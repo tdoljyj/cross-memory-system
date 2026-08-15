@@ -14,3 +14,6 @@
 - 只沉淀稳定长期信息，不写一次性临时信息。
 
 关键节点或会话收尾时，把新进展、新决策、新否决项写回上述文件，只放这一处。
+
+记忆同步（每会话收尾）：
+- 复查补写四个记忆文件后，运行记忆同步：powershell -ExecutionPolicy Bypass -File "C:\Users\<用户名>\.codex\projects\codex-memory-system\sync-memory.ps1"（复制记忆 → 本地 git 提交 → 推送到 GitHub 私有仓库；多机共用时脚本会自动先拉后推）
