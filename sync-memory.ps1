@@ -34,11 +34,14 @@ function Test-DirectGitHub {
 
 function Invoke-Git {
     param([Parameter(ValueFromRemainingArguments = $true)][string[]]$GitArgs)
+    # Prefer direct; fall back to the local proxy at the actual git-op level.
+    # A raw TCP probe is not a reliable reachability check: TCP can succeed
+    # while the HTTPS transfer is reset, so retry through the proxy on failure.
     if (Test-DirectGitHub) {
         git -C $repoRoot @GitArgs
-    } else {
-        git -C $repoRoot -c http.proxy=$proxy @GitArgs
+        if ($LASTEXITCODE -eq 0) { return }
     }
+    git -C $repoRoot -c http.proxy=$proxy @GitArgs
     if ($LASTEXITCODE -ne 0) {
         throw "git failed: git $($GitArgs -join ' ')"
     }
@@ -99,8 +102,9 @@ try {
     Remove-Item -LiteralPath $flagFile -Force -ErrorAction SilentlyContinue
     Write-Output "Memory synced to GitHub."
 } catch {
-    git -C $repoRoot rebase --abort 2>$null
     Set-SyncFailed
+    # Best-effort cleanup; must never prevent the failure flag from being written.
+    try { git -C $repoRoot rebase --abort 2>&1 | Out-Null } catch { }
     Write-Error $_.Exception.Message
     exit 1
 }
