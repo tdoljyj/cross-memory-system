@@ -138,6 +138,15 @@ if ($Doctor) {
     $gitVersion = (& git --version 2>&1 | Out-String).Trim()
     Report "git available" ($LASTEXITCODE -eq 0) $gitVersion
 
+    $gitPath = (Get-Command git -ErrorAction SilentlyContinue).Source
+    Write-Output ("git path : " + $(if ($gitPath) { $gitPath } else { "(not found)" }))
+
+    $isPortableGit = ($gitPath -match "PortableGit|\.workbuddy")
+    Report "git client safe (not PortableGit)" (-not $isPortableGit) $(if ($isPortableGit) { $gitPath + " -> 有 loose-ref 写入缺陷，请换 Git Bash 自带 git" } else { $gitPath })
+
+    $sslDefault = (git config --show-origin --get http.sslbackend 2>&1 | Out-String).Trim()
+    Write-Output ("git http.sslbackend default : " + $(if ($sslDefault) { $sslDefault } else { "(unset)" }))
+
     $remoteOut = git -C $repoRoot -c http.proxy=$proxy -c http.sslBackend=openssl ls-remote origin main 2>&1
     if ($LASTEXITCODE -ne 0) { $remoteOut = git -C $repoRoot ls-remote origin main 2>&1 }
     $remote = ($remoteOut | Out-String).Trim()
