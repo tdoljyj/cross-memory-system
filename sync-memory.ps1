@@ -1,7 +1,9 @@
 # Codex cross-session memory sync.
 # Default (push): copy local memory -> repo, commit if changed, reconcile with remote, push.
-# -Pull: session-start alignment (self-healing): pull newer remote memory and
-#        push any local commits left behind by a failed sync, then report changes.
+# -Pull: session-start alignment (self-healing): pull newer remote memory, write
+#        pulled changes back to the working memory directory when possible
+#        (otherwise flag .pending-writeback for a manual apply_patch), and push
+#        any local commits left behind by a failed sync.
 # Usage:
 #   powershell -ExecutionPolicy Bypass -File sync-memory.ps1
 #   powershell -ExecutionPolicy Bypass -File sync-memory.ps1 -Pull
@@ -15,6 +17,7 @@ $memorySrc = Join-Path $env:USERPROFILE "Documents\Codex\memory"
 $memoryDst = Join-Path $repoRoot "memory"
 $proxy = "http://127.0.0.1:7897"
 $flagFile = Join-Path $repoRoot ".sync-failed"
+$pendingFile = Join-Path $repoRoot ".pending-writeback"
 
 # Fast direct-connectivity probe so a dead github.com connection fails in ~3s instead of ~20s.
 function Test-DirectGitHub {
@@ -52,6 +55,49 @@ function Invoke-Git {
     }
 }
 
+function Get-MemoryFileHashes {
+    param([string]$Dir)
+    $map = @{}
+    Get-ChildItem -Path (Join-Path $Dir "*.md") -File -ErrorAction SilentlyContinue | ForEach-Object {
+        $map[$_.Name] = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash
+    }
+    return $map
+}
+
+function Test-MemoryDirsEqual {
+    param([string]$DirA, [string]$DirB)
+    $a = Get-MemoryFileHashes $DirA
+    $b = Get-MemoryFileHashes $DirB
+    if ($a.Count -ne $b.Count) { return $false }
+    foreach ($name in $a.Keys) {
+        if (-not $b.ContainsKey($name) -or $a[$name] -ne $b[$name]) { return $false }
+    }
+    return $true
+}
+
+function Copy-MemoryToWorkingDir {
+    # repo -> working memory directory. Returns $true only when the copy is verified.
+    try {
+        if (-not (Test-Path -LiteralPath $memorySrc)) {
+            New-Item -ItemType Directory -Path $memorySrc -Force -ErrorAction Stop | Out-Null
+        }
+        Copy-Item -Path (Join-Path $memoryDst "*.md") -Destination $memorySrc -Force -ErrorAction Stop
+        return (Test-MemoryDirsEqual $memoryDst $memorySrc)
+    } catch {
+        return $false
+    }
+}
+
+function Set-PendingWriteback {
+    param([string[]]$ChangedFiles)
+    $stamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    Set-Content -LiteralPath $pendingFile -Value (@("Created: $stamp") + $ChangedFiles) -Encoding UTF8 -ErrorAction SilentlyContinue
+}
+
+function Clear-PendingWriteback {
+    Remove-Item -LiteralPath $pendingFile -Force -ErrorAction SilentlyContinue
+}
+
 function Set-SyncFailed {
     Set-Content -LiteralPath $flagFile -Value (Get-Date -Format "yyyy-MM-dd HH:mm:ss") -ErrorAction SilentlyContinue
 }
@@ -61,19 +107,40 @@ if (-not (git -C $repoRoot config user.email)) { git -C $repoRoot config user.em
 
 if ($Pull) {
     # Session-start alignment is self-healing in both directions: pull any newer
-    # remote memory, and push any local commits left behind by a failed sync.
+    # remote memory, write it back to the working directory when possible, and
+    # push any local commits left behind by a failed sync.
     try {
         Invoke-Git fetch origin
         $local = git -C $repoRoot rev-parse HEAD
         $behind = [int](git -C $repoRoot rev-list --count HEAD..origin/main)
         $ahead  = [int](git -C $repoRoot rev-list --count origin/main..HEAD)
 
+        $changed = @()
         if ($behind -gt 0) {
             Invoke-Git pull --rebase origin main
+            $changed = @(git -C $repoRoot diff --name-only "$local..HEAD" -- memory)
             Write-Output "Memory repo updated from remote. Changed memory files:"
-            git -C $repoRoot diff --name-only "$local..HEAD" -- memory
+            $changed | ForEach-Object { Write-Output $_ }
             $ahead = [int](git -C $repoRoot rev-list --count origin/main..HEAD)
         }
+
+        # Reconcile repo -> working memory directory. Safe to write back only when
+        # the repo is the newer side: we just pulled remote commits, or a previous
+        # write-back is still pending. Never overwrite newer local edits.
+        if (($changed.Count -gt 0) -or (Test-Path $pendingFile)) {
+            if (Test-MemoryDirsEqual $memoryDst $memorySrc) {
+                Clear-PendingWriteback
+                Write-Output "Working memory directory already matches repo; cleared pending write-back flag."
+            } elseif (Copy-MemoryToWorkingDir) {
+                Clear-PendingWriteback
+                Write-Output "Pulled changes written back to working memory directory."
+            } else {
+                Set-PendingWriteback $changed
+                Write-Output "WARNING: could not auto-write repo changes to the working memory directory (likely read-only for shell)."
+                Write-Output "         Apply repo memory files to $memorySrc via apply_patch, then re-run -Pull (or delete .pending-writeback) before pushing."
+            }
+        }
+
         if ($ahead -gt 0) {
             Invoke-Git push origin main
             Write-Output "Pushed $ahead local commit(s) to GitHub."
@@ -94,6 +161,19 @@ if (-not (Test-Path $memorySrc)) {
     Set-SyncFailed
     Write-Error "Memory directory not found: $memorySrc"
     exit 1
+}
+
+# Refuse to overwrite pulled-but-not-written-back remote changes with the
+# (possibly stale) working copy. If the working copy already matches the repo,
+# clear the flag and continue.
+if (Test-Path $pendingFile) {
+    if (Test-MemoryDirsEqual $memoryDst $memorySrc) {
+        Clear-PendingWriteback
+        Write-Output "Pending write-back flag cleared: working memory directory now matches repo."
+    } else {
+        Write-Error "Pending write-back detected (.pending-writeback): remote changes pulled into the repo have not been written back to $memorySrc. Refusing to push to avoid reverting them. Apply repo memory files to the working directory via apply_patch, then re-run."
+        exit 1
+    }
 }
 
 Copy-Item -Path (Join-Path $memorySrc "*.md") -Destination $memoryDst -Force

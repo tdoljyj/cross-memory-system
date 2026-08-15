@@ -17,9 +17,9 @@
 读前对齐（新会话，多机共用防止读到旧记忆）：
 1. 若 %USERPROFILE%\.codex\projects\codex-memory-system\.sync-failed 存在，先告知用户上次同步失败，并读出其中时间戳。
 2. 运行：powershell -ExecutionPolicy Bypass -File "%USERPROFILE%\.codex\projects\codex-memory-system\sync-memory.ps1" -Pull
-3. 若输出显示 memory 文件有更新，用 apply_patch 把仓库 memory 目录中较新的内容同步回 %USERPROFILE%\Documents\Codex\memory 对应文件，再开始读取；无更新则直接读取。
+3. -Pull 会尝试把远端更新自动回写工作记忆目录；若输出提示「could not auto-write / pending write-back」（shell 因内容目录只读而回写失败），用 apply_patch 把仓库 memory 目录中较新的文件写回 %USERPROFILE%\Documents\Codex\memory 对应文件，再重跑 -Pull 清除 .pending-writeback 标记；无更新则直接读取。
 
 关键节点或会话收尾时，把新进展、新决策、新否决项写回上述文件，只放这一处。
 
 记忆同步（每会话收尾）：
-- 复查补写记忆文件后，运行：powershell -ExecutionPolicy Bypass -File "%USERPROFILE%\.codex\projects\codex-memory-system\sync-memory.ps1"（复制记忆 → 本地 git 提交 → 与远端对账 → 推送到 GitHub 私有仓库；失败会写 .sync-failed 标记，下次会话开场提醒）
+- 复查补写记忆文件后，运行：powershell -ExecutionPolicy Bypass -File "%USERPROFILE%\.codex\projects\codex-memory-system\sync-memory.ps1"（复制记忆 → 本地 git 提交 → 与远端对账 → 推送到 GitHub 私有仓库；失败会写 .sync-failed 标记，下次会话开场提醒；若 .pending-writeback 标记存在会先拒绝推送，需先按第 3 步回写）
