@@ -40,19 +40,22 @@ function Invoke-Git {
     param([Parameter(ValueFromRemainingArguments = $true)][string[]]$GitArgs)
     # Native git stderr must not throw: PowerShell 5.1 + $ErrorActionPreference='Stop'
     # turns it into a terminating NativeCommandError (redirection cannot stop it).
-    # Scope a local Continue and rely on exit codes instead.
+    # Scope a local Continue and rely on exit codes instead; capture stderr via
+    # 2>&1 so real failures keep the git error text for diagnostics.
     $ErrorActionPreference = "Continue"
     # Proxy first: local and reliable on this machine. Fall back to direct only
     # when the proxy is down; skip the slow direct attempt entirely when direct
     # TCP is also unreachable (Test-DirectGitHub probes in ~3s instead of ~20s).
-    git -C $repoRoot -c http.proxy=$proxy @GitArgs 2>$null
+    $errText = ""
+    $out = @(git -C $repoRoot -c http.proxy=$proxy @GitArgs 2>&1)
+    $errText = @($out | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] } | ForEach-Object { $_.ToString() }) -join "`n"
     if ($LASTEXITCODE -eq 0) { return }
     if (Test-DirectGitHub) {
-        git -C $repoRoot @GitArgs
+        $out = @(git -C $repoRoot @GitArgs 2>&1)
+        $errText = @($out | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] } | ForEach-Object { $_.ToString() }) -join "`n"
+        if ($LASTEXITCODE -eq 0) { return }
     }
-    if ($LASTEXITCODE -ne 0) {
-        throw "git failed: git $($GitArgs -join ' ')"
-    }
+    throw "git failed: git $($GitArgs -join ' ')`n$errText"
 }
 
 function Get-MemoryFileHashes {
@@ -99,7 +102,9 @@ function Clear-PendingWriteback {
 }
 
 function Set-SyncFailed {
-    Set-Content -LiteralPath $flagFile -Value (Get-Date -Format "yyyy-MM-dd HH:mm:ss") -ErrorAction SilentlyContinue
+    param([string]$Message)
+    $stamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    Set-Content -LiteralPath $flagFile -Value @("Failed: $stamp", $Message) -Encoding UTF8 -ErrorAction SilentlyContinue
 }
 
 if (-not (git -C $repoRoot config user.name)) { git -C $repoRoot config user.name "tdoljyj" | Out-Null }
@@ -150,7 +155,7 @@ if ($Pull) {
         }
         Remove-Item -LiteralPath $flagFile -Force -ErrorAction SilentlyContinue
     } catch {
-        Set-SyncFailed
+        Set-SyncFailed $_.Exception.Message
         # Clear any in-progress rebase left by a conflicted pull so the next
         # -Pull can retry cleanly instead of failing forever (multi-writer).
         try { git -C $repoRoot rebase --abort 2>&1 | Out-Null } catch { }
@@ -202,7 +207,7 @@ try {
     Remove-Item -LiteralPath $flagFile -Force -ErrorAction SilentlyContinue
     Write-Output "Memory synced to GitHub."
 } catch {
-    Set-SyncFailed
+    Set-SyncFailed $_.Exception.Message
     # Best-effort cleanup; must never prevent the failure flag from being written.
     try { git -C $repoRoot rebase --abort 2>&1 | Out-Null } catch { }
     Write-Error $_.Exception.Message
