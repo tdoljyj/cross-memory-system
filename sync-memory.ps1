@@ -39,14 +39,14 @@ function Invoke-Git {
     # turns it into a terminating NativeCommandError (redirection cannot stop it).
     # Scope a local Continue and rely on exit codes instead.
     $ErrorActionPreference = "Continue"
-    # Prefer direct; fall back to the local proxy at the actual git-op level.
-    # A raw TCP probe is not a reliable reachability check: TCP can succeed
-    # while the HTTPS transfer is reset, so retry through the proxy on failure.
+    # Proxy first: local and reliable on this machine. Fall back to direct only
+    # when the proxy is down; skip the slow direct attempt entirely when direct
+    # TCP is also unreachable (Test-DirectGitHub probes in ~3s instead of ~20s).
+    git -C $repoRoot -c http.proxy=$proxy @GitArgs 2>$null
+    if ($LASTEXITCODE -eq 0) { return }
     if (Test-DirectGitHub) {
-        git -C $repoRoot @GitArgs 2>$null
-        if ($LASTEXITCODE -eq 0) { return }
+        git -C $repoRoot @GitArgs
     }
-    git -C $repoRoot -c http.proxy=$proxy @GitArgs
     if ($LASTEXITCODE -ne 0) {
         throw "git failed: git $($GitArgs -join ' ')"
     }
