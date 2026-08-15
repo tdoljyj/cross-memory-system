@@ -1,6 +1,11 @@
 # Codex cross-session memory sync.
+# Module role (per 架构基线文档-vNext.md vNext-1.1): Codex-side AI Adapter Sync Layer.
+# Syncs only with the Canonical Memory Store (this git repo); never with other adapters.
+# Trigger policy (AGENTS.md v3): pull/push are invoked on demand — pull only when the
+# Memory Router (T1-T4) matches, push only when the current turn produced memory writes
+# (staged empty check below = Memory Change Detector: NO_CHANGE -> NO_SYNC).
 # Default (push): copy local memory -> repo, commit if changed, reconcile with remote, push.
-# -Pull: session-start alignment (self-healing): pull newer remote memory, write
+# -Pull: on-demand alignment (self-healing): pull newer remote memory, write
 #        pulled changes back to the working memory directory when possible
 #        (otherwise flag .pending-writeback for a manual apply_patch), and push
 #        any local commits left behind by a failed sync.

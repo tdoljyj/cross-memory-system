@@ -3,6 +3,11 @@
 """
 WorkBuddy 侧记忆同步脚本（Python 版）
 
+模块定位（对齐《架构基线文档-vNext.md》vNext-1.1）：本脚本 = WorkBuddy 端 AI Adapter
+的 Sync Layer 实现，只与 Canonical Memory Store（本 git 仓库）同步，不与其他端互相同步。
+按需触发：命中 Memory Router（AGENTS v3 / MEMORY.md 的 T1–T4）才 pull；本轮产生记忆
+写入才 push。NO_CHANGE → NO_WRITE → NO_SYNC。
+
 背景（2026-08-16 根因实锤）：
     WorkBuddy 沙盒 overlay 拦截 git 的 lockfile+rename 原子写，
     两层 ref（refs/remotes/origin/main）写不进（exit 0 静默失败、还清空父目录）。
