@@ -181,7 +181,7 @@ if ($Pull) {
         $changed = @()
         if ($behind -gt 0) {
             Invoke-Git pull --rebase origin main
-            $changed = @(git -C $repoRoot diff --name-only "$local..HEAD" -- memory)
+            $changed = @(git -C $repoRoot -c core.quotepath=false diff --name-only "$local..HEAD" -- memory)
             Write-Output "Memory repo updated from remote. Changed memory files:"
             $changed | ForEach-Object { Write-Output $_ }
             $ahead = [int](git -C $repoRoot rev-list --count origin/main..HEAD)
@@ -245,7 +245,7 @@ if (Test-Path $pendingFile) {
 Copy-Item -Path (Join-Path $memorySrc "*.md") -Destination $memoryDst -Force
 
 git -C $repoRoot add -- memory
-$staged = @(git -C $repoRoot diff --cached --name-only)
+$staged = @(git -C $repoRoot -c core.quotepath=false diff --cached --name-only)
 if (-not $staged) {
     Write-Output "No memory changes; skip commit."
     exit 0
