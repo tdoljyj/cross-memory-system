@@ -36,12 +36,13 @@
 
 ## 新电脑接入（一次性）
 1. 安装 GitHub CLI 并登录同一账号：`gh auth login`
-2. 克隆仓库：`gh repo clone tdoljyj/cross-memory-system ~/.codex/projects/codex-memory-system`
-3. 把 `memory\` 里的五个文件复制到 `Documents\Codex\memory\`
-4. 写全局钩子 `~/.codex/AGENTS.md`（用仓库内 AGENTS.md 内容，路径里的 `<用户名>` 换成实际用户名）
-5. 建立本机配置 `~/.codex/projects/codex-memory-system/sync.config.ps1`（gitignored）：`$AgentName = "Codex"`、`$ProxyUrl = "http://127.0.0.1:7897"`（无代理则 `""`）、`$MemoryDir`（非 Windows 或自定义路径时改）
-6. 跑自检：`powershell -ExecutionPolicy Bypass -File ~/.codex/projects/codex-memory-system/sync-memory.ps1 -Doctor`，全部 PASS
-7. 按手册第五节启用 Full access，然后新会话验证
+2. 接入 GitHub MCP：`gh auth token` 拿到令牌后 `setx GITHUB_PAT_TOKEN "<令牌>"`（gho_ 开头，用户级环境变量）；在 `~/.codex/config.toml` 加 `[mcp_servers.github]`（`url = "https://api.githubcopilot.com/mcp/"`、`bearer_token_env_var = "GITHUB_PAT_TOKEN"`）或走桌面 App 设置 → MCP 入口；新会话 `codex mcp list` 应看到 44 个工具。注意 config.toml 会被启动重写、MCP 条目可能丢失需重加；gh 重新登录后令牌会变，需重跑 setx
+3. 克隆仓库：`gh repo clone tdoljyj/cross-memory-system ~/.codex/projects/codex-memory-system`
+4. 把 `memory\` 里的五个文件复制到 `Documents\Codex\memory\`
+5. 写全局钩子 `~/.codex/AGENTS.md`（用仓库内 AGENTS.md 内容，路径里的 `<用户名>` 换成实际用户名）
+6. 建立本机配置 `~/.codex/projects/codex-memory-system/sync.config.ps1`（gitignored）：`$AgentName = "Codex"`、`$ProxyUrl = "http://127.0.0.1:7897"`（无代理则 `""`）、`$MemoryDir`（非 Windows 或自定义路径时改）
+7. 跑自检：`powershell -ExecutionPolicy Bypass -File ~/.codex/projects/codex-memory-system/sync-memory.ps1 -Doctor`，全部 PASS
+8. 按手册第五节启用 Full access，然后新会话验证
 
 ## Codex 自动同步（每会话收尾）
 - 钩子指令让 AI 在每次会话收尾时运行：`powershell -ExecutionPolicy Bypass -File ~/.codex/projects/codex-memory-system/sync-memory.ps1`
