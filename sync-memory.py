@@ -9,27 +9,38 @@ WorkBuddy 侧记忆同步脚本（Python 版）
     单层 ref（refs/heads/main）正常；Python os.makedirs+open 直写正常（不走 rename）。
 
 策略（根治方向 2 + 3）：
-    - git 只负责对象传输（fetch/pull/push），Python 负责 tracking ref 兜底写入
+    - git 只负责对象传输（fetch/merge/push），Python 负责 tracking ref 兜底写入
     - 显式 origin main，不依赖 tracking ref
     - 一切以 ls-remote 为准，不信 git status 的 ahead/behind / gone
 
+收敛策略（2026-08-16 修正，实测 E1~E4 支撑）：
+    - 全仓统一 git merge（非 rebase）。实测 rebase + union driver 会静默丢单边内容
+      （exit 0 假成功），merge + union driver 才能正确自动合并归档.md。
+    - 归档.md 配 merge=union（.gitattributes 已设 + 本机 merge.union.driver 已配），
+      两端追加自动保留；其余文件冲突时语义合并。
+    - merge 走 FETCH_HEAD（不受沙盒 tracking ref 失效影响）。
+
 用法：
-    python sync-memory.py pull      # 开场：fetch + 对齐 + 补写 tracking ref + 核验
-    python sync-memory.py push      # 收尾：push + 补写 tracking ref + ls-remote 核验
-    python sync-memory.py doctor    # 体检：git / 远端 / refs / 残留标记
+    python sync-memory.py pull      # 开场：fetch + merge 对齐 + 补写 tracking ref + 核验
+    python sync-memory.py push      # 收尾：fetch + merge 对齐 + push + 补写 tracking ref + 核验
+    python sync-memory.py doctor    # 体检：git / 远端 / refs / 残留标记 / union 配置
 
 注意：
     - commit 不在本脚本职责内（由使用方在改完记忆后自行 commit，再跑 push 模式）
-    - push 需在非沙盒环境（dangerouslyDisableSandbox）执行，判据=输出尾出现
-      "Sandbox bypassed"；沙盒内 push 的对象可能不落真实盘，跑完用 doctor 核验
+    - git 写操作需在非沙盒环境执行，判据=输出尾 "Sandbox bypassed"；
+      沙盒内 git 写对象可能不落真实盘，跑完用 doctor 核验
 """
 
 import os
+import re
+import socket
 import subprocess
 import sys
 
 REPO = os.path.expanduser("~/.workbuddy/codex-memory-system")
 PROXY = "http://127.0.0.1:7897"  # 本机 Clash 代理；无代理时设为 ""
+PROXY_HOST = "127.0.0.1"
+PROXY_PORT = 7897
 
 # git 优先级：官方 Git for Windows（真非沙盒下健康）> PortableGit（PATH 兜底）
 GIT_CANDIDATES = [
@@ -48,11 +59,24 @@ def find_git():
 GIT = find_git()
 
 
-def run(cmd, cwd=REPO):
-    p = subprocess.run(
-        cmd, cwd=cwd, capture_output=True, text=True,
-        encoding="utf-8", errors="replace",
-    )
+def proxy_alive():
+    """代理端口探测，3 秒快失败。WorkBuddy 沙箱内出网仅代理路径，
+    代理不在时应快速失败而非让 git 卡 20 秒。"""
+    try:
+        with socket.create_connection((PROXY_HOST, PROXY_PORT), timeout=3.0):
+            return True
+    except Exception:
+        return False
+
+
+def run(cmd, cwd=REPO, timeout=60):
+    try:
+        p = subprocess.run(
+            cmd, cwd=cwd, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        return -1, "", "git 命令超时（%ds）" % timeout
     return p.returncode, (p.stdout or "").strip(), (p.stderr or "").strip()
 
 
@@ -79,6 +103,9 @@ def ls_remote():
     if code != 0:
         print("[!] ls-remote 失败: %s" % err)
         return None
+    if not out.strip():
+        print("[!] ls-remote 空输出（远端可能无 main 分支）")
+        return None
     return out.split()[0]
 
 
@@ -97,16 +124,42 @@ def restore_tracking_ref(remote):
     return ok
 
 
-def cmd_pull():
-    print("== 开场拉取对齐 ==")
+def fetch_and_merge():
+    """fetch 后 merge FETCH_HEAD（非 rebase）。返回是否成功对齐。"""
     code, out, err = git("fetch", "origin", "main")
     print("[fetch] %s" % ("OK" if code == 0 else "FAIL: " + err))
-    code, out, err = git("pull", "--rebase", "origin", "main")
-    print("[pull --rebase] exit=%d" % code)
+    if code != 0:
+        return False
+    code, out, err = git("merge", "--no-edit", "FETCH_HEAD")
     if out:
         print(out)
     if err:
         print(err)
+    if code != 0:
+        print("[!] merge 冲突（code=%d），执行 --abort 清理中间态" % code)
+        git("merge", "--abort", proxy=False)
+        return False
+    return True
+
+
+def rev_count(a, b):
+    """提交数：b 有而 a 没有（即 a..b）。"""
+    code, out, _ = git("rev-list", "--count", "%s..%s" % (a, b), proxy=False)
+    if code == 0 and out.strip():
+        try:
+            return int(out.strip())
+        except ValueError:
+            pass
+    return 0
+
+
+def cmd_pull():
+    print("== 开场拉取对齐 ==")
+    if not fetch_and_merge():
+        remote = ls_remote()
+        restore_tracking_ref(remote)
+        print("[!] 对齐失败：请手动语义合并后重跑，或检查远端状态")
+        sys.exit(1)
     remote = ls_remote()
     restore_tracking_ref(remote)
     local = local_head()
@@ -116,12 +169,31 @@ def cmd_pull():
 
 def cmd_push():
     print("== 收尾推送 ==")
+    if not proxy_alive() and PROXY:
+        print("[!] 代理 %s 不可达（Clash 未启动？），终止以免 git 卡死" % PROXY)
+        sys.exit(1)
+    # 先 fetch 对齐，避免并发非快进失败（P10）
+    if not fetch_and_merge():
+        print("[!] 对齐失败，终止 push（避免覆盖远端）")
+        sys.exit(1)
     code, out, err = git("push", "origin", "main")
     print("[push] exit=%d" % code)
     if out:
         print(out)
     if err:
         print(err)
+    if code != 0:
+        # push 被拒（并发远端又前进）：重新 fetch+merge 后重推一轮
+        print("[!] push 被拒，重新 fetch+merge 后重推")
+        if not fetch_and_merge():
+            print("[!] 二次对齐失败，终止")
+            sys.exit(1)
+        code, out, err = git("push", "origin", "main")
+        print("[push 重试] exit=%d" % code)
+        if out:
+            print(out)
+        if err:
+            print(err)
     remote = ls_remote()
     local = local_head()
     restore_tracking_ref(remote)
@@ -129,21 +201,40 @@ def cmd_push():
     print("已推送 ✓" if local == remote else "未推上远端 ⚠️（沙盒内 push 可能未落盘，非沙盒重试）")
 
 
+def check_ref_valid():
+    """校验 tracking ref 文件内容是否为合法 40 位 hex（P4）。"""
+    ref_path = os.path.join(REPO, ".git", "refs", "remotes", "origin", "main")
+    if not os.path.exists(ref_path):
+        return False, "丢失（沙盒 overlay 所致，pull/push 模式会自动补写）"
+    try:
+        content = open(ref_path).read().strip()
+    except Exception as e:
+        return False, "读取失败: %s" % e
+    if re.fullmatch(r"[0-9a-f]{40}", content):
+        return True, content[:12]
+    return False, "非法内容: %r" % content[:40]
+
+
 def cmd_doctor():
     print("== 体检 ==")
     code, out, _ = git("--version", proxy=False)
     print("[git] %s" % out)
     print("[git 路径] %s" % GIT)
+    print("[代理 %s] %s" % (PROXY, "可达" if proxy_alive() else "不可达（Clash 未启动？）"))
     remote = ls_remote()
     local = local_head()
     print("[远端] %s" % remote)
     print("[本地] %s" % local)
-    ref_path = os.path.join(REPO, ".git", "refs", "remotes", "origin", "main")
-    print("[tracking ref] %s" %
-          ("存在" if os.path.exists(ref_path) else "丢失（沙盒 overlay 所致，pull/push 模式会自动补写）"))
+    ok, detail = check_ref_valid()
+    print("[tracking ref] %s（%s）" % ("合法" if ok else "异常", detail))
     for marker in (".sync-failed", ".pending-writeback"):
         p = os.path.join(REPO, marker)
         print("[%s] %s" % (marker, "有残留!" if os.path.exists(p) else "无"))
+    # union 配置检查（P1/P6）
+    code, out, _ = git("config", "--get", "merge.union.driver", proxy=False)
+    print("[merge.union.driver] %s" % (out if code == 0 else "未配置（归档.md 自动合并会失效）"))
+    code, out, _ = git("check-attr", "merge", "--", "memory/归档.md", proxy=False)
+    print("[归档.md merge 属性] %s" % (out or "(无)"))
     print("[对齐] %s" % ("一致 ✓" if local == remote else "不一致 ⚠️"))
 
 

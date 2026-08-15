@@ -20,7 +20,6 @@ $AgentName = "Codex"
 $HostName  = $env:COMPUTERNAME
 $ProxyUrl  = "http://127.0.0.1:7897"
 $MemoryDir = Join-Path $env:USERPROFILE "Documents\Codex\memory"
-$GitName   = "tdoljyj"
 $GitEmail  = "tdoljyj@users.noreply.github.com"
 if (Test-Path -LiteralPath $configFile) { . $configFile }
 
@@ -97,6 +96,9 @@ function Copy-MemoryToWorkingDir {
             New-Item -ItemType Directory -Path $memorySrc -Force -ErrorAction Stop | Out-Null
         }
         Copy-Item -Path (Join-Path $memoryDst "*.md") -Destination $memorySrc -Force -ErrorAction Stop
+        # 删除工作区中仓库已不存在的 .md（删除传播）
+        $repoNames = @(Get-ChildItem -Path (Join-Path $memoryDst "*.md") -File -ErrorAction SilentlyContinue | ForEach-Object { $_.Name })
+        Get-ChildItem -Path (Join-Path $memorySrc "*.md") -File -ErrorAction SilentlyContinue | Where-Object { $repoNames -notcontains $_.Name } | Remove-Item -Force -ErrorAction SilentlyContinue
         return (Test-MemoryDirsEqual $memoryDst $memorySrc)
     } catch {
         return $false
@@ -189,7 +191,7 @@ if ($Pull) {
 
         $changed = @()
         if ($behind -gt 0) {
-            Invoke-Git pull --rebase origin main
+            Invoke-Git merge --no-edit FETCH_HEAD
             $changed = @(git -C $repoRoot -c core.quotepath=false diff --name-only "$local..HEAD" -- memory)
             Write-Output "Memory repo updated from remote. Changed memory files:"
             $changed | ForEach-Object { Write-Output $_ }
@@ -223,9 +225,9 @@ if ($Pull) {
         Remove-Item -LiteralPath $flagFile -Force -ErrorAction SilentlyContinue
     } catch {
         Set-SyncFailed $_.Exception.Message
-        # Clear any in-progress rebase left by a conflicted pull so the next
+        # Clear any in-progress merge left by a conflicted pull so the next
         # -Pull can retry cleanly instead of failing forever (multi-writer).
-        try { git -C $repoRoot rebase --abort 2>&1 | Out-Null } catch { }
+        try { git -C $repoRoot merge --abort 2>&1 | Out-Null } catch { }
         Write-Error $_.Exception.Message
         exit 1
     }
@@ -233,7 +235,7 @@ if ($Pull) {
 }
 
 if (-not (Test-Path $memorySrc)) {
-    Set-SyncFailed
+    Set-SyncFailed -Message "Memory directory not found: $memorySrc"
     Write-Error "Memory directory not found: $memorySrc"
     exit 1
 }
@@ -252,10 +254,14 @@ if (Test-Path $pendingFile) {
 }
 
 Copy-Item -Path (Join-Path $memorySrc "*.md") -Destination $memoryDst -Force
+# 删除仓库中工作区已删除的 .md（删除传播）
+$srcNames = @(Get-ChildItem -Path (Join-Path $memorySrc "*.md") -File -ErrorAction SilentlyContinue | ForEach-Object { $_.Name })
+Get-ChildItem -Path (Join-Path $memoryDst "*.md") -File -ErrorAction SilentlyContinue | Where-Object { $srcNames -notcontains $_.Name } | Remove-Item -Force -ErrorAction SilentlyContinue
 
-git -C $repoRoot add -- memory
+git -C $repoRoot add -A -- memory
 $staged = @(git -C $repoRoot -c core.quotepath=false diff --cached --name-only)
 if (-not $staged) {
+    Remove-Item -LiteralPath $flagFile -Force -ErrorAction SilentlyContinue
     Write-Output "No memory changes; skip commit."
     exit 0
 }
@@ -267,7 +273,7 @@ try {
     git -C $repoRoot commit -m "memory sync [$identity]: $changed"
 
     if ($behind -gt 0) {
-        Invoke-Git pull --rebase origin main
+        Invoke-Git merge --no-edit FETCH_HEAD
     }
 
     Invoke-Git push origin main
@@ -276,7 +282,7 @@ try {
 } catch {
     Set-SyncFailed $_.Exception.Message
     # Best-effort cleanup; must never prevent the failure flag from being written.
-    try { git -C $repoRoot rebase --abort 2>&1 | Out-Null } catch { }
+    try { git -C $repoRoot merge --abort 2>&1 | Out-Null } catch { }
     Write-Error $_.Exception.Message
     exit 1
 }

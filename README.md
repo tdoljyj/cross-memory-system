@@ -10,12 +10,12 @@
 | 接入方 | 工作区 | 读写方式 |
 |---|---|---|
 | Codex | `Documents\Codex\memory\` | `sync-memory.ps1`（收尾 push / 开场 `-Pull` / 接入 `-Doctor` 自检），代理优先 127.0.0.1:7897（固定 `http.sslBackend=openssl`）、直连兜底 |
-| WorkBuddy | `~/.workbuddy/codex-memory-system\`（独立克隆） | 开场 `git pull` 读；写入前 `pull --rebase` → 修改 → push；不直写 Codex 侧工作区 |
-| 未来其他 AI | 各自工作区 | 同 WorkBuddy：克隆 → pull --rebase → 改 → push；不直写任何既有工作区 |
+| WorkBuddy | `~/.workbuddy/codex-memory-system\`（独立克隆） | 开场 `python sync-memory.py pull` 读；写入前 `fetch + merge` → 修改 → push；不直写 Codex 侧工作区 |
+| 未来其他 AI | 各自工作区 | 同 WorkBuddy：克隆 → fetch + merge → 改 → push；不直写任何既有工作区 |
 
 ## 多机多 AI 协同机制
 1. **身份与审计**：每端以 `AI名@机器名`（如 `Codex@DESKTOP-X`）作为 git 作者提交，commit message 带 `[身份]` 前缀与变更文件清单；`git log --format='%an %s'` 即可看到谁在哪台机器改了什么。
-2. **并发冲突分层**：追加类文件（`归档.md`）配 `merge=union`，两端同时追加自动保留、无需人工；改写类文件（`状态.md` / `待办.md`）靠「改前立即 pull --rebase + 小步提交 + 语义合并」，冲突时保留两端语义、绝不单方面覆盖。
+2. **并发冲突分层**：追加类文件（`归档.md`）配 `merge=union`，两端同时追加自动保留、无需人工；改写类文件（`状态.md` / `待办.md`）靠「改前立即 merge + 小步提交 + 语义合并」，冲突时保留两端语义、绝不单方面覆盖。⚠️ union 自动合并仅 `git merge` 生效（每机需 `git config merge.union.driver 'git merge-file --union %A %O %B'`），**禁止与 rebase 混用**（rebase + union driver 会静默丢单边内容）。
 3. **跨机可移植**：每机一份 gitignored 的 `sync.config.ps1`（身份 / 代理 / 记忆目录 / 提交身份），脚本无此文件时回落本机默认；换机器、换 OS（需 pwsh）只改这一个文件。
 4. **接入自检**：新机器跑 `powershell -ExecutionPolicy Bypass -File sync-memory.ps1 -Doctor`，一次检查 git、网络与凭据、引用写入（沙盒 overlay 拦截，2026-08-16 实锤非 PortableGit 缺陷）、换行符配置、记忆目录，全部 PASS 才正式接入。
 
@@ -27,10 +27,10 @@
 
 ## 写入纪律（所有接入方必须遵守）
 1. **带身份提交**：每端以 `AI名@机器名` 作为 git 作者（Codex 脚本自动；手动客户端用 `git -c user.name="AI名@机器名" commit`）；commit message 带 `[身份]` 与变更文件
-2. **改前先拉**：`git pull --rebase`，永远基于最新版修改；push 被拒 → 再 pull --rebase → 解决冲突 → 重推
-3. **冲突合并**：文本冲突时保留两端内容做语义合并，绝不单方面覆盖；**绝不 force push / reset / 以本地覆盖远端**。`归档.md` 为追加类文件（union 自动合并），`状态.md` / `待办.md` 为改写类文件（冲突需语义合并）
+2. **改前先拉**：`git fetch` + `git merge --no-edit FETCH_HEAD`（非 rebase），永远基于最新版修改；push 被拒 → 再 merge → 解决冲突 → 重推
+3. **冲突合并**：文本冲突时保留两端内容做语义合并，绝不单方面覆盖；**绝不 force push / reset / 以本地覆盖远端**。`归档.md` 为追加类文件（union 自动合并，仅 merge 生效），`状态.md` / `待办.md` 为改写类文件（冲突需语义合并）。收敛统一用 `git merge`（非 rebase）
 4. **已否决不复活**：`决策.md` 已否决项绝不重复推荐；修改时尊重 Codex 的格式与作者立场
-5. **双端对称「不越界」**：任何一端不直写对方工作区或克隆（Codex 不写 `~/.workbuddy`，WorkBuddy 不写 `Documents\Codex\memory`）；一切写入经仓库交换，各自工作区由各端自管。分叉属正常，靠 pull --rebase 收敛
+5. **双端对称「不越界」**：任何一端不直写对方工作区或克隆（Codex 不写 `~/.workbuddy`，WorkBuddy 不写 `Documents\Codex\memory`）；一切写入经仓库交换，各自工作区由各端自管。分叉属正常，靠 merge 收敛
 6. **字节级一致**：语义相同的内容必须字节级一致（LF / 无 BOM，`.gitattributes` 锁定），避免互相重写
 7. **只沉淀稳定长期信息**：不写流水账、一次性临时信息
 
