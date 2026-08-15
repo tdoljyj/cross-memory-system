@@ -73,6 +73,7 @@ def git_is_safe(path=None):
 def ensure_git_safe():
     if not git_is_safe():
         print("[!] 检测到不安全的 PortableGit: %s" % GIT)
+        write_marker(".sync-failed", "unsafe git client: %s" % GIT)
         sys.exit(1)
 
 

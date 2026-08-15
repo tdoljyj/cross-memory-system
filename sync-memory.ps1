@@ -40,6 +40,9 @@ function Test-DirectGitHub {
                 $client.EndConnect($async)
                 return $true
             }
+            # Abort the in-flight connect instead of leaving a half-open socket
+            # behind (resource is short-lived here, but this keeps it explicit).
+            $client.Close()
             return $false
         } finally {
             if ($async -and $async.AsyncWaitHandle) {
@@ -61,14 +64,16 @@ function Invoke-Git {
     # 2>&1 so real failures keep the git error text for diagnostics.
     $ErrorActionPreference = "Continue"
     # Proxy first: local and reliable on this machine. Fall back to direct only
-    # when the proxy is down; skip the slow direct attempt entirely when direct
-    # TCP is also unreachable (Test-DirectGitHub probes in ~3s instead of ~20s).
+    # when the failure looks like connectivity (not merge conflicts / non-FF) and
+    # direct TCP is reachable (Test-DirectGitHub probes in ~3s instead of ~20s).
+    # http.lowSpeed* bounds a stalled HTTP transfer so a half-dead proxy cannot
+    # hang the script indefinitely.
     $errText = ""
-    $out = @(git -C $repoRoot -c http.proxy=$proxy -c http.sslBackend=openssl @GitArgs 2>&1)
+    $out = @(git -C $repoRoot -c http.proxy=$proxy -c http.sslBackend=openssl -c http.lowSpeedLimit=1 -c http.lowSpeedTime=15 @GitArgs 2>&1)
     $errText = @($out | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] } | ForEach-Object { $_.ToString() }) -join "`n"
     if ($LASTEXITCODE -eq 0) { return }
-    if (Test-DirectGitHub) {
-        $out = @(git -C $repoRoot @GitArgs 2>&1)
+    if (($errText -match 'Could not connect|unable to access|Failed to connect|Connection (timed out|refused|was reset)|Could not resolve host|OpenSSL SSL_connect') -and (Test-DirectGitHub)) {
+        $out = @(git -C $repoRoot -c http.lowSpeedLimit=1 -c http.lowSpeedTime=15 @GitArgs 2>&1)
         $errText = @($out | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] } | ForEach-Object { $_.ToString() }) -join "`n"
         if ($LASTEXITCODE -eq 0) { return }
     }
@@ -166,9 +171,9 @@ function Backup-MergeConflict {
 }
 
 function Get-RemoteMainHash {
-    $out = @(git -C $repoRoot -c http.proxy=$proxy -c http.sslBackend=openssl ls-remote origin main 2>&1)
+    $out = @(git -C $repoRoot -c http.proxy=$proxy -c http.sslBackend=openssl -c http.lowSpeedLimit=1 -c http.lowSpeedTime=15 ls-remote origin main 2>&1)
     if ($LASTEXITCODE -ne 0) {
-        $out = @(git -C $repoRoot ls-remote origin main 2>&1)
+        $out = @(git -C $repoRoot -c http.lowSpeedLimit=1 -c http.lowSpeedTime=15 ls-remote origin main 2>&1)
     }
     $text = ($out | ForEach-Object { $_.ToString() }) -join "`n"
     if ($text -match '(?m)^([0-9a-f]{40})\s+refs/heads/main\s*$') {
@@ -180,7 +185,26 @@ function Get-RemoteMainHash {
 function Confirm-RemotePushed {
     $localHead = (git -C $repoRoot rev-parse HEAD 2>$null | Out-String).Trim()
     $remoteHash = Get-RemoteMainHash
-    return ($localHead -and $remoteHash -and $localHead -eq $remoteHash)
+    if (-not $localHead -or -not $remoteHash) { return $false }
+    if ($localHead -eq $remoteHash) { return $true }
+    # Remote may have advanced past us (concurrent push). Ensure the remote
+    # object is present locally, then treat "our HEAD is an ancestor of remote
+    # main" as pushed. This avoids a spurious merge commit from a == comparison.
+    git -C $repoRoot -c http.proxy=$proxy -c http.sslBackend=openssl -c http.lowSpeedLimit=1 -c http.lowSpeedTime=15 fetch --quiet origin main 2>$null | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        git -C $repoRoot -c http.lowSpeedLimit=1 -c http.lowSpeedTime=15 fetch --quiet origin main 2>$null | Out-Null
+    }
+    git -C $repoRoot merge-base --is-ancestor $localHead $remoteHash 2>$null | Out-Null
+    return ($LASTEXITCODE -eq 0)
+}
+
+# Final safety net: any unhandled terminating error must still leave a failure
+# marker and clean up an in-progress merge, instead of dying silently.
+trap {
+    Set-SyncFailed -Message ("Unhandled error during sync: " + $_.Exception.Message)
+    try { git -C $repoRoot merge --abort 2>&1 | Out-Null } catch { }
+    Write-Error -ErrorAction Continue ("Unhandled error during sync: " + $_.Exception.Message)
+    exit 1
 }
 
 $ErrorActionPreference = "Continue"
@@ -193,7 +217,7 @@ try {
     Write-Warning "git identity could not be set: $($_.Exception.Message)"
     if (-not $Pull -and -not $Doctor) {
         Set-SyncFailed -Message "git identity could not be set: $($_.Exception.Message)"
-        Write-Error "git identity could not be set: $($_.Exception.Message)"
+        Write-Error -ErrorAction Continue "git identity could not be set: $($_.Exception.Message)"
         exit 1
     }
 } finally {
@@ -229,6 +253,9 @@ if ($Doctor) {
     if ($LASTEXITCODE -ne 0) { $remoteOut = git -C $repoRoot ls-remote origin main 2>&1 }
     $remote = ($remoteOut | Out-String).Trim()
     Report "remote reachable + credential" ($remote -match "[0-9a-f]{40}") $remote
+    $remoteHashDoc = if ($remote -match '^([0-9a-f]{40})') { $Matches[1] } else { $null }
+    $trackedRef = (git -C $repoRoot rev-parse origin/main 2>&1 | Out-String).Trim()
+    Report "tracking ref matches remote" ($remoteHashDoc -and $trackedRef -eq $remoteHashDoc) ("origin/main=" + $trackedRef + " remote=" + $remoteHashDoc)
 
     $testRef = "refs/remotes/origin/doctor-test"
     $head = (git -C $repoRoot rev-parse HEAD).Trim()
@@ -269,12 +296,12 @@ if ($Pull) {
     # push any local commits left behind by a failed sync.
     if (Test-RepoMemoryDirty) {
         Set-SyncFailed -Message "Repo working tree has uncommitted memory changes; resolve them before running -Pull."
-        Write-Error "Repo working tree has uncommitted memory changes; resolve them before running -Pull."
+        Write-Error -ErrorAction Continue "Repo working tree has uncommitted memory changes; resolve them before running -Pull."
         exit 1
     }
     if (-not (Test-Path $pendingFile) -and -not (Test-MemoryDirsEqual $memorySrc $memoryDst)) {
         Set-SyncFailed -Message "Working memory directory has local changes not yet synced to the repo; run a normal sync or resolve before -Pull."
-        Write-Error "Working memory directory has local changes not yet synced to the repo; run a normal sync or resolve before -Pull."
+        Write-Error -ErrorAction Continue "Working memory directory has local changes not yet synced to the repo; run a normal sync or resolve before -Pull."
         exit 1
     }
 
@@ -282,8 +309,9 @@ if ($Pull) {
     try {
         Invoke-Git fetch origin
         $local = git -C $repoRoot rev-parse HEAD
-        $behind = [int](git -C $repoRoot rev-list --count HEAD..origin/main)
-        $ahead  = [int](git -C $repoRoot rev-list --count origin/main..HEAD)
+        $remoteHash = Get-RemoteMainHash
+        $behind = [int](git -C $repoRoot rev-list --count HEAD..$remoteHash)
+        $ahead  = [int](git -C $repoRoot rev-list --count $remoteHash..HEAD)
 
         $changed = @()
         if ($behind -gt 0) {
@@ -291,8 +319,8 @@ if ($Pull) {
             $changed = @(git -C $repoRoot -c core.quotepath=false diff --name-only "$local..HEAD" -- memory)
             Write-Output "Memory repo updated from remote. Changed memory files:"
             $changed | ForEach-Object { Write-Output $_ }
-            $ahead = [int](git -C $repoRoot rev-list --count origin/main..HEAD)
-            $behind = [int](git -C $repoRoot rev-list --count HEAD..origin/main)
+            $ahead = [int](git -C $repoRoot rev-list --count $remoteHash..HEAD)
+            $behind = [int](git -C $repoRoot rev-list --count HEAD..$remoteHash)
         }
 
         # Reconcile repo -> working memory directory. The preflight above ensures
@@ -320,7 +348,7 @@ if ($Pull) {
         if ($ahead -gt 0) {
             Invoke-Git push origin main
             if (-not (Confirm-RemotePushed)) {
-                throw "Push succeeded but remote verification failed (local HEAD != origin/main) during -Pull."
+                throw "Push succeeded but remote verification failed (local HEAD is not an ancestor of origin/main) during -Pull."
             }
             Write-Output "Pushed $ahead local commit(s) to GitHub."
         }
@@ -334,7 +362,7 @@ if ($Pull) {
         # Clear any in-progress merge left by a conflicted pull so the next
         # -Pull can retry cleanly instead of failing forever (multi-writer).
         try { git -C $repoRoot merge --abort 2>&1 | Out-Null } catch { }
-        Write-Error ($_.Exception.Message + "`nConflict snapshots (if any): $conflictBackupDir")
+        Write-Error -ErrorAction Continue ($_.Exception.Message + "`nConflict snapshots (if any): $conflictBackupDir")
         exit 1
     }
     exit 0
@@ -342,13 +370,13 @@ if ($Pull) {
 
 if (-not (Test-Path $memorySrc)) {
     Set-SyncFailed -Message "Memory directory not found: $memorySrc"
-    Write-Error "Memory directory not found: $memorySrc"
+    Write-Error -ErrorAction Continue "Memory directory not found: $memorySrc"
     exit 1
 }
 
 if (Test-RepoMemoryDirty) {
     Set-SyncFailed -Message "Repo working tree has uncommitted memory changes; resolve them before syncing."
-    Write-Error "Repo working tree has uncommitted memory changes; resolve them before syncing."
+    Write-Error -ErrorAction Continue "Repo working tree has uncommitted memory changes; resolve them before syncing."
     exit 1
 }
 
@@ -360,7 +388,7 @@ if (Test-Path $pendingFile) {
         Clear-PendingWriteback
         Write-Output "Pending write-back flag cleared: working memory directory now matches repo."
     } else {
-        Write-Error "Pending write-back detected (.pending-writeback): remote changes pulled into the repo have not been written back to $memorySrc. Refusing to push to avoid reverting them. Apply repo memory files to the working directory via apply_patch, then re-run."
+        Write-Error -ErrorAction Continue "Pending write-back detected (.pending-writeback): remote changes pulled into the repo have not been written back to $memorySrc. Refusing to push to avoid reverting them. Apply repo memory files to the working directory via apply_patch, then re-run."
         exit 1
     }
 }
@@ -372,12 +400,14 @@ Get-ChildItem -Path (Join-Path $memoryDst "*.md") -File -ErrorAction SilentlyCon
 
 if (-not (Test-MemoryDirsEqual $memorySrc $memoryDst)) {
     Set-SyncFailed -Message "Copy verification failed: working memory and repo memory differ after copy."
-    Write-Error "Copy verification failed: working memory and repo memory differ after copy."
+    Write-Error -ErrorAction Continue "Copy verification failed: working memory and repo memory differ after copy."
     exit 1
 }
 
 git -C $repoRoot add -A -- memory
+if ($LASTEXITCODE -ne 0) { throw "git add -A -- memory failed (staging memory changes)" }
 $staged = @(git -C $repoRoot -c core.quotepath=false diff --cached --name-only)
+if ($LASTEXITCODE -ne 0) { throw "git diff --cached --name-only failed" }
 if (-not $staged) {
     Remove-Item -LiteralPath $flagFile -Force -ErrorAction SilentlyContinue
     Write-Output "No memory changes; skip commit."
@@ -387,9 +417,11 @@ if (-not $staged) {
 $conflictBackupDir = Join-Path $env:TEMP ("codex-memory-conflict-" + (Get-Date -Format 'yyyyMMdd-HHmmss'))
 try {
     Invoke-Git fetch origin
-    $behind = [int](git -C $repoRoot rev-list --count HEAD..origin/main)
+    $remoteHash = Get-RemoteMainHash
+    $behind = [int](git -C $repoRoot rev-list --count HEAD..$remoteHash)
     $changed = (($staged -replace '^memory/','') -join ', ')
     git -C $repoRoot commit -m "memory sync [$identity]: $changed"
+    if ($LASTEXITCODE -ne 0) { throw "git commit failed (memory sync commit)" }
 
     if ($behind -gt 0) {
         Invoke-Git merge --no-edit FETCH_HEAD
@@ -398,13 +430,14 @@ try {
     Invoke-Git push origin main
     if (-not (Confirm-RemotePushed)) {
         Invoke-Git fetch origin
-        $behind = [int](git -C $repoRoot rev-list --count HEAD..origin/main)
+        $remoteHash = Get-RemoteMainHash
+        $behind = [int](git -C $repoRoot rev-list --count HEAD..$remoteHash)
         if ($behind -gt 0) {
             Invoke-Git merge --no-edit FETCH_HEAD
         }
         Invoke-Git push origin main
         if (-not (Confirm-RemotePushed)) {
-            throw "Push succeeded but remote verification failed (local HEAD != origin/main) after retry."
+            throw "Push succeeded but remote verification failed (local HEAD is not an ancestor of origin/main) after retry."
         }
     }
     Remove-Item -LiteralPath $flagFile -Force -ErrorAction SilentlyContinue
@@ -414,6 +447,6 @@ try {
     Set-SyncFailed $_.Exception.Message
     # Best-effort cleanup; must never prevent the failure flag from being written.
     try { git -C $repoRoot merge --abort 2>&1 | Out-Null } catch { }
-    Write-Error ($_.Exception.Message + "`nConflict snapshots (if any): $conflictBackupDir")
+    Write-Error -ErrorAction Continue ($_.Exception.Message + "`nConflict snapshots (if any): $conflictBackupDir")
     exit 1
 }
