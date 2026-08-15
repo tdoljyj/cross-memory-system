@@ -151,6 +151,9 @@ if ($Pull) {
         Remove-Item -LiteralPath $flagFile -Force -ErrorAction SilentlyContinue
     } catch {
         Set-SyncFailed
+        # Clear any in-progress rebase left by a conflicted pull so the next
+        # -Pull can retry cleanly instead of failing forever (multi-writer).
+        try { git -C $repoRoot rebase --abort 2>&1 | Out-Null } catch { }
         Write-Error $_.Exception.Message
         exit 1
     }
