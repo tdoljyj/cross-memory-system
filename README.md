@@ -38,7 +38,7 @@ git 仓库为**唯一数据源**，多个 AI 助手各自持有工作区镜像�
 
 ## WorkBuddy 接入要点
 - 独立副本：`~/.workbuddy/codex-memory-system\`（目录名固定，remote 指向本仓库；已配 gh 凭据助手）
-- ⚠️ 代理坑（2026-08-15 实测）：WorkBuddy 内置 PortableGit 走代理（http.proxy=127.0.0.1:7897）时 TLS 握手失败（schannel `failed to receive handshake` / openssl `unexpected eof`）；**WorkBuddy 侧克隆不设 http.proxy，走直连**（github.com 直连可达），gh 凭据助手正常供 token。curl / gh CLI 走代理则正常
+- ⚠️ 连接策略（2026-08-15 21:28 复测修正）：WorkBuddy 沙箱内 **raw TCP 直连外网被拦**（`Connection was reset`），出网仅代理路径（见配置手册 5.3 权限矩阵）；因此 **WorkBuddy 侧 git 操作一律走代理**：`git -c http.proxy=http://127.0.0.1:7897 fetch/pull/push`。注意必须用 Git Bash 自带 git（`/mingw64/bin/git`，本机 2.55.0）；WorkBuddy 内置 PortableGit 走代理会 TLS 握手失败（schannel `failed to receive handshake` / openssl `unexpected eof`），不要用。gh 凭据助手正常供 token。curl / gh CLI 走代理均正常
 - 会话开场：`git fetch origin main` + `git pull --rebase origin main` → 读 `memory/` 全部文件对齐上下文
 - 会话收尾/重大决策：按上述纪律写入后 push，并尝试直写 `Documents\Codex\memory\` 对应文件
 - git 写操作必须非沙盒执行（dangerouslyDisableSandbox=true），判据=输出末尾 `⚠️ Sandbox bypassed`；push 后用 `git ls-remote origin main` 确认远端 commit
