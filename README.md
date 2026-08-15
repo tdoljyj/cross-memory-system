@@ -8,7 +8,7 @@ git 仓库为**唯一数据源**，多个 AI 助手各自持有工作区镜像�
 | 接入方 | 工作区 | 读写方式 |
 |---|---|---|
 | Codex | `Documents\Codex\memory\` | `sync-memory.ps1`（收尾 push / 开场 `-Pull`），代理优先 127.0.0.1:7897、直连兜底 |
-| WorkBuddy | `~/.workbuddy/codex-memory-system\`（独立克隆） | 开场 `git pull` 读；写入前 `pull --rebase` → 修改 → push；改完尽力直写 Documents（mtime 保护） |
+| WorkBuddy | `~/.workbuddy/codex-memory-system\`（独立克隆） | 开场 `pull --rebase` 读；写入前 `pull --rebase` → 修改 → push（**不直写 Documents**，双端分叉由各自同步机制自愈） |
 | 未来其他 AI | 各自工作区 | 同 WorkBuddy：克隆 → pull --rebase → 改 → push |
 
 ## 内容
@@ -38,9 +38,9 @@ git 仓库为**唯一数据源**，多个 AI 助手各自持有工作区镜像�
 
 ## WorkBuddy 接入要点
 - 独立副本：`~/.workbuddy/codex-memory-system\`（目录名固定，remote 指向本仓库；已配 gh 凭据助手）
-- ⚠️ 连接策略（2026-08-15 21:28 复测修正）：WorkBuddy 沙箱内 **raw TCP 直连外网被拦**（`Connection was reset`），出网仅代理路径（见配置手册 5.3 权限矩阵）；因此 **WorkBuddy 侧 git 操作一律走代理**：`git -c http.proxy=http://127.0.0.1:7897 fetch/pull/push`。注意必须用 Git Bash 自带 git（`/mingw64/bin/git`，本机 2.55.0）；WorkBuddy 内置 PortableGit 走代理会 TLS 握手失败（schannel `failed to receive handshake` / openssl `unexpected eof`），不要用。gh 凭据助手正常供 token。curl / gh CLI 走代理均正常
+- ⚠️ 连接策略（2026-08-15 21:28 复测修正 + 21:32 补充）：WorkBuddy 沙箱内 **raw TCP 直连外网被拦**（`Connection was reset`），出网仅代理路径（见配置手册 5.3 权限矩阵）；因此 **WorkBuddy 侧 git 操作一律走代理，且必须用 Git Bash 自带 git 并显式指定 openssl TLS 后端**：`git -c http.proxy=http://127.0.0.1:7897 -c http.sslBackend=openssl fetch/pull/push`。注意：① 必须用 `/mingw64/bin/git`（本机 2.55.0），WorkBuddy 内置 PortableGit 走代理会 TLS 握手失败（schannel `failed to receive handshake` / openssl `unexpected eof`），不要用；② 默认 schannel 后端在代理下也可能握手失败（`schannel: failed to receive handshake`），固定加 `-c http.sslBackend=openssl` 对直连/代理均无副作用；③ 偶发 TLS `unexpected eof` 属网络抖动，重试 1-2 次即可。gh 凭据助手正常供 token。curl / gh CLI 走代理均正常
 - 会话开场：`git fetch origin main` + `git pull --rebase origin main` → 读 `memory/` 全部文件对齐上下文
-- 会话收尾/重大决策：按上述纪律写入后 push，并尝试直写 `Documents\Codex\memory\` 对应文件
+- 会话收尾/重大决策：按上述纪律写入后 push（不直写 `Documents\Codex\memory\`；该侧属 Codex 工作区，分叉由 Codex 侧 sync 自愈）
 - git 写操作必须非沙盒执行（dangerouslyDisableSandbox=true），判据=输出末尾 `⚠️ Sandbox bypassed`；push 后用 `git ls-remote origin main` 确认远端 commit
 
 > 注意：本仓库含个人真实记忆数据，保持私有；如要公开，只发布去敏模板版。
