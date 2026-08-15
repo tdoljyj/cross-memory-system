@@ -54,8 +54,9 @@
 - 提交身份：`git config user.name "WorkBuddy@<机器名>"`（email 保持账号邮箱），commit message 带 `[身份]` 与变更文件；其余与本仓相同
 - ⚠️ 连接策略（2026-08-15 21:28 复测修正）：WorkBuddy 沙箱内 **raw TCP 直连外网被拦**（`Connection was reset`），出网仅代理路径（见配置手册 5.3 权限矩阵）；因此 **WorkBuddy 侧 git 操作一律走代理**：`git -c http.proxy=http://127.0.0.1:7897 fetch/pull/push`。注意必须用 Git Bash 自带 git（`/mingw64/bin/git`，本机 2.55.0）；WorkBuddy 内置 PortableGit 走代理会 TLS 握手失败（schannel `failed to receive handshake` / openssl `unexpected eof`），不要用。gh 凭据助手正常供 token。curl / gh CLI 走代理均正常
 - ⚠️ TLS 后端（2026-08-15 21:32 复测补充）：Git Bash 自带 git + 代理时 schannel 默认后端仍**偶发**握手失败（`schannel: failed to receive handshake`）；命令固定加 `-c http.sslBackend=openssl`（对直连/代理均无副作用）
-- 会话开场：`git fetch origin main` + `git pull --rebase origin main` → 读 `memory/` 全部文件对齐上下文
-- 会话收尾/重大决策：按上述纪律写入后 push；**不直写 Codex 侧工作区**（`Documents\Codex\memory\` 由 Codex 自己同步）
+- **同步脚本 `sync-memory.py`**（Python 版，WorkBuddy 侧专用，2026-08-16 起）：WorkBuddy 沙盒 overlay 会拦截 git 写 tracking ref（`refs/remotes/origin/main` 两层目录，lockfile+rename 原子写 exit 0 静默失败），脚本策略=git 负责对象传输、Python 负责 ref 兜底写入；三模式 `pull` / `push` / `doctor`，用法见脚本头注释
+- 会话开场：`python sync-memory.py pull`（自动 fetch + 对齐 + 补写 tracking ref + ls-remote 核验）→ 读 `memory/` 全部文件对齐上下文
+- 会话收尾/重大决策：写入 + commit 后 `python sync-memory.py push`（非沙盒执行，判据=输出尾 `⚠️ Sandbox bypassed`）；**不直写 Codex 侧工作区**（`Documents\Codex\memory\` 由 Codex 自己同步）
 - git 写操作必须非沙盒执行（dangerouslyDisableSandbox=true），判据=输出末尾 `⚠️ Sandbox bypassed`；push 后用 `git ls-remote origin main` 确认远端 commit
 
 > 注意：本仓库含个人真实记忆数据，保持私有；如要公开，只发布去敏模板版。
