@@ -1,6 +1,7 @@
 # Codex cross-session memory sync.
 # Default (push): copy local memory -> repo, commit if changed, reconcile with remote, push.
-# -Pull: fetch + rebase repo from GitHub, then report changed memory files (used at session start).
+# -Pull: session-start alignment (self-healing): pull newer remote memory and
+#        push any local commits left behind by a failed sync, then report changes.
 # Usage:
 #   powershell -ExecutionPolicy Bypass -File sync-memory.ps1
 #   powershell -ExecutionPolicy Bypass -File sync-memory.ps1 -Pull
@@ -34,11 +35,15 @@ function Test-DirectGitHub {
 
 function Invoke-Git {
     param([Parameter(ValueFromRemainingArguments = $true)][string[]]$GitArgs)
+    # Native git stderr must not throw: PowerShell 5.1 + $ErrorActionPreference='Stop'
+    # turns it into a terminating NativeCommandError (redirection cannot stop it).
+    # Scope a local Continue and rely on exit codes instead.
+    $ErrorActionPreference = "Continue"
     # Prefer direct; fall back to the local proxy at the actual git-op level.
     # A raw TCP probe is not a reliable reachability check: TCP can succeed
     # while the HTTPS transfer is reset, so retry through the proxy on failure.
     if (Test-DirectGitHub) {
-        git -C $repoRoot @GitArgs
+        git -C $repoRoot @GitArgs 2>$null
         if ($LASTEXITCODE -eq 0) { return }
     }
     git -C $repoRoot -c http.proxy=$proxy @GitArgs
@@ -55,20 +60,32 @@ if (-not (git -C $repoRoot config user.name)) { git -C $repoRoot config user.nam
 if (-not (git -C $repoRoot config user.email)) { git -C $repoRoot config user.email "tdoljyj@users.noreply.github.com" | Out-Null }
 
 if ($Pull) {
-    Invoke-Git fetch origin
-    $local = git -C $repoRoot rev-parse HEAD
-    $remote = git -C $repoRoot rev-parse origin/main
-    if ($local -eq $remote) {
-        Write-Output "Memory repo already up to date."
-    } else {
+    # Session-start alignment is self-healing in both directions: pull any newer
+    # remote memory, and push any local commits left behind by a failed sync.
+    try {
+        Invoke-Git fetch origin
+        $local = git -C $repoRoot rev-parse HEAD
         $behind = [int](git -C $repoRoot rev-list --count HEAD..origin/main)
+        $ahead  = [int](git -C $repoRoot rev-list --count origin/main..HEAD)
+
         if ($behind -gt 0) {
             Invoke-Git pull --rebase origin main
-            Write-Output "Memory repo updated. Changed memory files:"
+            Write-Output "Memory repo updated from remote. Changed memory files:"
             git -C $repoRoot diff --name-only "$local..HEAD" -- memory
-        } else {
-            Write-Output "Memory repo has unpushed local commits; run sync to push them."
+            $ahead = [int](git -C $repoRoot rev-list --count origin/main..HEAD)
         }
+        if ($ahead -gt 0) {
+            Invoke-Git push origin main
+            Write-Output "Pushed $ahead local commit(s) to GitHub."
+        }
+        if ($behind -eq 0 -and $ahead -eq 0) {
+            Write-Output "Memory repo already up to date."
+        }
+        Remove-Item -LiteralPath $flagFile -Force -ErrorAction SilentlyContinue
+    } catch {
+        Set-SyncFailed
+        Write-Error $_.Exception.Message
+        exit 1
     }
     exit 0
 }
