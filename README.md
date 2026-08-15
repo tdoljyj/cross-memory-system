@@ -34,7 +34,7 @@
 6. **字节级一致**：语义相同的内容必须字节级一致（LF / 无 BOM，`.gitattributes` 锁定），避免互相重写
 7. **只沉淀稳定长期信息**：不写流水账、一次性临时信息
 
-## Codex 新电脑接入（一次性）
+## 新电脑接入（一次性）
 1. 安装 GitHub CLI 并登录同一账号：`gh auth login`
 2. 克隆仓库：`gh repo clone tdoljyj/cross-memory-system ~/.codex/projects/codex-memory-system`
 3. 把 `memory\` 里的五个文件复制到 `Documents\Codex\memory\`
