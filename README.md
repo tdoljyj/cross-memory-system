@@ -71,4 +71,12 @@
 - 代理预检：`pull` 与 `push` 均先探测代理存活，代理不可达时 3 秒内快速失败而非让 git 卡 60 秒超时
 - git 写操作必须非沙盒执行（dangerouslyDisableSandbox=true），判据=输出末尾 `⚠️ Sandbox bypassed`；push 后用 `git ls-remote origin main` 确认远端 commit；push/pull 后核验统一用 `merge-base --is-ancestor`（祖先判定），并发下本地落后远端不误报
 
+## 验收测试（附录 B 自动化）
+
+`tests/test_acceptance.py` 把基线第十八节 / 附录 B 中可代码验证的验收标准自动化（纯标准库、无第三方依赖）：
+
+    python tests/test_acceptance.py
+
+覆盖：段级召回映射一致性（B/C）、无变化不写不推（E）、有变化提交推送（D）、并发合并不丢（F）、幂等（G）、同步失败标记 + 重试（H）、pull 版本校验（I）、删除传播护栏（P0 回归）。B/C 的 Router 判定属 AI 自然语言行为，脚本层只验证其「段级召回映射正确性」这一可判定不变量。
+
 > 注意：本仓库含个人真实记忆数据，保持私有；如要公开，只发布去敏模板版。

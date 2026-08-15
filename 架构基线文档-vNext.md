@@ -648,8 +648,8 @@ Memory Access Policy
 | py pull 代理预检 | 调整（新增） | sync-memory.py | ✅ 已落地 |
 | 协议新鲜度检查（MEMORY.md 无 pull --rebase） | 调整（新增） | sync-memory.py doctor | ✅ 已落地 |
 | per-clone 配置 bootstrap（-Bootstrap / bootstrap） | 调整（新增） | sync-memory.ps1 / sync-memory.py | ✅ 已落地 |
+| 附录 B 验收标准转自动化测试 | 调整（新增） | tests/test_acceptance.py | ✅ 已落地（8 用例，无第三方依赖） |
 | 结构化语义合并（状态/待办按标题块三路合并） | 待办 | 双脚本 | ◻ 待实现 |
-| 附录 B 验收标准转自动化测试 | 待办 | 新增测试 | ◻ 待实现 |
 | 归档.md union 合并后去重 | 待办 | 双脚本 | ◻ 待实现（瘦身阈值已单独落地） |
 | Recall Score / item 级检索 | 展望 | 不引入组件 | ◻ 服务化后再评估 |
 | 凭据按 AI 隔离 / 缓存 TTL 兜底 | 展望 | — | ◻ 未来接入多机再评估 |
