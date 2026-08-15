@@ -8,15 +8,27 @@
 #   powershell -ExecutionPolicy Bypass -File sync-memory.ps1
 #   powershell -ExecutionPolicy Bypass -File sync-memory.ps1 -Pull
 [CmdletBinding()]
-param([switch]$Pull)
+param([switch]$Pull, [switch]$Doctor)
 
 $ErrorActionPreference = "Stop"
 
 $repoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
-$memorySrc = Join-Path $env:USERPROFILE "Documents\Codex\memory"
-$memoryDst = Join-Path $repoRoot "memory"
-$proxy = "http://127.0.0.1:7897"
-$flagFile = Join-Path $repoRoot ".sync-failed"
+
+# Per-machine / per-agent config (gitignored; falls back to this machine's defaults).
+$configFile = Join-Path $repoRoot "sync.config.ps1"
+$AgentName = "Codex"
+$HostName  = $env:COMPUTERNAME
+$ProxyUrl  = "http://127.0.0.1:7897"
+$MemoryDir = Join-Path $env:USERPROFILE "Documents\Codex\memory"
+$GitName   = "tdoljyj"
+$GitEmail  = "tdoljyj@users.noreply.github.com"
+if (Test-Path -LiteralPath $configFile) { . $configFile }
+
+$identity    = "$AgentName@$HostName"
+$memorySrc   = $MemoryDir
+$memoryDst   = Join-Path $repoRoot "memory"
+$proxy       = $ProxyUrl
+$flagFile    = Join-Path $repoRoot ".sync-failed"
 $pendingFile = Join-Path $repoRoot ".pending-writeback"
 
 # Fast direct-connectivity probe so a dead github.com connection fails in ~3s instead of ~20s.
@@ -107,8 +119,54 @@ function Set-SyncFailed {
     Set-Content -LiteralPath $flagFile -Value @("Failed: $stamp", $Message) -Encoding UTF8 -ErrorAction SilentlyContinue
 }
 
-if (-not (git -C $repoRoot config user.name)) { git -C $repoRoot config user.name "tdoljyj" | Out-Null }
-if (-not (git -C $repoRoot config user.email)) { git -C $repoRoot config user.email "tdoljyj@users.noreply.github.com" | Out-Null }
+git -C $repoRoot config user.name $identity
+git -C $repoRoot config user.email $GitEmail
+
+if ($Doctor) {
+    $script:failCount = 0
+    function Report($Name, $Pass, $Detail) {
+        Write-Output ("[{0}] {1}" -f ($(if ($Pass) { "PASS" } else { "FAIL" }), $Name))
+        if ($Detail) { Write-Output ("       {0}" -f $Detail) }
+        if (-not $Pass) { $script:failCount++ }
+    }
+
+    Write-Output "== cross-memory-system doctor =="
+    Write-Output "identity : $identity"
+    Write-Output "repo     : $repoRoot"
+    Write-Output "memory   : $memorySrc"
+
+    $gitVersion = (& git --version 2>&1 | Out-String).Trim()
+    Report "git available" ($LASTEXITCODE -eq 0) $gitVersion
+
+    $remoteOut = git -C $repoRoot -c http.proxy=$proxy -c http.sslBackend=openssl ls-remote origin main 2>&1
+    if ($LASTEXITCODE -ne 0) { $remoteOut = git -C $repoRoot ls-remote origin main 2>&1 }
+    $remote = ($remoteOut | Out-String).Trim()
+    Report "remote reachable + credential" ($remote -match "[0-9a-f]{40}") $remote
+
+    $testRef = "refs/remotes/origin/doctor-test"
+    $head = (git -C $repoRoot rev-parse HEAD).Trim()
+    git -C $repoRoot update-ref $testRef $head 2>&1 | Out-Null
+    $readBack = (git -C $repoRoot rev-parse $testRef 2>&1 | Out-String).Trim()
+    git -C $repoRoot update-ref -d $testRef 2>&1 | Out-Null
+    Report "ref write persists (PortableGit defect)" ($readBack -eq $head) ("read back: " + $readBack)
+
+    $crlf = (git -C $repoRoot config --get core.autocrlf 2>&1 | Out-String).Trim()
+    Report "core.autocrlf=false" ($crlf -eq "" -or $crlf -eq "false") ("value: " + $(if ($crlf) { $crlf } else { "(unset)" }))
+
+    $ga = Join-Path $repoRoot ".gitattributes"
+    $gaText = if (Test-Path $ga) { Get-Content $ga -Raw } else { "" }
+    Report ".gitattributes eol=lf" ($gaText -match "eol=lf")
+
+    Report "memory dir exists" (Test-Path -LiteralPath $memorySrc)
+
+    if ($script:failCount -eq 0) {
+        Write-Output "doctor: ALL PASS"
+        exit 0
+    } else {
+        Write-Output ("doctor: {0} FAILURE(S)" -f $script:failCount)
+        exit 1
+    }
+}
 
 if ($Pull) {
     # Session-start alignment is self-healing in both directions: pull any newer
@@ -187,7 +245,7 @@ if (Test-Path $pendingFile) {
 Copy-Item -Path (Join-Path $memorySrc "*.md") -Destination $memoryDst -Force
 
 git -C $repoRoot add -- memory
-$staged = git -C $repoRoot diff --cached --name-only
+$staged = @(git -C $repoRoot diff --cached --name-only)
 if (-not $staged) {
     Write-Output "No memory changes; skip commit."
     exit 0
@@ -196,8 +254,8 @@ if (-not $staged) {
 try {
     Invoke-Git fetch origin
     $behind = [int](git -C $repoRoot rev-list --count HEAD..origin/main)
-    $stamp = Get-Date -Format "yyyy-MM-dd HH:mm"
-    git -C $repoRoot commit -m "memory sync: $stamp"
+    $changed = (($staged -replace '^memory/','') -join ', ')
+    git -C $repoRoot commit -m "memory sync [$identity]: $changed"
 
     if ($behind -gt 0) {
         Invoke-Git pull --rebase origin main

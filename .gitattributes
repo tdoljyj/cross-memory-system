@@ -2,3 +2,4 @@
 # working tree / Documents memory and the WorkBuddy mirror stay byte-identical
 # (the sync script compares raw file hashes across mirrors).
 * text eol=lf
+memory/归档.md merge=union
