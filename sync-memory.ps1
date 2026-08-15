@@ -1,5 +1,5 @@
 # Codex cross-session memory sync.
-# Module role (per 架构基线文档-vNext.md vNext-1.1): Codex-side AI Adapter Sync Layer.
+# Module role (per 架构基线文档-vNext.md vNext-1.2): Codex-side AI Adapter Sync Layer.
 # Syncs only with the Canonical Memory Store (this git repo); never with other adapters.
 # Trigger policy (AGENTS.md v3): pull/push are invoked on demand — pull only when the
 # Memory Router (T1-T4) matches, push only when the current turn produced memory writes
@@ -105,9 +105,23 @@ function Test-MemoryDirsEqual {
     return $true
 }
 
+function Test-MemoryCountHealthy {
+    # Delete-propagation guard: refuse to treat a near-empty memory directory as
+    # the intended state. The system's invariant is exactly the five *.md files;
+    # anything below that is treated as accidental mass deletion, never synced.
+    param([string]$Dir, [int]$MinCount = 5)
+    $files = @(Get-ChildItem -Path (Join-Path $Dir "*.md") -File -ErrorAction SilentlyContinue)
+    if ($files.Count -lt $MinCount) { return $false }
+    foreach ($f in $files) {
+        if ($f.Length -eq 0) { return $false }
+    }
+    return $true
+}
+
 function Copy-MemoryToWorkingDir {
     # repo -> working memory directory. Returns $true only when the copy is verified.
     try {
+        if (-not (Test-MemoryCountHealthy $memoryDst)) { return $false }
         if (-not (Test-Path -LiteralPath $memorySrc)) {
             New-Item -ItemType Directory -Path $memorySrc -Force -ErrorAction Stop | Out-Null
         }
@@ -376,6 +390,12 @@ if ($Pull) {
 if (-not (Test-Path $memorySrc)) {
     Set-SyncFailed -Message "Memory directory not found: $memorySrc"
     Write-Error -ErrorAction Continue "Memory directory not found: $memorySrc"
+    exit 1
+}
+
+if (-not (Test-MemoryCountHealthy $memorySrc)) {
+    Set-SyncFailed -Message "Refusing to sync: working memory directory has fewer than 5 non-empty .md files (delete-propagation guard)."
+    Write-Error -ErrorAction Continue "Refusing to sync: working memory directory has fewer than 5 non-empty .md files (delete-propagation guard)."
     exit 1
 }
 

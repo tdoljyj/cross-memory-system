@@ -1,6 +1,6 @@
 # Cross Memory System vNext · 架构基线文档
 
-> **基线版本**：vNext-1.1（2026-08-16 确立，同日评审修订）
+> **基线版本**：vNext-1.2（2026-08-16 确立，同日评审修订并落地加固）
 > **来源**：Chase 提供的《Cross_Memory_System_vNext_核心架构》（原件存 `附录/Cross_Memory_System_vNext_核心架构.html`，本文档为其规范 Markdown 转换；源 HTML 存在表格标签未闭合等结构问题，转换时已修正）
 > **适用范围**：跨 AI 记忆系统的全部实现与协议文档——本仓库（cross-memory-system）全部文件、Codex 端 `~/.codex/AGENTS.md` 与 sync-memory.ps1、WorkBuddy 端 `~/.workbuddy/MEMORY.md` 协议与 sync-memory.py，以及未来任何新接入端
 > **权威性**：本文档是 vNext 核心架构规范，统一后续设计、实现和变更的依据。其他文档与本文档冲突时，以本文档为准；修改本文档必须在「变更记录」追加条目并同步全部协议副本
@@ -12,6 +12,7 @@
 |---|---|---|---|
 | vNext-1.0 | 2026-08-16 | 确立为基线：转换 Chase 提供的 vNext 核心架构为规范文档；新增附录 A（现有实现映射：保留/调整/替换）与附录 B（验收标准落地对照） | WorkBuddy@TURING |
 | vNext-1.1 | 2026-08-16 | 同日评审修订：新增适用性说明（正文与附录 A 冲突时以附录 A 为准）；十六节 Phase 标注现有架构落地状态；Trigger Matrix 补「受个人约束的通用问题」行；新增附录 C 隐私与安全约束；附录 B 用例 F 标注许可偏差（merge 收敛而非硬冲突）；附录 A 补 L6 工作区临时层映射、标注 Recall Score 为展望项 | WorkBuddy@TURING |
+| vNext-1.2 | 2026-08-16 | 评审落地加固：① 双端同步脚本新增删除传播护栏（源 memory 目录 .md<5 拒绝同步，防推空仓）；② 双脚本核验统一为祖先判定（merge-base --is-ancestor，消除 py 并发下误写 .sync-failed）；③ py 配置参数化（sync.config.json）；④ 召回粒度由文件级升级为段级（L1–L6 映射到具体标题段）；⑤ 明确 Sync Layer 与 commit 职责边界；⑥ 同步全局钩子 ~/.codex/AGENTS.md。新增附录 D（保留/调整/替换/待办对照）。结构化语义合并与验收自动化记为待办 | Codex@TURING |
 
 > **目标**：将"每次开头强制加载记忆、结尾强制上传"改造成真正的按需读写型跨会话记忆系统。
 >
@@ -583,13 +584,13 @@ Memory Access Policy
 | vNext 概念 | 现有实现 | 处置 | 说明 |
 |---|---|---|---|
 | Canonical Memory Store | GitHub 私有仓库 tdoljyj/cross-memory-system（`memory/*.md` + git 对象库，唯一数据源） | **保留** | 已合规：各端工作区只是 Cache/镜像，不是事实源（基线原则 4、7） |
-| AI Adapter | Codex（sync-memory.ps1）/ WorkBuddy（sync-memory.py） | **保留** | 双端不互相同步（「不越界」规则），只与仓库同步（P0-3 已合规） |
+| AI Adapter | Codex（sync-memory.ps1）/ WorkBuddy（sync-memory.py） | **保留** | 双端不互相同步（「不越界」规则），只与仓库同步（P0-3 已合规）。vNext-1.2 起 py 侧支持 sync.config.json 参数化；commit 在写入工作区后、push 前执行（Codex 因工作区非 git 克隆由脚本代 commit，WorkBuddy 因工作区即克隆由使用方 commit） |
 | Memory Router | AGENTS.md / MEMORY.md 的触发分类 | **调整** | 术语重写为 T0–T4（见基线第五节），替换 2026-08-16 04:05 的五类触发表述 |
-| Recall Planner + 分层召回 | 文件分级选读 | **调整** | 建立 L1–L6 记忆类型 → 文件/段落映射表（见 AGENTS.md v3） |
+| Recall Planner + 分层召回 | 文件分级选读 | **调整** | 建立 L1–L6 记忆类型 → 具体标题段映射（段级召回，见 AGENTS.md v3.1） |
 | Memory Trigger Matrix | 无 | **新增** | 基线第六节矩阵纳入 AGENTS.md v3 |
 | Memory Change Detector | ps1 staged 空检查（无变化 → skip commit）/ py 脏检查 / 「仅改动记忆文件才上传」 | **保留** | 已合规：NO_CHANGE → NO_WRITE → NO_SYNC（基线原则 8） |
 | Versioned Commit | git commit/push + ls-remote 核验 | **保留** | git commit hash = version；push 后 ls-remote 核验 = 版本校验 |
-| Optimistic Concurrency Control | fetch + merge（非 rebase）+ 非快进拒绝 + 冲突快照 + 重试一轮 | **保留** | git 非快进拒绝 ≡ `affected_rows == 0` 冲突语义（P0-5 已合规） |
+| Optimistic Concurrency Control | fetch + merge（非 rebase）+ 非快进拒绝 + 冲突快照 + 重试一轮 | **保留** | git 非快进拒绝 ≡ `affected_rows == 0` 冲突语义（P0-5 已合规）；push/pull 后核验统一为 `merge-base --is-ancestor`（祖先判定，非 `==` 比较） |
 | 幂等写入（operation_id） | `git add -A` + staged 空检查（相同内容不重复提交） | **保留** | 天然幂等：同一内容重复提交 → staged 为空 → NO-OP |
 | Sync Event / Event Log | git push + git log（commit message 带身份与变更文件） | **保留** | git log = 事件流；事件类型映射为 commit 语义 |
 | Cache Invalidation | 读前对齐（命中加载时先 pull）+ ls-remote 版本比较 | **调整** | 显式声明：本地镜像 = Cache，version = commit hash；读前必须验证 cache.version == store.version（pull 即 invalidate + 重取），不满足则重取 |
@@ -597,7 +598,7 @@ Memory Access Policy
 | confidence（事实与推测分离） | 无 | **调整** | 写入纪律新增：用户明确表达 → 直接写入；AI 推测 → 标注「（推测）」或不写，禁止把推测写成事实（基线第十节）。数值化 confidence 评分为展望项，现有架构用「（推测）」标注替代 |
 | L6 Temporary Context | 「只沉淀稳定长期信息」规则 | **保留** | 已合规：临时上下文不入长期记忆。落地映射：L6 只存在于各端会话内/工作区工作文件（如待办推进中的草稿、本轮调试状态），不进入 `memory/*.md` 五文件 |
 | Recall Score（Intent+Similarity+Recency+Confidence+Explicitness 打分） | 无 | **展望** | 现有架构无检索引擎，召回由 L1–L6 文件映射直接决定；打分排序是服务化后的优化项，现阶段不得为此引入组件 |
-| 异常路径（情况 1–4） | .sync-failed / .pending-writeback / 冲突快照 / merge --abort / 顶层 trap | **保留** | 四种异常路径均有对应机制（08-16 三轮审计验证） |
+| 异常路径（情况 1–4） | .sync-failed / .pending-writeback / 冲突快照 / merge --abort / 顶层 trap | **保留** | 四种异常路径均有对应机制（08-16 三轮审计验证）；vNext-1.2 起新增删除传播护栏（源 memory 目录 .md<5 拒绝同步） |
 | 资源生命周期 | subprocess.run 上下文管理 / TcpClient Close+Dispose / with 块 | **保留** | 三轮审计验证无泄漏 |
 | 服务端组件（DB / Event Bus / WebSocket） | 不适用 | **不引入** | 个人级系统维持文件+git 架构；vNext 抽象概念以 git 等价机制满足，不为此引入服务端组件 |
 
@@ -625,3 +626,22 @@ Memory Access Policy
 4. **日志脱敏**：同步脚本输出、commit message、审计记录不得包含令牌等敏感值；doctor/审计展示凭证时一律截断或掩码。
 5. **删除权**：用户要求删除某条记忆时，走 superseded/删除流程并 commit，git 历史中的旧版本视为受保护的审计痕迹，不再召回；如需彻底清除历史，另行评估（rewrite history 与四不变量冲突，需用户明确批准）。
 6. **不越界**：各端不读取、不写入其他端的工作区与私有文件（双端对称「不越界」规则的隐私含义）。
+
+## 附录 D：vNext-1.2 修订落地对照（保留 / 调整 / 替换 / 待办）
+
+本附录是 vNext-1.1 → vNext-1.2 的落地清单，作为「明确保留、调整、替换」的权威记录。凡未在本表出现的既有机制，默认维持 vNext-1.1 状态不变。
+
+| 修订项 | 处置 | 涉及文件 | 落地状态 |
+|---|---|---|---|
+| Canonical Store / Change Detector / OCC / 幂等 / Sync Event / 异常恢复 | 保留 | 不变 | ✅ 维持，机制等价 |
+| 删除传播护栏（源 memory 目录 .md<5 拒绝同步） | 调整（新增护栏） | sync-memory.ps1 / sync-memory.py | ✅ 已落地 |
+| 双脚本核验统一为祖先判定 | 调整 | sync-memory.py | ✅ 已落地（ps1 原本即祖先判定） |
+| py 配置参数化（sync.config.json，gitignored） | 调整 | sync-memory.py / .gitignore | ✅ 已落地 |
+| 召回粒度：文件级 → 段级（L1–L6 映射到具体标题段） | 调整 | AGENTS.md / ~/.codex/AGENTS.md | ✅ 已落地 |
+| Sync Layer 与 commit 职责边界 | 调整（明确化） | 附录 A / README / AGENTS.md | ✅ 已落地 |
+| 全局钩子副本对齐 | 调整 | ~/.codex/AGENTS.md | ✅ 已落地 |
+| 结构化语义合并（状态/待办按标题块三路合并） | 待办 | 双脚本 | ◻ 待实现 |
+| 附录 B 验收标准转自动化测试 | 待办 | 新增测试 | ◻ 待实现 |
+| 归档.md union 去重 + 瘦身阈值 | 待办 | 双脚本 | ◻ 待实现 |
+| Recall Score / item 级检索 | 展望 | 不引入组件 | ◻ 服务化后再评估 |
+| 凭据按 AI 隔离 / 缓存 TTL 兜底 | 展望 | — | ◻ 未来接入多机再评估 |

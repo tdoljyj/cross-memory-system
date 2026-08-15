@@ -3,7 +3,7 @@
 """
 WorkBuddy 侧记忆同步脚本（Python 版）
 
-模块定位（对齐《架构基线文档-vNext.md》vNext-1.1）：本脚本 = WorkBuddy 端 AI Adapter
+模块定位（对齐《架构基线文档-vNext.md》vNext-1.2）：本脚本 = WorkBuddy 端 AI Adapter
 的 Sync Layer 实现，只与 Canonical Memory Store（本 git 仓库）同步，不与其他端互相同步。
 按需触发：命中 Memory Router（AGENTS v3 / MEMORY.md 的 T1–T4）才 pull；本轮产生记忆
 写入才 push。NO_CHANGE → NO_WRITE → NO_SYNC。
@@ -34,8 +34,13 @@ WorkBuddy 侧记忆同步脚本（Python 版）
     - commit 不在本脚本职责内（由使用方在改完记忆后自行 commit，再跑 push 模式）
     - git 写操作需在非沙盒环境执行，判据=输出尾 "Sandbox bypassed"；
       沙盒内 git 写对象可能不落真实盘，跑完用 doctor 核验
+    - 可选 sync.config.json（与脚本同目录，gitignored）：{repo, proxy, proxy_host,
+      proxy_port, git_candidates}，缺省用内置默认值
+    - 删除传播护栏：memory 目录不足 5 个非空 .md 时拒绝 pull/push，防推空仓
+    - push/pull 后核验用 merge-base --is-ancestor（祖先判定），非 == 比较
 """
 
+import json
 import os
 import re
 import shutil
@@ -45,16 +50,36 @@ import sys
 import tempfile
 from datetime import datetime
 
-REPO = os.path.expanduser("~/.workbuddy/codex-memory-system")
-PROXY = "http://127.0.0.1:7897"  # 本机 Clash 代理；无代理时设为 ""
-PROXY_HOST = "127.0.0.1"
-PROXY_PORT = 7897
+_CONFIG_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "sync.config.json")
+
+
+def _load_config():
+    cfg = {}
+    if os.path.isfile(_CONFIG_PATH):
+        try:
+            with open(_CONFIG_PATH, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+        except Exception:
+            cfg = {}
+    return cfg if isinstance(cfg, dict) else {}
+
+
+_CONFIG = _load_config()
+
+REPO = os.path.expanduser(_CONFIG.get("repo", "~/.workbuddy/codex-memory-system"))
+PROXY = _CONFIG.get("proxy", "http://127.0.0.1:7897")  # 无代理时设为 ""
+PROXY_HOST = _CONFIG.get("proxy_host", "127.0.0.1")
+try:
+    PROXY_PORT = int(_CONFIG.get("proxy_port", 7897))
+except (TypeError, ValueError):
+    PROXY_PORT = 7897
 
 # git 优先级：官方 Git for Windows（真非沙盒下健康）> PortableGit（PATH 兜底）
-GIT_CANDIDATES = [
-    "C:/Program Files/Git/bin/git.exe",
-    "C:/Program Files/Git/cmd/git.exe",
-]
+GIT_CANDIDATES = _CONFIG.get(
+    "git_candidates",
+    ["C:/Program Files/Git/bin/git.exe", "C:/Program Files/Git/cmd/git.exe"],
+)
 
 
 def find_git():
@@ -137,6 +162,38 @@ def ls_remote():
 def local_head():
     code, out, _ = git("rev-parse", "HEAD", proxy=False)
     return out if code == 0 else None
+
+
+def memory_dir_healthy(min_count=5):
+    """删除传播护栏：memory 目录至少要有 5 个非空 .md 才允许同步。"""
+    memdir = os.path.join(REPO, "memory")
+    if not os.path.isdir(memdir):
+        return False
+    files = [f for f in os.listdir(memdir) if f.endswith(".md")]
+    if len(files) < min_count:
+        return False
+    for f in files:
+        p = os.path.join(memdir, f)
+        if not os.path.isfile(p) or os.path.getsize(p) == 0:
+            return False
+    return True
+
+
+def confirm_no_divergence():
+    """本地 HEAD 是否落在远端 main 祖先链上（含相等）。非分叉即视为安全。
+
+    与 sync-memory.ps1 的 Confirm-RemotePushed 对齐：用 merge-base --is-ancestor，
+    而非 == 比较，避免并发 push 下本地落后于远端时误报不一致、误写 .sync-failed。
+    """
+    local = local_head()
+    remote = ls_remote()
+    if not local or not remote:
+        return False, local, remote
+    if local == remote:
+        return True, local, remote
+    git("fetch", "origin", "main")  # 确保远端对象在本地，merge-base 才能判定
+    code, _, _ = git("merge-base", "--is-ancestor", local, remote, proxy=False)
+    return code == 0, local, remote
 
 
 def git_status_memory():
@@ -233,6 +290,10 @@ def fetch_and_merge():
 def cmd_pull():
     print("== 开场拉取对齐 ==")
     ensure_git_safe()
+    if not memory_dir_healthy():
+        print("[!] memory 目录不足 5 个非空 .md（删除传播护栏），终止 pull")
+        write_marker(".sync-failed", "pull aborted: memory dir < 5 non-empty .md files")
+        sys.exit(1)
     if is_working_tree_dirty():
         print("[!] 工作树有未提交的 memory 变更；请先提交或处理后重跑 pull，避免被覆盖")
         write_marker(".sync-failed", "pull aborted: working tree has uncommitted memory changes")
@@ -243,22 +304,29 @@ def cmd_pull():
         print("[!] 对齐失败：请手动语义合并后重跑，或检查远端状态")
         write_marker(".sync-failed", "pull failed: fetch+merge 对齐失败")
         sys.exit(1)
-    remote = ls_remote()
+    if not memory_dir_healthy():
+        print("[!] merge 后 memory 目录不足 5 个非空 .md（远端可能异常），终止")
+        write_marker(".sync-failed", "pull aborted: merged memory dir < 5 non-empty .md files")
+        sys.exit(1)
+    ok, local, remote = confirm_no_divergence()
     restore_tracking_ref(remote)
-    local = local_head()
     print("[核验] 本地=%s 远端=%s" % (local, remote))
-    if local == remote:
-        print("一致 ✓")
+    if ok:
+        print("对齐 ✓")
         clear_marker(".sync-failed")
     else:
-        print("不一致 ⚠️（注意分叉）")
-        write_marker(".sync-failed", "pull 后本地与远端不一致")
+        print("分叉 ⚠️（本地与远端不在同一祖先链）")
+        write_marker(".sync-failed", "pull 后本地与远端分叉")
         sys.exit(1)
 
 
 def cmd_push():
     print("== 收尾推送 ==")
     ensure_git_safe()
+    if not memory_dir_healthy():
+        print("[!] memory 目录不足 5 个非空 .md（删除传播护栏），终止 push")
+        write_marker(".sync-failed", "push aborted: memory dir < 5 non-empty .md files")
+        sys.exit(1)
     if is_working_tree_dirty():
         print("[!] 工作树有未提交的 memory 变更；请先 commit，否则 push 只会上传旧 HEAD")
         write_marker(".sync-failed", "push aborted: working tree has uncommitted memory changes")
@@ -291,16 +359,15 @@ def cmd_push():
             print(out)
         if err:
             print(err)
-    remote = ls_remote()
-    local = local_head()
+    ok, local, remote = confirm_no_divergence()
     restore_tracking_ref(remote)
     print("[核验] 本地=%s 远端=%s" % (local, remote))
-    if local == remote:
+    if ok:
         print("已推送 ✓")
         clear_marker(".sync-failed")
         sys.exit(0)
-    print("未推上远端 ⚠️（沙盒内 push 可能未落盘，非沙盒重试）")
-    write_marker(".sync-failed", "push 后本地与远端不一致")
+    print("未推上远端 ⚠️（本地与远端分叉；沙盒内 push 可能未落盘，非沙盒重试）")
+    write_marker(".sync-failed", "push 后本地与远端分叉")
     sys.exit(1)
 
 
@@ -370,6 +437,7 @@ def cmd_doctor():
     dirty = git_status_memory()
     report("working tree clean", dirty == [],
            "" if dirty is None else ("clean" if dirty == [] else "有未提交变更"))
+    report("memory dir healthy (>=5 non-empty .md)", memory_dir_healthy())
     report("local == remote", bool(local and remote and local == remote))
 
     if failures:

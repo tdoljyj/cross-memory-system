@@ -1,6 +1,6 @@
-# 全局指令 · 跨会话记忆按需读写（v3，对齐架构基线 vNext-1.1，2026-08-16 起生效）
+# 全局指令 · 跨会话记忆按需读写（v3.1，对齐架构基线 vNext-1.2，2026-08-16 起生效）
 
-> 规范依据：本仓库《架构基线文档-vNext.md》（vNext-1.1）。触发术语（T0–T4）、记忆分类（L1–L6）、Trigger Matrix、Router 边界、写入纪律均与基线一致；同步与执行纪律保留既定四不变量。
+> 规范依据：本仓库《架构基线文档-vNext.md》（vNext-1.2）。触发术语（T0–T4）、记忆分类（L1–L6）、Trigger Matrix、Router 边界、写入纪律均与基线一致；同步与执行纪律保留既定四不变量。
 
 记忆文件（%USERPROFILE% 即本机用户目录）：
 
@@ -27,13 +27,13 @@
 
 L1–L6 记忆类型 → 文件映射（按需选读，不全读）：
 
-| 类型 | 内容 | 召回文件 |
+| 类型 | 内容 | 召回范围（段级，按需只读对应标题段） |
 |---|---|---|
-| L1 Identity | 职业、长期身份、角色 | 画像.md |
-| L2 Preference | 喜好、工作习惯、工具偏好 | 画像.md |
-| L3 Project | 当前项目、目标、技术栈、长期决策 | 状态.md + 决策.md |
-| L4 History | 过去做过什么、尝试过什么、旧决定 | 归档.md |
-| L5 Constraint | 禁止项、预算、必须兼容、已否决方案 | 决策.md（必读，防复活已否决项） |
+| L1 Identity | 职业、长期身份、角色 | 画像.md「身份轨迹」「一句话」「技术能力」 |
+| L2 Preference | 喜好、审美、工作习惯、工具偏好 | 画像.md「审美」「工作方式（对 AI / 工具的要求）」「软件工程态度」「产品思维」「游戏偏好（研究型玩家）」 |
+| L3 Project | 当前项目、目标、技术栈、长期决策 | 状态.md「主线一」「主线二」「工作室」+ 决策.md「已确认」 |
+| L4 History | 过去做过什么、尝试过什么、旧决定 | 归档.md（按需查对应节）+ 决策.md「已否决」 |
+| L5 Constraint | 禁止项、预算、必须兼容、已否决方案 | 决策.md「已否决（不要重复推荐）」+ 画像.md「雷区（不要触碰）」（必读，防复活已否决项） |
 | L6 Temporary Context | 当前任务/本轮调试 | 不入库、不召回（会话内处理） |
 
 标准三件套（在研项目或跨多类别）：画像 + 状态 + 决策。查历史审计细节才读归档.md。
@@ -60,6 +60,8 @@ L1–L6 记忆类型 → 文件映射（按需选读，不全读）：
 - 双端对称「不越界」：本端不直写对方工作区 / 克隆（不写 ~/.workbuddy，也不写对方机器的 Documents\Codex\memory）；一切记忆交换经本仓库（唯一数据源=Canonical Store），分叉靠 merge（非 rebase）收敛，绝不 force push / reset / 以本地覆盖远端。
 - git 写操作（commit / push / sync-memory.ps1）运行在带沙盒 overlay 的环境时（典型：WorkBuddy Bash 沙盒对 ~/.workbuddy 下写入跨命令不持久），必须改为非沙盒方式执行（系统 PowerShell / 编辑器文件通道 / 批准沙盒放行）；~/.codex 与 Documents 不受 overlay 影响。
 - push 后立即用 `git ls-remote origin`（或 `git ls-remote <remote-url>`）对比远端真实 commit 确认已推送；勿依赖本地 `git status` 的 ahead 显示（沙盒 overlay 拦截 tracking ref 写入时本地引用可能失真；2026-08-16 实锤归因=沙盒 overlay，非 PortableGit 缺陷）。
+- 删除传播护栏：同步前校验源 memory 目录 `.md` ≥ 5 且各文件非空；不足则拒绝同步并写 `.sync-failed`，绝不把近空目录推成空仓。
+- 核验统一：push/pull 后核验一律用 `merge-base --is-ancestor`（祖先判定），不用 `==` 比较；并发下本地落后于远端属正常（安全），仅真分叉才视为失败。
 
 ## 六、多机多 AI 协同纪律
 
