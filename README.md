@@ -37,8 +37,10 @@ git 仓库为**唯一数据源**，多个 AI 助手各自持有工作区镜像�
 - 想手动同步：在 PowerShell 里直接运行上面的命令
 
 ## WorkBuddy 接入要点
-- 只读副本：`~/.workbuddy/codex-memory-system\`（已配 gh 凭据助手 + 代理）
-- 会话开场：`git pull` → 读 `memory/` 全部文件对齐上下文
+- 独立副本：`~/.workbuddy/codex-memory-system\`（目录名固定，remote 指向本仓库；已配 gh 凭据助手）
+- ⚠️ 代理坑（2026-08-15 实测）：WorkBuddy 内置 PortableGit 走代理（http.proxy=127.0.0.1:7897）时 TLS 握手失败（schannel `failed to receive handshake` / openssl `unexpected eof`）；**WorkBuddy 侧克隆不设 http.proxy，走直连**（github.com 直连可达），gh 凭据助手正常供 token。curl / gh CLI 走代理则正常
+- 会话开场：`git fetch origin main` + `git pull --rebase origin main` → 读 `memory/` 全部文件对齐上下文
 - 会话收尾/重大决策：按上述纪律写入后 push，并尝试直写 `Documents\Codex\memory\` 对应文件
+- git 写操作必须非沙盒执行（dangerouslyDisableSandbox=true），判据=输出末尾 `⚠️ Sandbox bypassed`；push 后用 `git ls-remote origin main` 确认远端 commit
 
 > 注意：本仓库含个人真实记忆数据，保持私有；如要公开，只发布去敏模板版。
