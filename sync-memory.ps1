@@ -35,15 +35,21 @@ function Test-DirectGitHub {
     $client = New-Object System.Net.Sockets.TcpClient
     try {
         $async = $client.BeginConnect("github.com", 443, $null, $null)
-        if ($async.AsyncWaitHandle.WaitOne(3000, $false)) {
-            $client.EndConnect($async)
-            return $true
+        try {
+            if ($async.AsyncWaitHandle.WaitOne(3000, $false)) {
+                $client.EndConnect($async)
+                return $true
+            }
+            return $false
+        } finally {
+            if ($async -and $async.AsyncWaitHandle) {
+                $async.AsyncWaitHandle.Dispose()
+            }
         }
-        return $false
     } catch {
         return $false
     } finally {
-        $client.Close()
+        try { $client.Dispose() } catch { }
     }
 }
 
@@ -121,8 +127,78 @@ function Set-SyncFailed {
     Set-Content -LiteralPath $flagFile -Value @("Failed: $stamp", $Message) -Encoding UTF8 -ErrorAction SilentlyContinue
 }
 
-git -C $repoRoot config user.name $identity
-git -C $repoRoot config user.email $GitEmail
+function Test-RepoMemoryDirty {
+    $dirty = @(git -C $repoRoot -c core.quotepath=false status --porcelain -- memory 2>$null)
+    return ($dirty.Count -gt 0)
+}
+
+function Backup-WorkingMemory {
+    param([string]$DestDir)
+    try {
+        if (-not (Test-Path -LiteralPath $memorySrc)) { return }
+        New-Item -ItemType Directory -Path $DestDir -Force -ErrorAction Stop | Out-Null
+        Copy-Item -Path (Join-Path $memorySrc "*.md") -Destination $DestDir -Force -ErrorAction SilentlyContinue
+    } catch { }
+}
+
+function Backup-MergeConflict {
+    param([string]$DestDir)
+    try {
+        $conflicted = @(git -C $repoRoot -c core.quotepath=false diff --name-only --diff-filter=U -- memory)
+        if ($conflicted.Count -eq 0) { return }
+        New-Item -ItemType Directory -Path $DestDir -Force -ErrorAction Stop | Out-Null
+        foreach ($f in $conflicted) {
+            $rel = $f -replace '^memory[\\/]', ''
+            $safe = $rel -replace '[\\/:*?"<>|]', '_'
+            foreach ($stage in @('base', 'ours', 'theirs')) {
+                $spec = switch ($stage) { 'base' { ':1' } 'ours' { ':2' } 'theirs' { ':3' } }
+                $content = @(git -C $repoRoot show "$spec`:$f" 2>$null)
+                if ($LASTEXITCODE -eq 0) {
+                    Set-Content -LiteralPath (Join-Path $DestDir "$safe.$stage.md") -Value $content -Encoding UTF8 -ErrorAction SilentlyContinue
+                }
+            }
+            $src = Join-Path $repoRoot $f
+            if (Test-Path -LiteralPath $src) {
+                Copy-Item -LiteralPath $src -Destination (Join-Path $DestDir "$safe.conflict.md") -Force -ErrorAction SilentlyContinue
+            }
+        }
+    } catch { }
+}
+
+function Get-RemoteMainHash {
+    $out = @(git -C $repoRoot -c http.proxy=$proxy -c http.sslBackend=openssl ls-remote origin main 2>&1)
+    if ($LASTEXITCODE -ne 0) {
+        $out = @(git -C $repoRoot ls-remote origin main 2>&1)
+    }
+    $text = ($out | ForEach-Object { $_.ToString() }) -join "`n"
+    if ($text -match '(?m)^([0-9a-f]{40})\s+refs/heads/main\s*$') {
+        return $Matches[1]
+    }
+    return $null
+}
+
+function Confirm-RemotePushed {
+    $localHead = (git -C $repoRoot rev-parse HEAD 2>$null | Out-String).Trim()
+    $remoteHash = Get-RemoteMainHash
+    return ($localHead -and $remoteHash -and $localHead -eq $remoteHash)
+}
+
+$ErrorActionPreference = "Continue"
+try {
+    git -C $repoRoot config user.name $identity
+    if ($LASTEXITCODE -ne 0) { throw "git config user.name failed" }
+    git -C $repoRoot config user.email $GitEmail
+    if ($LASTEXITCODE -ne 0) { throw "git config user.email failed" }
+} catch {
+    Write-Warning "git identity could not be set: $($_.Exception.Message)"
+    if (-not $Pull -and -not $Doctor) {
+        Set-SyncFailed -Message "git identity could not be set: $($_.Exception.Message)"
+        Write-Error "git identity could not be set: $($_.Exception.Message)"
+        exit 1
+    }
+} finally {
+    $ErrorActionPreference = "Stop"
+}
 
 if ($Doctor) {
     $script:failCount = 0
@@ -168,6 +244,14 @@ if ($Doctor) {
     $gaText = if (Test-Path $ga) { Get-Content $ga -Raw } else { "" }
     Report ".gitattributes eol=lf" ($gaText -match "eol=lf")
 
+    $unionDriver = (git -C $repoRoot config --get merge.union.driver 2>&1 | Out-String).Trim()
+    Report "merge.union.driver configured" ($unionDriver -match "git merge-file --union") $unionDriver
+
+    $staleMarkers = @('.sync-failed', '.pending-writeback') | ForEach-Object {
+        if (Test-Path -LiteralPath (Join-Path $repoRoot $_)) { $_ }
+    }
+    Report "no stale sync markers" ($staleMarkers.Count -eq 0) ($staleMarkers -join ', ')
+
     Report "memory dir exists" (Test-Path -LiteralPath $memorySrc)
 
     if ($script:failCount -eq 0) {
@@ -183,6 +267,18 @@ if ($Pull) {
     # Session-start alignment is self-healing in both directions: pull any newer
     # remote memory, write it back to the working directory when possible, and
     # push any local commits left behind by a failed sync.
+    if (Test-RepoMemoryDirty) {
+        Set-SyncFailed -Message "Repo working tree has uncommitted memory changes; resolve them before running -Pull."
+        Write-Error "Repo working tree has uncommitted memory changes; resolve them before running -Pull."
+        exit 1
+    }
+    if (-not (Test-Path $pendingFile) -and -not (Test-MemoryDirsEqual $memorySrc $memoryDst)) {
+        Set-SyncFailed -Message "Working memory directory has local changes not yet synced to the repo; run a normal sync or resolve before -Pull."
+        Write-Error "Working memory directory has local changes not yet synced to the repo; run a normal sync or resolve before -Pull."
+        exit 1
+    }
+
+    $conflictBackupDir = Join-Path $env:TEMP ("codex-memory-conflict-" + (Get-Date -Format 'yyyyMMdd-HHmmss'))
     try {
         Invoke-Git fetch origin
         $local = git -C $repoRoot rev-parse HEAD
@@ -196,27 +292,36 @@ if ($Pull) {
             Write-Output "Memory repo updated from remote. Changed memory files:"
             $changed | ForEach-Object { Write-Output $_ }
             $ahead = [int](git -C $repoRoot rev-list --count origin/main..HEAD)
+            $behind = [int](git -C $repoRoot rev-list --count HEAD..origin/main)
         }
 
-        # Reconcile repo -> working memory directory. Safe to write back only when
-        # the repo is the newer side: we just pulled remote commits, or a previous
-        # write-back is still pending. Never overwrite newer local edits.
+        # Reconcile repo -> working memory directory. The preflight above ensures
+        # the working copy is not carrying unsynced local edits in the normal case;
+        # when a previous write-back is still pending we back up before overwriting.
         if (($changed.Count -gt 0) -or (Test-Path $pendingFile)) {
             if (Test-MemoryDirsEqual $memoryDst $memorySrc) {
                 Clear-PendingWriteback
                 Write-Output "Working memory directory already matches repo; cleared pending write-back flag."
-            } elseif (Copy-MemoryToWorkingDir) {
-                Clear-PendingWriteback
-                Write-Output "Pulled changes written back to working memory directory."
             } else {
-                Set-PendingWriteback $changed
-                Write-Output "WARNING: could not auto-write repo changes to the working memory directory (likely read-only for shell)."
-                Write-Output "         Apply repo memory files to $memorySrc via apply_patch, then re-run -Pull (or delete .pending-writeback) before pushing."
+                $backupDir = Join-Path $env:TEMP ("codex-memory-writeback-" + (Get-Date -Format 'yyyyMMdd-HHmmss'))
+                Backup-WorkingMemory $backupDir
+                if (Copy-MemoryToWorkingDir) {
+                    Clear-PendingWriteback
+                    Write-Output "Pulled changes written back to working memory directory. Previous working copy backed up to $backupDir"
+                } else {
+                    Set-PendingWriteback $changed
+                    Write-Output "WARNING: could not auto-write repo changes to the working memory directory (likely read-only for shell)."
+                    Write-Output "         Apply repo memory files to $memorySrc via apply_patch, then re-run -Pull (or delete .pending-writeback) before pushing."
+                    Write-Output "         Previous working copy backed up to $backupDir"
+                }
             }
         }
 
         if ($ahead -gt 0) {
             Invoke-Git push origin main
+            if (-not (Confirm-RemotePushed)) {
+                throw "Push succeeded but remote verification failed (local HEAD != origin/main) during -Pull."
+            }
             Write-Output "Pushed $ahead local commit(s) to GitHub."
         }
         if ($behind -eq 0 -and $ahead -eq 0) {
@@ -224,11 +329,12 @@ if ($Pull) {
         }
         Remove-Item -LiteralPath $flagFile -Force -ErrorAction SilentlyContinue
     } catch {
+        Backup-MergeConflict $conflictBackupDir
         Set-SyncFailed $_.Exception.Message
         # Clear any in-progress merge left by a conflicted pull so the next
         # -Pull can retry cleanly instead of failing forever (multi-writer).
         try { git -C $repoRoot merge --abort 2>&1 | Out-Null } catch { }
-        Write-Error $_.Exception.Message
+        Write-Error ($_.Exception.Message + "`nConflict snapshots (if any): $conflictBackupDir")
         exit 1
     }
     exit 0
@@ -237,6 +343,12 @@ if ($Pull) {
 if (-not (Test-Path $memorySrc)) {
     Set-SyncFailed -Message "Memory directory not found: $memorySrc"
     Write-Error "Memory directory not found: $memorySrc"
+    exit 1
+}
+
+if (Test-RepoMemoryDirty) {
+    Set-SyncFailed -Message "Repo working tree has uncommitted memory changes; resolve them before syncing."
+    Write-Error "Repo working tree has uncommitted memory changes; resolve them before syncing."
     exit 1
 }
 
@@ -258,6 +370,12 @@ Copy-Item -Path (Join-Path $memorySrc "*.md") -Destination $memoryDst -Force
 $srcNames = @(Get-ChildItem -Path (Join-Path $memorySrc "*.md") -File -ErrorAction SilentlyContinue | ForEach-Object { $_.Name })
 Get-ChildItem -Path (Join-Path $memoryDst "*.md") -File -ErrorAction SilentlyContinue | Where-Object { $srcNames -notcontains $_.Name } | Remove-Item -Force -ErrorAction SilentlyContinue
 
+if (-not (Test-MemoryDirsEqual $memorySrc $memoryDst)) {
+    Set-SyncFailed -Message "Copy verification failed: working memory and repo memory differ after copy."
+    Write-Error "Copy verification failed: working memory and repo memory differ after copy."
+    exit 1
+}
+
 git -C $repoRoot add -A -- memory
 $staged = @(git -C $repoRoot -c core.quotepath=false diff --cached --name-only)
 if (-not $staged) {
@@ -266,6 +384,7 @@ if (-not $staged) {
     exit 0
 }
 
+$conflictBackupDir = Join-Path $env:TEMP ("codex-memory-conflict-" + (Get-Date -Format 'yyyyMMdd-HHmmss'))
 try {
     Invoke-Git fetch origin
     $behind = [int](git -C $repoRoot rev-list --count HEAD..origin/main)
@@ -277,12 +396,24 @@ try {
     }
 
     Invoke-Git push origin main
+    if (-not (Confirm-RemotePushed)) {
+        Invoke-Git fetch origin
+        $behind = [int](git -C $repoRoot rev-list --count HEAD..origin/main)
+        if ($behind -gt 0) {
+            Invoke-Git merge --no-edit FETCH_HEAD
+        }
+        Invoke-Git push origin main
+        if (-not (Confirm-RemotePushed)) {
+            throw "Push succeeded but remote verification failed (local HEAD != origin/main) after retry."
+        }
+    }
     Remove-Item -LiteralPath $flagFile -Force -ErrorAction SilentlyContinue
     Write-Output "Memory synced to GitHub."
 } catch {
+    Backup-MergeConflict $conflictBackupDir
     Set-SyncFailed $_.Exception.Message
     # Best-effort cleanup; must never prevent the failure flag from being written.
     try { git -C $repoRoot merge --abort 2>&1 | Out-Null } catch { }
-    Write-Error $_.Exception.Message
+    Write-Error ($_.Exception.Message + "`nConflict snapshots (if any): $conflictBackupDir")
     exit 1
 }

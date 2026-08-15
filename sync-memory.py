@@ -33,9 +33,12 @@ WorkBuddy 侧记忆同步脚本（Python 版）
 
 import os
 import re
+import shutil
 import socket
 import subprocess
 import sys
+import tempfile
+from datetime import datetime
 
 REPO = os.path.expanduser("~/.workbuddy/codex-memory-system")
 PROXY = "http://127.0.0.1:7897"  # 本机 Clash 代理；无代理时设为 ""
@@ -51,12 +54,26 @@ GIT_CANDIDATES = [
 
 def find_git():
     for c in GIT_CANDIDATES:
-        if os.path.exists(c):
-            return c
+        if os.path.isfile(c):
+            return os.path.abspath(c)
+    resolved = shutil.which("git")
+    if resolved:
+        return os.path.abspath(resolved)
     return "git"
 
 
 GIT = find_git()
+
+
+def git_is_safe(path=None):
+    p = (path or GIT).lower()
+    return "portablegit" not in p and ".workbuddy" not in p
+
+
+def ensure_git_safe():
+    if not git_is_safe():
+        print("[!] 检测到不安全的 PortableGit: %s" % GIT)
+        sys.exit(1)
 
 
 def proxy_alive():
@@ -92,9 +109,11 @@ def write_ref(name, refhash):
     """Python 直写 ref（绕过沙盒 overlay 的 rename 拦截）。name 用 '/' 分隔。"""
     full = os.path.join(REPO, ".git", *name.split("/"))
     os.makedirs(os.path.dirname(full), exist_ok=True)
-    with open(full, "w", newline="") as f:
+    with open(full, "w", newline="", encoding="ascii") as f:
         f.write(refhash + "\n")
-    with open(full, "r") as f:
+        f.flush()
+        os.fsync(f.fileno())
+    with open(full, "r", encoding="ascii") as f:
         return f.read().strip() == refhash
 
 
@@ -112,6 +131,66 @@ def ls_remote():
 def local_head():
     code, out, _ = git("rev-parse", "HEAD", proxy=False)
     return out if code == 0 else None
+
+
+def git_status_memory():
+    code, out, _ = git("status", "--porcelain", "--", "memory", proxy=False)
+    if code != 0:
+        return None
+    return [line for line in out.splitlines() if line.strip()]
+
+
+def is_working_tree_dirty():
+    lines = git_status_memory()
+    return lines is None or bool(lines)
+
+
+def marker_path(name):
+    return os.path.join(REPO, name)
+
+
+def write_marker(name, message):
+    try:
+        with open(marker_path(name), "w", encoding="utf-8") as f:
+            f.write("Failed: %s\n%s\n" % (
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"), message))
+    except Exception as e:
+        print("[!] 写 %s 失败: %s" % (name, e))
+
+
+def clear_marker(name):
+    try:
+        if os.path.exists(marker_path(name)):
+            os.remove(marker_path(name))
+    except Exception as e:
+        print("[!] 清除 %s 失败: %s" % (name, e))
+
+
+def backup_conflict():
+    code, out, _ = git(
+        "-c", "core.quotepath=false", "diff", "--name-only",
+        "--diff-filter=U", "--", "memory", proxy=False)
+    if code != 0 or not out.strip():
+        return None
+    dest = os.path.join(
+        tempfile.gettempdir(),
+        "codex-memory-conflict-" + datetime.now().strftime("%Y%m%d-%H%M%S"))
+    os.makedirs(dest, exist_ok=True)
+    for raw in out.splitlines():
+        rel = raw.strip()
+        if not rel:
+            continue
+        safe = os.path.basename(rel)
+        for stage, spec in (("base", ":1"), ("ours", ":2"), ("theirs", ":3")):
+            c, data, _ = git("show", "%s:%s" % (spec, rel), proxy=False)
+            if c == 0:
+                with open(os.path.join(dest, "%s.%s.md" % (safe, stage)),
+                          "w", encoding="utf-8", newline="") as fh:
+                    fh.write(data)
+        src = os.path.join(REPO, *rel.split("/"))
+        if os.path.exists(src):
+            shutil.copyfile(src, os.path.join(dest, safe + ".conflict.md"))
+    return dest
 
 
 def restore_tracking_ref(remote):
@@ -137,44 +216,55 @@ def fetch_and_merge():
         print(err)
     if code != 0:
         print("[!] merge 冲突（code=%d），执行 --abort 清理中间态" % code)
+        snap = backup_conflict()
+        if snap:
+            print("[conflict-snapshot] %s" % snap)
         git("merge", "--abort", proxy=False)
         return False
     return True
 
 
-def rev_count(a, b):
-    """提交数：b 有而 a 没有（即 a..b）。"""
-    code, out, _ = git("rev-list", "--count", "%s..%s" % (a, b), proxy=False)
-    if code == 0 and out.strip():
-        try:
-            return int(out.strip())
-        except ValueError:
-            pass
-    return 0
-
-
 def cmd_pull():
     print("== 开场拉取对齐 ==")
+    ensure_git_safe()
+    if is_working_tree_dirty():
+        print("[!] 工作树有未提交的 memory 变更；请先提交或处理后重跑 pull，避免被覆盖")
+        write_marker(".sync-failed", "pull aborted: working tree has uncommitted memory changes")
+        sys.exit(1)
     if not fetch_and_merge():
         remote = ls_remote()
         restore_tracking_ref(remote)
         print("[!] 对齐失败：请手动语义合并后重跑，或检查远端状态")
+        write_marker(".sync-failed", "pull failed: fetch+merge 对齐失败")
         sys.exit(1)
     remote = ls_remote()
     restore_tracking_ref(remote)
     local = local_head()
     print("[核验] 本地=%s 远端=%s" % (local, remote))
-    print("一致 ✓" if local == remote else "不一致 ⚠️（注意分叉）")
+    if local == remote:
+        print("一致 ✓")
+        clear_marker(".sync-failed")
+    else:
+        print("不一致 ⚠️（注意分叉）")
+        write_marker(".sync-failed", "pull 后本地与远端不一致")
+        sys.exit(1)
 
 
 def cmd_push():
     print("== 收尾推送 ==")
+    ensure_git_safe()
+    if is_working_tree_dirty():
+        print("[!] 工作树有未提交的 memory 变更；请先 commit，否则 push 只会上传旧 HEAD")
+        write_marker(".sync-failed", "push aborted: working tree has uncommitted memory changes")
+        sys.exit(1)
     if not proxy_alive() and PROXY:
         print("[!] 代理 %s 不可达（Clash 未启动？），终止以免 git 卡死" % PROXY)
+        write_marker(".sync-failed", "push aborted: proxy %s unreachable" % PROXY)
         sys.exit(1)
     # 先 fetch 对齐，避免并发非快进失败（P10）
     if not fetch_and_merge():
         print("[!] 对齐失败，终止 push（避免覆盖远端）")
+        write_marker(".sync-failed", "push aborted: fetch+merge 对齐失败")
         sys.exit(1)
     code, out, err = git("push", "origin", "main")
     print("[push] exit=%d" % code)
@@ -187,6 +277,7 @@ def cmd_push():
         print("[!] push 被拒，重新 fetch+merge 后重推")
         if not fetch_and_merge():
             print("[!] 二次对齐失败，终止")
+            write_marker(".sync-failed", "push failed: 二次对齐失败")
             sys.exit(1)
         code, out, err = git("push", "origin", "main")
         print("[push 重试] exit=%d" % code)
@@ -198,7 +289,13 @@ def cmd_push():
     local = local_head()
     restore_tracking_ref(remote)
     print("[核验] 本地=%s 远端=%s" % (local, remote))
-    print("已推送 ✓" if local == remote else "未推上远端 ⚠️（沙盒内 push 可能未落盘，非沙盒重试）")
+    if local == remote:
+        print("已推送 ✓")
+        clear_marker(".sync-failed")
+        sys.exit(0)
+    print("未推上远端 ⚠️（沙盒内 push 可能未落盘，非沙盒重试）")
+    write_marker(".sync-failed", "push 后本地与远端不一致")
+    sys.exit(1)
 
 
 def check_ref_valid():
@@ -207,7 +304,8 @@ def check_ref_valid():
     if not os.path.exists(ref_path):
         return False, "丢失（沙盒 overlay 所致，pull/push 模式会自动补写）"
     try:
-        content = open(ref_path).read().strip()
+        with open(ref_path, "r", encoding="ascii") as f:
+            content = f.read().strip()
     except Exception as e:
         return False, "读取失败: %s" % e
     if re.fullmatch(r"[0-9a-f]{40}", content):
@@ -217,25 +315,62 @@ def check_ref_valid():
 
 def cmd_doctor():
     print("== 体检 ==")
+    failures = []
+
+    def report(name, ok, detail=""):
+        print("[%s] %s%s" % (
+            "PASS" if ok else "FAIL", name,
+            ("（%s）" % detail if detail else "")))
+        if not ok:
+            failures.append(name)
+
     code, out, _ = git("--version", proxy=False)
     print("[git] %s" % out)
     print("[git 路径] %s" % GIT)
+    report("git client safe (not PortableGit)", git_is_safe(), GIT)
     print("[代理 %s] %s" % (PROXY, "可达" if proxy_alive() else "不可达（Clash 未启动？）"))
     remote = ls_remote()
     local = local_head()
     print("[远端] %s" % remote)
     print("[本地] %s" % local)
+    report("remote reachable", bool(remote), remote or "")
+    report("local head readable", bool(local), local or "")
     ok, detail = check_ref_valid()
-    print("[tracking ref] %s（%s）" % ("合法" if ok else "异常", detail))
+    report("tracking ref valid", ok, detail)
     for marker in (".sync-failed", ".pending-writeback"):
         p = os.path.join(REPO, marker)
-        print("[%s] %s" % (marker, "有残留!" if os.path.exists(p) else "无"))
+        exists = os.path.exists(p)
+        report("no stale %s" % marker, not exists,
+               "有残留!" if exists else "无")
     # union 配置检查（P1/P6）
     code, out, _ = git("config", "--get", "merge.union.driver", proxy=False)
-    print("[merge.union.driver] %s" % (out if code == 0 else "未配置（归档.md 自动合并会失效）"))
+    union_ok = code == 0 and "git merge-file --union" in out
+    report("merge.union.driver configured", union_ok,
+           out if code == 0 else "未配置（归档.md 自动合并会失效）")
     code, out, _ = git("check-attr", "merge", "--", "memory/归档.md", proxy=False)
-    print("[归档.md merge 属性] %s" % (out or "(无)"))
-    print("[对齐] %s" % ("一致 ✓" if local == remote else "不一致 ⚠️"))
+    report("归档.md merge=union", code == 0 and "union" in out, out or "(无)")
+
+    code, out, _ = git("config", "--get", "core.autocrlf", proxy=False)
+    crlf_ok = code != 0 or out.strip() in ("", "false")
+    report("core.autocrlf=false", crlf_ok, out.strip() if code == 0 else "(unset)")
+
+    ga_path = os.path.join(REPO, ".gitattributes")
+    ga_text = ""
+    if os.path.exists(ga_path):
+        with open(ga_path, "r", encoding="utf-8") as f:
+            ga_text = f.read()
+    report(".gitattributes eol=lf", "eol=lf" in ga_text)
+
+    dirty = git_status_memory()
+    report("working tree clean", dirty == [],
+           "" if dirty is None else ("clean" if dirty == [] else "有未提交变更"))
+    report("local == remote", bool(local and remote and local == remote))
+
+    if failures:
+        print("doctor: %d FAILURE(S)" % len(failures))
+        sys.exit(1)
+    print("doctor: ALL PASS")
+    sys.exit(0)
 
 
 def main():

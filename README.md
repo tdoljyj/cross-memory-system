@@ -20,7 +20,7 @@
 4. **接入自检**：新机器跑 `powershell -ExecutionPolicy Bypass -File sync-memory.ps1 -Doctor`，一次检查 git、网络与凭据、引用写入（沙盒 overlay 拦截，2026-08-16 实锤非 PortableGit 缺陷）、换行符配置、记忆目录，全部 PASS 才正式接入。
 
 ## 内容
-- `配置手册与数据包-v4.md` — 完整手册：记忆机制、写入权限、新电脑配置步骤
+- `配置手册与数据包-v4.md` — 完整手册：记忆机制、写入权限、新电脑配置步骤（⚠️ 其中 9.x 数据包为 2026-08-15 历史快照，AGENTS / 待办等内容可能已过期；权威以仓库当前 `AGENTS.md` 与 `memory/*.md` 为准）
 - `memory/` — 记忆快照（画像 / 状态 / 决策 / 待办 / 归档）
 - `AGENTS.md` — Codex 全局钩子副本（实际生效位置：`~/.codex/AGENTS.md`）
 - `sync-memory.ps1` — Codex 侧记忆同步脚本：复制最新记忆 → git 提交 → 推送

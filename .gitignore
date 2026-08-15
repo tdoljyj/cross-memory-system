@@ -1,3 +1,5 @@
 .sync-failed
 .pending-writeback
 sync.config.ps1
+__pycache__/
+*.pyc
