@@ -25,5 +25,6 @@
 - 复查补写记忆文件后，运行：powershell -ExecutionPolicy Bypass -File "%USERPROFILE%\.codex\projects\codex-memory-system\sync-memory.ps1"（复制记忆 → 本地 git 提交 → 与远端对账 → 推送到 GitHub 私有仓库；失败会写 .sync-failed 标记，下次会话开场提醒；若 .pending-writeback 标记存在会先拒绝推送，需先按第 3 步回写）
 
 执行纪律（防"提交了但没推到远端"）：
+- 双端对称「不越界」：本端不直写对方工作区 / 克隆（不写 ~/.workbuddy，也不写对方机器的 Documents\Codex\memory）；一切记忆交换经本仓库（唯一数据源），分叉靠 pull --rebase 收敛，绝不 force push / reset / 以本地覆盖远端。
 - git 写操作（commit / push / sync-memory.ps1）运行在带沙盒 overlay 的环境时（典型：WorkBuddy Bash 沙盒对 ~/.workbuddy 下写入跨命令不持久），必须改为非沙盒方式执行（系统 PowerShell / 编辑器文件通道 / 批准沙盒放行）；~/.codex 与 Documents 不受 overlay 影响。
 - push 后立即用 `git ls-remote origin`（或 `git ls-remote <remote-url>`）对比远端真实 commit 确认已推送；勿依赖本地 `git status` 的 ahead 显示（PortableGit / overlay 场景下本地引用可能失真）。

@@ -47,7 +47,7 @@ function Invoke-Git {
     # when the proxy is down; skip the slow direct attempt entirely when direct
     # TCP is also unreachable (Test-DirectGitHub probes in ~3s instead of ~20s).
     $errText = ""
-    $out = @(git -C $repoRoot -c http.proxy=$proxy @GitArgs 2>&1)
+    $out = @(git -C $repoRoot -c http.proxy=$proxy -c http.sslBackend=openssl @GitArgs 2>&1)
     $errText = @($out | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] } | ForEach-Object { $_.ToString() }) -join "`n"
     if ($LASTEXITCODE -eq 0) { return }
     if (Test-DirectGitHub) {
