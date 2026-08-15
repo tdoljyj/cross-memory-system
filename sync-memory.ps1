@@ -41,7 +41,15 @@ git -C $repoRoot commit -m "memory sync: $stamp"
 git -C $repoRoot push origin main
 if ($LASTEXITCODE -ne 0) {
     git -C $repoRoot pull --rebase origin main
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "Sync failed: pull from origin failed."
+        exit 1
+    }
     git -C $repoRoot push origin main
+}
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "Sync failed: push to origin failed."
+    exit 1
 }
 
 Write-Output "Memory synced to GitHub."
