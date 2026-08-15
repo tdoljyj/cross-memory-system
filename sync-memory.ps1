@@ -1,13 +1,24 @@
-# Codex cross-session memory sync script.
+﻿# Codex cross-session memory sync script.
 # Usage: powershell -ExecutionPolicy Bypass -File sync-memory.ps1
 $ErrorActionPreference = "Stop"
 
 $repoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $memorySrc = Join-Path $env:USERPROFILE "Documents\Codex\memory"
 $memoryDst = Join-Path $repoRoot "memory"
+$proxy = "http://127.0.0.1:7897"   # Local proxy fallback used only when direct github.com connection fails.
 
 if (-not (Test-Path $memorySrc)) {
     Write-Error "Memory directory not found: $memorySrc"
+}
+
+# Direct first; retry once via local proxy on failure.
+function Invoke-GitWithFallback {
+    param([Parameter(ValueFromRemainingArguments = $true)][string[]]$GitArgs)
+    git -C $repoRoot @GitArgs
+    if ($LASTEXITCODE -ne 0) {
+        Write-Output "Direct git failed; retrying via local proxy ($proxy)..."
+        git -C $repoRoot -c http.proxy=$proxy @GitArgs
+    }
 }
 
 # Set local git identity only if missing.
@@ -38,14 +49,14 @@ $stamp = Get-Date -Format "yyyy-MM-dd HH:mm"
 git -C $repoRoot commit -m "memory sync: $stamp"
 
 # Push; pull --rebase first if remote has new commits.
-git -C $repoRoot push origin main
+Invoke-GitWithFallback push origin main
 if ($LASTEXITCODE -ne 0) {
-    git -C $repoRoot pull --rebase origin main
+    Invoke-GitWithFallback pull --rebase origin main
     if ($LASTEXITCODE -ne 0) {
         Write-Error "Sync failed: pull from origin failed."
         exit 1
     }
-    git -C $repoRoot push origin main
+    Invoke-GitWithFallback push origin main
 }
 if ($LASTEXITCODE -ne 0) {
     Write-Error "Sync failed: push to origin failed."
