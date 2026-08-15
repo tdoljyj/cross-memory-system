@@ -12,8 +12,10 @@
 # Usage:
 #   powershell -ExecutionPolicy Bypass -File sync-memory.ps1
 #   powershell -ExecutionPolicy Bypass -File sync-memory.ps1 -Pull
+#   powershell -ExecutionPolicy Bypass -File sync-memory.ps1 -Doctor
+#   powershell -ExecutionPolicy Bypass -File sync-memory.ps1 -Bootstrap
 [CmdletBinding()]
-param([switch]$Pull, [switch]$Doctor)
+param([switch]$Pull, [switch]$Doctor, [switch]$Bootstrap)
 
 $ErrorActionPreference = "Stop"
 
@@ -156,6 +158,30 @@ function Test-RepoMemoryDirty {
     return ($dirty.Count -gt 0)
 }
 
+function Test-GitClientSafe {
+    $gitPath = (Get-Command git -ErrorAction SilentlyContinue).Source
+    if (-not $gitPath) { return $false }
+    return ($gitPath -notmatch "PortableGit|\.workbuddy")
+}
+
+function Get-NonMemoryDirtyCount {
+    $all = @(git -C $repoRoot -c core.quotepath=false status --porcelain 2>$null)
+    $mem = @(git -C $repoRoot -c core.quotepath=false status --porcelain -- memory 2>$null)
+    return ($all.Count - $mem.Count)
+}
+
+function Clear-StaleTempBackups {
+    # codex-memory-backup-* / conflict-* / writeback-* only ever accumulate;
+    # drop anything older than the retention window so TEMP does not grow forever.
+    param([int]$RetentionDays = 7)
+    try {
+        $cutoff = (Get-Date).AddDays(-$RetentionDays)
+        Get-ChildItem -Path $env:TEMP -Directory -Filter "codex-memory-*" -ErrorAction SilentlyContinue |
+            Where-Object { $_.LastWriteTime -lt $cutoff } |
+            Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+    } catch { }
+}
+
 function Backup-WorkingMemory {
     param([string]$DestDir)
     try {
@@ -255,6 +281,7 @@ if ($Doctor) {
     Write-Output "identity : $identity"
     Write-Output "repo     : $repoRoot"
     Write-Output "memory   : $memorySrc"
+    Clear-StaleTempBackups
 
     $gitVersion = (& git --version 2>&1 | Out-String).Trim()
     Report "git available" ($LASTEXITCODE -eq 0) $gitVersion
@@ -300,6 +327,22 @@ if ($Doctor) {
 
     Report "memory dir exists" (Test-Path -LiteralPath $memorySrc)
 
+    $allDirty = @(git -C $repoRoot -c core.quotepath=false status --porcelain 2>$null)
+    if ($allDirty.Count -eq 0) {
+        Write-Output "[INFO] repo working tree clean (all paths)"
+    } else {
+        Write-Output ("[WARN] 全仓有 " + $allDirty.Count + " 项未提交变更（含脚本/文档），需自行 commit；memory 同步脚本不会提交这些")
+    }
+
+    $archivePath = Join-Path $memoryDst "归档.md"
+    if (Test-Path -LiteralPath $archivePath) {
+        $archiveSize = (Get-Item -LiteralPath $archivePath).Length
+        $archiveLines = @(Get-Content -LiteralPath $archivePath -ErrorAction SilentlyContinue).Count
+        if ($archiveSize -gt 120000 -or $archiveLines -gt 1200) {
+            Write-Output ("[INFO] 归档.md 已超瘦身阈值（" + $archiveSize + " bytes / " + $archiveLines + " lines），建议压缩为结论 + 唯一事实")
+        }
+    }
+
     if ($script:failCount -eq 0) {
         Write-Output "doctor: ALL PASS"
         exit 0
@@ -309,10 +352,39 @@ if ($Doctor) {
     }
 }
 
+if ($Bootstrap) {
+    Write-Output "== 一次性接入配置（bootstrap） =="
+    $bootstrapSettings = @(
+        @("core.autocrlf", "false"),
+        @("merge.union.driver", "git merge-file --union %A %O %B"),
+        @("maintenance.auto", "false"),
+        @("gc.auto", "0"),
+        @("gc.pruneExpire", "never"),
+        @("fetch.autoMaintenance", "false")
+    )
+    foreach ($s in $bootstrapSettings) {
+        git -C $repoRoot config $s[0] $s[1]
+        $ok = ($LASTEXITCODE -eq 0)
+        Write-Output ("[config] {0}={1} -> {2}" -f $s[0], $s[1], $(if ($ok) { "OK" } else { "FAIL" }))
+    }
+    Write-Output "bootstrap 完成；再跑 -Doctor 自检"
+    exit 0
+}
+
 if ($Pull) {
     # Session-start alignment is self-healing in both directions: pull any newer
     # remote memory, write it back to the working directory when possible, and
     # push any local commits left behind by a failed sync.
+    if (-not (Test-GitClientSafe)) {
+        Set-SyncFailed -Message "Unsafe git client detected (PortableGit / .workbuddy); refusing to sync."
+        Write-Error -ErrorAction Continue "Unsafe git client detected (PortableGit / .workbuddy); refusing to sync."
+        exit 1
+    }
+    Clear-StaleTempBackups
+    $nonMemoryDirty = Get-NonMemoryDirtyCount
+    if ($nonMemoryDirty -gt 0) {
+        Write-Warning "$nonMemoryDirty uncommitted non-memory change(s) in repo (scripts/docs) will NOT be committed or pushed by this sync; commit them separately if intended."
+    }
     if (Test-RepoMemoryDirty) {
         Set-SyncFailed -Message "Repo working tree has uncommitted memory changes; resolve them before running -Pull."
         Write-Error -ErrorAction Continue "Repo working tree has uncommitted memory changes; resolve them before running -Pull."
@@ -385,6 +457,17 @@ if ($Pull) {
         exit 1
     }
     exit 0
+}
+
+if (-not (Test-GitClientSafe)) {
+    Set-SyncFailed -Message "Unsafe git client detected (PortableGit / .workbuddy); refusing to sync."
+    Write-Error -ErrorAction Continue "Unsafe git client detected (PortableGit / .workbuddy); refusing to sync."
+    exit 1
+}
+Clear-StaleTempBackups
+$nonMemoryDirty = Get-NonMemoryDirtyCount
+if ($nonMemoryDirty -gt 0) {
+    Write-Warning "$nonMemoryDirty uncommitted non-memory change(s) in repo (scripts/docs) will NOT be committed or pushed by this sync; commit them separately if intended."
 }
 
 if (-not (Test-Path $memorySrc)) {

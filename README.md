@@ -47,7 +47,7 @@
 4. 把 `memory\` 里的五个文件复制到 `Documents\Codex\memory\`
 5. 写全局钩子 `~/.codex/AGENTS.md`（用仓库内 AGENTS.md 内容，路径里的 `<用户名>` 换成实际用户名）
 6. 建立本机配置 `~/.codex/projects/codex-memory-system/sync.config.ps1`（gitignored）：`$AgentName = "Codex"`、`$ProxyUrl = "http://127.0.0.1:7897"`（无代理则 `""`）、`$MemoryDir`（非 Windows 或自定义路径时改）
-7. 跑自检：`powershell -ExecutionPolicy Bypass -File ~/.codex/projects/codex-memory-system/sync-memory.ps1 -Doctor`，全部 PASS
+7. 跑自检：`powershell -ExecutionPolicy Bypass -File ~/.codex/projects/codex-memory-system/sync-memory.ps1 -Doctor`，全部 PASS（可选先跑 `-Bootstrap` 一键写入推荐 git config）
 8. 按手册第五节启用 Full access，然后新会话验证
 
 ## Codex 同步（按需触发，对齐基线 vNext-1.2）
@@ -55,6 +55,7 @@
 - 脚本自动：复制最新记忆 → git 提交（无变化则 skip commit）→ 推送；远端有新提交时先拉取再推
 - NO_CHANGE 时不产生任何 commit / push / 缓存失效（基线原则 8）
 - 删除传播护栏：同步前校验工作记忆目录 `.md` ≥ 5 且非空，不足则拒绝同步并写 `.sync-failed`，防推空仓
+- 加固（vNext-1.2）：检测到 PortableGit / `.workbuddy` 的 git 客户端时拒绝同步；同步前清理 >7 天的 TEMP 备份目录；全仓有未提交的非 memory 变更时给出警告（脚本只提交 memory）；`-Doctor` 会提示归档.md 超瘦身阈值
 - 想手动同步：在 PowerShell 里直接运行上面的命令
 
 ## WorkBuddy 接入要点
@@ -62,11 +63,12 @@
 - 提交身份：`git config user.name "WorkBuddy@<机器名>"`（email 保持账号邮箱），commit message 带 `[身份]` 与变更文件；其余与本仓相同
 - ⚠️ 连接策略（2026-08-15 21:28 复测修正 + 2026-08-16 更新）：WorkBuddy 沙箱内 **raw TCP 直连外网被拦**（`Connection was reset`），出网仅代理路径（见配置手册 5.3 权限矩阵）；因此 **WorkBuddy 侧 git 操作一律走代理**：`git -c http.proxy=http://127.0.0.1:7897 fetch/pull/push`。git 客户端优先**官方 Git for Windows**（`C:\Program Files\Git`，本机已装 2.55.0.3，sync-memory.py 自动优先）；**勿用 WorkBuddy 内置 PortableGit**（走代理 TLS 握手失败：schannel `failed to receive handshake` / openssl `unexpected eof`）。gh 凭据助手正常供 token。curl / gh CLI 走代理均正常
 - ⚠️ TLS 后端（2026-08-15 21:32 复测补充）：Git Bash 自带 git + 代理时 schannel 默认后端仍**偶发**握手失败（`schannel: failed to receive handshake`）；命令固定加 `-c http.sslBackend=openssl`（对直连/代理均无副作用）
-- **同步脚本 `sync-memory.py`**（Python 版，WorkBuddy 侧专用，2026-08-16 起）：WorkBuddy 沙盒 overlay 会拦截 git 写 tracking ref（`refs/remotes/origin/main` 两层目录，lockfile+rename 原子写 exit 0 静默失败），脚本策略=git 负责对象传输、Python 负责 ref 兜底写入；三模式 `pull` / `push` / `doctor`，用法见脚本头注释
+- **同步脚本 `sync-memory.py`**（Python 版，WorkBuddy 侧专用，2026-08-16 起）：WorkBuddy 沙盒 overlay 会拦截 git 写 tracking ref（`refs/remotes/origin/main` 两层目录，lockfile+rename 原子写 exit 0 静默失败），脚本策略=git 负责对象传输、Python 负责 ref 兜底写入；四模式 `pull` / `push` / `doctor` / `bootstrap`，用法见脚本头注释
 - **配置参数化（vNext-1.2）**：`sync-memory.py` 支持与脚本同目录、gitignored 的 `sync.config.json`（`{repo, proxy, proxy_host, proxy_port, git_candidates}`），缺省回落内置默认；换机器只改这一个文件
 - **按需触发**（对齐基线 vNext-1.2 / AGENTS v3.1）：Memory Router 命中 T1–T4 才执行 `python sync-memory.py pull`（自动 fetch + 对齐 + 补写 tracking ref + 核验）→ 按 L1–L6 映射读所需文件；T0 通用问题直接回答，不访问记忆
 - 写入上传：本轮产生记忆写入 + commit 后才 `python sync-memory.py push`（非沙盒执行，判据=输出尾 `⚠️ Sandbox bypassed`）；无写入不 push（NO_CHANGE → NO_SYNC）；**不直写 Codex 侧工作区**（`Documents\Codex\memory\` 由 Codex 自己同步）
 - 删除传播护栏：pull/push 前校验 memory 目录 ≥ 5 个非空 `.md`，不足则拒绝并写 `.sync-failed`，防推空仓
+- 代理预检：`pull` 与 `push` 均先探测代理存活，代理不可达时 3 秒内快速失败而非让 git 卡 60 秒超时
 - git 写操作必须非沙盒执行（dangerouslyDisableSandbox=true），判据=输出末尾 `⚠️ Sandbox bypassed`；push 后用 `git ls-remote origin main` 确认远端 commit；push/pull 后核验统一用 `merge-base --is-ancestor`（祖先判定），并发下本地落后远端不误报
 
 > 注意：本仓库含个人真实记忆数据，保持私有；如要公开，只发布去敏模板版。

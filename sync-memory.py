@@ -48,6 +48,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import time
 from datetime import datetime
 
 _CONFIG_PATH = os.path.join(
@@ -229,6 +230,23 @@ def clear_marker(name):
         print("[!] 清除 %s 失败: %s" % (name, e))
 
 
+def cleanup_stale_backups(retention_days=7):
+    """清理过期的 codex-memory-* 临时备份目录（只增不减的历史债务）。"""
+    tmp = tempfile.gettempdir()
+    cutoff = time.time() - retention_days * 86400
+    try:
+        for name in os.listdir(tmp):
+            if not name.startswith("codex-memory-"):
+                continue
+            p = os.path.join(tmp, name)
+            if not os.path.isdir(p):
+                continue
+            if os.path.getmtime(p) < cutoff:
+                shutil.rmtree(p, ignore_errors=True)
+    except Exception:
+        pass
+
+
 def backup_conflict():
     code, out, _ = git(
         "-c", "core.quotepath=false", "diff", "--name-only",
@@ -290,6 +308,11 @@ def fetch_and_merge():
 def cmd_pull():
     print("== 开场拉取对齐 ==")
     ensure_git_safe()
+    cleanup_stale_backups()
+    if not proxy_alive() and PROXY:
+        print("[!] 代理 %s 不可达（Clash 未启动？），终止以免 git 卡死" % PROXY)
+        write_marker(".sync-failed", "pull aborted: proxy %s unreachable" % PROXY)
+        sys.exit(1)
     if not memory_dir_healthy():
         print("[!] memory 目录不足 5 个非空 .md（删除传播护栏），终止 pull")
         write_marker(".sync-failed", "pull aborted: memory dir < 5 non-empty .md files")
@@ -323,6 +346,7 @@ def cmd_pull():
 def cmd_push():
     print("== 收尾推送 ==")
     ensure_git_safe()
+    cleanup_stale_backups()
     if not memory_dir_healthy():
         print("[!] memory 目录不足 5 个非空 .md（删除传播护栏），终止 push")
         write_marker(".sync-failed", "push aborted: memory dir < 5 non-empty .md files")
@@ -388,6 +412,7 @@ def check_ref_valid():
 
 def cmd_doctor():
     print("== 体检 ==")
+    cleanup_stale_backups()
     failures = []
 
     def report(name, ok, detail=""):
@@ -434,11 +459,39 @@ def cmd_doctor():
             ga_text = f.read()
     report(".gitattributes eol=lf", "eol=lf" in ga_text)
 
+    # 本地协议新鲜度：WorkBuddy 侧 MEMORY.md 不得残留已废弃的 pull --rebase 指令
+    # （2026-08-16 三轮审计 P0：此脱节曾让 doctor 全绿却仍执行 rebase）。
+    wb_memory_md = os.path.expanduser("~/.workbuddy/MEMORY.md")
+    if os.path.isfile(wb_memory_md):
+        try:
+            with open(wb_memory_md, "r", encoding="utf-8") as f:
+                wb_protocol = f.read()
+        except Exception:
+            wb_protocol = ""
+        report("MEMORY.md 无已废弃 pull --rebase 指令",
+               "pull --rebase" not in wb_protocol)
+
     dirty = git_status_memory()
     report("working tree clean", dirty == [],
            "" if dirty is None else ("clean" if dirty == [] else "有未提交变更"))
     report("memory dir healthy (>=5 non-empty .md)", memory_dir_healthy())
     report("local == remote", bool(local and remote and local == remote))
+
+    code, out, _ = git("status", "--porcelain", proxy=False)
+    all_dirty = [l for l in (out or "").splitlines() if l.strip()]
+    print("[info] 全仓未提交变更 %d 项（含脚本/文档，需自行 commit）" % len(all_dirty))
+
+    archive_path = os.path.join(REPO, "memory", "归档.md")
+    if os.path.isfile(archive_path):
+        size = os.path.getsize(archive_path)
+        try:
+            with open(archive_path, "r", encoding="utf-8") as f:
+                lines = sum(1 for _ in f)
+        except Exception:
+            lines = 0
+        if size > 120000 or lines > 1200:
+            print("[提示] 归档.md 已超瘦身阈值（%d bytes / %d 行），建议压缩为结论 + 唯一事实"
+                  % (size, lines))
 
     if failures:
         print("doctor: %d FAILURE(S)" % len(failures))
@@ -447,9 +500,27 @@ def cmd_doctor():
     sys.exit(0)
 
 
+def cmd_bootstrap():
+    print("== 一次性接入配置（bootstrap） ==")
+    ensure_git_safe()
+    settings = {
+        "core.autocrlf": "false",
+        "merge.union.driver": "git merge-file --union %A %O %B",
+        "maintenance.auto": "false",
+        "gc.auto": "0",
+        "gc.pruneExpire": "never",
+        "fetch.autoMaintenance": "false",
+    }
+    for k, v in settings.items():
+        code, out, err = git("config", k, v, proxy=False)
+        print("[config] %s=%s -> %s" % (k, v, "OK" if code == 0 else ("FAIL: " + err)))
+    print("bootstrap 完成；再跑 doctor 自检")
+
+
 def main():
     mode = sys.argv[1] if len(sys.argv) > 1 else "doctor"
-    {"pull": cmd_pull, "push": cmd_push, "doctor": cmd_doctor}.get(mode, cmd_doctor)()
+    {"pull": cmd_pull, "push": cmd_push, "doctor": cmd_doctor,
+     "bootstrap": cmd_bootstrap}.get(mode, cmd_doctor)()
 
 
 if __name__ == "__main__":

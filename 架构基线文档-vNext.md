@@ -13,6 +13,7 @@
 | vNext-1.0 | 2026-08-16 | 确立为基线：转换 Chase 提供的 vNext 核心架构为规范文档；新增附录 A（现有实现映射：保留/调整/替换）与附录 B（验收标准落地对照） | WorkBuddy@TURING |
 | vNext-1.1 | 2026-08-16 | 同日评审修订：新增适用性说明（正文与附录 A 冲突时以附录 A 为准）；十六节 Phase 标注现有架构落地状态；Trigger Matrix 补「受个人约束的通用问题」行；新增附录 C 隐私与安全约束；附录 B 用例 F 标注许可偏差（merge 收敛而非硬冲突）；附录 A 补 L6 工作区临时层映射、标注 Recall Score 为展望项 | WorkBuddy@TURING |
 | vNext-1.2 | 2026-08-16 | 评审落地加固：① 双端同步脚本新增删除传播护栏（源 memory 目录 .md<5 拒绝同步，防推空仓）；② 双脚本核验统一为祖先判定（merge-base --is-ancestor，消除 py 并发下误写 .sync-failed）；③ py 配置参数化（sync.config.json）；④ 召回粒度由文件级升级为段级（L1–L6 映射到具体标题段）；⑤ 明确 Sync Layer 与 commit 职责边界；⑥ 同步全局钩子 ~/.codex/AGENTS.md。新增附录 D（保留/调整/替换/待办对照）。结构化语义合并与验收自动化记为待办 | Codex@TURING |
+| vNext-1.2 补充加固 | 2026-08-16 | 同日续加固：ps1 PortableGit 硬阻断；两端 TEMP 备份清理（>7 天）；全仓脏检查（非阻断提示）；归档.md 瘦身阈值提示；py pull 代理预检；py doctor 协议新鲜度检查；两端 bootstrap 一键配置 | Codex@TURING |
 
 > **目标**：将"每次开头强制加载记忆、结尾强制上传"改造成真正的按需读写型跨会话记忆系统。
 >
@@ -640,8 +641,15 @@ Memory Access Policy
 | 召回粒度：文件级 → 段级（L1–L6 映射到具体标题段） | 调整 | AGENTS.md / ~/.codex/AGENTS.md | ✅ 已落地 |
 | Sync Layer 与 commit 职责边界 | 调整（明确化） | 附录 A / README / AGENTS.md | ✅ 已落地 |
 | 全局钩子副本对齐 | 调整 | ~/.codex/AGENTS.md | ✅ 已落地 |
+| PortableGit 硬阻断（ps1 push/pull） | 调整（新增） | sync-memory.ps1 | ✅ 已落地 |
+| TEMP 备份目录清理（>7 天） | 调整（新增） | sync-memory.ps1 / sync-memory.py | ✅ 已落地 |
+| 全仓脏检查（非阻断提示） | 调整（新增） | sync-memory.ps1 / sync-memory.py | ✅ 已落地 |
+| 归档.md 瘦身阈值提示 | 调整（新增） | 双脚本 doctor | ✅ 已落地 |
+| py pull 代理预检 | 调整（新增） | sync-memory.py | ✅ 已落地 |
+| 协议新鲜度检查（MEMORY.md 无 pull --rebase） | 调整（新增） | sync-memory.py doctor | ✅ 已落地 |
+| per-clone 配置 bootstrap（-Bootstrap / bootstrap） | 调整（新增） | sync-memory.ps1 / sync-memory.py | ✅ 已落地 |
 | 结构化语义合并（状态/待办按标题块三路合并） | 待办 | 双脚本 | ◻ 待实现 |
 | 附录 B 验收标准转自动化测试 | 待办 | 新增测试 | ◻ 待实现 |
-| 归档.md union 去重 + 瘦身阈值 | 待办 | 双脚本 | ◻ 待实现 |
+| 归档.md union 合并后去重 | 待办 | 双脚本 | ◻ 待实现（瘦身阈值已单独落地） |
 | Recall Score / item 级检索 | 展望 | 不引入组件 | ◻ 服务化后再评估 |
 | 凭据按 AI 隔离 / 缓存 TTL 兜底 | 展望 | — | ◻ 未来接入多机再评估 |
