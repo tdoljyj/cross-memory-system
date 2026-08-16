@@ -22,6 +22,7 @@ B/C 的 Router 判定（T0–T4）本身是 AI 自然语言行为，无法在脚
 import functools
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -96,10 +97,17 @@ class Sandbox:
             memdir = os.path.join(clone, "memory")
             os.makedirs(memdir, exist_ok=True)
             for f in MEMORY_FILES:
-                with open(os.path.join(memdir, f), "w", encoding="utf-8") as fh:
-                    fh.write("# %s\n\n内容 %s\n" % (f, f))
+                # 复制真实记忆文件（含真实标题段），使 doctor 的 index 召回段名校验可过
+                shutil.copy(os.path.join(MEMORY, f), os.path.join(memdir, f))
             shutil.copy(os.path.join(MEMORY, "index.json"),
                         os.path.join(memdir, "index.json"))
+            # 复刻仓库根文件，使 ps1 doctor 的全局钩子一致性检查有可比对象
+            shutil.copy(os.path.join(REPO_ROOT, "AGENTS.md"),
+                        os.path.join(clone, "AGENTS.md"))
+            shutil.copy(os.path.join(REPO_ROOT, "guards.json"),
+                        os.path.join(clone, "guards.json"))
+            shutil.copy(os.path.join(REPO_ROOT, ".gitattributes"),
+                        os.path.join(clone, ".gitattributes"))
             git("add", "-A", cwd=clone)
             git("commit", "-m", "init", cwd=clone)
             git("push", "-u", "origin", "main", cwd=clone)
@@ -126,7 +134,7 @@ class Sandbox:
         return sh([sys.executable, script, mode] + list(extra),
                   cwd=os.path.dirname(script), check_fail=False)
 
-    def install_ps1(self, clone, workdir):
+    def install_ps1(self, clone, workdir, hook=None):
         shutil.copy(PS1, os.path.join(clone, "sync-memory.ps1"))
         os.makedirs(workdir, exist_ok=True)
         for f in MEMORY_FILES:
@@ -139,9 +147,17 @@ class Sandbox:
             "$MemoryDir = '%s'\n"
             '$GitEmail = "test@example.com"\n'
         ) % workdir
+        if hook:
+            cfg += "$GlobalHookPath = '%s'\n" % hook
         with open(os.path.join(clone, "sync.config.ps1"), "w",
                   encoding="utf-8") as fh:
             fh.write(cfg)
+        # bootstrap 等价配置：doctor 的 autocrlf / union driver 检查需要
+        git("config", "core.autocrlf", "false", cwd=clone)
+        git("config", "merge.union.driver", "git merge-file --union %A %O %B", cwd=clone)
+        git("config", "maintenance.auto", "false", cwd=clone)
+        git("config", "gc.pruneExpire", "2.weeks", cwd=clone)
+        git("config", "fetch.autoMaintenance", "false", cwd=clone)
         return os.path.join(clone, "sync-memory.ps1")
 
     def run_ps1(self, clone, *args):
@@ -209,6 +225,31 @@ def test_redact_masks_tokens():
           "github_pat_ 令牌未掩码")
     out = mod.redact("Authorization: Bearer abc123")
     check("Bearer abc123" not in out and "***" in out, "Bearer 令牌未掩码")
+
+
+def test_redact_covers_all_guards_patterns():
+    # 脱敏必须覆盖 guards.json 全部 secret_patterns（防扫描拒绝但日志未掩码的契约裂口）
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("syncmem_redact_all", PY)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    with open(os.path.join(REPO_ROOT, "guards.json"), encoding="utf-8") as fh:
+        guards = json.load(fh)
+    check(len(guards["secret_patterns"]) == 5, "guards.json secret_patterns 应为 5 条")
+    cases = {
+        "ghp_" + "A" * 24: "ghp_***",
+        "gho_" + "A" * 24: "gho_***",
+        "github_pat_" + "a" * 24: "github_pat_***",
+        "AKIA" + "A" * 16: "AKIA***",
+        # 样例运行时拼接，避免文件内出现可被扫描模式命中的字面样值（自命中误报）
+        "-----BEGIN " + "RSA PRIVATE KEY-----": "-----BEGIN PRIVATE KEY HEADER-----",
+        "Bearer " + "a" * 24: "Bearer ***",
+    }
+    for sample, expected in cases.items():
+        out = mod.redact(sample)
+        check(out == expected,
+              "redact(%r...) = %r，期望 %r（guards.json 模式脱敏覆盖不完整）"
+              % (sample[:24], out, expected))
 
 
 @sandboxed
@@ -358,7 +399,7 @@ def test_py_secret_scan_blocks_push(sb):
     before = sb.remote_head()
     with open(os.path.join(clone, "memory", "决策.md"), "a",
               encoding="utf-8") as fh:
-        fh.write("\nghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n")
+        fh.write("\n" + "ghp_" + "A" * 32 + "\n")  # 运行时拼接，防测试文件自命中扫描模式
     git("add", "-A", cwd=clone)
     git("commit", "-m", "leak", cwd=clone)
     p = sb.run_py(script, "push")
@@ -417,10 +458,45 @@ def test_py_dangling_ref_rejected(sb):
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     dead = "deadbeef" + "0" * 32  # 40 位 hex，对象必然不存在
+    # 注意：add_clone 的 `push -u` 已生成 loose tracking ref 文件，断言必须比对内容
+    # 是否被改写，而非「文件不应存在」（原断言在 loose ref 环境下假红）。
+    ref_path = os.path.join(clone, ".git", "refs", "remotes", "origin", "main")
+    before = None
+    if os.path.isfile(ref_path):
+        with open(ref_path, "r", encoding="ascii") as fh:
+            before = fh.read().strip()
     ok = mod.restore_tracking_ref(dead)
     check(ok is False, "悬空对象不应写入 tracking ref")
-    ref_path = os.path.join(clone, ".git", "refs", "remotes", "origin", "main")
-    check(not os.path.isfile(ref_path), "不应生成悬空 tracking ref 文件")
+    after = None
+    if os.path.isfile(ref_path):
+        with open(ref_path, "r", encoding="ascii") as fh:
+            after = fh.read().strip()
+    check(after == before,
+          "悬空对象不应改写既有 tracking ref 文件（原=%s 现=%s）" % (before, after))
+
+
+@sandboxed
+def test_py_lock_stale_pid_cleared(sb):
+    """P1 回归：陈旧锁（持锁 PID 已退出，但 Windows 进程对象可能尚存）必须能被清理，
+    不得永久楔住同步。os.kill(pid,0) 语义跨构建不一致，判活改 OpenProcess+GetExitCodeProcess。"""
+    clone = sb.add_clone("a")
+    script = sb.install_py(clone)
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("syncmem_lock2", script)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    child = subprocess.Popen([sys.executable, "-c", "pass"])
+    child.wait()
+    dead_pid = child.pid
+    lock = os.path.join(clone, ".sync.lock")
+    with open(lock, "w", encoding="ascii") as fh:
+        fh.write(str(dead_pid))
+    try:
+        ok = mod.acquire_lock()
+        check(ok is True, "陈旧锁（已退出 PID=%s）应被清理并成功加锁" % dead_pid)
+    finally:
+        if os.path.exists(lock):
+            os.remove(lock)
 
 
 @sandboxed
@@ -478,7 +554,7 @@ def test_ps1_secret_scan_blocks(sb):
     sb.install_ps1(clone, workdir)
     before = sb.remote_head()
     with open(os.path.join(workdir, "画像.md"), "a", encoding="utf-8") as fh:
-        fh.write("\nghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n")
+        fh.write("\n" + "ghp_" + "A" * 32 + "\n")  # 运行时拼接，防测试文件自命中扫描模式
     p = sb.run_ps1(clone)
     check(p.returncode != 0, p.stdout + p.stderr)
     check("secret" in (p.stdout + p.stderr), p.stdout + p.stderr)
@@ -499,6 +575,95 @@ def test_ps1_commit_repo_commits_docs(sb):
     check(sb.remote_head() != before, "-CommitRepo 应产生新提交并推送")
     check("repo sync" in git("log", "--oneline", "-3", cwd=clone).stdout,
           "git log 应出现 repo sync 提交")
+
+
+@sandboxed
+def test_ps1_doctor_detects_hook_drift(sb):
+    """P1 回归：全局钩子（生效协议副本）与仓库 AGENTS.md 不一致时 doctor 必须 FAIL；
+    对齐后 PASS。缺失钩子为 WARN（新机接入顺序允许 doctor 先于消费端准备）。"""
+    clone = sb.add_clone("repo")
+    workdir = os.path.join(sb.tmp, "working")
+    hook = os.path.join(sb.tmp, "AGENTS-hook.md")
+    with open(hook, "w", encoding="utf-8") as fh:
+        fh.write("旧版协议副本（vNext-1.2）……\n")
+    sb.install_ps1(clone, workdir, hook=hook)
+    p1 = sb.run_ps1(clone, "-Doctor")
+    check(p1.returncode != 0, "钩子漂移时 doctor 应 FAIL\n" + p1.stdout + p1.stderr)
+    check("global hook" in p1.stdout, "输出应含 global hook 检查项\n" + p1.stdout)
+    shutil.copy(os.path.join(clone, "AGENTS.md"), hook)
+    p2 = sb.run_ps1(clone, "-Doctor")
+    check(p2.returncode == 0, "钩子对齐后 doctor 应 PASS\n" + p2.stdout + p2.stderr)
+
+
+@sandboxed
+def test_ps1_push_scopes_to_index_files(sb):
+    """P2 回归：push 只处理 index.json 声明的必需文件——工作区额外 .md 不得入库，
+    仓库既有非 index .md 不得被删除。"""
+    clone = sb.add_clone("repo")
+    workdir = os.path.join(sb.tmp, "working")
+    sb.install_ps1(clone, workdir)
+    extra = os.path.join(workdir, "私密笔记.md")
+    with open(extra, "w", encoding="utf-8") as fh:
+        fh.write("用户私有，不应进入仓库\n")
+    with open(os.path.join(clone, "memory", "备注.md"), "w", encoding="utf-8") as fh:
+        fh.write("仓库既有备注（非 index）\n")
+    git("add", "-A", cwd=clone)
+    git("commit", "-m", "add non-index", cwd=clone)
+    git("push", "-u", "origin", "main", cwd=clone)
+    with open(os.path.join(workdir, "画像.md"), "a", encoding="utf-8") as fh:
+        fh.write("\n推送触发\n")
+    p = sb.run_ps1(clone)
+    check(p.returncode == 0, p.stdout + p.stderr)
+    check("Memory synced" in p.stdout, p.stdout)
+    checkclone = os.path.join(sb.tmp, "check-scope")
+    sh([GIT, "clone", sb.remote, checkclone])
+    memdir = os.path.join(checkclone, "memory")
+    check(not os.path.isfile(os.path.join(memdir, "私密笔记.md")),
+          "工作区非 index 文件不应入库")
+    check(os.path.isfile(os.path.join(memdir, "备注.md")),
+          "仓库既有非 index 文件不应被删除")
+    check(not os.path.isfile(os.path.join(clone, "memory", "私密笔记.md")),
+          "push 不应复制非 index 文件到仓库")
+
+
+@sandboxed
+def test_ps1_pull_pending_writeback_keeps_extras_and_backup(sb):
+    """P1/P2 回归：pending writeback 回写成功路径——非 index 工作区文件不得被删除，
+    写回备份必须保留（供恢复），pending 标记清除。"""
+    clone = sb.add_clone("repo")
+    workdir = os.path.join(sb.tmp, "working")
+    sb.install_ps1(clone, workdir)
+    with open(os.path.join(clone, "memory", "状态.md"), "a", encoding="utf-8") as fh:
+        fh.write("\n远端更新\n")
+    git("add", "-A", cwd=clone)
+    git("commit", "-m", "remote update", cwd=clone)
+    git("push", "-u", "origin", "main", cwd=clone)
+    with open(os.path.join(workdir, "画像.md"), "a", encoding="utf-8") as fh:
+        fh.write("\n本地未同步\n")
+    with open(os.path.join(workdir, "私有.md"), "w", encoding="utf-8") as fh:
+        fh.write("用户私有\n")
+    with open(os.path.join(clone, ".pending-writeback"), "w", encoding="utf-8") as fh:
+        fh.write("Created: 2026-08-16 00:00:00\n状态.md\n")
+    p = sb.run_ps1(clone, "-Pull")
+    check(p.returncode == 0, p.stdout + p.stderr)
+    check(os.path.isfile(os.path.join(workdir, "私有.md")),
+          "非 index 工作区文件不应被删除")
+    check(not os.path.exists(os.path.join(clone, ".pending-writeback")),
+          "pending 标记应清除")
+    snaps = os.path.join(clone, ".conflict-snapshots")
+    backups = []
+    if os.path.isdir(snaps):
+        backups = [d for d in os.listdir(snaps)
+                   if d.startswith("codex-memory-writeback-")]
+    check(len(backups) >= 1, "成功回写后备份应保留（供恢复）")
+    if backups:
+        bdir = os.path.join(snaps, backups[0])
+        btext = ""
+        if os.path.isfile(os.path.join(bdir, "画像.md")):
+            with open(os.path.join(bdir, "画像.md"), encoding="utf-8") as fh:
+                btext = fh.read()
+        check("本地未同步" in btext,
+              "备份应含被覆盖前的工作区内容（可恢复）")
 
 
 def test_consumer_conformed_detects_triggertype_ban():
@@ -556,13 +721,42 @@ def test_guards_json_single_source():
           "py 生效密钥模式表应等于 guards.json（唯一事实源，防双写漂移）")
 
 
+def test_repo_files_do_not_self_match_secret_patterns():
+    # 防自命中误报：仓库文本（脚本/测试/文档/配置）不得出现可被 guards.json 扫描模式
+    # 命中的字面样值（如掩码替换串、测试夹具）。否则 -CommitRepo 的 staged 扫描会把
+    # 自己的代码当密钥拒绝提交。真实样例必须运行时拼接（见 test_redact_covers_all_guards_patterns）。
+    guards = json.load(open(os.path.join(REPO_ROOT, "guards.json"), encoding="utf-8"))
+    hits = []
+    for root, _dirs, files in os.walk(REPO_ROOT):
+        rel_root = os.path.relpath(root, REPO_ROOT)
+        if rel_root.split(os.sep)[0] in (".git", ".conflict-snapshots", "__pycache__"):
+            continue
+        for name in files:
+            if name.endswith(".pyc"):
+                continue
+            p = os.path.join(root, name)
+            try:
+                text = open(p, encoding="utf-8", errors="replace").read()
+            except Exception:
+                continue
+            for pat in guards["secret_patterns"]:
+                m = re.search(pat, text)
+                if m:
+                    hits.append("%s -> %r" % (os.path.relpath(p, REPO_ROOT), m.group(0)[:40]))
+    check(not hits, "仓库文件自命中扫描模式（-CommitRepo 会被误拒）：\n" + "\n".join(hits))
+
+
 TESTS = [
     test_index_json_recall_mapping_valid,
     test_redact_masks_tokens,
+    test_redact_covers_all_guards_patterns,
     test_ps1_no_change_skips_commit,
     test_ps1_change_commits_and_pushes,
     test_ps1_secret_scan_blocks,
     test_ps1_commit_repo_commits_docs,
+    test_ps1_doctor_detects_hook_drift,
+    test_ps1_push_scopes_to_index_files,
+    test_ps1_pull_pending_writeback_keeps_extras_and_backup,
     test_py_push_is_idempotent,
     test_py_concurrent_merge_no_loss,
     test_py_sync_failure_writes_marker_and_retries,
@@ -572,12 +766,14 @@ TESTS = [
     test_py_secret_scan_blocks_push,
     test_py_access_none_skips_pull,
     test_py_lock_blocks_concurrent,
+    test_py_lock_stale_pid_cleared,
     test_py_dangling_ref_rejected,
     test_py_pull_ahead_self_heals,
     test_ps1_pull_fails_closed_on_bad_remote,
     test_ps1_deploy_guard_blocks_workbuddy_path,
     test_consumer_conformed_detects_triggertype_ban,
     test_guards_json_single_source,
+    test_repo_files_do_not_self_match_secret_patterns,
 ]
 
 

@@ -241,16 +241,42 @@ def memory_dir_healthy():
     return True
 
 
+def index_recall_valid():
+    """校验 memory/index.json 的 recall 段名在对应 .md 中真实存在（标题改写会静默失效）。
+    返回 (ok, detail)。"""
+    idx = load_index()
+    if not idx or not isinstance(idx.get("recall"), dict):
+        return False, "index.json 缺失或 recall 不可解析"
+    bad = []
+    for key, entries in idx.get("recall", {}).items():
+        for entry in entries or []:
+            f = entry.get("file")
+            p = os.path.join(REPO, "memory", f)
+            try:
+                with open(p, "r", encoding="utf-8") as fh:
+                    text = fh.read()
+            except Exception:
+                bad.append("%s %s 不可读" % (key, f))
+                continue
+            for sec in entry.get("sections") or []:
+                if sec and ("## " + sec) not in text:
+                    bad.append("%s %s「%s」" % (key, f, sec))
+    return (len(bad) == 0), ("; ".join(bad))
+
+
 _TOKEN_RE = re.compile(
     r"(?i)(bearer\s+)[A-Za-z0-9._-]+"
     r"|gho_[A-Za-z0-9]+"
     r"|ghp_[A-Za-z0-9]+"
     r"|github_pat_[A-Za-z0-9_]+"
+    r"|AKIA[0-9A-Z]{16}"
+    r"|-----BEGIN (RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----"
 )
 
 
 def redact(text):
-    """掩码凭据样值（gho_/ghp_/github_pat_/Bearer），不落到输出或 .sync-failed。"""
+    """掩码凭据样值（覆盖 guards.json 全部模式：gho_/ghp_/github_pat_/AKIA/私钥头/Bearer），
+    不落到输出或 .sync-failed。"""
     if not text:
         return text
 
@@ -265,6 +291,11 @@ def redact(text):
             return "ghp_***"
         if token.startswith("github_pat_"):
             return "github_pat_***"
+        if token.startswith("AKIA"):
+            return "AKIA***"
+        if token.startswith("-----BEGIN"):
+            # 掩码输出刻意不含「-----BEGIN ... PRIVATE KEY-----」字面（防自命中扫描模式）
+            return "-----BEGIN PRIVATE KEY HEADER-----"
         return token
 
     return _TOKEN_RE.sub(mask, text)
@@ -301,8 +332,26 @@ def _lock_path():
 
 
 def _pid_alive(pid):
+    """PID 是否存活。Windows 不用 os.kill(pid, 0)：该写法语义跨构建不一致（历史构建会
+    TerminateProcess 杀进程，本机构建对已退出但对象尚存的 PID 不报错，均不可靠）。
+    改用 OpenProcess + GetExitCodeProcess（STILL_ACTIVE=259）判活。POSIX 保留 os.kill。"""
     if not pid or pid <= 0:
         return False
+    if os.name == "nt":
+        import ctypes
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        STILL_ACTIVE = 259
+        k32 = ctypes.windll.kernel32
+        handle = k32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not handle:
+            return False
+        try:
+            code = ctypes.c_ulong()
+            if k32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                return code.value == STILL_ACTIVE
+            return False
+        finally:
+            k32.CloseHandle(handle)
     try:
         os.kill(pid, 0)
         return True
@@ -847,6 +896,8 @@ def cmd_doctor():
     report("working tree clean", dirty == [],
            "" if dirty is None else ("clean" if dirty == [] else "有未提交变更"))
     report("memory dir healthy (files per memory/index.json)", memory_dir_healthy())
+    recall_ok, recall_detail = index_recall_valid()
+    report("index.json recall 段名有效", recall_ok, recall_detail)
     # 版本对齐阻挡态：本地落后远端时必须显式标红并指引 re-pull（doctor 不再静默放行）
     if local and remote:
         if local == remote:

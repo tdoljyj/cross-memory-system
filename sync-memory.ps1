@@ -43,6 +43,7 @@ $HostName  = $env:COMPUTERNAME
 $ProxyUrl  = "http://127.0.0.1:7897"
 $MemoryDir = Join-Path $env:USERPROFILE "Documents\Codex\memory"
 $GitEmail  = "tdoljyj@users.noreply.github.com"
+$GlobalHookPath = Join-Path $env:USERPROFILE ".codex\AGENTS.md"
 if (Test-Path -LiteralPath $configFile) { . $configFile }
 
 $identity    = "$AgentName@$HostName"
@@ -124,6 +125,22 @@ function Test-MemoryDirsEqual {
     return $true
 }
 
+function Test-MemoryRequiredEqual {
+    # 只比对 index.json 声明的必需文件。非 index 的 .md 属用户自有：不同步、不删除、
+    # 不参与同步判定（防越界提交与静默丢失）。
+    param([string]$DirA, [string]$DirB, [string[]]$RequiredFiles)
+    if ($null -eq $RequiredFiles -or $RequiredFiles.Count -eq 0) { return $false }
+    foreach ($name in $RequiredFiles) {
+        $fa = Join-Path $DirA $name
+        $fb = Join-Path $DirB $name
+        if (-not (Test-Path -LiteralPath $fa -PathType Leaf) -or -not (Test-Path -LiteralPath $fb -PathType Leaf)) { return $false }
+        $ha = (Get-FileHash -LiteralPath $fa -Algorithm SHA256 -ErrorAction SilentlyContinue).Hash
+        $hb = (Get-FileHash -LiteralPath $fb -Algorithm SHA256 -ErrorAction SilentlyContinue).Hash
+        if (-not $ha -or -not $hb -or $ha -ne $hb) { return $false }
+    }
+    return $true
+}
+
 function Get-MemoryIndex {
     # Single source of truth for the memory file set and L1-L6 recall mapping
     # (memory/index.json). Returns $null when the index is missing or unparsable,
@@ -164,6 +181,7 @@ function Test-MemoryFilesHealthy {
 function Redact-Text {
     # Mask credential-like values before they reach stdout, error text, or
     # .sync-failed markers (baseline 附录 C「日志脱敏」).
+    # 覆盖范围须与 guards.json 的 secret_patterns 保持一致（AKIA / 私钥头同样掩码）。
     param([AllowEmptyString()][string]$Text)
     if ([string]::IsNullOrEmpty($Text)) { return $Text }
     $s = $Text
@@ -171,6 +189,9 @@ function Redact-Text {
     $s = $s -replace 'gho_[A-Za-z0-9]+', 'gho_***'
     $s = $s -replace 'github_pat_[A-Za-z0-9_]+', 'github_pat_***'
     $s = $s -replace '(?i)(bearer\s+)[A-Za-z0-9._-]+', '${1}***'
+    $s = $s -replace 'AKIA[0-9A-Z]{16}', 'AKIA***'
+    # 掩码输出刻意不含「-----BEGIN ... PRIVATE KEY-----」字面（防自命中扫描模式）
+    $s = $s -replace '-----BEGIN (RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----', '-----BEGIN PRIVATE KEY HEADER-----'
     return $s
 }
 
@@ -276,11 +297,11 @@ function Copy-MemoryToWorkingDir {
         if (-not (Test-Path -LiteralPath $memorySrc)) {
             New-Item -ItemType Directory -Path $memorySrc -Force -ErrorAction Stop | Out-Null
         }
-        Copy-Item -Path (Join-Path $memoryDst "*.md") -Destination $memorySrc -Force -ErrorAction Stop
-        # 删除工作区中仓库已不存在的 .md（删除传播）
-        $repoNames = @(Get-ChildItem -Path (Join-Path $memoryDst "*.md") -File -ErrorAction SilentlyContinue | ForEach-Object { $_.Name })
-        Get-ChildItem -Path (Join-Path $memorySrc "*.md") -File -ErrorAction SilentlyContinue | Where-Object { $repoNames -notcontains $_.Name } | Remove-Item -Force -ErrorAction SilentlyContinue
-        return (Test-MemoryDirsEqual $memoryDst $memorySrc)
+        # 只复制 index.json 声明的必需文件；工作区/仓库中的非 index .md 保留不动。
+        foreach ($name in $required) {
+            Copy-Item -LiteralPath (Join-Path $memoryDst $name) -Destination (Join-Path $memorySrc $name) -Force -ErrorAction Stop
+        }
+        return (Test-MemoryRequiredEqual $memoryDst $memorySrc $required)
     } catch {
         return $false
     }
@@ -403,24 +424,32 @@ function Confirm-RemotePushed {
 # Final safety net: any unhandled terminating error must still leave a failure
 # marker and clean up an in-progress merge, instead of dying silently.
 trap {
-    Set-SyncFailed -Message ("Unhandled error during sync: " + $_.Exception.Message)
+    $trapMsg = "Unhandled error during sync: " + $_.Exception.Message
+    if ($trapMsg -match "dubious ownership|Permission denied|Access is denied") {
+        $trapMsg += "`n提示：疑似在沙盒内运行（沙箱用户 vs 真实用户所有权差异）；请以非沙盒方式执行（批准放行 / 系统 PowerShell）后重试。"
+    }
+    Set-SyncFailed -Message $trapMsg
     Release-SyncLock
     try { git -C $repoRoot merge --abort 2>&1 | Out-Null } catch { }
-    Write-Error -ErrorAction Continue ("Unhandled error during sync: " + $_.Exception.Message)
+    Write-Error -ErrorAction Continue $trapMsg
     exit 1
 }
 
 $ErrorActionPreference = "Continue"
 try {
-    git -C $repoRoot config user.name $identity
-    if ($LASTEXITCODE -ne 0) { throw "git config user.name failed" }
-    git -C $repoRoot config user.email $GitEmail
-    if ($LASTEXITCODE -ne 0) { throw "git config user.email failed" }
+    $idOut1 = git -C $repoRoot config user.name $identity 2>&1
+    if ($LASTEXITCODE -ne 0) { throw ("git config user.name failed: " + (($idOut1 | Out-String).Trim())) }
+    $idOut2 = git -C $repoRoot config user.email $GitEmail 2>&1
+    if ($LASTEXITCODE -ne 0) { throw ("git config user.email failed: " + (($idOut2 | Out-String).Trim())) }
 } catch {
-    Write-Warning "git identity could not be set: $($_.Exception.Message)"
+    $idErr = $_.Exception.Message
+    Write-Warning "git identity could not be set: $idErr"
+    if ($idErr -match "dubious ownership|Permission denied|denied|Access is denied") {
+        Write-Warning "常见原因：沙盒内 git 无法写仓库配置（沙箱用户 vs 真实用户所有权差异）。请以非沙盒方式运行（批准放行 / 系统 PowerShell）后重试。"
+    }
     if (-not $Pull -and -not $Doctor) {
-        Set-SyncFailed -Message "git identity could not be set: $($_.Exception.Message)"
-        Write-Error -ErrorAction Continue "git identity could not be set: $($_.Exception.Message)"
+        Set-SyncFailed -Message "git identity could not be set: $idErr"
+        Write-Error -ErrorAction Continue "git identity could not be set: $idErr"
         exit 1
     }
 } finally {
@@ -499,6 +528,37 @@ function Invoke-DoctorMode {
 
     Report "memory dir exists" (Test-Path -LiteralPath $memorySrc)
 
+    # 全局钩子一致性：生效协议副本必须与仓库 AGENTS.md 字节一致，否则执行层落后于仓库。
+    if (Test-Path -LiteralPath $GlobalHookPath) {
+        $repoAgentsHash = (Get-FileHash -LiteralPath (Join-Path $repoRoot "AGENTS.md") -Algorithm SHA256 -ErrorAction SilentlyContinue).Hash
+        $hookAgentsHash = (Get-FileHash -LiteralPath $GlobalHookPath -Algorithm SHA256 -ErrorAction SilentlyContinue).Hash
+        $hookOk = (-not [string]::IsNullOrEmpty($repoAgentsHash)) -and ($repoAgentsHash -eq $hookAgentsHash)
+        Report "global hook matches repo AGENTS.md" $hookOk ($(if ($hookOk) { "一致" } else { "漂移：请复制仓库 AGENTS.md 到 $GlobalHookPath（协议执行层落后于仓库）" }))
+    } else {
+        Write-Output ("[WARN] 全局钩子未找到：$GlobalHookPath（新机接入时按 README 准备消费端后补检）")
+    }
+
+    # index.json 召回段名有效性：标题改写会静默失效，doctor 做运行时校验（与测试同口径）。
+    $idx = Get-MemoryIndex $memoryDst
+    if ($null -eq $idx -or $null -eq $idx.recall) {
+        Report "index.json recall 段名有效" $false "index.json 缺失或 recall 不可解析"
+    } else {
+        $badSections = @()
+        foreach ($type in @('L1','L2','L3','L4','L5','L6')) {
+            foreach ($entry in @($idx.recall.$type)) {
+                if ($null -eq $entry) { continue }
+                $mf = Join-Path $memoryDst ([string]$entry.file)
+                foreach ($sec in @($entry.sections)) {
+                    if ($null -eq $sec -or [string]::IsNullOrWhiteSpace([string]$sec)) { continue }
+                    $found = (Test-Path -LiteralPath $mf -PathType Leaf) -and
+                             (Select-String -LiteralPath $mf -Pattern ("^## " + [regex]::Escape([string]$sec)) -Quiet -ErrorAction SilentlyContinue)
+                    if (-not $found) { $badSections += ($type + " " + $entry.file + "「" + $sec + "」") }
+                }
+            }
+        }
+        Report "index.json recall 段名有效" ($badSections.Count -eq 0) ($badSections -join ', ')
+    }
+
     $allDirty = @(git -C $repoRoot -c core.quotepath=false status --porcelain 2>$null)
     if ($allDirty.Count -eq 0) {
         Write-Output "[INFO] repo working tree clean (all paths)"
@@ -553,6 +613,12 @@ function Invoke-PullMode {
         $script:exitCode = 1; return
     }
     Clear-StaleTempBackups
+    $requiredMemoryFiles = Get-MemoryFileList $memoryDst
+    if ($null -eq $requiredMemoryFiles) {
+        Set-SyncFailed -Message "Refusing to pull: memory/index.json missing or invalid (canonical file set unknown)."
+        Write-Error -ErrorAction Continue "Refusing to pull: memory/index.json missing or invalid."
+        $script:exitCode = 1; return
+    }
     $nonMemoryDirty = Get-NonMemoryDirtyCount
     if ($nonMemoryDirty -gt 0) {
         Write-Warning "$nonMemoryDirty uncommitted non-memory change(s) in repo (scripts/docs) will NOT be committed or pushed by this sync; commit them separately if intended."
@@ -562,7 +628,7 @@ function Invoke-PullMode {
         Write-Error -ErrorAction Continue "Repo working tree has uncommitted memory changes; resolve them before running -Pull."
         $script:exitCode = 1; return
     }
-    if (-not (Test-Path $pendingFile) -and -not (Test-MemoryDirsEqual $memorySrc $memoryDst)) {
+    if (-not (Test-Path $pendingFile) -and -not (Test-MemoryRequiredEqual $memorySrc $memoryDst $requiredMemoryFiles)) {
         Set-SyncFailed -Message "Working memory directory has local changes not yet synced to the repo; run a normal sync or resolve before -Pull."
         Write-Error -ErrorAction Continue "Working memory directory has local changes not yet synced to the repo; run a normal sync or resolve before -Pull."
         $script:exitCode = 1; return
@@ -581,11 +647,11 @@ function Invoke-PullMode {
 
     $conflictBackupDir = Join-Path (Join-Path $repoRoot ".conflict-snapshots") ("codex-memory-conflict-" + (Get-Date -Format 'yyyyMMdd-HHmmss'))
     try {
-        Invoke-Git fetch origin
+        Invoke-Git fetch origin main
         $local = git -C $repoRoot rev-parse HEAD
-        $remoteHash = Get-RemoteMainHash
+        $remoteHash = (git -C $repoRoot rev-parse FETCH_HEAD 2>$null | Out-String).Trim()
         if (-not ($remoteHash -match '^[0-9a-f]{40}$')) {
-            Set-SyncFailed -Message "ls-remote 未返回可用的 main hash；拒绝把本地缓存当作已对齐。"
+            Set-SyncFailed -Message "fetch 未返回可用的 main hash（FETCH_HEAD）；拒绝把本地缓存当作已对齐。"
             Write-Error -ErrorAction Continue "远端 hash 不可用，-Pull 以失败退出（fail-closed）。"
             $script:exitCode = 1; return
         }
@@ -606,7 +672,7 @@ function Invoke-PullMode {
         # the working copy is not carrying unsynced local edits in the normal case;
         # when a previous write-back is still pending we back up before overwriting.
         if (($changed.Count -gt 0) -or (Test-Path $pendingFile)) {
-            if (Test-MemoryDirsEqual $memoryDst $memorySrc) {
+            if (Test-MemoryRequiredEqual $memoryDst $memorySrc $requiredMemoryFiles) {
                 Clear-PendingWriteback
                 Write-Output "Working memory directory already matches repo; cleared pending write-back flag."
             } else {
@@ -614,10 +680,7 @@ function Invoke-PullMode {
                 Backup-WorkingMemory $backupDir
                 if (Copy-MemoryToWorkingDir) {
                     Clear-PendingWriteback
-                    Write-Output "Pulled changes written back to working memory directory. Previous working copy backed up to $backupDir"
-                    # On success the plaintext working-memory backup is no longer needed
-                    # for recovery; remove it immediately instead of waiting for age-out.
-                    if (Test-Path -LiteralPath $backupDir) { Remove-Item -LiteralPath $backupDir -Recurse -Force -ErrorAction SilentlyContinue }
+                    Write-Output "Pulled changes written back to working memory directory. Previous working copy backed up to $backupDir（备份保留至保留期清理，供恢复）"
                 } else {
                     Set-PendingWriteback $changed
                     Write-Output "WARNING: could not auto-write repo changes to the working memory directory (likely read-only for shell)."
@@ -764,7 +827,7 @@ if (Test-RepoMemoryDirty) {
 # (possibly stale) working copy. If the working copy already matches the repo,
 # clear the flag and continue.
 if (Test-Path $pendingFile) {
-    if (Test-MemoryDirsEqual $memoryDst $memorySrc) {
+    if (Test-MemoryRequiredEqual $memoryDst $memorySrc $requiredMemoryFiles) {
         Clear-PendingWriteback
         Write-Output "Pending write-back flag cleared: working memory directory now matches repo."
     } else {
@@ -786,20 +849,22 @@ if (-not (Test-AcquireSyncLock)) {
 }
 $script:lockHeld = $true
 
-Copy-Item -Path (Join-Path $memorySrc "*.md") -Destination $memoryDst -Force
-# 删除仓库中工作区已删除的 .md（删除传播）
-$srcNames = @(Get-ChildItem -Path (Join-Path $memorySrc "*.md") -File -ErrorAction SilentlyContinue | ForEach-Object { $_.Name })
-Get-ChildItem -Path (Join-Path $memoryDst "*.md") -File -ErrorAction SilentlyContinue | Where-Object { $srcNames -notcontains $_.Name } | Remove-Item -Force -ErrorAction SilentlyContinue
+# 只复制 index.json 声明的必需文件；工作区/仓库中的非 index .md 不复制、不删除、
+# 不提交（防越界提交与静默丢失；如仓库存在多余 .md 需人工对齐）。
+foreach ($name in $requiredMemoryFiles) {
+    Copy-Item -LiteralPath (Join-Path $memorySrc $name) -Destination (Join-Path $memoryDst $name) -Force
+}
 
-if (-not (Test-MemoryDirsEqual $memorySrc $memoryDst)) {
+if (-not (Test-MemoryRequiredEqual $memorySrc $memoryDst $requiredMemoryFiles)) {
     Set-SyncFailed -Message "Copy verification failed: working memory and repo memory differ after copy."
     Write-Error -ErrorAction Continue "Copy verification failed: working memory and repo memory differ after copy."
     Release-SyncLock
     $script:exitCode = 1; return
 }
 
-git -C $repoRoot add -A -- memory
-if ($LASTEXITCODE -ne 0) { throw "git add -A -- memory failed (staging memory changes)" }
+$memoryPaths = @($requiredMemoryFiles | ForEach-Object { "memory/" + $_ })
+git -C $repoRoot add -A -- $memoryPaths
+if ($LASTEXITCODE -ne 0) { throw "git add -A -- memory (index files) failed (staging memory changes)" }
 $staged = @(git -C $repoRoot -c core.quotepath=false diff --cached --name-only)
 if ($LASTEXITCODE -ne 0) { throw "git diff --cached --name-only failed" }
 if (-not $staged) {
@@ -811,8 +876,8 @@ if (-not $staged) {
 
 $conflictBackupDir = Join-Path (Join-Path $repoRoot ".conflict-snapshots") ("codex-memory-conflict-" + (Get-Date -Format 'yyyyMMdd-HHmmss'))
 try {
-    Invoke-Git fetch origin
-    $remoteHash = Get-RemoteMainHash
+    Invoke-Git fetch origin main
+    $remoteHash = (git -C $repoRoot rev-parse FETCH_HEAD 2>$null | Out-String).Trim()
     $behind = [int](git -C $repoRoot rev-list --count HEAD..$remoteHash)
     $changed = (($staged -replace '^memory/','') -join ', ')
     git -C $repoRoot commit -m "memory sync [$identity]: $changed"
@@ -824,8 +889,8 @@ try {
 
     Invoke-Git push origin main
     if (-not (Confirm-RemotePushed)) {
-        Invoke-Git fetch origin
-        $remoteHash = Get-RemoteMainHash
+        Invoke-Git fetch origin main
+        $remoteHash = (git -C $repoRoot rev-parse FETCH_HEAD 2>$null | Out-String).Trim()
         $behind = [int](git -C $repoRoot rev-list --count HEAD..$remoteHash)
         if ($behind -gt 0) {
             Invoke-Git merge --no-edit FETCH_HEAD

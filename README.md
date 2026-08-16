@@ -48,12 +48,13 @@
 
 1. **安装 GitHub CLI 并登录同一账号**：`gh auth login`。git 侧凭据统一走 gh 生成的 git credential helper（`git config --show-origin --get credential.helper` 应指向 gh 的 `auth git-credential`，而非 git-credential-manager）；**不要**把 `gho_`/`ghp_` 长期令牌 `setx` 进用户环境变量（常驻令牌会被任意本机进程读取）。两脚本的 doctor 都会对 `GITHUB_PAT_TOKEN` / `GH_TOKEN` 给出 WARN，并对输出做令牌掩码。
 2. **克隆私有仓库 `tdoljyj/cross-memory-system` 到本端工作区**（路径按端侧差异表；本端绝不克隆到对方工作区，也不直写对方克隆）。克隆后先做**版本真值核对**：取 `git ls-remote origin main` 输出首列 hash（`git ls-remote origin main | cut -f1`）与 `git rev-parse HEAD` 比对，一致再继续——此步只验证 clone 动作本身正确并建立基线（刚克隆的 HEAD 天然等于远端，不防后续漂移，后续漂移由每次读前对齐兜底）；版本号以仓库根 `VERSION` 文件 + git tag 为准（AGENTS v3.1 硬性 check-list）。
+   > tag 语义：tag 只随版本 bump 移动，doc-only 变更不移动 tag；HEAD 领先 tag 属正常，以 `ls-remote` / `rev-parse HEAD` 比对为准。
 3. **建立本机配置**（gitignored，各端格式见下表；脚本缺省回落内置默认，换机器只改这一个文件）。
 4. **写入推荐 git 配置**（两脚本均提供 bootstrap，写入内容一致）：
    - `core.autocrlf=false`（配合 `.gitattributes` 的 `eol=lf`，换行符字节级一致，防互相重写）
    - `merge.union.driver = "git merge-file --union %A %O %B"`（归档.md 并发追加自动合并的必需驱动；须配合 `.gitattributes` 的 `memory/归档.md merge=union` 标注才生效，只配 driver 或只配 attributes 都是 no-op；仅 `git merge` 生效，**禁止 rebase**）
    - `maintenance.auto=false` / `fetch.autoMaintenance=false`（关后台自动维护，防沙盒下 ref 重写）/ `gc.pruneExpire=2.weeks`（不设 `gc.auto`，用 git 默认阈值 6700，小仓库几乎不触发自动 gc，需要时手动 `git gc`）
-5. **跑 doctor 自检**（命令见下表）：覆盖 git 可用性与客户端安全（拒绝 git 可执行文件位于 PortableGit / `.workbuddy` 目录）、远端可达与凭据、tracking ref、ref 写入持久性、`core.autocrlf`、`.gitattributes`、union 驱动、残留标记、记忆目录健康（按 `memory/index.json` 的 files 清单，文件缺失或为空即 FAIL，防推空仓）、本地与远端版本对齐、消费端 conform 探针。**全部 PASS 才正式接入**。
+5. **跑 doctor 自检**（命令见下表）：覆盖 git 可用性与客户端安全（拒绝 git 可执行文件位于 PortableGit / `.workbuddy` 目录）、远端可达与凭据、tracking ref、ref 写入持久性、`core.autocrlf`、`.gitattributes`、union 驱动、残留标记、记忆目录健康（按 `memory/index.json` 的 files 清单，文件缺失或为空即 FAIL，防推空仓）、全局钩子一致性（Codex 侧 ps1 -Doctor 检查 `~/.codex/AGENTS.md` 与仓库 AGENTS.md 哈希一致，漂移=FAIL、缺失=WARN）、index.json 召回段名有效（双端 doctor）、本地与远端版本对齐、消费端 conform 探针。**全部 PASS 才正式接入**。
 6. **准备消费端 + 新会话验证**：按端侧差异表完成消费端配置。新会话按 Memory Router 命中执行读前对齐（Codex：`-Pull`；WorkBuddy：`python sync-memory.py pull`），问「我是谁」能直接接上即通过；再让 AI 修改记忆文件一行并完成一次提交推送，`git log` 应出现 `AI名@机器名` 身份的新 commit。
 
 ### 端侧差异（Codex / WorkBuddy）
@@ -81,6 +82,7 @@
 - **doctor：`memory dir healthy` FAIL** → 按 `memory/index.json` 的 files 清单，每个文件必须存在且非空：Codex 侧确认已复制完整；WorkBuddy 侧确认克隆内 `memory\` 完好（防把近空目录推成空仓）。
 - **doctor：`local == remote` 标红「本地落后远端」** → 读前必须 re-pull（`-Pull` / `python sync-memory.py pull`），否则结论不可信；标红「分叉」→ 手动语义合并（保留两端内容）后再收敛，**绝不 force push / reset / 以本地覆盖远端**。
 - **`.sync-failed` / `.pending-writeback` 残留** → 上次同步失败或待写回标记：先读标记文件内容定位原因，修复后重跑同步自动清除；`-Pull` 提示 pending write-back 时用 apply_patch 把仓库较新文件写回 Codex 工作区再重跑。
+- **doctor：`global hook matches repo AGENTS.md` FAIL** → Codex 侧全局钩子与仓库 AGENTS.md 不一致（协议执行层落后）：复制仓库 `AGENTS.md` 到 `~/.codex/AGENTS.md` 后重跑；钩子缺失为 WARN（新机按接入步骤准备消费端即可）。
 - **push 被拒（non-fast-forward）** → 远端有新提交：`git fetch` + `git merge --no-edit FETCH_HEAD`，归档.md 由 union 驱动自动合并、其余文件语义合并，解决后重推。
 - **push 后 `git status` 显示 ahead/gone** → 沙盒 overlay 不写 tracking ref 所致（cosmetic）：以 `git ls-remote origin main` 为准，或跑 doctor 自愈补写；真伪以 `merge-base --is-ancestor` 判定。
 - **WorkBuddy 侧 `[代理 ...] 不可达`** → 代理未启动：启动后重试，或改 `sync.config.json` 的 `proxy`；沙盒内 raw TCP 直连被拦，git 不可绕代理直连。
@@ -92,7 +94,7 @@
 - 钩子指令（AGENTS.md v3.1）：Memory Router 判定本轮产生记忆写入后才运行：`powershell -ExecutionPolicy Bypass -File ~/.codex/projects/codex-memory-system/sync-memory.ps1`
 - 脚本自动：复制最新记忆 → git 提交（无变化则 skip commit）→ 推送；远端有新提交时先拉取再推
 - NO_CHANGE 时不产生任何 commit / push / 缓存失效（基线原则 8）
-- 删除传播护栏：同步前校验工作记忆目录 `.md` ≥ 5 且非空，不足则拒绝同步并写 `.sync-failed`，防推空仓
+- 删除传播护栏：同步前校验 `memory/index.json` 声明的必需文件齐全非空，不足则拒绝同步并写 `.sync-failed`，防推空仓；同步只处理 index 声明的文件——工作区/仓库中的非 index `.md` 不复制、不删除、不提交（防越界提交与静默丢失）
 - 加固（vNext-1.2）：检测到 PortableGit / `.workbuddy` 的 git 客户端时拒绝同步；同步前清理过期 TEMP 备份目录；全仓有未提交的非 memory 变更时给出警告（脚本只提交 memory）；`-Doctor` 会提示归档.md 超瘦身阈值
 - 加固（vNext-1.3）：同步入口 `.sync.lock` 跨进程锁（同机并发 pull/push 拒绝而非交错）；提交前密钥扫描（ghp_/gho_/github_pat_/AKIA/私钥头/Bearer 长值命中即拒绝）；pull 支持 `-Access <scope>`（`NONE` 直接跳过）；`-Doctor` 校验凭据来源是否走 gh 助手
 - 脚本/文档提交：修改 sync 脚本/文档/测试后，运行 `powershell -ExecutionPolicy Bypass -File sync-memory.ps1 -CommitRepo` 提交并推送全部变更（普通记忆同步只提交 `memory/*.md`，不代提交脚本/文档）
@@ -107,7 +109,7 @@
 - **配置参数化（vNext-1.2）**：`sync-memory.py` 支持与脚本同目录、gitignored 的 `sync.config.json`（`{repo, proxy, proxy_host, proxy_port, git_candidates}`），缺省回落内置默认；换机器只改这一个文件
 - **按需触发**（对齐基线 vNext-1.3 / AGENTS v3.1）：Memory Router 命中 T1–T4 才执行 `python sync-memory.py pull`（自动 fetch + 对齐 + 补写 tracking ref + 核验）→ 按 L1–L6 映射读所需文件；T0 通用问题直接回答，不访问记忆
 - 写入上传：本轮产生记忆写入 + commit 后才 `python sync-memory.py push`（非沙盒执行，判据=输出尾 `⚠️ Sandbox bypassed`）；无写入不 push（NO_CHANGE → NO_SYNC）；**不直写 Codex 侧工作区**（`Documents\Codex\memory\` 由 Codex 自己同步）
-- 删除传播护栏：pull/push 前校验 memory 目录 ≥ 5 个非空 `.md`，不足则拒绝并写 `.sync-failed`，防推空仓
+- 删除传播护栏：pull/push 前校验 `memory/index.json` 声明的必需文件齐全非空，不足则拒绝并写 `.sync-failed`，防推空仓
 - 代理预检：`pull` 与 `push` 均先探测代理存活，代理不可达时 3 秒内快速失败而非让 git 卡 60 秒超时
 - git 写操作必须非沙盒执行（dangerouslyDisableSandbox=true），判据=输出末尾 `⚠️ Sandbox bypassed`；push 后用 `git ls-remote origin main` 确认远端 commit；push/pull 后核验统一用 `merge-base --is-ancestor`（祖先判定），并发下本地落后远端不误报
 
