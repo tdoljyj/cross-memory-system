@@ -93,6 +93,13 @@ PROXY_HOST, PROXY_PORT = _proxy_host_port(PROXY)
 
 REPO = os.path.expanduser(_CONFIG.get("repo", "~/.workbuddy/codex-memory-system"))
 
+# 消费端操作记忆协议文件（本端自检对象，per-clone 参数化）：
+# WorkBuddy 端默认 ~/.workbuddy/MEMORY.md；DSH 端经 sync.config.json 的
+# consumer_memory_path 指向 ~/.dsh/MEMORY.md。doctor 的协议新鲜度与
+# conform 触发式禁令探针均只检本端该文件（不越界互检）。
+CONSUMER_MEMORY_PATH = os.path.expanduser(
+    _CONFIG.get("consumer_memory_path", "~/.workbuddy/MEMORY.md"))
+
 # git 优先级：官方 Git for Windows（真非沙盒下健康）> PortableGit（PATH 兜底）
 GIT_CANDIDATES = _CONFIG.get(
     "git_candidates",
@@ -301,8 +308,33 @@ def _lock_path():
 
 
 def _pid_alive(pid):
+    """锁持有者探活。Windows 下 os.kill(pid, 0) 会被 CPython 映射为
+    TerminateProcess(pid, 0)（强制终止，sig 即退出码），不是 liveness 探测——
+    持锁并发时会把另一个同步进程杀死，PID 复用后还会误杀无关进程（P1-1 修复）。
+    Windows 改用 OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION) + GetExitCodeProcess：
+    打开失败=进程不存在；ERROR_ACCESS_DENIED(5)=无权打开但进程存在，按存活保守处理。"""
     if not pid or pid <= 0:
         return False
+    if os.name == "nt":
+        try:
+            import ctypes
+            kernel32 = ctypes.windll.kernel32
+            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+            STILL_ACTIVE = 259
+            handle = kernel32.OpenProcess(
+                PROCESS_QUERY_LIMITED_INFORMATION, False, int(pid))
+            if not handle:
+                # 5 = ERROR_ACCESS_DENIED：进程存在但无权查询 → 保守按存活
+                return ctypes.get_last_error() == 5
+            try:
+                code = ctypes.c_ulong()
+                if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                    return True  # 查询失败 → 保守按存活，防锁被偷
+                return code.value == STILL_ACTIVE
+            finally:
+                kernel32.CloseHandle(handle)
+        except Exception:
+            return True  # 探活机制自身异常 → 保守按存活
     try:
         os.kill(pid, 0)
         return True
@@ -545,11 +577,12 @@ def fetch_and_merge():
 
 def cmd_pull(access=""):
     print("== 开场拉取对齐 ==")
-    ensure_git_safe()
-    cleanup_stale_backups()
+    # Access=NONE 必须是纯短路：在任何写副作用（git 安全护栏标记 / TEMP 清理）之前返回
     if access.strip().upper() == "NONE":
         print("Memory Access = NONE; 按需读取判定为无关，跳过 pull")
         return
+    ensure_git_safe()
+    cleanup_stale_backups()
     if not resolve_network():
         print("[!] 代理 %s 不可达且直连失败（Clash 未启动？），终止以免 git 卡死" % PROXY)
         write_marker(".sync-failed", "pull aborted: proxy %s unreachable" % PROXY)
@@ -660,6 +693,7 @@ def cmd_push():
         if ok:
             print("已推送 ✓")
             clear_marker(".sync-failed")
+            clear_marker(".needs-push")  # P1-3：push 成功后清除领先标记，生命周期闭环
             sys.exit(0)
         print("未推上远端 ⚠️（本地与远端分叉；沙盒内 push 可能未落盘，非沙盒重试）")
         write_marker(".sync-failed", "push 后本地与远端分叉")
@@ -767,6 +801,8 @@ def cmd_doctor():
     code, url_helper, _ = git("config", "--get", "credential.https://github.com.helper", proxy=False)
     url_helper = url_helper or ""
     print("[credential.helper] %s" % redact(helper_out or "(unset)"))
+    code, name_out, _ = git("config", "--get", "user.name", proxy=False)
+    print("[git 身份] %s" % (name_out or "(未设置)"))
     if url_helper:
         print("[credential.https://github.com.helper] %s" % redact(url_helper))
     if "gh" not in (helper_out + " " + url_helper).lower():
@@ -800,6 +836,8 @@ def cmd_doctor():
         exists = os.path.exists(p)
         report("no stale %s" % marker, not exists,
                "有残留!" if exists else "无")
+    if os.path.exists(os.path.join(REPO, ".needs-push")):
+        print("[info] .needs-push 存在：本地有未推送的已提交记忆，需显式 push（不视为失败）")
     # union 配置检查（P1/P6）
     code, out, _ = git("config", "--get", "merge.union.driver", proxy=False)
     union_ok = code == 0 and "git merge-file --union" in out
@@ -819,9 +857,10 @@ def cmd_doctor():
             ga_text = f.read()
     report(".gitattributes eol=lf", "eol=lf" in ga_text)
 
-    # 本地协议新鲜度：WorkBuddy 侧 MEMORY.md 不得残留已废弃的 pull --rebase 指令
+    # 本地协议新鲜度：本端消费端操作记忆不得残留已废弃的 pull --rebase 指令
     # （2026-08-16 三轮审计 P0：此脱节曾让 doctor 全绿却仍执行 rebase）。
-    wb_memory_md = os.path.expanduser("~/.workbuddy/MEMORY.md")
+    # 消费文件路径 per-clone 参数化（consumer_memory_path），只检本端、不越界互检。
+    wb_memory_md = CONSUMER_MEMORY_PATH
     wb_protocol = ""
     if os.path.isfile(wb_memory_md):
         try:
@@ -829,16 +868,16 @@ def cmd_doctor():
                 wb_protocol = f.read()
         except Exception:
             wb_protocol = ""
-    report("MEMORY.md 无已废弃 pull --rebase 指令",
+    hook_name = os.path.basename(wb_memory_md)
+    report("%s 无已废弃 pull --rebase 指令" % hook_name,
            os.path.isfile(wb_memory_md) and "pull --rebase" not in wb_protocol,
            "" if os.path.isfile(wb_memory_md) and "pull --rebase" not in wb_protocol
            else ("文件缺失" if not os.path.isfile(wb_memory_md) else "残留已废弃指令"))
-    # 消费端 conform 探针（残留边界收窄，仅本端 WorkBuddy MEMORY.md）：
+    # 消费端 conform 探针（残留边界收窄，仅检本端消费记忆）：
     # 须声明「版本真值核对/触发式/禁自动化」三要素，否则视为未对齐
-    # vNext-1.3 显式化加固。Codex 端无机器检查（2026-08-16 审计实证 ps1
-    # 未实现该探针），依赖协议自觉，不在此越界检测。
+    # vNext-1.3 显式化加固。ps1 侧 2026-08-16 起已补等价探针（各端自检本端）。
     conform_ok = consumer_conformed_file(wb_memory_md)
-    report("MEMORY.md 已 conform 触发式禁令",
+    report("%s 已 conform 触发式禁令" % hook_name,
            conform_ok,
            "" if conform_ok
            else "文件缺失/不可读，或未声明「版本真值核对/触发式/禁自动化」，未对齐 vNext-1.3 显式化加固")
@@ -901,7 +940,19 @@ def cmd_bootstrap():
     print("bootstrap 完成；再跑 doctor 自检")
 
 
+def _deploy_guard():
+    """镜像位置护栏（对称 sync-memory.ps1 的 deploy-guard，P2-9 落地）：
+    拒绝在 Codex 端克隆（路径含 \\.codex\\）内运行本脚本——仓库是共享的，
+    本脚本会出现在每个克隆里；在 Codex 克隆误跑会按默认/配置 REPO 操作
+    他端镜像，造成跨端污染。各端只用本端克隆。"""
+    here = os.path.realpath(os.path.abspath(__file__)).lower()
+    if re.search(r"[\\/]\.codex[\\/]", here) or re.search(r"[\\/]\.codex[\\/]", REPO.lower()):
+        print("[deploy-guard] refusing to run inside a .codex clone (跨端污染风险)")
+        sys.exit(1)
+
+
 def main():
+    _deploy_guard()
     mode = sys.argv[1] if len(sys.argv) > 1 else "doctor"
     access = sys.argv[2] if len(sys.argv) > 2 else ""
     if mode == "pull":

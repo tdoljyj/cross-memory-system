@@ -15,7 +15,8 @@
 |---|---|---|
 | Codex | `Documents\Codex\memory\` | `sync-memory.ps1`（收尾 push / 开场 `-Pull` / 接入 `-Doctor` 自检），代理优先 127.0.0.1:7897（固定 `http.sslBackend=openssl`）、直连兜底 |
 | WorkBuddy | `~/.workbuddy/codex-memory-system\`（独立克隆） | 开场 `python sync-memory.py pull` 读；写入前 `fetch + merge` → 修改 → push；不直写 Codex 侧工作区 |
-| 未来其他 AI | 各自工作区 | 同 WorkBuddy：克隆 → fetch + merge → 改 → push；不直写任何既有工作区 |
+| DSH（DeepSeek Harness） | `~/.dsh/projects/cross-memory-system\`（独立克隆，自远端 origin 克隆）+ `~/.dsh/MEMORY.md` 消费端 | 开场 `python sync-memory.py pull` 读；写入 commit（身份 `DSH@TURING`）→ `python sync-memory.py push`；不读写任何他端克隆（不越界） |
+| 未来其他 AI | 各自工作区（独立克隆，**不复用/不克隆任何本地已有克隆**） | 同 WorkBuddy：克隆 → fetch + merge → 改 → push；不直写任何既有工作区 |
 
 ## 跨端协同机制
 1. **身份与审计**：每端以 `AI名@机器名`（如 `Codex@DESKTOP-X`）作为 git 作者提交，commit message 带 `[身份]` 前缀与变更文件清单；`git log --format='%an %s'` 即可看到谁在哪台机器改了什么。
@@ -42,7 +43,7 @@
 
 ## 新电脑接入（一次性）
 
-> 本仓库为「任意机器 × 任意 AI」跨端共享（见「定位」）：接入流程 = **通用步骤** + **端侧差异**。通用步骤对所有接入方一致；当前已登记 Codex 与 WorkBuddy 两端，未来新端照此模式登记。任一步失败先看「失败排查」；doctor 任一 FAIL 未修红前视为阻断态，不得据此读 canon 当依据、不得 push（AGENTS v3.1）。
+> 本仓库为「任意机器 × 任意 AI」跨端共享（见「定位」）：接入流程 = **通用步骤** + **端侧差异**。通用步骤对所有接入方一致；当前已登记 Codex、WorkBuddy、DSH 三端，未来新端照此模式登记（各端独立克隆，绝不复用/克隆任何本地已有克隆）。任一步失败先看「失败排查」；doctor 任一 FAIL 未修红前视为阻断态，不得据此读 canon 当依据、不得 push（AGENTS v3.1）。
 
 ### 通用步骤（所有接入方）
 
@@ -92,7 +93,7 @@
 - 钩子指令（AGENTS.md v3.1）：Memory Router 判定本轮产生记忆写入后才运行：`powershell -ExecutionPolicy Bypass -File ~/.codex/projects/codex-memory-system/sync-memory.ps1`
 - 脚本自动：复制最新记忆 → git 提交（无变化则 skip commit）→ 推送；远端有新提交时先拉取再推
 - NO_CHANGE 时不产生任何 commit / push / 缓存失效（基线原则 8）
-- 删除传播护栏：同步前校验工作记忆目录 `.md` ≥ 5 且非空，不足则拒绝同步并写 `.sync-failed`，防推空仓
+- 删除传播护栏：同步前按 `memory/index.json` 的 `files` 清单校验工作记忆文件存在且非空，不足则拒绝同步并写 `.sync-failed`，防推空仓
 - 加固（vNext-1.2）：检测到 PortableGit / `.workbuddy` 的 git 客户端时拒绝同步；同步前清理过期 TEMP 备份目录；全仓有未提交的非 memory 变更时给出警告（脚本只提交 memory）；`-Doctor` 会提示归档.md 超瘦身阈值
 - 加固（vNext-1.3）：同步入口 `.sync.lock` 跨进程锁（同机并发 pull/push 拒绝而非交错）；提交前密钥扫描（ghp_/gho_/github_pat_/AKIA/私钥头/Bearer 长值命中即拒绝）；pull 支持 `-Access <scope>`（`NONE` 直接跳过）；`-Doctor` 校验凭据来源是否走 gh 助手
 - 脚本/文档提交：修改 sync 脚本/文档/测试后，运行 `powershell -ExecutionPolicy Bypass -File sync-memory.ps1 -CommitRepo` 提交并推送全部变更（普通记忆同步只提交 `memory/*.md`，不代提交脚本/文档）
@@ -107,7 +108,7 @@
 - **配置参数化（vNext-1.2）**：`sync-memory.py` 支持与脚本同目录、gitignored 的 `sync.config.json`（`{repo, proxy, proxy_host, proxy_port, git_candidates}`），缺省回落内置默认；换机器只改这一个文件
 - **按需触发**（对齐基线 vNext-1.3 / AGENTS v3.1）：Memory Router 命中 T1–T4 才执行 `python sync-memory.py pull`（自动 fetch + 对齐 + 补写 tracking ref + 核验）→ 按 L1–L6 映射读所需文件；T0 通用问题直接回答，不访问记忆
 - 写入上传：本轮产生记忆写入 + commit 后才 `python sync-memory.py push`（非沙盒执行，判据=输出尾 `⚠️ Sandbox bypassed`）；无写入不 push（NO_CHANGE → NO_SYNC）；**不直写 Codex 侧工作区**（`Documents\Codex\memory\` 由 Codex 自己同步）
-- 删除传播护栏：pull/push 前校验 memory 目录 ≥ 5 个非空 `.md`，不足则拒绝并写 `.sync-failed`，防推空仓
+- 删除传播护栏：pull/push 前按 `memory/index.json` 的 `files` 清单校验各文件存在且非空，不足则拒绝并写 `.sync-failed`，防推空仓
 - 代理预检：`pull` 与 `push` 均先探测代理存活，代理不可达时 3 秒内快速失败而非让 git 卡 60 秒超时
 - git 写操作必须非沙盒执行（dangerouslyDisableSandbox=true），判据=输出末尾 `⚠️ Sandbox bypassed`；push 后用 `git ls-remote origin main` 确认远端 commit；push/pull 后核验统一用 `merge-base --is-ancestor`（祖先判定），并发下本地落后远端不误报
 
