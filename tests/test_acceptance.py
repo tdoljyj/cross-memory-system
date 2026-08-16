@@ -391,7 +391,8 @@ def test_py_missing_index_guard(sb):
     git("commit", "-m", "drop index", cwd=clone)
     p = sb.run_py(script, "push")
     check(p.returncode != 0, "缺少 memory/index.json 时 push 应被拒绝")
-    check("index.json" in p.stdout, p.stdout)
+    check("index.json 缺失或不可解析" in p.stdout,
+          "index 缺失应报独立口径（缺失/不可解析），而非「缺少必需文件」: " + p.stdout)
     check(os.path.isfile(os.path.join(clone, ".sync-failed")),
           "护栏触发时应写 .sync-failed")
 
@@ -1507,9 +1508,12 @@ def test_conformance_remote_verification(sb):
 
 def test_doc_guard_wording_consistent():
     """P1-2 回归：协议文档不得残留硬编码 .md 数量护栏旧口径（≥ 5），
-    护栏口径唯一事实源是 memory/index.json 的 files 清单。"""
+    护栏口径唯一事实源是 memory/index.json 的 files 清单。
+    GAP-3-2/3-3 回归：README 端侧差异表须含 DSH 列；配置手册旧流程须带行内「已废弃」。"""
     readme = open(os.path.join(REPO_ROOT, "README.md"), encoding="utf-8").read()
     agents = open(AGENTS, encoding="utf-8").read()
+    manual = open(os.path.join(REPO_ROOT, "配置手册与数据包-v4.md"),
+                  encoding="utf-8").read()
     for name, text in (("README.md", readme), ("AGENTS.md", agents)):
         check("≥ 5" not in text, "%s 残留「≥ 5」硬编码护栏旧口径" % name)
         check(">= 5" not in text, "%s 残留「>= 5」硬编码护栏旧口径" % name)
@@ -1517,6 +1521,11 @@ def test_doc_guard_wording_consistent():
     # Codex 端消费钩子文本须含 conform 三要素（ps1 doctor 探针判据）
     for m in ("版本真值核对", "触发式", "禁自动化"):
         check(m in agents, "AGENTS.md 须含 conform 三要素之一: %s" % m)
+    # GAP-3-2：README 端侧差异表补 DSH 列
+    check("端侧差异（Codex / WorkBuddy / DSH）" in readme,
+          "README 端侧差异表未登记 DSH 列")
+    # GAP-3-3：配置手册旧流程行须带行内「已废弃」注记
+    check("已废弃" in manual, "配置手册旧流程行缺「已废弃」行内注记")
 
 
 @sandboxed

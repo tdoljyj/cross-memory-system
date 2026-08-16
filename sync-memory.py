@@ -647,6 +647,10 @@ def cmd_pull(access=""):
         print("[!] 代理 %s 不可达且直连失败（Clash 未启动？），终止以免 git 卡死" % PROXY)
         write_marker(".sync-failed", "pull aborted: proxy %s unreachable" % PROXY)
         sys.exit(1)
+    if load_index() is None:
+        print("[!] memory/index.json 缺失或不可解析（护栏唯一事实源不可用），终止 pull")
+        write_marker(".sync-failed", "pull aborted: memory/index.json missing or invalid")
+        sys.exit(1)
     if not memory_dir_healthy():
         print("[!] memory 目录缺少 memory/index.json 声明的必需文件或文件为空（删除传播护栏），终止 pull")
         write_marker(".sync-failed", "pull aborted: missing/empty required files per memory/index.json")
@@ -696,6 +700,10 @@ def cmd_push():
     print("== 收尾推送 ==")
     ensure_git_safe()
     cleanup_stale_backups()
+    if load_index() is None:
+        print("[!] memory/index.json 缺失或不可解析（护栏唯一事实源不可用），终止 push")
+        write_marker(".sync-failed", "push aborted: memory/index.json missing or invalid")
+        sys.exit(1)
     if not memory_dir_healthy():
         print("[!] memory 目录缺少 memory/index.json 声明的必需文件或文件为空（删除传播护栏），终止 push")
         write_marker(".sync-failed", "push aborted: missing/empty required files per memory/index.json")
