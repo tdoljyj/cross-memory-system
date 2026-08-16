@@ -304,6 +304,32 @@ def find_secret_leak(memdir):
     return None
 
 
+def find_secret_leak_staged():
+    """扫 git diff --cached（staged）内容，覆盖全仓提交路径（脚本/文档/测试/配置）。
+
+    与 find_secret_leak（只扫 memory/*.md）互补，防令牌经全仓提交（ps1 -CommitRepo
+    等价路径）进入 git 历史。staged 为空时返回 None（无可扫描内容，不算失败）。
+    """
+    code, out, _ = git("diff", "--cached", "--name-only", "-z", proxy=False)
+    if code != 0 or not out.strip():
+        return None
+    for name in out.split("\0"):
+        if not name:
+            continue
+        p = os.path.join(REPO, name)
+        if not os.path.isfile(p):
+            continue
+        try:
+            with open(p, "r", encoding="utf-8", errors="replace") as f:
+                text = f.read()
+        except Exception:
+            continue
+        for pat in _SECRET_PATTERNS:
+            if re.search(pat, text):
+                return name
+    return None
+
+
 def is_ancestor(a, b):
     """a 是否是 b 的祖先（merge-base --is-ancestor）。"""
     code, _, _ = git("merge-base", "--is-ancestor", a, b, proxy=False)
@@ -523,6 +549,11 @@ def cmd_push():
         print("[!] 检测到疑似密钥/令牌（secret-like value）于 memory/%s，拒绝 push 以防泄露" % leak)
         write_marker(".sync-failed", "push aborted: secret-like value in memory/%s" % leak)
         sys.exit(1)
+    leak = find_secret_leak_staged()
+    if leak:
+        print("[!] 检测到疑似密钥/令牌（secret-like value）于 staged %s，拒绝 push 以防泄露" % leak)
+        write_marker(".sync-failed", "push aborted: secret-like value in staged %s" % leak)
+        sys.exit(1)
     if not proxy_alive() and PROXY:
         print("[!] 代理 %s 不可达（Clash 未启动？），终止以免 git 卡死" % PROXY)
         write_marker(".sync-failed", "push aborted: proxy %s unreachable" % PROXY)
@@ -650,7 +681,20 @@ def cmd_doctor():
     report("remote reachable", bool(remote), remote or "")
     report("local head readable", bool(local), local or "")
     ok, detail = check_ref_valid(remote)
-    report("tracking ref valid", ok, detail)
+    if not ok and remote:
+        # 自愈前置（沙盒 overlay 常态）：tracking ref 丢失/漂移先自动补写，
+        # 补写成功报 AUTO-HEALED 不计失败；仅真分叉/补写失败才 FAIL 阻断。
+        if restore_tracking_ref(remote):
+            ok, detail = check_ref_valid(remote)
+            if ok:
+                report("tracking ref valid", True,
+                       "AUTO-HEALED（补写 refs/remotes/origin/main=%s）" % remote[:12])
+            else:
+                report("tracking ref valid", False, "自愈补写后仍失败: %s" % detail)
+        else:
+            report("tracking ref valid", False, detail)
+    else:
+        report("tracking ref valid", ok, detail)
     for marker in (".sync-failed", ".pending-writeback"):
         p = os.path.join(REPO, marker)
         exists = os.path.exists(p)
@@ -688,8 +732,8 @@ def cmd_doctor():
                "pull --rebase" not in wb_protocol)
         # 消费端 conform 探针（残留边界收窄，仅本端 WorkBuddy MEMORY.md）：
         # 须声明「版本真值核对/触发式/禁自动化」三要素，否则视为未对齐
-        # vNext-1.3 显式化加固。Codex 端由其自有 sync-memory.ps1 -Doctor 管，
-        # 不在此越界检测（endpoint 各自 doctor 自检本端）。
+        # vNext-1.3 显式化加固。Codex 端无机器检查（2026-08-16 审计实证 ps1
+        # 未实现该探针），依赖协议自觉，不在此越界检测。
         report("MEMORY.md 已 conform 触发式禁令",
                consumer_conformed(wb_protocol),
                "" if consumer_conformed(wb_protocol)

@@ -229,6 +229,31 @@ function Find-SecretLeak {
     return $null
 }
 
+function Find-SecretLeakStaged {
+    # Scan the content of currently staged files (git diff --cached), covering the
+    # -CommitRepo full-repo commit path (scripts/docs/tests/config) so a token/private
+    # key never enters history via that route. Complements Find-SecretLeak (memory/*.md).
+    param([string]$RepoRoot)
+    $patterns = @(
+        'gh[op]_[A-Za-z0-9]{20,}',
+        'github_pat_[A-Za-z0-9_]{20,}',
+        'AKIA[0-9A-Z]{16}',
+        '-----BEGIN (RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----',
+        '(?i)bearer\s+[A-Za-z0-9._-]{20,}'
+    )
+    $stagedFiles = @(git -C $RepoRoot -c core.quotepath=false diff --cached --name-only 2>$null)
+    foreach ($rel in $stagedFiles) {
+        $full = Join-Path $RepoRoot $rel
+        if (-not (Test-Path -LiteralPath $full -PathType Leaf)) { continue }
+        $text = Get-Content -LiteralPath $full -Raw -Encoding UTF8 -ErrorAction SilentlyContinue
+        if ($null -eq $text) { continue }
+        foreach ($p in $patterns) {
+            if ($text -match $p) { return $rel }
+        }
+    }
+    return $null
+}
+
 function Copy-MemoryToWorkingDir {
     # repo -> working memory directory. Returns $true only when the copy is verified.
     try {
@@ -628,6 +653,14 @@ if ($CommitRepo) {
         Write-Output "No repo changes; nothing to commit."
         Release-SyncLock
         exit 0
+    }
+    $secretHit = Find-SecretLeakStaged $repoRoot
+    if ($secretHit) {
+        Set-SyncFailed -Message "Secret-like value detected in staged file: $secretHit; refusing repo commit."
+        Write-Error -ErrorAction Continue "Secret-like value detected in staged file: $secretHit; refusing repo commit."
+        git -C $repoRoot reset -q
+        Release-SyncLock
+        exit 1
     }
     $changed = (($staged | ForEach-Object { $_ -replace '^memory/', '' }) -join ', ')
     $conflictBackupDir = Join-Path $env:TEMP ("codex-memory-conflict-" + (Get-Date -Format 'yyyyMMdd-HHmmss'))
