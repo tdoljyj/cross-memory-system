@@ -1,5 +1,5 @@
 # Codex cross-session memory sync.
-# Module role (per 架构基线文档-vNext.md vNext-1.3): Codex-side AI Adapter Sync Layer.
+# Module role (per 架构基线文档-vNext-1.3.md vNext-1.3): Codex-side AI Adapter Sync Layer.
 # Syncs only with the Canonical Memory Store (this git repo); never with other adapters.
 # Trigger policy (AGENTS.md v3): pull/push are invoked on demand — pull only when the
 # Memory Router (T1-T4) matches, push only when the current turn produced memory writes
@@ -26,6 +26,15 @@ param(
 $ErrorActionPreference = "Stop"
 
 $repoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+
+# 部署位置护栏：本脚本只应在 Codex 侧克隆（~/.codex/projects/codex-memory-system）运行。
+# 仓库是共享的，sync-memory.ps1 也会出现在 WorkBuddy 镜像（~/.workbuddy/codex-memory-system）里；
+# 若在镜像内执行，$repoRoot 解析为镜像、$MemoryDir 仍指向 Codex 工作区，会把 Codex 工作区内容
+# 推入镜像并触发删除传播（跨端污染）。此处硬阻断。
+if ($repoRoot -match '[\\/]\.workbuddy[\\/]') {
+    Write-Output "[deploy-guard] refusing to run inside a .workbuddy mirror"
+    throw "禁止在 WorkBuddy 镜像内运行本脚本（跨端污染风险）：请从 ~/.codex/projects/codex-memory-system 执行。"
+}
 
 # Per-machine / per-agent config (gitignored; falls back to this machine's defaults).
 $configFile = Join-Path $repoRoot "sync.config.ps1"
@@ -526,6 +535,11 @@ if ($Pull) {
         Invoke-Git fetch origin
         $local = git -C $repoRoot rev-parse HEAD
         $remoteHash = Get-RemoteMainHash
+        if (-not ($remoteHash -match '^[0-9a-f]{40}$')) {
+            Set-SyncFailed -Message "ls-remote 未返回可用的 main hash；拒绝把本地缓存当作已对齐。"
+            Write-Error -ErrorAction Continue "远端 hash 不可用，-Pull 以失败退出（fail-closed）。"
+            exit 1
+        }
         $behind = [int](git -C $repoRoot rev-list --count HEAD..$remoteHash)
         $ahead  = [int](git -C $repoRoot rev-list --count $remoteHash..HEAD)
 

@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """附录 B 验收标准自动化测试（无第三方依赖，纯标准库 + 轻量 runner）。
 
-覆盖《架构基线文档-vNext.md》vNext-1.3「第十八节 验收标准 / 附录 B」中可在代码层验证的
+覆盖《架构基线文档-vNext-1.3.md》vNext-1.3「第十八节 验收标准 / 附录 B」中可在代码层验证的
 机制级不变量：
 
   D 有变化 → 提交 + 推送 + git log 出现新 commit
@@ -397,6 +397,65 @@ def test_py_lock_blocks_concurrent(sb):
 
 
 @sandboxed
+def test_py_dangling_ref_rejected(sb):
+    """R2 回归：restore_tracking_ref 不得写出悬空 ref（对象不在本地时拒绝）。"""
+    clone = sb.add_clone("a")
+    script = sb.install_py(clone)
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("syncmem_r2", script)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    dead = "deadbeef" + "0" * 32  # 40 位 hex，对象必然不存在
+    ok = mod.restore_tracking_ref(dead)
+    check(ok is False, "悬空对象不应写入 tracking ref")
+    ref_path = os.path.join(clone, ".git", "refs", "remotes", "origin", "main")
+    check(not os.path.isfile(ref_path), "不应生成悬空 tracking ref 文件")
+
+
+@sandboxed
+def test_py_pull_ahead_self_heals(sb):
+    """R4 回归：本地领先远端（上次 push 失败遗留）时，pull 应补推而非判分叉卡死。"""
+    clone = sb.add_clone("a")
+    script = sb.install_py(clone)
+    before = sb.remote_head()
+    with open(os.path.join(clone, "memory", "状态.md"), "a", encoding="utf-8") as fh:
+        fh.write("\n领先的本地提交\n")
+    git("add", "-A", cwd=clone)
+    git("commit", "-m", "local ahead", cwd=clone)
+    check(git("rev-parse", "HEAD", cwd=clone).stdout.strip() != before,
+          "本地应领先远端")
+    p = sb.run_py(script, "pull")
+    check(p.returncode == 0, p.stdout + p.stderr)
+    check(sb.remote_head() == git("rev-parse", "HEAD", cwd=clone).stdout.strip(),
+          "pull 自愈后本地应与远端一致")
+
+
+@sandboxed
+def test_ps1_pull_fails_closed_on_bad_remote(sb):
+    """R1 回归：远端不可达时 -Pull 必须失败退出，不得假报 already up to date。"""
+    clone = sb.add_clone("repo")
+    workdir = os.path.join(sb.tmp, "working")
+    sb.install_ps1(clone, workdir)
+    git("remote", "set-url", "origin", os.path.join(sb.tmp, "gone.git"), cwd=clone)
+    p = sb.run_ps1(clone, "-Pull")
+    check(p.returncode != 0, "-Pull 远端不可达时必须失败退出（fail-closed）")
+    check("already up to date" not in p.stdout, "不得假报 already up to date")
+
+
+@sandboxed
+def test_ps1_deploy_guard_blocks_workbuddy_path(sb):
+    """R3 回归：脚本在 .workbuddy 路径内执行必须被拒绝（部署位置护栏）。"""
+    wbdir = os.path.join(sb.tmp, ".workbuddy", "codex-memory-system")
+    os.makedirs(wbdir, exist_ok=True)
+    script = os.path.join(wbdir, "sync-memory.ps1")
+    shutil.copy(PS1, script)
+    p = sh([POWERSHELL, "-ExecutionPolicy", "Bypass", "-File", script, "-Doctor"],
+           cwd=wbdir, check_fail=False)
+    check(p.returncode != 0, "在 .workbuddy 路径执行必须被拒绝")
+    check("[deploy-guard]" in p.stdout, "应输出部署位置护栏标记")
+
+
+@sandboxed
 def test_ps1_secret_scan_blocks(sb):
     clone = sb.add_clone("repo")
     workdir = os.path.join(sb.tmp, "working")
@@ -442,6 +501,10 @@ TESTS = [
     test_py_secret_scan_blocks_push,
     test_py_access_none_skips_pull,
     test_py_lock_blocks_concurrent,
+    test_py_dangling_ref_rejected,
+    test_py_pull_ahead_self_heals,
+    test_ps1_pull_fails_closed_on_bad_remote,
+    test_ps1_deploy_guard_blocks_workbuddy_path,
 ]
 
 

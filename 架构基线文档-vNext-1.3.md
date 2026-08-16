@@ -15,6 +15,7 @@
 | vNext-1.2 | 2026-08-16 | 评审落地加固：① 双端同步脚本新增删除传播护栏（源 memory 目录 .md<5 拒绝同步，防推空仓）；② 双脚本核验统一为祖先判定（merge-base --is-ancestor，消除 py 并发下误写 .sync-failed）；③ py 配置参数化（sync.config.json）；④ 召回粒度由文件级升级为段级（L1–L6 映射到具体标题段）；⑤ 明确 Sync Layer 与 commit 职责边界；⑥ 同步全局钩子 ~/.codex/AGENTS.md。新增附录 D（保留/调整/替换/待办对照）。结构化语义合并与验收自动化记为待办 | Codex@TURING |
 | vNext-1.2 补充加固 | 2026-08-16 | 同日续加固：ps1 PortableGit 硬阻断；两端 TEMP 备份清理（>7 天）；全仓脏检查（非阻断提示）；归档.md 瘦身阈值提示；py pull 代理预检；py doctor 协议新鲜度检查；两端 bootstrap 一键配置 | Codex@TURING |
 | vNext-1.3 | 2026-08-16 | 工程化推进（结构化召回索引 + 统一护栏 + 令牌脱敏）：① 新增 memory/index.json（schema_version 1，files + L1–L6 recall 映射）作为召回与必需文件集的唯一事实源；② 双端同步护栏由硬编码 5 改为读 index.json 的 files 清单（缺失/为空拒绝同步）；③ 双端新增 redact() 令牌掩码（gho_/ghp_/github_pat_/Bearer）并接入 .sync-failed 与 doctor，doctor 提示长期令牌环境变量并展示 credential.helper；④ AGENTS.md / README 对齐 index.json 与「git 走 gh 凭据助手、不 setx 长期令牌」；⑤ 验收测试 8 → 10 用例（index.json 校验 / redact 回归 / missing-index 护栏） | Codex@TURING |
+| vNext-1.3 收尾修复 | 2026-08-16 | 复盘「评估失误」后双向整改落地：① check_ref_valid 由 40-hex 正则改为比对 ls-remote 哈希（消假阳）；② doctor 增加方向判定，本地落后远端时显式「读前必须 re-pull」阻挡态；③ 新增 VERSION 文件 + git tag vNext-1.3 带外版本指针，基线文档文件名加版本号（架构基线文档-vNext-1.3.md，全仓引用同步）；④ 版本号标注 1.2→1.3 同步（AGENTS/README/双脚本/tests/配置手册）；⑤ ps1 -Pull 远端 hash 缺失 fail-closed（消 P0-A）；⑥ py tracking ref 加 cat-file 存在性校验（消悬空 ref，P1-A）；⑦ ps1 部署位置护栏（拒绝在 .workbuddy 镜像执行，P0-B）；⑧ py pull 领先自愈补推（P1-C）；⑨ AGENTS 加「评估类任务第一步 ls-remote」硬性 check-list；⑩ 验收测试补 null-remote / dangling-ref / deploy-guard / 领先自愈 4 条回归 | WorkBuddy@TURING |
 
 > **目标**：将"每次开头强制加载记忆、结尾强制上传"改造成真正的按需读写型跨会话记忆系统。
 >

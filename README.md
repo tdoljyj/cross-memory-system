@@ -1,6 +1,6 @@
 # Cross-Memory-System · 跨 AI 记忆系统
 
-> **规范依据**：本仓库《架构基线文档-vNext.md》（当前基线版本 **vNext-1.3**，2026-08-16 确立）。适用范围：本仓库全部文件、Codex 端（`~/.codex/AGENTS.md` + sync-memory.ps1）、WorkBuddy 端（`~/.workbuddy/MEMORY.md` + sync-memory.py）及未来新接入端。本 README 与基线冲突时以基线为准；基线变更记录见该文档「变更记录」表。
+> **规范依据**：本仓库《架构基线文档-vNext-1.3.md》（当前基线版本 **vNext-1.3**，2026-08-16 确立）。适用范围：本仓库全部文件、Codex 端（`~/.codex/AGENTS.md` + sync-memory.ps1）、WorkBuddy 端（`~/.workbuddy/MEMORY.md` + sync-memory.py）及未来新接入端。本 README 与基线冲突时以基线为准；基线变更记录见该文档「变更记录」表。
 
 私有仓库：完整版配置手册 + 数据包快照 + **多机多 AI 协同**自动同步机制（2026-08-15 建立并更名）。
 
@@ -24,9 +24,9 @@
 4. **接入自检**：新机器跑 `powershell -ExecutionPolicy Bypass -File sync-memory.ps1 -Doctor`，一次检查 git、网络与凭据、引用写入（沙盒 overlay 拦截，2026-08-16 实锤非 PortableGit 缺陷）、换行符配置、记忆目录，全部 PASS 才正式接入。
 
 ## 内容
-- `架构基线文档-vNext.md` — **vNext 核心架构规范**（基线版本/适用范围/变更记录 + 正文二十节 + 附录 A 落地映射 / 附录 B 验收对照 / 附录 C 隐私约束）；后续设计、实现、变更的统一依据
+- `架构基线文档-vNext-1.3.md` — **vNext 核心架构规范**（基线版本/适用范围/变更记录 + 正文二十节 + 附录 A 落地映射 / 附录 B 验收对照 / 附录 C 隐私约束）；后续设计、实现、变更的统一依据
 - `附录/Cross_Memory_System_vNext_核心架构.html` — 基线源文件原件（Chase 提供）
-- `配置手册与数据包-v4.md` — 完整手册：记忆机制、写入权限、新电脑配置步骤（⚠️ 其中 9.x 数据包为 2026-08-15 历史快照，AGENTS / 待办等内容可能已过期；权威以仓库当前 `架构基线文档-vNext.md`、`AGENTS.md` 与 `memory/*.md` 为准）
+- `配置手册与数据包-v4.md` — 完整手册：记忆机制、写入权限、新电脑配置步骤（⚠️ 其中 9.x 数据包为 2026-08-15 历史快照，AGENTS / 待办等内容可能已过期；权威以仓库当前 `架构基线文档-vNext-1.3.md`、`AGENTS.md` 与 `memory/*.md` 为准）
 - `memory/` — 记忆快照（画像 / 状态 / 决策 / 待办 / 归档）+ `memory/index.json`（L1–L6 → 文件+标题段的召回索引，也是同步护栏的必需文件集唯一事实源）
 - `AGENTS.md` — Codex 全局钩子副本（当前 v3.1，对齐基线 T0–T4 / L1–L6 术语与段级召回；实际生效位置：`~/.codex/AGENTS.md`）
 - `sync-memory.ps1` — Codex 侧记忆同步脚本：复制最新记忆 → git 提交 → 推送

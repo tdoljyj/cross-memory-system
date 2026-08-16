@@ -3,7 +3,7 @@
 """
 WorkBuddy 侧记忆同步脚本（Python 版）
 
-模块定位（对齐《架构基线文档-vNext.md》vNext-1.3）：本脚本 = WorkBuddy 端 AI Adapter
+模块定位（对齐《架构基线文档-vNext-1.3.md》vNext-1.3）：本脚本 = WorkBuddy 端 AI Adapter
 的 Sync Layer 实现，只与 Canonical Memory Store（本 git 仓库）同步，不与其他端互相同步。
 按需触发：命中 Memory Router（AGENTS v3 / MEMORY.md 的 T1–T4）才 pull；本轮产生记忆
 写入才 push。NO_CHANGE → NO_WRITE → NO_SYNC。
@@ -304,6 +304,12 @@ def find_secret_leak(memdir):
     return None
 
 
+def is_ancestor(a, b):
+    """a 是否是 b 的祖先（merge-base --is-ancestor）。"""
+    code, _, _ = git("merge-base", "--is-ancestor", a, b, proxy=False)
+    return code == 0
+
+
 def confirm_no_divergence():
     """本地 HEAD 是否落在远端 main 祖先链上（含相等）。非分叉即视为安全。
 
@@ -398,9 +404,20 @@ def backup_conflict():
     return dest
 
 
+def object_exists(h):
+    """校验对象是否真在本地对象库（rev-parse 不做此校验，可能返回悬空 ref 的 hash）。"""
+    if not h:
+        return False
+    code, _, _ = git("cat-file", "-e", "%s^{commit}" % h, proxy=False)
+    return code == 0
+
+
 def restore_tracking_ref(remote):
-    """补写 refs/remotes/origin/main，让 git status 干净。"""
+    """补写 refs/remotes/origin/main，让 git status 干净。写前校验对象存在，防悬空 ref。"""
     if not remote:
+        return False
+    if not object_exists(remote):
+        print("[ref] 跳过补写：远端对象 %s 不在本地，写入会产生悬空 ref" % remote[:12])
         return False
     ok = write_ref("refs/remotes/origin/main", remote)
     print("[ref] 补写 refs/remotes/origin/main = %s  %s"
@@ -469,6 +486,22 @@ def cmd_pull(access=""):
         if ok:
             print("对齐 ✓")
             clear_marker(".sync-failed")
+        elif local and remote and is_ancestor(remote, local):
+            # 本地领先远端：上次 push 失败留下的已提交记忆，补推（自愈，避免永久卡死）
+            print("[自愈] 本地领先远端，补推上次同步失败遗留的提交")
+            code, _, err = git("push", "origin", "main")
+            if code != 0:
+                print("[!] 补推失败: %s" % err)
+                write_marker(".sync-failed", "pull 自愈补推失败")
+                sys.exit(1)
+            remote = ls_remote()
+            restore_tracking_ref(remote)
+            if local_head() == remote:
+                print("补推成功 ✓")
+                clear_marker(".sync-failed")
+            else:
+                write_marker(".sync-failed", "补推后仍不一致")
+                sys.exit(1)
         else:
             print("分叉 ⚠️（本地与远端不在同一祖先链）")
             write_marker(".sync-failed", "pull 后本地与远端分叉")
@@ -561,6 +594,8 @@ def check_ref_valid(remote=None):
         return False, "读取失败: %s" % e
     if not re.fullmatch(r"[0-9a-f]{40}", content):
         return False, "非法内容: %r" % content[:40]
+    if not object_exists(content):
+        return False, "悬空 ref：对象 %s 不在本地对象库" % content[:12]
     if content != remote:
         return False, "漂移：ref=%s ≠ 远端=%s" % (content[:12], remote[:12])
     return True, content[:12]
