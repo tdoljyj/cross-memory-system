@@ -15,7 +15,7 @@
 |---|---|---|
 | Codex | `Documents\Codex\memory\` | `sync-memory.ps1`（收尾 push / 开场 `-Pull` / 接入 `-Doctor` 自检），代理优先 127.0.0.1:7897（固定 `http.sslBackend=openssl`）、直连兜底 |
 | WorkBuddy | `~/.workbuddy/codex-memory-system\`（独立克隆） | 开场 `python sync-memory.py pull` 读；写入前 `fetch + merge` → 修改 → push；不直写 Codex 侧工作区 |
-| DSH（DeepSeek Harness） | `~/.dsh/projects/cross-memory-system\`（独立克隆，自远端 origin 克隆）+ `~/.dsh/MEMORY.md` 消费端 | 开场 `python sync-memory.py pull` 读；写入 commit（身份 `DSH@TURING`）→ `python sync-memory.py push`；不读写任何他端克隆（不越界） |
+| DSH（DeepSeek Harness） | `~/.dsh/projects/cross-memory-system\`（独立克隆，自远端 origin 克隆）+ `~/.dsh/MEMORY.md` 消费端 + `~/.dsh/AGENTS.md` 用户全局钩子（DSH 每会话自动注入，任意工作区生效） | 开场 `python sync-memory.py pull` 读；写入 commit（身份 `DSH@TURING`）→ `python sync-memory.py push`；不读写任何他端克隆（不越界） |
 | 未来其他 AI | 各自工作区（独立克隆，**不复用/不克隆任何本地已有克隆**） | 同 WorkBuddy：克隆 → fetch + merge → 改 → push；不直写任何既有工作区 |
 
 ## 跨端协同机制
