@@ -47,7 +47,7 @@
 ### 通用步骤（所有接入方）
 
 1. **安装 GitHub CLI 并登录同一账号**：`gh auth login`。git 侧凭据统一走 gh 生成的 git credential helper（`git config --show-origin --get credential.helper` 应指向 gh/manager）；**不要**把 `gho_`/`ghp_` 长期令牌 `setx` 进用户环境变量（常驻令牌会被任意本机进程读取）。两脚本的 doctor 都会对 `GITHUB_PAT_TOKEN` / `GH_TOKEN` 给出 WARN，并对输出做令牌掩码。
-2. **克隆仓库到本端工作区**（路径按端侧差异表；本端绝不克隆到对方工作区，也不直写对方克隆）。克隆后先做**版本真值核对**：`git ls-remote origin main` 与 `git rev-parse HEAD` 比对，一致再继续；版本号以仓库根 `VERSION` 文件 + git tag 为准（AGENTS v3.1 硬性 check-list）。
+2. **克隆私有仓库 `tdoljyj/cross-memory-system` 到本端工作区**（路径按端侧差异表；本端绝不克隆到对方工作区，也不直写对方克隆）。克隆后先做**版本真值核对**：`git ls-remote origin main` 与 `git rev-parse HEAD` 比对，一致再继续；版本号以仓库根 `VERSION` 文件 + git tag 为准（AGENTS v3.1 硬性 check-list）。
 3. **建立本机配置**（gitignored，各端格式见下表；脚本缺省回落内置默认，换机器只改这一个文件）。
 4. **写入推荐 git 配置**（两脚本均提供 bootstrap，写入内容一致）：
    - `core.autocrlf=false`（配合 `.gitattributes` 的 `eol=lf`，换行符字节级一致，防互相重写）
@@ -60,7 +60,7 @@
 
 | 项 | Codex | WorkBuddy |
 |---|---|---|
-| 克隆位置 | `~/.codex/projects/codex-memory-system`（`gh repo clone tdoljyj/cross-memory-system` + 该路径） | `~/.workbuddy/codex-memory-system`（目录名固定，remote 指向本仓库） |
+| 克隆位置 | `~/.codex/projects/codex-memory-system`（`gh repo clone tdoljyj/cross-memory-system` + 该路径） | `~/.workbuddy/codex-memory-system`（`gh repo clone tdoljyj/cross-memory-system` + 该路径，目录名固定，remote 指向本仓库） |
 | 同步脚本 | `sync-memory.ps1`（默认 push；`-Pull` 读前对齐 / `-Doctor` / `-Bootstrap` / `-CommitRepo` 提交脚本文档） | `sync-memory.py`（四模式 `pull` / `push` / `doctor` / `bootstrap`） |
 | 记忆工作区 | `Documents\Codex\memory\`：克隆后把 `memory\` 内 `memory/index.json` 声明的文件复制过去 | 克隆内 `memory\` 即工作区，无需复制 |
 | 消费端钩子 | 写全局钩子 `~/.codex/AGENTS.md`（用仓库内 AGENTS.md 内容，路径里 `<用户名>` 换成实际用户名） | WorkBuddy 系统注入 `~/.workbuddy/MEMORY.md`，无需手动 |
