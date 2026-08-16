@@ -686,25 +686,14 @@ def cmd_doctor():
             wb_protocol = ""
         report("MEMORY.md 无已废弃 pull --rebase 指令",
                "pull --rebase" not in wb_protocol)
-        # 消费端 conform 探针（残留边界收窄）：须声明触发式禁令三要素
+        # 消费端 conform 探针（残留边界收窄，仅本端 WorkBuddy MEMORY.md）：
+        # 须声明「版本真值核对/触发式/禁自动化」三要素，否则视为未对齐
+        # vNext-1.3 显式化加固。Codex 端由其自有 sync-memory.ps1 -Doctor 管，
+        # 不在此越界检测（endpoint 各自 doctor 自检本端）。
         report("MEMORY.md 已 conform 触发式禁令",
                consumer_conformed(wb_protocol),
                "" if consumer_conformed(wb_protocol)
                else "缺「版本真值核对/触发式/禁自动化」声明，未对齐 vNext-1.3 显式化加固")
-    # Codex 端消费记忆（WorkBuddy 机器上通常不存在，缺失仅提示不阻断）
-    codex_agents = os.path.expanduser("~/.codex/AGENTS.md")
-    if os.path.isfile(codex_agents):
-        try:
-            with open(codex_agents, "r", encoding="utf-8") as f:
-                codex_protocol = f.read()
-        except Exception:
-            codex_protocol = ""
-        report("Codex AGENTS.md 已 conform 触发式禁令",
-               consumer_conformed(codex_protocol),
-               "" if consumer_conformed(codex_protocol)
-               else "缺触发式/禁自动化声明，未对齐 vNext-1.3 显式化加固")
-    else:
-        print("[WARN] ~/.codex/AGENTS.md 不存在（跨端消费记忆，本机缺失不阻断）")
 
     dirty = git_status_memory()
     report("working tree clean", dirty == [],
