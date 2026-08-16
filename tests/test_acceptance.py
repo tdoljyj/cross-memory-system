@@ -1087,6 +1087,18 @@ def test_pid_alive_dead_pid_false():
     check(mod._pid_alive(probe) is False, "不存在的 PID 应判定为不存活")
 
 
+def test_credential_policy_superseded_marked():
+    """GAP-2-2 回归：决策.md 旧凭据口径（GITHUB_PAT_TOKEN/setx）必须标 superseded，
+    不得与 vNext-1.3 新口径（gh 助手、不 setx）并存未标注。"""
+    text = open(os.path.join(MEMORY, "决策.md"), encoding="utf-8").read()
+    lines = [ln for ln in text.splitlines() if "GITHUB_PAT_TOKEN" in ln and "setx" in ln]
+    check(lines, "决策.md 未找到旧凭据口径行")
+    check(all("superseded" in ln for ln in lines),
+          "旧凭据口径行必须标 superseded：%r" % lines)
+    check("不 setx" in text or "不 setx 长期令牌" in text,
+          "决策.md 应保留 vNext-1.3 新凭据口径")
+
+
 def test_doc_conform_probe_not_stale():
     """P0-6 回归：基线第十二节不得残留「Codex 端无机器检查」的过期表述
     （ps1 conform 探针已于 DSH 接入轮补齐），且须登记 DSH 端探针对象。"""
@@ -1558,6 +1570,7 @@ TESTS = [
     test_pid_alive_probe_does_not_kill,
     test_pid_alive_dead_pid_false,
     test_doc_conform_probe_not_stale,
+    test_credential_policy_superseded_marked,
     test_doc_guard_wording_consistent,
     test_py_needs_push_cleared_after_push,
     test_py_deploy_guard_blocks_codex_path,
