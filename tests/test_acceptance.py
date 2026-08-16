@@ -768,6 +768,28 @@ def test_py_fetch_error_output_redacted():
     check("ghp_***" in out, "fetch 错误应输出掩码: %r" % out[:200])
 
 
+@sandboxed
+def test_py_consumer_memory_path_config(sb):
+    """P0-5 回归：consumer_memory_path 经 sync.config.json 参数化生效（DSH 端指向
+    实际注入对象 ~/.dsh/AGENTS.md 而非 ~/.dsh/MEMORY.md）；仓库 AGENTS.md 端枚举须登记 DSH。"""
+    clone = sb.add_clone("a")
+    tooldir = os.path.join(sb.tmp, "tool-cmp")
+    os.makedirs(tooldir, exist_ok=True)
+    script = os.path.join(tooldir, "sync-memory.py")
+    shutil.copy(PY, script)
+    hook = os.path.join(sb.tmp, "AGENTS-hook.md")
+    with open(os.path.join(tooldir, "sync.config.json"), "w", encoding="utf-8") as fh:
+        json.dump({"repo": clone, "proxy": "", "consumer_memory_path": hook}, fh)
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("syncmem_consumer_cfg", script)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    check(mod.CONSUMER_MEMORY_PATH == hook,
+          "consumer_memory_path 参数化未生效: %r" % mod.CONSUMER_MEMORY_PATH)
+    agents = open(AGENTS, encoding="utf-8").read()
+    check("~/.dsh/AGENTS.md" in agents, "AGENTS.md 端枚举未登记 DSH 消费端")
+
+
 def test_consumer_conformed_detects_triggertype_ban():
     # 纯函数单体测试：消费端操作记忆须声明「版本真值核对/触发式/禁自动化」三要素
     import importlib.util
@@ -1004,6 +1026,7 @@ TESTS = [
     test_ps1_deploy_guard_blocks_workbuddy_path,
     test_ps1_deploy_guard_blocks_dsh_path,
     test_py_fetch_error_output_redacted,
+    test_py_consumer_memory_path_config,
     test_consumer_conformed_detects_triggertype_ban,
     test_guards_json_single_source,
     test_repo_files_do_not_self_match_secret_patterns,
