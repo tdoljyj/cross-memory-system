@@ -58,19 +58,19 @@
 5. **跑 doctor 自检**（命令见下表）：覆盖 git 可用性与客户端安全（拒绝 git 可执行文件位于 PortableGit / `.workbuddy` 目录）、远端可达与凭据、tracking ref、ref 写入持久性、`core.autocrlf`、`.gitattributes`、union 驱动、残留标记、记忆目录健康（按 `memory/index.json` 的 files 清单，文件缺失或为空即 FAIL，防推空仓）、全局钩子一致性（Codex 侧 ps1 -Doctor 检查 `~/.codex/AGENTS.md` 与仓库 AGENTS.md 哈希一致，漂移=FAIL、缺失=WARN）、index.json 召回段名有效（双端 doctor）、本地与远端版本对齐、消费端 conform 探针。**全部 PASS 才正式接入**。
 6. **准备消费端 + 新会话验证**：按端侧差异表完成消费端配置。新会话按 Memory Router 命中执行读前对齐（Codex：`-Pull`；WorkBuddy：`python sync-memory.py pull`），问「我是谁」能直接接上即通过；再让 AI 修改记忆文件一行并完成一次提交推送，`git log` 应出现 `AI名@机器名` 身份的新 commit。
 
-### 端侧差异（Codex / WorkBuddy）
+### 端侧差异（Codex / WorkBuddy / DSH）
 
-| 项 | Codex | WorkBuddy |
-|---|---|---|
-| 克隆位置 | `~/.codex/projects/codex-memory-system`（`gh repo clone tdoljyj/cross-memory-system` + 该路径） | `~/.workbuddy/codex-memory-system`（`gh repo clone tdoljyj/cross-memory-system` + 该路径，目录名固定，remote 指向本仓库） |
-| 同步脚本 | `sync-memory.ps1`（默认 push；`-Pull` 读前对齐 / `-Doctor` / `-Bootstrap` / `-CommitRepo` 提交脚本文档） | `sync-memory.py`（四模式 `pull` / `push` / `doctor` / `bootstrap`） |
-| 记忆工作区 | `Documents\Codex\memory\`：克隆后把 `memory\` 内 `memory/index.json` 声明的文件复制过去 | 克隆内 `memory\` 即工作区，无需复制 |
-| 消费端钩子 | 写全局钩子 `~/.codex/AGENTS.md`（用仓库内 AGENTS.md 内容，路径里 `<用户名>` 换成实际用户名） | WorkBuddy 系统注入 `~/.workbuddy/MEMORY.md`，无需手动 |
-| 本机配置 | `sync.config.ps1`（gitignored）：`$AgentName` / `$ProxyUrl`（默认 `http://127.0.0.1:7897`，无代理 `""`）/ `$MemoryDir` / `$GitEmail` | `sync.config.json`（gitignored）：`{repo, proxy, proxy_host, proxy_port, git_candidates}` |
-| 自检命令 | `powershell -ExecutionPolicy Bypass -File ...\sync-memory.ps1 -Doctor` | `python ...\sync-memory.py doctor` |
-| 权限要求 | Codex 桌面版启用 Full access（见配置手册第五节；`apply_patch` 写 `~/.codex` 与记忆目录必需） | 不依赖 Full access（WorkBuddy 侧 Full access 每会话临时、不可持久，2026-08-16 起弃用）：读/pull 沙盒内即可完成（Python 直写 ref 兜底）；仅 git 写操作（push）需逐次非沙盒执行（`dangerouslyDisableSandbox=true`），判据=输出尾 `⚠️ Sandbox bypassed` |
-| git 客户端 | 系统 git；ps1 内置部署护栏拒绝在 `~/.workbuddy` 镜像内运行，也拒绝 PortableGit / `.workbuddy` 路径的 git | 官方 Git for Windows 优先（`C:\Program Files\Git`，py 自动探测）；勿用 WorkBuddy 内置 PortableGit（代理 TLS 握手失败） |
-| 网络策略 | 代理优先 `http://127.0.0.1:7897`、固定 `http.sslBackend=openssl`，直连兜底 | 代理优先级 config > 环境变量（`HTTPS_PROXY`/`HTTP_PROXY`）> 默认 `http://127.0.0.1:7897`；沙盒内 raw TCP 直连被拦，git 必须走代理；pull/push 前先探测代理存活，不可达 3 秒内快速失败 |
+| 项 | Codex | WorkBuddy | DSH |
+|---|---|---|---|
+| 克隆位置 | `~/.codex/projects/codex-memory-system`（`gh repo clone tdoljyj/cross-memory-system` + 该路径） | `~/.workbuddy/codex-memory-system`（`gh repo clone tdoljyj/cross-memory-system` + 该路径，目录名固定，remote 指向本仓库） | `~/.dsh/projects/cross-memory-system`（`gh repo clone tdoljyj/cross-memory-system` + 该路径，**自远端 origin 克隆，绝不复用/克隆任何本地已有克隆**） |
+| 同步脚本 | `sync-memory.ps1`（默认 push；`-Pull` 读前对齐 / `-Doctor` / `-Bootstrap` / `-CommitRepo` 提交脚本文档） | `sync-memory.py`（四模式 `pull` / `push` / `doctor` / `bootstrap`） | `sync-memory.py`（四模式 `pull` / `push` / `doctor` / `bootstrap`；commit 由使用方以 `DSH@TURING` 身份执行后 push） |
+| 记忆工作区 | `Documents\Codex\memory\`：克隆后把 `memory\` 内 `memory/index.json` 声明的文件复制过去 | 克隆内 `memory\` 即工作区，无需复制 | 克隆内 `memory\` 即工作区，无需复制（同 WorkBuddy） |
+| 消费端钩子 | 写全局钩子 `~/.codex/AGENTS.md`（用仓库内 AGENTS.md 内容，路径里 `<用户名>` 换成实际用户名） | WorkBuddy 系统注入 `~/.workbuddy/MEMORY.md`，无需手动 | 用户全局钩子 `~/.dsh/AGENTS.md`（DSH 每会话自动注入、任意工作区生效）；`~/.dsh/MEMORY.md` 为权威协议文件 |
+| 本机配置 | `sync.config.ps1`（gitignored）：`$AgentName` / `$ProxyUrl`（默认 `http://127.0.0.1:7897`，无代理 `""`）/ `$MemoryDir` / `$GitEmail` | `sync.config.json`（gitignored）：`{repo, proxy, proxy_host, proxy_port, git_candidates}` | `sync.config.json`（gitignored）：`{repo, proxy, proxy_host, proxy_port, git_candidates, consumer_memory_path}`（`consumer_memory_path` 指向 `~/.dsh/AGENTS.md`） |
+| 自检命令 | `powershell -ExecutionPolicy Bypass -File ...\sync-memory.ps1 -Doctor` | `python ...\sync-memory.py doctor` | `python ...\sync-memory.py doctor` |
+| 权限要求 | Codex 桌面版启用 Full access（见配置手册第五节；`apply_patch` 写 `~/.codex` 与记忆目录必需） | 不依赖 Full access（WorkBuddy 侧 Full access 每会话临时、不可持久，2026-08-16 起弃用）：读/pull 沙盒内即可完成（Python 直写 ref 兜底）；仅 git 写操作（push）需逐次非沙盒执行（`dangerouslyDisableSandbox=true`），判据=输出尾 `⚠️ Sandbox bypassed` | 同 WorkBuddy（py 脚本）；仅 git 写操作（push）需非沙盒执行 |
+| git 客户端 | 系统 git；ps1 内置部署护栏拒绝在 `~/.workbuddy` 镜像内运行，也拒绝 PortableGit / `.workbuddy` 路径的 git | 官方 Git for Windows 优先（`C:\Program Files\Git`，py 自动探测）；勿用 WorkBuddy 内置 PortableGit（代理 TLS 握手失败） | 官方 Git for Windows 优先（py 自动探测，`git_candidates` 可覆盖）；勿用 PortableGit |
+| 网络策略 | 代理优先 `http://127.0.0.1:7897`、固定 `http.sslBackend=openssl`，直连兜底 | 代理优先级 config > 环境变量（`HTTPS_PROXY`/`HTTP_PROXY`）> 默认 `http://127.0.0.1:7897`；沙盒内 raw TCP 直连被拦，git 必须走代理；pull/push 前先探测代理存活，不可达 3 秒内快速失败 | 同 WorkBuddy（代理优先级 config > 环境变量 > 默认 7897；pull/push 前探测代理存活，3 秒快速失败） |
 
 > Codex 可选：GitHub MCP（`~/.codex/config.toml` 的 `[mcp_servers.github]`）与记忆同步无关，如启用，bearer 令牌用最小权限并避免重复写环境变量。WorkBuddy 侧不经过 Codex MCP。
 
