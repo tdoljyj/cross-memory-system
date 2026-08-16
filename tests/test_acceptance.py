@@ -42,6 +42,9 @@ POWERSHELL = shutil.which("pwsh") or shutil.which("powershell")
 
 MEMORY_FILES = ["画像.md", "状态.md", "决策.md", "待办.md", "归档.md"]
 
+# Sprint 2：协议行为契约（唯一契约源：conformance 测试读它，不硬编码期望）
+MANIFEST_PATH = os.path.join(REPO_ROOT, "protocol-manifest.json")
+
 
 def check(cond, msg):
     if not cond:
@@ -1045,6 +1048,328 @@ def test_doc_conform_probe_not_stale():
     check("~/.dsh/AGENTS.md" in text, "基线第十二节未登记 DSH 端 conform 探针对象")
 
 
+# ===== Sprint 2：Protocol Behavior Manifest & Conformance =====
+
+def _manifest():
+    with open(MANIFEST_PATH, encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def _matrix_row(rid):
+    for r in _manifest()["conformance_matrix"]:
+        if r["id"] == rid:
+            return r
+    raise AssertionError("manifest 缺 conformance_matrix 行: %s" % rid)
+
+
+def _classify(exit_code, remote_changed):
+    if exit_code != 0:
+        return "block"
+    return "allow" if remote_changed else "no-op"
+
+
+def _check_conformance(row, py, ps1):
+    """py/ps1 均为 (exit_code, remote_changed, marker_written)。对照 manifest 期望。"""
+    for impl, obs in (("py", py), ("ps1", ps1)):
+        exp = row[impl]
+        got = _classify(obs[0], obs[1])
+        check(got == exp["outcome"],
+              "%s: %s 期望 %s 实得 %s（exit=%s remote_changed=%s）"
+              % (row["id"], impl, exp["outcome"], got, obs[0], obs[1]))
+        check(obs[1] == exp["remote_change"],
+              "%s: %s remote_change 期望 %s 实得 %s"
+              % (row["id"], impl, exp["remote_change"], obs[1]))
+        if exp["outcome"] == "block":
+            want_marker = row.get("marker", True)
+            check(obs[2] == want_marker,
+                  "%s: %s .sync-failed 期望 %s 实得 %s"
+                  % (row["id"], impl, want_marker, obs[2]))
+
+
+def test_protocol_manifest_wellformed():
+    """Sprint2 回归：manifest 结构完整、conformance_matrix 行被测试覆盖、词汇合法。"""
+    m = _manifest()
+    check(m.get("schema_version") == 1, "schema_version 应为 1")
+    for k in ("modes", "guards", "side_effects", "exit_codes",
+              "remote_verification", "conformance_matrix"):
+        check(k in m, "manifest 缺字段 %s" % k)
+    check(set(m["modes"]) == {"pull", "push", "doctor", "bootstrap"},
+          "modes 应为四模式")
+    ids = [g["id"] for g in m["guards"]]
+    check(len(ids) == len(set(ids)), "guard id 重复")
+    for g in m["guards"]:
+        check(g.get("py") and g.get("ps1") and g.get("desc"),
+              "guard %s 缺 py/ps1/desc" % g.get("id"))
+    check("0" in m["exit_codes"] and "1" in m["exit_codes"],
+          "exit_codes 应声明 0/1")
+    check(m["remote_verification"].get("rule") and m["remote_verification"].get("method"),
+          "remote_verification 缺 rule/method")
+    valid = {"allow", "no-op", "block"}
+    for row in m["conformance_matrix"]:
+        rid = row["id"]
+        check(rid.isidentifier(), "row id 非法: %s" % rid)
+        check(row["py"]["outcome"] in valid and row["ps1"]["outcome"] in valid,
+              "%s: outcome 词汇非法" % rid)
+        check(isinstance(row["py"].get("remote_change"), bool)
+              and isinstance(row["ps1"].get("remote_change"), bool),
+              "%s: remote_change 应为 bool" % rid)
+        check(callable(globals().get("test_conformance_" + rid)),
+              "matrix 行 %s 无对应 conformance 测试 test_conformance_%s" % (rid, rid))
+
+
+@sandboxed
+def test_conformance_access_none(sb):
+    row = _matrix_row("access_none")
+    a, b = sb.add_clone("a"), sb.add_clone("b")
+    sa, sbb = sb.install_py(a), sb.install_py(b)
+    with open(os.path.join(a, "memory", "状态.md"), "a", encoding="utf-8") as fh:
+        fh.write("\n远端状态\n")
+    git("add", "-A", cwd=a)
+    git("commit", "-m", "v", cwd=a)
+    check(sb.run_py(sa, "push").returncode == 0, "py A push 失败")
+    p = sb.run_py(sbb, "pull", "NONE")
+    check(p.returncode == 0, p.stdout + p.stderr)
+    py_remote = sb.remote_head()
+    py_local = git("rev-parse", "HEAD", cwd=b).stdout.strip()
+    check(py_local != py_remote, "py NONE 不应拉取远端")
+    py = (p.returncode, py_local == py_remote, os.path.isfile(os.path.join(b, ".sync-failed")))
+    clone = sb.add_clone("repo")
+    workdir = os.path.join(sb.tmp, "working")
+    sb.install_ps1(clone, workdir)
+    with open(os.path.join(clone, "memory", "状态.md"), "a", encoding="utf-8") as fh:
+        fh.write("\n脏变更\n")
+    p2 = sb.run_ps1(clone, "-Pull", "-Access", "NONE")
+    check(p2.returncode == 0, p2.stdout + p2.stderr)
+    check("skipping pull" in p2.stdout, p2.stdout)
+    ps1 = (p2.returncode, False, os.path.isfile(os.path.join(clone, ".sync-failed")))
+    _check_conformance(row, py, ps1)
+
+
+@sandboxed
+def test_conformance_no_memory_change(sb):
+    row = _matrix_row("no_memory_change")
+    a = sb.add_clone("a")
+    sa = sb.install_py(a)
+    before = sb.remote_head()
+    p = sb.run_py(sa, "push")
+    check(p.returncode == 0, p.stdout + p.stderr)
+    py = (p.returncode, sb.remote_head() != before, os.path.isfile(os.path.join(a, ".sync-failed")))
+    clone = sb.add_clone("repo")
+    workdir = os.path.join(sb.tmp, "working")
+    sb.install_ps1(clone, workdir)
+    before2 = sb.remote_head()
+    p2 = sb.run_ps1(clone)
+    check(p2.returncode == 0, p2.stdout + p2.stderr)
+    ps1 = (p2.returncode, sb.remote_head() != before2, os.path.isfile(os.path.join(clone, ".sync-failed")))
+    _check_conformance(row, py, ps1)
+
+
+@sandboxed
+def test_conformance_staged_non_memory(sb):
+    row = _matrix_row("staged_non_memory")
+    a = sb.add_clone("a")
+    sa = sb.install_py(a)
+    before = sb.remote_head()
+    with open(os.path.join(a, "README_x.md"), "w", encoding="utf-8") as fh:
+        fh.write("pre-staged\n")
+    git("add", "README_x.md", cwd=a)
+    with open(os.path.join(a, "memory", "状态.md"), "a", encoding="utf-8") as fh:
+        fh.write("\n触发\n")
+    git("commit", "-m", "mem", "--", "memory", cwd=a)
+    p = sb.run_py(sa, "push")
+    check(p.returncode == 0, p.stdout + p.stderr)
+    py = (p.returncode, sb.remote_head() != before, os.path.isfile(os.path.join(a, ".sync-failed")))
+    c1 = os.path.join(sb.tmp, "chk1")
+    sh([GIT, "clone", sb.remote, c1])
+    check(not os.path.isfile(os.path.join(c1, "README_x.md")),
+          "py: 预 staged 非 memory 文件不得上远端")
+    clone = sb.add_clone("repo")
+    workdir = os.path.join(sb.tmp, "working")
+    sb.install_ps1(clone, workdir)
+    before2 = sb.remote_head()
+    with open(os.path.join(clone, "AGENTS.md"), "w", encoding="utf-8") as fh:
+        fh.write("# tampered\n")
+    git("add", "AGENTS.md", cwd=clone)
+    with open(os.path.join(workdir, "画像.md"), "a", encoding="utf-8") as fh:
+        fh.write("\n触发\n")
+    p2 = sb.run_ps1(clone)
+    check(p2.returncode == 0, p2.stdout + p2.stderr)
+    ps1 = (p2.returncode, sb.remote_head() != before2, os.path.isfile(os.path.join(clone, ".sync-failed")))
+    c2 = os.path.join(sb.tmp, "chk2")
+    sh([GIT, "clone", sb.remote, c2])
+    check("tampered" not in open(os.path.join(c2, "AGENTS.md"), encoding="utf-8").read(),
+          "ps1: 预 staged 非 memory 文件不得上远端")
+    _check_conformance(row, py, ps1)
+
+
+@sandboxed
+def test_conformance_staged_secret(sb):
+    row = _matrix_row("staged_secret")
+    tok = "ghp_" + "A" * 32
+    a = sb.add_clone("a")
+    sa = sb.install_py(a)
+    before = sb.remote_head()
+    with open(os.path.join(a, "README_secret.md"), "w", encoding="utf-8") as fh:
+        fh.write(tok + "\n")
+    git("add", "README_secret.md", cwd=a)
+    with open(os.path.join(a, "README_secret.md"), "w", encoding="utf-8") as fh:
+        fh.write("clean\n")
+    with open(os.path.join(a, "memory", "状态.md"), "a", encoding="utf-8") as fh:
+        fh.write("\n触发\n")
+    git("commit", "-m", "mem", "--", "memory", cwd=a)
+    p = sb.run_py(sa, "push")
+    py = (p.returncode, sb.remote_head() != before, os.path.isfile(os.path.join(a, ".sync-failed")))
+    clone = sb.add_clone("repo")
+    workdir = os.path.join(sb.tmp, "working")
+    sb.install_ps1(clone, workdir)
+    before2 = sb.remote_head()
+    with open(os.path.join(clone, "README_secret.md"), "w", encoding="utf-8") as fh:
+        fh.write(tok + "\n")
+    git("add", "README_secret.md", cwd=clone)
+    with open(os.path.join(clone, "README_secret.md"), "w", encoding="utf-8") as fh:
+        fh.write("clean\n")
+    with open(os.path.join(workdir, "画像.md"), "a", encoding="utf-8") as fh:
+        fh.write("\n触发\n")
+    p2 = sb.run_ps1(clone)
+    ps1 = (p2.returncode, sb.remote_head() != before2, os.path.isfile(os.path.join(clone, ".sync-failed")))
+    _check_conformance(row, py, ps1)
+
+
+@sandboxed
+def test_conformance_committed_non_memory_secret(sb):
+    row = _matrix_row("committed_non_memory_secret")
+    tok = "ghp_" + "A" * 32
+    a = sb.add_clone("a")
+    sa = sb.install_py(a)
+    before = sb.remote_head()
+    with open(os.path.join(a, "README_token.md"), "w", encoding="utf-8") as fh:
+        fh.write(tok + "\n")
+    git("add", "README_token.md", cwd=a)
+    git("commit", "-m", "token", cwd=a)
+    p = sb.run_py(sa, "push")
+    py = (p.returncode, sb.remote_head() != before, os.path.isfile(os.path.join(a, ".sync-failed")))
+    clone = sb.add_clone("repo")
+    workdir = os.path.join(sb.tmp, "working")
+    sb.install_ps1(clone, workdir)
+    before2 = sb.remote_head()
+    with open(os.path.join(clone, "README_token.md"), "w", encoding="utf-8") as fh:
+        fh.write(tok + "\n")
+    git("add", "README_token.md", cwd=clone)
+    git("commit", "-m", "token", cwd=clone)
+    with open(os.path.join(workdir, "画像.md"), "a", encoding="utf-8") as fh:
+        fh.write("\n触发\n")
+    p2 = sb.run_ps1(clone)
+    ps1 = (p2.returncode, sb.remote_head() != before2, os.path.isfile(os.path.join(clone, ".sync-failed")))
+    _check_conformance(row, py, ps1)
+
+
+@sandboxed
+def test_conformance_missing_config(sb):
+    row = _matrix_row("missing_config")
+    a = sb.add_clone("a")
+    script = os.path.join(a, "sync-memory.py")  # 克隆内、无 sync.config.json
+    shutil.copy(PY, script)
+    before = sb.remote_head()
+    with open(os.path.join(a, "memory", "状态.md"), "a", encoding="utf-8") as fh:
+        fh.write("\n无配置推送\n")
+    git("add", "-A", "--", "memory", cwd=a)
+    git("commit", "-m", "noconfig", cwd=a)
+    p = sh([sys.executable, script, "push"], cwd=a, check_fail=False)
+    py = (p.returncode, sb.remote_head() != before, os.path.isfile(os.path.join(a, ".sync-failed")))
+    clone = sb.add_clone("repo")
+    workdir = os.path.join(sb.tmp, "working")
+    sb.install_ps1(clone, workdir)
+    os.remove(os.path.join(clone, "sync.config.ps1"))  # 无配置
+    p2 = sb.run_ps1(clone, "-Pull", "-Access", "NONE")
+    check(p2.returncode == 0, p2.stdout + p2.stderr)
+    ps1 = (p2.returncode, False, os.path.isfile(os.path.join(clone, ".sync-failed")))
+    _check_conformance(row, py, ps1)
+
+
+@sandboxed
+def test_conformance_foreign_mirror(sb):
+    row = _matrix_row("foreign_mirror")
+    codexdir = os.path.join(sb.tmp, ".codex", "projects", "codex-memory-system")
+    os.makedirs(codexdir, exist_ok=True)
+    pyscript = os.path.join(codexdir, "sync-memory.py")
+    shutil.copy(PY, pyscript)
+    p = sh([sys.executable, pyscript, "pull"], cwd=codexdir, check_fail=False)
+    check(p.returncode != 0, "py 在 .codex 路径应被拒")
+    check("[deploy-guard]" in (p.stdout + p.stderr), "py 应输出 deploy-guard")
+    py = (p.returncode, False, os.path.isfile(os.path.join(codexdir, ".sync-failed")))
+    wbdir = os.path.join(sb.tmp, ".workbuddy", "codex-memory-system")
+    os.makedirs(wbdir, exist_ok=True)
+    ps1script = os.path.join(wbdir, "sync-memory.ps1")
+    shutil.copy(PS1, ps1script)
+    p2 = sh([POWERSHELL, "-ExecutionPolicy", "Bypass", "-File", ps1script, "-Doctor"],
+            cwd=wbdir, check_fail=False)
+    check(p2.returncode != 0, "ps1 在 .workbuddy 路径应被拒")
+    check("[deploy-guard]" in p2.stdout, "ps1 应输出 deploy-guard")
+    ps1 = (p2.returncode, False, os.path.isfile(os.path.join(wbdir, ".sync-failed")))
+    _check_conformance(row, py, ps1)
+
+
+@sandboxed
+def test_conformance_fetch_error_redact(sb):
+    row = _matrix_row("fetch_error_redact")
+    tok = "ghp_" + "A" * 32
+    bad_py = os.path.join(sb.tmp, "gone-" + tok + ".git")
+    a = sb.add_clone("a")
+    sa = sb.install_py(a)
+    git("remote", "set-url", "origin", bad_py, cwd=a)
+    before = sb.remote_head()
+    p = sb.run_py(sa, "pull")
+    check(tok not in (p.stdout + p.stderr), "py 输出不得含令牌")
+    marker = os.path.join(a, ".sync-failed")
+    if os.path.isfile(marker):
+        check(tok not in open(marker, encoding="utf-8", errors="replace").read(),
+              "py .sync-failed 不得含令牌")
+    py = (p.returncode, sb.remote_head() != before, os.path.isfile(marker))
+    bad_ps1 = os.path.join(sb.tmp, "gone-" + tok + ".git2")
+    clone = sb.add_clone("repo")
+    workdir = os.path.join(sb.tmp, "working")
+    sb.install_ps1(clone, workdir)
+    git("remote", "set-url", "origin", bad_ps1, cwd=clone)
+    before2 = sb.remote_head()
+    p2 = sb.run_ps1(clone, "-Pull")
+    check(tok not in (p2.stdout + p2.stderr), "ps1 输出不得含令牌")
+    marker2 = os.path.join(clone, ".sync-failed")
+    if os.path.isfile(marker2):
+        check(tok not in open(marker2, encoding="utf-8", errors="replace").read(),
+              "ps1 .sync-failed 不得含令牌")
+    ps1 = (p2.returncode, sb.remote_head() != before2, os.path.isfile(marker2))
+    _check_conformance(row, py, ps1)
+
+
+@sandboxed
+def test_conformance_remote_verification(sb):
+    row = _matrix_row("remote_verification")
+    a = sb.add_clone("a")
+    sa = sb.install_py(a)
+    before = sb.remote_head()
+    with open(os.path.join(a, "memory", "状态.md"), "a", encoding="utf-8") as fh:
+        fh.write("\n验证\n")
+    git("add", "-A", "--", "memory", cwd=a)
+    git("commit", "-m", "v", cwd=a)
+    p = sb.run_py(sa, "push")
+    check(p.returncode == 0, p.stdout + p.stderr)
+    py_ok = sb.remote_head() == git("rev-parse", "HEAD", cwd=a).stdout.strip()
+    check(py_ok, "py push 后本地应等于远端")
+    py = (p.returncode, sb.remote_head() != before, os.path.isfile(os.path.join(a, ".sync-failed")))
+    clone = sb.add_clone("repo")
+    workdir = os.path.join(sb.tmp, "working")
+    sb.install_ps1(clone, workdir)
+    before2 = sb.remote_head()
+    with open(os.path.join(workdir, "画像.md"), "a", encoding="utf-8") as fh:
+        fh.write("\n验证\n")
+    p2 = sb.run_ps1(clone)
+    check(p2.returncode == 0, p2.stdout + p2.stderr)
+    ps1_ok = sb.remote_head() == git("rev-parse", "HEAD", cwd=clone).stdout.strip()
+    check(ps1_ok, "ps1 push 后本地应等于远端")
+    ps1 = (p2.returncode, sb.remote_head() != before2, os.path.isfile(os.path.join(clone, ".sync-failed")))
+    _check_conformance(row, py, ps1)
+
+
 def test_doc_guard_wording_consistent():
     """P1-2 回归：协议文档不得残留硬编码 .md 数量护栏旧口径（≥ 5），
     护栏口径唯一事实源是 memory/index.json 的 files 清单。"""
@@ -1191,6 +1516,16 @@ TESTS = [
     test_ps1_push_refuses_committed_non_memory_secret,
     test_ps1_push_allows_clean_non_memory_commit,
     test_ps1_pull_access_none_pure_shortcircuit,
+    test_protocol_manifest_wellformed,
+    test_conformance_access_none,
+    test_conformance_no_memory_change,
+    test_conformance_staged_non_memory,
+    test_conformance_staged_secret,
+    test_conformance_committed_non_memory_secret,
+    test_conformance_missing_config,
+    test_conformance_foreign_mirror,
+    test_conformance_fetch_error_redact,
+    test_conformance_remote_verification,
 ]
 
 
@@ -1200,7 +1535,8 @@ def main():
     ps1_blocked = bool(POWERSHELL) and _ps1_git_unsafe()
     for fn in TESTS:
         name = fn.__name__
-        if "ps1" in name and name != "test_ps1_deploy_guard_blocks_workbuddy_path":
+        if ("ps1" in name or name.startswith("test_conformance_")) \
+                and name != "test_ps1_deploy_guard_blocks_workbuddy_path":
             if not POWERSHELL:
                 print("SKIP %s (PowerShell 不可用)" % name)
                 skipped += 1

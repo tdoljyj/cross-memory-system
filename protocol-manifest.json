@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "protocol": "cross-memory-sync",
+  "protocol_version": "vNext-1.3",
+  "description": "跨端记忆同步协议行为契约（vNext-1.3）。sync-memory.py 与 sync-memory.ps1 是同一协议的两种实现；本清单声明协议级行为矩阵，tests/test_acceptance.py 的 conformance 测试逐行核验两实现的安全结论一致（是否放行、副作用、远端修改、错误类别、密钥/护栏拒绝），不要求输出文字一致。修改任一脚本行为前必须先改本清单（清单 = 唯一契约源，测试读它、不硬编码期望）。",
+  "modes": ["pull", "push", "doctor", "bootstrap"],
+  "guards": [
+    {"id": "deploy", "desc": "拒绝在他端克隆/镜像内运行（防跨端污染/身份伪造）", "py": "sync-memory.py _deploy_guard（拒 .codex 克隆）", "ps1": "sync-memory.ps1 顶部 deploy-guard（拒 .workbuddy/.dsh 镜像）"},
+    {"id": "git-client", "desc": "拒绝不安全 git 客户端（PortableGit 路径启发式）", "py": "ensure_git_safe", "ps1": "Test-GitClientSafe"},
+    {"id": "deletion", "desc": "memory/index.json files 清单任一文件缺失或为空即拒绝同步（防推空仓）", "py": "memory_dir_healthy", "ps1": "Test-MemoryFilesHealthy"},
+    {"id": "secret-memory", "desc": "memory/*.md 工作树凭据样值拒绝 push", "py": "find_secret_leak", "ps1": "Find-SecretLeak"},
+    {"id": "secret-staged", "desc": "staged 文件 index blob 凭据样值拒绝（git show :path，非工作树读取）", "py": "find_secret_leak_staged", "ps1": "Find-SecretLeakStaged"},
+    {"id": "secret-unpushed", "desc": "本地领先远端的未推送提交（HEAD blob）凭据样值拒绝 push", "py": "find_secret_leak_unpushed", "ps1": "Find-SecretLeakUnpushed"},
+    {"id": "lock", "desc": "同机并发同步互斥（.sync.lock，O_EXCL/CreateNew + PID 探活）", "py": "acquire_lock", "ps1": "Test-AcquireSyncLock"},
+    {"id": "divergence", "desc": "push/pull 后核验（ls-remote + merge-base 祖先判定），真分叉失败", "py": "confirm_no_divergence", "ps1": "Confirm-RemotePushed"},
+    {"id": "config", "desc": "配置缺失时回落本端安全默认（不得指向他端克隆）", "py": "REPO 缺省=脚本所在克隆目录", "ps1": "sync.config.ps1 缺省本机默认 + deploy-guard 兜底"}
+  ],
+  "side_effects": {
+    "marker": ".sync-failed 失败标记（成功同步后清除；.needs-push 为领先提示标记）",
+    "temp_cleanup": "过期 codex-memory-* 备份目录清理（保留期见 guards.json）",
+    "commit": "memory sync 提交（ps1 代 commit；py 由使用方 commit）",
+    "push": "远端 main 推进",
+    "identity_write": "git config user.name 写入（ps1 每轮执行；py 不写）",
+    "remote_fetch": "fetch origin main（读路径允许，push/pull 前对齐）"
+  },
+  "exit_codes": {
+    "0": "成功或无变化（no-op：Access=NONE 短路 / 无 memory 变化 skip commit）",
+    "1": "失败：护栏拒绝 / 密钥命中 / 远端不可达 / 锁冲突 / 分叉 / 配置异常",
+    "note": "两实现失败均 exit 1 并写 .sync-failed；例外：deploy-guard 在进程早期拒绝，不写 .sync-failed（脚本尚未完成函数定义）"
+  },
+  "remote_verification": {
+    "rule": "push 后必须核验本地 HEAD 与远端 main 对齐；pull 后本地不得落后或分叉",
+    "method": "git ls-remote origin main + merge-base --is-ancestor（祖先判定，非 == 比较，容忍并发远端前进）",
+    "py": "confirm_no_divergence + restore_tracking_ref（cat-file 验对象防悬空 ref）",
+    "ps1": "Confirm-RemotePushed + tracking ref 行为探针（doctor）"
+  },
+  "conformance_matrix": [
+    {"id": "access_none", "behavior": "Access=NONE 拉取纯短路（T0 零副作用）", "py": {"outcome": "no-op", "remote_change": false}, "ps1": {"outcome": "no-op", "remote_change": false}, "marker": false, "note": "不写 marker/锁/TEMP 清理/git 身份，不访问远端"},
+    {"id": "no_memory_change", "behavior": "无 memory 变化时 push", "py": {"outcome": "no-op", "remote_change": false}, "ps1": {"outcome": "no-op", "remote_change": false}, "marker": false, "note": "ps1 显式 skip commit；py push 为 up-to-date（无新提交、远端不变）"},
+    {"id": "staged_non_memory", "behavior": "预 staged 非 memory 文件 + memory 变化 push", "py": {"outcome": "allow", "remote_change": true}, "ps1": {"outcome": "allow", "remote_change": true}, "marker": false, "note": "memory 变更正常推送；预 staged 非 memory 内容不得进入提交/远端，且其 index 状态保留"},
+    {"id": "staged_secret", "behavior": "预 staged 非 memory 文件携带令牌（工作树可已回改）", "py": {"outcome": "block", "remote_change": false}, "ps1": {"outcome": "block", "remote_change": false}, "marker": true, "note": "读 index blob 扫描（TOCTOU 免疫），拒绝 + .sync-failed + 远端不变"},
+    {"id": "committed_non_memory_secret", "behavior": "令牌已 commit 进非 memory 文件（staged 为空）", "py": {"outcome": "block", "remote_change": false}, "ps1": {"outcome": "block", "remote_change": false}, "marker": true, "note": "扫 origin/main..HEAD 的 HEAD blob，拒绝 + .sync-failed + 远端不变（ps1 侧 Sprint2-A 补齐）"},
+    {"id": "missing_config", "behavior": "sync.config 缺失时的安全回落（不访问他端工作区）", "py": {"outcome": "allow", "remote_change": true}, "ps1": {"outcome": "no-op", "remote_change": false}, "marker": false, "note": "py 缺省 REPO=脚本所在克隆（可在本端克隆正常 push）；ps1 经 -Pull -Access NONE 纯短路验证（其默认 MemoryDir 指向 Codex 工作区，测试不得触碰他端，越界场景由 deploy 行覆盖）"},
+    {"id": "foreign_mirror", "behavior": "在他端克隆/镜像内运行", "py": {"outcome": "block", "remote_change": false}, "ps1": {"outcome": "block", "remote_change": false}, "marker": false, "note": "deploy-guard 进程早期拒绝（exit 1），按契约不写 .sync-failed"},
+    {"id": "fetch_error_redact", "behavior": "fetch 失败（错误路径含凭据样值）", "py": {"outcome": "block", "remote_change": false}, "ps1": {"outcome": "block", "remote_change": false}, "marker": true, "note": "fail-closed 拒绝；错误文本经 redact，令牌样值不得出现在输出与 .sync-failed"},
+    {"id": "remote_verification", "behavior": "成功 push 后的远端核验", "py": {"outcome": "allow", "remote_change": true}, "ps1": {"outcome": "allow", "remote_change": true}, "marker": false, "note": "push 后本地 HEAD == 远端 main（ls-remote），exit 0"}
+  ]
+}
