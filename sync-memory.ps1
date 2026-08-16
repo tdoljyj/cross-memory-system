@@ -567,6 +567,25 @@ function Invoke-DoctorMode {
     $trackedRef = (git -C $repoRoot rev-parse origin/main 2>&1 | Out-String).Trim()
     Report "tracking ref matches remote" ($remoteHashDoc -and $trackedRef -eq $remoteHashDoc) ("origin/main=" + $trackedRef + " remote=" + $remoteHashDoc)
 
+    # GAP-2-3（对齐 py doctor）：本地与远端版本对齐阻挡态——落后必须标红并指引 re-pull。
+    $localHead = (git -C $repoRoot rev-parse HEAD 2>&1 | Out-String).Trim()
+    if ($remoteHashDoc -and $localHead) {
+        if ($localHead -eq $remoteHashDoc) {
+            Report "local == remote" $true "一致"
+        } else {
+            git -C $repoRoot -c http.proxy=$proxy -c http.sslBackend=openssl -c http.lowSpeedLimit=1 -c http.lowSpeedTime=15 fetch --quiet origin main 2>&1 | Out-Null
+            if ($LASTEXITCODE -ne 0) { git -C $repoRoot -c http.lowSpeedLimit=1 -c http.lowSpeedTime=15 fetch --quiet origin main 2>&1 | Out-Null }
+            git -C $repoRoot merge-base --is-ancestor $localHead $remoteHashDoc 2>$null | Out-Null
+            if ($LASTEXITCODE -eq 0) {
+                Report "local == remote" $false ("本地落后远端（{0}..{1}），读前必须 re-pull，否则结论不可信" -f $localHead.Substring(0, 12), $remoteHashDoc.Substring(0, 12))
+            } else {
+                Report "local == remote" $false "本地与远端分叉，需手动语义合并"
+            }
+        }
+    } else {
+        Report "local == remote" $false "无法判定（本地或远端不可读）"
+    }
+
     $testRef = "refs/remotes/origin/doctor-test"
     $head = (git -C $repoRoot rev-parse HEAD).Trim()
     git -C $repoRoot update-ref $testRef $head 2>&1 | Out-Null
@@ -615,6 +634,11 @@ function Invoke-DoctorMode {
     }
 
     Report "memory dir exists" (Test-Path -LiteralPath $memorySrc)
+
+    # GAP-2-3（对齐 py doctor）：仓库侧 memory 文件集健康（按 index.json files 清单），
+    # 缺失/为空即 FAIL——删除传播护栏状态必须在 doctor 可见。
+    $reqFiles = Get-MemoryFileList $memoryDst
+    Report "memory dir healthy (files per memory/index.json)" (Test-MemoryFilesHealthy $memoryDst $reqFiles)
 
     # index.json 召回段名有效性：标题改写会静默失效，doctor 做运行时校验（与测试同口径）。
     $idx = Get-MemoryIndex $memoryDst

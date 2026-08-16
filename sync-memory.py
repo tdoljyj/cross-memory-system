@@ -896,6 +896,18 @@ def cmd_doctor():
             report("tracking ref valid", False, detail)
     else:
         report("tracking ref valid", ok, detail)
+    # GAP-2-3（对齐 ps1 -Doctor）：ref 写入持久性行为探针（update-ref 写入→读回→删除）。
+    # 沙盒 overlay 拦截两层 ref 原子写时在此暴露，而非静默漂移。
+    if local:
+        test_ref = "refs/remotes/origin/doctor-test"
+        c1, _, _ = git("update-ref", test_ref, local, proxy=False)
+        c2, read_back, _ = git("rev-parse", test_ref, proxy=False)
+        git("update-ref", "-d", test_ref, proxy=False)
+        report("ref write persists (behavior probe)", c1 == 0 and c2 == 0 and read_back == local,
+               "read back: %s" % (read_back[:12] if read_back else "(empty)"))
+    else:
+        report("ref write persists (behavior probe)", False, "本地 HEAD 不可读")
+
     for marker in (".sync-failed", ".pending-writeback"):
         p = os.path.join(REPO, marker)
         exists = os.path.exists(p)

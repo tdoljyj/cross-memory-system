@@ -977,6 +977,81 @@ def test_ps1_retention_fallback_defaults_to_7(sb):
         shutil.rmtree(drop, ignore_errors=True)
 
 
+@sandboxed
+def test_ps1_doctor_symmetric_probes(sb):
+    """GAP-2-3 回归：ps1 -Doctor 须含「memory dir healthy（按 index.json）」与
+    「local == remote」两项探针；memory 文件缺失时前者 FAIL 且 exit != 0。"""
+    clone = sb.add_clone("repo")
+    workdir = os.path.join(sb.tmp, "working")
+    sb.install_ps1(clone, workdir)
+    shutil.copy(os.path.join(REPO_ROOT, ".gitattributes"),
+                os.path.join(clone, ".gitattributes"))
+    p0 = sb.run_ps1(clone, "-Bootstrap")
+    check(p0.returncode == 0, p0.stdout + p0.stderr)
+    hook = os.path.join(sb.tmp, "AGENTS.md")
+    with open(hook, "w", encoding="utf-8") as fh:
+        fh.write("版本真值核对 = 触发式、禁自动化\n")
+    with open(os.path.join(clone, "sync.config.ps1"), "a", encoding="utf-8") as fh:
+        fh.write("$ConsumerHookFile = '%s'\n" % hook)
+    p = sb.run_ps1(clone, "-Doctor")
+    check(p.returncode == 0, p.stdout + p.stderr)
+    check("memory dir healthy" in p.stdout, "ps1 doctor 缺 memory dir healthy 探针")
+    check("local == remote" in p.stdout, "ps1 doctor 缺 local == remote 探针")
+    os.remove(os.path.join(clone, "memory", "状态.md"))
+    p2 = sb.run_ps1(clone, "-Doctor")
+    check(p2.returncode != 0, "memory 文件缺失时 doctor 应 FAIL")
+    check("memory dir healthy" in p2.stdout and "FAIL" in p2.stdout,
+          "memory dir healthy 探针应标红: " + p2.stdout)
+
+
+@sandboxed
+def test_ps1_doctor_local_behind_blocks(sb):
+    """GAP-2-3 回归：本地落后远端时 ps1 -Doctor 的 local == remote 探针必须 FAIL
+    并指引 re-pull。"""
+    clone = sb.add_clone("repo")
+    workdir = os.path.join(sb.tmp, "working")
+    sb.install_ps1(clone, workdir)
+    shutil.copy(os.path.join(REPO_ROOT, ".gitattributes"),
+                os.path.join(clone, ".gitattributes"))
+    sb.run_ps1(clone, "-Bootstrap")
+    hook = os.path.join(sb.tmp, "AGENTS.md")
+    with open(hook, "w", encoding="utf-8") as fh:
+        fh.write("版本真值核对 = 触发式、禁自动化\n")
+    with open(os.path.join(clone, "sync.config.ps1"), "a", encoding="utf-8") as fh:
+        fh.write("$ConsumerHookFile = '%s'\n" % hook)
+    other = sb.add_clone("other")
+    with open(os.path.join(other, "memory", "状态.md"), "a", encoding="utf-8") as fh:
+        fh.write("\n远端前进\n")
+    git("add", "-A", cwd=other)
+    git("commit", "-m", "advance", cwd=other)
+    git("push", cwd=other)
+    p = sb.run_ps1(clone, "-Doctor")
+    check(p.returncode != 0, "本地落后远端时 doctor 应 FAIL")
+    check("本地落后远端" in p.stdout, "应输出落后阻挡态: " + p.stdout)
+
+
+@sandboxed
+def test_py_doctor_ref_write_probe(sb):
+    """GAP-2-3 回归：py doctor 须含 ref write persists 行为探针（沙盒健康态 PASS）。"""
+    clone = sb.add_clone("a")
+    script = sb.install_py(clone)
+    hook = os.path.join(sb.tmp, "AGENTS-hook.md")
+    with open(hook, "w", encoding="utf-8") as fh:
+        fh.write("版本真值核对 = 触发式、禁自动化\n")
+    cfg_path = os.path.join(os.path.dirname(script), "sync.config.json")
+    with open(cfg_path, "r", encoding="utf-8") as fh:
+        cfg = json.load(fh)
+    cfg["consumer_memory_path"] = hook
+    with open(cfg_path, "w", encoding="utf-8") as fh:
+        json.dump(cfg, fh)
+    git("config", "core.autocrlf", "false", cwd=clone)
+    git("config", "merge.union.driver", "git merge-file --union %A %O %B", cwd=clone)
+    p = sb.run_py(script, "doctor")
+    check(p.returncode == 0, p.stdout + p.stderr)
+    check("ref write persists (behavior probe)" in p.stdout, "py doctor 缺 ref 写入行为探针")
+    check("doctor: ALL PASS" in p.stdout, p.stdout)
+
+
 def test_consumer_conformed_detects_triggertype_ban():
     # 纯函数单体测试：消费端操作记忆须声明「版本真值核对/触发式/禁自动化」三要素
     import importlib.util
@@ -1576,6 +1651,9 @@ TESTS = [
     test_py_deploy_guard_blocks_codex_path,
     test_ps1_conform_probe_detects,
     test_ps1_needs_push_cleared_after_push,
+    test_ps1_doctor_symmetric_probes,
+    test_ps1_doctor_local_behind_blocks,
+    test_py_doctor_ref_write_probe,
     test_ps1_push_refuses_committed_non_memory_secret,
     test_ps1_push_allows_clean_non_memory_commit,
     test_ps1_pull_access_none_pure_shortcircuit,
