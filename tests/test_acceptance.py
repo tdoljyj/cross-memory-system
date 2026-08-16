@@ -485,6 +485,22 @@ def test_ps1_commit_repo_commits_docs(sb):
           "git log 应出现 repo sync 提交")
 
 
+def test_consumer_conformed_detects_triggertype_ban():
+    # 纯函数单体测试：消费端操作记忆须声明「版本真值核对/触发式/禁自动化」三要素
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "sync_memory_conform", os.path.join(REPO_ROOT, "sync-memory.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    check(mod.consumer_conformed("版本真值核对 / 触发式 / 禁自动化"),
+          "三要素齐全应 conform")
+    check(not mod.consumer_conformed("版本真值核对 / 触发式"),
+          "缺禁自动化不应 conform")
+    check(not mod.consumer_conformed("触发式 / 禁自动化"),
+          "缺版本真值核对不应 conform")
+    check(not mod.consumer_conformed(""), "空文本不应 conform")
+
+
 TESTS = [
     test_index_json_recall_mapping_valid,
     test_redact_masks_tokens,
@@ -505,6 +521,7 @@ TESTS = [
     test_py_pull_ahead_self_heals,
     test_ps1_pull_fails_closed_on_bad_remote,
     test_ps1_deploy_guard_blocks_workbuddy_path,
+    test_consumer_conformed_detects_triggertype_ban,
 ]
 
 

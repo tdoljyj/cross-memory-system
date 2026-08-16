@@ -55,6 +55,7 @@
 4. 「local ≠ remote」的任何已知证据都是全局红旗，必须当场处理，不得当作孤立 bug 略过。
 
 > ⚠️ **机制性质（防跑偏）**：版本真值核对是**触发式**——仅当请求命中 T1–T4 或属「最新版 / 评估现状 / 审计 / 提基线」类时，才在**读前**执行；**禁止定时任务 / 启动加载 / 调度自动化**等任何周期形态。依据：基线 Phase 6 已删「Session Start 全量 Load」、Phase 12 已废除强制启动加载/强制结束上传；版本对齐归属第十二节 Cache 与失效机制的「读前 pull + ls-remote 比对」，不另设独立周期任务。任何端点新增版本核对流程前须先读本最新基线，不得自创自动化。
+> **doctor 红旗 = 阻断态（残留边界收窄）**：doctor 的「消费端 conform 触发式禁令」探针 FAIL，或 tracking ref 漂移/分叉，一律视为未对齐本加固——**不得据此读 canon 当依据、不得 push**，须先补声明（消费记忆含「版本真值核对/触发式/禁自动化」）或 re-pull 修红后再继续。
 
 ## 四、Memory Change Detector + 写入纪律（按需写入与上传）
 
@@ -81,4 +82,4 @@
 
 - 身份：每端以「AI名@机器名」作为 git 作者提交（Codex 脚本自动；手动端用 git -c user.name="AI名@机器名" commit），commit message 带 [身份] 与变更文件，便于追溯与冲突仲裁。
 - 文件分区：归档.md 为追加类（union 自动合并，仅 `git merge` 生效）；状态.md / 待办.md 为改写类（改前立即 merge，冲突保留两端语义、绝不单方面覆盖）；决策.md / 画像.md 多为追加、偶发改写（默认合并，冲突语义合并）。收敛统一 `git merge`（非 rebase）。
-- 每机一份 gitignored 的 sync.config.ps1（身份/代理/记忆目录/提交身份）；新机器先跑 sync-memory.ps1 -Doctor 自检再接入。
+- 每机一份 gitignored 的 sync.config.ps1（身份/代理/记忆目录/提交身份）；新机器先跑 sync-memory.ps1 -Doctor 自检（须全 PASS、conform 探针不得 FAIL）再接入；doctor 任一红旗 = 阻断态，未修红不得读 canon / 不得 push。

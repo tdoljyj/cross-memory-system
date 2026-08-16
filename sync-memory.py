@@ -601,6 +601,19 @@ def check_ref_valid(remote=None):
     return True, content[:12]
 
 
+# 消费端操作记忆 conform 探针（残留边界收窄，vNext-1.3 残留边界收窄）：
+# 须同时声明「版本真值核对」+「触发式」+「禁自动化」三要素，才视为已对齐
+# vNext-1.3 显式化加固。语义匹配（非硬编码版本号），版本号一致性由
+# check_ref_valid / local==remote 阻挡态管。doctor 据此把「被动未 conform」
+# 从静默失效转为可检测红旗。
+CONFORM_MARKERS = ("版本真值核对", "触发式", "禁自动化")
+
+
+def consumer_conformed(text):
+    """消费端操作记忆（MEMORY.md / Codex AGENTS.md）是否声明了触发式禁令。"""
+    return all(m in text for m in CONFORM_MARKERS)
+
+
 def cmd_doctor():
     print("== 体检 ==")
     cleanup_stale_backups()
@@ -673,6 +686,25 @@ def cmd_doctor():
             wb_protocol = ""
         report("MEMORY.md 无已废弃 pull --rebase 指令",
                "pull --rebase" not in wb_protocol)
+        # 消费端 conform 探针（残留边界收窄）：须声明触发式禁令三要素
+        report("MEMORY.md 已 conform 触发式禁令",
+               consumer_conformed(wb_protocol),
+               "" if consumer_conformed(wb_protocol)
+               else "缺「版本真值核对/触发式/禁自动化」声明，未对齐 vNext-1.3 显式化加固")
+    # Codex 端消费记忆（WorkBuddy 机器上通常不存在，缺失仅提示不阻断）
+    codex_agents = os.path.expanduser("~/.codex/AGENTS.md")
+    if os.path.isfile(codex_agents):
+        try:
+            with open(codex_agents, "r", encoding="utf-8") as f:
+                codex_protocol = f.read()
+        except Exception:
+            codex_protocol = ""
+        report("Codex AGENTS.md 已 conform 触发式禁令",
+               consumer_conformed(codex_protocol),
+               "" if consumer_conformed(codex_protocol)
+               else "缺触发式/禁自动化声明，未对齐 vNext-1.3 显式化加固")
+    else:
+        print("[WARN] ~/.codex/AGENTS.md 不存在（跨端消费记忆，本机缺失不阻断）")
 
     dirty = git_status_memory()
     report("working tree clean", dirty == [],

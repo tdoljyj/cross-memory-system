@@ -17,6 +17,7 @@
 | vNext-1.3 | 2026-08-16 | 工程化推进（结构化召回索引 + 统一护栏 + 令牌脱敏）：① 新增 memory/index.json（schema_version 1，files + L1–L6 recall 映射）作为召回与必需文件集的唯一事实源；② 双端同步护栏由硬编码 5 改为读 index.json 的 files 清单（缺失/为空拒绝同步）；③ 双端新增 redact() 令牌掩码（gho_/ghp_/github_pat_/Bearer）并接入 .sync-failed 与 doctor，doctor 提示长期令牌环境变量并展示 credential.helper；④ AGENTS.md / README 对齐 index.json 与「git 走 gh 凭据助手、不 setx 长期令牌」；⑤ 验收测试 8 → 10 用例（index.json 校验 / redact 回归 / missing-index 护栏） | Codex@TURING |
 | vNext-1.3 收尾修复 | 2026-08-16 | 复盘「评估失误」后双向整改落地：① check_ref_valid 由 40-hex 正则改为比对 ls-remote 哈希（消假阳）；② doctor 增加方向判定，本地落后远端时显式「读前必须 re-pull」阻挡态；③ 新增 VERSION 文件 + git tag vNext-1.3 带外版本指针，基线文档文件名加版本号（架构基线文档-vNext-1.3.md，全仓引用同步）；④ 版本号标注 1.2→1.3 同步（AGENTS/README/双脚本/tests/配置手册）；⑤ ps1 -Pull 远端 hash 缺失 fail-closed（消 P0-A）；⑥ py tracking ref 加 cat-file 存在性校验（消悬空 ref，P1-A）；⑦ ps1 部署位置护栏（拒绝在 .workbuddy 镜像执行，P0-B）；⑧ py pull 领先自愈补推（P1-C）；⑨ AGENTS 加「评估类任务第一步 ls-remote」硬性 check-list；⑩ 验收测试补 null-remote / dangling-ref / deploy-guard / 领先自愈 4 条回归 | WorkBuddy@TURING |
 | vNext-1.3 显式化加固 | 2026-08-16 | 将「版本真值核对 = 触发式、禁止定时/启动/调度自动化」显式写入 canon：AGENTS v3.1 第 51 行 check-list 后补机制性质注（防跑偏）；第十二节 Cache 与失效机制补「版本真值核对=触发式落地、禁周期形态」一句；与 Phase 6/12 废除批量加载一致，未引入新机制、未 bump 版本 | WorkBuddy@TURING |
+| vNext-1.3 残留边界收窄 | 2026-08-16 | 把「端点完全无视协议则规则救不了」的残留边界收窄为可检测+阻断：① sync-memory.py doctor 新增「消费端 conform 触发式禁令」探针（纯函数 consumer_conformed，检测 MEMORY.md/Codex AGENTS.md 是否声明「版本真值核对/触发式/禁自动化」三要素；缺失=FAIL）；② AGENTS v3.1 明令 doctor 红旗=阻断态（conform 探针 FAIL / ref 漂移不得读 canon、不得 push）；③ bootstrap 接入门槛强化（须全 PASS、conform 探针不得 FAIL）。未引入周期任务、未 bump 版本、与 Phase 6/12 一致 | WorkBuddy@TURING |
 
 > **目标**：将"每次开头强制加载记忆、结尾强制上传"改造成真正的按需读写型跨会话记忆系统。
 >
@@ -392,6 +393,7 @@ value: memory content + version
 读取时 `cache.version == store.version` 才认为有效。例如 version 15 → 16，自动 invalidate version 15。不要单纯依靠 TTL。正确：**Version-based invalidation + TTL fallback**。其中 Version 解决一致性，TTL 防止永久脏缓存。
 
 > **版本真值核对 = 本机制的触发式落地**（对齐 AGENTS v3.1 第 51 行）：仅命中 T1–T4 或「最新版 / 审计」类请求时，在读前执行 `pull + ls-remote` 比对；**禁止定时 / 启动 / 调度自动化**等周期形态（Phase 6 已删 Session Start 全量 Load、Phase 12 已废除强制启动加载/强制结束上传）。新增版本核对流程须沿用此触发式，不得另设独立周期任务。
+> doctor 含「消费端 conform 触发式禁令」探针（检测 MEMORY.md / Codex AGENTS.md 是否声明三要素）；探针 FAIL = 阻断态（见 AGENTS v3.1 阻断态注），视为未 conform 到本加固，结论不可信。
 
 ---
 
@@ -668,3 +670,4 @@ Memory Access Policy
 | redact() 令牌掩码 + 长期令牌环境变量 doctor 提醒 | 新增 | sync-memory.ps1 / sync-memory.py | ✅ 已落地 |
 | 凭据接入指引：git 走 gh 凭据助手，不 setx 长期令牌 | 调整 | README.md | ✅ 已落地 |
 | 验收测试 8 → 10 用例（index.json 校验 / redact / missing-index 护栏） | 调整 | tests/test_acceptance.py | ✅ 已落地 |
+| 消费端 conform 触发式禁令探针（doctor）+ 纯函数单测 consumer_conformed | 新增 | sync-memory.py doctor + tests/test_acceptance.py | ✅ 已落地（11 用例） |
