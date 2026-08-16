@@ -209,17 +209,37 @@ function Release-SyncLock {
     $script:lockHeld = $false
 }
 
-function Find-SecretLeak {
-    # Pre-commit secret scan: refuse to sync memory files carrying a credential-like
-    # value so a token/private key never enters the git history (baseline 附录 C).
-    param([string]$Dir)
-    $patterns = @(
+function Get-Guards {
+    # Read guards.json (single source of truth for guard params, measure 9).
+    # Returns $null on any failure; callers fall back to built-in defaults.
+    $p = Join-Path $repoRoot "guards.json"
+    if (-not (Test-Path -LiteralPath $p)) { return $null }
+    try {
+        return (Get-Content -LiteralPath $p -Raw -Encoding UTF8 | ConvertFrom-Json)
+    } catch {
+        return $null
+    }
+}
+
+function Get-SecretPatterns {
+    # Secret patterns from guards.json (single source of truth); fall back to
+    # built-in defaults only if the contract file is missing or unreadable.
+    $g = Get-Guards
+    if ($g -and $g.secret_patterns) { return @($g.secret_patterns) }
+    return @(
         'gh[op]_[A-Za-z0-9]{20,}',
         'github_pat_[A-Za-z0-9_]{20,}',
         'AKIA[0-9A-Z]{16}',
         '-----BEGIN (RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----',
         '(?i)bearer\s+[A-Za-z0-9._-]{20,}'
     )
+}
+
+function Find-SecretLeak {
+    # Pre-commit secret scan: refuse to sync memory files carrying a credential-like
+    # value so a token/private key never enters the git history (baseline 附录 C).
+    param([string]$Dir)
+    $patterns = Get-SecretPatterns
     foreach ($f in @(Get-ChildItem -Path (Join-Path $Dir "*.md") -File -ErrorAction SilentlyContinue)) {
         $text = Get-Content -LiteralPath $f.FullName -Raw -Encoding UTF8
         foreach ($p in $patterns) {
@@ -234,13 +254,7 @@ function Find-SecretLeakStaged {
     # -CommitRepo full-repo commit path (scripts/docs/tests/config) so a token/private
     # key never enters history via that route. Complements Find-SecretLeak (memory/*.md).
     param([string]$RepoRoot)
-    $patterns = @(
-        'gh[op]_[A-Za-z0-9]{20,}',
-        'github_pat_[A-Za-z0-9_]{20,}',
-        'AKIA[0-9A-Z]{16}',
-        '-----BEGIN (RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----',
-        '(?i)bearer\s+[A-Za-z0-9._-]{20,}'
-    )
+    $patterns = Get-SecretPatterns
     $stagedFiles = @(git -C $RepoRoot -c core.quotepath=false diff --cached --name-only 2>$null)
     foreach ($rel in $stagedFiles) {
         $full = Join-Path $RepoRoot $rel
@@ -308,7 +322,11 @@ function Get-NonMemoryDirtyCount {
 function Clear-StaleTempBackups {
     # codex-memory-backup-* / conflict-* / writeback-* only ever accumulate;
     # drop anything older than the retention window so TEMP does not grow forever.
-    param([int]$RetentionDays = 2)
+    param([int]$RetentionDays = 0)
+    if ($RetentionDays -le 0) {
+        $g = Get-Guards
+        $RetentionDays = if ($g -and $g.backup_retention_days) { [int]$g.backup_retention_days } else { 2 }
+    }
     try {
         $cutoff = (Get-Date).AddDays(-$RetentionDays)
         Get-ChildItem -Path $env:TEMP -Directory -Filter "codex-memory-*" -ErrorAction SilentlyContinue |
@@ -426,7 +444,7 @@ if ($Doctor) {
     Write-Output ("git path : " + $(if ($gitPath) { $gitPath } else { "(not found)" }))
 
     $isPortableGit = ($gitPath -match "PortableGit|\.workbuddy")
-    Report "git client safe (not PortableGit)" (-not $isPortableGit) $(if ($isPortableGit) { $gitPath + " -> 有 loose-ref 写入缺陷，请换 Git Bash 自带 git" } else { $gitPath })
+    Report "git client safe (path guard)" (-not $isPortableGit) $(if ($isPortableGit) { $gitPath + " -> 非本端标准 git（部署护栏拒绝）；注：ref 写入失效真因为沙盒 overlay，非 PortableGit 缺陷（2026-08-16 实证）" } else { $gitPath })
 
     $sslDefault = (git config --show-origin --get http.sslbackend 2>&1 | Out-String).Trim()
     Write-Output ("git http.sslbackend default : " + $(if ($sslDefault) { $sslDefault } else { "(unset)" }))
@@ -444,7 +462,7 @@ if ($Doctor) {
     git -C $repoRoot update-ref $testRef $head 2>&1 | Out-Null
     $readBack = (git -C $repoRoot rev-parse $testRef 2>&1 | Out-String).Trim()
     git -C $repoRoot update-ref -d $testRef 2>&1 | Out-Null
-    Report "ref write persists (PortableGit defect)" ($readBack -eq $head) ("read back: " + $readBack)
+    Report "ref write persists (behavior probe)" ($readBack -eq $head) ("read back: " + $readBack)
 
     $crlf = (git -C $repoRoot config --get core.autocrlf 2>&1 | Out-String).Trim()
     Report "core.autocrlf=false" ($crlf -eq "" -or $crlf -eq "false") ("value: " + $(if ($crlf) { $crlf } else { "(unset)" }))

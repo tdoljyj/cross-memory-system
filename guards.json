@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "description": "双端同步护栏契约的单一事实源（2026-08-16 落地措施9务实版）。sync-memory.py / sync-memory.ps1 启动时读取，双端不得硬编码以下参数；修改只改本文件，并同步跑 tests/test_acceptance.py 回归。",
+  "secret_patterns": [
+    "gh[op]_[A-Za-z0-9]{20,}",
+    "github_pat_[A-Za-z0-9_]{20,}",
+    "AKIA[0-9A-Z]{16}",
+    "-----BEGIN (RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----",
+    "(?i)bearer\\s+[A-Za-z0-9._-]{20,}"
+  ],
+  "backup_retention_days": 2
+}

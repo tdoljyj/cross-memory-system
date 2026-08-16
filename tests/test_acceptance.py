@@ -499,6 +499,45 @@ def test_consumer_conformed_detects_triggertype_ban():
     check(not mod.consumer_conformed("触发式 / 禁自动化"),
           "缺版本真值核对不应 conform")
     check(not mod.consumer_conformed(""), "空文本不应 conform")
+    # C5 回归：语义反转（三要素齐全但被否定词否决）不得通过
+    check(not mod.consumer_conformed(
+        "本端不执行版本真值核对；触发式加载已废除；禁自动化条款作废。"),
+        "语义反转（否定三要素）不应 conform")
+    # C5 回归：消费记忆文件缺失/不可读 → fail-closed False
+    check(not mod.consumer_conformed_file(
+        os.path.join(REPO_ROOT, "definitely-not-exists-MEMORY.md")),
+        "文件缺失应 fail-closed（False）")
+    import tempfile
+    with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False, encoding="utf-8") as fh:
+        fh.write("版本真值核对=触发式、禁自动化\n")
+        tmp_path = fh.name
+    try:
+        check(mod.consumer_conformed_file(tmp_path),
+              "存在且声明三要素的文件应 conform")
+    finally:
+        os.unlink(tmp_path)
+
+
+def test_guards_json_single_source():
+    # 护栏契约单一事实源（措施9）：guards.json 存在且合法；py 生效密钥模式表
+    # 必须等于 guards.json（证明从契约读取而非硬编码双写）。
+    guards_path = os.path.join(REPO_ROOT, "guards.json")
+    check(os.path.isfile(guards_path), "guards.json 必须存在（护栏契约单一事实源）")
+    with open(guards_path, "r", encoding="utf-8") as fh:
+        guards = json.load(fh)
+    check(isinstance(guards.get("secret_patterns"), list)
+          and len(guards["secret_patterns"]) == 5,
+          "secret_patterns 应为 5 条")
+    check(isinstance(guards.get("backup_retention_days"), int)
+          and guards["backup_retention_days"] > 0,
+          "backup_retention_days 应为正整数")
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "sync_memory_guards", os.path.join(REPO_ROOT, "sync-memory.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    check(mod._SECRET_PATTERNS == guards["secret_patterns"],
+          "py 生效密钥模式表应等于 guards.json（唯一事实源，防双写漂移）")
 
 
 TESTS = [
@@ -522,6 +561,7 @@ TESTS = [
     test_ps1_pull_fails_closed_on_bad_remote,
     test_ps1_deploy_guard_blocks_workbuddy_path,
     test_consumer_conformed_detects_triggertype_ban,
+    test_guards_json_single_source,
 ]
 
 

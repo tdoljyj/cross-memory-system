@@ -228,13 +228,30 @@ def redact(text):
     return _TOKEN_RE.sub(mask, text)
 
 
-_SECRET_PATTERNS = [
+_GUARDS_PATH = os.path.join(REPO, "guards.json")
+_GUARDS = None
+
+
+def load_guards():
+    """读 guards.json（护栏契约单一事实源，措施9）。失败回落 {}，调用方回落内置默认。"""
+    global _GUARDS
+    if _GUARDS is not None:
+        return _GUARDS
+    try:
+        with open(_GUARDS_PATH, "r", encoding="utf-8") as f:
+            _GUARDS = json.load(f)
+    except Exception:
+        _GUARDS = {}
+    return _GUARDS
+
+
+_SECRET_PATTERNS = (load_guards().get("secret_patterns") or [
     r"gh[op]_[A-Za-z0-9]{20,}",
     r"github_pat_[A-Za-z0-9_]{20,}",
     r"AKIA[0-9A-Z]{16}",
     r"-----BEGIN (RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----",
     r"(?i)bearer\s+[A-Za-z0-9._-]{20,}",
-]
+])
 
 
 def _lock_path():
@@ -386,8 +403,13 @@ def clear_marker(name):
         print("[!] 清除 %s 失败: %s" % (name, e))
 
 
-def cleanup_stale_backups(retention_days=2):
-    """清理过期的 codex-memory-* 临时备份目录（只增不减的历史债务）。"""
+def cleanup_stale_backups(retention_days=None):
+    """清理过期的 codex-memory-* 临时备份目录（只增不减的历史债务）。
+
+    保留期默认取 guards.json（护栏契约单一事实源），缺省回落 2 天。
+    """
+    if retention_days is None:
+        retention_days = load_guards().get("backup_retention_days", 2)
     tmp = tempfile.gettempdir()
     cutoff = time.time() - retention_days * 86400
     try:
@@ -639,10 +661,47 @@ def check_ref_valid(remote=None):
 # 从静默失效转为可检测红旗。
 CONFORM_MARKERS = ("版本真值核对", "触发式", "禁自动化")
 
+# 语义反转否决词：marker 被这些词修饰（"不执行版本真值核对"/"触发式加载已废除"）
+# 时视为未 conform——三词齐全但语义相反不得通过（2026-08-16 审计 C5）。
+_NEGATION_WORDS = ("不执行", "不启用", "已废除", "废除", "作废", "取消", "停止", "移除", "不再", "无需")
+_NEGATION_WINDOW = 16
+
 
 def consumer_conformed(text):
-    """消费端操作记忆（MEMORY.md / Codex AGENTS.md）是否声明了触发式禁令。"""
-    return all(m in text for m in CONFORM_MARKERS)
+    """消费端操作记忆（MEMORY.md / Codex AGENTS.md）是否声明了触发式禁令。
+
+    判据：① 三要素「版本真值核对/触发式/禁自动化」齐全；② 任一否定词前后窗口内
+    不得出现三要素（防语义反转：声明与否定并存视为未 conform）。
+    """
+    if not text:
+        return False
+    for m in CONFORM_MARKERS:
+        if m not in text:
+            return False
+    for neg in _NEGATION_WORDS:
+        i = text.find(neg)
+        while i != -1:
+            window = text[max(0, i - _NEGATION_WINDOW):i + len(neg) + _NEGATION_WINDOW]
+            if any(m in window for m in CONFORM_MARKERS):
+                return False
+            i = text.find(neg, i + 1)
+    return True
+
+
+def consumer_conformed_file(path):
+    """fail-closed 版探针：消费记忆文件缺失/不可读即 False（与 memory_dir_healthy 纪律一致）。
+
+    2026-08-16 审计 C5：原实现文件缺失时整段跳过（fail-open），"删掉被检查对象"
+    成为绕过检查的最简路径；此处反转，缺失 = FAIL。
+    """
+    if not path or not os.path.isfile(path):
+        return False
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            text = f.read()
+    except Exception:
+        return False
+    return consumer_conformed(text)
 
 
 def cmd_doctor():
@@ -722,22 +781,26 @@ def cmd_doctor():
     # 本地协议新鲜度：WorkBuddy 侧 MEMORY.md 不得残留已废弃的 pull --rebase 指令
     # （2026-08-16 三轮审计 P0：此脱节曾让 doctor 全绿却仍执行 rebase）。
     wb_memory_md = os.path.expanduser("~/.workbuddy/MEMORY.md")
+    wb_protocol = ""
     if os.path.isfile(wb_memory_md):
         try:
             with open(wb_memory_md, "r", encoding="utf-8") as f:
                 wb_protocol = f.read()
         except Exception:
             wb_protocol = ""
-        report("MEMORY.md 无已废弃 pull --rebase 指令",
-               "pull --rebase" not in wb_protocol)
-        # 消费端 conform 探针（残留边界收窄，仅本端 WorkBuddy MEMORY.md）：
-        # 须声明「版本真值核对/触发式/禁自动化」三要素，否则视为未对齐
-        # vNext-1.3 显式化加固。Codex 端无机器检查（2026-08-16 审计实证 ps1
-        # 未实现该探针），依赖协议自觉，不在此越界检测。
-        report("MEMORY.md 已 conform 触发式禁令",
-               consumer_conformed(wb_protocol),
-               "" if consumer_conformed(wb_protocol)
-               else "缺「版本真值核对/触发式/禁自动化」声明，未对齐 vNext-1.3 显式化加固")
+    report("MEMORY.md 无已废弃 pull --rebase 指令",
+           os.path.isfile(wb_memory_md) and "pull --rebase" not in wb_protocol,
+           "" if os.path.isfile(wb_memory_md) and "pull --rebase" not in wb_protocol
+           else ("文件缺失" if not os.path.isfile(wb_memory_md) else "残留已废弃指令"))
+    # 消费端 conform 探针（残留边界收窄，仅本端 WorkBuddy MEMORY.md）：
+    # 须声明「版本真值核对/触发式/禁自动化」三要素，否则视为未对齐
+    # vNext-1.3 显式化加固。Codex 端无机器检查（2026-08-16 审计实证 ps1
+    # 未实现该探针），依赖协议自觉，不在此越界检测。
+    conform_ok = consumer_conformed_file(wb_memory_md)
+    report("MEMORY.md 已 conform 触发式禁令",
+           conform_ok,
+           "" if conform_ok
+           else "文件缺失/不可读，或未声明「版本真值核对/触发式/禁自动化」，未对齐 vNext-1.3 显式化加固")
 
     dirty = git_status_memory()
     report("working tree clean", dirty == [],
