@@ -134,7 +134,7 @@ class Sandbox:
         return sh([sys.executable, script, mode] + list(extra),
                   cwd=os.path.dirname(script), check_fail=False)
 
-    def install_ps1(self, clone, workdir, hook=None):
+    def install_ps1(self, clone, workdir):
         shutil.copy(PS1, os.path.join(clone, "sync-memory.ps1"))
         os.makedirs(workdir, exist_ok=True)
         for f in MEMORY_FILES:
@@ -147,8 +147,6 @@ class Sandbox:
             "$MemoryDir = '%s'\n"
             '$GitEmail = "test@example.com"\n'
         ) % workdir
-        if hook:
-            cfg += "$GlobalHookPath = '%s'\n" % hook
         with open(os.path.join(clone, "sync.config.ps1"), "w",
                   encoding="utf-8") as fh:
             fh.write(cfg)
@@ -190,7 +188,9 @@ def test_index_json_recall_mapping_valid():
     check(idx.get("schema_version") == 1, "index.json schema_version 应为 1")
 
     files = idx.get("files")
-    check(isinstance(files, list) and len(files) >= 5, "index.json files 清单缺失或过短")
+    # 文件集下限不再硬编码数量（vNext-1.3：index.json 是唯一事实源，护栏读 files 清单）；
+    # 仅要求清单非空且逐项存在非空（删除传播护栏口径与实现一致，P1-2）。
+    check(isinstance(files, list) and len(files) >= 1, "index.json files 清单为空")
     for f in files:
         fp = os.path.join(MEMORY, f)
         check(os.path.isfile(fp) and os.path.getsize(fp) > 0,
@@ -578,24 +578,6 @@ def test_ps1_commit_repo_commits_docs(sb):
 
 
 @sandboxed
-def test_ps1_doctor_detects_hook_drift(sb):
-    """P1 回归：全局钩子（生效协议副本）与仓库 AGENTS.md 不一致时 doctor 必须 FAIL；
-    对齐后 PASS。缺失钩子为 WARN（新机接入顺序允许 doctor 先于消费端准备）。"""
-    clone = sb.add_clone("repo")
-    workdir = os.path.join(sb.tmp, "working")
-    hook = os.path.join(sb.tmp, "AGENTS-hook.md")
-    with open(hook, "w", encoding="utf-8") as fh:
-        fh.write("旧版协议副本（vNext-1.2）……\n")
-    sb.install_ps1(clone, workdir, hook=hook)
-    p1 = sb.run_ps1(clone, "-Doctor")
-    check(p1.returncode != 0, "钩子漂移时 doctor 应 FAIL\n" + p1.stdout + p1.stderr)
-    check("global hook" in p1.stdout, "输出应含 global hook 检查项\n" + p1.stdout)
-    shutil.copy(os.path.join(clone, "AGENTS.md"), hook)
-    p2 = sb.run_ps1(clone, "-Doctor")
-    check(p2.returncode == 0, "钩子对齐后 doctor 应 PASS\n" + p2.stdout + p2.stderr)
-
-
-@sandboxed
 def test_ps1_push_scopes_to_index_files(sb):
     """P2 回归：push 只处理 index.json 声明的必需文件——工作区额外 .md 不得入库，
     仓库既有非 index .md 不得被删除。"""
@@ -744,6 +726,132 @@ def test_repo_files_do_not_self_match_secret_patterns():
                 if m:
                     hits.append("%s -> %r" % (os.path.relpath(p, REPO_ROOT), m.group(0)[:40]))
     check(not hits, "仓库文件自命中扫描模式（-CommitRepo 会被误拒）：\n" + "\n".join(hits))
+def test_pid_alive_probe_does_not_kill():
+    """P1-1 回归：_pid_alive 探活不得杀死被探测进程
+    （旧实现 Windows 下 os.kill(pid, 0) = TerminateProcess）。"""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("syncmem_pid", PY)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    child = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(60)"])
+    try:
+        check(mod._pid_alive(child.pid) is True, "存活子进程应判定为存活")
+        check(child.poll() is None,
+              "探活不得终止被探测进程（旧 os.kill(pid,0) 实现会杀进程）")
+    finally:
+        child.kill()
+        child.wait()
+
+
+def test_pid_alive_dead_pid_false():
+    """P1-1 配套：不存在的 PID 应判定为不存活（探活而非误判）。"""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("syncmem_pid2", PY)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    probe = os.getpid() + 1_000_000_000
+    if probe > 0xFFFFFFFF:
+        probe = 999_999_999
+    check(mod._pid_alive(probe) is False, "不存在的 PID 应判定为不存活")
+
+
+def test_doc_guard_wording_consistent():
+    """P1-2 回归：协议文档不得残留硬编码 .md 数量护栏旧口径（≥ 5），
+    护栏口径唯一事实源是 memory/index.json 的 files 清单。"""
+    readme = open(os.path.join(REPO_ROOT, "README.md"), encoding="utf-8").read()
+    agents = open(AGENTS, encoding="utf-8").read()
+    for name, text in (("README.md", readme), ("AGENTS.md", agents)):
+        check("≥ 5" not in text, "%s 残留「≥ 5」硬编码护栏旧口径" % name)
+        check(">= 5" not in text, "%s 残留「>= 5」硬编码护栏旧口径" % name)
+        check(".md ≥" not in text, "%s 残留「.md ≥」硬编码护栏旧口径" % name)
+    # Codex 端消费钩子文本须含 conform 三要素（ps1 doctor 探针判据）
+    for m in ("版本真值核对", "触发式", "禁自动化"):
+        check(m in agents, "AGENTS.md 须含 conform 三要素之一: %s" % m)
+
+
+@sandboxed
+def test_py_needs_push_cleared_after_push(sb):
+    """P1-3 回归（py 侧）：本地领先 → pull 写 .needs-push → 显式 push 成功后标记清除。"""
+    clone = sb.add_clone("a")
+    script = sb.install_py(clone)
+    with open(os.path.join(clone, "memory", "状态.md"), "a", encoding="utf-8") as fh:
+        fh.write("\n领先的本地提交\n")
+    git("add", "-A", cwd=clone)
+    git("commit", "-m", "local ahead", cwd=clone)
+    p = sb.run_py(script, "pull")
+    check(p.returncode == 0, p.stdout + p.stderr)
+    marker = os.path.join(clone, ".needs-push")
+    check(os.path.isfile(marker), "领先时 pull 应写 .needs-push 标记")
+    p2 = sb.run_py(script, "push")
+    check(p2.returncode == 0, p2.stdout + p2.stderr)
+    check(not os.path.exists(marker), "push 成功后应清除 .needs-push 标记")
+
+
+@sandboxed
+def test_py_deploy_guard_blocks_codex_path(sb):
+    """P2-9 回归（机制补齐）：py 拒绝在 .codex 克隆路径内运行（对称 ps1 deploy-guard）。"""
+    codexdir = os.path.join(sb.tmp, ".codex", "projects", "codex-memory-system")
+    os.makedirs(codexdir, exist_ok=True)
+    script = os.path.join(codexdir, "sync-memory.py")
+    shutil.copy(PY, script)
+    p = sh([sys.executable, script, "pull"], cwd=codexdir, check_fail=False)
+    check(p.returncode != 0, "在 .codex 路径执行必须被拒绝")
+    check("[deploy-guard]" in (p.stdout + p.stderr), "应输出 deploy-guard 标记")
+
+
+@sandboxed
+def test_ps1_conform_probe_detects(sb):
+    """P1-4 回归：ps1 -Doctor 的消费端 conform 探针——三要素齐全 PASS、缺失 FAIL。"""
+    clone = sb.add_clone("repo")
+    workdir = os.path.join(sb.tmp, "working")
+    sb.install_ps1(clone, workdir)
+    # 沙盒克隆无 .gitattributes 与 bootstrap 配置，先补齐再跑 doctor，
+    # 否则 doctor 会卡在 core.autocrlf / union driver 等无关项上。
+    shutil.copy(os.path.join(REPO_ROOT, ".gitattributes"),
+                os.path.join(clone, ".gitattributes"))
+    p0 = sb.run_ps1(clone, "-Bootstrap")
+    check(p0.returncode == 0, p0.stdout + p0.stderr)
+    hook = os.path.join(sb.tmp, "AGENTS.md")
+    with open(hook, "w", encoding="utf-8") as fh:
+        fh.write("版本真值核对 = 触发式、禁自动化\n")
+    cfg = os.path.join(clone, "sync.config.ps1")
+    with open(cfg, "a", encoding="utf-8") as fh:
+        fh.write("$ConsumerHookFile = '%s'\n" % hook)
+    p = sb.run_ps1(clone, "-Doctor")
+    check(p.returncode == 0, p.stdout + p.stderr)
+    check("consumer hook conform" in p.stdout, p.stdout)
+    with open(hook, "w", encoding="utf-8") as fh:
+        fh.write("只有触发式，没有版本真值核对\n")
+    p2 = sb.run_ps1(clone, "-Doctor")
+    check(p2.returncode != 0, "消费端缺 conform 三要素时 doctor 应 FAIL（阻断态）")
+    check("consumer hook conform" in p2.stdout, p2.stdout)
+
+
+@sandboxed
+def test_ps1_needs_push_cleared_after_push(sb):
+    """P1-3 回归（ps1 侧）：-Pull 领先写 .needs-push → 默认同步推送成功后清除。"""
+    clone = sb.add_clone("repo")
+    workdir = os.path.join(sb.tmp, "working")
+    sb.install_ps1(clone, workdir)
+    with open(os.path.join(clone, "memory", "画像.md"), "a", encoding="utf-8") as fh:
+        fh.write("\n克隆内领先提交\n")
+    git("add", "-A", cwd=clone)
+    git("commit", "-m", "clone ahead", cwd=clone)
+    shutil.copy(os.path.join(clone, "memory", "画像.md"),
+                os.path.join(workdir, "画像.md"))
+    p = sb.run_ps1(clone, "-Pull")
+    check(p.returncode == 0, p.stdout + p.stderr)
+    marker = os.path.join(clone, ".needs-push")
+    check(os.path.isfile(marker), "-Pull 领先时应写 .needs-push 标记")
+    with open(os.path.join(workdir, "画像.md"), "a", encoding="utf-8") as fh:
+        fh.write("\n工作区新变更\n")
+    before = sb.remote_head()
+    p2 = sb.run_ps1(clone)
+    check(p2.returncode == 0, p2.stdout + p2.stderr)
+    check("Memory synced" in p2.stdout, p2.stdout)
+    check(sb.remote_head() != before, "应产生新推送")
+    check(not os.path.exists(marker), "推送成功后应清除 .needs-push 标记")
 
 
 TESTS = [
@@ -754,7 +862,6 @@ TESTS = [
     test_ps1_change_commits_and_pushes,
     test_ps1_secret_scan_blocks,
     test_ps1_commit_repo_commits_docs,
-    test_ps1_doctor_detects_hook_drift,
     test_ps1_push_scopes_to_index_files,
     test_ps1_pull_pending_writeback_keeps_extras_and_backup,
     test_py_push_is_idempotent,
@@ -774,6 +881,13 @@ TESTS = [
     test_consumer_conformed_detects_triggertype_ban,
     test_guards_json_single_source,
     test_repo_files_do_not_self_match_secret_patterns,
+    test_pid_alive_probe_does_not_kill,
+    test_pid_alive_dead_pid_false,
+    test_doc_guard_wording_consistent,
+    test_py_needs_push_cleared_after_push,
+    test_py_deploy_guard_blocks_codex_path,
+    test_ps1_conform_probe_detects,
+    test_ps1_needs_push_cleared_after_push,
 ]
 
 

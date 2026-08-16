@@ -15,7 +15,8 @@
 |---|---|---|
 | Codex | `Documents\Codex\memory\` | `sync-memory.ps1`（收尾 push / 开场 `-Pull` / 接入 `-Doctor` 自检），代理优先 127.0.0.1:7897（固定 `http.sslBackend=openssl`）、直连兜底 |
 | WorkBuddy | `~/.workbuddy/codex-memory-system\`（独立克隆） | 开场 `python sync-memory.py pull` 读；写入前 `fetch + merge` → 修改 → push；不直写 Codex 侧工作区 |
-| 未来其他 AI | 各自工作区 | 同 WorkBuddy：克隆 → fetch + merge → 改 → push；不直写任何既有工作区 |
+| DSH（DeepSeek Harness） | `~/.dsh/projects/cross-memory-system\`（独立克隆，自远端 origin 克隆）+ `~/.dsh/MEMORY.md` 消费端 | 开场 `python sync-memory.py pull` 读；写入 commit（身份 `DSH@TURING`）→ `python sync-memory.py push`；不读写任何他端克隆（不越界） |
+| 未来其他 AI | 各自工作区（独立克隆，**不复用/不克隆任何本地已有克隆**） | 同 WorkBuddy：克隆 → fetch + merge → 改 → push；不直写任何既有工作区 |
 
 ## 跨端协同机制
 1. **身份与审计**：每端以 `AI名@机器名`（如 `Codex@DESKTOP-X`）作为 git 作者提交，commit message 带 `[身份]` 前缀与变更文件清单；`git log --format='%an %s'` 即可看到谁在哪台机器改了什么。
@@ -42,7 +43,7 @@
 
 ## 新电脑接入（一次性）
 
-> 本仓库为「任意机器 × 任意 AI」跨端共享（见「定位」）：接入流程 = **通用步骤** + **端侧差异**。通用步骤对所有接入方一致；当前已登记 Codex 与 WorkBuddy 两端，未来新端照此模式登记。任一步失败先看「失败排查」；doctor 任一 FAIL 未修红前视为阻断态，不得据此读 canon 当依据、不得 push（AGENTS v3.1）。
+> 本仓库为「任意机器 × 任意 AI」跨端共享（见「定位」）：接入流程 = **通用步骤** + **端侧差异**。通用步骤对所有接入方一致；当前已登记 Codex、WorkBuddy、DSH 三端，未来新端照此模式登记（各端独立克隆，绝不复用/克隆任何本地已有克隆）。任一步失败先看「失败排查」；doctor 任一 FAIL 未修红前视为阻断态，不得据此读 canon 当依据、不得 push（AGENTS v3.1）。
 
 ### 通用步骤（所有接入方）
 

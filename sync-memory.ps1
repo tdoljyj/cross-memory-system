@@ -43,7 +43,7 @@ $HostName  = $env:COMPUTERNAME
 $ProxyUrl  = "http://127.0.0.1:7897"
 $MemoryDir = Join-Path $env:USERPROFILE "Documents\Codex\memory"
 $GitEmail  = "tdoljyj@users.noreply.github.com"
-$GlobalHookPath = Join-Path $env:USERPROFILE ".codex\AGENTS.md"
+$ConsumerHookFile = Join-Path $env:USERPROFILE ".codex\AGENTS.md"
 if (Test-Path -LiteralPath $configFile) { . $configFile }
 
 $identity    = "$AgentName@$HostName"
@@ -53,6 +53,7 @@ $proxy       = $ProxyUrl
 $flagFile    = Join-Path $repoRoot ".sync-failed"
 $pendingFile = Join-Path $repoRoot ".pending-writeback"
 $lockFile    = Join-Path $repoRoot ".sync.lock"
+$needsPushFile = Join-Path $repoRoot ".needs-push"
 $script:lockHeld = $false
 
 # Fast direct-connectivity probe so a dead github.com connection fails in ~3s instead of ~20s.
@@ -193,6 +194,42 @@ function Redact-Text {
     # 掩码输出刻意不含「-----BEGIN ... PRIVATE KEY-----」字面（防自命中扫描模式）
     $s = $s -replace '-----BEGIN (RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----', '-----BEGIN PRIVATE KEY HEADER-----'
     return $s
+}
+
+function Test-ConsumerConformed {
+    # Codex 端消费端 conform 探针（对齐 sync-memory.py 的 consumer_conformed，P1-4 补齐）：
+    # 本端消费记忆（~/.codex/AGENTS.md）须声明「版本真值核对/触发式/禁自动化」三要素，
+    # 且任一否定词前后窗口内出现三要素即视为语义反转、未 conform。只检本端，不越界互检。
+    param([AllowEmptyString()][string]$Text)
+    if ([string]::IsNullOrEmpty($Text)) { return $false }
+    $markers = @('版本真值核对', '触发式', '禁自动化')
+    foreach ($m in $markers) {
+        if (-not $Text.Contains($m)) { return $false }
+    }
+    $negations = @('不执行', '不启用', '已废除', '废除', '作废', '取消', '停止', '移除', '不再', '无需')
+    foreach ($n in $negations) {
+        $start = 0
+        while (($idx = $Text.IndexOf($n, $start)) -ge 0) {
+            $lo = [Math]::Max(0, $idx - 16)
+            $window = $Text.Substring($lo, [Math]::Min($Text.Length - $lo, $n.Length + 32))
+            foreach ($m in $markers) {
+                if ($window.Contains($m)) { return $false }
+            }
+            $start = $idx + $n.Length
+        }
+    }
+    return $true
+}
+
+function Test-ConsumerConformedFile {
+    # fail-closed 版探针（对齐 py consumer_conformed_file）：文件缺失/不可读即 False。
+    param([string]$Path)
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $false }
+    try {
+        return Test-ConsumerConformed (Get-Content -LiteralPath $Path -Raw -Encoding UTF8)
+    } catch {
+        return $false
+    }
 }
 
 function Test-AcquireSyncLock {
@@ -514,6 +551,19 @@ function Invoke-DoctorMode {
     }
     Report "no stale sync markers" ($staleMarkers.Count -eq 0) ($staleMarkers -join ', ')
 
+    if (Test-Path -LiteralPath $needsPushFile) {
+        Write-Output "[INFO] .needs-push 存在：本地有未推送的已提交记忆，需显式同步推送（不视为失败）"
+    }
+
+    # 消费端 conform 触发式禁令探针（P1-4，2026-08-16 补齐）：只检本端 ~/.codex/AGENTS.md
+    # （路径可经 sync.config.ps1 的 $ConsumerHookFile 参数化）。FAIL = 阻断态红旗。
+    $conformOk = Test-ConsumerConformedFile $consumerHookFile
+    if ($conformOk) { $conformDetail = $consumerHookFile }
+    elseif (Test-Path -LiteralPath $consumerHookFile -PathType Leaf) {
+        $conformDetail = "文件存在但未声明「版本真值核对/触发式/禁自动化」或语义反转，未对齐 vNext-1.3 显式化加固"
+    } else { $conformDetail = "文件缺失: $consumerHookFile" }
+    Report "consumer hook conform (触发式禁令)" $conformOk $conformDetail
+
     $credHelper = (git -C $repoRoot config --get-all credential.helper 2>&1 | Out-String).Trim()
     $urlHelper = (git -C $repoRoot config --show-origin --get credential.https://github.com.helper 2>&1 | Out-String).Trim()
     Write-Output ("git credential.helper : " + $(if ($credHelper) { (Redact-Text $credHelper) } else { "(unset)" }))
@@ -527,16 +577,6 @@ function Invoke-DoctorMode {
     }
 
     Report "memory dir exists" (Test-Path -LiteralPath $memorySrc)
-
-    # 全局钩子一致性：生效协议副本必须与仓库 AGENTS.md 字节一致，否则执行层落后于仓库。
-    if (Test-Path -LiteralPath $GlobalHookPath) {
-        $repoAgentsHash = (Get-FileHash -LiteralPath (Join-Path $repoRoot "AGENTS.md") -Algorithm SHA256 -ErrorAction SilentlyContinue).Hash
-        $hookAgentsHash = (Get-FileHash -LiteralPath $GlobalHookPath -Algorithm SHA256 -ErrorAction SilentlyContinue).Hash
-        $hookOk = (-not [string]::IsNullOrEmpty($repoAgentsHash)) -and ($repoAgentsHash -eq $hookAgentsHash)
-        Report "global hook matches repo AGENTS.md" $hookOk ($(if ($hookOk) { "一致" } else { "漂移：请复制仓库 AGENTS.md 到 $GlobalHookPath（协议执行层落后于仓库）" }))
-    } else {
-        Write-Output ("[WARN] 全局钩子未找到：$GlobalHookPath（新机接入时按 README 准备消费端后补检）")
-    }
 
     # index.json 召回段名有效性：标题改写会静默失效，doctor 做运行时校验（与测试同口径）。
     $idx = Get-MemoryIndex $memoryDst
@@ -655,8 +695,12 @@ function Invoke-PullMode {
             Write-Error -ErrorAction Continue "远端 hash 不可用，-Pull 以失败退出（fail-closed）。"
             $script:exitCode = 1; return
         }
-        $behind = [int](git -C $repoRoot rev-list --count HEAD..$remoteHash)
-        $ahead  = [int](git -C $repoRoot rev-list --count $remoteHash..HEAD)
+        # 注意：PowerShell 分词器会把 $remoteHash..HEAD 拆成两个参数（Variable + ..HEAD），
+        # 使 rev-list 收到 "..HEAD" 非法参数 → stdout 空 → [int]@() = 0 → 领先检测恒假
+        # （措施8 的 .needs-push 路径因此从未生效，2026-08-16 回归测试实锤）。
+        # 必须用 ${remoteHash} 花括号把变量与 .. 并为一个参数。
+        $behind = [int](git -C $repoRoot rev-list --count "HEAD..${remoteHash}")
+        $ahead  = [int](git -C $repoRoot rev-list --count "${remoteHash}..HEAD")
 
         $changed = @()
         if ($behind -gt 0) {
@@ -664,8 +708,8 @@ function Invoke-PullMode {
             $changed = @(git -C $repoRoot -c core.quotepath=false diff --name-only "$local..HEAD" -- memory)
             Write-Output "Memory repo updated from remote. Changed memory files:"
             $changed | ForEach-Object { Write-Output $_ }
-            $ahead = [int](git -C $repoRoot rev-list --count $remoteHash..HEAD)
-            $behind = [int](git -C $repoRoot rev-list --count HEAD..$remoteHash)
+            $ahead = [int](git -C $repoRoot rev-list --count "${remoteHash}..HEAD")
+            $behind = [int](git -C $repoRoot rev-list --count "HEAD..${remoteHash}")
         }
 
         # Reconcile repo -> working memory directory. The preflight above ensures
@@ -754,7 +798,7 @@ function Invoke-CommitRepoMode {
     try {
         Invoke-Git fetch origin
         $remoteHash = Get-RemoteMainHash
-        $behind = [int](git -C $repoRoot rev-list --count HEAD..$remoteHash)
+        $behind = [int](git -C $repoRoot rev-list --count "HEAD..${remoteHash}")
         git -C $repoRoot commit -m "repo sync [$identity]: $changed"
         if ($LASTEXITCODE -ne 0) { throw "git commit failed (repo maintenance commit)" }
         if ($behind -gt 0) {
@@ -764,7 +808,7 @@ function Invoke-CommitRepoMode {
         if (-not (Confirm-RemotePushed)) {
             Invoke-Git fetch origin
             $remoteHash = Get-RemoteMainHash
-            $behind = [int](git -C $repoRoot rev-list --count HEAD..$remoteHash)
+            $behind = [int](git -C $repoRoot rev-list --count "HEAD..${remoteHash}")
             if ($behind -gt 0) {
                 Invoke-Git merge --no-edit FETCH_HEAD
             }
@@ -774,6 +818,7 @@ function Invoke-CommitRepoMode {
             }
         }
         Remove-Item -LiteralPath $flagFile -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $needsPushFile -Force -ErrorAction SilentlyContinue
         Write-Output "Repo synced to GitHub."
         Release-SyncLock
         $script:exitCode = 0; return
@@ -878,7 +923,7 @@ $conflictBackupDir = Join-Path (Join-Path $repoRoot ".conflict-snapshots") ("cod
 try {
     Invoke-Git fetch origin main
     $remoteHash = (git -C $repoRoot rev-parse FETCH_HEAD 2>$null | Out-String).Trim()
-    $behind = [int](git -C $repoRoot rev-list --count HEAD..$remoteHash)
+    $behind = [int](git -C $repoRoot rev-list --count "HEAD..${remoteHash}")
     $changed = (($staged -replace '^memory/','') -join ', ')
     git -C $repoRoot commit -m "memory sync [$identity]: $changed"
     if ($LASTEXITCODE -ne 0) { throw "git commit failed (memory sync commit)" }
@@ -891,7 +936,7 @@ try {
     if (-not (Confirm-RemotePushed)) {
         Invoke-Git fetch origin main
         $remoteHash = (git -C $repoRoot rev-parse FETCH_HEAD 2>$null | Out-String).Trim()
-        $behind = [int](git -C $repoRoot rev-list --count HEAD..$remoteHash)
+        $behind = [int](git -C $repoRoot rev-list --count "HEAD..${remoteHash}")
         if ($behind -gt 0) {
             Invoke-Git merge --no-edit FETCH_HEAD
         }
@@ -901,6 +946,7 @@ try {
         }
     }
     Remove-Item -LiteralPath $flagFile -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $needsPushFile -Force -ErrorAction SilentlyContinue
     Write-Output "Memory synced to GitHub."
 } catch {
     Backup-MergeConflict $conflictBackupDir

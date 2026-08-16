@@ -54,8 +54,8 @@
 3. 版本号以仓库根 `VERSION` 文件 + `git tag` 为准（带外真值源）；不得仅凭文档头部自述版本号判定——文件名无版本号、版本号写在正文里时尤其如此。
 4. 「local ≠ remote」的任何已知证据都是全局红旗，必须当场处理，不得当作孤立 bug 略过。
 
-> ⚠️ **机制性质（防跑偏）**：版本真值核对是**触发式**——仅当请求命中 T1–T4 或属「最新版 / 评估现状 / 审计 / 提基线」类时，才在**读前**执行；**禁止定时任务 / 启动加载 / 调度自动化**等任何周期形态。依据：基线 Phase 6 已删「Session Start 全量 Load」、Phase 12 已废除强制启动加载/强制结束上传；版本对齐归属第十二节 Cache 与失效机制的「读前 pull + ls-remote 比对」，不另设独立周期任务。任何端点新增版本核对流程前须先读本最新基线，不得自创自动化。
-> **doctor 红旗 = 阻断态（残留边界收窄）**：doctor 的「消费端 conform 触发式禁令」探针 FAIL（WorkBuddy 端检 `MEMORY.md`；**Codex 端无机器检查，属已知缺口，依赖协议自觉**，各端不互越界），或本地与远端**真分叉** / 远端不可达，一律视为未对齐本加固——**不得据此读 canon 当依据、不得 push**，须先补声明（本端消费记忆含「版本真值核对/触发式/禁自动化」）或 re-pull 修红后再继续。沙盒 overlay 导致的 tracking ref 丢失属**自愈项**（doctor 自动补写并报 AUTO-HEALED，不计失败），不构成阻断态。
+> ⚠️ **机制性质（防跑偏）**：版本真值核对是**触发式**——仅当请求命中 T1–T4 或属「最新版 / 评估现状 / 审计 / 提基线」类时，才在**读前**执行；**禁止定时任务 / 启动加载 / 调度自动化**等任何周期形态（版本真值核对 = 触发式、禁自动化；doctor conform 探针以「版本真值核对 / 触发式 / 禁自动化」三要素为判据）。依据：基线 Phase 6 已删「Session Start 全量 Load」、Phase 12 已废除强制启动加载/强制结束上传；版本对齐归属第十二节 Cache 与失效机制的「读前 pull + ls-remote 比对」，不另设独立周期任务。任何端点新增版本核对流程前须先读本最新基线，不得自创自动化。
+> **doctor 红旗 = 阻断态（残留边界收窄）**：doctor 的「消费端 conform 触发式禁令」探针 FAIL（各端只检本端：WorkBuddy 检 `~/.workbuddy/MEMORY.md`、Codex 检 `~/.codex/AGENTS.md`——2026-08-16 起 ps1 `-Doctor` 已补该探针、py 检本端 MEMORY.md），或本地与远端**真分叉** / 远端不可达，一律视为未对齐本加固——**不得据此读 canon 当依据、不得 push**，须先补声明（本端消费记忆含「版本真值核对/触发式/禁自动化」）或 re-pull 修红后再继续。沙盒 overlay 导致的 tracking ref 丢失属**自愈项**（doctor 自动补写并报 AUTO-HEALED，不计失败），不构成阻断态。
 
 ## 四、Memory Change Detector + 写入纪律（按需写入与上传）
 
@@ -71,7 +71,7 @@
 - 双端对称「不越界」：本端不直写对方工作区 / 克隆（不写 ~/.workbuddy，也不写对方机器的 Documents\Codex\memory）；一切记忆交换经本仓库（唯一数据源=Canonical Store），分叉靠 merge（非 rebase）收敛，绝不 force push / reset / 以本地覆盖远端。
 - git 写操作（commit / push / sync-memory.ps1）运行在带沙盒 overlay 的环境时（典型：WorkBuddy Bash 沙盒对 ~/.workbuddy 下写入跨命令不持久），必须改为非沙盒方式执行（系统 PowerShell / 编辑器文件通道 / 批准沙盒放行）；~/.codex 与 Documents 不受 overlay 影响。
 - push 后立即用 `git ls-remote origin`（或 `git ls-remote <remote-url>`）对比远端真实 commit 确认已推送；勿依赖本地 `git status` 的 ahead 显示（沙盒 overlay 拦截 tracking ref 写入时本地引用可能失真；2026-08-16 实锤归因=沙盒 overlay，非 PortableGit 缺陷）。
-- 删除传播护栏：同步前校验源 memory 目录 `.md` ≥ 5 且各文件非空；不足则拒绝同步并写 `.sync-failed`，绝不把近空目录推成空仓。
+- 删除传播护栏：同步前按 `memory/index.json` 的 `files` 清单校验各文件存在且非空；不足则拒绝同步并写 `.sync-failed`，绝不把近空目录推成空仓（vNext-1.3 起护栏不再硬编码文件数）。
 - 并发互斥：双端脚本入口有 `.sync.lock` 跨进程锁（按 PID 判活），同机并发 pull/push 会被拒绝而非交错，防 torn copy。
 - 密钥扫描：提交前对 memory/*.md 做凭据样值扫描（ghp_/gho_/github_pat_/AKIA/私钥头/Bearer 长值），命中即拒绝同步并写 `.sync-failed`，防令牌入 git 历史。
 - 脚本/文档提交：修改本仓库的脚本 / 文档 / 测试后，Codex 端收尾必须运行 `sync-memory.ps1 -CommitRepo`（提交并推送全部变更，不留未提交）；WorkBuddy 端在 push 前由使用方以「AI名@机器名」身份 commit 脚本/文档变更。绝不把脚本/文档变更长期留在工作树。
