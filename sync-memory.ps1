@@ -454,6 +454,30 @@ function Get-RemoteMainHash {
     return $null
 }
 
+function Find-SecretLeakUnpushed {
+    # Scan files changed in commits not yet on the remote (origin/main..HEAD), reading
+    # the HEAD blob of each (git show HEAD:<path>): closes the gap where a token was
+    # committed into a non-memory file and a later memory sync push carries it to the
+    # remote (P2-2; behavior-aligned with sync-memory.py find_secret_leak_unpushed).
+    param([string]$RepoRoot)
+    $remoteHash = Get-RemoteMainHash
+    if (-not $remoteHash) { return $null }
+    # 分词器陷阱：必须用 ${remoteHash} 花括号，否则 "..HEAD" 被拆成独立参数
+    $changed = @(git -C $RepoRoot -c core.quotepath=false diff --name-only -z "${remoteHash}..HEAD" 2>$null)
+    if ($LASTEXITCODE -ne 0) { return $null }
+    $patterns = Get-SecretPatterns
+    foreach ($rel in (($changed -join "`0") -split "`0")) {
+        if ([string]::IsNullOrEmpty($rel)) { continue }
+        $blobLines = @(git -C $RepoRoot show "HEAD:$rel" 2>$null)
+        if ($LASTEXITCODE -ne 0) { continue }
+        $text = ($blobLines -join "`n")
+        foreach ($p in $patterns) {
+            if ($text -match $p) { return $rel }
+        }
+    }
+    return $null
+}
+
 function Confirm-RemotePushed {
     $localHead = (git -C $repoRoot rev-parse HEAD 2>$null | Out-String).Trim()
     $remoteHash = Get-RemoteMainHash
@@ -901,6 +925,17 @@ if (-not (Test-AcquireSyncLock)) {
     $script:exitCode = 1; return
 }
 $script:lockHeld = $true
+
+# Sprint 2（对齐 py find_secret_leak_unpushed）：扫本地领先远端的未推送提交
+# （origin/main..HEAD 的 HEAD blob）——令牌已 commit 进非 memory 文件时，
+# memory sync push 不得把它带上远端（P2-2）。
+$secretHit = Find-SecretLeakUnpushed $repoRoot
+if ($secretHit) {
+    Set-SyncFailed -Message "Secret-like value detected in unpushed commit file: $secretHit; refusing to sync."
+    Write-Error -ErrorAction Continue "Secret-like value detected in unpushed commit file: $secretHit; refusing to sync."
+    Release-SyncLock
+    $script:exitCode = 1; return
+}
 
 # 只复制 index.json 声明的必需文件；工作区/仓库中的非 index .md 不复制、不删除、
 # 不提交（防越界提交与静默丢失；如仓库存在多余 .md 需人工对齐）。

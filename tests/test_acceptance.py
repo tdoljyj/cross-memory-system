@@ -631,6 +631,49 @@ def test_ps1_pull_access_none_pure_shortcircuit(sb):
 
 
 @sandboxed
+def test_ps1_push_refuses_committed_non_memory_secret(sb):
+    """Sprint2（P2-2 对齐 py）回归：令牌已 commit 进非 memory 文件（staged 为空）时，
+    ps1 memory sync push 必须扫 origin/main..HEAD 并拒绝，不得把令牌带上远端。"""
+    clone = sb.add_clone("repo")
+    workdir = os.path.join(sb.tmp, "working")
+    sb.install_ps1(clone, workdir)
+    before = sb.remote_head()
+    tok = "ghp_" + "A" * 32
+    with open(os.path.join(clone, "README_token.md"), "w", encoding="utf-8") as fh:
+        fh.write("doc\n" + tok + "\n")
+    git("add", "README_token.md", cwd=clone)
+    git("commit", "-m", "non-memory token", cwd=clone)
+    with open(os.path.join(workdir, "画像.md"), "a", encoding="utf-8") as fh:
+        fh.write("\n工作区记忆改动\n")
+    p = sb.run_ps1(clone)
+    check(p.returncode != 0, "已提交令牌应被拒绝: " + p.stdout + p.stderr)
+    check("secret" in (p.stdout + p.stderr).lower(), p.stdout + p.stderr)
+    check(os.path.isfile(os.path.join(clone, ".sync-failed")),
+          "护栏触发时应写 .sync-failed")
+    check(sb.remote_head() == before, "令牌样值不得推上远端")
+
+
+@sandboxed
+def test_ps1_push_allows_clean_non_memory_commit(sb):
+    """Sprint2 配套：干净的已提交非 memory 文件不被误拒，随 memory sync 正常推送。"""
+    clone = sb.add_clone("repo")
+    workdir = os.path.join(sb.tmp, "working")
+    sb.install_ps1(clone, workdir)
+    with open(os.path.join(clone, "README_clean.md"), "w", encoding="utf-8") as fh:
+        fh.write("# 干净文档\n")
+    git("add", "README_clean.md", cwd=clone)
+    git("commit", "-m", "clean doc", cwd=clone)
+    with open(os.path.join(workdir, "画像.md"), "a", encoding="utf-8") as fh:
+        fh.write("\n工作区记忆改动\n")
+    p = sb.run_ps1(clone)
+    check(p.returncode == 0, p.stdout + p.stderr)
+    checkclone = os.path.join(sb.tmp, "check-clean")
+    sh([GIT, "clone", sb.remote, checkclone])
+    check(os.path.isfile(os.path.join(checkclone, "README_clean.md")),
+          "干净非 memory 已提交文件应正常推送")
+
+
+@sandboxed
 def test_ps1_pull_fails_closed_on_bad_remote(sb):
     """R1 回归：远端不可达时 -Pull 必须失败退出，不得假报 already up to date。"""
     clone = sb.add_clone("repo")
@@ -1145,6 +1188,8 @@ TESTS = [
     test_py_deploy_guard_blocks_codex_path,
     test_ps1_conform_probe_detects,
     test_ps1_needs_push_cleared_after_push,
+    test_ps1_push_refuses_committed_non_memory_secret,
+    test_ps1_push_allows_clean_non_memory_commit,
     test_ps1_pull_access_none_pure_shortcircuit,
 ]
 
