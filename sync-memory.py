@@ -453,6 +453,32 @@ def find_secret_leak_staged():
     return None
 
 
+def find_secret_leak_unpushed():
+    """扫本地领先远端的提交内容（origin/main..HEAD 的文件级 diff，读 HEAD blob），
+    覆盖已 commit 但未推送的脚本/文档等非 memory 文件（P2-2）。
+
+    py 端 commit 由使用方执行，push 时 staged 常为空，仅靠 staged 扫描会漏掉
+    已入库令牌。远端不可达 / 无领先 / git 失败时返回 None（由 push 主流程的
+    对齐与核验步骤兜底）。
+    """
+    remote = ls_remote()
+    if not remote:
+        return None
+    code, out, _ = git("diff", "--name-only", "-z", "%s..HEAD" % remote, proxy=False)
+    if code != 0 or not out.strip():
+        return None
+    for name in out.split("\0"):
+        if not name:
+            continue
+        c, blob, _ = git("show", "HEAD:%s" % name, proxy=False)
+        if c != 0:
+            continue
+        for pat in _SECRET_PATTERNS:
+            if re.search(pat, blob):
+                return name
+    return None
+
+
 def is_ancestor(a, b):
     """a 是否是 b 的祖先（merge-base --is-ancestor）。"""
     code, _, _ = git("merge-base", "--is-ancestor", a, b, proxy=False)
@@ -685,6 +711,11 @@ def cmd_push():
     if not resolve_network():
         print("[!] 代理 %s 不可达且直连失败（Clash 未启动？），终止以免 git 卡死" % PROXY)
         write_marker(".sync-failed", "push aborted: proxy %s unreachable" % PROXY)
+        sys.exit(1)
+    leak = find_secret_leak_unpushed()
+    if leak:
+        print("[!] 检测到疑似密钥/令牌（secret-like value）于未推送提交 %s，拒绝 push 以防泄露" % leak)
+        write_marker(".sync-failed", "push aborted: secret-like value in unpushed %s" % leak)
         sys.exit(1)
     if not acquire_lock():
         print("[!] 已有另一同步进程持锁，拒绝并发 push")

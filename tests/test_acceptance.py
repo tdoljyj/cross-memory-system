@@ -437,6 +437,43 @@ def test_py_push_refuses_staged_secret_index_blob(sb):
 
 
 @sandboxed
+def test_py_push_refuses_committed_non_memory_secret(sb):
+    """P2-2 回归：令牌已 commit 进非 memory 文件（脚本/文档）且 staged 为空时，
+    push 必须扫 origin..HEAD 并拒绝（消除「已提交令牌直接 push」的防护空洞）。"""
+    clone = sb.add_clone("a")
+    script = sb.install_py(clone)
+    tok = "ghp_" + "A" * 32
+    with open(os.path.join(clone, "README_token.md"), "w", encoding="utf-8") as fh:
+        fh.write("doc\n" + tok + "\n")
+    git("add", "README_token.md", cwd=clone)
+    git("commit", "-m", "non-memory token", cwd=clone)
+    before = sb.remote_head()
+    p = sb.run_py(script, "push")
+    check(p.returncode != 0, "已提交令牌应被拒绝: " + p.stdout + p.stderr)
+    check("secret" in (p.stdout + p.stderr), p.stdout + p.stderr)
+    check(os.path.isfile(os.path.join(clone, ".sync-failed")),
+          "护栏触发时应写 .sync-failed")
+    check(sb.remote_head() == before, "远端不得变化")
+
+
+@sandboxed
+def test_py_push_allows_clean_non_memory_commit(sb):
+    """P2-2 配套：干净的 non-memory 提交不被误拒，正常推送。"""
+    clone = sb.add_clone("a")
+    script = sb.install_py(clone)
+    with open(os.path.join(clone, "README_clean.md"), "w", encoding="utf-8") as fh:
+        fh.write("# 干净文档\n")
+    git("add", "README_clean.md", cwd=clone)
+    git("commit", "-m", "clean doc", cwd=clone)
+    p = sb.run_py(script, "push")
+    check(p.returncode == 0, p.stdout + p.stderr)
+    checkclone = os.path.join(sb.tmp, "check-clean")
+    sh([GIT, "clone", sb.remote, checkclone])
+    check(os.path.isfile(os.path.join(checkclone, "README_clean.md")),
+          "干净非 memory 提交应正常推送")
+
+
+@sandboxed
 def test_py_access_none_skips_pull(sb):
     a = sb.add_clone("a")
     b = sb.add_clone("b")
@@ -1084,6 +1121,8 @@ TESTS = [
     test_py_missing_index_guard,
     test_py_secret_scan_blocks_push,
     test_py_push_refuses_staged_secret_index_blob,
+    test_py_push_refuses_committed_non_memory_secret,
+    test_py_push_allows_clean_non_memory_commit,
     test_py_access_none_skips_pull,
     test_py_lock_blocks_concurrent,
     test_py_repo_defaults_to_script_dir,
