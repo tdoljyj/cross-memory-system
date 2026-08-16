@@ -3,7 +3,7 @@
 """
 WorkBuddy 侧记忆同步脚本（Python 版）
 
-模块定位（对齐《架构基线文档-vNext.md》vNext-1.2）：本脚本 = WorkBuddy 端 AI Adapter
+模块定位（对齐《架构基线文档-vNext.md》vNext-1.3）：本脚本 = WorkBuddy 端 AI Adapter
 的 Sync Layer 实现，只与 Canonical Memory Store（本 git 仓库）同步，不与其他端互相同步。
 按需触发：命中 Memory Router（AGENTS v3 / MEMORY.md 的 T1–T4）才 pull；本轮产生记忆
 写入才 push。NO_CHANGE → NO_WRITE → NO_SYNC。
@@ -541,8 +541,16 @@ def cmd_push():
         release_lock()
 
 
-def check_ref_valid():
-    """校验 tracking ref 文件内容是否为合法 40 位 hex（P4）。"""
+def check_ref_valid(remote=None):
+    """校验 tracking ref 是否与远端 main 一致（消假阳：比对 ls-remote 哈希，而非仅验 40-hex）。
+
+    原实现只验 40-hex 正则，ref 悬空/指向错误提交时仍 PASS，会主动掩盖本地落后于远端的漂移。
+    现改为与远端真实哈希比对；远端不可达时视为 FAIL（不作通过）。
+    """
+    if remote is None:
+        remote = ls_remote()
+    if not remote:
+        return False, "远端不可达，无法比对（不作通过）"
     ref_path = os.path.join(REPO, ".git", "refs", "remotes", "origin", "main")
     if not os.path.exists(ref_path):
         return False, "丢失（沙盒 overlay 所致，pull/push 模式会自动补写）"
@@ -551,9 +559,11 @@ def check_ref_valid():
             content = f.read().strip()
     except Exception as e:
         return False, "读取失败: %s" % e
-    if re.fullmatch(r"[0-9a-f]{40}", content):
-        return True, content[:12]
-    return False, "非法内容: %r" % content[:40]
+    if not re.fullmatch(r"[0-9a-f]{40}", content):
+        return False, "非法内容: %r" % content[:40]
+    if content != remote:
+        return False, "漂移：ref=%s ≠ 远端=%s" % (content[:12], remote[:12])
+    return True, content[:12]
 
 
 def cmd_doctor():
@@ -591,7 +601,7 @@ def cmd_doctor():
     print("[本地] %s" % local)
     report("remote reachable", bool(remote), remote or "")
     report("local head readable", bool(local), local or "")
-    ok, detail = check_ref_valid()
+    ok, detail = check_ref_valid(remote)
     report("tracking ref valid", ok, detail)
     for marker in (".sync-failed", ".pending-writeback"):
         p = os.path.join(REPO, marker)
@@ -633,7 +643,20 @@ def cmd_doctor():
     report("working tree clean", dirty == [],
            "" if dirty is None else ("clean" if dirty == [] else "有未提交变更"))
     report("memory dir healthy (files per memory/index.json)", memory_dir_healthy())
-    report("local == remote", bool(local and remote and local == remote))
+    # 版本对齐阻挡态：本地落后远端时必须显式标红并指引 re-pull（doctor 不再静默放行）
+    if local and remote:
+        if local == remote:
+            report("local == remote", True, "一致")
+        else:
+            git("fetch", "origin", "main")  # 确保远端对象在本地，merge-base 才能判定方向
+            code, _, _ = git("merge-base", "--is-ancestor", local, remote, proxy=False)
+            if code == 0:
+                report("local == remote", False,
+                       "本地落后远端（%s..%s），读前必须 re-pull，否则结论不可信" % (local[:12], remote[:12]))
+            else:
+                report("local == remote", False, "本地与远端分叉，需手动语义合并")
+    else:
+        report("local == remote", False, "无法判定（本地或远端不可读）")
 
     code, out, _ = git("status", "--porcelain", proxy=False)
     all_dirty = [l for l in (out or "").splitlines() if l.strip()]

@@ -1,6 +1,6 @@
-# 全局指令 · 跨会话记忆按需读写（v3.1，对齐架构基线 vNext-1.2，2026-08-16 起生效）
+# 全局指令 · 跨会话记忆按需读写（v3.1，对齐架构基线 vNext-1.3，2026-08-16 起生效）
 
-> 规范依据：本仓库《架构基线文档-vNext.md》（vNext-1.2）。触发术语（T0–T4）、记忆分类（L1–L6）、Trigger Matrix、Router 边界、写入纪律均与基线一致；同步与执行纪律保留既定四不变量。
+> 规范依据：本仓库《架构基线文档-vNext.md》（vNext-1.3）。触发术语（T0–T4）、记忆分类（L1–L6）、Trigger Matrix、Router 边界、写入纪律均与基线一致；同步与执行纪律保留既定四不变量。
 
 记忆文件（%USERPROFILE% 即本机用户目录）：
 
@@ -47,6 +47,12 @@
 3. -Pull 输出提示「could not auto-write / pending write-back」时，用 apply_patch 把仓库 memory 目录较新文件写回 %USERPROFILE%\Documents\Codex\memory 对应文件，再重跑 -Pull 清除标记；无更新则直接读取。
 
 缓存语义：本地镜像只是 Cache，仓库是唯一事实源。读前 pull 即版本校验（cache.version == store.version），不一致必须重取。
+
+**版本真值核对（硬性 check-list，任何「最新版 / 当前实现 / 评估现状 / 审计」类任务强制执行，不靠自觉）**：
+1. 第一步（动手前，只读、不等写操作）：`git ls-remote origin main` 取远端真实 HEAD，与本地 `git rev-parse HEAD` 比对。
+2. 本地 HEAD ≠ 远端时，先 `fetch + merge（非 rebase）` 对齐，再读任何文件；未对齐前，本地任何文件内容不得作为「当前实现」的依据。
+3. 版本号以仓库根 `VERSION` 文件 + `git tag` 为准（带外真值源）；不得仅凭文档头部自述版本号判定——文件名无版本号、版本号写在正文里时尤其如此。
+4. 「local ≠ remote」的任何已知证据都是全局红旗，必须当场处理，不得当作孤立 bug 略过。
 
 ## 四、Memory Change Detector + 写入纪律（按需写入与上传）
 

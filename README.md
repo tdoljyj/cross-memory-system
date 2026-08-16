@@ -1,6 +1,6 @@
 # Cross-Memory-System · 跨 AI 记忆系统
 
-> **规范依据**：本仓库《架构基线文档-vNext.md》（当前基线版本 **vNext-1.2**，2026-08-16 确立）。适用范围：本仓库全部文件、Codex 端（`~/.codex/AGENTS.md` + sync-memory.ps1）、WorkBuddy 端（`~/.workbuddy/MEMORY.md` + sync-memory.py）及未来新接入端。本 README 与基线冲突时以基线为准；基线变更记录见该文档「变更记录」表。
+> **规范依据**：本仓库《架构基线文档-vNext.md》（当前基线版本 **vNext-1.3**，2026-08-16 确立）。适用范围：本仓库全部文件、Codex 端（`~/.codex/AGENTS.md` + sync-memory.ps1）、WorkBuddy 端（`~/.workbuddy/MEMORY.md` + sync-memory.py）及未来新接入端。本 README 与基线冲突时以基线为准；基线变更记录见该文档「变更记录」表。
 
 私有仓库：完整版配置手册 + 数据包快照 + **多机多 AI 协同**自动同步机制（2026-08-15 建立并更名）。
 
@@ -50,7 +50,7 @@
 7. 跑自检：`powershell -ExecutionPolicy Bypass -File ~/.codex/projects/codex-memory-system/sync-memory.ps1 -Doctor`，全部 PASS（可选先跑 `-Bootstrap` 一键写入推荐 git config）
 8. 按手册第五节启用 Full access，然后新会话验证
 
-## Codex 同步（按需触发，对齐基线 vNext-1.2）
+## Codex 同步（按需触发，对齐基线 vNext-1.3）
 - 钩子指令（AGENTS.md v3.1）：Memory Router 判定本轮产生记忆写入后才运行：`powershell -ExecutionPolicy Bypass -File ~/.codex/projects/codex-memory-system/sync-memory.ps1`
 - 脚本自动：复制最新记忆 → git 提交（无变化则 skip commit）→ 推送；远端有新提交时先拉取再推
 - NO_CHANGE 时不产生任何 commit / push / 缓存失效（基线原则 8）
@@ -67,7 +67,7 @@
 - ⚠️ TLS 后端（2026-08-15 21:32 复测补充）：Git Bash 自带 git + 代理时 schannel 默认后端仍**偶发**握手失败（`schannel: failed to receive handshake`）；命令固定加 `-c http.sslBackend=openssl`（对直连/代理均无副作用）
 - **同步脚本 `sync-memory.py`**（Python 版，WorkBuddy 侧专用，2026-08-16 起）：WorkBuddy 沙盒 overlay 会拦截 git 写 tracking ref（`refs/remotes/origin/main` 两层目录，lockfile+rename 原子写 exit 0 静默失败），脚本策略=git 负责对象传输、Python 负责 ref 兜底写入；四模式 `pull` / `push` / `doctor` / `bootstrap`，用法见脚本头注释
 - **配置参数化（vNext-1.2）**：`sync-memory.py` 支持与脚本同目录、gitignored 的 `sync.config.json`（`{repo, proxy, proxy_host, proxy_port, git_candidates}`），缺省回落内置默认；换机器只改这一个文件
-- **按需触发**（对齐基线 vNext-1.2 / AGENTS v3.1）：Memory Router 命中 T1–T4 才执行 `python sync-memory.py pull`（自动 fetch + 对齐 + 补写 tracking ref + 核验）→ 按 L1–L6 映射读所需文件；T0 通用问题直接回答，不访问记忆
+- **按需触发**（对齐基线 vNext-1.3 / AGENTS v3.1）：Memory Router 命中 T1–T4 才执行 `python sync-memory.py pull`（自动 fetch + 对齐 + 补写 tracking ref + 核验）→ 按 L1–L6 映射读所需文件；T0 通用问题直接回答，不访问记忆
 - 写入上传：本轮产生记忆写入 + commit 后才 `python sync-memory.py push`（非沙盒执行，判据=输出尾 `⚠️ Sandbox bypassed`）；无写入不 push（NO_CHANGE → NO_SYNC）；**不直写 Codex 侧工作区**（`Documents\Codex\memory\` 由 Codex 自己同步）
 - 删除传播护栏：pull/push 前校验 memory 目录 ≥ 5 个非空 `.md`，不足则拒绝并写 `.sync-failed`，防推空仓
 - 代理预检：`pull` 与 `push` 均先探测代理存活，代理不可达时 3 秒内快速失败而非让 git 卡 60 秒超时

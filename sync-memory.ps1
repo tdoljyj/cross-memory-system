@@ -1,5 +1,5 @@
 # Codex cross-session memory sync.
-# Module role (per 架构基线文档-vNext.md vNext-1.2): Codex-side AI Adapter Sync Layer.
+# Module role (per 架构基线文档-vNext.md vNext-1.3): Codex-side AI Adapter Sync Layer.
 # Syncs only with the Canonical Memory Store (this git repo); never with other adapters.
 # Trigger policy (AGENTS.md v3): pull/push are invoked on demand — pull only when the
 # Memory Router (T1-T4) matches, push only when the current turn produced memory writes
