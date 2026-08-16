@@ -308,17 +308,19 @@ function Find-SecretLeak {
 }
 
 function Find-SecretLeakStaged {
-    # Scan the content of currently staged files (git diff --cached), covering the
-    # -CommitRepo full-repo commit path (scripts/docs/tests/config) so a token/private
-    # key never enters history via that route. Complements Find-SecretLeak (memory/*.md).
+    # Scan the content of currently staged files by reading the index blob
+    # (`git show :<path>`), not the working tree: closes the TOCTOU where a token
+    # was staged and then reverted in the working tree before the scan ran
+    # (P0-1/P2-1). Covers the -CommitRepo full-repo commit path and the push path,
+    # where pre-staged non-memory files would otherwise bypass scanning.
     param([string]$RepoRoot)
     $patterns = Get-SecretPatterns
     $stagedFiles = @(git -C $RepoRoot -c core.quotepath=false diff --cached --name-only 2>$null)
+    if ($LASTEXITCODE -ne 0) { return $null }
     foreach ($rel in $stagedFiles) {
-        $full = Join-Path $RepoRoot $rel
-        if (-not (Test-Path -LiteralPath $full -PathType Leaf)) { continue }
-        $text = Get-Content -LiteralPath $full -Raw -Encoding UTF8 -ErrorAction SilentlyContinue
-        if ($null -eq $text) { continue }
+        $blobLines = @(git -C $RepoRoot show ":$rel" 2>$null)
+        if ($LASTEXITCODE -ne 0) { continue }
+        $text = ($blobLines -join "`n")
         foreach ($p in $patterns) {
             if ($text -match $p) { return $rel }
         }
@@ -910,7 +912,10 @@ if (-not (Test-MemoryRequiredEqual $memorySrc $memoryDst $requiredMemoryFiles)) 
 $memoryPaths = @($requiredMemoryFiles | ForEach-Object { "memory/" + $_ })
 git -C $repoRoot add -A -- $memoryPaths
 if ($LASTEXITCODE -ne 0) { throw "git add -A -- memory (index files) failed (staging memory changes)" }
-$staged = @(git -C $repoRoot -c core.quotepath=false diff --cached --name-only)
+# P0-1：staged 名单只取 index.json 声明的 memory 文件——预 staged 的非 memory 文件
+# （脚本/文档/新文件）既不算「有变化」也不进入 memory sync 提交，恢复
+# NO_CHANGE → NO_SYNC 契约并保持用户 index 状态不被触碰。
+$staged = @(git -C $repoRoot -c core.quotepath=false diff --cached --name-only | Where-Object { $_ -in $memoryPaths })
 if ($LASTEXITCODE -ne 0) { throw "git diff --cached --name-only failed" }
 if (-not $staged) {
     Remove-Item -LiteralPath $flagFile -Force -ErrorAction SilentlyContinue
@@ -919,13 +924,25 @@ if (-not $staged) {
     $script:exitCode = 0; return
 }
 
+# P0-1：push 路径补 staged 密钥扫描（读 index blob）。即便上述收窄被未来改动破坏，
+# 预 staged 文件携带令牌也会在此被拒绝，令牌不进入提交。
+$secretHit = Find-SecretLeakStaged $repoRoot
+if ($secretHit) {
+    Set-SyncFailed -Message "Secret-like value detected in staged file: $secretHit; refusing to sync."
+    Write-Error -ErrorAction Continue "Secret-like value detected in staged file: $secretHit; refusing to sync."
+    Release-SyncLock
+    $script:exitCode = 1; return
+}
+
 $conflictBackupDir = Join-Path (Join-Path $repoRoot ".conflict-snapshots") ("codex-memory-conflict-" + (Get-Date -Format 'yyyyMMdd-HHmmss'))
 try {
     Invoke-Git fetch origin main
     $remoteHash = (git -C $repoRoot rev-parse FETCH_HEAD 2>$null | Out-String).Trim()
     $behind = [int](git -C $repoRoot rev-list --count "HEAD..${remoteHash}")
     $changed = (($staged -replace '^memory/','') -join ', ')
-    git -C $repoRoot commit -m "memory sync [$identity]: $changed"
+    # P0-1：commit 限定 index.json 声明的 memory 文件（pathspec 提交），预 staged 的
+    # 非 memory 文件不被卷入；其 index 状态原样保留，由 -CommitRepo 或使用方处理。
+    git -C $repoRoot commit -m "memory sync [$identity]: $changed" -- $memoryPaths
     if ($LASTEXITCODE -ne 0) { throw "git commit failed (memory sync commit)" }
 
     if ($behind -gt 0) {

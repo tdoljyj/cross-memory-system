@@ -609,6 +609,76 @@ def test_ps1_push_scopes_to_index_files(sb):
 
 
 @sandboxed
+def test_ps1_push_prestaged_non_memory_not_committed(sb):
+    """P0-1 回归：预 staged 非 memory 文件不得被 memory sync 提交卷入（paths 收窄）。"""
+    clone = sb.add_clone("repo")
+    workdir = os.path.join(sb.tmp, "working")
+    sb.install_ps1(clone, workdir)
+    before = sb.remote_head()
+    with open(os.path.join(clone, "AGENTS.md"), "w", encoding="utf-8") as fh:
+        fh.write("# tampered\n预 stage 非 memory 文件\n")
+    git("add", "AGENTS.md", cwd=clone)
+    with open(os.path.join(workdir, "画像.md"), "a", encoding="utf-8") as fh:
+        fh.write("\n推送触发\n")
+    p = sb.run_ps1(clone)
+    check(p.returncode == 0, p.stdout + p.stderr)
+    check("Memory synced" in p.stdout, p.stdout)
+    checkclone = os.path.join(sb.tmp, "check")
+    sh([GIT, "clone", sb.remote, checkclone])
+    remote_agents = open(os.path.join(checkclone, "AGENTS.md"), encoding="utf-8").read()
+    check("tampered" not in remote_agents, "预 staged 非 memory 文件被卷入提交")
+    msg = git("log", "-1", "--format=%s", cwd=clone).stdout.strip()
+    check("AGENTS.md" not in msg, "commit message 不应包含非 memory 文件: %s" % msg)
+    check("画像.md" in msg, "commit message 应包含 memory 文件: %s" % msg)
+    staged = sh([GIT, "-C", clone, "diff", "--cached", "--name-only"]).stdout.split()
+    check("AGENTS.md" in staged, "预 staged 文件应保持 staged（不提交也不 reset）")
+    check(sb.remote_head() != before, "memory 变更应正常推送")
+
+
+@sandboxed
+def test_ps1_push_no_change_with_prestaged_skips(sb):
+    """P0-1 回归：仅预 staged 非 memory 文件、无 memory 变化时不得产生提交推送。"""
+    clone = sb.add_clone("repo")
+    workdir = os.path.join(sb.tmp, "working")
+    sb.install_ps1(clone, workdir)
+    before = sb.remote_head()
+    with open(os.path.join(clone, "README_extra.md"), "w", encoding="utf-8") as fh:
+        fh.write("pre-staged only\n")
+    git("add", "README_extra.md", cwd=clone)
+    p = sb.run_ps1(clone)
+    check(p.returncode == 0, p.stdout + p.stderr)
+    check("No memory changes" in p.stdout, p.stdout)
+    check(sb.remote_head() == before, "无 memory 变化时不应推送")
+    staged = sh([GIT, "-C", clone, "diff", "--cached", "--name-only"]).stdout.split()
+    check("README_extra.md" in staged, "用户预 staged 状态应保留")
+
+
+@sandboxed
+def test_ps1_push_refuses_staged_secret_non_memory(sb):
+    """P0-1 回归（blob 读取）：预 staged 非 memory 文件含令牌且工作树已回改时，
+    staged 扫描必须读到 index blob 并拒绝推送（工作树读取会被 TOCTOU 绕过）。"""
+    clone = sb.add_clone("repo")
+    workdir = os.path.join(sb.tmp, "working")
+    sb.install_ps1(clone, workdir)
+    before = sb.remote_head()
+    tok = "ghp_" + "A" * 32
+    extra = os.path.join(clone, "README_secret.md")
+    with open(extra, "w", encoding="utf-8") as fh:
+        fh.write("doc\n" + tok + "\n")
+    git("add", "README_secret.md", cwd=clone)
+    with open(extra, "w", encoding="utf-8") as fh:
+        fh.write("doc clean\n")
+    with open(os.path.join(workdir, "画像.md"), "a", encoding="utf-8") as fh:
+        fh.write("\n工作区记忆改动\n")
+    p = sb.run_ps1(clone)
+    check(p.returncode != 0, "staged 令牌应被拒绝: " + p.stdout + p.stderr)
+    check("secret" in (p.stdout + p.stderr), p.stdout + p.stderr)
+    check(os.path.isfile(os.path.join(clone, ".sync-failed")),
+          "护栏触发时应写 .sync-failed")
+    check(sb.remote_head() == before, "令牌样值不得推上远端")
+
+
+@sandboxed
 def test_ps1_pull_pending_writeback_keeps_extras_and_backup(sb):
     """P1/P2 回归：pending writeback 回写成功路径——非 index 工作区文件不得被删除，
     写回备份必须保留（供恢复），pending 标记清除。"""
@@ -863,6 +933,9 @@ TESTS = [
     test_ps1_secret_scan_blocks,
     test_ps1_commit_repo_commits_docs,
     test_ps1_push_scopes_to_index_files,
+    test_ps1_push_prestaged_non_memory_not_committed,
+    test_ps1_push_no_change_with_prestaged_skips,
+    test_ps1_push_refuses_staged_secret_non_memory,
     test_ps1_pull_pending_writeback_keeps_extras_and_backup,
     test_py_push_is_idempotent,
     test_py_concurrent_merge_no_loss,
