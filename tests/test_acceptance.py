@@ -898,6 +898,15 @@ def test_pid_alive_dead_pid_false():
     check(mod._pid_alive(probe) is False, "不存在的 PID 应判定为不存活")
 
 
+def test_doc_conform_probe_not_stale():
+    """P0-6 回归：基线第十二节不得残留「Codex 端无机器检查」的过期表述
+    （ps1 conform 探针已于 DSH 接入轮补齐），且须登记 DSH 端探针对象。"""
+    doc_path = os.path.join(REPO_ROOT, "架构基线文档-vNext-1.3.md")
+    text = open(doc_path, encoding="utf-8").read()
+    check("Codex 端无机器检查" not in text, "基线正文残留过期表述「Codex 端无机器检查」")
+    check("~/.dsh/AGENTS.md" in text, "基线第十二节未登记 DSH 端 conform 探针对象")
+
+
 def test_doc_guard_wording_consistent():
     """P1-2 回归：协议文档不得残留硬编码 .md 数量护栏旧口径（≥ 5），
     护栏口径唯一事实源是 memory/index.json 的 files 清单。"""
@@ -1032,6 +1041,7 @@ TESTS = [
     test_repo_files_do_not_self_match_secret_patterns,
     test_pid_alive_probe_does_not_kill,
     test_pid_alive_dead_pid_false,
+    test_doc_conform_probe_not_stale,
     test_doc_guard_wording_consistent,
     test_py_needs_push_cleared_after_push,
     test_py_deploy_guard_blocks_codex_path,
