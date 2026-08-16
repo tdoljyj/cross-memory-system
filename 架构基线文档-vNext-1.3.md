@@ -2,7 +2,7 @@
 
 > **基线版本**：vNext-1.3（2026-08-16 确立，同日按 A/B/C 结构化召回索引、统一护栏、令牌脱敏推进）
 > **来源**：Chase 提供的《Cross_Memory_System_vNext_核心架构》（原件存 `附录/Cross_Memory_System_vNext_核心架构.html`，本文档为其规范 Markdown 转换；源 HTML 存在表格标签未闭合等结构问题，转换时已修正）
-> **适用范围**：跨 AI 记忆系统的全部实现与协议文档——本仓库（cross-memory-system）全部文件、Codex 端 `~/.codex/AGENTS.md` 与 sync-memory.ps1、WorkBuddy 端 `~/.workbuddy/MEMORY.md` 协议与 sync-memory.py，以及未来任何新接入端
+> **适用范围**：跨端记忆系统的全部实现与协议文档——本仓库（cross-memory-system）全部文件、Codex 端 `~/.codex/AGENTS.md` 与 sync-memory.ps1、WorkBuddy 端 `~/.workbuddy/MEMORY.md` 协议与 sync-memory.py，以及未来任何新接入端
 > **权威性**：本文档是 vNext 核心架构规范，统一后续设计、实现和变更的依据。其他文档与本文档冲突时，以本文档为准；修改本文档必须在「变更记录」追加条目并同步全部协议副本
 > **适用性说明**：正文（第一~二十一节）为通用理想架构（面向服务化/数据库实现）；本系统当前为「文件 + git 私有仓库」架构，**正文与附录 A 冲突时以附录 A 的落地映射为准**。附录 A 标注「不适用/展望」的条目不得在现有架构中机械套用（如 SQL 式 UPDATE、数值化 confidence、语义检索打分）
 
@@ -21,6 +21,7 @@
 | vNext-1.3 残留边界收窄-修正 | 2026-08-16 | 撤回「检测 Codex AGENTS.md」的跨端探针：按「不越界」纪律，各端 doctor 只自检本端（WorkBuddy 检 MEMORY.md、Codex 由 ps1 -Doctor 自检）；同步修正第十二节探针描述与验收表用例口径（TESTS 实际注册 20 项） | WorkBuddy@TURING |
 | vNext-1.3 conform 缺口显式化 | 2026-08-16 | 审计实证（grep ps1 零 conform 代码）：上一行「Codex 由 ps1 -Doctor 自检」为**虚假覆盖**——ps1 从未实现该探针。方案 B 落地：改为显式承认「Codex 端 conform 无机器检查、依赖协议自觉」；同步修正第十二节与验收表口径；doctor 对 tracking ref 丢失（沙盒 overlay 常态）改为自愈项（自动补写，报 AUTO-HEALED 不计失败），阻断态限定为真分叉 / conform 缺失 / 远端不可达 | WorkBuddy@TURING |
 | vNext-1.3 措施8/10/11/12/15 落地 | 2026-08-16 | 结构性加固收尾：① 措施8（C15）py/ps1 pull 领先不再内嵌 push（读路径无写副作用），只写 `.needs-push` 标记，由使用方非沙盒显式 push；② 措施10（C19）ps1 5 模式函数化（Invoke-DoctorMode/BootstrapMode/PullMode/CommitRepoMode/PushMode + 顶层 dispatch，exit→`$script:exitCode`）；③ 措施11（C17）冲突快照/写回备份从 %TEMP% 明文改仓库内 gitignored `.conflict-snapshots/`，成功即删；④ 措施12（C11）代理优先读 HTTPS_PROXY 环境变量 + proxy_alive 从 URL 解析 + resolve_network 直连兜底（消 7892 误杀）；⑤ 措施15（C23）bootstrap 恢复保守 GC（gc.auto=256 / gc.pruneExpire=2.weeks）。验收 21/21 PASS | WorkBuddy@TURING |
+| vNext-1.3 术语统一（跨 AI → 跨端） | 2026-08-16 | 系统中文称呼由「跨 AI 记忆系统」统一为「跨端记忆系统」：各端（AI×机器 组合）隔离共享唯一数据源、互不同步、互不越界，用「协同」描述机制不准确，以「共享/跨端共享」取代「协同/多机多 AI 协同」。同步修改：README 标题/第 5 行/定位句/「跨端共享机制」章节标题/新电脑接入导语、本文档第 5 行适用范围全称。未改架构语义、未 bump 版本（VERSION 仍 vNext-1.3）；`memory/归档.md`「跨 AI 体检结论」为历史审计标题（指跨两端体检，事实准确），保留 | WorkBuddy@TURING |
 
 > **目标**：将"每次开头强制加载记忆、结尾强制上传"改造成真正的按需读写型跨会话记忆系统。
 >
