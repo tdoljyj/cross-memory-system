@@ -184,8 +184,11 @@ def run(cmd, cwd=REPO, timeout=60):
 
 def git(*args, proxy=True):
     cmd = [GIT]
-    if proxy and PROXY:
-        cmd += ["-c", "http.proxy=%s" % PROXY, "-c", "http.sslBackend=openssl"]
+    if proxy:
+        # GAP-3-6：lowSpeed 超时与 ps1 对齐（HTTP 传输半死时不再耗满 60s 总超时）
+        cmd += ["-c", "http.lowSpeedLimit=1", "-c", "http.lowSpeedTime=15"]
+        if PROXY:
+            cmd += ["-c", "http.proxy=%s" % PROXY, "-c", "http.sslBackend=openssl"]
     cmd += list(args)
     return run(cmd)
 
@@ -236,7 +239,15 @@ def memory_files():
     if not idx:
         return None
     files = [str(f) for f in idx.get("files", [])]
-    return files or None
+    if not files:
+        return None
+    # GAP-3-10：路径净化——files 项必须是 memory 目录内的 .md 基名，
+    # 含目录分隔符/相对路径/非 .md 后缀一律按索引非法 fail-closed（防 ../ 逃逸）。
+    for f in files:
+        if (not f.endswith(".md") or os.path.basename(f) != f
+                or "/" in f or "\\" in f):
+            return None
+    return files
 
 
 def memory_dir_healthy():
@@ -497,8 +508,12 @@ def confirm_no_divergence():
         return False, local, remote
     if local == remote:
         return True, local, remote
-    git("fetch", "origin", "main")  # 确保远端对象在本地，merge-base 才能判定
     code, _, _ = git("merge-base", "--is-ancestor", local, remote, proxy=False)
+    if code >= 128:
+        # 远端对象不在本地才 fetch（GAP-3-6：消 pull/push 路径的二次 fetch；
+        # merge-base 对 --is-ancestor 的 0/1 已是确定结论，128 才是对象缺失/错误）
+        git("fetch", "origin", "main")
+        code, _, _ = git("merge-base", "--is-ancestor", local, remote, proxy=False)
     return code == 0, local, remote
 
 
@@ -648,7 +663,7 @@ def cmd_pull(access=""):
         write_marker(".sync-failed", "pull aborted: proxy %s unreachable" % PROXY)
         sys.exit(1)
     if load_index() is None:
-        print("[!] memory/index.json 缺失或不可解析（护栏唯一事实源不可用），终止 pull")
+        print("[!] memory/index.json 缺失或非法（护栏唯一事实源不可用），终止 pull")
         write_marker(".sync-failed", "pull aborted: memory/index.json missing or invalid")
         sys.exit(1)
     if not memory_dir_healthy():
@@ -701,7 +716,7 @@ def cmd_push():
     ensure_git_safe()
     cleanup_stale_backups()
     if load_index() is None:
-        print("[!] memory/index.json 缺失或不可解析（护栏唯一事实源不可用），终止 push")
+        print("[!] memory/index.json 缺失或非法（护栏唯一事实源不可用），终止 push")
         write_marker(".sync-failed", "push aborted: memory/index.json missing or invalid")
         sys.exit(1)
     if not memory_dir_healthy():
@@ -857,6 +872,9 @@ def cmd_doctor():
     cleanup_stale_backups()
     failures = []
 
+    if not load_guards():
+        print("[WARN] guards.json 缺失或不可解析：护栏契约回落内置默认（密钥模式/保留期 7 天）；请从远端恢复该文件防口径漂移（GAP-3-4）")
+
     def report(name, ok, detail=""):
         print("[%s] %s%s" % (
             "PASS" if ok else "FAIL", name,
@@ -923,6 +941,9 @@ def cmd_doctor():
                "有残留!" if exists else "无")
     if os.path.exists(os.path.join(REPO, ".needs-push")):
         print("[info] .needs-push 存在：本地有未推送的已提交记忆，需显式 push（不视为失败）")
+    lockp = os.path.join(REPO, ".sync.lock")
+    if os.path.exists(lockp):
+        print("[info] .sync.lock 存在：持有进程已退出时下次同步自动清理；PID 复用可能楔住时手工删除 .sync.lock 解除（GAP-3-5）")
     # union 配置检查（P1/P6）
     code, out, _ = git("config", "--get", "merge.union.driver", proxy=False)
     union_ok = code == 0 and "git merge-file --union" in out
