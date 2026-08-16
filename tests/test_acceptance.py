@@ -58,6 +58,17 @@ def sh(cmd, cwd=None, check_fail=True, timeout=90):
     return p
 
 
+def _ps1_git_unsafe():
+    """ps1 用例环境预检（措施5/7）：ps1 的 Test-GitClientSafe 用 PowerShell 解析到的
+    git 路径判断（含 PortableGit/.workbuddy 即拦截）。环境不满足时 ps1 用例应 SKIP
+    而非 FAIL，使「红 = 真回归」成立，消除 PATH 顺序（PortableGit 排前）导致的噪声红。"""
+    p = sh([POWERSHELL, "-NoProfile", "-Command",
+            "(Get-Command git -ErrorAction SilentlyContinue).Source"],
+           check_fail=False)
+    g = (p.stdout or "").strip()
+    return bool(g) and ("PortableGit" in g or ".workbuddy" in g)
+
+
 def git(*args, cwd):
     return sh([GIT, "-C", cwd] + list(args))
 
@@ -443,6 +454,8 @@ def test_ps1_pull_fails_closed_on_bad_remote(sb):
     p = sb.run_ps1(clone, "-Pull")
     check(p.returncode != 0, "-Pull 远端不可达时必须失败退出（fail-closed）")
     check("already up to date" not in p.stdout, "不得假报 already up to date")
+    check("Unsafe git client" not in (p.stdout + p.stderr),
+          "失败应源于远端不可达，而非 git 客户端护栏拦截（防假通过）")
 
 
 @sandboxed
@@ -570,11 +583,19 @@ TESTS = [
 
 def main():
     failures = 0
+    skipped = 0
+    ps1_blocked = bool(POWERSHELL) and _ps1_git_unsafe()
     for fn in TESTS:
         name = fn.__name__
-        if "ps1" in name and not POWERSHELL:
-            print("SKIP %s (PowerShell 不可用)" % name)
-            continue
+        if "ps1" in name and name != "test_ps1_deploy_guard_blocks_workbuddy_path":
+            if not POWERSHELL:
+                print("SKIP %s (PowerShell 不可用)" % name)
+                skipped += 1
+                continue
+            if ps1_blocked:
+                print("SKIP %s (环境 git 客户端不安全，将被 ps1 护栏拦截；请前置官方 Git 后重跑以覆盖)" % name)
+                skipped += 1
+                continue
         try:
             fn()
             print("PASS %s" % name)
@@ -582,7 +603,7 @@ def main():
             failures += 1
             print("FAIL %s: %s" % (name, e))
     print("----")
-    print("%d test(s), %d failure(s)" % (len(TESTS), failures))
+    print("%d test(s), %d failure(s), %d skipped" % (len(TESTS), failures, skipped))
     sys.exit(1 if failures else 0)
 
 
