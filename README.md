@@ -27,7 +27,7 @@
 - `架构基线文档-vNext.md` — **vNext 核心架构规范**（基线版本/适用范围/变更记录 + 正文二十节 + 附录 A 落地映射 / 附录 B 验收对照 / 附录 C 隐私约束）；后续设计、实现、变更的统一依据
 - `附录/Cross_Memory_System_vNext_核心架构.html` — 基线源文件原件（Chase 提供）
 - `配置手册与数据包-v4.md` — 完整手册：记忆机制、写入权限、新电脑配置步骤（⚠️ 其中 9.x 数据包为 2026-08-15 历史快照，AGENTS / 待办等内容可能已过期；权威以仓库当前 `架构基线文档-vNext.md`、`AGENTS.md` 与 `memory/*.md` 为准）
-- `memory/` — 记忆快照（画像 / 状态 / 决策 / 待办 / 归档）
+- `memory/` — 记忆快照（画像 / 状态 / 决策 / 待办 / 归档）+ `memory/index.json`（L1–L6 → 文件+标题段的召回索引，也是同步护栏的必需文件集唯一事实源）
 - `AGENTS.md` — Codex 全局钩子副本（当前 v3.1，对齐基线 T0–T4 / L1–L6 术语与段级召回；实际生效位置：`~/.codex/AGENTS.md`）
 - `sync-memory.ps1` — Codex 侧记忆同步脚本：复制最新记忆 → git 提交 → 推送
 
@@ -42,7 +42,7 @@
 
 ## 新电脑接入（一次性）
 1. 安装 GitHub CLI 并登录同一账号：`gh auth login`
-2. 接入 GitHub MCP：`gh auth token` 拿到令牌后 `setx GITHUB_PAT_TOKEN "<令牌>"`（gho_ 开头，用户级环境变量）；在 `~/.codex/config.toml` 加 `[mcp_servers.github]`（`url = "https://api.githubcopilot.com/mcp/"`、`bearer_token_env_var = "GITHUB_PAT_TOKEN"`）或走桌面 App 设置 → MCP 入口；新会话 `codex mcp list` 应看到 44 个工具。注意 config.toml 会被启动重写、MCP 条目可能丢失需重加；gh 重新登录后令牌会变，需重跑 setx
+2. 接入 GitHub MCP：git 侧的凭据统一走 `gh auth login` 生成的 git credential helper（`git config --show-origin --get credential.helper` 应指向 gh/manager），**不要**再把 `gho_` 长期令牌 `setx` 进用户环境变量（长期令牌常驻环境变量会被任意本机进程读取）。若 MCP 确需 bearer 令牌（`~/.codex/config.toml` 的 `[mcp_servers.github]` / `bearer_token_env_var`），优先用最小权限令牌并避免重复写环境变量；同步脚本的 doctor 已对 `GITHUB_PAT_TOKEN` / `GH_TOKEN` 给出提醒、并对输出做令牌掩码。新会话 `codex mcp list` 应看到 44 个工具
 3. 克隆仓库：`gh repo clone tdoljyj/cross-memory-system ~/.codex/projects/codex-memory-system`
 4. 把 `memory\` 里的五个文件复制到 `Documents\Codex\memory\`
 5. 写全局钩子 `~/.codex/AGENTS.md`（用仓库内 AGENTS.md 内容，路径里的 `<用户名>` 换成实际用户名）

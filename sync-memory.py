@@ -36,7 +36,7 @@ WorkBuddy 侧记忆同步脚本（Python 版）
       沙盒内 git 写对象可能不落真实盘，跑完用 doctor 核验
     - 可选 sync.config.json（与脚本同目录，gitignored）：{repo, proxy, proxy_host,
       proxy_port, git_candidates}，缺省用内置默认值
-    - 删除传播护栏：memory 目录不足 5 个非空 .md 时拒绝 pull/push，防推空仓
+    - 删除传播护栏：memory/index.json 声明的 .md 缺失或为空时拒绝 pull/push，防推空仓
     - push/pull 后核验用 merge-base --is-ancestor（祖先判定），非 == 比较
 """
 
@@ -152,7 +152,7 @@ def write_ref(name, refhash):
 def ls_remote():
     code, out, err = git("ls-remote", "origin", "main")
     if code != 0:
-        print("[!] ls-remote 失败: %s" % err)
+        print("[!] ls-remote 失败: %s" % redact(err))
         return None
     if not out.strip():
         print("[!] ls-remote 空输出（远端可能无 main 分支）")
@@ -165,19 +165,67 @@ def local_head():
     return out if code == 0 else None
 
 
-def memory_dir_healthy(min_count=5):
-    """删除传播护栏：memory 目录至少要有 5 个非空 .md 才允许同步。"""
+def load_index():
+    """读取 memory/index.json（文件集 + L1-L6 召回映射的单一事实源）。"""
+    path = os.path.join(REPO, "memory", "index.json")
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        return None
+    if not isinstance(data, dict) or not isinstance(data.get("files"), list):
+        return None
+    return data
+
+
+def memory_files():
+    idx = load_index()
+    if not idx:
+        return None
+    files = [str(f) for f in idx.get("files", [])]
+    return files or None
+
+
+def memory_dir_healthy():
+    """删除传播护栏：memory/index.json 声明的每个 .md 都必须存在且非空。"""
+    required = memory_files()
+    if not required:
+        return False
     memdir = os.path.join(REPO, "memory")
-    if not os.path.isdir(memdir):
-        return False
-    files = [f for f in os.listdir(memdir) if f.endswith(".md")]
-    if len(files) < min_count:
-        return False
-    for f in files:
+    for f in required:
         p = os.path.join(memdir, f)
         if not os.path.isfile(p) or os.path.getsize(p) == 0:
             return False
     return True
+
+
+_TOKEN_RE = re.compile(
+    r"(?i)(bearer\s+)[A-Za-z0-9._-]+"
+    r"|gho_[A-Za-z0-9]+"
+    r"|ghp_[A-Za-z0-9]+"
+    r"|github_pat_[A-Za-z0-9_]+"
+)
+
+
+def redact(text):
+    """掩码凭据样值（gho_/ghp_/github_pat_/Bearer），不落到输出或 .sync-failed。"""
+    if not text:
+        return text
+
+    def mask(m):
+        token = m.group(0)
+        low = token.lower()
+        if low.startswith("bearer "):
+            return token.split()[0] + " ***"
+        if token.startswith("gho_"):
+            return "gho_***"
+        if token.startswith("ghp_"):
+            return "ghp_***"
+        if token.startswith("github_pat_"):
+            return "github_pat_***"
+        return token
+
+    return _TOKEN_RE.sub(mask, text)
 
 
 def confirm_no_divergence():
@@ -217,9 +265,9 @@ def write_marker(name, message):
     try:
         with open(marker_path(name), "w", encoding="utf-8") as f:
             f.write("Failed: %s\n%s\n" % (
-                datetime.now().strftime("%Y-%m-%d %H:%M:%S"), message))
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"), redact(message)))
     except Exception as e:
-        print("[!] 写 %s 失败: %s" % (name, e))
+        print("[!] 写 %s 失败: %s" % (name, redact(str(e))))
 
 
 def clear_marker(name):
@@ -294,7 +342,7 @@ def fetch_and_merge():
     if out:
         print(out)
     if err:
-        print(err)
+        print(redact(err))
     if code != 0:
         print("[!] merge 冲突（code=%d），执行 --abort 清理中间态" % code)
         snap = backup_conflict()
@@ -314,8 +362,8 @@ def cmd_pull():
         write_marker(".sync-failed", "pull aborted: proxy %s unreachable" % PROXY)
         sys.exit(1)
     if not memory_dir_healthy():
-        print("[!] memory 目录不足 5 个非空 .md（删除传播护栏），终止 pull")
-        write_marker(".sync-failed", "pull aborted: memory dir < 5 non-empty .md files")
+        print("[!] memory 目录缺少 memory/index.json 声明的必需文件或文件为空（删除传播护栏），终止 pull")
+        write_marker(".sync-failed", "pull aborted: missing/empty required files per memory/index.json")
         sys.exit(1)
     if is_working_tree_dirty():
         print("[!] 工作树有未提交的 memory 变更；请先提交或处理后重跑 pull，避免被覆盖")
@@ -328,8 +376,8 @@ def cmd_pull():
         write_marker(".sync-failed", "pull failed: fetch+merge 对齐失败")
         sys.exit(1)
     if not memory_dir_healthy():
-        print("[!] merge 后 memory 目录不足 5 个非空 .md（远端可能异常），终止")
-        write_marker(".sync-failed", "pull aborted: merged memory dir < 5 non-empty .md files")
+        print("[!] merge 后 memory 目录缺少 memory/index.json 声明的必需文件或文件为空（远端可能异常），终止")
+        write_marker(".sync-failed", "pull aborted: merged memory dir missing required files per memory/index.json")
         sys.exit(1)
     ok, local, remote = confirm_no_divergence()
     restore_tracking_ref(remote)
@@ -348,8 +396,8 @@ def cmd_push():
     ensure_git_safe()
     cleanup_stale_backups()
     if not memory_dir_healthy():
-        print("[!] memory 目录不足 5 个非空 .md（删除传播护栏），终止 push")
-        write_marker(".sync-failed", "push aborted: memory dir < 5 non-empty .md files")
+        print("[!] memory 目录缺少 memory/index.json 声明的必需文件或文件为空（删除传播护栏），终止 push")
+        write_marker(".sync-failed", "push aborted: missing/empty required files per memory/index.json")
         sys.exit(1)
     if is_working_tree_dirty():
         print("[!] 工作树有未提交的 memory 变更；请先 commit，否则 push 只会上传旧 HEAD")
@@ -369,7 +417,7 @@ def cmd_push():
     if out:
         print(out)
     if err:
-        print(err)
+        print(redact(err))
     if code != 0:
         # push 被拒（并发远端又前进）：重新 fetch+merge 后重推一轮
         print("[!] push 被拒，重新 fetch+merge 后重推")
@@ -382,7 +430,7 @@ def cmd_push():
         if out:
             print(out)
         if err:
-            print(err)
+            print(redact(err))
     ok, local, remote = confirm_no_divergence()
     restore_tracking_ref(remote)
     print("[核验] 本地=%s 远端=%s" % (local, remote))
@@ -426,7 +474,12 @@ def cmd_doctor():
     print("[git] %s" % out)
     print("[git 路径] %s" % GIT)
     report("git client safe (not PortableGit)", git_is_safe(), GIT)
-    print("[代理 %s] %s" % (PROXY, "可达" if proxy_alive() else "不可达（Clash 未启动？）"))
+    print("[代理 %s] %s" % (redact(PROXY), "可达" if proxy_alive() else "不可达（Clash 未启动？）"))
+    code, helper_out, _ = git("config", "--show-origin", "--get", "credential.helper", proxy=False)
+    print("[credential.helper] %s" % redact(helper_out or "(unset)"))
+    for var in ("GITHUB_PAT_TOKEN", "GH_TOKEN"):
+        if os.environ.get(var):
+            print("[WARN] 检测到长期令牌环境变量 %s；建议改用 gh auth login + git credential helper" % var)
     remote = ls_remote()
     local = local_head()
     print("[远端] %s" % remote)
@@ -474,7 +527,7 @@ def cmd_doctor():
     dirty = git_status_memory()
     report("working tree clean", dirty == [],
            "" if dirty is None else ("clean" if dirty == [] else "有未提交变更"))
-    report("memory dir healthy (>=5 non-empty .md)", memory_dir_healthy())
+    report("memory dir healthy (files per memory/index.json)", memory_dir_healthy())
     report("local == remote", bool(local and remote and local == remote))
 
     code, out, _ = git("status", "--porcelain", proxy=False)

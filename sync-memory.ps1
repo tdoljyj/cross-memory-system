@@ -84,7 +84,7 @@ function Invoke-Git {
         $errText = @($out | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] } | ForEach-Object { $_.ToString() }) -join "`n"
         if ($LASTEXITCODE -eq 0) { return }
     }
-    throw "git failed: git $($GitArgs -join ' ')`n$errText"
+    throw ("git failed: git " + ($GitArgs -join ' ') + "`n" + (Redact-Text $errText))
 }
 
 function Get-MemoryFileHashes {
@@ -107,23 +107,61 @@ function Test-MemoryDirsEqual {
     return $true
 }
 
-function Test-MemoryCountHealthy {
-    # Delete-propagation guard: refuse to treat a near-empty memory directory as
-    # the intended state. The system's invariant is exactly the five *.md files;
-    # anything below that is treated as accidental mass deletion, never synced.
-    param([string]$Dir, [int]$MinCount = 5)
-    $files = @(Get-ChildItem -Path (Join-Path $Dir "*.md") -File -ErrorAction SilentlyContinue)
-    if ($files.Count -lt $MinCount) { return $false }
-    foreach ($f in $files) {
-        if ($f.Length -eq 0) { return $false }
+function Get-MemoryIndex {
+    # Single source of truth for the memory file set and L1-L6 recall mapping
+    # (memory/index.json). Returns $null when the index is missing or unparsable,
+    # which the guard treats as a corrupted canonical store.
+    param([string]$MemoryRepoDir)
+    $indexPath = Join-Path $MemoryRepoDir "index.json"
+    if (-not (Test-Path -LiteralPath $indexPath -PathType Leaf)) { return $null }
+    try {
+        return (Get-Content -LiteralPath $indexPath -Raw -Encoding UTF8 | ConvertFrom-Json)
+    } catch {
+        return $null
+    }
+}
+
+function Get-MemoryFileList {
+    param([string]$MemoryRepoDir)
+    $idx = Get-MemoryIndex $MemoryRepoDir
+    if ($null -eq $idx -or $null -eq $idx.files) { return $null }
+    $list = @($idx.files | ForEach-Object { [string]$_ })
+    if ($list.Count -eq 0) { return $null }
+    return $list
+}
+
+function Test-MemoryFilesHealthy {
+    # Delete-propagation guard, now driven by memory/index.json instead of a
+    # hard-coded count of five. Every required file must exist and be non-empty;
+    # a missing file is treated as accidental mass deletion and never synced.
+    param([string]$Dir, [string[]]$RequiredFiles)
+    if ($null -eq $RequiredFiles -or $RequiredFiles.Count -eq 0) { return $false }
+    foreach ($name in $RequiredFiles) {
+        $f = Join-Path $Dir $name
+        if (-not (Test-Path -LiteralPath $f -PathType Leaf)) { return $false }
+        if ((Get-Item -LiteralPath $f).Length -eq 0) { return $false }
     }
     return $true
+}
+
+function Redact-Text {
+    # Mask credential-like values before they reach stdout, error text, or
+    # .sync-failed markers (baseline 附录 C「日志脱敏」).
+    param([AllowEmptyString()][string]$Text)
+    if ([string]::IsNullOrEmpty($Text)) { return $Text }
+    $s = $Text
+    $s = $s -replace 'ghp_[A-Za-z0-9]+', 'ghp_***'
+    $s = $s -replace 'gho_[A-Za-z0-9]+', 'gho_***'
+    $s = $s -replace 'github_pat_[A-Za-z0-9_]+', 'github_pat_***'
+    $s = $s -replace '(?i)(bearer\s+)[A-Za-z0-9._-]+', '${1}***'
+    return $s
 }
 
 function Copy-MemoryToWorkingDir {
     # repo -> working memory directory. Returns $true only when the copy is verified.
     try {
-        if (-not (Test-MemoryCountHealthy $memoryDst)) { return $false }
+        $required = Get-MemoryFileList $memoryDst
+        if ($null -eq $required -or -not (Test-MemoryFilesHealthy $memoryDst $required)) { return $false }
         if (-not (Test-Path -LiteralPath $memorySrc)) {
             New-Item -ItemType Directory -Path $memorySrc -Force -ErrorAction Stop | Out-Null
         }
@@ -150,7 +188,7 @@ function Clear-PendingWriteback {
 function Set-SyncFailed {
     param([string]$Message)
     $stamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    Set-Content -LiteralPath $flagFile -Value @("Failed: $stamp", $Message) -Encoding UTF8 -ErrorAction SilentlyContinue
+    Set-Content -LiteralPath $flagFile -Value @("Failed: $stamp", (Redact-Text $Message)) -Encoding UTF8 -ErrorAction SilentlyContinue
 }
 
 function Test-RepoMemoryDirty {
@@ -298,7 +336,7 @@ if ($Doctor) {
     $remoteOut = git -C $repoRoot -c http.proxy=$proxy -c http.sslBackend=openssl ls-remote origin main 2>&1
     if ($LASTEXITCODE -ne 0) { $remoteOut = git -C $repoRoot ls-remote origin main 2>&1 }
     $remote = ($remoteOut | Out-String).Trim()
-    Report "remote reachable + credential" ($remote -match "[0-9a-f]{40}") $remote
+    Report "remote reachable + credential" ($remote -match "[0-9a-f]{40}") (Redact-Text $remote)
     $remoteHashDoc = if ($remote -match '^([0-9a-f]{40})') { $Matches[1] } else { $null }
     $trackedRef = (git -C $repoRoot rev-parse origin/main 2>&1 | Out-String).Trim()
     Report "tracking ref matches remote" ($remoteHashDoc -and $trackedRef -eq $remoteHashDoc) ("origin/main=" + $trackedRef + " remote=" + $remoteHashDoc)
@@ -324,6 +362,13 @@ if ($Doctor) {
         if (Test-Path -LiteralPath (Join-Path $repoRoot $_)) { $_ }
     }
     Report "no stale sync markers" ($staleMarkers.Count -eq 0) ($staleMarkers -join ', ')
+
+    $credHelper = (git -C $repoRoot config --show-origin --get credential.helper 2>&1 | Out-String).Trim()
+    Write-Output ("git credential.helper : " + $(if ($credHelper) { (Redact-Text $credHelper) } else { "(unset)" }))
+    $credEnvVars = @('GITHUB_PAT_TOKEN', 'GH_TOKEN') | Where-Object { [Environment]::GetEnvironmentVariable($_) }
+    if ($credEnvVars.Count -gt 0) {
+        Write-Output ("[WARN] 检测到长期令牌环境变量：{0}。建议改用 gh auth login + git credential helper，避免令牌常驻用户环境变量。" -f ($credEnvVars -join ', '))
+    }
 
     Report "memory dir exists" (Test-Path -LiteralPath $memorySrc)
 
@@ -476,9 +521,15 @@ if (-not (Test-Path $memorySrc)) {
     exit 1
 }
 
-if (-not (Test-MemoryCountHealthy $memorySrc)) {
-    Set-SyncFailed -Message "Refusing to sync: working memory directory has fewer than 5 non-empty .md files (delete-propagation guard)."
-    Write-Error -ErrorAction Continue "Refusing to sync: working memory directory has fewer than 5 non-empty .md files (delete-propagation guard)."
+$requiredMemoryFiles = Get-MemoryFileList $memoryDst
+if ($null -eq $requiredMemoryFiles) {
+    Set-SyncFailed -Message "Refusing to sync: memory/index.json missing or invalid (canonical file set unknown)."
+    Write-Error -ErrorAction Continue "Refusing to sync: memory/index.json missing or invalid (canonical file set unknown)."
+    exit 1
+}
+if (-not (Test-MemoryFilesHealthy $memorySrc $requiredMemoryFiles)) {
+    Set-SyncFailed -Message "Refusing to sync: working memory directory is missing required files listed in memory/index.json (delete-propagation guard)."
+    Write-Error -ErrorAction Continue "Refusing to sync: working memory directory is missing required files listed in memory/index.json (delete-propagation guard)."
     exit 1
 }
 

@@ -1,6 +1,6 @@
 # Cross Memory System vNext · 架构基线文档
 
-> **基线版本**：vNext-1.2（2026-08-16 确立，同日评审修订并落地加固）
+> **基线版本**：vNext-1.3（2026-08-16 确立，同日按 A/B/C 结构化召回索引、统一护栏、令牌脱敏推进）
 > **来源**：Chase 提供的《Cross_Memory_System_vNext_核心架构》（原件存 `附录/Cross_Memory_System_vNext_核心架构.html`，本文档为其规范 Markdown 转换；源 HTML 存在表格标签未闭合等结构问题，转换时已修正）
 > **适用范围**：跨 AI 记忆系统的全部实现与协议文档——本仓库（cross-memory-system）全部文件、Codex 端 `~/.codex/AGENTS.md` 与 sync-memory.ps1、WorkBuddy 端 `~/.workbuddy/MEMORY.md` 协议与 sync-memory.py，以及未来任何新接入端
 > **权威性**：本文档是 vNext 核心架构规范，统一后续设计、实现和变更的依据。其他文档与本文档冲突时，以本文档为准；修改本文档必须在「变更记录」追加条目并同步全部协议副本
@@ -14,6 +14,7 @@
 | vNext-1.1 | 2026-08-16 | 同日评审修订：新增适用性说明（正文与附录 A 冲突时以附录 A 为准）；十六节 Phase 标注现有架构落地状态；Trigger Matrix 补「受个人约束的通用问题」行；新增附录 C 隐私与安全约束；附录 B 用例 F 标注许可偏差（merge 收敛而非硬冲突）；附录 A 补 L6 工作区临时层映射、标注 Recall Score 为展望项 | WorkBuddy@TURING |
 | vNext-1.2 | 2026-08-16 | 评审落地加固：① 双端同步脚本新增删除传播护栏（源 memory 目录 .md<5 拒绝同步，防推空仓）；② 双脚本核验统一为祖先判定（merge-base --is-ancestor，消除 py 并发下误写 .sync-failed）；③ py 配置参数化（sync.config.json）；④ 召回粒度由文件级升级为段级（L1–L6 映射到具体标题段）；⑤ 明确 Sync Layer 与 commit 职责边界；⑥ 同步全局钩子 ~/.codex/AGENTS.md。新增附录 D（保留/调整/替换/待办对照）。结构化语义合并与验收自动化记为待办 | Codex@TURING |
 | vNext-1.2 补充加固 | 2026-08-16 | 同日续加固：ps1 PortableGit 硬阻断；两端 TEMP 备份清理（>7 天）；全仓脏检查（非阻断提示）；归档.md 瘦身阈值提示；py pull 代理预检；py doctor 协议新鲜度检查；两端 bootstrap 一键配置 | Codex@TURING |
+| vNext-1.3 | 2026-08-16 | 工程化推进（结构化召回索引 + 统一护栏 + 令牌脱敏）：① 新增 memory/index.json（schema_version 1，files + L1–L6 recall 映射）作为召回与必需文件集的唯一事实源；② 双端同步护栏由硬编码 5 改为读 index.json 的 files 清单（缺失/为空拒绝同步）；③ 双端新增 redact() 令牌掩码（gho_/ghp_/github_pat_/Bearer）并接入 .sync-failed 与 doctor，doctor 提示长期令牌环境变量并展示 credential.helper；④ AGENTS.md / README 对齐 index.json 与「git 走 gh 凭据助手、不 setx 长期令牌」；⑤ 验收测试 8 → 10 用例（index.json 校验 / redact 回归 / missing-index 护栏） | Codex@TURING |
 
 > **目标**：将"每次开头强制加载记忆、结尾强制上传"改造成真正的按需读写型跨会话记忆系统。
 >
@@ -587,7 +588,7 @@ Memory Access Policy
 | Canonical Memory Store | GitHub 私有仓库 tdoljyj/cross-memory-system（`memory/*.md` + git 对象库，唯一数据源） | **保留** | 已合规：各端工作区只是 Cache/镜像，不是事实源（基线原则 4、7） |
 | AI Adapter | Codex（sync-memory.ps1）/ WorkBuddy（sync-memory.py） | **保留** | 双端不互相同步（「不越界」规则），只与仓库同步（P0-3 已合规）。vNext-1.2 起 py 侧支持 sync.config.json 参数化；commit 在写入工作区后、push 前执行（Codex 因工作区非 git 克隆由脚本代 commit，WorkBuddy 因工作区即克隆由使用方 commit） |
 | Memory Router | AGENTS.md / MEMORY.md 的触发分类 | **调整** | 术语重写为 T0–T4（见基线第五节），替换 2026-08-16 04:05 的五类触发表述 |
-| Recall Planner + 分层召回 | 文件分级选读 | **调整** | 建立 L1–L6 记忆类型 → 具体标题段映射（段级召回，见 AGENTS.md v3.1） |
+| Recall Planner + 分层召回 | 文件分级选读 | **调整** | L1–L6 → 具体标题段映射的权威源固化为 `memory/index.json`（`schema_version: 1`，`recall` 字段）；AGENTS.md v3.1 表为其人类可读摘要，由 `tests/test_acceptance.py` 校验一致性 |
 | Memory Trigger Matrix | 无 | **新增** | 基线第六节矩阵纳入 AGENTS.md v3 |
 | Memory Change Detector | ps1 staged 空检查（无变化 → skip commit）/ py 脏检查 / 「仅改动记忆文件才上传」 | **保留** | 已合规：NO_CHANGE → NO_WRITE → NO_SYNC（基线原则 8） |
 | Versioned Commit | git commit/push + ls-remote 核验 | **保留** | git commit hash = version；push 后 ls-remote 核验 = 版本校验 |
@@ -599,7 +600,7 @@ Memory Access Policy
 | confidence（事实与推测分离） | 无 | **调整** | 写入纪律新增：用户明确表达 → 直接写入；AI 推测 → 标注「（推测）」或不写，禁止把推测写成事实（基线第十节）。数值化 confidence 评分为展望项，现有架构用「（推测）」标注替代 |
 | L6 Temporary Context | 「只沉淀稳定长期信息」规则 | **保留** | 已合规：临时上下文不入长期记忆。落地映射：L6 只存在于各端会话内/工作区工作文件（如待办推进中的草稿、本轮调试状态），不进入 `memory/*.md` 五文件 |
 | Recall Score（Intent+Similarity+Recency+Confidence+Explicitness 打分） | 无 | **展望** | 现有架构无检索引擎，召回由 L1–L6 文件映射直接决定；打分排序是服务化后的优化项，现阶段不得为此引入组件 |
-| 异常路径（情况 1–4） | .sync-failed / .pending-writeback / 冲突快照 / merge --abort / 顶层 trap | **保留** | 四种异常路径均有对应机制（08-16 三轮审计验证）；vNext-1.2 起新增删除传播护栏（源 memory 目录 .md<5 拒绝同步） |
+| 异常路径（情况 1–4） | .sync-failed / .pending-writeback / 冲突快照 / merge --abort / 顶层 trap | **保留** | 四种异常路径均有对应机制（08-16 三轮审计验证）；删除传播护栏现由 `memory/index.json` 的 `files` 清单驱动（文件缺失或为空即拒绝同步），不再硬编码文件数 |
 | 资源生命周期 | subprocess.run 上下文管理 / TcpClient Close+Dispose / with 块 | **保留** | 三轮审计验证无泄漏 |
 | 服务端组件（DB / Event Bus / WebSocket） | 不适用 | **不引入** | 个人级系统维持文件+git 架构；vNext 抽象概念以 git 等价机制满足，不为此引入服务端组件 |
 
@@ -628,9 +629,9 @@ Memory Access Policy
 5. **删除权**：用户要求删除某条记忆时，走 superseded/删除流程并 commit，git 历史中的旧版本视为受保护的审计痕迹，不再召回；如需彻底清除历史，另行评估（rewrite history 与四不变量冲突，需用户明确批准）。
 6. **不越界**：各端不读取、不写入其他端的工作区与私有文件（双端对称「不越界」规则的隐私含义）。
 
-## 附录 D：vNext-1.2 修订落地对照（保留 / 调整 / 替换 / 待办）
+## 附录 D：修订落地对照（保留 / 调整 / 替换 / 待办）
 
-本附录是 vNext-1.1 → vNext-1.2 的落地清单，作为「明确保留、调整、替换」的权威记录。凡未在本表出现的既有机制，默认维持 vNext-1.1 状态不变。
+本附录记录各版本的落地清单，作为「明确保留、调整、替换」的权威记录。下表为 vNext-1.1 → vNext-1.2 的清单；vNext-1.2 → vNext-1.3 的清单见文末「vNext-1.3 追加」。凡未在本表出现的既有机制，默认维持前一版本状态不变。
 
 | 修订项 | 处置 | 涉及文件 | 落地状态 |
 |---|---|---|---|
@@ -653,3 +654,13 @@ Memory Access Policy
 | 归档.md union 合并后去重 | 待办 | 双脚本 | ◻ 待实现（瘦身阈值已单独落地） |
 | Recall Score / item 级检索 | 展望 | 不引入组件 | ◻ 服务化后再评估 |
 | 凭据按 AI 隔离 / 缓存 TTL 兜底 | 展望 | — | ◻ 未来接入多机再评估 |
+
+### vNext-1.3 追加（vNext-1.2 → vNext-1.3，2026-08-16）
+
+| 修订项 | 处置 | 涉及文件 | 落地状态 |
+|---|---|---|---|
+| 结构化召回索引 memory/index.json（files + L1–L6 recall） | 新增 | memory/index.json / AGENTS.md / tests/test_acceptance.py | ✅ 已落地 |
+| 同步护栏由硬编码 5 → 读 index.json files 清单 | 调整 | sync-memory.ps1 / sync-memory.py | ✅ 已落地 |
+| redact() 令牌掩码 + 长期令牌环境变量 doctor 提醒 | 新增 | sync-memory.ps1 / sync-memory.py | ✅ 已落地 |
+| 凭据接入指引：git 走 gh 凭据助手，不 setx 长期令牌 | 调整 | README.md | ✅ 已落地 |
+| 验收测试 8 → 10 用例（index.json 校验 / redact / missing-index 护栏） | 调整 | tests/test_acceptance.py | ✅ 已落地 |

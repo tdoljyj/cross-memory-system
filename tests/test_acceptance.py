@@ -22,7 +22,6 @@ B/C 的 Router 判定（T0–T4）本身是 AI 自然语言行为，无法在脚
 import functools
 import json
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -88,6 +87,8 @@ class Sandbox:
             for f in MEMORY_FILES:
                 with open(os.path.join(memdir, f), "w", encoding="utf-8") as fh:
                     fh.write("# %s\n\n内容 %s\n" % (f, f))
+            shutil.copy(os.path.join(MEMORY, "index.json"),
+                        os.path.join(memdir, "index.json"))
             git("add", "-A", cwd=clone)
             git("commit", "-m", "init", cwd=clone)
             git("push", "-u", "origin", "main", cwd=clone)
@@ -144,16 +145,6 @@ class Sandbox:
         shutil.rmtree(self.tmp, ignore_errors=True)
 
 
-RECALL_RE = re.compile(r'([\u4e00-\u9fffA-Za-z0-9_]+\.md)((?:「[^」]+」)+)')
-
-
-def recall_pairs(text):
-    for m in RECALL_RE.finditer(text):
-        fname = m.group(1)
-        for sec in re.findall(r'「([^」]+)」', m.group(2)):
-            yield fname, sec
-
-
 def sandboxed(fn):
     @functools.wraps(fn)
     def wrapper():
@@ -165,17 +156,48 @@ def sandboxed(fn):
     return wrapper
 
 
-@sandboxed
-def test_recall_mapping_matches_memory_sections(sb):
-    pairs = list(recall_pairs(open(AGENTS, encoding="utf-8").read()))
-    check(pairs, "未从 AGENTS.md 解析到段级召回映射")
-    for fname, section in pairs:
-        fp = os.path.join(MEMORY, fname)
-        check(os.path.isfile(fp), "映射引用不存在的文件: %s" % fname)
-        content = open(fp, encoding="utf-8").read()
-        check("## " + section in content,
-              "映射引用不存在的标题段: %s「%s」" % (fname, section))
-    check(len(pairs) >= 5, "召回映射条目过少，疑似解析错误")
+def test_index_json_recall_mapping_valid():
+    idx_path = os.path.join(MEMORY, "index.json")
+    check(os.path.isfile(idx_path), "memory/index.json 缺失")
+    idx = json.load(open(idx_path, encoding="utf-8"))
+    check(idx.get("schema_version") == 1, "index.json schema_version 应为 1")
+
+    files = idx.get("files")
+    check(isinstance(files, list) and len(files) >= 5, "index.json files 清单缺失或过短")
+    for f in files:
+        fp = os.path.join(MEMORY, f)
+        check(os.path.isfile(fp) and os.path.getsize(fp) > 0,
+              "files 引用了不存在或为空的文件: %s" % f)
+
+    recall = idx.get("recall")
+    check(isinstance(recall, dict), "index.json recall 缺失")
+    for key in ("L1", "L2", "L3", "L4", "L5", "L6"):
+        check(key in recall, "recall 缺少类型 %s" % key)
+    for key, entries in recall.items():
+        for entry in entries:
+            f = entry.get("file")
+            check(f in files, "%s 引用了未知文件 %s" % (key, f))
+            content = open(os.path.join(MEMORY, f), encoding="utf-8").read()
+            for sec in entry.get("sections", []):
+                check("## " + sec in content,
+                      "%s 引用了不存在的标题段 %s「%s」" % (key, f, sec))
+
+    # 协议文档应把 index.json 声明为召回权威源，避免退回散文唯一来源。
+    check("memory/index.json" in open(AGENTS, encoding="utf-8").read(),
+          "AGENTS.md 未引用 memory/index.json 作为权威召回源")
+
+
+def test_redact_masks_tokens():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("syncmem", PY)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    check(mod.redact("gho_ABC123xyz") == "gho_***", "gho_ 令牌未掩码")
+    check("ghp_***" in mod.redact("x ghp_123 y"), "ghp_ 令牌未掩码")
+    check(mod.redact("github_pat_abc_1") == "github_pat_***",
+          "github_pat_ 令牌未掩码")
+    out = mod.redact("Authorization: Bearer abc123")
+    check("Bearer abc123" not in out and "***" in out, "Bearer 令牌未掩码")
 
 
 @sandboxed
@@ -298,14 +320,29 @@ def test_py_delete_propagation_guard(sb):
     git("add", "-A", cwd=clone)
     git("commit", "-m", "wipe", cwd=clone)
     p = sb.run_py(script, "push")
-    check(p.returncode != 0, "memory 目录 <5 文件时 push 应被拒绝")
-    check("memory 目录不足" in p.stdout, p.stdout)
+    check(p.returncode != 0, "memory 目录缺少必需文件时 push 应被拒绝")
+    check("必需文件" in p.stdout, p.stdout)
+    check(os.path.isfile(os.path.join(clone, ".sync-failed")),
+          "护栏触发时应写 .sync-failed")
+
+
+@sandboxed
+def test_py_missing_index_guard(sb):
+    clone = sb.add_clone("a")
+    script = sb.install_py(clone)
+    os.remove(os.path.join(clone, "memory", "index.json"))
+    git("add", "-A", cwd=clone)
+    git("commit", "-m", "drop index", cwd=clone)
+    p = sb.run_py(script, "push")
+    check(p.returncode != 0, "缺少 memory/index.json 时 push 应被拒绝")
+    check("index.json" in p.stdout, p.stdout)
     check(os.path.isfile(os.path.join(clone, ".sync-failed")),
           "护栏触发时应写 .sync-failed")
 
 
 TESTS = [
-    test_recall_mapping_matches_memory_sections,
+    test_index_json_recall_mapping_valid,
+    test_redact_masks_tokens,
     test_ps1_no_change_skips_commit,
     test_ps1_change_commits_and_pushes,
     test_py_push_is_idempotent,
@@ -313,6 +350,7 @@ TESTS = [
     test_py_sync_failure_writes_marker_and_retries,
     test_py_pull_aligns_to_remote,
     test_py_delete_propagation_guard,
+    test_py_missing_index_guard,
 ]
 
 

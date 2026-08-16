@@ -9,6 +9,7 @@
 - 决策记录：%USERPROFILE%\Documents\Codex\memory\决策.md（已否决的绝不重复推荐）
 - 待办：%USERPROFILE%\Documents\Codex\memory\待办.md
 - 归档：%USERPROFILE%\Documents\Codex\memory\归档.md（历史审计项，仅在查历史细节时读）
+- 召回索引：本仓库 `memory/index.json`（L1–L6 → 文件+标题段的唯一事实源，同步护栏也据此判断必需文件集）
 
 ## 一、Memory Router（按需加载判断）
 
@@ -25,7 +26,7 @@
 
 ## 二、Recall Planner（最小召回，命中加载时执行）
 
-L1–L6 记忆类型 → 文件映射（按需选读，不全读）：
+权威映射在 `memory/index.json`（`schema_version: 1`，`recall` 字段）；下表为其人类可读摘要，二者不一致时以 `index.json` 为准（`tests/test_acceptance.py` 会校验一致性）：
 
 | 类型 | 内容 | 召回范围（段级，按需只读对应标题段） |
 |---|---|---|
