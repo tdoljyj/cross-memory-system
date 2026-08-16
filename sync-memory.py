@@ -91,7 +91,11 @@ def _proxy_host_port(url):
 PROXY = _CONFIG.get("proxy") or _env_proxy() or "http://127.0.0.1:7897"  # 无代理时设为 ""
 PROXY_HOST, PROXY_PORT = _proxy_host_port(PROXY)
 
-REPO = os.path.expanduser(_CONFIG.get("repo", "~/.workbuddy/codex-memory-system"))
+# 缺省 REPO = 脚本所在克隆根目录（fail-safe）：sync.config.json 是 gitignored 文件、
+# 新克隆天然缺失；原缺省回落 ~/.workbuddy/codex-memory-system 会把无配置运行指向
+# WorkBuddy 端克隆（fail-open 越界默认，P0-2）。config 的 repo 仅作显式覆盖。
+REPO = os.path.expanduser(
+    _CONFIG.get("repo") or os.path.dirname(os.path.abspath(__file__)))
 
 # 消费端操作记忆协议文件（本端自检对象，per-clone 参数化）：
 # WorkBuddy 端默认 ~/.workbuddy/MEMORY.md；DSH 端经 sync.config.json 的

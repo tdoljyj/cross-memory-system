@@ -476,6 +476,21 @@ def test_py_dangling_ref_rejected(sb):
 
 
 @sandboxed
+def test_py_repo_defaults_to_script_dir(sb):
+    """P0-2 回归：sync.config.json 缺失时 REPO 默认 = 脚本所在克隆（原默认指向
+    WorkBuddy 克隆路径，属 fail-open 越界默认）。"""
+    clone = sb.add_clone("a")
+    script = os.path.join(clone, "sync-memory.py")
+    shutil.copy(PY, script)
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("syncmem_default_repo", script)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    check(mod.REPO == clone,
+          "REPO 默认应为脚本所在克隆 %r，实为 %r" % (clone, mod.REPO))
+
+
+@sandboxed
 def test_py_lock_stale_pid_cleared(sb):
     """P1 回归：陈旧锁（持锁 PID 已退出，但 Windows 进程对象可能尚存）必须能被清理，
     不得永久楔住同步。os.kill(pid,0) 语义跨构建不一致，判活改 OpenProcess+GetExitCodeProcess。"""
@@ -946,6 +961,7 @@ TESTS = [
     test_py_secret_scan_blocks_push,
     test_py_access_none_skips_pull,
     test_py_lock_blocks_concurrent,
+    test_py_repo_defaults_to_script_dir,
     test_py_lock_stale_pid_cleared,
     test_py_dangling_ref_rejected,
     test_py_pull_ahead_self_heals,
