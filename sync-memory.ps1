@@ -172,6 +172,14 @@ function Get-MemoryFileList {
     if ($null -eq $idx -or $null -eq $idx.files) { return $null }
     $list = @($idx.files | ForEach-Object { [string]$_ })
     if ($list.Count -eq 0) { return $null }
+    # GAP-3-10：路径净化——files 项必须是 memory 目录内的 .md 基名，
+    # 含目录分隔符/相对路径/非 .md 后缀一律按索引非法 fail-closed（防 ../ 逃逸）。
+    foreach ($f in $list) {
+        if (-not $f.EndsWith('.md') -or $f.Contains('/') -or $f.Contains('\') -or
+            [System.IO.Path]::GetFileName($f) -ne $f) {
+            return $null
+        }
+    }
     return $list
 }
 
@@ -503,8 +511,15 @@ trap {
     if ($trapMsg -match "dubious ownership|Permission denied|Access is denied") {
         $trapMsg += "`n提示：疑似在沙盒内运行（沙箱用户 vs 真实用户所有权差异）；请以非沙盒方式执行（批准放行 / 系统 PowerShell）后重试。"
     }
-    Set-SyncFailed -Message $trapMsg
-    Release-SyncLock
+    # GAP-3-8：deploy-guard 拒绝发生在函数定义之前，trap 触发时 Set-SyncFailed /
+    # Release-SyncLock 尚未定义——先探测再调用：消除「术语未识别」噪音，且不写
+    # .sync-failed（与 protocol-manifest 契约一致：deploy 拒绝不写 marker）。
+    if (Get-Command Set-SyncFailed -ErrorAction SilentlyContinue) {
+        Set-SyncFailed -Message $trapMsg
+    }
+    if (Get-Command Release-SyncLock -ErrorAction SilentlyContinue) {
+        Release-SyncLock
+    }
     try { git -C $repoRoot merge --abort 2>&1 | Out-Null } catch { }
     Write-Error -ErrorAction Continue $trapMsg
     exit 1
@@ -546,6 +561,10 @@ function Invoke-DoctorMode {
     Write-Output "repo     : $repoRoot"
     Write-Output "memory   : $memorySrc"
     Clear-StaleTempBackups
+
+    if ($null -eq (Get-Guards)) {
+        Write-Output "[WARN] guards.json 缺失或不可解析：护栏契约回落内置默认（密钥模式/保留期 7 天）；请从远端恢复该文件防口径漂移（GAP-3-4）"
+    }
 
     $gitVersion = (& git --version 2>&1 | Out-String).Trim()
     Report "git available" ($LASTEXITCODE -eq 0) $gitVersion
@@ -610,6 +629,10 @@ function Invoke-DoctorMode {
 
     if (Test-Path -LiteralPath $needsPushFile) {
         Write-Output "[INFO] .needs-push 存在：本地有未推送的已提交记忆，需显式同步推送（不视为失败）"
+    }
+
+    if (Test-Path -LiteralPath $lockFile) {
+        Write-Output "[INFO] .sync.lock 存在：持有进程已退出时下次同步自动清理；PID 复用可能楔住时手工删除 .sync.lock 解除（GAP-3-5）"
     }
 
     # 消费端 conform 触发式禁令探针（P1-4，2026-08-16 补齐）：只检本端 ~/.codex/AGENTS.md
