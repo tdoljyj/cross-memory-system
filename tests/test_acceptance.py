@@ -391,10 +391,49 @@ def test_py_missing_index_guard(sb):
     git("commit", "-m", "drop index", cwd=clone)
     p = sb.run_py(script, "push")
     check(p.returncode != 0, "缺少 memory/index.json 时 push 应被拒绝")
-    check("index.json 缺失或不可解析" in p.stdout,
-          "index 缺失应报独立口径（缺失/不可解析），而非「缺少必需文件」: " + p.stdout)
+    check("index.json 缺失或非法" in p.stdout,
+          "index 缺失应报独立口径（缺失/非法），而非「缺少必需文件」: " + p.stdout)
     check(os.path.isfile(os.path.join(clone, ".sync-failed")),
           "护栏触发时应写 .sync-failed")
+
+
+@sandboxed
+def test_py_index_path_traversal_rejected(sb):
+    """GAP-3-10 回归：index.json files 含 ../ 越界项时按索引非法 fail-closed 拒绝 push。"""
+    clone = sb.add_clone("a")
+    script = sb.install_py(clone)
+    idx_path = os.path.join(clone, "memory", "index.json")
+    with open(idx_path, "r", encoding="utf-8") as fh:
+        idx = json.load(fh)
+    idx["files"] = list(idx["files"]) + ["../evil.md"]
+    with open(idx_path, "w", encoding="utf-8") as fh:
+        json.dump(idx, fh, ensure_ascii=False, indent=2)
+    git("add", "-A", cwd=clone)
+    git("commit", "-m", "path traversal index", cwd=clone)
+    before = sb.remote_head()
+    p = sb.run_py(script, "push")
+    check(p.returncode != 0, "越界 files 项应被拒绝: " + p.stdout + p.stderr)
+    check(sb.remote_head() == before, "远端不得变化")
+
+
+@sandboxed
+def test_ps1_index_path_traversal_rejected(sb):
+    """GAP-3-10 回归：index.json files 含 ../ 越界项时 ps1 按索引非法 fail-closed 拒绝。"""
+    clone = sb.add_clone("repo")
+    workdir = os.path.join(sb.tmp, "working")
+    sb.install_ps1(clone, workdir)
+    idx_path = os.path.join(clone, "memory", "index.json")
+    with open(idx_path, "r", encoding="utf-8") as fh:
+        idx = json.load(fh)
+    idx["files"] = list(idx["files"]) + ["../evil.md"]
+    with open(idx_path, "w", encoding="utf-8") as fh:
+        json.dump(idx, fh, ensure_ascii=False, indent=2)
+    git("add", "-A", cwd=clone)
+    git("commit", "-m", "path traversal index", cwd=clone)
+    before = sb.remote_head()
+    p = sb.run_ps1(clone)
+    check(p.returncode != 0, "越界 files 项应被拒绝: " + p.stdout + p.stderr)
+    check(sb.remote_head() == before, "远端不得变化")
 
 
 @sandboxed
@@ -702,6 +741,9 @@ def test_ps1_deploy_guard_blocks_workbuddy_path(sb):
            cwd=wbdir, check_fail=False)
     check(p.returncode != 0, "在 .workbuddy 路径执行必须被拒绝")
     check("[deploy-guard]" in p.stdout, "应输出部署位置护栏标记")
+    # GAP-3-8 回归：护栏拒绝路径不得出现「Set-SyncFailed 未定义」的 trap 噪音
+    check("Set-SyncFailed" not in (p.stdout + p.stderr),
+          "deploy-guard 拒绝不得产生 trap 噪音: " + (p.stdout + p.stderr)[:300])
 
 
 @sandboxed
@@ -1051,6 +1093,122 @@ def test_py_doctor_ref_write_probe(sb):
     check(p.returncode == 0, p.stdout + p.stderr)
     check("ref write persists (behavior probe)" in p.stdout, "py doctor 缺 ref 写入行为探针")
     check("doctor: ALL PASS" in p.stdout, p.stdout)
+
+
+@sandboxed
+def test_py_doctor_warns_missing_guards(sb):
+    """GAP-3-4 回归：guards.json 缺失时 py doctor 输出 WARN 且 exit 0（警示不改退出码契约）。"""
+    clone = sb.add_clone("a")
+    script = sb.install_py(clone)
+    os.remove(os.path.join(clone, "guards.json"))
+    hook = os.path.join(sb.tmp, "AGENTS-hook.md")
+    with open(hook, "w", encoding="utf-8") as fh:
+        fh.write("版本真值核对 = 触发式、禁自动化\n")
+    cfg_path = os.path.join(os.path.dirname(script), "sync.config.json")
+    with open(cfg_path, "r", encoding="utf-8") as fh:
+        cfg = json.load(fh)
+    cfg["consumer_memory_path"] = hook
+    with open(cfg_path, "w", encoding="utf-8") as fh:
+        json.dump(cfg, fh)
+    git("config", "core.autocrlf", "false", cwd=clone)
+    git("config", "merge.union.driver", "git merge-file --union %A %O %B", cwd=clone)
+    p = sb.run_py(script, "doctor")
+    check(p.returncode == 0, p.stdout + p.stderr)
+    check("guards.json 缺失" in p.stdout, "py doctor 缺 guards.json 缺失警示: " + p.stdout)
+
+
+@sandboxed
+def test_ps1_doctor_warns_missing_guards(sb):
+    """GAP-3-4 回归：guards.json 缺失时 ps1 -Doctor 输出 WARN 且 exit 0。"""
+    clone = sb.add_clone("repo")
+    workdir = os.path.join(sb.tmp, "working")
+    sb.install_ps1(clone, workdir)
+    os.remove(os.path.join(clone, "guards.json"))
+    shutil.copy(os.path.join(REPO_ROOT, ".gitattributes"),
+                os.path.join(clone, ".gitattributes"))
+    sb.run_ps1(clone, "-Bootstrap")
+    hook = os.path.join(sb.tmp, "AGENTS.md")
+    with open(hook, "w", encoding="utf-8") as fh:
+        fh.write("版本真值核对 = 触发式、禁自动化\n")
+    with open(os.path.join(clone, "sync.config.ps1"), "a", encoding="utf-8") as fh:
+        fh.write("$ConsumerHookFile = '%s'\n" % hook)
+    p = sb.run_ps1(clone, "-Doctor")
+    check(p.returncode == 0, p.stdout + p.stderr)
+    check("guards.json 缺失" in p.stdout, "ps1 doctor 缺 guards.json 缺失警示: " + p.stdout)
+
+
+def test_py_confirm_no_divergence_skips_redundant_fetch():
+    """GAP-3-6 回归：远端对象已在本地时 confirm_no_divergence 不再二次 fetch；
+    对象缺失（merge-base 报错码 >=128）时才 fetch 一次。"""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("syncmem_nodiv", PY)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    calls = []
+    def fake_git(*args, **kwargs):
+        calls.append(args)
+        if args[0] == "merge-base":
+            return (0, "", "")
+        if args[0] == "fetch":
+            return (0, "", "")
+        if args[0] == "ls-remote":
+            return (0, "cafebabecafebabecafebabecafebabecafebabe\trefs/heads/main", "")
+        if args[0] == "rev-parse":
+            return (0, "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef", "")
+        return (0, "", "")
+    mod.git = fake_git
+    ok, local, remote = mod.confirm_no_divergence()
+    check(ok is True and local != remote, "非相等且祖先成立应返回 True")
+    check(not any(a[0] == "fetch" for a in calls),
+          "远端对象已在本地时不得 fetch: %r" % calls)
+    # 对象缺失场景：merge-base 返回 128 → fetch 一次 → 再判定
+    calls2 = []
+    state = {"n": 0}
+    def fake_git2(*args, **kwargs):
+        calls2.append(args)
+        if args[0] == "merge-base":
+            state["n"] += 1
+            return (0, "", "") if state["n"] == 2 else (128, "", "")
+        if args[0] == "fetch":
+            return (0, "", "")
+        if args[0] == "ls-remote":
+            return (0, "cafebabecafebabecafebabecafebabecafebabe\trefs/heads/main", "")
+        if args[0] == "rev-parse":
+            return (0, "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef", "")
+        return (0, "", "")
+    mod.git = fake_git2
+    ok2, _, _ = mod.confirm_no_divergence()
+    check(ok2 is True, "对象缺失时应 fetch 后判定为祖先成立")
+    check(len([a for a in calls2 if a[0] == "fetch"]) == 1,
+          "对象缺失时只应 fetch 一次: %r" % calls2)
+
+
+def test_agents_table_matches_index():
+    """GAP-3-9 回归：AGENTS.md 第二节 L1–L6 表与 memory/index.json 双向一致
+    （文件与标题段逐项包含，表内「」引用的段必须存在于 index.json）。"""
+    idx = json.load(open(os.path.join(MEMORY, "index.json"), encoding="utf-8"))
+    agents = open(AGENTS, encoding="utf-8").read()
+    m = re.search(r"\| 类型 \| 内容 \| 召回范围[^\n]*\n\|[-| ]*\n((?:\|.*\n)+)", agents)
+    check(m, "AGENTS.md 第二节表未找到")
+    rows = {}
+    for line in m.group(1).splitlines():
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        mm = re.match(r"^(L\d)", cells[0]) if cells else None
+        if len(cells) >= 3 and mm:
+            rows[mm.group(1)] = cells[2]
+    for key in ("L1", "L2", "L3", "L4", "L5", "L6"):
+        check(key in rows, "AGENTS 表缺 %s 行" % key)
+        for entry in idx["recall"][key]:
+            check(entry["file"] in rows[key],
+                  "AGENTS %s 行缺文件 %s" % (key, entry["file"]))
+            for sec in entry["sections"]:
+                check(sec in rows[key],
+                      "AGENTS %s 行缺段「%s」" % (key, sec))
+        allowed = set()
+        for entry in idx["recall"][key]:
+            allowed.update(entry["sections"] or [])
+        for q in re.findall(r"「([^」]+)」", rows[key]):
+            check(q in allowed, "AGENTS %s 行含 index.json 未声明的段「%s」" % (key, q))
 
 
 def test_consumer_conformed_detects_triggertype_ban():
@@ -1666,6 +1824,11 @@ TESTS = [
     test_ps1_push_refuses_committed_non_memory_secret,
     test_ps1_push_allows_clean_non_memory_commit,
     test_ps1_pull_access_none_pure_shortcircuit,
+    test_ps1_doctor_warns_missing_guards,
+    test_py_confirm_no_divergence_skips_redundant_fetch,
+    test_agents_table_matches_index,
+    test_py_index_path_traversal_rejected,
+    test_ps1_index_path_traversal_rejected,
     test_protocol_manifest_wellformed,
     test_conformance_access_none,
     test_conformance_no_memory_change,
