@@ -1211,6 +1211,15 @@ def test_agents_table_matches_index():
             check(q in allowed, "AGENTS %s 行含 index.json 未声明的段「%s」" % (key, q))
 
 
+def test_version_pointer_consistent():
+    """GAP-2-4 回归：VERSION 文件内容必须与 git tag 集合一致（带外真值源名称一致）。"""
+    version = open(os.path.join(REPO_ROOT, "VERSION"), encoding="utf-8").read().strip()
+    p = sh([GIT, "-C", REPO_ROOT, "tag", "-l"], check_fail=False)
+    tags = [t for t in (p.stdout or "").splitlines() if t.strip()]
+    check(tags, "仓库无任何 tag（带外真值源缺失）")
+    check(version in tags, "VERSION=%r 不在 tag 集合 %r 中" % (version, tags))
+
+
 def test_consumer_conformed_detects_triggertype_ban():
     # 纯函数单体测试：消费端操作记忆须声明「版本真值核对/触发式/禁自动化」三要素
     import importlib.util
@@ -1827,6 +1836,7 @@ TESTS = [
     test_ps1_doctor_warns_missing_guards,
     test_py_confirm_no_divergence_skips_redundant_fetch,
     test_agents_table_matches_index,
+    test_version_pointer_consistent,
     test_py_index_path_traversal_rejected,
     test_ps1_index_path_traversal_rejected,
     test_protocol_manifest_wellformed,

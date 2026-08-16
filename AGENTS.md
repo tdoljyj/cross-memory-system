@@ -80,6 +80,6 @@
 
 ## 六、跨端协同纪律
 
-- 身份：每端以「AI名@机器名」作为 git 作者提交（Codex 脚本自动；手动端用 git -c user.name="AI名@机器名" commit），commit message 带 [身份] 与变更文件，便于追溯与冲突仲裁。
+- 身份：每端以「AI名@机器名」作为 git 作者提交（Codex 脚本自动；手动端用 git -c user.name="AI名@机器名" commit），commit message 带 [身份] 与变更文件，便于追溯与冲突仲裁。**合并提交同样适用**（GAP-2-4）：执行 merge 的一端必须带本端身份（`git -c user.name="AI名@机器名" merge --no-edit FETCH_HEAD` 或确认仓库级 user.name 已设为本端身份），不得出现无端身份的合并作者——历史 `d436de8` 作者=push 属身份越轨，不得复现。
 - 文件分区：归档.md 为追加类（union 自动合并，仅 `git merge` 生效）；状态.md / 待办.md 为改写类（改前立即 merge，冲突保留两端语义、绝不单方面覆盖）；决策.md / 画像.md 多为追加、偶发改写（默认合并，冲突语义合并）。收敛统一 `git merge`（非 rebase）。
 - 每机一份 gitignored 的 sync.config.ps1（身份/代理/记忆目录/提交身份）；新机器先跑 sync-memory.ps1 -Doctor 自检（须全 PASS、conform 探针不得 FAIL）再接入；doctor 任一红旗 = 阻断态，未修红不得读 canon / 不得 push。
