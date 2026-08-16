@@ -395,7 +395,9 @@ function Clear-StaleTempBackups {
     param([int]$RetentionDays = 0)
     if ($RetentionDays -le 0) {
         $g = Get-Guards
-        $RetentionDays = if ($g -and $g.backup_retention_days) { [int]$g.backup_retention_days } else { 2 }
+        # 回落默认与 guards.json 一致（7 天，GAP-2-1 机器口径统一）；
+        # guards.json 缺失时不得回落为 2 天旧口径。
+        $RetentionDays = if ($g -and $g.backup_retention_days) { [int]$g.backup_retention_days } else { 7 }
     }
     try {
         $cutoff = (Get-Date).AddDays(-$RetentionDays)

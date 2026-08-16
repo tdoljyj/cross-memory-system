@@ -546,7 +546,9 @@ def cleanup_stale_backups(retention_days=None):
     与 %TEMP% 遗留备份统一按保留期清理。
     """
     if retention_days is None:
-        retention_days = load_guards().get("backup_retention_days", 2)
+        # 回落默认与 guards.json 一致（7 天，GAP-2-1 机器口径统一）；
+        # guards.json 缺失时不得回落为 2 天旧口径。
+        retention_days = load_guards().get("backup_retention_days", 7)
     cutoff = time.time() - retention_days * 86400
     for base in (tempfile.gettempdir(), SNAPSHOT_DIR):
         try:

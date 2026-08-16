@@ -931,6 +931,52 @@ def test_py_consumer_memory_path_config(sb):
     check("~/.dsh/AGENTS.md" in agents, "AGENTS.md 端枚举未登记 DSH 消费端")
 
 
+@sandboxed
+def test_py_retention_fallback_defaults_to_7(sb):
+    """GAP-2-1 回归：guards.json 缺失/无保留期字段时，py 回落默认必须为 7 天
+    （不得回落为 2 天旧口径）。3 天前备份应保留，8 天前备份应被清理。"""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("syncmem_retention_fb", PY)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    mod.load_guards = lambda: {}  # guards.json 缺失/无字段 → 回落默认
+    keep = os.path.join(tempfile.gettempdir(), "codex-memory-fbkeep-2000")
+    drop = os.path.join(tempfile.gettempdir(), "codex-memory-fbdrop-2000")
+    for d, days in ((keep, 3), (drop, 8)):
+        os.makedirs(d, exist_ok=True)
+        os.utime(d, (time.time() - days * 86400, time.time() - days * 86400))
+    try:
+        mod.cleanup_stale_backups()
+        check(os.path.isdir(keep), "3 天前备份在 7 天保留期下应保留")
+        check(not os.path.isdir(drop), "8 天前备份应被清理")
+    finally:
+        shutil.rmtree(keep, ignore_errors=True)
+        shutil.rmtree(drop, ignore_errors=True)
+
+
+@sandboxed
+def test_ps1_retention_fallback_defaults_to_7(sb):
+    """GAP-2-1 回归：guards.json 缺失时 ps1 回落默认必须为 7 天（-Pull 的 TEMP 清理
+    不删除 3 天前备份，删除 8 天前备份）。"""
+    clone = sb.add_clone("repo")
+    workdir = os.path.join(sb.tmp, "working")
+    sb.install_ps1(clone, workdir)
+    os.remove(os.path.join(clone, "guards.json"))  # 强制回落默认
+    keep = os.path.join(tempfile.gettempdir(), "codex-memory-fbkeep-2000")
+    drop = os.path.join(tempfile.gettempdir(), "codex-memory-fbdrop-2000")
+    for d, days in ((keep, 3), (drop, 8)):
+        os.makedirs(d, exist_ok=True)
+        os.utime(d, (time.time() - days * 86400, time.time() - days * 86400))
+    try:
+        p = sb.run_ps1(clone, "-Pull")
+        check(p.returncode == 0, p.stdout + p.stderr)
+        check(os.path.isdir(keep), "3 天前备份在 7 天保留期下应保留")
+        check(not os.path.isdir(drop), "8 天前备份应被清理")
+    finally:
+        shutil.rmtree(keep, ignore_errors=True)
+        shutil.rmtree(drop, ignore_errors=True)
+
+
 def test_consumer_conformed_detects_triggertype_ban():
     # 纯函数单体测试：消费端操作记忆须声明「版本真值核对/触发式/禁自动化」三要素
     import importlib.util
@@ -977,6 +1023,8 @@ def test_guards_json_single_source():
     check(isinstance(guards.get("backup_retention_days"), int)
           and guards["backup_retention_days"] > 0,
           "backup_retention_days 应为正整数")
+    check(guards["backup_retention_days"] == 7,
+          "backup_retention_days 应为 7（GAP-2-1 机器口径统一，实现向基线收敛）")
     import importlib.util
     spec = importlib.util.spec_from_file_location(
         "sync_memory_guards", os.path.join(REPO_ROOT, "sync-memory.py"))
@@ -1504,6 +1552,8 @@ TESTS = [
     test_py_consumer_memory_path_config,
     test_consumer_conformed_detects_triggertype_ban,
     test_guards_json_single_source,
+    test_py_retention_fallback_defaults_to_7,
+    test_ps1_retention_fallback_defaults_to_7,
     test_repo_files_do_not_self_match_secret_patterns,
     test_pid_alive_probe_does_not_kill,
     test_pid_alive_dead_pid_false,
