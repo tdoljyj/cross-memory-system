@@ -2,7 +2,7 @@
 
 > **规范依据**：本仓库《架构基线文档-vNext-1.3.md》（当前基线版本 **vNext-1.3**，2026-08-16 确立）。适用范围：本仓库全部文件、Codex 端（`~/.codex/AGENTS.md` + sync-memory.ps1）、WorkBuddy 端（`~/.workbuddy/MEMORY.md` + sync-memory.py）及未来新接入端。本 README 与基线冲突时以基线为准；基线变更记录见该文档「变更记录」表。
 
-私有仓库：完整版配置手册 + 数据包快照 + **跨端共享**自动同步机制（2026-08-15 建立并更名）。
+私有仓库：完整版配置手册 + 数据包快照 + **跨端记忆协同机制**（2026-08-15 建立并更名）。
 
 ## 定位
 一个 git 私有仓库作为**唯一数据源**（基线术语：**Canonical Memory Store**），多台机器、多个 AI 助手各自持有工作区镜像（基线术语：**AI Adapter / Cache**），通过仓库互相共享记忆。设计目标不是单机双端，而是**任意机器 × 任意 AI** 的跨端共享：各端从不直写对方工作区（Adapter 不互相同步，只与 Canonical Store 同步，基线 P0-3/P0-4），一切经仓库收敛；每个提交都带 `AI名@机器名` 身份，可追溯到谁、在哪台机器、改了什么。
@@ -17,7 +17,7 @@
 | WorkBuddy | `~/.workbuddy/codex-memory-system\`（独立克隆） | 开场 `python sync-memory.py pull` 读；写入前 `fetch + merge` → 修改 → push；不直写 Codex 侧工作区 |
 | 未来其他 AI | 各自工作区 | 同 WorkBuddy：克隆 → fetch + merge → 改 → push；不直写任何既有工作区 |
 
-## 跨端共享机制
+## 跨端协同机制
 1. **身份与审计**：每端以 `AI名@机器名`（如 `Codex@DESKTOP-X`）作为 git 作者提交，commit message 带 `[身份]` 前缀与变更文件清单；`git log --format='%an %s'` 即可看到谁在哪台机器改了什么。
 2. **并发冲突分层**：追加类文件（`归档.md`）配 `merge=union`，两端同时追加自动保留、无需人工；改写类文件（`状态.md` / `待办.md`）靠「改前立即 merge + 小步提交 + 语义合并」，冲突时保留两端语义、绝不单方面覆盖。⚠️ union 自动合并仅 `git merge` 生效（每机需 `git config merge.union.driver 'git merge-file --union %A %O %B'`），**禁止与 rebase 混用**（rebase + union driver 会静默丢单边内容）。
 3. **跨机可移植**：每机一份 gitignored 的 `sync.config.ps1`（身份 / 代理 / 记忆目录 / 提交身份），脚本无此文件时回落本机默认；换机器、换 OS（需 pwsh）只改这一个文件。
