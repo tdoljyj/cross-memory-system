@@ -592,7 +592,7 @@ def restore_tracking_ref(remote):
 def fetch_and_merge():
     """fetch 后 merge FETCH_HEAD（非 rebase）。返回是否成功对齐。"""
     code, out, err = git("fetch", "origin", "main")
-    print("[fetch] %s" % ("OK" if code == 0 else "FAIL: " + err))
+    print("[fetch] %s" % ("OK" if code == 0 else "FAIL: " + redact(err)))
     if code != 0:
         return False
     code, out, err = git("merge", "--no-edit", "FETCH_HEAD")

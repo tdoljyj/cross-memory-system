@@ -746,6 +746,28 @@ def test_ps1_pull_pending_writeback_keeps_extras_and_backup(sb):
               "备份应含被覆盖前的工作区内容（可恢复）")
 
 
+def test_py_fetch_error_output_redacted():
+    """P0-4 回归：fetch 失败路径的错误文本必须过 redact（防凭据样值落日志）。"""
+    import contextlib
+    import importlib.util
+    import io
+    spec = importlib.util.spec_from_file_location("syncmem_fetch_redact", PY)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    tok = "ghp_" + "A" * 32  # 运行时拼接，防测试文件自命中扫描模式
+    def fake_git(*args, **kwargs):
+        return (1, "", "fatal: unable to access 'https://" + tok + "@github.com/x': TLS error")
+    mod.git = fake_git
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        ok = mod.fetch_and_merge()
+    out = buf.getvalue()
+    check(ok is False, "fetch 失败应返回 False")
+    check("[fetch] FAIL" in out, out)
+    check(tok not in out, "fetch 错误输出未经 redact 泄露令牌: %r" % out[:200])
+    check("ghp_***" in out, "fetch 错误应输出掩码: %r" % out[:200])
+
+
 def test_consumer_conformed_detects_triggertype_ban():
     # 纯函数单体测试：消费端操作记忆须声明「版本真值核对/触发式/禁自动化」三要素
     import importlib.util
@@ -981,6 +1003,7 @@ TESTS = [
     test_ps1_pull_fails_closed_on_bad_remote,
     test_ps1_deploy_guard_blocks_workbuddy_path,
     test_ps1_deploy_guard_blocks_dsh_path,
+    test_py_fetch_error_output_redacted,
     test_consumer_conformed_detects_triggertype_ban,
     test_guards_json_single_source,
     test_repo_files_do_not_self_match_secret_patterns,
