@@ -20,6 +20,7 @@
 | vNext-1.3 残留边界收窄 | 2026-08-16 | 把「端点完全无视协议则规则救不了」的残留边界收窄为可检测+阻断：① sync-memory.py doctor 新增「消费端 conform 触发式禁令」探针（纯函数 consumer_conformed，检测 MEMORY.md/Codex AGENTS.md 是否声明「版本真值核对/触发式/禁自动化」三要素；缺失=FAIL）；② AGENTS v3.1 明令 doctor 红旗=阻断态（conform 探针 FAIL / ref 漂移不得读 canon、不得 push）；③ bootstrap 接入门槛强化（须全 PASS、conform 探针不得 FAIL）。未引入周期任务、未 bump 版本、与 Phase 6/12 一致 | WorkBuddy@TURING |
 | vNext-1.3 残留边界收窄-修正 | 2026-08-16 | 撤回「检测 Codex AGENTS.md」的跨端探针：按「不越界」纪律，各端 doctor 只自检本端（WorkBuddy 检 MEMORY.md、Codex 由 ps1 -Doctor 自检）；同步修正第十二节探针描述与验收表用例口径（TESTS 实际注册 20 项） | WorkBuddy@TURING |
 | vNext-1.3 conform 缺口显式化 | 2026-08-16 | 审计实证（grep ps1 零 conform 代码）：上一行「Codex 由 ps1 -Doctor 自检」为**虚假覆盖**——ps1 从未实现该探针。方案 B 落地：改为显式承认「Codex 端 conform 无机器检查、依赖协议自觉」；同步修正第十二节与验收表口径；doctor 对 tracking ref 丢失（沙盒 overlay 常态）改为自愈项（自动补写，报 AUTO-HEALED 不计失败），阻断态限定为真分叉 / conform 缺失 / 远端不可达 | WorkBuddy@TURING |
+| vNext-1.3 措施8/10/11/12/15 落地 | 2026-08-16 | 结构性加固收尾：① 措施8（C15）py/ps1 pull 领先不再内嵌 push（读路径无写副作用），只写 `.needs-push` 标记，由使用方非沙盒显式 push；② 措施10（C19）ps1 5 模式函数化（Invoke-DoctorMode/BootstrapMode/PullMode/CommitRepoMode/PushMode + 顶层 dispatch，exit→`$script:exitCode`）；③ 措施11（C17）冲突快照/写回备份从 %TEMP% 明文改仓库内 gitignored `.conflict-snapshots/`，成功即删；④ 措施12（C11）代理优先读 HTTPS_PROXY 环境变量 + proxy_alive 从 URL 解析 + resolve_network 直连兜底（消 7892 误杀）；⑤ 措施15（C23）bootstrap 恢复保守 GC（gc.auto=256 / gc.pruneExpire=2.weeks）。验收 21/21 PASS | WorkBuddy@TURING |
 
 > **目标**：将"每次开头强制加载记忆、结尾强制上传"改造成真正的按需读写型跨会话记忆系统。
 >

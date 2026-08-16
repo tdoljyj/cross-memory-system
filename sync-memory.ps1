@@ -329,9 +329,13 @@ function Clear-StaleTempBackups {
     }
     try {
         $cutoff = (Get-Date).AddDays(-$RetentionDays)
-        Get-ChildItem -Path $env:TEMP -Directory -Filter "codex-memory-*" -ErrorAction SilentlyContinue |
-            Where-Object { $_.LastWriteTime -lt $cutoff } |
-            Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+        $snapDir = Join-Path $repoRoot ".conflict-snapshots"
+        foreach ($base in @($env:TEMP, $snapDir)) {
+            if (-not (Test-Path -LiteralPath $base)) { continue }
+            Get-ChildItem -Path $base -Directory -Filter "codex-memory-*" -ErrorAction SilentlyContinue |
+                Where-Object { $_.LastWriteTime -lt $cutoff } |
+                Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+        }
     } catch { }
 }
 
@@ -423,7 +427,9 @@ try {
     $ErrorActionPreference = "Stop"
 }
 
-if ($Doctor) {
+$script:exitCode = 0
+
+function Invoke-DoctorMode {
     $script:failCount = 0
     function Report($Name, $Pass, $Detail) {
         Write-Output ("[{0}] {1}" -f ($(if ($Pass) { "PASS" } else { "FAIL" }), $Name))
@@ -511,21 +517,21 @@ if ($Doctor) {
 
     if ($script:failCount -eq 0) {
         Write-Output "doctor: ALL PASS"
-        exit 0
+        $script:exitCode = 0
     } else {
         Write-Output ("doctor: {0} FAILURE(S)" -f $script:failCount)
-        exit 1
+        $script:exitCode = 1
     }
 }
 
-if ($Bootstrap) {
+function Invoke-BootstrapMode {
     Write-Output "== 一次性接入配置（bootstrap） =="
     $bootstrapSettings = @(
         @("core.autocrlf", "false"),
         @("merge.union.driver", "git merge-file --union %A %O %B"),
         @("maintenance.auto", "false"),
-        @("gc.auto", "0"),
-        @("gc.pruneExpire", "never"),
+        @("gc.auto", "256"),
+        @("gc.pruneExpire", "2.weeks"),
         @("fetch.autoMaintenance", "false")
     )
     foreach ($s in $bootstrapSettings) {
@@ -534,17 +540,18 @@ if ($Bootstrap) {
         Write-Output ("[config] {0}={1} -> {2}" -f $s[0], $s[1], $(if ($ok) { "OK" } else { "FAIL" }))
     }
     Write-Output "bootstrap 完成；再跑 -Doctor 自检"
-    exit 0
+    $script:exitCode = 0
+    return
 }
 
-if ($Pull) {
+function Invoke-PullMode {
     # Session-start alignment is self-healing in both directions: pull any newer
     # remote memory, write it back to the working directory when possible, and
     # push any local commits left behind by a failed sync.
     if (-not (Test-GitClientSafe)) {
         Set-SyncFailed -Message "Unsafe git client detected (PortableGit / .workbuddy); refusing to sync."
         Write-Error -ErrorAction Continue "Unsafe git client detected (PortableGit / .workbuddy); refusing to sync."
-        exit 1
+        $script:exitCode = 1; return
     }
     Clear-StaleTempBackups
     $nonMemoryDirty = Get-NonMemoryDirtyCount
@@ -554,26 +561,26 @@ if ($Pull) {
     if (Test-RepoMemoryDirty) {
         Set-SyncFailed -Message "Repo working tree has uncommitted memory changes; resolve them before running -Pull."
         Write-Error -ErrorAction Continue "Repo working tree has uncommitted memory changes; resolve them before running -Pull."
-        exit 1
+        $script:exitCode = 1; return
     }
     if (-not (Test-Path $pendingFile) -and -not (Test-MemoryDirsEqual $memorySrc $memoryDst)) {
         Set-SyncFailed -Message "Working memory directory has local changes not yet synced to the repo; run a normal sync or resolve before -Pull."
         Write-Error -ErrorAction Continue "Working memory directory has local changes not yet synced to the repo; run a normal sync or resolve before -Pull."
-        exit 1
+        $script:exitCode = 1; return
     }
 
     if ($Access -eq "NONE") {
         Write-Output "Memory Access = NONE; skipping pull (no recall scope)."
-        exit 0
+        $script:exitCode = 0; return
     }
     if (-not (Test-AcquireSyncLock)) {
         Set-SyncFailed -Message "Another sync is already running (lock held); refusing concurrent -Pull."
         Write-Error -ErrorAction Continue "Another sync is already running (lock held); refusing concurrent -Pull."
-        exit 1
+        $script:exitCode = 1; return
     }
     $script:lockHeld = $true
 
-    $conflictBackupDir = Join-Path $env:TEMP ("codex-memory-conflict-" + (Get-Date -Format 'yyyyMMdd-HHmmss'))
+    $conflictBackupDir = Join-Path (Join-Path $repoRoot ".conflict-snapshots") ("codex-memory-conflict-" + (Get-Date -Format 'yyyyMMdd-HHmmss'))
     try {
         Invoke-Git fetch origin
         $local = git -C $repoRoot rev-parse HEAD
@@ -581,7 +588,7 @@ if ($Pull) {
         if (-not ($remoteHash -match '^[0-9a-f]{40}$')) {
             Set-SyncFailed -Message "ls-remote 未返回可用的 main hash；拒绝把本地缓存当作已对齐。"
             Write-Error -ErrorAction Continue "远端 hash 不可用，-Pull 以失败退出（fail-closed）。"
-            exit 1
+            $script:exitCode = 1; return
         }
         $behind = [int](git -C $repoRoot rev-list --count HEAD..$remoteHash)
         $ahead  = [int](git -C $repoRoot rev-list --count $remoteHash..HEAD)
@@ -604,7 +611,7 @@ if ($Pull) {
                 Clear-PendingWriteback
                 Write-Output "Working memory directory already matches repo; cleared pending write-back flag."
             } else {
-                $backupDir = Join-Path $env:TEMP ("codex-memory-writeback-" + (Get-Date -Format 'yyyyMMdd-HHmmss'))
+                $backupDir = Join-Path (Join-Path $repoRoot ".conflict-snapshots") ("codex-memory-writeback-" + (Get-Date -Format 'yyyyMMdd-HHmmss'))
                 Backup-WorkingMemory $backupDir
                 if (Copy-MemoryToWorkingDir) {
                     Clear-PendingWriteback
@@ -622,11 +629,11 @@ if ($Pull) {
         }
 
         if ($ahead -gt 0) {
-            Invoke-Git push origin main
-            if (-not (Confirm-RemotePushed)) {
-                throw "Push succeeded but remote verification failed (local HEAD is not an ancestor of origin/main) during -Pull."
-            }
-            Write-Output "Pushed $ahead local commit(s) to GitHub."
+            # 措施8：pull=读，不在此 push（读路径不得有写副作用，沙盒内 push 会假成功）。
+            # 写 .needs-push 标记，由使用方在非沙盒显式同步推送（对齐 AGENTS:72）。
+            $stamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+            Set-Content -LiteralPath (Join-Path $repoRoot ".needs-push") -Value @("Pending: $stamp", "本地领先远端，待非沙盒显式 push（sync-memory.ps1 默认模式）") -Encoding UTF8
+            Write-Output "本地领先远端 $ahead 提交；pull=读不在此 push，已写 .needs-push 标记，请在非沙盒环境显式同步推送。"
         }
         if ($behind -eq 0 -and $ahead -eq 0) {
             Write-Output "Memory repo already up to date."
@@ -640,26 +647,26 @@ if ($Pull) {
         try { git -C $repoRoot merge --abort 2>&1 | Out-Null } catch { }
         Write-Error -ErrorAction Continue ($_.Exception.Message + "`nConflict snapshots (if any): $conflictBackupDir")
         Release-SyncLock
-        exit 1
+        $script:exitCode = 1; return
     }
     Release-SyncLock
-    exit 0
+    $script:exitCode = 0; return
 }
 
-if ($CommitRepo) {
+function Invoke-CommitRepoMode {
     # Commit every tracked change (scripts/docs/tests + memory) in one repo-maintenance
     # commit. This is the code path for persisting script/doc changes, which the normal
     # memory sync intentionally does not commit (it stages only memory/*.md).
     if (-not (Test-GitClientSafe)) {
         Set-SyncFailed -Message "Unsafe git client detected (PortableGit / .workbuddy); refusing to commit repo."
         Write-Error -ErrorAction Continue "Unsafe git client detected (PortableGit / .workbuddy); refusing to commit repo."
-        exit 1
+        $script:exitCode = 1; return
     }
     Clear-StaleTempBackups
     if (-not (Test-AcquireSyncLock)) {
         Set-SyncFailed -Message "Another sync is already running (lock held); refusing concurrent -CommitRepo."
         Write-Error -ErrorAction Continue "Another sync is already running (lock held); refusing concurrent -CommitRepo."
-        exit 1
+        $script:exitCode = 1; return
     }
     $script:lockHeld = $true
     git -C $repoRoot add -A
@@ -670,7 +677,7 @@ if ($CommitRepo) {
         Remove-Item -LiteralPath $flagFile -Force -ErrorAction SilentlyContinue
         Write-Output "No repo changes; nothing to commit."
         Release-SyncLock
-        exit 0
+        $script:exitCode = 0; return
     }
     $secretHit = Find-SecretLeakStaged $repoRoot
     if ($secretHit) {
@@ -678,10 +685,10 @@ if ($CommitRepo) {
         Write-Error -ErrorAction Continue "Secret-like value detected in staged file: $secretHit; refusing repo commit."
         git -C $repoRoot reset -q
         Release-SyncLock
-        exit 1
+        $script:exitCode = 1; return
     }
     $changed = (($staged | ForEach-Object { $_ -replace '^memory/', '' }) -join ', ')
-    $conflictBackupDir = Join-Path $env:TEMP ("codex-memory-conflict-" + (Get-Date -Format 'yyyyMMdd-HHmmss'))
+    $conflictBackupDir = Join-Path (Join-Path $repoRoot ".conflict-snapshots") ("codex-memory-conflict-" + (Get-Date -Format 'yyyyMMdd-HHmmss'))
     try {
         Invoke-Git fetch origin
         $remoteHash = Get-RemoteMainHash
@@ -707,21 +714,22 @@ if ($CommitRepo) {
         Remove-Item -LiteralPath $flagFile -Force -ErrorAction SilentlyContinue
         Write-Output "Repo synced to GitHub."
         Release-SyncLock
-        exit 0
+        $script:exitCode = 0; return
     } catch {
         Backup-MergeConflict $conflictBackupDir
         Set-SyncFailed $_.Exception.Message
         try { git -C $repoRoot merge --abort 2>&1 | Out-Null } catch { }
         Write-Error -ErrorAction Continue ($_.Exception.Message + "`nConflict snapshots (if any): $conflictBackupDir")
         Release-SyncLock
-        exit 1
+        $script:exitCode = 1; return
     }
 }
 
+function Invoke-PushMode {
 if (-not (Test-GitClientSafe)) {
     Set-SyncFailed -Message "Unsafe git client detected (PortableGit / .workbuddy); refusing to sync."
     Write-Error -ErrorAction Continue "Unsafe git client detected (PortableGit / .workbuddy); refusing to sync."
-    exit 1
+    $script:exitCode = 1; return
 }
 Clear-StaleTempBackups
 $nonMemoryDirty = Get-NonMemoryDirtyCount
@@ -732,25 +740,25 @@ if ($nonMemoryDirty -gt 0) {
 if (-not (Test-Path $memorySrc)) {
     Set-SyncFailed -Message "Memory directory not found: $memorySrc"
     Write-Error -ErrorAction Continue "Memory directory not found: $memorySrc"
-    exit 1
+    $script:exitCode = 1; return
 }
 
 $requiredMemoryFiles = Get-MemoryFileList $memoryDst
 if ($null -eq $requiredMemoryFiles) {
     Set-SyncFailed -Message "Refusing to sync: memory/index.json missing or invalid (canonical file set unknown)."
     Write-Error -ErrorAction Continue "Refusing to sync: memory/index.json missing or invalid (canonical file set unknown)."
-    exit 1
+    $script:exitCode = 1; return
 }
 if (-not (Test-MemoryFilesHealthy $memorySrc $requiredMemoryFiles)) {
     Set-SyncFailed -Message "Refusing to sync: working memory directory is missing required files listed in memory/index.json (delete-propagation guard)."
     Write-Error -ErrorAction Continue "Refusing to sync: working memory directory is missing required files listed in memory/index.json (delete-propagation guard)."
-    exit 1
+    $script:exitCode = 1; return
 }
 
 if (Test-RepoMemoryDirty) {
     Set-SyncFailed -Message "Repo working tree has uncommitted memory changes; resolve them before syncing."
     Write-Error -ErrorAction Continue "Repo working tree has uncommitted memory changes; resolve them before syncing."
-    exit 1
+    $script:exitCode = 1; return
 }
 
 # Refuse to overwrite pulled-but-not-written-back remote changes with the
@@ -762,7 +770,7 @@ if (Test-Path $pendingFile) {
         Write-Output "Pending write-back flag cleared: working memory directory now matches repo."
     } else {
         Write-Error -ErrorAction Continue "Pending write-back detected (.pending-writeback): remote changes pulled into the repo have not been written back to $memorySrc. Refusing to push to avoid reverting them. Apply repo memory files to the working directory via apply_patch, then re-run."
-        exit 1
+        $script:exitCode = 1; return
     }
 }
 
@@ -770,12 +778,12 @@ $secretLeak = Find-SecretLeak $memorySrc
 if ($secretLeak) {
     Set-SyncFailed -Message "Refusing to sync: secret-like value detected in $secretLeak (pre-commit secret scan)."
     Write-Error -ErrorAction Continue "Refusing to sync: secret-like value detected in $secretLeak (pre-commit secret scan)."
-    exit 1
+    $script:exitCode = 1; return
 }
 if (-not (Test-AcquireSyncLock)) {
     Set-SyncFailed -Message "Another sync is already running (lock held); refusing concurrent sync."
     Write-Error -ErrorAction Continue "Another sync is already running (lock held); refusing concurrent sync."
-    exit 1
+    $script:exitCode = 1; return
 }
 $script:lockHeld = $true
 
@@ -788,7 +796,7 @@ if (-not (Test-MemoryDirsEqual $memorySrc $memoryDst)) {
     Set-SyncFailed -Message "Copy verification failed: working memory and repo memory differ after copy."
     Write-Error -ErrorAction Continue "Copy verification failed: working memory and repo memory differ after copy."
     Release-SyncLock
-    exit 1
+    $script:exitCode = 1; return
 }
 
 git -C $repoRoot add -A -- memory
@@ -799,10 +807,10 @@ if (-not $staged) {
     Remove-Item -LiteralPath $flagFile -Force -ErrorAction SilentlyContinue
     Write-Output "No memory changes; skip commit."
     Release-SyncLock
-    exit 0
+    $script:exitCode = 0; return
 }
 
-$conflictBackupDir = Join-Path $env:TEMP ("codex-memory-conflict-" + (Get-Date -Format 'yyyyMMdd-HHmmss'))
+$conflictBackupDir = Join-Path (Join-Path $repoRoot ".conflict-snapshots") ("codex-memory-conflict-" + (Get-Date -Format 'yyyyMMdd-HHmmss'))
 try {
     Invoke-Git fetch origin
     $remoteHash = Get-RemoteMainHash
@@ -837,6 +845,15 @@ try {
     try { git -C $repoRoot merge --abort 2>&1 | Out-Null } catch { }
     Write-Error -ErrorAction Continue ($_.Exception.Message + "`nConflict snapshots (if any): $conflictBackupDir")
     Release-SyncLock
-    exit 1
+    $script:exitCode = 1; return
 }
 Release-SyncLock
+
+}
+
+# ---- mode dispatch (措施10：5 模式函数化) ----
+if ($Doctor) { Invoke-DoctorMode; exit $script:exitCode }
+if ($Bootstrap) { Invoke-BootstrapMode; exit $script:exitCode }
+if ($Pull) { Invoke-PullMode; exit $script:exitCode }
+if ($CommitRepo) { Invoke-CommitRepoMode; exit $script:exitCode }
+Invoke-PushMode; exit $script:exitCode

@@ -50,6 +50,7 @@ import sys
 import tempfile
 import time
 from datetime import datetime
+from urllib.parse import urlparse
 
 _CONFIG_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "sync.config.json")
@@ -68,13 +69,29 @@ def _load_config():
 
 _CONFIG = _load_config()
 
+
+def _env_proxy():
+    for var in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"):
+        v = os.environ.get(var)
+        if v:
+            return v
+    return None
+
+
+def _proxy_host_port(url):
+    try:
+        p = urlparse(url)
+        return p.hostname or "127.0.0.1", p.port or 7897
+    except Exception:
+        return "127.0.0.1", 7897
+
+
+# 代理优先级：config > 环境变量(HTTPS_PROXY/HTTP_PROXY) > 默认。环境变量优先于默认，
+# 解决 C11：环境真实代理 7892 与硬编码 7897 不一致导致的 fail-closed 永久误杀。
+PROXY = _CONFIG.get("proxy") or _env_proxy() or "http://127.0.0.1:7897"  # 无代理时设为 ""
+PROXY_HOST, PROXY_PORT = _proxy_host_port(PROXY)
+
 REPO = os.path.expanduser(_CONFIG.get("repo", "~/.workbuddy/codex-memory-system"))
-PROXY = _CONFIG.get("proxy", "http://127.0.0.1:7897")  # 无代理时设为 ""
-PROXY_HOST = _CONFIG.get("proxy_host", "127.0.0.1")
-try:
-    PROXY_PORT = int(_CONFIG.get("proxy_port", 7897))
-except (TypeError, ValueError):
-    PROXY_PORT = 7897
 
 # git 优先级：官方 Git for Windows（真非沙盒下健康）> PortableGit（PATH 兜底）
 GIT_CANDIDATES = _CONFIG.get(
@@ -116,6 +133,31 @@ def proxy_alive():
             return True
     except Exception:
         return False
+
+
+def direct_reachable():
+    """直连 github.com 可达性探测（措施12 直连兜底）。"""
+    try:
+        with socket.create_connection(("github.com", 443), timeout=3.0):
+            return True
+    except Exception:
+        return False
+
+
+def resolve_network():
+    """措施12：代理可达→走代理；代理不可达但直连可达→清空 PROXY 走直连；
+    都不可达→返回 False。调用方据此决定是否继续（消 C11 的 fail-closed 永久误杀）。
+    """
+    global PROXY
+    if not PROXY:
+        return True
+    if proxy_alive():
+        return True
+    if direct_reachable():
+        print("[代理] 代理 %s 不可达，但直连可达，本次改用直连" % PROXY)
+        PROXY = ""
+        return True
+    return False
 
 
 def run(cmd, cwd=REPO, timeout=60):
@@ -403,26 +445,31 @@ def clear_marker(name):
         print("[!] 清除 %s 失败: %s" % (name, e))
 
 
+SNAPSHOT_DIR = os.path.join(REPO, ".conflict-snapshots")
+
+
 def cleanup_stale_backups(retention_days=None):
-    """清理过期的 codex-memory-* 临时备份目录（只增不减的历史债务）。
+    """清理过期的临时备份目录（只增不减的历史债务）。
 
     保留期默认取 guards.json（护栏契约单一事实源），缺省回落 2 天。
+    措施11：冲突快照改写仓库内 .conflict-snapshots/（私有、gitignored），
+    与 %TEMP% 遗留备份统一按保留期清理。
     """
     if retention_days is None:
         retention_days = load_guards().get("backup_retention_days", 2)
-    tmp = tempfile.gettempdir()
     cutoff = time.time() - retention_days * 86400
-    try:
-        for name in os.listdir(tmp):
-            if not name.startswith("codex-memory-"):
-                continue
-            p = os.path.join(tmp, name)
-            if not os.path.isdir(p):
-                continue
-            if os.path.getmtime(p) < cutoff:
-                shutil.rmtree(p, ignore_errors=True)
-    except Exception:
-        pass
+    for base in (tempfile.gettempdir(), SNAPSHOT_DIR):
+        try:
+            for name in os.listdir(base):
+                if not name.startswith("codex-memory-"):
+                    continue
+                p = os.path.join(base, name)
+                if not os.path.isdir(p):
+                    continue
+                if os.path.getmtime(p) < cutoff:
+                    shutil.rmtree(p, ignore_errors=True)
+        except Exception:
+            pass
 
 
 def backup_conflict():
@@ -431,8 +478,10 @@ def backup_conflict():
         "--diff-filter=U", "--", "memory", proxy=False)
     if code != 0 or not out.strip():
         return None
+    # 措施11：冲突快照（base/ours/theirs 三阶段 + 冲突文件）写仓库内 gitignored
+    # .conflict-snapshots/，不落 %TEMP%（对同用户所有进程可读，隐私暴露面大）。
     dest = os.path.join(
-        tempfile.gettempdir(),
+        SNAPSHOT_DIR,
         "codex-memory-conflict-" + datetime.now().strftime("%Y%m%d-%H%M%S"))
     os.makedirs(dest, exist_ok=True)
     for raw in out.splitlines():
@@ -501,8 +550,8 @@ def cmd_pull(access=""):
     if access.strip().upper() == "NONE":
         print("Memory Access = NONE; 按需读取判定为无关，跳过 pull")
         return
-    if not proxy_alive() and PROXY:
-        print("[!] 代理 %s 不可达（Clash 未启动？），终止以免 git 卡死" % PROXY)
+    if not resolve_network():
+        print("[!] 代理 %s 不可达且直连失败（Clash 未启动？），终止以免 git 卡死" % PROXY)
         write_marker(".sync-failed", "pull aborted: proxy %s unreachable" % PROXY)
         sys.exit(1)
     if not memory_dir_healthy():
@@ -535,21 +584,13 @@ def cmd_pull(access=""):
             print("对齐 ✓")
             clear_marker(".sync-failed")
         elif local and remote and is_ancestor(remote, local):
-            # 本地领先远端：上次 push 失败留下的已提交记忆，补推（自愈，避免永久卡死）
-            print("[自愈] 本地领先远端，补推上次同步失败遗留的提交")
-            code, _, err = git("push", "origin", "main")
-            if code != 0:
-                print("[!] 补推失败: %s" % err)
-                write_marker(".sync-failed", "pull 自愈补推失败")
-                sys.exit(1)
-            remote = ls_remote()
-            restore_tracking_ref(remote)
-            if local_head() == remote:
-                print("补推成功 ✓")
-                clear_marker(".sync-failed")
-            else:
-                write_marker(".sync-failed", "补推后仍不一致")
-                sys.exit(1)
+            # 本地领先远端：上次 push 失败留下的已提交记忆。pull=读，不再内嵌 push
+            # （措施8：读路径不得有写副作用，沙盒内 push 会假成功）。只报告并写
+            # .needs-push 标记，由使用方在非沙盒显式 push（对齐 AGENTS:72）。
+            print("[领先] 本地领先远端（有未推送的已提交记忆），pull=读不在此 push")
+            write_marker(".needs-push", "本地领先远端，待非沙盒显式 push（sync-memory.py push）")
+            clear_marker(".sync-failed")
+            print("提示：在非沙盒环境运行 sync-memory.py push 补齐推送")
         else:
             print("分叉 ⚠️（本地与远端不在同一祖先链）")
             write_marker(".sync-failed", "pull 后本地与远端分叉")
@@ -576,8 +617,8 @@ def cmd_push():
         print("[!] 检测到疑似密钥/令牌（secret-like value）于 staged %s，拒绝 push 以防泄露" % leak)
         write_marker(".sync-failed", "push aborted: secret-like value in staged %s" % leak)
         sys.exit(1)
-    if not proxy_alive() and PROXY:
-        print("[!] 代理 %s 不可达（Clash 未启动？），终止以免 git 卡死" % PROXY)
+    if not resolve_network():
+        print("[!] 代理 %s 不可达且直连失败（Clash 未启动？），终止以免 git 卡死" % PROXY)
         write_marker(".sync-failed", "push aborted: proxy %s unreachable" % PROXY)
         sys.exit(1)
     if not acquire_lock():
@@ -851,8 +892,8 @@ def cmd_bootstrap():
         "core.autocrlf": "false",
         "merge.union.driver": "git merge-file --union %A %O %B",
         "maintenance.auto": "false",
-        "gc.auto": "0",
-        "gc.pruneExpire": "never",
+        "gc.auto": "256",
+        "gc.pruneExpire": "2.weeks",
         "fetch.autoMaintenance": "false",
     }
     for k, v in settings.items():

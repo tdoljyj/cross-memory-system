@@ -414,7 +414,8 @@ def test_py_dangling_ref_rejected(sb):
 
 @sandboxed
 def test_py_pull_ahead_self_heals(sb):
-    """R4 回归：本地领先远端（上次 push 失败遗留）时，pull 应补推而非判分叉卡死。"""
+    """措施8 回归：本地领先远端（上次 push 失败遗留）时，pull=读不在此 push，
+    只报告并写 .needs-push 标记；远端保持不变，由使用方非沙盒显式 push。"""
     clone = sb.add_clone("a")
     script = sb.install_py(clone)
     before = sb.remote_head()
@@ -426,8 +427,10 @@ def test_py_pull_ahead_self_heals(sb):
           "本地应领先远端")
     p = sb.run_py(script, "pull")
     check(p.returncode == 0, p.stdout + p.stderr)
-    check(sb.remote_head() == git("rev-parse", "HEAD", cwd=clone).stdout.strip(),
-          "pull 自愈后本地应与远端一致")
+    check(sb.remote_head() == before,
+          "pull=读不应 push，远端应保持不变")
+    check(os.path.exists(os.path.join(clone, ".needs-push")),
+          "领先时应写 .needs-push 标记")
 
 
 @sandboxed
