@@ -563,6 +563,19 @@ def test_ps1_deploy_guard_blocks_workbuddy_path(sb):
 
 
 @sandboxed
+def test_ps1_deploy_guard_blocks_dsh_path(sb):
+    """P0-3 回归：ps1 在 .dsh 克隆路径内执行必须被拒绝（第三端接入后补的覆盖单元格）。"""
+    dshdir = os.path.join(sb.tmp, ".dsh", "projects", "cross-memory-system")
+    os.makedirs(dshdir, exist_ok=True)
+    script = os.path.join(dshdir, "sync-memory.ps1")
+    shutil.copy(PS1, script)
+    p = sh([POWERSHELL, "-ExecutionPolicy", "Bypass", "-File", script, "-Doctor"],
+           cwd=dshdir, check_fail=False)
+    check(p.returncode != 0, "在 .dsh 路径执行必须被拒绝")
+    check("[deploy-guard]" in p.stdout, "应输出部署位置护栏标记")
+
+
+@sandboxed
 def test_ps1_secret_scan_blocks(sb):
     clone = sb.add_clone("repo")
     workdir = os.path.join(sb.tmp, "working")
@@ -967,6 +980,7 @@ TESTS = [
     test_py_pull_ahead_self_heals,
     test_ps1_pull_fails_closed_on_bad_remote,
     test_ps1_deploy_guard_blocks_workbuddy_path,
+    test_ps1_deploy_guard_blocks_dsh_path,
     test_consumer_conformed_detects_triggertype_ban,
     test_guards_json_single_source,
     test_repo_files_do_not_self_match_secret_patterns,
