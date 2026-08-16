@@ -431,10 +431,12 @@ def find_secret_leak(memdir):
 
 
 def find_secret_leak_staged():
-    """扫 git diff --cached（staged）内容，覆盖全仓提交路径（脚本/文档/测试/配置）。
+    """扫 git diff --cached（staged）的 index blob 内容（`git show :<path>`），覆盖全仓提交路径。
 
     与 find_secret_leak（只扫 memory/*.md）互补，防令牌经全仓提交（ps1 -CommitRepo
-    等价路径）进入 git 历史。staged 为空时返回 None（无可扫描内容，不算失败）。
+    等价路径）进入 git 历史。读 index blob 而非工作树文件：stage 令牌后工作树回改的
+    TOCTOU 场景下，工作树读取会漏检（P2-1；与 sync-memory.ps1 Find-SecretLeakStaged
+    语义统一）。staged 为空时返回 None（无可扫描内容，不算失败）。
     """
     code, out, _ = git("diff", "--cached", "--name-only", "-z", proxy=False)
     if code != 0 or not out.strip():
@@ -442,16 +444,11 @@ def find_secret_leak_staged():
     for name in out.split("\0"):
         if not name:
             continue
-        p = os.path.join(REPO, name)
-        if not os.path.isfile(p):
-            continue
-        try:
-            with open(p, "r", encoding="utf-8", errors="replace") as f:
-                text = f.read()
-        except Exception:
+        c, blob, _ = git("show", ":%s" % name, proxy=False)
+        if c != 0:
             continue
         for pat in _SECRET_PATTERNS:
-            if re.search(pat, text):
+            if re.search(pat, blob):
                 return name
     return None
 

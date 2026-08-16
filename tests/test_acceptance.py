@@ -412,6 +412,31 @@ def test_py_secret_scan_blocks_push(sb):
 
 
 @sandboxed
+def test_py_push_refuses_staged_secret_index_blob(sb):
+    """P2-1 回归：staged 非 memory 文件含令牌、工作树已回改为干净内容时，staged 扫描
+    必须读 index blob 并拒绝 push（工作树读取会被 TOCTOU 绕过）。"""
+    clone = sb.add_clone("a")
+    script = sb.install_py(clone)
+    tok = "ghp_" + "A" * 32
+    extra = os.path.join(clone, "README_secret.md")
+    with open(extra, "w", encoding="utf-8") as fh:
+        fh.write("doc\n" + tok + "\n")
+    git("add", "README_secret.md", cwd=clone)
+    with open(extra, "w", encoding="utf-8") as fh:
+        fh.write("doc clean\n")
+    with open(os.path.join(clone, "memory", "状态.md"), "a", encoding="utf-8") as fh:
+        fh.write("\n触发 push\n")
+    git("commit", "-m", "mem", "--", "memory", cwd=clone)
+    before = sb.remote_head()
+    p = sb.run_py(script, "push")
+    check(p.returncode != 0, "staged 令牌应被拒绝: " + p.stdout + p.stderr)
+    check("secret" in (p.stdout + p.stderr), p.stdout + p.stderr)
+    check(os.path.isfile(os.path.join(clone, ".sync-failed")),
+          "护栏触发时应写 .sync-failed")
+    check(sb.remote_head() == before, "远端不得变化")
+
+
+@sandboxed
 def test_py_access_none_skips_pull(sb):
     a = sb.add_clone("a")
     b = sb.add_clone("b")
@@ -1058,6 +1083,7 @@ TESTS = [
     test_py_delete_propagation_guard,
     test_py_missing_index_guard,
     test_py_secret_scan_blocks_push,
+    test_py_push_refuses_staged_secret_index_blob,
     test_py_access_none_skips_pull,
     test_py_lock_blocks_concurrent,
     test_py_repo_defaults_to_script_dir,
