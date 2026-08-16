@@ -15,7 +15,13 @@
 #   powershell -ExecutionPolicy Bypass -File sync-memory.ps1 -Doctor
 #   powershell -ExecutionPolicy Bypass -File sync-memory.ps1 -Bootstrap
 [CmdletBinding()]
-param([switch]$Pull, [switch]$Doctor, [switch]$Bootstrap)
+param(
+    [switch]$Pull,
+    [switch]$Doctor,
+    [switch]$Bootstrap,
+    [switch]$CommitRepo,
+    [ValidateSet("NONE", "IDENTITY", "PREFERENCE", "PROJECT", "HISTORY", "CONSTRAINT", "MULTI")][string]$Access = ""
+)
 
 $ErrorActionPreference = "Stop"
 
@@ -36,6 +42,8 @@ $memoryDst   = Join-Path $repoRoot "memory"
 $proxy       = $ProxyUrl
 $flagFile    = Join-Path $repoRoot ".sync-failed"
 $pendingFile = Join-Path $repoRoot ".pending-writeback"
+$lockFile    = Join-Path $repoRoot ".sync.lock"
+$script:lockHeld = $false
 
 # Fast direct-connectivity probe so a dead github.com connection fails in ~3s instead of ~20s.
 function Test-DirectGitHub {
@@ -157,6 +165,61 @@ function Redact-Text {
     return $s
 }
 
+function Test-AcquireSyncLock {
+    # Cross-process advisory lock so concurrent pull/push on the same clone cannot
+    # interleave the multi-step copy->commit->fetch->merge->push transaction. Atomic
+    # create (FileMode.CreateNew) + PID-liveness stale detection; no held-open handle.
+    for ($attempt = 0; $attempt -lt 2; $attempt++) {
+        try {
+            $fs = [System.IO.File]::Open($lockFile, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::Read)
+            try {
+                $bytes = [System.Text.Encoding]::UTF8.GetBytes([string]$PID)
+                $fs.Write($bytes, 0, $bytes.Length)
+                $fs.Flush()
+            } finally {
+                $fs.Dispose()
+            }
+            return $true
+        } catch [System.IO.IOException] {
+            $holderPid = $null
+            try { $holderPid = [int]((Get-Content -LiteralPath $lockFile -Raw -ErrorAction Stop).Trim()) } catch { }
+            if ($holderPid -gt 0 -and (Get-Process -Id $holderPid -ErrorAction SilentlyContinue)) {
+                return $false
+            }
+            Remove-Item -LiteralPath $lockFile -Force -ErrorAction SilentlyContinue
+        } catch {
+            return $false
+        }
+    }
+    return $false
+}
+
+function Release-SyncLock {
+    if (-not $script:lockHeld) { return }
+    Remove-Item -LiteralPath $lockFile -Force -ErrorAction SilentlyContinue
+    $script:lockHeld = $false
+}
+
+function Find-SecretLeak {
+    # Pre-commit secret scan: refuse to sync memory files carrying a credential-like
+    # value so a token/private key never enters the git history (baseline 附录 C).
+    param([string]$Dir)
+    $patterns = @(
+        'gh[op]_[A-Za-z0-9]{20,}',
+        'github_pat_[A-Za-z0-9_]{20,}',
+        'AKIA[0-9A-Z]{16}',
+        '-----BEGIN (RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----',
+        '(?i)bearer\s+[A-Za-z0-9._-]{20,}'
+    )
+    foreach ($f in @(Get-ChildItem -Path (Join-Path $Dir "*.md") -File -ErrorAction SilentlyContinue)) {
+        $text = Get-Content -LiteralPath $f.FullName -Raw -Encoding UTF8
+        foreach ($p in $patterns) {
+            if ($text -match $p) { return $f.Name }
+        }
+    }
+    return $null
+}
+
 function Copy-MemoryToWorkingDir {
     # repo -> working memory directory. Returns $true only when the copy is verified.
     try {
@@ -211,7 +274,7 @@ function Get-NonMemoryDirtyCount {
 function Clear-StaleTempBackups {
     # codex-memory-backup-* / conflict-* / writeback-* only ever accumulate;
     # drop anything older than the retention window so TEMP does not grow forever.
-    param([int]$RetentionDays = 7)
+    param([int]$RetentionDays = 2)
     try {
         $cutoff = (Get-Date).AddDays(-$RetentionDays)
         Get-ChildItem -Path $env:TEMP -Directory -Filter "codex-memory-*" -ErrorAction SilentlyContinue |
@@ -285,6 +348,7 @@ function Confirm-RemotePushed {
 # marker and clean up an in-progress merge, instead of dying silently.
 trap {
     Set-SyncFailed -Message ("Unhandled error during sync: " + $_.Exception.Message)
+    Release-SyncLock
     try { git -C $repoRoot merge --abort 2>&1 | Out-Null } catch { }
     Write-Error -ErrorAction Continue ("Unhandled error during sync: " + $_.Exception.Message)
     exit 1
@@ -363,8 +427,13 @@ if ($Doctor) {
     }
     Report "no stale sync markers" ($staleMarkers.Count -eq 0) ($staleMarkers -join ', ')
 
-    $credHelper = (git -C $repoRoot config --show-origin --get credential.helper 2>&1 | Out-String).Trim()
+    $credHelper = (git -C $repoRoot config --get-all credential.helper 2>&1 | Out-String).Trim()
+    $urlHelper = (git -C $repoRoot config --show-origin --get credential.https://github.com.helper 2>&1 | Out-String).Trim()
     Write-Output ("git credential.helper : " + $(if ($credHelper) { (Redact-Text $credHelper) } else { "(unset)" }))
+    if ($urlHelper) { Write-Output ("credential.https://github.com.helper : " + (Redact-Text $urlHelper)) }
+    if (-not (($credHelper + $urlHelper) -match "gh")) {
+        Write-Output ("[WARN] 未检测到 gh 凭据助手（当前 helper：" + $(if ($credHelper) { (Redact-Text $credHelper) } else { "(unset)" }) + "）；README 建议 gh auth login 生成 git credential helper，避免长期令牌 setx 常驻。")
+    }
     $credEnvVars = @('GITHUB_PAT_TOKEN', 'GH_TOKEN') | Where-Object { [Environment]::GetEnvironmentVariable($_) }
     if ($credEnvVars.Count -gt 0) {
         Write-Output ("[WARN] 检测到长期令牌环境变量：{0}。建议改用 gh auth login + git credential helper，避免令牌常驻用户环境变量。" -f ($credEnvVars -join ', '))
@@ -441,6 +510,17 @@ if ($Pull) {
         exit 1
     }
 
+    if ($Access -eq "NONE") {
+        Write-Output "Memory Access = NONE; skipping pull (no recall scope)."
+        exit 0
+    }
+    if (-not (Test-AcquireSyncLock)) {
+        Set-SyncFailed -Message "Another sync is already running (lock held); refusing concurrent -Pull."
+        Write-Error -ErrorAction Continue "Another sync is already running (lock held); refusing concurrent -Pull."
+        exit 1
+    }
+    $script:lockHeld = $true
+
     $conflictBackupDir = Join-Path $env:TEMP ("codex-memory-conflict-" + (Get-Date -Format 'yyyyMMdd-HHmmss'))
     try {
         Invoke-Git fetch origin
@@ -472,6 +552,9 @@ if ($Pull) {
                 if (Copy-MemoryToWorkingDir) {
                     Clear-PendingWriteback
                     Write-Output "Pulled changes written back to working memory directory. Previous working copy backed up to $backupDir"
+                    # On success the plaintext working-memory backup is no longer needed
+                    # for recovery; remove it immediately instead of waiting for age-out.
+                    if (Test-Path -LiteralPath $backupDir) { Remove-Item -LiteralPath $backupDir -Recurse -Force -ErrorAction SilentlyContinue }
                 } else {
                     Set-PendingWriteback $changed
                     Write-Output "WARNING: could not auto-write repo changes to the working memory directory (likely read-only for shell)."
@@ -499,9 +582,75 @@ if ($Pull) {
         # -Pull can retry cleanly instead of failing forever (multi-writer).
         try { git -C $repoRoot merge --abort 2>&1 | Out-Null } catch { }
         Write-Error -ErrorAction Continue ($_.Exception.Message + "`nConflict snapshots (if any): $conflictBackupDir")
+        Release-SyncLock
         exit 1
     }
+    Release-SyncLock
     exit 0
+}
+
+if ($CommitRepo) {
+    # Commit every tracked change (scripts/docs/tests + memory) in one repo-maintenance
+    # commit. This is the code path for persisting script/doc changes, which the normal
+    # memory sync intentionally does not commit (it stages only memory/*.md).
+    if (-not (Test-GitClientSafe)) {
+        Set-SyncFailed -Message "Unsafe git client detected (PortableGit / .workbuddy); refusing to commit repo."
+        Write-Error -ErrorAction Continue "Unsafe git client detected (PortableGit / .workbuddy); refusing to commit repo."
+        exit 1
+    }
+    Clear-StaleTempBackups
+    if (-not (Test-AcquireSyncLock)) {
+        Set-SyncFailed -Message "Another sync is already running (lock held); refusing concurrent -CommitRepo."
+        Write-Error -ErrorAction Continue "Another sync is already running (lock held); refusing concurrent -CommitRepo."
+        exit 1
+    }
+    $script:lockHeld = $true
+    git -C $repoRoot add -A
+    if ($LASTEXITCODE -ne 0) { throw "git add -A failed (repo maintenance staging)" }
+    $staged = @(git -C $repoRoot -c core.quotepath=false diff --cached --name-only)
+    if ($LASTEXITCODE -ne 0) { throw "git diff --cached --name-only failed" }
+    if (-not $staged) {
+        Remove-Item -LiteralPath $flagFile -Force -ErrorAction SilentlyContinue
+        Write-Output "No repo changes; nothing to commit."
+        Release-SyncLock
+        exit 0
+    }
+    $changed = (($staged | ForEach-Object { $_ -replace '^memory/', '' }) -join ', ')
+    $conflictBackupDir = Join-Path $env:TEMP ("codex-memory-conflict-" + (Get-Date -Format 'yyyyMMdd-HHmmss'))
+    try {
+        Invoke-Git fetch origin
+        $remoteHash = Get-RemoteMainHash
+        $behind = [int](git -C $repoRoot rev-list --count HEAD..$remoteHash)
+        git -C $repoRoot commit -m "repo sync [$identity]: $changed"
+        if ($LASTEXITCODE -ne 0) { throw "git commit failed (repo maintenance commit)" }
+        if ($behind -gt 0) {
+            Invoke-Git merge --no-edit FETCH_HEAD
+        }
+        Invoke-Git push origin main
+        if (-not (Confirm-RemotePushed)) {
+            Invoke-Git fetch origin
+            $remoteHash = Get-RemoteMainHash
+            $behind = [int](git -C $repoRoot rev-list --count HEAD..$remoteHash)
+            if ($behind -gt 0) {
+                Invoke-Git merge --no-edit FETCH_HEAD
+            }
+            Invoke-Git push origin main
+            if (-not (Confirm-RemotePushed)) {
+                throw "Push succeeded but remote verification failed (local HEAD is not an ancestor of origin/main) after retry."
+            }
+        }
+        Remove-Item -LiteralPath $flagFile -Force -ErrorAction SilentlyContinue
+        Write-Output "Repo synced to GitHub."
+        Release-SyncLock
+        exit 0
+    } catch {
+        Backup-MergeConflict $conflictBackupDir
+        Set-SyncFailed $_.Exception.Message
+        try { git -C $repoRoot merge --abort 2>&1 | Out-Null } catch { }
+        Write-Error -ErrorAction Continue ($_.Exception.Message + "`nConflict snapshots (if any): $conflictBackupDir")
+        Release-SyncLock
+        exit 1
+    }
 }
 
 if (-not (Test-GitClientSafe)) {
@@ -552,6 +701,19 @@ if (Test-Path $pendingFile) {
     }
 }
 
+$secretLeak = Find-SecretLeak $memorySrc
+if ($secretLeak) {
+    Set-SyncFailed -Message "Refusing to sync: secret-like value detected in $secretLeak (pre-commit secret scan)."
+    Write-Error -ErrorAction Continue "Refusing to sync: secret-like value detected in $secretLeak (pre-commit secret scan)."
+    exit 1
+}
+if (-not (Test-AcquireSyncLock)) {
+    Set-SyncFailed -Message "Another sync is already running (lock held); refusing concurrent sync."
+    Write-Error -ErrorAction Continue "Another sync is already running (lock held); refusing concurrent sync."
+    exit 1
+}
+$script:lockHeld = $true
+
 Copy-Item -Path (Join-Path $memorySrc "*.md") -Destination $memoryDst -Force
 # 删除仓库中工作区已删除的 .md（删除传播）
 $srcNames = @(Get-ChildItem -Path (Join-Path $memorySrc "*.md") -File -ErrorAction SilentlyContinue | ForEach-Object { $_.Name })
@@ -560,6 +722,7 @@ Get-ChildItem -Path (Join-Path $memoryDst "*.md") -File -ErrorAction SilentlyCon
 if (-not (Test-MemoryDirsEqual $memorySrc $memoryDst)) {
     Set-SyncFailed -Message "Copy verification failed: working memory and repo memory differ after copy."
     Write-Error -ErrorAction Continue "Copy verification failed: working memory and repo memory differ after copy."
+    Release-SyncLock
     exit 1
 }
 
@@ -570,6 +733,7 @@ if ($LASTEXITCODE -ne 0) { throw "git diff --cached --name-only failed" }
 if (-not $staged) {
     Remove-Item -LiteralPath $flagFile -Force -ErrorAction SilentlyContinue
     Write-Output "No memory changes; skip commit."
+    Release-SyncLock
     exit 0
 }
 
@@ -607,5 +771,7 @@ try {
     # Best-effort cleanup; must never prevent the failure flag from being written.
     try { git -C $repoRoot merge --abort 2>&1 | Out-Null } catch { }
     Write-Error -ErrorAction Continue ($_.Exception.Message + "`nConflict snapshots (if any): $conflictBackupDir")
+    Release-SyncLock
     exit 1
 }
+Release-SyncLock

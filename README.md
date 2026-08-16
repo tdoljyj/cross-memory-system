@@ -55,7 +55,9 @@
 - 脚本自动：复制最新记忆 → git 提交（无变化则 skip commit）→ 推送；远端有新提交时先拉取再推
 - NO_CHANGE 时不产生任何 commit / push / 缓存失效（基线原则 8）
 - 删除传播护栏：同步前校验工作记忆目录 `.md` ≥ 5 且非空，不足则拒绝同步并写 `.sync-failed`，防推空仓
-- 加固（vNext-1.2）：检测到 PortableGit / `.workbuddy` 的 git 客户端时拒绝同步；同步前清理 >7 天的 TEMP 备份目录；全仓有未提交的非 memory 变更时给出警告（脚本只提交 memory）；`-Doctor` 会提示归档.md 超瘦身阈值
+- 加固（vNext-1.2）：检测到 PortableGit / `.workbuddy` 的 git 客户端时拒绝同步；同步前清理过期 TEMP 备份目录；全仓有未提交的非 memory 变更时给出警告（脚本只提交 memory）；`-Doctor` 会提示归档.md 超瘦身阈值
+- 加固（vNext-1.3）：同步入口 `.sync.lock` 跨进程锁（同机并发 pull/push 拒绝而非交错）；提交前密钥扫描（ghp_/gho_/github_pat_/AKIA/私钥头/Bearer 长值命中即拒绝）；pull 支持 `-Access <scope>`（`NONE` 直接跳过）；`-Doctor` 校验凭据来源是否走 gh 助手
+- 脚本/文档提交：修改 sync 脚本/文档/测试后，运行 `powershell -ExecutionPolicy Bypass -File sync-memory.ps1 -CommitRepo` 提交并推送全部变更（普通记忆同步只提交 `memory/*.md`，不代提交脚本/文档）
 - 想手动同步：在 PowerShell 里直接运行上面的命令
 
 ## WorkBuddy 接入要点

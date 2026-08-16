@@ -1,5 +1,6 @@
 .sync-failed
 .pending-writeback
+.sync.lock
 sync.config.ps1
 sync.config.json
 __pycache__/

@@ -228,6 +228,82 @@ def redact(text):
     return _TOKEN_RE.sub(mask, text)
 
 
+_SECRET_PATTERNS = [
+    r"gh[op]_[A-Za-z0-9]{20,}",
+    r"github_pat_[A-Za-z0-9_]{20,}",
+    r"AKIA[0-9A-Z]{16}",
+    r"-----BEGIN (RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----",
+    r"(?i)bearer\s+[A-Za-z0-9._-]{20,}",
+]
+
+
+def _lock_path():
+    return os.path.join(REPO, ".sync.lock")
+
+
+def _pid_alive(pid):
+    if not pid or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def acquire_lock():
+    """Cross-process advisory lock: serialize concurrent pull/push on the same clone."""
+    path = _lock_path()
+    for _ in range(2):
+        try:
+            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            try:
+                os.write(fd, str(os.getpid()).encode("ascii"))
+            finally:
+                os.close(fd)
+            return True
+        except FileExistsError:
+            holder = None
+            try:
+                with open(path, "r", encoding="ascii") as f:
+                    holder = int(f.read().strip() or 0)
+            except Exception:
+                holder = None
+            if _pid_alive(holder):
+                return False
+            try:
+                os.remove(path)
+            except OSError:
+                return False
+    return False
+
+
+def release_lock():
+    try:
+        if os.path.exists(_lock_path()):
+            os.remove(_lock_path())
+    except OSError:
+        pass
+
+
+def find_secret_leak(memdir):
+    """Pre-commit secret scan: refuse to sync memory files carrying credential-like values."""
+    if not os.path.isdir(memdir):
+        return None
+    for name in sorted(os.listdir(memdir)):
+        if not name.endswith(".md"):
+            continue
+        try:
+            with open(os.path.join(memdir, name), "r", encoding="utf-8") as f:
+                text = f.read()
+        except Exception:
+            continue
+        for pat in _SECRET_PATTERNS:
+            if re.search(pat, text):
+                return name
+    return None
+
+
 def confirm_no_divergence():
     """本地 HEAD 是否落在远端 main 祖先链上（含相等）。非分叉即视为安全。
 
@@ -278,7 +354,7 @@ def clear_marker(name):
         print("[!] 清除 %s 失败: %s" % (name, e))
 
 
-def cleanup_stale_backups(retention_days=7):
+def cleanup_stale_backups(retention_days=2):
     """清理过期的 codex-memory-* 临时备份目录（只增不减的历史债务）。"""
     tmp = tempfile.gettempdir()
     cutoff = time.time() - retention_days * 86400
@@ -353,10 +429,13 @@ def fetch_and_merge():
     return True
 
 
-def cmd_pull():
+def cmd_pull(access=""):
     print("== 开场拉取对齐 ==")
     ensure_git_safe()
     cleanup_stale_backups()
+    if access.strip().upper() == "NONE":
+        print("Memory Access = NONE; 按需读取判定为无关，跳过 pull")
+        return
     if not proxy_alive() and PROXY:
         print("[!] 代理 %s 不可达（Clash 未启动？），终止以免 git 卡死" % PROXY)
         write_marker(".sync-failed", "pull aborted: proxy %s unreachable" % PROXY)
@@ -365,30 +444,37 @@ def cmd_pull():
         print("[!] memory 目录缺少 memory/index.json 声明的必需文件或文件为空（删除传播护栏），终止 pull")
         write_marker(".sync-failed", "pull aborted: missing/empty required files per memory/index.json")
         sys.exit(1)
-    if is_working_tree_dirty():
-        print("[!] 工作树有未提交的 memory 变更；请先提交或处理后重跑 pull，避免被覆盖")
-        write_marker(".sync-failed", "pull aborted: working tree has uncommitted memory changes")
+    if not acquire_lock():
+        print("[!] 已有另一同步进程持锁，拒绝并发 pull")
+        write_marker(".sync-failed", "pull aborted: another sync holds .sync.lock")
         sys.exit(1)
-    if not fetch_and_merge():
-        remote = ls_remote()
+    try:
+        if is_working_tree_dirty():
+            print("[!] 工作树有未提交的 memory 变更；请先提交或处理后重跑 pull，避免被覆盖")
+            write_marker(".sync-failed", "pull aborted: working tree has uncommitted memory changes")
+            sys.exit(1)
+        if not fetch_and_merge():
+            remote = ls_remote()
+            restore_tracking_ref(remote)
+            print("[!] 对齐失败：请手动语义合并后重跑，或检查远端状态")
+            write_marker(".sync-failed", "pull failed: fetch+merge 对齐失败")
+            sys.exit(1)
+        if not memory_dir_healthy():
+            print("[!] merge 后 memory 目录缺少 memory/index.json 声明的必需文件或文件为空（远端可能异常），终止")
+            write_marker(".sync-failed", "pull aborted: merged memory dir missing required files per memory/index.json")
+            sys.exit(1)
+        ok, local, remote = confirm_no_divergence()
         restore_tracking_ref(remote)
-        print("[!] 对齐失败：请手动语义合并后重跑，或检查远端状态")
-        write_marker(".sync-failed", "pull failed: fetch+merge 对齐失败")
-        sys.exit(1)
-    if not memory_dir_healthy():
-        print("[!] merge 后 memory 目录缺少 memory/index.json 声明的必需文件或文件为空（远端可能异常），终止")
-        write_marker(".sync-failed", "pull aborted: merged memory dir missing required files per memory/index.json")
-        sys.exit(1)
-    ok, local, remote = confirm_no_divergence()
-    restore_tracking_ref(remote)
-    print("[核验] 本地=%s 远端=%s" % (local, remote))
-    if ok:
-        print("对齐 ✓")
-        clear_marker(".sync-failed")
-    else:
-        print("分叉 ⚠️（本地与远端不在同一祖先链）")
-        write_marker(".sync-failed", "pull 后本地与远端分叉")
-        sys.exit(1)
+        print("[核验] 本地=%s 远端=%s" % (local, remote))
+        if ok:
+            print("对齐 ✓")
+            clear_marker(".sync-failed")
+        else:
+            print("分叉 ⚠️（本地与远端不在同一祖先链）")
+            write_marker(".sync-failed", "pull 后本地与远端分叉")
+            sys.exit(1)
+    finally:
+        release_lock()
 
 
 def cmd_push():
@@ -399,48 +485,60 @@ def cmd_push():
         print("[!] memory 目录缺少 memory/index.json 声明的必需文件或文件为空（删除传播护栏），终止 push")
         write_marker(".sync-failed", "push aborted: missing/empty required files per memory/index.json")
         sys.exit(1)
-    if is_working_tree_dirty():
-        print("[!] 工作树有未提交的 memory 变更；请先 commit，否则 push 只会上传旧 HEAD")
-        write_marker(".sync-failed", "push aborted: working tree has uncommitted memory changes")
+    leak = find_secret_leak(os.path.join(REPO, "memory"))
+    if leak:
+        print("[!] 检测到疑似密钥/令牌（secret-like value）于 memory/%s，拒绝 push 以防泄露" % leak)
+        write_marker(".sync-failed", "push aborted: secret-like value in memory/%s" % leak)
         sys.exit(1)
     if not proxy_alive() and PROXY:
         print("[!] 代理 %s 不可达（Clash 未启动？），终止以免 git 卡死" % PROXY)
         write_marker(".sync-failed", "push aborted: proxy %s unreachable" % PROXY)
         sys.exit(1)
-    # 先 fetch 对齐，避免并发非快进失败（P10）
-    if not fetch_and_merge():
-        print("[!] 对齐失败，终止 push（避免覆盖远端）")
-        write_marker(".sync-failed", "push aborted: fetch+merge 对齐失败")
+    if not acquire_lock():
+        print("[!] 已有另一同步进程持锁，拒绝并发 push")
+        write_marker(".sync-failed", "push aborted: another sync holds .sync.lock")
         sys.exit(1)
-    code, out, err = git("push", "origin", "main")
-    print("[push] exit=%d" % code)
-    if out:
-        print(out)
-    if err:
-        print(redact(err))
-    if code != 0:
-        # push 被拒（并发远端又前进）：重新 fetch+merge 后重推一轮
-        print("[!] push 被拒，重新 fetch+merge 后重推")
+    try:
+        if is_working_tree_dirty():
+            print("[!] 工作树有未提交的 memory 变更；请先 commit，否则 push 只会上传旧 HEAD")
+            write_marker(".sync-failed", "push aborted: working tree has uncommitted memory changes")
+            sys.exit(1)
+        # 先 fetch 对齐，避免并发非快进失败（P10）
         if not fetch_and_merge():
-            print("[!] 二次对齐失败，终止")
-            write_marker(".sync-failed", "push failed: 二次对齐失败")
+            print("[!] 对齐失败，终止 push（避免覆盖远端）")
+            write_marker(".sync-failed", "push aborted: fetch+merge 对齐失败")
             sys.exit(1)
         code, out, err = git("push", "origin", "main")
-        print("[push 重试] exit=%d" % code)
+        print("[push] exit=%d" % code)
         if out:
             print(out)
         if err:
             print(redact(err))
-    ok, local, remote = confirm_no_divergence()
-    restore_tracking_ref(remote)
-    print("[核验] 本地=%s 远端=%s" % (local, remote))
-    if ok:
-        print("已推送 ✓")
-        clear_marker(".sync-failed")
-        sys.exit(0)
-    print("未推上远端 ⚠️（本地与远端分叉；沙盒内 push 可能未落盘，非沙盒重试）")
-    write_marker(".sync-failed", "push 后本地与远端分叉")
-    sys.exit(1)
+        if code != 0:
+            # push 被拒（并发远端又前进）：重新 fetch+merge 后重推一轮
+            print("[!] push 被拒，重新 fetch+merge 后重推")
+            if not fetch_and_merge():
+                print("[!] 二次对齐失败，终止")
+                write_marker(".sync-failed", "push failed: 二次对齐失败")
+                sys.exit(1)
+            code, out, err = git("push", "origin", "main")
+            print("[push 重试] exit=%d" % code)
+            if out:
+                print(out)
+            if err:
+                print(redact(err))
+        ok, local, remote = confirm_no_divergence()
+        restore_tracking_ref(remote)
+        print("[核验] 本地=%s 远端=%s" % (local, remote))
+        if ok:
+            print("已推送 ✓")
+            clear_marker(".sync-failed")
+            sys.exit(0)
+        print("未推上远端 ⚠️（本地与远端分叉；沙盒内 push 可能未落盘，非沙盒重试）")
+        write_marker(".sync-failed", "push 后本地与远端分叉")
+        sys.exit(1)
+    finally:
+        release_lock()
 
 
 def check_ref_valid():
@@ -475,8 +573,15 @@ def cmd_doctor():
     print("[git 路径] %s" % GIT)
     report("git client safe (not PortableGit)", git_is_safe(), GIT)
     print("[代理 %s] %s" % (redact(PROXY), "可达" if proxy_alive() else "不可达（Clash 未启动？）"))
-    code, helper_out, _ = git("config", "--show-origin", "--get", "credential.helper", proxy=False)
+    code, helper_out, _ = git("config", "--get-all", "credential.helper", proxy=False)
+    helper_out = helper_out or ""
+    code, url_helper, _ = git("config", "--get", "credential.https://github.com.helper", proxy=False)
+    url_helper = url_helper or ""
     print("[credential.helper] %s" % redact(helper_out or "(unset)"))
+    if url_helper:
+        print("[credential.https://github.com.helper] %s" % redact(url_helper))
+    if "gh" not in (helper_out + " " + url_helper).lower():
+        print("[WARN] 未检测到 gh 凭据助手（当前 helper：%s）；README 建议 gh auth login 生成 git credential helper，避免长期令牌 setx 常驻" % redact(helper_out or "(unset)"))
     for var in ("GITHUB_PAT_TOKEN", "GH_TOKEN"):
         if os.environ.get(var):
             print("[WARN] 检测到长期令牌环境变量 %s；建议改用 gh auth login + git credential helper" % var)
@@ -572,8 +677,17 @@ def cmd_bootstrap():
 
 def main():
     mode = sys.argv[1] if len(sys.argv) > 1 else "doctor"
-    {"pull": cmd_pull, "push": cmd_push, "doctor": cmd_doctor,
-     "bootstrap": cmd_bootstrap}.get(mode, cmd_doctor)()
+    access = sys.argv[2] if len(sys.argv) > 2 else ""
+    if mode == "pull":
+        cmd_pull(access)
+    elif mode == "push":
+        cmd_push()
+    elif mode == "doctor":
+        cmd_doctor()
+    elif mode == "bootstrap":
+        cmd_bootstrap()
+    else:
+        cmd_doctor()
 
 
 if __name__ == "__main__":

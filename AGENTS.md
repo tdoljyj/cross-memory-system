@@ -42,7 +42,8 @@
 ## 三、读前对齐（仅在命中加载时执行）
 
 1. 若 %USERPROFILE%\.codex\projects\codex-memory-system\.sync-failed 存在，先告知用户上次同步失败及时间戳。
-2. 运行：powershell -ExecutionPolicy Bypass -File "%USERPROFILE%\.codex\projects\codex-memory-system\sync-memory.ps1" -Pull
+2. 运行（T0 绝不触发；命中 T1–T4 时显式声明召回范围，作为「读前判断」的代码锚点）：powershell -ExecutionPolicy Bypass -File "%USERPROFILE%\.codex\projects\codex-memory-system\sync-memory.ps1" -Pull -Access <NONE|IDENTITY|PREFERENCE|PROJECT|HISTORY|CONSTRAINT|MULTI>
+   - `-Access NONE` 会让脚本直接跳过 pull（防 T0 误读）；缺省不传仍兼容旧流程，但建议显式传入以便审计。
 3. -Pull 输出提示「could not auto-write / pending write-back」时，用 apply_patch 把仓库 memory 目录较新文件写回 %USERPROFILE%\Documents\Codex\memory 对应文件，再重跑 -Pull 清除标记；无更新则直接读取。
 
 缓存语义：本地镜像只是 Cache，仓库是唯一事实源。读前 pull 即版本校验（cache.version == store.version），不一致必须重取。
@@ -62,6 +63,10 @@
 - git 写操作（commit / push / sync-memory.ps1）运行在带沙盒 overlay 的环境时（典型：WorkBuddy Bash 沙盒对 ~/.workbuddy 下写入跨命令不持久），必须改为非沙盒方式执行（系统 PowerShell / 编辑器文件通道 / 批准沙盒放行）；~/.codex 与 Documents 不受 overlay 影响。
 - push 后立即用 `git ls-remote origin`（或 `git ls-remote <remote-url>`）对比远端真实 commit 确认已推送；勿依赖本地 `git status` 的 ahead 显示（沙盒 overlay 拦截 tracking ref 写入时本地引用可能失真；2026-08-16 实锤归因=沙盒 overlay，非 PortableGit 缺陷）。
 - 删除传播护栏：同步前校验源 memory 目录 `.md` ≥ 5 且各文件非空；不足则拒绝同步并写 `.sync-failed`，绝不把近空目录推成空仓。
+- 并发互斥：双端脚本入口有 `.sync.lock` 跨进程锁（按 PID 判活），同机并发 pull/push 会被拒绝而非交错，防 torn copy。
+- 密钥扫描：提交前对 memory/*.md 做凭据样值扫描（ghp_/gho_/github_pat_/AKIA/私钥头/Bearer 长值），命中即拒绝同步并写 `.sync-failed`，防令牌入 git 历史。
+- 脚本/文档提交：修改本仓库的脚本 / 文档 / 测试后，Codex 端收尾必须运行 `sync-memory.ps1 -CommitRepo`（提交并推送全部变更，不留未提交）；WorkBuddy 端在 push 前由使用方以「AI名@机器名」身份 commit 脚本/文档变更。绝不把脚本/文档变更长期留在工作树。
+- 自主执行边界：对无风险、可逆、在任务范围内的合理操作（git commit/push、文件对齐、补测试、清理临时文件等）直接执行，不再反复请求确认；仅在破坏性/不可逆（rm -rf、force push、reset、删除记忆）、越出任务范围、或需外部授权/凭据时才停下确认。
 - 核验统一：push/pull 后核验一律用 `merge-base --is-ancestor`（祖先判定），不用 `==` 比较；并发下本地落后于远端属正常（安全），仅真分叉才视为失败。
 
 ## 六、多机多 AI 协同纪律

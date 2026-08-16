@@ -111,8 +111,8 @@ class Sandbox:
             }, fh)
         return script
 
-    def run_py(self, script, mode):
-        return sh([sys.executable, script, mode],
+    def run_py(self, script, mode, *extra):
+        return sh([sys.executable, script, mode] + list(extra),
                   cwd=os.path.dirname(script), check_fail=False)
 
     def install_ps1(self, clone, workdir):
@@ -340,17 +340,108 @@ def test_py_missing_index_guard(sb):
           "护栏触发时应写 .sync-failed")
 
 
+@sandboxed
+def test_py_secret_scan_blocks_push(sb):
+    clone = sb.add_clone("a")
+    script = sb.install_py(clone)
+    before = sb.remote_head()
+    with open(os.path.join(clone, "memory", "决策.md"), "a",
+              encoding="utf-8") as fh:
+        fh.write("\nghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n")
+    git("add", "-A", cwd=clone)
+    git("commit", "-m", "leak", cwd=clone)
+    p = sb.run_py(script, "push")
+    check(p.returncode != 0, "密钥样值应被拒绝")
+    check("secret" in (p.stdout + p.stderr), p.stdout + p.stderr)
+    check(os.path.isfile(os.path.join(clone, ".sync-failed")),
+          "密钥扫描触发时应写 .sync-failed")
+    check(sb.remote_head() == before, "密钥样值不应推上远端")
+
+
+@sandboxed
+def test_py_access_none_skips_pull(sb):
+    a = sb.add_clone("a")
+    b = sb.add_clone("b")
+    sa = sb.install_py(a)
+    sb_script = sb.install_py(b)
+    with open(os.path.join(a, "memory", "状态.md"), "a",
+              encoding="utf-8") as fh:
+        fh.write("\n状态 v3\n")
+    git("add", "-A", cwd=a)
+    git("commit", "-m", "v3", cwd=a)
+    check(sb.run_py(sa, "push").returncode == 0, "A push 应成功")
+    p = sb.run_py(sb_script, "pull", "NONE")
+    check(p.returncode == 0, p.stdout + p.stderr)
+    check("NONE" in p.stdout, p.stdout)
+    local = git("rev-parse", "HEAD", cwd=b).stdout.strip()
+    check(local != sb.remote_head(), "Access=NONE 时不应拉取远端")
+
+
+@sandboxed
+def test_py_lock_blocks_concurrent(sb):
+    clone = sb.add_clone("a")
+    script = sb.install_py(clone)
+    lock = os.path.join(clone, ".sync.lock")
+    with open(lock, "w", encoding="ascii") as fh:
+        fh.write(str(os.getpid()))
+    try:
+        p = sb.run_py(script, "push")
+        check(p.returncode != 0, "已有持锁进程时应拒绝 push")
+        check("锁" in (p.stdout + p.stderr) or "lock" in (p.stdout + p.stderr),
+              p.stdout + p.stderr)
+        check(os.path.isfile(os.path.join(clone, ".sync-failed")),
+              "持锁拒绝时应写 .sync-failed")
+    finally:
+        if os.path.exists(lock):
+            os.remove(lock)
+
+
+@sandboxed
+def test_ps1_secret_scan_blocks(sb):
+    clone = sb.add_clone("repo")
+    workdir = os.path.join(sb.tmp, "working")
+    sb.install_ps1(clone, workdir)
+    before = sb.remote_head()
+    with open(os.path.join(workdir, "画像.md"), "a", encoding="utf-8") as fh:
+        fh.write("\nghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n")
+    p = sb.run_ps1(clone)
+    check(p.returncode != 0, p.stdout + p.stderr)
+    check("secret" in (p.stdout + p.stderr), p.stdout + p.stderr)
+    check(sb.remote_head() == before, "密钥样值不应推上远端")
+
+
+@sandboxed
+def test_ps1_commit_repo_commits_docs(sb):
+    clone = sb.add_clone("repo")
+    workdir = os.path.join(sb.tmp, "working")
+    sb.install_ps1(clone, workdir)
+    before = sb.remote_head()
+    with open(os.path.join(clone, "NEW_DOC.md"), "w", encoding="utf-8") as fh:
+        fh.write("# 新增文档\n")
+    p = sb.run_ps1(clone, "-CommitRepo")
+    check(p.returncode == 0, p.stdout + p.stderr)
+    check("Repo synced" in p.stdout, p.stdout)
+    check(sb.remote_head() != before, "-CommitRepo 应产生新提交并推送")
+    check("repo sync" in git("log", "--oneline", "-3", cwd=clone).stdout,
+          "git log 应出现 repo sync 提交")
+
+
 TESTS = [
     test_index_json_recall_mapping_valid,
     test_redact_masks_tokens,
     test_ps1_no_change_skips_commit,
     test_ps1_change_commits_and_pushes,
+    test_ps1_secret_scan_blocks,
+    test_ps1_commit_repo_commits_docs,
     test_py_push_is_idempotent,
     test_py_concurrent_merge_no_loss,
     test_py_sync_failure_writes_marker_and_retries,
     test_py_pull_aligns_to_remote,
     test_py_delete_propagation_guard,
     test_py_missing_index_guard,
+    test_py_secret_scan_blocks_push,
+    test_py_access_none_skips_pull,
+    test_py_lock_blocks_concurrent,
 ]
 
 
