@@ -41,14 +41,52 @@
 7. **只沉淀稳定长期信息**：不写流水账、一次性临时信息
 
 ## 新电脑接入（一次性）
-1. 安装 GitHub CLI 并登录同一账号：`gh auth login`
-2. 接入 GitHub MCP：git 侧的凭据统一走 `gh auth login` 生成的 git credential helper（`git config --show-origin --get credential.helper` 应指向 gh/manager），**不要**再把 `gho_` 长期令牌 `setx` 进用户环境变量（长期令牌常驻环境变量会被任意本机进程读取）。若 MCP 确需 bearer 令牌（`~/.codex/config.toml` 的 `[mcp_servers.github]` / `bearer_token_env_var`），优先用最小权限令牌并避免重复写环境变量；同步脚本的 doctor 已对 `GITHUB_PAT_TOKEN` / `GH_TOKEN` 给出提醒、并对输出做令牌掩码。新会话 `codex mcp list` 应看到 44 个工具
-3. 克隆仓库：`gh repo clone tdoljyj/cross-memory-system ~/.codex/projects/codex-memory-system`
-4. 把 `memory\` 里的五个文件复制到 `Documents\Codex\memory\`
-5. 写全局钩子 `~/.codex/AGENTS.md`（用仓库内 AGENTS.md 内容，路径里的 `<用户名>` 换成实际用户名）
-6. 建立本机配置 `~/.codex/projects/codex-memory-system/sync.config.ps1`（gitignored）：`$AgentName = "Codex"`、`$ProxyUrl = "http://127.0.0.1:7897"`（无代理则 `""`）、`$MemoryDir`（非 Windows 或自定义路径时改）
-7. 跑自检：`powershell -ExecutionPolicy Bypass -File ~/.codex/projects/codex-memory-system/sync-memory.ps1 -Doctor`，全部 PASS（可选先跑 `-Bootstrap` 一键写入推荐 git config）
-8. 按手册第五节启用 Full access，然后新会话验证
+
+> 本仓库为「任意机器 × 任意 AI」协同（见「定位」）：接入流程 = **通用步骤** + **端侧差异**。通用步骤对所有接入方一致；当前已登记 Codex 与 WorkBuddy 两端，未来新端照此模式登记。任一步失败先看「失败排查」；doctor 任一 FAIL 未修红前视为阻断态，不得据此读 canon 当依据、不得 push（AGENTS v3.1）。
+
+### 通用步骤（所有接入方）
+
+1. **安装 GitHub CLI 并登录同一账号**：`gh auth login`。git 侧凭据统一走 gh 生成的 git credential helper（`git config --show-origin --get credential.helper` 应指向 gh/manager）；**不要**把 `gho_`/`ghp_` 长期令牌 `setx` 进用户环境变量（常驻令牌会被任意本机进程读取）。两脚本的 doctor 都会对 `GITHUB_PAT_TOKEN` / `GH_TOKEN` 给出 WARN，并对输出做令牌掩码。
+2. **克隆仓库到本端工作区**（路径按端侧差异表；本端绝不克隆到对方工作区，也不直写对方克隆）。克隆后先做**版本真值核对**：`git ls-remote origin main` 与 `git rev-parse HEAD` 比对，一致再继续；版本号以仓库根 `VERSION` 文件 + git tag 为准（AGENTS v3.1 硬性 check-list）。
+3. **建立本机配置**（gitignored，各端格式见下表；脚本缺省回落内置默认，换机器只改这一个文件）。
+4. **写入推荐 git 配置**（两脚本均提供 bootstrap，写入内容一致）：
+   - `core.autocrlf=false`（配合 `.gitattributes` 的 `eol=lf`，换行符字节级一致，防互相重写）
+   - `merge.union.driver = "git merge-file --union %A %O %B"`（归档.md 并发追加自动合并的必需驱动；仅 `git merge` 生效，**禁止 rebase**）
+   - `maintenance.auto=false` / `fetch.autoMaintenance=false` / `gc.auto=256` / `gc.pruneExpire=2.weeks`
+5. **跑 doctor 自检**（命令见下表）：覆盖 git 可用性与客户端安全（拒绝 PortableGit / `.workbuddy` 路径）、远端可达与凭据、tracking ref、ref 写入持久性、`core.autocrlf`、`.gitattributes`、union 驱动、残留标记、记忆目录健康（按 `memory/index.json` 的 files 清单，文件缺失或为空即 FAIL，防推空仓）、本地与远端版本对齐、消费端 conform 探针。**全部 PASS 才正式接入**。
+6. **准备消费端 + 新会话验证**：按端侧差异表完成消费端配置。新会话按 Memory Router 命中执行读前对齐（Codex：`-Pull`；WorkBuddy：`python sync-memory.py pull`），问「我是谁」能直接接上即通过；再让 AI 修改记忆文件一行并完成一次提交推送，`git log` 应出现 `AI名@机器名` 身份的新 commit。
+
+### 端侧差异（Codex / WorkBuddy）
+
+| 项 | Codex | WorkBuddy |
+|---|---|---|
+| 克隆位置 | `~/.codex/projects/codex-memory-system`（`gh repo clone tdoljyj/cross-memory-system` + 该路径） | `~/.workbuddy/codex-memory-system`（目录名固定，remote 指向本仓库） |
+| 同步脚本 | `sync-memory.ps1`（默认 push；`-Pull` 读前对齐 / `-Doctor` / `-Bootstrap` / `-CommitRepo` 提交脚本文档） | `sync-memory.py`（四模式 `pull` / `push` / `doctor` / `bootstrap`） |
+| 记忆工作区 | `Documents\Codex\memory\`：克隆后把 `memory\` 内 `memory/index.json` 声明的文件复制过去 | 克隆内 `memory\` 即工作区，无需复制 |
+| 消费端钩子 | 写全局钩子 `~/.codex/AGENTS.md`（用仓库内 AGENTS.md 内容，路径里 `<用户名>` 换成实际用户名） | WorkBuddy 系统注入 `~/.workbuddy/MEMORY.md`，无需手动 |
+| 本机配置 | `sync.config.ps1`（gitignored）：`$AgentName` / `$ProxyUrl`（默认 `http://127.0.0.1:7897`，无代理 `""`）/ `$MemoryDir` / `$GitEmail` | `sync.config.json`（gitignored）：`{repo, proxy, proxy_host, proxy_port, git_candidates}` |
+| 自检命令 | `powershell -ExecutionPolicy Bypass -File ...\sync-memory.ps1 -Doctor` | `python ...\sync-memory.py doctor` |
+| 权限要求 | Codex 桌面版启用 Full access（见配置手册第五节；`apply_patch` 写 `~/.codex` 与记忆目录必需） | 不依赖 Full access（WorkBuddy 侧 Full access 每会话临时、不可持久，2026-08-16 起弃用）：读/pull 沙盒内即可完成（Python 直写 ref 兜底）；仅 git 写操作（push）需逐次非沙盒执行（`dangerouslyDisableSandbox=true`），判据=输出尾 `⚠️ Sandbox bypassed` |
+| git 客户端 | 系统 git；ps1 内置部署护栏拒绝在 `~/.workbuddy` 镜像内运行，也拒绝 PortableGit / `.workbuddy` 路径的 git | 官方 Git for Windows 优先（`C:\Program Files\Git`，py 自动探测）；勿用 WorkBuddy 内置 PortableGit（代理 TLS 握手失败） |
+| 网络策略 | 代理优先 `http://127.0.0.1:7897`、固定 `http.sslBackend=openssl`，直连兜底 | 代理优先级 config > 环境变量（`HTTPS_PROXY`/`HTTP_PROXY`）> 默认 `http://127.0.0.1:7897`；沙盒内 raw TCP 直连被拦，git 必须走代理；pull/push 前先探测代理存活，不可达 3 秒内快速失败 |
+
+> Codex 可选：GitHub MCP（`~/.codex/config.toml` 的 `[mcp_servers.github]`）与记忆同步无关，如启用，bearer 令牌用最小权限并避免重复写环境变量。WorkBuddy 侧不经过 Codex MCP。
+
+### 失败排查
+
+- **doctor：`remote reachable + credential` FAIL** → 先 `gh auth status` 确认已登录；再确认代理已启动（默认 7897）；`git config --show-origin --get-all credential.helper` 应指向 gh/manager，而非 `GITHUB_PAT_TOKEN`/`GH_TOKEN` 环境变量（doctor 会 WARN）。
+- **doctor：`tracking ref` FAIL** → WorkBuddy 侧多为沙盒 overlay 拦两层 ref 原子写（exit 0 静默失败），doctor 会自动补写并报 AUTO-HEALED（不计失败）；补写仍失败或报真分叉时，手动 `git fetch origin main && git merge --no-edit FETCH_HEAD`（非 rebase）后再跑。
+- **doctor：`merge.union.driver` / `core.autocrlf` FAIL** → 未跑 bootstrap 或配置被覆盖，重跑 `-Bootstrap`（ps1）或 `bootstrap`（py）。
+- **doctor：`git client safe` FAIL** → git 来自 PortableGit 或 `.workbuddy` 路径：Codex 侧换系统 git（ps1 会拒绝同步）；WorkBuddy 侧改 `sync.config.json` 的 `git_candidates` 指向官方 Git for Windows。
+- **doctor：`memory dir healthy` FAIL** → 按 `memory/index.json` 的 files 清单，每个文件必须存在且非空：Codex 侧确认已复制完整；WorkBuddy 侧确认克隆内 `memory\` 完好（防把近空目录推成空仓）。
+- **doctor：`local == remote` 标红「本地落后远端」** → 读前必须 re-pull（`-Pull` / `python sync-memory.py pull`），否则结论不可信；标红「分叉」→ 手动语义合并（保留两端内容）后再收敛，**绝不 force push / reset / 以本地覆盖远端**。
+- **`.sync-failed` / `.pending-writeback` 残留** → 上次同步失败或待写回标记：先读标记文件内容定位原因，修复后重跑同步自动清除；`-Pull` 提示 pending write-back 时用 apply_patch 把仓库较新文件写回 Codex 工作区再重跑。
+- **push 被拒（non-fast-forward）** → 远端有新提交：`git fetch` + `git merge --no-edit FETCH_HEAD`，归档.md 由 union 驱动自动合并、其余文件语义合并，解决后重推。
+- **push 后 `git status` 显示 ahead/gone** → 沙盒 overlay 不写 tracking ref 所致（cosmetic）：以 `git ls-remote origin main` 为准，或跑 doctor 自愈补写；真伪以 `merge-base --is-ancestor` 判定。
+- **WorkBuddy 侧 `[代理 ...] 不可达`** → 代理未启动：启动后重试，或改 `sync.config.json` 的 `proxy`；沙盒内 raw TCP 直连被拦，git 不可绕代理直连。
+- **`.sync.lock` 并发锁冲突** → 同机已有另一同步在跑，等其结束重试（拒绝而非交错，防 torn copy）。
+- **密钥扫描拦截（同步被拒并写 `.sync-failed`）** → 提交前命中 `ghp_`/`gho_`/`github_pat_`/`AKIA`/私钥头/Bearer 长值：清理记忆文件中的令牌样值后再同步（模式见 `guards.json`）。
+- **ps1 在 WorkBuddy 镜像内运行被硬阻断** → `[deploy-guard] refusing to run inside a .workbuddy mirror`：sync-memory.ps1 只应在 Codex 侧克隆（`~/.codex/projects/...`）运行，WorkBuddy 侧用 `sync-memory.py`，脚本与工作区不可互换。
 
 ## Codex 同步（按需触发，对齐基线 vNext-1.3）
 - 钩子指令（AGENTS.md v3.1）：Memory Router 判定本轮产生记忆写入后才运行：`powershell -ExecutionPolicy Bypass -File ~/.codex/projects/codex-memory-system/sync-memory.ps1`
