@@ -46,14 +46,14 @@
 
 ### 通用步骤（所有接入方）
 
-1. **安装 GitHub CLI 并登录同一账号**：`gh auth login`。git 侧凭据统一走 gh 生成的 git credential helper（`git config --show-origin --get credential.helper` 应指向 gh/manager）；**不要**把 `gho_`/`ghp_` 长期令牌 `setx` 进用户环境变量（常驻令牌会被任意本机进程读取）。两脚本的 doctor 都会对 `GITHUB_PAT_TOKEN` / `GH_TOKEN` 给出 WARN，并对输出做令牌掩码。
-2. **克隆私有仓库 `tdoljyj/cross-memory-system` 到本端工作区**（路径按端侧差异表；本端绝不克隆到对方工作区，也不直写对方克隆）。克隆后先做**版本真值核对**：`git ls-remote origin main` 与 `git rev-parse HEAD` 比对，一致再继续；版本号以仓库根 `VERSION` 文件 + git tag 为准（AGENTS v3.1 硬性 check-list）。
+1. **安装 GitHub CLI 并登录同一账号**：`gh auth login`。git 侧凭据统一走 gh 生成的 git credential helper（`git config --show-origin --get credential.helper` 应指向 gh 的 `auth git-credential`，而非 git-credential-manager）；**不要**把 `gho_`/`ghp_` 长期令牌 `setx` 进用户环境变量（常驻令牌会被任意本机进程读取）。两脚本的 doctor 都会对 `GITHUB_PAT_TOKEN` / `GH_TOKEN` 给出 WARN，并对输出做令牌掩码。
+2. **克隆私有仓库 `tdoljyj/cross-memory-system` 到本端工作区**（路径按端侧差异表；本端绝不克隆到对方工作区，也不直写对方克隆）。克隆后先做**版本真值核对**：取 `git ls-remote origin main` 输出首列 hash（`git ls-remote origin main | cut -f1`）与 `git rev-parse HEAD` 比对，一致再继续——此步只验证 clone 动作本身正确并建立基线（刚克隆的 HEAD 天然等于远端，不防后续漂移，后续漂移由每次读前对齐兜底）；版本号以仓库根 `VERSION` 文件 + git tag 为准（AGENTS v3.1 硬性 check-list）。
 3. **建立本机配置**（gitignored，各端格式见下表；脚本缺省回落内置默认，换机器只改这一个文件）。
 4. **写入推荐 git 配置**（两脚本均提供 bootstrap，写入内容一致）：
    - `core.autocrlf=false`（配合 `.gitattributes` 的 `eol=lf`，换行符字节级一致，防互相重写）
-   - `merge.union.driver = "git merge-file --union %A %O %B"`（归档.md 并发追加自动合并的必需驱动；仅 `git merge` 生效，**禁止 rebase**）
-   - `maintenance.auto=false` / `fetch.autoMaintenance=false` / `gc.auto=256` / `gc.pruneExpire=2.weeks`
-5. **跑 doctor 自检**（命令见下表）：覆盖 git 可用性与客户端安全（拒绝 PortableGit / `.workbuddy` 路径）、远端可达与凭据、tracking ref、ref 写入持久性、`core.autocrlf`、`.gitattributes`、union 驱动、残留标记、记忆目录健康（按 `memory/index.json` 的 files 清单，文件缺失或为空即 FAIL，防推空仓）、本地与远端版本对齐、消费端 conform 探针。**全部 PASS 才正式接入**。
+   - `merge.union.driver = "git merge-file --union %A %O %B"`（归档.md 并发追加自动合并的必需驱动；须配合 `.gitattributes` 的 `memory/归档.md merge=union` 标注才生效，只配 driver 或只配 attributes 都是 no-op；仅 `git merge` 生效，**禁止 rebase**）
+   - `maintenance.auto=false` / `fetch.autoMaintenance=false`（关后台自动维护，防沙盒下 ref 重写）/ `gc.pruneExpire=2.weeks`（不设 `gc.auto`，用 git 默认阈值 6700，小仓库几乎不触发自动 gc，需要时手动 `git gc`）
+5. **跑 doctor 自检**（命令见下表）：覆盖 git 可用性与客户端安全（拒绝 git 可执行文件位于 PortableGit / `.workbuddy` 目录）、远端可达与凭据、tracking ref、ref 写入持久性、`core.autocrlf`、`.gitattributes`、union 驱动、残留标记、记忆目录健康（按 `memory/index.json` 的 files 清单，文件缺失或为空即 FAIL，防推空仓）、本地与远端版本对齐、消费端 conform 探针。**全部 PASS 才正式接入**。
 6. **准备消费端 + 新会话验证**：按端侧差异表完成消费端配置。新会话按 Memory Router 命中执行读前对齐（Codex：`-Pull`；WorkBuddy：`python sync-memory.py pull`），问「我是谁」能直接接上即通过；再让 AI 修改记忆文件一行并完成一次提交推送，`git log` 应出现 `AI名@机器名` 身份的新 commit。
 
 ### 端侧差异（Codex / WorkBuddy）
@@ -74,7 +74,7 @@
 
 ### 失败排查
 
-- **doctor：`remote reachable + credential` FAIL** → 先 `gh auth status` 确认已登录；再确认代理已启动（默认 7897）；`git config --show-origin --get-all credential.helper` 应指向 gh/manager，而非 `GITHUB_PAT_TOKEN`/`GH_TOKEN` 环境变量（doctor 会 WARN）。
+- **doctor：`remote reachable + credential` FAIL** → 先 `gh auth status` 确认已登录；再确认代理已启动（默认 7897）；`git config --show-origin --get-all credential.helper` 应指向 gh 的 `auth git-credential`，而非 `GITHUB_PAT_TOKEN`/`GH_TOKEN` 环境变量（doctor 会 WARN）。
 - **doctor：`tracking ref` FAIL** → WorkBuddy 侧多为沙盒 overlay 拦两层 ref 原子写（exit 0 静默失败），doctor 会自动补写并报 AUTO-HEALED（不计失败）；补写仍失败或报真分叉时，手动 `git fetch origin main && git merge --no-edit FETCH_HEAD`（非 rebase）后再跑。
 - **doctor：`merge.union.driver` / `core.autocrlf` FAIL** → 未跑 bootstrap 或配置被覆盖，重跑 `-Bootstrap`（ps1）或 `bootstrap`（py）。
 - **doctor：`git client safe` FAIL** → git 来自 PortableGit 或 `.workbuddy` 路径：Codex 侧换系统 git（ps1 会拒绝同步）；WorkBuddy 侧改 `sync.config.json` 的 `git_candidates` 指向官方 Git for Windows。

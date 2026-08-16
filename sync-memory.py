@@ -892,7 +892,6 @@ def cmd_bootstrap():
         "core.autocrlf": "false",
         "merge.union.driver": "git merge-file --union %A %O %B",
         "maintenance.auto": "false",
-        "gc.auto": "256",
         "gc.pruneExpire": "2.weeks",
         "fetch.autoMaintenance": "false",
     }
