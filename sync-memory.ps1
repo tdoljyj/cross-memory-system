@@ -57,6 +57,15 @@ $lockFile    = Join-Path $repoRoot ".sync.lock"
 $needsPushFile = Join-Path $repoRoot ".needs-push"
 $script:lockHeld = $false
 
+# P2-4：-Pull -Access NONE 纯短路——必须在任何写副作用之前退出：不写 git 身份配置、
+# 不写 .sync-failed、不清理 TEMP 备份、不取锁、不读 git/index、不访问远端
+# （对齐 sync-memory.py cmd_pull 的 NONE 纯短路语义；原实现把 NONE 判断放在
+# Invoke-PullMode 的五步 preflight 之后，T0 场景仍产生写副作用）。
+if ($Pull -and $Access -eq "NONE") {
+    Write-Output "Memory Access = NONE; skipping pull (no recall scope)."
+    exit 0
+}
+
 # Fast direct-connectivity probe so a dead github.com connection fails in ~3s instead of ~20s.
 function Test-DirectGitHub {
     $client = New-Object System.Net.Sockets.TcpClient
@@ -677,10 +686,6 @@ function Invoke-PullMode {
         $script:exitCode = 1; return
     }
 
-    if ($Access -eq "NONE") {
-        Write-Output "Memory Access = NONE; skipping pull (no recall scope)."
-        $script:exitCode = 0; return
-    }
     if (-not (Test-AcquireSyncLock)) {
         Set-SyncFailed -Message "Another sync is already running (lock held); refusing concurrent -Pull."
         Write-Error -ErrorAction Continue "Another sync is already running (lock held); refusing concurrent -Pull."

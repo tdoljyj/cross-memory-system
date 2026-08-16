@@ -27,6 +27,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PS1 = os.path.join(REPO_ROOT, "sync-memory.ps1")
@@ -533,6 +534,38 @@ def test_py_pull_ahead_self_heals(sb):
           "pull=读不应 push，远端应保持不变")
     check(os.path.exists(os.path.join(clone, ".needs-push")),
           "领先时应写 .needs-push 标记")
+
+
+@sandboxed
+def test_ps1_pull_access_none_pure_shortcircuit(sb):
+    """P2-4 回归：-Pull -Access NONE 必须进程级零副作用短路——即使仓库 memory 脏、
+    存在过期 TEMP 备份，也不写 .sync-failed、不清理 TEMP、不取锁、不写 git 身份、
+    不访问远端、不改动工作树。"""
+    clone = sb.add_clone("repo")
+    workdir = os.path.join(sb.tmp, "working")
+    sb.install_ps1(clone, workdir)
+    # 制造会触发各 preflight 失败/副作用的状态
+    with open(os.path.join(clone, "memory", "状态.md"), "a", encoding="utf-8") as fh:
+        fh.write("\n未提交脏变更\n")
+    stale = os.path.join(tempfile.gettempdir(), "codex-memory-backup-2000-01-01")
+    os.makedirs(stale, exist_ok=True)
+    os.utime(stale, (time.time() - 400 * 86400, time.time() - 400 * 86400))
+    before_head = sb.remote_head()
+    p = sb.run_ps1(clone, "-Pull", "-Access", "NONE")
+    check(p.returncode == 0, p.stdout + p.stderr)
+    check("skipping pull" in p.stdout, p.stdout)
+    check(not os.path.isfile(os.path.join(clone, ".sync-failed")),
+          "NONE 短路不得写 .sync-failed")
+    check(not os.path.exists(os.path.join(clone, ".sync.lock")),
+          "NONE 短路不得取锁/留锁文件")
+    check(os.path.isdir(stale), "NONE 短路不得清理 TEMP 备份目录")
+    check(git("config", "user.name", cwd=clone).stdout.strip() == "Test",
+          "NONE 短路不得执行 git config 身份写入")
+    check(sb.remote_head() == before_head, "NONE 短路不得访问/修改远端")
+    dirty = sh([GIT, "-C", clone, "-c", "core.quotepath=false",
+                "status", "--porcelain", "--", "memory"]).stdout
+    check("状态.md" in dirty, "NONE 短路不得改动/合并工作树")
+    shutil.rmtree(stale, ignore_errors=True)
 
 
 @sandboxed
@@ -1047,6 +1080,7 @@ TESTS = [
     test_py_deploy_guard_blocks_codex_path,
     test_ps1_conform_probe_detects,
     test_ps1_needs_push_cleared_after_push,
+    test_ps1_pull_access_none_pure_shortcircuit,
 ]
 
 
