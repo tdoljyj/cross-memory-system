@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "id": "mem_c1d8a9ba",
+  "type": "episodic",
+  "scope": "global",
+  "content": "- 封版：验收测试 57→69 全绿；py doctor ALL PASS；ps1 -Doctor ALL PASS（含新探针）；tag vNext-1.3 由 c2bb2cb 移至封版 commit（GAP-2-4 第二部分）；VERSION=vNext-1.3=tag 名；本地=远端=封版 HEAD",
+  "status": "candidate",
+  "source": {
+    "kind": "migration",
+    "adapter": "migrate-memory.py",
+    "session_id": null,
+    "created_at": "2026-08-17T07:50:27Z",
+    "updated_at": "2026-08-17T07:50:27Z"
+  },
+  "temporal": {
+    "valid_from": null,
+    "valid_until": null
+  },
+  "relations": {
+    "supersedes": [],
+    "superseded_by": [],
+    "contradicts": [],
+    "related": []
+  },
+  "classification": {
+    "memory_layer": "episodic",
+    "category": "history",
+    "recall_layer": "L4",
+    "priority": "medium"
+  },
+  "provenance": {
+    "evidence": "observed",
+    "source_ref": "归档.md##Sprint 3 完成与封版（2026-08-16，DSH@TURING）"
+  },
+  "tags": [
+    "manual-review"
+  ],
+  "entities": []
+}

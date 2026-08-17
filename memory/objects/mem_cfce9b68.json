@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "id": "mem_cfce9b68",
+  "type": "episodic",
+  "scope": "global",
+  "content": "- 坑：内置 PortableGit 走代理 TLS 握手失败（schannel failed to receive handshake / openssl unexpected eof），同机 curl / gh 正常；PortableGit 全局 etc/gitconfig 偶发 gitconfig.lock 残留（File exists），删锁文件即可",
+  "status": "candidate",
+  "source": {
+    "kind": "migration",
+    "adapter": "migrate-memory.py",
+    "session_id": null,
+    "created_at": "2026-08-17T07:50:27Z",
+    "updated_at": "2026-08-17T07:50:27Z"
+  },
+  "temporal": {
+    "valid_from": null,
+    "valid_until": null
+  },
+  "relations": {
+    "supersedes": [],
+    "superseded_by": [],
+    "contradicts": [],
+    "related": []
+  },
+  "classification": {
+    "memory_layer": "episodic",
+    "category": "history",
+    "recall_layer": "L4",
+    "priority": "medium"
+  },
+  "provenance": {
+    "evidence": "observed",
+    "source_ref": "归档.md##WorkBuddy 新机器接入实录（2026-08-15 本机）"
+  },
+  "tags": [
+    "manual-review"
+  ],
+  "entities": []
+}

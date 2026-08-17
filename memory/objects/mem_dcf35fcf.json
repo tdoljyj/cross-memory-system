@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "id": "mem_dcf35fcf",
+  "type": "semantic",
+  "scope": "global",
+  "content": "- 结果导向，讨厌长时间抽象讨论；高频词：「直接给我」「完整版本」「详细规划」「不要废话」「继续」「你再想想」「你完全理解错了」「不是这个意思」",
+  "status": "active",
+  "source": {
+    "kind": "migration",
+    "adapter": "migrate-memory.py",
+    "session_id": null,
+    "created_at": "2026-08-17T07:50:27Z",
+    "updated_at": "2026-08-17T07:50:27Z"
+  },
+  "temporal": {
+    "valid_from": null,
+    "valid_until": null
+  },
+  "relations": {
+    "supersedes": [],
+    "superseded_by": [],
+    "contradicts": [],
+    "related": []
+  },
+  "classification": {
+    "memory_layer": "semantic",
+    "category": "preference",
+    "recall_layer": "L2",
+    "priority": "medium"
+  },
+  "provenance": {
+    "evidence": "explicit",
+    "source_ref": "画像.md##工作方式（对 AI / 工具的要求）"
+  },
+  "tags": [],
+  "entities": []
+}

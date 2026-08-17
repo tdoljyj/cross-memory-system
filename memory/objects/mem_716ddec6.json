@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "id": "mem_716ddec6",
+  "type": "semantic",
+  "scope": "global",
+  "content": "- 不追求稳定，愿承担风险，希望拥有自己的项目/IP/工作室/技术/产品/作品（资产归属感重要）",
+  "status": "active",
+  "source": {
+    "kind": "migration",
+    "adapter": "migrate-memory.py",
+    "session_id": null,
+    "created_at": "2026-08-17T07:50:27Z",
+    "updated_at": "2026-08-17T07:50:27Z"
+  },
+  "temporal": {
+    "valid_from": null,
+    "valid_until": null
+  },
+  "relations": {
+    "supersedes": [],
+    "superseded_by": [],
+    "contradicts": [],
+    "related": []
+  },
+  "classification": {
+    "memory_layer": "semantic",
+    "category": "preference",
+    "recall_layer": "L2",
+    "priority": "medium"
+  },
+  "provenance": {
+    "evidence": "explicit",
+    "source_ref": "画像.md##性格与风险"
+  },
+  "tags": [],
+  "entities": []
+}

@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "id": "mem_4c10e8e7",
+  "type": "episodic",
+  "scope": "global",
+  "content": "- 症状：fetch 显示更新 origin/main 成功但引用不持久，status 幻影 ahead / gone，update-ref 返回 0 但不写文件；一层目录 ref 正常、两层及以上失败，对象传输不受影响",
+  "status": "candidate",
+  "source": {
+    "kind": "migration",
+    "adapter": "migrate-memory.py",
+    "session_id": null,
+    "created_at": "2026-08-17T07:50:27Z",
+    "updated_at": "2026-08-17T07:50:27Z"
+  },
+  "temporal": {
+    "valid_from": null,
+    "valid_until": null
+  },
+  "relations": {
+    "supersedes": [],
+    "superseded_by": [],
+    "contradicts": [],
+    "related": []
+  },
+  "classification": {
+    "memory_layer": "episodic",
+    "category": "history",
+    "recall_layer": "L4",
+    "priority": "medium"
+  },
+  "provenance": {
+    "evidence": "observed",
+    "source_ref": "归档.md##tracking ref 写入缺陷：根因与止血（2026-08-15 ~ 08-16）"
+  },
+  "tags": [
+    "manual-review"
+  ],
+  "entities": []
+}

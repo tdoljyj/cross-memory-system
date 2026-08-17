@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "id": "mem_3664c826",
+  "type": "state",
+  "scope": "global",
+  "content": "- 现状：筹备阶段，按项目驱动边做边学",
+  "status": "candidate",
+  "source": {
+    "kind": "migration",
+    "adapter": "migrate-memory.py",
+    "session_id": null,
+    "created_at": "2026-08-17T07:50:27Z",
+    "updated_at": "2026-08-17T07:50:27Z"
+  },
+  "temporal": {
+    "valid_from": null,
+    "valid_until": null
+  },
+  "relations": {
+    "supersedes": [],
+    "superseded_by": [],
+    "contradicts": [],
+    "related": []
+  },
+  "classification": {
+    "memory_layer": "state",
+    "category": "project",
+    "recall_layer": "L3",
+    "priority": "medium"
+  },
+  "provenance": {
+    "evidence": "observed",
+    "source_ref": "状态.md##主线一：游戏原型（UE）"
+  },
+  "tags": [
+    "manual-review"
+  ],
+  "entities": []
+}

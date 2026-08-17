@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "id": "mem_1841365e",
+  "type": "semantic",
+  "scope": "global",
+  "content": "- 表面上矛盾：一边「有成熟方案就用」，一边自研插件——真正倾向是「能复用的全部复用，但影响核心体验的部分自己掌控」",
+  "status": "active",
+  "source": {
+    "kind": "migration",
+    "adapter": "migrate-memory.py",
+    "session_id": null,
+    "created_at": "2026-08-17T07:50:27Z",
+    "updated_at": "2026-08-17T07:50:27Z"
+  },
+  "temporal": {
+    "valid_from": null,
+    "valid_until": null
+  },
+  "relations": {
+    "supersedes": [],
+    "superseded_by": [],
+    "contradicts": [],
+    "related": []
+  },
+  "classification": {
+    "memory_layer": "semantic",
+    "category": "preference",
+    "recall_layer": "L2",
+    "priority": "medium"
+  },
+  "provenance": {
+    "evidence": "explicit",
+    "source_ref": "画像.md##软件工程态度"
+  },
+  "tags": [],
+  "entities": []
+}

@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "id": "mem_8eae7d57",
+  "type": "semantic",
+  "scope": "global",
+  "content": "- 「鱼火」是典型：方向确认后立刻进入「沿这个方向继续给」，不是优柔寡断，是阶段切换",
+  "status": "active",
+  "source": {
+    "kind": "migration",
+    "adapter": "migrate-memory.py",
+    "session_id": null,
+    "created_at": "2026-08-17T07:50:27Z",
+    "updated_at": "2026-08-17T07:50:27Z"
+  },
+  "temporal": {
+    "valid_from": null,
+    "valid_until": null
+  },
+  "relations": {
+    "supersedes": [],
+    "superseded_by": [],
+    "contradicts": [],
+    "related": []
+  },
+  "classification": {
+    "memory_layer": "semantic",
+    "category": "preference",
+    "recall_layer": "L2",
+    "priority": "medium"
+  },
+  "provenance": {
+    "evidence": "explicit",
+    "source_ref": "画像.md##决策风格"
+  },
+  "tags": [],
+  "entities": []
+}

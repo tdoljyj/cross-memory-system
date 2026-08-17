@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "id": "mem_10fdabcb",
+  "type": "episodic",
+  "scope": "global",
+  "content": "- 双端对称「不越界」：任一端不直写对方工作区 / 克隆（Codex 不写 ~/.workbuddy，WorkBuddy 不写 Documents\\Codex\\memory），一切交换经仓库；取消 WorkBuddy 直写 Documents 的 mtime 例外",
+  "status": "candidate",
+  "source": {
+    "kind": "migration",
+    "adapter": "migrate-memory.py",
+    "session_id": null,
+    "created_at": "2026-08-17T07:50:27Z",
+    "updated_at": "2026-08-17T07:50:27Z"
+  },
+  "temporal": {
+    "valid_from": null,
+    "valid_until": null
+  },
+  "relations": {
+    "supersedes": [],
+    "superseded_by": [],
+    "contradicts": [],
+    "related": []
+  },
+  "classification": {
+    "memory_layer": "episodic",
+    "category": "history",
+    "recall_layer": "L4",
+    "priority": "medium"
+  },
+  "provenance": {
+    "evidence": "observed",
+    "source_ref": "归档.md##双端边界规则 + 连接策略终版（2026-08-15 ~ 08-16，复测修正）"
+  },
+  "tags": [
+    "manual-review"
+  ],
+  "entities": []
+}

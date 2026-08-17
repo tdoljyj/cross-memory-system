@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "id": "mem_34bd0630",
+  "type": "semantic",
+  "scope": "global",
+  "content": "- WorkBuddy 官方 GitHub Connector（OAuth 授权无法访问私有仓库、看不到私有仓库，不可用；用 gh CLI + GitHub MCP 替代）",
+  "status": "active",
+  "source": {
+    "kind": "migration",
+    "adapter": "migrate-memory.py",
+    "session_id": null,
+    "created_at": "2026-08-17T07:50:27Z",
+    "updated_at": "2026-08-17T07:50:27Z"
+  },
+  "temporal": {
+    "valid_from": null,
+    "valid_until": null
+  },
+  "relations": {
+    "supersedes": [],
+    "superseded_by": [],
+    "contradicts": [],
+    "related": []
+  },
+  "classification": {
+    "memory_layer": "semantic",
+    "category": "constraint",
+    "recall_layer": "L5",
+    "priority": "medium"
+  },
+  "provenance": {
+    "evidence": "explicit",
+    "source_ref": "决策.md##已否决（不要重复推荐）"
+  },
+  "tags": [],
+  "entities": []
+}

@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "id": "mem_8b3652b2",
+  "type": "semantic",
+  "scope": "global",
+  "content": "- 参考：山海经、上古神话、天庭、夸父逐日、东方哲学、宏大叙事",
+  "status": "active",
+  "source": {
+    "kind": "migration",
+    "adapter": "migrate-memory.py",
+    "session_id": null,
+    "created_at": "2026-08-17T07:50:27Z",
+    "updated_at": "2026-08-17T07:50:27Z"
+  },
+  "temporal": {
+    "valid_from": null,
+    "valid_until": null
+  },
+  "relations": {
+    "supersedes": [],
+    "superseded_by": [],
+    "contradicts": [],
+    "related": []
+  },
+  "classification": {
+    "memory_layer": "semantic",
+    "category": "preference",
+    "recall_layer": "L2",
+    "priority": "medium"
+  },
+  "provenance": {
+    "evidence": "explicit",
+    "source_ref": "画像.md##真正想做的事（游戏）"
+  },
+  "tags": [],
+  "entities": []
+}

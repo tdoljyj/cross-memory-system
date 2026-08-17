@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "id": "mem_b19afc1c",
+  "type": "episodic",
+  "scope": "global",
+  "content": "- 22:40 / 00:46 体检：三副本字节一致、无 .sync-failed、packed-refs 无 stale；处理 Codex 克隆 .pending-writeback 残留（sync -Pull 写回 Documents 失败所致，dirs-equal 分支下次自动清除）、README 补 openssl 经验、README 边界描述过期修正",
+  "status": "candidate",
+  "source": {
+    "kind": "migration",
+    "adapter": "migrate-memory.py",
+    "session_id": null,
+    "created_at": "2026-08-17T07:50:27Z",
+    "updated_at": "2026-08-17T07:50:27Z"
+  },
+  "temporal": {
+    "valid_from": null,
+    "valid_until": null
+  },
+  "relations": {
+    "supersedes": [],
+    "superseded_by": [],
+    "contradicts": [],
+    "related": []
+  },
+  "classification": {
+    "memory_layer": "episodic",
+    "category": "history",
+    "recall_layer": "L4",
+    "priority": "medium"
+  },
+  "provenance": {
+    "evidence": "observed",
+    "source_ref": "归档.md##跨 AI 体检结论（2026-08-15 ~ 08-16，多次）"
+  },
+  "tags": [
+    "manual-review"
+  ],
+  "entities": []
+}

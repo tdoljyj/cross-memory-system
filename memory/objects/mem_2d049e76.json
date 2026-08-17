@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "id": "mem_2d049e76",
+  "type": "semantic",
+  "scope": "global",
+  "content": "- 记忆互通：完全双向（WorkBuddy 可读写全部 5 个记忆文件），按多方架构设计（git 仓库为唯一数据源，各 AI 独立工作区镜像；未来新 AI 接入=克隆仓库+遵守写入纪律）",
+  "status": "active",
+  "source": {
+    "kind": "migration",
+    "adapter": "migrate-memory.py",
+    "session_id": null,
+    "created_at": "2026-08-17T07:50:27Z",
+    "updated_at": "2026-08-17T07:50:27Z"
+  },
+  "temporal": {
+    "valid_from": null,
+    "valid_until": null
+  },
+  "relations": {
+    "supersedes": [],
+    "superseded_by": [],
+    "contradicts": [],
+    "related": []
+  },
+  "classification": {
+    "memory_layer": "semantic",
+    "category": "decision",
+    "recall_layer": "L3",
+    "priority": "medium"
+  },
+  "provenance": {
+    "evidence": "explicit",
+    "source_ref": "决策.md##已确认"
+  },
+  "tags": [],
+  "entities": []
+}

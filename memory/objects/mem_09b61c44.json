@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "id": "mem_09b61c44",
+  "type": "semantic",
+  "scope": "global",
+  "content": "- 玩过/关注：只狼、鬼泣5、仁王2、巫师3、艾尔登法环、黑神话·悟空、猎天使魔女系列、Astral Chain、怪物猎人、忍者龙剑传等",
+  "status": "active",
+  "source": {
+    "kind": "migration",
+    "adapter": "migrate-memory.py",
+    "session_id": null,
+    "created_at": "2026-08-17T07:50:27Z",
+    "updated_at": "2026-08-17T07:50:27Z"
+  },
+  "temporal": {
+    "valid_from": null,
+    "valid_until": null
+  },
+  "relations": {
+    "supersedes": [],
+    "superseded_by": [],
+    "contradicts": [],
+    "related": []
+  },
+  "classification": {
+    "memory_layer": "semantic",
+    "category": "preference",
+    "recall_layer": "L2",
+    "priority": "medium"
+  },
+  "provenance": {
+    "evidence": "explicit",
+    "source_ref": "画像.md##游戏偏好（研究型玩家）"
+  },
+  "tags": [],
+  "entities": []
+}

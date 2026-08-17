@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "id": "mem_ed76c994",
+  "type": "episodic",
+  "scope": "global",
+  "content": "- 2026-08-16 DSH 端接入（DSH@TURING，技术评估落地）：DSH 注册为第三端——独立克隆 ~/.dsh/projects/cross-memory-system（自远端 origin 克隆，不复用/不克隆任何本地已有克隆，遵守不越界）+ 消费端 ~/.dsh/MEMORY.md，身份 DSH@TURING；同批 P1 修复：py 锁探活改 Windows 安全探活（原 os.kill(pid,0) 会杀进程）、py/ps1 push 成功清除 .needs-push、ps1 -Doctor 补 conform 探针、护栏口径统一（AGENTS/README「.md ≥ 5」→ index.json files 清单）、py 补 deploy-guard（拒绝在 .codex 克隆运行）；验收测试 21→28 用例（详见架构基线变更记录）",
+  "status": "candidate",
+  "source": {
+    "kind": "migration",
+    "adapter": "migrate-memory.py",
+    "session_id": null,
+    "created_at": "2026-08-17T07:50:27Z",
+    "updated_at": "2026-08-17T07:50:27Z"
+  },
+  "temporal": {
+    "valid_from": null,
+    "valid_until": null
+  },
+  "relations": {
+    "supersedes": [],
+    "superseded_by": [],
+    "contradicts": [],
+    "related": []
+  },
+  "classification": {
+    "memory_layer": "episodic",
+    "category": "history",
+    "recall_layer": "L4",
+    "priority": "medium"
+  },
+  "provenance": {
+    "evidence": "observed",
+    "source_ref": "状态.md##记忆系统与工具链"
+  },
+  "tags": [
+    "manual-review"
+  ],
+  "entities": []
+}

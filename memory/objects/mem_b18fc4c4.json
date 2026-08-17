@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "id": "mem_b18fc4c4",
+  "type": "episodic",
+  "scope": "global",
+  "content": "- 落地：AGENTS.md 升级 v3（T0–T4 触发分类 + L1–L6 记忆类型→文件映射表 + Trigger Matrix + Router 边界「判断先于读取」+ 缓存语义 + 事实推测分离 + superseded 语义）；~/.workbuddy/MEMORY.md 对称改写为 v3；决策.md 记录基线确立",
+  "status": "candidate",
+  "source": {
+    "kind": "migration",
+    "adapter": "migrate-memory.py",
+    "session_id": null,
+    "created_at": "2026-08-17T07:50:27Z",
+    "updated_at": "2026-08-17T07:50:27Z"
+  },
+  "temporal": {
+    "valid_from": null,
+    "valid_until": null
+  },
+  "relations": {
+    "supersedes": [],
+    "superseded_by": [],
+    "contradicts": [],
+    "related": []
+  },
+  "classification": {
+    "memory_layer": "episodic",
+    "category": "history",
+    "recall_layer": "L4",
+    "priority": "medium"
+  },
+  "provenance": {
+    "evidence": "observed",
+    "source_ref": "归档.md##vNext 架构基线确立与评审（2026-08-16 04:30~04:45，WorkBuddy 侧）"
+  },
+  "tags": [
+    "manual-review"
+  ],
+  "entities": []
+}

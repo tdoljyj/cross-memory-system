@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "id": "mem_f8cfccc3",
+  "type": "state",
+  "scope": "global",
+  "content": "《山川夜语：逐日》世界观 / 角色 / 故事结构继续推进",
+  "status": "candidate",
+  "source": {
+    "kind": "migration",
+    "adapter": "migrate-memory.py",
+    "session_id": null,
+    "created_at": "2026-08-17T07:50:27Z",
+    "updated_at": "2026-08-17T07:50:27Z"
+  },
+  "temporal": {
+    "valid_from": null,
+    "valid_until": null
+  },
+  "relations": {
+    "supersedes": [],
+    "superseded_by": [],
+    "contradicts": [],
+    "related": []
+  },
+  "classification": {
+    "memory_layer": "state",
+    "category": "todo",
+    "recall_layer": null,
+    "priority": "medium"
+  },
+  "provenance": {
+    "evidence": "observed",
+    "source_ref": "待办.md##剧情"
+  },
+  "tags": [
+    "manual-review"
+  ],
+  "entities": []
+}

@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "id": "mem_222f5007",
+  "type": "episodic",
+  "scope": "global",
+  "content": "- R1 回写：Documents\\Codex\\memory 三文件（决策/归档/待办）已由编辑器通道（Write 工具）回写仓库权威版，三方字节一致；.pending-writeback 已清。通道经验：Documents 对 Bash cp / Python open('wb') 均只读（Bad file descriptor / 禁止新建），但 Write/apply_patch 类编辑器通道可写",
+  "status": "candidate",
+  "source": {
+    "kind": "migration",
+    "adapter": "migrate-memory.py",
+    "session_id": null,
+    "created_at": "2026-08-17T07:50:27Z",
+    "updated_at": "2026-08-17T07:50:27Z"
+  },
+  "temporal": {
+    "valid_from": null,
+    "valid_until": null
+  },
+  "relations": {
+    "supersedes": [],
+    "superseded_by": [],
+    "contradicts": [],
+    "related": []
+  },
+  "classification": {
+    "memory_layer": "episodic",
+    "category": "history",
+    "recall_layer": "L4",
+    "priority": "medium"
+  },
+  "provenance": {
+    "evidence": "observed",
+    "source_ref": "归档.md##收敛策略修正 rebase→merge + union driver 落地（2026-08-16 01:50，WorkBuddy）"
+  },
+  "tags": [
+    "manual-review"
+  ],
+  "entities": []
+}

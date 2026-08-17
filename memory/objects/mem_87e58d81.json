@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "id": "mem_87e58d81",
+  "type": "semantic",
+  "scope": "global",
+  "content": "- 自研 GroundMate / MotionCorrector / Atlas 不是喜欢造轮子，而是希望关键环节按自己逻辑运行、拥有控制权",
+  "status": "active",
+  "source": {
+    "kind": "migration",
+    "adapter": "migrate-memory.py",
+    "session_id": null,
+    "created_at": "2026-08-17T07:50:27Z",
+    "updated_at": "2026-08-17T07:50:27Z"
+  },
+  "temporal": {
+    "valid_from": null,
+    "valid_until": null
+  },
+  "relations": {
+    "supersedes": [],
+    "superseded_by": [],
+    "contradicts": [],
+    "related": []
+  },
+  "classification": {
+    "memory_layer": "semantic",
+    "category": "preference",
+    "recall_layer": "L2",
+    "priority": "medium"
+  },
+  "provenance": {
+    "evidence": "explicit",
+    "source_ref": "画像.md##软件工程态度"
+  },
+  "tags": [],
+  "entities": []
+}

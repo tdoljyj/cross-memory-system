@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "id": "mem_ca125453",
+  "type": "episodic",
+  "scope": "global",
+  "content": "- sync-memory.ps1 修复记录：推送失败仍报成功误报；Invoke-Git 局部 ErrorActionPreference=Continue（PS5.1 原生 git stderr + Stop 抛 NativeCommandError）；catch 块 rebase --abort 抛错致 .sync-failed 未写；-Pull 自愈（拉远端 + 推送遗留本地提交 + 回写工作目录，失败写 .pending-writeback）；复制 memory 全 *.md 通配",
+  "status": "candidate",
+  "source": {
+    "kind": "migration",
+    "adapter": "migrate-memory.py",
+    "session_id": null,
+    "created_at": "2026-08-17T07:50:27Z",
+    "updated_at": "2026-08-17T07:50:27Z"
+  },
+  "temporal": {
+    "valid_from": null,
+    "valid_until": null
+  },
+  "relations": {
+    "supersedes": [],
+    "superseded_by": [],
+    "contradicts": [],
+    "related": []
+  },
+  "classification": {
+    "memory_layer": "episodic",
+    "category": "history",
+    "recall_layer": "L4",
+    "priority": "medium"
+  },
+  "provenance": {
+    "evidence": "observed",
+    "source_ref": "归档.md##记忆系统接入与 GitHub（2026-08-15）"
+  },
+  "tags": [
+    "manual-review"
+  ],
+  "entities": []
+}

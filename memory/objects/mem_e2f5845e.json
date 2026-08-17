@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "id": "mem_e2f5845e",
+  "type": "episodic",
+  "scope": "global",
+  "content": "- 修改：① gh/manager → gh 的 auth git-credential（README 第 49/77 行；gh 无 manager 子命令，正确写法见本文件「记忆系统接入」段 credential.https://github.com.helper=!gh auth git-credential）；② bootstrap 移除 gc.auto=256（sync-memory.py / sync-memory.ps1 + README 第 55 行；256 比默认 6700 更激进，与 maintenance.auto=false / fetch.autoMaintenance=false 的「关后台维护」意图冲突，回退 git 默认阈值，gc.pruneExpire=2.weeks 保留）；③ doctor 客户端安全表述明确为「拒绝 git 可执行文件位于 PortableGit / .workbuddy 目录」（README 第 56 行，消除「拒绝工作区路径」歧义）；④ union 驱动补「须配合 .gitattributes 的 merge=union 标注才生效」（README 第 54 行）；⑤ 版本真值核对补 hash 提取（cut -f1）与 baseline 语义（README 第 50 行）",
+  "status": "candidate",
+  "source": {
+    "kind": "migration",
+    "adapter": "migrate-memory.py",
+    "session_id": null,
+    "created_at": "2026-08-17T07:50:27Z",
+    "updated_at": "2026-08-17T07:50:27Z"
+  },
+  "temporal": {
+    "valid_from": null,
+    "valid_until": null
+  },
+  "relations": {
+    "supersedes": [],
+    "superseded_by": [],
+    "contradicts": [],
+    "related": []
+  },
+  "classification": {
+    "memory_layer": "episodic",
+    "category": "history",
+    "recall_layer": "L4",
+    "priority": "medium"
+  },
+  "provenance": {
+    "evidence": "observed",
+    "source_ref": "归档.md##接入文档勘误（2026-08-16，WorkBuddy 侧）"
+  },
+  "tags": [
+    "manual-review"
+  ],
+  "entities": []
+}

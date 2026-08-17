@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "id": "mem_788dc509",
+  "type": "episodic",
+  "scope": "global",
+  "content": "- 范围：① 矩阵暴露的实现分歧关闭（ps1 push 补未推送提交密钥扫描，对齐 py）；② protocol-manifest.json（modes / guards 九类 / side_effects / exit_codes / remote_verification + conformance_matrix 九行）；③ 双脚本 conformance 一致性测试。未启动 Sprint 3",
+  "status": "candidate",
+  "source": {
+    "kind": "migration",
+    "adapter": "migrate-memory.py",
+    "session_id": null,
+    "created_at": "2026-08-17T07:50:27Z",
+    "updated_at": "2026-08-17T07:50:27Z"
+  },
+  "temporal": {
+    "valid_from": null,
+    "valid_until": null
+  },
+  "relations": {
+    "supersedes": [],
+    "superseded_by": [],
+    "contradicts": [],
+    "related": []
+  },
+  "classification": {
+    "memory_layer": "episodic",
+    "category": "history",
+    "recall_layer": "L4",
+    "priority": "medium"
+  },
+  "provenance": {
+    "evidence": "observed",
+    "source_ref": "归档.md##Sprint 2：Protocol Behavior Manifest & 双脚本一致性（2026-08-16，DSH@TURING）"
+  },
+  "tags": [
+    "manual-review"
+  ],
+  "entities": []
+}

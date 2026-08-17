@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "id": "mem_92c0206e",
+  "type": "episodic",
+  "scope": "global",
+  "content": "- 2026-08-16 Sprint 3 完成并封版（DSH@TURING）：P2×4 + P3×10 全部闭环（保留期统一 7 天[用户决策]、superseded 标记、doctor 探针对称、README/配置手册口径、guards 警示、fetch 复用、trap 噪音、AGENTS↔index 断言、index 路径净化；GAP-3-5/3-7 留档不修）；第二轮专项审计十重点复核全 CONFORM；验收测试 57→69 全绿；tag vNext-1.3 移至封版 commit（VERSION=tag=封版 HEAD）。产出《Sprint3专项审计与封版报告-vNext-1.3.md》。系统状态：vNext-1.3 Stable Baseline / 可封版；vNext-1.4 仅在必要时评估",
+  "status": "candidate",
+  "source": {
+    "kind": "migration",
+    "adapter": "migrate-memory.py",
+    "session_id": null,
+    "created_at": "2026-08-17T07:50:27Z",
+    "updated_at": "2026-08-17T07:50:27Z"
+  },
+  "temporal": {
+    "valid_from": null,
+    "valid_until": null
+  },
+  "relations": {
+    "supersedes": [],
+    "superseded_by": [],
+    "contradicts": [],
+    "related": []
+  },
+  "classification": {
+    "memory_layer": "episodic",
+    "category": "history",
+    "recall_layer": "L4",
+    "priority": "medium"
+  },
+  "provenance": {
+    "evidence": "observed",
+    "source_ref": "状态.md##记忆系统与工具链"
+  },
+  "tags": [
+    "manual-review"
+  ],
+  "entities": []
+}

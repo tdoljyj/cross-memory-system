@@ -3,7 +3,10 @@
 .sync.lock
 .needs-push
 .conflict-snapshots/
+.migration-backups/
 sync.config.ps1
 sync.config.json
 __pycache__/
 *.pyc
+# vNext-2.0：session 级临时记忆（不入 Canonical Store，§14/L6）
+memory/session/

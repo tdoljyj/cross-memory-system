@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "id": "mem_90ae5553",
+  "type": "episodic",
+  "scope": "global",
+  "content": "- 连接策略（终版）：WorkBuddy 沙箱内 raw TCP 直连外网被拦（Connection was reset），出网仅代理路径；git 一律走代理 127.0.0.1:7897 + 固定 -c http.sslBackend=openssl（schannel 默认后端经 Clash 代理 TLS 握手偶发失败）。git 客户端优先官方 Git for Windows（C:\\Program Files\\Git 2.55.0.3，sync-memory.py 自动优先），勿用内置 PortableGit。curl / gh CLI 走代理正常",
+  "status": "candidate",
+  "source": {
+    "kind": "migration",
+    "adapter": "migrate-memory.py",
+    "session_id": null,
+    "created_at": "2026-08-17T07:50:27Z",
+    "updated_at": "2026-08-17T07:50:27Z"
+  },
+  "temporal": {
+    "valid_from": null,
+    "valid_until": null
+  },
+  "relations": {
+    "supersedes": [],
+    "superseded_by": [],
+    "contradicts": [],
+    "related": []
+  },
+  "classification": {
+    "memory_layer": "episodic",
+    "category": "history",
+    "recall_layer": "L4",
+    "priority": "medium"
+  },
+  "provenance": {
+    "evidence": "observed",
+    "source_ref": "归档.md##双端边界规则 + 连接策略终版（2026-08-15 ~ 08-16，复测修正）"
+  },
+  "tags": [
+    "manual-review"
+  ],
+  "entities": []
+}

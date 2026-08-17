@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "id": "mem_349e1451",
+  "type": "semantic",
+  "scope": "global",
+  "content": "- 记忆系统完整版放 GitHub 私有仓库（tdoljyj/cross-memory-system，原 codex-memory-system）；未来公开只做去敏模板，真实记忆不进公开仓库",
+  "status": "active",
+  "source": {
+    "kind": "migration",
+    "adapter": "migrate-memory.py",
+    "session_id": null,
+    "created_at": "2026-08-17T07:50:27Z",
+    "updated_at": "2026-08-17T07:50:27Z"
+  },
+  "temporal": {
+    "valid_from": null,
+    "valid_until": null
+  },
+  "relations": {
+    "supersedes": [],
+    "superseded_by": [],
+    "contradicts": [],
+    "related": []
+  },
+  "classification": {
+    "memory_layer": "semantic",
+    "category": "decision",
+    "recall_layer": "L3",
+    "priority": "medium"
+  },
+  "provenance": {
+    "evidence": "explicit",
+    "source_ref": "决策.md##已确认"
+  },
+  "tags": [],
+  "entities": []
+}

@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "id": "mem_61a0ca7b",
+  "type": "episodic",
+  "scope": "global",
+  "content": "- 验证：验收测试 41→45 全绿（新增：ps1 NONE 纯短路 / py staged blob TOCTOU / py 已提交令牌拒绝 / py 干净提交放行）；ps1 -Doctor 隔离沙盒 ALL PASS；py doctor 推送对齐后 ALL PASS",
+  "status": "candidate",
+  "source": {
+    "kind": "migration",
+    "adapter": "migrate-memory.py",
+    "session_id": null,
+    "created_at": "2026-08-17T07:50:27Z",
+    "updated_at": "2026-08-17T07:50:27Z"
+  },
+  "temporal": {
+    "valid_from": null,
+    "valid_until": null
+  },
+  "relations": {
+    "supersedes": [],
+    "superseded_by": [],
+    "contradicts": [],
+    "related": []
+  },
+  "classification": {
+    "memory_layer": "episodic",
+    "category": "history",
+    "recall_layer": "L4",
+    "priority": "medium"
+  },
+  "provenance": {
+    "evidence": "observed",
+    "source_ref": "归档.md##Sprint 1：P1/P2 行为安全加固（2026-08-16，DSH@TURING）"
+  },
+  "tags": [
+    "manual-review"
+  ],
+  "entities": []
+}

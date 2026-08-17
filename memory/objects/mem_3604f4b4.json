@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "id": "mem_3604f4b4",
+  "type": "episodic",
+  "scope": "global",
+  "content": "- 关键决策与落地：① 保留期统一 7 天（guards.json + 双脚本回落默认，用户决策「实现向基线收敛」）；② 决策.md:18 凭据旧口径标 superseded（历史保留）；③ doctor 探针集对称（ps1 补 memory-files-healthy/local==remote，py 补 ref-write）；④ 合并作者规则入 AGENTS §六；⑤ index 路径净化（../ 越界 fail-closed）；⑥ 留档两例：PID 锁句柄锁不实施（四场景已有测试、概率极低）、%TEMP% listdir 保持（实测 1437 条目/161ms）",
+  "status": "candidate",
+  "source": {
+    "kind": "migration",
+    "adapter": "migrate-memory.py",
+    "session_id": null,
+    "created_at": "2026-08-17T07:50:27Z",
+    "updated_at": "2026-08-17T07:50:27Z"
+  },
+  "temporal": {
+    "valid_from": null,
+    "valid_until": null
+  },
+  "relations": {
+    "supersedes": [],
+    "superseded_by": [],
+    "contradicts": [],
+    "related": []
+  },
+  "classification": {
+    "memory_layer": "episodic",
+    "category": "history",
+    "recall_layer": "L4",
+    "priority": "medium"
+  },
+  "provenance": {
+    "evidence": "observed",
+    "source_ref": "归档.md##Sprint 3 完成与封版（2026-08-16，DSH@TURING）"
+  },
+  "tags": [
+    "manual-review"
+  ],
+  "entities": []
+}

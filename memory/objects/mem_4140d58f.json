@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "id": "mem_4140d58f",
+  "type": "episodic",
+  "scope": "global",
+  "content": "- 根治三选：① WorkBuddy 开 Full access（最彻底）② 工作流不依赖 tracking ref（显式 merge（非 rebase）origin main / push origin main，status gone 是 cosmetic，零成本；早期曾用 pull --rebase）③ Python 直写 ref 兜底（已封装 sync-memory.py）。推荐 ② 为主 + ③ 兜底",
+  "status": "candidate",
+  "source": {
+    "kind": "migration",
+    "adapter": "migrate-memory.py",
+    "session_id": null,
+    "created_at": "2026-08-17T07:50:27Z",
+    "updated_at": "2026-08-17T07:50:27Z"
+  },
+  "temporal": {
+    "valid_from": null,
+    "valid_until": null
+  },
+  "relations": {
+    "supersedes": [],
+    "superseded_by": [],
+    "contradicts": [],
+    "related": []
+  },
+  "classification": {
+    "memory_layer": "episodic",
+    "category": "history",
+    "recall_layer": "L4",
+    "priority": "medium"
+  },
+  "provenance": {
+    "evidence": "observed",
+    "source_ref": "归档.md##tracking ref 写入缺陷：根因与止血（2026-08-15 ~ 08-16）"
+  },
+  "tags": [
+    "manual-review"
+  ],
+  "entities": []
+}

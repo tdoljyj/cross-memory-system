@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "id": "mem_e575cdf0",
+  "type": "state",
+  "scope": "global",
+  "content": "- 待确认「双层结构」：品牌名走鱼火方向，公司主体名可走「普通字 × 行业词」（如数字引擎式）；未决策",
+  "status": "candidate",
+  "source": {
+    "kind": "migration",
+    "adapter": "migrate-memory.py",
+    "session_id": null,
+    "created_at": "2026-08-17T07:50:27Z",
+    "updated_at": "2026-08-17T07:50:27Z"
+  },
+  "temporal": {
+    "valid_from": null,
+    "valid_until": null
+  },
+  "relations": {
+    "supersedes": [],
+    "superseded_by": [],
+    "contradicts": [],
+    "related": []
+  },
+  "classification": {
+    "memory_layer": "state",
+    "category": "project",
+    "recall_layer": "L3",
+    "priority": "medium"
+  },
+  "provenance": {
+    "evidence": "observed",
+    "source_ref": "状态.md##工作室"
+  },
+  "tags": [
+    "manual-review"
+  ],
+  "entities": []
+}

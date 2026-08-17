@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "id": "mem_f44f7166",
+  "type": "episodic",
+  "scope": "global",
+  "content": "- 触发：Chase 逐项核对「新电脑接入」段落（README）指正 6 处；核实后 4 处需改、2 处核实无误（端侧差异表与 doctor 命令表本就在 README 59–71 行；.gitattributes 已含 memory/归档.md merge=union）",
+  "status": "candidate",
+  "source": {
+    "kind": "migration",
+    "adapter": "migrate-memory.py",
+    "session_id": null,
+    "created_at": "2026-08-17T07:50:27Z",
+    "updated_at": "2026-08-17T07:50:27Z"
+  },
+  "temporal": {
+    "valid_from": null,
+    "valid_until": null
+  },
+  "relations": {
+    "supersedes": [],
+    "superseded_by": [],
+    "contradicts": [],
+    "related": []
+  },
+  "classification": {
+    "memory_layer": "episodic",
+    "category": "history",
+    "recall_layer": "L4",
+    "priority": "medium"
+  },
+  "provenance": {
+    "evidence": "observed",
+    "source_ref": "归档.md##接入文档勘误（2026-08-16，WorkBuddy 侧）"
+  },
+  "tags": [
+    "manual-review"
+  ],
+  "entities": []
+}

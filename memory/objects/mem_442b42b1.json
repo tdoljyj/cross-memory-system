@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "id": "mem_442b42b1",
+  "type": "episodic",
+  "scope": "global",
+  "content": "- 跨会话记忆：画像 / 状态 / 决策 / 待办 / 归档五个文件，GitHub 私有仓库 tdoljyj/cross-memory-system（2026-08-15 由 codex-memory-system 更名）；多方接入：Codex（Documents\\Codex\\memory + sync-memory.ps1 自动同步，代理优先 127.0.0.1:7897 且固定 openssl 后端、直连兜底）、WorkBuddy（~/.workbuddy/codex-memory-system 独立副本，双向经仓库交换、不直写对方工作区：按基线 vNext-1.2 按需 pull/push——Router 命中才拉取、有记忆写入才推送）；双端对称「不越界」规则已固化（2026-08-15）",
+  "status": "candidate",
+  "source": {
+    "kind": "migration",
+    "adapter": "migrate-memory.py",
+    "session_id": null,
+    "created_at": "2026-08-17T07:50:27Z",
+    "updated_at": "2026-08-17T07:50:27Z"
+  },
+  "temporal": {
+    "valid_from": null,
+    "valid_until": null
+  },
+  "relations": {
+    "supersedes": [],
+    "superseded_by": [],
+    "contradicts": [],
+    "related": []
+  },
+  "classification": {
+    "memory_layer": "episodic",
+    "category": "history",
+    "recall_layer": "L4",
+    "priority": "medium"
+  },
+  "provenance": {
+    "evidence": "observed",
+    "source_ref": "状态.md##记忆系统与工具链"
+  },
+  "tags": [
+    "manual-review"
+  ],
+  "entities": []
+}

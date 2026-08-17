@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "id": "mem_876a294e",
+  "type": "episodic",
+  "scope": "global",
+  "content": "- 不变项：读前对齐流程（.sync-failed 检查 + -Pull）、四不变量、身份提交、union/语义合并、非沙盒写、ls-remote 核验全部保留，仅触发时机从「固定」改「按需」",
+  "status": "candidate",
+  "source": {
+    "kind": "migration",
+    "adapter": "migrate-memory.py",
+    "session_id": null,
+    "created_at": "2026-08-17T07:50:27Z",
+    "updated_at": "2026-08-17T07:50:27Z"
+  },
+  "temporal": {
+    "valid_from": null,
+    "valid_until": null
+  },
+  "relations": {
+    "supersedes": [],
+    "superseded_by": [],
+    "contradicts": [],
+    "related": []
+  },
+  "classification": {
+    "memory_layer": "episodic",
+    "category": "history",
+    "recall_layer": "L4",
+    "priority": "medium"
+  },
+  "provenance": {
+    "evidence": "observed",
+    "source_ref": "归档.md##触发机制 v2：按需读写落地（2026-08-16 04:05，WorkBuddy 侧）"
+  },
+  "tags": [
+    "manual-review"
+  ],
+  "entities": []
+}

@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "id": "mem_fb526b84",
+  "type": "episodic",
+  "scope": "global",
+  "content": "- 第二轮专项审计：十重点复核全 CONFORM（T0 零访问/段级召回/NO_CHANGE/版本生命周期/并发/幂等/同步边界/触发式边界/密钥三路径+脱敏+deploy+fail-closed/conformance 九行 + 契约变异测试）",
+  "status": "candidate",
+  "source": {
+    "kind": "migration",
+    "adapter": "migrate-memory.py",
+    "session_id": null,
+    "created_at": "2026-08-17T07:50:27Z",
+    "updated_at": "2026-08-17T07:50:27Z"
+  },
+  "temporal": {
+    "valid_from": null,
+    "valid_until": null
+  },
+  "relations": {
+    "supersedes": [],
+    "superseded_by": [],
+    "contradicts": [],
+    "related": []
+  },
+  "classification": {
+    "memory_layer": "episodic",
+    "category": "history",
+    "recall_layer": "L4",
+    "priority": "medium"
+  },
+  "provenance": {
+    "evidence": "observed",
+    "source_ref": "归档.md##Sprint 3 完成与封版（2026-08-16，DSH@TURING）"
+  },
+  "tags": [
+    "manual-review"
+  ],
+  "entities": []
+}

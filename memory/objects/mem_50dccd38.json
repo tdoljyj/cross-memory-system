@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "id": "mem_50dccd38",
+  "type": "episodic",
+  "scope": "global",
+  "content": "- 变更：废除「每次开场强制 pull+读五文件 + 收尾强制 push」，改为按需读写。读侧五类加载触发（自身相关 / 跨会话历史 / 依赖个人上下文的任务 / 维护记忆系统 / 冲突风险）+ 明确排除（数学/语法/客观知识等通用问题）+ 模糊兜底（拿不准就加载，误加载成本 ~1s < 漏加载成本）+ 文件分级选读（标准三件套=画像+状态+决策）。写侧：仅本轮产生稳定个人/项目信息才写记忆文件；仅实际改动了记忆文件才 push，无写入静默结束",
+  "status": "candidate",
+  "source": {
+    "kind": "migration",
+    "adapter": "migrate-memory.py",
+    "session_id": null,
+    "created_at": "2026-08-17T07:50:27Z",
+    "updated_at": "2026-08-17T07:50:27Z"
+  },
+  "temporal": {
+    "valid_from": null,
+    "valid_until": null
+  },
+  "relations": {
+    "supersedes": [],
+    "superseded_by": [],
+    "contradicts": [],
+    "related": []
+  },
+  "classification": {
+    "memory_layer": "episodic",
+    "category": "history",
+    "recall_layer": "L4",
+    "priority": "medium"
+  },
+  "provenance": {
+    "evidence": "observed",
+    "source_ref": "归档.md##触发机制 v2：按需读写落地（2026-08-16 04:05，WorkBuddy 侧）"
+  },
+  "tags": [
+    "manual-review"
+  ],
+  "entities": []
+}

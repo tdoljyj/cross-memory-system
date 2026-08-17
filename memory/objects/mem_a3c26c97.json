@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "id": "mem_a3c26c97",
+  "type": "episodic",
+  "scope": "global",
+  "content": "- 2026-08-16 DSH 端全面实现审计与技术评估（DSH@TURING，本轮）：基线 doctor ALL PASS + 验收 33/33 全绿；发现 P1×3（ps1 push 卷入预 staged 非 memory 文件→密钥扫描绕过 + NO_CHANGE 违约[3 组实证]；部署护栏漏「DSH 克隆×ps1」单元格；py REPO 回落默认指向 WorkBuddy 克隆）+ P2×8 + P3×9；产出《技术评估报告-vNext-1.3-DSH-2026-08-16.md》（仓库根，含优化路线图：P0 六项），修复项登记待办.md 待闭环",
+  "status": "candidate",
+  "source": {
+    "kind": "migration",
+    "adapter": "migrate-memory.py",
+    "session_id": null,
+    "created_at": "2026-08-17T07:50:27Z",
+    "updated_at": "2026-08-17T07:50:27Z"
+  },
+  "temporal": {
+    "valid_from": null,
+    "valid_until": null
+  },
+  "relations": {
+    "supersedes": [],
+    "superseded_by": [],
+    "contradicts": [],
+    "related": []
+  },
+  "classification": {
+    "memory_layer": "episodic",
+    "category": "history",
+    "recall_layer": "L4",
+    "priority": "medium"
+  },
+  "provenance": {
+    "evidence": "observed",
+    "source_ref": "状态.md##记忆系统与工具链"
+  },
+  "tags": [
+    "manual-review"
+  ],
+  "entities": []
+}

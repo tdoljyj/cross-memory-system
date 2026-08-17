@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "id": "mem_46e9acf4",
+  "type": "semantic",
+  "scope": "global",
+  "content": "- 记忆同步四不变量：① 绝不 force push / reset / 以本地覆盖远端；② 写前 fetch + merge（非 rebase），冲突保留两端语义手工合并；③ 语义相同内容必须字节级一致（LF / 无 BOM，.gitattributes 锁定）；④ 每端开场 pull、收尾 push + git ls-remote 核验，失败写 .sync-failed",
+  "status": "active",
+  "source": {
+    "kind": "migration",
+    "adapter": "migrate-memory.py",
+    "session_id": null,
+    "created_at": "2026-08-17T07:50:27Z",
+    "updated_at": "2026-08-17T07:50:27Z"
+  },
+  "temporal": {
+    "valid_from": null,
+    "valid_until": null
+  },
+  "relations": {
+    "supersedes": [],
+    "superseded_by": [],
+    "contradicts": [],
+    "related": []
+  },
+  "classification": {
+    "memory_layer": "semantic",
+    "category": "decision",
+    "recall_layer": "L3",
+    "priority": "medium"
+  },
+  "provenance": {
+    "evidence": "explicit",
+    "source_ref": "决策.md##已确认"
+  },
+  "tags": [],
+  "entities": []
+}

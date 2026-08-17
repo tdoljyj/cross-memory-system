@@ -1,6 +1,6 @@
-# 全局指令 · 跨会话记忆按需读写（v3.1，对齐架构基线 vNext-1.3，2026-08-16 起生效）
+# 全局指令 · 跨会话记忆按需读写（v4.0，对齐架构基线 vNext-2.0，2026-08-17 起生效）
 
-> 规范依据：本仓库《架构基线文档-vNext-1.3.md》（vNext-1.3）。触发术语（T0–T4）、记忆分类（L1–L6）、Trigger Matrix、Router 边界、写入纪律均与基线一致；同步与执行纪律保留既定四不变量。
+> 规范依据：本仓库《架构基线文档-vNext-2.0.md》（vNext-2.0，2026-08-17）。触发术语（T0–T4）、记忆分类（L1–L6）、Trigger Matrix、Router 边界、写入纪律与 vNext-1.3 一致；同步与执行纪律保留既定四不变量。vNext-2.0 新增 Memory Engine（对象层/生命周期/写引擎/召回引擎/审计/索引/迁移/CLI），位于同步层之上，不改动 v1.3 同步护栏。历史基线：《架构基线文档-vNext-1.3.md》。
 
 记忆文件（%USERPROFILE% 即本机用户目录）：
 
@@ -83,3 +83,14 @@
 - 身份：每端以「AI名@机器名」作为 git 作者提交（Codex 脚本自动；手动端用 git -c user.name="AI名@机器名" commit），commit message 带 [身份] 与变更文件，便于追溯与冲突仲裁。**合并提交同样适用**（GAP-2-4）：执行 merge 的一端必须带本端身份（`git -c user.name="AI名@机器名" merge --no-edit FETCH_HEAD` 或确认仓库级 user.name 已设为本端身份），不得出现无端身份的合并作者——历史 `d436de8` 作者=push 属身份越轨，不得复现。
 - 文件分区：归档.md 为追加类（union 自动合并，仅 `git merge` 生效）；状态.md / 待办.md 为改写类（改前立即 merge，冲突保留两端语义、绝不单方面覆盖）；决策.md / 画像.md 多为追加、偶发改写（默认合并，冲突语义合并）。收敛统一 `git merge`（非 rebase）。
 - 每机一份 gitignored 的 sync.config.ps1（身份/代理/记忆目录/提交身份）；新机器先跑 sync-memory.ps1 -Doctor 自检（须全 PASS、conform 探针不得 FAIL）再接入；doctor 任一红旗 = 阻断态，未修红不得读 canon / 不得 push。
+
+## 七、Memory Engine（vNext-2.0，位于同步层之上）
+
+- 组成：`memory.py`（CLI）、`migrate-memory.py`（迁移）、`memory_engine/`（Schema/Lifecycle/Write Engine/Recall Engine/Temporal/Conflict/Consolidation/Procedural/Object Index/Audit/Doctor）、`adapters/`（MemoryAdapter 统一接口）。
+- 双写：Markdown 五文件继续作为 legacy canonical（L1–L6 映射不变）；结构化记忆以 `memory/objects/*.json` 为对象层（Schema v1，Object 是事实源；`memory/object-index.json` 是派生索引，不一致时 Object 优先，可 `python memory.py rebuild-index` 重建）。第一阶段 = Object + Markdown 双写。
+- 写入纪律：新信息默认 candidate（T4「记住」/ explicit → active）；重复 → NO_CHANGE 零副作用；细化 → UPDATE；明确改变 → SUPERSEDE（旧不删除，记录 supersedes/superseded_by 与 valid_until）；否决 → constraint/negative_preference 并与实体关联；inferred 绝不覆盖 explicit/observed；DELETE = 归档不物理删除。
+- 召回纪律：T0 零读取；T1→L1、T2→L3、T3→L3 light；`python memory.py recall "query" --tier T2 [--history]` 输出 Markdown 段级计划 + 对象结果；历史查询（--history）才返回 superseded/archived/expired。禁止因引擎存在而全量加载对象。
+- 引擎体检：`python memory.py doctor [--fix]`（17 项检查，FAIL → exit 1）；同步层体检仍为 `python sync-memory.py doctor`（阻断态判定不变），二者互补。
+- 同步边界：Memory Engine 不执行 git commit/push；对象/索引/审计变更后按既有纪律 commit（身份 `DSH@TURING`）→ `python sync-memory.py push`，护栏照旧。
+- 迁移：`python migrate-memory.py --dry-run` → 审查 → `--migrate`（幂等）→ 回滚用 `--rollback`；不能确定的行一律 candidate + manual-review，绝不把推测自动升级成事实。
+- 实施冲突记录：`vNext-2.0-实施冲突记录.md`（C1–C9）；测试：`python tests/test_acceptance.py`（v1.3 回归 70 项）+ `python tests/test_memory_v2.py`（v2.0 引擎 55 项）。

@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "id": "mem_38c62096",
+  "type": "episodic",
+  "scope": "global",
+  "content": "- 文档同步：README / AGENTS / 配置手册 / 决策.md 的「pull --rebase」全部改为「merge（非 rebase）」，union 补充「仅 merge 生效 + 每机配 driver」；四不变量②更新",
+  "status": "candidate",
+  "source": {
+    "kind": "migration",
+    "adapter": "migrate-memory.py",
+    "session_id": null,
+    "created_at": "2026-08-17T07:50:27Z",
+    "updated_at": "2026-08-17T07:50:27Z"
+  },
+  "temporal": {
+    "valid_from": null,
+    "valid_until": null
+  },
+  "relations": {
+    "supersedes": [],
+    "superseded_by": [],
+    "contradicts": [],
+    "related": []
+  },
+  "classification": {
+    "memory_layer": "episodic",
+    "category": "history",
+    "recall_layer": "L4",
+    "priority": "medium"
+  },
+  "provenance": {
+    "evidence": "observed",
+    "source_ref": "归档.md##收敛策略修正 rebase→merge + union driver 落地（2026-08-16 01:50，WorkBuddy）"
+  },
+  "tags": [
+    "manual-review"
+  ],
+  "entities": []
+}

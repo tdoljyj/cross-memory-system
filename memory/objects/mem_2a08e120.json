@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "id": "mem_2a08e120",
+  "type": "foundational",
+  "scope": "global",
+  "content": "制作思路正在转变：关注点从「怎么做」转向「我要做什么」——从技术执行者向作品负责人迁移。",
+  "status": "active",
+  "source": {
+    "kind": "migration",
+    "adapter": "migrate-memory.py",
+    "session_id": null,
+    "created_at": "2026-08-17T07:50:27Z",
+    "updated_at": "2026-08-17T07:50:27Z"
+  },
+  "temporal": {
+    "valid_from": null,
+    "valid_until": null
+  },
+  "relations": {
+    "supersedes": [],
+    "superseded_by": [],
+    "contradicts": [],
+    "related": []
+  },
+  "classification": {
+    "memory_layer": "foundational",
+    "category": "identity",
+    "recall_layer": "L1",
+    "priority": "medium"
+  },
+  "provenance": {
+    "evidence": "explicit",
+    "source_ref": "画像.md##身份轨迹"
+  },
+  "tags": [],
+  "entities": []
+}

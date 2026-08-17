@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "id": "mem_4c00b4b9",
+  "type": "episodic",
+  "scope": "global",
+  "content": "- 08-16 01:13 体检：本地 = 远端 = 2b742be8，工作树 clean、无残留标记、换行符纯 LF 无 BOM、归因已全部修正；无实质问题",
+  "status": "candidate",
+  "source": {
+    "kind": "migration",
+    "adapter": "migrate-memory.py",
+    "session_id": null,
+    "created_at": "2026-08-17T07:50:27Z",
+    "updated_at": "2026-08-17T07:50:27Z"
+  },
+  "temporal": {
+    "valid_from": null,
+    "valid_until": null
+  },
+  "relations": {
+    "supersedes": [],
+    "superseded_by": [],
+    "contradicts": [],
+    "related": []
+  },
+  "classification": {
+    "memory_layer": "episodic",
+    "category": "history",
+    "recall_layer": "L4",
+    "priority": "medium"
+  },
+  "provenance": {
+    "evidence": "observed",
+    "source_ref": "归档.md##跨 AI 体检结论（2026-08-15 ~ 08-16，多次）"
+  },
+  "tags": [
+    "manual-review"
+  ],
+  "entities": []
+}

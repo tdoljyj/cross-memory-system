@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "id": "mem_18beb7ab",
+  "type": "state",
+  "scope": "global",
+  "content": "- 「数字引擎」已查证不适合做品牌（撞名严重、联想偏金融科技）——只适合作注册主体兜底",
+  "status": "candidate",
+  "source": {
+    "kind": "migration",
+    "adapter": "migrate-memory.py",
+    "session_id": null,
+    "created_at": "2026-08-17T07:50:27Z",
+    "updated_at": "2026-08-17T07:50:27Z"
+  },
+  "temporal": {
+    "valid_from": null,
+    "valid_until": null
+  },
+  "relations": {
+    "supersedes": [],
+    "superseded_by": [],
+    "contradicts": [],
+    "related": []
+  },
+  "classification": {
+    "memory_layer": "state",
+    "category": "project",
+    "recall_layer": "L3",
+    "priority": "medium"
+  },
+  "provenance": {
+    "evidence": "observed",
+    "source_ref": "状态.md##工作室"
+  },
+  "tags": [
+    "manual-review"
+  ],
+  "entities": []
+}

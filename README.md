@@ -1,6 +1,6 @@
 # Cross-Memory-System · 跨端记忆系统
 
-> **规范依据**：本仓库《架构基线文档-vNext-1.3.md》（当前基线版本 **vNext-1.3**，2026-08-16 确立）。适用范围：本仓库全部文件、Codex 端（`~/.codex/AGENTS.md` + sync-memory.ps1）、WorkBuddy 端（`~/.workbuddy/MEMORY.md` + sync-memory.py）及未来新接入端。本 README 与基线冲突时以基线为准；基线变更记录见该文档「变更记录」表。
+> **规范依据**：本仓库《架构基线文档-vNext-2.0.md》（当前基线版本 **vNext-2.0**，2026-08-17 确立）。历史基线《架构基线文档-vNext-1.3.md》（2026-08-16 封版）保留为历史文档。适用范围：本仓库全部文件、Codex 端（`~/.codex/AGENTS.md` + sync-memory.ps1）、WorkBuddy 端（`~/.workbuddy/MEMORY.md` + sync-memory.py）、DSH 端（`~/.dsh/AGENTS.md` + sync-memory.py + Memory Engine）及未来新接入端。本 README 与基线冲突时以基线为准；变更记录见 v2.0 基线文档。
 
 私有仓库：完整版配置手册 + 数据包快照 + **跨端记忆协同机制**（2026-08-15 建立并更名）。
 
@@ -25,12 +25,19 @@
 4. **接入自检**：新机器跑 `powershell -ExecutionPolicy Bypass -File sync-memory.ps1 -Doctor`，一次检查 git、网络与凭据、引用写入（沙盒 overlay 拦截，2026-08-16 实锤非 PortableGit 缺陷）、换行符配置、记忆目录，全部 PASS 才正式接入。
 
 ## 内容
-- `架构基线文档-vNext-1.3.md` — **vNext 核心架构规范**（基线版本/适用范围/变更记录 + 正文二十节 + 附录 A 落地映射 / 附录 B 验收对照 / 附录 C 隐私约束）；后续设计、实现、变更的统一依据
+- `架构基线文档-vNext-2.0.md` — **vNext-2.0 架构规范（Memory Engine Architecture）**，当前基线
+- `架构基线文档-vNext-1.3.md` — vNext-1.3 历史基线（2026-08-16 封版，保留）
+- `vNext-2.0-实施冲突记录.md` — 执行计划与仓库现状冲突的逐项裁决（C1–C9）
 - `附录/Cross_Memory_System_vNext_核心架构.html` — 基线源文件原件（Chase 提供）
-- `配置手册与数据包-v4.md` — 完整手册：记忆机制、写入权限、新电脑配置步骤（⚠️ 其中 9.x 数据包为 2026-08-15 历史快照，AGENTS / 待办等内容可能已过期；权威以仓库当前 `架构基线文档-vNext-1.3.md`、`AGENTS.md` 与 `memory/*.md` 为准）
-- `memory/` — 记忆快照（画像 / 状态 / 决策 / 待办 / 归档）+ `memory/index.json`（L1–L6 → 文件+标题段的召回索引，也是同步护栏的必需文件集唯一事实源）
-- `AGENTS.md` — Codex 全局钩子副本（当前 v3.1，对齐基线 T0–T4 / L1–L6 术语与段级召回；实际生效位置：`~/.codex/AGENTS.md`）
+- `配置手册与数据包-v4.md` — 完整手册：记忆机制、写入权限、新电脑配置步骤（⚠️ 其中 9.x 数据包为 2026-08-15 历史快照，AGENTS / 待办等内容可能已过期；权威以仓库当前 `架构基线文档-vNext-2.0.md`、`AGENTS.md` 与 `memory/*.md` 为准）
+- `memory/` — 记忆快照（画像 / 状态 / 决策 / 待办 / 归档）+ `memory/index.json`（L1–L6 → 文件+标题段的召回索引，也是同步护栏的必需文件集唯一事实源）+ `memory/objects/`（Memory Object 层，v2.0）+ `memory/object-index.json`（派生索引）+ `memory/audit/`（审计日志）
+- `memory_engine/` — vNext-2.0 Memory Engine（Schema / Lifecycle / Write / Recall / Temporal / Conflict / Consolidation / Procedural / Index / Audit / Doctor）
+- `memory.py` — Memory Engine CLI（status / doctor / recall / add / update / supersede / consolidate / procedural / rebuild-index / migrate / delete / reject / audit）
+- `migrate-memory.py` — Markdown → Object 迁移（--dry-run / --validate / --migrate / --rollback，幂等）
+- `adapters/` — 统一 Adapter 接口（MemoryAdapter；当前 CLIAdapter，未来 ChatGPT/Claude/Cursor 走同一接口）
+- `AGENTS.md` — Codex 全局钩子副本（当前 v4.0，对齐基线 T0–T4 / L1–L6 术语与段级召回 + v2.0 Memory Engine 章节；实际生效位置：`~/.codex/AGENTS.md`）
 - `sync-memory.ps1` — Codex 侧记忆同步脚本：复制最新记忆 → git 提交 → 推送
+- `sync-memory.py` — WorkBuddy / DSH 侧记忆同步脚本（四模式 pull / push / doctor / bootstrap；vNext-1.3 稳定基线，v2.0 未改动）
 
 ## 写入纪律（所有接入方必须遵守）
 1. **带身份提交**：每端以 `AI名@机器名` 作为 git 作者（Codex 脚本自动；手动客户端用 `git -c user.name="AI名@机器名" commit`）；commit message 带 `[身份]` 与变更文件
@@ -123,4 +130,25 @@
 
 覆盖：段级召回映射一致性（B/C）、无变化不写不推（E）、有变化提交推送（D）、并发合并不丢（F）、幂等（G）、同步失败标记 + 重试（H）、pull 版本校验（I）、删除传播护栏（P0 回归）。B/C 的 Router 判定属 AI 自然语言行为，脚本层只验证其「段级召回映射正确性」这一可判定不变量。
 
+**Memory Engine 验收测试（vNext-2.0）**：
+
+    python tests/test_memory_v2.py
+
+覆盖执行计划 §21（A–Z：Schema/创建/去重/更新/推翻/冲突/时间有效性/active 过滤/历史召回/负向偏好/候选拒绝/巩固/程序性记忆/scope/索引重建/orphan/broken relation/Markdown 兼容/T0 零读取/T1 最小召回/T2 项目召回/T3 light/T4 立即写/NO_CHANGE 零副作用/superseded 永不赢得当前召回）与 §28 最终验收。运行前无需网络（沙盒本地文件仓库）；两套合计 125 项必须全绿。
+
 > 注意：本仓库含个人真实记忆数据，保持私有；如要公开，只发布去敏模板版。
+
+## Memory Engine 快速上手（vNext-2.0）
+
+    python memory.py doctor            # 引擎体检（17 项，FAIL → exit 1）
+    python memory.py status            # 对象库统计
+    python memory.py recall "我现在用什么引擎" --tier T2   # 确定性召回（--history 看历史）
+    python memory.py add --content "用户偏好高信息密度" --category preference --evidence explicit
+    python memory.py update --id mem_xxx --content "同对象细化内容"
+    python memory.py supersede --id mem_xxx --content "用户明确改变后的新值"
+    python memory.py consolidate --from mem_a,mem_b --content "巩固后的语义结论" --confirm
+    python memory.py procedural --content "GroundMate 必须兼容 Maya 2020.4–2026" --category toolchain
+    python memory.py rebuild-index    # 重建派生索引（Object 优先）
+    python migrate-memory.py --dry-run   # 迁移先 dry-run；--migrate 幂等；--rollback 回滚
+
+纪律：Memory Engine 不执行 git commit/push——引擎写完后按既有纪律 commit（身份 `DSH@TURING`）→ `python sync-memory.py push`；T0 查询零读取；新信息默认 candidate，T4「记住」或 explicit 直接 active；inferred 绝不覆盖 explicit。

@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "id": "mem_ed230ac3",
+  "type": "state",
+  "scope": "global",
+  "content": "结构化语义合并：状态.md / 待办.md 按标题块三路合并，替代整文件 diff 与人工冲突清理（基线附录 D 待办）——冻结：双端同改同一文件概率极低，merge+手工兜底已够，收益<风险",
+  "status": "candidate",
+  "source": {
+    "kind": "migration",
+    "adapter": "migrate-memory.py",
+    "session_id": null,
+    "created_at": "2026-08-17T07:50:27Z",
+    "updated_at": "2026-08-17T07:50:27Z"
+  },
+  "temporal": {
+    "valid_from": null,
+    "valid_until": null
+  },
+  "relations": {
+    "supersedes": [],
+    "superseded_by": [],
+    "contradicts": [],
+    "related": []
+  },
+  "classification": {
+    "memory_layer": "state",
+    "category": "todo",
+    "recall_layer": null,
+    "priority": "medium"
+  },
+  "provenance": {
+    "evidence": "observed",
+    "source_ref": "待办.md##记忆系统"
+  },
+  "tags": [
+    "manual-review"
+  ],
+  "entities": []
+}

@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "id": "mem_bf320136",
+  "type": "episodic",
+  "scope": "global",
+  "content": "- 落地修复（sync-memory.ps1 / sync-memory.py）：C1 顶层 trap + git 直接调用显式 $LASTEXITCODE 校验；C2 Write-Error 非终止化；B2 Confirm-RemotePushed 改 merge-base --is-ancestor 祖先判定（消除并发虚警）；D1 ahead/behind 改用 ls-remote 哈希（不信 tracking ref）；C3 Invoke-Git 仅连接类错误才直连重试；D2 git 加 http.lowSpeed 超时；E1 Test-DirectGitHub 超时分支 Close；C4 Python ensure_git_safe 失败写 .sync-failed；Doctor 新增 tracking-ref 匹配远端检查",
+  "status": "candidate",
+  "source": {
+    "kind": "migration",
+    "adapter": "migrate-memory.py",
+    "session_id": null,
+    "created_at": "2026-08-17T07:50:27Z",
+    "updated_at": "2026-08-17T07:50:27Z"
+  },
+  "temporal": {
+    "valid_from": null,
+    "valid_until": null
+  },
+  "relations": {
+    "supersedes": [],
+    "superseded_by": [],
+    "contradicts": [],
+    "related": []
+  },
+  "classification": {
+    "memory_layer": "episodic",
+    "category": "history",
+    "recall_layer": "L4",
+    "priority": "medium"
+  },
+  "provenance": {
+    "evidence": "observed",
+    "source_ref": "归档.md##二轮审计与加固执行（2026-08-16，Codex 侧）"
+  },
+  "tags": [
+    "manual-review"
+  ],
+  "entities": []
+}

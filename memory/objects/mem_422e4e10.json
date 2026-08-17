@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "id": "mem_422e4e10",
+  "type": "semantic",
+  "scope": "global",
+  "content": "- UE、游戏动画系统、游戏原型、AI 辅助开发",
+  "status": "active",
+  "source": {
+    "kind": "migration",
+    "adapter": "migrate-memory.py",
+    "session_id": null,
+    "created_at": "2026-08-17T07:50:27Z",
+    "updated_at": "2026-08-17T07:50:27Z"
+  },
+  "temporal": {
+    "valid_from": null,
+    "valid_until": null
+  },
+  "relations": {
+    "supersedes": [],
+    "superseded_by": [],
+    "contradicts": [],
+    "related": []
+  },
+  "classification": {
+    "memory_layer": "semantic",
+    "category": "identity",
+    "recall_layer": "L1",
+    "priority": "medium"
+  },
+  "provenance": {
+    "evidence": "explicit",
+    "source_ref": "画像.md##技术能力"
+  },
+  "tags": [],
+  "entities": []
+}

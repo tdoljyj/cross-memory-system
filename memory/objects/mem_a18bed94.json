@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "id": "mem_a18bed94",
+  "type": "episodic",
+  "scope": "global",
+  "content": "- 2026-08-17 工具链运维两条：① sync-memory.ps1 必须用 pwsh 7 执行（Windows PowerShell 5.1 按 ANSI 读 UTF-8 无 BOM 会解析失败）；② DSH Web UI 启动命令 = node C:\\Users\\Windows\\dsh\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js web（DSH_HOME=~/.dsh，默认监听 http://127.0.0.1:3080，启动时写 ~/.dsh 配置文件，Codex 内需非沙箱运行）",
+  "status": "candidate",
+  "source": {
+    "kind": "migration",
+    "adapter": "migrate-memory.py",
+    "session_id": null,
+    "created_at": "2026-08-17T07:50:27Z",
+    "updated_at": "2026-08-17T07:50:27Z"
+  },
+  "temporal": {
+    "valid_from": null,
+    "valid_until": null
+  },
+  "relations": {
+    "supersedes": [],
+    "superseded_by": [],
+    "contradicts": [],
+    "related": []
+  },
+  "classification": {
+    "memory_layer": "episodic",
+    "category": "history",
+    "recall_layer": "L4",
+    "priority": "medium"
+  },
+  "provenance": {
+    "evidence": "observed",
+    "source_ref": "状态.md##记忆系统与工具链"
+  },
+  "tags": [
+    "manual-review"
+  ],
+  "entities": []
+}

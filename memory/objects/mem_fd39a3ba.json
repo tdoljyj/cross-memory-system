@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "id": "mem_fd39a3ba",
+  "type": "state",
+  "scope": "global",
+  "content": "- 约束：成熟方案优先；核心体验（动作/动画表现）自己掌控",
+  "status": "candidate",
+  "source": {
+    "kind": "migration",
+    "adapter": "migrate-memory.py",
+    "session_id": null,
+    "created_at": "2026-08-17T07:50:27Z",
+    "updated_at": "2026-08-17T07:50:27Z"
+  },
+  "temporal": {
+    "valid_from": null,
+    "valid_until": null
+  },
+  "relations": {
+    "supersedes": [],
+    "superseded_by": [],
+    "contradicts": [],
+    "related": []
+  },
+  "classification": {
+    "memory_layer": "state",
+    "category": "project",
+    "recall_layer": "L3",
+    "priority": "medium"
+  },
+  "provenance": {
+    "evidence": "observed",
+    "source_ref": "状态.md##主线一：游戏原型（UE）"
+  },
+  "tags": [
+    "manual-review"
+  ],
+  "entities": []
+}

@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "id": "mem_1b6049f2",
+  "type": "episodic",
+  "scope": "global",
+  "content": "- sync-memory.py / sync-memory.ps1（调整）：头部注释补基线溯源（模块定位=AI Adapter Sync Layer、只与 Canonical Store 同步、按需触发策略、staged 空检查=Change Detector）；两脚本语法校验通过（ps1 PSParser 0 errors / py_compile OK）",
+  "status": "candidate",
+  "source": {
+    "kind": "migration",
+    "adapter": "migrate-memory.py",
+    "session_id": null,
+    "created_at": "2026-08-17T07:50:27Z",
+    "updated_at": "2026-08-17T07:50:27Z"
+  },
+  "temporal": {
+    "valid_from": null,
+    "valid_until": null
+  },
+  "relations": {
+    "supersedes": [],
+    "superseded_by": [],
+    "contradicts": [],
+    "related": []
+  },
+  "classification": {
+    "memory_layer": "episodic",
+    "category": "history",
+    "recall_layer": "L4",
+    "priority": "medium"
+  },
+  "provenance": {
+    "evidence": "observed",
+    "source_ref": "归档.md##基线一致性对齐（2026-08-16 ~05:00，WorkBuddy 侧）"
+  },
+  "tags": [
+    "manual-review"
+  ],
+  "entities": []
+}

@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "id": "mem_7549c1fb",
+  "type": "semantic",
+  "scope": "global",
+  "content": "- 当前倾向「鱼火」：鱼普通、火普通，组合不常见、无需解释，方向对",
+  "status": "active",
+  "source": {
+    "kind": "migration",
+    "adapter": "migrate-memory.py",
+    "session_id": null,
+    "created_at": "2026-08-17T07:50:27Z",
+    "updated_at": "2026-08-17T07:50:27Z"
+  },
+  "temporal": {
+    "valid_from": null,
+    "valid_until": null
+  },
+  "relations": {
+    "supersedes": [],
+    "superseded_by": [],
+    "contradicts": [],
+    "related": []
+  },
+  "classification": {
+    "memory_layer": "semantic",
+    "category": "preference",
+    "recall_layer": "L2",
+    "priority": "medium"
+  },
+  "provenance": {
+    "evidence": "explicit",
+    "source_ref": "画像.md##工作室命名"
+  },
+  "tags": [],
+  "entities": []
+}

@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "id": "mem_4a2576da",
+  "type": "state",
+  "scope": "global",
+  "content": "补充同机本地同步锁（防并行互踩；push 验证已改祖先判定）+ 状态/待办结构化语义合并（冲突自动保留两端语义）——冻结：git index.lock 已兜底；结构化语义合并同上方冻结项",
+  "status": "candidate",
+  "source": {
+    "kind": "migration",
+    "adapter": "migrate-memory.py",
+    "session_id": null,
+    "created_at": "2026-08-17T07:50:27Z",
+    "updated_at": "2026-08-17T07:50:27Z"
+  },
+  "temporal": {
+    "valid_from": null,
+    "valid_until": null
+  },
+  "relations": {
+    "supersedes": [],
+    "superseded_by": [],
+    "contradicts": [],
+    "related": []
+  },
+  "classification": {
+    "memory_layer": "state",
+    "category": "todo",
+    "recall_layer": null,
+    "priority": "medium"
+  },
+  "provenance": {
+    "evidence": "observed",
+    "source_ref": "待办.md##记忆系统"
+  },
+  "tags": [
+    "manual-review"
+  ],
+  "entities": []
+}
