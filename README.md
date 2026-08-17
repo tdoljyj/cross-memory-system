@@ -98,6 +98,7 @@
 - 删除传播护栏：同步前校验 `memory/index.json` 声明的必需文件齐全非空，不足则拒绝同步并写 `.sync-failed`，防推空仓；同步只处理 index 声明的文件——工作区/仓库中的非 index `.md` 不复制、不删除、不提交（防越界提交与静默丢失）
 - 加固（vNext-1.2）：检测到 PortableGit / `.workbuddy` 的 git 客户端时拒绝同步；同步前清理过期 TEMP 备份目录；全仓有未提交的非 memory 变更时给出警告（脚本只提交 memory）；`-Doctor` 会提示归档.md 超瘦身阈值
 - 加固（vNext-1.3）：同步入口 `.sync.lock` 跨进程锁（同机并发 pull/push 拒绝而非交错）；提交前密钥扫描（ghp_/gho_/github_pat_/AKIA/私钥头/Bearer 长值命中即拒绝）；pull 支持 `-Access <scope>`（`NONE` 直接跳过）；`-Doctor` 校验凭据来源是否走 gh 助手
+- 编码约束（2026-08-17 P0 修复）：`sync-memory.ps1` 必须保留 UTF-8 BOM——Windows PowerShell 5.1 将无 BOM 的 UTF-8 按 ANSI（zh-CN=GBK）解析，中文注释会吞换行导致整脚本解析失败；任何保存/编辑不得剥离 BOM（`tests/test_acceptance.py` 有回归断言）
 - 脚本/文档提交：修改 sync 脚本/文档/测试后，运行 `powershell -ExecutionPolicy Bypass -File sync-memory.ps1 -CommitRepo` 提交并推送全部变更（普通记忆同步只提交 `memory/*.md`，不代提交脚本/文档）
 - 想手动同步：在 PowerShell 里直接运行上面的命令
 

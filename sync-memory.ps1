@@ -1,4 +1,9 @@
-# Codex cross-session memory sync.
+﻿# Codex cross-session memory sync.
+# ENCODING: keep this file UTF-8 WITH BOM. Windows PowerShell 5.1 parses BOM-less
+# UTF-8 as ANSI (GBK on zh-CN), garbling CJK comments and swallowing newlines,
+# which breaks the whole script. tests/test_acceptance.py asserts the BOM; do not
+# strip it when saving.
+
 # Module role (per 架构基线文档-vNext-1.3.md vNext-1.3): Codex-side AI Adapter Sync Layer.
 # Syncs only with the Canonical Memory Store (this git repo); never with other adapters.
 # Trigger policy (AGENTS.md v3): pull/push are invoked on demand — pull only when the

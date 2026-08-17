@@ -1220,6 +1220,21 @@ def test_version_pointer_consistent():
     check(version in tags, "VERSION=%r 不在 tag 集合 %r 中" % (version, tags))
 
 
+def test_ps1_utf8_bom_preserved():
+    """2026-08-17 P0 回归：sync-memory.ps1 必须保留 UTF-8 BOM。
+
+    Windows PowerShell 5.1（Codex 端文档化运行环境）按 ANSI 解析无 BOM 的 UTF-8
+    （zh-CN 代码页 936/GBK）：中文注释末字节落在 GBK lead 范围时会把换行吞入
+    非法序列，导致注释行合并、后续代码行被吞，整脚本解析失败（DSH Sprint 3
+    引入中文注释后实测 -Pull/-Doctor/-CommitRepo 全挂）。BOM 是 5.1 唯一可靠的
+    UTF-8 识别标记；任何保存/编辑不得剥离。
+    """
+    with open(PS1, "rb") as fh:
+        head = fh.read(3)
+    check(head == b"\xef\xbb\xbf",
+          "sync-memory.ps1 缺少 UTF-8 BOM（Windows PowerShell 5.1 无法解析，必须保留）")
+
+
 def test_consumer_conformed_detects_triggertype_ban():
     # 纯函数单体测试：消费端操作记忆须声明「版本真值核对/触发式/禁自动化」三要素
     import importlib.util
@@ -1834,6 +1849,7 @@ TESTS = [
     test_ps1_push_allows_clean_non_memory_commit,
     test_ps1_pull_access_none_pure_shortcircuit,
     test_ps1_doctor_warns_missing_guards,
+    test_ps1_utf8_bom_preserved,
     test_py_confirm_no_divergence_skips_redundant_fetch,
     test_agents_table_matches_index,
     test_version_pointer_consistent,
