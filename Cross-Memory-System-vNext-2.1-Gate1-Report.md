@@ -28,8 +28,8 @@
 | ahead/behind（对齐后） | 0 / 0 |
 | worktree（执行开始） | clean |
 | VERSION | `vNext-2.0` |
-| TESTED_HEAD | `91d9af6ac4851687aa8b7f281abcb4b8c714e080`（v3 干净 clone） |
-| FINAL_REPORT_HEAD | 见 §11（= HEAD，本报告所有数字以最终 HEAD 复现） |
+| TESTED_HEAD | `91d9af6ac4851687aa8b7f281abcb4b8c714e080`（v3 干净 clone，249 项）；新增 19+12 项与 55 项回归在实现 HEAD `3b596c89fe1a39caf334fd049bf90585ecc890fa` 复跑全绿 |
+| FINAL_REPORT_HEAD | `3b596c89fe1a39caf334fd049bf90585ecc890fa`（实现 HEAD；本条之后的 HEAD 仅为本文档证据定稿提交，代码与测试结果不受影响） |
 
 ## 3. Baseline & Frozen Evidence
 
@@ -220,7 +220,9 @@ rebase/force）：
 f2d1dd4 [WorkBuddy@TURING] test: add deterministic memory intelligence eval corpus（MIV-001 评测语料）
 0fed055 [WorkBuddy@TURING] feat: add read-only recall trace contract（MIV-002）
 ae0f93a [WorkBuddy@TURING] test: cover recall trace safety and compatibility（MIV-002 Gate 1 新增测试）
-（docs 与 memory/状态.md 提交见最终 HEAD 记录）
+bab065b [WorkBuddy@TURING] docs: record vNext-2.1 gate-1 evidence and baseline
+3b596c8 [WorkBuddy@TURING] memory: record vNext-2.1 gate-1 status
+（本条之后的 HEAD = 本文档证据定稿提交）
 ```
 
 - no amend / no rebase / no force push / no push / no PR / no tag / no release ✅
@@ -228,8 +230,7 @@ ae0f93a [WorkBuddy@TURING] test: cover recall trace safety and compatibility（M
   `git ls-remote origin main` 执行前后一致）
 - worktree clean（提交后核验）
 - secret scan：全仓扫描零自命中（含新增 memory_eval_baseline/ 产物与全部新文件）
-- FINAL_REPORT_HEAD = `git rev-parse HEAD`（本报告定稿时的本地 HEAD，
-  所有数字以该 HEAD 可复现）
+- FINAL_REPORT_HEAD = `3b596c89fe1a39caf334fd049bf90585ecc890fa`
 
 ## 12. Next Decision Required
 
