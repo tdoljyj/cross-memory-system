@@ -65,7 +65,7 @@ clued/audit.py                             # recovery_step 事件类型
 clued/paths.py                             # pending-refs / orphans 路径
 clued/uninstaller.py                       # 丢弃导出含 payload 包络
 tests/test_clued_auth.py                   # LKG 1h 边界（59m59s / 60m00s / 3601s）+ 配置延长拒绝（18 项）
-tests/test_clued_unit.py                   # 信封协议版本 0.2.0（26 项）
+tests/test_clued_unit.py                   # 信封协议版本 0.2.0 + Journal created_at 单调（27 项）
 tests/test_clued_pending.py                # 降级工作树干净 + doctor PASS；D4 专项 3 项（15 项）
 tests/test_clued_e2e.py                    # 信封协议版本 0.2.0（8 项）
 Clued-v0.1-实施与复用文档.md                 # 设计决策重写（staged payload / 严格恢复 / LKG 单值）
@@ -93,7 +93,7 @@ python tests/test_memory_v2.py         → 55/55 PASS（vNext-2.0 记忆引擎�
 
 **Clued 测试（本轮修正后，全部零网络：沙盒克隆 + 本地 bare remote + FakeAuthProvider）**
 ```
-python tests/test_clued_unit.py           → 26/26 PASS（信封 0.2.0/退出码/状态机/清单/LKG 完整性/熔断/Journal/锁/越界）
+python tests/test_clued_unit.py           → 27/27 PASS（信封 0.2.0/退出码/状态机/清单/LKG 完整性/熔断/Journal 创建顺序与 created_at 单调/锁/越界）
 python tests/test_clued_auth.py           → 18/18 PASS（三值/12s 预算/拒绝绝不降级/TLS→DENIED_SECURITY/LKG 1h 边界 59m59s·60m00s·3601s/篡改禁降级/配置延长拒绝/30min TTL/scope 上限）
 python tests/test_clued_install.py        → 10/10 PASS（首装/第二 Agent/幂等/篡改 repair/认证失败回滚/doctor FAIL 阻断/CLD-CAP-001/不改记忆）
 python tests/test_clued_pending.py        → 15/15 PASS（降级先入 Journal 且工作树干净 + doctor PASS/恢复顺序/no-change/冲突快照不覆盖远端/APPLYING 恢复/损坏保留/push 失败不丢/D4 专项 3 项）
@@ -102,7 +102,7 @@ python tests/test_clued_uninstall.py      → 11/11 PASS（默认仅当前 Agent
 python tests/test_clued_e2e.py            → 8/8 PASS（CLI JSON 信封 0.2.0/安装-状态往返/拒绝 exit 30/降级写入+恢复/参数 10/双 Agent 全生命周期/卸载幂等/doctor）
 ```
 
-**合计：226 项，0 失败，0 跳过。**（隔离环境复跑证据见 §7.4）
+**合计：227 项，0 失败，0 跳过。**（隔离环境复跑证据见 §7.4）
 
 **隔离环境 doctor（CLD-FIX-005）**
 ```
@@ -146,7 +146,9 @@ python clued.py doctor --json  → exit 0（干净隔离 clone：local HEAD = �
   - `50798dc` fix: enforce doctor-pass pull-before-replay recovery (CLD-FIX-002/003)
   - `e9eb7fe` test: recovery ordering, crash fault injection, D4 LOCKED gate
   - `0ce3062` fix: make journal created_at strictly monotonic per binding
-  - （+ docs 提交与 memory 登记提交，见本轮回报 §1 的精确本地 HEAD）
+  - `a0e356f` docs: refresh implementation and acceptance report (v0.2.0)
+  - `d477ae2` memory: record Clued pre-release correction status
+  - （+ 报告测试计数的文档修正提交，见本轮回报 §1 的精确本地 HEAD）
 - Exact remote HEAD：`77e0797344481519117defa626afea417a5f5f0b`（本轮未写入）
 - Exact local/remote relationship：本地 ahead 远端（追加提交未 push）；隔离验收在干净 clone 中另建临时 bare remote 完成（真实 GitHub 零写入，验收前后 `ls-remote` 一致）
 - Confirm：**no push / no PR / no tag / no release / no rebase / no force push**
