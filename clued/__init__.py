@@ -1,5 +1,8 @@
 # -*- coding: utf-8 -*-
-"""Clued v0.1 —— Agent Lifecycle 核心包（Clued Agent Lifecycle Protocol v0.1.0）。
+"""Clued v0.1 —— Agent Lifecycle 核心包（Clued Agent Lifecycle Protocol v0.2.0）。
+
+产品名：Clued v0.1；协议版本：Clued Agent Lifecycle Protocol v0.2.0
+（v0.1.0 → v0.2.0 依据 ADR-CLD-001：LKG 最大年龄收紧为 1 小时）。
 
 分层（协议 §4）：
     Conversation Adapter（clued/codex_adapter.md）
@@ -17,5 +20,5 @@
 """
 
 __version__ = "0.1.0"
-PROTOCOL_VERSION = "0.1.0"
+PROTOCOL_VERSION = "0.2.0"
 RUNTIME_VERSION = "0.1.x"

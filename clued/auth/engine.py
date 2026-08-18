@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""每会话授权引擎（协议 §7）。
+"""每会话授权引擎（协议 §7，v0.2.0）。
 
 核心规则：
 - 每个新会话对 Clued 的第一次 Memory Access 前 MUST 尝试在线认证（§7.1）；
@@ -7,8 +7,10 @@
 - 授权缓存不能替代在线尝试，只能在明确判定网络不可用后用于降级决策；
 - DENIED / DENIED_SECURITY 绝不降级 → LOCKED（§7.4）；
 - 有界在线尝试：连接 3s、操作 5s、2 次、抖动 500–1500ms、总预算 12s（§7.3）；
-- 降级窗口：LKG ≤ 1h（lkg_max_age，保守裁决）且 < 6h 硬失效；
-  降级会话 30 分钟；到期后下一次 Memory Access 重新在线尝试（§7.5）。
+- 降级窗口（ADR-CLD-001，协议 v0.2.0）：LKG age <= 1h（lkg_max_age）有效，
+  age > 1h 失效；无 6 小时/双界语义；降级会话 30 分钟，到期后下一次
+  Memory Access 重新在线尝试（§7.5）；
+- 配置只允许缩短 LKG 上限；延长到 1 小时以上视为协议配置变化，拒绝接受。
 """
 
 import json
@@ -34,8 +36,9 @@ MAX_ATTEMPTS = 2
 JITTER_RANGE_S = (0.5, 1.5)
 TOTAL_BUDGET_S = 12.0
 
-LKG_MAX_AGE_S = 3600.0       # 表值 lkg_max_age = 1h（保守裁决，§7.5）
-LKG_HARD_CEILING_S = 21600.0  # §7.5 条件 3 / §22.7：6h 完全失效
+# 协议 v0.2.0（ADR-CLD-001）：唯一权威值，单一常量来源，禁止在其它模块
+# 重复硬编码；边界语义 = age <= 1h 有效、age > 1h 失效。
+LKG_MAX_AGE_S = 3600.0
 DEGRADED_SESSION_TTL_S = 1800.0  # 30 分钟
 
 
@@ -73,12 +76,13 @@ class SessionRecord(object):
 
 class SessionAuthResult(object):
     def __init__(self, kind, scopes=None, detail="", degraded_until=None,
-                 online_attempted=False):
+                 online_attempted=False, account_id=None):
         self.kind = kind          # AUTHORIZED | DEGRADED | DENIED | UNAVAILABLE
         self.scopes = list(scopes or [])
         self.detail = detail
         self.degraded_until = degraded_until
         self.online_attempted = online_attempted
+        self.account_id = account_id
 
     @property
     def is_authorized(self):
@@ -101,8 +105,8 @@ class AuthEngine(object):
 
     def __init__(self, provider, auth_cache, breaker, paths, audit=None,
                  now=time.time, clock=time.sleep, jitter=random.uniform,
-                 lkg_max_age_s=None, lkg_hard_ceiling_s=None,
-                 degraded_ttl_s=None, budget_s=None, max_attempts=None):
+                 lkg_max_age_s=None, degraded_ttl_s=None,
+                 budget_s=None, max_attempts=None):
         self.provider = provider
         self.cache = auth_cache
         self.breaker = breaker
@@ -111,8 +115,13 @@ class AuthEngine(object):
         self._now = now
         self._sleep = clock
         self._jitter = jitter
+        # 配置缩短允许；延长到 1 小时以上 = 协议配置变化，必须拒绝（ADR-CLD-001）
+        if lkg_max_age_s is not None and lkg_max_age_s > LKG_MAX_AGE_S:
+            raise CluedError(
+                "CLD-AUTH-003",
+                "协议配置变化被拒绝：lkg_max_age 超过 1 小时（%ss > %ss）"
+                "需经产品所有者批准并写 ADR" % (lkg_max_age_s, LKG_MAX_AGE_S))
         self.lkg_max_age_s = lkg_max_age_s or LKG_MAX_AGE_S
-        self.lkg_hard_ceiling_s = lkg_hard_ceiling_s or LKG_HARD_CEILING_S
         self.degraded_ttl_s = degraded_ttl_s or DEGRADED_SESSION_TTL_S
         self.budget_s = budget_s or TOTAL_BUDGET_S
         self.max_attempts = max_attempts or MAX_ATTEMPTS
@@ -189,7 +198,8 @@ class AuthEngine(object):
             self.save_session(rec)
             return SessionAuthResult(AUTHORIZED, scopes=result.scopes,
                                      detail=result.detail,
-                                     online_attempted=True)
+                                     online_attempted=True,
+                                     account_id=result.account_id)
 
         if result.is_denial:
             if self.audit is not None:
@@ -292,11 +302,9 @@ class AuthEngine(object):
             # 条件 2 不满足 → 禁止降级（CLD-AUTH-003）
             return None
 
-        # 条件 3：证明年龄 ≤ lkg_max_age（1h 保守裁决）且 < 6h 硬失效
+        # 条件 3（ADR-CLD-001 / 协议 v0.2.0）：age <= 1h 有效、age > 1h 失效
         age = self.cache.age(entry)
-        if age is None or age > self.lkg_hard_ceiling_s:
-            return None
-        if age > self.lkg_max_age_s:
+        if age is None or age > self.lkg_max_age_s:
             return None
 
         # 条件 4：Binding 本地状态为 ACTIVE

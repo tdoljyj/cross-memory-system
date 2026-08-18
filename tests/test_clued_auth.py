@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
-"""Clued 授权测试（协议 §7）：三值结果 / 有界预算 / 拒绝绝不降级 /
-LKG 双界 / 降级 TTL / scope 上限 / 会话复用。故障注入用 FakeAuthProvider。"""
+"""Clued 授权测试（协议 §7 v0.2.0）：三值结果 / 有界预算 / 拒绝绝不降级 /
+LKG 1 小时边界（ADR-CLD-001）/ 降级 TTL / scope 上限 / 会话复用。
+故障注入用 FakeAuthProvider。"""
 
 import os
 import random
@@ -21,6 +22,7 @@ from clued.auth.provider import (
     AUTHORIZED, DENIED, DENIED_SECURITY, UNAVAILABLE,
 )
 from clued.circuit_breaker import OPEN, CircuitBreaker
+from clued.errors import CluedError
 from clued.identifiers import now_rfc3339
 from clued.paths import RuntimePaths
 
@@ -132,15 +134,54 @@ def test_lkg_over_1h_blocks_degrade():
         {"outcomes": [{"kind": "UNAVAILABLE", "reason": "network"}]},
         lkg_age_s=7200)
     result = engine.ensure_authorized(BINDING, "sess-1")
-    check(result.kind == UNAVAILABLE, "LKG > 1h（保守裁决）禁止降级")
+    check(result.kind == UNAVAILABLE, "LKG > 1h 禁止降级（ADR-CLD-001）")
 
 
-def test_lkg_over_6h_expired():
+def test_lkg_59m59s_degrades():
+    """age = 3599s（59m59s）→ 仍有效，可按规则降级。"""
     _p, provider, cache, breaker, engine = _make(
         {"outcomes": [{"kind": "UNAVAILABLE", "reason": "network"}]},
-        lkg_age_s=26000)
+        lkg_age_s=3599)
     result = engine.ensure_authorized(BINDING, "sess-1")
-    check(result.kind == UNAVAILABLE, "LKG > 6h 完全失效禁止降级")
+    check(result.is_degraded, "LKG 59m59s 仍有效，可降级")
+
+
+def test_lkg_60m00s_boundary_valid():
+    """边界固定：age <= 1h 有效 → 恰好 60m00s 仍可降级（假时钟固定 age）。"""
+    _p, provider, cache, breaker, engine = _make(
+        {"outcomes": [{"kind": "UNAVAILABLE", "reason": "network"}]},
+        lkg_age_s=60)
+    engine.cache.age = lambda entry: 3600.0  # 恰好 1h（边界）
+    result = engine.ensure_authorized(BINDING, "sess-1")
+    check(result.is_degraded, "LKG 恰好 60m00s（age <= 1h）仍有效")
+
+
+def test_lkg_over_60m00s_blocks_degrade():
+    """边界固定：age > 1h 失效 → 3600.1s 禁止降级（假时钟固定 age）。"""
+    _p, provider, cache, breaker, engine = _make(
+        {"outcomes": [{"kind": "UNAVAILABLE", "reason": "network"}]},
+        lkg_age_s=60)
+    engine.cache.age = lambda entry: 3600.1  # 超过 1h（失效）
+    result = engine.ensure_authorized(BINDING, "sess-1")
+    check(result.kind == UNAVAILABLE, "LKG > 1h 禁止降级")
+
+
+def test_lkg_max_age_extension_rejected():
+    """延长到 1 小时以上 = 协议配置变化，必须拒绝（ADR-CLD-001，不得静默）。"""
+    root = os.path.join(_tmp(), ".clued")
+    paths = RuntimePaths(root)
+    paths.ensure_dirs()
+    provider = FakeAuthProvider({"outcomes": []})
+    cache = AuthCache(paths, "node-1")
+    breaker = CircuitBreaker("auth")
+    try:
+        AuthEngine(provider, cache, breaker, paths, lkg_max_age_s=7200)
+        raise AssertionError("lkg_max_age > 1h 配置必须被拒绝")
+    except CluedError as exc:
+        check(exc.code == "CLD-AUTH-003", exc.code)
+    # 缩短允许（协议允许配置缩短）
+    shorter = AuthEngine(provider, cache, breaker, paths, lkg_max_age_s=1800)
+    check(shorter.lkg_max_age_s == 1800, "允许配置缩短 LKG 上限")
 
 
 def test_tampered_lkg_never_degrades():
@@ -245,7 +286,10 @@ TESTS = [
     test_unavailable_with_fresh_lkg_degrades,
     test_unavailable_no_lkg_blocks_degrade,
     test_lkg_over_1h_blocks_degrade,
-    test_lkg_over_6h_expired,
+    test_lkg_59m59s_degrades,
+    test_lkg_60m00s_boundary_valid,
+    test_lkg_over_60m00s_blocks_degrade,
+    test_lkg_max_age_extension_rejected,
     test_tampered_lkg_never_degrades,
     test_revoked_binding_denied,
     test_auth_budget_bounded,
