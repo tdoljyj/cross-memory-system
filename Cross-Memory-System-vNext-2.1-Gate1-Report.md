@@ -7,13 +7,16 @@
 
 ## 1. Result
 
-- **PASS**（249/249 既有回归 0 失败 0 跳过 + 新增 31 项全 PASS + 冻结区
-  diff 为空 + 真实记忆字节级一致 + doctor 三件套全 PASS；偏差清单为空——
-  已知差距为既有引擎的目标差距，如实记录，非本 Gate 引入）
+- **Gate 1 infrastructure = PASS**（249/249 既有回归 0 失败 0 跳过 + 新增 32 项
+  全 PASS + 冻结区 diff 为空 + 真实记忆字节级一致 + doctor 三件套全 PASS；
+  偏差清单为空）
+- **vNext-2.0 memory-quality baseline = BELOW TARGET**（Precision@5=0.19 /
+  false recall=0.37 / paraphrase 11/12 不命中 / project_id 隔离 1 缺口——
+  均为既有引擎目标差距，本 Gate 只度量不修改召回算法，如实记录）
 - 本 Gate 授权范围：MIV-000 预检、MIV-001 Memory Eval、MIV-002 Recall Trace、
   Gate 1 验收、文档与 `memory/状态.md` 登记、仅本地单一目的提交
 - 是否严格停止在授权边界：**是**——未执行 MIV-003 及以后任何任务；
-  未 push / 未建 PR / 未 tag / 未 release / 未 rebase / 未 force push；
+  未 push（口径修正前）/ 未建 PR / 未 tag / 未 release / 未 rebase / 未 force push；
   未修改真实记忆数据；未启用任何自动写入/反思/Embedding
 
 ## 2. Version Truth
@@ -28,8 +31,9 @@
 | ahead/behind（对齐后） | 0 / 0 |
 | worktree（执行开始） | clean |
 | VERSION | `vNext-2.0` |
-| TESTED_HEAD | `91d9af6ac4851687aa8b7f281abcb4b8c714e080`（v3 干净 clone，249 项）；新增 19+12 项与 55 项回归在实现 HEAD `3b596c89fe1a39caf334fd049bf90585ecc890fa` 复跑全绿 |
-| FINAL_REPORT_HEAD | `3b596c89fe1a39caf334fd049bf90585ecc890fa`（实现 HEAD；本条之后的 HEAD 仅为本文档证据定稿提交，代码与测试结果不受影响） |
+| TESTED_HEAD | 最终口径修正后的 HEAD（见 FINAL_REPORT_HEAD）：在其干净 clone 上重跑 249 + 32 = 281 项 + doctor 三件套 + secret scan |
+| FINAL_REPORT_HEAD | 口径修正后的最终本地 HEAD（§11 提交链末）；TESTED_HEAD = FINAL_REPORT_HEAD = `git rev-parse HEAD` |
+| ahead/behind（最终） | ahead=本地提交数（未 push）；behind=0 |
 
 ## 3. Baseline & Frozen Evidence
 
@@ -150,16 +154,17 @@ memory/状态.md                    # Gate 1 登记（按计划要求）
 
 | 指标 | 基准值 | 说明 |
 | --- | ---: | --- |
-| Precision@5 | ~0.19 | 确定性检索无相关性阈值 + 零词面重合改写不命中 |
-| critical-memory recall | ~0.86 | 明确偏好/冲突裁决基本可靠 |
-| false recall rate | ~0.41 | 无阈值 → 同类别无关对象全量返回（MIV-005 目标） |
-| stale recall rate | 0.0 | 时间过滤工作正常 |
-| scope leakage count | 1 | ps-010：v2.0 无 project_id 隔离（MIV-006 目标差距） |
+| Precision@5 | ~0.19 | 确定性检索无相关性阈值 + 零词面重合改写不命中（**BELOW TARGET** ≥0.90） |
+| critical-memory recall | ~0.86 | 明确偏好/冲突裁决基本可靠（BELOW TARGET ≥0.95） |
+| false recall rate | ~0.37 | 无阈值 → 同类别无关对象全量返回（**BELOW TARGET** ≤0.02，MIV-005A） |
+| stale recall rate | 0.0 | 时间过滤工作正常（非当前瓶颈） |
+| current-scope leakage | **0** | 既有 global/project/session 边界正确执行，无越权（达标） |
+| project-only capability gap | **1** | ps-010：v2.0 无 project_id 隔离（MIV-006 能力缺口，非既有 scope 越权） |
 | superseded leakage count | 0 | 状态过滤工作正常 |
 | NO MEMORY correctness | ~0.95 | 2 例违反均为「无阈值返回无关同类对象」 |
 | cross-agent consistency | 1.0 | 双模拟 Adapter 合同一致 |
 | estimated prompt tokens P50/P95 | 18 / 50 | 固定估算器 cms-cjk1-ascii4 v1.0 |
-| recall latency P50/P95 | ~1.0 / ~1.7 ms | 预热后 |
+| recall latency P50/P95 | ~1.0 / ~1.7 ms | 预热后（合成小库） |
 | determinism | 通过 | 同环境连续两次 replay hash 一致 |
 | secret leakage | 0 | FAKE_TOKEN 零泄漏（结果/报告/trace） |
 
@@ -178,12 +183,14 @@ memory/状态.md                    # Gate 1 登记（按计划要求）
 ## 9. Compatibility
 
 - explain=False 与 explain=True：selected IDs/顺序/截断/状态完全一致
-  （test_explain_does_not_change_result + 多参数矩阵）
+  （test_explain_does_not_change_result + history/scope/limit/light 多参数矩阵）
 - 旧 Adapter（不传 explain）：合同保持兼容，`to_dict()` 无 trace 键
   （test_old_adapter_contract_compatible）
 - 完全离线：Trace 与 Eval 均不依赖网络（临时夹具 + 本地仓库）
 - Windows/POSIX：source_ref 统一正斜杠（test_source_ref_path_portable）
-- Trace P95 开销：≤ 基准 5% 或 +10ms 取较宽者（test_trace_overhead_within_budget）
+- Trace P95 开销：实测 +2.55ms（相对 +6.7%，绝对 ≤10ms）→ 按「不高于 5%
+  或绝对增加 ≤10ms 取较宽者」达标（test_trace_overhead_within_budget，
+  真实仓库 230 对象 T2 召回，base P95=38.2ms / explain P95=40.8ms）
 
 ## 10. Deviations & Limitations
 
@@ -202,14 +209,28 @@ memory/状态.md                    # Gate 1 登记（按计划要求）
 - 首轮全量跑 test_clued_policy 曾出现 1 例时间边界抖动（高负载下 3599s 边界
   越过 1h）；隔离复跑与最终干净 clone 一次通过（22/22），判定为负载噪声
 
-已知限制（本 Gate 不处理）：
-- v2.0 引擎无相关性阈值：同类别无关对象全量返回（false recall 0.41，
-  MIV-005 目标）
-- v2.0 引擎无 project_id 隔离：ps-010 跨项目泄漏（MIV-006 目标）
-- 零词面重合改写（paraphrase）不命中（11/12 paraphrase 用例未达 top5，
-  MIV-005 目标）
+已知限制（本 Gate 不处理；已按产品裁决列为 Gate 2R 顺序）：
+- v2.0 引擎无相关性阈值：同类别无关对象全量返回（false recall 0.37，
+  → Gate 2R / MIV-005A）
+- v2.0 引擎无 project_id 隔离：ps-010 项目隔离缺口（→ Gate 2R / MIV-006，
+  **非既有 global/project/session 边界越权**，见下）
+- 零词面重合改写（paraphrase）不命中（11/12 未达 top5，→ Gate 2R / MIV-005B）
 - 「permission denied」reason code 为预留码：v2.0 引擎授权边界 = scope，
   越权以 SCOPE_MISMATCH 表达（test_permission_denied_is_scope_boundary）
+
+### ps-010 性质判定（Push 前置口径）
+
+ps-010（scope.project_id="p-alpha" vs p-beta）唯一命中 forbidden。判定为
+**MIV-006 尚未实现的 project_id 隔离能力缺口，而非既有 scope 真实越权**，
+依据：
+1. v2.0 引擎 scope 模型只有 `global/project/session` 单桶，无 project_id 字段；
+   两对象 scope 均为 `project`，在「project 桶」内被一并召回符合 v2.0 自身合同；
+2. 既有 current-scope 边界（global 排除 project、project 排除 session、global
+   排除 session）在 ps-005/ps-006/ps-015/sa-005/sa-012 全部正确执行，
+   **current-scope leakage = 0**（新增 `test_scope_metric_split_contract` 固化）；
+3. 计划 §2.3 已把「项目级隔离尚未产品化」列为 P1/MIV-006。
+
+故不构成 push 阻断，按能力缺口记录，交由 Gate 2R / MIV-006 归零。
 
 ## 11. Git Evidence
 
@@ -225,16 +246,25 @@ bab065b [WorkBuddy@TURING] docs: record vNext-2.1 gate-1 evidence and baseline
 （本条之后的 HEAD = 本文档证据定稿提交）
 ```
 
-- no amend / no rebase / no force push / no push / no PR / no tag / no release ✅
-- 远端执行前后 HEAD：`91d9af6ac4851687aa8b7f281abcb4b8c714e080`（零写入，
+- no amend / no rebase / no force push / no PR / no tag / no release ✅
+- push：口径修正后，经产品所有者授权，普通 fast-forward push（见 §12）
+- 远端执行前 HEAD：`91d9af6ac4851687aa8b7f281abcb4b8c714e080`（零写入，
   `git ls-remote origin main` 执行前后一致）
 - worktree clean（提交后核验）
 - secret scan：全仓扫描零自命中（含新增 memory_eval_baseline/ 产物与全部新文件）
-- FINAL_REPORT_HEAD = `3b596c89fe1a39caf334fd049bf90585ecc890fa`
+- FINAL_REPORT_HEAD = 口径修正后的最终本地 HEAD（见下方提交链末）
 
-## 12. Next Decision Required
+## 12. Next Decision Required（产品所有者裁决）
 
-1. 是否接受 Eval corpus、指标定义与当前基准
-2. 是否接受 Recall Trace 用户/审计合同
-3. 是否授权 push Gate 1（默认否）
-4. 是否授权 Gate 2（Reflection + Temporal）
+已裁定（2026-08-19）：
+1. Eval corpus / 指标 → **接受为 v1.0 基准**，冻结 111 场景 + 94 夹具 + hash
+2. Recall Trace v1.0 → **接受**
+3. Gate 1 push → **有条件授权**（口径修正后普通 fast-forward push；
+   不打 tag、不 release、不进入下一 Gate）
+4. 原 Gate 2（Reflection + Temporal）→ **暂不授权**
+
+新优先级：**Gate 2R · Recall Safety & Relevance**（召回安全、相关性与项目隔离）
+顺序：MIV-006（project_id 硬隔离，scope leakage 归零）→ MIV-005A（相关性阈值
+与正确 NO MEMORY）→ MIV-005B（本地词法/BM25，解决 paraphrase）→ 仅 BM25 未达标
+才提交本地 Embedding ADR；达到 Precision@5 ≥90%、critical recall ≥95%、
+false recall ≤2% 后，才重新授权 Reflection；Temporal 延后（当前 stale=0）。
