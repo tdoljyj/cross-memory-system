@@ -72,7 +72,8 @@ def cmd_recall(args):
         scope=args.scope, limit=args.limit,
         categories=args.categories.split(",") if args.categories else None,
         tags=args.tags.split(",") if args.tags else None,
-        entities=args.entities.split(",") if args.entities else None)
+        entities=args.entities.split(",") if args.entities else None,
+        explain=args.explain)
     _out(result.to_dict())
     return 0
 
@@ -202,6 +203,8 @@ def build_parser():
     r.add_argument("--categories")
     r.add_argument("--tags")
     r.add_argument("--entities")
+    r.add_argument("--explain", action="store_true",
+                   help="生成只读 Recall Trace（为什么召回；不影响召回结果）")
     r.set_defaults(func=cmd_recall)
 
     a = sub.add_parser("add", help="写入新记忆（决策由引擎裁决）")

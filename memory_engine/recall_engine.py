@@ -22,6 +22,7 @@ import os
 from . import conflict
 from . import object_index
 from . import paths
+from . import recall_trace as RT
 from . import schema as S
 from . import store
 from . import temporal as T
@@ -46,9 +47,10 @@ class RecallResult(object):
         self.query = ""
         self.skipped = {"superseded": 0, "expired": 0, "conflict_loser": 0}
         self.warnings = []
+        self.trace = None  # MIV-002：仅 explain=True 时填充（只读观测）
 
     def to_dict(self):
-        return {
+        d = {
             "access": self.access,
             "tier": self.tier,
             "layers": self.layers,
@@ -60,6 +62,9 @@ class RecallResult(object):
             "skipped": self.skipped,
             "warnings": self.warnings,
         }
+        if self.trace is not None:
+            d["trace"] = self.trace
+        return d
 
 
 def _access_name(layers):
@@ -190,12 +195,34 @@ def _attach_constraints(objects, all_objects):
     return constraints
 
 
+def _scope_category_codes(obj, want_categories, scope):
+    """镜像 _category_scope_ok 的判定，只为 Trace 输出稳定 reason code。
+
+    只读观测用途，不参与过滤决策。
+    """
+    codes = []
+    if scope:
+        o_scope = obj.get("scope")
+        if scope != "global" and o_scope not in ("global", scope):
+            codes.append(RT.RC_SCOPE_MISMATCH)
+        elif scope == "global" and o_scope != "global":
+            codes.append(RT.RC_SCOPE_MISMATCH)
+    if want_categories:
+        cat = (obj.get("classification") or {}).get("category")
+        if cat not in want_categories:
+            codes.append(RT.RC_CATEGORY_MISMATCH)
+    return codes
+
+
 def recall(query="", tier="T0", layers=None, scope=None, include_history=False,
            categories=None, tags=None, entities=None, limit=10,
-           valid_at=None, light=None, max_objects=200):
+           valid_at=None, light=None, max_objects=200, explain=False):
     """确定性混合召回入口。
 
     返回 RecallResult。T0 = 零文件读取纯短路（§17）。
+
+    explain=True（MIV-002）时额外生成只读 Recall Trace（result.trace）；
+    召回集合、顺序、token 截断与状态与 explain=False 完全一致。
     """
     result = RecallResult()
     result.query = query or ""
@@ -204,15 +231,29 @@ def recall(query="", tier="T0", layers=None, scope=None, include_history=False,
         raise ValueError("未知 tier: %s" % tier)
     result.tier = tier
 
+    tracer = None
+    if explain:
+        tracer = RT.TraceRecorder(
+            result.query, tier, layers, scope, valid_at,
+            include_history=include_history, limit=limit)
+
     # ---- T0：真正零读取（不碰 index.json / objects / 任何文件）----
     if tier == "T0":
         result.access = "NONE"
+        if tracer is not None:
+            result.trace = RT.build_empty_trace(
+                result.query, tier, scope, valid_at,
+                [RT.RC_T0_ZERO_READ, RT.RC_NO_MEMORY])
         return result
 
     if tier == "T4":
         # 明确记忆指令走 Write Engine；召回侧返回提示语义
         result.access = "IMMEDIATE_WRITE"
         result.warnings.append("T4 = 立即写入（走 Write Engine），不触发召回")
+        if tracer is not None:
+            result.trace = RT.build_empty_trace(
+                result.query, tier, scope, valid_at,
+                [RT.RC_T4_IMMEDIATE_WRITE])
         return result
 
     if layers is None:
@@ -233,6 +274,9 @@ def recall(query="", tier="T0", layers=None, scope=None, include_history=False,
         for l in layers:
             want_categories.extend(S.LAYER_CATEGORIES.get(l, []))
     if not want_categories:
+        if tracer is not None:
+            result.trace = RT.build_empty_trace(
+                result.query, tier, scope, valid_at, [RT.RC_NO_MEMORY])
         return result  # 无对象召回需求（如 L6）
 
     objects = store.load_all_objects()
@@ -241,6 +285,8 @@ def recall(query="", tier="T0", layers=None, scope=None, include_history=False,
             "对象数 %d 超过召回上限 %d，已截断（禁止全量加载）"
             % (len(objects), max_objects))
         objects = objects[:max_objects]
+        if tracer is not None:
+            tracer.mark_load_truncated()
 
     statuses = set(S.RECALLABLE_STATUSES)
     if include_history:
@@ -248,11 +294,19 @@ def recall(query="", tier="T0", layers=None, scope=None, include_history=False,
 
     filtered = []
     for obj in objects:
+        oid = obj.get("id")
         if obj.get("status") not in statuses:
             if obj.get("status") in ("superseded", "archived"):
                 result.skipped["superseded"] += 1
+            if tracer is not None:
+                tracer.exclude(oid, RT.status_exclude_code(obj.get("status")))
             continue
         if not _category_scope_ok(obj, want_categories, scope):
+            if tracer is not None:
+                codes = _scope_category_codes(obj, want_categories, scope)
+                if not codes:
+                    codes = [RT.RC_SCOPE_MISMATCH]
+                tracer.exclude(oid, *codes)
             continue
         # 时间过滤只约束「当前」召回；历史查询（superseded/archived/expired，
         # 或已过 valid_until 的 active 对象）不受影响（CURRENT vs HISTORY，§11）
@@ -262,27 +316,57 @@ def recall(query="", tier="T0", layers=None, scope=None, include_history=False,
         if not is_history and not T.is_valid_now(obj, valid_at):
             if expired_now:
                 result.skipped["expired"] += 1
+            if tracer is not None:
+                tracer.exclude(oid, RT.RC_TEMPORAL_EXPIRED
+                               if expired_now else RT.RC_TEMPORAL_NOT_YET_VALID)
             continue
         if tags and not (set(tags) & set(obj.get("tags") or [])):
+            if tracer is not None:
+                tracer.exclude(oid, RT.RC_TAG_MISMATCH)
             continue
         if entities and not (set(entities) & set(obj.get("entities") or [])):
+            if tracer is not None:
+                tracer.exclude(oid, RT.RC_ENTITY_MISMATCH)
             continue
         if light and (obj.get("classification") or {}).get("priority") != "high":
+            if tracer is not None:
+                tracer.exclude(oid, RT.RC_PRIORITY_FILTERED)
             continue
         filtered.append(obj)
 
-    ranked = sorted(
-        filtered,
-        key=lambda o: _rank_key(o, _match_score(result.query, o)),
-        reverse=True)
+    if tracer is not None:
+        scored = []
+        for o in filtered:
+            s = _match_score(result.query, o)
+            rk = _rank_key(o, s)
+            scored.append((o, s, rk))
+            tracer.record_candidate(o, s, rk)
+        ranked = [t[0] for t in sorted(
+            scored, key=lambda t: t[2], reverse=True)]
+    else:
+        ranked = sorted(
+            filtered,
+            key=lambda o: _rank_key(o, _match_score(result.query, o)),
+            reverse=True)
     # 冲突过滤只约束「当前」召回（竞争事实只保留胜者）；历史查询返回全部版本
     if include_history:
         survivors, losers = ranked, set()
     else:
         survivors, losers = _conflict_filter(ranked)
     result.skipped["conflict_loser"] = len(losers)
+    if tracer is not None:
+        for loser_id in losers:
+            tracer.exclude(loser_id, RT.RC_CONFLICT_LOSER)
     result.objects = survivors[:limit]
     result.constraints = _attach_constraints(result.objects, objects)
+    if tracer is not None:
+        if len(survivors) > limit:
+            for o in survivors[limit:]:
+                tracer.exclude(o.get("id"), RT.RC_LIMIT_TRUNCATED)
+        result.trace = tracer.finalize(
+            result.objects, len(survivors), losers,
+            markdown_plan=result.markdown_plan,
+            constraints=result.constraints)
     return result
 
 
