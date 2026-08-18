@@ -1,0 +1,2760 @@
+{
+  "adapter_ids": [
+    "codex-test",
+    "dsh-test"
+  ],
+  "case_count": 111,
+  "corpus_hash": "2dad8c237b8424e4e2ff357dc149c10fae9292275eccb1811fd7ae5d71528b50",
+  "eval_schema_version": 1,
+  "fixed_now": "2026-08-18T12:00:00Z",
+  "metrics": {
+    "case_count": 111,
+    "critical_memory_recall": 0.8553,
+    "cross_agent_consistency": 1.0,
+    "estimated_prompt_tokens_p50": 18,
+    "estimated_prompt_tokens_p95": 50,
+    "false_recall_rate": 0.3663,
+    "forbidden_hits": 1,
+    "missed_items": 11,
+    "no_memory_correctness": 0.9512,
+    "no_memory_violations": 2,
+    "per_category": {
+      "conflict_superseded": {
+        "cases": 12,
+        "critical_failures": 0,
+        "forbidden_hits": 0,
+        "precision_at5": 0.2727
+      },
+      "explicit_preference": {
+        "cases": 15,
+        "critical_failures": 0,
+        "forbidden_hits": 0,
+        "precision_at5": 0.2
+      },
+      "implicit_observed": {
+        "cases": 16,
+        "critical_failures": 0,
+        "forbidden_hits": 0,
+        "precision_at5": 0.2
+      },
+      "negative_no_memory": {
+        "cases": 15,
+        "critical_failures": 2,
+        "forbidden_hits": 0,
+        "precision_at5": null
+      },
+      "paraphrase": {
+        "cases": 12,
+        "critical_failures": 11,
+        "forbidden_hits": 0,
+        "precision_at5": 0.0167
+      },
+      "project_scope": {
+        "cases": 16,
+        "critical_failures": 1,
+        "forbidden_hits": 1,
+        "precision_at5": 0.2308
+      },
+      "security_adversarial": {
+        "cases": 12,
+        "critical_failures": 0,
+        "forbidden_hits": 0,
+        "precision_at5": 0.2
+      },
+      "temporal": {
+        "cases": 13,
+        "critical_failures": 0,
+        "forbidden_hits": 0,
+        "precision_at5": 0.2
+      }
+    },
+    "precision_at5": 0.1857,
+    "recall_latency_ms_p50": 0.978,
+    "recall_latency_ms_p95": 1.446,
+    "scope_leakage_count": 1,
+    "stale_recall_rate": 0.0,
+    "superseded_leakage_count": 0
+  },
+  "replay_hash": "b7a9b25030e4b932ee158327a2908e4e0ac2fdcce5141d0288fa5649ce02e8e0",
+  "runner_version": "1.0",
+  "secret_leaks": [],
+  "verdicts": [
+    {
+      "case_id": "ep-001",
+      "category": "explicit_preference",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [
+        "mem_fx0a0001"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 1.801,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0a0001"
+      ],
+      "tokens": 18,
+      "trace_digest": "ae83864e9f514afd248c05acc3450d0206a42410cd55bbea579a65e4777bdd72"
+    },
+    {
+      "case_id": "ep-002",
+      "category": "explicit_preference",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [
+        "mem_fx0a0002"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 0.969,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0a0002"
+      ],
+      "tokens": 17,
+      "trace_digest": "06c9efdbce5f0f34e763b8e0d319ce4b7d96c8309add2bc6d574959efc2ac82c"
+    },
+    {
+      "case_id": "ep-003",
+      "category": "explicit_preference",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [
+        "mem_fx0a0003"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 1.386,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0a0003"
+      ],
+      "tokens": 14,
+      "trace_digest": "93e59a4efab486195ae0ac137170e79dd5faedc8db0378831b707a27a57b49f2"
+    },
+    {
+      "case_id": "ep-004",
+      "category": "explicit_preference",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [
+        "mem_fx0a0004"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 1.012,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0a0004"
+      ],
+      "tokens": 15,
+      "trace_digest": "4ebfbc8794b2e0dfac5aa21a70d2f657d1f947e6a3a1ff20d2afc02ca5058b6d"
+    },
+    {
+      "case_id": "ep-005",
+      "category": "explicit_preference",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [
+        "mem_fx0a0005"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 1.033,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0a0005"
+      ],
+      "tokens": 15,
+      "trace_digest": "8dcc534a2a172cec1ae5ff20578305d423b454a66b85ebfd2c6be27dcc45292b"
+    },
+    {
+      "case_id": "ep-006",
+      "category": "explicit_preference",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [
+        "mem_fx0a0006"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 1.094,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0a0006"
+      ],
+      "tokens": 17,
+      "trace_digest": "4235631323dde16558564be46a09b0bbc0830861b0120d19a727a13988c7f89f"
+    },
+    {
+      "case_id": "ep-007",
+      "category": "explicit_preference",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [
+        "mem_fx0a0007"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 1.147,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0a0007"
+      ],
+      "tokens": 17,
+      "trace_digest": "ba152102d836b1211041de59140b00f51c2b7703810bcd97d50f63ec6483ec2a"
+    },
+    {
+      "case_id": "ep-008",
+      "category": "explicit_preference",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [
+        "mem_fx0a0008"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 0.979,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0a0008"
+      ],
+      "tokens": 18,
+      "trace_digest": "22c1a44e91c59581f225aa01f879da4ad627a9ec300c2f7117b6670e1319764d"
+    },
+    {
+      "case_id": "ep-009",
+      "category": "explicit_preference",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [
+        "mem_fx0a0010"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [
+        "mem_fx0a0009"
+      ],
+      "latency_ms": 1.454,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {
+        "mem_fx0a0009": [
+          "STATUS_SUPERSEDED"
+        ]
+      },
+      "returned_ids": [
+        "mem_fx0a0010"
+      ],
+      "tokens": 17,
+      "trace_digest": "250cfdba1737273fcda8419e9ff9067d2deffa217dda22e817774aa8818edf73"
+    },
+    {
+      "case_id": "ep-010",
+      "category": "explicit_preference",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [
+        "mem_fx0a0011"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 1.274,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0a0011"
+      ],
+      "tokens": 19,
+      "trace_digest": "f211460dccc43b7a7164fd512604dae18ea9bc2fc9c00353862162bda5860a7c"
+    },
+    {
+      "case_id": "ep-011",
+      "category": "explicit_preference",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [
+        "mem_fx0a0012"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 1.01,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0a0012"
+      ],
+      "tokens": 33,
+      "trace_digest": "d9ac7d8bebcec28e0835e0f7077ceda1e178ac41dc5e83fab00a681c39c978ee"
+    },
+    {
+      "case_id": "ep-012",
+      "category": "explicit_preference",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [
+        "mem_fx0a0013"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 0.973,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0a0013"
+      ],
+      "tokens": 17,
+      "trace_digest": "f841772e2c110ee2b9962a6d25dff3ab28d662248ccc06734886755fc8bec96e"
+    },
+    {
+      "case_id": "ep-013",
+      "category": "explicit_preference",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [
+        "mem_fx0a0014"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 0.938,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0a0014"
+      ],
+      "tokens": 25,
+      "trace_digest": "8a414f121ec971a89ee7dc7153938eac71debb885bd18e9e9f7a193d1ef4f004"
+    },
+    {
+      "case_id": "ep-014",
+      "category": "explicit_preference",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [
+        "mem_fx0a0015"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 0.949,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0a0015"
+      ],
+      "tokens": 18,
+      "trace_digest": "efb550aa44f92c2ead6667f2250f23f24025634956620831f83c44db7b74f51a"
+    },
+    {
+      "case_id": "ep-015",
+      "category": "explicit_preference",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [
+        "mem_fx0a0016"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 1.079,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0a0016"
+      ],
+      "tokens": 29,
+      "trace_digest": "40ca6d31b686a15a75ae49d9f321de8596ff44d1cd090735d2b26773a8f6106e"
+    },
+    {
+      "case_id": "io-001",
+      "category": "implicit_observed",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 0.952,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "tokens": 0,
+      "trace_digest": "cc0808b4616f68f8f93f74fe75378d753c0fcfab48c8fb86416619d11bf401b5"
+    },
+    {
+      "case_id": "io-002",
+      "category": "implicit_observed",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 0.894,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "tokens": 0,
+      "trace_digest": "bd00908be975e75a1c6f60eab7ee3feecd0f3900317ce4810380d64ef2cc35da"
+    },
+    {
+      "case_id": "io-003",
+      "category": "implicit_observed",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 1.035,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "tokens": 0,
+      "trace_digest": "cedce102e1dcf528c1b6fd3ca8be706d3e182640164eab2ae77968d4eea19af7"
+    },
+    {
+      "case_id": "io-004",
+      "category": "implicit_observed",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 1.035,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "tokens": 0,
+      "trace_digest": "e061f873e66b78cfbebbb07490e3cf28aead9714a1db0c5fe42a062cbdd76f49"
+    },
+    {
+      "case_id": "io-005",
+      "category": "implicit_observed",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 0.849,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "tokens": 0,
+      "trace_digest": "34f2bc2c35ba675e37a7c4347767463834603bfad0c66838c10377d510c65774"
+    },
+    {
+      "case_id": "io-006",
+      "category": "implicit_observed",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 0.896,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "tokens": 0,
+      "trace_digest": "dc20be46170c189040361af40ecb2f8304d348117366fab9325e151e99459a94"
+    },
+    {
+      "case_id": "io-007",
+      "category": "implicit_observed",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 0.902,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "tokens": 0,
+      "trace_digest": "8780b8ab089f6ac7967ee63a62a6078051908a1ff5768b3454cf6c3ea959d949"
+    },
+    {
+      "case_id": "io-008",
+      "category": "implicit_observed",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 0.955,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "tokens": 0,
+      "trace_digest": "f37cab2159085b6b929205b77333f75b55ac23e8f6ca639cc08a64c466c8b40f"
+    },
+    {
+      "case_id": "io-009",
+      "category": "implicit_observed",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [
+        "mem_fx0b0009"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 0.97,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0b0009"
+      ],
+      "tokens": 23,
+      "trace_digest": "ca0351ffef029e82a5a5b6050e5dfbe19f11a8fe81481c58bbb205230aa80934"
+    },
+    {
+      "case_id": "io-010",
+      "category": "implicit_observed",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [
+        "mem_fx0b0010"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 1.101,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0b0010"
+      ],
+      "tokens": 17,
+      "trace_digest": "7a0c585ea9bc14b79c8d8e600031635f139282801c601c0bb632db9bf5eb724d"
+    },
+    {
+      "case_id": "io-011",
+      "category": "implicit_observed",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 1.092,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "tokens": 0,
+      "trace_digest": "ca512f8c68958b2f6a823ca4f743595c44937f394c2ed45b3e0d603d25252b50"
+    },
+    {
+      "case_id": "io-012",
+      "category": "implicit_observed",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 0.952,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "tokens": 0,
+      "trace_digest": "03c682110ac5fbf827f3fb9c69c92f96efc8cb350f6fabd582901f51a791da93"
+    },
+    {
+      "case_id": "io-013",
+      "category": "implicit_observed",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 0.931,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "tokens": 0,
+      "trace_digest": "992210fec21d6abf27eb1f0b88de37d151f55c340f1d87c89336488e450c1217"
+    },
+    {
+      "case_id": "io-014",
+      "category": "implicit_observed",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [
+        "mem_fx0b0014"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 1.276,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0b0014"
+      ],
+      "tokens": 15,
+      "trace_digest": "166dac7ed7f8d17dcc428e92c95653d88dd985d18669032f7adeae1be8a8d223"
+    },
+    {
+      "case_id": "io-015",
+      "category": "implicit_observed",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 0.906,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "tokens": 0,
+      "trace_digest": "b91ff7444525a3a480f4c55a9cad177a161458c53a662f6a92488e4cab6e436e"
+    },
+    {
+      "case_id": "io-016",
+      "category": "implicit_observed",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 0.842,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "tokens": 0,
+      "trace_digest": "ff97a166873bb3d5c09b2a636520322326201e542ff90958f549d6eff3d9a4f0"
+    },
+    {
+      "case_id": "ps-001",
+      "category": "project_scope",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [
+        "mem_fx0c0001"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 0.887,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0c0001"
+      ],
+      "tokens": 12,
+      "trace_digest": "3256002a399d813023f57d4ce7d4a8c7a7c1c02ece0e219b2bfd6709d57ac981"
+    },
+    {
+      "case_id": "ps-002",
+      "category": "project_scope",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [
+        "mem_fx0c0002"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 0.931,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0c0002"
+      ],
+      "tokens": 12,
+      "trace_digest": "00ce546f113fe4cb15d7f03d7cbe4cd61659c0eb64c3aac7589ae598744137ab"
+    },
+    {
+      "case_id": "ps-003",
+      "category": "project_scope",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [
+        "mem_fx0c0003"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 0.935,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0c0003"
+      ],
+      "tokens": 10,
+      "trace_digest": "7b5bf24281df5cdc6612753c466c6c12584984daaae8c09c65492d59f133069c"
+    },
+    {
+      "case_id": "ps-004",
+      "category": "project_scope",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [
+        "mem_fx0c0004"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 0.918,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0c0004"
+      ],
+      "tokens": 13,
+      "trace_digest": "e8bd714b5d48b99843533750eb73e3263168d6c12113a228d9048320238a28c1"
+    },
+    {
+      "case_id": "ps-005",
+      "category": "project_scope",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [
+        "mem_fx0c0001"
+      ],
+      "latency_ms": 0.98,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {
+        "mem_fx0c0001": [
+          "SCOPE_MISMATCH"
+        ]
+      },
+      "returned_ids": [],
+      "tokens": 0,
+      "trace_digest": "d660f7ad47c8e29e1a9925642ab7b0252d6a41567050889c0960aa127a6d7aea"
+    },
+    {
+      "case_id": "ps-006",
+      "category": "project_scope",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [
+        "mem_fx0c0007"
+      ],
+      "latency_ms": 0.876,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {
+        "mem_fx0c0007": [
+          "SCOPE_MISMATCH"
+        ]
+      },
+      "returned_ids": [],
+      "tokens": 0,
+      "trace_digest": "39d8249e8295a5753fec506dccd0f25e9d8feb41052e033124f9e5fb98bbab19"
+    },
+    {
+      "case_id": "ps-007",
+      "category": "project_scope",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [
+        "mem_fx0c0001",
+        "mem_fx0c0002",
+        "mem_fx0c0003"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 1.296,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0c0003",
+        "mem_fx0c0001",
+        "mem_fx0c0002"
+      ],
+      "tokens": 34,
+      "trace_digest": "3426945b02229edc215e1dbb98dcf38c7df624714d915507c0ae50bc8bab358a"
+    },
+    {
+      "case_id": "ps-008",
+      "category": "project_scope",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [
+        "mem_fx0c0008"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 1.166,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0c0008"
+      ],
+      "tokens": 17,
+      "trace_digest": "5d7904050d54e75ce20c67dc00cd5a4233214f7165cf425b141ce4feefb9e513"
+    },
+    {
+      "case_id": "ps-009",
+      "category": "project_scope",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [
+        "mem_fx0c0009"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 0.944,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0c0009"
+      ],
+      "tokens": 21,
+      "trace_digest": "206be32620a10c931b68302ebffe0c3340ea8f6dbcca0d3b1523f8e50898358c"
+    },
+    {
+      "case_id": "ps-010",
+      "category": "project_scope",
+      "critical_failures": [
+        "no_cross_project_leak"
+      ],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [
+        "mem_fx0c0001"
+      ],
+      "extra": [
+        "mem_fx0c0006"
+      ],
+      "forbidden_hits": [
+        "mem_fx0c0006"
+      ],
+      "forbidden_ids": [
+        "mem_fx0c0006"
+      ],
+      "latency_ms": 1.194,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0c0006",
+        "mem_fx0c0001"
+      ],
+      "tokens": 26,
+      "trace_digest": "cda3703c45b084eb829d0669f4715694c7e41153612c15edc6b687169bdca0f2"
+    },
+    {
+      "case_id": "ps-011",
+      "category": "project_scope",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [
+        "mem_fx0c0010"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 0.969,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0c0010"
+      ],
+      "tokens": 12,
+      "trace_digest": "b1cdedaed61a6856a3d5c6489e97289e360ffb0f0f92fe961cf7850dfc24f6d9"
+    },
+    {
+      "case_id": "ps-012",
+      "category": "project_scope",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [
+        "mem_fx0c0011"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 1.032,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0c0011"
+      ],
+      "tokens": 16,
+      "trace_digest": "7a40473278d1984f0d1a09c71b0c8e3dc9adb7bb52289f6dc0ed477087ec6101"
+    },
+    {
+      "case_id": "ps-013",
+      "category": "project_scope",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [
+        "mem_fx0c0012"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 0.956,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0c0012"
+      ],
+      "tokens": 15,
+      "trace_digest": "7972a38898905cb15abea24e9151f7fd36bf3130b4b0911be9398d00e54a79ba"
+    },
+    {
+      "case_id": "ps-014",
+      "category": "project_scope",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [
+        "mem_fx0c0013"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 0.935,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0c0013"
+      ],
+      "tokens": 33,
+      "trace_digest": "f89ba50c1613fb0a543de4a4d90238b343bb08662c3e1d6ac124250f0babfb19"
+    },
+    {
+      "case_id": "ps-015",
+      "category": "project_scope",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [
+        "mem_fx0c0014"
+      ],
+      "latency_ms": 0.953,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {
+        "mem_fx0c0014": [
+          "SCOPE_MISMATCH",
+          "CATEGORY_MISMATCH"
+        ]
+      },
+      "returned_ids": [],
+      "tokens": 0,
+      "trace_digest": "0d7b97290f7c0c35013160738fede9bec1de1282d3923b2a8e730dc20a80e3a0"
+    },
+    {
+      "case_id": "ps-016",
+      "category": "project_scope",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [
+        "mem_fx0c0015"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 1.215,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0c0015"
+      ],
+      "tokens": 13,
+      "trace_digest": "e1686e428cfe1b8c9cab9259686683d7a2384cbfb27ed8c615aae9797a6d9575"
+    },
+    {
+      "case_id": "nm-001",
+      "category": "negative_no_memory",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 0.054,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "tokens": 0,
+      "trace_digest": "8e8eb02950b0e6c538dfba6691542c0b0c1d7a858dc3c332a809dfa706d775fa"
+    },
+    {
+      "case_id": "nm-002",
+      "category": "negative_no_memory",
+      "critical_failures": [
+        "no_fabrication"
+      ],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [],
+      "extra": [
+        "mem_fx0d0002"
+      ],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 1.05,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": true,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0d0002"
+      ],
+      "tokens": 12,
+      "trace_digest": "2c8e43135549ca19e9249abba69e55c32de5091d615a2a469990e46f7a3d6ed0"
+    },
+    {
+      "case_id": "nm-003",
+      "category": "negative_no_memory",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 0.936,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "tokens": 0,
+      "trace_digest": "45a84189e7c2cbbb1a5d494db7ce21a63247dddce0c1a4ebc3446549640b15fe"
+    },
+    {
+      "case_id": "nm-004",
+      "category": "negative_no_memory",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 0.921,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "tokens": 0,
+      "trace_digest": "cedce102e1dcf528c1b6fd3ca8be706d3e182640164eab2ae77968d4eea19af7"
+    },
+    {
+      "case_id": "nm-005",
+      "category": "negative_no_memory",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 1.082,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "tokens": 0,
+      "trace_digest": "c65182d2e78bd3ff5cf469ebd4a7260322f7b97d4e2d3a66e404d1dc2bde93e1"
+    },
+    {
+      "case_id": "nm-006",
+      "category": "negative_no_memory",
+      "critical_failures": [
+        "no_fabrication"
+      ],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [],
+      "extra": [
+        "mem_fx0a0005"
+      ],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 0.953,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": true,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0a0005"
+      ],
+      "tokens": 15,
+      "trace_digest": "547e3c551ef538207d108e2126e6cee6e9940538d1125e70e51b4edfcc72d1db"
+    },
+    {
+      "case_id": "nm-007",
+      "category": "negative_no_memory",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 0.062,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "tokens": 0,
+      "trace_digest": "8e8eb02950b0e6c538dfba6691542c0b0c1d7a858dc3c332a809dfa706d775fa"
+    },
+    {
+      "case_id": "nm-008",
+      "category": "negative_no_memory",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 1.006,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "tokens": 0,
+      "trace_digest": "97e7ba6a7803e29826aa22d9dbf14f94b0668418587a23aad49d44368abf4c28"
+    },
+    {
+      "case_id": "nm-009",
+      "category": "negative_no_memory",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 0.869,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "tokens": 0,
+      "trace_digest": "5638851f678e08dcf04326cb1a61fa07b329617f8a38be53a2ec0052e357cd00"
+    },
+    {
+      "case_id": "nm-010",
+      "category": "negative_no_memory",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 0.864,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "tokens": 0,
+      "trace_digest": "13db6a752fdc3ceb7b0bcc8f3b30eb44df1f39c7b8713ba4a5bf92bef8c613f3"
+    },
+    {
+      "case_id": "nm-011",
+      "category": "negative_no_memory",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 0.862,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "tokens": 0,
+      "trace_digest": "49b2e5bc9e10759d54412f3266e5d9757f1dd215f13fbd3e6927cbda7d334fd6"
+    },
+    {
+      "case_id": "nm-012",
+      "category": "negative_no_memory",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 0.978,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "tokens": 0,
+      "trace_digest": "c92c06f699a652a7e682201b291e85975b2183d0fc45fa5a5b4b1917bc3c5173"
+    },
+    {
+      "case_id": "nm-013",
+      "category": "negative_no_memory",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 1.046,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "tokens": 0,
+      "trace_digest": "cc0808b4616f68f8f93f74fe75378d753c0fcfab48c8fb86416619d11bf401b5"
+    },
+    {
+      "case_id": "nm-014",
+      "category": "negative_no_memory",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 0.915,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "tokens": 0,
+      "trace_digest": "7575aa876c37d5ec6008da635db6df8a7acc586877b71c09c8a8dcf81b84b348"
+    },
+    {
+      "case_id": "nm-015",
+      "category": "negative_no_memory",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [
+        "mem_fx0f0003"
+      ],
+      "latency_ms": 0.955,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {
+        "mem_fx0f0003": [
+          "STATUS_SUPERSEDED"
+        ]
+      },
+      "returned_ids": [],
+      "tokens": 0,
+      "trace_digest": "d9e5d0b31faa975c5a1e5228c2b3dc8883425ea8364a727a33be3951d828f65e"
+    },
+    {
+      "case_id": "tp-001",
+      "category": "temporal",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 0.912,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "tokens": 0,
+      "trace_digest": "0570cecb06823162c6b1ab92db86cf3637bacee7b9d04d9c2b05f5565caa9057"
+    },
+    {
+      "case_id": "tp-002",
+      "category": "temporal",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [
+        "mem_fx0e0001"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 0.974,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0e0001"
+      ],
+      "tokens": 13,
+      "trace_digest": "1769add47539b043cd68eaa9e156489eac30fb7ccd2b4ddbbc24431168eb4ec5"
+    },
+    {
+      "case_id": "tp-003",
+      "category": "temporal",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 0.971,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "tokens": 0,
+      "trace_digest": "c92c06f699a652a7e682201b291e85975b2183d0fc45fa5a5b4b1917bc3c5173"
+    },
+    {
+      "case_id": "tp-004",
+      "category": "temporal",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [
+        "mem_fx0e0003"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 0.943,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0e0003"
+      ],
+      "tokens": 12,
+      "trace_digest": "83ffcce26d8d942b7b65ba79b6b23655754f94009272c9e812c608beea6ac7ac"
+    },
+    {
+      "case_id": "tp-005",
+      "category": "temporal",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 0.901,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "tokens": 0,
+      "trace_digest": "92af20dd95cfb53ec7817539974ff3d3de2a26206c57221b75d31431cb217576"
+    },
+    {
+      "case_id": "tp-006",
+      "category": "temporal",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [
+        "mem_fx0e0004"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 0.962,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0e0004"
+      ],
+      "tokens": 16,
+      "trace_digest": "f4aae8b333496a6b9bd5dc1fbd6ded8ba811c8631592aeadd55d8561e5cf0d7b"
+    },
+    {
+      "case_id": "tp-007",
+      "category": "temporal",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [
+        "mem_fx0e0005"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 1.023,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0e0005"
+      ],
+      "tokens": 17,
+      "trace_digest": "1b01d877e9de39ea821f46b266969f04a963d57aa9077290435e6f9ac0d3bae9"
+    },
+    {
+      "case_id": "tp-008",
+      "category": "temporal",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 0.89,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "tokens": 0,
+      "trace_digest": "397087834aa7abc54b9269972dae5e37c3c0591f6aaa5a276ec2b4b657d33bfc"
+    },
+    {
+      "case_id": "tp-009",
+      "category": "temporal",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [
+        "mem_fx0e0008"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 1.051,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0e0008"
+      ],
+      "tokens": 17,
+      "trace_digest": "f3b267a7f4bf133283647acf6c69e229d187b0f935421d9419fa029c8ade6a12"
+    },
+    {
+      "case_id": "tp-010",
+      "category": "temporal",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 0.863,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "tokens": 0,
+      "trace_digest": "ef70bcefd6ff07dda4f59cd39c70b8a40f764a4b40820c8c31a5b1185df61d23"
+    },
+    {
+      "case_id": "tp-011",
+      "category": "temporal",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [
+        "mem_fx0e0007"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 0.963,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0e0007"
+      ],
+      "tokens": 16,
+      "trace_digest": "16653aabd3050db5eef9bbbd13a500263d3290e1cb4520717be365826521987b"
+    },
+    {
+      "case_id": "tp-012",
+      "category": "temporal",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 0.906,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "tokens": 0,
+      "trace_digest": "fd62744aeea0b4c750463e7dd00e5a9ede898b18716e1bf9d90184af7e4c791a"
+    },
+    {
+      "case_id": "tp-013",
+      "category": "temporal",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 0.899,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "tokens": 0,
+      "trace_digest": "fe86ecc3317a500e6c9fe7c7fe5a7eb922e6b2f3a9e770d2d566809bea282753"
+    },
+    {
+      "case_id": "cs-001",
+      "category": "conflict_superseded",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [
+        "mem_fx0f0002"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [
+        "mem_fx0f0001"
+      ],
+      "latency_ms": 1.061,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {
+        "mem_fx0f0001": [
+          "STATUS_SUPERSEDED"
+        ]
+      },
+      "returned_ids": [
+        "mem_fx0f0002"
+      ],
+      "tokens": 15,
+      "trace_digest": "9a84e1fdc682a0ada71b637ea889a4ee3e2d9ac43b0882bba401ee5f55d4a772"
+    },
+    {
+      "case_id": "cs-002",
+      "category": "conflict_superseded",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [
+        "mem_fx0f0002",
+        "mem_fx0f0001"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 1.108,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0f0001",
+        "mem_fx0f0002"
+      ],
+      "tokens": 29,
+      "trace_digest": "5ee7a1889e2968053e0a6d3c0419ee64e5441fbcfe9a1a0096d9aeb81b59cda5"
+    },
+    {
+      "case_id": "cs-003",
+      "category": "conflict_superseded",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [
+        "mem_fx0f0004"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [
+        "mem_fx0f0003"
+      ],
+      "latency_ms": 1.071,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {
+        "mem_fx0f0003": [
+          "STATUS_SUPERSEDED"
+        ]
+      },
+      "returned_ids": [
+        "mem_fx0f0004"
+      ],
+      "tokens": 12,
+      "trace_digest": "669ac8d696d9df3cc7f1a854ec8d9fe7ceb2806b0fdddb034823ff6ab177e3e0"
+    },
+    {
+      "case_id": "cs-004",
+      "category": "conflict_superseded",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [
+        "mem_fx0f0005"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [
+        "mem_fx0f0006"
+      ],
+      "latency_ms": 1.051,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {
+        "mem_fx0f0006": [
+          "STATUS_CANDIDATE"
+        ]
+      },
+      "returned_ids": [
+        "mem_fx0f0005"
+      ],
+      "tokens": 14,
+      "trace_digest": "1dab3c9c5e331ee9fe810d7314f47d564c98c9bf0778d4296e99e4582c19810a"
+    },
+    {
+      "case_id": "cs-005",
+      "category": "conflict_superseded",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [
+        "mem_fx0f0008"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [
+        "mem_fx0f0007"
+      ],
+      "latency_ms": 1.056,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {
+        "mem_fx0f0007": [
+          "STATUS_SUPERSEDED"
+        ]
+      },
+      "returned_ids": [
+        "mem_fx0f0008"
+      ],
+      "tokens": 11,
+      "trace_digest": "e68b8462a5dfe3a971a14486ddfbc6df3b5d049d720e7c570a83078d1b90e973"
+    },
+    {
+      "case_id": "cs-006",
+      "category": "conflict_superseded",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [
+        "mem_fx0f0008",
+        "mem_fx0f0007"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 1.064,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0f0007",
+        "mem_fx0f0008"
+      ],
+      "tokens": 24,
+      "trace_digest": "1e51e3a9a9da2b6b5072ab6a7bb872d5f6fe06a4bd590ddb077040587d14cf02"
+    },
+    {
+      "case_id": "cs-007",
+      "category": "conflict_superseded",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [
+        "mem_fx0f0011"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [
+        "mem_fx0f0009",
+        "mem_fx0f0010"
+      ],
+      "latency_ms": 1.3,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {
+        "mem_fx0f0009": [
+          "CONFLICT_LOSER"
+        ],
+        "mem_fx0f0010": [
+          "STATUS_SUPERSEDED"
+        ]
+      },
+      "returned_ids": [
+        "mem_fx0f0011"
+      ],
+      "tokens": 15,
+      "trace_digest": "cbbf283c9939c920efaef6cbcb5a829f849dda8514f35193db81df8a9965f16f"
+    },
+    {
+      "case_id": "cs-008",
+      "category": "conflict_superseded",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [
+        "mem_fx0f0011"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [
+        "mem_fx0f0009"
+      ],
+      "latency_ms": 1.109,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {
+        "mem_fx0f0009": [
+          "CONFLICT_LOSER"
+        ]
+      },
+      "returned_ids": [
+        "mem_fx0f0011"
+      ],
+      "tokens": 15,
+      "trace_digest": "688840cd1422f9dad758e99431a315607e49c4aef1fb9917245135f2a1e8609f"
+    },
+    {
+      "case_id": "cs-009",
+      "category": "conflict_superseded",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [
+        "mem_fx0f0007"
+      ],
+      "latency_ms": 0.869,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {
+        "mem_fx0f0007": [
+          "STATUS_SUPERSEDED"
+        ]
+      },
+      "returned_ids": [],
+      "tokens": 0,
+      "trace_digest": "e5cba5513e828d1c5d6405ee277268a5bd90eb6048359fea88e8e19bdbb1dfbe"
+    },
+    {
+      "case_id": "cs-010",
+      "category": "conflict_superseded",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [
+        "mem_fx0f0002"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [
+        "mem_fx0f0001"
+      ],
+      "latency_ms": 1.055,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {
+        "mem_fx0f0001": [
+          "STATUS_SUPERSEDED"
+        ]
+      },
+      "returned_ids": [
+        "mem_fx0f0002"
+      ],
+      "tokens": 15,
+      "trace_digest": "d90f55cd9e5d44343c1cbc88dee3ce6ee765ff120eda533e7a64deee5c7ae336"
+    },
+    {
+      "case_id": "cs-011",
+      "category": "conflict_superseded",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [
+        "mem_fx0a0002",
+        "mem_fx0a0013"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 1.078,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0a0002",
+        "mem_fx0a0013"
+      ],
+      "tokens": 34,
+      "trace_digest": "f1bff02867d7c8f3b37d310af5d0dfd5620e3a5ae039d3affe1ed5cfc650e1d4"
+    },
+    {
+      "case_id": "cs-012",
+      "category": "conflict_superseded",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [
+        "mem_fx0f0009",
+        "mem_fx0f0011"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 1.224,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0f0009",
+        "mem_fx0f0011"
+      ],
+      "tokens": 30,
+      "trace_digest": "324f61ede3dd487c6a38684755c214f32fda4979582848558d7592269f7185b8"
+    },
+    {
+      "case_id": "pp-001",
+      "category": "paraphrase",
+      "critical_failures": [
+        "paraphrase_hit_top5"
+      ],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [
+        "mem_fx0g0001"
+      ],
+      "extra": [
+        "mem_fx0a0001",
+        "mem_fx0a0002",
+        "mem_fx0a0003"
+      ],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 1.716,
+      "missed": [
+        "mem_fx0g0001"
+      ],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {
+        "mem_fx0g0001": [
+          "LIMIT_TRUNCATED"
+        ]
+      },
+      "returned_ids": [
+        "mem_fx0a0001",
+        "mem_fx0a0002",
+        "mem_fx0a0003"
+      ],
+      "tokens": 49,
+      "trace_digest": "039e7a7818d90c95fedc8f50c370a89368d5b683c0296e9d8eb2308d0ef27904"
+    },
+    {
+      "case_id": "pp-002",
+      "category": "paraphrase",
+      "critical_failures": [
+        "paraphrase_hit_top5"
+      ],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [
+        "mem_fx0g0002"
+      ],
+      "extra": [
+        "mem_fx0a0001",
+        "mem_fx0a0005",
+        "mem_fx0a0013"
+      ],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 1.39,
+      "missed": [
+        "mem_fx0g0002"
+      ],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {
+        "mem_fx0g0002": [
+          "LIMIT_TRUNCATED"
+        ]
+      },
+      "returned_ids": [
+        "mem_fx0a0001",
+        "mem_fx0a0005",
+        "mem_fx0a0013"
+      ],
+      "tokens": 50,
+      "trace_digest": "a3d943c54f7cc7e85f370e595214498115fd7ab6a62efa237cd0905aaa566e77"
+    },
+    {
+      "case_id": "pp-003",
+      "category": "paraphrase",
+      "critical_failures": [
+        "paraphrase_hit_top5"
+      ],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [
+        "mem_fx0g0003"
+      ],
+      "extra": [
+        "mem_fx0a0007",
+        "mem_fx0a0012",
+        "mem_fx0a0016"
+      ],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 1.428,
+      "missed": [
+        "mem_fx0g0003"
+      ],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {
+        "mem_fx0g0003": [
+          "LIMIT_TRUNCATED"
+        ]
+      },
+      "returned_ids": [
+        "mem_fx0a0007",
+        "mem_fx0a0012",
+        "mem_fx0a0016"
+      ],
+      "tokens": 79,
+      "trace_digest": "0827cdf95afb921d982233582b0348a2ca92a019c2b7332eee0f6ff6d50ae904"
+    },
+    {
+      "case_id": "pp-004",
+      "category": "paraphrase",
+      "critical_failures": [
+        "paraphrase_hit_top5"
+      ],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [
+        "mem_fx0g0004"
+      ],
+      "extra": [
+        "mem_fx0a0006",
+        "mem_fx0a0015",
+        "mem_fx0c0015"
+      ],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 1.484,
+      "missed": [
+        "mem_fx0g0004"
+      ],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {
+        "mem_fx0g0004": [
+          "LIMIT_TRUNCATED"
+        ]
+      },
+      "returned_ids": [
+        "mem_fx0a0006",
+        "mem_fx0a0015",
+        "mem_fx0c0015"
+      ],
+      "tokens": 48,
+      "trace_digest": "c8a52c8fb46bff07bbb6c0b551aed6294d2c9142aa813ea56851bbc8c6ede784"
+    },
+    {
+      "case_id": "pp-005",
+      "category": "paraphrase",
+      "critical_failures": [
+        "paraphrase_hit_top5"
+      ],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [
+        "mem_fx0g0005"
+      ],
+      "extra": [
+        "mem_fx0a0003",
+        "mem_fx0b0014",
+        "mem_fx0d0002"
+      ],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 1.402,
+      "missed": [
+        "mem_fx0g0005"
+      ],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {
+        "mem_fx0g0005": [
+          "LIMIT_TRUNCATED"
+        ]
+      },
+      "returned_ids": [
+        "mem_fx0d0002",
+        "mem_fx0b0014",
+        "mem_fx0a0003"
+      ],
+      "tokens": 41,
+      "trace_digest": "cf414a456e98987001fb6dcc8fbb5e8bc1c8d8ef73ccc01e7188718a581ae1cc"
+    },
+    {
+      "case_id": "pp-006",
+      "category": "paraphrase",
+      "critical_failures": [
+        "paraphrase_hit_top5"
+      ],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [
+        "mem_fx0g0006"
+      ],
+      "extra": [
+        "mem_fx0a0004",
+        "mem_fx0a0008",
+        "mem_fx0a0013"
+      ],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 1.602,
+      "missed": [
+        "mem_fx0g0006"
+      ],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {
+        "mem_fx0g0006": [
+          "LIMIT_TRUNCATED"
+        ]
+      },
+      "returned_ids": [
+        "mem_fx0a0008",
+        "mem_fx0a0013",
+        "mem_fx0a0004"
+      ],
+      "tokens": 50,
+      "trace_digest": "6b396ed7bd14c0ed9587d564935aad3f972b0d6881d9066a06dfd658d6127ead"
+    },
+    {
+      "case_id": "pp-007",
+      "category": "paraphrase",
+      "critical_failures": [
+        "paraphrase_hit_top5"
+      ],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [
+        "mem_fx0g0007"
+      ],
+      "extra": [
+        "mem_fx0a0007",
+        "mem_fx0a0011",
+        "mem_fx0c0005"
+      ],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 1.432,
+      "missed": [
+        "mem_fx0g0007"
+      ],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {
+        "mem_fx0g0007": [
+          "LIMIT_TRUNCATED"
+        ]
+      },
+      "returned_ids": [
+        "mem_fx0a0007",
+        "mem_fx0a0011",
+        "mem_fx0c0005"
+      ],
+      "tokens": 49,
+      "trace_digest": "5d487bd0704196171c6cd3838116f91184ea05cabae8eb0bc5317a93dc601780"
+    },
+    {
+      "case_id": "pp-008",
+      "category": "paraphrase",
+      "critical_failures": [
+        "paraphrase_hit_top5"
+      ],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [
+        "mem_fx0g0008"
+      ],
+      "extra": [
+        "mem_fx0a0001",
+        "mem_fx0a0002",
+        "mem_fx0a0016"
+      ],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 1.411,
+      "missed": [
+        "mem_fx0g0008"
+      ],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {
+        "mem_fx0g0008": [
+          "LIMIT_TRUNCATED"
+        ]
+      },
+      "returned_ids": [
+        "mem_fx0a0001",
+        "mem_fx0a0002",
+        "mem_fx0a0016"
+      ],
+      "tokens": 64,
+      "trace_digest": "5a57aca353fac477cb3cb9457b958f9be984ead20983ff73c90eb4422e4522f0"
+    },
+    {
+      "case_id": "pp-009",
+      "category": "paraphrase",
+      "critical_failures": [
+        "paraphrase_hit_top5"
+      ],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [
+        "mem_fx0g0009"
+      ],
+      "extra": [
+        "mem_fx0a0005",
+        "mem_fx0a0015",
+        "mem_fx0b0010"
+      ],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 1.575,
+      "missed": [
+        "mem_fx0g0009"
+      ],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {
+        "mem_fx0g0009": [
+          "LIMIT_TRUNCATED"
+        ]
+      },
+      "returned_ids": [
+        "mem_fx0a0005",
+        "mem_fx0a0015",
+        "mem_fx0b0010"
+      ],
+      "tokens": 50,
+      "trace_digest": "b00a27f8f0c5482984033e816c494181ee4f9383286a6d0572a77295bc1d4ba2"
+    },
+    {
+      "case_id": "pp-010",
+      "category": "paraphrase",
+      "critical_failures": [
+        "paraphrase_hit_top5"
+      ],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [
+        "mem_fx0g0010"
+      ],
+      "extra": [
+        "mem_fx0a0004",
+        "mem_fx0a0006",
+        "mem_fx0a0008"
+      ],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 1.446,
+      "missed": [
+        "mem_fx0g0010"
+      ],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {
+        "mem_fx0g0010": [
+          "LIMIT_TRUNCATED"
+        ]
+      },
+      "returned_ids": [
+        "mem_fx0a0006",
+        "mem_fx0a0008",
+        "mem_fx0a0004"
+      ],
+      "tokens": 50,
+      "trace_digest": "f97d75fd41b4653fd4e04b843677efec9fd0f0218392e8e6d3e364ca4193bd0a"
+    },
+    {
+      "case_id": "pp-011",
+      "category": "paraphrase",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [
+        "mem_fx0g0001"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 0.948,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0g0001"
+      ],
+      "tokens": 13,
+      "trace_digest": "59a81befb0c2c4434160a2bd8b174026b19de0e1bd7266c80eec4a1b100ac250"
+    },
+    {
+      "case_id": "pp-012",
+      "category": "paraphrase",
+      "critical_failures": [
+        "paraphrase_hit_top5"
+      ],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [
+        "mem_fx0g0002"
+      ],
+      "extra": [
+        "mem_fx0a0001",
+        "mem_fx0a0002",
+        "mem_fx0a0003"
+      ],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 1.399,
+      "missed": [
+        "mem_fx0g0002"
+      ],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {
+        "mem_fx0g0002": [
+          "LIMIT_TRUNCATED"
+        ]
+      },
+      "returned_ids": [
+        "mem_fx0a0001",
+        "mem_fx0a0002",
+        "mem_fx0a0003"
+      ],
+      "tokens": 49,
+      "trace_digest": "d0ed895e5a1dfd77e4f6f3c05ffc7a87342462ebc770c8a9f311fd3c9b72eb51"
+    },
+    {
+      "case_id": "sa-001",
+      "category": "security_adversarial",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [
+        "mem_fx0h0001"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 0.955,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0h0001"
+      ],
+      "tokens": 30,
+      "trace_digest": "adaf82bfe7ec6b84410efc86a0067a4d117396cc8aa8721b298f042a20317b40"
+    },
+    {
+      "case_id": "sa-002",
+      "category": "security_adversarial",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [
+        "mem_fx0a0001"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [
+        "mem_fx0h0001"
+      ],
+      "latency_ms": 1.176,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {
+        "mem_fx0h0001": [
+          "CATEGORY_MISMATCH"
+        ]
+      },
+      "returned_ids": [
+        "mem_fx0a0001"
+      ],
+      "tokens": 18,
+      "trace_digest": "f9dabf52ed3a2c4b827ece280250ddc73724324cf6b3fb0d9f54c465664340b0"
+    },
+    {
+      "case_id": "sa-003",
+      "category": "security_adversarial",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [
+        "mem_fx0h0002"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 0.956,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0h0002"
+      ],
+      "tokens": 57,
+      "trace_digest": "cedfc068a9cced52e2c8a5e3a7f92e26cb577b1e321be90655ef738527e617aa"
+    },
+    {
+      "case_id": "sa-004",
+      "category": "security_adversarial",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [
+        "mem_fx0h0003"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 0.968,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0h0003"
+      ],
+      "tokens": 21,
+      "trace_digest": "11cec63a7077bbd9c9a5db70c20633ea278d4bb45592bfeb119b95134f2f605e"
+    },
+    {
+      "case_id": "sa-005",
+      "category": "security_adversarial",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [
+        "mem_fx0h0004"
+      ],
+      "latency_ms": 0.844,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {
+        "mem_fx0h0004": [
+          "SCOPE_MISMATCH"
+        ]
+      },
+      "returned_ids": [],
+      "tokens": 0,
+      "trace_digest": "0d38c512793e3c322773de7f5ac396f34df816773ebecb6d5fa7c8c5734371ac"
+    },
+    {
+      "case_id": "sa-006",
+      "category": "security_adversarial",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [
+        "mem_fx0h0005"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 1.031,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0h0005"
+      ],
+      "tokens": 16,
+      "trace_digest": "0f91f364c4e80fa6f2f072703a1adb1140ee53866961fd40bed4703113cfd33d"
+    },
+    {
+      "case_id": "sa-007",
+      "category": "security_adversarial",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [
+        "mem_fx0h0006"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 0.955,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0h0006"
+      ],
+      "tokens": 21,
+      "trace_digest": "1c545a11f0b3f6776b185c6d2b5e509ab67426c3ca1413e31a9240003acdca83"
+    },
+    {
+      "case_id": "sa-008",
+      "category": "security_adversarial",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [
+        "mem_fx0h0007"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 1.007,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0h0007"
+      ],
+      "tokens": 45,
+      "trace_digest": "b50d4e1695bbb4cbc3475d14a2e4850433f11395a7416b1838fdb3c400d7be31"
+    },
+    {
+      "case_id": "sa-009",
+      "category": "security_adversarial",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [
+        "mem_fx0h0008"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 0.929,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0h0008"
+      ],
+      "tokens": 22,
+      "trace_digest": "d087e25941108afa17fcce74c54fd45ddb7298d463c4257ccfe9c927da2cfa36"
+    },
+    {
+      "case_id": "sa-010",
+      "category": "security_adversarial",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [
+        "mem_fx0h0009"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 1.047,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0h0009"
+      ],
+      "tokens": 45,
+      "trace_digest": "c4ef0f29e3b62816bddda474511949ef3330a60f4a6512dd850eec9334cf472e"
+    },
+    {
+      "case_id": "sa-011",
+      "category": "security_adversarial",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [
+        "mem_fx0h0010"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "latency_ms": 0.949,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0h0010"
+      ],
+      "tokens": 43,
+      "trace_digest": "183c58c0f3c81a71f0c046ffcbec9eeed878ca9fa8875d3e2252882f3cfaddb9"
+    },
+    {
+      "case_id": "sa-012",
+      "category": "security_adversarial",
+      "critical_failures": [],
+      "cross_agent_consistent": true,
+      "error": null,
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [
+        "mem_fx0h0004"
+      ],
+      "latency_ms": 0.987,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {
+        "mem_fx0h0004": [
+          "SCOPE_MISMATCH"
+        ]
+      },
+      "returned_ids": [],
+      "tokens": 0,
+      "trace_digest": "3d397eee236c085cb9deff7038aead484f41805acfb06a45a31f5b9d29777c99"
+    }
+  ]
+}
