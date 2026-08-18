@@ -245,6 +245,34 @@ def test_journal_create_and_order():
     check(op1["operation_id"] != op2["operation_id"], "operation_id 唯一")
 
 
+def test_journal_created_at_monotonic_per_binding():
+    """同微秒竞态下 created_at 仍严格递增（§9.4 创建顺序不依赖文件名）。"""
+    paths = _paths()
+    paths.ensure_dirs()
+    j = PendingJournal(paths)
+    # 预置一条「未来」created_at，模拟上一条同微秒/更晚写入
+    from clued.identifiers import now_rfc3339
+    future = now_rfc3339()
+    manifests.atomic_write_json(
+        paths.pending_file("00000000-0000-4000-8000-000000000001"), {
+            "schema_version": "clued.pending-op.v0.1",
+            "operation_id": "00000000-0000-4000-8000-000000000001",
+            "binding_id": "b", "agent_id": "a", "node_id": "n",
+            "session_id": "s", "operation_type": "CREATE",
+            "memory_id": "obj:z", "base_revision": None,
+            "payload_ref": "r", "payload_sha256": "c" * 64,
+            "created_at": future, "status": "PENDING",
+            "attempt_count": 0, "last_attempt_at": None,
+            "last_error_code": None})
+    op = j.create("b", "a", "n", "s", "CREATE", "obj:x", None, "r",
+                  "c" * 64)
+    check(op["created_at"] > future,
+          "created_at 严格递增: %s > %s" % (op["created_at"], future))
+    ordered = j.pending("b")
+    check(ordered[-1]["operation_id"] == op["operation_id"],
+          "新条目排在最后（创建顺序）")
+
+
 def test_journal_transition_rules():
     paths = _paths()
     paths.ensure_dirs()
@@ -373,6 +401,7 @@ TESTS = [
     test_breaker_half_open_single_flight,
     test_breaker_exponential_cooldown,
     test_journal_create_and_order,
+    test_journal_created_at_monotonic_per_binding,
     test_journal_transition_rules,
     test_journal_crash_recovery_applying_to_pending,
     test_journal_retry_keeps_operation_id,

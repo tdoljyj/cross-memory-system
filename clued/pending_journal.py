@@ -21,7 +21,7 @@ import os
 
 from . import manifests
 from .errors import CluedError
-from .identifiers import new_uuid, now_rfc3339
+from .identifiers import new_uuid, now_rfc3339, parse_rfc3339
 
 TERMINAL_STATES = ("SYNCED", "CONFLICTED", "REJECTED", "PENDING_CORRUPT")
 
@@ -71,7 +71,8 @@ class PendingJournal(object):
         op_id = operation_id or new_uuid()
         op = manifests.build_pending_op(
             op_id, binding_id, agent_id, node_id, session_id, operation_type,
-            memory_id, base_revision, payload_ref, payload_sha256)
+            memory_id, base_revision, payload_ref, payload_sha256,
+            created_at=self._next_created_at(binding_id))
         manifests.atomic_write_json(self.paths.pending_file(op_id), op)
         if self.audit is not None:
             self.audit.append(
@@ -80,6 +81,32 @@ class PendingJournal(object):
                 metadata={"operation_id": op_id, "memory_id": memory_id,
                           "operation_type": operation_type})
         return op
+
+    def _next_created_at(self, binding_id):
+        """同一 Binding 严格递增 created_at（§9.4 创建顺序）：同微秒竞态时
+        取「上一条 + 1μs」，保证按创建顺序处理不依赖文件名。"""
+        from datetime import timedelta
+        now = now_rfc3339()
+        last = None
+        d = self.paths.pending_dir()
+        if os.path.isdir(d):
+            for p in glob.glob(os.path.join(d, "*.json")):
+                try:
+                    raw = manifests.read_json(p)
+                except Exception:
+                    continue
+                if binding_id and raw.get("binding_id") != binding_id:
+                    continue
+                created = raw.get("created_at") or ""
+                if created and (last is None or created > last):
+                    last = created
+        if not last or last < now:
+            return now
+        dt = parse_rfc3339(last)
+        if dt is None:
+            return now
+        return (dt + timedelta(microseconds=1)).isoformat(
+            timespec="microseconds")
 
     # ---- 读取 ----
     def load(self, operation_id):
