@@ -1,14 +1,17 @@
 # -*- coding: utf-8 -*-
-"""Pending Operation Journal（协议 §9）。
+"""Pending Operation Journal（协议 §9，v0.2.0 / CLD-FIX-003）。
 
 - 每次逻辑写入生成稳定 operation_id；重试不得生成新 ID（§9.3.1）；
-- 先原子持久化 journal，再向用户确认“已保存在本地”（§9.3.2）；
+- 先原子持久化 payload（受保护 staging）→ 原子持久化 journal → 再向用户
+  确认「已保存在本地」（§9.3.2；执行计划 §5.2 统一顺序）；
 - 状态转移只允许 PENDING → APPLYING → SYNCED 或
   PENDING/APPLYING → CONFLICTED/REJECTED；损坏 → PENDING_CORRUPT（§9.3.3/8）；
 - SYNCED 记录在确认远端结果后才可归档（§9.3.4）；
 - 进程崩溃后 APPLYING 必须可恢复为幂等重试状态（§9.3.5）；
-- Journal 不得进入 Git 同步范围（位于 .clued/，gitignored）；
-- Payload 引用受保护本地对象（工作树相对路径 + sha256），不重复写明文（§9.3.7）；
+- Journal 与 payload 均不得进入 Git 同步范围（位于 .clued/ 或等价运行时
+  位置，gitignored，不入 Canonical Store）；
+- payload = 语义包络（重放所需全部参数 + 用户内容），sha256 校验；
+- orphan payload 可以检测、隔离并生成审计事件（CLD-FIX-003 §5.2）；
 - 同一 Binding 按创建顺序处理；同一 memory_id 严格保序（§9.4）。
 """
 
@@ -22,13 +25,46 @@ from .identifiers import new_uuid, now_rfc3339
 
 TERMINAL_STATES = ("SYNCED", "CONFLICTED", "REJECTED", "PENDING_CORRUPT")
 
+PAYLOAD_SCHEMA = "clued.pending-payload.v0.1"
+
+
+def validate_payload_envelope(env, op=None):
+    """payload 包络结构校验（CLD-FIX-003：payload 与 journal 必须可关联）。"""
+    if not isinstance(env, dict):
+        return False, "payload 不是对象"
+    if env.get("schema_version") != PAYLOAD_SCHEMA:
+        return False, "payload schema_version 不兼容: %r" % env.get(
+            "schema_version")
+    engine_op = env.get("engine_op")
+    if engine_op not in ("CREATE", "UPDATE", "SUPERSEDE", "DELETE"):
+        return False, "非法 engine_op: %r" % engine_op
+    for field in ("operation_id", "session_id"):
+        if not env.get(field):
+            return False, "payload 缺少字段 %s" % field
+    if op is not None and env.get("operation_id") != op.get("operation_id"):
+        return False, "payload operation_id 与 journal 不符"
+    if engine_op in ("UPDATE", "SUPERSEDE", "DELETE"):
+        if not env.get("target_id"):
+            return False, "payload 缺少 target_id"
+    if engine_op in ("CREATE", "SUPERSEDE"):
+        if not env.get("content"):
+            return False, "payload 缺少 content"
+    if engine_op == "CREATE" and not isinstance(env.get("candidate"), dict):
+        return False, "CREATE payload 缺少 candidate"
+    if engine_op == "SUPERSEDE" and not isinstance(
+            env.get("successor_candidate"), dict):
+        return False, "SUPERSEDE payload 缺少 successor_candidate"
+    if manifests.contains_secret(json.dumps(env, ensure_ascii=False)):
+        return False, "payload 含凭据样值（违规）"
+    return True, ""
+
 
 class PendingJournal(object):
     def __init__(self, paths, audit=None):
         self.paths = paths
         self.audit = audit
 
-    # ---- 创建（先 journal，后应用，再确认）----
+    # ---- 创建（payload 已先落盘 → 原子 journal → 确认）----
     def create(self, binding_id, agent_id, node_id, session_id, operation_type,
                memory_id, base_revision, payload_ref, payload_sha256,
                operation_id=None, request_id=None):
@@ -168,11 +204,10 @@ class PendingJournal(object):
 
     # ---- 完整性检查（§7.5 条件 6 / §10.1.5）----
     def integrity_check(self, repo_root, binding_id=None):
-        """校验条目结构、引用包完整性、目标文件位于仓库内且 sha256 匹配。
-
-        引用包（payload_ref）可位于仓库外（运行时根）；其引用的目标文件
-        必须在仓库内。无法解析的 journal 文件同样计入错误（§9.3.8 不静默
-        丢弃）。
+        """校验条目结构、payload 包络完整性（sha256 + 结构）、重放目标
+        路径位于仓库内。无法解析的 journal 文件同样计入错误（§9.3.8
+        不静默丢弃）。payload 包络位于 .clued/ 或等价运行时位置（可在
+        仓库外），只有重放目标（memory/objects/** 等）必须在仓库内。
         """
         errors = []
         repo_real = os.path.realpath(repo_root)
@@ -197,33 +232,83 @@ class PendingJournal(object):
                 errors.append("%s: %s" % (op_id, err_op))
                 continue
             # 载荷完整性只对活跃批次（PENDING/APPLYING）校验：SYNCED/
-            # CONFLICTED 等终态条目是历史记录，工作树文件已合法演进（§9.3.4）
+            # CONFLICTED 等终态条目是历史记录（§9.3.4）
             if raw.get("status") not in ("PENDING", "APPLYING"):
                 continue
             ref = raw.get("payload_ref") or ""
             bundle = os.path.join(repo_root, ref.replace("/", os.sep))
             if not os.path.isfile(bundle):
-                errors.append("%s: 引用包缺失 %s" % (op_id, ref))
+                errors.append("%s: payload 包络缺失 %s" % (op_id, ref))
                 continue
             if manifests.sha256_file(bundle) != raw.get("payload_sha256"):
-                errors.append("%s: 引用包 sha256 不符 %s" % (op_id, ref))
+                errors.append("%s: payload 包络 sha256 不符 %s" % (op_id, ref))
                 continue
             try:
-                with open(bundle, "r", encoding="utf-8") as fh:
-                    targets = (json.load(fh) or {}).get("payload_files") or {}
+                env = manifests.read_json(bundle)
             except Exception:
-                errors.append("%s: 引用包不可解析 %s" % (op_id, ref))
+                errors.append("%s: payload 包络不可解析 %s" % (op_id, ref))
                 continue
-            for rel, expect_sha in targets.items():
-                full = os.path.join(repo_root, rel.replace("/", os.sep))
+            ok_env, err_env = validate_payload_envelope(env, raw)
+            if not ok_env:
+                errors.append("%s: %s" % (op_id, err_env))
+                continue
+            # 重放目标路径必须位于仓库内（防 payload 越界写入）
+            for oid in (env.get("memory_id"), env.get("target_id"),
+                        env.get("successor_oid")):
+                if not oid:
+                    continue
+                rel = os.path.join("memory", "objects",
+                                   "%s.json" % oid).replace("\\", "/")
+                full = os.path.join(repo_root, *rel.split("/"))
                 real = os.path.realpath(full)
                 if not (real == repo_real or
                         real.startswith(repo_real + os.sep)):
-                    errors.append("%s: 目标文件越界 %s" % (op_id, rel))
-                    continue
-                if not os.path.isfile(real):
-                    errors.append("%s: 目标文件缺失 %s" % (op_id, rel))
-                    continue
-                if manifests.sha256_file(real) != expect_sha:
-                    errors.append("%s: 目标文件 sha256 不符 %s" % (op_id, rel))
+                    errors.append("%s: 重放目标越界 %s" % (op_id, rel))
         return (len(errors) == 0), errors
+
+    # ---- orphan payload（CLD-FIX-003 §5.2：检测、隔离、审计）----
+    def orphan_payloads(self):
+        """payload 包络与 journal 无法关联的孤儿：检测并返回清单。"""
+        out = []
+        d = self.paths.payload_refs_dir()
+        if not os.path.isdir(d):
+            return out
+        for name in sorted(os.listdir(d)):
+            if not name.endswith(".json"):
+                continue
+            op_id = name[:-5]
+            p = self.paths.payload_ref_file(op_id)
+            try:
+                env = manifests.read_json(p)
+            except Exception:
+                out.append({"operation_id": op_id, "reason":
+                            "payload 不可解析"})
+                continue
+            if env.get("operation_id") != op_id:
+                out.append({"operation_id": op_id, "reason":
+                            "payload operation_id 与文件名不符"})
+                continue
+            journal_p = self.paths.pending_file(op_id)
+            if not os.path.isfile(journal_p):
+                out.append({"operation_id": op_id, "reason":
+                            "无对应 journal 条目"})
+        return out
+
+    def isolate_orphan(self, operation_id):
+        """隔离孤儿 payload：移动到 orphans/ 目录，保留证据并审计。"""
+        src = self.paths.payload_ref_file(operation_id)
+        if not os.path.isfile(src):
+            return None
+        d = self.paths.orphan_payload_dir()
+        if not os.path.isdir(d):
+            os.makedirs(d)
+        dst = os.path.join(d, "%s.json" % operation_id)
+        if os.path.isfile(dst):
+            os.remove(dst)
+        os.rename(src, dst)
+        if self.audit is not None:
+            self.audit.append(
+                "pending_conflict", result_code="PENDING_ORPHAN",
+                metadata={"operation_id": operation_id,
+                          "isolated_to": dst, "event": "orphan_payload"})
+        return dst

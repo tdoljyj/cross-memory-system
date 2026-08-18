@@ -85,6 +85,15 @@ class RuntimePaths(object):
     def pending_dir(self):
         return self._p("pending")
 
+    def payload_ref_file(self, operation_id):
+        return self._p("pending-refs", "%s.json" % operation_id)
+
+    def payload_refs_dir(self):
+        return self._p("pending-refs")
+
+    def orphan_payload_dir(self):
+        return self._p("pending-refs", "orphans")
+
     def conflict_dir(self, conflict_id):
         return self._p("conflicts", conflict_id)
 
@@ -120,7 +129,8 @@ class RuntimePaths(object):
 
     def ensure_dirs(self):
         for d in (self.root, self._p("bindings"), self._p("auth"),
-                  self._p("pending"), self._p("conflicts"),
+                  self._p("pending"), self._p("pending-refs"),
+                  self._p("conflicts"),
                   self._p("state", "sessions"), self._p("state", "revoke-queue"),
                   self._p("audit"), self._p("locks"), self._p("staging"),
                   self._p("exports")):

@@ -26,6 +26,7 @@ EVENT_TYPES = (
     "uninstall_begin", "uninstall_success", "uninstall_pending_revoke",
     "uninstall_failure",
     "state_transition", "recovery_begin", "recovery_success",
+    "recovery_step",
     "conflict_snapshot", "lock_acquired", "lock_released",
 )
 

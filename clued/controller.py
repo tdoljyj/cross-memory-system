@@ -128,7 +128,11 @@ class Controller(object):
         entry["updated_at"] = self._now_iso()
         data["bindings"][binding_id] = entry
         self._save_state(data)
-        self.audit.append("state_transition", binding_id=binding_id,
+        # 审计 event_type 使用状态机 TRANSITION_EVENTS（如 LOCKED →
+        # AUTH_REQUIRED 记 auth_recovered，CLD-FIX-004 审计要求）
+        event_type = SM.TRANSITION_EVENTS.get((from_state, to_state),
+                                              "state_transition")
+        self.audit.append(event_type, binding_id=binding_id,
                           request_id=request_id, result_code=to_state,
                           metadata={"from": from_state, "to": to_state})
         return to_state
@@ -231,8 +235,22 @@ class Controller(object):
                              data={"reason": result.kind})
         if result.is_authorized:
             state = self.get_state(binding_id)
-            if state in (SM.AUTH_REQUIRED, SM.LOCKED, SM.DEGRADED_LOCAL,
-                         SM.RECOVERING):
+            if state in (SM.AUTH_REQUIRED, SM.DEGRADED_LOCAL, SM.RECOVERING):
+                pending = self.journal.pending_count(binding_id)
+                self.transition(binding_id, SM.ONLINE_DIRTY if pending
+                                else SM.ONLINE_SYNCED, request_id)
+            elif state == SM.LOCKED:
+                # D4：LOCKED 出口（待产品确认项，保留为文档化偏差）——
+                # 新的在线认证成功 + 账户一致 + Binding ACTIVE + scope 合规
+                # + 完整性检查通过 → LOCKED → AUTH_REQUIRED → ONLINE_*。
+                # 审计事件 auth_recovered + auth_authorized。
+                if not self._account_consistent(binding, result):
+                    raise CluedError(
+                        "CLD-AUTH-001",
+                        "LOCKED 解除被拒绝：账户不一致（%s）"
+                        % (result.account_id or ""),
+                        state=SM.LOCKED, exit_code=30)
+                self.transition(binding_id, SM.AUTH_REQUIRED, request_id)
                 pending = self.journal.pending_count(binding_id)
                 self.transition(binding_id, SM.ONLINE_DIRTY if pending
                                 else SM.ONLINE_SYNCED, request_id)
@@ -240,6 +258,14 @@ class Controller(object):
                     "scopes": result.scopes,
                     "summary": "在线认证成功（AUTHORIZED）"}
         if result.is_degraded:
+            state = self.get_state(binding_id)
+            if state == SM.LOCKED:
+                # CLD-FIX-004：LOCKED 期间禁止降级、禁止使用旧 LKG
+                raise CluedError(
+                    "CLD-AUTH-002",
+                    "LOCKED 状态下在线认证不可用：禁止使用旧 LKG 降级，"
+                    "保持 LOCKED",
+                    exit_code=31, state=SM.LOCKED)
             self.transition(binding_id, SM.DEGRADED_LOCAL, request_id)
             return {
                 "code": "DEGRADED", "state": SM.DEGRADED_LOCAL,
@@ -266,8 +292,11 @@ class Controller(object):
         """
         binding_id = binding.get("binding_id")
         auth_b, sync_b, engine, _rec = self._recovery_for(binding_id)
+        was_locked = self.get_state(binding_id) == SM.LOCKED
+        # CLD-FIX-004：LOCKED 状态必须强制新的在线认证（不得复用旧会话结果）
         result = engine.ensure_authorized(
-            binding, session_id, request_id=request_id, force_online=manual)
+            binding, session_id, request_id=request_id,
+            force_online=(manual or was_locked))
         self._persist_breakers(binding_id, auth_b, sync_b)
         if result.is_denial:
             state = self.get_state(binding_id)
@@ -280,10 +309,27 @@ class Controller(object):
                 state=SM.LOCKED, exit_code=30)
         if result.is_authorized:
             state = self.get_state(binding_id)
-            if state in (SM.AUTH_REQUIRED, SM.LOCKED):
+            if state == SM.LOCKED:
+                # D4 出口：新在线认证成功 + 账户一致 + Binding ACTIVE +
+                # scope 合规 + 完整性检查（LKG 校验已由引擎完成）→ 离开 LOCKED
+                if not self._account_consistent(binding, result):
+                    raise CluedError(
+                        "CLD-AUTH-001",
+                        "LOCKED 解除被拒绝：账户不一致（%s）"
+                        % (result.account_id or ""),
+                        state=SM.LOCKED, exit_code=30)
+                self.transition(binding_id, SM.AUTH_REQUIRED, request_id)
+                state = self.get_state(binding_id)
+            if state == SM.AUTH_REQUIRED:
                 self.transition(binding_id, SM.ONLINE_SYNCED, request_id)
             return AUTHORIZED, result.scopes, self.get_state(binding_id)
         if result.is_degraded:
+            if was_locked:
+                # LOCKED 期间：不降级、不读不写、不使用旧 LKG（CLD-FIX-004）
+                raise CluedError(
+                    "CLD-AUTH-002",
+                    "LOCKED 状态下在线认证不可用：禁止降级与 Memory Access",
+                    state=SM.LOCKED, exit_code=31)
             if (operation or "").lower() not in DEGRADED_OPS:
                 raise CluedError(
                     "CLD-AUTH-005", "降级模式禁止该操作: %s" % operation,
@@ -308,6 +354,9 @@ class Controller(object):
         result = self.gate.recall(query, tier=tier)
         return {"kind": kind, "state": state, "recall": result,
                 "summary": "召回完成（%s）" % state}
+
+    def _account_consistent(self, binding, auth_result):
+        return _account_consistent(binding, auth_result)
 
     def memory_write(self, binding_id, session_id, operation, content,
                      memory_id=None, category=None, request_id=None,
@@ -340,13 +389,13 @@ class Controller(object):
                 "summary": ("已保存在本地（Pending Journal），尚未同步到远端；"
                             "连接恢复后会先重新认证再同步。"),
             }
-        # AUTHORIZED：立即尝试同步（本会话已认证，复用授权，§7.1）
+        # AUTHORIZED：立即尝试同步。恢复层自己重新在线认证
+        #（CLD-FIX-002：每次恢复必须先重新在线认证且必须 AUTHORIZED）。
         _auth_b, _sync_b, _engine, recovery = self._recovery_for(binding_id)
         try:
             sync_result = recovery.recover(
                 binding, session_id, request_id=request_id,
-                committer_name=committer_name, committer_email=committer_email,
-                auth_granted=result_scopes(scopes))
+                committer_name=committer_name, committer_email=committer_email)
         except CluedError as exc:
             self._persist_breakers(binding_id, _auth_b, _sync_b)
             # 在线写入的同步失败 → ONLINE_DIRTY（本地操作保留在 Journal）。
@@ -417,16 +466,33 @@ class Controller(object):
                                     request_id)
                 except CluedError:
                     pass
+            elif exc.state == SM.LOCKED:
+                try:
+                    self.transition(binding_id, SM.LOCKED, request_id)
+                except CluedError:
+                    pass
             elif exc.state == SM.DEGRADED_LOCAL and \
                     self.get_state(binding_id) == SM.RECOVERING:
                 self.transition(binding_id, SM.DEGRADED_LOCAL, request_id)
-            if exc.state == SM.DEGRADED_LOCAL:
-                raise CluedError(
-                    "CLD-AUTH-002",
-                    "重新认证不可用，保持本地优先降级；"
-                    "不会增加高频重试：%s" % exc.message,
-                    exit_code=31, state=SM.DEGRADED_LOCAL,
-                    data={"pending": self.journal.pending_count(binding_id)})
+            elif exc.state in (SM.RECOVERING, None) and \
+                    self.get_state(binding_id) == SM.RECOVERING:
+                # 严格 doctor 阻断/其它恢复失败：回到降级（pending 保留），
+                # 不伪报 ONLINE
+                try:
+                    self.transition(binding_id, SM.DEGRADED_LOCAL,
+                                    request_id)
+                except CluedError:
+                    pass
+            if exc.state == SM.DEGRADED_LOCAL or \
+                    self.get_state(binding_id) == SM.DEGRADED_LOCAL:
+                if exc.state == SM.DEGRADED_LOCAL and exc.code == "CLD-AUTH-002":
+                    raise CluedError(
+                        "CLD-AUTH-002",
+                        "重新认证不可用，保持本地优先降级；"
+                        "不会增加高频重试：%s" % exc.message,
+                        exit_code=31, state=SM.DEGRADED_LOCAL,
+                        data={"pending":
+                              self.journal.pending_count(binding_id)})
             raise
 
     # ---- status（§7.1 MAY：不含私有记忆内容，无需在线认证）----
@@ -457,7 +523,7 @@ class Controller(object):
             out_bindings = [b for b in out_bindings
                             if b.get("binding_id") == binding_id]
         return {
-            "protocol_version": "0.1.0",
+            "protocol_version": "0.2.0",
             "node_id": (node or {}).get("node_id"),
             "runtime_root": self.paths.root,
             "bindings": out_bindings,
@@ -547,6 +613,14 @@ class Controller(object):
         check("pending_journal_integrity", ok_int,
               "; ".join(errors[:5]) if errors else "OK")
 
+        # orphan payload（CLD-FIX-003：检测、隔离并审计，不静默丢弃）
+        orphans = self.journal.orphan_payloads()
+        for o in orphans:
+            self.journal.isolate_orphan(o.get("operation_id"))
+        check("pending_orphan_payloads", not orphans,
+              "; ".join("%s(%s)" % (o.get("operation_id"), o.get("reason"))
+                        for o in orphans[:5]) if orphans else "无孤儿")
+
         # journal 条目结构
         for op in self.journal.list_all():
             ok_op, err_op = manifests.validate_pending_op(op)
@@ -601,6 +675,15 @@ class Controller(object):
 
 def result_scopes(scopes):
     return list(scopes or [])
+
+
+def _account_consistent(binding, auth_result):
+    """D4 出口条件之一：账户一致（§7.4 账户不匹配 → LOCKED）。"""
+    expect = binding.get("account_id") or ""
+    got = getattr(auth_result, "account_id", None) or ""
+    if not expect or not got:
+        return False
+    return expect == got
 
 
 def _make_memory_doctor(repo):

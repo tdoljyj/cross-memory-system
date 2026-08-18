@@ -148,9 +148,15 @@ class GitRepo(object):
         return (p2.stdout or "").strip() or None
 
     def blob_sha(self, relpath):
-        """HEAD 处文件的 blob sha；不存在返回 None。"""
+        """HEAD 处文件的 blob sha；不存在返回 None。
+
+        注意：git rev-parse 对不存在的路径会把输入原样回显到 stdout 并
+        以非零退出，因此必须校验 returncode。
+        """
         rel = relpath.replace("\\", "/")
         p = self._run_git(["rev-parse", "HEAD:%s" % rel])
+        if p.returncode != 0:
+            return None
         return (p.stdout or "").strip() or None
 
     def blob_at_ref(self, ref, relpath):
@@ -184,8 +190,40 @@ class GitRepo(object):
         return line[0].split()[0] if line else None
 
     def status_porcelain(self):
-        p = self._run_git(["status", "--porcelain"])
+        # 显式 =v1：部分 git 版本对裸 --porcelain 的输出列宽不稳定
+        p = self._run_git(["status", "--porcelain=v1"])
         return (p.stdout or "").strip()
+
+    def restore_paths(self, relpaths):
+        """`git restore -- <paths>`：把指定已跟踪路径恢复为 HEAD 内容。
+
+        仅用于回滚 Clued 自己的 replay 残留/提交（调用前必须确认工作树
+        干净或脏文件全部属于 Clued replay 产物，绝不清理用户工作）。
+        """
+        rels = [r.replace("\\", "/") for r in relpaths if r]
+        if not rels:
+            return
+        self._run_git(["restore", "--"] + rels, check=True)
+
+    def reset_soft_undo_commit(self, expected_sha):
+        """回滚 Clued 自己的未推送 replay 提交。
+
+        前置校验 HEAD == expected_sha（绝不回滚他人提交）；随后
+        `git reset --soft HEAD~1` + 取消暂存（工作树内容保留，由调用方
+        精确 restore/删除）。返回回滚后的 HEAD。
+        """
+        head = self.head_sha()
+        if not head or head != expected_sha:
+            raise CluedError(
+                "CLD-SYNC-003",
+                "提交回滚前置校验失败：HEAD 已变化（拒绝回滚）")
+        p = self._run_git(["rev-parse", "HEAD~1"])
+        if p.returncode != 0:
+            raise CluedError(
+                "CLD-SYNC-003", "提交回滚失败：HEAD 无父提交（拒绝回滚）")
+        self._run_git(["reset", "--soft", "HEAD~1"], check=True)
+        self._run_git(["reset"], check=True)  # 取消暂存，保留工作树
+        return self.head_sha()
 
     def commit_paths(self, relpaths, message, name, email, allow_empty=False):
         """add 指定文件 + 身份提交；不 push。"""

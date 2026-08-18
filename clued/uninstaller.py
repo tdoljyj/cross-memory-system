@@ -285,10 +285,17 @@ class Uninstaller(object):
             src = self.paths.pending_file(op["operation_id"])
             if os.path.isfile(src):
                 shutil.copy(src, os.path.join(d, os.path.basename(src)))
+            # payload 包络一并导出（否则导出的 journal 只有引用无内容）
+            ref = op.get("payload_ref") or ""
+            payload = os.path.join(self.sync.repo,
+                                   ref.replace("/", os.sep))
+            if os.path.isfile(payload):
+                shutil.copy(payload, os.path.join(
+                    d, "payload-%s.json" % op["operation_id"]))
         with open(os.path.join(d, "README.txt"), "w", encoding="utf-8") as fh:
             fh.write("丢弃未同步操作的可恢复导出（%s 个操作）。\n"
-                     "原始 Journal 条目保留 operation_id 与 payload 引用；"
-                     "工作树内容以导出时刻为准，恢复需人工评审。\n"
+                     "包含原始 Journal 条目与 payload 包络（operation_id "
+                     "可关联）；恢复需人工评审后重新 replay。\n"
                      % len(pending_ops))
         return d
 
