@@ -10,3 +10,5 @@ __pycache__/
 *.pyc
 # vNext-2.0：session 级临时记忆（不入 Canonical Store，§14/L6）
 memory/session/
+# Clued v0.1：Agent Lifecycle 运行时根（协议 §5.5，不得默认推送）
+.clued/
