@@ -13,21 +13,22 @@
 
 | 项目                   | 值                                        |
 | -------------------- | ---------------------------------------- |
-| 协议版本                 | Clued Agent Lifecycle Protocol **v0.2.0** |
+| 协议版本                 | Clued Agent Lifecycle Protocol **v0.3.0** |
 | 协议状态                 | **FROZEN（冻结）**                           |
-| 冻结日期                 | 2026-08-18（v0.1.0）；2026-08-18（v0.2.0）   |
+| 冻结日期                 | 2026-08-18（v0.1.0）；2026-08-18（v0.2.0）；2026-08-18（v0.3.0） |
 | 实现基线                 | `cross-memory-system` / vNext-2.0        |
 | 当前远端 Canonical Store | GitHub 私有仓库                              |
 | 首个参考适配器              | Codex Agent Adapter                      |
 | 首个参考实现执行者            | DeepSeek V4 Pro                          |
 | 兼容性要求                | 保持 vNext-1.3 同步层、vNext-2.0 记忆引擎及既有数据完全兼容 |
 
-本协议是 Clued v0.1 的实现合同，而不是讨论稿。DeepSeek V4 Pro 应按本文的规范性要求实现首个参考版本。
+本协议是 Clued v0.2.0 的实现合同，而不是讨论稿。DeepSeek V4 Pro 应按本文的规范性要求实现首个参考版本。
 
 > **版本变更记录**：
 > - v0.1.0（2026-08-18）：首次冻结。
 > - v0.2.0（2026-08-18）：依据 ADR-CLD-001（`ADR-CLD-001-LKG-Max-Age-One-Hour.md`），产品所有者批准将 `lkg_max_age` 由 6 小时收紧为 **1 小时**，废除「1 小时开启 / 6 小时完全失效」双界语义。产品名仍为「Clued v0.1」，协议版本提升至 v0.2.0。全部更新位置：§7.5、§17 CLD-003、§19.2、§22。
 > - v0.2.0（2026-08-18，D4 发布前收口）：依据 ADR-CLD-002（`ADR-CLD-002-LOCKED-Recovery-Transition.md`），产品所有者批准将状态转换 `LOCKED → AUTH_REQUIRED` 及其全部安全前提正式纳入 **§11.2**（作为 v0.2.0 发布前收口，协议版本不再提升）。全部更新位置：§11.2、§15.4。
+> - v0.3.0（2026-08-18）：依据 ADR-CLD-003（`ADR-CLD-003-LKG-Policy-Profiles.md`），产品所有者批准 LKG 策略化——`balanced=6h`（新装默认）/ `strict=1h`（v0.1.0 升级保守迁移）；有效降级截止 = min(LKG 到期, 降级会话到期)；未知策略/超 6h fail closed；仅显式命令可切到 balanced。产品版本提升为 **Clued v0.2.0**，协议版本提升至 **v0.3.0**；ADR-CLD-001 的 LKG 取值维度被 supersede（历史事实保留）。全部更新位置：§0、§7.5、§13、§14、§17 CLD-003、§19.2、§22。
 
 本文中的关键词具有以下约束力：
 
@@ -416,26 +417,63 @@ Auth Provider MUST 返回且只返回下列语义之一：
 
 ### 7.5 弱网降级的授权窗口
 
-降级不是离线许可证，而是对一次失败在线认证的短时网络妥协。v0.1 默认策略（经 ADR-CLD-001 固化）：
+降级不是离线许可证，而是对一次失败在线认证的短时网络妥协。v0.2.0 默认策略（经 ADR-CLD-003 固化）：
 
 | 参数                                  | 默认值              |
 | ----------------------------------- | ----------------:|
-| 最近成功在线授权最大年龄 `lkg_max_age`          | 1 小时             |
-| 单次降级会话最大持续时间 `degraded_session_ttl` | 30 分钟            |
+| 策略 `auth_policy`（固定语义策略名）           | `balanced`（新装默认）/ `strict`（v0.1.0 升级保守迁移） |
+| `balanced` LKG 最大年龄 `lkg_max_age`     | **6 小时**          |
+| `strict` LKG 最大年龄 `lkg_max_age`       | **1 小时**          |
+| 单次降级会话最大持续时间 `degraded_session_ttl` | 30 分钟（不变）        |
 | 降级可用 scopes                         | 不超过最近成功授权 scopes |
 | 跨会话继承                               | 禁止；新会话仍必须先尝试在线认证 |
+
+策略语义（ADR-CLD-003）：
+
+- **新安装**默认 `balanced`；**从 clued-v0.1.0 升级的既有安装**（Binding
+  manifest 无 `auth_policy` 字段）首次加载时**保守迁移为 `strict`**，绝不静默
+  放宽，迁移确定性且幂等（写 `policy_migrated` 审计事件，仅一次）；
+- 切换到 `balanced` **只能经显式命令**（§13 `clued auth policy --set
+  balanced`），每次切换写 `policy_change` 审计事件；
+- **未知策略名、任意自定义秒数、任何超过 6 小时的 LKG 上限 → fail closed**
+  （`CLD-AUTH-006`），实现不得静默接受或扩大。
 
 只有同时满足下列条件才可进入 `DEGRADED_LOCAL`：
 
 1. 本次在线认证结果严格为 `UNAVAILABLE`；
 2. 存在校验完整的 Last-Known-Good 授权证明；
-3. 证明年龄 `age <= 1 小时`（`lkg_max_age`；**age > 1 小时即失效**，无 6 小时或其它双界语义）；
+3. 证明年龄 `age <= 当前策略 lkg_max_age`（`balanced`=6h / `strict`=1h；
+   **age > 策略上限即失效**）；
 4. Binding 本地状态为 ACTIVE；
 5. 没有已知撤销、账户切换、scope 降级或安全错误；
 6. 本地存储和 Pending Journal 通过完整性检查；
 7. 当前操作在降级允许列表内。
 
-30 分钟到期后，下一次 Memory Access 必须重新尝试在线认证。若仍不可用且 LKG 仍有效，可开启新的 30 分钟降级会话；这仍不改变“每个新会话必须在线尝试”的规则。
+**有效降级截止时间（绝对截止，ADR-CLD-003 B2）**：
+
+```text
+effective_degraded_until
+= min(
+    lkg_authorized_at + policy.lkg_max_age,   -- LKG 到期
+    degraded_session_started_at + 30min       -- 降级会话到期
+  )
+```
+
+运行中的降级会话**不得越过 LKG 绝对截止时间**：不能在 LKG 临近失效时额外获得
+完整 30 分钟。有效截止到期后，下一次 Memory Access 必须重新尝试在线认证。
+若仍不可用且 LKG 仍有效，可开启新的降级会话（新会话的有效截止重新按 min()
+计算）；这仍不改变“每个新会话必须在线尝试”的规则。
+
+状态与 doctor 至少呈现（全部为派生非秘密信息，不得含令牌/Cookie/凭据）：
+
+```text
+auth_policy
+lkg_max_age
+lkg_authorized_at
+lkg_expires_at
+degraded_session_expires_at
+effective_degraded_until
+```
 
 ### 7.6 降级期间的权限
 
@@ -761,12 +799,18 @@ v0.1 禁止自动选择本地覆盖远端、禁止 rebase、禁止 force push。
 ```text
 clued install --agent-type codex --agent-instance <label> --json
 clued auth check --binding-id <id> --session-id <id> --json
+clued auth policy --binding-id <id> [--set balanced|strict] --json
 clued status --binding-id <id> --json
 clued memory <operation> ... --session-id <id> --json
 clued sync --binding-id <id> --session-id <id> --json
 clued uninstall --binding-id <id> --mode detach-current-agent --json
 clued doctor --json
 ```
+
+`clued auth policy`（ADR-CLD-003）：不带 `--set` 时只读返回当前策略与
+`lkg_max_age`；带 `--set` 时**显式切换**策略（仅此命令可切到 `balanced`；
+未知策略名 → 拒绝，`CLD-AUTH-006`，fail closed），每次切换写
+`policy_change` 审计事件。
 
 若仓库已有命令入口，可扩展现有入口而非强行创建名为 `clued` 的二进制；但语义和 JSON 合同必须等价。
 
@@ -829,6 +873,7 @@ clued doctor --json
 | `CLD-AUTH-003`      | LKG 不存在或过期，禁止降级       |
 | `CLD-AUTH-004`      | Binding/证明完整性失败       |
 | `CLD-AUTH-005`      | scope 不足              |
+| `CLD-AUTH-006`      | 认证策略非法或未知（fail closed，ADR-CLD-003） |
 | `CLD-NET-001`       | 网络预算耗尽，熔断器打开          |
 | `CLD-SYNC-001`      | doctor FAIL           |
 | `CLD-SYNC-002`      | pull 失败               |
@@ -975,7 +1020,10 @@ Codex Adapter MUST：
 
 - 授权与同步各自的 Circuit Breaker；
 - 超时、两次尝试和总预算；
-- 1 小时 LKG 上限（`lkg_max_age`，ADR-CLD-001）与 30 分钟降级会话；
+- LKG 策略配置（ADR-CLD-003）：`balanced`=6h（新装默认）/ `strict`=1h
+  （v0.1.0 升级保守迁移）；有效降级截止 = min(LKG 到期, 降级会话到期)；
+  未知策略/超 6h fail closed（`CLD-AUTH-006`）；
+- 30 分钟降级会话（不变）；
 - 降级权限矩阵；
 - 单飞恢复探测；
 - 不刷屏的状态通知。
@@ -1070,7 +1118,14 @@ DeepSeek SHOULD 按以下顺序实施：
 - revoked Binding 绝不降级；
 - TLS 信任错误绝不降级；
 - DNS/timeout 正确归类为 UNAVAILABLE；
-- 缓存超过 1 小时禁止降级（`age <= 1h` 有效、`age > 1h` 失效，ADR-CLD-001）；
+- 缓存年龄按策略边界判定（ADR-CLD-003）：`balanced` 5h59m59s 可降级、
+  6h00m00s 边界有效、>6h 失效；`strict` 59m59s 可降级、60m00s 边界有效、
+  >60m 失效；
+- 无 `auth_policy` 字段的 v0.1.0 遗留 Binding 按 `strict` 保守裁决并迁移，
+  绝不静默放宽；
+- 有效降级截止 = min(LKG 到期, 降级会话到期)，运行中不得越过 LKG 绝对截止；
+- 未知策略名 / 超过 6 小时的配置 fail closed（`CLD-AUTH-006`）；
+- 切换策略只能经显式命令（`clued auth policy --set`），迁移幂等；
 - 降级 scope 不超过 LKG scope；
 - 30 分钟到期后强制重新尝试在线认证。
 
@@ -1218,9 +1273,11 @@ DeepSeek 完成后必须按以下结构报告：
 - 实现发现歧义时，选择更保守、更少权限、不丢数据、不覆盖远端的行为，并在报告中列明；
 - 发现 P0 安全或数据丢失矛盾时，停止相关模块实现并请求产品决策。
 
-（v0.1.0 → v0.2.0 的 LKG 变更已按本条款执行：ADR-CLD-001 + 版本提升。）
+（v0.1.0 → v0.2.0 的 LKG 变更已按本条款执行：ADR-CLD-001 + 版本提升；
+v0.2.0 → v0.3.0 的 LKG 策略化已按本条款执行：ADR-CLD-003 + 版本提升，
+ADR-CLD-001 的 LKG 取值维度被 supersede，历史事实保留。）
 
-以下决策在 v0.1 已冻结，不接受实现者自行改变：
+以下决策在 v0.2.0 已冻结，不接受实现者自行改变：
 
 1. 安装单位是 Agent Binding；
 2. 同设备不同 Agent 分别安装；
@@ -1228,7 +1285,9 @@ DeepSeek 完成后必须按以下结构报告：
 4. 每新会话首次 Memory Access 必须在线认证尝试；
 5. 只有 `UNAVAILABLE` 可以进入弱网降级；
 6. `DENIED` 和安全错误绝不降级；
-7. 默认 LKG 最大年龄 1 小时（ADR-CLD-001），单次降级会话 30 分钟；
+7. LKG 策略为固定语义策略名：`balanced`=6h（新装默认）/ `strict`=1h
+   （v0.1.0 升级保守迁移；ADR-CLD-003），单次降级会话 30 分钟，有效截止 =
+   min(LKG 到期, 降级会话到期)；未知策略/超 6h fail closed；
 8. 网络调用必须有界并使用熔断；
 9. 降级写入必须进入 Pending Journal；
 10. 恢复必须重新认证、先 pull、后 replay/push；
@@ -1264,8 +1323,10 @@ Clued v0.1 的核心不是“把脚本包装成安装器”，而是建立一个
 - 用户在对话中发出意图；
 - 每个智能体获得独立 Binding；
 - 每个新会话仍严格尝试在线认证；
-- 只有真实弱网才获得短时、本地优先的妥协；
+- 只有真实弱网才获得短时、本地优先的妥协（窗口受策略 lkg_max_age 与
+  30 分钟会话的 min() 绝对截止约束）；
 - 网络恢复后重新认证并严格回归远端 Canonical；
 - 卸载精确作用于当前智能体，不误删其他 Agent 或用户记忆。
 
-至此，Clued Agent Lifecycle Protocol v0.2.0 冻结，可进入第一个参考实现阶段。
+至此，Clued Agent Lifecycle Protocol v0.3.0 冻结（产品 Clued v0.2.0），
+可进入参考实现阶段。

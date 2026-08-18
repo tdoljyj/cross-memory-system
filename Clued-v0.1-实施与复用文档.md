@@ -1,12 +1,12 @@
-# Clued v0.1 实施与复用文档（CLD-000 输出 + 实现设计，v0.2.0）
+# Clued 实施与复用文档（CLD-000 输出 + 实现设计，v0.3.0）
 
 > 协议依据：《Clued v0.1 智能体安装、授权、弱网降级与卸载协议》
-> （Clued Agent Lifecycle Protocol **v0.2.0**，FROZEN，2026-08-18；
->  LKG = 1 小时经 **ADR-CLD-001** 固化；
+> （Clued Agent Lifecycle Protocol **v0.3.0**，FROZEN，2026-08-18；
+>  LKG 策略经 **ADR-CLD-003** 固化：balanced=6h / strict=1h；
 >  `LOCKED → AUTH_REQUIRED` 经 **ADR-CLD-002** 纳入 §11.2）
 > 实现执行者：DeepSeek V4 Pro（DSH@TURING）
 > 实现基线：cross-memory-system / vNext-2.0（HEAD = tag vNext-2.0）
-> 本轮性质：发布前协议纠偏与最终验收（CLD-FIX-001 ~ CLD-FIX-005 + D4 收口）
+> 本轮性质：LKG 策略化（阶段 B，协议 v0.3.0 / 产品 Clued v0.2.0）
 
 ---
 
@@ -101,7 +101,7 @@ Clued-v0.1-Reference-Implementation-Report.md（最终交付报告，协议 §21
 
 1. **运行时根解析**（§5.5）：优先级 `CROSS_MEMORY_CLUED_ROOT` 环境变量 > `sync.config.json` 的 `clued_runtime_root` > `<克隆根>/.clued`。不硬编码用户目录。
 2. **认证后端**：GitHub 参考认证 = `gh api user` + `gh auth status`（凭据留在 gh keyring，Clued 不接触令牌）。TLS/证书错误 → `DENIED_SECURITY`（禁止降级）；401/403/scope 缺失 → `DENIED`；DNS/超时/断连 → `UNAVAILABLE`；gh 缺失 → `UNAVAILABLE(reason=capability)` → `CLD-CAP-001`，不降级。
-3. **LKG 单一权威值（CLD-FIX-001，ADR-CLD-001，协议 v0.2.0）**：`lkg_max_age = 1 小时`（`clued/auth/engine.py` 单一常量来源，禁止其它模块重复硬编码）。边界语义三处一致：**`age <= 1h` 有效、`age > 1h` 失效**；无 6 小时/双界语义。配置只允许缩短；延长到 1h 以上 = 协议配置变化，构造即拒绝（`CLD-AUTH-003`），不得静默接受。
+3. **LKG 单一权威值（CLD-FIX-001，ADR-CLD-001，协议 v0.2.0；已被决策 11 supersede）**：`lkg_max_age = 1 小时`（`clued/auth/engine.py` 单一常量来源，禁止其它模块重复硬编码）。边界语义三处一致：**`age <= 1h` 有效、`age > 1h` 失效**；无 6 小时/双界语义。配置只允许缩短；延长到 1h 以上 = 协议配置变化，构造即拒绝（`CLD-AUTH-003`），不得静默接受。**2026-08-18 ADR-CLD-003（协议 v0.3.0）将其改为策略配置：balanced=6h / strict=1h，见决策 11。**
 4. **排队写入的原子顺序（CLD-FIX-003，执行计划 §5.2）**：生成稳定 `operation_id` → 原子写入 payload 语义包络（受保护 staging，`.clued/pending-refs/`，含重放所需全部参数与用户内容，不入 Git 范围）→ 计算校验 `payload_sha256` → 原子创建 PENDING Journal → 暴露给本地 pending view → 向用户确认「已保存在本地、尚未同步」。**排队期间不修改 Git 跟踪工作树**，因此恢复前 sync doctor 可以真实 PASS。Journal 状态只按 `PENDING → APPLYING → SYNCED` 或 `→ CONFLICTED/REJECTED/PENDING_CORRUPT` 转移；损坏保留证据；孤儿 payload 检测、隔离并审计。
 5. **payload 包络（§9.3.7）**：`clued.pending-payload.v0.1`，含 `engine_op`（CREATE/UPDATE/SUPERSEDE/DELETE）、对象 id、`base_revision`、`base_pending`（pending 链标记）、内容、重建 candidate 字典与 `successor_oid`；sha256 校验；Journal 的 `operation_type` 遵循 §9.2 枚举（SUPERSEDE 归入 UPDATE）。秘密样值扫描照旧（写入即拒绝）。
 6. **恢复严格顺序（CLD-FIX-002，执行计划 §4.2）**：单飞锁 → AUTHENTICATE（每次恢复必须重新在线认证且必须 `AUTHORIZED`）→ DOCTOR 严格门 → VALIDATE_PENDING_JOURNAL → 既有同步层 PULL → VALIDATE_REMOTE_HEAD → LOAD_PENDING_IN_ORDER → 乐观锁判定（read-only）→ REPLAY_WITH_SAME_OPERATION_ID（同一 engine API、同一对象 id，幂等效果）→ RUN_EXISTING_MEMORY_VALIDATION → 既有同步层 PUSH → VERIFY_REMOTE_RESULT → MARK_PENDING_SYNCED → INVALIDATE_ONLY_IF_CHANGED → CLOSE_BREAKERS。每步产生 `recovery_step` 审计事件（顺序证据）。
@@ -109,11 +109,13 @@ Clued-v0.1-Reference-Implementation-Report.md（最终交付报告，协议 §21
 8. **push/确认失败回滚**：replay 提交是 Clued 自己的未推送单目的提交；push 或远端确认失败时校验 `HEAD == 本批提交` 后 `git reset --soft` + 精确 restore/删除本批文件，Pending 全部回到 PENDING（不丢、不标 SYNCED），恢复入口重新回到 doctor 可 PASS。绝不 rebase/force push/回滚他人提交。
 9. **冲突（§10.4）**：任何冲突 → 整批停止（不 replay、不 commit、不 push）、生成 base（staging 时刻 HEAD 内容）/ours（payload 意图渲染）/theirs（拉取后远端内容）快照、标记 CONFLICTED、进入 CONFLICT_REVIEW；绝不自动本地覆盖远端。
 10. **LOCKED 出口（ADR-CLD-002 已批准，协议 §11.2.1 正式条款）**：`LOCKED → AUTH_REQUIRED`（新的在线认证结果严格 `AUTHORIZED` 且账户一致 + Binding ACTIVE + scope 合规 + 完整性检查通过，**不使用旧 LKG 作为解锁依据**），审计 `auth_recovered` + `auth_authorized`；返回 `AUTH_REQUIRED` 后下一次 Memory Access 仍按每会话规则执行认证门禁；LOCKED 期间强制新在线认证、禁止降级、禁止读私有记忆、禁止写 Pending、禁止使用旧 LKG、禁止 canonical read/push。**2026-08-18 产品所有者批准（D4 收口），不再列为协议偏差。**
-11. **GitHub 撤销语义**：GitHub 认证是账户级（无逐 Binding 令牌），`revoke()` 标记 Binding REVOKED 并登记撤销任务；不触碰用户共享的 gh 登录。文档化为 v0.1 已知限制。
-12. **Adapter 不越界**：Codex 适配器只交付指令文档 + 由 Codex 自身在其工作区落地，Clued 核心不写 `~/.codex`（遵守既有 deploy-guard / 不越界纪律）。
-13. **测试隔离**：沿用 `test_acceptance.py` 模式——沙盒克隆 + 把 `sync-memory.py` 复制进沙盒（脚本 REPO 自解析），认证用 `CLUED_AUTH_PROVIDER=fake:<spec.json>` 故障注入，全部测试零网络、零改动真实记忆；恢复顺序/崩溃注入在 `tests/test_clued_recovery_crash.py`（13 项）。
-14. **认证熔断与手动探测**：熔断 OPEN 时自动在线调用暂停（返回 UNAVAILABLE→按 LKG 降级）；用户显式操作（auth check / sync / uninstall）经单飞锁执行一次受控 HALF_OPEN 探测（§8.3.5-6）。
+11. **LKG 策略配置（ADR-CLD-003，协议 v0.3.0）**：固定语义策略名，唯一权威注册表在 `clued/auth/policy.py`（`balanced`=6h / `strict`=1h），禁止其它模块硬编码秒数。新装 Binding 写入 `auth_policy=balanced`（installer → `build_binding_manifest` 默认）；**clued-v0.1.0 遗留 Binding（无 `auth_policy` 字段）由 `AgentRegistry._migrate_auth_policy` 首次加载时保守迁移 `strict`**（幂等、写盘、`policy_migrated` 审计仅一次），绝不静默放宽。**有效降级截止 = min(LKG 到期, 降级会话到期)**（engine `_degrade_decision`，运行中不得越过 LKG 绝对截止）。未知策略名/超 6h 秒数 → `CLD-AUTH-006` fail closed（构造器、manifest 校验、命令三层拦截）。切换策略仅经显式命令 `clued auth policy --set`（`policy_change` 审计）。
+12. **status/doctor 策略字段（ADR-CLD-003 §7.5）**：`status` 每个 Binding 呈现 `auth_policy / lkg_max_age / lkg_authorized_at / lkg_expires_at / degraded_session_expires_at / effective_degraded_until`；`doctor` 逐 Binding 校验策略已知（`policy_<id>` 检查）。全部为派生非秘密信息，不含令牌/Cookie/凭据。
+13. **GitHub 撤销语义**：GitHub 认证是账户级（无逐 Binding 令牌），`revoke()` 标记 Binding REVOKED 并登记撤销任务；不触碰用户共享的 gh 登录。文档化为 v0.1 已知限制。
+14. **Adapter 不越界**：Codex 适配器只交付指令文档 + 由 Codex 自身在其工作区落地，Clued 核心不写 `~/.codex`（遵守既有 deploy-guard / 不越界纪律）。
+15. **测试隔离**：沿用 `test_acceptance.py` 模式——沙盒克隆 + 把 `sync-memory.py` 复制进沙盒（脚本 REPO 自解析），认证用 `CLUED_AUTH_PROVIDER=fake:<spec.json>` 故障注入，全部测试零网络、零改动真实记忆；恢复顺序/崩溃注入在 `tests/test_clued_recovery_crash.py`（13 项）；策略/迁移在 `tests/test_clued_policy.py`（22 项）。
+16. **认证熔断与手动探测**：熔断 OPEN 时自动在线调用暂停（返回 UNAVAILABLE→按 LKG 策略降级）；用户显式操作（auth check / sync / uninstall）经单飞锁执行一次受控 HALF_OPEN 探测（§8.3.5-6）。
 
 ## 6. 第二个 Agent Adapter 复用指南
 
-新 Adapter（Claude/ChatGPT/Cursor 等）只需：① 生成 `agent_type` / `agent_instance_label` / 每会话 `session_id`；② 调用 `clued.py` 命令（§13 合同，JSON 信封）；③ 按 `code`/`state` 呈现（§16.3 模板可复用）。**不得**自行实现认证、熔断、Journal、恢复、卸载逻辑，不得直接调用 git。核心入口：`clued install / auth check / status / memory / sync / uninstall / doctor`。
+新 Adapter（Claude/ChatGPT/Cursor 等）只需：① 生成 `agent_type` / `agent_instance_label` / 每会话 `session_id`；② 调用 `clued.py` 命令（§13 合同，JSON 信封）；③ 按 `code`/`state` 呈现（§16.3 模板可复用）。**不得**自行实现认证、熔断、Journal、恢复、卸载逻辑，不得直接调用 git。核心入口：`clued install / auth check / auth policy / status / memory / sync / uninstall / doctor`（`auth policy` 仅在用户显式要求切换 LKG 策略时调用，ADR-CLD-003）。

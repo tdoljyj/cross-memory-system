@@ -1,6 +1,12 @@
 # ADR-CLD-001：LKG 最大年龄收紧为 1 小时
 
-- **Status**：`ACCEPTED`
+> **SUPERSEDED（2026-08-18）**：本 ADR 的 LKG 最大年龄取值维度已被
+> **ADR-CLD-003（LKG 策略配置文件：balanced=6h / strict=1h，协议 v0.3.0）**
+> 取代——LKG 上限从单一权威值改为固定策略配置（新装默认 balanced=6h，
+> v0.1.0 升级保守迁移 strict=1h）。本 ADR 的**历史事实不改写、不删除**：
+> 它记录了 v0.2.0 时期「LKG 唯一权威值 1 小时」的决策依据与代价。
+
+- **Status**：`ACCEPTED`（superseded by ADR-CLD-003，2026-08-18）
 - **Date**：2026-08-18
 - **Decider**：Product Owner
 - **Protocol**：Clued Agent Lifecycle Protocol（版本随之提升至 **v0.2.0**）

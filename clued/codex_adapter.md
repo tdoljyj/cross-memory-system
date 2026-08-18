@@ -38,6 +38,7 @@ python "<克隆根>\clued.py" <command> ... --json
 | “安装 Clued” / “给我装 Clued” | `install --agent-type codex --agent-instance <id> --session-id <sid> --json` |
 | “检查 Clued 状态” / “Clued 状态” | `status --json`（无需认证，§7.1 MAY） |
 | “连接我的 Clued” / “Clued 还能用吗” | `auth check --binding-id <id> --session-id <sid> --json` |
+| “收紧/放宽降级窗口” / “切换 LKG 策略” | `auth policy --binding-id <id> [--set balanced\|strict] --json`（ADR-CLD-003：仅显式命令可切到 balanced；未知策略 fail closed） |
 | “立即同步 Clued” / “重新连接” | `sync --binding-id <id> --session-id <sid> --json` |
 | “从这个智能体卸载 Clued” | `uninstall --binding-id <id> --session-id <sid> --json`（默认 detach-current-agent） |
 | 记忆读/写 | `memory recall/add/update/supersede/delete ... --binding-id <id> --session-id <sid> --json` |
