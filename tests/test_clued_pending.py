@@ -21,6 +21,7 @@ from clued_testkit import (
 
 from clued import manifests
 from clued import state_machine as SM
+from clued.auth.provider import AUTHORIZED
 from clued.errors import CluedError
 from clued.identifiers import new_uuid
 
@@ -42,13 +43,18 @@ def _spec(outcomes):
                                              "remote_confirmed": True}}
 
 
-def _degraded_provider_ctrl(tmp):
-    """install 后进入降级的控制器：AUTH(安装) → UNAV×2（降级会话）→ AUTH…"""
+def _provider_ctrl(tmp, outcomes):
+    """install 后的控制器（session=s-install）；outcomes 依序消费。"""
     from clued.auth.fake import FakeAuthProvider
-    provider = FakeAuthProvider(_spec([AUTH, UNAV, UNAV, AUTH]))
+    provider = FakeAuthProvider(_spec(outcomes))
     ctrl = make_controller(tmp, provider=provider)
     ctrl.install("codex", "TURING:codex", session_id="s-install")
     return ctrl
+
+
+def _degraded_provider_ctrl(tmp):
+    """install 后进入降级的控制器：AUTH(安装) → UNAV×2（降级会话）→ AUTH…"""
+    return _provider_ctrl(tmp, [AUTH, UNAV, UNAV, AUTH])
 
 
 def _binding_id(ctrl):
@@ -146,7 +152,8 @@ def test_recovery_no_change_rule():
 
 def test_recovery_conflict_snapshot_no_push():
     tmp = _tmp()
-    ctrl = _degraded_provider_ctrl(tmp)
+    # AUTH：install + 在线写入的恢复重认证 + 冲突恢复的重新认证
+    ctrl = _provider_ctrl(tmp, [AUTH, AUTH, UNAV, UNAV, AUTH])
     bid = _binding_id(ctrl)
     # 先在线创建对象并推送（安装会话已授权）
     r1 = ctrl.memory_write(bid, "s-install", "CREATE", "v1",
@@ -308,6 +315,120 @@ def test_push_failure_keeps_pending_and_degrades():
     check(sync_result["state"] == SM.ONLINE_SYNCED, "重试恢复成功")
 
 
+def test_degraded_write_keeps_worktree_clean_and_doctor_pass():
+    """CLD-FIX-002 核心：降级写入不修改工作树，恢复前 sync doctor 可真实 PASS。"""
+    tmp = _tmp()
+    ctrl = _degraded_provider_ctrl(tmp)
+    bid = _binding_id(ctrl)
+    ctrl.memory_write(bid, "sess-d", "CREATE", "降级记忆", category="state",
+                      remember=True)
+    status = git("status", "--porcelain=v1", cwd=ctrl.repo).stdout.strip()
+    check(status == "", "降级期间工作树干净: %r" % status)
+    doc = ctrl.sync_provider.doctor()
+    check(doc.ok, "降级期间 sync doctor PASS（恢复前可满足严格 doctor）")
+    check(ctrl.journal.pending_count(bid) == 1, "payload 在 .clued/ staging")
+
+
+# ================= CLD-FIX-004：LOCKED 出口（待产品确认项）=================
+def test_locked_no_degrade_no_access_no_lkg_use():
+    """LOCKED 期间：不降级、不读不写、不使用旧 LKG（专项测试）。"""
+    tmp = _tmp()
+    from clued.auth.fake import FakeAuthProvider
+    provider = FakeAuthProvider(_spec([AUTH,
+                                       {"kind": "DENIED", "reason":
+                                        "revoked"},
+                                       UNAV, UNAV]))
+    ctrl = make_controller(tmp, provider=provider)
+    ctrl.install("codex", "TURING:codex", session_id="s1")
+    bid = _binding_id(ctrl)
+    # 明确拒绝 → LOCKED
+    try:
+        ctrl.auth_check(bid, session_id="s-d")
+        raise AssertionError("应进入 LOCKED")
+    except CluedError as exc:
+        check(exc.state == SM.LOCKED, "DENIED → LOCKED")
+    check(ctrl.get_state(bid) == SM.LOCKED, "状态 LOCKED")
+    # LKG 存在但 LOCKED 期间不得用于降级
+    entry, err = ctrl.auth_cache.load(bid)
+    check(err is None and entry is not None, "LKG 仍在缓存中")
+    # Memory Access：强制新在线认证 → UNAVAILABLE → 不得降级、不得读写
+    try:
+        ctrl.memory_write(bid, "s-e", "CREATE", "locked 期间写入",
+                          category="state", remember=True)
+        raise AssertionError("LOCKED 期间必须拒绝 Memory Access")
+    except CluedError as exc:
+        check(exc.code == "CLD-AUTH-002" and exc.state == SM.LOCKED,
+              "LOCKED 期间 UNAVAILABLE → 不降级保持 LOCKED: %s %s"
+              % (exc.code, exc.state))
+    check(ctrl.get_state(bid) == SM.LOCKED, "仍 LOCKED")
+    check(ctrl.journal.pending_count(bid) == 0, "LOCKED 期间不得写 Pending")
+    try:
+        ctrl.memory_recall(bid, "s-f", "任何查询", tier="T2")
+        raise AssertionError("LOCKED 期间不得读取私有记忆")
+    except CluedError as exc:
+        check(exc.state == SM.LOCKED, "LOCKED 期间拒绝读取: %s" % exc.code)
+
+
+def test_locked_exit_requires_fresh_online_auth_and_audit():
+    """D4：LOCKED → AUTH_REQUIRED → ONLINE_SYNCED（新在线认证成功 + 账户一致 +
+    Binding ACTIVE + scope 合规），审计事件完整。"""
+    tmp = _tmp()
+    from clued.auth.fake import FakeAuthProvider
+    provider = FakeAuthProvider(_spec([AUTH,
+                                       {"kind": "DENIED", "reason":
+                                        "revoked"},
+                                       AUTH, AUTH]))
+    ctrl = make_controller(tmp, provider=provider)
+    ctrl.install("codex", "TURING:codex", session_id="s1")
+    bid = _binding_id(ctrl)
+    try:
+        ctrl.auth_check(bid, session_id="s-d")
+        raise AssertionError("应进入 LOCKED")
+    except CluedError:
+        pass
+    check(ctrl.get_state(bid) == SM.LOCKED, "前置 LOCKED")
+    # 新的在线认证成功（账户一致）→ 离开 LOCKED
+    n = len(provider.calls)
+    result = ctrl.auth_check(bid, session_id="s-r")
+    check(len(provider.calls) > n, "LOCKED 出口必须新的在线认证（不得复用）")
+    check(result["code"] == AUTHORIZED, "AUTHORIZED")
+    check(ctrl.get_state(bid) == SM.ONLINE_SYNCED, "最终 ONLINE_SYNCED")
+    events = [e["event_type"] for e in ctrl.audit.tail(30)]
+    check("auth_recovered" in events, "审计 auth_recovered（LOCKED → AUTH_REQUIRED）")
+    check("auth_authorized" in events, "审计 auth_authorized（→ ONLINE）")
+    # 出口后写入恢复可用
+    w = ctrl.memory_write(bid, "s-r", "CREATE", "解锁后写入",
+                          category="state", remember=True)
+    check(w.get("synced") is True, "解锁后在线写入同步成功")
+
+
+def test_locked_account_mismatch_blocks_exit():
+    """D4 出口条件：账户不一致 → 保持 LOCKED，不得离开。"""
+    tmp = _tmp()
+    from clued.auth.fake import FakeAuthProvider
+    other = {"kind": "AUTHORIZED", "account_id": "github:otheruser",
+             "scopes": SCOPES, "subject": "otheruser"}
+    provider = FakeAuthProvider(_spec([AUTH,
+                                       {"kind": "DENIED", "reason":
+                                        "revoked"},
+                                       other]))
+    ctrl = make_controller(tmp, provider=provider)
+    ctrl.install("codex", "TURING:codex", session_id="s1")
+    bid = _binding_id(ctrl)
+    try:
+        ctrl.auth_check(bid, session_id="s-d")
+        raise AssertionError("应进入 LOCKED")
+    except CluedError:
+        pass
+    try:
+        ctrl.auth_check(bid, session_id="s-other")
+        raise AssertionError("账户不一致必须拒绝离开 LOCKED")
+    except CluedError as exc:
+        check(exc.code == "CLD-AUTH-001" and exc.state == SM.LOCKED,
+              "账户不一致 → 保持 LOCKED: %s %s" % (exc.code, exc.state))
+    check(ctrl.get_state(bid) == SM.LOCKED, "仍 LOCKED")
+
+
 def make_second_clone(tmp, repo):
     clone = os.path.join(tmp, "clone2")
     sh(["git", "clone", os.path.join(tmp, "remote.git"), clone])
@@ -319,6 +440,7 @@ def make_second_clone(tmp, repo):
 TESTS = [
     test_degraded_write_journaled_not_pushed,
     test_degraded_update_and_delete_journaled,
+    test_degraded_write_keeps_worktree_clean_and_doctor_pass,
     test_recovery_replays_and_confirms_remote,
     test_recovery_no_change_rule,
     test_recovery_conflict_snapshot_no_push,
@@ -328,6 +450,9 @@ TESTS = [
     test_applying_crash_recovery_idempotent,
     test_journal_corruption_not_silently_dropped,
     test_push_failure_keeps_pending_and_degrades,
+    test_locked_no_degrade_no_access_no_lkg_use,
+    test_locked_exit_requires_fresh_online_auth_and_audit,
+    test_locked_account_mismatch_blocks_exit,
 ]
 
 
