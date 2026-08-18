@@ -2,21 +2,23 @@
 
 > 协议：《Clued v0.1 智能体安装、授权、弱网降级与卸载协议》
 > （Clued Agent Lifecycle Protocol **v0.2.0**，FROZEN 2026-08-18；
->   LKG = 1 小时经 **ADR-CLD-001** 固化）
+>   LKG = 1 小时经 **ADR-CLD-001** 固化；
+>   `LOCKED → AUTH_REQUIRED` 经 **ADR-CLD-002** 纳入 §11.2）
 > 产品：Clued v0.1
 > 实现执行者：DeepSeek V4 Pro（DSH@TURING）
 > 实现基线：cross-memory-system / vNext-2.0
-> 本轮：发布前协议纠偏与最终验收（CLD-FIX-001 ~ CLD-FIX-005）
+> 本轮：发布前协议纠偏与最终验收（CLD-FIX-001 ~ CLD-FIX-005 + D4 收口）
 
 ---
 
 ## 1. Result
 
-- **PARTIAL**（D1–D3 已解决并移出偏差清单；**D4 仍为待产品确认项**，偏差清单非空 → 不得声明 PASS）
+- **PASS**（D1–D4 已全部解决并移出偏差清单；`Protocol Deviations` 为空）
 - Product version：Clued v0.1
-- Protocol version：Clued Agent Lifecycle Protocol **v0.2.0**（ADR-CLD-001）
+- Protocol version：Clued Agent Lifecycle Protocol **v0.2.0**（ADR-CLD-001 + ADR-CLD-002 发布前收口）
 - Branch：`main`
-- Exact local HEAD：见「9. Git Evidence」（本轮全部提交均为本地提交）
+- Exact local HEAD：见「9. Git Evidence」（本轮全部提交均为本地提交；最终精确 HEAD = 验收证据，见 §7.4 与本轮回报）
+- 验收不变量：TESTED_HEAD = FINAL_REPORT_HEAD = `git rev-parse HEAD` = 临时 bare remote HEAD（见 §7.4）
 - Exact remote HEAD：`77e0797344481519117defa626afea417a5f5f0b`
 - Ahead/behind：本地 ahead 远端（本轮追加提交；**未 push**）
 - Worktree：clean（`.clued/` 运行时根 gitignored，不入 Canonical Store）
@@ -36,12 +38,12 @@
 | §8 弱网重试与熔断 | `clued/circuit_breaker.py`（CLOSED/OPEN/HALF_OPEN、2min→15min 指数冷却、单飞、速率限制） |
 | §9 Pending Operation Journal | `clued/pending_journal.py`（状态机/损坏保留/孤儿检测隔离）+ `clued/memory_gate.py`（payload 语义包络 staging，原子顺序：operation_id → payload 原子写 → sha256 校验 → journal 原子写 → pending view → 确认） |
 | §10 网络恢复与同步 | `clued/recovery.py`（§10.1 前提、§10.2 固定顺序 + 每步 `recovery_step` 审计、§10.3 无变化规则、§10.4 冲突快照 base/ours/theirs、§10.5 完成条件）；`clued/sync_provider.py`（子进程复用冻结同步层；GitRepo 只读 + 精确 restore/回滚） |
-| §11 状态机 | `clued/state_machine.py`（11 态 + LOCKED→AUTH_REQUIRED 文档化扩展 D4）；单一控制器 `clued/controller.py`（TRANSITION_EVENTS 审计） |
+| §11 状态机 | `clued/state_machine.py`（11 态 + `LOCKED→AUTH_REQUIRED`，§11.2.1 正式条款，ADR-CLD-002）；单一控制器 `clued/controller.py`（TRANSITION_EVENTS 审计，`auth_recovered`） |
 | §12 卸载协议 | `clued/uninstaller.py`（默认 detach-current-agent、manifest 精确删除、离线 REMOTE_REVOCATION_PENDING、幂等；导出含 payload 包络） |
 | §13/§14 命令合同/错误码 | `clued/cli.py` + `clued.py`（JSON 信封 `protocol_version=0.2.0`）；`clued/errors.py`（23 个 CLD-* 全实现） |
 | §15 安全与隐私 | gh keyring 凭据；`clued/audit.py`（§15.4 全事件 + 脱敏）；供应链 sha256 + canonicalize + 越界拒绝 |
 | §16 Codex 参考适配器 | `clued/codex_adapter.md`（意图表、session_id、状态模板、自清理；核心逻辑在可复用核心） |
-| §22 变更控制 | `ADR-CLD-001-LKG-Max-Age-One-Hour.md`（ACCEPTED，LKG 6h → 1h，协议 v0.2.0） |
+| §22 变更控制 | `ADR-CLD-001-LKG-Max-Age-One-Hour.md`（ACCEPTED，LKG 6h → 1h，协议 v0.2.0）+ `ADR-CLD-002-LOCKED-Recovery-Transition.md`（ACCEPTED，`LOCKED → AUTH_REQUIRED` 纳入 §11.2，v0.2.0 发布前收口） |
 
 ## 3. Changed Files
 
@@ -70,6 +72,19 @@ tests/test_clued_pending.py                # 降级工作树干净 + doctor PASS
 tests/test_clued_e2e.py                    # 信封协议版本 0.2.0（8 项）
 Clued-v0.1-实施与复用文档.md                 # 设计决策重写（staged payload / 严格恢复 / LKG 单值）
 Clued-v0.1-Reference-Implementation-Report.md（本文件）
+```
+
+**Added（D4 收口轮）**
+```
+ADR-CLD-002-LOCKED-Recovery-Transition.md  # 见上方 Added 清单（D4 收口轮正式登记）
+```
+
+**Modified（D4 收口轮）**
+```
+Clued_v0.1_智能体安装授权弱网降级与卸载协议.md  # §0 变更记录、§11.2 转换行 + §11.2.1 安全前提、§15.4 审计事件（ADR-CLD-002）
+Clued-v0.1-实施与复用文档.md                 # 设计决策 10：D4 由「待确认偏差」改为 ADR-CLD-002 批准条款
+Clued-v0.1-Reference-Implementation-Report.md（本文件：Result=PASS、偏差清单清空、HEAD 证据）
+memory/状态.md                              # 登记 D4 批准与最终收口状态（记忆纪律）
 ```
 
 **Intentionally untouched core files（冻结区，一字未改，见 §7 差异核验）**
@@ -126,7 +141,7 @@ python clued.py doctor --json  → exit 0（干净隔离 clone：local HEAD = �
 1. **vNext-1.3**：`sync-memory.py/ps1` 零改动；70/70 回归全绿；Clued 经子进程复用其 pull/push/doctor/bootstrap，不绕过其密钥扫描、删除传播护栏、锁、分歧核验；恢复前严格服从其 doctor（不豁免、不把 FAIL 当预期状态）。
 2. **vNext-2.0**：`memory_engine/**` 零改动；55/55 回归全绿；replay 经 `adapters.CLIAdapter` / `write_engine` 执行（同一 operation_id、同一对象 id），replay 后运行既有 `memory.py doctor` 验证。
 3. **Git 协议不变量**：无 rebase、无 force push；远端确认用 `merge-base --is-ancestor`；doctor FAIL 阻断 canonical read/push（调用计数证据）；NO_CHANGE → NO_WRITE → NO_SYNC 有专门测试；回滚仅限 Clued 自己的未推送提交（`git reset --soft` + 精确 restore，绝不动用户工作）。
-4. **隔离环境验收（CLD-FIX-005）**：临时目录 + 本地 bare remote + 从修正后本地 HEAD 建立的干净 clone（协议/fix/test 提交之后；docs/memory 提交不改变被测代码）；clone 内 local HEAD == 临时 remote HEAD、worktree clean；九套测试 + `clued.py doctor --json` 全绿（证据文件：`acceptance-evidence.txt`，含每条命令退出码、测试计数、doctor 摘要、`git status --short` 为空、HEAD 对齐、真实远端前后一致、secret 扫描零命中）。全程零真实网络写入（本地 bare remote + fake auth provider + `proxy=""`）。
+4. **隔离环境验收（CLD-FIX-005 + D4 收口后最终重测）**：临时目录 + 本地 bare remote + 从最终本地 HEAD 建立的干净 clone（协议/ADR/报告/D4 收口提交之后；docs/memory 提交不改变被测代码）；clone 内 local HEAD == 临时 remote HEAD、worktree clean；九套测试 + `clued.py doctor --json` 全绿。最终重测证据文件：`acceptance-evidence.txt`（临时目录，含每条命令退出码、测试计数、doctor 摘要、`git status --short` 为空、HEAD 对齐、真实远端前后一致、secret 扫描零命中）。全程零真实网络写入（本地 bare remote + fake auth provider + `proxy=""`）。
 
 ## 8. Known Limitations
 
@@ -141,32 +156,38 @@ python clued.py doctor --json  → exit 0（干净隔离 clone：local HEAD = �
 
 ## 9. Git Evidence
 
-- 本轮追加本地提交（保留历史 4 个提交，无 amend/squash/rebase）：
+- 本轮追加本地提交（保留历史提交，无 amend/squash/rebase）：
   - `c4b2a57` protocol: approve one-hour LKG via ADR-CLD-001 (v0.2.0)
   - `50798dc` fix: enforce doctor-pass pull-before-replay recovery (CLD-FIX-002/003)
   - `e9eb7fe` test: recovery ordering, crash fault injection, D4 LOCKED gate
   - `0ce3062` fix: make journal created_at strictly monotonic per binding
   - `a0e356f` docs: refresh implementation and acceptance report (v0.2.0)
   - `d477ae2` memory: record Clued pre-release correction status
-  - （+ 报告测试计数的文档修正提交，见本轮回报 §1 的精确本地 HEAD）
+  - `b13a430` docs: correct final test counts in report (227 total)
+  - `8738d1c` memory: correct test count in status entry (227)
+  - （D4 收口轮提交见本轮回报：ADR-CLD-002 + 协议 §11.2/§15.4 + 报告 PASS + 实施文档 + 状态.md 登记）
 - Exact remote HEAD：`77e0797344481519117defa626afea417a5f5f0b`（本轮未写入）
 - Exact local/remote relationship：本地 ahead 远端（追加提交未 push）；隔离验收在干净 clone 中另建临时 bare remote 完成（真实 GitHub 零写入，验收前后 `ls-remote` 一致）
 - Confirm：**no push / no PR / no tag / no release / no rebase / no force push**
 
 ## 10. Protocol Deviations
 
-| # | 条款 | 状态 |
+**当前偏差清单：空**（Result = PASS）。
+
+历史处置记录（全部已解决并移出偏差清单）：
+
+| # | 条款 | 处置 |
 |---|---|---|
 | D1 | §7.5 LKG 双界（1h/6h 不一致） | **已解决**：ADR-CLD-001 批准 `lkg_max_age = 1h`，协议升至 v0.2.0；实现/测试/文档单一语义（age ≤ 1h 有效、age > 1h 失效），无 6 小时残留 |
 | D2 | §10.2 恢复顺序适配（先 fetch 后 pull） | **已解决**：降级写入改为 .clued/ staging（不改工作树），恢复前 doctor 真实 PASS；恢复严格 auth → doctor PASS → pull → replay → validate → push → verify，每步审计事件 |
 | D3 | §10.1.4 恢复前 doctor 豁免 | **已解决**：豁免已删除；doctor FAIL 严格阻断 read/push；仅保留冻结层自身指令的「本地落后 → 先 pull 后复查必须 PASS」与「自身 replay 残留 → 精确自愈后复查必须 PASS」两类精确补救 |
-| D4 | §11.2 增加 LOCKED → AUTH_REQUIRED 出口 | **保留（待产品确认）**：实现保留并加固（新在线认证成功 + 账户一致 + Binding ACTIVE + scope 合规 + 完整性检查；审计 auth_recovered；LOCKED 期间禁降级/禁读写/禁用旧 LKG；专项测试 3 项）。产品所有者本轮只批准了「LKG = 1 小时」，**未单独批准 D4**，因此不自行从偏差清单删除 |
+| D4 | §11.2 增加 LOCKED → AUTH_REQUIRED 出口 | **已解决（D4 收口）**：产品所有者批准（ADR-CLD-002，ACCEPTED），转换与 8 项安全前提写入协议 §11.2.1（新在线认证严格 AUTHORIZED + 账户一致 + Binding ACTIVE + scope 合规 + 完整性检查 + 不使用旧 LKG + 审计 auth_recovered + 解锁后仍按每会话门禁）；LOCKED 期间禁降级/禁读写/禁用旧 LKG 维持不变；专项测试 3 项全绿 |
 
-> 偏差清单非空（D4）→ 按执行计划 §9 规则，Result = **PARTIAL**，不得声明 PASS。
+> 偏差清单为空 → 按执行计划 §9 规则，Result = **PASS**。
 
 ## 11. Next Actions（需产品决策）
 
-1. **D4**：`LOCKED → AUTH_REQUIRED` 出口是否正式纳入协议（当前实现已具备审计与测试，仅待产品所有者确认）。
-2. 授权 push 本实现（当前按协议 §18 未 push、未打 tag、未发布；真实仓库 doctor 在本轮未推送状态下按设计报告本地/远端不一致，push 授权后转绿）。
-3. v0.2 候选：逐 Binding 远端凭证撤销（Clued 自有认证服务时实现真正 remote_confirmed 撤销）。
-4. 是否把 `clued.py` 注册为系统级 `clued` 命令别名（协议 §13 允许扩展现有入口，当前以 `python clued.py` 形式交付）。
+1. **授权 push** 本实现（当前按协议 §18 未 push、未打 tag、未发布；真实仓库 doctor 在本轮未推送状态下按设计报告本地/远端不一致，push 授权后转绿）。
+2. v0.2 候选：逐 Binding 远端凭证撤销（Clued 自有认证服务时实现真正 remote_confirmed 撤销）。
+3. 是否把 `clued.py` 注册为系统级 `clued` 命令别名（协议 §13 允许扩展现有入口，当前以 `python clued.py` 形式交付）。
+4. 下一阶段（需另行授权）：LKG 策略化（`balanced=6h` 建议默认 / `strict=1h`，独立 ADR-CLD-003，协议升至 0.3.0）与 Cross-Memory-System 瘦身（先只读 Bloat Audit + `compact --dry-run`，禁止任何真实删除）。

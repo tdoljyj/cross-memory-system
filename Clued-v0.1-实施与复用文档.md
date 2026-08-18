@@ -2,10 +2,11 @@
 
 > 协议依据：《Clued v0.1 智能体安装、授权、弱网降级与卸载协议》
 > （Clued Agent Lifecycle Protocol **v0.2.0**，FROZEN，2026-08-18；
->  LKG = 1 小时经 **ADR-CLD-001** 固化）
+>  LKG = 1 小时经 **ADR-CLD-001** 固化；
+>  `LOCKED → AUTH_REQUIRED` 经 **ADR-CLD-002** 纳入 §11.2）
 > 实现执行者：DeepSeek V4 Pro（DSH@TURING）
 > 实现基线：cross-memory-system / vNext-2.0（HEAD = tag vNext-2.0）
-> 本轮性质：发布前协议纠偏与最终验收（CLD-FIX-001 ~ CLD-FIX-005）
+> 本轮性质：发布前协议纠偏与最终验收（CLD-FIX-001 ~ CLD-FIX-005 + D4 收口）
 
 ---
 
@@ -107,7 +108,7 @@ Clued-v0.1-Reference-Implementation-Report.md（最终交付报告，协议 §21
 7. **doctor 严格门（不绕过）**：doctor PASS → 继续；doctor FAIL 一律阻断 canonical read 与 push。唯一精确补救（非「预期 FAIL」）：FAIL 行仅为「local == remote / tracking ref valid」且本地落后远端（frozen sync 层自身指令「读前必须 re-pull」）→ 先经既有同步层 pull → 复查 doctor 必须 PASS。崩溃残留自愈：FAIL 行仅为「working tree clean」且脏文件 ⊆ 上次 APPLYING 操作的 replay 残留 → 精确 restore/删除残留 → 复查 doctor 必须 PASS。其余任何 FAIL（脏树非本批残留、真分叉、篡改、不健康文件）→ `CLD-SYNC-001` 阻断。
 8. **push/确认失败回滚**：replay 提交是 Clued 自己的未推送单目的提交；push 或远端确认失败时校验 `HEAD == 本批提交` 后 `git reset --soft` + 精确 restore/删除本批文件，Pending 全部回到 PENDING（不丢、不标 SYNCED），恢复入口重新回到 doctor 可 PASS。绝不 rebase/force push/回滚他人提交。
 9. **冲突（§10.4）**：任何冲突 → 整批停止（不 replay、不 commit、不 push）、生成 base（staging 时刻 HEAD 内容）/ours（payload 意图渲染）/theirs（拉取后远端内容）快照、标记 CONFLICTED、进入 CONFLICT_REVIEW；绝不自动本地覆盖远端。
-10. **LOCKED 出口（D4，待产品确认项）**：`LOCKED → AUTH_REQUIRED`（新的在线认证成功且账户一致 + Binding ACTIVE + scope 合规 + 完整性检查通过），审计 `auth_recovered` + `auth_authorized`；LOCKED 期间强制新在线认证、禁止降级、禁止读私有记忆、禁止写 Pending、禁止使用旧 LKG。**本轮未获产品所有者确认，仍列为协议偏差（D4），不自行删除。**
+10. **LOCKED 出口（ADR-CLD-002 已批准，协议 §11.2.1 正式条款）**：`LOCKED → AUTH_REQUIRED`（新的在线认证结果严格 `AUTHORIZED` 且账户一致 + Binding ACTIVE + scope 合规 + 完整性检查通过，**不使用旧 LKG 作为解锁依据**），审计 `auth_recovered` + `auth_authorized`；返回 `AUTH_REQUIRED` 后下一次 Memory Access 仍按每会话规则执行认证门禁；LOCKED 期间强制新在线认证、禁止降级、禁止读私有记忆、禁止写 Pending、禁止使用旧 LKG、禁止 canonical read/push。**2026-08-18 产品所有者批准（D4 收口），不再列为协议偏差。**
 11. **GitHub 撤销语义**：GitHub 认证是账户级（无逐 Binding 令牌），`revoke()` 标记 Binding REVOKED 并登记撤销任务；不触碰用户共享的 gh 登录。文档化为 v0.1 已知限制。
 12. **Adapter 不越界**：Codex 适配器只交付指令文档 + 由 Codex 自身在其工作区落地，Clued 核心不写 `~/.codex`（遵守既有 deploy-guard / 不越界纪律）。
 13. **测试隔离**：沿用 `test_acceptance.py` 模式——沙盒克隆 + 把 `sync-memory.py` 复制进沙盒（脚本 REPO 自解析），认证用 `CLUED_AUTH_PROVIDER=fake:<spec.json>` 故障注入，全部测试零网络、零改动真实记忆；恢复顺序/崩溃注入在 `tests/test_clued_recovery_crash.py`（13 项）。

@@ -27,6 +27,7 @@
 > **版本变更记录**：
 > - v0.1.0（2026-08-18）：首次冻结。
 > - v0.2.0（2026-08-18）：依据 ADR-CLD-001（`ADR-CLD-001-LKG-Max-Age-One-Hour.md`），产品所有者批准将 `lkg_max_age` 由 6 小时收紧为 **1 小时**，废除「1 小时开启 / 6 小时完全失效」双界语义。产品名仍为「Clued v0.1」，协议版本提升至 v0.2.0。全部更新位置：§7.5、§17 CLD-003、§19.2、§22。
+> - v0.2.0（2026-08-18，D4 发布前收口）：依据 ADR-CLD-002（`ADR-CLD-002-LOCKED-Recovery-Transition.md`），产品所有者批准将状态转换 `LOCKED → AUTH_REQUIRED` 及其全部安全前提正式纳入 **§11.2**（作为 v0.2.0 发布前收口，协议版本不再提升）。全部更新位置：§11.2、§15.4。
 
 本文中的关键词具有以下约束力：
 
@@ -662,8 +663,32 @@ v0.1 禁止自动选择本地覆盖远端、禁止 rebase、禁止 force push。
 | RECOVERING     | conflict                | snapshot 成功          | CONFLICT_REVIEW               |
 | 任意已安装状态        | explicit denial         | —                    | LOCKED                        |
 | 任意已安装状态        | uninstall current agent | 用户明确确认               | UNINSTALLING → UNINSTALLED    |
+| LOCKED            | auth check / first access（强制新在线认证） | 新在线认证严格 `AUTHORIZED` 且满足 §11.2.1 全部前提 | AUTH_REQUIRED → ONLINE_SYNCED / ONLINE_DIRTY |
 
 代码中不得以多个互不一致的布尔值代替该状态机。状态转换必须经过单一控制器并写入审计事件。
+
+### 11.2.1 LOCKED → AUTH_REQUIRED 安全前提（ADR-CLD-002）
+
+`LOCKED → AUTH_REQUIRED` 不是绕过锁定，而是锁定原因已经通过一次**全新的在线验证**被消除后，回到「当前会话仍需授权」的保守状态。必须**同时满足**下列全部前提才允许转换：
+
+1. 新的在线认证结果严格为 `AUTHORIZED`；
+2. 当前账户与 Binding 的 `account_id` 一致；
+3. Binding 状态为 `ACTIVE`；
+4. scopes 满足 Binding 所需权限且没有扩大；
+5. Binding manifest、Authorization Cache 和本地完整性检查通过；
+6. **不使用旧 LKG 作为解锁依据**（解锁只能来自新的在线验证结果）；
+7. 写入 `auth_recovered` 审计事件；
+8. 返回 `AUTH_REQUIRED` 后，下一次 Memory Access 仍按每会话规则执行认证门禁（§7.1），不得因解锁而获得跨会话豁免。
+
+任一前提不满足，系统 MUST 保持 `LOCKED`。
+
+在 `LOCKED` 期间继续严格禁止（与 §7.4 一致，不变）：
+
+- 使用旧 LKG 降级；
+- 读取私有记忆；
+- 新增、修改或删除记忆；
+- 写入新的 Pending Operation；
+- 请求 canonical read 或 push。
 
 ---
 
@@ -853,7 +878,7 @@ clued doctor --json
 
 - install begin/success/failure/rollback；
 - bind create/revoke；
-- auth authorized/denied/unavailable；
+- auth authorized/denied/unavailable/recovered（`LOCKED → AUTH_REQUIRED`，ADR-CLD-002）；
 - degraded enter/expire/exit；
 - pending create/replay/conflict/synced；
 - breaker open/half-open/close；
