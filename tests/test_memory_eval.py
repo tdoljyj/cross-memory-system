@@ -98,7 +98,8 @@ def test_runner_deterministic_replay():
           "两次运行 replay hash 必须一致")
     m1, m2 = rep1["metrics"], rep2["metrics"]
     for key in ("precision_at5", "critical_memory_recall",
-                "false_recall_rate", "scope_leakage_count",
+                "false_recall_rate", "current_scope_leakage_count",
+                "project_only_capability_gap_count",
                 "superseded_leakage_count", "no_memory_correctness",
                 "cross_agent_consistency"):
         check(m1.get(key) == m2.get(key), "指标 %s 两次不一致" % key)
@@ -189,6 +190,17 @@ def test_failure_samples_never_leak_markers():
     check(rep["secret_leaks"] == [], "secret_leaks 必须为空")
 
 
+def test_scope_metric_split_contract():
+    """scope 指标拆分不变量：既有 current-scope 边界泄漏 = 0；
+    project_id 隔离缺口 = 1（ps-010，MIV-006 能力，非既有 scope 越权）。"""
+    rep = runner.run_all(warmup=True)
+    m = rep["metrics"]
+    check(m["current_scope_leakage_count"] == 0,
+          "既有 global/project/session 边界不得泄漏（current-scope 须为 0）: %r" % m)
+    check(m["project_only_capability_gap_count"] == 1,
+          "ps-010 应为 MIV-006 project_id 能力缺口（=1），非既有 scope 越权: %r" % m)
+
+
 def test_scope_mapping_contract():
     check(eval_schema.scope_to_engine({"mode": "current"}) is None,
           "current → None")
@@ -228,6 +240,7 @@ TESTS = [
     test_invalid_cases_rejected,
     test_unknown_fixture_raises,
     test_failure_samples_never_leak_markers,
+    test_scope_metric_split_contract,
     test_scope_mapping_contract,
     test_token_estimator_and_trace_present,
     test_report_markdown_renders,

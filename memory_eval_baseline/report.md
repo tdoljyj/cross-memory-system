@@ -2,7 +2,7 @@
 
 - runner: 1.0
 - eval schema: v1
-- corpus hash: `2dad8c237b8424e4e2ff357dc149c10fae9292275eccb1811fd7ae5d71528b50`
+- corpus hash: `1bc2374405f9678bf455b6bfffb2ed6fe3b4c12054fb2fe521e8ac9db3482c0e`
 - cases: 111
 - adapters: codex-test, dsh-test
 - fixed clock: 2026-08-18T12:00:00Z
@@ -15,15 +15,16 @@
 | critical_memory_recall | 0.8553 |
 | false_recall_rate | 0.3663 |
 | stale_recall_rate | 0.0 |
-| scope_leakage_count | 1 |
+| current_scope_leakage_count | 0 |
+| project_only_capability_gap_count | 1 |
 | superseded_leakage_count | 0 |
 | no_memory_correctness | 0.9512 |
 | no_memory_violations | 2 |
 | cross_agent_consistency | 1.0 |
 | estimated_prompt_tokens_p50 | 18 |
 | estimated_prompt_tokens_p95 | 50 |
-| recall_latency_ms_p50 | 0.978 |
-| recall_latency_ms_p95 | 1.446 |
+| recall_latency_ms_p50 | 1.074 |
+| recall_latency_ms_p95 | 1.828 |
 
 ## 分类指标
 
@@ -43,7 +44,7 @@
 - `ps-010` [project_scope]
   - extra: mem_fx0c0006
   - forbidden hits: mem_fx0c0006
-  - critical: no_cross_project_leak
+  - critical: project_only_isolation
 - `nm-002` [negative_no_memory]
   - extra: mem_fx0d0002
   - no-memory violated: returned mem_fx0d0002

@@ -185,10 +185,10 @@ def compute_case_verdict(case, primary, expected, forbidden, no_memory):
             reason_codes[mid] = e.get("reason_codes") or []
     critical = case.get("critical_assertions") or []
     critical_failures = []
-    if "no_cross_project_leak" in critical and forbidden_hits:
-        critical_failures.append("no_cross_project_leak")
     if "no_scope_leak" in critical and forbidden_hits:
         critical_failures.append("no_scope_leak")
+    if "project_only_isolation" in critical and forbidden_hits:
+        critical_failures.append("project_only_isolation")
     if "no_superseded_leak" in critical and forbidden_hits:
         critical_failures.append("no_superseded_leak")
     if "no_stale_recall" in critical and (no_memory_violated or extra):
@@ -333,9 +333,11 @@ def compute_metrics(verdicts):
         len(temporal_cases)
     stale_recall_rate = _frac(stale_items, stale_total)
 
-    # scope leakage：forbidden 命中且 critical 含 scope 类断言
-    scope_leakage = sum(len(v["forbidden_hits"]) for v in verdicts
-                        if _has_scope_critical(v))
+    # scope 拆分：既有 current-scope 边界泄漏（须为 0）vs project_id 隔离能力缺口（MIV-006）
+    current_scope_leakage = sum(len(v["forbidden_hits"]) for v in verdicts
+                                if _has_assert(v, "no_scope_leak"))
+    project_only_gap = sum(len(v["forbidden_hits"]) for v in verdicts
+                           if _has_assert(v, "project_only_isolation"))
     superseded_leakage = sum(len(v["forbidden_hits"]) for v in verdicts
                              if _has_superseded_critical(v))
 
@@ -377,7 +379,8 @@ def compute_metrics(verdicts):
         "critical_memory_recall": critical_recall,
         "false_recall_rate": false_recall_rate,
         "stale_recall_rate": stale_recall_rate,
-        "scope_leakage_count": scope_leakage,
+        "current_scope_leakage_count": current_scope_leakage,
+        "project_only_capability_gap_count": project_only_gap,
         "superseded_leakage_count": superseded_leakage,
         "no_memory_correctness": no_memory_correctness,
         "no_memory_violations": no_memory_violations,
@@ -394,18 +397,15 @@ def compute_metrics(verdicts):
     }
 
 
-def _has_scope_critical(v):
-    """scope 类 critical 断言（no_cross_project_leak / no_scope_leak）的
-    forbidden 命中 = scope leakage。"""
+def _has_assert(v, name):
+    """critical_failures 中命中指定断言 = 该断言对应的 forbidden 越权/差距。"""
     fails = v.get("critical_failures") or []
-    return bool(v.get("forbidden_hits")) and (
-        "no_cross_project_leak" in fails or "no_scope_leak" in fails)
+    return bool(v.get("forbidden_hits")) and name in fails
 
 
 def _has_superseded_critical(v):
     """superseded 类 critical 断言的 forbidden 命中 = superseded leakage。"""
-    fails = v.get("critical_failures") or []
-    return bool(v.get("forbidden_hits")) and "no_superseded_leak" in fails
+    return _has_assert(v, "no_superseded_leak")
 
 
 def render_markdown(report):
@@ -427,7 +427,9 @@ def render_markdown(report):
     lines.append("| --- | --- |")
     for key in ("precision_at5", "critical_memory_recall",
                 "false_recall_rate", "stale_recall_rate",
-                "scope_leakage_count", "superseded_leakage_count",
+                "current_scope_leakage_count",
+                "project_only_capability_gap_count",
+                "superseded_leakage_count",
                 "no_memory_correctness", "no_memory_violations",
                 "cross_agent_consistency",
                 "estimated_prompt_tokens_p50",

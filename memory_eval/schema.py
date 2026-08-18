@@ -35,12 +35,12 @@ SCOPE_MODES = ["current", "project_only", "global"]
 
 # 可选 critical assertion 枚举（报告分类统计用）
 CRITICAL_ASSERTIONS = [
-    "no_cross_project_leak",
+    "no_scope_leak",             # 既有 global/project/session 边界（current-scope，须为 0）
+    "project_only_isolation",    # project_id 硬隔离（MIV-006 能力，尚未实现）
     "no_superseded_leak",
     "no_stale_recall",
     "no_fabrication",
     "no_secret_leak",
-    "no_scope_leak",
     "explicit_wins",
     "deterministic_replay",
     "paraphrase_hit_top5",
