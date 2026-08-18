@@ -12,6 +12,7 @@ import json
 import os
 
 from . import RUNTIME_VERSION
+from .auth.policy import AUTH_POLICIES, DEFAULT_POLICY
 from .errors import CluedError
 from .identifiers import now_rfc3339
 from .redact import contains_secret, secret_patterns
@@ -21,7 +22,9 @@ BINDING_SCHEMA = "clued.binding.v0.1"
 AUTH_CACHE_SCHEMA = "clued.auth-cache.v0.1"
 PENDING_SCHEMA = "clued.pending-op.v0.1"
 REVOKE_TASK_SCHEMA = "clued.revoke-task.v0.1"
-POLICY_VERSION = "0.1"
+# ADR-CLD-003 / 协议 v0.3.0：LKG 证明按策略版本签发（旧 0.1 缓存仍按自身
+# 版本自洽校验，可继续在 strict 保守语义下使用）
+POLICY_VERSION = "0.2"
 
 SCOPES = ("memory:read", "memory:write", "sync:request")
 
@@ -102,7 +105,13 @@ def validate_node_manifest(manifest):
 def build_binding_manifest(binding_id, agent_id, node_id, account_id,
                            agent_type, agent_instance_label,
                            adapter_version, scopes, status="ACTIVE",
-                           installed_at=None, artifacts=None):
+                           installed_at=None, artifacts=None,
+                           auth_policy=DEFAULT_POLICY):
+    """新 Binding 默认携带 auth_policy=DEFAULT_POLICY（balanced，ADR-CLD-003）。
+
+    从 clued-v0.1.0 升级的既有 Binding（无 auth_policy 字段）由
+    AgentRegistry 保守迁移为 strict，本构造器不负责迁移。
+    """
     return {
         "schema_version": BINDING_SCHEMA,
         "binding_id": binding_id,
@@ -113,6 +122,7 @@ def build_binding_manifest(binding_id, agent_id, node_id, account_id,
         "agent_instance_label": agent_instance_label,
         "adapter_version": adapter_version,
         "scopes": list(scopes),
+        "auth_policy": auth_policy,
         "status": status,
         "installed_at": installed_at or now_rfc3339(),
         "last_verified_at": None,
@@ -132,6 +142,12 @@ def validate_binding_manifest(manifest):
             return False, "缺少字段 %s" % field
     if manifest.get("status") not in ("ACTIVE", "REVOKED", "REVOKING"):
         return False, "非法 status: %r" % manifest.get("status")
+    # ADR-CLD-003：auth_policy 缺失 = clued-v0.1.0 遗留（合法，由 Registry 保守
+    # 迁移 strict）；存在则必须为已知策略，未知策略 fail closed（CLD-AUTH-006）。
+    if "auth_policy" in manifest and \
+            manifest.get("auth_policy") not in AUTH_POLICIES:
+        return False, "未知认证策略: %r（仅允许 %s，fail closed）" % (
+            manifest.get("auth_policy"), "/".join(AUTH_POLICIES))
     scopes = manifest.get("scopes")
     if not isinstance(scopes, list) or not scopes:
         return False, "scopes 缺失或为空"

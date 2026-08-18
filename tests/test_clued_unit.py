@@ -39,7 +39,7 @@ def test_envelope_ok_shape():
     env = envelope.envelope_ok(state="ONLINE_SYNCED", code="AUTHORIZED",
                                message="ok")
     check(env["ok"] is True, "ok 应为 true")
-    check(env["protocol_version"] == "0.2.0", "协议版本 0.2.0")
+    check(env["protocol_version"] == "0.3.0", "协议版本 0.3.0")
     for key in ("request_id", "code", "state", "message", "data", "actions",
                 "retry_after_seconds", "timestamp"):
         check(key in env, "缺少信封字段 %s" % key)

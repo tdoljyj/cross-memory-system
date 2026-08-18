@@ -28,6 +28,7 @@ ERROR_CODES = {
     "CLD-AUTH-003":       "LKG 不存在或过期，禁止降级",
     "CLD-AUTH-004":       "Binding/证明完整性失败",
     "CLD-AUTH-005":       "scope 不足",
+    "CLD-AUTH-006":       "认证策略非法或未知（fail closed）",
     "CLD-NET-001":        "网络预算耗尽，熔断器打开",
     "CLD-SYNC-001":       "doctor FAIL",
     "CLD-SYNC-002":       "pull 失败",

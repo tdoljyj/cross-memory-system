@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Memory Access 门禁（协议 §4.1 / §7.1 / §7.6，v0.2.0）。
+"""Memory Access 门禁（协议 §4.1 / §7.1 / §7.6，v0.3.0）。
 
 - 读/写/召回全部属 Memory Access：第一次访问前必须经会话授权引擎
   （在线尝试 → AUTHORIZED / DEGRADED / DENIED，由 Controller 编排）；

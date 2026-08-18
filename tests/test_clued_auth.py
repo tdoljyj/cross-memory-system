@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
-"""Clued 授权测试（协议 §7 v0.2.0）：三值结果 / 有界预算 / 拒绝绝不降级 /
-LKG 1 小时边界（ADR-CLD-001）/ 降级 TTL / scope 上限 / 会话复用。
+"""Clued 授权测试（协议 §7 v0.3.0）：三值结果 / 有界预算 / 拒绝绝不降级 /
+LKG 策略边界（ADR-CLD-003：strict=1h；balanced 边界见 test_clued_policy.py）/
+降级 TTL / scope 上限 / 会话复用。
 故障注入用 FakeAuthProvider。"""
 
 import os
@@ -167,7 +168,7 @@ def test_lkg_over_60m00s_blocks_degrade():
 
 
 def test_lkg_max_age_extension_rejected():
-    """延长到 1 小时以上 = 协议配置变化，必须拒绝（ADR-CLD-001，不得静默）。"""
+    """超过 6 小时上限 = 协议配置变化，必须拒绝（ADR-CLD-003，fail closed）。"""
     root = os.path.join(_tmp(), ".clued")
     paths = RuntimePaths(root)
     paths.ensure_dirs()
@@ -175,13 +176,16 @@ def test_lkg_max_age_extension_rejected():
     cache = AuthCache(paths, "node-1")
     breaker = CircuitBreaker("auth")
     try:
-        AuthEngine(provider, cache, breaker, paths, lkg_max_age_s=7200)
-        raise AssertionError("lkg_max_age > 1h 配置必须被拒绝")
+        AuthEngine(provider, cache, breaker, paths, lkg_max_age_s=21601)
+        raise AssertionError("lkg_max_age > 6h 配置必须被拒绝")
     except CluedError as exc:
-        check(exc.code == "CLD-AUTH-003", exc.code)
-    # 缩短允许（协议允许配置缩短）
-    shorter = AuthEngine(provider, cache, breaker, paths, lkg_max_age_s=1800)
-    check(shorter.lkg_max_age_s == 1800, "允许配置缩短 LKG 上限")
+        check(exc.code == "CLD-AUTH-006", exc.code)
+    # 6h 整（balanced 上限）允许作为覆盖；缩短（如 2h）也允许
+    for allowed in (21600, 7200, 1800):
+        shorter = AuthEngine(provider, cache, breaker, paths,
+                             lkg_max_age_s=allowed)
+        check(shorter.lkg_max_age_s == allowed,
+              "允许 %ss（≤ 6h 上限）作为 LKG 上限覆盖" % allowed)
 
 
 def test_tampered_lkg_never_degrades():

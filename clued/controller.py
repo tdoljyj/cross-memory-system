@@ -13,12 +13,13 @@ from . import manifests
 from . import state_machine as SM
 from .audit import AuditLog
 from .auth.authcache import AuthCache
-from .auth.engine import AuthEngine, SessionRecord
+from .auth.engine import DEGRADED_SESSION_TTL_S, AuthEngine, SessionRecord
 from .auth.github_provider import GitHubAuthProvider
+from .auth.policy import POLICY_PROFILES, UPGRADE_POLICY, resolve_lkg_max_age
 from .auth.provider import AUTHORIZED, DENIED, DENIED_SECURITY, UNAVAILABLE
 from .circuit_breaker import CircuitBreaker
 from .errors import CluedError
-from .identifiers import new_uuid
+from .identifiers import epoch_to_rfc3339, new_uuid
 from .installer import Installer
 from .locking import CrossProcessLock
 from .memory_gate import MemoryGate
@@ -282,6 +283,54 @@ class Controller(object):
                          "在线认证暂时不可用且无法降级：%s" % result.detail,
                          exit_code=31, state=self.get_state(binding_id))
 
+    # ---- auth policy（ADR-CLD-003：显式命令切换，fail closed）----
+    def auth_policy(self, binding_id, set_policy=None, request_id=None):
+        """查看或显式切换 LKG 策略。
+
+        - set_policy=None：只读返回当前策略与 lkg_max_age；
+        - set_policy 必须为已知策略名（balanced/strict），未知策略 → 抛
+          CLD-AUTH-006（fail closed）；
+        - 从 strict 切到 balanced 只能经本命令（显式用户操作）完成，迁移
+          逻辑绝不自动放宽；每次切换写 `policy_change` 审计事件。
+        """
+        binding = self.require_binding(binding_id)
+        current = binding.get("auth_policy") or UPGRADE_POLICY
+        if set_policy is None:
+            try:
+                max_age = resolve_lkg_max_age(current)
+            except CluedError:
+                max_age = None
+            return {"auth_policy": current, "lkg_max_age": max_age,
+                    "state": self.get_state(binding_id),
+                    "summary": "当前 LKG 策略：%s（lkg_max_age=%ss）"
+                               % (current, max_age)}
+        if set_policy not in POLICY_PROFILES:
+            raise CluedError(
+                "CLD-AUTH-006",
+                "未知认证策略 %r（仅允许 balanced/strict，fail closed）"
+                % (set_policy,), state=self.get_state(binding_id))
+        if set_policy == current:
+            return {"auth_policy": current,
+                    "lkg_max_age": resolve_lkg_max_age(current),
+                    "state": self.get_state(binding_id),
+                    "changed": False,
+                    "summary": "策略未变化（当前即 %s）" % current}
+        # 显式切换（本命令即用户显式授权；写审计，绝不静默）
+        binding["auth_policy"] = set_policy
+        self.registry.save_binding(binding)
+        self.audit.append(
+            "policy_change", binding_id=binding_id, request_id=request_id,
+            result_code=set_policy.upper(),
+            metadata={"from": current, "to": set_policy,
+                      "channel": "explicit-command"})
+        return {"auth_policy": set_policy,
+                "lkg_max_age": resolve_lkg_max_age(set_policy),
+                "state": self.get_state(binding_id),
+                "changed": True,
+                "summary": "LKG 策略已显式切换：%s → %s（lkg_max_age=%ss）"
+                           % (current, set_policy,
+                              resolve_lkg_max_age(set_policy))}
+
     # ---- memory access ----
     def ensure_access(self, binding, session_id, request_id, operation,
                       manual=False):
@@ -504,12 +553,17 @@ class Controller(object):
             bid = b.get("binding_id")
             data = self._load_state()
             entry = data.get("bindings", {}).get(bid) or {}
+            # ADR-CLD-003：策略与 LKG/降级窗口状态（不得含令牌/凭据）
+            policy = b.get("auth_policy") or UPGRADE_POLICY
+            policy_info = self._policy_status(bid, policy)
             out_bindings.append({
                 "binding_id": bid,
                 "agent_type": b.get("agent_type"),
                 "agent_instance_label": b.get("agent_instance_label"),
                 "binding_status": b.get("status"),
                 "state": entry.get("state") or SM.UNINSTALLED,
+                "auth_policy": policy,
+                **policy_info,
                 "pending": self.journal.pending_count(bid),
                 "conflicted": len(self.journal.list_all(
                     bid, statuses=("CONFLICTED",))),
@@ -523,7 +577,7 @@ class Controller(object):
             out_bindings = [b for b in out_bindings
                             if b.get("binding_id") == binding_id]
         return {
-            "protocol_version": "0.2.0",
+            "protocol_version": "0.3.0",
             "node_id": (node or {}).get("node_id"),
             "runtime_root": self.paths.root,
             "bindings": out_bindings,
@@ -531,6 +585,56 @@ class Controller(object):
             "sync_local_head": _safe(self.git.head_sha),
             "summary": "本地健康摘要（不含私有记忆内容）",
         }
+
+    def _policy_status(self, binding_id, policy):
+        """ADR-CLD-003 状态字段：lkg_max_age / lkg_authorized_at /
+        lkg_expires_at / degraded_session_expires_at / effective_degraded_until。
+
+        全部为派生展示字段，不含任何令牌、Cookie、凭据或可恢复认证响应。
+        """
+        out = {"lkg_max_age": None, "lkg_authorized_at": None,
+               "lkg_expires_at": None, "degraded_session_expires_at": None,
+               "effective_degraded_until": None}
+        try:
+            max_age = resolve_lkg_max_age(policy)
+        except CluedError:
+            return out
+        out["lkg_max_age"] = max_age
+        entry, err = self.auth_cache.load(binding_id)
+        if err or entry is None:
+            return out
+        out["lkg_authorized_at"] = entry.get("authorized_at")
+        from .identifiers import parse_rfc3339
+        lkg_dt = parse_rfc3339(entry.get("authorized_at") or "")
+        if lkg_dt is not None:
+            out["lkg_expires_at"] = epoch_to_rfc3339(
+                lkg_dt.timestamp() + max_age)
+        # 最近一条降级会话（session 文件含 binding_id；取 degraded_until 最大）
+        latest = None
+        sessions_dir = self.paths.sessions_dir()
+        if os.path.isdir(sessions_dir):
+            for name in os.listdir(sessions_dir):
+                f = os.path.join(sessions_dir, name)
+                if not os.path.isfile(f):
+                    continue
+                try:
+                    rec = SessionRecord.from_dict(manifests.read_json(f))
+                except Exception:
+                    continue
+                if rec.kind != "DEGRADED" or rec.binding_id != binding_id:
+                    continue
+                if latest is None or (rec.degraded_until or 0) > (
+                        latest.degraded_until or 0):
+                    latest = rec
+        if latest is not None and latest.degraded_until is not None:
+            # nominal 会话到期 = 降级开始 + 30min；有效截止 = min(…)
+            nominal = (latest.degraded_started_at or
+                       latest.degraded_until - DEGRADED_SESSION_TTL_S) \
+                + DEGRADED_SESSION_TTL_S
+            out["degraded_session_expires_at"] = epoch_to_rfc3339(nominal)
+            out["effective_degraded_until"] = epoch_to_rfc3339(
+                latest.degraded_until)
+        return out
 
     # ---- uninstall ----
     def uninstall(self, binding_id, mode="detach-current-agent",
@@ -598,6 +702,19 @@ class Controller(object):
             check("binding_%s" % b.get("binding_id"), not b.get("corrupt"),
                   "manifest 校验" if not b.get("corrupt")
                   else str(b.get("corrupt")))
+
+        # ADR-CLD-003：每个 Binding 的策略必须是已知策略（fail closed 呈现）
+        for b in self.registry.list_bindings(include_revoked=True):
+            bid = b.get("binding_id")
+            policy = b.get("auth_policy") or UPGRADE_POLICY
+            if b.get("corrupt"):
+                continue
+            try:
+                max_age = resolve_lkg_max_age(policy)
+                check("policy_%s" % bid, True,
+                      "auth_policy=%s lkg_max_age=%ss" % (policy, max_age))
+            except CluedError as exc:
+                check("policy_%s" % bid, False, exc.message)
 
         # auth cache 完整性
         for b in self.registry.list_bindings(include_revoked=True):

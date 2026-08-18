@@ -45,6 +45,15 @@ def age_seconds(rfc3339_value, now=None):
     return max(0.0, (ref - dt).total_seconds())
 
 
+def epoch_to_rfc3339(epoch):
+    """epoch 秒 → RFC3339 UTC 字符串；非法输入返回 None。"""
+    try:
+        return datetime.fromtimestamp(float(epoch), timezone.utc).isoformat(
+            timespec="microseconds")
+    except (TypeError, ValueError, OSError):
+        return None
+
+
 def valid_uuid4(value):
     try:
         uuid.UUID(str(value), version=4)

@@ -12,6 +12,7 @@ import os
 
 from . import errors
 from . import manifests
+from .auth.policy import UPGRADE_POLICY
 from .locking import CrossProcessLock
 from .paths import RuntimePaths
 
@@ -20,6 +21,23 @@ class AgentRegistry(object):
     def __init__(self, paths, audit=None):
         self.paths = paths  # RuntimePaths
         self.audit = audit
+
+    # ---- ADR-CLD-003：clued-v0.1.0 遗留 Binding 保守迁移 ----
+    def _migrate_auth_policy(self, binding):
+        """Binding manifest 无 auth_policy 字段（clued-v0.1.0 遗留）→ 保守迁移
+        strict（1h），绝不静默放宽到 6h。幂等：迁移后字段存在，不再重复写/审计。
+        """
+        if "auth_policy" in binding:
+            return binding
+        binding["auth_policy"] = UPGRADE_POLICY
+        self.save_binding(binding)
+        if self.audit is not None:
+            self.audit.append(
+                "policy_migrated", binding_id=binding.get("binding_id"),
+                result_code=UPGRADE_POLICY.upper(),
+                metadata={"from": "legacy-clued-v0.1.0", "to": "strict",
+                          "reason": "conservative-upgrade-no-permission-expand"})
+        return binding
 
     # ---- node manifest ----
     def load_node(self):
@@ -69,6 +87,7 @@ class AgentRegistry(object):
                 continue
             if not include_revoked and binding.get("status") != "ACTIVE":
                 continue
+            self._migrate_auth_policy(binding)
             out.append(binding)
         out.sort(key=lambda b: b.get("installed_at") or "")
         return out
@@ -85,6 +104,7 @@ class AgentRegistry(object):
         if binding.get("binding_id") != binding_id:
             raise errors.CluedError("CLD-AUTH-004",
                                     "binding_id 与清单不符")
+        self._migrate_auth_policy(binding)
         return binding
 
     def load_binding_loose(self, binding_id):

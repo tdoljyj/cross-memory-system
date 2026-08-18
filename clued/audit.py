@@ -28,6 +28,7 @@ EVENT_TYPES = (
     "state_transition", "recovery_begin", "recovery_success",
     "recovery_step",
     "conflict_snapshot", "lock_acquired", "lock_released",
+    "policy_migrated", "policy_change",   # ADR-CLD-003（协议 v0.3.0）
 )
 
 

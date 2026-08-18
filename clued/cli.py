@@ -23,6 +23,7 @@ import os
 import sys
 
 from . import PROTOCOL_VERSION, __version__
+from .auth.policy import POLICY_PROFILES
 from .controller import Controller
 from .envelope import dumps, envelope_fail, envelope_ok
 from .errors import CluedError, UsageError
@@ -40,7 +41,7 @@ class _Parser(argparse.ArgumentParser):
 
 def build_parser():
     p = _Parser(
-        prog="clued", description="Clued v0.1 agent lifecycle CLI")
+        prog="clued", description="Clued v0.2.0 agent lifecycle CLI")
     # --json 可出现在子命令前后（协议 §13 示例：clued install ... --json）
     common = _Parser(add_help=False)
     common.add_argument("--json", action="store_true",
@@ -62,6 +63,14 @@ def build_parser():
     ac = auth_sub.add_parser("check", parents=[common], help="执行一次在线认证")
     ac.add_argument("--binding-id", required=True)
     ac.add_argument("--session-id")
+    ap = auth_sub.add_parser(
+        "policy", parents=[common],
+        help="查看或显式切换 LKG 策略（ADR-CLD-003：balanced=6h / strict=1h；"
+             "仅经本命令可切换到 balanced，未知策略 fail closed）")
+    ap.add_argument("--binding-id", required=True)
+    ap.add_argument("--set", dest="policy",
+                    choices=sorted(POLICY_PROFILES),
+                    help="显式切换策略（必须为已知策略名）")
 
     st = sub.add_parser("status", parents=[common], help="本地健康摘要（不含私有内容）")
     st.add_argument("--binding-id")
@@ -170,6 +179,9 @@ def _dispatch(args, controller_factory, request_id=None):
                             committer_email=args.committer_email)
     if cmd == "auth" and args.auth_command == "check":
         return ctrl.auth_check(args.binding_id, session_id=args.session_id)
+    if cmd == "auth" and args.auth_command == "policy":
+        return ctrl.auth_policy(args.binding_id,
+                                set_policy=getattr(args, "policy", None))
     if cmd == "status":
         return ctrl.status(args.binding_id)
     if cmd == "memory":

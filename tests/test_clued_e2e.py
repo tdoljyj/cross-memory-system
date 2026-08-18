@@ -73,7 +73,7 @@ def test_cli_json_contract_single_object():
     except ValueError as exc:
         raise AssertionError("stdout 不是合法 JSON: %s" % exc)
     check(data["ok"] is True, "信封 ok")
-    check(data["protocol_version"] == "0.2.0", "协议版本字段（v0.2.0）")
+    check(data["protocol_version"] == "0.3.0", "协议版本字段（v0.3.0）")
     for key in ("request_id", "code", "state", "message", "data",
                 "actions", "retry_after_seconds", "timestamp"):
         check(key in data, "信封缺 %s" % key)

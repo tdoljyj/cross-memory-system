@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""网络恢复与同步协议（协议 §10，v0.2.0；CLD-FIX-002）。
+"""网络恢复与同步协议（协议 §10，v0.3.0；CLD-FIX-002）。
 
 固定恢复顺序（§10.2 / 执行计划 §4.2）：
     ACQUIRE_SINGLE_FLIGHT_LOCK → AUTHENTICATE → DOCTOR_PASS →

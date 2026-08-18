@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""每会话授权引擎（协议 §7，v0.2.0）。
+"""每会话授权引擎（协议 §7，v0.3.0）。
 
 核心规则：
 - 每个新会话对 Clued 的第一次 Memory Access 前 MUST 尝试在线认证（§7.1）；
@@ -7,10 +7,10 @@
 - 授权缓存不能替代在线尝试，只能在明确判定网络不可用后用于降级决策；
 - DENIED / DENIED_SECURITY 绝不降级 → LOCKED（§7.4）；
 - 有界在线尝试：连接 3s、操作 5s、2 次、抖动 500–1500ms、总预算 12s（§7.3）；
-- 降级窗口（ADR-CLD-001，协议 v0.2.0）：LKG age <= 1h（lkg_max_age）有效，
-  age > 1h 失效；无 6 小时/双界语义；降级会话 30 分钟，到期后下一次
-  Memory Access 重新在线尝试（§7.5）；
-- 配置只允许缩短 LKG 上限；延长到 1 小时以上视为协议配置变化，拒绝接受。
+- 降级窗口（ADR-CLD-003，协议 v0.3.0）：LKG 最大年龄 = 当前策略的
+  lkg_max_age（balanced=6h / strict=1h）；降级会话 30 分钟；有效降级截止 =
+  min(LKG 到期, 降级会话到期)（B2 绝对截止，不得越过 LKG 上限）；
+- 未知策略、任意自定义秒数、超过 6 小时的配置 → 全部 fail closed（CLD-AUTH-006）。
 """
 
 import json
@@ -25,6 +25,10 @@ from ..identifiers import now_rfc3339
 from ..state_machine import (
     AUTH_REQUIRED, DEGRADED_LOCAL, LOCKED, ONLINE_SYNCED,
 )
+from .policy import (
+    DEFAULT_POLICY, MAX_LKG_MAX_AGE_S, POLICY_PROFILES, UPGRADE_POLICY,
+    resolve_lkg_max_age,
+)
 from .provider import (
     AUTHORIZED, DENIED, DENIED_SECURITY, REASON_BREAKER, REASON_BUDGET,
     REASON_NETWORK, UNAVAILABLE, AuthResult,
@@ -36,20 +40,20 @@ MAX_ATTEMPTS = 2
 JITTER_RANGE_S = (0.5, 1.5)
 TOTAL_BUDGET_S = 12.0
 
-# 协议 v0.2.0（ADR-CLD-001）：唯一权威值，单一常量来源，禁止在其它模块
-# 重复硬编码；边界语义 = age <= 1h 有效、age > 1h 失效。
-LKG_MAX_AGE_S = 3600.0
-DEGRADED_SESSION_TTL_S = 1800.0  # 30 分钟
+# 单次降级会话 TTL（协议 §7.5，30 分钟，不变；ADR-CLD-003）
+DEGRADED_SESSION_TTL_S = 1800.0
 
 
 class SessionRecord(object):
     def __init__(self, session_id, binding_id, kind, authorized_at=None,
-                 degraded_until=None, scopes=None, provider=None):
+                 degraded_until=None, scopes=None, provider=None,
+                 degraded_started_at=None):
         self.session_id = session_id
         self.binding_id = binding_id
         self.kind = kind  # AUTHORIZED | DEGRADED | DENIED
         self.authorized_at = authorized_at or now_rfc3339()
         self.degraded_until = degraded_until
+        self.degraded_started_at = degraded_started_at
         self.scopes = list(scopes or [])
         self.provider = provider
 
@@ -61,6 +65,7 @@ class SessionRecord(object):
             "kind": self.kind,
             "authorized_at": self.authorized_at,
             "degraded_until": self.degraded_until,
+            "degraded_started_at": self.degraded_started_at,
             "scopes": self.scopes,
             "provider": self.provider,
         }
@@ -71,18 +76,22 @@ class SessionRecord(object):
             d.get("session_id"), d.get("binding_id"), d.get("kind"),
             authorized_at=d.get("authorized_at"),
             degraded_until=d.get("degraded_until"),
-            scopes=d.get("scopes") or [], provider=d.get("provider"))
+            scopes=d.get("scopes") or [], provider=d.get("provider"),
+            degraded_started_at=d.get("degraded_started_at"))
 
 
 class SessionAuthResult(object):
     def __init__(self, kind, scopes=None, detail="", degraded_until=None,
-                 online_attempted=False, account_id=None):
+                 online_attempted=False, account_id=None,
+                 degraded_started_at=None, effective_degraded_until=None):
         self.kind = kind          # AUTHORIZED | DEGRADED | DENIED | UNAVAILABLE
         self.scopes = list(scopes or [])
         self.detail = detail
         self.degraded_until = degraded_until
         self.online_attempted = online_attempted
         self.account_id = account_id
+        self.degraded_started_at = degraded_started_at
+        self.effective_degraded_until = effective_degraded_until
 
     @property
     def is_authorized(self):
@@ -106,7 +115,7 @@ class AuthEngine(object):
     def __init__(self, provider, auth_cache, breaker, paths, audit=None,
                  now=time.time, clock=time.sleep, jitter=random.uniform,
                  lkg_max_age_s=None, degraded_ttl_s=None,
-                 budget_s=None, max_attempts=None):
+                 budget_s=None, max_attempts=None, policy=None):
         self.provider = provider
         self.cache = auth_cache
         self.breaker = breaker
@@ -115,16 +124,42 @@ class AuthEngine(object):
         self._now = now
         self._sleep = clock
         self._jitter = jitter
-        # 配置缩短允许；延长到 1 小时以上 = 协议配置变化，必须拒绝（ADR-CLD-001）
-        if lkg_max_age_s is not None and lkg_max_age_s > LKG_MAX_AGE_S:
+        # ADR-CLD-003（协议 v0.3.0）：
+        # - 任意自定义秒数：允许作为「缩短」覆盖，但超过 6 小时上限一律拒绝
+        #   （fail closed，CLD-AUTH-006；v0.2.0 的 1h 上限已由策略化取代）；
+        # - policy 只允许语义策略名（balanced/strict），未知策略 fail closed；
+        # - 未显式给定 policy 时，缺省回退 UPGRADE_POLICY=strict（保守，与
+        #   v0.2.0 的 1h 语义一致；真实 Binding 总是携带 auth_policy 字段）。
+        if lkg_max_age_s is not None and lkg_max_age_s > MAX_LKG_MAX_AGE_S:
             raise CluedError(
-                "CLD-AUTH-003",
-                "协议配置变化被拒绝：lkg_max_age 超过 1 小时（%ss > %ss）"
-                "需经产品所有者批准并写 ADR" % (lkg_max_age_s, LKG_MAX_AGE_S))
-        self.lkg_max_age_s = lkg_max_age_s or LKG_MAX_AGE_S
+                "CLD-AUTH-006",
+                "协议配置变化被拒绝：lkg_max_age 超过 6 小时上限（%ss > %ss）"
+                "需经产品所有者批准并写 ADR" % (lkg_max_age_s,
+                                               MAX_LKG_MAX_AGE_S))
+        if policy is not None and policy not in POLICY_PROFILES:
+            raise CluedError(
+                "CLD-AUTH-006",
+                "未知认证策略 %r（仅允许 balanced/strict，fail closed）"
+                % (policy,))
+        self._policy_override = policy
+        self.lkg_max_age_s = lkg_max_age_s  # None = 按 Binding 策略解析
         self.degraded_ttl_s = degraded_ttl_s or DEGRADED_SESSION_TTL_S
         self.budget_s = budget_s or TOTAL_BUDGET_S
         self.max_attempts = max_attempts or MAX_ATTEMPTS
+
+    # ---- 策略解析（ADR-CLD-003）----
+    def lkg_max_age_for(self, binding):
+        """Binding 的 LKG 最大年龄（秒）。
+
+        优先级：显式 lkg_max_age_s 覆盖（仅缩短）> Binding.auth_policy 策略
+        > 引擎缺省策略（strict，保守）。未知策略 → 抛 CLD-AUTH-006
+        （fail closed；正常情况下 Binding manifest 校验已拦截）。
+        """
+        if self.lkg_max_age_s is not None:
+            return self.lkg_max_age_s
+        policy = binding.get("auth_policy") or self._policy_override \
+            or UPGRADE_POLICY
+        return resolve_lkg_max_age(policy)
 
     # ---- 会话状态持久化 ----
     def _session_path(self, session_id):
@@ -221,6 +256,8 @@ class AuthEngine(object):
             return SessionAuthResult(
                 "DEGRADED", scopes=degraded.scopes, online_attempted=True,
                 degraded_until=degraded.degraded_until,
+                degraded_started_at=degraded.degraded_started_at,
+                effective_degraded_until=degraded.degraded_until,
                 detail=result.detail or "网络不可用，进入短时本地优先降级")
         return SessionAuthResult(
             UNAVAILABLE, detail=result.detail, online_attempted=True)
@@ -285,7 +322,7 @@ class AuthEngine(object):
         return AuthResult(UNAVAILABLE, reason=REASON_BREAKER,
                           detail="熔断器打开，跳过在线尝试")
 
-    # ---- 降级决策（§7.5 七条件）----
+    # ---- 降级决策（§7.5 七条件 + ADR-CLD-003 策略化）----
     def _degrade_decision(self, binding, result, request_id=None):
         binding_id = binding.get("binding_id") or ""
         entry, err = self.cache.load(binding_id)
@@ -302,9 +339,14 @@ class AuthEngine(object):
             # 条件 2 不满足 → 禁止降级（CLD-AUTH-003）
             return None
 
-        # 条件 3（ADR-CLD-001 / 协议 v0.2.0）：age <= 1h 有效、age > 1h 失效
+        # 条件 3（ADR-CLD-003 / 协议 v0.3.0）：age <= 策略 lkg_max_age 有效、
+        # age > 策略 lkg_max_age 失效；未知策略 fail closed（不降级）。
+        try:
+            max_age = self.lkg_max_age_for(binding)
+        except CluedError:
+            return None
         age = self.cache.age(entry)
-        if age is None or age > self.lkg_max_age_s:
+        if age is None or age > max_age:
             return None
 
         # 条件 4：Binding 本地状态为 ACTIVE
@@ -325,17 +367,25 @@ class AuthEngine(object):
 
         # 条件 7：当前操作在降级允许列表内（调用方判定；这里授予降级会话）
 
+        # ADR-CLD-003 B2：有效降级截止 = min(LKG 到期, 降级会话到期)。
+        # 不能在 LKG 临近失效时额外获得完整 30 分钟，从而突破 LKG 绝对上限。
+        lkg_expires_at = self._now() - age + max_age
+        session_expires_at = self._now() + self.degraded_ttl_s
+        effective_until = min(lkg_expires_at, session_expires_at)
+
         if self.audit is not None:
             self.audit.append(
                 "degraded_enter", binding_id=binding_id,
                 request_id=request_id, result_code="DEGRADED_LOCAL",
-                metadata={"lkg_age_s": age, "scopes": scopes,
-                          "reason": result.reason})
+                metadata={"lkg_age_s": age, "lkg_max_age_s": max_age,
+                          "effective_until_s": effective_until,
+                          "scopes": scopes, "reason": result.reason})
         return SessionRecord(
             session_id="",  # 由 ensure_authorized 填充
             binding_id=binding_id, kind="DEGRADED",
             authorized_at=entry.get("authorized_at"),
-            degraded_until=self._now() + self.degraded_ttl_s,
+            degraded_started_at=self._now(),
+            degraded_until=effective_until,
             scopes=scopes, provider=entry.get("provider"))
 
     def _store_lkg(self, binding, result):

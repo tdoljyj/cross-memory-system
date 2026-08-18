@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Pending Operation Journal（协议 §9，v0.2.0 / CLD-FIX-003）。
+"""Pending Operation Journal（协议 §9，v0.3.0 / CLD-FIX-003）。
 
 - 每次逻辑写入生成稳定 operation_id；重试不得生成新 ID（§9.3.1）；
 - 先原子持久化 payload（受保护 staging）→ 原子持久化 journal → 再向用户
