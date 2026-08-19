@@ -12,3 +12,8 @@ __pycache__/
 memory/session/
 # Clued v0.1：Agent Lifecycle 运行时根（协议 §5.5，不得默认推送）
 .clued/
+# Gate 工作区（R3 审计/测试证据留存，不入库）
+.gate0-workspace/
+.gate-t0-workspace/
+# Truth Integrity LKG 状态目录（ADR-R3-006：独立状态文件，非 current 事实源）
+.truth-state/

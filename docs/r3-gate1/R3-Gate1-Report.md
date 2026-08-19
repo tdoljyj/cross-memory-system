@@ -57,21 +57,24 @@
 - 产品 manifest 混入 model artifact → 拒绝（模型隔离边界测试：test_dist_manifest
   `test_model_artifact_in_product_manifest_rejected` / `test_model_manifest_separate_ok`）
 
-## 6. 环境失败 vs 逻辑失败分栏（新增测试全绿）
+## 6. 环境失败 vs 逻辑失败（严格归因，经裁决复核修正）
 
 - 新增 8 文件 68 项测试：**0 失败**（见 §7 汇总）→ 全部为产品逻辑测试，无环境豁免
-- 既有测试 60 FAIL 归因：ENV（ENV-DEFECT-001/002 级联），由 `TestAttributor` 分栏
-  （test_envprobe 7 项锁归因逻辑）
-- 归因原则：环境失败记录为环境约束，**逻辑失败仍按失败计**，不以环境缺陷降低门槛
+- 全量 60 FAIL 严格归因（四条件：probe 明确失败 / 签名对应 / 因果链定位 / 无回归）：
+  **ENV=56 / HEURISTIC=4 / UNKNOWN=0**（详见 `勘误-启动前三项复核.md` §3 与 attribution-strict.json）
+- 归因原则：环境失败记录为环境约束，**逻辑失败仍按失败计**，不以环境缺陷降低门槛；
+  HEURISTIC 项（退出码 30/31、CLD-CAP）为高置信推断，如实标注
 
-## 7. Test Evidence（全量）
+## 7. Test Evidence（全量，口径经裁决复核修正）
 
 - 命令：`python .gate0-workspace/run_tests.py`（逐文件隔离，timeout 900s/file，python 3.13.14）
 - 汇总：**24 文件 / PASS=313 / FAIL=60 / SKIP=31 / ERROR=0** / nonzero_exit=7
-- 新增测试（Gate 1，8 文件 68 项）：**0 失败**（truth 34 + dist 27 + envprobe 7），全部为隔离 fixture，无环境豁免
-- 既有测试（16 文件）：245P/60F/31S，与 Gate 0 基线一致
-- **归因分栏（attribution.json）**：60 FAIL 全部归 **ENV**（ENV-DEFECT-001/002 级联：doctor ref 探针 + install 预检 CLD-INSTALL-001），**LOGIC=0**；
-  31 SKIP = ps1 系列（PortableGit 护栏）
+- **不称"全绿"**：全量含 60 FAIL / 31 SKIP；仅新增 68 项为 0 失败
+- 新增测试（Gate 1，8 文件 68 项）：**68 PASS / 0 FAIL / 0 SKIP**（truth 34 + dist 27 + envprobe 7）
+- 既有测试（16 文件）：245P/60F/31S，与 Gate 0 基线逐文件一致（无回归）
+- 严格归因：ENV=56（直接签名：CLD-INSTALL-001 / ref write persists / SAFE_DELETE_FAIL_CLOSED）、
+  HEURISTIC=4、UNKNOWN=0；31 SKIP 全部为 ps1 护栏（环境 git 客户端不安全），与 Gate 0 基线
+  31→31 无新增
 
 ## 8. Safety Evidence
 
@@ -87,13 +90,15 @@
 - 未决 P1：ENV-DEFECT-001/002（环境缺陷，规避 ADR 已交付：ADR-R3-006）；
   版本矩阵差异（vNext-2.0/vNext-1.3/0.3.0）经 ADR-R3-005 判定为正常差异，不修正
 
-## 10. Git Evidence（提交后现场复核，2026-08-19T14:26:41Z）
+## 10. Git Evidence（ahead/behind 经裁决复核修正为 4/0）
 
 - Gate 1 提交：`b324b7bcba33f62b8188d6ab9587373fd3a0f8f5`（24 文件，+3141）
-- 起止 HEAD：`b4fcb15` → `b324b7b`
+- 起止 HEAD：`b4fcb15` → `ed839e2`（含 §10 回填提交）
 - remote main：`9dcc31be2b7f32f3199cfbd44e138d161fc0cfdb`（ls-remote 现场）
-- ahead/behind：**3 / 0**（Gate 0 两提交 + Gate 1 一提交）
-- worktree：clean（仅 `.gate-t0-workspace/`、`.gate0-workspace/` untracked）
+- ahead/behind：**4 / 0**（`rev-list --left-right --count HEAD...<远端 sha>` 直算，线性；
+  原 3/0 为 b324b7b 时刻过时值，ed839e2 提交后未重算导致——复核见 `勘误-启动前三项复核.md`）
+- worktree：**porcelain 零输出 = clean**（`.gate0-workspace/`、`.gate-t0-workspace/`、
+  `.truth-state/` 已由 .gitignore 正式忽略，文件保留于磁盘作证据）
 - 真实 memory / 冻结区：逐文件 hash DIFF=0
 - 无 rewrite / 无 push / 无 tag / 无 release
 

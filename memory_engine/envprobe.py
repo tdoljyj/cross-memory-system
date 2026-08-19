@@ -92,30 +92,42 @@ def probe_refs_remotes_write(git="git", workdir=None):
 
 
 def probe_safe_delete():
-    """探测 safe-delete 回收站能力。
+    """探测 safe-delete 回收站能力（沙盒内）。
 
-    依据：WorkBuddy 注入 NODE_OPTIONS=--require ...genie-safe-delete.cjs，
-    该 shim 在沙盒无回收站时输出 SAFE_DELETE_FAIL_CLOSED。本 probe 检查
-    是否存在该 shim 环境标记，并在临时目录尝试删除一个探针文件观察结果。
+    依据：WorkBuddy 注入 sitecustomize shim（PYTHONPATH），沙盒内
+    （CODEBUDDY_SAFE_DELETE_SANDBOX=1）对**非 OS temp 路径**的删除走
+    _try_trash → 回收站不可用 → 抛 SAFE_DELETE_FAIL_CLOSED(OSError)。
+
+    关键：探针路径必须**不在 OS temp 目录**（temp 下删除被 shim 豁免，
+    探测不到缺陷）；探针目录建在 ~/.workbuddy/.envprobe-del-<pid>/。
     """
     detail = []
     node_opts = os.environ.get("NODE_OPTIONS", "")
     has_shim = "genie-safe-delete" in node_opts or "safe-delete" in node_opts
-    detail.append("NODE_OPTIONS shim: %s" % ("present" if has_shim else "absent"))
-    # 行为探针：创建临时文件并删除，观察 stderr 是否含 FAIL_CLOSED
-    tmp = tempfile.mkdtemp(prefix="envprobe-del-")
-    probe_file = os.path.join(tmp, "probe.tmp")
+    in_sandbox = os.environ.get("CODEBUDDY_SAFE_DELETE_SANDBOX") == "1"
+    detail.append("shim: %s; sandbox: %s" % ("present" if has_shim else "absent",
+                                             "1" if in_sandbox else "0"))
+    # 非 temp 探针目录（避开 shim 的 temp 豁免路径）
+    probe_root = os.path.join(os.path.expanduser("~"), ".workbuddy",
+                              ".envprobe-del-%d" % os.getpid())
+    os.makedirs(probe_root, exist_ok=True)
+    probe_file = os.path.join(probe_root, "probe.tmp")
     with open(probe_file, "w") as f:
         f.write("x")
+    fail_closed_seen = False
     try:
         os.remove(probe_file)
-        detail.append("os.remove: ok")
-        fail_closed_seen = False
-    except Exception as e:
-        fail_closed_seen = "recycle" in str(e).lower()
-        detail.append("os.remove: %s" % e)
-    shutil.rmtree(tmp, ignore_errors=True)
-    available = not (has_shim and fail_closed_seen)
+        detail.append("os.remove(non-temp): ok（回收站可用或已移入）")
+    except OSError as e:
+        fail_closed_seen = "SAFE_DELETE_FAIL_CLOSED" in str(e)
+        detail.append("os.remove(non-temp): %s" % str(e)[:140])
+    # 清理探针目录（os.remove 失败时 rmtree 也可能被 shim 拦截，忽略错误）
+    try:
+        shutil.rmtree(probe_root, ignore_errors=True)
+    except Exception:
+        pass
+    # 沙盒内 + shim 存在 + 非 temp 删除抛 FAIL_CLOSED → 回收站不可用
+    available = not (in_sandbox and has_shim and fail_closed_seen)
     return available, "; ".join(detail)
 
 
