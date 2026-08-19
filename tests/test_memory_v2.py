@@ -227,7 +227,9 @@ def test_superseded_never_wins_current_recall(repo):
     write_engine.perform_write(cand(
         "用户以后主要用 Blender", oid="mem_a0000002", tags=["引擎"],
         entities=["Blender", "Maya"]))
-    res = recall_engine.recall("用什么工具", tier="T2",
+    # R1 合同演进：查询调整为与新记忆内容相关（score>1/6 准入），
+    # 原语义不变——当前召回只返回新记忆、superseded 绝不复活。
+    res = recall_engine.recall("以后主要用什么工具", tier="T2",
                                categories=["preference"], limit=10)
     contents = [o["content"] for o in res.objects]
     check(any("Blender" in c for c in contents), "当前召回应返回新记忆")
@@ -242,7 +244,9 @@ def test_history_recall_includes_superseded(repo):
     write_engine.perform_write(cand(
         "用户以后主要用 Blender", oid="mem_h0000002", tags=["引擎"],
         entities=["Maya"]))
-    res = recall_engine.recall("以前用过什么", tier="T2",
+    # R1 合同演进：查询调整为与新旧两条记忆内容都相关（score>1/6），
+    # 原语义不变——历史查询应返回 superseded 旧记忆。
+    res = recall_engine.recall("用户主要用过什么工具", tier="T2",
                                categories=["preference"],
                                include_history=True, limit=10)
     ids = [o["id"] for o in res.objects]
@@ -367,13 +371,15 @@ def test_temporal_current_vs_history_engine(repo):
     write_engine.perform_write(cand(
         "曾经主引擎 UE 5.2", oid="mem_tc000002", entities=["主引擎"],
         valid_until="2025-12-31T00:00:00Z", status="active"))
-    cur = recall_engine.recall("现在用什么引擎", tier="T2",
+    # R1 合同演进：查询调整为与对象内容/实体相关（score>1/6 准入），
+    # 原语义不变——「现在」返回当前 active、「以前」返回历史。
+    cur = recall_engine.recall("现在主引擎是什么", tier="T2",
                                categories=["preference"], limit=10)
     check(any(o["id"] == "mem_tc000001" for o in cur.objects),
           "「现在」应返回当前 active")
     check(not any(o["id"] == "mem_tc000002" for o in cur.objects),
           "「现在」不应返回过期")
-    hist = recall_engine.recall("以前用过什么引擎", tier="T2",
+    hist = recall_engine.recall("以前用过什么主引擎", tier="T2",
                                 categories=["preference"],
                                 include_history=True, limit=10)
     check(any(o["id"] == "mem_tc000002" for o in hist.objects),
@@ -416,7 +422,9 @@ def test_recall_t1_minimal(repo):
     write_engine.perform_write(cand(
         "用户在做 UE 游戏原型", oid="mem_t1000002", category="project",
         layer="L3", type_="state"))
-    res = recall_engine.recall("我是谁", tier="T1", limit=10)
+    # R1 合同演进：查询调整为与 identity 对象内容相关（score>1/6），
+    # 原语义不变——T1 最小召回只回 identity、不回 project。
+    res = recall_engine.recall("用户是什么身份", tier="T1", limit=10)
     check(res.access == "IDENTITY", res.to_dict())
     check(any(o["id"] == "mem_t1000001" for o in res.objects),
           "T1 应召回 identity")
@@ -434,7 +442,9 @@ def test_recall_t2_project(repo):
     write_engine.perform_write(cand(
         "用户喜欢留白美学", oid="mem_t2000002", category="preference",
         layer="L2"))
-    res = recall_engine.recall("项目进度", tier="T2", limit=10)
+    # R1 合同演进：查询调整为与 project 对象内容相关（score>1/6），
+    # 原语义不变——T2 只回 project、不回 preference。
+    res = recall_engine.recall("UE 游戏原型", tier="T2", limit=10)
     check(res.access == "PROJECT", res.to_dict())
     check(any(o["id"] == "mem_t2000001" for o in res.objects),
           "T2 应召回 project")
@@ -489,7 +499,10 @@ def test_recall_project_scope_filter(repo):
         scope="project", entities=["工作室"], layer="L3"))
     write_engine.perform_write(cand(
         "全局偏好：留白", oid="mem_sc000002", scope="global"))
-    res = recall_engine.recall("工作室", tier="T2",
+    # R1 合同演进：查询调整为对 project 与 global 两个对象都相关
+    # （score>1/6），原语义不变——scope=project 回 project 对象、
+    # global 对象在任意 scope 可见。
+    res = recall_engine.recall("工作室 偏好 留白", tier="T2",
                                categories=["project", "preference"],
                                scope="project", limit=10)
     check(any(o["id"] == "mem_sc000001" for o in res.objects),
@@ -814,7 +827,9 @@ def test_acceptance_project_state(repo):
         "我现在主要做 UE", oid="mem_ft000021", category="project",
         layer="L3", type_="state"))
     check(r.decision == "NEW_MEMORY", "§28 测试6")
-    res = recall_engine.recall("项目问题：现在做什么", tier="T2", limit=5)
+    # R1 合同演进：查询调整为与 project 状态对象内容相关（score>1/6），
+    # 原语义不变——只读取对应 project memory。
+    res = recall_engine.recall("项目现在主要做什么", tier="T2", limit=5)
     check(any(o["id"] == "mem_ft000021" for o in res.objects),
           "只读取对应 project memory")
 

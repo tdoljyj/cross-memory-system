@@ -8,8 +8,9 @@
  3. 空 query 且无显式 selector → NO MEMORY（Trace 顶层 reason_codes）
  4. 空 query + 显式 selector → selector 命中对象仍可返回
  5. 全部候选被准入门排除 → NO_MEMORY + 每个排除带 RELEVANCE_BELOW_THRESHOLD
- 6. 默认 tier→layer 映射的非空查询不叠加准入门（Gate 2R 兼容合同）
- 7. MIV-006 硬隔离 mode 的非空查询不叠加准入门（Gate 2R 兼容合同）
+ 6. 默认 tier→layer 映射的非空查询同样执行 > 1/6 准入门（MIV-005A-R1 勘误合同）
+ 7. MIV-006 硬隔离 mode（project_only/session_only）的非空查询同样执行
+    > 1/6 准入门（MIV-005A-R1 勘误合同）
  8. 显式 layers 的定向召回叠加准入门
  9. explain=True/False 的 selected IDs 与顺序完全一致
  10. Trace 新增 relevance_policy_version / threshold 与比较方式
@@ -186,29 +187,58 @@ def test_all_candidates_below_threshold_no_memory(_repo):
           "skipped 计数: %r" % r.skipped)
 
 
-# ============ 6/7/8. 适用边界（Gate 2R 兼容合同） ============
+# ============ 6/7/8. 适用范围（MIV-005A-R1 勘误：全路由统一准入） ============
 @ sandboxed
-def test_gate_not_applied_default_tier_layers(_repo):
-    put(cand("用户在做 UE 游戏原型《山川夜语》", category="project",
-             layer="L3", oid="mem_reldef000"))
-    r = recall_engine.recall("项目进度", tier="T2")
-    check(ids(r) == ["mem_reldef000"],
-          "默认 tier→layer 路由不叠加准入门: %r" % ids(r))
+def test_gate_applied_default_tier_layers(_repo):
+    # R1 勘误合同演进：默认 tier→layer 路由同样执行 > 1/6 准入门
+    # （旧断言「不叠加准入门」已按裁决翻转为新合同，阈值/评分未改）。
+    rel = put(cand("用户在做 UE 游戏原型《山川夜语》", category="project",
+                   layer="L3", oid="mem_reldef000"))
+    irr = put(cand("用户在看科幻电影", category="project", layer="L3",
+                   oid="mem_reldef001"))
+    r = recall_engine.recall("UE 游戏原型", tier="T2", explain=True)
+    check(ids(r) == [rel],
+          "默认 tier→layer 路由同样执行 > 1/6：相关对象命中: %r" % ids(r))
+    check(RT.RC_RELEVANCE_BELOW_THRESHOLD
+          in excluded_codes(r.trace, irr),
+          "默认 tier 路由无关对象必须带 RELEVANCE_BELOW_THRESHOLD: %r"
+          % excluded_codes(r.trace, irr))
+    r2 = recall_engine.recall("完全无关的查询", tier="T2", explain=True)
+    check(ids(r2) == [], "默认 tier 路由无关查询必须 NO MEMORY: %r" % ids(r2))
+    check(RT.RC_NO_MEMORY in r2.trace.get("reason_codes", []),
+          "默认 tier 路由全排除必须带 NO_MEMORY: %r" % r2.trace)
 
 
 @ sandboxed
-def test_gate_not_applied_new_scope_modes(_repo):
+def test_gate_applied_new_scope_modes(_repo):
+    # R1 勘误合同演进：MIV-006 硬隔离 mode 完成 scope 硬过滤后同样执行
+    # > 1/6 准入门（旧断言「不叠加准入门」已按裁决翻转为新合同）。
     a = put(cand("项目 A 使用 UE 5.6 引擎", category="project", layer="L3",
                  scope="project", project_id="p-alpha",
                  oid="mem_relproja0"))
+    b = put(cand("项目 B 使用 Unity 引擎", category="project", layer="L3",
+                 scope="project", project_id="p-beta",
+                 oid="mem_relprojb0"))
     g = put(cand("所有项目统一使用 git", category="project", layer="L3",
                  oid="mem_relprojg0"))
     r = recall_engine.recall("引擎", tier="T2", layers=["L3"],
                              scope="project_only", project_id="p-alpha",
                              explain=True)
-    got = set(ids(r))
-    check(a in got and g in got,
-          "MIV-006 硬隔离 mode 不叠加准入门（分区合同可见性不变）: %r" % got)
+    check(ids(r) == [a],
+          "project_only 路由同样执行 > 1/6：同项目相关命中、无关对象排除: %r"
+          % ids(r))
+    check(RT.RC_RELEVANCE_BELOW_THRESHOLD in excluded_codes(r.trace, g),
+          "同分区无关对象必须带 RELEVANCE_BELOW_THRESHOLD: %r"
+          % excluded_codes(r.trace, g))
+    check(RT.RC_PROJECT_MISMATCH in excluded_codes(r.trace, b),
+          "他项目对象仍由 scope 硬过滤排除（分区合同不变）: %r"
+          % excluded_codes(r.trace, b))
+    r2 = recall_engine.recall("完全无关的查询", tier="T2", layers=["L3"],
+                              scope="project_only", project_id="p-alpha",
+                              explain=True)
+    check(ids(r2) == [], "project_only 全无关必须 NO MEMORY: %r" % ids(r2))
+    check(RT.RC_NO_MEMORY in r2.trace.get("reason_codes", []),
+          "project_only 全排除必须带 NO_MEMORY: %r" % r2.trace)
 
 
 @ sandboxed
@@ -344,8 +374,8 @@ TESTS = [
     test_empty_query_no_selector_no_memory,
     test_empty_query_with_selector_admits,
     test_all_candidates_below_threshold_no_memory,
-    test_gate_not_applied_default_tier_layers,
-    test_gate_not_applied_new_scope_modes,
+    test_gate_applied_default_tier_layers,
+    test_gate_applied_new_scope_modes,
     test_gate_applied_explicit_layers,
     test_explain_equivalence_with_gate,
     test_trace_relevance_policy_fields,

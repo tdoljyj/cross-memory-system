@@ -19,14 +19,14 @@
     - 不允许按 case、类别或项目设置特殊阈值；
     - 不允许 synonym map、BM25、Embedding、tokenizer 改造或排序调权。
 
-适用边界（Gate 2R 兼容合同，详见 ADR-MIV-005A-001）：
-    - 显式 layers 的定向召回：准入门生效；
-    - 空 query 且无显式 selector：任何 mode 一律 NO MEMORY；
-    - MIV-006 硬隔离 mode（project_only / session_only / temporary）的
-      非空查询不叠加准入门（可见性合同由 scope 硬过滤定义，保持既有
-      295 项断言语义）；
-    - 默认 tier→layer 映射的非空查询不叠加准入门（引擎内部路由合同，
-      与 v2.0 既有行为一致）。
+适用范围（MIV-005A-R1 勘误，取代旧「显式 layers 才生效」边界）：
+    - 到达准入阶段的所有召回路由统一生效、规则与阈值完全一致：
+      显式 layers 定向召回、默认 tier→layer 映射、MIV-006 硬隔离 mode
+      （project_only / session_only）；
+    - 空 query 且无显式 selector：任何路由一律 NO MEMORY；
+    - T0 / T4 / temporary 在准入阶段之前提前短路（零读取），不进入本判定；
+    - 顺序保持已接受的合同修正：conflict 之后、limit 之前
+      （conflict loser 永远保持 CONFLICT_LOSER，不会因 winner 被过滤而复活）。
 
 本模块无任何文件/网络副作用，只做纯判定，可独立单测。
 """
@@ -38,9 +38,6 @@ _THRESHOLD_DENOMINATOR = 6
 # score > 1/6（严格大于）；等于 1/6 必须排除
 RELEVANCE_THRESHOLD = 1.0 / 6.0
 RELEVANCE_COMPARISON = "strict_greater_than"
-
-# MIV-006 硬隔离 mode（非空查询不叠加准入门）
-NEW_SCOPE_MODES = ("project_only", "session_only", "temporary")
 
 
 def threshold_ref():
@@ -56,23 +53,6 @@ def threshold_ref():
         "selector_bypass": ["tags", "entities"],
         "layers_categories_not_relevance_evidence": True,
     }
-
-
-def gate_active(query, layers_explicit, scope):
-    """准入门是否作用于本次查询（threshold 本身对所有查询一致）。
-
-    返回 True = 在 conflict 之后、limit 之前对准入候选做
-    `admit()` 过滤；返回 False = 该查询路径不叠加准入门
-    （Gate 2R 兼容边界，非阈值特例）。
-    """
-    query = query or ""
-    if not query:
-        # 空 query 且无显式 selector → NO MEMORY（无 selector 命中时
-        # score=0 一律低于阈值，全部候选被排除）。
-        return True
-    if scope in NEW_SCOPE_MODES:
-        return False
-    return bool(layers_explicit)
 
 
 def selector_hit(obj, tags=None, entities=None):

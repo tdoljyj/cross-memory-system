@@ -8,9 +8,12 @@
     → Status filtering → Conflict filtering → Relevance ranking
     → Context packing
 
-MIV-005A（ADR-MIV-005A-001）：在 conflict 与 limit 之间插入相关性准入门
-（显式 tags/entities selector 命中 OR score > 1/6 严格大于），不改候选
-生成、分词、评分权重或排序；阈值对所有 case/类别/项目一致。
+MIV-005A（ADR-MIV-005A-001，R1 勘误）：在 conflict 与 limit 之间插入
+相关性准入门（显式 tags/entities selector 命中 OR score > 1/6 严格大于），
+不改候选生成、分词、评分权重或排序；阈值对所有 case/类别/项目一致。
+准入门对所有到达准入阶段的召回路由统一生效（显式 layers / 默认
+tier→layer / project_only / session_only 同一规则同一阈值）；T0/T4/
+temporary 提前短路（零读取）不进入准入阶段。
 
 v2.0 第一阶段：确定性召回（exact/keyword/category/tag/entity/temporal/
 status/priority），**不使用向量数据库 / embedding / 外部 SaaS**（§10/§18）。
@@ -334,7 +337,6 @@ def recall(query="", tier="T0", layers=None, scope=None, include_history=False,
                 project_id=project_id, session_id=session_id)
         return result
 
-    layers_explicit = layers is not None  # MIV-005A：准入门适用边界（显式层路由）
     if layers is None:
         layers = list(S.TIER_LAYERS.get(tier, []))
     layers = [l for l in layers if l in S.RECALL_LAYERS]
@@ -437,22 +439,20 @@ def recall(query="", tier="T0", layers=None, scope=None, include_history=False,
 
     # ---- MIV-005A：相关性准入门（conflict 之后、limit 之前）----
     # 只过滤，不改排序；threshold 对所有 case/类别/项目一致。
-    # 适用边界见 relevance.gate_active（Gate 2R 兼容合同）。
-    gate_on = REL.gate_active(result.query, layers_explicit, scope)
+    # MIV-005A-R1：对所有到达本阶段的召回路由统一生效（显式 layers /
+    # 默认 tier→layer / project_only / session_only 同一规则同一阈值），
+    # 不再存在「是否显式传入 layers」或 scope mode 的绕过。
     score_by_id = {o["id"]: s for o, s, _rk in scored}
     admitted = []
     gate_no_memory = False
-    if gate_on:
-        for o in survivors:
-            if REL.admit(o, score_by_id.get(o["id"], 0.0), tags, entities):
-                admitted.append(o)
-            elif tracer is not None:
-                tracer.exclude(o["id"], RT.RC_RELEVANCE_BELOW_THRESHOLD)
-        # 全部候选被准入门排除 → NO MEMORY（Trace 顶层 reason_codes）
-        if survivors and not admitted:
-            gate_no_memory = True
-    else:
-        admitted = survivors
+    for o in survivors:
+        if REL.admit(o, score_by_id.get(o["id"], 0.0), tags, entities):
+            admitted.append(o)
+        elif tracer is not None:
+            tracer.exclude(o["id"], RT.RC_RELEVANCE_BELOW_THRESHOLD)
+    # 全部候选被准入门排除 → NO MEMORY（Trace 顶层 reason_codes）
+    if survivors and not admitted:
+        gate_no_memory = True
     result.skipped["relevance_below_threshold"] = \
         len(survivors) - len(admitted)
     result.objects = admitted[:limit]

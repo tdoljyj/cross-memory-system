@@ -137,7 +137,9 @@ def test_project_a_cannot_read_project_b(_repo):
     a = put(pcand("项目 A 使用 UE 5.6 引擎", "p-alpha"))
     b = put(pcand("项目 B 使用 Unity 引擎", "p-beta"))
     g = put(cand("所有项目统一使用 git", category="project"))
-    r = recall_engine.recall("引擎", tier="T2", layers=["L3"],
+    # R1 合同演进：查询调整为对 a（引擎）与 global g（git）都相关
+    # （score>1/6），原语义不变——A 项目可见 A+global、B 项目绝不泄漏。
+    r = recall_engine.recall("引擎 git", tier="T2", layers=["L3"],
                              scope="project_only", project_id="p-alpha",
                              explain=True)
     got = set(ids(r))
