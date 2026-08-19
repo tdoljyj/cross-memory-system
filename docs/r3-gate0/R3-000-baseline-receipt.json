@@ -1,0 +1,132 @@
+{
+  "receipt_type": "R3_GATE0_LIVE_BASELINE_RECEIPT",
+  "plan": "Cross-Memory-System vNext-2.1 Memory Intelligence R3: Truth Integrity + Distribution & Lifecycle 双 P0 完整执行计划",
+  "authorized_scope": "Gate 0 (R3-000..R3-004): 只读审计、文档、schema 草案、脱敏 fixture、本地单一目的提交；不实现生产代码、不下载产品 artifact、不执行真实安装/停用/卸载、不写远端",
+  "generated_at_utc": "2026-08-19T13:08:39Z",
+  "generated_by": "WorkBuddy agent (Claude) @ CHASE-PC, WorkBuddy 沙盒 Bash",
+
+  "live_repository_truth": {
+    "remote_identity": "https://github.com/tdoljyj/cross-memory-system.git",
+    "remote_ref": "refs/heads/main",
+    "remote_head": "9dcc31be2b7f32f3199cfbd44e138d161fc0cfdb",
+    "ls_remote_verified_at_utc": "2026-08-19T13:08:39Z",
+    "local_head": "9dcc31be2b7f32f3199cfbd44e138d161fc0cfdb",
+    "branch": "main",
+    "ahead_behind": "0/0",
+    "relation": "local == remote (in sync)",
+    "worktree": "clean (0 modified tracked files)",
+    "index": "clean",
+    "untracked": [
+      ".gate-t0-workspace/",
+      ".gate0-workspace/"
+    ],
+    "version_file": "vNext-2.0",
+    "tags": ["clued-v0.1.0", "clued-v0.2.0", "vNext-1.3", "vNext-2.0"]
+  },
+
+  "doctor_evidence": {
+    "engine_doctor": {
+      "command": "python memory.py doctor",
+      "result": "ALL PASS (0 WARN)",
+      "objects_total": 230,
+      "objects_candidate": 147,
+      "objects_active": 83,
+      "audit_entries": 230,
+      "checks_ok": 17
+    },
+    "sync_doctor": {
+      "command": "python sync-memory.py doctor",
+      "result": "1 FAILURE",
+      "failures": [
+        {
+          "check": "ref write persists (behavior probe)",
+          "observed": "read back: refs/remotes (ref 未落盘)",
+          "mechanism": "git update-ref refs/remotes/origin/doctor-test 返回 exit 0 且写 reflog，但 loose ref 不落盘；git rev-parse 原样回显参数 (exit 128)",
+          "root_cause": "WorkBuddy 沙盒 overlay 拦截 git 在 refs/remotes/ 下的 lockfile+rename 原子写（README 已记载，2026-08-16 根因实锤）。现场跨进程/跨工具复现：PowerShell 同操作同样失败；refs/heads/ 与 Python 直写（open 不走 rename）正常",
+          "cross_process_repro": true,
+          "workaround_in_product": "sync-memory.py write_ref() Python 直写 tracking ref（进程内自洽，但跨进程不持久，见下条）"
+        }
+      ],
+      "auto_heal_false_positive": {
+        "observed": "doctor 报告 tracking ref valid: AUTO-HEALED",
+        "problem": "write_ref 写后立即读回成功（进程内自洽），但进程退出后文件不落盘（refs/remotes/origin/ 目录消失）；AUTO-HEALED 是假阳性",
+        "evidence": "磁盘上 .git/refs/remotes/origin/ 不存在；git rev-parse refs/remotes/origin/main 失败"
+      }
+    }
+  },
+
+  "test_evidence": {
+    "driver": ".gate0-workspace/run_tests.py (subprocess 隔离, timeout=900s/file)",
+    "python": "C:/Users/Windows/.workbuddy/binaries/python/versions/3.13.12/python.exe (3.13.14)",
+    "test_file_count": 16,
+    "totals": {"PASS": 245, "FAIL": 60, "SKIP": 31, "ERROR": 0},
+    "nonzero_exit_files": [
+      "tests/test_acceptance.py",
+      "tests/test_clued_e2e.py",
+      "tests/test_clued_install.py",
+      "tests/test_clued_pending.py",
+      "tests/test_clued_policy.py",
+      "tests/test_clued_recovery_crash.py",
+      "tests/test_clued_uninstall.py"
+    ],
+    "failures_root_cause": {
+      "test_acceptance": "1 FAIL = test_py_doctor_ref_write_probe（refs/remotes 写故障，环境缺陷非代码缺陷）; 31 SKIP = ps1 系列（git 客户端为 PortableGit，ps1 护栏判定不安全而跳过）",
+      "clued_series": "60 FAIL 同根：install 预检失败 CLD-INSTALL-001 (退出码 50) = runtime_root（safe-delete 回收站不可用）+ doctor（refs/remotes 写故障）两项环境缺陷级联",
+      "memory_engine_series": "PASS (245 中约 176 项来自 memory/engine/unit 系列)"
+    },
+    "tested_head": "9dcc31be2b7f32f3199cfbd44e138d161fc0cfdb (测试运行于干净 worktree, 无代码修改)"
+  },
+
+  "hash_baseline": {
+    "real_memory": {
+      "file_count": 238,
+      "aggregate_sha256": "6da7e366ce7832b0d06de4cae684b1fbf46879a9cb690dc3dfb30128b5c3800d",
+      "hashed_at_utc": "2026-08-19T12:30:00Z"
+    },
+    "frozen_zone": {
+      "file_count": 8,
+      "aggregate_sha256": "0708b959c5e84a17903f56cf72ac3880ec5c25a22ff3ae5a500ad94b43a03cee",
+      "files": {
+        "sync-memory.py": "bbdfcc42079671b7bf5362914f80a3b2ed9bc7fc33c2f557ade27679ad97d7af",
+        "sync-memory.ps1": "f7bad72e36e0a1c88f105bf353c6b999ed6d4330405dd92a4261e3938a18a341",
+        "guards.json": "e51f9379ee6b0c14cf415cdb09262f5ae047f09a8af50b60a01bceffa8d03579",
+        "protocol-manifest.json": "9a474aee9226af946d799d837562d21bbc790d99f49af120cf7ed6c243998ac0",
+        "VERSION": "e3df72cac617f4130348fa2502622cc7fc6027ee4bd5e7656d6f956b40275b77",
+        "AGENTS.md": "c774a3f041fc4522621d5a2b1d878dc4c92781bb3ee1ee78e104687c13b785da",
+        "memory.py": "9a3b71ba74cf3ffb72be9475652f320ed6edddce37cb066141d31bef262208e8",
+        "clued.py": "ecbeed5196d5bfc43009ae96f1b11fdf6dfbcce944d31548de9005c959e2a3e0"
+      }
+    }
+  },
+
+  "evidence_binding": {
+    "evidence_head": "9dcc31be2b7f32f3199cfbd44e138d161fc0cfdb",
+    "tested_head": "9dcc31be2b7f32f3199cfbd44e138d161fc0cfdb",
+    "final_report_head": "PENDING: 本 Gate 的本地单一目的提交（docs/r3-gate0/ 提交后回填）",
+    "published": false,
+    "local_only": true
+  },
+
+  "environment_defects": [
+    {
+      "id": "ENV-DEFECT-001",
+      "title": "refs/remotes/ 下 git 写 ref 不落盘（沙盒 overlay）",
+      "impact": "sync doctor 恒 1 FAIL；install 预检 doctor 检查失败 → CLD-INSTALL-001 级联 60 FAIL；tracking ref AUTO-HEALED 为进程内假阳性",
+      "evidence": "temp 路径 + PowerShell 对照复现；refs/heads/ 正常；Python 直写正常但跨进程消失",
+      "mitigation_in_gate0": "不修生产代码（只读审计边界）；记录为 baseline 环境缺陷，作为 R3-001 差距矩阵输入"
+    },
+    {
+      "id": "ENV-DEFECT-002",
+      "title": "safe-delete 回收站不可用 (windows-sandbox-recycle-bin-unavailable)",
+      "impact": "install 预检 runtime_root 检查失败（safe-delete 清理 .write-probe 失败 FAIL_CLOSED）",
+      "evidence": "clued install --json 输出 [safe-delete][SAFE_DELETE_FAIL_CLOSED]",
+      "mitigation_in_gate0": "记录；Gate 2 临时 home 环境必须规避此约束"
+    }
+  ],
+
+  "protocol_deviations_during_gate0": [],
+  "real_memory_modified": false,
+  "frozen_zone_modified": false,
+  "remote_modified": false,
+  "bound_by": "本 receipt 绑定 evidence_head=9dcc31b；此后一切状态结论以此为准，不得引用旧报告/会话记忆/注入记忆"
+}
