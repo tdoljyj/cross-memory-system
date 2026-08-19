@@ -1,4 +1,7 @@
-# R3-Gate2 实现说明：Claim Gate 全面接入、Adapter 合同、三轴状态、六动作生命周期
+# R3-Gate2 实现说明：Truth integration layer、Adapter 合同、三轴状态、六动作生命周期
+
+> 口径（经裁决修正）：Gate 2 实现并验证的是 **Truth integration layer / 公共 Adapter 合同 / 旁路阻断机制**；
+> **生产 Adapter 的实际入口接线未完成**（属 Gate 3）。不得将 Gate 2 表述为"全面接入"。
 
 - **依据**：产品所有者裁决（有条件授权 R3 Gate 2）——"完成上述三项启动前复核并消除矛盾后，可直接启动 R3 Gate 2"
 - **前置复核**：已完成并提交（`勘误-启动前三项复核.md`，提交 2397332）
@@ -7,7 +10,7 @@
 
 ---
 
-## 1. R3-T05：Truth Claim Gate 全面接入（`memory_engine/truth/integration.py`）
+## 1. R3-T05：Truth integration layer（`memory_engine/truth/integration.py`，隔离测试验证；生产接线见 Gate 3）
 
 | 裁决要求 | 实现 |
 |---|---|

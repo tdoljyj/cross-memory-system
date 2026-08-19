@@ -282,7 +282,15 @@ class LifecycleController(object):
             raise
 
     def purge(self, binding_id):
-        """清理已卸载 Binding 的状态文件（UNINSTALLED → ABSENT）。"""
+        """【内部测试能力，非用户六动作语义】清理已卸载 Binding 的状态文件。
+
+        边界（Gate 3 裁决复核④）：purge 仅用于**临时 home 测试清理**；
+        不属于默认六动作（install/repair/update/disable/enable/uninstall）语义。
+        默认 uninstall 只解绑当前 Agent 并保留 UNINSTALLED 状态（幂等可识别）；
+        purge 删除该状态文件（→ ABSENT）。若未来作为用户可调用的真实删除操作，
+        必须退出当前 R3 验收范围并另行授权（本实现不作真实环境调用）。
+        本方法不触碰 canonical memory、共享 Core 或其他 Binding 状态文件。
+        """
         st = self.load(binding_id)
         if not st:
             return {"binding": "ABSENT", "note": "ALREADY_ABSENT"}

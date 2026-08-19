@@ -3,7 +3,7 @@
 - **生成**：2026-08-19T（UTC，以 commit 时间为准）
 - **授权**：产品所有者裁决（有条件授权）——"完成上述三项启动前复核并消除矛盾后，可直接启动 R3 Gate 2"
 - **前置复核**：三项启动前复核已完成并提交（`勘误-启动前三项复核.md`，提交 `2397332`）
-- **授权范围**：R3-T05（Claim Gate 全面接入）、R3-T06（版本化 Adapter 公共合同）、
+- **授权范围**：R3-T05（Truth integration layer + Claim Gate 基础接入）、R3-T06（版本化 Adapter 公共合同）、
   R3-L01~L05（六动作完整生命周期）、三轴状态机器校验、临时 home E2E
 - **不授权执行**：push/tag/release、真实 Agent 安装/修复/更新/停用/启用/卸载、
   真实环境试装、Embedding 模型下载、真实 memory/冻结区修改、
@@ -29,7 +29,7 @@
 
 | 裁决要求 | 实现 | 测试 |
 |---|---|---|
-| R3-T05 Claim Gate 全面接入 | `memory_engine/truth/integration.py`（TruthAwareRecall / pre_answer_gate / BypassGuard） | test_truth_integration（15 项） |
+| R3-T05 Truth integration layer（Claim Gate 基础接入） | `memory_engine/truth/integration.py`（TruthAwareRecall / pre_answer_gate / BypassGuard） | test_truth_integration（15 项） |
 | 状态区分 NO_MEMORY/UNVERIFIED/TAMPERED/STALE/DENIED/ENV_UNAVAILABLE | `schema.ANSWER_STATES` + `classify_answer` | 同上 |
 | 禁止"无法核验"误报"没有记忆" | classify_answer（无内容→NO_MEMORY；有内容无 receipt→UNVERIFIED） | 同上 |
 | 旁路测试（Adapter 无法绕过） | BypassGuard.strict + e2e bypass | test_truth_integration + test_lifecycle_e2e |
@@ -44,13 +44,16 @@
 | 幂等 + 中断恢复 | 幂等标记 + journal recover_pending（INSTALLING→BROKEN） | test_lifecycle_ctl |
 | 临时 home E2E | tests/test_lifecycle_e2e.py（6 动作全流程 + INV + 旁路 + 多 Binding） | test_lifecycle_e2e（5 项） |
 
-## 4. Truth Integrity（Gate 2 后状态）
+## 4. Truth Integrity（Gate 2 后状态 —— 口径经裁决修正）
 
-- Claim Gate：已接入召回/读取/pre-answer 路径（TruthAwareRecall + pre_answer_gate + BypassGuard）
+- **准确口径**：Truth integration layer（`TruthAwareRecall` / `pre_answer_gate` / `BypassGuard`）、
+  公共 Adapter 合同（R3-T06）与旁路阻断机制**已实现并通过隔离测试**；
+  **生产 Adapter 的实际入口接线尚未完成**（recall/read/write/sync/pre-answer 的真实端侧接线属 Gate 3）。
+  **Gate 2 不留下"所有生产路径已受 Claim Gate 保护"的结论。**
 - 状态区分：7 状态机器可读；无 receipt 不得 VERIFIED；环境故障显式 ENV_UNAVAILABLE
-- 旁路：ENFORCED 候选模式下绕过 gate 的读取被阻断（e2e 锁定）
+- 旁路：ENFORCED 候选模式下绕过 gate 的读取被阻断（隔离 e2e 锁定；生产接线未覆盖）
 - **档位**：隔离环境候选可达 ENFORCED（conformance 证据链）；**真实环境保持 ADVISORY/AUDIT**；
-  Gate 2 未正式切换 ENFORCED（Gate 3 裁决）
+  Gate 2 未正式切换 ENFORCED（Gate 3 分层裁决）
 
 ## 5. Lifecycle（六动作状态迁移证据）
 
