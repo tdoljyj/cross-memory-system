@@ -73,6 +73,24 @@ REASON_CODES = (
 VERDICT_VERIFIED = "CURRENT_STATE_VERIFIED"
 VERDICT_UNVERIFIED = "CURRENT_STATE_UNVERIFIED"
 
+# ---- 回答状态区分（R3-T05，裁决要求） ----
+# 禁止把"无法核验"误报成"没有记忆"：
+#   NO_MEMORY       = 真实查无记忆（引擎确认无匹配对象），与核验无关
+#   UNVERIFIED      = 有内容但无有效 receipt / 无法现场核验（≠ 没有记忆）
+#   TAMPERED        = receipt 被篡改（digest 不符）
+#   STALE           = receipt 过期（超过 max_age）
+#   DENIED          = 授权/能力拒绝（capability 不足、认证拒绝）
+#   ENV_UNAVAILABLE = 环境不可用（远端不可达、git 故障、doctor FAIL）
+ANSWER_STATES = (
+    "NO_MEMORY",
+    "UNVERIFIED",
+    "TAMPERED",
+    "STALE",
+    "DENIED",
+    "ENV_UNAVAILABLE",
+    "VERIFIED",
+)
+
 # ---- Source Precedence（§2.2） ----
 # 现场证据 > 本 Gate receipt > 代码内 ADR/报告（锚定声明 HEAD） > 注入记忆（仅线索）
 SOURCE_PRECEDENCE = ("live", "receipt", "report", "memory")
