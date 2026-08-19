@@ -9,10 +9,10 @@
 
 | 候选 | 许可证 | 维度 | 参数 | 磁盘(fp32) | 语言 | CPU 内存预估 | 结论 |
 | --- | --- | ---: | ---: | ---: | --- | --- | --- |
-| BAAI/bge-m3 | MIT | 1024 | ~568M | ~2.27GB | 100+ 语言 | ~4–5GB | 质量候选（资源占用高） |
-| intfloat/multilingual-e5-small | MIT | 384 | ~118M | ~470MB | 94 语言 | ~1GB | **首选候选** |
+| BAAI/bge-m3 | MIT | 1024 | ~568M | ~2.27GB | 100+ 语言 | ~4–5GB | 越界对照（>2GB 预算，见 §7） |
+| intfloat/multilingual-e5-small | MIT | 384 | ~118M | ~470MB | 94 语言 | ~1GB | **首轮基准候选**（冻结运行合同见 §7） |
 | paraphrase-multilingual-MiniLM-L12-v2 | Apache-2.0 | 384 | ~118M | ~471MB | 50+ 语言 | ~1GB | 替代备份 |
-| jinaai/jina-embeddings-v2-base-zh | CC-BY-NC-4.0 | 768 | 161M | ~1.3GB | 中英 8K | ~2.6GB | 不建议（非商用许可证风险） |
+| jinaai/jina-embeddings-v2-base-zh | Apache-2.0（勘误：初稿误记 CC-BY-NC-4.0） | 768 | 161M | ~1.3GB | 中英 8K | ~2.6GB | 降级：trust_remote_code=True 供应链风险 + 资源占用（见 §7） |
 
 - 官方卡链接：[bge-m3](https://huggingface.co/BAAI/bge-m3) · [multilingual-e5-small](https://huggingface.co/intfloat/multilingual-e5-small) · [MiniLM-L12-v2](https://huggingface.co/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2) · [jina-v2-base-zh](https://huggingface.co/jinaai/jina-embeddings-v2-base-zh)
 - revision 与逐文件 SHA-256：在**下载授权轮**从官方模型卡抓取并写入 MODEL-MANIFEST（bge-m3 官方卡 revision 示例 `2ab44ec5c6ffa948890dcd605b723be45690d220`）；任何与官方卡不符 → 中止下载。本报告不预先固化哈希（下载被本轮禁令禁止，预先固化未经核对的哈希反而构成虚假供应链证据）。
@@ -55,3 +55,22 @@ precision_at5_v2 ≥ 0.90；critical_memory_recall_v2 ≥ 0.95；false_recall_ra
 - 既有 336 项全绿；原 replay hash `f4266eabd2bed94d…` 与全部冻结指标不变；doctor 三件套 ALL PASS；密钥扫描 0 命中；本地 ahead/behind = 1/0；未 push / tag / release
 
 **状态：ADR 待裁决。**
+
+## 7. R1 硬化修订（2026-08-19 产品所有者裁决：方向接受、正式 PASS 暂缓、一次纯文档 R1）
+
+> 本报告 §1 候选表已按 R1 勘误更新（Jina 许可证、E5 定位、bge-m3 越界）；其余修订为对 ADR-MIV-005B-002 §7 的逐项摘要。`7c3617f` 提案基线保留、不改写。
+
+1. **Jina 勘误**：官方卡现标注 **Apache-2.0**（初稿误记 CC-BY-NC-4.0）；官方示例要求 `trust_remote_code=True`。排除/降级理由改为：远程自定义代码供应链风险（需独立审计）+ 资源占用（161M/768d/~1.3GB）；处置=D 级备选。
+2. **E5 = 首轮基准候选**（非生产选型）。冻结运行合同：`query: `/`passage: ` 前缀、attention-mask mean pooling、L2 归一化、cosine、float32 基线（int8 需单独 manifest）、max length 512、backend+版本在下载授权轮固定、`trust_remote_code=False`。
+3. **磁盘口径**：E5 单 safetensors ≈471MB vs 官方全树多格式重复明显更大；下载用**文件白名单**（pytorch：config/tokenizer/model.safetensors；onnx：onnx/model.onnx+tokenizer），禁止 snapshot 全仓；实测全口径写入 MANIFEST。
+4. **准入 = 增量 OR**：`admit = MIV_005A_admit OR cosine > τ`（MIV_005A 合同逐字不变）；顺序=硬过滤 → 打分 → conflict → 准入 → 确定性排序 → limit；向量不复活 CONFLICT_LOSER、不淘汰词法通过对象；hybrid 只用于排序。
+5. **bge-m3 越界**：≈2.27GB > 2GB 磁盘预算 → 越界对照；量化变体需独立 manifest + 裁决。
+6. **hybrid 公式**：`hybrid = α·(s/(s+1)) + (1−α)·max(0,cosine)`；严格 >；tie-break=(hybrid,priority,evidence,updated_at,id)；舍入仅报告层 4 位。
+7. **calibration/holdout 冻结**：家族=expected/forbidden ID 连通（同族不跨组）；种子 `20260819`；12 paraphrase 与 ps-007/ps-016/cs-008/cs-012 全量排除于参数选择（仅验收）；冻结划分 = **calibration 53 / holdout 58**（具体 ID 见 ADR §7 R1.6）；网格 α×τ = 5×12 = 60 组合。
+8. **缓存移出 memory/ 树**：默认 `~/.dsh/vector-cache/cross-memory-system/`（`sync.config.json: vector_cache_dir` 可配）；不同步/不备份/不入 Git/权限 0700；卸载工作项负责清理。
+9. **索引构建排除**：temporary/会话临时、rejected/denied/invalid、秘密样值命中、T0/T4 不可见对象一律不索引；T0/T4/temporary 查询零向量读写。
+10. **下载合同**：固定 revision + 逐文件 SHA-256 + 白名单 + 推理离线 + manifest 原子校验，失败即回退 MIV-005A。
+11. **资源预算**：参考硬件=TURING（CPU-only）；query batch=1 / build batch=32；冷启动≤30s、热路径 P95≤50ms、重建≤60s；磁盘白名单口径 E5 ≈0.5GB+索引<10MB（预算内），bge-m3 ≈2.3GB（越界）。
+12. **验收补强**：新增 **paraphrase golden 命中 ≥ 11/12**（holdout 验收）；其余门槛不变（0.90/0.95/0.02/41-41/泄漏 0/token≤650/336 零回归/`f4266eab…` 不变/回退逐字节/重建回滚幂等）。
+
+**状态：ADR 待裁决（R1 硬化完成；未 push、未下载、未装依赖、未实施）。**

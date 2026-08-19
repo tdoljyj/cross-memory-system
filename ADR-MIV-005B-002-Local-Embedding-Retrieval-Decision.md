@@ -77,4 +77,111 @@
 - [BAAI/bge-m3 官方模型卡](https://huggingface.co/BAAI/bge-m3)（MIT）
 - [intfloat/multilingual-e5-small 官方模型卡](https://huggingface.co/intfloat/multilingual-e5-small)（MIT）
 - [sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2 官方模型卡](https://huggingface.co/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2)（Apache-2.0）
-- [jinaai/jina-embeddings-v2-base-zh 官方模型卡](https://huggingface.co/jinaai/jina-embeddings-v2-base-zh)（CC-BY-NC-4.0）
+- [jinaai/jina-embeddings-v2-base-zh 官方模型卡](https://huggingface.co/jinaai/jina-embeddings-v2-base-zh)（**勘误：官方卡现标注 Apache-2.0，见 §7 R1.1**）
+
+## 7. R1 硬化修订（2026-08-19 产品所有者裁决：方向接受、正式 PASS 暂缓、一次纯文档 R1）
+
+> 本节为 §1–6 的**硬化修订与勘误**：R1.1/R1.2/R1.3/R1.5 对 §2 相应行作出纠正与取代，其余为冻结补充合同。§1–6 原始文本保留（历史提案记录）；以本节为准。
+
+### R1.1 Jina 许可证勘误与排除理由修正
+
+- **勘误**：§2 将 jina-embeddings-v2-base-zh 标为 CC-BY-NC-4.0 有误——[官方模型卡](https://huggingface.co/jinaai/jina-embeddings-v2-base-zh)当前标注 **Apache-2.0**；且官方示例要求 `trust_remote_code=True`（执行模型库自带远程自定义代码）。
+- **修正后的排除/降级理由**（不再以「非商用许可证」为由）：
+  1. **供应链风险**：`trust_remote_code=True` 意味着运行未经本仓库审计的远程自定义 Python 代码，违反 D3/D10 的供应链与回退纪律，需要额外的独立代码审计才可放行；
+  2. **资源占用**：161M 参数 / 768 维 / fp32 权重 ~1.3GB + 推理内存 ~2.6GB，处于预算上限边缘且无量化官方变体；
+  3. 双语（中/英）覆盖与 e5-small 的 94 语言相比无额外收益。
+- 处置：降级为 **D 级备选**（仅当首选/质量候选均不达标且完成远程代码审计后才可启用，需单独裁决）。
+
+### R1.2 E5 定位与冻结运行合同
+
+- **定位修正**：multilingual-e5-small 只能裁决为「**首轮基准候选**」，不得提前成为生产选型；最终选型由下载授权轮的 calibration/holdout 实测（R1.6）决定。
+- **冻结运行合同（以下载实施轮照此落地，偏差即中止）**：
+  1. 输入前缀：检索查询加 `query: ` 前缀、入库正文加 `passage: ` 前缀（官方卡要求）；
+  2. pooling：attention-mask **mean pooling**（非 CLS、非 max）；
+  3. 归一化：pooled 向量做 **L2 normalization**；
+  4. 相似度：**cosine**（归一化后即内积，结果一致）；
+  5. 精度：**float32 基线**（int8 量化需单独 manifest + 单独裁决，且必须与 fp32 基线校准等价性）；
+  6. 最大长度：**512 token**（超出截断，官方卡默认）；
+  7. backend 与版本：sentence-transformers 或 onnxruntime 二选一，**具体包版本与 ONNX opset 在下载授权轮冻结进 MODEL-MANIFEST**；
+  8. **trust_remote_code=False**（本候选官方卡无需远程代码；任何需要该开关的候选按 R1.1 同等供应链审计处理）。
+
+### R1.3 磁盘口径修正（权重 vs 完整仓库树）与下载白名单
+
+- E5 的单个 `model.safetensors` ≈ 471MB，但官方文件树同时含 pytorch / onnx / tensorflow 等多格式重复副本，**完整树明显大于 471MB**。
+- 下载阶段**必须使用文件白名单**，禁止无选择 `snapshot_download` 全仓：
+  - pytorch 后端白名单：`config.json`、`tokenizer.json`、`tokenizer_config.json`、`special_tokens_map.json`、`vocab.txt`（如存在）、`model.safetensors`；
+  - onnx 后端白名单：`onnx/model.onnx`（或等价导出物）+ tokenizer 文件集；
+  - 白名单外文件一律不下载；实测全口径在下载授权轮记录进 MODEL-MANIFEST（预计 pytorch ≈0.5GB、onnx ≈0.25GB，以实测为准）。
+
+### R1.4 准入公式与管道顺序（向量 = MIV-005A 的增量 OR 路径）
+
+- **准入（取代 D7 的「替换式准入」表述）**：
+  `admit(o, q) = MIV_005A_admit(o, q) OR cosine(o, q) > τ`
+  其中 `MIV_005A_admit` = 显式 tags/entities selector 命中 OR 词法 score > 1/6（**生产合同逐字不变**）；`cosine > τ` 为**新增的增量放行路径**（严格大于，等于 τ 排除）。
+- **固定管道顺序（取代 D6 措辞，语义对齐 MIV-005A）**：
+  `硬过滤（scope/permission/status/temporal/light）→ 打分（词法 + cosine）→ conflict → 准入（上述 OR 公式）→ 确定性排序 → limit`
+- 两条不变量：
+  1. **向量不得复活 CONFLICT_LOSER**：conflict 过滤在准入之前，输家在准入阶段不可见；
+  2. **向量不得淘汰词法通过对象**：只要 MIV_005A_admit 为真即准入，其 cosine 分数再低也不影响准入（只影响排序位置）。
+- hybrid 分数**只用于准入后的排序**，不参与准入判定。
+
+### R1.5 bge-m3 预算越界处置
+
+- bge-m3 fp32 权重 ≈ 2.27GB 已**超过磁盘预算 ≤2GB**，只能保留为**越界对照候选**；除非未来另立量化变体（如 int8）与**独立 MODEL-MANIFEST + 独立裁决**，否则不得进入下载/实施轮。
+
+### R1.6 calibration / holdout 冻结（具体 case ID、种子、有限网格）
+
+- **家族规则**：同一 expected_relevant_ids 或 forbidden_ids 成员相连的 case 属于同一「场景族」（union-find over expected/forbidden IDs）；**同族绝不跨 calibration/holdout**。
+- **参数选择排除集**：12 个 paraphrase case 与已知 6 个被过滤正确 ID 所在 case（ps-007、ps-016、cs-008、cs-012）**完全排除于参数选择**，全部进入 holdout 仅作最终验收（其家族成员一并进入 holdout）。
+- **划分算法（可复现）**：种子 `20260819`；对剩余家族以 `random.Random(20260819)` 洗牌后按家族完整性贪心填充 calibration 至剩余 case 数的 60%（四舍五入）；实际冻结为 **calibration 53 / holdout 58**。
+- **冻结 case ID 列表**：
+  - calibration（53）：`cs-001 cs-002 cs-003 cs-005 cs-006 cs-009 cs-010 cs-011 ep-002 ep-007 ep-009 ep-011 ep-012 ep-013 ep-015 io-002 io-003 io-010 io-011 io-012 io-014 io-015 io-016 nm-001 nm-003 nm-004 nm-005 nm-006 nm-007 nm-008 nm-009 nm-012 nm-013 nm-015 ps-004 ps-006 ps-008 sa-003 sa-004 sa-005 sa-006 sa-007 sa-009 sa-010 sa-011 sa-012 tp-001 tp-003 tp-006 tp-010 tp-011 tp-012 tp-013`
+  - holdout（58）：`cs-004 cs-007 cs-008 cs-012 ep-001 ep-003 ep-004 ep-005 ep-006 ep-008 ep-010 ep-014 io-001 io-004 io-005 io-006 io-007 io-008 io-009 io-013 nm-002 nm-010 nm-011 nm-014 pp-001 pp-002 pp-003 pp-004 pp-005 pp-006 pp-007 pp-008 pp-009 pp-010 pp-011 pp-012 ps-001 ps-002 ps-003 ps-005 ps-007 ps-009 ps-010 ps-011 ps-012 ps-013 ps-014 ps-015 ps-016 sa-001 sa-002 sa-008 tp-002 tp-004 tp-005 tp-007 tp-008 tp-009`
+- **有限 (α, τ) 网格**：α ∈ {0.0, 0.25, 0.5, 0.75, 1.0}，τ ∈ {0.05, 0.10, …, 0.60}（12 档）→ 共 60 个组合；只在 calibration 上选择满足「NO MEMORY 41/41、false_recall_rate_v2 ≤ 0.02、precision_at5_v2 ≥ 0.90」且 critical recall 最大的组合，holdout 复核同门槛；**12 个 paraphrase 与 6 个被过滤 ID 禁入任何选择步骤**。
+
+### R1.7 hybrid 公式与数值纪律（只影响排序）
+
+- `hybrid(o,q) = α · lex_norm(s) + (1−α) · max(0, cosine(o,q))`
+  - `lex_norm(s) = s / (s + 1)`（单调压缩到 [0,1)，不依赖任何全局统计，保证可重放）；
+  - `cosine` 负值截断为 0；
+  - 比较一律**严格大于**；相等按 tie-break。
+- tie-break（确定性，全部字段参与）：`(hybrid 降序, priority 权重降序, evidence 权重降序, updated_at 降序, object_id 升序)`。
+- 舍入纪律：计算全程使用原始浮点值；**仅在报告层**做 round-half-up 到 4 位小数（与 metrics.py v2 一致）。
+
+### R1.8 向量缓存移出 canonical memory/ 树
+
+- 默认目录改为 **`~/.dsh/vector-cache/cross-memory-system/`**（仓库外），可经 `sync.config.json` 的 `vector_cache_dir` 覆盖；canonical `memory/` 树内不落任何向量文件。
+- 声明：缓存**不同步**（sync-memory 白名单外）、**不备份**、**不入 Git**（gitignore + guards 扫描）；目录权限 0700 / 文件 0600（Windows 用等效 ACL）；**未来安装/停用/卸载独立工作项必须包含该目录的清理责任**（写进该工作项的验收清单，本 ADR 不实施）。
+
+### R1.9 索引构建排除（防「召回时过滤但缓存已泄漏」）
+
+- 构建阶段排除：scope=temporary 与会话临时对象、status ∈ {rejected, denied, invalid} 的对象、内容命中 guards 秘密样值的对象、T0/T4 语义下不可见的对象；构建集合 = 召回可见集合（RECALLABLE ∪ HISTORY）∩ 排除项补集。
+- T0 / T4 / temporary 查询**永不触发**向量推理或缓存读写。
+
+### R1.10 下载合同（固定 revision、白名单、离线、原子 manifest）
+
+- 固定官方卡 revision + **逐文件 SHA-256**（下载授权轮从官方卡抓取并写入 MODEL-MANIFEST）；仅下载 R1.3 白名单文件；
+- 推理**完全离线**（禁运行时网络访问，含无网络环境验收测试）；
+- manifest 校验为**原子写**（临时文件 + rename），任何哈希不匹配 → 中止加载、删除本次下载物、整体回退 D10（MIV-005A 路径）。
+
+### R1.11 资源预算（参考硬件与全口径）
+
+- 参考硬件：当前 TURING 机（Windows x64、CPU-only、≥16GB RAM）为唯一首轮验收硬件；
+- batch：查询 batch=1；索引构建 batch=32；
+- 冷启动（进程内首次加载模型+索引）≤ 30s；热路径单查询 embedding 推理 P95 ≤ 50ms；230 对象全量索引重建 ≤ 60s；
+- 磁盘全口径（白名单口径，实测写入 manifest）：E5 pytorch ≈0.5GB + 索引 <10MB（384×4B×230≈0.35MB + 元数据）≤ 2GB 预算内；bge-m3 ≈2.3GB 越界（R1.5）。
+
+### R1.12 最终验收矩阵（补充 paraphrase 底线）
+
+在原 §4 矩阵基础上增加/冻结：
+
+| # | 验收项 | 门槛 |
+| --- | --- | ---: |
+| 12 | **paraphrase golden 命中** | **≥ 11/12**（holdout 内验收；参数选择全程不接触） |
+| 13 | 阈值来源审计 | 仅允许 R1.6 冻结的 60 组合网格 + calibration/holdout 流程 |
+
+其余门槛不变：precision_at5_v2 ≥ 0.90、critical_memory_recall_v2 ≥ 0.95、false_recall_rate_v2 ≤ 0.02、NO MEMORY 41/41、泄漏全 0、token P95 ≤ 650、既有 336 项零回归、原 replay hash `f4266eab…` 与冻结指标不变、回退路径逐字节一致、索引重建/回滚/迁移幂等且 Trace 零泄漏。
+
+### R1.13 本轮纪律
+
+本轮为纯文档 R1：不修改任何生产代码、测试合同、corpus、fixtures、golden、objects、index、同步层或 Clued；不下载模型、不安装依赖、不生成向量索引、不 push / tag / release；不启动 Reflection 或生命周期工作项。`7c3617f` 提案基线保留、不改写。
