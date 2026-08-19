@@ -32,8 +32,8 @@
 | worktree（执行开始） | clean |
 | VERSION | `vNext-2.0` |
 | TESTED_HEAD | `2e1af97a0bd0263f82b1c7419a87e92a0832e592`（干净 clone：249 既有 + 19 trace 在 `41a32e1d` 全绿、`2e1af97` 等价[仅 runner.py diff，且 249+trace 测试零依赖 memory_eval]；memory_eval 13 项在 `2e1af97` 全绿；doctor 三件套 + secret scan 在 `2e1af97` 全 PASS） |
-| FINAL_REPORT_HEAD | `2e1af97a0bd0263f82b1c7419a87e92a0832e592`（§11 提交链末） |
-| ahead/behind（最终） | ahead=9（本地提交，未 push）；behind=0 |
+| FINAL_REPORT_HEAD | `2e1af97a0bd0263f82b1c7419a87e92a0832e592`（代码/测试 HEAD；文档定稿提交 `848fe9d` 零代码 diff，见 §11） |
+| ahead/behind（最终） | ahead=10（本地提交，未 push）；behind=0 |
 
 ## 3. Baseline & Frozen Evidence
 
@@ -252,6 +252,7 @@ bab065b [WorkBuddy@TURING] docs: record vNext-2.1 gate-1 evidence and baseline
 e8829a7 [WorkBuddy@TURING] test: split scope metric into current-scope leakage vs project-only capability gap
 41a32e1 [WorkBuddy@TURING] docs: clarify gate-1 infra PASS vs memory-quality BELOW TARGET（口径修正）
 2e1af97 [WorkBuddy@TURING] fix: reuse single temp root in eval runner（规避高频删除硬退出）
+848fe9d [WorkBuddy@TURING] docs: finalize gate-1 report at HEAD 2e1af97（口径修正 + 高频删除规避）
 ```
 
 - no amend / no rebase / no force push / no PR / no tag / no release ✅
@@ -260,8 +261,10 @@ e8829a7 [WorkBuddy@TURING] test: split scope metric into current-scope leakage v
   `git ls-remote origin main` 执行前后一致）
 - worktree clean（提交后核验）
 - secret scan：全仓扫描零自命中（含新增 memory_eval_baseline/ 产物与全部新文件）
-- FINAL_REPORT_HEAD = `2e1af97a0bd0263f82b1c7419a87e92a0832e592`（§11 提交链末；
-  TESTED_HEAD = FINAL_REPORT_HEAD = `git rev-parse HEAD`）
+- FINAL_REPORT_HEAD（代码/测试 HEAD）= `2e1af97a0bd0263f82b1c7419a87e92a0832e592`
+  （§11 提交链；TESTED_HEAD = 2e1af97，所有测试在该 HEAD 的干净 clone 上跑）
+- 本文档自身定稿提交 `848fe9d` 仅含 `.md` 文档（2e1af97..848fe9d 零代码/测试 diff，
+  不改变任何测试结果）；实际 `git rev-parse HEAD` = `848fe9d`
 
 ## 12. Next Decision Required（产品所有者裁决）
 
