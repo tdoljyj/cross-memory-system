@@ -15,14 +15,14 @@
   （Claim Gate/合同/六动作在隔离环境全绿；真实环境接线与 ENFORCED 正式切换属 Gate 3）
 - 已停在边界等待 Gate 3 裁决
 
-## 2. Live Repository Truth（提交后现场复核，回填）
+## 2. Live Repository Truth（提交后现场复核，2026-08-19T15:43:31Z）
 
 | 项 | Gate 2 启动 | Gate 2 完成 |
 |---|---|---|
-| local HEAD | `2397332` | <回填> |
-| remote main（ls-remote） | `9dcc31b` | <回填> |
-| ahead/behind（rev-list 直算） | 5/0 | <回填> |
-| worktree（porcelain） | 零输出 | 零输出 |
+| local HEAD | `2397332` | `ca87a1234c18b02ac0885579dbfd106ec341dc37` |
+| remote main（ls-remote） | `9dcc31b` | `9dcc31b`（未漂移） |
+| ahead/behind（rev-list 直算） | 5/0 | **6/0**（9dcc31b..HEAD 线性 6 提交） |
+| worktree（porcelain） | 零输出 | 零输出（clean） |
 | 真实 memory / 冻结区 | DIFF=0 | DIFF=0 |
 
 ## 3. 实现—测试—证据映射（Gate 2 新增 47 项全绿）
@@ -84,15 +84,19 @@
 
 ## 8. Deviations / P0 / P1
 
-- Protocol Deviations：<回填>（预期空）
+- Protocol Deviations：**空**
 - 未决 P0：无
 - 未决 P1：ENV-DEFECT-001/002（环境缺陷，ADR-R3-006 规避方案已冻结，Gate 3 执行）；
   版本矩阵差异（ADR-R3-005 判定正常）；六动作真实环境接线（Gate 3）
 
-## 9. Git Evidence（提交后回填）
+## 9. Git Evidence（提交后现场复核）
 
-- Gate 2 提交：<回填 HEAD>
-- 起止 HEAD：`2397332` → <回填>；remote main / ahead-behind / worktree：<回填现场复核>
+- Gate 2 提交：`ca87a1234c18b02ac0885579dbfd106ec341dc37`（13 文件，+1988）
+- 起止 HEAD：`2397332` → `ca87a12`
+- remote main：`9dcc31be2b7f32f3199cfbd44e138d161fc0cfdb`（ls-remote 现场）
+- ahead/behind：**6/0**（9dcc31b..HEAD 线性 6 提交）
+- worktree：porcelain 零输出（clean）
+- 真实 memory / 冻结区：逐文件 hash DIFF=0
 - 无 rewrite / 无 push / 无 tag / 无 release
 
 ## 10. Next Decision（Gate 3 建议，不自行启动）
