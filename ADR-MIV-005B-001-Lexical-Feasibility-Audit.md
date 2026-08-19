@@ -89,3 +89,18 @@
 - 既有 326 项测试全绿 + 新增 `tests/test_bm25_probe.py` 10 项（探针重放 hash 两次运行完全一致：`4e4562f13c6ad35f3bba604f8638bfd9973c85924c36ea9f89362008a6bad563`）；
 - 硬边界零改动：`memory_engine/**`、corpus、fixtures、golden、objects、index、`memory_eval_baseline/**`（v1 基线）、同步层、Clued、协议清单 diff 为空（本轮仅新增 2 文件 + 2 文档 + 状态.md 一行）；
 - doctor 三件套 ALL PASS、密钥扫描 0 命中。
+
+## 6. 正式裁决记录（2026-08-19 产品所有者裁决）
+
+> 追加记录；第 1–5 节全部历史内容保持不变。
+
+1. **MIV-005B 词法可行性审计：PASS（正式）**。
+2. **本地词法 / BM25 生产接入：NO-GO**——关键结论被接受：
+   - 纯 BM25 的高 recall 依赖零分候选进入 top-k，不是真实相关性恢复；
+   - 10/12 paraphrase 完全零词面重叠，当前 tokenizer + BM25 无法解决；
+   - 去除准入门会使 NO MEMORY 退化为 39/41、false recall 升至 0.29，不可进入生产；
+   - 不允许为挽救词法路线加入 query 特判、手工同义词或降低 >1/6 门槛。
+3. **Gate 2R 质量目标尚未达到；Reflection 继续阻断**。
+4. **后续路线 = Embedding ADR**：本轮不授权实施，不授权模型下载。
+5. **生命周期独立工作项（安装/停用/卸载）继续排队，不启动**。
+6. 授权纯文档收口提交 `docs: record MIV-005B lexical NO-GO`（本 §6 + 审计报告 §8 + `memory/状态.md` 一行，只追加）与普通 fast-forward push（未推送范围 = `a4c2250` + `da9d550` + 收口提交）；push 后 local HEAD = remote main、0/0；不 tag / release；不启动 Reflection、Embedding 实施、模型下载或安装/停用/卸载工作项。

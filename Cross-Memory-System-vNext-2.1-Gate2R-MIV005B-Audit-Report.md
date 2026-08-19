@@ -236,3 +236,13 @@
 - 探针 replay hash（两次运行一致）：`4e4562f13c6ad35f3bba604f8638bfd9973c85924c36ea9f89362008a6bad563`
 - 原评测 replay hash `f4266eabd2bed94d…` 与全部冻结指标不变；既有 326 项全绿 + 新增 `tests/test_bm25_probe.py` 10 项
 - `memory_engine/**`、>1/6 阈值、conflict→admission→limit 顺序、corpus、fixtures、golden、objects、index、v1 基线、同步层、Clued、协议清单零改动；doctor 三件套 ALL PASS；密钥扫描 0 命中
+
+## 8. 正式裁决记录（2026-08-19 产品所有者裁决）
+
+> 追加记录；第 1–7 节全部历史内容保持不变。
+
+- **MIV-005B 词法可行性审计：PASS（正式）**。
+- **本地词法 / BM25 生产接入：NO-GO**（接受本报告关键结论：零分候选进入 top-k 的 recall 非真实相关性恢复；10/12 paraphrase 零重叠当前 tokenizer + BM25 无法解决；去准入门使 NO MEMORY 39/41、false recall 0.29；不得引入 query 特判 / 手工同义词 / 降低 >1/6 门槛）。
+- **Gate 2R 质量目标尚未达到；Reflection 继续阻断**。
+- **后续路线 = Embedding ADR**（本轮不授权实施、不授权模型下载）；生命周期独立工作项继续排队不启动。
+- 授权纯文档收口提交 `docs: record MIV-005B lexical NO-GO` 与普通 fast-forward push；未推送范围 = `a4c2250` + `da9d550` + 收口提交；push 后 local HEAD = remote main、0/0；不 tag / release。
