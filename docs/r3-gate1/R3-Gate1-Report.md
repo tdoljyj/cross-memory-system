@@ -87,11 +87,14 @@
 - 未决 P1：ENV-DEFECT-001/002（环境缺陷，规避 ADR 已交付：ADR-R3-006）；
   版本矩阵差异（vNext-2.0/vNext-1.3/0.3.0）经 ADR-R3-005 判定为正常差异，不修正
 
-## 10. Git Evidence（提交后回填）
+## 10. Git Evidence（提交后现场复核，2026-08-19T14:26:41Z）
 
-- Gate 1 提交：<回填 HEAD>
-- 起止 HEAD：`b4fcb15` → <回填>
-- remote main / ahead-behind / worktree：<回填现场复核>
+- Gate 1 提交：`b324b7bcba33f62b8188d6ab9587373fd3a0f8f5`（24 文件，+3141）
+- 起止 HEAD：`b4fcb15` → `b324b7b`
+- remote main：`9dcc31be2b7f32f3199cfbd44e138d161fc0cfdb`（ls-remote 现场）
+- ahead/behind：**3 / 0**（Gate 0 两提交 + Gate 1 一提交）
+- worktree：clean（仅 `.gate-t0-workspace/`、`.gate0-workspace/` untracked）
+- 真实 memory / 冻结区：逐文件 hash DIFF=0
 - 无 rewrite / 无 push / 无 tag / 无 release
 
 ## 11. Next Decision
