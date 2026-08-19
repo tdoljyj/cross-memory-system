@@ -147,15 +147,16 @@ def assert_case_has_no_secrets(case):
 
 
 def scope_to_engine(scope):
-    """case scope → v2.0 引擎 scope 参数。
+    """case scope → 引擎 scope 参数（MIV-006：返回 (scope, project_id)）。
 
-    current      → None（无 scope 过滤，适配器当前上下文）
-    project_only → "project"
-    global       → "global"
+    current      → (None, None)   无 scope 过滤（适配器当前上下文）
+    project_only → ("project_only", project_id)   项目硬隔离（缺失 project_id 由引擎 fail-closed）
+    global       → ("global", None)
     """
     mode = (scope or {}).get("mode", "current")
+    pid = (scope or {}).get("project_id")
     if mode == "project_only":
-        return "project"
+        return ("project_only", pid)
     if mode == "global":
-        return "global"
-    return None
+        return ("global", None)
+    return (None, None)

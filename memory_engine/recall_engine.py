@@ -101,10 +101,40 @@ def load_markdown_plan(layers):
     return plan
 
 
-def _category_scope_ok(obj, categories, scope):
-    if scope and scope != "global" and obj.get("scope") not in ("global", scope):
-        return False
-    if scope and scope == "global" and obj.get("scope") != "global":
+def _scope_ok(obj, scope, project_id=None, session_id=None):
+    """MIV-006（ADR-MIV-006-001 D2）scope 硬过滤——先于一切打分执行。
+
+    查询 mode 可见性矩阵：
+    - global            ：仅 scope=="global"（legacy，与 v2.0 一致）
+    - project           ：global ∪ project（legacy，与 v2.0 一致）
+    - session           ：global ∪ session（legacy，与 v2.0 一致）
+    - project_only + pid：global ∪ (project 且 project_id==pid)
+                           project_id=null 的 project 对象不进入分区视图
+    - session_only + sid：global ∪ (session 且 source.session_id==sid)
+    - 其他任意 legacy 字符串：global ∪ 该 scope（v2.0 原语义）
+    """
+    if scope is None:
+        return True
+    if scope == "project_only":
+        if obj.get("scope") == "global":
+            return True
+        if obj.get("scope") != "project":
+            return False
+        return obj.get("project_id") == project_id
+    if scope == "session_only":
+        if obj.get("scope") == "global":
+            return True
+        if obj.get("scope") != "session":
+            return False
+        return (obj.get("source") or {}).get("session_id") == session_id
+    if scope == "global":
+        return obj.get("scope") == "global"
+    return obj.get("scope") in ("global", scope)
+
+
+def _category_scope_ok(obj, categories, scope, project_id=None,
+                       session_id=None):
+    if not _scope_ok(obj, scope, project_id, session_id):
         return False
     if categories:
         cat = (obj.get("classification") or {}).get("category")
@@ -172,8 +202,13 @@ def _conflict_filter(objects):
     return [o for o in objects if o["id"] not in losers], losers
 
 
-def _attach_constraints(objects, all_objects):
-    """§8.D：返回集实体的约束/负向偏好附带（供推荐过滤用）。"""
+def _attach_constraints(objects, all_objects, scope=None, project_id=None,
+                        session_id=None):
+    """§8.D：返回集实体的约束/负向偏好附带（供推荐过滤用）。
+
+    MIV-006：project_only/session_only 查询下，约束同样受 scope 硬过滤
+    （B 项目约束不得附着 A 项目召回）；legacy mode 行为与 v2.0 一致。
+    """
     wanted_entities = set()
     for o in objects:
         wanted_entities |= set(o.get("entities") or [])
@@ -186,6 +221,9 @@ def _attach_constraints(objects, all_objects):
         cat = (o.get("classification") or {}).get("category")
         if cat not in ("constraint", "negative_preference"):
             continue
+        if scope in ("project_only", "session_only") and \
+                not _scope_ok(o, scope, project_id, session_id):
+            continue
         if not T.active_and_valid(o):
             continue
         ents = set(o.get("entities") or []) | set(o.get("tags") or [])
@@ -195,18 +233,24 @@ def _attach_constraints(objects, all_objects):
     return constraints
 
 
-def _scope_category_codes(obj, want_categories, scope):
+def _scope_category_codes(obj, want_categories, scope, project_id=None,
+                          session_id=None):
     """镜像 _category_scope_ok 的判定，只为 Trace 输出稳定 reason code。
 
-    只读观测用途，不参与过滤决策。
+    只读观测用途，不参与过滤决策。MIV-006：project_only 桶内 project_id
+    不符 → PROJECT_MISMATCH；session_only 桶内 session_id 不符 →
+    SESSION_MISMATCH；跨桶（session/agent/machine 等）→ SCOPE_MISMATCH。
     """
     codes = []
     if scope:
-        o_scope = obj.get("scope")
-        if scope != "global" and o_scope not in ("global", scope):
-            codes.append(RT.RC_SCOPE_MISMATCH)
-        elif scope == "global" and o_scope != "global":
-            codes.append(RT.RC_SCOPE_MISMATCH)
+        if not _scope_ok(obj, scope, project_id, session_id):
+            o_scope = obj.get("scope")
+            if scope == "project_only" and o_scope == "project":
+                codes.append(RT.RC_PROJECT_MISMATCH)
+            elif scope == "session_only" and o_scope == "session":
+                codes.append(RT.RC_SESSION_MISMATCH)
+            else:
+                codes.append(RT.RC_SCOPE_MISMATCH)
     if want_categories:
         cat = (obj.get("classification") or {}).get("category")
         if cat not in want_categories:
@@ -216,10 +260,16 @@ def _scope_category_codes(obj, want_categories, scope):
 
 def recall(query="", tier="T0", layers=None, scope=None, include_history=False,
            categories=None, tags=None, entities=None, limit=10,
-           valid_at=None, light=None, max_objects=200, explain=False):
+           valid_at=None, light=None, max_objects=200, explain=False,
+           project_id=None, session_id=None):
     """确定性混合召回入口。
 
     返回 RecallResult。T0 = 零文件读取纯短路（§17）。
+
+    MIV-006（ADR-MIV-006-001）新增查询 mode：
+    - scope="project_only" + project_id=P  ：项目硬隔离（缺 project_id → ValueError）
+    - scope="session_only"  + session_id=S ：会话硬隔离（缺 session_id → ValueError）
+    - scope="temporary"                    ：零长期读取，返回 NO MEMORY
 
     explain=True（MIV-002）时额外生成只读 Recall Trace（result.trace）；
     召回集合、顺序、token 截断与状态与 explain=False 完全一致。
@@ -235,7 +285,8 @@ def recall(query="", tier="T0", layers=None, scope=None, include_history=False,
     if explain:
         tracer = RT.TraceRecorder(
             result.query, tier, layers, scope, valid_at,
-            include_history=include_history, limit=limit)
+            include_history=include_history, limit=limit,
+            project_id=project_id, session_id=session_id)
 
     # ---- T0：真正零读取（不碰 index.json / objects / 任何文件）----
     if tier == "T0":
@@ -243,7 +294,8 @@ def recall(query="", tier="T0", layers=None, scope=None, include_history=False,
         if tracer is not None:
             result.trace = RT.build_empty_trace(
                 result.query, tier, scope, valid_at,
-                [RT.RC_T0_ZERO_READ, RT.RC_NO_MEMORY])
+                [RT.RC_T0_ZERO_READ, RT.RC_NO_MEMORY],
+                project_id=project_id, session_id=session_id)
         return result
 
     if tier == "T4":
@@ -253,7 +305,28 @@ def recall(query="", tier="T0", layers=None, scope=None, include_history=False,
         if tracer is not None:
             result.trace = RT.build_empty_trace(
                 result.query, tier, scope, valid_at,
-                [RT.RC_T4_IMMEDIATE_WRITE])
+                [RT.RC_T4_IMMEDIATE_WRITE],
+                project_id=project_id, session_id=session_id)
+        return result
+
+    # ---- MIV-006：新查询 mode 校验（fail-closed，先于任何读取）----
+    if scope == "project_only" and not project_id:
+        raise ValueError(
+            "scope=project_only 必须携带非空 project_id（fail-closed）")
+    if scope == "session_only" and not session_id:
+        raise ValueError(
+            "scope=session_only 必须携带非空 session_id（fail-closed）")
+
+    # ---- MIV-006：temporary = 零长期读取（不读 index.json / objects）----
+    if scope == "temporary":
+        result.access = "TEMPORARY"
+        result.warnings.append(
+            "temporary 查询：不读长期记忆、不产生长期记忆（零对象读取）")
+        if tracer is not None:
+            result.trace = RT.build_empty_trace(
+                result.query, tier, scope, valid_at,
+                [RT.RC_TEMPORARY_MODE, RT.RC_NO_MEMORY],
+                project_id=project_id, session_id=session_id)
         return result
 
     if layers is None:
@@ -276,7 +349,8 @@ def recall(query="", tier="T0", layers=None, scope=None, include_history=False,
     if not want_categories:
         if tracer is not None:
             result.trace = RT.build_empty_trace(
-                result.query, tier, scope, valid_at, [RT.RC_NO_MEMORY])
+                result.query, tier, scope, valid_at, [RT.RC_NO_MEMORY],
+                project_id=project_id, session_id=session_id)
         return result  # 无对象召回需求（如 L6）
 
     objects = store.load_all_objects()
@@ -301,9 +375,11 @@ def recall(query="", tier="T0", layers=None, scope=None, include_history=False,
             if tracer is not None:
                 tracer.exclude(oid, RT.status_exclude_code(obj.get("status")))
             continue
-        if not _category_scope_ok(obj, want_categories, scope):
+        if not _category_scope_ok(obj, want_categories, scope,
+                                  project_id, session_id):
             if tracer is not None:
-                codes = _scope_category_codes(obj, want_categories, scope)
+                codes = _scope_category_codes(obj, want_categories, scope,
+                                              project_id, session_id)
                 if not codes:
                     codes = [RT.RC_SCOPE_MISMATCH]
                 tracer.exclude(oid, *codes)
@@ -358,7 +434,8 @@ def recall(query="", tier="T0", layers=None, scope=None, include_history=False,
         for loser_id in losers:
             tracer.exclude(loser_id, RT.RC_CONFLICT_LOSER)
     result.objects = survivors[:limit]
-    result.constraints = _attach_constraints(result.objects, objects)
+    result.constraints = _attach_constraints(
+        result.objects, objects, scope, project_id, session_id)
     if tracer is not None:
         if len(survivors) > limit:
             for o in survivors[limit:]:

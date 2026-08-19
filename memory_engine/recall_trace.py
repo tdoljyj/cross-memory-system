@@ -54,6 +54,8 @@ def estimator_ref():
 # ---- 稳定 reason code（集中定义，禁止自由文本替代）----
 # 选中类
 RC_SCOPE_OK = "SCOPE_OK"
+RC_PROJECT_OK = "PROJECT_OK"          # MIV-006：project_only 命中本分区
+RC_SESSION_OK = "SESSION_OK"          # MIV-006：session_only 命中本会话
 RC_STATUS_ACTIVE = "STATUS_ACTIVE"
 RC_STATUS_REINFORCED = "STATUS_REINFORCED"
 RC_HISTORY_ALLOWED = "HISTORY_ALLOWED"
@@ -68,6 +70,8 @@ RC_LIMIT_WITHIN = "LIMIT_WITHIN"
 
 # 排除类
 RC_SCOPE_MISMATCH = "SCOPE_MISMATCH"
+RC_PROJECT_MISMATCH = "PROJECT_MISMATCH"  # MIV-006：project_only 下 project_id 不同
+RC_SESSION_MISMATCH = "SESSION_MISMATCH"  # MIV-006：session_only 下 session_id 不同
 RC_PERMISSION_DENIED = "PERMISSION_DENIED"  # 预留：scope 是引擎授权边界
 RC_STATUS_CANDIDATE = "STATUS_CANDIDATE"
 RC_STATUS_SUPERSEDED = "STATUS_SUPERSEDED"
@@ -90,6 +94,7 @@ RC_LOAD_LIMIT_TRUNCATED = "LOAD_LIMIT_TRUNCATED"
 RC_NO_MEMORY = "NO_MEMORY"
 RC_T0_ZERO_READ = "T0_ZERO_READ"
 RC_T4_IMMEDIATE_WRITE = "T4_IMMEDIATE_WRITE"
+RC_TEMPORARY_MODE = "TEMPORARY_MODE"  # MIV-006：temporary 查询零长期读取
 RC_TRACE_BUILD_FAILED = "TRACE_BUILD_FAILED"
 
 # 状态 → 排除 reason code（status 过滤第一道）
@@ -236,11 +241,18 @@ class TraceRecorder(object):
     """
 
     def __init__(self, query, tier, layers, scope, valid_at,
-                 include_history=False, limit=10):
+                 include_history=False, limit=10, project_id=None,
+                 session_id=None):
         self.trace_version = TRACE_VERSION
         self.query_id = new_query_id()
         self.operation_id = new_operation_id()
-        self.scope = {"mode": scope or "current", "project_id": None}
+        # MIV-006：scope 输出真实 mode + project_id；session_id 仅非空时输出
+        # （legacy 调用两者为空 → 与 v1.0 输出字节一致）
+        self.scope = {"mode": scope or "current", "project_id": project_id}
+        if session_id:
+            self.scope["session_id"] = session_id
+        self.project_id = project_id
+        self.session_id = session_id
         self.route = tier or "T0"
         self.valid_at = valid_at or datetime.now(timezone.utc)
         self.include_history = include_history
@@ -311,6 +323,10 @@ class TraceRecorder(object):
             oid = o["id"]
             score, rank_key = rank_by_id.get(oid, (0.0, None))
             codes = [RC_SCOPE_OK]
+            if self.project_id:
+                codes.append(RC_PROJECT_OK)
+            if self.session_id:
+                codes.append(RC_SESSION_OK)
             st = o.get("status")
             if st == "reinforced":
                 codes.append(RC_STATUS_REINFORCED)
@@ -375,12 +391,14 @@ class TraceRecorder(object):
 
 
 def build_empty_trace(query, tier, scope, valid_at, reason_codes,
-                      degraded=False, build_error=None):
-    """无对象召回路径（T0 / T4 / 无类别）的合法空 Trace。
+                      degraded=False, build_error=None, project_id=None,
+                      session_id=None):
+    """无对象召回路径（T0 / T4 / temporary / 无类别）的合法空 Trace。
 
-    不得触发任何记忆文件读取。
+    不得触发任何记忆文件读取。MIV-006：project_id/session_id 可选透传。
     """
-    rec = TraceRecorder(query or "", tier or "T0", [], scope, valid_at)
+    rec = TraceRecorder(query or "", tier or "T0", [], scope, valid_at,
+                        project_id=project_id, session_id=session_id)
     if degraded:
         rec.mark_degraded(build_error)
     d = rec.finalize([], 0, set())

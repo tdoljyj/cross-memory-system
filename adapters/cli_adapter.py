@@ -47,7 +47,8 @@ class CLIAdapter(MemoryAdapter):
             adapter=kwargs.get("adapter", self.name),
             session_id=kwargs.get("session_id"),
             tags=obj.get("tags"), entities=obj.get("entities"),
-            source_kind="user_explicit")
+            source_kind="user_explicit",
+            project_id=obj.get("project_id"))  # MIV-006：分区标记继承
         return write_engine.perform_write(
             candidate, supersede_target=memory_id, **kwargs)
 

@@ -39,6 +39,10 @@ DECISIONS = (
     "SUPERSEDE_MEMORY", "DELETE_MEMORY",
 )
 
+# MIV-006（ADR-MIV-006-001 D3）：这些是查询侧 disposition，绝不进入
+# 长期记忆（memory/objects/）。写入一律 fail-closed 拒绝（零副作用）。
+EPHEMERAL_SCOPES = ("session_only", "temporary")
+
 
 class WriteResult(object):
     """一次写入操作的完整结果（供 CLI/Adapter/测试断言）。"""
@@ -74,13 +78,21 @@ def _candidate_snapshot(candidate):
 
 
 def candidate_lookup(candidate, objects):
-    """Existing Memory Lookup：按类别+范围+状态初筛，再按相似度/实体匹配。"""
+    """Existing Memory Lookup：按类别+范围+状态初筛，再按相似度/实体匹配。
+
+    MIV-006：project 分区下按 (scope, project_id) 匹配（project_id 缺失
+    按 null），杜绝跨项目 UPDATE/SUPERSEDE 串扰。
+    """
     c_cat = (candidate.get("classification") or {}).get("category")
     c_scope = candidate.get("scope")
+    c_pid = candidate.get("project_id") or None
     out = []
     for obj in objects:
         o_cat = (obj.get("classification") or {}).get("category")
         if obj.get("scope") != c_scope:
+            continue
+        if c_scope == "project" and \
+                (obj.get("project_id") or None) != c_pid:
             continue
         if c_cat and o_cat and c_cat != o_cat:
             continue
@@ -139,6 +151,13 @@ def perform_write(candidate, objects=None, adapter="memory-engine",
     if objects is None:
         objects = store.load_all_objects()
     cand = _candidate_snapshot(candidate)
+
+    # 0) MIV-006：临时/会话 disposition 拒绝持久化（fail-closed，零副作用）
+    if cand.get("scope") in EPHEMERAL_SCOPES:
+        raise ValueError(
+            "EPHEMERAL_SCOPE_NOT_PERSISTED: scope=%r 不产生长期写入"
+            "（会话运行期 store 未实现，本阶段 fail-closed）"
+            % (cand.get("scope"),))
 
     # 1) 生命周期默认状态（§6.1/§6.4）+ 候选确认，然后校验
     if explicit_remember:
@@ -235,6 +254,10 @@ def perform_write(candidate, objects=None, adapter="memory-engine",
         oid = new_obj.get("id") or store.new_id()
         new_obj["id"] = oid
         new_obj["status"] = "active"
+        # MIV-006：分区标记继承——supersede 不得丢失旧对象 project_id
+        if new_obj.get("scope") == "project" and \
+                not new_obj.get("project_id") and old.get("project_id"):
+            new_obj["project_id"] = old.get("project_id")
         rel = new_obj.setdefault("relations", {})
         rel.setdefault("supersedes", [])
         if old["id"] not in rel["supersedes"]:

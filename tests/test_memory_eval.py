@@ -192,22 +192,25 @@ def test_failure_samples_never_leak_markers():
 
 def test_scope_metric_split_contract():
     """scope 指标拆分不变量：既有 current-scope 边界泄漏 = 0；
-    project_id 隔离缺口 = 1（ps-010，MIV-006 能力，非既有 scope 越权）。"""
+    project_id 隔离缺口 = 0（MIV-006 已实现硬隔离，ADR-MIV-006-001 D7）。"""
     rep = runner.run_all(warmup=True)
     m = rep["metrics"]
     check(m["current_scope_leakage_count"] == 0,
           "既有 global/project/session 边界不得泄漏（current-scope 须为 0）: %r" % m)
-    check(m["project_only_capability_gap_count"] == 1,
-          "ps-010 应为 MIV-006 project_id 能力缺口（=1），非既有 scope 越权: %r" % m)
+    check(m["project_only_capability_gap_count"] == 0,
+          "MIV-006 后 project_id 隔离缺口须为 0: %r" % m)
 
 
 def test_scope_mapping_contract():
-    check(eval_schema.scope_to_engine({"mode": "current"}) is None,
-          "current → None")
-    check(eval_schema.scope_to_engine({"mode": "project_only"}) == "project",
-          "project_only → project")
-    check(eval_schema.scope_to_engine({"mode": "global"}) == "global",
-          "global → global")
+    """case scope → 引擎参数（MIV-006：project_only 携带 project_id）。"""
+    check(eval_schema.scope_to_engine({"mode": "current"}) == (None, None),
+          "current → (None, None)")
+    check(eval_schema.scope_to_engine(
+        {"mode": "project_only", "project_id": "p-alpha"})
+        == ("project_only", "p-alpha"),
+          "project_only → (project_only, project_id)")
+    check(eval_schema.scope_to_engine({"mode": "global"}) == ("global", None),
+          "global → (global, None)")
 
 
 def test_token_estimator_and_trace_present():

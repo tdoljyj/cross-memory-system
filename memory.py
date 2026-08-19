@@ -73,6 +73,7 @@ def cmd_recall(args):
         categories=args.categories.split(",") if args.categories else None,
         tags=args.tags.split(",") if args.tags else None,
         entities=args.entities.split(",") if args.entities else None,
+        project_id=args.project_id, session_id=args.session_id,
         explain=args.explain)
     _out(result.to_dict())
     return 0
@@ -92,7 +93,7 @@ def cmd_add(args):
         recall_layer=args.layer, adapter="memory.py",
         valid_from=args.valid_from, valid_until=args.valid_until,
         tags=_split(args.tags), entities=_split(args.entities),
-        source_kind=args.source_kind)
+        source_kind=args.source_kind, project_id=args.project_id)
     result = write_engine.perform_write(
         candidate, explicit_remember=args.remember, confirm=args.confirm,
         dry_run=args.dry_run)
@@ -198,7 +199,13 @@ def build_parser():
     r.add_argument("--tier", default="T2", choices=["T0", "T1", "T2", "T3", "T4"])
     r.add_argument("--history", action="store_true",
                    help="包含 superseded/archived（历史查询）")
-    r.add_argument("--scope", default=None)
+    r.add_argument("--scope", default=None,
+                   help="global/project/session（legacy）或 project_only/"
+                        "session_only/temporary（MIV-006）")
+    r.add_argument("--project-id", default=None,
+                   help="scope=project_only 时的项目分区 ID")
+    r.add_argument("--session-id", default=None,
+                   help="scope=session_only 时的会话 ID")
     r.add_argument("--limit", type=int, default=10)
     r.add_argument("--categories")
     r.add_argument("--tags")
@@ -211,6 +218,8 @@ def build_parser():
     a.add_argument("--content", required=True)
     a.add_argument("--type", default="semantic", choices=S.FUNCTION_TYPES)
     a.add_argument("--scope", default="global", choices=S.SCOPES)
+    a.add_argument("--project-id", default=None,
+                   help="scope=project 时的项目分区 ID（MIV-006）")
     a.add_argument("--category", default="other", choices=S.CATEGORIES)
     a.add_argument("--evidence", default="observed", choices=S.EVIDENCES)
     a.add_argument("--priority", default="medium", choices=S.PRIORITIES)

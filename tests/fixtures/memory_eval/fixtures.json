@@ -1300,6 +1300,7 @@
       },
       "schema_version": 1,
       "scope": "project",
+      "project_id": "p-alpha",
       "source": {
         "adapter": "eval-fixture",
         "created_at": "2026-08-01T00:00:00Z",
@@ -1341,6 +1342,7 @@
       },
       "schema_version": 1,
       "scope": "project",
+      "project_id": "p-alpha",
       "source": {
         "adapter": "eval-fixture",
         "created_at": "2026-08-01T00:00:00Z",
@@ -1380,6 +1382,7 @@
       },
       "schema_version": 1,
       "scope": "project",
+      "project_id": "p-alpha",
       "source": {
         "adapter": "eval-fixture",
         "created_at": "2026-08-01T00:00:00Z",
@@ -1499,6 +1502,7 @@
       },
       "schema_version": 1,
       "scope": "project",
+      "project_id": "p-beta",
       "source": {
         "adapter": "eval-fixture",
         "created_at": "2026-08-01T00:00:00Z",
@@ -1617,6 +1621,7 @@
       },
       "schema_version": 1,
       "scope": "project",
+      "project_id": "p-alpha",
       "source": {
         "adapter": "eval-fixture",
         "created_at": "2026-08-01T00:00:00Z",
@@ -1658,6 +1663,7 @@
       },
       "schema_version": 1,
       "scope": "project",
+      "project_id": "p-alpha",
       "source": {
         "adapter": "eval-fixture",
         "created_at": "2026-08-01T00:00:00Z",
@@ -1736,6 +1742,7 @@
       },
       "schema_version": 1,
       "scope": "project",
+      "project_id": "p-alpha",
       "source": {
         "adapter": "eval-fixture",
         "created_at": "2026-08-01T00:00:00Z",
@@ -1776,6 +1783,7 @@
       },
       "schema_version": 1,
       "scope": "project",
+      "project_id": "p-alpha",
       "source": {
         "adapter": "eval-fixture",
         "created_at": "2026-08-01T00:00:00Z",
@@ -1895,6 +1903,7 @@
       },
       "schema_version": 1,
       "scope": "project",
+      "project_id": "p-alpha",
       "source": {
         "adapter": "eval-fixture",
         "created_at": "2026-08-01T00:00:00Z",

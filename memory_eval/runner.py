@@ -111,12 +111,17 @@ def materialize(case, fixtures, base_dir=None):
 def _run_recall_once(case, repo):
     engine_paths.set_repo(repo)
     try:
+        # MIV-006：case 声明的 project_id 原样传入引擎（转发合同，不 mock
+        # scope 决策，符合执行计划 §10.3 测试真实性）
+        engine_scope, engine_project_id = eval_schema.scope_to_engine(
+            case.get("scope"))
         t0 = time.perf_counter()
         result = recall_engine.recall(
             query=case["query"],
             tier=case.get("tier", "T2"),
             layers=case.get("layers"),
-            scope=eval_schema.scope_to_engine(case.get("scope")),
+            scope=engine_scope,
+            project_id=engine_project_id,
             include_history=case.get("include_history", False),
             categories=case.get("categories"),
             tags=case.get("tags"),

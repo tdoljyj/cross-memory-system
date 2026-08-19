@@ -164,6 +164,11 @@ def validate_object(obj):
         err("type 不在 Memory Function Type 枚举: %r" % (obj.get("type"),))
     if obj.get("scope") not in SCOPES:
         err("scope 不在枚举: %r" % (obj.get("scope"),))
+    # MIV-006（ADR-MIV-006-001 D1）：可选 project_id（null 或非空字符串）。
+    # 仅 scope=="project" 时参与召回硬过滤；缺失视为 null（legacy 语义）。
+    pid = obj.get("project_id")
+    if pid is not None and (not isinstance(pid, str) or not pid.strip()):
+        err("project_id 必须为 null 或非空字符串: %r" % (pid,))
     if obj.get("status") not in STATUSES:
         err("status 不在枚举: %r" % (obj.get("status"),))
     content = obj.get("content")
@@ -253,10 +258,12 @@ def new_object(oid, type_, content, scope="global", status=None,
                valid_from=None, valid_until=None, tags=None, entities=None,
                source_kind=None, source_ref=None, supersedes=None,
                superseded_by=None, contradicts=None, related=None,
-               created_at=None):
+               created_at=None, project_id=None):
     """构造一个完整合法的 Memory Object 模板。
 
     status=None 时按证据默认（explicit → active；observed/inferred → candidate）。
+    project_id（MIV-006）：仅 scope=="project" 时参与召回硬过滤；
+    为 None 时对象 JSON 不携带该键（与 v2.0 输出字节兼容）。
     """
     now = created_at or now_iso()
     if status is None:
@@ -264,7 +271,7 @@ def new_object(oid, type_, content, scope="global", status=None,
     if source_kind is None:
         source_kind = ("user_explicit" if evidence == "explicit" else
                        "ai_inferred" if evidence == "inferred" else "observed")
-    return {
+    obj = {
         "schema_version": SCHEMA_VERSION,
         "id": oid,
         "type": type_,
@@ -301,3 +308,6 @@ def new_object(oid, type_, content, scope="global", status=None,
         "tags": tags or [],
         "entities": entities or [],
     }
+    if project_id is not None:
+        obj["project_id"] = project_id
+    return obj
