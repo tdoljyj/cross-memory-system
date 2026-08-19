@@ -52,13 +52,20 @@ def load_fixtures():
     return out
 
 
-def materialize(case, fixtures):
+def materialize(case, fixtures, base_dir=None):
     """物化 case 夹具到临时引擎仓库；返回 (repo_path, fixture_objects)。
+
+    base_dir 非 None 时复用其下以 case_id 命名的子目录（避免每 case 一次
+    mkdtemp + rmtree 触发 WorkBuddy 高频删除硬退出）；None 时独立 mkdtemp。
 
     安全不变量：save_object 前必须把 engine_paths 重定向到临时仓库，
     并事后校验真实仓库 objects 目录零新增（防夹具泄漏进真实记忆）。
     """
-    tmp = tempfile.mkdtemp(prefix="mem-eval-")
+    if base_dir is not None:
+        tmp = os.path.join(base_dir, case.get("case_id", "case"))
+        os.makedirs(tmp, exist_ok=True)
+    else:
+        tmp = tempfile.mkdtemp(prefix="mem-eval-")
     memdir = os.path.join(tmp, "memory")
     os.makedirs(os.path.join(memdir, "objects"), exist_ok=True)
     os.makedirs(os.path.join(memdir, "audit"), exist_ok=True)
@@ -141,9 +148,14 @@ def _run_recall_once(case, repo):
         engine_paths.set_repo(REPO_ROOT)
 
 
-def run_case(case, fixtures, adapters=ADAPTER_IDS):
-    """跑一个 case（各模拟 Adapter 各一次）。"""
-    repo, _objs = materialize(case, fixtures)
+def run_case(case, fixtures, adapters=ADAPTER_IDS, base_dir=None,
+             cleanup=True):
+    """跑一个 case（各模拟 Adapter 各一次）。
+
+    cleanup=False 时不删除临时仓库（由调用方统一清理），用于复用 base_dir
+    降低高频 rmtree 次数。
+    """
+    repo, _objs = materialize(case, fixtures, base_dir=base_dir)
     try:
         per_adapter = {}
         for aid in adapters:
@@ -151,7 +163,8 @@ def run_case(case, fixtures, adapters=ADAPTER_IDS):
         return per_adapter
     finally:
         engine_paths.set_repo(REPO_ROOT)
-        shutil.rmtree(repo, ignore_errors=True)
+        if cleanup:
+            shutil.rmtree(repo, ignore_errors=True)
 
 
 def _pctl(values, p):
@@ -236,9 +249,13 @@ def run_all(cases=None, fixtures=None, adapters=ADAPTER_IDS, warmup=True):
                 engine_paths.set_repo(REPO_ROOT)
                 shutil.rmtree(repo, ignore_errors=True)
 
+    # 复用单个临时根目录，避免每 case 一次 rmtree 触发 WorkBuddy 环境对
+    # 高频文件删除的进程树级硬退出（约 500+ 次即触发）。
+    run_root = tempfile.mkdtemp(prefix="mem-eval-run-")
     verdicts = []
     for case in cases:
-        per = run_case(case, fixtures, adapters)
+        per = run_case(case, fixtures, adapters, base_dir=run_root,
+                       cleanup=False)
         primary = per[adapters[0]]
         verdict = compute_case_verdict(
             case, primary, case["expected_relevant_ids"],
@@ -283,6 +300,7 @@ def run_all(cases=None, fixtures=None, adapters=ADAPTER_IDS, warmup=True):
         "secret_leaks": secret_leaks,
         "verdicts": verdicts,
     }
+    shutil.rmtree(run_root, ignore_errors=True)
     return report
 
 
