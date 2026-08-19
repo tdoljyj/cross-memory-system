@@ -48,6 +48,110 @@
 6. **字节级一致**：语义相同的内容必须字节级一致（LF / 无 BOM，`.gitattributes` 锁定），避免互相重写
 7. **只沉淀稳定长期信息**：不写流水账、一次性临时信息
 
+## 安装（一次性）
+
+> 当前版本采用**人工一次性安装流程**：安装点只有“本端独立克隆 + 本端消费钩子 + gitignored 本机配置”，不会安装定时任务、开机自启或系统服务。下面给出可直接执行的最短路径；完整配置含义、端侧差异和故障处理见下一节「新电脑接入」。
+
+### 1. 准备 GitHub 访问
+
+安装 Git、Python 3 和 GitHub CLI，然后登录有权访问本私有仓库的 GitHub 账号：
+
+```powershell
+git --version
+python --version
+gh --version
+gh auth login
+gh auth setup-git
+gh auth status
+```
+
+不得把 `ghp_` / `gho_` / `github_pat_` 令牌写入仓库、README、`sync.config.*` 或长期环境变量。
+
+### 2. 按接入端选择独立克隆
+
+以下命令在 PowerShell 中执行；同一台机器接多个 AI 时也必须各自独立克隆，禁止复用其他端的工作区：
+
+```powershell
+# Codex
+New-Item -ItemType Directory -Force "$HOME\.codex\projects" | Out-Null
+gh repo clone tdoljyj/cross-memory-system "$HOME\.codex\projects\codex-memory-system"
+
+# WorkBuddy
+New-Item -ItemType Directory -Force "$HOME\.workbuddy" | Out-Null
+gh repo clone tdoljyj/cross-memory-system "$HOME\.workbuddy\codex-memory-system"
+
+# DSH
+New-Item -ItemType Directory -Force "$HOME\.dsh\projects" | Out-Null
+gh repo clone tdoljyj/cross-memory-system "$HOME\.dsh\projects\cross-memory-system"
+```
+
+只执行与你当前接入端对应的一组命令。
+
+### 3. 初始化本端
+
+**Codex：**
+
+```powershell
+$Repo = "$HOME\.codex\projects\codex-memory-system"
+New-Item -ItemType Directory -Force "$HOME\.codex" | Out-Null
+New-Item -ItemType Directory -Force "$HOME\Documents\Codex\memory" | Out-Null
+Copy-Item "$Repo\AGENTS.md" "$HOME\.codex\AGENTS.md" -Force
+
+$Index = Get-Content "$Repo\memory\index.json" -Raw -Encoding UTF8 | ConvertFrom-Json
+foreach ($Name in $Index.files) {
+    Copy-Item "$Repo\memory\$Name" "$HOME\Documents\Codex\memory\$Name" -Force
+}
+
+Set-Location $Repo
+powershell -ExecutionPolicy Bypass -File .\sync-memory.ps1 -Bootstrap
+powershell -ExecutionPolicy Bypass -File .\sync-memory.ps1 -Doctor
+```
+
+如需修改代理、身份、邮箱或记忆目录，在克隆根目录创建 gitignored 的 `sync.config.ps1`；可配置项见下方端侧差异表。Doctor 必须全部 PASS 才算安装完成。
+
+**WorkBuddy：**
+
+```powershell
+$Repo = "$HOME\.workbuddy\codex-memory-system"
+Set-Location $Repo
+python .\sync-memory.py bootstrap
+python .\sync-memory.py doctor
+```
+
+确认 WorkBuddy 已生成并注入本端 `~/.workbuddy/MEMORY.md`。如需覆盖默认仓库、代理或 Git 路径，在克隆根目录创建 gitignored 的 `sync.config.json`。
+
+**DSH：**
+
+```powershell
+$Repo = "$HOME\.dsh\projects\cross-memory-system"
+New-Item -ItemType Directory -Force "$HOME\.dsh" | Out-Null
+Copy-Item "$Repo\AGENTS.md" "$HOME\.dsh\AGENTS.md" -Force
+
+$Config = @{
+    repo = $Repo
+    proxy = "http://127.0.0.1:7897"
+    consumer_memory_path = "$HOME\.dsh\AGENTS.md"
+} | ConvertTo-Json
+[System.IO.File]::WriteAllText(
+    "$Repo\sync.config.json",
+    $Config,
+    [System.Text.UTF8Encoding]::new($false)
+)
+
+Set-Location $Repo
+python .\sync-memory.py bootstrap
+python .\sync-memory.py doctor
+```
+
+无本地代理时把 `proxy` 改为 `""`。DSH 的 `consumer_memory_path` 必须指向 `~/.dsh/AGENTS.md`；`~/.dsh/MEMORY.md` 继续由 DSH 自身管理。
+
+### 4. 安装验收
+
+1. Doctor 全部 PASS，且本地 HEAD 与 `git ls-remote origin main` 一致。
+2. 新开一个接入端会话，确认消费钩子已注入。
+3. 触发一次 T1–T3 记忆查询，确认能按需 pull 和召回。
+4. 如需验证写入链路，只使用明确可回滚的测试记录；确认提交作者为 `AI名@机器名` 且普通 fast-forward push 成功。
+
 ## 新电脑接入（一次性）
 
 > 本仓库为「任意机器 × 任意 AI」跨端共享（见「定位」）：接入流程 = **通用步骤** + **端侧差异**。通用步骤对所有接入方一致；当前已登记 Codex、WorkBuddy、DSH 三端，未来新端照此模式登记（各端独立克隆，绝不复用/克隆任何本地已有克隆）。任一步失败先看「失败排查」；doctor 任一 FAIL 未修红前视为阻断态，不得据此读 canon 当依据、不得 push（AGENTS v3.1）。
