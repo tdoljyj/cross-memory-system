@@ -3,14 +3,14 @@
 > 执行计划：《Cross-Memory-System_vNext-2.1_Memory-Intelligence_下一阶段执行计划.md》§MIV-006（第 551–569 行）
 > 本阶段授权范围：仅 MIV-006（Project-only Scope 硬隔离）；不执行 MIV-005A/B
 > 执行者：DSH @ TURING
-> 执行基线：`725df3d9d49cf7e58e34549c9af49e71b783f94b`（Gate 1 封板后 HEAD == origin/main；`ffba74bf` 为其直接父提交，产品所有者裁决以 725df3d 为 Gate 2R 基线）
-> 批准：ADR-MIV-006-001（含 D7 冻结语料对齐）经产品所有者批准后实施
+> 执行基线：`725df3d9d49cf7e58e34549c9af49e71b783f94b`——**Gate 2R 执行基线（2026-08-19 产品所有者事后裁决接受）**；**Gate 1 封板基线 = `ffba74bfba27143411c664aa963f54e298cebe43`**（725df3d 的直接父提交）
+> 裁决记录：ADR-MIV-006-001 实施前经产品所有者询问答复（选项选择）；2026-08-19 经 HOLD / BASELINE_DRIFT 复核后正式裁决：**MIV-006 = PASS、接受基线修订（725df3d 为 Gate 2R 基线）、D7 冻结语料对齐事后接受**；725df3d 未经可证实授权的 push 登记为一次已解决的治理事件
 
 ## 1. Result
 
-- **MIV-006 = PASS**
+- **MIV-006 = PASS**（2026-08-19 产品所有者最终裁决；期间曾短暂记 HOLD / BASELINE_DRIFT 供基线溯源）
 - 本 Gate 授权范围：project scope 硬隔离（global / project_only / session_only / temporary）
-- 是否严格停止在授权边界：**是**——未执行 MIV-005A/B 及任何其他任务；未 push / 未 tag / 未 release / 未 rebase / 未 force push；真实记忆零修改
+- 是否严格停止在授权边界：**是**——未执行 MIV-005A/B 及任何其他任务；未 push / 未 tag / 未 release / 未 rebase / 未 force push；MIV-006 实现提交内 `memory/objects/**` 与 `index.json` 零修改（`memory/状态.md` 一行登记按 2026-08-19 收口授权在后续 doc/status-only 提交中执行，见 §11）
 
 ## 2. Version Truth
 
@@ -18,11 +18,12 @@
 | --- | --- |
 | exact local HEAD（执行开始） | `725df3d9d49cf7e58e34549c9af49e71b783f94b` |
 | exact remote HEAD（ls-remote + GitHub API 双源） | `725df3d9d49cf7e58e34549c9af49e71b783f94b` |
-| `ffba74bf`（授权文本基线） | HEAD 的直接父提交（`merge-base --is-ancestor` exit 0）；裁决见 ADR §0 |
-| ahead/behind | 0 / 0 |
-| worktree（执行开始） | clean |
+| `ffba74bf`（Gate 1 封板基线） | 725df3d 的直接父提交（`merge-base --is-ancestor` exit 0）；2026-08-19 事后裁决确认封板基线不变 |
+| Gate 2R 起始基线裁决 | 725df3d 经产品所有者 2026-08-19 事后裁决接受为 Gate 2R 执行基线（其未经可证实授权的 push 登记为已解决的治理事件；执行计划本身不等于 push 授权） |
+| ahead/behind | 执行开始 0/0；MIV-006 实现提交后 1/0；收口提交后 **2/0** |
+| worktree（执行开始 / 提交后） | clean |
 | VERSION | `vNext-2.0` |
-| TESTED_HEAD / FINAL_REPORT_HEAD / HEAD | 同一本地提交（见 §11；未 push） |
+| TESTED_HEAD / FINAL_REPORT_HEAD / HEAD | 收口提交 HEAD（本文件所在提交，见 §11）；295 项 + doctor 三件套 + secret scan 在该 HEAD 复验 |
 
 ## 3. Baseline & Frozen Evidence
 
@@ -74,7 +75,7 @@ tests/test_memory_eval.py          # D8：两处断言演进（gap 0、映射元
 （无）
 ```
 
-- `memory/` 全部 238 个文件：**零改动**（git diff -- memory/ 为空 + 前后哈希一致）
+- `memory/` 全部 238 个文件：**零改动**（git diff -- memory/ 为空 + 前后哈希一致；指 MIV-006 实现提交 d17c02d）
 - 冻结区（sync-memory.py/ps1、guards.json、protocol-manifest.json、migrate-memory.py、clued.py、clued/**）：**零改动**
 
 ## 6. Test Evidence
@@ -99,13 +100,15 @@ tests/test_memory_eval.py          # D8：两处断言演进（gap 0、映射元
 | 13 | `python tests/test_project_scope.py`（新增） | 14/14 |
 | 合计既有 | 281 项（249 + 19 + 13）全部 PASS，0 失败 0 跳过 | |
 | 合计新增 | 14 项全部 PASS | |
+| **当前总数** | **295 项（281 + 14）全部 PASS，0 失败 0 跳过** | |
 | — | `python memory.py doctor` | ALL PASS（0 WARN），exit 0 |
 | — | `python clued.py doctor --json` | ok=true，exit 0 |
 | — | `python sync-memory.py doctor` | ALL PASS |
 
-> 口径说明：Gate 1 报告记录「249+19+12=280」；基线 HEAD 725df3d 实测
-> `test_memory_eval.py` 为 13 项（Gate 1 报告定稿时口径为 12），本报告按
-> 实测 281 项记录，全部通过。
+> 口径说明（2026-08-19 产品所有者统一裁决）：Gate 1 测试基线 = **281 项
+> （249 + 19 + 13）**（`test_memory_eval.py` 在 Gate 1 封板基线 `ffba74bf`
+> 实测 13 项；Gate 1 报告定稿写 12/280 属口径错误，其 §13 勘误已追加，
+> 不再使用 280）；MIV-006 后当前总数 = **295 项**。
 
 证据文件：`%USERPROFILE%\Documents\20260817\gate2r-test-run1.log`、
 `gate2r-test-run2.log`（含每套退出码）。
@@ -123,7 +126,7 @@ tests/test_memory_eval.py          # D8：两处断言演进（gap 0、映射元
 | secret leakage | 0 | 0 | ✅ |
 | Precision@5 | 0.19 | 0.1857 | 不变（MIV-005A/B 范围外，如实记录） |
 | false recall rate | 0.37 | 0.35 | 不变（同上） |
-| paraphrase 未命中 | 11/12 | 11/12 | 不变（同上） |
+| paraphrase | **1/12 PASS、11/12 FAIL** | **1/12 PASS、11/12 FAIL**（pp-011 PASS；pp-001~010、pp-012 FAIL） | 不变（MIV-005A/B 范围外，如实记录） |
 | cross-agent consistency | 1.0 | 1.0 | ✅ |
 | replay hash | b7a9b250… | `fa3c0533ce18…` | 因 trace.scope 携带真实 project_id + PROJECT_OK 码而演进（预期，见 §9） |
 
@@ -159,26 +162,40 @@ tests/test_memory_eval.py          # D8：两处断言演进（gap 0、映射元
    "只做本地单一目的提交"；取更保守的授权边界——MIV-006 全部变更收敛于
    一个本地提交，语料对齐在提交正文单独说明并给出前后哈希。
 3. **eval 套件计数口径**：基线 HEAD 实测 test_memory_eval.py 为 13 项
-   （Gate 1 报告定稿写 12），按实测 281 记录。
-4. **`memory/状态.md` 未登记**：遵守授权边界「真实记忆零修改」，Gate 2R
-   登记留待 push 授权后单独执行。
+   （Gate 1 报告定稿写 12），按实测 281 记录（已按 2026-08-19 裁决统一，
+   见 Gate 1 报告 §13 勘误）。
+4. **`memory/状态.md` 登记**：MIV-006 实现提交内遵守「真实记忆零修改」未登记；
+   按产品所有者 2026-08-19 收口授权，在本报告所在 doc/status-only 提交中
+   补登记（MIV-006 PASS、尚未 push、725df3d 事后接受裁决）。
 5. 已知限制（非本阶段范围）：Precision@5 0.1857 / false recall 0.35 /
-   paraphrase 11/12 未命中 → MIV-005A/B；session 运行期 store 未实现
-   （session_only 写入 fail-closed 拒绝，见 ADR D3）。
+   paraphrase 1/12 PASS、11/12 FAIL → MIV-005A/B；session 运行期 store
+   未实现（session_only 写入 fail-closed 拒绝，见 ADR D3）。
+6. **治理事件记录**：725df3d 未经可证实授权的 push 已按产品所有者裁决登记为
+   一次已解决的治理事件（不 revert / 不 reset / 不重写历史）；MIV-006 曾因
+   执行基线与授权文本基线不一致短暂记 HOLD / BASELINE_DRIFT，最终裁决 PASS。
 
 ## 11. Git Evidence
 
-- 本地提交：1 个（`feat: hard project/session scope isolation (MIV-006)`，
-  作者 DSH@TURING）
+- 本地提交：2 个——
+  1. `d17c02d7b7908cfe83453da2685aa7e2b6d3367e` `feat: hard project/session scope isolation (MIV-006)`（实现，作者 DSH@TURING）；
+  2. 本收口提交 `docs: correct Gate 1 and MIV-006 evidence records`（doc/status-only，作者 DSH@TURING；仅 Gate 1 报告勘误追加、本报告、ADR、`memory/状态.md` 一行登记）
 - no amend / no rebase / no force push / no PR / no tag / no release ✅
-- **no push**：远端执行前后 HEAD 均为 `725df3d9d49cf7e58e34549c9af49e71b783f94b`
-  （执行前后 `git ls-remote origin main` 不变）
+- **no push**：远端 HEAD 始终为 `725df3d9d49cf7e58e34549c9af49e71b783f94b`
+  （执行前后 `git ls-remote origin main` 不变；本地 ahead=2 / behind=0）
 - worktree clean（提交后核验）
-- secret scan：新增文件零自命中（guards.json 模式；`test_repo_files_do_not_self_match_secret_patterns` 通过）
+- secret scan：全仓零自命中（guards.json 模式；`test_repo_files_do_not_self_match_secret_patterns` 通过）
 
 ## 12. Next Decision Required（产品所有者裁决）
 
-1. 是否接受 MIV-006 验收证据；
+已裁定（2026-08-19）：
+1. **基线**：`ffba74bf` 保持 Gate 1 封板基线；`725df3d` 接受为 Gate 2R 执行基线；
+   不 revert / 不 reset / 不重写历史；执行计划本身不等于 push 授权；
+2. **MIV-006 技术结果 = PASS**：project-only capability gap 1→0；
+   current/project/superseded leakage = 0；真实 Memory Object 零修改；
+   295 项测试全部通过；
+3. **push：不授权**；**MIV-005A/B：不授权**；本收口提交仅为本地 doc/status-only。
+
+待裁决：
+1. 是否接受本收口提交的证据记录；
 2. 是否授权 push（默认否）；
-3. push 授权后是否补 `memory/状态.md` Gate 2R 登记（本阶段按「真实记忆零修改」未执行）；
-4. 是否授权 Gate 2R 下一阶段（MIV-005A 相关性阈值与 NO MEMORY，仍不包含 MIV-005B）。
+3. 是否授权 Gate 2R 下一阶段（MIV-005A，仍不包含 MIV-005B）。

@@ -280,3 +280,25 @@ e8829a7 [WorkBuddy@TURING] test: split scope metric into current-scope leakage v
 与正确 NO MEMORY）→ MIV-005B（本地词法/BM25，解决 paraphrase）→ 仅 BM25 未达标
 才提交本地 Embedding ADR；达到 Precision@5 ≥90%、critical recall ≥95%、
 false recall ≤2% 后，才重新授权 Reflection；Temporal 延后（当前 stale=0）。
+
+## 13. 勘误与事后裁决（2026-08-19 产品所有者，追加记录）
+
+> 本节为**追加勘误**：上文 §1–§12 原始记录一字未改（保留原始证据），以下条目
+> 为统一口径与事后裁决，二者不一致时以本节为准。
+
+1. **Gate 1 测试基线口径修正 = 281 项**：`249 + 19 + 13`。§6 表中「新增
+   `tests/test_memory_eval.py` 12/12」与合计 280 为定稿时口径错误——该套件在
+   Gate 1 封板基线 HEAD（`ffba74bf`）实测为 **13 项**。此后一律使用 281，
+   不再使用 280。
+2. **paraphrase 口径修正**：固定语料 paraphrase 类 = **1/12 PASS、11/12 FAIL**
+   （pp-011 PASS；pp-001~010、pp-012 FAIL）。不得使用「11/12 不命中」的省略式表述。
+3. **Gate 1 封板基线 SHA**：`ffba74bfba27143411c664aa963f54e298cebe43`。
+   本文档 §2/§11 内的 848fe9d / 2e1af97 为报告定稿链内部 HEAD；「Gate 1 封板基线」
+   以本节为准。
+4. **Gate 2R 起始基线裁决**：`725df3d9d49cf7e58e34549c9af49e71b783f94b`
+   （`ffba74bf` 的直接后继，[DSH@TURING] README 新增卸载/停用章节 + 状态.md 登记，
+   纯文档提交，不改变代码/测试/协议/Eval/Object 层）经产品所有者 **2026-08-19
+   事后裁决接受为 Gate 2R 执行基线**；其未经可证实授权的 push 登记为**一次已解决的
+   治理事件**；不 revert、不 reset、不重写历史；执行计划本身不等于 push 授权。
+5. **MIV-006 实现提交**：`d17c02d7b7908cfe83453da2685aa7e2b6d3367e`
+   （本地提交，未 push；技术验收 PASS，详见 Gate 2R Phase 1 报告及其勘误）。

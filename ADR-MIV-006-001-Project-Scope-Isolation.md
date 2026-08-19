@@ -1,8 +1,8 @@
 # ADR-MIV-006-001 · Project-only Scope 硬隔离（Gate 2R 第一阶段）
 
-> 状态：ACCEPTED（2026-08-19 产品所有者批准，含 D7 冻结语料对齐）
+> 状态：ACCEPTED（2026-08-19 产品所有者最终裁决：MIV-006 = PASS、含 D7 冻结语料对齐；初版实施前询问答复为选项选择，经 HOLD / BASELINE_DRIFT 复核后正式裁决，见 §9）
 > 依据：《Cross-Memory-System_vNext-2.1_Memory-Intelligence_下一阶段执行计划.md》§MIV-006（第 551–569 行）+ §4.3（Gate 2/3 条件解冻：若必须改动既有模块，先提交 ADR，说明不变量、迁移、回滚与兼容性，然后停止等待确认）
-> 执行基线：`725df3d9d49cf7e58e34549c9af49e71b783f94b`（HEAD == origin/main，经 ls-remote 与 GitHub API 双重核验；`ffba74bf` 为其直接父提交，产品所有者已裁决以 725df3d 为 Gate 2R 基线）
+> 执行基线：`725df3d9d49cf7e58e34549c9af49e71b783f94b`（HEAD == origin/main，经 ls-remote 与 GitHub API 双重核验；`ffba74bf` 为其直接父提交；2026-08-19 产品所有者**事后裁决**接受为 Gate 2R 执行基线，Gate 1 封板基线保持 `ffba74bf`；725df3d 未经可证实授权的 push 登记为一次已解决的治理事件，不 revert / 不 reset / 不重写历史）
 > 审计日期：2026-08-19
 
 ## 1. 背景与问题
@@ -89,8 +89,8 @@ fail-closed：`project_only` 缺 project_id、`session_only` 缺 session_id → 
 ## 4. 不变量（实施必须证明）
 
 1. 既有 249 项永久基线测试（十套）零修改、全部 PASS、0 skip；
-   Gate 1 新增 31 项中 trace 19 项零修改全部 PASS；`test_memory_eval.py`
-   两处断言随本 ADR 演进（见 §10 D8），其余零修改；
+   Gate 1 新增 32 项（19 trace + 13 eval）中 trace 19 项零修改全部 PASS；
+   `test_memory_eval.py` 两处断言随本 ADR 演进（见 §10 D8），其余零修改；
 2. 真实记忆（`memory/` 238 个文件）前后 SHA-256 字节级一致；
 3. 永久冻结区（`sync-memory.py/ps1`、`guards.json`、`protocol-manifest.json`、`migrate-memory.py`、Clued v0.2.0 语义、既有基线测试断言语义）diff 为空；
 4. legacy mode（global/project/session）过滤行为逐字节不变；
@@ -133,14 +133,23 @@ fail-closed：`project_only` 缺 project_id、`session_only` 缺 session_id → 
 - 真实记忆零修改；仅本地单一目的提交；不 push、不 tag、不 release、不 rebase；
 - PASS 后立即停止并回报（计划 §12 模板）。
 
-## 9. 待产品所有者批准事项
+## 9. 产品所有者批准记录（2026-08-19）
 
-1. 本 ADR 整体（D1–D6）；
-2. D7 冻结语料对齐（9 个 fixture 补 project_id；golden 零改动；corpus hash 不变）。
+1. **实施前**：产品所有者以询问选项答复「以 725df3d 为基线继续 MIV-006」
+   （会话记录：问题 `baseline_hash`）——当时未展示 725df3d 完整取证内容，
+   属程序性缺陷；
+2. **复核**：产品所有者裁定 MIV-006 暂记 **HOLD / BASELINE_DRIFT**
+   （执行基线与授权文本基线不一致），要求基线溯源；
+3. **最终裁决**：接受基线修订——`ffba74bf` 保持 Gate 1 封板基线，
+   `725df3d` 事后接受为 Gate 2R 执行基线；**MIV-006 技术结果 = PASS**；
+   本 ADR 整体（D1–D6）与 D7 冻结语料对齐**事后接受**；725df3d 未经可证实
+   授权的 push 登记为一次已解决的治理事件（不 revert / 不 reset / 不重写
+   历史；执行计划本身不等于 push 授权）。
 
 ## 10. 实施增补（批准后记录，非重新裁决）
 
-- **D8（测试断言演进）**：`tests/test_memory_eval.py`（Gate 1 自身新增的 12 项之一，不属 249 永久基线）两处断言随本 ADR 演进：
+- **D8（测试断言演进）**：`tests/test_memory_eval.py`（Gate 1 自身新增的
+  13 项之一，不属 249 永久基线）两处断言随本 ADR 演进：
   1. `test_scope_metric_split_contract`：`project_only_capability_gap_count == 1` → `== 0`（D7 声明效果）；
   2. `test_scope_mapping_contract`：`scope_to_engine` 返回 `("project_only", project_id)` 元组。
   其余 Gate 1 测试（含 trace 19 项）与 249 永久基线零修改。
