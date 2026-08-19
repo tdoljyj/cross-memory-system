@@ -122,3 +122,76 @@ admit(obj) = 显式 tags/entities selector 命中(obj)  OR  score > 1/6
 - 仅本地、单一目的提交；不 amend / squash / rebase / push / PR / tag / release。
 - 远端若不再是 `97ca58b` → 立即以 **BASELINE_DRIFT** 停止。
 - PASS 后仅允许 `memory/状态.md` 追加一行登记；完成后停止，等待对结果与 push / MIV-005B 的下一次裁决。
+
+---
+
+## 9. 勘误 MIV-005A-R1（2026-08-19 产品所有者裁决：PARTIAL / CONTRACT_DEVIATION，授权一次窄范围整改）
+
+> 本节为**追加勘误**，不删除 / 不修改第 1–8 节的原始 PASS 记录与 D1–D7 决策原文。第 8 节「PASS 后仅允许状态.md 追加一行登记」已被本裁决取代为「R1 整改 + 本勘误」。
+
+### 9.1 裁决结论
+
+1. **接受**：1/6 阈值与指标结果、Metric Contract v2.0、「conflict 后、limit 前执行准入」为安全性合同修正（正式顺序：硬过滤 → 现有评分与排序 → conflict winner/loser 裁决 → relevance admission → limit → context packing；保证 conflict loser 永远保持 CONFLICT_LOSER、winner 低于阈值记录 RELEVANCE_BELOW_THRESHOLD、不会因先过滤 winner 而让 loser「复活」）、316 项全绿及冻结证明（暂接受）。
+2. **不接受**：D4「适用边界（Gate 2R 兼容合同）」——仅显式 layers 应用准入门；默认 tier 路由、MIV-006 mode 绕过准入。
+3. **未通过原因**：准入门只覆盖显式 layers 路径，而冻结 Eval corpus 基本都显式传入 layers，指标全绿不能证明默认产品路径已获得正确 NO MEMORY；`tier → 默认解析 layers`、`project_only`（项目内候选）、`session_only`（会话内候选）仍可能返回同类别无关对象——不构成跨 scope 泄漏，但构成核心相关性缺口。
+4. 不授权：push / MIV-005B / Embedding ADR / Reflection / Temporal / tag / release。
+
+### 9.2 R1 整改内容（本勘误随整改提交）
+
+| # | 裁决要求 | 实现 |
+| --- | --- | --- |
+| 1 | 删除基于「是否显式传入 layers」或 scope mode 的准入绕过 | `memory_engine/relevance.py`：删除 `gate_active()` 与 `NEW_SCOPE_MODES`；`memory_engine/recall_engine.py`：删除 `layers_explicit`，准入循环无条件执行 |
+| 2 | tier 自动解析出的 layers 与显式传入同一组 layers 使用完全相同准入规则 | 准入在层解析之后统一执行，路由来源不再参与判定（新增测试显式断言两路由结果/统计一致） |
+| 3 | project_only / session_only 完成硬隔离后继续执行同一 >1/6 准入门 | 硬隔离（MIV-006）仍在打分前执行；隔离后的候选与其余路由同一准入规则 |
+| 4 | T0 / T4 / temporary 保持原有提前短路与零读取 | 未改动：三个路径在准入阶段之前返回（T0 零读取 / T4 立即写入 / temporary 零长期读取） |
+| 5 | conflict → admission 顺序保持不变 | 未改动：`_conflict_filter` 之后、`limit` 之前 |
+| 6 | ADR、报告、memory/状态.md 追加勘误，不删除原始 PASS 记录 | 本节 + 报告勘误节 + 状态.md 追加行 |
+
+### 9.3 测试合同状态（整改后全量实测）
+
+- 新增 `tests/test_relevance_admission_r1.py` 10 项（裁决要求的新增路由测试）：**10/10 PASS**——默认 tier 相关命中 / 默认 tier 无关 NO MEMORY / 显式 layers ≡ tier-derived / project_only 无关排除 + 相关命中 / session_only 正反例 / conflict loser 三路由不复活 / explain 等价 / Trace reason code / tags+entities selector 全路由一致。
+- 既有 316 项：**306 PASS / 10 FAIL（0 skip）**。失败全部由「全路由启用准入」引起，按裁决**未修改任何旧断言、未重新增加隐式绕过**：
+
+| 文件 | 测试 | 调用参数 | 旧预期 | 新结果 |
+| --- | --- | --- | --- | --- |
+| test_relevance_admission.py | test_gate_not_applied_default_tier_layers | `recall("项目进度", tier="T2")`（默认 T2→L3） | 返回 `mem_reldef000`（零重叠对象） | `[]`（score=0 → RELEVANCE_BELOW_THRESHOLD → NO MEMORY） |
+| test_relevance_admission.py | test_gate_not_applied_new_scope_modes | `recall("引擎", tier="T2", layers=["L3"], scope="project_only", project_id="p-alpha")` | 返回 project A 对象 + global 对象 | 仅 project A 对象（global「所有项目统一使用 git」score=0 → 排除） |
+| test_project_scope.py | test_project_a_cannot_read_project_b | `recall("引擎", tier="T2", layers=["L3"], scope="project_only", project_id="p-alpha")` | 返回 a + global g | 仅 a（g score=0 → 排除） |
+| test_memory_v2.py | test_recall_t1_minimal | `recall("我是谁", tier="T1", limit=10)`（默认 T1→L1） | 返回 identity 对象 | `[]`（score=0 → 排除） |
+| test_memory_v2.py | test_recall_t2_project | `recall("项目进度", tier="T2", limit=10)`（默认 T2→L3） | 返回 project 对象 | `[]`（score=0 → 排除） |
+| test_memory_v2.py | test_superseded_never_wins_current_recall | `recall("用什么工具", tier="T2", categories=["preference"])`（默认层路由） | 返回新记忆（Blender） | `[]`（两对象 score=0 → 排除） |
+| test_memory_v2.py | test_history_recall_includes_superseded | `recall("以前用过什么", tier="T2", categories=["preference"], include_history=True)`（默认层路由） | 历史返回 superseded 对象 | `[]`（score=0 → 排除） |
+| test_memory_v2.py | test_temporal_current_vs_history_engine | `recall("现在用什么引擎", tier="T2", categories=["preference"])` 及历史查询（默认层路由） | 返回当前 active / 历史对象 | `[]`（当前对象 score 恰为 1/6 → 严格 > 排除；历史 1/7 → 排除） |
+| test_memory_v2.py | test_recall_project_scope_filter | `recall("工作室", tier="T2", categories=["project","preference"], scope="project")`（默认层路由） | 返回 project + global 对象 | 仅 project 对象（global「全局偏好：留白」score=0 → 排除） |
+| test_memory_v2.py | test_acceptance_project_state | `recall("项目问题：现在做什么", tier="T2", limit=5)`（默认层路由） | 返回 project 对象 | `[]`（score=1/8 < 1/6 → 排除） |
+
+- 不受影响（全 PASS）：test_acceptance 70、clued 全部 124、test_memory_eval 19（冻结 corpus 显式 layers，指标与 NO MEMORY 41/41 不变）、test_recall_trace 19。注意 `test_acceptance_update_preference` 在新合同下仍 PASS（tags/entities「回答方式」为查询子串 → exact +1.5 → 准入）。
+- **状态：按裁决停止，未提交任何整改 commit，等待是否授权测试合同演进**（旧断言语义变更 = 显式 layers / 默认层路由 / MIV-006 硬隔离 mode 的可见性合同，需产品裁决）。
+
+### 9.4 结论修正
+
+- 原「316/316 全绿」不再作为「默认产品路径已获得正确 NO MEMORY」的证据；默认 tier / project_only / session_only 的相关性准入证据以本勘误 + `tests/test_relevance_admission_r1.py` 为准。
+- MIV-005A 改判 PASS 的条件（裁决原文）：原 316 项与新增路由测试全部通过——当前不满足（10 项旧断言因合同变更失败），等待测试合同演进授权后重新验收。
+
+### 9.5 测试合同演进（2026-08-19 产品所有者裁决：授权 MIV-005A-R1 测试合同演进，两提交；本地验收通过、等待正式裁决）
+
+> 追加勘误。§9.3/§9.4 的「10 项旧断言失败、未修改、等待授权」记录保留不变；本节记录授权后的演进与本地验收，不构成正式 PASS（HOLD 未解除）。
+
+1. **授权边界（裁决原文要点）**：接受 R1 实现方向，当前仍为 HOLD。10 项失败按以下边界处理：
+   - 2 项旧「准入绕过」测试翻转为新合同，明确断言默认 tier 路由与新 scope mode（project_only / session_only）同样执行 score > 1/6；
+   - 其余 8 项不得把预期改成 `[]` 来消除失败：优先调整测试查询使目标对象满足相关性门槛，同时保留各测试原本验证的 tier、project isolation、current/history、superseded、temporal 等语义；
+   - 不得修改阈值、评分算法、生产数据或冻结 fixtures。
+2. **fix 提交** `fix: apply relevance admission across recall routes (MIV-005A-R1)`：
+   - R1 生产代码（§9.2 改动随本提交落库）：删除 `relevance.gate_active()` / `NEW_SCOPE_MODES` 与 `recall_engine.layers_explicit`，准入门对所有到达准入阶段的召回路由统一生效；
+   - 新增测试 `tests/test_relevance_admission_r1.py` 10 项（首次入库）：10/10 PASS；
+   - 2 项翻转（`tests/test_relevance_admission.py`）：`test_gate_applied_default_tier_layers`（默认 tier 路由：相关对象命中、无关对象 RELEVANCE_BELOW_THRESHOLD、全排除 NO_MEMORY）与 `test_gate_applied_new_scope_modes`（project_only：同项目相关命中、同分区无关排除、他项目 PROJECT_MISMATCH 硬过滤不变、全无关 NO_MEMORY）；
+   - 8 项查询调整（断言与语义逐项保留，未把任何预期改为 `[]`、未改阈值/评分/生产数据/冻结夹具）：`test_project_scope.py::test_project_a_cannot_read_project_b`「引擎」→「引擎 git」（A+global 可见、B 不泄漏、PROJECT_MISMATCH）；`test_memory_v2.py::test_recall_t1_minimal`「我是谁」→「用户是什么身份」（T1 只回 identity）；`test_recall_t2_project`「项目进度」→「UE 游戏原型」（T2 只回 project）；`test_superseded_never_wins_current_recall`「用什么工具」→「以后主要用什么工具」（当前只回新记忆）；`test_history_recall_includes_superseded`「以前用过什么」→「用户主要用过什么工具」（历史回 superseded）；`test_temporal_current_vs_history_engine`「现在用什么引擎」→「现在主引擎是什么」/「以前用过什么引擎」→「以前用过什么主引擎」（现在=当前 active、以前=历史）；`test_recall_project_scope_filter`「工作室」→「工作室 偏好 留白」（scope=project 回 project 对象 + global 任意 scope 可见）；`test_acceptance_project_state`「项目问题：现在做什么」→「项目现在主要做什么」（只读取对应 project memory）。
+3. **docs 提交** `docs: correct MIV-005A applicability evidence`：本 §9.5 + Gate2R 报告 §7.3 + `memory/状态.md` 追加一行；只追加历史勘误，不删除此前 PASS / 整改失败记录；只记录「本地验收通过、等待正式裁决」。
+4. **本地验收（等待正式裁决，非正式 PASS）**：
+   - 全量 **326/326 PASS、0 skip**（test_acceptance 70、clued 124、test_memory_eval 19、test_memory_v2 55、test_project_scope 14、test_recall_trace 19、test_relevance_admission 15、test_relevance_admission_r1 10）；
+   - 冻结评测复跑：replay hash = `f4266eabd2bed94d…` 与冻结基线一致；corpus hash、111 例 verdicts、全部冻结指标（全语料 precision_at5_v2=0.6556 / false_recall=0.3444 / critical recall=0.7763；非 paraphrase 1.0000 / 0.0000 / 0.9063（58/64）/ hit_rate 0.9483；paraphrase 1/12；泄漏全 0；token P95=50）不变；latency 为运行时计时、非冻结指标（复跑 P95=0.624ms，≤ control 0.708ms 的 120%）；
+   - doctor 三件套 ALL PASS（canonical 克隆 `~/.dsh/projects/cross-memory-system` 0/0 @ `97ca58b`：`python memory.py doctor` ALL PASS（0 WARN）、`python clued.py doctor --json` ok=true、`python sync-memory.py doctor` ALL PASS；工作克隆 `python memory.py doctor` 亦 ALL PASS）；
+   - 密钥扫描（guards 模式、全仓 346 文件）0 命中；
+   - 冻结区零改动：本轮 diff 仅 `memory_engine/{recall_engine,relevance}.py`、`tests/{test_relevance_admission,test_memory_v2,test_project_scope,test_relevance_admission_r1}.py` 与本文档 / 报告 / 状态.md；`memory_eval/`、fixtures、`memory/objects`、`object-index.json`、`guards.json`、同步层（`sync-memory.py` / `sync-memory.ps1`）、`clued/`、协议清单零改动；
+   - 远端仍为 `97ca58b`，工作克隆 ahead/behind = 5/0，worktree clean；未 push / tag / release；MIV-005B 未启动；README 卸载/停用支持为后续独立工作项，本轮未夹带。
+5. **状态**：本地验收通过，**等待 MIV-005A 正式裁决**（HOLD 未解除，不得视为正式 PASS）。
