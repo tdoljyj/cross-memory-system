@@ -28,6 +28,7 @@ from memory_engine import store  # noqa: E402
 from memory_engine.recall_trace import trace_digest  # noqa: E402
 
 from . import corpus as corpus_mod  # noqa: E402
+from . import metrics as metrics_v2  # noqa: E402
 from . import schema as eval_schema  # noqa: E402
 
 RUNNER_VERSION = "1.0"
@@ -273,6 +274,18 @@ def run_all(cases=None, fixtures=None, adapters=ADAPTER_IDS, warmup=True):
         verdicts.append(verdict)
 
     metrics = compute_metrics(verdicts)
+    # ---- MIV-005A：指标合同 v2.0 ----
+    # v1 字段顶层继续输出（语义不变），同时在 legacy_v1 下显式标记；
+    # v2 指标为聚合口径（precision_at5_v2 / hit_rate_at5 /
+    # false_recall_rate_v2 / critical_memory_recall_v2 + 切片）。
+    v2 = metrics_v2.compute_v2(verdicts)
+    for key, value in v2.items():
+        metrics[key] = value
+    metrics["metric_contract_version"] = metrics_v2.METRIC_CONTRACT_VERSION
+    metrics["legacy_v1_fields"] = list(metrics_v2.LEGACY_V1_FIELDS)
+    metrics["legacy_v1"] = {
+        key: metrics[key] for key in metrics_v2.LEGACY_V1_FIELDS
+    }
     replay_rows = [
         {"case_id": v["case_id"],
          "returned_ids": v["returned_ids"],
@@ -296,6 +309,7 @@ def run_all(cases=None, fixtures=None, adapters=ADAPTER_IDS, warmup=True):
     report = {
         "runner_version": RUNNER_VERSION,
         "eval_schema_version": eval_schema.SCHEMA_VERSION,
+        "metric_contract_version": metrics_v2.METRIC_CONTRACT_VERSION,
         "corpus_hash": corpus_mod.corpus_hash(),
         "case_count": len(cases),
         "adapter_ids": list(adapters),
@@ -439,12 +453,35 @@ def render_markdown(report):
     lines.append("")
     lines.append("- runner: %s" % report["runner_version"])
     lines.append("- eval schema: v%d" % report["eval_schema_version"])
+    lines.append("- metric contract: %s" % report.get(
+        "metric_contract_version", "v1"))
     lines.append("- corpus hash: `%s`" % report["corpus_hash"])
     lines.append("- cases: %d" % report["case_count"])
     lines.append("- adapters: %s" % ", ".join(report["adapter_ids"]))
     lines.append("- fixed clock: %s" % report["fixed_now"])
     lines.append("")
-    lines.append("## 指标")
+    lines.append("## 指标 v2（MIV-005A）")
+    lines.append("")
+    lines.append("| 指标 | 值 |")
+    lines.append("| --- | --- |")
+    for key in ("precision_at5_v2", "hit_rate_at5",
+                "false_recall_rate_v2", "critical_memory_recall_v2"):
+        v = m.get(key)
+        lines.append("| %s | %s |" % (key, v if v is not None else "NOT_APPLICABLE"))
+    lines.append("")
+    lines.append("## 指标 v2 切片")
+    lines.append("")
+    lines.append("| 切片 | precision_at5_v2 | hit_rate_at5 | false_recall_rate_v2 | critical_memory_recall_v2 |")
+    lines.append("| --- | ---: | ---: | ---: | ---: |")
+    for label, s in (m.get("slices") or {}).items():
+        lines.append("| %s | %s | %s | %s | %s |" % (
+            label,
+            s.get("precision_at5_v2") if s.get("precision_at5_v2") is not None else "N/A",
+            s.get("hit_rate_at5") if s.get("hit_rate_at5") is not None else "N/A",
+            s.get("false_recall_rate_v2") if s.get("false_recall_rate_v2") is not None else "N/A",
+            s.get("critical_memory_recall_v2") if s.get("critical_memory_recall_v2") is not None else "N/A"))
+    lines.append("")
+    lines.append("## 指标（legacy_v1，语义不变）")
     lines.append("")
     lines.append("| 指标 | 值 |")
     lines.append("| --- | --- |")

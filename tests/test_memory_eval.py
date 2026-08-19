@@ -233,6 +233,117 @@ def test_report_markdown_renders():
     check(corpus_mod.FAKE_TOKEN not in md, "报告不得泄漏秘密")
 
 
+# ============ MIV-005A：指标合同 v2.0（仅新增，v1 断言全部保留） ============
+
+def test_metric_contract_v2_present():
+    """metric_contract_version=2.0；v2 字段存在；v1 字段顶层继续输出并标记 legacy_v1。"""
+    rep = runner.run_all(warmup=True)
+    check(rep["metric_contract_version"] == 2.0,
+          "metric_contract_version 必须为 2.0: %r" % rep.get("metric_contract_version"))
+    m = rep["metrics"]
+    for key in ("precision_at5_v2", "hit_rate_at5",
+                "false_recall_rate_v2", "critical_memory_recall_v2"):
+        check(key in m, "缺少 v2 指标 %s" % key)
+    check(m.get("metric_contract_version") == 2.0,
+          "metrics.metric_contract_version 必须为 2.0")
+    for key in ("precision_at5", "critical_memory_recall", "false_recall_rate"):
+        check(key in m, "v1 指标 %s 必须继续输出" % key)
+    check(isinstance(m.get("legacy_v1"), dict), "legacy_v1 标记必须存在")
+    check(isinstance(m.get("legacy_v1_fields"), list), "legacy_v1_fields 必须存在")
+    check(m["legacy_v1"].get("precision_at5") == m.get("precision_at5"),
+          "legacy_v1 与顶层 v1 值必须一致（同一计算产出）")
+    check("slices" in m and "non_paraphrase" in m["slices"],
+          "必须输出非 paraphrase 切片")
+
+
+def test_miv005a_no_memory_contract():
+    """MIV-005A 验收：NO MEMORY 41/41，correctness=1.0，violations=0；nm-002/nm-006 空结果。"""
+    rep = runner.run_all(warmup=True)
+    m = rep["metrics"]
+    nm = [v for v in rep["verdicts"] if v["no_memory_expected"]]
+    check(len(nm) == 41, "NO MEMORY 用例应为 41（实际 %d）" % len(nm))
+    check(m["no_memory_correctness"] == 1.0,
+          "no_memory_correctness 必须为 1.0: %r" % m["no_memory_correctness"])
+    check(m["no_memory_violations"] == 0,
+          "no_memory_violations 必须为 0: %r" % m["no_memory_violations"])
+    for cid in ("nm-002", "nm-006"):
+        v = next(x for x in rep["verdicts"] if x["case_id"] == cid)
+        check(v["returned_ids"] == [], "%s 必须返回空结果: %r" % (cid, v["returned_ids"]))
+
+
+def test_miv005a_expected_metrics_frozen_contract():
+    """MIV-005A 验收口径（冻结语料/夹具，指标预期值固定）。"""
+    rep = runner.run_all(warmup=True)
+    m = rep["metrics"]
+    np_ = m["slices"]["non_paraphrase"]
+    pp_ = m["slices"]["paraphrase"]
+    check(np_["precision_at5_v2"] == 1.0000,
+          "非 paraphrase precision_at5_v2 必须为 1.0000: %r" % np_["precision_at5_v2"])
+    check(np_["false_recall_rate_v2"] == 0.0000,
+          "非 paraphrase false_recall_rate_v2 必须为 0.0000: %r" % np_["false_recall_rate_v2"])
+    check(np_["critical_memory_recall_v2"] == 0.9063,
+          "非 paraphrase critical recall 必须为 0.9063（58/64）: %r"
+          % np_["critical_memory_recall_v2"])
+    check(np_["golden_ids"] == 64 and np_["returned_objects"] == 58,
+          "非 paraphrase golden 64 / 返回 58: %r" % np_)
+    check(np_["hit_rate_at5"] == 0.9483,
+          "非 paraphrase hit_rate_at5 必须为 0.9483（55/58）: %r" % np_["hit_rate_at5"])
+    check(m["precision_at5_v2"] == 0.6556,
+          "全语料 precision_at5_v2 必须为 0.6556: %r" % m["precision_at5_v2"])
+    check(m["false_recall_rate_v2"] == 0.3444,
+          "全语料 false_recall_rate_v2 必须为 0.3444: %r" % m["false_recall_rate_v2"])
+    check(m["critical_memory_recall_v2"] == 0.7763,
+          "全语料 critical recall 必须为 0.7763（59/76）: %r"
+          % m["critical_memory_recall_v2"])
+    check(m["golden_ids"] == 76, "全语料 golden 应为 76: %r" % m["golden_ids"])
+    # paraphrase：1/12 PASS、11/12 FAIL（golden 命中即 PASS）
+    pp_verdicts = [v for v in rep["verdicts"] if v["category"] == "paraphrase"]
+    check(len(pp_verdicts) == 12, "paraphrase 应为 12 例")
+    pp_pass = [v["case_id"] for v in pp_verdicts
+               if not v["critical_failures"] and not v["missed"]]
+    check(len(pp_pass) == 1, "paraphrase 必须 1/12 PASS: %r" % pp_pass)
+    check(pp_["critical_memory_recall_v2"] == 0.0833,
+          "paraphrase critical recall 应为 0.0833（1/12）: %r"
+          % pp_["critical_memory_recall_v2"])
+
+
+def test_miv005a_leakages_still_zero():
+    """MIV-005A 不引入任何泄漏：scope/project/superseded/stale/secret 全部 0。"""
+    rep = runner.run_all(warmup=True)
+    m = rep["metrics"]
+    check(m["current_scope_leakage_count"] == 0,
+          "current-scope 泄漏必须为 0: %r" % m["current_scope_leakage_count"])
+    check(m["project_only_capability_gap_count"] == 0,
+          "project_only 隔离缺口必须为 0")
+    check(m["superseded_leakage_count"] == 0,
+          "superseded 泄漏必须为 0")
+    check(m["stale_recall_rate"] == 0.0,
+          "stale recall 必须为 0.0: %r" % m["stale_recall_rate"])
+    check(rep["secret_leaks"] == [], "secret_leaks 必须为空")
+
+
+def test_miv005a_token_p95_within_budget():
+    """token P95 不增加且 ≤650（冻结口径上限）。"""
+    rep = runner.run_all(warmup=True)
+    p95 = rep["metrics"].get("estimated_prompt_tokens_p95")
+    check(p95 is not None and p95 <= 650,
+          "token P95 必须 ≤650: %r" % p95)
+
+
+def test_miv005a_gate_reason_codes_observable():
+    """非 paraphrase 中被准入门过滤的 6 个正确 ID 在 Trace 中带
+    RELEVANCE_BELOW_THRESHOLD（全局 recall 64→58 的已接受下降量）。"""
+    rep = runner.run_all(warmup=True)
+    gated = 0
+    for v in rep["verdicts"]:
+        if v["category"] == "paraphrase":
+            continue
+        for codes in v.get("reason_codes", {}).values():
+            if "RELEVANCE_BELOW_THRESHOLD" in codes:
+                gated += 1
+    check(gated == 6, "非 paraphrase 应有 6 个正确 ID 被准入门过滤: %r" % gated)
+
+
 TESTS = [
     test_corpus_all_cases_valid,
     test_category_quotas_met,
@@ -247,6 +358,13 @@ TESTS = [
     test_scope_mapping_contract,
     test_token_estimator_and_trace_present,
     test_report_markdown_renders,
+    # ---- MIV-005A v2（v1 断言全部保留）----
+    test_metric_contract_v2_present,
+    test_miv005a_no_memory_contract,
+    test_miv005a_expected_metrics_frozen_contract,
+    test_miv005a_leakages_still_zero,
+    test_miv005a_token_p95_within_budget,
+    test_miv005a_gate_reason_codes_observable,
 ]
 
 
