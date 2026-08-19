@@ -31,9 +31,9 @@
 | ahead/behind（对齐后） | 0 / 0 |
 | worktree（执行开始） | clean |
 | VERSION | `vNext-2.0` |
-| TESTED_HEAD | 最终口径修正后的 HEAD（见 FINAL_REPORT_HEAD）：在其干净 clone 上重跑 249 + 32 = 281 项 + doctor 三件套 + secret scan |
-| FINAL_REPORT_HEAD | 口径修正后的最终本地 HEAD（§11 提交链末）；TESTED_HEAD = FINAL_REPORT_HEAD = `git rev-parse HEAD` |
-| ahead/behind（最终） | ahead=本地提交数（未 push）；behind=0 |
+| TESTED_HEAD | `2e1af97a0bd0263f82b1c7419a87e92a0832e592`（干净 clone：249 既有 + 19 trace 在 `41a32e1d` 全绿、`2e1af97` 等价[仅 runner.py diff，且 249+trace 测试零依赖 memory_eval]；memory_eval 13 项在 `2e1af97` 全绿；doctor 三件套 + secret scan 在 `2e1af97` 全 PASS） |
+| FINAL_REPORT_HEAD | `2e1af97a0bd0263f82b1c7419a87e92a0832e592`（§11 提交链末） |
+| ahead/behind（最终） | ahead=9（本地提交，未 push）；behind=0 |
 
 ## 3. Baseline & Frozen Evidence
 
@@ -205,6 +205,11 @@ memory/状态.md                    # Gate 1 登记（按计划要求）
   reftable 同操作成功）
 - WorkBuddy Python safe-delete 钩子（`CODEBUDDY_SAFE_DELETE_SANDBOX=1` 时
   `os.remove` fail-closed）→ 隔离 clone 置于系统 TEMP 目录（钩子豁免）
+- **WorkBuddy 环境对高频文件删除的进程树级硬退出**（约 500+ 次 `shutil.rmtree`
+  即 os 级终止进程树、无 traceback、连带杀父 shell；`-S` 跳过 sitecustomize 后
+  仍复现，故非 safe-delete 钩子本身，属宿主层限制）→ Memory Eval 运行器改为
+  复用单个临时根目录（每次 run_all 仅 2 次 rmtree，见提交 `2e1af97`）；
+  评测语义不变（replay hash `b7a9b250` 与改动前完全一致）
 - 本机无 ripgrep → `rg --files tests` 以目录清单等价核对
 - 首轮全量跑 test_clued_policy 曾出现 1 例时间边界抖动（高负载下 3599s 边界
   越过 1h）；隔离复跑与最终干净 clone 一次通过（22/22），判定为负载噪声
@@ -243,7 +248,10 @@ f2d1dd4 [WorkBuddy@TURING] test: add deterministic memory intelligence eval corp
 ae0f93a [WorkBuddy@TURING] test: cover recall trace safety and compatibility（MIV-002 Gate 1 新增测试）
 bab065b [WorkBuddy@TURING] docs: record vNext-2.1 gate-1 evidence and baseline
 3b596c8 [WorkBuddy@TURING] memory: record vNext-2.1 gate-1 status
-（本条之后的 HEAD = 本文档证据定稿提交）
+13597a5 [WorkBuddy@TURING] docs: finalize vNext-2.1 gate-1 report head evidence
+e8829a7 [WorkBuddy@TURING] test: split scope metric into current-scope leakage vs project-only capability gap
+41a32e1 [WorkBuddy@TURING] docs: clarify gate-1 infra PASS vs memory-quality BELOW TARGET（口径修正）
+2e1af97 [WorkBuddy@TURING] fix: reuse single temp root in eval runner（规避高频删除硬退出）
 ```
 
 - no amend / no rebase / no force push / no PR / no tag / no release ✅
@@ -252,7 +260,8 @@ bab065b [WorkBuddy@TURING] docs: record vNext-2.1 gate-1 evidence and baseline
   `git ls-remote origin main` 执行前后一致）
 - worktree clean（提交后核验）
 - secret scan：全仓扫描零自命中（含新增 memory_eval_baseline/ 产物与全部新文件）
-- FINAL_REPORT_HEAD = 口径修正后的最终本地 HEAD（见下方提交链末）
+- FINAL_REPORT_HEAD = `2e1af97a0bd0263f82b1c7419a87e92a0832e592`（§11 提交链末；
+  TESTED_HEAD = FINAL_REPORT_HEAD = `git rev-parse HEAD`）
 
 ## 12. Next Decision Required（产品所有者裁决）
 
