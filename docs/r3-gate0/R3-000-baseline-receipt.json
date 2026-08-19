@@ -102,7 +102,7 @@
   "evidence_binding": {
     "evidence_head": "9dcc31be2b7f32f3199cfbd44e138d161fc0cfdb",
     "tested_head": "9dcc31be2b7f32f3199cfbd44e138d161fc0cfdb",
-    "final_report_head": "PENDING: 本 Gate 的本地单一目的提交（docs/r3-gate0/ 提交后回填）",
+    "final_report_head": "2a024c45632e6d896a7547ac68314afd31b1030c（Gate 0 单一目的提交；本 receipt 所在提交的 parent 为 evidence HEAD）",
     "published": false,
     "local_only": true
   },
