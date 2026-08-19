@@ -127,3 +127,12 @@
   - 密钥扫描 0 命中（guards 模式、全仓 346 文件）；冻结区 / 同步层 / Clued / 协议清单零改动（diff 仅 2 个引擎文件 + 4 个测试文件 + 本文档 / ADR / 状态.md）；
   - 远端仍为 `97ca58b`，工作克隆 ahead/behind = 5/0，worktree clean；未 push / tag / release；MIV-005B 未启动；README 卸载/停用支持为后续独立工作项，本轮未夹带。
 - **状态**：本地验收通过，**等待 MIV-005A 正式裁决**（HOLD 未解除，不得视为正式 PASS）。
+
+## 8. 正式裁决：MIV-005A PASS（2026-08-19 产品所有者裁决）
+
+> 追加记录；第 1–6 节与 §7 的全部历史记录（含 §7.2 的整改失败与等待授权记录）保持不变。
+
+- **裁决结论**：**MIV-005A 正式 PASS**。接受实现 HEAD = `e89c036`；R1 全路由统一准入 PASS；326 项测试 PASS；冻结评测与 replay hash PASS。
+- **BASELINE_DRIFT 解决**：Codex 端推送 `51093d3`（docs：installation guide and lifecycle work item，README.md + memory/待办.md）后按本报告 §6/ADR §8 停止并回报；产品裁决接受其为授权文档提交、新执行基线 origin/main=`51093d3`，授权唯一 merge commit；`e89c036`（父提交=`543f3be`+`51093d3`，仅引入 README.md 与 memory/待办.md）正式解决漂移，合并后复验全通过（6/0、326/326、replay hash `f4266eab…`、doctor 三件套、密钥扫描 0）。
+- **冻结验收结果（接受 HEAD `e89c036`）**：326/326 PASS、0 skip；replay hash `f4266eabd2bed94d…` 不变；全语料 precision_at5_v2=0.6556 / false_recall=0.3444 / critical recall=0.7763；非 paraphrase 1.0000 / 0.0000 / 0.9063（58/64）/ hit_rate 0.9483（55/58）；paraphrase 1/12；泄漏全 0；token P95=50；latency 非冻结（复跑 ≤ control 120%）。
+- **收口**：授权纯文档收口提交 `docs: record formal MIV-005A PASS`（ADR §10 + 本 §8 + `memory/状态.md` 一行）与普通 fast-forward push 至 origin/main（未推送范围 = 既有 MIV-005A 链 + 授权 merge + 收口提交）；push 后 local HEAD = remote main、0/0；不 tag / release；MIV-005B 与安装/停用/卸载独立工作项暂不授权。

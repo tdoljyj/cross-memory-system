@@ -195,3 +195,12 @@ admit(obj) = 显式 tags/entities selector 命中(obj)  OR  score > 1/6
    - 冻结区零改动：本轮 diff 仅 `memory_engine/{recall_engine,relevance}.py`、`tests/{test_relevance_admission,test_memory_v2,test_project_scope,test_relevance_admission_r1}.py` 与本文档 / 报告 / 状态.md；`memory_eval/`、fixtures、`memory/objects`、`object-index.json`、`guards.json`、同步层（`sync-memory.py` / `sync-memory.ps1`）、`clued/`、协议清单零改动；
    - 远端仍为 `97ca58b`，工作克隆 ahead/behind = 5/0，worktree clean；未 push / tag / release；MIV-005B 未启动；README 卸载/停用支持为后续独立工作项，本轮未夹带。
 5. **状态**：本地验收通过，**等待 MIV-005A 正式裁决**（HOLD 未解除，不得视为正式 PASS）。
+
+## 10. 正式裁决：MIV-005A PASS（2026-08-19 产品所有者裁决）
+
+> 追加记录；第 1–9 节全部历史记录（含 §9.3/§9.4 的整改失败与等待授权记录）保持不变。
+
+1. **裁决结论**：**MIV-005A 正式 PASS**。接受实现 HEAD = `e89c036`（既有 MIV-005A 链 `5c9aa8a`/`1674241`/`78dd1ee` + fix `beb8252` + docs `543f3be` + 授权 merge `e89c036`）；R1 全路由统一准入 PASS；326 项测试 PASS；冻结评测与 replay hash PASS；**BASELINE_DRIFT 已通过授权 merge 正式解决**；MIV-005B / 生命周期工作项暂不授权。
+2. **51093d3 漂移解决过程（照录）**：执行期间 Codex 端于 2026-08-19 16:57:51 推送 `51093d3`「docs [Codex@ChatGPT]: add installation guide and lifecycle work item」（README.md + memory/待办.md），按 §8 规则以 BASELINE_DRIFT 立即停止并回报；产品裁决：接受该提交为授权文档提交，新执行基线 = origin/main `51093d3f270b4208c1fbe2a7abd77b5546f1e309`，MIV-005A 暂维持 HOLD、等待合并后复验；授权唯一 merge commit（必须从 `543f3be` 执行、只能 merge、两父提交=`543f3be`+`51093d3`、正常只引入 README.md 与 memory/待办.md）。合并=`e89c036`（无冲突、无其他文件变化），合并后复验：51093d3 与 543f3be 均为新 HEAD 祖先、ahead/behind=6/0、worktree clean、326/326 PASS 0 skip、replay hash `f4266eabd2bed94d…` 与全部冻结指标不变、doctor 三件套 ALL PASS、密钥扫描 0 命中、冻结区/同步层/Clued/协议清单无新增改动。
+3. **冻结验收结果（接受 HEAD `e89c036`，产品裁决照录为 PASS）**：全量 326/326 PASS、0 skip；replay hash `f4266eabd2bed94d…` 不变；全语料 precision_at5_v2=0.6556 / false_recall=0.3444 / critical recall=0.7763；非 paraphrase precision 1.0000 / false_recall 0.0000 / critical recall 0.9063（58/64）/ hit_rate 0.9483（55/58）；paraphrase 1/12（critical recall 0.0833）；泄漏全 0；token P95=50；latency 为运行时计时（复跑 P95≈0.61–0.62ms，≤ control 0.708ms 的 120%）。
+4. **收口**：产品裁决授权纯文档收口提交 `docs: record formal MIV-005A PASS`（本 §10 + Gate2R 报告 §8 + `memory/状态.md` 一行，只追加、不改既有历史）与普通 fast-forward push 至 origin/main；未推送范围 = 既有 MIV-005A 链 + 授权 merge + 本次收口提交共 7 个提交；push 后 local HEAD = remote main、ahead/behind 0/0；不新增提交、不 tag / release；MIV-005B 与安装/停用/卸载独立工作项仍不授权。
