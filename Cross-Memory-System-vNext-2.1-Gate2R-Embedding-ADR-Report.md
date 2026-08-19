@@ -74,3 +74,14 @@ precision_at5_v2 ≥ 0.90；critical_memory_recall_v2 ≥ 0.95；false_recall_ra
 12. **验收补强**：新增 **paraphrase golden 命中 ≥ 11/12**（holdout 验收）；其余门槛不变（0.90/0.95/0.02/41-41/泄漏 0/token≤650/336 零回归/`f4266eab…` 不变/回退逐字节/重建回滚幂等）。
 
 **状态：ADR 待裁决（R1 硬化完成；未 push、未下载、未装依赖、未实施）。**
+
+## 8. 正式裁决记录（2026-08-19 产品所有者裁决）
+
+> 追加记录；第 1–7 节全部历史内容保持不变。
+
+- **ADR-MIV-005B-002 R1：接受，正式 PASS**。接受提交 = `a5a3e5c`（本地、未 push）；`7c3617f` 保留、不得改写。
+- **PASS 范围界定**：Embedding ADR 正式 PASS 仅表示**设计与实施合同获接受**；**不等于 E5 生产选型**（E5 仍只是「首轮基准候选」）；**不授权**模型下载、依赖安装、探针、索引构建、Embedding 实施或 Reflection。
+- 阻断项关闭确认：Jina 官方卡确为 Apache-2.0（示例要求 `trust_remote_code=True`，供应链风险降级成立）；E5 前缀 / attention-mask pooling / L2 归一化合同与官方说明一致；增量 OR 准入、conflict 不可复活、确定性排序、calibration/holdout 隔离、缓存移出 canonical 树、索引前排密、下载白名单与最终验收合同均已冻结；Protocol Deviations 为空，未越过纯文档授权边界。
+- **下一核心优先级 = Truth Integrity Gate T0**；push / tag / release 不授权。
+
+**状态：正式 PASS（设计/实施合同获接受；实施与下载仍不授权）。**

@@ -185,3 +185,13 @@
 ### R1.13 本轮纪律
 
 本轮为纯文档 R1：不修改任何生产代码、测试合同、corpus、fixtures、golden、objects、index、同步层或 Clued；不下载模型、不安装依赖、不生成向量索引、不 push / tag / release；不启动 Reflection 或生命周期工作项。`7c3617f` 提案基线保留、不改写。
+
+## 8. 正式裁决记录（2026-08-19 产品所有者裁决）
+
+> 追加记录；§1–7 全部历史内容保持不变。
+
+1. **ADR-MIV-005B-002 R1：接受，正式 PASS**。接受提交 = `a5a3e5c`（本地、未 push）；原提案提交 `7c3617f` 保留、不得改写。
+2. **PASS 范围界定（裁决原文要点）**：Embedding ADR 正式 PASS **仅表示设计与实施合同获接受**；**不等于 E5 生产选型**（E5 仍只是「首轮基准候选」）；**不授权**模型下载、依赖安装、探针、索引构建、Embedding 实施或 Reflection。
+3. R1 已关闭的阻断项确认：Jina 官方卡确为 Apache-2.0 且示例要求 `trust_remote_code=True`（供应链风险降级成立）；E5 前缀 / attention-mask pooling / L2 归一化合同与官方说明一致；增量 OR 准入、conflict 不可复活、确定性排序、calibration/holdout 隔离、缓存移出 canonical 树、索引前排密、下载白名单与最终验收合同均已冻结；Protocol Deviations 为空，未越过纯文档授权边界。
+4. **下一核心优先级 = Truth Integrity Gate T0**（后续单独裁决）。
+5. push / tag / release 均不授权；本收口提交（`docs: record formal local embedding ADR PASS`）仅追加本节 + 报告 §8 + `memory/状态.md` 一行，不删除、不改写历史。
