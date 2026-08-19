@@ -98,6 +98,30 @@
 - **密钥扫描拦截（同步被拒并写 `.sync-failed`）** → 提交前命中 `ghp_`/`gho_`/`github_pat_`/`AKIA`/私钥头/Bearer 长值：清理记忆文件中的令牌样值后再同步（模式见 `guards.json`）。
 - **ps1 在 WorkBuddy 镜像内运行被硬阻断** → `[deploy-guard] refusing to run inside a .workbuddy mirror`：sync-memory.ps1 只应在 Codex 侧克隆（`~/.codex/projects/...`）运行，WorkBuddy 侧用 `sync-memory.py`，脚本与工作区不可互换。
 
+## 卸载 / 停用（一次性）
+
+> 本系统**不安装任何定时任务、开机自启或系统服务**（对齐基线：触发式、禁自动化），卸载无需清理计划任务。系统的全部落点 = 每端一个克隆 + 消费端钩子 + 每端一个 gitignored 配置。**Canonical Memory Store（远端仓库）始终持有全部记忆**：卸载本机只移除本端缓存与钩子，远端数据不动；只有主动删除远端仓库才会真正抹掉所有端的共享记忆。
+
+### 方案 A：仅停用（保留数据，可随时恢复）
+1. 删除本端消费端钩子（解除每会话注入，AI 不再读写记忆）：
+   - Codex：删除 `~/.codex/AGENTS.md`（`Documents\Codex\memory\` 数据副本可留可删）
+   - WorkBuddy：删除 `~/.workbuddy/MEMORY.md`
+   - DSH：删除 `~/.dsh/AGENTS.md` 与 `~/.dsh/MEMORY.md`
+2. 克隆、配置文件、远端全部保留；新会话即不再触发记忆读写。恢复 = 按「新电脑接入」重建消费端钩子即可。
+
+### 方案 B：完整卸载（本机彻底移除）
+1. **先归档（必做）**：在本端克隆执行 `git fetch` + `git merge --no-edit FETCH_HEAD`（非 rebase）→ `python sync-memory.py push`（Codex 用 `sync-memory.ps1`）→ `git ls-remote origin main` 与本地 HEAD 比对，确认远端已收齐；如需离线备份，`git clone --mirror` 到备份路径或直接打包克隆目录。
+2. 按方案 A 删除本端消费端钩子；可选删除 Codex 侧 `Documents\Codex\memory\`。
+3. 删除本端 gitignored 配置：`sync.config.ps1`（Codex）/ `sync.config.json`（WorkBuddy、DSH，含 `consumer_memory_path`）。
+4. 删除本端克隆目录：`~/.codex/projects/codex-memory-system` / `~/.workbuddy/codex-memory-system` / `~/.dsh/projects/cross-memory-system`。bootstrap 写入的推荐 git 配置（`core.autocrlf` / `merge.union.driver` / `maintenance.auto` / `fetch.autoMaintenance` / `gc.pruneExpire`）为**克隆级（local scope）**，随目录删除自然消失；仅当你曾手动用 `--global` 写过时才需 `git config --global --unset` 逐项还原。
+5. 清理凭据（可选）：`gh auth status` 确认；不再用则 `gh auth logout`（同账号其它 GitHub 操作会一并失效），并移除 git credential helper 中的 gh 条目。Codex 如启用过 GitHub MCP，按需移除 `~/.codex/config.toml` 的 `[mcp_servers.github]`（与记忆同步无关，纯可选）。
+6. 清理远端（可选，**不可逆**）：GitHub 仓库设置 → Danger Zone → Delete this repository 会**永久删除所有端的共享记忆且不可恢复**——仅在所有端均已停用、且完成归档/备份后执行；想保留数据可改为 Private 或转移所有权。
+
+### 核验
+- 新会话不再注入记忆钩子（Codex / DSH 的 `AGENTS.md` 已消失，WorkBuddy 无 `MEMORY.md`）；
+- 克隆目录与配置文件均不存在；
+- 删除远端前：`git ls-remote origin main` 输出与归档时 HEAD 一致。
+
 ## Codex 同步（按需触发，对齐基线 vNext-1.3）
 - 钩子指令（AGENTS.md v3.1）：Memory Router 判定本轮产生记忆写入后才运行：`powershell -ExecutionPolicy Bypass -File ~/.codex/projects/codex-memory-system/sync-memory.ps1`
 - 脚本自动：复制最新记忆 → git 提交（无变化则 skip commit）→ 推送；远端有新提交时先拉取再推
