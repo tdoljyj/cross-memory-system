@@ -8,6 +8,10 @@
     → Status filtering → Conflict filtering → Relevance ranking
     → Context packing
 
+MIV-005A（ADR-MIV-005A-001）：在 conflict 与 limit 之间插入相关性准入门
+（显式 tags/entities selector 命中 OR score > 1/6 严格大于），不改候选
+生成、分词、评分权重或排序；阈值对所有 case/类别/项目一致。
+
 v2.0 第一阶段：确定性召回（exact/keyword/category/tag/entity/temporal/
 status/priority），**不使用向量数据库 / embedding / 外部 SaaS**（§10/§18）。
 
@@ -23,6 +27,7 @@ from . import conflict
 from . import object_index
 from . import paths
 from . import recall_trace as RT
+from . import relevance as REL
 from . import schema as S
 from . import store
 from . import temporal as T
@@ -329,6 +334,7 @@ def recall(query="", tier="T0", layers=None, scope=None, include_history=False,
                 project_id=project_id, session_id=session_id)
         return result
 
+    layers_explicit = layers is not None  # MIV-005A：准入门适用边界（显式层路由）
     if layers is None:
         layers = list(S.TIER_LAYERS.get(tier, []))
     layers = [l for l in layers if l in S.RECALL_LAYERS]
@@ -410,20 +416,15 @@ def recall(query="", tier="T0", layers=None, scope=None, include_history=False,
             continue
         filtered.append(obj)
 
-    if tracer is not None:
-        scored = []
-        for o in filtered:
-            s = _match_score(result.query, o)
-            rk = _rank_key(o, s)
-            scored.append((o, s, rk))
+    scored = []
+    for o in filtered:
+        s = _match_score(result.query, o)
+        rk = _rank_key(o, s)
+        scored.append((o, s, rk))
+        if tracer is not None:
             tracer.record_candidate(o, s, rk)
-        ranked = [t[0] for t in sorted(
-            scored, key=lambda t: t[2], reverse=True)]
-    else:
-        ranked = sorted(
-            filtered,
-            key=lambda o: _rank_key(o, _match_score(result.query, o)),
-            reverse=True)
+    ranked = [t[0] for t in sorted(
+        scored, key=lambda t: t[2], reverse=True)]
     # 冲突过滤只约束「当前」召回（竞争事实只保留胜者）；历史查询返回全部版本
     if include_history:
         survivors, losers = ranked, set()
@@ -433,17 +434,39 @@ def recall(query="", tier="T0", layers=None, scope=None, include_history=False,
     if tracer is not None:
         for loser_id in losers:
             tracer.exclude(loser_id, RT.RC_CONFLICT_LOSER)
-    result.objects = survivors[:limit]
+
+    # ---- MIV-005A：相关性准入门（conflict 之后、limit 之前）----
+    # 只过滤，不改排序；threshold 对所有 case/类别/项目一致。
+    # 适用边界见 relevance.gate_active（Gate 2R 兼容合同）。
+    gate_on = REL.gate_active(result.query, layers_explicit, scope)
+    score_by_id = {o["id"]: s for o, s, _rk in scored}
+    admitted = []
+    gate_no_memory = False
+    if gate_on:
+        for o in survivors:
+            if REL.admit(o, score_by_id.get(o["id"], 0.0), tags, entities):
+                admitted.append(o)
+            elif tracer is not None:
+                tracer.exclude(o["id"], RT.RC_RELEVANCE_BELOW_THRESHOLD)
+        # 全部候选被准入门排除 → NO MEMORY（Trace 顶层 reason_codes）
+        if survivors and not admitted:
+            gate_no_memory = True
+    else:
+        admitted = survivors
+    result.skipped["relevance_below_threshold"] = \
+        len(survivors) - len(admitted)
+    result.objects = admitted[:limit]
     result.constraints = _attach_constraints(
         result.objects, objects, scope, project_id, session_id)
     if tracer is not None:
-        if len(survivors) > limit:
-            for o in survivors[limit:]:
+        if len(admitted) > limit:
+            for o in admitted[limit:]:
                 tracer.exclude(o.get("id"), RT.RC_LIMIT_TRUNCATED)
         result.trace = tracer.finalize(
-            result.objects, len(survivors), losers,
+            result.objects, len(admitted), losers,
             markdown_plan=result.markdown_plan,
-            constraints=result.constraints)
+            constraints=result.constraints,
+            gate_no_memory=gate_no_memory)
     return result
 
 

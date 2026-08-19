@@ -37,6 +37,7 @@ import uuid
 from datetime import datetime, timezone
 
 from . import audit as audit_mod
+from . import relevance as REL
 from . import schema as S
 from . import store as store_mod
 
@@ -87,6 +88,7 @@ RC_TAG_MISMATCH = "TAG_MISMATCH"
 RC_ENTITY_MISMATCH = "ENTITY_MISMATCH"
 RC_PRIORITY_FILTERED = "PRIORITY_FILTERED"
 RC_CONFLICT_LOSER = "CONFLICT_LOSER"
+RC_RELEVANCE_BELOW_THRESHOLD = "RELEVANCE_BELOW_THRESHOLD"  # MIV-005A：准入门排除
 RC_LIMIT_TRUNCATED = "LIMIT_TRUNCATED"
 RC_LOAD_LIMIT_TRUNCATED = "LOAD_LIMIT_TRUNCATED"
 
@@ -282,20 +284,27 @@ class TraceRecorder(object):
 
     # ---- finalize ----
     def finalize(self, result_objects, survivor_count, losers,
-                 markdown_plan=None, constraints=None):
-        """把记录渲染为合同 JSON。失败不抛——标记 degraded。"""
+                 markdown_plan=None, constraints=None,
+                 gate_no_memory=False):
+        """把记录渲染为合同 JSON。失败不抛——标记 degraded。
+
+        MIV-005A：gate_no_memory=True 时（准入门排除全部候选）在
+        顶层 reason_codes 输出 NO_MEMORY。
+        """
         try:
             return self._finalize_inner(
                 result_objects, survivor_count, losers,
-                markdown_plan, constraints)
+                markdown_plan, constraints, gate_no_memory)
         except Exception as e:  # noqa: BLE001 —— trace 失败必须显式降级
             self.mark_degraded(e)
-            return {
+            d = {
                 "trace_version": TRACE_VERSION,
                 "query_id": self.query_id,
                 "operation_id": self.operation_id,
                 "scope": dict(self.scope),
                 "route": self.route,
+                "relevance_policy_version": REL.RELEVANCE_POLICY_VERSION,
+                "relevance_threshold": REL.threshold_ref(),
                 "selected": [],
                 "excluded": [
                     {"memory_id": oid, "reason_codes": codes}
@@ -306,9 +315,12 @@ class TraceRecorder(object):
                 "build_error": self.build_error,
                 "token_estimator": estimator_ref(),
             }
+            if gate_no_memory:
+                d["reason_codes"] = [RC_NO_MEMORY]
+            return d
 
     def _finalize_inner(self, result_objects, survivor_count, losers,
-                        markdown_plan, constraints):
+                        markdown_plan, constraints, gate_no_memory=False):
         rank_by_id = {}
         for obj, score, rank_key in self.selected_log:
             oid = (obj or {}).get("id")
@@ -373,12 +385,15 @@ class TraceRecorder(object):
         budget_tokens = packed_token_estimate(
             markdown_plan or [], result_objects, constraints or [])
 
-        return {
+        d = {
             "trace_version": TRACE_VERSION,
             "query_id": self.query_id,
             "operation_id": self.operation_id,
             "scope": dict(self.scope),
             "route": self.route,
+            # MIV-005A：准入门合同声明（只读观测，不参与决策）
+            "relevance_policy_version": REL.RELEVANCE_POLICY_VERSION,
+            "relevance_threshold": REL.threshold_ref(),
             "selected": selected,
             "excluded": excluded,
             "budget": {
@@ -388,6 +403,9 @@ class TraceRecorder(object):
             "degraded": self.degraded,
             "token_estimator": estimator_ref(),
         }
+        if gate_no_memory:
+            d["reason_codes"] = [RC_NO_MEMORY]
+        return d
 
 
 def build_empty_trace(query, tier, scope, valid_at, reason_codes,
