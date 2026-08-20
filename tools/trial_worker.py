@@ -229,20 +229,68 @@ class TrialWorker(object):
                     "error": str(e)}
 
 
+    # ---- 单次迁移（worker 主流程；flat → 目录，原子事务） ----
+    def run_migrate(self, binding_id, receipt_path, backup_dir, fault_inject=None):
+        status = self.acquire_lock()
+        if status == "ALREADY_RUNNING":
+            return {"status": "ALREADY_RUNNING", "run_id": self.run_id,
+                    "pid": self.pid}
+        if status == "ALREADY_DONE":
+            with open(receipt_path, "r", encoding="utf-8") as f:
+                rec = json.load(f)
+            return {"status": "ALREADY_DONE", "receipt": rec}
+        from tools.trial_migrate import MigrateTransaction, MigrateError
+        tx = MigrateTransaction(self.state_root, binding_id, backup_dir,
+                                fault_inject=fault_inject)
+        try:
+            result = tx.run()
+            self.write_receipt(receipt_path, 0, detail={
+                "migration": "DONE", "flat_sha256": result["flat_sha256"],
+                "moved_to": os.path.basename(result["moved_to"]),
+                "canonical": result["canonical"],
+            })
+            self.release_lock(done=True)
+            return {"status": "DONE", "run_id": self.run_id, "pid": self.pid,
+                    "migration": "DONE", "flat_sha256": result["flat_sha256"]}
+        except (MigrateError, BaseException) as e:
+            # 事务回滚：完整扁平 ADVISORY 或完整目录 ADVISORY（不允许半迁移）
+            try:
+                rb = tx.rollback()
+                rb_note = rb["status"]
+            except Exception as rb_e:
+                rb_note = "ROLLBACK_FAILED: %s" % rb_e
+            self.write_receipt(receipt_path, 1, detail={
+                "migration": "FAILED", "error": "%s: %s" % (type(e).__name__, e),
+                "rollback": rb_note,
+            })
+            self.release_lock(done=True)
+            return {"status": "FAILED", "run_id": self.run_id,
+                    "error": str(e), "rollback": rb_note}
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--run-id", required=True)
     ap.add_argument("--state-root", required=True)
     ap.add_argument("--binding", required=True)
     ap.add_argument("--receipt", required=True)
-    ap.add_argument("--action", choices=("install", "enable"), default="install")
+    ap.add_argument("--action", choices=("install", "enable", "migrate"),
+                    default="install")
     ap.add_argument("--conformance-ok", action="store_true", default=False)
+    ap.add_argument("--backup-dir", default=None)
+    ap.add_argument("--fault-inject", default=None)
     args = ap.parse_args(argv)
 
     worker = TrialWorker(args.state_root, args.run_id)
     if args.action == "enable":
         result = worker.run_enable(args.binding, args.receipt,
                                    conformance_ok=args.conformance_ok)
+    elif args.action == "migrate":
+        if not args.backup_dir:
+            print("migrate 需要 --backup-dir", file=sys.stderr)
+            return 2
+        result = worker.run_migrate(args.binding, args.receipt,
+                                    args.backup_dir, args.fault_inject)
     else:
         result = worker.run_install(args.binding, args.receipt)
     print(json.dumps(result, ensure_ascii=False, indent=1))
