@@ -19,13 +19,13 @@
 - Truth 整体仍为 **ADVISORY/AUDIT**；Gate 3 未在真实环境切换 ENFORCED；
 - **不推导**：不从一个临时 Binding 的通过推导所有 Adapter/环境/产品已 ENFORCED。
 
-## 2. Live Repository Truth（提交后现场复核，回填）
+## 2. Live Repository Truth（提交后现场复核，2026-08-20T02:46:57Z）
 
 | 项 | Gate 3 启动 | Gate 3 完成 |
 |---|---|---|
-| local HEAD | `3f82797` | <回填> |
-| remote main（ls-remote） | `9dcc31b` | <回填> |
-| ahead/behind（rev-list 直算） | 8/0 | <回填> |
+| local HEAD | `3f82797` | `9509784dcaa4462608748a606267369dde494c44` |
+| remote main（ls-remote） | `9dcc31b` | `9dcc31b`（未漂移） |
+| ahead/behind（rev-list 直算） | 8/0 | **9/0**（9dcc31b..HEAD 线性 9 提交） |
 | worktree（porcelain） | 零输出 | 零输出 |
 | 真实 memory / 冻结区 | DIFF=0 | DIFF=0 |
 | ignored runtime artifacts | `.gate0-workspace/`、`.gate-t0-workspace/`、`.clued/`、`.truth-state/`（磁盘存在，.gitignore 忽略） | 同左 |
@@ -79,10 +79,14 @@
 - 未决 P1：ENV-DEFECT-001/002（环境缺陷，ADR-R3-006 规避已验证；
   真实环境接线与试装需单独授权）；六动作真实环境执行（等待试装授权）
 
-## 8. Git Evidence（提交后回填）
+## 8. Git Evidence（提交后现场复核）
 
-- Gate 3 提交：<回填 HEAD>；起止 HEAD：`3f82797` → <回填>
-- remote main / ahead-behind / worktree：<回填现场复核>
+- Gate 3 提交：`9509784dcaa4462608748a606267369dde494c44`（11 文件，+1462）
+- 起止 HEAD：`3f82797` → `9509784`
+- remote main：`9dcc31be2b7f32f3199cfbd44e138d161fc0cfdb`（ls-remote 现场）
+- ahead/behind：**9/0**（9dcc31b..HEAD 线性 9 提交）
+- worktree：porcelain 零输出（clean）
+- 真实 memory / 冻结区：逐文件 hash DIFF=0
 - 无 rewrite / 无 push / 无 tag / 无 release
 
 ## 9. Next Decision
