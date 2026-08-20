@@ -1,0 +1,54 @@
+{
+  "case_count": 111,
+  "corpus_hash": "1bc2374405f9678bf455b6bfffb2ed6fe3b4c12054fb2fe521e8ac9db3482c0e",
+  "generated_at_utc": "2026-08-20T12:44:14Z",
+  "legacy_v1_metrics": {
+    "critical_memory_recall": 0.7763,
+    "current_scope_leakage_count": 0,
+    "estimated_prompt_tokens_p95": 50,
+    "false_recall_rate": 0.3444,
+    "no_memory_correctness": 1.0,
+    "no_memory_violations": 0,
+    "precision_at5": 0.1761,
+    "project_only_capability_gap_count": 0,
+    "superseded_leakage_count": 0
+  },
+  "manifest_type": "baseline-manifest",
+  "metric_contract_version": 2.0,
+  "no_memory": {
+    "case_count": 41,
+    "violated_case_ids": [],
+    "violated_count": 0
+  },
+  "paraphrase": {
+    "case_count": 12,
+    "hit_top5_case_ids": [
+      "pp-011"
+    ],
+    "hit_top5_count": 1
+  },
+  "replay_hash": "f4266eabd2bed94da36c5fa7d99fba17a3493418b849da3dfcfcee7e2842159c",
+  "secret_leaks": [],
+  "source_report_sha256": "1dd4fb3d6ad1219fe3fb940385792fc968ea0b02ecbb3c41d3d03e866e209743",
+  "source_results_sha256": "00c219c490b8a4321680034e48594cb8e85e98ba5aa924c7a98f647211305ed3",
+  "v2_metrics": {
+    "critical_memory_recall_v2": 0.7763,
+    "false_recall_rate_v2": 0.3444,
+    "hit_rate_at5": 0.8,
+    "precision_at5_v2": 0.6556
+  },
+  "v2_slices": {
+    "non_paraphrase": {
+      "critical_memory_recall_v2": 0.9063,
+      "false_recall_rate_v2": 0.0,
+      "hit_rate_at5": 0.9483,
+      "precision_at5_v2": 1.0
+    },
+    "paraphrase": {
+      "critical_memory_recall_v2": 0.0833,
+      "false_recall_rate_v2": 0.9688,
+      "hit_rate_at5": 0.0833,
+      "precision_at5_v2": 0.0313
+    }
+  }
+}
