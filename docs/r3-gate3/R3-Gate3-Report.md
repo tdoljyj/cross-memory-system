@@ -84,7 +84,9 @@
 - Gate 3 提交：`9509784dcaa4462608748a606267369dde494c44`（11 文件，+1462）
 - 起止 HEAD：`3f82797` → `9509784`
 - remote main：`9dcc31be2b7f32f3199cfbd44e138d161fc0cfdb`（ls-remote 现场）
-- ahead/behind：**9/0**（9dcc31b..HEAD 线性 9 提交）
+- ahead/behind：**9/0**（9509784 时刻现场复核，9dcc31b..HEAD 线性 9 提交）
+- **最终复核（01c2b29，含 §8 回填提交）**：ahead/behind = **10/0**（线性 10 提交，
+  2026-08-20T02:47:48Z 现场复核；remote 仍 9dcc31b，porcelain 零输出）
 - worktree：porcelain 零输出（clean）
 - 真实 memory / 冻结区：逐文件 hash DIFF=0
 - 无 rewrite / 无 push / 无 tag / 无 release
