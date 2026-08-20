@@ -74,12 +74,40 @@
 ## 7. 代码
 
 - 新增：`memory_engine/embedding_adapter.py`（`E5Embedder`：加载 + mean pooling + L2 + cosine，
-  `trust_remote_code=False` + `local_files_only=True`，维度运行时核验）。
+  `trust_remote_code=False` + `local_files_only=True`）。
+- 新增：`memory_engine/manifest_guard.py`（供应链 manifest 守卫，纯标准库无 torch 依赖，
+  `verify_model_manifest` / `manifest_canonical_hash` / `verify_hidden_size`）。
+- 新增测试：`tests/test_embedding_adapter.py`（17 项，合成 fixture，可重放）。
 - 工作区脚本（gitignored `.gate0-workspace/`）：`download_model.py`、`make_model_manifest.py`、
   `smoke_test.py`、`verify_determinism.py`、`fault_injection.py`、`reference_check.py`、
-  `wheel_hashes.py`。
+  `wheel_hashes.py`、`download_all_wheels.py`。
 
 ## 8. 退出条件
 
-Gate 0-B 运行合同、离线、确定性、故障注入全部 PASS。未触碰真实 Binding、未 push、未 tag、
-未 release。下一步 Gate 0-C（安全向量索引）。
+Gate 0-B 运行合同、离线、确定性、故障注入全部 PASS。未触碰真实 Binding、未 push origin/main、
+未 tag、未 release；Gate 0-A/B 证据已保全 push 至 `r4-gate0-wip` 分支。
+
+---
+
+## 9. R1 修订（产品所有者裁决，2026-08-21）
+
+R1 前存在两个阻断：① manifest 验证未接入 `E5Embedder` 实际加载路径；② 验证脚本在
+gitignored 工作区、不可独立重放。R1 已闭合：
+
+1. **manifest 验证接入加载路径**：`E5Embedder.__init__` 在加载 tokenizer/model **之前**调用
+   `verify_model_manifest`（schema / canonical self-hash / 模型 ID / 固定 revision /
+   冻结合同字段 / 白名单文件存在+大小+SHA-256 / 额外文件拒绝）+ `verify_backend_versions`
+   （当前环境包版本 vs manifest 记录）。任何不符 fail-closed。
+2. **canonical hashing 算法明确定义**：`self_hash = sha256(canonical_json(manifest 移除
+   self_hash 字段))`，`canonical_json = json.dumps(sort_keys=True, ensure_ascii=False,
+   separators=(",", ":"))`。「排除该字段」口径（非置空），实现于 `manifest_canonical_hash`。
+3. **batch 冻结**：`embed_query` / `embed_passages` 移除 `batch_size` 参数，固定 1/32，
+   调用方不可覆盖（`test_batch_args_frozen` 用 AST 断言签名）。
+4. **hidden_size 严格核验**：`getattr(config, "hidden_size", None)` + `verify_hidden_size`，
+   缺失（None）或 != 384 均拒绝（此前缺失会静默通过）。
+5. **输出核验**：`verify_embedding_output` 核验维度 / float32 / finite / L2，任一不符 fail-closed。
+6. **可重放单元测试**：`tests/test_embedding_adapter.py` 17 项（16 项纯标准库 + 1 项 torch 守卫），
+   覆盖缺文件 / 可解析文件改 1 byte / manifest 篡改 / 错误维度 / 额外模型文件 / hidden_size 缺失等。
+7. **完整传递依赖闭包**：`requirements-gate0b.lock.txt`（35 包）+ `artifact-hashes.json`
+   （全量 wheel SHA-256），见 `evidence/`。
+8. **报告口径修正**：本节 §8 已改为「未 push origin/main，已保全 push 至 WIP 分支」。

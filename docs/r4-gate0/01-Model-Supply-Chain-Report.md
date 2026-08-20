@@ -73,7 +73,9 @@ transformers 后端白名单 6 文件**，其余一律拒绝：
 ### 2.4 MODEL-MANIFEST
 
 - 原子写（临时文件 + rename）：✅
-- self SHA-256：`f1467a159ca942bd38fecdf69c96c9acca094628c5f458dfcb1d10dca691f88c`
+- 文件 SHA-256：`8099e598ae5782d5f86785be8cc04de44d12b93d81fc74af86608c35faf9649c`
+- canonical self-hash（`self_hash` 字段）：`7e57626c357a0adbd5f6d83a9b46d38e18ef08600785035dd9ff9f218235ad5a`
+  （算法 = sha256(canonical_json(manifest 移除 self_hash 字段))，见 `manifest_guard.py`）
 - 去敏证据：`docs/r4-gate0/evidence/model-manifest.redacted.json`
 
 ---
@@ -83,4 +85,19 @@ transformers 后端白名单 6 文件**，其余一律拒绝：
 Gate 0-B 退出条件「供应链、运行合同、离线与故障注入全部 PASS」已满足（运行合同与故障注入
 见 `02-Embedding-Runtime-Contract-Report.md`）。无哈希不匹配，未触发停止条件。
 
-**下一步**：Gate 0-C（安全向量索引）。
+**下一步**：Gate 0-C（安全向量索引）——R1 闭合后经产品所有者复核放行。
+
+---
+
+## 4. R1 修订（产品所有者裁决，2026-08-21）
+
+R1 前两个阻断（manifest 验证未接入加载路径、验证脚本不可重放）已闭合，详见
+`02-Embedding-Runtime-Contract-Report.md` §9。本报告侧补充供应链证据：
+
+- **manifest 验证接入**：`manifest_guard.verify_model_manifest` 在加载前校验 schema / canonical
+  self-hash / 模型 ID / 固定 revision / 冻结合同字段 / 白名单文件存在+大小+SHA-256 / 额外文件拒绝。
+- **完整传递依赖闭包**：`requirements-gate0b.lock.txt`（35 包）全量 wheel SHA-256 见
+  `evidence/artifact-hashes.redacted.json`（R1 前仅 6 个核心包）。
+- **download-receipt** 已从模型目录移入 `evidence/download-receipt.json`（模型目录仅保留
+  6 白名单文件 + MODEL-MANIFEST.json，额外文件一律拒绝）。
+- 报告 push 口径已修正为「未 push origin/main，已保全 push 至 `r4-gate0-wip` 分支」。

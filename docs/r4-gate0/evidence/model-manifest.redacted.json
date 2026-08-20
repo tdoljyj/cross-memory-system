@@ -1,6 +1,6 @@
 {
+  "_file_sha256": "8099e598ae5782d5f86785be8cc04de44d12b93d81fc74af86608c35faf9649c",
   "_note": "redacted: 不含模型文件/向量/原始query/secret/home路径；仅 manifest 摘要",
-  "_self_sha256": "f1467a159ca942bd38fecdf69c96c9acca094628c5f458dfcb1d10dca691f88c",
   "backend": {
     "arch": "AMD64",
     "name": "transformers",
@@ -46,6 +46,7 @@
     "license": "MIT",
     "source": "https://huggingface.co/intfloat/multilingual-e5-small"
   },
+  "self_hash": "7e57626c357a0adbd5f6d83a9b46d38e18ef08600785035dd9ff9f218235ad5a",
   "whitelist_files": [
     {
       "filename": "config.json",

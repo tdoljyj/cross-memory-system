@@ -8,19 +8,56 @@
 - 归一化：L2 normalization
 - 相似度：cosine（归一化后即内积）
 - 精度：float32；维度 384；最大长度 512 token（超出截断）
-- batch：query=1；index build=32
+- batch：query=1；index build=32（固定，禁止调用方覆盖）
 - remote code：trust_remote_code=False
 - runtime：完全离线（local_files_only 等价语义）
+
+供应链不变量（R4-G0-B R1）：加载 tokenizer/model **之前**必须通过
+`manifest_guard.verify_model_manifest` 的完整校验（schema / self-hash /
+白名单文件大小与 SHA-256 / 模型 ID / 固定 revision / 冻结合同字段 / 额外文件
+拒绝），任何不符 fail-closed（抛异常）。backend 包版本须与 manifest 记录一致。
 """
-import os
+import importlib.metadata
+
 import torch
 import torch.nn.functional as F
 from transformers import AutoModel, AutoTokenizer
 
+from memory_engine.manifest_guard import (
+    DIM, MAX_LENGTH, QUERY_BATCH, PASSAGE_BATCH,
+    verify_model_manifest, verify_hidden_size,
+)
+
 QUERY_PREFIX = "query: "
 PASSAGE_PREFIX = "passage: "
-DIM = 384
-MAX_LENGTH = 512
+
+
+def verify_backend_versions(manifest):
+    """验证当前环境包版本与 manifest backend.packages 记录一致。"""
+    expected = (manifest.get("backend") or {}).get("packages") or {}
+    for pkg, ver in expected.items():
+        try:
+            cur = importlib.metadata.version(pkg)
+        except importlib.metadata.PackageNotFoundError:
+            raise RuntimeError("backend package not installed: %s" % pkg)
+        if cur != ver:
+            raise RuntimeError(
+                "backend version mismatch: %s expected=%s got=%s"
+                % (pkg, ver, cur))
+
+
+def verify_embedding_output(vec):
+    """核验 embedding 输出：维度 / float32 / finite / L2 归一化。"""
+    if vec.shape[-1] != DIM:
+        raise RuntimeError("embedding dim=%s != %d" % (vec.shape[-1], DIM))
+    if vec.dtype != torch.float32:
+        raise RuntimeError("embedding dtype=%s != float32" % vec.dtype)
+    if not torch.isfinite(vec).all():
+        raise RuntimeError("embedding contains non-finite value")
+    norms = vec.norm(p=2, dim=1)
+    if (norms - 1.0).abs().max() > 1e-4:
+        raise RuntimeError("embedding L2 norm != 1")
+    return vec
 
 
 class E5Embedder:
@@ -29,19 +66,19 @@ class E5Embedder:
     def __init__(self, model_dir, device="cpu"):
         self.model_dir = model_dir
         self.device = device
-        # 完全离线 + 禁 remote code
+        # 1) 加载前：manifest 完整校验 + backend 版本校验（fail-closed）
+        self.manifest = verify_model_manifest(model_dir)
+        verify_backend_versions(self.manifest)
+        # 2) 完全离线 + 禁 remote code
         self.tokenizer = AutoTokenizer.from_pretrained(
             model_dir, trust_remote_code=False, local_files_only=True)
         self.model = AutoModel.from_pretrained(
             model_dir, trust_remote_code=False, local_files_only=True)
         self.model.to(device)
         self.model.eval()
-        # 运行时维度核验
-        cfg = self.model.config
-        hidden = getattr(cfg, "hidden_size", None)
-        if hidden is not None and hidden != DIM:
-            raise RuntimeError(
-                "模型 hidden_size=%s 与合同 dimension=%d 不符" % (hidden, DIM))
+        # 3) hidden_size 严格核验：缺失（getattr->None）或 != 384 均拒绝
+        hidden = getattr(self.model.config, "hidden_size", None)
+        verify_hidden_size(hidden)
 
     @staticmethod
     def _mean_pooling(model_output, attention_mask):
@@ -52,7 +89,7 @@ class E5Embedder:
         return summed / counts
 
     def _encode(self, texts, prefix, batch_size):
-        """texts -> L2 归一化后的 float32 向量 [N, 384]。"""
+        """texts -> L2 归一化后的 float32 向量 [N, 384]，并做输出核验。"""
         full = [prefix + t for t in texts]
         vecs = []
         for i in range(0, len(full), batch_size):
@@ -68,17 +105,19 @@ class E5Embedder:
             vecs.append(normed)
         if not vecs:
             return torch.zeros((0, DIM), dtype=torch.float32)
-        return torch.cat(vecs, dim=0)
+        vec = torch.cat(vecs, dim=0)
+        # 输出核验：shape / dtype / finite / L2（fail-closed）
+        return verify_embedding_output(vec)
 
-    def embed_query(self, text, batch_size=1):
-        """单条 query embedding（batch=1）。返回 [1, 384] 归一化向量。"""
-        return self._encode([text], QUERY_PREFIX, batch_size)
+    def embed_query(self, text):
+        """单条 query embedding（batch 固定 = 1）。返回 [1, 384]。"""
+        return self._encode([text], QUERY_PREFIX, QUERY_BATCH)
 
-    def embed_passages(self, texts, batch_size=32):
-        """批量 passage embedding（index build batch=32）。返回 [N, 384]。"""
+    def embed_passages(self, texts):
+        """批量 passage embedding（batch 固定 = 32）。返回 [N, 384]。"""
         if not texts:
             return torch.zeros((0, DIM), dtype=torch.float32)
-        return self._encode(texts, PASSAGE_PREFIX, batch_size)
+        return self._encode(texts, PASSAGE_PREFIX, PASSAGE_BATCH)
 
     @staticmethod
     def cosine(q_vec, p_vec):
