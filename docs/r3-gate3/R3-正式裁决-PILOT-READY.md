@@ -58,3 +58,26 @@
 
 - 受控试装通过后，才可**逐 Binding** 裁决 ENFORCED；
 - push、tag、release 继续分别裁决（当前 NO）。
+
+---
+
+## 6. 追加裁决（2026-08-20）：R3 升级 PILOT-VALIDATED
+
+- **依据**：Trial 4 四阶段全 PASS + 普通 fast-forward push 成功（详见 `docs/r3-gate3/试装报告-20260820-Trial4-PILOT-VALIDATED.md`）
+- **分层最终状态**：
+
+| 层级 | 裁决 |
+|---|---|
+| Trial 4 | **PASS** |
+| 真实 Binding | **ACTIVE / ONLINE / ENFORCED** |
+| R3 授权交付范围 | **PASS** |
+| 真实受控试装 | **PASS / PILOT-VALIDATED** |
+| 跨平台、其他 Agent/Binding 泛化 | PARTIAL / 未验证 |
+| 发布状态 | UNRELEASED |
+| Tag / Release / Purge | NO |
+
+- **ENFORCED 严格限定于**：Binding `codex-workbuddy-windows-primary`、构件 a418618、合同 v1、Windows / Python 3.13.x、clued.binding.v0.1＋lifecycle.state.v0.1、当前通过 conformance 的构件与证据组合；运行时仍须执行证据新鲜度与强绑定校验；不得扩展为所有平台或所有 Adapter 已 ENFORCED。
+- **测试口径固定**：542 = 448 PASS / 0 FAIL / 94 SKIP / 0 ERROR；SKIP：ENV 63 / HEURISTIC 31 / UNKNOWN 0；不得简称「全量全绿」。
+- **R3 开发执行阶段至此收口**：后续进入独立的真实使用观察期；发布与版本标签继续另行裁决。
+
+> 本文件历史（Gate 3 PASS / PILOT-READY）保留原貌，仅追加本节，不改写历史。
