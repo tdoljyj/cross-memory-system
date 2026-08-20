@@ -209,19 +209,30 @@ def test_g7_journal_zero():
 
 @register
 def test_g8_binding_complete_no_half_write():
-    """资格 8：binding 状态完整（无半写：字段齐、三轴合法）。"""
+    """资格 8：binding 状态完整（无半写：字段齐、三轴合法）。
+
+    P0-1（2026-08-20）：三轴位于 state.json，binding.json 为 Clued manifest。
+    """
     tmp = tempfile.mkdtemp(prefix="wq-")
     try:
         state = os.path.join(tmp, "state")
         rc, _o, _e, _r, _p = _run_worker(state, "b1", os.path.join(tmp, "r.json"))
         _check(rc == 0, "exit 0")
-        st = json.load(open(os.path.join(state, "b1", "binding.json"), encoding="utf-8"))
+        st = json.load(open(os.path.join(state, "b1", "state.json"),
+                            encoding="utf-8"))
         for k in ("binding", "session", "truth", "binding_id"):
-            _check(k in st, "字段 %s 存在" % k)
+            _check(k in st, "state.json 字段 %s 存在" % k)
         _check(st["binding"] == "ACTIVE" and st["truth"] == "ADVISORY"
                and st["session"] == "ONLINE", "三轴完整（ACTIVE/ADVISORY/ONLINE）")
-        _check(not os.path.exists(os.path.join(state, "b1", "binding.json.tmp")),
+        _check(not os.path.exists(os.path.join(state, "b1", "state.json.tmp")),
                "无半写 .tmp")
+        # P0-1：binding.json 必须为合法 Clued manifest（三轴字段不得混入）
+        man = json.load(open(os.path.join(state, "b1", "binding.json"),
+                             encoding="utf-8"))
+        _check(man.get("schema_version") == "clued.binding.v0.1",
+               "binding.json 为 Clued manifest")
+        _check("binding" not in man and "truth" not in man,
+               "三轴字段不得混入 manifest")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

@@ -28,6 +28,8 @@ from clued_testkit import (
     check, git, make_controller, make_sandbox, sh,
 )
 
+from clued_testkit import requires_ref_write, run_tests  # ENV 归因（R3 P0-3）
+
 from clued import manifests
 from clued import state_machine as SM
 from clued.errors import CluedError
@@ -530,18 +532,11 @@ TESTS = [
 ]
 
 
+
+TESTS = [requires_ref_write(t) for t in TESTS]
+
 def main():
-    failures = 0
-    for fn in TESTS:
-        try:
-            fn()
-            print("PASS %s" % fn.__name__)
-        except Exception as exc:
-            failures += 1
-            print("FAIL %s: %s" % (fn.__name__, exc))
-    print("----")
-    print("%d test(s), %d failure(s)" % (len(TESTS), failures))
-    sys.exit(1 if failures else 0)
+    run_tests(TESTS)
 
 
 if __name__ == "__main__":

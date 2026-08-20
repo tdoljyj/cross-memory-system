@@ -16,6 +16,29 @@ CAPABILITY_LEVELS = ("UNAVAILABLE", "ADVISORY", "AUDIT", "ENFORCED")
 
 CONTRACT_METHODS = ("query", "receipt", "claim_gate", "capability", "lifecycle")
 
+# ---- P0-3 裁决（2026-08-20）：Conformance environment 语义冻结（合同条款） ----
+# ConformanceVerifier.verify(environment=...) 的 environment 表示
+# **验证执行环境**（validation execution environment），即"执行 conformance
+# 验证时验证器所处/所声明的环境类别"，与 Binding 的部署位置正交：
+#
+#   "isolated" —— 隔离/临时验证执行环境（测试夹具、试装验证、临时 home）。
+#                全证据链（receipt 有效 + truth-state 强绑定 + 证据新鲜）下
+#                可产出 ENFORCED 档位；该档位证明"该构件组合在隔离验证执行
+#                环境中通过 conformance"，**不自动迁移到任何部署环境**。
+#   "real"     —— 真实部署执行环境（产品运行环境）。最多 AUDIT，
+#                未获产品所有者授权不得自行升级。
+#
+# 防误解条款（ADR-R3-007）：
+# 1) 真实 Binding 的试装验证以 environment="isolated" 调用 verifier，
+#    表示"验证发生在隔离执行环境中"，**不等于**"该 Binding 部署在隔离环境"；
+# 2) ENFORCED 档位绑定 (revision, 合同版本, 证据链, 验证执行环境) 元组，
+#    部署环境的最终档位由产品所有者另行裁决；
+# 3) 任何调用方不得把 environment 当作 Binding 部署属性上报/宣称。
+ENVIRONMENT_SEMANTICS = {
+    "isolated": "验证执行环境=隔离/临时（可产出 ENFORCED 档位证据）",
+    "real": "验证执行环境=真实部署（最多 AUDIT，未授权不得升级）",
+}
+
 
 class ContractViolation(Exception):
     """Adapter 违反公共合同。"""

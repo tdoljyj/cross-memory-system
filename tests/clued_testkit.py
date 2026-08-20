@@ -58,6 +58,87 @@ def check(cond, msg):
         raise AssertionError(msg)
 
 
+# ---- ENV 归因（R3 P0-3 裁决，2026-08-20）----
+# 不支持 .git/refs 持久写入的环境（沙盒 overlay 拦截 git 对 refs 的写）下，
+# sync doctor 的 behavior probe 必 FAIL → install 预检 doctor 项必 FAIL →
+# 所有依赖 install 的 clued 测试连锁"代码失败"。这些失败是**环境限制**，
+# 归因 ENV：测试显式 SKIP 并标注，而不是产生误导性的代码失败计数。
+# 禁止通过放宽 runtime doctor 消除（doctor 探针保持严格）。
+class EnvSkip(Exception):
+    """环境限制导致的跳过（ENV 归因，非代码失败）。"""
+
+
+ENV_REF_REASON = (
+    "ENV: .git/refs 写入不持久（沙盒 overlay 拦截 git refs 写），"
+    "install 预检 doctor behavior probe 必败；环境限制归因 ENV，非代码失败")
+
+_ENV_REF_OK = None
+
+
+def env_refs_write_persists():
+    """探测 .git/refs 写入持久性（与 sync doctor behavior probe 同逻辑）。
+
+    在独立临时 repo 上：update-ref 写 → rev-parse 读回 → 删除。
+    结果进程内缓存。失败 = 环境限制（ENV），不是代码缺陷。
+    """
+    global _ENV_REF_OK
+    if _ENV_REF_OK is not None:
+        return _ENV_REF_OK
+    tmp = tempfile.mkdtemp(prefix="envprobe-")
+    try:
+        git("init", "-b", "main", cwd=tmp)
+        git("config", "user.name", "Probe", cwd=tmp)
+        git("config", "user.email", "probe@localhost", cwd=tmp)
+        with open(os.path.join(tmp, "a.txt"), "w", encoding="utf-8") as f:
+            f.write("x")
+        git("add", ".", cwd=tmp)
+        git("commit", "-m", "init", cwd=tmp)
+        head = git("rev-parse", "HEAD", cwd=tmp).stdout.strip()
+        test_ref = "refs/remotes/origin/env-probe"
+        p1 = sh([GIT, "-C", tmp, "update-ref", test_ref, head],
+                check_fail=False)
+        p2 = sh([GIT, "-C", tmp, "rev-parse", test_ref], check_fail=False)
+        sh([GIT, "-C", tmp, "update-ref", "-d", test_ref], check_fail=False)
+        _ENV_REF_OK = (p1.returncode == 0 and p2.returncode == 0
+                       and p2.stdout.strip() == head)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return _ENV_REF_OK
+
+
+def requires_ref_write(fn):
+    """装饰器：环境不支持 .git/refs 持久写入 → EnvSkip（ENV 归因）。
+
+    用法：@requires_ref_write 标注依赖 install（预检 doctor）的测试。
+    """
+    def wrapper(*args, **kwargs):
+        if not env_refs_write_persists():
+            raise EnvSkip(ENV_REF_REASON)
+        return fn(*args, **kwargs)
+    wrapper.__name__ = getattr(fn, "__name__", "test")
+    return wrapper
+
+
+def run_tests(tests):
+    """统一 runner：PASS / FAIL / SKIP(ENV) 三态输出 + 归因计数。"""
+    failures = 0
+    skipped = 0
+    for fn in tests:
+        try:
+            fn()
+            print("PASS %s" % fn.__name__)
+        except EnvSkip as e:
+            skipped += 1
+            print("SKIP %s (%s)" % (fn.__name__, e))
+        except Exception as e:
+            failures += 1
+            print("FAIL %s: %s" % (fn.__name__, e))
+    print("----")
+    print("%d test(s), %d failure(s), %d skipped (ENV)"
+          % (len(tests), failures, skipped))
+    sys.exit(1 if failures else 0)
+
+
 def make_sandbox(tmp, with_engine=True):
     """创建沙盒克隆 + 本地 bare remote。返回 repo 路径。"""
     repo = os.path.join(tmp, "repo")

@@ -19,6 +19,7 @@ import sys
 import tempfile
 
 from clued_testkit import check, make_controller
+from clued_testkit import requires_ref_write, run_tests  # ENV 归因（R3 P0-3）
 
 random.uniform = lambda a, b: 0.0  # 关闭认证重试抖动（测试提速）
 
@@ -438,18 +439,11 @@ TESTS = [
 ]
 
 
+
+TESTS = [requires_ref_write(t) if t.__name__ in {'test_degraded_status_shows_policy_and_window_fields', 'test_doctor_reports_policy', 'test_explicit_command_switches_policy', 'test_legacy_binding_migrates_to_strict_idempotent', 'test_new_install_defaults_to_balanced'} else t for t in TESTS]
+
 def main():
-    failures = 0
-    for fn in TESTS:
-        try:
-            fn()
-            print("PASS %s" % fn.__name__)
-        except Exception as exc:
-            failures += 1
-            print("FAIL %s: %s" % (fn.__name__, exc))
-    print("----")
-    print("%d test(s), %d failure(s)" % (len(TESTS), failures))
-    sys.exit(1 if failures else 0)
+    run_tests(TESTS)
 
 
 if __name__ == "__main__":

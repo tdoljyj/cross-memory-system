@@ -8,6 +8,7 @@
 """
 
 import glob
+import json
 import os
 
 from . import errors
@@ -132,6 +133,41 @@ class AgentRegistry(object):
             os.makedirs(d)
         manifests.atomic_write_json(
             self.paths.binding_manifest(binding["binding_id"]), binding)
+
+    # P0-1 裁决（2026-08-20）：安装事务必须原子创建
+    # bindings/<id>/binding.json（Clued manifest）+ bindings/<id>/state.json（三轴）。
+    def save_binding_with_state(self, binding, state):
+        """安装事务原子双写：manifest 与三轴 state 一起创建，任一失败回滚到 ABSENT。"""
+        d = self.paths.binding_dir(binding["binding_id"])
+        mpath = self.paths.binding_manifest(binding["binding_id"])
+        spath = os.path.join(d, "state.json")
+        if os.path.isfile(mpath) or os.path.isfile(spath):
+            raise errors.CluedError(
+                "CLD-INSTALL-001",
+                "目标文件已存在（binding_id=%s），禁止覆盖创建（幂等由上层处理）"
+                % binding["binding_id"])
+        os.makedirs(d, exist_ok=True)
+        m_tmp = mpath + ".tmp"
+        s_tmp = spath + ".tmp"
+        try:
+            with open(m_tmp, "w", encoding="utf-8") as f:
+                json.dump(binding, f, ensure_ascii=False, indent=1)
+                f.flush()
+            with open(s_tmp, "w", encoding="utf-8") as f:
+                json.dump(state, f, ensure_ascii=False, indent=1)
+                f.flush()
+            os.replace(m_tmp, mpath)
+            try:
+                os.replace(s_tmp, spath)
+            except BaseException:
+                if os.path.isfile(mpath):
+                    os.remove(mpath)  # 回滚 manifest，保持 ABSENT（无半创建）
+                raise
+        finally:
+            for p in (m_tmp, s_tmp):
+                if os.path.isfile(p):
+                    os.remove(p)
+        return binding
 
     def artifact_checks(self, binding):
         """校验 installed_artifacts 的 sha256 与路径（协议 §12.2.8 / §15.3）。

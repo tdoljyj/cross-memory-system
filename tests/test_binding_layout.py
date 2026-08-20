@@ -47,20 +47,105 @@ def _ctrl(tmp):
 
 
 def _canonical(state, bid):
+    """P0-1：三轴状态规范路径 = state.json"""
+    return os.path.join(state, bid, "state.json")
+
+
+def _manifest(state, bid):
+    """P0-1：Clued manifest 路径 = binding.json"""
     return os.path.join(state, bid, "binding.json")
 
 
 @register
 def test_install_writes_directory_layout():
-    """R3 install 输出必须为 bindings/<id>/binding.json（正式布局）。"""
+    """P0-1：安装必须原子创建 binding.json（manifest）+ state.json（三轴）。"""
     tmp = tempfile.mkdtemp(prefix="bl-")
     try:
         c = _ctrl(tmp)
         c.install("b1")
         state = os.path.join(tmp, "state")
-        _check(os.path.isfile(_canonical(state, "b1")), "目录布局 binding.json 存在")
+        _check(os.path.isfile(_manifest(state, "b1")),
+               "binding.json（manifest）存在")
+        _check(os.path.isfile(_canonical(state, "b1")),
+               "state.json（三轴）存在")
         _check(not os.path.isfile(os.path.join(state, "b1.json")),
                "无扁平残留（新写入）")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+@register
+def test_install_manifest_passes_clued_validation():
+    """P0-1 验收：安装产出的 binding.json 必须通过 clued registry manifest 校验
+    （这是 clued doctor 在兼容 fixture 中 PASS 的前提）。"""
+    tmp = tempfile.mkdtemp(prefix="bl-")
+    try:
+        c = _ctrl(tmp)
+        c.install("codex-workbuddy-windows-primary")
+        state = os.path.join(tmp, "state")
+        with open(_manifest(state, "codex-workbuddy-windows-primary"),
+                  encoding="utf-8") as f:
+            man = json.load(f)
+        from clued.manifests import validate_binding_manifest
+        ok, err = validate_binding_manifest(man)
+        _check(ok, "安装产出 manifest 校验失败: %s" % err)
+        _check(man["schema_version"] == "clued.binding.v0.1", "schema 版本正确")
+        _check(man["binding_id"] == "codex-workbuddy-windows-primary",
+               "binding_id 关联")
+        _check(man["scopes"], "scopes 非空")
+        # state.json 与 manifest 通过 binding_id 关联
+        with open(_canonical(state, "codex-workbuddy-windows-primary"),
+                  encoding="utf-8") as f:
+            st = json.load(f)
+        _check(st["binding_id"] == man["binding_id"], "state 与 manifest 的 binding_id 一致")
+        _check(st["schema_version"] == "lifecycle.state.v0.1", "state schema 版本")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+@register
+def test_manifest_only_half_created_fail_closed():
+    """P0-1：仅 manifest 无 state.json（半创建）→ CLD-LAYOUT-004 fail-closed。"""
+    tmp = tempfile.mkdtemp(prefix="bl-")
+    try:
+        state = os.path.join(tmp, "state")
+        c = LifecycleController(state_root=state)
+        c.install("b1")
+        # 模拟半创建：删除 state.json，保留 binding.json（manifest）
+        os.remove(_canonical(state, "b1"))
+        try:
+            c.load("b1")
+            raise AssertionError("半创建必须 fail-closed")
+        except LifecycleError as e:
+            _check(e.code == "CLD-LAYOUT-004", "fail-closed 码 CLD-LAYOUT-004")
+        _check(c.list_bindings() == [], "半创建不进入枚举")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+@register
+def test_legacy_binding_json_read_only():
+    """P0-1：legacy 三轴 binding.json 兼容读（directory-legacy），写入拒绝
+    （CLD-LAYOUT-003，须先迁移；真实 Binding 现状保护）。"""
+    tmp = tempfile.mkdtemp(prefix="bl-")
+    try:
+        state = os.path.join(tmp, "state")
+        os.makedirs(os.path.join(state, "b1"))
+        with open(_manifest(state, "b1"), "w", encoding="utf-8") as f:
+            json.dump({"binding": "ACTIVE", "session": "ONLINE",
+                       "truth": "ENFORCED", "binding_id": "b1",
+                       "updated_at": time.time()}, f)
+        c = LifecycleController(state_root=state)
+        st = c.load("b1")
+        _check(st is not None and st["_layout"] == "directory-legacy",
+               "legacy 兼容读标记 directory-legacy")
+        _check(st["truth"] == "ENFORCED", "legacy 状态可读")
+        try:
+            c.save("b1", {"binding": "ACTIVE", "session": "ONLINE",
+                          "truth": "ADVISORY"})
+            raise AssertionError("legacy 写入必须拒绝")
+        except LifecycleError as e:
+            _check(e.code == "CLD-LAYOUT-003", "写入拒绝码 CLD-LAYOUT-003")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

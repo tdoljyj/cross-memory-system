@@ -35,6 +35,10 @@ PY = os.path.join(REPO_ROOT, "sync-memory.py")
 AGENTS = os.path.join(REPO_ROOT, "AGENTS.md")
 MEMORY = os.path.join(REPO_ROOT, "memory")
 
+# R3 P0-3：ENV 归因（沙盒 overlay 拦截 .git/refs 写入 → doctor probe 必败）
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from clued_testkit import EnvSkip, env_refs_write_persists  # noqa: E402
+
 GIT = shutil.which("git") or "git"
 # 优先 pwsh（PowerShell 7）：本机 Windows PowerShell 5.1 的 PSModulePath 被 pwsh
 # 运行时污染，Get-FileHash 不可用；真实同步脚本运行环境即 pwsh。
@@ -1075,7 +1079,15 @@ def test_ps1_doctor_local_behind_blocks(sb):
 
 @sandboxed
 def test_py_doctor_ref_write_probe(sb):
-    """GAP-2-3 回归：py doctor 须含 ref write persists 行为探针（沙盒健康态 PASS）。"""
+    """GAP-2-3 回归：py doctor 须含 ref write persists 行为探针（沙盒健康态 PASS）。
+
+    R3 P0-3：环境不支持 .git/refs 持久写入（沙盒 overlay）时探针必 FAIL ——
+    该环境限制归因 ENV（SKIP），而非代码失败；支持环境仍必须 ALL PASS。
+    """
+    if not env_refs_write_persists():
+        raise EnvSkip(
+            "ENV: .git/refs 写入不持久（沙盒 overlay），探针健康态无法成立；"
+            "环境限制归因 ENV，非代码失败")
     clone = sb.add_clone("a")
     script = sb.install_py(clone)
     hook = os.path.join(sb.tmp, "AGENTS-hook.md")
@@ -1887,6 +1899,9 @@ def main():
         try:
             fn()
             print("PASS %s" % name)
+        except EnvSkip as e:
+            print("SKIP %s (%s)" % (name, e))
+            skipped += 1
         except Exception as e:
             failures += 1
             print("FAIL %s: %s" % (name, e))

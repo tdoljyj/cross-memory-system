@@ -77,10 +77,10 @@ def test_idempotent_install_journal_zero():
         _check(result.get("note") == "ALREADY_INSTALLED", "幂等返回")
         leftovers = [f for f in os.listdir(state) if f.startswith(".journal-")]
         _check(leftovers == [], "幂等返回后 journal 零残留（R1 修复）")
-        # binding 无重复/漂移
+        # binding 无重复/漂移（P0-1：三轴位于 state.json）
         files = [f for f in os.listdir(state) if f == "b1"]
         _check(len(files) == 1, "binding 文件唯一")
-        st = json.load(open(os.path.join(state, "b1", "binding.json"), encoding="utf-8"))
+        st = json.load(open(os.path.join(state, "b1", "state.json"), encoding="utf-8"))
         _check(st["binding"] == "ACTIVE" and st["truth"] == "ADVISORY",
                "三轴无漂移")
     finally:

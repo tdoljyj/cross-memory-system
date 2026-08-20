@@ -591,19 +591,27 @@ function Invoke-DoctorMode {
     $trackedRef = (git -C $repoRoot rev-parse origin/main 2>&1 | Out-String).Trim()
     Report "tracking ref matches remote" ($remoteHashDoc -and $trackedRef -eq $remoteHashDoc) ("origin/main=" + $trackedRef + " remote=" + $remoteHashDoc)
 
-    # GAP-2-3（对齐 py doctor）：本地与远端版本对齐阻挡态——落后必须标红并指引 re-pull。
+    # GAP-2-3（对齐 py doctor）：本地与远端版本对齐阻挡态——线性领先报 AHEAD、
+    # 线性落后报 BEHIND、双方各有提交才报 DIVERGED（R3 P0-3 文案修正，2026-08-20）。
     $localHead = (git -C $repoRoot rev-parse HEAD 2>&1 | Out-String).Trim()
     if ($remoteHashDoc -and $localHead) {
         if ($localHead -eq $remoteHashDoc) {
-            Report "local == remote" $true "一致"
+            Report "local == remote" $true "一致（SYNCED）"
         } else {
             git -C $repoRoot -c http.proxy=$proxy -c http.sslBackend=openssl -c http.lowSpeedLimit=1 -c http.lowSpeedTime=15 fetch --quiet origin main 2>&1 | Out-Null
             if ($LASTEXITCODE -ne 0) { git -C $repoRoot -c http.lowSpeedLimit=1 -c http.lowSpeedTime=15 fetch --quiet origin main 2>&1 | Out-Null }
             git -C $repoRoot merge-base --is-ancestor $localHead $remoteHashDoc 2>$null | Out-Null
-            if ($LASTEXITCODE -eq 0) {
-                Report "local == remote" $false ("本地落后远端（{0}..{1}），读前必须 re-pull，否则结论不可信" -f $localHead.Substring(0, 12), $remoteHashDoc.Substring(0, 12))
+            $behind = ($LASTEXITCODE -eq 0)
+            git -C $repoRoot merge-base --is-ancestor $remoteHashDoc $localHead 2>$null | Out-Null
+            $ahead = ($LASTEXITCODE -eq 0)
+            if ($behind -and -not $ahead) {
+                $n = (git -C $repoRoot rev-list --count ("{0}..{1}" -f $localHead, $remoteHashDoc) 2>$null | Out-String).Trim()
+                Report "local == remote" $false ("本地落后远端（BEHIND {0} 提交，{1}..{2}），读前必须 re-pull，否则结论不可信" -f $n, $localHead.Substring(0, 12), $remoteHashDoc.Substring(0, 12))
+            } elseif ($ahead -and -not $behind) {
+                $n = (git -C $repoRoot rev-list --count ("{0}..{1}" -f $remoteHashDoc, $localHead) 2>$null | Out-String).Trim()
+                Report "local == remote" $false ("本地领先远端（AHEAD {0} 提交，{1}..{2}），未 push（Push 授权单独裁决）" -f $n, $remoteHashDoc.Substring(0, 12), $localHead.Substring(0, 12))
             } else {
-                Report "local == remote" $false "本地与远端分叉，需手动语义合并"
+                Report "local == remote" $false "本地与远端分叉（DIVERGED，双方各有提交），需手动语义合并"
             }
         }
     } else {

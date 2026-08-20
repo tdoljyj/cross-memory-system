@@ -221,6 +221,14 @@ def local_head():
     return out if code == 0 else None
 
 
+def rev_list_count(a, b):
+    """a..b 方向的提交数（a 为祖先端）。失败返回 0（文案降级，不阻断）。"""
+    code, out, _ = git("rev-list", "--count", "%s..%s" % (a, b), proxy=False)
+    if code == 0 and out and out.strip().isdigit():
+        return int(out.strip())
+    return 0
+
+
 def load_index():
     """读取 memory/index.json（文件集 + L1-L6 召回映射的单一事实源）。"""
     path = os.path.join(REPO, "memory", "index.json")
@@ -994,18 +1002,32 @@ def cmd_doctor():
     report("memory dir healthy (files per memory/index.json)", memory_dir_healthy())
     recall_ok, recall_detail = index_recall_valid()
     report("index.json recall 段名有效", recall_ok, recall_detail)
-    # 版本对齐阻挡态：本地落后远端时必须显式标红并指引 re-pull（doctor 不再静默放行）
+    # 版本对齐阻挡态（R3 P0-3 文案修正，2026-08-20）：
+    # - 线性领先（本地 AHEAD 远端）→ 报告 AHEAD（未 push，不误报"分叉"）；
+    # - 线性落后（本地 BEHIND 远端）→ 报告 BEHIND（读前必须 re-pull）；
+    # - 双方各有提交（非祖先关系）→ 才报告 DIVERGED（需手动语义合并）。
     if local and remote:
         if local == remote:
-            report("local == remote", True, "一致")
+            report("local == remote", True, "一致（SYNCED）")
         else:
             git("fetch", "origin", "main")  # 确保远端对象在本地，merge-base 才能判定方向
-            code, _, _ = git("merge-base", "--is-ancestor", local, remote, proxy=False)
-            if code == 0:
+            c_behind, _, _ = git("merge-base", "--is-ancestor",
+                                 local, remote, proxy=False)  # local 是 remote 祖先 → 落后
+            c_ahead, _, _ = git("merge-base", "--is-ancestor",
+                                remote, local, proxy=False)  # remote 是 local 祖先 → 领先
+            if c_behind == 0 and c_ahead != 0:
+                _n = rev_list_count(local, remote)
                 report("local == remote", False,
-                       "本地落后远端（%s..%s），读前必须 re-pull，否则结论不可信" % (local[:12], remote[:12]))
+                       "本地落后远端（BEHIND %d 提交，%s..%s），读前必须 re-pull，否则结论不可信"
+                       % (_n, local[:12], remote[:12]))
+            elif c_ahead == 0 and c_behind != 0:
+                _n = rev_list_count(remote, local)
+                report("local == remote", False,
+                       "本地领先远端（AHEAD %d 提交，%s..%s），未 push（Push 授权单独裁决）"
+                       % (_n, remote[:12], local[:12]))
             else:
-                report("local == remote", False, "本地与远端分叉，需手动语义合并")
+                report("local == remote", False,
+                       "本地与远端分叉（DIVERGED，双方各有提交），需手动语义合并")
     else:
         report("local == remote", False, "无法判定（本地或远端不可读）")
 

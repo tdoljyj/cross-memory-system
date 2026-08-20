@@ -9,11 +9,21 @@
 - 分层结论：仓库 revision/Adapter 实现 → ENFORCED-CAPABLE；
   临时 home 通过 conformance 的测试 Binding → ENFORCED；
   真实环境 Binding → 继续 ADVISORY/AUDIT。
+
+P0-3 裁决（2026-08-20）environment 语义冻结（见 adapter_contract.ENVIRONMENT_SEMANTICS）：
+- environment = **验证执行环境**（validation execution environment），
+  与 Binding 部署位置正交；
+- "isolated"：隔离/临时验证执行环境 —— 全证据链可产出 ENFORCED 档位证据，
+  该档位证明"该构件组合在隔离验证执行环境中通过 conformance"，不自动迁移
+  到部署环境；
+- "real"：真实部署执行环境 —— 最多 AUDIT，未授权不得升级；
+- 真实 Binding 的试装验证以 isolated 调用，表示验证发生在隔离执行环境，
+  不等于 Binding 部署在隔离环境（防冒充条款，ADR-R3-007）。
 """
 
 import time
 
-from .adapter_contract import CAPABILITY_LEVELS
+from .adapter_contract import CAPABILITY_LEVELS, ENVIRONMENT_SEMANTICS
 from .truth_state import TruthStateStore, TruthStateError
 from .receipt import ReceiptError, TruthReceipt
 
@@ -100,6 +110,10 @@ class ConformanceVerifier(object):
 
         # 恶意自报：声明 ENFORCED 但实际证据不足 → 实际档位为准（已由上面判定）
         summary.append("声明=%s → 最终=%s" % (claim, capability))
+        # P0-3：summary 固化 environment 语义（验证执行环境，防冒充/防误读）
+        summary.append("environment=%s（%s）" % (
+            environment, ENVIRONMENT_SEMANTICS.get(
+                environment, "未定义环境语义（fail-closed 之外，按 isolated 之外处理）")))
         return capability, "; ".join(summary)
 
     # ---- ENFORCED-CAPABLE（仓库 revision / Adapter 实现） ----

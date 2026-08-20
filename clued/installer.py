@@ -307,8 +307,16 @@ class Installer(object):
                                  "安装阶段 doctor FAIL: %s"
                                  % doc.combined()[:400], state=SM.INSTALL_ERROR)
 
-            # 12) Commit Manifest：原子提交 binding / artifacts / node 状态
-            self.registry.save_binding(binding)
+            # 12) Commit Manifest（P0-1 原子双写）：binding.json（Clued manifest）
+            #     + state.json（lifecycle 三轴）一次事务创建，杜绝半创建/同路径
+            #     不同 schema 冲突。
+            from memory_engine.lifecycle_ctl import states as LCStates
+            from memory_engine.lifecycle_ctl.controller import STATE_SCHEMA
+            init_state = LCStates.new_state(binding="ACTIVE", session="ONLINE",
+                                            truth="ADVISORY")
+            init_state["binding_id"] = binding_id
+            init_state["schema_version"] = STATE_SCHEMA
+            self.registry.save_binding_with_state(binding, init_state)
             self.registry.update_node_binding_count()
             self.audit.append("bind_create", binding_id=binding_id,
                               request_id=request_id, result_code="ACTIVE",

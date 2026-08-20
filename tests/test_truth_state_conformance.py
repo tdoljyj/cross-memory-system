@@ -298,6 +298,63 @@ def test_update_rollback_and_journal_recovery():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+@register
+def test_p0_3_environment_semantics_matrix():
+    """P0-3 裁决：environment 语义矩阵冻结。
+
+    矩阵（环境 × 证据链 → 档位）：
+      isolated + 全证据 → ENFORCED
+      real     + 全证据 → AUDIT（未授权不得升级）
+      isolated + 无 receipt → ADVISORY（fail-closed）
+      real     + 无 receipt → ADVISORY
+      isolated + state 缺失 → ADVISORY
+    summary 必须携带 environment 语义标注（可追溯，ADR-R3-007）。
+    """
+    from memory_engine.truth.adapter_contract import ENVIRONMENT_SEMANTICS
+    tmp = tempfile.mkdtemp(prefix="ts-")
+    try:
+        store = _state(tmp)
+        ev = hashlib.sha256(b"e1").hexdigest()
+        store.write("b1", "fake", "r1", ev, "ADVISORY",
+                    evidence_meta={"verified_at": time.time()})
+        v = ConformanceVerifier(truth_state_store=store)
+        # isolated + 全证据 → ENFORCED
+        cap, s1 = v.verify("fake", "b1", "r1", receipt=_fresh_receipt(),
+                           conformance_evidence=ev, environment="isolated")
+        _check(cap == "ENFORCED", "isolated+全证据 → ENFORCED（实际=%s）" % cap)
+        _check("environment=isolated" in s1,
+               "summary 携带 environment 标注: " + s1)
+        # real + 全证据 → AUDIT
+        cap, s2 = v.verify("fake", "b1", "r1", receipt=_fresh_receipt(),
+                           conformance_evidence=ev, environment="real")
+        _check(cap == "AUDIT", "real+全证据 → AUDIT（实际=%s）" % cap)
+        _check("environment=real" in s2, "summary 标注 real")
+        # isolated + 无 receipt → ADVISORY
+        cap, _ = v.verify("fake", "b1", "r1", receipt=None,
+                          conformance_evidence=ev, environment="isolated")
+        _check(cap == "ADVISORY", "isolated+无receipt → ADVISORY")
+        # real + 无 receipt → ADVISORY
+        cap, _ = v.verify("fake", "b1", "r1", receipt=None,
+                          conformance_evidence=ev, environment="real")
+        _check(cap == "ADVISORY", "real+无receipt → ADVISORY")
+        # isolated + state 缺失 → ADVISORY（fail-closed）
+        empty = TruthStateStore(os.path.join(tmp, "empty"))
+        v2 = ConformanceVerifier(truth_state_store=empty)
+        cap, _ = v2.verify("fake", "nobody", "r1", receipt=_fresh_receipt(),
+                           conformance_evidence="x" * 64,
+                           environment="isolated")
+        _check(cap == "ADVISORY", "isolated+state缺失 → ADVISORY")
+        # 合同语义冻结：两个取值必须被定义且描述不同
+        _check("isolated" in ENVIRONMENT_SEMANTICS
+               and "real" in ENVIRONMENT_SEMANTICS,
+               "合同必须冻结 isolated/real 语义")
+        _check(ENVIRONMENT_SEMANTICS["isolated"]
+               != ENVIRONMENT_SEMANTICS["real"],
+               "两环境语义描述必须区分")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def main():
     failures = 0
     for fn in TESTS:

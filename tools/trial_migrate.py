@@ -48,7 +48,10 @@ class MigrateTransaction(object):
         self.fault_inject = fault_inject  # stage 名（测试故障注入）
         self.flat_path = os.path.join(state_root, "%s.json" % binding_id)
         self.dir_path = os.path.join(state_root, binding_id)
-        self.canonical = os.path.join(self.dir_path, "binding.json")
+        # P0-1（2026-08-20）：目录布局 = binding.json（Clued manifest）
+        # + state.json（三轴）；三轴状态不再写入 binding.json。
+        self.canonical = os.path.join(self.dir_path, "state.json")
+        self.manifest_path = os.path.join(self.dir_path, "binding.json")
         self.stage = "PRE"
         self.flat_bytes = None
         self.flat_sha256 = None
@@ -114,24 +117,40 @@ class MigrateTransaction(object):
                        "ts": time.time()}, f, ensure_ascii=False, indent=1)
         self._fault("BACKUP")
 
-        # STAGE：目录构件临时写入
+        # STAGE：目录构件临时写入（P0-1：manifest + state.json 双构件）
         self.stage = "STAGE"
         os.makedirs(self.dir_path, exist_ok=True)
-        tmp = self.canonical + ".tmp"
         st = json.loads(self.flat_bytes.decode("utf-8"))
         st["_migrated"] = True
-        with open(tmp, "w", encoding="utf-8") as f:
+        st["schema_version"] = "lifecycle.state.v0.1"
+        from memory_engine.lifecycle_ctl.controller import LifecycleController
+        ctl = LifecycleController(state_root=self.state_root)
+        manifest = ctl._default_manifest(self.binding_id)
+        manifest["_migrated"] = True
+        s_tmp = self.canonical + ".tmp"
+        m_tmp = self.manifest_path + ".tmp"
+        with open(s_tmp, "w", encoding="utf-8") as f:
             json.dump(st, f, ensure_ascii=False, indent=1)
+            f.flush()
+        with open(m_tmp, "w", encoding="utf-8") as f:
+            json.dump(manifest, f, ensure_ascii=False, indent=1)
             f.flush()
         self._fault("STAGE")
 
-        # COMMIT：原子切换（此时双格式并存，迁移窗口）
+        # COMMIT：原子切换（此时双格式并存，迁移窗口；先 manifest 后 state，
+        # state 失败回滚 manifest → 不留下半创建）
         self.stage = "COMMIT"
-        os.replace(tmp, self.canonical)
+        os.replace(m_tmp, self.manifest_path)
+        try:
+            os.replace(s_tmp, self.canonical)
+        except BaseException:
+            if os.path.isfile(self.manifest_path):
+                os.remove(self.manifest_path)
+            raise
         self.committed = True
         self._fault("COMMIT")
 
-        # VERIFY：目录可读 + 三轴一致 + 可枚举
+        # VERIFY：目录可读 + 三轴一致 + manifest 合法 + 可枚举
         self.stage = "VERIFY"
         with open(self.canonical, "r", encoding="utf-8") as f:
             dir_st = json.load(f)
@@ -143,6 +162,16 @@ class MigrateTransaction(object):
         ctl = LifecycleController(state_root=self.state_root)
         if ctl.find_by_agent(self.binding_id) is None:
             raise MigrateError("VERIFY", "迁移后 find_by_agent 无法定位")
+        # P0-1：迁移产物 binding.json 必须为合法 Clued manifest（doctor 兼容）
+        with open(self.manifest_path, "r", encoding="utf-8") as f:
+            man = json.load(f)
+        from clued.manifests import validate_binding_manifest
+        ok, err = validate_binding_manifest(man)
+        if not ok:
+            raise MigrateError("VERIFY", "迁移产物 manifest 校验失败: %s" % err)
+        if man.get("binding_id") != self.binding_id \
+                or dir_st.get("binding_id") != self.binding_id:
+            raise MigrateError("VERIFY", "manifest/state 与 binding_id 关联不一致")
         self._fault("VERIFY")
 
         # FINALIZE：扁平移入备份区（非删除）

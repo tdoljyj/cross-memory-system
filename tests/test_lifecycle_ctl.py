@@ -47,6 +47,79 @@ def _ctrl(tmp, **kwargs):
     return LifecycleController(os.path.join(tmp, "state"), **kwargs)
 
 
+def _journals(tmp):
+    d = os.path.join(tmp, "state")
+    return [f for f in os.listdir(d) if f.startswith(".journal-")] \
+        if os.path.isdir(d) else []
+
+
+# ---- P0-2 回归（2026-08-20 裁决）：_begin() 后所有提前返回路径 journal 零残留 ----
+@register
+def test_p0_2_journal_zero_all_paths():
+    """六动作 × 幂等/异常/正常路径：journal 必须零残留（finally 收口）。"""
+    tmp = tempfile.mkdtemp(prefix="lc-j-")
+    try:
+        c = _ctrl(tmp)
+        # install：首次 + 幂等
+        c.install("b1")
+        _check(_journals(tmp) == [], "install 后 journal 零")
+        c.install("b1")  # ALREADY_INSTALLED（R1 回归）
+        _check(_journals(tmp) == [], "install 幂等后 journal 零")
+        # repair：ALREADY_ACTIVE（提前返回分支，P0-2 泄漏点 1）
+        c.repair("b1")
+        _check(_journals(tmp) == [], "repair ALREADY_ACTIVE 后 journal 零")
+        # disable：正常 + ALREADY_DISABLED（提前返回分支，P0-2 泄漏点 2）
+        c.disable("b1")
+        _check(_journals(tmp) == [], "disable 后 journal 零")
+        c.disable("b1")
+        _check(_journals(tmp) == [], "disable ALREADY_DISABLED 后 journal 零")
+        # repair：REMAIN_DISABLED（提前返回分支，P0-2 泄漏点 3）
+        c.repair("b1")
+        _check(_journals(tmp) == [], "repair REMAIN_DISABLED 后 journal 零")
+        # enable：正常（DISABLED→ACTIVE）
+        c.enable("b1")
+        _check(_journals(tmp) == [], "enable 后 journal 零")
+        # uninstall：正常 + ALREADY_UNINSTALLED（提前返回分支，P0-2 泄漏点 4）
+        c.uninstall("b1")
+        _check(_journals(tmp) == [], "uninstall 后 journal 零")
+        c.uninstall("b1")
+        _check(_journals(tmp) == [], "uninstall ALREADY_UNINSTALLED 后 journal 零")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+@register
+def test_p0_2_journal_zero_exception_paths():
+    """异常路径（LifecycleError）也必须零残留：不存在 binding 的六动作。"""
+    tmp = tempfile.mkdtemp(prefix="lc-je-")
+    try:
+        c = _ctrl(tmp)
+        for action in ("repair", "disable", "enable", "uninstall"):
+            try:
+                getattr(c, action)("nobody")
+                raise AssertionError("%s 不存在应抛错" % action)
+            except LifecycleError:
+                pass
+            _check(_journals(tmp) == [],
+                   "%s 异常路径后 journal 零残留" % action)
+        # update：不存在 + 无 manifest 两条异常
+        try:
+            c.update("nobody")
+            raise AssertionError("update 不存在应抛错")
+        except LifecycleError:
+            pass
+        _check(_journals(tmp) == [], "update 不存在后 journal 零")
+        c.install("b1")
+        try:
+            c.update("b1", manifest=None)
+            raise AssertionError("update 缺 manifest 应抛错")
+        except LifecycleError:
+            pass
+        _check(_journals(tmp) == [], "update 缺 manifest 后 journal 零")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 # ---- 三轴不变量 ----
 @register
 def test_invariant_inv1_disabled_no_enforced():
