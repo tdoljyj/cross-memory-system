@@ -142,7 +142,7 @@ def test_install_idempotent_journal_zero():
         # 3) 幂等返回后 journal 仍零
         _check(journals() == [], "幂等返回后 journal 零残留（R1 修复生效）")
         # 4) Binding 内容无重复/漂移：状态文件唯一且三轴一致
-        bindings = [f for f in os.listdir(state_dir) if f == "b1.json"]
+        bindings = [f for f in os.listdir(state_dir) if f == "b1"]
         _check(len(bindings) == 1, "binding 状态文件唯一")
         st = c.load("b1")
         _check(st["binding"] == "ACTIVE" and st["truth"] == "ADVISORY"

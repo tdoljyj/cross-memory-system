@@ -154,6 +154,80 @@ class TrialWorker(object):
             return {"status": "FAILED", "run_id": self.run_id,
                     "error": str(e)}
 
+    # ---- 单次 enable（worker 主流程；ADVISORY → ENFORCED） ----
+    def run_enable(self, binding_id, receipt_path, conformance_ok=True):
+        """enable：真实状态变更（truth ADVISORY → ENFORCED）。
+
+        前置（fail-closed）：
+          - binding 必须 ACTIVE / ONLINE / ADVISORY（否则 FAILED，保持原状）；
+          - conformance_ok 必须 True（外部判定；R2 验证阶段由调用方注入，
+            真实 enable 须传入外部 ConformanceVerifier 结果）；
+          - 生命周期/连接状态不改变；其他 Binding 不受影响。
+        失败或中断路径：binding 恢复 ADVISORY（不进入 ENFORCED）。
+        """
+        status = self.acquire_lock()
+        if status == "ALREADY_RUNNING":
+            return {"status": "ALREADY_RUNNING", "run_id": self.run_id,
+                    "pid": self.pid}
+        if status == "ALREADY_DONE":
+            with open(receipt_path, "r", encoding="utf-8") as f:
+                rec = json.load(f)
+            return {"status": "ALREADY_DONE", "receipt": rec}
+        try:
+            from memory_engine.lifecycle_ctl import LifecycleController, LifecycleError
+            ctl = LifecycleController(state_root=self.state_root)
+            st = ctl.status(binding_id)
+            if st["binding"] != "ACTIVE" or st["session"] != "ONLINE" \
+                    or st["truth"] != "ADVISORY":
+                raise LifecycleError(
+                    "CLD-ENABLE-001",
+                    "enable 前置不满足（当前 %s/%s/%s）"
+                    % (st["binding"], st["session"], st["truth"]))
+            if not conformance_ok:
+                raise LifecycleError(
+                    "CLD-ENABLE-001", "conformance 未 PASS，禁止 enable")
+            # 写入 ENFORCED（原子；目录布局）
+            st2 = dict(st)
+            st2["binding"] = "ACTIVE"
+            st2["session"] = "ONLINE"
+            st2["truth"] = "ENFORCED"
+            ctl.save(binding_id, st2)
+            # 收尾：journal 零 + 临时文件零 + 三轴核验
+            leftovers = [f for f in os.listdir(self.state_root)
+                         if f.startswith(".journal-")]
+            if leftovers:
+                raise TrialStop("enable 收尾 journal 残留: %s" % leftovers)
+            tmp = [f for f in os.listdir(self.state_root) if f.endswith(".tmp")]
+            if tmp:
+                raise TrialStop("enable 收尾 .tmp 残留: %s" % tmp)
+            fin = ctl.status(binding_id)
+            self.write_receipt(receipt_path, 0, detail={
+                "binding_state": fin["binding"], "session": fin["session"],
+                "truth": fin["truth"], "journal_count": 0,
+                "enable_calls": 1,
+                "transition": "ADVISORY -> %s" % fin["truth"],
+            })
+            self.release_lock(done=True)
+            return {"status": "DONE", "run_id": self.run_id, "pid": self.pid,
+                    "binding": fin["binding"], "truth": fin["truth"]}
+        except BaseException as e:
+            # 失败/中断：保持 ADVISORY（若已写入 ENFORCED 则回退）
+            try:
+                from memory_engine.lifecycle_ctl import LifecycleController
+                ctl = LifecycleController(state_root=self.state_root)
+                cur = ctl.status(binding_id)
+                if cur.get("truth") == "ENFORCED":
+                    cur["truth"] = "ADVISORY"
+                    ctl.save(binding_id, cur)
+            except Exception:
+                pass
+            self.write_receipt(receipt_path, 1,
+                               detail={"error": "%s: %s" % (type(e).__name__, e),
+                                       "recovered": "ADVISORY"})
+            self.release_lock(done=True)
+            return {"status": "FAILED", "run_id": self.run_id,
+                    "error": str(e)}
+
 
 def main(argv=None):
     ap = argparse.ArgumentParser()
@@ -161,10 +235,16 @@ def main(argv=None):
     ap.add_argument("--state-root", required=True)
     ap.add_argument("--binding", required=True)
     ap.add_argument("--receipt", required=True)
+    ap.add_argument("--action", choices=("install", "enable"), default="install")
+    ap.add_argument("--conformance-ok", action="store_true", default=False)
     args = ap.parse_args(argv)
 
     worker = TrialWorker(args.state_root, args.run_id)
-    result = worker.run_install(args.binding, args.receipt)
+    if args.action == "enable":
+        result = worker.run_enable(args.binding, args.receipt,
+                                   conformance_ok=args.conformance_ok)
+    else:
+        result = worker.run_install(args.binding, args.receipt)
     print(json.dumps(result, ensure_ascii=False, indent=1))
     if result["status"] in ("ALREADY_RUNNING",):
         return 3

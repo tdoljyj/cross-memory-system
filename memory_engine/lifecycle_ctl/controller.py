@@ -47,31 +47,101 @@ class LifecycleController(object):
         self.conformance = conformance or (lambda binding_id: False)
         os.makedirs(state_root, exist_ok=True)
 
-    # ---- 持久化 ----
-    def _path(self, binding_id):
-        # Windows 文件名不允许冒号等字符；保留字母数字 . _ -
+    # ---- 持久化（R2：单一规范写入 bindings/<id>/binding.json；扁平仅受控迁移兼容读） ----
+    def _safe_id(self, binding_id):
         import re
-        safe = re.sub(r"[^A-Za-z0-9._-]", "_", binding_id)
-        return os.path.join(self.state_root, "%s.json" % safe)
+        return re.sub(r"[^A-Za-z0-9._-]", "_", binding_id)
+
+    def _dir_path(self, binding_id):
+        """正式生命周期布局：<state_root>/<safe_id>/binding.json"""
+        return os.path.join(self.state_root, self._safe_id(binding_id))
+
+    def _flat_path(self, binding_id):
+        """旧扁平布局（仅受控迁移兼容读，不写入）：<state_root>/<safe_id>.json"""
+        return os.path.join(self.state_root, "%s.json" % self._safe_id(binding_id))
+
+    def _path(self, binding_id):
+        """当前生效的物理路径（目录布局优先；返回 (path, layout)）。"""
+        d = self._dir_path(binding_id)
+        canonical = os.path.join(d, "binding.json")
+        flat = self._flat_path(binding_id)
+        has_dir = os.path.isfile(canonical)
+        has_flat = os.path.isfile(flat)
+        if has_dir and has_flat:
+            raise LifecycleError(
+                "CLD-LAYOUT-001",
+                "双格式冲突：%s 与 %s 同时存在（fail-closed，禁止猜测/自动合并）"
+                % (canonical, flat))
+        if has_dir:
+            return canonical, "directory"
+        if has_flat:
+            return flat, "flat-migration"  # 受控迁移兼容读（不写回）
+        return canonical, "directory"  # 写入一律走正式布局
 
     def load(self, binding_id):
-        p = self._path(binding_id)
+        try:
+            p, layout = self._path(binding_id)
+        except LifecycleError:
+            raise
         if not os.path.isfile(p):
             return None
         with open(p, "r", encoding="utf-8") as f:
             st = json.load(f)
+        st["_layout"] = layout  # 记录读取布局（directory / flat-migration）
         return st
 
     def save(self, binding_id, st):
         st = dict(st)
         st["binding_id"] = binding_id
         st["updated_at"] = time.time()
-        p = self._path(binding_id)
+        p, layout = self._path(binding_id)  # 双格式冲突在此 fail-closed
+        if layout == "flat-migration":
+            # 扁平仅受控迁移兼容读；写入一律走正式布局。
+            # 若仅存在扁平文件，必须先迁移（CLD-LAYOUT-002：禁止写扁平）。
+            raise LifecycleError(
+                "CLD-LAYOUT-002",
+                "扁平布局需先迁移（binding_id=%s）；禁止写扁平文件" % binding_id)
+        os.makedirs(os.path.dirname(p), exist_ok=True)
         tmp = p + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(st, f, ensure_ascii=False, indent=1)
+            f.flush()
         os.replace(tmp, p)
+        # 写入正式布局后：若存在旧扁平文件，保留（迁移由迁移工具处理，
+        # 不在常规写入路径中静默删除——但写入即产生双格式 → 下次读写 fail-closed）
         return st
+
+    # ---- 枚举（对齐 clued list_bindings：仅目录布局） ----
+    def list_bindings(self):
+        """枚举正式布局 Binding（bindings/<id>/binding.json）。"""
+        out = []
+        if not os.path.isdir(self.state_root):
+            return out
+        for entry in sorted(os.listdir(self.state_root)):
+            if entry.startswith(".") or entry.endswith(".json"):
+                continue  # 跳过点文件（lock/journal）与扁平文件
+            bpath = os.path.join(self.state_root, entry)
+            if not os.path.isdir(bpath):
+                continue
+            mpath = os.path.join(bpath, "binding.json")
+            if not os.path.isfile(mpath):
+                continue
+            try:
+                with open(mpath, "r", encoding="utf-8") as f:
+                    out.append(json.load(f))
+            except (ValueError, OSError):
+                continue
+        return out
+
+    def find_by_agent(self, binding_id):
+        """按 binding_id 唯一定位（目录布局优先；扁平仅受控迁移读）。"""
+        for b in self.list_bindings():
+            if b.get("binding_id") == binding_id:
+                return b
+        st = self.load(binding_id)
+        if st and st.get("_layout") == "flat-migration":
+            return st
+        return None
 
     # ---- journal（中断恢复） ----
     def _journal_path(self, binding_id, op_id):
@@ -300,7 +370,7 @@ class LifecycleController(object):
         if st["binding"] != "UNINSTALLED":
             raise LifecycleError("CLD-UNINSTALL-001",
                                  "仅 UNINSTALLED 可 purge（当前 %s）" % st["binding"])
-        p = self._path(binding_id)
+        p, _layout = self._path(binding_id)
         if os.path.isfile(p):
             os.remove(p)
         return {"binding": "ABSENT", "binding_id": binding_id, "note": "PURGED"}

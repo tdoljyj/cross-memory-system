@@ -136,7 +136,7 @@ def test_g4_rerun_returns_done_or_running():
         rec = json.load(open(receipt, encoding="utf-8"))
         _check(rec["install_calls"] == 1, "install 调用总数=1")
         # binding 无重复
-        files = [f for f in os.listdir(state) if f == "b1.json"]
+        files = [f for f in os.listdir(state) if f == "b1"]
         _check(len(files) == 1, "binding 唯一")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -215,12 +215,12 @@ def test_g8_binding_complete_no_half_write():
         state = os.path.join(tmp, "state")
         rc, _o, _e, _r, _p = _run_worker(state, "b1", os.path.join(tmp, "r.json"))
         _check(rc == 0, "exit 0")
-        st = json.load(open(os.path.join(state, "b1.json"), encoding="utf-8"))
+        st = json.load(open(os.path.join(state, "b1", "binding.json"), encoding="utf-8"))
         for k in ("binding", "session", "truth", "binding_id"):
             _check(k in st, "字段 %s 存在" % k)
         _check(st["binding"] == "ACTIVE" and st["truth"] == "ADVISORY"
                and st["session"] == "ONLINE", "三轴完整（ACTIVE/ADVISORY/ONLINE）")
-        _check(not os.path.exists(os.path.join(state, "b1.json.tmp")),
+        _check(not os.path.exists(os.path.join(state, "b1", "binding.json.tmp")),
                "无半写 .tmp")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
