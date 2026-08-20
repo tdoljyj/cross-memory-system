@@ -126,6 +126,9 @@ class LifecycleController(object):
             st = self.load(binding_id)
             if st:
                 if st["binding"] in ("ACTIVE", "DISABLED"):
+                    # R1 修复（裁决 2026-08-20）：幂等成功返回也必须 _end(jp)，
+                    # 否则 journal 泄漏（试装暴露缺陷 controller.py:129）
+                    self._end(jp)
                     return self.status(binding_id, note="ALREADY_INSTALLED")
                 if st["binding"] == "BROKEN":
                     raise LifecycleError("CLD-INSTALL-001", "binding 处于 BROKEN，请先 repair/uninstall")

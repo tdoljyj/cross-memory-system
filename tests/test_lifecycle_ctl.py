@@ -116,6 +116,42 @@ def test_install_idempotent():
 
 
 @register
+def test_install_idempotent_journal_zero():
+    """R1 修复验证（裁决 2026-08-20）：幂等 install 返回后 journal 必须零残留。
+
+    回归场景：试装暴露 controller.py:129 缺陷 —— 幂等分支提前 return
+    不 _end(jp) → journal 泄漏。修复后：
+      首次 install 成功 → journal 零；
+      第二次幂等 install → ALREADY_INSTALLED；
+      幂等返回后 journal 仍零。
+    """
+    tmp = tempfile.mkdtemp(prefix="lc-")
+    try:
+        c = _ctrl(tmp)
+        state_dir = os.path.join(tmp, "state")
+
+        def journals():
+            return [f for f in os.listdir(state_dir) if f.startswith(".journal-")]
+
+        # 1) 首次 install 成功 → journal 零
+        c.install("b1")
+        _check(journals() == [], "首次 install 后 journal 零残留")
+        # 2) 第二次幂等 install → ALREADY_INSTALLED
+        st2 = c.install("b1")
+        _check(st2["note"] == "ALREADY_INSTALLED", "第二次幂等返回 ALREADY_INSTALLED")
+        # 3) 幂等返回后 journal 仍零
+        _check(journals() == [], "幂等返回后 journal 零残留（R1 修复生效）")
+        # 4) Binding 内容无重复/漂移：状态文件唯一且三轴一致
+        bindings = [f for f in os.listdir(state_dir) if f == "b1.json"]
+        _check(len(bindings) == 1, "binding 状态文件唯一")
+        st = c.load("b1")
+        _check(st["binding"] == "ACTIVE" and st["truth"] == "ADVISORY"
+               and st["session"] == "ONLINE", "三轴状态无漂移")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+@register
 def test_disable_and_gate_blocks_ops():
     tmp = tempfile.mkdtemp(prefix="lc-")
     try:
