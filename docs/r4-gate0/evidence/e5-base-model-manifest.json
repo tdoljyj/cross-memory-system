@@ -14,7 +14,7 @@
     "python": "3.13.14",
     "runtime": "torch-cpu"
   },
-  "candidate_lock_sha256": "50ab5689cf4378441177d1af0773b59fbd5a2dc62ff866df7a76b0ea0ad0cd23",
+  "candidate_lock_sha256": "66e1ab241f98a92759844cefb329688cb6a9dbb19a04fd28d4ad05dd904e2ed9",
   "contract": {
     "dimension": 768,
     "dtype": "float32",
@@ -35,8 +35,8 @@
     "id": "intfloat/multilingual-e5-base",
     "immutable_revision": "d128750597153bb5987e10b1c3493a34e5a4502a"
   },
-  "self_hash": "8a29164203e2dc1690d1b70b5dcb28d2a72418d01dda3df6f5b78f8254620d82",
-  "trust_root": "docs/r4-gate0/locks/e5-base-candidate-lock.json @ baa9bb6faddfce633b5cfbfff17501ecb033676c（SHA-256 = 50ab5689cf4378441177d1af0773b59fbd5a2dc62ff866df7a76b0ea0ad0cd23）",
+  "self_hash": "ca8f732c7ac345e8fcd30925be33a825d75e7359d68aa2be577c18d90fa60c68",
+  "trust_root": "docs/r4-gate0/locks/e5-base-candidate-lock.json @ baa9bb6faddfce633b5cfbfff17501ecb033676c（SHA-256 = 66e1ab241f98a92759844cefb329688cb6a9dbb19a04fd28d4ad05dd904e2ed9）",
   "whitelist_files": [
     {
       "filename": "config.json",

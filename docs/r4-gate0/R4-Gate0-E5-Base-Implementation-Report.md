@@ -336,3 +336,39 @@ R2 = R2A（合同样值勘误，本节）+ R2B（锁定环境 manifest 重生成
 - **禁令遵守**：fixture / expected / oracle v3 代码 / calibration 实现 /
   embedder / 网格 / 门槛 / 择优 / holdout 与 pp-001~012（零读取）/ Shadow
   计数（未启动）/ 真实 Binding / main·tag·release 全部零触碰；未 push
+
+---
+
+## 12. R2B 重跑后记（2026-08-22 R2B 轮，R2A 33cfe42 之下）
+
+R2B = 锁定环境（vg0b venv，与 R1B 同一 TURING Python/backend、同 E5-base
+模型目录与缓存）下 manifest 重生成 + main/replay 双运行重跑。运行前删除
+模型目录中锚定旧锁的 MODEL-MANIFEST.json（删前实测 `8e768a6e…`），由
+calibration 经 build_manifest 从勘误后候选锁自动重建。
+
+- **manifest 重建**：schema v2，锚定 `66e1ab24…`，新 SHA-256
+  `4a87ee46…`（2343 字节）；evidence 内字节拷贝
+  `docs/r4-gate0/evidence/e5-base-model-manifest.json` 与模型目录运行时
+  副本逐字节一致；零 discrepancy 字段
+- **main 运行**：PASS；53 cases / 35-grid 全跑；qualifying 10/35；
+  最终选择 alpha=1.00 / tau=0.90 不变；holdout_detail_reads = 0
+- **replay 复验**：独立索引目录重建后重跑；deterministic_replay_ok =
+  true（22 个确定性字段，mismatched_fields = []）
+- **receipts git_head** = R2A（`33cfe42`）
+- **跨轮一致性（R2B vs R1B）**：确定性差异仅 `integrity` 与
+  `runtime.model` 两块；leaf 级恰为预期 6 项（git_head、候选锁、合同
+  digest、spec digest、manifest digest ×2），unexpected leaf diffs = 0；
+  verdict 级差异仅 latency_ms；oracle_results `8e8e2622…`、vector table
+  `2fe408db…`、vectors.f32 `dde75de2…`、calibration_code `39e76734…`、
+  oracle_v3_code `3163ab4f…`、embedder_code `60bf99f2…` 全部不变
+  （完整比较见 `docs/r4-gate0/evidence/e5-base-r2-record.json`）
+- **测试**：供应链 18/18（vg0b + 系统 Python 双环境）；
+  test_gate0_calibration 5 PASS；test_vector_index 15 PASS；
+  test_embedding_adapter 29 PASS（vg0b，torch 在场零跳过）；
+  test_hybrid_recall 12 PASS；test_recall_trace 19 PASS；secret scan
+  在全部证据文件定稿后重跑 PASS（R2A 修复经 R2B 全量验证）
+- **receipts markdown 变更**：main / replay 两份 receipt 各仅 line 11
+  Model manifest SHA-256 一行变化（`8e768a6e…` → `4a87ee46…`）
+- **禁令遵守**：holdout 与 pp-001~012 零读取、Shadow 计数未启动、
+  真实 Binding 零触碰、case / oracle 语义 / 参数 / 网格 / 门槛零变化、
+  未 push / tag / release

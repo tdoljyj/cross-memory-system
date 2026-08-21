@@ -3,6 +3,6 @@
   "deterministic_replay_ok": true,
   "main_run": "docs/r4-gate0/evidence/e5-base-calibration-results.json",
   "mismatched_fields": [],
-  "note": "比对剥离 latency_ms / grid_elapsed_seconds / index_dir / rebuild_command / run_label（运行参数与延迟）。R1B 轮（2026-08-22）：本比对为 R1A（e6b4412）已提交状态下重跑的主运行与复验（同 53 cases / 35-grid / calibration 实现零改动 / 同缓存；供应链代码经 R1A 冻结，manifest 由新 build_manifest 从修正后候选锁生成），deterministic_replay_ok = true；与 baa9bb6 勘误轮运行的跨轮一致性证据见 e5-base-r1-record.json",
+  "note": "比对剥离 latency_ms / grid_elapsed_seconds / index_dir / rebuild_command / run_label（运行参数与延迟）。R2B 轮（2026-08-22）：本比对为 R2A（33cfe42）已提交状态下重跑的主运行与复验（同 53 cases / 35-grid / calibration 实现零改动 / 同缓存；供应链 pin 经 R2A 更新为勘误后候选锁 66e1ab24…，manifest 由 build_manifest 从勘误后候选锁重新生成，digest 链 = 勘误后合同 f79b6a0f… / 勘误后 spec 1ff8b9a0… / 勘误后候选锁 66e1ab24…），deterministic_replay_ok = true；与 R1B 轮（e6b4412）运行的跨轮一致性证据见 e5-base-r2-record.json",
   "replay_run": "docs/r4-gate0/evidence/e5-base-calibration-results-replay.json"
 }
