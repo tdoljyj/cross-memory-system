@@ -1,0 +1,4694 @@
+{
+  "best_observed_nonqualifying": null,
+  "calibration_case_count": 53,
+  "derived_index": {
+    "dimension": 768,
+    "dtype": "float32",
+    "index_dir": "C:/Users/17531/.workbuddy/vector-cache/cross-memory-system/indexes/e5-base-eval-replay",
+    "object_count": 28,
+    "object_ids_sha256": "69b480a5ac4446e2e8d2c78bbba5d99aae1899f65ff93c95203c6c8294c9b736",
+    "rebuild_command": "重跑本 runner（索引由冻结夹具 + 固定 revision 模型完整重建；目录可删除）",
+    "vector_table_sha256": "2fe408db68586809c673771635398659aebeb4b0c567d3256eed931e39d54c55",
+    "vectors_bytes": 86016,
+    "vectors_sha256": "dde75de23c343aeded684f99adfaf767bb3003c3b23e2d27b59aa718b0f65f79"
+  },
+  "diagnostic_case_verdicts": [
+    {
+      "case_id": "cs-001",
+      "category": "conflict_superseded",
+      "eligible_expected_ids": [
+        "mem_fx0f0002"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0f0002"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [
+        "mem_fx0f0001"
+      ],
+      "frozen_expected_ids": [
+        "mem_fx0f0002"
+      ],
+      "latency_ms": 1.2626000097952783,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {
+        "mem_fx0f0001": [
+          "STATUS_SUPERSEDED"
+        ]
+      },
+      "returned_ids": [
+        "mem_fx0f0002"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0f0002": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 15
+    },
+    {
+      "case_id": "cs-002",
+      "category": "conflict_superseded",
+      "eligible_expected_ids": [
+        "mem_fx0f0001",
+        "mem_fx0f0002"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0f0001",
+        "mem_fx0f0002"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0f0002",
+        "mem_fx0f0001"
+      ],
+      "latency_ms": 1.0212000051978976,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0f0001",
+        "mem_fx0f0002"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0f0001": [],
+        "mem_fx0f0002": []
+      },
+      "semantic_status": "HYBRID_HISTORY_UNSUPPORTED",
+      "tokens": 29
+    },
+    {
+      "case_id": "cs-003",
+      "category": "conflict_superseded",
+      "eligible_expected_ids": [
+        "mem_fx0f0004"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0f0004"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [
+        "mem_fx0f0003"
+      ],
+      "frozen_expected_ids": [
+        "mem_fx0f0004"
+      ],
+      "latency_ms": 1.3418000016827136,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {
+        "mem_fx0f0003": [
+          "STATUS_SUPERSEDED"
+        ]
+      },
+      "returned_ids": [
+        "mem_fx0f0004"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0f0004": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 12
+    },
+    {
+      "case_id": "cs-005",
+      "category": "conflict_superseded",
+      "eligible_expected_ids": [
+        "mem_fx0f0008"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0f0008"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [
+        "mem_fx0f0007"
+      ],
+      "frozen_expected_ids": [
+        "mem_fx0f0008"
+      ],
+      "latency_ms": 1.1666000063996762,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {
+        "mem_fx0f0007": [
+          "STATUS_SUPERSEDED"
+        ]
+      },
+      "returned_ids": [
+        "mem_fx0f0008"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0f0008": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 11
+    },
+    {
+      "case_id": "cs-006",
+      "category": "conflict_superseded",
+      "eligible_expected_ids": [
+        "mem_fx0f0007",
+        "mem_fx0f0008"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0f0007",
+        "mem_fx0f0008"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0f0008",
+        "mem_fx0f0007"
+      ],
+      "latency_ms": 1.001399999950081,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0f0007",
+        "mem_fx0f0008"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0f0007": [],
+        "mem_fx0f0008": []
+      },
+      "semantic_status": "HYBRID_HISTORY_UNSUPPORTED",
+      "tokens": 24
+    },
+    {
+      "case_id": "cs-009",
+      "category": "conflict_superseded",
+      "eligible_expected_ids": [],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [
+        "mem_fx0f0007"
+      ],
+      "frozen_expected_ids": [],
+      "latency_ms": 0.751899991882965,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {
+        "mem_fx0f0007": [
+          "STATUS_SUPERSEDED"
+        ]
+      },
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 0
+    },
+    {
+      "case_id": "cs-010",
+      "category": "conflict_superseded",
+      "eligible_expected_ids": [
+        "mem_fx0f0002"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0f0002"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [
+        "mem_fx0f0001"
+      ],
+      "frozen_expected_ids": [
+        "mem_fx0f0002"
+      ],
+      "latency_ms": 1.278899988392368,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {
+        "mem_fx0f0001": [
+          "STATUS_SUPERSEDED"
+        ]
+      },
+      "returned_ids": [
+        "mem_fx0f0002"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0f0002": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 15
+    },
+    {
+      "case_id": "cs-011",
+      "category": "conflict_superseded",
+      "eligible_expected_ids": [
+        "mem_fx0a0002",
+        "mem_fx0a0013"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0a0002",
+        "mem_fx0a0013"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0a0002",
+        "mem_fx0a0013"
+      ],
+      "latency_ms": 1.4242999895941466,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0a0002",
+        "mem_fx0a0013"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0a0002": [
+          "MIV_005A_ADMIT"
+        ],
+        "mem_fx0a0013": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 34
+    },
+    {
+      "case_id": "ep-002",
+      "category": "explicit_preference",
+      "eligible_expected_ids": [
+        "mem_fx0a0002"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0a0002"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0a0002"
+      ],
+      "latency_ms": 1.0187000152654946,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0a0002"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0a0002": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 17
+    },
+    {
+      "case_id": "ep-007",
+      "category": "explicit_preference",
+      "eligible_expected_ids": [
+        "mem_fx0a0007"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0a0007"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0a0007"
+      ],
+      "latency_ms": 1.0338999854866415,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0a0007"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0a0007": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 17
+    },
+    {
+      "case_id": "ep-009",
+      "category": "explicit_preference",
+      "eligible_expected_ids": [
+        "mem_fx0a0010"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0a0010"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [
+        "mem_fx0a0009"
+      ],
+      "frozen_expected_ids": [
+        "mem_fx0a0010"
+      ],
+      "latency_ms": 1.1660000018309802,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {
+        "mem_fx0a0009": [
+          "STATUS_SUPERSEDED"
+        ]
+      },
+      "returned_ids": [
+        "mem_fx0a0010"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0a0010": [
+          "MIV_005A_AND_VECTOR_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 17
+    },
+    {
+      "case_id": "ep-011",
+      "category": "explicit_preference",
+      "eligible_expected_ids": [
+        "mem_fx0a0012"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0a0012"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0a0012"
+      ],
+      "latency_ms": 1.0945999820251018,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0a0012"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0a0012": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 33
+    },
+    {
+      "case_id": "ep-012",
+      "category": "explicit_preference",
+      "eligible_expected_ids": [
+        "mem_fx0a0013"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0a0013"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0a0013"
+      ],
+      "latency_ms": 1.0255000088363886,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0a0013"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0a0013": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 17
+    },
+    {
+      "case_id": "ep-013",
+      "category": "explicit_preference",
+      "eligible_expected_ids": [
+        "mem_fx0a0014"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0a0014"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0a0014"
+      ],
+      "latency_ms": 1.0223000135738403,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0a0014"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0a0014": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 25
+    },
+    {
+      "case_id": "ep-015",
+      "category": "explicit_preference",
+      "eligible_expected_ids": [
+        "mem_fx0a0016"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0a0016"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0a0016"
+      ],
+      "latency_ms": 1.0105999826919287,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0a0016"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0a0016": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 29
+    },
+    {
+      "case_id": "io-002",
+      "category": "implicit_observed",
+      "eligible_expected_ids": [],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [],
+      "latency_ms": 0.7886000094003975,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 0
+    },
+    {
+      "case_id": "io-003",
+      "category": "implicit_observed",
+      "eligible_expected_ids": [],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [],
+      "latency_ms": 1.0200999968219548,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 0
+    },
+    {
+      "case_id": "io-010",
+      "category": "implicit_observed",
+      "eligible_expected_ids": [
+        "mem_fx0b0010"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0b0010"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0b0010"
+      ],
+      "latency_ms": 1.164900022558868,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0b0010"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0b0010": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 17
+    },
+    {
+      "case_id": "io-011",
+      "category": "implicit_observed",
+      "eligible_expected_ids": [],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [],
+      "latency_ms": 0.8043000125326216,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 0
+    },
+    {
+      "case_id": "io-012",
+      "category": "implicit_observed",
+      "eligible_expected_ids": [],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [],
+      "latency_ms": 0.7546000124420971,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 0
+    },
+    {
+      "case_id": "io-014",
+      "category": "implicit_observed",
+      "eligible_expected_ids": [
+        "mem_fx0b0014"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0b0014"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0b0014"
+      ],
+      "latency_ms": 1.0596000065561384,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0b0014"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0b0014": [
+          "MIV_005A_AND_VECTOR_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 15
+    },
+    {
+      "case_id": "io-015",
+      "category": "implicit_observed",
+      "eligible_expected_ids": [],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [],
+      "latency_ms": 0.7904999947641045,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 0
+    },
+    {
+      "case_id": "io-016",
+      "category": "implicit_observed",
+      "eligible_expected_ids": [],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [],
+      "latency_ms": 1.0171000030823052,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 0
+    },
+    {
+      "case_id": "nm-001",
+      "category": "negative_no_memory",
+      "eligible_expected_ids": [],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [],
+      "latency_ms": 0.0557999883312732,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": null,
+      "tokens": 0
+    },
+    {
+      "case_id": "nm-003",
+      "category": "negative_no_memory",
+      "eligible_expected_ids": [],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [],
+      "latency_ms": 0.9704999974928796,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 0
+    },
+    {
+      "case_id": "nm-004",
+      "category": "negative_no_memory",
+      "eligible_expected_ids": [],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [],
+      "latency_ms": 0.7473000150639564,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 0
+    },
+    {
+      "case_id": "nm-005",
+      "category": "negative_no_memory",
+      "eligible_expected_ids": [],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [],
+      "latency_ms": 0.8800000068731606,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 0
+    },
+    {
+      "case_id": "nm-006",
+      "category": "negative_no_memory",
+      "eligible_expected_ids": [],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [],
+      "latency_ms": 1.0176000068895519,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 0
+    },
+    {
+      "case_id": "nm-007",
+      "category": "negative_no_memory",
+      "eligible_expected_ids": [],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [],
+      "latency_ms": 0.03250001464039087,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": null,
+      "tokens": 0
+    },
+    {
+      "case_id": "nm-008",
+      "category": "negative_no_memory",
+      "eligible_expected_ids": [],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [],
+      "latency_ms": 0.7416999724227935,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 0
+    },
+    {
+      "case_id": "nm-009",
+      "category": "negative_no_memory",
+      "eligible_expected_ids": [],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [],
+      "latency_ms": 0.7254999945871532,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 0
+    },
+    {
+      "case_id": "nm-012",
+      "category": "negative_no_memory",
+      "eligible_expected_ids": [],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [],
+      "latency_ms": 0.7150000019464642,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 0
+    },
+    {
+      "case_id": "nm-013",
+      "category": "negative_no_memory",
+      "eligible_expected_ids": [],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [],
+      "latency_ms": 0.7183999987319112,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 0
+    },
+    {
+      "case_id": "nm-015",
+      "category": "negative_no_memory",
+      "eligible_expected_ids": [],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [
+        "mem_fx0f0003"
+      ],
+      "frozen_expected_ids": [],
+      "latency_ms": 0.7325999904423952,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {
+        "mem_fx0f0003": [
+          "STATUS_SUPERSEDED"
+        ]
+      },
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 0
+    },
+    {
+      "case_id": "ps-004",
+      "category": "project_scope",
+      "eligible_expected_ids": [
+        "mem_fx0c0004"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0c0004"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0c0004"
+      ],
+      "latency_ms": 0.977699994109571,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0c0004"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0c0004": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 13
+    },
+    {
+      "case_id": "ps-006",
+      "category": "project_scope",
+      "eligible_expected_ids": [],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [
+        "mem_fx0c0007"
+      ],
+      "frozen_expected_ids": [],
+      "latency_ms": 1.1113999935332686,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {
+        "mem_fx0c0007": [
+          "SCOPE_MISMATCH"
+        ]
+      },
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 0
+    },
+    {
+      "case_id": "ps-008",
+      "category": "project_scope",
+      "eligible_expected_ids": [
+        "mem_fx0c0008"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0c0008"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0c0008"
+      ],
+      "latency_ms": 1.0921999928541481,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0c0008"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0c0008": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 17
+    },
+    {
+      "case_id": "sa-003",
+      "category": "security_adversarial",
+      "eligible_expected_ids": [
+        "mem_fx0h0002"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0h0002"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0h0002"
+      ],
+      "latency_ms": 1.0717999830376357,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0h0002"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0h0002": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 57
+    },
+    {
+      "case_id": "sa-004",
+      "category": "security_adversarial",
+      "eligible_expected_ids": [],
+      "error": null,
+      "excluded_from_expected_by_oracle": [
+        "mem_fx0h0003"
+      ],
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0h0003"
+      ],
+      "latency_ms": 0.9200000204145908,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 0
+    },
+    {
+      "case_id": "sa-005",
+      "category": "security_adversarial",
+      "eligible_expected_ids": [],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [
+        "mem_fx0h0004"
+      ],
+      "frozen_expected_ids": [],
+      "latency_ms": 0.7472999859601259,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {
+        "mem_fx0h0004": [
+          "SCOPE_MISMATCH"
+        ]
+      },
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 0
+    },
+    {
+      "case_id": "sa-006",
+      "category": "security_adversarial",
+      "eligible_expected_ids": [
+        "mem_fx0h0005"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0h0005"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0h0005"
+      ],
+      "latency_ms": 1.0584999981801957,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0h0005"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0h0005": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 16
+    },
+    {
+      "case_id": "sa-007",
+      "category": "security_adversarial",
+      "eligible_expected_ids": [
+        "mem_fx0h0006"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0h0006"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0h0006"
+      ],
+      "latency_ms": 1.0411999828647822,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0h0006"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0h0006": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 21
+    },
+    {
+      "case_id": "sa-009",
+      "category": "security_adversarial",
+      "eligible_expected_ids": [
+        "mem_fx0h0008"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0h0008"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0h0008"
+      ],
+      "latency_ms": 1.0763999889604747,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0h0008"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0h0008": [
+          "MIV_005A_AND_VECTOR_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 22
+    },
+    {
+      "case_id": "sa-010",
+      "category": "security_adversarial",
+      "eligible_expected_ids": [
+        "mem_fx0h0009"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0h0009"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0h0009"
+      ],
+      "latency_ms": 0.9938000002875924,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0h0009"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0h0009": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 45
+    },
+    {
+      "case_id": "sa-011",
+      "category": "security_adversarial",
+      "eligible_expected_ids": [
+        "mem_fx0h0010"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0h0010"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0h0010"
+      ],
+      "latency_ms": 1.131199998781085,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0h0010"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0h0010": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 43
+    },
+    {
+      "case_id": "sa-012",
+      "category": "security_adversarial",
+      "eligible_expected_ids": [],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [
+        "mem_fx0h0004"
+      ],
+      "frozen_expected_ids": [],
+      "latency_ms": 0.9174000006169081,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {
+        "mem_fx0h0004": [
+          "SCOPE_MISMATCH"
+        ]
+      },
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 0
+    },
+    {
+      "case_id": "tp-001",
+      "category": "temporal",
+      "eligible_expected_ids": [],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [],
+      "latency_ms": 0.7899000192992389,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 0
+    },
+    {
+      "case_id": "tp-003",
+      "category": "temporal",
+      "eligible_expected_ids": [],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [],
+      "latency_ms": 0.8194999827537686,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 0
+    },
+    {
+      "case_id": "tp-006",
+      "category": "temporal",
+      "eligible_expected_ids": [
+        "mem_fx0e0004"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0e0004"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0e0004"
+      ],
+      "latency_ms": 1.0305999894626439,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0e0004"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0e0004": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 16
+    },
+    {
+      "case_id": "tp-010",
+      "category": "temporal",
+      "eligible_expected_ids": [],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [],
+      "latency_ms": 0.7602999976370484,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 0
+    },
+    {
+      "case_id": "tp-011",
+      "category": "temporal",
+      "eligible_expected_ids": [
+        "mem_fx0e0007"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0e0007"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0e0007"
+      ],
+      "latency_ms": 1.129399985074997,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0e0007"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0e0007": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 16
+    },
+    {
+      "case_id": "tp-012",
+      "category": "temporal",
+      "eligible_expected_ids": [],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [],
+      "latency_ms": 1.0119999933522195,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 0
+    },
+    {
+      "case_id": "tp-013",
+      "category": "temporal",
+      "eligible_expected_ids": [],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [],
+      "latency_ms": 0.759599992306903,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 0
+    }
+  ],
+  "eligible_expected_counts": {
+    "cs-001": 1,
+    "cs-002": 2,
+    "cs-003": 1,
+    "cs-005": 1,
+    "cs-006": 2,
+    "cs-009": 0,
+    "cs-010": 1,
+    "cs-011": 2,
+    "ep-002": 1,
+    "ep-007": 1,
+    "ep-009": 1,
+    "ep-011": 1,
+    "ep-012": 1,
+    "ep-013": 1,
+    "ep-015": 1,
+    "io-002": 0,
+    "io-003": 0,
+    "io-010": 1,
+    "io-011": 0,
+    "io-012": 0,
+    "io-014": 1,
+    "io-015": 0,
+    "io-016": 0,
+    "nm-001": 0,
+    "nm-003": 0,
+    "nm-004": 0,
+    "nm-005": 0,
+    "nm-006": 0,
+    "nm-007": 0,
+    "nm-008": 0,
+    "nm-009": 0,
+    "nm-012": 0,
+    "nm-013": 0,
+    "nm-015": 0,
+    "ps-004": 1,
+    "ps-006": 0,
+    "ps-008": 1,
+    "sa-003": 1,
+    "sa-004": 0,
+    "sa-005": 0,
+    "sa-006": 1,
+    "sa-007": 1,
+    "sa-009": 1,
+    "sa-010": 1,
+    "sa-011": 1,
+    "sa-012": 0,
+    "tp-001": 0,
+    "tp-003": 0,
+    "tp-006": 1,
+    "tp-010": 0,
+    "tp-011": 1,
+    "tp-012": 0,
+    "tp-013": 0
+  },
+  "eligible_expected_rule": "eligible_expected = frozen_expected ∩ canonical_survivors（oracle v3 口径）",
+  "evidence_secret_leak_count": 0,
+  "grid": {
+    "alpha": [
+      0.0,
+      0.25,
+      0.5,
+      0.75,
+      1.0
+    ],
+    "tau": [
+      0.6,
+      0.65,
+      0.7,
+      0.75,
+      0.8,
+      0.85,
+      0.9
+    ]
+  },
+  "grid_combination_count_expected": 35,
+  "grid_count": 35,
+  "grid_results": [
+    {
+      "alpha": 0.0,
+      "elimination_reasons": [
+        "FALSE_RECALL_GT_0_02",
+        "NO_MEMORY_NOT_ALL_CORRECT"
+      ],
+      "metric_contract_v2_rounded": {
+        "cases": 53,
+        "critical_memory_recall_v2": 1.0,
+        "false_recall_rate_v2": 0.0333,
+        "golden_ids": 29,
+        "hit_rate_at5": 1.0,
+        "positive_cases": 26,
+        "precision_at5_v2": 0.9667,
+        "returned_objects": 30,
+        "wrong_objects": 1
+      },
+      "qualifying": false,
+      "raw_counts": {
+        "critical_hits": 29,
+        "critical_total": 29,
+        "error_count": 0,
+        "false_objects": 1,
+        "forbidden_hits": 0,
+        "lexical_expected_baseline_total": 29,
+        "lexical_expected_preserved": 29,
+        "no_memory_correct": 25,
+        "no_memory_total": 26,
+        "precision_relevant_top5": 29,
+        "precision_returned_top5": 30,
+        "returned_objects": 30
+      },
+      "raw_metrics": {
+        "critical_memory_recall_v2": 1.0,
+        "false_recall_rate_v2": 0.03333333333333333,
+        "lexical_expected_preservation": 1.0,
+        "no_memory_correctness": 0.9615384615384616,
+        "precision_at5_v2": 0.9666666666666667,
+        "prompt_token_p95": 45
+      },
+      "tau": 0.6
+    },
+    {
+      "alpha": 0.0,
+      "elimination_reasons": [
+        "FALSE_RECALL_GT_0_02",
+        "NO_MEMORY_NOT_ALL_CORRECT"
+      ],
+      "metric_contract_v2_rounded": {
+        "cases": 53,
+        "critical_memory_recall_v2": 1.0,
+        "false_recall_rate_v2": 0.0333,
+        "golden_ids": 29,
+        "hit_rate_at5": 1.0,
+        "positive_cases": 26,
+        "precision_at5_v2": 0.9667,
+        "returned_objects": 30,
+        "wrong_objects": 1
+      },
+      "qualifying": false,
+      "raw_counts": {
+        "critical_hits": 29,
+        "critical_total": 29,
+        "error_count": 0,
+        "false_objects": 1,
+        "forbidden_hits": 0,
+        "lexical_expected_baseline_total": 29,
+        "lexical_expected_preserved": 29,
+        "no_memory_correct": 25,
+        "no_memory_total": 26,
+        "precision_relevant_top5": 29,
+        "precision_returned_top5": 30,
+        "returned_objects": 30
+      },
+      "raw_metrics": {
+        "critical_memory_recall_v2": 1.0,
+        "false_recall_rate_v2": 0.03333333333333333,
+        "lexical_expected_preservation": 1.0,
+        "no_memory_correctness": 0.9615384615384616,
+        "precision_at5_v2": 0.9666666666666667,
+        "prompt_token_p95": 45
+      },
+      "tau": 0.65
+    },
+    {
+      "alpha": 0.0,
+      "elimination_reasons": [
+        "FALSE_RECALL_GT_0_02",
+        "NO_MEMORY_NOT_ALL_CORRECT"
+      ],
+      "metric_contract_v2_rounded": {
+        "cases": 53,
+        "critical_memory_recall_v2": 1.0,
+        "false_recall_rate_v2": 0.0333,
+        "golden_ids": 29,
+        "hit_rate_at5": 1.0,
+        "positive_cases": 26,
+        "precision_at5_v2": 0.9667,
+        "returned_objects": 30,
+        "wrong_objects": 1
+      },
+      "qualifying": false,
+      "raw_counts": {
+        "critical_hits": 29,
+        "critical_total": 29,
+        "error_count": 0,
+        "false_objects": 1,
+        "forbidden_hits": 0,
+        "lexical_expected_baseline_total": 29,
+        "lexical_expected_preserved": 29,
+        "no_memory_correct": 25,
+        "no_memory_total": 26,
+        "precision_relevant_top5": 29,
+        "precision_returned_top5": 30,
+        "returned_objects": 30
+      },
+      "raw_metrics": {
+        "critical_memory_recall_v2": 1.0,
+        "false_recall_rate_v2": 0.03333333333333333,
+        "lexical_expected_preservation": 1.0,
+        "no_memory_correctness": 0.9615384615384616,
+        "precision_at5_v2": 0.9666666666666667,
+        "prompt_token_p95": 45
+      },
+      "tau": 0.7
+    },
+    {
+      "alpha": 0.0,
+      "elimination_reasons": [
+        "FALSE_RECALL_GT_0_02",
+        "NO_MEMORY_NOT_ALL_CORRECT"
+      ],
+      "metric_contract_v2_rounded": {
+        "cases": 53,
+        "critical_memory_recall_v2": 1.0,
+        "false_recall_rate_v2": 0.0333,
+        "golden_ids": 29,
+        "hit_rate_at5": 1.0,
+        "positive_cases": 26,
+        "precision_at5_v2": 0.9667,
+        "returned_objects": 30,
+        "wrong_objects": 1
+      },
+      "qualifying": false,
+      "raw_counts": {
+        "critical_hits": 29,
+        "critical_total": 29,
+        "error_count": 0,
+        "false_objects": 1,
+        "forbidden_hits": 0,
+        "lexical_expected_baseline_total": 29,
+        "lexical_expected_preserved": 29,
+        "no_memory_correct": 25,
+        "no_memory_total": 26,
+        "precision_relevant_top5": 29,
+        "precision_returned_top5": 30,
+        "returned_objects": 30
+      },
+      "raw_metrics": {
+        "critical_memory_recall_v2": 1.0,
+        "false_recall_rate_v2": 0.03333333333333333,
+        "lexical_expected_preservation": 1.0,
+        "no_memory_correctness": 0.9615384615384616,
+        "precision_at5_v2": 0.9666666666666667,
+        "prompt_token_p95": 45
+      },
+      "tau": 0.75
+    },
+    {
+      "alpha": 0.0,
+      "elimination_reasons": [
+        "FALSE_RECALL_GT_0_02",
+        "NO_MEMORY_NOT_ALL_CORRECT"
+      ],
+      "metric_contract_v2_rounded": {
+        "cases": 53,
+        "critical_memory_recall_v2": 1.0,
+        "false_recall_rate_v2": 0.0333,
+        "golden_ids": 29,
+        "hit_rate_at5": 1.0,
+        "positive_cases": 26,
+        "precision_at5_v2": 0.9667,
+        "returned_objects": 30,
+        "wrong_objects": 1
+      },
+      "qualifying": false,
+      "raw_counts": {
+        "critical_hits": 29,
+        "critical_total": 29,
+        "error_count": 0,
+        "false_objects": 1,
+        "forbidden_hits": 0,
+        "lexical_expected_baseline_total": 29,
+        "lexical_expected_preserved": 29,
+        "no_memory_correct": 25,
+        "no_memory_total": 26,
+        "precision_relevant_top5": 29,
+        "precision_returned_top5": 30,
+        "returned_objects": 30
+      },
+      "raw_metrics": {
+        "critical_memory_recall_v2": 1.0,
+        "false_recall_rate_v2": 0.03333333333333333,
+        "lexical_expected_preservation": 1.0,
+        "no_memory_correctness": 0.9615384615384616,
+        "precision_at5_v2": 0.9666666666666667,
+        "prompt_token_p95": 45
+      },
+      "tau": 0.8
+    },
+    {
+      "alpha": 0.0,
+      "elimination_reasons": [],
+      "metric_contract_v2_rounded": {
+        "cases": 53,
+        "critical_memory_recall_v2": 1.0,
+        "false_recall_rate_v2": 0.0,
+        "golden_ids": 29,
+        "hit_rate_at5": 1.0,
+        "positive_cases": 26,
+        "precision_at5_v2": 1.0,
+        "returned_objects": 29,
+        "wrong_objects": 0
+      },
+      "qualifying": true,
+      "raw_counts": {
+        "critical_hits": 29,
+        "critical_total": 29,
+        "error_count": 0,
+        "false_objects": 0,
+        "forbidden_hits": 0,
+        "lexical_expected_baseline_total": 29,
+        "lexical_expected_preserved": 29,
+        "no_memory_correct": 26,
+        "no_memory_total": 26,
+        "precision_relevant_top5": 29,
+        "precision_returned_top5": 29,
+        "returned_objects": 29
+      },
+      "raw_metrics": {
+        "critical_memory_recall_v2": 1.0,
+        "false_recall_rate_v2": 0.0,
+        "lexical_expected_preservation": 1.0,
+        "no_memory_correctness": 1.0,
+        "precision_at5_v2": 1.0,
+        "prompt_token_p95": 45
+      },
+      "tau": 0.85
+    },
+    {
+      "alpha": 0.0,
+      "elimination_reasons": [],
+      "metric_contract_v2_rounded": {
+        "cases": 53,
+        "critical_memory_recall_v2": 1.0,
+        "false_recall_rate_v2": 0.0,
+        "golden_ids": 29,
+        "hit_rate_at5": 1.0,
+        "positive_cases": 26,
+        "precision_at5_v2": 1.0,
+        "returned_objects": 29,
+        "wrong_objects": 0
+      },
+      "qualifying": true,
+      "raw_counts": {
+        "critical_hits": 29,
+        "critical_total": 29,
+        "error_count": 0,
+        "false_objects": 0,
+        "forbidden_hits": 0,
+        "lexical_expected_baseline_total": 29,
+        "lexical_expected_preserved": 29,
+        "no_memory_correct": 26,
+        "no_memory_total": 26,
+        "precision_relevant_top5": 29,
+        "precision_returned_top5": 29,
+        "returned_objects": 29
+      },
+      "raw_metrics": {
+        "critical_memory_recall_v2": 1.0,
+        "false_recall_rate_v2": 0.0,
+        "lexical_expected_preservation": 1.0,
+        "no_memory_correctness": 1.0,
+        "precision_at5_v2": 1.0,
+        "prompt_token_p95": 45
+      },
+      "tau": 0.9
+    },
+    {
+      "alpha": 0.25,
+      "elimination_reasons": [
+        "FALSE_RECALL_GT_0_02",
+        "NO_MEMORY_NOT_ALL_CORRECT"
+      ],
+      "metric_contract_v2_rounded": {
+        "cases": 53,
+        "critical_memory_recall_v2": 1.0,
+        "false_recall_rate_v2": 0.0333,
+        "golden_ids": 29,
+        "hit_rate_at5": 1.0,
+        "positive_cases": 26,
+        "precision_at5_v2": 0.9667,
+        "returned_objects": 30,
+        "wrong_objects": 1
+      },
+      "qualifying": false,
+      "raw_counts": {
+        "critical_hits": 29,
+        "critical_total": 29,
+        "error_count": 0,
+        "false_objects": 1,
+        "forbidden_hits": 0,
+        "lexical_expected_baseline_total": 29,
+        "lexical_expected_preserved": 29,
+        "no_memory_correct": 25,
+        "no_memory_total": 26,
+        "precision_relevant_top5": 29,
+        "precision_returned_top5": 30,
+        "returned_objects": 30
+      },
+      "raw_metrics": {
+        "critical_memory_recall_v2": 1.0,
+        "false_recall_rate_v2": 0.03333333333333333,
+        "lexical_expected_preservation": 1.0,
+        "no_memory_correctness": 0.9615384615384616,
+        "precision_at5_v2": 0.9666666666666667,
+        "prompt_token_p95": 45
+      },
+      "tau": 0.6
+    },
+    {
+      "alpha": 0.25,
+      "elimination_reasons": [
+        "FALSE_RECALL_GT_0_02",
+        "NO_MEMORY_NOT_ALL_CORRECT"
+      ],
+      "metric_contract_v2_rounded": {
+        "cases": 53,
+        "critical_memory_recall_v2": 1.0,
+        "false_recall_rate_v2": 0.0333,
+        "golden_ids": 29,
+        "hit_rate_at5": 1.0,
+        "positive_cases": 26,
+        "precision_at5_v2": 0.9667,
+        "returned_objects": 30,
+        "wrong_objects": 1
+      },
+      "qualifying": false,
+      "raw_counts": {
+        "critical_hits": 29,
+        "critical_total": 29,
+        "error_count": 0,
+        "false_objects": 1,
+        "forbidden_hits": 0,
+        "lexical_expected_baseline_total": 29,
+        "lexical_expected_preserved": 29,
+        "no_memory_correct": 25,
+        "no_memory_total": 26,
+        "precision_relevant_top5": 29,
+        "precision_returned_top5": 30,
+        "returned_objects": 30
+      },
+      "raw_metrics": {
+        "critical_memory_recall_v2": 1.0,
+        "false_recall_rate_v2": 0.03333333333333333,
+        "lexical_expected_preservation": 1.0,
+        "no_memory_correctness": 0.9615384615384616,
+        "precision_at5_v2": 0.9666666666666667,
+        "prompt_token_p95": 45
+      },
+      "tau": 0.65
+    },
+    {
+      "alpha": 0.25,
+      "elimination_reasons": [
+        "FALSE_RECALL_GT_0_02",
+        "NO_MEMORY_NOT_ALL_CORRECT"
+      ],
+      "metric_contract_v2_rounded": {
+        "cases": 53,
+        "critical_memory_recall_v2": 1.0,
+        "false_recall_rate_v2": 0.0333,
+        "golden_ids": 29,
+        "hit_rate_at5": 1.0,
+        "positive_cases": 26,
+        "precision_at5_v2": 0.9667,
+        "returned_objects": 30,
+        "wrong_objects": 1
+      },
+      "qualifying": false,
+      "raw_counts": {
+        "critical_hits": 29,
+        "critical_total": 29,
+        "error_count": 0,
+        "false_objects": 1,
+        "forbidden_hits": 0,
+        "lexical_expected_baseline_total": 29,
+        "lexical_expected_preserved": 29,
+        "no_memory_correct": 25,
+        "no_memory_total": 26,
+        "precision_relevant_top5": 29,
+        "precision_returned_top5": 30,
+        "returned_objects": 30
+      },
+      "raw_metrics": {
+        "critical_memory_recall_v2": 1.0,
+        "false_recall_rate_v2": 0.03333333333333333,
+        "lexical_expected_preservation": 1.0,
+        "no_memory_correctness": 0.9615384615384616,
+        "precision_at5_v2": 0.9666666666666667,
+        "prompt_token_p95": 45
+      },
+      "tau": 0.7
+    },
+    {
+      "alpha": 0.25,
+      "elimination_reasons": [
+        "FALSE_RECALL_GT_0_02",
+        "NO_MEMORY_NOT_ALL_CORRECT"
+      ],
+      "metric_contract_v2_rounded": {
+        "cases": 53,
+        "critical_memory_recall_v2": 1.0,
+        "false_recall_rate_v2": 0.0333,
+        "golden_ids": 29,
+        "hit_rate_at5": 1.0,
+        "positive_cases": 26,
+        "precision_at5_v2": 0.9667,
+        "returned_objects": 30,
+        "wrong_objects": 1
+      },
+      "qualifying": false,
+      "raw_counts": {
+        "critical_hits": 29,
+        "critical_total": 29,
+        "error_count": 0,
+        "false_objects": 1,
+        "forbidden_hits": 0,
+        "lexical_expected_baseline_total": 29,
+        "lexical_expected_preserved": 29,
+        "no_memory_correct": 25,
+        "no_memory_total": 26,
+        "precision_relevant_top5": 29,
+        "precision_returned_top5": 30,
+        "returned_objects": 30
+      },
+      "raw_metrics": {
+        "critical_memory_recall_v2": 1.0,
+        "false_recall_rate_v2": 0.03333333333333333,
+        "lexical_expected_preservation": 1.0,
+        "no_memory_correctness": 0.9615384615384616,
+        "precision_at5_v2": 0.9666666666666667,
+        "prompt_token_p95": 45
+      },
+      "tau": 0.75
+    },
+    {
+      "alpha": 0.25,
+      "elimination_reasons": [
+        "FALSE_RECALL_GT_0_02",
+        "NO_MEMORY_NOT_ALL_CORRECT"
+      ],
+      "metric_contract_v2_rounded": {
+        "cases": 53,
+        "critical_memory_recall_v2": 1.0,
+        "false_recall_rate_v2": 0.0333,
+        "golden_ids": 29,
+        "hit_rate_at5": 1.0,
+        "positive_cases": 26,
+        "precision_at5_v2": 0.9667,
+        "returned_objects": 30,
+        "wrong_objects": 1
+      },
+      "qualifying": false,
+      "raw_counts": {
+        "critical_hits": 29,
+        "critical_total": 29,
+        "error_count": 0,
+        "false_objects": 1,
+        "forbidden_hits": 0,
+        "lexical_expected_baseline_total": 29,
+        "lexical_expected_preserved": 29,
+        "no_memory_correct": 25,
+        "no_memory_total": 26,
+        "precision_relevant_top5": 29,
+        "precision_returned_top5": 30,
+        "returned_objects": 30
+      },
+      "raw_metrics": {
+        "critical_memory_recall_v2": 1.0,
+        "false_recall_rate_v2": 0.03333333333333333,
+        "lexical_expected_preservation": 1.0,
+        "no_memory_correctness": 0.9615384615384616,
+        "precision_at5_v2": 0.9666666666666667,
+        "prompt_token_p95": 45
+      },
+      "tau": 0.8
+    },
+    {
+      "alpha": 0.25,
+      "elimination_reasons": [],
+      "metric_contract_v2_rounded": {
+        "cases": 53,
+        "critical_memory_recall_v2": 1.0,
+        "false_recall_rate_v2": 0.0,
+        "golden_ids": 29,
+        "hit_rate_at5": 1.0,
+        "positive_cases": 26,
+        "precision_at5_v2": 1.0,
+        "returned_objects": 29,
+        "wrong_objects": 0
+      },
+      "qualifying": true,
+      "raw_counts": {
+        "critical_hits": 29,
+        "critical_total": 29,
+        "error_count": 0,
+        "false_objects": 0,
+        "forbidden_hits": 0,
+        "lexical_expected_baseline_total": 29,
+        "lexical_expected_preserved": 29,
+        "no_memory_correct": 26,
+        "no_memory_total": 26,
+        "precision_relevant_top5": 29,
+        "precision_returned_top5": 29,
+        "returned_objects": 29
+      },
+      "raw_metrics": {
+        "critical_memory_recall_v2": 1.0,
+        "false_recall_rate_v2": 0.0,
+        "lexical_expected_preservation": 1.0,
+        "no_memory_correctness": 1.0,
+        "precision_at5_v2": 1.0,
+        "prompt_token_p95": 45
+      },
+      "tau": 0.85
+    },
+    {
+      "alpha": 0.25,
+      "elimination_reasons": [],
+      "metric_contract_v2_rounded": {
+        "cases": 53,
+        "critical_memory_recall_v2": 1.0,
+        "false_recall_rate_v2": 0.0,
+        "golden_ids": 29,
+        "hit_rate_at5": 1.0,
+        "positive_cases": 26,
+        "precision_at5_v2": 1.0,
+        "returned_objects": 29,
+        "wrong_objects": 0
+      },
+      "qualifying": true,
+      "raw_counts": {
+        "critical_hits": 29,
+        "critical_total": 29,
+        "error_count": 0,
+        "false_objects": 0,
+        "forbidden_hits": 0,
+        "lexical_expected_baseline_total": 29,
+        "lexical_expected_preserved": 29,
+        "no_memory_correct": 26,
+        "no_memory_total": 26,
+        "precision_relevant_top5": 29,
+        "precision_returned_top5": 29,
+        "returned_objects": 29
+      },
+      "raw_metrics": {
+        "critical_memory_recall_v2": 1.0,
+        "false_recall_rate_v2": 0.0,
+        "lexical_expected_preservation": 1.0,
+        "no_memory_correctness": 1.0,
+        "precision_at5_v2": 1.0,
+        "prompt_token_p95": 45
+      },
+      "tau": 0.9
+    },
+    {
+      "alpha": 0.5,
+      "elimination_reasons": [
+        "FALSE_RECALL_GT_0_02",
+        "NO_MEMORY_NOT_ALL_CORRECT"
+      ],
+      "metric_contract_v2_rounded": {
+        "cases": 53,
+        "critical_memory_recall_v2": 1.0,
+        "false_recall_rate_v2": 0.0333,
+        "golden_ids": 29,
+        "hit_rate_at5": 1.0,
+        "positive_cases": 26,
+        "precision_at5_v2": 0.9667,
+        "returned_objects": 30,
+        "wrong_objects": 1
+      },
+      "qualifying": false,
+      "raw_counts": {
+        "critical_hits": 29,
+        "critical_total": 29,
+        "error_count": 0,
+        "false_objects": 1,
+        "forbidden_hits": 0,
+        "lexical_expected_baseline_total": 29,
+        "lexical_expected_preserved": 29,
+        "no_memory_correct": 25,
+        "no_memory_total": 26,
+        "precision_relevant_top5": 29,
+        "precision_returned_top5": 30,
+        "returned_objects": 30
+      },
+      "raw_metrics": {
+        "critical_memory_recall_v2": 1.0,
+        "false_recall_rate_v2": 0.03333333333333333,
+        "lexical_expected_preservation": 1.0,
+        "no_memory_correctness": 0.9615384615384616,
+        "precision_at5_v2": 0.9666666666666667,
+        "prompt_token_p95": 45
+      },
+      "tau": 0.6
+    },
+    {
+      "alpha": 0.5,
+      "elimination_reasons": [
+        "FALSE_RECALL_GT_0_02",
+        "NO_MEMORY_NOT_ALL_CORRECT"
+      ],
+      "metric_contract_v2_rounded": {
+        "cases": 53,
+        "critical_memory_recall_v2": 1.0,
+        "false_recall_rate_v2": 0.0333,
+        "golden_ids": 29,
+        "hit_rate_at5": 1.0,
+        "positive_cases": 26,
+        "precision_at5_v2": 0.9667,
+        "returned_objects": 30,
+        "wrong_objects": 1
+      },
+      "qualifying": false,
+      "raw_counts": {
+        "critical_hits": 29,
+        "critical_total": 29,
+        "error_count": 0,
+        "false_objects": 1,
+        "forbidden_hits": 0,
+        "lexical_expected_baseline_total": 29,
+        "lexical_expected_preserved": 29,
+        "no_memory_correct": 25,
+        "no_memory_total": 26,
+        "precision_relevant_top5": 29,
+        "precision_returned_top5": 30,
+        "returned_objects": 30
+      },
+      "raw_metrics": {
+        "critical_memory_recall_v2": 1.0,
+        "false_recall_rate_v2": 0.03333333333333333,
+        "lexical_expected_preservation": 1.0,
+        "no_memory_correctness": 0.9615384615384616,
+        "precision_at5_v2": 0.9666666666666667,
+        "prompt_token_p95": 45
+      },
+      "tau": 0.65
+    },
+    {
+      "alpha": 0.5,
+      "elimination_reasons": [
+        "FALSE_RECALL_GT_0_02",
+        "NO_MEMORY_NOT_ALL_CORRECT"
+      ],
+      "metric_contract_v2_rounded": {
+        "cases": 53,
+        "critical_memory_recall_v2": 1.0,
+        "false_recall_rate_v2": 0.0333,
+        "golden_ids": 29,
+        "hit_rate_at5": 1.0,
+        "positive_cases": 26,
+        "precision_at5_v2": 0.9667,
+        "returned_objects": 30,
+        "wrong_objects": 1
+      },
+      "qualifying": false,
+      "raw_counts": {
+        "critical_hits": 29,
+        "critical_total": 29,
+        "error_count": 0,
+        "false_objects": 1,
+        "forbidden_hits": 0,
+        "lexical_expected_baseline_total": 29,
+        "lexical_expected_preserved": 29,
+        "no_memory_correct": 25,
+        "no_memory_total": 26,
+        "precision_relevant_top5": 29,
+        "precision_returned_top5": 30,
+        "returned_objects": 30
+      },
+      "raw_metrics": {
+        "critical_memory_recall_v2": 1.0,
+        "false_recall_rate_v2": 0.03333333333333333,
+        "lexical_expected_preservation": 1.0,
+        "no_memory_correctness": 0.9615384615384616,
+        "precision_at5_v2": 0.9666666666666667,
+        "prompt_token_p95": 45
+      },
+      "tau": 0.7
+    },
+    {
+      "alpha": 0.5,
+      "elimination_reasons": [
+        "FALSE_RECALL_GT_0_02",
+        "NO_MEMORY_NOT_ALL_CORRECT"
+      ],
+      "metric_contract_v2_rounded": {
+        "cases": 53,
+        "critical_memory_recall_v2": 1.0,
+        "false_recall_rate_v2": 0.0333,
+        "golden_ids": 29,
+        "hit_rate_at5": 1.0,
+        "positive_cases": 26,
+        "precision_at5_v2": 0.9667,
+        "returned_objects": 30,
+        "wrong_objects": 1
+      },
+      "qualifying": false,
+      "raw_counts": {
+        "critical_hits": 29,
+        "critical_total": 29,
+        "error_count": 0,
+        "false_objects": 1,
+        "forbidden_hits": 0,
+        "lexical_expected_baseline_total": 29,
+        "lexical_expected_preserved": 29,
+        "no_memory_correct": 25,
+        "no_memory_total": 26,
+        "precision_relevant_top5": 29,
+        "precision_returned_top5": 30,
+        "returned_objects": 30
+      },
+      "raw_metrics": {
+        "critical_memory_recall_v2": 1.0,
+        "false_recall_rate_v2": 0.03333333333333333,
+        "lexical_expected_preservation": 1.0,
+        "no_memory_correctness": 0.9615384615384616,
+        "precision_at5_v2": 0.9666666666666667,
+        "prompt_token_p95": 45
+      },
+      "tau": 0.75
+    },
+    {
+      "alpha": 0.5,
+      "elimination_reasons": [
+        "FALSE_RECALL_GT_0_02",
+        "NO_MEMORY_NOT_ALL_CORRECT"
+      ],
+      "metric_contract_v2_rounded": {
+        "cases": 53,
+        "critical_memory_recall_v2": 1.0,
+        "false_recall_rate_v2": 0.0333,
+        "golden_ids": 29,
+        "hit_rate_at5": 1.0,
+        "positive_cases": 26,
+        "precision_at5_v2": 0.9667,
+        "returned_objects": 30,
+        "wrong_objects": 1
+      },
+      "qualifying": false,
+      "raw_counts": {
+        "critical_hits": 29,
+        "critical_total": 29,
+        "error_count": 0,
+        "false_objects": 1,
+        "forbidden_hits": 0,
+        "lexical_expected_baseline_total": 29,
+        "lexical_expected_preserved": 29,
+        "no_memory_correct": 25,
+        "no_memory_total": 26,
+        "precision_relevant_top5": 29,
+        "precision_returned_top5": 30,
+        "returned_objects": 30
+      },
+      "raw_metrics": {
+        "critical_memory_recall_v2": 1.0,
+        "false_recall_rate_v2": 0.03333333333333333,
+        "lexical_expected_preservation": 1.0,
+        "no_memory_correctness": 0.9615384615384616,
+        "precision_at5_v2": 0.9666666666666667,
+        "prompt_token_p95": 45
+      },
+      "tau": 0.8
+    },
+    {
+      "alpha": 0.5,
+      "elimination_reasons": [],
+      "metric_contract_v2_rounded": {
+        "cases": 53,
+        "critical_memory_recall_v2": 1.0,
+        "false_recall_rate_v2": 0.0,
+        "golden_ids": 29,
+        "hit_rate_at5": 1.0,
+        "positive_cases": 26,
+        "precision_at5_v2": 1.0,
+        "returned_objects": 29,
+        "wrong_objects": 0
+      },
+      "qualifying": true,
+      "raw_counts": {
+        "critical_hits": 29,
+        "critical_total": 29,
+        "error_count": 0,
+        "false_objects": 0,
+        "forbidden_hits": 0,
+        "lexical_expected_baseline_total": 29,
+        "lexical_expected_preserved": 29,
+        "no_memory_correct": 26,
+        "no_memory_total": 26,
+        "precision_relevant_top5": 29,
+        "precision_returned_top5": 29,
+        "returned_objects": 29
+      },
+      "raw_metrics": {
+        "critical_memory_recall_v2": 1.0,
+        "false_recall_rate_v2": 0.0,
+        "lexical_expected_preservation": 1.0,
+        "no_memory_correctness": 1.0,
+        "precision_at5_v2": 1.0,
+        "prompt_token_p95": 45
+      },
+      "tau": 0.85
+    },
+    {
+      "alpha": 0.5,
+      "elimination_reasons": [],
+      "metric_contract_v2_rounded": {
+        "cases": 53,
+        "critical_memory_recall_v2": 1.0,
+        "false_recall_rate_v2": 0.0,
+        "golden_ids": 29,
+        "hit_rate_at5": 1.0,
+        "positive_cases": 26,
+        "precision_at5_v2": 1.0,
+        "returned_objects": 29,
+        "wrong_objects": 0
+      },
+      "qualifying": true,
+      "raw_counts": {
+        "critical_hits": 29,
+        "critical_total": 29,
+        "error_count": 0,
+        "false_objects": 0,
+        "forbidden_hits": 0,
+        "lexical_expected_baseline_total": 29,
+        "lexical_expected_preserved": 29,
+        "no_memory_correct": 26,
+        "no_memory_total": 26,
+        "precision_relevant_top5": 29,
+        "precision_returned_top5": 29,
+        "returned_objects": 29
+      },
+      "raw_metrics": {
+        "critical_memory_recall_v2": 1.0,
+        "false_recall_rate_v2": 0.0,
+        "lexical_expected_preservation": 1.0,
+        "no_memory_correctness": 1.0,
+        "precision_at5_v2": 1.0,
+        "prompt_token_p95": 45
+      },
+      "tau": 0.9
+    },
+    {
+      "alpha": 0.75,
+      "elimination_reasons": [
+        "FALSE_RECALL_GT_0_02",
+        "NO_MEMORY_NOT_ALL_CORRECT"
+      ],
+      "metric_contract_v2_rounded": {
+        "cases": 53,
+        "critical_memory_recall_v2": 1.0,
+        "false_recall_rate_v2": 0.0333,
+        "golden_ids": 29,
+        "hit_rate_at5": 1.0,
+        "positive_cases": 26,
+        "precision_at5_v2": 0.9667,
+        "returned_objects": 30,
+        "wrong_objects": 1
+      },
+      "qualifying": false,
+      "raw_counts": {
+        "critical_hits": 29,
+        "critical_total": 29,
+        "error_count": 0,
+        "false_objects": 1,
+        "forbidden_hits": 0,
+        "lexical_expected_baseline_total": 29,
+        "lexical_expected_preserved": 29,
+        "no_memory_correct": 25,
+        "no_memory_total": 26,
+        "precision_relevant_top5": 29,
+        "precision_returned_top5": 30,
+        "returned_objects": 30
+      },
+      "raw_metrics": {
+        "critical_memory_recall_v2": 1.0,
+        "false_recall_rate_v2": 0.03333333333333333,
+        "lexical_expected_preservation": 1.0,
+        "no_memory_correctness": 0.9615384615384616,
+        "precision_at5_v2": 0.9666666666666667,
+        "prompt_token_p95": 45
+      },
+      "tau": 0.6
+    },
+    {
+      "alpha": 0.75,
+      "elimination_reasons": [
+        "FALSE_RECALL_GT_0_02",
+        "NO_MEMORY_NOT_ALL_CORRECT"
+      ],
+      "metric_contract_v2_rounded": {
+        "cases": 53,
+        "critical_memory_recall_v2": 1.0,
+        "false_recall_rate_v2": 0.0333,
+        "golden_ids": 29,
+        "hit_rate_at5": 1.0,
+        "positive_cases": 26,
+        "precision_at5_v2": 0.9667,
+        "returned_objects": 30,
+        "wrong_objects": 1
+      },
+      "qualifying": false,
+      "raw_counts": {
+        "critical_hits": 29,
+        "critical_total": 29,
+        "error_count": 0,
+        "false_objects": 1,
+        "forbidden_hits": 0,
+        "lexical_expected_baseline_total": 29,
+        "lexical_expected_preserved": 29,
+        "no_memory_correct": 25,
+        "no_memory_total": 26,
+        "precision_relevant_top5": 29,
+        "precision_returned_top5": 30,
+        "returned_objects": 30
+      },
+      "raw_metrics": {
+        "critical_memory_recall_v2": 1.0,
+        "false_recall_rate_v2": 0.03333333333333333,
+        "lexical_expected_preservation": 1.0,
+        "no_memory_correctness": 0.9615384615384616,
+        "precision_at5_v2": 0.9666666666666667,
+        "prompt_token_p95": 45
+      },
+      "tau": 0.65
+    },
+    {
+      "alpha": 0.75,
+      "elimination_reasons": [
+        "FALSE_RECALL_GT_0_02",
+        "NO_MEMORY_NOT_ALL_CORRECT"
+      ],
+      "metric_contract_v2_rounded": {
+        "cases": 53,
+        "critical_memory_recall_v2": 1.0,
+        "false_recall_rate_v2": 0.0333,
+        "golden_ids": 29,
+        "hit_rate_at5": 1.0,
+        "positive_cases": 26,
+        "precision_at5_v2": 0.9667,
+        "returned_objects": 30,
+        "wrong_objects": 1
+      },
+      "qualifying": false,
+      "raw_counts": {
+        "critical_hits": 29,
+        "critical_total": 29,
+        "error_count": 0,
+        "false_objects": 1,
+        "forbidden_hits": 0,
+        "lexical_expected_baseline_total": 29,
+        "lexical_expected_preserved": 29,
+        "no_memory_correct": 25,
+        "no_memory_total": 26,
+        "precision_relevant_top5": 29,
+        "precision_returned_top5": 30,
+        "returned_objects": 30
+      },
+      "raw_metrics": {
+        "critical_memory_recall_v2": 1.0,
+        "false_recall_rate_v2": 0.03333333333333333,
+        "lexical_expected_preservation": 1.0,
+        "no_memory_correctness": 0.9615384615384616,
+        "precision_at5_v2": 0.9666666666666667,
+        "prompt_token_p95": 45
+      },
+      "tau": 0.7
+    },
+    {
+      "alpha": 0.75,
+      "elimination_reasons": [
+        "FALSE_RECALL_GT_0_02",
+        "NO_MEMORY_NOT_ALL_CORRECT"
+      ],
+      "metric_contract_v2_rounded": {
+        "cases": 53,
+        "critical_memory_recall_v2": 1.0,
+        "false_recall_rate_v2": 0.0333,
+        "golden_ids": 29,
+        "hit_rate_at5": 1.0,
+        "positive_cases": 26,
+        "precision_at5_v2": 0.9667,
+        "returned_objects": 30,
+        "wrong_objects": 1
+      },
+      "qualifying": false,
+      "raw_counts": {
+        "critical_hits": 29,
+        "critical_total": 29,
+        "error_count": 0,
+        "false_objects": 1,
+        "forbidden_hits": 0,
+        "lexical_expected_baseline_total": 29,
+        "lexical_expected_preserved": 29,
+        "no_memory_correct": 25,
+        "no_memory_total": 26,
+        "precision_relevant_top5": 29,
+        "precision_returned_top5": 30,
+        "returned_objects": 30
+      },
+      "raw_metrics": {
+        "critical_memory_recall_v2": 1.0,
+        "false_recall_rate_v2": 0.03333333333333333,
+        "lexical_expected_preservation": 1.0,
+        "no_memory_correctness": 0.9615384615384616,
+        "precision_at5_v2": 0.9666666666666667,
+        "prompt_token_p95": 45
+      },
+      "tau": 0.75
+    },
+    {
+      "alpha": 0.75,
+      "elimination_reasons": [
+        "FALSE_RECALL_GT_0_02",
+        "NO_MEMORY_NOT_ALL_CORRECT"
+      ],
+      "metric_contract_v2_rounded": {
+        "cases": 53,
+        "critical_memory_recall_v2": 1.0,
+        "false_recall_rate_v2": 0.0333,
+        "golden_ids": 29,
+        "hit_rate_at5": 1.0,
+        "positive_cases": 26,
+        "precision_at5_v2": 0.9667,
+        "returned_objects": 30,
+        "wrong_objects": 1
+      },
+      "qualifying": false,
+      "raw_counts": {
+        "critical_hits": 29,
+        "critical_total": 29,
+        "error_count": 0,
+        "false_objects": 1,
+        "forbidden_hits": 0,
+        "lexical_expected_baseline_total": 29,
+        "lexical_expected_preserved": 29,
+        "no_memory_correct": 25,
+        "no_memory_total": 26,
+        "precision_relevant_top5": 29,
+        "precision_returned_top5": 30,
+        "returned_objects": 30
+      },
+      "raw_metrics": {
+        "critical_memory_recall_v2": 1.0,
+        "false_recall_rate_v2": 0.03333333333333333,
+        "lexical_expected_preservation": 1.0,
+        "no_memory_correctness": 0.9615384615384616,
+        "precision_at5_v2": 0.9666666666666667,
+        "prompt_token_p95": 45
+      },
+      "tau": 0.8
+    },
+    {
+      "alpha": 0.75,
+      "elimination_reasons": [],
+      "metric_contract_v2_rounded": {
+        "cases": 53,
+        "critical_memory_recall_v2": 1.0,
+        "false_recall_rate_v2": 0.0,
+        "golden_ids": 29,
+        "hit_rate_at5": 1.0,
+        "positive_cases": 26,
+        "precision_at5_v2": 1.0,
+        "returned_objects": 29,
+        "wrong_objects": 0
+      },
+      "qualifying": true,
+      "raw_counts": {
+        "critical_hits": 29,
+        "critical_total": 29,
+        "error_count": 0,
+        "false_objects": 0,
+        "forbidden_hits": 0,
+        "lexical_expected_baseline_total": 29,
+        "lexical_expected_preserved": 29,
+        "no_memory_correct": 26,
+        "no_memory_total": 26,
+        "precision_relevant_top5": 29,
+        "precision_returned_top5": 29,
+        "returned_objects": 29
+      },
+      "raw_metrics": {
+        "critical_memory_recall_v2": 1.0,
+        "false_recall_rate_v2": 0.0,
+        "lexical_expected_preservation": 1.0,
+        "no_memory_correctness": 1.0,
+        "precision_at5_v2": 1.0,
+        "prompt_token_p95": 45
+      },
+      "tau": 0.85
+    },
+    {
+      "alpha": 0.75,
+      "elimination_reasons": [],
+      "metric_contract_v2_rounded": {
+        "cases": 53,
+        "critical_memory_recall_v2": 1.0,
+        "false_recall_rate_v2": 0.0,
+        "golden_ids": 29,
+        "hit_rate_at5": 1.0,
+        "positive_cases": 26,
+        "precision_at5_v2": 1.0,
+        "returned_objects": 29,
+        "wrong_objects": 0
+      },
+      "qualifying": true,
+      "raw_counts": {
+        "critical_hits": 29,
+        "critical_total": 29,
+        "error_count": 0,
+        "false_objects": 0,
+        "forbidden_hits": 0,
+        "lexical_expected_baseline_total": 29,
+        "lexical_expected_preserved": 29,
+        "no_memory_correct": 26,
+        "no_memory_total": 26,
+        "precision_relevant_top5": 29,
+        "precision_returned_top5": 29,
+        "returned_objects": 29
+      },
+      "raw_metrics": {
+        "critical_memory_recall_v2": 1.0,
+        "false_recall_rate_v2": 0.0,
+        "lexical_expected_preservation": 1.0,
+        "no_memory_correctness": 1.0,
+        "precision_at5_v2": 1.0,
+        "prompt_token_p95": 45
+      },
+      "tau": 0.9
+    },
+    {
+      "alpha": 1.0,
+      "elimination_reasons": [
+        "FALSE_RECALL_GT_0_02",
+        "NO_MEMORY_NOT_ALL_CORRECT"
+      ],
+      "metric_contract_v2_rounded": {
+        "cases": 53,
+        "critical_memory_recall_v2": 1.0,
+        "false_recall_rate_v2": 0.0333,
+        "golden_ids": 29,
+        "hit_rate_at5": 1.0,
+        "positive_cases": 26,
+        "precision_at5_v2": 0.9667,
+        "returned_objects": 30,
+        "wrong_objects": 1
+      },
+      "qualifying": false,
+      "raw_counts": {
+        "critical_hits": 29,
+        "critical_total": 29,
+        "error_count": 0,
+        "false_objects": 1,
+        "forbidden_hits": 0,
+        "lexical_expected_baseline_total": 29,
+        "lexical_expected_preserved": 29,
+        "no_memory_correct": 25,
+        "no_memory_total": 26,
+        "precision_relevant_top5": 29,
+        "precision_returned_top5": 30,
+        "returned_objects": 30
+      },
+      "raw_metrics": {
+        "critical_memory_recall_v2": 1.0,
+        "false_recall_rate_v2": 0.03333333333333333,
+        "lexical_expected_preservation": 1.0,
+        "no_memory_correctness": 0.9615384615384616,
+        "precision_at5_v2": 0.9666666666666667,
+        "prompt_token_p95": 45
+      },
+      "tau": 0.6
+    },
+    {
+      "alpha": 1.0,
+      "elimination_reasons": [
+        "FALSE_RECALL_GT_0_02",
+        "NO_MEMORY_NOT_ALL_CORRECT"
+      ],
+      "metric_contract_v2_rounded": {
+        "cases": 53,
+        "critical_memory_recall_v2": 1.0,
+        "false_recall_rate_v2": 0.0333,
+        "golden_ids": 29,
+        "hit_rate_at5": 1.0,
+        "positive_cases": 26,
+        "precision_at5_v2": 0.9667,
+        "returned_objects": 30,
+        "wrong_objects": 1
+      },
+      "qualifying": false,
+      "raw_counts": {
+        "critical_hits": 29,
+        "critical_total": 29,
+        "error_count": 0,
+        "false_objects": 1,
+        "forbidden_hits": 0,
+        "lexical_expected_baseline_total": 29,
+        "lexical_expected_preserved": 29,
+        "no_memory_correct": 25,
+        "no_memory_total": 26,
+        "precision_relevant_top5": 29,
+        "precision_returned_top5": 30,
+        "returned_objects": 30
+      },
+      "raw_metrics": {
+        "critical_memory_recall_v2": 1.0,
+        "false_recall_rate_v2": 0.03333333333333333,
+        "lexical_expected_preservation": 1.0,
+        "no_memory_correctness": 0.9615384615384616,
+        "precision_at5_v2": 0.9666666666666667,
+        "prompt_token_p95": 45
+      },
+      "tau": 0.65
+    },
+    {
+      "alpha": 1.0,
+      "elimination_reasons": [
+        "FALSE_RECALL_GT_0_02",
+        "NO_MEMORY_NOT_ALL_CORRECT"
+      ],
+      "metric_contract_v2_rounded": {
+        "cases": 53,
+        "critical_memory_recall_v2": 1.0,
+        "false_recall_rate_v2": 0.0333,
+        "golden_ids": 29,
+        "hit_rate_at5": 1.0,
+        "positive_cases": 26,
+        "precision_at5_v2": 0.9667,
+        "returned_objects": 30,
+        "wrong_objects": 1
+      },
+      "qualifying": false,
+      "raw_counts": {
+        "critical_hits": 29,
+        "critical_total": 29,
+        "error_count": 0,
+        "false_objects": 1,
+        "forbidden_hits": 0,
+        "lexical_expected_baseline_total": 29,
+        "lexical_expected_preserved": 29,
+        "no_memory_correct": 25,
+        "no_memory_total": 26,
+        "precision_relevant_top5": 29,
+        "precision_returned_top5": 30,
+        "returned_objects": 30
+      },
+      "raw_metrics": {
+        "critical_memory_recall_v2": 1.0,
+        "false_recall_rate_v2": 0.03333333333333333,
+        "lexical_expected_preservation": 1.0,
+        "no_memory_correctness": 0.9615384615384616,
+        "precision_at5_v2": 0.9666666666666667,
+        "prompt_token_p95": 45
+      },
+      "tau": 0.7
+    },
+    {
+      "alpha": 1.0,
+      "elimination_reasons": [
+        "FALSE_RECALL_GT_0_02",
+        "NO_MEMORY_NOT_ALL_CORRECT"
+      ],
+      "metric_contract_v2_rounded": {
+        "cases": 53,
+        "critical_memory_recall_v2": 1.0,
+        "false_recall_rate_v2": 0.0333,
+        "golden_ids": 29,
+        "hit_rate_at5": 1.0,
+        "positive_cases": 26,
+        "precision_at5_v2": 0.9667,
+        "returned_objects": 30,
+        "wrong_objects": 1
+      },
+      "qualifying": false,
+      "raw_counts": {
+        "critical_hits": 29,
+        "critical_total": 29,
+        "error_count": 0,
+        "false_objects": 1,
+        "forbidden_hits": 0,
+        "lexical_expected_baseline_total": 29,
+        "lexical_expected_preserved": 29,
+        "no_memory_correct": 25,
+        "no_memory_total": 26,
+        "precision_relevant_top5": 29,
+        "precision_returned_top5": 30,
+        "returned_objects": 30
+      },
+      "raw_metrics": {
+        "critical_memory_recall_v2": 1.0,
+        "false_recall_rate_v2": 0.03333333333333333,
+        "lexical_expected_preservation": 1.0,
+        "no_memory_correctness": 0.9615384615384616,
+        "precision_at5_v2": 0.9666666666666667,
+        "prompt_token_p95": 45
+      },
+      "tau": 0.75
+    },
+    {
+      "alpha": 1.0,
+      "elimination_reasons": [
+        "FALSE_RECALL_GT_0_02",
+        "NO_MEMORY_NOT_ALL_CORRECT"
+      ],
+      "metric_contract_v2_rounded": {
+        "cases": 53,
+        "critical_memory_recall_v2": 1.0,
+        "false_recall_rate_v2": 0.0333,
+        "golden_ids": 29,
+        "hit_rate_at5": 1.0,
+        "positive_cases": 26,
+        "precision_at5_v2": 0.9667,
+        "returned_objects": 30,
+        "wrong_objects": 1
+      },
+      "qualifying": false,
+      "raw_counts": {
+        "critical_hits": 29,
+        "critical_total": 29,
+        "error_count": 0,
+        "false_objects": 1,
+        "forbidden_hits": 0,
+        "lexical_expected_baseline_total": 29,
+        "lexical_expected_preserved": 29,
+        "no_memory_correct": 25,
+        "no_memory_total": 26,
+        "precision_relevant_top5": 29,
+        "precision_returned_top5": 30,
+        "returned_objects": 30
+      },
+      "raw_metrics": {
+        "critical_memory_recall_v2": 1.0,
+        "false_recall_rate_v2": 0.03333333333333333,
+        "lexical_expected_preservation": 1.0,
+        "no_memory_correctness": 0.9615384615384616,
+        "precision_at5_v2": 0.9666666666666667,
+        "prompt_token_p95": 45
+      },
+      "tau": 0.8
+    },
+    {
+      "alpha": 1.0,
+      "elimination_reasons": [],
+      "metric_contract_v2_rounded": {
+        "cases": 53,
+        "critical_memory_recall_v2": 1.0,
+        "false_recall_rate_v2": 0.0,
+        "golden_ids": 29,
+        "hit_rate_at5": 1.0,
+        "positive_cases": 26,
+        "precision_at5_v2": 1.0,
+        "returned_objects": 29,
+        "wrong_objects": 0
+      },
+      "qualifying": true,
+      "raw_counts": {
+        "critical_hits": 29,
+        "critical_total": 29,
+        "error_count": 0,
+        "false_objects": 0,
+        "forbidden_hits": 0,
+        "lexical_expected_baseline_total": 29,
+        "lexical_expected_preserved": 29,
+        "no_memory_correct": 26,
+        "no_memory_total": 26,
+        "precision_relevant_top5": 29,
+        "precision_returned_top5": 29,
+        "returned_objects": 29
+      },
+      "raw_metrics": {
+        "critical_memory_recall_v2": 1.0,
+        "false_recall_rate_v2": 0.0,
+        "lexical_expected_preservation": 1.0,
+        "no_memory_correctness": 1.0,
+        "precision_at5_v2": 1.0,
+        "prompt_token_p95": 45
+      },
+      "tau": 0.85
+    },
+    {
+      "alpha": 1.0,
+      "elimination_reasons": [],
+      "metric_contract_v2_rounded": {
+        "cases": 53,
+        "critical_memory_recall_v2": 1.0,
+        "false_recall_rate_v2": 0.0,
+        "golden_ids": 29,
+        "hit_rate_at5": 1.0,
+        "positive_cases": 26,
+        "precision_at5_v2": 1.0,
+        "returned_objects": 29,
+        "wrong_objects": 0
+      },
+      "qualifying": true,
+      "raw_counts": {
+        "critical_hits": 29,
+        "critical_total": 29,
+        "error_count": 0,
+        "false_objects": 0,
+        "forbidden_hits": 0,
+        "lexical_expected_baseline_total": 29,
+        "lexical_expected_preserved": 29,
+        "no_memory_correct": 26,
+        "no_memory_total": 26,
+        "precision_relevant_top5": 29,
+        "precision_returned_top5": 29,
+        "returned_objects": 29
+      },
+      "raw_metrics": {
+        "critical_memory_recall_v2": 1.0,
+        "false_recall_rate_v2": 0.0,
+        "lexical_expected_preservation": 1.0,
+        "no_memory_correctness": 1.0,
+        "precision_at5_v2": 1.0,
+        "prompt_token_p95": 45
+      },
+      "tau": 0.9
+    }
+  ],
+  "hard_gate_reference": "precision_at5_v2>=0.90; critical_memory_recall_v2>=0.95; false_recall_rate_v2<=0.02; no_memory all correct; forbidden_hits==0; error_count==0; lexical_expected_preservation==1.0; prompt_token_p95<=650",
+  "holdout_detail_reads": 0,
+  "integrity": {
+    "calibration_code_sha256": "bac9c6f2f77f758975f389f12e98b0f355500d474197ba405a7d73cd26f7978f",
+    "calibration_lock_sha256": "939f1b65315296079a9a8f7c887a74e7fe84849b765898e88c130feaf4df1ad0",
+    "calibration_vector_table_sha256": "2fe408db68586809c673771635398659aebeb4b0c567d3256eed931e39d54c55",
+    "candidate_lock_sha256": "9ee354192a4fbe42a15c2a84874548d83e5c92b233f4bfb6f56c724afc644814",
+    "e5_base_runner_gate0_sha256": "0dd8e8b3f39f2209cca75410e9b5e712bde8de8c0a6abf8f3e7fad677a61c1ed",
+    "embedder_code_sha256": "ef186eef2e07d930a36b29efbda5a47dba0722820e2b16751649cabbbe131b20",
+    "frozen_sources": {
+      "docs/r4-gate0/evidence/frozen-eval-manifest.json": "c7a195e1e21a476ac949723d65dc8f8594f3931b999974db68561a2838b32ac1",
+      "memory_eval/corpus.py": "4836f10836262098ad91633fbaf4164523afe7e82c2755bb1f04b94191bf22a5",
+      "memory_eval/metrics.py": "77595574e3eee85d112877e43619b91930663f621c4bbb3c3716d6089ddf8fe2",
+      "memory_eval/runner.py": "813d2534463279f14e3b462080d6b048f5f65dd3925555119098076ae01bf08c",
+      "tests/fixtures/memory_eval/fixtures.json": "ad84011c4b341c5d5bd4c1fb3c16c7eb4f27fee3dbc353650cc809e9cc15407a"
+    },
+    "git_head": "4e6cca120c7f57d0f1fa1d29002a87922e22facb",
+    "lock_digests_measured": {
+      "frozen_hard_filter_contract": "1785469cafa4660bdc6f06e531b93fab6e87f14b7ba6dfe4ea09d884626b3881",
+      "holdout_manifest": "c7a195e1e21a476ac949723d65dc8f8594f3931b999974db68561a2838b32ac1",
+      "oracle_v3_spec": "11ce893465f4a25f0f3d2e3fd933b643713fcb90acbeec69de978132164ab83f",
+      "requirements_lock": "e0355a341138fb90abeb0826fdeef0acfeba4eb2dea2c4d673ed127c2db155c6"
+    },
+    "model_manifest_sha256": "c5e145a140d851cb72905c2a5b7ed9f052c45084a0a07e3476cfa516f1607b5e",
+    "oracle_v3_code_sha256": "3163ab4ff3d589f1968a0c1bdb55e939ca78a3a042f439b5d5d37151e34068df",
+    "sealed_inputs": {
+      "memory_eval/gate0_inputs/calibration-cases.json": "ca1e2bcc11795f0a49de7dd0ed5152982e513d21eaa215f93b8846fbf60f9037",
+      "memory_eval/gate0_inputs/calibration-fixtures.json": "f060aa56449dc7670f8a2f963ae236aa6ebb3f8df520ac56bad722d37662c80a"
+    }
+  },
+  "loaded_case_ids": [
+    "cs-001",
+    "cs-002",
+    "cs-003",
+    "cs-005",
+    "cs-006",
+    "cs-009",
+    "cs-010",
+    "cs-011",
+    "ep-002",
+    "ep-007",
+    "ep-009",
+    "ep-011",
+    "ep-012",
+    "ep-013",
+    "ep-015",
+    "io-002",
+    "io-003",
+    "io-010",
+    "io-011",
+    "io-012",
+    "io-014",
+    "io-015",
+    "io-016",
+    "nm-001",
+    "nm-003",
+    "nm-004",
+    "nm-005",
+    "nm-006",
+    "nm-007",
+    "nm-008",
+    "nm-009",
+    "nm-012",
+    "nm-013",
+    "nm-015",
+    "ps-004",
+    "ps-006",
+    "ps-008",
+    "sa-003",
+    "sa-004",
+    "sa-005",
+    "sa-006",
+    "sa-007",
+    "sa-009",
+    "sa-010",
+    "sa-011",
+    "sa-012",
+    "tp-001",
+    "tp-003",
+    "tp-006",
+    "tp-010",
+    "tp-011",
+    "tp-012",
+    "tp-013"
+  ],
+  "loaded_case_ids_sha256": "1b0ea9cba921bc700bb98714743a26c6be4ec570896a07a50803665347442e09",
+  "protocol_deviations": [],
+  "qualifying_count": 10,
+  "result": "PASS",
+  "run_label": "replay",
+  "runtime": {
+    "grid_elapsed_seconds": 2.973779199994169,
+    "model": {
+      "id": "intfloat/multilingual-e5-base",
+      "immutable_revision": "d128750597153bb5987e10b1c3493a34e5a4502a",
+      "manifest_digest": "c5e145a140d851cb72905c2a5b7ed9f052c45084a0a07e3476cfa516f1607b5e"
+    },
+    "passage_embedding_count": 28,
+    "query_embedding_count": 25,
+    "score_call_count": 875,
+    "scored_candidate_count": 23,
+    "torch_version": "2.13.0+cpu"
+  },
+  "schema_version": "r4-gate0-e5base-calibration-v1",
+  "selected": {
+    "alpha": 1.0,
+    "elimination_reasons": [],
+    "metric_contract_v2_rounded": {
+      "cases": 53,
+      "critical_memory_recall_v2": 1.0,
+      "false_recall_rate_v2": 0.0,
+      "golden_ids": 29,
+      "hit_rate_at5": 1.0,
+      "positive_cases": 26,
+      "precision_at5_v2": 1.0,
+      "returned_objects": 29,
+      "wrong_objects": 0
+    },
+    "qualifying": true,
+    "raw_counts": {
+      "critical_hits": 29,
+      "critical_total": 29,
+      "error_count": 0,
+      "false_objects": 0,
+      "forbidden_hits": 0,
+      "lexical_expected_baseline_total": 29,
+      "lexical_expected_preserved": 29,
+      "no_memory_correct": 26,
+      "no_memory_total": 26,
+      "precision_relevant_top5": 29,
+      "precision_returned_top5": 29,
+      "returned_objects": 29
+    },
+    "raw_metrics": {
+      "critical_memory_recall_v2": 1.0,
+      "false_recall_rate_v2": 0.0,
+      "lexical_expected_preservation": 1.0,
+      "no_memory_correctness": 1.0,
+      "precision_at5_v2": 1.0,
+      "prompt_token_p95": 45
+    },
+    "tau": 0.9
+  },
+  "selected_case_verdicts": [
+    {
+      "case_id": "cs-001",
+      "category": "conflict_superseded",
+      "eligible_expected_ids": [
+        "mem_fx0f0002"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0f0002"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [
+        "mem_fx0f0001"
+      ],
+      "frozen_expected_ids": [
+        "mem_fx0f0002"
+      ],
+      "latency_ms": 1.2626000097952783,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {
+        "mem_fx0f0001": [
+          "STATUS_SUPERSEDED"
+        ]
+      },
+      "returned_ids": [
+        "mem_fx0f0002"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0f0002": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 15
+    },
+    {
+      "case_id": "cs-002",
+      "category": "conflict_superseded",
+      "eligible_expected_ids": [
+        "mem_fx0f0001",
+        "mem_fx0f0002"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0f0001",
+        "mem_fx0f0002"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0f0002",
+        "mem_fx0f0001"
+      ],
+      "latency_ms": 1.0212000051978976,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0f0001",
+        "mem_fx0f0002"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0f0001": [],
+        "mem_fx0f0002": []
+      },
+      "semantic_status": "HYBRID_HISTORY_UNSUPPORTED",
+      "tokens": 29
+    },
+    {
+      "case_id": "cs-003",
+      "category": "conflict_superseded",
+      "eligible_expected_ids": [
+        "mem_fx0f0004"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0f0004"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [
+        "mem_fx0f0003"
+      ],
+      "frozen_expected_ids": [
+        "mem_fx0f0004"
+      ],
+      "latency_ms": 1.3418000016827136,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {
+        "mem_fx0f0003": [
+          "STATUS_SUPERSEDED"
+        ]
+      },
+      "returned_ids": [
+        "mem_fx0f0004"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0f0004": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 12
+    },
+    {
+      "case_id": "cs-005",
+      "category": "conflict_superseded",
+      "eligible_expected_ids": [
+        "mem_fx0f0008"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0f0008"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [
+        "mem_fx0f0007"
+      ],
+      "frozen_expected_ids": [
+        "mem_fx0f0008"
+      ],
+      "latency_ms": 1.1666000063996762,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {
+        "mem_fx0f0007": [
+          "STATUS_SUPERSEDED"
+        ]
+      },
+      "returned_ids": [
+        "mem_fx0f0008"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0f0008": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 11
+    },
+    {
+      "case_id": "cs-006",
+      "category": "conflict_superseded",
+      "eligible_expected_ids": [
+        "mem_fx0f0007",
+        "mem_fx0f0008"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0f0007",
+        "mem_fx0f0008"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0f0008",
+        "mem_fx0f0007"
+      ],
+      "latency_ms": 1.001399999950081,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0f0007",
+        "mem_fx0f0008"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0f0007": [],
+        "mem_fx0f0008": []
+      },
+      "semantic_status": "HYBRID_HISTORY_UNSUPPORTED",
+      "tokens": 24
+    },
+    {
+      "case_id": "cs-009",
+      "category": "conflict_superseded",
+      "eligible_expected_ids": [],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [
+        "mem_fx0f0007"
+      ],
+      "frozen_expected_ids": [],
+      "latency_ms": 0.751899991882965,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {
+        "mem_fx0f0007": [
+          "STATUS_SUPERSEDED"
+        ]
+      },
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 0
+    },
+    {
+      "case_id": "cs-010",
+      "category": "conflict_superseded",
+      "eligible_expected_ids": [
+        "mem_fx0f0002"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0f0002"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [
+        "mem_fx0f0001"
+      ],
+      "frozen_expected_ids": [
+        "mem_fx0f0002"
+      ],
+      "latency_ms": 1.278899988392368,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {
+        "mem_fx0f0001": [
+          "STATUS_SUPERSEDED"
+        ]
+      },
+      "returned_ids": [
+        "mem_fx0f0002"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0f0002": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 15
+    },
+    {
+      "case_id": "cs-011",
+      "category": "conflict_superseded",
+      "eligible_expected_ids": [
+        "mem_fx0a0002",
+        "mem_fx0a0013"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0a0002",
+        "mem_fx0a0013"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0a0002",
+        "mem_fx0a0013"
+      ],
+      "latency_ms": 1.4242999895941466,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0a0002",
+        "mem_fx0a0013"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0a0002": [
+          "MIV_005A_ADMIT"
+        ],
+        "mem_fx0a0013": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 34
+    },
+    {
+      "case_id": "ep-002",
+      "category": "explicit_preference",
+      "eligible_expected_ids": [
+        "mem_fx0a0002"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0a0002"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0a0002"
+      ],
+      "latency_ms": 1.0187000152654946,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0a0002"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0a0002": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 17
+    },
+    {
+      "case_id": "ep-007",
+      "category": "explicit_preference",
+      "eligible_expected_ids": [
+        "mem_fx0a0007"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0a0007"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0a0007"
+      ],
+      "latency_ms": 1.0338999854866415,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0a0007"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0a0007": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 17
+    },
+    {
+      "case_id": "ep-009",
+      "category": "explicit_preference",
+      "eligible_expected_ids": [
+        "mem_fx0a0010"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0a0010"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [
+        "mem_fx0a0009"
+      ],
+      "frozen_expected_ids": [
+        "mem_fx0a0010"
+      ],
+      "latency_ms": 1.1660000018309802,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {
+        "mem_fx0a0009": [
+          "STATUS_SUPERSEDED"
+        ]
+      },
+      "returned_ids": [
+        "mem_fx0a0010"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0a0010": [
+          "MIV_005A_AND_VECTOR_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 17
+    },
+    {
+      "case_id": "ep-011",
+      "category": "explicit_preference",
+      "eligible_expected_ids": [
+        "mem_fx0a0012"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0a0012"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0a0012"
+      ],
+      "latency_ms": 1.0945999820251018,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0a0012"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0a0012": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 33
+    },
+    {
+      "case_id": "ep-012",
+      "category": "explicit_preference",
+      "eligible_expected_ids": [
+        "mem_fx0a0013"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0a0013"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0a0013"
+      ],
+      "latency_ms": 1.0255000088363886,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0a0013"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0a0013": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 17
+    },
+    {
+      "case_id": "ep-013",
+      "category": "explicit_preference",
+      "eligible_expected_ids": [
+        "mem_fx0a0014"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0a0014"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0a0014"
+      ],
+      "latency_ms": 1.0223000135738403,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0a0014"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0a0014": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 25
+    },
+    {
+      "case_id": "ep-015",
+      "category": "explicit_preference",
+      "eligible_expected_ids": [
+        "mem_fx0a0016"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0a0016"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0a0016"
+      ],
+      "latency_ms": 1.0105999826919287,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0a0016"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0a0016": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 29
+    },
+    {
+      "case_id": "io-002",
+      "category": "implicit_observed",
+      "eligible_expected_ids": [],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [],
+      "latency_ms": 0.7886000094003975,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 0
+    },
+    {
+      "case_id": "io-003",
+      "category": "implicit_observed",
+      "eligible_expected_ids": [],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [],
+      "latency_ms": 1.0200999968219548,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 0
+    },
+    {
+      "case_id": "io-010",
+      "category": "implicit_observed",
+      "eligible_expected_ids": [
+        "mem_fx0b0010"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0b0010"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0b0010"
+      ],
+      "latency_ms": 1.164900022558868,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0b0010"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0b0010": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 17
+    },
+    {
+      "case_id": "io-011",
+      "category": "implicit_observed",
+      "eligible_expected_ids": [],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [],
+      "latency_ms": 0.8043000125326216,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 0
+    },
+    {
+      "case_id": "io-012",
+      "category": "implicit_observed",
+      "eligible_expected_ids": [],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [],
+      "latency_ms": 0.7546000124420971,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 0
+    },
+    {
+      "case_id": "io-014",
+      "category": "implicit_observed",
+      "eligible_expected_ids": [
+        "mem_fx0b0014"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0b0014"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0b0014"
+      ],
+      "latency_ms": 1.0596000065561384,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0b0014"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0b0014": [
+          "MIV_005A_AND_VECTOR_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 15
+    },
+    {
+      "case_id": "io-015",
+      "category": "implicit_observed",
+      "eligible_expected_ids": [],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [],
+      "latency_ms": 0.7904999947641045,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 0
+    },
+    {
+      "case_id": "io-016",
+      "category": "implicit_observed",
+      "eligible_expected_ids": [],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [],
+      "latency_ms": 1.0171000030823052,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 0
+    },
+    {
+      "case_id": "nm-001",
+      "category": "negative_no_memory",
+      "eligible_expected_ids": [],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [],
+      "latency_ms": 0.0557999883312732,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": null,
+      "tokens": 0
+    },
+    {
+      "case_id": "nm-003",
+      "category": "negative_no_memory",
+      "eligible_expected_ids": [],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [],
+      "latency_ms": 0.9704999974928796,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 0
+    },
+    {
+      "case_id": "nm-004",
+      "category": "negative_no_memory",
+      "eligible_expected_ids": [],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [],
+      "latency_ms": 0.7473000150639564,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 0
+    },
+    {
+      "case_id": "nm-005",
+      "category": "negative_no_memory",
+      "eligible_expected_ids": [],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [],
+      "latency_ms": 0.8800000068731606,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 0
+    },
+    {
+      "case_id": "nm-006",
+      "category": "negative_no_memory",
+      "eligible_expected_ids": [],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [],
+      "latency_ms": 1.0176000068895519,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 0
+    },
+    {
+      "case_id": "nm-007",
+      "category": "negative_no_memory",
+      "eligible_expected_ids": [],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [],
+      "latency_ms": 0.03250001464039087,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": null,
+      "tokens": 0
+    },
+    {
+      "case_id": "nm-008",
+      "category": "negative_no_memory",
+      "eligible_expected_ids": [],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [],
+      "latency_ms": 0.7416999724227935,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 0
+    },
+    {
+      "case_id": "nm-009",
+      "category": "negative_no_memory",
+      "eligible_expected_ids": [],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [],
+      "latency_ms": 0.7254999945871532,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 0
+    },
+    {
+      "case_id": "nm-012",
+      "category": "negative_no_memory",
+      "eligible_expected_ids": [],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [],
+      "latency_ms": 0.7150000019464642,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 0
+    },
+    {
+      "case_id": "nm-013",
+      "category": "negative_no_memory",
+      "eligible_expected_ids": [],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [],
+      "latency_ms": 0.7183999987319112,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 0
+    },
+    {
+      "case_id": "nm-015",
+      "category": "negative_no_memory",
+      "eligible_expected_ids": [],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [
+        "mem_fx0f0003"
+      ],
+      "frozen_expected_ids": [],
+      "latency_ms": 0.7325999904423952,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {
+        "mem_fx0f0003": [
+          "STATUS_SUPERSEDED"
+        ]
+      },
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 0
+    },
+    {
+      "case_id": "ps-004",
+      "category": "project_scope",
+      "eligible_expected_ids": [
+        "mem_fx0c0004"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0c0004"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0c0004"
+      ],
+      "latency_ms": 0.977699994109571,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0c0004"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0c0004": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 13
+    },
+    {
+      "case_id": "ps-006",
+      "category": "project_scope",
+      "eligible_expected_ids": [],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [
+        "mem_fx0c0007"
+      ],
+      "frozen_expected_ids": [],
+      "latency_ms": 1.1113999935332686,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {
+        "mem_fx0c0007": [
+          "SCOPE_MISMATCH"
+        ]
+      },
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 0
+    },
+    {
+      "case_id": "ps-008",
+      "category": "project_scope",
+      "eligible_expected_ids": [
+        "mem_fx0c0008"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0c0008"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0c0008"
+      ],
+      "latency_ms": 1.0921999928541481,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0c0008"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0c0008": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 17
+    },
+    {
+      "case_id": "sa-003",
+      "category": "security_adversarial",
+      "eligible_expected_ids": [
+        "mem_fx0h0002"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0h0002"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0h0002"
+      ],
+      "latency_ms": 1.0717999830376357,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0h0002"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0h0002": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 57
+    },
+    {
+      "case_id": "sa-004",
+      "category": "security_adversarial",
+      "eligible_expected_ids": [],
+      "error": null,
+      "excluded_from_expected_by_oracle": [
+        "mem_fx0h0003"
+      ],
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0h0003"
+      ],
+      "latency_ms": 0.9200000204145908,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 0
+    },
+    {
+      "case_id": "sa-005",
+      "category": "security_adversarial",
+      "eligible_expected_ids": [],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [
+        "mem_fx0h0004"
+      ],
+      "frozen_expected_ids": [],
+      "latency_ms": 0.7472999859601259,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {
+        "mem_fx0h0004": [
+          "SCOPE_MISMATCH"
+        ]
+      },
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 0
+    },
+    {
+      "case_id": "sa-006",
+      "category": "security_adversarial",
+      "eligible_expected_ids": [
+        "mem_fx0h0005"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0h0005"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0h0005"
+      ],
+      "latency_ms": 1.0584999981801957,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0h0005"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0h0005": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 16
+    },
+    {
+      "case_id": "sa-007",
+      "category": "security_adversarial",
+      "eligible_expected_ids": [
+        "mem_fx0h0006"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0h0006"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0h0006"
+      ],
+      "latency_ms": 1.0411999828647822,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0h0006"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0h0006": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 21
+    },
+    {
+      "case_id": "sa-009",
+      "category": "security_adversarial",
+      "eligible_expected_ids": [
+        "mem_fx0h0008"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0h0008"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0h0008"
+      ],
+      "latency_ms": 1.0763999889604747,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0h0008"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0h0008": [
+          "MIV_005A_AND_VECTOR_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 22
+    },
+    {
+      "case_id": "sa-010",
+      "category": "security_adversarial",
+      "eligible_expected_ids": [
+        "mem_fx0h0009"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0h0009"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0h0009"
+      ],
+      "latency_ms": 0.9938000002875924,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0h0009"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0h0009": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 45
+    },
+    {
+      "case_id": "sa-011",
+      "category": "security_adversarial",
+      "eligible_expected_ids": [
+        "mem_fx0h0010"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0h0010"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0h0010"
+      ],
+      "latency_ms": 1.131199998781085,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0h0010"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0h0010": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 43
+    },
+    {
+      "case_id": "sa-012",
+      "category": "security_adversarial",
+      "eligible_expected_ids": [],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [
+        "mem_fx0h0004"
+      ],
+      "frozen_expected_ids": [],
+      "latency_ms": 0.9174000006169081,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {
+        "mem_fx0h0004": [
+          "SCOPE_MISMATCH"
+        ]
+      },
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 0
+    },
+    {
+      "case_id": "tp-001",
+      "category": "temporal",
+      "eligible_expected_ids": [],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [],
+      "latency_ms": 0.7899000192992389,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 0
+    },
+    {
+      "case_id": "tp-003",
+      "category": "temporal",
+      "eligible_expected_ids": [],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [],
+      "latency_ms": 0.8194999827537686,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 0
+    },
+    {
+      "case_id": "tp-006",
+      "category": "temporal",
+      "eligible_expected_ids": [
+        "mem_fx0e0004"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0e0004"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0e0004"
+      ],
+      "latency_ms": 1.0305999894626439,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0e0004"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0e0004": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 16
+    },
+    {
+      "case_id": "tp-010",
+      "category": "temporal",
+      "eligible_expected_ids": [],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [],
+      "latency_ms": 0.7602999976370484,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 0
+    },
+    {
+      "case_id": "tp-011",
+      "category": "temporal",
+      "eligible_expected_ids": [
+        "mem_fx0e0007"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0e0007"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0e0007"
+      ],
+      "latency_ms": 1.129399985074997,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0e0007"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0e0007": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 16
+    },
+    {
+      "case_id": "tp-012",
+      "category": "temporal",
+      "eligible_expected_ids": [],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [],
+      "latency_ms": 1.0119999933522195,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 0
+    },
+    {
+      "case_id": "tp-013",
+      "category": "temporal",
+      "eligible_expected_ids": [],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [],
+      "latency_ms": 0.759599992306903,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 0
+    }
+  ],
+  "trace_consistency": {
+    "canonical_oracle": "memory_eval/e5_base/oracle_v3.py (independent implementation)",
+    "conflict_loser_policy": "CONFLICT_LOSER 不得被向量路径复活；复活 = 整轮 FAIL",
+    "conflict_loser_revivals": 0,
+    "oracle_results_sha256": "8e8e2622ee5f930f92861c6dba2ac1fe7f9e78a18fce57490d4af02ffc145564",
+    "runtime_hard_filter_consistent_across_grid": true,
+    "trace_mismatch_count": 0,
+    "trace_mismatch_examples": []
+  }
+}
