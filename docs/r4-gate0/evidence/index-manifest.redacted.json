@@ -1,0 +1,49 @@
+{
+  "_artifact_file_sha256": "819973a06e002f30cd23d19db232067a160405b54fd3d23031c8df25f9370100",
+  "_note": "redacted: no passages, vectors, raw queries, secrets, session IDs, project IDs, or user-home paths",
+  "build_duration_ms": 3069.406,
+  "build_finished_utc": "2026-08-21T05:35:05Z",
+  "build_started_utc": "2026-08-21T05:35:02Z",
+  "dimension": 384,
+  "dtype": "float32",
+  "excluded_object_count": 149,
+  "excluded_reason_counts": {
+    "STATUS_NOT_RECALLABLE": 149
+  },
+  "files": {
+    "current": {
+      "sha256": "ac914135aa6faa41e07d58b94e47b3c319e918aad6a158fd8fe2ec6239130b80",
+      "size": 174
+    },
+    "rows": {
+      "sha256": "fd5ef5caa2be94f97bf25bf7a6834a05a37ae13750efb1baec3d04e7f68ed307",
+      "size": 23857
+    },
+    "vectors": {
+      "sha256": "c59e8c23aebbee58d1f745a121c88568ff0929b61964cda44f271822d9be8ed2",
+      "size": 129024
+    }
+  },
+  "generation_id": "g-20260821T053505813330Z-70c1afe1aa5f-bbf4aa36",
+  "included_object_count": 84,
+  "index_manifest_self_hash": "dd8797270ed8d14a4d15bc963a9cd97ac273ace5d81c825068d895c77a18b8b0",
+  "index_schema_version": 1,
+  "l2_normalized": true,
+  "model": {
+    "id": "intfloat/multilingual-e5-small",
+    "immutable_revision": "919cfbe11fbf4f1b9bb321007c46c14feaf84227"
+  },
+  "model_manifest_digest": "0de629f4b6db1d74812cd9581f6a8d305d3a88d9abee998498571c86197d080c",
+  "object_set_digest": "cbb5e7f88e01bd65151db84798abecc698f12f0345420ea45cd07fe082baa035",
+  "passage_serializer_version": "r4-g0-passage-v1",
+  "permissions": {
+    "mode": "windows-protected-dacl",
+    "principals": [
+      "EXECUTING_IDENTITY",
+      "SYSTEM",
+      "ADMINISTRATORS"
+    ],
+    "post_acl_self_check_rows": 84
+  },
+  "source_fingerprint": "70c1afe1aa5f26db6f35fca55982350290edaa10896be5c2eedbe97def7456fc"
+}
