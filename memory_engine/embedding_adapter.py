@@ -18,6 +18,8 @@
 拒绝），任何不符 fail-closed（抛异常）。backend 包版本须与 manifest 记录一致。
 """
 import importlib.metadata
+import hashlib
+import os
 
 import torch
 import torch.nn.functional as F
@@ -76,6 +78,8 @@ class E5Embedder:
         self.device = device
         # 1) 加载前：manifest 完整校验 + backend 版本校验（fail-closed）
         self.manifest = verify_model_manifest(model_dir)
+        with open(os.path.join(model_dir, "MODEL-MANIFEST.json"), "rb") as fh:
+            self.manifest_digest = hashlib.sha256(fh.read()).hexdigest()
         verify_backend_versions(self.manifest)
         # 2) 完全离线 + 禁 remote code
         self.tokenizer = AutoTokenizer.from_pretrained(
