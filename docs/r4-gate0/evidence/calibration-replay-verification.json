@@ -1,0 +1,12 @@
+{
+  "calibration_code_sha256": "0dd8e8b3f39f2209cca75410e9b5e712bde8de8c0a6abf8f3e7fad677a61c1ed",
+  "calibration_lock_sha256": "939f1b65315296079a9a8f7c887a74e7fe84849b765898e88c130feaf4df1ad0",
+  "calibration_vector_table_sha256": "6e07576f82df21f9ef5e3bed250a3f9067e95cea7c0c633d9fb0f8feb552c372",
+  "comparison_contract": "latency and elapsed time excluded; IDs, order, reason codes, raw counts, raw metrics and all 60 grid decisions included",
+  "grid_results_primary_sha256": "aff5a1290659abb7832babbd3e5153e44072b5a70a703d659798daff853ab3b1",
+  "grid_results_rerun_sha256": "aff5a1290659abb7832babbd3e5153e44072b5a70a703d659798daff853ab3b1",
+  "normalized_case_verdicts_primary_sha256": "321542cda70e30aed167c96367f18ed49c054593732a4a5bcb27dab1605577fb",
+  "normalized_case_verdicts_rerun_sha256": "321542cda70e30aed167c96367f18ed49c054593732a4a5bcb27dab1605577fb",
+  "result": "NO-GO",
+  "verifier": "independent-normalized-comparison-v1"
+}
