@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "id": "mem_bfce9c78",
+  "type": "semantic",
+  "scope": "project",
+  "content": "裁决：R4 Gate 0-B 于 2026-08-21 签核 PASS，允许进入 Gate 0-C；不授权合并 main、tag 或 release。",
+  "status": "candidate",
+  "source": {
+    "kind": "observed",
+    "adapter": "memory.py",
+    "session_id": null,
+    "created_at": "2026-08-21T04:54:14Z",
+    "updated_at": "2026-08-21T04:54:14Z"
+  },
+  "temporal": {
+    "valid_from": null,
+    "valid_until": null
+  },
+  "relations": {
+    "supersedes": [],
+    "superseded_by": [],
+    "contradicts": [],
+    "related": []
+  },
+  "classification": {
+    "memory_layer": "semantic",
+    "category": "decision",
+    "recall_layer": "L3",
+    "priority": "high"
+  },
+  "provenance": {
+    "evidence": "observed",
+    "source_ref": null
+  },
+  "tags": [
+    "r4-gate0",
+    "gate-decision"
+  ],
+  "entities": [
+    "Gate-0-B",
+    "Gate-0-C"
+  ],
+  "project_id": "cross-memory-system"
+}

@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-08-21T02:10:55Z",
-  "count": 231,
+  "generated_at": "2026-08-21T04:54:15Z",
+  "count": 233,
   "objects": {
     "mem_012b899e": {
       "path": "memory/objects/mem_012b899e.json",
@@ -2473,6 +2473,26 @@
       "supersedes": [],
       "superseded_by": []
     },
+    "mem_bfce9c78": {
+      "path": "memory/objects/mem_bfce9c78.json",
+      "type": "semantic",
+      "scope": "project",
+      "status": "candidate",
+      "priority": "high",
+      "category": "decision",
+      "tags": [
+        "r4-gate0",
+        "gate-decision"
+      ],
+      "entities": [
+        "Gate-0-B",
+        "Gate-0-C"
+      ],
+      "valid_from": null,
+      "valid_until": null,
+      "supersedes": [],
+      "superseded_by": []
+    },
     "mem_c031bda4": {
       "path": "memory/objects/mem_c031bda4.json",
       "type": "episodic",
@@ -2734,6 +2754,27 @@
         "manual-review"
       ],
       "entities": [],
+      "valid_from": null,
+      "valid_until": null,
+      "supersedes": [],
+      "superseded_by": []
+    },
+    "mem_d42e783b": {
+      "path": "memory/objects/mem_d42e783b.json",
+      "type": "state",
+      "scope": "project",
+      "status": "candidate",
+      "priority": "high",
+      "category": "state",
+      "tags": [
+        "r4-gate0",
+        "embedding",
+        "supply-chain"
+      ],
+      "entities": [
+        "r4-gate0-r2",
+        "dc01dd1"
+      ],
       "valid_from": null,
       "valid_until": null,
       "supersedes": [],
