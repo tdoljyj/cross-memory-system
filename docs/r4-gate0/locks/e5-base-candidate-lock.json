@@ -30,7 +30,7 @@
   "files": [
     { "path": "config.json", "size": 694, "sha256": "9dab198f24c8c0879e481cf7822005d5ecbceedbacb390ffafa594e28d31bac4", "hash_source": "直接下载实测（M0-R1 与 M0-R2 均以固定 revision 复验一致）" },
     { "path": "tokenizer.json", "size": 17082660, "sha256": "62c24cdc13d4c9952d63718d6c9fa4c287974249e16b7ade6d5a85e7bbb75626", "hash_source": "官方 Xet/LFS 文件元数据 SHA-256（M0-R2 以固定 revision 的 tree API 复验一致；下载授权轮须逐文件复验）" },
-    { "path": "tokenizer_config.json", "size": 418, "sha256": "efb5c0d09722e5fe59a462cd2a9976ee216d55b037597d996cd3fe833216da15", "hash_source": "直接下载实测（M0-R1 与 M0-R2 均以固定 revision 复验一致）" },
+    { "path": "tokenizer_config.json", "size": 418, "sha256": "efb5c0d09722e5fe59a462cd2a9976ee216d55b037597d997cd3fe833216da15", "hash_source": "直接下载实测（M0-R1 与 M0-R2 均以固定 revision 复验一致）" },
     { "path": "special_tokens_map.json", "size": 280, "sha256": "06e405a36dfe4b9604f484f6a1e619af1a7f7d09e34a8555eb0b77b66318067f", "hash_source": "直接下载实测（M0-R1 与 M0-R2 均以固定 revision 复验一致）" },
     { "path": "sentencepiece.bpe.model", "size": 5069051, "sha256": "cfc8146abe2a0488e9e2a0c56de7952f7c11ab059eca145a0a727afce0db2865", "hash_source": "官方 Xet/LFS 文件元数据 SHA-256（与 E5-small 同名文件完全相同，交叉验证一致；下载授权轮须逐文件复验）" },
     { "path": "model.safetensors", "size": 1112201288, "sha256": "a18a44fad1d0b46ded15928144138cff1135d5cc8233bdd90be5f18822de09a7", "hash_source": "官方 Xet/LFS 文件元数据 SHA-256（M0-R2 以固定 revision 的 tree API 复验一致；下载授权轮须逐文件复验）" }

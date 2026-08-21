@@ -1,0 +1,131 @@
+{
+  "schema_version": "r4-gate0-e5base-lock-erratum-v1",
+  "erratum_type": "candidate-lock-single-sha256-transcription-fix",
+  "authorization": "产品所有者裁决 2026-08-21：修锁获批（tokenizer_config.json 锁值按实测值勘误，非语义勘误）；calibration CONDITIONAL PASS；Gate 0-F 暂不授权；授权一次最小勘误轮",
+  "executed_utc": "2026-08-21T16:18:00Z（本地 2026-08-22 00:18 +0800）",
+  "commit_structure": {
+    "parent": "db1d5c9de9672839b6951181491aa48242f4a947",
+    "parent_subject": "E5-base impl: supply chain + independent oracle v3 + 768d index + 35-grid calibration PASS",
+    "amend": false,
+    "structure": "本记录所在提交 = db1d5c9 之上的独立子提交（勘误提交，非 amend）",
+    "branch": "r4-gate0-m0-r2"
+  },
+  "target": {
+    "lock_path": "docs/r4-gate0/locks/e5-base-candidate-lock.json",
+    "lock_field": "files[tokenizer_config.json].sha256",
+    "model_id": "intfloat/multilingual-e5-base",
+    "immutable_revision": "d128750597153bb5987e10b1c3493a34e5a4502a",
+    "tokenizer_config_size_bytes": 418
+  },
+  "hash_erratum": {
+    "old_sha256": "efb5c0d09722e5fe59a462cd2a9976ee216d55b037597d996cd3fe833216da15",
+    "new_sha256": "efb5c0d09722e5fe59a462cd2a9976ee216d55b037597d997cd3fe833216da15",
+    "hash_length": 64,
+    "diff_count": 1,
+    "character_position_1indexed": 49,
+    "character_position_0indexed": 48,
+    "old_char": "6",
+    "new_char": "7",
+    "context_before": "…37597d996cd3fe833216da15",
+    "context_after": "…37597d997cd3fe833216da15",
+    "byte_offset_of_hash_string_in_lock_file": 2756,
+    "byte_offset_of_changed_char_in_lock_file": 2804,
+    "lock_file_size_bytes_unchanged": 8198,
+    "lock_file_changed_byte_count": 1
+  },
+  "hash_provenance": {
+    "hash_types_note": "git blob SHA-1（内容寻址，证明对象身份 = HF 仓库该 revision 的官方对象）与文件字节 SHA-256（证明字节内容）是两种不同的哈希证明，本记录分别列示，不得互相替代或混称为同一种哈希证明",
+    "git_blob_sha1": "6de1940d16d38be9877bf7cc228c9377841b311f",
+    "git_blob_sha1_provenance": [
+      "实施轮（2026-08-21）：HF paths-info API 在固定 revision 返回的官方 oid，与下载字节本地重算的 git blob SHA-1 精确一致",
+      "勘误轮（2026-08-22）：本地 git hash-object 对磁盘 tokenizer_config.json 重算 = 6de1940d16d38be9877bf7cc228c9377841b311f，再次独立复核一致"
+    ],
+    "sha256_measurements": [
+      {"when": "实施轮下载 #1（固定 revision resolve 端点）", "sha256": "efb5c0d09722e5fe59a462cd2a9976ee216d55b037597d997cd3fe833216da15"},
+      {"when": "实施轮下载 #2（独立复验，字节完全一致）", "sha256": "efb5c0d09722e5fe59a462cd2a9976ee216d55b037597d997cd3fe833216da15"},
+      {"when": "勘误轮磁盘字节复测（2026-08-22）", "sha256": "efb5c0d09722e5fe59a462cd2a9976ee216d55b037597d997cd3fe833216da15"}
+    ],
+    "cross_checks": "其余 5 个白名单文件锁值逐字节一致；三个大文件（tokenizer.json / sentencepiece.bpe.model / model.safetensors）的官方 Xet/LFS 元数据（tree API lfs.oid）亦全部一致；size 418 与锁一致",
+    "classification": "锁记录单字符抄写笔误（M0-R1/R2 复验仅比对前缀 efb5c0d0…，完整 64 位从未逐字符比对）；供应链字节权威性独立于锁记录笔误成立（git 内容寻址证明）"
+  },
+  "erratum_justification": [
+    "模型 ID、文件路径、immutable revision 均未变化",
+    "下载文件 git blob SHA-1 与该 revision 官方对象 oid 精确一致（内容寻址）",
+    "两次下载字节稳定，勘误轮磁盘复测第三次一致",
+    "差异仅为一个十六进制字符（第 49 位 6→7）的抄写错误",
+    "修正不改变 embedding 计算、35-grid 结果或择优决策（新旧运行全量比对一致，见 rerun_evidence）",
+    "错误在 holdout 解封前于实施轮报告 §1.1 主动披露，本勘误为获批后的正式闭合"
+  ],
+  "lock_digest": {
+    "old_lock_sha256": "9ee354192a4fbe42a15c2a84874548d83e5c92b233f4bfb6f56c724afc644814",
+    "new_lock_sha256": "50ab5689cf4378441177d1af0773b59fbd5a2dc62ff866df7a76b0ea0ad0cd23",
+    "old_lock_recorded_in": "db1d5c9 evidence integrity.candidate_lock_sha256（原始主运行与复验 receipts）",
+    "new_lock_recorded_in": "勘误提交内 evidence integrity.candidate_lock_sha256（勘误重跑主运行与复验 receipts）"
+  },
+  "manifest_rebuild": {
+    "path": "MODEL-MANIFEST.json（模型目录，仓库外派生物）",
+    "old_manifest_sha256": "c5e145a140d851cb72905c2a5b7ed9f052c45084a0a07e3476cfa516f1607b5e",
+    "new_manifest_sha256": "2c9d6487b39576684d6593d33a52f8603087bf5775b51cddf8f907dd1eeba960",
+    "changes": [
+      "lock_discrepancy 例外移除（活跃 manifest 零 discrepancy，无可绕过校验的例外）",
+      "trust_root 更新为勘误后锁（内容寻址：SHA-256 = 50ab5689…，指向本勘误记录）",
+      "generated_by 标注勘误轮重建",
+      "self_hash 按上述变更重算"
+    ],
+    "unchanged": "manifest_schema_version / model（id + immutable_revision）/ contract / backend / whitelist_files（6 文件 size+SHA-256 全部不变）",
+    "generator_note": "重建经 memory_eval/e5_base/embedder.py::build_manifest 结构生成后仅做上述三处变更；embedder.py 本体零改动（SHA-256 = ef186eef2e07d930a36b29efbda5a47dba0722820e2b16751649cabbbe131b20，与原始 receipts 记录一致）"
+  },
+  "supply_chain_verification": {
+    "guard": "memory_eval/e5_base/embedder.py::verify_model_manifest（fail-closed：schema / canonical self-hash / 模型 ID / 固定 revision / 合同字段 / backend packages / 六文件白名单 size+SHA-256 / 额外文件拒绝）",
+    "guard_result": "PASS",
+    "three_way_check": "锁 files[6] vs 活跃 manifest whitelist_files[6] vs 磁盘字节：6/6 全部一致（lock_eq_manifest / lock_eq_disk / size_eq_disk 均 true）",
+    "mismatch_count": 0,
+    "active_manifest_lock_discrepancy_present": false,
+    "zero_discrepancy": true
+  },
+  "rerun_evidence": {
+    "environment_preflight": "勘误前（原锁 + 原 manifest）完整重跑一次：与原始运行确定性一致（差异仅 integrity.git_head 与 integrity.calibration_code_sha256，见下），环境确定性基线成立",
+    "main_run": {"result": "PASS", "qualifying": "10/35", "selected": "alpha=1.00 / tau=0.90", "path": "docs/r4-gate0/evidence/e5-base-calibration-results.json"},
+    "deterministic_replay": {"deterministic_replay_ok": true, "mismatched_fields": [], "path": "docs/r4-gate0/evidence/e5-base-calibration-results-replay.json"},
+    "old_vs_new_comparison": {
+      "path": "docs/r4-gate0/evidence/e5-base-erratum-rerun-comparison.json",
+      "verdict_invariance": "PASS",
+      "statement": "新旧运行的逐 case verdict、顺序、reason code、35 项决策、最终选择完全一致；全部叶子差异 5 处均在预期集合内（锁勘误 + manifest 重建连带 + 运行溯源字段），零预期外差异",
+      "expected_leaf_diffs": [
+        "integrity.candidate_lock_sha256（9ee35419… → 50ab5689…，锁勘误）",
+        "integrity.model_manifest_sha256（c5e145a1… → 2c9d6487…，manifest 重建）",
+        "runtime.model.manifest_digest（c5e145a1… → 2c9d6487…，manifest 重建连带）",
+        "integrity.git_head（4e6cca1… → db1d5c9…，勘误轮运行时 HEAD = 勘误提交之父；原始轮同模式：运行先于提交，receipts 记录其父提交）",
+        "integrity.calibration_code_sha256（bac9c6f2… → 39e76734…，实施轮遗留披露，见 implementation_round_finding）"
+      ]
+    },
+    "receipts_markdown_diff": "两份 receipt .md 各仅 1 行变化（Model manifest SHA-256 行）"
+  },
+  "implementation_round_finding": {
+    "title": "原始 receipts 的 calibration_code_sha256 与 db1d5c9 提交内文件不一致（勘误轮发现，非静默披露）",
+    "facts": [
+      "原始 receipts（db1d5c9 内 evidence）记录 calibration_code_sha256 = bac9c6f2f77f758975f389f12e98b0f355500d474197ba405a7d73cd26f7978f（运行时版本）",
+      "db1d5c9 提交内 memory_eval/e5_base/calibration.py 实测 SHA-256 = 39e76734330826a790fb00b8a8890ecc7c38e4d5786466d47a297dca56fa13dc",
+      "工作区文件 mtime（22:39）晚于两次原始运行（约 22:35-36）早于提交；运行时版本在提交前被改动且从未入库（git 内不可恢复）",
+      "其余代码文件（embedder.py / oracle_v3.py / gate0_calibration.py）receipts 记录与提交内文件逐字节一致"
+    ],
+    "resolution": [
+      "勘误轮重跑使用 db1d5c9 提交版代码（复核者可从 git 独立取得并核验）",
+      "行为等价由双重完整重跑证明：环境预检（勘误前）与勘误重跑（勘误后）均在完整 35-grid × 53-case 上复现原始全部 verdict / 决策 / digest（oracle digest 8e8e2622… / 向量表 2fe408db… / vectors.f32 dde75de2… 全部不变）",
+      "勘误后 receipts 记录 calibration_code_sha256 = 39e76734…（= 提交版），receipts ↔ 提交代码一致性就此修复"
+    ],
+    "classification": "实施轮遗留缺陷（evidence-code 不一致），非勘误引入；对 calibration 结论无影响（verdict 级等价已证）"
+  },
+  "frozen_unchanged": {
+    "calibration_fixture_or_expected": "未修改（memory_eval/gate0_inputs/ 下 calibration-cases.json / calibration-fixtures.json digest 与原始 receipts sealed_inputs 一致）",
+    "oracle_v3": "未修改（oracle_v3.py SHA-256 = 3163ab4ff3d589f1968a0c1bdb55e939ca78a3a042f439b5d37151e34068df）",
+    "grid_thresholds_selection_rules": "未修改（35-grid 从勘误后锁读取并与代码内冻结期望双校验；八项硬门槛逐字沿用；择优规则未触碰）",
+    "calibration_implementation": "未修改（calibration.py / gate0_calibration.py / metrics.py / runner.py 与 db1d5c9 提交逐字节一致；勘误重跑即以提交版执行）",
+    "holdout_and_pp_001_012": "零读取零解析（holdout_detail_reads = 0；frozen-eval-manifest.json 仅字节级哈希校验，digest c7a195e1… 不变）",
+    "main_tag_release": "未执行任何 push / tag / release；本地 refs/heads/main（ffba74b）与 origin/main（8c22c238）未 rebase 未 merge",
+    "real_binding": "未修改（semantic_mode 仅以 test 参数进入被测路径）",
+    "e5_small_lock": "未修改（memory_eval/gate0_inputs/calibration-lock.json SHA-256 = 939f1b65… 与原始 receipts 一致）"
+  },
+  "environment_note": "MAX_PATH 206 为环境处置记录，不构成 Gate 阻断（产品所有者裁决 2026-08-21 口径照录）",
+  "gate_0_f": "仍未授权：holdout 保持密封；本勘误轮完成后待独立复核（新提交 SHA 及父提交关系 / db1d5c9..新提交文件清单 / 修正后完整锁值与 digest / 零 discrepancy 供应链验证 / calibration 重跑一致性证据 / git bundle 或 format-patch），复核通过转正式 CALIBRATION PASS 后再申请授权唯一一次 Gate 0-F"
+}

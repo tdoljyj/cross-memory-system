@@ -1,0 +1,228 @@
+{
+  "authorization": "产品所有者裁决 2026-08-21：修锁获批（tokenizer_config.json 锁值按实测值勘误）；授权一次最小勘误轮 = 修锁 + 连带 digest 更新 + 供应链守卫重跑 + 同 53 cases / 35-grid / 代码 / 缓存重跑主运行与确定性复验；Gate 0-F 暂不授权",
+  "comparison_basis": {
+    "deterministic_fields_compared": 22,
+    "erratum_runs_source": "勘误后重跑（磁盘现行 evidence）",
+    "expected_change_set": [
+      "integrity.candidate_lock_sha256（锁勘误）",
+      "integrity.model_manifest_sha256（manifest 重建）",
+      "runtime.model.manifest_digest（manifest 重建连带）",
+      "integrity.git_head（勘误轮运行时 HEAD = 勘误提交之父 db1d5c9；原始轮同模式：运行先于提交，receipts 记录其父 4e6cca1）",
+      "integrity.calibration_code_sha256（实施轮遗留披露，见 implementation_round_finding；勘误轮使用 db1d5c9 提交版代码）"
+    ],
+    "original_runs_source": "db1d5c9 提交内 evidence（勘误前本地备份，与 git 对象逐字节同源）",
+    "strip_rule": "latency_ms / grid_elapsed_seconds / index_dir / rebuild_command / run_label（E5-small 轮同口径）"
+  },
+  "conclusion": {
+    "statement": "新旧运行的逐 case verdict、顺序、reason code、35 项决策、最终选择（alpha=1.00 / tau=0.90）完全一致；变化仅限预期集合（锁 / manifest digest 连带 + 运行溯源字段，全部有根因记录，无任何预期外叶子差异）",
+    "verdict_invariance": "PASS"
+  },
+  "environment_preflight": {
+    "comparison_vs_original": {
+      "compare_receipts_mismatched_fields": [
+        "integrity"
+      ],
+      "expected_leaf_diffs": [
+        {
+          "new": "39e76734330826a790fb00b8a8890ecc7c38e4d5786466d47a297dca56fa13dc",
+          "old": "bac9c6f2f77f758975f389f12e98b0f355500d474197ba405a7d73cd26f7978f",
+          "path": "integrity.calibration_code_sha256"
+        },
+        {
+          "new": "db1d5c9de9672839b6951181491aa48242f4a947",
+          "old": "4e6cca120c7f57d0f1fa1d29002a87922e22facb",
+          "path": "integrity.git_head"
+        }
+      ],
+      "unexpected_leaf_diffs": [],
+      "verdict_invariance_ok": true
+    },
+    "description": "勘误执行前，以原始锁 + 原 manifest（含 lock_discrepancy 例外）完整重跑一次，建立环境确定性基线",
+    "finding": "环境在勘误前即可完整复现原始运行（verdict 级完全一致）；差异仅 integrity.git_head（4e6cca1→db1d5c9，运行时 HEAD）与 integrity.calibration_code_sha256（实施轮遗留，见下）"
+  },
+  "implementation_round_finding": {
+    "classification": "实施轮遗留缺陷（evidence-code 不一致），非勘误引入；对 calibration 结论无影响（verdict 级等价已证）",
+    "facts": [
+      "原始 receipts（db1d5c9 内 evidence）记录 calibration_code_sha256 = bac9c6f2f77f758975f389f12e98b0f355500d474197ba405a7d73cd26f7978f（运行时版本）",
+      "db1d5c9 提交内 memory_eval/e5_base/calibration.py 实测 SHA-256 = 39e76734330826a790fb00b8a8890ecc7c38e4d5786466d47a297dca56fa13dc",
+      "工作区文件 mtime 22:39 晚于两次原始运行（~22:35-36）早于提交；运行时版本在提交前被改动且从未入库（git 内不可恢复）",
+      "其余代码文件（embedder.py / oracle_v3.py / gate0_calibration.py）receipts 记录与提交内文件逐字节一致"
+    ],
+    "resolution": [
+      "勘误轮重跑使用 db1d5c9 提交版代码（复核者可从 git 独立取得并核验）",
+      "行为等价由双重完整重跑证明：环境预检（勘误前）与勘误重跑（勘误后）均在完整 35-grid × 53-case 上复现原始全部 verdict / 决策 / digest",
+      "勘误后 receipts 记录 calibration_code_sha256 = 39e76734…（= 提交版），receipts ↔ 提交代码一致性就此修复"
+    ],
+    "title": "原始 receipts 的 calibration_code_sha256 与 db1d5c9 提交内文件不一致（勘误轮发现，非静默披露）"
+  },
+  "main_run_comparison": {
+    "compare_receipts_mismatched_fields": [
+      "integrity",
+      "runtime.model"
+    ],
+    "expected_leaf_diffs": [
+      {
+        "new": "39e76734330826a790fb00b8a8890ecc7c38e4d5786466d47a297dca56fa13dc",
+        "old": "bac9c6f2f77f758975f389f12e98b0f355500d474197ba405a7d73cd26f7978f",
+        "path": "integrity.calibration_code_sha256"
+      },
+      {
+        "new": "50ab5689cf4378441177d1af0773b59fbd5a2dc62ff866df7a76b0ea0ad0cd23",
+        "old": "9ee354192a4fbe42a15c2a84874548d83e5c92b233f4bfb6f56c724afc644814",
+        "path": "integrity.candidate_lock_sha256"
+      },
+      {
+        "new": "db1d5c9de9672839b6951181491aa48242f4a947",
+        "old": "4e6cca120c7f57d0f1fa1d29002a87922e22facb",
+        "path": "integrity.git_head"
+      },
+      {
+        "new": "2c9d6487b39576684d6593d33a52f8603087bf5775b51cddf8f907dd1eeba960",
+        "old": "c5e145a140d851cb72905c2a5b7ed9f052c45084a0a07e3476cfa516f1607b5e",
+        "path": "integrity.model_manifest_sha256"
+      },
+      {
+        "new": "2c9d6487b39576684d6593d33a52f8603087bf5775b51cddf8f907dd1eeba960",
+        "old": "c5e145a140d851cb72905c2a5b7ed9f052c45084a0a07e3476cfa516f1607b5e",
+        "path": "runtime.model.manifest_digest"
+      }
+    ],
+    "invariance": {
+      "case_count": 53,
+      "case_order_identical": true,
+      "diagnostic_case_verdicts_identical": true,
+      "final_selection": {
+        "alpha": 1.0,
+        "tau": 0.9
+      },
+      "final_selection_identical": true,
+      "grid_decisions_identical": true,
+      "grid_rows_compared": 35,
+      "oracle_results_sha256": {
+        "new": "8e8e2622ee5f930f92861c6dba2ac1fe7f9e78a18fce57490d4af02ffc145564",
+        "old": "8e8e2622ee5f930f92861c6dba2ac1fe7f9e78a18fce57490d4af02ffc145564"
+      },
+      "qualifying_count": {
+        "new": 10,
+        "old": 10
+      },
+      "reason_codes_identical_per_case": true,
+      "result": {
+        "new": "PASS",
+        "old": "PASS"
+      },
+      "selected_case_verdicts_identical": true,
+      "selected_case_verdicts_order_identical": true,
+      "trace_mismatch_count": {
+        "new": 0,
+        "old": 0
+      }
+    },
+    "leaf_diff_count": 5,
+    "new_run": {
+      "path": "C:\\Users\\17531\\.workbuddy\\codex-memory-system\\docs\\r4-gate0\\evidence\\e5-base-calibration-results.json",
+      "sha256": "ddec90f172bb4964a685f7eda04b99bf2aa3c58db806d382f1bf79d9e8633323"
+    },
+    "old_run": {
+      "path": "C:\\Users\\17531\\WorkBuddy\\2026-08-21-23-57-56\\erratum-backup\\evidence\\e5-base-calibration-results.json",
+      "sha256": "cf5d78a17ea249bbfdfa7c98d035bb0823e7928b8f7098d56d010d2e80c864b7"
+    },
+    "pair": "main",
+    "unexpected_leaf_diffs": [],
+    "verdict_invariance_ok": true
+  },
+  "receipts_markdown_diff": {
+    "expected": "仅 Model manifest SHA-256 一行（manifest 重建连带）",
+    "main_receipt_changed_lines": [
+      {
+        "line": 11,
+        "new": "- Model manifest SHA-256: `2c9d6487b39576684d6593d33a52f8603087bf5775b51cddf8f907dd1eeba960`",
+        "old": "- Model manifest SHA-256: `c5e145a140d851cb72905c2a5b7ed9f052c45084a0a07e3476cfa516f1607b5e`"
+      }
+    ],
+    "replay_receipt_changed_lines": [
+      {
+        "line": 11,
+        "new": "- Model manifest SHA-256: `2c9d6487b39576684d6593d33a52f8603087bf5775b51cddf8f907dd1eeba960`",
+        "old": "- Model manifest SHA-256: `c5e145a140d851cb72905c2a5b7ed9f052c45084a0a07e3476cfa516f1607b5e`"
+      }
+    ]
+  },
+  "replay_run_comparison": {
+    "compare_receipts_mismatched_fields": [
+      "integrity",
+      "runtime.model"
+    ],
+    "expected_leaf_diffs": [
+      {
+        "new": "39e76734330826a790fb00b8a8890ecc7c38e4d5786466d47a297dca56fa13dc",
+        "old": "bac9c6f2f77f758975f389f12e98b0f355500d474197ba405a7d73cd26f7978f",
+        "path": "integrity.calibration_code_sha256"
+      },
+      {
+        "new": "50ab5689cf4378441177d1af0773b59fbd5a2dc62ff866df7a76b0ea0ad0cd23",
+        "old": "9ee354192a4fbe42a15c2a84874548d83e5c92b233f4bfb6f56c724afc644814",
+        "path": "integrity.candidate_lock_sha256"
+      },
+      {
+        "new": "db1d5c9de9672839b6951181491aa48242f4a947",
+        "old": "4e6cca120c7f57d0f1fa1d29002a87922e22facb",
+        "path": "integrity.git_head"
+      },
+      {
+        "new": "2c9d6487b39576684d6593d33a52f8603087bf5775b51cddf8f907dd1eeba960",
+        "old": "c5e145a140d851cb72905c2a5b7ed9f052c45084a0a07e3476cfa516f1607b5e",
+        "path": "integrity.model_manifest_sha256"
+      },
+      {
+        "new": "2c9d6487b39576684d6593d33a52f8603087bf5775b51cddf8f907dd1eeba960",
+        "old": "c5e145a140d851cb72905c2a5b7ed9f052c45084a0a07e3476cfa516f1607b5e",
+        "path": "runtime.model.manifest_digest"
+      }
+    ],
+    "invariance": {
+      "case_count": 53,
+      "case_order_identical": true,
+      "diagnostic_case_verdicts_identical": true,
+      "final_selection": {
+        "alpha": 1.0,
+        "tau": 0.9
+      },
+      "final_selection_identical": true,
+      "grid_decisions_identical": true,
+      "grid_rows_compared": 35,
+      "oracle_results_sha256": {
+        "new": "8e8e2622ee5f930f92861c6dba2ac1fe7f9e78a18fce57490d4af02ffc145564",
+        "old": "8e8e2622ee5f930f92861c6dba2ac1fe7f9e78a18fce57490d4af02ffc145564"
+      },
+      "qualifying_count": {
+        "new": 10,
+        "old": 10
+      },
+      "reason_codes_identical_per_case": true,
+      "result": {
+        "new": "PASS",
+        "old": "PASS"
+      },
+      "selected_case_verdicts_identical": true,
+      "selected_case_verdicts_order_identical": true,
+      "trace_mismatch_count": {
+        "new": 0,
+        "old": 0
+      }
+    },
+    "leaf_diff_count": 5,
+    "new_run": {
+      "path": "C:\\Users\\17531\\.workbuddy\\codex-memory-system\\docs\\r4-gate0\\evidence\\e5-base-calibration-results-replay.json",
+      "sha256": "12b0a98e8dcd27cb6007fc3714449afa96db7bc0872f306231367cbdd5c56497"
+    },
+    "old_run": {
+      "path": "C:\\Users\\17531\\WorkBuddy\\2026-08-21-23-57-56\\erratum-backup\\evidence\\e5-base-calibration-results-replay.json",
+      "sha256": "673f378b9f6db05e1388fdf9efc01282481384fa019420acbea24ffbeff57423"
+    },
+    "pair": "replay",
+    "unexpected_leaf_diffs": [],
+    "verdict_invariance_ok": true
+  },
+  "schema_version": "r4-gate0-e5base-erratum-rerun-comparison-v1"
+}

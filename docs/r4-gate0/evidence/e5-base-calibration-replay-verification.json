@@ -3,6 +3,6 @@
   "deterministic_replay_ok": true,
   "main_run": "docs/r4-gate0/evidence/e5-base-calibration-results.json",
   "mismatched_fields": [],
-  "note": "比对剥离 latency_ms / grid_elapsed_seconds / index_dir / rebuild_command / run_label（运行参数与延迟）；向量表、网格结果、逐 case verdict、oracle digest、模型 manifest digest 全字段一致",
+  "note": "比对剥离 latency_ms / grid_elapsed_seconds / index_dir / rebuild_command / run_label（运行参数与延迟）；向量表、网格结果、逐 case verdict、oracle digest、模型 manifest digest 全字段一致。勘误轮（2026-08-21）：本比对为勘误后重跑的主运行与复验（同 53 cases / 35-grid / 提交版代码 / 同缓存），deterministic_replay_ok = true；与原始运行（db1d5c9）的跨轮一致性证据见 e5-base-erratum-rerun-comparison.json",
   "replay_run": "docs/r4-gate0/evidence/e5-base-calibration-results-replay.json"
 }

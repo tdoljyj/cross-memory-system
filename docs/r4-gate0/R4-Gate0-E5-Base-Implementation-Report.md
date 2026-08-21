@@ -264,3 +264,42 @@ memory_eval 文件>` = 空。本轮只新增 `memory_eval/e5_base/`（3 文件�
    ②Gate 0-F / 58-case holdout 运行授权（须在本轮 PASS 基础上另行申请）
 6. **E5-base 实施轮到此停止。** 不申请解释权、不扩网格、不动 holdout；
    后续任何一步均待产品所有者裁决
+
+---
+
+## 10. 勘误后记（2026-08-22 勘误轮，产品所有者裁决 2026-08-21 授权）
+
+> 裁决：修锁获批（tokenizer_config.json 锁值按实测值勘误）；calibration
+> CONDITIONAL PASS；Gate 0-F 暂不授权。授权一次最小勘误轮：修锁 +
+> 连带 digest 更新 + 供应链守卫重跑 + 同 53 cases / 35-grid / 代码 /
+> 缓存重跑主运行与确定性复验。本节为追加记录，§1–§9 原文零改动。
+
+- **锁勘误**：候选锁 tokenizer_config.json SHA-256 第 49 位 hex `6`→`7`
+  （`…37597d996cd3f…` → `…37597d997cd3f…`），锁文件 8198 字节中仅 1 个
+  字节变化；旧锁 digest `9ee35419…4814` → 新锁 digest
+  `50ab5689cf4378441177d1af0773b59fbd5a2dc62ff866df7a76b0ea0ad0cd23`
+- **manifest 重建**（模型目录仓库外派生物）：lock_discrepancy 例外移除
+  （活跃 manifest 零 discrepancy，无可绕过校验的例外）；trust_root 改为
+  勘误后锁内容寻址；self_hash 重算。旧 manifest digest `c5e145a1…07b5e`
+  → 新 manifest digest
+  `2c9d6487b39576684d6593d33a52f8603087bf5775b51cddf8f907dd1eeba960`
+- **供应链守卫重跑**：fail-closed 校验 PASS；锁 / manifest / 磁盘字节
+  三方 6/6 完全一致，discrepancy = 0
+- **calibration 重跑**（环境预检 + 主运行 + 确定性复验）：Result = PASS，
+  10/35 qualifying，冻结选择 alpha=1.00 / tau=0.90 不变；新旧运行逐 case
+  verdict、顺序、reason code、35 项决策、最终选择**完全一致**；叶子差异
+  恰 5 处且全部在预期集合（锁勘误、manifest 重建 ×2、运行时 HEAD、
+  实施轮遗留 calibration_code 披露项），零预期外差异
+- **实施轮遗留发现（非静默披露）**：原始 receipts 记录的
+  calibration_code_sha256（`bac9c6f2…`，运行时版本）与 db1d5c9 提交内
+  文件（`39e76734…`）不一致——运行时版本在提交前被改动且从未入库；
+  行为等价由勘误轮双重完整重跑证明，勘误后 receipts ↔ 提交代码一致性
+  就此修复
+- **禁令遵守**：fixture / expected / oracle v3 / 网格 / 门槛 / 择优 /
+  calibration 实现 / holdout 与 pp-001~012 / main·tag·release / 真实
+  Binding 全部零触碰；未执行 push
+- 完整勘误记录：`docs/r4-gate0/evidence/e5-base-lock-erratum.json`
+- 重跑一致性比较证据：`docs/r4-gate0/evidence/e5-base-erratum-rerun-comparison.json`
+- §7 digest 清单中 `e5-base-candidate-lock.json` 与 `MODEL-MANIFEST.json`
+  两行由上述勘误值取代；其余各行（含全部代码文件与冻结合同、oracle
+  spec、holdout manifest、requirements lock）在勘误轮逐字节复测不变
