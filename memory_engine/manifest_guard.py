@@ -3,8 +3,10 @@
 """供应链 manifest 守卫（无 torch/transformers 依赖，纯标准库）。
 
 职责：在加载任何模型权重/tokenizer **之前**，对 MODEL-MANIFEST.json 做完整
-校验（schema / canonical self-hash / 模型 ID / 固定 revision / 冻结合同字段 /
-白名单文件存在+大小+SHA-256 / 额外文件拒绝），任何不符 fail-closed（抛异常）。
+校验（schema / canonical self-hash / 模型 ID / 固定 revision / 冻结合同字段
+（含 query_prefix / passage_prefix 精确值）/ backend.packages 非空 / 白名单
+文件集合与代码内冻结的精确 6 文件集合完全相等 / 逐文件存在+大小+SHA-256 /
+额外文件拒绝），任何不符 fail-closed（抛异常）。
 
 canonical hash 算法（明确定义）：
   self_hash = sha256(canonical_json(manifest 移除 self_hash 字段))
@@ -26,6 +28,24 @@ MANIFEST_SCHEMA_VERSION = 1
 EXPECTED_MODEL_ID = "intfloat/multilingual-e5-small"
 EXPECTED_REVISION = "919cfbe11fbf4f1b9bb321007c46c14feaf84227"
 
+# 冻结输入前缀（与 embedding_adapter 的 QUERY_PREFIX/PASSAGE_PREFIX 一致，
+# 属冻结运行合同的一部分，manifest contract 必须精确等于这些值）
+QUERY_PREFIX = "query: "
+PASSAGE_PREFIX = "passage: "
+
+# 代码内冻结的精确 6 文件集合：manifest 白名单文件名集合必须与此完全相等
+# （额外 / 缺失 / 重复均拒绝）。这六者是 transformers 后端 E5-small 的唯一
+# 合法文件；官方全树里的 pytorch_model.bin / onnx/* / 1_Pooling/* 等一律不在
+# 白名单内（见 docs/r4-gate0/01 §2.2）。
+FROZEN_FILES = frozenset({
+    "config.json",
+    "tokenizer.json",
+    "tokenizer_config.json",
+    "special_tokens_map.json",
+    "sentencepiece.bpe.model",
+    "model.safetensors",
+})
+
 # 冻结合同字段（值必须与 manifest 完全一致）
 CONTRACT = {
     "dimension": 384,
@@ -38,6 +58,8 @@ CONTRACT = {
     "index_build_batch": 32,
     "trust_remote_code": False,
     "offline_only": True,
+    "query_prefix": QUERY_PREFIX,
+    "passage_prefix": PASSAGE_PREFIX,
 }
 
 
@@ -102,15 +124,34 @@ def verify_model_manifest(model_dir, manifest_path=None):
         if contract.get(k) != v:
             raise RuntimeError("contract field mismatch: %s" % k)
 
-    # 5. 白名单文件（存在 / 大小 / SHA-256）
+    # 4b. backend.packages 必须为非空 dict（{} 明确拒绝）
+    backend = manifest.get("backend") or {}
+    packages = backend.get("packages")
+    if not isinstance(packages, dict) or not packages:
+        raise RuntimeError("backend.packages empty or invalid (must be non-empty)")
+
+    # 5. 白名单文件（存在 / 大小 / SHA-256）+ 冻结精确 6 文件集合
     whitelist = manifest.get("whitelist_files")
     if not isinstance(whitelist, list) or not whitelist:
         raise RuntimeError("manifest whitelist_files empty or invalid")
-    allowed = set()
+    filenames = []
     for wf in whitelist:
         fn = wf.get("filename")
         if not fn:
             raise RuntimeError("whitelist entry missing filename")
+        filenames.append(fn)
+    # 5a. 文件名集合必须与 FROZEN_FILES 完全相等（额外 / 缺失 / 重复均拒绝）
+    if len(filenames) != len(FROZEN_FILES) or set(filenames) != FROZEN_FILES:
+        extra = sorted(set(filenames) - FROZEN_FILES)
+        missing = sorted(FROZEN_FILES - set(filenames))
+        raise RuntimeError(
+            "whitelist file set mismatch: expected exactly %s, "
+            "got extra=%s missing=%s"
+            % (sorted(FROZEN_FILES), extra, missing))
+    # 5b. 逐文件存在 / 大小 / SHA-256
+    allowed = set()
+    for wf in whitelist:
+        fn = wf.get("filename")
         allowed.add(fn)
         p = os.path.join(model_dir, fn)
         if not os.path.isfile(p):

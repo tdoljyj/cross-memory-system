@@ -47,7 +47,15 @@ def verify_backend_versions(manifest):
 
 
 def verify_embedding_output(vec):
-    """核验 embedding 输出：维度 / float32 / finite / L2 归一化。"""
+    """核验 embedding 输出：ndim==2 → 维度 / float32 / finite / L2 归一化。
+
+    注意：必须先判 ndim==2 再查维度。仅用 `vec.shape[-1]` 会让 [1,1,384]
+    这类 3-D 张量「最后一维是 384」而误通过；显式抛异常（非裸 assert，
+    assert 会被 python -O 移除）。
+    """
+    if vec.ndim != 2:
+        raise RuntimeError("embedding must be 2-D [N, %d], got ndim=%d"
+                           % (DIM, vec.ndim))
     if vec.shape[-1] != DIM:
         raise RuntimeError("embedding dim=%s != %d" % (vec.shape[-1], DIM))
     if vec.dtype != torch.float32:
