@@ -32,7 +32,7 @@
       "frozen_expected_ids": [
         "mem_fx0f0002"
       ],
-      "latency_ms": 1.1868999863509089,
+      "latency_ms": 1.079899986507371,
       "missed": [],
       "no_memory_expected": false,
       "no_memory_violated": false,
@@ -72,7 +72,7 @@
         "mem_fx0f0002",
         "mem_fx0f0001"
       ],
-      "latency_ms": 0.987899984465912,
+      "latency_ms": 0.9164000221062452,
       "missed": [],
       "no_memory_expected": false,
       "no_memory_violated": false,
@@ -107,7 +107,7 @@
       "frozen_expected_ids": [
         "mem_fx0f0004"
       ],
-      "latency_ms": 1.136100006988272,
+      "latency_ms": 1.0631000041030347,
       "missed": [],
       "no_memory_expected": false,
       "no_memory_violated": false,
@@ -146,7 +146,7 @@
       "frozen_expected_ids": [
         "mem_fx0f0008"
       ],
-      "latency_ms": 1.1901000107172877,
+      "latency_ms": 1.0700999991968274,
       "missed": [],
       "no_memory_expected": false,
       "no_memory_violated": false,
@@ -186,7 +186,7 @@
         "mem_fx0f0008",
         "mem_fx0f0007"
       ],
-      "latency_ms": 0.9887000196613371,
+      "latency_ms": 0.918399979127571,
       "missed": [],
       "no_memory_expected": false,
       "no_memory_violated": false,
@@ -215,7 +215,7 @@
         "mem_fx0f0007"
       ],
       "frozen_expected_ids": [],
-      "latency_ms": 0.7504000095650554,
+      "latency_ms": 0.9796999802347273,
       "missed": [],
       "no_memory_expected": true,
       "no_memory_violated": false,
@@ -248,7 +248,7 @@
       "frozen_expected_ids": [
         "mem_fx0f0002"
       ],
-      "latency_ms": 1.2366000155452639,
+      "latency_ms": 1.054599997587502,
       "missed": [],
       "no_memory_expected": false,
       "no_memory_violated": false,
@@ -288,7 +288,7 @@
         "mem_fx0a0002",
         "mem_fx0a0013"
       ],
-      "latency_ms": 1.3991000014357269,
+      "latency_ms": 1.225399988470599,
       "missed": [],
       "no_memory_expected": false,
       "no_memory_violated": false,
@@ -325,7 +325,7 @@
       "frozen_expected_ids": [
         "mem_fx0a0002"
       ],
-      "latency_ms": 1.0375999845564365,
+      "latency_ms": 0.9862000006251037,
       "missed": [],
       "no_memory_expected": false,
       "no_memory_violated": false,
@@ -358,7 +358,7 @@
       "frozen_expected_ids": [
         "mem_fx0a0007"
       ],
-      "latency_ms": 1.0093000018969178,
+      "latency_ms": 0.919299985980615,
       "missed": [],
       "no_memory_expected": false,
       "no_memory_violated": false,
@@ -393,7 +393,7 @@
       "frozen_expected_ids": [
         "mem_fx0a0010"
       ],
-      "latency_ms": 1.1399999784771353,
+      "latency_ms": 1.0834999848157167,
       "missed": [],
       "no_memory_expected": false,
       "no_memory_violated": false,
@@ -430,7 +430,7 @@
       "frozen_expected_ids": [
         "mem_fx0a0012"
       ],
-      "latency_ms": 1.0193999914918095,
+      "latency_ms": 0.9212000004481524,
       "missed": [],
       "no_memory_expected": false,
       "no_memory_violated": false,
@@ -463,7 +463,7 @@
       "frozen_expected_ids": [
         "mem_fx0a0013"
       ],
-      "latency_ms": 0.9814999939408153,
+      "latency_ms": 0.9796000085771084,
       "missed": [],
       "no_memory_expected": false,
       "no_memory_violated": false,
@@ -496,7 +496,7 @@
       "frozen_expected_ids": [
         "mem_fx0a0014"
       ],
-      "latency_ms": 1.0491000139154494,
+      "latency_ms": 0.981099990895018,
       "missed": [],
       "no_memory_expected": false,
       "no_memory_violated": false,
@@ -529,7 +529,7 @@
       "frozen_expected_ids": [
         "mem_fx0a0016"
       ],
-      "latency_ms": 1.0034000151790679,
+      "latency_ms": 0.9775999933481216,
       "missed": [],
       "no_memory_expected": false,
       "no_memory_violated": false,
@@ -556,7 +556,7 @@
       "forbidden_hits": [],
       "forbidden_ids": [],
       "frozen_expected_ids": [],
-      "latency_ms": 0.7695999811403453,
+      "latency_ms": 0.7303000020328909,
       "missed": [],
       "no_memory_expected": true,
       "no_memory_violated": false,
@@ -577,7 +577,7 @@
       "forbidden_hits": [],
       "forbidden_ids": [],
       "frozen_expected_ids": [],
-      "latency_ms": 0.745400000596419,
+      "latency_ms": 0.6804000004194677,
       "missed": [],
       "no_memory_expected": true,
       "no_memory_violated": false,
@@ -604,7 +604,7 @@
       "frozen_expected_ids": [
         "mem_fx0b0010"
       ],
-      "latency_ms": 0.9824999724514782,
+      "latency_ms": 0.8984000014606863,
       "missed": [],
       "no_memory_expected": false,
       "no_memory_violated": false,
@@ -631,7 +631,7 @@
       "forbidden_hits": [],
       "forbidden_ids": [],
       "frozen_expected_ids": [],
-      "latency_ms": 0.7551999879069626,
+      "latency_ms": 0.6863000162411481,
       "missed": [],
       "no_memory_expected": true,
       "no_memory_violated": false,
@@ -652,7 +652,7 @@
       "forbidden_hits": [],
       "forbidden_ids": [],
       "frozen_expected_ids": [],
-      "latency_ms": 0.7566000276710838,
+      "latency_ms": 0.6950999959371984,
       "missed": [],
       "no_memory_expected": true,
       "no_memory_violated": false,
@@ -679,7 +679,7 @@
       "frozen_expected_ids": [
         "mem_fx0b0014"
       ],
-      "latency_ms": 0.9804000146687031,
+      "latency_ms": 0.9652000153437257,
       "missed": [],
       "no_memory_expected": false,
       "no_memory_violated": false,
@@ -706,7 +706,7 @@
       "forbidden_hits": [],
       "forbidden_ids": [],
       "frozen_expected_ids": [],
-      "latency_ms": 0.7594000198878348,
+      "latency_ms": 0.8025999995879829,
       "missed": [],
       "no_memory_expected": true,
       "no_memory_violated": false,
@@ -727,7 +727,7 @@
       "forbidden_hits": [],
       "forbidden_ids": [],
       "frozen_expected_ids": [],
-      "latency_ms": 1.268699998036027,
+      "latency_ms": 0.6756999937351793,
       "missed": [],
       "no_memory_expected": true,
       "no_memory_violated": false,
@@ -748,7 +748,7 @@
       "forbidden_hits": [],
       "forbidden_ids": [],
       "frozen_expected_ids": [],
-      "latency_ms": 0.03500000457279384,
+      "latency_ms": 0.03369999467395246,
       "missed": [],
       "no_memory_expected": true,
       "no_memory_violated": false,
@@ -769,7 +769,7 @@
       "forbidden_hits": [],
       "forbidden_ids": [],
       "frozen_expected_ids": [],
-      "latency_ms": 0.9379999828524888,
+      "latency_ms": 0.6901999877300113,
       "missed": [],
       "no_memory_expected": true,
       "no_memory_violated": false,
@@ -790,7 +790,7 @@
       "forbidden_hits": [],
       "forbidden_ids": [],
       "frozen_expected_ids": [],
-      "latency_ms": 0.7883000071160495,
+      "latency_ms": 0.689499982399866,
       "missed": [],
       "no_memory_expected": true,
       "no_memory_violated": false,
@@ -811,7 +811,7 @@
       "forbidden_hits": [],
       "forbidden_ids": [],
       "frozen_expected_ids": [],
-      "latency_ms": 0.7326999912038445,
+      "latency_ms": 0.7334999972954392,
       "missed": [],
       "no_memory_expected": true,
       "no_memory_violated": false,
@@ -832,7 +832,7 @@
       "forbidden_hits": [],
       "forbidden_ids": [],
       "frozen_expected_ids": [],
-      "latency_ms": 0.975800008745864,
+      "latency_ms": 0.9052999957930297,
       "missed": [],
       "no_memory_expected": true,
       "no_memory_violated": false,
@@ -853,7 +853,7 @@
       "forbidden_hits": [],
       "forbidden_ids": [],
       "frozen_expected_ids": [],
-      "latency_ms": 0.031200004741549492,
+      "latency_ms": 0.028999987989664078,
       "missed": [],
       "no_memory_expected": true,
       "no_memory_violated": false,
@@ -874,7 +874,7 @@
       "forbidden_hits": [],
       "forbidden_ids": [],
       "frozen_expected_ids": [],
-      "latency_ms": 0.7246999884955585,
+      "latency_ms": 0.6829000194557011,
       "missed": [],
       "no_memory_expected": true,
       "no_memory_violated": false,
@@ -895,7 +895,7 @@
       "forbidden_hits": [],
       "forbidden_ids": [],
       "frozen_expected_ids": [],
-      "latency_ms": 0.7216999947559088,
+      "latency_ms": 0.6767000013496727,
       "missed": [],
       "no_memory_expected": true,
       "no_memory_violated": false,
@@ -916,7 +916,7 @@
       "forbidden_hits": [],
       "forbidden_ids": [],
       "frozen_expected_ids": [],
-      "latency_ms": 0.7129999867174774,
+      "latency_ms": 0.6843000010121614,
       "missed": [],
       "no_memory_expected": true,
       "no_memory_violated": false,
@@ -937,7 +937,7 @@
       "forbidden_hits": [],
       "forbidden_ids": [],
       "frozen_expected_ids": [],
-      "latency_ms": 0.7169000164140016,
+      "latency_ms": 0.6874000246170908,
       "missed": [],
       "no_memory_expected": true,
       "no_memory_violated": false,
@@ -960,7 +960,7 @@
         "mem_fx0f0003"
       ],
       "frozen_expected_ids": [],
-      "latency_ms": 0.7096999906934798,
+      "latency_ms": 0.6920000014360994,
       "missed": [],
       "no_memory_expected": true,
       "no_memory_violated": false,
@@ -991,7 +991,7 @@
       "frozen_expected_ids": [
         "mem_fx0c0004"
       ],
-      "latency_ms": 0.9868000051937997,
+      "latency_ms": 0.9470999939367175,
       "missed": [],
       "no_memory_expected": false,
       "no_memory_violated": false,
@@ -1020,7 +1020,7 @@
         "mem_fx0c0007"
       ],
       "frozen_expected_ids": [],
-      "latency_ms": 0.7362000178545713,
+      "latency_ms": 0.6883000023663044,
       "missed": [],
       "no_memory_expected": true,
       "no_memory_violated": false,
@@ -1051,7 +1051,7 @@
       "frozen_expected_ids": [
         "mem_fx0c0008"
       ],
-      "latency_ms": 0.9493999823462218,
+      "latency_ms": 0.9068999788723886,
       "missed": [],
       "no_memory_expected": false,
       "no_memory_violated": false,
@@ -1084,7 +1084,7 @@
       "frozen_expected_ids": [
         "mem_fx0h0002"
       ],
-      "latency_ms": 1.021600008243695,
+      "latency_ms": 0.9357999952044338,
       "missed": [],
       "no_memory_expected": false,
       "no_memory_violated": false,
@@ -1115,7 +1115,7 @@
       "frozen_expected_ids": [
         "mem_fx0h0003"
       ],
-      "latency_ms": 0.9031000081449747,
+      "latency_ms": 0.834399979794398,
       "missed": [],
       "no_memory_expected": false,
       "no_memory_violated": false,
@@ -1138,7 +1138,7 @@
         "mem_fx0h0004"
       ],
       "frozen_expected_ids": [],
-      "latency_ms": 0.7283999875653535,
+      "latency_ms": 0.738300004741177,
       "missed": [],
       "no_memory_expected": true,
       "no_memory_violated": false,
@@ -1169,7 +1169,7 @@
       "frozen_expected_ids": [
         "mem_fx0h0005"
       ],
-      "latency_ms": 0.9768000163603574,
+      "latency_ms": 0.90819998877123,
       "missed": [],
       "no_memory_expected": false,
       "no_memory_violated": false,
@@ -1202,7 +1202,7 @@
       "frozen_expected_ids": [
         "mem_fx0h0006"
       ],
-      "latency_ms": 1.3300999999046326,
+      "latency_ms": 0.9437999979127198,
       "missed": [],
       "no_memory_expected": false,
       "no_memory_violated": false,
@@ -1235,7 +1235,7 @@
       "frozen_expected_ids": [
         "mem_fx0h0008"
       ],
-      "latency_ms": 1.036700006807223,
+      "latency_ms": 1.0866000084206462,
       "missed": [],
       "no_memory_expected": false,
       "no_memory_violated": false,
@@ -1268,7 +1268,7 @@
       "frozen_expected_ids": [
         "mem_fx0h0009"
       ],
-      "latency_ms": 1.0269999911542982,
+      "latency_ms": 0.9327000007033348,
       "missed": [],
       "no_memory_expected": false,
       "no_memory_violated": false,
@@ -1301,7 +1301,7 @@
       "frozen_expected_ids": [
         "mem_fx0h0010"
       ],
-      "latency_ms": 1.1492999910842627,
+      "latency_ms": 1.0334999824408442,
       "missed": [],
       "no_memory_expected": false,
       "no_memory_violated": false,
@@ -1330,7 +1330,7 @@
         "mem_fx0h0004"
       ],
       "frozen_expected_ids": [],
-      "latency_ms": 0.9068000072147697,
+      "latency_ms": 0.8801999792922288,
       "missed": [],
       "no_memory_expected": true,
       "no_memory_violated": false,
@@ -1355,7 +1355,7 @@
       "forbidden_hits": [],
       "forbidden_ids": [],
       "frozen_expected_ids": [],
-      "latency_ms": 0.7425999792758375,
+      "latency_ms": 0.677400006679818,
       "missed": [],
       "no_memory_expected": true,
       "no_memory_violated": false,
@@ -1376,7 +1376,7 @@
       "forbidden_hits": [],
       "forbidden_ids": [],
       "frozen_expected_ids": [],
-      "latency_ms": 0.7610999746248126,
+      "latency_ms": 0.6679000216536224,
       "missed": [],
       "no_memory_expected": true,
       "no_memory_violated": false,
@@ -1403,7 +1403,7 @@
       "frozen_expected_ids": [
         "mem_fx0e0004"
       ],
-      "latency_ms": 1.0445999796502292,
+      "latency_ms": 0.8911000040825456,
       "missed": [],
       "no_memory_expected": false,
       "no_memory_violated": false,
@@ -1430,7 +1430,7 @@
       "forbidden_hits": [],
       "forbidden_ids": [],
       "frozen_expected_ids": [],
-      "latency_ms": 0.7622000121045858,
+      "latency_ms": 0.6806000019423664,
       "missed": [],
       "no_memory_expected": true,
       "no_memory_violated": false,
@@ -1457,7 +1457,7 @@
       "frozen_expected_ids": [
         "mem_fx0e0007"
       ],
-      "latency_ms": 0.9942000033333898,
+      "latency_ms": 0.8981999999377877,
       "missed": [],
       "no_memory_expected": false,
       "no_memory_violated": false,
@@ -1484,7 +1484,7 @@
       "forbidden_hits": [],
       "forbidden_ids": [],
       "frozen_expected_ids": [],
-      "latency_ms": 0.7780999876558781,
+      "latency_ms": 0.700599979609251,
       "missed": [],
       "no_memory_expected": true,
       "no_memory_violated": false,
@@ -1505,7 +1505,7 @@
       "forbidden_hits": [],
       "forbidden_ids": [],
       "frozen_expected_ids": [],
-      "latency_ms": 0.7625000143889338,
+      "latency_ms": 0.6699999794363976,
       "missed": [],
       "no_memory_expected": true,
       "no_memory_violated": false,
@@ -3051,14 +3051,14 @@
       "memory_eval/runner.py": "813d2534463279f14e3b462080d6b048f5f65dd3925555119098076ae01bf08c",
       "tests/fixtures/memory_eval/fixtures.json": "ad84011c4b341c5d5bd4c1fb3c16c7eb4f27fee3dbc353650cc809e9cc15407a"
     },
-    "git_head": "33cfe424d01727c3a16b8e5bbe9fd7d02ca16dfc",
+    "git_head": "6c578a4aca91df6b230ec11268f970e15de7e8f0",
     "lock_digests_measured": {
       "frozen_hard_filter_contract": "f79b6a0f5c03e6ff33bee754ca5496b85f1365a5db67e4d9318172f2d5197cd4",
       "holdout_manifest": "c7a195e1e21a476ac949723d65dc8f8594f3931b999974db68561a2838b32ac1",
       "oracle_v3_spec": "1ff8b9a0db0a77875ffc9764222b9dba22fdf4e9e4aae90b2db863629ac83843",
       "requirements_lock": "e0355a341138fb90abeb0826fdeef0acfeba4eb2dea2c4d673ed127c2db155c6"
     },
-    "model_manifest_sha256": "4a87ee46c5548ac3193cfd14dceb5a54555b09030f8db53421b11095362d7331",
+    "model_manifest_sha256": "f4d7c895a2900bd06cc8761043fbc94c3190dd521e931b7d603d79c928eb842e",
     "oracle_v3_code_sha256": "3163ab4ff3d589f1968a0c1bdb55e939ca78a3a042f439b5d5d37151e34068df",
     "sealed_inputs": {
       "memory_eval/gate0_inputs/calibration-cases.json": "ca1e2bcc11795f0a49de7dd0ed5152982e513d21eaa215f93b8846fbf60f9037",
@@ -3126,11 +3126,11 @@
   "result": "PASS",
   "run_label": "main",
   "runtime": {
-    "grid_elapsed_seconds": 2.762013100000331,
+    "grid_elapsed_seconds": 2.661458499991568,
     "model": {
       "id": "intfloat/multilingual-e5-base",
       "immutable_revision": "d128750597153bb5987e10b1c3493a34e5a4502a",
-      "manifest_digest": "4a87ee46c5548ac3193cfd14dceb5a54555b09030f8db53421b11095362d7331"
+      "manifest_digest": "f4d7c895a2900bd06cc8761043fbc94c3190dd521e931b7d603d79c928eb842e"
     },
     "passage_embedding_count": 28,
     "query_embedding_count": 25,
@@ -3198,7 +3198,7 @@
       "frozen_expected_ids": [
         "mem_fx0f0002"
       ],
-      "latency_ms": 1.1868999863509089,
+      "latency_ms": 1.079899986507371,
       "missed": [],
       "no_memory_expected": false,
       "no_memory_violated": false,
@@ -3238,7 +3238,7 @@
         "mem_fx0f0002",
         "mem_fx0f0001"
       ],
-      "latency_ms": 0.987899984465912,
+      "latency_ms": 0.9164000221062452,
       "missed": [],
       "no_memory_expected": false,
       "no_memory_violated": false,
@@ -3273,7 +3273,7 @@
       "frozen_expected_ids": [
         "mem_fx0f0004"
       ],
-      "latency_ms": 1.136100006988272,
+      "latency_ms": 1.0631000041030347,
       "missed": [],
       "no_memory_expected": false,
       "no_memory_violated": false,
@@ -3312,7 +3312,7 @@
       "frozen_expected_ids": [
         "mem_fx0f0008"
       ],
-      "latency_ms": 1.1901000107172877,
+      "latency_ms": 1.0700999991968274,
       "missed": [],
       "no_memory_expected": false,
       "no_memory_violated": false,
@@ -3352,7 +3352,7 @@
         "mem_fx0f0008",
         "mem_fx0f0007"
       ],
-      "latency_ms": 0.9887000196613371,
+      "latency_ms": 0.918399979127571,
       "missed": [],
       "no_memory_expected": false,
       "no_memory_violated": false,
@@ -3381,7 +3381,7 @@
         "mem_fx0f0007"
       ],
       "frozen_expected_ids": [],
-      "latency_ms": 0.7504000095650554,
+      "latency_ms": 0.9796999802347273,
       "missed": [],
       "no_memory_expected": true,
       "no_memory_violated": false,
@@ -3414,7 +3414,7 @@
       "frozen_expected_ids": [
         "mem_fx0f0002"
       ],
-      "latency_ms": 1.2366000155452639,
+      "latency_ms": 1.054599997587502,
       "missed": [],
       "no_memory_expected": false,
       "no_memory_violated": false,
@@ -3454,7 +3454,7 @@
         "mem_fx0a0002",
         "mem_fx0a0013"
       ],
-      "latency_ms": 1.3991000014357269,
+      "latency_ms": 1.225399988470599,
       "missed": [],
       "no_memory_expected": false,
       "no_memory_violated": false,
@@ -3491,7 +3491,7 @@
       "frozen_expected_ids": [
         "mem_fx0a0002"
       ],
-      "latency_ms": 1.0375999845564365,
+      "latency_ms": 0.9862000006251037,
       "missed": [],
       "no_memory_expected": false,
       "no_memory_violated": false,
@@ -3524,7 +3524,7 @@
       "frozen_expected_ids": [
         "mem_fx0a0007"
       ],
-      "latency_ms": 1.0093000018969178,
+      "latency_ms": 0.919299985980615,
       "missed": [],
       "no_memory_expected": false,
       "no_memory_violated": false,
@@ -3559,7 +3559,7 @@
       "frozen_expected_ids": [
         "mem_fx0a0010"
       ],
-      "latency_ms": 1.1399999784771353,
+      "latency_ms": 1.0834999848157167,
       "missed": [],
       "no_memory_expected": false,
       "no_memory_violated": false,
@@ -3596,7 +3596,7 @@
       "frozen_expected_ids": [
         "mem_fx0a0012"
       ],
-      "latency_ms": 1.0193999914918095,
+      "latency_ms": 0.9212000004481524,
       "missed": [],
       "no_memory_expected": false,
       "no_memory_violated": false,
@@ -3629,7 +3629,7 @@
       "frozen_expected_ids": [
         "mem_fx0a0013"
       ],
-      "latency_ms": 0.9814999939408153,
+      "latency_ms": 0.9796000085771084,
       "missed": [],
       "no_memory_expected": false,
       "no_memory_violated": false,
@@ -3662,7 +3662,7 @@
       "frozen_expected_ids": [
         "mem_fx0a0014"
       ],
-      "latency_ms": 1.0491000139154494,
+      "latency_ms": 0.981099990895018,
       "missed": [],
       "no_memory_expected": false,
       "no_memory_violated": false,
@@ -3695,7 +3695,7 @@
       "frozen_expected_ids": [
         "mem_fx0a0016"
       ],
-      "latency_ms": 1.0034000151790679,
+      "latency_ms": 0.9775999933481216,
       "missed": [],
       "no_memory_expected": false,
       "no_memory_violated": false,
@@ -3722,7 +3722,7 @@
       "forbidden_hits": [],
       "forbidden_ids": [],
       "frozen_expected_ids": [],
-      "latency_ms": 0.7695999811403453,
+      "latency_ms": 0.7303000020328909,
       "missed": [],
       "no_memory_expected": true,
       "no_memory_violated": false,
@@ -3743,7 +3743,7 @@
       "forbidden_hits": [],
       "forbidden_ids": [],
       "frozen_expected_ids": [],
-      "latency_ms": 0.745400000596419,
+      "latency_ms": 0.6804000004194677,
       "missed": [],
       "no_memory_expected": true,
       "no_memory_violated": false,
@@ -3770,7 +3770,7 @@
       "frozen_expected_ids": [
         "mem_fx0b0010"
       ],
-      "latency_ms": 0.9824999724514782,
+      "latency_ms": 0.8984000014606863,
       "missed": [],
       "no_memory_expected": false,
       "no_memory_violated": false,
@@ -3797,7 +3797,7 @@
       "forbidden_hits": [],
       "forbidden_ids": [],
       "frozen_expected_ids": [],
-      "latency_ms": 0.7551999879069626,
+      "latency_ms": 0.6863000162411481,
       "missed": [],
       "no_memory_expected": true,
       "no_memory_violated": false,
@@ -3818,7 +3818,7 @@
       "forbidden_hits": [],
       "forbidden_ids": [],
       "frozen_expected_ids": [],
-      "latency_ms": 0.7566000276710838,
+      "latency_ms": 0.6950999959371984,
       "missed": [],
       "no_memory_expected": true,
       "no_memory_violated": false,
@@ -3845,7 +3845,7 @@
       "frozen_expected_ids": [
         "mem_fx0b0014"
       ],
-      "latency_ms": 0.9804000146687031,
+      "latency_ms": 0.9652000153437257,
       "missed": [],
       "no_memory_expected": false,
       "no_memory_violated": false,
@@ -3872,7 +3872,7 @@
       "forbidden_hits": [],
       "forbidden_ids": [],
       "frozen_expected_ids": [],
-      "latency_ms": 0.7594000198878348,
+      "latency_ms": 0.8025999995879829,
       "missed": [],
       "no_memory_expected": true,
       "no_memory_violated": false,
@@ -3893,7 +3893,7 @@
       "forbidden_hits": [],
       "forbidden_ids": [],
       "frozen_expected_ids": [],
-      "latency_ms": 1.268699998036027,
+      "latency_ms": 0.6756999937351793,
       "missed": [],
       "no_memory_expected": true,
       "no_memory_violated": false,
@@ -3914,7 +3914,7 @@
       "forbidden_hits": [],
       "forbidden_ids": [],
       "frozen_expected_ids": [],
-      "latency_ms": 0.03500000457279384,
+      "latency_ms": 0.03369999467395246,
       "missed": [],
       "no_memory_expected": true,
       "no_memory_violated": false,
@@ -3935,7 +3935,7 @@
       "forbidden_hits": [],
       "forbidden_ids": [],
       "frozen_expected_ids": [],
-      "latency_ms": 0.9379999828524888,
+      "latency_ms": 0.6901999877300113,
       "missed": [],
       "no_memory_expected": true,
       "no_memory_violated": false,
@@ -3956,7 +3956,7 @@
       "forbidden_hits": [],
       "forbidden_ids": [],
       "frozen_expected_ids": [],
-      "latency_ms": 0.7883000071160495,
+      "latency_ms": 0.689499982399866,
       "missed": [],
       "no_memory_expected": true,
       "no_memory_violated": false,
@@ -3977,7 +3977,7 @@
       "forbidden_hits": [],
       "forbidden_ids": [],
       "frozen_expected_ids": [],
-      "latency_ms": 0.7326999912038445,
+      "latency_ms": 0.7334999972954392,
       "missed": [],
       "no_memory_expected": true,
       "no_memory_violated": false,
@@ -3998,7 +3998,7 @@
       "forbidden_hits": [],
       "forbidden_ids": [],
       "frozen_expected_ids": [],
-      "latency_ms": 0.975800008745864,
+      "latency_ms": 0.9052999957930297,
       "missed": [],
       "no_memory_expected": true,
       "no_memory_violated": false,
@@ -4019,7 +4019,7 @@
       "forbidden_hits": [],
       "forbidden_ids": [],
       "frozen_expected_ids": [],
-      "latency_ms": 0.031200004741549492,
+      "latency_ms": 0.028999987989664078,
       "missed": [],
       "no_memory_expected": true,
       "no_memory_violated": false,
@@ -4040,7 +4040,7 @@
       "forbidden_hits": [],
       "forbidden_ids": [],
       "frozen_expected_ids": [],
-      "latency_ms": 0.7246999884955585,
+      "latency_ms": 0.6829000194557011,
       "missed": [],
       "no_memory_expected": true,
       "no_memory_violated": false,
@@ -4061,7 +4061,7 @@
       "forbidden_hits": [],
       "forbidden_ids": [],
       "frozen_expected_ids": [],
-      "latency_ms": 0.7216999947559088,
+      "latency_ms": 0.6767000013496727,
       "missed": [],
       "no_memory_expected": true,
       "no_memory_violated": false,
@@ -4082,7 +4082,7 @@
       "forbidden_hits": [],
       "forbidden_ids": [],
       "frozen_expected_ids": [],
-      "latency_ms": 0.7129999867174774,
+      "latency_ms": 0.6843000010121614,
       "missed": [],
       "no_memory_expected": true,
       "no_memory_violated": false,
@@ -4103,7 +4103,7 @@
       "forbidden_hits": [],
       "forbidden_ids": [],
       "frozen_expected_ids": [],
-      "latency_ms": 0.7169000164140016,
+      "latency_ms": 0.6874000246170908,
       "missed": [],
       "no_memory_expected": true,
       "no_memory_violated": false,
@@ -4126,7 +4126,7 @@
         "mem_fx0f0003"
       ],
       "frozen_expected_ids": [],
-      "latency_ms": 0.7096999906934798,
+      "latency_ms": 0.6920000014360994,
       "missed": [],
       "no_memory_expected": true,
       "no_memory_violated": false,
@@ -4157,7 +4157,7 @@
       "frozen_expected_ids": [
         "mem_fx0c0004"
       ],
-      "latency_ms": 0.9868000051937997,
+      "latency_ms": 0.9470999939367175,
       "missed": [],
       "no_memory_expected": false,
       "no_memory_violated": false,
@@ -4186,7 +4186,7 @@
         "mem_fx0c0007"
       ],
       "frozen_expected_ids": [],
-      "latency_ms": 0.7362000178545713,
+      "latency_ms": 0.6883000023663044,
       "missed": [],
       "no_memory_expected": true,
       "no_memory_violated": false,
@@ -4217,7 +4217,7 @@
       "frozen_expected_ids": [
         "mem_fx0c0008"
       ],
-      "latency_ms": 0.9493999823462218,
+      "latency_ms": 0.9068999788723886,
       "missed": [],
       "no_memory_expected": false,
       "no_memory_violated": false,
@@ -4250,7 +4250,7 @@
       "frozen_expected_ids": [
         "mem_fx0h0002"
       ],
-      "latency_ms": 1.021600008243695,
+      "latency_ms": 0.9357999952044338,
       "missed": [],
       "no_memory_expected": false,
       "no_memory_violated": false,
@@ -4281,7 +4281,7 @@
       "frozen_expected_ids": [
         "mem_fx0h0003"
       ],
-      "latency_ms": 0.9031000081449747,
+      "latency_ms": 0.834399979794398,
       "missed": [],
       "no_memory_expected": false,
       "no_memory_violated": false,
@@ -4304,7 +4304,7 @@
         "mem_fx0h0004"
       ],
       "frozen_expected_ids": [],
-      "latency_ms": 0.7283999875653535,
+      "latency_ms": 0.738300004741177,
       "missed": [],
       "no_memory_expected": true,
       "no_memory_violated": false,
@@ -4335,7 +4335,7 @@
       "frozen_expected_ids": [
         "mem_fx0h0005"
       ],
-      "latency_ms": 0.9768000163603574,
+      "latency_ms": 0.90819998877123,
       "missed": [],
       "no_memory_expected": false,
       "no_memory_violated": false,
@@ -4368,7 +4368,7 @@
       "frozen_expected_ids": [
         "mem_fx0h0006"
       ],
-      "latency_ms": 1.3300999999046326,
+      "latency_ms": 0.9437999979127198,
       "missed": [],
       "no_memory_expected": false,
       "no_memory_violated": false,
@@ -4401,7 +4401,7 @@
       "frozen_expected_ids": [
         "mem_fx0h0008"
       ],
-      "latency_ms": 1.036700006807223,
+      "latency_ms": 1.0866000084206462,
       "missed": [],
       "no_memory_expected": false,
       "no_memory_violated": false,
@@ -4434,7 +4434,7 @@
       "frozen_expected_ids": [
         "mem_fx0h0009"
       ],
-      "latency_ms": 1.0269999911542982,
+      "latency_ms": 0.9327000007033348,
       "missed": [],
       "no_memory_expected": false,
       "no_memory_violated": false,
@@ -4467,7 +4467,7 @@
       "frozen_expected_ids": [
         "mem_fx0h0010"
       ],
-      "latency_ms": 1.1492999910842627,
+      "latency_ms": 1.0334999824408442,
       "missed": [],
       "no_memory_expected": false,
       "no_memory_violated": false,
@@ -4496,7 +4496,7 @@
         "mem_fx0h0004"
       ],
       "frozen_expected_ids": [],
-      "latency_ms": 0.9068000072147697,
+      "latency_ms": 0.8801999792922288,
       "missed": [],
       "no_memory_expected": true,
       "no_memory_violated": false,
@@ -4521,7 +4521,7 @@
       "forbidden_hits": [],
       "forbidden_ids": [],
       "frozen_expected_ids": [],
-      "latency_ms": 0.7425999792758375,
+      "latency_ms": 0.677400006679818,
       "missed": [],
       "no_memory_expected": true,
       "no_memory_violated": false,
@@ -4542,7 +4542,7 @@
       "forbidden_hits": [],
       "forbidden_ids": [],
       "frozen_expected_ids": [],
-      "latency_ms": 0.7610999746248126,
+      "latency_ms": 0.6679000216536224,
       "missed": [],
       "no_memory_expected": true,
       "no_memory_violated": false,
@@ -4569,7 +4569,7 @@
       "frozen_expected_ids": [
         "mem_fx0e0004"
       ],
-      "latency_ms": 1.0445999796502292,
+      "latency_ms": 0.8911000040825456,
       "missed": [],
       "no_memory_expected": false,
       "no_memory_violated": false,
@@ -4596,7 +4596,7 @@
       "forbidden_hits": [],
       "forbidden_ids": [],
       "frozen_expected_ids": [],
-      "latency_ms": 0.7622000121045858,
+      "latency_ms": 0.6806000019423664,
       "missed": [],
       "no_memory_expected": true,
       "no_memory_violated": false,
@@ -4623,7 +4623,7 @@
       "frozen_expected_ids": [
         "mem_fx0e0007"
       ],
-      "latency_ms": 0.9942000033333898,
+      "latency_ms": 0.8981999999377877,
       "missed": [],
       "no_memory_expected": false,
       "no_memory_violated": false,
@@ -4650,7 +4650,7 @@
       "forbidden_hits": [],
       "forbidden_ids": [],
       "frozen_expected_ids": [],
-      "latency_ms": 0.7780999876558781,
+      "latency_ms": 0.700599979609251,
       "missed": [],
       "no_memory_expected": true,
       "no_memory_violated": false,
@@ -4671,7 +4671,7 @@
       "forbidden_hits": [],
       "forbidden_ids": [],
       "frozen_expected_ids": [],
-      "latency_ms": 0.7625000143889338,
+      "latency_ms": 0.6699999794363976,
       "missed": [],
       "no_memory_expected": true,
       "no_memory_violated": false,

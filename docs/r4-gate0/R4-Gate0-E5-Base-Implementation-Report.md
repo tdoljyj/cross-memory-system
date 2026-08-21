@@ -419,3 +419,48 @@ manifest 重建与 calibration 重跑，独立子提交）。授权边界照录�
 - **勘误完整记录**：`docs/r4-gate0/evidence/e5-base-r3a-erratum.json`
 - **禁令遵守**：holdout 与 pp-001~012 零读取、Shadow 计数未启动、
   真实 Binding 零触碰、未 push / tag / release、未 amend
+
+---
+
+## 14. R3B 重跑后记（2026-08-22 R3B 轮，R3A 6c578a4 之下）
+
+R3B = 锁定环境（vg0b venv，与 R1B/R2B 同一 TURING Python/backend、同
+E5-base 模型目录与缓存）下 manifest 重建 + main/replay 双运行重跑。运行前
+删除模型目录中 trust_root 锚点过期的 MODEL-MANIFEST.json（删前实测
+`4a87ee46…`），由 calibration 经 build_manifest 自动重建。
+
+- **manifest 重建**：schema v2，锚定 `66e1ab24…`，新 SHA-256
+  `f4d7c895…`（2343 字节）；trust_root 精确为
+  「candidate-lock @ 33cfe424d01727c3a16b8e5bbe9fd7d02ca16dfc
+  （SHA-256 = 66e1ab241f98a92759844cefb329688cb6a9dbb19a04fd28d4ad05dd904e2ed9）」
+  ——首次实际包含候选锁 `66e1ab24…` 字节的提交，(commit, bytes) 组合
+  可重放（`git show 33cfe42:…lock.json` 的 SHA-256 == `66e1ab24…` 实测
+  证明）；evidence 内字节拷贝
+  `docs/r4-gate0/evidence/e5-base-model-manifest.json` 与模型目录运行时
+  副本逐字节一致；零 discrepancy 字段
+- **main 运行**：PASS；53 cases / 35-grid 全跑；qualifying 10/35；
+  最终选择 alpha=1.00 / tau=0.90 不变；holdout_detail_reads = 0
+- **replay 复验**：独立索引目录重建后重跑；deterministic_replay_ok =
+  true（22 个确定性字段，mismatched_fields = []）
+- **receipts git_head** = R3A（`6c578a4`）
+- **跨轮一致性（R3B vs R2B）**：确定性差异仅 `integrity` 与
+  `runtime.model` 两块；剥离延迟字段（latency_ms / grid_elapsed_seconds）
+  后 leaf 级恰为裁决允许的 3 项（integrity.git_head、
+  integrity.model_manifest_sha256、runtime.model.manifest_digest），
+  unexpected leaf diffs = 0；verdict 级差异仅 latency_ms；
+  oracle_results `8e8e2622…`、vector table `2fe408db…`、vectors.f32
+  `dde75de2…`、calibration_code `39e76734…`、oracle_v3_code
+  `3163ab4f…`、embedder_code `60bf99f2…`、候选锁 `66e1ab24…`、
+  合同 `f79b6a0f…`、spec `1ff8b9a0…` 全部不变（完整比较见
+  `docs/r4-gate0/evidence/e5-base-r3-record.json`）
+- **receipts markdown 变更**：main / replay 两份 receipt 各仅 line 11
+  Model manifest SHA-256 一行变化（`4a87ee46…` → `f4d7c895…`）
+- **测试**：供应链 19/19（vg0b + 系统 Python 双环境；原 18 项 +
+  R3A 新增 provenance 测试）；test_gate0_calibration 5 PASS；
+  test_vector_index 15 PASS；test_embedding_adapter 29 PASS（vg0b，
+  torch 在场零跳过）；test_hybrid_recall 12 PASS；test_recall_trace
+  19 PASS；secret scan 在全部证据文件定稿后重跑 PASS
+- **禁令遵守**：holdout 与 pp-001~012 零读取、Shadow 计数未启动、
+  真实 Binding 零触碰、候选锁 / frozen contract / oracle spec / 模型
+  文件 / case / oracle 语义 / 参数 / 网格 / 门槛 / 择优规则零变化、
+  未 push / tag / release、未 amend

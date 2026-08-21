@@ -1,0 +1,245 @@
+{
+  "authorization": "产品所有者指令 2026-08-22：微型 R3（两个独立提交 R3A + R3B，禁止 amend）；R3A 修正 trust-root provenance（LOCK_FROZEN_COMMIT baa9bb6 → 33cfe42，EXPECTED_LOCK_SHA256 保持 66e1ab24… 不变）；R3B 在 R3A 提交状态与同一 vg0b/TURING 锁定环境下删除并重建 manifest、重跑 main/replay 证据；禁止修改候选锁 / frozen contract / oracle spec / 模型文件 / case / 网格 / 门槛 / 择优规则；禁止运行一次性 E5-base holdout、启动正式 Shadow 计数、修改真实 Binding、push / tag / release",
+  "conclusion": {
+    "r3_complete": true,
+    "statement": "R3A trust-root provenance 修正 + R3B 重跑证据完成：新 manifest 的 trust_root 精确为「docs/r4-gate0/locks/e5-base-candidate-lock.json @ 33cfe424d01727c3a16b8e5bbe9fd7d02ca16dfc（SHA-256 = 66e1ab24…）」——首次实际包含候选锁 66e1ab24… 字节的提交，(commit, bytes) 组合可重放（由 test_lock_frozen_commit_provenance 每次测试运行实测证明）；R2B manifest 的「baa9bb6 + 66e1ab24」组合经实测证明不可重放（git show baa9bb6:lock = 50ab5689…）并已记入 e5-base-r3a-erratum.json 勘误。同 53 cases / 35-grid 重跑 verdict、10/35 qualifying、最终选择 alpha=1.00 / tau=0.90 全部不变；receipts 的 git_head 指向 R3A（6c578a4）。相对 R2B 剥离延迟字段（latency_ms / grid_elapsed_seconds）后 leaf diffs 恰为裁决允许的 3 项（integrity.git_head / integrity.model_manifest_sha256 / runtime.model.manifest_digest），unexpected leaf diffs = 0。"
+  },
+  "invariant_across_r3": {
+    "calibration_code_sha256": "39e76734…（不变，calibration 实现零触碰）",
+    "calibration_vector_table_sha256": "2fe408db…（不变）",
+    "candidate_lock_sha256": "66e1ab24…（不变，锁零字节改动）",
+    "e5_base_runner_gate0_sha256": "0dd8e8b3…（不变）",
+    "embedder_code_sha256": "60bf99f2…（不变）",
+    "holdout_detail_reads": "0（两运行均零读取）",
+    "lock_digests_measured.frozen_hard_filter_contract": "f79b6a0f…（不变）",
+    "lock_digests_measured.oracle_v3_spec": "1ff8b9a0…（不变）",
+    "lock_digests_measured.holdout_manifest": "c7a195e1…（不变）",
+    "lock_digests_measured.requirements_lock": "e0355a34…（不变）",
+    "oracle_results_sha256": "8e8e2622…（不变）",
+    "oracle_v3_code_sha256": "3163ab4f…（不变）",
+    "vectors_f32_sha256": "dde75de2…（不变）",
+    "verdicts_grid_decisions_final_selection": "逐项不变（见比较明细；verdict 级差异仅 latency_ms）"
+  },
+  "old_vs_new_comparison": {
+    "basis": "R3B 运行 vs R2B 运行（git HEAD=6c578a4 中 R2B 证据 vs 工作区 R3B 证据）；剥离 latency_ms / grid_elapsed_seconds / index_dir / rebuild_command / run_label",
+    "allowed_leaf_diffs_rationale": [
+      "integrity.git_head：33cfe42 -> 6c578a4（R2A -> R3A；裁决要求 receipts 的 git_head 指向 R3A）",
+      "integrity.model_manifest_sha256：4a87ee46… -> f4d7c895…（manifest 重建：trust_root 字符串内 LOCK_FROZEN_COMMIT baa9bb6 -> 33cfe42 连带 self_hash 变化）",
+      "runtime.model.manifest_digest：同上（manifest 重建连带）"
+    ],
+    "main_run": {
+      "compare_receipts_mismatched_fields": [
+        "integrity",
+        "runtime.model"
+      ],
+      "expected_leaf_diffs": [
+        {
+          "new": "6c578a4aca91df6b230ec11268f970e15de7e8f0",
+          "old": "33cfe424d01727c3a16b8e5bbe9fd7d02ca16dfc",
+          "path": "integrity.git_head"
+        },
+        {
+          "new": "f4d7c895a2900bd06cc8761043fbc94c3190dd521e931b7d603d79c928eb842e",
+          "old": "4a87ee46c5548ac3193cfd14dceb5a54555b09030f8db53421b11095362d7331",
+          "path": "integrity.model_manifest_sha256"
+        },
+        {
+          "new": "f4d7c895a2900bd06cc8761043fbc94c3190dd521e931b7d603d79c928eb842e",
+          "old": "4a87ee46c5548ac3193cfd14dceb5a54555b09030f8db53421b11095362d7331",
+          "path": "runtime.model.manifest_digest"
+        }
+      ],
+      "invariance": {
+        "case_count": 53,
+        "case_order_identical": true,
+        "final_selection_identical": true,
+        "grid_decisions_identical": true,
+        "oracle_results_sha256_unchanged": true,
+        "qualifying_count": {
+          "new": 10,
+          "old": 10
+        },
+        "reason_codes_identical_per_case": true,
+        "result": {
+          "new": "PASS",
+          "old": "PASS"
+        },
+        "selected_case_verdicts_identical": true,
+        "vector_table_sha256_unchanged": true
+      },
+      "leaf_diff_count": 3,
+      "new_run": {
+        "path": "C:\\Users\\17531\\.workbuddy\\codex-memory-system\\docs\\r4-gate0\\evidence\\e5-base-calibration-results.json",
+        "sha256": "f84f3f4c09a8fb15f696e7c861d65e327b443a2a0daacdccdda2c158734461c5"
+      },
+      "old_run": {
+        "sha256": "1cff06f5f3deacdcba3d0f4440fa048a0fdf5f73121330eed9c4d74af27f54a8",
+        "source": "3aa381d:e5-base-calibration-results.json（R2B 运行产物）"
+      },
+      "pair": "main",
+      "unexpected_leaf_diffs": [],
+      "verdict_invariance_ok": true,
+      "verdict_level_diff_keys": [
+        "diagnostic_case_verdicts[].latency_ms",
+        "selected_case_verdicts[].latency_ms"
+      ]
+    },
+    "receipts_markdown_changed_lines": {
+      "expected": "仅 Model manifest SHA-256 一行（manifest 重建连带）",
+      "main_receipt": [
+        {
+          "line": 11,
+          "new": "- Model manifest SHA-256: `f4d7c895a2900bd06cc8761043fbc94c3190dd521e931b7d603d79c928eb842e`",
+          "old": "- Model manifest SHA-256: `4a87ee46c5548ac3193cfd14dceb5a54555b09030f8db53421b11095362d7331`"
+        }
+      ],
+      "replay_receipt": [
+        {
+          "line": 11,
+          "new": "- Model manifest SHA-256: `f4d7c895a2900bd06cc8761043fbc94c3190dd521e931b7d603d79c928eb842e`",
+          "old": "- Model manifest SHA-256: `4a87ee46c5548ac3193cfd14dceb5a54555b09030f8db53421b11095362d7331`"
+        }
+      ]
+    },
+    "replay_run": {
+      "compare_receipts_mismatched_fields": [
+        "integrity",
+        "runtime.model"
+      ],
+      "expected_leaf_diffs": [
+        {
+          "new": "6c578a4aca91df6b230ec11268f970e15de7e8f0",
+          "old": "33cfe424d01727c3a16b8e5bbe9fd7d02ca16dfc",
+          "path": "integrity.git_head"
+        },
+        {
+          "new": "f4d7c895a2900bd06cc8761043fbc94c3190dd521e931b7d603d79c928eb842e",
+          "old": "4a87ee46c5548ac3193cfd14dceb5a54555b09030f8db53421b11095362d7331",
+          "path": "integrity.model_manifest_sha256"
+        },
+        {
+          "new": "f4d7c895a2900bd06cc8761043fbc94c3190dd521e931b7d603d79c928eb842e",
+          "old": "4a87ee46c5548ac3193cfd14dceb5a54555b09030f8db53421b11095362d7331",
+          "path": "runtime.model.manifest_digest"
+        }
+      ],
+      "invariance": {
+        "case_count": 53,
+        "case_order_identical": true,
+        "final_selection_identical": true,
+        "grid_decisions_identical": true,
+        "oracle_results_sha256_unchanged": true,
+        "qualifying_count": {
+          "new": 10,
+          "old": 10
+        },
+        "reason_codes_identical_per_case": true,
+        "result": {
+          "new": "PASS",
+          "old": "PASS"
+        },
+        "selected_case_verdicts_identical": true,
+        "vector_table_sha256_unchanged": true
+      },
+      "leaf_diff_count": 3,
+      "new_run": {
+        "path": "C:\\Users\\17531\\.workbuddy\\codex-memory-system\\docs\\r4-gate0\\evidence\\e5-base-calibration-results-replay.json",
+        "sha256": "548007004ee22b3a59077135fa1a9398a9dd8ff98d972fe07d965aee61188cae"
+      },
+      "old_run": {
+        "sha256": "86ab45d5554da17fa297441c2209c84660709bfb07865c49a10c7c46b08cc47e",
+        "source": "3aa381d:e5-base-calibration-results-replay.json（R2B 运行产物）"
+      },
+      "pair": "replay",
+      "unexpected_leaf_diffs": [],
+      "verdict_invariance_ok": true,
+      "verdict_level_diff_keys": [
+        "diagnostic_case_verdicts[].latency_ms",
+        "selected_case_verdicts[].latency_ms"
+      ]
+    },
+    "delay_fields_stripped": [
+      "latency_ms（每 case verdict 级，main/replay 各 106 处 = diagnostic 53 + selected 53）",
+      "grid_elapsed_seconds（runtime 级，main 2.762 -> 2.661 / replay 2.956 -> 2.608）"
+    ]
+  },
+  "prohibitions_respected": "未运行/读取一次性 E5-base holdout（holdout_detail_reads = 0）；未启动正式 Shadow 计数；未修改真实 Binding；未修改候选锁 / frozen contract / oracle spec / 模型文件 / case / oracle 语义 / 参数 / 网格 / 门槛 / 择优规则；未 push / tag / release；未 amend",
+  "r3a": {
+    "amend": false,
+    "commit": "6c578a4aca91df6b230ec11268f970e15de7e8f0",
+    "files": [
+      "memory_eval/e5_base/supply_chain.py（仅 LOCK_FROZEN_COMMIT 常量值 baa9bb6… -> 33cfe42… + provenance 注释 + docstring 勘误标注；EXPECTED_LOCK_SHA256 与守卫逻辑零改动）",
+      "tests/test_e5_base_supply_chain.py（LOCK_FROZEN_COMMIT 断言更新 + 旧锚点 baa9bb6 全哈希不得残留断言 + 新增 test_lock_frozen_commit_provenance + 文件头过期说明更新；其余 17 项测试零改动）",
+      "docs/r4-gate0/evidence/e5-base-r3a-erratum.json（新增：勘误完整记录）",
+      "docs/r4-gate0/R4-Gate0-E5-Base-Implementation-Report.md（追加 §13 R3A 勘误后记，原文零改动）"
+    ],
+    "old_to_new_values": {
+      "lock_frozen_commit": {
+        "new": "33cfe424d01727c3a16b8e5bbe9fd7d02ca16dfc",
+        "old": "baa9bb6faddfce633b5cfbfff17501ecb033676c"
+      },
+      "expected_lock_sha256": "不变（66e1ab241f98a92759844cefb329688cb6a9dbb19a04fd28d4ad05dd904e2ed9）"
+    },
+    "parent": "3aa381db9ebbcd63ca807ae314b3777659e2c524",
+    "run_artifacts": "零运行产物（沿 R1A/R2A 分工先例：代码/文本轮不带运行产物）",
+    "secret_scan_after_r3a": "PASS（test_repo_files_do_not_self_match_secret_patterns）",
+    "supply_chain_tests_after_r3a": "19/19 PASS（vg0b venv + 系统 Python 双环境；原 18 项全保持 + 新增 provenance 测试）",
+    "title": "trust-root provenance 修正（不可重放组合勘误）",
+    "erratum_branch_note": "e5-base-r3a-erratum.json 的 commit_structure.branch 误写为 r4-gate0-r3；实际提交所在分支为 r4-gate0-r2（R1/R2/R3 轮连续同分支线性历史；勘误 JSON 已随 R3A 提交、amend 禁止，故在此记录更正，以本记录为准）"
+  },
+  "r3b": {
+    "executed_utc": "2026-08-21T19:51:05Z（本地 2026-08-22 03:51 +0800）",
+    "guard_rerun": "供应链守卫经 test_e5_base_supply_chain 19/19 验证（vg0b venv + 系统 Python 双环境；锁篡改 / 例外字段 / 文件不一致 / loader-before-verification / manifest 锚点 / provenance 全覆盖）",
+    "manifest_regenerated_under_r3a": {
+      "candidate_lock_sha256": "66e1ab241f98a92759844cefb329688cb6a9dbb19a04fd28d4ad05dd904e2ed9",
+      "generator": "memory_eval/e5_base/supply_chain.py::build_manifest（白名单逐字段取自候选锁 files；锁 digest 先验证）",
+      "lock_discrepancy_present": false,
+      "manifest_schema_version": 2,
+      "new_manifest_sha256": "f4d7c895a2900bd06cc8761043fbc94c3190dd521e931b7d603d79c928eb842e",
+      "old_manifest_sha256_deleted_before_rerun": "4a87ee46c5548ac3193cfd14dceb5a54555b09030f8db53421b11095362d7331",
+      "trust_root": "docs/r4-gate0/locks/e5-base-candidate-lock.json @ 33cfe424d01727c3a16b8e5bbe9fd7d02ca16dfc（SHA-256 = 66e1ab241f98a92759844cefb329688cb6a9dbb19a04fd28d4ad05dd904e2ed9）",
+      "trust_root_replayable": "git show 33cfe42:docs/r4-gate0/locks/e5-base-candidate-lock.json 的整文件 SHA-256 == 66e1ab24…（实测证明）"
+    },
+    "reruns": {
+      "deterministic_replay": {
+        "deterministic_fields_compared": 22,
+        "deterministic_replay_ok": true,
+        "mismatched_fields": []
+      },
+      "main": {
+        "duration_seconds": 58,
+        "qualifying": "10/35",
+        "result": "PASS",
+        "selected": "alpha=1.00 / tau=0.90"
+      },
+      "replay": {
+        "duration_seconds": 58,
+        "index_dir": "C:/Users/17531/.workbuddy/vector-cache/cross-memory-system/indexes/e5-base-eval-replay",
+        "qualifying": "10/35",
+        "result": "PASS",
+        "selected": "alpha=1.00 / tau=0.90"
+      },
+      "receipts_git_head": "6c578a4aca91df6b230ec11268f970e15de7e8f0",
+      "receipts_git_head_is_r3a": true,
+      "run_environment": "vg0b venv（C:/Users/17531/vg0b/Scripts/python.exe；与 R1B/R2B 同一锁定 TURING Python/backend、同 E5-base 模型目录 d128750597…、同缓存）"
+    },
+    "runtime_manifest_byte_copy_in_evidence": {
+      "bytes": 2343,
+      "exact_match_with_model_dir_runtime": true,
+      "path": "docs/r4-gate0/evidence/e5-base-model-manifest.json",
+      "sha256": "f4d7c895a2900bd06cc8761043fbc94c3190dd521e931b7d603d79c928eb842e"
+    },
+    "tests": {
+      "secret_scan_final_state": "PASS（全部证据文件定稿后重跑 test_repo_files_do_not_self_match_secret_patterns）",
+      "supply_chain": "19/19 PASS（vg0b venv + 系统 Python 双环境；原 18 项 + 新增 provenance 测试）",
+      "related_regression": {
+        "test_embedding_adapter": "29 PASS（vg0b venv，torch 可用）",
+        "test_gate0_calibration": "5 PASS",
+        "test_hybrid_recall": "12 PASS",
+        "test_recall_trace": "19 PASS",
+        "test_vector_index": "15 PASS"
+      }
+    }
+  },
+  "schema_version": "r4-gate0-e5base-r3-record-v1"
+}
