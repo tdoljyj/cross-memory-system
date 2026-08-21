@@ -1,0 +1,43 @@
+{
+  "alpha_grid": [
+    0.0,
+    0.25,
+    0.5,
+    0.75,
+    1.0
+  ],
+  "calibration_count": 53,
+  "calibration_ids_sha256": "1b0ea9cba921bc700bb98714743a26c6be4ec570896a07a50803665347442e09",
+  "case_contract_sha256": "fa956862ae0bc9dee5ed66ff4f0566243a28ea50370cda5128081a008d8ad917",
+  "fixture_ids_sha256": "e843dc5149e3e70b982d8d8155dad89c60fe1c0ffbaf6659dc21201800fa7eeb",
+  "holdout_count": 58,
+  "lock_type": "gate0-calibration-input-lock",
+  "sealed_inputs": {
+    "memory_eval/gate0_inputs/calibration-cases.json": "ca1e2bcc11795f0a49de7dd0ed5152982e513d21eaa215f93b8846fbf60f9037",
+    "memory_eval/gate0_inputs/calibration-fixtures.json": "f060aa56449dc7670f8a2f963ae236aa6ebb3f8df520ac56bad722d37662c80a"
+  },
+  "seed": 20260819,
+  "source_corpus_hash": "1bc2374405f9678bf455b6bfffb2ed6fe3b4c12054fb2fe521e8ac9db3482c0e",
+  "source_files": {
+    "docs/r4-gate0/evidence/frozen-eval-manifest.json": "c7a195e1e21a476ac949723d65dc8f8594f3931b999974db68561a2838b32ac1",
+    "memory_eval/corpus.py": "4836f10836262098ad91633fbaf4164523afe7e82c2755bb1f04b94191bf22a5",
+    "memory_eval/metrics.py": "77595574e3eee85d112877e43619b91930663f621c4bbb3c3716d6089ddf8fe2",
+    "memory_eval/runner.py": "813d2534463279f14e3b462080d6b048f5f65dd3925555119098076ae01bf08c",
+    "tests/fixtures/memory_eval/fixtures.json": "ad84011c4b341c5d5bd4c1fb3c16c7eb4f27fee3dbc353650cc809e9cc15407a"
+  },
+  "tau_grid": [
+    0.05,
+    0.1,
+    0.15,
+    0.2,
+    0.25,
+    0.3,
+    0.35,
+    0.4,
+    0.45,
+    0.5,
+    0.55,
+    0.6
+  ],
+  "version": 1
+}

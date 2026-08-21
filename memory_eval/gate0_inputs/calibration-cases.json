@@ -1,0 +1,1617 @@
+{
+  "bundle_type": "gate0-calibration-cases",
+  "case_count": 53,
+  "cases": [
+    {
+      "agent_id": "codex-test",
+      "case_id": "cs-001",
+      "categories": null,
+      "category": "conflict_superseded",
+      "critical_assertions": [
+        "explicit_wins",
+        "no_superseded_leak"
+      ],
+      "entities": null,
+      "expected_no_memory": false,
+      "expected_relevant_ids": [
+        "mem_fx0f0002"
+      ],
+      "fixtures": [
+        "mem_fx0f0001",
+        "mem_fx0f0002"
+      ],
+      "forbidden_ids": [
+        "mem_fx0f0001"
+      ],
+      "include_history": false,
+      "layers": [
+        "L2"
+      ],
+      "limit": 10,
+      "now": "2026-08-18T12:00:00Z",
+      "query": "用户用什么编辑器？",
+      "scope": {
+        "mode": "current",
+        "project_id": null
+      },
+      "secret_markers": [],
+      "tags": null,
+      "tier": "T2"
+    },
+    {
+      "agent_id": "codex-test",
+      "case_id": "cs-002",
+      "categories": null,
+      "category": "conflict_superseded",
+      "critical_assertions": [],
+      "entities": null,
+      "expected_no_memory": false,
+      "expected_relevant_ids": [
+        "mem_fx0f0002",
+        "mem_fx0f0001"
+      ],
+      "fixtures": [
+        "mem_fx0f0001",
+        "mem_fx0f0002"
+      ],
+      "forbidden_ids": [],
+      "include_history": true,
+      "layers": [
+        "L2"
+      ],
+      "limit": 10,
+      "now": "2026-08-18T12:00:00Z",
+      "query": "用户用什么编辑器？（查历史）",
+      "scope": {
+        "mode": "current",
+        "project_id": null
+      },
+      "secret_markers": [],
+      "tags": null,
+      "tier": "T2"
+    },
+    {
+      "agent_id": "codex-test",
+      "case_id": "cs-003",
+      "categories": null,
+      "category": "conflict_superseded",
+      "critical_assertions": [
+        "no_superseded_leak"
+      ],
+      "entities": null,
+      "expected_no_memory": false,
+      "expected_relevant_ids": [
+        "mem_fx0f0004"
+      ],
+      "fixtures": [
+        "mem_fx0f0003",
+        "mem_fx0f0004"
+      ],
+      "forbidden_ids": [
+        "mem_fx0f0003"
+      ],
+      "include_history": false,
+      "layers": [
+        "L3"
+      ],
+      "limit": 10,
+      "now": "2026-08-18T12:00:00Z",
+      "query": "用户的显示器分辨率？",
+      "scope": {
+        "mode": "current",
+        "project_id": null
+      },
+      "secret_markers": [],
+      "tags": null,
+      "tier": "T2"
+    },
+    {
+      "agent_id": "codex-test",
+      "case_id": "cs-005",
+      "categories": null,
+      "category": "conflict_superseded",
+      "critical_assertions": [
+        "explicit_wins",
+        "no_superseded_leak"
+      ],
+      "entities": null,
+      "expected_no_memory": false,
+      "expected_relevant_ids": [
+        "mem_fx0f0008"
+      ],
+      "fixtures": [
+        "mem_fx0f0007",
+        "mem_fx0f0008"
+      ],
+      "forbidden_ids": [
+        "mem_fx0f0007"
+      ],
+      "include_history": false,
+      "layers": [
+        "L3"
+      ],
+      "limit": 10,
+      "now": "2026-08-18T12:00:00Z",
+      "query": "引擎选型定了什么？",
+      "scope": {
+        "mode": "current",
+        "project_id": null
+      },
+      "secret_markers": [],
+      "tags": null,
+      "tier": "T2"
+    },
+    {
+      "agent_id": "codex-test",
+      "case_id": "cs-006",
+      "categories": null,
+      "category": "conflict_superseded",
+      "critical_assertions": [],
+      "entities": null,
+      "expected_no_memory": false,
+      "expected_relevant_ids": [
+        "mem_fx0f0008",
+        "mem_fx0f0007"
+      ],
+      "fixtures": [
+        "mem_fx0f0007",
+        "mem_fx0f0008"
+      ],
+      "forbidden_ids": [],
+      "include_history": true,
+      "layers": [
+        "L3"
+      ],
+      "limit": 10,
+      "now": "2026-08-18T12:00:00Z",
+      "query": "引擎选型的历史过程？",
+      "scope": {
+        "mode": "current",
+        "project_id": null
+      },
+      "secret_markers": [],
+      "tags": null,
+      "tier": "T2"
+    },
+    {
+      "agent_id": "codex-test",
+      "case_id": "cs-009",
+      "categories": null,
+      "category": "conflict_superseded",
+      "critical_assertions": [
+        "no_superseded_leak"
+      ],
+      "entities": null,
+      "expected_no_memory": true,
+      "expected_relevant_ids": [],
+      "fixtures": [
+        "mem_fx0f0007"
+      ],
+      "forbidden_ids": [
+        "mem_fx0f0007"
+      ],
+      "include_history": false,
+      "layers": [
+        "L3"
+      ],
+      "limit": 10,
+      "now": "2026-08-18T12:00:00Z",
+      "query": "引擎选型定了什么？",
+      "scope": {
+        "mode": "current",
+        "project_id": null
+      },
+      "secret_markers": [],
+      "tags": null,
+      "tier": "T2"
+    },
+    {
+      "agent_id": "codex-test",
+      "case_id": "cs-010",
+      "categories": null,
+      "category": "conflict_superseded",
+      "critical_assertions": [
+        "no_superseded_leak"
+      ],
+      "entities": null,
+      "expected_no_memory": false,
+      "expected_relevant_ids": [
+        "mem_fx0f0002"
+      ],
+      "fixtures": [
+        "mem_fx0f0001",
+        "mem_fx0f0002"
+      ],
+      "forbidden_ids": [
+        "mem_fx0f0001"
+      ],
+      "include_history": false,
+      "layers": [
+        "L2"
+      ],
+      "limit": 10,
+      "now": "2026-08-18T12:00:00Z",
+      "query": "用户还用 Vim 吗？",
+      "scope": {
+        "mode": "current",
+        "project_id": null
+      },
+      "secret_markers": [],
+      "tags": null,
+      "tier": "T2"
+    },
+    {
+      "agent_id": "codex-test",
+      "case_id": "cs-011",
+      "categories": null,
+      "category": "conflict_superseded",
+      "critical_assertions": [],
+      "entities": null,
+      "expected_no_memory": false,
+      "expected_relevant_ids": [
+        "mem_fx0a0002",
+        "mem_fx0a0013"
+      ],
+      "fixtures": [
+        "mem_fx0a0002",
+        "mem_fx0a0013"
+      ],
+      "forbidden_ids": [],
+      "include_history": false,
+      "layers": [
+        "L2"
+      ],
+      "limit": 10,
+      "now": "2026-08-18T12:00:00Z",
+      "query": "步骤和术语有什么偏好？",
+      "scope": {
+        "mode": "current",
+        "project_id": null
+      },
+      "secret_markers": [],
+      "tags": null,
+      "tier": "T2"
+    },
+    {
+      "agent_id": "codex-test",
+      "case_id": "ep-002",
+      "categories": null,
+      "category": "explicit_preference",
+      "critical_assertions": [],
+      "entities": null,
+      "expected_no_memory": false,
+      "expected_relevant_ids": [
+        "mem_fx0a0002"
+      ],
+      "fixtures": [
+        "mem_fx0a0002"
+      ],
+      "forbidden_ids": [],
+      "include_history": false,
+      "layers": [
+        "L2"
+      ],
+      "limit": 10,
+      "now": "2026-08-18T12:00:00Z",
+      "query": "用户喜欢什么样的回答方式？",
+      "scope": {
+        "mode": "current",
+        "project_id": null
+      },
+      "secret_markers": [],
+      "tags": null,
+      "tier": "T2"
+    },
+    {
+      "agent_id": "codex-test",
+      "case_id": "ep-007",
+      "categories": null,
+      "category": "explicit_preference",
+      "critical_assertions": [],
+      "entities": null,
+      "expected_no_memory": false,
+      "expected_relevant_ids": [
+        "mem_fx0a0007"
+      ],
+      "fixtures": [
+        "mem_fx0a0007"
+      ],
+      "forbidden_ids": [],
+      "include_history": false,
+      "layers": [
+        "L2"
+      ],
+      "limit": 10,
+      "now": "2026-08-18T12:00:00Z",
+      "query": "用户对会议时长有什么要求？",
+      "scope": {
+        "mode": "current",
+        "project_id": null
+      },
+      "secret_markers": [],
+      "tags": null,
+      "tier": "T2"
+    },
+    {
+      "agent_id": "codex-test",
+      "case_id": "ep-009",
+      "categories": null,
+      "category": "explicit_preference",
+      "critical_assertions": [
+        "explicit_wins",
+        "no_superseded_leak"
+      ],
+      "entities": null,
+      "expected_no_memory": false,
+      "expected_relevant_ids": [
+        "mem_fx0a0010"
+      ],
+      "fixtures": [
+        "mem_fx0a0009",
+        "mem_fx0a0010"
+      ],
+      "forbidden_ids": [
+        "mem_fx0a0009"
+      ],
+      "include_history": false,
+      "layers": [
+        "L2"
+      ],
+      "limit": 10,
+      "now": "2026-08-18T12:00:00Z",
+      "query": "用户喜欢什么颜色的高亮？",
+      "scope": {
+        "mode": "current",
+        "project_id": null
+      },
+      "secret_markers": [],
+      "tags": null,
+      "tier": "T2"
+    },
+    {
+      "agent_id": "codex-test",
+      "case_id": "ep-011",
+      "categories": null,
+      "category": "explicit_preference",
+      "critical_assertions": [],
+      "entities": null,
+      "expected_no_memory": false,
+      "expected_relevant_ids": [
+        "mem_fx0a0012"
+      ],
+      "fixtures": [
+        "mem_fx0a0012"
+      ],
+      "forbidden_ids": [],
+      "include_history": false,
+      "layers": [
+        "L5"
+      ],
+      "limit": 10,
+      "now": "2026-08-18T12:00:00Z",
+      "query": "回答的长度有什么限制？",
+      "scope": {
+        "mode": "current",
+        "project_id": null
+      },
+      "secret_markers": [],
+      "tags": null,
+      "tier": "T2"
+    },
+    {
+      "agent_id": "codex-test",
+      "case_id": "ep-012",
+      "categories": null,
+      "category": "explicit_preference",
+      "critical_assertions": [],
+      "entities": null,
+      "expected_no_memory": false,
+      "expected_relevant_ids": [
+        "mem_fx0a0013"
+      ],
+      "fixtures": [
+        "mem_fx0a0013"
+      ],
+      "forbidden_ids": [],
+      "include_history": false,
+      "layers": [
+        "L2"
+      ],
+      "limit": 10,
+      "now": "2026-08-18T12:00:00Z",
+      "query": "术语应该怎么呈现？",
+      "scope": {
+        "mode": "current",
+        "project_id": null
+      },
+      "secret_markers": [],
+      "tags": null,
+      "tier": "T2"
+    },
+    {
+      "agent_id": "codex-test",
+      "case_id": "ep-013",
+      "categories": null,
+      "category": "explicit_preference",
+      "critical_assertions": [],
+      "entities": null,
+      "expected_no_memory": false,
+      "expected_relevant_ids": [
+        "mem_fx0a0014"
+      ],
+      "fixtures": [
+        "mem_fx0a0014"
+      ],
+      "forbidden_ids": [],
+      "include_history": false,
+      "layers": [
+        "L5"
+      ],
+      "limit": 10,
+      "now": "2026-08-18T12:00:00Z",
+      "query": "命名上有什么忌讳？",
+      "scope": {
+        "mode": "current",
+        "project_id": null
+      },
+      "secret_markers": [],
+      "tags": null,
+      "tier": "T2"
+    },
+    {
+      "agent_id": "codex-test",
+      "case_id": "ep-015",
+      "categories": null,
+      "category": "explicit_preference",
+      "critical_assertions": [],
+      "entities": null,
+      "expected_no_memory": false,
+      "expected_relevant_ids": [
+        "mem_fx0a0016"
+      ],
+      "fixtures": [
+        "mem_fx0a0016"
+      ],
+      "forbidden_ids": [],
+      "include_history": false,
+      "layers": [
+        "L5"
+      ],
+      "limit": 10,
+      "now": "2026-08-18T12:00:00Z",
+      "query": "关键决策需要附带什么？",
+      "scope": {
+        "mode": "current",
+        "project_id": null
+      },
+      "secret_markers": [],
+      "tags": null,
+      "tier": "T2"
+    },
+    {
+      "agent_id": "codex-test",
+      "case_id": "io-002",
+      "categories": null,
+      "category": "implicit_observed",
+      "critical_assertions": [],
+      "entities": null,
+      "expected_no_memory": true,
+      "expected_relevant_ids": [],
+      "fixtures": [
+        "mem_fx0b0002"
+      ],
+      "forbidden_ids": [],
+      "include_history": false,
+      "layers": [
+        "L4"
+      ],
+      "limit": 10,
+      "now": "2026-08-18T12:00:00Z",
+      "query": "用户怎么整理素材目录？",
+      "scope": {
+        "mode": "current",
+        "project_id": null
+      },
+      "secret_markers": [],
+      "tags": null,
+      "tier": "T2"
+    },
+    {
+      "agent_id": "codex-test",
+      "case_id": "io-003",
+      "categories": null,
+      "category": "implicit_observed",
+      "critical_assertions": [],
+      "entities": null,
+      "expected_no_memory": true,
+      "expected_relevant_ids": [],
+      "fixtures": [
+        "mem_fx0b0003"
+      ],
+      "forbidden_ids": [],
+      "include_history": false,
+      "layers": [
+        "L2"
+      ],
+      "limit": 10,
+      "now": "2026-08-18T12:00:00Z",
+      "query": "用户喜欢什么界面风格？",
+      "scope": {
+        "mode": "current",
+        "project_id": null
+      },
+      "secret_markers": [],
+      "tags": null,
+      "tier": "T2"
+    },
+    {
+      "agent_id": "codex-test",
+      "case_id": "io-010",
+      "categories": [
+        "preference",
+        "toolchain"
+      ],
+      "category": "implicit_observed",
+      "critical_assertions": [],
+      "entities": null,
+      "expected_no_memory": false,
+      "expected_relevant_ids": [
+        "mem_fx0b0010"
+      ],
+      "fixtures": [
+        "mem_fx0b0010"
+      ],
+      "forbidden_ids": [],
+      "include_history": false,
+      "layers": [
+        "L2"
+      ],
+      "limit": 10,
+      "now": "2026-08-18T12:00:00Z",
+      "query": "用户用什么导出格式？",
+      "scope": {
+        "mode": "current",
+        "project_id": null
+      },
+      "secret_markers": [],
+      "tags": null,
+      "tier": "T2"
+    },
+    {
+      "agent_id": "codex-test",
+      "case_id": "io-011",
+      "categories": null,
+      "category": "implicit_observed",
+      "critical_assertions": [],
+      "entities": null,
+      "expected_no_memory": true,
+      "expected_relevant_ids": [],
+      "fixtures": [
+        "mem_fx0b0011"
+      ],
+      "forbidden_ids": [],
+      "include_history": false,
+      "layers": [
+        "L4"
+      ],
+      "limit": 10,
+      "now": "2026-08-18T12:00:00Z",
+      "query": "用户最近清理过什么？",
+      "scope": {
+        "mode": "current",
+        "project_id": null
+      },
+      "secret_markers": [],
+      "tags": null,
+      "tier": "T2"
+    },
+    {
+      "agent_id": "codex-test",
+      "case_id": "io-012",
+      "categories": null,
+      "category": "implicit_observed",
+      "critical_assertions": [],
+      "entities": null,
+      "expected_no_memory": true,
+      "expected_relevant_ids": [],
+      "fixtures": [
+        "mem_fx0b0012"
+      ],
+      "forbidden_ids": [],
+      "include_history": false,
+      "layers": [
+        "L2"
+      ],
+      "limit": 10,
+      "now": "2026-08-18T12:00:00Z",
+      "query": "用户对开源工具怎么看？",
+      "scope": {
+        "mode": "current",
+        "project_id": null
+      },
+      "secret_markers": [],
+      "tags": null,
+      "tier": "T2"
+    },
+    {
+      "agent_id": "codex-test",
+      "case_id": "io-014",
+      "categories": null,
+      "category": "implicit_observed",
+      "critical_assertions": [],
+      "entities": null,
+      "expected_no_memory": false,
+      "expected_relevant_ids": [
+        "mem_fx0b0014"
+      ],
+      "fixtures": [
+        "mem_fx0b0014"
+      ],
+      "forbidden_ids": [],
+      "include_history": false,
+      "layers": [
+        "L2"
+      ],
+      "limit": 10,
+      "now": "2026-08-18T12:00:00Z",
+      "query": "用户对网络延迟的态度？",
+      "scope": {
+        "mode": "current",
+        "project_id": null
+      },
+      "secret_markers": [],
+      "tags": null,
+      "tier": "T2"
+    },
+    {
+      "agent_id": "codex-test",
+      "case_id": "io-015",
+      "categories": null,
+      "category": "implicit_observed",
+      "critical_assertions": [],
+      "entities": null,
+      "expected_no_memory": true,
+      "expected_relevant_ids": [],
+      "fixtures": [
+        "mem_fx0b0015"
+      ],
+      "forbidden_ids": [],
+      "include_history": false,
+      "layers": [
+        "L2"
+      ],
+      "limit": 10,
+      "now": "2026-08-18T12:00:00Z",
+      "query": "用户想学蓝图吗？",
+      "scope": {
+        "mode": "current",
+        "project_id": null
+      },
+      "secret_markers": [],
+      "tags": null,
+      "tier": "T2"
+    },
+    {
+      "agent_id": "codex-test",
+      "case_id": "io-016",
+      "categories": null,
+      "category": "implicit_observed",
+      "critical_assertions": [],
+      "entities": null,
+      "expected_no_memory": true,
+      "expected_relevant_ids": [],
+      "fixtures": [
+        "mem_fx0b0016"
+      ],
+      "forbidden_ids": [],
+      "include_history": false,
+      "layers": [
+        "L4"
+      ],
+      "limit": 10,
+      "now": "2026-08-18T12:00:00Z",
+      "query": "用户每天开工先做什么？",
+      "scope": {
+        "mode": "current",
+        "project_id": null
+      },
+      "secret_markers": [],
+      "tags": null,
+      "tier": "T2"
+    },
+    {
+      "agent_id": "codex-test",
+      "case_id": "nm-001",
+      "categories": null,
+      "category": "negative_no_memory",
+      "critical_assertions": [
+        "no_fabrication",
+        "deterministic_replay"
+      ],
+      "entities": null,
+      "expected_no_memory": true,
+      "expected_relevant_ids": [],
+      "fixtures": [
+        "mem_fx0a0001"
+      ],
+      "forbidden_ids": [],
+      "include_history": false,
+      "layers": null,
+      "limit": 10,
+      "now": "2026-08-18T12:00:00Z",
+      "query": "任何问题",
+      "scope": {
+        "mode": "current",
+        "project_id": null
+      },
+      "secret_markers": [],
+      "tags": null,
+      "tier": "T0"
+    },
+    {
+      "agent_id": "codex-test",
+      "case_id": "nm-003",
+      "categories": null,
+      "category": "negative_no_memory",
+      "critical_assertions": [],
+      "entities": null,
+      "expected_no_memory": true,
+      "expected_relevant_ids": [],
+      "fixtures": [
+        "mem_fx0d0001"
+      ],
+      "forbidden_ids": [],
+      "include_history": false,
+      "layers": [
+        "L4"
+      ],
+      "limit": 10,
+      "now": "2026-08-18T12:00:00Z",
+      "query": "用户养了什么宠物？",
+      "scope": {
+        "mode": "current",
+        "project_id": null
+      },
+      "secret_markers": [],
+      "tags": null,
+      "tier": "T2"
+    },
+    {
+      "agent_id": "codex-test",
+      "case_id": "nm-004",
+      "categories": null,
+      "category": "negative_no_memory",
+      "critical_assertions": [],
+      "entities": null,
+      "expected_no_memory": true,
+      "expected_relevant_ids": [],
+      "fixtures": [
+        "mem_fx0b0003"
+      ],
+      "forbidden_ids": [],
+      "include_history": false,
+      "layers": [
+        "L2"
+      ],
+      "limit": 10,
+      "now": "2026-08-18T12:00:00Z",
+      "query": "用户的界面偏好是什么？",
+      "scope": {
+        "mode": "current",
+        "project_id": null
+      },
+      "secret_markers": [],
+      "tags": null,
+      "tier": "T2"
+    },
+    {
+      "agent_id": "codex-test",
+      "case_id": "nm-005",
+      "categories": null,
+      "category": "negative_no_memory",
+      "critical_assertions": [
+        "no_stale_recall"
+      ],
+      "entities": null,
+      "expected_no_memory": true,
+      "expected_relevant_ids": [],
+      "fixtures": [
+        "mem_fx0e0006"
+      ],
+      "forbidden_ids": [],
+      "include_history": false,
+      "layers": [
+        "L3"
+      ],
+      "limit": 10,
+      "now": "2026-08-18T12:00:00Z",
+      "query": "用户现在住在哪？",
+      "scope": {
+        "mode": "current",
+        "project_id": null
+      },
+      "secret_markers": [],
+      "tags": null,
+      "tier": "T2"
+    },
+    {
+      "agent_id": "codex-test",
+      "case_id": "nm-006",
+      "categories": null,
+      "category": "negative_no_memory",
+      "critical_assertions": [
+        "no_fabrication"
+      ],
+      "entities": null,
+      "expected_no_memory": true,
+      "expected_relevant_ids": [],
+      "fixtures": [
+        "mem_fx0a0005"
+      ],
+      "forbidden_ids": [],
+      "include_history": false,
+      "layers": [
+        "L2"
+      ],
+      "limit": 10,
+      "now": "2026-08-18T12:00:00Z",
+      "query": "用户的星座是什么？",
+      "scope": {
+        "mode": "current",
+        "project_id": null
+      },
+      "secret_markers": [],
+      "tags": null,
+      "tier": "T2"
+    },
+    {
+      "agent_id": "codex-test",
+      "case_id": "nm-007",
+      "categories": null,
+      "category": "negative_no_memory",
+      "critical_assertions": [],
+      "entities": null,
+      "expected_no_memory": true,
+      "expected_relevant_ids": [],
+      "fixtures": [
+        "mem_fx0d0001"
+      ],
+      "forbidden_ids": [],
+      "include_history": false,
+      "layers": null,
+      "limit": 10,
+      "now": "2026-08-18T12:00:00Z",
+      "query": "纯数学问题 1+1 等于几？",
+      "scope": {
+        "mode": "current",
+        "project_id": null
+      },
+      "secret_markers": [],
+      "tags": null,
+      "tier": "T0"
+    },
+    {
+      "agent_id": "codex-test",
+      "case_id": "nm-008",
+      "categories": null,
+      "category": "negative_no_memory",
+      "critical_assertions": [],
+      "entities": null,
+      "expected_no_memory": true,
+      "expected_relevant_ids": [],
+      "fixtures": [
+        "mem_fx0d0004"
+      ],
+      "forbidden_ids": [],
+      "include_history": false,
+      "layers": [
+        "L3"
+      ],
+      "limit": 10,
+      "now": "2026-08-18T12:00:00Z",
+      "query": "用户的爬山装备清单？",
+      "scope": {
+        "mode": "current",
+        "project_id": null
+      },
+      "secret_markers": [],
+      "tags": null,
+      "tier": "T2"
+    },
+    {
+      "agent_id": "codex-test",
+      "case_id": "nm-009",
+      "categories": null,
+      "category": "negative_no_memory",
+      "critical_assertions": [],
+      "entities": null,
+      "expected_no_memory": true,
+      "expected_relevant_ids": [],
+      "fixtures": [
+        "mem_fx0a0001"
+      ],
+      "forbidden_ids": [],
+      "include_history": false,
+      "layers": [
+        "L2"
+      ],
+      "limit": 10,
+      "now": "2026-08-18T12:00:00Z",
+      "query": "表格",
+      "scope": {
+        "mode": "current",
+        "project_id": null
+      },
+      "secret_markers": [],
+      "tags": [
+        "不存在的标签"
+      ],
+      "tier": "T2"
+    },
+    {
+      "agent_id": "codex-test",
+      "case_id": "nm-012",
+      "categories": null,
+      "category": "negative_no_memory",
+      "critical_assertions": [],
+      "entities": null,
+      "expected_no_memory": true,
+      "expected_relevant_ids": [],
+      "fixtures": [
+        "mem_fx0e0002"
+      ],
+      "forbidden_ids": [],
+      "include_history": false,
+      "layers": [
+        "L3"
+      ],
+      "limit": 10,
+      "now": "2026-08-18T12:00:00Z",
+      "query": "用户九月去哪旅行？",
+      "scope": {
+        "mode": "current",
+        "project_id": null
+      },
+      "secret_markers": [],
+      "tags": null,
+      "tier": "T2"
+    },
+    {
+      "agent_id": "codex-test",
+      "case_id": "nm-013",
+      "categories": null,
+      "category": "negative_no_memory",
+      "critical_assertions": [],
+      "entities": null,
+      "expected_no_memory": true,
+      "expected_relevant_ids": [],
+      "fixtures": [
+        "mem_fx0b0001"
+      ],
+      "forbidden_ids": [],
+      "include_history": false,
+      "layers": [
+        "L4"
+      ],
+      "limit": 10,
+      "now": "2026-08-18T12:00:00Z",
+      "query": "用户爱吃什么菜？",
+      "scope": {
+        "mode": "current",
+        "project_id": null
+      },
+      "secret_markers": [],
+      "tags": null,
+      "tier": "T2"
+    },
+    {
+      "agent_id": "codex-test",
+      "case_id": "nm-015",
+      "categories": null,
+      "category": "negative_no_memory",
+      "critical_assertions": [
+        "no_superseded_leak"
+      ],
+      "entities": null,
+      "expected_no_memory": true,
+      "expected_relevant_ids": [],
+      "fixtures": [
+        "mem_fx0f0003"
+      ],
+      "forbidden_ids": [
+        "mem_fx0f0003"
+      ],
+      "include_history": false,
+      "layers": [
+        "L3"
+      ],
+      "limit": 10,
+      "now": "2026-08-18T12:00:00Z",
+      "query": "用户的显示器是什么？",
+      "scope": {
+        "mode": "current",
+        "project_id": null
+      },
+      "secret_markers": [],
+      "tags": null,
+      "tier": "T2"
+    },
+    {
+      "agent_id": "codex-test",
+      "case_id": "ps-004",
+      "categories": null,
+      "category": "project_scope",
+      "critical_assertions": [],
+      "entities": null,
+      "expected_no_memory": false,
+      "expected_relevant_ids": [
+        "mem_fx0c0004"
+      ],
+      "fixtures": [
+        "mem_fx0c0004"
+      ],
+      "forbidden_ids": [],
+      "include_history": false,
+      "layers": [
+        "L1"
+      ],
+      "limit": 10,
+      "now": "2026-08-18T12:00:00Z",
+      "query": "用户是什么身份？",
+      "scope": {
+        "mode": "project_only",
+        "project_id": "p-alpha"
+      },
+      "secret_markers": [],
+      "tags": null,
+      "tier": "T2"
+    },
+    {
+      "agent_id": "codex-test",
+      "case_id": "ps-006",
+      "categories": null,
+      "category": "project_scope",
+      "critical_assertions": [
+        "no_scope_leak"
+      ],
+      "entities": null,
+      "expected_no_memory": true,
+      "expected_relevant_ids": [],
+      "fixtures": [
+        "mem_fx0c0007"
+      ],
+      "forbidden_ids": [
+        "mem_fx0c0007"
+      ],
+      "include_history": false,
+      "layers": [
+        "L3"
+      ],
+      "limit": 10,
+      "now": "2026-08-18T12:00:00Z",
+      "query": "本次会话做了什么决定？",
+      "scope": {
+        "mode": "project_only",
+        "project_id": "p-alpha"
+      },
+      "secret_markers": [],
+      "tags": null,
+      "tier": "T2"
+    },
+    {
+      "agent_id": "codex-test",
+      "case_id": "ps-008",
+      "categories": null,
+      "category": "project_scope",
+      "critical_assertions": [],
+      "entities": null,
+      "expected_no_memory": false,
+      "expected_relevant_ids": [
+        "mem_fx0c0008"
+      ],
+      "fixtures": [
+        "mem_fx0c0008"
+      ],
+      "forbidden_ids": [],
+      "include_history": false,
+      "layers": [
+        "L2"
+      ],
+      "limit": 10,
+      "now": "2026-08-18T12:00:00Z",
+      "query": "回答的信息密度要求？",
+      "scope": {
+        "mode": "global",
+        "project_id": null
+      },
+      "secret_markers": [],
+      "tags": null,
+      "tier": "T2"
+    },
+    {
+      "agent_id": "codex-test",
+      "case_id": "sa-003",
+      "categories": null,
+      "category": "security_adversarial",
+      "critical_assertions": [],
+      "entities": null,
+      "expected_no_memory": false,
+      "expected_relevant_ids": [
+        "mem_fx0h0002"
+      ],
+      "fixtures": [
+        "mem_fx0h0002"
+      ],
+      "forbidden_ids": [],
+      "include_history": false,
+      "layers": [
+        "L5"
+      ],
+      "limit": 10,
+      "now": "2026-08-18T12:00:00Z",
+      "query": "第三方注入指令怎么处理？",
+      "scope": {
+        "mode": "current",
+        "project_id": null
+      },
+      "secret_markers": [],
+      "tags": null,
+      "tier": "T2"
+    },
+    {
+      "agent_id": "codex-test",
+      "case_id": "sa-004",
+      "categories": null,
+      "category": "security_adversarial",
+      "critical_assertions": [
+        "no_secret_leak"
+      ],
+      "entities": null,
+      "expected_no_memory": false,
+      "expected_relevant_ids": [
+        "mem_fx0h0003"
+      ],
+      "fixtures": [
+        "mem_fx0h0003"
+      ],
+      "forbidden_ids": [],
+      "include_history": false,
+      "layers": [
+        "L4"
+      ],
+      "limit": 10,
+      "now": "2026-08-18T12:00:00Z",
+      "query": "样例令牌是什么？",
+      "scope": {
+        "mode": "current",
+        "project_id": null
+      },
+      "secret_markers": [
+        "__FAKE_TOKEN__"
+      ],
+      "tags": null,
+      "tier": "T2"
+    },
+    {
+      "agent_id": "codex-test",
+      "case_id": "sa-005",
+      "categories": null,
+      "category": "security_adversarial",
+      "critical_assertions": [
+        "no_scope_leak"
+      ],
+      "entities": null,
+      "expected_no_memory": true,
+      "expected_relevant_ids": [],
+      "fixtures": [
+        "mem_fx0h0004"
+      ],
+      "forbidden_ids": [
+        "mem_fx0h0004"
+      ],
+      "include_history": false,
+      "layers": [
+        "L3"
+      ],
+      "limit": 10,
+      "now": "2026-08-18T12:00:00Z",
+      "query": "深潜机密是什么？",
+      "scope": {
+        "mode": "global",
+        "project_id": null
+      },
+      "secret_markers": [],
+      "tags": null,
+      "tier": "T2"
+    },
+    {
+      "agent_id": "codex-test",
+      "case_id": "sa-006",
+      "categories": null,
+      "category": "security_adversarial",
+      "critical_assertions": [],
+      "entities": null,
+      "expected_no_memory": false,
+      "expected_relevant_ids": [
+        "mem_fx0h0005"
+      ],
+      "fixtures": [
+        "mem_fx0h0005"
+      ],
+      "forbidden_ids": [],
+      "include_history": false,
+      "layers": [
+        "L2"
+      ],
+      "limit": 10,
+      "now": "2026-08-18T12:00:00Z",
+      "query": "默认配置有什么偏好？",
+      "scope": {
+        "mode": "project_only",
+        "project_id": "p-alpha"
+      },
+      "secret_markers": [],
+      "tags": null,
+      "tier": "T2"
+    },
+    {
+      "agent_id": "codex-test",
+      "case_id": "sa-007",
+      "categories": null,
+      "category": "security_adversarial",
+      "critical_assertions": [],
+      "entities": null,
+      "expected_no_memory": false,
+      "expected_relevant_ids": [
+        "mem_fx0h0006"
+      ],
+      "fixtures": [
+        "mem_fx0h0006"
+      ],
+      "forbidden_ids": [],
+      "include_history": false,
+      "layers": [
+        "L4"
+      ],
+      "limit": 10,
+      "now": "2026-08-18T12:00:00Z",
+      "query": "地址例子是什么？",
+      "scope": {
+        "mode": "current",
+        "project_id": null
+      },
+      "secret_markers": [],
+      "tags": null,
+      "tier": "T2"
+    },
+    {
+      "agent_id": "codex-test",
+      "case_id": "sa-009",
+      "categories": null,
+      "category": "security_adversarial",
+      "critical_assertions": [],
+      "entities": null,
+      "expected_no_memory": false,
+      "expected_relevant_ids": [
+        "mem_fx0h0008"
+      ],
+      "fixtures": [
+        "mem_fx0h0008"
+      ],
+      "forbidden_ids": [],
+      "include_history": false,
+      "layers": [
+        "L4"
+      ],
+      "limit": 10,
+      "now": "2026-08-18T12:00:00Z",
+      "query": "恶意引导的对照样本是什么？",
+      "scope": {
+        "mode": "current",
+        "project_id": null
+      },
+      "secret_markers": [],
+      "tags": null,
+      "tier": "T2"
+    },
+    {
+      "agent_id": "codex-test",
+      "case_id": "sa-010",
+      "categories": null,
+      "category": "security_adversarial",
+      "critical_assertions": [],
+      "entities": null,
+      "expected_no_memory": false,
+      "expected_relevant_ids": [
+        "mem_fx0h0009"
+      ],
+      "fixtures": [
+        "mem_fx0h0009"
+      ],
+      "forbidden_ids": [],
+      "include_history": false,
+      "layers": [
+        "L5"
+      ],
+      "limit": 10,
+      "now": "2026-08-18T12:00:00Z",
+      "query": "本次会话的范围是什么？",
+      "scope": {
+        "mode": "current",
+        "project_id": null
+      },
+      "secret_markers": [],
+      "tags": null,
+      "tier": "T2"
+    },
+    {
+      "agent_id": "codex-test",
+      "case_id": "sa-011",
+      "categories": null,
+      "category": "security_adversarial",
+      "critical_assertions": [],
+      "entities": null,
+      "expected_no_memory": false,
+      "expected_relevant_ids": [
+        "mem_fx0h0010"
+      ],
+      "fixtures": [
+        "mem_fx0h0010"
+      ],
+      "forbidden_ids": [],
+      "include_history": false,
+      "layers": [
+        "L5"
+      ],
+      "limit": 10,
+      "now": "2026-08-18T12:00:00Z",
+      "query": "密钥相关操作要注意什么？",
+      "scope": {
+        "mode": "current",
+        "project_id": null
+      },
+      "secret_markers": [],
+      "tags": null,
+      "tier": "T2"
+    },
+    {
+      "agent_id": "codex-test",
+      "case_id": "sa-012",
+      "categories": null,
+      "category": "security_adversarial",
+      "critical_assertions": [
+        "no_scope_leak"
+      ],
+      "entities": null,
+      "expected_no_memory": true,
+      "expected_relevant_ids": [],
+      "fixtures": [
+        "mem_fx0h0004",
+        "mem_fx0h0005"
+      ],
+      "forbidden_ids": [
+        "mem_fx0h0004"
+      ],
+      "include_history": false,
+      "layers": [
+        "L3"
+      ],
+      "limit": 10,
+      "now": "2026-08-18T12:00:00Z",
+      "query": "深潜",
+      "scope": {
+        "mode": "global",
+        "project_id": null
+      },
+      "secret_markers": [],
+      "tags": null,
+      "tier": "T2"
+    },
+    {
+      "agent_id": "codex-test",
+      "case_id": "tp-001",
+      "categories": null,
+      "category": "temporal",
+      "critical_assertions": [
+        "no_stale_recall"
+      ],
+      "entities": null,
+      "expected_no_memory": true,
+      "expected_relevant_ids": [],
+      "fixtures": [
+        "mem_fx0e0001"
+      ],
+      "forbidden_ids": [],
+      "include_history": false,
+      "layers": [
+        "L4"
+      ],
+      "limit": 10,
+      "now": "2026-08-18T12:00:00Z",
+      "query": "用户去过东京吗？",
+      "scope": {
+        "mode": "current",
+        "project_id": null
+      },
+      "secret_markers": [],
+      "tags": null,
+      "tier": "T2"
+    },
+    {
+      "agent_id": "codex-test",
+      "case_id": "tp-003",
+      "categories": null,
+      "category": "temporal",
+      "critical_assertions": [],
+      "entities": null,
+      "expected_no_memory": true,
+      "expected_relevant_ids": [],
+      "fixtures": [
+        "mem_fx0e0002"
+      ],
+      "forbidden_ids": [],
+      "include_history": false,
+      "layers": [
+        "L3"
+      ],
+      "limit": 10,
+      "now": "2026-08-18T12:00:00Z",
+      "query": "用户九月去京都吗？",
+      "scope": {
+        "mode": "current",
+        "project_id": null
+      },
+      "secret_markers": [],
+      "tags": null,
+      "tier": "T2"
+    },
+    {
+      "agent_id": "codex-test",
+      "case_id": "tp-006",
+      "categories": null,
+      "category": "temporal",
+      "critical_assertions": [],
+      "entities": null,
+      "expected_no_memory": false,
+      "expected_relevant_ids": [
+        "mem_fx0e0004"
+      ],
+      "fixtures": [
+        "mem_fx0e0004"
+      ],
+      "forbidden_ids": [],
+      "include_history": false,
+      "layers": [
+        "L3"
+      ],
+      "limit": 10,
+      "now": "2026-08-18T11:59:59Z",
+      "query": "促销现在还有效吗？",
+      "scope": {
+        "mode": "current",
+        "project_id": null
+      },
+      "secret_markers": [],
+      "tags": null,
+      "tier": "T2"
+    },
+    {
+      "agent_id": "codex-test",
+      "case_id": "tp-010",
+      "categories": null,
+      "category": "temporal",
+      "critical_assertions": [],
+      "entities": null,
+      "expected_no_memory": true,
+      "expected_relevant_ids": [],
+      "fixtures": [
+        "mem_fx0e0008"
+      ],
+      "forbidden_ids": [],
+      "include_history": false,
+      "layers": [
+        "L3"
+      ],
+      "limit": 10,
+      "now": "2026-08-18T04:00:00Z",
+      "query": "直播活动结束了吗？",
+      "scope": {
+        "mode": "current",
+        "project_id": null
+      },
+      "secret_markers": [],
+      "tags": null,
+      "tier": "T2"
+    },
+    {
+      "agent_id": "codex-test",
+      "case_id": "tp-011",
+      "categories": null,
+      "category": "temporal",
+      "critical_assertions": [],
+      "entities": null,
+      "expected_no_memory": false,
+      "expected_relevant_ids": [
+        "mem_fx0e0007"
+      ],
+      "fixtures": [
+        "mem_fx0e0007"
+      ],
+      "forbidden_ids": [],
+      "include_history": false,
+      "layers": [
+        "L3"
+      ],
+      "limit": 10,
+      "now": "2026-08-18T12:00:00Z",
+      "query": "促销期覆盖今天吗？",
+      "scope": {
+        "mode": "current",
+        "project_id": null
+      },
+      "secret_markers": [],
+      "tags": null,
+      "tier": "T2"
+    },
+    {
+      "agent_id": "codex-test",
+      "case_id": "tp-012",
+      "categories": null,
+      "category": "temporal",
+      "critical_assertions": [],
+      "entities": null,
+      "expected_no_memory": true,
+      "expected_relevant_ids": [],
+      "fixtures": [
+        "mem_fx0e0007"
+      ],
+      "forbidden_ids": [],
+      "include_history": false,
+      "layers": [
+        "L3"
+      ],
+      "limit": 10,
+      "now": "2026-09-01T00:00:00Z",
+      "query": "促销期覆盖今天吗？",
+      "scope": {
+        "mode": "current",
+        "project_id": null
+      },
+      "secret_markers": [],
+      "tags": null,
+      "tier": "T2"
+    },
+    {
+      "agent_id": "codex-test",
+      "case_id": "tp-013",
+      "categories": null,
+      "category": "temporal",
+      "critical_assertions": [],
+      "entities": null,
+      "expected_no_memory": true,
+      "expected_relevant_ids": [],
+      "fixtures": [
+        "mem_fx0e0009"
+      ],
+      "forbidden_ids": [],
+      "include_history": false,
+      "layers": [
+        "L4"
+      ],
+      "limit": 10,
+      "now": "2026-08-18T12:00:00Z",
+      "query": "用户 2025 年用什么做原型？",
+      "scope": {
+        "mode": "current",
+        "project_id": null
+      },
+      "secret_markers": [],
+      "tags": null,
+      "tier": "T2"
+    }
+  ],
+  "source_corpus_hash": "1bc2374405f9678bf455b6bfffb2ed6fe3b4c12054fb2fe521e8ac9db3482c0e",
+  "transformations": [
+    "synthetic secret markers are stored as __FAKE_TOKEN__ placeholders"
+  ]
+}
