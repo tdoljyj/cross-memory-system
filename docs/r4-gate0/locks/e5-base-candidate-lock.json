@@ -1,0 +1,81 @@
+{
+  "lock_type": "e5-base-eval-candidate-lock",
+  "lock_version": 1,
+  "status": "CANDIDATE",
+  "status_note": "定义锁：本轮（M0-R2）仅锁定义，未授权任何下载/构建/评测实施；实施待 M0-R2 后的下一授权轮",
+  "authorization": "产品所有者裁决 2026-08-21 M0-R2（M0-R1 PARTIAL PASS 后的小范围修正轮）",
+  "created_utc": "2026-08-21T12:41:43Z",
+  "authoritative_evidence": {
+    "branch": "r4-gate0-nogo",
+    "commit": "5c6aa1f95672ec588b24785e1dfd66a69b024dca",
+    "vs_gate0_baseline_286e637": { "ahead": 19, "behind": 0 },
+    "vs_origin_main_8c22c238": { "ahead": 16, "behind": 2 },
+    "origin_main_at_lock_time": "8c22c238144225335c08ad8ebbf63ac890f87b55",
+    "note": "16/2 与 19/0 均于 2026-08-21 实测验证；main 的 2 个独有提交不改变 Gate 0 基线口径"
+  },
+  "model": {
+    "id": "intfloat/multilingual-e5-base",
+    "immutable_revision": "d128750597153bb5987e10b1c3493a34e5a4502a",
+    "license": "MIT",
+    "trust_remote_code": false,
+    "architecture_note": "标准 XLMRobertaModel，12 层 / 768 维 / 0.3B / max 512 token",
+    "replay_url_rule": "所有文件查询、下载、哈希验证只允许使用 immutable_revision；main 仅可用于确认当前指向，禁止作为下载或重放输入"
+  },
+  "files": [
+    { "path": "config.json", "size": 694, "sha256": "9dab198f24c8c0879e481cf7822005d5ecbceedbacb390ffafa594e28d31bac4", "hash_source": "直接下载实测（M0-R1 与 M0-R2 均以固定 revision 复验一致）" },
+    { "path": "tokenizer.json", "size": 17082660, "sha256": "62c24cdc13d4c9952d63718d6c9fa4c287974249e16b7ade6d5a85e7bbb75626", "hash_source": "官方 Xet/LFS 文件元数据 SHA-256（M0-R2 以固定 revision 的 tree API 复验一致；下载授权轮须逐文件复验）" },
+    { "path": "tokenizer_config.json", "size": 418, "sha256": "efb5c0d09722e5fe59a462cd2a9976ee216d55b037597d997cd3fe833216da15", "hash_source": "直接下载实测（M0-R1 与 M0-R2 均以固定 revision 复验一致）" },
+    { "path": "special_tokens_map.json", "size": 280, "sha256": "06e405a36dfe4b9604f484f6a1e619af1a7f7d09e34a8555eb0b77b66318067f", "hash_source": "直接下载实测（M0-R1 与 M0-R2 均以固定 revision 复验一致）" },
+    { "path": "sentencepiece.bpe.model", "size": 5069051, "sha256": "cfc8146abe2a0488e9e2a0c56de7952f7c11ab059eca145a0a727afce0db2865", "hash_source": "官方 Xet/LFS 文件元数据 SHA-256（与 E5-small 同名文件完全相同，交叉验证一致；下载授权轮须逐文件复验）" },
+    { "path": "model.safetensors", "size": 1112201288, "sha256": "a18a44fad1d0b46ded15928144138cff1135d5cc8233bdd90be5f18822de09a7", "hash_source": "官方 Xet/LFS 文件元数据 SHA-256（M0-R2 以固定 revision 的 tree API 复验一致；下载授权轮须逐文件复验）" }
+  ],
+  "files_note": "存储后端表述：Hugging Face 当前文件页显示大文件由 Xet 存储，官方 API 的文件元数据以 lfs.oid 字段暴露 SHA-256。实现不得假设具体存储后端（LFS 协议或 Xet），一律以官方 Xet/LFS 文件元数据中的 SHA-256 为准。白名单排除 onnx/**、openvino/**、pytorch_model.bin、README、sentence-transformers 专用文件。",
+  "whitelist_total_bytes": 1134354391,
+  "disk_budget": {
+    "whitelist_6_files_bytes": 1134354391,
+    "whitelist_6_files_gib": 1.0564,
+    "index_768d_float32_233_objects_bytes": 715776,
+    "total_gib": 1.0571,
+    "budget_limit_gib": 2
+  },
+  "backend": {
+    "python": "3.13.14 (Windows AMD64)",
+    "torch": "2.13.0+cpu",
+    "transformers": "5.15.1",
+    "tokenizers": "0.22.2",
+    "safetensors": "0.8.0",
+    "huggingface_hub": "1.28.0",
+    "numpy": "2.5.2",
+    "requirements_lock_source": "docs/r4-gate0/evidence/requirements-gate0b.lock.txt @ 5c6aa1f",
+    "requirements_lock_sha256": "e0355a341138fb90abeb0826fdeef0acfeba4eb2dea2c4d673ed127c2db155c6",
+    "contract_delta_vs_e5_small": "仅 dimension: 384 -> 768；dtype float32 / max_length 512 / L2 normalization / attention-mask mean pooling / query+passage 前缀 / cosine / trust_remote_code false / offline_only 逐项相同；零新依赖"
+  },
+  "grid": {
+    "tau": [0.60, 0.65, 0.70, 0.75, 0.80, 0.85, 0.90],
+    "alpha": [0.0, 0.25, 0.5, 0.75, 1.0],
+    "combination_count": 35,
+    "frozen_at": "M0-R1（先于任何结果）",
+    "no_go_rule": "35 组合中 0 qualifying -> E5-base 在本次预冻结 35 组合合同下 NO-GO，不扩网格、不重试。该结论的适用范围仅限本合同，不构成对所有可能阈值的模型级证明。",
+    "quality_gates": "ADR-MIV-005B-002 §4 全部硬门槛逐字保留，不降门槛"
+  },
+  "holdout_manifest": {
+    "source": "docs/r4-gate0/evidence/frozen-eval-manifest.json @ 5c6aa1f",
+    "sha256": "c7a195e1e21a476ac949723d65dc8f8594f3931b999974db68561a2838b32ac1",
+    "split_contract": "seed 20260819，calibration 53 / holdout 58，pp-001~012 全部密封于 holdout",
+    "integrity": "58-case holdout 逐字节不变、零内容读取；Gate 0-F 仅在候选 calibration 全部硬门槛 PASS 后才可申请授权"
+  },
+  "oracle_v3": {
+    "spec_path": "docs/r4-gate0/locks/oracle-v3-spec.md",
+    "spec_sha256": "a915d8e7fe4bf1c2c0090b114c26b1f069866e8e95ee2a81fa2a0c2baecf05ac",
+    "summary": "canonical 独立 oracle：eligible_expected = frozen_expected ∩ oracle_v3(frozen fixture metadata, frozen hard-filter contract)；runtime filter Trace 与 canonical oracle Trace 逐 case 比对，不一致必须 FAIL，禁止缩减 expected。实现待下一授权轮。"
+  },
+  "prohibitions_until_next_authorization": [
+    "E5-base 权重下载",
+    "768 维索引构建",
+    "oracle v3 实现",
+    "calibration 或 holdout 运行",
+    "git push / tag / release",
+    "修改真实 Binding 或启用 semantic mode",
+    "扩网格、加网格点、改区间"
+  ]
+}
