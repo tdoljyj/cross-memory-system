@@ -1,0 +1,72 @@
+{
+  "backend": {
+    "arch": "AMD64",
+    "name": "transformers",
+    "os": "Windows",
+    "packages": {
+      "huggingface_hub": "1.28.0",
+      "numpy": "2.5.2",
+      "safetensors": "0.8.0",
+      "tokenizers": "0.22.2",
+      "torch": "2.13.0+cpu",
+      "transformers": "5.15.1"
+    },
+    "python": "3.13.14",
+    "runtime": "torch-cpu"
+  },
+  "candidate_lock_sha256": "50ab5689cf4378441177d1af0773b59fbd5a2dc62ff866df7a76b0ea0ad0cd23",
+  "contract": {
+    "dimension": 768,
+    "dtype": "float32",
+    "index_build_batch": 32,
+    "max_length_tokens": 512,
+    "normalization": "L2",
+    "offline_only": true,
+    "passage_prefix": "passage: ",
+    "pooling": "attention-mask mean pooling",
+    "query_batch": 1,
+    "query_prefix": "query: ",
+    "similarity": "cosine",
+    "trust_remote_code": false
+  },
+  "generated_by": "memory_eval/e5_base/supply_chain.py（R1A 供应链冻结：候选锁驱动生成，零例外）",
+  "manifest_schema_version": 2,
+  "model": {
+    "id": "intfloat/multilingual-e5-base",
+    "immutable_revision": "d128750597153bb5987e10b1c3493a34e5a4502a"
+  },
+  "self_hash": "8a29164203e2dc1690d1b70b5dcb28d2a72418d01dda3df6f5b78f8254620d82",
+  "trust_root": "docs/r4-gate0/locks/e5-base-candidate-lock.json @ baa9bb6faddfce633b5cfbfff17501ecb033676c（SHA-256 = 50ab5689cf4378441177d1af0773b59fbd5a2dc62ff866df7a76b0ea0ad0cd23）",
+  "whitelist_files": [
+    {
+      "filename": "config.json",
+      "sha256": "9dab198f24c8c0879e481cf7822005d5ecbceedbacb390ffafa594e28d31bac4",
+      "size": 694
+    },
+    {
+      "filename": "model.safetensors",
+      "sha256": "a18a44fad1d0b46ded15928144138cff1135d5cc8233bdd90be5f18822de09a7",
+      "size": 1112201288
+    },
+    {
+      "filename": "sentencepiece.bpe.model",
+      "sha256": "cfc8146abe2a0488e9e2a0c56de7952f7c11ab059eca145a0a727afce0db2865",
+      "size": 5069051
+    },
+    {
+      "filename": "special_tokens_map.json",
+      "sha256": "06e405a36dfe4b9604f484f6a1e619af1a7f7d09e34a8555eb0b77b66318067f",
+      "size": 280
+    },
+    {
+      "filename": "tokenizer.json",
+      "sha256": "62c24cdc13d4c9952d63718d6c9fa4c287974249e16b7ade6d5a85e7bbb75626",
+      "size": 17082660
+    },
+    {
+      "filename": "tokenizer_config.json",
+      "sha256": "efb5c0d09722e5fe59a462cd2a9976ee216d55b037597d997cd3fe833216da15",
+      "size": 418
+    }
+  ]
+}

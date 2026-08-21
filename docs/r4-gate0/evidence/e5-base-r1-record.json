@@ -1,0 +1,215 @@
+{
+  "authorization": "产品所有者裁决 2026-08-22：baa9bb6 PARTIAL PASS；授权一次小范围 R1（两个独立提交 R1A + R1B，禁止 amend）；Gate 0-F 暂不授权",
+  "conclusion": {
+    "r1_complete": true,
+    "statement": "R1A 供应链代码冻结 + R1B 重跑证据完成：manifest 由修正后候选锁驱动生成（锁 digest pin = 50ab5689…），守卫链 = 修正后候选锁 <-> manifest <-> 磁盘字节，无任何 discrepancy 例外路径；同 53 cases / 35-grid 重跑 verdict、10/35 qualifying、最终选择 alpha=1.00 / tau=0.90 全部不变；receipts 的 git_head 指向 R1A（e6b4412）。Gate 0-F 保持密封，待独立复核通过后转正式 CALIBRATION PASS 再行授权。"
+  },
+  "invariant_across_r1": {
+    "calibration_code_sha256": "39e76734…（不变，calibration 实现零触碰）",
+    "calibration_vector_table_sha256": "2fe408db…（不变）",
+    "candidate_lock_sha256": "50ab5689…（不变）",
+    "e5_base_runner_gate0_sha256": "0dd8e8b3…（不变）",
+    "oracle_results_sha256": "8e8e2622…（不变）",
+    "oracle_v3_code_sha256": "3163ab4f…（不变）",
+    "vectors_f32_sha256": "dde75de2…（不变）",
+    "verdicts_grid_decisions_final_selection": "逐项不变（见比较明细）"
+  },
+  "old_vs_new_comparison": {
+    "basis": "R1B 运行 vs baa9bb6（勘误轮）运行；剥离 latency_ms / grid_elapsed_seconds / index_dir / rebuild_command / run_label",
+    "expected_leaf_diffs_rationale": [
+      "integrity.git_head：db1d5c9 -> e6b4412（R1A；裁决要求 receipts 的 git_head 指向 R1A）",
+      "integrity.embedder_code_sha256：ef186eef… -> 60bf99f2…（R1A 供应链代码冻结的授权改动本体；磁盘实测与 receipts 一致）",
+      "integrity.model_manifest_sha256：2c9d6487… -> 8e768a6e…（manifest schema v2 重建：锁驱动 + candidate_lock_sha256 锚定 + 无例外字段）",
+      "runtime.model.manifest_digest：同上（manifest 重建连带）"
+    ],
+    "main_run": {
+      "compare_receipts_mismatched_fields": [
+        "integrity",
+        "runtime.model"
+      ],
+      "expected_leaf_diffs": [
+        {
+          "new": "60bf99f2c4a96d50f6d78167405ba3d1d31e99f249b2981a4bdd5fad3eb07b4a",
+          "old": "ef186eef2e07d930a36b29efbda5a47dba0722820e2b16751649cabbbe131b20",
+          "path": "integrity.embedder_code_sha256"
+        },
+        {
+          "new": "e6b4412de7b9f8fdcbaf2e80fa674d34bef7a545",
+          "old": "db1d5c9de9672839b6951181491aa48242f4a947",
+          "path": "integrity.git_head"
+        },
+        {
+          "new": "8e768a6e2a3f4966e09b0a254e50fe6e94dcecf98738ceeebcf7f167e9395380",
+          "old": "2c9d6487b39576684d6593d33a52f8603087bf5775b51cddf8f907dd1eeba960",
+          "path": "integrity.model_manifest_sha256"
+        },
+        {
+          "new": "8e768a6e2a3f4966e09b0a254e50fe6e94dcecf98738ceeebcf7f167e9395380",
+          "old": "2c9d6487b39576684d6593d33a52f8603087bf5775b51cddf8f907dd1eeba960",
+          "path": "runtime.model.manifest_digest"
+        }
+      ],
+      "invariance": {
+        "case_count": 53,
+        "case_order_identical": true,
+        "final_selection_identical": true,
+        "grid_decisions_identical": true,
+        "oracle_results_sha256_unchanged": true,
+        "qualifying_count": {
+          "new": 10,
+          "old": 10
+        },
+        "reason_codes_identical_per_case": true,
+        "result": {
+          "new": "PASS",
+          "old": "PASS"
+        },
+        "selected_case_verdicts_identical": true,
+        "vector_table_sha256_unchanged": true
+      },
+      "leaf_diff_count": 4,
+      "new_run": {
+        "path": "C:\\Users\\17531\\.workbuddy\\codex-memory-system\\docs\\r4-gate0\\evidence\\e5-base-calibration-results.json",
+        "sha256": "17de09263ac2226ae0ba0d9f936f3a0288afb81abe34068440478487780ef890"
+      },
+      "old_run": {
+        "sha256": "ddec90f172bb4964a685f7eda04b99bf2aa3c58db806d382f1bf79d9e8633323",
+        "source": "baa9bb6:C:/Users/17531/WorkBuddy/2026-08-21-23-57-56/erratum-work/r1-base/results.json"
+      },
+      "pair": "main",
+      "unexpected_leaf_diffs": [],
+      "verdict_invariance_ok": true
+    },
+    "receipts_markdown_changed_lines": {
+      "expected": "仅 Model manifest SHA-256 一行（manifest 重建连带）",
+      "main_receipt": [
+        {
+          "line": 11,
+          "new": "- Model manifest SHA-256: `8e768a6e2a3f4966e09b0a254e50fe6e94dcecf98738ceeebcf7f167e9395380`",
+          "old": "- Model manifest SHA-256: `2c9d6487b39576684d6593d33a52f8603087bf5775b51cddf8f907dd1eeba960`"
+        }
+      ],
+      "replay_receipt": [
+        {
+          "line": 11,
+          "new": "- Model manifest SHA-256: `8e768a6e2a3f4966e09b0a254e50fe6e94dcecf98738ceeebcf7f167e9395380`",
+          "old": "- Model manifest SHA-256: `2c9d6487b39576684d6593d33a52f8603087bf5775b51cddf8f907dd1eeba960`"
+        }
+      ]
+    },
+    "replay_run": {
+      "compare_receipts_mismatched_fields": [
+        "integrity",
+        "runtime.model"
+      ],
+      "expected_leaf_diffs": [
+        {
+          "new": "60bf99f2c4a96d50f6d78167405ba3d1d31e99f249b2981a4bdd5fad3eb07b4a",
+          "old": "ef186eef2e07d930a36b29efbda5a47dba0722820e2b16751649cabbbe131b20",
+          "path": "integrity.embedder_code_sha256"
+        },
+        {
+          "new": "e6b4412de7b9f8fdcbaf2e80fa674d34bef7a545",
+          "old": "db1d5c9de9672839b6951181491aa48242f4a947",
+          "path": "integrity.git_head"
+        },
+        {
+          "new": "8e768a6e2a3f4966e09b0a254e50fe6e94dcecf98738ceeebcf7f167e9395380",
+          "old": "2c9d6487b39576684d6593d33a52f8603087bf5775b51cddf8f907dd1eeba960",
+          "path": "integrity.model_manifest_sha256"
+        },
+        {
+          "new": "8e768a6e2a3f4966e09b0a254e50fe6e94dcecf98738ceeebcf7f167e9395380",
+          "old": "2c9d6487b39576684d6593d33a52f8603087bf5775b51cddf8f907dd1eeba960",
+          "path": "runtime.model.manifest_digest"
+        }
+      ],
+      "invariance": {
+        "case_count": 53,
+        "case_order_identical": true,
+        "final_selection_identical": true,
+        "grid_decisions_identical": true,
+        "oracle_results_sha256_unchanged": true,
+        "qualifying_count": {
+          "new": 10,
+          "old": 10
+        },
+        "reason_codes_identical_per_case": true,
+        "result": {
+          "new": "PASS",
+          "old": "PASS"
+        },
+        "selected_case_verdicts_identical": true,
+        "vector_table_sha256_unchanged": true
+      },
+      "leaf_diff_count": 4,
+      "new_run": {
+        "path": "C:\\Users\\17531\\.workbuddy\\codex-memory-system\\docs\\r4-gate0\\evidence\\e5-base-calibration-results-replay.json",
+        "sha256": "3cf9429791db30dc01cfd8e6460ed651a9aad6148141d2f763ad3f54f7bc19e6"
+      },
+      "old_run": {
+        "sha256": "12b0a98e8dcd27cb6007fc3714449afa96db7bc0872f306231367cbdd5c56497",
+        "source": "baa9bb6:C:/Users/17531/WorkBuddy/2026-08-21-23-57-56/erratum-work/r1-base/results-replay.json"
+      },
+      "pair": "replay",
+      "unexpected_leaf_diffs": [],
+      "verdict_invariance_ok": true
+    }
+  },
+  "prohibitions_respected": "未读取 holdout / pp-001~012（holdout_detail_reads = 0）；未修改 oracle / fixture / 网格 / 门槛 / calibration 实现 / 真实 Binding；未 push / tag / main",
+  "r1a": {
+    "amend": false,
+    "commit": "e6b4412de7b9f8fdcbaf2e80fa674d34bef7a545",
+    "files": [
+      "memory_eval/e5_base/supply_chain.py（新增：候选锁驱动守卫，零第三方依赖）",
+      "memory_eval/e5_base/embedder.py（移除 LOCK_DISCREPANCY / AUTHORITATIVE_FILES / 过期说明；守卫委托 supply_chain + 兼容层 re-export）",
+      "memory_eval/e5_base/__init__.py（包文档行）",
+      "tests/test_e5_base_supply_chain.py（新增 18 项测试）"
+    ],
+    "guard_chain": "修正后候选锁 <-> manifest <-> 磁盘字节（三方逐字段；manifest 携带任何 lock_discrepancy 字段一律拒绝；schema v1 一律拒绝）",
+    "lock_pin": {
+      "expected_lock_sha256": "50ab5689cf4378441177d1af0773b59fbd5a2dc62ff866df7a76b0ea0ad0cd23",
+      "lock_frozen_commit": "baa9bb6faddfce633b5cfbfff17501ecb033676c",
+      "trust_root_anchored": true
+    },
+    "parent": "baa9bb6faddfce633b5cfbfff17501ecb033676c",
+    "tests": {
+      "environmental_note": "test_memory_eval 在本沙盒静默硬退出（已知 safe-delete 环境行为；与 R1A 改动零导入关联，复核方环境 51 PASS 已独立验证）",
+      "new": "18/18 PASS（plain python 与 vg0b venv 双环境；锁篡改 / 例外字段 / 文件不一致 / loader-before-verification / 旧代码移除全覆盖）",
+      "related_regression": "test_embedding_adapter 29 PASS / test_vector_index 15 PASS / test_gate0_calibration 5 PASS"
+    },
+    "title": "供应链代码冻结"
+  },
+  "r1b": {
+    "guard_rerun": "verify_model_manifest PASS（fail-closed；锁 / manifest / 磁盘三方 6/6 一致；零 discrepancy；无例外字段）",
+    "manifest_regenerated_under_r1a": {
+      "candidate_lock_sha256": "50ab5689cf4378441177d1af0773b59fbd5a2dc62ff866df7a76b0ea0ad0cd23",
+      "generator": "memory_eval/e5_base/supply_chain.py::build_manifest（白名单逐字段取自修正后候选锁 files；锁 digest 先验证）",
+      "lock_discrepancy_present": false,
+      "manifest_schema_version": 2,
+      "new_manifest_sha256": "8e768a6e2a3f4966e09b0a254e50fe6e94dcecf98738ceeebcf7f167e9395380",
+      "old_manifest_sha256_baa9bb6": "2c9d6487b39576684d6593d33a52f8603087bf5775b51cddf8f907dd1eeba960",
+      "trust_root": "docs/r4-gate0/locks/e5-base-candidate-lock.json @ baa9bb6faddfce633b5cfbfff17501ecb033676c（SHA-256 = 50ab5689cf4378441177d1af0773b59fbd5a2dc62ff866df7a76b0ea0ad0cd23）"
+    },
+    "reruns": {
+      "deterministic_replay": {
+        "deterministic_replay_ok": true,
+        "mismatched_fields": []
+      },
+      "main": {
+        "qualifying": "10/35",
+        "result": "PASS",
+        "selected": "alpha=1.00 / tau=0.90"
+      },
+      "receipts_git_head": "e6b4412de7b9f8fdcbaf2e80fa674d34bef7a545",
+      "receipts_git_head_is_r1a": true
+    },
+    "runtime_manifest_byte_copy_in_evidence": {
+      "bytes": 2343,
+      "exact_match_with_model_dir_runtime": true,
+      "path": "docs/r4-gate0/evidence/e5-base-model-manifest.json",
+      "sha256": "8e768a6e2a3f4966e09b0a254e50fe6e94dcecf98738ceeebcf7f167e9395380"
+    }
+  },
+  "schema_version": "r4-gate0-e5base-r1-record-v1"
+}
