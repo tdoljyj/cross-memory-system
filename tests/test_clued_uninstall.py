@@ -77,6 +77,23 @@ def test_uninstall_removes_local_credentials_immediately():
           "binding 清单已移除")
 
 
+def test_uninstall_removes_state_json():
+    """P0：卸载必须清除三轴状态 state.json（P0-1 布局 binding.json+state.json
+    原子双写），否则残留致目录非空、卸载不彻底。"""
+    tmp = _tmp()
+    from clued.auth.fake import FakeAuthProvider
+    ctrl, b1, b2 = _two_agents(tmp, FakeAuthProvider(
+        {"outcomes": [AUTH, AUTH, AUTH], "revoke": {"ok": True,
+                                                    "remote_confirmed": True}}))
+    bid = b1["binding_id"]
+    state_path = os.path.join(ctrl.paths.binding_dir(bid), "state.json")
+    check(os.path.isfile(state_path), "卸载前 state.json 存在（P0-1 双写布局）")
+    ctrl.uninstall(bid, session_id="s3")
+    check(not os.path.isfile(state_path), "卸载后 state.json 已清除（P0）")
+    check(not os.path.isdir(ctrl.paths.binding_dir(bid)),
+          "binding 目录已彻底移除（无残留）")
+
+
 def test_uninstall_online_pending_shows_count_and_blocks():
     tmp = _tmp()
     from clued.auth.fake import FakeAuthProvider
@@ -258,6 +275,7 @@ def test_uninstall_denied_still_removes_local():
 TESTS = [
     test_uninstall_default_only_current_agent,
     test_uninstall_removes_local_credentials_immediately,
+    test_uninstall_removes_state_json,
     test_uninstall_online_pending_shows_count_and_blocks,
     test_uninstall_online_discard_pending_exports,
     test_uninstall_offline_revocation_pending,
