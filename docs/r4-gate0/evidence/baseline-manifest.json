@@ -1,0 +1,69 @@
+{
+  "case_count": 111,
+  "corpus_hash": "1bc2374405f9678bf455b6bfffb2ed6fe3b4c12054fb2fe521e8ac9db3482c0e",
+  "generated_at_utc": "2026-08-21T06:14:55Z",
+  "head": "6ee9b4b1723846ef9030be2443fd433c48031bd6",
+  "leakage": {
+    "project": 0,
+    "secret": 0,
+    "superseded": 0
+  },
+  "manifest_type": "baseline-manifest-run2",
+  "no_memory": {
+    "correct": 41,
+    "total": 41,
+    "violated_case_ids": [],
+    "violations": 0
+  },
+  "paraphrase": {
+    "hit_top5": 1,
+    "hit_top5_case_ids": [
+      "pp-011"
+    ],
+    "total": 12
+  },
+  "prompt_token_p95": 50,
+  "replay_hash": "f4266eabd2bed94da36c5fa7d99fba17a3493418b849da3dfcfcee7e2842159c",
+  "results_sha256": "3c40f58015fd6309b567025e0e1f95009eb789e09b102d70f99e35b398fc2f41",
+  "slices": {
+    "non_paraphrase": {
+      "cases": 99,
+      "critical_memory_recall_v2": 0.9063,
+      "false_recall_rate_v2": 0.0,
+      "golden_ids": 64,
+      "hit_rate_at5": 0.9483,
+      "positive_cases": 58,
+      "precision_at5_v2": 1.0,
+      "returned_objects": 58,
+      "wrong_objects": 0
+    },
+    "paraphrase": {
+      "cases": 12,
+      "critical_memory_recall_v2": 0.0833,
+      "false_recall_rate_v2": 0.9688,
+      "golden_ids": 12,
+      "hit_rate_at5": 0.0833,
+      "positive_cases": 12,
+      "precision_at5_v2": 0.0313,
+      "returned_objects": 32,
+      "wrong_objects": 31
+    }
+  },
+  "test_failure_attribution": {
+    "CODE": 11,
+    "ENV": 4,
+    "UNKNOWN": 0
+  },
+  "test_totals": {
+    "ERROR": 0,
+    "FAIL": 15,
+    "PASS": 527,
+    "SKIP": 0
+  },
+  "v2_metrics": {
+    "critical_memory_recall_v2": 0.7763,
+    "false_recall_rate_v2": 0.3444,
+    "hit_rate_at5": 0.8,
+    "precision_at5_v2": 0.6556
+  }
+}
