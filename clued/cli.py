@@ -5,6 +5,7 @@
     clued install --agent-type codex --agent-instance <label> [--session-id] --json
     clued auth check --binding-id <id> [--session-id] --json
     clued status [--binding-id <id>] --json
+    clued shadow status --json
     clued memory recall --query <q> [--tier T2] --binding-id <id> --session-id <id> --json
     clued memory add|update|supersede|delete --content <c> [--id mem_x] --binding-id --session-id --json
     clued sync --binding-id <id> --session-id <id> --json
@@ -74,6 +75,12 @@ def build_parser():
 
     st = sub.add_parser("status", parents=[common], help="本地健康摘要（不含私有内容）")
     st.add_argument("--binding-id")
+
+    shadow = sub.add_parser("shadow", parents=[common],
+                            help="Gate 0-H 隔离 Shadow（只读状态）")
+    shadow_sub = shadow.add_subparsers(dest="shadow_command")
+    shadow_sub.add_parser("status", parents=[common],
+                          help="显示去正文 Shadow 计数（不启动计数）")
 
     mem = sub.add_parser("memory", parents=[common], help="记忆访问（读/写）")
     mem_sub = mem.add_subparsers(dest="memory_command")
@@ -169,9 +176,25 @@ def run(argv=None, controller_factory=None):
 
 
 def _dispatch(args, controller_factory, request_id=None):
+    cmd = args.command
+    if cmd == "shadow" and args.shadow_command == "status":
+        from .shadow import ShadowProgress
+        status = ShadowProgress().status()
+        return {
+            "state": status["state"],
+            "code": "SHADOW_STATUS",
+            "summary": (
+                "Shadow %s — valid %d/%d, invalid %d, differences %d, "
+                "reviews %d/%d, critical worse %d, leakage %d"
+                % (status["readiness"], status["valid_requests"],
+                   status["valid_target"], status["invalid_attempts"],
+                   status["hybrid_differences"], status["manual_reviews"],
+                   status["manual_review_target"], status["critical_worse"],
+                   status["leakage_events"])),
+            "shadow": status,
+        }
     ctrl = (controller_factory() if controller_factory
             else Controller.create())
-    cmd = args.command
     if cmd == "install":
         return ctrl.install(args.agent_type, args.agent_instance,
                             session_id=args.session_id,
