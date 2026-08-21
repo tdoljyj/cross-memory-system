@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """E5-base 供应链守卫（R1A 冻结，产品所有者裁决 2026-08-22 授权；
-R2A 勘误 2026-08-22 更新锁 digest pin）。
+R2A 勘误 2026-08-22 更新锁 digest pin；R3A 勘误 2026-08-22 修正
+LOCK_FROZEN_COMMIT provenance，锁字节与 digest pin 零变化）。
 
 可信根 = 修正后候选锁 ``docs/r4-gate0/locks/e5-base-candidate-lock.json``：
 - 整文件 SHA-256 在代码内 pin（EXPECTED_LOCK_SHA256 = 66e1ab24…，
@@ -39,14 +40,23 @@ MANIFEST_SCHEMA_VERSION = 2
 MODEL_ID = "intfloat/multilingual-e5-base"
 IMMUTABLE_REVISION = "d128750597153bb5987e10b1c3493a34e5a4502a"
 
-# ---- 候选锁 pin（R1A 冻结；R2A 勘误更新 digest）----
+# ---- 候选锁 pin（R1A 冻结；R2A 勘误更新 digest；R3A 勘误修正 provenance）----
 LOCK_RELATIVE_PATH = "docs/r4-gate0/locks/e5-base-candidate-lock.json"
-# LOCK_FROZEN_COMMIT = 锁字节最初由 R1A pin 冻结的提交（历史锚点）。
-# R2A 勘误（2026-08-22）更新锁内 oracle_v3 两个 digest 字段（合同勘误连带，
-# 见锁 status_note）；当前锁字节的真实锚定 = EXPECTED_LOCK_SHA256（内容
-# 寻址；与所在提交哈希无循环依赖，先例见 frozen-hard-filter-contract.json
-# 的 frozen_in_commit_note）。
-LOCK_FROZEN_COMMIT = "baa9bb6faddfce633b5cfbfff17501ecb033676c"
+# LOCK_FROZEN_COMMIT = 当前锁字节（66e1ab24…）首次实际进入仓库的提交
+# （R3A 勘误 2026-08-22 修正 provenance）。
+# 勘误前该常量为 baa9bb6（R1A 时代锚点），但 baa9bb6 中的锁字节是
+# 勘误前旧锁（其 digest 见 tests 与 e5-base-r3a-erratum.json，
+# 防残留断言禁止在本文件写出该旧 digest 字面量）；R2A 更新锁字节后
+# 未同步移动该锚点，导致 R2B manifest 的 trust_root 出现
+# 「baa9bb6 + 66e1ab24」组合——该组合不可重放
+# （git show baa9bb6:lock 的 SHA-256 ≠ 66e1ab24…）。
+# 33cfe42（R2A 提交本身）才是首次包含 66e1ab24… 锁字节的提交
+# （git show 33cfe42:lock 的 SHA-256 = 66e1ab24…，由
+# tests/test_e5_base_supply_chain.py::test_lock_frozen_commit_provenance
+# 在每次测试运行时实测证明）。锁字节真实锚定 = EXPECTED_LOCK_SHA256
+# （内容寻址）；LOCK_FROZEN_COMMIT 仅是 provenance 描述字段，两者共同
+# 构成可重放的 (commit, bytes) 组合。
+LOCK_FROZEN_COMMIT = "33cfe424d01727c3a16b8e5bbe9fd7d02ca16dfc"
 EXPECTED_LOCK_SHA256 = (
     "66e1ab241f98a92759844cefb329688cb6a9dbb19a04fd28d4ad05dd904e2ed9")
 EXPECTED_LOCK_TYPE = "e5-base-eval-candidate-lock"

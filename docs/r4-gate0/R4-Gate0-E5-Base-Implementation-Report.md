@@ -372,3 +372,50 @@ calibration 经 build_manifest 从勘误后候选锁自动重建。
 - **禁令遵守**：holdout 与 pp-001~012 零读取、Shadow 计数未启动、
   真实 Binding 零触碰、case / oracle 语义 / 参数 / 网格 / 门槛零变化、
   未 push / tag / release
+
+---
+
+## 13. R3A 勘误后记（2026-08-22 R3A 轮，产品所有者裁决 2026-08-22 授权）
+
+R3 = 微型 R3（R3A trust-root provenance 修正，本节）+ R3B（锁定环境
+manifest 重建与 calibration 重跑，独立子提交）。授权边界照录：禁止运行
+一次性 E5-base holdout、禁止启动正式 Shadow 计数、禁止修改真实 Binding、
+禁止修改候选锁 / frozen contract / oracle spec / 模型文件 / case / 网格 /
+门槛 / 择优规则、禁止 push / tag / release、禁止 amend。
+
+- **修复对象**：R2B 重建的 MODEL-MANIFEST.json 的 trust_root 为
+  「candidate-lock @ baa9bb6（SHA-256 = 66e1ab24…）」——该
+  (commit, bytes) 组合**不可重放**：`git show baa9bb6:…lock.json` 的
+  整文件 SHA-256 = `50ab5689…`（R2A 勘误前旧锁字节），≠ `66e1ab24…`
+- **根因**：R2A 更新锁字节与 EXPECTED_LOCK_SHA256 pin 时，将
+  LOCK_FROZEN_COMMIT 当作「历史锚点」保持 baa9bb6 不动；build_manifest()
+  把该常量写进 trust_root，产生「baa9bb6 + 66e1ab24」错误组合。附随
+  不一致：r2-record.json 中 trust_root 描述为「@ R2A 33cfe42」而 manifest
+  实际字节为「@ baa9bb6」
+- **勘误本体**：supply_chain.py 的 LOCK_FROZEN_COMMIT 由 `baa9bb6…`
+  改为 `33cfe424d01727c3a16b8e5bbe9fd7d02ca16dfc`——首次实际包含候选锁
+  `66e1ab24…` 字节的提交（即 R2A 提交本身）；EXPECTED_LOCK_SHA256
+  保持 `66e1ab24…` 不变，守卫逻辑零改动
+- **provenance 证明**（新增
+  `tests/test_e5_base_supply_chain.py::test_lock_frozen_commit_provenance`，
+  每次测试运行时实测复证）：
+  - `git show 33cfe42:docs/r4-gate0/locks/e5-base-candidate-lock.json`
+    的 SHA-256 == `66e1ab24…`（当前 (commit, bytes) 组合可重放）
+  - `git show baa9bb6:…` 的 SHA-256 == `50ab5689…` ≠ `66e1ab24…`
+    （R2 旧组合不可重放的直接证明）
+  - 工作树锁字节 == pin（三方一致）
+- **零变化面**：候选锁（`66e1ab24…`，lock_version 2）/ frozen contract
+  （`f79b6a0f…`）/ oracle spec（`1ff8b9a0…`）/ oracle_v3.py /
+  calibration.py / gate0_calibration.py / embedder.py / 模型文件 / case /
+  网格 / 门槛 / 择优规则全部零字节改动
+- **测试**：供应链 19/19 PASS（vg0b + 系统 Python 双环境；原 18 项全
+  保持 PASS + 新增 provenance 测试 PASS）；test_real_lock_pinned_in_code
+  新增旧锚点 baa9bb6 全哈希不得残留断言；文件头过期说明更新（原
+  「真实锁 SHA-256 == 50ab5689…」为 R2A 遗留过期描述）
+- **manifest 与运行产物**：MODEL-MANIFEST.json 因 trust_root 字符串内
+  锚点值变化而失效（self_hash 不可复现），由 R3B 删除重建——trust_root
+  精确为「candidate-lock @ 33cfe42（SHA-256 = 66e1ab24…）」；evidence
+  字节拷贝与 receipts/results 由 R3B 连带更新（本提交零运行产物）
+- **勘误完整记录**：`docs/r4-gate0/evidence/e5-base-r3a-erratum.json`
+- **禁令遵守**：holdout 与 pp-001~012 零读取、Shadow 计数未启动、
+  真实 Binding 零触碰、未 push / tag / release、未 amend

@@ -3,8 +3,13 @@
 """E5-base 供应链守卫（supply_chain.py）单元测试（R1A；纯标准库，可重放，
 不依赖 torch / transformers / 模型权重）。
 
-覆盖（产品所有者裁决 2026-08-22 R1A）：
-- 候选锁 pin：真实锁整文件 SHA-256 == 50ab5689…（固定并验证）
+覆盖（产品所有者裁决 2026-08-22 R1A；R3A 勘误更新 provenance 断言）：
+- 候选锁 pin：真实锁整文件 SHA-256 == 66e1ab24…（固定并验证；
+  R2A 勘误后锁字节）
+- 锁冻结提交 provenance（R3A 新增）：git show 33cfe42:lock 的
+  SHA-256 == 66e1ab24…（当前 pin 的 (commit, bytes) 组合可重放）；
+  git show baa9bb6:lock 的 SHA-256 == 50ab5689…（旧锁字节，
+  证明 R2B manifest 的 baa9bb6 + 66e1ab24 组合不可重放）
 - build_manifest 从锁生成：白名单逐字段 == 锁 files；不含 lock_discrepancy；
   trust_root 含锁路径 + 冻结提交 + 完整 SHA-256；candidate_lock_sha256 锚定
 - 守卫链 = 修正后候选锁 ↔ manifest ↔ 磁盘（三方逐字段）
@@ -152,8 +157,52 @@ def test_real_lock_pinned_in_code():
         "28d4ad05dd904e2ed9" in source, "锁 digest 未在代码内 pin"
     # R2A 勘误：旧 digest 50ab5689… 不得残留在代码内（防回退到勘误前 pin）
     assert "50ab5689" not in source, "旧锁 digest 残留"
+    # R3A 勘误：LOCK_FROZEN_COMMIT = 33cfe42（当前锁字节 66e1ab24…
+    # 首次实际进入仓库的提交）；旧锚点 baa9bb6 不得残留（其锁字节为
+    # 勘误前旧锁 50ab5689…，与当前 pin 组合不可重放）
     assert SC.LOCK_FROZEN_COMMIT == \
-        "baa9bb6faddfce633b5cfbfff17501ecb033676c"
+        "33cfe424d01727c3a16b8e5bbe9fd7d02ca16dfc"
+    assert "baa9bb6faddfce633b5cfbfff17501ecb033676c" not in source, \
+        "旧 LOCK_FROZEN_COMMIT 锚点残留"
+
+
+# ---------------- 锁冻结提交 provenance（R3A 新增）----------------
+
+def test_lock_frozen_commit_provenance():
+    """证明 (LOCK_FROZEN_COMMIT, EXPECTED_LOCK_SHA256) 组合可重放。
+
+    - git show 33cfe42:docs/r4-gate0/locks/e5-base-candidate-lock.json
+      的整文件 SHA-256 必须 == EXPECTED_LOCK_SHA256（66e1ab24…）：
+      33cfe42 是首次实际包含当前锁字节的提交。
+    - git show baa9bb6:…（R1A 时代旧锚点）的 SHA-256 == 50ab5689…
+      ≠ 66e1ab24…：证明 R2B manifest 的「baa9bb6 + 66e1ab24」
+      trust_root 组合不可重放（R3A 勘误根因）。
+    """
+    import subprocess
+    lock_rel = SC.LOCK_RELATIVE_PATH
+
+    def _show_sha(commit):
+        proc = subprocess.run(
+            ["git", "-C", ROOT, "show", "%s:%s" % (commit, lock_rel)],
+            capture_output=True)
+        if proc.returncode != 0:
+            raise AssertionError(
+                "git show %s:%s 失败: %s" % (
+                    commit, lock_rel, proc.stderr.decode("utf-8", "replace")))
+        return _sha(proc.stdout)
+
+    # 当前锚点：可重放（33cfe42 的锁字节 == pin 的 66e1ab24…）
+    assert _show_sha("33cfe424d01727c3a16b8e5bbe9fd7d02ca16dfc") == \
+        SC.EXPECTED_LOCK_SHA256, \
+        "33cfe42 中的锁字节 != EXPECTED_LOCK_SHA256（provenance 断链）"
+    # 旧锚点：baa9bb6 的锁字节是勘误前旧锁（50ab5689…），与当前 pin 不符
+    baa_sha = _show_sha("baa9bb6faddfce633b5cfbfff17501ecb033676c")
+    assert baa_sha == "50ab5689cf4378441177d1af0773b59fbd5a2dc62ff866" \
+        "df7a76b0ea0ad0cd23", baa_sha
+    assert baa_sha != SC.EXPECTED_LOCK_SHA256
+    # 工作树锁字节与锚点提交一致（三方一致：pin / 锚点提交 / 工作树）
+    assert _sha(open(SC.default_lock_path(), "rb").read()) == \
+        SC.EXPECTED_LOCK_SHA256
 
 
 # ---------------- build_manifest：锁驱动生成 ----------------
@@ -458,6 +507,7 @@ def test_stale_discrepancy_code_removed():
 TESTS = [
     test_real_lock_pinned,
     test_real_lock_pinned_in_code,
+    test_lock_frozen_commit_provenance,
     test_build_manifest_from_lock,
     test_manifest_verify_ok,
     test_lock_tampering_rejected,

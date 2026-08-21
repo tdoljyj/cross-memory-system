@@ -1,0 +1,58 @@
+{
+  "schema_version": "r4-gate0-e5base-r3a-erratum-v1",
+  "erratum_type": "trust-root-provenance-correction",
+  "authorization": "产品所有者裁决 2026-08-22：授权一次微型 R3（R3A trust-root provenance 修正 + R3B 锁定环境 manifest 重建与 calibration 重跑，两个独立提交，禁止 amend）；禁止运行一次性 E5-base holdout、禁止启动正式 Shadow 计数、禁止修改真实 Binding、禁止 push/tag/release",
+  "executed_utc": "2026-08-21T19:47:11Z（本地 2026-08-22 03:47 +0800）",
+  "commit_structure": {
+    "parent": "3aa381db9ebbcd63ca807ae314b3777659e2c524",
+    "parent_subject": "R2B: rerun evidence under R2A (erratum-anchored manifest rebuild + calibration main/replay identical + r2 record)",
+    "amend": false,
+    "structure": "本记录所在提交 = 3aa381d 之上的独立子提交（R3A 勘误提交，非 amend）；R3B 为其独立子提交",
+    "branch": "r4-gate0-r3"
+  },
+  "problem": {
+    "finding": "R2B 重建的 MODEL-MANIFEST.json 的 trust_root 为「docs/r4-gate0/locks/e5-base-candidate-lock.json @ baa9bb6faddfce633b5cfbfff17501ecb033676c（SHA-256 = 66e1ab241f98a92759844cefb329688cb6a9dbb19a04fd28d4ad05dd904e2ed9）」，该 (commit, bytes) 组合不可重放",
+    "root_cause": "baa9bb6 中的锁字节是 R2A 勘误前的旧锁：git show baa9bb6:docs/r4-gate0/locks/e5-base-candidate-lock.json 的整文件 SHA-256 = 50ab5689cf4378441177d1af0773b59fbd5a2dc62ff866df7a76b0ea0ad0cd23 ≠ 66e1ab24…。R2A 勘误更新锁字节（50ab5689… → 66e1ab24…）与 EXPECTED_LOCK_SHA256 pin 时，将 LOCK_FROZEN_COMMIT 描述为「历史锚点」并保持 baa9bb6 不动；build_manifest() 把该常量写进 trust_root，产生「baa9bb6 + 66e1ab24」的不可重放组合。附随不一致：e5-base-r2-record.json 的 r2b.manifest_regenerated_under_r2a.trust_root 描述为「@ R2A 33cfe424…」，与 manifest 实际字节「@ baa9bb6」不符（记录为期望态、代码产物为旧锚点）",
+    "evidence": "git show 33cfe424d01727c3a16b8e5bbe9fd7d02ca16dfc:docs/r4-gate0/locks/e5-base-candidate-lock.json 的整文件 SHA-256 = 66e1ab241f98a92759844cefb329688cb6a9dbb19a04fd28d4ad05dd904e2ed9（9214 字节）；33cfe42（R2A 提交本身）是首次实际包含 66e1ab24… 锁字节的提交（git log --follow 该路径的提交序列：df15e1e → 4e6cca1 → baa9bb6（50ab5689…）→ 33cfe42（66e1ab24…））",
+    "impact": "守卫安全语义零影响：EXPECTED_LOCK_SHA256 内容寻址 pin 一直正确（任何锁字节篡改均 LOCK_DIGEST_MISMATCH），manifest 的 candidate_lock_sha256 锚定也正确；受影响的是 provenance 描述字段 trust_root 的可重放性与记录一致性",
+    "fix": "supply_chain.py 的 LOCK_FROZEN_COMMIT 由 baa9bb6… 改为 33cfe424d01727c3a16b8e5bbe9fd7d02ca16dfc（首次实际包含候选锁 66e1ab24… 字节的提交）；EXPECTED_LOCK_SHA256 保持 66e1ab24… 不变。R3B 在 R3A 提交状态下重建 manifest，使 trust_root 精确为「lock @ 33cfe42（SHA-256 = 66e1ab24…）」的可重放组合"
+  },
+  "semantics_invariance": [
+    "候选锁 docs/r4-gate0/locks/e5-base-candidate-lock.json 零字节改动（SHA-256 保持 66e1ab24…；lock_version 保持 2）",
+    "EXPECTED_LOCK_SHA256 / EXPECTED_LOCK_TYPE / EXPECTED_LOCK_VERSION / EXPECTED_WHITELIST_COUNT 全部不变",
+    "frozen-hard-filter-contract.json（f79b6a0f…）与 oracle-v3-spec.md（1ff8b9a0…）零改动",
+    "oracle_v3.py / calibration.py / gate0_calibration.py / embedder.py 零改动（oracle_results 8e8e2622… / calibration_vector_table 2fe408db… / vectors.f32 dde75de2… / receipts 代码 digest 不变性预期保持）",
+    "case、oracle 规则、门槛（ADR-MIV-005B-002 §4 八项硬门槛）、网格（tau×7 × alpha×5 = 35）、择优规则全部零触碰",
+    "模型文件、模型目录白名单六文件零触碰",
+    "guards.json（secret_patterns 单一事实源）零触碰"
+  ],
+  "digest_chain_update": {
+    "supply_chain_pin": {
+      "path": "memory_eval/e5_base/supply_chain.py",
+      "changed_scope": "仅 LOCK_FROZEN_COMMIT 常量值（baa9bb6… → 33cfe42…）与其上方 provenance 注释、模块 docstring 勘误标注；EXPECTED_LOCK_SHA256 与全部守卫逻辑零改动"
+    },
+    "tests": {
+      "path": "tests/test_e5_base_supply_chain.py",
+      "changed_scope": "test_real_lock_pinned_in_code 的 LOCK_FROZEN_COMMIT 断言更新为 33cfe42… + 新增旧锚点 baa9bb6 全哈希不得残留断言；新增 test_lock_frozen_commit_provenance（git show 33cfe42:lock 的 SHA-256 == 66e1ab24… 可重放证明 + git show baa9bb6:lock == 50ab5689… 旧锁证明 + 工作树三方一致）；文件头 docstring 过期说明更新（原「真实锁 SHA-256 == 50ab5689…」为 R2A 遗留过期描述）。其余 17 项测试零改动"
+    },
+    "lock_and_contract": "零改动（本勘误不动锁 / 合同 / spec / 模型文件 / case / 网格 / 门槛 / 择优规则）",
+    "manifest_note": "MODEL-MANIFEST.json（模型目录仓库外派生物）因 trust_root 字符串内 LOCK_FROZEN_COMMIT 变化而失效（旧值 @ baa9bb6 的 manifest self_hash 不再可复现），由 R3B 在精确锁定的 vg0b/TURING Python/backend、E5-base 模型目录与缓存下删除后经 build_manifest 重建并经守卫三方校验；evidence 内字节拷贝（e5-base-model-manifest.json）与 calibration receipts/results 由 R3B 连带更新——本勘误提交不含任何运行产物"
+  },
+  "verification": {
+    "supply_chain_tests": "tests/test_e5_base_supply_chain.py 19/19 PASS（vg0b venv + 系统 Python 双环境；原 18 项全保持 PASS + 新增 test_lock_frozen_commit_provenance PASS）",
+    "provenance_proof": "git show 33cfe42:docs/r4-gate0/locks/e5-base-candidate-lock.json | sha256sum == 66e1ab241f98a92759844cefb329688cb6a9dbb19a04fd28d4ad05dd904e2ed9（实测 2026-08-22；并由新增测试在每次运行时复证）",
+    "non_replayability_proof": "git show baa9bb6:docs/r4-gate0/locks/e5-base-candidate-lock.json | sha256sum == 50ab5689cf4378441177d1af0773b59fbd5a2dc62ff866df7a76b0ea0ad0cd23 ≠ 66e1ab24…（实测 2026-08-22；R2 manifest 的旧组合不可重放的直接证明）",
+    "secret_self_scan": "勘误后全仓库 secret 自扫描（test_repo_files_do_not_self_match_secret_patterns 同口径）零命中",
+    "full_regression": "R3B 在锁定环境重跑供应链测试 + calibration 测试 + 完整 secret scan + 相关回归后闭环"
+  },
+  "frozen_unchanged": {
+    "calibration_fixture_or_expected": "未修改",
+    "oracle_v3_code": "未修改（oracle_v3.py 零触碰）",
+    "calibration_implementation": "未修改（calibration.py / gate0_calibration.py / embedder.py 零触碰，receipts 代码 digest 不变性预期保持）",
+    "grid_thresholds_selection_rules": "未修改",
+    "holdout_and_pp_001_012": "零读取零解析（holdout 保持密封，Gate 0-F 未授权）",
+    "shadow_counting": "未启动（Gate 0-H formal_counting 保持 NOT_STARTED）",
+    "real_binding": "未修改",
+    "main_tag_release": "未执行任何 push / tag / release"
+  }
+}
