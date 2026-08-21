@@ -119,3 +119,6 @@ R1 前两个阻断（manifest 验证未接入加载路径、验证脚本不可�
   现已 fail-closed。
 - 独立验证：`test_embedding_adapter.py` 29 项，Codex 环境 28 PASS / 1 SKIP
   （仅 torch 不可用）；具备 torch 的 Gate 0-B 环境原 ndim 守卫 24/24 已通过。
+
+**最终裁决：Gate 0-B PASS（2026-08-21，Codex@DESK-W-591 复核签核），放行进入
+Gate 0-C；本裁决不等于合并 `main`、tag 或 release 授权。**

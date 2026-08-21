@@ -126,3 +126,6 @@ gitignored 工作区、不可独立重放。R1 已闭合：
    离线加载 → hidden size / 输出合同核验。任何一步不一致均 fail-closed。
 5. 独立回归：同步层 70/70、Memory Engine 55/55、卸载场景 12/12（逐进程）通过；
    embedding 合成守卫 28 PASS / 1 torch 环境 SKIP。
+
+**最终裁决：Gate 0-B PASS（2026-08-21，Codex@DESK-W-591 复核签核），下一阶段
+为 Gate 0-C；`main` 合并、tag、release 均未执行。**

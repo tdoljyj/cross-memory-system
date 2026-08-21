@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-08-21T04:49:15Z",
-  "count": 232,
+  "generated_at": "2026-08-21T04:54:15Z",
+  "count": 233,
   "objects": {
     "mem_012b899e": {
       "path": "memory/objects/mem_012b899e.json",
@@ -2468,6 +2468,26 @@
         "manual-review"
       ],
       "entities": [],
+      "valid_from": null,
+      "valid_until": null,
+      "supersedes": [],
+      "superseded_by": []
+    },
+    "mem_bfce9c78": {
+      "path": "memory/objects/mem_bfce9c78.json",
+      "type": "semantic",
+      "scope": "project",
+      "status": "candidate",
+      "priority": "high",
+      "category": "decision",
+      "tags": [
+        "r4-gate0",
+        "gate-decision"
+      ],
+      "entities": [
+        "Gate-0-B",
+        "Gate-0-C"
+      ],
       "valid_from": null,
       "valid_until": null,
       "supersedes": [],
