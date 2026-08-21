@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "id": "mem_6252dd6b",
+  "type": "state",
+  "scope": "global",
+  "content": "2026-08-21 R4 Gate 0-E 已完成冻结 53-case calibration 的 60 组真实离线 E5 网格；0 组满足全部硬门槛，最佳观察点 alpha=1.00、tau=0.60，precision/critical=29/30、false recall=1/30、NO MEMORY=25/26、词法正确 expected 保留=29/30，因此本轮 E5 NO-GO，按计划禁止进入 Gate 0-F 至 0-I。干净证据分支 r4-gate0-nogo 指向 5c6aa1f。",
+  "status": "candidate",
+  "source": {
+    "kind": "observed",
+    "adapter": "memory.py",
+    "session_id": null,
+    "created_at": "2026-08-21T06:47:45Z",
+    "updated_at": "2026-08-21T06:47:45Z"
+  },
+  "temporal": {
+    "valid_from": null,
+    "valid_until": null
+  },
+  "relations": {
+    "supersedes": [],
+    "superseded_by": [],
+    "contradicts": [],
+    "related": []
+  },
+  "classification": {
+    "memory_layer": "state",
+    "category": "state",
+    "recall_layer": "L3",
+    "priority": "high"
+  },
+  "provenance": {
+    "evidence": "observed",
+    "source_ref": null
+  },
+  "tags": [
+    "R4",
+    "Gate0",
+    "E5",
+    "NO-GO"
+  ],
+  "entities": [
+    "cross-memory-system",
+    "Clued"
+  ]
+}

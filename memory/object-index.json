@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-08-21T04:54:15Z",
-  "count": 233,
+  "generated_at": "2026-08-21T06:47:45Z",
+  "count": 234,
   "objects": {
     "mem_012b899e": {
       "path": "memory/objects/mem_012b899e.json",
@@ -1238,6 +1238,28 @@
         "manual-review"
       ],
       "entities": [],
+      "valid_from": null,
+      "valid_until": null,
+      "supersedes": [],
+      "superseded_by": []
+    },
+    "mem_6252dd6b": {
+      "path": "memory/objects/mem_6252dd6b.json",
+      "type": "state",
+      "scope": "global",
+      "status": "candidate",
+      "priority": "high",
+      "category": "state",
+      "tags": [
+        "R4",
+        "Gate0",
+        "E5",
+        "NO-GO"
+      ],
+      "entities": [
+        "cross-memory-system",
+        "Clued"
+      ],
       "valid_from": null,
       "valid_until": null,
       "supersedes": [],

@@ -231,3 +231,4 @@
 {"memory_id": "mem_8a99e081", "operation": "CREATE", "timestamp": "2026-08-21T02:10:55Z", "adapter": "memory-engine", "reason": "无既有对应记忆", "previous_status": null, "new_status": "active", "session_id": null}
 {"memory_id": "mem_d42e783b", "operation": "CREATE", "timestamp": "2026-08-21T04:49:15Z", "adapter": "memory-engine", "reason": "无既有对应记忆", "previous_status": null, "new_status": "candidate", "session_id": null}
 {"memory_id": "mem_bfce9c78", "operation": "CREATE", "timestamp": "2026-08-21T04:54:14Z", "adapter": "memory-engine", "reason": "无既有对应记忆", "previous_status": null, "new_status": "candidate", "session_id": null}
+{"memory_id": "mem_6252dd6b", "operation": "CREATE", "timestamp": "2026-08-21T06:47:45Z", "adapter": "memory-engine", "reason": "无既有对应记忆", "previous_status": null, "new_status": "candidate", "session_id": null}
