@@ -303,3 +303,36 @@ memory_eval 文件>` = 空。本轮只新增 `memory_eval/e5_base/`（3 文件�
 - §7 digest 清单中 `e5-base-candidate-lock.json` 与 `MODEL-MANIFEST.json`
   两行由上述勘误值取代；其余各行（含全部代码文件与冻结合同、oracle
   spec、holdout manifest、requirements lock）在勘误轮逐字节复测不变
+
+---
+
+## 11. R2A 勘误后记（2026-08-22 R2A 轮，产品所有者裁决 2026-08-22 授权）
+
+R2 = R2A（合同样值勘误，本节）+ R2B（锁定环境 manifest 重生成与 calibration
+重跑，独立子提交）。授权边界照录：禁止运行一次性 E5-base holdout、禁止启动
+正式 Shadow 计数、禁止修改真实 Binding、禁止修改 case / oracle 语义 / 参数 /
+网格 / 门槛、禁止 push / tag / release。
+
+- **修复对象**：`tests/test_acceptance.py::test_repo_files_do_not_self_match_secret_patterns`
+  FAIL——冻结合同 `secret_marker_substitution` 字段中合成令牌样值以连续字面
+  形态写出（`ghp_` 前缀 + 24 连续大写 `A`），自命中 secret_patterns 模式 1
+  （该失败已在 gate0-continuation-status-68c0e4f.json 的 gate_0_g.blockers
+  如实记录，当时因 TURING 锁定环境不在场未修）
+- **勘误本体**：该括号内样值描述改写为乘积记法描述形态；替换规则本体
+  （`'__FAKE_TOKEN__'` → `'ghp_' + 'A'×24`）与全部过滤语义零变化；
+  oracle 消费面（contract_type / status / vocabularies）不触及该描述文本
+- **digest 链更新**（新旧值与逐字段改动范围见
+  `docs/r4-gate0/evidence/e5-base-r2a-erratum.json`）：
+  - frozen-hard-filter-contract.json：`1785469c…` → `f79b6a0f…`
+  - oracle-v3-spec.md：`11ce8934…` → `1ff8b9a0…`（§2.1 digest + 头部变更记录）
+  - e5-base-candidate-lock.json：`50ab5689…` → `66e1ab24…`
+    （lock_version 保持 2；结构 / 模型 / 网格 / 门槛字段逐字段不变）
+  - supply_chain.py pin：EXPECTED_LOCK_SHA256 → `66e1ab24…`（LOCK_FROZEN_COMMIT
+    保持 baa9bb6 历史锚点，内容寻址优先，无提交哈希循环依赖）
+  - tests/test_e5_base_supply_chain.py：真实锁 pin 断言更新 + 旧 digest
+    不得残留断言新增（18/18 PASS）
+- **manifest 与运行产物**：MODEL-MANIFEST.json 与 calibration
+  receipts/results/replay 连带更新全部归 R2B（本提交零运行产物）
+- **禁令遵守**：fixture / expected / oracle v3 代码 / calibration 实现 /
+  embedder / 网格 / 门槛 / 择优 / holdout 与 pp-001~012（零读取）/ Shadow
+  计数（未启动）/ 真实 Binding / main·tag·release 全部零触碰；未 push

@@ -8,6 +8,13 @@
 > `oracle_v3_spec_digest`，实际 JSON 字段为 `oracle_v3.spec_sha256`）；
 > ② frozen_hard_filter_contract 由独立文件逐字节冻结（path + source +
 > SHA-256 见 §2.1）。除此之外逐字保留 M0-R2 冻结内容。
+> R2A 变更记录（2026-08-22 勘误，产品所有者裁决授权）：§2.1 所引
+> frozen-hard-filter-contract.json 的 SHA-256 随合同本体勘误更新——合同
+> input_materialization.secret_marker_substitution 中以连续字面形态写出的
+> 合成令牌样值改写为乘积记法描述形态（该字面样值会命中 guards.json
+> secret_patterns 模式 1，触发仓库 secret 自扫描 FAIL）；过滤语义、case、
+> oracle 规则、门槛与网格零变化。本文件除该 digest 与本变更记录外
+> 逐字保留 M0-R3 冻结内容。
 
 ## 1. 目的（被修正的缺陷）
 
@@ -44,9 +51,10 @@ eligible_expected(case) =
   `hybrid_recall.py`、`memory_eval/schema.py`、`guards.json`
   @ `5c6aa1f95672ec588b24785e1dfd66a69b024dca`（逐文件 SHA-256 见合同
   `authoritative_source.files`）
-- 本体 SHA-256：
-  `1785469cafa4660bdc6f06e531b93fab6e87f14b7ba6dfe4ea09d884626b3881`
-  （同步记录于 `locks/e5-base-candidate-lock.json` 的
+- 本体 SHA-256（R2A 勘误后）：
+  `f79b6a0f5c03e6ff33bee754ca5496b85f1365a5db67e4d9318172f2d5197cd4`
+  （勘误前 = `1785469cafa4660bdc6f06e531b93fab6e87f14b7ba6dfe4ea09d884626b3881`；
+  同步记录于 `locks/e5-base-candidate-lock.json` 的
   `oracle_v3.frozen_hard_filter_contract.sha256`）
 
 合同内容：判定顺序 P1–P8（短路与参数解析）→ A1–A6（status /

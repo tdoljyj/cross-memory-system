@@ -1,0 +1,71 @@
+{
+  "schema_version": "r4-gate0-e5base-r2a-erratum-v1",
+  "erratum_type": "contract-literal-sample-rewrite-non-secret-form",
+  "authorization": "产品所有者裁决 2026-08-22：授权一次小范围 R2（R2A 合同样值勘误 + R2B 锁定环境 manifest 重生成与 calibration 重跑，两个独立提交，禁止 amend）；禁止运行一次性 E5-base holdout、禁止启动正式 Shadow 计数、禁止修改真实 Binding、禁止 push/tag/release",
+  "executed_utc": "2026-08-21T19:18:32Z（本地 2026-08-22 03:18 +0800）",
+  "commit_structure": {
+    "parent": "e4240914bd4ac429171ac9a7dedc27a3b85e47ad",
+    "parent_subject": "R4 Gate0: record F-G environment blockers and H status",
+    "amend": false,
+    "structure": "本记录所在提交 = e424091 之上的独立子提交（R2A 勘误提交，非 amend）；R2B 为其独立子提交",
+    "branch": "r4-gate0-r2"
+  },
+  "problem": {
+    "test": "tests/test_acceptance.py::test_repo_files_do_not_self_match_secret_patterns",
+    "symptom": "FAIL：仓库文件自命中扫描模式（-CommitRepo staged 扫描会把仓库自己的代码当密钥拒绝提交）",
+    "root_cause": "docs/r4-gate0/locks/frozen-hard-filter-contract.json 的 input_materialization.secret_marker_substitution 字段中，替换样值以连续字面形态写出（'ghp_' 前缀后接 24 个连续大写 'A'，总长 28 字符），命中 guards.json secret_patterns 模式 1（gh[op]_[A-Za-z0-9]{20,}）。该样值是合成测试标记（__FAKE_TOKEN__ 的运行时替换产物描述），不是真实凭据；但合同是仓库文本文件，字面连续形态必然自命中。gate0-continuation-status-68c0e4f.json 的 gate_0_g.blockers 已如实记录该失败，当时因 TURING 锁定环境不在场而未修（frozen_contract_action = not modified）",
+    "fix": "将该括号内样值描述改写为乘积记法描述形态（前缀 'ghp_' 后接 24 个连续大写 'A' 的 28 字符串），替换规则本体（'__FAKE_TOKEN__' → 'ghp_' + 'A'×24）、逐字节一致性口径与全部过滤语义零变化"
+  },
+  "semantics_invariance": [
+    "oracle_v3.py 的 CanonicalOracleV3 只消费合同 contract_type / status / vocabularies 结构字段；secret_marker_substitution 是纯描述性文本，oracle 不解析（物化替换由 gate0_calibration._runtime_fixture_copy 独立执行，不在合同消费面内）",
+    "替换规则本体 '__FAKE_TOKEN__' → 'ghp_' + 'A'×24 一字未动（乘积记法在原文中已存在，勘误仅删除连续字面展开）",
+    "vocabularies（含 secret_patterns 五条模式原文）/ judgment_contract（P1–P8、A1–A6、B1–B7 全部 predicate 与 code）/ trace_equality_rule / out_of_contract_stages / independence_rule / prohibitions_unchanged 逐字未动",
+    "case、oracle 规则、门槛（ADR-MIV-005B-002 §4 八项硬门槛）、网格（tau×7 × alpha×5 = 35）、择优规则全部零触碰",
+    "guards.json（secret_patterns 单一事实源）零触碰"
+  ],
+  "digest_chain_update": {
+    "frozen_hard_filter_contract": {
+      "path": "docs/r4-gate0/locks/frozen-hard-filter-contract.json",
+      "old_sha256": "1785469cafa4660bdc6f06e531b93fab6e87f14b7ba6dfe4ea09d884626b3881",
+      "new_sha256": "f79b6a0f5c03e6ff33bee754ca5496b85f1365a5db67e4d9318172f2d5197cd4",
+      "changed_scope": "仅 input_materialization.secret_marker_substitution 一个字符串值内的括号样值描述；JSON 其余 231 行逐字未动"
+    },
+    "oracle_v3_spec": {
+      "path": "docs/r4-gate0/locks/oracle-v3-spec.md",
+      "old_sha256": "11ce893465f4a25f0f3d2e3fd933b643713fcb90acbeec69de978132164ab83f",
+      "new_sha256": "1ff8b9a0db0a77875ffc9764222b9dba22fdf4e9e4aae90b2db863629ac83843",
+      "changed_scope": "§2.1 合同 SHA-256 值更新（含勘误前后双值记录）+ 头部追加 R2A 变更记录；§1–§6 其余内容逐字未动"
+    },
+    "candidate_lock": {
+      "path": "docs/r4-gate0/locks/e5-base-candidate-lock.json",
+      "old_sha256": "50ab5689cf4378441177d1af0773b59fbd5a2dc62ff866df7a76b0ea0ad0cd23",
+      "new_sha256": "66e1ab241f98a92759844cefb329688cb6a9dbb19a04fd28d4ad05dd904e2ed9",
+      "changed_scope": "status_note / authorization 追加 R2A 说明；updated_utc 更新；oracle_v3.spec_sha256 与 oracle_v3.frozen_hard_filter_contract.sha256 两处 digest 值更新（附 sha256_erratum_note）；lock_type / lock_version（保持 2）/ model / files[6] / grid / holdout_manifest / prohibitions 全部结构字段与语义字段零变化"
+    },
+    "supply_chain_pin": {
+      "path": "memory_eval/e5_base/supply_chain.py",
+      "changed_scope": "EXPECTED_LOCK_SHA256 更新为勘误后锁 digest；docstring 与 pin 注释更新。LOCK_FROZEN_COMMIT 保持 baa9bb6（历史锚点：锁字节最初由 R1A pin 冻结的提交；当前锁字节真实锚定 = EXPECTED_LOCK_SHA256 内容寻址，与所在提交哈希无循环依赖，先例见合同 frozen_in_commit_note）；EXPECTED_LOCK_VERSION 保持 2；守卫逻辑零改动"
+    },
+    "tests": {
+      "path": "tests/test_e5_base_supply_chain.py",
+      "changed_scope": "test_real_lock_pinned / test_real_lock_pinned_in_code 的锁 digest 断言更新为 66e1ab24…；新增旧 digest 50ab5689 不得残留断言；LOCK_FROZEN_COMMIT 断言不变；其余 16 项测试零改动"
+    },
+    "manifest_note": "MODEL-MANIFEST.json（模型目录仓库外派生物）随锁 digest 变化失效，由 R2B 在精确锁定的 TURING Python/backend、E5-base 模型目录与缓存下经 build_manifest 重新生成并经守卫三方校验；evidence 内字节拷贝（e5-base-model-manifest.json）与 calibration receipts/results 由 R2B 连带更新——本勘误提交不含任何运行产物"
+  },
+  "verification": {
+    "secret_self_scan": "勘误后全仓库 secret 自扫描（test_repo_files_do_not_self_match_secret_patterns 同口径）零命中",
+    "supply_chain_tests": "tests/test_e5_base_supply_chain.py 18/18 PASS（勘误后锁 pin 生效）",
+    "lock_structure_check": "锁 JSON 合法；lock_version=2 / lock_type / model.id / immutable_revision / files[6] / grid(tau×7, alpha×5, 35) 与勘误前逐字段一致",
+    "full_regression": "R2B 在锁定环境重跑供应链测试 + calibration 测试 + 完整 secret scan + 相关回归后闭环"
+  },
+  "frozen_unchanged": {
+    "calibration_fixture_or_expected": "未修改",
+    "oracle_v3_code": "未修改（oracle_v3.py 零触碰）",
+    "calibration_implementation": "未修改（calibration.py / gate0_calibration.py / embedder.py 零触碰，receipts 代码 digest 不变性预期保持）",
+    "grid_thresholds_selection_rules": "未修改",
+    "holdout_and_pp_001_012": "零读取零解析（holdout 保持密封，Gate 0-F 未授权）",
+    "shadow_counting": "未启动（Gate 0-H formal_counting 保持 NOT_STARTED）",
+    "real_binding": "未修改",
+    "main_tag_release": "未执行任何 push / tag / release"
+  }
+}

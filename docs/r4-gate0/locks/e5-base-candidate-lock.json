@@ -2,10 +2,10 @@
   "lock_type": "e5-base-eval-candidate-lock",
   "lock_version": 2,
   "status": "CANDIDATE",
-  "status_note": "定义锁：M0-R2 生成候选锁（lock_version 1）；M0-R3 微型锁修正（lock_version 2）= 冻结 canonical hard-filter contract 本体 + 修正 oracle spec 内的锁字段引用（oracle_v3_spec_digest → oracle_v3.spec_sha256）+ 更新 oracle spec digest。仍未授权任何下载/构建/评测实施；实施待 M0-R3 后的下一授权轮",
-  "authorization": "产品所有者裁决 2026-08-21 M0-R3（M0-R2 PARTIAL PASS，原三项阻断闭合、新阻断一项：canonical hard-filter contract 未精确固定）",
+  "status_note": "定义锁：M0-R2 生成候选锁（lock_version 1）；M0-R3 微型锁修正（lock_version 2）= 冻结 canonical hard-filter contract 本体 + 修正 oracle spec 内的锁字段引用（oracle_v3_spec_digest → oracle_v3.spec_sha256）+ 更新 oracle spec digest。仍未授权任何下载/构建/评测实施；实施待 M0-R3 后的下一授权轮。R2A 勘误（2026-08-22，lock_version 保持 2）：合同 input_materialization.secret_marker_substitution 中连续字面写出的合成令牌样值改写为乘积记法描述形态（该字面样值命中 secret_patterns 模式 1，导致仓库 secret 自扫描 FAIL）；frozen_hard_filter_contract.sha256 与 oracle_v3.spec_sha256 随合同/spec 勘误更新；模型文件、网格、门槛、质量闸门与全部锁结构字段零变化",
+  "authorization": "产品所有者裁决 2026-08-21 M0-R3（M0-R2 PARTIAL PASS，原三项阻断闭合、新阻断一项：canonical hard-filter contract 未精确固定）；R2A 勘误授权 2026-08-22（小范围 R2：R2A 合同样值勘误 + R2B 锁定环境 manifest 重生成与 calibration 重跑）",
   "created_utc": "2026-08-21T12:41:43Z",
-  "updated_utc": "2026-08-21T13:20:00Z",
+  "updated_utc": "2026-08-21T19:18:32Z",
   "authoritative_evidence": {
     "evidence_branch": "r4-gate0-nogo",
     "evidence_commit": "5c6aa1f95672ec588b24785e1dfd66a69b024dca",
@@ -72,14 +72,15 @@
   },
   "oracle_v3": {
     "spec_path": "docs/r4-gate0/locks/oracle-v3-spec.md",
-    "spec_sha256": "11ce893465f4a25f0f3d2e3fd933b643713fcb90acbeec69de978132164ab83f",
-    "spec_digest_note": "M0-R3 更新：spec 修正字段引用并挂接合同（见 spec 头部变更记录）；旧 digest a915d8e7…f05ac 随之作废",
+    "spec_sha256": "1ff8b9a0db0a77875ffc9764222b9dba22fdf4e9e4aae90b2db863629ac83843",
+    "spec_digest_note": "M0-R3 更新：spec 修正字段引用并挂接合同（见 spec 头部变更记录）；旧 digest a915d8e7…f05ac 随之作废。R2A 勘误（2026-08-22）：spec §2.1 所引合同 digest 随合同勘误更新 + spec 头部追加 R2A 变更记录；旧 digest 11ce8934…ab83f 随之作废",
     "frozen_hard_filter_contract": {
       "path": "docs/r4-gate0/locks/frozen-hard-filter-contract.json",
       "semantic_source_commit": "5c6aa1f95672ec588b24785e1dfd66a69b024dca",
       "source_files": "memory_engine/{recall_engine,recall_trace,vector_index,schema,temporal,store,relevance,hybrid_recall}.py + memory_eval/schema.py + guards.json，逐文件 SHA-256 记录于合同 authoritative_source.files（其中 recall_engine.py / store.py / vector_index.py / hybrid_recall.py 与旧 manifest 基线的差异已在合同 hash_note 中逐项说明）",
       "frozen_in_commit": "M0-R3 提交（分支 r4-gate0-m0-r2，父提交 df15e1e03f4cb392de457ea08ffcbefa57e104e8 的唯一子提交，不 amend）",
-      "sha256": "1785469cafa4660bdc6f06e531b93fab6e87f14b7ba6dfe4ea09d884626b3881",
+      "sha256": "f79b6a0f5c03e6ff33bee754ca5496b85f1365a5db67e4d9318172f2d5197cd4",
+      "sha256_erratum_note": "R2A 勘误（2026-08-22）：勘误前 digest = 1785469cafa4660bdc6f06e531b93fab6e87f14b7ba6dfe4ea09d884626b3881；勘误仅改写 secret_marker_substitution 的样值描述形态（连续字面 → 乘积记法），过滤语义零变化",
       "coverage": "判定顺序 P1–P8 → A1–A6 → B1–B7 → SURVIVOR；六族 predicate（permission/status/temporal/light/scope/secret）+ object-validity 全部固定；输入字段、canonical Trace code、secret 扫描规则、__FAKE_TOKEN__ 替换规则、Trace 相等性规则、合同外阶段、独立性要求逐条冻结"
     },
     "summary": "canonical 独立 oracle：eligible_expected = frozen_expected ∩ oracle_v3(frozen fixture metadata, frozen hard-filter contract)；runtime filter Trace 与 canonical oracle Trace 逐 case 比对，不一致必须 FAIL，禁止缩减 expected。硬过滤合同本体已冻结（见 frozen_hard_filter_contract）。实现待下一授权轮。"

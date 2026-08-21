@@ -137,8 +137,8 @@ def _rewrite_manifest(model_dir, mutate):
 
 def test_real_lock_pinned():
     lock, lock_sha = SC.load_verified_lock()  # 默认路径 = 仓库真实候选锁
-    assert lock_sha == "50ab5689cf4378441177d1af0773b59fbd5a2dc6" \
-        "2ff866df7a76b0ea0ad0cd23", lock_sha
+    assert lock_sha == "66e1ab241f98a92759844cefb329688cb6a9dbb19a04" \
+        "fd28d4ad05dd904e2ed9", lock_sha
     assert lock["lock_type"] == "e5-base-eval-candidate-lock"
     assert lock["lock_version"] == 2
     assert lock["model"]["id"] == SC.MODEL_ID
@@ -148,8 +148,10 @@ def test_real_lock_pinned():
 
 def test_real_lock_pinned_in_code():
     source = open(SUPPLY_CHAIN_SRC, encoding="utf-8").read()
-    assert "50ab5689cf4378441177d1af0773b59fbd5a2dc62ff866df7a" \
-        "76b0ea0ad0cd23" in source, "锁 digest 未在代码内 pin"
+    assert "66e1ab241f98a92759844cefb329688cb6a9dbb19a04fd" \
+        "28d4ad05dd904e2ed9" in source, "锁 digest 未在代码内 pin"
+    # R2A 勘误：旧 digest 50ab5689… 不得残留在代码内（防回退到勘误前 pin）
+    assert "50ab5689" not in source, "旧锁 digest 残留"
     assert SC.LOCK_FROZEN_COMMIT == \
         "baa9bb6faddfce633b5cfbfff17501ecb033676c"
 

@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-"""E5-base 供应链守卫（R1A 冻结，产品所有者裁决 2026-08-22 授权）。
+"""E5-base 供应链守卫（R1A 冻结，产品所有者裁决 2026-08-22 授权；
+R2A 勘误 2026-08-22 更新锁 digest pin）。
 
 可信根 = 修正后候选锁 ``docs/r4-gate0/locks/e5-base-candidate-lock.json``：
-- 整文件 SHA-256 在代码内 pin（EXPECTED_LOCK_SHA256 = 50ab5689…，
-  该版本由勘误提交 baa9bb6 冻结；任何锁字节变化 = LOCK_DIGEST_MISMATCH）
+- 整文件 SHA-256 在代码内 pin（EXPECTED_LOCK_SHA256 = 66e1ab24…，
+  R2A 勘误后锁字节；任何锁字节变化 = LOCK_DIGEST_MISMATCH）
 - 守卫链 = 修正后候选锁 ↔ manifest ↔ 磁盘字节（三方逐字段一致，
   不再以模块内硬编码文件哈希为独立真值源）
 - build_manifest() 的白名单直接从锁 files 生成（锁 digest 先验证），
@@ -38,11 +39,16 @@ MANIFEST_SCHEMA_VERSION = 2
 MODEL_ID = "intfloat/multilingual-e5-base"
 IMMUTABLE_REVISION = "d128750597153bb5987e10b1c3493a34e5a4502a"
 
-# ---- 候选锁 pin（R1A 冻结）----
+# ---- 候选锁 pin（R1A 冻结；R2A 勘误更新 digest）----
 LOCK_RELATIVE_PATH = "docs/r4-gate0/locks/e5-base-candidate-lock.json"
+# LOCK_FROZEN_COMMIT = 锁字节最初由 R1A pin 冻结的提交（历史锚点）。
+# R2A 勘误（2026-08-22）更新锁内 oracle_v3 两个 digest 字段（合同勘误连带，
+# 见锁 status_note）；当前锁字节的真实锚定 = EXPECTED_LOCK_SHA256（内容
+# 寻址；与所在提交哈希无循环依赖，先例见 frozen-hard-filter-contract.json
+# 的 frozen_in_commit_note）。
 LOCK_FROZEN_COMMIT = "baa9bb6faddfce633b5cfbfff17501ecb033676c"
 EXPECTED_LOCK_SHA256 = (
-    "50ab5689cf4378441177d1af0773b59fbd5a2dc62ff866df7a76b0ea0ad0cd23")
+    "66e1ab241f98a92759844cefb329688cb6a9dbb19a04fd28d4ad05dd904e2ed9")
 EXPECTED_LOCK_TYPE = "e5-base-eval-candidate-lock"
 EXPECTED_LOCK_VERSION = 2
 EXPECTED_WHITELIST_COUNT = 6
