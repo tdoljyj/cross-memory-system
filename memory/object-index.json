@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-08-17T07:50:42Z",
-  "count": 230,
+  "generated_at": "2026-08-21T02:10:55Z",
+  "count": 231,
   "objects": {
     "mem_012b899e": {
       "path": "memory/objects/mem_012b899e.json",
@@ -1678,6 +1678,30 @@
         "manual-review"
       ],
       "entities": [],
+      "valid_from": null,
+      "valid_until": null,
+      "supersedes": [],
+      "superseded_by": []
+    },
+    "mem_8a99e081": {
+      "path": "memory/objects/mem_8a99e081.json",
+      "type": "procedural",
+      "scope": "machine",
+      "status": "active",
+      "priority": "high",
+      "category": "constraint",
+      "tags": [
+        "codex",
+        "windows-sandbox",
+        "proxy",
+        "network",
+        "git"
+      ],
+      "entities": [
+        "CodexSandboxOffline",
+        "127.0.0.1:7897",
+        "GitHub"
+      ],
       "valid_from": null,
       "valid_until": null,
       "supersedes": [],

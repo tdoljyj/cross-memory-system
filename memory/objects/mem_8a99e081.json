@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "id": "mem_8a99e081",
+  "type": "procedural",
+  "scope": "machine",
+  "content": "本机其他应用网络与代理正常；Codex 在 Windows elevated sandbox 中以 CodexSandboxOffline 独立账号运行，不继承用户级代理和私有仓库凭据，直连网络受限。涉及远端 Git、私有仓库和记忆同步时，应直接申请在宿主用户上下文执行，不得再笼统归因成整机网络不可达或代理故障。",
+  "status": "active",
+  "source": {
+    "kind": "user_explicit",
+    "adapter": "memory.py",
+    "session_id": null,
+    "created_at": "2026-08-21T02:10:55Z",
+    "updated_at": "2026-08-21T02:10:55Z"
+  },
+  "temporal": {
+    "valid_from": null,
+    "valid_until": null
+  },
+  "relations": {
+    "supersedes": [],
+    "superseded_by": [],
+    "contradicts": [],
+    "related": []
+  },
+  "classification": {
+    "memory_layer": "procedural",
+    "category": "constraint",
+    "recall_layer": "L5",
+    "priority": "high"
+  },
+  "provenance": {
+    "evidence": "explicit",
+    "source_ref": null
+  },
+  "tags": [
+    "codex",
+    "windows-sandbox",
+    "proxy",
+    "network",
+    "git"
+  ],
+  "entities": [
+    "CodexSandboxOffline",
+    "127.0.0.1:7897",
+    "GitHub"
+  ]
+}
