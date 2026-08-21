@@ -1,17 +1,23 @@
 {
   "lock_type": "e5-base-eval-candidate-lock",
-  "lock_version": 1,
+  "lock_version": 2,
   "status": "CANDIDATE",
-  "status_note": "定义锁：本轮（M0-R2）仅锁定义，未授权任何下载/构建/评测实施；实施待 M0-R2 后的下一授权轮",
-  "authorization": "产品所有者裁决 2026-08-21 M0-R2（M0-R1 PARTIAL PASS 后的小范围修正轮）",
+  "status_note": "定义锁：M0-R2 生成候选锁（lock_version 1）；M0-R3 微型锁修正（lock_version 2）= 冻结 canonical hard-filter contract 本体 + 修正 oracle spec 内的锁字段引用（oracle_v3_spec_digest → oracle_v3.spec_sha256）+ 更新 oracle spec digest。仍未授权任何下载/构建/评测实施；实施待 M0-R3 后的下一授权轮",
+  "authorization": "产品所有者裁决 2026-08-21 M0-R3（M0-R2 PARTIAL PASS，原三项阻断闭合、新阻断一项：canonical hard-filter contract 未精确固定）",
   "created_utc": "2026-08-21T12:41:43Z",
+  "updated_utc": "2026-08-21T13:20:00Z",
   "authoritative_evidence": {
-    "branch": "r4-gate0-nogo",
-    "commit": "5c6aa1f95672ec588b24785e1dfd66a69b024dca",
+    "evidence_branch": "r4-gate0-nogo",
+    "evidence_commit": "5c6aa1f95672ec588b24785e1dfd66a69b024dca",
     "vs_gate0_baseline_286e637": { "ahead": 19, "behind": 0 },
     "vs_origin_main_8c22c238": { "ahead": 16, "behind": 2 },
-    "origin_main_at_lock_time": "8c22c238144225335c08ad8ebbf63ac890f87b55",
-    "note": "16/2 与 19/0 均于 2026-08-21 实测验证；main 的 2 个独有提交不改变 Gate 0 基线口径"
+    "repository_caliber_2026_08_21": {
+      "local_refs_heads_main": "ffba74bfba27143411c664aa963f54e298cebe43",
+      "origin_main": "8c22c238144225335c08ad8ebbf63ac890f87b55",
+      "m0_document_branch": "r4-gate0-m0-r2（M0-R2 提交 df15e1e03f4cb392de457ea08ffcbefa57e104e8，父提交 5c6aa1f；M0-R3 提交为 df15e1e 的唯一子提交）",
+      "caliber_rule": "本地 refs/heads/main（ffba74b）与 origin/main（8c22c238）是两条不同历史，两者不得统称 main；引用任一方必须写全称与完整哈希。16/2 与 19/0 均相对 evidence_commit 5c6aa1f 实测（2026-08-21）"
+    },
+    "note": "证据链唯一权威 = r4-gate0-nogo @ 5c6aa1f；本地 main 的 2 个独有提交不改变 Gate 0 基线口径"
   },
   "model": {
     "id": "intfloat/multilingual-e5-base",
@@ -24,7 +30,7 @@
   "files": [
     { "path": "config.json", "size": 694, "sha256": "9dab198f24c8c0879e481cf7822005d5ecbceedbacb390ffafa594e28d31bac4", "hash_source": "直接下载实测（M0-R1 与 M0-R2 均以固定 revision 复验一致）" },
     { "path": "tokenizer.json", "size": 17082660, "sha256": "62c24cdc13d4c9952d63718d6c9fa4c287974249e16b7ade6d5a85e7bbb75626", "hash_source": "官方 Xet/LFS 文件元数据 SHA-256（M0-R2 以固定 revision 的 tree API 复验一致；下载授权轮须逐文件复验）" },
-    { "path": "tokenizer_config.json", "size": 418, "sha256": "efb5c0d09722e5fe59a462cd2a9976ee216d55b037597d997cd3fe833216da15", "hash_source": "直接下载实测（M0-R1 与 M0-R2 均以固定 revision 复验一致）" },
+    { "path": "tokenizer_config.json", "size": 418, "sha256": "efb5c0d09722e5fe59a462cd2a9976ee216d55b037597d996cd3fe833216da15", "hash_source": "直接下载实测（M0-R1 与 M0-R2 均以固定 revision 复验一致）" },
     { "path": "special_tokens_map.json", "size": 280, "sha256": "06e405a36dfe4b9604f484f6a1e619af1a7f7d09e34a8555eb0b77b66318067f", "hash_source": "直接下载实测（M0-R1 与 M0-R2 均以固定 revision 复验一致）" },
     { "path": "sentencepiece.bpe.model", "size": 5069051, "sha256": "cfc8146abe2a0488e9e2a0c56de7952f7c11ab059eca145a0a727afce0db2865", "hash_source": "官方 Xet/LFS 文件元数据 SHA-256（与 E5-small 同名文件完全相同，交叉验证一致；下载授权轮须逐文件复验）" },
     { "path": "model.safetensors", "size": 1112201288, "sha256": "a18a44fad1d0b46ded15928144138cff1135d5cc8233bdd90be5f18822de09a7", "hash_source": "官方 Xet/LFS 文件元数据 SHA-256（M0-R2 以固定 revision 的 tree API 复验一致；下载授权轮须逐文件复验）" }
@@ -66,8 +72,17 @@
   },
   "oracle_v3": {
     "spec_path": "docs/r4-gate0/locks/oracle-v3-spec.md",
-    "spec_sha256": "a915d8e7fe4bf1c2c0090b114c26b1f069866e8e95ee2a81fa2a0c2baecf05ac",
-    "summary": "canonical 独立 oracle：eligible_expected = frozen_expected ∩ oracle_v3(frozen fixture metadata, frozen hard-filter contract)；runtime filter Trace 与 canonical oracle Trace 逐 case 比对，不一致必须 FAIL，禁止缩减 expected。实现待下一授权轮。"
+    "spec_sha256": "11ce893465f4a25f0f3d2e3fd933b643713fcb90acbeec69de978132164ab83f",
+    "spec_digest_note": "M0-R3 更新：spec 修正字段引用并挂接合同（见 spec 头部变更记录）；旧 digest a915d8e7…f05ac 随之作废",
+    "frozen_hard_filter_contract": {
+      "path": "docs/r4-gate0/locks/frozen-hard-filter-contract.json",
+      "semantic_source_commit": "5c6aa1f95672ec588b24785e1dfd66a69b024dca",
+      "source_files": "memory_engine/{recall_engine,recall_trace,vector_index,schema,temporal,store,relevance,hybrid_recall}.py + memory_eval/schema.py + guards.json，逐文件 SHA-256 记录于合同 authoritative_source.files（其中 recall_engine.py / store.py / vector_index.py / hybrid_recall.py 与旧 manifest 基线的差异已在合同 hash_note 中逐项说明）",
+      "frozen_in_commit": "M0-R3 提交（分支 r4-gate0-m0-r2，父提交 df15e1e03f4cb392de457ea08ffcbefa57e104e8 的唯一子提交，不 amend）",
+      "sha256": "1785469cafa4660bdc6f06e531b93fab6e87f14b7ba6dfe4ea09d884626b3881",
+      "coverage": "判定顺序 P1–P8 → A1–A6 → B1–B7 → SURVIVOR；六族 predicate（permission/status/temporal/light/scope/secret）+ object-validity 全部固定；输入字段、canonical Trace code、secret 扫描规则、__FAKE_TOKEN__ 替换规则、Trace 相等性规则、合同外阶段、独立性要求逐条冻结"
+    },
+    "summary": "canonical 独立 oracle：eligible_expected = frozen_expected ∩ oracle_v3(frozen fixture metadata, frozen hard-filter contract)；runtime filter Trace 与 canonical oracle Trace 逐 case 比对，不一致必须 FAIL，禁止缩减 expected。硬过滤合同本体已冻结（见 frozen_hard_filter_contract）。实现待下一授权轮。"
   },
   "prohibitions_until_next_authorization": [
     "E5-base 权重下载",
@@ -76,6 +91,7 @@
     "calibration 或 holdout 运行",
     "git push / tag / release",
     "修改真实 Binding 或启用 semantic mode",
-    "扩网格、加网格点、改区间"
+    "扩网格、加网格点、改区间",
+    "rebase / merge 本地 refs/heads/main（ffba74b）或 origin/main（8c22c238）"
   ]
 }

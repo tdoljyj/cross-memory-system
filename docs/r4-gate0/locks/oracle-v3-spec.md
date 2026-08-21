@@ -1,8 +1,13 @@
 # Oracle v3 — expected_forbidden_contract 修订规范（canonical）
 
-> 状态：定义冻结（M0-R2）。实现待下一授权轮，本文档即实现合同。
-> digest：见 `locks/e5-base-candidate-lock.json` 的 `oracle_v3_spec_digest`（对本文件逐字节 SHA-256）
+> 状态：定义冻结（M0-R2）；M0-R3 补冻结 frozen_hard_filter_contract 本体（见 §2.1）。
+> 实现待下一授权轮，本文档即实现合同。
+> digest：见 `locks/e5-base-candidate-lock.json` 的 `oracle_v3.spec_sha256`（对本文件逐字节 SHA-256）
 > 本文件任何修改 = 锁失效，必须重新走授权
+> M0-R3 变更记录：① 修正本文件此处的锁字段引用错误（原文误写
+> `oracle_v3_spec_digest`，实际 JSON 字段为 `oracle_v3.spec_sha256`）；
+> ② frozen_hard_filter_contract 由独立文件逐字节冻结（path + source +
+> SHA-256 见 §2.1）。除此之外逐字保留 M0-R2 冻结内容。
 
 ## 1. 目的（被修正的缺陷）
 
@@ -22,12 +27,35 @@ canonical_survivors(case) =
                                           # no-memory 标记、绑定关系（来自
                                           # frozen-eval-manifest.json 及其引用的冻结夹具）
         frozen_hard_filter_contract       # 冻结硬过滤合同：secret-first 顺序、
-                                          # 过滤条件、判定规则
+                                          # 过滤条件、判定规则（本体见 §2.1）
     )
 
 eligible_expected(case) =
     frozen_expected(case) ∩ canonical_survivors(case)
 ```
+
+## 2.1 frozen_hard_filter_contract 本体（M0-R3 冻结）
+
+完整规则正文已冻结为独立机器可读合同：
+
+- path：`locks/frozen-hard-filter-contract.json`
+- 权威语义源：`memory_engine/recall_engine.py`、`recall_trace.py`、
+  `vector_index.py`、`schema.py`、`temporal.py`、`store.py`、`relevance.py`、
+  `hybrid_recall.py`、`memory_eval/schema.py`、`guards.json`
+  @ `5c6aa1f95672ec588b24785e1dfd66a69b024dca`（逐文件 SHA-256 见合同
+  `authoritative_source.files`）
+- 本体 SHA-256：
+  `1785469cafa4660bdc6f06e531b93fab6e87f14b7ba6dfe4ea09d884626b3881`
+  （同步记录于 `locks/e5-base-candidate-lock.json` 的
+  `oracle_v3.frozen_hard_filter_contract.sha256`）
+
+合同内容：判定顺序 P1–P8（短路与参数解析）→ A1–A6（status /
+scope+category / temporal / tags / entities / light）→ B1–B7
+（invalid / permission / schema / temporary / status / temporal / secret，
+first-match-wins）→ SURVIVOR；每条 predicate 的输入字段与 canonical
+Trace code、secret 扫描规则（guards.json 模式 + 全对象 JSON 序列化文本）、
+`__FAKE_TOKEN__` 替换规则、Trace 相等性比较规则、合同外阶段（conflict /
+准入 / 截断 / 回退码）与独立性要求均在合同中逐条固定。
 
 ## 3. 独立性要求（硬约束）
 
@@ -54,8 +82,9 @@ sa-004 的 `mem_fx0h0003` 由 oracle_v3 基于**冻结元数据独立判定**为
 
 ## 6. 不变量（零改动项）
 
-- secret-first 硬过滤合同不动
-- 硬过滤顺序不动
+- secret-first 硬过滤合同不动（本体已由 M0-R3 冻结为
+  `locks/frozen-hard-filter-contract.json`，见 §2.1）
+- 硬过滤顺序不动（合同 stage_order：P → A1–A6 → B1–B7 → SURVIVOR）
 - frozen_expected 冻结原文不动（eligible_expected 是派生集合，不改写原文）
 - 58-case holdout 逐字节密封不动，detail reads = 0
 - 质量门槛（ADR-MIV-005B-002 §4）逐字不动

@@ -1,0 +1,232 @@
+{
+  "contract_type": "canonical-hard-filter-contract",
+  "contract_version": 1,
+  "status": "FROZEN",
+  "authorization": "产品所有者裁决 2026-08-21 M0-R3（M0-R2 PARTIAL PASS 后的一次微型锁修正）",
+  "created_utc": "2026-08-21T13:20:00Z",
+  "purpose": "oracle_v3 第二输入 frozen_hard_filter_contract 的完整冻结正文。M0-R2 只锁定了 oracle spec 自身，本合同把被测路径 pre-scoring 硬过滤的每条 predicate、输入字段、判定顺序与 canonical Trace code 逐条固定，使 canonical oracle 可由不同实现者独立重放并逐 case 比对 Runtime Trace。本合同是 oracle 实现的规范性输入；其任何修改 = 锁失效，必须重新走授权。",
+
+  "authoritative_source": {
+    "repository": "tdoljyj/cross-memory-system",
+    "semantic_source_commit": "5c6aa1f95672ec588b24785e1dfd66a69b024dca",
+    "frozen_in_commit_note": "本合同文件本体由 M0-R3 提交引入：分支 r4-gate0-m0-r2 上 df15e1e03f4cb392de457ea08ffcbefa57e104e8 的唯一子提交（哈希见提交记录与 M0-R3 裁决回复）；内容以本文件 SHA-256 锚定，与所在提交哈希无循环依赖",
+    "files": {
+      "memory_engine/recall_engine.py": "c927964bc6c52f84817768de66d9af58e52315f4f15c1078879b021fcd6936c6",
+      "memory_engine/recall_trace.py": "b0d41cad9d3e89f168f13549cede561e090214b4c6e372ade67a91288f5f0a06",
+      "memory_engine/vector_index.py": "500585d091d9906ffb6884b900731da9e903b3516c42d86964ffa1633b5606f2",
+      "memory_engine/schema.py": "e3e07628d5c85581f99a31664db38f054114696ce18253e0d888354ba55dd22e",
+      "memory_engine/temporal.py": "951a66708e6d53eac65013bc109d8a73330dc3a9d95377a0de6a46bd0bbf1b47",
+      "memory_engine/store.py": "8dd395260cfc550b883b971d262212d1eaed88f5306eee15ee99726df5d8f360",
+      "memory_engine/relevance.py": "7abc60c6d0b3a3597403dab26402d15f0819e09ec715181e47260a344b246505",
+      "memory_engine/hybrid_recall.py": "0e07125ec2b859846b488cb6d72d27c02aa9181ae004ab88b8af42a4687ab2e6",
+      "memory_eval/schema.py": "4caf747ca6c3ad89150c480dd2a85b50750da904424070c848e8280df6f722ab",
+      "guards.json": "e51f9379ee6b0c14cf415cdb09262f5ae047f09a8af50b60a01bceffa8d03579"
+    },
+    "hash_note": "以上哈希为 2026-08-21 实测（git show 5c6aa1f:<path> | sha256sum，且与 M0-R3 工作树逐文件一致）。与 frozen-eval-manifest.json 的 engine_sources 基线（Gate0-A-Run2，HEAD 6ee9b4b）存在两处有意差异：recall_engine.py（c927964b… vs 基线 3e7b59fa…，差异仅为 Gate 0-D 语义边界与 hybrid 接线新增，词法过滤链 A1–A6 逐行未变）与 store.py（8dd39526… vs 基线 2b2a6db6…，差异仅为 save_object 的 vector dirty-marker，secret 扫描函数未变）。vector_index.py 与 hybrid_recall.py 为 Gate 0-C/D 新增文件，不在旧 manifest 基线内，本合同直接钉 @5c6aa1f。语义冲突时以本节钉定源码为准，并判定本合同失效。",
+    "replay_rule": "重放与哈希验证一律使用 semantic_source_commit 的完整 40 位 SHA；禁止用分支名作为重放输入。"
+  },
+
+  "tested_path": {
+    "entry": "memory_engine.recall(...)",
+    "call_site_reference": "memory_eval/gate0_calibration.py::_recall（E5-base 评测轮被测路径）与 memory_eval/runner.py::_run_recall_once（MIV-001 路径）在硬过滤相关参数上逐字段一致",
+    "parameters_from_case_contract": {
+      "query": "case.query（硬过滤不消费，仅供说明：硬过滤全部 predicate 均不依赖 query 文本）",
+      "tier": "case.tier，缺省 'T2'",
+      "layers": "case.layers（可 null）",
+      "scope": "case.scope.mode 经 scope_to_engine 映射：current→None / project_only→'project_only'（携带 case.scope.project_id）/ global→'global'",
+      "project_id": "case.scope.project_id（仅 project_only 透传）",
+      "include_history": "case.include_history，缺省 false",
+      "categories": "case.categories（可 null）",
+      "tags": "case.tags（可 null）",
+      "entities": "case.entities（可 null）",
+      "limit": "case.limit，缺省 10（不属于硬过滤判定，见 out_of_contract_stages）",
+      "valid_at": "parse_ts(case.now)",
+      "light": "被测路径从不显式传 light，因此恒为 light = (tier == 'T3')",
+      "semantic_mode": "E5-base 评测轮恒为 'test'"
+    },
+    "corpus_parameter_profile": "111 case 实测（memory_eval/corpus.py CASES）：tier T2×108 / T0×2（nm-001, nm-007）/ T3×1（nm-014，light 阶段唯一激活点）；include_history true×4；scope.mode current×93 / project_only×12 / global×6；layers 显式×109；categories 显式×2；tags 显式×1；entities 显式×1；limit 10×100 / 3×11。eval SCOPE_MODES 不含 session_only/temporary，二者按引擎完备性保留定义但当前语料不可达。"
+  },
+
+  "input_materialization": {
+    "fixture_source": "冻结夹具 JSON（fixtures.json，由 frozen-eval-manifest.json 的 fixtures.sha256 钉定）",
+    "secret_marker_substitution": "判定前对每个夹具执行且仅执行一次字符串替换：当且仅当 fixture.content 为字符串时，将其中的全部 '__FAKE_TOKEN__' 替换为 'ghp_' + 'A'×24（即 ghp_AAAAAAAAAAAAAAAAAAAAAAAA）。其他字段一律不替换。该替换与 runner.load_fixtures / gate0_calibration._runtime_fixture_copy 逐字节一致，是冻结输入的一部分，不是运行时自由行为。",
+    "no_normalization": "夹具物化不做任何其他规范化（store.save_object 原样写盘；calibration 物化直写文件），oracle 输入 = 替换后的冻结夹具原文。"
+  },
+
+  "vocabularies": {
+    "recallable_statuses": ["active", "reinforced"],
+    "history_statuses": ["superseded", "archived", "expired", "deprecated"],
+    "all_statuses": ["candidate", "active", "reinforced", "superseded", "archived", "rejected", "expired", "deprecated"],
+    "status_exclude_code_map": {
+      "candidate": "STATUS_CANDIDATE",
+      "superseded": "STATUS_SUPERSEDED",
+      "archived": "STATUS_ARCHIVED",
+      "rejected": "STATUS_REJECTED",
+      "expired": "STATUS_EXPIRED",
+      "deprecated": "STATUS_DEPRECATED",
+      "*other_or_missing*": "STATUS_OTHER"
+    },
+    "object_scopes": ["global", "project", "session", "agent", "machine"],
+    "function_types": ["foundational", "semantic", "episodic", "procedural", "state", "temporary"],
+    "priorities": ["high", "medium", "low"],
+    "layer_categories": {
+      "L1": ["identity"],
+      "L2": ["preference"],
+      "L3": ["project", "state", "decision"],
+      "L4": ["history", "event"],
+      "L5": ["constraint", "negative_preference"],
+      "L6": []
+    },
+    "tier_layers": {"T0": [], "T1": ["L1"], "T2": ["L3"], "T3": ["L3"], "T4": []},
+    "secret_patterns_source": "guards.json @5c6aa1f 的 secret_patterns（单一事实源）；guards.json 缺失或非法时回落的内置默认与该列表逐字相同",
+    "secret_patterns": [
+      "gh[op]_[A-Za-z0-9]{20,}",
+      "github_pat_[A-Za-z0-9_]{20,}",
+      "AKIA[0-9A-Z]{16}",
+      "-----BEGIN (RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----",
+      "(?i)bearer\\s+[A-Za-z0-9._-]{20,}"
+    ]
+  },
+
+  "judgment_contract": {
+    "verdict_domain": "每个 (case, fixture) 判定一次；verdict = 有序 canonical Trace code 列表（可为多 code，仅 stage A2），或空列表 = SURVIVOR（eligible）",
+    "canonical_survivors_definition": "canonical_survivors(case) = { fixture.id : verdict(case, fixture) == SURVIVOR }；eligible_expected(case) = frozen_expected(case) ∩ canonical_survivors(case)",
+    "preconditions": [
+      {"id": "P1", "when": "tier == 'T0'", "effect": "零读取短路：所有夹具 verdict = NOT_EVALUATED_ZERO_READ（不进入任何 stage），canonical_survivors = 空集；顶层 Trace reason_codes = [T0_ZERO_READ, NO_MEMORY]"},
+      {"id": "P2", "when": "tier == 'T4'", "effect": "零读取短路：同 P1 不评估；顶层 Trace reason_codes = [T4_IMMEDIATE_WRITE]"},
+      {"id": "P3", "when": "engine scope == 'temporary'", "effect": "零读取短路：同 P1 不评估；顶层 Trace reason_codes = [TEMPORARY_MODE, NO_MEMORY]（eval SCOPE_MODES 不可达，引擎完备性保留）"},
+      {"id": "P4", "when": "engine scope == 'project_only' 且 project_id 为空", "effect": "引擎 fail-closed 抛 ValueError（不是过滤 verdict）；评测按 ENGINE_EXCEPTION 记录。eval 语料 project_only case 均携带 project_id，不可达"},
+      {"id": "P5", "when": "恒成立（stage 求值前）", "effect": "want_categories 解析：case.categories 非空 → want_categories = case.categories；否则 = 按 layers 顺序拼接 layer_categories（layers 为 null 时先取 tier_layers[tier]，再过滤至 L1–L6）。want_categories 为空 → 不评估任何夹具，canonical_survivors = 空集，顶层 [NO_MEMORY]"},
+      {"id": "P6", "when": "恒成立", "effect": "statuses_admissible = recallable_statuses ∪ (include_history ? history_statuses : ∅)"},
+      {"id": "P7", "when": "恒成立", "effect": "light = (tier == 'T3')（被测路径不显式传 light）；light 生效时 limit 取 min(limit, 3)——limit 截断不属于硬过滤，仅记录其副作用"},
+      {"id": "P8", "when": "恒成立", "effect": "boundary_active = (semantic_mode != 'off') AND (NOT include_history)。E5-base 轮 semantic_mode='test' 恒真，故 boundary_active = NOT include_history（111 case 中 4 个 include_history case 的 stage B 不执行，其被测路径按 FB_HISTORY_UNSUPPORTED 回退词法）"}
+    ],
+    "stage_order": "对每个夹具按 A1 → A2 → A3 → A4 → A5 → A6 → B1 → … → B7 顺序求值；第一个命中的 stage 产生 verdict 并终止该夹具的判定（与 Runtime 逐 case 的过滤循环及 continue 语义一致）。stage A2 内部可同时产出 scope code 与 CATEGORY_MISMATCH 两个 code（顺序：scope code 在前）。无任何 stage 命中 → SURVIVOR。",
+    "stages": [
+      {
+        "id": "A1", "family": "status",
+        "predicate": "fixture.status ∉ statuses_admissible",
+        "input_fields": ["fixture.status", "case.include_history（经 P6）"],
+        "code": "status_exclude_code_map[fixture.status]（枚举外或缺失 → STATUS_OTHER）",
+        "note": "status == 'denied' 属于枚举外 → 本 stage 产出 STATUS_OTHER（ACCESS_DENIED 只可能来自 B2）。"
+      },
+      {
+        "id": "A2", "family": "scope + category",
+        "predicate": "NOT scope_visible(fixture, engine_scope, project_id, session_id) OR (want_categories 非空 AND fixture.classification.category ∉ want_categories)",
+        "scope_visibility_matrix": {
+          "engine scope = None（case.scope.mode == 'current'）": "恒可见（无 scope 限制）",
+          "engine scope = 'project_only' + pid": "fixture.scope == 'global' 可见；fixture.scope == 'project' 且 fixture.project_id == pid 可见；其余不可见",
+          "engine scope = 'session_only' + sid": "fixture.scope == 'global' 可见；fixture.scope == 'session' 且 fixture.source.session_id == sid 可见；其余不可见（eval 不可达，引擎完备性保留）",
+          "engine scope = 'global'": "仅 fixture.scope == 'global' 可见",
+          "其他 legacy 字符串 s": "fixture.scope ∈ {'global', s} 可见"
+        },
+        "input_fields": ["fixture.scope", "fixture.project_id", "fixture.source.session_id", "fixture.classification.category", "case.scope（经 scope_to_engine）", "want_categories（经 P5）"],
+        "code": "scope 不可见时：project_only 且 fixture.scope == 'project' → PROJECT_MISMATCH；session_only 且 fixture.scope == 'session' → SESSION_MISMATCH；其余 → SCOPE_MISMATCH。category 不命中 → 追加 CATEGORY_MISMATCH（可与 scope code 并存，scope code 在前）",
+        "note": "fixture.project_id 缺失按 null 处理（project 分支下 null != pid → 不可见 → PROJECT_MISMATCH）。"
+      },
+      {
+        "id": "A3", "family": "temporal",
+        "predicate": "NOT history_bypass AND NOT temporal_valid(fixture, now)，其中 history_bypass = include_history AND (fixture.status ∈ history_statuses OR expired_now)；temporal_valid：valid_from 可解析时须满足 now >= valid_from，valid_until 可解析时须满足 now < valid_until，二者均缺失/不可解析 = 永久有效；expired_now = valid_until 可解析且 now >= valid_until",
+        "input_fields": ["fixture.temporal.valid_from", "fixture.temporal.valid_until", "fixture.status", "case.now", "case.include_history"],
+        "code": "expired_now 为真 → TEMPORAL_EXPIRED；否则 → TEMPORAL_NOT_YET_VALID",
+        "note": "时间戳解析 = schema.parse_ts（ISO-8601，'Z' 后缀归一化为 +00:00，naive 按 UTC）；不可解析的边界按缺失处理。"
+      },
+      {
+        "id": "A4", "family": "selector",
+        "predicate": "case.tags 非空 AND set(case.tags) ∩ set(fixture.tags or ∅) == ∅",
+        "input_fields": ["case.tags", "fixture.tags"],
+        "code": "TAG_MISMATCH",
+        "note": "仅显式 tags selector 存在时该 stage 存在（111 case 中 1 例）。"
+      },
+      {
+        "id": "A5", "family": "selector",
+        "predicate": "case.entities 非空 AND set(case.entities) ∩ set(fixture.entities or ∅) == ∅",
+        "input_fields": ["case.entities", "fixture.entities"],
+        "code": "ENTITY_MISMATCH",
+        "note": "仅显式 entities selector 存在时该 stage 存在（111 case 中 1 例）。"
+      },
+      {
+        "id": "A6", "family": "light",
+        "predicate": "light（P7）AND fixture.classification.priority != 'high'",
+        "input_fields": ["case.tier（经 P7）", "fixture.classification.priority"],
+        "code": "PRIORITY_FILTERED",
+        "note": "111 case 中仅 nm-014（T3）激活。"
+      },
+      {
+        "id": "B1", "family": "object-validity",
+        "predicate": "fixture 不是 JSON object（dict）",
+        "input_fields": ["fixture 整体"],
+        "code": "INVALID_OBJECT",
+        "note": "对 JSON 夹具恒为 dict，防御性保留。"
+      },
+      {
+        "id": "B2", "family": "permission",
+        "predicate": "fixture.denied is True OR fixture.status == 'denied'",
+        "input_fields": ["fixture.denied（可选字段）", "fixture.status"],
+        "code": "ACCESS_DENIED",
+        "note": "denied 布尔标记不在 schema 枚举内，是对 canonical 损坏的防御性检查；A1 已排除 status=='denied'（STATUS_OTHER），故本条款在 recall 顺序内经 fixture.denied 标记触达。"
+      },
+      {
+        "id": "B3", "family": "object-validity",
+        "predicate": "schema_validate(fixture) 失败（以下任一）：schema_version != 1；id 不匹配 ^mem_[0-9a-z]{8,16}$；type ∉ function_types；scope ∉ object_scopes；project_id 非 null 且非非空字符串；status ∉ all_statuses；content 非非空字符串；source 非 object 或 source.kind ∉ {user_explicit, user_implicit, observed, ai_inferred, migration, system, unknown} 或 source.adapter/source.session_id 非 str-or-null 或 source.created_at/source.updated_at 不匹配严格时间戳格式（^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(Z|[+-]\\d{2}:\\d{2})?$ 且可解析）或 updated_at < created_at；temporal 非 object 或其 valid_from/valid_until 非法时间戳或 valid_until < valid_from；relations 非 object 或 supersedes/superseded_by/contradicts/related 非字符串数组；classification 非 object 或 category ∉ {identity, preference, negative_preference, project, state, decision, history, event, constraint, workflow, toolchain, method, todo, other} 或 priority ∉ {high, medium, low} 或 memory_layer（可选）∉ function_types 或 recall_layer（可选）∉ L1–L6；provenance 非 object 或 evidence ∉ {explicit, observed, inferred} 或 source_ref（可选）非字符串；tags/entities（可选）非字符串数组",
+        "input_fields": ["fixture 全部字段"],
+        "code": "INVALID_OBJECT",
+        "note": "规范性依据 = memory_engine/schema.py::validate_object @5c6aa1f；上表为其完整逐条转写。"
+      },
+      {
+        "id": "B4", "family": "object-validity",
+        "predicate": "fixture.type == 'temporary'",
+        "input_fields": ["fixture.type"],
+        "code": "TEMPORARY_OBJECT",
+        "note": "temporary 类型对象不得进入向量候选/模型输入。"
+      },
+      {
+        "id": "B5", "family": "status",
+        "predicate": "fixture.status ∉ recallable_statuses（无 history 扩展）",
+        "input_fields": ["fixture.status"],
+        "code": "STATUS_NOT_RECALLABLE",
+        "note": "在 recall 顺序内因 A1 先行而不可达（防御性重复）；该谓词在向量表预嵌入过滤（vector_index/_initial_exclusion_reasons 独立调用，无 A1 前置）中可达并被同序执行。"
+      },
+      {
+        "id": "B6", "family": "temporal",
+        "predicate": "NOT temporal_valid(fixture, now)（同 A3 的 temporal_valid 定义，无 history 例外）",
+        "input_fields": ["fixture.temporal.valid_from", "fixture.temporal.valid_until", "case.now"],
+        "code": "TEMPORAL_NOT_CURRENT",
+        "note": "在 recall 顺序内因 A3 先行而不可达（防御性重复）；在向量表预嵌入过滤中可达并被同序执行。"
+      },
+      {
+        "id": "B7", "family": "secret",
+        "predicate": "secret_scan(fixture) 命中：扫描文本 = json.dumps(fixture, ensure_ascii=False)（整个对象的 JSON 序列化，含全部字段与嵌套值，非仅 content）；对 secret_patterns 中每条模式按 Python re.search（子串匹配）逐一尝试，任一命中即成立",
+        "input_fields": ["fixture 全部字段的 JSON 序列化文本", "secret_patterns（guards.json @5c6aa1f）"],
+        "code": "SECRET_DETECTED",
+        "note": "secret-first 含义 = 任何携带秘密样值的对象在进入打分、词法排序、模型输入或向量候选之前被本 stage 排除；判定顺序中 B7 位于 B1–B6 之后仅为 Runtime 既有实现的字面顺序，不影响 secret-first 不变量（B1–B6 均为排除性谓词，不存在让 secret 对象存活的路径）。sa-004/mem_fx0h0003 即由本 stage 判定（content 含替换后的 ghp_A×24 标记，命中模式 1）。"
+      }
+    ]
+  },
+
+  "trace_equality_rule": {
+    "comparison": "逐 case、逐夹具：canonical_verdict(case, fixture) 必须等于被测路径 Trace 中该对象的硬过滤排除 reason_codes（hybrid Trace excluded[] 里归属于 stage A1–A6/B1–B7 的条目）。",
+    "survivor_rule": "verdict == SURVIVOR 的对象在被测 Trace 中不得携带任何硬过滤 code；短路 case（P1–P3、P5 空 want_categories）不产生任何逐对象条目。",
+    "fail_semantics": "任何不一致 → 该轮评测整体 FAIL，出具差异报告（case ID、对象 ID、两侧 Trace）；禁止以缩减 expected、跳过 case、放宽校验继续（oracle-v3-spec §4）。",
+    "multi_code_note": "A2 可产出两个 code（scope code + CATEGORY_MISMATCH），比较按整个有序列表相等。"
+  },
+
+  "out_of_contract_stages": {
+    "statement": "以下阶段不属于本合同、不参与 canonical verdict 与 Trace 相等性比较（评分依赖或后置阶段；Runtime 中存在，oracle 不重放）",
+    "items": [
+      {"code": "CONFLICT_LOSER", "reason": "冲突裁决为评分后的关系性阶段（依赖 supersedes/contradicts 双对象与 evidence/updated_at 裁决）；语料将败者置于 forbidden_ids，expected 不含败者"},
+      {"code": "RELEVANCE_BELOW_THRESHOLD", "reason": "MIV-005A 准入门依赖 _match_score（query 依赖）；阈值 score > 1/6 严格大于，selector 命中豁免"},
+      {"codes": ["MIV_005A_ADMIT", "VECTOR_ADMIT", "MIV_005A_AND_VECTOR_ADMIT", "BELOW_LEXICAL_AND_VECTOR_THRESHOLDS"], "reason": "Gate 0-D hybrid 增量 OR 准入（alpha/tau 网格参数依赖）"},
+      {"codes": ["LIMIT_TRUNCATED", "LOAD_LIMIT_TRUNCATED"], "reason": "limit 截断与 max_objects=200 装载截断（111 case 每 case 夹具数远小于 200，装载截断不可达）"},
+      {"codes": ["HYBRID_RUNTIME_UNAVAILABLE", "HYBRID_INDEX_UNAVAILABLE", "HYBRID_INDEX_DIRTY", "HYBRID_INDEX_BUILDING", "HYBRID_SOURCE_FINGERPRINT_MISMATCH", "HYBRID_MODEL_INFERENCE_ERROR", "HYBRID_HISTORY_UNSUPPORTED"], "reason": "运行时基础设施回退码，非对象过滤判定"},
+      {"code": "NO_MEMORY / T0_ZERO_READ / T4_IMMEDIATE_WRITE / TEMPORARY_MODE / TRACE_BUILD_FAILED", "reason": "顶层路径 reason code（P1–P3 短路与观测层失败），已在 preconditions 中按路径语义固定，不是逐对象 verdict"}
+    ]
+  },
+
+  "independence_rule": {
+    "requirement": "oracle 实现只允许消费冻结夹具元数据（含 secret_marker_substitution）+ 本合同；禁止 import/调用/复制 Runtime 过滤函数（memory_engine.* 的 _initial_exclusion_reasons / _scope_ok / _category_scope_ok / status_exclude_code / find_secret_in_object / is_valid_now 等），复制粘贴共享逻辑同样禁止（oracle-v3-spec §3）。",
+    "ambiguity_resolution": "本合同与钉定源码出现语义分歧时，以钉定源码为准并判定本合同失效，必须重新走授权修正；禁止实现者自行裁量。"
+  },
+
+  "prohibitions_unchanged": "本合同不授权任何实施：模型下载、oracle 实现、768 维索引、calibration/holdout 运行、push/tag/release、修改真实 Binding、rebase/merge 本地 main（ffba74b）仍全部禁止。"
+}
