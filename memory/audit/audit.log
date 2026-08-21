@@ -228,3 +228,4 @@
 {"memory_id": "mem_fb526b84", "operation": "MIGRATE", "timestamp": "2026-08-17T07:50:27Z", "adapter": "migrate-memory.py", "reason": "归档.md##Sprint 3 完成与封版（2026-08-16，DSH@TURING）", "previous_status": null, "new_status": "candidate", "session_id": null}
 {"memory_id": "mem_c1d8a9ba", "operation": "MIGRATE", "timestamp": "2026-08-17T07:50:27Z", "adapter": "migrate-memory.py", "reason": "归档.md##Sprint 3 完成与封版（2026-08-16，DSH@TURING）", "previous_status": null, "new_status": "candidate", "session_id": null}
 {"memory_id": "mem_fa7650ab", "operation": "MIGRATE", "timestamp": "2026-08-17T07:50:27Z", "adapter": "migrate-memory.py", "reason": "归档.md##Sprint 3 完成与封版（2026-08-16，DSH@TURING）", "previous_status": null, "new_status": "candidate", "session_id": null}
+{"memory_id": "mem_8a99e081", "operation": "CREATE", "timestamp": "2026-08-21T02:10:55Z", "adapter": "memory-engine", "reason": "无既有对应记忆", "previous_status": null, "new_status": "active", "session_id": null}
