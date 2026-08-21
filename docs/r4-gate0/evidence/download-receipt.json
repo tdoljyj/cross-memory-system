@@ -1,0 +1,44 @@
+{
+  "channel": "https://huggingface.co",
+  "files": [
+    {
+      "filename": "config.json",
+      "local_path": "C:\\Users\\Windows\\.workbuddy\\vector-cache\\cross-memory-system\\models\\919cfbe11fbf4f1b9bb321007c46c14feaf84227\\config.json",
+      "sha256": "69137736cab8b8903a07fe8afaafdda25aac55415a12a55d1bffa9f581abf959",
+      "size": 655
+    },
+    {
+      "filename": "tokenizer.json",
+      "local_path": "C:\\Users\\Windows\\.workbuddy\\vector-cache\\cross-memory-system\\models\\919cfbe11fbf4f1b9bb321007c46c14feaf84227\\tokenizer.json",
+      "sha256": "0b44a9d7b51c3c62626640cda0e2c2f70fdacdc25bbbd68038369d14ebdf4c39",
+      "size": 17082730
+    },
+    {
+      "filename": "tokenizer_config.json",
+      "local_path": "C:\\Users\\Windows\\.workbuddy\\vector-cache\\cross-memory-system\\models\\919cfbe11fbf4f1b9bb321007c46c14feaf84227\\tokenizer_config.json",
+      "sha256": "a1d6bc8734a6f635dc158508bef000f8e2e5a759c7d92f984b2c86e5ff53425b",
+      "size": 443
+    },
+    {
+      "filename": "special_tokens_map.json",
+      "local_path": "C:\\Users\\Windows\\.workbuddy\\vector-cache\\cross-memory-system\\models\\919cfbe11fbf4f1b9bb321007c46c14feaf84227\\special_tokens_map.json",
+      "sha256": "d05497f1da52c5e09554c0cd874037a083e1dc1b9cfd48034d1c717f1afc07a7",
+      "size": 167
+    },
+    {
+      "filename": "sentencepiece.bpe.model",
+      "local_path": "C:\\Users\\Windows\\.workbuddy\\vector-cache\\cross-memory-system\\models\\919cfbe11fbf4f1b9bb321007c46c14feaf84227\\sentencepiece.bpe.model",
+      "sha256": "cfc8146abe2a0488e9e2a0c56de7952f7c11ab059eca145a0a727afce0db2865",
+      "size": 5069051
+    },
+    {
+      "filename": "model.safetensors",
+      "local_path": "C:\\Users\\Windows\\.workbuddy\\vector-cache\\cross-memory-system\\models\\919cfbe11fbf4f1b9bb321007c46c14feaf84227\\model.safetensors",
+      "sha256": "1a55775f53449dac10a2bcbc312469fac40b96d53198c407081a831f81c98477",
+      "size": 470641600
+    }
+  ],
+  "missing": [],
+  "repo_id": "intfloat/multilingual-e5-small",
+  "revision": "919cfbe11fbf4f1b9bb321007c46c14feaf84227"
+}

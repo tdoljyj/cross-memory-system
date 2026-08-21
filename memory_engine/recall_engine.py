@@ -15,8 +15,10 @@ MIV-005A（ADR-MIV-005A-001，R1 勘误）：在 conflict 与 limit 之间插入
 tier→layer / project_only / session_only 同一规则同一阈值）；T0/T4/
 temporary 提前短路（零读取）不进入准入阶段。
 
-v2.0 第一阶段：确定性召回（exact/keyword/category/tag/entity/temporal/
-status/priority），**不使用向量数据库 / embedding / 外部 SaaS**（§10/§18）。
+默认路径仍为确定性召回（exact/keyword/category/tag/entity/temporal/
+status/priority），不使用向量数据库 / embedding / 外部 SaaS。R4 Gate 0-D
+仅在调用方显式传入 ``semantic_mode=test|shadow`` 与已验证 runtime 时启用
+外置 brute-force cosine；生产默认保持 ``off``。
 
 硬约束（§17）：
 - T0 必须真正零读取：任何文件（含 index.json / objects）都不得触碰
@@ -56,6 +58,8 @@ class RecallResult(object):
         self.skipped = {"superseded": 0, "expired": 0, "conflict_loser": 0}
         self.warnings = []
         self.trace = None  # MIV-002：仅 explain=True 时填充（只读观测）
+        # Gate 0-D 运行态（不进入 to_dict，保证 fallback/default 字节兼容）。
+        self.semantic_status = None
 
     def to_dict(self):
         d = {
@@ -269,7 +273,8 @@ def _scope_category_codes(obj, want_categories, scope, project_id=None,
 def recall(query="", tier="T0", layers=None, scope=None, include_history=False,
            categories=None, tags=None, entities=None, limit=10,
            valid_at=None, light=None, max_objects=200, explain=False,
-           project_id=None, session_id=None):
+           project_id=None, session_id=None, semantic_mode="off",
+           vector_runtime=None, alpha=None, tau=None):
     """确定性混合召回入口。
 
     返回 RecallResult。T0 = 零文件读取纯短路（§17）。
@@ -337,6 +342,14 @@ def recall(query="", tier="T0", layers=None, scope=None, include_history=False,
                 project_id=project_id, session_id=session_id)
         return result
 
+    # Gate 0-D：只在零读取短路之后解析显式模式。default off 不导入
+    # hybrid/vector 模块，也不读取任何派生缓存。
+    semantic_mode = (semantic_mode or "off").lower()
+    HR = None
+    if semantic_mode != "off":
+        from . import hybrid_recall as HR
+        HR.validate_parameters(semantic_mode, alpha, tau)
+
     if layers is None:
         layers = list(S.TIER_LAYERS.get(tier, []))
     layers = [l for l in layers if l in S.RECALL_LAYERS]
@@ -361,7 +374,8 @@ def recall(query="", tier="T0", layers=None, scope=None, include_history=False,
                 project_id=project_id, session_id=session_id)
         return result  # 无对象召回需求（如 L6）
 
-    objects = store.load_all_objects()
+    all_objects = store.load_all_objects()
+    objects = all_objects
     if len(objects) > max_objects:
         result.warnings.append(
             "对象数 %d 超过召回上限 %d，已截断（禁止全量加载）"
@@ -418,6 +432,21 @@ def recall(query="", tier="T0", layers=None, scope=None, include_history=False,
             continue
         filtered.append(obj)
 
+    # Gate 0-D 额外硬边界：即使 canonical 被手工损坏而绕过 Write Engine，
+    # secret/denied/temporary 也不得进入词法打分、模型输入或 Hybrid Trace。
+    # history 请求按合同整体回退 MIV-005A，保持既有 history 语义。
+    if semantic_mode != "off" and not include_history:
+        from . import vector_index as VI
+        guarded = []
+        for obj in filtered:
+            reasons = VI._initial_exclusion_reasons(obj, when=valid_at)
+            if reasons:
+                if tracer is not None:
+                    tracer.exclude(obj.get("id"), *reasons)
+                continue
+            guarded.append(obj)
+        filtered = guarded
+
     scored = []
     for o in filtered:
         s = _match_score(result.query, o)
@@ -436,6 +465,49 @@ def recall(query="", tier="T0", layers=None, scope=None, include_history=False,
     if tracer is not None:
         for loser_id in losers:
             tracer.exclude(loser_id, RT.RC_CONFLICT_LOSER)
+
+    # ---- Gate 0-D：显式 test/shadow 才启用增量 OR；默认 off 零变化 ----
+    if semantic_mode != "off":
+        fallback = None
+        metrics = {}
+        if include_history:
+            fallback = HR.FB_HISTORY_UNSUPPORTED
+        elif vector_runtime is None:
+            fallback = HR.FB_RUNTIME_MISSING
+        elif survivors:
+            try:
+                lexical_scores = {o["id"]: s for o, s, _rk in scored}
+                cosine_scores = vector_runtime.score(
+                    result.query, [o["id"] for o in survivors], all_objects,
+                    valid_at=valid_at)
+                admitted, metrics, below = HR.admit_and_rank(
+                    survivors, lexical_scores, cosine_scores,
+                    float(alpha), float(tau), tags=tags, entities=entities)
+                result.skipped["relevance_below_threshold"] = len(below)
+                result.objects = admitted[:limit]
+                result.constraints = _attach_constraints(
+                    result.objects, objects, scope, project_id, session_id)
+                result.semantic_status = "HYBRID_ACTIVE"
+                if tracer is not None:
+                    result.trace = HR.build_trace(
+                        semantic_mode, vector_runtime, metrics,
+                        result.objects, limit,
+                        inherited_excluded=tracer.excluded,
+                        conflict_losers=losers)
+                return result
+            except Exception as exc:  # fail whole query back to MIV-005A
+                fallback = HR.fallback_code(exc)
+        elif not survivors:
+            result.objects = []
+            result.constraints = []
+            result.semantic_status = "HYBRID_ACTIVE"
+            if tracer is not None:
+                result.trace = HR.build_trace(
+                    semantic_mode, vector_runtime, {}, [], limit,
+                    inherited_excluded=tracer.excluded,
+                    conflict_losers=losers)
+            return result
+        result.semantic_status = fallback
 
     # ---- MIV-005A：相关性准入门（conflict 之后、limit 之前）----
     # 只过滤，不改排序；threshold 对所有 case/类别/项目一致。
@@ -467,6 +539,13 @@ def recall(query="", tier="T0", layers=None, scope=None, include_history=False,
             markdown_plan=result.markdown_plan,
             constraints=result.constraints,
             gate_no_memory=gate_no_memory)
+        if semantic_mode != "off" and result.semantic_status:
+            from . import hybrid_recall as HR
+            result.trace = HR.build_trace(
+                semantic_mode, vector_runtime, {}, result.objects, limit,
+                inherited_excluded=tracer.excluded,
+                conflict_losers=losers,
+                fallback=result.semantic_status)
     return result
 
 

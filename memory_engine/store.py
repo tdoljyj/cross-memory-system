@@ -69,6 +69,13 @@ def save_object(obj):
     oid = safe_id(obj.get("id"))
     if not oid:
         raise ValueError("非法 memory id: %r" % (obj.get("id"),))
+    # R4 Gate 0-C：对象层仍是唯一事实源；若本端显式配置了外置向量缓存，
+    # 只写 dirty marker，绝不在此增量改写派生向量。后续完整重建与原子切换
+    # 才能清除 marker。先标 dirty 再写 canonical；若 marker 无法落盘则
+    # fail-closed，避免 canonical 已变化但旧向量仍被误认为有效。
+    from . import vector_index
+    vector_index.mark_dirty_if_configured(
+        "CANONICAL_OBJECT_CHANGED", object_ids=[oid], repo=paths.REPO)
     _atomic_write(object_path(oid), dumps(obj))
     return object_path(oid)
 
