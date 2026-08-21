@@ -111,3 +111,18 @@ gitignored 工作区、不可独立重放。R1 已闭合：
 7. **完整传递依赖闭包**：`requirements-gate0b.lock.txt`（35 包）+ `artifact-hashes.json`
    （全量 wheel SHA-256），见 `evidence/`。
 8. **报告口径修正**：本节 §8 已改为「未 push origin/main，已保全 push 至 WIP 分支」。
+
+---
+
+## 10. R2 / R3 运行时守卫闭合（2026-08-21）
+
+1. `verify_embedding_output` 在任何 shape 索引前显式要求二维 `[N,384]`；
+   `[1,1,384]` 即使最后一维正确且归一化也拒绝，`[1,384]` / `[N,384]` 保持通过。
+2. manifest 文件集合、输入前缀与 backend 依赖声明已冻结；packages 必须与完整依赖锁
+   精确相等，不再只做“非空”判断。
+3. 模型文件 metadata 与 backend/wheel 元数据必须匹配仓库内可信根；联合改写 artifact、
+   manifest 内哈希和 `self_hash` 无法再绕过加载前校验。
+4. `E5Embedder` 的加载顺序保持：生产可信根校验 → backend 版本核验 → tokenizer/model
+   离线加载 → hidden size / 输出合同核验。任何一步不一致均 fail-closed。
+5. 独立回归：同步层 70/70、Memory Engine 55/55、卸载场景 12/12（逐进程）通过；
+   embedding 合成守卫 28 PASS / 1 torch 环境 SKIP。

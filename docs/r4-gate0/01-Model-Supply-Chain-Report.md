@@ -101,3 +101,21 @@ R1 前两个阻断（manifest 验证未接入加载路径、验证脚本不可�
 - **download-receipt** 已从模型目录移入 `evidence/download-receipt.json`（模型目录仅保留
   6 白名单文件 + MODEL-MANIFEST.json，额外文件一律拒绝）。
 - 报告 push 口径已修正为「未 push origin/main，已保全 push 至 `r4-gate0-wip` 分支」。
+
+---
+
+## 5. R2 / R3 复核阻断闭合（2026-08-21）
+
+- **R2 `b7b07b1`**：白名单名称冻结为精确 6 文件集合；`query_prefix` /
+  `passage_prefix` 纳入冻结合同；空 `backend.packages` 拒绝；embedding 输出先验证
+  `ndim == 2`。
+- **R3 `dc01dd1`**：修复复核发现的根信任缺口。运行时不再只信任与模型同目录、
+  可被联合改写的 manifest，而是把固定 revision 绑定到仓库内可信根：精确 6 文件的
+  size/SHA-256、backend 名称/runtime、完整 packages 版本集合及 wheel SHA-256。
+- 校验链现在为：**仓库可信根 → manifest 声明 → 实际 artifact**。manifest 的
+  canonical `self_hash` 继续承担损坏检测，但不再被误作带外信任锚。
+- 新增反例覆盖 artifact + manifest metadata + `self_hash` 联合篡改、非空但不完整的
+  packages、wheel hash 漂移、生产可信根与审计证据漂移；旧实现可通过的联合篡改反例
+  现已 fail-closed。
+- 独立验证：`test_embedding_adapter.py` 29 项，Codex 环境 28 PASS / 1 SKIP
+  （仅 torch 不可用）；具备 torch 的 Gate 0-B 环境原 ndim 守卫 24/24 已通过。

@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-08-21T02:10:55Z",
-  "count": 231,
+  "generated_at": "2026-08-21T04:49:15Z",
+  "count": 232,
   "objects": {
     "mem_012b899e": {
       "path": "memory/objects/mem_012b899e.json",
@@ -2734,6 +2734,27 @@
         "manual-review"
       ],
       "entities": [],
+      "valid_from": null,
+      "valid_until": null,
+      "supersedes": [],
+      "superseded_by": []
+    },
+    "mem_d42e783b": {
+      "path": "memory/objects/mem_d42e783b.json",
+      "type": "state",
+      "scope": "project",
+      "status": "candidate",
+      "priority": "high",
+      "category": "state",
+      "tags": [
+        "r4-gate0",
+        "embedding",
+        "supply-chain"
+      ],
+      "entities": [
+        "r4-gate0-r2",
+        "dc01dd1"
+      ],
       "valid_from": null,
       "valid_until": null,
       "supersedes": [],
