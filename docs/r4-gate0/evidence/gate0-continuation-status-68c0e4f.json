@@ -1,0 +1,60 @@
+{
+  "schema_version": "r4-gate0-continuation-status-v1",
+  "created_utc": "2026-08-21T18:37:51Z",
+  "result": "BLOCKED",
+  "candidate": {
+    "r1b_commit": "ef61ca59b74ae8d2fbdd9ccff1bb3805f1e1088d",
+    "shadow_prerequisite_commit": "68c0e4f12f664b2ad60fc24f85658284100587d0",
+    "remote_main_observed": "8c22c238144225335c08ad8ebbf63ac890f87b55",
+    "remote_topology_note": "bundle-only checkout does not contain remote main, so ahead/behind cannot be recomputed locally"
+  },
+  "calibration_review": {
+    "verdict": "PASS",
+    "supply_chain_tests": "18/18 PASS",
+    "calibration_contract_tests": "5/5 PASS",
+    "related_targeted_tests": "113 PASS / 0 FAIL / 1 ENV SKIP",
+    "manifest_sha256": "8e768a6e2a3f4966e09b0a254e50fe6e94dcecf98738ceeebcf7f167e9395380",
+    "candidate_lock_sha256": "50ab5689cf4378441177d1af0773b59fbd5a2dc62ff866df7a76b0ea0ad0cd23",
+    "selected": {
+      "alpha": 1.0,
+      "tau": 0.9,
+      "qualifying": "10/35"
+    }
+  },
+  "gate_0_f": {
+    "candidate_holdout_runs": 0,
+    "status": "NOT_RUN",
+    "sealed_run_consumed": false,
+    "environment_blocker": "locked torch/transformers runtime and the verified 1.13 GB E5-base model directory are absent",
+    "precheck_note": "after calibration review, an existing BM25 regression read the frozen full-corpus aggregate; it did not run the E5-base candidate, emit per-case details, select parameters, or consume the one allowed candidate holdout run"
+  },
+  "gate_0_g": {
+    "status": "BLOCKED",
+    "blockers": [
+      "no locked model/runtime, so offline cold start, 500-query hot path, five rebuilds, peak RSS and candidate fault injection cannot be measured",
+      "PowerShell and gh CLI are unavailable in this container; /root/.workbuddy is read-only and repository tags are absent from the bundle checkout",
+      "tests/test_acceptance.py::test_repo_files_do_not_self_match_secret_patterns fails on the pre-existing frozen hard-filter contract's literal synthetic token sample"
+    ],
+    "frozen_contract_action": "not modified because changing it would change the pinned contract digest and invalidate existing calibration evidence"
+  },
+  "gate_0_h": {
+    "engineering_prerequisite": "COMPLETE",
+    "formal_counting": "NOT_STARTED",
+    "status_command": "clued shadow status",
+    "observed_status": "NOT_STARTED",
+    "valid_requests": "0/100",
+    "manual_reviews": "0/30",
+    "progress_file_created": false,
+    "real_binding_modified": false,
+    "privacy_guards": "strict schema stores only generated request IDs, Memory Object IDs, fixed reason codes, counters and review verdicts; no query, content, vector, stable query hash, secret or user path"
+  },
+  "authorization_boundary": {
+    "push": false,
+    "tag": false,
+    "release": false,
+    "real_binding_change": false,
+    "semantic_mode_enabled_on_real_binding": false,
+    "r4_1_started": false
+  },
+  "next_required_environment": "TURING Windows x64 with the exact R1A-verified E5-base model directory, locked Python/backend packages, external vector cache and existing real Binding available for read-only identity checks"
+}
