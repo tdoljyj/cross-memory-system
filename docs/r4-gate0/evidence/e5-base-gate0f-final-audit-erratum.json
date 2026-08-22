@@ -1,0 +1,98 @@
+{
+  "schema_version": "r4-gate0-e5base-gate0f-final-audit-erratum-v1",
+  "authorization": "产品所有者于 2026-08-22 授权 Codex@WORKMODE 直接执行 F0C 证据勘误闭环；只允许新增终验 erratum 与报告后记，禁止修改原始 marker、receipt、results、runner、test，禁止运行 holdout、preflight、模型推理、replay、Shadow，禁止修改 Binding、push、tag、release 或 amend",
+  "audit_base": {
+    "commit": "ef92df936ff37beb33eeb0c47147664bf9fdeef2",
+    "parent": "47a51ea6c0f03e5a5449eee91cbe6d5a1ecca869",
+    "authorization_base": "52cd2aa44ad6db05597badddbe69f7a92d552736",
+    "history_commit_count": 251,
+    "bundle_sha256": "0c93a9b94aa42ee471d30495144128c86b16bdc4bc06c46f6ac40ba6ee5cd2b2"
+  },
+  "immutable_original_evidence": {
+    "consumption_marker_sha256": "c72c399c8a7b79a2b3916c970fdc32ee71fedf09d79ba3b65786c3141f810cbb",
+    "holdout_receipt_sha256": "32e1e3fcb5add3bc672b0d6c94da67dea584a06aa31c35db023eb176b619603e",
+    "holdout_results_sha256": "0b1c1075fc529e92f3328050f8b810ad490aa16118d297de06c67f661129bfdd",
+    "holdout_runner_code_sha256": "c5ba51ab5e58674aca8763c3b981bb7254e2061fbc7d55d766fcdd07e87d6d5c",
+    "statement": "三份外置附件与 ef92df9 提交 blob 逐字节一致；marker、results、runner SHA 与 launch HEAD 交叉锚定成立。原始证据保持原样，不以本勘误回写或重写。"
+  },
+  "independent_recomputation": {
+    "frozen_holdout_ids_exact": true,
+    "holdout_count": 58,
+    "holdout_ids_sha256": "0977a9d993346d2430c5ceea0129001741c51502635fd3e9bccafd477e94de4c",
+    "verdict_set_self_consistent": true,
+    "precision_at5_v2": {
+      "numerator": 29,
+      "denominator": 60,
+      "raw": 0.48333333333333334,
+      "contract_v2": 0.4833,
+      "rule": ">=0.90",
+      "passed": false
+    },
+    "critical_memory_recall_v2": {
+      "numerator": 29,
+      "denominator": 46,
+      "raw": 0.6304347826086957,
+      "contract_v2": 0.6304,
+      "rule": ">=0.95",
+      "passed": false
+    },
+    "false_recall_rate_v2": {
+      "numerator": 31,
+      "denominator": 60,
+      "raw": 0.5166666666666667,
+      "contract_v2": 0.5167,
+      "rule": "<=0.02",
+      "passed": false
+    },
+    "paraphrase": {
+      "correct": 1,
+      "total": 12,
+      "rule": ">=11/12",
+      "passed": false
+    },
+    "no_memory": {
+      "calibration": "26/26",
+      "holdout": "15/15",
+      "combined": "41/41",
+      "passed": true
+    },
+    "failed_quality_gates": [
+      "precision_at5_v2",
+      "critical_memory_recall_v2",
+      "false_recall_rate_v2",
+      "paraphrase_correct"
+    ]
+  },
+  "protocol_erratum": {
+    "code": "PRE_MARKER_CORPUS_EAGER_IMPORT",
+    "severity": "GATE_INVALIDATING",
+    "finding": "47a51ea:memory_eval/e5_base/holdout.py 在模块顶层导入 memory_eval；Python 在解析该子模块前执行 memory_eval/__init__.py，而 __init__.py 顶层导入 .corpus.CASES。因此完整 corpus（包含冻结 holdout）在 run_holdout()、assert_not_consumed() 与 write_consumption_marker() 之前已被加载。F0A 合成测试顶层导入同一 runner，存在相同读取路径。",
+    "source_chain": [
+      "47a51ea:memory_eval/e5_base/holdout.py:39-42",
+      "47a51ea:memory_eval/__init__.py:4",
+      "47a51ea:tests/test_e5_base_holdout.py:20"
+    ],
+    "superseded_claims": [
+      "consumption_marker.written_before_first_holdout_detail_read = true",
+      "protocol_deviations = []",
+      "F0A tests zero real holdout content reads"
+    ],
+    "corrected_interpretation": "marker 仍证明唯一一次模型 holdout 推理运行已登记并阻止合法重跑，但不能证明 marker 早于 corpus 首次加载；holdout_detail_reads 计数未覆盖 import-time eager load。正式协议偏差列表必须包含 PRE_MARKER_CORPUS_EAGER_IMPORT。",
+    "rerun_authorized": false
+  },
+  "final_decision": {
+    "status": "FINAL_NO_GO_CONSUMED_WITH_PROTOCOL_DEVIATION",
+    "gate0f": "FAIL",
+    "candidate": "intfloat/multilingual-e5-base",
+    "candidate_disposition": "REJECTED_UNDER_FROZEN_CONTRACT",
+    "reasoning": "四项核心质量门槛经独立重算均失败；此外 pre-marker corpus eager import 本身构成 Gate-invalidating 协议偏差。两条理由任一均足以 NO-GO。协议偏差不构成第二次运行授权，也不能把失败结果提升为 PASS。",
+    "one_shot": "CONSUMED_PERMANENTLY",
+    "gate0g": "SKIPPED_BY_GATE_F",
+    "gate0h_shadow": "NOT_STARTED_0_OF_100",
+    "gate0i": "TERMINAL_NO_GO_RECORDED_BY_F0C",
+    "old_holdout_disposition": "EXPOSED_REGRESSION_ONLY_NEVER_HOLDOUT_AGAIN",
+    "next_evaluation_requirement": "如继续语义召回评估，必须建立新的冻结语料、新 split、新 holdout digest 与新的独立授权周期；不得用当前 58-case holdout 翻案。"
+  },
+  "sibling_f0a_note": "27a4a0e 是同父 52cd2aa 的后产出旁支，修复了 import boundary，但未参与唯一真实运行；不得用于追溯净化 47a51ea/ef92df9 结果链，也不在 F0C 中合并或 cherry-pick。",
+  "prohibitions_respected": "F0C 未运行 holdout、preflight、模型、replay 或 Shadow；未读取新的未曝光评测材料；未修改原始 marker/receipt/results/runner/test、冻结输入、模型、Binding；未 amend、merge、rebase、push、tag 或 release。"
+}

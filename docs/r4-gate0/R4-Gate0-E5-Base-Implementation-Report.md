@@ -541,3 +541,58 @@ F0A 冻结 runner（`47a51ea`），F0B 唯一一次真实运行（本提交）�
 - **结论**：E5-base 候选在冻结 58-case holdout 上
   **HOLDOUT FAIL / NO-GO**。本轮停止；后续任何动作（含处置失败
   候选的方式）需产品所有者另行授权
+
+---
+
+## 16. F0C 最终审计勘误后记（2026-08-22，父提交 ef92df9）
+
+Codex@WORKMODE 对完整 F0B bundle、canonical marker、原始 receipt 与
+results 做只读终验。附件大小与 SHA-256、完整 251-commit 历史、提交链
+`52cd2aa → 47a51ea → ef92df9`、三份外置证据与提交 blob 的逐字节一致性、
+marker → results → runner → launch HEAD 交叉锚点均通过复核。58 条 verdict
+与冻结 split 顺序及 `0977a9d9…` digest 精确一致；独立重算确认：
+
+- precision_at5_v2 = 29/60 = 0.4833，FAIL；
+- critical_memory_recall_v2 = 29/46 = 0.6304，FAIL；
+- false_recall_rate_v2 = 31/60 = 0.5167，FAIL；
+- paraphrase = 1/12，FAIL；
+- NO MEMORY = 41/41，PASS。
+
+终验同时发现 `PRE_MARKER_CORPUS_EAGER_IMPORT` 协议偏差：实际运行的
+`47a51ea:memory_eval/e5_base/holdout.py` 在模块顶层导入 `memory_eval`；
+Python 因此先执行 `memory_eval/__init__.py`，而后者在顶层导入
+`.corpus.CASES`。完整 corpus（含冻结 holdout）由此在 `run_holdout()`、
+`assert_not_consumed()` 与原子 marker 写入前已加载。F0A 合成测试顶层导入
+同一 runner，也存在相同读取路径；原 `holdout_detail_reads` 计数未覆盖该
+import-time eager load。
+
+因此 §15 与原始 results 中以下同期声明由本节勘误覆盖，但原始证据保持
+逐字节不变：
+
+- `written_before_first_holdout_detail_read = true` 不成立；
+- `protocol_deviations = []` 更正为至少包含
+  `PRE_MARKER_CORPUS_EAGER_IMPORT`；
+- “F0A 合成测试零真实 holdout 内容读取”不成立。
+
+该偏差不授权重跑：marker 仍证明唯一一次模型 holdout 推理运行已登记，
+且 corpus 已客观曝光；删除或更换 marker、replay、重试、调参、修例外或
+重新分组均被禁止。四项核心质量门槛失败与 Gate-invalidating 协议偏差
+任一项都足以否决候选，二者共同形成终态：
+
+> **FINAL NO-GO — CONSUMED WITH PROTOCOL DEVIATION**
+
+- E5-base：`REJECTED_UNDER_FROZEN_CONTRACT`；
+- Gate 0-G：`SKIPPED_BY_GATE_F`；
+- Gate 0-H：`NOT_STARTED / 0/100`；
+- Gate 0-I：由 F0C 记录终局 NO-GO，不启动执行路径；
+- 当前 58-case holdout 永久降级为已曝光回归集，不得再次作为 holdout；
+- 后续若继续语义召回评估，必须建立新冻结语料、新 split、新 holdout
+  digest 与新的独立授权周期。
+
+同父旁支 `27a4a0e` 修复了 import boundary，但未参与唯一真实运行，不能
+追溯净化 `47a51ea → ef92df9` 结果链；F0C 不合并或 cherry-pick 该旁支。
+完整机读勘误见
+`docs/r4-gate0/evidence/e5-base-gate0f-final-audit-erratum.json`。F0C 未修改
+原始 marker、receipt、results、runner、test 或任何冻结输入；未运行
+holdout、preflight、模型、replay、Shadow；未修改 Binding；未 push / tag /
+release；未 amend / merge / rebase。
