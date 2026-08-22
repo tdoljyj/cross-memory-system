@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "gate": "K2",
+  "decision": "LOCKED_READY_FOR_EXPLICIT_AUTHORIZATION",
+  "prepared_at": "2026-08-22",
+  "authorization": "explicit user instruction: follow recommendation and remediate debt first",
+  "branch": "r5-kernel-k2-debt-closure",
+  "upstream_baseline": "af135bf7908b483deafb4b35688221397ca00aab",
+  "tested_product_commit": "653417a29b8e079b5e49db8dce4480261c728585",
+  "k0": {
+    "historical_decision": "NO_GO",
+    "historical_decision_preserved": true,
+    "known_regression_debt_before": 12,
+    "known_regression_debt_after": 0,
+    "debt_status": "REMEDIATED"
+  },
+  "evidence": {
+    "report": "docs/r5-kernel/02-K0-Debt-Closure.md",
+    "regression": "docs/r5-kernel/evidence/test-results/02-k0-debt-closure-summary.json",
+    "security": "docs/r5-kernel/evidence/security/02-k0-debt-closure-secret-scan.json",
+    "k1_contract_tests": "9/9 PASS",
+    "sync_layer": "70/70 PASS",
+    "memory_engine": "55/55 PASS",
+    "miv_005a_contracts": "19/19 PASS",
+    "full_matrix": "552 PASS / 0 FAIL / 0 SKIP / 552 total",
+    "secret_hits": 0
+  },
+  "change_scope": {
+    "functional_product_code_changed": true,
+    "real_binding_changed": false,
+    "semantic_recall_enabled": false,
+    "release_created": false,
+    "deployment_performed": false
+  },
+  "unlock_requirements": {
+    "K1 conformance test pass": "SATISFIED",
+    "K0 regressions remediated or explicitly accepted as bounded debt": "SATISFIED_BY_REMEDIATION",
+    "fresh full regression evidence": "SATISFIED",
+    "no secret scan hits": "SATISFIED",
+    "explicit K2 authorization": "PENDING"
+  },
+  "next_action": "Obtain a new explicit K2 authorization before changing the gate status or starting K2 implementation."
+}

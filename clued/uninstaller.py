@@ -163,8 +163,14 @@ class Uninstaller(object):
                 os.remove(art["path"])
             bdir = self.paths.binding_dir(binding_id)
             manifest_path = self.paths.binding_manifest(binding_id)
+            state_path = os.path.join(bdir, "state.json")
             if os.path.isfile(manifest_path):
                 os.remove(manifest_path)
+            # P0-1 installs binding.json and the three-axis state.json as one
+            # transaction.  Both files belong to the exact Binding directory,
+            # so detach must remove both before the now-empty directory.
+            if os.path.isfile(state_path):
+                os.remove(state_path)
             if os.path.isdir(bdir):
                 os.rmdir(bdir)
 
@@ -185,6 +191,9 @@ class Uninstaller(object):
             raise CluedError("CLD-UNINSTALL-003", "卸载后 binding 清单仍存在")
         if os.path.isfile(self.paths.auth_cache(binding_id)):
             raise CluedError("CLD-UNINSTALL-003", "卸载后 LKG 缓存仍存在")
+        if os.path.isfile(os.path.join(self.paths.binding_dir(binding_id),
+                                       "state.json")):
+            raise CluedError("CLD-UNINSTALL-003", "卸载后 state.json 仍存在")
 
         # 11) 验证其他 Agent Binding 仍然有效
         others = [b for b in self.registry.list_bindings()

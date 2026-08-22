@@ -115,35 +115,26 @@ def h3_capability_missing_cld_cap_001():
 
 @register
 def h4_cli_doctor_contract_pass_when_doctor_ok():
-    """H4 证明：CLI doctor JSON 契约在 doctor PASS 时 ok=True。
+    """H4 证明：doctor 在隔离的 sync doctor PASS 条件下整体通过。
 
-    两条证据：
-      a) Controller.doctor 的 sync_doctor 检查在 doc.ok=True 时不抛
-         （代码路径：sync_provider.doctor() PASS → check("sync_doctor", True)
-          → 不进入 failed → 不抛 CLD-SYNC-001）；
-      b) 真实环境 sync doctor 的唯一 FAIL 是 ref write persists
-         （ENV-DEFECT-001），其余 17 项 PASS —— 即 CLI doctor 的 ok=False
-         由该环境缺陷造成，而非 CLI/契约逻辑。
-    为避免环境 bulk guard 干扰清理，本测试不建完整 sandbox，
-    直接对真实 sync doctor 报告做归因断言。
+    环境探针的具体失败项会随执行环境变化，不属于产品合同。与 H1-H3
+    一致，本测试在临时沙盒中 mock sync doctor 为 PASS，只验证 Controller
+    对 PASS 结果的稳定分类，不再把某个历史 ENV-DEFECT 签名写死为前提。
     """
-    import subprocess
-    # b) 真实 sync doctor：断言唯一 FAIL 是 ref write persists（ENV-DEFECT-001）
-    p = subprocess.run(
-        [sys.executable, "sync-memory.py", "doctor"], cwd=REPO_ROOT,
-        capture_output=True, text=True, encoding="utf-8", errors="replace",
-        timeout=120)
-    out = (p.stdout or "") + (p.stderr or "")
-    check("ref write persists" in out, "H4: doctor 含 ref write persists 症状")
-    # 除 ref probe 与 local!=remote（本地领先未 push 的正常状态）外无其他 FAIL
-    other_fail = [l for l in out.splitlines()
-                  if l.startswith("[FAIL]")
-                  and "ref" not in l and "local == remote" not in l]
-    check(other_fail == [], "H4: 除 ref probe 外无其他 FAIL: %s" % other_fail[:3])
-    # a) Controller.doctor 的 sync_doctor 分支：doc.ok=True → 该 check 通过
-    # （代码阅读证据，见 controller.py sync_doctor check 逻辑）
-    check("[FAIL] ref" in out or "ref write persists" in out,
-          "H4: FAIL 签名 = ENV-DEFECT-001")
+    tmp = tempfile.mkdtemp(prefix="hc-h4-")
+    try:
+        ctrl = make_controller(tmp)
+        _mock_doctor_pass(ctrl.sync_provider)
+        result = ctrl.doctor(include_engine=False)
+        check(result["summary"] == "doctor ALL PASS",
+              "H4: doctor PASS 摘要")
+        sync_findings = [f for f in result["findings"]
+                         if f["check"] == "sync_doctor"]
+        check(len(sync_findings) == 1 and sync_findings[0]["ok"] is True,
+              "H4: sync_doctor PASS 被稳定分类")
+    finally:
+        import shutil
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 def main():
