@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "id": "mem_4a56666f",
+  "type": "state",
+  "scope": "project",
+  "content": "2026-08-22 Clued Kernel R5 K2 缺口已补齐并完成第四轮独立裁决，最终结果为 PASS。产品提交 4ed347fb908bbadc888c8cf58768536c6ca108ea，最终裁决证据提交 3c907ae7b97f1d459a8233623eb780538e1c7c8b；K2 静态 16/16、PostgreSQL 15.19 集成 21/21、K1 9/9、全量 589 PASS / 0 FAIL / 0 SKIP；receipt 12/12，候选树密钥扫描 474 文件 0 命中，脱敏数据库日志正文 0 命中。十项必测与八项 K2 PASS 标准全部通过，无 blocker。K2 分支仍仅本地，未 push/merge/tag/release/deploy，真实 Binding 未变，语义召回关闭。",
+  "status": "active",
+  "source": {
+    "kind": "user_explicit",
+    "adapter": "cli",
+    "session_id": null,
+    "created_at": "2026-08-22T10:11:42Z",
+    "updated_at": "2026-08-22T10:11:42Z"
+  },
+  "temporal": {
+    "valid_from": null,
+    "valid_until": null
+  },
+  "relations": {
+    "supersedes": [
+      "mem_144c832a"
+    ],
+    "superseded_by": [],
+    "contradicts": [],
+    "related": []
+  },
+  "classification": {
+    "memory_layer": "state",
+    "category": "state",
+    "recall_layer": "L3",
+    "priority": "high"
+  },
+  "provenance": {
+    "evidence": "explicit",
+    "source_ref": null
+  },
+  "tags": [
+    "Clued",
+    "R5",
+    "K2",
+    "Cloud Data Foundation"
+  ],
+  "entities": [
+    "Clued Kernel R5",
+    "K2",
+    "PostgreSQL"
+  ],
+  "project_id": "clued-kernel-r5"
+}
