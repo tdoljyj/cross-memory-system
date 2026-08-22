@@ -17,3 +17,6 @@ memory/session/
 .gate-t0-workspace/
 # Truth Integrity LKG 状态目录（ADR-R3-006：独立状态文件，非 current 事实源）
 .truth-state/
+# R5 K2：本地 PostgreSQL 运行时与 Gate 临时数据（仅合成数据，不入仓库）
+.k2-postgres/
+.k2-backups/
