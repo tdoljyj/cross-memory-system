@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-08-22T17:12:20Z",
-  "count": 252,
+  "generated_at": "2026-08-22T23:09:38Z",
+  "count": 254,
   "objects": {
     "mem_012b899e": {
       "path": "memory/objects/mem_012b899e.json",
@@ -1254,12 +1254,13 @@
         "PostgreSQL"
       ],
       "valid_from": null,
-      "valid_until": "2026-08-22T17:12:20Z",
+      "valid_until": "2026-08-22T23:09:38Z",
       "supersedes": [
         "mem_4a56666f"
       ],
       "superseded_by": [
-        "mem_c87fd2d2"
+        "mem_c87fd2d2",
+        "mem_ef3fd220"
       ]
     },
     "mem_55d14690": {
@@ -3073,12 +3074,13 @@
         "Clued-Kernel"
       ],
       "valid_from": null,
-      "valid_until": "2026-08-22T17:12:20Z",
+      "valid_until": "2026-08-22T23:09:38Z",
       "supersedes": [
         "mem_60b4dce9"
       ],
       "superseded_by": [
-        "mem_4cd51231"
+        "mem_4cd51231",
+        "mem_e0004de3"
       ]
     },
     "mem_cdb0c1e6": {
@@ -3371,6 +3373,31 @@
       "valid_from": null,
       "valid_until": null,
       "supersedes": [],
+      "superseded_by": []
+    },
+    "mem_e0004de3": {
+      "path": "memory/objects/mem_e0004de3.json",
+      "type": "semantic",
+      "scope": "global",
+      "status": "active",
+      "priority": "high",
+      "category": "constraint",
+      "tags": [
+        "R5",
+        "K0",
+        "K1",
+        "NO_GO",
+        "LOCKED"
+      ],
+      "entities": [
+        "cross-memory-system",
+        "Clued-Kernel"
+      ],
+      "valid_from": null,
+      "valid_until": null,
+      "supersedes": [
+        "mem_cd589650"
+      ],
       "superseded_by": []
     },
     "mem_e07057bb": {
@@ -3711,6 +3738,31 @@
       "valid_from": null,
       "valid_until": null,
       "supersedes": [],
+      "superseded_by": []
+    },
+    "mem_ef3fd220": {
+      "path": "memory/objects/mem_ef3fd220.json",
+      "type": "state",
+      "scope": "project",
+      "status": "active",
+      "priority": "high",
+      "category": "state",
+      "tags": [
+        "Clued",
+        "R5",
+        "K2",
+        "Cloud Data Foundation"
+      ],
+      "entities": [
+        "Clued Kernel R5",
+        "K2",
+        "PostgreSQL"
+      ],
+      "valid_from": null,
+      "valid_until": null,
+      "supersedes": [
+        "mem_525ea2c2"
+      ],
       "superseded_by": []
     },
     "mem_efedcf99": {

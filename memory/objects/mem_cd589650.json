@@ -10,18 +10,19 @@
     "adapter": "cli",
     "session_id": null,
     "created_at": "2026-08-22T10:43:03Z",
-    "updated_at": "2026-08-22T17:12:20Z"
+    "updated_at": "2026-08-22T23:09:38Z"
   },
   "temporal": {
     "valid_from": null,
-    "valid_until": "2026-08-22T17:12:20Z"
+    "valid_until": "2026-08-22T23:09:38Z"
   },
   "relations": {
     "supersedes": [
       "mem_60b4dce9"
     ],
     "superseded_by": [
-      "mem_4cd51231"
+      "mem_4cd51231",
+      "mem_e0004de3"
     ],
     "contradicts": [],
     "related": []
