@@ -204,12 +204,13 @@ def restore(dsn, input_path, bin_dir=None, expected_sha256=None):
     input_path = os.path.abspath(input_path)
     if not os.path.isfile(input_path):
         raise ToolError("backup file is missing")
+    if expected_sha256 is None:
+        raise ToolError("expected backup SHA-256 is required")
     input_sha256 = file_sha256(input_path)
-    if expected_sha256 is not None:
-        if not re.fullmatch(r"[0-9a-fA-F]{64}", expected_sha256):
-            raise ToolError("expected backup SHA-256 is invalid")
-        if input_sha256 != expected_sha256.lower():
-            raise ToolError("backup SHA-256 mismatch")
+    if not re.fullmatch(r"[0-9a-fA-F]{64}", expected_sha256):
+        raise ToolError("expected backup SHA-256 is invalid")
+    if input_sha256 != expected_sha256.lower():
+        raise ToolError("backup SHA-256 mismatch")
     created_roles = bootstrap_roles(dsn, bin_dir)
     argv = [_exe("pg_restore", bin_dir), "--dbname", dsn, "--no-owner",
             "--single-transaction", "--exit-on-error", input_path]
@@ -220,7 +221,7 @@ def restore(dsn, input_path, bin_dir=None, expected_sha256=None):
         raise
     return {"ok": True, "operation": "restore",
             "input_sha256": input_sha256,
-            "expected_sha256_verified": expected_sha256 is not None,
+            "expected_sha256_verified": True,
             "roles_bootstrapped": created_roles}
 
 
@@ -239,7 +240,7 @@ def build_parser():
     dump.add_argument("path")
     load = sub.add_parser("restore")
     load.add_argument("path")
-    load.add_argument("--expected-sha256")
+    load.add_argument("--expected-sha256", required=True)
     return parser
 
 

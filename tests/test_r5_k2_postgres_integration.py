@@ -435,7 +435,7 @@ def verify_failed_transaction_preserves_invariants(dsn):
           scan["violations"])
 
 
-def verify_cli_failure_exit_codes(dsn, missing_backup):
+def verify_cli_failure_exit_codes(dsn, missing_backup, existing_backup):
     env = os.environ.copy()
     env.pop("CLD_K2_DATABASE_URL", None)
     env["PYTHONUTF8"] = "1"
@@ -458,6 +458,14 @@ def verify_cli_failure_exit_codes(dsn, missing_backup):
           "module entrypoint swallowed restore failure exit code")
     check(json.loads(missing_restore.stdout)["ok"] is False,
           "restore CLI response is not a failure object")
+
+    omitted_digest = subprocess.run(
+        [sys.executable, "-m", "clued.cloud_data", "--dsn", dsn,
+         "--bin-dir", BIN_DIR, "restore", existing_backup],
+        cwd=ROOT, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, encoding="utf-8", errors="replace", check=False)
+    check(omitted_digest.returncode == 2,
+          "restore CLI accepted an unverified backup")
 
 
 def add_tombstone(dsn, memory_id):
@@ -645,8 +653,19 @@ def main():
               "down migration left roles created by the source migration")
 
         pg_cmd("createdb", "--maintenance-db", ADMIN_URL, restore_db)
-        verify_cli_failure_exit_codes(restore_dsn, missing_backup)
+        verify_cli_failure_exit_codes(restore_dsn, missing_backup, backup_path)
         tests.append("cli_failure_exit_codes")
+        try:
+            tooling.restore(restore_dsn, backup_path, BIN_DIR)
+            raise AssertionError("restore accepted an omitted expected digest")
+        except tooling.ToolError as exc:
+            check("SHA-256 is required" in str(exc),
+                  "restore returned the wrong missing-digest error")
+        roles_after_omission = int(scalar(
+            restore_dsn, "SELECT count(*) FROM pg_roles WHERE rolname IN "
+                         "('clued_owner','clued_client','clued_service')"))
+        check(roles_after_omission == len(initial_roles),
+              "missing digest changed cluster roles before restore")
         try:
             tooling.restore(restore_dsn, backup_path, BIN_DIR,
                             expected_sha256="0" * 64)

@@ -226,6 +226,8 @@ def test_tooling_is_shell_free_and_redacts_credentials():
     for token in ("bootstrap_roles", "--single-transaction",
                   "expected_sha256", "backup SHA-256 mismatch"):
         check(token in source, "safe restore contract missing %s" % token)
+    check('load.add_argument("--expected-sha256", required=True)' in source,
+          "restore CLI permits an unverified backup")
 
 
 def test_module_entrypoint_propagates_failure_exit_codes():
