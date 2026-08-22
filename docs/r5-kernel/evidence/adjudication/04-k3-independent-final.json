@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "gate": "K3",
+  "decision": "PASS",
+  "adjudicated_commit": "ad8f912deefdfaecdf99ff3cd6a9f34d5957be9e",
+  "environment": "fresh local clone under compliant desktop permissions",
+  "worktree_clean": true,
+  "qualification_files": {
+    "total": 5,
+    "failed": 0,
+    "files": [
+      "test_envprobe.py",
+      "test_r5_k1_contract_freeze.py",
+      "test_r5_k2_cloud_foundation.py",
+      "test_r5_k2_postgres_integration.py",
+      "test_r5_k3_postgres_integration.py"
+    ]
+  },
+  "results": {
+    "envprobe": "7/7 PASS",
+    "k1": "9/9 PASS",
+    "k2_static": "16/16 PASS",
+    "k2_postgresql": "20/20 PASS",
+    "k3_postgresql": "18/18 PASS"
+  },
+  "adjudicated_at": "2026-08-23"
+}

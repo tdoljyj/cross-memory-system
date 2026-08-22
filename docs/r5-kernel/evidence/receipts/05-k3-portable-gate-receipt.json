@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "gate": "K3",
-  "decision": "CANDIDATE_PASS_PENDING_INDEPENDENT_CHECKOUT",
+  "decision": "K3_GATE_PASS",
   "tested_product_commit": "567222dccd8f51b2314b460876a4de9812aa0c74",
   "aligned_parent_head": "138ce2295f17e67347f55f7cb47a2bad0e1f38a5",
   "contract": "docs/r5-kernel/contracts/kernel-contract-v1.1.json",
@@ -18,15 +18,15 @@
   "evidence": {
     "matrix_summary": "docs/r5-kernel/evidence/test-results/04-k3-portable-matrix-summary.json",
     "qualified_reruns": "docs/r5-kernel/evidence/raw/04-k3-qualified-reruns.log",
+    "independent_adjudication": "docs/r5-kernel/evidence/adjudication/04-k3-independent-final.json",
     "complete_matrix_raw_sha256": "61a593975d7e91229fcc90139081c82364dba7cebea8420e8c1bd26e6a9d564c",
     "qualified_reruns_sha256": "c6d91de843d39b64f8e04e91d6fc4e412fda740d499b1e2d6cfaec095a40d55d"
   },
   "portability": {
     "durable_tag": "r5-k3-portable-gate-2026-08-23",
     "bundle_required": true,
-    "bundle_sha256": "PENDING",
-    "remote_ancestry_verified": false
+    "bundle_sha256": "RECORDED_IN_EXTERNAL_SHA256_MANIFEST",
+    "remote_ancestry_verification": "REQUIRED_AFTER_PUSH_AND_RECORDED_IN_RELEASE"
   },
-  "independent_adjudication": "PENDING_CLEAN_CHECKOUT"
+  "independent_adjudication": "PASS_CLEAN_CHECKOUT"
 }
-

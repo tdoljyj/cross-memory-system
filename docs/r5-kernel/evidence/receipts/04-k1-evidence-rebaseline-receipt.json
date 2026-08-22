@@ -52,6 +52,6 @@
     "k1_contract": "9/9 PASS",
     "full_matrix": "43/43 QUALIFIED",
     "secret_scan_hits": 0,
-    "independent_adjudication": "PENDING_CLEAN_CHECKOUT"
+    "independent_adjudication": "PASS_CLEAN_CHECKOUT"
   }
 }
