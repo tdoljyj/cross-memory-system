@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "gate": "K2",
+  "tested_product_commit": "ce699b0fe05001e04707b26b80f886a2a6d12db8",
+  "database": "PostgreSQL 15.19 Windows x64",
+  "data": "synthetic only",
+  "migration": {
+    "id": "0001_cloud_data_foundation",
+    "up": "PASS",
+    "interrupted_transaction_residue": 0,
+    "down": "PASS",
+    "up_down_up_roundtrip": "PASS"
+  },
+  "projection": {
+    "corruption_injected": true,
+    "rebuild": "PASS",
+    "tombstone_remained_authoritative": true
+  },
+  "backup_restore": {
+    "format": "pg_dump custom",
+    "restore_target": "new synthetic database",
+    "deletion_ledger_rows_preserved": true,
+    "post_restore_invariant_violations": 0
+  },
+  "server_log": {
+    "unsafe_default_observed_and_rejected": true,
+    "safe_configuration_loaded": true,
+    "body_marker_hits_after_fix": 0
+  },
+  "production_or_real_binding_touched": false
+}

@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "gate": "K2",
+  "decision": "IMPLEMENTATION_PASS_AWAITING_INDEPENDENT_ADJUDICATION",
+  "authorized_at": "2026-08-22",
+  "authorization": "explicit user instruction: 开始执行K2",
+  "branch": "r5-kernel-k2-cloud-data",
+  "parent": "500386a14e7ec3da08eb3cf83a81e4be223239e4",
+  "remote_main_at_start": "500386a14e7ec3da08eb3cf83a81e4be223239e4",
+  "remote_main_before_evidence": "500386a14e7ec3da08eb3cf83a81e4be223239e4",
+  "tested_product_commit": "ce699b0fe05001e04707b26b80f886a2a6d12db8",
+  "assets": [
+    {
+      "path": "cloud/postgres/migrations/0001_cloud_data_foundation.up.sql",
+      "sha256": "06f2a1cedcbadff9f9ef783f219a6c1afd60b123629f563470af7d77e8bd7bc8"
+    },
+    {
+      "path": "cloud/postgres/migrations/0001_cloud_data_foundation.down.sql",
+      "sha256": "941c85c4401c619c6a2e88b736bb5643132a2a9c89c304c8b91186aa7333b371"
+    },
+    {
+      "path": "cloud/postgres/postgresql.k2.conf",
+      "sha256": "900e8b9872c2761a30b7687d98d5a5609ef9ab203c6ff13ba9c7edbd2196d8f3"
+    },
+    {
+      "path": "cloud/postgres/sql/scan_invariants.sql",
+      "sha256": "212c77551958271c7da5e41ce77be0708bf7e7b8d81d0bea19ac6ebf1241068b"
+    },
+    {
+      "path": "clued/cloud_data/tooling.py",
+      "sha256": "3fe10cefa4a7741a2c90bd2740664968049379181cc6adcaf3a490b5ecb053fa"
+    },
+    {
+      "path": "tests/test_r5_k2_cloud_foundation.py",
+      "sha256": "53b354656c8a1932679715ce07d8d201aec211e2ecefea414d60088be0e5dfdd"
+    },
+    {
+      "path": "tests/test_r5_k2_postgres_integration.py",
+      "sha256": "397d6b74902c7b4d4b23c7065e41e5a39d9d8fe74fb8f6f2921a61bad1662cd9"
+    }
+  ],
+  "evidence": {
+    "report": "docs/r5-kernel/03-Cloud-Data-Foundation.md",
+    "regression": "docs/r5-kernel/evidence/test-results/03-k2-regression-summary.json",
+    "security": "docs/r5-kernel/evidence/security/03-k2-secret-scan.json",
+    "recovery": "docs/r5-kernel/evidence/recovery/03-k2-backup-restore.json",
+    "k2_static_contract": "14/14 PASS",
+    "k2_postgres_integration": "14/14 PASS",
+    "full_matrix": "580 PASS / 0 FAIL / 0 SKIP / 580 total",
+    "secret_hits": 0
+  },
+  "pass_criteria": {
+    "cross_tenant_visibility": 0,
+    "tenant_tables_with_rls": "16/16",
+    "committed_seq_duplicate_or_gap": 0,
+    "immutable_update_paths": 0,
+    "projection_rebuild": "PASS",
+    "migration_roundtrip": "PASS",
+    "deletion_ledger_after_restore": "PASS",
+    "sql_or_error_log_body_hits": 0
+  },
+  "change_scope": {
+    "functional_product_code_changed": true,
+    "real_binding_changed": false,
+    "semantic_recall_enabled": false,
+    "canonical_store_switched": false,
+    "release_created": false,
+    "deployment_performed": false,
+    "pushed": false
+  },
+  "protocol_deviations": [],
+  "known_limitations": [
+    "synthetic local/dev PostgreSQL only; no Supabase or production deployment",
+    "JWT and Binding authorization wiring is deferred to K5",
+    "pgvector retrieval and semantic qualification are deferred to K7",
+    "cloud DR operations and PITR are deferred to K8"
+  ],
+  "next_gate": {
+    "gate": "K3",
+    "status": "LOCKED",
+    "requires": "new explicit authorization"
+  }
+}

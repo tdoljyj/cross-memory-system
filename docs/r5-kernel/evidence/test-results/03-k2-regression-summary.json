@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "gate": "K2",
+  "tested_product_commit": "ce699b0fe05001e04707b26b80f886a2a6d12db8",
+  "postgresql": {
+    "version": "15.19",
+    "platform": "Windows x64",
+    "data_class": "synthetic local/dev only"
+  },
+  "k2_static_contract": {
+    "pass": 14,
+    "fail": 0,
+    "skip": 0
+  },
+  "k2_postgres_integration": {
+    "pass": 14,
+    "fail": 0,
+    "skip": 0,
+    "scenarios": [
+      "transactional migration up",
+      "safe server log configuration",
+      "concurrent committed_seq",
+      "concurrent idempotency reservation",
+      "RLS and role isolation",
+      "client without service role",
+      "tombstone authority",
+      "immutable history and redacted errors",
+      "projection rebuild",
+      "interrupted migration rollback",
+      "data invariant scan",
+      "backup restore with deletion ledger",
+      "migration up/down/up roundtrip",
+      "zero body leakage in server log"
+    ]
+  },
+  "regression": {
+    "k1_contract": "9/9 PASS",
+    "sync_layer": "70/70 PASS",
+    "memory_engine": "55/55 PASS",
+    "full_matrix_files": 41,
+    "baseline_before_k2": 552,
+    "new_k2_tests": 28,
+    "pass": 580,
+    "fail": 0,
+    "skip": 0,
+    "total": 580
+  },
+  "environment_adjudication": {
+    "initial_sandbox_result": "577 PASS / 3 ENV FAIL / 0 SKIP",
+    "failing_file": "tests/test_envprobe.py",
+    "signature": "CodexSandboxOffline access denied at ~/.workbuddy/.envprobe-del-<pid>",
+    "host_context_rerun": "7/7 PASS",
+    "replacement_rule": "replace the complete result for the same test file",
+    "final_result": "580 PASS / 0 FAIL / 0 SKIP"
+  },
+  "semantic_recall_enabled": false,
+  "real_binding_changed": false
+}
