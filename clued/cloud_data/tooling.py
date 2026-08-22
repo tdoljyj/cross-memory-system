@@ -17,7 +17,7 @@ import shutil
 import subprocess
 import sys
 
-from . import MIGRATION_ID
+from . import LIFECYCLE_MIGRATION_ID, MIGRATION_ID
 
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -26,7 +26,13 @@ MIGRATIONS = os.path.join(PG_ROOT, "migrations")
 SQL_DIR = os.path.join(PG_ROOT, "sql")
 UP_SQL = os.path.join(MIGRATIONS, MIGRATION_ID + ".up.sql")
 DOWN_SQL = os.path.join(MIGRATIONS, MIGRATION_ID + ".down.sql")
+LIFECYCLE_UP_SQL = os.path.join(
+    MIGRATIONS, LIFECYCLE_MIGRATION_ID + ".up.sql")
+LIFECYCLE_DOWN_SQL = os.path.join(
+    MIGRATIONS, LIFECYCLE_MIGRATION_ID + ".down.sql")
 INVARIANT_SQL = os.path.join(SQL_DIR, "scan_invariants.sql")
+LIFECYCLE_INVARIANT_SQL = os.path.join(
+    SQL_DIR, "scan_lifecycle_invariants.sql")
 ROLE_BOOTSTRAP_SQL = os.path.join(SQL_DIR, "bootstrap_roles.sql")
 MANAGED_ROLES = ("clued_owner", "clued_client", "clued_service")
 
@@ -102,6 +108,15 @@ def migrate(dsn, direction, bin_dir=None):
             "migration_id": MIGRATION_ID}
 
 
+def migrate_lifecycle(dsn, direction, bin_dir=None):
+    path = LIFECYCLE_UP_SQL if direction == "up" else LIFECYCLE_DOWN_SQL
+    if not os.path.isfile(path):
+        raise ToolError("lifecycle migration file is missing")
+    psql(dsn, bin_dir=bin_dir, file_path=path)
+    return {"ok": True, "operation": "lifecycle_migrate_%s" % direction,
+            "migration_id": LIFECYCLE_MIGRATION_ID}
+
+
 def migration_status(dsn, bin_dir=None):
     sql = (
         "SELECT EXISTS (SELECT 1 FROM information_schema.tables "
@@ -126,6 +141,19 @@ def migration_status(dsn, bin_dir=None):
 
 def scan_invariants(dsn, bin_dir=None):
     proc = psql(dsn, bin_dir=bin_dir, file_path=INVARIANT_SQL,
+                csv_output=True)
+    rows = list(csv.DictReader(io.StringIO(proc.stdout)))[0:]
+    violations = []
+    for row in rows:
+        count = int(row["violation_count"])
+        if count:
+            violations.append({"name": row["invariant_name"], "count": count})
+    return {"ok": not violations, "checked": len(rows),
+            "violations": violations}
+
+
+def scan_lifecycle_invariants(dsn, bin_dir=None):
+    proc = psql(dsn, bin_dir=bin_dir, file_path=LIFECYCLE_INVARIANT_SQL,
                 csv_output=True)
     rows = list(csv.DictReader(io.StringIO(proc.stdout)))[0:]
     violations = []
@@ -233,7 +261,10 @@ def build_parser():
     sub.add_parser("status")
     mig = sub.add_parser("migrate")
     mig.add_argument("direction", choices=("up", "down"))
+    lifecycle_mig = sub.add_parser("lifecycle-migrate")
+    lifecycle_mig.add_argument("direction", choices=("up", "down"))
     scan = sub.add_parser("scan")
+    lifecycle_scan = sub.add_parser("lifecycle-scan")
     rebuild = sub.add_parser("rebuild-projection")
     rebuild.add_argument("account_id")
     dump = sub.add_parser("backup")
@@ -255,8 +286,12 @@ def main(argv=None):
             result = migration_status(args.dsn, args.bin_dir)
         elif args.command == "migrate":
             result = migrate(args.dsn, args.direction, args.bin_dir)
+        elif args.command == "lifecycle-migrate":
+            result = migrate_lifecycle(args.dsn, args.direction, args.bin_dir)
         elif args.command == "scan":
             result = scan_invariants(args.dsn, args.bin_dir)
+        elif args.command == "lifecycle-scan":
+            result = scan_lifecycle_invariants(args.dsn, args.bin_dir)
         elif args.command == "rebuild-projection":
             result = rebuild_projection(args.dsn, args.account_id, args.bin_dir)
         elif args.command == "backup":
