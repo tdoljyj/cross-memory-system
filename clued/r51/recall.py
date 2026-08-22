@@ -301,3 +301,66 @@ class SafeRecallEngine:
             "freshness": freshness,
             "semantic_recall_enabled": False,
         }
+class PostgresCloudFTSProvider:
+    """Parameterized PostgreSQL FTS adapter with SQL-side hard gates."""
+
+    identity = "clued-postgres-fts/v1"
+    _SQL = """
+      SELECT c.memory_id::text AS id,
+             v.version_id::text AS version_id,
+             v.content,
+             ts_rank_cd(
+               to_tsvector('simple', COALESCE(v.content, '')),
+               plainto_tsquery('simple', %s)) AS score
+        FROM clued.memory_current c
+        JOIN clued.memory_versions v
+          ON v.account_id = c.account_id
+         AND v.version_id = c.current_version_id
+        JOIN clued.bindings b
+          ON b.account_id = c.account_id
+         AND b.binding_id = %s::uuid
+       WHERE c.account_id = %s::uuid
+         AND b.status = 'ACTIVE'
+         AND 'memory:read' = ANY(b.scopes)
+         AND c.status = 'ACTIVE'
+         AND v.status = 'ACTIVE'
+         AND v.sensitivity <> 'SECRET'
+         AND v.truth_state NOT IN ('REJECTED', 'CONFLICTED')
+         AND (v.valid_from IS NULL OR v.valid_from <= clock_timestamp())
+         AND (v.valid_until IS NULL OR v.valid_until > clock_timestamp())
+         AND (v.scope = 'GLOBAL' OR v.space_id = ANY(%s::uuid[]))
+         AND to_tsvector('simple', COALESCE(v.content, ''))
+             @@ plainto_tsquery('simple', %s)
+       ORDER BY score DESC, c.committed_seq DESC, c.memory_id ASC
+       LIMIT %s
+    """
+
+    def __init__(self, connection):
+        if connection is None:
+            raise RecallError("CLOUD_FTS_CONNECTION_REQUIRED")
+        self.connection = connection
+
+    def search(self, caller: CallerIdentity, query: str, *,
+               accessible_space_ids=(), limit: int = 5):
+        maximum = min(max(1, int(limit)), 20)
+        cursor = None
+        try:
+            cursor = self.connection.cursor()
+            cursor.execute(
+                self._SQL,
+                (str(query or ""), caller.binding_id, caller.account_id,
+                 list(accessible_space_ids), str(query or ""), maximum))
+            rows = cursor.fetchall()
+            columns = [column[0] for column in cursor.description]
+            results = [dict(zip(columns, row)) for row in rows]
+            return {
+                "provider": self.identity,
+                "evidence_level": "VERIFIED",
+                "results": results,
+                "semantic_recall_enabled": False,
+            }
+        except Exception:
+            raise RecallError("CLOUD_FTS_QUERY_FAILED")
+        finally:
+            if cursor is not None:
+                cursor.close()

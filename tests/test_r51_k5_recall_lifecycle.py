@@ -311,5 +311,71 @@ class K5LifecycleTests(unittest.TestCase):
             target.recallable("account-a")
 
 
+class _FTSCursor:
+    def __init__(self, error=None):
+        self.error = error
+        self.statement = None
+        self.params = None
+        self.description = [
+            ("id",), ("version_id",), ("content",), ("score",)]
+        self.closed = False
+
+    def execute(self, statement, params):
+        self.statement = statement
+        self.params = params
+        if self.error:
+            raise RuntimeError(self.error)
+
+    def fetchall(self):
+        return [("m1", "v1", "synthetic result", 0.9)]
+
+    def close(self):
+        self.closed = True
+
+
+class _FTSConnection:
+    def __init__(self, error=None):
+        self.value = _FTSCursor(error=error)
+
+    def cursor(self):
+        return self.value
+
+
+class K5PostgresFTSContractTests(unittest.TestCase):
+    def test_15_postgres_fts_is_parameterized_and_hard_filtered(self):
+        from clued.r51.recall import PostgresCloudFTSProvider, RecallError
+
+        caller = CallerIdentity("account-a", "binding-a", "device-a")
+        connection = _FTSConnection()
+        provider = PostgresCloudFTSProvider(connection)
+        result = provider.search(
+            caller, "private synthetic query",
+            accessible_space_ids=["00000000-0000-0000-0000-000000000001"])
+        statement = connection.value.statement
+        self.assertNotIn("private synthetic query", statement)
+        self.assertEqual("private synthetic query", connection.value.params[0])
+        for contract in (
+                "c.account_id = %s::uuid",
+                "b.binding_id = %s::uuid",
+                "b.status = 'ACTIVE'",
+                "'memory:read' = ANY(b.scopes)",
+                "c.status = 'ACTIVE'",
+                "v.status = 'ACTIVE'",
+                "v.sensitivity <> 'SECRET'",
+                "v.truth_state NOT IN",
+                "v.valid_from IS NULL",
+                "v.valid_until IS NULL",
+                "v.space_id = ANY(%s::uuid[])"):
+            self.assertIn(contract, statement)
+        self.assertEqual("VERIFIED", result["evidence_level"])
+        self.assertFalse(result["semantic_recall_enabled"])
+        self.assertTrue(connection.value.closed)
+
+        broken = PostgresCloudFTSProvider(
+            _FTSConnection(error="secret database detail"))
+        with self.assertRaises(RecallError) as raised:
+            broken.search(caller, "query")
+        self.assertEqual("CLOUD_FTS_QUERY_FAILED", str(raised.exception))
+        self.assertNotIn("secret database detail", str(raised.exception))
 if __name__ == "__main__":
     unittest.main()
