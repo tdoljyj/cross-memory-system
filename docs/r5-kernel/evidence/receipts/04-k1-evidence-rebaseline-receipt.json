@@ -41,7 +41,7 @@
     },
     {
       "path": "tools/export-r5-gate-evidence.ps1",
-      "sha256": "4030cbd7d6e59742e88b518bb5c65dc0ee84a69b93fbe83188abadd8c7bad1f7"
+      "sha256": "f7a34954127bc3f161064371f74b9eccdccc4a93518826a25ae882718109f4c6"
     },
     {
       "path": "tests/test_r5_k3_postgres_integration.py",

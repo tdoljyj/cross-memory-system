@@ -4,7 +4,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$root = (& git rev-parse --show-toplevel).Trim()
+$root = [IO.Path]::GetFullPath((& git rev-parse --show-toplevel).Trim())
 if ($LASTEXITCODE -ne 0) { throw 'not inside a Git repository' }
 
 $receiptPath = [IO.Path]::GetFullPath((Join-Path $root $Receipt))
@@ -49,4 +49,3 @@ $manifestPath = $output + '.sha256.json'
 Write-Output ('BUNDLE=' + $output)
 Write-Output ('SHA256=' + $bundleHash)
 Write-Output ('MANIFEST=' + $manifestPath)
-
