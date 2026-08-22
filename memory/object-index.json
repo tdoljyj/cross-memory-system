@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-08-21T06:47:45Z",
-  "count": 234,
+  "generated_at": "2026-08-22T05:36:15Z",
+  "count": 236,
   "objects": {
     "mem_012b899e": {
       "path": "memory/objects/mem_012b899e.json",
@@ -1935,6 +1935,51 @@
       "tags": [],
       "entities": [],
       "valid_from": null,
+      "valid_until": null,
+      "supersedes": [],
+      "superseded_by": []
+    },
+    "mem_9b4ed78a": {
+      "path": "memory/objects/mem_9b4ed78a.json",
+      "type": "state",
+      "scope": "global",
+      "status": "active",
+      "priority": "high",
+      "category": "state",
+      "tags": [
+        "R5",
+        "K0",
+        "NO_GO",
+        "R4-separation"
+      ],
+      "entities": [
+        "cross-memory-system",
+        "Clued-Kernel"
+      ],
+      "valid_from": "2026-08-22T00:00:00+08:00",
+      "valid_until": null,
+      "supersedes": [],
+      "superseded_by": []
+    },
+    "mem_9d7dbf63": {
+      "path": "memory/objects/mem_9d7dbf63.json",
+      "type": "semantic",
+      "scope": "global",
+      "status": "active",
+      "priority": "high",
+      "category": "constraint",
+      "tags": [
+        "R5",
+        "K0",
+        "K1",
+        "NO_GO",
+        "LOCKED"
+      ],
+      "entities": [
+        "cross-memory-system",
+        "Clued-Kernel"
+      ],
+      "valid_from": "2026-08-22T00:00:00+08:00",
       "valid_until": null,
       "supersedes": [],
       "superseded_by": []
