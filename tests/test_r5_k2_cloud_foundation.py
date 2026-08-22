@@ -243,6 +243,7 @@ def test_postgres_logging_contract_suppresses_body_text():
         "log_min_error_statement": "'panic'",
         "log_parameter_max_length": "0",
         "log_parameter_max_length_on_error": "0",
+        "log_error_verbosity": "'terse'",
     }
     for key, value in expected.items():
         check(re.search(r"(?m)^%s\s*=\s*%s\s*$" %

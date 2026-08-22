@@ -1,0 +1,188 @@
+{
+  "gate": "K6",
+  "status": "PASS",
+  "git_head": "c94a4f0063055c677e1b3ad5077fb7c5ded79998",
+  "parent": "5bfee3a7227151bf070bed2803bcf6bc4f8af8d3",
+  "worktree_clean": true,
+  "changed_files": [
+    "clued/r51/__main__.py",
+    "clued/r51/activation.py",
+    "clued/r51/cli.py",
+    "clued/r51/pilot.py",
+    "clued/r51/service.py",
+    "clued/r51/telemetry.py",
+    "tests/test_r51_k6_install_doctor_pilot.py"
+  ],
+  "tests": {
+    "pass": 88,
+    "fail": 0,
+    "skip": 0,
+    "error": 0,
+    "specialized": 20,
+    "inherited_install_uninstall_recovery_e2e": 68,
+    "specialized_stable_runs": 2
+  },
+  "hard_gate_violations": 0,
+  "performance": {
+    "pilot_operations": 20,
+    "pilot_elapsed_seconds": 0.057447
+  },
+  "cost_usd": 0,
+  "rollback_checked": true,
+  "borrowed_enhancements": {
+    "BE-01": "PASS",
+    "BE-02": "PASS",
+    "BE-03": "PASS (inherited from K5)",
+    "BE-04": "PASS (inherited from K5)",
+    "BE-05": "PASS",
+    "BE-06": "PASS (inherited from K4)"
+  },
+  "pilot": {
+    "status": "PASS",
+    "synthetic_only": true,
+    "operation_count": 20,
+    "category_counts": {
+      "create_update": 5,
+      "cross_agent_recall": 5,
+      "offline_sync": 3,
+      "conflict_stale_base": 2,
+      "delete_restore": 2,
+      "binding_revoke": 1,
+      "export": 1,
+      "install_rollback": 1
+    },
+    "data_loss": 0,
+    "unexplained_errors": 0,
+    "noncritical_issues": [],
+    "operations": [
+      {
+        "number": 1,
+        "category": "create_update",
+        "name": "create-1",
+        "result": "PASS"
+      },
+      {
+        "number": 2,
+        "category": "create_update",
+        "name": "create-2",
+        "result": "PASS"
+      },
+      {
+        "number": 3,
+        "category": "create_update",
+        "name": "create-3",
+        "result": "PASS"
+      },
+      {
+        "number": 4,
+        "category": "create_update",
+        "name": "update-1",
+        "result": "PASS"
+      },
+      {
+        "number": 5,
+        "category": "create_update",
+        "name": "update-2",
+        "result": "PASS"
+      },
+      {
+        "number": 6,
+        "category": "cross_agent_recall",
+        "name": "recall-synthetic",
+        "result": "PASS"
+      },
+      {
+        "number": 7,
+        "category": "cross_agent_recall",
+        "name": "recall-updated",
+        "result": "PASS"
+      },
+      {
+        "number": 8,
+        "category": "cross_agent_recall",
+        "name": "recall-topic1",
+        "result": "PASS"
+      },
+      {
+        "number": 9,
+        "category": "cross_agent_recall",
+        "name": "recall-topic2",
+        "result": "PASS"
+      },
+      {
+        "number": 10,
+        "category": "cross_agent_recall",
+        "name": "recall-topic3",
+        "result": "PASS"
+      },
+      {
+        "number": 11,
+        "category": "offline_sync",
+        "name": "offline-create-recover",
+        "result": "PASS"
+      },
+      {
+        "number": 12,
+        "category": "offline_sync",
+        "name": "offline-update-recover",
+        "result": "PASS"
+      },
+      {
+        "number": 13,
+        "category": "offline_sync",
+        "name": "committed-response-loss-recover",
+        "result": "PASS"
+      },
+      {
+        "number": 14,
+        "category": "conflict_stale_base",
+        "name": "explicit-conflict-1",
+        "result": "PASS"
+      },
+      {
+        "number": 15,
+        "category": "conflict_stale_base",
+        "name": "explicit-conflict-2",
+        "result": "PASS"
+      },
+      {
+        "number": 16,
+        "category": "delete_restore",
+        "name": "delete-and-sync",
+        "result": "PASS"
+      },
+      {
+        "number": 17,
+        "category": "delete_restore",
+        "name": "backup-ledger-restore",
+        "result": "PASS"
+      },
+      {
+        "number": 18,
+        "category": "binding_revoke",
+        "name": "binding-revoke",
+        "result": "PASS"
+      },
+      {
+        "number": 19,
+        "category": "export",
+        "name": "jsonl-checksum-export",
+        "result": "PASS"
+      },
+      {
+        "number": 20,
+        "category": "install_rollback",
+        "name": "forced-update-rollback",
+        "result": "PASS"
+      }
+    ]
+  },
+  "known_limitations": [
+    "The graphical Installer shell is deferred; CLI and AI Conversation share the verified KernelService.",
+    "The Pilot uses one real Windows host plus isolated logical device profiles and synthetic data.",
+    "PostgreSQL 15+ integration rerun remains a K7 qualification step.",
+    "Production Binding backends were not changed or contacted.",
+    "Semantic recall remains disabled."
+  ],
+  "protocol_deviations": []
+}
