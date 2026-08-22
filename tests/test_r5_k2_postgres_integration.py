@@ -553,12 +553,14 @@ def main():
             "log_parameter_max_length": scalar(dsn, "SHOW log_parameter_max_length"),
             "log_parameter_max_length_on_error": scalar(
                 dsn, "SHOW log_parameter_max_length_on_error"),
+            "log_error_verbosity": scalar(dsn, "SHOW log_error_verbosity"),
         }
         check(logging_settings == {
             "log_statement": "none",
             "log_min_error_statement": "panic",
             "log_parameter_max_length": "0",
             "log_parameter_max_length_on_error": "0",
+            "log_error_verbosity": "terse",
         }, "unsafe PostgreSQL logging settings: %r" % logging_settings)
         tests.append("server_log_safety_configuration")
 

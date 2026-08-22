@@ -361,7 +361,7 @@ class K5PostgresFTSContractTests(unittest.TestCase):
                 "'memory:read' = ANY(b.scopes)",
                 "c.status = 'ACTIVE'",
                 "v.status = 'ACTIVE'",
-                "v.sensitivity <> 'SECRET'",
+                "v.sensitivity NOT IN ('SECRET', 'SECRET_BLOCKED')",
                 "v.truth_state NOT IN",
                 "v.valid_from IS NULL",
                 "v.valid_until IS NULL",

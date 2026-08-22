@@ -324,7 +324,7 @@ class PostgresCloudFTSProvider:
          AND 'memory:read' = ANY(b.scopes)
          AND c.status = 'ACTIVE'
          AND v.status = 'ACTIVE'
-         AND v.sensitivity <> 'SECRET'
+         AND v.sensitivity NOT IN ('SECRET', 'SECRET_BLOCKED')
          AND v.truth_state NOT IN ('REJECTED', 'CONFLICTED')
          AND (v.valid_from IS NULL OR v.valid_from <= clock_timestamp())
          AND (v.valid_until IS NULL OR v.valid_until > clock_timestamp())
