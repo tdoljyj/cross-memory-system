@@ -4,23 +4,25 @@
   "type": "state",
   "scope": "global",
   "content": "2026-08-22 Clued Kernel R5 K1 架构与合同冻结完成：机器合同 clued-kernel-r5-k1/1.0.0，专项 9/9、同步层 70/70、Memory Engine 55/55、MIV-005A 合同 19/19；全量 551 项为 539 PASS / 12 FAIL，失败与 K0 完全一致、无新增失败，最终候选树密钥扫描 0 命中。K0 仍为 NO_GO，语义召回未启用，未 release/deploy，K2 保持锁定。",
-  "status": "active",
+  "status": "superseded",
   "source": {
     "kind": "user_explicit",
     "adapter": "cli",
     "session_id": null,
     "created_at": "2026-08-22T06:47:27Z",
-    "updated_at": "2026-08-22T06:47:28Z"
+    "updated_at": "2026-08-22T07:32:36Z"
   },
   "temporal": {
     "valid_from": null,
-    "valid_until": null
+    "valid_until": "2026-08-22T07:32:36Z"
   },
   "relations": {
     "supersedes": [
       "mem_f7b771a0"
     ],
-    "superseded_by": [],
+    "superseded_by": [
+      "mem_7c595648"
+    ],
     "contradicts": [],
     "related": []
   },

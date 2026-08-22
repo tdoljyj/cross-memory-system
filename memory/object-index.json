@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-08-22T06:47:28Z",
-  "count": 239,
+  "generated_at": "2026-08-22T07:34:57Z",
+  "count": 241,
   "objects": {
     "mem_012b899e": {
       "path": "memory/objects/mem_012b899e.json",
@@ -475,7 +475,7 @@
       "path": "memory/objects/mem_26ed6fc2.json",
       "type": "semantic",
       "scope": "global",
-      "status": "active",
+      "status": "superseded",
       "priority": "high",
       "category": "constraint",
       "tags": [
@@ -490,11 +490,13 @@
         "Clued-Kernel"
       ],
       "valid_from": null,
-      "valid_until": null,
+      "valid_until": "2026-08-22T07:32:36Z",
       "supersedes": [
         "mem_9d7dbf63"
       ],
-      "superseded_by": []
+      "superseded_by": [
+        "mem_68ce421a"
+      ]
     },
     "mem_27338615": {
       "path": "memory/objects/mem_27338615.json",
@@ -1336,6 +1338,31 @@
       "supersedes": [],
       "superseded_by": []
     },
+    "mem_68ce421a": {
+      "path": "memory/objects/mem_68ce421a.json",
+      "type": "semantic",
+      "scope": "global",
+      "status": "active",
+      "priority": "high",
+      "category": "constraint",
+      "tags": [
+        "R5",
+        "K0",
+        "K1",
+        "NO_GO",
+        "LOCKED"
+      ],
+      "entities": [
+        "cross-memory-system",
+        "Clued-Kernel"
+      ],
+      "valid_from": null,
+      "valid_until": null,
+      "supersedes": [
+        "mem_26ed6fc2"
+      ],
+      "superseded_by": []
+    },
     "mem_69cbfae2": {
       "path": "memory/objects/mem_69cbfae2.json",
       "type": "episodic",
@@ -1546,6 +1573,30 @@
       "valid_from": null,
       "valid_until": null,
       "supersedes": [],
+      "superseded_by": []
+    },
+    "mem_7c595648": {
+      "path": "memory/objects/mem_7c595648.json",
+      "type": "state",
+      "scope": "global",
+      "status": "active",
+      "priority": "high",
+      "category": "state",
+      "tags": [
+        "R5",
+        "K0",
+        "NO_GO",
+        "R4-separation"
+      ],
+      "entities": [
+        "cross-memory-system",
+        "Clued-Kernel"
+      ],
+      "valid_from": null,
+      "valid_until": null,
+      "supersedes": [
+        "mem_bdc913b7"
+      ],
       "superseded_by": []
     },
     "mem_7c6a2c8f": {
@@ -2527,7 +2578,7 @@
       "path": "memory/objects/mem_bdc913b7.json",
       "type": "state",
       "scope": "global",
-      "status": "active",
+      "status": "superseded",
       "priority": "high",
       "category": "state",
       "tags": [
@@ -2541,11 +2592,13 @@
         "Clued-Kernel"
       ],
       "valid_from": null,
-      "valid_until": null,
+      "valid_until": "2026-08-22T07:32:36Z",
       "supersedes": [
         "mem_f7b771a0"
       ],
-      "superseded_by": []
+      "superseded_by": [
+        "mem_7c595648"
+      ]
     },
     "mem_be0d7d2e": {
       "path": "memory/objects/mem_be0d7d2e.json",
