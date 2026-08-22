@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "id": "mem_60b4dce9",
+  "type": "semantic",
+  "scope": "global",
+  "content": "2026-08-22 K2 第四轮独立裁决为 PASS，K2 Gate 已通过；先前 PARTIAL PASS 缺口已全部关闭。K3 继续 LOCKED，只有用户新的明确授权才能进入 K3；继续禁止未授权 push/merge/tag/release/deploy、真实 Binding 变更与语义召回启用。",
+  "status": "active",
+  "source": {
+    "kind": "user_explicit",
+    "adapter": "cli",
+    "session_id": null,
+    "created_at": "2026-08-22T10:11:42Z",
+    "updated_at": "2026-08-22T10:11:42Z"
+  },
+  "temporal": {
+    "valid_from": null,
+    "valid_until": null
+  },
+  "relations": {
+    "supersedes": [
+      "mem_1a72b942"
+    ],
+    "superseded_by": [],
+    "contradicts": [],
+    "related": []
+  },
+  "classification": {
+    "memory_layer": "semantic",
+    "category": "constraint",
+    "recall_layer": "L5",
+    "priority": "high"
+  },
+  "provenance": {
+    "evidence": "explicit",
+    "source_ref": null
+  },
+  "tags": [
+    "R5",
+    "K0",
+    "K1",
+    "NO_GO",
+    "LOCKED"
+  ],
+  "entities": [
+    "cross-memory-system",
+    "Clued-Kernel"
+  ]
+}
