@@ -1,0 +1,300 @@
+{
+  "schema_version": 1,
+  "contract_id": "clued-kernel-r5-k1",
+  "contract_version": "1.0.0",
+  "gate": "K1",
+  "decision": "FROZEN",
+  "frozen_at": "2026-08-22",
+  "baseline_head": "30c2f69723d897f235d971d6e0847b44b69d5699",
+  "product_version": "0.2.0",
+  "protocol_version": "0.3.0",
+  "runtime_version": "0.2.x",
+  "normative_sources": [
+    "docs/r5-kernel/01-Architecture-and-Contract-Freeze.md",
+    "docs/r5-kernel/contracts/kernel-contract-v1.json",
+    "Clued_v0.1_智能体安装授权弱网降级与卸载协议.md",
+    "ADR-CLD-001-LKG-Max-Age-One-Hour.md",
+    "ADR-CLD-002-LOCKED-Recovery-Transition.md",
+    "ADR-CLD-003-LKG-Policy-Profiles.md"
+  ],
+  "truth_receipt": {
+    "k0_decision": "NO_GO",
+    "k0_evidence_commit": "951078fc173809547ed377bfe326c68b9e476ac9",
+    "k0_evidence_is_ancestor_of_baseline": false,
+    "previous_memory_claim": "not pushed or merged",
+    "previous_memory_claim_status": "CONFIRMED_BY_GIT_ANCESTRY",
+    "k1_authorization": "explicit user instruction on 2026-08-22",
+    "k1_does_not_reclassify_k0": true
+  },
+  "architecture": {
+    "layers_top_down": [
+      "conversation_adapter",
+      "lifecycle_controller",
+      "auth_and_sync_planes",
+      "local_runtime",
+      "memory_engine_and_git_sync",
+      "canonical_store"
+    ],
+    "single_orchestrator": "clued.controller.Controller",
+    "plane_separation": {
+      "auth": "clued.auth.provider.AuthProvider",
+      "sync": "clued.sync_provider.SyncProvider"
+    },
+    "legacy_core_bridges": [
+      "clued.controller",
+      "clued.installer",
+      "clued.memory_gate",
+      "clued.paths",
+      "clued.sync_provider"
+    ],
+    "canonical_store": "remote Git repository",
+    "local_degraded_truth": "temporary node-local operational truth only",
+    "forbidden_actions": [
+      "adapter_bypasses_controller",
+      "auth_denial_degrades_to_local",
+      "push_before_pull",
+      "direct_canonical_store_write_outside_sync_provider",
+      "automatic_conflict_resolution",
+      "rebase",
+      "force_push",
+      "runtime_files_enter_canonical_store",
+      "semantic_recall_enablement_by_k1",
+      "release_or_deploy_by_k1"
+    ]
+  },
+  "controller_contract": {
+    "install": [
+      "self",
+      "agent_type",
+      "agent_instance_label",
+      "session_id",
+      "request_id",
+      "committer_name",
+      "committer_email"
+    ],
+    "auth_check": ["self", "binding_id", "session_id", "request_id"],
+    "auth_policy": ["self", "binding_id", "set_policy", "request_id"],
+    "memory_recall": [
+      "self",
+      "binding_id",
+      "session_id",
+      "query",
+      "tier",
+      "request_id"
+    ],
+    "memory_write": [
+      "self",
+      "binding_id",
+      "session_id",
+      "operation",
+      "content",
+      "memory_id",
+      "category",
+      "request_id",
+      "remember",
+      "committer_name",
+      "committer_email"
+    ],
+    "sync": [
+      "self",
+      "binding_id",
+      "session_id",
+      "request_id",
+      "committer_name",
+      "committer_email"
+    ],
+    "status": ["self", "binding_id"],
+    "uninstall": [
+      "self",
+      "binding_id",
+      "mode",
+      "session_id",
+      "request_id",
+      "discard_pending",
+      "confirm_shared_cleanup"
+    ],
+    "doctor": ["self", "request_id", "include_sync", "include_engine"]
+  },
+  "cli_contract": {
+    "commands": [
+      "install",
+      "auth check",
+      "auth policy",
+      "status",
+      "memory recall",
+      "memory add",
+      "memory update",
+      "memory supersede",
+      "memory delete",
+      "sync",
+      "uninstall",
+      "doctor"
+    ],
+    "json_stdout_objects": 1,
+    "diagnostics_stream": "stderr",
+    "envelope_fields": [
+      "protocol_version",
+      "request_id",
+      "ok",
+      "code",
+      "state",
+      "message",
+      "data",
+      "actions",
+      "retry_after_seconds",
+      "timestamp"
+    ],
+    "success_exit_code": 0,
+    "degraded_success_may_be_ok": true,
+    "local_unsynced_must_not_claim_synced": true
+  },
+  "auth_contract": {
+    "results": ["AUTHORIZED", "DENIED", "DENIED_SECURITY", "UNAVAILABLE"],
+    "required_scopes": ["memory:read", "memory:write", "sync:request"],
+    "connect_timeout_s": 3.0,
+    "operation_timeout_s": 5.0,
+    "max_attempts": 2,
+    "total_budget_s": 12.0,
+    "degraded_session_ttl_s": 1800.0,
+    "policy_profiles": {
+      "balanced": 21600.0,
+      "strict": 3600.0
+    },
+    "default_policy": "balanced",
+    "upgrade_policy": "strict",
+    "max_lkg_age_s": 21600.0,
+    "locked_recovery_requires_fresh_online_authorized": true,
+    "denial_never_degrades": true
+  },
+  "state_machine": {
+    "states": [
+      "UNINSTALLED",
+      "INSTALLING",
+      "AUTH_REQUIRED",
+      "ONLINE_SYNCED",
+      "ONLINE_DIRTY",
+      "DEGRADED_LOCAL",
+      "RECOVERING",
+      "CONFLICT_REVIEW",
+      "LOCKED",
+      "UNINSTALLING",
+      "INSTALL_ERROR"
+    ],
+    "transitions": {
+      "UNINSTALLED": ["INSTALLING"],
+      "INSTALLING": ["AUTH_REQUIRED", "ONLINE_SYNCED", "UNINSTALLED", "INSTALL_ERROR"],
+      "AUTH_REQUIRED": ["ONLINE_SYNCED", "DEGRADED_LOCAL", "LOCKED", "UNINSTALLING"],
+      "ONLINE_SYNCED": ["ONLINE_DIRTY", "DEGRADED_LOCAL", "LOCKED", "UNINSTALLING"],
+      "ONLINE_DIRTY": ["ONLINE_SYNCED", "DEGRADED_LOCAL", "LOCKED", "RECOVERING", "CONFLICT_REVIEW", "UNINSTALLING"],
+      "DEGRADED_LOCAL": ["RECOVERING", "LOCKED", "UNINSTALLING"],
+      "RECOVERING": ["ONLINE_SYNCED", "CONFLICT_REVIEW", "DEGRADED_LOCAL", "LOCKED", "ONLINE_DIRTY"],
+      "CONFLICT_REVIEW": ["ONLINE_SYNCED", "UNINSTALLING", "LOCKED", "DEGRADED_LOCAL"],
+      "LOCKED": ["AUTH_REQUIRED", "UNINSTALLING"],
+      "UNINSTALLING": ["UNINSTALLED", "INSTALL_ERROR", "AUTH_REQUIRED", "ONLINE_SYNCED", "ONLINE_DIRTY", "DEGRADED_LOCAL", "CONFLICT_REVIEW", "LOCKED"],
+      "INSTALL_ERROR": ["INSTALLING", "UNINSTALLED", "UNINSTALLING"]
+    }
+  },
+  "journal_contract": {
+    "states": ["PENDING", "APPLYING", "SYNCED", "CONFLICTED", "REJECTED", "PENDING_CORRUPT"],
+    "terminal_states": ["SYNCED", "CONFLICTED", "REJECTED", "PENDING_CORRUPT"],
+    "transitions": {
+      "PENDING": ["APPLYING", "CONFLICTED", "REJECTED", "PENDING_CORRUPT"],
+      "APPLYING": ["SYNCED", "CONFLICTED", "REJECTED", "PENDING_CORRUPT", "PENDING"]
+    },
+    "delivery": "at_least_once",
+    "logical_effect": "idempotent_by_operation_id",
+    "conflict_policy": "explicit_no_last_write_wins"
+  },
+  "recovery_contract": {
+    "steps": [
+      "ACQUIRE_SINGLE_FLIGHT_LOCK",
+      "AUTHENTICATE",
+      "DOCTOR_PASS",
+      "VALIDATE_PENDING_JOURNAL",
+      "PULL_VIA_EXISTING_SYNC_LAYER",
+      "VALIDATE_REMOTE_HEAD",
+      "LOAD_PENDING_IN_ORDER",
+      "REPLAY_WITH_SAME_OPERATION_ID",
+      "CHECK_OPTIMISTIC_LOCKS",
+      "RUN_EXISTING_MEMORY_VALIDATION",
+      "PUSH_VIA_EXISTING_SYNC_LAYER",
+      "VERIFY_REMOTE_RESULT",
+      "MARK_PENDING_SYNCED",
+      "INVALIDATE_ONLY_IF_CHANGED",
+      "CLOSE_BREAKERS_AND_RETURN_ONLINE"
+    ],
+    "doctor_fail_blocks_canonical_read_and_push": true,
+    "no_change_rule": "NO_CHANGE -> NO_WRITE -> NO_SYNC -> NO_INVALIDATION"
+  },
+  "schema_contract": {
+    "node": "clued.node.v0.1",
+    "binding": "clued.binding.v0.1",
+    "auth_cache": "clued.auth-cache.v0.1",
+    "pending_op": "clued.pending-op.v0.1",
+    "pending_payload": "clued.pending-payload.v0.1",
+    "revoke_task": "clued.revoke-task.v0.1",
+    "session_auth": "clued.session-auth.v0.1",
+    "runtime_state": "clued.runtime-state.v0.1",
+    "conflict": "clued.conflict.v0.1",
+    "policy": "0.2"
+  },
+  "exit_codes": {
+    "ok": 0,
+    "usage": 10,
+    "capability": 20,
+    "denied": 30,
+    "unavailable": 31,
+    "sync_fail": 40,
+    "conflict": 41,
+    "transaction_fail": 50,
+    "security": 60
+  },
+  "error_codes": [
+    "CLD-CAP-001",
+    "CLD-INSTALL-001",
+    "CLD-INSTALL-002",
+    "CLD-INSTALL-003",
+    "CLD-BIND-001",
+    "CLD-BIND-002",
+    "CLD-AUTH-001",
+    "CLD-AUTH-002",
+    "CLD-AUTH-003",
+    "CLD-AUTH-004",
+    "CLD-AUTH-005",
+    "CLD-AUTH-006",
+    "CLD-NET-001",
+    "CLD-SYNC-001",
+    "CLD-SYNC-002",
+    "CLD-SYNC-003",
+    "CLD-SYNC-004",
+    "CLD-PEND-001",
+    "CLD-PEND-002",
+    "CLD-CONFLICT-001",
+    "CLD-UNINSTALL-001",
+    "CLD-UNINSTALL-002",
+    "CLD-UNINSTALL-003",
+    "CLD-SEC-001",
+    "CLD-SEC-002"
+  ],
+  "compatibility_policy": {
+    "additive_optional_fields": "allowed_with_tests_and_documentation",
+    "new_error_codes": "allowed_only_if_existing_meanings_do_not_change",
+    "breaking_change": "requires_contract_major_bump_and_explicit_freeze_reopen",
+    "state_or_transition_change": "breaking",
+    "schema_semantic_change": "breaking",
+    "recovery_order_change": "breaking",
+    "auth_result_reclassification": "breaking",
+    "semantic_recall": "remains_disabled_and_not_product_qualified"
+  },
+  "next_gate": {
+    "gate": "K2",
+    "status": "LOCKED",
+    "unlock_requires": [
+      "K1 conformance test pass",
+      "K0 regressions remediated or explicitly accepted as bounded debt",
+      "fresh full regression evidence",
+      "no secret scan hits",
+      "explicit K2 authorization"
+    ]
+  }
+}

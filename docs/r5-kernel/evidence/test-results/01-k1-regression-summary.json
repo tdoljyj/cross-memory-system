@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "gate": "K1",
+  "tested_baseline": "30c2f69723d897f235d971d6e0847b44b69d5699",
+  "environment": {
+    "os": "Microsoft Windows NT 10.0.26200.0",
+    "python": "3.12.13",
+    "python_utf8": true
+  },
+  "runs": [
+    {
+      "name": "K1 architecture and contract freeze",
+      "command": "python tests/test_r5_k1_contract_freeze.py",
+      "pass": 9,
+      "fail": 0,
+      "skip": 0,
+      "result": "PASS"
+    },
+    {
+      "name": "vNext-1.3 sync layer",
+      "command": "PYTHONUTF8=1 python tests/test_acceptance.py",
+      "pass": 70,
+      "fail": 0,
+      "skip": 0,
+      "result": "PASS",
+      "note": "An initial inherited-GBK console run reproduced the known UnicodeEncodeError on the check-mark glyph; the frozen PYTHONUTF8=1 run passed."
+    },
+    {
+      "name": "vNext-2.0 Memory Engine",
+      "command": "python tests/test_memory_v2.py",
+      "pass": 55,
+      "fail": 0,
+      "skip": 0,
+      "result": "PASS"
+    },
+    {
+      "name": "MIV-005A evaluation contracts",
+      "command": "python tests/test_memory_eval.py",
+      "pass": 19,
+      "fail": 0,
+      "skip": 0,
+      "result": "PASS"
+    },
+    {
+      "name": "full current matrix",
+      "command": "run each tests/test_*.py in filename order with PYTHONUTF8=1",
+      "files": 39,
+      "files_pass": 36,
+      "files_fail": 3,
+      "pass": 539,
+      "fail": 12,
+      "skip": 0,
+      "total": 551,
+      "result": "FAIL_KNOWN_K0_DEBT_ONLY"
+    }
+  ],
+  "known_k0_failures": {
+    "tests/test_clued_e2e.py": 2,
+    "tests/test_clued_uninstall.py": 9,
+    "tests/test_heuristic_closure.py": 1,
+    "functional_signature": "WinError 145: Binding directory is not empty; residual file is state.json",
+    "environment_assumption_signature": "Test requires old ref-write-persistence defect while the live doctor probe passes"
+  },
+  "delta_from_k0": {
+    "new_tests": 9,
+    "new_passes": 9,
+    "new_failures": 0,
+    "resolved_failures": 0,
+    "known_failures_unchanged": 12
+  },
+  "decision": "K1_FREEZE_CONFORMANT_WITH_K0_DEBT_PRESERVED"
+}

@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "id": "mem_26ed6fc2",
+  "type": "semantic",
+  "scope": "global",
+  "content": "2026-08-22 用户已明确解锁并执行 Clued Kernel R5 K1；K1 架构与合同已按 clued-kernel-r5-k1/1.0.0 冻结。K0 NO_GO 与隔离证据保持有效，K0 证据提交不得 push/merge/tag/deploy；K2 在 K0 债务修复或显式接受、新鲜全量回归、零密钥命中及新的明确授权前保持锁定。",
+  "status": "active",
+  "source": {
+    "kind": "user_explicit",
+    "adapter": "cli",
+    "session_id": null,
+    "created_at": "2026-08-22T06:45:32Z",
+    "updated_at": "2026-08-22T06:45:32Z"
+  },
+  "temporal": {
+    "valid_from": null,
+    "valid_until": null
+  },
+  "relations": {
+    "supersedes": [
+      "mem_9d7dbf63"
+    ],
+    "superseded_by": [],
+    "contradicts": [],
+    "related": []
+  },
+  "classification": {
+    "memory_layer": "semantic",
+    "category": "constraint",
+    "recall_layer": "L5",
+    "priority": "high"
+  },
+  "provenance": {
+    "evidence": "explicit",
+    "source_ref": null
+  },
+  "tags": [
+    "R5",
+    "K0",
+    "K1",
+    "NO_GO",
+    "LOCKED"
+  ],
+  "entities": [
+    "cross-memory-system",
+    "Clued-Kernel"
+  ]
+}
