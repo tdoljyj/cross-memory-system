@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "gate": "K2",
-  "decision": "REMEDIATION_PASS_AWAITING_INDEPENDENT_RE_ADJUDICATION",
+  "decision": "GATE_PASS_INDEPENDENTLY_ADJUDICATED",
   "authorized_at": "2026-08-22",
   "authorization": "explicit user instruction: 补齐这些 K2 缺口并重新独立裁决",
   "prior_adjudications": [
@@ -71,11 +71,14 @@
     "recovery": "docs/r5-kernel/evidence/recovery/03-k2-backup-restore.json",
     "raw_transcript": "docs/r5-kernel/evidence/raw/03-k2-postgres-transcript.json",
     "sanitized_server_log": "docs/r5-kernel/evidence/raw/03-k2-postgres-server.log",
+    "independent_adjudication": "docs/r5-kernel/evidence/adjudication/03-k2-independent-final.json",
+    "independent_adjudication_sha256": "1b053d7965bb94eb6b720010792f02ca00ea13fc15154a6a3dac5f3ee8bf8db4",
+    "independent_adjudication_verdict": "PASS",
     "backup_sha256": "97dfe6afb8a93bb0e30af6c073399d2b745e272cd89c7c82b9dc0567740551ac",
     "k2_static_contract": "16/16 PASS",
     "k2_postgres_integration": "21/21 PASS",
     "full_matrix": "589 PASS / 0 FAIL / 0 SKIP / 589 total",
-    "secret_candidate_files": 473,
+    "secret_candidate_files": 474,
     "secret_hits": 0
   },
   "required_scenarios": {
@@ -121,6 +124,6 @@
   "next_gate": {
     "gate": "K3",
     "status": "LOCKED",
-    "requires": "independent K2 PASS followed by new explicit authorization"
+    "requires": "new explicit user authorization"
   }
 }

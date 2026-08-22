@@ -1,7 +1,7 @@
 # Clued Kernel R5 · K2 Cloud Data Foundation
 
 - Gate：`K2`
-- 裁决：`REMEDIATION_PASS / AWAITING_INDEPENDENT_RE-ADJUDICATION`
+- 裁决：`GATE PASS / INDEPENDENTLY ADJUDICATED`
 - 日期：`2026-08-22`
 - 原 K2 冻结链：`500386a → ce699b0 → 1a939b9`
 - 修复起点：`main@5c244d8e374e711a91670fbbec89f8c4aad3014b`
@@ -15,21 +15,22 @@
 本轮已逐项补齐同 ID 跨租户、RLS 遗漏、真实 migration 中断、change-event
 缺口、rollback 后不变量和原始证据缺口，并修复角色所有权、NULL 唯一键和恢复
 ACL 三项相关技术债。修复实现满足 R5 v1.0 计划第 16 节的本地/开发验收条件，
-但仍须新的独立裁决签署最终 Gate 结论。K2 没有切换
+第四次独立裁决已对修复提交、原始证据和真实 PostgreSQL 负向路径签发 `PASS`。
+K2 没有切换
 Canonical Store，没有连接 Supabase 或生产数据库，没有修改真实 Binding，没有读取
 旧 R4 holdout，也没有启用语义召回、push、merge、tag、Release 或部署。
 
 当前 Gate 状态：
 
 ```text
-K2 REMEDIATION PASS
-INDEPENDENT RE-ADJUDICATION PENDING
-K3 LOCKED
+K2 GATE PASS
+INDEPENDENT ADJUDICATION PASS
+K3 LOCKED — AWAITING NEW EXPLICIT AUTHORIZATION
 PRODUCT UNRELEASED
 SEMANTIC RECALL DISABLED
 ```
 
-本报告是 K2 修复候选证据；只有重新独立裁决为 PASS 后，K3 才能等待新的明确授权。
+本报告是 K2 最终本地证据；K3 现在仅进入等待新的明确授权状态。
 
 ## 2. 实现
 
@@ -123,7 +124,8 @@ SHA-256、恢复输入 SHA-256，以及受测 SQL、tooling 和测试源文件�
 | vNext-1.3 同步层 | `70/70 PASS` |
 | vNext-2.0 Memory Engine | `55/55 PASS` |
 | 全量矩阵 | `589 PASS / 0 FAIL / 0 SKIP` |
-| 候选树密钥扫描 | `473 files / 0 hits` |
+| 候选树密钥扫描 | `474 files / 0 hits` |
+| 第四次独立裁决 | `PASS / 0 blockers` |
 
 全量矩阵共 41 个测试文件。本轮直接在已验证的宿主 UTF-8 执行面运行，所有
 `589/589` 项一次通过，无 FAIL、SKIP、替换结果或未归类结果。此前沙盒中出现的
@@ -158,5 +160,5 @@ GBK 子进程编码、CodexSandboxOffline 权限和 `CLD-SYNC-002` 仅作为历�
   P1 修复为 `4f62fbc...`，强制验证 restore digest 后的最终受测实现为本地
   `4ed347f...`；
 - 功能分支未 push，且未 merge 到 main、未 tag、未 Release、未 deploy；
-- K3 `Memory Write and Lifecycle` 保持 `LOCKED`，等待重新独立裁决 PASS 后的
-  新明确授权。
+- K2 第四次独立裁决为 `PASS`；K3 `Memory Write and Lifecycle` 保持 `LOCKED`，
+  等待新的明确授权。

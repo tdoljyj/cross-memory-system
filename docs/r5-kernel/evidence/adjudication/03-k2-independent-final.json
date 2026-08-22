@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "gate": "K2",
+  "adjudication_round": 4,
+  "verdict": "PASS",
+  "reviewed_head": "e826a679b956b5fe543c3862ef295bbd895bc639",
+  "tested_product_commit": "4ed347fb908bbadc888c8cf58768536c6ca108ea",
+  "reviewer": "independent read-only agent",
+  "verification": {
+    "receipt_assets": "12/12 SHA-256 MATCH",
+    "raw_transcript_sha256": "11738fad937ee5c15384fe2b89fdc397354903b4d32260e9fba84a31b444a49a",
+    "sanitized_server_log_sha256": "6835d52cd158fdcb221e322e66249b6ce7668636499148038e82d19fce3af30a",
+    "backup_sha256": "97dfe6afb8a93bb0e30af6c073399d2b745e272cd89c7c82b9dc0567740551ac",
+    "backup_toc_lines": 179,
+    "k2_static": "16/16 PASS",
+    "k1_contract": "9/9 PASS",
+    "postgresql_integration": "21/21 PASS"
+  },
+  "mandatory_digest_negative_paths": {
+    "cli_omitted_expected_sha_exit": 2,
+    "api_omitted_expected_sha": "ToolError before role bootstrap",
+    "wrong_sha_exit": 1,
+    "role_changes_before_verified_restore": 0,
+    "schema_changes_before_verified_restore": 0,
+    "failed_restore_created_role_residue": 0,
+    "failed_restore_schema_residue": 0
+  },
+  "clean_restore": {
+    "roles_before": 0,
+    "roles_bootstrapped": 3,
+    "deletion_ledger_rows": 1,
+    "rls_tables": "16/16",
+    "client_select": true,
+    "client_insert": false,
+    "cross_tenant_visible_rows": 0,
+    "invariants_checked": 18,
+    "invariant_violations": 0
+  },
+  "required_scenarios": {
+    "same_idempotency_key_concurrent": "PASS",
+    "same_memory_id_cross_account": "PASS",
+    "rls_omission_fault_injection": "PASS",
+    "client_without_service_role": "PASS",
+    "actual_migration_interruption": "PASS",
+    "projection_corruption_rebuild": "PASS",
+    "change_event_gap_fault_injection": "PASS",
+    "committed_seq_concurrency": "PASS",
+    "tombstone_over_old_version": "PASS",
+    "post_rollback_invariants": "PASS"
+  },
+  "pass_criteria": {
+    "cross_tenant_visibility_zero": "PASS",
+    "all_tenant_tables_rls": "PASS",
+    "committed_seq_monotonic_unique": "PASS",
+    "immutable_tables_no_update_path": "PASS",
+    "projection_rebuildable": "PASS",
+    "migration_roundtrip": "PASS",
+    "deletion_ledger_after_restore": "PASS",
+    "sql_error_log_body_leakage_zero": "PASS"
+  },
+  "blocking_findings": [],
+  "non_blocking_scope_limits": [
+    "synthetic local/dev PostgreSQL only",
+    "production, Supabase, real Binding, semantic recall and PITR remain out of K2 scope"
+  ],
+  "cleanup": {
+    "temporary_databases_remaining": 0,
+    "managed_roles_remaining": 0,
+    "repository_modified_by_reviewer": false
+  },
+  "next_gate": {
+    "gate": "K3",
+    "status": "LOCKED",
+    "requires": "new explicit user authorization"
+  }
+}
