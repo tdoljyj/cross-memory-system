@@ -1,22 +1,27 @@
 {
   "schema_version": 1,
   "gate": "K2",
-  "decision": "IMPLEMENTATION_PASS_AWAITING_INDEPENDENT_ADJUDICATION",
+  "decision": "REMEDIATION_PASS_AWAITING_INDEPENDENT_RE_ADJUDICATION",
   "authorized_at": "2026-08-22",
-  "authorization": "explicit user instruction: 开始执行K2",
-  "branch": "r5-kernel-k2-cloud-data",
-  "parent": "500386a14e7ec3da08eb3cf83a81e4be223239e4",
-  "remote_main_at_start": "500386a14e7ec3da08eb3cf83a81e4be223239e4",
-  "remote_main_before_evidence": "500386a14e7ec3da08eb3cf83a81e4be223239e4",
-  "tested_product_commit": "ce699b0fe05001e04707b26b80f886a2a6d12db8",
+  "authorization": "explicit user instruction: 补齐这些 K2 缺口并重新独立裁决",
+  "prior_adjudication": "PARTIAL PASS: 5 PASS / 3 PARTIAL / 2 MISSING",
+  "branch": "r5-kernel-k2-remediation",
+  "original_frozen_head": "1a939b90b60cf7b767901265a614aa5c2a4b6a9f",
+  "parent": "e73a73cc899863ebe1e2bf4ff32ecbe2aacb8ab7",
+  "remote_main_at_remediation_start": "5c244d8e374e711a91670fbbec89f8c4aad3014b",
+  "tested_product_commit": "cb7509cb082265298ed356b9d225c4a298fc3e85",
   "assets": [
     {
+      "path": "cloud/postgres/README.md",
+      "sha256": "9efd2795b9dd0aa9987c4e8f12afc5ba770255ed915438a185b8cfb106ead8b6"
+    },
+    {
       "path": "cloud/postgres/migrations/0001_cloud_data_foundation.up.sql",
-      "sha256": "06f2a1cedcbadff9f9ef783f219a6c1afd60b123629f563470af7d77e8bd7bc8"
+      "sha256": "df313aa29c4d6cb37f10fdcecd6b015773e438966538348b033bbbe8ef53f7c0"
     },
     {
       "path": "cloud/postgres/migrations/0001_cloud_data_foundation.down.sql",
-      "sha256": "941c85c4401c619c6a2e88b736bb5643132a2a9c89c304c8b91186aa7333b371"
+      "sha256": "94be0d3881c0277a62d6a7a829d0f056aa33eb387c9490103f8f3d491b2f1e6d"
     },
     {
       "path": "cloud/postgres/postgresql.k2.conf",
@@ -28,15 +33,23 @@
     },
     {
       "path": "clued/cloud_data/tooling.py",
-      "sha256": "3fe10cefa4a7741a2c90bd2740664968049379181cc6adcaf3a490b5ecb053fa"
+      "sha256": "e3b9121f83968ec5a6f0699f82262063be744d20b1e4437d6bc02ebee31ab502"
     },
     {
       "path": "tests/test_r5_k2_cloud_foundation.py",
-      "sha256": "53b354656c8a1932679715ce07d8d201aec211e2ecefea414d60088be0e5dfdd"
+      "sha256": "28421bf508c67acb030850160985e64ec9d1779416dfda4cf96abad7744b8fdd"
     },
     {
       "path": "tests/test_r5_k2_postgres_integration.py",
-      "sha256": "397d6b74902c7b4d4b23c7065e41e5a39d9d8fe74fb8f6f2921a61bad1662cd9"
+      "sha256": "6c34d0a39124e48066153cd141bc9b9f3cf3ba29042744a740af0af193493bee"
+    },
+    {
+      "path": "docs/r5-kernel/evidence/raw/03-k2-postgres-transcript.json",
+      "sha256": "99f4cc29a8e501e366747b117f3532fa467a7cfbdc81b24bb3868d818a27e959"
+    },
+    {
+      "path": "docs/r5-kernel/evidence/raw/03-k2-postgres-server.log",
+      "sha256": "d5a6a4cf23d35fa8156d494411942494fb45138b55c7dfeb1b9eb4fd4f7e4a33"
     }
   ],
   "evidence": {
@@ -44,10 +57,26 @@
     "regression": "docs/r5-kernel/evidence/test-results/03-k2-regression-summary.json",
     "security": "docs/r5-kernel/evidence/security/03-k2-secret-scan.json",
     "recovery": "docs/r5-kernel/evidence/recovery/03-k2-backup-restore.json",
-    "k2_static_contract": "14/14 PASS",
-    "k2_postgres_integration": "14/14 PASS",
-    "full_matrix": "580 PASS / 0 FAIL / 0 SKIP / 580 total",
+    "raw_transcript": "docs/r5-kernel/evidence/raw/03-k2-postgres-transcript.json",
+    "sanitized_server_log": "docs/r5-kernel/evidence/raw/03-k2-postgres-server.log",
+    "backup_sha256": "91dd2fe85e99ebde81ce4cd128da5c2dc590c8eb8c2d8988071c98cbafc8a553",
+    "k2_static_contract": "15/15 PASS",
+    "k2_postgres_integration": "20/20 PASS",
+    "full_matrix": "587 PASS / 0 FAIL / 0 SKIP / 587 total",
+    "secret_candidate_files": 472,
     "secret_hits": 0
+  },
+  "required_scenarios": {
+    "same_idempotency_key_concurrent": "PASS",
+    "same_memory_id_cross_account": "PASS",
+    "rls_omission_fault_injection": "PASS",
+    "client_without_service_role": "PASS",
+    "actual_migration_interruption": "PASS",
+    "projection_corruption_rebuild": "PASS",
+    "change_event_gap_fault_injection": "PASS",
+    "committed_seq_concurrency": "PASS",
+    "tombstone_over_old_version": "PASS",
+    "post_rollback_invariants": "PASS"
   },
   "pass_criteria": {
     "cross_tenant_visibility": 0,
@@ -66,7 +95,8 @@
     "canonical_store_switched": false,
     "release_created": false,
     "deployment_performed": false,
-    "pushed": false
+    "feature_branch_pushed": false,
+    "merged_to_main": false
   },
   "protocol_deviations": [],
   "known_limitations": [
@@ -78,6 +108,6 @@
   "next_gate": {
     "gate": "K3",
     "status": "LOCKED",
-    "requires": "new explicit authorization"
+    "requires": "independent K2 PASS followed by new explicit authorization"
   }
 }

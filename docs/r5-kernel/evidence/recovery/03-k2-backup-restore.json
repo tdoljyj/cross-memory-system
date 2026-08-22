@@ -1,15 +1,18 @@
 {
   "schema_version": 1,
   "gate": "K2",
-  "tested_product_commit": "ce699b0fe05001e04707b26b80f886a2a6d12db8",
+  "tested_product_commit": "cb7509cb082265298ed356b9d225c4a298fc3e85",
   "database": "PostgreSQL 15.19 Windows x64",
   "data": "synthetic only",
   "migration": {
     "id": "0001_cloud_data_foundation",
     "up": "PASS",
-    "interrupted_transaction_residue": 0,
+    "fault_injected_real_migration": "PASS",
+    "interrupted_schema_residue": 0,
+    "interrupted_receipt_residue": 0,
     "down": "PASS",
-    "up_down_up_roundtrip": "PASS"
+    "up_down_up_roundtrip": "PASS",
+    "post_roundtrip_invariant_violations": 0
   },
   "projection": {
     "corruption_injected": true,
@@ -18,14 +21,31 @@
   },
   "backup_restore": {
     "format": "pg_dump custom",
+    "bytes": 82360,
+    "sha256": "91dd2fe85e99ebde81ce4cd128da5c2dc590c8eb8c2d8988071c98cbafc8a553",
+    "restore_input_sha256": "91dd2fe85e99ebde81ce4cd128da5c2dc590c8eb8c2d8988071c98cbafc8a553",
     "restore_target": "new synthetic database",
     "deletion_ledger_rows_preserved": true,
-    "post_restore_invariant_violations": 0
+    "post_restore_invariant_violations": 0,
+    "client_acl_preserved": true,
+    "cross_tenant_visibility_after_restore": 0
   },
   "server_log": {
     "unsafe_default_observed_and_rejected": true,
     "safe_configuration_loaded": true,
-    "body_marker_hits_after_fix": 0
+    "body_marker_hits_after_fix": 0,
+    "sanitized_log_sha256": "d5a6a4cf23d35fa8156d494411942494fb45138b55c7dfeb1b9eb4fd4f7e4a33"
+  },
+  "fault_injection": {
+    "same_memory_id_cross_account": "PASS",
+    "rls_omission_detected_and_repaired": "PASS",
+    "change_event_gap_detected_and_repaired": "PASS",
+    "failed_data_ddl_transaction_preserved_invariants": "PASS"
+  },
+  "raw_evidence": {
+    "transcript": "docs/r5-kernel/evidence/raw/03-k2-postgres-transcript.json",
+    "sanitized_server_log": "docs/r5-kernel/evidence/raw/03-k2-postgres-server.log",
+    "backup_artifact": "temporary and gitignored; hash recorded above"
   },
   "production_or_real_binding_touched": false
 }

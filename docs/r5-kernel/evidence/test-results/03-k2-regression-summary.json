@@ -1,34 +1,42 @@
 {
   "schema_version": 1,
   "gate": "K2",
-  "tested_product_commit": "ce699b0fe05001e04707b26b80f886a2a6d12db8",
+  "decision": "REMEDIATION_PASS_AWAITING_INDEPENDENT_RE_ADJUDICATION",
+  "tested_product_commit": "cb7509cb082265298ed356b9d225c4a298fc3e85",
   "postgresql": {
     "version": "15.19",
+    "server_version_num": 150019,
     "platform": "Windows x64",
     "data_class": "synthetic local/dev only"
   },
   "k2_static_contract": {
-    "pass": 14,
+    "pass": 15,
     "fail": 0,
     "skip": 0
   },
   "k2_postgres_integration": {
-    "pass": 14,
+    "pass": 20,
     "fail": 0,
     "skip": 0,
     "scenarios": [
+      "fault-injected real migration rollback",
       "transactional migration up",
       "safe server log configuration",
       "concurrent committed_seq",
       "concurrent idempotency reservation",
+      "cross-account same memory_id RLS isolation",
       "RLS and role isolation",
+      "RLS omission fault injection",
       "client without service role",
+      "duplicate FTS job with NULL model identity rejected",
       "tombstone authority",
       "immutable history and redacted errors",
       "projection rebuild",
-      "interrupted migration rollback",
-      "data invariant scan",
-      "backup restore with deletion ledger",
+      "change_event gap fault injection",
+      "failed transaction preserves data invariants",
+      "clean data invariant scan",
+      "backup restore preserves deletion ledger, ACLs and RLS",
+      "post-rollback invariant scan",
       "migration up/down/up roundtrip",
       "zero body leakage in server log"
     ]
@@ -38,20 +46,32 @@
     "sync_layer": "70/70 PASS",
     "memory_engine": "55/55 PASS",
     "full_matrix_files": 41,
-    "baseline_before_k2": 552,
-    "new_k2_tests": 28,
-    "pass": 580,
+    "baseline_before_remediation": 580,
+    "new_k2_tests": 7,
+    "pass": 587,
     "fail": 0,
     "skip": 0,
-    "total": 580
+    "total": 587
   },
   "environment_adjudication": {
-    "initial_sandbox_result": "577 PASS / 3 ENV FAIL / 0 SKIP",
-    "failing_file": "tests/test_envprobe.py",
-    "signature": "CodexSandboxOffline access denied at ~/.workbuddy/.envprobe-del-<pid>",
-    "host_context_rerun": "7/7 PASS",
-    "replacement_rule": "replace the complete result for the same test file",
-    "final_result": "580 PASS / 0 FAIL / 0 SKIP"
+    "complete_first_pass_files": 32,
+    "complete_first_pass_tests": "424/424 PASS",
+    "invalidated_files": 9,
+    "invalidated_partial_passes_discarded": 49,
+    "signatures": [
+      "Windows GBK child-process encoding failure",
+      "CodexSandboxOffline access denied at ~/.workbuddy/.envprobe-del-<pid>",
+      "sandbox sync capability returned CLD-SYNC-002"
+    ],
+    "host_utf8_whole_file_replacement": "163/163 PASS",
+    "replacement_rule": "replace the complete result for each affected test file",
+    "final_result": "587 PASS / 0 FAIL / 0 SKIP"
+  },
+  "raw_evidence": {
+    "transcript": "docs/r5-kernel/evidence/raw/03-k2-postgres-transcript.json",
+    "sanitized_server_log": "docs/r5-kernel/evidence/raw/03-k2-postgres-server.log",
+    "backup_sha256": "91dd2fe85e99ebde81ce4cd128da5c2dc590c8eb8c2d8988071c98cbafc8a553",
+    "server_log_sha256": "d5a6a4cf23d35fa8156d494411942494fb45138b55c7dfeb1b9eb4fd4f7e4a33"
   },
   "semantic_recall_enabled": false,
   "real_binding_changed": false

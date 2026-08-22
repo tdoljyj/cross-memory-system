@@ -1,0 +1,15 @@
+2026-08-22 17:17:42.609 CST [4596] LOG:  starting PostgreSQL 15.19, compiled by Visual C++ build 1944, 64-bit
+2026-08-22 17:17:42.610 CST [4596] LOG:  listening on IPv4 address "127.0.0.1", port 55439
+2026-08-22 17:17:42.635 CST [47688] LOG:  database system was shut down at 2026-08-22 17:17:42 CST
+2026-08-22 17:17:42.704 CST [4596] LOG:  database system is ready to accept connections
+2026-08-22 17:17:50.587 CST [39076] ERROR:  division by zero
+2026-08-22 17:17:50.675 CST [2604] ERROR:  relation "clued.schema_migrations" does not exist at character 211
+2026-08-22 17:17:50.712 CST [3884] LOG:  checkpoint starting: immediate force wait
+2026-08-22 17:17:50.724 CST [3884] LOG:  checkpoint complete: wrote 14 buffers (0.1%); 0 WAL file(s) added, 0 removed, 1 recycled; write=0.002 s, sync=0.006 s, total=0.012 s; sync files=13, longest=0.001 s, average=0.001 s; distance=4926 kB, estimate=4926 kB
+2026-08-22 17:17:52.035 CST [23956] ERROR:  permission denied for table accounts
+2026-08-22 17:17:52.071 CST [42500] ERROR:  duplicate key value violates unique constraint "index_jobs_account_id_version_id_index_kind_model_id_model__key"
+2026-08-22 17:17:52.071 CST [42500] DETAIL:  Key (account_id, version_id, index_kind, model_id, model_revision)=(00000000-0000-0000-0000-000000000001, 950e6bdb-f4e1-5090-9102-3faeabe900f4, FTS, null, null) already exists.
+2026-08-22 17:17:52.196 CST [17256] ERROR:  permission denied for table memory_versions
+2026-08-22 17:17:52.619 CST [44772] ERROR:  division by zero
+2026-08-22 17:17:53.255 CST [3884] LOG:  checkpoint starting: immediate force wait
+2026-08-22 17:17:53.512 CST [3884] LOG:  checkpoint complete: wrote 1054 buffers (6.4%); 0 WAL file(s) added, 0 removed, 0 recycled; write=0.015 s, sync=0.240 s, total=0.258 s; sync files=392, longest=0.004 s, average=0.001 s; distance=10108 kB, estimate=10108 kB
