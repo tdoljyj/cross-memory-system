@@ -4,23 +4,25 @@
   "type": "semantic",
   "scope": "global",
   "content": "2026-08-22 用户已明确授权开始 K3，先前 K3 LOCKED 状态已解除。K3 当前为本地实施中，尚未完成最终全量回归、证据封存和独立裁决；继续禁止未授权 push/merge/tag/release/deploy、真实 Binding 变更与语义召回启用。",
-  "status": "active",
+  "status": "superseded",
   "source": {
     "kind": "user_explicit",
     "adapter": "cli",
     "session_id": null,
     "created_at": "2026-08-22T10:43:03Z",
-    "updated_at": "2026-08-22T10:43:03Z"
+    "updated_at": "2026-08-22T17:12:20Z"
   },
   "temporal": {
     "valid_from": null,
-    "valid_until": null
+    "valid_until": "2026-08-22T17:12:20Z"
   },
   "relations": {
     "supersedes": [
       "mem_60b4dce9"
     ],
-    "superseded_by": [],
+    "superseded_by": [
+      "mem_4cd51231"
+    ],
     "contradicts": [],
     "related": []
   },

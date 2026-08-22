@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "id": "mem_4cd51231",
+  "type": "semantic",
+  "scope": "global",
+  "content": "2026-08-23 Clued Kernel R5 K3 Gate 已 PASS，先前“本地实施中/尚未完成/未 push”状态已结束。分支 r5-kernel-k3-memory-lifecycle、标签 r5-k3-portable-gate-2026-08-23、GitHub Release 与完整历史 bundle 均已上传并核验；真实 Binding 与语义召回未变，今后的 deploy 或 Binding 变更仍需明确授权。",
+  "status": "active",
+  "source": {
+    "kind": "user_explicit",
+    "adapter": "cli",
+    "session_id": null,
+    "created_at": "2026-08-22T17:12:20Z",
+    "updated_at": "2026-08-22T17:12:20Z"
+  },
+  "temporal": {
+    "valid_from": null,
+    "valid_until": null
+  },
+  "relations": {
+    "supersedes": [
+      "mem_cd589650"
+    ],
+    "superseded_by": [],
+    "contradicts": [],
+    "related": []
+  },
+  "classification": {
+    "memory_layer": "semantic",
+    "category": "constraint",
+    "recall_layer": "L5",
+    "priority": "high"
+  },
+  "provenance": {
+    "evidence": "explicit",
+    "source_ref": null
+  },
+  "tags": [
+    "R5",
+    "K0",
+    "K1",
+    "NO_GO",
+    "LOCKED"
+  ],
+  "entities": [
+    "cross-memory-system",
+    "Clued-Kernel"
+  ]
+}

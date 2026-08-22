@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-08-22T10:43:03Z",
-  "count": 249,
+  "generated_at": "2026-08-22T17:12:20Z",
+  "count": 252,
   "objects": {
     "mem_012b899e": {
       "path": "memory/objects/mem_012b899e.json",
@@ -1180,6 +1180,31 @@
       "supersedes": [],
       "superseded_by": []
     },
+    "mem_4cd51231": {
+      "path": "memory/objects/mem_4cd51231.json",
+      "type": "semantic",
+      "scope": "global",
+      "status": "active",
+      "priority": "high",
+      "category": "constraint",
+      "tags": [
+        "R5",
+        "K0",
+        "K1",
+        "NO_GO",
+        "LOCKED"
+      ],
+      "entities": [
+        "cross-memory-system",
+        "Clued-Kernel"
+      ],
+      "valid_from": null,
+      "valid_until": null,
+      "supersedes": [
+        "mem_cd589650"
+      ],
+      "superseded_by": []
+    },
     "mem_50dccd38": {
       "path": "memory/objects/mem_50dccd38.json",
       "type": "episodic",
@@ -1214,7 +1239,7 @@
       "path": "memory/objects/mem_525ea2c2.json",
       "type": "state",
       "scope": "project",
-      "status": "active",
+      "status": "superseded",
       "priority": "high",
       "category": "state",
       "tags": [
@@ -1229,11 +1254,13 @@
         "PostgreSQL"
       ],
       "valid_from": null,
-      "valid_until": null,
+      "valid_until": "2026-08-22T17:12:20Z",
       "supersedes": [
         "mem_4a56666f"
       ],
-      "superseded_by": []
+      "superseded_by": [
+        "mem_c87fd2d2"
+      ]
     },
     "mem_55d14690": {
       "path": "memory/objects/mem_55d14690.json",
@@ -2954,6 +2981,31 @@
       "supersedes": [],
       "superseded_by": []
     },
+    "mem_c87fd2d2": {
+      "path": "memory/objects/mem_c87fd2d2.json",
+      "type": "state",
+      "scope": "project",
+      "status": "active",
+      "priority": "high",
+      "category": "state",
+      "tags": [
+        "Clued",
+        "R5",
+        "K2",
+        "Cloud Data Foundation"
+      ],
+      "entities": [
+        "Clued Kernel R5",
+        "K2",
+        "PostgreSQL"
+      ],
+      "valid_from": null,
+      "valid_until": null,
+      "supersedes": [
+        "mem_525ea2c2"
+      ],
+      "superseded_by": []
+    },
     "mem_ca125453": {
       "path": "memory/objects/mem_ca125453.json",
       "type": "episodic",
@@ -3006,7 +3058,7 @@
       "path": "memory/objects/mem_cd589650.json",
       "type": "semantic",
       "scope": "global",
-      "status": "active",
+      "status": "superseded",
       "priority": "high",
       "category": "constraint",
       "tags": [
@@ -3021,11 +3073,13 @@
         "Clued-Kernel"
       ],
       "valid_from": null,
-      "valid_until": null,
+      "valid_until": "2026-08-22T17:12:20Z",
       "supersedes": [
         "mem_60b4dce9"
       ],
-      "superseded_by": []
+      "superseded_by": [
+        "mem_4cd51231"
+      ]
     },
     "mem_cdb0c1e6": {
       "path": "memory/objects/mem_cdb0c1e6.json",
@@ -3878,6 +3932,28 @@
         "manual-review"
       ],
       "entities": [],
+      "valid_from": null,
+      "valid_until": null,
+      "supersedes": [],
+      "superseded_by": []
+    },
+    "mem_f948c9b4": {
+      "path": "memory/objects/mem_f948c9b4.json",
+      "type": "procedural",
+      "scope": "global",
+      "status": "active",
+      "priority": "high",
+      "category": "constraint",
+      "tags": [
+        "workflow",
+        "closure",
+        "portable",
+        "evidence"
+      ],
+      "entities": [
+        "Codex",
+        "task-workflow"
+      ],
       "valid_from": null,
       "valid_until": null,
       "supersedes": [],
