@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-08-22T05:36:15Z",
-  "count": 236,
+  "generated_at": "2026-08-22T06:47:28Z",
+  "count": 239,
   "objects": {
     "mem_012b899e": {
       "path": "memory/objects/mem_012b899e.json",
@@ -469,6 +469,31 @@
       "valid_from": null,
       "valid_until": null,
       "supersedes": [],
+      "superseded_by": []
+    },
+    "mem_26ed6fc2": {
+      "path": "memory/objects/mem_26ed6fc2.json",
+      "type": "semantic",
+      "scope": "global",
+      "status": "active",
+      "priority": "high",
+      "category": "constraint",
+      "tags": [
+        "R5",
+        "K0",
+        "K1",
+        "NO_GO",
+        "LOCKED"
+      ],
+      "entities": [
+        "cross-memory-system",
+        "Clued-Kernel"
+      ],
+      "valid_from": null,
+      "valid_until": null,
+      "supersedes": [
+        "mem_9d7dbf63"
+      ],
       "superseded_by": []
     },
     "mem_27338615": {
@@ -1943,7 +1968,7 @@
       "path": "memory/objects/mem_9b4ed78a.json",
       "type": "state",
       "scope": "global",
-      "status": "active",
+      "status": "superseded",
       "priority": "high",
       "category": "state",
       "tags": [
@@ -1957,15 +1982,17 @@
         "Clued-Kernel"
       ],
       "valid_from": "2026-08-22T00:00:00+08:00",
-      "valid_until": null,
+      "valid_until": "2026-08-22T06:45:32Z",
       "supersedes": [],
-      "superseded_by": []
+      "superseded_by": [
+        "mem_f7b771a0"
+      ]
     },
     "mem_9d7dbf63": {
       "path": "memory/objects/mem_9d7dbf63.json",
       "type": "semantic",
       "scope": "global",
-      "status": "active",
+      "status": "superseded",
       "priority": "high",
       "category": "constraint",
       "tags": [
@@ -1980,9 +2007,11 @@
         "Clued-Kernel"
       ],
       "valid_from": "2026-08-22T00:00:00+08:00",
-      "valid_until": null,
+      "valid_until": "2026-08-22T06:45:32Z",
       "supersedes": [],
-      "superseded_by": []
+      "superseded_by": [
+        "mem_26ed6fc2"
+      ]
     },
     "mem_9e9561b0": {
       "path": "memory/objects/mem_9e9561b0.json",
@@ -2492,6 +2521,30 @@
       "valid_from": null,
       "valid_until": null,
       "supersedes": [],
+      "superseded_by": []
+    },
+    "mem_bdc913b7": {
+      "path": "memory/objects/mem_bdc913b7.json",
+      "type": "state",
+      "scope": "global",
+      "status": "active",
+      "priority": "high",
+      "category": "state",
+      "tags": [
+        "R5",
+        "K0",
+        "NO_GO",
+        "R4-separation"
+      ],
+      "entities": [
+        "cross-memory-system",
+        "Clued-Kernel"
+      ],
+      "valid_from": null,
+      "valid_until": null,
+      "supersedes": [
+        "mem_f7b771a0"
+      ],
       "superseded_by": []
     },
     "mem_be0d7d2e": {
@@ -3492,6 +3545,32 @@
       "valid_until": null,
       "supersedes": [],
       "superseded_by": []
+    },
+    "mem_f7b771a0": {
+      "path": "memory/objects/mem_f7b771a0.json",
+      "type": "state",
+      "scope": "global",
+      "status": "superseded",
+      "priority": "high",
+      "category": "state",
+      "tags": [
+        "R5",
+        "K0",
+        "NO_GO",
+        "R4-separation"
+      ],
+      "entities": [
+        "cross-memory-system",
+        "Clued-Kernel"
+      ],
+      "valid_from": null,
+      "valid_until": "2026-08-22T06:47:28Z",
+      "supersedes": [
+        "mem_9b4ed78a"
+      ],
+      "superseded_by": [
+        "mem_bdc913b7"
+      ]
     },
     "mem_f7c22efc": {
       "path": "memory/objects/mem_f7c22efc.json",
