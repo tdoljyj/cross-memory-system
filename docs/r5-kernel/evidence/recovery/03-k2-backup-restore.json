@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "gate": "K2",
-  "tested_product_commit": "4f62fbcc08296e8ab51bea99af3358698d6c6120",
+  "tested_product_commit": "4ed347fb908bbadc888c8cf58768536c6ca108ea",
   "database": "PostgreSQL 15.19 Windows x64",
   "data": "synthetic only",
   "migration": {
@@ -21,9 +21,9 @@
   },
   "backup_restore": {
     "format": "pg_dump custom",
-    "bytes": 82361,
-    "sha256": "be46db1a9b80acff8b6c66f6093895702c973edd23f09850546bdb6d7357edfe",
-    "restore_input_sha256": "be46db1a9b80acff8b6c66f6093895702c973edd23f09850546bdb6d7357edfe",
+    "bytes": 82360,
+    "sha256": "97dfe6afb8a93bb0e30af6c073399d2b745e272cd89c7c82b9dc0567740551ac",
+    "restore_input_sha256": "97dfe6afb8a93bb0e30af6c073399d2b745e272cd89c7c82b9dc0567740551ac",
     "expected_sha256_enforced_before_database_changes": true,
     "restore_target": "new synthetic database",
     "roles_present_before_restore": 0,
@@ -38,7 +38,7 @@
     "unsafe_default_observed_and_rejected": true,
     "safe_configuration_loaded": true,
     "body_marker_hits_after_fix": 0,
-    "sanitized_log_sha256": "cac2cfca2e2a3049fa2451a3013368bd67ce391e96f816003fbd8d22aa0ab4be"
+    "sanitized_log_sha256": "6835d52cd158fdcb221e322e66249b6ce7668636499148038e82d19fce3af30a"
   },
   "fault_injection": {
     "same_memory_id_cross_account": "PASS",
@@ -49,6 +49,8 @@
   "tooling_failure_contract": {
     "missing_dsn_exit_code": 10,
     "restore_failure_exit_code": 1,
+    "omitted_expected_sha_cli_exit_code": 2,
+    "omitted_expected_sha_changed_roles": false,
     "digest_mismatch_changed_roles": false,
     "failed_restore_cleans_new_roles": true
   },

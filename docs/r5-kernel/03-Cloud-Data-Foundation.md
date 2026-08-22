@@ -5,7 +5,7 @@
 - 日期：`2026-08-22`
 - 原 K2 冻结链：`500386a → ce699b0 → 1a939b9`
 - 修复起点：`main@5c244d8e374e711a91670fbbec89f8c4aad3014b`
-- 受测修复实现：`4f62fbcc08296e8ab51bea99af3358698d6c6120`
+- 受测修复实现：`4ed347fb908bbadc888c8cf58768536c6ca108ea`
 - 分支：`r5-kernel-k2-remediation`
 - 数据库：PostgreSQL `15.19`，仅本机 synthetic local/dev 实例
 
@@ -88,6 +88,8 @@ Binding、时间和 `committed_seq`。
   强制校验预期 SHA-256，引导三个带标记的受限角色，并在单事务中恢复；失败会
   回收本次新建角色；
 - `python -m clued.cloud_data` 现在传播配置错误和 restore 失败的非零退出码；
+- 第三次独立裁决发现预期哈希仍可省略；修复后 API 缺少哈希会在角色引导前失败，
+  CLI 将 `--expected-sha256` 设为必填，省略时退出 2 且数据库与角色零变更；
 - 不变量扫描按 schema OID 绑定表，其他 schema 的同名表不再造成误判；
 - 不变量扫描覆盖 RLS、租户键、不可变触发器、事件缺口、投影、孤儿引用、
   embedding 合同、deleted ready index、冲突、墓碑、删除证明和安全 audit metadata。
@@ -153,7 +155,8 @@ GBK 子进程编码、CodexSandboxOffline 权限和 `CLD-SYNC-002` 仅作为历�
 
 - 修复前 `ls-remote origin main=5c244d8...`，仅比原冻结链多记忆同步提交；
 - 原 K2 冻结分支保留在 `1a939b9...`；第一轮修复为 `cb7509c...`，二次裁决
-  P1 修复后的受测实现为本地 `4f62fbc...`；
+  P1 修复为 `4f62fbc...`，强制验证 restore digest 后的最终受测实现为本地
+  `4ed347f...`；
 - 功能分支未 push，且未 merge 到 main、未 tag、未 Release、未 deploy；
 - K3 `Memory Write and Lifecycle` 保持 `LOCKED`，等待重新独立裁决 PASS 后的
   新明确授权。

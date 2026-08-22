@@ -6,13 +6,14 @@
   "authorization": "explicit user instruction: 补齐这些 K2 缺口并重新独立裁决",
   "prior_adjudications": [
     "PARTIAL PASS: 5 PASS / 3 PARTIAL / 2 MISSING",
-    "PARTIAL PASS: clean-cluster restore bootstrap and module exit propagation required"
+    "PARTIAL PASS: clean-cluster restore bootstrap and module exit propagation required",
+    "PARTIAL PASS: expected restore SHA-256 was still optional"
   ],
   "branch": "r5-kernel-k2-remediation",
   "original_frozen_head": "1a939b90b60cf7b767901265a614aa5c2a4b6a9f",
-  "parent": "2bcdaf7560e0ccaf54f12f6a501bcd739dd6cfa8",
+  "parent": "299b775ff05d497cf2c3f73c97dc21020f94be1f",
   "remote_main_at_remediation_start": "5c244d8e374e711a91670fbbec89f8c4aad3014b",
-  "tested_product_commit": "4f62fbcc08296e8ab51bea99af3358698d6c6120",
+  "tested_product_commit": "4ed347fb908bbadc888c8cf58768536c6ca108ea",
   "assets": [
     {
       "path": "cloud/postgres/README.md",
@@ -44,23 +45,23 @@
     },
     {
       "path": "clued/cloud_data/tooling.py",
-      "sha256": "ac653c2cbcf84ad704450f0b3726bfbbca52a3b1b2126845a95d319164fa4f82"
+      "sha256": "2af8147b64de153478cbd0edda6a5f89d1d0c131db7773a36151fd6c6751cae2"
     },
     {
       "path": "tests/test_r5_k2_cloud_foundation.py",
-      "sha256": "cb37c93ac4b2ac07c5d0a45ad31abf2437dc64e228274ce28412dda2bf0424f7"
+      "sha256": "e40a2d8337c40497a1e252e7705add400f35407acb9761dbf153c07f02e77ca6"
     },
     {
       "path": "tests/test_r5_k2_postgres_integration.py",
-      "sha256": "4fd6e31df7e9e4ec4c131a8092e988509c9e9bb59f0d90d04370f1f13d2062a5"
+      "sha256": "a70d2c0cbfb57e3c20c5bc94d48e8480cdcbe16c9bea348c367dff1b06561f41"
     },
     {
       "path": "docs/r5-kernel/evidence/raw/03-k2-postgres-transcript.json",
-      "sha256": "388c5fa3898c42540229dab02a68c403587daa69fccb7a20a0973808d69cec28"
+      "sha256": "11738fad937ee5c15384fe2b89fdc397354903b4d32260e9fba84a31b444a49a"
     },
     {
       "path": "docs/r5-kernel/evidence/raw/03-k2-postgres-server.log",
-      "sha256": "cac2cfca2e2a3049fa2451a3013368bd67ce391e96f816003fbd8d22aa0ab4be"
+      "sha256": "6835d52cd158fdcb221e322e66249b6ce7668636499148038e82d19fce3af30a"
     }
   ],
   "evidence": {
@@ -70,7 +71,7 @@
     "recovery": "docs/r5-kernel/evidence/recovery/03-k2-backup-restore.json",
     "raw_transcript": "docs/r5-kernel/evidence/raw/03-k2-postgres-transcript.json",
     "sanitized_server_log": "docs/r5-kernel/evidence/raw/03-k2-postgres-server.log",
-    "backup_sha256": "be46db1a9b80acff8b6c66f6093895702c973edd23f09850546bdb6d7357edfe",
+    "backup_sha256": "97dfe6afb8a93bb0e30af6c073399d2b745e272cd89c7c82b9dc0567740551ac",
     "k2_static_contract": "16/16 PASS",
     "k2_postgres_integration": "21/21 PASS",
     "full_matrix": "589 PASS / 0 FAIL / 0 SKIP / 589 total",
@@ -97,6 +98,7 @@
     "projection_rebuild": "PASS",
     "migration_roundtrip": "PASS",
     "deletion_ledger_after_restore": "PASS",
+    "restore_expected_sha256_required": true,
     "sql_or_error_log_body_hits": 0
   },
   "change_scope": {
