@@ -26,9 +26,11 @@ checks(invariant_name, violation_count) AS (
   UNION ALL
   SELECT 'rls_not_enabled_or_forced', count(*)
   FROM tenant_tables expected
-  LEFT JOIN pg_class c ON c.relname = expected.table_name
-  LEFT JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'clued'
-  WHERE n.oid IS NULL OR NOT c.relrowsecurity OR NOT c.relforcerowsecurity
+  LEFT JOIN pg_namespace n ON n.nspname = 'clued'
+  LEFT JOIN pg_class c
+    ON c.relnamespace = n.oid
+   AND c.relname = expected.table_name
+  WHERE c.oid IS NULL OR NOT c.relrowsecurity OR NOT c.relforcerowsecurity
 
   UNION ALL
   SELECT 'tenant_policy_missing', count(*)
@@ -42,8 +44,10 @@ checks(invariant_name, violation_count) AS (
   UNION ALL
   SELECT 'immutable_trigger_missing', count(*)
   FROM immutable_tables expected
-  LEFT JOIN pg_class c ON c.relname = expected.table_name
-  LEFT JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'clued'
+  LEFT JOIN pg_namespace n ON n.nspname = 'clued'
+  LEFT JOIN pg_class c
+    ON c.relnamespace = n.oid
+   AND c.relname = expected.table_name
   LEFT JOIN pg_trigger t
     ON t.tgrelid = c.oid
    AND t.tgname = expected.trigger_name

@@ -37,14 +37,16 @@ python -m clued.cloud_data migrate up
 python -m clued.cloud_data scan
 python -m clued.cloud_data rebuild-projection <account-uuid>
 python -m clued.cloud_data backup <path>
-python -m clued.cloud_data restore <path>
+python -m clued.cloud_data restore <path> --expected-sha256 <sha256>
 python -m clued.cloud_data migrate down
 ```
 
 Commands emit one JSON object and redact connection credentials. Backup files,
 local clusters, and test data belong outside Git under ignored K2 directories.
 Custom backups omit ownership but retain ACLs, and the tooling reports a
-SHA-256 digest that the restore path rechecks.
+SHA-256 digest that the restore path can require before making database
+changes. Restore bootstraps the three marked restricted roles when absent,
+uses a single transaction, and removes roles created by a failed restore.
 
 The PostgreSQL integration qualification supports an evidence mode through
 `CLD_K2_EVIDENCE_DIR`, `CLD_K2_BACKUP_ARTIFACT`,

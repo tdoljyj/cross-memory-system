@@ -27,6 +27,8 @@ SQL_DIR = os.path.join(PG_ROOT, "sql")
 UP_SQL = os.path.join(MIGRATIONS, MIGRATION_ID + ".up.sql")
 DOWN_SQL = os.path.join(MIGRATIONS, MIGRATION_ID + ".down.sql")
 INVARIANT_SQL = os.path.join(SQL_DIR, "scan_invariants.sql")
+ROLE_BOOTSTRAP_SQL = os.path.join(SQL_DIR, "bootstrap_roles.sql")
+MANAGED_ROLES = ("clued_owner", "clued_client", "clued_service")
 
 _DSN_RE = re.compile(r"(?i)(postgres(?:ql)?://)([^\s/@:]+)(?::[^\s/@]*)?@")
 _PASSWORD_RE = re.compile(r"(?i)(password\s*[=:]\s*)[^\s]+")
@@ -155,15 +157,71 @@ def backup(dsn, output_path, bin_dir=None):
             "sha256": file_sha256(output_path)}
 
 
-def restore(dsn, input_path, bin_dir=None):
+def _managed_role_state(dsn, bin_dir=None):
+    sql = (
+        "SELECT rolname, COALESCE(shobj_description(oid,'pg_authid'),'') AS marker "
+        "FROM pg_roles WHERE rolname IN "
+        "('clued_owner','clued_client','clued_service') ORDER BY rolname;")
+    proc = psql(dsn, bin_dir=bin_dir, command=sql, csv_output=True)
+    return {row["rolname"]: row["marker"]
+            for row in csv.DictReader(io.StringIO(proc.stdout))}
+
+
+def bootstrap_roles(dsn, bin_dir=None):
+    before = _managed_role_state(dsn, bin_dir)
+    psql(dsn, bin_dir=bin_dir, file_path=ROLE_BOOTSTRAP_SQL)
+    after = _managed_role_state(dsn, bin_dir)
+    invalid = [name for name in MANAGED_ROLES
+               if after.get(name) != "clued-k2-managed-v1"]
+    if invalid:
+        raise ToolError("managed role bootstrap verification failed")
+    return [name for name in MANAGED_ROLES if name not in before]
+
+
+def _cleanup_bootstrapped_roles(dsn, role_names, bin_dir=None):
+    role_names = [name for name in role_names if name in MANAGED_ROLES]
+    if not role_names:
+        return
+    values = ",".join("'%s'" % name for name in role_names)
+    sql = """
+DO $cleanup$
+DECLARE role_name text; role_marker text;
+BEGIN
+  FOREACH role_name IN ARRAY ARRAY[%s] LOOP
+    SELECT shobj_description(oid, 'pg_authid') INTO role_marker
+      FROM pg_roles WHERE rolname = role_name;
+    IF FOUND AND role_marker = 'clued-k2-managed-v1' THEN
+      EXECUTE format('DROP ROLE %%I', role_name);
+    END IF;
+  END LOOP;
+END
+$cleanup$;
+""" % values
+    psql(dsn, bin_dir=bin_dir, command=sql)
+
+
+def restore(dsn, input_path, bin_dir=None, expected_sha256=None):
     input_path = os.path.abspath(input_path)
     if not os.path.isfile(input_path):
         raise ToolError("backup file is missing")
+    input_sha256 = file_sha256(input_path)
+    if expected_sha256 is not None:
+        if not re.fullmatch(r"[0-9a-fA-F]{64}", expected_sha256):
+            raise ToolError("expected backup SHA-256 is invalid")
+        if input_sha256 != expected_sha256.lower():
+            raise ToolError("backup SHA-256 mismatch")
+    created_roles = bootstrap_roles(dsn, bin_dir)
     argv = [_exe("pg_restore", bin_dir), "--dbname", dsn, "--no-owner",
-            "--exit-on-error", input_path]
-    _run(argv)
+            "--single-transaction", "--exit-on-error", input_path]
+    try:
+        _run(argv)
+    except ToolError:
+        _cleanup_bootstrapped_roles(dsn, created_roles, bin_dir)
+        raise
     return {"ok": True, "operation": "restore",
-            "input_sha256": file_sha256(input_path)}
+            "input_sha256": input_sha256,
+            "expected_sha256_verified": expected_sha256 is not None,
+            "roles_bootstrapped": created_roles}
 
 
 def build_parser():
@@ -181,6 +239,7 @@ def build_parser():
     dump.add_argument("path")
     load = sub.add_parser("restore")
     load.add_argument("path")
+    load.add_argument("--expected-sha256")
     return parser
 
 
@@ -202,7 +261,8 @@ def main(argv=None):
         elif args.command == "backup":
             result = backup(args.dsn, args.path, args.bin_dir)
         else:
-            result = restore(args.dsn, args.path, args.bin_dir)
+            result = restore(args.dsn, args.path, args.bin_dir,
+                             args.expected_sha256)
     except ToolError as exc:
         print(json.dumps({"ok": False, "code": "CLD-K2-DB-ERROR",
                           "message": redact(str(exc))}, ensure_ascii=False))

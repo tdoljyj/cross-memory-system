@@ -385,6 +385,11 @@ def verify_rls_omission_is_detected(dsn):
              "ALTER TABLE clued.export_jobs FORCE ROW LEVEL SECURITY")
     repaired = tooling.scan_invariants(dsn, BIN_DIR)
     check(repaired["ok"], "RLS repair did not restore clean invariants")
+    sql(dsn, "CREATE TABLE public.export_jobs(id integer)")
+    collision_scan = tooling.scan_invariants(dsn, BIN_DIR)
+    check(collision_scan["ok"],
+          "same-name public table confused schema-local invariant checks")
+    sql(dsn, "DROP TABLE public.export_jobs")
 
 
 def verify_duplicate_fts_job_is_rejected(dsn, version_id):
@@ -428,6 +433,31 @@ def verify_failed_transaction_preserves_invariants(dsn):
     check(scan["ok"],
           "rollback left data or schema invariant violations: %r" %
           scan["violations"])
+
+
+def verify_cli_failure_exit_codes(dsn, missing_backup):
+    env = os.environ.copy()
+    env.pop("CLD_K2_DATABASE_URL", None)
+    env["PYTHONUTF8"] = "1"
+    missing_dsn = subprocess.run(
+        [sys.executable, "-m", "clued.cloud_data", "status"],
+        cwd=ROOT, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, encoding="utf-8", errors="replace", check=False)
+    check(missing_dsn.returncode == 10,
+          "module entrypoint swallowed missing-DSN exit code")
+    check(json.loads(missing_dsn.stdout)["ok"] is False,
+          "missing-DSN CLI response is not a failure object")
+
+    missing_restore = subprocess.run(
+        [sys.executable, "-m", "clued.cloud_data", "--dsn", dsn,
+         "--bin-dir", BIN_DIR, "restore", missing_backup,
+         "--expected-sha256", "0" * 64],
+        cwd=ROOT, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, encoding="utf-8", errors="replace", check=False)
+    check(missing_restore.returncode == 1,
+          "module entrypoint swallowed restore failure exit code")
+    check(json.loads(missing_restore.stdout)["ok"] is False,
+          "restore CLI response is not a failure object")
 
 
 def add_tombstone(dsn, memory_id):
@@ -488,7 +518,9 @@ def main():
     interrupt_dsn = db_url(ADMIN_URL, interrupt_db)
     tmp = tempfile.mkdtemp(prefix="clued-k2-pg-")
     backup_path = os.path.join(tmp, "k2.backup")
+    missing_backup = os.path.join(tmp, "missing.backup")
     tests = []
+    initial_roles = tooling._managed_role_state(ADMIN_URL, BIN_DIR)
     try:
         pg_cmd("dropdb", "--if-exists", "--maintenance-db", ADMIN_URL, test_db)
         pg_cmd("dropdb", "--if-exists", "--maintenance-db", ADMIN_URL, restore_db)
@@ -603,10 +635,42 @@ def main():
             shutil.copy2(backup_path, BACKUP_ARTIFACT)
             check(tooling.file_sha256(BACKUP_ARTIFACT) == backup_result["sha256"],
                   "preserved backup artifact digest changed during copy")
+        tooling.migrate(dsn, "down", BIN_DIR)
+        check(scalar(dsn, "SELECT to_regnamespace('clued') IS NULL") == "t",
+              "pre-restore down migration left schema")
+        remaining_roles = int(scalar(
+            dsn, "SELECT count(*) FROM pg_roles WHERE rolname IN "
+                 "('clued_owner','clued_client','clued_service')"))
+        check(remaining_roles == len(initial_roles),
+              "down migration left roles created by the source migration")
+
         pg_cmd("createdb", "--maintenance-db", ADMIN_URL, restore_db)
-        restore_result = tooling.restore(restore_dsn, backup_path, BIN_DIR)
+        verify_cli_failure_exit_codes(restore_dsn, missing_backup)
+        tests.append("cli_failure_exit_codes")
+        try:
+            tooling.restore(restore_dsn, backup_path, BIN_DIR,
+                            expected_sha256="0" * 64)
+            raise AssertionError("restore accepted an incorrect expected digest")
+        except tooling.ToolError as exc:
+            check("SHA-256 mismatch" in str(exc),
+                  "restore returned the wrong digest mismatch error")
+        roles_after_mismatch = int(scalar(
+            restore_dsn, "SELECT count(*) FROM pg_roles WHERE rolname IN "
+                         "('clued_owner','clued_client','clued_service')"))
+        check(roles_after_mismatch == len(initial_roles),
+              "digest mismatch changed cluster roles before restore")
+
+        restore_result = tooling.restore(
+            restore_dsn, backup_path, BIN_DIR,
+            expected_sha256=backup_result["sha256"])
         check(restore_result["input_sha256"] == backup_result["sha256"],
               "restore did not consume the hashed backup artifact")
+        check(restore_result["expected_sha256_verified"],
+              "restore did not enforce the expected backup digest")
+        expected_created = sorted(
+            name for name in tooling.MANAGED_ROLES if name not in initial_roles)
+        check(sorted(restore_result["roles_bootstrapped"]) == expected_created,
+              "restore did not bootstrap the missing restricted roles")
         restored_ledger = scalar(restore_dsn, "SELECT count(*) FROM clued.deletion_ledger")
         check(int(restored_ledger) >= 1, "deletion ledger missing after restore")
         restored_scan = tooling.scan_invariants(restore_dsn, BIN_DIR)
@@ -620,12 +684,10 @@ def main():
                          "WHERE account_id='%s'" % (A, B))
         check(restored_visible >= 1 and restored_hidden == "0",
               "restore lost client ACLs or tenant RLS isolation")
-        tests.append("backup_restore_ledger_acl_and_rls")
+        tests.append("no_role_backup_restore_ledger_acl_and_rls")
 
+        tooling.migrate(restore_dsn, "down", BIN_DIR)
         pg_cmd("dropdb", "--if-exists", "--maintenance-db", ADMIN_URL, restore_db)
-        tooling.migrate(dsn, "down", BIN_DIR)
-        check(scalar(dsn, "SELECT to_regnamespace('clued') IS NULL") == "t",
-              "down migration left schema")
         tooling.migrate(dsn, "up", BIN_DIR)
         check(tooling.migration_status(dsn, BIN_DIR)["migration_applied"],
               "up/down/up roundtrip failed")
@@ -665,6 +727,13 @@ def main():
                test_db, check_result=False)
         pg_cmd("dropdb", "--if-exists", "--maintenance-db", ADMIN_URL,
                interrupt_db, check_result=False)
+        created_during_test = [name for name in tooling.MANAGED_ROLES
+                               if name not in initial_roles]
+        try:
+            tooling._cleanup_bootstrapped_roles(
+                ADMIN_URL, created_during_test, BIN_DIR)
+        except tooling.ToolError:
+            pass
         shutil.rmtree(tmp, ignore_errors=True)
 
 

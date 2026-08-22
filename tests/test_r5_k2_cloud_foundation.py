@@ -17,6 +17,8 @@ DOWN = os.path.join(ROOT, "cloud", "postgres", "migrations",
 SCAN = os.path.join(ROOT, "cloud", "postgres", "sql",
                     "scan_invariants.sql")
 PG_CONF = os.path.join(ROOT, "cloud", "postgres", "postgresql.k2.conf")
+ROLE_BOOTSTRAP = os.path.join(ROOT, "cloud", "postgres", "sql",
+                              "bootstrap_roles.sql")
 
 TENANT_TABLES = {
     "accounts", "memory_spaces", "devices", "bindings",
@@ -104,10 +106,14 @@ def test_service_role_and_client_are_separate():
 def test_cluster_roles_are_owned_and_down_is_scoped():
     up = read(UP)
     down = read(DOWN)
+    bootstrap = read(ROLE_BOOTSTRAP)
     check("clued-k2-managed-v1" in up and "CLD_K2_RESERVED_ROLE_EXISTS" in up,
           "migration must reject unowned pre-existing cluster roles")
     check("shobj_description" in down and "clued-k2-managed-v1" in down,
           "down migration must only remove K2-managed roles")
+    for token in ("CLD_K2_RESERVED_ROLE_EXISTS", "clued-k2-managed-v1",
+                  "NOBYPASSRLS", "BYPASSRLS"):
+        check(token in bootstrap, "restore role bootstrap missing %s" % token)
 
 
 def test_committed_sequence_and_idempotency_primitives():
@@ -190,6 +196,8 @@ def test_invariant_scanner_covers_k2_contract():
     }
     missing = {name for name in expected if name not in scan}
     check(not missing, "invariant scanner gaps: %r" % sorted(missing))
+    check("c.relnamespace = n.oid" in scan,
+          "schema-local checks can be confused by same-name public tables")
 
 
 def test_down_migration_is_scoped_and_reversible():
@@ -215,6 +223,15 @@ def test_tooling_is_shell_free_and_redacts_credentials():
           "backup/restore must preserve restricted-role ACLs")
     check("file_sha256" in source,
           "backup evidence must include an artifact digest")
+    for token in ("bootstrap_roles", "--single-transaction",
+                  "expected_sha256", "backup SHA-256 mismatch"):
+        check(token in source, "safe restore contract missing %s" % token)
+
+
+def test_module_entrypoint_propagates_failure_exit_codes():
+    entrypoint = read(os.path.join(ROOT, "clued", "cloud_data", "__main__.py"))
+    check("raise SystemExit(main())" in entrypoint,
+          "python -m clued.cloud_data swallows main() failure exit codes")
 
 
 def test_postgres_logging_contract_suppresses_body_text():
@@ -256,6 +273,7 @@ TESTS = [
     test_invariant_scanner_covers_k2_contract,
     test_down_migration_is_scoped_and_reversible,
     test_tooling_is_shell_free_and_redacts_credentials,
+    test_module_entrypoint_propagates_failure_exit_codes,
     test_postgres_logging_contract_suppresses_body_text,
     test_k1_surface_and_semantic_gate_remain_unchanged,
 ]
