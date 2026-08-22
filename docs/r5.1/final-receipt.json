@@ -1,0 +1,105 @@
+{
+  "gate": "K7",
+  "status": "PASS",
+  "verdict": "CLUED KERNEL BETA CANDIDATE",
+  "tested_product_commit": "3aa1cad752933bde624274e2c4ec0fb8be556fd2",
+  "parent": "756a9546d03e7cbf901bf6a15b851bca7453a28f",
+  "baseline": "4be850a2691dc42329d760c18a67fc63d2db08b3",
+  "branch": "r5.1-fast-close",
+  "worktree_clean_at_test": true,
+  "changed_files": 25,
+  "k3_product_commit_reachable": true,
+  "tests": {
+    "files": 47,
+    "pass": 678,
+    "fail": 0,
+    "error": 0,
+    "skip": 0,
+    "critical_smoke_pass": 71,
+    "critical_smoke_fail": 0,
+    "recall_trace_isolated_stable_runs": 2
+  },
+  "postgresql": {
+    "version": "15.19",
+    "k2_pass": 21,
+    "k3_pass": 18,
+    "fts_qualification": "PASS",
+    "blocked_secret_rows_visible": 0,
+    "server_log_body_matches": 0,
+    "temporary_databases_remaining": 0,
+    "managed_roles_remaining": 0,
+    "temporary_cluster_removed": true
+  },
+  "security": {
+    "repository_secret_scan_files": 519,
+    "repository_secret_matches": 0,
+    "real_binding_changed": false,
+    "production_touched": false,
+    "semantic_recall_enabled": false
+  },
+  "dependencies": {
+    "pip_check": "PASS",
+    "r51_external_runtime_imports": 0,
+    "new_package_manifests": 0
+  },
+  "receipts": {
+    "K4": {
+      "status": "PASS",
+      "git_head": "aa23b0db88394386887ecc2ff30ea608391de3b3",
+      "ancestor_of_candidate": true
+    },
+    "K5": {
+      "status": "PASS",
+      "git_head": "e126c147651620e195e945c0a24ede57bf12e296",
+      "ancestor_of_candidate": true
+    },
+    "K6": {
+      "status": "PASS",
+      "git_head": "c94a4f0063055c677e1b3ad5077fb7c5ded79998",
+      "ancestor_of_candidate": true
+    }
+  },
+  "borrowed_enhancements": {
+    "BE-01": "PASS",
+    "BE-02": "PASS",
+    "BE-03": "PASS",
+    "BE-04": "PASS",
+    "BE-05": "PASS",
+    "BE-06": "PASS"
+  },
+  "rollback": {
+    "forced_install_update": "PASS",
+    "database_restore": "PASS",
+    "deletion_ledger_replay": "PASS",
+    "deleted_object_resurrection": 0
+  },
+  "performance": {
+    "sync_events": 1000,
+    "sync_seconds": 0.06483,
+    "warm_recall_queries": 1000,
+    "warm_recall_p95_ms": 0.0799,
+    "warm_recall_max_ms": 0.522,
+    "pilot_operations": 20,
+    "pilot_elapsed_seconds": 0.057447
+  },
+  "cost_usd": 0,
+  "hard_gate_violations": 0,
+  "publication_actions": {
+    "push": false,
+    "merge": false,
+    "tag": false,
+    "release": false,
+    "deploy": false,
+    "real_binding_switch": false
+  },
+  "known_limitations": [
+    "Semantic recall remains disabled; optional S1 was not executed.",
+    "The graphical Installer shell is deferred; CLI and AI Conversation share KernelService.",
+    "Cross-device qualification used isolated logical profiles on one Windows host.",
+    "Production multi-region RPO/RTO, complete break-glass operations and real Binding switching remain out of scope."
+  ],
+  "protocol_notes": [
+    "A parallel performance run was invalidated by host contention; the Recall Trace timing gate passed twice in isolation.",
+    "K7 ran in the current authorized task rather than a separate task; all final evidence is bound to a new committed candidate HEAD."
+  ]
+}
