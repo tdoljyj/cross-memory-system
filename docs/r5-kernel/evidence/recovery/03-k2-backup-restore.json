@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "gate": "K2",
-  "tested_product_commit": "cb7509cb082265298ed356b9d225c4a298fc3e85",
+  "tested_product_commit": "4f62fbcc08296e8ab51bea99af3358698d6c6120",
   "database": "PostgreSQL 15.19 Windows x64",
   "data": "synthetic only",
   "migration": {
@@ -21,10 +21,14 @@
   },
   "backup_restore": {
     "format": "pg_dump custom",
-    "bytes": 82360,
-    "sha256": "91dd2fe85e99ebde81ce4cd128da5c2dc590c8eb8c2d8988071c98cbafc8a553",
-    "restore_input_sha256": "91dd2fe85e99ebde81ce4cd128da5c2dc590c8eb8c2d8988071c98cbafc8a553",
+    "bytes": 82361,
+    "sha256": "be46db1a9b80acff8b6c66f6093895702c973edd23f09850546bdb6d7357edfe",
+    "restore_input_sha256": "be46db1a9b80acff8b6c66f6093895702c973edd23f09850546bdb6d7357edfe",
+    "expected_sha256_enforced_before_database_changes": true,
     "restore_target": "new synthetic database",
+    "roles_present_before_restore": 0,
+    "restricted_roles_bootstrapped": 3,
+    "single_transaction_restore": true,
     "deletion_ledger_rows_preserved": true,
     "post_restore_invariant_violations": 0,
     "client_acl_preserved": true,
@@ -34,13 +38,19 @@
     "unsafe_default_observed_and_rejected": true,
     "safe_configuration_loaded": true,
     "body_marker_hits_after_fix": 0,
-    "sanitized_log_sha256": "d5a6a4cf23d35fa8156d494411942494fb45138b55c7dfeb1b9eb4fd4f7e4a33"
+    "sanitized_log_sha256": "cac2cfca2e2a3049fa2451a3013368bd67ce391e96f816003fbd8d22aa0ab4be"
   },
   "fault_injection": {
     "same_memory_id_cross_account": "PASS",
     "rls_omission_detected_and_repaired": "PASS",
     "change_event_gap_detected_and_repaired": "PASS",
     "failed_data_ddl_transaction_preserved_invariants": "PASS"
+  },
+  "tooling_failure_contract": {
+    "missing_dsn_exit_code": 10,
+    "restore_failure_exit_code": 1,
+    "digest_mismatch_changed_roles": false,
+    "failed_restore_cleans_new_roles": true
   },
   "raw_evidence": {
     "transcript": "docs/r5-kernel/evidence/raw/03-k2-postgres-transcript.json",

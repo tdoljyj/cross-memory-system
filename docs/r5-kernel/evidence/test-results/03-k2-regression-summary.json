@@ -2,7 +2,7 @@
   "schema_version": 1,
   "gate": "K2",
   "decision": "REMEDIATION_PASS_AWAITING_INDEPENDENT_RE_ADJUDICATION",
-  "tested_product_commit": "cb7509cb082265298ed356b9d225c4a298fc3e85",
+  "tested_product_commit": "4f62fbcc08296e8ab51bea99af3358698d6c6120",
   "postgresql": {
     "version": "15.19",
     "server_version_num": 150019,
@@ -10,12 +10,12 @@
     "data_class": "synthetic local/dev only"
   },
   "k2_static_contract": {
-    "pass": 15,
+    "pass": 16,
     "fail": 0,
     "skip": 0
   },
   "k2_postgres_integration": {
-    "pass": 20,
+    "pass": 21,
     "fail": 0,
     "skip": 0,
     "scenarios": [
@@ -35,7 +35,8 @@
       "change_event gap fault injection",
       "failed transaction preserves data invariants",
       "clean data invariant scan",
-      "backup restore preserves deletion ledger, ACLs and RLS",
+      "module entrypoint propagates failure exit codes",
+      "no-role restore bootstraps roles and preserves ledger, ACLs and RLS",
       "post-rollback invariant scan",
       "migration up/down/up roundtrip",
       "zero body leakage in server log"
@@ -46,32 +47,24 @@
     "sync_layer": "70/70 PASS",
     "memory_engine": "55/55 PASS",
     "full_matrix_files": 41,
-    "baseline_before_remediation": 580,
-    "new_k2_tests": 7,
-    "pass": 587,
+    "baseline_before_remediation": 587,
+    "new_k2_tests": 2,
+    "pass": 589,
     "fail": 0,
     "skip": 0,
-    "total": 587
+    "total": 589
   },
   "environment_adjudication": {
-    "complete_first_pass_files": 32,
-    "complete_first_pass_tests": "424/424 PASS",
-    "invalidated_files": 9,
-    "invalidated_partial_passes_discarded": 49,
-    "signatures": [
-      "Windows GBK child-process encoding failure",
-      "CodexSandboxOffline access denied at ~/.workbuddy/.envprobe-del-<pid>",
-      "sandbox sync capability returned CLD-SYNC-002"
-    ],
-    "host_utf8_whole_file_replacement": "163/163 PASS",
-    "replacement_rule": "replace the complete result for each affected test file",
-    "final_result": "587 PASS / 0 FAIL / 0 SKIP"
+    "execution_context": "host UTF-8",
+    "full_matrix_files": 41,
+    "replacement_files": 0,
+    "final_result": "589 PASS / 0 FAIL / 0 SKIP"
   },
   "raw_evidence": {
     "transcript": "docs/r5-kernel/evidence/raw/03-k2-postgres-transcript.json",
     "sanitized_server_log": "docs/r5-kernel/evidence/raw/03-k2-postgres-server.log",
-    "backup_sha256": "91dd2fe85e99ebde81ce4cd128da5c2dc590c8eb8c2d8988071c98cbafc8a553",
-    "server_log_sha256": "d5a6a4cf23d35fa8156d494411942494fb45138b55c7dfeb1b9eb4fd4f7e4a33"
+    "backup_sha256": "be46db1a9b80acff8b6c66f6093895702c973edd23f09850546bdb6d7357edfe",
+    "server_log_sha256": "cac2cfca2e2a3049fa2451a3013368bd67ce391e96f816003fbd8d22aa0ab4be"
   },
   "semantic_recall_enabled": false,
   "real_binding_changed": false

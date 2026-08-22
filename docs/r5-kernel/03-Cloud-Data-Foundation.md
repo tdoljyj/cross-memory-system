@@ -5,7 +5,7 @@
 - 日期：`2026-08-22`
 - 原 K2 冻结链：`500386a → ce699b0 → 1a939b9`
 - 修复起点：`main@5c244d8e374e711a91670fbbec89f8c4aad3014b`
-- 受测修复实现：`cb7509cb082265298ed356b9d225c4a298fc3e85`
+- 受测修复实现：`4f62fbcc08296e8ab51bea99af3358698d6c6120`
 - 分支：`r5-kernel-k2-remediation`
 - 数据库：PostgreSQL `15.19`，仅本机 synthetic local/dev 实例
 
@@ -84,6 +84,11 @@ Binding、时间和 `committed_seq`。
 - up/down/up 后再次执行全部不变量扫描；
 - custom-format backup 保留 ACL；恢复到新数据库后，deletion ledger、RLS、客户端
   权限面和全部不变量保持有效；
+- 第二次独立裁决发现无角色环境不能直接 restore；修复后 restore 在修改数据库前
+  强制校验预期 SHA-256，引导三个带标记的受限角色，并在单事务中恢复；失败会
+  回收本次新建角色；
+- `python -m clued.cloud_data` 现在传播配置错误和 restore 失败的非零退出码；
+- 不变量扫描按 schema OID 绑定表，其他 schema 的同名表不再造成误判；
 - 不变量扫描覆盖 RLS、租户键、不可变触发器、事件缺口、投影、孤儿引用、
   embedding 合同、deleted ready index、冲突、墓碑、删除证明和安全 audit metadata。
 
@@ -110,19 +115,18 @@ SHA-256、恢复输入 SHA-256，以及受测 SQL、tooling 和测试源文件�
 
 | 项目 | 结果 |
 |---|---:|
-| K2 静态合同 | `15/15 PASS` |
-| K2 PostgreSQL 真实集成 | `20/20 PASS` |
+| K2 静态合同 | `16/16 PASS` |
+| K2 PostgreSQL 真实集成 | `21/21 PASS` |
 | K1 冻结合同 | `9/9 PASS` |
 | vNext-1.3 同步层 | `70/70 PASS` |
 | vNext-2.0 Memory Engine | `55/55 PASS` |
-| 全量矩阵 | `587 PASS / 0 FAIL / 0 SKIP` |
-| 候选树密钥扫描 | `472 files / 0 hits` |
+| 全量矩阵 | `589 PASS / 0 FAIL / 0 SKIP` |
+| 候选树密钥扫描 | `473 files / 0 hits` |
 
-全量矩阵共 41 个测试文件。首轮有 32 文件、424 项完整通过；9 个文件受 Windows
-GBK 子进程编码、CodexSandboxOffline 文件权限或沙盒同步能力影响而失效，其首轮
-49 个局部 PASS 不计入最终结果。按同文件替换规则在宿主 UTF-8 上下文精确复跑
-这 9 个文件，得到 `163/163 PASS`；因此最终矩阵为 `424 + 163 = 587 PASS`，无
-FAIL、SKIP 或未归类结果。
+全量矩阵共 41 个测试文件。本轮直接在已验证的宿主 UTF-8 执行面运行，所有
+`589/589` 项一次通过，无 FAIL、SKIP、替换结果或未归类结果。此前沙盒中出现的
+GBK 子进程编码、CodexSandboxOffline 权限和 `CLD-SYNC-002` 仅作为历史环境诊断，
+不参与本轮最终矩阵。
 
 ## 4. 已知限制
 
@@ -148,7 +152,8 @@ FAIL、SKIP 或未归类结果。
 ## 6. 远端与后续 Gate
 
 - 修复前 `ls-remote origin main=5c244d8...`，仅比原冻结链多记忆同步提交；
-- 原 K2 冻结分支保留在 `1a939b9...`，修复实现提交为本地 `cb7509c...`；
+- 原 K2 冻结分支保留在 `1a939b9...`；第一轮修复为 `cb7509c...`，二次裁决
+  P1 修复后的受测实现为本地 `4f62fbc...`；
 - 功能分支未 push，且未 merge 到 main、未 tag、未 Release、未 deploy；
 - K3 `Memory Write and Lifecycle` 保持 `LOCKED`，等待重新独立裁决 PASS 后的
   新明确授权。

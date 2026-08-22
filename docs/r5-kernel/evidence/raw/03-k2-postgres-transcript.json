@@ -1,16 +1,16 @@
 {
   "artifacts": {
     "backup": {
-      "bytes": 82360,
+      "bytes": 82361,
       "path_class": "temporary_untracked_artifact",
-      "restore_input_sha256": "91dd2fe85e99ebde81ce4cd128da5c2dc590c8eb8c2d8988071c98cbafc8a553",
-      "sha256": "91dd2fe85e99ebde81ce4cd128da5c2dc590c8eb8c2d8988071c98cbafc8a553"
+      "restore_input_sha256": "be46db1a9b80acff8b6c66f6093895702c973edd23f09850546bdb6d7357edfe",
+      "sha256": "be46db1a9b80acff8b6c66f6093895702c973edd23f09850546bdb6d7357edfe"
     },
     "sanitized_server_log": {
       "body_marker_hits": 0,
-      "bytes": 1857,
+      "bytes": 1864,
       "path": "03-k2-postgres-server.log",
-      "sha256": "d5a6a4cf23d35fa8156d494411942494fb45138b55c7dfeb1b9eb4fd4f7e4a33"
+      "sha256": "cac2cfca2e2a3049fa2451a3013368bd67ce391e96f816003fbd8d22aa0ab4be"
     }
   },
   "constraints": {
@@ -24,10 +24,10 @@
     "minimum": 150000,
     "server_version_num": 150019
   },
-  "recorded_at": "2026-08-22T09:17:53+00:00",
+  "recorded_at": "2026-08-22T09:41:46+00:00",
   "result": {
     "fail": 0,
-    "pass": 20,
+    "pass": 21,
     "skip": 0,
     "status": "PASS",
     "tests": [
@@ -47,7 +47,8 @@
       "change_event_gap_fault_injection",
       "rollback_preserves_data_invariants",
       "invariant_scan",
-      "backup_restore_ledger_acl_and_rls",
+      "cli_failure_exit_codes",
+      "no_role_backup_restore_ledger_acl_and_rls",
       "post_rollback_invariant_scan",
       "migration_roundtrip",
       "server_log_zero_body_leakage"
@@ -58,9 +59,9 @@
   "source_sha256": {
     "cloud/postgres/migrations/0001_cloud_data_foundation.down.sql": "94be0d3881c0277a62d6a7a829d0f056aa33eb387c9490103f8f3d491b2f1e6d",
     "cloud/postgres/migrations/0001_cloud_data_foundation.up.sql": "df313aa29c4d6cb37f10fdcecd6b015773e438966538348b033bbbe8ef53f7c0",
-    "cloud/postgres/sql/scan_invariants.sql": "212c77551958271c7da5e41ce77be0708bf7e7b8d81d0bea19ac6ebf1241068b",
-    "clued/cloud_data/tooling.py": "e3b9121f83968ec5a6f0699f82262063be744d20b1e4437d6bc02ebee31ab502",
-    "tests/test_r5_k2_postgres_integration.py": "6c34d0a39124e48066153cd141bc9b9f3cf3ba29042744a740af0af193493bee"
+    "cloud/postgres/sql/scan_invariants.sql": "f3d947c916002bd2c0b3ea8626048772359f34d417dce6cbf68b9a672cf239f7",
+    "clued/cloud_data/tooling.py": "ac653c2cbcf84ad704450f0b3726bfbbca52a3b1b2126845a95d319164fa4f82",
+    "tests/test_r5_k2_postgres_integration.py": "4fd6e31df7e9e4ec4c131a8092e988509c9e9bb59f0d90d04370f1f13d2062a5"
   },
-  "tested_product_commit": "cb7509cb082265298ed356b9d225c4a298fc3e85"
+  "tested_product_commit": "4f62fbcc08296e8ab51bea99af3358698d6c6120"
 }
