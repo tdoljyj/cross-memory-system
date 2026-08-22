@@ -9,7 +9,21 @@ END
 $clued_preflight$;
 
 DO $clued_roles$
+DECLARE
+  role_name text;
+  role_marker text;
+  managed_marker constant text := 'clued-k2-managed-v1';
 BEGIN
+  FOREACH role_name IN ARRAY ARRAY['clued_owner', 'clued_client', 'clued_service'] LOOP
+    SELECT shobj_description(oid, 'pg_authid')
+      INTO role_marker
+      FROM pg_roles
+     WHERE rolname = role_name;
+    IF FOUND AND role_marker IS DISTINCT FROM managed_marker THEN
+      RAISE EXCEPTION 'CLD_K2_RESERVED_ROLE_EXISTS:%', role_name;
+    END IF;
+  END LOOP;
+
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'clued_owner') THEN
     CREATE ROLE clued_owner NOLOGIN;
   END IF;
@@ -19,6 +33,10 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'clued_service') THEN
     CREATE ROLE clued_service NOLOGIN;
   END IF;
+
+  COMMENT ON ROLE clued_owner IS 'clued-k2-managed-v1';
+  COMMENT ON ROLE clued_client IS 'clued-k2-managed-v1';
+  COMMENT ON ROLE clued_service IS 'clued-k2-managed-v1';
 END
 $clued_roles$;
 
@@ -292,7 +310,8 @@ CREATE TABLE clued.index_jobs (
   created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
   updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
   PRIMARY KEY (account_id, job_id),
-  UNIQUE (account_id, version_id, index_kind, model_id, model_revision),
+  UNIQUE NULLS NOT DISTINCT
+    (account_id, version_id, index_kind, model_id, model_revision),
   FOREIGN KEY (account_id, version_id)
     REFERENCES clued.memory_versions(account_id, version_id) ON DELETE RESTRICT,
   CHECK ((index_kind = 'FTS' AND model_id IS NULL AND model_revision IS NULL)

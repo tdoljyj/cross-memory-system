@@ -8,6 +8,7 @@ resolved explicitly and invoked without a shell.
 
 import argparse
 import csv
+import hashlib
 import io
 import json
 import os
@@ -33,6 +34,14 @@ _PASSWORD_RE = re.compile(r"(?i)(password\s*[=:]\s*)[^\s]+")
 
 class ToolError(RuntimeError):
     pass
+
+
+def file_sha256(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def redact(text):
@@ -139,10 +148,11 @@ def backup(dsn, output_path, bin_dir=None):
     output_path = os.path.abspath(output_path)
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     argv = [_exe("pg_dump", bin_dir), "--dbname", dsn, "--format", "custom",
-            "--no-owner", "--no-privileges", "--file", output_path]
+            "--no-owner", "--file", output_path]
     _run(argv)
     return {"ok": True, "operation": "backup",
-            "bytes": os.path.getsize(output_path)}
+            "bytes": os.path.getsize(output_path),
+            "sha256": file_sha256(output_path)}
 
 
 def restore(dsn, input_path, bin_dir=None):
@@ -150,9 +160,10 @@ def restore(dsn, input_path, bin_dir=None):
     if not os.path.isfile(input_path):
         raise ToolError("backup file is missing")
     argv = [_exe("pg_restore", bin_dir), "--dbname", dsn, "--no-owner",
-            "--no-privileges", "--exit-on-error", input_path]
+            "--exit-on-error", input_path]
     _run(argv)
-    return {"ok": True, "operation": "restore"}
+    return {"ok": True, "operation": "restore",
+            "input_sha256": file_sha256(input_path)}
 
 
 def build_parser():

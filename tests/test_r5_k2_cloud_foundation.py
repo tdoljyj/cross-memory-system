@@ -101,6 +101,15 @@ def test_service_role_and_client_are_separate():
           "append-only privilege guard missing")
 
 
+def test_cluster_roles_are_owned_and_down_is_scoped():
+    up = read(UP)
+    down = read(DOWN)
+    check("clued-k2-managed-v1" in up and "CLD_K2_RESERVED_ROLE_EXISTS" in up,
+          "migration must reject unowned pre-existing cluster roles")
+    check("shobj_description" in down and "clued-k2-managed-v1" in down,
+          "down migration must only remove K2-managed roles")
+
+
 def test_committed_sequence_and_idempotency_primitives():
     up = read(UP)
     for signature in (
@@ -155,6 +164,8 @@ def test_index_and_deletion_metadata_are_bound():
           "tombstone not bound to immutable version")
     check("proof_hash" in table_body(up, "deletion_ledger"),
           "deletion ledger proof missing")
+    check("UNIQUE NULLS NOT DISTINCT" in table_body(up, "index_jobs"),
+          "nullable model identity permits duplicate FTS index jobs")
 
 
 def test_metadata_blocks_content_keys():
@@ -186,8 +197,8 @@ def test_down_migration_is_scoped_and_reversible():
     check("DROP SCHEMA IF EXISTS clued CASCADE" in down,
           "down migration does not remove candidate schema")
     for role in ("clued_client", "clued_service", "clued_owner"):
-        check("DROP ROLE %s" % role in down,
-              "down migration leaves role %s" % role)
+        check("'%s'" % role in down,
+              "down migration omits managed role %s" % role)
     check("DROP DATABASE" not in down and "DROP SCHEMA public" not in down,
           "down migration exceeds K2 scope")
 
@@ -200,6 +211,10 @@ def test_tooling_is_shell_free_and_redacts_credentials():
     redacted = tooling.redact(sample)
     check("alice" not in redacted and "example-value" not in redacted,
           "connection credential redaction failed")
+    check('"--no-privileges"' not in source,
+          "backup/restore must preserve restricted-role ACLs")
+    check("file_sha256" in source,
+          "backup evidence must include an artifact digest")
 
 
 def test_postgres_logging_contract_suppresses_body_text():
@@ -232,6 +247,7 @@ TESTS = [
     test_core_tables_and_tenant_keys,
     test_rls_is_enabled_forced_and_default_deny,
     test_service_role_and_client_are_separate,
+    test_cluster_roles_are_owned_and_down_is_scoped,
     test_committed_sequence_and_idempotency_primitives,
     test_version_chain_and_projection_contract,
     test_immutable_history_guards,

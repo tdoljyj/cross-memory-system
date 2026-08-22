@@ -11,6 +11,9 @@ recall or Git synchronization path.
 - Every tenant table carries `account_id`, has RLS enabled and forced, and uses
   a default-deny account context policy.
 - `clued_client` is read-only and never receives the `clued_service` role.
+- Cluster roles carry the `clued-k2-managed-v1` ownership marker. Migration up
+  rejects an unmarked pre-existing reserved role, and migration down removes
+  only marked roles.
 - `memory_versions`, `change_events`, `tombstones`, `deletion_ledger`, and
   `audit_events` are append-only through always-enabled triggers.
 - `memory_current` is a disposable projection rebuilt by
@@ -40,3 +43,11 @@ python -m clued.cloud_data migrate down
 
 Commands emit one JSON object and redact connection credentials. Backup files,
 local clusters, and test data belong outside Git under ignored K2 directories.
+Custom backups omit ownership but retain ACLs, and the tooling reports a
+SHA-256 digest that the restore path rechecks.
+
+The PostgreSQL integration qualification supports an evidence mode through
+`CLD_K2_EVIDENCE_DIR`, `CLD_K2_BACKUP_ARTIFACT`,
+`CLD_K2_TESTED_COMMIT`, and `CLD_K2_SERVER_LOG`. Evidence mode writes a
+structured transcript plus a sanitized server log; the backup itself remains
+untracked and temporary while its size and SHA-256 are recorded.

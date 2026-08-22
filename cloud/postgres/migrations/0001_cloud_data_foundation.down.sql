@@ -3,16 +3,19 @@ BEGIN;
 DROP SCHEMA IF EXISTS clued CASCADE;
 
 DO $clued_drop_roles$
+DECLARE
+  role_name text;
+  role_marker text;
 BEGIN
-  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'clued_client') THEN
-    DROP ROLE clued_client;
-  END IF;
-  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'clued_service') THEN
-    DROP ROLE clued_service;
-  END IF;
-  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'clued_owner') THEN
-    DROP ROLE clued_owner;
-  END IF;
+  FOREACH role_name IN ARRAY ARRAY['clued_client', 'clued_service', 'clued_owner'] LOOP
+    SELECT shobj_description(oid, 'pg_authid')
+      INTO role_marker
+      FROM pg_roles
+     WHERE rolname = role_name;
+    IF FOUND AND role_marker = 'clued-k2-managed-v1' THEN
+      EXECUTE format('DROP ROLE %I', role_name);
+    END IF;
+  END LOOP;
 END
 $clued_drop_roles$;
 
