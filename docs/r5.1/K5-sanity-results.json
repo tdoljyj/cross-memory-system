@@ -1,0 +1,226 @@
+{
+  "gate": "K5",
+  "fixture_kind": "synthetic",
+  "provider": "clued-cloud-fts/v1",
+  "semantic_recall_enabled": false,
+  "total": 30,
+  "top5_hits": 30,
+  "threshold_required": 27,
+  "hard_rule_leakage": 0,
+  "secret_leakage": 0,
+  "cross_tenant_leakage": 0,
+  "trace_filter_mismatches": 0,
+  "cold_incremental_mismatches": 0,
+  "cases": [
+    {
+      "case_id": "K5-SANITY-01",
+      "query": "topic00",
+      "expected_id": "sanity-00",
+      "observed_rank": 1,
+      "passed": true
+    },
+    {
+      "case_id": "K5-SANITY-02",
+      "query": "topic01",
+      "expected_id": "sanity-01",
+      "observed_rank": 1,
+      "passed": true
+    },
+    {
+      "case_id": "K5-SANITY-03",
+      "query": "topic02",
+      "expected_id": "sanity-02",
+      "observed_rank": 1,
+      "passed": true
+    },
+    {
+      "case_id": "K5-SANITY-04",
+      "query": "topic03",
+      "expected_id": "sanity-03",
+      "observed_rank": 1,
+      "passed": true
+    },
+    {
+      "case_id": "K5-SANITY-05",
+      "query": "topic04",
+      "expected_id": "sanity-04",
+      "observed_rank": 1,
+      "passed": true
+    },
+    {
+      "case_id": "K5-SANITY-06",
+      "query": "topic05",
+      "expected_id": "sanity-05",
+      "observed_rank": 1,
+      "passed": true
+    },
+    {
+      "case_id": "K5-SANITY-07",
+      "query": "topic06",
+      "expected_id": "sanity-06",
+      "observed_rank": 1,
+      "passed": true
+    },
+    {
+      "case_id": "K5-SANITY-08",
+      "query": "topic07",
+      "expected_id": "sanity-07",
+      "observed_rank": 1,
+      "passed": true
+    },
+    {
+      "case_id": "K5-SANITY-09",
+      "query": "topic08",
+      "expected_id": "sanity-08",
+      "observed_rank": 1,
+      "passed": true
+    },
+    {
+      "case_id": "K5-SANITY-10",
+      "query": "topic09",
+      "expected_id": "sanity-09",
+      "observed_rank": 1,
+      "passed": true
+    },
+    {
+      "case_id": "K5-SANITY-11",
+      "query": "topic10",
+      "expected_id": "sanity-10",
+      "observed_rank": 1,
+      "passed": true
+    },
+    {
+      "case_id": "K5-SANITY-12",
+      "query": "topic11",
+      "expected_id": "sanity-11",
+      "observed_rank": 1,
+      "passed": true
+    },
+    {
+      "case_id": "K5-SANITY-13",
+      "query": "topic12",
+      "expected_id": "sanity-12",
+      "observed_rank": 1,
+      "passed": true
+    },
+    {
+      "case_id": "K5-SANITY-14",
+      "query": "topic13",
+      "expected_id": "sanity-13",
+      "observed_rank": 1,
+      "passed": true
+    },
+    {
+      "case_id": "K5-SANITY-15",
+      "query": "topic14",
+      "expected_id": "sanity-14",
+      "observed_rank": 1,
+      "passed": true
+    },
+    {
+      "case_id": "K5-SANITY-16",
+      "query": "topic15",
+      "expected_id": "sanity-15",
+      "observed_rank": 1,
+      "passed": true
+    },
+    {
+      "case_id": "K5-SANITY-17",
+      "query": "topic16",
+      "expected_id": "sanity-16",
+      "observed_rank": 1,
+      "passed": true
+    },
+    {
+      "case_id": "K5-SANITY-18",
+      "query": "topic17",
+      "expected_id": "sanity-17",
+      "observed_rank": 1,
+      "passed": true
+    },
+    {
+      "case_id": "K5-SANITY-19",
+      "query": "topic18",
+      "expected_id": "sanity-18",
+      "observed_rank": 1,
+      "passed": true
+    },
+    {
+      "case_id": "K5-SANITY-20",
+      "query": "topic19",
+      "expected_id": "sanity-19",
+      "observed_rank": 1,
+      "passed": true
+    },
+    {
+      "case_id": "K5-SANITY-21",
+      "query": "topic20",
+      "expected_id": "sanity-20",
+      "observed_rank": 1,
+      "passed": true
+    },
+    {
+      "case_id": "K5-SANITY-22",
+      "query": "topic21",
+      "expected_id": "sanity-21",
+      "observed_rank": 1,
+      "passed": true
+    },
+    {
+      "case_id": "K5-SANITY-23",
+      "query": "topic22",
+      "expected_id": "sanity-22",
+      "observed_rank": 1,
+      "passed": true
+    },
+    {
+      "case_id": "K5-SANITY-24",
+      "query": "topic23",
+      "expected_id": "sanity-23",
+      "observed_rank": 1,
+      "passed": true
+    },
+    {
+      "case_id": "K5-SANITY-25",
+      "query": "topic24",
+      "expected_id": "sanity-24",
+      "observed_rank": 1,
+      "passed": true
+    },
+    {
+      "case_id": "K5-SANITY-26",
+      "query": "topic25",
+      "expected_id": "sanity-25",
+      "observed_rank": 1,
+      "passed": true
+    },
+    {
+      "case_id": "K5-SANITY-27",
+      "query": "topic26",
+      "expected_id": "sanity-26",
+      "observed_rank": 1,
+      "passed": true
+    },
+    {
+      "case_id": "K5-SANITY-28",
+      "query": "topic27",
+      "expected_id": "sanity-27",
+      "observed_rank": 1,
+      "passed": true
+    },
+    {
+      "case_id": "K5-SANITY-29",
+      "query": "topic28",
+      "expected_id": "sanity-28",
+      "observed_rank": 1,
+      "passed": true
+    },
+    {
+      "case_id": "K5-SANITY-30",
+      "query": "topic29",
+      "expected_id": "sanity-29",
+      "observed_rank": 1,
+      "passed": true
+    }
+  ]
+}
