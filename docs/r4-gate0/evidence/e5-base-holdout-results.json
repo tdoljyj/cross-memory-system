@@ -1,0 +1,2327 @@
+{
+  "all_gates_passed": false,
+  "authorization": "产品所有者指令 2026-08-22：Gate 0-F 唯一一次 E5-base holdout（F0A 冻结 runner + F0B 唯一运行，两个独立提交，禁 amend）；alpha=1.00 / tau=0.90 正式选择固定；禁止第二次运行 / replay / 重试 / 调参 / 修例外 / 重新分组；仅授权 Gate 0-F，不启动 Gate 0-G/H/I、正式 Shadow 计数、真实 Binding、R4-1、Reflection、push、tag、release。",
+  "calibration_gate_reason_codes_observed": [
+    "PRECISION_LT_0_90",
+    "CRITICAL_LT_0_95",
+    "FALSE_RECALL_GT_0_02"
+  ],
+  "calibration_index_verified": {
+    "index_dir": "C:/Users/17531/.workbuddy/vector-cache/cross-memory-system/indexes/e5-base-eval",
+    "object_ids_sha256": "69b480a5ac4446e2e8d2c78bbba5d99aae1899f65ff93c95203c6c8294c9b736",
+    "vector_table_sha256": "2fe408db68586809c673771635398659aebeb4b0c567d3256eed931e39d54c55",
+    "vectors_sha256": "dde75de23c343aeded684f99adfaf767bb3003c3b23e2d27b59aa718b0f65f79"
+  },
+  "case_verdicts": [
+    {
+      "case_id": "cs-004",
+      "category": "conflict_superseded",
+      "eligible_expected_ids": [
+        "mem_fx0f0005"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0f0005"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [
+        "mem_fx0f0006"
+      ],
+      "frozen_expected_ids": [
+        "mem_fx0f0005"
+      ],
+      "latency_ms": 47.292200004449114,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {
+        "mem_fx0f0006": [
+          "STATUS_CANDIDATE"
+        ]
+      },
+      "returned_ids": [
+        "mem_fx0f0005"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0f0005": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 14
+    },
+    {
+      "case_id": "cs-007",
+      "category": "conflict_superseded",
+      "eligible_expected_ids": [
+        "mem_fx0f0011"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0f0011"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [
+        "mem_fx0f0009",
+        "mem_fx0f0010"
+      ],
+      "frozen_expected_ids": [
+        "mem_fx0f0011"
+      ],
+      "latency_ms": 45.448100019712,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {
+        "mem_fx0f0009": [
+          "CONFLICT_LOSER"
+        ],
+        "mem_fx0f0010": [
+          "STATUS_SUPERSEDED"
+        ]
+      },
+      "returned_ids": [
+        "mem_fx0f0011"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0f0011": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 15
+    },
+    {
+      "case_id": "cs-008",
+      "category": "conflict_superseded",
+      "eligible_expected_ids": [
+        "mem_fx0f0011"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0f0011"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [
+        "mem_fx0f0009"
+      ],
+      "frozen_expected_ids": [
+        "mem_fx0f0011"
+      ],
+      "latency_ms": 39.01639999821782,
+      "missed": [
+        "mem_fx0f0011"
+      ],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {
+        "mem_fx0f0009": [
+          "CONFLICT_LOSER"
+        ],
+        "mem_fx0f0011": [
+          "BELOW_LEXICAL_AND_VECTOR_THRESHOLDS"
+        ]
+      },
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 0
+    },
+    {
+      "case_id": "cs-012",
+      "category": "conflict_superseded",
+      "eligible_expected_ids": [
+        "mem_fx0f0009",
+        "mem_fx0f0011"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0f0009",
+        "mem_fx0f0011"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0f0009",
+        "mem_fx0f0011"
+      ],
+      "latency_ms": 1.1479999811854213,
+      "missed": [
+        "mem_fx0f0011"
+      ],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {
+        "mem_fx0f0011": [
+          "RELEVANCE_BELOW_THRESHOLD"
+        ]
+      },
+      "returned_ids": [
+        "mem_fx0f0009"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0f0009": []
+      },
+      "semantic_status": "HYBRID_HISTORY_UNSUPPORTED",
+      "tokens": 15
+    },
+    {
+      "case_id": "ep-001",
+      "category": "explicit_preference",
+      "eligible_expected_ids": [
+        "mem_fx0a0001"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0a0001"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0a0001"
+      ],
+      "latency_ms": 37.4061000184156,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0a0001"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0a0001": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 18
+    },
+    {
+      "case_id": "ep-003",
+      "category": "explicit_preference",
+      "eligible_expected_ids": [
+        "mem_fx0a0003"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0a0003"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0a0003"
+      ],
+      "latency_ms": 38.284100010059774,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0a0003"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0a0003": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 14
+    },
+    {
+      "case_id": "ep-004",
+      "category": "explicit_preference",
+      "eligible_expected_ids": [
+        "mem_fx0a0004"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0a0004"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0a0004"
+      ],
+      "latency_ms": 38.16929997992702,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0a0004"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0a0004": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 15
+    },
+    {
+      "case_id": "ep-005",
+      "category": "explicit_preference",
+      "eligible_expected_ids": [
+        "mem_fx0a0005"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0a0005"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0a0005"
+      ],
+      "latency_ms": 38.211200007935986,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0a0005"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0a0005": [
+          "MIV_005A_AND_VECTOR_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 15
+    },
+    {
+      "case_id": "ep-006",
+      "category": "explicit_preference",
+      "eligible_expected_ids": [
+        "mem_fx0a0006"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0a0006"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0a0006"
+      ],
+      "latency_ms": 39.33849997702055,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0a0006"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0a0006": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 17
+    },
+    {
+      "case_id": "ep-008",
+      "category": "explicit_preference",
+      "eligible_expected_ids": [
+        "mem_fx0a0008"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0a0008"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0a0008"
+      ],
+      "latency_ms": 38.626200024737045,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0a0008"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0a0008": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 18
+    },
+    {
+      "case_id": "ep-010",
+      "category": "explicit_preference",
+      "eligible_expected_ids": [
+        "mem_fx0a0011"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0a0011"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0a0011"
+      ],
+      "latency_ms": 39.62109997519292,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0a0011"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0a0011": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 19
+    },
+    {
+      "case_id": "ep-014",
+      "category": "explicit_preference",
+      "eligible_expected_ids": [
+        "mem_fx0a0015"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0a0015"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0a0015"
+      ],
+      "latency_ms": 44.95169999427162,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0a0015"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0a0015": [
+          "MIV_005A_AND_VECTOR_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 18
+    },
+    {
+      "case_id": "io-001",
+      "category": "implicit_observed",
+      "eligible_expected_ids": [],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [],
+      "latency_ms": 0.9511999960523099,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 0
+    },
+    {
+      "case_id": "io-004",
+      "category": "implicit_observed",
+      "eligible_expected_ids": [],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [],
+      "latency_ms": 0.7594999915454537,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 0
+    },
+    {
+      "case_id": "io-005",
+      "category": "implicit_observed",
+      "eligible_expected_ids": [],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [],
+      "latency_ms": 0.7340000011026859,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 0
+    },
+    {
+      "case_id": "io-006",
+      "category": "implicit_observed",
+      "eligible_expected_ids": [],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [],
+      "latency_ms": 0.7593999907840043,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 0
+    },
+    {
+      "case_id": "io-007",
+      "category": "implicit_observed",
+      "eligible_expected_ids": [],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [],
+      "latency_ms": 0.7539999787695706,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 0
+    },
+    {
+      "case_id": "io-008",
+      "category": "implicit_observed",
+      "eligible_expected_ids": [],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [],
+      "latency_ms": 0.7445999945048243,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 0
+    },
+    {
+      "case_id": "io-009",
+      "category": "implicit_observed",
+      "eligible_expected_ids": [
+        "mem_fx0b0009"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0b0009"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0b0009"
+      ],
+      "latency_ms": 44.94280001381412,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0b0009"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0b0009": [
+          "MIV_005A_AND_VECTOR_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 23
+    },
+    {
+      "case_id": "io-013",
+      "category": "implicit_observed",
+      "eligible_expected_ids": [],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [],
+      "latency_ms": 0.971200002823025,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 0
+    },
+    {
+      "case_id": "nm-002",
+      "category": "negative_no_memory",
+      "eligible_expected_ids": [],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [],
+      "latency_ms": 45.03929999191314,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 0
+    },
+    {
+      "case_id": "nm-010",
+      "category": "negative_no_memory",
+      "eligible_expected_ids": [],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [],
+      "latency_ms": 0.9589999972376972,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 0
+    },
+    {
+      "case_id": "nm-011",
+      "category": "negative_no_memory",
+      "eligible_expected_ids": [],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [],
+      "latency_ms": 0.7673999934922904,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 0
+    },
+    {
+      "case_id": "nm-014",
+      "category": "negative_no_memory",
+      "eligible_expected_ids": [],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [],
+      "latency_ms": 0.7470000127796084,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 0
+    },
+    {
+      "case_id": "pp-001",
+      "category": "paraphrase",
+      "eligible_expected_ids": [
+        "mem_fx0g0001"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0g0001"
+      ],
+      "extra": [
+        "mem_fx0a0001",
+        "mem_fx0a0002"
+      ],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0g0001"
+      ],
+      "latency_ms": 45.188199990661815,
+      "missed": [
+        "mem_fx0g0001"
+      ],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {
+        "mem_fx0g0001": [
+          "BELOW_LEXICAL_AND_VECTOR_THRESHOLDS"
+        ]
+      },
+      "returned_ids": [
+        "mem_fx0a0001",
+        "mem_fx0a0002"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0a0001": [
+          "MIV_005A_ADMIT"
+        ],
+        "mem_fx0a0002": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 35
+    },
+    {
+      "case_id": "pp-002",
+      "category": "paraphrase",
+      "eligible_expected_ids": [
+        "mem_fx0g0002"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0g0002"
+      ],
+      "extra": [
+        "mem_fx0a0001",
+        "mem_fx0a0005",
+        "mem_fx0a0013"
+      ],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0g0002"
+      ],
+      "latency_ms": 56.48020000080578,
+      "missed": [
+        "mem_fx0g0002"
+      ],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {
+        "mem_fx0g0002": [
+          "BELOW_LEXICAL_AND_VECTOR_THRESHOLDS"
+        ]
+      },
+      "returned_ids": [
+        "mem_fx0a0001",
+        "mem_fx0a0005",
+        "mem_fx0a0013"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0a0001": [
+          "MIV_005A_ADMIT"
+        ],
+        "mem_fx0a0005": [
+          "MIV_005A_ADMIT"
+        ],
+        "mem_fx0a0013": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 50
+    },
+    {
+      "case_id": "pp-003",
+      "category": "paraphrase",
+      "eligible_expected_ids": [
+        "mem_fx0g0003"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0g0003"
+      ],
+      "extra": [
+        "mem_fx0a0007",
+        "mem_fx0a0012"
+      ],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0g0003"
+      ],
+      "latency_ms": 50.02639998565428,
+      "missed": [
+        "mem_fx0g0003"
+      ],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {
+        "mem_fx0g0003": [
+          "BELOW_LEXICAL_AND_VECTOR_THRESHOLDS"
+        ]
+      },
+      "returned_ids": [
+        "mem_fx0a0007",
+        "mem_fx0a0012"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0a0007": [
+          "MIV_005A_ADMIT"
+        ],
+        "mem_fx0a0012": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 50
+    },
+    {
+      "case_id": "pp-004",
+      "category": "paraphrase",
+      "eligible_expected_ids": [
+        "mem_fx0g0004"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0g0004"
+      ],
+      "extra": [
+        "mem_fx0a0006",
+        "mem_fx0a0015",
+        "mem_fx0c0015"
+      ],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0g0004"
+      ],
+      "latency_ms": 46.835899993311614,
+      "missed": [
+        "mem_fx0g0004"
+      ],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {
+        "mem_fx0g0004": [
+          "LIMIT_TRUNCATED"
+        ]
+      },
+      "returned_ids": [
+        "mem_fx0a0006",
+        "mem_fx0a0015",
+        "mem_fx0c0015"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0a0006": [
+          "MIV_005A_ADMIT"
+        ],
+        "mem_fx0a0015": [
+          "MIV_005A_ADMIT"
+        ],
+        "mem_fx0c0015": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 48
+    },
+    {
+      "case_id": "pp-005",
+      "category": "paraphrase",
+      "eligible_expected_ids": [
+        "mem_fx0g0005"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0g0005"
+      ],
+      "extra": [
+        "mem_fx0a0003",
+        "mem_fx0b0014",
+        "mem_fx0d0002"
+      ],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0g0005"
+      ],
+      "latency_ms": 44.71809999085963,
+      "missed": [
+        "mem_fx0g0005"
+      ],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {
+        "mem_fx0g0005": [
+          "BELOW_LEXICAL_AND_VECTOR_THRESHOLDS"
+        ]
+      },
+      "returned_ids": [
+        "mem_fx0d0002",
+        "mem_fx0b0014",
+        "mem_fx0a0003"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0a0003": [
+          "MIV_005A_ADMIT"
+        ],
+        "mem_fx0b0014": [
+          "MIV_005A_ADMIT"
+        ],
+        "mem_fx0d0002": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 41
+    },
+    {
+      "case_id": "pp-006",
+      "category": "paraphrase",
+      "eligible_expected_ids": [
+        "mem_fx0g0006"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0g0006"
+      ],
+      "extra": [
+        "mem_fx0a0004",
+        "mem_fx0a0008",
+        "mem_fx0a0013"
+      ],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0g0006"
+      ],
+      "latency_ms": 43.84649998974055,
+      "missed": [
+        "mem_fx0g0006"
+      ],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {
+        "mem_fx0g0006": [
+          "BELOW_LEXICAL_AND_VECTOR_THRESHOLDS"
+        ]
+      },
+      "returned_ids": [
+        "mem_fx0a0008",
+        "mem_fx0a0013",
+        "mem_fx0a0004"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0a0004": [
+          "MIV_005A_ADMIT"
+        ],
+        "mem_fx0a0008": [
+          "MIV_005A_ADMIT"
+        ],
+        "mem_fx0a0013": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 50
+    },
+    {
+      "case_id": "pp-007",
+      "category": "paraphrase",
+      "eligible_expected_ids": [
+        "mem_fx0g0007"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0g0007"
+      ],
+      "extra": [
+        "mem_fx0a0007",
+        "mem_fx0a0011",
+        "mem_fx0c0005"
+      ],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0g0007"
+      ],
+      "latency_ms": 48.459499987075105,
+      "missed": [
+        "mem_fx0g0007"
+      ],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {
+        "mem_fx0g0007": [
+          "BELOW_LEXICAL_AND_VECTOR_THRESHOLDS"
+        ]
+      },
+      "returned_ids": [
+        "mem_fx0a0007",
+        "mem_fx0a0011",
+        "mem_fx0c0005"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0a0007": [
+          "MIV_005A_ADMIT"
+        ],
+        "mem_fx0a0011": [
+          "MIV_005A_ADMIT"
+        ],
+        "mem_fx0c0005": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 49
+    },
+    {
+      "case_id": "pp-008",
+      "category": "paraphrase",
+      "eligible_expected_ids": [
+        "mem_fx0g0008"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0g0008"
+      ],
+      "extra": [
+        "mem_fx0a0001",
+        "mem_fx0a0002",
+        "mem_fx0a0016"
+      ],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0g0008"
+      ],
+      "latency_ms": 46.17840002174489,
+      "missed": [
+        "mem_fx0g0008"
+      ],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {
+        "mem_fx0g0008": [
+          "BELOW_LEXICAL_AND_VECTOR_THRESHOLDS"
+        ]
+      },
+      "returned_ids": [
+        "mem_fx0a0001",
+        "mem_fx0a0002",
+        "mem_fx0a0016"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0a0001": [
+          "MIV_005A_ADMIT"
+        ],
+        "mem_fx0a0002": [
+          "MIV_005A_ADMIT"
+        ],
+        "mem_fx0a0016": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 64
+    },
+    {
+      "case_id": "pp-009",
+      "category": "paraphrase",
+      "eligible_expected_ids": [
+        "mem_fx0g0009"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0g0009"
+      ],
+      "extra": [
+        "mem_fx0a0005",
+        "mem_fx0a0015",
+        "mem_fx0b0010"
+      ],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0g0009"
+      ],
+      "latency_ms": 48.44529999536462,
+      "missed": [
+        "mem_fx0g0009"
+      ],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {
+        "mem_fx0g0009": [
+          "BELOW_LEXICAL_AND_VECTOR_THRESHOLDS"
+        ]
+      },
+      "returned_ids": [
+        "mem_fx0a0005",
+        "mem_fx0a0015",
+        "mem_fx0b0010"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0a0005": [
+          "MIV_005A_ADMIT"
+        ],
+        "mem_fx0a0015": [
+          "MIV_005A_ADMIT"
+        ],
+        "mem_fx0b0010": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 50
+    },
+    {
+      "case_id": "pp-010",
+      "category": "paraphrase",
+      "eligible_expected_ids": [
+        "mem_fx0g0010"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0g0010"
+      ],
+      "extra": [
+        "mem_fx0a0004",
+        "mem_fx0a0006",
+        "mem_fx0a0008"
+      ],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0g0010"
+      ],
+      "latency_ms": 44.9975999945309,
+      "missed": [
+        "mem_fx0g0010"
+      ],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {
+        "mem_fx0g0010": [
+          "BELOW_LEXICAL_AND_VECTOR_THRESHOLDS"
+        ]
+      },
+      "returned_ids": [
+        "mem_fx0a0006",
+        "mem_fx0a0008",
+        "mem_fx0a0004"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0a0004": [
+          "MIV_005A_ADMIT"
+        ],
+        "mem_fx0a0006": [
+          "MIV_005A_ADMIT"
+        ],
+        "mem_fx0a0008": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 50
+    },
+    {
+      "case_id": "pp-011",
+      "category": "paraphrase",
+      "eligible_expected_ids": [
+        "mem_fx0g0001"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0g0001"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0g0001"
+      ],
+      "latency_ms": 39.78799999458715,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0g0001"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0g0001": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 13
+    },
+    {
+      "case_id": "pp-012",
+      "category": "paraphrase",
+      "eligible_expected_ids": [
+        "mem_fx0g0002"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0g0002"
+      ],
+      "extra": [
+        "mem_fx0a0001",
+        "mem_fx0a0002",
+        "mem_fx0a0003"
+      ],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0g0002"
+      ],
+      "latency_ms": 38.41969999484718,
+      "missed": [
+        "mem_fx0g0002"
+      ],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {
+        "mem_fx0g0002": [
+          "BELOW_LEXICAL_AND_VECTOR_THRESHOLDS"
+        ]
+      },
+      "returned_ids": [
+        "mem_fx0a0001",
+        "mem_fx0a0002",
+        "mem_fx0a0003"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0a0001": [
+          "MIV_005A_ADMIT"
+        ],
+        "mem_fx0a0002": [
+          "MIV_005A_ADMIT"
+        ],
+        "mem_fx0a0003": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 49
+    },
+    {
+      "case_id": "ps-001",
+      "category": "project_scope",
+      "eligible_expected_ids": [
+        "mem_fx0c0001"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0c0001"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0c0001"
+      ],
+      "latency_ms": 38.691399997333065,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0c0001"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0c0001": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 12
+    },
+    {
+      "case_id": "ps-002",
+      "category": "project_scope",
+      "eligible_expected_ids": [
+        "mem_fx0c0002"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0c0002"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0c0002"
+      ],
+      "latency_ms": 37.85960000823252,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0c0002"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0c0002": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 12
+    },
+    {
+      "case_id": "ps-003",
+      "category": "project_scope",
+      "eligible_expected_ids": [
+        "mem_fx0c0003"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0c0003"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0c0003"
+      ],
+      "latency_ms": 37.48500000801869,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0c0003"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0c0003": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 10
+    },
+    {
+      "case_id": "ps-005",
+      "category": "project_scope",
+      "eligible_expected_ids": [],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [
+        "mem_fx0c0001"
+      ],
+      "frozen_expected_ids": [],
+      "latency_ms": 0.9766000148374587,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {
+        "mem_fx0c0001": [
+          "SCOPE_MISMATCH"
+        ]
+      },
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 0
+    },
+    {
+      "case_id": "ps-007",
+      "category": "project_scope",
+      "eligible_expected_ids": [
+        "mem_fx0c0001",
+        "mem_fx0c0002",
+        "mem_fx0c0003"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0c0001",
+        "mem_fx0c0002",
+        "mem_fx0c0003"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0c0001",
+        "mem_fx0c0002",
+        "mem_fx0c0003"
+      ],
+      "latency_ms": 38.02730000461452,
+      "missed": [
+        "mem_fx0c0001",
+        "mem_fx0c0002",
+        "mem_fx0c0003"
+      ],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {
+        "mem_fx0c0001": [
+          "BELOW_LEXICAL_AND_VECTOR_THRESHOLDS"
+        ],
+        "mem_fx0c0002": [
+          "BELOW_LEXICAL_AND_VECTOR_THRESHOLDS"
+        ],
+        "mem_fx0c0003": [
+          "BELOW_LEXICAL_AND_VECTOR_THRESHOLDS"
+        ]
+      },
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 0
+    },
+    {
+      "case_id": "ps-009",
+      "category": "project_scope",
+      "eligible_expected_ids": [
+        "mem_fx0c0009"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0c0009"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0c0009"
+      ],
+      "latency_ms": 40.41039998992346,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0c0009"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0c0009": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 21
+    },
+    {
+      "case_id": "ps-010",
+      "category": "project_scope",
+      "eligible_expected_ids": [
+        "mem_fx0c0001"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0c0001"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [
+        "mem_fx0c0006"
+      ],
+      "frozen_expected_ids": [
+        "mem_fx0c0001"
+      ],
+      "latency_ms": 37.777100020321086,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {
+        "mem_fx0c0006": [
+          "PROJECT_MISMATCH"
+        ]
+      },
+      "returned_ids": [
+        "mem_fx0c0001"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0c0001": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 12
+    },
+    {
+      "case_id": "ps-011",
+      "category": "project_scope",
+      "eligible_expected_ids": [
+        "mem_fx0c0010"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0c0010"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0c0010"
+      ],
+      "latency_ms": 38.19299998576753,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0c0010"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0c0010": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 12
+    },
+    {
+      "case_id": "ps-012",
+      "category": "project_scope",
+      "eligible_expected_ids": [
+        "mem_fx0c0011"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0c0011"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0c0011"
+      ],
+      "latency_ms": 37.277900002663955,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0c0011"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0c0011": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 16
+    },
+    {
+      "case_id": "ps-013",
+      "category": "project_scope",
+      "eligible_expected_ids": [
+        "mem_fx0c0012"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0c0012"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0c0012"
+      ],
+      "latency_ms": 37.39569999743253,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0c0012"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0c0012": [
+          "MIV_005A_AND_VECTOR_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 15
+    },
+    {
+      "case_id": "ps-014",
+      "category": "project_scope",
+      "eligible_expected_ids": [
+        "mem_fx0c0013"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0c0013"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0c0013"
+      ],
+      "latency_ms": 39.01780000887811,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0c0013"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0c0013": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 33
+    },
+    {
+      "case_id": "ps-015",
+      "category": "project_scope",
+      "eligible_expected_ids": [],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [
+        "mem_fx0c0014"
+      ],
+      "frozen_expected_ids": [],
+      "latency_ms": 1.0444999788887799,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {
+        "mem_fx0c0014": [
+          "SCOPE_MISMATCH",
+          "CATEGORY_MISMATCH"
+        ]
+      },
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 0
+    },
+    {
+      "case_id": "ps-016",
+      "category": "project_scope",
+      "eligible_expected_ids": [
+        "mem_fx0c0015"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0c0015"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0c0015"
+      ],
+      "latency_ms": 38.07459998643026,
+      "missed": [
+        "mem_fx0c0015"
+      ],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {
+        "mem_fx0c0015": [
+          "BELOW_LEXICAL_AND_VECTOR_THRESHOLDS"
+        ]
+      },
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 0
+    },
+    {
+      "case_id": "sa-001",
+      "category": "security_adversarial",
+      "eligible_expected_ids": [
+        "mem_fx0h0001"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0h0001"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0h0001"
+      ],
+      "latency_ms": 37.938800000119954,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0h0001"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0h0001": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 30
+    },
+    {
+      "case_id": "sa-002",
+      "category": "security_adversarial",
+      "eligible_expected_ids": [
+        "mem_fx0a0001"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0a0001"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [
+        "mem_fx0h0001"
+      ],
+      "frozen_expected_ids": [
+        "mem_fx0a0001"
+      ],
+      "latency_ms": 38.54120001778938,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {
+        "mem_fx0h0001": [
+          "CATEGORY_MISMATCH"
+        ]
+      },
+      "returned_ids": [
+        "mem_fx0a0001"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0a0001": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 18
+    },
+    {
+      "case_id": "sa-008",
+      "category": "security_adversarial",
+      "eligible_expected_ids": [
+        "mem_fx0h0007"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0h0007"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0h0007"
+      ],
+      "latency_ms": 38.15690000192262,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0h0007"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0h0007": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 45
+    },
+    {
+      "case_id": "tp-002",
+      "category": "temporal",
+      "eligible_expected_ids": [
+        "mem_fx0e0001"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0e0001"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0e0001"
+      ],
+      "latency_ms": 1.0130000009667128,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0e0001"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0e0001": []
+      },
+      "semantic_status": "HYBRID_HISTORY_UNSUPPORTED",
+      "tokens": 13
+    },
+    {
+      "case_id": "tp-004",
+      "category": "temporal",
+      "eligible_expected_ids": [
+        "mem_fx0e0003"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0e0003"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0e0003"
+      ],
+      "latency_ms": 38.02089998498559,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0e0003"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0e0003": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 12
+    },
+    {
+      "case_id": "tp-005",
+      "category": "temporal",
+      "eligible_expected_ids": [],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [],
+      "latency_ms": 0.9730999881867319,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 0
+    },
+    {
+      "case_id": "tp-007",
+      "category": "temporal",
+      "eligible_expected_ids": [
+        "mem_fx0e0005"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0e0005"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0e0005"
+      ],
+      "latency_ms": 37.698700005421415,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0e0005"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0e0005": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 17
+    },
+    {
+      "case_id": "tp-008",
+      "category": "temporal",
+      "eligible_expected_ids": [],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [],
+      "latency_ms": 0.9071000094991177,
+      "missed": [],
+      "no_memory_expected": true,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [],
+      "selected_reason_codes": {},
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 0
+    },
+    {
+      "case_id": "tp-009",
+      "category": "temporal",
+      "eligible_expected_ids": [
+        "mem_fx0e0008"
+      ],
+      "error": null,
+      "excluded_from_expected_by_oracle": [],
+      "expected_relevant_ids": [
+        "mem_fx0e0008"
+      ],
+      "extra": [],
+      "forbidden_hits": [],
+      "forbidden_ids": [],
+      "frozen_expected_ids": [
+        "mem_fx0e0008"
+      ],
+      "latency_ms": 37.01899998122826,
+      "missed": [],
+      "no_memory_expected": false,
+      "no_memory_violated": false,
+      "reason_codes": {},
+      "returned_ids": [
+        "mem_fx0e0008"
+      ],
+      "selected_reason_codes": {
+        "mem_fx0e0008": [
+          "MIV_005A_ADMIT"
+        ]
+      },
+      "semantic_status": "HYBRID_ACTIVE",
+      "tokens": 17
+    }
+  ],
+  "consumption_marker": {
+    "content": {
+      "calibration_receipt_sha256": "f84f3f4c09a8fb15f696e7c861d65e327b443a2a0daacdccdda2c158734461c5",
+      "candidate_lock_sha256": "66e1ab241f98a92759844cefb329688cb6a9dbb19a04fd28d4ad05dd904e2ed9",
+      "consumed_at_utc": "2026-08-22T00:29:41Z",
+      "git_head": "47a51ea6c0f03e5a5449eee91cbe6d5a1ecca869",
+      "holdout_case_count": 58,
+      "holdout_ids_sha256": "0977a9d993346d2430c5ceea0129001741c51502635fd3e9bccafd477e94de4c",
+      "holdout_runner_code_sha256": "c5ba51ab5e58674aca8763c3b981bb7254e2061fbc7d55d766fcdd07e87d6d5c",
+      "model_manifest_sha256": "f4d7c895a2900bd06cc8761043fbc94c3190dd521e931b7d603d79c928eb842e",
+      "parameters_frozen": {
+        "alpha": 1.0,
+        "tau": 0.9
+      },
+      "policy": "one-shot：本 marker 的存在即代表唯一一次 E5-base holdout 运行已被消费（写入发生在全部 preflight 通过之后、读取第一条 holdout detail 之前）；此后禁止第二次运行、replay、重试、调参、修例外或重新分组。",
+      "run_kind": "e5-base-holdout-one-shot",
+      "schema_version": "r4-gate0-e5base-holdout-consumption-v1"
+    },
+    "path": "C:\\Users\\17531\\.workbuddy\\vector-cache\\cross-memory-system\\holdout\\e5-base-one-shot-consumption-marker.json",
+    "sha256": "c72c399c8a7b79a2b3916c970fdc32ee71fedf09d79ba3b65786c3141f810cbb",
+    "written_after_all_preflight": true,
+    "written_before_first_holdout_detail_read": true
+  },
+  "eligible_expected_rule": "eligible_expected = frozen_expected ∩ canonical_survivors（oracle v3 口径）",
+  "evidence_secret_leak_count": 0,
+  "gates": [
+    {
+      "gate": "precision_at5_v2",
+      "passed": false,
+      "rule": ">=0.90",
+      "value": 0.48333333333333334
+    },
+    {
+      "gate": "critical_memory_recall_v2",
+      "passed": false,
+      "rule": ">=0.95",
+      "value": 0.6304347826086957
+    },
+    {
+      "gate": "false_recall_rate_v2",
+      "passed": false,
+      "rule": "<=0.02",
+      "value": 0.5166666666666667
+    },
+    {
+      "gate": "paraphrase_correct",
+      "passed": false,
+      "rule": ">=11/12",
+      "value": "1/12"
+    },
+    {
+      "gate": "no_memory_final_contract",
+      "passed": true,
+      "rule": "41/41 all correct",
+      "value": "41/41"
+    },
+    {
+      "gate": "lexical_expected_preservation",
+      "passed": true,
+      "rule": "==1.0",
+      "value": 1.0
+    },
+    {
+      "gate": "prompt_token_p95",
+      "passed": true,
+      "rule": "<=650",
+      "value": 50
+    },
+    {
+      "gate": "scope_leakage",
+      "passed": true,
+      "rule": "==0",
+      "value": 0
+    },
+    {
+      "gate": "superseded_leakage",
+      "passed": true,
+      "rule": "==0",
+      "value": 0
+    },
+    {
+      "gate": "conflict_loser_revival",
+      "passed": true,
+      "rule": "==0",
+      "value": 0
+    },
+    {
+      "gate": "secret_leakage",
+      "passed": true,
+      "rule": "==0",
+      "value": 0
+    },
+    {
+      "gate": "forbidden_leakage_total",
+      "passed": true,
+      "rule": "==0",
+      "value": 0
+    },
+    {
+      "gate": "trace_mismatch",
+      "passed": true,
+      "rule": "==0",
+      "value": 0
+    },
+    {
+      "gate": "error_count",
+      "passed": true,
+      "rule": "==0",
+      "value": 0
+    }
+  ],
+  "git_head": "47a51ea6c0f03e5a5449eee91cbe6d5a1ecca869",
+  "holdout_case_count": 58,
+  "holdout_case_details_read": 58,
+  "holdout_gate_reference": "precision_at5_v2>=0.90; critical_memory_recall_v2>=0.95; false_recall_rate_v2<=0.02; paraphrase>=11/12; NO MEMORY final contract 41/41; lexical_expected_preservation==1.0; prompt_token_p95<=650; scope/superseded/conflict/secret/forbidden leakage==0; conflict_loser_revival==0; trace_mismatch==0; error_count==0",
+  "integrity": {
+    "calibration_code_sha256": "39e76734330826a790fb00b8a8890ecc7c38e4d5786466d47a297dca56fa13dc",
+    "calibration_receipt_sha256": "f84f3f4c09a8fb15f696e7c861d65e327b443a2a0daacdccdda2c158734461c5",
+    "candidate_lock_sha256": "66e1ab241f98a92759844cefb329688cb6a9dbb19a04fd28d4ad05dd904e2ed9",
+    "corpus_sha256": "4836f10836262098ad91633fbaf4164523afe7e82c2755bb1f04b94191bf22a5",
+    "e5_base_runner_gate0_sha256": "0dd8e8b3f39f2209cca75410e9b5e712bde8de8c0a6abf8f3e7fad677a61c1ed",
+    "fixtures_sha256": "ad84011c4b341c5d5bd4c1fb3c16c7eb4f27fee3dbc353650cc809e9cc15407a",
+    "frozen_eval_manifest_sha256": "c7a195e1e21a476ac949723d65dc8f8594f3931b999974db68561a2838b32ac1",
+    "frozen_sources": {
+      "docs/r4-gate0/evidence/frozen-eval-manifest.json": "c7a195e1e21a476ac949723d65dc8f8594f3931b999974db68561a2838b32ac1",
+      "memory_eval/corpus.py": "4836f10836262098ad91633fbaf4164523afe7e82c2755bb1f04b94191bf22a5",
+      "memory_eval/metrics.py": "77595574e3eee85d112877e43619b91930663f621c4bbb3c3716d6089ddf8fe2",
+      "memory_eval/runner.py": "813d2534463279f14e3b462080d6b048f5f65dd3925555119098076ae01bf08c",
+      "tests/fixtures/memory_eval/fixtures.json": "ad84011c4b341c5d5bd4c1fb3c16c7eb4f27fee3dbc353650cc809e9cc15407a"
+    },
+    "git_head": "47a51ea6c0f03e5a5449eee91cbe6d5a1ecca869",
+    "holdout_runner_code_sha256": "c5ba51ab5e58674aca8763c3b981bb7254e2061fbc7d55d766fcdd07e87d6d5c",
+    "lock_digests_measured": {
+      "frozen_hard_filter_contract": "f79b6a0f5c03e6ff33bee754ca5496b85f1365a5db67e4d9318172f2d5197cd4",
+      "holdout_manifest": "c7a195e1e21a476ac949723d65dc8f8594f3931b999974db68561a2838b32ac1",
+      "oracle_v3_spec": "1ff8b9a0db0a77875ffc9764222b9dba22fdf4e9e4aae90b2db863629ac83843",
+      "requirements_lock": "e0355a341138fb90abeb0826fdeef0acfeba4eb2dea2c4d673ed127c2db155c6"
+    },
+    "model_manifest_sha256": "f4d7c895a2900bd06cc8761043fbc94c3190dd521e931b7d603d79c928eb842e",
+    "oracle_v3_code_sha256": "3163ab4ff3d589f1968a0c1bdb55e939ca78a3a042f439b5d5d37151e34068df"
+  },
+  "leakage": {
+    "conflict_loser_revival": 0,
+    "forbidden_leakage_total": 0,
+    "scope_leakage": 0,
+    "secret_leakage": 0,
+    "superseded_leakage": 0
+  },
+  "loaded_case_ids": [
+    "cs-004",
+    "cs-007",
+    "cs-008",
+    "cs-012",
+    "ep-001",
+    "ep-003",
+    "ep-004",
+    "ep-005",
+    "ep-006",
+    "ep-008",
+    "ep-010",
+    "ep-014",
+    "io-001",
+    "io-004",
+    "io-005",
+    "io-006",
+    "io-007",
+    "io-008",
+    "io-009",
+    "io-013",
+    "nm-002",
+    "nm-010",
+    "nm-011",
+    "nm-014",
+    "pp-001",
+    "pp-002",
+    "pp-003",
+    "pp-004",
+    "pp-005",
+    "pp-006",
+    "pp-007",
+    "pp-008",
+    "pp-009",
+    "pp-010",
+    "pp-011",
+    "pp-012",
+    "ps-001",
+    "ps-002",
+    "ps-003",
+    "ps-005",
+    "ps-007",
+    "ps-009",
+    "ps-010",
+    "ps-011",
+    "ps-012",
+    "ps-013",
+    "ps-014",
+    "ps-015",
+    "ps-016",
+    "sa-001",
+    "sa-002",
+    "sa-008",
+    "tp-002",
+    "tp-004",
+    "tp-005",
+    "tp-007",
+    "tp-008",
+    "tp-009"
+  ],
+  "loaded_case_ids_sha256": "0977a9d993346d2430c5ceea0129001741c51502635fd3e9bccafd477e94de4c",
+  "metric_contract_v2": {
+    "cases": 58,
+    "critical_memory_recall_v2": 0.6304,
+    "false_recall_rate_v2": 0.5167,
+    "golden_ids": 46,
+    "hit_rate_at5": 0.6744,
+    "positive_cases": 43,
+    "precision_at5_v2": 0.4833,
+    "returned_objects": 60,
+    "wrong_objects": 31
+  },
+  "no_memory": {
+    "calibration_correct": 26,
+    "calibration_total": 26,
+    "combined_correct": 41,
+    "combined_total": 41,
+    "final_contract": "41/41",
+    "holdout_correct": 15,
+    "holdout_no_memory_case_ids": [
+      "io-001",
+      "io-004",
+      "io-005",
+      "io-006",
+      "io-007",
+      "io-008",
+      "io-013",
+      "nm-002",
+      "nm-010",
+      "nm-011",
+      "nm-014",
+      "ps-005",
+      "ps-015",
+      "tp-005",
+      "tp-008"
+    ],
+    "holdout_total": 15
+  },
+  "parameters": {
+    "alpha": 1.0,
+    "frozen": true,
+    "selection_source": "正式 calibration receipt（禁止网格 / 选参 / 调参 / 降门槛）",
+    "tau": 0.9
+  },
+  "paraphrase": {
+    "correct": 1,
+    "correct_case_ids": [
+      "pp-011"
+    ],
+    "definition": "改写目标（eligible expected）命中 Top-5 且 零 forbidden 命中且零引擎错误",
+    "total": 12
+  },
+  "paraphrase_completed_in_same_run": true,
+  "paraphrase_ids": [
+    "pp-001",
+    "pp-002",
+    "pp-003",
+    "pp-004",
+    "pp-005",
+    "pp-006",
+    "pp-007",
+    "pp-008",
+    "pp-009",
+    "pp-010",
+    "pp-011",
+    "pp-012"
+  ],
+  "protocol_deviations": [],
+  "raw_counts": {
+    "critical_hits": 29,
+    "critical_total": 46,
+    "error_count": 0,
+    "false_objects": 31,
+    "forbidden_hits": 0,
+    "lexical_expected_baseline_total": 29,
+    "lexical_expected_preserved": 29,
+    "no_memory_correct": 15,
+    "no_memory_total": 15,
+    "precision_relevant_top5": 29,
+    "precision_returned_top5": 60,
+    "returned_objects": 60
+  },
+  "raw_metrics": {
+    "critical_memory_recall_v2": 0.6304347826086957,
+    "false_recall_rate_v2": 0.5166666666666667,
+    "lexical_expected_preservation": 1.0,
+    "no_memory_correctness": 1.0,
+    "precision_at5_v2": 0.48333333333333334,
+    "prompt_token_p95": 50
+  },
+  "result": "HOLDOUT_FAIL_NO_GO",
+  "run_label": "one-shot",
+  "runtime": {
+    "elapsed_seconds": 8.807560699991882,
+    "model": {
+      "id": "intfloat/multilingual-e5-base",
+      "immutable_revision": "d128750597153bb5987e10b1c3493a34e5a4502a",
+      "manifest_digest": "f4d7c895a2900bd06cc8761043fbc94c3190dd521e931b7d603d79c928eb842e"
+    },
+    "passage_embedding_count": 48,
+    "platform": "Windows-11-10.0.26200-SP0",
+    "python_version": "3.13.14",
+    "query_embedding_count": 42,
+    "score_call_count": 42,
+    "scored_candidate_count": 44,
+    "torch_version": "2.13.0+cpu"
+  },
+  "schema_version": "r4-gate0-e5base-holdout-v1",
+  "trace_consistency": {
+    "canonical_oracle": "memory_eval/e5_base/oracle_v3.py (independent implementation)",
+    "conflict_loser_policy": "CONFLICT_LOSER 不得被向量路径复活；复活 = FAIL",
+    "conflict_loser_revivals": 0,
+    "trace_mismatch_count": 0,
+    "trace_mismatch_examples": []
+  }
+}

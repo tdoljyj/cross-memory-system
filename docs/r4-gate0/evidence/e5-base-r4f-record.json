@@ -1,0 +1,96 @@
+{
+ "authorization": "产品所有者指令 2026-08-22：Gate 0-F 唯一一次 E5-base holdout（两个独立提交 F0A + F0B，禁止 amend）；正式起点 52cd2aa；calibration 正式选择固定 alpha=1.00 / tau=0.90；禁止网格、选参、调参、降门槛；禁止第二次运行、replay、重试、修例外、重新分组；仅授权 Gate 0-F，禁止 Gate 0-G/H/I、正式 Shadow 计数、真实 Binding、R4-1、Reflection、push、tag、release",
+ "f0a": {
+  "commit": "47a51ea6c0f03e5a5449eee91cbe6d5a1ecca869",
+  "parent": "52cd2aa44ad6db05597badddbe69f7a92d552736",
+  "content": "冻结一次性 holdout acceptance runner（memory_eval/e5_base/holdout.py）+ 合成 fixture 契约测试（tests/test_e5_base_holdout.py，15/15 双环境 PASS）；零真实 holdout 运行产物；runner 源码零 holdout 细节（细节一律运行时从冻结语料装载）",
+  "holdout_runner_code_sha256": "c5ba51ab5e58674aca8763c3b981bb7254e2061fbc7d55d766fcdd07e87d6d5c"
+ },
+ "f0b": {
+  "launch_head": "47a51ea6c0f03e5a5449eee91cbe6d5a1ecca869（F0A clean HEAD，worktree clean）",
+  "environment": "vg0b venv（TURING Python 3.13.14，torch 2.13.0+cpu，transformers 5.15.1，与 R1B/R2B/R3B 同源）；模型目录 d128750597153bb5987e10b1c3493a34e5a4502a（manifest f4d7c895…）；calibration 主索引目录 digest 复验通过（vectors.f32 dde75de2… / object_ids.json 69b480a5…）",
+  "one_shot_consumed": true,
+  "consumption_marker": {
+   "path_external": "C:/Users/17531/.workbuddy/vector-cache/cross-memory-system/holdout/e5-base-one-shot-consumption-marker.json",
+   "sha256": "c72c399c8a7b79a2b3916c970fdc32ee71fedf09d79ba3b65786c3141f810cbb",
+   "evidence_byte_copy": "docs/r4-gate0/evidence/e5-base-holdout-consumption-record.json（逐字节一致）",
+   "consumed_at_utc": "2026-08-22T00:29:41Z",
+   "written_after_all_preflight": true,
+   "written_before_first_holdout_detail_read": true
+  }
+ },
+ "run": {
+  "holdout_case_count": 58,
+  "loaded_case_ids_sha256": "0977a9d993346d2430c5ceea0129001741c51502635fd3e9bccafd477e94de4c",
+  "paraphrase_completed_in_same_run": true,
+  "holdout_case_details_read": 58,
+  "result": "HOLDOUT_FAIL_NO_GO",
+  "all_gates_passed": false,
+  "failed_gates": [
+   "precision_at5_v2",
+   "critical_memory_recall_v2",
+   "false_recall_rate_v2",
+   "paraphrase_correct"
+  ],
+  "raw_counts": {
+   "precision_relevant_top5": 29,
+   "precision_returned_top5": 60,
+   "critical_hits": 29,
+   "critical_total": 46,
+   "false_objects": 31,
+   "returned_objects": 60,
+   "no_memory_correct": 15,
+   "no_memory_total": 15,
+   "forbidden_hits": 0,
+   "error_count": 0,
+   "lexical_expected_preserved": 29,
+   "lexical_expected_baseline_total": 29
+  },
+  "gate_verdicts": [
+   {"gate": "precision_at5_v2", "value": 0.48333333333333334, "rule": ">=0.90", "passed": false},
+   {"gate": "critical_memory_recall_v2", "value": 0.6304347826086957, "rule": ">=0.95", "passed": false},
+   {"gate": "false_recall_rate_v2", "value": 0.5166666666666667, "rule": "<=0.02", "passed": false},
+   {"gate": "paraphrase_correct", "value": "1/12", "rule": ">=11/12", "passed": false},
+   {"gate": "no_memory_final_contract", "value": "41/41", "rule": "41/41 all correct", "passed": true},
+   {"gate": "lexical_expected_preservation", "value": 1.0, "rule": "==1.0", "passed": true},
+   {"gate": "prompt_token_p95", "value": 50, "rule": "<=650", "passed": true},
+   {"gate": "scope_leakage", "value": 0, "rule": "==0", "passed": true},
+   {"gate": "superseded_leakage", "value": 0, "rule": "==0", "passed": true},
+   {"gate": "conflict_loser_revival", "value": 0, "rule": "==0", "passed": true},
+   {"gate": "secret_leakage", "value": 0, "rule": "==0", "passed": true},
+   {"gate": "forbidden_leakage_total", "value": 0, "rule": "==0", "passed": true},
+   {"gate": "trace_mismatch", "value": 0, "rule": "==0", "passed": true},
+   {"gate": "error_count", "value": 0, "rule": "==0", "passed": true}
+  ],
+  "no_memory_final_contract": {
+   "calibration": "26/26（正式 calibration receipt，PASS）",
+   "holdout": "15/15（本轮）",
+   "combined": "41/41"
+  },
+  "failure_profile": {
+   "cases_with_missed": 15,
+   "cases_with_extra": 11,
+   "missed_by_category": {"paraphrase": 11, "conflict_superseded": 2, "project_scope": 2},
+   "extra_by_category": {"paraphrase": 11},
+   "paraphrase_correct_case_ids": ["pp-011"],
+   "diagnosis": "失败集中于语义排序泛化：11/12 paraphrase case 的复合偏好目标（g 系列夹具）在 alpha=1.00 / tau=0.90 下未进入返回集，返回被同 case 的单点偏好夹具占据；2 个 conflict_superseded 与 2 个 project_scope case 存在 missed。全部安全面（scope/superseded/conflict/secret/forbidden 泄漏、CONFLICT_LOSER 复活、Trace 一致性、引擎错误）零违例；NO MEMORY 41/41 与词法基线保全 1.0 完好。即：硬过滤与安全合同完全成立，失败全部来自向量排序质量对未见 query 的泛化不足。"
+  },
+  "protocol_deviations": []
+ },
+ "integrity": {
+  "git_head": "47a51ea6c0f03e5a5449eee91cbe6d5a1ecca869",
+  "holdout_runner_code_sha256": "c5ba51ab5e58674aca8763c3b981bb7254e2061fbc7d55d766fcdd07e87d6d5c",
+  "calibration_receipt_sha256": "f84f3f4c09a8fb15f696e7c861d65e327b443a2a0daacdccdda2c158734461c5",
+  "candidate_lock_sha256": "66e1ab241f98a92759844cefb329688cb6a9dbb19a04fd28d4ad05dd904e2ed9",
+  "model_manifest_sha256": "f4d7c895a2900bd06cc8761043fbc94c3190dd521e931b7d603d79c928eb842e",
+  "results_json_sha256": "0b1c1075fc529e92f3328050f8b810ad490aa16118d297de06c67f661129bfdd",
+  "oracle_v3_code_sha256": "3163ab4ff3d589f1968a0c1bdb55e939ca78a3a042f439b5d5d37151e34068df（不变）",
+  "calibration_code_sha256": "39e76734330826a790fb00b8a8890ecc7c38e4d5786466d47a297dca56fa13dc（不变）",
+  "corpus_sha256": "4836f10836262098ad91633fbaf4164523afe7e82c2755bb1f04b94191bf22a5（不变）",
+  "fixtures_sha256": "ad84011c4b341c5d5bd4c1fb3c16c7eb4f27fee3dbc353650cc809e9cc15407a（不变）"
+ },
+ "conclusion": {
+  "gate0f_complete": true,
+  "statement": "F0A 冻结 runner + F0B 唯一一次 58-case holdout 完成：唯一运行已消费（外置原子 marker c72c399c…，preflight 全通过后、首条 detail 读取前写入）；58 case 完整（pp-001~012 同次完成）；14 项门槛 4 项失败（precision_at5_v2 = 0.4833 < 0.90；critical_memory_recall_v2 = 0.6304 < 0.95；false_recall_rate_v2 = 0.5167 > 0.02；paraphrase = 1/12 < 11/12），其余 10 项全部 PASS。E5-base 候选（alpha=1.00 / tau=0.90，53-case calibration 满分）在冻结 holdout 上泛化失败：**HOLDOUT FAIL / NO-GO**。按协议禁止第二次运行；不启动 Gate 0-G/H/I、Shadow、Binding、R4-1、Reflection；不 push / tag / release。"
+ }
+}

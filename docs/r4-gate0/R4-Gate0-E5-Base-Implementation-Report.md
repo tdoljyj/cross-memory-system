@@ -464,3 +464,80 @@ E5-base 模型目录与缓存）下 manifest 重建 + main/replay 双运行重�
   真实 Binding 零触碰、候选锁 / frozen contract / oracle spec / 模型
   文件 / case / oracle 语义 / 参数 / 网格 / 门槛 / 择优规则零变化、
   未 push / tag / release、未 amend
+
+## 15. Gate 0-F 后记（2026-08-22 Gate 0-F 轮，F0A 47a51ea 之下）
+
+Gate 0-F = E5-base 唯一一次 holdout。正式起点 `52cd2aa`（R3B clean
+HEAD，worktree clean，完整历史在链）；两个独立提交（禁 amend）：
+F0A 冻结 runner（`47a51ea`），F0B 唯一一次真实运行（本提交）。
+
+- **F0A 冻结 runner**
+  （`memory_eval/e5_base/holdout.py`，SHA-256 `c5ba51ab…`）：
+  参数硬编码 alpha=1.00 / tau=0.90（正式 calibration 选择固定；
+  无网格 / 无选参 / 无调参 / 无降门槛路径）；preflight 在读取任何
+  holdout detail 之前依次加载并验证正式 calibration receipt
+  （`f84f3f4c…`，PASS / selected alpha=1.00 / tau=0.90 /
+  holdout_detail_reads=0）、candidate lock（`66e1ab24…`）、
+  model manifest（`f4d7c895…` 三方一致：模型目录 = receipt 锚定 =
+  证据副本）、代码 digest（calibration `39e76734…` / oracle_v3
+  `3163ab4f…` / embedder `60bf99f2…` / gate0 runner `0dd8e8b3…`
+  零漂移）、语料（corpus.py `4836f108…`）与 fixture
+  （fixtures.json `ad84011c…`）digest、calibration 主索引 digest
+  （vectors.f32 `dde75de2…` / object_ids.json `69b480a5…` 实测复验）；
+  仅根据 frozen split manifest 装载精确 58 个 holdout IDs（
+  `0977a9d9…`）；外置原子 one-shot consumption marker
+  （O_CREAT|O_EXCL）在全部 preflight 通过后、读取第一条 holdout
+  detail 之前写入。F0A 测试（tests/test_e5_base_holdout.py，15/15，
+  vg0b + 系统 Python 双环境）全部使用合成 fixture，零真实 holdout
+  query / expected / forbidden / pp 内容读取；F0A 提交零运行产物
+- **F0B 唯一一次运行**：从 F0A clean HEAD 启动（vg0b 锁定环境，
+  torch 2.13.0+cpu / transformers 5.15.1 / Python 3.13.14，与
+  R1B/R2B/R3B 同源）；全部 preflight 通过后原子写入 marker
+  （`c72c399c…`，2026-08-22T00:29:41Z，仓库外
+  `…/vector-cache/…/holdout/e5-base-one-shot-consumption-marker.json`，
+  证据字节拷贝
+  `docs/r4-gate0/evidence/e5-base-holdout-consumption-record.json`）；
+  随后读取并执行 58 个冻结 holdout cases（pp-001~012 同次完成）
+- **结果：HOLDOUT FAIL / NO-GO**（14 门槛 4 失败）：
+  - precision_at5_v2 = 0.4833（29/60）< 0.90 **FAIL**
+  - critical_memory_recall_v2 = 0.6304（29/46）< 0.95 **FAIL**
+  - false_recall_rate_v2 = 0.5167（31/60）> 0.02 **FAIL**
+  - paraphrase = 1/12 < 11/12 **FAIL**（仅 pp-011 命中）
+  - NO MEMORY 最终合同 41/41（cal 26/26 + holdout 15/15）PASS
+  - lexical_expected_preservation = 1.0（29/29）PASS
+  - prompt_token_p95 = 50 <= 650 PASS
+  - scope / superseded / conflict / secret / forbidden leakage = 0
+    PASS；CONFLICT_LOSER revival = 0 PASS；trace mismatch = 0
+    PASS；error_count = 0 PASS
+- **失败画像**：15 case 存在 missed（paraphrase 11 /
+  conflict_superseded 2 / project_scope 2），11 case 存在 extra
+  （全部为 paraphrase）；11/12 paraphrase case 的复合偏好目标
+  （g 系列夹具）在 alpha=1.00 / tau=0.90 下未进入返回集，返回被
+  同 case 的单点偏好夹具占据。硬过滤 / 安全 / 零记忆 / 词法保全
+  合同全部成立；失败全部来自向量排序质量对未见 query 的泛化不足
+  （53-case calibration 满分 → 58-case holdout 崩塌，属 calibration
+  过拟合的教科书式结果）
+- **运行证据**：
+  `docs/r4-gate0/evidence/e5-base-holdout-results.json`（SHA-256
+  `0b1c1075…`，含原始分子/分母、58 条 per-case verdict 与 reason
+  codes、聚合指标、digest/环境/参数/HEAD、consumption marker、
+  protocol_deviations=[]）、
+  `docs/r4-gate0/evidence/e5-base-holdout-receipt.md`、
+  `docs/r4-gate0/evidence/e5-base-holdout-consumption-record.json`
+  （marker 字节拷贝）、`docs/r4-gate0/evidence/e5-base-r4f-record.json`
+- **one-shot 语义**：marker 已写入且 58 条 holdout detail 已读取，
+  唯一运行已消费；按协议禁止第二次运行、replay、重试、调参、
+  修例外或重新分组（runner 自身对已消费状态硬拒绝，
+  HoldoutConsumedError）
+- **测试**：F0A 契约测试 15/15（vg0b + 系统 Python）；供应链
+  19/19（双环境）；test_gate0_calibration 5 PASS；回归
+  vector_index 15 / embedding_adapter 29 / hybrid_recall 12 /
+  recall_trace 19 全 PASS；secret scan 在全部证据文件定稿后重跑
+  PASS
+- **禁令遵守**：仅执行 Gate 0-F；Gate 0-G/H/I、正式 Shadow 计数、
+  真实 Binding、R4-1、Reflection 未启动；未 push / tag / release；
+  未 amend；候选锁 / frozen contract / oracle spec / 模型文件 /
+  case / 门槛零变化
+- **结论**：E5-base 候选在冻结 58-case holdout 上
+  **HOLDOUT FAIL / NO-GO**。本轮停止；后续任何动作（含处置失败
+  候选的方式）需产品所有者另行授权

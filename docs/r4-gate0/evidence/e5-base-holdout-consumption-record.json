@@ -1,0 +1,17 @@
+{
+  "calibration_receipt_sha256": "f84f3f4c09a8fb15f696e7c861d65e327b443a2a0daacdccdda2c158734461c5",
+  "candidate_lock_sha256": "66e1ab241f98a92759844cefb329688cb6a9dbb19a04fd28d4ad05dd904e2ed9",
+  "consumed_at_utc": "2026-08-22T00:29:41Z",
+  "git_head": "47a51ea6c0f03e5a5449eee91cbe6d5a1ecca869",
+  "holdout_case_count": 58,
+  "holdout_ids_sha256": "0977a9d993346d2430c5ceea0129001741c51502635fd3e9bccafd477e94de4c",
+  "holdout_runner_code_sha256": "c5ba51ab5e58674aca8763c3b981bb7254e2061fbc7d55d766fcdd07e87d6d5c",
+  "model_manifest_sha256": "f4d7c895a2900bd06cc8761043fbc94c3190dd521e931b7d603d79c928eb842e",
+  "parameters_frozen": {
+    "alpha": 1.0,
+    "tau": 0.9
+  },
+  "policy": "one-shot：本 marker 的存在即代表唯一一次 E5-base holdout 运行已被消费（写入发生在全部 preflight 通过之后、读取第一条 holdout detail 之前）；此后禁止第二次运行、replay、重试、调参、修例外或重新分组。",
+  "run_kind": "e5-base-holdout-one-shot",
+  "schema_version": "r4-gate0-e5base-holdout-consumption-v1"
+}
