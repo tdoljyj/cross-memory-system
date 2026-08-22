@@ -59,7 +59,8 @@ def pg_cmd(name, *args, check_result=True):
 
 def sql(dsn, statement, check_result=True):
     return pg_cmd("psql", "--no-psqlrc", "--dbname", dsn,
-                  "--set", "ON_ERROR_STOP=1", "--tuples-only", "--no-align",
+                  "--set", "ON_ERROR_STOP=1", "--set", "VERBOSITY=verbose",
+                  "--tuples-only", "--no-align",
                   "--field-separator", "|", "--command", statement,
                   check_result=check_result)
 
@@ -179,7 +180,9 @@ def run():
         passed("function_acl_boundary")
 
         denied = sql(dsn, "SET ROLE clued_service; INSERT INTO clued.audit_events(account_id,audit_event_id,event_type,actor_type) VALUES('%s','%s','BYPASS','SERVICE');" % (A, uid("bypass")), check_result=False)
-        check(denied.returncode != 0 and "permission denied" in denied.stderr.lower(),
+        check(denied.returncode != 0 and
+              ("42501" in denied.stderr or
+               "permission denied" in denied.stderr.lower()),
               "service direct DML bypass was not denied")
         passed("direct_dml_denied")
 

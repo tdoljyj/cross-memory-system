@@ -11,6 +11,7 @@ compares it with the implementation so contract drift fails closed.
 import argparse
 import ast
 import inspect
+import hashlib
 import json
 import os
 import subprocess
@@ -21,7 +22,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-CONTRACT_REL = "docs/r5-kernel/contracts/kernel-contract-v1.json"
+CONTRACT_REL = "docs/r5-kernel/contracts/kernel-contract-v1.1.json"
 CONTRACT_PATH = os.path.join(ROOT, *CONTRACT_REL.split("/"))
 
 
@@ -86,7 +87,7 @@ def test_contract_identity_and_sources():
     c = load_contract()
     check(c["schema_version"] == 1, "contract schema_version drift")
     check(c["contract_id"] == "clued-kernel-r5-k1", "contract id drift")
-    check(c["contract_version"] == "1.0.0", "contract version drift")
+    check(c["contract_version"] == "1.1.0", "contract version drift")
     check(c["gate"] == "K1" and c["decision"] == "FROZEN",
           "K1 must remain FROZEN")
     for rel in c["normative_sources"]:
@@ -98,20 +99,50 @@ def test_truth_receipt_and_ancestry():
     c = load_contract()
     receipt = c["truth_receipt"]
     check(receipt["k0_decision"] == "NO_GO",
-          "K1 must not reclassify K0")
+          "K1 must not reclassify historical K0")
     check(receipt["k1_does_not_reclassify_k0"] is True,
           "K0 non-reclassification flag missing")
+    check(receipt["legacy_k0_evidence_status"] ==
+          "UNAVAILABLE_ORPHAN_NOT_PORTABLE",
+          "legacy evidence portability failure must remain explicit")
+    check(receipt["original_evidence_bytes_verified"] is False,
+          "missing legacy bytes must not be represented as verified")
+    check(receipt["audit_gap_accepted"] is True,
+          "rebaseline must explicitly accept the audit gap")
     check(receipt["previous_memory_claim_status"] ==
-          "CONFIRMED_BY_GIT_ANCESTRY", "K0 isolation not adjudicated")
-    baseline = c["baseline_head"]
-    k0 = receipt["k0_evidence_commit"]
-    check(git("cat-file", "-e", "%s^{commit}" % baseline).returncode == 0,
-          "frozen baseline commit missing")
-    check(git("merge-base", "--is-ancestor", baseline, "HEAD").returncode == 0,
-          "HEAD is not descended from frozen baseline")
-    check(git("merge-base", "--is-ancestor", k0, baseline).returncode == 1,
-          "K0 evidence unexpectedly entered the frozen main baseline")
+          "REISSUED_WITH_EXPLICIT_AUDIT_GAP",
+          "rebaseline disposition drift")
 
+    baseline = c["baseline_head"]
+    required = [
+        baseline,
+        receipt["k0_historical_claim_anchor_commit"],
+        receipt["k0_debt_closure_commit"],
+    ]
+    for commit in required:
+        check(git("cat-file", "-e", "%s^{commit}" % commit).returncode == 0,
+              "portable evidence commit missing: %s" % commit)
+        check(git("merge-base", "--is-ancestor", commit, "HEAD").returncode == 0,
+              "portable evidence commit is not anchored by HEAD: %s" % commit)
+
+    rebaseline_rel = (
+        "docs/r5-kernel/evidence/receipts/"
+        "04-k1-evidence-rebaseline-receipt.json"
+    )
+    with open(os.path.join(ROOT, *rebaseline_rel.split("/")),
+              "r", encoding="utf-8") as fh:
+        rebaseline = json.load(fh)
+    check(rebaseline["decision"] == "K1_REBASELINE_FROZEN",
+          "K1 rebaseline receipt decision drift")
+    check(rebaseline["legacy_evidence"]["status"] ==
+          "UNAVAILABLE_ORPHAN_NOT_PORTABLE",
+          "receipt must preserve the evidence gap")
+    for asset in rebaseline["frozen_assets"]:
+        path = os.path.join(ROOT, *asset["path"].split("/"))
+        with open(path, "rb") as fh:
+            digest = hashlib.sha256(fh.read()).hexdigest()
+        check(digest == asset["sha256"],
+              "rebaseline asset digest drift: %s" % asset["path"])
 
 def test_versions_and_controller_surface():
     import clued

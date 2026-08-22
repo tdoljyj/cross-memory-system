@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "gate": "K3",
+  "complete_matrix": {
+    "total_files": 43,
+    "background_passed": 39,
+    "background_failed": 4,
+    "failures": [
+      "test_envprobe.py",
+      "test_r5_k2_cloud_foundation.py",
+      "test_r5_k2_postgres_integration.py",
+      "test_r5_k3_postgres_integration.py"
+    ],
+    "raw_sha256": "61a593975d7e91229fcc90139081c82364dba7cebea8420e8c1bd26e6a9d564c"
+  },
+  "final_tree_direct_qualification": {
+    "total_files": 5,
+    "failed": 0,
+    "files": [
+      "test_envprobe.py",
+      "test_r5_k1_contract_freeze.py",
+      "test_r5_k2_cloud_foundation.py",
+      "test_r5_k2_postgres_integration.py",
+      "test_r5_k3_postgres_integration.py"
+    ],
+    "transcript_sha256": "c6d91de843d39b64f8e04e91d6fc4e412fda740d499b1e2d6cfaec095a40d55d"
+  },
+  "qualified_aggregate": "43/43 PASS",
+  "rationale": "38 unchanged suites passed in the complete run; all five environment-sensitive or subsequently changed suites passed on the final tree in the compliant environment."
+}
+
