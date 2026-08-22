@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "id": "mem_68ce421a",
+  "type": "semantic",
+  "scope": "global",
+  "content": "2026-08-22 Clued Kernel R5 K2 解锁门禁的前四项已满足：K1 合同通过、K0 的 12 项已知回归债务已修复、新鲜全量回归 552/552 PASS、候选树密钥扫描 0 命中。K0 历史 NO_GO 与隔离证据继续保留；在用户下达新的明确 K2 授权前，K2 必须保持 LOCKED，语义召回不得启用，禁止 release/deploy。",
+  "status": "superseded",
+  "source": {
+    "kind": "user_explicit",
+    "adapter": "cli",
+    "session_id": null,
+    "created_at": "2026-08-22T07:32:36Z",
+    "updated_at": "2026-08-22T08:28:51Z"
+  },
+  "temporal": {
+    "valid_from": null,
+    "valid_until": "2026-08-22T08:28:51Z"
+  },
+  "relations": {
+    "supersedes": [
+      "mem_26ed6fc2"
+    ],
+    "superseded_by": [
+      "mem_110c1854"
+    ],
+    "contradicts": [],
+    "related": []
+  },
+  "classification": {
+    "memory_layer": "semantic",
+    "category": "constraint",
+    "recall_layer": "L5",
+    "priority": "high"
+  },
+  "provenance": {
+    "evidence": "explicit",
+    "source_ref": null
+  },
+  "tags": [
+    "R5",
+    "K0",
+    "K1",
+    "NO_GO",
+    "LOCKED"
+  ],
+  "entities": [
+    "cross-memory-system",
+    "Clued-Kernel"
+  ]
+}

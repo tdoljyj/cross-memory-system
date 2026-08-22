@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "id": "mem_7c595648",
+  "type": "state",
+  "scope": "global",
+  "content": "2026-08-22 Clued Kernel R5 的 12 项 K0 已知债务已关闭：卸载精确清除 state.json，HEURISTIC H4 移除过时环境归因断言；修复提交 653417a29b8e079b5e49db8dce4480261c728585，证据分支 e946408accac278c93d3e7dc3780daf59f91a23e，main 合并提交 7b6e21333902643a76cfa12926eceef4d2a01c37。卸载 12/12、E2E 8/8、HEURISTIC 4/4、K1 9/9、同步层 70/70、Memory Engine 55/55、MIV-005A 合同 19/19；全量 552 PASS / 0 FAIL / 0 SKIP，候选树密钥扫描 451 文件 0 命中。K0 历史 NO_GO 保留；语义召回未启用，未 release/deploy；K2 仍锁定，仅待新的明确授权。",
+  "status": "active",
+  "source": {
+    "kind": "user_explicit",
+    "adapter": "cli",
+    "session_id": null,
+    "created_at": "2026-08-22T07:32:36Z",
+    "updated_at": "2026-08-22T07:32:36Z"
+  },
+  "temporal": {
+    "valid_from": null,
+    "valid_until": null
+  },
+  "relations": {
+    "supersedes": [
+      "mem_bdc913b7"
+    ],
+    "superseded_by": [],
+    "contradicts": [],
+    "related": []
+  },
+  "classification": {
+    "memory_layer": "state",
+    "category": "state",
+    "recall_layer": "L3",
+    "priority": "high"
+  },
+  "provenance": {
+    "evidence": "explicit",
+    "source_ref": null
+  },
+  "tags": [
+    "R5",
+    "K0",
+    "NO_GO",
+    "R4-separation"
+  ],
+  "entities": [
+    "cross-memory-system",
+    "Clued-Kernel"
+  ]
+}

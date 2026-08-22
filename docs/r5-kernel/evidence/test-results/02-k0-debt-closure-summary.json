@@ -1,0 +1,91 @@
+{
+  "schema_version": 1,
+  "gate": "K2_UNLOCK_PREPARATION",
+  "tested_baseline": "653417a29b8e079b5e49db8dce4480261c728585",
+  "upstream_baseline": "af135bf7908b483deafb4b35688221397ca00aab",
+  "environment": {
+    "os": "Microsoft Windows NT 10.0.26200.0",
+    "python": "3.12.13",
+    "python_utf8": true
+  },
+  "targeted_runs": [
+    {
+      "name": "Clued uninstall",
+      "command": "PYTHONUTF8=1 python tests/test_clued_uninstall.py",
+      "pass": 12,
+      "fail": 0,
+      "skip": 0,
+      "result": "PASS"
+    },
+    {
+      "name": "Clued end-to-end",
+      "command": "PYTHONUTF8=1 python tests/test_clued_e2e.py",
+      "pass": 8,
+      "fail": 0,
+      "skip": 0,
+      "result": "PASS"
+    },
+    {
+      "name": "HEURISTIC closure",
+      "command": "PYTHONUTF8=1 python tests/test_heuristic_closure.py",
+      "pass": 4,
+      "fail": 0,
+      "skip": 0,
+      "result": "PASS"
+    }
+  ],
+  "frozen_baseline_runs": [
+    {
+      "name": "K1 architecture and contract freeze",
+      "command": "PYTHONUTF8=1 python tests/test_r5_k1_contract_freeze.py",
+      "pass": 9,
+      "fail": 0,
+      "skip": 0,
+      "result": "PASS"
+    },
+    {
+      "name": "vNext-1.3 sync layer",
+      "command": "PYTHONUTF8=1 python tests/test_acceptance.py",
+      "pass": 70,
+      "fail": 0,
+      "skip": 0,
+      "result": "PASS"
+    },
+    {
+      "name": "vNext-2.0 Memory Engine",
+      "command": "PYTHONUTF8=1 python tests/test_memory_v2.py",
+      "pass": 55,
+      "fail": 0,
+      "skip": 0,
+      "result": "PASS"
+    },
+    {
+      "name": "MIV-005A evaluation contracts",
+      "command": "PYTHONUTF8=1 python tests/test_memory_eval.py",
+      "pass": 19,
+      "fail": 0,
+      "skip": 0,
+      "result": "PASS"
+    }
+  ],
+  "full_matrix": {
+    "command": "run each tests/test_*.py in filename order with PYTHONUTF8=1",
+    "files": 39,
+    "files_pass": 39,
+    "files_fail": 0,
+    "pass": 552,
+    "fail": 0,
+    "skip": 0,
+    "total": 552,
+    "result": "PASS"
+  },
+  "closed_k0_debt": {
+    "previous_failures": 12,
+    "tests/test_clued_e2e.py": 2,
+    "tests/test_clued_uninstall.py": 9,
+    "tests/test_heuristic_closure.py": 1,
+    "functional_resolution": "detach removes the exact Binding state.json before removing the empty Binding directory",
+    "environment_resolution": "H4 validates mocked PASS classification instead of requiring a historical environment-specific doctor failure"
+  },
+  "decision": "K0_DEBT_REMEDIATED_K2_STILL_LOCKED"
+}

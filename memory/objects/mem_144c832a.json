@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "id": "mem_144c832a",
+  "type": "state",
+  "scope": "project",
+  "content": "2026-08-22 Clued Kernel R5 K2 已完成独立裁决，结果为 PARTIAL PASS，不允许解锁 K3。冻结链 500386a→ce699b0→1a939b9、工作树和 7 项 receipt 哈希均核对通过，独立复跑 K2 静态 14/14、K1 9/9；但 K2 十项必测仅 5 PASS/3 PARTIAL/2 MISSING：跨账号相同 memory_id、rollback 后数据不变量缺失，RLS 遗漏表、实际 migration 中断、change_event 缺口仅部分覆盖，且未保存可独立复核的 PostgreSQL 原始 transcript、脱敏 server log 和 backup 哈希。K2 分支仍未 push/merge/tag/release/deploy，真实 Binding 未变，语义召回关闭。",
+  "status": "superseded",
+  "source": {
+    "kind": "user_explicit",
+    "adapter": "cli",
+    "session_id": null,
+    "created_at": "2026-08-22T09:01:35Z",
+    "updated_at": "2026-08-22T10:11:42Z"
+  },
+  "temporal": {
+    "valid_from": null,
+    "valid_until": "2026-08-22T10:11:42Z"
+  },
+  "relations": {
+    "supersedes": [
+      "mem_d4fa4484"
+    ],
+    "superseded_by": [
+      "mem_4a56666f"
+    ],
+    "contradicts": [],
+    "related": []
+  },
+  "classification": {
+    "memory_layer": "state",
+    "category": "state",
+    "recall_layer": "L3",
+    "priority": "high"
+  },
+  "provenance": {
+    "evidence": "explicit",
+    "source_ref": null
+  },
+  "tags": [
+    "Clued",
+    "R5",
+    "K2",
+    "Cloud Data Foundation"
+  ],
+  "entities": [
+    "Clued Kernel R5",
+    "K2",
+    "PostgreSQL"
+  ],
+  "project_id": "clued-kernel-r5"
+}

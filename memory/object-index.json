@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-08-21T06:47:45Z",
-  "count": 234,
+  "generated_at": "2026-08-22T10:43:03Z",
+  "count": 249,
   "objects": {
     "mem_012b899e": {
       "path": "memory/objects/mem_012b899e.json",
@@ -211,6 +211,33 @@
       "supersedes": [],
       "superseded_by": []
     },
+    "mem_110c1854": {
+      "path": "memory/objects/mem_110c1854.json",
+      "type": "semantic",
+      "scope": "global",
+      "status": "superseded",
+      "priority": "high",
+      "category": "constraint",
+      "tags": [
+        "R5",
+        "K0",
+        "K1",
+        "NO_GO",
+        "LOCKED"
+      ],
+      "entities": [
+        "cross-memory-system",
+        "Clued-Kernel"
+      ],
+      "valid_from": null,
+      "valid_until": "2026-08-22T09:01:36Z",
+      "supersedes": [
+        "mem_68ce421a"
+      ],
+      "superseded_by": [
+        "mem_1a72b942"
+      ]
+    },
     "mem_12534f57": {
       "path": "memory/objects/mem_12534f57.json",
       "type": "episodic",
@@ -226,6 +253,33 @@
       "valid_until": null,
       "supersedes": [],
       "superseded_by": []
+    },
+    "mem_144c832a": {
+      "path": "memory/objects/mem_144c832a.json",
+      "type": "state",
+      "scope": "project",
+      "status": "superseded",
+      "priority": "high",
+      "category": "state",
+      "tags": [
+        "Clued",
+        "R5",
+        "K2",
+        "Cloud Data Foundation"
+      ],
+      "entities": [
+        "Clued Kernel R5",
+        "K2",
+        "PostgreSQL"
+      ],
+      "valid_from": null,
+      "valid_until": "2026-08-22T10:11:42Z",
+      "supersedes": [
+        "mem_d4fa4484"
+      ],
+      "superseded_by": [
+        "mem_4a56666f"
+      ]
     },
     "mem_1841365e": {
       "path": "memory/objects/mem_1841365e.json",
@@ -256,6 +310,33 @@
       "valid_until": null,
       "supersedes": [],
       "superseded_by": []
+    },
+    "mem_1a72b942": {
+      "path": "memory/objects/mem_1a72b942.json",
+      "type": "semantic",
+      "scope": "global",
+      "status": "superseded",
+      "priority": "high",
+      "category": "constraint",
+      "tags": [
+        "R5",
+        "K0",
+        "K1",
+        "NO_GO",
+        "LOCKED"
+      ],
+      "entities": [
+        "cross-memory-system",
+        "Clued-Kernel"
+      ],
+      "valid_from": null,
+      "valid_until": "2026-08-22T10:11:42Z",
+      "supersedes": [
+        "mem_110c1854"
+      ],
+      "superseded_by": [
+        "mem_60b4dce9"
+      ]
     },
     "mem_1af3aaa2": {
       "path": "memory/objects/mem_1af3aaa2.json",
@@ -470,6 +551,33 @@
       "valid_until": null,
       "supersedes": [],
       "superseded_by": []
+    },
+    "mem_26ed6fc2": {
+      "path": "memory/objects/mem_26ed6fc2.json",
+      "type": "semantic",
+      "scope": "global",
+      "status": "superseded",
+      "priority": "high",
+      "category": "constraint",
+      "tags": [
+        "R5",
+        "K0",
+        "K1",
+        "NO_GO",
+        "LOCKED"
+      ],
+      "entities": [
+        "cross-memory-system",
+        "Clued-Kernel"
+      ],
+      "valid_from": null,
+      "valid_until": "2026-08-22T07:32:36Z",
+      "supersedes": [
+        "mem_9d7dbf63"
+      ],
+      "superseded_by": [
+        "mem_68ce421a"
+      ]
     },
     "mem_27338615": {
       "path": "memory/objects/mem_27338615.json",
@@ -999,6 +1107,33 @@
       "supersedes": [],
       "superseded_by": []
     },
+    "mem_4a56666f": {
+      "path": "memory/objects/mem_4a56666f.json",
+      "type": "state",
+      "scope": "project",
+      "status": "superseded",
+      "priority": "high",
+      "category": "state",
+      "tags": [
+        "Clued",
+        "R5",
+        "K2",
+        "Cloud Data Foundation"
+      ],
+      "entities": [
+        "Clued Kernel R5",
+        "K2",
+        "PostgreSQL"
+      ],
+      "valid_from": null,
+      "valid_until": "2026-08-22T10:43:03Z",
+      "supersedes": [
+        "mem_144c832a"
+      ],
+      "superseded_by": [
+        "mem_525ea2c2"
+      ]
+    },
     "mem_4b8f50cc": {
       "path": "memory/objects/mem_4b8f50cc.json",
       "type": "semantic",
@@ -1073,6 +1208,31 @@
       "valid_from": null,
       "valid_until": null,
       "supersedes": [],
+      "superseded_by": []
+    },
+    "mem_525ea2c2": {
+      "path": "memory/objects/mem_525ea2c2.json",
+      "type": "state",
+      "scope": "project",
+      "status": "active",
+      "priority": "high",
+      "category": "state",
+      "tags": [
+        "Clued",
+        "R5",
+        "K2",
+        "Cloud Data Foundation"
+      ],
+      "entities": [
+        "Clued Kernel R5",
+        "K2",
+        "PostgreSQL"
+      ],
+      "valid_from": null,
+      "valid_until": null,
+      "supersedes": [
+        "mem_4a56666f"
+      ],
       "superseded_by": []
     },
     "mem_55d14690": {
@@ -1211,6 +1371,33 @@
       "supersedes": [],
       "superseded_by": []
     },
+    "mem_60b4dce9": {
+      "path": "memory/objects/mem_60b4dce9.json",
+      "type": "semantic",
+      "scope": "global",
+      "status": "superseded",
+      "priority": "high",
+      "category": "constraint",
+      "tags": [
+        "R5",
+        "K0",
+        "K1",
+        "NO_GO",
+        "LOCKED"
+      ],
+      "entities": [
+        "cross-memory-system",
+        "Clued-Kernel"
+      ],
+      "valid_from": null,
+      "valid_until": "2026-08-22T10:43:03Z",
+      "supersedes": [
+        "mem_1a72b942"
+      ],
+      "superseded_by": [
+        "mem_cd589650"
+      ]
+    },
     "mem_60f9a693": {
       "path": "memory/objects/mem_60f9a693.json",
       "type": "episodic",
@@ -1310,6 +1497,33 @@
       "valid_until": null,
       "supersedes": [],
       "superseded_by": []
+    },
+    "mem_68ce421a": {
+      "path": "memory/objects/mem_68ce421a.json",
+      "type": "semantic",
+      "scope": "global",
+      "status": "superseded",
+      "priority": "high",
+      "category": "constraint",
+      "tags": [
+        "R5",
+        "K0",
+        "K1",
+        "NO_GO",
+        "LOCKED"
+      ],
+      "entities": [
+        "cross-memory-system",
+        "Clued-Kernel"
+      ],
+      "valid_from": null,
+      "valid_until": "2026-08-22T08:28:51Z",
+      "supersedes": [
+        "mem_26ed6fc2"
+      ],
+      "superseded_by": [
+        "mem_110c1854"
+      ]
     },
     "mem_69cbfae2": {
       "path": "memory/objects/mem_69cbfae2.json",
@@ -1521,6 +1735,30 @@
       "valid_from": null,
       "valid_until": null,
       "supersedes": [],
+      "superseded_by": []
+    },
+    "mem_7c595648": {
+      "path": "memory/objects/mem_7c595648.json",
+      "type": "state",
+      "scope": "global",
+      "status": "active",
+      "priority": "high",
+      "category": "state",
+      "tags": [
+        "R5",
+        "K0",
+        "NO_GO",
+        "R4-separation"
+      ],
+      "entities": [
+        "cross-memory-system",
+        "Clued-Kernel"
+      ],
+      "valid_from": null,
+      "valid_until": null,
+      "supersedes": [
+        "mem_bdc913b7"
+      ],
       "superseded_by": []
     },
     "mem_7c6a2c8f": {
@@ -1938,6 +2176,55 @@
       "valid_until": null,
       "supersedes": [],
       "superseded_by": []
+    },
+    "mem_9b4ed78a": {
+      "path": "memory/objects/mem_9b4ed78a.json",
+      "type": "state",
+      "scope": "global",
+      "status": "superseded",
+      "priority": "high",
+      "category": "state",
+      "tags": [
+        "R5",
+        "K0",
+        "NO_GO",
+        "R4-separation"
+      ],
+      "entities": [
+        "cross-memory-system",
+        "Clued-Kernel"
+      ],
+      "valid_from": "2026-08-22T00:00:00+08:00",
+      "valid_until": "2026-08-22T06:45:32Z",
+      "supersedes": [],
+      "superseded_by": [
+        "mem_f7b771a0"
+      ]
+    },
+    "mem_9d7dbf63": {
+      "path": "memory/objects/mem_9d7dbf63.json",
+      "type": "semantic",
+      "scope": "global",
+      "status": "superseded",
+      "priority": "high",
+      "category": "constraint",
+      "tags": [
+        "R5",
+        "K0",
+        "K1",
+        "NO_GO",
+        "LOCKED"
+      ],
+      "entities": [
+        "cross-memory-system",
+        "Clued-Kernel"
+      ],
+      "valid_from": "2026-08-22T00:00:00+08:00",
+      "valid_until": "2026-08-22T06:45:32Z",
+      "supersedes": [],
+      "superseded_by": [
+        "mem_26ed6fc2"
+      ]
     },
     "mem_9e9561b0": {
       "path": "memory/objects/mem_9e9561b0.json",
@@ -2449,6 +2736,32 @@
       "supersedes": [],
       "superseded_by": []
     },
+    "mem_bdc913b7": {
+      "path": "memory/objects/mem_bdc913b7.json",
+      "type": "state",
+      "scope": "global",
+      "status": "superseded",
+      "priority": "high",
+      "category": "state",
+      "tags": [
+        "R5",
+        "K0",
+        "NO_GO",
+        "R4-separation"
+      ],
+      "entities": [
+        "cross-memory-system",
+        "Clued-Kernel"
+      ],
+      "valid_from": null,
+      "valid_until": "2026-08-22T07:32:36Z",
+      "supersedes": [
+        "mem_f7b771a0"
+      ],
+      "superseded_by": [
+        "mem_7c595648"
+      ]
+    },
     "mem_be0d7d2e": {
       "path": "memory/objects/mem_be0d7d2e.json",
       "type": "episodic",
@@ -2689,6 +3002,31 @@
       "supersedes": [],
       "superseded_by": []
     },
+    "mem_cd589650": {
+      "path": "memory/objects/mem_cd589650.json",
+      "type": "semantic",
+      "scope": "global",
+      "status": "active",
+      "priority": "high",
+      "category": "constraint",
+      "tags": [
+        "R5",
+        "K0",
+        "K1",
+        "NO_GO",
+        "LOCKED"
+      ],
+      "entities": [
+        "cross-memory-system",
+        "Clued-Kernel"
+      ],
+      "valid_from": null,
+      "valid_until": null,
+      "supersedes": [
+        "mem_60b4dce9"
+      ],
+      "superseded_by": []
+    },
     "mem_cdb0c1e6": {
       "path": "memory/objects/mem_cdb0c1e6.json",
       "type": "episodic",
@@ -2815,6 +3153,31 @@
       "valid_until": null,
       "supersedes": [],
       "superseded_by": []
+    },
+    "mem_d4fa4484": {
+      "path": "memory/objects/mem_d4fa4484.json",
+      "type": "state",
+      "scope": "project",
+      "status": "superseded",
+      "priority": "high",
+      "category": "state",
+      "tags": [
+        "Clued",
+        "R5",
+        "K2",
+        "Cloud Data Foundation"
+      ],
+      "entities": [
+        "Clued Kernel R5",
+        "K2",
+        "PostgreSQL"
+      ],
+      "valid_from": null,
+      "valid_until": "2026-08-22T09:01:35Z",
+      "supersedes": [],
+      "superseded_by": [
+        "mem_144c832a"
+      ]
     },
     "mem_d67d6c85": {
       "path": "memory/objects/mem_d67d6c85.json",
@@ -3447,6 +3810,32 @@
       "valid_until": null,
       "supersedes": [],
       "superseded_by": []
+    },
+    "mem_f7b771a0": {
+      "path": "memory/objects/mem_f7b771a0.json",
+      "type": "state",
+      "scope": "global",
+      "status": "superseded",
+      "priority": "high",
+      "category": "state",
+      "tags": [
+        "R5",
+        "K0",
+        "NO_GO",
+        "R4-separation"
+      ],
+      "entities": [
+        "cross-memory-system",
+        "Clued-Kernel"
+      ],
+      "valid_from": null,
+      "valid_until": "2026-08-22T06:47:28Z",
+      "supersedes": [
+        "mem_9b4ed78a"
+      ],
+      "superseded_by": [
+        "mem_bdc913b7"
+      ]
     },
     "mem_f7c22efc": {
       "path": "memory/objects/mem_f7c22efc.json",
