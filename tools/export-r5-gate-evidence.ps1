@@ -8,7 +8,8 @@ $root = [IO.Path]::GetFullPath((& git rev-parse --show-toplevel).Trim())
 if ($LASTEXITCODE -ne 0) { throw 'not inside a Git repository' }
 
 $receiptPath = [IO.Path]::GetFullPath((Join-Path $root $Receipt))
-$rootPrefix = [IO.Path]::GetFullPath($root).TrimEnd('\\') + '\\'
+$separator = [IO.Path]::DirectorySeparatorChar
+$rootPrefix = [IO.Path]::GetFullPath($root).TrimEnd($separator) + $separator
 if (-not $receiptPath.StartsWith($rootPrefix, [StringComparison]::OrdinalIgnoreCase)) {
     throw 'receipt path escapes repository'
 }
