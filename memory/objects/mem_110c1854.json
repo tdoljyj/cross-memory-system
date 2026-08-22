@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "id": "mem_110c1854",
+  "type": "semantic",
+  "scope": "global",
+  "content": "2026-08-22 用户明确指令“开始执行K2”，Clued Kernel R5 K2 已从 LOCKED 解锁；K0 历史 NO_GO 与旧证据隔离继续保留。K3 在新的明确授权前保持 LOCKED；禁止未经授权 push/merge/tag/release/deploy、切换真实 Binding 或启用语义召回。",
+  "status": "active",
+  "source": {
+    "kind": "user_explicit",
+    "adapter": "cli",
+    "session_id": null,
+    "created_at": "2026-08-22T08:28:51Z",
+    "updated_at": "2026-08-22T08:28:51Z"
+  },
+  "temporal": {
+    "valid_from": null,
+    "valid_until": null
+  },
+  "relations": {
+    "supersedes": [
+      "mem_68ce421a"
+    ],
+    "superseded_by": [],
+    "contradicts": [],
+    "related": []
+  },
+  "classification": {
+    "memory_layer": "semantic",
+    "category": "constraint",
+    "recall_layer": "L5",
+    "priority": "high"
+  },
+  "provenance": {
+    "evidence": "explicit",
+    "source_ref": null
+  },
+  "tags": [
+    "R5",
+    "K0",
+    "K1",
+    "NO_GO",
+    "LOCKED"
+  ],
+  "entities": [
+    "cross-memory-system",
+    "Clued-Kernel"
+  ]
+}
