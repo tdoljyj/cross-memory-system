@@ -50,6 +50,22 @@ interface BindingRecord {
   revoked_at: string | null;
 }
 
+interface MemoryRecord {
+  id: string;
+  title: string;
+  content: string;
+  created_at: string;
+  updated_at: string;
+}
+
+interface MemoryAuditRecord {
+  id: string;
+  memory_id: string;
+  action: "create" | "update" | "delete";
+  details: Record<string, unknown>;
+  occurred_at: string;
+}
+
 class HttpError extends Error {
   constructor(
     readonly status: number,
@@ -79,7 +95,7 @@ function corsHeaders(request: Request) {
     "access-control-allow-origin": origin ?? "*",
     "access-control-allow-headers":
       "authorization, content-type, mcp-protocol-version, mcp-session-id",
-    "access-control-allow-methods": "GET, POST, DELETE, OPTIONS",
+    "access-control-allow-methods": "GET, POST, PATCH, DELETE, OPTIONS",
     vary: "Origin",
   };
 }
@@ -345,6 +361,101 @@ async function revokeBinding(request: Request, env: ContinuityEnv) {
     },
   );
   return new Response(null, { status: 204, headers: corsHeaders(request) });
+}
+
+function memoryText(value: unknown, field: "title" | "content") {
+  if (typeof value !== "string") {
+    throw new HttpError(400, `Memory ${field} is required.`);
+  }
+  const trimmed = value.trim();
+  const limit = field === "title" ? 120 : 8000;
+  if (!trimmed || trimmed.length > limit) {
+    throw new HttpError(400, `Memory ${field} must be between 1 and ${limit} characters.`);
+  }
+  return trimmed;
+}
+
+function memoryId(request: Request) {
+  const id = new URL(request.url).searchParams.get("id") ?? "";
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) {
+    throw new HttpError(400, "A valid memory id is required.");
+  }
+  return id;
+}
+
+async function listMemories(request: Request, env: ContinuityEnv) {
+  const { token } = await requireSupabaseUser(request, env);
+  const rows = (await supabaseRequest(
+    env,
+    "/rest/v1/clued_memories?select=id,title,content,created_at,updated_at&order=updated_at.desc&limit=100",
+    { method: "GET", userToken: token },
+  )) as MemoryRecord[];
+  return json({ memories: rows }, 200, corsHeaders(request));
+}
+
+async function createMemory(request: Request, env: ContinuityEnv) {
+  const { user, token } = await requireSupabaseUser(request, env);
+  const body = await parseBody(request);
+  const rows = (await supabaseRequest(env, "/rest/v1/clued_memories", {
+    method: "POST",
+    userToken: token,
+    headers: { prefer: "return=representation" },
+    body: JSON.stringify({
+      user_id: user.id,
+      title: memoryText(body.title, "title"),
+      content: memoryText(body.content, "content"),
+    }),
+  })) as MemoryRecord[];
+  if (!rows[0]) throw new HttpError(500, "Clued did not return the created memory.");
+  return json({ memory: rows[0] }, 201, corsHeaders(request));
+}
+
+async function updateMemory(request: Request, env: ContinuityEnv) {
+  const { token } = await requireSupabaseUser(request, env);
+  const id = memoryId(request);
+  const body = await parseBody(request);
+  const rows = (await supabaseRequest(
+    env,
+    `/rest/v1/clued_memories?id=eq.${encodeURIComponent(id)}`,
+    {
+      method: "PATCH",
+      userToken: token,
+      headers: { prefer: "return=representation" },
+      body: JSON.stringify({
+        title: memoryText(body.title, "title"),
+        content: memoryText(body.content, "content"),
+        updated_at: new Date().toISOString(),
+      }),
+    },
+  )) as MemoryRecord[];
+  if (!rows[0]) throw new HttpError(404, "Memory not found.");
+  return json({ memory: rows[0] }, 200, corsHeaders(request));
+}
+
+async function deleteMemory(request: Request, env: ContinuityEnv) {
+  const { token } = await requireSupabaseUser(request, env);
+  const id = memoryId(request);
+  const rows = (await supabaseRequest(
+    env,
+    `/rest/v1/clued_memories?id=eq.${encodeURIComponent(id)}`,
+    {
+      method: "DELETE",
+      userToken: token,
+      headers: { prefer: "return=representation" },
+    },
+  )) as MemoryRecord[];
+  if (!rows[0]) throw new HttpError(404, "Memory not found.");
+  return new Response(null, { status: 204, headers: corsHeaders(request) });
+}
+
+async function listMemoryAudit(request: Request, env: ContinuityEnv) {
+  const { token } = await requireSupabaseUser(request, env);
+  const rows = (await supabaseRequest(
+    env,
+    "/rest/v1/clued_memory_audit?select=id,memory_id,action,details,occurred_at&order=occurred_at.desc&limit=50",
+    { method: "GET", userToken: token },
+  )) as MemoryAuditRecord[];
+  return json({ audit: rows }, 200, corsHeaders(request));
 }
 
 const tools = [
@@ -713,6 +824,23 @@ export async function handleContinuityRequest(
       if (request.method === "GET") return await listBindings(request, env);
       if (request.method === "POST") return await createBinding(request, env);
       if (request.method === "DELETE") return await revokeBinding(request, env);
+      return json({ error: "Method not allowed." }, 405, corsHeaders(request));
+    }
+    if (url.pathname === "/api/memories/audit") {
+      if (request.method === "OPTIONS") {
+        return new Response(null, { status: 204, headers: corsHeaders(request) });
+      }
+      if (request.method === "GET") return await listMemoryAudit(request, env);
+      return json({ error: "Method not allowed." }, 405, corsHeaders(request));
+    }
+    if (url.pathname === "/api/memories") {
+      if (request.method === "OPTIONS") {
+        return new Response(null, { status: 204, headers: corsHeaders(request) });
+      }
+      if (request.method === "GET") return await listMemories(request, env);
+      if (request.method === "POST") return await createMemory(request, env);
+      if (request.method === "PATCH") return await updateMemory(request, env);
+      if (request.method === "DELETE") return await deleteMemory(request, env);
       return json({ error: "Method not allowed." }, 405, corsHeaders(request));
     }
     return null;

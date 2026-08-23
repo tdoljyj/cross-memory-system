@@ -23,6 +23,21 @@ type Binding = {
   revoked_at: string | null;
 };
 type IssuedBinding = { token: string; mcpUrl: string; binding: Binding };
+type Memory = {
+  id: string;
+  title: string;
+  content: string;
+  created_at: string;
+  updated_at: string;
+};
+type MemoryAudit = {
+  id: string;
+  memory_id: string;
+  action: "create" | "update" | "delete";
+  details: { title?: unknown };
+  occurred_at: string;
+};
+type MemoryNotice = "created" | "updated" | "deleted" | "";
 type NoticeKey =
   | "invalidLink"
   | "invalidCredentials"
@@ -73,6 +88,32 @@ const copy = {
     accountActive: "Account active",
     accountReadyTitle: "You’re in.",
     accountReadyCopy: "Your Clued identity is ready. Device and AI bindings will appear here as they are connected.",
+    memoriesTitle: "My memories",
+    memoriesCopy: "Create and manage the private context you want Clued to remember.",
+    memoryTitle: "Title",
+    memoryTitlePlaceholder: "What should Clued remember?",
+    memoryContent: "Memory",
+    memoryContentPlaceholder: "Write the useful detail, decision, preference, or context.",
+    addMemory: "Add memory",
+    updateMemory: "Save changes",
+    savingMemory: "Saving…",
+    cancelEdit: "Cancel",
+    noMemories: "No memories yet. Add the first one above.",
+    memoryUpdatedAt: "Updated",
+    editMemory: "Edit",
+    deleteMemory: "Delete",
+    confirmDelete: "Delete this memory? The content will be removed, while an audit receipt is retained.",
+    memoryError: "Clued could not update your memories. Please try again.",
+    memoryCreated: "Memory added.",
+    memoryUpdated: "Memory updated.",
+    memoryDeleted: "Memory deleted.",
+    auditTitle: "Recent memory activity",
+    auditCopy: "Receipts record the action and a content digest, not deleted text.",
+    noAudit: "No memory activity yet.",
+    auditCreate: "Created",
+    auditUpdate: "Updated",
+    auditDelete: "Deleted",
+    untitledMemory: "Memory",
     continuityTitle: "AI continuity",
     continuityCopy: "Authorize an AI once. It can then restore this context at session start and checkpoint changes before handoff.",
     vendor: "Provider",
@@ -145,6 +186,32 @@ const copy = {
     accountActive: "账户已激活",
     accountReadyTitle: "登录成功",
     accountReadyCopy: "你的 Clued 身份已经就绪。设备和 AI 连接将在接入后显示在这里。",
+    memoriesTitle: "我的记忆",
+    memoriesCopy: "新增并管理你希望 Clued 长期记住的私人上下文。",
+    memoryTitle: "标题",
+    memoryTitlePlaceholder: "希望 Clued 记住什么？",
+    memoryContent: "记忆内容",
+    memoryContentPlaceholder: "写下有用的细节、决定、偏好或上下文。",
+    addMemory: "新增记忆",
+    updateMemory: "保存修改",
+    savingMemory: "正在保存…",
+    cancelEdit: "取消编辑",
+    noMemories: "还没有记忆，请先新增第一条。",
+    memoryUpdatedAt: "更新时间",
+    editMemory: "编辑",
+    deleteMemory: "删除",
+    confirmDelete: "确定删除这条记忆吗？正文会被移除，但会保留审计回执。",
+    memoryError: "Clued 暂时无法更新你的记忆，请重试。",
+    memoryCreated: "记忆已新增。",
+    memoryUpdated: "记忆已更新。",
+    memoryDeleted: "记忆已删除。",
+    auditTitle: "最近记忆活动",
+    auditCopy: "回执只记录动作与内容摘要，不保留已删除正文。",
+    noAudit: "还没有记忆活动。",
+    auditCreate: "已新增",
+    auditUpdate: "已更新",
+    auditDelete: "已删除",
+    untitledMemory: "记忆",
     continuityTitle: "AI 连续性",
     continuityCopy: "只授权一次。此后 AI 会在会话开始恢复上下文，在交接或结束前提交检查点。",
     vendor: "厂商",
@@ -234,6 +301,14 @@ export default function Home() {
   const [bindingError, setBindingError] = useState(false);
   const [issuedBinding, setIssuedBinding] = useState<IssuedBinding | null>(null);
   const [copiedField, setCopiedField] = useState<"endpoint" | "token" | null>(null);
+  const [memories, setMemories] = useState<Memory[]>([]);
+  const [memoryAudit, setMemoryAudit] = useState<MemoryAudit[]>([]);
+  const [memoryTitle, setMemoryTitle] = useState("");
+  const [memoryContent, setMemoryContent] = useState("");
+  const [editingMemoryId, setEditingMemoryId] = useState<string | null>(null);
+  const [memoryBusy, setMemoryBusy] = useState(false);
+  const [memoryError, setMemoryError] = useState(false);
+  const [memoryNotice, setMemoryNotice] = useState<MemoryNotice>("");
   const t = copy[locale];
 
   useEffect(() => {
@@ -331,6 +406,36 @@ export default function Home() {
     };
   }, [session, view]);
 
+  useEffect(() => {
+    if (!session || view !== "account") return;
+    let cancelled = false;
+    const headers = { authorization: `Bearer ${session.access_token}` };
+
+    Promise.all([
+      fetch("/api/memories", { headers, cache: "no-store" }).then(async (response) => {
+        if (!response.ok) throw new Error("memory-list-failed");
+        return response.json() as Promise<{ memories: Memory[] }>;
+      }),
+      fetch("/api/memories/audit", { headers, cache: "no-store" }).then(async (response) => {
+        if (!response.ok) throw new Error("memory-audit-failed");
+        return response.json() as Promise<{ audit: MemoryAudit[] }>;
+      }),
+    ])
+      .then(([memoryResult, auditResult]) => {
+        if (cancelled) return;
+        setMemories(memoryResult.memories);
+        setMemoryAudit(auditResult.audit);
+        setMemoryError(false);
+      })
+      .catch(() => {
+        if (!cancelled) setMemoryError(true);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [session, view]);
+
   function resetNotices() {
     setError("");
     setMessage("");
@@ -410,6 +515,11 @@ export default function Home() {
     setBusy(false);
     setSession(null);
     setEmail("");
+    setMemories([]);
+    setMemoryAudit([]);
+    resetMemoryForm();
+    setMemoryError(false);
+    setMemoryNotice("");
     setView("login");
     resetNotices();
   }
@@ -461,6 +571,87 @@ export default function Home() {
       setBindingError(true);
     } finally {
       setBindingBusy(false);
+    }
+  }
+
+  async function refreshMemoryAudit() {
+    if (!session) return;
+    const response = await fetch("/api/memories/audit", {
+      headers: { authorization: `Bearer ${session.access_token}` },
+      cache: "no-store",
+    });
+    if (!response.ok) throw new Error("memory-audit-failed");
+    const result = (await response.json()) as { audit: MemoryAudit[] };
+    setMemoryAudit(result.audit);
+  }
+
+  function resetMemoryForm() {
+    setMemoryTitle("");
+    setMemoryContent("");
+    setEditingMemoryId(null);
+  }
+
+  async function handleSaveMemory(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!session) return;
+    const editing = Boolean(editingMemoryId);
+    setMemoryBusy(true);
+    setMemoryError(false);
+    setMemoryNotice("");
+    try {
+      const query = editingMemoryId ? `?id=${encodeURIComponent(editingMemoryId)}` : "";
+      const response = await fetch(`/api/memories${query}`, {
+        method: editing ? "PATCH" : "POST",
+        headers: {
+          authorization: `Bearer ${session.access_token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ title: memoryTitle, content: memoryContent }),
+      });
+      if (!response.ok) throw new Error("memory-save-failed");
+      const result = (await response.json()) as { memory: Memory };
+      setMemories((current) =>
+        editing
+          ? current.map((memory) => (memory.id === result.memory.id ? result.memory : memory))
+          : [result.memory, ...current],
+      );
+      resetMemoryForm();
+      setMemoryNotice(editing ? "updated" : "created");
+      await refreshMemoryAudit();
+    } catch {
+      setMemoryError(true);
+    } finally {
+      setMemoryBusy(false);
+    }
+  }
+
+  function handleEditMemory(memory: Memory) {
+    setEditingMemoryId(memory.id);
+    setMemoryTitle(memory.title);
+    setMemoryContent(memory.content);
+    setMemoryError(false);
+    setMemoryNotice("");
+  }
+
+  async function handleDeleteMemory(memory: Memory) {
+    if (!session || !window.confirm(t.confirmDelete)) return;
+    setMemoryBusy(true);
+    setMemoryError(false);
+    setMemoryNotice("");
+    try {
+      const response = await fetch(`/api/memories?id=${encodeURIComponent(memory.id)}`, {
+        method: "DELETE",
+        headers: { authorization: `Bearer ${session.access_token}` },
+      });
+      if (!response.ok) throw new Error("memory-delete-failed");
+      setMemories((current) => current.filter((item) => item.id !== memory.id));
+      if (editingMemoryId === memory.id) resetMemoryForm();
+      setMemoryNotice("deleted");
+      await refreshMemoryAudit();
+    } catch {
+      setMemoryError(true);
+    } finally {
+      setMemoryBusy(false);
     }
   }
 
@@ -644,6 +835,134 @@ export default function Home() {
               <p className="account-email">{session?.user.email}</p>
               <p className="account-copy">{t.accountReadyCopy}</p>
               {message && <p className="notice success">{t[message]}</p>}
+              <div className="memory-panel">
+                <div className="memory-heading">
+                  <div>
+                    <h3>{t.memoriesTitle}</h3>
+                    <p>{t.memoriesCopy}</p>
+                  </div>
+                  <span className="memory-count">{memories.length}</span>
+                </div>
+
+                <form className="memory-form" onSubmit={handleSaveMemory}>
+                  <label>
+                    {t.memoryTitle}
+                    <input
+                      value={memoryTitle}
+                      onChange={(event) => setMemoryTitle(event.target.value)}
+                      placeholder={t.memoryTitlePlaceholder}
+                      maxLength={120}
+                      required
+                    />
+                  </label>
+                  <label>
+                    {t.memoryContent}
+                    <textarea
+                      value={memoryContent}
+                      onChange={(event) => setMemoryContent(event.target.value)}
+                      placeholder={t.memoryContentPlaceholder}
+                      maxLength={8000}
+                      rows={4}
+                      required
+                    />
+                  </label>
+                  <div className="memory-form-actions">
+                    <button className="primary-button" type="submit" disabled={memoryBusy}>
+                      {memoryBusy
+                        ? t.savingMemory
+                        : editingMemoryId
+                          ? t.updateMemory
+                          : t.addMemory}
+                    </button>
+                    {editingMemoryId && (
+                      <button
+                        className="memory-cancel"
+                        type="button"
+                        onClick={resetMemoryForm}
+                        disabled={memoryBusy}
+                      >
+                        {t.cancelEdit}
+                      </button>
+                    )}
+                  </div>
+                </form>
+
+                {memoryError && <p className="notice error">{t.memoryError}</p>}
+                {memoryNotice && (
+                  <p className="notice success">
+                    {memoryNotice === "created"
+                      ? t.memoryCreated
+                      : memoryNotice === "updated"
+                        ? t.memoryUpdated
+                        : t.memoryDeleted}
+                  </p>
+                )}
+
+                <div className="memory-list">
+                  {memories.length === 0 ? (
+                    <p className="empty-bindings">{t.noMemories}</p>
+                  ) : (
+                    memories.map((memory) => (
+                      <article className="memory-item" key={memory.id}>
+                        <div className="memory-item-heading">
+                          <strong>{memory.title}</strong>
+                          <small>
+                            {t.memoryUpdatedAt}: {new Date(memory.updated_at).toLocaleString(locale)}
+                          </small>
+                        </div>
+                        <p>{memory.content}</p>
+                        <div className="memory-item-actions">
+                          <button
+                            type="button"
+                            onClick={() => handleEditMemory(memory)}
+                            disabled={memoryBusy}
+                          >
+                            {t.editMemory}
+                          </button>
+                          <button
+                            className="danger"
+                            type="button"
+                            onClick={() => handleDeleteMemory(memory)}
+                            disabled={memoryBusy}
+                          >
+                            {t.deleteMemory}
+                          </button>
+                        </div>
+                      </article>
+                    ))
+                  )}
+                </div>
+
+                <div className="memory-audit">
+                  <div>
+                    <h4>{t.auditTitle}</h4>
+                    <p>{t.auditCopy}</p>
+                  </div>
+                  {memoryAudit.length === 0 ? (
+                    <p className="empty-bindings">{t.noAudit}</p>
+                  ) : (
+                    memoryAudit.slice(0, 8).map((event) => (
+                      <div className="audit-item" key={event.id}>
+                        <span className={`audit-action audit-${event.action}`}>
+                          {event.action === "create"
+                            ? t.auditCreate
+                            : event.action === "update"
+                              ? t.auditUpdate
+                              : t.auditDelete}
+                        </span>
+                        <strong>
+                          {typeof event.details.title === "string"
+                            ? event.details.title
+                            : t.untitledMemory}
+                        </strong>
+                        <time dateTime={event.occurred_at}>
+                          {new Date(event.occurred_at).toLocaleString(locale)}
+                        </time>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
               <div className="continuity-panel">
                 <div className="continuity-heading">
                   <div>

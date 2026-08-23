@@ -25,5 +25,8 @@ test("ships bilingual copy and an eight-character password rule", async () => {
   assert.match(source, /headlineOne: "一个你。"/);
   assert.match(source, /headlineOne: "One you\."/);
   assert.match(source, /Clued by Pixel Gravity/);
+  assert.match(source, /memoriesTitle: "My memories"/);
+  assert.match(source, /memoriesTitle: "我的记忆"/);
+  assert.match(source, /\/api\/memories/);
   assert.doesNotMatch(source, /setError\(result\.error\.message\)/);
 });
