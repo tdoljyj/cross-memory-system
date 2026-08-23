@@ -5,10 +5,10 @@
 
 ## 当前修复工作
 
-- 修复分支：`fix/clued-memory-routing`，创建基线为 `main@920601a448a5ea8c99f99192cc2b3e59fd8a8843`。
-- 并发真值：`main` 已推进到 `227ac26`，完成 Kernel `0.3.0` 发布门禁（构建、Lint、`14/14` PASS）但未部署；修复分支未覆盖该提交，合并需后续单独授权。
-- 范围：当前工作/待办路由、权威日志入口、记忆优先级和回归测试。
-- 边界：未合并 `main`、未部署 Worker、未执行数据库迁移、未修改 DNS。
+- Clued 当前工作记忆路由已通过 [PR #1](https://github.com/tdoljyj/cross-memory-system/pull/1) 收敛到 `main@65fa8d80ed9409c711db639e1ca4617d393838e0`。
+- 合并为真实双父提交：保留 `main@20664eb` 的 Kernel/生产 bindings 变化与 `fix/clued-memory-routing@8ef81b8` 的完整修复历史；未 rebase、未 force push。
+- 合并后验证：路由 `6/6 PASS`、Kernel 合同 `14/14 PASS`、生产构建 PASS。
+- 边界：未部署 Worker、未执行数据库迁移、未修改 DNS、未创建 Binding、未发布 tag/Release。
 
 ## 分支
 
