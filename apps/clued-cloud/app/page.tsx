@@ -23,6 +23,16 @@ type Binding = {
   revoked_at: string | null;
 };
 type IssuedBinding = { token: string; mcpUrl: string; binding: Binding };
+type Project = {
+  id: string;
+  name: string;
+  certainty_status: "unconfirmed" | "confirmed";
+  progress_status: "not_started" | "active" | "paused" | "completed" | "archived";
+  summary: string | null;
+  confidence: number;
+  version: number;
+  updated_at: string;
+};
 type NoticeKey =
   | "invalidLink"
   | "invalidCredentials"
@@ -93,6 +103,24 @@ const copy = {
     revoke: "Revoke",
     bindingError: "Clued could not update AI connections. The continuity database may still need its migration.",
     continuityProtocol: "Automatic protocol: restore → work events → checkpoint",
+    projectsTitle: "Projects",
+    projectsCopy: "A mention starts as unconfirmed. Explicit intent or real work promotes the same project without losing its history.",
+    newProject: "Project name",
+    newProjectPlaceholder: "Mention or add a project",
+    addUnconfirmed: "Add as unconfirmed",
+    addingProject: "Adding…",
+    unconfirmedProjects: "Unconfirmed projects",
+    confirmedProjects: "Confirmed projects",
+    noUnconfirmedProjects: "No unconfirmed projects.",
+    noConfirmedProjects: "No confirmed projects.",
+    confirmProject: "Confirm",
+    dismissProject: "Dismiss",
+    projectError: "Clued could not update projects. The lifecycle migration may still need to be applied.",
+    progressNotStarted: "Not started",
+    progressActive: "Active",
+    progressPaused: "Paused",
+    progressCompleted: "Completed",
+    progressArchived: "Archived",
     signingOut: "Signing out…",
     signOut: "Sign out",
     copyright: "© 2026 Pixel Gravity",
@@ -165,6 +193,24 @@ const copy = {
     revoke: "撤销",
     bindingError: "Clued 暂时无法更新 AI 连接；连续性数据库迁移可能尚未生效。",
     continuityProtocol: "自动协议：恢复 → 工作事件 → 检查点",
+    projectsTitle: "项目",
+    projectsCopy: "提到项目时先进入未确定；明确意图或开始实质工作后，原项目会直接晋级，历史不会丢失。",
+    newProject: "项目名称",
+    newProjectPlaceholder: "提到或添加一个项目",
+    addUnconfirmed: "加入未确定项目",
+    addingProject: "正在添加…",
+    unconfirmedProjects: "未确定项目",
+    confirmedProjects: "已确定项目",
+    noUnconfirmedProjects: "暂无未确定项目。",
+    noConfirmedProjects: "暂无已确定项目。",
+    confirmProject: "确定",
+    dismissProject: "忽略",
+    projectError: "Clued 暂时无法更新项目；项目生命周期迁移可能尚未生效。",
+    progressNotStarted: "未开始",
+    progressActive: "进行中",
+    progressPaused: "已暂停",
+    progressCompleted: "已完成",
+    progressArchived: "已归档",
     signingOut: "正在退出…",
     signOut: "退出登录",
     copyright: "© 2026 Pixel Gravity",
@@ -234,6 +280,10 @@ export default function Home() {
   const [bindingError, setBindingError] = useState(false);
   const [issuedBinding, setIssuedBinding] = useState<IssuedBinding | null>(null);
   const [copiedField, setCopiedField] = useState<"endpoint" | "token" | null>(null);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [projectName, setProjectName] = useState("");
+  const [projectBusy, setProjectBusy] = useState(false);
+  const [projectError, setProjectError] = useState(false);
   const t = copy[locale];
 
   useEffect(() => {
@@ -310,21 +360,33 @@ export default function Home() {
   useEffect(() => {
     if (!session || view !== "account") return;
     let cancelled = false;
-    fetch("/api/bindings", {
-      headers: { authorization: `Bearer ${session.access_token}` },
-    })
-      .then(async (response) => {
+    Promise.all([
+      fetch("/api/bindings", {
+        headers: { authorization: `Bearer ${session.access_token}` },
+      }).then(async (response) => {
         if (!response.ok) throw new Error("binding-list-failed");
         return response.json() as Promise<{ bindings: Binding[] }>;
-      })
-      .then((result) => {
+      }),
+      fetch("/v1/projects", {
+        headers: { authorization: `Bearer ${session.access_token}` },
+      }).then(async (response) => {
+        if (!response.ok) throw new Error("project-list-failed");
+        return response.json() as Promise<{ projects: Project[] }>;
+      }),
+    ])
+      .then(([bindingResult, projectResult]) => {
         if (!cancelled) {
-          setBindings(result.bindings.filter((binding) => !binding.revoked_at));
+          setBindings(bindingResult.bindings.filter((binding) => !binding.revoked_at));
+          setProjects(projectResult.projects);
           setBindingError(false);
+          setProjectError(false);
         }
       })
       .catch(() => {
-        if (!cancelled) setBindingError(true);
+        if (!cancelled) {
+          setBindingError(true);
+          setProjectError(true);
+        }
       });
     return () => {
       cancelled = true;
@@ -469,6 +531,81 @@ export default function Home() {
     setCopiedField(field);
     window.setTimeout(() => setCopiedField(null), 1600);
   }
+
+  async function handleCreateProject(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!session || !projectName.trim()) return;
+    setProjectBusy(true);
+    setProjectError(false);
+    try {
+      const response = await fetch("/v1/projects/observe", {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${session.access_token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          name: projectName.trim(),
+          intent: "possible",
+          confidence: 1,
+          source_ref: "clued-project-ui",
+          idempotency_key: crypto.randomUUID(),
+        }),
+      });
+      if (!response.ok) throw new Error("project-create-failed");
+      const result = (await response.json()) as { project: Project | null };
+      if (result.project) {
+        setProjects((current) => [result.project as Project, ...current.filter((item) => item.id !== result.project?.id)]);
+      }
+      setProjectName("");
+    } catch {
+      setProjectError(true);
+    } finally {
+      setProjectBusy(false);
+    }
+  }
+
+  async function updateProject(project: Project, action: string, extra: Record<string, unknown> = {}) {
+    if (!session) return;
+    setProjectBusy(true);
+    setProjectError(false);
+    try {
+      const response = await fetch(`/v1/projects/${project.id}`, {
+        method: "PATCH",
+        headers: {
+          authorization: `Bearer ${session.access_token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          action,
+          base_version: project.version,
+          idempotency_key: crypto.randomUUID(),
+          ...extra,
+        }),
+      });
+      if (!response.ok) throw new Error("project-update-failed");
+      const result = (await response.json()) as { project: Project };
+      setProjects((current) =>
+        action === "dismiss"
+          ? current.filter((item) => item.id !== project.id)
+          : current.map((item) => (item.id === project.id ? result.project : item)),
+      );
+    } catch {
+      setProjectError(true);
+    } finally {
+      setProjectBusy(false);
+    }
+  }
+
+  const projectProgressLabels = {
+    not_started: t.progressNotStarted,
+    active: t.progressActive,
+    paused: t.progressPaused,
+    completed: t.progressCompleted,
+    archived: t.progressArchived,
+  };
+  const unconfirmedProjects = projects.filter((project) => project.certainty_status === "unconfirmed");
+  const confirmedProjects = projects.filter((project) => project.certainty_status === "confirmed");
 
   const isCreate = view === "create";
   const isPasswordSetup = view === "set-password";
@@ -644,6 +781,66 @@ export default function Home() {
               <p className="account-email">{session?.user.email}</p>
               <p className="account-copy">{t.accountReadyCopy}</p>
               {message && <p className="notice success">{t[message]}</p>}
+              <div className="projects-panel">
+                <div className="continuity-heading">
+                  <div>
+                    <h3>{t.projectsTitle}</h3>
+                    <p>{t.projectsCopy}</p>
+                  </div>
+                </div>
+                <form className="project-create-form" onSubmit={handleCreateProject}>
+                  <label>
+                    {t.newProject}
+                    <input
+                      value={projectName}
+                      onChange={(event) => setProjectName(event.target.value)}
+                      placeholder={t.newProjectPlaceholder}
+                      maxLength={120}
+                      required
+                    />
+                  </label>
+                  <button className="primary-button" type="submit" disabled={projectBusy}>
+                    {projectBusy ? t.addingProject : t.addUnconfirmed}
+                  </button>
+                </form>
+                {projectError && <p className="notice error">{t.projectError}</p>}
+                <div className="project-columns">
+                  {([
+                    ["unconfirmed", t.unconfirmedProjects, t.noUnconfirmedProjects, unconfirmedProjects],
+                    ["confirmed", t.confirmedProjects, t.noConfirmedProjects, confirmedProjects],
+                  ] as const).map(([certainty, title, empty, items]) => (
+                    <section className="project-group" key={certainty}>
+                      <h4>{title}<span>{items.length}</span></h4>
+                      {items.length === 0 ? <p className="empty-bindings">{empty}</p> : items.map((project) => (
+                        <article className="project-item" key={project.id}>
+                          <div>
+                            <strong>{project.name}</strong>
+                            <span>{projectProgressLabels[project.progress_status]}</span>
+                          </div>
+                          <div className="project-actions">
+                            {certainty === "unconfirmed" && (
+                              <button type="button" onClick={() => updateProject(project, "confirm")} disabled={projectBusy}>
+                                {t.confirmProject}
+                              </button>
+                            )}
+                            <select
+                              aria-label={`${project.name} progress`}
+                              value={project.progress_status}
+                              onChange={(event) => updateProject(project, "set_progress", { progress_status: event.target.value })}
+                              disabled={projectBusy}
+                            >
+                              {Object.entries(projectProgressLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}
+                            </select>
+                            <button type="button" onClick={() => updateProject(project, "dismiss")} disabled={projectBusy}>
+                              {t.dismissProject}
+                            </button>
+                          </div>
+                        </article>
+                      ))}
+                    </section>
+                  ))}
+                </div>
+              </div>
               <div className="continuity-panel">
                 <div className="continuity-heading">
                   <div>

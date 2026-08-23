@@ -26,4 +26,8 @@ test("ships bilingual copy and an eight-character password rule", async () => {
   assert.match(source, /headlineOne: "One you\."/);
   assert.match(source, /Clued by Pixel Gravity/);
   assert.doesNotMatch(source, /setError\(result\.error\.message\)/);
+  assert.match(source, /unconfirmedProjects: "未确定项目"/);
+  assert.match(source, /confirmedProjects: "已确定项目"/);
+  assert.match(source, /\/v1\/projects\/observe/);
+  assert.match(source, /action,\s*base_version: project\.version/);
 });

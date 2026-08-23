@@ -1,4 +1,27 @@
-# vinext-starter
+# Clued Cloud
+
+Clued's vendor-neutral continuity kernel and account portal, running on Cloudflare Workers with Supabase as the canonical store.
+
+## Project lifecycle v1
+
+Project certainty and work progress are deliberately independent:
+
+- `unconfirmed` is the default when an authorized AI observes a possible project mention.
+- `confirmed` is used for explicit intent or material work; promotion updates the same project id and `project:<id>` context key.
+- Progress is one of `not_started`, `active`, `paused`, `completed`, or `archived`.
+- Exact normalized names and aliases deduplicate automatically. Probable lexical duplicates are returned for review; merge remains explicit.
+- Dismiss, restore, rename, status updates and merge are idempotent, audited and serialized in Postgres.
+
+The additive, unapplied migration is `supabase/migrations/202608240003_project_lifecycle_v1.sql`. It creates only `clued_projects` and `clued_project_mentions`, reuses `clued_audit_receipts`, enables RLS, and keeps private transaction helpers outside the exposed schema.
+
+MCP adds exactly three tools: `clued_project_observe`, `clued_project_list`, and `clued_project_update`. Existing Binding scopes are reused against `system:projects`; no additional setup is required for wildcard bindings.
+
+The signed-in account API has four operations:
+
+- `GET /v1/projects`
+- `POST /v1/projects/observe`
+- `PATCH /v1/projects/:id`
+- `POST /v1/projects/:id/merge`
 
 A clean full-stack starter running on
 [vinext](https://github.com/cloudflare/vinext), with optional Cloudflare D1 and

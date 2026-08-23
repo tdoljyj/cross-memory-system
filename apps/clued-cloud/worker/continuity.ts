@@ -1,3 +1,5 @@
+import { projectRpcByTool, projectTools } from "./projects";
+
 const DEFAULT_SUPABASE_URL = "https://ccxsikzwxlolxqlosril.supabase.co";
 const DEFAULT_SUPABASE_KEY =
   "sb_publishable_tVKKh7Ok4FhBhHtHyZfwBA_i2RJD2Fg";
@@ -15,7 +17,7 @@ const SUPPORTED_MCP_VERSIONS = [
   "2025-03-26",
 ] as const;
 const MAX_JSON_BYTES = 1024 * 1024;
-const KERNEL_VERSION = "0.3.0";
+const KERNEL_VERSION = "0.3.1";
 
 type Scope = (typeof ALL_SCOPES)[number];
 
@@ -79,7 +81,7 @@ function corsHeaders(request: Request) {
     "access-control-allow-origin": origin ?? "*",
     "access-control-allow-headers":
       "authorization, content-type, mcp-protocol-version, mcp-session-id",
-    "access-control-allow-methods": "GET, POST, DELETE, OPTIONS",
+    "access-control-allow-methods": "GET, POST, PATCH, DELETE, OPTIONS",
     vary: "Origin",
   };
 }
@@ -98,6 +100,7 @@ function bootstrapContract(origin: string) {
       bootstrap: `${origin}/v1/continuity/bootstrap`,
       agent_instructions: `${origin}/clued-agent.md`,
       binding_portal: `${origin}/`,
+      projects: `${origin}/v1/projects`,
     },
     authentication: {
       scheme: "Bearer",
@@ -120,6 +123,12 @@ function bootstrapContract(origin: string) {
       read_log: "clued_read_log",
       search_mode: "deterministic-lexical",
       semantic_recall: false,
+      project_lifecycle: {
+        certainty: ["unconfirmed", "confirmed"],
+        progress: ["not_started", "active", "paused", "completed", "archived"],
+        default_on_mention: "unconfirmed",
+        promotion_preserves_identity: true,
+      },
     },
     supported_mcp_versions: SUPPORTED_MCP_VERSIONS,
   };
@@ -137,6 +146,7 @@ Canonical store: clued-cloud/supabase
 4. Before ending or handing off, call \`clued_session_checkpoint\` with the current base version.
 5. Use \`clued_read_log\` for the canonical human-readable 日志.md. Import an authorized baseline only with \`clued_import_log\`.
 6. Treat version conflicts and revoked/expired credentials as hard stops; resume again instead of overwriting.
+7. When a project is merely mentioned call \`clued_project_observe\` with intent \`possible\`; when intent or material work is explicit, use \`confirmed\`. Use \`ignore\` for one-off or third-party mentions.
 
 MCP endpoint: ${origin}/mcp
 HTTP bootstrap: ${origin}/v1/continuity/bootstrap
@@ -485,6 +495,7 @@ const tools = [
       additionalProperties: false,
     },
   },
+  ...projectTools,
 ] as const;
 
 const rpcByTool = {
@@ -495,6 +506,7 @@ const rpcByTool = {
   clued_read_log: "clued_mcp_read_log",
   clued_import_log: "clued_mcp_import_log",
   clued_audit_receipts: "clued_mcp_audit_receipts",
+  ...projectRpcByTool,
 } as const;
 
 async function callRpc(
@@ -583,9 +595,9 @@ async function handleMcp(request: Request, env: ContinuityEnv) {
         rpcResult(rpc.id, {
           protocolVersion,
           capabilities: { tools: { listChanged: false } },
-          serverInfo: { name: "Clued Continuity", version: "0.3.0" },
+          serverInfo: { name: "Clued Continuity", version: KERNEL_VERSION },
           instructions:
-            "Resume with clued_session_resume at session start, append authoritative changes while working, and checkpoint before handoff or session end.",
+            "Resume with clued_session_resume at session start, observe project mentions with the Clued project tools, append authoritative changes while working, and checkpoint before handoff or session end.",
         }),
         200,
         corsHeaders(request),
@@ -651,6 +663,70 @@ async function handleRestContinuity(request: Request, env: ContinuityEnv) {
   return json(result, 200, corsHeaders(request));
 }
 
+async function callUserProjectRpc(
+  request: Request,
+  env: ContinuityEnv,
+  rpc: "clued_user_project_list" | "clued_user_project_observe" | "clued_user_project_update",
+  input: Record<string, unknown>,
+) {
+  const { token } = await requireSupabaseUser(request, env);
+  return await supabaseRequest(env, `/rest/v1/rpc/${rpc}`, {
+    method: "POST",
+    userToken: token,
+    body: JSON.stringify({ p_input: input }),
+  });
+}
+
+async function handleProjectApi(request: Request, env: ContinuityEnv) {
+  validateOrigin(request, env);
+  if (request.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: corsHeaders(request) });
+  }
+  const url = new URL(request.url);
+  if (url.pathname === "/v1/projects" && request.method === "GET") {
+    const input: Record<string, unknown> = {};
+    for (const key of ["certainty_status", "progress_status", "query", "limit"] as const) {
+      const value = url.searchParams.get(key);
+      if (value !== null) input[key] = key === "limit" ? Number(value) : value;
+    }
+    if (url.searchParams.get("include_dismissed") === "true") input.include_dismissed = true;
+    return json(await callUserProjectRpc(request, env, "clued_user_project_list", input), 200, corsHeaders(request));
+  }
+  if (url.pathname === "/v1/projects/observe" && request.method === "POST") {
+    return json(
+      await callUserProjectRpc(request, env, "clued_user_project_observe", await parseBody(request)),
+      200,
+      corsHeaders(request),
+    );
+  }
+  const match = /^\/v1\/projects\/([0-9a-f-]{36})(\/merge)?$/i.exec(url.pathname);
+  if (match && request.method === "PATCH" && !match[2]) {
+    return json(
+      await callUserProjectRpc(request, env, "clued_user_project_update", {
+        ...(await parseBody(request)),
+        project_id: match[1],
+      }),
+      200,
+      corsHeaders(request),
+    );
+  }
+  if (match && request.method === "POST" && match[2] === "/merge") {
+    return json(
+      await callUserProjectRpc(request, env, "clued_user_project_update", {
+        ...(await parseBody(request)),
+        project_id: match[1],
+        action: "merge",
+      }),
+      200,
+      corsHeaders(request),
+    );
+  }
+  return json({ error: "Method not allowed." }, 405, {
+    ...corsHeaders(request),
+    allow: "GET, POST, PATCH, OPTIONS",
+  });
+}
+
 export async function handleContinuityRequest(
   request: Request,
   env: ContinuityEnv,
@@ -706,6 +782,9 @@ export async function handleContinuityRequest(
     }
     if (url.pathname === "/mcp") return await handleMcp(request, env);
     if (url.pathname in restToolByPath) return await handleRestContinuity(request, env);
+    if (url.pathname === "/v1/projects" || url.pathname.startsWith("/v1/projects/")) {
+      return await handleProjectApi(request, env);
+    }
     if (url.pathname === "/api/bindings") {
       if (request.method === "OPTIONS") {
         return new Response(null, { status: 204, headers: corsHeaders(request) });
