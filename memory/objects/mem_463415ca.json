@@ -3,14 +3,14 @@
   "id": "mem_463415ca",
   "type": "state",
   "scope": "project",
-  "content": "2026-08-23：clued.pixelgrav.com 的 OpenAI Sites 项目、公开访问、自定义域名、证书与 CNAME 均为 active/正确；Worker 日志证明 GET / 可返回 200。当前打不开的请求在进入 Worker 前被 chatgpt.site 的 Cloudflare 边缘安全层以 403 拦截，继续修改 DNS 无效；短期应更换网络/VPN 出口，长期可迁移到不依赖 chatgpt.site 的托管。",
+  "content": "2026-08-23，clued.pixelgrav.com 已从 OpenAI Sites 迁移到自有 Cloudflare Workers（Worker clued-cloud）。旧 Sites 自定义域名映射已解除但旧站内容保留；Cloudflare 自定义域名、DNS 与 HTTPS 已生效，首页、favicon、OG 图片经普通公网验收均返回 200，原 chatgpt.site 边缘 403 问题已闭环。",
   "status": "active",
   "source": {
     "kind": "observed",
     "adapter": "memory.py",
     "session_id": null,
     "created_at": "2026-08-23T06:33:28Z",
-    "updated_at": "2026-08-23T06:33:28Z"
+    "updated_at": "2026-08-23T07:10:35Z"
   },
   "temporal": {
     "valid_from": null,
