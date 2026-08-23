@@ -3,11 +3,12 @@
 > 本节是当前 Clued 仓库的最高优先级入口；下方旧版 Memory Router / 同步规则继续保留，不因本次整理改变功能或测试语义。
 
 1. 任何 Clued、Pixel Gravity、Clued Kernel、Clued Cloud、Binding、Memory Engine 或部署任务，开始前必须使用 `Clued Continuity`。
-2. 必须读取同一份权威日志 `日志.md`，不得再使用 `Clued_工作日志.md` 或 `工作日志.md` 作为新文件名。
+2. 必须读取当前用户 `project:clued` 上下文的同一份权威工作日志 `memory/contexts/projects/clued/日志.md`；它是用户的工作日志与长期记忆，不是 Clued 开发日志。不得再使用根目录 `日志.md`、`Clued_工作日志.md` 或 `工作日志.md`。
 3. 必须先核对真实 GitHub `origin/main`、适用合同与部署目标，再判断当前状态；不得用聊天记忆或旧报告替代实时证据。
-4. 完成后必须把目标、动作、证据、错误、阻塞和唯一下一步写回同一份 `日志.md`。
+4. 完成后必须把用户目标、决策、授权、约束、动作、证据、错误、阻塞和唯一下一步写回同一份 `memory/contexts/projects/clued/日志.md`。
 5. 版本口径以根目录 `CURRENT_STATUS.md` 为人类可读入口；`VERSION`、产品版本、Runtime、协议和合同版本不得混为一谈。
 6. 不得触碰真实 flat Binding、执行真实迁移、启用语义召回、发布、部署、重写历史或删除受保护证据，除非获得针对该动作的明确授权。
+7. 上述仓库文件仅是当前用户 `project:clued` 的生产前授权镜像；生产客户日志必须按 `user_id + context_key` 存入 Canonical Context，不能用 Git 仓库充当多租户数据面。
 
 ---
 
