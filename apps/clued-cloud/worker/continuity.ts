@@ -15,6 +15,7 @@ const SUPPORTED_MCP_VERSIONS = [
   "2025-03-26",
 ] as const;
 const MAX_JSON_BYTES = 1024 * 1024;
+const KERNEL_VERSION = "0.3.0";
 
 type Scope = (typeof ALL_SCOPES)[number];
 
@@ -81,6 +82,66 @@ function corsHeaders(request: Request) {
     "access-control-allow-methods": "GET, POST, DELETE, OPTIONS",
     vary: "Origin",
   };
+}
+
+function bootstrapContract(origin: string) {
+  return {
+    schema_version: "1.0",
+    service: "clued-continuity",
+    kernel_version: KERNEL_VERSION,
+    canonical_store: "clued-cloud/supabase",
+    context_model: "user_id + context_key",
+    work_log: "日志.md",
+    endpoints: {
+      mcp: `${origin}/mcp`,
+      http_api: `${origin}/v1/continuity`,
+      bootstrap: `${origin}/v1/continuity/bootstrap`,
+      agent_instructions: `${origin}/clued-agent.md`,
+      binding_portal: `${origin}/`,
+    },
+    authentication: {
+      scheme: "Bearer",
+      binding_token_prefix: "clued_bnd_",
+      token_storage: "hash-only",
+      binding_policy: "one independent, revocable, least-privilege binding per vendor client",
+      scopes: ALL_SCOPES,
+    },
+    lifecycle: {
+      required: true,
+      start: "clued_session_resume",
+      during: "clued_append_event",
+      end: "clued_session_checkpoint",
+      session_ttl_seconds: 3600,
+      conflict_policy: "optimistic-version-check",
+      idempotency: "required for durable writes",
+    },
+    capabilities: {
+      import_log: "clued_import_log",
+      read_log: "clued_read_log",
+      search_mode: "deterministic-lexical",
+      semantic_recall: false,
+    },
+    supported_mcp_versions: SUPPORTED_MCP_VERSIONS,
+  };
+}
+
+function agentInstructions(origin: string) {
+  return `# Clued Continuity Agent Contract
+
+Kernel: ${KERNEL_VERSION}
+Canonical store: clued-cloud/supabase
+
+1. Use a dedicated Clued Binding for this vendor/client; never share another vendor's token.
+2. At the start of every authorized session call \`clued_session_resume\`.
+3. Record authoritative decisions, corrections, failures and blockers with \`clued_append_event\`.
+4. Before ending or handing off, call \`clued_session_checkpoint\` with the current base version.
+5. Use \`clued_read_log\` for the canonical human-readable 日志.md. Import an authorized baseline only with \`clued_import_log\`.
+6. Treat version conflicts and revoked/expired credentials as hard stops; resume again instead of overwriting.
+
+MCP endpoint: ${origin}/mcp
+HTTP bootstrap: ${origin}/v1/continuity/bootstrap
+Binding portal: ${origin}/
+`;
 }
 
 function supabaseConfig(env: ContinuityEnv) {
@@ -248,7 +309,20 @@ async function createBinding(request: Request, env: ContinuityEnv) {
       mcpUrl: `${new URL(request.url).origin}/mcp`,
       apiBaseUrl: `${new URL(request.url).origin}/v1/continuity`,
       policyUrl: `${new URL(request.url).origin}/.well-known/clued-continuity`,
+      bootstrapUrl: `${new URL(request.url).origin}/v1/continuity/bootstrap`,
+      agentInstructionsUrl: `${new URL(request.url).origin}/clued-agent.md`,
       requiredLifecycle: ["resume", "append_event", "checkpoint"],
+      clientConfig: {
+        transport: "streamable-http",
+        mcp: {
+          url: `${new URL(request.url).origin}/mcp`,
+          headers: { authorization: `Bearer ${token}` },
+        },
+        rest: {
+          baseUrl: `${new URL(request.url).origin}/v1/continuity`,
+          authorization: `Bearer ${token}`,
+        },
+      },
       note: "This token is shown once. Store it only in the authorized AI client.",
     },
     201,
@@ -274,6 +348,16 @@ async function revokeBinding(request: Request, env: ContinuityEnv) {
 }
 
 const tools = [
+  {
+    name: "clued_agent_bootstrap",
+    description:
+      "Read the public, vendor-neutral Clued Continuity connection and lifecycle contract. This call never returns user context or credentials.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
+  },
   {
     name: "clued_session_resume",
     description:
@@ -371,6 +455,24 @@ const tools = [
     },
   },
   {
+    name: "clued_import_log",
+    description:
+      "Import an authorized # 日志 Markdown baseline into the canonical context. Resume first and supply the exact current base version plus an idempotency key.",
+    inputSchema: {
+      type: "object",
+      required: ["session_token", "base_version", "markdown", "idempotency_key"],
+      properties: {
+        session_token: { type: "string" },
+        base_version: { type: "integer", minimum: 0 },
+        markdown: { type: "string", minLength: 1, maxLength: 1048576 },
+        idempotency_key: { type: "string", minLength: 8, maxLength: 140 },
+        context_key: { type: "string" },
+        source: { type: "string", minLength: 1, maxLength: 80 },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
     name: "clued_audit_receipts",
     description:
       "Read recent immutable receipts showing which authorized binding restored, changed or checkpointed context and when.",
@@ -391,6 +493,7 @@ const rpcByTool = {
   clued_session_checkpoint: "clued_mcp_commit_checkpoint",
   clued_search_context: "clued_mcp_search_context",
   clued_read_log: "clued_mcp_read_log",
+  clued_import_log: "clued_mcp_import_log",
   clued_audit_receipts: "clued_mcp_audit_receipts",
 } as const;
 
@@ -418,6 +521,14 @@ async function callTool(
   name: unknown,
   args: unknown,
 ) {
+  if (name === "clued_agent_bootstrap") {
+    const result = bootstrapContract(new URL(request.url).origin);
+    return {
+      content: [{ type: "text", text: JSON.stringify(result) }],
+      structuredContent: result,
+      isError: false,
+    };
+  }
   if (typeof name !== "string" || !(name in rpcByTool)) {
     throw new HttpError(404, "Unknown Clued continuity tool.");
   }
@@ -518,6 +629,7 @@ const restToolByPath = {
   "/v1/continuity/checkpoint": "clued_session_checkpoint",
   "/v1/continuity/search": "clued_search_context",
   "/v1/continuity/log": "clued_read_log",
+  "/v1/continuity/log/import": "clued_import_log",
   "/v1/continuity/audit": "clued_audit_receipts",
 } as const;
 
@@ -549,7 +661,7 @@ export async function handleContinuityRequest(
       return json({
         status: "ok",
         service: "clued-continuity",
-        version: "0.3.0",
+        version: KERNEL_VERSION,
         canonicalStore: "supabase",
         mcp: "/mcp",
         api: "/v1/continuity",
@@ -558,21 +670,30 @@ export async function handleContinuityRequest(
       });
     }
     if (url.pathname === "/.well-known/clued-continuity") {
-      return json({
-        schema_version: "1.0",
-        canonical_store: "clued-cloud/supabase",
-        mcp_endpoint: `${url.origin}/mcp`,
-        http_api: `${url.origin}/v1/continuity`,
-        work_log: "日志.md",
-        lifecycle: {
-          required: true,
-          start: "resume",
-          during: "append_event",
-          end: "checkpoint",
-          session_ttl_seconds: 3600,
-          conflict_policy: "optimistic-version-check",
+      return json(bootstrapContract(url.origin));
+    }
+    if (url.pathname === "/v1/continuity/bootstrap") {
+      if (request.method === "OPTIONS") {
+        return new Response(null, { status: 204, headers: corsHeaders(request) });
+      }
+      if (request.method !== "GET" && request.method !== "POST") {
+        return json({ error: "Method not allowed." }, 405, {
+          ...corsHeaders(request),
+          allow: "GET, POST, OPTIONS",
+        });
+      }
+      return json(bootstrapContract(url.origin), 200, corsHeaders(request));
+    }
+    if (url.pathname === "/clued-agent.md") {
+      if (request.method !== "GET") {
+        return json({ error: "Method not allowed." }, 405, { allow: "GET" });
+      }
+      return new Response(agentInstructions(url.origin), {
+        status: 200,
+        headers: {
+          "content-type": "text/markdown; charset=utf-8",
+          "cache-control": "public, max-age=300",
         },
-        supported_mcp_versions: SUPPORTED_MCP_VERSIONS,
       });
     }
     if (url.pathname === "/.well-known/oauth-protected-resource/mcp") {

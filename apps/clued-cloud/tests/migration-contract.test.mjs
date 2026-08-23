@@ -16,3 +16,19 @@ test("continuity migration preserves ownership, revocation, conflict and audit i
   assert.match(sql, /canonical_store', 'clued-cloud\/supabase'/);
   assert.doesNotMatch(sql, /vector\s*\(/i);
 });
+
+test("mandatory continuity migration preserves lifecycle, log and hash-only invariants", async () => {
+  const sql = await readFile(
+    new URL("../supabase/migrations/202608230002_mandatory_continuity.sql", import.meta.url),
+    "utf8",
+  );
+  assert.match(sql, /clued_continuity_sessions/);
+  assert.match(sql, /clued_log_versions/);
+  assert.match(sql, /clued_mcp_import_log/);
+  assert.match(sql, /clued_mcp_read_log/);
+  assert.match(sql, /token_hash text not null unique/);
+  assert.match(sql, /resume_required/);
+  assert.match(sql, /stale_base_version/);
+  assert.match(sql, /enable row level security/);
+  assert.doesNotMatch(sql, /vector\s*\(/i);
+});

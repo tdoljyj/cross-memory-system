@@ -19,9 +19,12 @@ test("publishes a continuity health contract", async () => {
   assert.deepEqual(await response.json(), {
     status: "ok",
     service: "clued-continuity",
-    version: "0.2.0",
+    version: "0.3.0",
     canonicalStore: "supabase",
     mcp: "/mcp",
+    api: "/v1/continuity",
+    workLog: "日志.md",
+    mandatoryLifecycle: ["resume", "append_event", "checkpoint"],
   });
 });
 
@@ -39,7 +42,8 @@ test("implements MCP initialization and continuity tool discovery", async () => 
   assert.equal(initialize.status, 200);
   const initialized = await initialize.json();
   assert.equal(initialized.result.serverInfo.name, "Clued Continuity");
-  assert.equal(initialized.result.protocolVersion, "2025-06-18");
+  assert.equal(initialized.result.protocolVersion, "2026-07-28");
+  assert.equal(initialized.result.serverInfo.version, "0.3.0");
 
   const list = await worker.fetch(
     new Request("https://clued.test/mcp", {
@@ -54,13 +58,113 @@ test("implements MCP initialization and continuity tool discovery", async () => 
   assert.deepEqual(
     listed.result.tools.map((tool) => tool.name),
     [
+      "clued_agent_bootstrap",
       "clued_session_resume",
       "clued_append_event",
       "clued_session_checkpoint",
       "clued_search_context",
+      "clued_read_log",
+      "clued_import_log",
       "clued_audit_receipts",
     ],
   );
+});
+
+test("publishes a public bootstrap without user context", async () => {
+  const worker = await loadWorker();
+  const response = await worker.fetch(
+    new Request("https://clued.test/v1/continuity/bootstrap"),
+    env,
+    ctx,
+  );
+  assert.equal(response.status, 200);
+  const result = await response.json();
+  assert.equal(result.kernel_version, "0.3.0");
+  assert.equal(result.endpoints.mcp, "https://clued.test/mcp");
+  assert.equal(result.lifecycle.required, true);
+  assert.equal(result.capabilities.semantic_recall, false);
+  assert.doesNotMatch(JSON.stringify(result), /session_token|markdown/i);
+});
+
+test("publishes vendor-neutral agent instructions", async () => {
+  const worker = await loadWorker();
+  const response = await worker.fetch(new Request("https://clued.test/clued-agent.md"), env, ctx);
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get("content-type") ?? "", /^text\/markdown/);
+  const markdown = await response.text();
+  assert.match(markdown, /clued_session_resume/);
+  assert.match(markdown, /dedicated Clued Binding/);
+});
+
+test("serves MCP bootstrap without a binding token", async () => {
+  const worker = await loadWorker();
+  const response = await worker.fetch(
+    new Request("https://clued.test/mcp", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 21,
+        method: "tools/call",
+        params: { name: "clued_agent_bootstrap", arguments: {} },
+      }),
+    }),
+    env,
+    ctx,
+  );
+  assert.equal(response.status, 200);
+  const result = await response.json();
+  assert.equal(result.result.structuredContent.kernel_version, "0.3.0");
+});
+
+test("forwards canonical log imports to the production RPC contract", async () => {
+  const worker = await loadWorker();
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init = {}) => {
+    assert.match(String(input), /\/rest\/v1\/rpc\/clued_mcp_import_log$/);
+    const body = JSON.parse(init.body);
+    assert.match(body.p_token_hash, /^[0-9a-f]{64}$/);
+    assert.equal(body.p_input.markdown, "# 日志\n\nImported baseline.");
+    return Response.json({ status: "imported", version: 8, content_sha256: "a".repeat(64) });
+  };
+  try {
+    const response = await worker.fetch(
+      new Request("https://clued.test/v1/continuity/log/import", {
+        method: "POST",
+        headers: {
+          authorization: `Bearer clued_bnd_${"b".repeat(43)}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          context_key: "project:clued",
+          session_token: `clued_ses_${"c".repeat(64)}`,
+          base_version: 7,
+          markdown: "# 日志\n\nImported baseline.",
+          idempotency_key: "import-log-001",
+        }),
+      }),
+      env,
+      ctx,
+    );
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).version, 8);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("rejects cross-origin continuity calls by default", async () => {
+  const worker = await loadWorker();
+  const response = await worker.fetch(
+    new Request("https://clued.test/mcp", {
+      method: "POST",
+      headers: { origin: "https://untrusted.example", "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 22, method: "ping" }),
+    }),
+    env,
+    ctx,
+  );
+  assert.equal(response.status, 403);
 });
 
 test("rejects MCP memory access without a scoped binding token", async () => {
