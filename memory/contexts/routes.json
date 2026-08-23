@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "route_id": "current_work",
+  "description": "Deterministic low-cost route for personal or project-related questions about current work, todos, priorities, progress, or the next action.",
+  "precondition": "The request is T1/T2 personal or project related. T0 generic questions remain Memory Access = NONE.",
+  "match": {
+    "mode": "substring_any",
+    "case_insensitive": true,
+    "terms": [
+      "我现在要做的有哪些",
+      "现在最需要做什么",
+      "当前待办",
+      "要做什么",
+      "待办",
+      "下一步",
+      "优先级",
+      "项目进度",
+      "what should i work on",
+      "current tasks",
+      "next action",
+      "priority",
+      "project progress"
+    ]
+  },
+  "required_sources": [
+    {
+      "path": "memory/状态.md",
+      "role": "current_state"
+    },
+    {
+      "path": "memory/待办.md",
+      "role": "todos"
+    },
+    {
+      "path": "memory/决策.md",
+      "role": "decisions_and_constraints"
+    }
+  ],
+  "authorized_context_sources": [
+    {
+      "context_key": "project:clued",
+      "path": "memory/contexts/projects/clued/日志.md",
+      "required_when_authorized_and_relevant": true
+    }
+  ],
+  "answer_contract": {
+    "required_fields": [
+      "current_priority",
+      "current_todos",
+      "conflicts",
+      "next_action",
+      "sources_read"
+    ],
+    "project_log_replaces_global_memory": false,
+    "surface_conflicts": true,
+    "fail_closed_when_required_source_is_unavailable": true
+  }
+}
