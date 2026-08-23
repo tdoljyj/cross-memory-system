@@ -360,7 +360,7 @@ export default function Home() {
   useEffect(() => {
     if (!session || view !== "account") return;
     let cancelled = false;
-    Promise.all([
+    Promise.allSettled([
       fetch("/api/bindings", {
         headers: { authorization: `Bearer ${session.access_token}` },
       }).then(async (response) => {
@@ -375,16 +375,17 @@ export default function Home() {
       }),
     ])
       .then(([bindingResult, projectResult]) => {
-        if (!cancelled) {
-          setBindings(bindingResult.bindings.filter((binding) => !binding.revoked_at));
-          setProjects(projectResult.projects);
+        if (cancelled) return;
+        if (bindingResult.status === "fulfilled") {
+          setBindings(bindingResult.value.bindings.filter((binding) => !binding.revoked_at));
           setBindingError(false);
-          setProjectError(false);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
+        } else {
           setBindingError(true);
+        }
+        if (projectResult.status === "fulfilled") {
+          setProjects(projectResult.value.projects);
+          setProjectError(false);
+        } else {
           setProjectError(true);
         }
       });
