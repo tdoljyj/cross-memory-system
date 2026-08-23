@@ -1,7 +1,13 @@
 # Clued 仓库当前状态
 
-最后核对：2026-08-23  
+最后核对：2026-08-24  
 权威仓库：`tdoljyj/cross-memory-system`
+
+## 当前修复工作
+
+- 修复分支：`fix/clued-memory-routing`，基于 `main@920601a448a5ea8c99f99192cc2b3e59fd8a8843`。
+- 范围：当前工作/待办路由、权威日志入口、记忆优先级和回归测试。
+- 边界：未合并 `main`、未部署 Worker、未执行数据库迁移、未修改 DNS。
 
 ## 分支
 
