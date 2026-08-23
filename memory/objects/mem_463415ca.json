@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "id": "mem_463415ca",
+  "type": "state",
+  "scope": "project",
+  "content": "2026-08-23：clued.pixelgrav.com 的 OpenAI Sites 项目、公开访问、自定义域名、证书与 CNAME 均为 active/正确；Worker 日志证明 GET / 可返回 200。当前打不开的请求在进入 Worker 前被 chatgpt.site 的 Cloudflare 边缘安全层以 403 拦截，继续修改 DNS 无效；短期应更换网络/VPN 出口，长期可迁移到不依赖 chatgpt.site 的托管。",
+  "status": "active",
+  "source": {
+    "kind": "observed",
+    "adapter": "memory.py",
+    "session_id": null,
+    "created_at": "2026-08-23T06:33:28Z",
+    "updated_at": "2026-08-23T06:33:28Z"
+  },
+  "temporal": {
+    "valid_from": null,
+    "valid_until": null
+  },
+  "relations": {
+    "supersedes": [],
+    "superseded_by": [],
+    "contradicts": [],
+    "related": []
+  },
+  "classification": {
+    "memory_layer": "state",
+    "category": "state",
+    "recall_layer": "L3",
+    "priority": "high"
+  },
+  "provenance": {
+    "evidence": "observed",
+    "source_ref": null
+  },
+  "tags": [
+    "clued",
+    "website",
+    "sites",
+    "cloudflare",
+    "waf"
+  ],
+  "entities": [
+    "clued.pixelgrav.com",
+    "OpenAI Sites",
+    "Cloudflare"
+  ],
+  "project_id": "clued.pixelgrav.com"
+}

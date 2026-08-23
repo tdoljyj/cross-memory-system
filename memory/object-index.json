@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-08-22T23:09:38Z",
-  "count": 254,
+  "generated_at": "2026-08-23T06:33:28Z",
+  "count": 255,
   "objects": {
     "mem_012b899e": {
       "path": "memory/objects/mem_012b899e.json",
@@ -1028,6 +1028,30 @@
         "manual-review"
       ],
       "entities": [],
+      "valid_from": null,
+      "valid_until": null,
+      "supersedes": [],
+      "superseded_by": []
+    },
+    "mem_463415ca": {
+      "path": "memory/objects/mem_463415ca.json",
+      "type": "state",
+      "scope": "project",
+      "status": "active",
+      "priority": "high",
+      "category": "state",
+      "tags": [
+        "clued",
+        "website",
+        "sites",
+        "cloudflare",
+        "waf"
+      ],
+      "entities": [
+        "clued.pixelgrav.com",
+        "OpenAI Sites",
+        "Cloudflare"
+      ],
       "valid_from": null,
       "valid_until": null,
       "supersedes": [],
