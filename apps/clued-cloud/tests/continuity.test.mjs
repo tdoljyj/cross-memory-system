@@ -19,7 +19,7 @@ test("publishes a continuity health contract", async () => {
   assert.deepEqual(await response.json(), {
     status: "ok",
     service: "clued-continuity",
-    version: "0.3.0",
+    version: "0.3.1",
     canonicalStore: "supabase",
     mcp: "/mcp",
     api: "/v1/continuity",
@@ -43,7 +43,7 @@ test("implements MCP initialization and continuity tool discovery", async () => 
   const initialized = await initialize.json();
   assert.equal(initialized.result.serverInfo.name, "Clued Continuity");
   assert.equal(initialized.result.protocolVersion, "2026-07-28");
-  assert.equal(initialized.result.serverInfo.version, "0.3.0");
+  assert.equal(initialized.result.serverInfo.version, "0.3.1");
 
   const list = await worker.fetch(
     new Request("https://clued.test/mcp", {
@@ -66,6 +66,9 @@ test("implements MCP initialization and continuity tool discovery", async () => 
       "clued_read_log",
       "clued_import_log",
       "clued_audit_receipts",
+      "clued_project_observe",
+      "clued_project_list",
+      "clued_project_update",
     ],
   );
 });
@@ -79,7 +82,7 @@ test("publishes a public bootstrap without user context", async () => {
   );
   assert.equal(response.status, 200);
   const result = await response.json();
-  assert.equal(result.kernel_version, "0.3.0");
+  assert.equal(result.kernel_version, "0.3.1");
   assert.equal(result.endpoints.mcp, "https://clued.test/mcp");
   assert.equal(result.lifecycle.required, true);
   assert.equal(result.capabilities.semantic_recall, false);
@@ -114,7 +117,7 @@ test("serves MCP bootstrap without a binding token", async () => {
   );
   assert.equal(response.status, 200);
   const result = await response.json();
-  assert.equal(result.result.structuredContent.kernel_version, "0.3.0");
+  assert.equal(result.result.structuredContent.kernel_version, "0.3.1");
 });
 
 test("forwards canonical log imports to the production RPC contract", async () => {
@@ -277,3 +280,4 @@ test("forwards MCP calls as token-hash RPCs", async () => {
     globalThis.fetch = originalFetch;
   }
 });
+
