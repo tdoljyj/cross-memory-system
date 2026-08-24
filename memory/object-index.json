@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-08-23T07:10:35Z",
-  "count": 255,
+  "generated_at": "2026-08-24T08:48:32Z",
+  "count": 256,
   "objects": {
     "mem_012b899e": {
       "path": "memory/objects/mem_012b899e.json",
@@ -618,6 +618,28 @@
       "category": "identity",
       "tags": [],
       "entities": [],
+      "valid_from": null,
+      "valid_until": null,
+      "supersedes": [],
+      "superseded_by": []
+    },
+    "mem_2bce7e4e": {
+      "path": "memory/objects/mem_2bce7e4e.json",
+      "type": "state",
+      "scope": "project",
+      "status": "active",
+      "priority": "high",
+      "category": "state",
+      "tags": [
+        "clued",
+        "stage8a",
+        "release-readiness"
+      ],
+      "entities": [
+        "clued",
+        "clued-cloud",
+        "project_views_v2"
+      ],
       "valid_from": null,
       "valid_until": null,
       "supersedes": [],
