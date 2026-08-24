@@ -12,12 +12,37 @@ const baseEnv = { ASSETS: { fetch: async () => new Response("Not found", { statu
 const ctx = { waitUntil() {}, passThroughOnException() {} };
 const projectId = "11111111-1111-4111-8111-111111111111";
 const recordId = "22222222-2222-4222-8222-222222222222";
+const semanticContract = {
+  version: "two-level-five-view-v1",
+  read_order: [
+    "global_registry_and_priority",
+    "project_state_task_decision",
+    "log_and_archive_on_demand",
+  ],
+  current_truth: ["state", "task", "decision"],
+  history_on_demand: ["log", "archive"],
+  write_order: [
+    "canonical_record",
+    "event_and_receipt_same_transaction",
+    "derived_views",
+  ],
+  canonical_id_field: "id",
+  mirror_mode: "query_results_or_stable_id_references",
+  mirror_layout: {
+    global_directory: "Global",
+    project_directory_pattern: "Projects/{canonical_project_id}",
+    view_files: ["State.md", "Task.md", "Decision.md", "Archive.md", "Log.md"],
+    entry_mode: "query_conclusion_or_stable_id_reference",
+  },
+  project_creation: "explicit_confirmation_required",
+  double_write: false,
+};
 
 test("keeps project views v2 off by default in API and MCP discovery", async () => {
   const worker = await loadWorker();
   const config = await worker.fetch(new Request("https://clued.test/v1/records/config"), baseEnv, ctx);
   assert.equal(config.status, 200);
-  assert.deepEqual(await config.json(), { enabled: false });
+  assert.deepEqual(await config.json(), { enabled: false, semantic_contract: semanticContract });
 
   const records = await worker.fetch(new Request("https://clued.test/v1/records"), baseEnv, ctx);
   assert.equal(records.status, 404);
@@ -30,6 +55,58 @@ test("keeps project views v2 off by default in API and MCP discovery", async () 
   const names = (await tools.json()).result.tools.map((tool) => tool.name);
   assert.equal(names.includes("clued_record_list"), false);
   assert.equal(names.includes("clued_record_write"), false);
+});
+
+test("REST and MCP reads return the same canonical record id and conclusion", async () => {
+  const worker = await loadWorker();
+  const originalFetch = globalThis.fetch;
+  const rpcNames = [];
+  globalThis.fetch = async (input, init = {}) => {
+    const url = String(input);
+    if (url.endsWith("/auth/v1/user")) return Response.json({ id: projectId });
+    const rpc = /\/rpc\/([^/?]+)$/.exec(url)?.[1];
+    rpcNames.push(rpc);
+    const body = JSON.parse(init.body);
+    if (rpc === "clued_record_list") assert.match(body.p_token_hash, /^[0-9a-f]{64}$/);
+    assert.deepEqual(body.p_input, { level: "global", record_type: "state", limit: 10 });
+    return Response.json({
+      status: "ok",
+      records: [{ id: recordId, record_type: "state", status: "current", title: "Current" }],
+    });
+  };
+  try {
+    const env = { ...baseEnv, PROJECT_VIEWS_V2: "true" };
+    const rest = await worker.fetch(new Request(
+      "https://clued.test/v1/records?level=global&record_type=state&limit=10",
+      { headers: { authorization: "Bearer account-jwt" } },
+    ), env, ctx);
+    const restResult = await rest.json();
+
+    const mcp = await worker.fetch(new Request("https://clued.test/mcp", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer clued_bnd_${"x".repeat(43)}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 3,
+        method: "tools/call",
+        params: {
+          name: "clued_record_list",
+          arguments: { level: "global", record_type: "state", limit: 10 },
+        },
+      }),
+    }), env, ctx);
+    const mcpResult = await mcp.json();
+
+    assert.equal(restResult.records[0].id, recordId);
+    assert.equal(mcpResult.result.structuredContent.records[0].id, recordId);
+    assert.equal(restResult.records[0].title, mcpResult.result.structuredContent.records[0].title);
+    assert.deepEqual(rpcNames, ["clued_user_record_list", "clued_record_list"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("Global and Project reads share the authenticated record list RPC", async () => {
@@ -111,4 +188,6 @@ test("account UI exposes two levels and five query tabs only behind the v2 confi
   assert.match(source, /type RecordView = "state" \| "task" \| "decision" \| "archive" \| "log"/);
   assert.match(source, /\["global", "project"\]/);
   assert.match(source, /fetch\("\/v1\/records"/);
+  assert.match(source, /canonicalIdLabel/);
+  assert.match(source, /t\.canonicalIdLabel}: \{record\.id\}/);
 });

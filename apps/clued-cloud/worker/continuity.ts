@@ -1,5 +1,6 @@
 import { projectRpcByTool, projectTools } from "./projects";
 import {
+  currentWorkContract,
   recordRpcByTool,
   recordTools,
   recordsV2Enabled,
@@ -158,6 +159,7 @@ function bootstrapContract(origin: string, env?: ContinuityEnv) {
         levels: ["global", "project"],
         views: ["state", "task", "decision", "archive", "log"],
         canonical_write_core: true,
+        semantic_contract: currentWorkContract,
       },
     },
     supported_mcp_versions: SUPPORTED_MCP_VERSIONS,
@@ -177,6 +179,9 @@ Canonical store: clued-cloud/supabase
 5. Use \`clued_read_log\` for the canonical human-readable 日志.md. Import an authorized baseline only with \`clued_import_log\`.
 6. Treat version conflicts and revoked/expired credentials as hard stops; resume again instead of overwriting.
 7. When a project is merely mentioned call \`clued_project_observe\` with intent \`possible\`; when intent or material work is explicit, use \`confirmed\`. Use \`ignore\` for one-off or third-party mentions.
+8. For current work, read Global registry and priority first, then Project State, Task and Decision. Read Log or Archive only when history or evidence is needed; they never override current records.
+9. Preserve the returned canonical \`id\` across API, MCP, UI and Markdown mirrors. Markdown contains query results or stable-ID references, not copied canonical bodies.
+10. Write once with \`clued_record_write\` only after the project is explicitly confirmed. The database transaction creates Record + Event + Receipt; never create a second Markdown record or invent a confirmed project.
 
 MCP endpoint: ${origin}/mcp
 HTTP bootstrap: ${origin}/v1/continuity/bootstrap
@@ -727,7 +732,7 @@ async function handleMcp(request: Request, env: ContinuityEnv) {
           capabilities: { tools: { listChanged: false } },
           serverInfo: { name: "Clued Continuity", version: KERNEL_VERSION },
           instructions:
-            "Resume with clued_session_resume at session start, observe project mentions with the Clued project tools, append authoritative changes while working, and checkpoint before handoff or session end.",
+            "Resume first. For current work read Global priority, then Project State/Task/Decision, and use Log/Archive only as evidence. Preserve canonical record IDs; write once through clued_record_write and never dual-write Markdown.",
         }),
         200,
         corsHeaders(request),
@@ -881,7 +886,11 @@ async function handleRecordApi(request: Request, env: ContinuityEnv) {
   }
   const url = new URL(request.url);
   if (url.pathname === "/v1/records/config" && request.method === "GET") {
-    return json({ enabled: recordsV2Enabled(env) }, 200, corsHeaders(request));
+    return json(
+      { enabled: recordsV2Enabled(env), semantic_contract: currentWorkContract },
+      200,
+      corsHeaders(request),
+    );
   }
   if (!recordsV2Enabled(env)) {
     throw new HttpError(404, "Clued project views v2 are disabled.");

@@ -54,5 +54,43 @@
     "project_log_replaces_global_memory": false,
     "surface_conflicts": true,
     "fail_closed_when_required_source_is_unavailable": true
+  },
+  "semantic_contract": {
+    "version": "two-level-five-view-v1",
+    "read_order": [
+      "global_registry_and_priority",
+      "project_state_task_decision",
+      "log_and_archive_on_demand"
+    ],
+    "current_truth": [
+      "state",
+      "task",
+      "decision"
+    ],
+    "history_on_demand": [
+      "log",
+      "archive"
+    ],
+    "write_order": [
+      "canonical_record",
+      "event_and_receipt_same_transaction",
+      "derived_views"
+    ],
+    "canonical_id_field": "id",
+    "mirror_mode": "query_results_or_stable_id_references",
+    "mirror_layout": {
+      "global_directory": "Global",
+      "project_directory_pattern": "Projects/{canonical_project_id}",
+      "view_files": [
+        "State.md",
+        "Task.md",
+        "Decision.md",
+        "Archive.md",
+        "Log.md"
+      ],
+      "entry_mode": "query_conclusion_or_stable_id_reference"
+    },
+    "project_creation": "explicit_confirmation_required",
+    "double_write": false
   }
 }

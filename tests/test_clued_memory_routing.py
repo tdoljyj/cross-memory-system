@@ -55,6 +55,33 @@ class CluedMemoryRoutingTests(unittest.TestCase):
         self.assertTrue(contract["fail_closed_when_required_source_is_unavailable"])
         self.assertFalse(contract["project_log_replaces_global_memory"])
 
+    def test_two_level_five_view_semantics_are_single_source_and_fail_closed(self):
+        contract = load_route()["semantic_contract"]
+        self.assertEqual(contract["version"], "two-level-five-view-v1")
+        self.assertEqual(
+            contract["read_order"],
+            [
+                "global_registry_and_priority",
+                "project_state_task_decision",
+                "log_and_archive_on_demand",
+            ],
+        )
+        self.assertEqual(contract["canonical_id_field"], "id")
+        self.assertEqual(contract["project_creation"], "explicit_confirmation_required")
+        self.assertEqual(
+            contract["mirror_mode"],
+            "query_results_or_stable_id_references",
+        )
+        self.assertEqual(
+            contract["mirror_layout"]["project_directory_pattern"],
+            "Projects/{canonical_project_id}",
+        )
+        self.assertEqual(
+            contract["mirror_layout"]["view_files"],
+            ["State.md", "Task.md", "Decision.md", "Archive.md", "Log.md"],
+        )
+        self.assertFalse(contract["double_write"])
+
     def test_root_agents_enforces_route(self):
         agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
         self.assertIn("memory/contexts/routes.json", agents)
@@ -66,6 +93,14 @@ class CluedMemoryRoutingTests(unittest.TestCase):
         self.assertIn("memory/contexts/projects/clued/日志.md", agents)
         self.assertIn("memory/contexts/routes.json", agents)
         self.assertNotIn("Clued_工作日志.md", agents)
+
+    def test_versioned_clued_continuity_skill_is_available(self):
+        skill = (ROOT / "skills" / "clued-continuity" / "SKILL.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("memory/contexts/routes.json", skill)
+        self.assertIn("Never invent a project ID", skill)
+        self.assertIn("Never dual-write a Markdown business record", skill)
 
     def test_legacy_l1_l6_index_is_unchanged(self):
         index = json.loads((ROOT / "memory" / "index.json").read_text(encoding="utf-8"))

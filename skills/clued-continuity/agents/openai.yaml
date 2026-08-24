@@ -1,0 +1,4 @@
+interface:
+  display_name: "Clued Continuity"
+  short_description: "Restore and maintain authoritative Clued project context"
+  default_prompt: "Use $clued-continuity to restore the current Clued state and continue from the canonical next action."

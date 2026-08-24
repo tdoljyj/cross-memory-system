@@ -40,6 +40,40 @@ The Worker flag `PROJECT_VIEWS_V2` is disabled when absent. Only `true`, `1`,
 account-page five-view panel. Do not enable it until the local database gate and
 an independently approved production migration are complete.
 
+### Two-level five-view semantic contract
+
+All consumers use the `two-level-five-view-v1` contract exposed by
+`GET /v1/records/config` and the continuity bootstrap:
+
+1. Read Global registry and priority.
+2. Read the selected Project's current State, Tasks and Decisions.
+3. Read Log or Archive only when history or evidence is needed; neither can
+   override current records.
+
+REST `GET /v1/records`, MCP `clued_record_list`, the account UI and the
+`clued-continuity` Skill preserve the database `id` as the canonical record ID.
+Markdown mirrors contain query results or stable-ID references, never a second
+canonical body.
+
+The readable mirror layout is fixed and does not create another store:
+
+```text
+Global/{State,Task,Decision,Archive,Log}.md
+Projects/{canonical-project-id}/{State,Task,Decision,Archive,Log}.md
+```
+
+Every entry includes the canonical `id` and only a query conclusion or stable-ID
+reference. The directory and file names are views, not writable business records.
+
+Writes follow one path: canonical Record → Event + Receipt in the same database
+transaction → derived Global/Project views. REST and MCP already delegate to the
+same write core; clients must not dual-write Markdown. A merely mentioned project
+remains unconfirmed, and no Skill or client may invent or auto-confirm a project.
+
+This contract is discoverable while `PROJECT_VIEWS_V2` is disabled, but the
+record endpoints/tools/panel remain unavailable until an independently approved
+production migration and flag change.
+
 Local database verification requires Docker and the pinned Supabase CLI entry:
 
 ```bash

@@ -6,11 +6,37 @@ export function recordsV2Enabled(env: RecordFeatureEnv) {
   return /^(1|true|on|enabled)$/i.test(env.PROJECT_VIEWS_V2?.trim() ?? "");
 }
 
+export const currentWorkContract = {
+  version: "two-level-five-view-v1",
+  read_order: [
+    "global_registry_and_priority",
+    "project_state_task_decision",
+    "log_and_archive_on_demand",
+  ],
+  current_truth: ["state", "task", "decision"],
+  history_on_demand: ["log", "archive"],
+  write_order: [
+    "canonical_record",
+    "event_and_receipt_same_transaction",
+    "derived_views",
+  ],
+  canonical_id_field: "id",
+  mirror_mode: "query_results_or_stable_id_references",
+  mirror_layout: {
+    global_directory: "Global",
+    project_directory_pattern: "Projects/{canonical_project_id}",
+    view_files: ["State.md", "Task.md", "Decision.md", "Archive.md", "Log.md"],
+    entry_mode: "query_conclusion_or_stable_id_reference",
+  },
+  project_creation: "explicit_confirmation_required",
+  double_write: false,
+} as const;
+
 export const recordTools = [
   {
     name: "clued_record_list",
     description:
-      "Read one of Clued's State, Task, Decision, Archive or Log views at the Global level or for one effective project. All record views preserve canonical IDs.",
+      "Read canonical records at the Global level or for one effective project. Read global priority first, then project State, Task and Decision; use Log or Archive only for history. Every view returns the same canonical id.",
     inputSchema: {
       type: "object",
       required: ["record_type"],
@@ -30,7 +56,7 @@ export const recordTools = [
   {
     name: "clued_record_write",
     description:
-      "Write through Clued's single transactional record core. Requires an idempotency key and expected_version for mutations.",
+      "Write once through Clued's canonical transactional core. The same transaction emits Event and Receipt, and derived views reflect the result; never dual-write a Markdown copy. Requires an idempotency key and expected_version for mutations.",
     inputSchema: {
       type: "object",
       required: ["action", "idempotency_key"],

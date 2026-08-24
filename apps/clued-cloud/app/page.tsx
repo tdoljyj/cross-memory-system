@@ -178,7 +178,7 @@ const copy = {
     progressCompleted: "Completed",
     progressArchived: "Archived",
     workViewsTitle: "Current work",
-    workViewsCopy: "Global and Project are filters over the same canonical records.",
+    workViewsCopy: "Read global priority first, then project State, Tasks and Decisions. Log and Archive are evidence on demand; every view keeps the same canonical ID.",
     globalLevel: "Global",
     projectLevel: "Project",
     chooseProject: "Choose a confirmed project",
@@ -190,6 +190,7 @@ const copy = {
     noWorkRecords: "No records in this view.",
     workRecordTitle: "Title",
     workRecordContent: "Detail",
+    canonicalIdLabel: "Canonical ID",
     addWorkRecord: "Add canonical record",
     workViewsError: "Clued could not load the unified work views.",
     signingOut: "Signing out…",
@@ -309,7 +310,7 @@ const copy = {
     progressCompleted: "已完成",
     progressArchived: "已归档",
     workViewsTitle: "当前工作",
-    workViewsCopy: "全局与项目只是同一批 canonical 记录的筛选方式。",
+    workViewsCopy: "先读全局优先级，再读项目状态、任务和决策；日志与归档仅按需作证据，每个视图保留同一个 canonical ID。",
     globalLevel: "全局",
     projectLevel: "项目",
     chooseProject: "选择一个已确定项目",
@@ -321,6 +322,7 @@ const copy = {
     noWorkRecords: "此视图暂无记录。",
     workRecordTitle: "标题",
     workRecordContent: "详细内容",
+    canonicalIdLabel: "Canonical ID",
     addWorkRecord: "新增 canonical 记录",
     workViewsError: "Clued 暂时无法加载统一工作视图。",
     signingOut: "正在退出…",
@@ -1398,7 +1400,7 @@ export default function Home() {
                       <article className="record-item" key={record.id}>
                         <div>
                           <strong>{record.title ?? record.event_type ?? recordViewLabels[recordView]}</strong>
-                          <span>{record.status ?? record.record_type} · {record.id}</span>
+                          <span>{record.status ?? record.record_type} · {t.canonicalIdLabel}: {record.id}</span>
                         </div>
                         <p>{record.body ?? (record.payload ? JSON.stringify(record.payload) : "")}</p>
                         <time dateTime={record.updated_at}>{new Date(record.updated_at).toLocaleString(locale)}</time>
