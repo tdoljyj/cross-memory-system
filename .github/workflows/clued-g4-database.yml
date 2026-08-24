@@ -1,0 +1,67 @@
+name: Clued G4 Database Gate
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feat/clued-two-level-views-v1
+    paths:
+      - .github/workflows/clued-g4-database.yml
+      - apps/clued-cloud/package.json
+      - apps/clued-cloud/package-lock.json
+      - apps/clued-cloud/supabase/**
+  pull_request:
+    paths:
+      - .github/workflows/clued-g4-database.yml
+      - apps/clued-cloud/package.json
+      - apps/clued-cloud/package-lock.json
+      - apps/clued-cloud/supabase/**
+
+permissions:
+  contents: read
+
+concurrency:
+  group: clued-g4-database-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  database-gate:
+    name: Supabase migration, RLS, transaction, and pgTAP
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: apps/clued-cloud
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+          cache: npm
+          cache-dependency-path: apps/clued-cloud/package-lock.json
+
+      - name: Start isolated Supabase runtime
+        run: npm run db:start
+
+      - name: Reapply migrations from a clean database
+        run: npm run db:reset
+
+      - name: Lint public and private database schemas
+        run: npm run db:lint
+
+      - name: Run Unified Record V2 RLS and transaction tests
+        run: npm run db:test:v2
+
+      - name: Capture safe failure diagnostics
+        if: failure()
+        run: |
+          docker ps -a --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}'
+          docker system df
+
+      - name: Stop isolated Supabase runtime
+        if: always()
+        run: npx --yes supabase@2.115.0 stop --no-backup
