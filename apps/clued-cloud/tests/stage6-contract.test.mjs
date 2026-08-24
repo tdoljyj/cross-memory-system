@@ -54,17 +54,25 @@ test("agent contract makes current truth, stable ids and single write explicit",
 });
 
 test("versioned Skill and project rules fail closed without inventing projects or mirrors", async () => {
-  const [skill, agents, readme] = await Promise.all([
+  const [skill, agents, readme, routeText] = await Promise.all([
     readFile(new URL("../../../skills/clued-continuity/SKILL.md", import.meta.url), "utf8"),
     readFile(new URL("../AGENTS.md", import.meta.url), "utf8"),
     readFile(new URL("../README.md", import.meta.url), "utf8"),
+    readFile(new URL("../../../memory/contexts/routes.json", import.meta.url), "utf8"),
   ]);
+  const route = JSON.parse(routeText);
+  const mirror = route.semantic_contract.mirror_layout;
 
   assert.match(skill, /memory\/contexts\/routes\.json/);
   assert.match(skill, /Never invent a project ID or auto-confirm a project/);
   assert.match(skill, /Never dual-write a Markdown business record/);
+  assert.match(skill, /Global\/\{State,Task,Decision,Archive,Log\}\.md/);
+  assert.match(skill, /Projects\/\{canonical-project-id\}\/\{State,Task,Decision,Archive,Log\}\.md/);
+  assert.equal(skill.includes(mirror.entry_template), true);
   assert.match(agents, /skills\/clued-continuity\/SKILL\.md/);
   assert.match(agents, /canonical Record → Event \+ Receipt/);
+  assert.equal(agents.includes(mirror.entry_template), true);
   assert.match(readme, /two-level-five-view-v1/);
+  assert.equal(readme.includes(mirror.entry_template), true);
   assert.match(readme, /record endpoints\/tools\/panel remain unavailable/);
 });

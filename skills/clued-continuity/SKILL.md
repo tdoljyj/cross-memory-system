@@ -21,7 +21,9 @@ The authorized legacy Clued log is `memory/contexts/projects/clued/日志.md`. I
 - Never invent a project ID or auto-confirm a project. A mention may create only an unconfirmed candidate; confirmation requires explicit intent or material-work evidence.
 - When Unified Record V2 is enabled, write once through `clued_record_write` or `POST /v1/records`, using an idempotency key and the expected version for mutations. The database transaction creates Record + Event + Receipt and the views update automatically.
 - Never dual-write a Markdown business record. Markdown output contains query results or stable-ID references to canonical records.
-- When a Markdown mirror is requested, use `Global/{State,Task,Decision,Archive,Log}.md` and `Projects/{canonical-project-id}/{State,Task,Decision,Archive,Log}.md`. Each item must keep its canonical `id` and include only a query conclusion or stable-ID reference, never a copied body.
+- When a Markdown mirror is requested, use `Global/{State,Task,Decision,Archive,Log}.md` and `Projects/{canonical-project-id}/{State,Task,Decision,Archive,Log}.md`. Format each item exactly as the following line; this is a query conclusion and stable-ID reference, never a copied canonical body:
+
+      - `{id}` — {title}: {conclusion} [status={status}; version={version}]
 - When V2 is disabled, do not claim its record tools or UI are live and do not bypass the flag with legacy logs.
 
 ## Finish

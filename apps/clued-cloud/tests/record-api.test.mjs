@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import {
+  formatCanonicalRecordReference,
+  presentCluedRecord,
+} from "../app/record-presentation.ts";
 
 async function loadWorker() {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
@@ -12,6 +16,15 @@ const baseEnv = { ASSETS: { fetch: async () => new Response("Not found", { statu
 const ctx = { waitUntil() {}, passThroughOnException() {} };
 const projectId = "11111111-1111-4111-8111-111111111111";
 const recordId = "22222222-2222-4222-8222-222222222222";
+const recordFixture = {
+  id: recordId,
+  record_type: "state",
+  status: "current",
+  title: "Current priority",
+  body: "Complete the G6 cross-entry evidence.",
+  version: 7,
+  updated_at: "2026-08-24T08:00:00.000Z",
+};
 const semanticContract = {
   version: "two-level-five-view-v1",
   read_order: [
@@ -33,6 +46,7 @@ const semanticContract = {
     project_directory_pattern: "Projects/{canonical_project_id}",
     view_files: ["State.md", "Task.md", "Decision.md", "Archive.md", "Log.md"],
     entry_mode: "query_conclusion_or_stable_id_reference",
+    entry_template: "- `{id}` — {title}: {conclusion} [status={status}; version={version}]",
   },
   project_creation: "explicit_confirmation_required",
   double_write: false,
@@ -57,7 +71,7 @@ test("keeps project views v2 off by default in API and MCP discovery", async () 
   assert.equal(names.includes("clued_record_write"), false);
 });
 
-test("REST and MCP reads return the same canonical record id and conclusion", async () => {
+test("one fixture preserves canonical id and conclusion across REST, MCP, UI and Markdown", async () => {
   const worker = await loadWorker();
   const originalFetch = globalThis.fetch;
   const rpcNames = [];
@@ -69,10 +83,7 @@ test("REST and MCP reads return the same canonical record id and conclusion", as
     const body = JSON.parse(init.body);
     if (rpc === "clued_record_list") assert.match(body.p_token_hash, /^[0-9a-f]{64}$/);
     assert.deepEqual(body.p_input, { level: "global", record_type: "state", limit: 10 });
-    return Response.json({
-      status: "ok",
-      records: [{ id: recordId, record_type: "state", status: "current", title: "Current" }],
-    });
+    return Response.json({ status: "ok", records: [recordFixture] });
   };
   try {
     const env = { ...baseEnv, PROJECT_VIEWS_V2: "true" };
@@ -100,9 +111,22 @@ test("REST and MCP reads return the same canonical record id and conclusion", as
     }), env, ctx);
     const mcpResult = await mcp.json();
 
-    assert.equal(restResult.records[0].id, recordId);
-    assert.equal(mcpResult.result.structuredContent.records[0].id, recordId);
-    assert.equal(restResult.records[0].title, mcpResult.result.structuredContent.records[0].title);
+    const restRecord = restResult.records[0];
+    const mcpRecord = mcpResult.result.structuredContent.records[0];
+    assert.deepEqual(restRecord, recordFixture);
+    assert.deepEqual(mcpRecord, recordFixture);
+    assert.deepEqual(presentCluedRecord(restRecord, "State"), {
+      id: recordId,
+      title: "Current priority",
+      conclusion: "Complete the G6 cross-entry evidence.",
+      status: "current",
+      version: 7,
+      updatedAt: "2026-08-24T08:00:00.000Z",
+    });
+    assert.equal(
+      formatCanonicalRecordReference(restRecord, "State"),
+      "- `22222222-2222-4222-8222-222222222222` — Current priority: Complete the G6 cross-entry evidence. [status=current; version=7]",
+    );
     assert.deepEqual(rpcNames, ["clued_user_record_list", "clued_record_list"]);
   } finally {
     globalThis.fetch = originalFetch;
@@ -188,6 +212,9 @@ test("account UI exposes two levels and five query tabs only behind the v2 confi
   assert.match(source, /type RecordView = "state" \| "task" \| "decision" \| "archive" \| "log"/);
   assert.match(source, /\["global", "project"\]/);
   assert.match(source, /fetch\("\/v1\/records"/);
+  assert.match(source, /presentCluedRecord\(record, recordViewLabels\[recordView\]\)/);
   assert.match(source, /canonicalIdLabel/);
-  assert.match(source, /t\.canonicalIdLabel}: \{record\.id\}/);
+  assert.match(source, /t\.canonicalIdLabel}: \{item\.id\}/);
+  assert.match(source, /item\.conclusion/);
+  assert.match(source, /item\.version/);
 });

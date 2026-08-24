@@ -27,6 +27,7 @@ export const currentWorkContract = {
     project_directory_pattern: "Projects/{canonical_project_id}",
     view_files: ["State.md", "Task.md", "Decision.md", "Archive.md", "Log.md"],
     entry_mode: "query_conclusion_or_stable_id_reference",
+    entry_template: "- `{id}` — {title}: {conclusion} [status={status}; version={version}]",
   },
   project_creation: "explicit_confirmation_required",
   double_write: false,

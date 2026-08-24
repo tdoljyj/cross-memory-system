@@ -80,6 +80,10 @@ class CluedMemoryRoutingTests(unittest.TestCase):
             contract["mirror_layout"]["view_files"],
             ["State.md", "Task.md", "Decision.md", "Archive.md", "Log.md"],
         )
+        self.assertEqual(
+            contract["mirror_layout"]["entry_template"],
+            "- `{id}` — {title}: {conclusion} [status={status}; version={version}]",
+        )
         self.assertFalse(contract["double_write"])
 
     def test_root_agents_enforces_route(self):

@@ -88,7 +88,8 @@
         "Archive.md",
         "Log.md"
       ],
-      "entry_mode": "query_conclusion_or_stable_id_reference"
+      "entry_mode": "query_conclusion_or_stable_id_reference",
+      "entry_template": "- `{id}` — {title}: {conclusion} [status={status}; version={version}]"
     },
     "project_creation": "explicit_confirmation_required",
     "double_write": false

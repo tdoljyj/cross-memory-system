@@ -3,6 +3,7 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { createClient, Session } from "@supabase/supabase-js";
 import Link from "next/link";
+import { presentCluedRecord, type CluedRecord } from "./record-presentation";
 
 const SUPABASE_URL = "https://ccxsikzwxlolxqlosril.supabase.co";
 const SUPABASE_PUBLISHABLE_KEY =
@@ -50,19 +51,6 @@ type Project = {
 };
 type RecordView = "state" | "task" | "decision" | "archive" | "log";
 type RecordLevel = "global" | "project";
-type CluedRecord = {
-  id: string;
-  title?: string;
-  body?: string;
-  record_type: RecordView | "note";
-  status?: string;
-  version?: number;
-  project_id?: string | null;
-  effective_project_id?: string | null;
-  event_type?: string;
-  payload?: Record<string, unknown>;
-  updated_at: string;
-};
 type NoticeKey =
   | "invalidLink"
   | "invalidCredentials"
@@ -1396,16 +1384,19 @@ export default function Home() {
                   <div className="record-list">
                     {visibleRecords.length === 0 ? (
                       <p className="empty-bindings">{t.noWorkRecords}</p>
-                    ) : visibleRecords.map((record) => (
-                      <article className="record-item" key={record.id}>
-                        <div>
-                          <strong>{record.title ?? record.event_type ?? recordViewLabels[recordView]}</strong>
-                          <span>{record.status ?? record.record_type} · {t.canonicalIdLabel}: {record.id}</span>
-                        </div>
-                        <p>{record.body ?? (record.payload ? JSON.stringify(record.payload) : "")}</p>
-                        <time dateTime={record.updated_at}>{new Date(record.updated_at).toLocaleString(locale)}</time>
-                      </article>
-                    ))}
+                    ) : visibleRecords.map((record) => {
+                      const item = presentCluedRecord(record, recordViewLabels[recordView]);
+                      return (
+                        <article className="record-item" key={item.id}>
+                          <div>
+                            <strong>{item.title}</strong>
+                            <span>{item.status} · v{item.version ?? "n/a"} · {t.canonicalIdLabel}: {item.id}</span>
+                          </div>
+                          <p>{item.conclusion}</p>
+                          <time dateTime={item.updatedAt}>{new Date(item.updatedAt).toLocaleString(locale)}</time>
+                        </article>
+                      );
+                    })}
                   </div>
                 </div>
               )}

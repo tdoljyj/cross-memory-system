@@ -1,6 +1,6 @@
 # 阶段 6：路由、Skill、可读镜像与 G6 验收报告
 
-> 状态：G6 REVIEW CANDIDATE（待用户批准，不等于 G6 PASS）
+> 状态：G6 PASS（2026-08-24 独立复评；阶段 7 仍需用户明确授权）
 >
 > 日期：2026-08-24
 >
@@ -12,7 +12,7 @@
 
 阶段 6 已把 Global / Project 两级五视图的读取、写入、稳定 ID 和可读镜像语义收敛为 `two-level-five-view-v1` 单一合同。API、MCP、UI、Skill 与项目规则均引用同一语义；日志和归档只能作为按需证据，不能覆盖 State、Task 或 Decision。
 
-当前结果可进入 G6 人工评审。V2 功能仍默认关闭，本文不声明生产端点、工具或面板已上线。
+补齐同一 fixture 的跨入口证据后，G6 三项门禁均已满足，独立复评结论为 `PASS`。V2 功能仍默认关闭，本文不声明生产端点、工具或面板已上线，也不自动进入阶段 7。
 
 ## 2. 单一语义合同
 
@@ -46,7 +46,11 @@ Projects/{canonical-project-id}/
   Log.md
 ```
 
-目录和文件只是查询视图，不是第二套正文存储。每条输出必须包含 canonical `id`，内容只允许查询结论或稳定 ID 引用；不得复制 canonical body，也不得在写数据库后再双写 Markdown 业务记录。
+目录和文件只是查询视图，不是第二套正文存储。每条输出必须包含 canonical `id`，内容只允许查询结论或稳定 ID 引用；不得复制 canonical body，也不得在写数据库后再双写 Markdown 业务记录。确定性条目格式为：
+
+```text
+- `{id}` — {title}: {conclusion} [status={status}; version={version}]
+```
 
 ## 4. 入口一致性
 
@@ -54,11 +58,11 @@ Projects/{canonical-project-id}/
 |---|---|---|
 | REST API | `GET/POST /v1/records` → account RPC wrapper | 返回 canonical `id`；写入进入统一 private core |
 | MCP | `clued_record_list` / `clued_record_write` → binding RPC wrapper | 与 REST 返回同一 canonical `id`；写入进入同一 core |
-| UI | 读取 `/v1/records` | 显式显示 `Canonical ID: {record.id}` |
+| UI | 读取 `/v1/records` 并调用共享 `presentCluedRecord` | 显式显示 canonical ID、结论、状态与版本 |
 | Skill | `$clued-continuity` | 按路由合同读取、保留 `id`、禁止猜 ID 与双写 |
-| 可读镜像 | 两级五视图目录 | 仅查询结论或稳定 ID 引用 |
+| 可读镜像 | 两级五视图目录与 `formatCanonicalRecordReference` | 使用合同固定模板输出查询结论与稳定 ID 引用 |
 
-集成测试以同一 global State 查询分别调用 REST 与 MCP，断言 record ID 和标题结论完全一致。UI、Skill 与项目规则通过合同测试断言使用该 ID，且 V2 关闭时不得声称能力已上线。
+集成测试以同一 global State fixture 分别调用 REST 与 MCP，并对完整记录做 deep equality：canonical `id`、title、body/conclusion、status、version 与时间戳全部一致。账户 UI 实际调用的共享 presentation 函数和 Markdown formatter 使用同一 fixture 复验；Skill、AGENTS、README 必须逐字包含路由合同中的目录和条目模板。V2 关闭时仍不得声称能力已上线。
 
 ## 5. Skill 漂移修复
 
@@ -77,6 +81,7 @@ Projects/{canonical-project-id}/
 | 门禁 | 结果 |
 |---|---:|
 | Clued Cloud build + Node tests | `39/39 PASS` |
+| G6 同一 fixture 跨入口专项 | `8/8 PASS` |
 | V2 冻结合同 | `14/14 PASS` |
 | TypeScript typecheck | PASS |
 | ESLint | PASS |
@@ -113,13 +118,13 @@ Projects/{canonical-project-id}/
 - 启用 `PROJECT_VIEWS_V2`；
 - 部署 Worker、改 DNS、Binding 或密钥。
 
-## 9. G6 审批项
+## 9. G6 重新裁决
 
-建议 G6 审批以下四点：
+独立复评逐项结论：
 
-1. 接受统一读取顺序：Global → Project State/Task/Decision → Log/Archive on demand。
-2. 接受统一写入顺序：canonical Record → 同事务 Event + Receipt → 派生视图。
-3. 接受 API、MCP、UI、Skill 和两级五视图镜像保留同一 canonical `id`，Markdown 不复制正文。
-4. 接受阶段 6 只交付语义合同与本地实现，不等于生产迁移、数据导入、功能启用或发布。
+1. `PASS`：API、MCP、UI presentation、Skill/Markdown 模板在同一 fixture 上保留相同 canonical `id` 与完整结论字段。
+2. `PASS`：Log/Archive 只按需作证据，不能覆盖 State、Task、Decision；路由、Agent contract 和 V2 冻结合同均有回归。
+3. `PASS`：文档明确功能仍关闭，且与实际 feature flag、REST/MCP discovery 和 UI gating 一致，没有未实现的生产能力声明。
+4. `PASS`：阶段 6 没有生产迁移、数据导入、功能启用或发布。
 
-在用户明确“确认 G6”之前，状态保持 `G6 REVIEW CANDIDATE`，停止在阶段 6。
+G6 最终判定 `PASS`。仍停止在阶段 6；只有用户明确授权进入阶段 7 后，才执行干净 clone 集成评审。

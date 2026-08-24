@@ -63,7 +63,15 @@ Projects/{canonical-project-id}/{State,Task,Decision,Archive,Log}.md
 ```
 
 Every entry includes the canonical `id` and only a query conclusion or stable-ID
-reference. The directory and file names are views, not writable business records.
+reference in one deterministic form:
+
+```text
+- `{id}` — {title}: {conclusion} [status={status}; version={version}]
+```
+
+The account UI uses the same record-presentation mapping for ID, title,
+conclusion, status and version. The directory and file names are views, not
+writable business records.
 
 Writes follow one path: canonical Record → Event + Receipt in the same database
 transaction → derived Global/Project views. REST and MCP already delegate to the
