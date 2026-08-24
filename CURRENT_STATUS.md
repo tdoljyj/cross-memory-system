@@ -1,55 +1,33 @@
 # Clued 仓库当前状态
 
-最后核对：2026-08-24
+最后核对：2026-08-25
 权威仓库：`tdoljyj/cross-memory-system`
+仓库基线：`vNext-2.0`
 
-## 当前修复工作
+## 生产事实
 
-- Clued 当前工作记忆路由已通过 [PR #1](https://github.com/tdoljyj/cross-memory-system/pull/1) 收敛到 `main@65fa8d80ed9409c711db639e1ca4617d393838e0`。
-- 合并为真实双父提交：保留 `main@20664eb` 的 Kernel/生产 bindings 变化与 `fix/clued-memory-routing@8ef81b8` 的完整修复历史；未 rebase、未 force push。
-- 合并后验证：路由 `6/6 PASS`、Kernel 合同 `14/14 PASS`、生产构建 PASS。
-- 边界：未部署 Worker、未执行数据库迁移、未修改 DNS、未创建 Binding、未发布 tag/Release。
+- Clued Kernel `0.3.1` 正式 V2 已启用，语义合同为 `two-level-five-view-v1`。
+- Supabase 是唯一生产 canonical store；Global/Project 是同一 Record 表的查询层，五视图是类型/事件过滤。
+- 正式写路径为认证 Record → 同事务 Event + Receipt → 派生视图；Markdown 不接受双写。
+- 最近只读生产快照：0 个 Project、0 个 Mention、5 条 Memory、7 条 Event、10 条 Receipt。
+- 本状态不授权新的 migration、Binding、DNS、Worker deploy、tag 或 Release。
 
-## 分支
+## User Memory Bundle v1
 
-| 分支 | 作用 | 当前状态 |
-|---|---|---|
-| `main` | 唯一产品主线与 Canonical Memory Store | 当前远端基线；整理前 HEAD `995b4cbd46c2c52196743112322f606f4996d266` |
-| `r5.1-fast-close` | R5.1 Beta Candidate 证据与候选实现 | HEAD `021ca5c3a20ba49711cae3b97bdab2096359687d`；未合并、未删除 |
+- `memory/` 已被定义为单用户可携带 Bundle/golden sample，不是在线多租户数据面。
+- 合同：`clued.user-memory-bundle@1.0.0`；机器合同位于
+  `apps/clued-cloud/schemas/user-memory-bundle-v1.schema.json`。
+- 实际导出 `umb_fdb167fd46d84c16047af70d`：4 个 Project、262 条 Record；校验与 dry-run PASS。
+- Bundle 专项 4/4、应用测试 45/45、TypeScript、ESLint、生产构建全部 PASS。
+- 生产专用账号导入当前停在公开 Auth 邮件限流门禁；目标用户未创建、生产 Record 零写入。
 
-两条分支已经分叉：候选分支相对 `main` 为 ahead 27 / behind 11；`main` 的 11 个独有提交仅涉及 `memory/**`。本次整理不借机合并功能代码，也不改记忆数据。
+## 边界
 
-## 版本矩阵
+- 不用 service role 或 SQL 绕过用户认证/RLS，不直写 `auth.users`。
+- 不把 `index.json`、对象索引、routes、session 或审计 evidence 当成用户正文。
+- 不把访问令牌、用户 ID 或 service-role 凭据写入 Bundle、仓库或回执。
+- 相同 Bundle 使用确定性 idempotency key；恢复后必须做二次重放与计数/RLS复核。
 
-| 名称 | 值 | 含义 |
-|---|---|---|
-| 仓库基线 | `vNext-2.0` | 当前根 `VERSION`，历史 Memory Engine 基线 |
-| 内核工程代际 | `R5.1` | 最新候选工程线 |
-| 产品版本 | `0.2.0` | R5.1 冻结合同中的候选产品版本 |
-| Runtime | `0.2.x` | 兼容版本线 |
-| Protocol | `0.3.0` | 跨端协议版本 |
-| Kernel Contract | `1.1.0` | 冻结合同版本 |
-| Cloud Preview | `v0.1` | 云端最小产品阶段名，不是内核版本 |
+## 下一动作
 
-## 验证状态
-
-- R5.1 verdict：`CLUED KERNEL BETA CANDIDATE`
-- 经验证产品候选提交：`3aa1cad752933bde624274e2c4ec0fb8be556fd2`
-- 完整矩阵：47 个测试文件，`678 PASS / 0 FAIL / 0 ERROR / 0 SKIP`
-- K4–K7：PASS
-- 语义召回：仍禁用；R4 为 terminal `NO-GO`
-- Stable / Release / 生产 Binding 切换：均未发生
-
-## 受保护区域
-
-以下内容不能因“整理仓库”删除或改写语义：
-
-- `memory/**`、`.clued/**`
-- 冻结 corpus、fixtures、golden、baseline
-- Gate receipts、adjudication、raw logs 和 evidence tags
-- 真实 Binding 与迁移状态
-- 已封存提交历史
-
-## 下一项仓库治理动作
-
-以后如要把 R5.1 进入 `main`，必须作为单独的产品集成任务：先保留 `main` 最新 `memory/**`，再完成合并、全量测试和版本源归一。不能把功能合并伪装成文档清理。
+等待 Supabase 内置邮件服务项目级窗口恢复，然后完成专用用户邮箱确认、262 条认证导入、同 Bundle 重放及生产只读验收。门禁恢复前不改变生产 Auth 配置。

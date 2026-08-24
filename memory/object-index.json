@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-08-24T15:29:44Z",
-  "count": 262,
+  "generated_at": "2026-08-24T17:18:22Z",
+  "count": 263,
   "objects": {
     "mem_012b899e": {
       "path": "memory/objects/mem_012b899e.json",
@@ -2093,6 +2093,20 @@
       "tags": [
         "manual-review"
       ],
+      "entities": [],
+      "valid_from": null,
+      "valid_until": null,
+      "supersedes": [],
+      "superseded_by": []
+    },
+    "mem_8c35bf42": {
+      "path": "memory/objects/mem_8c35bf42.json",
+      "type": "semantic",
+      "scope": "project",
+      "status": "active",
+      "priority": "high",
+      "category": "decision",
+      "tags": [],
       "entities": [],
       "valid_from": null,
       "valid_until": null,

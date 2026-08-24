@@ -12,7 +12,10 @@ Project certainty and work progress are deliberately independent:
 - Exact normalized names and aliases deduplicate automatically. Probable lexical duplicates are returned for review; merge remains explicit.
 - Dismiss, restore, rename, status updates and merge are idempotent, audited and serialized in Postgres.
 
-The additive, unapplied migration is `supabase/migrations/202608240003_project_lifecycle_v1.sql`. It creates only `clued_projects` and `clued_project_mentions`, reuses `clued_audit_receipts`, enables RLS, and keeps private transaction helpers outside the exposed schema.
+The additive migration `supabase/migrations/202608240003_project_lifecycle_v1.sql`
+is applied in formal production. It creates only `clued_projects` and
+`clued_project_mentions`, reuses `clued_audit_receipts`, enables RLS, and keeps
+private transaction helpers outside the exposed schema.
 
 MCP adds exactly three tools: `clued_project_observe`, `clued_project_list`, and `clued_project_update`. Existing Binding scopes are reused against `system:projects`; no additional setup is required for wildcard bindings.
 
@@ -37,8 +40,9 @@ Legacy `/api/memories` remains limited to global notes by column grants and RLS.
 
 The Worker flag `PROJECT_VIEWS_V2` is disabled when absent. Only `true`, `1`,
 `on`, or `enabled` exposes `/v1/records`, the two MCP record tools and the
-account-page five-view panel. Do not enable it until the local database gate and
-an independently approved production migration are complete.
+account-page five-view panel. The approved production migration and formal V2
+gate are complete; production currently publishes the enabled
+`two-level-five-view-v1` contract.
 
 ### Two-level five-view semantic contract
 
@@ -78,9 +82,25 @@ transaction → derived Global/Project views. REST and MCP already delegate to t
 same write core; clients must not dual-write Markdown. A merely mentioned project
 remains unconfirmed, and no Skill or client may invent or auto-confirm a project.
 
-This contract is discoverable while `PROJECT_VIEWS_V2` is disabled, but the
-record endpoints/tools/panel remain unavailable until an independently approved
-production migration and flag change.
+When `PROJECT_VIEWS_V2` is disabled, the contract remains discoverable while the
+record endpoints/tools/panel remain unavailable and fail closed.
+
+### User Memory Bundle v1
+
+The repository `memory/` directory may be exported as a complete, portable
+single-user bundle. It is not an online production data directory and never
+replaces the Supabase `user_id + RLS` data plane.
+
+- `memory/objects/*.json` is the only importable business-body source.
+- Legacy Markdown and audit logs are checksum-protected read-only evidence.
+- Generated Global/Project Markdown contains stable-ID references only.
+- The importer defaults to a zero-network dry-run and executes only through an
+  authenticated user's `/v1/projects*` and `/v1/records` APIs.
+- Tokens, tenant IDs, service-role credentials, direct table writes and runtime
+  Git writes are forbidden by the bundle contract.
+
+See `docs/clued-two-level-views/19-User-Memory-Bundle-v1合同与导入验收.md` for
+the complete contract and acceptance record.
 
 Local database verification requires Docker and the pinned Supabase CLI entry:
 
