@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "id": "mem_152b651b",
+  "type": "state",
+  "scope": "project",
+  "content": "Clued 阶段 8B-2 已 PASS：生产按序应用 project_lifecycle_v1 与 unified_record_v2 additive migration；RLS、private core revoke、最小包装器授权、pgTAP 16/16、legacy Memory CRUD 与 3 条摘要审计全部通过，所有探针回滚且数据保持 Project/Mention/Memory/Event/Receipt 0/0/0/2/5。PROJECT_VIEWS_V2 继续关闭，Worker 仍为 bf0038c3-1456-4653-bdcf-f962ff962ec4 / Kernel 0.3.0，未导入、未部署、未改 DNS/Binding/密钥；下一步需用户明确确认后进入 8B-3 独立 canary。",
+  "status": "active",
+  "source": {
+    "kind": "user_explicit",
+    "adapter": "cli",
+    "session_id": null,
+    "created_at": "2026-08-24T11:41:09Z",
+    "updated_at": "2026-08-24T11:41:09Z"
+  },
+  "temporal": {
+    "valid_from": null,
+    "valid_until": null
+  },
+  "relations": {
+    "supersedes": [
+      "mem_caa21170"
+    ],
+    "superseded_by": [],
+    "contradicts": [],
+    "related": []
+  },
+  "classification": {
+    "memory_layer": "state",
+    "category": "state",
+    "recall_layer": "L3",
+    "priority": "high"
+  },
+  "provenance": {
+    "evidence": "explicit",
+    "source_ref": null
+  },
+  "tags": [
+    "clued",
+    "stage8a",
+    "release-readiness"
+  ],
+  "entities": [
+    "clued",
+    "clued-cloud",
+    "project_views_v2"
+  ],
+  "project_id": "clued"
+}

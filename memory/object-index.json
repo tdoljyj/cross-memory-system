@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-08-24T11:20:10Z",
-  "count": 257,
+  "generated_at": "2026-08-24T11:41:09Z",
+  "count": 258,
   "objects": {
     "mem_012b899e": {
       "path": "memory/objects/mem_012b899e.json",
@@ -280,6 +280,30 @@
       "superseded_by": [
         "mem_4a56666f"
       ]
+    },
+    "mem_152b651b": {
+      "path": "memory/objects/mem_152b651b.json",
+      "type": "state",
+      "scope": "project",
+      "status": "active",
+      "priority": "high",
+      "category": "state",
+      "tags": [
+        "clued",
+        "stage8a",
+        "release-readiness"
+      ],
+      "entities": [
+        "clued",
+        "clued-cloud",
+        "project_views_v2"
+      ],
+      "valid_from": null,
+      "valid_until": null,
+      "supersedes": [
+        "mem_caa21170"
+      ],
+      "superseded_by": []
     },
     "mem_1841365e": {
       "path": "memory/objects/mem_1841365e.json",
@@ -3075,7 +3099,7 @@
       "path": "memory/objects/mem_caa21170.json",
       "type": "state",
       "scope": "project",
-      "status": "active",
+      "status": "superseded",
       "priority": "high",
       "category": "state",
       "tags": [
@@ -3089,11 +3113,13 @@
         "project_views_v2"
       ],
       "valid_from": null,
-      "valid_until": null,
+      "valid_until": "2026-08-24T11:41:09Z",
       "supersedes": [
         "mem_2bce7e4e"
       ],
-      "superseded_by": []
+      "superseded_by": [
+        "mem_152b651b"
+      ]
     },
     "mem_caf56adf": {
       "path": "memory/objects/mem_caf56adf.json",
