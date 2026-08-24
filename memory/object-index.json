@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-08-24T08:48:32Z",
-  "count": 256,
+  "generated_at": "2026-08-24T11:20:10Z",
+  "count": 257,
   "objects": {
     "mem_012b899e": {
       "path": "memory/objects/mem_012b899e.json",
@@ -627,7 +627,7 @@
       "path": "memory/objects/mem_2bce7e4e.json",
       "type": "state",
       "scope": "project",
-      "status": "active",
+      "status": "superseded",
       "priority": "high",
       "category": "state",
       "tags": [
@@ -641,9 +641,11 @@
         "project_views_v2"
       ],
       "valid_from": null,
-      "valid_until": null,
+      "valid_until": "2026-08-24T11:20:10Z",
       "supersedes": [],
-      "superseded_by": []
+      "superseded_by": [
+        "mem_caa21170"
+      ]
     },
     "mem_2c000453": {
       "path": "memory/objects/mem_2c000453.json",
@@ -3067,6 +3069,30 @@
       "valid_from": null,
       "valid_until": null,
       "supersedes": [],
+      "superseded_by": []
+    },
+    "mem_caa21170": {
+      "path": "memory/objects/mem_caa21170.json",
+      "type": "state",
+      "scope": "project",
+      "status": "active",
+      "priority": "high",
+      "category": "state",
+      "tags": [
+        "clued",
+        "stage8a",
+        "release-readiness"
+      ],
+      "entities": [
+        "clued",
+        "clued-cloud",
+        "project_views_v2"
+      ],
+      "valid_from": null,
+      "valid_until": null,
+      "supersedes": [
+        "mem_2bce7e4e"
+      ],
       "superseded_by": []
     },
     "mem_caf56adf": {
