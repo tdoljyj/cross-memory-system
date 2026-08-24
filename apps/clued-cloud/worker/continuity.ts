@@ -263,13 +263,21 @@ async function supabaseRequest(
   const text = await response.text();
   const payload = text ? JSON.parse(text) : null;
   if (!response.ok) {
-    throw new HttpError(
-      response.status,
+    const message =
       typeof payload?.message === "string"
         ? payload.message
         : typeof payload?.error_description === "string"
           ? payload.error_description
-          : "Clued storage request failed.",
+          : "Clued storage request failed.";
+    const status =
+      response.status >= 500 &&
+      payload?.code === "P0002" &&
+      (message === "project_not_found" || message === "record_not_found")
+        ? 404
+        : response.status;
+    throw new HttpError(
+      status,
+      message,
       payload,
     );
   }

@@ -162,6 +162,31 @@ test("Global and Project reads share the authenticated record list RPC", async (
   }
 });
 
+test("known database not-found errors remain client-safe 404 responses", async () => {
+  const worker = await loadWorker();
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    if (String(input).endsWith("/auth/v1/user")) return Response.json({ id: projectId });
+    return Response.json(
+      { code: "P0002", details: null, hint: null, message: "project_not_found" },
+      { status: 500 },
+    );
+  };
+  try {
+    const response = await worker.fetch(new Request(
+      `https://clued.test/v1/records?level=project&project_id=${projectId}&record_type=task&limit=25`,
+      { headers: { authorization: "Bearer account-jwt" } },
+    ), { ...baseEnv, PROJECT_VIEWS_V2: "true" }, ctx);
+    assert.equal(response.status, 404);
+    assert.deepEqual(await response.json(), {
+      error: "project_not_found",
+      details: { code: "P0002", details: null, hint: null, message: "project_not_found" },
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("REST and MCP writes delegate to the same canonical database core wrappers", async () => {
   const worker = await loadWorker();
   const originalFetch = globalThis.fetch;

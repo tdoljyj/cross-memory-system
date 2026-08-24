@@ -131,3 +131,16 @@ test("unified record v2 is additive, single-source, transactional and least-priv
   assert.doesNotMatch(sql, /create table(?: if not exists)? public\.clued_(?:states|tasks|decisions|archives)/);
   assert.doesNotMatch(sql, /update public\.clued_memories set project_id/);
 });
+
+test("Data API wrappers translate optimistic conflicts to HTTP 409-compatible SQLSTATE", async () => {
+  const sql = await readFile(
+    new URL("../supabase/migrations/20260824123000_map_optimistic_conflicts_to_http_409.sql", import.meta.url),
+    "utf8",
+  );
+  assert.match(sql, /when serialization_failure/);
+  assert.match(sql, /sqlerrm='record_version_conflict'/);
+  assert.match(sql, /sqlerrm='project_version_conflict'/);
+  assert.equal((sql.match(/errcode='23505'/g) ?? []).length, 4);
+  assert.match(sql, /revoke all on function public\.clued_user_record_write\(jsonb\) from public,anon/);
+  assert.match(sql, /revoke all on function public\.clued_user_project_update\(jsonb\) from public,anon/);
+});

@@ -65,7 +65,7 @@ select throws_ok($test$
     'record_type','task','record_id',(select id from public.clued_memories where title='Ship G4'),
     'expected_version',99,'title','Stale update','content','Must not win'
   ))
-$test$,'40001','record_version_conflict','Stale expected version is rejected');
+$test$,'23505','record_version_conflict','Stale expected version is rejected as an API conflict');
 
 select throws_ok($test$
   select public.clued_user_record_write('{
