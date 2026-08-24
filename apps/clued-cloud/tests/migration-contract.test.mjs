@@ -112,3 +112,22 @@ test("project lifecycle v1 preserves identity during confirmation and supports c
   assert.match(sql, /project_version_conflict/);
   assert.match(sql, /'status','idempotent'/);
 });
+
+test("unified record v2 is additive, single-source, transactional and least-privilege", async () => {
+  const sql = await readFile(
+    new URL("../supabase/migrations/20260824014005_unified_record_v2.sql", import.meta.url),
+    "utf8",
+  );
+  assert.match(sql, /alter table public\.clued_memories/);
+  assert.match(sql, /record_type text not null default 'note'/);
+  assert.match(sql, /create or replace view public\.clued_records_v2\s+with \(security_invoker=true\)/);
+  assert.match(sql, /create or replace function clued_private\.record_write_core/);
+  assert.match(sql, /security definer set search_path=''/);
+  assert.match(sql, /record_version_conflict/);
+  assert.match(sql, /idempotency_key_conflict/);
+  assert.match(sql, /insert into public\.clued_context_events/);
+  assert.match(sql, /insert into public\.clued_audit_receipts/);
+  assert.match(sql, /grant insert \(user_id,title,content\)/);
+  assert.doesNotMatch(sql, /create table(?: if not exists)? public\.clued_(?:states|tasks|decisions|archives)/);
+  assert.doesNotMatch(sql, /update public\.clued_memories set project_id/);
+});

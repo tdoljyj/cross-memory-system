@@ -67,7 +67,7 @@ contract("CLD-VIEW-003: merge resolves an effective project without copying reco
   assert.match(resolutionView, /effective_project_id/);
   assert.doesNotMatch(
     compactSql,
-    /update public\.clued_memories set project_id|insert into public\.clued_memories[\s\S]*select[\s\S]*from public\.clued_memories/,
+    /update public\.clued_memories set project_id|insert into public\.clued_memories[^;]*select[^;]*from public\.clued_memories/,
   );
 });
 

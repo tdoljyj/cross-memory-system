@@ -12,6 +12,10 @@
     "start": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext start",
     "test": "npm run build && node --test tests/*.test.mjs",
     "test:v2:red": "node --test tests/v2-red/*.test.mjs",
+    "db:start": "npx --yes supabase@2.115.0 start",
+    "db:reset": "npx --yes supabase@2.115.0 db reset --local --no-seed",
+    "db:test:v2": "npx --yes supabase@2.115.0 test db supabase/tests/unified_record_v2.test.sql --local",
+    "db:lint": "npx --yes supabase@2.115.0 db lint --local --schema public,clued_private --level error --fail-on error",
     "typecheck": "tsc --noEmit --incremental false",
     "lint": "bash scripts/sites-env.sh -- eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "bash scripts/sites-env.sh -- drizzle-kit generate"

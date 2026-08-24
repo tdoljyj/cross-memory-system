@@ -529,6 +529,45 @@ textarea:focus {
   background: rgba(255,255,255,.04);
   font-size: 10px;
 }
+.records-panel {
+  display: grid;
+  gap: 16px;
+  margin-top: 26px;
+  padding: 18px;
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 14px;
+  background: rgba(255,255,255,.025);
+}
+.record-levels, .record-tabs { display: flex; flex-wrap: wrap; gap: 7px; }
+.record-levels button, .record-tabs button {
+  padding: 7px 10px;
+  color: #8d9891;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  cursor: pointer;
+  background: rgba(255,255,255,.025);
+  font-size: 10px;
+}
+.record-levels button.active, .record-tabs button.active {
+  color: #a3f4c8;
+  border-color: rgba(65,226,155,.3);
+  background: rgba(65,226,155,.08);
+}
+.record-form { display: grid; gap: 10px; }
+.record-form .primary-button { width: 100%; }
+.record-list { display: grid; gap: 9px; }
+.record-item {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid rgba(255,255,255,.06);
+  border-radius: 10px;
+  background: rgba(0,0,0,.12);
+}
+.record-item > div { display: flex; gap: 8px; justify-content: space-between; align-items: baseline; }
+.record-item strong { font-size: 12px; }
+.record-item span, .record-item time { color: #68736c; font-size: 9px; }
+.record-item p { margin: 0; color: #a7b0ab; font-size: 11px; line-height: 1.55; white-space: pre-wrap; }
 .continuity-panel {
   display: grid;
   gap: 18px;

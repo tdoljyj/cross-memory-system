@@ -48,6 +48,21 @@ type Project = {
   version: number;
   updated_at: string;
 };
+type RecordView = "state" | "task" | "decision" | "archive" | "log";
+type RecordLevel = "global" | "project";
+type CluedRecord = {
+  id: string;
+  title?: string;
+  body?: string;
+  record_type: RecordView | "note";
+  status?: string;
+  version?: number;
+  project_id?: string | null;
+  effective_project_id?: string | null;
+  event_type?: string;
+  payload?: Record<string, unknown>;
+  updated_at: string;
+};
 type NoticeKey =
   | "invalidLink"
   | "invalidCredentials"
@@ -162,6 +177,21 @@ const copy = {
     progressPaused: "Paused",
     progressCompleted: "Completed",
     progressArchived: "Archived",
+    workViewsTitle: "Current work",
+    workViewsCopy: "Global and Project are filters over the same canonical records.",
+    globalLevel: "Global",
+    projectLevel: "Project",
+    chooseProject: "Choose a confirmed project",
+    stateView: "State",
+    taskView: "Tasks",
+    decisionView: "Decisions",
+    archiveView: "Archive",
+    logView: "Log",
+    noWorkRecords: "No records in this view.",
+    workRecordTitle: "Title",
+    workRecordContent: "Detail",
+    addWorkRecord: "Add canonical record",
+    workViewsError: "Clued could not load the unified work views.",
     signingOut: "Signing out…",
     signOut: "Sign out",
     copyright: "© 2026 Pixel Gravity",
@@ -278,6 +308,21 @@ const copy = {
     progressPaused: "已暂停",
     progressCompleted: "已完成",
     progressArchived: "已归档",
+    workViewsTitle: "当前工作",
+    workViewsCopy: "全局与项目只是同一批 canonical 记录的筛选方式。",
+    globalLevel: "全局",
+    projectLevel: "项目",
+    chooseProject: "选择一个已确定项目",
+    stateView: "状态",
+    taskView: "任务",
+    decisionView: "决策",
+    archiveView: "归档",
+    logView: "日志",
+    noWorkRecords: "此视图暂无记录。",
+    workRecordTitle: "标题",
+    workRecordContent: "详细内容",
+    addWorkRecord: "新增 canonical 记录",
+    workViewsError: "Clued 暂时无法加载统一工作视图。",
     signingOut: "正在退出…",
     signOut: "退出登录",
     copyright: "© 2026 Pixel Gravity",
@@ -359,6 +404,15 @@ export default function Home() {
   const [projectName, setProjectName] = useState("");
   const [projectBusy, setProjectBusy] = useState(false);
   const [projectError, setProjectError] = useState(false);
+  const [recordsEnabled, setRecordsEnabled] = useState(false);
+  const [recordView, setRecordView] = useState<RecordView>("state");
+  const [recordLevel, setRecordLevel] = useState<RecordLevel>("global");
+  const [recordProjectId, setRecordProjectId] = useState("");
+  const [records, setRecords] = useState<CluedRecord[]>([]);
+  const [recordTitle, setRecordTitle] = useState("");
+  const [recordContent, setRecordContent] = useState("");
+  const [recordBusy, setRecordBusy] = useState(false);
+  const [recordError, setRecordError] = useState(false);
   const t = copy[locale];
 
   useEffect(() => {
@@ -468,6 +522,55 @@ export default function Home() {
       cancelled = true;
     };
   }, [session, view]);
+
+  useEffect(() => {
+    if (!session || view !== "account") return;
+    let cancelled = false;
+    fetch("/v1/records/config", { cache: "no-store" })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("record-config-failed");
+        return response.json() as Promise<{ enabled: boolean }>;
+      })
+      .then((result) => {
+        if (!cancelled) setRecordsEnabled(result.enabled);
+      })
+      .catch(() => {
+        if (!cancelled) setRecordsEnabled(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [session, view]);
+
+  useEffect(() => {
+    if (!session || view !== "account" || !recordsEnabled) return;
+    if (recordLevel === "project" && !recordProjectId) {
+      return;
+    }
+    let cancelled = false;
+    const query = new URLSearchParams({ level: recordLevel, record_type: recordView });
+    if (recordLevel === "project") query.set("project_id", recordProjectId);
+    fetch(`/v1/records?${query}`, {
+      headers: { authorization: `Bearer ${session.access_token}` },
+      cache: "no-store",
+    })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("record-list-failed");
+        return response.json() as Promise<{ records: CluedRecord[] }>;
+      })
+      .then((result) => {
+        if (!cancelled) {
+          setRecords(result.records);
+          setRecordError(false);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setRecordError(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [recordLevel, recordProjectId, recordView, recordsEnabled, session, view]);
 
   useEffect(() => {
     if (!session || view !== "account") return;
@@ -789,6 +892,53 @@ export default function Home() {
     }
   }
 
+  async function handleCreateRecord(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!session || recordView === "archive" || recordView === "log") return;
+    if (recordLevel === "project" && !recordProjectId) return;
+    setRecordBusy(true);
+    setRecordError(false);
+    const idempotencyKey = crypto.randomUUID();
+    const input: Record<string, unknown> = {
+      action: "create",
+      idempotency_key: idempotencyKey,
+      scope: recordLevel,
+      record_type: recordView,
+      title: recordTitle,
+      content: recordContent,
+      source_ref: "clued-work-ui",
+    };
+    if (recordLevel === "project") input.project_id = recordProjectId;
+    if (recordView === "state") {
+      input.status = "current";
+      input.record_key = "current-work";
+    } else if (recordView === "task") {
+      input.status = "backlog";
+    } else if (recordView === "decision") {
+      input.status = "active";
+      input.record_key = `decision:${idempotencyKey}`;
+    }
+    try {
+      const response = await fetch("/v1/records", {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${session.access_token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(input),
+      });
+      if (!response.ok) throw new Error("record-write-failed");
+      const result = (await response.json()) as { record: CluedRecord };
+      setRecords((current) => [result.record, ...current.filter((item) => item.id !== result.record.id)]);
+      setRecordTitle("");
+      setRecordContent("");
+    } catch {
+      setRecordError(true);
+    } finally {
+      setRecordBusy(false);
+    }
+  }
+
   const projectProgressLabels = {
     not_started: t.progressNotStarted,
     active: t.progressActive,
@@ -798,6 +948,14 @@ export default function Home() {
   };
   const unconfirmedProjects = projects.filter((project) => project.certainty_status === "unconfirmed");
   const confirmedProjects = projects.filter((project) => project.certainty_status === "confirmed");
+  const visibleRecords = recordLevel === "project" && !recordProjectId ? [] : records;
+  const recordViewLabels: Record<RecordView, string> = {
+    state: t.stateView,
+    task: t.taskView,
+    decision: t.decisionView,
+    archive: t.archiveView,
+    log: t.logView,
+  };
 
   const isCreate = view === "create";
   const isPasswordSetup = view === "set-password";
@@ -1161,6 +1319,94 @@ export default function Home() {
                   ))}
                 </div>
               </div>
+              {recordsEnabled && (
+                <div className="records-panel">
+                  <div className="continuity-heading">
+                    <div>
+                      <h3>{t.workViewsTitle}</h3>
+                      <p>{t.workViewsCopy}</p>
+                    </div>
+                    <span className="protocol-badge">V2</span>
+                  </div>
+                  <div className="record-levels" role="group" aria-label={t.workViewsTitle}>
+                    {(["global", "project"] as const).map((level) => (
+                      <button
+                        type="button"
+                        className={recordLevel === level ? "active" : ""}
+                        onClick={() => setRecordLevel(level)}
+                        key={level}
+                      >
+                        {level === "global" ? t.globalLevel : t.projectLevel}
+                      </button>
+                    ))}
+                  </div>
+                  {recordLevel === "project" && (
+                    <select
+                      aria-label={t.chooseProject}
+                      value={recordProjectId}
+                      onChange={(event) => setRecordProjectId(event.target.value)}
+                    >
+                      <option value="">{t.chooseProject}</option>
+                      {confirmedProjects.map((project) => (
+                        <option value={project.id} key={project.id}>{project.name}</option>
+                      ))}
+                    </select>
+                  )}
+                  <div className="record-tabs" role="tablist" aria-label={t.workViewsTitle}>
+                    {(Object.keys(recordViewLabels) as RecordView[]).map((item) => (
+                      <button
+                        type="button"
+                        role="tab"
+                        aria-selected={recordView === item}
+                        className={recordView === item ? "active" : ""}
+                        onClick={() => setRecordView(item)}
+                        key={item}
+                      >
+                        {recordViewLabels[item]}
+                      </button>
+                    ))}
+                  </div>
+                  {recordView !== "archive" && recordView !== "log" && (
+                    <form className="record-form" onSubmit={handleCreateRecord}>
+                      <input
+                        aria-label={t.workRecordTitle}
+                        value={recordTitle}
+                        onChange={(event) => setRecordTitle(event.target.value)}
+                        placeholder={t.workRecordTitle}
+                        maxLength={120}
+                        required
+                      />
+                      <textarea
+                        aria-label={t.workRecordContent}
+                        value={recordContent}
+                        onChange={(event) => setRecordContent(event.target.value)}
+                        placeholder={t.workRecordContent}
+                        maxLength={8000}
+                        rows={3}
+                        required
+                      />
+                      <button className="primary-button" type="submit" disabled={recordBusy}>
+                        {recordBusy ? t.savingMemory : t.addWorkRecord}
+                      </button>
+                    </form>
+                  )}
+                  {recordError && <p className="notice error">{t.workViewsError}</p>}
+                  <div className="record-list">
+                    {visibleRecords.length === 0 ? (
+                      <p className="empty-bindings">{t.noWorkRecords}</p>
+                    ) : visibleRecords.map((record) => (
+                      <article className="record-item" key={record.id}>
+                        <div>
+                          <strong>{record.title ?? record.event_type ?? recordViewLabels[recordView]}</strong>
+                          <span>{record.status ?? record.record_type} · {record.id}</span>
+                        </div>
+                        <p>{record.body ?? (record.payload ? JSON.stringify(record.payload) : "")}</p>
+                        <time dateTime={record.updated_at}>{new Date(record.updated_at).toLocaleString(locale)}</time>
+                      </article>
+                    ))}
+                  </div>
+                </div>
+              )}
               <div className="continuity-panel">
                 <div className="continuity-heading">
                   <div>

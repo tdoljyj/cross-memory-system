@@ -23,6 +23,32 @@ The signed-in account API has four operations:
 - `PATCH /v1/projects/:id`
 - `POST /v1/projects/:id/merge`
 
+## Unified Record v2
+
+`supabase/migrations/20260824014005_unified_record_v2.sql` additively extends
+`clued_memories` into the single canonical record table. Global and Project are
+query levels over the same IDs; State, Task, Decision and Archive are record
+filters, while Log remains the append-only `clued_context_events` stream.
+
+REST and MCP both delegate writes to `clued_private.record_write_core`. The
+core validates confirmed effective projects, optimistic versions and request
+hashes, then commits Record + Event + Receipt in one database transaction.
+Legacy `/api/memories` remains limited to global notes by column grants and RLS.
+
+The Worker flag `PROJECT_VIEWS_V2` is disabled when absent. Only `true`, `1`,
+`on`, or `enabled` exposes `/v1/records`, the two MCP record tools and the
+account-page five-view panel. Do not enable it until the local database gate and
+an independently approved production migration are complete.
+
+Local database verification requires Docker and the pinned Supabase CLI entry:
+
+```bash
+npm run db:start
+npm run db:reset
+npm run db:lint
+npm run db:test:v2
+```
+
 A clean full-stack starter running on
 [vinext](https://github.com/cloudflare/vinext), with optional Cloudflare D1 and
 Drizzle support.
@@ -118,6 +144,12 @@ actions tied to the current ChatGPT user. Leave public content anonymous.
 - `npm run build`: build the deployable Sites artifact
 - `npm run start`: start the built Vinext application
 - `npm test`: build and verify the rendered development-preview metadata
+- `npm run typecheck`: run the independent TypeScript gate
+- `npm run test:v2:red`: run the frozen V2 contracts (green after Stage 4)
+- `npm run db:start`: start the isolated Supabase stack (Docker required)
+- `npm run db:reset`: recreate only the local database from migrations
+- `npm run db:lint`: lint the local public and private schemas
+- `npm run db:test:v2`: run the isolated V2 RLS/transaction pgTAP suite
 - `npm run db:generate`: generate Drizzle migrations after schema changes
 
 Use build commands for targeted diagnosis after a remote failure, not as part of the normal checkpoint path.
@@ -128,4 +160,3 @@ The timeout defaults can be overridden for a controlled canary with `SITES_INSTA
 
 - [vinext Documentation](https://github.com/cloudflare/vinext)
 - [Drizzle D1 Guide](https://orm.drizzle.team/docs/get-started/d1-new)
-

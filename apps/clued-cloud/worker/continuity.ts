@@ -1,4 +1,11 @@
 import { projectRpcByTool, projectTools } from "./projects";
+import {
+  recordRpcByTool,
+  recordTools,
+  recordsV2Enabled,
+  type RecordFeatureEnv,
+  type UserRecordRpc,
+} from "./records";
 
 const DEFAULT_SUPABASE_URL = "https://ccxsikzwxlolxqlosril.supabase.co";
 const DEFAULT_SUPABASE_KEY =
@@ -21,7 +28,7 @@ const KERNEL_VERSION = "0.3.1";
 
 type Scope = (typeof ALL_SCOPES)[number];
 
-export interface ContinuityEnv {
+export interface ContinuityEnv extends RecordFeatureEnv {
   SUPABASE_URL?: string;
   SUPABASE_PUBLISHABLE_KEY?: string;
   CLUED_ALLOWED_ORIGINS?: string;
@@ -102,7 +109,7 @@ function corsHeaders(request: Request) {
   };
 }
 
-function bootstrapContract(origin: string) {
+function bootstrapContract(origin: string, env?: ContinuityEnv) {
   return {
     schema_version: "1.0",
     service: "clued-continuity",
@@ -117,6 +124,7 @@ function bootstrapContract(origin: string) {
       agent_instructions: `${origin}/clued-agent.md`,
       binding_portal: `${origin}/`,
       projects: `${origin}/v1/projects`,
+      records: `${origin}/v1/records`,
     },
     authentication: {
       scheme: "Bearer",
@@ -144,6 +152,12 @@ function bootstrapContract(origin: string) {
         progress: ["not_started", "active", "paused", "completed", "archived"],
         default_on_mention: "unconfirmed",
         promotion_preserves_identity: true,
+      },
+      project_views_v2: {
+        enabled: env ? recordsV2Enabled(env) : false,
+        levels: ["global", "project"],
+        views: ["state", "task", "decision", "archive", "log"],
+        canonical_write_core: true,
       },
     },
     supported_mcp_versions: SUPPORTED_MCP_VERSIONS,
@@ -607,6 +621,7 @@ const tools = [
     },
   },
   ...projectTools,
+  ...recordTools,
 ] as const;
 
 const rpcByTool = {
@@ -618,6 +633,7 @@ const rpcByTool = {
   clued_import_log: "clued_mcp_import_log",
   clued_audit_receipts: "clued_mcp_audit_receipts",
   ...projectRpcByTool,
+  ...recordRpcByTool,
 } as const;
 
 async function callRpc(
@@ -645,12 +661,15 @@ async function callTool(
   args: unknown,
 ) {
   if (name === "clued_agent_bootstrap") {
-    const result = bootstrapContract(new URL(request.url).origin);
+    const result = bootstrapContract(new URL(request.url).origin, env);
     return {
       content: [{ type: "text", text: JSON.stringify(result) }],
       structuredContent: result,
       isError: false,
     };
+  }
+  if (typeof name === "string" && name in recordRpcByTool && !recordsV2Enabled(env)) {
+    throw new HttpError(404, "Clued project views v2 are disabled.");
   }
   if (typeof name !== "string" || !(name in rpcByTool)) {
     throw new HttpError(404, "Unknown Clued continuity tool.");
@@ -721,7 +740,10 @@ async function handleMcp(request: Request, env: ContinuityEnv) {
       return json(rpcResult(rpc.id, {}), 200, corsHeaders(request));
     }
     if (rpc.method === "tools/list") {
-      return json(rpcResult(rpc.id, { tools }), 200, corsHeaders(request));
+      const visibleTools = recordsV2Enabled(env)
+        ? tools
+        : tools.filter((tool) => !(tool.name in recordRpcByTool));
+      return json(rpcResult(rpc.id, { tools: visibleTools }), 200, corsHeaders(request));
     }
     if (rpc.method === "tools/call") {
       const name = rpc.params?.name;
@@ -838,6 +860,57 @@ async function handleProjectApi(request: Request, env: ContinuityEnv) {
   });
 }
 
+async function callUserRecordRpc(
+  request: Request,
+  env: ContinuityEnv,
+  rpc: UserRecordRpc,
+  input: Record<string, unknown>,
+) {
+  const { token } = await requireSupabaseUser(request, env);
+  return await supabaseRequest(env, `/rest/v1/rpc/${rpc}`, {
+    method: "POST",
+    userToken: token,
+    body: JSON.stringify({ p_input: input }),
+  });
+}
+
+async function handleRecordApi(request: Request, env: ContinuityEnv) {
+  validateOrigin(request, env);
+  if (request.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: corsHeaders(request) });
+  }
+  const url = new URL(request.url);
+  if (url.pathname === "/v1/records/config" && request.method === "GET") {
+    return json({ enabled: recordsV2Enabled(env) }, 200, corsHeaders(request));
+  }
+  if (!recordsV2Enabled(env)) {
+    throw new HttpError(404, "Clued project views v2 are disabled.");
+  }
+  if (url.pathname === "/v1/records" && request.method === "GET") {
+    const input: Record<string, unknown> = {};
+    for (const key of ["level", "project_id", "record_type", "limit"] as const) {
+      const value = url.searchParams.get(key);
+      if (value !== null) input[key] = key === "limit" ? Number(value) : value;
+    }
+    return json(
+      await callUserRecordRpc(request, env, "clued_user_record_list", input),
+      200,
+      corsHeaders(request),
+    );
+  }
+  if (url.pathname === "/v1/records" && request.method === "POST") {
+    return json(
+      await callUserRecordRpc(request, env, "clued_user_record_write", await parseBody(request)),
+      200,
+      corsHeaders(request),
+    );
+  }
+  return json({ error: "Method not allowed." }, 405, {
+    ...corsHeaders(request),
+    allow: "GET, POST, OPTIONS",
+  });
+}
+
 export async function handleContinuityRequest(
   request: Request,
   env: ContinuityEnv,
@@ -857,7 +930,7 @@ export async function handleContinuityRequest(
       });
     }
     if (url.pathname === "/.well-known/clued-continuity") {
-      return json(bootstrapContract(url.origin));
+      return json(bootstrapContract(url.origin, env));
     }
     if (url.pathname === "/v1/continuity/bootstrap") {
       if (request.method === "OPTIONS") {
@@ -869,7 +942,7 @@ export async function handleContinuityRequest(
           allow: "GET, POST, OPTIONS",
         });
       }
-      return json(bootstrapContract(url.origin), 200, corsHeaders(request));
+      return json(bootstrapContract(url.origin, env), 200, corsHeaders(request));
     }
     if (url.pathname === "/clued-agent.md") {
       if (request.method !== "GET") {
@@ -895,6 +968,9 @@ export async function handleContinuityRequest(
     if (url.pathname in restToolByPath) return await handleRestContinuity(request, env);
     if (url.pathname === "/v1/projects" || url.pathname.startsWith("/v1/projects/")) {
       return await handleProjectApi(request, env);
+    }
+    if (url.pathname === "/v1/records" || url.pathname.startsWith("/v1/records/")) {
+      return await handleRecordApi(request, env);
     }
     if (url.pathname === "/api/bindings") {
       if (request.method === "OPTIONS") {
