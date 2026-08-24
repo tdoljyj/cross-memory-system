@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "mode": "select_only",
+  "captured_at": "2026-08-24T05:35:54.968159Z",
+  "project": {
+    "ref": "ccxsikzwxlolxqlosril",
+    "name": "clued-prod",
+    "region": "ap-northeast-2",
+    "status": "ACTIVE_HEALTHY",
+    "postgres_version": "17.6.1"
+  },
+  "production_migrations": [
+    "20260823154017_mandatory_continuity_002",
+    "20260823182409_clued_memory_crud",
+    "20260823182517_harden_clued_memory_grants"
+  ],
+  "boundaries": {
+    "sql_operation": "SELECT",
+    "raw_user_ids_read": false,
+    "token_hashes_read": false,
+    "raw_markdown_read": false,
+    "raw_event_payloads_read": false,
+    "production_writes": 0
+  },
+  "continuity": {
+    "context_key": "project:clued",
+    "stream_version": 3,
+    "head_version": 3,
+    "events": 2,
+    "checkpoints": 1,
+    "log_versions": 1,
+    "log_version_1_sha256": "49c50ed4d11844c0d8cf6108cb261dc324b8a30c7d8f333596677d44c1820869",
+    "log_version_1_markdown_chars": 26198,
+    "audit_receipts": 5,
+    "agent_bindings": 2,
+    "continuity_sessions": {
+      "total": 2,
+      "active": 0,
+      "ended": 1,
+      "expired_unended": 1
+    }
+  },
+  "legacy_memory_crud": {
+    "memories": 0,
+    "audit": 0
+  },
+  "v2_production_state": {
+    "project_lifecycle_v1_applied": false,
+    "unified_record_v2_applied": false,
+    "project_views_v2_enabled": false
+  }
+}
