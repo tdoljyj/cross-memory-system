@@ -4,23 +4,25 @@
   "type": "state",
   "scope": "project",
   "content": "Clued 阶段 8B-4 已 PASS：生产批次 8b4-20260824T143700Z 从阶段5冻结快照导入5条 candidate/current/global/manual_review=false State；源哈希、canonical view 与公开 user read wrapper 5/5一致，幂等重放返回原UUID，Record/Event/Receipt严格5/5配对，跨用户读改删均0，legacy CRUD回滚通过。生产 Project/Mention/Memory/Event/Receipt 0/0/5/7/10，26条manual-review自动写入0；正式Worker仍 bf0038c3-1456-4653-bdcf-f962ff962ec4 / Kernel0.3.0，域名/Binding/流量未变。下一步只有用户明确确认后进入8B-5正式Worker部署。",
-  "status": "active",
+  "status": "superseded",
   "source": {
     "kind": "user_explicit",
     "adapter": "cli",
     "session_id": null,
     "created_at": "2026-08-24T14:51:15Z",
-    "updated_at": "2026-08-24T14:51:15Z"
+    "updated_at": "2026-08-24T15:09:43Z"
   },
   "temporal": {
     "valid_from": null,
-    "valid_until": null
+    "valid_until": "2026-08-24T15:09:43Z"
   },
   "relations": {
     "supersedes": [
       "mem_b3f14978"
     ],
-    "superseded_by": [],
+    "superseded_by": [
+      "mem_efd476f0"
+    ],
     "contradicts": [],
     "related": []
   },
