@@ -131,6 +131,7 @@ Dry-Run 识别并保留以下线索计数：
 - Dry-Run JSON SHA-256：`13953d3b63bd11ade2b929a162cab47b8b8a21a39174bb15135c28e87fafbbc0`；写入阶段 5 连续性记录后从固定 source commit 重跑，哈希保持不变。
 - 生产快照：SELECT-only，原始正文和凭据未进入报告。
 - 旧 `日志.md`：保留原文件，权威性固定为 `legacy_evidence_only`。
+- 推送后隔离数据库复验：[GitHub Actions Run 32694966298](https://github.com/tdoljyj/cross-memory-system/actions/runs/32694966298) PASS；migration clean replay、schema lint、Unified Record V2 RLS/transaction pgTAP 全部成功。
 
 ## 8. 回滚与停止线
 
