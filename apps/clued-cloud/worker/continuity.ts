@@ -18,6 +18,8 @@ const ALL_SCOPES = [
   "audit:read",
 ] as const;
 
+const OAUTH_SCOPES = ["openid", "email", "profile"] as const;
+
 const SUPPORTED_MCP_VERSIONS = [
   "2026-07-28",
   "2025-11-25",
@@ -129,6 +131,12 @@ function bootstrapContract(origin: string, env?: ContinuityEnv) {
     },
     authentication: {
       scheme: "Bearer",
+      oauth: {
+        enabled: true,
+        authorization_server: `${supabaseConfig(env ?? {}).url}/auth/v1`,
+        consent_path: `${origin}/oauth/consent`,
+        dynamic_client_registration: true,
+      },
       binding_token_prefix: "clued_bnd_",
       token_storage: "hash-only",
       binding_policy: "one independent, revocable, least-privilege binding per vendor client",
@@ -656,11 +664,20 @@ async function callRpc(
   args: unknown,
 ) {
   const token = bearerToken(request);
-  if (!token?.startsWith("clued_bnd_")) {
-    throw new HttpError(401, "A Clued Binding Token is required.");
+  if (!token) {
+    throw new HttpError(401, "Authorize with Clued OAuth or a Clued Binding Token.");
   }
-  const tokenHash = await sha256(token);
   const payload = typeof args === "object" && args ? args : {};
+
+  if (!token.startsWith("clued_bnd_")) {
+    return await supabaseRequest(env, "/rest/v1/rpc/clued_oauth_call", {
+      method: "POST",
+      userToken: token,
+      body: JSON.stringify({ p_tool: name, p_input: payload }),
+    });
+  }
+
+  const tokenHash = await sha256(token);
   return await supabaseRequest(env, `/rest/v1/rpc/${rpcByTool[name]}`, {
     method: "POST",
     body: JSON.stringify({ p_token_hash: tokenHash, p_input: payload }),
@@ -974,10 +991,13 @@ export async function handleContinuityRequest(
       });
     }
     if (url.pathname === "/.well-known/oauth-protected-resource/mcp") {
+      const { url: supabaseUrl } = supabaseConfig(env);
       return json({
         resource: `${url.origin}/mcp`,
         bearer_methods_supported: ["header"],
-        scopes_supported: ALL_SCOPES,
+        authorization_servers: [`${supabaseUrl}/auth/v1`],
+        scopes_supported: OAUTH_SCOPES,
+        clued_binding_scopes: ALL_SCOPES,
         clued_binding_portal: `${url.origin}/`,
       });
     }
