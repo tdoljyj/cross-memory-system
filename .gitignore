@@ -21,3 +21,6 @@ memory/session/
 .sites-runtime/
 # Clued M2 publish coordination locks are process-local runtime state.
 artifacts/clued-two-level-snapshots/m2/runtime/
+# R5 K2：本地 PostgreSQL 运行时与 Gate 临时数据（仅合成数据，不入仓库）
+.k2-postgres/
+.k2-backups/

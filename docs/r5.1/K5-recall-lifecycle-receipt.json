@@ -1,0 +1,44 @@
+{
+  "gate": "K5",
+  "status": "PASS",
+  "git_head": "e126c147651620e195e945c0a24ede57bf12e296",
+  "parent": "31ae45b379a1a35c69dc3d2b2c5531efd5042e1d",
+  "worktree_clean": true,
+  "changed_files": [
+    "clued/r51/lifecycle_ops.py",
+    "clued/r51/recall.py",
+    "tests/test_r51_k5_recall_lifecycle.py"
+  ],
+  "tests": {
+    "pass": 92,
+    "fail": 0,
+    "skip": 0,
+    "error": 0,
+    "specialized": 15,
+    "inherited_miv_trace_scope": 77,
+    "specialized_stable_runs": 2
+  },
+  "hard_gate_violations": 0,
+  "performance": {
+    "warm_queries": 1000,
+    "corpus_objects": 100,
+    "warm_p95_ms": 0.0799,
+    "max_ms": 0.522
+  },
+  "cost_usd": 0,
+  "rollback_checked": true,
+  "borrowed_enhancements": {
+    "BE-01": "NOT_APPLICABLE",
+    "BE-02": "NOT_APPLICABLE",
+    "BE-03": "PASS",
+    "BE-04": "PASS",
+    "BE-05": "NOT_APPLICABLE",
+    "BE-06": "PASS (inherited from K4)"
+  },
+  "known_limitations": [
+    "PostgreSQL 15+ execution of the parameterized Cloud FTS adapter remains part of K7 environment qualification.",
+    "Semantic recall remains disabled and is not part of this Gate.",
+    "Production Binding backends were not changed or contacted."
+  ],
+  "protocol_deviations": []
+}

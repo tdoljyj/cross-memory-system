@@ -1,0 +1,67 @@
+{
+  "artifacts": {
+    "backup": {
+      "bytes": 82360,
+      "path_class": "temporary_untracked_artifact",
+      "restore_input_sha256": "97dfe6afb8a93bb0e30af6c073399d2b745e272cd89c7c82b9dc0567740551ac",
+      "sha256": "97dfe6afb8a93bb0e30af6c073399d2b745e272cd89c7c82b9dc0567740551ac"
+    },
+    "sanitized_server_log": {
+      "body_marker_hits": 0,
+      "bytes": 1857,
+      "path": "03-k2-postgres-server.log",
+      "sha256": "6835d52cd158fdcb221e322e66249b6ce7668636499148038e82d19fce3af30a"
+    }
+  },
+  "constraints": {
+    "production_touched": false,
+    "real_binding_changed": false,
+    "semantic_recall_enabled": false
+  },
+  "data_class": "synthetic_local_dev_only",
+  "gate": "K2",
+  "postgresql": {
+    "minimum": 150000,
+    "server_version_num": 150019
+  },
+  "recorded_at": "2026-08-22T09:57:54+00:00",
+  "result": {
+    "fail": 0,
+    "pass": 21,
+    "skip": 0,
+    "status": "PASS",
+    "tests": [
+      "actual_migration_interruption_rollback",
+      "migration_up",
+      "server_log_safety_configuration",
+      "committed_seq_concurrency",
+      "idempotency_concurrency",
+      "cross_account_same_memory_id_rls",
+      "rls_and_role_isolation",
+      "rls_omission_fault_injection",
+      "service_role_absent_from_client",
+      "duplicate_fts_job_null_identity",
+      "tombstone_authority",
+      "immutable_history_and_error_redaction",
+      "projection_rebuild",
+      "change_event_gap_fault_injection",
+      "rollback_preserves_data_invariants",
+      "invariant_scan",
+      "cli_failure_exit_codes",
+      "no_role_backup_restore_ledger_acl_and_rls",
+      "post_rollback_invariant_scan",
+      "migration_roundtrip",
+      "server_log_zero_body_leakage"
+    ]
+  },
+  "run_kind": "remediation_qualification",
+  "schema_version": 1,
+  "source_sha256": {
+    "cloud/postgres/migrations/0001_cloud_data_foundation.down.sql": "94be0d3881c0277a62d6a7a829d0f056aa33eb387c9490103f8f3d491b2f1e6d",
+    "cloud/postgres/migrations/0001_cloud_data_foundation.up.sql": "df313aa29c4d6cb37f10fdcecd6b015773e438966538348b033bbbe8ef53f7c0",
+    "cloud/postgres/sql/scan_invariants.sql": "f3d947c916002bd2c0b3ea8626048772359f34d417dce6cbf68b9a672cf239f7",
+    "clued/cloud_data/tooling.py": "2af8147b64de153478cbd0edda6a5f89d1d0c131db7773a36151fd6c6751cae2",
+    "tests/test_r5_k2_postgres_integration.py": "a70d2c0cbfb57e3c20c5bc94d48e8480cdcbe16c9bea348c367dff1b06561f41"
+  },
+  "tested_product_commit": "4ed347fb908bbadc888c8cf58768536c6ca108ea"
+}

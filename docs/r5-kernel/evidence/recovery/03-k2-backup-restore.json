@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "gate": "K2",
+  "tested_product_commit": "4ed347fb908bbadc888c8cf58768536c6ca108ea",
+  "database": "PostgreSQL 15.19 Windows x64",
+  "data": "synthetic only",
+  "migration": {
+    "id": "0001_cloud_data_foundation",
+    "up": "PASS",
+    "fault_injected_real_migration": "PASS",
+    "interrupted_schema_residue": 0,
+    "interrupted_receipt_residue": 0,
+    "down": "PASS",
+    "up_down_up_roundtrip": "PASS",
+    "post_roundtrip_invariant_violations": 0
+  },
+  "projection": {
+    "corruption_injected": true,
+    "rebuild": "PASS",
+    "tombstone_remained_authoritative": true
+  },
+  "backup_restore": {
+    "format": "pg_dump custom",
+    "bytes": 82360,
+    "sha256": "97dfe6afb8a93bb0e30af6c073399d2b745e272cd89c7c82b9dc0567740551ac",
+    "restore_input_sha256": "97dfe6afb8a93bb0e30af6c073399d2b745e272cd89c7c82b9dc0567740551ac",
+    "expected_sha256_enforced_before_database_changes": true,
+    "restore_target": "new synthetic database",
+    "roles_present_before_restore": 0,
+    "restricted_roles_bootstrapped": 3,
+    "single_transaction_restore": true,
+    "deletion_ledger_rows_preserved": true,
+    "post_restore_invariant_violations": 0,
+    "client_acl_preserved": true,
+    "cross_tenant_visibility_after_restore": 0
+  },
+  "server_log": {
+    "unsafe_default_observed_and_rejected": true,
+    "safe_configuration_loaded": true,
+    "body_marker_hits_after_fix": 0,
+    "sanitized_log_sha256": "6835d52cd158fdcb221e322e66249b6ce7668636499148038e82d19fce3af30a"
+  },
+  "fault_injection": {
+    "same_memory_id_cross_account": "PASS",
+    "rls_omission_detected_and_repaired": "PASS",
+    "change_event_gap_detected_and_repaired": "PASS",
+    "failed_data_ddl_transaction_preserved_invariants": "PASS"
+  },
+  "tooling_failure_contract": {
+    "missing_dsn_exit_code": 10,
+    "restore_failure_exit_code": 1,
+    "omitted_expected_sha_cli_exit_code": 2,
+    "omitted_expected_sha_changed_roles": false,
+    "digest_mismatch_changed_roles": false,
+    "failed_restore_cleans_new_roles": true
+  },
+  "raw_evidence": {
+    "transcript": "docs/r5-kernel/evidence/raw/03-k2-postgres-transcript.json",
+    "sanitized_server_log": "docs/r5-kernel/evidence/raw/03-k2-postgres-server.log",
+    "backup_artifact": "temporary and gitignored; hash recorded above"
+  },
+  "production_or_real_binding_touched": false
+}

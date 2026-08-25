@@ -1,0 +1,87 @@
+===== RUN test_envprobe.py =====
+PASS test_probe_runs_and_returns_result
+PASS test_probe_refs_write_does_not_touch_real_repo
+PASS test_probe_safe_delete_runs
+PASS test_diagnose_output
+PASS test_attribution_env_pattern
+PASS test_attribution_summary_split
+PASS test_attribution_json
+----
+7 test(s), 0 failure(s)
+===== END test_envprobe.py: exit=0 =====
+===== RUN test_r5_k1_contract_freeze.py =====
+PASS test_contract_identity_and_sources
+PASS test_truth_receipt_and_ancestry
+PASS test_versions_and_controller_surface
+PASS test_cli_and_envelope_surface
+PASS test_auth_surface
+PASS test_state_machine_and_journal
+PASS test_recovery_and_schemas
+PASS test_errors_and_exit_codes
+PASS test_legacy_core_bridge_boundary_and_next_gate
+K1 CONTRACT FREEZE: 9/9 PASS
+===== END test_r5_k1_contract_freeze.py: exit=0 =====
+===== RUN test_r5_k2_cloud_foundation.py =====
+PASS test_migration_is_atomic_and_versioned
+PASS test_core_tables_and_tenant_keys
+PASS test_rls_is_enabled_forced_and_default_deny
+PASS test_service_role_and_client_are_separate
+PASS test_cluster_roles_are_owned_and_down_is_scoped
+PASS test_committed_sequence_and_idempotency_primitives
+PASS test_version_chain_and_projection_contract
+PASS test_immutable_history_guards
+PASS test_index_and_deletion_metadata_are_bound
+PASS test_metadata_blocks_content_keys
+PASS test_invariant_scanner_covers_k2_contract
+PASS test_down_migration_is_scoped_and_reversible
+PASS test_tooling_is_shell_free_and_redacts_credentials
+PASS test_module_entrypoint_propagates_failure_exit_codes
+PASS test_postgres_logging_contract_suppresses_body_text
+PASS test_k1_surface_and_semantic_gate_remain_unchanged
+K2 STATIC CONTRACT: 16/16 PASS
+===== END test_r5_k2_cloud_foundation.py: exit=0 =====
+===== RUN test_r5_k2_postgres_integration.py =====
+PASS actual_migration_interruption_rollback
+PASS migration_up
+PASS server_log_safety_configuration
+PASS committed_seq_concurrency
+PASS idempotency_concurrency
+PASS cross_account_same_memory_id_rls
+PASS rls_and_role_isolation
+PASS rls_omission_fault_injection
+PASS service_role_absent_from_client
+PASS duplicate_fts_job_null_identity
+PASS tombstone_authority
+PASS immutable_history_and_error_redaction
+PASS projection_rebuild
+PASS change_event_gap_fault_injection
+PASS rollback_preserves_data_invariants
+PASS invariant_scan
+PASS cli_failure_exit_codes
+PASS no_role_backup_restore_ledger_acl_and_rls
+PASS post_rollback_invariant_scan
+PASS migration_roundtrip
+K2 POSTGRES INTEGRATION: 20/20 PASS
+===== END test_r5_k2_postgres_integration.py: exit=0 =====
+===== RUN test_r5_k3_postgres_integration.py =====
+PASS migration_chain
+PASS function_acl_boundary
+PASS direct_dml_denied
+PASS create_atomic_projection
+PASS exact_replay_zero_side_effect
+PASS idempotency_payload_conflict
+PASS optimistic_update
+PASS stale_write_conflict
+PASS open_conflict_blocks_writes
+PASS explicit_conflict_resolution
+PASS update_then_stale_delete_conflicts
+PASS delete_then_late_update_no_resurrection
+PASS scope_denied
+PASS cross_account_denied
+PASS transaction_rollback_gap_free
+PASS concurrent_exactly_once
+PASS post_lifecycle_invariants
+PASS down_migration_roundtrip
+K3_POSTGRES_PASS=18
+===== END test_r5_k3_postgres_integration.py: exit=0 =====
+QUALIFIED_RERUN_TOTAL=5 FAILED=0

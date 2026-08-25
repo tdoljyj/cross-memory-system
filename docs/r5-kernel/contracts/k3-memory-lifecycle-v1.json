@@ -1,0 +1,58 @@
+{
+  "contract_id": "clued-kernel-r5-k3-memory-lifecycle/1.0.0",
+  "gate": "K3",
+  "schema_version": 1,
+  "foundation_migration": "0001_cloud_data_foundation",
+  "lifecycle_migration": "0002_memory_write_lifecycle",
+  "operations": [
+    "CREATE",
+    "UPDATE",
+    "SUPERSEDE",
+    "DELETE",
+    "RESOLVE"
+  ],
+  "write_rules": {
+    "stable_operation_id_required": true,
+    "idempotency_scope": [
+      "account_id",
+      "binding_id",
+      "idempotency_key"
+    ],
+    "request_hash_algorithm": "SHA-256 canonical JSON",
+    "optimistic_lock": "base_version_id",
+    "stale_write": "CONFLICT_REVIEW",
+    "open_conflict_blocks_mutation": true,
+    "delete_is_logical": true,
+    "tombstone_blocks_resurrection": true,
+    "delete_wins_against_late_update": true,
+    "last_write_wins": false,
+    "one_sequence_one_version_one_event": true,
+    "direct_service_table_dml": false
+  },
+  "result_codes": [
+    "CREATED",
+    "UPDATED",
+    "SUPERSEDED",
+    "DELETED",
+    "ALREADY_DELETED",
+    "CONFLICT_REVIEW",
+    "RESOLVED"
+  ],
+  "security": {
+    "call_role": "clued_service",
+    "definer_role": "clued_lifecycle",
+    "client_execute": false,
+    "public_execute": false,
+    "binding_must_be_active": true,
+    "required_scope": "memory:write",
+    "metadata_content_free": true
+  },
+  "deferred": {
+    "real_binding_and_jwt": "K5",
+    "semantic_recall_and_pgvector": "K7",
+    "physical_purge_and_pitr": "K8"
+  },
+  "release_authorized": false,
+  "deployment_authorized": false,
+  "semantic_recall_enabled": false
+}
