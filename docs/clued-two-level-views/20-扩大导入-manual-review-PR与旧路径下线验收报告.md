@@ -1,7 +1,7 @@
 # Clued 扩大导入、Manual Review 与旧路径下线验收报告
 
 > 日期：2026-08-25
-> 状态：`导入与人工复核 PASS；旧路径下线候选待合并部署`
+> 状态：`全部 PASS`
 > 正式入口：<https://clued.pixelgrav.com>
 > Worker：`clued-cloud`
 
@@ -73,8 +73,18 @@ Clued 当前只读计数复核为 Project `4`、Record `262`，其中 Note/State
 - 发布前正式 Version / 即时回滚点：`928bb6ec-cdc2-4a9a-a630-87a1685e7915`。
 - Git `origin/main` 与本地基线均为 `95c2e5b49f630bb4bc19ae93d837a704f0e64779`。
 - Wrangler `4.125.0`，登录账号与目标 Worker 已核对。
-- TypeScript、ESLint、生产 build、Node 全套 `47/47` 已通过；最终合并前将从干净构建再跑一次。
+- TypeScript、ESLint、生产 build、Node 全套 `47/47` 已通过；合并后的 `main` 又完成一次干净生产构建。
 
 ## 6. PR、部署与发布后验收
 
-待本候选通过 PR 合并后，从合并后的 `main` 部署。最终 PR、commit、deployment、Version、10 轮只读观察与数据不变性结果将在发布后补入本节。
+- PR [#5](https://github.com/tdoljyj/cross-memory-system/pull/5) 已合并；source commit `b13f5feea997b4acce321a7c464e7ad952e2180b`，merge commit `21b7b947f47aca66c9c38abc7c741ef29e954aab`。
+- 部署从已合并且与 `origin/main` 对齐的 `main` 构建；Wrangler dry-run PASS，使用 `--keep-vars --strict`，只显式保持 `PROJECT_VIEWS_V2=true`。
+- 正式 deployment：`8c42f2cc-9591-4a54-8270-da364a0fe5f1`。
+- 正式 Version：`bb56e002-583f-4893-b53a-6a347267a978`，100% 流量，Worker Startup Time `19 ms`。
+- Bindings 仍为 `ASSETS`、`IMAGES`、`PROJECT_VIEWS_V2=true`；未改 DNS、domain、route、secret 或数据库。
+- `clued.pixelgrav.com` 与 workers.dev 均通过：`/healthz` 200、V2 config 200/enabled、两个 legacy 路径 410、未认证 `/v1/records` 401、首页 200。
+- 两个 legacy 路径的 GET/POST/PATCH/DELETE 均为 410，OPTIONS 均为 204；响应 replacement 与 semantic contract 正确。
+- 正式入口固定 10 轮只读观察 `10/10 PASS`，意外 5xx 为 0，未触发回滚。
+- 发布后 Clued canonical 计数仍为 Project `4`、Note/State/Task/Decision/Archive `53/18/14/41/136`，合计 Record `262`，无数据漂移。
+
+最终裁决：扩大导入、26 条 manual-review、PR merge、旧读取路径下线全部完成。回滚点 `928bb6ec-cdc2-4a9a-a630-87a1685e7915` 继续保留；历史数据、审计证据和 Canary 均未删除。

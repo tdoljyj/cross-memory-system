@@ -10,7 +10,7 @@
 - Supabase 是唯一生产 canonical store；Global/Project 是同一 Record 表的查询层，五视图是类型/事件过滤。
 - 正式写路径为认证 Record → 同事务 Event + Receipt → 派生视图；Markdown 不接受双写。
 - 当前账号已确认 4 个 Project、262 条 Unified Record；原始 Memory/Event/Receipt 审计证据继续保留。
-- 当前线上 deployment `a536f79d-c9f5-4764-8274-be05f3cc5a3c` / Version `928bb6ec-cdc2-4a9a-a630-87a1685e7915` 已冻结为本轮发布前回滚点。
+- 当前线上 deployment `8c42f2cc-9591-4a54-8270-da364a0fe5f1` / Version `bb56e002-583f-4893-b53a-6a347267a978`，100% 流量；发布前 Version `928bb6ec-cdc2-4a9a-a630-87a1685e7915` 是即时回滚点。
 
 ## User Memory Bundle v1
 
@@ -29,8 +29,10 @@
 - 不把访问令牌、用户 ID 或 service-role 凭据写入 Bundle、仓库或回执。
 - 相同 Bundle 使用确定性 idempotency key；恢复后必须做二次重放与计数/RLS复核。
 
-## 当前发布动作
+## 当前结果
 
-- 旧账户页 Memory CRUD 已移除；`/api/memories` 与 `/api/memories/audit` 改为明确的 HTTP 410，并指向 `/v1/records`。
+- PR #5 已合并；旧账户页 Memory CRUD 已移除，`/api/memories` 与 `/api/memories/audit` 已在正式环境返回 HTTP 410，并指向 `/v1/records`。
 - 本轮不删除历史行、审计回执、Supabase schema、Canary、DNS、Binding、route 或 secret。
-- 代码门禁、PR 合并、正式部署与发布后只读观察正在执行；最终 deployment/version 记录在验收报告与项目日志。
+- TypeScript、ESLint、生产构建、Node `47/47`、Wrangler dry-run 全部 PASS；正式入口固定观察 `10/10 PASS`，意外 5xx 为 0。
+- 发布后 canonical 计数仍为 Project `4`、Record `262`（`53/18/14/41/136`），无数据漂移。
+- 完整证据见 `docs/clued-two-level-views/20-扩大导入-manual-review-PR与旧路径下线验收报告.md`。
