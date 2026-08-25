@@ -120,6 +120,24 @@ test("serves MCP bootstrap without a binding token", async () => {
   assert.equal(result.result.structuredContent.kernel_version, "0.3.1");
 });
 
+test("publishes OAuth protected resource metadata for MCP clients", async () => {
+  const worker = await loadWorker();
+  const response = await worker.fetch(
+    new Request("https://clued.test/.well-known/oauth-protected-resource/mcp"),
+    env,
+    ctx,
+  );
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    resource: "https://clued.test/mcp",
+    bearer_methods_supported: ["header"],
+    authorization_servers: ["https://ccxsikzwxlolxqlosril.supabase.co/auth/v1"],
+    scopes_supported: ["openid", "email", "profile"],
+    clued_binding_scopes: ["context:read", "context:write", "audit:read"],
+    clued_binding_portal: "https://clued.test/",
+  });
+});
+
 test("forwards canonical log imports to the production RPC contract", async () => {
   const worker = await loadWorker();
   const originalFetch = globalThis.fetch;
@@ -276,6 +294,47 @@ test("forwards MCP calls as token-hash RPCs", async () => {
     assert.equal(response.status, 200);
     const result = await response.json();
     assert.equal(result.result.structuredContent.version, 7);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("forwards Supabase OAuth MCP calls through the authenticated dispatcher", async () => {
+  const worker = await loadWorker();
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init = {}) => {
+    assert.match(String(input), /\/rest\/v1\/rpc\/clued_oauth_call$/);
+    assert.equal(init.headers.get("authorization"), "Bearer oauth-access-jwt");
+    assert.deepEqual(JSON.parse(init.body), {
+      p_tool: "clued_session_resume",
+      p_input: { context_key: "global" },
+    });
+    return Response.json({ status: "restored", version: 12 });
+  };
+
+  try {
+    const response = await worker.fetch(
+      new Request("https://clued.test/mcp", {
+        method: "POST",
+        headers: {
+          authorization: "Bearer oauth-access-jwt",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 5,
+          method: "tools/call",
+          params: {
+            name: "clued_session_resume",
+            arguments: { context_key: "global" },
+          },
+        }),
+      }),
+      env,
+      ctx,
+    );
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).result.structuredContent.version, 12);
   } finally {
     globalThis.fetch = originalFetch;
   }

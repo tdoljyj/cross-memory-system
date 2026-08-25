@@ -113,6 +113,21 @@ test("project lifecycle v1 preserves identity during confirmation and supports c
   assert.match(sql, /'status','idempotent'/);
 });
 
+test("OAuth MCP migration keeps client bindings private, revocable and authenticated", async () => {
+  const sql = await readFile(
+    new URL("../supabase/migrations/202608250005_oauth_mcp_binding.sql", import.meta.url),
+    "utf8",
+  );
+  assert.match(sql, /oauth_client_id/);
+  assert.match(sql, /auth\.jwt\(\)->>'client_id'/);
+  assert.match(sql, /oauth_binding_revoked/);
+  assert.match(sql, /extensions\.gen_random_bytes\(32\)/);
+  assert.match(sql, /create or replace function public\.clued_oauth_call/);
+  assert.match(sql, /grant execute on function public\.clued_oauth_call\(text, jsonb\) to authenticated/);
+  assert.match(sql, /revoke all on function public\.clued_oauth_call\(text, jsonb\) from public, anon/);
+  assert.doesNotMatch(sql, /grant execute on function public\.clued_oauth_call\(text, jsonb\) to anon/);
+});
+
 test("unified record v2 is additive, single-source, transactional and least-privilege", async () => {
   const sql = await readFile(
     new URL("../supabase/migrations/20260824014005_unified_record_v2.sql", import.meta.url),
