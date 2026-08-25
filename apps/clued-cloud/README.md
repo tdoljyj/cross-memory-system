@@ -36,7 +36,10 @@ filters, while Log remains the append-only `clued_context_events` stream.
 REST and MCP both delegate writes to `clued_private.record_write_core`. The
 core validates confirmed effective projects, optimistic versions and request
 hashes, then commits Record + Event + Receipt in one database transaction.
-Legacy `/api/memories` remains limited to global notes by column grants and RLS.
+Legacy `/api/memories` and `/api/memories/audit` are retired. Non-`OPTIONS`
+requests return HTTP `410 Gone` with `/v1/records` as the replacement; the
+underlying legacy rows and audit evidence remain preserved and are not exposed
+as a second write path.
 
 The Worker flag `PROJECT_VIEWS_V2` is disabled when absent. Only `true`, `1`,
 `on`, or `enabled` exposes `/v1/records`, the two MCP record tools and the
