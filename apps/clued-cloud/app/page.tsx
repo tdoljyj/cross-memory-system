@@ -324,18 +324,40 @@ function detectLocale(): Locale {
     : "en";
 }
 
-function authErrorKey(message: string): NoticeKey {
+function authErrorDetails(message: string): {
+  key: NoticeKey;
+  minimumPasswordLength?: number;
+} {
   const normalized = message.toLowerCase();
-  if (normalized.includes("password") && normalized.includes("at least")) {
-    return "passwordTooShort";
+  const minimumPasswordMatch = normalized.match(
+    /password.*at least\s+(\d+)\s+characters?/,
+  );
+  if (minimumPasswordMatch) {
+    return {
+      key: "passwordTooShort",
+      minimumPasswordLength: Number(minimumPasswordMatch[1]),
+    };
   }
   if (normalized.includes("already registered") || normalized.includes("already exists")) {
-    return "accountExists";
+    return { key: "accountExists" };
   }
   if (normalized.includes("rate") || normalized.includes("too many")) {
-    return "rateLimited";
+    return { key: "rateLimited" };
   }
-  return "genericAuthError";
+  return { key: "genericAuthError" };
+}
+
+function authErrorText(
+  key: NoticeKey,
+  locale: Locale,
+  minimumPasswordLength?: number,
+): string {
+  if (key === "passwordTooShort" && minimumPasswordLength !== undefined) {
+    return locale === "zh-CN"
+      ? `密码至少需要 ${minimumPasswordLength} 个字符。`
+      : `Use at least ${minimumPasswordLength} characters for your password.`;
+  }
+  return copy[locale][key];
 }
 
 export default function Home() {
@@ -360,6 +382,7 @@ export default function Home() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<NoticeKey | "">("");
   const [error, setError] = useState<NoticeKey | "">("");
+  const [minimumPasswordError, setMinimumPasswordError] = useState<number>();
   const [bindings, setBindings] = useState<Binding[]>([]);
   const [bindingVendor, setBindingVendor] = useState("OpenAI");
   const [bindingAgentName, setBindingAgentName] = useState("");
@@ -542,6 +565,7 @@ export default function Home() {
   function resetNotices() {
     setError("");
     setMessage("");
+    setMinimumPasswordError(undefined);
   }
 
   function changeLocale(nextLocale: Locale) {
@@ -570,6 +594,7 @@ export default function Home() {
     resetNotices();
     if (password.length < MIN_PASSWORD_LENGTH) {
       setError("passwordTooShort");
+      setMinimumPasswordError(MIN_PASSWORD_LENGTH);
       return;
     }
     setBusy(true);
@@ -580,7 +605,9 @@ export default function Home() {
     });
     setBusy(false);
     if (result.error) {
-      setError(authErrorKey(result.error.message));
+      const details = authErrorDetails(result.error.message);
+      setError(details.key);
+      setMinimumPasswordError(details.minimumPasswordLength);
       return;
     }
     setPassword("");
@@ -592,6 +619,7 @@ export default function Home() {
     resetNotices();
     if (password.length < MIN_PASSWORD_LENGTH) {
       setError("passwordTooShort");
+      setMinimumPasswordError(MIN_PASSWORD_LENGTH);
       return;
     }
     if (password !== confirmPassword) {
@@ -602,7 +630,9 @@ export default function Home() {
     const result = await supabase.auth.updateUser({ password });
     setBusy(false);
     if (result.error) {
-      setError(authErrorKey(result.error.message));
+      const details = authErrorDetails(result.error.message);
+      setError(details.key);
+      setMinimumPasswordError(details.minimumPasswordLength);
       return;
     }
     window.history.replaceState({}, "", window.location.pathname);
@@ -908,7 +938,11 @@ export default function Home() {
                     required
                   />
                 </label>
-                {error && <p className="notice error">{t[error]}</p>}
+                {error && (
+                  <p className="notice error">
+                    {authErrorText(error, locale, minimumPasswordError)}
+                  </p>
+                )}
                 {message && <p className="notice success">{t[message]}</p>}
                 <button className="primary-button" type="submit" disabled={busy}>
                   {busy ? t.pleaseWait : isCreate ? t.createAccount : t.signIn}

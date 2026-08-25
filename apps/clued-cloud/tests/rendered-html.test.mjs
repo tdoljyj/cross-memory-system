@@ -22,6 +22,13 @@ test("ships bilingual copy and an eight-character password rule", async () => {
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
   );
   assert.match(source, /const MIN_PASSWORD_LENGTH = 8;/);
+  assert.match(source, /minimumPasswordLength:\s*Number\(minimumPasswordMatch\[1\]\)/);
+  assert.match(source, /密码至少需要 \$\{minimumPasswordLength\} 个字符。/);
+  assert.match(source, /Use at least \$\{minimumPasswordLength\} characters/);
+  assert.doesNotMatch(
+    source,
+    /normalized\.includes\("password"\).*normalized\.includes\("at least"\)/s,
+  );
   assert.match(source, /headlineOne: "一个你。"/);
   assert.match(source, /headlineOne: "One you\."/);
   assert.match(source, /Clued by Pixel Gravity/);
