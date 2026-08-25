@@ -1,0 +1,38 @@
+{
+  "canonical_id": "b6c5141f-3ae9-4c4b-af05-8c0e49f4c29b",
+  "canonical_version": "cv_139",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "- 优势：能把艺术、技术、产品三个世界连接（视觉审美 + 动画专业 + 技术工具 + 游戏理解 + 产品意识），视觉 + 技术 + 产品交叉型",
+    "content_hash": "b921021a0a64ba7f08fa134151f8ae985a5a90471b2a8d224c0ca20e63912af5",
+    "id": "b6c5141f-3ae9-4c4b-af05-8c0e49f4c29b",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "9a64185c-ea79-4d0c-9af0-e5e74c21f8c0",
+    "record_schema_version": 1,
+    "record_type": "note",
+    "recorded_at": "2026-08-25T05:59:37.136333+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_93288112",
+    "title": "- 优势：能把艺术、技术、产品三个世界连接（视觉审美 + 动画专业 + 技术工具 + 游戏理解 + 产品意识），视觉 + 技术 + 产品交叉型",
+    "type_fields": {
+      "legacy_priority": 40,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "note_kind": "legacy_import"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_76d8a4a701098649c9941083c96c4ddf"
+}

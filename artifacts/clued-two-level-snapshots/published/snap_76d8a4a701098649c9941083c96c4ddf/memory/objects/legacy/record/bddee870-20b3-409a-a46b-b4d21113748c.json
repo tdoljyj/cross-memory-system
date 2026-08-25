@@ -1,0 +1,38 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "2a9d94dc6b6e564a466e3e9ab2791a40fda78db0bb3693437146c87d34a7b050",
+    "inline_payload": {
+      "archived_at": "2026-08-25T05:23:18.86287+00:00",
+      "content": "- 基线冻结：vNext-1.3 为唯一判断基准；架构回退检查五项触发条件（逻辑矛盾/数据安全/核心不变量失败/规范冲突/映射不可靠）均未出现 → 不改基线",
+      "created_at": "2026-08-25T05:23:18.86287+00:00",
+      "id": "bddee870-20b3-409a-a46b-b4d21113748c",
+      "priority": 40,
+      "project_id": null,
+      "record_key": "umb:v1:mem_012b899e",
+      "record_type": "archive_snapshot",
+      "scope": "global",
+      "source_ref": "user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_012b899e",
+      "status": "archived",
+      "title": "- 基线冻结：vNext-1.3 为唯一判断基准；架构回退检查五项触发条件（逻辑矛盾/数据安全/核心不变量失败/规范冲突/映射不可靠）均未出现 → 不改基线",
+      "updated_at": "2026-08-25T05:23:18.86287+00:00",
+      "version": 1
+    },
+    "kind": "legacy_record",
+    "legacy_id": "bddee870-20b3-409a-a46b-b4d21113748c",
+    "legacy_record_type": "archive_snapshot",
+    "legacy_schema_version": null,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_76d8a4a701098649c9941083c96c4ddf"
+}

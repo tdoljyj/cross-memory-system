@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -12,6 +12,13 @@ import {
   sha256,
   validateSnapshot,
 } from "../scripts/two-level-snapshot.mjs";
+import {
+  coordinatedPublishSnapshot,
+  DEFAULT_M2_POLICY,
+  enablePersistentSnapshotStore,
+  reconcilePersistentSnapshotStore,
+  sweepPersistentSnapshotStore,
+} from "../scripts/m2-snapshot-store.mjs";
 
 const BUILD_EPOCH = "2026-08-26T00:00:00.000Z";
 const HASH = "a".repeat(64);
@@ -213,4 +220,92 @@ test("failure injection preserves the formal pointer and rollback restores the p
 test("canonical JSON normalizes object key order and Unicode", () => {
   assert.equal(canonicalJson({ b: "e\u0301", a: 1 }), canonicalJson({ a: 1, b: "é" }));
   assert.equal(sha256(canonicalJson({ b: 2, a: 1 })), sha256('{"a":1,"b":2}'));
+});
+
+test("M2 persistent store coordinates CAS publication and sweeps only unprotected versions", async () => {
+  const source = canonicalSource({ verification: "live_rechecked", viewsComplete: true });
+  const first = await buildFixture(source, BUILD_EPOCH, "run_m2_a");
+  const exportRoot = path.join(first.parent, "export");
+  await publishSnapshot({ snapshotDirectory: first.snapshot, exportRoot, activate: true });
+  const second = await buildFixture(source, "2026-08-26T00:01:00.000Z", "run_m2_b");
+  await publishSnapshot({ snapshotDirectory: second.snapshot, exportRoot, activate: true });
+  const policy = { ...DEFAULT_M2_POLICY, max_versions: 2, retry_schedule_ms: [] };
+  const enabled = await enablePersistentSnapshotStore({ exportRoot, enabledAt: "2026-08-26T00:02:00.000Z", policy });
+  assert.equal(enabled.status, "healthy");
+  assert.equal(enabled.versions.length, 2);
+
+  const third = await buildFixture(source, "2026-08-26T00:03:00.000Z", "run_m2_c");
+  const published = await coordinatedPublishSnapshot({
+    snapshotDirectory: third.snapshot,
+    exportRoot,
+    expectedCurrentSnapshotVersion: second.result.manifest.snapshot_version,
+    publishedAt: "2026-08-26T00:04:00.000Z",
+  });
+  assert.equal(published.pointer.snapshot_version, third.result.manifest.snapshot_version);
+  assert.equal(published.pointer.previous_snapshot_version, second.result.manifest.snapshot_version);
+  await assert.rejects(coordinatedPublishSnapshot({
+    snapshotDirectory: first.snapshot,
+    exportRoot,
+    expectedCurrentSnapshotVersion: first.result.manifest.snapshot_version,
+    publishedAt: "2026-08-26T00:05:00.000Z",
+  }), /stale_current_pointer/);
+
+  const sweep = await sweepPersistentSnapshotStore({ exportRoot, sweptAt: "2026-08-26T00:06:00.000Z", apply: true });
+  assert.deepEqual(sweep.deleted_versions, [first.result.manifest.snapshot_version]);
+  await assert.rejects(access(path.join(exportRoot, "published", first.result.manifest.snapshot_version)));
+  await access(path.join(exportRoot, "published", second.result.manifest.snapshot_version));
+  await access(path.join(exportRoot, "published", third.result.manifest.snapshot_version));
+});
+
+test("M2 publication lock fails closed without moving current", async () => {
+  const source = canonicalSource({ verification: "live_rechecked", viewsComplete: true });
+  const first = await buildFixture(source, BUILD_EPOCH, "run_lock_a");
+  const exportRoot = path.join(first.parent, "export");
+  await publishSnapshot({ snapshotDirectory: first.snapshot, exportRoot, activate: true });
+  const second = await buildFixture(source, "2026-08-26T00:01:00.000Z", "run_lock_b");
+  await publishSnapshot({ snapshotDirectory: second.snapshot, exportRoot, activate: true });
+  await enablePersistentSnapshotStore({
+    exportRoot,
+    enabledAt: "2026-08-26T00:02:00.000Z",
+    policy: { ...DEFAULT_M2_POLICY, retry_schedule_ms: [] },
+  });
+  const pointerBefore = await readFile(path.join(exportRoot, "current.json"), "utf8");
+  const lock = path.join(exportRoot, "m2", "runtime", "publish.lock");
+  await mkdir(path.dirname(lock), { recursive: true });
+  await writeFile(lock, "occupied\n", "utf8");
+  const third = await buildFixture(source, "2026-08-26T00:03:00.000Z", "run_lock_c");
+  await assert.rejects(coordinatedPublishSnapshot({
+    snapshotDirectory: third.snapshot,
+    exportRoot,
+    expectedCurrentSnapshotVersion: second.result.manifest.snapshot_version,
+    publishedAt: "2026-08-26T00:04:00.000Z",
+  }), /publication_lock_busy/);
+  assert.equal(await readFile(path.join(exportRoot, "current.json"), "utf8"), pointerBefore);
+  await rm(lock, { force: true });
+});
+
+test("M2 reconciler repairs registry drift and raises a bounded failure alert", async () => {
+  const source = canonicalSource({ verification: "live_rechecked", viewsComplete: true });
+  const first = await buildFixture(source, BUILD_EPOCH, "run_reconcile_a");
+  const exportRoot = path.join(first.parent, "export");
+  await publishSnapshot({ snapshotDirectory: first.snapshot, exportRoot, activate: true });
+  const second = await buildFixture(source, "2026-08-26T00:01:00.000Z", "run_reconcile_b");
+  await publishSnapshot({ snapshotDirectory: second.snapshot, exportRoot, activate: true });
+  await enablePersistentSnapshotStore({ exportRoot, enabledAt: "2026-08-26T00:02:00.000Z" });
+
+  const pointerPath = path.join(exportRoot, "current.json");
+  const pointer = JSON.parse(await readFile(pointerPath, "utf8"));
+  await writeFile(pointerPath, `${JSON.stringify({ ...pointer, manifest_sha256: "0".repeat(64) }, null, 2)}\n`, "utf8");
+  let result;
+  for (let index = 0; index < 3; index += 1) {
+    result = await reconcilePersistentSnapshotStore({ exportRoot, reconciledAt: `2026-08-26T00:0${3 + index}:00.000Z` });
+  }
+  assert.equal(result.status, "degraded");
+  assert.equal(result.active_alert.code, "snapshot_store_reconcile_failed");
+  assert.equal(result.active_alert.consecutive_failures, 3);
+  await writeFile(pointerPath, `${JSON.stringify(pointer, null, 2)}\n`, "utf8");
+  result = await reconcilePersistentSnapshotStore({ exportRoot, reconciledAt: "2026-08-26T00:06:00.000Z" });
+  assert.equal(result.status, "healthy");
+  assert.equal(result.consecutive_failures, 0);
+  assert.equal(result.active_alert, null);
 });

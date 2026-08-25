@@ -1,0 +1,38 @@
+{
+  "canonical_id": "8e1faf79-1fdb-4d59-8a10-4343bd48d0ec",
+  "canonical_version": "cv_139",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "Clued Kernel R5 的 K0 裁决为 NO_GO 且已封存；K1 必须保持锁定，不得 push、merge、tag 或 deploy K0 本地证据提交，除非后续有新的明确解锁裁决。",
+    "content_hash": "50bfa129ecf1dc83b94060756e6a45393ffec2b1241d2c5c9e0f218c3080d37b",
+    "id": "8e1faf79-1fdb-4d59-8a10-4343bd48d0ec",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "922df2a4-1525-4794-9623-fbfd64b669e3",
+    "record_schema_version": 1,
+    "record_type": "decision",
+    "recorded_at": "2026-08-25T05:59:43.61688+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_9d7dbf63",
+    "title": "Clued Kernel R5 的 K0 裁决为 NO_GO 且已封存；K1 必须保持锁定，不得 push、merge、tag 或 deploy K0 本地证据提交，除非后续有新的明确解锁裁决",
+    "type_fields": {
+      "legacy_priority": 80,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "rationale": "legacy_import_preserved_content"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_76d8a4a701098649c9941083c96c4ddf"
+}

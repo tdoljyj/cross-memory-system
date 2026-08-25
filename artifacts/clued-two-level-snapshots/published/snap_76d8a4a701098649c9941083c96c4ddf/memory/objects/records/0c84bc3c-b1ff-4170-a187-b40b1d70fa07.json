@@ -1,0 +1,38 @@
+{
+  "canonical_id": "0c84bc3c-b1ff-4170-a187-b40b1d70fa07",
+  "canonical_version": "cv_139",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "制作思路正在转变：关注点从「怎么做」转向「我要做什么」——从技术执行者向作品负责人迁移。",
+    "content_hash": "02e77c6aa0c17637587d8fea1c2c5f572bdf6996625c057fdd9b6d7cba284177",
+    "id": "0c84bc3c-b1ff-4170-a187-b40b1d70fa07",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "1c2e024c-3626-477e-9507-83cc5d1b1acb",
+    "record_schema_version": 1,
+    "record_type": "note",
+    "recorded_at": "2026-08-25T05:56:21.056499+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_2a08e120",
+    "title": "制作思路正在转变：关注点从「怎么做」转向「我要做什么」——从技术执行者向作品负责人迁移",
+    "type_fields": {
+      "legacy_priority": 40,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "note_kind": "legacy_import"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_76d8a4a701098649c9941083c96c4ddf"
+}

@@ -1,0 +1,38 @@
+{
+  "canonical_id": "754dc9f0-d22d-474f-b633-4028307afdb4",
+  "canonical_version": "cv_139",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "- 能接受复杂和详细，但「详细」= 有效信息密度高，不是「背景 + 免责声明 + 空泛总结」",
+    "content_hash": "2390c3a57cbc17d70cffc87948903e3c560b04fff13e8d86451b0c445ef3dad1",
+    "id": "754dc9f0-d22d-474f-b633-4028307afdb4",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "b85b71a1-1235-4e5d-acc7-e64004bab7ab",
+    "record_schema_version": 1,
+    "record_type": "note",
+    "recorded_at": "2026-08-25T05:59:38.100762+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_9a17e34e",
+    "title": "- 能接受复杂和详细，但「详细」= 有效信息密度高，不是「背景 + 免责声明 + 空泛总结」",
+    "type_fields": {
+      "legacy_priority": 40,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "note_kind": "legacy_import"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_76d8a4a701098649c9941083c96c4ddf"
+}

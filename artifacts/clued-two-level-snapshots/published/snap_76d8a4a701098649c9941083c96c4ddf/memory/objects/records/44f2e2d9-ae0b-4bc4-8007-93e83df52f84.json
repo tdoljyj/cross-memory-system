@@ -1,0 +1,38 @@
+{
+  "canonical_id": "44f2e2d9-ae0b-4bc4-8007-93e83df52f84",
+  "canonical_version": "cv_139",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "2026-08-23 Clued Kernel R5 K3 Gate 已 PASS：产品提交 567222dccd8f51b2314b460876a4de9812aa0c74，最终 Gate 提交 3b3ca6081a4d41a9c6b13103dedc5e0a2da13809；全量矩阵合格 43/43，独立干净克隆裁决 PASS，密钥扫描 0；分支、标签、GitHub Release 和完整历史 bundle 已上传并核验，bundle SHA-256 为 90d207b5e5986fa36e213580550287af438b8d41b830768c4950dbc057690f29。K3 已完成，不再依赖旧电脑或临时文件。",
+    "content_hash": "90e44956be88aa9e3afec4dc029a0b2884cb514328110d39595da0a211d21742",
+    "id": "44f2e2d9-ae0b-4bc4-8007-93e83df52f84",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "1d94f53e-9c70-4765-80a4-2873db197cb8",
+    "record_schema_version": 1,
+    "record_type": "state",
+    "recorded_at": "2026-08-25T06:01:17.461555+00:00",
+    "relations": {},
+    "scope": "project:09c99505-7971-4bca-a885-632350b05139",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_c87fd2d2",
+    "title": "2026-08-23 Clued Kernel R5 K3 Gate 已 PASS：产品提交 567222dccd8f51b2314b460876a4de9812aa0c74，最终 Gate 提交 3b3ca6081a4d41a9c6b13",
+    "type_fields": {
+      "legacy_priority": 80,
+      "legacy_status": "current",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "state_kind": "legacy_import"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_76d8a4a701098649c9941083c96c4ddf"
+}

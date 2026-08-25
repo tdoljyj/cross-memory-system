@@ -1,0 +1,38 @@
+{
+  "canonical_id": "b6c8c052-2413-4737-b003-44672adf2f61",
+  "canonical_version": "cv_139",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "- 记忆同步四不变量：① 绝不 force push / reset / 以本地覆盖远端；② 写前 fetch + merge（非 rebase），冲突保留两端语义手工合并；③ 语义相同内容必须字节级一致（LF / 无 BOM，.gitattributes 锁定）；④ 每端开场 pull、收尾 push + git ls-remote 核验，失败写 .sync-failed",
+    "content_hash": "43ccdd98ff7ef9008755cb95e6a18b22328806a1652509b45af4ab2a6c8ddbb5",
+    "id": "b6c8c052-2413-4737-b003-44672adf2f61",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "eda16641-34c0-4e79-b532-3a595d018f66",
+    "record_schema_version": 1,
+    "record_type": "decision",
+    "recorded_at": "2026-08-25T05:57:20.726292+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_46e9acf4",
+    "title": "- 记忆同步四不变量：① 绝不 force push / reset / 以本地覆盖远端；② 写前 fetch + merge（非 rebase），冲突保留两端语义手工合并；③ 语义相同内容必须字节级一致（LF / 无 BOM，.gitat",
+    "type_fields": {
+      "legacy_priority": 40,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "rationale": "legacy_import_preserved_content"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_76d8a4a701098649c9941083c96c4ddf"
+}

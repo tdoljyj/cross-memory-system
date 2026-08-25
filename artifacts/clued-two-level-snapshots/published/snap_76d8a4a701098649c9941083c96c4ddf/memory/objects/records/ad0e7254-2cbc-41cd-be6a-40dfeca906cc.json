@@ -1,0 +1,38 @@
+{
+  "canonical_id": "ad0e7254-2cbc-41cd-be6a-40dfeca906cc",
+  "canonical_version": "cv_139",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "Clued 正式 Unified Record V2 已启用并 PASS：正式 clued-cloud deployment cd3aee40-9c4b-4c7c-ac4f-e3c496668ed7 / Version 56d2a481-9d3c-4237-859c-7144b6f88059 以100%流量生效，Bindings为ASSETS/IMAGES/PROJECT_VIEWS_V2=true。正式域名与workers.dev均为Kernel0.3.1、V2 true、Record工具2个，未认证读写/MCP继续401，固定观察10/10零失败。生产Project/Mention/Memory/Event/Receipt保持0/0/5/7/10，active Binding/record write/RLS-disabled table均为0。即时回滚点为V2关闭版3b5d1627-e53f-44cf-b26c-26717ebe6e5c；扩大导入、manual-review、PR merge与旧路径下线仍需独立批准。",
+    "content_hash": "18bbe86670f384f8488b35cd80eb6659578329d5bc949422761b35d9e66f8b70",
+    "id": "ad0e7254-2cbc-41cd-be6a-40dfeca906cc",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "aa7d7bc6-1125-434b-9718-3c9eb83910f5",
+    "record_schema_version": 1,
+    "record_type": "state",
+    "recorded_at": "2026-08-25T06:01:14.750472+00:00",
+    "relations": {},
+    "scope": "project:0597aa60-9b98-4da6-a4ab-63d7705b632f",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_c642448c",
+    "title": "Clued 正式 Unified Record V2 已启用并 PASS：正式 clued-cloud deployment cd3aee40-9c4b-4c7c-ac4f-e3c496668ed7 / Version 56d2a481-9",
+    "type_fields": {
+      "legacy_priority": 80,
+      "legacy_status": "current",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "state_kind": "legacy_import"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_76d8a4a701098649c9941083c96c4ddf"
+}

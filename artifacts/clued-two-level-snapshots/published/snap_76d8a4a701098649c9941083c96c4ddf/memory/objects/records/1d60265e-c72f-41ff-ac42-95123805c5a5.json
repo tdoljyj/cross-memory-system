@@ -1,0 +1,38 @@
+{
+  "canonical_id": "1d60265e-c72f-41ff-ac42-95123805c5a5",
+  "canonical_version": "cv_139",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "2026-08-22 Clued Kernel R5 K2 已完成独立裁决，结果为 PARTIAL PASS，不允许解锁 K3。冻结链 500386a→ce699b0→1a939b9、工作树和 7 项 receipt 哈希均核对通过，独立复跑 K2 静态 14/14、K1 9/9；但 K2 十项必测仅 5 PASS/3 PARTIAL/2 MISSING：跨账号相同 memory_id、rollback 后数据不变量缺失，RLS 遗漏表、实际 migration 中断、change_event 缺口仅部分覆盖，且未保存可独立复核的 PostgreSQL 原始 transcript、脱敏 server log 和 backup 哈希。K2 分支仍未 push/merge/tag/release/deploy，真实 Binding 未变，语义召回关闭。",
+    "content_hash": "14bb1d5b5a5410f7d93cd49c13c46d3f25f9a952623c15d1d581ac15145d0466",
+    "id": "1d60265e-c72f-41ff-ac42-95123805c5a5",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "909dc147-91e5-47c4-a20d-48845131b52e",
+    "record_schema_version": 1,
+    "record_type": "state",
+    "recorded_at": "2026-08-25T05:24:17.727726+00:00",
+    "relations": {},
+    "scope": "project:09c99505-7971-4bca-a885-632350b05139",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_144c832a",
+    "title": "2026-08-22 Clued Kernel R5 K2 已完成独立裁决，结果为 PARTIAL PASS，不允许解锁 K3",
+    "type_fields": {
+      "legacy_priority": 80,
+      "legacy_status": "current",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "state_kind": "legacy_import"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_76d8a4a701098649c9941083c96c4ddf"
+}

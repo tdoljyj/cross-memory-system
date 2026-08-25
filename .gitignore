@@ -19,3 +19,5 @@ memory/session/
 .truth-state/
 # Clued Sites/Vinext 隔离运行目录（构建缓存，不属于发布源）
 .sites-runtime/
+# Clued M2 publish coordination locks are process-local runtime state.
+artifacts/clued-two-level-snapshots/m2/runtime/

@@ -1,0 +1,38 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "b083bdf84e86cd0982cc8b46296366aec060ca9d677a3c8c28521075916ce55d",
+    "inline_payload": {
+      "archived_at": "2026-08-25T05:25:12.827273+00:00",
+      "content": "- ① ff180f2 ps1 新增 Find-SecretLeakUnpushed（Get-RemoteMainHash + git diff --name-only -z \"${remoteHash}..HEAD\" + git show HEAD:<path> blob 扫描，注意 PowerShell 分词器陷阱用花括号），push 路径取锁后、复制前检查；攻击实测：令牌已 commit 进非 memory 文件 →「Secret-like value detected in unpushed commit file」拒绝、远端不变；干净非 memory 已提交文件正常放行",
+      "created_at": "2026-08-25T05:25:12.827273+00:00",
+      "id": "61f4936e-0c05-4acf-b807-a17c36967a9a",
+      "priority": 40,
+      "project_id": null,
+      "record_key": "umb:v1:mem_1c50596a",
+      "record_type": "archive_snapshot",
+      "scope": "global",
+      "source_ref": "user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_1c50596a",
+      "status": "archived",
+      "title": "- ① ff180f2 ps1 新增 Find-SecretLeakUnpushed（Get-RemoteMainHash + git diff --name-only -z \"${remoteHash}..HEAD\" + git show",
+      "updated_at": "2026-08-25T05:25:12.827273+00:00",
+      "version": 1
+    },
+    "kind": "legacy_record",
+    "legacy_id": "61f4936e-0c05-4acf-b807-a17c36967a9a",
+    "legacy_record_type": "archive_snapshot",
+    "legacy_schema_version": null,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_76d8a4a701098649c9941083c96c4ddf"
+}

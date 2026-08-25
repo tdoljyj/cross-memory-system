@@ -215,6 +215,10 @@ actions tied to the current ChatGPT user. Leave public content anonymous.
 - `npm run db:reset`: recreate only the local database from migrations
 - `npm run db:lint`: lint the local public and private schemas
 - `npm run db:test:m1`: replay and verify the v1.6 M1 Record/Project/Event/Evidence/Receipt/Export contracts, RLS, CAS, failure and replay paths, plus deterministic audited promotion of authorized non-terminal legacy Records
+- `npm run snapshot:m2:enable -- --export-root <path> --at <iso>`: enable the threshold-triggered M2 persistent snapshot store after at least two ready versions exist
+- `npm run snapshot:m2:reconcile -- --export-root <path> --at <iso>`: validate the formal pointer and every registered version, repair registry drift, and raise a bounded file alert after repeated failures
+- `npm run snapshot:m2:sweep -- --export-root <path> --at <iso> [--apply]`: report retention candidates by default; delete only versions outside current/previous/minimum retention when explicitly applied
+- `npm run snapshot:m2:publish -- --snapshot <path> --export-root <path> --expected-current <version> --at <iso>`: publish under an exclusive lock and current-pointer CAS
 - `npm run db:test:v2`: historical pre-M1 suite; its retired write wrapper is intentionally revoked after the M1 migration
 - `npm run db:generate`: generate Drizzle migrations after schema changes
 

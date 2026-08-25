@@ -1,0 +1,38 @@
+{
+  "canonical_id": "144e0320-9de9-4641-b92a-d4c37254f52d",
+  "canonical_version": "cv_139",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "- UE、游戏动画系统、游戏原型、AI 辅助开发",
+    "content_hash": "91eef82fa4c695b42bfe1e410aaf5c3bc9926cd726daf024076ac79dece6e9cf",
+    "id": "144e0320-9de9-4641-b92a-d4c37254f52d",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "11629d5b-1a1e-4d15-8292-8ac2e6a97542",
+    "record_schema_version": 1,
+    "record_type": "note",
+    "recorded_at": "2026-08-25T05:56:54.524838+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_422e4e10",
+    "title": "- UE、游戏动画系统、游戏原型、AI 辅助开发",
+    "type_fields": {
+      "legacy_priority": 40,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "note_kind": "legacy_import"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_76d8a4a701098649c9941083c96c4ddf"
+}

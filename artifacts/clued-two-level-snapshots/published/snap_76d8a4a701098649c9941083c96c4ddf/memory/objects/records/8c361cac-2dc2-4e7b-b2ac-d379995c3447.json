@@ -1,0 +1,38 @@
+{
+  "canonical_id": "8c361cac-2dc2-4e7b-b2ac-d379995c3447",
+  "canonical_version": "cv_139",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "- 最大课题不是能力不够，而是把动画、技术、审美、游戏理解、叙事、产品思维压缩到一个真正完成的作品上",
+    "content_hash": "91701528c018f7cf04b2e3fb753060be55fae0df99177087d9694b1ce6407eb8",
+    "id": "8c361cac-2dc2-4e7b-b2ac-d379995c3447",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "17e9eaa2-5691-49bb-a2b2-1ee982a6ec3b",
+    "record_schema_version": 1,
+    "record_type": "note",
+    "recorded_at": "2026-08-25T06:00:18.367354+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_a9dbd749",
+    "title": "- 最大课题不是能力不够，而是把动画、技术、审美、游戏理解、叙事、产品思维压缩到一个真正完成的作品上",
+    "type_fields": {
+      "legacy_priority": 40,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "note_kind": "legacy_import"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_76d8a4a701098649c9941083c96c4ddf"
+}

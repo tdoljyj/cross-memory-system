@@ -1,0 +1,38 @@
+{
+  "canonical_id": "7117d09f-3381-4ac9-a666-5f0fe34f3384",
+  "canonical_version": "cv_139",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "沿「鱼火」方向收敛最终工作室名",
+    "content_hash": "15bc3e17e7a6763d77c6fc3514cf7626523e3afa8f480677b741886f7c861ee3",
+    "id": "7117d09f-3381-4ac9-a666-5f0fe34f3384",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "119d6cd1-5f93-48e8-a0f0-814865b7602e",
+    "record_schema_version": 1,
+    "record_type": "task",
+    "recorded_at": "2026-08-25T06:00:00.852996+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_a2f9955f",
+    "title": "沿「鱼火」方向收敛最终工作室名",
+    "type_fields": {
+      "execution_bucket": "later",
+      "legacy_priority": 40,
+      "legacy_status": "backlog",
+      "migration_batch": "m1-current-legacy-20260826-v1"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_76d8a4a701098649c9941083c96c4ddf"
+}

@@ -1,0 +1,38 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "0edeafe98db8102d64cfe25c4c14a13e1f6b6fdebfc35a273b1736ac1a4a361a",
+    "inline_payload": {
+      "archived_at": "2026-08-25T06:02:49.584102+00:00",
+      "content": "- 2026-08-16 DSH 端接入（DSH@TURING，技术评估落地）：DSH 注册为第三端——独立克隆 ~/.dsh/projects/cross-memory-system（自远端 origin 克隆，不复用/不克隆任何本地已有克隆，遵守不越界）+ 消费端 ~/.dsh/MEMORY.md，身份 DSH@TURING；同批 P1 修复：py 锁探活改 Windows 安全探活（原 os.kill(pid,0) 会杀进程）、py/ps1 push 成功清除 .needs-push、ps1 -Doctor 补 conform 探针、护栏口径统一（AGENTS/README「.md ≥ 5」→ index.json files 清单）、py 补 deploy-guard（拒绝在 .codex 克隆运行）；验收测试 21→28 用例（详见架构基线变更记录）",
+      "created_at": "2026-08-25T06:02:49.584102+00:00",
+      "id": "0e36c053-ea42-4aab-8e09-af958d346ac9",
+      "priority": 40,
+      "project_id": null,
+      "record_key": "umb:v1:mem_ed76c994",
+      "record_type": "archive_snapshot",
+      "scope": "global",
+      "source_ref": "user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_ed76c994",
+      "status": "archived",
+      "title": "- 2026-08-16 DSH 端接入（DSH@TURING，技术评估落地）：DSH 注册为第三端——独立克隆 ~/.dsh/projects/cross-memory-system（自远端 origin 克隆，不复用/不克隆任何本地已有",
+      "updated_at": "2026-08-25T06:02:49.584102+00:00",
+      "version": 1
+    },
+    "kind": "legacy_record",
+    "legacy_id": "0e36c053-ea42-4aab-8e09-af958d346ac9",
+    "legacy_record_type": "archive_snapshot",
+    "legacy_schema_version": null,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_76d8a4a701098649c9941083c96c4ddf"
+}

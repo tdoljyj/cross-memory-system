@@ -1,0 +1,38 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "502028ea09c7e442f0d85bd524423b0a075e43c65dd20cf404c07dc587699975",
+    "inline_payload": {
+      "archived_at": "2026-08-25T05:59:34.7548+00:00",
+      "content": "- 2026-08-16 Sprint 3 完成并封版（DSH@TURING）：P2×4 + P3×10 全部闭环（保留期统一 7 天[用户决策]、superseded 标记、doctor 探针对称、README/配置手册口径、guards 警示、fetch 复用、trap 噪音、AGENTS↔index 断言、index 路径净化；GAP-3-5/3-7 留档不修）；第二轮专项审计十重点复核全 CONFORM；验收测试 57→69 全绿；tag vNext-1.3 移至封版 commit（VERSION=tag=封版 HEAD）。产出《Sprint3专项审计与封版报告-vNext-1.3.md》。系统状态：vNext-1.3 Stable Baseline / 可封版；vNext-1.4 仅在必要时评估",
+      "created_at": "2026-08-25T05:59:34.7548+00:00",
+      "id": "8617eb32-59e2-4670-9ede-266891f2f72e",
+      "priority": 40,
+      "project_id": null,
+      "record_key": "umb:v1:mem_92c0206e",
+      "record_type": "archive_snapshot",
+      "scope": "global",
+      "source_ref": "user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_92c0206e",
+      "status": "archived",
+      "title": "- 2026-08-16 Sprint 3 完成并封版（DSH@TURING）：P2×4 + P3×10 全部闭环（保留期统一 7 天[用户决策]、superseded 标记、doctor 探针对称、README/配置手册口径、guards",
+      "updated_at": "2026-08-25T05:59:34.7548+00:00",
+      "version": 1
+    },
+    "kind": "legacy_record",
+    "legacy_id": "8617eb32-59e2-4670-9ede-266891f2f72e",
+    "legacy_record_type": "archive_snapshot",
+    "legacy_schema_version": null,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_76d8a4a701098649c9941083c96c4ddf"
+}

@@ -1,0 +1,50 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "dfc3ed2ef15d04a4b68967de4356939e9d20b9fdc4b6508450403fd9d09dc553",
+    "inline_payload": {
+      "base_version": 4,
+      "context_key": "project:0597aa60-9b98-4da6-a4ab-63d7705b632f",
+      "event_type": "action",
+      "occurred_at": "2026-08-25T22:05:20.562696+00:00",
+      "payload": {
+        "action": "m2_persistent_snapshot_store_enabled",
+        "bounded_retry": true,
+        "capability_contract": "clued.m2.persistent-snapshot-store",
+        "coordinated_publish": true,
+        "current_snapshot_version": "snap_d04d68806b63819ca12b7a2a58bf2f27",
+        "event_rollup_enabled": false,
+        "event_stream_ordering_enabled": false,
+        "file_alerts": true,
+        "index_sharding_enabled": false,
+        "merge_writes_enabled": false,
+        "ready_versions": 2,
+        "reconciler": true,
+        "semantic_assist_enabled": false,
+        "store_status": "healthy",
+        "sweeper_gc": true,
+        "workspace_team_enabled": false
+      },
+      "project_id": null,
+      "record_id": null,
+      "record_version": null
+    },
+    "kind": "legacy_event",
+    "legacy_id": "437",
+    "legacy_record_type": null,
+    "legacy_schema_version": null,
+    "migration_status": "preserved_audit_only",
+    "missing_required_fields": [
+      "event_schema_version",
+      "committed_canonical_version",
+      "audit_visibility",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_event",
+  "schema_version": 1,
+  "snapshot_version": "snap_76d8a4a701098649c9941083c96c4ddf"
+}

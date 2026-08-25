@@ -1,0 +1,36 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "483728a68abbf4614d4a27af561d184292a703f39dacff2b640ae9f82f1c5be0",
+    "inline_payload": {
+      "base_version": null,
+      "context_key": "global",
+      "event_type": "action",
+      "occurred_at": "2026-08-25T06:03:02.310382+00:00",
+      "payload": {
+        "action": "create",
+        "record_type": "note"
+      },
+      "project_id": null,
+      "record_id": "38f81d25-9397-4d83-b685-137e286213e1",
+      "record_version": 1
+    },
+    "kind": "legacy_event",
+    "legacy_id": "288",
+    "legacy_record_type": null,
+    "legacy_schema_version": null,
+    "migration_status": "preserved_audit_only",
+    "missing_required_fields": [
+      "event_schema_version",
+      "committed_canonical_version",
+      "audit_visibility",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_event",
+  "schema_version": 1,
+  "snapshot_version": "snap_76d8a4a701098649c9941083c96c4ddf"
+}

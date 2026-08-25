@@ -1,0 +1,38 @@
+{
+  "canonical_id": "c9c72a89-eeb2-4471-9e1e-294b7bf4066c",
+  "canonical_version": "cv_139",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "- 对需求理解敏感：先理解原逻辑 → 找真正问题 → 最小范围修改 → 保留既有行为 → 给完整可运行版本；「更好」不等于「兼容」",
+    "content_hash": "da6be51f09c6b05f1b7699cf7440074d36c417084cd3529b6bf49fdefedf915e",
+    "id": "c9c72a89-eeb2-4471-9e1e-294b7bf4066c",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "f2f8751a-12cf-4823-b941-5f50e75cfaa5",
+    "record_schema_version": 1,
+    "record_type": "note",
+    "recorded_at": "2026-08-25T05:56:17.576628+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_27338615",
+    "title": "- 对需求理解敏感：先理解原逻辑 → 找真正问题 → 最小范围修改 → 保留既有行为 → 给完整可运行版本；「更好」不等于「兼容」",
+    "type_fields": {
+      "legacy_priority": 40,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "note_kind": "legacy_import"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_76d8a4a701098649c9941083c96c4ddf"
+}

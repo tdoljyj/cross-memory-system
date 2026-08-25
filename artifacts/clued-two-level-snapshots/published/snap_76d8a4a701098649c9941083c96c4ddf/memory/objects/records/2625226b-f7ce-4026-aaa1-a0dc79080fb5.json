@@ -1,0 +1,38 @@
+{
+  "canonical_id": "2625226b-f7ce-4026-aaa1-a0dc79080fb5",
+  "canonical_version": "cv_139",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "- 城市 / 落户 / 房产（考虑过，未决策）",
+    "content_hash": "4500a09a463e6bd5307ea31d66566eaa716ae1591a7f066ebaf48aee4540ca4c",
+    "id": "2625226b-f7ce-4026-aaa1-a0dc79080fb5",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "ee075ec8-e11d-43cf-b997-a44cf54eb49b",
+    "record_schema_version": 1,
+    "record_type": "decision",
+    "recorded_at": "2026-08-25T05:23:20.558304+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_037fbaba",
+    "title": "- 城市 / 落户 / 房产（考虑过，未决策）",
+    "type_fields": {
+      "legacy_priority": 40,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "rationale": "legacy_import_preserved_content"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_76d8a4a701098649c9941083c96c4ddf"
+}

@@ -1,0 +1,38 @@
+{
+  "canonical_id": "78bbd2cb-0d2b-442c-a44e-547e28fdc7a2",
+  "canonical_version": "cv_139",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "- 从动画师 → 独立游戏制作人转型，两条主线并行（原型 + 剧情）",
+    "content_hash": "c566f5c71f179fcb3057ef8b7ecde64e27812a9d000c0cbb4c45dd226655b7a6",
+    "id": "78bbd2cb-0d2b-442c-a44e-547e28fdc7a2",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "6682baef-8926-4891-98e6-ea0d64c36152",
+    "record_schema_version": 1,
+    "record_type": "decision",
+    "recorded_at": "2026-08-25T05:56:45.449925+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_3b2998ab",
+    "title": "- 从动画师 → 独立游戏制作人转型，两条主线并行（原型 + 剧情）",
+    "type_fields": {
+      "legacy_priority": 40,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "rationale": "legacy_import_preserved_content"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_76d8a4a701098649c9941083c96c4ddf"
+}

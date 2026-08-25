@@ -1,0 +1,38 @@
+{
+  "canonical_id": "95e6ce93-e342-4c44-918e-7116f4334c68",
+  "canonical_version": "cv_139",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "- 记忆回写双通道实测（2026-08-16）：exec shell 对 Documents\\Codex\\memory 只读；apply_patch 可写；Node REPL（mcp node_repl 的 fs 写入）也可写，且适合字节级复制 + 哈希核验——拉取远端更新后回写工作目录优先用它（避免长中文行人工转录漂移）",
+    "content_hash": "ac367fb1f175bbfb87a4617d0e2e0acf59439582d317e2a017e9f17b68386bf0",
+    "id": "95e6ce93-e342-4c44-918e-7116f4334c68",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "f51d3278-8860-4332-80ed-5990b93203ff",
+    "record_schema_version": 1,
+    "record_type": "decision",
+    "recorded_at": "2026-08-25T06:01:34.844543+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_d1c29a77",
+    "title": "- 记忆回写双通道实测（2026-08-16）：exec shell 对 Documents\\Codex\\memory 只读；apply_patch 可写；Node REPL（mcp node_repl 的 fs 写入）也可写，且适合字节级",
+    "type_fields": {
+      "legacy_priority": 40,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "rationale": "legacy_import_preserved_content"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_76d8a4a701098649c9941083c96c4ddf"
+}

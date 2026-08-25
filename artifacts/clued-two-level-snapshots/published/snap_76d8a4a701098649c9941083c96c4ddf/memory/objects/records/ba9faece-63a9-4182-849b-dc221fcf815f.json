@@ -1,0 +1,38 @@
+{
+  "canonical_id": "ba9faece-63a9-4182-849b-dc221fcf815f",
+  "canonical_version": "cv_139",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "Clued 阶段 8B-4 已 PASS：生产批次 8b4-20260824T143700Z 从阶段5冻结快照导入5条 candidate/current/global/manual_review=false State；源哈希、canonical view 与公开 user read wrapper 5/5一致，幂等重放返回原UUID，Record/Event/Receipt严格5/5配对，跨用户读改删均0，legacy CRUD回滚通过。生产 Project/Mention/Memory/Event/Receipt 0/0/5/7/10，26条manual-review自动写入0；正式Worker仍 bf0038c3-1456-4653-bdcf-f962ff962ec4 / Kernel0.3.0，域名/Binding/流量未变。下一步只有用户明确确认后进入8B-5正式Worker部署。",
+    "content_hash": "b7e3c458e01a10bee10c3e09572f32d520cc18b50e3326e7fe1f538da44717d5",
+    "id": "ba9faece-63a9-4182-849b-dc221fcf815f",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "775c8a0a-08b2-475b-bc62-3980404f7679",
+    "record_schema_version": 1,
+    "record_type": "state",
+    "recorded_at": "2026-08-25T06:01:05.777988+00:00",
+    "relations": {},
+    "scope": "project:0597aa60-9b98-4da6-a4ab-63d7705b632f",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_c2ac657e",
+    "title": "Clued 阶段 8B-4 已 PASS：生产批次 8b4-20260824T143700Z 从阶段5冻结快照导入5条 candidate/current/global/manual_review=false State；源哈希、canon",
+    "type_fields": {
+      "legacy_priority": 80,
+      "legacy_status": "current",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "state_kind": "legacy_import"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_76d8a4a701098649c9941083c96c4ddf"
+}

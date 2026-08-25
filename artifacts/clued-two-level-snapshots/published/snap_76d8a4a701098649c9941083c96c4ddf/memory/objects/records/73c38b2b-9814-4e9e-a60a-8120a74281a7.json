@@ -1,0 +1,38 @@
+{
+  "canonical_id": "73c38b2b-9814-4e9e-a60a-8120a74281a7",
+  "canonical_version": "cv_139",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "DSH 端评估 P1 短期项剩余（评估报告 #7/#8/#13/#14，归入 Sprint 3 治理）：保留期口径统一（guards 2 天 vs 文档 7 天）+ 口径测试；决策.md:18 凭据旧口径标 superseded；版本 tag 治理（tag 落后 HEAD 12 提交、合并作者规则）；index.json files 路径净化",
+    "content_hash": "4eff4a447cf24a0569d2147fc8aece6fe131385b63414712ca528b7c0a9215d8",
+    "id": "73c38b2b-9814-4e9e-a60a-8120a74281a7",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "2fb71848-8e78-4410-8b5f-df8577879c8d",
+    "record_schema_version": 1,
+    "record_type": "task",
+    "recorded_at": "2026-08-25T06:00:45.808087+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_bd60fb17",
+    "title": "DSH 端评估 P1 短期项剩余（评估报告 #7/#8/#13/#14，归入 Sprint 3 治理）：保留期口径统一（guards 2 天 vs 文档 7 天）+ 口径测试；决策.md:18 凭据旧口径标 superseded；版本 ta",
+    "type_fields": {
+      "execution_bucket": "later",
+      "legacy_priority": 40,
+      "legacy_status": "backlog",
+      "migration_batch": "m1-current-legacy-20260826-v1"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_76d8a4a701098649c9941083c96c4ddf"
+}

@@ -1,0 +1,38 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "a0798570eed9b79523f4cf0f5b9f28559d25f83487b63e4a4db2ef37bc5c2f32",
+    "inline_payload": {
+      "archived_at": "2026-08-25T05:56:49.093277+00:00",
+      "content": "- 待验证：第二台机器 -Doctor 可移植性（macOS / Linux 需 pwsh）",
+      "created_at": "2026-08-25T05:56:49.093277+00:00",
+      "id": "5492303a-d5e2-4f9c-b476-4d86f59d416e",
+      "priority": 40,
+      "project_id": null,
+      "record_key": "umb:v1:mem_3e5c645c",
+      "record_type": "archive_snapshot",
+      "scope": "global",
+      "source_ref": "user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_3e5c645c",
+      "status": "archived",
+      "title": "- 待验证：第二台机器 -Doctor 可移植性（macOS / Linux 需 pwsh）",
+      "updated_at": "2026-08-25T05:56:49.093277+00:00",
+      "version": 1
+    },
+    "kind": "legacy_record",
+    "legacy_id": "5492303a-d5e2-4f9c-b476-4d86f59d416e",
+    "legacy_record_type": "archive_snapshot",
+    "legacy_schema_version": null,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_76d8a4a701098649c9941083c96c4ddf"
+}

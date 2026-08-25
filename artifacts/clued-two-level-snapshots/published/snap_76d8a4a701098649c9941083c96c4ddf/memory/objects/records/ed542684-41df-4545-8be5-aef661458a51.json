@@ -1,0 +1,38 @@
+{
+  "canonical_id": "ed542684-41df-4545-8be5-aef661458a51",
+  "canonical_version": "cv_139",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "2026-08-22 Clued Kernel R5 K2 缺口已补齐并完成第四轮独立裁决，最终结果为 PASS。产品提交 4ed347fb908bbadc888c8cf58768536c6ca108ea，最终裁决证据提交 3c907ae7b97f1d459a8233623eb780538e1c7c8b；K2 静态 16/16、PostgreSQL 15.19 集成 21/21、K1 9/9、全量 589 PASS / 0 FAIL / 0 SKIP；receipt 12/12，候选树密钥扫描 474 文件 0 命中，脱敏数据库日志正文 0 命中。十项必测与八项 K2 PASS 标准全部通过，无 blocker。K2 分支仍仅本地，未 push/merge/tag/release/deploy，真实 Binding 未变，语义召回关闭。",
+    "content_hash": "5b70874b3c872d5039bfc240f49186c30062cbfcc6686bd45a4d4bc01bb921e7",
+    "id": "ed542684-41df-4545-8be5-aef661458a51",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "bfb73fdc-5ceb-4a5d-becd-235ae70931e8",
+    "record_schema_version": 1,
+    "record_type": "state",
+    "recorded_at": "2026-08-25T05:57:28.542627+00:00",
+    "relations": {},
+    "scope": "project:09c99505-7971-4bca-a885-632350b05139",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_4a56666f",
+    "title": "2026-08-22 Clued Kernel R5 K2 缺口已补齐并完成第四轮独立裁决，最终结果为 PASS",
+    "type_fields": {
+      "legacy_priority": 80,
+      "legacy_status": "current",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "state_kind": "legacy_import"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_76d8a4a701098649c9941083c96c4ddf"
+}

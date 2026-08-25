@@ -1,0 +1,38 @@
+{
+  "canonical_id": "bae9c995-afeb-4cb8-9bef-b6f3105f63da",
+  "canonical_version": "cv_139",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "- 确立《架构基线文档-vNext-1.3.md》为核心架构规范（2026-08-16）：Chase 提供的 vNext 核心架构（原件存附录/）确立为基线 vNext-1.0，统一后续设计/实现/变更依据；AGENTS.md 升级 v3 对齐基线术语（T0–T4 触发 / L1–L6 分类 / Trigger Matrix / 事实推测分离 / superseded 语义）；现有文件+git 架构按附录 A 映射表对应基线概念（Canonical Store=仓库、Change Detector=staged 空检查、OCC=非快进拒绝+merge），不引入服务端组件",
+    "content_hash": "f0c8be24acf7a16da213fa7bfa3df3eb10dd8e3466bcc0ebe88c6ae2353658de",
+    "id": "bae9c995-afeb-4cb8-9bef-b6f3105f63da",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "990853c4-d80d-49c5-a239-dcd704a7bda4",
+    "record_schema_version": 1,
+    "record_type": "decision",
+    "recorded_at": "2026-08-25T06:03:01.413208+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_f2bc415e",
+    "title": "- 确立《架构基线文档-vNext-1.3.md》为核心架构规范（2026-08-16）：Chase 提供的 vNext 核心架构（原件存附录/）确立为基线 vNext-1.0，统一后续设计/实现/变更依据；AGENTS.md 升级 v3",
+    "type_fields": {
+      "legacy_priority": 40,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "rationale": "legacy_import_preserved_content"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_76d8a4a701098649c9941083c96c4ddf"
+}

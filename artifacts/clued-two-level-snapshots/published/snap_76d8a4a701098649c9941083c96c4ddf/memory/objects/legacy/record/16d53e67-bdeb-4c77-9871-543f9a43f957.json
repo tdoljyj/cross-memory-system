@@ -1,0 +1,38 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "0fa3751f4fb541e81b772ab975a8d2b09d1f1ab759ec45ba9f0914eb5fe07a6e",
+    "inline_payload": {
+      "archived_at": "2026-08-25T06:03:05.545884+00:00",
+      "content": "- 关键发现：PS5.1 下未重定向 stderr 的原生命令失败不抛异常，原 git add / git diff --cached / git commit 失败会被静默吞掉并误报「No memory changes; skip commit」（假成功）；已改为显式 $LASTEXITCODE 校验 + 顶层 trap 兜底",
+      "created_at": "2026-08-25T06:03:05.545884+00:00",
+      "id": "16d53e67-bdeb-4c77-9871-543f9a43f957",
+      "priority": 40,
+      "project_id": null,
+      "record_key": "umb:v1:mem_f585dfcc",
+      "record_type": "archive_snapshot",
+      "scope": "global",
+      "source_ref": "user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_f585dfcc",
+      "status": "archived",
+      "title": "- 关键发现：PS5.1 下未重定向 stderr 的原生命令失败不抛异常，原 git add / git diff --cached / git commit 失败会被静默吞掉并误报「No memory changes; skip com",
+      "updated_at": "2026-08-25T06:03:05.545884+00:00",
+      "version": 1
+    },
+    "kind": "legacy_record",
+    "legacy_id": "16d53e67-bdeb-4c77-9871-543f9a43f957",
+    "legacy_record_type": "archive_snapshot",
+    "legacy_schema_version": null,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_76d8a4a701098649c9941083c96c4ddf"
+}

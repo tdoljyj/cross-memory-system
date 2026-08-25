@@ -1,0 +1,38 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "7867613896e642385bf9b6b763977559f05bdd058a20647f0ce7f63a44f9633e",
+    "inline_payload": {
+      "archived_at": "2026-08-25T05:56:43.080983+00:00",
+      "content": "- gh 2.97.0 已装登录（tdoljyj，scopes 含 repo / workflow）；GitHub MCP 接入 44 工具，只接受 gh 登录令牌（gho_），经典 PAT（ghp_）被拒 invalid_token；令牌存 GITHUB_PAT_TOKEN（gh 令牌副本），刷新 gh 后需 setx 同步（已废弃口径，2026-08-16：见 决策.md「已确认」vNext-1.3 条目——凭据走 gh 助手、不 setx）",
+      "created_at": "2026-08-25T05:56:43.080983+00:00",
+      "id": "7c19d096-a56a-460a-b3ee-650bdf7a4b90",
+      "priority": 40,
+      "project_id": null,
+      "record_key": "umb:v1:mem_3a939565",
+      "record_type": "archive_snapshot",
+      "scope": "global",
+      "source_ref": "user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_3a939565",
+      "status": "archived",
+      "title": "- gh 2.97.0 已装登录（tdoljyj，scopes 含 repo / workflow）；GitHub MCP 接入 44 工具，只接受 gh 登录令牌（gho_），经典 PAT（ghp_）被拒 invalid_token；令牌",
+      "updated_at": "2026-08-25T05:56:43.080983+00:00",
+      "version": 1
+    },
+    "kind": "legacy_record",
+    "legacy_id": "7c19d096-a56a-460a-b3ee-650bdf7a4b90",
+    "legacy_record_type": "archive_snapshot",
+    "legacy_schema_version": null,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_76d8a4a701098649c9941083c96c4ddf"
+}

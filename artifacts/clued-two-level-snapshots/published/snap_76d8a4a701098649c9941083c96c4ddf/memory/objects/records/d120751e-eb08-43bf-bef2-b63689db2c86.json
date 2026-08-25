@@ -1,0 +1,38 @@
+{
+  "canonical_id": "d120751e-eb08-43bf-bef2-b63689db2c86",
+  "canonical_version": "cv_139",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "Clued 阶段 8A 发布准备已于 2026-08-24 PASS：发布候选 79c13023a50a46f015fe921c74c55bf84f381ef5 已推送并创建 Draft PR #3；候选应用与数据库 Gate 全绿，生产依赖漏洞 0，完整工具链仅余 4 项 moderate dev-only；未执行生产迁移、导入、功能启用或部署，下一步须单独授权 8B-1 备份与隔离恢复演练。",
+    "content_hash": "0d820e3878854be0cd1384b1e9490104976a779806c605e5aec42bb7f64a621f",
+    "id": "d120751e-eb08-43bf-bef2-b63689db2c86",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "33d4496d-390f-4e46-bbad-90efbfd25a97",
+    "record_schema_version": 1,
+    "record_type": "state",
+    "recorded_at": "2026-08-25T05:56:21.961051+00:00",
+    "relations": {},
+    "scope": "project:0597aa60-9b98-4da6-a4ab-63d7705b632f",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_2bce7e4e",
+    "title": "Clued 阶段 8A 发布准备已于 2026-08-24 PASS：发布候选 79c13023a50a46f015fe921c74c55bf84f381ef5 已推送并创建 Draft PR #3；候选应用与数据库 Gate 全绿，生产依",
+    "type_fields": {
+      "legacy_priority": 80,
+      "legacy_status": "current",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "state_kind": "legacy_import"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_76d8a4a701098649c9941083c96c4ddf"
+}

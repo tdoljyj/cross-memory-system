@@ -1,0 +1,38 @@
+{
+  "canonical_id": "28c691e5-3a2e-4965-aa76-6353af04b0d5",
+  "canonical_version": "cv_139",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "- 思维跨度：单个功能 → 工具 → 工作流 → 系统 → 平台 → 产品（Atlas 是例证：Core / Engine / SDK / Cloud / Marketplace / AI / Event Bus / Data Model 等，已接近平台思维）",
+    "content_hash": "4f1e6b0f2176b2b674a744ac858568d450548b3d3b645cb80b0a2b1aea3ec3fb",
+    "id": "28c691e5-3a2e-4965-aa76-6353af04b0d5",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "0c64f09b-2140-4ab9-9349-d66bf4f3150d",
+    "record_schema_version": 1,
+    "record_type": "note",
+    "recorded_at": "2026-08-25T06:02:52.153611+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_eed0ecd4",
+    "title": "- 思维跨度：单个功能 → 工具 → 工作流 → 系统 → 平台 → 产品（Atlas 是例证：Core / Engine / SDK / Cloud / Marketplace / AI / Event Bus / Data Model",
+    "type_fields": {
+      "legacy_priority": 40,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "note_kind": "legacy_import"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_76d8a4a701098649c9941083c96c4ddf"
+}

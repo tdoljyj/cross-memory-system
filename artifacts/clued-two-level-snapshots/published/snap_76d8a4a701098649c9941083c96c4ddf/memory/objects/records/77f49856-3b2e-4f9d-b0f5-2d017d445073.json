@@ -1,0 +1,38 @@
+{
+  "canonical_id": "77f49856-3b2e-4f9d-b0f5-2d017d445073",
+  "canonical_version": "cv_139",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "- 确立 vNext-1.2（2026-08-16，Codex@TURING 评审落地）：双脚本删除传播护栏（memory 目录 .md<5 非空拒绝同步）、双脚本核验统一祖先判定（merge-base --is-ancestor）、py 配置参数化（sync.config.json，gitignored）、召回粒度文件级→段级（L1–L6→具体标题段）、明确 Sync Layer 与 commit 职责边界、同步全局钩子；新增附录 D（保留/调整/替换/待办对照）",
+    "content_hash": "e4e6a4ded3899c1d2b51b5d755bc99ac0786664bb8e63393fd3d4c61f2edae3a",
+    "id": "77f49856-3b2e-4f9d-b0f5-2d017d445073",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "82bbc701-065a-46ee-b3b7-8559479e1a4e",
+    "record_schema_version": 1,
+    "record_type": "decision",
+    "recorded_at": "2026-08-25T06:02:50.898262+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_eecb9b63",
+    "title": "- 确立 vNext-1.2（2026-08-16，Codex@TURING 评审落地）：双脚本删除传播护栏（memory 目录 .md<5 非空拒绝同步）、双脚本核验统一祖先判定（merge-base --is-ancestor）、py",
+    "type_fields": {
+      "legacy_priority": 40,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "rationale": "legacy_import_preserved_content"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_76d8a4a701098649c9941083c96c4ddf"
+}

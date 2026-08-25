@@ -1,0 +1,19 @@
+{
+  "current_snapshot_version": "snap_d04d68806b63819ca12b7a2a58bf2f27",
+  "occurred_at": "2026-08-25T21:59:41.4066531Z",
+  "operation": "enable_persistent_snapshot_store",
+  "policy": {
+    "failure_alert_threshold": 3,
+    "max_versions": 12,
+    "min_versions": 2,
+    "retry_schedule_ms": [
+      100,
+      500,
+      2000
+    ],
+    "stale_lock_seconds": 900
+  },
+  "ready_version_count": 2,
+  "report_schema_version": 1,
+  "status": "success"
+}

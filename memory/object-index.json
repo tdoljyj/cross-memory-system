@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-08-25T19:07:53Z",
-  "count": 270,
+  "generated_at": "2026-08-25T22:12:07Z",
+  "count": 272,
   "objects": {
     "mem_012b899e": {
       "path": "memory/objects/mem_012b899e.json",
@@ -33,6 +33,30 @@
       "valid_from": null,
       "valid_until": null,
       "supersedes": [],
+      "superseded_by": []
+    },
+    "mem_026206b4": {
+      "path": "memory/objects/mem_026206b4.json",
+      "type": "state",
+      "scope": "project",
+      "status": "active",
+      "priority": "high",
+      "category": "state",
+      "tags": [
+        "clued",
+        "m1",
+        "v1.6",
+        "production"
+      ],
+      "entities": [
+        "clued",
+        "clued-cloud"
+      ],
+      "valid_from": null,
+      "valid_until": null,
+      "supersedes": [
+        "mem_1ce82c47"
+      ],
       "superseded_by": []
     },
     "mem_037fbaba": {
@@ -411,6 +435,32 @@
       "valid_until": null,
       "supersedes": [],
       "superseded_by": []
+    },
+    "mem_1ce82c47": {
+      "path": "memory/objects/mem_1ce82c47.json",
+      "type": "state",
+      "scope": "project",
+      "status": "superseded",
+      "priority": "high",
+      "category": "state",
+      "tags": [
+        "clued",
+        "m1",
+        "v1.6",
+        "production"
+      ],
+      "entities": [
+        "clued",
+        "clued-cloud"
+      ],
+      "valid_from": null,
+      "valid_until": "2026-08-25T22:12:07Z",
+      "supersedes": [
+        "mem_a004c38c"
+      ],
+      "superseded_by": [
+        "mem_026206b4"
+      ]
     },
     "mem_1dd8b1f9": {
       "path": "memory/objects/mem_1dd8b1f9.json",
@@ -2443,7 +2493,7 @@
       "path": "memory/objects/mem_a004c38c.json",
       "type": "state",
       "scope": "project",
-      "status": "active",
+      "status": "superseded",
       "priority": "high",
       "category": "state",
       "tags": [
@@ -2457,11 +2507,13 @@
         "clued-cloud"
       ],
       "valid_from": null,
-      "valid_until": null,
+      "valid_until": "2026-08-25T22:05:05Z",
       "supersedes": [
         "mem_714dd47d"
       ],
-      "superseded_by": []
+      "superseded_by": [
+        "mem_1ce82c47"
+      ]
     },
     "mem_a035c117": {
       "path": "memory/objects/mem_a035c117.json",

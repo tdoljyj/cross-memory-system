@@ -1,0 +1,38 @@
+{
+  "canonical_id": "1083694f-e9c3-4d6b-a392-6bf9a8ffbd5e",
+  "canonical_version": "cv_139",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "2026-08-22 用户已明确授权开始 K3，先前 K3 LOCKED 状态已解除。K3 当前为本地实施中，尚未完成最终全量回归、证据封存和独立裁决；继续禁止未授权 push/merge/tag/release/deploy、真实 Binding 变更与语义召回启用。",
+    "content_hash": "cbc22cf80fd1801fed43f1ef33d9d6b8ffeea2f0fd57df966d2159216c64f45e",
+    "id": "1083694f-e9c3-4d6b-a392-6bf9a8ffbd5e",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "8a94873b-0227-4e50-8e76-4d3ebf6d0707",
+    "record_schema_version": 1,
+    "record_type": "decision",
+    "recorded_at": "2026-08-25T06:01:26.961444+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_cd589650",
+    "title": "2026-08-22 用户已明确授权开始 K3，先前 K3 LOCKED 状态已解除",
+    "type_fields": {
+      "legacy_priority": 80,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "rationale": "legacy_import_preserved_content"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_76d8a4a701098649c9941083c96c4ddf"
+}

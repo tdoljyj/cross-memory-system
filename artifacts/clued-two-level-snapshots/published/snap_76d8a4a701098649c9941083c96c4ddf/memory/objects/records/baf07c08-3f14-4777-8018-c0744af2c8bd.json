@@ -1,0 +1,38 @@
+{
+  "canonical_id": "baf07c08-3f14-4777-8018-c0744af2c8bd",
+  "canonical_version": "cv_139",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "任务必须按独立闭环单元完成：每一步结束即固化、校验并上传全部后续所需产物；完成即了结，禁止后续追索旧电脑、本机临时文件、孤儿提交或未上传的前序证据，不把历史保存责任转嫁给用户。",
+    "content_hash": "17b6a0966a3c784c238cce93907813dad43b3a76a7724bae3fcd2147d517bda9",
+    "id": "baf07c08-3f14-4777-8018-c0744af2c8bd",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "71be4779-5ec9-4eb9-a6d3-64b1db5f4d74",
+    "record_schema_version": 1,
+    "record_type": "decision",
+    "recorded_at": "2026-08-25T06:03:17.35706+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_f948c9b4",
+    "title": "任务必须按独立闭环单元完成：每一步结束即固化、校验并上传全部后续所需产物；完成即了结，禁止后续追索旧电脑、本机临时文件、孤儿提交或未上传的前序证据，不把历史保存责任转嫁给用户",
+    "type_fields": {
+      "legacy_priority": 80,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "rationale": "legacy_import_preserved_content"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_76d8a4a701098649c9941083c96c4ddf"
+}

@@ -1,0 +1,38 @@
+{
+  "canonical_id": "05469eef-e3f8-4139-a03a-1c4a1534365c",
+  "canonical_version": "cv_139",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "- 天然偏爱：角色 → 动作 → 战斗 → 镜头 → 打击感 → 动画；卡牌 / 模拟经营 / 纯文字叙事方向不成立",
+    "content_hash": "ed4d8f9a4ac46fbb61e820289505f54731a1b1df379e431fdce1140a0130360e",
+    "id": "05469eef-e3f8-4139-a03a-1c4a1534365c",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "556b810b-0573-47ab-a6c4-d11b907d07a1",
+    "record_schema_version": 1,
+    "record_type": "note",
+    "recorded_at": "2026-08-25T06:03:26.006698+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_fc62be5b",
+    "title": "- 天然偏爱：角色 → 动作 → 战斗 → 镜头 → 打击感 → 动画；卡牌 / 模拟经营 / 纯文字叙事方向不成立",
+    "type_fields": {
+      "legacy_priority": 40,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "note_kind": "legacy_import"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_76d8a4a701098649c9941083c96c4ddf"
+}

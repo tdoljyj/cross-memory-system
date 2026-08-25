@@ -1,0 +1,38 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "2d765e2f2d366719261a26a74140be17f7365efa30ecbb23ac34729ddf12851d",
+    "inline_payload": {
+      "archived_at": "2026-08-25T06:00:23.938117+00:00",
+      "content": "- 2026-08-16 vNext-1.3 架构基线冻结 + 代码级 Gap Audit 完成（DSH@TURING）：十模块逐项核对「基线写的 vs 代码做的」——P0=0、P1=0，P2×4 + P3×10（全部治理/文档/检测面/优化项）；十模块核心不变量 CONFORM；架构回退检查五项触发条件均未出现（无需改基线）。产出《代码级Gap审计报告-vNext-1.3-2026-08-16.md》（仓库根）；门禁结论：正式满足进入 Sprint 3 条件，Sprint 3 清单（GAP-2-1~4 + GAP-3-1~10）已登记待办.md",
+      "created_at": "2026-08-25T06:00:23.938117+00:00",
+      "id": "93bc08b3-67ad-40ac-876c-d40ead1bf213",
+      "priority": 40,
+      "project_id": null,
+      "record_key": "umb:v1:mem_b147f5c8",
+      "record_type": "archive_snapshot",
+      "scope": "global",
+      "source_ref": "user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_b147f5c8",
+      "status": "archived",
+      "title": "- 2026-08-16 vNext-1.3 架构基线冻结 + 代码级 Gap Audit 完成（DSH@TURING）：十模块逐项核对「基线写的 vs 代码做的」——P0=0、P1=0，P2×4 + P3×10（全部治理/文档/检测面/优",
+      "updated_at": "2026-08-25T06:00:23.938117+00:00",
+      "version": 1
+    },
+    "kind": "legacy_record",
+    "legacy_id": "93bc08b3-67ad-40ac-876c-d40ead1bf213",
+    "legacy_record_type": "archive_snapshot",
+    "legacy_schema_version": null,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_76d8a4a701098649c9941083c96c4ddf"
+}

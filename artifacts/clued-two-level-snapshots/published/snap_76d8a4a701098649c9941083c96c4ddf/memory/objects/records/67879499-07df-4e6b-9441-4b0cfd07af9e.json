@@ -1,0 +1,38 @@
+{
+  "canonical_id": "67879499-07df-4e6b-9441-4b0cfd07af9e",
+  "canonical_version": "cv_139",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "2026-08-23，clued.pixelgrav.com 已从 OpenAI Sites 迁移到自有 Cloudflare Workers（Worker clued-cloud）。旧 Sites 自定义域名映射已解除但旧站内容保留；Cloudflare 自定义域名、DNS 与 HTTPS 已生效，首页、favicon、OG 图片经普通公网验收均返回 200，原 chatgpt.site 边缘 403 问题已闭环。",
+    "content_hash": "651f5519df7dc2b06b0212254e5f0ce3228e7011dd527e1d3a0537e7d824f768",
+    "id": "67879499-07df-4e6b-9441-4b0cfd07af9e",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "70f3f053-6899-476d-a508-65fabe989f39",
+    "record_schema_version": 1,
+    "record_type": "state",
+    "recorded_at": "2026-08-25T05:57:19.781492+00:00",
+    "relations": {},
+    "scope": "project:85f6ca2c-dbd4-4a45-a19e-f11e38f43c73",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_463415ca",
+    "title": "2026-08-23，clued.pixelgrav.com 已从 OpenAI Sites 迁移到自有 Cloudflare Workers（Worker clued-cloud）",
+    "type_fields": {
+      "legacy_priority": 80,
+      "legacy_status": "current",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "state_kind": "legacy_import"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_76d8a4a701098649c9941083c96c4ddf"
+}

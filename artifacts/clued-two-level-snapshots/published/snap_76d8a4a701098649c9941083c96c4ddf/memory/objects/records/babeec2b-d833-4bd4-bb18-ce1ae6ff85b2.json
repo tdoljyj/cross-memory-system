@@ -1,0 +1,38 @@
+{
+  "canonical_id": "babeec2b-d833-4bd4-bb18-ce1ae6ff85b2",
+  "canonical_version": "cv_139",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "2026-08-22 Clued Kernel R5 K2 Cloud Data Foundation 本地实现验收通过：实现提交 ce699b0fe05001e04707b26b80f886a2a6d12db8，证据提交 1a939b9；K2 静态 14/14、PostgreSQL 15.19 集成 14/14、K1 9/9、全量 580 PASS / 0 FAIL / 0 SKIP；候选树密钥扫描 466 文件 0 命中，安全 PostgreSQL 日志正文命中 0。分支仅本地 ahead 2，未 push/merge/tag/release/deploy，语义召回仍关闭，真实 Binding 未变；等待独立裁决，K3 锁定。",
+    "content_hash": "e2fa228b719df8ebc41b244bdc7085a91c39a1c72ac00c8cb05ddf5f62b330b6",
+    "id": "babeec2b-d833-4bd4-bb18-ce1ae6ff85b2",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "cbad9a3b-4a54-4228-9f91-ba62d53c7565",
+    "record_schema_version": 1,
+    "record_type": "state",
+    "recorded_at": "2026-08-25T06:01:41.372191+00:00",
+    "relations": {},
+    "scope": "project:09c99505-7971-4bca-a885-632350b05139",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_d4fa4484",
+    "title": "2026-08-22 Clued Kernel R5 K2 Cloud Data Foundation 本地实现验收通过：实现提交 ce699b0fe05001e04707b26b80f886a2a6d12db8，证据提交 1a939b9；",
+    "type_fields": {
+      "legacy_priority": 80,
+      "legacy_status": "current",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "state_kind": "legacy_import"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_76d8a4a701098649c9941083c96c4ddf"
+}

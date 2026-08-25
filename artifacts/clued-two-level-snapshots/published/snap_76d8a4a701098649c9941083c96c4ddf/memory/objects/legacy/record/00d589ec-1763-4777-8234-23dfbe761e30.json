@@ -1,0 +1,38 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "83096282e7a2b31316c39c9f9d39a7681c761a946aeb83b1f488b39f0f73fc3d",
+    "inline_payload": {
+      "archived_at": "2026-08-25T05:56:28.890377+00:00",
+      "content": "- 评审结论：基线核心思想（默认不加载/最小召回/Canonical Store/版本化幂等写入/无变化不动作）与现有 git 架构高度契合，P0-1~P0-6 六项审查中五项已由等价机制满足；主要缺口为隐私约束缺失（已补附录 C）、正文与文件架构的适用性歧义（已补适用性说明）",
+      "created_at": "2026-08-25T05:56:28.890377+00:00",
+      "id": "00d589ec-1763-4777-8234-23dfbe761e30",
+      "priority": 40,
+      "project_id": null,
+      "record_key": "umb:v1:mem_3118a075",
+      "record_type": "archive_snapshot",
+      "scope": "global",
+      "source_ref": "user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_3118a075",
+      "status": "archived",
+      "title": "- 评审结论：基线核心思想（默认不加载/最小召回/Canonical Store/版本化幂等写入/无变化不动作）与现有 git 架构高度契合，P0-1~P0-6 六项审查中五项已由等价机制满足；主要缺口为隐私约束缺失（已补附录 C）、正文与",
+      "updated_at": "2026-08-25T05:56:28.890377+00:00",
+      "version": 1
+    },
+    "kind": "legacy_record",
+    "legacy_id": "00d589ec-1763-4777-8234-23dfbe761e30",
+    "legacy_record_type": "archive_snapshot",
+    "legacy_schema_version": null,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_76d8a4a701098649c9941083c96c4ddf"
+}

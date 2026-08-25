@@ -1,0 +1,38 @@
+{
+  "canonical_id": "abd9cf89-3f5b-4fba-a0a7-baea3c2b459e",
+  "canonical_version": "cv_139",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "- 标准：陌生但自然、简单但有气质、有画面感、没有廉价造词痕迹",
+    "content_hash": "cebfa73cd1d5aca1b27928193cd24bf07cf998e25638b6e7ea93c296bc352689",
+    "id": "abd9cf89-3f5b-4fba-a0a7-baea3c2b459e",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "670553bf-3445-41b5-8690-c0613cc4e59e",
+    "record_schema_version": 1,
+    "record_type": "note",
+    "recorded_at": "2026-08-25T05:25:53.663563+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_1f952681",
+    "title": "- 标准：陌生但自然、简单但有气质、有画面感、没有廉价造词痕迹",
+    "type_fields": {
+      "legacy_priority": 40,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "note_kind": "legacy_import"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_76d8a4a701098649c9941083c96c4ddf"
+}

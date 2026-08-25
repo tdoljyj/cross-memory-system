@@ -1,0 +1,38 @@
+{
+  "canonical_id": "5568da69-a628-4c97-8c4d-5fd05da36db0",
+  "canonical_version": "cv_139",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "换行符/BOM 自愈（哈希比对前归一化，防 CRLF 漂移被误判为未同步）——冻结：.gitattributes 已锁定 LF 无 BOM，自愈反而掩盖差异",
+    "content_hash": "bc2a1faa3efed0541016bed1756f7249582ef5f40a80440b197540b21eb42f95",
+    "id": "5568da69-a628-4c97-8c4d-5fd05da36db0",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "eb3d1941-ddd1-496a-b373-27004e4a1f7b",
+    "record_schema_version": 1,
+    "record_type": "task",
+    "recorded_at": "2026-08-25T05:58:58.308278+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_88c53179",
+    "title": "换行符/BOM 自愈（哈希比对前归一化，防 CRLF 漂移被误判为未同步）——冻结：.gitattributes 已锁定 LF 无 BOM，自愈反而掩盖差异",
+    "type_fields": {
+      "execution_bucket": "later",
+      "legacy_priority": 40,
+      "legacy_status": "backlog",
+      "migration_batch": "m1-current-legacy-20260826-v1"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_76d8a4a701098649c9941083c96c4ddf"
+}

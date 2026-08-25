@@ -1,0 +1,38 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "ebae1a5bd9144012c30bb7f5e33a91134d8ff5f5aa81d5203f99ccf73ae648a5",
+    "inline_payload": {
+      "archived_at": "2026-08-25T06:01:57.082921+00:00",
+      "content": "- 2026-08-16 确立 vNext-1.3（Codex@TURING）：结构化召回索引 memory/index.json（files + L1–L6 recall 唯一事实源）；双端护栏改读 index.json files 清单（去硬编码 5）；双端 redact() 令牌掩码 + doctor 长期令牌环境变量提醒；凭据走 gh 助手、不 setx 长期令牌；验收测试 8→10 用例",
+      "created_at": "2026-08-25T06:01:57.082921+00:00",
+      "id": "7e6cc797-f21d-45b4-9373-93cad53c4d11",
+      "priority": 40,
+      "project_id": null,
+      "record_key": "umb:v1:mem_dc2ff76c",
+      "record_type": "archive_snapshot",
+      "scope": "global",
+      "source_ref": "user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_dc2ff76c",
+      "status": "archived",
+      "title": "- 2026-08-16 确立 vNext-1.3（Codex@TURING）：结构化召回索引 memory/index.json（files + L1–L6 recall 唯一事实源）；双端护栏改读 index.json files 清单",
+      "updated_at": "2026-08-25T06:01:57.082921+00:00",
+      "version": 1
+    },
+    "kind": "legacy_record",
+    "legacy_id": "7e6cc797-f21d-45b4-9373-93cad53c4d11",
+    "legacy_record_type": "archive_snapshot",
+    "legacy_schema_version": null,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_76d8a4a701098649c9941083c96c4ddf"
+}

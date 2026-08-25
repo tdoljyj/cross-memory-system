@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "id": "mem_026206b4",
+  "type": "state",
+  "scope": "project",
+  "content": "2026-08-26 Clued v1.6 M2 已按阈值启用持久快照运维能力：三消费者触发，3 个 ready 版本纳管；独占发布锁、expected-current CAS、有界重试（100/500/2000ms）、Reconciler、Sweeper/GC、连续 3 次失败文件告警均已实现并验证 healthy。current 已通过协调发布切换为 snap_76d8a4a701098649c9941083c96c4ddf / cv_139，previous 为 snap_d04d68806b63819ca12b7a2a58bf2f27。Event Rollup/ordering、冷存储、Index 分片、语义自动改写、Workspace/Team 与 Project/Record merge 因门禁未满足继续关闭。Node 63/63、v2 红线 14/14、pgTAP 72/72、typecheck、ESLint、DB lint、build 全绿。",
+  "status": "active",
+  "source": {
+    "kind": "user_explicit",
+    "adapter": "cli",
+    "session_id": null,
+    "created_at": "2026-08-25T22:12:07Z",
+    "updated_at": "2026-08-25T22:12:07Z"
+  },
+  "temporal": {
+    "valid_from": null,
+    "valid_until": null
+  },
+  "relations": {
+    "supersedes": [
+      "mem_1ce82c47"
+    ],
+    "superseded_by": [],
+    "contradicts": [],
+    "related": []
+  },
+  "classification": {
+    "memory_layer": "state",
+    "category": "state",
+    "recall_layer": "L3",
+    "priority": "high"
+  },
+  "provenance": {
+    "evidence": "explicit",
+    "source_ref": null
+  },
+  "tags": [
+    "clued",
+    "m1",
+    "v1.6",
+    "production"
+  ],
+  "entities": [
+    "clued",
+    "clued-cloud"
+  ],
+  "project_id": "clued"
+}

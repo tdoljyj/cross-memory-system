@@ -1,0 +1,12 @@
+{
+  "candidate_versions": [],
+  "deleted_versions": [],
+  "mode": "dry_run",
+  "occurred_at": "2026-08-25T22:08:50.7213831Z",
+  "protected_versions": [
+    "snap_76d8a4a701098649c9941083c96c4ddf",
+    "snap_d04d68806b63819ca12b7a2a58bf2f27",
+    "snap_e5a6daef8fbc934f3bdeff9b7de11a26"
+  ],
+  "status": "success"
+}

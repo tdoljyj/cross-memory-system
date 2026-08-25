@@ -1,0 +1,38 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "71c80564050cd62ee6630eb63f0522e80ceef6124f597ae03c07c1e8bb3a776c",
+    "inline_payload": {
+      "archived_at": "2026-08-25T05:56:50.202656+00:00",
+      "content": "- 实测（隔离仓库 E1~E4）：.gitattributes 的 merge=union 无 driver 是 no-op，归档.md 末尾追加（常态）即冲突；更严重的是 rebase + union driver 会 exit 0 假成功 + 静默丢单边内容（比冲突危险）。正确组合 = .gitattributes merge=union + git config merge.union.driver 'git merge-file --union %A %O %B' + 收敛用 git merge（非 rebase）",
+      "created_at": "2026-08-25T05:56:50.202656+00:00",
+      "id": "2114dd4a-f5cb-47ec-a2d8-9fbf08885632",
+      "priority": 40,
+      "project_id": null,
+      "record_key": "umb:v1:mem_3f963164",
+      "record_type": "archive_snapshot",
+      "scope": "global",
+      "source_ref": "user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_3f963164",
+      "status": "archived",
+      "title": "- 实测（隔离仓库 E1~E4）：.gitattributes 的 merge=union 无 driver 是 no-op，归档.md 末尾追加（常态）即冲突；更严重的是 rebase + union driver 会 exit 0 假成",
+      "updated_at": "2026-08-25T05:56:50.202656+00:00",
+      "version": 1
+    },
+    "kind": "legacy_record",
+    "legacy_id": "2114dd4a-f5cb-47ec-a2d8-9fbf08885632",
+    "legacy_record_type": "archive_snapshot",
+    "legacy_schema_version": null,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_76d8a4a701098649c9941083c96c4ddf"
+}

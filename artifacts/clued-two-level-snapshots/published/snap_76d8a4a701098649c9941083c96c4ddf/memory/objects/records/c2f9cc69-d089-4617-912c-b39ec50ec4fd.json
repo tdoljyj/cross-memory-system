@@ -1,0 +1,38 @@
+{
+  "canonical_id": "c2f9cc69-d089-4617-912c-b39ec50ec4fd",
+  "canonical_version": "cv_139",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "2026-08-23 Clued Kernel R5.1 必做主线 K4-K7 已完成并发布为 Beta Candidate。产品提交 3aa1cad752933bde624274e2c4ec0fb8be556fd2，证据提交 021ca5c3a20ba49711cae3b97bdab2096359687d，合并提交 b9a9f06be6784d8c9c9dc42ae5067db560db9f67；候选分支与 r5-kernel-k3-memory-lifecycle 已推送，注释标签 r5.1-beta-candidate-2026-08-23 与 GitHub prerelease 已发布。K7 全量 678 PASS / 0 FAIL / 0 ERROR / 0 SKIP，PostgreSQL K2 21/21、K3 18/18，硬门槛、Secret Scan、日志正文泄漏和真实 Binding 未授权修改均为 0。部署与真实 Binding 后端切换未执行，原因从授权阻断转为技术阻断：仓库无 deployment environment/产品部署 workflow，无生产 CloudSync adapter、endpoint/credential 配置或现有 Binding，R5.1 Doctor 为 DEGRADED 且 active_backend=null；语义召回仍关闭。",
+    "content_hash": "75ae4591b86ddb2d2d96803cf7379c56613dd0c09a932bd43a625d748e0ed532",
+    "id": "c2f9cc69-d089-4617-912c-b39ec50ec4fd",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "77f016af-727e-4506-9e79-bad9bc306896",
+    "record_schema_version": 1,
+    "record_type": "state",
+    "recorded_at": "2026-08-25T06:02:53.323731+00:00",
+    "relations": {},
+    "scope": "project:09c99505-7971-4bca-a885-632350b05139",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_ef3fd220",
+    "title": "2026-08-23 Clued Kernel R5.1 必做主线 K4-K7 已完成并发布为 Beta Candidate",
+    "type_fields": {
+      "legacy_priority": 80,
+      "legacy_status": "current",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "state_kind": "legacy_import"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_76d8a4a701098649c9941083c96c4ddf"
+}

@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "contract": "clued.m2.threshold-evaluation",
+  "evaluated_at": "2026-08-25T22:08:50.7213831Z",
+  "canonical_version": "cv_139",
+  "snapshot_version": "snap_76d8a4a701098649c9941083c96c4ddf",
+  "capabilities": {
+    "persistent_snapshot_store": {
+      "enabled": true,
+      "trigger": "multiple_consumers",
+      "observed_consumers": 3,
+      "minimum_consumers": 2
+    },
+    "event_rollup_and_cold_storage": {
+      "enabled": false,
+      "thresholds": {
+        "raw_event_count": 10000,
+        "raw_event_bytes": 67108864,
+        "requires_approved_retention_policy": true,
+        "requires_complete_stream_ordering": true
+      },
+      "observed": {
+        "raw_event_count": 391,
+        "snapshot_raw_event_files": 391,
+        "snapshot_raw_event_bytes": 477773,
+        "canonical_events": 126,
+        "sequenced_events": 0,
+        "distinct_streams": 0,
+        "approved_retention_policy": false
+      },
+      "reason": "No volume or retention threshold is met and no Event has provable stream sequencing; Raw Event retention remains mandatory."
+    },
+    "index_sharding": {
+      "enabled": false,
+      "thresholds": {
+        "index_bytes": 8388608,
+        "parse_p95_ms": 50
+      },
+      "observed": {
+        "index_bytes": 274059,
+        "benchmark_runs": 200,
+        "parse_p95_ms": 0.9703
+      },
+      "reason": "The single index remains below both size and latency SLOs."
+    },
+    "semantic_assist": {
+      "enabled": false,
+      "thresholds": {
+        "labeled_examples": 200,
+        "precision": 0.995,
+        "requires_reversible_preview": true,
+        "requires_false_merge_recovery": true
+      },
+      "observed": {
+        "labeled_examples": 0,
+        "reversible_preview": false,
+        "false_merge_recovery": false
+      },
+      "reason": "The labeled-set and reversible-safety gates are absent; canonical truth cannot be auto-rewritten."
+    },
+    "workspace_team": {
+      "enabled": false,
+      "requires_real_multi_member_authorization": true,
+      "observed_requirement": false
+    }
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "canonical_id": "d1db19a2-b30d-437a-bf01-f384340bbb31",
+  "canonical_version": "cv_139",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "AGENTS.md 按端参数化（当前以 Codex 路径为中心，WorkBuddy 侧副本陈旧且引用已删章节）——冻结：Codex 全局钩子已一致，WorkBuddy 侧 MEMORY.md 由 WorkBuddy 自管",
+    "content_hash": "e39a1ff904a334a5fe7ddac5153d88bd8317d6e84e065218878b17c32a347f1f",
+    "id": "d1db19a2-b30d-437a-bf01-f384340bbb31",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "1b59542b-f0c3-4837-83d0-280ecfea7634",
+    "record_schema_version": 1,
+    "record_type": "task",
+    "recorded_at": "2026-08-25T06:03:19.633306+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_fad7233d",
+    "title": "AGENTS.md 按端参数化（当前以 Codex 路径为中心，WorkBuddy 侧副本陈旧且引用已删章节）——冻结：Codex 全局钩子已一致，WorkBuddy 侧 MEMORY.md 由 WorkBuddy 自管",
+    "type_fields": {
+      "execution_bucket": "later",
+      "legacy_priority": 40,
+      "legacy_status": "backlog",
+      "migration_batch": "m1-current-legacy-20260826-v1"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_76d8a4a701098649c9941083c96c4ddf"
+}

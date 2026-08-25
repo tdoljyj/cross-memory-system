@@ -1,0 +1,38 @@
+{
+  "canonical_id": "c2e2382d-6598-49cc-8b1d-d2497d4a79c7",
+  "canonical_version": "cv_139",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "UE 项目驱动学习：先学立刻要用的部分",
+    "content_hash": "25352ce6374351ac53cf504ef6e2c78c3badfcdab5b4e35d30e8f879ac854441",
+    "id": "c2e2382d-6598-49cc-8b1d-d2497d4a79c7",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "d05db244-9c58-45fb-af29-c91c095d688e",
+    "record_schema_version": 1,
+    "record_type": "task",
+    "recorded_at": "2026-08-25T06:03:23.208009+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_fb67a697",
+    "title": "UE 项目驱动学习：先学立刻要用的部分",
+    "type_fields": {
+      "execution_bucket": "later",
+      "legacy_priority": 40,
+      "legacy_status": "backlog",
+      "migration_batch": "m1-current-legacy-20260826-v1"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_76d8a4a701098649c9941083c96c4ddf"
+}

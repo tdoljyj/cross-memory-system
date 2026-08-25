@@ -1,0 +1,38 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "3d0acca252af74e53270fdac3188477217f162b0404b83e2586b7d1750ad4bf6",
+    "inline_payload": {
+      "archived_at": "2026-08-25T05:56:25.880389+00:00",
+      "content": "- WorkBuddy 从「只追加归档」升级为完全双向（可读写全部 5 文件）；多方架构 = git 唯一数据源 + 各端独立镜像 + 不越界 + 身份提交；新 AI 接入 = 克隆仓库 + 遵守写入纪律",
+      "created_at": "2026-08-25T05:56:25.880389+00:00",
+      "id": "919db38e-cf70-46f1-a690-c9be3edbbcbc",
+      "priority": 40,
+      "project_id": null,
+      "record_key": "umb:v1:mem_2f517921",
+      "record_type": "archive_snapshot",
+      "scope": "global",
+      "source_ref": "user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_2f517921",
+      "status": "archived",
+      "title": "- WorkBuddy 从「只追加归档」升级为完全双向（可读写全部 5 文件）；多方架构 = git 唯一数据源 + 各端独立镜像 + 不越界 + 身份提交；新 AI 接入 = 克隆仓库 + 遵守写入纪律",
+      "updated_at": "2026-08-25T05:56:25.880389+00:00",
+      "version": 1
+    },
+    "kind": "legacy_record",
+    "legacy_id": "919db38e-cf70-46f1-a690-c9be3edbbcbc",
+    "legacy_record_type": "archive_snapshot",
+    "legacy_schema_version": null,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_76d8a4a701098649c9941083c96c4ddf"
+}

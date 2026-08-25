@@ -1,0 +1,38 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "d529da07339e7a80cd60b219e24b50149846bc7a559d8d01920329fdc3b9d138",
+    "inline_payload": {
+      "archived_at": "2026-08-25T06:02:40.091514+00:00",
+      "content": "- 完整访问权限：config.toml 的 sandbox_mode / approval_policy / writable_roots 对桌面版会话不生效——权限由应用注入的受管 profile 决定；正确启用 = 桌面 App 设置开 Full access + 发送前权限菜单选该模式 + 开新会话（08-15 复测稳定）。残余限制（shell 写 Documents\\Codex 内容目录只读、raw TCP 直连不通）不阻塞工作",
+      "created_at": "2026-08-25T06:02:40.091514+00:00",
+      "id": "1e656f41-8c7d-49b9-bbdf-72e0d0e67d59",
+      "priority": 40,
+      "project_id": null,
+      "record_key": "umb:v1:mem_eb1f154b",
+      "record_type": "archive_snapshot",
+      "scope": "global",
+      "source_ref": "user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_eb1f154b",
+      "status": "archived",
+      "title": "- 完整访问权限：config.toml 的 sandbox_mode / approval_policy / writable_roots 对桌面版会话不生效——权限由应用注入的受管 profile 决定；正确启用 = 桌面 App 设置",
+      "updated_at": "2026-08-25T06:02:40.091514+00:00",
+      "version": 1
+    },
+    "kind": "legacy_record",
+    "legacy_id": "1e656f41-8c7d-49b9-bbdf-72e0d0e67d59",
+    "legacy_record_type": "archive_snapshot",
+    "legacy_schema_version": null,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_76d8a4a701098649c9941083c96c4ddf"
+}

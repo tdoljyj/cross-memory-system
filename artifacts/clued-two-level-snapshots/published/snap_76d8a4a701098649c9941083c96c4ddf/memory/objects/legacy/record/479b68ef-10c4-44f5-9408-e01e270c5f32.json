@@ -1,0 +1,38 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "e44b05fa9cc832c23be1d7dfbf05fe4412d1cc4f9d1320caca55047d966d365a",
+    "inline_payload": {
+      "archived_at": "2026-08-25T05:59:46.243526+00:00",
+      "content": "- ~/.codex 写入：编辑器路径可写，钩子 / config 可由 AI 维护；此前「不认 writable_roots」实为会话 / 版本差异",
+      "created_at": "2026-08-25T05:59:46.243526+00:00",
+      "id": "479b68ef-10c4-44f5-9408-e01e270c5f32",
+      "priority": 40,
+      "project_id": null,
+      "record_key": "umb:v1:mem_9e9561b0",
+      "record_type": "archive_snapshot",
+      "scope": "global",
+      "source_ref": "user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_9e9561b0",
+      "status": "archived",
+      "title": "- ~/.codex 写入：编辑器路径可写，钩子 / config 可由 AI 维护；此前「不认 writable_roots」实为会话 / 版本差异",
+      "updated_at": "2026-08-25T05:59:46.243526+00:00",
+      "version": 1
+    },
+    "kind": "legacy_record",
+    "legacy_id": "479b68ef-10c4-44f5-9408-e01e270c5f32",
+    "legacy_record_type": "archive_snapshot",
+    "legacy_schema_version": null,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_76d8a4a701098649c9941083c96c4ddf"
+}

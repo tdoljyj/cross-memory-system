@@ -1,0 +1,38 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "dd7cfb7c74d6188d5742fcb4114431bed7da749a3d36ee3e29b929bbeb41af9c",
+    "inline_payload": {
+      "archived_at": "2026-08-25T06:03:04.072065+00:00",
+      "content": "- 触发：Chase 逐项核对「新电脑接入」段落（README）指正 6 处；核实后 4 处需改、2 处核实无误（端侧差异表与 doctor 命令表本就在 README 59–71 行；.gitattributes 已含 memory/归档.md merge=union）",
+      "created_at": "2026-08-25T06:03:04.072065+00:00",
+      "id": "7178e759-4b53-4153-8325-a69d0c84bc22",
+      "priority": 40,
+      "project_id": null,
+      "record_key": "umb:v1:mem_f44f7166",
+      "record_type": "archive_snapshot",
+      "scope": "global",
+      "source_ref": "user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_f44f7166",
+      "status": "archived",
+      "title": "- 触发：Chase 逐项核对「新电脑接入」段落（README）指正 6 处；核实后 4 处需改、2 处核实无误（端侧差异表与 doctor 命令表本就在 README 59–71 行；.gitattributes 已含 memory/归档",
+      "updated_at": "2026-08-25T06:03:04.072065+00:00",
+      "version": 1
+    },
+    "kind": "legacy_record",
+    "legacy_id": "7178e759-4b53-4153-8325-a69d0c84bc22",
+    "legacy_record_type": "archive_snapshot",
+    "legacy_schema_version": null,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_76d8a4a701098649c9941083c96c4ddf"
+}

@@ -1,0 +1,38 @@
+{
+  "canonical_id": "5d8becfd-4d46-4708-9ed1-2ecca436218b",
+  "canonical_version": "cv_139",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "- 高信息密度型用户：不怕复杂，怕浪费时间",
+    "content_hash": "1988f35d2f4a40634932a9fce77dc97578205a9a7c91275363f6c9fc919f19a1",
+    "id": "5d8becfd-4d46-4708-9ed1-2ecca436218b",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "7a1d3a27-9b92-4843-88f0-38905fd00143",
+    "record_schema_version": 1,
+    "record_type": "note",
+    "recorded_at": "2026-08-25T06:02:37.405177+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_eae28007",
+    "title": "- 高信息密度型用户：不怕复杂，怕浪费时间",
+    "type_fields": {
+      "legacy_priority": 40,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "note_kind": "legacy_import"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_76d8a4a701098649c9941083c96c4ddf"
+}
