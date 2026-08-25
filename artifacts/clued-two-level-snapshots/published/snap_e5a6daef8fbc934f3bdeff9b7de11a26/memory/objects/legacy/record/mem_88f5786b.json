@@ -1,0 +1,62 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "21778b6ae98caf3e58b21a356cff50da316f87d7606a33d7c1928cf764e35c85",
+    "inline_payload": {
+      "classification": {
+        "category": "history",
+        "memory_layer": "episodic",
+        "priority": "medium",
+        "recall_layer": "L4"
+      },
+      "content": "- 结论：P0=0、P1=0；P2×4（保留期口径漂移 2 天 vs 7 天[决策点] / 决策.md:18 凭据旧口径未 superseded / doctor 探针集不对称 / tag 落后 HEAD 30 提交）+ P3×10（报错口径/README 缺 DSH 行/配置手册行内注记/guards 回落警示/PID 锁复用/fetch 冗余/TEMP listdir/deploy-guard trap 噪音/AGENTS 表↔index 一致性测试/index 路径净化）；十模块核心不变量全部 CONFORM",
+      "entities": [],
+      "id": "mem_88f5786b",
+      "provenance": {
+        "evidence": "observed",
+        "source_ref": "归档.md##代码级 Gap Audit（vNext-1.3 基线冻结，2026-08-16，DSH@TURING）"
+      },
+      "relations": {
+        "contradicts": [],
+        "related": [],
+        "superseded_by": [],
+        "supersedes": []
+      },
+      "schema_version": 1,
+      "scope": "global",
+      "source": {
+        "adapter": "migrate-memory.py",
+        "created_at": "2026-08-17T07:50:27Z",
+        "kind": "migration",
+        "session_id": null,
+        "updated_at": "2026-08-17T07:50:27Z"
+      },
+      "status": "candidate",
+      "tags": [
+        "manual-review"
+      ],
+      "temporal": {
+        "valid_from": null,
+        "valid_until": null
+      },
+      "type": "episodic"
+    },
+    "kind": "legacy_record",
+    "legacy_id": "mem_88f5786b",
+    "legacy_record_type": "episodic",
+    "legacy_schema_version": 1,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "canonical_id",
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_e5a6daef8fbc934f3bdeff9b7de11a26"
+}

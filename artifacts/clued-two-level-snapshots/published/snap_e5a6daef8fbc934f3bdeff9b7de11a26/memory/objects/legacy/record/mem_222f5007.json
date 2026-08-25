@@ -1,0 +1,62 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "d503a0f8a95d0aea66234bad0d863c3a6d3ac741b4a2b12c33a4886a6f0acb5a",
+    "inline_payload": {
+      "classification": {
+        "category": "history",
+        "memory_layer": "episodic",
+        "priority": "medium",
+        "recall_layer": "L4"
+      },
+      "content": "- R1 回写：Documents\\Codex\\memory 三文件（决策/归档/待办）已由编辑器通道（Write 工具）回写仓库权威版，三方字节一致；.pending-writeback 已清。通道经验：Documents 对 Bash cp / Python open('wb') 均只读（Bad file descriptor / 禁止新建），但 Write/apply_patch 类编辑器通道可写",
+      "entities": [],
+      "id": "mem_222f5007",
+      "provenance": {
+        "evidence": "observed",
+        "source_ref": "归档.md##收敛策略修正 rebase→merge + union driver 落地（2026-08-16 01:50，WorkBuddy）"
+      },
+      "relations": {
+        "contradicts": [],
+        "related": [],
+        "superseded_by": [],
+        "supersedes": []
+      },
+      "schema_version": 1,
+      "scope": "global",
+      "source": {
+        "adapter": "migrate-memory.py",
+        "created_at": "2026-08-17T07:50:27Z",
+        "kind": "migration",
+        "session_id": null,
+        "updated_at": "2026-08-17T07:50:27Z"
+      },
+      "status": "candidate",
+      "tags": [
+        "manual-review"
+      ],
+      "temporal": {
+        "valid_from": null,
+        "valid_until": null
+      },
+      "type": "episodic"
+    },
+    "kind": "legacy_record",
+    "legacy_id": "mem_222f5007",
+    "legacy_record_type": "episodic",
+    "legacy_schema_version": 1,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "canonical_id",
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_e5a6daef8fbc934f3bdeff9b7de11a26"
+}

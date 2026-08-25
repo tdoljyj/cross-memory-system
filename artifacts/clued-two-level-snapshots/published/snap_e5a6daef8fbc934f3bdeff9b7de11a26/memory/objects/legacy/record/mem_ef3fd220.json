@@ -1,0 +1,72 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "e0e69ab862f3bacc7b087189c8185d024606b02092363c45e1e6261c3d34d734",
+    "inline_payload": {
+      "classification": {
+        "category": "state",
+        "memory_layer": "state",
+        "priority": "high",
+        "recall_layer": "L3"
+      },
+      "content": "2026-08-23 Clued Kernel R5.1 必做主线 K4-K7 已完成并发布为 Beta Candidate。产品提交 3aa1cad752933bde624274e2c4ec0fb8be556fd2，证据提交 021ca5c3a20ba49711cae3b97bdab2096359687d，合并提交 b9a9f06be6784d8c9c9dc42ae5067db560db9f67；候选分支与 r5-kernel-k3-memory-lifecycle 已推送，注释标签 r5.1-beta-candidate-2026-08-23 与 GitHub prerelease 已发布。K7 全量 678 PASS / 0 FAIL / 0 ERROR / 0 SKIP，PostgreSQL K2 21/21、K3 18/18，硬门槛、Secret Scan、日志正文泄漏和真实 Binding 未授权修改均为 0。部署与真实 Binding 后端切换未执行，原因从授权阻断转为技术阻断：仓库无 deployment environment/产品部署 workflow，无生产 CloudSync adapter、endpoint/credential 配置或现有 Binding，R5.1 Doctor 为 DEGRADED 且 active_backend=null；语义召回仍关闭。",
+      "entities": [
+        "Clued Kernel R5",
+        "K2",
+        "PostgreSQL"
+      ],
+      "id": "mem_ef3fd220",
+      "project_id": "clued-kernel-r5",
+      "provenance": {
+        "evidence": "explicit",
+        "source_ref": null
+      },
+      "relations": {
+        "contradicts": [],
+        "related": [],
+        "superseded_by": [],
+        "supersedes": [
+          "mem_525ea2c2"
+        ]
+      },
+      "schema_version": 1,
+      "scope": "project",
+      "source": {
+        "adapter": "cli",
+        "created_at": "2026-08-22T23:09:38Z",
+        "kind": "user_explicit",
+        "session_id": null,
+        "updated_at": "2026-08-22T23:09:38Z"
+      },
+      "status": "active",
+      "tags": [
+        "Clued",
+        "R5",
+        "K2",
+        "Cloud Data Foundation"
+      ],
+      "temporal": {
+        "valid_from": null,
+        "valid_until": null
+      },
+      "type": "state"
+    },
+    "kind": "legacy_record",
+    "legacy_id": "mem_ef3fd220",
+    "legacy_record_type": "state",
+    "legacy_schema_version": 1,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "canonical_id",
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_e5a6daef8fbc934f3bdeff9b7de11a26"
+}

@@ -1,0 +1,71 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "efa108133c8df725e83ed389aea2d7b82fdeda2d21dd476ac1ecc15340a24d49",
+    "inline_payload": {
+      "classification": {
+        "category": "state",
+        "memory_layer": "state",
+        "priority": "high",
+        "recall_layer": "L3"
+      },
+      "content": "Clued 正式 Unified Record V2 已启用并 PASS：正式 clued-cloud deployment cd3aee40-9c4b-4c7c-ac4f-e3c496668ed7 / Version 56d2a481-9d3c-4237-859c-7144b6f88059 以100%流量生效，Bindings为ASSETS/IMAGES/PROJECT_VIEWS_V2=true。正式域名与workers.dev均为Kernel0.3.1、V2 true、Record工具2个，未认证读写/MCP继续401，固定观察10/10零失败。生产Project/Mention/Memory/Event/Receipt保持0/0/5/7/10，active Binding/record write/RLS-disabled table均为0。即时回滚点为V2关闭版3b5d1627-e53f-44cf-b26c-26717ebe6e5c；扩大导入、manual-review、PR merge与旧路径下线仍需独立批准。",
+      "entities": [
+        "clued",
+        "clued-cloud",
+        "project_views_v2"
+      ],
+      "id": "mem_c642448c",
+      "project_id": "clued",
+      "provenance": {
+        "evidence": "explicit",
+        "source_ref": null
+      },
+      "relations": {
+        "contradicts": [],
+        "related": [],
+        "superseded_by": [],
+        "supersedes": [
+          "mem_efd476f0"
+        ]
+      },
+      "schema_version": 1,
+      "scope": "project",
+      "source": {
+        "adapter": "cli",
+        "created_at": "2026-08-24T15:29:44Z",
+        "kind": "user_explicit",
+        "session_id": null,
+        "updated_at": "2026-08-24T15:29:44Z"
+      },
+      "status": "active",
+      "tags": [
+        "clued",
+        "stage8a",
+        "release-readiness"
+      ],
+      "temporal": {
+        "valid_from": null,
+        "valid_until": null
+      },
+      "type": "state"
+    },
+    "kind": "legacy_record",
+    "legacy_id": "mem_c642448c",
+    "legacy_record_type": "state",
+    "legacy_schema_version": 1,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "canonical_id",
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_e5a6daef8fbc934f3bdeff9b7de11a26"
+}

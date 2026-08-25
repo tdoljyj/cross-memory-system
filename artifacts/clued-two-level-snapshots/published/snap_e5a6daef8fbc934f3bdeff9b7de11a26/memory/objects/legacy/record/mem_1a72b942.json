@@ -1,0 +1,73 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "217f38374201a594ed277e385df56da0140b0c1bf69749d68b2ca85e7f27c6c3",
+    "inline_payload": {
+      "classification": {
+        "category": "constraint",
+        "memory_layer": "semantic",
+        "priority": "high",
+        "recall_layer": "L5"
+      },
+      "content": "2026-08-22 K2 独立裁决为 PARTIAL PASS，K3 继续 LOCKED。必须补齐并实测：跨账号相同 memory_id 隔离、RLS 遗漏表故障注入、实际 migration 中断、change_event 缺口注入、rollback 后不变量，并保存脱敏原始 transcript、server log 哈希和 backup 哈希；重新独立裁决为 PASS 且获得新的明确 K3 授权前，禁止进入 K3。继续禁止未授权 push/merge/tag/release/deploy、真实 Binding 变更与语义召回启用。",
+      "entities": [
+        "cross-memory-system",
+        "Clued-Kernel"
+      ],
+      "id": "mem_1a72b942",
+      "provenance": {
+        "evidence": "explicit",
+        "source_ref": null
+      },
+      "relations": {
+        "contradicts": [],
+        "related": [],
+        "superseded_by": [
+          "mem_60b4dce9"
+        ],
+        "supersedes": [
+          "mem_110c1854"
+        ]
+      },
+      "schema_version": 1,
+      "scope": "global",
+      "source": {
+        "adapter": "cli",
+        "created_at": "2026-08-22T09:01:36Z",
+        "kind": "user_explicit",
+        "session_id": null,
+        "updated_at": "2026-08-22T10:11:42Z"
+      },
+      "status": "superseded",
+      "tags": [
+        "R5",
+        "K0",
+        "K1",
+        "NO_GO",
+        "LOCKED"
+      ],
+      "temporal": {
+        "valid_from": null,
+        "valid_until": "2026-08-22T10:11:42Z"
+      },
+      "type": "semantic"
+    },
+    "kind": "legacy_record",
+    "legacy_id": "mem_1a72b942",
+    "legacy_record_type": "semantic",
+    "legacy_schema_version": 1,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "canonical_id",
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_e5a6daef8fbc934f3bdeff9b7de11a26"
+}

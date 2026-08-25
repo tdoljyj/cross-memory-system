@@ -1,0 +1,74 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "618e893d5d0ba5e49d256359c207136e4df70289fb7b9dc86563be1b924bef79",
+    "inline_payload": {
+      "classification": {
+        "category": "state",
+        "memory_layer": "state",
+        "priority": "high",
+        "recall_layer": "L3"
+      },
+      "content": "2026-08-22 Clued Kernel R5 K2 已完成独立裁决，结果为 PARTIAL PASS，不允许解锁 K3。冻结链 500386a→ce699b0→1a939b9、工作树和 7 项 receipt 哈希均核对通过，独立复跑 K2 静态 14/14、K1 9/9；但 K2 十项必测仅 5 PASS/3 PARTIAL/2 MISSING：跨账号相同 memory_id、rollback 后数据不变量缺失，RLS 遗漏表、实际 migration 中断、change_event 缺口仅部分覆盖，且未保存可独立复核的 PostgreSQL 原始 transcript、脱敏 server log 和 backup 哈希。K2 分支仍未 push/merge/tag/release/deploy，真实 Binding 未变，语义召回关闭。",
+      "entities": [
+        "Clued Kernel R5",
+        "K2",
+        "PostgreSQL"
+      ],
+      "id": "mem_144c832a",
+      "project_id": "clued-kernel-r5",
+      "provenance": {
+        "evidence": "explicit",
+        "source_ref": null
+      },
+      "relations": {
+        "contradicts": [],
+        "related": [],
+        "superseded_by": [
+          "mem_4a56666f"
+        ],
+        "supersedes": [
+          "mem_d4fa4484"
+        ]
+      },
+      "schema_version": 1,
+      "scope": "project",
+      "source": {
+        "adapter": "cli",
+        "created_at": "2026-08-22T09:01:35Z",
+        "kind": "user_explicit",
+        "session_id": null,
+        "updated_at": "2026-08-22T10:11:42Z"
+      },
+      "status": "superseded",
+      "tags": [
+        "Clued",
+        "R5",
+        "K2",
+        "Cloud Data Foundation"
+      ],
+      "temporal": {
+        "valid_from": null,
+        "valid_until": "2026-08-22T10:11:42Z"
+      },
+      "type": "state"
+    },
+    "kind": "legacy_record",
+    "legacy_id": "mem_144c832a",
+    "legacy_record_type": "state",
+    "legacy_schema_version": 1,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "canonical_id",
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_e5a6daef8fbc934f3bdeff9b7de11a26"
+}

@@ -1,0 +1,71 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "345e14fe4b40264d1dabaa57fb910adb5eae81c4433edeeca64a5757bf737fe5",
+    "inline_payload": {
+      "classification": {
+        "category": "constraint",
+        "memory_layer": "semantic",
+        "priority": "high",
+        "recall_layer": "L5"
+      },
+      "content": "2026-08-23 Clued Kernel R5 K3 Gate 已 PASS，先前“本地实施中/尚未完成/未 push”状态已结束。分支 r5-kernel-k3-memory-lifecycle、标签 r5-k3-portable-gate-2026-08-23、GitHub Release 与完整历史 bundle 均已上传并核验；真实 Binding 与语义召回未变，今后的 deploy 或 Binding 变更仍需明确授权。",
+      "entities": [
+        "cross-memory-system",
+        "Clued-Kernel"
+      ],
+      "id": "mem_4cd51231",
+      "provenance": {
+        "evidence": "explicit",
+        "source_ref": null
+      },
+      "relations": {
+        "contradicts": [],
+        "related": [],
+        "superseded_by": [],
+        "supersedes": [
+          "mem_cd589650"
+        ]
+      },
+      "schema_version": 1,
+      "scope": "global",
+      "source": {
+        "adapter": "cli",
+        "created_at": "2026-08-22T17:12:20Z",
+        "kind": "user_explicit",
+        "session_id": null,
+        "updated_at": "2026-08-22T17:12:20Z"
+      },
+      "status": "active",
+      "tags": [
+        "R5",
+        "K0",
+        "K1",
+        "NO_GO",
+        "LOCKED"
+      ],
+      "temporal": {
+        "valid_from": null,
+        "valid_until": null
+      },
+      "type": "semantic"
+    },
+    "kind": "legacy_record",
+    "legacy_id": "mem_4cd51231",
+    "legacy_record_type": "semantic",
+    "legacy_schema_version": 1,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "canonical_id",
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_e5a6daef8fbc934f3bdeff9b7de11a26"
+}

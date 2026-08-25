@@ -1,0 +1,71 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "3dcfb170c13158760d9d8a208538684947b26e9065d5d150433c6122b05a3f13",
+    "inline_payload": {
+      "classification": {
+        "category": "state",
+        "memory_layer": "state",
+        "priority": "high",
+        "recall_layer": "L3"
+      },
+      "content": "2026-08-23，clued.pixelgrav.com 已从 OpenAI Sites 迁移到自有 Cloudflare Workers（Worker clued-cloud）。旧 Sites 自定义域名映射已解除但旧站内容保留；Cloudflare 自定义域名、DNS 与 HTTPS 已生效，首页、favicon、OG 图片经普通公网验收均返回 200，原 chatgpt.site 边缘 403 问题已闭环。",
+      "entities": [
+        "clued.pixelgrav.com",
+        "OpenAI Sites",
+        "Cloudflare"
+      ],
+      "id": "mem_463415ca",
+      "project_id": "clued.pixelgrav.com",
+      "provenance": {
+        "evidence": "observed",
+        "source_ref": null
+      },
+      "relations": {
+        "contradicts": [],
+        "related": [],
+        "superseded_by": [],
+        "supersedes": []
+      },
+      "schema_version": 1,
+      "scope": "project",
+      "source": {
+        "adapter": "memory.py",
+        "created_at": "2026-08-23T06:33:28Z",
+        "kind": "observed",
+        "session_id": null,
+        "updated_at": "2026-08-23T07:10:35Z"
+      },
+      "status": "active",
+      "tags": [
+        "clued",
+        "website",
+        "sites",
+        "cloudflare",
+        "waf"
+      ],
+      "temporal": {
+        "valid_from": null,
+        "valid_until": null
+      },
+      "type": "state"
+    },
+    "kind": "legacy_record",
+    "legacy_id": "mem_463415ca",
+    "legacy_record_type": "state",
+    "legacy_schema_version": 1,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "canonical_id",
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_e5a6daef8fbc934f3bdeff9b7de11a26"
+}

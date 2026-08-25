@@ -1,0 +1,62 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "fb495c300e61dc2e721e44c25fd4a9223db82b723a27ff25cf6e233d4ff8cdb6",
+    "inline_payload": {
+      "classification": {
+        "category": "history",
+        "memory_layer": "episodic",
+        "priority": "medium",
+        "recall_layer": "L4"
+      },
+      "content": "- 结论：架构成立（四层结构 + Canonical Store + 护栏族经三轮审计验证）；发现 P1×3——① ps1 push 卷入预 staged 非 memory 文件（密钥扫描绕过：staged 令牌文件随 memory sync 提交推上远端[实证]；无 memory 变化仍产生推送→NO_CHANGE 违约[实证]）；② 部署护栏黑名单漏「DSH 克隆×ps1」单元格（跨端污染+身份伪造路径）；③ py REPO 回落默认指向 WorkBuddy 克隆（fail-open 越界默认）。另 P2×8 + P3×9（探针对象错位、保留期漂移、决策.md 凭据口径并存、基线第十二节与变更记录矛盾、tag 落后 HEAD 12 提交等）",
+      "entities": [],
+      "id": "mem_21d4095e",
+      "provenance": {
+        "evidence": "observed",
+        "source_ref": "归档.md##DSH 端全面实现审计与技术评估（2026-08-16，DSH@TURING）"
+      },
+      "relations": {
+        "contradicts": [],
+        "related": [],
+        "superseded_by": [],
+        "supersedes": []
+      },
+      "schema_version": 1,
+      "scope": "global",
+      "source": {
+        "adapter": "migrate-memory.py",
+        "created_at": "2026-08-17T07:50:27Z",
+        "kind": "migration",
+        "session_id": null,
+        "updated_at": "2026-08-17T07:50:27Z"
+      },
+      "status": "candidate",
+      "tags": [
+        "manual-review"
+      ],
+      "temporal": {
+        "valid_from": null,
+        "valid_until": null
+      },
+      "type": "episodic"
+    },
+    "kind": "legacy_record",
+    "legacy_id": "mem_21d4095e",
+    "legacy_record_type": "episodic",
+    "legacy_schema_version": 1,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "canonical_id",
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_e5a6daef8fbc934f3bdeff9b7de11a26"
+}

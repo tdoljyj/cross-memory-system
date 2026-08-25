@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-08-24T17:18:22Z",
-  "count": 263,
+  "generated_at": "2026-08-25T16:19:27Z",
+  "count": 266,
   "objects": {
     "mem_012b899e": {
       "path": "memory/objects/mem_012b899e.json",
@@ -465,6 +465,27 @@
       "category": "preference",
       "tags": [],
       "entities": [],
+      "valid_from": null,
+      "valid_until": null,
+      "supersedes": [],
+      "superseded_by": []
+    },
+    "mem_20f858e3": {
+      "path": "memory/objects/mem_20f858e3.json",
+      "type": "state",
+      "scope": "project",
+      "status": "active",
+      "priority": "high",
+      "category": "todo",
+      "tags": [
+        "clued",
+        "m1",
+        "v1.6"
+      ],
+      "entities": [
+        "clued",
+        "clued-cloud"
+      ],
       "valid_from": null,
       "valid_until": null,
       "supersedes": [],
@@ -2103,15 +2124,17 @@
       "path": "memory/objects/mem_8c35bf42.json",
       "type": "semantic",
       "scope": "project",
-      "status": "active",
+      "status": "superseded",
       "priority": "high",
       "category": "decision",
       "tags": [],
       "entities": [],
       "valid_from": null,
-      "valid_until": null,
+      "valid_until": "2026-08-25T16:19:27Z",
       "supersedes": [],
-      "superseded_by": []
+      "superseded_by": [
+        "mem_9540a21b"
+      ]
     },
     "mem_8c4e5d9a": {
       "path": "memory/objects/mem_8c4e5d9a.json",
@@ -2277,6 +2300,22 @@
       "valid_from": null,
       "valid_until": null,
       "supersedes": [],
+      "superseded_by": []
+    },
+    "mem_9540a21b": {
+      "path": "memory/objects/mem_9540a21b.json",
+      "type": "semantic",
+      "scope": "project",
+      "status": "active",
+      "priority": "high",
+      "category": "decision",
+      "tags": [],
+      "entities": [],
+      "valid_from": null,
+      "valid_until": null,
+      "supersedes": [
+        "mem_8c35bf42"
+      ],
       "superseded_by": []
     },
     "mem_9a17e34e": {
@@ -3599,6 +3638,27 @@
       "category": "preference",
       "tags": [],
       "entities": [],
+      "valid_from": null,
+      "valid_until": null,
+      "supersedes": [],
+      "superseded_by": []
+    },
+    "mem_e1a85496": {
+      "path": "memory/objects/mem_e1a85496.json",
+      "type": "state",
+      "scope": "project",
+      "status": "active",
+      "priority": "high",
+      "category": "state",
+      "tags": [
+        "clued",
+        "m0",
+        "v1.6"
+      ],
+      "entities": [
+        "clued",
+        "clued-cloud"
+      ],
       "valid_from": null,
       "valid_until": null,
       "supersedes": [],

@@ -1,0 +1,73 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "f42c817827b98bc89dbd656a413bd16df97f719831af50d32a05d81bc6acafa5",
+    "inline_payload": {
+      "classification": {
+        "category": "state",
+        "memory_layer": "state",
+        "priority": "high",
+        "recall_layer": "L3"
+      },
+      "content": "Clued 阶段 8B-2 已 PASS：生产按序应用 project_lifecycle_v1 与 unified_record_v2 additive migration；RLS、private core revoke、最小包装器授权、pgTAP 16/16、legacy Memory CRUD 与 3 条摘要审计全部通过，所有探针回滚且数据保持 Project/Mention/Memory/Event/Receipt 0/0/0/2/5。PROJECT_VIEWS_V2 继续关闭，Worker 仍为 bf0038c3-1456-4653-bdcf-f962ff962ec4 / Kernel 0.3.0，未导入、未部署、未改 DNS/Binding/密钥；下一步需用户明确确认后进入 8B-3 独立 canary。",
+      "entities": [
+        "clued",
+        "clued-cloud",
+        "project_views_v2"
+      ],
+      "id": "mem_152b651b",
+      "project_id": "clued",
+      "provenance": {
+        "evidence": "explicit",
+        "source_ref": null
+      },
+      "relations": {
+        "contradicts": [],
+        "related": [],
+        "superseded_by": [
+          "mem_b3f14978"
+        ],
+        "supersedes": [
+          "mem_caa21170"
+        ]
+      },
+      "schema_version": 1,
+      "scope": "project",
+      "source": {
+        "adapter": "cli",
+        "created_at": "2026-08-24T11:41:09Z",
+        "kind": "user_explicit",
+        "session_id": null,
+        "updated_at": "2026-08-24T14:25:31Z"
+      },
+      "status": "superseded",
+      "tags": [
+        "clued",
+        "stage8a",
+        "release-readiness"
+      ],
+      "temporal": {
+        "valid_from": null,
+        "valid_until": "2026-08-24T14:25:31Z"
+      },
+      "type": "state"
+    },
+    "kind": "legacy_record",
+    "legacy_id": "mem_152b651b",
+    "legacy_record_type": "state",
+    "legacy_schema_version": 1,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "canonical_id",
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_e5a6daef8fbc934f3bdeff9b7de11a26"
+}

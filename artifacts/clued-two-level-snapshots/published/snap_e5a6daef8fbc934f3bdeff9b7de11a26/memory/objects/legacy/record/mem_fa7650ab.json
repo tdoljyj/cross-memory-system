@@ -1,0 +1,62 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "2ac0c19a5e4a55d399f50a118ccc91cafbce1df4e7bbd1e3ddfe89da5f8c9136",
+    "inline_payload": {
+      "classification": {
+        "category": "history",
+        "memory_layer": "episodic",
+        "priority": "medium",
+        "recall_layer": "L4"
+      },
+      "content": "- 产出：《Sprint3专项审计与封版报告-vNext-1.3.md》（仓库根）。vNext-1.3 Stable Baseline / 可封版；vNext-1.4 仅在核心问题不可代码修复或明确服务化需求时评估",
+      "entities": [],
+      "id": "mem_fa7650ab",
+      "provenance": {
+        "evidence": "observed",
+        "source_ref": "归档.md##Sprint 3 完成与封版（2026-08-16，DSH@TURING）"
+      },
+      "relations": {
+        "contradicts": [],
+        "related": [],
+        "superseded_by": [],
+        "supersedes": []
+      },
+      "schema_version": 1,
+      "scope": "global",
+      "source": {
+        "adapter": "migrate-memory.py",
+        "created_at": "2026-08-17T07:50:27Z",
+        "kind": "migration",
+        "session_id": null,
+        "updated_at": "2026-08-17T07:50:27Z"
+      },
+      "status": "candidate",
+      "tags": [
+        "manual-review"
+      ],
+      "temporal": {
+        "valid_from": null,
+        "valid_until": null
+      },
+      "type": "episodic"
+    },
+    "kind": "legacy_record",
+    "legacy_id": "mem_fa7650ab",
+    "legacy_record_type": "episodic",
+    "legacy_schema_version": 1,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "canonical_id",
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_e5a6daef8fbc934f3bdeff9b7de11a26"
+}

@@ -1,0 +1,62 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "55fcf48d9bb4be2ed51773f4fd1d7891cfba027c514a7e0db883af686e2097d2",
+    "inline_payload": {
+      "classification": {
+        "category": "history",
+        "memory_layer": "episodic",
+        "priority": "medium",
+        "recall_layer": "L4"
+      },
+      "content": "- 凭据：两克隆 credential.helper 默认 helper-selector → pull 报 could not read Username；仓库级设 credential.https://github.com.helper = !gh auth git-credential（gist 同）通过。! 前缀 = 让 git 当 shell 命令执行，否则按 git-credential-XXX 协议查找失败、降级 selector 弹窗",
+      "entities": [],
+      "id": "mem_e787c46a",
+      "provenance": {
+        "evidence": "observed",
+        "source_ref": "归档.md##记忆系统接入与 GitHub（2026-08-15）"
+      },
+      "relations": {
+        "contradicts": [],
+        "related": [],
+        "superseded_by": [],
+        "supersedes": []
+      },
+      "schema_version": 1,
+      "scope": "global",
+      "source": {
+        "adapter": "migrate-memory.py",
+        "created_at": "2026-08-17T07:50:27Z",
+        "kind": "migration",
+        "session_id": null,
+        "updated_at": "2026-08-17T07:50:27Z"
+      },
+      "status": "candidate",
+      "tags": [
+        "manual-review"
+      ],
+      "temporal": {
+        "valid_from": null,
+        "valid_until": null
+      },
+      "type": "episodic"
+    },
+    "kind": "legacy_record",
+    "legacy_id": "mem_e787c46a",
+    "legacy_record_type": "episodic",
+    "legacy_schema_version": 1,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "canonical_id",
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_e5a6daef8fbc934f3bdeff9b7de11a26"
+}

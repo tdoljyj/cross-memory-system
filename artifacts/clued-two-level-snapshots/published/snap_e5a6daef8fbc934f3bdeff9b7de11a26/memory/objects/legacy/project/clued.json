@@ -1,0 +1,26 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "b9d3396b01dc4f9a642ea1438749aa6b7a2d1226264820d4039da276bb56bcd1",
+    "inline_payload": {
+      "source_project_id": "clued"
+    },
+    "kind": "legacy_project",
+    "legacy_id": "clued",
+    "legacy_record_type": null,
+    "legacy_schema_version": null,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "canonical_project_id",
+      "project_schema_version",
+      "version",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_project",
+  "schema_version": 1,
+  "snapshot_version": "snap_e5a6daef8fbc934f3bdeff9b7de11a26"
+}

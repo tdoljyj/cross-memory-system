@@ -1,0 +1,60 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "b245a6a0b0d2e8feff8abac8ee5f474fb6652e308a1618ee0677c40a340e4c8a",
+    "inline_payload": {
+      "classification": {
+        "category": "preference",
+        "memory_layer": "semantic",
+        "priority": "medium",
+        "recall_layer": "L2"
+      },
+      "content": "- 理想 AI：能进入工作上下文、跟着思路推进的「项目记忆型搭档」，不是百科全书或搜索框",
+      "entities": [],
+      "id": "mem_48f3acde",
+      "provenance": {
+        "evidence": "explicit",
+        "source_ref": "画像.md##工作方式（对 AI / 工具的要求）"
+      },
+      "relations": {
+        "contradicts": [],
+        "related": [],
+        "superseded_by": [],
+        "supersedes": []
+      },
+      "schema_version": 1,
+      "scope": "global",
+      "source": {
+        "adapter": "migrate-memory.py",
+        "created_at": "2026-08-17T07:50:27Z",
+        "kind": "migration",
+        "session_id": null,
+        "updated_at": "2026-08-17T07:50:27Z"
+      },
+      "status": "active",
+      "tags": [],
+      "temporal": {
+        "valid_from": null,
+        "valid_until": null
+      },
+      "type": "semantic"
+    },
+    "kind": "legacy_record",
+    "legacy_id": "mem_48f3acde",
+    "legacy_record_type": "semantic",
+    "legacy_schema_version": 1,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "canonical_id",
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_e5a6daef8fbc934f3bdeff9b7de11a26"
+}

@@ -1,0 +1,71 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "593641d348b91950de95cf9318e6e9c437bb278ed33bafe5d511dd019e4c279e",
+    "inline_payload": {
+      "classification": {
+        "category": "state",
+        "memory_layer": "state",
+        "priority": "high",
+        "recall_layer": "L3"
+      },
+      "content": "Clued 阶段 8A 发布准备已于 2026-08-24 PASS：发布候选 79c13023a50a46f015fe921c74c55bf84f381ef5 已推送并创建 Draft PR #3；候选应用与数据库 Gate 全绿，生产依赖漏洞 0，完整工具链仅余 4 项 moderate dev-only；未执行生产迁移、导入、功能启用或部署，下一步须单独授权 8B-1 备份与隔离恢复演练。",
+      "entities": [
+        "clued",
+        "clued-cloud",
+        "project_views_v2"
+      ],
+      "id": "mem_2bce7e4e",
+      "project_id": "clued",
+      "provenance": {
+        "evidence": "observed",
+        "source_ref": null
+      },
+      "relations": {
+        "contradicts": [],
+        "related": [],
+        "superseded_by": [
+          "mem_caa21170"
+        ],
+        "supersedes": []
+      },
+      "schema_version": 1,
+      "scope": "project",
+      "source": {
+        "adapter": "memory.py",
+        "created_at": "2026-08-24T08:48:32Z",
+        "kind": "observed",
+        "session_id": null,
+        "updated_at": "2026-08-24T11:20:10Z"
+      },
+      "status": "superseded",
+      "tags": [
+        "clued",
+        "stage8a",
+        "release-readiness"
+      ],
+      "temporal": {
+        "valid_from": null,
+        "valid_until": "2026-08-24T11:20:10Z"
+      },
+      "type": "state"
+    },
+    "kind": "legacy_record",
+    "legacy_id": "mem_2bce7e4e",
+    "legacy_record_type": "state",
+    "legacy_schema_version": 1,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "canonical_id",
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_e5a6daef8fbc934f3bdeff9b7de11a26"
+}

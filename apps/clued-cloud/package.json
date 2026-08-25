@@ -20,7 +20,12 @@
     "bundle:export": "node scripts/user-memory-bundle.mjs export",
     "bundle:validate": "node scripts/user-memory-bundle.mjs validate",
     "bundle:import": "node scripts/user-memory-bundle-import.mjs",
+    "snapshot:v16:build": "node scripts/two-level-snapshot.mjs build",
+    "snapshot:v16:validate": "node scripts/two-level-snapshot.mjs validate",
+    "snapshot:v16:publish": "node scripts/two-level-snapshot.mjs publish",
+    "snapshot:v16:rollback": "node scripts/two-level-snapshot.mjs rollback",
     "test:bundle": "node --test tests/user-memory-bundle.test.mjs",
+    "test:snapshot:v16": "node --test tests/two-level-snapshot.test.mjs",
     "typecheck": "tsc --noEmit --incremental false",
     "lint": "bash scripts/sites-env.sh -- eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "bash scripts/sites-env.sh -- drizzle-kit generate"

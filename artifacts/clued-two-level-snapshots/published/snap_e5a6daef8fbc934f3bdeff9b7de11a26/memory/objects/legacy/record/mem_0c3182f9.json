@@ -1,0 +1,62 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "028ebbea9df431289287076a80c590999a507e8b6d9647ea11f42b5343431d1c",
+    "inline_payload": {
+      "classification": {
+        "category": "history",
+        "memory_layer": "episodic",
+        "priority": "medium",
+        "recall_layer": "L4"
+      },
+      "content": "- 2026-08-16 DSH 端接入验证闭环（DSH@TURING，本轮）：pull 对齐远端 d436de8；doctor 全 PASS；验收测试 33/33 全绿；补建用户全局钩子 ~/.dsh/AGENTS.md（DSH 每会话自动注入、任意工作区生效——此前仅消费端 MEMORY.md 无注入机制，新会话不知协议）；完成 DSH 端首轮记忆写入闭环",
+      "entities": [],
+      "id": "mem_0c3182f9",
+      "provenance": {
+        "evidence": "observed",
+        "source_ref": "状态.md##记忆系统与工具链"
+      },
+      "relations": {
+        "contradicts": [],
+        "related": [],
+        "superseded_by": [],
+        "supersedes": []
+      },
+      "schema_version": 1,
+      "scope": "global",
+      "source": {
+        "adapter": "migrate-memory.py",
+        "created_at": "2026-08-17T07:50:27Z",
+        "kind": "migration",
+        "session_id": null,
+        "updated_at": "2026-08-17T07:50:27Z"
+      },
+      "status": "candidate",
+      "tags": [
+        "manual-review"
+      ],
+      "temporal": {
+        "valid_from": null,
+        "valid_until": null
+      },
+      "type": "episodic"
+    },
+    "kind": "legacy_record",
+    "legacy_id": "mem_0c3182f9",
+    "legacy_record_type": "episodic",
+    "legacy_schema_version": 1,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "canonical_id",
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_e5a6daef8fbc934f3bdeff9b7de11a26"
+}

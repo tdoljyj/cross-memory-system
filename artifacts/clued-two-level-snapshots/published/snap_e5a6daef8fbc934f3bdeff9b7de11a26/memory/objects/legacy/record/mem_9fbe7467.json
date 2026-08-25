@@ -1,0 +1,62 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "f359d003f07dfe9ff8239e69c6501dd878f5c7e023dda324677b8316ce0e3b65",
+    "inline_payload": {
+      "classification": {
+        "category": "history",
+        "memory_layer": "episodic",
+        "priority": "medium",
+        "recall_layer": "L4"
+      },
+      "content": "- 2026-08-16 Sprint 2（Protocol Behavior Manifest & 双脚本一致性）完成（DSH@TURING，commit ff180f2 + cf937c2）：protocol-manifest.json 行为契约落地（guards 九类 + conformance_matrix 九行，唯一契约源）；双脚本 conformance 一致性测试 9 行全绿（变异测试验证契约约束有效）；矩阵暴露分歧已关闭（ps1 push 补未推送提交密钥扫描）。验收测试 47→57 全绿。下一步：Sprint 3（保留期/superseded 治理 + VERSION/tag/HEAD 真值统一 + README/文档同步），按计划单独启动",
+      "entities": [],
+      "id": "mem_9fbe7467",
+      "provenance": {
+        "evidence": "observed",
+        "source_ref": "状态.md##记忆系统与工具链"
+      },
+      "relations": {
+        "contradicts": [],
+        "related": [],
+        "superseded_by": [],
+        "supersedes": []
+      },
+      "schema_version": 1,
+      "scope": "global",
+      "source": {
+        "adapter": "migrate-memory.py",
+        "created_at": "2026-08-17T07:50:27Z",
+        "kind": "migration",
+        "session_id": null,
+        "updated_at": "2026-08-17T07:50:27Z"
+      },
+      "status": "candidate",
+      "tags": [
+        "manual-review"
+      ],
+      "temporal": {
+        "valid_from": null,
+        "valid_until": null
+      },
+      "type": "episodic"
+    },
+    "kind": "legacy_record",
+    "legacy_id": "mem_9fbe7467",
+    "legacy_record_type": "episodic",
+    "legacy_schema_version": 1,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "canonical_id",
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_e5a6daef8fbc934f3bdeff9b7de11a26"
+}

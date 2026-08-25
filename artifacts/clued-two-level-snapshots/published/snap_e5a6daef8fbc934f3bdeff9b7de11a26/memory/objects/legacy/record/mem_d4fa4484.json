@@ -1,0 +1,72 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "06586cd5118964b2202412bb3cb4cf1025d98aa98738b39e91ebf332d8981d37",
+    "inline_payload": {
+      "classification": {
+        "category": "state",
+        "memory_layer": "state",
+        "priority": "high",
+        "recall_layer": "L3"
+      },
+      "content": "2026-08-22 Clued Kernel R5 K2 Cloud Data Foundation 本地实现验收通过：实现提交 ce699b0fe05001e04707b26b80f886a2a6d12db8，证据提交 1a939b9；K2 静态 14/14、PostgreSQL 15.19 集成 14/14、K1 9/9、全量 580 PASS / 0 FAIL / 0 SKIP；候选树密钥扫描 466 文件 0 命中，安全 PostgreSQL 日志正文命中 0。分支仅本地 ahead 2，未 push/merge/tag/release/deploy，语义召回仍关闭，真实 Binding 未变；等待独立裁决，K3 锁定。",
+      "entities": [
+        "Clued Kernel R5",
+        "K2",
+        "PostgreSQL"
+      ],
+      "id": "mem_d4fa4484",
+      "project_id": "clued-kernel-r5",
+      "provenance": {
+        "evidence": "observed",
+        "source_ref": null
+      },
+      "relations": {
+        "contradicts": [],
+        "related": [],
+        "superseded_by": [
+          "mem_144c832a"
+        ],
+        "supersedes": []
+      },
+      "schema_version": 1,
+      "scope": "project",
+      "source": {
+        "adapter": "memory.py",
+        "created_at": "2026-08-22T08:29:02Z",
+        "kind": "observed",
+        "session_id": null,
+        "updated_at": "2026-08-22T09:01:35Z"
+      },
+      "status": "superseded",
+      "tags": [
+        "Clued",
+        "R5",
+        "K2",
+        "Cloud Data Foundation"
+      ],
+      "temporal": {
+        "valid_from": null,
+        "valid_until": "2026-08-22T09:01:35Z"
+      },
+      "type": "state"
+    },
+    "kind": "legacy_record",
+    "legacy_id": "mem_d4fa4484",
+    "legacy_record_type": "state",
+    "legacy_schema_version": 1,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "canonical_id",
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_e5a6daef8fbc934f3bdeff9b7de11a26"
+}

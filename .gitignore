@@ -17,3 +17,5 @@ memory/session/
 .gate-t0-workspace/
 # Truth Integrity LKG 状态目录（ADR-R3-006：独立状态文件，非 current 事实源）
 .truth-state/
+# Clued Sites/Vinext 隔离运行目录（构建缓存，不属于发布源）
+.sites-runtime/

@@ -1,0 +1,88 @@
+# 待办 · 长期记忆
+
+> 最后更新：2026-08-24
+
+## 最高优先级
+- [x] 已实现并验证 Clued User Memory Bundle v1：4 个 Project、262 条 Record，单一对象正文、只读 evidence/ID 镜像、SHA-256 完整性、默认零网络 dry-run、用户 JWT 认证导入与确定性幂等合同全部落地；本地门禁全绿。
+- [ ] Supabase 内置邮件服务项目级窗口恢复后，完成专用生产测试用户邮箱确认、Bundle `umb_fdb167fd46d84c16047af70d` 的 262 条认证导入、相同 Bundle 重放、生产计数/RLS/幂等性复核；不得绕过 Auth 门禁。
+- [x] 已在 GitHub Actions 临时 Ubuntu Docker 环境完成 Clued G4 数据库门禁：`db:start → db:reset → db:lint → db:test:v2`；6 个 migration 完整重放、schema lint 0 error、pgTAP `16/16 PASS`，Run `32692785684`。
+- [x] 用户已确认 G4；阶段 5 已完成旧数据只读快照、稳定 ID/来源映射、重复引用化与 dry-run 报告，820 条数量差异可解释，生产写入 0。
+- [x] 用户已确认 G5；阶段 6 已统一路由、Skill、API/MCP、UI 与两级五视图镜像语义，26 条高风险项仍不自动导入，旧项目日志仍只作 legacy evidence。
+- [x] G6 证据缺口已补齐并独立复评 PASS：同一 fixture 覆盖 API、MCP、UI presentation、Skill/Markdown 的 canonical ID 与完整结论字段。
+- [x] 用户已授权并完成阶段 7 干净 clone 集成评审；G7 PASS，最终代码与隔离数据库门禁全绿，生产依赖漏洞 0。
+- [x] 用户已授权并完成阶段 8A 发布准备：候选 `79c1302`、Draft PR #3、可复现应用 Gate、生产依赖审计 0；完整工具链风险由 18 项（13 high）收敛为 4 moderate dev-only，备份/恢复、canary、监控和回滚包已冻结。
+- [x] 用户已授权并完成 `8B-1`：生产基线冻结、AES-256-GCM 受控逻辑备份、US$0/月临时 Supabase 项目恢复、数据摘要对账、六迁移重放、RLS、pgTAP `16/16` 与 legacy CRUD 全部通过；生产写入 0。
+- [x] 用户已确认并完成 `8B-2`：生产按序应用 `project_lifecycle_v1` 与 `unified_record_v2` additive migration；RLS/授权目录检查、pgTAP `16/16`、legacy CRUD、3 条摘要审计与事务回滚验收通过，数据保持 `0/0/0/2/5`，功能开关与 Worker 均未变。
+- [x] 用户已授权并完成 `8B-3`：生产冲突映射 migration、独立 Canary、完整 V2 smoke、跨用户隔离、61/61 稳定性探针与临时数据清理全部通过；正式 Worker、域名、Binding 和流量未变。
+- [x] 用户已确认并完成 `8B-4`：批次 `8b4-20260824T143700Z` 导入 5 条低风险 State，源哈希/canonical/wrapper 双读、幂等、Event/Receipt、RLS 与 legacy CRUD 全部通过；26 条 manual-review 自动写入 0。
+- [x] 用户已确认并完成 `8B-5`：正式 Worker 候选已 100% 部署，Kernel `0.3.1`、V2 false、Record 工具隐藏，10/10 观察与数据不变性全部通过。
+- [x] 用户已单独批准并完成正式 V2 启用：`PROJECT_VIEWS_V2=true` 已在 Version `56d2a481-9d3c-4237-859c-7144b6f88059` 100% 生效，正式入口、未认证隔离、10/10 观察与数据不变性全部通过。
+- [ ] 除已授权的 Bundle 专用账号验收外，保持现有单用户范围观察；26 条 manual-review 处置、其他扩大导入、PR merge、旧路径下线、历史数据或 Canary 删除均等待独立批准。
+- [x] 已确认 Clued 阶段 3 的 G3 红灯验收包，并完成阶段 4 migration、canonical write core、REST/MCP、两级五视图 UI 与默认关闭功能开关；静态合同 14/14、Node 32/32 全绿。
+- [x] 已确认 Clued 阶段 2 的 G2 数据模型评审包，并完成阶段 3 隔离失败测试：14 项合同 1 PASS / 13 预期 FAIL / 0 SKIP。
+- [x] 已确认 Clued“两级五视图单一数据源”ADR，并完成阶段 2 实体映射与 additive/兼容/回滚设计。
+- [x] 在独立分支建立 Clued 最小闭环记忆路由：当前工作类问题读取 `状态.md + 待办.md + 决策.md + 已授权项目日志`，并加入来源/冲突回归测试。
+- [x] `fix/clued-memory-routing` 已通过 PR #1 以双父 merge commit `65fa8d8` 收敛到 `main`；合并后路由 `6/6`、Kernel `14/14`、生产构建全部通过。
+- [x] Continuity Kernel `0.3.0` 源码一致性与发布门禁已完成：构建、Lint、`14/14` 测试和 Wrangler dry-run 通过。
+- [x] 已记录生产 LKG `3caaf3e1-9ee5-4cf6-b0a4-cf19c5371c32`，部署 `clued-cloud` Version `9b4337ed-cd23-4bee-82f9-a619b3c2be92`，并完成 P0 与双 Binding P1 验收；未触发回滚。
+- [x] 已完成 Clued Memory CRUD 第一条产品垂直闭环：两张生产表、本人 RLS、最小表授权、摘要审计、Worker API、“我的记忆”中英双语页面、18/18 测试与生产验收；当前 Worker Version `bf0038c3-1456-4653-bdcf-f962ff962ec4`。
+- [ ] 确认「当前最重要的一件事」：原型 / 剧情 / 名字收敛？
+
+## 记忆系统
+> 剩余未勾选项均已定调（2026-08-16）：**冻结** = 个人级系统收益<风险，暂不投入；**归档** = 当前无需求；**触发** = 接第二台机器时执行。仅当主线明确或接新机器时才重新评估。
+
+- [x] 处置《跨端记忆系统技术评估报告-vNext-1.3》问题清单（P1×4 + P2×4 + P3×3）——2026-08-16 已全部修复闭环（验收测试 27/27 全绿、钩子对齐、py 锁判活、备份保留、删除传播收敛 index、脱敏全覆盖；收尾 commit/push 待批准执行）
+- [ ] 公开版去敏模板（可选，仅当想分享系统时做）——归档：无分享需求时不做
+- [x] WorkBuddy 侧采纳身份约定（config user.name = WorkBuddy@TURING，2026-08-15 23:57 体检落地）+ 读新 README/AGENTS 后落地
+- [x] 2026-08-16 实现审计与脚本加固（覆盖保护 / push 核验 / 脏工作树检查 / 失败标记 / 冲突快照 / Doctor 退出码；两端 Doctor 通过）
+- [x] 2026-08-16 二轮加固：异常兜底（trap + 显式 $LASTEXITCODE）/ 祖先判定 / 不信 tracking-ref / 重试门控 / 超时；两端脚本已提交推送 ce38b7c
+- [x] WorkBuddy 副本对齐（08-16 三轮审计开场 pull 完成：tracking ref 补写、本地=远端=5f99dad、三镜像字节一致）
+- [x] 2026-08-16 三轮机制审计（WorkBuddy 侧）：发现并当场修复 P0「~/.workbuddy/MEMORY.md 残留已废弃 pull --rebase 指令」；补录 8 项加固待办（见下）
+- [x] sync-memory.py 推送/拉取核验改祖先判定（merge-base --is-ancestor，对齐 ps1 Confirm-RemotePushed；当前 == 比较在并发 push 下会误报不一致、误写 .sync-failed）——2026-08-16 vNext-1.2 已落地（ps1/py 均用 merge-base --is-ancestor）
+- [x] 脏检查扩大到全仓库（两端脚本目前只查 memory pathspec；脚本/文档改动忘 commit 会被静默漏推且无警告）——2026-08-16 已落地（ps1/py 全仓脏提示 + doctor INFO/WARN）
+- [x] ps1 工作区空目录护栏：源目录 .md 少于 5 个时拒绝同步（删除传播 + 空哈希比对通过 → 会把远端推成空仓，灾难性边界）——2026-08-16 vNext-1.2 已落地（ps1/py 均加 .md≥5 且非空护栏）
+- [ ] 结构化语义合并：状态.md / 待办.md 按标题块三路合并，替代整文件 diff 与人工冲突清理（基线附录 D 待办）——冻结：双端同改同一文件概率极低，merge+手工兜底已够，收益<风险
+- [x] 附录 B 验收标准转自动化测试（基线附录 D 待办）——2026-08-16 已落地（tests/test_acceptance.py，8 用例）
+- [ ] 归档.md union 合并后去重（union driver 两端同加相同内容会保留重复行）——冻结：仅两端同加相同内容时才发生，极罕见
+- [x] doctor 增加本地协议新鲜度检查（WorkBuddy 侧 grep ~/.workbuddy/MEMORY.md 是否含已废弃指令）——2026-08-16 已落地（py doctor 检查 pull --rebase）
+- [x] ps1 检测 PortableGit 时拒绝运行（对齐 Python ensure_git_safe）——2026-08-16 已落地（ps1 push/pull 硬阻断）
+- [x] TEMP 备份目录清理策略（codex-memory-backup-* / conflict-* 只增不减）——2026-08-16 已落地（ps1/py 清理 >7 天）
+- [x] Python pull 补 proxy_alive 前置探测（对齐 push；代理挂掉时 fetch 会耗到 60s 超时）——2026-08-16 已落地
+- [ ] 双脚本协议统一或加一致性测试（py/ps1 双实现已漂移过一次：核验逻辑 ps1 祖先判定 vs py 仍为 == 比较）——冻结：核验逻辑已在 vNext-1.2 统一，彻底合并成本高收益低
+- [ ] 接第二台机器时用 `-Doctor` 验证可移植性（macOS / Linux 需 pwsh，待测）——触发：接第二台机器时执行，现在无需做
+- [ ] 补充同机本地同步锁（防并行互踩；push 验证已改祖先判定）+ 状态/待办结构化语义合并（冲突自动保留两端语义）——冻结：git index.lock 已兜底；结构化语义合并同上方冻结项
+- [ ] AGENTS.md 按端参数化（当前以 Codex 路径为中心，WorkBuddy 侧副本陈旧且引用已删章节）——冻结：Codex 全局钩子已一致，WorkBuddy 侧 MEMORY.md 由 WorkBuddy 自管
+- [ ] 换行符/BOM 自愈（哈希比对前归一化，防 CRLF 漂移被误判为未同步）——冻结：.gitattributes 已锁定 LF 无 BOM，自愈反而掩盖差异
+- [x] per-clone 配置 bootstrap（union driver / core.autocrlf=false / credential 一键写入，新机 clone 后自动）——2026-08-16 已落地（ps1 -Bootstrap / py bootstrap；credential 仍走 README 手动步骤）
+- [x] 归档.md 瘦身阈值守护（超阈值提示压缩为结论 + 唯一事实）——2026-08-16 已落地（ps1/py doctor 超 120KB/1200 行提示）
+- [x] **处置 DSH 端评估 P0 六项**（2026-08-16，见《技术评估报告-vNext-1.3-DSH-2026-08-16.md》路线图 #1–#6）——**已全部修复闭环（DSH@TURING，6 个独立 commit：0a7b215/67b2669/048550c/b523b02/77248f9/a2c9352）**：① ps1 push 路径 staged 名单限 index 文件集 + commit 限 pathspec + push 路径补 staged blob 密钥扫描（3 组实证复现：扫入关闭/令牌拒绝/NO_CHANGE 恢复）；② py REPO 默认改脚本所在克隆；③ ps1 deploy-guard 补 .dsh 单元格（DSH 克隆内跑 ps1 已实测被拒）；④ py fetch 错误输出 redact；⑤ DSH consumer_memory_path 改指 ~/.dsh/AGENTS.md + AGENTS.md:58 补 DSH 枚举；⑥ 基线第十二节 conform 表述与变更记录对齐。验收测试 33→41 全绿
+- [x] **Sprint 1（P1/P2 行为安全加固）三项已完成**（2026-08-16，DSH@TURING，独立 commit a322067/69aa7fb/c8e5947）：① ps1 `-Pull -Access NONE` 进程级纯短路（T0 零副作用实测：不写 git 身份/marker/锁、不清 TEMP、不访问远端）；② py staged 密钥扫描改读 index blob（`git show :path`，与 ps1 语义统一；staged/index 不一致 TOCTOU 攻击实测拦截）；③ py push 扫 `origin/main..HEAD` 未推送提交（non-memory 已提交令牌实测拦截、干净 non-memory 提交正常放行）。验收测试 41→45 全绿
+- [x] **Sprint 2（Protocol Behavior Manifest & 双脚本一致性）完成**（2026-08-16，DSH@TURING，commit ff180f2 + cf937c2）：`protocol-manifest.json`（modes/guards/side_effects/exit_codes/remote_verification + conformance_matrix 九行，唯一契约源）；9 行双脚本 conformance 一致性测试（变异测试验证：篡改 manifest 期望即被捕获）；矩阵暴露的分歧已关闭：ps1 push 补 `Find-SecretLeakUnpushed`（origin/main..HEAD 的 HEAD blob 扫描，对齐 py）。验收测试 47→57 全绿；ps1/py doctor 均 ALL PASS
+- [ ] DSH 端评估 P1 短期项剩余（评估报告 #7/#8/#13/#14，归入 Sprint 3 治理）：保留期口径统一（guards 2 天 vs 文档 7 天）+ 口径测试；决策.md:18 凭据旧口径标 superseded；版本 tag 治理（tag 落后 HEAD 12 提交、合并作者规则）；index.json files 路径净化
+
+## Sprint 3 清单（代码级 Gap Audit 2026-08-16 产出）——**已全部闭环（2026-08-16，DSH@TURING，封版）**
+
+- [x] **GAP-2-1** 保留期统一 7 天（用户决策）——guards.json + py/ps1 回落默认同步 7；口径测试 ×3
+- [x] **GAP-2-2** 决策.md:18 凭据旧口径标 superseded（指向 :25）；配置手册:403、归档:13 加注记
+- [x] **GAP-2-3** doctor 探针集补齐：ps1 补 memory-files-healthy + local==remote 阻挡态；py 补 ref-write 行为探针 + 3 条回归
+- [x] **GAP-2-4** 封版 release baseline：AGENTS §六 合并作者规则 + VERSION↔tag 一致性测试；tag vNext-1.3 移至封版 commit（旧指针落后 HEAD 30 提交已消除）
+- [x] **GAP-3-1** py index 损坏报错口径区分（缺失/非法/文件缺失三口径）
+- [x] **GAP-3-2** README 端侧差异表补 DSH 行（九行）
+- [x] **GAP-3-3** 配置手册旧流程行加「已废弃」行内注记（:62/:101/:403）
+- [x] **GAP-3-4** doctor 增 guards.json 缺失警示（py/ps1，不改退出码）
+- [x] **GAP-3-5** PID 锁复用：双端 doctor 增 .sync.lock 诊断 INFO；句柄锁**留档不实施**（理由：四场景已有测试覆盖、概率极低；后续若实际楔住再专项评估）
+- [x] **GAP-3-6** py pull/push fetch 复用（merge-base 128 才 fetch）+ lowSpeed 超时对齐 ps1 + 单测
+- [x] **GAP-3-7** %TEMP% listdir **留档保持现状**（实测 1437 条目/161ms；降频收益<复杂度；膨胀再评估）
+- [x] **GAP-3-8** ps1 deploy-guard 拒绝路径 trap 噪音（Get-Command 防御，不写 marker 符合 manifest 契约）+ 断言
+- [x] **GAP-3-9** AGENTS §二表 ↔ index.json 双向一致性测试
+- [x] **GAP-3-10** index.json files 项路径净化（双端 basename 校验 fail-closed）+ 越界拒绝测试 ×2
+
+## 游戏原型
+- [ ] 确定第一个可玩的最小原型范围
+- [ ] UE 项目驱动学习：先学立刻要用的部分
+
+## 剧情
+- [ ] 《山川夜语：逐日》世界观 / 角色 / 故事结构继续推进
+
+## 工作室
+- [ ] 沿「鱼火」方向收敛最终工作室名

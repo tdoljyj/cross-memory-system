@@ -1312,7 +1312,8 @@ def test_repo_files_do_not_self_match_secret_patterns():
     hits = []
     for root, _dirs, files in os.walk(REPO_ROOT):
         rel_root = os.path.relpath(root, REPO_ROOT)
-        if rel_root.split(os.sep)[0] in (".git", ".conflict-snapshots", "__pycache__"):
+        parts = set(rel_root.split(os.sep))
+        if parts.intersection((".git", ".conflict-snapshots", "__pycache__", ".sites-runtime", "node_modules")):
             continue
         for name in files:
             if name.endswith(".pyc"):

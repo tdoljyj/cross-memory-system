@@ -1,0 +1,61 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "c82d961fb14ef9f0b5b8666d307b71c08edc9a9996b0e59f124d8051656163bc",
+    "inline_payload": {
+      "classification": {
+        "category": "decision",
+        "memory_layer": "semantic",
+        "priority": "high",
+        "recall_layer": "L3"
+      },
+      "content": "Clued User Memory Bundle v1：仓库 memory/ 仅作为单用户可携带 Bundle/golden sample；memory/objects 是唯一可导入正文，Markdown/日志只作只读证据和稳定 ID 镜像；Clued 在线生产唯一 canonical store 仍为 Supabase，导入只走专用用户的认证 API 与 RLS，禁止 service role、直写表、运行时 Git 双写或携带凭据。",
+      "entities": [],
+      "id": "mem_8c35bf42",
+      "project_id": "clued",
+      "provenance": {
+        "evidence": "explicit",
+        "source_ref": null
+      },
+      "relations": {
+        "contradicts": [],
+        "related": [],
+        "superseded_by": [],
+        "supersedes": []
+      },
+      "schema_version": 1,
+      "scope": "project",
+      "source": {
+        "adapter": "memory.py",
+        "created_at": "2026-08-24T17:18:22Z",
+        "kind": "user_explicit",
+        "session_id": null,
+        "updated_at": "2026-08-24T17:18:22Z"
+      },
+      "status": "active",
+      "tags": [],
+      "temporal": {
+        "valid_from": null,
+        "valid_until": null
+      },
+      "type": "semantic"
+    },
+    "kind": "legacy_record",
+    "legacy_id": "mem_8c35bf42",
+    "legacy_record_type": "semantic",
+    "legacy_schema_version": 1,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "canonical_id",
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_e5a6daef8fbc934f3bdeff9b7de11a26"
+}

@@ -1,0 +1,73 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "cb1abd6572f39ed5d4f7189219a122d26c4070f2ae932ff011884a277f11212b",
+    "inline_payload": {
+      "classification": {
+        "category": "state",
+        "memory_layer": "state",
+        "priority": "high",
+        "recall_layer": "L3"
+      },
+      "content": "Clued 阶段 8B-3 已 PASS：生产新增 map_optimistic_conflicts_to_http_409 migration，已知 Record/Project 乐观锁冲突经 Data API 返回 HTTP 409；独立 clued-cloud-canary version 5c47e7fd-8819-47d1-86e0-d6aa7f97e435 启用 V2，完整写入/归档/恢复/supersede/原子推进与跨用户 smoke 通过，61/61 稳定性探针在 2,078.4 秒内零失败。全部临时数据、测试用户与活动写会话已清理，生产保持 Project/Mention/Memory/Event/Receipt 0/0/0/2/5，正式 Worker 仍为 bf0038c3-1456-4653-bdcf-f962ff962ec4 / Kernel 0.3.0。下一步只有用户明确确认后才进入 8B-4，导入 5–10 条低风险记录并双读校验。",
+      "entities": [
+        "clued",
+        "clued-cloud",
+        "project_views_v2"
+      ],
+      "id": "mem_b3f14978",
+      "project_id": "clued",
+      "provenance": {
+        "evidence": "explicit",
+        "source_ref": null
+      },
+      "relations": {
+        "contradicts": [],
+        "related": [],
+        "superseded_by": [
+          "mem_c2ac657e"
+        ],
+        "supersedes": [
+          "mem_152b651b"
+        ]
+      },
+      "schema_version": 1,
+      "scope": "project",
+      "source": {
+        "adapter": "cli",
+        "created_at": "2026-08-24T14:25:31Z",
+        "kind": "user_explicit",
+        "session_id": null,
+        "updated_at": "2026-08-24T14:51:15Z"
+      },
+      "status": "superseded",
+      "tags": [
+        "clued",
+        "stage8a",
+        "release-readiness"
+      ],
+      "temporal": {
+        "valid_from": null,
+        "valid_until": "2026-08-24T14:51:15Z"
+      },
+      "type": "state"
+    },
+    "kind": "legacy_record",
+    "legacy_id": "mem_b3f14978",
+    "legacy_record_type": "state",
+    "legacy_schema_version": 1,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "canonical_id",
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_e5a6daef8fbc934f3bdeff9b7de11a26"
+}

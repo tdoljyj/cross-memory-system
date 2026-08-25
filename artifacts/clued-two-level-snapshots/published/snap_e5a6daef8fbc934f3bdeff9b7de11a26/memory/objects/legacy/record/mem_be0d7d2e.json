@@ -1,0 +1,62 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "0586667c7fb1f1c1ccb1a247c7a70e385021afcd13a9a4eb421fcc7798820c46",
+    "inline_payload": {
+      "classification": {
+        "category": "history",
+        "memory_layer": "episodic",
+        "priority": "medium",
+        "recall_layer": "L4"
+      },
+      "content": "- 2026-08-17 DSH 端接入 DESK-W-591 完成（DSH@TURING，本轮）：本机 DSH 第三端接入落地——独立克隆 ~/.dsh/projects/cross-memory-system（自远端 origin，版本真值核对：远端 main=9f6b4201=本地 HEAD；WorkBuddy 克隆已落后远端 4 提交，验证了「新端必须自远端克隆」）＋ gitignored sync.config.json（proxy=127.0.0.1:7897，git_candidates=C:/Users/Windows/git/mingw64/bin/git.exe，consumer_memory_path=~/.dsh/AGENTS.md）＋ bootstrap 推荐 git 配置（autocrlf=false / merge.union.driver / maintenance.auto=false）＋ 提交身份 DSH@TURING（tdoljyj@users.noreply.github.com）；消费端就位：~/.dsh/AGENTS.md（用户全局钩子，DSH 每会话自动注入、本会话已实测注入生效）＋ ~/.dsh/MEMORY.md（权威协议文件，内容同钩子）；sync-memory.py doctor ALL PASS（含 AGENTS.md conform 触发式禁令 PASS）；pull 对齐 9f6b4201 ✓；本轮完成 DSH 端首轮记忆写入闭环",
+      "entities": [],
+      "id": "mem_be0d7d2e",
+      "provenance": {
+        "evidence": "observed",
+        "source_ref": "状态.md##记忆系统与工具链"
+      },
+      "relations": {
+        "contradicts": [],
+        "related": [],
+        "superseded_by": [],
+        "supersedes": []
+      },
+      "schema_version": 1,
+      "scope": "global",
+      "source": {
+        "adapter": "migrate-memory.py",
+        "created_at": "2026-08-17T07:50:27Z",
+        "kind": "migration",
+        "session_id": null,
+        "updated_at": "2026-08-17T07:50:27Z"
+      },
+      "status": "candidate",
+      "tags": [
+        "manual-review"
+      ],
+      "temporal": {
+        "valid_from": null,
+        "valid_until": null
+      },
+      "type": "episodic"
+    },
+    "kind": "legacy_record",
+    "legacy_id": "mem_be0d7d2e",
+    "legacy_record_type": "episodic",
+    "legacy_schema_version": 1,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "canonical_id",
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_e5a6daef8fbc934f3bdeff9b7de11a26"
+}

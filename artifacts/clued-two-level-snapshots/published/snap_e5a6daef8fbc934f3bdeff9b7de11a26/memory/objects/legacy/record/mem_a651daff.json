@@ -1,0 +1,62 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "30ae39e0023f08c5aeb54272e8091849e415a04f0af6ea6704e62e0bf4aa508d",
+    "inline_payload": {
+      "classification": {
+        "category": "history",
+        "memory_layer": "episodic",
+        "priority": "medium",
+        "recall_layer": "L4"
+      },
+      "content": "- 基线：开场 pull 对齐（本地=远端=5f99dad，tracking ref 补写成功）；doctor ALL PASS；三镜像（WB 克隆 / Codex 克隆 / Documents）五文件字节一致；无残留锁、无残留标记；全局 ~/.codex/AGENTS.md 与仓库版哈希一致；配置全在位（union driver / autocrlf=false / gc·maintenance 全关 / credential=gh / 身份 WorkBuddy@TURING）",
+      "entities": [],
+      "id": "mem_a651daff",
+      "provenance": {
+        "evidence": "observed",
+        "source_ref": "归档.md##三轮机制审计（2026-08-16 03:30，WorkBuddy 侧）"
+      },
+      "relations": {
+        "contradicts": [],
+        "related": [],
+        "superseded_by": [],
+        "supersedes": []
+      },
+      "schema_version": 1,
+      "scope": "global",
+      "source": {
+        "adapter": "migrate-memory.py",
+        "created_at": "2026-08-17T07:50:27Z",
+        "kind": "migration",
+        "session_id": null,
+        "updated_at": "2026-08-17T07:50:27Z"
+      },
+      "status": "candidate",
+      "tags": [
+        "manual-review"
+      ],
+      "temporal": {
+        "valid_from": null,
+        "valid_until": null
+      },
+      "type": "episodic"
+    },
+    "kind": "legacy_record",
+    "legacy_id": "mem_a651daff",
+    "legacy_record_type": "episodic",
+    "legacy_schema_version": 1,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "canonical_id",
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_e5a6daef8fbc934f3bdeff9b7de11a26"
+}

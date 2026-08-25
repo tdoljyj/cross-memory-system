@@ -4,21 +4,23 @@
   "type": "semantic",
   "scope": "project",
   "content": "Clued User Memory Bundle v1：仓库 memory/ 仅作为单用户可携带 Bundle/golden sample；memory/objects 是唯一可导入正文，Markdown/日志只作只读证据和稳定 ID 镜像；Clued 在线生产唯一 canonical store 仍为 Supabase，导入只走专用用户的认证 API 与 RLS，禁止 service role、直写表、运行时 Git 双写或携带凭据。",
-  "status": "active",
+  "status": "superseded",
   "source": {
     "kind": "user_explicit",
     "adapter": "memory.py",
     "session_id": null,
     "created_at": "2026-08-24T17:18:22Z",
-    "updated_at": "2026-08-24T17:18:22Z"
+    "updated_at": "2026-08-25T16:19:27Z"
   },
   "temporal": {
     "valid_from": null,
-    "valid_until": null
+    "valid_until": "2026-08-25T16:19:27Z"
   },
   "relations": {
     "supersedes": [],
-    "superseded_by": [],
+    "superseded_by": [
+      "mem_9540a21b"
+    ],
     "contradicts": [],
     "related": []
   },

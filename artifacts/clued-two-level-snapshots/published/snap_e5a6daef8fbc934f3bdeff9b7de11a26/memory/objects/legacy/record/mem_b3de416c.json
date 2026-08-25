@@ -1,0 +1,60 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "052388fb86e188b6d56144c2b58917483a340196b4f3457dd095c56dbdeb1e26",
+    "inline_payload": {
+      "classification": {
+        "category": "constraint",
+        "memory_layer": "semantic",
+        "priority": "medium",
+        "recall_layer": "L5"
+      },
+      "content": "- 反复推荐已否决方案（信任底线）",
+      "entities": [],
+      "id": "mem_b3de416c",
+      "provenance": {
+        "evidence": "explicit",
+        "source_ref": "画像.md##雷区（不要触碰）"
+      },
+      "relations": {
+        "contradicts": [],
+        "related": [],
+        "superseded_by": [],
+        "supersedes": []
+      },
+      "schema_version": 1,
+      "scope": "global",
+      "source": {
+        "adapter": "migrate-memory.py",
+        "created_at": "2026-08-17T07:50:27Z",
+        "kind": "migration",
+        "session_id": null,
+        "updated_at": "2026-08-17T07:50:27Z"
+      },
+      "status": "active",
+      "tags": [],
+      "temporal": {
+        "valid_from": null,
+        "valid_until": null
+      },
+      "type": "semantic"
+    },
+    "kind": "legacy_record",
+    "legacy_id": "mem_b3de416c",
+    "legacy_record_type": "semantic",
+    "legacy_schema_version": 1,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "canonical_id",
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_e5a6daef8fbc934f3bdeff9b7de11a26"
+}

@@ -1,0 +1,60 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "12a83737970a90d58aeb4c575a6b45f412dcdea3cbb938d0373202166ce44d06",
+    "inline_payload": {
+      "classification": {
+        "category": "decision",
+        "memory_layer": "semantic",
+        "priority": "medium",
+        "recall_layer": "L3"
+      },
+      "content": "- 记忆触发机制改按需读写（v2，2026-08-16）：废除「每次开场强制加载 + 收尾强制上传」。读：仅命中加载触发（自身相关 / 跨会话历史 / 依赖个人上下文的任务 / 维护记忆系统 / 冲突风险）才 pull + 读记忆，通用问题直接回答，模糊时倾向加载；文件分级选读（身份→画像、决策→决策.md 必读、进度→状态+待办、历史→归档、标准三件套=画像+状态+决策）。写：仅本轮产生稳定个人/项目信息才写入记忆文件；仅实际改动了记忆文件才 push，无写入不 commit 不 push。权威定义=仓库 AGENTS.md（Codex 端）+ ~/.workbuddy/MEMORY.md（WorkBuddy 端），双端对称",
+      "entities": [],
+      "id": "mem_1f670a7b",
+      "provenance": {
+        "evidence": "explicit",
+        "source_ref": "决策.md##已确认"
+      },
+      "relations": {
+        "contradicts": [],
+        "related": [],
+        "superseded_by": [],
+        "supersedes": []
+      },
+      "schema_version": 1,
+      "scope": "global",
+      "source": {
+        "adapter": "migrate-memory.py",
+        "created_at": "2026-08-17T07:50:27Z",
+        "kind": "migration",
+        "session_id": null,
+        "updated_at": "2026-08-17T07:50:27Z"
+      },
+      "status": "active",
+      "tags": [],
+      "temporal": {
+        "valid_from": null,
+        "valid_until": null
+      },
+      "type": "semantic"
+    },
+    "kind": "legacy_record",
+    "legacy_id": "mem_1f670a7b",
+    "legacy_record_type": "semantic",
+    "legacy_schema_version": 1,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "canonical_id",
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_e5a6daef8fbc934f3bdeff9b7de11a26"
+}

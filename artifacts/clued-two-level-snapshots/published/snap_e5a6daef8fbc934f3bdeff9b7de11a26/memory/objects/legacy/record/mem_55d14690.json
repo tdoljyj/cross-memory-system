@@ -1,0 +1,62 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "8d10dfbb0fcdbcbf9104070c97d6de0cfa3d0caf2658d623e7951de2225a7cba",
+    "inline_payload": {
+      "classification": {
+        "category": "history",
+        "memory_layer": "episodic",
+        "priority": "medium",
+        "recall_layer": "L4"
+      },
+      "content": "- 2026-08-16 全面技术评估（Codex 侧）：vNext-1.3 实测 doctor 全 PASS、本地=远端；发现 P1×4/P2×4/P3×3——验收测试 1 项红（dangling-ref 断言缺陷）、全局钩子 ~/.codex/AGENTS.md 漂移（仍 vNext-1.2）、py 锁 PID 判活 os.kill(0) 不可移植、写回「备份即删」丢失窗口、redact 与 guards.json 模式不一致等；同日全部修复闭环（验收测试 27/27 全绿、钩子已对齐仓库版，详见评估报告「修复记录」附录）",
+      "entities": [],
+      "id": "mem_55d14690",
+      "provenance": {
+        "evidence": "observed",
+        "source_ref": "状态.md##记忆系统与工具链"
+      },
+      "relations": {
+        "contradicts": [],
+        "related": [],
+        "superseded_by": [],
+        "supersedes": []
+      },
+      "schema_version": 1,
+      "scope": "global",
+      "source": {
+        "adapter": "migrate-memory.py",
+        "created_at": "2026-08-17T07:50:27Z",
+        "kind": "migration",
+        "session_id": null,
+        "updated_at": "2026-08-17T07:50:27Z"
+      },
+      "status": "candidate",
+      "tags": [
+        "manual-review"
+      ],
+      "temporal": {
+        "valid_from": null,
+        "valid_until": null
+      },
+      "type": "episodic"
+    },
+    "kind": "legacy_record",
+    "legacy_id": "mem_55d14690",
+    "legacy_record_type": "episodic",
+    "legacy_schema_version": 1,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "canonical_id",
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_e5a6daef8fbc934f3bdeff9b7de11a26"
+}

@@ -1,0 +1,26 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "ff60ee05c756904118b038d2822300aa447a32474d1eae19f38478bc6c04a1c2",
+    "inline_payload": {
+      "source_project_id": "cross-memory-system"
+    },
+    "kind": "legacy_project",
+    "legacy_id": "cross-memory-system",
+    "legacy_record_type": null,
+    "legacy_schema_version": null,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "canonical_project_id",
+      "project_schema_version",
+      "version",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_project",
+  "schema_version": 1,
+  "snapshot_version": "snap_e5a6daef8fbc934f3bdeff9b7de11a26"
+}

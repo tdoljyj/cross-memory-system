@@ -1,0 +1,62 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "07f2c058371cab54483097743a5ed123d93ef923f8ef39e80f3f85b25a91f2a8",
+    "inline_payload": {
+      "classification": {
+        "category": "history",
+        "memory_layer": "episodic",
+        "priority": "medium",
+        "recall_layer": "L4"
+      },
+      "content": "- 2026-08-16 P0 六项修复闭环（DSH@TURING，6 个独立 commit：0a7b215→a2c9352）：附录 B 三漏洞隔离沙盒复现全部失效（① 预 staged 非 memory 文件不再卷入 memory sync 提交；② staged 令牌被 blob 级扫描拒绝、远端不变；③ 无 memory 变化恢复 skip commit）；验收测试 33→41 全绿；ps1 -Doctor 隔离沙盒 ALL PASS + py doctor ALL PASS（推送对齐后）；P1 短期项（评估报告 #7–#14）仍挂待办",
+      "entities": [],
+      "id": "mem_12534f57",
+      "provenance": {
+        "evidence": "observed",
+        "source_ref": "状态.md##记忆系统与工具链"
+      },
+      "relations": {
+        "contradicts": [],
+        "related": [],
+        "superseded_by": [],
+        "supersedes": []
+      },
+      "schema_version": 1,
+      "scope": "global",
+      "source": {
+        "adapter": "migrate-memory.py",
+        "created_at": "2026-08-17T07:50:27Z",
+        "kind": "migration",
+        "session_id": null,
+        "updated_at": "2026-08-17T07:50:27Z"
+      },
+      "status": "candidate",
+      "tags": [
+        "manual-review"
+      ],
+      "temporal": {
+        "valid_from": null,
+        "valid_until": null
+      },
+      "type": "episodic"
+    },
+    "kind": "legacy_record",
+    "legacy_id": "mem_12534f57",
+    "legacy_record_type": "episodic",
+    "legacy_schema_version": 1,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "canonical_id",
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_e5a6daef8fbc934f3bdeff9b7de11a26"
+}

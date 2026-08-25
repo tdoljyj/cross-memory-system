@@ -40,6 +40,14 @@ R5.1 候选目前仍在 `r5.1-fast-close`，没有借本次仓库整理合并进
 | `tools/` | 迁移与试运行工具 |
 | `docs/` | 架构、Gate、证据和历史资料 |
 
+## 端侧差异（Codex / WorkBuddy / DSH）
+
+| 端 | 消费协议 | 本地镜像 | 同步边界 |
+|---|---|---|---|
+| Codex | `~/.codex/AGENTS.md` | `Documents/Codex/memory` | 通过本仓库按需 pull/push |
+| WorkBuddy | `~/.workbuddy/MEMORY.md` | 独立 clone | 不直写 Codex/DSH 工作区 |
+| DSH | `~/.dsh/AGENTS.md` | 独立 clone | 不复用其他端 clone |
+
 ## 入口
 
 ```powershell

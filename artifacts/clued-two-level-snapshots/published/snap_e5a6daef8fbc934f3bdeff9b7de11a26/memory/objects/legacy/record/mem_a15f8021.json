@@ -1,0 +1,60 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "edc90fa2a6c03905527fb9dca26b49feb3a3ea9adff9e4baaf41d2c6d1aee257",
+    "inline_payload": {
+      "classification": {
+        "category": "preference",
+        "memory_layer": "semantic",
+        "priority": "medium",
+        "recall_layer": "L2"
+      },
+      "content": "- 软件是实现目标的工具，不是目标本身；成熟方案优先，不从零造轮子、不为架构而架构",
+      "entities": [],
+      "id": "mem_a15f8021",
+      "provenance": {
+        "evidence": "explicit",
+        "source_ref": "画像.md##软件工程态度"
+      },
+      "relations": {
+        "contradicts": [],
+        "related": [],
+        "superseded_by": [],
+        "supersedes": []
+      },
+      "schema_version": 1,
+      "scope": "global",
+      "source": {
+        "adapter": "migrate-memory.py",
+        "created_at": "2026-08-17T07:50:27Z",
+        "kind": "migration",
+        "session_id": null,
+        "updated_at": "2026-08-17T07:50:27Z"
+      },
+      "status": "active",
+      "tags": [],
+      "temporal": {
+        "valid_from": null,
+        "valid_until": null
+      },
+      "type": "semantic"
+    },
+    "kind": "legacy_record",
+    "legacy_id": "mem_a15f8021",
+    "legacy_record_type": "semantic",
+    "legacy_schema_version": 1,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "canonical_id",
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_e5a6daef8fbc934f3bdeff9b7de11a26"
+}

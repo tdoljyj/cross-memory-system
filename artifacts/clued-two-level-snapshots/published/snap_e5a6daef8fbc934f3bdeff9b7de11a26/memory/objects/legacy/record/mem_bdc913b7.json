@@ -1,0 +1,72 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "e5927b80e05e3e3de164f2cd3881add603937c412dbedb507ac6b41f3aa3c8d2",
+    "inline_payload": {
+      "classification": {
+        "category": "state",
+        "memory_layer": "state",
+        "priority": "high",
+        "recall_layer": "L3"
+      },
+      "content": "2026-08-22 Clued Kernel R5 K1 架构与合同冻结完成：机器合同 clued-kernel-r5-k1/1.0.0，专项 9/9、同步层 70/70、Memory Engine 55/55、MIV-005A 合同 19/19；全量 551 项为 539 PASS / 12 FAIL，失败与 K0 完全一致、无新增失败，最终候选树密钥扫描 0 命中。K0 仍为 NO_GO，语义召回未启用，未 release/deploy，K2 保持锁定。",
+      "entities": [
+        "cross-memory-system",
+        "Clued-Kernel"
+      ],
+      "id": "mem_bdc913b7",
+      "provenance": {
+        "evidence": "explicit",
+        "source_ref": null
+      },
+      "relations": {
+        "contradicts": [],
+        "related": [],
+        "superseded_by": [
+          "mem_7c595648"
+        ],
+        "supersedes": [
+          "mem_f7b771a0"
+        ]
+      },
+      "schema_version": 1,
+      "scope": "global",
+      "source": {
+        "adapter": "cli",
+        "created_at": "2026-08-22T06:47:27Z",
+        "kind": "user_explicit",
+        "session_id": null,
+        "updated_at": "2026-08-22T07:32:36Z"
+      },
+      "status": "superseded",
+      "tags": [
+        "R5",
+        "K0",
+        "NO_GO",
+        "R4-separation"
+      ],
+      "temporal": {
+        "valid_from": null,
+        "valid_until": "2026-08-22T07:32:36Z"
+      },
+      "type": "state"
+    },
+    "kind": "legacy_record",
+    "legacy_id": "mem_bdc913b7",
+    "legacy_record_type": "state",
+    "legacy_schema_version": 1,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "canonical_id",
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_e5a6daef8fbc934f3bdeff9b7de11a26"
+}

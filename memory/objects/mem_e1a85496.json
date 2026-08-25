@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "id": "mem_e1a85496",
+  "type": "state",
+  "scope": "project",
+  "content": "2026-08-26 Clued v1.6 M0 historical_offline 结构基线已落地：快照 snap_e5a6daef8fbc934f3bdeff9b7de11a26；Manifest v5、profile/global/projects、objects/events/evidence、单一 index、确定性构建、失败注入、原子指针与 rollback 测试均 PASS。生产未变；52/52 应用测试、typecheck、lint、build 全绿。",
+  "status": "active",
+  "source": {
+    "kind": "observed",
+    "adapter": "memory.py",
+    "session_id": null,
+    "created_at": "2026-08-25T16:19:27Z",
+    "updated_at": "2026-08-25T16:19:27Z"
+  },
+  "temporal": {
+    "valid_from": null,
+    "valid_until": null
+  },
+  "relations": {
+    "supersedes": [],
+    "superseded_by": [],
+    "contradicts": [],
+    "related": []
+  },
+  "classification": {
+    "memory_layer": "state",
+    "category": "state",
+    "recall_layer": "L3",
+    "priority": "high"
+  },
+  "provenance": {
+    "evidence": "observed",
+    "source_ref": null
+  },
+  "tags": [
+    "clued",
+    "m0",
+    "v1.6"
+  ],
+  "entities": [
+    "clued",
+    "clued-cloud"
+  ],
+  "project_id": "clued"
+}

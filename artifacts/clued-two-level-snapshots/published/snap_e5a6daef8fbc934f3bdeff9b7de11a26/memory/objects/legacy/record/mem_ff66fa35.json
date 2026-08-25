@@ -1,0 +1,62 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "473501ad7061b14462ec703d22319599fa90e668babebbd6598d3b9c61c91a22",
+    "inline_payload": {
+      "classification": {
+        "category": "history",
+        "memory_layer": "episodic",
+        "priority": "medium",
+        "recall_layer": "L4"
+      },
+      "content": "- 2026-08-17 DSH 本机重装验证（Codex@DESK-W-591）：此前记录的本机 DSH 安装（C:\\Users\\Windows\\dsh）已不存在（Node.js 缺失、~/.dsh 无配置），本轮重装完成：winget 装 Node.js LTS 24.19.0（系统级）+ npm 全局装 @deepseek-ai/dsh 0.1.0-rc.6（dsh 命令入 PATH）+ 按已知路径本地前缀装 C:\\Users\\Windows\\dsh（项目 .npmrc 放行 koffi/node-pty 等 5 个安装脚本）；验证：dsh --version 与记忆中的启动命令 node C:\\Users\\Windows\\dsh\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js web 均正常，Web UI http://127.0.0.1:3080 返回 HTTP 200，~/.dsh 已生成 profiles/storages",
+      "entities": [],
+      "id": "mem_ff66fa35",
+      "provenance": {
+        "evidence": "observed",
+        "source_ref": "状态.md##记忆系统与工具链"
+      },
+      "relations": {
+        "contradicts": [],
+        "related": [],
+        "superseded_by": [],
+        "supersedes": []
+      },
+      "schema_version": 1,
+      "scope": "global",
+      "source": {
+        "adapter": "migrate-memory.py",
+        "created_at": "2026-08-17T07:50:27Z",
+        "kind": "migration",
+        "session_id": null,
+        "updated_at": "2026-08-17T07:50:27Z"
+      },
+      "status": "candidate",
+      "tags": [
+        "manual-review"
+      ],
+      "temporal": {
+        "valid_from": null,
+        "valid_until": null
+      },
+      "type": "episodic"
+    },
+    "kind": "legacy_record",
+    "legacy_id": "mem_ff66fa35",
+    "legacy_record_type": "episodic",
+    "legacy_schema_version": 1,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "canonical_id",
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_e5a6daef8fbc934f3bdeff9b7de11a26"
+}

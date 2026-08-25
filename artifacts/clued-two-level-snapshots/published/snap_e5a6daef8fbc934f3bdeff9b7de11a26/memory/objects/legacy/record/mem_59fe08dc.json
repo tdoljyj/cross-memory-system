@@ -1,0 +1,60 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "4e203304d4d608cb2a18c2f7ef8d15a982fbd503191bd184763663aef05c4874",
+    "inline_payload": {
+      "classification": {
+        "category": "constraint",
+        "memory_layer": "semantic",
+        "priority": "medium",
+        "recall_layer": "L5"
+      },
+      "content": "- 传统系统性学完 UE 再开项目",
+      "entities": [],
+      "id": "mem_59fe08dc",
+      "provenance": {
+        "evidence": "explicit",
+        "source_ref": "决策.md##已否决（不要重复推荐）"
+      },
+      "relations": {
+        "contradicts": [],
+        "related": [],
+        "superseded_by": [],
+        "supersedes": []
+      },
+      "schema_version": 1,
+      "scope": "global",
+      "source": {
+        "adapter": "migrate-memory.py",
+        "created_at": "2026-08-17T07:50:27Z",
+        "kind": "migration",
+        "session_id": null,
+        "updated_at": "2026-08-17T07:50:27Z"
+      },
+      "status": "active",
+      "tags": [],
+      "temporal": {
+        "valid_from": null,
+        "valid_until": null
+      },
+      "type": "semantic"
+    },
+    "kind": "legacy_record",
+    "legacy_id": "mem_59fe08dc",
+    "legacy_record_type": "semantic",
+    "legacy_schema_version": 1,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "canonical_id",
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_e5a6daef8fbc934f3bdeff9b7de11a26"
+}
