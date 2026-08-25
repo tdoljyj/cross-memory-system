@@ -1,0 +1,38 @@
+{
+  "canonical_id": "70934de4-964e-4f62-917b-6923f9a732b0",
+  "canonical_version": "cv_137",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "- 思维已从「怎么把动画做出来」升级为「为什么必须这么做？能不能变成系统？」",
+    "content_hash": "01ea51a5858fb36e4dca4f7ca28f58b2dbcc634b2446d887e69e609d5144567c",
+    "id": "70934de4-964e-4f62-917b-6923f9a732b0",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "07514865-a4a7-491b-94fc-3945ebfa27fd",
+    "record_schema_version": 1,
+    "record_type": "note",
+    "recorded_at": "2026-08-25T05:23:21.664215+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_03e88a6d",
+    "title": "- 思维已从「怎么把动画做出来」升级为「为什么必须这么做",
+    "type_fields": {
+      "legacy_priority": 40,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "note_kind": "legacy_import"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_d04d68806b63819ca12b7a2a58bf2f27"
+}

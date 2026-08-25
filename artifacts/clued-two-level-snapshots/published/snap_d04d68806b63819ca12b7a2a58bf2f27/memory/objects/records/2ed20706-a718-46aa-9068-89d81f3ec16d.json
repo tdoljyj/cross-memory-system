@@ -1,0 +1,38 @@
+{
+  "canonical_id": "2ed20706-a718-46aa-9068-89d81f3ec16d",
+  "canonical_version": "cv_137",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "- 项目名方向：《山川夜语：逐日》",
+    "content_hash": "a1c084b937a53ce3f147647d7d0caa6748bf5e8f86909686344761350c73e9c9",
+    "id": "2ed20706-a718-46aa-9068-89d81f3ec16d",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "5ffb070c-8a51-4081-aaae-6d3278e804d3",
+    "record_schema_version": 1,
+    "record_type": "note",
+    "recorded_at": "2026-08-25T05:57:39.334964+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_518fa98b",
+    "title": "- 项目名方向：《山川夜语：逐日》",
+    "type_fields": {
+      "legacy_priority": 40,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "note_kind": "legacy_import"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_d04d68806b63819ca12b7a2a58bf2f27"
+}

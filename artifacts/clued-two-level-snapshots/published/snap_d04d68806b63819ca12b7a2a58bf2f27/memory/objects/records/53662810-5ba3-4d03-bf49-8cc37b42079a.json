@@ -1,0 +1,38 @@
+{
+  "canonical_id": "53662810-5ba3-4d03-bf49-8cc37b42079a",
+  "canonical_version": "cv_137",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "- Atlas 暂不考虑商业化",
+    "content_hash": "4f9d8a87a69b679cccef3bee83da185ba7715878e988367f5a5500552b016600",
+    "id": "53662810-5ba3-4d03-bf49-8cc37b42079a",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "f1f9655f-7b5a-42d7-9819-8ba448bfdcea",
+    "record_schema_version": 1,
+    "record_type": "decision",
+    "recorded_at": "2026-08-25T05:23:23.309356+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_06b3cd91",
+    "title": "- Atlas 暂不考虑商业化",
+    "type_fields": {
+      "legacy_priority": 40,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "rationale": "legacy_import_preserved_content"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_d04d68806b63819ca12b7a2a58bf2f27"
+}

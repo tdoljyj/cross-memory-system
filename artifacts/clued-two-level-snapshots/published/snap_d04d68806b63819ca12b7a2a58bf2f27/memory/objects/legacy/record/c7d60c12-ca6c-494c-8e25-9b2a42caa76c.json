@@ -1,0 +1,38 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "9dd42f2e76f95b71b70d9d6c3533319963fb30b2a577d894f5caf02331a01818",
+    "inline_payload": {
+      "archived_at": "2026-08-25T06:02:28.743792+00:00",
+      "content": "- 范围：GAP-2-1~4 + GAP-3-1~10 全部处置（13 修复 + 2 留档），每项独立 commit + 回归；不重构架构、不加依赖、不改核心协议语义",
+      "created_at": "2026-08-25T06:02:28.743792+00:00",
+      "id": "c7d60c12-ca6c-494c-8e25-9b2a42caa76c",
+      "priority": 40,
+      "project_id": null,
+      "record_key": "umb:v1:mem_e752b587",
+      "record_type": "archive_snapshot",
+      "scope": "global",
+      "source_ref": "user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_e752b587",
+      "status": "archived",
+      "title": "- 范围：GAP-2-1~4 + GAP-3-1~10 全部处置（13 修复 + 2 留档），每项独立 commit + 回归；不重构架构、不加依赖、不改核心协议语义",
+      "updated_at": "2026-08-25T06:02:28.743792+00:00",
+      "version": 1
+    },
+    "kind": "legacy_record",
+    "legacy_id": "c7d60c12-ca6c-494c-8e25-9b2a42caa76c",
+    "legacy_record_type": "archive_snapshot",
+    "legacy_schema_version": null,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_d04d68806b63819ca12b7a2a58bf2f27"
+}

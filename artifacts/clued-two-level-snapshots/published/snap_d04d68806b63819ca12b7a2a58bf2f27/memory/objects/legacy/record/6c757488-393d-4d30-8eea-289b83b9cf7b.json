@@ -1,0 +1,38 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "885097d84db32f8899674c73af77be1f2199a7f5fc7f7fec23574a0ab7696f39",
+    "inline_payload": {
+      "archived_at": "2026-08-25T05:23:35.189522+00:00",
+      "content": "- 2026-08-16 DSH 端接入验证闭环（DSH@TURING，本轮）：pull 对齐远端 d436de8；doctor 全 PASS；验收测试 33/33 全绿；补建用户全局钩子 ~/.dsh/AGENTS.md（DSH 每会话自动注入、任意工作区生效——此前仅消费端 MEMORY.md 无注入机制，新会话不知协议）；完成 DSH 端首轮记忆写入闭环",
+      "created_at": "2026-08-25T05:23:35.189522+00:00",
+      "id": "6c757488-393d-4d30-8eea-289b83b9cf7b",
+      "priority": 40,
+      "project_id": null,
+      "record_key": "umb:v1:mem_0c3182f9",
+      "record_type": "archive_snapshot",
+      "scope": "global",
+      "source_ref": "user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_0c3182f9",
+      "status": "archived",
+      "title": "- 2026-08-16 DSH 端接入验证闭环（DSH@TURING，本轮）：pull 对齐远端 d436de8；doctor 全 PASS；验收测试 33/33 全绿；补建用户全局钩子 ~/.dsh/AGENTS.md（DSH 每会话自",
+      "updated_at": "2026-08-25T05:23:35.189522+00:00",
+      "version": 1
+    },
+    "kind": "legacy_record",
+    "legacy_id": "6c757488-393d-4d30-8eea-289b83b9cf7b",
+    "legacy_record_type": "archive_snapshot",
+    "legacy_schema_version": null,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_d04d68806b63819ca12b7a2a58bf2f27"
+}

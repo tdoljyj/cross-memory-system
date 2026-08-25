@@ -1,0 +1,38 @@
+{
+  "canonical_id": "1a1cb985-1d63-4f1b-92cc-18d29b338a08",
+  "canonical_version": "cv_137",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "- 当前倾向「鱼火」：鱼普通、火普通，组合不常见、无需解释，方向对",
+    "content_hash": "5e53d5ddbb577f87977e5ffb5a3af2f501f0ab286152e6d8d6eaca0b758f65c4",
+    "id": "1a1cb985-1d63-4f1b-92cc-18d29b338a08",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "be9c638a-00e3-4d0e-8437-d9e6a26588b9",
+    "record_schema_version": 1,
+    "record_type": "note",
+    "recorded_at": "2026-08-25T05:58:20.649226+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_7549c1fb",
+    "title": "- 当前倾向「鱼火」：鱼普通、火普通，组合不常见、无需解释，方向对",
+    "type_fields": {
+      "legacy_priority": 40,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "note_kind": "legacy_import"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_d04d68806b63819ca12b7a2a58bf2f27"
+}

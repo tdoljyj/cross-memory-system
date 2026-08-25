@@ -1,0 +1,38 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "ad9f55751d6527d6f9a8c7ac393fae28ef981acef1e25d97ebbf97529b5a90a1",
+    "inline_payload": {
+      "archived_at": "2026-08-25T06:02:03.547786+00:00",
+      "content": "- 同步：架构基线文档-vNext-1.3.md 变更记录追加「接入文档勘误」条目；未 bump 版本（VERSION 仍 vNext-1.3）",
+      "created_at": "2026-08-25T06:02:03.547786+00:00",
+      "id": "c5d130cf-900c-4efa-8545-6b72b6a3e578",
+      "priority": 40,
+      "project_id": null,
+      "record_key": "umb:v1:mem_deb4b1c8",
+      "record_type": "archive_snapshot",
+      "scope": "global",
+      "source_ref": "user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_deb4b1c8",
+      "status": "archived",
+      "title": "- 同步：架构基线文档-vNext-1.3.md 变更记录追加「接入文档勘误」条目；未 bump 版本（VERSION 仍 vNext-1.3）",
+      "updated_at": "2026-08-25T06:02:03.547786+00:00",
+      "version": 1
+    },
+    "kind": "legacy_record",
+    "legacy_id": "c5d130cf-900c-4efa-8545-6b72b6a3e578",
+    "legacy_record_type": "archive_snapshot",
+    "legacy_schema_version": null,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_d04d68806b63819ca12b7a2a58bf2f27"
+}

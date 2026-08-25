@@ -1,0 +1,38 @@
+{
+  "canonical_id": "f76a368a-3b03-44df-b29f-7d509f91917d",
+  "canonical_version": "cv_137",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "- 发散探索 → 快速淘汰 → 集中深入执行",
+    "content_hash": "1af278c26f763a7c83381b2f5936dc42a6e0266484aef62486e9883d9700dd9f",
+    "id": "f76a368a-3b03-44df-b29f-7d509f91917d",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "b7fc4247-d19f-420d-b80a-7a578c89302d",
+    "record_schema_version": 1,
+    "record_type": "note",
+    "recorded_at": "2026-08-25T06:02:41.900357+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_eb2155d7",
+    "title": "- 发散探索 → 快速淘汰 → 集中深入执行",
+    "type_fields": {
+      "legacy_priority": 40,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "note_kind": "legacy_import"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_d04d68806b63819ca12b7a2a58bf2f27"
+}

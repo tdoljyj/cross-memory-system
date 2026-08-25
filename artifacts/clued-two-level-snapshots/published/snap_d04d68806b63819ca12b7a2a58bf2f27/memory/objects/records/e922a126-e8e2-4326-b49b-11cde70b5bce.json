@@ -1,0 +1,38 @@
+{
+  "canonical_id": "e922a126-e8e2-4326-b49b-11cde70b5bce",
+  "canonical_version": "cv_137",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "- 喜欢：自然、天地、山川、日月、神话、宿命、生命、时间；「留白」，不喜欢「解释」",
+    "content_hash": "dc0c06abae234d679db4a3d6a466fb33bba66b3ed12e24cf24b30b6f33bec404",
+    "id": "e922a126-e8e2-4326-b49b-11cde70b5bce",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "5279160f-9191-4f0a-9658-e14522df8a9c",
+    "record_schema_version": 1,
+    "record_type": "note",
+    "recorded_at": "2026-08-25T05:57:48.204486+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_5940972c",
+    "title": "- 喜欢：自然、天地、山川、日月、神话、宿命、生命、时间；「留白」，不喜欢「解释」",
+    "type_fields": {
+      "legacy_priority": 40,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "note_kind": "legacy_import"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_d04d68806b63819ca12b7a2a58bf2f27"
+}

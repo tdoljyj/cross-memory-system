@@ -1,0 +1,38 @@
+{
+  "canonical_id": "b595bc8e-7a55-4e39-91b1-eb9d094c4fd0",
+  "canonical_version": "cv_137",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "2026-08-22 Clued Kernel R5 K2 解锁门禁的前四项已满足：K1 合同通过、K0 的 12 项已知回归债务已修复、新鲜全量回归 552/552 PASS、候选树密钥扫描 0 命中。K0 历史 NO_GO 与隔离证据继续保留；在用户下达新的明确 K2 授权前，K2 必须保持 LOCKED，语义召回不得启用，禁止 release/deploy。",
+    "content_hash": "7aaa1bb27f6b548da506373c1f162ace6b557b2a8fa37b94670409839ec6813d",
+    "id": "b595bc8e-7a55-4e39-91b1-eb9d094c4fd0",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "16024ff7-0bde-4c6a-a873-d24114c59aa4",
+    "record_schema_version": 1,
+    "record_type": "decision",
+    "recorded_at": "2026-08-25T05:58:12.774366+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_68ce421a",
+    "title": "2026-08-22 Clued Kernel R5 K2 解锁门禁的前四项已满足：K1 合同通过、K0 的 12 项已知回归债务已修复、新鲜全量回归 552/552 PASS、候选树密钥扫描 0 命中",
+    "type_fields": {
+      "legacy_priority": 80,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "rationale": "legacy_import_preserved_content"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_d04d68806b63819ca12b7a2a58bf2f27"
+}

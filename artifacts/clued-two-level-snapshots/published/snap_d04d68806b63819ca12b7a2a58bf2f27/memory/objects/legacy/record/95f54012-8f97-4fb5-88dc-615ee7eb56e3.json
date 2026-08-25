@@ -1,0 +1,38 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "b754a785b31182c51de25986846bae5876feed2eb4e29f66e6b965a815f86ca8",
+    "inline_payload": {
+      "archived_at": "2026-08-25T05:58:41.299247+00:00",
+      "content": "- 范围：核心玩法 / 动作 / 战斗 / 角色 / 系统 / 可玩性",
+      "created_at": "2026-08-25T05:58:41.299247+00:00",
+      "id": "95f54012-8f97-4fb5-88dc-615ee7eb56e3",
+      "priority": 40,
+      "project_id": null,
+      "record_key": "umb:v1:mem_80c0f792",
+      "record_type": "note",
+      "scope": "global",
+      "source_ref": "user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_80c0f792",
+      "status": "archived",
+      "title": "- 范围：核心玩法 / 动作 / 战斗 / 角色 / 系统 / 可玩性",
+      "updated_at": "2026-08-25T05:58:41.299247+00:00",
+      "version": 1
+    },
+    "kind": "legacy_record",
+    "legacy_id": "95f54012-8f97-4fb5-88dc-615ee7eb56e3",
+    "legacy_record_type": "note",
+    "legacy_schema_version": null,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_d04d68806b63819ca12b7a2a58bf2f27"
+}

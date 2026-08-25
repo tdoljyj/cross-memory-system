@@ -1,0 +1,38 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "5334fe484002c27e11866eb8b4a98efc6796b428f3f046addb4880b40856889d",
+    "inline_payload": {
+      "archived_at": "2026-08-25T05:59:50.004791+00:00",
+      "content": "- 复核基线：远端=Codex 克隆=c9a4187、工作树 clean、Documents↔仓库字节一致、LF 无 BOM；代理 7897 通、直连 github.com:443 不通；WorkBuddy 克隆落后 2 提交（d7b73c7）且 tracking ref 丢失（[origin/main: gone]）",
+      "created_at": "2026-08-25T05:59:50.004791+00:00",
+      "id": "aee8a78f-9bdb-4c3e-898d-bc13f78ae117",
+      "priority": 40,
+      "project_id": null,
+      "record_key": "umb:v1:mem_a035c117",
+      "record_type": "archive_snapshot",
+      "scope": "global",
+      "source_ref": "user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_a035c117",
+      "status": "archived",
+      "title": "- 复核基线：远端=Codex 克隆=c9a4187、工作树 clean、Documents↔仓库字节一致、LF 无 BOM；代理 7897 通、直连 github.com:443 不通；WorkBuddy 克隆落后 2 提交（d7b73c",
+      "updated_at": "2026-08-25T05:59:50.004791+00:00",
+      "version": 1
+    },
+    "kind": "legacy_record",
+    "legacy_id": "aee8a78f-9bdb-4c3e-898d-bc13f78ae117",
+    "legacy_record_type": "archive_snapshot",
+    "legacy_schema_version": null,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_d04d68806b63819ca12b7a2a58bf2f27"
+}

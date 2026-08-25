@@ -1,0 +1,38 @@
+{
+  "canonical_id": "417e2046-4bf6-4215-b6fd-823a8ed3d52c",
+  "canonical_version": "cv_137",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "- 动画曲线、IK / Foot Lock、Motion Correction、自动化工作流、插件与工具架构",
+    "content_hash": "bfe95cc4e584e3bcf030f25f8b68e47d67854a2932fee795ce49753587e3eae1",
+    "id": "417e2046-4bf6-4215-b6fd-823a8ed3d52c",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "7eec2e98-27eb-47ec-8cd9-866e112c1bac",
+    "record_schema_version": 1,
+    "record_type": "note",
+    "recorded_at": "2026-08-25T05:57:31.613916+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_4b8f50cc",
+    "title": "- 动画曲线、IK / Foot Lock、Motion Correction、自动化工作流、插件与工具架构",
+    "type_fields": {
+      "legacy_priority": 40,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "note_kind": "legacy_import"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_d04d68806b63819ca12b7a2a58bf2f27"
+}

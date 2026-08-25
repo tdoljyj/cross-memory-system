@@ -1,0 +1,38 @@
+{
+  "canonical_id": "ace054f6-ee62-4315-867b-3be007b5e595",
+  "canonical_version": "cv_137",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "- 不追求稳定，愿承担风险，希望拥有自己的项目/IP/工作室/技术/产品/作品（资产归属感重要）",
+    "content_hash": "d309649b892c04a0f6509d50ced7e89dfdf822296ca7ef23d52ec3cc629fecec",
+    "id": "ace054f6-ee62-4315-867b-3be007b5e595",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "a0ece78b-aa7f-4504-92ed-5984d7074676",
+    "record_schema_version": 1,
+    "record_type": "note",
+    "recorded_at": "2026-08-25T05:58:16.312009+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_716ddec6",
+    "title": "- 不追求稳定，愿承担风险，希望拥有自己的项目/IP/工作室/技术/产品/作品（资产归属感重要）",
+    "type_fields": {
+      "legacy_priority": 40,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "note_kind": "legacy_import"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_d04d68806b63819ca12b7a2a58bf2f27"
+}

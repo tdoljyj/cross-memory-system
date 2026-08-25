@@ -1,0 +1,38 @@
+{
+  "canonical_id": "efcf9606-3ade-45eb-99e7-a27116f86d8b",
+  "canonical_version": "cv_137",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "视觉传达 → 3D 动画 → 动画工具开发 → 技术型动画师 → 游戏动画 / 游戏制作 → 独立游戏项目 → 工作室 / IP。长期深度使用 Maya。当前处于「个人专业能力 → 个人作品与组织能力」的关键转型期。",
+    "content_hash": "3d0732628a67525d6c872fd622a9413e2dacdd8c03538473d4380e3304b9c7f5",
+    "id": "efcf9606-3ade-45eb-99e7-a27116f86d8b",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "ffae0be3-bca5-4a74-90df-cbdbe47b7f1a",
+    "record_schema_version": 1,
+    "record_type": "note",
+    "recorded_at": "2026-08-25T05:56:10.632794+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_25206d8c",
+    "title": "视觉传达 → 3D 动画 → 动画工具开发 → 技术型动画师 → 游戏动画 / 游戏制作 → 独立游戏项目 → 工作室 / IP",
+    "type_fields": {
+      "legacy_priority": 40,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "note_kind": "legacy_import"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_d04d68806b63819ca12b7a2a58bf2f27"
+}

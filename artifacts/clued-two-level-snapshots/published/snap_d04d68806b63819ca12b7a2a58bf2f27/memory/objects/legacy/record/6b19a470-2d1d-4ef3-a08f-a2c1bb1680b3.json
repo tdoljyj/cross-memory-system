@@ -1,0 +1,38 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "94f9b700ffcce1a0d4d835b5e67ff8ba06941a1b2f0200a710f85d6c39c49a59",
+    "inline_payload": {
+      "archived_at": "2026-08-25T05:56:41.338539+00:00",
+      "content": "- Codex 运行时 git 全局 autocrlf=true（来源 runtime gitconfig），但 .gitattributes 优先级更高，三副本仍字节一致；已补仓库级 core.autocrlf=false 防漂移",
+      "created_at": "2026-08-25T05:56:41.338539+00:00",
+      "id": "6b19a470-2d1d-4ef3-a08f-a2c1bb1680b3",
+      "priority": 40,
+      "project_id": null,
+      "record_key": "umb:v1:mem_39413cba",
+      "record_type": "archive_snapshot",
+      "scope": "global",
+      "source_ref": "user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_39413cba",
+      "status": "archived",
+      "title": "- Codex 运行时 git 全局 autocrlf=true（来源 runtime gitconfig），但 .gitattributes 优先级更高，三副本仍字节一致；已补仓库级 core.autocrlf=false 防漂移",
+      "updated_at": "2026-08-25T05:56:41.338539+00:00",
+      "version": 1
+    },
+    "kind": "legacy_record",
+    "legacy_id": "6b19a470-2d1d-4ef3-a08f-a2c1bb1680b3",
+    "legacy_record_type": "archive_snapshot",
+    "legacy_schema_version": null,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_d04d68806b63819ca12b7a2a58bf2f27"
+}

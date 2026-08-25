@@ -1,0 +1,38 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "e92a454f6909ebd668ebc078301c699795cfe19de4bfa1c719d6a139132b154e",
+    "inline_payload": {
+      "archived_at": "2026-08-25T06:02:10.438482+00:00",
+      "content": "- 验证：工作树脏检查正确拦截带未提交变更的 pull（覆盖保护按预期生效）；提交推送后 ls-remote 核验",
+      "created_at": "2026-08-25T06:02:10.438482+00:00",
+      "id": "61b0e1c4-f70c-47da-8f87-209cb92c03ad",
+      "priority": 40,
+      "project_id": null,
+      "record_key": "umb:v1:mem_e31c52fe",
+      "record_type": "archive_snapshot",
+      "scope": "global",
+      "source_ref": "user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_e31c52fe",
+      "status": "archived",
+      "title": "- 验证：工作树脏检查正确拦截带未提交变更的 pull（覆盖保护按预期生效）；提交推送后 ls-remote 核验",
+      "updated_at": "2026-08-25T06:02:10.438482+00:00",
+      "version": 1
+    },
+    "kind": "legacy_record",
+    "legacy_id": "61b0e1c4-f70c-47da-8f87-209cb92c03ad",
+    "legacy_record_type": "archive_snapshot",
+    "legacy_schema_version": null,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_d04d68806b63819ca12b7a2a58bf2f27"
+}

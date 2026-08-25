@@ -1,0 +1,38 @@
+{
+  "canonical_id": "de39f8e7-12ef-486f-9869-3763762cade4",
+  "canonical_version": "cv_137",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "公开版去敏模板（可选，仅当想分享系统时做）——归档：无分享需求时不做",
+    "content_hash": "26609788a59058971db86d851b9f20ea24fc6fbd40be8f021b484c1881a4d53d",
+    "id": "de39f8e7-12ef-486f-9869-3763762cade4",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "bdd96ccc-6124-4ca4-8e34-91709fdb8326",
+    "record_schema_version": 1,
+    "record_type": "task",
+    "recorded_at": "2026-08-25T06:02:12.489372+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_e3844a8c",
+    "title": "公开版去敏模板（可选，仅当想分享系统时做）——归档：无分享需求时不做",
+    "type_fields": {
+      "execution_bucket": "later",
+      "legacy_priority": 40,
+      "legacy_status": "backlog",
+      "migration_batch": "m1-current-legacy-20260826-v1"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_d04d68806b63819ca12b7a2a58bf2f27"
+}

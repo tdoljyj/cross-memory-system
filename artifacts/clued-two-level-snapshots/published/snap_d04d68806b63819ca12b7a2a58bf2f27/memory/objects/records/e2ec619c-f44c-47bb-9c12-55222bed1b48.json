@@ -1,0 +1,38 @@
+{
+  "canonical_id": "e2ec619c-f44c-47bb-9c12-55222bed1b48",
+  "canonical_version": "cv_137",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "- 通过改 config.toml 的 sandbox_mode / approval_policy / writable_roots 来解锁桌面版权限（实测不生效）",
+    "content_hash": "c7e72e9dd2ed79a78b0c75a9b5d33ae7644e56e34b6a6d4c3f1fb9df83e8ae56",
+    "id": "e2ec619c-f44c-47bb-9c12-55222bed1b48",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "8ce34d92-80ea-4736-a844-11d4cbde5784",
+    "record_schema_version": 1,
+    "record_type": "decision",
+    "recorded_at": "2026-08-25T05:56:30.700495+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_33707f72",
+    "title": "- 通过改 config.toml 的 sandbox_mode / approval_policy / writable_roots 来解锁桌面版权限（实测不生效）",
+    "type_fields": {
+      "legacy_priority": 40,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "rationale": "legacy_import_preserved_content"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_d04d68806b63819ca12b7a2a58bf2f27"
+}

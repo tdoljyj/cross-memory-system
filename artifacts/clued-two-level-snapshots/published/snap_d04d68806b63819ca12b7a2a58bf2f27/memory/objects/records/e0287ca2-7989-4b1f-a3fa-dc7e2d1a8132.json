@@ -1,0 +1,38 @@
+{
+  "canonical_id": "e0287ca2-7989-4b1f-a3fa-dc7e2d1a8132",
+  "canonical_version": "cv_137",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "本机其他应用网络与代理正常；Codex 在 Windows elevated sandbox 中以 CodexSandboxOffline 独立账号运行，不继承用户级代理和私有仓库凭据，直连网络受限。涉及远端 Git、私有仓库和记忆同步时，应直接申请在宿主用户上下文执行，不得再笼统归因成整机网络不可达或代理故障。",
+    "content_hash": "5a23fb1d5111b40f527cd784569fded4756eafb9ec3b0f23844b800555382459",
+    "id": "e0287ca2-7989-4b1f-a3fa-dc7e2d1a8132",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "2b5f48aa-b8ea-4e86-84a6-cc2a336e51eb",
+    "record_schema_version": 1,
+    "record_type": "decision",
+    "recorded_at": "2026-08-25T05:59:02.391271+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_8a99e081",
+    "title": "本机其他应用网络与代理正常；Codex 在 Windows elevated sandbox 中以 CodexSandboxOffline 独立账号运行，不继承用户级代理和私有仓库凭据，直连网络受限",
+    "type_fields": {
+      "legacy_priority": 80,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "rationale": "legacy_import_preserved_content"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_d04d68806b63819ca12b7a2a58bf2f27"
+}

@@ -1,0 +1,38 @@
+{
+  "canonical_id": "d3e431ee-ac36-4190-b526-cdb08efffb4f",
+  "canonical_version": "cv_137",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "- 没有项目牵引时，纯学习会被判定为低效（需要目标牵引）",
+    "content_hash": "76da87348d50b2838e08ced6d1dc8ec917414a436ae7c3d0b5b213989e35992e",
+    "id": "d3e431ee-ac36-4190-b526-cdb08efffb4f",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "2906f7e0-3d19-4784-b3d6-964c22345025",
+    "record_schema_version": 1,
+    "record_type": "note",
+    "recorded_at": "2026-08-25T05:58:27.523927+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_787073b9",
+    "title": "- 没有项目牵引时，纯学习会被判定为低效（需要目标牵引）",
+    "type_fields": {
+      "legacy_priority": 40,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "note_kind": "legacy_import"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_d04d68806b63819ca12b7a2a58bf2f27"
+}

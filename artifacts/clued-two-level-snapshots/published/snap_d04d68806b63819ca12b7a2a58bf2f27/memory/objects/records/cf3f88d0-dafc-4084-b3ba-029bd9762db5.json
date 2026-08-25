@@ -1,0 +1,38 @@
+{
+  "canonical_id": "cf3f88d0-dafc-4084-b3ba-029bd9762db5",
+  "canonical_version": "cv_137",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "- 东方但不古装化；神话但不仙侠化；文学但不文艺腔；宏大但不喊口号；高级但不装；现代但不欧美模板化",
+    "content_hash": "d061da8fd5aa3da8f34002fed12980b58cf2cbfe8f9aa6b3fabfc4335b22d7bd",
+    "id": "cf3f88d0-dafc-4084-b3ba-029bd9762db5",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "da51abfa-4438-4772-9b0a-c4a05ca7eb3e",
+    "record_schema_version": 1,
+    "record_type": "note",
+    "recorded_at": "2026-08-25T05:56:27.914112+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_2ff87e82",
+    "title": "- 东方但不古装化；神话但不仙侠化；文学但不文艺腔；宏大但不喊口号；高级但不装；现代但不欧美模板化",
+    "type_fields": {
+      "legacy_priority": 40,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "note_kind": "legacy_import"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_d04d68806b63819ca12b7a2a58bf2f27"
+}

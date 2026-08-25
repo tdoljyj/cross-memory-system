@@ -1,0 +1,38 @@
+{
+  "canonical_id": "d603567e-d7ce-4f29-9dce-093f26581b17",
+  "canonical_version": "cv_137",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "《山川夜语：逐日》世界观 / 角色 / 故事结构继续推进",
+    "content_hash": "ef727eb8c333090aba6a17a7f41cd2366a141ec863876b8e5a89fd8995cdd6f6",
+    "id": "d603567e-d7ce-4f29-9dce-093f26581b17",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "b365cd3c-82f7-4802-afae-2395e661120a",
+    "record_schema_version": 1,
+    "record_type": "task",
+    "recorded_at": "2026-08-25T06:03:16.290361+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_f8cfccc3",
+    "title": "《山川夜语：逐日》世界观 / 角色 / 故事结构继续推进",
+    "type_fields": {
+      "execution_bucket": "later",
+      "legacy_priority": 40,
+      "legacy_status": "backlog",
+      "migration_batch": "m1-current-legacy-20260826-v1"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_d04d68806b63819ca12b7a2a58bf2f27"
+}

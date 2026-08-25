@@ -4,23 +4,25 @@
   "type": "state",
   "scope": "project",
   "content": "Clued v1.6 M1 运行时合同已部署生产；下一步需用户另行明确授权后，只将 126 条非终态 legacy record 确定性映射为 M1 canonical，136 条 archived legacy（含 121 条 archive_snapshot）继续只读保留。映射后重跑用户 JWT/RLS live export，仅 views_complete=true 时激活 current.json；M2 与 merge 写入继续关闭。",
-  "status": "active",
+  "status": "superseded",
   "source": {
     "kind": "user_explicit",
     "adapter": "cli",
     "session_id": null,
     "created_at": "2026-08-25T17:58:28Z",
-    "updated_at": "2026-08-25T17:58:28Z"
+    "updated_at": "2026-08-25T19:07:47Z"
   },
   "temporal": {
     "valid_from": null,
-    "valid_until": null
+    "valid_until": "2026-08-25T19:07:47Z"
   },
   "relations": {
     "supersedes": [
       "mem_20f858e3"
     ],
-    "superseded_by": [],
+    "superseded_by": [
+      "mem_b8b13e65"
+    ],
     "contradicts": [],
     "related": []
   },

@@ -1,0 +1,38 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "f426126e56be38dfd58c11db500a59c674c9dedabb4b28eda95c317225fa1eb8",
+    "inline_payload": {
+      "archived_at": "2026-08-25T05:57:38.103904+00:00",
+      "content": "- 变更：废除「每次开场强制 pull+读五文件 + 收尾强制 push」，改为按需读写。读侧五类加载触发（自身相关 / 跨会话历史 / 依赖个人上下文的任务 / 维护记忆系统 / 冲突风险）+ 明确排除（数学/语法/客观知识等通用问题）+ 模糊兜底（拿不准就加载，误加载成本 ~1s < 漏加载成本）+ 文件分级选读（标准三件套=画像+状态+决策）。写侧：仅本轮产生稳定个人/项目信息才写记忆文件；仅实际改动了记忆文件才 push，无写入静默结束",
+      "created_at": "2026-08-25T05:57:38.103904+00:00",
+      "id": "40eebdd8-0f52-4495-8f8a-b1099e0c74a2",
+      "priority": 40,
+      "project_id": null,
+      "record_key": "umb:v1:mem_50dccd38",
+      "record_type": "archive_snapshot",
+      "scope": "global",
+      "source_ref": "user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_50dccd38",
+      "status": "archived",
+      "title": "- 变更：废除「每次开场强制 pull+读五文件 + 收尾强制 push」，改为按需读写",
+      "updated_at": "2026-08-25T05:57:38.103904+00:00",
+      "version": 1
+    },
+    "kind": "legacy_record",
+    "legacy_id": "40eebdd8-0f52-4495-8f8a-b1099e0c74a2",
+    "legacy_record_type": "archive_snapshot",
+    "legacy_schema_version": null,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_d04d68806b63819ca12b7a2a58bf2f27"
+}

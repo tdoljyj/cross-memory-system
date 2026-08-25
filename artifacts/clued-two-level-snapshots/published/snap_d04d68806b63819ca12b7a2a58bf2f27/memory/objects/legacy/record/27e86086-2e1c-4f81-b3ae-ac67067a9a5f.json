@@ -1,0 +1,38 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "3a6647ad923f52449f3de2bdc02787844e5a027500b09f8d8e8daf23ffc6fb5c",
+    "inline_payload": {
+      "archived_at": "2026-08-25T05:59:24.081759+00:00",
+      "content": "- ③ c8e5947 py 新增 find_secret_leak_unpushed（扫 origin/main..HEAD 文件级 diff 的 HEAD blob），push 前置检查；攻击实测：令牌已 commit 进非 memory 文件 → push 被「未推送提交 README_token.md」拒绝、远端不变；干净 non-memory 提交正常放行",
+      "created_at": "2026-08-25T05:59:24.081759+00:00",
+      "id": "27e86086-2e1c-4f81-b3ae-ac67067a9a5f",
+      "priority": 40,
+      "project_id": null,
+      "record_key": "umb:v1:mem_8fbe1a91",
+      "record_type": "archive_snapshot",
+      "scope": "global",
+      "source_ref": "user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_8fbe1a91",
+      "status": "archived",
+      "title": "- ③ c8e5947 py 新增 find_secret_leak_unpushed（扫 origin/main..HEAD 文件级 diff 的 HEAD blob），push 前置检查；攻击实测：令牌已 commit 进非 memor",
+      "updated_at": "2026-08-25T05:59:24.081759+00:00",
+      "version": 1
+    },
+    "kind": "legacy_record",
+    "legacy_id": "27e86086-2e1c-4f81-b3ae-ac67067a9a5f",
+    "legacy_record_type": "archive_snapshot",
+    "legacy_schema_version": null,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_d04d68806b63819ca12b7a2a58bf2f27"
+}

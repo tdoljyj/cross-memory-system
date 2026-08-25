@@ -1,0 +1,38 @@
+{
+  "canonical_id": "a907632d-d985-4e41-98ba-d86c12af161a",
+  "canonical_version": "cv_137",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "- 记忆 / 钩子 / config 维护走 apply_patch；shell 写不进 Documents\\Codex 内容目录（只读保护）",
+    "content_hash": "c5efeb61b6c2671ccd9ec223178ec6d55068c0cebd594b5f5f1eeef2eed51e0c",
+    "id": "a907632d-d985-4e41-98ba-d86c12af161a",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "ba54b3c9-c9ae-495d-a3d9-0b7da1bdfa2b",
+    "record_schema_version": 1,
+    "record_type": "decision",
+    "recorded_at": "2026-08-25T05:59:31.898878+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_90f16c7f",
+    "title": "- 记忆 / 钩子 / config 维护走 apply_patch；shell 写不进 Documents\\Codex 内容目录（只读保护）",
+    "type_fields": {
+      "legacy_priority": 40,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "rationale": "legacy_import_preserved_content"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_d04d68806b63819ca12b7a2a58bf2f27"
+}

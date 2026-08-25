@@ -1,0 +1,38 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "aa46e3279f56c0a721dc879fc76ac48730cfe534de2f1ef4609e4a987f56c74b",
+    "inline_payload": {
+      "archived_at": "2026-08-25T05:24:32.665081+00:00",
+      "content": "- 「数字引擎」已查证不适合做品牌（撞名严重、联想偏金融科技）——只适合作注册主体兜底",
+      "created_at": "2026-08-25T05:24:32.665081+00:00",
+      "id": "62db8a7a-86d7-4058-bec6-1fa063896509",
+      "priority": 40,
+      "project_id": null,
+      "record_key": "umb:v1:mem_18beb7ab",
+      "record_type": "note",
+      "scope": "global",
+      "source_ref": "user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_18beb7ab",
+      "status": "archived",
+      "title": "- 「数字引擎」已查证不适合做品牌（撞名严重、联想偏金融科技）——只适合作注册主体兜底",
+      "updated_at": "2026-08-25T05:24:32.665081+00:00",
+      "version": 1
+    },
+    "kind": "legacy_record",
+    "legacy_id": "62db8a7a-86d7-4058-bec6-1fa063896509",
+    "legacy_record_type": "note",
+    "legacy_schema_version": null,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_d04d68806b63819ca12b7a2a58bf2f27"
+}

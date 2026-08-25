@@ -1,0 +1,25 @@
+{
+  "canonical_id": "c59e4de8-9116-4e4a-b27f-663eaf30ca95",
+  "canonical_version": "cv_137",
+  "data": {
+    "aliases": [],
+    "canonical_project_id": "c59e4de8-9116-4e4a-b27f-663eaf30ca95",
+    "certainty_status": "confirmed",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "lifecycle_status": "active",
+    "merge_generation": 0,
+    "merged_into_project_id": null,
+    "name": "cross-memory-system",
+    "progress_status": "active",
+    "project_schema_version": 1,
+    "receipt_id": null,
+    "recorded_at": "2026-08-25T05:23:15.632693+00:00",
+    "updated_at": "2026-08-25T05:23:15.632693+00:00",
+    "version": 1
+  },
+  "kind": "project",
+  "schema_version": 1,
+  "snapshot_version": "snap_d04d68806b63819ca12b7a2a58bf2f27"
+}

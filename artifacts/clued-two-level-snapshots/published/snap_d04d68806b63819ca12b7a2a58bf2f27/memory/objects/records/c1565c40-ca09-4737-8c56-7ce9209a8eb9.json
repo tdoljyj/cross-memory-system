@@ -1,0 +1,38 @@
+{
+  "canonical_id": "c1565c40-ca09-4737-8c56-7ce9209a8eb9",
+  "canonical_version": "cv_137",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "- 「鱼火」是典型：方向确认后立刻进入「沿这个方向继续给」，不是优柔寡断，是阶段切换",
+    "content_hash": "0b3f367376af6fc14af9a94f1c313abefe69b65fa0de35e3eb0bf537873369b9",
+    "id": "c1565c40-ca09-4737-8c56-7ce9209a8eb9",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "fa410d15-8312-4056-8af9-249e3bb93e20",
+    "record_schema_version": 1,
+    "record_type": "note",
+    "recorded_at": "2026-08-25T05:59:22.359045+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_8eae7d57",
+    "title": "- 「鱼火」是典型：方向确认后立刻进入「沿这个方向继续给」，不是优柔寡断，是阶段切换",
+    "type_fields": {
+      "legacy_priority": 40,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "note_kind": "legacy_import"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_d04d68806b63819ca12b7a2a58bf2f27"
+}

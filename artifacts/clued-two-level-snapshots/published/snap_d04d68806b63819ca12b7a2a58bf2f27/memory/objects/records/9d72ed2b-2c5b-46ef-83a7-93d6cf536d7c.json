@@ -1,0 +1,38 @@
+{
+  "canonical_id": "9d72ed2b-2c5b-46ef-83a7-93d6cf536d7c",
+  "canonical_version": "cv_137",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "- 候选池：鱼景、鱼乐、鱼火、与火、于火、松鱼、熊火、月禾、禾月、禾景夕色、戏影、影戏堂",
+    "content_hash": "f3c8e37791937279e808166ba90054c9302dfd032a7038dc95738c2cbedb6c71",
+    "id": "9d72ed2b-2c5b-46ef-83a7-93d6cf536d7c",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "f7a260a1-655f-48c4-8418-22aa80d6c8a8",
+    "record_schema_version": 1,
+    "record_type": "note",
+    "recorded_at": "2026-08-25T06:00:14.174683+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_a7cbc95f",
+    "title": "- 候选池：鱼景、鱼乐、鱼火、与火、于火、松鱼、熊火、月禾、禾月、禾景夕色、戏影、影戏堂",
+    "type_fields": {
+      "legacy_priority": 40,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "note_kind": "legacy_import"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_d04d68806b63819ca12b7a2a58bf2f27"
+}

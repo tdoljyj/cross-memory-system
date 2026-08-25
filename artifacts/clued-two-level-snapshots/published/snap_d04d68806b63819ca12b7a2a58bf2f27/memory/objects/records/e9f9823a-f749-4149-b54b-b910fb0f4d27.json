@@ -1,0 +1,38 @@
+{
+  "canonical_id": "e9f9823a-f749-4149-b54b-b910fb0f4d27",
+  "canonical_version": "cv_137",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "- 项目驱动：遇到问题 → 学对应知识 → 马上用；不适合系统性学完再动手",
+    "content_hash": "675ecf12c840b7b0d66ce2ce7cf2d146ffd738ff972893b6845de91801964844",
+    "id": "e9f9823a-f749-4149-b54b-b910fb0f4d27",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "6ed00489-362b-4024-8a25-0b8bab213da6",
+    "record_schema_version": 1,
+    "record_type": "note",
+    "recorded_at": "2026-08-25T06:03:14.146074+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_f7c22efc",
+    "title": "- 项目驱动：遇到问题 → 学对应知识 → 马上用；不适合系统性学完再动手",
+    "type_fields": {
+      "legacy_priority": 40,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "note_kind": "legacy_import"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_d04d68806b63819ca12b7a2a58bf2f27"
+}

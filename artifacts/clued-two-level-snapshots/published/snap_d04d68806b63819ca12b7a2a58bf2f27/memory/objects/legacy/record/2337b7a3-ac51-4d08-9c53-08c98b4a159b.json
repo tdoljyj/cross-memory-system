@@ -1,0 +1,38 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "9efad13edd74ac30c80004e4a2d7edbf0bbdced9982a4459d3a967d55bae4fb4",
+    "inline_payload": {
+      "archived_at": "2026-08-25T06:00:41.5472+00:00",
+      "content": "- 验证：PS/Python 语法解析通过；-Doctor ALL PASS；-Pull up-to-date；空 push skip；index.lock 注入测试确认失败必写 .sync-failed 且 exit 1；脚本改动提交 ce38b7c 并已推送核验",
+      "created_at": "2026-08-25T06:00:41.5472+00:00",
+      "id": "2337b7a3-ac51-4d08-9c53-08c98b4a159b",
+      "priority": 40,
+      "project_id": null,
+      "record_key": "umb:v1:mem_b89f19d6",
+      "record_type": "archive_snapshot",
+      "scope": "global",
+      "source_ref": "user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_b89f19d6",
+      "status": "archived",
+      "title": "- 验证：PS/Python 语法解析通过；-Doctor ALL PASS；-Pull up-to-date；空 push skip；index.lock 注入测试确认失败必写 .sync-failed 且 exit 1；脚本改动提交 c",
+      "updated_at": "2026-08-25T06:00:41.5472+00:00",
+      "version": 1
+    },
+    "kind": "legacy_record",
+    "legacy_id": "2337b7a3-ac51-4d08-9c53-08c98b4a159b",
+    "legacy_record_type": "archive_snapshot",
+    "legacy_schema_version": null,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_d04d68806b63819ca12b7a2a58bf2f27"
+}

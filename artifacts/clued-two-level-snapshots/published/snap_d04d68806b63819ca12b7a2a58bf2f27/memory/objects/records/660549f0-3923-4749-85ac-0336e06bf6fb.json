@@ -1,0 +1,38 @@
+{
+  "canonical_id": "660549f0-3923-4749-85ac-0336e06bf6fb",
+  "canonical_version": "cv_137",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "2026-08-22 Clued Kernel R5 K1 架构与合同冻结完成：机器合同 clued-kernel-r5-k1/1.0.0，专项 9/9、同步层 70/70、Memory Engine 55/55、MIV-005A 合同 19/19；全量 551 项为 539 PASS / 12 FAIL，失败与 K0 完全一致、无新增失败，最终候选树密钥扫描 0 命中。K0 仍为 NO_GO，语义召回未启用，未 release/deploy，K2 保持锁定。",
+    "content_hash": "ee5af5c4a93dd50a42a6193dbd554f4c1791f239efc91df5c4d05f4e073860e5",
+    "id": "660549f0-3923-4749-85ac-0336e06bf6fb",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "7c18af1c-79b0-4816-a7f9-899aea0396c7",
+    "record_schema_version": 1,
+    "record_type": "state",
+    "recorded_at": "2026-08-25T06:00:47.015732+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_bdc913b7",
+    "title": "2026-08-22 Clued Kernel R5 K1 架构与合同冻结完成：机器合同 clued-kernel-r5-k1/1.0.0，专项 9/9、同步层 70/70、Memory Engine 55/55、MIV-005A 合同 1",
+    "type_fields": {
+      "legacy_priority": 80,
+      "legacy_status": "current",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "state_kind": "legacy_import"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_d04d68806b63819ca12b7a2a58bf2f27"
+}

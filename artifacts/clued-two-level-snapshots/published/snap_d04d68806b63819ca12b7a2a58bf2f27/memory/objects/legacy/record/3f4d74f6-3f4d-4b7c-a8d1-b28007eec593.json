@@ -1,0 +1,38 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "2cdfbaa248c54ddd3ec6a259ec8bb258b66412cc67fc766de4af4c8ebc2c8bc1",
+    "inline_payload": {
+      "archived_at": "2026-08-25T06:00:08.610989+00:00",
+      "content": "- 排除项（全复现失败）：git 版本（官方 2.55.0.3 / 2.54.0.windows.1 便携版 / PortableGit 2.55.0.windows.3）、仓库损坏（全新 init）、shell 环境（Bash + PowerShell）→ 锁定沙盒 overlay",
+      "created_at": "2026-08-25T06:00:08.610989+00:00",
+      "id": "3f4d74f6-3f4d-4b7c-a8d1-b28007eec593",
+      "priority": 40,
+      "project_id": null,
+      "record_key": "umb:v1:mem_a63b3e8f",
+      "record_type": "archive_snapshot",
+      "scope": "global",
+      "source_ref": "user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_a63b3e8f",
+      "status": "archived",
+      "title": "- 排除项（全复现失败）：git 版本（官方 2.55.0.3 / 2.54.0.windows.1 便携版 / PortableGit 2.55.0.windows.3）、仓库损坏（全新 init）、shell 环境（Bash + Pow",
+      "updated_at": "2026-08-25T06:00:08.610989+00:00",
+      "version": 1
+    },
+    "kind": "legacy_record",
+    "legacy_id": "3f4d74f6-3f4d-4b7c-a8d1-b28007eec593",
+    "legacy_record_type": "archive_snapshot",
+    "legacy_schema_version": null,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_d04d68806b63819ca12b7a2a58bf2f27"
+}

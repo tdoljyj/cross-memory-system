@@ -1,0 +1,38 @@
+{
+  "canonical_id": "d807884e-367d-468a-b147-c52dde13e369",
+  "canonical_version": "cv_137",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "- 玩过/关注：只狼、鬼泣5、仁王2、巫师3、艾尔登法环、黑神话·悟空、猎天使魔女系列、Astral Chain、怪物猎人、忍者龙剑传等",
+    "content_hash": "936d85d36db68b5c8c76a26d538736fc2ebbc26566832a224e51e7053013d453",
+    "id": "d807884e-367d-468a-b147-c52dde13e369",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "f9210657-2c21-46dc-9361-37feafc7d08e",
+    "record_schema_version": 1,
+    "record_type": "note",
+    "recorded_at": "2026-08-25T05:23:24.111523+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_09b61c44",
+    "title": "- 玩过/关注：只狼、鬼泣5、仁王2、巫师3、艾尔登法环、黑神话·悟空、猎天使魔女系列、Astral Chain、怪物猎人、忍者龙剑传等",
+    "type_fields": {
+      "legacy_priority": 40,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "note_kind": "legacy_import"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_d04d68806b63819ca12b7a2a58bf2f27"
+}

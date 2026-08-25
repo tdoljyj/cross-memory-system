@@ -1,0 +1,38 @@
+{
+  "canonical_id": "6f91700d-a64e-483c-a3ce-eeac51775614",
+  "canonical_version": "cv_137",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "- 双端对称「不越界」硬规则（2026-08-15）：任何一端不直写对方工作区 / 克隆（Codex 不写 ~/.workbuddy，WorkBuddy 不写 Documents\\Codex\\memory），一切记忆交换经仓库（唯一数据源）；取消 WorkBuddy 直写 Documents 的 mtime 例外；工作区镜像由各端自管",
+    "content_hash": "611c772c36850a077a5cf20ea0fbe8670744e025ec3a6c63aee2fa3b9e882694",
+    "id": "6f91700d-a64e-483c-a3ce-eeac51775614",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "488e80bf-0ae5-4b81-ad89-d2e426cadf1d",
+    "record_schema_version": 1,
+    "record_type": "decision",
+    "recorded_at": "2026-08-25T06:03:11.658316+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_f6caf18d",
+    "title": "- 双端对称「不越界」硬规则（2026-08-15）：任何一端不直写对方工作区 / 克隆（Codex 不写 ~/.workbuddy，WorkBuddy 不写 Documents\\Codex\\memory），一切记忆交换经仓库（唯一数据源）",
+    "type_fields": {
+      "legacy_priority": 40,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "rationale": "legacy_import_preserved_content"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_d04d68806b63819ca12b7a2a58bf2f27"
+}

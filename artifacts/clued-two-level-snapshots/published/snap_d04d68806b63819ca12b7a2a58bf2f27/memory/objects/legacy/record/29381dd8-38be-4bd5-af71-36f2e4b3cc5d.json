@@ -1,0 +1,38 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "58ad4fbfc4501a536c5961678d2ed3b9e8f41bbfa5be4095242beb46e4827dbf",
+    "inline_payload": {
+      "archived_at": "2026-08-25T05:56:08.723753+00:00",
+      "content": "- R1 回写：Documents\\Codex\\memory 三文件（决策/归档/待办）已由编辑器通道（Write 工具）回写仓库权威版，三方字节一致；.pending-writeback 已清。通道经验：Documents 对 Bash cp / Python open('wb') 均只读（Bad file descriptor / 禁止新建），但 Write/apply_patch 类编辑器通道可写",
+      "created_at": "2026-08-25T05:56:08.723753+00:00",
+      "id": "29381dd8-38be-4bd5-af71-36f2e4b3cc5d",
+      "priority": 40,
+      "project_id": null,
+      "record_key": "umb:v1:mem_222f5007",
+      "record_type": "archive_snapshot",
+      "scope": "global",
+      "source_ref": "user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_222f5007",
+      "status": "archived",
+      "title": "- R1 回写：Documents\\Codex\\memory 三文件（决策/归档/待办）已由编辑器通道（Write 工具）回写仓库权威版，三方字节一致；.pending-writeback 已清",
+      "updated_at": "2026-08-25T05:56:08.723753+00:00",
+      "version": 1
+    },
+    "kind": "legacy_record",
+    "legacy_id": "29381dd8-38be-4bd5-af71-36f2e4b3cc5d",
+    "legacy_record_type": "archive_snapshot",
+    "legacy_schema_version": null,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_d04d68806b63819ca12b7a2a58bf2f27"
+}

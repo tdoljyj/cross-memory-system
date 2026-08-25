@@ -1,0 +1,38 @@
+{
+  "canonical_id": "b820d52e-c47c-4708-838d-0be4030dbae5",
+  "canonical_version": "cv_137",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "- 四字成语式公司名；一眼像游戏公司/文化传媒的名字；生硬堆砌神话元素的名字",
+    "content_hash": "675baf2e7a1206e57348fc5c837f95ad5747ae21a65569a7cb64ccd6f768c994",
+    "id": "b820d52e-c47c-4708-838d-0be4030dbae5",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "37075454-590c-4cb6-9735-342f345f394a",
+    "record_schema_version": 1,
+    "record_type": "decision",
+    "recorded_at": "2026-08-25T05:56:13.534369+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_26977a1e",
+    "title": "- 四字成语式公司名；一眼像游戏公司/文化传媒的名字；生硬堆砌神话元素的名字",
+    "type_fields": {
+      "legacy_priority": 40,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "rationale": "legacy_import_preserved_content"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_d04d68806b63819ca12b7a2a58bf2f27"
+}

@@ -1,0 +1,38 @@
+{
+  "canonical_id": "2f69b6c3-b797-4e2b-a6f7-68d002f8eb24",
+  "canonical_version": "cv_137",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "- 研究点：动作系统、角色动作、动画衔接、游戏反馈、镜头设计——玩游戏本质上也在研究游戏",
+    "content_hash": "30c5d885eb45535e8e998e61a5236687e47a7a5f072fb0f23670a208a82fa68f",
+    "id": "2f69b6c3-b797-4e2b-a6f7-68d002f8eb24",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "495f5059-2134-460e-8e69-2e5013227115",
+    "record_schema_version": 1,
+    "record_type": "note",
+    "recorded_at": "2026-08-25T05:58:44.557764+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_85a09c08",
+    "title": "- 研究点：动作系统、角色动作、动画衔接、游戏反馈、镜头设计——玩游戏本质上也在研究游戏",
+    "type_fields": {
+      "legacy_priority": 40,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "note_kind": "legacy_import"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_d04d68806b63819ca12b7a2a58bf2f27"
+}

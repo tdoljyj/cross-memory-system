@@ -1,0 +1,38 @@
+{
+  "canonical_id": "a2defa78-9d13-4d6e-ab31-6a4c59a4f73b",
+  "canonical_version": "cv_137",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "- 工作室名方向：两字普通词组合、有陌生感、不需解释 →「鱼火」方向",
+    "content_hash": "f55034576120e3cc22bd8dc3867c2470bc0af4a1d7a74b5caaa0b4d8fcb2ff3b",
+    "id": "a2defa78-9d13-4d6e-ab31-6a4c59a4f73b",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "e3c27404-4424-4249-abf7-a38368bdeffd",
+    "record_schema_version": 1,
+    "record_type": "decision",
+    "recorded_at": "2026-08-25T05:23:26.888403+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_0b2fdce4",
+    "title": "- 工作室名方向：两字普通词组合、有陌生感、不需解释 →「鱼火」方向",
+    "type_fields": {
+      "legacy_priority": 40,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "rationale": "legacy_import_preserved_content"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_d04d68806b63819ca12b7a2a58bf2f27"
+}

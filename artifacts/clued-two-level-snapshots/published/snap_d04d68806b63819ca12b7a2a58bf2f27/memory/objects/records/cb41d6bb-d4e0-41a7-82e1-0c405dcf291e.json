@@ -1,0 +1,38 @@
+{
+  "canonical_id": "cb41d6bb-d4e0-41a7-82e1-0c405dcf291e",
+  "canonical_version": "cv_137",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "- 记忆系统完整版放 GitHub 私有仓库（tdoljyj/cross-memory-system，原 codex-memory-system）；未来公开只做去敏模板，真实记忆不进公开仓库",
+    "content_hash": "ac0e155b17ff6952780f789badf52112682ce8bff4693205611bc02a1b77b770",
+    "id": "cb41d6bb-d4e0-41a7-82e1-0c405dcf291e",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "8acf16b6-5a37-432e-8ba5-e96cc89e8885",
+    "record_schema_version": 1,
+    "record_type": "decision",
+    "recorded_at": "2026-08-25T05:56:31.70528+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_349e1451",
+    "title": "- 记忆系统完整版放 GitHub 私有仓库（tdoljyj/cross-memory-system，原 codex-memory-system）；未来公开只做去敏模板，真实记忆不进公开仓库",
+    "type_fields": {
+      "legacy_priority": 40,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "rationale": "legacy_import_preserved_content"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_d04d68806b63819ca12b7a2a58bf2f27"
+}

@@ -1,0 +1,38 @@
+{
+  "canonical_id": "f5844a6b-6ca5-415f-bc39-c4acf7eace71",
+  "canonical_version": "cv_137",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "- 软件是实现目标的工具，不是目标本身；成熟方案优先，不从零造轮子、不为架构而架构",
+    "content_hash": "f7736a114010486f3d76cadb1772fef71fd315f05035e43d4f03baafeac02a0e",
+    "id": "f5844a6b-6ca5-415f-bc39-c4acf7eace71",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "e06ffeea-0ef6-434b-8a76-f527ecf8b62d",
+    "record_schema_version": 1,
+    "record_type": "note",
+    "recorded_at": "2026-08-25T05:59:52.775572+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_a15f8021",
+    "title": "- 软件是实现目标的工具，不是目标本身；成熟方案优先，不从零造轮子、不为架构而架构",
+    "type_fields": {
+      "legacy_priority": 40,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "note_kind": "legacy_import"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_d04d68806b63819ca12b7a2a58bf2f27"
+}

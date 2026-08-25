@@ -1,0 +1,38 @@
+{
+  "canonical_id": "60add54c-64f8-4c1b-b775-7f8dec76d76e",
+  "canonical_version": "cv_137",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "- 记忆触发机制改按需读写（v2，2026-08-16）：废除「每次开场强制加载 + 收尾强制上传」。读：仅命中加载触发（自身相关 / 跨会话历史 / 依赖个人上下文的任务 / 维护记忆系统 / 冲突风险）才 pull + 读记忆，通用问题直接回答，模糊时倾向加载；文件分级选读（身份→画像、决策→决策.md 必读、进度→状态+待办、历史→归档、标准三件套=画像+状态+决策）。写：仅本轮产生稳定个人/项目信息才写入记忆文件；仅实际改动了记忆文件才 push，无写入不 commit 不 push。权威定义=仓库 AGENTS.md（Codex 端）+ ~/.workbuddy/MEMORY.md（WorkBuddy 端），双端对称",
+    "content_hash": "2e0aed23fd80b5683cdba543bd1c3907c4564980193c5404047bfe2a70729d25",
+    "id": "60add54c-64f8-4c1b-b775-7f8dec76d76e",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "3ff6c3da-d6b5-4236-9f7b-f2049a213557",
+    "record_schema_version": 1,
+    "record_type": "decision",
+    "recorded_at": "2026-08-25T05:25:20.810179+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_1f670a7b",
+    "title": "- 记忆触发机制改按需读写（v2，2026-08-16）：废除「每次开场强制加载 + 收尾强制上传」",
+    "type_fields": {
+      "legacy_priority": 40,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "rationale": "legacy_import_preserved_content"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_d04d68806b63819ca12b7a2a58bf2f27"
+}

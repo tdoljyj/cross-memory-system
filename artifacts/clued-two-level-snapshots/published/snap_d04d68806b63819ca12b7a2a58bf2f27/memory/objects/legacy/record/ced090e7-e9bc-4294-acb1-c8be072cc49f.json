@@ -1,0 +1,38 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "e7427c64dac8e95837ac74267262c05ee76dff318cfda860b7463bcba7119209",
+    "inline_payload": {
+      "archived_at": "2026-08-25T06:00:54.618766+00:00",
+      "content": "裁决：R4 Gate 0-B 于 2026-08-21 签核 PASS，允许进入 Gate 0-C；不授权合并 main、tag 或 release。",
+      "created_at": "2026-08-25T06:00:54.618766+00:00",
+      "id": "ced090e7-e9bc-4294-acb1-c8be072cc49f",
+      "priority": 80,
+      "project_id": "c59e4de8-9116-4e4a-b27f-663eaf30ca95",
+      "record_key": "umb:v1:mem_bfce9c78",
+      "record_type": "decision",
+      "scope": "project",
+      "source_ref": "user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_bfce9c78",
+      "status": "archived",
+      "title": "裁决：R4 Gate 0-B 于 2026-08-21 签核 PASS，允许进入 Gate 0-C；不授权合并 main、tag 或 release",
+      "updated_at": "2026-08-25T06:00:54.618766+00:00",
+      "version": 1
+    },
+    "kind": "legacy_record",
+    "legacy_id": "ced090e7-e9bc-4294-acb1-c8be072cc49f",
+    "legacy_record_type": "decision",
+    "legacy_schema_version": null,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_d04d68806b63819ca12b7a2a58bf2f27"
+}

@@ -1,0 +1,38 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "69f69ef03d8418b71aa70671fbfe741bd3bd5492e2d44f0ee06b68b9eaeaa7b2",
+    "inline_payload": {
+      "archived_at": "2026-08-25T05:59:48.656363+00:00",
+      "content": "- 2026-08-16 Sprint 2（Protocol Behavior Manifest & 双脚本一致性）完成（DSH@TURING，commit ff180f2 + cf937c2）：protocol-manifest.json 行为契约落地（guards 九类 + conformance_matrix 九行，唯一契约源）；双脚本 conformance 一致性测试 9 行全绿（变异测试验证契约约束有效）；矩阵暴露分歧已关闭（ps1 push 补未推送提交密钥扫描）。验收测试 47→57 全绿。下一步：Sprint 3（保留期/superseded 治理 + VERSION/tag/HEAD 真值统一 + README/文档同步），按计划单独启动",
+      "created_at": "2026-08-25T05:59:48.656363+00:00",
+      "id": "0c812ef4-f0d8-4b77-b3ee-10199644a4bc",
+      "priority": 40,
+      "project_id": null,
+      "record_key": "umb:v1:mem_9fbe7467",
+      "record_type": "archive_snapshot",
+      "scope": "global",
+      "source_ref": "user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_9fbe7467",
+      "status": "archived",
+      "title": "- 2026-08-16 Sprint 2（Protocol Behavior Manifest & 双脚本一致性）完成（DSH@TURING，commit ff180f2 + cf937c2）：protocol-manifest.json",
+      "updated_at": "2026-08-25T05:59:48.656363+00:00",
+      "version": 1
+    },
+    "kind": "legacy_record",
+    "legacy_id": "0c812ef4-f0d8-4b77-b3ee-10199644a4bc",
+    "legacy_record_type": "archive_snapshot",
+    "legacy_schema_version": null,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_d04d68806b63819ca12b7a2a58bf2f27"
+}

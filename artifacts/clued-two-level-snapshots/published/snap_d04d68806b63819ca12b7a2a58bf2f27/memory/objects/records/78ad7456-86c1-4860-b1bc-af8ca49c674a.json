@@ -1,0 +1,38 @@
+{
+  "canonical_id": "78ad7456-86c1-4860-b1bc-af8ca49c674a",
+  "canonical_version": "cv_137",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "- 表面上矛盾：一边「有成熟方案就用」，一边自研插件——真正倾向是「能复用的全部复用，但影响核心体验的部分自己掌控」",
+    "content_hash": "803da6c723fee70e18a24b5e2ca88480c49b6a3cddb013e25078c11cf89fe46c",
+    "id": "78ad7456-86c1-4860-b1bc-af8ca49c674a",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "023f2edd-6440-411f-a484-1c24d7f2c5c7",
+    "record_schema_version": 1,
+    "record_type": "note",
+    "recorded_at": "2026-08-25T05:24:22.847555+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_1841365e",
+    "title": "- 表面上矛盾：一边「有成熟方案就用」，一边自研插件——真正倾向是「能复用的全部复用，但影响核心体验的部分自己掌控」",
+    "type_fields": {
+      "legacy_priority": 40,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "note_kind": "legacy_import"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_d04d68806b63819ca12b7a2a58bf2f27"
+}

@@ -1,0 +1,38 @@
+{
+  "canonical_id": "05ff8e1c-ac42-4fd0-98f4-072b7aba40c3",
+  "canonical_version": "cv_137",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "Clued 阶段 8B-2 已 PASS：生产按序应用 project_lifecycle_v1 与 unified_record_v2 additive migration；RLS、private core revoke、最小包装器授权、pgTAP 16/16、legacy Memory CRUD 与 3 条摘要审计全部通过，所有探针回滚且数据保持 Project/Mention/Memory/Event/Receipt 0/0/0/2/5。PROJECT_VIEWS_V2 继续关闭，Worker 仍为 bf0038c3-1456-4653-bdcf-f962ff962ec4 / Kernel 0.3.0，未导入、未部署、未改 DNS/Binding/密钥；下一步需用户明确确认后进入 8B-3 独立 canary。",
+    "content_hash": "aa62af2ebd478749d1566b65d84a114b8d7448761fddf18c67d84f4b9af09836",
+    "id": "05ff8e1c-ac42-4fd0-98f4-072b7aba40c3",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "73de6810-7133-48e2-a07a-b437037c32fb",
+    "record_schema_version": 1,
+    "record_type": "state",
+    "recorded_at": "2026-08-25T05:24:18.799925+00:00",
+    "relations": {},
+    "scope": "project:0597aa60-9b98-4da6-a4ab-63d7705b632f",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_152b651b",
+    "title": "Clued 阶段 8B-2 已 PASS：生产按序应用 project_lifecycle_v1 与 unified_record_v2 additive migration；RLS、private core revoke、最小包装器授权、",
+    "type_fields": {
+      "legacy_priority": 80,
+      "legacy_status": "current",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "state_kind": "legacy_import"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_d04d68806b63819ca12b7a2a58bf2f27"
+}

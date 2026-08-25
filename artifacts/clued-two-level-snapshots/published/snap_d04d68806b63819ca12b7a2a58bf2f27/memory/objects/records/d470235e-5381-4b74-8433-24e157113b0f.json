@@ -1,0 +1,38 @@
+{
+  "canonical_id": "d470235e-5381-4b74-8433-24e157113b0f",
+  "canonical_version": "cv_137",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "- 对无风险、可逆、在任务范围内的合理操作直接执行，不要反复请求确认；只有破坏性/不可逆/越界/需外部授权才停下问",
+    "content_hash": "9742c85b9bdce28a4324aa4bf0af9980076abdf185590b7c8d434357263f5bb7",
+    "id": "d470235e-5381-4b74-8433-24e157113b0f",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "a3a3cebf-cab6-4226-b132-d721cda63918",
+    "record_schema_version": 1,
+    "record_type": "note",
+    "recorded_at": "2026-08-25T06:00:50.276098+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_be952086",
+    "title": "- 对无风险、可逆、在任务范围内的合理操作直接执行，不要反复请求确认；只有破坏性/不可逆/越界/需外部授权才停下问",
+    "type_fields": {
+      "legacy_priority": 40,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "note_kind": "legacy_import"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_d04d68806b63819ca12b7a2a58bf2f27"
+}
