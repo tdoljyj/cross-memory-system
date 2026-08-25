@@ -66,9 +66,8 @@ test("implements MCP initialization and continuity tool discovery", async () => 
       "clued_read_log",
       "clued_import_log",
       "clued_audit_receipts",
-      "clued_project_observe",
+      "clued_project_mutate",
       "clued_project_list",
-      "clued_project_update",
     ],
   );
 });
@@ -339,4 +338,3 @@ test("forwards Supabase OAuth MCP calls through the authenticated dispatcher", a
     globalThis.fetch = originalFetch;
   }
 });
-

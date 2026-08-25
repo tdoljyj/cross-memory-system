@@ -7,7 +7,7 @@ export function recordsV2Enabled(env: RecordFeatureEnv) {
 }
 
 export const currentWorkContract = {
-  version: "two-level-five-view-v1",
+  version: "clued-v1.6-m1",
   read_order: [
     "global_registry_and_priority",
     "project_state_task_decision",
@@ -15,11 +15,7 @@ export const currentWorkContract = {
   ],
   current_truth: ["state", "task", "decision"],
   history_on_demand: ["log", "archive"],
-  write_order: [
-    "canonical_record",
-    "event_and_receipt_same_transaction",
-    "derived_views",
-  ],
+  write_order: ["canonical_entity", "event_and_receipt_same_transaction", "derived_views"],
   canonical_id_field: "id",
   mirror_mode: "query_results_or_stable_id_references",
   mirror_layout: {
@@ -30,6 +26,11 @@ export const currentWorkContract = {
     entry_template: "- `{id}` — {title}: {conclusion} [status={status}; version={version}]",
   },
   project_creation: "explicit_confirmation_required",
+  idempotency_boundary: "verified_user_and_operation_family",
+  event_stream_ordering_enabled: false,
+  record_merge_write_enabled: false,
+  project_merge_write_enabled: false,
+  canonical_export: "authorized_live_recheck",
   double_write: false,
 } as const;
 
@@ -55,52 +56,83 @@ export const recordTools = [
     },
   },
   {
-    name: "clued_record_write",
+    name: "clued_record_mutate",
     description:
-      "Write once through Clued's canonical transactional core. The same transaction emits Event and Receipt, and derived views reflect the result; never dual-write a Markdown copy. Requires an idempotency key and expected_version for mutations.",
+      "Create, update, close, restore, or explicitly reclassify one v1.6 Canonical Record with CAS, Evidence authorization, Event, and immutable Receipt.",
     inputSchema: {
       type: "object",
-      required: ["action", "idempotency_key"],
+      required: ["operation", "record_type", "record_schema_version", "lifecycle_status", "scope", "idempotency_key", "authority", "confidence_reason"],
       properties: {
-        action: {
-          type: "string",
-          enum: [
-            "create",
-            "update",
-            "archive",
-            "restore",
-            "supersede_decision",
-            "complete_task_and_advance_state",
-          ],
-        },
+        operation: { type: "string", enum: ["create", "update", "close", "restore", "reclassify_scope"] },
         idempotency_key: { type: "string", minLength: 8, maxLength: 160 },
-        expected_version: { type: "integer", minimum: 1 },
-        record_id: { type: "string", format: "uuid" },
-        record_type: {
-          type: "string",
-          enum: ["note", "state", "task", "decision", "archive_snapshot"],
-        },
-        scope: { type: "string", enum: ["global", "project"] },
-        project_id: { type: "string", format: "uuid" },
-        title: { type: "string", minLength: 1, maxLength: 120 },
-        content: { type: "string", minLength: 1, maxLength: 8000 },
-        record_key: { type: "string", minLength: 1, maxLength: 160 },
-        status: { type: "string" },
-        priority: { type: "integer", minimum: 0, maximum: 100 },
-        source_ref: { type: "string", maxLength: 500 },
-        state_id: { type: "string", format: "uuid" },
-        next_task_id: { type: "string", format: "uuid" },
-        state_content: { type: "string", maxLength: 8000 },
-        context_key: { type: "string" },
+        request_hash: { type: "string", pattern: "^[0-9a-f]{64}$" },
+        id: { type: "string", format: "uuid" },
+        record_type: { type: "string", enum: ["state", "task", "decision", "profile_fact", "note"] },
+        record_schema_version: { type: "integer", const: 1 },
+        lifecycle_status: { type: "string", enum: ["active", "completed", "cancelled", "archived", "revoked"] },
+        scope: { type: "string", pattern: "^(profile|global|project:[0-9a-fA-F-]{36})$" },
+        base_version: { type: ["integer", "null"], minimum: 1 },
+        source_refs: { type: "array", uniqueItems: true, items: { type: "string", format: "uuid" } },
+        source_unavailable_reason: { type: ["string", "null"], maxLength: 1000 },
+        mutation: { type: "object" },
+        reclassification_reason: { type: ["string", "null"] },
+        authority: { type: "string", enum: ["user_explicit", "observed", "inferred", "imported"] },
+        user_confirmed: { type: "boolean" },
+        observed_at: { type: ["string", "null"], format: "date-time" },
+        confidence: { type: ["number", "null"], minimum: 0, maximum: 1 },
+        confidence_reason: { type: "string", minLength: 1 },
       },
       additionalProperties: false,
     },
+  },
+  {
+    name: "clued_decision_supersede",
+    description: "Atomically replace one or more active Decisions using multi-target CAS.",
+    inputSchema: { type: "object", required: ["source_decisions", "replacement", "supersede_reason", "idempotency_key"], properties: {
+      source_decisions: { type: "array", minItems: 1, items: { type: "object" } }, replacement: { type: "object" },
+      supersede_reason: { type: "string", minLength: 1 }, idempotency_key: { type: "string", minLength: 8, maxLength: 160 },
+      request_hash: { type: "string", pattern: "^[0-9a-f]{64}$" }, user_confirmed: { type: "boolean" },
+    }, additionalProperties: false },
+  },
+  {
+    name: "clued_evidence_ingest",
+    description: "Ingest private Evidence and its committed Receipt atomically; standalone ingest emits no work Event.",
+    inputSchema: { type: "object", required: ["evidence_schema_version", "evidence_type", "storage_ref", "content_hash", "idempotency_key"], properties: {
+      evidence_id: { type: "string", format: "uuid" }, evidence_schema_version: { type: "integer", const: 1 },
+      evidence_type: { type: "string", enum: ["user_quote", "file", "image", "web_ref", "test_output", "legacy_document"] },
+      storage_ref: { type: "string", minLength: 1, maxLength: 1000 }, content_hash: { type: "string", pattern: "^[0-9a-f]{64}$" },
+      mime_type: { type: ["string", "null"] }, size_bytes: { type: ["integer", "null"], minimum: 0 }, captured_at: { type: ["string", "null"], format: "date-time" },
+      idempotency_key: { type: "string", minLength: 8, maxLength: 160 }, request_hash: { type: "string", pattern: "^[0-9a-f]{64}$" },
+    }, additionalProperties: false },
+  },
+  {
+    name: "clued_event_append",
+    description: "Append an authorized extension Event without mutating a business entity; built-in business Event types are server-only.",
+    inputSchema: { type: "object", required: ["event_schema_version", "event_type", "event_scope", "idempotency_key"], properties: {
+      event_schema_version: { type: "integer", const: 1 }, event_type: { type: "string", pattern: "^extension:[a-z0-9_.-]+:[a-z0-9_.-]+$" },
+      event_scope: { type: "string", pattern: "^(profile|global|project:[0-9a-fA-F-]{36})$" }, target_refs: { type: "array" }, change_summary: { type: ["array", "null"] },
+      audit_visibility: { type: "string", enum: ["audit_only", "work_log"] }, evidence_refs: { type: "array", items: { type: "string", format: "uuid" } }, artifact_refs: { type: "array" },
+      idempotency_key: { type: "string", minLength: 8, maxLength: 160 }, request_hash: { type: "string", pattern: "^[0-9a-f]{64}$" },
+    }, additionalProperties: false },
+  },
+  {
+    name: "clued_canonical_export",
+    description: "Create a Receipt-backed Canonical Export for live recheck; legacy rows remain explicit compatibility envelopes.",
+    inputSchema: { type: "object", required: ["idempotency_key"], properties: {
+      idempotency_key: { type: "string", minLength: 8, maxLength: 160 }, request_hash: { type: "string", pattern: "^[0-9a-f]{64}$" },
+    }, additionalProperties: false },
   },
 ] as const;
 
 export const recordRpcByTool = {
   clued_record_list: "clued_record_list",
-  clued_record_write: "clued_record_write",
+  clued_record_mutate: "clued_record_mutate",
+  clued_decision_supersede: "clued_decision_supersede",
+  clued_evidence_ingest: "clued_evidence_ingest",
+  clued_event_append: "clued_event_append",
+  clued_canonical_export: "clued_canonical_export",
 } as const;
 
-export type UserRecordRpc = "clued_user_record_list" | "clued_user_record_write";
+export type UserRecordRpc = "clued_user_record_list" | "clued_user_record_mutate" |
+  "clued_user_decision_supersede" | "clued_user_evidence_ingest" | "clued_user_event_append" |
+  "clued_user_canonical_export";

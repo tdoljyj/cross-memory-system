@@ -2,29 +2,20 @@ export const PROJECT_CONTEXT_KEY = "system:projects";
 
 export const projectTools = [
   {
-    name: "clued_project_observe",
+    name: "clued_project_mutate",
     description:
-      "Observe a project mention. Use possible for an implied project (created as unconfirmed), confirmed for explicit intent or material work (promotes the same record), and ignore for one-off or third-party mentions.",
+      "Create, update, complete, archive, or restore one v1.6 Canonical Project with CAS, Event, and immutable Receipt. Project merge writes are not enabled.",
     inputSchema: {
       type: "object",
-      required: ["name", "intent", "idempotency_key"],
+      required: ["operation", "project_schema_version", "idempotency_key"],
       properties: {
-        name: { type: "string", minLength: 1, maxLength: 120 },
-        intent: { type: "string", enum: ["possible", "confirmed", "ignore"] },
+        operation: { type: "string", enum: ["create", "update", "complete", "archive", "restore"] },
+        canonical_project_id: { type: "string", format: "uuid" },
+        project_schema_version: { type: "integer", const: 1 },
+        base_version: { type: ["integer", "null"], minimum: 1 },
         idempotency_key: { type: "string", minLength: 8, maxLength: 160 },
-        summary: { type: "string", maxLength: 2000 },
-        evidence_summary: { type: "string", maxLength: 500 },
-        source_ref: { type: "string", maxLength: 160 },
-        confidence: { type: "number", minimum: 0, maximum: 1 },
-        aliases: {
-          type: "array",
-          maxItems: 20,
-          items: { type: "string", minLength: 1, maxLength: 120 },
-        },
-        progress_status: {
-          type: "string",
-          enum: ["not_started", "active", "paused", "completed", "archived"],
-        },
+        request_hash: { type: "string", pattern: "^[0-9a-f]{64}$" },
+        mutation: { type: "object" },
       },
       additionalProperties: false,
     },
@@ -48,38 +39,11 @@ export const projectTools = [
       additionalProperties: false,
     },
   },
-  {
-    name: "clued_project_update",
-    description:
-      "Confirm, rename, dismiss, restore, change progress, or merge a project. Promotion preserves the project id and context key.",
-    inputSchema: {
-      type: "object",
-      required: ["project_id", "action", "idempotency_key"],
-      properties: {
-        project_id: { type: "string", format: "uuid" },
-        action: {
-          type: "string",
-          enum: ["confirm", "rename", "dismiss", "restore", "set_progress", "merge"],
-        },
-        idempotency_key: { type: "string", minLength: 8, maxLength: 160 },
-        target_project_id: { type: "string", format: "uuid" },
-        name: { type: "string", minLength: 1, maxLength: 120 },
-        progress_status: {
-          type: "string",
-          enum: ["not_started", "active", "paused", "completed", "archived"],
-        },
-        summary: { type: "string", maxLength: 2000 },
-        base_version: { type: "integer", minimum: 1 },
-      },
-      additionalProperties: false,
-    },
-  },
 ] as const;
 
 export const projectRpcByTool = {
-  clued_project_observe: "clued_project_observe",
+  clued_project_mutate: "clued_project_mutate",
   clued_project_list: "clued_project_list",
-  clued_project_update: "clued_project_update",
 } as const;
 
 export type ProjectToolName = keyof typeof projectRpcByTool;
@@ -87,4 +51,3 @@ export type ProjectToolName = keyof typeof projectRpcByTool;
 export function isProjectTool(value: string): value is ProjectToolName {
   return value in projectRpcByTool;
 }
-

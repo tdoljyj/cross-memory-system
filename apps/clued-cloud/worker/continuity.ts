@@ -112,6 +112,9 @@ function bootstrapContract(origin: string, env?: ContinuityEnv) {
       binding_portal: `${origin}/`,
       projects: `${origin}/v1/projects`,
       records: `${origin}/v1/records`,
+      evidence: `${origin}/v1/evidence`,
+      events: `${origin}/v1/events`,
+      canonical_export: `${origin}/v1/export`,
     },
     authentication: {
       scheme: "Bearer",
@@ -170,10 +173,10 @@ Canonical store: clued-cloud/supabase
 4. Before ending or handing off, call \`clued_session_checkpoint\` with the current base version.
 5. Use \`clued_read_log\` for the canonical human-readable 日志.md. Import an authorized baseline only with \`clued_import_log\`.
 6. Treat version conflicts and revoked/expired credentials as hard stops; resume again instead of overwriting.
-7. When a project is merely mentioned call \`clued_project_observe\` with intent \`possible\`; when intent or material work is explicit, use \`confirmed\`. Use \`ignore\` for one-off or third-party mentions.
+7. Use \`clued_project_mutate\` for explicit Project create/update/complete/archive/restore. Project merge writes are disabled.
 8. For current work, read Global registry and priority first, then Project State, Task and Decision. Read Log or Archive only when history or evidence is needed; they never override current records.
 9. Preserve the returned canonical \`id\` across API, MCP, UI and Markdown mirrors. Markdown contains query results or stable-ID references, not copied canonical bodies.
-10. Write once with \`clued_record_write\` only after the project is explicitly confirmed. The database transaction creates Record + Event + Receipt; never create a second Markdown record or invent a confirmed project.
+10. Write once with \`clued_record_mutate\`; use \`clued_decision_supersede\` for replacement and \`clued_evidence_ingest\` for sources. The database transaction creates the Canonical entity + Event + Receipt; never dual-write Markdown.
 
 MCP endpoint: ${origin}/mcp
 HTTP bootstrap: ${origin}/v1/continuity/bootstrap
@@ -224,6 +227,42 @@ async function parseBody(request: Request) {
   } catch {
     throw new HttpError(400, "Request body must be valid JSON.");
   }
+}
+
+async function parseCanonicalBody(request: Request) {
+  const declaredLength = Number(request.headers.get("content-length") ?? "0");
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_JSON_BYTES) {
+    throw new HttpError(413, "Request body is too large.");
+  }
+  const bytes = new Uint8Array(await request.arrayBuffer());
+  if (bytes.byteLength > MAX_JSON_BYTES) throw new HttpError(413, "Request body is too large.");
+  let text: string;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    throw new HttpError(400, "Request body must be valid UTF-8.");
+  }
+  let input: Record<string, unknown>;
+  try {
+    input = JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    throw new HttpError(400, "Request body must be valid JSON.");
+  }
+  if (!input || Array.isArray(input) || typeof input !== "object") {
+    throw new HttpError(400, "Request body must be a JSON object.");
+  }
+  return { input, receivedPayloadHash: await sha256(text) };
+}
+
+function sanitizeCluedResult(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sanitizeCluedResult);
+  if (!value || typeof value !== "object") return value;
+  const result: Record<string, unknown> = {};
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    if (["user_id", "actor_user_id", "binding_id", "actor_binding_id"].includes(key)) continue;
+    result[key] = sanitizeCluedResult(child);
+  }
+  return result;
 }
 
 function validateOrigin(request: Request, env: ContinuityEnv) {
@@ -593,11 +632,11 @@ async function callTool(
   if (typeof name !== "string" || !(name in rpcByTool)) {
     throw new HttpError(404, "Unknown Clued continuity tool.");
   }
-  const result = await callRpc(request, env, name as keyof typeof rpcByTool, args);
+  const result = sanitizeCluedResult(await callRpc(request, env, name as keyof typeof rpcByTool, args));
   return {
     content: [{ type: "text", text: JSON.stringify(result) }],
     structuredContent: result,
-    isError: Boolean(result?.error),
+    isError: Boolean((result as Record<string, unknown> | null)?.error),
   };
 }
 
@@ -646,7 +685,7 @@ async function handleMcp(request: Request, env: ContinuityEnv) {
           capabilities: { tools: { listChanged: false } },
           serverInfo: { name: "Clued Continuity", version: KERNEL_VERSION },
           instructions:
-            "Resume first. For current work read Global priority, then Project State/Task/Decision, and use Log/Archive only as evidence. Preserve canonical record IDs; write once through clued_record_write and never dual-write Markdown.",
+            "Resume first. Read Global priority, then Project State/Task/Decision, and use Log/Archive only as evidence. Preserve canonical IDs; write through M1 mutation contracts and never dual-write Markdown.",
         }),
         200,
         corsHeaders(request),
@@ -718,14 +757,17 @@ async function handleRestContinuity(request: Request, env: ContinuityEnv) {
 async function callUserProjectRpc(
   request: Request,
   env: ContinuityEnv,
-  rpc: "clued_user_project_list" | "clued_user_project_observe" | "clued_user_project_update",
+  rpc: "clued_user_project_list" | "clued_user_project_mutate",
   input: Record<string, unknown>,
+  receivedPayloadHash?: string,
 ) {
   const { token } = await requireSupabaseUser(request, env);
   return await supabaseRequest(env, `/rest/v1/rpc/${rpc}`, {
     method: "POST",
     userToken: token,
-    body: JSON.stringify({ p_input: input }),
+    body: JSON.stringify(receivedPayloadHash
+      ? { p_input: input, p_received_payload_hash: receivedPayloadHash }
+      : { p_input: input }),
   });
 }
 
@@ -744,31 +786,22 @@ async function handleProjectApi(request: Request, env: ContinuityEnv) {
     if (url.searchParams.get("include_dismissed") === "true") input.include_dismissed = true;
     return json(await callUserProjectRpc(request, env, "clued_user_project_list", input), 200, corsHeaders(request));
   }
-  if (url.pathname === "/v1/projects/observe" && request.method === "POST") {
+  if (url.pathname === "/v1/projects" && request.method === "POST") {
+    const { input, receivedPayloadHash } = await parseCanonicalBody(request);
     return json(
-      await callUserProjectRpc(request, env, "clued_user_project_observe", await parseBody(request)),
+      await callUserProjectRpc(request, env, "clued_user_project_mutate", input, receivedPayloadHash),
       200,
       corsHeaders(request),
     );
   }
-  const match = /^\/v1\/projects\/([0-9a-f-]{36})(\/merge)?$/i.exec(url.pathname);
-  if (match && request.method === "PATCH" && !match[2]) {
+  const match = /^\/v1\/projects\/([0-9a-f-]{36})$/i.exec(url.pathname);
+  if (match && request.method === "PATCH") {
+    const { input, receivedPayloadHash } = await parseCanonicalBody(request);
     return json(
-      await callUserProjectRpc(request, env, "clued_user_project_update", {
-        ...(await parseBody(request)),
-        project_id: match[1],
-      }),
-      200,
-      corsHeaders(request),
-    );
-  }
-  if (match && request.method === "POST" && match[2] === "/merge") {
-    return json(
-      await callUserProjectRpc(request, env, "clued_user_project_update", {
-        ...(await parseBody(request)),
-        project_id: match[1],
-        action: "merge",
-      }),
+      await callUserProjectRpc(request, env, "clued_user_project_mutate", {
+        ...input,
+        canonical_project_id: match[1],
+      }, receivedPayloadHash),
       200,
       corsHeaders(request),
     );
@@ -784,13 +817,23 @@ async function callUserRecordRpc(
   env: ContinuityEnv,
   rpc: UserRecordRpc,
   input: Record<string, unknown>,
+  receivedPayloadHash?: string,
 ) {
   const { token } = await requireSupabaseUser(request, env);
   return await supabaseRequest(env, `/rest/v1/rpc/${rpc}`, {
     method: "POST",
     userToken: token,
-    body: JSON.stringify({ p_input: input }),
+    body: JSON.stringify(receivedPayloadHash
+      ? { p_input: input, p_received_payload_hash: receivedPayloadHash }
+      : { p_input: input }),
   });
+}
+
+function m1HttpStatus(result: unknown) {
+  const value = result as { status?: string; error_code?: string } | null;
+  if (value?.status === "failed") return 500;
+  if (value?.status !== "rejected") return 200;
+  return /CONFLICT|VERSION|NOW_CONFLICT/.test(value.error_code ?? "") ? 409 : 422;
 }
 
 async function handleRecordApi(request: Request, env: ContinuityEnv) {
@@ -822,11 +865,21 @@ async function handleRecordApi(request: Request, env: ContinuityEnv) {
     );
   }
   if (url.pathname === "/v1/records" && request.method === "POST") {
-    return json(
-      await callUserRecordRpc(request, env, "clued_user_record_write", await parseBody(request)),
-      200,
-      corsHeaders(request),
-    );
+    const { input, receivedPayloadHash } = await parseCanonicalBody(request);
+    const result = await callUserRecordRpc(request, env, "clued_user_record_mutate", input, receivedPayloadHash);
+    return json(result, m1HttpStatus(result), corsHeaders(request));
+  }
+  const mutationRoutes: Record<string, UserRecordRpc> = {
+    "/v1/decisions/supersede": "clued_user_decision_supersede",
+    "/v1/evidence": "clued_user_evidence_ingest",
+    "/v1/events": "clued_user_event_append",
+    "/v1/export": "clued_user_canonical_export",
+  };
+  const rpc = mutationRoutes[url.pathname];
+  if (rpc && request.method === "POST") {
+    const { input, receivedPayloadHash } = await parseCanonicalBody(request);
+    const result = await callUserRecordRpc(request, env, rpc, input, receivedPayloadHash);
+    return json(result, m1HttpStatus(result), corsHeaders(request));
   }
   return json({ error: "Method not allowed." }, 405, {
     ...corsHeaders(request),
@@ -895,7 +948,8 @@ export async function handleContinuityRequest(
     if (url.pathname === "/v1/projects" || url.pathname.startsWith("/v1/projects/")) {
       return await handleProjectApi(request, env);
     }
-    if (url.pathname === "/v1/records" || url.pathname.startsWith("/v1/records/")) {
+    if (url.pathname === "/v1/records" || url.pathname.startsWith("/v1/records/") ||
+      ["/v1/decisions/supersede", "/v1/evidence", "/v1/events", "/v1/export"].includes(url.pathname)) {
       return await handleRecordApi(request, env);
     }
     if (url.pathname === "/api/bindings") {

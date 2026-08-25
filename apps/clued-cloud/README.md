@@ -111,7 +111,7 @@ Local database verification requires Docker and the pinned Supabase CLI entry:
 npm run db:start
 npm run db:reset
 npm run db:lint
-npm run db:test:v2
+npm run db:test:m1
 ```
 
 A clean full-stack starter running on
@@ -214,7 +214,8 @@ actions tied to the current ChatGPT user. Leave public content anonymous.
 - `npm run db:start`: start the isolated Supabase stack (Docker required)
 - `npm run db:reset`: recreate only the local database from migrations
 - `npm run db:lint`: lint the local public and private schemas
-- `npm run db:test:v2`: run the isolated V2 RLS/transaction pgTAP suite
+- `npm run db:test:m1`: replay and verify the v1.6 M1 Record/Project/Event/Evidence/Receipt/Export contracts, RLS, CAS, failure and replay paths
+- `npm run db:test:v2`: historical pre-M1 suite; its retired write wrapper is intentionally revoked after the M1 migration
 - `npm run db:generate`: generate Drizzle migrations after schema changes
 
 Use build commands for targeted diagnosis after a remote failure, not as part of the normal checkpoint path.

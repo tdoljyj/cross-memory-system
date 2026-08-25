@@ -26,7 +26,7 @@ const recordFixture = {
   updated_at: "2026-08-24T08:00:00.000Z",
 };
 const semanticContract = {
-  version: "two-level-five-view-v1",
+  version: "clued-v1.6-m1",
   read_order: [
     "global_registry_and_priority",
     "project_state_task_decision",
@@ -35,7 +35,7 @@ const semanticContract = {
   current_truth: ["state", "task", "decision"],
   history_on_demand: ["log", "archive"],
   write_order: [
-    "canonical_record",
+    "canonical_entity",
     "event_and_receipt_same_transaction",
     "derived_views",
   ],
@@ -49,6 +49,11 @@ const semanticContract = {
     entry_template: "- `{id}` — {title}: {conclusion} [status={status}; version={version}]",
   },
   project_creation: "explicit_confirmation_required",
+  idempotency_boundary: "verified_user_and_operation_family",
+  event_stream_ordering_enabled: false,
+  record_merge_write_enabled: false,
+  project_merge_write_enabled: false,
+  canonical_export: "authorized_live_recheck",
   double_write: false,
 };
 
@@ -68,7 +73,7 @@ test("keeps project views v2 off by default in API and MCP discovery", async () 
   }), baseEnv, ctx);
   const names = (await tools.json()).result.tools.map((tool) => tool.name);
   assert.equal(names.includes("clued_record_list"), false);
-  assert.equal(names.includes("clued_record_write"), false);
+  assert.equal(names.includes("clued_record_mutate"), false);
 });
 
 test("one fixture preserves canonical id and conclusion across REST, MCP, UI and Markdown", async () => {
@@ -197,16 +202,24 @@ test("REST and MCP writes delegate to the same canonical database core wrappers"
     const rpc = /\/rpc\/([^/?]+)$/.exec(url)?.[1];
     rpcNames.push(rpc);
     const body = JSON.parse(init.body);
-    if (rpc === "clued_record_write") assert.match(body.p_token_hash, /^[0-9a-f]{64}$/);
-    return Response.json({ status: "written", record: { id: recordId, record_type: "task", version: 1 } });
+    if (rpc === "clued_record_mutate") assert.match(body.p_token_hash, /^[0-9a-f]{64}$/);
+    return Response.json({ status: "committed", supplemental: { record: { id: recordId, record_type: "task", version: 1 } } });
   };
   const input = {
-    action: "create",
+    operation: "create",
+    id: recordId,
     idempotency_key: "record-create-0001",
+    record_schema_version: 1,
+    lifecycle_status: "active",
     scope: "global",
     record_type: "task",
-    title: "Ship G4",
-    content: "Turn the accepted contracts green.",
+    base_version: null,
+    source_refs: [],
+    source_unavailable_reason: null,
+    mutation: { title: "Ship G4", content: "Turn the accepted contracts green.", type_fields: { execution_bucket: "now" }, relations: {} },
+    authority: "user_explicit",
+    confidence: 1,
+    confidence_reason: "Explicit test input",
   };
   try {
     const rest = await worker.fetch(new Request("https://clued.test/v1/records", {
@@ -220,11 +233,11 @@ test("REST and MCP writes delegate to the same canonical database core wrappers"
       method: "POST",
       headers: { authorization: `Bearer clued_bnd_${"x".repeat(43)}`, "content-type": "application/json" },
       body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/call", params: {
-        name: "clued_record_write", arguments: input,
+        name: "clued_record_mutate", arguments: input,
       } }),
     }), { ...baseEnv, PROJECT_VIEWS_V2: "true" }, ctx);
     assert.equal(mcp.status, 200);
-    assert.deepEqual(rpcNames, ["clued_user_record_write", "clued_record_write"]);
+    assert.deepEqual(rpcNames, ["clued_user_record_mutate", "clued_record_mutate"]);
   } finally {
     globalThis.fetch = originalFetch;
   }

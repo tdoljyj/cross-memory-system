@@ -26,27 +26,27 @@ function mockAccountRpc(expectedRpc, expectedInput, result = { status: "ok", pro
   return { calls, restore: () => { globalThis.fetch = originalFetch; } };
 }
 
-test("exposes exactly three project MCP tools and hashes binding credentials", async () => {
+test("exposes the M1 Project Mutation tool and hashes binding credentials", async () => {
   const worker = await loadWorker();
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (input, init = {}) => {
-    assert.match(String(input), /\/rest\/v1\/rpc\/clued_project_observe$/);
+    assert.match(String(input), /\/rest\/v1\/rpc\/clued_project_mutate$/);
     const body = JSON.parse(init.body);
     assert.match(body.p_token_hash, /^[0-9a-f]{64}$/);
-    assert.equal(body.p_input.intent, "possible");
-    return Response.json({ status: "create-unconfirmed-project", project: { id: projectId } });
+    assert.equal(body.p_input.operation, "create");
+    return Response.json({ status: "committed", supplemental: { project: { id: projectId } } });
   };
   try {
     const response = await worker.fetch(new Request("https://clued.test/mcp", {
       method: "POST",
       headers: { authorization: `Bearer clued_bnd_${"x".repeat(43)}`, "content-type": "application/json" },
       body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: {
-        name: "clued_project_observe",
-        arguments: { name: "Clued", intent: "possible", idempotency_key: "mention-0001" },
+        name: "clued_project_mutate",
+        arguments: { operation: "create", project_schema_version: 1, base_version: null, idempotency_key: "project-0001", mutation: { name: "Clued", certainty_status: "unconfirmed", progress_status: "paused", aliases: [] } },
       } }),
     }), env, ctx);
     assert.equal(response.status, 200);
-    assert.equal((await response.json()).result.structuredContent.project.id, projectId);
+    assert.equal((await response.json()).result.structuredContent.supplemental.project.id, projectId);
   } finally { globalThis.fetch = originalFetch; }
 });
 
@@ -65,44 +65,40 @@ test("GET /v1/projects forwards account filters to the list RPC", async () => {
   } finally { mock.restore(); }
 });
 
-test("POST /v1/projects/observe creates through the authenticated atomic RPC", async () => {
+test("POST /v1/projects creates through the authenticated M1 atomic RPC", async () => {
   const worker = await loadWorker();
-  const input = { name: "Clued", intent: "possible", idempotency_key: "mention-0002" };
-  const mock = mockAccountRpc("clued_user_project_observe", input, { status: "created", project: { id: projectId } });
+  const input = { operation: "create", canonical_project_id: projectId, project_schema_version: 1, base_version: null, idempotency_key: "project-0002", mutation: { name: "Clued", certainty_status: "confirmed", progress_status: "active", aliases: [] } };
+  const mock = mockAccountRpc("clued_user_project_mutate", input, { status: "committed", supplemental: { project: { id: projectId } } });
   try {
-    const response = await worker.fetch(new Request("https://clued.test/v1/projects/observe", {
+    const response = await worker.fetch(new Request("https://clued.test/v1/projects", {
       method: "POST", headers: { authorization: "Bearer account-jwt", "content-type": "application/json" }, body: JSON.stringify(input),
     }), env, ctx);
     assert.equal(response.status, 200);
-    assert.equal((await response.json()).project.id, projectId);
+    assert.equal((await response.json()).supplemental.project.id, projectId);
   } finally { mock.restore(); }
 });
 
 test("PATCH /v1/projects/:id preserves path identity and optimistic version", async () => {
   const worker = await loadWorker();
-  const expected = { action: "confirm", base_version: 3, idempotency_key: "update-0001", project_id: projectId };
-  const mock = mockAccountRpc("clued_user_project_update", expected, { status: "confirmed", project: { id: projectId, version: 4 } });
+  const expected = { operation: "update", project_schema_version: 1, base_version: 3, idempotency_key: "update-0001", mutation: { certainty_status: "confirmed" }, canonical_project_id: projectId };
+  const mock = mockAccountRpc("clued_user_project_mutate", expected, { status: "committed", supplemental: { project: { id: projectId, version: 4 } } });
   try {
     const response = await worker.fetch(new Request(`https://clued.test/v1/projects/${projectId}`, {
       method: "PATCH", headers: { authorization: "Bearer account-jwt", "content-type": "application/json" },
-      body: JSON.stringify({ action: "confirm", base_version: 3, idempotency_key: "update-0001" }),
+      body: JSON.stringify({ operation: "update", project_schema_version: 1, base_version: 3, idempotency_key: "update-0001", mutation: { certainty_status: "confirmed" } }),
     }), env, ctx);
     assert.equal(response.status, 200);
-    assert.equal((await response.json()).project.id, projectId);
+    assert.equal((await response.json()).supplemental.project.id, projectId);
   } finally { mock.restore(); }
 });
 
-test("POST /v1/projects/:id/merge forces the merge action", async () => {
+test("Project merge writes remain disabled", async () => {
   const worker = await loadWorker();
-  const expected = { target_project_id: targetId, idempotency_key: "merge-00001", project_id: projectId, action: "merge" };
-  const mock = mockAccountRpc("clued_user_project_update", expected, { status: "merged", project: { id: projectId } });
-  try {
-    const response = await worker.fetch(new Request(`https://clued.test/v1/projects/${projectId}/merge`, {
-      method: "POST", headers: { authorization: "Bearer account-jwt", "content-type": "application/json" },
-      body: JSON.stringify({ target_project_id: targetId, idempotency_key: "merge-00001", action: "dismiss" }),
-    }), env, ctx);
-    assert.equal(response.status, 200);
-  } finally { mock.restore(); }
+  const response = await worker.fetch(new Request(`https://clued.test/v1/projects/${projectId}/merge`, {
+    method: "POST", headers: { authorization: "Bearer account-jwt", "content-type": "application/json" },
+    body: JSON.stringify({ target_project_id: targetId, idempotency_key: "merge-00001" }),
+  }), env, ctx);
+  assert.equal(response.status, 405);
 });
 
 test("project APIs reject missing account authentication", async () => {
@@ -110,4 +106,3 @@ test("project APIs reject missing account authentication", async () => {
   const response = await worker.fetch(new Request("https://clued.test/v1/projects"), env, ctx);
   assert.equal(response.status, 401);
 });
-

@@ -15,6 +15,7 @@
     "db:start": "npx --yes supabase@2.115.0 start",
     "db:reset": "npx --yes supabase@2.115.0 db reset --local --no-seed",
     "db:test:v2": "npx --yes supabase@2.115.0 test db supabase/tests/unified_record_v2.test.sql --local",
+    "db:test:m1": "npx --yes supabase@2.115.0 test db supabase/tests/m1_runtime_contracts.test.sql --local",
     "db:lint": "npx --yes supabase@2.115.0 db lint --local --schema public,clued_private --level error --fail-on error",
     "stage5:dry-run": "node scripts/stage5-legacy-dry-run.mjs --as-of 2026-08-24T05:35:54.968159Z --source-commit a11d73c139561d61cb3a2caaf3e3280771ac5562 --db-snapshot docs/clued-two-level-views/stage5-production-readonly-snapshot.json --output docs/clued-two-level-views/stage5-legacy-dry-run.json",
     "bundle:export": "node scripts/user-memory-bundle.mjs export",
@@ -27,7 +28,7 @@
     "test:bundle": "node --test tests/user-memory-bundle.test.mjs",
     "test:snapshot:v16": "node --test tests/two-level-snapshot.test.mjs",
     "typecheck": "tsc --noEmit --incremental false",
-    "lint": "bash scripts/sites-env.sh -- eslint . --ignore-pattern dist --ignore-pattern .next",
+    "lint": "bash scripts/sites-env.sh -- eslint . --ignore-pattern dist --ignore-pattern .next --ignore-pattern supabase/.temp",
     "db:generate": "bash scripts/sites-env.sh -- drizzle-kit generate"
   },
   "dependencies": {

@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-08-25T16:19:27Z",
-  "count": 266,
+  "generated_at": "2026-08-25T18:01:02Z",
+  "count": 268,
   "objects": {
     "mem_012b899e": {
       "path": "memory/objects/mem_012b899e.json",
@@ -474,7 +474,7 @@
       "path": "memory/objects/mem_20f858e3.json",
       "type": "state",
       "scope": "project",
-      "status": "active",
+      "status": "superseded",
       "priority": "high",
       "category": "todo",
       "tags": [
@@ -487,9 +487,11 @@
         "clued-cloud"
       ],
       "valid_from": null,
-      "valid_until": null,
+      "valid_until": "2026-08-25T17:58:28Z",
       "supersedes": [],
-      "superseded_by": []
+      "superseded_by": [
+        "mem_a4996fc9"
+      ]
     },
     "mem_21d4095e": {
       "path": "memory/objects/mem_21d4095e.json",
@@ -1680,6 +1682,28 @@
       "supersedes": [],
       "superseded_by": []
     },
+    "mem_714dd47d": {
+      "path": "memory/objects/mem_714dd47d.json",
+      "type": "state",
+      "scope": "project",
+      "status": "active",
+      "priority": "high",
+      "category": "state",
+      "tags": [
+        "clued",
+        "m1",
+        "v1.6",
+        "production"
+      ],
+      "entities": [
+        "clued",
+        "clued-cloud"
+      ],
+      "valid_from": null,
+      "valid_until": null,
+      "supersedes": [],
+      "superseded_by": []
+    },
     "mem_716ddec6": {
       "path": "memory/objects/mem_716ddec6.json",
       "type": "semantic",
@@ -2489,6 +2513,29 @@
       "valid_from": null,
       "valid_until": null,
       "supersedes": [],
+      "superseded_by": []
+    },
+    "mem_a4996fc9": {
+      "path": "memory/objects/mem_a4996fc9.json",
+      "type": "state",
+      "scope": "project",
+      "status": "active",
+      "priority": "high",
+      "category": "todo",
+      "tags": [
+        "clued",
+        "m1",
+        "v1.6"
+      ],
+      "entities": [
+        "clued",
+        "clued-cloud"
+      ],
+      "valid_from": null,
+      "valid_until": null,
+      "supersedes": [
+        "mem_20f858e3"
+      ],
       "superseded_by": []
     },
     "mem_a56a96e3": {

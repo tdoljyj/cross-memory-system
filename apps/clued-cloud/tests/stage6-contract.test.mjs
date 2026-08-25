@@ -49,8 +49,8 @@ test("agent contract makes current truth, stable ids and single write explicit",
 
   assert.match(contract, /Log or Archive only when history or evidence is needed/);
   assert.match(contract, /canonical `id` across API, MCP, UI and Markdown mirrors/);
-  assert.match(contract, /Record \+ Event \+ Receipt/);
-  assert.match(contract, /never create a second Markdown record/);
+  assert.match(contract, /Canonical entity \+ Event \+ Receipt/);
+  assert.match(contract, /never dual-write Markdown/);
 });
 
 test("versioned Skill and project rules fail closed without inventing projects or mirrors", async () => {

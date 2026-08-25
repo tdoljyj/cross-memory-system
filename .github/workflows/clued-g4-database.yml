@@ -54,7 +54,7 @@ jobs:
         run: npm run db:lint
 
       - name: Run Unified Record V2 RLS and transaction tests
-        run: npm run db:test:v2
+        run: npm run db:test:m1
 
       - name: Capture safe failure diagnostics
         if: failure()

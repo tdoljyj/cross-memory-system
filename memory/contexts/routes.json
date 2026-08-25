@@ -56,7 +56,7 @@
     "fail_closed_when_required_source_is_unavailable": true
   },
   "semantic_contract": {
-    "version": "two-level-five-view-v1",
+    "version": "clued-v1.6-m1",
     "read_order": [
       "global_registry_and_priority",
       "project_state_task_decision",
@@ -72,7 +72,7 @@
       "archive"
     ],
     "write_order": [
-      "canonical_record",
+      "canonical_entity",
       "event_and_receipt_same_transaction",
       "derived_views"
     ],
@@ -92,6 +92,11 @@
       "entry_template": "- `{id}` — {title}: {conclusion} [status={status}; version={version}]"
     },
     "project_creation": "explicit_confirmation_required",
+    "idempotency_boundary": "verified_user_and_operation_family",
+    "event_stream_ordering_enabled": false,
+    "record_merge_write_enabled": false,
+    "project_merge_write_enabled": false,
+    "canonical_export": "authorized_live_recheck",
     "double_write": false
   }
 }
