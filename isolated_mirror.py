@@ -501,11 +501,12 @@ class MirrorCoordinator:
         request_id: str,
         phase: str,
         prior_lkg: dict,
+        boundary: str = "recovery_backup_lkg",
     ) -> None:
         if self.recovery_validator is None:
             self._block_recovery(request_id=request_id, phase=phase, reason="recovery verification context unavailable")
         try:
-            manifest, errors = self.recovery_validator(backup, "recovery_backup_lkg", prior_lkg)
+            manifest, errors = self.recovery_validator(backup, boundary, prior_lkg)
             generation = _load_generation(backup)
             generation_valid = (
                 generation is not None
@@ -534,9 +535,23 @@ class MirrorCoordinator:
         candidate: Path,
         outcome: str,
     ) -> dict:
-        if self._path_exists(candidate):
-            _safe_remove(candidate, self.target.parent)
-        journal_path_for_target(self.target).unlink()
+        try:
+            if self._path_exists(candidate):
+                _safe_remove(candidate, self.target.parent)
+            journal_path_for_target(self.target).unlink()
+        except MirrorRecoveryRequired:
+            raise
+        except Exception as exc:
+            self._block_recovery(
+                request_id=request_id,
+                phase=phase,
+                reason=f"recovery cleanup failed: {exc}",
+                state={
+                    "target_exists": self._path_exists(self.target),
+                    "candidate_exists": self._path_exists(candidate),
+                    "journal_exists": self._path_exists(journal_path_for_target(self.target)),
+                },
+            )
         self.audit.emit(
             "interrupted_switch_recovered",
             request_id=request_id,
@@ -565,14 +580,72 @@ class MirrorCoordinator:
             phase=phase,
             prior_lkg=prior_lkg,
         )
-        if self._path_exists(self.target):
-            _safe_remove(self.target, self.target.parent)
-        os.replace(backup, self.target)
-        self._validate_recovery_target(
-            request_id=request_id,
-            phase=phase,
-            prior_lkg=prior_lkg,
-        )
+        # A transaction can fail while writing its Backup record.  The record
+        # and control file are Backup metadata, not bytes from the old Mirror.
+        # Remove them only after the first in-place full validation, then run a
+        # second independent boundary validation before touching the target.
+        metadata_removed = []
+        try:
+            for filename in (BACKUP_RECORD_FILENAME, BACKUP_CONTROL_FILENAME):
+                metadata_path = backup / filename
+                if metadata_path.is_file():
+                    _make_root_writable(backup)
+                    metadata_path.chmod(stat.S_IREAD | stat.S_IWRITE)
+                    metadata_path.unlink()
+                    metadata_removed.append(filename)
+            if metadata_removed:
+                _set_tree_read_only(backup)
+                self._validate_recovery_backup(
+                    backup,
+                    request_id=request_id,
+                    phase=phase,
+                    prior_lkg=prior_lkg,
+                    boundary="recovery_backup_lkg_after_metadata_cleanup",
+                )
+                self.audit.emit(
+                    "backup_restore_metadata_removed",
+                    request_id=request_id,
+                    phase=phase,
+                    backup=str(backup),
+                    files=metadata_removed,
+                )
+        except MirrorRecoveryRequired:
+            raise
+        except Exception as exc:
+            self._block_recovery(
+                request_id=request_id,
+                phase=phase,
+                reason=f"Backup preparation for restore failed: {exc}",
+                state={
+                    "target_exists": self._path_exists(self.target),
+                    "candidate_exists": self._path_exists(candidate),
+                    "backup_exists": self._path_exists(backup),
+                    "journal_exists": self._path_exists(journal_path_for_target(self.target)),
+                },
+            )
+        try:
+            if self._path_exists(self.target):
+                _safe_remove(self.target, self.target.parent)
+            os.replace(backup, self.target)
+            self._validate_recovery_target(
+                request_id=request_id,
+                phase=phase,
+                prior_lkg=prior_lkg,
+            )
+        except MirrorRecoveryRequired:
+            raise
+        except Exception as exc:
+            self._block_recovery(
+                request_id=request_id,
+                phase=phase,
+                reason=f"verified Backup restore failed: {exc}",
+                state={
+                    "target_exists": self._path_exists(self.target),
+                    "candidate_exists": self._path_exists(candidate),
+                    "backup_exists": self._path_exists(backup),
+                    "journal_exists": self._path_exists(journal_path_for_target(self.target)),
+                },
+            )
         return self._finish_recovery(
             request_id=request_id,
             phase=phase,
@@ -655,7 +728,15 @@ class MirrorCoordinator:
             if phase in {"prepared", "candidate-promoted"} and target_exists and not candidate_exists:
                 # No old LKG exists.  The target is a promoted but not committed
                 # Candidate, so it cannot be reported as a successful Mirror.
-                _safe_remove(self.target, self.target.parent)
+                try:
+                    _safe_remove(self.target, self.target.parent)
+                except Exception as exc:
+                    self._block_recovery(
+                        request_id=request_id,
+                        phase=phase,
+                        reason=f"first-install uncommitted target cleanup failed: {exc}",
+                        state=state,
+                    )
                 return self._finish_recovery(
                     request_id=request_id,
                     phase=phase,
@@ -1088,21 +1169,47 @@ class MirrorCoordinator:
                     self._write_backup_record(backup, request_id=request_id, generation=current_generation)
                 journal_path_for_target(self.target).unlink(missing_ok=True)
             except Exception as exc:
-                if self.target.exists() or self.target.is_symlink():
-                    _safe_remove(self.target, self.target.parent)
-                if backup is not None and backup.exists():
-                    os.replace(backup, self.target)
-                    _, restored_errors = self.raw_validator(self.target)
-                    if restored_errors:
-                        self.audit.emit("rollback_failed", request_id=request_id, errors=restored_errors[:10])
-                        raise MirrorError("switch failed and prior LKG could not be restored") from exc
-                    self.audit.emit("rollback_restored_lkg", request_id=request_id, reason=str(exc))
-                else:
-                    self.audit.emit("switch_failed_no_prior_lkg", request_id=request_id, reason=str(exc))
-                if candidate.exists() or candidate.is_symlink():
-                    _safe_remove(candidate, self.target.parent)
-                journal_path_for_target(self.target).unlink(missing_ok=True)
-                raise MirrorError(f"mirror switch failed: {exc}") from exc
+                # There is exactly one rollback implementation: the persisted
+                # journal plus filesystem state machine above.  Do not infer a
+                # phase here and never delete target/Candidate/Backup/journal
+                # directly from the synchronous exception handler.
+                with contextlib.suppress(Exception):
+                    self.audit.emit(
+                        "switch_transaction_failed",
+                        request_id=request_id,
+                        reason=str(exc),
+                        exception_type=type(exc).__name__,
+                    )
+                try:
+                    recovery = self._recover_interrupted_switch(request_id)
+                    if recovery is None:
+                        self._block_recovery(
+                            request_id=request_id,
+                            phase="unknown",
+                            reason="switch transaction failed but journal is unavailable",
+                            state={
+                                "target_exists": self._path_exists(self.target),
+                                "candidate_exists": self._path_exists(candidate),
+                                "backup_exists": backup is not None and self._path_exists(backup),
+                            },
+                        )
+                except MirrorRecoveryRequired as recovery_exc:
+                    raise recovery_exc from exc
+                except Exception as recovery_exc:
+                    self._block_recovery(
+                        request_id=request_id,
+                        phase="unknown",
+                        reason=f"synchronous switch recovery failed: {recovery_exc}",
+                        state={
+                            "target_exists": self._path_exists(self.target),
+                            "candidate_exists": self._path_exists(candidate),
+                            "backup_exists": backup is not None and self._path_exists(backup),
+                            "journal_exists": self._path_exists(journal_path_for_target(self.target)),
+                        },
+                    )
+                raise MirrorError(
+                    f"mirror switch failed; journal state-machine recovery completed ({recovery['outcome']}): {exc}"
+                ) from exc
 
             self.audit.emit(
                 "mirror_switched",

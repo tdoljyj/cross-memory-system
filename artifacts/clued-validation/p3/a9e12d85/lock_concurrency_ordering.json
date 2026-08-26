@@ -1,5 +1,7 @@
 {
   "contract": "clued.p3-lock-concurrency-evidence.v1",
+  "verified_round": "sync-exception-LKG-fix",
+  "fixed_candidate_parent": "6acab22515d56b75c021d6921ade883855763b87",
   "implementation_commit": "5062abc0ef19947ee2c3175480d97763cd57360a",
   "lock_scope": "one OS cross-process exclusive lock per canonical target Mirror",
   "same_snapshot_two_process": {
@@ -24,6 +26,10 @@
     "abnormal_lock_holder_released_by_OS": true,
     "candidate_corruption_rejected": true,
     "switch_interruption_rolled_back": true,
+    "synchronous_exception_windows": 13,
+    "secondary_recovery_failures": 2,
+    "single_journal_state_machine": true,
+    "manual_recovery_preserves_remaining_artifacts": true,
     "old_LKG_full_validation_after_failure": "PASS"
   },
   "real_process_crash_recovery": {
@@ -34,6 +40,15 @@
     "old_LKG_full_validation": "PASS",
     "false_success_events": 0,
     "ambiguous_state_policy": "manual-recovery-required-without-deletion",
+    "result": "PASS"
+  },
+  "synchronous_exception_recovery": {
+    "replacement_windows": 8,
+    "first_install_windows": 5,
+    "old_target_digest_unchanged_for_prepared_or_pre_move": true,
+    "backup_validated_before_target_removal": true,
+    "next_independent_process": "PASS-or-explicit-manual-recovery-required",
+    "false_success_events": 0,
     "result": "PASS"
   },
   "test_sources": [

@@ -23,6 +23,7 @@ from isolated_mirror import (
     AUDIT_FILENAME,
     BACKUP_CONTROL_CONTRACT,
     BACKUP_CONTROL_FILENAME,
+    BACKUP_RECORD_FILENAME,
     ExclusiveFileLock,
     MirrorCoordinator,
     MirrorError,
@@ -647,7 +648,7 @@ class F32CrashRecoveryStateMachine(TempFixture):
                 target = case / "mirror"
                 backups = case / "backups"
                 old_remote = f"{index:x}" * 40
-                new_remote = f"{index + 8:x}" * 40
+                new_remote = f"{(index + 8) % 16:x}" * 40
                 apply_capsule(old, target, backups, self.policy, old_remote)
                 old_digest = tree_digest(target)
                 self._crash(
@@ -832,6 +833,276 @@ class F32CrashRecoveryStateMachine(TempFixture):
         self.assertTrue(backup.exists())
         self.assertFalse(candidate.exists())
         self.assertTrue(journal_path_for_target(target).exists())
+
+    def _apply_with_sync_fault(self, *, old, new, target, backups, old_remote, new_remote, fault):
+        context = context_for(new, new_remote)
+        recovery_observations = []
+        base_recovery_validator = recovery_validator_for(old if old is not None else new)
+
+        def observe_recovery(path, boundary, expected):
+            recovery_observations.append({
+                "boundary": boundary,
+                "path": str(path),
+                "target_exists": target.exists(),
+                "backup_exists": any(backups.glob("backup-*")),
+            })
+            return base_recovery_validator(path, boundary, expected)
+
+        coordinator = MirrorCoordinator(
+            target=target,
+            backup_root=backups,
+            policy_path=self.policy,
+            raw_validator=basic_validator,
+            recovery_validator=observe_recovery,
+        )
+        original_replace = isolated_mirror.os.replace
+        original_write_journal = coordinator._write_journal
+        original_finalize_generation = coordinator._finalize_generation
+        original_backup_record = coordinator._write_backup_record
+
+        def replace_with_fault(source, destination):
+            source_path = Path(source)
+            destination_path = Path(destination)
+            if fault == "target_backup_replace" and source_path == target and destination_path.parent == backups:
+                raise PermissionError("injected target-to-Backup pre-move failure")
+            if (
+                fault == "candidate_promote_replace"
+                and source_path.parent == target.parent
+                and source_path.name.startswith(f".{target.name}.candidate-")
+                and destination_path == target
+            ):
+                raise PermissionError("injected Candidate promotion pre-move failure")
+            return original_replace(source, destination)
+
+        def write_journal_with_fault(**kwargs):
+            if fault == "old_moved_journal" and kwargs["phase"] == "old-moved":
+                raise OSError("injected old-moved journal write failure")
+            if fault == "candidate_promoted_journal" and kwargs["phase"] == "candidate-promoted":
+                raise OSError("injected candidate-promoted journal write failure")
+            return original_write_journal(**kwargs)
+
+        def write_backup_then_fail(*args, **kwargs):
+            original_backup_record(*args, **kwargs)
+            raise OSError("injected Backup record post-write failure")
+
+        def finalize_then_fail(*args, **kwargs):
+            original_finalize_generation(*args, **kwargs)
+            raise OSError("injected generation finalize post-write failure")
+
+        def validate_boundary(path, boundary):
+            manifest, errors = context.verify_bundle(path, basic_validator, boundary=boundary)
+            if fault == "final_target_validation" and path == target and boundary == "local_mirror":
+                return manifest, [*errors, "injected-final-target-validation-failure"]
+            return manifest, errors
+
+        def switch_hook(phase, candidate, backup):
+            if fault == "after_prepared_journal" and phase == "after_prepared_journal":
+                raise RuntimeError("injected after-prepared synchronous failure")
+
+        with contextlib.ExitStack() as stack:
+            if fault in {"target_backup_replace", "candidate_promote_replace"}:
+                stack.enter_context(mock.patch.object(isolated_mirror.os, "replace", side_effect=replace_with_fault))
+            if fault in {"old_moved_journal", "candidate_promoted_journal"}:
+                stack.enter_context(mock.patch.object(coordinator, "_write_journal", side_effect=write_journal_with_fault))
+            if fault == "generation_finalize":
+                stack.enter_context(mock.patch.object(coordinator, "_finalize_generation", side_effect=finalize_then_fail))
+            if fault == "backup_record":
+                stack.enter_context(mock.patch.object(coordinator, "_write_backup_record", side_effect=write_backup_then_fail))
+            with self.assertRaises(MirrorError) as raised:
+                coordinator.apply(
+                    source=new / "memory",
+                    context=context,
+                    validate_boundary=validate_boundary,
+                    remote_head=new_remote,
+                    switch_hook=switch_hook,
+                )
+        self.assertNotIsInstance(raised.exception, MirrorRecoveryRequired)
+        return recovery_observations
+
+    def test_sync_exception_matrix_preserves_or_discards_by_journal_state_contract(self):
+        replacement_faults = (
+            "after_prepared_journal",
+            "target_backup_replace",
+            "old_moved_journal",
+            "candidate_promote_replace",
+            "candidate_promoted_journal",
+            "generation_finalize",
+            "final_target_validation",
+            "backup_record",
+        )
+        first_install_faults = (
+            "after_prepared_journal",
+            "candidate_promote_replace",
+            "candidate_promoted_journal",
+            "generation_finalize",
+            "final_target_validation",
+        )
+        repo_before = self._repo_state()
+        for index, fault in enumerate(replacement_faults, 1):
+            with self.subTest(kind="replacement", fault=fault):
+                case = self.root / f"sync-replacement-{index}"
+                old = make_capsule(
+                    case / "old", snapshot=f"sync_old_{index}", canonical=index * 2 - 1,
+                    build_epoch=f"2026-08-26T{index:02d}:00:00Z", content=f"sync-old-{index}\n",
+                )
+                new = make_capsule(
+                    case / "new", snapshot=f"sync_new_{index}", canonical=index * 2,
+                    build_epoch=f"2026-08-26T{index:02d}:30:00Z", content=f"sync-new-{index}\n",
+                )
+                target = case / "mirror"
+                backups = case / "backups"
+                old_remote = f"{index:x}" * 40
+                new_remote = f"{(index + 8) % 16:x}" * 40
+                apply_capsule(old, target, backups, self.policy, old_remote)
+                old_digest = tree_digest(target)
+                observations = self._apply_with_sync_fault(
+                    old=old, new=new, target=target, backups=backups,
+                    old_remote=old_remote, new_remote=new_remote, fault=fault,
+                )
+                self.assertEqual(old_digest, tree_digest(target))
+                _, errors = basic_validator(target)
+                self.assertEqual([], errors)
+                self.assertFalse(journal_path_for_target(target).exists())
+                self.assertEqual([], list(target.parent.glob(f".{target.name}.candidate-*")))
+                self.assertEqual([], list(backups.glob("backup-*")))
+                with ExclusiveFileLock(lock_path_for_target(target), timeout_seconds=2):
+                    pass
+                events = [json.loads(line) for line in (backups / AUDIT_FILENAME).read_text(encoding="utf-8").splitlines()]
+                self.assertTrue(
+                    any(event["event"] == "switch_transaction_failed" for event in events),
+                    [event["event"] for event in events],
+                )
+                self.assertTrue(any(event["event"] == "interrupted_switch_recovered" for event in events))
+                self.assertFalse(any(
+                    event["event"] == "mirror_switched" and event.get("snapshot_version") == f"sync_new_{index}"
+                    for event in events
+                ))
+                if fault in {"candidate_promoted_journal", "generation_finalize", "final_target_validation", "backup_record"}:
+                    backup_checks = [item for item in observations if item["boundary"] == "recovery_backup_lkg"]
+                    self.assertTrue(backup_checks)
+                    self.assertTrue(backup_checks[0]["target_exists"])
+                if fault == "backup_record":
+                    self.assertTrue(any(item["boundary"] == "recovery_backup_lkg_after_metadata_cleanup" for item in observations))
+                    self.assertTrue(any(event["event"] == "backup_restore_metadata_removed" for event in events))
+                    self.assertFalse((target / BACKUP_RECORD_FILENAME).exists())
+                installed = self._apply_process(
+                    capsule=new, target=target, backups=backups, remote_head=new_remote
+                )
+                self.assertEqual("mirrored", installed["status"])
+                self.assertEqual(f"sync-new-{index}\n", (target / "data.txt").read_text(encoding="utf-8"))
+
+        for index, fault in enumerate(first_install_faults, 1):
+            with self.subTest(kind="first-install", fault=fault):
+                case = self.root / f"sync-first-install-{index}"
+                capsule = make_capsule(
+                    case / "source", snapshot=f"sync_first_{index}", canonical=index,
+                    build_epoch=f"2026-08-26T{index:02d}:00:00Z", content=f"sync-first-{index}\n",
+                )
+                target = case / "mirror"
+                backups = case / "backups"
+                remote = f"{index + 2:x}" * 40
+                self._apply_with_sync_fault(
+                    old=None, new=capsule, target=target, backups=backups,
+                    old_remote=remote, new_remote=remote, fault=fault,
+                )
+                self.assertFalse(target.exists())
+                self.assertFalse(journal_path_for_target(target).exists())
+                self.assertEqual([], list(target.parent.glob(f".{target.name}.candidate-*")))
+                self.assertEqual([], list(backups.glob("backup-*")))
+                events = [json.loads(line) for line in (backups / AUDIT_FILENAME).read_text(encoding="utf-8").splitlines()]
+                self.assertFalse(any(event["event"] == "mirror_switched" for event in events))
+                installed = self._apply_process(
+                    capsule=capsule, target=target, backups=backups, remote_head=remote
+                )
+                self.assertEqual("mirrored", installed["status"])
+        self.assertEqual(repo_before, self._repo_state())
+
+    def test_secondary_recovery_failures_preserve_remaining_artifacts_and_require_manual(self):
+        old = make_capsule(
+            self.root / "secondary-old", snapshot="secondary_old", canonical=1,
+            build_epoch="2026-08-26T00:00:00Z", content="secondary-old\n",
+        )
+        new = make_capsule(
+            self.root / "secondary-new", snapshot="secondary_new", canonical=2,
+            build_epoch="2026-08-26T01:00:00Z", content="secondary-new\n",
+        )
+        old_remote = "1" * 40
+        new_remote = "2" * 40
+
+        target = self.root / "secondary-restore-mirror"
+        backups = self.root / "secondary-restore-backups"
+        apply_capsule(old, target, backups, self.policy, old_remote)
+        context = context_for(new, new_remote)
+        coordinator = MirrorCoordinator(
+            target=target, backup_root=backups, policy_path=self.policy,
+            raw_validator=basic_validator, recovery_validator=recovery_validator_for(old),
+        )
+        original_replace = isolated_mirror.os.replace
+
+        def fail_restore(source, destination):
+            source_path = Path(source)
+            if source_path.parent == backups and Path(destination) == target:
+                raise PermissionError("injected verified Backup restore failure")
+            return original_replace(source, destination)
+
+        def fail_after_promoted(phase, candidate, backup):
+            if phase == "after_candidate_promoted_journal":
+                raise RuntimeError("trigger recovery")
+
+        with mock.patch.object(isolated_mirror.os, "replace", side_effect=fail_restore):
+            with self.assertRaises(MirrorRecoveryRequired):
+                coordinator.apply(
+                    source=new / "memory", context=context,
+                    validate_boundary=lambda path, boundary: context.verify_bundle(path, basic_validator, boundary=boundary),
+                    remote_head=new_remote, switch_hook=fail_after_promoted,
+                )
+        journal = json.loads(journal_path_for_target(target).read_text(encoding="utf-8"))
+        backup = Path(journal["backup"])
+        self.assertFalse(target.exists())
+        self.assertTrue(backup.exists())
+        self.assertEqual([], basic_validator(backup)[1])
+        self.assertTrue(journal_path_for_target(target).exists())
+        events = [json.loads(line) for line in (backups / AUDIT_FILENAME).read_text(encoding="utf-8").splitlines()]
+        self.assertTrue(any(event["event"] == "switch_recovery_blocked" for event in events))
+        self.assertFalse(any(event["event"] == "mirror_switched" and event.get("snapshot_version") == "secondary_new" for event in events))
+        with self.assertRaises(MirrorRecoveryRequired):
+            MirrorCoordinator(
+                target=target, backup_root=backups, policy_path=self.policy,
+                raw_validator=basic_validator, recovery_validator=recovery_validator_for(old),
+            ).recover_interrupted_switch()
+        self.assertTrue(backup.exists())
+        self.assertTrue(journal_path_for_target(target).exists())
+
+        cleanup_target = self.root / "secondary-cleanup-mirror"
+        cleanup_backups = self.root / "secondary-cleanup-backups"
+        apply_capsule(old, cleanup_target, cleanup_backups, self.policy, old_remote)
+        old_digest = tree_digest(cleanup_target)
+        cleanup_context = context_for(new, new_remote)
+        cleanup_coordinator = MirrorCoordinator(
+            target=cleanup_target, backup_root=cleanup_backups, policy_path=self.policy,
+            raw_validator=basic_validator, recovery_validator=recovery_validator_for(old),
+        )
+        original_remove = isolated_mirror._safe_remove
+
+        def fail_candidate_cleanup(path, parent):
+            if Path(path).name.startswith(f".{cleanup_target.name}.candidate-"):
+                raise PermissionError("injected Candidate cleanup failure")
+            return original_remove(path, parent)
+
+        with mock.patch.object(isolated_mirror, "_safe_remove", side_effect=fail_candidate_cleanup):
+            with self.assertRaises(MirrorRecoveryRequired):
+                cleanup_coordinator.apply(
+                    source=new / "memory", context=cleanup_context,
+                    validate_boundary=lambda path, boundary: cleanup_context.verify_bundle(path, basic_validator, boundary=boundary),
+                    remote_head=new_remote,
+                    switch_hook=lambda phase, candidate, backup: (_ for _ in ()).throw(RuntimeError("trigger cleanup recovery")) if phase == "after_prepared_journal" else None,
+                )
+        cleanup_journal = json.loads(journal_path_for_target(cleanup_target).read_text(encoding="utf-8"))
+        self.assertEqual(old_digest, tree_digest(cleanup_target))
+        self.assertTrue(Path(cleanup_journal["candidate"]).exists())
+        self.assertTrue(journal_path_for_target(cleanup_target).exists())
+        cleanup_events = [json.loads(line) for line in (cleanup_backups / AUDIT_FILENAME).read_text(encoding="utf-8").splitlines()]
+        self.assertTrue(any(event["event"] == "switch_recovery_blocked" for event in cleanup_events))
 
     def test_next_new_snapshot_request_uses_recovery_context_then_switches(self):
         old = make_capsule(
