@@ -17,7 +17,7 @@ import time
 from pathlib import Path
 
 from isolated_mirror import MirrorCoordinator
-from verification_context import RequestVerificationContext
+from verification_context import MIRROR_GENERATION_FILENAME, RequestVerificationContext, sha256_file
 
 
 REPO = Path(__file__).resolve().parent
@@ -47,11 +47,16 @@ def new_verification_context(
     remote_head: str = "not-applicable",
     *,
     capsule_root: Path | None = None,
+    enforce_current_pointer: bool = True,
 ) -> RequestVerificationContext:
     sys.path.insert(0, str(REPO))
     import memory as memory_cli
     if capsule_root is None:
-        return memory_cli.new_verification_context(mode, remote_head)
+        return memory_cli.new_verification_context(
+            mode,
+            remote_head,
+            enforce_current_pointer=enforce_current_pointer,
+        )
     return memory_cli.new_verification_context(
         mode,
         remote_head,
@@ -59,7 +64,54 @@ def new_verification_context(
         pointer_path=capsule_root / "artifacts" / "clued-two-level-snapshots" / "current.json",
         version_path=capsule_root / "VERSION",
         endpoint_trust_path=capsule_root / "config" / "clued-endpoint-trust.json",
+        enforce_current_pointer=enforce_current_pointer,
     )
+
+
+def recovery_validator_for(capsule_root: Path):
+    state: dict[str, object] = {"expected_sha256": None, "context": None}
+
+    def validate_recovery(root: Path, boundary: str, expected: dict) -> tuple[dict, list[str]]:
+        expected_sha256 = hashlib.sha256(
+            json.dumps(expected, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        if state["context"] is None:
+            state["expected_sha256"] = expected_sha256
+            state["context"] = new_verification_context(
+                "AUDIT_FULL",
+                expected["remote_head"],
+                capsule_root=capsule_root,
+                enforce_current_pointer=False,
+            )
+        elif state["expected_sha256"] != expected_sha256:
+            return {}, ["recovery:prior-lkg-evidence-changed"]
+
+        def validate_expected(path: Path) -> tuple[dict, list[str]]:
+            manifest, errors = validate(path)
+            errors = list(errors)
+            try:
+                generation = json.loads((path / MIRROR_GENERATION_FILENAME).read_text(encoding="utf-8"))
+            except Exception as exc:
+                return manifest, [*errors, f"recovery:generation-invalid:{exc}"]
+            comparisons = {
+                "snapshot-version": manifest.get("snapshot_version") == expected["snapshot_version"],
+                "manifest-sha256": sha256_file(path / "manifest.json") == expected["manifest_sha256"],
+                "generation-id": generation.get("generation_id") == expected["generation_id"],
+                "generation-manifest": generation.get("manifest_sha256") == expected["manifest_sha256"],
+                "generation-remote": generation.get("remote_head") == expected["remote_head"],
+                "generation-target-identity": generation.get("target_identity_sha256") == expected["target_identity_sha256"],
+                "generation-read-only": generation.get("read_only_sha256") == expected["read_only_sha256"],
+            }
+            errors.extend(
+                f"recovery:{name}-mismatch" for name, matches in comparisons.items() if not matches
+            )
+            return manifest, errors
+
+        context = state["context"]
+        assert isinstance(context, RequestVerificationContext)
+        return context.verify_bundle(root, validate_expected, boundary=boundary)
+
+    return validate_recovery
 
 
 def _validate_boundary(
@@ -301,6 +353,7 @@ def isolated_read_request(remote_sha: str) -> tuple[dict, RequestVerificationCon
         backup_root=backup_root,
         policy_path=_backup_policy_path(),
         raw_validator=lambda root: validate(root),
+        recovery_validator=recovery_validator_for(capsule_root),
     )
     result = coordinator.apply(
         source=capsule_root / "memory",

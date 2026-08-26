@@ -26,6 +26,8 @@ from isolated_mirror import (
     ExclusiveFileLock,
     MirrorCoordinator,
     MirrorError,
+    MirrorRecoveryRequired,
+    journal_path_for_target,
     lock_path_for_target,
 )
 from verification_context import EndpointTrust, PathIdentity, RequestVerificationContext, sha256_file
@@ -156,6 +158,48 @@ def context_for(capsule: Path, remote_head: str, repository_root: Path | None = 
     )
 
 
+def recovery_validator_for(capsule: Path):
+    state = {"expected_sha256": None, "context": None}
+
+    def validate_recovery(root: Path, boundary: str, expected: dict):
+        expected_sha256 = canonical_hash(expected)
+        if state["context"] is None:
+            state["expected_sha256"] = expected_sha256
+            state["context"] = RequestVerificationContext(
+                "AUDIT_FULL",
+                repository_root=capsule,
+                pointer_path=None,
+                version_path=capsule / "VERSION",
+                remote_head=expected["remote_head"],
+                endpoint_trust=EndpointTrust.load(capsule / "config" / "clued-endpoint-trust.json"),
+                allow_authoritative=False,
+            )
+        elif state["expected_sha256"] != expected_sha256:
+            return {}, ["recovery:prior-lkg-evidence-changed"]
+
+        def validate_expected(path: Path):
+            manifest, errors = basic_validator(path)
+            try:
+                generation = json.loads((path / ".clued-mirror-generation.json").read_text(encoding="utf-8"))
+            except Exception as exc:
+                return manifest, [*errors, f"recovery:generation-invalid:{exc}"]
+            comparisons = {
+                "snapshot-version": manifest.get("snapshot_version") == expected["snapshot_version"],
+                "manifest-sha256": sha256_file(path / "manifest.json") == expected["manifest_sha256"],
+                "generation-id": generation.get("generation_id") == expected["generation_id"],
+                "generation-manifest": generation.get("manifest_sha256") == expected["manifest_sha256"],
+                "generation-remote": generation.get("remote_head") == expected["remote_head"],
+                "generation-target-identity": generation.get("target_identity_sha256") == expected["target_identity_sha256"],
+                "generation-read-only": generation.get("read_only_sha256") == expected["read_only_sha256"],
+            }
+            errors.extend(f"recovery:{name}-mismatch" for name, matches in comparisons.items() if not matches)
+            return manifest, errors
+
+        return state["context"].verify_bundle(root, validate_expected, boundary=boundary)
+
+    return validate_recovery
+
+
 def apply_capsule(
     capsule: Path,
     target: Path,
@@ -173,6 +217,7 @@ def apply_capsule(
         backup_root=backups,
         policy_path=policy,
         raw_validator=basic_validator,
+        recovery_validator=recovery_validator_for(capsule),
         clock=clock,
     )
     result = coordinator.apply(
@@ -467,6 +512,364 @@ def worker_apply(spec_path: Path):
     print(json.dumps({"status": result["status"], "snapshot_version": result["snapshot_version"]}))
 
 
+def worker_crash(spec_path: Path):
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+
+    def crash_at(phase, candidate, backup):
+        if phase == spec["crash_phase"]:
+            os._exit(int(spec.get("crash_exit", 86)))
+
+    apply_capsule(
+        Path(spec["capsule"]),
+        Path(spec["target"]),
+        Path(spec["backups"]),
+        Path(spec["policy"]),
+        spec["remote_head"],
+        switch_hook=crash_at,
+    )
+    os._exit(97)
+
+
+def worker_recover(spec_path: Path):
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    capsule = Path(spec["validation_capsule"])
+    coordinator = MirrorCoordinator(
+        target=Path(spec["target"]),
+        backup_root=Path(spec["backups"]),
+        policy_path=Path(spec["policy"]),
+        raw_validator=basic_validator,
+        recovery_validator=recovery_validator_for(capsule),
+    )
+    result = coordinator.recover_interrupted_switch()
+    print(json.dumps(result), flush=True)
+
+
+class F32CrashRecoveryStateMachine(TempFixture):
+    CRASH_EXIT = 86
+
+    def _spawn_mode(self, mode, spec):
+        spec_path = self.root / f"{mode}-{time.time_ns()}.json"
+        spec_path.write_text(json.dumps(spec), encoding="utf-8")
+        return subprocess.Popen(
+            [sys.executable, str(Path(__file__).resolve()), f"--{mode}", str(spec_path)],
+            cwd=ROOT,
+            text=True,
+            encoding="utf-8",
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
+    def _crash(self, *, capsule, target, backups, crash_phase, remote_head):
+        process = self._spawn_mode("crash-worker", {
+            "capsule": str(capsule),
+            "target": str(target),
+            "backups": str(backups),
+            "policy": str(self.policy),
+            "remote_head": remote_head,
+            "crash_phase": crash_phase,
+            "crash_exit": self.CRASH_EXIT,
+        })
+        stdout, stderr = process.communicate(timeout=60)
+        self.assertEqual(self.CRASH_EXIT, process.returncode, stderr + stdout)
+
+    def _recover(self, *, validation_capsule, validation_remote_head, target, backups):
+        process = self._spawn_mode("recover-worker", {
+            "validation_capsule": str(validation_capsule),
+            "validation_remote_head": validation_remote_head,
+            "target": str(target),
+            "backups": str(backups),
+            "policy": str(self.policy),
+        })
+        stdout, stderr = process.communicate(timeout=60)
+        self.assertEqual(0, process.returncode, stderr + stdout)
+        return json.loads(stdout.strip().splitlines()[-1])
+
+    def _apply_process(self, *, capsule, target, backups, remote_head):
+        process = self._spawn_mode("worker", {
+            "capsule": str(capsule),
+            "target": str(target),
+            "backups": str(backups),
+            "policy": str(self.policy),
+            "remote_head": remote_head,
+            "delay": 0,
+        })
+        stdout, stderr = process.communicate(timeout=60)
+        self.assertEqual(0, process.returncode, stderr + stdout)
+        return json.loads(stdout.strip().splitlines()[-1])
+
+    @staticmethod
+    def _repo_state():
+        index = ROOT / ".git" / "index"
+        return {
+            "head": subprocess.run(
+                ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True, capture_output=True, check=True
+            ).stdout.strip(),
+            "status": subprocess.run(
+                ["git", "status", "--porcelain=v1"], cwd=ROOT, text=True, capture_output=True, check=True
+            ).stdout,
+            "index": hashlib.sha256(index.read_bytes()).hexdigest(),
+            "manifest": sha256_file(ROOT / "memory" / "manifest.json"),
+            "pointer": sha256_file(ROOT / "artifacts" / "clued-two-level-snapshots" / "current.json"),
+            "implementation": sha256_file(ROOT / "isolated_mirror.py"),
+        }
+
+    @staticmethod
+    def _journal_state(target):
+        payload = json.loads(journal_path_for_target(target).read_text(encoding="utf-8"))
+        candidate = Path(payload["candidate"])
+        backup = Path(payload["backup"]) if payload["backup"] else None
+        return payload, candidate, backup, (
+            target.exists(),
+            candidate.exists(),
+            backup is not None and backup.exists(),
+        )
+
+    def test_replacement_real_process_crashes_restore_verified_old_lkg(self):
+        windows = (
+            ("after_prepared_journal", "prepared", (True, True, False)),
+            ("after_old_moved_before_journal", "prepared", (False, True, True)),
+            ("after_old_moved_journal", "old-moved", (False, True, True)),
+            ("after_candidate_promoted_before_journal", "old-moved", (True, False, True)),
+            ("after_candidate_promoted_journal", "candidate-promoted", (True, False, True)),
+        )
+        repo_before = self._repo_state()
+        for index, (crash_phase, journal_phase, expected_state) in enumerate(windows, 1):
+            with self.subTest(crash_phase=crash_phase):
+                case = self.root / f"replacement-{index}"
+                old = make_capsule(
+                    case / "old", snapshot=f"old_{index}", canonical=index * 2 - 1,
+                    build_epoch=f"2026-08-26T{index:02d}:00:00Z", content=f"old-{index}\n",
+                )
+                new = make_capsule(
+                    case / "new", snapshot=f"new_{index}", canonical=index * 2,
+                    build_epoch=f"2026-08-26T{index:02d}:30:00Z", content=f"new-{index}\n",
+                )
+                target = case / "mirror"
+                backups = case / "backups"
+                old_remote = f"{index:x}" * 40
+                new_remote = f"{index + 8:x}" * 40
+                apply_capsule(old, target, backups, self.policy, old_remote)
+                old_digest = tree_digest(target)
+                self._crash(
+                    capsule=new, target=target, backups=backups,
+                    crash_phase=crash_phase, remote_head=new_remote,
+                )
+                journal, candidate, backup, actual_state = self._journal_state(target)
+                self.assertEqual(journal_phase, journal["phase"])
+                self.assertEqual(expected_state, actual_state)
+                recovered = self._recover(
+                    validation_capsule=old,
+                    validation_remote_head=old_remote,
+                    target=target,
+                    backups=backups,
+                )
+                self.assertEqual("recovered", recovered["status"])
+                self.assertTrue(target.is_dir())
+                self.assertEqual(old_digest, tree_digest(target))
+                _, errors = basic_validator(target)
+                self.assertEqual([], errors)
+                self.assertFalse(candidate.exists())
+                self.assertFalse(journal_path_for_target(target).exists())
+                self.assertEqual([], list(backups.glob("backup-*")))
+                with ExclusiveFileLock(lock_path_for_target(target), timeout_seconds=2):
+                    pass
+                events = [json.loads(line) for line in (backups / AUDIT_FILENAME).read_text(encoding="utf-8").splitlines()]
+                self.assertFalse(any(
+                    event["event"] == "mirror_switched" and event.get("snapshot_version") == f"new_{index}"
+                    for event in events
+                ))
+                self.assertTrue(any(
+                    event["event"] == "interrupted_switch_recovered" and event.get("phase") == journal_phase
+                    for event in events
+                ))
+                self.assertTrue(any(event["event"] == "lock_released" and event.get("operation") == "recovery-only" for event in events))
+                if backup is not None:
+                    self.assertFalse(backup.exists())
+        self.assertEqual(repo_before, self._repo_state())
+
+    def test_first_install_real_process_crashes_leave_no_false_success_then_reinstall(self):
+        windows = (
+            ("after_prepared_journal", "prepared", (False, True, False)),
+            ("after_candidate_promoted_before_journal", "prepared", (True, False, False)),
+            ("after_candidate_promoted_journal", "candidate-promoted", (True, False, False)),
+        )
+        repo_before = self._repo_state()
+        for index, (crash_phase, journal_phase, expected_state) in enumerate(windows, 1):
+            with self.subTest(crash_phase=crash_phase):
+                case = self.root / f"first-install-{index}"
+                capsule = make_capsule(
+                    case / "source", snapshot=f"first_{index}", canonical=index,
+                    build_epoch=f"2026-08-26T{index:02d}:00:00Z", content=f"first-{index}\n",
+                )
+                target = case / "mirror"
+                backups = case / "backups"
+                remote = f"{index + 2:x}" * 40
+                self._crash(
+                    capsule=capsule, target=target, backups=backups,
+                    crash_phase=crash_phase, remote_head=remote,
+                )
+                journal, candidate, backup, actual_state = self._journal_state(target)
+                self.assertEqual(journal_phase, journal["phase"])
+                self.assertEqual(expected_state, actual_state)
+                self.assertIsNone(backup)
+                recovered = self._recover(
+                    validation_capsule=capsule,
+                    validation_remote_head=remote,
+                    target=target,
+                    backups=backups,
+                )
+                self.assertEqual("recovered", recovered["status"])
+                self.assertFalse(target.exists())
+                self.assertFalse(candidate.exists())
+                self.assertFalse(journal_path_for_target(target).exists())
+                self.assertEqual([], list(backups.glob("backup-*")))
+                events = [json.loads(line) for line in (backups / AUDIT_FILENAME).read_text(encoding="utf-8").splitlines()]
+                self.assertFalse(any(event["event"] == "mirror_switched" for event in events))
+                installed = self._apply_process(
+                    capsule=capsule, target=target, backups=backups, remote_head=remote
+                )
+                self.assertEqual("mirrored", installed["status"])
+                _, errors = basic_validator(target)
+                self.assertEqual([], errors)
+                with ExclusiveFileLock(lock_path_for_target(target), timeout_seconds=2):
+                    pass
+        self.assertEqual(repo_before, self._repo_state())
+
+    def test_invalid_journal_fields_and_ambiguous_state_fail_closed_without_deletion(self):
+        cases = ("phase", "target", "candidate", "backup", "prior-lkg", "inconsistent-state")
+        for index, field in enumerate(cases, 1):
+            with self.subTest(field=field):
+                case = self.root / f"invalid-{index}"
+                old = make_capsule(
+                    case / "old", snapshot=f"invalid_old_{index}", canonical=index * 2 - 1,
+                    build_epoch=f"2026-08-26T{index:02d}:00:00Z", content=f"invalid-old-{index}\n",
+                )
+                new = make_capsule(
+                    case / "new", snapshot=f"invalid_new_{index}", canonical=index * 2,
+                    build_epoch=f"2026-08-26T{index:02d}:30:00Z", content=f"invalid-new-{index}\n",
+                )
+                target = case / "mirror"
+                backups = case / "backups"
+                old_remote = f"{index:x}" * 40
+                new_remote = f"{index + 9:x}" * 40
+                apply_capsule(old, target, backups, self.policy, old_remote)
+                old_digest = tree_digest(target)
+                self._crash(
+                    capsule=new, target=target, backups=backups,
+                    crash_phase="after_prepared_journal", remote_head=new_remote,
+                )
+                journal_path = journal_path_for_target(target)
+                journal = json.loads(journal_path.read_text(encoding="utf-8"))
+                original_candidate = Path(journal["candidate"])
+                original_backup = Path(journal["backup"])
+                if field == "phase":
+                    journal["phase"] = "unknown-phase"
+                elif field == "target":
+                    journal["target"] = str(case / "other-target")
+                elif field == "candidate":
+                    journal["candidate"] = str(case / "outside-candidate")
+                elif field == "backup":
+                    journal["backup"] = str(case / "outside-backup")
+                elif field == "prior-lkg":
+                    journal["prior_lkg"]["generation_id"] = "invalid"
+                else:
+                    shutil.copytree(target, original_backup)
+                journal_path.write_text(json.dumps(journal, indent=2) + "\n", encoding="utf-8")
+                coordinator = MirrorCoordinator(
+                    target=target,
+                    backup_root=backups,
+                    policy_path=self.policy,
+                    raw_validator=basic_validator,
+                    recovery_validator=recovery_validator_for(old),
+                )
+                with self.assertRaisesRegex(MirrorRecoveryRequired, "manual intervention"):
+                    coordinator.recover_interrupted_switch()
+                self.assertEqual(old_digest, tree_digest(target))
+                self.assertTrue(original_candidate.exists())
+                self.assertTrue(journal_path.exists())
+                if field == "inconsistent-state":
+                    self.assertTrue(original_backup.exists())
+                events = [json.loads(line) for line in (backups / AUDIT_FILENAME).read_text(encoding="utf-8").splitlines()]
+                self.assertTrue(any(event["event"] == "switch_recovery_blocked" for event in events))
+                self.assertTrue(any(event["event"] == "lock_released" and event.get("operation") == "recovery-only" for event in events))
+
+    def test_invalid_backup_is_rejected_in_place_before_current_target_is_removed(self):
+        old = make_capsule(
+            self.root / "invalid-backup-old", snapshot="invalid_backup_old", canonical=1,
+            build_epoch="2026-08-26T00:00:00Z", content="verified-old\n",
+        )
+        new = make_capsule(
+            self.root / "invalid-backup-new", snapshot="invalid_backup_new", canonical=2,
+            build_epoch="2026-08-26T01:00:00Z", content="uncommitted-new\n",
+        )
+        target = self.root / "invalid-backup-mirror"
+        backups = self.root / "invalid-backup-store"
+        apply_capsule(old, target, backups, self.policy, "1" * 40)
+        self._crash(
+            capsule=new,
+            target=target,
+            backups=backups,
+            crash_phase="after_candidate_promoted_journal",
+            remote_head="2" * 40,
+        )
+        journal, candidate, backup, state = self._journal_state(target)
+        self.assertEqual("candidate-promoted", journal["phase"])
+        self.assertEqual((True, False, True), state)
+        assert backup is not None
+        current_before = tree_digest(target)
+        make_writable(backup)
+        (backup / "data.txt").write_text("corrupted-backup\n", encoding="utf-8")
+        coordinator = MirrorCoordinator(
+            target=target,
+            backup_root=backups,
+            policy_path=self.policy,
+            raw_validator=basic_validator,
+            recovery_validator=recovery_validator_for(old),
+        )
+        with self.assertRaisesRegex(MirrorRecoveryRequired, "manual intervention"):
+            coordinator.recover_interrupted_switch()
+        self.assertEqual(current_before, tree_digest(target))
+        self.assertTrue(backup.exists())
+        self.assertFalse(candidate.exists())
+        self.assertTrue(journal_path_for_target(target).exists())
+
+    def test_next_new_snapshot_request_uses_recovery_context_then_switches(self):
+        old = make_capsule(
+            self.root / "next-request-old", snapshot="next_request_old", canonical=1,
+            build_epoch="2026-08-26T00:00:00Z", content="next-old\n",
+        )
+        new = make_capsule(
+            self.root / "next-request-new", snapshot="next_request_new", canonical=2,
+            build_epoch="2026-08-26T01:00:00Z", content="next-new\n",
+        )
+        target = self.root / "next-request-mirror"
+        backups = self.root / "next-request-backups"
+        apply_capsule(old, target, backups, self.policy, "1" * 40)
+        self._crash(
+            capsule=new,
+            target=target,
+            backups=backups,
+            crash_phase="after_prepared_journal",
+            remote_head="2" * 40,
+        )
+        result = self._apply_process(
+            capsule=new, target=target, backups=backups, remote_head="2" * 40
+        )
+        self.assertEqual("mirrored", result["status"])
+        self.assertEqual("next-new\n", (target / "data.txt").read_text(encoding="utf-8"))
+        self.assertFalse(journal_path_for_target(target).exists())
+        events = [json.loads(line) for line in (backups / AUDIT_FILENAME).read_text(encoding="utf-8").splitlines()]
+        self.assertTrue(any(
+            event["event"] == "interrupted_switch_recovered"
+            and event.get("outcome") == "prepared-target-lkg-preserved"
+            for event in events
+        ))
+        self.assertTrue(any(
+            event["event"] == "mirror_switched" and event.get("snapshot_version") == "next_request_new"
+            for event in events
+        ))
+
+
 class F32ConcurrencyRollbackRetention(TempFixture):
     def _spawn(self, capsule, target, backups, remote_head, delay=0):
         spec = self.root / f"worker-{time.time_ns()}.json"
@@ -662,6 +1065,10 @@ def _control(backup: Path):
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "--worker":
         worker_apply(Path(sys.argv[2]))
+    elif len(sys.argv) > 1 and sys.argv[1] == "--crash-worker":
+        worker_crash(Path(sys.argv[2]))
+    elif len(sys.argv) > 1 and sys.argv[1] == "--recover-worker":
+        worker_recover(Path(sys.argv[2]))
     elif len(sys.argv) > 1 and sys.argv[1] == "--hold-lock":
         with ExclusiveFileLock(Path(sys.argv[2]), timeout_seconds=10):
             Path(sys.argv[3]).write_text("ready\n", encoding="utf-8")

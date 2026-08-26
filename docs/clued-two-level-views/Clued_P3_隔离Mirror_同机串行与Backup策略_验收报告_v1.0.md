@@ -1,155 +1,186 @@
 # Clued P3 隔离 Mirror、同机串行与 Backup 策略验收报告 v1.0
 
-## 1. 裁决
+## 1. 第四轮复审候选裁决
 
-`PASS / P3_ISOLATED_MIRROR_LOCK_RETENTION_ACCEPTED_FOR_INDEPENDENT_REVIEW`
+`PASS / P3_PREPARED_JOURNAL_LKG_LOSS_FIXED_FOR_FOURTH_INDEPENDENT_REVIEW`
 
-本报告只验收 P3：隔离只读 Mirror、同机跨进程串行、确定性 Generation、失败恢复与本地 Backup 保留策略。未合并 `main`，未创建 PR、Tag、Release，未部署，也未触及 P4–P6、生产或 Canonical Store。
+本裁决只表示阻断修复及本地门禁通过，不表示 P3 已获独立复审通过，也不授权合并 `main`。P3 必须等待第四轮独立复审。
 
-## 2. Git 基线与实现提交
+第三轮独立复审裁决已记录为：
 
-- 仓库：`tdoljyj/cross-memory-system`
-- 功能分支：`codex/p3-isolated-mirror-lock-retention`
-- 开始时远端 `main`：`a9e12d8581c914dcbd5041324f20189c943261b8`（与授权基线精确一致）
-- 固定基线唯一父提交：`1fc9c5faa4ba9e09f1bc69e1bdea69732111e214`
-- P3 实现 Commit：`5062abc0ef19947ee2c3175480d97763cd57360a`
-- P3 实现 Commit 唯一父提交：`a9e12d8581c914dcbd5041324f20189c943261b8`
-- P3 实现 Tree：`cf3a99248b7242bbd429d5ced3f306d6301823f0`
-- 提交方式：普通 Commit；未执行 merge、rebase、squash、amend、force push 或历史重写。
+`FAIL / P3_INDEPENDENT_REVIEW_BLOCKED_BY_PREPARED_JOURNAL_LKG_LOSS`
 
-## 3. 实际变更文件
+固定被阻断候选为 `ce33299b280f98e67c6c0121c78d8fbf594ac2d3`。本轮仅在 `codex/p3-isolated-mirror-lock-retention` 上追加一个普通线性修复 Commit；该 Commit 的唯一父提交必须是上述固定候选。最终 Commit、Tree 与修复文件 Blob 由提交后回执记录，报告不预写自身 Commit。
 
-实现提交修改或新增 9 个文件：
+## 2. 原阻断复现
 
-1. `AGENTS.md`
-2. `config/clued-local-mirror-backup-policy.json`
-3. `isolated_mirror.py`
-4. `memory.py`
-5. `sync-memory.py`
-6. `tests/test_p1_align_and_verify.py`
-7. `tests/test_p2_verification_context.py`
-8. `tests/test_p3_isolated_mirror.py`
-9. `verification_context.py`
+原实现先持久化 `phase=prepared`，随后才执行 `os.replace(target, backup)`。如果进程在两步之间崩溃，磁盘状态为：
 
-证据/报告提交新增指定 P3 证据目录下的 `p3_raw_results.jsonl`、`SHA256SUMS`、锁并发顺序、Mirror Generation/切换、Backup 保留审计、Conflict Packet Fixture 证据，以及本报告；并仅强化同一个 P3 测试文件中的独立 ACL 指纹失效断言。
+- journal：`prepared`
+- target：存在且是已验证旧 LKG
+- Candidate：存在
+- Backup：不存在
 
-未修改 `memory/`、任何已发布 Snapshot、Manifest、正式 `current.json`、根 `VERSION` 或 Cloud/数据库实现。
+旧恢复代码只检查 Backup 是否存在；Backup 不存在时会删除 target，再删除 Candidate 和 journal。测试已用真实子进程 `os._exit(86)` 复现该窗口。该行为违反 F32、最低一个已验证 LKG 与 fail-closed，第三轮报告中“任一中断均恢复旧 LKG”的无条件表述已撤销。
 
-## 4. Backup Policy 冻结值
+## 3. 修复范围
 
-本轮权威配置为 `config/clued-local-mirror-backup-policy.json`，合同 `clued.local-mirror-backup-policy.v1`：
+运行时代码与合同：
 
-| 参数 | 冻结值 |
-| --- | --- |
-| `policy_version` | `1.0.0` |
-| `max_retained_backups` | `3` |
-| `max_retention_seconds` | `604800`（7 天） |
-| `minimum_verified_lkg` | `1` |
-| `legal_hold_blocks_deletion` | `true` |
-| `erasure_mode` | `delete-if-eligible` |
-| `audit_contract` | `clued.local-mirror-audit.v1` |
+1. `isolated_mirror.py`
+2. `memory.py`
+3. `sync-memory.py`
+4. `verification_context.py`
 
-数量和时间是显式、版本化的本地默认值与测试 Fixture，不声明为既有生产事实。本轮未扫描、迁移或清理用户真实历史 Backup。
+测试：
 
-删除前会重新验证 Backup，并确认其不是当前 Mirror、Candidate 或最低保留的唯一已验证 LKG。Legal Hold 阻止删除；Erasure 仅在合格时删除。保留、跳过、删除、删除失败及原因均写入 JSONL 审计。
+5. `tests/test_p2_verification_context.py`
+6. `tests/test_p3_isolated_mirror.py`
 
-## 5. P3 行为
+重生成证据与报告：
 
-### 5.1 隔离读取
+7. `artifacts/clued-validation/p3/a9e12d85/p3_raw_results.jsonl`
+8. `artifacts/clued-validation/p3/a9e12d85/lock_concurrency_ordering.json`
+9. `artifacts/clued-validation/p3/a9e12d85/journal_crash_recovery_evidence.jsonl`
+10. `artifacts/clued-validation/p3/a9e12d85/SHA256SUMS`
+11. 本报告
 
-每个非 `NONE` 请求只执行一次真实 `git ls-remote origin refs/heads/main`，将该 SHA 传入 Git 对象获取和 `git archive`。读取的 `memory/`、正式指针、`VERSION` 与 endpoint trust 配置来自该不可变 Commit 的隔离临时 Capsule；开发工作树只用于 Git 历史分类，不复制其文件，也不移动其 HEAD、Index 或文件字节。
+未修改 `memory/`、已发布 Snapshot、Manifest、正式 Current Pointer、根 `VERSION`、Cloud 应用或数据库文件。
 
-因此 Remote Ahead 且开发工作树 dirty 时，读请求可以更新独立 Mirror，但脏文件不会进入 Mirror。实现、提交、推送和写路径的 dirty-worktree 门禁仍保留。
+## 4. 明确 journal 状态机
 
-### 5.2 串行、Generation 与 no-op
+journal phase 白名单只有：
 
-同一规范目标 Mirror 使用一个 OS 跨进程独占文件锁。Source、Candidate、Local Mirror 在同一请求 Context 内分别独立全量校验。Candidate 位于目标同卷临时目录；通过独立目标校验后，在锁内使用同卷 rename、持久化 switch journal 和最终目标重验完成协议原子切换。只有最终目标重验成功后才返回成功；任一中断均恢复旧 LKG，并清除 Candidate、journal 和错误成功状态。
+- `prepared`
+- `old-moved`
+- `candidate-promoted`
 
-Generation 顺序固定为：`build_epoch`、数值化 `canonical_version`、`snapshot_version`。相同 Snapshot 仅在 Generation、规范路径、目录/卷身份、Owner/Group/DACL 或 POSIX security identity、只读属性、Manifest、Snapshot Version 与内容证据仍有效时 no-op。不同 Snapshot 以该内在顺序决定最终版本，不以线程或进程取得锁的顺序决定。
+journal 必须满足：
 
-真实替换才创建 Backup；首建与 no-op 都不创建 Backup。
+- `contract` 精确匹配；
+- `target` 字符串与规范目标精确匹配；
+- Candidate 是 target parent 的直接子目录，且名称匹配 `.{target}.candidate-*`；
+- Backup 如存在，必须是 `backup_root` 的直接子目录并匹配 `backup-*`；
+- target、Candidate、Backup 不得是 Junction、Symlink 或非目录对象；
+- 替换已有 LKG 时，journal 冻结旧 LKG 的 Generation ID、Snapshot Version、Manifest SHA-256、Remote Head、目标身份 SHA-256 和只读身份 SHA-256；
+- phase、是否存在旧 LKG以及 target/Candidate/Backup 实际存在状态必须属于下表的确定性组合。
 
-### 5.3 Git 真分叉
+### 4.1 替换已有 LKG
 
-Remote Ahead/Local Ahead/相等与 true divergence 保持 P1 ancestor 分类。true divergence 输出 `clued.git-conflict-packet.v1`，包含 Base、Local、Remote、双方变更路径、重叠路径与证据 SHA-256，并明确区别于 Canonical CAS Conflict；不自动 merge、rebase、覆盖或切换 Mirror。
+| journal phase | target | Candidate | Backup | 恢复动作 |
+| --- | --- | --- | --- | --- |
+| `prepared` | 有 | 有 | 无 | 在原 target 位置全量验证并确认身份；保留旧 LKG，仅删除 Candidate 和 journal |
+| `prepared` | 无 | 有 | 有 | 在 Backup 原位置全量验证；验证通过后恢复至 target，再次全量验证，清理 Candidate/journal |
+| `old-moved` | 无 | 有 | 有 | 同上，恢复已验证 Backup |
+| `old-moved` | 有 | 无 | 有 | 先在 Backup 原位置全量验证；通过后才删除未提交 target 并恢复旧 LKG |
+| `candidate-promoted` | 有 | 无 | 有 | 先在 Backup 原位置全量验证；通过后回滚未完成 Candidate 并恢复旧 LKG |
 
-## 6. P1/P2 不变量
+### 4.2 首次安装、没有旧 LKG
 
-- P1：一次 Remote Head 解析、显式 SHA 传播、ancestor/divergence 分类、Malformed Ref/Remote unavailable/Git divergence fail-closed 均保留。
-- P2：每次请求创建新的 `RequestVerificationContext`；仅同一请求、同一进程、同一 Context、同一信任边界内复用。
-- 真实替换验证计数保持 `full=3/reuse=1`；相同 Snapshot no-op 为 Source + 当前 Mirror 两次全量校验，即 `full=2/reuse=1`。
-- 新请求产生新 Context；standalone doctor 创建新的 doctor-only Context。
-- Repository Source、Candidate、Local Mirror 不共享 PASS Evidence。
-- 不实现跨请求、跨进程、跨设备、跨 Agent 的 PASS Evidence 复用。
-- `NONE` 继续为零 Context、零 Git、零 Memory 读取。
-- F05/F06、Remote unavailable、Malformed Ref、真实 Git divergence 继续 fail-closed。
+| journal phase | target | Candidate | Backup | 恢复动作 |
+| --- | --- | --- | --- | --- |
+| `prepared` | 无 | 有 | 无 | 删除未提交 Candidate 和 journal，不产生成功状态 |
+| `prepared` | 有 | 无 | 无 | 删除已提升但未提交的 target 和 journal，不产生成功状态 |
+| `candidate-promoted` | 有 | 无 | 无 | 删除最终验证前的 target 和 journal，不产生成功状态 |
 
-## 7. P3 明确改变的旧行为
+`old-moved` 不允许描述首次安装。
 
-唯一获准的旧行为变化是：脏开发工作树下的非 `NONE` 读路径不再因读取需要而拒绝或改写开发工作树，而是从固定 Remote Commit 的隔离 Git 对象源构建/验证 Mirror。测试同时证明开发 HEAD、Index、已暂存文件、未暂存文件和文件字节均不变，且脏内容没有被读取或复制进 Mirror。
+任何未列出的组合、非法 phase、路径越界、冻结证据异常或对象类型异常都抛出 `manual-recovery-required`。该路径只追加阻断审计，保留 target、Candidate、Backup 和 journal，不执行猜测性删除。
 
-旧的实现/提交/写路径 dirty gate 未移除。未出现其他未解释的“旧路径拒绝、新路径接受”。
+## 5. Backup 原位置校验与 P2 Context
 
-## 8. 验收结果
+恢复 Backup 前，代码先在 Backup 当前原位置完成全量验证，并对照 journal 冻结的旧 LKG 证据。只有通过后才允许删除当前未提交 target 或执行 `Backup→target` rename。恢复至 target 后还会重新全量验证并确认原 target 路径身份；失败时保留现存对象和 journal，要求人工恢复。
 
-### 正向、负向与并发
+恢复验证使用新的 request-local `AUDIT_FULL` Context：
 
-- F01：PASS；每个非 `NONE` 请求一次 `ls-remote`，请求内复用具体 SHA。
-- F02：PASS；Remote Ahead/clean 更新隔离 Mirror，开发 HEAD、Index、文件字节不变，Candidate 校验后切换。
-- F03：PASS；Remote Ahead/dirty 独立更新，dirty/staged 文件不进入 Mirror，开发状态完全不变。
-- F04：PASS；真实 divergence 生成 Git Conflict Packet，旧 LKG Tree digest 不变。
-- F05/F06：PASS；源损坏在复制前拒绝，复制后目标损坏拒绝并保留旧 LKG。
-- F27：PASS；控制场景 no-op；Junction/Symlink 目标、相同字节目录替换、卷身份、ACL 安全描述符、只读属性、Mirror Generation 变化全部使 Evidence 失效。
-- F32 同 Snapshot：PASS；两个进程结果为一次 `mirrored` 和一次 `noop`，最终一个 Generation、零重复 Backup。
-- F32 不同 Snapshot：PASS；new-first 与 old-first 两种竞争顺序最终均为确定性较新 Snapshot，无交叉污染。
-- 锁竞争/异常持锁进程：PASS；OS 释放异常进程锁，旧 LKG 不变。
-- Candidate 损坏/切换中断：PASS；Candidate 被拒绝，switch journal 回滚，旧 LKG 全量验证通过。
-- Backup：PASS；数量有界、至少一个已验证 LKG、Hold 不删除、Erasure 合格删除/唯一 LKG 跳过、删除失败原因审计。
+- endpoint trust、Owner Ref、Bundle Scope、授权与完整性校验继续生效；
+- 正式 Current Pointer 不用于旧 LKG 恢复，因为它属于新请求 Snapshot，不能错误拒绝历史 LKG；
+- journal 冻结的旧 Snapshot/Manifest/Generation/Remote/身份取代“当前 Pointer”成为恢复期预期值；
+- `allow_authoritative=false`，恢复 Context 不能创建 Source Envelope，也不能产生 `authoritative=true`；
+- 恢复 Evidence 不进入新 Snapshot 的 Source、Candidate 或 Mirror 边界，不跨请求复用。
 
-### 回归门禁
+恢复完成后，新请求仍使用原 P2 Request Context 分别全量验证 Repository Source、Candidate 和最终 Local Mirror。真实替换继续保持 `full=3/reuse=1`；`NONE` 仍为零 Context、零 Git、零 Memory 读取。
+
+## 6. 真实子进程崩溃 F32
+
+所有崩溃均由独立 Python 子进程调用 `os._exit(86)`，不是抛出可捕获异常。下一独立子进程只执行恢复，并验证锁可重新获取。
+
+### 6.1 替换已有 LKG：5 个窗口
+
+1. `prepared` 已持久化，旧 target 尚未移动；
+2. 旧 target 已移动，`old-moved` 尚未持久化；
+3. `old-moved` 已持久化，Candidate 尚未提升；
+4. Candidate 已提升，`candidate-promoted` 尚未持久化；
+5. `candidate-promoted` 已持久化，最终验证尚未完成。
+
+五个窗口全部证明：
+
+- 下一独立进程恢复后旧 LKG Tree digest 精确一致；
+- 旧 LKG 全量验证通过；
+- 新 Snapshot 没有错误 `mirror_switched` 成功事件；
+- Candidate 和 journal 清理结果确定；
+- Backup 恢复后不残留伪 Backup；
+- `interrupted_switch_recovered`、phase、outcome 与锁审计一致；
+- OS 锁可再次独占获取。
+
+### 6.2 首次安装：3 个窗口
+
+覆盖 prepared 前提升、提升后未写 phase、写入 candidate-promoted 后最终验证前。三个窗口均无错误成功状态；恢复清理未提交 Candidate/target/journal，随后另一独立进程可完成干净安装并全量验证。
+
+### 6.3 负向恢复
+
+- Backup 在原位置被损坏：恢复拒绝；当前 target digest 不变；Backup 与 journal 均保留。
+- 非法 phase、target mismatch、Candidate 越界、Backup 越界、旧 LKG 冻结证据异常、phase/文件系统歧义：全部 `manual-recovery-required`，不删除任何可恢复对象。
+- 下一新 Snapshot 请求：先用 recovery-only Context 恢复旧 LKG，再用新的 P2 Context完成新 Source/Candidate/target 验证与切换。
+
+## 7. 完整门禁结果
 
 | 门禁 | 结果 |
 | --- | --- |
-| P1 专项 | PASS，15/15 |
-| P2 专项与文档契约 | PASS，28/28 |
-| P3 专项 F02/F03/F04/F27/F32 | PASS，15/15 |
-| Python 全量 | PASS，63/63，89.610s |
-| PowerShell `NONE` | PASS，零 Context/Git/Memory 读取 |
-| PowerShell 非 `NONE` | PASS，请求内同 Context；新请求新 Context |
+| P1 专项（含 F01/F05/F06、Remote unavailable、Malformed Ref、divergence） | PASS，15/15 |
+| P2 专项与文档合同 | PASS，29/29 |
+| P3 专项（F02/F03/F04/F27/F32） | PASS，20/20 |
+| 真实 crash recovery 窄门禁 | PASS，5/5 测试方法，8 个 `os._exit` 窗口 |
+| Python 全量 | PASS，69/69，99.530s |
+| PowerShell NONE/非 NONE | PASS |
 | `memory.py doctor` | PASS，710 个 Manifest 文件 |
 | `sync-memory.py doctor` | PASS |
 | Cloud verified build | PASS |
 | Cloud 离线回归 | PASS，63/63 |
-| Python 编译 | PASS，8 个 Python 文件 |
+| Python compile | PASS，8 个 Python 文件 |
 | `git diff --check` | PASS |
 
-Cloud build 输出两条 Vite `configLoader: native` 前瞻性兼容警告，构建退出码为 0；该警告与 P3 无关，没有测试失败或运行时错误。
+Cloud build 仍仅输出与 P3 无关的 Vite `configLoader: native` 前瞻警告，退出码为 0。
 
-## 9. Commit、Blob 与 SHA-256 证据
+## 8. 不变量与限定结论
 
-实现 Commit `5062abc0ef19947ee2c3175480d97763cd57360a` 的文件证据：
+- 对状态机列出的真实崩溃窗口，恢复会保留或恢复旧 LKG并重新全量验证。
+- 对无法唯一判断的组合，不声称自动恢复；系统 fail-closed、保留现有对象并要求人工恢复。
+- Backup 在原位置验证失败前，不会删除当前 target。
+- 不产生错误成功状态，不跨请求复用 PASS Evidence。
+- 开发工作树 HEAD、Index、tracked status、P3 实现文件字节、Snapshot Manifest 和正式 Current Pointer 哈希在 crash Fixture 前后不变。
+- P1 一次 Remote Head 和 divergence fail-closed、P2 Request Context、F05/F06、F27、Backup Hold/Erasure/最低 LKG 均继续保留。
 
-| 文件 | Git Blob | SHA-256 |
-| --- | --- | --- |
-| `AGENTS.md` | `7007225f55236d6132ae6ecb73f171102156d8a7` | `75d0788ff62a20d2d211115a66ab20fc38519a14fad890ab9a3d6f821e821793` |
-| `config/clued-local-mirror-backup-policy.json` | `fc23b49406e64d568cfb4c637ef351c7f71d29c5` | `6c43db25ee9bb6f2e00b6a9754fa270b9b0458754e8bc518d25ce0a692157f66` |
-| `isolated_mirror.py` | `07c42cecaa937975c937b4a37cb73e831c2ee8f6` | `4d591896417512766830b4aa07561a7f0df9dfa58cdd35ffacabb583c46d8627` |
-| `memory.py` | `78ba99a8661a6bf427167cc491abde4299560367` | `53aa29022916e71273b2dfa98e941ccfd8fec9a8d253fb1c7b8c3db3e6873d5c` |
-| `sync-memory.py` | `fae1ce01251736c3f5e9f8f828bb32dae9022e4c` | `336f183998e026718ab70b7737fedd4103974006158469518486942458665fb2` |
-| `tests/test_p1_align_and_verify.py` | `7debd3fafd9018d1471d12d39ffb0be059892dbb` | `81ceed67c950abe6382397b8565bf69cbef629e13575589d4693186c6bbace8d` |
-| `tests/test_p2_verification_context.py` | `77bd96bc893566b5db1b2c7885904e1ce9a04b6c` | `2d8952ff29a8f9cd300636892b0d1f97ca552a0ca50e7e78efd52733b0467548` |
-| `tests/test_p3_isolated_mirror.py`（实现提交） | `c116cae13f60757717a67d5facf9680f7e8395f9` | `d6a415cf145ac7d9a7b4089427090605323bf5ce49a882a439c2f1e47e1e4a14` |
-| `verification_context.py` | `1c4387c69d02ee7a954a26f93f022c7548ce9d4d` | `36e08c2590eccd786d5306229b44d2b832dc1f0b4ace860b0523f6ace91e8517` |
+## 9. 证据
 
-指定证据目录为 `artifacts/clued-validation/p3/a9e12d85/`。其中 `SHA256SUMS` 覆盖本报告以外的证据文件和本报告本身；最终证据提交与各文件 Blob 由提交后回执记录，不在文件内部预写自身 Commit。
+证据目录：`artifacts/clued-validation/p3/a9e12d85/`
+
+- `p3_raw_results.jsonl`：第四轮修复门禁原始结论；
+- `journal_crash_recovery_evidence.jsonl`：8 个真实崩溃窗口、损坏 Backup 和歧义矩阵；
+- `lock_concurrency_ordering.json`：并发、异常进程和恢复锁证据；
+- `mirror_generation_switch_records.jsonl`：Generation/no-op/切换记录；
+- `backup_retention_audit.jsonl`：Backup 策略审计；
+- `conflict_packet_fixture.json`：Git Conflict Packet；
+- `SHA256SUMS`：本轮证据与本报告 SHA-256。
+
+各证据文件的 Git Blob、SHA-256、最终修复 Commit、唯一父提交与 Tree 由提交后回执列出。
 
 ## 10. 未执行事项
 
 - 未合并 `main`，未创建 PR、Tag、Release，未部署。
-- 未执行生产访问、Canonical Store、Worker、MCP、OAuth、数据库或 RLS 变更。
-- 未实现 P4 Canonical-first、T1/T3 路由、Index/Routes、Freshness 语义、P5 写并发或 P6 发布/CAS。
-- 未生成、切换或发布 Snapshot、Manifest 或正式 Current Pointer。
-- 未清理任何用户真实历史 Backup；所有删除与 Hold/Erasure 均为隔离临时 Fixture。
-- 未授权或实现跨请求、跨进程、跨设备、跨 Agent 的 PASS Evidence 复用。
+- 未执行 P4–P6、Canonical Store、Worker、MCP、OAuth、数据库或 RLS 变更。
+- 未生成、修改、切换或发布 Snapshot、Manifest 或正式 Current Pointer。
+- 未访问生产，未清理用户真实 Backup。
+- 未 amend、rebase、squash、force push 或历史重写。
 
-P3 到此停止，等待独立审查与后续合并授权。
+本轮到此停止，等待第四轮独立复审。

@@ -131,9 +131,10 @@ def new_verification_context(
     pointer_path: Path | None = None,
     version_path: Path | None = None,
     endpoint_trust_path: Path | None = None,
+    enforce_current_pointer: bool = True,
 ) -> RequestVerificationContext:
     repository_root = repository_root or REPO
-    pointer_path = pointer_path or CURRENT_POINTER
+    pointer_path = (pointer_path or CURRENT_POINTER) if enforce_current_pointer else None
     version_path = version_path or (REPO / "VERSION")
     endpoint_trust_path = endpoint_trust_path or ENDPOINT_TRUST_CONFIG
     return RequestVerificationContext(
@@ -144,6 +145,7 @@ def new_verification_context(
         remote_head=remote_head,
         authorization=_authorization_evidence(),
         endpoint_trust=EndpointTrust.load(endpoint_trust_path),
+        allow_authoritative=enforce_current_pointer,
     )
 
 

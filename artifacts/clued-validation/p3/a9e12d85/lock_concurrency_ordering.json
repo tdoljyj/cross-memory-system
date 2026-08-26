@@ -26,5 +26,18 @@
     "switch_interruption_rolled_back": true,
     "old_LKG_full_validation_after_failure": "PASS"
   },
-  "test_source": "tests/test_p3_isolated_mirror.py::F32ConcurrencyRollbackRetention"
+  "real_process_crash_recovery": {
+    "replacement_windows": 5,
+    "first_install_windows": 3,
+    "crash_primitive": "os._exit(86)",
+    "next_process_lock_acquisition": "PASS",
+    "old_LKG_full_validation": "PASS",
+    "false_success_events": 0,
+    "ambiguous_state_policy": "manual-recovery-required-without-deletion",
+    "result": "PASS"
+  },
+  "test_sources": [
+    "tests/test_p3_isolated_mirror.py::F32ConcurrencyRollbackRetention",
+    "tests/test_p3_isolated_mirror.py::F32CrashRecoveryStateMachine"
+  ]
 }

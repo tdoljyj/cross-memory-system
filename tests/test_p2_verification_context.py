@@ -340,6 +340,37 @@ class F31SourceEnvelope(VerificationContextFixture):
             with self.subTest(values=values), self.assertRaises(VerificationContextError):
                 context.source_envelope(boundary="source", **values)
 
+    def test_recovery_only_context_can_verify_but_cannot_become_authoritative(self):
+        context = RequestVerificationContext(
+            "AUDIT_FULL",
+            repository_root=self.repo,
+            pointer_path=None,
+            version_path=self.version,
+            remote_head="a" * 40,
+            authorization=AuthorizationEvidence(
+                tenant_ref="tenant_fixture",
+                workspace_ref="workspace_fixture",
+                policy_version="policy_v1",
+                revocation_epoch="rev_1",
+            ),
+            endpoint_trust=EndpointTrust.load(self.trust_path),
+            allow_authoritative=False,
+            ttl_seconds=30,
+            clock=self.clock,
+        )
+        self.assertEqual([], self.verify(context, boundary="recovery_lkg")[1])
+        summary = context.summary(boundary="recovery_lkg")
+        self.assertFalse(summary["authoritative"])
+        self.assertEqual("not-applicable", summary["snapshot"]["current_pointer_sha256"])
+        with self.assertRaisesRegex(VerificationContextError, "recovery-only"):
+            context.source_envelope(
+                boundary="recovery_lkg",
+                sources_read=["local-LKG"],
+                source_versions=["snap_fixture"],
+                freshness="historical",
+                degraded_reason=None,
+            )
+
 
 class EvidenceAuthorityNegativeTests(VerificationContextFixture):
     def test_source_envelope_and_summary_reject_before_verify(self):

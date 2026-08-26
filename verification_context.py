@@ -400,6 +400,7 @@ class RequestVerificationContext:
         remote_head: str = "not-applicable",
         authorization: AuthorizationEvidence | None = None,
         endpoint_trust: EndpointTrust | None = None,
+        allow_authoritative: bool = True,
         ttl_seconds: float = 300.0,
         clock: object | None = None,
         max_clock_skew_seconds: float = 5.0,
@@ -416,6 +417,7 @@ class RequestVerificationContext:
         self.remote_head = remote_head
         self.authorization = authorization or AuthorizationEvidence()
         self.endpoint_trust = endpoint_trust
+        self.allow_authoritative = bool(allow_authoritative)
         self.ttl_seconds = float(ttl_seconds)
         self.clock = clock or SystemClock()
         self.max_clock_skew_seconds = float(max_clock_skew_seconds)
@@ -698,6 +700,8 @@ class RequestVerificationContext:
         degraded_reason: str | None,
     ) -> SourceEnvelope:
         self._assert_request_inputs(None, None, None)
+        if not self.allow_authoritative:
+            raise VerificationContextError("recovery-only Context cannot create a Source Envelope")
         if not isinstance(boundary, str) or not boundary.strip():
             raise VerificationContextError("verification boundary required")
         evidence = self._evidence.get(boundary)
@@ -713,6 +717,8 @@ class RequestVerificationContext:
         )
 
     def summary(self, *, boundary: str, sources: SourceEnvelope | None = None) -> dict:
+        if sources is not None and not self.allow_authoritative:
+            raise VerificationContextError("recovery-only Context cannot become authoritative")
         now = self._trusted_now()
         evidence = self._require_current_evidence(boundary)
         if sources is not None and (sources.boundary != boundary or sources.evidence_id != evidence.evidence_id):

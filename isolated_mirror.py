@@ -37,6 +37,7 @@ BACKUP_RECORD_FILENAME = ".clued-backup-record.json"
 BACKUP_CONTROL_FILENAME = ".clued-backup-control.json"
 AUDIT_FILENAME = "p3-mirror-audit.jsonl"
 SWITCH_JOURNAL_CONTRACT = "clued.local-mirror-switch-journal.v1"
+SWITCH_JOURNAL_PHASES = frozenset({"prepared", "old-moved", "candidate-promoted"})
 
 
 class MirrorError(RuntimeError):
@@ -47,8 +48,13 @@ class MirrorLockTimeout(MirrorError):
     """The per-target cross-process lock could not be acquired in time."""
 
 
+class MirrorRecoveryRequired(MirrorError):
+    """Journal state is ambiguous; preserve every artifact for manual recovery."""
+
+
 Validator = Callable[[Path], tuple[dict, list[str]]]
 BoundaryValidator = Callable[[Path, str], tuple[dict, list[str]]]
+RecoveryBoundaryValidator = Callable[[Path, str, dict], tuple[dict, list[str]]]
 CandidateMutator = Callable[[Path], None]
 SwitchHook = Callable[[str, Path, Path | None], None]
 
@@ -384,6 +390,7 @@ class MirrorCoordinator:
         backup_root: Path,
         policy_path: Path,
         raw_validator: Validator,
+        recovery_validator: RecoveryBoundaryValidator | None = None,
         lock_timeout_seconds: float = 30.0,
         clock: Callable[[], float] = time.time,
         request_id_factory: Callable[[], str] = lambda: uuid.uuid4().hex,
@@ -392,6 +399,7 @@ class MirrorCoordinator:
         self.backup_root = Path(os.path.abspath(backup_root))
         self.policy = BackupPolicy.load(policy_path)
         self.raw_validator = raw_validator
+        self.recovery_validator = recovery_validator
         self.lock_timeout_seconds = float(lock_timeout_seconds)
         self.clock = clock
         self.request_id_factory = request_id_factory
@@ -421,33 +429,338 @@ class MirrorCoordinator:
                 _safe_remove(path, self.target.parent)
                 self.audit.emit("candidate_recovered", request_id=request_id, candidate=str(path))
 
-    def _recover_interrupted_switch(self, request_id: str) -> None:
+    @staticmethod
+    def _path_exists(path: Path) -> bool:
+        return path.exists() or path.is_symlink() or bool(getattr(path, "is_junction", lambda: False)())
+
+    @staticmethod
+    def _is_link_like(path: Path) -> bool:
+        return path.is_symlink() or bool(getattr(path, "is_junction", lambda: False)())
+
+    def _block_recovery(self, *, request_id: str, phase: object, reason: str, state: dict | None = None) -> None:
+        self.audit.emit(
+            "switch_recovery_blocked",
+            request_id=request_id,
+            error_class="manual-recovery-required",
+            phase=phase,
+            reason=reason,
+            state=state,
+        )
+        raise MirrorRecoveryRequired(f"switch recovery requires manual intervention: {reason}")
+
+    def _journal_member_path(
+        self,
+        value: object,
+        *,
+        parent: Path,
+        prefix: str,
+        label: str,
+        request_id: str,
+        phase: object,
+    ) -> Path:
+        if not isinstance(value, str) or not value:
+            self._block_recovery(request_id=request_id, phase=phase, reason=f"journal {label} missing")
+        path = Path(os.path.abspath(value))
+        if value != str(path) or path.parent != parent or not path.name.startswith(prefix) or path.name == prefix:
+            self._block_recovery(request_id=request_id, phase=phase, reason=f"journal {label} path outside allowed namespace")
+        if self._path_exists(path) and (self._is_link_like(path) or not path.is_dir()):
+            self._block_recovery(request_id=request_id, phase=phase, reason=f"journal {label} is not a real directory")
+        return path
+
+    def _validate_recovery_target(
+        self,
+        *,
+        request_id: str,
+        phase: str,
+        prior_lkg: dict,
+    ) -> None:
+        if self.recovery_validator is None:
+            self._block_recovery(request_id=request_id, phase=phase, reason="recovery verification context unavailable")
+        try:
+            manifest, errors = self.recovery_validator(self.target, "recovery_target_lkg", prior_lkg)
+            generation = _load_generation(self.target)
+            identity_valid = generation is not None and self._identity_is_current(generation, manifest)
+        except Exception as exc:
+            self._block_recovery(
+                request_id=request_id,
+                phase=phase,
+                reason=f"existing target LKG validation failed: {exc}",
+            )
+        if errors or not identity_valid:
+            self._block_recovery(
+                request_id=request_id,
+                phase=phase,
+                reason="existing target is not a fully verified LKG",
+                state={"errors": errors[:10], "identity_valid": identity_valid},
+            )
+
+    def _validate_recovery_backup(
+        self,
+        backup: Path,
+        *,
+        request_id: str,
+        phase: str,
+        prior_lkg: dict,
+    ) -> None:
+        if self.recovery_validator is None:
+            self._block_recovery(request_id=request_id, phase=phase, reason="recovery verification context unavailable")
+        try:
+            manifest, errors = self.recovery_validator(backup, "recovery_backup_lkg", prior_lkg)
+            generation = _load_generation(backup)
+            generation_valid = (
+                generation is not None
+                and generation.get("snapshot_version") == manifest.get("snapshot_version")
+                and generation.get("manifest_sha256") == sha256_file(backup / "manifest.json")
+            )
+        except Exception as exc:
+            self._block_recovery(
+                request_id=request_id,
+                phase=phase,
+                reason=f"Backup LKG validation failed in original location: {exc}",
+            )
+        if errors or not generation_valid:
+            self._block_recovery(
+                request_id=request_id,
+                phase=phase,
+                reason="Backup is not a fully verified LKG in its original location",
+                state={"errors": errors[:10], "generation_valid": generation_valid},
+            )
+
+    def _finish_recovery(
+        self,
+        *,
+        request_id: str,
+        phase: str,
+        candidate: Path,
+        outcome: str,
+    ) -> dict:
+        if self._path_exists(candidate):
+            _safe_remove(candidate, self.target.parent)
+        journal_path_for_target(self.target).unlink()
+        self.audit.emit(
+            "interrupted_switch_recovered",
+            request_id=request_id,
+            phase=phase,
+            outcome=outcome,
+            candidate_removed=not self._path_exists(candidate),
+            journal_removed=not journal_path_for_target(self.target).exists(),
+        )
+        return {"status": "recovered", "phase": phase, "outcome": outcome}
+
+    def _restore_backup_lkg(
+        self,
+        backup: Path,
+        *,
+        request_id: str,
+        phase: str,
+        candidate: Path,
+        prior_lkg: dict,
+    ) -> dict:
+        # The Backup is fully validated at its original path before the current
+        # target can be removed.  A bad Backup can therefore never destroy a
+        # still-valid target while recovery is deciding what to do.
+        self._validate_recovery_backup(
+            backup,
+            request_id=request_id,
+            phase=phase,
+            prior_lkg=prior_lkg,
+        )
+        if self._path_exists(self.target):
+            _safe_remove(self.target, self.target.parent)
+        os.replace(backup, self.target)
+        self._validate_recovery_target(
+            request_id=request_id,
+            phase=phase,
+            prior_lkg=prior_lkg,
+        )
+        return self._finish_recovery(
+            request_id=request_id,
+            phase=phase,
+            candidate=candidate,
+            outcome="verified-backup-restored",
+        )
+
+    def _recover_interrupted_switch(
+        self,
+        request_id: str,
+    ) -> dict | None:
         journal_path = journal_path_for_target(self.target)
-        if not journal_path.is_file():
-            return
+        if not self._path_exists(journal_path):
+            return None
+        if self._is_link_like(journal_path) or not journal_path.is_file():
+            self._block_recovery(request_id=request_id, phase="unknown", reason="switch journal is not a real file")
         try:
             journal = json.loads(journal_path.read_text(encoding="utf-8"))
         except Exception as exc:
-            raise MirrorError("switch journal invalid; manual recovery required") from exc
-        if journal.get("contract") != SWITCH_JOURNAL_CONTRACT or journal.get("target") != str(self.target):
-            raise MirrorError("switch journal target mismatch; manual recovery required")
-        backup = Path(journal["backup"]) if journal.get("backup") else None
-        candidate = Path(journal["candidate"]) if journal.get("candidate") else None
-        if backup is not None and backup.exists():
-            if self.target.exists() or self.target.is_symlink():
-                _safe_remove(self.target, self.target.parent)
-            os.replace(backup, self.target)
-            _, errors = self.raw_validator(self.target)
-            if errors:
-                raise MirrorError("recovered LKG failed validation")
-        elif self.target.exists() or self.target.is_symlink():
-            _safe_remove(self.target, self.target.parent)
-        if candidate is not None and (candidate.exists() or candidate.is_symlink()):
-            _safe_remove(candidate, self.target.parent)
-        journal_path.unlink(missing_ok=True)
-        self.audit.emit("interrupted_switch_recovered", request_id=request_id, phase=journal.get("phase"))
+            self._block_recovery(request_id=request_id, phase="unknown", reason=f"switch journal JSON invalid: {exc}")
+        if not isinstance(journal, dict) or journal.get("contract") != SWITCH_JOURNAL_CONTRACT:
+            self._block_recovery(request_id=request_id, phase=journal.get("phase") if isinstance(journal, dict) else "unknown", reason="switch journal contract invalid")
+        phase = journal.get("phase")
+        if phase not in SWITCH_JOURNAL_PHASES:
+            self._block_recovery(request_id=request_id, phase=phase, reason="switch journal phase invalid")
+        if journal.get("target") != str(self.target):
+            self._block_recovery(request_id=request_id, phase=phase, reason="switch journal target mismatch")
+        candidate = self._journal_member_path(
+            journal.get("candidate"),
+            parent=self.target.parent,
+            prefix=f".{self.target.name}.candidate-",
+            label="Candidate",
+            request_id=request_id,
+            phase=phase,
+        )
+        backup_value = journal.get("backup")
+        backup = None
+        if backup_value is not None:
+            backup = self._journal_member_path(
+                backup_value,
+                parent=self.backup_root,
+                prefix="backup-",
+                label="Backup",
+                request_id=request_id,
+                phase=phase,
+            )
+        prior_lkg = journal.get("prior_lkg")
+        if backup is None:
+            if prior_lkg is not None:
+                self._block_recovery(request_id=request_id, phase=phase, reason="first-install journal unexpectedly contains prior LKG evidence")
+        elif not self._prior_lkg_is_valid(prior_lkg):
+            self._block_recovery(request_id=request_id, phase=phase, reason="prior LKG journal evidence invalid")
+        target_exists = self._path_exists(self.target)
+        candidate_exists = self._path_exists(candidate)
+        backup_exists = backup is not None and self._path_exists(backup)
+        state = {
+            "target_exists": target_exists,
+            "candidate_exists": candidate_exists,
+            "backup_exists": backup_exists,
+            "has_prior_lkg": backup is not None,
+        }
+        if target_exists and (self._is_link_like(self.target) or not self.target.is_dir()):
+            self._block_recovery(
+                request_id=request_id,
+                phase=phase,
+                reason="journal target is not a real directory",
+                state=state,
+            )
 
-    def _write_journal(self, *, phase: str, candidate: Path, backup: Path | None, request_id: str) -> None:
+        if backup is None:
+            if phase == "old-moved":
+                self._block_recovery(request_id=request_id, phase=phase, reason="old-moved cannot describe a first install", state=state)
+            if phase == "prepared" and not target_exists and candidate_exists:
+                return self._finish_recovery(
+                    request_id=request_id,
+                    phase=phase,
+                    candidate=candidate,
+                    outcome="first-install-candidate-discarded",
+                )
+            if phase in {"prepared", "candidate-promoted"} and target_exists and not candidate_exists:
+                # No old LKG exists.  The target is a promoted but not committed
+                # Candidate, so it cannot be reported as a successful Mirror.
+                _safe_remove(self.target, self.target.parent)
+                return self._finish_recovery(
+                    request_id=request_id,
+                    phase=phase,
+                    candidate=candidate,
+                    outcome="first-install-uncommitted-target-discarded",
+                )
+            self._block_recovery(request_id=request_id, phase=phase, reason="first-install journal state is ambiguous", state=state)
+
+        if phase == "prepared" and target_exists and candidate_exists and not backup_exists:
+            self._validate_recovery_target(
+                request_id=request_id,
+                phase=phase,
+                prior_lkg=prior_lkg,
+            )
+            return self._finish_recovery(
+                request_id=request_id,
+                phase=phase,
+                candidate=candidate,
+                outcome="prepared-target-lkg-preserved",
+            )
+        if phase in {"prepared", "old-moved"} and not target_exists and candidate_exists and backup_exists:
+            return self._restore_backup_lkg(
+                backup,
+                request_id=request_id,
+                phase=phase,
+                candidate=candidate,
+                prior_lkg=prior_lkg,
+            )
+        if phase in {"old-moved", "candidate-promoted"} and target_exists and not candidate_exists and backup_exists:
+            return self._restore_backup_lkg(
+                backup,
+                request_id=request_id,
+                phase=phase,
+                candidate=candidate,
+                prior_lkg=prior_lkg,
+            )
+        self._block_recovery(request_id=request_id, phase=phase, reason="journal phase and filesystem state are inconsistent", state=state)
+
+    def recover_interrupted_switch(self) -> dict:
+        """Recover one journal without continuing into a new Mirror build."""
+
+        request_id = self.request_id_factory()
+        self._assert_same_volume()
+        lock = ExclusiveFileLock(lock_path_for_target(self.target), timeout_seconds=self.lock_timeout_seconds)
+        with lock:
+            self.audit.emit(
+                "lock_acquired",
+                request_id=request_id,
+                operation="recovery-only",
+                wait_seconds=round(lock.wait_seconds, 6),
+                target=str(self.target),
+            )
+            try:
+                result = self._recover_interrupted_switch(request_id)
+                if result is None:
+                    result = {"status": "no-journal"}
+                return result
+            finally:
+                self.audit.emit(
+                    "lock_released",
+                    request_id=request_id,
+                    operation="recovery-only",
+                    target=str(self.target),
+                )
+
+    @staticmethod
+    def _prior_lkg_payload(generation: dict | None) -> dict | None:
+        if generation is None:
+            return None
+        return {
+            "generation_id": generation.get("generation_id"),
+            "snapshot_version": generation.get("snapshot_version"),
+            "manifest_sha256": generation.get("manifest_sha256"),
+            "remote_head": generation.get("remote_head"),
+            "target_identity_sha256": generation.get("target_identity_sha256"),
+            "read_only_sha256": generation.get("read_only_sha256"),
+        }
+
+    @staticmethod
+    def _prior_lkg_is_valid(prior_lkg: object) -> bool:
+        return (
+            isinstance(prior_lkg, dict)
+            and isinstance(prior_lkg.get("snapshot_version"), str)
+            and bool(prior_lkg["snapshot_version"])
+            and all(
+                isinstance(prior_lkg.get(field), str) and re.fullmatch(pattern, prior_lkg[field])
+                for field, pattern in (
+                    ("generation_id", r"[0-9a-f]{64}"),
+                    ("manifest_sha256", r"[0-9a-f]{64}"),
+                    ("remote_head", r"[0-9a-f]{40}"),
+                    ("target_identity_sha256", r"[0-9a-f]{64}"),
+                    ("read_only_sha256", r"[0-9a-f]{64}"),
+                )
+            )
+        )
+
+    def _write_journal(
+        self,
+        *,
+        phase: str,
+        candidate: Path,
+        backup: Path | None,
+        prior_lkg: dict | None,
+        request_id: str,
+    ) -> None:
         _atomic_json(journal_path_for_target(self.target), {
             "contract": SWITCH_JOURNAL_CONTRACT,
             "request_id": request_id,
@@ -455,6 +768,7 @@ class MirrorCoordinator:
             "target": str(self.target),
             "candidate": str(candidate),
             "backup": str(backup) if backup is not None else None,
+            "prior_lkg": self._prior_lkg_payload(prior_lkg),
         })
 
     def _validate_existing(self) -> tuple[dict, dict | None]:
@@ -729,16 +1043,42 @@ class MirrorCoordinator:
                 raise MirrorError("local candidate invalid: source-target identity mismatch")
 
             backup = self._backup_path(current_generation, request_id) if self.target.exists() else None
-            self._write_journal(phase="prepared", candidate=candidate, backup=backup, request_id=request_id)
+            self._write_journal(
+                phase="prepared",
+                candidate=candidate,
+                backup=backup,
+                prior_lkg=current_generation,
+                request_id=request_id,
+            )
             try:
+                if switch_hook is not None:
+                    switch_hook("after_prepared_journal", candidate, backup)
                 if backup is not None:
                     os.replace(self.target, backup)
-                    self._write_journal(phase="old-moved", candidate=candidate, backup=backup, request_id=request_id)
                     if switch_hook is not None:
+                        switch_hook("after_old_moved_before_journal", candidate, backup)
+                    self._write_journal(
+                        phase="old-moved",
+                        candidate=candidate,
+                        backup=backup,
+                        prior_lkg=current_generation,
+                        request_id=request_id,
+                    )
+                    if switch_hook is not None:
+                        switch_hook("after_old_moved_journal", candidate, backup)
                         switch_hook("after_backup", candidate, backup)
                 os.replace(candidate, self.target)
-                self._write_journal(phase="candidate-promoted", candidate=candidate, backup=backup, request_id=request_id)
                 if switch_hook is not None:
+                    switch_hook("after_candidate_promoted_before_journal", self.target, backup)
+                self._write_journal(
+                    phase="candidate-promoted",
+                    candidate=candidate,
+                    backup=backup,
+                    prior_lkg=current_generation,
+                    request_id=request_id,
+                )
+                if switch_hook is not None:
+                    switch_hook("after_candidate_promoted_journal", self.target, backup)
                     switch_hook("after_candidate_promoted", self.target, backup)
                 final_generation = self._finalize_generation(generation, candidate_manifest)
                 _, local_errors = validate_boundary(self.target, "local_mirror")
