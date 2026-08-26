@@ -10,6 +10,16 @@ This repository follows `Clued_单一数据源与两级五视图架构方案_v1.
 - `memory/index.json` is the only derived lookup index. Canonical Records, Projects, Events, Evidence and Receipts retain their stable service IDs.
 - Never recreate the retired local dual-write model: no Chinese root five-file set, no `memory/objects/*.json` Memory Engine objects, no `object-index.json`, and no Markdown-to-Canonical reverse write.
 
+## Snapshot tenancy
+
+- Repository `memory/` is a single-user snapshot, not a system-wide or multi-user export.
+- Supabase project: `clued-prod`.
+- Owner label: `primary-owner`.
+- Account hint: `175***@qq.com`.
+- Owner ref: `owner_0e58f3caef99d95912279cee`.
+- Readers must verify `memory/manifest.json.owner_ref` before using this snapshot.
+- Other users must be accessed through authenticated Clued APIs or separate user-scoped exports; never treat or overwrite this root snapshot as another user's data.
+
 ## Memory Router
 
 Default access is `NONE`. Decide before reading.
