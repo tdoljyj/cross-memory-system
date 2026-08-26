@@ -518,6 +518,23 @@ class RealRequestCallChains(unittest.TestCase):
             self.assertNotEqual(verification_ids[0], verification_ids[1])
 
 
+class DocumentationContract(unittest.TestCase):
+    def test_align_and_verify_does_not_require_a_second_doctor_request(self):
+        agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+        read_before = agents.split("## Read-before-alignment", 1)[1].split(
+            "## Request-local verification context", 1
+        )[0]
+        contract = (
+            "`sync-memory.ps1 -AlignAndVerify` 已在同一 Python 进程、同一 "
+            "RequestVerificationContext 中完成 mirror 与 doctor。成功后不得在同一请求中再次运行 "
+            "`python memory.py doctor`。独立执行 doctor 属于新的 doctor-only 请求，必须创建新的 "
+            "Context 并重新校验。"
+        )
+        self.assertIn(contract, read_before)
+        self.assertNotIn("Run `python memory.py doctor`", read_before)
+        self.assertIn("align-and-verify → mirror → doctor", agents)
+
+
 class NoneAccess(unittest.TestCase):
     def test_none_cannot_create_context_and_t0_performs_no_reads(self):
         with self.assertRaisesRegex(VerificationContextError, "NONE"):

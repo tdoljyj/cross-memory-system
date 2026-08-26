@@ -2,9 +2,9 @@
 
 ## 裁决
 
-`PASS / P2_REVIEW_FINDINGS_CORRECTED_ON_FEATURE_BRANCH`
+`PASS / P2_DOCUMENTATION_CONTRACT_CORRECTED_ON_FEATURE_BRANCH`
 
-固定基线：`main@7f1bc29cfd8f2ff80b24c7e10f55f1bc0a3df3e0`。实施分支：`codex/p2-request-local-verification-context`。本轮在既有 P2 Commit `69254f3b8d3e5ac3604f8fd0c2ee1d8118f866d1` 之上追加修复，不 amend、rebase 或重写既有 Commit；远端 `main` 在提交前仍为固定基线，未合并 `main`。
+固定基线：`main@7f1bc29cfd8f2ff80b24c7e10f55f1bc0a3df3e0`。实施分支：`codex/p2-request-local-verification-context`。原始 P2 Commit 为 `69254f3b8d3e5ac3604f8fd0c2ee1d8118f866d1`，第二轮修复 Commit 为 `40abd21c3bb3b98dd43af19c2f4e2c187983b560`。本轮只在 `40abd21c…` 上追加文档契约修复，不 amend、rebase 或重写已有 Commit；远端 `main` 在提交前仍为固定基线，未合并 `main`。
 
 本轮仅修正 P2 Request-local Verification Context。未执行 P3 的隔离 Mirror、Backup/no-op、锁或原子切换改造；未执行 P4 的 Canonical-first/T1/T3 路由；未执行 P5–P6、生产访问、部署、数据库/RLS 变更或 Snapshot 发布。
 
@@ -16,6 +16,7 @@
 4. PowerShell `-AlignAndVerify` 的非 `NONE` 请求由一个 Python 进程完成 align-and-verify → Mirror → doctor，并显式传递同一个不可序列化 Context。Context 没有模块级或持久 PASS 缓存；下一请求创建新 Context、重新查询 Remote Head 并重新校验。
 5. 已删除为制造 reuse 增加的无业务意义重复验证。真实链路计数为：status `full=1/reuse=0`，Memory doctor `1/0`，recall `1/1`（读取后形成权威结果前复核），Mirror + doctor `3/1`（源、复制候选、本地 Mirror 三个真实边界；doctor 复用同请求源 Evidence）。
 6. Owner Ref 与 Bundle Scope 的期望值来自版本化可信端点配置 `config/clued-endpoint-trust.json`，不从可选调用者环境变量取得。可信配置缺值、Manifest 缺值、不匹配或配置发生变化均失效并 fail-closed。
+7. `AGENTS.md` 的 Read-before-alignment 第 4 步已收敛到实际入口：`sync-memory.ps1 -AlignAndVerify` 本身在同一 Python 进程和同一 Context 内完成 Mirror 与 doctor；成功后同一请求不得再启动 `python memory.py doctor`。独立 doctor 明确属于新的 doctor-only 请求，创建新 Context 并重新校验。文档契约回归测试同时锁定该正向要求与旧矛盾指令的缺席。
 
 ## Evidence 与失效语义
 
@@ -36,12 +37,13 @@
 | F27 | PASS | 目录被相同字节副本替换仍由路径身份变化触发失效与重验 |
 | F30 | PASS | `VERSION`、tag、Manifest、Pointer、可信 Owner/Scope 配置、Validator Contract 变化全部失效；Manifest/Pointer 不一致拒绝 |
 | F31 | PASS | 完整且绑定当前 Evidence 的 Source Envelope 才允许 `authoritative=true`；缺项、失效或错绑均拒绝/非权威 |
+| 文档契约 | PASS | AGENTS 包含单进程唯一 Context 的内置 doctor 契约，且不再要求 AlignAndVerify 成功后同请求另起 doctor |
 
 新增负向测试覆盖：未调用 `verify_bundle()` 生成 Source Envelope；缺少 boundary；Validator PASS 后、Evidence 捕获前篡改；可信 Owner/Scope 期望缺失；Manifest Owner/Scope 缺失；Evidence 失效后 `summary()`；实际非 `NONE` PowerShell 单请求贯穿一个 Context；下一独立请求产生新 Context 并重新校验。
 
 ## 真实调用链与拒绝等价
 
-实际 PowerShell Fixture 连续执行两个独立 `-AlignAndVerify -Access PROJECT` 请求。每个请求均为一个 Python 进程、一个 Context、一次真实 `git ls-remote`；两次请求的 `verification_id` 不同，每次 `full_validation_count=3`、`reuse_count=1`。未跨请求复用 Remote SHA 或 PASS Evidence。
+实际 PowerShell Fixture 连续执行两个独立 `-AlignAndVerify -Access PROJECT` 请求。每个请求均为一个 Python 进程、一个 Context、一次真实 `git ls-remote`；两次请求的 `verification_id` 不同，每次 `full_validation_count=3`、`reuse_count=1`。未跨请求复用 Remote SHA 或 PASS Evidence。两个 standalone doctor 分别作为新的 doctor-only 请求执行并重新创建 Context，不属于 AlignAndVerify 请求的延续。
 
 F05、F06 分别在旧兼容路径和 P2 Context 路径执行：
 
@@ -57,29 +59,24 @@ F05、F06 分别在旧兼容路径和 P2 Context 路径执行：
 
 | 验证 | 结果 |
 |---|---|
-| P2 专项 | 27/27 PASS，约 24,734 ms |
+| P2 专项 | 28/28 PASS，约 23,952 ms |
+| AGENTS 文档契约 | 1/1 PASS |
 | 新增 Evidence 权威负向测试 | 6/6 PASS，约 1,768 ms |
-| F05/F06 定向回归 | 4/4 PASS，约 6,438 ms |
-| 实际非 NONE PowerShell 单请求/下一请求测试 | 1/1 PASS，约 10,679 ms |
-| Python 全量 | 47/47 PASS，0 fail |
-| Cloud 离线合同回归 | 63/63 PASS，0 fail，0 skip，约 817.524 ms |
-| Cloud 构建 | PASS，约 3,045.598 ms |
-| `python memory.py doctor` | PASS，710 个 Manifest 文件，实际 Evidence full 1/reuse 0 |
-| `python sync-memory.py doctor` | PASS，一次性 OS 临时 Mirror Fixture |
-| PowerShell `-AlignAndVerify -Access NONE` | PASS，约 130.539 ms，零 Git、零 Mirror |
+| F05/F06 定向回归 | 4/4 PASS，约 5,655 ms |
+| 实际非 NONE PowerShell 单请求/下一请求测试 | 1/1 PASS，约 9,646 ms |
+| Python 全量 | 48/48 PASS，0 fail，约 35,096 ms |
+| Cloud 离线合同回归 | 63/63 PASS，0 fail，0 skip，约 817.329 ms |
+| standalone `python memory.py doctor` | PASS，710 个 Manifest 文件，新 Context full 1/reuse 0，约 1,101.076 ms |
+| standalone `python sync-memory.py doctor` | PASS，一次性 OS 临时 Mirror Fixture，新 Context，约 1,743.425 ms |
+| PowerShell `-AlignAndVerify -Access NONE` | PASS，约 172.060 ms，零 Git、零 Mirror |
 | Python bytecode 与 `git diff --check` | PASS |
 
 Cloud 构建使用已有本地依赖和仓库源码。全部同步/损坏场景均在一次性 Fixture 中运行；未连接生产服务。
 
-## 变更文件
+## 本轮追加修复变更文件
 
-- `verification_context.py`
-- `memory.py`
-- `sync-memory.py`
 - `AGENTS.md`
-- `config/clued-endpoint-trust.json`
 - `tests/test_p2_verification_context.py`
-- `tests/test_p1_align_and_verify.py`
 - `artifacts/clued-validation/p2/7f1bc29c/p2_raw_results.jsonl`
 - `artifacts/clued-validation/p2/7f1bc29c/SHA256SUMS`
 - `docs/clued-two-level-views/Clued_P2_Request-local_Verification_Context_验收报告_v1.0.md`
