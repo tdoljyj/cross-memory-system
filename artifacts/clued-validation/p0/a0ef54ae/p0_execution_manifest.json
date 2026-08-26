@@ -1,0 +1,194 @@
+{
+  "environment": {
+    "canonical_version": "cv_155",
+    "clock": "time.perf_counter_ns (monotonic)",
+    "git": "git version 2.53.0.windows.3",
+    "manifest_file_count": 710,
+    "os": "Windows-11-10.0.26200-SP0",
+    "python": "Python 3.12.13",
+    "repository_version": "Clued-v1.6",
+    "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+  },
+  "execution": {
+    "cold_definition": "new process and, for stateful cases, fresh fixture/absent mirror; OS page cache not forcibly cleared",
+    "ended_at": "2026-08-26T07:57:37.412020Z",
+    "mandatory_scenario_count": 13,
+    "raw_record_count": 562,
+    "scenario_status": {
+      "dirty_worktree": {
+        "measured_runs": 40,
+        "outcomes": {
+          "EXPECTED_BLOCK": 40
+        },
+        "records": 40
+      },
+      "latest_current": {
+        "measured_runs": 0,
+        "outcomes": {
+          "UNOBSERVABLE": 2
+        },
+        "records": 2
+      },
+      "manifest_corrupted": {
+        "measured_runs": 40,
+        "outcomes": {
+          "EXPECTED_BLOCK": 40
+        },
+        "records": 40
+      },
+      "memory_unrelated_implementation": {
+        "measured_runs": 40,
+        "outcomes": {
+          "PASS": 40
+        },
+        "records": 40
+      },
+      "network_unavailable": {
+        "measured_runs": 40,
+        "outcomes": {
+          "EXPECTED_BLOCK": 40
+        },
+        "records": 40
+      },
+      "post_copy_target_corrupted": {
+        "measured_runs": 40,
+        "outcomes": {
+          "EXPECTED_BLOCK": 40
+        },
+        "records": 40
+      },
+      "remote_ahead": {
+        "measured_runs": 40,
+        "outcomes": {
+          "PASS": 40
+        },
+        "records": 40
+      },
+      "remote_unchanged": {
+        "measured_runs": 40,
+        "outcomes": {
+          "PASS": 40
+        },
+        "records": 40
+      },
+      "snapshot_audit": {
+        "measured_runs": 40,
+        "outcomes": {
+          "PASS": 40
+        },
+        "records": 40
+      },
+      "t0_zero_read": {
+        "measured_runs": 40,
+        "outcomes": {
+          "PASS": 40
+        },
+        "records": 40
+      },
+      "t1_exact_read": {
+        "measured_runs": 40,
+        "outcomes": {
+          "PASS": 40
+        },
+        "records": 40
+      },
+      "t2_current_project_read": {
+        "measured_runs": 40,
+        "outcomes": {
+          "PASS": 40
+        },
+        "records": 40
+      },
+      "t3_light_read": {
+        "measured_runs": 40,
+        "outcomes": {
+          "PASS": 40
+        },
+        "records": 40
+      }
+    },
+    "started_at": "2026-08-26T07:47:42.695143Z",
+    "target_iterations_per_bucket": 20,
+    "warm_definition": "same fixture after warmup; every measured request is a new process and no PASS evidence is persisted"
+  },
+  "file_sha256": {
+    "clued_p0_harness.py": "b75d9453436eb2c31f446fa7b6fe748ff6e511f2771ce8a720e94d79e46070a0",
+    "p0_classification.md": "268bf4b2140df1ff60b22aa570788f5193c216df246bcd89f005b9afac2566db",
+    "p0_invariant_evidence_matrix.md": "4de3d0f2e4723d5b5bedf766d9bbe8cc65ccbe155a356c7fbe8c0b0912a5dca8",
+    "p0_limitations.md": "fc76ae1bb733135f5e80386f36ae6982d22b0176becb65499b2145f4392a2e27",
+    "p0_p1_priority_recommendations.md": "f5c3b675c257f0b7de9c02604bb91b9fa081ab1139244baab85a96396068afd1",
+    "p0_raw_results.jsonl": "6e29c05fb9cda250033d0cc03428ec82492edbc21fc6e1b3b20a88c6e6a67238",
+    "p0_summary.md": "4540137f19133c68e02cca9a4420572a0e3202fa5fa09492c3eb4abf7d140301"
+  },
+  "fixed_input": {
+    "branch": "main",
+    "commit": "a0ef54ae006451f0d7dedfeef65c79e0f89b4c37",
+    "fixed_commit_contained_at_start": true,
+    "matrix": {
+      "blob_sha": "fbc8493625a94f6f8cc4cea031d44d19756c4519",
+      "path": "docs/clued-two-level-views/Clued_校验不变量与去重矩阵_v1.1.md"
+    },
+    "remote_main_at_end": "a0ef54ae006451f0d7dedfeef65c79e0f89b4c37",
+    "remote_main_at_start": "a0ef54ae006451f0d7dedfeef65c79e0f89b4c37",
+    "repository": "tdoljyj/cross-memory-system",
+    "second_review": {
+      "blob_sha": "6a259f70ab3bc3286683f22cb9093f0d95f1c668",
+      "path": "docs/clued-two-level-views/Clued_校验不变量与去重矩阵_v1.1_第二轮静态审查报告.md"
+    }
+  },
+  "p0_only": true,
+  "p1_p6_implemented": false,
+  "redaction": {
+    "client_secrets": true,
+    "emails": true,
+    "stable_identity_refs": true,
+    "tokens": true,
+    "user_paths": true,
+    "uuids": true
+  },
+  "safety": {
+    "canonical_or_production_calls": false,
+    "commit_push_tag_pr_release_deploy": false,
+    "core_files_modified": false,
+    "fixture_local_pushes_only": true,
+    "real_repository_after": {
+      "head": "a0ef54ae006451f0d7dedfeef65c79e0f89b4c37",
+      "memory_tree": {
+        "byte_count": 1702091,
+        "file_count": 711,
+        "sha256": "76c361a7f3422c51c26006c50d50ecad71930859fc32c7a35bfa445952ce7935"
+      },
+      "protected_sha256": {
+        "AGENTS.md": "574fa06216c8313ae377f0c18c5281ef8b2cadf1fa7f37e9dcee55167224a955",
+        "artifacts/clued-two-level-snapshots/current.json": "ef05f3e9d4e92e82598e416cc86d16b05cf18531438788fb1f297834a74d4a60",
+        "memory.py": "84d99e0b3a42d257cf2477391e79cd5f1a5bd2e0840e4694117363697039d9f5",
+        "memory/manifest.json": "8e38db1f22e1ae260a55927b9df862db447d1b312fd6e38e094289b223d95e9c",
+        "sync-memory.ps1": "e5d7e0ac5eb64f2ad32738d4fa517cca23eccdba3a2ae8675a7c655d0d7983ce",
+        "sync-memory.py": "87a3efb2fa84420dc0357f07db5a6351df8deeb6db1a8614e25b3339015e3d64"
+      },
+      "status_porcelain": ""
+    },
+    "real_repository_before": {
+      "head": "a0ef54ae006451f0d7dedfeef65c79e0f89b4c37",
+      "memory_tree": {
+        "byte_count": 1702091,
+        "file_count": 711,
+        "sha256": "76c361a7f3422c51c26006c50d50ecad71930859fc32c7a35bfa445952ce7935"
+      },
+      "protected_sha256": {
+        "AGENTS.md": "574fa06216c8313ae377f0c18c5281ef8b2cadf1fa7f37e9dcee55167224a955",
+        "artifacts/clued-two-level-snapshots/current.json": "ef05f3e9d4e92e82598e416cc86d16b05cf18531438788fb1f297834a74d4a60",
+        "memory.py": "84d99e0b3a42d257cf2477391e79cd5f1a5bd2e0840e4694117363697039d9f5",
+        "memory/manifest.json": "8e38db1f22e1ae260a55927b9df862db447d1b312fd6e38e094289b223d95e9c",
+        "sync-memory.ps1": "e5d7e0ac5eb64f2ad32738d4fa517cca23eccdba3a2ae8675a7c655d0d7983ce",
+        "sync-memory.py": "87a3efb2fa84420dc0357f07db5a6351df8deeb6db1a8614e25b3339015e3d64"
+      },
+      "status_porcelain": ""
+    },
+    "real_repository_unchanged": true,
+    "remote_mutations": false,
+    "snapshot_or_current_pointer_modified": false
+  },
+  "schema_version": 1,
+  "self_hash": "NOT_EMBEDDED_RECURSIVE; compute SHA-256 externally"
+}
