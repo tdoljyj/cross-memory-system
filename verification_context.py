@@ -37,6 +37,8 @@ DOCTOR_VERSION = "clued-v1.6"
 ENDPOINT_TRUST_CONTRACT = "clued.endpoint-trust.v1"
 SOURCE_FRESHNESS = frozenset({"current", "degraded", "historical"})
 SHA256_CHUNK_SIZE = 1024 * 1024
+MIRROR_GENERATION_CONTRACT = "clued.local-mirror-generation.v1"
+MIRROR_GENERATION_FILENAME = ".clued-mirror-generation.json"
 
 
 class VerificationContextError(RuntimeError):
@@ -318,6 +320,32 @@ def _verified_content_fingerprint(root: Path, manifest: dict) -> str:
     return digest.hexdigest()
 
 
+def _mirror_generation_state(root: Path, manifest: dict) -> tuple[str, str]:
+    path = root / MIRROR_GENERATION_FILENAME
+    if not path.exists():
+        return "not-applicable", "not-applicable"
+    if not path.is_file():
+        raise VerificationContextError("mirror generation metadata is not a file")
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise VerificationContextError("mirror generation metadata invalid") from exc
+    generation_id = payload.get("generation_id") if isinstance(payload, dict) else None
+    order_key = payload.get("order_key") if isinstance(payload, dict) else None
+    if (
+        not isinstance(payload, dict)
+        or payload.get("contract") != MIRROR_GENERATION_CONTRACT
+        or not isinstance(generation_id, str)
+        or not re.fullmatch(r"[0-9a-f]{64}", generation_id)
+        or not isinstance(order_key, list)
+        or len(order_key) != 3
+        or not all(isinstance(value, str) and value for value in order_key)
+        or payload.get("snapshot_version") != manifest.get("snapshot_version")
+    ):
+        raise VerificationContextError("mirror generation metadata invalid")
+    return generation_id, sha256_file(path)
+
+
 @dataclass(frozen=True)
 class VersionEnvelope:
     remote_head: str
@@ -334,6 +362,8 @@ class VersionEnvelope:
     bundle_scope: str
     generator_version: str
     schema_version: str
+    mirror_generation: str
+    mirror_generation_sha256: str
     validator_contract_version: str
     doctor_version: str
 
@@ -461,6 +491,8 @@ class RequestVerificationContext:
         self,
         manifest: dict,
         manifest_sha256: str,
+        mirror_generation: str,
+        mirror_generation_sha256: str,
         validator_contract_version: str,
         doctor_version: str,
     ) -> VersionEnvelope:
@@ -493,6 +525,8 @@ class RequestVerificationContext:
             bundle_scope=str(manifest.get("bundle_scope", "missing")),
             generator_version=str(manifest.get("generator_version", "missing")),
             schema_version=str(manifest.get("schema_version", "missing")),
+            mirror_generation=mirror_generation,
+            mirror_generation_sha256=mirror_generation_sha256,
             validator_contract_version=validator_contract_version,
             doctor_version=doctor_version,
         )
@@ -536,7 +570,15 @@ class RequestVerificationContext:
     ) -> tuple[PathIdentity, VersionEnvelope, str]:
         manifest_sha256 = sha256_file(root / "manifest.json")
         identity = PathIdentity.capture(root)
-        version = self._version_envelope(manifest, manifest_sha256, validator_contract_version, doctor_version)
+        mirror_generation, mirror_generation_sha256 = _mirror_generation_state(root, manifest)
+        version = self._version_envelope(
+            manifest,
+            manifest_sha256,
+            mirror_generation,
+            mirror_generation_sha256,
+            validator_contract_version,
+            doctor_version,
+        )
         content = _verified_content_fingerprint(root, manifest)
         return identity, version, content
 
@@ -700,6 +742,8 @@ class RequestVerificationContext:
                 "current_pointer_sha256": version.current_pointer_hash,
                 "owner_ref": version.owner_ref,
                 "bundle_scope": version.bundle_scope,
+                "mirror_generation": version.mirror_generation,
+                "mirror_generation_sha256": version.mirror_generation_sha256,
             },
             "authorization": {
                 "evidence_sha256": evidence.authorization_sha256,

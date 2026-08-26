@@ -463,7 +463,14 @@ class RealRequestCallChains(unittest.TestCase):
             repo = temp / "repo"
             repo.mkdir()
             shutil.copy2(ROOT / ".gitignore", repo / ".gitignore")
-            for name in ("sync-memory.ps1", "sync-memory.py", "memory.py", "verification_context.py", "VERSION"):
+            for name in (
+                "sync-memory.ps1",
+                "sync-memory.py",
+                "isolated_mirror.py",
+                "memory.py",
+                "verification_context.py",
+                "VERSION",
+            ):
                 shutil.copy2(ROOT / name, repo / name)
             shutil.copytree(ROOT / "memory", repo / "memory")
             shutil.copytree(ROOT / "config", repo / "config")
@@ -507,7 +514,9 @@ class RealRequestCallChains(unittest.TestCase):
                 summary = payload["verification"]
                 verification_ids.append(summary["verification_id"])
                 self.assertEqual("local_mirror", summary["boundary"])
-                self.assertEqual((3, 1), (summary["full_validation_count"], summary["reuse_count"]))
+                expected_counts = (3, 1) if request_number == 1 else (2, 1)
+                self.assertEqual(expected_counts, (summary["full_validation_count"], summary["reuse_count"]))
+                self.assertEqual("mirrored" if request_number == 1 else "noop", payload["status"])
                 trace_events = [json.loads(line) for line in trace.read_text(encoding="utf-8", errors="replace").splitlines()]
                 ls_remote_starts = [
                     event for event in trace_events

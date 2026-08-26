@@ -48,26 +48,29 @@ class F01SingleRemoteHeadQuery(unittest.TestCase):
 
     def test_each_request_queries_once_and_reuses_concrete_sha(self):
         calls = []
-        mirrored = []
+        isolated = []
 
         def fake_run(*args, check=True):
             calls.append(args)
-            if args[:3] == ("git", "status", "--porcelain"):
-                return completed()
             if args[:2] == ("git", "ls-remote"):
                 return completed(f"{REMOTE_SHA}\trefs/heads/main\n")
-            if args[:3] == ("git", "rev-parse", "HEAD"):
-                return completed(REMOTE_SHA + "\n")
             raise AssertionError(f"unexpected command: {args}")
 
         context = SimpleNamespace(
             source_envelope=lambda **kwargs: "sources",
             summary=lambda **kwargs: {"verification_id": "fixture"},
         )
+        capsule = Path("fixture-capsule")
+        temporary = SimpleNamespace(cleanup=lambda: None)
         with mock.patch.object(self.sync, "run", side_effect=fake_run), mock.patch.object(
-            self.sync, "new_verification_context", return_value=context
-        ), mock.patch.object(
-            self.sync, "mirror", side_effect=lambda remote_sha=None, context=None, emit=True: mirrored.append(remote_sha) or {}
+            self.sync,
+            "isolated_read_request",
+            side_effect=lambda remote_sha: isolated.append(remote_sha) or (
+                {"status": "mirrored", "_source_manifest": {"snapshot_version": "snap"}},
+                context,
+                capsule,
+                temporary,
+            ),
         ), mock.patch.object(
             self.sync, "_doctor",
             return_value=({"snapshot_version": "snap"}, {"snapshot_version": "snap"}, []),
@@ -77,24 +80,22 @@ class F01SingleRemoteHeadQuery(unittest.TestCase):
 
         ls_remote = [call for call in calls if call[:2] == ("git", "ls-remote")]
         self.assertEqual(2, len(ls_remote), "two independent requests must each query once")
-        self.assertEqual([REMOTE_SHA, REMOTE_SHA], mirrored)
+        self.assertEqual([REMOTE_SHA, REMOTE_SHA], isolated)
 
     def test_query_failure_blocks_without_old_result_fallback(self):
-        mirrored = []
+        isolated = []
 
         def fake_run(*args, check=True):
-            if args[:3] == ("git", "status", "--porcelain"):
-                return completed()
             if args[:2] == ("git", "ls-remote"):
                 raise RuntimeError("transport unavailable")
             raise AssertionError(f"unexpected command: {args}")
 
         with mock.patch.object(self.sync, "run", side_effect=fake_run), mock.patch.object(
-            self.sync, "mirror", side_effect=lambda remote_sha=None, context=None, emit=True: mirrored.append(remote_sha)
+            self.sync, "isolated_read_request", side_effect=lambda remote_sha: isolated.append(remote_sha)
         ):
             with self.assertRaisesRegex(RuntimeError, "remote unavailable"):
                 self.sync.cmd_align_and_verify("PROJECT")
-        self.assertEqual([], mirrored)
+        self.assertEqual([], isolated)
 
     def test_remote_ahead_fetch_and_merge_consume_the_resolved_sha(self):
         calls = []
@@ -131,10 +132,13 @@ class F01SingleRemoteHeadQuery(unittest.TestCase):
                 self.sync.resolve_remote_head()
 
     def test_none_remains_zero_git_and_zero_mirror(self):
-        with mock.patch.object(self.sync, "run") as run_mock, mock.patch.object(self.sync, "mirror") as mirror_mock:
+        with mock.patch.object(self.sync, "run") as run_mock, mock.patch.object(
+            self.sync, "mirror"
+        ) as mirror_mock, mock.patch.object(self.sync, "isolated_read_request") as isolated_mock:
             self.assertEqual(0, self.sync.cmd_align_and_verify("NONE"))
         run_mock.assert_not_called()
         mirror_mock.assert_not_called()
+        isolated_mock.assert_not_called()
 
 
 class GitAlignmentNegativeRegression(unittest.TestCase):

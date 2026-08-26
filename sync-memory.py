@@ -4,14 +4,19 @@
 from __future__ import annotations
 
 import json
+import io
+import hashlib
 import os
 import re
 import shutil
 import subprocess
 import sys
+import tarfile
+import tempfile
 import time
 from pathlib import Path
 
+from isolated_mirror import MirrorCoordinator
 from verification_context import RequestVerificationContext
 
 
@@ -37,10 +42,24 @@ def validate(
     return memory_cli.validate_bundle(root, context=context, boundary=boundary)
 
 
-def new_verification_context(mode: str, remote_head: str = "not-applicable") -> RequestVerificationContext:
+def new_verification_context(
+    mode: str,
+    remote_head: str = "not-applicable",
+    *,
+    capsule_root: Path | None = None,
+) -> RequestVerificationContext:
     sys.path.insert(0, str(REPO))
     import memory as memory_cli
-    return memory_cli.new_verification_context(mode, remote_head)
+    if capsule_root is None:
+        return memory_cli.new_verification_context(mode, remote_head)
+    return memory_cli.new_verification_context(
+        mode,
+        remote_head,
+        repository_root=REPO,
+        pointer_path=capsule_root / "artifacts" / "clued-two-level-snapshots" / "current.json",
+        version_path=capsule_root / "VERSION",
+        endpoint_trust_path=capsule_root / "config" / "clued-endpoint-trust.json",
+    )
 
 
 def _validate_boundary(
@@ -105,8 +124,14 @@ def _doctor(
     *,
     require_local: bool,
     emit: bool,
+    source_root: Path | None = None,
+    source_manifest: dict | None = None,
 ) -> tuple[dict, dict | None, list[str]]:
-    manifest, errors = _validate_boundary(REPO / "memory", context, "repository_source")
+    root = source_root or (REPO / "memory")
+    if source_manifest is None:
+        manifest, errors = _validate_boundary(root, context, "repository_source")
+    else:
+        manifest, errors = dict(source_manifest), []
     if errors:
         if emit:
             for error in errors:
@@ -151,6 +176,142 @@ def resolve_remote_head() -> str:
     return fields[0].lower()
 
 
+class GitConflictPacketError(RuntimeError):
+    def __init__(self, packet: dict) -> None:
+        self.packet = packet
+        super().__init__("git history divergence: " + json.dumps(packet, ensure_ascii=False, sort_keys=True))
+
+
+def _ensure_remote_commit(remote_sha: str) -> None:
+    if run("git", "cat-file", "-e", f"{remote_sha}^{{commit}}", check=False).returncode != 0:
+        try:
+            run("git", "fetch", "--no-tags", "--no-write-fetch-head", "origin", remote_sha)
+        except RuntimeError as exc:
+            raise RuntimeError(f"remote unavailable: {exc}") from exc
+    resolved = run("git", "rev-parse", f"{remote_sha}^{{commit}}", check=False)
+    if resolved.returncode or resolved.stdout.strip().lower() != remote_sha:
+        raise RuntimeError("remote changed during isolated source acquisition; retry required")
+
+
+def _changed_paths(base: str, tip: str) -> list[dict]:
+    output = run("git", "diff", "--name-status", base, tip, check=False).stdout
+    changes = []
+    for line in output.splitlines():
+        fields = line.split("\t")
+        if len(fields) >= 2:
+            changes.append({"status": fields[0], "path": fields[-1]})
+    return changes
+
+
+def classify_local_remote(remote_sha: str) -> dict:
+    if not re.fullmatch(r"[0-9a-f]{40}", remote_sha):
+        raise RuntimeError("invalid request remote SHA")
+    _ensure_remote_commit(remote_sha)
+    local_sha = run("git", "rev-parse", "HEAD").stdout.strip().lower()
+    if local_sha == remote_sha:
+        return {"classification": "equal", "local": local_sha, "remote": remote_sha}
+    if run("git", "merge-base", "--is-ancestor", local_sha, remote_sha, check=False).returncode == 0:
+        return {"classification": "remote-ahead", "local": local_sha, "remote": remote_sha}
+    if run("git", "merge-base", "--is-ancestor", remote_sha, local_sha, check=False).returncode == 0:
+        return {"classification": "local-ahead", "local": local_sha, "remote": remote_sha}
+    base = run("git", "merge-base", local_sha, remote_sha, check=False).stdout.strip().lower()
+    local_changes = _changed_paths(base, local_sha) if base else []
+    remote_changes = _changed_paths(base, remote_sha) if base else []
+    local_paths = {item["path"] for item in local_changes}
+    remote_paths = {item["path"] for item in remote_changes}
+    packet = {
+        "contract": "clued.git-conflict-packet.v1",
+        "error_class": "git-history-divergence",
+        "canonical_cas_conflict": False,
+        "base": base or "no-common-base",
+        "local": local_sha,
+        "remote": remote_sha,
+        "local_changes": local_changes,
+        "remote_changes": remote_changes,
+        "overlapping_paths": sorted(local_paths & remote_paths),
+        "automatic_merge_attempted": False,
+        "worktree_overwrite_attempted": False,
+    }
+    packet["evidence_sha256"] = hashlib.sha256(
+        json.dumps(packet, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    raise GitConflictPacketError(packet)
+
+
+def _run_binary(*args: str) -> bytes:
+    result = subprocess.run(args, cwd=REPO, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if result.returncode:
+        raise RuntimeError(result.stderr.decode("utf-8", errors="replace").strip())
+    return result.stdout
+
+
+def extract_snapshot_capsule(remote_sha: str, destination: Path) -> Path:
+    archive = _run_binary(
+        "git",
+        "archive",
+        "--format=tar",
+        remote_sha,
+        "memory",
+        "artifacts/clued-two-level-snapshots/current.json",
+        "VERSION",
+        "config/clued-endpoint-trust.json",
+    )
+    destination.mkdir(parents=True, exist_ok=False)
+    with tarfile.open(fileobj=io.BytesIO(archive), mode="r:") as bundle:
+        destination_root = destination.resolve()
+        for member in bundle.getmembers():
+            member_path = (destination / member.name).resolve(strict=False)
+            if destination_root not in member_path.parents and member_path != destination_root:
+                raise RuntimeError("unsafe path in isolated repository archive")
+            if member.issym() or member.islnk():
+                raise RuntimeError("links are not allowed in isolated repository archive")
+        bundle.extractall(destination, filter="data")
+    required = (
+        destination / "memory" / "manifest.json",
+        destination / "artifacts" / "clued-two-level-snapshots" / "current.json",
+        destination / "VERSION",
+        destination / "config" / "clued-endpoint-trust.json",
+    )
+    if not all(path.is_file() for path in required):
+        raise RuntimeError("isolated repository archive is incomplete")
+    return destination
+
+
+def _local_backup_root() -> Path:
+    return Path(os.environ.get("CROSS_MEMORY_BACKUP_DIR", LOCAL_MEMORY.parent / "memory-backups"))
+
+
+def _backup_policy_path() -> Path:
+    return Path(os.environ.get(
+        "CROSS_MEMORY_BACKUP_POLICY",
+        REPO / "config" / "clued-local-mirror-backup-policy.json",
+    ))
+
+
+def isolated_read_request(remote_sha: str) -> tuple[dict, RequestVerificationContext, Path, tempfile.TemporaryDirectory]:
+    classification = classify_local_remote(remote_sha)
+    backup_root = _local_backup_root()
+    request_root = backup_root / ".requests"
+    request_root.mkdir(parents=True, exist_ok=True)
+    temporary = tempfile.TemporaryDirectory(prefix="p3-source-", dir=request_root)
+    capsule_root = extract_snapshot_capsule(remote_sha, Path(temporary.name) / "capsule")
+    context = new_verification_context("REPO_IMPLEMENT", remote_sha, capsule_root=capsule_root)
+    coordinator = MirrorCoordinator(
+        target=LOCAL_MEMORY,
+        backup_root=backup_root,
+        policy_path=_backup_policy_path(),
+        raw_validator=lambda root: validate(root),
+    )
+    result = coordinator.apply(
+        source=capsule_root / "memory",
+        context=context,
+        validate_boundary=lambda root, boundary: _validate_boundary(root, context, boundary),
+        remote_head=remote_sha,
+    )
+    result["git_classification"] = classification
+    return result, context, capsule_root, temporary
+
+
 def align_to_remote(remote_sha: str) -> None:
     if not re.fullmatch(r"[0-9a-f]{40}", remote_sha):
         raise RuntimeError("invalid request remote SHA")
@@ -178,26 +339,42 @@ def cmd_align_and_verify(access: str) -> int:
     if access.upper() == "NONE":
         print("Memory Access = NONE; skipping pull (no recall scope).")
         return 0
-    remote_sha = align_and_verify()
-    context = new_verification_context("REPO_IMPLEMENT", remote_sha)
-    result = mirror(remote_sha, context, emit=False)
-    manifest, local_manifest, errors = _doctor(context, require_local=True, emit=True)
-    if errors or local_manifest is None:
-        raise RuntimeError("post-mirror doctor failed: " + "; ".join(errors[:10]))
-    sources = context.source_envelope(
-        boundary="local_mirror",
-        sources_read=(
-            "memory/manifest.json",
-            "artifacts/clued-two-level-snapshots/current.json",
-            "local-mirror/manifest.json",
-        ),
-        source_versions=(manifest["snapshot_version"], local_manifest["snapshot_version"]),
-        freshness="historical",
-        degraded_reason=None,
-    )
-    result["verification"] = context.summary(boundary="local_mirror", sources=sources)
-    print(json.dumps(result, ensure_ascii=False))
-    return 0
+    remote_sha = resolve_remote_head()
+    temporary = None
+    try:
+        result, context, capsule_root, temporary = isolated_read_request(remote_sha)
+        source_manifest = result.pop("_source_manifest")
+        if result["status"] == "stale-skipped":
+            result["authoritative"] = False
+            result["retry_required"] = True
+            print(json.dumps(result, ensure_ascii=False))
+            return 0
+        manifest, local_manifest, errors = _doctor(
+            context,
+            require_local=True,
+            emit=True,
+            source_root=capsule_root / "memory",
+            source_manifest=source_manifest,
+        )
+        if errors or local_manifest is None:
+            raise RuntimeError("post-mirror doctor failed: " + "; ".join(errors[:10]))
+        sources = context.source_envelope(
+            boundary="local_mirror",
+            sources_read=(
+                "isolated-repository-source/memory/manifest.json",
+                "isolated-repository-source/artifacts/clued-two-level-snapshots/current.json",
+                "local-mirror/manifest.json",
+            ),
+            source_versions=(manifest["snapshot_version"], local_manifest["snapshot_version"]),
+            freshness="historical",
+            degraded_reason=None,
+        )
+        result["verification"] = context.summary(boundary="local_mirror", sources=sources)
+        print(json.dumps(result, ensure_ascii=False))
+        return 0
+    finally:
+        if temporary is not None:
+            temporary.cleanup()
 
 
 def cmd_pull(access: str) -> int:

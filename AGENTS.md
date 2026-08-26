@@ -44,7 +44,7 @@ Always report `sources_read` for an authoritative current-status answer. Treat `
 For T1–T4, “latest/current”, audit, or implementation work:
 
 1. Run `sync-memory.ps1 -AlignAndVerify -Access <scope>` exactly once on the Codex endpoint before relying on repository files. The unified request entry resolves `origin/main` to one concrete Commit SHA with one real `git ls-remote`; `-Access NONE` remains a zero-read/no-op path.
-2. The same invocation passes that SHA explicitly to fetch/merge. If local is behind, it fetches and merges that exact SHA (never rebase); if truly diverged, it stops for semantic merge.
+2. The same invocation passes that SHA explicitly to an isolated Git-object source. It may fetch that exact object without moving the development worktree HEAD, Index, or files, then classifies equal / Remote Ahead / Local Ahead / true divergence. True divergence emits a Git Conflict Packet and stops; the read path never merges, rebases, or overwrites the development worktree.
 3. Every new request, independent retry, or new process runs `align-and-verify` again. Never cache or reuse PASS evidence across requests, Sessions, processes, devices, or Agents; never substitute mtime, a tracking ref, or an old SHA for the remote query.
 4. `sync-memory.ps1 -AlignAndVerify` 已在同一 Python 进程、同一 RequestVerificationContext 中完成 mirror 与 doctor。成功后不得在同一请求中再次运行 `python memory.py doctor`。独立执行 doctor 属于新的 doctor-only 请求，必须创建新的 Context 并重新校验。
 
@@ -58,6 +58,15 @@ Version truth is the remote commit plus root `VERSION`, git tags, `memory/manife
 - Repository source, copy candidate, and local mirror are separate boundaries. A PASS at one boundary never replaces the independent source or target hash validation at another boundary.
 - Expected Owner Ref and Bundle Scope come from the committed endpoint trust policy `config/clued-endpoint-trust.json`, independently of the Bundle and optional caller environment. Missing or changed trust policy, missing Manifest owner/scope, or a mismatch fails closed.
 - An authoritative result must bind a complete Source Envelope to one currently valid successful Bundle Evidence: exact boundary, evidence ID, sources read, source versions, freshness (`current`, `historical`, or explicit `degraded` with reason), and the request-local verification summary. Zero validation, failed/invalidated Evidence, or an absent/mismatched boundary can never produce `authoritative=true`.
+
+## Isolated local mirror and Backup policy
+
+- Non-`NONE` reads obtain `memory/` from the single resolved Remote Commit through an isolated Git archive. They never copy from or modify development worktree files; a dirty development worktree may be bypassed for reads only.
+- Repository source, Candidate, and active local Mirror are independently fully validated in the same request Context. Candidate construction, validation, deterministic Generation selection, logical atomic switch, rollback, retention, and audit are serialized by one cross-process exclusive lock per target Mirror.
+- A no-op is allowed only for the same Snapshot Generation while the stored canonical path, directory/volume identity, ACL/read-only fingerprint, Manifest, Snapshot Version, and content evidence still match. Any change invalidates no-op evidence and requires full validation or fails closed.
+- Different Snapshots are ordered by the intrinsic deterministic tuple `build_epoch`, numeric Canonical Version, and Snapshot Version. Thread or process lock acquisition order cannot downgrade the active Mirror.
+- Local Backup retention follows `config/clued-local-mirror-backup-policy.json`. Backup is created only after a real replacement; policy decisions and switch/no-op events use `clued.local-mirror-audit.v1`. Legal Hold blocks deletion, Erasure is audited and deletes only when eligible, and deletion rechecks that the target is not the active Mirror, Candidate, or the minimum verified LKG.
+- Mirror Generation and request-local PASS Evidence are never reused across requests, processes, devices, or Agents. The local Mirror is a read-only derived consumer cache, not a Canonical Store or publication pointer.
 
 ## Canonical writes
 
@@ -74,6 +83,7 @@ Superseded and archived facts remain in Canonical history. Do not delete them to
 ## Git and endpoint discipline
 
 - No force push, reset, rebase, or local-over-remote overwrite.
+- Dirty-worktree gates remain mandatory for repository implementation, commit, push, and every write path. Only the isolated read-only Mirror path may bypass a dirty development worktree, and it must not read, copy, stage, or modify dirty worktree files.
 - Each endpoint edits only its own consumer configuration. Cross-endpoint exchange goes through the Canonical Store and versioned repository snapshot.
 - `sync-memory.ps1` / `sync-memory.py` only pull and atomically mirror the read-only snapshot. Their business-memory push path must fail closed.
 - Script/document changes use normal Git commits with `AI@machine` authorship, fetch+merge before push, and post-push `merge-base --is-ancestor` verification.

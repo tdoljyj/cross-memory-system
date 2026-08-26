@@ -123,15 +123,27 @@ def _authorization_evidence() -> AuthorizationEvidence:
     )
 
 
-def new_verification_context(mode: str, remote_head: str = "not-applicable") -> RequestVerificationContext:
+def new_verification_context(
+    mode: str,
+    remote_head: str = "not-applicable",
+    *,
+    repository_root: Path | None = None,
+    pointer_path: Path | None = None,
+    version_path: Path | None = None,
+    endpoint_trust_path: Path | None = None,
+) -> RequestVerificationContext:
+    repository_root = repository_root or REPO
+    pointer_path = pointer_path or CURRENT_POINTER
+    version_path = version_path or (REPO / "VERSION")
+    endpoint_trust_path = endpoint_trust_path or ENDPOINT_TRUST_CONFIG
     return RequestVerificationContext(
         mode,
-        repository_root=REPO,
-        pointer_path=CURRENT_POINTER,
-        version_path=REPO / "VERSION",
+        repository_root=repository_root,
+        pointer_path=pointer_path,
+        version_path=version_path,
         remote_head=remote_head,
         authorization=_authorization_evidence(),
-        endpoint_trust=EndpointTrust.load(ENDPOINT_TRUST_CONFIG),
+        endpoint_trust=EndpointTrust.load(endpoint_trust_path),
     )
 
 
