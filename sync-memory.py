@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -29,7 +30,7 @@ def validate(root: Path) -> tuple[dict, list[str]]:
     return memory_cli.validate_bundle(root)
 
 
-def mirror() -> None:
+def mirror(remote_sha: str | None = None) -> None:
     manifest, errors = validate(REPO / "memory")
     if errors:
         raise RuntimeError("canonical snapshot invalid: " + "; ".join(errors[:10]))
@@ -56,7 +57,15 @@ def mirror() -> None:
         if not LOCAL_MEMORY.exists() and moved_old and backup.exists():
             backup.rename(LOCAL_MEMORY)
         raise
-    print(json.dumps({"status": "mirrored", "snapshot_version": manifest["snapshot_version"], "canonical_version": manifest["canonical_version"], "backup": str(backup) if moved_old else None}, ensure_ascii=False))
+    result = {
+        "status": "mirrored",
+        "snapshot_version": manifest["snapshot_version"],
+        "canonical_version": manifest["canonical_version"],
+        "backup": str(backup) if moved_old else None,
+    }
+    if remote_sha is not None:
+        result["remote_head"] = remote_sha
+    print(json.dumps(result, ensure_ascii=False))
 
 
 def cmd_doctor() -> int:
@@ -77,22 +86,52 @@ def cmd_doctor() -> int:
     return 0
 
 
-def cmd_pull(access: str) -> int:
+def resolve_remote_head() -> str:
+    try:
+        result = run("git", "ls-remote", "origin", "refs/heads/main")
+    except RuntimeError as exc:
+        raise RuntimeError(f"remote unavailable: {exc}") from exc
+    fields = result.stdout.split()
+    if len(fields) != 2 or fields[1] != "refs/heads/main" or not re.fullmatch(r"[0-9a-fA-F]{40}", fields[0]):
+        raise RuntimeError("remote unavailable: origin/main did not resolve to a concrete commit SHA")
+    return fields[0].lower()
+
+
+def align_to_remote(remote_sha: str) -> None:
+    if not re.fullmatch(r"[0-9a-f]{40}", remote_sha):
+        raise RuntimeError("invalid request remote SHA")
+    local = run("git", "rev-parse", "HEAD").stdout.strip().lower()
+    if local != remote_sha:
+        run("git", "fetch", "origin", remote_sha)
+        fetched = run("git", "rev-parse", "FETCH_HEAD").stdout.strip().lower()
+        if fetched != remote_sha:
+            raise RuntimeError("remote changed during alignment; retry required")
+        if run("git", "merge-base", "--is-ancestor", local, remote_sha, check=False).returncode == 0:
+            run("git", "-c", "user.name=Codex@TURING", "-c", "user.email=tdoljyj@users.noreply.github.com", "merge", "--no-edit", remote_sha)
+        elif run("git", "merge-base", "--is-ancestor", remote_sha, local, check=False).returncode != 0:
+            raise RuntimeError("local and origin/main diverged; semantic merge required")
+
+
+def align_and_verify() -> str:
+    if run("git", "status", "--porcelain", check=False).stdout.strip():
+        raise RuntimeError("refusing pull: repository worktree is dirty")
+    remote_sha = resolve_remote_head()
+    align_to_remote(remote_sha)
+    return remote_sha
+
+
+def cmd_align_and_verify(access: str) -> int:
     if access.upper() == "NONE":
         print("Memory Access = NONE; skipping pull (no recall scope).")
         return 0
-    if run("git", "status", "--porcelain", check=False).stdout.strip():
-        raise RuntimeError("refusing pull: repository worktree is dirty")
-    remote = run("git", "ls-remote", "origin", "refs/heads/main").stdout.split()[0]
-    local = run("git", "rev-parse", "HEAD").stdout.strip()
-    if local != remote:
-        run("git", "fetch", "origin", "main")
-        if run("git", "merge-base", "--is-ancestor", local, remote, check=False).returncode == 0:
-            run("git", "-c", "user.name=Codex@TURING", "-c", "user.email=tdoljyj@users.noreply.github.com", "merge", "--no-edit", "FETCH_HEAD")
-        elif run("git", "merge-base", "--is-ancestor", remote, local, check=False).returncode != 0:
-            raise RuntimeError("local and origin/main diverged; semantic merge required")
-    mirror()
+    remote_sha = align_and_verify()
+    mirror(remote_sha)
     return 0
+
+
+def cmd_pull(access: str) -> int:
+    """Backward-compatible alias for the unified request entry."""
+    return cmd_align_and_verify(access)
 
 
 def cmd_push() -> int:
@@ -134,8 +173,8 @@ def main() -> int:
     mode = sys.argv[1] if len(sys.argv) > 1 else "doctor"
     if mode == "doctor":
         return cmd_doctor()
-    if mode == "pull":
-        return cmd_pull(sys.argv[2] if len(sys.argv) > 2 else "MULTI")
+    if mode in {"align-and-verify", "pull"}:
+        return cmd_align_and_verify(sys.argv[2] if len(sys.argv) > 2 else "MULTI")
     if mode == "push":
         return cmd_push()
     if mode == "bootstrap":

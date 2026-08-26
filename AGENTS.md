@@ -43,9 +43,9 @@ Always report `sources_read` for an authoritative current-status answer. Treat `
 
 For T1–T4, “latest/current”, audit, or implementation work:
 
-1. Check `git ls-remote origin main` against local `HEAD` before relying on repository files.
-2. If local is behind, fetch and merge (never rebase); if truly diverged, stop for semantic merge.
-3. Run `sync-memory.ps1 -Pull -Access <scope>` on the Codex endpoint. `-Access NONE` must remain a zero-read/no-op path.
+1. Run `sync-memory.ps1 -AlignAndVerify -Access <scope>` exactly once on the Codex endpoint before relying on repository files. The unified request entry resolves `origin/main` to one concrete Commit SHA with one real `git ls-remote`; `-Access NONE` remains a zero-read/no-op path.
+2. The same invocation passes that SHA explicitly to fetch/merge. If local is behind, it fetches and merges that exact SHA (never rebase); if truly diverged, it stops for semantic merge.
+3. Every new request, independent retry, or new process runs `align-and-verify` again. Never cache or reuse PASS evidence across requests, Sessions, processes, devices, or Agents; never substitute mtime, a tracking ref, or an old SHA for the remote query.
 4. Run `python memory.py doctor`. A failed Manifest/hash/current-view check is blocking.
 
 Version truth is the remote commit plus root `VERSION`, git tags, `memory/manifest.json`, and the M2 `current.json` pointer. Version checks are triggered by relevant requests; never schedule them periodically.

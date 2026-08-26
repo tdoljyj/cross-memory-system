@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
     [switch]$Pull,
+    [switch]$AlignAndVerify,
     [switch]$Doctor,
     [switch]$Bootstrap,
     [switch]$CommitRepo,
@@ -23,7 +24,7 @@ $pythonArgs = @((Join-Path $repoRoot "sync-memory.py"))
 if ($Doctor) { $pythonArgs += "doctor" }
 elseif ($Bootstrap) { $pythonArgs += "bootstrap" }
 elseif ($CommitRepo) { $pythonArgs += "commit-repo" }
-elseif ($Pull) { $pythonArgs += @("pull", $Access) }
+elseif ($Pull -or $AlignAndVerify) { $pythonArgs += @("align-and-verify", $Access) }
 else { $pythonArgs += "push" }
 
 & python @pythonArgs
