@@ -1,0 +1,22 @@
+{"contract":"clued.p3-validation-result.v1","gate":"baseline_remote_main","result":"PASS","expected":"a9e12d8581c914dcbd5041324f20189c943261b8","observed":"a9e12d8581c914dcbd5041324f20189c943261b8"}
+{"contract":"clued.p3-validation-result.v1","gate":"implementation_commit_parent","result":"PASS","commit":"5062abc0ef19947ee2c3175480d97763cd57360a","parent":"a9e12d8581c914dcbd5041324f20189c943261b8"}
+{"contract":"clued.p3-validation-result.v1","gate":"F01_single_remote_head","result":"PASS","tests":5,"invariant":"one ls-remote per non-NONE request; malformed and unavailable refs fail closed"}
+{"contract":"clued.p3-validation-result.v1","gate":"F02_remote_ahead_clean","result":"PASS","invariant":"isolated mirror updated; development HEAD, Index and worktree bytes unchanged"}
+{"contract":"clued.p3-validation-result.v1","gate":"F03_remote_ahead_dirty","result":"PASS","invariant":"dirty and staged bytes absent from mirror; development HEAD, Index and files unchanged"}
+{"contract":"clued.p3-validation-result.v1","gate":"F04_git_divergence","result":"PASS","invariant":"Git Conflict Packet emitted; no merge, rebase, overwrite or mirror switch"}
+{"contract":"clued.p3-validation-result.v1","gate":"F05_source_corruption","result":"PASS","invariant":"source rejected before copy"}
+{"contract":"clued.p3-validation-result.v1","gate":"F06_target_corruption","result":"PASS","invariant":"post-copy target rejected and old LKG preserved"}
+{"contract":"clued.p3-validation-result.v1","gate":"F27_noop_identity","result":"PASS","cases":["same-snapshot-control","junction-or-symlink-target-change","identical-byte-directory-replacement","volume-change","ACL-or-read-only-change","generation-change"]}
+{"contract":"clued.p3-validation-result.v1","gate":"F32_cross_process_locking","result":"PASS","cases":["same-snapshot-two-process","different-snapshot-both-race-orders","abnormal-lock-holder","candidate-corruption","switch-interruption"]}
+{"contract":"clued.p3-validation-result.v1","gate":"F32_retention","result":"PASS","cases":["bounded-count","minimum-verified-LKG","legal-hold","erasure-delete","erasure-skip-only-LKG","delete-failure-audit"]}
+{"contract":"clued.p3-validation-result.v1","gate":"P1_suite","result":"PASS","tests":15}
+{"contract":"clued.p3-validation-result.v1","gate":"P2_suite","result":"PASS","tests":28,"replacement_counts":"full=3/reuse=1","noop_counts":"full=2/reuse=1","new_request_new_context":true,"standalone_doctor_new_context":true}
+{"contract":"clued.p3-validation-result.v1","gate":"P3_suite","result":"PASS","tests":15}
+{"contract":"clued.p3-validation-result.v1","gate":"python_full","result":"PASS","tests":63,"duration_seconds":89.610}
+{"contract":"clued.p3-validation-result.v1","gate":"powershell_NONE","result":"PASS","contexts":0,"git_reads":0,"memory_reads":0}
+{"contract":"clued.p3-validation-result.v1","gate":"memory_doctor","result":"PASS","manifest_files":710,"snapshot_version":"snap_f6134235591bfcbfe4ba3a674383c3e0","canonical_version":"cv_155"}
+{"contract":"clued.p3-validation-result.v1","gate":"sync_memory_doctor","result":"PASS"}
+{"contract":"clued.p3-validation-result.v1","gate":"cloud_verified_build","result":"PASS","vite_modules":{"client_references":243,"server_references":183,"rsc":235,"client":189,"ssr":182}}
+{"contract":"clued.p3-validation-result.v1","gate":"cloud_offline_regression","result":"PASS","tests":63,"failed":0,"duration_ms":3141.5679}
+{"contract":"clued.p3-validation-result.v1","gate":"python_compile","result":"PASS","files":8}
+{"contract":"clued.p3-validation-result.v1","gate":"git_diff_check","result":"PASS"}

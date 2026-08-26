@@ -1,0 +1,30 @@
+{
+  "contract": "clued.p3-lock-concurrency-evidence.v1",
+  "implementation_commit": "5062abc0ef19947ee2c3175480d97763cd57360a",
+  "lock_scope": "one OS cross-process exclusive lock per canonical target Mirror",
+  "same_snapshot_two_process": {
+    "processes": 2,
+    "statuses": ["mirrored", "noop"],
+    "valid_generations": 1,
+    "mirror_switched_events": 1,
+    "mirror_noop_events": 1,
+    "backups_created": 0,
+    "result": "PASS"
+  },
+  "different_snapshot_two_process": {
+    "race_orders": ["new-first", "old-first"],
+    "old_order_key": ["2026-08-26T00:00:00Z", "00000000000000000001", "snap_old"],
+    "new_order_key": ["2026-08-26T01:00:00Z", "00000000000000000002", "snap_new"],
+    "final_snapshot_each_race": "snap_new",
+    "selection_basis": "intrinsic generation order, never lock acquisition order",
+    "cross_contamination": false,
+    "result": "PASS"
+  },
+  "failure_injection": {
+    "abnormal_lock_holder_released_by_OS": true,
+    "candidate_corruption_rejected": true,
+    "switch_interruption_rolled_back": true,
+    "old_LKG_full_validation_after_failure": "PASS"
+  },
+  "test_source": "tests/test_p3_isolated_mirror.py::F32ConcurrencyRollbackRetention"
+}

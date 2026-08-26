@@ -1,0 +1,25 @@
+{
+  "contract": "clued.git-conflict-packet.v1",
+  "error_class": "git-history-divergence",
+  "canonical_cas_conflict": false,
+  "fixture_commit_fields": {
+    "base": "40-hex Git merge-base asserted by test",
+    "local": "40-hex local fixture commit asserted distinct from remote",
+    "remote": "40-hex remote fixture commit returned by the sole ls-remote request"
+  },
+  "required_evidence": [
+    "base",
+    "local",
+    "remote",
+    "local_changes",
+    "remote_changes",
+    "overlapping_paths",
+    "evidence_sha256"
+  ],
+  "automatic_merge_attempted": false,
+  "worktree_overwrite_attempted": false,
+  "mirror_switch_attempted": false,
+  "old_LKG_tree_digest_unchanged": true,
+  "test": "tests/test_p3_isolated_mirror.py::F04ConflictPacket::test_true_divergence_emits_packet_and_does_not_switch",
+  "result": "PASS"
+}

@@ -423,6 +423,20 @@ class F27NoopIdentity(TempFixture):
         with self.assertRaisesRegex(MirrorError, "no-op Evidence invalid"):
             apply_capsule(capsule, target, backups, self.policy, "2" * 40)
 
+    def test_acl_security_descriptor_change_invalidates_noop(self):
+        capsule, target, backups = self._fixture()
+        original = PathIdentity.capture
+
+        def changed(path):
+            captured = original(path)
+            if Path(path).resolve(strict=False) == target.resolve(strict=False):
+                return dataclasses.replace(captured, security_sha256="f" * 64)
+            return captured
+
+        with mock.patch.object(isolated_mirror.PathIdentity, "capture", side_effect=changed):
+            with self.assertRaisesRegex(MirrorError, "no-op Evidence invalid"):
+                apply_capsule(capsule, target, backups, self.policy, "2" * 40)
+
     def test_generation_change_invalidates_noop_and_full_revalidates(self):
         capsule, target, backups = self._fixture()
         metadata_path = target / ".clued-mirror-generation.json"
