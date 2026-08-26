@@ -12,6 +12,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
+from verification_context import RequestVerificationContext
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SYNC_PATH = ROOT / "sync-memory.py"
@@ -59,7 +61,7 @@ class F01SingleRemoteHeadQuery(unittest.TestCase):
             raise AssertionError(f"unexpected command: {args}")
 
         with mock.patch.object(self.sync, "run", side_effect=fake_run), mock.patch.object(
-            self.sync, "mirror", side_effect=lambda remote_sha=None: mirrored.append(remote_sha)
+            self.sync, "mirror", side_effect=lambda remote_sha=None, context=None: mirrored.append(remote_sha)
         ):
             self.assertEqual(0, self.sync.cmd_align_and_verify("PROJECT"))
             self.assertEqual(0, self.sync.cmd_align_and_verify("PROJECT"))
@@ -79,7 +81,7 @@ class F01SingleRemoteHeadQuery(unittest.TestCase):
             raise AssertionError(f"unexpected command: {args}")
 
         with mock.patch.object(self.sync, "run", side_effect=fake_run), mock.patch.object(
-            self.sync, "mirror", side_effect=lambda remote_sha=None: mirrored.append(remote_sha)
+            self.sync, "mirror", side_effect=lambda remote_sha=None, context=None: mirrored.append(remote_sha)
         ):
             with self.assertRaisesRegex(RuntimeError, "remote unavailable"):
                 self.sync.cmd_align_and_verify("PROJECT")
@@ -251,6 +253,15 @@ class ManifestBoundaryRegression(unittest.TestCase):
         backups = list(self.backup_root.glob("memory-[0-9]*")) if self.backup_root.exists() else []
         self.assertEqual([], backups)
 
+    def _p2_context(self):
+        return RequestVerificationContext(
+            "REPO_IMPLEMENT",
+            repository_root=self.fixture_repo,
+            pointer_path=self.current_pointer,
+            version_path=ROOT / "VERSION",
+            remote_head=REMOTE_SHA,
+        )
+
     def test_f05_source_hash_failure_blocks_before_copy(self):
         source_file = self.fixture_repo / "memory" / self.manifest_file
         source_file.write_bytes(source_file.read_bytes() + b"\ncorrupted")
@@ -261,6 +272,16 @@ class ManifestBoundaryRegression(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "canonical snapshot invalid"):
                 self.sync.mirror(REMOTE_SHA)
         self.assertEqual("", output.getvalue())
+        self._assert_lkg_unchanged_and_valid()
+        self.assertFalse(self.backup_root.exists())
+
+    def test_f05_p2_context_preserves_source_rejection(self):
+        source_file = self.fixture_repo / "memory" / self.manifest_file
+        source_file.write_bytes(source_file.read_bytes() + b"\ncorrupted")
+        with self._patch_fixture() as stack:
+            self._enter_fixture_patches(stack)
+            with self.assertRaisesRegex(RuntimeError, "canonical snapshot invalid"):
+                self.sync.mirror(REMOTE_SHA, self._p2_context())
         self._assert_lkg_unchanged_and_valid()
         self.assertFalse(self.backup_root.exists())
 
@@ -282,6 +303,24 @@ class ManifestBoundaryRegression(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "local candidate invalid"):
                 self.sync.mirror(REMOTE_SHA)
         self.assertEqual("", output.getvalue())
+        self._assert_lkg_unchanged_and_valid()
+        self.assertEqual([], list(self.backup_root.glob("memory-next-*")))
+
+    def test_f06_p2_context_preserves_target_rejection(self):
+        real_copytree = shutil.copytree
+
+        def corrupting_copytree(source, destination, *args, **kwargs):
+            result = real_copytree(source, destination, *args, **kwargs)
+            copied_file = Path(destination) / self.manifest_file
+            copied_file.write_bytes(copied_file.read_bytes() + b"\ncorrupted-after-copy")
+            return result
+
+        with self._patch_fixture() as stack:
+            self._enter_fixture_patches(stack)
+            fixture_shutil = SimpleNamespace(copytree=corrupting_copytree, rmtree=shutil.rmtree)
+            stack.enter_context(mock.patch.object(self.sync, "shutil", fixture_shutil))
+            with self.assertRaisesRegex(RuntimeError, "local candidate invalid"):
+                self.sync.mirror(REMOTE_SHA, self._p2_context())
         self._assert_lkg_unchanged_and_valid()
         self.assertEqual([], list(self.backup_root.glob("memory-next-*")))
 

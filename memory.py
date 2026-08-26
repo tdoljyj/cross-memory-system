@@ -8,15 +8,22 @@ immutable-at-commit export and must never be used as a write target.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
+import os
 import re
 import sys
 from pathlib import Path
 
+from verification_context import (
+    AuthorizationEvidence,
+    RequestVerificationContext,
+    sha256_file,
+)
+
 
 REPO = Path(__file__).resolve().parent
 MEMORY = REPO / "memory"
+CURRENT_POINTER = REPO / "artifacts" / "clued-two-level-snapshots" / "current.json"
 REQUIRED_GLOBAL = ("state.md", "task.md", "decision.md", "archive.md", "log.md")
 LEGACY_ROOT_NAMES = {
     "画像.md", "状态.md", "待办.md", "决策.md", "归档.md",
@@ -28,7 +35,7 @@ def _json(path: Path):
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def validate_bundle(root: Path = MEMORY) -> tuple[dict, list[str]]:
+def _validate_bundle_uncached(root: Path = MEMORY) -> tuple[dict, list[str]]:
     errors: list[str] = []
     manifest_path = root / "manifest.json"
     index_path = root / "index.json"
@@ -77,7 +84,7 @@ def validate_bundle(root: Path = MEMORY) -> tuple[dict, list[str]]:
         if not path.is_file():
             errors.append(f"manifest:missing:{rel}")
             continue
-        actual = hashlib.sha256(path.read_bytes()).hexdigest()
+        actual = sha256_file(path)
         if actual != digest:
             errors.append(f"manifest:hash-mismatch:{rel}")
         if item.get("snapshot_version") != snapshot_version:
@@ -85,8 +92,59 @@ def validate_bundle(root: Path = MEMORY) -> tuple[dict, list[str]]:
     return manifest, errors
 
 
-def cmd_doctor(_args) -> int:
-    manifest, errors = validate_bundle()
+def validate_bundle(
+    root: Path = MEMORY,
+    *,
+    context: RequestVerificationContext | None = None,
+    boundary: str = "repository_snapshot",
+) -> tuple[dict, list[str]]:
+    if context is None:
+        return _validate_bundle_uncached(root)
+    return context.verify_bundle(root, _validate_bundle_uncached, boundary=boundary)
+
+
+def _authorization_evidence() -> AuthorizationEvidence:
+    """Bind optional opaque caller policy evidence without reading credentials."""
+    return AuthorizationEvidence(
+        tenant_ref=os.environ.get("CLUED_TENANT_REF", "not-applicable"),
+        organization_ref=os.environ.get("CLUED_ORGANIZATION_REF", "not-applicable"),
+        workspace_ref=os.environ.get("CLUED_WORKSPACE_REF", "not-applicable"),
+        context_key=os.environ.get("CLUED_CONTEXT_KEY", "not-applicable"),
+        binding_id=os.environ.get("CLUED_BINDING_ID", "not-applicable"),
+        role=os.environ.get("CLUED_ROLE", "read-only-snapshot"),
+        scope_hash=os.environ.get("CLUED_SCOPE_HASH", "not-applicable"),
+        purpose=os.environ.get("CLUED_PURPOSE", "local-read"),
+        policy_version=os.environ.get("CLUED_POLICY_VERSION", "not-applicable"),
+        revocation_epoch=os.environ.get("CLUED_REVOCATION_EPOCH", "not-applicable"),
+        session_expires_at=os.environ.get("CLUED_SESSION_EXPIRES_AT"),
+        expected_owner_ref=os.environ.get("CLUED_EXPECTED_OWNER_REF"),
+        expected_bundle_scope=os.environ.get("CLUED_EXPECTED_BUNDLE_SCOPE"),
+        allowed=os.environ.get("CLUED_AUTHORIZED", "true").casefold() == "true",
+    )
+
+
+def new_verification_context(mode: str, remote_head: str = "not-applicable") -> RequestVerificationContext:
+    return RequestVerificationContext(
+        mode,
+        repository_root=REPO,
+        pointer_path=CURRENT_POINTER,
+        version_path=REPO / "VERSION",
+        remote_head=remote_head,
+        authorization=_authorization_evidence(),
+    )
+
+
+def cmd_doctor(args) -> int:
+    context = getattr(args, "verification_context", None)
+    manifest, errors = validate_bundle(context=context)
+    if errors:
+        for error in errors:
+            print(f"[FAIL] {error}")
+        print(f"bundle doctor: {len(errors)} FAILURE(S)")
+        return 1
+    # Re-check every bound identity before reporting PASS.  An unchanged request
+    # reuses the validator result; changed inputs invalidate and validate again.
+    manifest, errors = validate_bundle(context=context)
     if errors:
         for error in errors:
             print(f"[FAIL] {error}")
@@ -99,8 +157,15 @@ def cmd_doctor(_args) -> int:
     return 0
 
 
-def cmd_status(_args) -> int:
-    manifest, errors = validate_bundle()
+def cmd_status(args) -> int:
+    context = getattr(args, "verification_context", None)
+    manifest, errors = validate_bundle(context=context)
+    if errors:
+        print(json.dumps({"status": "invalid", "errors": errors}, ensure_ascii=False, indent=2))
+        return 1
+    manifest, errors = validate_bundle(context=context)
+    if not errors and context is not None and not context.last_reused:
+        errors = ["verification-input-changed-during-read"]
     if errors:
         print(json.dumps({"status": "invalid", "errors": errors}, ensure_ascii=False, indent=2))
         return 1
@@ -116,6 +181,14 @@ def cmd_status(_args) -> int:
         "canonical_counts": manifest.get("canonical_counts", {}),
         "snapshot_counts": manifest.get("snapshot_counts", {}),
     }
+    if context is not None:
+        sources = context.source_envelope(
+            sources_read=("memory/manifest.json", "artifacts/clued-two-level-snapshots/current.json"),
+            source_versions=(manifest["snapshot_version"], manifest["canonical_version"]),
+            freshness="historical",
+            degraded_reason=None,
+        )
+        payload["verification"] = context.summary(sources)
     print(json.dumps(payload, ensure_ascii=False, indent=2))
     return 0
 
@@ -143,14 +216,23 @@ def _tokens(query: str) -> list[str]:
 
 
 def cmd_recall(args) -> int:
-    manifest, errors = validate_bundle()
+    # T0/NONE is deliberately decided before any Context, Git, pointer,
+    # manifest, directory, or memory view access.
+    if args.tier == "T0":
+        print(json.dumps({
+            "tier": "T0",
+            "snapshot_version": None,
+            "sources_read": [],
+            "results": [],
+            "verification_context": None,
+        }, ensure_ascii=False, indent=2))
+        return 0
+    context = getattr(args, "verification_context", None)
+    manifest, errors = validate_bundle(context=context)
     if errors:
         print(json.dumps({"status": "invalid", "errors": errors}, ensure_ascii=False, indent=2))
         return 1
     paths = _candidate_views(args.tier, args.history, args.project_id)
-    if args.tier == "T0":
-        print(json.dumps({"tier": "T0", "snapshot_version": manifest["snapshot_version"], "sources_read": [], "results": []}, ensure_ascii=False, indent=2))
-        return 0
     tokens = _tokens(args.query)
     results = []
     for path in paths:
@@ -164,6 +246,14 @@ def cmd_recall(args) -> int:
         excerpt = text[start:start + 700].strip()
         results.append({"path": path.relative_to(REPO).as_posix(), "score": score, "excerpt": excerpt})
     results.sort(key=lambda item: (-item["score"], item["path"]))
+    # Detect any in-request input substitution after the view reads and before
+    # the answer is labeled authoritative.
+    manifest, errors = validate_bundle(context=context)
+    if not errors and context is not None and not context.last_reused:
+        errors = ["verification-input-changed-during-read"]
+    if errors:
+        print(json.dumps({"status": "invalid", "errors": errors}, ensure_ascii=False, indent=2))
+        return 1
     payload = {
         "tier": args.tier,
         "snapshot_version": manifest["snapshot_version"],
@@ -171,6 +261,18 @@ def cmd_recall(args) -> int:
         "sources_read": [p.relative_to(REPO).as_posix() for p in paths],
         "results": results[: args.limit],
     }
+    if context is not None:
+        sources = context.source_envelope(
+            sources_read=(
+                "memory/manifest.json",
+                "artifacts/clued-two-level-snapshots/current.json",
+                *(p.relative_to(REPO).as_posix() for p in paths),
+            ),
+            source_versions=(manifest["snapshot_version"], manifest["canonical_version"]),
+            freshness="historical",
+            degraded_reason=None,
+        )
+        payload["verification"] = context.summary(sources)
     print(json.dumps(payload, ensure_ascii=False, indent=2))
     return 0
 
@@ -212,6 +314,11 @@ def main() -> int:
         return cmd_retired(argparse.Namespace(command=sys.argv[1]))
     parser = build_parser()
     args = parser.parse_args()
+    if args.command == "recall" and args.tier == "T0":
+        args.verification_context = None
+    else:
+        mode = "AUDIT_FULL" if args.command == "doctor" else "READ_SNAPSHOT_HISTORICAL"
+        args.verification_context = new_verification_context(mode)
     return args.func(args)
 
 

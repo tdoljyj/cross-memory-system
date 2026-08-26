@@ -50,6 +50,14 @@ For T1–T4, “latest/current”, audit, or implementation work:
 
 Version truth is the remote commit plus root `VERSION`, git tags, `memory/manifest.json`, and the M2 `current.json` pointer. Version checks are triggered by relevant requests; never schedule them periodically.
 
+## Request-local verification context
+
+- A T1–T4, audit, status, doctor, or repository implementation request creates exactly one in-memory `RequestVerificationContext` after `align-and-verify`. `NONE`/T0 creates no Context and performs zero Git and zero Memory reads.
+- Pass the Context and its resolved Remote Head SHA explicitly through the request call chain. Never serialize it or reuse its PASS across requests, retries, Sessions, processes, devices, or Agents.
+- Reuse is allowed only within the same request and trust boundary after rechecking path identity and ACL, streaming Manifest content identity, the Current Pointer, root `VERSION`, git HEAD/tags/repository identity, owner/scope, authorization evidence, TTL/clock, and validator versions. Any change invalidates the evidence and requires full validation or fails closed.
+- Repository source, copy candidate, and local mirror are separate boundaries. A PASS at one boundary never replaces the independent source or target hash validation at another boundary.
+- An authoritative result must include a complete Source Envelope: exact sources read, source versions, freshness (`current`, `historical`, or explicit `degraded` with reason), and the request-local verification summary.
+
 ## Canonical writes
 
 - Record create/update/close/restore/reclassification: `clued_record_mutate`.

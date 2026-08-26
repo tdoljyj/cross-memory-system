@@ -12,6 +12,8 @@ import sys
 import time
 from pathlib import Path
 
+from verification_context import RequestVerificationContext
+
 
 REPO = Path(__file__).resolve().parent
 LOCAL_MEMORY = Path(os.environ.get("CROSS_MEMORY_LOCAL_DIR", Path.home() / "Documents" / "Codex" / "memory"))
@@ -24,14 +26,40 @@ def run(*args: str, check: bool = True):
     return result
 
 
-def validate(root: Path) -> tuple[dict, list[str]]:
+def validate(
+    root: Path,
+    *,
+    context: RequestVerificationContext | None = None,
+    boundary: str = "repository_snapshot",
+) -> tuple[dict, list[str]]:
     sys.path.insert(0, str(REPO))
     import memory as memory_cli
-    return memory_cli.validate_bundle(root)
+    return memory_cli.validate_bundle(root, context=context, boundary=boundary)
 
 
-def mirror(remote_sha: str | None = None) -> None:
-    manifest, errors = validate(REPO / "memory")
+def new_verification_context(mode: str, remote_head: str = "not-applicable") -> RequestVerificationContext:
+    sys.path.insert(0, str(REPO))
+    import memory as memory_cli
+    return memory_cli.new_verification_context(mode, remote_head)
+
+
+def _validate_boundary(
+    root: Path,
+    context: RequestVerificationContext | None,
+    boundary: str,
+) -> tuple[dict, list[str]]:
+    if context is None:
+        return validate(root)
+    return validate(root, context=context, boundary=boundary)
+
+
+def mirror(
+    remote_sha: str | None = None,
+    context: RequestVerificationContext | None = None,
+) -> None:
+    if context is not None and remote_sha is not None and context.remote_head != remote_sha:
+        raise RuntimeError("request Remote Head does not match Verification Context")
+    manifest, errors = _validate_boundary(REPO / "memory", context, "repository_source")
     if errors:
         raise RuntimeError("canonical snapshot invalid: " + "; ".join(errors[:10]))
     parent = LOCAL_MEMORY.parent
@@ -42,11 +70,21 @@ def mirror(remote_sha: str | None = None) -> None:
     backup = backup_root / f"memory-{int(time.time())}"
     if temporary.exists():
         shutil.rmtree(temporary)
+    # Re-check the request-bound evidence at the copy boundary.  On unchanged
+    # input this reuses the validator PASS; any change invalidates and blocks or
+    # performs a fresh full validation before copying.
+    manifest, errors = _validate_boundary(REPO / "memory", context, "repository_source")
+    if errors:
+        raise RuntimeError("canonical snapshot invalid before copy: " + "; ".join(errors[:10]))
     shutil.copytree(REPO / "memory", temporary)
-    _, copied_errors = validate(temporary)
+    _, copied_errors = _validate_boundary(temporary, context, "target_candidate")
     if copied_errors:
         shutil.rmtree(temporary)
         raise RuntimeError("local candidate invalid: " + "; ".join(copied_errors[:10]))
+    _, copied_errors = _validate_boundary(temporary, context, "target_candidate")
+    if copied_errors:
+        shutil.rmtree(temporary)
+        raise RuntimeError("local candidate changed before switch: " + "; ".join(copied_errors[:10]))
     moved_old = False
     try:
         if LOCAL_MEMORY.exists():
@@ -65,19 +103,28 @@ def mirror(remote_sha: str | None = None) -> None:
     }
     if remote_sha is not None:
         result["remote_head"] = remote_sha
+    if context is not None:
+        result["verification"] = context.summary()
     print(json.dumps(result, ensure_ascii=False))
 
 
 def cmd_doctor() -> int:
-    manifest, errors = validate(REPO / "memory")
+    context = new_verification_context("AUDIT_FULL")
+    manifest, errors = _validate_boundary(REPO / "memory", context, "repository_source")
     for error in errors:
         print(f"[FAIL] {error}")
     if errors:
         print(f"doctor: {len(errors)} FAILURE(S)")
         return 1
+    manifest, errors = _validate_boundary(REPO / "memory", context, "repository_source")
+    if errors:
+        for error in errors:
+            print(f"[FAIL] {error}")
+        print(f"doctor: {len(errors)} FAILURE(S)")
+        return 1
     print(f"[PASS] repository snapshot {manifest['snapshot_version']} / {manifest['canonical_version']}")
     if LOCAL_MEMORY.exists():
-        local_manifest, local_errors = validate(LOCAL_MEMORY)
+        local_manifest, local_errors = _validate_boundary(LOCAL_MEMORY, context, "local_mirror")
         same = not local_errors and local_manifest.get("snapshot_version") == manifest.get("snapshot_version")
         print(f"[{'PASS' if same else 'WARN'}] local read-only mirror {'aligned' if same else 'not aligned'}")
     else:
@@ -125,7 +172,8 @@ def cmd_align_and_verify(access: str) -> int:
         print("Memory Access = NONE; skipping pull (no recall scope).")
         return 0
     remote_sha = align_and_verify()
-    mirror(remote_sha)
+    context = new_verification_context("REPO_IMPLEMENT", remote_sha)
+    mirror(remote_sha, context)
     return 0
 
 
