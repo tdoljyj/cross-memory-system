@@ -16,6 +16,7 @@ from pathlib import Path
 
 from verification_context import (
     AuthorizationEvidence,
+    EndpointTrust,
     RequestVerificationContext,
     sha256_file,
 )
@@ -24,6 +25,7 @@ from verification_context import (
 REPO = Path(__file__).resolve().parent
 MEMORY = REPO / "memory"
 CURRENT_POINTER = REPO / "artifacts" / "clued-two-level-snapshots" / "current.json"
+ENDPOINT_TRUST_CONFIG = REPO / "config" / "clued-endpoint-trust.json"
 REQUIRED_GLOBAL = ("state.md", "task.md", "decision.md", "archive.md", "log.md")
 LEGACY_ROOT_NAMES = {
     "画像.md", "状态.md", "待办.md", "决策.md", "归档.md",
@@ -117,8 +119,6 @@ def _authorization_evidence() -> AuthorizationEvidence:
         policy_version=os.environ.get("CLUED_POLICY_VERSION", "not-applicable"),
         revocation_epoch=os.environ.get("CLUED_REVOCATION_EPOCH", "not-applicable"),
         session_expires_at=os.environ.get("CLUED_SESSION_EXPIRES_AT"),
-        expected_owner_ref=os.environ.get("CLUED_EXPECTED_OWNER_REF"),
-        expected_bundle_scope=os.environ.get("CLUED_EXPECTED_BUNDLE_SCOPE"),
         allowed=os.environ.get("CLUED_AUTHORIZED", "true").casefold() == "true",
     )
 
@@ -131,6 +131,7 @@ def new_verification_context(mode: str, remote_head: str = "not-applicable") -> 
         version_path=REPO / "VERSION",
         remote_head=remote_head,
         authorization=_authorization_evidence(),
+        endpoint_trust=EndpointTrust.load(ENDPOINT_TRUST_CONFIG),
     )
 
 
@@ -142,17 +143,18 @@ def cmd_doctor(args) -> int:
             print(f"[FAIL] {error}")
         print(f"bundle doctor: {len(errors)} FAILURE(S)")
         return 1
-    # Re-check every bound identity before reporting PASS.  An unchanged request
-    # reuses the validator result; changed inputs invalidate and validate again.
-    manifest, errors = validate_bundle(context=context)
-    if errors:
-        for error in errors:
-            print(f"[FAIL] {error}")
-        print(f"bundle doctor: {len(errors)} FAILURE(S)")
-        return 1
     print(f"[PASS] {manifest['snapshot_version']} / {manifest['canonical_version']}")
     print("[PASS] current + live_rechecked + views_complete")
     print(f"[PASS] {len(manifest['files'])} manifest files verified")
+    if context is not None:
+        sources = context.source_envelope(
+            boundary="repository_snapshot",
+            sources_read=("memory/manifest.json", "artifacts/clued-two-level-snapshots/current.json"),
+            source_versions=(manifest["snapshot_version"], manifest["canonical_version"]),
+            freshness="historical",
+            degraded_reason=None,
+        )
+        print(json.dumps({"verification": context.summary(boundary="repository_snapshot", sources=sources)}, ensure_ascii=False))
     print("bundle doctor: ALL PASS")
     return 0
 
@@ -160,12 +162,6 @@ def cmd_doctor(args) -> int:
 def cmd_status(args) -> int:
     context = getattr(args, "verification_context", None)
     manifest, errors = validate_bundle(context=context)
-    if errors:
-        print(json.dumps({"status": "invalid", "errors": errors}, ensure_ascii=False, indent=2))
-        return 1
-    manifest, errors = validate_bundle(context=context)
-    if not errors and context is not None and not context.last_reused:
-        errors = ["verification-input-changed-during-read"]
     if errors:
         print(json.dumps({"status": "invalid", "errors": errors}, ensure_ascii=False, indent=2))
         return 1
@@ -183,12 +179,13 @@ def cmd_status(args) -> int:
     }
     if context is not None:
         sources = context.source_envelope(
+            boundary="repository_snapshot",
             sources_read=("memory/manifest.json", "artifacts/clued-two-level-snapshots/current.json"),
             source_versions=(manifest["snapshot_version"], manifest["canonical_version"]),
             freshness="historical",
             degraded_reason=None,
         )
-        payload["verification"] = context.summary(sources)
+        payload["verification"] = context.summary(boundary="repository_snapshot", sources=sources)
     print(json.dumps(payload, ensure_ascii=False, indent=2))
     return 0
 
@@ -263,6 +260,7 @@ def cmd_recall(args) -> int:
     }
     if context is not None:
         sources = context.source_envelope(
+            boundary="repository_snapshot",
             sources_read=(
                 "memory/manifest.json",
                 "artifacts/clued-two-level-snapshots/current.json",
@@ -272,7 +270,7 @@ def cmd_recall(args) -> int:
             freshness="historical",
             degraded_reason=None,
         )
-        payload["verification"] = context.summary(sources)
+        payload["verification"] = context.summary(boundary="repository_snapshot", sources=sources)
     print(json.dumps(payload, ensure_ascii=False, indent=2))
     return 0
 

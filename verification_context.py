@@ -13,11 +13,12 @@ import datetime as dt
 import hashlib
 import json
 import os
+import re
 import stat
 import subprocess
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Callable
 
@@ -33,6 +34,7 @@ CONTEXT_MODES = frozenset({
 })
 VALIDATOR_CONTRACT_VERSION = "clued-request-verifier-v1"
 DOCTOR_VERSION = "clued-v1.6"
+ENDPOINT_TRUST_CONTRACT = "clued.endpoint-trust.v1"
 SOURCE_FRESHNESS = frozenset({"current", "degraded", "historical"})
 SHA256_CHUNK_SIZE = 1024 * 1024
 
@@ -91,8 +93,6 @@ class AuthorizationEvidence:
     policy_version: str = "not-applicable"
     revocation_epoch: str = "not-applicable"
     session_expires_at: str | None = None
-    expected_owner_ref: str | None = None
-    expected_bundle_scope: str | None = None
     allowed: bool = True
 
     def fingerprint(self) -> str:
@@ -106,7 +106,49 @@ class AuthorizationEvidence:
 
 
 @dataclass(frozen=True)
+class EndpointTrust:
+    config_path: Path
+    expected_owner_ref: str
+    expected_bundle_scope: str
+    contract: str = ENDPOINT_TRUST_CONTRACT
+
+    @classmethod
+    def load(cls, path: Path) -> "EndpointTrust":
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            raise VerificationContextError("trusted endpoint configuration unavailable") from exc
+        if not isinstance(payload, dict):
+            raise VerificationContextError("trusted endpoint configuration invalid")
+        trust = payload.get("snapshot_trust")
+        if payload.get("contract") != ENDPOINT_TRUST_CONTRACT or not isinstance(trust, dict):
+            raise VerificationContextError("trusted endpoint configuration invalid")
+        owner = trust.get("expected_owner_ref")
+        scope = trust.get("expected_bundle_scope")
+        if (
+            not isinstance(owner, str)
+            or not owner.strip()
+            or owner == "not-applicable"
+            or not isinstance(scope, str)
+            or not scope.strip()
+            or scope == "not-applicable"
+        ):
+            raise VerificationContextError("trusted endpoint Owner Ref or Bundle Scope missing")
+        _opaque(owner, "expected_owner_ref")
+        _opaque(scope, "expected_bundle_scope")
+        return cls(path.resolve(strict=True), owner, scope)
+
+    def current_sha256(self) -> str:
+        current = EndpointTrust.load(self.config_path)
+        if current.expected_owner_ref != self.expected_owner_ref or current.expected_bundle_scope != self.expected_bundle_scope:
+            raise VerificationContextError("trusted endpoint configuration changed")
+        return sha256_file(self.config_path)
+
+
+@dataclass(frozen=True)
 class SourceEnvelope:
+    boundary: str
+    evidence_id: str
     sources_read: tuple[str, ...]
     source_versions: tuple[str, ...]
     freshness: str
@@ -126,6 +168,8 @@ class SourceEnvelope:
 
     def as_dict(self) -> dict:
         return {
+            "boundary": self.boundary,
+            "evidence_id": self.evidence_id,
             "sources_read": list(self.sources_read),
             "source_versions": list(self.source_versions),
             "freshness": self.freshness,
@@ -248,7 +292,7 @@ def _repository_state(repo: Path) -> dict:
     }
 
 
-def _content_fingerprint(root: Path, manifest: dict) -> str:
+def _verified_content_fingerprint(root: Path, manifest: dict) -> str:
     files = manifest.get("files")
     if not isinstance(files, list) or not files:
         raise VerificationContextError("manifest files unavailable for content identity")
@@ -262,9 +306,15 @@ def _content_fingerprint(root: Path, manifest: dict) -> str:
         path = root / rel
         if not path.is_file():
             raise VerificationContextError("manifest file missing during content identity")
+        declared = item.get("sha256")
+        if not isinstance(declared, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", declared):
+            raise VerificationContextError(f"manifest:invalid-sha256:{rel}")
+        actual = sha256_file(path)
+        if actual != declared.lower():
+            raise VerificationContextError(f"manifest:hash-mismatch:{rel}")
         digest.update(rel.encode("utf-8"))
         digest.update(b"\0")
-        digest.update(bytes.fromhex(sha256_file(path)))
+        digest.update(bytes.fromhex(actual))
     return digest.hexdigest()
 
 
@@ -277,6 +327,7 @@ class VersionEnvelope:
     tag_set_sha256: str
     manifest_sha256: str
     current_pointer_hash: str
+    endpoint_config_sha256: str
     snapshot_version: str
     canonical_version: str
     owner_ref: str
@@ -292,6 +343,10 @@ class VersionEnvelope:
 
 @dataclass
 class BundleEvidence:
+    evidence_id: str
+    boundary: str
+    root: str
+    verified_at: float
     manifest: dict
     path_identity: PathIdentity
     version: VersionEnvelope
@@ -314,6 +369,7 @@ class RequestVerificationContext:
         version_path: Path | None = None,
         remote_head: str = "not-applicable",
         authorization: AuthorizationEvidence | None = None,
+        endpoint_trust: EndpointTrust | None = None,
         ttl_seconds: float = 300.0,
         clock: object | None = None,
         max_clock_skew_seconds: float = 5.0,
@@ -329,6 +385,7 @@ class RequestVerificationContext:
         self.version_path = version_path
         self.remote_head = remote_head
         self.authorization = authorization or AuthorizationEvidence()
+        self.endpoint_trust = endpoint_trust
         self.ttl_seconds = float(ttl_seconds)
         self.clock = clock or SystemClock()
         self.max_clock_skew_seconds = float(max_clock_skew_seconds)
@@ -418,6 +475,9 @@ class RequestVerificationContext:
             if not self.version_path.is_file():
                 raise VerificationContextError("VERSION unavailable")
             version_hash = sha256_file(self.version_path)
+        endpoint_config_sha256 = "missing"
+        if self.endpoint_trust is not None:
+            endpoint_config_sha256 = self.endpoint_trust.current_sha256()
         return VersionEnvelope(
             remote_head=self.remote_head,
             local_head=repository["local_head"],
@@ -426,6 +486,7 @@ class RequestVerificationContext:
             tag_set_sha256=repository["tag_set_sha256"],
             manifest_sha256=manifest_sha256,
             current_pointer_hash=pointer_hash,
+            endpoint_config_sha256=endpoint_config_sha256,
             snapshot_version=str(manifest.get("snapshot_version", "missing")),
             canonical_version=str(manifest.get("canonical_version", "missing")),
             owner_ref=str(manifest.get("owner_ref", "missing")),
@@ -452,11 +513,17 @@ class RequestVerificationContext:
 
     def _owner_errors(self, manifest: dict) -> list[str]:
         errors = []
-        expected_owner = self.authorization.expected_owner_ref
-        if expected_owner is not None and manifest.get("owner_ref") != expected_owner:
+        if self.endpoint_trust is None:
+            return ["trusted-endpoint-config-missing"]
+        owner_ref = manifest.get("owner_ref")
+        bundle_scope = manifest.get("bundle_scope")
+        if not isinstance(owner_ref, str) or not owner_ref:
+            errors.append("manifest:owner-ref-missing")
+        elif owner_ref != self.endpoint_trust.expected_owner_ref:
             errors.append("owner-mismatch")
-        expected_scope = self.authorization.expected_bundle_scope
-        if expected_scope is not None and manifest.get("bundle_scope") != expected_scope:
+        if not isinstance(bundle_scope, str) or not bundle_scope:
+            errors.append("manifest:bundle-scope-missing")
+        elif bundle_scope != self.endpoint_trust.expected_bundle_scope:
             errors.append("tenant-scope-mismatch")
         return errors
 
@@ -470,8 +537,36 @@ class RequestVerificationContext:
         manifest_sha256 = sha256_file(root / "manifest.json")
         identity = PathIdentity.capture(root)
         version = self._version_envelope(manifest, manifest_sha256, validator_contract_version, doctor_version)
-        content = _content_fingerprint(root, manifest)
+        content = _verified_content_fingerprint(root, manifest)
         return identity, version, content
+
+    def _require_current_evidence(self, boundary: str) -> BundleEvidence:
+        self._assert_request_inputs(None, None, None)
+        if not isinstance(boundary, str) or not boundary.strip():
+            raise VerificationContextError("verification boundary required")
+        evidence = self._evidence.get(boundary)
+        if evidence is None:
+            raise VerificationContextError("no current successful Bundle Evidence for boundary")
+        try:
+            identity, version, content = self._capture_state(
+                Path(evidence.root),
+                evidence.manifest,
+                evidence.version.validator_contract_version,
+                evidence.version.doctor_version,
+            )
+        except Exception as exc:
+            self._invalidate_boundary(boundary, "evidence-no-longer-observable")
+            raise VerificationContextError("Bundle Evidence is no longer valid") from exc
+        if (
+            identity.fingerprint() != evidence.path_identity.fingerprint()
+            or version.fingerprint() != evidence.version.fingerprint()
+            or content != evidence.content_sha256
+            or evidence.authorization_sha256 != self._authorization_sha256
+        ):
+            self._invalidate_boundary(boundary, "evidence-changed-before-summary")
+            raise VerificationContextError("Bundle Evidence is no longer valid")
+        self._trusted_now()
+        return evidence
 
     def verify_bundle(
         self,
@@ -486,6 +581,8 @@ class RequestVerificationContext:
         doctor_version: str = DOCTOR_VERSION,
     ) -> tuple[dict, list[str]]:
         self._assert_request_inputs(authorization, ttl_seconds, remote_head)
+        if not isinstance(boundary, str) or not boundary.strip():
+            raise VerificationContextError("verification boundary required")
         self.last_reused = False
         evidence = self._evidence.get(boundary)
         if evidence is not None:
@@ -504,6 +601,7 @@ class RequestVerificationContext:
                 }
                 reason = next((name for name, changed in comparisons.items() if changed), None)
                 if reason is None:
+                    self._trusted_now()
                     self.reuse_count += 1
                     self.last_reused = True
                     self.events.append({"action": "reuse", "boundary": boundary})
@@ -516,9 +614,13 @@ class RequestVerificationContext:
         manifest, errors = validator(root)
         errors = list(errors)
         if not errors:
-            post_identity, version, content = self._capture_state(
-                root, manifest, validator_contract_version, doctor_version
-            )
+            try:
+                post_identity, version, content = self._capture_state(
+                    root, manifest, validator_contract_version, doctor_version
+                )
+            except VerificationContextError as exc:
+                errors.append(str(exc))
+        if not errors:
             if pre_identity.fingerprint() != post_identity.fingerprint():
                 errors.append("verification-input-changed:path-identity")
             if pre_manifest_sha256 != version.manifest_sha256:
@@ -531,6 +633,10 @@ class RequestVerificationContext:
             return manifest, errors
         self._trusted_now()
         self._evidence[boundary] = BundleEvidence(
+            evidence_id=uuid.uuid4().hex,
+            boundary=boundary,
+            root=str(root.resolve(strict=True)),
+            verified_at=float(self.clock.wall_time()),
             manifest=dict(manifest),
             path_identity=post_identity,
             version=version,
@@ -543,25 +649,73 @@ class RequestVerificationContext:
     def source_envelope(
         self,
         *,
+        boundary: str,
         sources_read: list[str] | tuple[str, ...],
         source_versions: list[str] | tuple[str, ...],
         freshness: str,
         degraded_reason: str | None,
     ) -> SourceEnvelope:
-        self._trusted_now()
-        return SourceEnvelope(tuple(sources_read), tuple(source_versions), freshness, degraded_reason)
+        self._assert_request_inputs(None, None, None)
+        if not isinstance(boundary, str) or not boundary.strip():
+            raise VerificationContextError("verification boundary required")
+        evidence = self._evidence.get(boundary)
+        if evidence is None:
+            raise VerificationContextError("no current successful Bundle Evidence for boundary")
+        return SourceEnvelope(
+            boundary,
+            evidence.evidence_id,
+            tuple(sources_read),
+            tuple(source_versions),
+            freshness,
+            degraded_reason,
+        )
 
-    def summary(self, sources: SourceEnvelope | None = None) -> dict:
+    def summary(self, *, boundary: str, sources: SourceEnvelope | None = None) -> dict:
         now = self._trusted_now()
+        evidence = self._require_current_evidence(boundary)
+        if sources is not None and (sources.boundary != boundary or sources.evidence_id != evidence.evidence_id):
+            raise VerificationContextError("Source Envelope is not bound to current Bundle Evidence")
+        version = evidence.version
         payload = {
             "verification_id": self.verification_id,
+            "evidence_id": evidence.evidence_id,
+            "boundary": boundary,
             "mode": self.mode,
-            "verified_at": _iso(self._wall_anchor),
+            "verified_at": _iso(evidence.verified_at),
             "effective_expires_at": _iso(self._effective_expiry),
             "stale_age_seconds": max(0.0, now - self._wall_anchor),
+            "repository": {
+                "root": str(self.repository_root.resolve()),
+                "identity_sha256": version.repository_identity,
+                "remote_head": version.remote_head,
+                "local_head": version.local_head,
+            },
+            "snapshot": {
+                "root": evidence.root,
+                "path_identity_sha256": evidence.path_identity.fingerprint(),
+                "content_sha256": evidence.content_sha256,
+                "snapshot_version": version.snapshot_version,
+                "canonical_version": version.canonical_version,
+                "manifest_sha256": version.manifest_sha256,
+                "current_pointer_sha256": version.current_pointer_hash,
+                "owner_ref": version.owner_ref,
+                "bundle_scope": version.bundle_scope,
+            },
+            "authorization": {
+                "evidence_sha256": evidence.authorization_sha256,
+                "allowed": self.authorization.allowed,
+                "role": self.authorization.role,
+                "purpose": self.authorization.purpose,
+                "policy_version": self.authorization.policy_version,
+                "revocation_epoch": self.authorization.revocation_epoch,
+                "session_expires_at": self.authorization.session_expires_at,
+                "expected_owner_ref": self.endpoint_trust.expected_owner_ref,
+                "expected_bundle_scope": self.endpoint_trust.expected_bundle_scope,
+            },
+            "version_envelope": asdict(version),
             "validator": {
-                "contract_version": VALIDATOR_CONTRACT_VERSION,
-                "doctor_version": DOCTOR_VERSION,
+                "contract_version": version.validator_contract_version,
+                "doctor_version": version.doctor_version,
                 "result": "pass",
             },
             "full_validation_count": self.full_validation_count,

@@ -1,9 +1,11 @@
 import hashlib
 import importlib.util
 import json
+import os
 import pickle
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -15,8 +17,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 from verification_context import (  # noqa: E402
     AuthorizationEvidence,
+    EndpointTrust,
     RequestVerificationContext,
-    SourceEnvelope,
     VerificationContextError,
 )
 
@@ -65,6 +67,8 @@ class VerificationContextFixture(unittest.TestCase):
         self._write_pointer(previous="snap_previous")
         self.version = self.repo / "VERSION"
         self.version.write_text("fixture-v1\n", encoding="utf-8")
+        self.trust_path = self.repo / "endpoint-trust.json"
+        self._write_trust()
         self._git("init", "-b", "main")
         self._git("config", "user.name", "P2-Fixture")
         self._git("config", "user.email", "fixture@example.invalid")
@@ -98,6 +102,15 @@ class VerificationContextFixture(unittest.TestCase):
             "previous_snapshot_version": previous,
         }, sort_keys=True), encoding="utf-8")
 
+    def _write_trust(self, owner="owner_fixture", scope="tenant_fixture"):
+        self.trust_path.write_text(json.dumps({
+            "contract": "clued.endpoint-trust.v1",
+            "snapshot_trust": {
+                "expected_owner_ref": owner,
+                "expected_bundle_scope": scope,
+            },
+        }, sort_keys=True), encoding="utf-8")
+
     def validator(self, root):
         self.validator_calls += 1
         try:
@@ -115,8 +128,6 @@ class VerificationContextFixture(unittest.TestCase):
 
     def context(self, **kwargs):
         authorization = kwargs.pop("authorization", AuthorizationEvidence(
-            expected_owner_ref="owner_fixture",
-            expected_bundle_scope="tenant_fixture",
             tenant_ref="tenant_fixture",
             workspace_ref="workspace_fixture",
             policy_version="policy_v1",
@@ -129,6 +140,7 @@ class VerificationContextFixture(unittest.TestCase):
             version_path=self.version,
             remote_head="a" * 40,
             authorization=authorization,
+            endpoint_trust=kwargs.pop("endpoint_trust", EndpointTrust.load(self.trust_path)),
             ttl_seconds=kwargs.pop("ttl_seconds", 30),
             clock=kwargs.pop("clock", self.clock),
             **kwargs,
@@ -186,22 +198,21 @@ class F08PointerEnvelope(VerificationContextFixture):
 
 class F09OwnerTenantAuthorization(VerificationContextFixture):
     def test_owner_and_tenant_mismatch_fail_closed(self):
-        for field, value, expected in (
-            ("expected_owner_ref", "owner_wrong", "owner-mismatch"),
-            ("expected_bundle_scope", "tenant_wrong", "tenant-scope-mismatch"),
+        for owner, scope, expected in (
+            ("owner_wrong", "tenant_fixture", "owner-mismatch"),
+            ("owner_fixture", "tenant_wrong", "tenant-scope-mismatch"),
         ):
-            auth_values = AuthorizationEvidence().__dict__.copy()
-            auth_values[field] = value
-            context = self.context(authorization=AuthorizationEvidence(**auth_values))
+            self._write_trust(owner, scope)
+            context = self.context()
             _, errors = self.verify(context)
             self.assertIn(expected, errors)
             self.assertEqual(0, context.reuse_count)
+            self._write_trust()
 
     def test_authorization_or_remote_or_ttl_change_clears_evidence(self):
         context = self.context()
         self.verify(context)
         changed = AuthorizationEvidence(
-            expected_owner_ref="owner_fixture", expected_bundle_scope="tenant_fixture",
             tenant_ref="tenant_fixture", workspace_ref="workspace_changed",
             policy_version="policy_v1", revocation_epoch="rev_1",
         )
@@ -291,23 +302,34 @@ class F30VersionEnvelope(VerificationContextFixture):
         self.assertEqual([], self.verify(context, validator_contract_version="contract-v2")[1])
         self.assertEqual(2, context.full_validation_count)
 
+    def test_trusted_owner_or_scope_change_invalidates(self):
+        context = self._initial_control()
+        self._write_trust(owner="owner_changed")
+        with self.assertRaisesRegex(VerificationContextError, "no longer valid"):
+            context.summary(boundary="source")
+
 
 class F31SourceEnvelope(VerificationContextFixture):
     def test_complete_envelope_is_authoritative(self):
         context = self.context()
         self.verify(context)
         envelope = context.source_envelope(
+            boundary="source",
             sources_read=["bundle/data.txt"], source_versions=["snap_fixture"],
             freshness="historical", degraded_reason=None,
         )
-        summary = context.summary(envelope)
+        summary = context.summary(boundary="source", sources=envelope)
         self.assertTrue(summary["authoritative"])
         self.assertEqual("historical", summary["sources"]["freshness"])
+        self.assertEqual("a" * 40, summary["repository"]["remote_head"])
+        self.assertEqual("snap_fixture", summary["snapshot"]["snapshot_version"])
+        self.assertEqual("owner_fixture", summary["authorization"]["expected_owner_ref"])
+        self.assertEqual(summary["validator"]["contract_version"], summary["version_envelope"]["validator_contract_version"])
 
     def test_incomplete_envelopes_are_rejected_or_non_authoritative(self):
         context = self.context()
         self.verify(context)
-        self.assertFalse(context.summary()["authoritative"])
+        self.assertFalse(context.summary(boundary="source")["authoritative"])
         invalid = (
             dict(sources_read=[], source_versions=["v"], freshness="historical", degraded_reason=None),
             dict(sources_read=["s"], source_versions=[], freshness="historical", degraded_reason=None),
@@ -316,7 +338,184 @@ class F31SourceEnvelope(VerificationContextFixture):
         )
         for values in invalid:
             with self.subTest(values=values), self.assertRaises(VerificationContextError):
-                SourceEnvelope(tuple(values["sources_read"]), tuple(values["source_versions"]), values["freshness"], values["degraded_reason"])
+                context.source_envelope(boundary="source", **values)
+
+
+class EvidenceAuthorityNegativeTests(VerificationContextFixture):
+    def test_source_envelope_and_summary_reject_before_verify(self):
+        context = self.context()
+        with self.assertRaisesRegex(VerificationContextError, "verification boundary required"):
+            context.verify_bundle(self.bundle, self.validator, boundary="")
+        self.assertEqual(0, self.validator_calls)
+        with self.assertRaisesRegex(VerificationContextError, "verification boundary required"):
+            context.source_envelope(
+                boundary="", sources_read=["bundle/data.txt"],
+                source_versions=["snap_fixture"], freshness="historical", degraded_reason=None,
+            )
+        with self.assertRaisesRegex(VerificationContextError, "verification boundary required"):
+            context.summary(boundary="")
+        with self.assertRaisesRegex(VerificationContextError, "no current successful"):
+            context.source_envelope(
+                boundary="source", sources_read=["bundle/data.txt"],
+                source_versions=["snap_fixture"], freshness="historical", degraded_reason=None,
+            )
+        with self.assertRaisesRegex(VerificationContextError, "no current successful"):
+            context.summary(boundary="source")
+
+    def test_validator_pass_then_tamper_before_evidence_capture_is_rejected(self):
+        context = self.context()
+
+        def validator_then_tamper(root):
+            manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+            (root / "data.txt").write_text("tampered-after-validator-pass\n", encoding="utf-8")
+            return manifest, []
+
+        _, errors = context.verify_bundle(self.bundle, validator_then_tamper, boundary="source")
+        self.assertIn("manifest:hash-mismatch:data.txt", errors)
+        with self.assertRaisesRegex(VerificationContextError, "no current successful"):
+            context.summary(boundary="source")
+
+    def test_missing_owner_or_scope_expectation_is_rejected(self):
+        for trust in (
+            {"expected_bundle_scope": "tenant_fixture"},
+            {"expected_owner_ref": "owner_fixture"},
+        ):
+            with self.subTest(trust=trust):
+                self.trust_path.write_text(json.dumps({
+                    "contract": "clued.endpoint-trust.v1",
+                    "snapshot_trust": trust,
+                }), encoding="utf-8")
+                with self.assertRaisesRegex(VerificationContextError, "Owner Ref or Bundle Scope missing"):
+                    EndpointTrust.load(self.trust_path)
+        self._write_trust()
+        context = self.context(endpoint_trust=None)
+        _, errors = self.verify(context)
+        self.assertIn("trusted-endpoint-config-missing", errors)
+
+    def test_manifest_missing_owner_or_scope_is_rejected(self):
+        for field, expected in (
+            ("owner_ref", "manifest:owner-ref-missing"),
+            ("bundle_scope", "manifest:bundle-scope-missing"),
+        ):
+            with self.subTest(field=field):
+                saved = self.manifest.pop(field)
+                self._write_manifest()
+                self._write_pointer(previous="snap_previous")
+                _, errors = self.verify(self.context())
+                self.assertIn(expected, errors)
+                self.manifest[field] = saved
+                self._write_manifest()
+                self._write_pointer(previous="snap_previous")
+
+    def test_summary_rejects_after_evidence_is_invalidated(self):
+        context = self.context()
+        self.assertEqual([], self.verify(context)[1])
+        (self.bundle / "data.txt").write_text("changed-after-evidence\n", encoding="utf-8")
+        with self.assertRaisesRegex(VerificationContextError, "no longer valid"):
+            context.summary(boundary="source")
+        with self.assertRaisesRegex(VerificationContextError, "no current successful"):
+            context.summary(boundary="source")
+
+    def test_actual_validator_versions_are_reported_from_evidence(self):
+        context = self.context()
+        self.assertEqual([], context.verify_bundle(
+            self.bundle, self.validator, boundary="source",
+            validator_contract_version="fixture-validator-v9", doctor_version="fixture-doctor-v4",
+        )[1])
+        summary = context.summary(boundary="source")
+        self.assertEqual("fixture-validator-v9", summary["validator"]["contract_version"])
+        self.assertEqual("fixture-doctor-v4", summary["validator"]["doctor_version"])
+
+
+class RealRequestCallChains(unittest.TestCase):
+    def test_status_doctor_and_recall_use_business_call_counts(self):
+        status = subprocess.run(
+            [sys.executable, str(ROOT / "memory.py"), "status"], cwd=ROOT,
+            text=True, encoding="utf-8", errors="replace", capture_output=True, check=True,
+        )
+        status_summary = json.loads(status.stdout)["verification"]
+        self.assertEqual((1, 0), (status_summary["full_validation_count"], status_summary["reuse_count"]))
+
+        doctor = subprocess.run(
+            [sys.executable, str(ROOT / "memory.py"), "doctor"], cwd=ROOT,
+            text=True, encoding="utf-8", errors="replace", capture_output=True, check=True,
+        )
+        doctor_json = next(json.loads(line)["verification"] for line in doctor.stdout.splitlines() if line.startswith("{"))
+        self.assertEqual((1, 0), (doctor_json["full_validation_count"], doctor_json["reuse_count"]))
+
+        recall = subprocess.run(
+            [sys.executable, str(ROOT / "memory.py"), "recall", "clued", "--tier", "T3", "--limit", "1"], cwd=ROOT,
+            text=True, encoding="utf-8", errors="replace", capture_output=True, check=True,
+        )
+        recall_summary = json.loads(recall.stdout)["verification"]
+        self.assertEqual((1, 1), (recall_summary["full_validation_count"], recall_summary["reuse_count"]))
+
+    @unittest.skipUnless(os.name == "nt", "PowerShell entry contract is Windows-specific")
+    def test_non_none_powershell_request_shares_context_and_next_request_is_new(self):
+        bundled_pwsh = Path.home() / ".cache" / "codex-runtimes" / "codex-primary-runtime" / "dependencies" / "native" / "powershell" / "pwsh.exe"
+        pwsh = shutil.which("pwsh") or shutil.which("powershell") or (str(bundled_pwsh) if bundled_pwsh.is_file() else None)
+        self.assertIsNotNone(pwsh, "PowerShell is required for the P2 entry gate")
+        python_dir = Path(sys.executable).parent
+        git_dir = Path(shutil.which("git") or r"C:\Program Files\Git\cmd\git.exe").parent
+
+        with tempfile.TemporaryDirectory(prefix="clued-p2-pwsh-") as temp_name:
+            temp = Path(temp_name)
+            repo = temp / "repo"
+            repo.mkdir()
+            shutil.copy2(ROOT / ".gitignore", repo / ".gitignore")
+            for name in ("sync-memory.ps1", "sync-memory.py", "memory.py", "verification_context.py", "VERSION"):
+                shutil.copy2(ROOT / name, repo / name)
+            shutil.copytree(ROOT / "memory", repo / "memory")
+            shutil.copytree(ROOT / "config", repo / "config")
+            pointer_dir = repo / "artifacts" / "clued-two-level-snapshots"
+            pointer_dir.mkdir(parents=True)
+            shutil.copy2(ROOT / "artifacts" / "clued-two-level-snapshots" / "current.json", pointer_dir / "current.json")
+            endpoint = temp / "endpoint-memory"
+            endpoint_ps = str(endpoint).replace("'", "''")
+            python_ps = str(python_dir).replace("'", "''")
+            git_ps = str(git_dir).replace("'", "''")
+            config_text = (
+                f"$MemoryDir = '{endpoint_ps}'\n"
+                f"$env:PATH = '{python_ps};{git_ps};' + $env:PATH\n"
+            )
+            (repo / "sync.config.ps1").write_text(config_text, encoding="utf-8")
+            subprocess.run(["git", "init", "-b", "main"], cwd=repo, check=True, capture_output=True)
+            subprocess.run(["git", "config", "core.autocrlf", "false"], cwd=repo, check=True)
+            subprocess.run(["git", "config", "user.name", "P2-PowerShell-Fixture"], cwd=repo, check=True)
+            subprocess.run(["git", "config", "user.email", "fixture@example.invalid"], cwd=repo, check=True)
+            subprocess.run(["git", "add", "."], cwd=repo, check=True)
+            subprocess.run(["git", "commit", "-m", "fixture"], cwd=repo, check=True, capture_output=True)
+            origin = temp / "origin.git"
+            subprocess.run(["git", "clone", "--bare", str(repo), str(origin)], cwd=temp, check=True, capture_output=True)
+            subprocess.run(["git", "remote", "add", "origin", str(origin)], cwd=repo, check=True)
+            fixture_status = subprocess.run(
+                ["git", "status", "--porcelain"], cwd=repo, text=True, encoding="utf-8", capture_output=True, check=True,
+            ).stdout
+            self.assertEqual("", fixture_status, fixture_status)
+
+            verification_ids = []
+            for request_number in (1, 2):
+                trace = temp / f"trace-{request_number}.jsonl"
+                environment = os.environ.copy()
+                environment["GIT_TRACE2_EVENT"] = str(trace)
+                result = subprocess.run(
+                    [pwsh, "-NoProfile", "-File", str(repo / "sync-memory.ps1"), "-AlignAndVerify", "-Access", "PROJECT"],
+                    cwd=repo, env=environment, text=True, encoding="utf-8", errors="replace", capture_output=True,
+                )
+                self.assertEqual(0, result.returncode, result.stderr + result.stdout)
+                payload = json.loads(next(line for line in reversed(result.stdout.splitlines()) if line.startswith("{")))
+                summary = payload["verification"]
+                verification_ids.append(summary["verification_id"])
+                self.assertEqual("local_mirror", summary["boundary"])
+                self.assertEqual((3, 1), (summary["full_validation_count"], summary["reuse_count"]))
+                trace_events = [json.loads(line) for line in trace.read_text(encoding="utf-8", errors="replace").splitlines()]
+                ls_remote_starts = [
+                    event for event in trace_events
+                    if event.get("event") == "start" and "ls-remote" in event.get("argv", [])
+                ]
+                self.assertEqual(1, len(ls_remote_starts))
+
+            self.assertNotEqual(verification_ids[0], verification_ids[1])
 
 
 class NoneAccess(unittest.TestCase):

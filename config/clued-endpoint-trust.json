@@ -1,0 +1,8 @@
+{
+  "contract": "clued.endpoint-trust.v1",
+  "endpoint": "codex-read-only-snapshot",
+  "snapshot_trust": {
+    "expected_bundle_scope": "user",
+    "expected_owner_ref": "owner_0e58f3caef99d95912279cee"
+  }
+}

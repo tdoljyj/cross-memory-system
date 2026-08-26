@@ -56,7 +56,9 @@ def _validate_boundary(
 def mirror(
     remote_sha: str | None = None,
     context: RequestVerificationContext | None = None,
-) -> None:
+    *,
+    emit: bool = True,
+) -> dict:
     if context is not None and remote_sha is not None and context.remote_head != remote_sha:
         raise RuntimeError("request Remote Head does not match Verification Context")
     manifest, errors = _validate_boundary(REPO / "memory", context, "repository_source")
@@ -70,21 +72,11 @@ def mirror(
     backup = backup_root / f"memory-{int(time.time())}"
     if temporary.exists():
         shutil.rmtree(temporary)
-    # Re-check the request-bound evidence at the copy boundary.  On unchanged
-    # input this reuses the validator PASS; any change invalidates and blocks or
-    # performs a fresh full validation before copying.
-    manifest, errors = _validate_boundary(REPO / "memory", context, "repository_source")
-    if errors:
-        raise RuntimeError("canonical snapshot invalid before copy: " + "; ".join(errors[:10]))
     shutil.copytree(REPO / "memory", temporary)
     _, copied_errors = _validate_boundary(temporary, context, "target_candidate")
     if copied_errors:
         shutil.rmtree(temporary)
         raise RuntimeError("local candidate invalid: " + "; ".join(copied_errors[:10]))
-    _, copied_errors = _validate_boundary(temporary, context, "target_candidate")
-    if copied_errors:
-        shutil.rmtree(temporary)
-        raise RuntimeError("local candidate changed before switch: " + "; ".join(copied_errors[:10]))
     moved_old = False
     try:
         if LOCAL_MEMORY.exists():
@@ -103,34 +95,49 @@ def mirror(
     }
     if remote_sha is not None:
         result["remote_head"] = remote_sha
-    if context is not None:
-        result["verification"] = context.summary()
-    print(json.dumps(result, ensure_ascii=False))
+    if emit:
+        print(json.dumps(result, ensure_ascii=False))
+    return result
+
+
+def _doctor(
+    context: RequestVerificationContext,
+    *,
+    require_local: bool,
+    emit: bool,
+) -> tuple[dict, dict | None, list[str]]:
+    manifest, errors = _validate_boundary(REPO / "memory", context, "repository_source")
+    if errors:
+        if emit:
+            for error in errors:
+                print(f"[FAIL] {error}")
+            print(f"doctor: {len(errors)} FAILURE(S)")
+        return manifest, None, errors
+    if emit:
+        print(f"[PASS] repository snapshot {manifest['snapshot_version']} / {manifest['canonical_version']}")
+    local_manifest = None
+    if LOCAL_MEMORY.exists():
+        local_manifest, local_errors = _validate_boundary(LOCAL_MEMORY, context, "local_mirror")
+        same = not local_errors and local_manifest.get("snapshot_version") == manifest.get("snapshot_version")
+        if require_local and not same:
+            errors.extend(local_errors or ["local-mirror:snapshot-version-mismatch"])
+        if emit:
+            state = "PASS" if same else ("FAIL" if require_local else "WARN")
+            print(f"[{state}] local read-only mirror {'aligned' if same else 'not aligned'}")
+    else:
+        if require_local:
+            errors.append("local-mirror:missing")
+        if emit:
+            print(f"[{'FAIL' if require_local else 'WARN'}] local read-only mirror does not exist")
+    if emit:
+        print("doctor: ALL PASS" if not errors else f"doctor: {len(errors)} FAILURE(S)")
+    return manifest, local_manifest, errors
 
 
 def cmd_doctor() -> int:
     context = new_verification_context("AUDIT_FULL")
-    manifest, errors = _validate_boundary(REPO / "memory", context, "repository_source")
-    for error in errors:
-        print(f"[FAIL] {error}")
-    if errors:
-        print(f"doctor: {len(errors)} FAILURE(S)")
-        return 1
-    manifest, errors = _validate_boundary(REPO / "memory", context, "repository_source")
-    if errors:
-        for error in errors:
-            print(f"[FAIL] {error}")
-        print(f"doctor: {len(errors)} FAILURE(S)")
-        return 1
-    print(f"[PASS] repository snapshot {manifest['snapshot_version']} / {manifest['canonical_version']}")
-    if LOCAL_MEMORY.exists():
-        local_manifest, local_errors = _validate_boundary(LOCAL_MEMORY, context, "local_mirror")
-        same = not local_errors and local_manifest.get("snapshot_version") == manifest.get("snapshot_version")
-        print(f"[{'PASS' if same else 'WARN'}] local read-only mirror {'aligned' if same else 'not aligned'}")
-    else:
-        print("[WARN] local read-only mirror does not exist")
-    print("doctor: ALL PASS")
-    return 0
+    _, _, errors = _doctor(context, require_local=False, emit=True)
+    return 1 if errors else 0
 
 
 def resolve_remote_head() -> str:
@@ -173,7 +180,23 @@ def cmd_align_and_verify(access: str) -> int:
         return 0
     remote_sha = align_and_verify()
     context = new_verification_context("REPO_IMPLEMENT", remote_sha)
-    mirror(remote_sha, context)
+    result = mirror(remote_sha, context, emit=False)
+    manifest, local_manifest, errors = _doctor(context, require_local=True, emit=True)
+    if errors or local_manifest is None:
+        raise RuntimeError("post-mirror doctor failed: " + "; ".join(errors[:10]))
+    sources = context.source_envelope(
+        boundary="local_mirror",
+        sources_read=(
+            "memory/manifest.json",
+            "artifacts/clued-two-level-snapshots/current.json",
+            "local-mirror/manifest.json",
+        ),
+        source_versions=(manifest["snapshot_version"], local_manifest["snapshot_version"]),
+        freshness="historical",
+        degraded_reason=None,
+    )
+    result["verification"] = context.summary(boundary="local_mirror", sources=sources)
+    print(json.dumps(result, ensure_ascii=False))
     return 0
 
 
@@ -230,7 +253,8 @@ def main() -> int:
     if mode == "commit-repo":
         return cmd_commit_repo()
     if mode == "mirror":
-        mirror()
+        context = new_verification_context("AUDIT_FULL")
+        mirror(context=context)
         return 0
     raise RuntimeError(f"unknown mode: {mode}")
 

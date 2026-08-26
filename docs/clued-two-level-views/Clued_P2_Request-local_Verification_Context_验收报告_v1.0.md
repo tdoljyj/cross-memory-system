@@ -2,66 +2,74 @@
 
 ## 裁决
 
-`PASS / P2_IMPLEMENTED_ON_FEATURE_BRANCH`
+`PASS / P2_REVIEW_FINDINGS_CORRECTED_ON_FEATURE_BRANCH`
 
-固定基线为 `main@7f1bc29cfd8f2ff80b24c7e10f55f1bc0a3df3e0`。实施分支为 `codex/p2-request-local-verification-context`。提交前再次只读核验远端 `main` 仍为该固定 Commit；未合并 `main`。
+固定基线：`main@7f1bc29cfd8f2ff80b24c7e10f55f1bc0a3df3e0`。实施分支：`codex/p2-request-local-verification-context`。本轮在既有 P2 Commit `69254f3b8d3e5ac3604f8fd0c2ee1d8118f866d1` 之上追加修复，不 amend、rebase 或重写既有 Commit；远端 `main` 在提交前仍为固定基线，未合并 `main`。
 
-本次只实施 P2 Request-local Verification Context。未执行 P3 的隔离 Mirror、Backup/no-op、同机锁或原子切换改造；未执行 P4 的 Canonical-first、T1/T3 路由或读取范围改造；未执行 P5–P6、生产访问、部署、数据库/RLS 变更或 Snapshot 发布。
+本轮仅修正 P2 Request-local Verification Context。未执行 P3 的隔离 Mirror、Backup/no-op、锁或原子切换改造；未执行 P4 的 Canonical-first/T1/T3 路由；未执行 P5–P6、生产访问、部署、数据库/RLS 变更或 Snapshot 发布。
 
-## 实现结果
+## 复审问题闭环
 
-每个非 `NONE` 请求创建一个显式传递、仅存于当前进程内存的 `RequestVerificationContext`。Context 不可序列化，没有模块级 PASS 缓存；新请求、独立重试和新进程均重新创建并重新验证。`NONE`/T0 在 Context、Git、Pointer、Manifest 和 Memory 读取前返回。
+1. `authoritative=true` 现在必须绑定指定 boundary 上仍有效的成功 `BundleEvidence`，并通过 `evidence_id` 与 `SourceEnvelope` 绑定。零校验、校验失败、缺 boundary、Evidence 失效或 Envelope 跨 boundary/跨 Evidence 均拒绝；仅有 Evidence 而无完整 Source Envelope 时只能输出 `authoritative=false`。
+2. `summary()` 从当前 Evidence 输出实际 Repository、Snapshot、Authorization、完整 Version Envelope、Validator Contract 与 Doctor Version。`validator.result=pass` 只会在当前 Evidence 重新核验成功后出现，不再是无条件常量结论。
+3. Validator 返回无错误后、Evidence 创建前，Context 再次逐项流式计算 Manifest 枚举文件的 SHA-256 并与声明比较。测试在 Validator PASS 后、Evidence 捕获前篡改文件，首次调用即以 `manifest:hash-mismatch:data.txt` 阻断，未创建 Evidence、未缓存 PASS。
+4. PowerShell `-AlignAndVerify` 的非 `NONE` 请求由一个 Python 进程完成 align-and-verify → Mirror → doctor，并显式传递同一个不可序列化 Context。Context 没有模块级或持久 PASS 缓存；下一请求创建新 Context、重新查询 Remote Head 并重新校验。
+5. 已删除为制造 reuse 增加的无业务意义重复验证。真实链路计数为：status `full=1/reuse=0`，Memory doctor `1/0`，recall `1/1`（读取后形成权威结果前复核），Mirror + doctor `3/1`（源、复制候选、本地 Mirror 三个真实边界；doctor 复用同请求源 Evidence）。
+6. Owner Ref 与 Bundle Scope 的期望值来自版本化可信端点配置 `config/clued-endpoint-trust.json`，不从可选调用者环境变量取得。可信配置缺值、Manifest 缺值、不匹配或配置发生变化均失效并 fail-closed。
 
-同一请求内，复用前重新绑定并比较：
+## Evidence 与失效语义
 
-- 请求路径与解析后路径、卷/设备、目录 inode、文件属性、ACL/Owner/Group、可写性、Symlink/Junction 状态；
-- Remote Head、Local Head、仓库身份、根 `VERSION`、完整 Git tag 集；
-- Manifest SHA-256、Current Pointer SHA-256、Snapshot/Canonical Version、Owner、Bundle Scope、Generator/Schema；
-- Manifest 枚举文件的流式内容指纹；
-- Tenant/Organization/Workspace/Context/Binding/Role/Scope/Purpose/Policy/Revocation/Session 到期与授权结论；
-- TTL、可信单调时钟、墙钟漂移、Validator Contract 与 Doctor Version。
+每个成功 `BundleEvidence` 保存：Evidence/Boundary 身份、被测根路径、验证时间、实际 Manifest、路径身份、实际文件内容指纹、授权证据哈希和 Version Envelope。Version Envelope 包含 Remote/Local Commit、仓库身份、根 `VERSION`、Git tag 集、Manifest、Current Pointer、可信端点配置、Snapshot/Canonical Version、Owner、Bundle Scope、Generator/Schema、Validator Contract 与 Doctor Version。
 
-任一项变化即删除相应 boundary 的 PASS；随后只能完整重验或 fail-closed。上下文授权、Remote Head、TTL、时钟信任变化直接 fail-closed。复用不依赖 mtime、size、tracking ref 或旧 Remote SHA。
+复用前及权威汇总前均重新检查请求授权、TTL、可信时钟和全部 Evidence 身份。路径、Manifest、Pointer、Version、tag、Remote、Owner/Scope 可信配置、授权、时钟、Validator/Doctor 或实际文件内容任一变化都会删除对应 boundary 的 PASS，随后只能完整重验或拒绝。源 Bundle、复制候选和本地 Mirror 的 Evidence 相互独立；源 PASS 不替代复制后目标的独立哈希校验。
 
-源 Bundle、复制候选与本地 Mirror 使用不同 boundary key。源端 PASS 不会替代复制后目标的独立 Manifest/哈希校验；P1 的一次请求一次 `ls-remote` 及显式 Remote SHA 传递保持不变，参数 SHA 与 Context SHA 不一致时在校验前阻断。
-
-Recall 在读取后、形成权威结果前再次核验；若期间输入改变，即使新状态能独立通过，也拒绝本次混合时点结果并要求新请求。权威输出必须带完整 Source Envelope：`sources_read`、source versions、freshness，以及始终存在的 degraded 字段。
+`NONE` 在 Context、Git、Pointer、Manifest 和 Memory 读取前返回，保持零 Git、零 Memory 读取。
 
 ## 强制 Gate
 
-| Gate | 结果 | 独立证据 |
+| Gate | 结果 | 证据摘要 |
 |---|---|---|
-| F07 | PASS | 未变化：full validate 1、reuse 1；篡改后 invalidate、full validate 2、hash mismatch 阻断；新请求重新校验且 Context 不可序列化 |
-| F08 | PASS | Manifest 不变而 Pointer 改变时 Version Envelope 失效并完整重验 |
-| F09 | PASS | Owner mismatch 与 Tenant scope mismatch 均拒绝；授权、Remote SHA、TTL 变化清空证据并 fail-closed |
-| F25 | PASS | TTL 过期、墙钟前跳/回拨、future `verified_at`、不可信时钟全部阻断；stale age 非负 |
-| F27 | PASS | 相同字节的目录替换仍由路径身份变化触发失效与完整重验 |
-| F30 | PASS | control 复用；分别改变 `VERSION`、tag、Manifest、Pointer、Validator 均失效；Manifest 与 Pointer 不一致明确拒绝 |
-| F31 | PASS | 完整 Source Envelope 才可 `authoritative=true`；缺 sources/version/freshness/degraded reason 均拒绝或非权威 |
+| F07 | PASS | 同请求未变化为 full 1/reuse 1；篡改使 Evidence 失效、完整重验并拒绝；新请求重新校验；Context 不可序列化 |
+| F08 | PASS | Current Pointer 变化使 Version Envelope 失效并完整重验 |
+| F09 | PASS | Owner/Scope 缺失或不匹配、授权/Remote SHA/TTL 变化全部 fail-closed |
+| F25 | PASS | TTL 过期、墙钟前跳/回拨、future verified-at、不可信时钟全部拒绝；stale age 非负 |
+| F27 | PASS | 目录被相同字节副本替换仍由路径身份变化触发失效与重验 |
+| F30 | PASS | `VERSION`、tag、Manifest、Pointer、可信 Owner/Scope 配置、Validator Contract 变化全部失效；Manifest/Pointer 不一致拒绝 |
+| F31 | PASS | 完整且绑定当前 Evidence 的 Source Envelope 才允许 `authoritative=true`；缺项、失效或错绑均拒绝/非权威 |
 
-## 旧拒绝集合与回归
+新增负向测试覆盖：未调用 `verify_bundle()` 生成 Source Envelope；缺少 boundary；Validator PASS 后、Evidence 捕获前篡改；可信 Owner/Scope 期望缺失；Manifest Owner/Scope 缺失；Evidence 失效后 `summary()`；实际非 `NONE` PowerShell 单请求贯穿一个 Context；下一独立请求产生新 Context 并重新校验。
 
-F05、F06 分别在旧兼容路径和真实 P2 Context 路径重复执行：
+## 真实调用链与拒绝等价
 
-- F05 源 Manifest 文件哈希错误均在复制前阻断，没有成功状态、切换或 Backup；
-- F06 复制后目标损坏均在目标独立校验阻断，Current Pointer 与既有 LKG 不变；
-- dirty worktree、网络不可用、真实 Git divergence、Malformed Remote Ref 继续使用各自错误分类并 fail-closed；
-- Remote 未变化仍为每请求一次 `ls-remote`，第二个新请求重新查询，失败不使用旧结果降级；
+实际 PowerShell Fixture 连续执行两个独立 `-AlignAndVerify -Access PROJECT` 请求。每个请求均为一个 Python 进程、一个 Context、一次真实 `git ls-remote`；两次请求的 `verification_id` 不同，每次 `full_validation_count=3`、`reuse_count=1`。未跨请求复用 Remote SHA 或 PASS Evidence。
+
+F05、F06 分别在旧兼容路径和 P2 Context 路径执行：
+
+- F05 源 Manifest 文件哈希错误均在复制前阻断，无成功状态、切换或 Backup；
+- F06 复制后目标损坏均在目标独立校验阻断，Current Pointer 和既有 LKG 不变；
+- dirty worktree、网络不可用、真实 Git divergence、Malformed Remote Ref 保留原错误分类并 fail-closed；
+- Remote 未变化仍为每请求一次 `ls-remote`，新请求重新查询，查询失败不使用旧 SHA 降级；
 - Git divergence 未与 Canonical CAS Conflict 合并。
 
-因此未发现“旧路径拒绝、新路径接受”。
+未发现“旧路径拒绝、新路径接受”。
+
+## 复跑结果
 
 | 验证 | 结果 |
 |---|---|
-| Python 全量（P1/P2/根切换） | 38/38 PASS，0 fail，23,832.507 ms |
-| P2 + F05/F06 Context 专项 | 22/22 PASS |
-| Cloud 离线合同回归 | 63/63 PASS，0 fail，0 skip，825.871 ms |
-| Cloud 构建 | PASS，3,096.062 ms |
-| `python memory.py doctor` | PASS，710 个 Manifest 文件，1,135.368 ms |
-| `python sync-memory.py doctor` | PASS，一次性 OS 临时 Mirror Fixture，1,764.870 ms |
-| PowerShell `-AlignAndVerify -Access NONE` | PASS，81.778 ms；零 Git、零 Mirror |
+| P2 专项 | 27/27 PASS，约 24,734 ms |
+| 新增 Evidence 权威负向测试 | 6/6 PASS，约 1,768 ms |
+| F05/F06 定向回归 | 4/4 PASS，约 6,438 ms |
+| 实际非 NONE PowerShell 单请求/下一请求测试 | 1/1 PASS，约 10,679 ms |
+| Python 全量 | 47/47 PASS，0 fail |
+| Cloud 离线合同回归 | 63/63 PASS，0 fail，0 skip，约 817.524 ms |
+| Cloud 构建 | PASS，约 3,045.598 ms |
+| `python memory.py doctor` | PASS，710 个 Manifest 文件，实际 Evidence full 1/reuse 0 |
+| `python sync-memory.py doctor` | PASS，一次性 OS 临时 Mirror Fixture |
+| PowerShell `-AlignAndVerify -Access NONE` | PASS，约 130.539 ms，零 Git、零 Mirror |
+| Python bytecode 与 `git diff --check` | PASS |
 
-Cloud 构建只使用本地依赖与仓库源码；测试未调用生产服务。在线撤销、Supabase RLS 和生产授权变更没有被访问，而是通过注入的请求级授权/撤销/租户证据执行 fail-closed 合同测试。
+Cloud 构建使用已有本地依赖和仓库源码。全部同步/损坏场景均在一次性 Fixture 中运行；未连接生产服务。
 
 ## 变更文件
 
@@ -69,17 +77,19 @@ Cloud 构建只使用本地依赖与仓库源码；测试未调用生产服务�
 - `memory.py`
 - `sync-memory.py`
 - `AGENTS.md`
+- `config/clued-endpoint-trust.json`
 - `tests/test_p2_verification_context.py`
 - `tests/test_p1_align_and_verify.py`
 - `artifacts/clued-validation/p2/7f1bc29c/p2_raw_results.jsonl`
 - `artifacts/clued-validation/p2/7f1bc29c/SHA256SUMS`
 - `docs/clued-two-level-views/Clued_P2_Request-local_Verification_Context_验收报告_v1.0.md`
 
-## 证据
+## 证据路径
 
 - 原始结果：`artifacts/clued-validation/p2/7f1bc29c/p2_raw_results.jsonl`
 - 文件哈希：`artifacts/clued-validation/p2/7f1bc29c/SHA256SUMS`
-- 专项测试：`tests/test_p2_verification_context.py`
-- 旧/新拒绝等价测试：`tests/test_p1_align_and_verify.py`
+- P2 Gate 与真实入口测试：`tests/test_p2_verification_context.py`
+- F05/F06 与旧拒绝等价测试：`tests/test_p1_align_and_verify.py`
+- 可信端点边界：`config/clued-endpoint-trust.json`
 
-最终 Commit SHA 与各证据 Git Blob SHA 在功能分支提交后记录于提交/推送回执；本报告不预写尚未产生的 Git 身份。
+最终修复 Commit SHA 与证据 Git Blob SHA 在追加 Commit 和推送验证后由回执记录；本报告不预写尚未产生的 Git 身份。

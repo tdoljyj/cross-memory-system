@@ -12,7 +12,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
-from verification_context import RequestVerificationContext
+from verification_context import EndpointTrust, RequestVerificationContext
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -60,8 +60,17 @@ class F01SingleRemoteHeadQuery(unittest.TestCase):
                 return completed(REMOTE_SHA + "\n")
             raise AssertionError(f"unexpected command: {args}")
 
+        context = SimpleNamespace(
+            source_envelope=lambda **kwargs: "sources",
+            summary=lambda **kwargs: {"verification_id": "fixture"},
+        )
         with mock.patch.object(self.sync, "run", side_effect=fake_run), mock.patch.object(
-            self.sync, "mirror", side_effect=lambda remote_sha=None, context=None: mirrored.append(remote_sha)
+            self.sync, "new_verification_context", return_value=context
+        ), mock.patch.object(
+            self.sync, "mirror", side_effect=lambda remote_sha=None, context=None, emit=True: mirrored.append(remote_sha) or {}
+        ), mock.patch.object(
+            self.sync, "_doctor",
+            return_value=({"snapshot_version": "snap"}, {"snapshot_version": "snap"}, []),
         ):
             self.assertEqual(0, self.sync.cmd_align_and_verify("PROJECT"))
             self.assertEqual(0, self.sync.cmd_align_and_verify("PROJECT"))
@@ -81,7 +90,7 @@ class F01SingleRemoteHeadQuery(unittest.TestCase):
             raise AssertionError(f"unexpected command: {args}")
 
         with mock.patch.object(self.sync, "run", side_effect=fake_run), mock.patch.object(
-            self.sync, "mirror", side_effect=lambda remote_sha=None, context=None: mirrored.append(remote_sha)
+            self.sync, "mirror", side_effect=lambda remote_sha=None, context=None, emit=True: mirrored.append(remote_sha)
         ):
             with self.assertRaisesRegex(RuntimeError, "remote unavailable"):
                 self.sync.cmd_align_and_verify("PROJECT")
@@ -260,6 +269,7 @@ class ManifestBoundaryRegression(unittest.TestCase):
             pointer_path=self.current_pointer,
             version_path=ROOT / "VERSION",
             remote_head=REMOTE_SHA,
+            endpoint_trust=EndpointTrust.load(ROOT / "config" / "clued-endpoint-trust.json"),
         )
 
     def test_f05_source_hash_failure_blocks_before_copy(self):
