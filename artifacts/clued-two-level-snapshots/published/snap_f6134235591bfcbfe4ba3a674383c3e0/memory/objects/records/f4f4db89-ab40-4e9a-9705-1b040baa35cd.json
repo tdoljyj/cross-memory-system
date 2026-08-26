@@ -1,0 +1,38 @@
+{
+  "canonical_id": "f4f4db89-ab40-4e9a-9705-1b040baa35cd",
+  "canonical_version": "cv_155",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "- 纯卡牌 / 模拟经营 / 纯文字叙事方向",
+    "content_hash": "ac773c24556480af19ad91199672a12a32ffff43384a42224002798629288c06",
+    "id": "f4f4db89-ab40-4e9a-9705-1b040baa35cd",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "b546e552-ae70-4f53-8a38-df3fe269be83",
+    "record_schema_version": 1,
+    "record_type": "decision",
+    "recorded_at": "2026-08-25T05:23:24.90659+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_0afd7a20",
+    "title": "- 纯卡牌 / 模拟经营 / 纯文字叙事方向",
+    "type_fields": {
+      "legacy_priority": 40,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "rationale": "legacy_import_preserved_content"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

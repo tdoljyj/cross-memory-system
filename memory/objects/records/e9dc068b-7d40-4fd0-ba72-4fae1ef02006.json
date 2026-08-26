@@ -1,0 +1,38 @@
+{
+  "canonical_id": "e9dc068b-7d40-4fd0-ba72-4fae1ef02006",
+  "canonical_version": "cv_155",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "- 最大短板：战线过多、注意力分散（游戏原型、剧情、UE、Maya、插件、Atlas、名字、设计、硬件、手柄、公司、落户、房子、工具并行）",
+    "content_hash": "c5fd17bb4e4ba8d24f41278aeda878a2494dc2d7c583bba02a111414dccf395c",
+    "id": "e9dc068b-7d40-4fd0-ba72-4fae1ef02006",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "9fdf8027-6c81-4717-a7ce-aaf8b3122d55",
+    "record_schema_version": 1,
+    "record_type": "note",
+    "recorded_at": "2026-08-25T06:00:06.800595+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_a5e7caac",
+    "title": "- 最大短板：战线过多、注意力分散（游戏原型、剧情、UE、Maya、插件、Atlas、名字、设计、硬件、手柄、公司、落户、房子、工具并行）",
+    "type_fields": {
+      "legacy_priority": 40,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "note_kind": "legacy_import"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

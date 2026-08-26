@@ -1,0 +1,38 @@
+{
+  "canonical_id": "5a966ce7-4591-4ab8-809d-496bf53e9067",
+  "canonical_version": "cv_155",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "Clued 阶段 8B-3 已 PASS：生产新增 map_optimistic_conflicts_to_http_409 migration，已知 Record/Project 乐观锁冲突经 Data API 返回 HTTP 409；独立 clued-cloud-canary version 5c47e7fd-8819-47d1-86e0-d6aa7f97e435 启用 V2，完整写入/归档/恢复/supersede/原子推进与跨用户 smoke 通过，61/61 稳定性探针在 2,078.4 秒内零失败。全部临时数据、测试用户与活动写会话已清理，生产保持 Project/Mention/Memory/Event/Receipt 0/0/0/2/5，正式 Worker 仍为 bf0038c3-1456-4653-bdcf-f962ff962ec4 / Kernel 0.3.0。下一步只有用户明确确认后才进入 8B-4，导入 5–10 条低风险记录并双读校验。",
+    "content_hash": "12a1651ced1f4e9e85fe62d0811379bfb92c71c8b8c9796b12744ba3a1311c07",
+    "id": "5a966ce7-4591-4ab8-809d-496bf53e9067",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "ca845d80-9def-4c8a-9128-1b945acfbbf7",
+    "record_schema_version": 1,
+    "record_type": "state",
+    "recorded_at": "2026-08-25T06:00:31.572291+00:00",
+    "relations": {},
+    "scope": "project:0597aa60-9b98-4da6-a4ab-63d7705b632f",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_b3f14978",
+    "title": "Clued 阶段 8B-3 已 PASS：生产新增 map_optimistic_conflicts_to_http_409 migration，已知 Record/Project 乐观锁冲突经 Data API 返回 HTTP 409；独",
+    "type_fields": {
+      "legacy_priority": 80,
+      "legacy_status": "current",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "state_kind": "legacy_import"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

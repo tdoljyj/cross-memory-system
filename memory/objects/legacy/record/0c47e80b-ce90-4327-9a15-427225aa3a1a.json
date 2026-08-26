@@ -1,0 +1,38 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "721355ca76fb4e540294c880a1d3fe3d59bf4ef78373a244720952083f08ac44",
+    "inline_payload": {
+      "archived_at": "2026-08-25T06:00:12.982739+00:00",
+      "content": "从专职 3D 动画师向独立游戏制作人转型中，两条主线并行：UE 游戏原型 + 东方幻想剧情《山川夜语：逐日》。",
+      "created_at": "2026-08-25T06:00:12.982739+00:00",
+      "id": "0c47e80b-ce90-4327-9a15-427225aa3a1a",
+      "priority": 40,
+      "project_id": null,
+      "record_key": "umb:v1:mem_a69a84c2",
+      "record_type": "state",
+      "scope": "global",
+      "source_ref": "user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_a69a84c2",
+      "status": "archived",
+      "title": "从专职 3D 动画师向独立游戏制作人转型中，两条主线并行：UE 游戏原型 + 东方幻想剧情《山川夜语：逐日》",
+      "updated_at": "2026-08-25T06:00:12.982739+00:00",
+      "version": 1
+    },
+    "kind": "legacy_record",
+    "legacy_id": "0c47e80b-ce90-4327-9a15-427225aa3a1a",
+    "legacy_record_type": "state",
+    "legacy_schema_version": null,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

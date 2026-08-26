@@ -1,0 +1,38 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "b4bddd06f5bc68b18f69c8b1a91df3640c49c70f97474479ec0f343112ffe35a",
+    "inline_payload": {
+      "archived_at": "2026-08-25T06:00:49.040473+00:00",
+      "content": "- 2026-08-17 DSH 端接入 DESK-W-591 完成（DSH@TURING，本轮）：本机 DSH 第三端接入落地——独立克隆 ~/.dsh/projects/cross-memory-system（自远端 origin，版本真值核对：远端 main=9f6b4201=本地 HEAD；WorkBuddy 克隆已落后远端 4 提交，验证了「新端必须自远端克隆」）＋ gitignored sync.config.json（proxy=127.0.0.1:7897，git_candidates=C:/Users/Windows/git/mingw64/bin/git.exe，consumer_memory_path=~/.dsh/AGENTS.md）＋ bootstrap 推荐 git 配置（autocrlf=false / merge.union.driver / maintenance.auto=false）＋ 提交身份 DSH@TURING（tdoljyj@users.noreply.github.com）；消费端就位：~/.dsh/AGENTS.md（用户全局钩子，DSH 每会话自动注入、本会话已实测注入生效）＋ ~/.dsh/MEMORY.md（权威协议文件，内容同钩子）；sync-memory.py doctor ALL PASS（含 AGENTS.md conform 触发式禁令 PASS）；pull 对齐 9f6b4201 ✓；本轮完成 DSH 端首轮记忆写入闭环",
+      "created_at": "2026-08-25T06:00:49.040473+00:00",
+      "id": "f1ce7b51-325c-412f-9485-fce028ca6783",
+      "priority": 40,
+      "project_id": null,
+      "record_key": "umb:v1:mem_be0d7d2e",
+      "record_type": "archive_snapshot",
+      "scope": "global",
+      "source_ref": "user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_be0d7d2e",
+      "status": "archived",
+      "title": "- 2026-08-17 DSH 端接入 DESK-W-591 完成（DSH@TURING，本轮）：本机 DSH 第三端接入落地——独立克隆 ~/.dsh/projects/cross-memory-system（自远端 origin，版本",
+      "updated_at": "2026-08-25T06:00:49.040473+00:00",
+      "version": 1
+    },
+    "kind": "legacy_record",
+    "legacy_id": "f1ce7b51-325c-412f-9485-fce028ca6783",
+    "legacy_record_type": "archive_snapshot",
+    "legacy_schema_version": null,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

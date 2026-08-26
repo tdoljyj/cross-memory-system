@@ -1,0 +1,38 @@
+{
+  "canonical_id": "dd15d259-167c-407f-999b-4a179ad5722f",
+  "canonical_version": "cv_155",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "- 审美基调：东方但不古装化；神话但不仙侠化；克制、留白、现代语境重新诠释东方神话",
+    "content_hash": "941d61c0de7e231a3abc34e0e37320bd614df8036a892c0fab43c3dd0be2f3ac",
+    "id": "dd15d259-167c-407f-999b-4a179ad5722f",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "9ac59791-b7c2-49c4-a63c-13e9d5e4608c",
+    "record_schema_version": 1,
+    "record_type": "decision",
+    "recorded_at": "2026-08-25T05:57:46.411313+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_582c0fd1",
+    "title": "- 审美基调：东方但不古装化；神话但不仙侠化；克制、留白、现代语境重新诠释东方神话",
+    "type_fields": {
+      "legacy_priority": 40,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "rationale": "legacy_import_preserved_content"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

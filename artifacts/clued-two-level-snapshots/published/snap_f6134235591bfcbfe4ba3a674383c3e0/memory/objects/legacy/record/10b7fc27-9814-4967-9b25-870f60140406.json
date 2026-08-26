@@ -1,0 +1,38 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "524020b5c6bb20673f7a21b65839c515ed6b4f9d3b7fd6c24304b00664f48799",
+    "inline_payload": {
+      "archived_at": "2026-08-25T06:00:04.533004+00:00",
+      "content": "- 2026-08-16 DSH 端全面实现审计与技术评估（DSH@TURING，本轮）：基线 doctor ALL PASS + 验收 33/33 全绿；发现 P1×3（ps1 push 卷入预 staged 非 memory 文件→密钥扫描绕过 + NO_CHANGE 违约[3 组实证]；部署护栏漏「DSH 克隆×ps1」单元格；py REPO 回落默认指向 WorkBuddy 克隆）+ P2×8 + P3×9；产出《技术评估报告-vNext-1.3-DSH-2026-08-16.md》（仓库根，含优化路线图：P0 六项），修复项登记待办.md 待闭环",
+      "created_at": "2026-08-25T06:00:04.533004+00:00",
+      "id": "10b7fc27-9814-4967-9b25-870f60140406",
+      "priority": 40,
+      "project_id": null,
+      "record_key": "umb:v1:mem_a3c26c97",
+      "record_type": "archive_snapshot",
+      "scope": "global",
+      "source_ref": "user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_a3c26c97",
+      "status": "archived",
+      "title": "- 2026-08-16 DSH 端全面实现审计与技术评估（DSH@TURING，本轮）：基线 doctor ALL PASS + 验收 33/33 全绿；发现 P1×3（ps1 push 卷入预 staged 非 memory 文件→密钥",
+      "updated_at": "2026-08-25T06:00:04.533004+00:00",
+      "version": 1
+    },
+    "kind": "legacy_record",
+    "legacy_id": "10b7fc27-9814-4967-9b25-870f60140406",
+    "legacy_record_type": "archive_snapshot",
+    "legacy_schema_version": null,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

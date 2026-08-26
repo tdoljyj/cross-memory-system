@@ -1,0 +1,38 @@
+{
+  "canonical_id": "710275d6-071b-4a0d-861d-8eef91cc90d5",
+  "canonical_version": "cv_155",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "Clued 阶段 8B-1 已于 2026-08-24 PASS：生产 Worker/version、Supabase 三条 migration 与关键表 0/2/5 已冻结；Free Plan 无自动备份，改用 US/月临时项目完成 AES-256-GCM 受控逻辑备份、生产/恢复摘要一致性、跨用户 RLS、六迁移重放、pgTAP 16/16 与迁移后 legacy CRUD。生产写入 0，003/V2、PROJECT_VIEWS_V2、Worker、DNS、Binding、密钥均未变化；下一步须由用户独立确认 8B-1 并授权 8B-2，且 8B-2 仅应用 additive migration、开关继续关闭。",
+    "content_hash": "7c60e509919ba421a26f94cc4f349f4c8678e3073bf6984f2052c154a13a58a1",
+    "id": "710275d6-071b-4a0d-861d-8eef91cc90d5",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "3d573112-88a4-4428-8c84-1775e3468511",
+    "record_schema_version": 1,
+    "record_type": "state",
+    "recorded_at": "2026-08-25T06:01:23.771461+00:00",
+    "relations": {},
+    "scope": "project:0597aa60-9b98-4da6-a4ab-63d7705b632f",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_caa21170",
+    "title": "Clued 阶段 8B-1 已于 2026-08-24 PASS：生产 Worker/version、Supabase 三条 migration 与关键表 0/2/5 已冻结；Free Plan 无自动备份，改用 US/月临时项目完成 AE",
+    "type_fields": {
+      "legacy_priority": 80,
+      "legacy_status": "current",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "state_kind": "legacy_import"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

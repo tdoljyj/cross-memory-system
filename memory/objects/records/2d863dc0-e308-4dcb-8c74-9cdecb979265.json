@@ -1,0 +1,38 @@
+{
+  "canonical_id": "2d863dc0-e308-4dcb-8c74-9cdecb979265",
+  "canonical_version": "cv_155",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "- 一条主线贯穿所有选择：把「脑子里认为应该存在的东西」变成现实——先是动画，再是工具（Atlas），再是游戏，最后是工作室 / IP",
+    "content_hash": "330c00f5c70332c4419a0680341cc1e8976b3cf9b7110e8040e55dbe93e73439",
+    "id": "2d863dc0-e308-4dcb-8c74-9cdecb979265",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "680e7f9a-3bf0-4f5c-8402-8f1d55b97dd9",
+    "record_schema_version": 1,
+    "record_type": "note",
+    "recorded_at": "2026-08-25T05:23:26.013672+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_0b0c2742",
+    "title": "- 一条主线贯穿所有选择：把「脑子里认为应该存在的东西」变成现实——先是动画，再是工具（Atlas），再是游戏，最后是工作室 / IP",
+    "type_fields": {
+      "legacy_priority": 40,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "note_kind": "legacy_import"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

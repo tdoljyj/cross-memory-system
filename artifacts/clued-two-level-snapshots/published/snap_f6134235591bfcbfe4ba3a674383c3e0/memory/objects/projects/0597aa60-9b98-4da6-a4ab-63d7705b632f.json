@@ -1,0 +1,25 @@
+{
+  "canonical_id": "0597aa60-9b98-4da6-a4ab-63d7705b632f",
+  "canonical_version": "cv_155",
+  "data": {
+    "aliases": [],
+    "canonical_project_id": "0597aa60-9b98-4da6-a4ab-63d7705b632f",
+    "certainty_status": "confirmed",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "lifecycle_status": "active",
+    "merge_generation": 0,
+    "merged_into_project_id": null,
+    "name": "clued",
+    "progress_status": "active",
+    "project_schema_version": 1,
+    "receipt_id": null,
+    "recorded_at": "2026-08-25T05:23:12.720112+00:00",
+    "updated_at": "2026-08-25T05:23:12.720112+00:00",
+    "version": 1
+  },
+  "kind": "project",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

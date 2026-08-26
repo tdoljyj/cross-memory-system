@@ -1,0 +1,38 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "4d9a1ae97367440ff1ea70de4a33c207baaf36eba8b85810018852b50e2f607d",
+    "inline_payload": {
+      "archived_at": "2026-08-25T06:00:09.910318+00:00",
+      "content": "- 基线：开场 pull 对齐（本地=远端=5f99dad，tracking ref 补写成功）；doctor ALL PASS；三镜像（WB 克隆 / Codex 克隆 / Documents）五文件字节一致；无残留锁、无残留标记；全局 ~/.codex/AGENTS.md 与仓库版哈希一致；配置全在位（union driver / autocrlf=false / gc·maintenance 全关 / credential=gh / 身份 WorkBuddy@TURING）",
+      "created_at": "2026-08-25T06:00:09.910318+00:00",
+      "id": "efd2aa9b-c942-4e16-a38c-5029983e80a9",
+      "priority": 40,
+      "project_id": null,
+      "record_key": "umb:v1:mem_a651daff",
+      "record_type": "archive_snapshot",
+      "scope": "global",
+      "source_ref": "user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_a651daff",
+      "status": "archived",
+      "title": "- 基线：开场 pull 对齐（本地=远端=5f99dad，tracking ref 补写成功）；doctor ALL PASS；三镜像（WB 克隆 / Codex 克隆 / Documents）五文件字节一致；无残留锁、无残留标记；全局",
+      "updated_at": "2026-08-25T06:00:09.910318+00:00",
+      "version": 1
+    },
+    "kind": "legacy_record",
+    "legacy_id": "efd2aa9b-c942-4e16-a38c-5029983e80a9",
+    "legacy_record_type": "archive_snapshot",
+    "legacy_schema_version": null,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

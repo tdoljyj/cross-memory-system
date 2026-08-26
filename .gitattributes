@@ -1,6 +1,2 @@
-# All files in this repo are text. Force LF on every checkout so the Codex
-# working tree / Documents memory and the WorkBuddy mirror stay byte-identical
-# (the sync script compares raw file hashes across mirrors).
 * text eol=lf
 *.png binary
-memory/归档.md merge=union

@@ -1,0 +1,38 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "7ff60bca28d708c2416d385a95c4b14517722f1bbbb6e23ba2867594595f7d9b",
+    "inline_payload": {
+      "archived_at": "2026-08-25T05:59:12.794603+00:00",
+      "content": "- 仓库更名 codex-memory-system → cross-memory-system（gh repo rename，旧链接自动重定向）；两个本地克隆 remote 已更新，本地目录名保持不变（AGENTS.md / sync 脚本依赖路径）",
+      "created_at": "2026-08-25T05:59:12.794603+00:00",
+      "id": "2f5c6f00-7eb9-46f4-ae31-5106c1245164",
+      "priority": 40,
+      "project_id": null,
+      "record_key": "umb:v1:mem_8c3228a6",
+      "record_type": "archive_snapshot",
+      "scope": "global",
+      "source_ref": "user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_8c3228a6",
+      "status": "archived",
+      "title": "- 仓库更名 codex-memory-system → cross-memory-system（gh repo rename，旧链接自动重定向）；两个本地克隆 remote 已更新，本地目录名保持不变（AGENTS.md / sync 脚",
+      "updated_at": "2026-08-25T05:59:12.794603+00:00",
+      "version": 1
+    },
+    "kind": "legacy_record",
+    "legacy_id": "2f5c6f00-7eb9-46f4-ae31-5106c1245164",
+    "legacy_record_type": "archive_snapshot",
+    "legacy_schema_version": null,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

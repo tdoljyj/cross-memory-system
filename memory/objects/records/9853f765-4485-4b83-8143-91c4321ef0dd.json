@@ -1,0 +1,38 @@
+{
+  "canonical_id": "9853f765-4485-4b83-8143-91c4321ef0dd",
+  "canonical_version": "cv_155",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "- 自研 GroundMate / MotionCorrector / Atlas 不是喜欢造轮子，而是希望关键环节按自己逻辑运行、拥有控制权",
+    "content_hash": "d63c8a8bc4138789d0be1487a209ff6cbf57694cab4dbff654c339b442467af3",
+    "id": "9853f765-4485-4b83-8143-91c4321ef0dd",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "392f6557-460b-4d86-803f-c975aafded1f",
+    "record_schema_version": 1,
+    "record_type": "note",
+    "recorded_at": "2026-08-25T05:58:55.88207+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_87e58d81",
+    "title": "- 自研 GroundMate / MotionCorrector / Atlas 不是喜欢造轮子，而是希望关键环节按自己逻辑运行、拥有控制权",
+    "type_fields": {
+      "legacy_priority": 40,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "note_kind": "legacy_import"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

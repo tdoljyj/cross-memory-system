@@ -1,0 +1,38 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "e4eced91e89d4aaea049c74139dc69c0b84cbb216206f5d6af98731c8c5a297e",
+    "inline_payload": {
+      "archived_at": "2026-08-25T06:00:58.340858+00:00",
+      "content": "- Atlas（Maya 动画工具平台）：暂不考虑商业化",
+      "created_at": "2026-08-25T06:00:58.340858+00:00",
+      "id": "1bcaaf46-89e4-4548-9c7b-500b43a21538",
+      "priority": 40,
+      "project_id": null,
+      "record_key": "umb:v1:mem_c13fad46",
+      "record_type": "note",
+      "scope": "global",
+      "source_ref": "user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_c13fad46",
+      "status": "archived",
+      "title": "- Atlas（Maya 动画工具平台）：暂不考虑商业化",
+      "updated_at": "2026-08-25T06:00:58.340858+00:00",
+      "version": 1
+    },
+    "kind": "legacy_record",
+    "legacy_id": "1bcaaf46-89e4-4548-9c7b-500b43a21538",
+    "legacy_record_type": "note",
+    "legacy_schema_version": null,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

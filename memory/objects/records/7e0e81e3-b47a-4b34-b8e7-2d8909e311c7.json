@@ -1,0 +1,38 @@
+{
+  "canonical_id": "7e0e81e3-b47a-4b34-b8e7-2d8909e311c7",
+  "canonical_version": "cv_155",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "- 理想 AI：能进入工作上下文、跟着思路推进的「项目记忆型搭档」，不是百科全书或搜索框",
+    "content_hash": "5ff60114df08836a466f448e7174149ea80dc2cba45ba6686fa3471c8f258028",
+    "id": "7e0e81e3-b47a-4b34-b8e7-2d8909e311c7",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "91dad06e-50f3-4178-a606-6b2f878007bc",
+    "record_schema_version": 1,
+    "record_type": "note",
+    "recorded_at": "2026-08-25T05:57:25.300384+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_48f3acde",
+    "title": "- 理想 AI：能进入工作上下文、跟着思路推进的「项目记忆型搭档」，不是百科全书或搜索框",
+    "type_fields": {
+      "legacy_priority": 40,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "note_kind": "legacy_import"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

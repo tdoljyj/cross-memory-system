@@ -1,0 +1,40 @@
+{
+  "canonical_id": "c1dc1bdf-8787-4ec4-b3f9-f6850814dc5c",
+  "canonical_version": "cv_155",
+  "data": {
+    "authority": "user_explicit",
+    "closed_at": "2026-08-25T23:44:21.19388+00:00",
+    "closed_reason": "Superseded before v1.6 root cutover.",
+    "closure_summary": "Superseded legacy continuity state mem_a004c38c.",
+    "confidence": 1,
+    "confidence_reason": "Legacy mem_a004c38c is superseded; preserve as archived history.",
+    "content": "2026-08-26 Clued v1.6 M1 当前生产镜像门已关闭：126 条非终态 legacy 全部映射为 M1 canonical，126 Receipt 与 126 Event 完整；生产非终态 legacy 为 0，136 archived legacy 与 263 legacy Event 只读保留；snapshot snap_d04d68806b63819ca12b7a2a58bf2f27 / cv_137 已通过 authenticated RLS live_rechecked、views_complete=true 并激活 current.json。pgTAP 72/72、Node 58/58、v2 红线 14/14、typecheck、ESLint、DB lint、build 全绿；M2/merge 关闭。",
+    "content_hash": "12371c5b644d9e1e8e61a5451458801e88e6e606d26bedce43cf9264319f6842",
+    "id": "c1dc1bdf-8787-4ec4-b3f9-f6850814dc5c",
+    "lifecycle_status": "archived",
+    "merged_into_record_id": null,
+    "observed_at": "2026-08-25T19:07:53+00:00",
+    "receipt_id": "e42ea6c7-9fd4-46f8-9df1-2a62477f843d",
+    "record_schema_version": 1,
+    "record_type": "state",
+    "recorded_at": "2026-08-25T23:44:18.055289+00:00",
+    "relations": {
+      "depends_on": [],
+      "related_records": [],
+      "supersedes": []
+    },
+    "scope": "project:0597aa60-9b98-4da6-a4ab-63d7705b632f",
+    "source_refs": [],
+    "source_unavailable_reason": "Source preserved at Git tag pre-memory-v16-root-cutover-20260826:memory/objects/mem_a004c38c.json",
+    "title": "Clued v1.6 M1 当前生产镜像门关闭",
+    "type_fields": {
+      "priority": 90,
+      "state_kind": "milestone"
+    },
+    "updated_at": "2026-08-25T23:44:21.19388+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

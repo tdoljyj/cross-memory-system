@@ -1,0 +1,38 @@
+{
+  "canonical_id": "fa54133a-a268-4abd-b265-6f87c34ef265",
+  "canonical_version": "cv_155",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "确认「当前最重要的一件事」：原型 / 剧情 / 名字收敛？",
+    "content_hash": "dfe14b348b77aded5a69645d70f1fdaf2b3a16d0d0d994f60b3e78985cbad47d",
+    "id": "fa54133a-a268-4abd-b265-6f87c34ef265",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "a632af6b-8548-4d95-b37b-607ac76158f3",
+    "record_schema_version": 1,
+    "record_type": "task",
+    "recorded_at": "2026-08-25T06:01:55.814788+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_dbeb22c4",
+    "title": "确认「当前最重要的一件事」：原型 / 剧情 / 名字收敛",
+    "type_fields": {
+      "execution_bucket": "later",
+      "legacy_priority": 40,
+      "legacy_status": "backlog",
+      "migration_batch": "m1-current-legacy-20260826-v1"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

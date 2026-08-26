@@ -1,0 +1,38 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "3282aba523a63dd3c75f9c76ff8f0df42c77a0cab84c05cbd64684cd834ca536",
+    "inline_payload": {
+      "archived_at": "2026-08-25T06:00:20.575662+00:00",
+      "content": "- 对齐修改（明确保留/调整/替换）：",
+      "created_at": "2026-08-25T06:00:20.575662+00:00",
+      "id": "4aac4085-2ca2-4bf7-aef4-c23874a3cc5c",
+      "priority": 40,
+      "project_id": null,
+      "record_key": "umb:v1:mem_afa11445",
+      "record_type": "archive_snapshot",
+      "scope": "global",
+      "source_ref": "user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_afa11445",
+      "status": "archived",
+      "title": "- 对齐修改（明确保留/调整/替换）：",
+      "updated_at": "2026-08-25T06:00:20.575662+00:00",
+      "version": 1
+    },
+    "kind": "legacy_record",
+    "legacy_id": "4aac4085-2ca2-4bf7-aef4-c23874a3cc5c",
+    "legacy_record_type": "archive_snapshot",
+    "legacy_schema_version": null,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

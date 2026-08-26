@@ -1,0 +1,16 @@
+# Global / task
+
+- `27876dbf-dfad-44cb-a434-3339710600cf` — 结构化语义合并：状态.md / 待办.md 按标题块三路合并，替代整文件 diff 与人工冲突清理（基线附录 D 待办）——冻结：双端同改同一文件概率极低，merge+手工兜底已够，收益<风险: 结构化语义合并：状态.md / 待办.md 按标题块三路合并，替代整文件 diff 与人工冲突清理（基线附录 D 待办）——冻结：双端同改同一文件概率极低，merge+手工兜底已够，收益<风险 [lifecycle_status=active; version=2]
+- `5568da69-a628-4c97-8c4d-5fd05da36db0` — 换行符/BOM 自愈（哈希比对前归一化，防 CRLF 漂移被误判为未同步）——冻结：.gitattributes 已锁定 LF 无 BOM，自愈反而掩盖差异: 换行符/BOM 自愈（哈希比对前归一化，防 CRLF 漂移被误判为未同步）——冻结：.gitattributes 已锁定 LF 无 BOM，自愈反而掩盖差异 [lifecycle_status=active; version=2]
+- `5a834462-878b-4334-bc46-3fea19dc5b39` — 双脚本协议统一或加一致性测试（py/ps1 双实现已漂移过一次：核验逻辑 ps1 祖先判定 vs py 仍为 == 比较）——冻结：核验逻辑已在 vNext-1.2 统一，彻底合并成本高收益低: 双脚本协议统一或加一致性测试（py/ps1 双实现已漂移过一次：核验逻辑 ps1 祖先判定 vs py 仍为 == 比较）——冻结：核验逻辑已在 vNext-1.2 统一，彻底合并成本高收益低 [lifecycle_status=active; version=2]
+- `5afbd814-0d71-4c64-aba3-ea253ed1b9ff` — 接第二台机器时用 -Doctor 验证可移植性（macOS / Linux 需 pwsh，待测）——触发：接第二台机器时执行，现在无需做: 接第二台机器时用 -Doctor 验证可移植性（macOS / Linux 需 pwsh，待测）——触发：接第二台机器时执行，现在无需做 [lifecycle_status=active; version=2]
+- `7117d09f-3381-4ac9-a666-5f0fe34f3384` — 沿「鱼火」方向收敛最终工作室名: 沿「鱼火」方向收敛最终工作室名 [lifecycle_status=active; version=2]
+- `71e9a390-2678-4d9c-9b96-6f6e71eb4104` — 补充同机本地同步锁（防并行互踩；push 验证已改祖先判定）+ 状态/待办结构化语义合并（冲突自动保留两端语义）——冻结：git index.lock 已兜底；结构化语义合并同上方冻结项: 补充同机本地同步锁（防并行互踩；push 验证已改祖先判定）+ 状态/待办结构化语义合并（冲突自动保留两端语义）——冻结：git index.lock 已兜底；结构化语义合并同上方冻结项 [lifecycle_status=active; version=2]
+- `73c38b2b-9814-4e9e-a60a-8120a74281a7` — DSH 端评估 P1 短期项剩余（评估报告 #7/#8/#13/#14，归入 Sprint 3 治理）：保留期口径统一（guards 2 天 vs 文档 7 天）+ 口径测试；决策.md:18 凭据旧口径标 superseded；版本 ta: DSH 端评估 P1 短期项剩余（评估报告 #7/#8/#13/#14，归入 Sprint 3 治理）：保留期口径统一（guards 2 天 vs 文档 7 天）+ 口径测试；决策.md:18 凭据旧口径标 superseded；版本 ta [lifecycle_status=active; version=2]
+- `8db87882-5952-4eea-b7e4-6882124220a0` — 确定第一个可玩的最小原型范围: 确定第一个可玩的最小原型范围 [lifecycle_status=active; version=2]
+- `c1b1041a-3831-4d99-890d-844f78a72c78` — 归档.md union 合并后去重（union driver 两端同加相同内容会保留重复行）——冻结：仅两端同加相同内容时才发生，极罕见: 归档.md union 合并后去重（union driver 两端同加相同内容会保留重复行）——冻结：仅两端同加相同内容时才发生，极罕见 [lifecycle_status=active; version=2]
+- `c2e2382d-6598-49cc-8b1d-d2497d4a79c7` — UE 项目驱动学习：先学立刻要用的部分: UE 项目驱动学习：先学立刻要用的部分 [lifecycle_status=active; version=2]
+- `d1db19a2-b30d-437a-bf01-f384340bbb31` — AGENTS.md 按端参数化（当前以 Codex 路径为中心，WorkBuddy 侧副本陈旧且引用已删章节）——冻结：Codex 全局钩子已一致，WorkBuddy 侧 MEMORY.md 由 WorkBuddy 自管: AGENTS.md 按端参数化（当前以 Codex 路径为中心，WorkBuddy 侧副本陈旧且引用已删章节）——冻结：Codex 全局钩子已一致，WorkBuddy 侧 MEMORY.md 由 WorkBuddy 自管 [lifecycle_status=active; version=2]
+- `d603567e-d7ce-4f29-9dce-093f26581b17` — 《山川夜语：逐日》世界观 / 角色 / 故事结构继续推进: 《山川夜语：逐日》世界观 / 角色 / 故事结构继续推进 [lifecycle_status=active; version=2]
+- `de39f8e7-12ef-486f-9869-3763762cade4` — 公开版去敏模板（可选，仅当想分享系统时做）——归档：无分享需求时不做: 公开版去敏模板（可选，仅当想分享系统时做）——归档：无分享需求时不做 [lifecycle_status=active; version=2]
+- `fa54133a-a268-4abd-b265-6f87c34ef265` — 确认「当前最重要的一件事」：原型 / 剧情 / 名字收敛: 确认「当前最重要的一件事」：原型 / 剧情 / 名字收敛 [lifecycle_status=active; version=2]

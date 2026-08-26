@@ -1,0 +1,38 @@
+{
+  "canonical_id": "e535a3e2-0998-4bdf-9f51-d56844045813",
+  "canonical_version": "cv_155",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "2026-08-22 用户明确指令“开始执行K2”，Clued Kernel R5 K2 已从 LOCKED 解锁；K0 历史 NO_GO 与旧证据隔离继续保留。K3 在新的明确授权前保持 LOCKED；禁止未经授权 push/merge/tag/release/deploy、切换真实 Binding 或启用语义召回。",
+    "content_hash": "e78687925a1326781ded21cfe8f9d3bf5848de4a1d9584bd2a4beb10cc8ecc0d",
+    "id": "e535a3e2-0998-4bdf-9f51-d56844045813",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "c29b0a2d-aa19-44ac-8a5f-e6440fd5c696",
+    "record_schema_version": 1,
+    "record_type": "decision",
+    "recorded_at": "2026-08-25T05:24:15.699977+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_110c1854",
+    "title": "2026-08-22 用户明确指令“开始执行K2”，Clued Kernel R5 K2 已从 LOCKED 解锁；K0 历史 NO_GO 与旧证据隔离继续保留",
+    "type_fields": {
+      "legacy_priority": 80,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "rationale": "legacy_import_preserved_content"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

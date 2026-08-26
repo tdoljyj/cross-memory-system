@@ -1,0 +1,40 @@
+{
+  "canonical_id": "ffb7c3a9-b812-495d-ab33-a53ede2e5909",
+  "canonical_version": "cv_155",
+  "data": {
+    "authority": "user_explicit",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": 1,
+    "confidence_reason": "Legacy Memory Engine object mem_b8b13e65; deterministic G2 reconciliation.",
+    "content": "2026-08-26 用户已明确授权并完成 Clued v1.6 M1 的 126 条非终态 legacy record 确定性映射；136 条 archived legacy 继续只读保留，认证 RLS export 达到 views_complete=true，current.json 已激活。M2 与 merge 写入继续关闭。",
+    "content_hash": "7c85c3022d0264af9518b572b9acfefd4af08d3fae870ffb4f93ba7a43a981f4",
+    "id": "ffb7c3a9-b812-495d-ab33-a53ede2e5909",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": "2026-08-25T19:07:47+00:00",
+    "receipt_id": "63eb99bc-b2a0-4135-9c30-1b3bf955ab5c",
+    "record_schema_version": 1,
+    "record_type": "state",
+    "recorded_at": "2026-08-25T23:44:31.316468+00:00",
+    "relations": {
+      "depends_on": [],
+      "related_records": [],
+      "supersedes": []
+    },
+    "scope": "project:0597aa60-9b98-4da6-a4ab-63d7705b632f",
+    "source_refs": [],
+    "source_unavailable_reason": "Source preserved at Git tag pre-memory-v16-root-cutover-20260826:memory/objects/mem_b8b13e65.json",
+    "title": "Clued v1.6 M1 映射完成",
+    "type_fields": {
+      "priority": 90,
+      "state_kind": "milestone"
+    },
+    "updated_at": "2026-08-25T23:44:31.316468+00:00",
+    "version": 1
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

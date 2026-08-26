@@ -1,0 +1,38 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "506d931760ad98f6eaf2bba8d20269e3acf3c24ad056d2b7d83bc1a625203b63",
+    "inline_payload": {
+      "archived_at": "2026-08-25T06:00:55.651999+00:00",
+      "content": "- sync-memory.ps1 参数化：新增 gitignored sync.config.ps1（AgentName / HostName / ProxyUrl / MemoryDir / GitName / GitEmail），读不到回落本机默认；-Doctor 开关做接入自检",
+      "created_at": "2026-08-25T06:00:55.651999+00:00",
+      "id": "cea482fb-2052-406d-be56-048f4df340e3",
+      "priority": 40,
+      "project_id": null,
+      "record_key": "umb:v1:mem_c031bda4",
+      "record_type": "archive_snapshot",
+      "scope": "global",
+      "source_ref": "user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_c031bda4",
+      "status": "archived",
+      "title": "- sync-memory.ps1 参数化：新增 gitignored sync.config.ps1（AgentName / HostName / ProxyUrl / MemoryDir / GitName / GitEmail），读不",
+      "updated_at": "2026-08-25T06:00:55.651999+00:00",
+      "version": 1
+    },
+    "kind": "legacy_record",
+    "legacy_id": "cea482fb-2052-406d-be56-048f4df340e3",
+    "legacy_record_type": "archive_snapshot",
+    "legacy_schema_version": null,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

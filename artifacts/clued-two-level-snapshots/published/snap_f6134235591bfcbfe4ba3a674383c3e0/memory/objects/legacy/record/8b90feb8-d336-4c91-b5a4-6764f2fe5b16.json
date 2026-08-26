@@ -1,0 +1,38 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "fc962c0b0134b08657a5e359c28cf9418db19241e7d28470201d347b9d9b0afe",
+    "inline_payload": {
+      "archived_at": "2026-08-25T05:25:09.623786+00:00",
+      "content": "- sync-memory.py / sync-memory.ps1（调整）：头部注释补基线溯源（模块定位=AI Adapter Sync Layer、只与 Canonical Store 同步、按需触发策略、staged 空检查=Change Detector）；两脚本语法校验通过（ps1 PSParser 0 errors / py_compile OK）",
+      "created_at": "2026-08-25T05:25:09.623786+00:00",
+      "id": "8b90feb8-d336-4c91-b5a4-6764f2fe5b16",
+      "priority": 40,
+      "project_id": null,
+      "record_key": "umb:v1:mem_1b6049f2",
+      "record_type": "archive_snapshot",
+      "scope": "global",
+      "source_ref": "user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_1b6049f2",
+      "status": "archived",
+      "title": "- sync-memory.py / sync-memory.ps1（调整）：头部注释补基线溯源（模块定位=AI Adapter Sync Layer、只与 Canonical Store 同步、按需触发策略、staged 空检查=Chan",
+      "updated_at": "2026-08-25T05:25:09.623786+00:00",
+      "version": 1
+    },
+    "kind": "legacy_record",
+    "legacy_id": "8b90feb8-d336-4c91-b5a4-6764f2fe5b16",
+    "legacy_record_type": "archive_snapshot",
+    "legacy_schema_version": null,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

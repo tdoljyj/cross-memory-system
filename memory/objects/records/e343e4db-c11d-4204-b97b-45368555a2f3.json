@@ -1,0 +1,40 @@
+{
+  "canonical_id": "e343e4db-c11d-4204-b97b-45368555a2f3",
+  "canonical_version": "cv_155",
+  "data": {
+    "authority": "user_explicit",
+    "closed_at": "2026-08-25T23:44:27.431013+00:00",
+    "closed_reason": "Superseded before v1.6 root cutover.",
+    "closure_summary": "Superseded legacy continuity state mem_a4996fc9.",
+    "confidence": 1,
+    "confidence_reason": "Legacy mem_a4996fc9 is superseded; preserve as archived history.",
+    "content": "Clued v1.6 M1 运行时合同已部署生产；下一步需用户另行明确授权后，只将 126 条非终态 legacy record 确定性映射为 M1 canonical，136 条 archived legacy（含 121 条 archive_snapshot）继续只读保留。映射后重跑用户 JWT/RLS live export，仅 views_complete=true 时激活 current.json；M2 与 merge 写入继续关闭。",
+    "content_hash": "ce19e94bdde0f323cecda4d64d4005182caf4c8512d59ec93263ac199e619fd2",
+    "id": "e343e4db-c11d-4204-b97b-45368555a2f3",
+    "lifecycle_status": "archived",
+    "merged_into_record_id": null,
+    "observed_at": "2026-08-25T17:58:28+00:00",
+    "receipt_id": "18cbac93-2fc2-45d2-9f3c-1e46a1aa2c61",
+    "record_schema_version": 1,
+    "record_type": "state",
+    "recorded_at": "2026-08-25T23:44:24.528176+00:00",
+    "relations": {
+      "depends_on": [],
+      "related_records": [],
+      "supersedes": []
+    },
+    "scope": "project:0597aa60-9b98-4da6-a4ab-63d7705b632f",
+    "source_refs": [],
+    "source_unavailable_reason": "Source preserved at Git tag pre-memory-v16-root-cutover-20260826:memory/objects/mem_a4996fc9.json",
+    "title": "Clued v1.6 M1 映射待授权",
+    "type_fields": {
+      "priority": 90,
+      "state_kind": "milestone"
+    },
+    "updated_at": "2026-08-25T23:44:27.431013+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

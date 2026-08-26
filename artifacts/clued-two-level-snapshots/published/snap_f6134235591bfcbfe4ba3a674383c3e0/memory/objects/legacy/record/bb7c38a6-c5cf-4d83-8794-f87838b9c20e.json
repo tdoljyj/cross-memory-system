@@ -1,0 +1,38 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "58757673cd7be2705a5b0ef6603072071d30c0492b1fcc134d9f6efab27d25c6",
+    "inline_payload": {
+      "archived_at": "2026-08-25T05:56:57.277282+00:00",
+      "content": "- 跨会话记忆：画像 / 状态 / 决策 / 待办 / 归档五个文件，GitHub 私有仓库 tdoljyj/cross-memory-system（2026-08-15 由 codex-memory-system 更名）；多方接入：Codex（Documents\\Codex\\memory + sync-memory.ps1 自动同步，代理优先 127.0.0.1:7897 且固定 openssl 后端、直连兜底）、WorkBuddy（~/.workbuddy/codex-memory-system 独立副本，双向经仓库交换、不直写对方工作区：按基线 vNext-1.2 按需 pull/push——Router 命中才拉取、有记忆写入才推送）；双端对称「不越界」规则已固化（2026-08-15）",
+      "created_at": "2026-08-25T05:56:57.277282+00:00",
+      "id": "bb7c38a6-c5cf-4d83-8794-f87838b9c20e",
+      "priority": 40,
+      "project_id": null,
+      "record_key": "umb:v1:mem_442b42b1",
+      "record_type": "archive_snapshot",
+      "scope": "global",
+      "source_ref": "user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_442b42b1",
+      "status": "archived",
+      "title": "- 跨会话记忆：画像 / 状态 / 决策 / 待办 / 归档五个文件，GitHub 私有仓库 tdoljyj/cross-memory-system（2026-08-15 由 codex-memory-system 更名）；多方接入：Cod",
+      "updated_at": "2026-08-25T05:56:57.277282+00:00",
+      "version": 1
+    },
+    "kind": "legacy_record",
+    "legacy_id": "bb7c38a6-c5cf-4d83-8794-f87838b9c20e",
+    "legacy_record_type": "archive_snapshot",
+    "legacy_schema_version": null,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

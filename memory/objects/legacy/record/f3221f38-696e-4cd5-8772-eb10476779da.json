@@ -1,0 +1,38 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "2f25d5dc3321edee80eb4000ac431855d69fc581ae19fa5b62f9830a7f44cfa1",
+    "inline_payload": {
+      "archived_at": "2026-08-25T05:59:16.886398+00:00",
+      "content": "- 身份审计：repo user.name = AI名@机器名（WorkBuddy@TURING / Codex@TURING），commit message 带身份，git log / blame 可追溯",
+      "created_at": "2026-08-25T05:59:16.886398+00:00",
+      "id": "f3221f38-696e-4cd5-8772-eb10476779da",
+      "priority": 40,
+      "project_id": null,
+      "record_key": "umb:v1:mem_8c4e5d9a",
+      "record_type": "archive_snapshot",
+      "scope": "global",
+      "source_ref": "user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_8c4e5d9a",
+      "status": "archived",
+      "title": "- 身份审计：repo user.name = AI名@机器名（WorkBuddy@TURING / Codex@TURING），commit message 带身份，git log / blame 可追溯",
+      "updated_at": "2026-08-25T05:59:16.886398+00:00",
+      "version": 1
+    },
+    "kind": "legacy_record",
+    "legacy_id": "f3221f38-696e-4cd5-8772-eb10476779da",
+    "legacy_record_type": "archive_snapshot",
+    "legacy_schema_version": null,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

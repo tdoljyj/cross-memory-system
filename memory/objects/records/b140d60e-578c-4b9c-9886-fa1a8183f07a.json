@@ -1,0 +1,38 @@
+{
+  "canonical_id": "b140d60e-578c-4b9c-9886-fa1a8183f07a",
+  "canonical_version": "cv_155",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "- 记忆系统按「多机多 AI 协同」构建（2026-08-15）：git 唯一数据源 + 各端镜像 + 不越界；每端以「AI名@机器名」提交身份（可追溯/审计）；归档.md 用 union 自动合并（追加类，仅 merge 生效、每机配 merge.union.driver）、状态.md/待办.md 语义合并（改写类）；每机一份 gitignored sync.config.ps1（身份/代理/记忆目录/提交身份）+ 新机 -Doctor 自检",
+    "content_hash": "cd503dd3aa10e09173faab1a72d698957b6655ea55afc16f8677b8287a1f84ad",
+    "id": "b140d60e-578c-4b9c-9886-fa1a8183f07a",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "e10c58b1-9a3f-4899-b037-b2b4b20888d7",
+    "record_schema_version": 1,
+    "record_type": "decision",
+    "recorded_at": "2026-08-25T06:01:33.507502+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_d0339b48",
+    "title": "- 记忆系统按「多机多 AI 协同」构建（2026-08-15）：git 唯一数据源 + 各端镜像 + 不越界；每端以「AI名@机器名」提交身份（可追溯/审计）；归档.md 用 union 自动合并（追加类，仅 merge 生效、每机配 m",
+    "type_fields": {
+      "legacy_priority": 40,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "rationale": "legacy_import_preserved_content"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

@@ -1,0 +1,38 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "300d348b809037c222409d3234aea8745899791dae282aa98bf230848826ddd2",
+    "inline_payload": {
+      "archived_at": "2026-08-25T06:00:51.85607+00:00",
+      "content": "- 落地修复（sync-memory.ps1 / sync-memory.py）：C1 顶层 trap + git 直接调用显式 $LASTEXITCODE 校验；C2 Write-Error 非终止化；B2 Confirm-RemotePushed 改 merge-base --is-ancestor 祖先判定（消除并发虚警）；D1 ahead/behind 改用 ls-remote 哈希（不信 tracking ref）；C3 Invoke-Git 仅连接类错误才直连重试；D2 git 加 http.lowSpeed 超时；E1 Test-DirectGitHub 超时分支 Close；C4 Python ensure_git_safe 失败写 .sync-failed；Doctor 新增 tracking-ref 匹配远端检查",
+      "created_at": "2026-08-25T06:00:51.85607+00:00",
+      "id": "d54cc728-7cf1-42ba-b066-0d5d4a48d12b",
+      "priority": 40,
+      "project_id": null,
+      "record_key": "umb:v1:mem_bf320136",
+      "record_type": "archive_snapshot",
+      "scope": "global",
+      "source_ref": "user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_bf320136",
+      "status": "archived",
+      "title": "- 落地修复（sync-memory.ps1 / sync-memory.py）：C1 顶层 trap + git 直接调用显式 $LASTEXITCODE 校验；C2 Write-Error 非终止化；B2 Confirm-RemoteP",
+      "updated_at": "2026-08-25T06:00:51.85607+00:00",
+      "version": 1
+    },
+    "kind": "legacy_record",
+    "legacy_id": "d54cc728-7cf1-42ba-b066-0d5d4a48d12b",
+    "legacy_record_type": "archive_snapshot",
+    "legacy_schema_version": null,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

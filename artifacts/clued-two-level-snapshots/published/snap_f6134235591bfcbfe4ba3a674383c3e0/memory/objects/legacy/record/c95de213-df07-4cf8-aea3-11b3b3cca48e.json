@@ -1,0 +1,38 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "c324ada15a00286cdffcc9b4ea11e6059c16db842c52da7d4994eb9ba7a1bf28",
+    "inline_payload": {
+      "archived_at": "2026-08-25T06:03:29.44628+00:00",
+      "content": "- 2026-08-17 DSH 本机重装验证（Codex@DESK-W-591）：此前记录的本机 DSH 安装（C:\\Users\\Windows\\dsh）已不存在（Node.js 缺失、~/.dsh 无配置），本轮重装完成：winget 装 Node.js LTS 24.19.0（系统级）+ npm 全局装 @deepseek-ai/dsh 0.1.0-rc.6（dsh 命令入 PATH）+ 按已知路径本地前缀装 C:\\Users\\Windows\\dsh（项目 .npmrc 放行 koffi/node-pty 等 5 个安装脚本）；验证：dsh --version 与记忆中的启动命令 node C:\\Users\\Windows\\dsh\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js web 均正常，Web UI http://127.0.0.1:3080 返回 HTTP 200，~/.dsh 已生成 profiles/storages",
+      "created_at": "2026-08-25T06:03:29.44628+00:00",
+      "id": "c95de213-df07-4cf8-aea3-11b3b3cca48e",
+      "priority": 40,
+      "project_id": null,
+      "record_key": "umb:v1:mem_ff66fa35",
+      "record_type": "archive_snapshot",
+      "scope": "global",
+      "source_ref": "user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_ff66fa35",
+      "status": "archived",
+      "title": "- 2026-08-17 DSH 本机重装验证（Codex@DESK-W-591）：此前记录的本机 DSH 安装（C:\\Users\\Windows\\dsh）已不存在（Node.js 缺失、~/.dsh 无配置），本轮重装完成：winget",
+      "updated_at": "2026-08-25T06:03:29.44628+00:00",
+      "version": 1
+    },
+    "kind": "legacy_record",
+    "legacy_id": "c95de213-df07-4cf8-aea3-11b3b3cca48e",
+    "legacy_record_type": "archive_snapshot",
+    "legacy_schema_version": null,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

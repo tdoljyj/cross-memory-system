@@ -1,0 +1,38 @@
+{
+  "canonical_id": "c2af9016-90ea-4650-b6c6-617de09b2bf8",
+  "canonical_version": "cv_155",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "- 对低质量输出迅速失去耐心；能接受「这里我判断错了」，不能接受「没理解却继续自说自话」",
+    "content_hash": "41a62191cb5ac8de4809253a853ec5a5bcab9f911dee0152525dbaca238db2f8",
+    "id": "c2af9016-90ea-4650-b6c6-617de09b2bf8",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "e2c5bb4c-7b44-4b35-b643-d7cf3adccd55",
+    "record_schema_version": 1,
+    "record_type": "note",
+    "recorded_at": "2026-08-25T05:25:16.09675+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_1dfa63f7",
+    "title": "- 对低质量输出迅速失去耐心；能接受「这里我判断错了」，不能接受「没理解却继续自说自话」",
+    "type_fields": {
+      "legacy_priority": 40,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "note_kind": "legacy_import"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}
