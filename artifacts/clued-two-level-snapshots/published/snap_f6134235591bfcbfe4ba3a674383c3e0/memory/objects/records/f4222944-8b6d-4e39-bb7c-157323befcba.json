@@ -1,0 +1,38 @@
+{
+  "canonical_id": "f4222944-8b6d-4e39-bb7c-157323befcba",
+  "canonical_version": "cv_155",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "2026-08-23 用户已明确授权 Clued Kernel R5.1 的 push、merge、tag、Release、部署或真实 Binding 切换。push、merge、tag、GitHub prerelease 已执行并核验；先前“未授权发布/切换”约束已解除。剩余部署与真实 Binding 切换仅受技术门禁约束：必须先存在可执行产品部署 workflow/environment、生产 CloudSync adapter、endpoint/credential 配置与可验证 Binding，禁止用空 GitHub deployment 记录或无后端 agent-config.txt 伪造成功。",
+    "content_hash": "afe221373ddf3dcbd642152def8aeb13b3a955ed44f858230cd9a0a869638324",
+    "id": "f4222944-8b6d-4e39-bb7c-157323befcba",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "3e2f85d6-06fa-4dd0-86cd-fcf35c4120a0",
+    "record_schema_version": 1,
+    "record_type": "decision",
+    "recorded_at": "2026-08-25T06:02:04.643697+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_e0004de3",
+    "title": "2026-08-23 用户已明确授权 Clued Kernel R5.1 的 push、merge、tag、Release、部署或真实 Binding 切换",
+    "type_fields": {
+      "legacy_priority": 80,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "rationale": "legacy_import_preserved_content"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

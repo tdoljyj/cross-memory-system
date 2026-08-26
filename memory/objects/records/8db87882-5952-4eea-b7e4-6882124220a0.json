@@ -1,0 +1,38 @@
+{
+  "canonical_id": "8db87882-5952-4eea-b7e4-6882124220a0",
+  "canonical_version": "cv_155",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "确定第一个可玩的最小原型范围",
+    "content_hash": "319b23053d61b05be21e536e82c184fb5f51ecae9edb2316674e0112a456defb",
+    "id": "8db87882-5952-4eea-b7e4-6882124220a0",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "aeac250b-cb55-4b6e-a0d0-a56e2c87393a",
+    "record_schema_version": 1,
+    "record_type": "task",
+    "recorded_at": "2026-08-25T05:57:54.352662+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_6075246f",
+    "title": "确定第一个可玩的最小原型范围",
+    "type_fields": {
+      "execution_bucket": "later",
+      "legacy_priority": 40,
+      "legacy_status": "backlog",
+      "migration_batch": "m1-current-legacy-20260826-v1"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

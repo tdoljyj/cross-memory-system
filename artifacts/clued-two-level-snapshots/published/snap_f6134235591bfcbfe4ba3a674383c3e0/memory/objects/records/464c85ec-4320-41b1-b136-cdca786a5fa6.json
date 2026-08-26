@@ -1,0 +1,38 @@
+{
+  "canonical_id": "464c85ec-4320-41b1-b136-cdca786a5fa6",
+  "canonical_version": "cv_155",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "2026-08-22 用户已明确解锁并执行 Clued Kernel R5 K1；K1 架构与合同已按 clued-kernel-r5-k1/1.0.0 冻结。K0 NO_GO 与隔离证据保持有效，K0 证据提交不得 push/merge/tag/deploy；K2 在 K0 债务修复或显式接受、新鲜全量回归、零密钥命中及新的明确授权前保持锁定。",
+    "content_hash": "cc1e1ef4917e3a2ed4935bc1b09e6fac2650d45c6b2ab7a9110a890792cc27fa",
+    "id": "464c85ec-4320-41b1-b136-cdca786a5fa6",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "471b0f61-b723-47a0-97ee-05a7547a0888",
+    "record_schema_version": 1,
+    "record_type": "decision",
+    "recorded_at": "2026-08-25T05:56:14.395694+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_26ed6fc2",
+    "title": "2026-08-22 用户已明确解锁并执行 Clued Kernel R5 K1；K1 架构与合同已按 clued-kernel-r5-k1/1.0.0 冻结",
+    "type_fields": {
+      "legacy_priority": 80,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "rationale": "legacy_import_preserved_content"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

@@ -1,0 +1,38 @@
+{
+  "canonical_id": "8a318deb-3c53-4414-bd5b-6f54716906d3",
+  "canonical_version": "cv_155",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "- 记忆同步脚本加固（2026-08-16）：-Pull 前拒绝本地未同步修改 / 仓库脏工作树；push 后必须 ls-remote 核验；Python push 前强制检查工作树已提交；两端失败均写 .sync-failed，冲突前保留 base/ours/theirs 快照",
+    "content_hash": "527f9231b70914a20bd004a07d01b34736324bfc50d899f7faf54143b4dcb878",
+    "id": "8a318deb-3c53-4414-bd5b-6f54716906d3",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "0c2b9e0a-173d-470a-a369-bbeafb9ed293",
+    "record_schema_version": 1,
+    "record_type": "decision",
+    "recorded_at": "2026-08-25T06:03:07.916129+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_f68ab010",
+    "title": "- 记忆同步脚本加固（2026-08-16）：-Pull 前拒绝本地未同步修改 / 仓库脏工作树；push 后必须 ls-remote 核验；Python push 前强制检查工作树已提交；两端失败均写 .sync-failed，冲突前保留",
+    "type_fields": {
+      "legacy_priority": 40,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "rationale": "legacy_import_preserved_content"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

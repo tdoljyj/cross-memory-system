@@ -1,0 +1,38 @@
+{
+  "canonical_id": "a48a906b-ebd6-46ff-848f-68bc60195984",
+  "canonical_version": "cv_155",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "- 记忆互通：完全双向（WorkBuddy 可读写全部 5 个记忆文件），按多方架构设计（git 仓库为唯一数据源，各 AI 独立工作区镜像；未来新 AI 接入=克隆仓库+遵守写入纪律）",
+    "content_hash": "c7f94a62d19cfaf755a7e4bb703dc376cc4bf4f0905b79930135b4ec52d921eb",
+    "id": "a48a906b-ebd6-46ff-848f-68bc60195984",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "29578b79-f14e-4d49-a8b6-71ce7c32068a",
+    "record_schema_version": 1,
+    "record_type": "decision",
+    "recorded_at": "2026-08-25T05:56:23.889516+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_2d049e76",
+    "title": "- 记忆互通：完全双向（WorkBuddy 可读写全部 5 个记忆文件），按多方架构设计（git 仓库为唯一数据源，各 AI 独立工作区镜像；未来新 AI 接入=克隆仓库+遵守写入纪律）",
+    "type_fields": {
+      "legacy_priority": 40,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "rationale": "legacy_import_preserved_content"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

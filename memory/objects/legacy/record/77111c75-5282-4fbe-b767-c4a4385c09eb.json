@@ -1,0 +1,38 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "793be56857bdd2b4391817901a33ad004a95a28602064eefe47788156491068d",
+    "inline_payload": {
+      "archived_at": "2026-08-25T05:58:52.415473+00:00",
+      "content": "- 不变项：读前对齐流程（.sync-failed 检查 + -Pull）、四不变量、身份提交、union/语义合并、非沙盒写、ls-remote 核验全部保留，仅触发时机从「固定」改「按需」",
+      "created_at": "2026-08-25T05:58:52.415473+00:00",
+      "id": "77111c75-5282-4fbe-b767-c4a4385c09eb",
+      "priority": 40,
+      "project_id": null,
+      "record_key": "umb:v1:mem_876a294e",
+      "record_type": "archive_snapshot",
+      "scope": "global",
+      "source_ref": "user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_876a294e",
+      "status": "archived",
+      "title": "- 不变项：读前对齐流程（.sync-failed 检查 + -Pull）、四不变量、身份提交、union/语义合并、非沙盒写、ls-remote 核验全部保留，仅触发时机从「固定」改「按需」",
+      "updated_at": "2026-08-25T05:58:52.415473+00:00",
+      "version": 1
+    },
+    "kind": "legacy_record",
+    "legacy_id": "77111c75-5282-4fbe-b767-c4a4385c09eb",
+    "legacy_record_type": "archive_snapshot",
+    "legacy_schema_version": null,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

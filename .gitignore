@@ -8,19 +8,11 @@ sync.config.ps1
 sync.config.json
 __pycache__/
 *.pyc
-# vNext-2.0：session 级临时记忆（不入 Canonical Store，§14/L6）
-memory/session/
-# Clued v0.1：Agent Lifecycle 运行时根（协议 §5.5，不得默认推送）
 .clued/
-# Gate 工作区（R3 审计/测试证据留存，不入库）
 .gate0-workspace/
 .gate-t0-workspace/
-# Truth Integrity LKG 状态目录（ADR-R3-006：独立状态文件，非 current 事实源）
 .truth-state/
-# Clued Sites/Vinext 隔离运行目录（构建缓存，不属于发布源）
 .sites-runtime/
-# Clued M2 publish coordination locks are process-local runtime state.
 artifacts/clued-two-level-snapshots/m2/runtime/
-# R5 K2：本地 PostgreSQL 运行时与 Gate 临时数据（仅合成数据，不入仓库）
 .k2-postgres/
 .k2-backups/

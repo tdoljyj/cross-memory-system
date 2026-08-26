@@ -1,0 +1,44 @@
+{
+  "canonical_id": "452",
+  "canonical_version": "cv_155",
+  "data": {
+    "actor_kind": "self",
+    "actor_ref": null,
+    "artifact_refs": [],
+    "audit_visibility": "work_log",
+    "canonical_content_hash": "b3f37f335baf280a12fce700eae73a81c3a6ab835e4983ad4b5b8ae60fa7d863",
+    "change_summary": [],
+    "committed_canonical_version": 154,
+    "error_code": null,
+    "event_id": "452",
+    "event_schema_version": 1,
+    "event_scope": "project:0597aa60-9b98-4da6-a4ab-63d7705b632f",
+    "event_sequence": null,
+    "event_stream_id": null,
+    "event_type": "decision_superseded",
+    "evidence_refs": [],
+    "export_content_hash": "4f50094f9e209dffd61d3cd1aeb9ceba8cdbf81cda7af2bd5e60a9c9b66ad2a8",
+    "idempotency_key": "v16-root-cutover-supersede-mem-9540a21b",
+    "occurred_at": "2026-08-25T23:44:59.442819+00:00",
+    "origin_scope": null,
+    "receipt_id": "ddf97d0c-966d-4f72-a630-4ec358d01195",
+    "request_hash": "c33f05ac77b711dd8c897f0ff1ee8f8d328adb4ea1d1e7b98ad85e5ce10d5cc0",
+    "result": "success",
+    "stream_generation": null,
+    "target_refs": [
+      {
+        "id": "fd2c65d4-b507-4b9c-81eb-666201727d8f",
+        "kind": "record",
+        "role": "source"
+      },
+      {
+        "id": "46fcdf0e-6921-4d62-a1d4-5e8d86f79861",
+        "kind": "record",
+        "role": "target"
+      }
+    ]
+  },
+  "kind": "event",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

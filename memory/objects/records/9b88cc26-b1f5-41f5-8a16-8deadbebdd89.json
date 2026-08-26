@@ -1,0 +1,38 @@
+{
+  "canonical_id": "9b88cc26-b1f5-41f5-8a16-8deadbebdd89",
+  "canonical_version": "cv_155",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "- 最终形态：独立游戏制作人 / Creative Director + Technical Director；决定游戏长什么样、怎么做、为什么这么做，并亲自解决关键技术问题",
+    "content_hash": "42d1176d45e8a257b9aa001dacea03452f9ba2d829eca485f951f58959a4d01b",
+    "id": "9b88cc26-b1f5-41f5-8a16-8deadbebdd89",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "c5d2f349-fb49-4920-aca0-6b5181c24abe",
+    "record_schema_version": 1,
+    "record_type": "note",
+    "recorded_at": "2026-08-25T06:01:58.052844+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_dc59295a",
+    "title": "- 最终形态：独立游戏制作人 / Creative Director + Technical Director；决定游戏长什么样、怎么做、为什么这么做，并亲自解决关键技术问题",
+    "type_fields": {
+      "legacy_priority": 40,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "note_kind": "legacy_import"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

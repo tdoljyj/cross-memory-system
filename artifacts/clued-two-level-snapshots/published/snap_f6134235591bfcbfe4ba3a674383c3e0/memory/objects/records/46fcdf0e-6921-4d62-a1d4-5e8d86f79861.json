@@ -1,0 +1,42 @@
+{
+  "canonical_id": "46fcdf0e-6921-4d62-a1d4-5e8d86f79861",
+  "canonical_version": "cv_155",
+  "data": {
+    "authority": "user_explicit",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": 1,
+    "confidence_reason": "User-explicit legacy Decision mem_9540a21b; deterministic G2 reconciliation.",
+    "content": "Clued 两级五视图 v1.6：生产 Supabase 继续是唯一在线 Canonical Store；仓库/Bundle 只保存某一 snapshot_version 的 Object/Event/Evidence 导出，Markdown 与唯一 index.json 均为只读派生。M0 已发布 historical_offline 结构基线 snap_e5a6daef8fbc934f3bdeff9b7de11a26，但未 live recheck、views_complete=false、267 项待评审，不得称为生产当前镜像或 M1 完成。",
+    "content_hash": "878203edbcb6486de95b91762236dfd82b1c942a6905e41f16be75db63759a33",
+    "id": "46fcdf0e-6921-4d62-a1d4-5e8d86f79861",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": "2026-08-25T16:19:27+00:00",
+    "receipt_id": "ddf97d0c-966d-4f72-a630-4ec358d01195",
+    "record_schema_version": 1,
+    "record_type": "decision",
+    "recorded_at": "2026-08-25T23:44:59.442819+00:00",
+    "relations": {
+      "depends_on": [],
+      "related_records": [],
+      "supersedes": [
+        "fd2c65d4-b507-4b9c-81eb-666201727d8f"
+      ]
+    },
+    "scope": "project:0597aa60-9b98-4da6-a4ab-63d7705b632f",
+    "source_refs": [],
+    "source_unavailable_reason": "Source preserved at Git tag pre-memory-v16-root-cutover-20260826:memory/objects/mem_9540a21b.json",
+    "title": "Clued 两级五视图 v1.6 权威边界",
+    "type_fields": {
+      "priority": 90,
+      "rationale": "Replace Bundle-v1 dual-authority wording with the v1.6 single-source two-level five-view contract."
+    },
+    "updated_at": "2026-08-25T23:44:59.442819+00:00",
+    "version": 1
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

@@ -1,0 +1,38 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "e117f9d97850b63cc73c4a2f3ae6409d6e996fe4cd12d5eed151e34da2eac74c",
+    "inline_payload": {
+      "archived_at": "2026-08-25T06:00:17.268006+00:00",
+      "content": "- Chase 提供《Cross_Memory_System_vNext_核心架构》（HTML），确立为核心架构规范。原件存 附录/Cross_Memory_System_vNext_核心架构.html；规范转换版=架构基线文档-vNext-1.3.md（含元数据：基线版本/适用范围/变更记录）",
+      "created_at": "2026-08-25T06:00:17.268006+00:00",
+      "id": "0ea69605-0d52-4254-8ed1-db55edb0babf",
+      "priority": 40,
+      "project_id": null,
+      "record_key": "umb:v1:mem_a9611472",
+      "record_type": "archive_snapshot",
+      "scope": "global",
+      "source_ref": "user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_a9611472",
+      "status": "archived",
+      "title": "- Chase 提供《Cross_Memory_System_vNext_核心架构》（HTML），确立为核心架构规范",
+      "updated_at": "2026-08-25T06:00:17.268006+00:00",
+      "version": 1
+    },
+    "kind": "legacy_record",
+    "legacy_id": "0ea69605-0d52-4254-8ed1-db55edb0babf",
+    "legacy_record_type": "archive_snapshot",
+    "legacy_schema_version": null,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

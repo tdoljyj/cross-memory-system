@@ -1,0 +1,38 @@
+{
+  "canonical_id": "ba5dc43c-44bf-4b3a-ae62-a90ee28ef746",
+  "canonical_version": "cv_155",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "- Maya Python、MEL、PySide2、OpenMaya",
+    "content_hash": "d03d45d9a6ccdf6ec7ee040cda2ca0e79e1c2d223cb537df853cc8e6412e88f8",
+    "id": "ba5dc43c-44bf-4b3a-ae62-a90ee28ef746",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "b9af7702-48ef-4c3b-88cc-6edcdc1e8b1c",
+    "record_schema_version": 1,
+    "record_type": "note",
+    "recorded_at": "2026-08-25T05:56:26.906886+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_2f9c8286",
+    "title": "- Maya Python、MEL、PySide2、OpenMaya",
+    "type_fields": {
+      "legacy_priority": 40,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "note_kind": "legacy_import"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

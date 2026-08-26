@@ -1,0 +1,38 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "47baa85a7502171e9ee88797ecbf7ad5f7d8880e2a070e252e7346e5b9ce3ad2",
+    "inline_payload": {
+      "archived_at": "2026-08-25T06:01:32.359183+00:00",
+      "content": "- 坑：内置 PortableGit 走代理 TLS 握手失败（schannel failed to receive handshake / openssl unexpected eof），同机 curl / gh 正常；PortableGit 全局 etc/gitconfig 偶发 gitconfig.lock 残留（File exists），删锁文件即可",
+      "created_at": "2026-08-25T06:01:32.359183+00:00",
+      "id": "18b6e7cf-fe0d-44e7-9148-0fbf15c96c40",
+      "priority": 40,
+      "project_id": null,
+      "record_key": "umb:v1:mem_cfce9b68",
+      "record_type": "archive_snapshot",
+      "scope": "global",
+      "source_ref": "user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_cfce9b68",
+      "status": "archived",
+      "title": "- 坑：内置 PortableGit 走代理 TLS 握手失败（schannel failed to receive handshake / openssl unexpected eof），同机 curl / gh 正常；PortableG",
+      "updated_at": "2026-08-25T06:01:32.359183+00:00",
+      "version": 1
+    },
+    "kind": "legacy_record",
+    "legacy_id": "18b6e7cf-fe0d-44e7-9148-0fbf15c96c40",
+    "legacy_record_type": "archive_snapshot",
+    "legacy_schema_version": null,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

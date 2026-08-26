@@ -1,0 +1,38 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "6caaa0afec8bc2303b22450b354224545c5b60243a400dc520ab723d8185850d",
+    "inline_payload": {
+      "archived_at": "2026-08-25T06:01:35.881677+00:00",
+      "content": "- 同日评审修订（vNext-1.0→1.1）：① 补适用性说明（正文为服务化理想架构，与附录 A 冲突时以附录 A 为准，SQL UPDATE/数值 confidence/语义检索打分不得在现有架构机械套用）② 十六节 12 个 Phase 标注现有落地状态（✅/⚙️/◻）③ Trigger Matrix 补「受个人约束的通用问题」行（L5 Constraint 高优先场景）④ 新增附录 C 隐私与安全约束（最小写入/仓库私有/日志脱敏/删除权与 git 历史的关系/不越界的隐私含义）⑤ 附录 B 用例 F 标注许可偏差（现有冲突收敛=merge 保留两端语义，满足「后到者不覆盖先到者」核心不变量，但非严格 OCC 冲突拒绝）⑥ 附录 A 补 L6 工作区临时层映射",
+      "created_at": "2026-08-25T06:01:35.881677+00:00",
+      "id": "af810f94-c712-4f7f-a479-b51629e21075",
+      "priority": 40,
+      "project_id": null,
+      "record_key": "umb:v1:mem_d3cf5318",
+      "record_type": "archive_snapshot",
+      "scope": "global",
+      "source_ref": "user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_d3cf5318",
+      "status": "archived",
+      "title": "- 同日评审修订（vNext-1.0→1.1）：① 补适用性说明（正文为服务化理想架构，与附录 A 冲突时以附录 A 为准，SQL UPDATE/数值 confidence/语义检索打分不得在现有架构机械套用）② 十六节 12 个 Phas",
+      "updated_at": "2026-08-25T06:01:35.881677+00:00",
+      "version": 1
+    },
+    "kind": "legacy_record",
+    "legacy_id": "af810f94-c712-4f7f-a479-b51629e21075",
+    "legacy_record_type": "archive_snapshot",
+    "legacy_schema_version": null,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

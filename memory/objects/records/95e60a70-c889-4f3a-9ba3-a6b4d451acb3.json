@@ -1,0 +1,38 @@
+{
+  "canonical_id": "95e60a70-c889-4f3a-9ba3-a6b4d451acb3",
+  "canonical_version": "cv_155",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "- 讨厌：龙凤祥云、青瓦白墙、水墨套路、玄天 / 苍穹 / 九州式词汇堆砌",
+    "content_hash": "faa7b6c63995ce6dd3ae2080ff987857cb27080ee8c69a0341bfcda40a40679c",
+    "id": "95e60a70-c889-4f3a-9ba3-a6b4d451acb3",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "5a769799-fbbc-4115-8797-8716a9e976ed",
+    "record_schema_version": 1,
+    "record_type": "note",
+    "recorded_at": "2026-08-25T05:59:33.789002+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_9259558f",
+    "title": "- 讨厌：龙凤祥云、青瓦白墙、水墨套路、玄天 / 苍穹 / 九州式词汇堆砌",
+    "type_fields": {
+      "legacy_priority": 40,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "note_kind": "legacy_import"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

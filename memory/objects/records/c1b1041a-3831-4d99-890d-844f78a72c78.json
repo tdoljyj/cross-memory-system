@@ -1,0 +1,38 @@
+{
+  "canonical_id": "c1b1041a-3831-4d99-890d-844f78a72c78",
+  "canonical_version": "cv_155",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "归档.md union 合并后去重（union driver 两端同加相同内容会保留重复行）——冻结：仅两端同加相同内容时才发生，极罕见",
+    "content_hash": "e2d3f6c3ad85904cb66045f7f42c131b8d16293f3d1d503ab9f55bb269472b9e",
+    "id": "c1b1041a-3831-4d99-890d-844f78a72c78",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "4d00b3cd-c1db-4793-81da-d2312ae2af38",
+    "record_schema_version": 1,
+    "record_type": "task",
+    "recorded_at": "2026-08-25T06:01:09.324341+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_c31763c9",
+    "title": "归档.md union 合并后去重（union driver 两端同加相同内容会保留重复行）——冻结：仅两端同加相同内容时才发生，极罕见",
+    "type_fields": {
+      "execution_bucket": "later",
+      "legacy_priority": 40,
+      "legacy_status": "backlog",
+      "migration_batch": "m1-current-legacy-20260826-v1"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

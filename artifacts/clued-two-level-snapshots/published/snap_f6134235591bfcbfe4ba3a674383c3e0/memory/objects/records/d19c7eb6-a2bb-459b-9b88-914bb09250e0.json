@@ -1,0 +1,38 @@
+{
+  "canonical_id": "d19c7eb6-a2bb-459b-9b88-914bb09250e0",
+  "canonical_version": "cv_155",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "- 确立 vNext-1.3（2026-08-16，Codex@TURING）：结构化召回索引 memory/index.json（files + L1–L6 recall 唯一事实源）；双端同步护栏由硬编码 5 改为读 index.json files 清单（缺失/为空拒绝同步）；双端 redact() 令牌掩码（gho_/ghp_/github_pat_/Bearer）+ doctor 长期令牌环境变量提醒；凭据接入改为 git 走 gh 凭据助手、不 setx 长期令牌；验收测试 8→10 用例",
+    "content_hash": "6828442cfcb4b3ce53d769600f357c52facacbf8247bfa5bb049584f9c55fc33",
+    "id": "d19c7eb6-a2bb-459b-9b88-914bb09250e0",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "bb24b2da-7953-4662-b205-3db5165aab1e",
+    "record_schema_version": 1,
+    "record_type": "decision",
+    "recorded_at": "2026-08-25T05:57:26.440823+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_491384d4",
+    "title": "- 确立 vNext-1.3（2026-08-16，Codex@TURING）：结构化召回索引 memory/index.json（files + L1–L6 recall 唯一事实源）；双端同步护栏由硬编码 5 改为读 index.jso",
+    "type_fields": {
+      "legacy_priority": 40,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "rationale": "legacy_import_preserved_content"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

@@ -1,0 +1,38 @@
+{
+  "canonical_id": "9a085002-d5f0-4d27-8670-8a2a38511be5",
+  "canonical_version": "cv_155",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "- 天然优势区：角色、动作、动画、战斗表现、制作流程——动作表现最可能建立差异化，最可能成为工作室标签",
+    "content_hash": "8ceb804c4e84ddf854eabddabf13bd367da48455a0f71a9190e4a652d13be726",
+    "id": "9a085002-d5f0-4d27-8670-8a2a38511be5",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "fa554301-41e2-424a-a621-9ce5a2a29903",
+    "record_schema_version": 1,
+    "record_type": "note",
+    "recorded_at": "2026-08-25T06:01:40.037573+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_d4611cda",
+    "title": "- 天然优势区：角色、动作、动画、战斗表现、制作流程——动作表现最可能建立差异化，最可能成为工作室标签",
+    "type_fields": {
+      "legacy_priority": 40,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "note_kind": "legacy_import"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

@@ -1,0 +1,38 @@
+{
+  "canonical_id": "62b1ab0c-d816-4d64-822d-bcd3669e3630",
+  "canonical_version": "cv_155",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "2026-08-22 K2 第四轮独立裁决为 PASS，K2 Gate 已通过；先前 PARTIAL PASS 缺口已全部关闭。K3 继续 LOCKED，只有用户新的明确授权才能进入 K3；继续禁止未授权 push/merge/tag/release/deploy、真实 Binding 变更与语义召回启用。",
+    "content_hash": "9b04c556cfbcfcacf91b0de368d6f4b87fc1729611f08200decf887287838e1c",
+    "id": "62b1ab0c-d816-4d64-822d-bcd3669e3630",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "34e99027-2c72-48bf-b724-d55fcd9a7f11",
+    "record_schema_version": 1,
+    "record_type": "decision",
+    "recorded_at": "2026-08-25T05:57:56.198735+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_60b4dce9",
+    "title": "2026-08-22 K2 第四轮独立裁决为 PASS，K2 Gate 已通过；先前 PARTIAL PASS 缺口已全部关闭",
+    "type_fields": {
+      "legacy_priority": 80,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "rationale": "legacy_import_preserved_content"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

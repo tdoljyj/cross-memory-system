@@ -14,12 +14,12 @@
   },
   "consecutive_failures": 0,
   "contract": "clued.m2.persistent-snapshot-store",
-  "current_snapshot_version": "snap_76d8a4a701098649c9941083c96c4ddf",
+  "current_snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0",
   "enabled": true,
   "enabled_at": "2026-08-25T21:59:41.4066531Z",
   "last_reconcile": {
     "issues": [],
-    "occurred_at": "2026-08-25T22:08:49.0152638Z",
+    "occurred_at": "2026-08-25T23:59:00.000Z",
     "repaired_registry": false,
     "status": "success"
   },
@@ -46,7 +46,7 @@
     ],
     "stale_lock_seconds": 900
   },
-  "previous_snapshot_version": "snap_d04d68806b63819ca12b7a2a58bf2f27",
+  "previous_snapshot_version": "snap_76d8a4a701098649c9941083c96c4ddf",
   "schema_version": 1,
   "status": "healthy",
   "versions": [
@@ -75,6 +75,15 @@
       "canonical_version": "git:c8badfeae1c6600c330d42fe1428168003ac8c77:memory-objects",
       "manifest_sha256": "ca1bb251dacc13c4da85aeaf551f79662c4fc67c0295572ada1c3da2ae34d9dc",
       "snapshot_version": "snap_e5a6daef8fbc934f3bdeff9b7de11a26",
+      "status": "ready"
+    },
+    {
+      "baseline_claim": "current",
+      "build_epoch": "2026-08-25T23:45:30.000Z",
+      "bundle_path": "published/snap_f6134235591bfcbfe4ba3a674383c3e0/memory",
+      "canonical_version": "cv_155",
+      "manifest_sha256": "8e38db1f22e1ae260a55927b9df862db447d1b312fd6e38e094289b223d95e9c",
+      "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0",
       "status": "ready"
     }
   ]

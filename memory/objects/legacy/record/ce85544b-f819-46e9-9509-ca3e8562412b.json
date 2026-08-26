@@ -1,0 +1,38 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "ef9de4e3a812ad0c7ed3538f330394c8bed5769d88f209816480f73ca2113a3d",
+    "inline_payload": {
+      "archived_at": "2026-08-25T05:58:26.362168+00:00",
+      "content": "- 待 Codex 侧：~/.codex/AGENTS.md（全局钩子）下次会话自行同步仓库新 AGENTS.md",
+      "created_at": "2026-08-25T05:58:26.362168+00:00",
+      "id": "ce85544b-f819-46e9-9509-ca3e8562412b",
+      "priority": 40,
+      "project_id": null,
+      "record_key": "umb:v1:mem_7867479e",
+      "record_type": "archive_snapshot",
+      "scope": "global",
+      "source_ref": "user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_7867479e",
+      "status": "archived",
+      "title": "- 待 Codex 侧：~/.codex/AGENTS.md（全局钩子）下次会话自行同步仓库新 AGENTS.md",
+      "updated_at": "2026-08-25T05:58:26.362168+00:00",
+      "version": 1
+    },
+    "kind": "legacy_record",
+    "legacy_id": "ce85544b-f819-46e9-9509-ca3e8562412b",
+    "legacy_record_type": "archive_snapshot",
+    "legacy_schema_version": null,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

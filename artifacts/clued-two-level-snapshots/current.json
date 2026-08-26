@@ -1,7 +1,7 @@
 {
-  "bundle_path": "published/snap_76d8a4a701098649c9941083c96c4ddf/memory",
-  "manifest_sha256": "8234cbb0de47b636ceea38d83b5c79a907da2bda30b67dd3001a1858e637c387",
+  "bundle_path": "published/snap_f6134235591bfcbfe4ba3a674383c3e0/memory",
+  "manifest_sha256": "8e38db1f22e1ae260a55927b9df862db447d1b312fd6e38e094289b223d95e9c",
   "pointer_schema_version": 1,
-  "previous_snapshot_version": "snap_d04d68806b63819ca12b7a2a58bf2f27",
-  "snapshot_version": "snap_76d8a4a701098649c9941083c96c4ddf"
+  "previous_snapshot_version": "snap_76d8a4a701098649c9941083c96c4ddf",
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
 }

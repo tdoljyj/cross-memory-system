@@ -1,0 +1,40 @@
+{
+  "canonical_id": "7cfc4648-b680-4b66-bac7-a3f658067111",
+  "canonical_version": "cv_155",
+  "data": {
+    "authority": "observed",
+    "closed_at": "2026-08-25T23:44:13.325653+00:00",
+    "closed_reason": "Superseded before v1.6 root cutover.",
+    "closure_summary": "Superseded legacy continuity state mem_714dd47d.",
+    "confidence": 1,
+    "confidence_reason": "Legacy mem_714dd47d is superseded; preserve as archived history.",
+    "content": "2026-08-26 Clued v1.6 M1 运行时合同已部署生产：Supabase migration 20260825174741_clued_m1_runtime_contracts；Worker b7431319-718b-480b-a711-d73571d29c07 100% 生效。pgTAP 48/48、应用 58/58、v2 红线 14/14、typecheck、DB lint、build 与生产回滚烟测通过；随后写入 1 条 M1 连续性 Event 并 checkpoint，最终生产数据 4 Project / 262 Record / 263 Event / 273 Receipt / 0 Evidence。",
+    "content_hash": "f03a5488fa876b6c3c5969cc89bd1f6e23cff19461ec49ac7ff222ce8a71ed4e",
+    "id": "7cfc4648-b680-4b66-bac7-a3f658067111",
+    "lifecycle_status": "archived",
+    "merged_into_record_id": null,
+    "observed_at": "2026-08-25T17:58:28+00:00",
+    "receipt_id": "13b0480e-3817-4bba-b76f-5ada44dfcd43",
+    "record_schema_version": 1,
+    "record_type": "state",
+    "recorded_at": "2026-08-25T23:44:10.706877+00:00",
+    "relations": {
+      "depends_on": [],
+      "related_records": [],
+      "supersedes": []
+    },
+    "scope": "project:0597aa60-9b98-4da6-a4ab-63d7705b632f",
+    "source_refs": [],
+    "source_unavailable_reason": "Source preserved at Git tag pre-memory-v16-root-cutover-20260826:memory/objects/mem_714dd47d.json",
+    "title": "Clued v1.6 M1 运行时合同部署",
+    "type_fields": {
+      "priority": 90,
+      "state_kind": "milestone"
+    },
+    "updated_at": "2026-08-25T23:44:13.325653+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

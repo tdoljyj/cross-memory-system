@@ -1,0 +1,38 @@
+{
+  "canonical_id": "dec94f48-5600-4a25-b622-be1a152b4a6c",
+  "canonical_version": "cv_155",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "2026-08-22 用户已明确授权开始 Clued Kernel R5 K3。K3 云端 Memory Write and Lifecycle 首版本地实现已提交为 567222dccd8f51b2314b460876a4de9812aa0c74，分支 r5-kernel-k3-memory-lifecycle，仅本地未 push。已实现 create/update/supersede/delete/resolve、稳定 operation id 幂等、陈旧写冲突显式化、delete 防复活、service 直写封堵、K3 invariant scanner 和可逆 migration；K3 静态 12/12、PostgreSQL 15.19 真实集成 18/18、K1 9/9、K2 静态 16/16、K2 PostgreSQL 20/20 通过。全量矩阵中旧 test_envprobe.py 因当前沙盒拒绝访问 C:\\Users\\Windows\\.workbuddy 出现 3 个环境权限失败，矩阵在结束前被用户中止，尚未生成最终证据或独立裁决。临时 PostgreSQL 已停止但运行包保留。",
+    "content_hash": "33d58d22abcf6c06798d9b92e4043d490cae73512126dba5dc9a95467ecfbd58",
+    "id": "dec94f48-5600-4a25-b622-be1a152b4a6c",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "bfea63ff-d26a-466d-b206-fc5da30cbc02",
+    "record_schema_version": 1,
+    "record_type": "state",
+    "recorded_at": "2026-08-25T05:57:40.511813+00:00",
+    "relations": {},
+    "scope": "project:09c99505-7971-4bca-a885-632350b05139",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_525ea2c2",
+    "title": "2026-08-22 用户已明确授权开始 Clued Kernel R5 K3",
+    "type_fields": {
+      "legacy_priority": 80,
+      "legacy_status": "current",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "state_kind": "legacy_import"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

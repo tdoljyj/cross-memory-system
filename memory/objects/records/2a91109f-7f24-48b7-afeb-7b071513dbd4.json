@@ -1,0 +1,38 @@
+{
+  "canonical_id": "2a91109f-7f24-48b7-afeb-7b071513dbd4",
+  "canonical_version": "cv_155",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "- 关心实际操作体验，而非商业包装",
+    "content_hash": "dbed0d55b83b5d97ac52d615fa294fa2e7ae3fe5de33d9b02118f204d7f0ef12",
+    "id": "2a91109f-7f24-48b7-afeb-7b071513dbd4",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "9321fdd4-b5f5-4a66-9e8c-62b85d742385",
+    "record_schema_version": 1,
+    "record_type": "note",
+    "recorded_at": "2026-08-25T06:00:59.449052+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_c1d24998",
+    "title": "- 关心实际操作体验，而非商业包装",
+    "type_fields": {
+      "legacy_priority": 40,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "note_kind": "legacy_import"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

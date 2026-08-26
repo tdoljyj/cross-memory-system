@@ -1,0 +1,38 @@
+{
+  "canonical_id": "8aad9971-325a-48c9-9aad-2ffcfe66b508",
+  "canonical_version": "cv_155",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "2026-08-22 K2 独立裁决为 PARTIAL PASS，K3 继续 LOCKED。必须补齐并实测：跨账号相同 memory_id 隔离、RLS 遗漏表故障注入、实际 migration 中断、change_event 缺口注入、rollback 后不变量，并保存脱敏原始 transcript、server log 哈希和 backup 哈希；重新独立裁决为 PASS 且获得新的明确 K3 授权前，禁止进入 K3。继续禁止未授权 push/merge/tag/release/deploy、真实 Binding 变更与语义召回启用。",
+    "content_hash": "b3d7d871d6cac39553bc51d7892908425bbb3abd1aabe9e21ce54962b0d3a5d3",
+    "id": "8aad9971-325a-48c9-9aad-2ffcfe66b508",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "e3e30bac-a326-480e-b2b7-77e7796415c2",
+    "record_schema_version": 1,
+    "record_type": "decision",
+    "recorded_at": "2026-08-25T05:24:35.928428+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_1a72b942",
+    "title": "2026-08-22 K2 独立裁决为 PARTIAL PASS，K3 继续 LOCKED",
+    "type_fields": {
+      "legacy_priority": 80,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "rationale": "legacy_import_preserved_content"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

@@ -1,0 +1,38 @@
+{
+  "canonical_id": "79aa5856-06b6-41cd-99e9-0841181c6cd7",
+  "canonical_version": "cv_155",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "2026-08-22 Clued Kernel R5 的 12 项 K0 已知债务已关闭：卸载精确清除 state.json，HEURISTIC H4 移除过时环境归因断言；修复提交 653417a29b8e079b5e49db8dce4480261c728585，证据分支 e946408accac278c93d3e7dc3780daf59f91a23e，main 合并提交 7b6e21333902643a76cfa12926eceef4d2a01c37。卸载 12/12、E2E 8/8、HEURISTIC 4/4、K1 9/9、同步层 70/70、Memory Engine 55/55、MIV-005A 合同 19/19；全量 552 PASS / 0 FAIL / 0 SKIP，候选树密钥扫描 451 文件 0 命中。K0 历史 NO_GO 保留；语义召回未启用，未 release/deploy；K2 仍锁定，仅待新的明确授权。",
+    "content_hash": "58c239a35474eb6a6e403d783c8c1b55e44dd0acc497fe489a46ca681e4f0d04",
+    "id": "79aa5856-06b6-41cd-99e9-0841181c6cd7",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "29752520-6729-4085-b51c-db283ba87786",
+    "record_schema_version": 1,
+    "record_type": "state",
+    "recorded_at": "2026-08-25T05:58:36.717675+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_7c595648",
+    "title": "2026-08-22 Clued Kernel R5 的 12 项 K0 已知债务已关闭：卸载精确清除 state.json，HEURISTIC H4 移除过时环境归因断言；修复提交 653417a29b8e079b5e49db8dce44",
+    "type_fields": {
+      "legacy_priority": 80,
+      "legacy_status": "current",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "state_kind": "legacy_import"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

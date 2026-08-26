@@ -1,0 +1,38 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "0f8d3842ee5b626bf71a753096879941943810236cc923657c3fc33b3c2e0e83",
+    "inline_payload": {
+      "archived_at": "2026-08-25T05:56:36.195234+00:00",
+      "content": "- 关键决策与落地：① 保留期统一 7 天（guards.json + 双脚本回落默认，用户决策「实现向基线收敛」）；② 决策.md:18 凭据旧口径标 superseded（历史保留）；③ doctor 探针集对称（ps1 补 memory-files-healthy/local==remote，py 补 ref-write）；④ 合并作者规则入 AGENTS §六；⑤ index 路径净化（../ 越界 fail-closed）；⑥ 留档两例：PID 锁句柄锁不实施（四场景已有测试、概率极低）、%TEMP% listdir 保持（实测 1437 条目/161ms）",
+      "created_at": "2026-08-25T05:56:36.195234+00:00",
+      "id": "7f429ace-9a08-4c28-b9fc-675d934a5b47",
+      "priority": 40,
+      "project_id": null,
+      "record_key": "umb:v1:mem_3604f4b4",
+      "record_type": "archive_snapshot",
+      "scope": "global",
+      "source_ref": "user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_3604f4b4",
+      "status": "archived",
+      "title": "- 关键决策与落地：① 保留期统一 7 天（guards.json + 双脚本回落默认，用户决策「实现向基线收敛」）；② 决策.md:18 凭据旧口径标 superseded（历史保留）；③ doctor 探针集对称（ps1 补 memor",
+      "updated_at": "2026-08-25T05:56:36.195234+00:00",
+      "version": 1
+    },
+    "kind": "legacy_record",
+    "legacy_id": "7f429ace-9a08-4c28-b9fc-675d934a5b47",
+    "legacy_record_type": "archive_snapshot",
+    "legacy_schema_version": null,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

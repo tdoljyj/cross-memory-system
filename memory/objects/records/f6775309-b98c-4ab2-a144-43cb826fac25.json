@@ -1,0 +1,38 @@
+{
+  "canonical_id": "f6775309-b98c-4ab2-a144-43cb826fac25",
+  "canonical_version": "cv_155",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "- DSH 端接入 = 独立第三端克隆（2026-08-16，DSH@TURING）：~/.dsh/projects/cross-memory-system（自远端 origin 克隆）+ ~/.dsh/MEMORY.md 消费端，身份 DSH@TURING；任何端不得复用/克隆/操作他端本地克隆，不得以他端身份提交——早期 DSH 以 WorkBuddy@TURING 身份操作 ~/.workbuddy 克隆属越界，已纠正（机制补 py deploy-guard 双向护栏；接入新端只允许从远端 origin 克隆）",
+    "content_hash": "d9b7e05192725592bbb3a45337f3b9d13402d221c6f45a27f2442dc3219ecdf3",
+    "id": "f6775309-b98c-4ab2-a144-43cb826fac25",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "d01015dc-32ab-4e2b-ba0d-f8a5ad1da4a0",
+    "record_schema_version": 1,
+    "record_type": "decision",
+    "recorded_at": "2026-08-25T06:00:11.712215+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_a68cc1b2",
+    "title": "- DSH 端接入 = 独立第三端克隆（2026-08-16，DSH@TURING）：~/.dsh/projects/cross-memory-system（自远端 origin 克隆）+ ~/.dsh/MEMORY.md 消费端，身份 D",
+    "type_fields": {
+      "legacy_priority": 40,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "rationale": "legacy_import_preserved_content"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

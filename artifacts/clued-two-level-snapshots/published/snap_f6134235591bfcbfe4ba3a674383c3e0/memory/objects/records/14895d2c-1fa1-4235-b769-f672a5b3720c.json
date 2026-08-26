@@ -1,0 +1,38 @@
+{
+  "canonical_id": "14895d2c-1fa1-4235-b769-f672a5b3720c",
+  "canonical_version": "cv_155",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "- 三维动画 / Maya（长期深度使用）",
+    "content_hash": "82424c2860fd3da56f4d7fa0036a2a4be7b5c929cb47124ca098f6163bb34269",
+    "id": "14895d2c-1fa1-4235-b769-f672a5b3720c",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "6fb513d1-c2dc-489e-b49e-8384e1d798b3",
+    "record_schema_version": 1,
+    "record_type": "note",
+    "recorded_at": "2026-08-25T05:56:29.744546+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_31db4b89",
+    "title": "- 三维动画 / Maya（长期深度使用）",
+    "type_fields": {
+      "legacy_priority": 40,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "note_kind": "legacy_import"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

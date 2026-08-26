@@ -1,0 +1,38 @@
+{
+  "canonical_id": "3fc63dc0-07e8-406b-9395-37798af5e81c",
+  "canonical_version": "cv_155",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "- 两条主线：① UE 游戏原型（核心玩法 / 动作 / 战斗 / 角色 / UE / 动画 / 系统 / 可玩性）② 剧情编剧（世界观 / 角色 / 神话 / 叙事）",
+    "content_hash": "56fd934bacf4a5d4e8621a633fdc905208db970fe55af453b5f57e211ecd470e",
+    "id": "3fc63dc0-07e8-406b-9395-37798af5e81c",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "06b8eaa8-0783-49c7-a062-646e25f8f483",
+    "record_schema_version": 1,
+    "record_type": "note",
+    "recorded_at": "2026-08-25T05:57:53.284487+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_5c404b25",
+    "title": "- 两条主线：① UE 游戏原型（核心玩法 / 动作 / 战斗 / 角色 / UE / 动画 / 系统 / 可玩性）② 剧情编剧（世界观 / 角色 / 神话 / 叙事）",
+    "type_fields": {
+      "legacy_priority": 40,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "note_kind": "legacy_import"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

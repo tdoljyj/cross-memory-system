@@ -1,0 +1,40 @@
+{
+  "canonical_id": "a1bbcf90-ff13-4ca7-8ed6-6f226e38cf2d",
+  "canonical_version": "cv_155",
+  "data": {
+    "authority": "observed",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": 1,
+    "confidence_reason": "Legacy Memory Engine object mem_e1a85496; deterministic G2 reconciliation.",
+    "content": "2026-08-26 Clued v1.6 M0 historical_offline 结构基线已落地：快照 snap_e5a6daef8fbc934f3bdeff9b7de11a26；Manifest v5、profile/global/projects、objects/events/evidence、单一 index、确定性构建、失败注入、原子指针与 rollback 测试均 PASS。生产未变；52/52 应用测试、typecheck、lint、build 全绿。",
+    "content_hash": "45a084f9585883362cce63bd5eae2cfb3cb150b36fe543d940a08ce809566afb",
+    "id": "a1bbcf90-ff13-4ca7-8ed6-6f226e38cf2d",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": "2026-08-25T16:19:27+00:00",
+    "receipt_id": "4556bbd2-318d-490b-b14e-dd23b19b8173",
+    "record_schema_version": 1,
+    "record_type": "state",
+    "recorded_at": "2026-08-25T23:42:51.935861+00:00",
+    "relations": {
+      "depends_on": [],
+      "related_records": [],
+      "supersedes": []
+    },
+    "scope": "project:0597aa60-9b98-4da6-a4ab-63d7705b632f",
+    "source_refs": [],
+    "source_unavailable_reason": "Source preserved at Git tag pre-memory-v16-root-cutover-20260826:memory/objects/mem_e1a85496.json",
+    "title": "Clued v1.6 M0 historical_offline 结构基线",
+    "type_fields": {
+      "priority": 90,
+      "state_kind": "milestone"
+    },
+    "updated_at": "2026-08-25T23:42:51.935861+00:00",
+    "version": 1
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

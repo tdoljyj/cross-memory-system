@@ -1,0 +1,38 @@
+{
+  "canonical_id": "8cb57b0b-cea1-45fc-a765-502fe927d05e",
+  "canonical_version": "cv_155",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "- 为了回答而回答、自说自话、没理解却继续",
+    "content_hash": "d76d84d66fdb32421bc1a4f8fd4714befa12b5c51b7bafec4d4aa99ce0aa5029",
+    "id": "8cb57b0b-cea1-45fc-a765-502fe927d05e",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "ce09af6b-adcf-41aa-8899-4cf4ad689d73",
+    "record_schema_version": 1,
+    "record_type": "decision",
+    "recorded_at": "2026-08-25T05:58:31.680288+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_7a4361ae",
+    "title": "- 为了回答而回答、自说自话、没理解却继续",
+    "type_fields": {
+      "legacy_priority": 40,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "rationale": "legacy_import_preserved_content"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

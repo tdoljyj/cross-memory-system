@@ -1,0 +1,38 @@
+{
+  "canonical_id": "27876dbf-dfad-44cb-a434-3339710600cf",
+  "canonical_version": "cv_155",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "结构化语义合并：状态.md / 待办.md 按标题块三路合并，替代整文件 diff 与人工冲突清理（基线附录 D 待办）——冻结：双端同改同一文件概率极低，merge+手工兜底已够，收益<风险",
+    "content_hash": "e81c49ecf23b031b82c675e332684947bdb6129ec4953debd8f21c9adedc4037",
+    "id": "27876dbf-dfad-44cb-a434-3339710600cf",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "313e977e-fac7-4feb-9011-da2e5565fa0c",
+    "record_schema_version": 1,
+    "record_type": "task",
+    "recorded_at": "2026-08-25T06:02:46.083355+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_ed230ac3",
+    "title": "结构化语义合并：状态.md / 待办.md 按标题块三路合并，替代整文件 diff 与人工冲突清理（基线附录 D 待办）——冻结：双端同改同一文件概率极低，merge+手工兜底已够，收益<风险",
+    "type_fields": {
+      "execution_bucket": "later",
+      "legacy_priority": 40,
+      "legacy_status": "backlog",
+      "migration_batch": "m1-current-legacy-20260826-v1"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

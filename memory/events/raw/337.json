@@ -1,0 +1,47 @@
+{
+  "canonical_id": "337",
+  "canonical_version": "cv_155",
+  "data": {
+    "actor_kind": "self",
+    "actor_ref": null,
+    "artifact_refs": [],
+    "audit_visibility": "work_log",
+    "canonical_content_hash": "1f0c7ff927974f7c72a82811984b89c683dafbea81a4e079c9eb4e5f96cd27a5",
+    "change_summary": [
+      {
+        "change": "legacy_to_m1_canonical",
+        "committed_version": 2,
+        "legacy_version": 1,
+        "mapping_contract": "clued-v1.6-m1-current-legacy-v1",
+        "migration_batch": "m1-current-legacy-20260826-v1"
+      }
+    ],
+    "committed_canonical_version": 33,
+    "error_code": null,
+    "event_id": "337",
+    "event_schema_version": 1,
+    "event_scope": "global",
+    "event_sequence": null,
+    "event_stream_id": null,
+    "event_type": "extension:clued:migrate_legacy_record",
+    "evidence_refs": [],
+    "export_content_hash": "17ee3b29175679438f78f7b29cad69d619b534ddb197a299c17742f2f44b432c",
+    "idempotency_key": "m1-map-v1:45fab1dc-e81f-4000-a10a-618386d3f985",
+    "occurred_at": "2026-08-25T18:47:22.605042+00:00",
+    "origin_scope": "global",
+    "receipt_id": "36961cf2-a4dc-4aff-8d1a-61d461ec91cb",
+    "request_hash": "2c830d350e046926b3831d918bb6d7b70e05583f07a4a0a800875f13b11aefef",
+    "result": "success",
+    "stream_generation": null,
+    "target_refs": [
+      {
+        "id": "45fab1dc-e81f-4000-a10a-618386d3f985",
+        "kind": "record",
+        "role": "primary"
+      }
+    ]
+  },
+  "kind": "event",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

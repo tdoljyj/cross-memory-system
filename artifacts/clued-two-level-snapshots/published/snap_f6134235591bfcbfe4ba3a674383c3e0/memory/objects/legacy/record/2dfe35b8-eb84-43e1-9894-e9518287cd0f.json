@@ -1,0 +1,38 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "ad61e7a694b682ddf0e14fe093103781ec6bed7c57dabc25d0bec9a2a5015ac6",
+    "inline_payload": {
+      "archived_at": "2026-08-25T05:56:09.72983+00:00",
+      "content": "- 双轨问题：git blob 全 LF，但 Codex 工作树 / Documents 混合（待办 LF、其余 CRLF）、WorkBuddy 检出全 CRLF → 跨副本哈希误判、远端更新互相重写。已统一 LF + 新增 .gitattributes（* text eol=lf）+ Codex 仓库 core.autocrlf=false",
+      "created_at": "2026-08-25T05:56:09.72983+00:00",
+      "id": "2dfe35b8-eb84-43e1-9894-e9518287cd0f",
+      "priority": 40,
+      "project_id": null,
+      "record_key": "umb:v1:mem_22888ea6",
+      "record_type": "archive_snapshot",
+      "scope": "global",
+      "source_ref": "user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_22888ea6",
+      "status": "archived",
+      "title": "- 双轨问题：git blob 全 LF，但 Codex 工作树 / Documents 混合（待办 LF、其余 CRLF）、WorkBuddy 检出全 CRLF → 跨副本哈希误判、远端更新互相重写",
+      "updated_at": "2026-08-25T05:56:09.72983+00:00",
+      "version": 1
+    },
+    "kind": "legacy_record",
+    "legacy_id": "2dfe35b8-eb84-43e1-9894-e9518287cd0f",
+    "legacy_record_type": "archive_snapshot",
+    "legacy_schema_version": null,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

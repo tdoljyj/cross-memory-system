@@ -1,0 +1,38 @@
+{
+  "canonical_id": "00ad8a34-9800-4269-88ef-8bee5440bc03",
+  "canonical_version": "cv_155",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "- 讨厌：明显 AI 造词、四字成语式、过度文艺/古风、一眼「游戏公司/文化传媒」、生硬堆砌神话元素、为寓意而寓意",
+    "content_hash": "9def28f946f5ef04f71289b3d75f695b33a4a6dad7bae6f74b58767252799c27",
+    "id": "00ad8a34-9800-4269-88ef-8bee5440bc03",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "cd3f8d37-c5da-4b82-b165-49e6502f3396",
+    "record_schema_version": 1,
+    "record_type": "note",
+    "recorded_at": "2026-08-25T06:02:08.137717+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_e07057bb",
+    "title": "- 讨厌：明显 AI 造词、四字成语式、过度文艺/古风、一眼「游戏公司/文化传媒」、生硬堆砌神话元素、为寓意而寓意",
+    "type_fields": {
+      "legacy_priority": 40,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "note_kind": "legacy_import"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

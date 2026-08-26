@@ -1,0 +1,38 @@
+{
+  "canonical_id": "037b1863-ac8e-443b-8907-f3bce633b4d4",
+  "canonical_version": "cv_155",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "- 项目驱动学习，不做系统性学完再动手",
+    "content_hash": "818ebfdc760cb7d8a01c5fca87a7829f7d5ccebd350427126f41514f1ac3b70e",
+    "id": "037b1863-ac8e-443b-8907-f3bce633b4d4",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "f0c91a72-0b98-41c4-9189-345be3c332a2",
+    "record_schema_version": 1,
+    "record_type": "decision",
+    "recorded_at": "2026-08-25T05:58:42.405543+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_814f8dd5",
+    "title": "- 项目驱动学习，不做系统性学完再动手",
+    "type_fields": {
+      "legacy_priority": 40,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "rationale": "legacy_import_preserved_content"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

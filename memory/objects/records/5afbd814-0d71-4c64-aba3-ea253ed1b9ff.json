@@ -1,0 +1,38 @@
+{
+  "canonical_id": "5afbd814-0d71-4c64-aba3-ea253ed1b9ff",
+  "canonical_version": "cv_155",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "接第二台机器时用 -Doctor 验证可移植性（macOS / Linux 需 pwsh，待测）——触发：接第二台机器时执行，现在无需做",
+    "content_hash": "cd10605f2056941237379afe396d51ee4774eb683611e8b0524bdb946b2661f9",
+    "id": "5afbd814-0d71-4c64-aba3-ea253ed1b9ff",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "7d40f907-5015-433c-a6d8-0c444d7a22ef",
+    "record_schema_version": 1,
+    "record_type": "task",
+    "recorded_at": "2026-08-25T05:59:28.263206+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_90b13f5c",
+    "title": "接第二台机器时用 -Doctor 验证可移植性（macOS / Linux 需 pwsh，待测）——触发：接第二台机器时执行，现在无需做",
+    "type_fields": {
+      "execution_bucket": "later",
+      "legacy_priority": 40,
+      "legacy_status": "backlog",
+      "migration_batch": "m1-current-legacy-20260826-v1"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

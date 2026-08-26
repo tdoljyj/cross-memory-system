@@ -1,0 +1,38 @@
+{
+  "canonical_id": "94bd0127-f163-4d73-b840-4ac102e4c5e3",
+  "canonical_version": "cv_155",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "- 判断标准常是「有没有感觉」而非「能不能用」；对「气质」极其敏感（视觉化思维：先看「看起来对不对」）",
+    "content_hash": "eeffbbd25a850056880e28dff6a0c971f57d15d106a3d71791083d0eb62fdff0",
+    "id": "94bd0127-f163-4d73-b840-4ac102e4c5e3",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "c3513f88-54b6-43dd-b725-aaa4e3a092ef",
+    "record_schema_version": 1,
+    "record_type": "note",
+    "recorded_at": "2026-08-25T06:03:00.339539+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_f2ac9f5b",
+    "title": "- 判断标准常是「有没有感觉」而非「能不能用」；对「气质」极其敏感（视觉化思维：先看「看起来对不对」）",
+    "type_fields": {
+      "legacy_priority": 40,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "note_kind": "legacy_import"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

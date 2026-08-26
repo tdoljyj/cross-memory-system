@@ -1,0 +1,38 @@
+{
+  "canonical_id": "f1fc559a-0a56-4ef3-9979-0e1ba113fca6",
+  "canonical_version": "cv_155",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "- 定位：东方文化底层 + 现代 3A/主机动作游戏表现形式的独立游戏（不是手游 / 纯小游戏）",
+    "content_hash": "0546356d21db32c17dda838231961a46a3a276c1cd5030ff3bdc0653a7205397",
+    "id": "f1fc559a-0a56-4ef3-9979-0e1ba113fca6",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "cfcddc3a-f9bc-417e-ada1-44d452032ac3",
+    "record_schema_version": 1,
+    "record_type": "note",
+    "recorded_at": "2026-08-25T05:59:18.162186+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_8cf5d7d8",
+    "title": "- 定位：东方文化底层 + 现代 3A/主机动作游戏表现形式的独立游戏（不是手游 / 纯小游戏）",
+    "type_fields": {
+      "legacy_priority": 40,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "note_kind": "legacy_import"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

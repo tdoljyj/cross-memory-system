@@ -1,0 +1,41 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "95297f00b6f68e4f033b1863b5c36bbbdc8c97abe67e8ca4a4ac39dd1c318cda",
+    "inline_payload": {
+      "base_version": 0,
+      "context_key": "project:0597aa60-9b98-4da6-a4ab-63d7705b632f",
+      "event_type": "action",
+      "occurred_at": "2026-08-25T17:58:49.500732+00:00",
+      "payload": {
+        "action": "deploy_m1_runtime_contracts",
+        "database_migration": "20260825174741_clued_m1_runtime_contracts",
+        "legacy_current_records": 126,
+        "m2_enabled": false,
+        "merge_writes_enabled": false,
+        "result": "runtime_deployed_mapping_gate_open",
+        "worker_version": "b7431319-718b-480b-a711-d73571d29c07"
+      },
+      "project_id": null,
+      "record_id": null,
+      "record_version": null
+    },
+    "kind": "legacy_event",
+    "legacy_id": "309",
+    "legacy_record_type": null,
+    "legacy_schema_version": null,
+    "migration_status": "preserved_audit_only",
+    "missing_required_fields": [
+      "event_schema_version",
+      "committed_canonical_version",
+      "audit_visibility",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_event",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

@@ -1,0 +1,38 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "5117509f276e9ef63f08b9503c3ce78ac12bbff24590161ac43fee370314b3c0",
+    "inline_payload": {
+      "archived_at": "2026-08-25T05:56:05.404907+00:00",
+      "content": "- 结论：架构成立（四层结构 + Canonical Store + 护栏族经三轮审计验证）；发现 P1×3——① ps1 push 卷入预 staged 非 memory 文件（密钥扫描绕过：staged 令牌文件随 memory sync 提交推上远端[实证]；无 memory 变化仍产生推送→NO_CHANGE 违约[实证]）；② 部署护栏黑名单漏「DSH 克隆×ps1」单元格（跨端污染+身份伪造路径）；③ py REPO 回落默认指向 WorkBuddy 克隆（fail-open 越界默认）。另 P2×8 + P3×9（探针对象错位、保留期漂移、决策.md 凭据口径并存、基线第十二节与变更记录矛盾、tag 落后 HEAD 12 提交等）",
+      "created_at": "2026-08-25T05:56:05.404907+00:00",
+      "id": "d7eac989-23eb-493a-935b-6b49ca677590",
+      "priority": 40,
+      "project_id": null,
+      "record_key": "umb:v1:mem_21d4095e",
+      "record_type": "archive_snapshot",
+      "scope": "global",
+      "source_ref": "user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_21d4095e",
+      "status": "archived",
+      "title": "- 结论：架构成立（四层结构 + Canonical Store + 护栏族经三轮审计验证）；发现 P1×3——① ps1 push 卷入预 staged 非 memory 文件（密钥扫描绕过：staged 令牌文件随 memory syn",
+      "updated_at": "2026-08-25T05:56:05.404907+00:00",
+      "version": 1
+    },
+    "kind": "legacy_record",
+    "legacy_id": "d7eac989-23eb-493a-935b-6b49ca677590",
+    "legacy_record_type": "archive_snapshot",
+    "legacy_schema_version": null,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

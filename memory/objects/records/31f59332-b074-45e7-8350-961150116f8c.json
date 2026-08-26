@@ -1,0 +1,38 @@
+{
+  "canonical_id": "31f59332-b074-45e7-8350-961150116f8c",
+  "canonical_version": "cv_155",
+  "data": {
+    "authority": "imported",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "confidence": null,
+    "confidence_reason": "legacy_authenticated_import_no_confidence_reestimation",
+    "content": "- 参考：山海经、上古神话、天庭、夸父逐日、东方哲学、宏大叙事",
+    "content_hash": "d01d384d432fc80fdf2f90b23c4051a2ec9a4817571145081a3e68e18b7dd0ac",
+    "id": "31f59332-b074-45e7-8350-961150116f8c",
+    "lifecycle_status": "active",
+    "merged_into_record_id": null,
+    "observed_at": null,
+    "receipt_id": "29bcd16e-5a42-4221-a4aa-880b93ef71d9",
+    "record_schema_version": 1,
+    "record_type": "note",
+    "recorded_at": "2026-08-25T05:59:09.594263+00:00",
+    "relations": {},
+    "scope": "global",
+    "source_refs": [],
+    "source_unavailable_reason": "legacy_source_ref:user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_8b3652b2",
+    "title": "- 参考：山海经、上古神话、天庭、夸父逐日、东方哲学、宏大叙事",
+    "type_fields": {
+      "legacy_priority": 40,
+      "legacy_status": "active",
+      "migration_batch": "m1-current-legacy-20260826-v1",
+      "note_kind": "legacy_import"
+    },
+    "updated_at": "2026-08-25T18:47:22.605042+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

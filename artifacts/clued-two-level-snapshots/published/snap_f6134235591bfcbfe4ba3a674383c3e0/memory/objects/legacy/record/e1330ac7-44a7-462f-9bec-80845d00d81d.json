@@ -1,0 +1,38 @@
+{
+  "canonical_id": null,
+  "canonical_version": null,
+  "data": {
+    "content_hash": "255e921d33965f21deaa450a2bd8b31365d6ae83e65f8d5d040fc91a43d162bd",
+    "inline_payload": {
+      "archived_at": "2026-08-25T06:02:16.745231+00:00",
+      "content": "- 待确认「双层结构」：品牌名走鱼火方向，公司主体名可走「普通字 × 行业词」（如数字引擎式）；未决策",
+      "created_at": "2026-08-25T06:02:16.745231+00:00",
+      "id": "e1330ac7-44a7-462f-9bec-80845d00d81d",
+      "priority": 40,
+      "project_id": null,
+      "record_key": "umb:v1:mem_e575cdf0",
+      "record_type": "note",
+      "scope": "global",
+      "source_ref": "user-memory-bundle-v1:umb_fdb167fd46d84c16047af70d:mem_e575cdf0",
+      "status": "archived",
+      "title": "- 待确认「双层结构」：品牌名走鱼火方向，公司主体名可走「普通字 × 行业词」（如数字引擎式）；未决策",
+      "updated_at": "2026-08-25T06:02:16.745231+00:00",
+      "version": 1
+    },
+    "kind": "legacy_record",
+    "legacy_id": "e1330ac7-44a7-462f-9bec-80845d00d81d",
+    "legacy_record_type": "note",
+    "legacy_schema_version": null,
+    "migration_status": "pending_review",
+    "missing_required_fields": [
+      "record_schema_version",
+      "lifecycle_status",
+      "receipt_id"
+    ],
+    "omitted_reason": null,
+    "protected_payload_ref": null
+  },
+  "kind": "legacy_record",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

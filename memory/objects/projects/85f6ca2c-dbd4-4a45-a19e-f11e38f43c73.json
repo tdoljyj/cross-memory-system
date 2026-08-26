@@ -1,0 +1,25 @@
+{
+  "canonical_id": "85f6ca2c-dbd4-4a45-a19e-f11e38f43c73",
+  "canonical_version": "cv_155",
+  "data": {
+    "aliases": [],
+    "canonical_project_id": "85f6ca2c-dbd4-4a45-a19e-f11e38f43c73",
+    "certainty_status": "confirmed",
+    "closed_at": null,
+    "closed_reason": null,
+    "closure_summary": null,
+    "lifecycle_status": "active",
+    "merge_generation": 0,
+    "merged_into_project_id": null,
+    "name": "clued.pixelgrav.com",
+    "progress_status": "active",
+    "project_schema_version": 1,
+    "receipt_id": null,
+    "recorded_at": "2026-08-25T05:23:14.433884+00:00",
+    "updated_at": "2026-08-25T05:23:14.433884+00:00",
+    "version": 1
+  },
+  "kind": "project",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}

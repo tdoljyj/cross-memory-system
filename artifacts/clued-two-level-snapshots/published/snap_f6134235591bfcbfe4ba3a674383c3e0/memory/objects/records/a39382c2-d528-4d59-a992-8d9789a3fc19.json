@@ -1,0 +1,40 @@
+{
+  "canonical_id": "a39382c2-d528-4d59-a992-8d9789a3fc19",
+  "canonical_version": "cv_155",
+  "data": {
+    "authority": "user_explicit",
+    "closed_at": "2026-08-25T23:44:00.661458+00:00",
+    "closed_reason": "Superseded before v1.6 root cutover.",
+    "closure_summary": "Superseded legacy continuity state mem_1ce82c47.",
+    "confidence": 1,
+    "confidence_reason": "Legacy mem_1ce82c47 is superseded; preserve as archived history.",
+    "content": "2026-08-26 Clued v1.6 M2 已按阈值启用持久快照运维能力：三消费者触发，2 个 ready 版本纳管；独占发布锁、current CAS、有界重试、Reconciler、Sweeper/GC、连续 3 次失败文件告警均已实现，首次运行 healthy。current 仍为 snap_d04d68806b63819ca12b7a2a58bf2f27。Event Rollup/ordering、冷存储、Index 分片、语义自动改写、Workspace/Team 与 Project/Record merge 因门禁未满足继续关闭。Node 63/63、v2 红线 14/14、pgTAP 72/72、typecheck、ESLint、DB lint、build 全绿。",
+    "content_hash": "0adafbc52044e0c9be24e75ffcf4f0d81b39f30f3925c3717eca89fd88494774",
+    "id": "a39382c2-d528-4d59-a992-8d9789a3fc19",
+    "lifecycle_status": "archived",
+    "merged_into_record_id": null,
+    "observed_at": "2026-08-25T22:05:05+00:00",
+    "receipt_id": "08fc485b-29a2-41ec-a6c4-5192c26f3cfa",
+    "record_schema_version": 1,
+    "record_type": "state",
+    "recorded_at": "2026-08-25T23:43:56.403538+00:00",
+    "relations": {
+      "depends_on": [],
+      "related_records": [],
+      "supersedes": []
+    },
+    "scope": "project:0597aa60-9b98-4da6-a4ab-63d7705b632f",
+    "source_refs": [],
+    "source_unavailable_reason": "Source preserved at Git tag pre-memory-v16-root-cutover-20260826:memory/objects/mem_1ce82c47.json",
+    "title": "Clued v1.6 M2 首次运行状态",
+    "type_fields": {
+      "priority": 90,
+      "state_kind": "milestone"
+    },
+    "updated_at": "2026-08-25T23:44:00.661458+00:00",
+    "version": 2
+  },
+  "kind": "record",
+  "schema_version": 1,
+  "snapshot_version": "snap_f6134235591bfcbfe4ba3a674383c3e0"
+}
