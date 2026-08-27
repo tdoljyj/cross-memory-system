@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { cp, mkdtemp, readFile, readdir } from "node:fs/promises";
+import { cp, mkdtemp, readFile, readdir, utimes } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -409,6 +409,69 @@ test("Snapshot publication lock uses trusted stale time and token-scoped release
     scenario: "trusted_stale_time_and_token_scoped_release",
     future_business_clock_eviction_blocked: true,
     previous_owner_cannot_release_successor_lock: true,
+    result: "PASS",
+  });
+});
+
+test("Snapshot lock serializes true-overlap stale takeover and old-owner release", async () => {
+  const exportRoot = await mkdtemp(path.join(os.tmpdir(), "clued-p6-lock-overlap-"));
+  const lockPath = path.join(exportRoot, "m2", "runtime", "publish.lock");
+  const iterations = 250;
+  for (let iteration = 0; iteration < iterations; iteration += 1) {
+    let releaseFirst;
+    let firstEntered;
+    const firstEnteredPromise = new Promise((resolve) => { firstEntered = resolve; });
+    const firstReleasePromise = new Promise((resolve) => { releaseFirst = resolve; });
+    const first = withSnapshotPublicationLock({
+      exportRoot,
+      occurredAt: BUILD_EPOCH,
+      operation: `overlap_first_${iteration}`,
+      policy: { stale_lock_seconds: 900, retry_schedule_ms: [] },
+    }, async () => {
+      firstEntered();
+      await firstReleasePromise;
+    });
+    await firstEnteredPromise;
+    const aged = new Date(Date.now() - 2_000);
+    await utimes(lockPath, aged, aged);
+
+    let releaseSecond;
+    let secondEntered;
+    const secondEnteredPromise = new Promise((resolve) => { secondEntered = resolve; });
+    const secondReleasePromise = new Promise((resolve) => { releaseSecond = resolve; });
+    const second = withSnapshotPublicationLock({
+      exportRoot,
+      occurredAt: BUILD_EPOCH,
+      operation: `overlap_second_${iteration}`,
+      policy: { stale_lock_seconds: 1, retry_schedule_ms: [0, 0, 0] },
+    }, async () => {
+      secondEntered();
+      await secondReleasePromise;
+    });
+    setImmediate(releaseFirst);
+    assert.equal(await Promise.race([
+      secondEnteredPromise.then(() => "entered"),
+      second.then(() => "failed", () => "failed"),
+      new Promise((resolve) => setTimeout(() => resolve("timeout"), 2_000)),
+    ]), "entered");
+    await first;
+
+    await assert.rejects(withSnapshotPublicationLock({
+      exportRoot,
+      occurredAt: BUILD_EPOCH,
+      operation: `overlap_third_${iteration}`,
+      policy: { stale_lock_seconds: 900, retry_schedule_ms: [] },
+    }, async () => {}), /publication_lock_busy/);
+    releaseSecond();
+    await second;
+  }
+  recordEvidence("f19_publish_rollback_evidence.jsonl", {
+    scenario: "positive_threshold_true_overlap_transition_stress",
+    iterations,
+    stale_lock_seconds: 1,
+    aged_mtime_seconds: 2,
+    concurrent_enoent_cleanup_errors: 0,
+    successor_lock_violations: 0,
     result: "PASS",
   });
 });

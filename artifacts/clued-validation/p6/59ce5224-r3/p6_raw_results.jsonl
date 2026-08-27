@@ -1,0 +1,2 @@
+{"contract":"clued.p6.validation-result.v1","gate":"shadow_normalization","result":"PASS","volatile_ids_removed":true,"business_identity_preserved":true}
+{"contract":"clued.p6.validation-result.v1","gate":"P6_LOCAL_IMPLEMENTATION_ONLY","g6_3a":"PASS","g6_3b":"NOT_EXECUTED_NOT_AUTHORIZED","real_canary":"NOT_EXECUTED_NOT_AUTHORIZED","production_access":false,"result":"PASS"}

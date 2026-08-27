@@ -25,6 +25,7 @@ export const SNAPSHOT_PUBLICATION_LOCK_POLICY = Object.freeze({
   stale_lock_seconds: 900,
   retry_schedule_ms: [100, 500, 2_000],
 });
+const PUBLICATION_TRANSITION_RETRY_MS = Object.freeze([0, 1, 5, 25, 100, 500, 2_000]);
 
 const RECORD_TYPES = new Set(["state", "task", "decision", "profile_fact", "note"]);
 const TERMINAL_RECORD_STATUSES = new Set([
@@ -797,6 +798,7 @@ function publicationPaths(exportRoot) {
     current: path.resolve(root, "current.json"),
     runtime: path.resolve(root, "m2", "runtime"),
     lock: path.resolve(root, "m2", "runtime", "publish.lock"),
+    transitionLock: path.resolve(root, "m2", "runtime", "publish.lock.transition"),
   };
 }
 
@@ -824,26 +826,105 @@ async function observePublicationLock(lockPath) {
   }
 }
 
-async function removePublicationLockIfUnchanged(lockPath, observation) {
-  const current = await observePublicationLock(lockPath);
-  if (!current) return false;
-  if (
-    current.identity !== observation.identity
-    || current.lockStat.size !== observation.lockStat.size
-    || current.lockStat.mtimeMs !== observation.lockStat.mtimeMs
-  ) return false;
-  await rm(lockPath, { force: false });
-  return true;
+async function acquirePublicationTransitionLock(paths, operation) {
+  for (const waitMs of PUBLICATION_TRANSITION_RETRY_MS) {
+    await delay(waitMs);
+    let handle;
+    try {
+      handle = await open(paths.transitionLock, "wx");
+    } catch (error) {
+      if (error.code !== "EEXIST") throw error;
+      continue;
+    }
+    const transition = {
+      lock_schema_version: 1,
+      operation,
+      owner_ref: `pid:${process.pid}`,
+      owner_token: randomUUID(),
+      acquired_at: new Date().toISOString(),
+    };
+    try {
+      await handle.writeFile(prettyJson(transition), "utf8");
+      await handle.sync();
+      return transition;
+    } catch (error) {
+      await rm(paths.transitionLock, { force: true });
+      throw error;
+    } finally {
+      await handle.close();
+    }
+  }
+  throw new Error("publication_lock_transition_busy");
 }
 
-async function releaseSnapshotPublicationLock(lockPath, acquiredLock) {
-  const observation = await observePublicationLock(lockPath);
-  if (!observation) return false;
-  if (
-    typeof acquiredLock.owner_token !== "string"
-    || observation.payload?.owner_token !== acquiredLock.owner_token
-  ) return false;
-  return removePublicationLockIfUnchanged(lockPath, observation);
+async function withPublicationLockTransition(paths, operation, callback) {
+  await acquirePublicationTransitionLock(paths, operation);
+  try {
+    return await callback();
+  } finally {
+    try {
+      await rm(paths.transitionLock, { force: false });
+    } catch (error) {
+      if (error.code === "ENOENT") throw new Error("publication_lock_transition_lost");
+      throw error;
+    }
+  }
+}
+
+async function createSnapshotPublicationLock(paths, { occurredAt, operation }) {
+  const handle = await open(paths.lock, "wx");
+  const lock = {
+    lock_schema_version: 2,
+    operation,
+    owner_ref: `pid:${process.pid}`,
+    owner_token: randomUUID(),
+    acquired_at: new Date().toISOString(),
+    requested_at: occurredAt,
+  };
+  try {
+    await handle.writeFile(prettyJson(lock), "utf8");
+    await handle.sync();
+    return lock;
+  } catch (error) {
+    await rm(paths.lock, { force: true });
+    throw error;
+  } finally {
+    await handle.close();
+  }
+}
+
+async function tryAcquireSnapshotPublicationLock(paths, options) {
+  return withPublicationLockTransition(paths, `acquire:${options.operation}`, async () => {
+    try {
+      return await createSnapshotPublicationLock(paths, options);
+    } catch (error) {
+      if (error.code !== "EEXIST") throw error;
+    }
+    const observation = await observePublicationLock(paths.lock);
+    if (!observation) return createSnapshotPublicationLock(paths, options);
+    const ageSeconds = Math.max(0, Date.now() - observation.lockStat.mtimeMs) / 1_000;
+    if (ageSeconds <= options.policy.stale_lock_seconds) return null;
+    await rm(paths.lock, { force: false });
+    return createSnapshotPublicationLock(paths, options);
+  });
+}
+
+async function releaseSnapshotPublicationLock(paths, acquiredLock) {
+  return withPublicationLockTransition(paths, `release:${acquiredLock.operation}`, async () => {
+    const observation = await observePublicationLock(paths.lock);
+    if (!observation) return false;
+    if (
+      typeof acquiredLock.owner_token !== "string"
+      || observation.payload?.owner_token !== acquiredLock.owner_token
+    ) return false;
+    try {
+      await rm(paths.lock, { force: false });
+      return true;
+    } catch (error) {
+      if (error.code === "ENOENT") return false;
+      throw error;
+    }
+  });
 }
 
 async function acquireSnapshotPublicationLock(paths, { occurredAt, operation, policy }) {
@@ -852,39 +933,9 @@ async function acquireSnapshotPublicationLock(paths, { occurredAt, operation, po
   const schedule = [0, ...(policy.retry_schedule_ms ?? [])];
   for (let attempt = 0; attempt < schedule.length; attempt += 1) {
     await delay(schedule[attempt]);
-    let handle;
-    try {
-      handle = await open(paths.lock, "wx");
-    } catch (error) {
-      if (error.code !== "EEXIST") throw error;
-      const observation = await observePublicationLock(paths.lock);
-      if (!observation) continue;
-      const ageSeconds = Math.max(0, Date.now() - observation.lockStat.mtimeMs) / 1_000;
-      if (ageSeconds > policy.stale_lock_seconds) {
-        if (await removePublicationLockIfUnchanged(paths.lock, observation)) continue;
-      }
-      if (attempt === schedule.length - 1) throw new Error("publication_lock_busy");
-      continue;
-    }
-
-    const lock = {
-      lock_schema_version: 2,
-      operation,
-      owner_ref: `pid:${process.pid}`,
-      owner_token: randomUUID(),
-      acquired_at: new Date().toISOString(),
-      requested_at: occurredAt,
-    };
-    try {
-      await handle.writeFile(prettyJson(lock), "utf8");
-      await handle.sync();
-      return lock;
-    } catch (error) {
-      await rm(paths.lock, { force: true });
-      throw error;
-    } finally {
-      await handle.close();
-    }
+    const lock = await tryAcquireSnapshotPublicationLock(paths, { occurredAt, operation, policy });
+    if (lock) return lock;
+    if (attempt === schedule.length - 1) throw new Error("publication_lock_busy");
   }
   throw new Error("publication_lock_busy");
 }
@@ -900,7 +951,7 @@ export async function withSnapshotPublicationLock({
   try {
     return await callback(paths);
   } finally {
-    await releaseSnapshotPublicationLock(paths.lock, acquiredLock);
+    await releaseSnapshotPublicationLock(paths, acquiredLock);
   }
 }
 
