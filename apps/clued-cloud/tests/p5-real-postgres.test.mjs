@@ -8,7 +8,7 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
-import { build } from 'esbuild';
+import { build, stop as stopEsbuild } from 'esbuild';
 
 const TEST_DIR = path.dirname(fileURLToPath(import.meta.url));
 const CLOUD_ROOT = path.resolve(TEST_DIR, '..');
@@ -62,6 +62,13 @@ const IDS = {
   recordWorkerSuccess: '50000000-0000-4000-8000-000000000021',
   recordWorkerCommit: '50000000-0000-4000-8000-000000000022',
   recordAttemptForgery: '50000000-0000-4000-8000-000000000023',
+  recordWorkerConcurrent: '50000000-0000-4000-8000-000000000024',
+  recordWorkerFailedConcurrent: '50000000-0000-4000-8000-000000000025',
+  recordWorkerLostResponse: '50000000-0000-4000-8000-000000000026',
+  recordWorkerPayloadConflict: '50000000-0000-4000-8000-000000000027',
+  recordWorkerLegacyRace: '50000000-0000-4000-8000-000000000028',
+  recordAttemptExpired: '50000000-0000-4000-8000-000000000029',
+  recordAttemptMissingResult: '50000000-0000-4000-8000-000000000030',
   projectA: '60000000-0000-4000-8000-000000000001',
   projectB: '60000000-0000-4000-8000-000000000002',
 };
@@ -292,7 +299,77 @@ const GATEWAY_RPC_ARGUMENTS = {
   clued_p5_record_commit_failure: ['p_token_hash', 'p_input', 'p_attempt_id', 'p_failure_kind'],
 };
 
-function postgresGatewayFetch(server, gatewayToken, calls, { commitFailureTarget, lostResponseTarget } = {}) {
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((onResolve, onReject) => {
+    resolve = onResolve;
+    reject = onReject;
+  });
+  return { promise, resolve, reject };
+}
+
+function concurrentAttemptBarrier(expected = 2) {
+  const beginGate = deferred();
+  const mutateGate = deferred();
+  const failureClosedGate = deferred();
+  const firstMutationCompletedGate = deferred();
+  const beginResults = [];
+  const mutateRequests = [];
+  return {
+    async afterAttemptBegin(result) {
+      beginResults.push(result);
+      if (beginResults.length === expected) {
+        try {
+          equal(beginResults.map((item) => item.status), Array(expected).fill('open'),
+            'all concurrent Worker attempt_begin calls complete with an open Attempt');
+          equal(new Set(beginResults.map((item) => item.attempt_id)).size, 1,
+            'all concurrent Worker attempt_begin calls share one Attempt');
+          beginGate.resolve();
+        } catch (error) {
+          beginGate.reject(error);
+          throw error;
+        }
+      }
+      await beginGate.promise;
+    },
+    async beforeMutate(body) {
+      mutateRequests.push(body);
+      const ordinal = mutateRequests.length;
+      if (ordinal === expected) {
+        try {
+          equal(new Set(mutateRequests.map((item) => item.p_attempt_id)).size, 1,
+            'both Worker mutate calls use the shared open Attempt');
+          equal(mutateRequests[0].p_attempt_id, beginResults[0].attempt_id,
+            'mutate cannot pass the barrier before both attempt_begin calls finish');
+          mutateGate.resolve();
+        } catch (error) {
+          mutateGate.reject(error);
+          throw error;
+        }
+      }
+      await mutateGate.promise;
+      return ordinal;
+    },
+    markFailureClosed() { failureClosedGate.resolve(); },
+    async waitForFailureClosed() { await failureClosedGate.promise; },
+    markFirstMutationCompleted() { firstMutationCompletedGate.resolve(); },
+    async waitForFirstMutationCompleted() { await firstMutationCompletedGate.promise; },
+    snapshot() {
+      return {
+        attempt_id: beginResults[0]?.attempt_id ?? null,
+        begin_count: beginResults.length,
+        mutate_count: mutateRequests.length,
+        shared_open_attempt: beginResults.length === expected
+          && new Set(beginResults.map((item) => item.attempt_id)).size === 1,
+      };
+    },
+  };
+}
+
+function postgresGatewayFetch(server, gatewayToken, calls, {
+  commitFailureTarget, lostResponseTarget, concurrentBarrier, legacyConsumedTarget,
+} = {}) {
   return async (url, init = {}) => {
     const rpcName = new URL(String(url)).pathname.split('/').at(-1);
     calls.push(rpcName);
@@ -306,7 +383,21 @@ function postgresGatewayFetch(server, gatewayToken, calls, { commitFailureTarget
     const client = server.getPgClient();
     await client.connect();
     try {
-      if (rpcName === 'clued_p5_mutate' && body.p_input?.target_id === commitFailureTarget) {
+      const mutateOrdinal = rpcName === 'clued_p5_mutate' && concurrentBarrier
+        ? await concurrentBarrier.beforeMutate(body)
+        : null;
+      if (rpcName === 'clued_p5_mutate' && body.p_input?.target_id === commitFailureTarget
+          && mutateOrdinal && mutateOrdinal > 1) {
+        await concurrentBarrier.waitForFailureClosed();
+      }
+      if (rpcName === 'clued_p5_mutate' && body.p_input?.target_id === legacyConsumedTarget
+          && mutateOrdinal && mutateOrdinal > 1) {
+        await concurrentBarrier.waitForFirstMutationCompleted();
+        return Response.json({ status: 'rejected',
+          error: { type: 'P5_ATTEMPT_ALREADY_CONSUMED', sqlstate: 'P0001' } });
+      }
+      if (rpcName === 'clued_p5_mutate' && body.p_input?.target_id === commitFailureTarget
+          && (!mutateOrdinal || mutateOrdinal === 1)) {
         await client.query('begin');
         await client.query('set local role clued_p5_gateway');
         await rawRpc(client, rpcName, params);
@@ -323,6 +414,16 @@ function postgresGatewayFetch(server, gatewayToken, calls, { commitFailureTarget
       }
       await client.query('set role clued_p5_gateway');
       const result = await rawRpc(client, rpcName, params);
+      if (rpcName === 'clued_p5_attempt_begin' && concurrentBarrier) {
+        await concurrentBarrier.afterAttemptBegin(result);
+      }
+      if (rpcName === 'clued_p5_mutate' && body.p_input?.target_id === legacyConsumedTarget
+          && mutateOrdinal === 1) {
+        concurrentBarrier.markFirstMutationCompleted();
+      }
+      if (rpcName === 'clued_p5_record_commit_failure' && concurrentBarrier) {
+        concurrentBarrier.markFailureClosed();
+      }
       if (rpcName === 'clued_p5_mutate' && body.p_input?.target_id === lostResponseTarget) {
         return Response.json({ message: 'mutation response lost', code: 'P5_TRANSPORT_RESPONSE_LOST' }, { status: 503 });
       }
@@ -345,7 +446,7 @@ async function workerTool(handleContinuityRequest, env, bindingToken, name, args
   const response = await handleContinuityRequest(request, env);
   const payload = await response.json();
   return { httpStatus: response.status, rpcError: payload.error ?? null,
-    result: payload.result?.structuredContent ?? null };
+    result: payload.result?.structuredContent ?? null, rawPayload: payload };
 }
 
 function runSupabaseSecurityAdvisors(port, password) {
@@ -612,11 +713,12 @@ test('P5 real PostgreSQL tenant isolation, concurrency, idempotency, rollback, a
     let workerCommitFailure;
     let workerCommitRetry;
     let workerCommitInput;
+    let workerCtx;
     try {
       workerSessionResult = (await workerTool(handleContinuityRequest, workerEnv, RAW_WORKER_BINDING_TOKEN,
         'clued_p5_session_open', context())).result;
       equal(workerSessionResult.status, 'authorized');
-      const workerCtx = context({ sessionToken: workerSessionResult.session_token });
+      workerCtx = context({ sessionToken: workerSessionResult.session_token });
       workerSuccess = (await workerTool(handleContinuityRequest, workerEnv, RAW_WORKER_BINDING_TOKEN,
         'clued_p5_mutate', mutation(workerCtx, IDS.recordWorkerSuccess, 1,
           'worker-gateway-success', 'worker-gateway-v2'))).result;
@@ -663,6 +765,305 @@ test('P5 real PostgreSQL tenant isolation, concurrency, idempotency, rollback, a
       worker_uses_dedicated_gateway_role: true,
       gateway_secret_logged: false,
     });
+
+    // F16 second-review regression: both real Worker requests must finish
+    // attempt_begin with the same open Attempt before either mutate is allowed
+    // to execute. A second barrier then releases both PostgreSQL mutations to
+    // contend on the Attempt row lock.
+    const committedBarrier = concurrentAttemptBarrier();
+    const committedGatewayCalls = [];
+    const workerConcurrentInput = mutation(workerCtx, IDS.recordWorkerConcurrent, 1,
+      'worker-concurrent-shared-attempt', 'worker-concurrent-v2');
+    globalThis.fetch = postgresGatewayFetch(server, gatewayToken, committedGatewayCalls,
+      { concurrentBarrier: committedBarrier });
+    let workerConcurrentA;
+    let workerConcurrentB;
+    try {
+      [workerConcurrentA, workerConcurrentB] = await Promise.all([
+        workerTool(handleContinuityRequest, workerEnv, RAW_WORKER_BINDING_TOKEN,
+          'clued_p5_mutate', workerConcurrentInput),
+        workerTool(handleContinuityRequest, workerEnv, RAW_WORKER_BINDING_TOKEN,
+          'clued_p5_mutate', workerConcurrentInput),
+      ]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+    const committedBarrierState = committedBarrier.snapshot();
+    equal(committedBarrierState.begin_count, 2);
+    equal(committedBarrierState.mutate_count, 2);
+    equal(committedBarrierState.shared_open_attempt, true);
+    equal(workerConcurrentA.httpStatus, 200);
+    equal(workerConcurrentB.httpStatus, 200);
+    equal(workerConcurrentA.rpcError, null);
+    equal(workerConcurrentB.rpcError, null);
+    equal(workerConcurrentA.result, workerConcurrentB.result,
+      'concurrent Worker retries return the identical canonical result');
+    equal(workerConcurrentA.result.status, 'committed');
+    equal(await row(admin, IDS.recordWorkerConcurrent),
+      { version: '2', content: 'worker-concurrent-v2' });
+    equal(await counts(admin, 'worker-concurrent-shared-attempt'),
+      { idempotency: 1, events: 1, receipts: 1 });
+    const completedAttemptRow = (await admin.query(`select status,canonical_result
+      from public.clued_p5_gateway_attempts where id=$1`,
+    [committedBarrierState.attempt_id])).rows[0];
+    equal(completedAttemptRow.status, 'completed');
+    equal(completedAttemptRow.canonical_result, workerConcurrentA.result);
+    check(!JSON.stringify([workerConcurrentA.rawPayload, workerConcurrentB.rawPayload])
+      .includes('P5_ATTEMPT_ALREADY_CONSUMED'), 'legal Worker retry never exposes consumed Attempt error');
+    record('worker_concurrent_attempt_replay_evidence.jsonl',
+      'F16_WORKER_SHARED_OPEN_ATTEMPT_COMMITTED_REPLAY', {
+        barrier: committedBarrierState,
+        gateway_call_sequence: committedGatewayCalls,
+        responses_identical: true,
+        response_a: workerConcurrentA.result,
+        response_b: workerConcurrentB.result,
+        canonical_version: 2,
+        mutation_count: 1,
+        event_count: 1,
+        receipt_count: 1,
+        idempotency_count: 1,
+        attempt_already_consumed_exposed: false,
+        production_access: false,
+      });
+
+    // Failed Attempt replay uses the same begin/mutate barriers. The second
+    // mutation has already reached the Gateway before the first Worker's real
+    // deferred commit failure is resolved and atomically frozen as failed.
+    const failedBarrier = concurrentAttemptBarrier();
+    const failedGatewayCalls = [];
+    const workerFailedInput = mutation(workerCtx, IDS.recordWorkerFailedConcurrent, 1,
+      'worker-concurrent-failed-attempt', 'must-rollback');
+    globalThis.fetch = postgresGatewayFetch(server, gatewayToken, failedGatewayCalls, {
+      concurrentBarrier: failedBarrier,
+      commitFailureTarget: IDS.recordWorkerFailedConcurrent,
+    });
+    let workerFailedA;
+    let workerFailedB;
+    try {
+      [workerFailedA, workerFailedB] = await Promise.all([
+        workerTool(handleContinuityRequest, workerEnv, RAW_WORKER_BINDING_TOKEN,
+          'clued_p5_mutate', workerFailedInput),
+        workerTool(handleContinuityRequest, workerEnv, RAW_WORKER_BINDING_TOKEN,
+          'clued_p5_mutate', workerFailedInput),
+      ]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+    const failedBarrierState = failedBarrier.snapshot();
+    equal(failedBarrierState, {
+      attempt_id: failedBarrierState.attempt_id,
+      begin_count: 2,
+      mutate_count: 2,
+      shared_open_attempt: true,
+    });
+    equal(workerFailedA.result, workerFailedB.result,
+      'concurrent failed Attempt retries return the identical canonical result');
+    equal(workerFailedA.result.status, 'failed');
+    equal(workerFailedA.result.error.type, 'TRANSACTION_COMMIT_FAILED');
+    equal(await row(admin, IDS.recordWorkerFailedConcurrent),
+      { version: '1', content: 'recordWorkerFailedConcurrent-v1' });
+    equal(await counts(admin, 'worker-concurrent-failed-attempt'),
+      { idempotency: 1, events: 0, receipts: 1 });
+    const failedAttemptRow = (await admin.query(`select status,canonical_result
+      from public.clued_p5_gateway_attempts where id=$1`,
+    [failedBarrierState.attempt_id])).rows[0];
+    equal(failedAttemptRow.status, 'failed');
+    equal(failedAttemptRow.canonical_result, workerFailedA.result);
+    check(!JSON.stringify([workerFailedA.rawPayload, workerFailedB.rawPayload])
+      .includes('P5_ATTEMPT_ALREADY_CONSUMED'), 'failed legal retry never exposes consumed Attempt error');
+    record('worker_concurrent_attempt_replay_evidence.jsonl',
+      'F16_WORKER_SHARED_OPEN_ATTEMPT_FAILED_REPLAY', {
+        barrier: failedBarrierState,
+        gateway_call_sequence: failedGatewayCalls,
+        responses_identical: true,
+        response_a: workerFailedA.result,
+        response_b: workerFailedB.result,
+        canonical_version: 1,
+        mutation_count: 0,
+        event_count: 0,
+        receipt_count: 1,
+        idempotency_count: 1,
+        attempt_already_consumed_exposed: false,
+        production_access: false,
+      });
+
+    // Exercise the Worker's defensive compatibility path explicitly: an old
+    // Gateway returns HTTP 200 + ALREADY_CONSUMED for the second mutation, and
+    // the Worker resolves the exact completed Attempt instead of exposing it.
+    const legacyBarrier = concurrentAttemptBarrier();
+    const legacyGatewayCalls = [];
+    const legacyRaceInput = mutation(workerCtx, IDS.recordWorkerLegacyRace, 1,
+      'worker-legacy-consumed-race', 'legacy-race-v2');
+    globalThis.fetch = postgresGatewayFetch(server, gatewayToken, legacyGatewayCalls, {
+      concurrentBarrier: legacyBarrier,
+      legacyConsumedTarget: IDS.recordWorkerLegacyRace,
+    });
+    let legacyRaceA;
+    let legacyRaceB;
+    try {
+      [legacyRaceA, legacyRaceB] = await Promise.all([
+        workerTool(handleContinuityRequest, workerEnv, RAW_WORKER_BINDING_TOKEN,
+          'clued_p5_mutate', legacyRaceInput),
+        workerTool(handleContinuityRequest, workerEnv, RAW_WORKER_BINDING_TOKEN,
+          'clued_p5_mutate', legacyRaceInput),
+      ]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+    equal(legacyRaceA.result, legacyRaceB.result);
+    equal(legacyRaceA.result.status, 'committed');
+    check(legacyGatewayCalls.includes('clued_p5_attempt_resolve'),
+      'Worker resolves HTTP-successful ALREADY_CONSUMED race payload');
+    check(!JSON.stringify([legacyRaceA.rawPayload, legacyRaceB.rawPayload])
+      .includes('P5_ATTEMPT_ALREADY_CONSUMED'), 'defensive resolve hides legacy consumed error');
+    equal(await counts(admin, 'worker-legacy-consumed-race'),
+      { idempotency: 1, events: 1, receipts: 1 });
+    record('worker_concurrent_attempt_replay_evidence.jsonl',
+      'F16_WORKER_DEFENSIVE_ALREADY_CONSUMED_RESOLVE', {
+        barrier: legacyBarrier.snapshot(),
+        gateway_call_sequence: legacyGatewayCalls,
+        responses_identical: true,
+        canonical_result: legacyRaceA.result,
+        defensive_attempt_resolve: true,
+        attempt_already_consumed_exposed: false,
+      });
+
+    // A successfully committed response that is lost in transport resolves to
+    // the terminal Attempt, and a later full Worker retry replays identically.
+    const lostGatewayCalls = [];
+    const lostResponseInput = mutation(workerCtx, IDS.recordWorkerLostResponse, 1,
+      'worker-first-response-lost', 'lost-response-v2');
+    globalThis.fetch = postgresGatewayFetch(server, gatewayToken, lostGatewayCalls,
+      { lostResponseTarget: IDS.recordWorkerLostResponse });
+    let lostResponseFirst;
+    let lostResponseReplay;
+    try {
+      lostResponseFirst = await workerTool(handleContinuityRequest, workerEnv,
+        RAW_WORKER_BINDING_TOKEN, 'clued_p5_mutate', lostResponseInput);
+      lostResponseReplay = await workerTool(handleContinuityRequest, workerEnv,
+        RAW_WORKER_BINDING_TOKEN, 'clued_p5_mutate', lostResponseInput);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+    equal(lostResponseFirst.result, lostResponseReplay.result);
+    equal(lostResponseFirst.result.status, 'committed');
+    equal(await counts(admin, 'worker-first-response-lost'),
+      { idempotency: 1, events: 1, receipts: 1 });
+    equal((await row(admin, IDS.recordWorkerLostResponse)).version, '2');
+    record('worker_concurrent_attempt_replay_evidence.jsonl',
+      'F16_WORKER_FIRST_RESPONSE_LOST_REPLAY', {
+        gateway_call_sequence: lostGatewayCalls,
+        first_response: lostResponseFirst.result,
+        replay_response: lostResponseReplay.result,
+        responses_identical: true,
+        canonical_version: 2,
+        mutation_count: 1,
+        event_count: 1,
+        receipt_count: 1,
+        idempotency_count: 1,
+      });
+
+    // The same Worker Idempotency Key with a different body remains a payload
+    // conflict and never receives the first request's canonical result.
+    const payloadConflictCalls = [];
+    const payloadConflictA = mutation(workerCtx, IDS.recordWorkerPayloadConflict, 1,
+      'worker-same-key-different-body', 'original-worker-body');
+    const payloadConflictB = mutation(workerCtx, IDS.recordWorkerPayloadConflict, 1,
+      'worker-same-key-different-body', 'forged-worker-body');
+    globalThis.fetch = postgresGatewayFetch(server, gatewayToken, payloadConflictCalls);
+    let workerPayloadFirst;
+    let workerPayloadRejected;
+    try {
+      workerPayloadFirst = await workerTool(handleContinuityRequest, workerEnv,
+        RAW_WORKER_BINDING_TOKEN, 'clued_p5_mutate', payloadConflictA);
+      workerPayloadRejected = await workerTool(handleContinuityRequest, workerEnv,
+        RAW_WORKER_BINDING_TOKEN, 'clued_p5_mutate', payloadConflictB);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+    equal(workerPayloadFirst.result.status, 'committed');
+    equal(workerPayloadRejected.result.status, 'rejected');
+    equal(workerPayloadRejected.result.error.type, 'IDEMPOTENCY_PAYLOAD_CONFLICT');
+    equal(await row(admin, IDS.recordWorkerPayloadConflict),
+      { version: '2', content: 'original-worker-body' });
+    equal(await counts(admin, 'worker-same-key-different-body'),
+      { idempotency: 1, events: 1, receipts: 1 });
+    record('worker_concurrent_attempt_replay_evidence.jsonl',
+      'F17_WORKER_SAME_KEY_DIFFERENT_BODY_REJECTED', {
+        committed: workerPayloadFirst.result,
+        rejected: workerPayloadRejected.result,
+        canonical_result_leaked: false,
+        canonical_version: 2,
+        canonical_content: 'original-worker-body',
+        mutation_count: 1,
+        event_count: 1,
+        idempotency_count: 1,
+      });
+
+    // Terminal replay checks are deliberately forged after completion/failure:
+    // mismatch must win over status handling, so no stored result can leak.
+    const terminalMismatchCases = [
+      ['completed', committedBarrierState.attempt_id, workerConcurrentInput, workerConcurrentA.result],
+      ['failed', failedBarrierState.attempt_id, workerFailedInput, workerFailedA.result],
+    ];
+    for (const [terminalStatus, attemptId, exactInput, canonicalResult] of terminalMismatchCases) {
+      const wrongTerminalBody = { ...exactInput, mutation: { content: `forged-${terminalStatus}` } };
+      const mismatchedMutate = await rawRpc(owner, 'clued_p5_mutate',
+        [TOKENS.worker, wrongTerminalBody, attemptId]);
+      const mismatchedResolve = await rawRpc(owner, 'clued_p5_attempt_resolve',
+        [TOKENS.worker, wrongTerminalBody, attemptId]);
+      const crossBindingInput = { ...exactInput, ...ownerCtx };
+      const crossBindingMutate = await rawRpc(owner, 'clued_p5_mutate',
+        [TOKENS.owner, crossBindingInput, attemptId]);
+      equal(mismatchedMutate.error.type, 'P5_ATTEMPT_REQUEST_MISMATCH');
+      equal(mismatchedResolve.error.type, 'P5_ATTEMPT_REQUEST_MISMATCH');
+      equal(crossBindingMutate.error.type, 'P5_ATTEMPT_REQUEST_MISMATCH');
+      check(!('canonical_result' in mismatchedMutate), `${terminalStatus} mismatch leaks no result`);
+      check(!('canonical_result' in mismatchedResolve), `${terminalStatus} resolve mismatch leaks no result`);
+      check(!('canonical_result' in crossBindingMutate), `${terminalStatus} cross-Binding leaks no result`);
+      check(JSON.stringify(mismatchedMutate) !== JSON.stringify(canonicalResult),
+        `${terminalStatus} mismatch is checked before terminal replay`);
+      record('worker_concurrent_attempt_replay_evidence.jsonl',
+        `P5_${terminalStatus.toUpperCase()}_ATTEMPT_MISMATCH_PRECEDES_REPLAY`, {
+          attempt_id: attemptId,
+          wrong_body: mismatchedMutate.error.type,
+          wrong_body_resolve: mismatchedResolve.error.type,
+          cross_binding: crossBindingMutate.error.type,
+          canonical_result_leaked: false,
+          mismatch_precedes_terminal_status: true,
+        });
+    }
+
+    const expiredInput = mutation(ownerCtx, IDS.recordAttemptExpired, 1,
+      'attempt-expired-fail-closed', 'must-not-write');
+    const expiredAttempt = await rawRpc(owner, 'clued_p5_attempt_begin', [TOKENS.owner, expiredInput]);
+    await admin.query(`update public.clued_p5_gateway_attempts set expires_at=now()-interval '1 second'
+      where id=$1`, [expiredAttempt.attempt_id]);
+    const expiredMutation = await rawRpc(owner, 'clued_p5_mutate',
+      [TOKENS.owner, expiredInput, expiredAttempt.attempt_id]);
+    equal(expiredMutation.error.type, 'P5_ATTEMPT_EXPIRED');
+
+    const missingResultInput = mutation(ownerCtx, IDS.recordAttemptMissingResult, 1,
+      'attempt-missing-result-fail-closed', 'must-not-write');
+    const missingResultAttempt = await rawRpc(owner, 'clued_p5_attempt_begin',
+      [TOKENS.owner, missingResultInput]);
+    await admin.query(`update public.clued_p5_gateway_attempts
+      set status='completed',canonical_result=null,completed_at=now() where id=$1`,
+    [missingResultAttempt.attempt_id]);
+    const missingResultMutation = await rawRpc(owner, 'clued_p5_mutate',
+      [TOKENS.owner, missingResultInput, missingResultAttempt.attempt_id]);
+    equal(missingResultMutation.error.type, 'P5_ATTEMPT_CANONICAL_RESULT_MISSING');
+    equal(await row(admin, IDS.recordAttemptExpired),
+      { version: '1', content: 'recordAttemptExpired-v1' });
+    equal(await row(admin, IDS.recordAttemptMissingResult),
+      { version: '1', content: 'recordAttemptMissingResult-v1' });
+    record('worker_concurrent_attempt_replay_evidence.jsonl',
+      'P5_ATTEMPT_AMBIGUOUS_STATES_FAIL_CLOSED', {
+        expired: expiredMutation.error.type,
+        missing_canonical_result: missingResultMutation.error.type,
+        mutation_count: 0,
+        canonical_versions_unchanged: true,
+      });
 
     // Missing, mismatched, cross-Binding, untrusted-class and duplicate
     // compensation attempts are fail-closed. The first four create no
@@ -942,6 +1343,7 @@ test('P5 real PostgreSQL tenant isolation, concurrency, idempotency, rollback, a
         'apps/clued-cloud/supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql',
         'apps/clued-cloud/supabase/migrations/20260827031728_clued_p5_tenant_isolation_concurrent_writes.sql',
         'apps/clued-cloud/supabase/migrations/20260827050750_p5_gateway_attempt_commit_failure.sql',
+        'apps/clued-cloud/supabase/migrations/20260827062132_p5_concurrent_attempt_replay.sql',
         'cloud/postgres/README.md',
         'cloud/postgres/migrations/0001_cloud_data_foundation.up.sql',
       ],
@@ -954,6 +1356,7 @@ test('P5 real PostgreSQL tenant isolation, concurrency, idempotency, rollback, a
     throw error;
   } finally {
     await Promise.allSettled(clients.reverse().map((client) => client.end()));
+    await stopEsbuild();
     if (process.platform === 'win32') {
       const pid = server.process?.pid;
       if (pid) {

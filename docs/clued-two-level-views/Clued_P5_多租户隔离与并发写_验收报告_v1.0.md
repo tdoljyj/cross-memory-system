@@ -1,98 +1,78 @@
 # Clued P5 多租户隔离与并发写验收报告 v1.0
 
-本报告记录 P5 第一轮独立复审阻断项的线性修复、重新验收与第二轮独立复审候选事实。
+本报告记录 P5 第二轮独立复审阻断项的线性修复、重新验收与第三轮独立复审候选事实。
 
 最终裁决：
 
-`PASS / P5_SECURITY_FIX_ACCEPTED_FOR_SECOND_INDEPENDENT_REVIEW`
+`PASS / P5_CONCURRENT_ATTEMPT_REPLAY_FIX_ACCEPTED_FOR_THIRD_INDEPENDENT_REVIEW`
 
 ## 1. 固定拓扑与边界
 
 - 仓库：`tdoljyj/cross-memory-system`
 - 固定 `main` / P4 Closeout：`8327b6b0429ce69aa95be05fc83bb0e4950625ea`
-- P5 第一候选：`5aa069b5f594789bf564af67ebfaf1f6b67c332c`
-- 本轮修复提交的唯一父提交：`5aa069b5f594789bf564af67ebfaf1f6b67c332c`
+- P5 第二轮候选：`8fef81a32a761d89c196095c2fe758b33f9e4da6`
+- 本轮修复提交的唯一父提交：`8fef81a32a761d89c196095c2fe758b33f9e4da6`
 - 功能分支：`codex/p5-tenant-isolation-concurrent-writes`
 - 证据目录：`artifacts/clued-validation/p5/8327b6b0/`
 
-本轮只追加一个普通线性修复 Commit；不 amend、rebase、squash、force push，不移动或合并 `main`。未执行 P6、生产访问或生产数据库、部署、Tag、Release、Snapshot、Manifest、Current Pointer、根 `VERSION` 或语义召回变更。
+本轮只追加一个普通线性修复 Commit；不 amend、rebase、squash、force push，不移动或合并 `main`。未执行 P6、生产访问、部署、Tag、Release、Snapshot、Manifest、Current Pointer、根 `VERSION` 或语义召回变更。
 
-## 2. 第一轮复审与根因
+## 2. 第二轮复审与根因
 
-第一轮裁决：
+第二轮裁决：
 
-`FAIL / P5_INDEPENDENT_REVIEW_BLOCKED_BY_ANON_RPC_GATE_BYPASS_AND_FORGEABLE_COMMIT_FAILURE`
+`FAIL / P5_SECOND_INDEPENDENT_REVIEW_BLOCKED_BY_CONCURRENT_ATTEMPT_REPLAY_REGRESSION`
 
-根因有两项：
-
-1. 第一候选把 public `SECURITY DEFINER` P5 RPC 直接授予 `anon`，持有 Binding Token 的调用者可自行计算 Token Hash 后绕过 Worker，进而绕过 `P5_TENANT_WRITES`、Binding-only 路由、JSON Schema、请求大小和未来 P6 启停边界。
-2. 旧 `clued_p5_record_commit_failure` 接受普通调用者提供的任意 `p_error`。测试在事务失败后由夹具手工调用它，Worker 没有真实自动补记链路；因此调用者可伪造 `TRANSACTION_COMMIT_FAILED` 并污染 Idempotency Key。
+两个完全相同的并发 Worker 请求可能从 `clued_p5_attempt_begin` 取得同一个 open Attempt。第一方完成后，第二方原先在 `clued_p5_mutate` 中得到包装为 HTTP 成功 JSON 的 `P5_ATTEMPT_ALREADY_CONSUMED`；Worker 只对 RPC transport exception 调用 `attempt_resolve`，因而没有返回第一方已保存的 `canonical_result`。这避免了重复副作用，却违反 F16 对合法并发重试“规范结果完全相同”的要求。
 
 ## 3. 修复合同
 
-### 3.1 Gateway 最小权限边界
+### 3.1 数据库终态回放
 
-- 从 `PUBLIC`、`anon`、`authenticated`、`service_role` 撤销全部 8 个 public P5 RPC 的直接 `EXECUTE`。
-- 新增 `clued_p5_gateway`：`NOLOGIN`、`NOINHERIT`、`NOBYPASSRLS`、非超级用户；只拥有 P5 public RPC 的 `EXECUTE` 和 public schema `USAGE`。
-- Gateway 无 P5 Attempt 表权限，也不能直接执行 private mutation core。
-- Worker 仅从服务端 Secret `CLUED_P5_GATEWAY_TOKEN` 取得专用 Gateway JWT；源码、客户端、证据和日志均不含该 Token、`service_role` Secret 或数据库密码。
-- Binding Token 仍只作为待核对身份，Worker 只向数据库传输其 SHA-256；它不再充当数据库 RPC 执行凭据。
-- `P5_TENANT_WRITES=false` 时，Worker 在进入任一 RPC 前返回 404；匿名、publishable key、authenticated 或有效 Binding Token 直调数据库均因 SQLSTATE `42501` 被拒绝且零 Mutation。`true` 控制场景走实际 Worker → Gateway → PostgreSQL 并成功。
+Migration `20260827062132_p5_concurrent_attempt_replay.sql` 替换 public `clued_p5_mutate`：
 
-### 3.2 真实 commit-time failure 闭环
+1. 先 fresh-resolve Binding 并对 Attempt `FOR UPDATE` 加行锁；
+2. 在读取或返回任何 `canonical_result` 前，逐项验证 Organization、Workspace、User、Binding、Request Hash、Idempotency Key、Target Kind/ID 和 Base Version；
+3. 精确匹配且 status=`open` 时执行 private Mutation；
+4. 精确匹配且 status=`completed` 或 `failed` 时直接返回已保存的 `canonical_result`；
+5. `expired`、未知状态或终态缺少 `canonical_result` 明确 fail-closed；
+6. mismatch 检查永远先于 completed/failed 结果返回，不向伪造 Attempt ID 或跨 Binding 请求泄露规范结果。
 
-Worker mutation 流程为：
+Gateway 最小权限和 8 个 P5 RPC 的撤权合同保持不变：`PUBLIC`、`anon`、`authenticated`、`service_role` 仍不能直接执行 P5 RPC；只有 `clued_p5_gateway` 可执行 public P5 RPC，且不能读写 Attempt 表或执行 private mutation core。
 
-1. 经 Gateway 创建服务端 Attempt；
-2. Attempt 绑定 Organization、Workspace、User、Binding、Request Hash、Idempotency Key、Target、Base Version，并带短期 Expiry；
-3. 使用同一 Attempt 发起权威 Mutation；
-4. 数据库 commit/transport failure 被 Worker 捕获；
-5. Worker 经受保护通道在新事务中解析仍为 `open` 的 Attempt；
-6. 只有精确匹配且未消费的 Attempt 才可生成一份 failed Idempotency、immutable failed Receipt 与 failed Audit；
-7. Attempt 原子变为 `failed`，同请求重试确定性返回同一失败结果。
+### 3.2 Worker 防御性解析
 
-真实 deferred constraint commit failure 在数据库事务提交点发生。原 Mutation、Event、成功 Receipt 和成功 Audit 整体回滚；测试夹具没有手工调用补偿函数，补记由实际 Worker 自动完成。
+`callP5Mutation` 同时处理 transport exception 和 SQL 包装的 HTTP 200 竞态结果。若 mutate 返回 `P5_ATTEMPT_ALREADY_CONSUMED` 或等价终态，它必须调用 `attempt_resolve`：只有精确匹配且 resolved status 为 `completed`/`failed`、并存在对象型 `canonical_result` 时才返回规范结果；`open`、mismatch、expired、未知、缺失结果或歧义状态一律 fail-closed。防御路径不会调用 commit-failure 补记，也不会把 resolve details 中的规范结果附入错误响应。
 
-`clued_p5_record_commit_failure` 不再接受任意 `p_error`；只接受数据库合同定义的 `database_commit_failure` 或 `transport_failure` 分类，并必须携带服务端创建的一次性 Attempt。以下场景全部 fail-closed、零 Idempotency/Receipt/Audit 污染，且不影响后续合法 Mutation：
+### 3.3 确定性真实并发屏障
 
-- 无 Attempt 或伪造 Attempt；
-- 已消费 Attempt 重复使用；
-- Request Hash / 正文不匹配；
-- 跨 Binding、Organization、Workspace、Target 或 Idempotency Key；
-- 不可信 failure kind。
+真实 Worker → Gateway → PostgreSQL 测试新增双阶段同步屏障：两个 Worker 请求必须都完成 `attempt_begin`，均观察到同一个 open `attempt_id`，随后两个 mutate 都抵达竞争闸门，最后才同时释放。测试不依赖调度时序。
 
-## 4. P5 不变量与身份矩阵
+覆盖并证明：
 
-F15–F18、F22–F24、F28、F29 原合同继续成立：每次在线访问重验 User、Organization/Tenant、Workspace、Context Key、Agent Binding、Role、Scope、Purpose、Policy Version、Expiry 与 Revocation Epoch；Auth、服务层授权和真实数据库 RLS 保持独立纵深防御。
+- 相同正文并发请求的两个 Worker 响应逐字节相同，均为 committed canonical result；
+- Mutation、Event、Receipt、Idempotency 各一份，Canonical Version 只增加一次；
+- 合法重试者不暴露 `P5_ATTEMPT_ALREADY_CONSUMED`；
+- completed Attempt 并发重放与 failed Attempt 并发重放；
+- 首次响应丢失后的完整 Worker 重试；
+- 相同 Idempotency Key、不同正文仍拒绝；
+- 伪造/跨 Binding Attempt 无法取得 completed 或 failed `canonical_result`；
+- mismatch 先于 completed/failed 返回；
+- expired、未知或终态缺少结果均 fail-closed；
+- 兼容旧 Gateway 返回 consumed JSON 时，Worker 经 `attempt_resolve` 返回 canonical result。
 
-矩阵覆盖：
+## 4. P5 不变量与真实矩阵
 
-| 维度 | 覆盖 |
-| --- | --- |
-| 用户/租户 | 5 个用户，Tenant A / Tenant B |
-| Workspace | Tenant A 的 Workspace A/A2，Tenant B 的 Workspace B |
-| Role | Owner、Editor、Reader、Denied |
-| Binding | 9 个独立且可撤销 Binding；并发双方使用独立 Binding |
-| Context/Scope/Purpose | 不同 Context Key；read/write/audit Scope；`project_delivery` Purpose |
-| 动态变化 | 撤销、Role 降权、Scope 缩小、Policy 变化、Workspace 切换 |
-| 伪造 | 跨用户、跨租户、跨 Workspace 的 Record/Project 读写 |
-| Actor | user、agent_binding、service_account、automation 分别审计 |
+F15–F18、F22–F24、F28、F29 原合同继续成立。验收使用临时本地原生 PostgreSQL 18.4，从空库顺序应用 13 份 Supabase Migration；没有 Mock、内存字典或 Policy 文本替代真实执行。
 
-F15 使用两个独立连接和同一 Base Version 真实并发：仅一个提交，另一方返回含 expected/actual version 的 `CANONICAL_CAS_CONFLICT`；最终版本只增一，只有一组成功 Event/Receipt。F16/F17 覆盖同 Key 同正文串行/并发/网络结果丢失重试，以及同 Key 不同正文串行/并发冲突。F18 覆盖 Mutation 后、Event 前，Event 后、Receipt 前，Receipt 写入，CAS，幂等唯一约束，Audit 和真实 commit failure。F22/F23 覆盖撤销、降权、缩 Scope 和 Workspace 切换后的下一在线请求。F24 的服务层与真实 RLS 分别独立拒绝伪造。F28 区分 `GIT_DIVERGENCE` 与 `CANONICAL_CAS_CONFLICT`。F29 保持 Git、Markdown、Bundle、Index 和 `memory/` 只读，离线只产生 Pending Intent。
+- 5 个用户、2 个 Tenant、3 个 Workspace、Owner/Editor/Reader/Denied、9 个独立可撤销 Binding；
+- 跨 User/Tenant/Workspace/Binding/Target/正文的伪造和 mismatch；
+- 同 Base Version CAS、同/异 Idempotency Key、rollback/commit failure、RLS 与撤权矩阵；
+- 逐一验证 `anon`、`authenticated` 的 8 个 P5 RPC 均 permission denied，`service_role` 也无 P5 RPC EXECUTE；
+- Supabase CLI security advisors 实际执行并 PASS，结果哈希写入冻结证据；
+- `production_access=false`，未连接或访问生产。
 
-## 5. 独立数据库权限与 Advisors
-
-验收使用临时本地原生 PostgreSQL 18.4，从空库顺序应用 12 份 Supabase Migration；没有 Mock、内存字典或只读 Policy 文本替代真实执行。
-
-- 逐一以 `anon` 调用 8 个 P5 RPC：8/8 `permission denied`。
-- 逐一以 `authenticated` 调用 8 个 P5 RPC：8/8 `permission denied`。
-- `service_role` 无 P5 RPC `EXECUTE`。
-- 有效 Binding Token 不能替代 Gateway JWT 绕过 Worker。
-- Gateway Role 权限、角色属性、private core 与 Attempt 表隔离均通过。
-- Supabase CLI `db advisors --type security --level warn --fail-on error --output-format json` 实际执行并 PASS；结果哈希和字节数写入独立证据。
-- `production_access=false`，未连接 `clued-prod`。
-
-## 6. 重新执行的门禁
+## 5. 重新执行的门禁
 
 | 门禁 | 结果 |
 | --- | --- |
@@ -100,63 +80,62 @@ F15 使用两个独立连接和同一 Base Version 真实并发：仅一个提�
 | P2 专项 | PASS，29/29 |
 | P3 专项 | PASS，22/22 |
 | P4 专项 | PASS，33/33 |
-| Python 全量 | PASS，104/104 |
+| Python 专项合计 | PASS，104/104 |
 | P5 Cloud contracts | PASS，2/2 |
-| P5 真实 PostgreSQL/RLS/并发/Worker | PASS，1 test，144/144 assertions，18 scenarios |
-| Cloud verified build | PASS |
-| Cloud 离线回归 | PASS，66/66 |
+| P5 真实 PostgreSQL/RLS/并发/Worker | PASS，1 test，211/211 assertions，26 scenarios，13 migrations |
+| Cloud verified build | PASS，Vite 8.2.2 / vinext build |
+| Cloud 离线回归 | PASS，63/63；连同 P5 3 tests 为 66/66 |
+| TypeScript typecheck | PASS |
 | `memory.py doctor` | PASS，710 Manifest files，`snap_f6134235591bfcbfe4ba3a674383c3e0 / cv_155` |
-| `sync-memory.py doctor` | PASS |
-| NONE/T0 | PASS，`sources_read=[]`、`verification_context=null`、零 Context/Git/Memory/网络读取 |
+| `sync-memory.py doctor` | PASS，local read-only mirror aligned |
+| NONE/T0 | PASS，`Memory Access = NONE; skipping pull`；专项断言 `sources_read=[]`、`verification_context=null` |
+| Supabase security advisors | PASS |
 | Python compileall | PASS |
 | `git diff --check` | PASS |
-| 凭据扫描 | PASS |
-| Supabase security advisors | PASS |
+| 凭据扫描 | PASS，0 命中 |
 
-冻结黄金集在任务临时目录重跑：合同 19/19；回放 111 cases；corpus hash `1bc2374405f9678bf455b6bfffb2ed6fe3b4c12054fb2fe521e8ac9db3482c0e`；replay hash `f4266eabd2bed94da36c5fa7d99fba17a3493418b849da3dfcfcee7e2842159c`；critical memory recall v2 `0.7763`；false recall rate v2 `0.3444`；stale、scope leakage、no-memory violations、secret leaks 均为 `0`。
+P3 的最终专项运行使用普通 Git checkout，因为该专项显式检查 `.git/index`；产品修复仍在固定父提交的隔离 worktree 中完成。冻结黄金集在任务临时运行目录重建依赖视图后重跑：合同 19/19；回放 111 cases；corpus hash `1bc2374405f9678bf455b6bfffb2ed6fe3b4c12054fb2fe521e8ac9db3482c0e`；replay hash `f4266eabd2bed94da36c5fa7d99fba17a3493418b849da3dfcfcee7e2842159c`；critical memory recall v2 `0.7763`；false recall rate v2 `0.3444`；stale、scope leakage、superseded leakage、no-memory violations、secret leaks 均为 `0`。
 
-## 7. 最终证据
+## 6. 冻结证据
 
 | 文件 | Git Blob SHA | SHA-256 |
 | --- | --- | --- |
-| `binding_revocation_role_scope_evidence.jsonl` | `253a85afbc3ad3ca780916042f234f11dcbb6853` | `9f9caadbe7f904c306b5e3664e8dd8a575b620118153c8fa55ddee587b738db1` |
-| `concurrent_cas_evidence.jsonl` | `d82db6bb45f81db60d6b42f8688ca20796b3f816` | `a52d9d57f4b13955a3e5a0b21d69b9bcb2c76e49d1ca92b1be55a4a83efd3779` |
-| `git_canonical_conflict_evidence.jsonl` | `06b459f45d213c82781acda0d03223cebceace66` | `95e3f0636250f5194640d87c2f46c2bb172c63b0b04841c71da1d826afdbddba` |
-| `idempotency_retry_evidence.jsonl` | `272b3c05f57244ea4a95ccdd60a9654428d7b36a` | `1e9295aa34afdc3de64d315dc72ba5828eba73fc7567dc4a7b381c77743789fe` |
-| `p5_raw_results.jsonl` | `62020f948345cf3ef3cf55140aad1b3ab9819ee8` | `2023c0d848a1a350598d2509d1503d78a41e3f34e4e2525d12283dde524a60dc` |
+| `binding_revocation_role_scope_evidence.jsonl` | `972bfde54bbbf161bc384d384e5835eff18eac01` | `a1f3567a5d8991c318f87c58646403762df9d66ca75cf7e296f70d018b2cf6c1` |
+| `concurrent_cas_evidence.jsonl` | `1acb08340670dc1a0d797b08ea57b264b4cf7d7d` | `c2b3417ff29e12a4d5ab7ebc9aba14d0145782f53e9bcdfca8c9d983a2f71bf3` |
+| `git_canonical_conflict_evidence.jsonl` | `be82e144c30fe631a2a3819646b8dbae9b814bf0` | `24407560290ae5f0e91bbadea4ed78b0fcd99ee5c223e860ac42043554491ec2` |
+| `idempotency_retry_evidence.jsonl` | `368b71d1c91e3cc13be9839a93b918423737206a` | `4481f704f78e251ab2095fe7a093b3a195f59d572f9f33a6b78c36743a449acc` |
+| `p5_raw_results.jsonl` | `df90f241ee6b66505892697363a112a5fb9852ff` | `ed2652712596fa5a671834a685d1ed29a389aab887f4d4d61db81ce7582c701d` |
 | `supabase_advisors_evidence.jsonl` | `463f1b8ec19de64de5a432fa4ca7f77b04a280d0` | `27121e15d5a97787e620ad8a9620271a483aa07d0ea482916c2c4234b8f84383` |
 | `tenant_workspace_rls_evidence.jsonl` | `dffe0365794c5127e41ebdcc008ac36dfc8c147b` | `dafaff61c147623a6add9b6db7a2e7558c6a9e42af6708748e7cfb3e9ccf5e0d` |
-| `transaction_rollback_evidence.jsonl` | `ccdc181bf8c4ffc6343a75da3720fab8fdd3dc3e` | `9c5466d333a448e0de7d7da029c1f17237c4b38c5838f52d69b770232e6b9606` |
-| `SHA256SUMS` | `f1228083674b89fb1a4afad5a7869c39f1583833` | `23280489762b5b3a71ed38ba4f3c48d147d38b47580c6f4ed58bc7a5976ff15f` |
+| `transaction_rollback_evidence.jsonl` | `02726f3b2226e23a785edd9a9444917a632ffa4a` | `2d0d22b1d486c7a8fce73bca5d32c06d404dea3390ae5ef158d9d8c97cdc41d5` |
+| `worker_concurrent_attempt_replay_evidence.jsonl` | `6d70717499ddf2c508cb0ee2bb169f72cea2cf44` | `a26a576a85f53e0057c86d7859c2d2f2a5b08cca60178c333d89422364d9ebc7` |
+| `SHA256SUMS` | `28215ea6bdea05b330d672eded3a7a21629b599d` | `c673059af3e37593e6b214bbc69ab6ea2f50992c9b79401fb5d0f286cc7acd9a` |
 
-`SHA256SUMS` 覆盖全部 8 份 JSONL；其自身 Blob 与 SHA-256 单独列出。
+`SHA256SUMS` 覆盖全部 9 份 JSONL；其自身 Blob 与 SHA-256 单独列出。Advisors 与 Tenant/RLS 证据重新执行后字节未变化，故 Blob 与前一候选相同。
 
-## 8. 本轮精确变更文件
+## 7. 本轮精确变更文件
 
-修复提交只包含 16 个路径：
+修复提交只包含 13 个路径：
 
-1. `apps/clued-cloud/supabase/migrations/20260827031728_clued_p5_tenant_isolation_concurrent_writes.sql`
-2. `apps/clued-cloud/supabase/migrations/20260827050750_p5_gateway_attempt_commit_failure.sql`
-3. `apps/clued-cloud/worker/continuity.ts`
-4. `apps/clued-cloud/worker/p5.ts`
-5. `apps/clued-cloud/tests/p5-cloud-contracts.test.mjs`
-6. `apps/clued-cloud/tests/p5-real-postgres.test.mjs`
-7. `artifacts/clued-validation/p5/8327b6b0/p5_raw_results.jsonl`
-8. `artifacts/clued-validation/p5/8327b6b0/tenant_workspace_rls_evidence.jsonl`
-9. `artifacts/clued-validation/p5/8327b6b0/binding_revocation_role_scope_evidence.jsonl`
-10. `artifacts/clued-validation/p5/8327b6b0/concurrent_cas_evidence.jsonl`
-11. `artifacts/clued-validation/p5/8327b6b0/idempotency_retry_evidence.jsonl`
-12. `artifacts/clued-validation/p5/8327b6b0/transaction_rollback_evidence.jsonl`
-13. `artifacts/clued-validation/p5/8327b6b0/git_canonical_conflict_evidence.jsonl`
-14. `artifacts/clued-validation/p5/8327b6b0/supabase_advisors_evidence.jsonl`
-15. `artifacts/clued-validation/p5/8327b6b0/SHA256SUMS`
-16. `docs/clued-two-level-views/Clued_P5_多租户隔离与并发写_验收报告_v1.0.md`
+1. `apps/clued-cloud/supabase/migrations/20260827062132_p5_concurrent_attempt_replay.sql`
+2. `apps/clued-cloud/worker/continuity.ts`
+3. `apps/clued-cloud/tests/p5-cloud-contracts.test.mjs`
+4. `apps/clued-cloud/tests/p5-real-postgres.test.mjs`
+5. `artifacts/clued-validation/p5/8327b6b0/binding_revocation_role_scope_evidence.jsonl`
+6. `artifacts/clued-validation/p5/8327b6b0/concurrent_cas_evidence.jsonl`
+7. `artifacts/clued-validation/p5/8327b6b0/git_canonical_conflict_evidence.jsonl`
+8. `artifacts/clued-validation/p5/8327b6b0/idempotency_retry_evidence.jsonl`
+9. `artifacts/clued-validation/p5/8327b6b0/p5_raw_results.jsonl`
+10. `artifacts/clued-validation/p5/8327b6b0/transaction_rollback_evidence.jsonl`
+11. `artifacts/clued-validation/p5/8327b6b0/worker_concurrent_attempt_replay_evidence.jsonl`
+12. `artifacts/clued-validation/p5/8327b6b0/SHA256SUMS`
+13. `docs/clued-two-level-views/Clued_P5_多租户隔离与并发写_验收报告_v1.0.md`
 
-未修改 P1–P4 实现/测试/原始证据、`memory/`、Snapshot、Manifest、Current Pointer 或 `VERSION`。
+未修改 P1–P4 实现/测试/原始证据、旧 P5 Migration、`worker/p5.ts`、`memory/`、Snapshot、Manifest、Current Pointer 或 `VERSION`。
 
-## 9. sources_read
+## 8. sources_read
 
-仓库来源：`AGENTS.md`、`apps/clued-cloud/AGENTS.md`、`skills/clued-continuity/SKILL.md`、两级五视图架构与校验不变量文档、P4 Closeout、P5 Worker/测试/Migration、M1 runtime contracts、Cloud PostgreSQL foundation。
+仓库来源：`AGENTS.md`、`apps/clued-cloud/AGENTS.md`、仓库 fallback `skills/clued-continuity/SKILL.md`（已安装 Skill catalog 未暴露该 Skill）、两级五视图架构与校验不变量文档、P4 Closeout、P5 Worker/测试/Migration、M1 runtime contracts、Cloud PostgreSQL foundation。
 
 当前官方来源：
 
@@ -169,8 +148,8 @@ F15 使用两个独立连接和同一 Base Version 真实并发：仅一个提�
 - Cloudflare Workers Best Practices：`https://developers.cloudflare.com/workers/best-practices/workers-best-practices/`
 - Cloudflare Workers Secrets：`https://developers.cloudflare.com/workers/configuration/secrets/`
 
-## 10. 最终裁决
+## 9. 最终裁决
 
-第一轮阻断的匿名 RPC 绕过与可伪造 commit-failure 均已按最小权限、一次性 Attempt 和实际 Worker 自动补记闭环修复；原 P5 主体及 P1–P4 无回归。候选只可推送现有功能分支并等待第二轮独立复审，不得合并 `main`。
+第二轮阻断的并发 Attempt replay 回归已由数据库终态 canonical replay、mismatch-first 防泄露和 Worker 防御 resolve 三层修复；确定性真实并发屏障证明合法并发重试得到完全相同规范结果且只产生一次副作用。原 P5 安全收紧与 P1–P4 无回归。候选只可推送现有 P5 功能分支并等待第三轮独立复审，不得合并 `main`。
 
-`PASS / P5_SECURITY_FIX_ACCEPTED_FOR_SECOND_INDEPENDENT_REVIEW`
+`PASS / P5_CONCURRENT_ATTEMPT_REPLAY_FIX_ACCEPTED_FOR_THIRD_INDEPENDENT_REVIEW`

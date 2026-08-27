@@ -377,6 +377,38 @@ function p5FailureKind(error: unknown) {
   return "transport_failure";
 }
 
+function p5AttemptRaceResult(result: Record<string, unknown>) {
+  const error = result.error;
+  const errorType = error && typeof error === "object" && !Array.isArray(error)
+    ? (error as Record<string, unknown>).type
+    : null;
+  return [
+    "P5_ATTEMPT_ALREADY_CONSUMED",
+    "P5_ATTEMPT_COMPLETED",
+    "P5_ATTEMPT_FAILED",
+  ].includes(typeof errorType === "string" ? errorType : "") || [
+    "already_consumed",
+    "attempt_completed",
+    "attempt_failed",
+  ].includes(typeof result.status === "string" ? result.status : "");
+}
+
+function p5ResolvedCanonicalResult(resolution: Record<string, unknown>) {
+  if (resolution.status !== "completed" && resolution.status !== "failed") return null;
+  const result = resolution.canonical_result;
+  return result && typeof result === "object" && !Array.isArray(result)
+    ? result as Record<string, unknown>
+    : null;
+}
+
+function p5AttemptResolutionFailed(resolution: Record<string, unknown>): never {
+  const error = resolution.error;
+  throw new HttpError(409, "Clued P5 attempt replay could not be resolved.", {
+    status: resolution.status,
+    error: error && typeof error === "object" && !Array.isArray(error) ? error : undefined,
+  });
+}
+
 async function callP5Mutation(
   env: ContinuityEnv,
   tokenHash: string,
@@ -387,8 +419,9 @@ async function callP5Mutation(
   if (attempt.status === "replayed") return attempt.canonical_result;
   if (attempt.status !== "open" || typeof attempt.attempt_id !== "string") return attempt;
   const attemptId = attempt.attempt_id;
+  let mutation: Record<string, unknown>;
   try {
-    return await p5GatewayRpc(env, "clued_p5_mutate", {
+    mutation = await p5GatewayRpc(env, "clued_p5_mutate", {
       ...parameters,
       p_attempt_id: attemptId,
     });
@@ -401,17 +434,28 @@ async function callP5Mutation(
       ...parameters,
       p_attempt_id: attemptId,
     });
-    if ((resolution.status === "completed" || resolution.status === "failed")
-      && resolution.canonical_result) {
-      return resolution.canonical_result;
-    }
-    if (resolution.status !== "open") return resolution;
+    const canonicalResult = p5ResolvedCanonicalResult(resolution);
+    if (canonicalResult) return canonicalResult;
+    if (resolution.status !== "open") p5AttemptResolutionFailed(resolution);
     return await p5GatewayRpc(env, "clued_p5_record_commit_failure", {
       ...parameters,
       p_attempt_id: attemptId,
       p_failure_kind: p5FailureKind(error),
     });
   }
+  if (!p5AttemptRaceResult(mutation)) return mutation;
+
+  // Older gateways can surface a row-lock replay race as an HTTP-successful
+  // rejected payload. Resolve it explicitly; only an exact terminal Attempt
+  // may release its stored canonical result. Open, mismatched, expired, or
+  // ambiguous resolutions never trigger compensation on this path.
+  const resolution = await p5GatewayRpc(env, "clued_p5_attempt_resolve", {
+    ...parameters,
+    p_attempt_id: attemptId,
+  });
+  const canonicalResult = p5ResolvedCanonicalResult(resolution);
+  if (canonicalResult) return canonicalResult;
+  return p5AttemptResolutionFailed(resolution);
 }
 
 async function requireSupabaseUser(request: Request, env: ContinuityEnv) {
