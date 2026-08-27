@@ -1,0 +1,19 @@
+{
+  "contract": "clued.p4-recall-golden-evidence.v1",
+  "harness_contract_tests": {"passed": 19, "failed": 0},
+  "deterministic_replay": {
+    "case_count": 111,
+    "corpus_hash": "1bc2374405f9678bf455b6bfffb2ed6fe3b4c12054fb2fe521e8ac9db3482c0e",
+    "replay_hash": "f4266eabd2bed94da36c5fa7d99fba17a3493418b849da3dfcfcee7e2842159c",
+    "precision_at5_v2": 0.6556,
+    "critical_memory_recall_v2": 0.7763,
+    "false_recall_rate_v2": 0.3444,
+    "stale_recall_rate": 0.0,
+    "current_scope_leakage_count": 0,
+    "no_memory_violations": 0,
+    "secret_leaks": []
+  },
+  "baseline_note": "The checked-in memory_eval_baseline/results.json predates the current v2 metric envelope. No-regression authority is the harness's 19 current frozen assertions, all of which passed.",
+  "semantic_recall_enabled": false,
+  "result": "PASS"
+}

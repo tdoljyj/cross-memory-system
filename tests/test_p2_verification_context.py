@@ -498,6 +498,7 @@ class RealRequestCallChains(unittest.TestCase):
                 "sync-memory.ps1",
                 "sync-memory.py",
                 "isolated_mirror.py",
+                "canonical_read.py",
                 "memory.py",
                 "verification_context.py",
                 "VERSION",

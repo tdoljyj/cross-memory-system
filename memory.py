@@ -14,6 +14,7 @@ import re
 import sys
 from pathlib import Path
 
+from canonical_read import P4ReadError, deterministic_t1_plan
 from verification_context import (
     AuthorizationEvidence,
     EndpointTrust,
@@ -243,14 +244,32 @@ def cmd_recall(args) -> int:
     if errors:
         print(json.dumps({"status": "invalid", "errors": errors}, ensure_ascii=False, indent=2))
         return 1
-    paths = _candidate_views(args.tier, args.history, args.project_id)
+    t1_plan = None
+    if args.tier == "T1":
+        try:
+            t1_plan = deterministic_t1_plan(
+                REPO,
+                query=args.query,
+                project_id=args.project_id,
+                history=args.history,
+                snapshot_version=manifest["snapshot_version"],
+                canonical_version=manifest["canonical_version"],
+            )
+        except P4ReadError as exc:
+            print(json.dumps({
+                "status": "rejected", "error": exc.code, "detail": exc.detail,
+            }, ensure_ascii=False, indent=2))
+            return 1
+        paths = list(t1_plan.paths)
+    else:
+        paths = _candidate_views(args.tier, args.history, args.project_id)
     tokens = _tokens(args.query)
     results = []
     for path in paths:
         text = path.read_text(encoding="utf-8")
         folded = text.casefold()
         score = sum(folded.count(token) * max(1, len(token)) for token in tokens if token)
-        if score == 0 and args.tier != "T1":
+        if score == 0 and (args.tier != "T1" or (t1_plan and t1_plan.access_tier == "T3")):
             continue
         first = min((folded.find(t) for t in tokens if t and folded.find(t) >= 0), default=0)
         start = max(0, first - 180)
@@ -266,19 +285,29 @@ def cmd_recall(args) -> int:
         print(json.dumps({"status": "invalid", "errors": errors}, ensure_ascii=False, indent=2))
         return 1
     payload = {
-        "tier": args.tier,
+        "tier": t1_plan.access_tier if t1_plan else args.tier,
+        "requested_tier": args.tier,
         "snapshot_version": manifest["snapshot_version"],
         "canonical_version": manifest["canonical_version"],
-        "sources_read": [p.relative_to(REPO).as_posix() for p in paths],
+        "sources_read": list(t1_plan.sources_read) if t1_plan else [p.relative_to(REPO).as_posix() for p in paths],
+        "source_versions": list(t1_plan.source_versions) if t1_plan else [manifest["snapshot_version"], manifest["canonical_version"]],
         "results": results[: args.limit],
     }
+    if t1_plan:
+        payload["routing"] = {
+            "reason": t1_plan.reason,
+            "selector": t1_plan.selector,
+            "project_id": t1_plan.project_id,
+            "expansion_reason": t1_plan.expansion_reason,
+            "semantic_recall": "disabled",
+        }
     if context is not None:
         sources = context.source_envelope(
             boundary="repository_snapshot",
             sources_read=(
                 "memory/manifest.json",
                 "artifacts/clued-two-level-snapshots/current.json",
-                *(p.relative_to(REPO).as_posix() for p in paths),
+                *(t1_plan.sources_read if t1_plan else (p.relative_to(REPO).as_posix() for p in paths)),
             ),
             source_versions=(manifest["snapshot_version"], manifest["canonical_version"]),
             freshness="historical",
