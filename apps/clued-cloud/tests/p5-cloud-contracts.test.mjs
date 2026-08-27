@@ -44,6 +44,7 @@ test('P5 migrations enforce gateway-only RPC, Attempt-bound failure, RLS, and ca
   const migration = read('supabase/migrations/20260827031728_clued_p5_tenant_isolation_concurrent_writes.sql');
   const fix = read('supabase/migrations/20260827050750_p5_gateway_attempt_commit_failure.sql');
   const replayFix = read('supabase/migrations/20260827062132_p5_concurrent_attempt_replay.sql');
+  const expiryFix = read('supabase/migrations/20260827072012_p5_expired_attempt_reissue.sql');
   assert.match(migration, /version=v_base/);
   assert.match(migration, /CANONICAL_CAS_CONFLICT/);
   assert.match(migration, /IDEMPOTENCY_PAYLOAD_CONFLICT/);
@@ -84,4 +85,20 @@ test('P5 migrations enforce gateway-only RPC, Attempt-bound failure, RLS, and ca
   assert.match(replayFix, /is distinct from \(p_input->>'target_id'\)::uuid/);
   assert.match(replayFix, /is distinct from \(p_input->>'base_version'\)::bigint/);
   assert.doesNotMatch(replayFix, /P5_ATTEMPT_ALREADY_CONSUMED/);
+  assert.match(expiryFix, /status in \('open','completed','failed','expired'\)/);
+  assert.match(expiryFix,
+    /update public\.clued_p5_gateway_attempts a[\s\S]*a\.status='open' and a\.expires_at<=now\(\)[\s\S]*select \* into v_existing[\s\S]*insert into public\.clued_p5_gateway_attempts/,
+    'expired open Attempt must be atomically retired and Idempotency rechecked before insert');
+  assert.match(expiryFix, /set status='expired'/);
+  assert.match(expiryFix, /P5_ATTEMPT_EXPIRED/);
+  assert.match(expiryFix, /P5_ATTEMPT_CANONICAL_RESULT_MISSING/);
+  assert.match(expiryFix, /P5_ATTEMPT_UNAVAILABLE/);
+  assert.match(expiryFix,
+    /P5_ATTEMPT_REQUEST_MISMATCH'[\s\S]*v_attempt\.expires_at<=now\(\)[\s\S]*v_attempt\.status in \('completed','failed'\)/,
+    'mutate/resolve must check request, then expiry, then terminal status');
+  assert.match(expiryFix,
+    /create or replace function public\.clued_p5_record_commit_failure[\s\S]*p5_resolve_request[\s\S]*P5_ATTEMPT_REQUEST_MISMATCH[\s\S]*P5_ATTEMPT_EXPIRED[\s\S]*P5_ATTEMPT_ALREADY_CONSUMED[\s\S]*P5_UNTRUSTED_FAILURE_CLASS/,
+    'commit-failure must validate request and expiry before status/failure class');
+  assert.match(expiryFix, /to clued_p5_gateway/);
+  assert.doesNotMatch(expiryFix, /grant execute[\s\S]*to (anon|authenticated|service_role)/);
 });

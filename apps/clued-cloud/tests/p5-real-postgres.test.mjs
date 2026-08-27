@@ -69,6 +69,8 @@ const IDS = {
   recordWorkerLegacyRace: '50000000-0000-4000-8000-000000000028',
   recordAttemptExpired: '50000000-0000-4000-8000-000000000029',
   recordAttemptMissingResult: '50000000-0000-4000-8000-000000000030',
+  recordAttemptExpiredConcurrent: '50000000-0000-4000-8000-000000000031',
+  recordAttemptExpiryLockRace: '50000000-0000-4000-8000-000000000032',
   projectA: '60000000-0000-4000-8000-000000000001',
   projectB: '60000000-0000-4000-8000-000000000002',
 };
@@ -1034,14 +1036,207 @@ test('P5 real PostgreSQL tenant isolation, concurrency, idempotency, rollback, a
         });
     }
 
+    // Terminal Attempt TTL invalidates the old capability ID, but a complete
+    // retry still replays the permanent Idempotency result. None of the three
+    // old-ID entrypoints may release Attempt-local canonical_result.
+    for (const [terminalStatus, attemptId, exactInput, canonicalResult] of terminalMismatchCases) {
+      await admin.query(`update public.clued_p5_gateway_attempts
+        set expires_at=now()-interval '1 second' where id=$1`, [attemptId]);
+      const expiredTerminalMutate = await rawRpc(owner, 'clued_p5_mutate',
+        [TOKENS.worker, exactInput, attemptId]);
+      const expiredTerminalResolve = await rawRpc(owner, 'clued_p5_attempt_resolve',
+        [TOKENS.worker, exactInput, attemptId]);
+      const expiredTerminalFailure = await rawRpc(owner, 'clued_p5_record_commit_failure',
+        [TOKENS.worker, exactInput, attemptId, 'database_commit_failure']);
+      for (const response of [expiredTerminalMutate, expiredTerminalResolve, expiredTerminalFailure]) {
+        equal(response.error.type, 'P5_ATTEMPT_EXPIRED');
+        check(!('canonical_result' in response), `${terminalStatus} expired Attempt ID leaks no result`);
+      }
+      const fullRetry = await rawRpc(owner, 'clued_p5_attempt_begin', [TOKENS.worker, exactInput]);
+      equal(fullRetry.status, 'replayed');
+      equal(fullRetry.canonical_result, canonicalResult,
+        `${terminalStatus} full retry replays permanent Idempotency result`);
+      const terminalRow = (await admin.query(`select status from public.clued_p5_gateway_attempts
+        where id=$1`, [attemptId])).rows[0];
+      equal(terminalRow.status, terminalStatus,
+        `${terminalStatus} audit lifecycle is not overwritten by TTL expiry`);
+      record('expired_attempt_reissue_evidence.jsonl',
+        `P5_${terminalStatus.toUpperCase()}_ATTEMPT_TTL_ID_INVALID_IDEMPOTENCY_REPLAY`, {
+          attempt_id: attemptId,
+          attempt_status_preserved: terminalRow.status,
+          direct_mutate: expiredTerminalMutate.error.type,
+          direct_resolve: expiredTerminalResolve.error.type,
+          direct_commit_failure: expiredTerminalFailure.error.type,
+          old_attempt_canonical_result_leaked: false,
+          full_retry_status: fullRetry.status,
+          permanent_idempotency_replay: true,
+          canonical_result: fullRetry.canonical_result,
+        });
+    }
+
     const expiredInput = mutation(ownerCtx, IDS.recordAttemptExpired, 1,
-      'attempt-expired-fail-closed', 'must-not-write');
+      'attempt-expired-reissue', 'expired-reissued-v2');
     const expiredAttempt = await rawRpc(owner, 'clued_p5_attempt_begin', [TOKENS.owner, expiredInput]);
     await admin.query(`update public.clued_p5_gateway_attempts set expires_at=now()-interval '1 second'
       where id=$1`, [expiredAttempt.attempt_id]);
-    const expiredMutation = await rawRpc(owner, 'clued_p5_mutate',
+    const reissuedAttempt = await rawRpc(owner, 'clued_p5_attempt_begin', [TOKENS.owner, expiredInput]);
+    equal(reissuedAttempt.status, 'open');
+    check(reissuedAttempt.attempt_id !== expiredAttempt.attempt_id,
+      'expired open Attempt is replaced by a distinct open Attempt');
+    const expiredAttemptRow = (await admin.query(`select status from public.clued_p5_gateway_attempts
+      where id=$1`, [expiredAttempt.attempt_id])).rows[0];
+    equal(expiredAttemptRow.status, 'expired');
+    const oldExpiredMutation = await rawRpc(owner, 'clued_p5_mutate',
       [TOKENS.owner, expiredInput, expiredAttempt.attempt_id]);
-    equal(expiredMutation.error.type, 'P5_ATTEMPT_EXPIRED');
+    const oldExpiredResolve = await rawRpc(owner, 'clued_p5_attempt_resolve',
+      [TOKENS.owner, expiredInput, expiredAttempt.attempt_id]);
+    const oldExpiredFailure = await rawRpc(owner, 'clued_p5_record_commit_failure',
+      [TOKENS.owner, expiredInput, expiredAttempt.attempt_id, 'transport_failure']);
+    for (const response of [oldExpiredMutation, oldExpiredResolve, oldExpiredFailure]) {
+      equal(response.error.type, 'P5_ATTEMPT_EXPIRED');
+      check(!('canonical_result' in response), 'expired open Attempt ID leaks no result');
+    }
+    const reissuedMutation = await rawRpc(owner, 'clued_p5_mutate',
+      [TOKENS.owner, expiredInput, reissuedAttempt.attempt_id]);
+    equal(reissuedMutation.status, 'committed');
+    equal(await row(admin, IDS.recordAttemptExpired),
+      { version: '2', content: 'expired-reissued-v2' });
+    equal(await counts(admin, 'attempt-expired-reissue'),
+      { idempotency: 1, events: 1, receipts: 1 });
+    record('expired_attempt_reissue_evidence.jsonl',
+      'P5_EXPIRED_OPEN_ATTEMPT_REISSUED', {
+        old_attempt_id: expiredAttempt.attempt_id,
+        new_attempt_id: reissuedAttempt.attempt_id,
+        ids_distinct: true,
+        old_attempt_status: expiredAttemptRow.status,
+        old_mutate: oldExpiredMutation.error.type,
+        old_resolve: oldExpiredResolve.error.type,
+        old_commit_failure: oldExpiredFailure.error.type,
+        new_attempt_status: reissuedAttempt.status,
+        canonical_result: reissuedMutation,
+        canonical_version: 2,
+        mutation_count: 1,
+        event_count: 1,
+        receipt_count: 1,
+        idempotency_count: 1,
+      });
+
+    // Two real Worker retries start from the same expired open Attempt. Both
+    // attempt_begin transactions must converge on one replacement Attempt,
+    // then the existing row-lock replay path returns one canonical result.
+    const expiredConcurrentInput = mutation(workerCtx, IDS.recordAttemptExpiredConcurrent, 1,
+      'worker-expired-attempt-reissue', 'expired-concurrent-v2');
+    const oldConcurrentAttempt = await rawRpc(owner, 'clued_p5_attempt_begin',
+      [TOKENS.worker, expiredConcurrentInput]);
+    await admin.query(`update public.clued_p5_gateway_attempts
+      set expires_at=now()-interval '1 second' where id=$1`, [oldConcurrentAttempt.attempt_id]);
+    const expiredRetryBarrier = concurrentAttemptBarrier();
+    const expiredRetryCalls = [];
+    globalThis.fetch = postgresGatewayFetch(server, gatewayToken, expiredRetryCalls,
+      { concurrentBarrier: expiredRetryBarrier });
+    let expiredRetryA;
+    let expiredRetryB;
+    try {
+      [expiredRetryA, expiredRetryB] = await Promise.all([
+        workerTool(handleContinuityRequest, workerEnv, RAW_WORKER_BINDING_TOKEN,
+          'clued_p5_mutate', expiredConcurrentInput),
+        workerTool(handleContinuityRequest, workerEnv, RAW_WORKER_BINDING_TOKEN,
+          'clued_p5_mutate', expiredConcurrentInput),
+      ]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+    const expiredRetryBarrierState = expiredRetryBarrier.snapshot();
+    equal(expiredRetryBarrierState.begin_count, 2);
+    equal(expiredRetryBarrierState.mutate_count, 2);
+    equal(expiredRetryBarrierState.shared_open_attempt, true);
+    check(expiredRetryBarrierState.attempt_id !== oldConcurrentAttempt.attempt_id,
+      'concurrent retries share a new Attempt rather than the expired ID');
+    equal(expiredRetryA.result, expiredRetryB.result);
+    equal(expiredRetryA.result.status, 'committed');
+    equal(await row(admin, IDS.recordAttemptExpiredConcurrent),
+      { version: '2', content: 'expired-concurrent-v2' });
+    equal(await counts(admin, 'worker-expired-attempt-reissue'),
+      { idempotency: 1, events: 1, receipts: 1 });
+    const expiredRetryAttempts = (await admin.query(`select status,count(*)::int as count
+      from public.clued_p5_gateway_attempts where idempotency_key=$1 group by status order by status`,
+    ['worker-expired-attempt-reissue'])).rows;
+    equal(expiredRetryAttempts, [
+      { status: 'completed', count: 1 },
+      { status: 'expired', count: 1 },
+    ]);
+    check(!JSON.stringify([expiredRetryA.rawPayload, expiredRetryB.rawPayload])
+      .includes('P5_ATTEMPT_UNAVAILABLE'), 'concurrent expired retry never exposes unavailable');
+    record('expired_attempt_reissue_evidence.jsonl',
+      'P5_TWO_WORKERS_EXPIRED_ATTEMPT_SINGLE_REISSUE', {
+        old_attempt_id: oldConcurrentAttempt.attempt_id,
+        new_attempt_id: expiredRetryBarrierState.attempt_id,
+        barrier: expiredRetryBarrierState,
+        gateway_call_sequence: expiredRetryCalls,
+        responses_identical: true,
+        response_a: expiredRetryA.result,
+        response_b: expiredRetryB.result,
+        attempt_status_counts: expiredRetryAttempts,
+        p5_attempt_unavailable_exposed: false,
+        canonical_version: 2,
+        mutation_count: 1,
+        event_count: 1,
+        receipt_count: 1,
+        idempotency_count: 1,
+        production_access: false,
+      });
+
+    // A Mutation may have locked the old row while it was still valid, then
+    // remain uncommitted until after expires_at. The retry's expiry UPDATE must
+    // wait; after commit it must re-evaluate the now-completed row and replay
+    // Idempotency instead of overwriting status or issuing another Attempt.
+    const lockRaceInput = mutation(ownerCtx, IDS.recordAttemptExpiryLockRace, 1,
+      'attempt-expiry-row-lock-race', 'lock-race-v2');
+    const lockRaceAttempt = await rawRpc(owner, 'clued_p5_attempt_begin',
+      [TOKENS.owner, lockRaceInput]);
+    await admin.query(`update public.clued_p5_gateway_attempts
+      set expires_at=now()+interval '200 milliseconds' where id=$1`, [lockRaceAttempt.attempt_id]);
+    const lockingMutation = await clientFor(server, { faults: true });
+    const lockRaceRetry = await clientFor(server, { faults: true });
+    clients.push(lockingMutation, lockRaceRetry);
+    await lockingMutation.query('begin');
+    const uncommittedCanonicalResult = await rawRpc(lockingMutation, 'clued_p5_mutate',
+      [TOKENS.owner, lockRaceInput, lockRaceAttempt.attempt_id]);
+    equal(uncommittedCanonicalResult.status, 'committed');
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const waitingRetryPromise = rawRpc(lockRaceRetry, 'clued_p5_attempt_begin',
+      [TOKENS.owner, lockRaceInput]);
+    const retryWaitedForLock = await Promise.race([
+      waitingRetryPromise.then(() => false),
+      new Promise((resolve) => setTimeout(() => resolve(true), 100)),
+    ]);
+    equal(retryWaitedForLock, true, 'expired transition waits for the Mutation row lock');
+    await lockingMutation.query('commit');
+    const lockRaceReplay = await waitingRetryPromise;
+    equal(lockRaceReplay.status, 'replayed');
+    equal(lockRaceReplay.canonical_result, uncommittedCanonicalResult);
+    const lockRaceAttemptRows = (await admin.query(`select id,status from public.clued_p5_gateway_attempts
+      where idempotency_key=$1 order by created_at`, ['attempt-expiry-row-lock-race'])).rows;
+    equal(lockRaceAttemptRows, [{ id: lockRaceAttempt.attempt_id, status: 'completed' }]);
+    equal(await row(admin, IDS.recordAttemptExpiryLockRace),
+      { version: '2', content: 'lock-race-v2' });
+    equal(await counts(admin, 'attempt-expiry-row-lock-race'),
+      { idempotency: 1, events: 1, receipts: 1 });
+    record('expired_attempt_reissue_evidence.jsonl',
+      'P5_EXPIRY_WAITS_FOR_MUTATION_LOCK_AND_RECHECKS_TERMINAL', {
+        attempt_id: lockRaceAttempt.attempt_id,
+        expiry_transition_waited_for_row_lock: retryWaitedForLock,
+        final_attempt_status: lockRaceAttemptRows[0].status,
+        completed_not_overwritten_as_expired: true,
+        replacement_attempt_count: 0,
+        retry_status: lockRaceReplay.status,
+        responses_identical: true,
+        canonical_version: 2,
+        mutation_count: 1,
+        event_count: 1,
+        receipt_count: 1,
+        idempotency_count: 1,
+      });
 
     const missingResultInput = mutation(ownerCtx, IDS.recordAttemptMissingResult, 1,
       'attempt-missing-result-fail-closed', 'must-not-write');
@@ -1053,16 +1248,15 @@ test('P5 real PostgreSQL tenant isolation, concurrency, idempotency, rollback, a
     const missingResultMutation = await rawRpc(owner, 'clued_p5_mutate',
       [TOKENS.owner, missingResultInput, missingResultAttempt.attempt_id]);
     equal(missingResultMutation.error.type, 'P5_ATTEMPT_CANONICAL_RESULT_MISSING');
-    equal(await row(admin, IDS.recordAttemptExpired),
-      { version: '1', content: 'recordAttemptExpired-v1' });
     equal(await row(admin, IDS.recordAttemptMissingResult),
       { version: '1', content: 'recordAttemptMissingResult-v1' });
     record('worker_concurrent_attempt_replay_evidence.jsonl',
       'P5_ATTEMPT_AMBIGUOUS_STATES_FAIL_CLOSED', {
-        expired: expiredMutation.error.type,
+        expired_old_attempt: oldExpiredMutation.error.type,
         missing_canonical_result: missingResultMutation.error.type,
-        mutation_count: 0,
-        canonical_versions_unchanged: true,
+        expired_reissue_mutation_count: 1,
+        missing_result_mutation_count: 0,
+        missing_result_canonical_version_unchanged: true,
       });
 
     // Missing, mismatched, cross-Binding, untrusted-class and duplicate
@@ -1344,6 +1538,7 @@ test('P5 real PostgreSQL tenant isolation, concurrency, idempotency, rollback, a
         'apps/clued-cloud/supabase/migrations/20260827031728_clued_p5_tenant_isolation_concurrent_writes.sql',
         'apps/clued-cloud/supabase/migrations/20260827050750_p5_gateway_attempt_commit_failure.sql',
         'apps/clued-cloud/supabase/migrations/20260827062132_p5_concurrent_attempt_replay.sql',
+        'apps/clued-cloud/supabase/migrations/20260827072012_p5_expired_attempt_reissue.sql',
         'cloud/postgres/README.md',
         'cloud/postgres/migrations/0001_cloud_data_foundation.up.sql',
       ],
