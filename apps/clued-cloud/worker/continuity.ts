@@ -1,4 +1,5 @@
 import { projectRpcByTool, projectTools } from "./projects";
+import { p5RpcByTool, p5TenantWritesEnabled, p5Tools, type P5FeatureEnv } from "./p5";
 import {
   currentWorkContract,
   recordRpcByTool,
@@ -31,7 +32,7 @@ const KERNEL_VERSION = "0.3.1";
 
 type Scope = (typeof ALL_SCOPES)[number];
 
-export interface ContinuityEnv extends RecordFeatureEnv {
+export interface ContinuityEnv extends RecordFeatureEnv, P5FeatureEnv {
   SUPABASE_URL?: string;
   SUPABASE_PUBLISHABLE_KEY?: string;
   CLUED_ALLOWED_ORIGINS?: string;
@@ -571,6 +572,7 @@ const tools = [
   },
   ...projectTools,
   ...recordTools,
+  ...p5Tools,
 ] as const;
 
 const rpcByTool = {
@@ -583,6 +585,7 @@ const rpcByTool = {
   clued_audit_receipts: "clued_mcp_audit_receipts",
   ...projectRpcByTool,
   ...recordRpcByTool,
+  ...p5RpcByTool,
 } as const;
 
 async function callRpc(
@@ -596,6 +599,10 @@ async function callRpc(
     throw new HttpError(401, "Authorize with Clued OAuth or a Clued Binding Token.");
   }
   const payload = typeof args === "object" && args ? args : {};
+
+  if (name in p5RpcByTool && !token.startsWith("clued_bnd_")) {
+    throw new HttpError(403, "P5 tenant operations require an independent revocable Agent Binding.");
+  }
 
   if (!token.startsWith("clued_bnd_")) {
     return await supabaseRequest(env, "/rest/v1/rpc/clued_oauth_call", {
@@ -628,6 +635,9 @@ async function callTool(
   }
   if (typeof name === "string" && name in recordRpcByTool && !recordsV2Enabled(env)) {
     throw new HttpError(404, "Clued project views v2 are disabled.");
+  }
+  if (typeof name === "string" && name in p5RpcByTool && !p5TenantWritesEnabled(env)) {
+    throw new HttpError(404, "Clued P5 tenant writes are disabled.");
   }
   if (typeof name !== "string" || !(name in rpcByTool)) {
     throw new HttpError(404, "Unknown Clued continuity tool.");
@@ -698,9 +708,10 @@ async function handleMcp(request: Request, env: ContinuityEnv) {
       return json(rpcResult(rpc.id, {}), 200, corsHeaders(request));
     }
     if (rpc.method === "tools/list") {
-      const visibleTools = recordsV2Enabled(env)
-        ? tools
-        : tools.filter((tool) => !(tool.name in recordRpcByTool));
+      const visibleTools = tools.filter((tool) =>
+        (!(tool.name in recordRpcByTool) || recordsV2Enabled(env))
+        && (!(tool.name in p5RpcByTool) || p5TenantWritesEnabled(env))
+      );
       return json(rpcResult(rpc.id, { tools: visibleTools }), 200, corsHeaders(request));
     }
     if (rpc.method === "tools/call") {
