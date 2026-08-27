@@ -45,6 +45,7 @@ test('P5 migrations enforce gateway-only RPC, Attempt-bound failure, RLS, and ca
   const fix = read('supabase/migrations/20260827050750_p5_gateway_attempt_commit_failure.sql');
   const replayFix = read('supabase/migrations/20260827062132_p5_concurrent_attempt_replay.sql');
   const expiryFix = read('supabase/migrations/20260827072012_p5_expired_attempt_reissue.sql');
+  const linearizationFix = read('supabase/migrations/20260827084500_p5_attempt_reissue_linearization.sql');
   assert.match(migration, /version=v_base/);
   assert.match(migration, /CANONICAL_CAS_CONFLICT/);
   assert.match(migration, /IDEMPOTENCY_PAYLOAD_CONFLICT/);
@@ -101,4 +102,23 @@ test('P5 migrations enforce gateway-only RPC, Attempt-bound failure, RLS, and ca
     'commit-failure must validate request and expiry before status/failure class');
   assert.match(expiryFix, /to clued_p5_gateway/);
   assert.doesNotMatch(expiryFix, /grant execute[\s\S]*to (anon|authenticated|service_role)/);
+  assert.match(linearizationFix, /issuance_parent text/);
+  assert.match(linearizationFix,
+    /create unique index if not exists clued_p5_gateway_attempt_issuance_uidx[\s\S]*idempotency_key,issuance_parent/,
+    'successor issuance slot must remain unique across every Attempt status');
+  assert.doesNotMatch(linearizationFix,
+    /clued_p5_gateway_attempt_issuance_uidx[\s\S]{0,300}where status='open'/,
+    'linearization constraint must not be released by terminal status');
+  assert.match(linearizationFix, /P5_ATTEMPT_ISSUANCE_PARENT_IMMUTABLE/);
+  assert.match(linearizationFix,
+    /before update of issuance_parent on public\.clued_p5_gateway_attempts/);
+  assert.match(linearizationFix,
+    /final Idempotency read before issuance[\s\S]*insert into public\.clued_p5_gateway_attempts[\s\S]*issuance_parent/,
+    'the immutable issuance slot must close the final-recheck/INSERT window');
+  assert.match(linearizationFix,
+    /A conflict is a permanent issuance decision[\s\S]*v_latest\.status in \('completed','failed'\)[\s\S]*canonical_result/,
+    'a terminal winner must replay after permanent issuance conflict');
+  assert.match(linearizationFix, /IDEMPOTENCY_PAYLOAD_CONFLICT/);
+  assert.match(linearizationFix, /to clued_p5_gateway/);
+  assert.doesNotMatch(linearizationFix, /grant execute[\s\S]*to (anon|authenticated|service_role)/);
 });

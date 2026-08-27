@@ -71,6 +71,10 @@ const IDS = {
   recordAttemptMissingResult: '50000000-0000-4000-8000-000000000030',
   recordAttemptExpiredConcurrent: '50000000-0000-4000-8000-000000000031',
   recordAttemptExpiryLockRace: '50000000-0000-4000-8000-000000000032',
+  recordAttemptLinearCommitted: '50000000-0000-4000-8000-000000000033',
+  recordAttemptLinearFailed: '50000000-0000-4000-8000-000000000034',
+  recordAttemptLinearReexpired: '50000000-0000-4000-8000-000000000035',
+  recordAttemptLinearCrossBinding: '50000000-0000-4000-8000-000000000036',
   projectA: '60000000-0000-4000-8000-000000000001',
   projectB: '60000000-0000-4000-8000-000000000002',
 };
@@ -263,6 +267,19 @@ async function counts(client, idempotencyKey) {
   `, [idempotencyKey])).rows[0];
 }
 
+async function waitForDatabasePause(client, applicationName) {
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    const paused = (await client.query(`select exists(
+      select 1 from pg_stat_activity
+       where application_name=$1 and wait_event_type='Lock' and wait_event='advisory'
+    ) as paused`, [applicationName])).rows[0].paused;
+    if (paused) return true;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  return false;
+}
+
 async function treeDigest(root) {
   const entries = [];
   async function walk(dir) {
@@ -371,6 +388,7 @@ function concurrentAttemptBarrier(expected = 2) {
 
 function postgresGatewayFetch(server, gatewayToken, calls, {
   commitFailureTarget, lostResponseTarget, concurrentBarrier, legacyConsumedTarget,
+  pauseAttemptInsertTarget, pauseApplicationName,
 } = {}) {
   return async (url, init = {}) => {
     const rpcName = new URL(String(url)).pathname.split('/').at(-1);
@@ -385,6 +403,13 @@ function postgresGatewayFetch(server, gatewayToken, calls, {
     const client = server.getPgClient();
     await client.connect();
     try {
+      if (rpcName === 'clued_p5_attempt_begin'
+          && body.p_input?.target_id === pauseAttemptInsertTarget) {
+        await client.query(`select set_config('application_name',$1,false),
+          set_config('clued.p5_test_pause_attempt_insert','on',false),
+          set_config('clued.p5_test_faults','on',false)`,
+        [pauseApplicationName ?? 'p5-attempt-insert-paused']);
+      }
       const mutateOrdinal = rpcName === 'clued_p5_mutate' && concurrentBarrier
         ? await concurrentBarrier.beforeMutate(body)
         : null;
@@ -1186,6 +1211,225 @@ test('P5 real PostgreSQL tenant isolation, concurrency, idempotency, rollback, a
         production_access: false,
       });
 
+    // Fourth-review linearization: pause Worker B at the database hook after
+    // attempt_begin's final Idempotency read but before the successor INSERT.
+    // Worker A then completes the same request. The
+    // permanent issuance-parent uniqueness must make B's INSERT conflict even
+    // though A changed its Attempt from open to completed/failed.
+    const attemptInsertLock = 500050004;
+    const workerSessionBResult = await rawRpc(owner, 'clued_p5_session_open',
+      [TOKENS.worker, context()]);
+    equal(workerSessionBResult.status, 'authorized');
+    const workerCtxB = context({ sessionToken: workerSessionBResult.session_token });
+
+    async function runAttemptReissueLinearizationRace({ targetId, key, body, terminalStatus }) {
+      const input = mutation(workerCtx, targetId, 1, key, body);
+      const workerBInput = mutation(workerCtxB, targetId, 1, key, body);
+      const oldAttempt = await rawRpc(owner, 'clued_p5_attempt_begin', [TOKENS.worker, input]);
+      equal(oldAttempt.status, 'open');
+      await admin.query(`update public.clued_p5_gateway_attempts
+        set status='expired',expires_at=now()-interval '1 second' where id=$1`,
+      [oldAttempt.attempt_id]);
+
+      const calls = [];
+      const pausedApplication = `p5-${terminalStatus}-insert-paused`;
+      await admin.query('select pg_advisory_lock($1)', [attemptInsertLock]);
+      let workerBPromise;
+      let workerA;
+      let workerB;
+      let pausedAfterFinalRecheck = false;
+      let bStayedPausedThroughACommit = false;
+      try {
+        globalThis.fetch = postgresGatewayFetch(server, gatewayToken, calls, {
+          pauseAttemptInsertTarget: targetId,
+          pauseApplicationName: pausedApplication,
+        });
+        workerBPromise = workerTool(handleContinuityRequest, workerEnv, RAW_WORKER_BINDING_TOKEN,
+          'clued_p5_mutate', workerBInput);
+        pausedAfterFinalRecheck = await waitForDatabasePause(admin, pausedApplication);
+        equal(pausedAfterFinalRecheck, true,
+          'Worker B pauses inside successor INSERT after the final Idempotency recheck');
+
+        globalThis.fetch = postgresGatewayFetch(server, gatewayToken, calls,
+          terminalStatus === 'failed' ? { commitFailureTarget: targetId } : {});
+        workerA = await workerTool(handleContinuityRequest, workerEnv, RAW_WORKER_BINDING_TOKEN,
+          'clued_p5_mutate', input);
+        equal(workerA.result.status, terminalStatus);
+        bStayedPausedThroughACommit = await Promise.race([
+          workerBPromise.then(() => false),
+          new Promise((resolve) => setTimeout(() => resolve(true), 50)),
+        ]);
+        equal(bStayedPausedThroughACommit, true,
+          'Worker B remains before INSERT until Worker A terminal result commits');
+      } finally {
+        await admin.query('select pg_advisory_unlock($1)', [attemptInsertLock]);
+      }
+      workerB = await workerBPromise;
+      globalThis.fetch = originalFetch;
+
+      equal(workerB.result, workerA.result,
+        'Worker B returns the exact canonical result committed by Worker A');
+      const attemptCounts = (await admin.query(`select
+        count(*) filter (where status='expired')::int as expired,
+        count(*) filter (where status='open')::int as open,
+        count(*) filter (where status in ('completed','failed'))::int as terminal,
+        count(*) filter (where status<>'expired')::int as non_expired
+        from public.clued_p5_gateway_attempts
+        where binding_id=$1 and idempotency_key=$2`, [IDS.bindWorker, key])).rows[0];
+      equal(attemptCounts, { expired: 1, open: 0, terminal: 1, non_expired: 1 });
+      const sideEffects = await counts(admin, key);
+      equal(sideEffects, terminalStatus === 'committed'
+        ? { idempotency: 1, events: 1, receipts: 1 }
+        : { idempotency: 1, events: 0, receipts: 1 });
+      equal((await row(admin, targetId)).version, terminalStatus === 'committed' ? '2' : '1');
+      const lineage = (await admin.query(`select id,status,issuance_parent
+        from public.clued_p5_gateway_attempts
+        where binding_id=$1 and idempotency_key=$2 order by created_at,id`,
+      [IDS.bindWorker, key])).rows;
+      equal(lineage.length, 2);
+      equal(lineage[1].issuance_parent, oldAttempt.attempt_id,
+        'the permanent successor slot is bound to the expired predecessor');
+      return {
+        runtime_input: input, old_attempt_id: oldAttempt.attempt_id, calls, worker_a: workerA.result,
+        worker_b: workerB.result, paused_after_final_idempotency_recheck: pausedAfterFinalRecheck,
+        worker_a_committed_while_b_paused: bStayedPausedThroughACommit,
+        responses_identical: true, attempt_counts: attemptCounts, lineage,
+        ...sideEffects,
+      };
+    }
+
+    const committedLinearization = await runAttemptReissueLinearizationRace({
+      targetId: IDS.recordAttemptLinearCommitted,
+      key: 'attempt-reissue-linear-committed',
+      body: 'linear-committed-v2',
+      terminalStatus: 'committed',
+    });
+    const { runtime_input: committedRuntimeInput,
+      ...committedLinearizationEvidence } = committedLinearization;
+    record('attempt_reissue_linearization_evidence.jsonl',
+      'P5_REISSUE_INSERT_WINDOW_COMMITTED_LINEARIZED', {
+        ...committedLinearizationEvidence,
+        canonical_version: 2,
+        no_extra_open_attempt: true,
+        production_access: false,
+      });
+
+    const failedLinearization = await runAttemptReissueLinearizationRace({
+      targetId: IDS.recordAttemptLinearFailed,
+      key: 'attempt-reissue-linear-failed',
+      body: 'must-rollback',
+      terminalStatus: 'failed',
+    });
+    const failedLinearizationEvidence = { ...failedLinearization };
+    delete failedLinearizationEvidence.runtime_input;
+    check(failedLinearization.calls.includes('clued_p5_attempt_resolve')
+      && failedLinearization.calls.includes('clued_p5_record_commit_failure'),
+    'failed race uses Worker automatic commit-failure closure');
+    equal(failedLinearization.worker_a.error.type, 'TRANSACTION_COMMIT_FAILED');
+    record('attempt_reissue_linearization_evidence.jsonl',
+      'P5_REISSUE_INSERT_WINDOW_FAILED_LINEARIZED', {
+        ...failedLinearizationEvidence,
+        canonical_version: 1,
+        commit_failure_auto_recorded: true,
+        no_extra_open_attempt: true,
+        production_access: false,
+      });
+
+    let immutableParentError;
+    await admin.query('begin');
+    try {
+      await admin.query(`update public.clued_p5_gateway_attempts
+        set issuance_parent='forged-parent' where id=$1`,
+      [committedLinearization.lineage[1].id]);
+    } catch (error) {
+      immutableParentError = error;
+    } finally {
+      await admin.query('rollback');
+    }
+    equal(immutableParentError?.message, 'P5_ATTEMPT_ISSUANCE_PARENT_IMMUTABLE');
+    record('attempt_reissue_linearization_evidence.jsonl',
+      'P5_ISSUANCE_PARENT_IMMUTABLE', {
+        attempted_rewrite: true,
+        rejected_error: immutableParentError.message,
+        permanent_slot_preserved: true,
+      });
+
+    // Same Binding + key + different body cannot gain a capability after the
+    // permanent result. The same key under another Binding is an independent
+    // lineage and remains usable.
+    globalThis.fetch = postgresGatewayFetch(server, gatewayToken, []);
+    const differentBody = (await workerTool(handleContinuityRequest, workerEnv,
+      RAW_WORKER_BINDING_TOKEN, 'clued_p5_mutate', {
+        ...committedRuntimeInput,
+        mutation: { content: 'different-body-must-not-run' },
+      })).result;
+    globalThis.fetch = originalFetch;
+    equal(differentBody.error.type, 'IDEMPOTENCY_PAYLOAD_CONFLICT');
+    const committedAttemptTotal = (await admin.query(`select count(*)::int as count
+      from public.clued_p5_gateway_attempts where binding_id=$1 and idempotency_key=$2`,
+    [IDS.bindWorker, 'attempt-reissue-linear-committed'])).rows[0].count;
+    equal(committedAttemptTotal, 2, 'different body creates no additional Attempt');
+
+    const crossBindingInput = mutation(ownerCtx, IDS.recordAttemptLinearCrossBinding, 1,
+      'attempt-reissue-linear-committed', 'cross-binding-v2');
+    const crossBindingAttempt = await rawRpc(owner, 'clued_p5_attempt_begin',
+      [TOKENS.owner, crossBindingInput]);
+    equal(crossBindingAttempt.status, 'open');
+    const crossBindingResult = await rawRpc(owner, 'clued_p5_mutate',
+      [TOKENS.owner, crossBindingInput, crossBindingAttempt.attempt_id]);
+    equal(crossBindingResult.status, 'committed');
+    record('attempt_reissue_linearization_evidence.jsonl',
+      'P5_REISSUE_PAYLOAD_AND_BINDING_SCOPE', {
+        same_binding_different_body: differentBody.error.type,
+        different_body_attempt_count_unchanged: true,
+        cross_binding_isolated: true,
+        cross_binding_id: IDS.bindOwner,
+        cross_binding_result: crossBindingResult,
+      });
+
+    // An unused successor may itself expire. Its immutable ID becomes the
+    // sole issuance parent for the next generation, and permanent replay after
+    // that generation completes creates no fourth capability.
+    const reexpiredInput = mutation(workerCtx, IDS.recordAttemptLinearReexpired, 1,
+      'attempt-reissue-linear-reexpired', 'reexpired-v2');
+    const reexpiredRoot = await rawRpc(owner, 'clued_p5_attempt_begin',
+      [TOKENS.worker, reexpiredInput]);
+    await admin.query(`update public.clued_p5_gateway_attempts
+      set expires_at=now()-interval '1 second' where id=$1`, [reexpiredRoot.attempt_id]);
+    const reexpiredSuccessor = await rawRpc(owner, 'clued_p5_attempt_begin',
+      [TOKENS.worker, reexpiredInput]);
+    await admin.query(`update public.clued_p5_gateway_attempts
+      set expires_at=now()-interval '1 second' where id=$1`, [reexpiredSuccessor.attempt_id]);
+    const reexpiredGrandchild = await rawRpc(owner, 'clued_p5_attempt_begin',
+      [TOKENS.worker, reexpiredInput]);
+    const reexpiredResult = await rawRpc(owner, 'clued_p5_mutate',
+      [TOKENS.worker, reexpiredInput, reexpiredGrandchild.attempt_id]);
+    const reexpiredReplay = await rawRpc(owner, 'clued_p5_attempt_begin',
+      [TOKENS.worker, reexpiredInput]);
+    equal(reexpiredReplay.status, 'replayed');
+    equal(reexpiredReplay.canonical_result, reexpiredResult);
+    const reexpiredLineage = (await admin.query(`select id,status,issuance_parent
+      from public.clued_p5_gateway_attempts where binding_id=$1 and idempotency_key=$2
+      order by created_at,id`, [IDS.bindWorker, 'attempt-reissue-linear-reexpired'])).rows;
+    equal(reexpiredLineage, [
+      { id: reexpiredRoot.attempt_id, status: 'expired', issuance_parent: 'root' },
+      { id: reexpiredSuccessor.attempt_id, status: 'expired', issuance_parent: reexpiredRoot.attempt_id },
+      { id: reexpiredGrandchild.attempt_id, status: 'completed', issuance_parent: reexpiredSuccessor.attempt_id },
+    ]);
+    equal(await counts(admin, 'attempt-reissue-linear-reexpired'),
+      { idempotency: 1, events: 1, receipts: 1 });
+    record('attempt_reissue_linearization_evidence.jsonl',
+      'P5_REPLACEMENT_NATURAL_EXPIRY_NEXT_GENERATION', {
+        lineage: reexpiredLineage,
+        final_retry_status: reexpiredReplay.status,
+        responses_identical: true,
+        open_attempt_count: 0,
+        mutation_count: 1,
+        event_count: 1,
+        receipt_count: 1,
+        idempotency_count: 1,
+      });
+
     // A Mutation may have locked the old row while it was still valid, then
     // remain uncommitted until after expires_at. The retry's expiry UPDATE must
     // wait; after commit it must re-evaluate the now-completed row and replay
@@ -1539,6 +1783,7 @@ test('P5 real PostgreSQL tenant isolation, concurrency, idempotency, rollback, a
         'apps/clued-cloud/supabase/migrations/20260827050750_p5_gateway_attempt_commit_failure.sql',
         'apps/clued-cloud/supabase/migrations/20260827062132_p5_concurrent_attempt_replay.sql',
         'apps/clued-cloud/supabase/migrations/20260827072012_p5_expired_attempt_reissue.sql',
+        'apps/clued-cloud/supabase/migrations/20260827084500_p5_attempt_reissue_linearization.sql',
         'cloud/postgres/README.md',
         'cloud/postgres/migrations/0001_cloud_data_foundation.up.sql',
       ],
