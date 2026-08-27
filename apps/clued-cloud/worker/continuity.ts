@@ -1,6 +1,14 @@
 import { projectRpcByTool, projectTools } from "./projects";
 import { p5RpcByTool, p5TenantWritesEnabled, p5Tools, type P5FeatureEnv } from "./p5";
 import {
+  decorateP6Response,
+  P6_CANARY_PHASES,
+  P6_CONTRACT,
+  p6ReleaseControlEnabled,
+  versionAttribution,
+  type P6FeatureEnv,
+} from "./p6";
+import {
   currentWorkContract,
   recordRpcByTool,
   recordTools,
@@ -32,7 +40,7 @@ const KERNEL_VERSION = "0.3.1";
 
 type Scope = (typeof ALL_SCOPES)[number];
 
-export interface ContinuityEnv extends RecordFeatureEnv, P5FeatureEnv {
+export interface ContinuityEnv extends RecordFeatureEnv, P5FeatureEnv, P6FeatureEnv {
   SUPABASE_URL?: string;
   SUPABASE_PUBLISHABLE_KEY?: string;
   CLUED_ALLOWED_ORIGINS?: string;
@@ -160,6 +168,14 @@ function bootstrapContract(origin: string, env?: ContinuityEnv) {
         views: ["state", "task", "decision", "archive", "log"],
         canonical_write_core: true,
         semantic_contract: currentWorkContract,
+      },
+      p6_release_control: {
+        contract: P6_CONTRACT,
+        implementation_scope: "isolated_candidate_code",
+        production_enabled: false,
+        version_attribution: versionAttribution(env ?? {}),
+        affinity_input_header: "Cloudflare-Workers-Version-Key",
+        canary_phases: P6_CANARY_PHASES,
       },
     },
     supported_mcp_versions: SUPPORTED_MCP_VERSIONS,
@@ -1055,7 +1071,7 @@ async function handleRecordApi(request: Request, env: ContinuityEnv) {
   });
 }
 
-export async function handleContinuityRequest(
+async function handleContinuityRequestInner(
   request: Request,
   env: ContinuityEnv,
 ): Promise<Response | null> {
@@ -1144,4 +1160,13 @@ export async function handleContinuityRequest(
     const problem = error instanceof HttpError ? error : new HttpError(500, "Clued request failed.");
     return json({ error: problem.message, details: problem.details }, problem.status, corsHeaders(request));
   }
+}
+
+export async function handleContinuityRequest(
+  request: Request,
+  env: ContinuityEnv,
+): Promise<Response | null> {
+  const response = await handleContinuityRequestInner(request, env);
+  if (!response || !p6ReleaseControlEnabled(env)) return response;
+  return decorateP6Response(request, response, env);
 }

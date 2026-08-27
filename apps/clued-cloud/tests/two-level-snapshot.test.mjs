@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -8,14 +8,17 @@ import {
   buildSnapshot,
   canonicalJson,
   publishSnapshot,
+  readFormalSnapshot,
   rollbackSnapshot,
   sha256,
   validateSnapshot,
 } from "../scripts/two-level-snapshot.mjs";
 import {
   coordinatedPublishSnapshot,
+  coordinatedRollbackSnapshot,
   DEFAULT_M2_POLICY,
   enablePersistentSnapshotStore,
+  readPersistentSnapshotStoreStatus,
   reconcilePersistentSnapshotStore,
   sweepPersistentSnapshotStore,
 } from "../scripts/m2-snapshot-store.mjs";
@@ -138,6 +141,16 @@ async function buildFixture(source = canonicalSource(), epoch = BUILD_EPOCH, run
   return { parent, snapshot, result };
 }
 
+async function activateFixture(fixture, exportRoot, expectedCurrentSnapshotVersion, publishedAt) {
+  return await publishSnapshot({
+    snapshotDirectory: fixture.snapshot,
+    exportRoot,
+    activate: true,
+    expectedCurrentSnapshotVersion,
+    publishedAt,
+  });
+}
+
 test("M0 emits profile/global/projects, canonical objects, raw Events, evidence, one index and Manifest v5", async () => {
   const { snapshot, result } = await buildFixture();
   const root = path.join(snapshot, "memory");
@@ -187,14 +200,20 @@ test("validation fails closed on checksum drift and offline publish cannot activ
   const exportRoot = path.join(parent, "export");
   const published = await publishSnapshot({ snapshotDirectory: clean.snapshot, exportRoot, activate: false });
   assert.equal(published.status, "published_offline");
-  await assert.rejects(publishSnapshot({ snapshotDirectory: clean.snapshot, exportRoot, activate: true }), /live-rechecked/);
+  await assert.rejects(publishSnapshot({
+    snapshotDirectory: clean.snapshot,
+    exportRoot,
+    activate: true,
+    expectedCurrentSnapshotVersion: null,
+    publishedAt: "2026-08-26T00:00:01.000Z",
+  }), /live-rechecked/);
 });
 
 test("failure injection preserves the formal pointer and rollback restores the previous immutable version", async () => {
   const source = canonicalSource({ verification: "live_rechecked", viewsComplete: true });
   const first = await buildFixture(source, BUILD_EPOCH, "run_current_a");
   const exportRoot = path.join(first.parent, "export");
-  await publishSnapshot({ snapshotDirectory: first.snapshot, exportRoot, activate: true });
+  await activateFixture(first, exportRoot, null, "2026-08-26T00:00:10.000Z");
   const firstPointer = JSON.parse(await readFile(path.join(exportRoot, "current.json"), "utf8"));
 
   const failedRoot = path.join(first.parent, "failed-candidate");
@@ -209,12 +228,94 @@ test("failure injection preserves the formal pointer and rollback restores the p
   assert.equal(afterFailure.snapshot_version, firstPointer.snapshot_version);
 
   const second = await buildFixture(source, "2026-08-26T00:02:00.000Z", "run_current_b");
-  await publishSnapshot({ snapshotDirectory: second.snapshot, exportRoot, activate: true });
+  await activateFixture(second, exportRoot, firstPointer.snapshot_version, "2026-08-26T00:02:10.000Z");
   const secondPointer = JSON.parse(await readFile(path.join(exportRoot, "current.json"), "utf8"));
   assert.equal(secondPointer.previous_snapshot_version, firstPointer.snapshot_version);
-  const rolledBack = await rollbackSnapshot({ exportRoot });
+  const rolledBack = await rollbackSnapshot({
+    exportRoot,
+    expectedCurrentSnapshotVersion: secondPointer.snapshot_version,
+    rolledBackAt: "2026-08-26T00:02:20.000Z",
+  });
   assert.equal(rolledBack.pointer.snapshot_version, firstPointer.snapshot_version);
   assert.equal(rolledBack.pointer.previous_snapshot_version, secondPointer.snapshot_version);
+});
+
+test("P6 closes base activation and rollback CAS bypasses", async () => {
+  const source = canonicalSource({ verification: "live_rechecked", viewsComplete: true });
+  const first = await buildFixture(source, BUILD_EPOCH, "run_p6_cas_a");
+  const exportRoot = path.join(first.parent, "export");
+  await assert.rejects(publishSnapshot({
+    snapshotDirectory: first.snapshot,
+    exportRoot,
+    activate: true,
+    publishedAt: "2026-08-26T00:00:10.000Z",
+  }), /expected_current_required/);
+  await activateFixture(first, exportRoot, null, "2026-08-26T00:00:20.000Z");
+  await assert.rejects(rollbackSnapshot({ exportRoot }), /expected_current_required/);
+  const second = await buildFixture(source, "2026-08-26T00:01:00.000Z", "run_p6_cas_b");
+  await assert.rejects(activateFixture(
+    second,
+    exportRoot,
+    "snap_stale",
+    "2026-08-26T00:01:10.000Z",
+  ), /stale_current_pointer/);
+  assert.equal((await readFormalSnapshot({ exportRoot })).pointer.snapshot_version, first.result.manifest.snapshot_version);
+});
+
+test("F19 every staging and pointer failure window preserves the old formal snapshot", async () => {
+  const source = canonicalSource({ verification: "live_rechecked", viewsComplete: true });
+  const first = await buildFixture(source, BUILD_EPOCH, "run_f19_a");
+  const exportRoot = path.join(first.parent, "export");
+  await activateFixture(first, exportRoot, null, "2026-08-26T00:00:10.000Z");
+  const second = await buildFixture(source, "2026-08-26T00:01:00.000Z", "run_f19_b");
+  const pointerBefore = await readFile(path.join(exportRoot, "current.json"), "utf8");
+  for (const [index, failAt] of [
+    "staging_copy",
+    "staging_hash",
+    "immutable_promote",
+    "pointer_temp_write",
+    "pointer_fsync",
+    "pointer_rename",
+    "pointer_directory_sync",
+    "formal_readback",
+    "post_switch_audit",
+  ].entries()) {
+    let recoveryCalls = 0;
+    await assert.rejects(publishSnapshot({
+      snapshotDirectory: second.snapshot,
+      exportRoot,
+      activate: true,
+      expectedCurrentSnapshotVersion: first.result.manifest.snapshot_version,
+      publishedAt: `2026-08-26T00:${String(2 + index).padStart(2, "0")}:00.000Z`,
+      failAt,
+      afterRecovery: async () => { recoveryCalls += 1; },
+    }), /INJECTED_FAILURE|checksum mismatch/);
+    assert.equal(await readFile(path.join(exportRoot, "current.json"), "utf8"), pointerBefore, failAt);
+    assert.equal((await readFormalSnapshot({ exportRoot })).pointer.snapshot_version, first.result.manifest.snapshot_version, failAt);
+    if (["pointer_directory_sync", "formal_readback", "post_switch_audit"].includes(failAt)) {
+      assert.equal(recoveryCalls, 1, failAt);
+    }
+  }
+  const staging = path.join(exportRoot, "staging");
+  assert.deepEqual(await readdir(staging), []);
+});
+
+test("F19 rollback readback failure automatically restores the pre-rollback pointer", async () => {
+  const source = canonicalSource({ verification: "live_rechecked", viewsComplete: true });
+  const first = await buildFixture(source, BUILD_EPOCH, "run_f19_rb_a");
+  const exportRoot = path.join(first.parent, "export");
+  await activateFixture(first, exportRoot, null, "2026-08-26T00:00:10.000Z");
+  const second = await buildFixture(source, "2026-08-26T00:01:00.000Z", "run_f19_rb_b");
+  await activateFixture(second, exportRoot, first.result.manifest.snapshot_version, "2026-08-26T00:01:10.000Z");
+  const pointerBefore = await readFile(path.join(exportRoot, "current.json"), "utf8");
+  await assert.rejects(rollbackSnapshot({
+    exportRoot,
+    expectedCurrentSnapshotVersion: second.result.manifest.snapshot_version,
+    rolledBackAt: "2026-08-26T00:02:00.000Z",
+    failAt: "formal_readback",
+  }), /INJECTED_FAILURE:formal_readback/);
+  assert.equal(await readFile(path.join(exportRoot, "current.json"), "utf8"), pointerBefore);
+  assert.equal((await readFormalSnapshot({ exportRoot })).pointer.snapshot_version, second.result.manifest.snapshot_version);
 });
 
 test("canonical JSON normalizes object key order and Unicode", () => {
@@ -226,9 +327,9 @@ test("M2 persistent store coordinates CAS publication and sweeps only unprotecte
   const source = canonicalSource({ verification: "live_rechecked", viewsComplete: true });
   const first = await buildFixture(source, BUILD_EPOCH, "run_m2_a");
   const exportRoot = path.join(first.parent, "export");
-  await publishSnapshot({ snapshotDirectory: first.snapshot, exportRoot, activate: true });
+  await activateFixture(first, exportRoot, null, "2026-08-26T00:00:10.000Z");
   const second = await buildFixture(source, "2026-08-26T00:01:00.000Z", "run_m2_b");
-  await publishSnapshot({ snapshotDirectory: second.snapshot, exportRoot, activate: true });
+  await activateFixture(second, exportRoot, first.result.manifest.snapshot_version, "2026-08-26T00:01:10.000Z");
   const policy = { ...DEFAULT_M2_POLICY, max_versions: 2, retry_schedule_ms: [] };
   const enabled = await enablePersistentSnapshotStore({ exportRoot, enabledAt: "2026-08-26T00:02:00.000Z", policy });
   assert.equal(enabled.status, "healthy");
@@ -261,9 +362,9 @@ test("M2 publication lock fails closed without moving current", async () => {
   const source = canonicalSource({ verification: "live_rechecked", viewsComplete: true });
   const first = await buildFixture(source, BUILD_EPOCH, "run_lock_a");
   const exportRoot = path.join(first.parent, "export");
-  await publishSnapshot({ snapshotDirectory: first.snapshot, exportRoot, activate: true });
+  await activateFixture(first, exportRoot, null, "2026-08-26T00:00:10.000Z");
   const second = await buildFixture(source, "2026-08-26T00:01:00.000Z", "run_lock_b");
-  await publishSnapshot({ snapshotDirectory: second.snapshot, exportRoot, activate: true });
+  await activateFixture(second, exportRoot, first.result.manifest.snapshot_version, "2026-08-26T00:01:10.000Z");
   await enablePersistentSnapshotStore({
     exportRoot,
     enabledAt: "2026-08-26T00:02:00.000Z",
@@ -284,13 +385,61 @@ test("M2 publication lock fails closed without moving current", async () => {
   await rm(lock, { force: true });
 });
 
+test("M2 post-switch audit failure restores both pointer and persistent store", async () => {
+  const source = canonicalSource({ verification: "live_rechecked", viewsComplete: true });
+  const first = await buildFixture(source, BUILD_EPOCH, "run_m2_recovery_a");
+  const exportRoot = path.join(first.parent, "export");
+  await activateFixture(first, exportRoot, null, "2026-08-26T00:00:10.000Z");
+  const second = await buildFixture(source, "2026-08-26T00:01:00.000Z", "run_m2_recovery_b");
+  await activateFixture(second, exportRoot, first.result.manifest.snapshot_version, "2026-08-26T00:01:10.000Z");
+  await enablePersistentSnapshotStore({ exportRoot, enabledAt: "2026-08-26T00:02:00.000Z" });
+  const third = await buildFixture(source, "2026-08-26T00:03:00.000Z", "run_m2_recovery_c");
+
+  await assert.rejects(coordinatedPublishSnapshot({
+    snapshotDirectory: third.snapshot,
+    exportRoot,
+    expectedCurrentSnapshotVersion: second.result.manifest.snapshot_version,
+    publishedAt: "2026-08-26T00:04:00.000Z",
+    failAt: "post_switch_audit",
+  }), /INJECTED_FAILURE:post_switch_audit/);
+
+  const formal = await readFormalSnapshot({ exportRoot });
+  const store = await readPersistentSnapshotStoreStatus({ exportRoot });
+  assert.equal(formal.pointer.snapshot_version, second.result.manifest.snapshot_version);
+  assert.equal(store.current_snapshot_version, second.result.manifest.snapshot_version);
+  assert.equal(store.status, "healthy");
+});
+
+test("M2 rollback uses the shared lock, Expected-Current CAS, readback and reconciliation", async () => {
+  const source = canonicalSource({ verification: "live_rechecked", viewsComplete: true });
+  const first = await buildFixture(source, BUILD_EPOCH, "run_m2_rb_a");
+  const exportRoot = path.join(first.parent, "export");
+  await activateFixture(first, exportRoot, null, "2026-08-26T00:00:10.000Z");
+  const second = await buildFixture(source, "2026-08-26T00:01:00.000Z", "run_m2_rb_b");
+  await activateFixture(second, exportRoot, first.result.manifest.snapshot_version, "2026-08-26T00:01:10.000Z");
+  await enablePersistentSnapshotStore({ exportRoot, enabledAt: "2026-08-26T00:02:00.000Z" });
+  await assert.rejects(coordinatedRollbackSnapshot({
+    exportRoot,
+    expectedCurrentSnapshotVersion: first.result.manifest.snapshot_version,
+    rolledBackAt: "2026-08-26T00:03:00.000Z",
+  }), /stale_current_pointer/);
+  const result = await coordinatedRollbackSnapshot({
+    exportRoot,
+    expectedCurrentSnapshotVersion: second.result.manifest.snapshot_version,
+    rolledBackAt: "2026-08-26T00:04:00.000Z",
+  });
+  assert.equal(result.pointer.snapshot_version, first.result.manifest.snapshot_version);
+  assert.equal(result.store_status, "healthy");
+  assert.equal((await readFormalSnapshot({ exportRoot })).pointer.snapshot_version, first.result.manifest.snapshot_version);
+});
+
 test("M2 reconciler repairs registry drift and raises a bounded failure alert", async () => {
   const source = canonicalSource({ verification: "live_rechecked", viewsComplete: true });
   const first = await buildFixture(source, BUILD_EPOCH, "run_reconcile_a");
   const exportRoot = path.join(first.parent, "export");
-  await publishSnapshot({ snapshotDirectory: first.snapshot, exportRoot, activate: true });
+  await activateFixture(first, exportRoot, null, "2026-08-26T00:00:10.000Z");
   const second = await buildFixture(source, "2026-08-26T00:01:00.000Z", "run_reconcile_b");
-  await publishSnapshot({ snapshotDirectory: second.snapshot, exportRoot, activate: true });
+  await activateFixture(second, exportRoot, first.result.manifest.snapshot_version, "2026-08-26T00:01:10.000Z");
   await enablePersistentSnapshotStore({ exportRoot, enabledAt: "2026-08-26T00:02:00.000Z" });
 
   const pointerPath = path.join(exportRoot, "current.json");

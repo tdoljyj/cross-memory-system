@@ -9,6 +9,7 @@ import {
   readFile,
   readdir,
   rename,
+  rm,
   stat,
   writeFile,
 } from "node:fs/promises";
@@ -20,6 +21,10 @@ export const SNAPSHOT_SCHEMA_VERSION = 5;
 export const INDEX_SCHEMA_VERSION = 1;
 export const GENERATOR_VERSION = "1.6.0";
 export const DEFAULT_EXPORT_POLICY_VERSION = "clued-m0-offline-v1";
+export const SNAPSHOT_PUBLICATION_LOCK_POLICY = Object.freeze({
+  stale_lock_seconds: 900,
+  retry_schedule_ms: [100, 500, 2_000],
+});
 
 const RECORD_TYPES = new Set(["state", "task", "decision", "profile_fact", "note"]);
 const TERMINAL_RECORD_STATUSES = new Set([
@@ -759,69 +764,274 @@ async function syncFile(filePath) {
   try { await handle.sync(); } finally { await handle.close(); }
 }
 
-async function atomicWriteJson(filePath, value) {
+async function atomicWriteJson(filePath, value, { failAt = null } = {}) {
   const parent = path.dirname(filePath);
   await mkdir(parent, { recursive: true });
   const temporary = path.resolve(parent, `.current.${process.pid}.${sha256(canonicalJson(value)).slice(0, 12)}.tmp`);
-  await writeFile(temporary, prettyJson(value), "utf8");
-  await syncFile(temporary);
-  await rename(temporary, filePath);
   try {
-    const directory = await open(parent, "r");
-    try { await directory.sync(); } finally { await directory.close(); }
-  } catch {
-    // Windows does not consistently allow directory handles; file sync + atomic rename remains enforced.
+    if (failAt === "pointer_temp_write") throw new Error("INJECTED_FAILURE:pointer_temp_write");
+    await writeFile(temporary, prettyJson(value), "utf8");
+    if (failAt === "pointer_fsync") throw new Error("INJECTED_FAILURE:pointer_fsync");
+    await syncFile(temporary);
+    if (failAt === "pointer_rename") throw new Error("INJECTED_FAILURE:pointer_rename");
+    await rename(temporary, filePath);
+    if (failAt === "pointer_directory_sync") throw new Error("INJECTED_FAILURE:pointer_directory_sync");
+    try {
+      const directory = await open(parent, "r");
+      try { await directory.sync(); } finally { await directory.close(); }
+    } catch (error) {
+      if (failAt === "pointer_directory_sync") throw error;
+      // Windows does not consistently allow directory handles; file sync + atomic rename remains enforced.
+    }
+  } finally {
+    await rm(temporary, { force: true });
   }
 }
 
-export async function publishSnapshot({ snapshotDirectory, exportRoot, activate = false }) {
-  const { manifest } = await validateSnapshot(snapshotDirectory);
-  const destination = path.resolve(exportRoot, "published", manifest.snapshot_version);
+function publicationPaths(exportRoot) {
+  const root = path.resolve(exportRoot);
+  return {
+    root,
+    published: path.resolve(root, "published"),
+    staging: path.resolve(root, "staging"),
+    current: path.resolve(root, "current.json"),
+    runtime: path.resolve(root, "m2", "runtime"),
+    lock: path.resolve(root, "m2", "runtime", "publish.lock"),
+  };
+}
+
+async function delay(milliseconds) {
+  if (milliseconds > 0) await new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+async function acquireSnapshotPublicationLock(paths, { occurredAt, operation, policy }) {
+  assertIso(occurredAt, "occurredAt");
+  await mkdir(paths.runtime, { recursive: true });
+  const schedule = [0, ...(policy.retry_schedule_ms ?? [])];
+  for (let attempt = 0; attempt < schedule.length; attempt += 1) {
+    await delay(schedule[attempt]);
+    try {
+      const handle = await open(paths.lock, "wx");
+      const lock = {
+        lock_schema_version: 1,
+        operation,
+        owner_ref: `pid:${process.pid}`,
+        acquired_at: occurredAt,
+      };
+      await handle.writeFile(prettyJson(lock), "utf8");
+      await handle.sync();
+      await handle.close();
+      return lock;
+    } catch (error) {
+      if (error.code !== "EEXIST") throw error;
+      const lockStat = await stat(paths.lock);
+      const ageSeconds = (Date.parse(occurredAt) - lockStat.mtimeMs) / 1_000;
+      if (ageSeconds > policy.stale_lock_seconds) {
+        await rm(paths.lock, { force: true });
+        continue;
+      }
+      if (attempt === schedule.length - 1) throw new Error("publication_lock_busy");
+    }
+  }
+  throw new Error("publication_lock_busy");
+}
+
+export async function withSnapshotPublicationLock({
+  exportRoot,
+  occurredAt,
+  operation,
+  policy = SNAPSHOT_PUBLICATION_LOCK_POLICY,
+}, callback) {
+  const paths = publicationPaths(exportRoot);
+  await acquireSnapshotPublicationLock(paths, { occurredAt, operation, policy });
+  try {
+    return await callback(paths);
+  } finally {
+    await rm(paths.lock, { force: true });
+  }
+}
+
+async function readPointerIfPresent(pointerPath) {
+  if (!await exists(pointerPath)) return null;
+  const pointer = JSON.parse(await readFile(pointerPath, "utf8"));
+  if (pointer.pointer_schema_version !== 1 || typeof pointer.snapshot_version !== "string") {
+    throw new Error("invalid_current_pointer");
+  }
+  return pointer;
+}
+
+export async function readFormalSnapshot({ exportRoot }) {
+  const paths = publicationPaths(exportRoot);
+  const pointer = await readPointerIfPresent(paths.current);
+  if (!pointer) throw new Error("current_pointer_missing");
+  if (pointer.bundle_path !== `published/${pointer.snapshot_version}/memory`) {
+    throw new Error("current_pointer_bundle_path_mismatch");
+  }
+  const snapshotRoot = path.resolve(paths.published, pointer.snapshot_version);
+  const { manifest } = await validateSnapshot(snapshotRoot);
+  const manifestHash = sha256(await readFile(path.resolve(snapshotRoot, "memory", "manifest.json")));
+  if (manifestHash !== pointer.manifest_sha256) throw new Error("current_pointer_manifest_hash_mismatch");
+  if (manifest.snapshot_version !== pointer.snapshot_version) throw new Error("current_pointer_snapshot_mismatch");
+  return { pointer, manifest, snapshotRoot, manifestHash };
+}
+
+async function publishImmutableSnapshot({ snapshotDirectory, paths, manifest, failAt }) {
+  const destination = path.resolve(paths.published, manifest.snapshot_version);
   if (await exists(destination)) {
     const existing = await validateSnapshot(destination);
     if (canonicalJson(existing.manifest) !== canonicalJson(manifest)) throw new Error("Published snapshot identity already exists with different bytes.");
   } else {
-    await mkdir(path.dirname(destination), { recursive: true });
-    await cp(path.resolve(snapshotDirectory), destination, { recursive: true, force: false, errorOnExist: true });
-    await validateSnapshot(destination);
+    const staging = path.resolve(paths.staging, `${manifest.snapshot_version}.${process.pid}`);
+    await mkdir(paths.staging, { recursive: true });
+    await rm(staging, { recursive: true, force: true });
+    try {
+      if (failAt === "staging_copy") throw new Error("INJECTED_FAILURE:staging_copy");
+      await cp(path.resolve(snapshotDirectory), staging, { recursive: true, force: false, errorOnExist: true });
+      if (failAt === "staging_hash") {
+        await writeFile(path.resolve(staging, "memory", "global", "state.md"), "INJECTED_CORRUPTION\n", "utf8");
+      }
+      await validateSnapshot(staging);
+      await mkdir(paths.published, { recursive: true });
+      if (failAt === "immutable_promote") throw new Error("INJECTED_FAILURE:immutable_promote");
+      await rename(staging, destination);
+      await validateSnapshot(destination);
+    } finally {
+      await rm(staging, { recursive: true, force: true });
+    }
   }
-  if (!activate) return { status: "published_offline", snapshot_version: manifest.snapshot_version, destination };
-  if (manifest.baseline_claim !== "current" || manifest.source_verification !== "live_rechecked" || manifest.views_complete !== true) {
-    throw new Error("Only a complete, live-rechecked current snapshot may become the formal pointer.");
-  }
-  const pointerPath = path.resolve(exportRoot, "current.json");
-  let previous = null;
-  if (await exists(pointerPath)) previous = JSON.parse(await readFile(pointerPath, "utf8")).snapshot_version ?? null;
-  const manifestHash = sha256(await readFile(path.resolve(destination, "memory", "manifest.json")));
-  const pointer = {
-    pointer_schema_version: 1,
-    snapshot_version: manifest.snapshot_version,
-    bundle_path: `published/${manifest.snapshot_version}/memory`,
-    manifest_sha256: manifestHash,
-    previous_snapshot_version: previous,
-  };
-  await atomicWriteJson(pointerPath, pointer);
-  const reread = JSON.parse(await readFile(pointerPath, "utf8"));
-  if (canonicalJson(reread) !== canonicalJson(pointer)) throw new Error("Formal pointer verification failed.");
-  return { status: "activated", pointer };
+  return destination;
 }
 
-export async function rollbackSnapshot({ exportRoot }) {
-  const pointerPath = path.resolve(exportRoot, "current.json");
-  const current = JSON.parse(await readFile(pointerPath, "utf8"));
-  if (!current.previous_snapshot_version) throw new Error("No previous snapshot is available for rollback.");
-  const previousRoot = path.resolve(exportRoot, "published", current.previous_snapshot_version);
-  const { manifest } = await validateSnapshot(previousRoot);
-  const manifestHash = sha256(await readFile(path.resolve(previousRoot, "memory", "manifest.json")));
-  const rolledBack = {
+function pointerFor(manifest, manifestHash, previousSnapshotVersion) {
+  return {
     pointer_schema_version: 1,
     snapshot_version: manifest.snapshot_version,
     bundle_path: `published/${manifest.snapshot_version}/memory`,
     manifest_sha256: manifestHash,
-    previous_snapshot_version: current.snapshot_version,
+    previous_snapshot_version: previousSnapshotVersion,
   };
-  await atomicWriteJson(pointerPath, rolledBack);
-  return { status: "rolled_back", pointer: rolledBack };
+}
+
+async function restorePointer(paths, previousPointer) {
+  if (previousPointer) {
+    await atomicWriteJson(paths.current, previousPointer);
+    const restored = await readFormalSnapshot({ exportRoot: paths.root });
+    if (canonicalJson(restored.pointer) !== canonicalJson(previousPointer)) throw new Error("pointer_recovery_readback_failed");
+  } else {
+    await rm(paths.current, { force: true });
+  }
+}
+
+export async function publishSnapshot({
+  snapshotDirectory,
+  exportRoot,
+  activate = false,
+  expectedCurrentSnapshotVersion,
+  publishedAt = new Date().toISOString(),
+  lockPolicy = SNAPSHOT_PUBLICATION_LOCK_POLICY,
+  failAt = null,
+  afterSwitch = null,
+  afterRecovery = null,
+}) {
+  const { manifest } = await validateSnapshot(snapshotDirectory);
+  if (activate && expectedCurrentSnapshotVersion === undefined) {
+    throw new Error("expected_current_required");
+  }
+  return withSnapshotPublicationLock({ exportRoot, occurredAt: publishedAt, operation: activate ? "publish_activate" : "publish_offline", policy: lockPolicy }, async (paths) => {
+    const previousPointer = await readPointerIfPresent(paths.current);
+    const actualCurrent = previousPointer?.snapshot_version ?? null;
+    if (activate && actualCurrent !== expectedCurrentSnapshotVersion) throw new Error("stale_current_pointer");
+    const destination = await publishImmutableSnapshot({ snapshotDirectory, paths, manifest, failAt });
+    if (!activate) return { status: "published_offline", snapshot_version: manifest.snapshot_version, destination };
+    if (manifest.baseline_claim !== "current" || manifest.source_verification !== "live_rechecked" || manifest.views_complete !== true) {
+      throw new Error("Only a complete, live-rechecked current snapshot may become the formal pointer.");
+    }
+    const manifestHash = sha256(await readFile(path.resolve(destination, "memory", "manifest.json")));
+    const pointer = pointerFor(manifest, manifestHash, actualCurrent);
+    let switched = false;
+    try {
+      await atomicWriteJson(paths.current, pointer, { failAt });
+      switched = true;
+      if (failAt === "formal_readback") throw new Error("INJECTED_FAILURE:formal_readback");
+      const formal = await readFormalSnapshot({ exportRoot });
+      if (canonicalJson(formal.pointer) !== canonicalJson(pointer)) throw new Error("formal_pointer_readback_failed");
+      if (afterSwitch) await afterSwitch({ pointer, formal, previousPointer });
+      if (failAt === "post_switch_audit") throw new Error("INJECTED_FAILURE:post_switch_audit");
+      return {
+        status: "activated",
+        pointer,
+        receipt: {
+          contract: "clued.snapshot-publication-receipt.v1",
+          operation: "publish",
+          occurred_at: publishedAt,
+          expected_current: expectedCurrentSnapshotVersion,
+          previous_current: actualCurrent,
+          new_current: pointer.snapshot_version,
+          result: "success",
+          receipt_id: `pub_${sha256(canonicalJson({ publishedAt, pointer, expectedCurrentSnapshotVersion })).slice(0, 32)}`,
+        },
+      };
+    } catch (error) {
+      if (switched || await exists(paths.current)) {
+        const active = await readPointerIfPresent(paths.current).catch(() => null);
+        if (switched || active?.snapshot_version === pointer.snapshot_version) {
+          await restorePointer(paths, previousPointer);
+          if (afterRecovery) await afterRecovery({ previousPointer, failedPointer: pointer, error });
+        }
+      }
+      throw error;
+    }
+  });
+}
+
+export async function rollbackSnapshot({
+  exportRoot,
+  expectedCurrentSnapshotVersion,
+  rolledBackAt = new Date().toISOString(),
+  lockPolicy = SNAPSHOT_PUBLICATION_LOCK_POLICY,
+  failAt = null,
+  afterSwitch = null,
+  afterRecovery = null,
+}) {
+  if (expectedCurrentSnapshotVersion === undefined) throw new Error("expected_current_required");
+  return withSnapshotPublicationLock({ exportRoot, occurredAt: rolledBackAt, operation: "rollback", policy: lockPolicy }, async (paths) => {
+    const current = await readPointerIfPresent(paths.current);
+    if (!current || current.snapshot_version !== expectedCurrentSnapshotVersion) throw new Error("stale_current_pointer");
+    if (!current.previous_snapshot_version) throw new Error("No previous snapshot is available for rollback.");
+    const previousRoot = path.resolve(paths.published, current.previous_snapshot_version);
+    const { manifest } = await validateSnapshot(previousRoot);
+    const manifestHash = sha256(await readFile(path.resolve(previousRoot, "memory", "manifest.json")));
+    const rolledBack = pointerFor(manifest, manifestHash, current.snapshot_version);
+    let switched = false;
+    try {
+      await atomicWriteJson(paths.current, rolledBack, { failAt });
+      switched = true;
+      if (failAt === "formal_readback") throw new Error("INJECTED_FAILURE:formal_readback");
+      const formal = await readFormalSnapshot({ exportRoot });
+      if (canonicalJson(formal.pointer) !== canonicalJson(rolledBack)) throw new Error("formal_pointer_readback_failed");
+      if (afterSwitch) await afterSwitch({ pointer: rolledBack, formal, previousPointer: current });
+      return {
+        status: "rolled_back",
+        pointer: rolledBack,
+        receipt: {
+          contract: "clued.snapshot-publication-receipt.v1",
+          operation: "rollback",
+          occurred_at: rolledBackAt,
+          expected_current: expectedCurrentSnapshotVersion,
+          previous_current: current.snapshot_version,
+          new_current: rolledBack.snapshot_version,
+          result: "success",
+          receipt_id: `rb_${sha256(canonicalJson({ rolledBackAt, rolledBack, expectedCurrentSnapshotVersion })).slice(0, 32)}`,
+        },
+      };
+    } catch (error) {
+      if (switched || (await readPointerIfPresent(paths.current).catch(() => null))?.snapshot_version === rolledBack.snapshot_version) {
+        await restorePointer(paths, current);
+        if (afterRecovery) await afterRecovery({ previousPointer: current, failedPointer: rolledBack, error });
+      }
+      throw error;
+    }
+  });
 }
 
 function parseArgs(argv) {
@@ -831,7 +1041,7 @@ function parseArgs(argv) {
   for (let index = 1; index < argv.length; index += 1) {
     const name = argv[index];
     if (flags.has(name)) { options[name.slice(2)] = true; continue; }
-    if (!["--source", "--legacy-memory", "--source-commit", "--canonical-version", "--output", "--build-epoch", "--migration-run-id", "--snapshot", "--export-root"].includes(name)) throw new Error(`Unknown argument: ${name}`);
+    if (!["--source", "--legacy-memory", "--source-commit", "--canonical-version", "--output", "--build-epoch", "--migration-run-id", "--snapshot", "--export-root", "--expected-current", "--at"].includes(name)) throw new Error(`Unknown argument: ${name}`);
     const value = argv[++index];
     if (!value) throw new Error(`${name} requires a value.`);
     options[name.slice(2).replaceAll("-", "_")] = value;
@@ -855,12 +1065,23 @@ async function main() {
     return;
   }
   if (command === "publish") {
-    const result = await publishSnapshot({ snapshotDirectory: path.resolve(options.snapshot), exportRoot: path.resolve(options.export_root), activate: options.activate ?? false });
+    const expectedCurrent = options.expected_current === "NONE" ? null : options.expected_current;
+    const result = await publishSnapshot({
+      snapshotDirectory: path.resolve(options.snapshot),
+      exportRoot: path.resolve(options.export_root),
+      activate: options.activate ?? false,
+      expectedCurrentSnapshotVersion: options.activate ? expectedCurrent : undefined,
+      publishedAt: options.at ?? new Date().toISOString(),
+    });
     process.stdout.write(`${JSON.stringify(result)}\n`);
     return;
   }
   if (command === "rollback") {
-    const result = await rollbackSnapshot({ exportRoot: path.resolve(options.export_root) });
+    const result = await rollbackSnapshot({
+      exportRoot: path.resolve(options.export_root),
+      expectedCurrentSnapshotVersion: options.expected_current,
+      rolledBackAt: options.at ?? new Date().toISOString(),
+    });
     process.stdout.write(`${JSON.stringify(result)}\n`);
     return;
   }

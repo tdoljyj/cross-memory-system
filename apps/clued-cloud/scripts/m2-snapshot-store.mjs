@@ -16,6 +16,7 @@ import { fileURLToPath } from "node:url";
 import {
   canonicalJson,
   publishSnapshot,
+  rollbackSnapshot,
   sha256,
   validateSnapshot,
 } from "./two-level-snapshot.mjs";
@@ -276,19 +277,56 @@ export async function reconcilePersistentSnapshotStore({ exportRoot, reconciledA
   return withPublicationLock(paths, { now: reconciledAt, policy: store.policy, operation: "reconcile" }, () => reconcileUnlocked(paths, store, reconciledAt));
 }
 
-export async function coordinatedPublishSnapshot({ snapshotDirectory, exportRoot, expectedCurrentSnapshotVersion, publishedAt }) {
+export async function coordinatedPublishSnapshot({ snapshotDirectory, exportRoot, expectedCurrentSnapshotVersion, publishedAt, failAt = null }) {
   assertIso(publishedAt, "publishedAt");
   if (typeof expectedCurrentSnapshotVersion !== "string" || expectedCurrentSnapshotVersion.length === 0) throw new Error("expectedCurrentSnapshotVersion is required.");
   const paths = storePaths(exportRoot);
   const store = await readJson(paths.store);
   assertStore(store);
-  return withPublicationLock(paths, { now: publishedAt, policy: store.policy, operation: "publish" }, async () => {
-    const current = await inspectPointer(paths);
-    if (current.pointer.snapshot_version !== expectedCurrentSnapshotVersion) throw new Error("stale_current_pointer");
-    const published = await publishSnapshot({ snapshotDirectory, exportRoot, activate: true });
-    const next = await reconcileUnlocked(paths, store, publishedAt);
-    return { status: "activated", pointer: published.pointer, store_status: next.status };
+  let storeStatus = store.status;
+  const published = await publishSnapshot({
+    snapshotDirectory,
+    exportRoot,
+    activate: true,
+    expectedCurrentSnapshotVersion,
+    publishedAt,
+    failAt,
+    lockPolicy: store.policy,
+    afterSwitch: async () => {
+      const next = await reconcileUnlocked(paths, store, publishedAt);
+      storeStatus = next.status;
+      if (next.status !== "healthy") throw new Error("post_publish_reconcile_failed");
+    },
+    afterRecovery: async () => {
+      await reconcileUnlocked(paths, store, publishedAt);
+    },
   });
+  return { ...published, store_status: storeStatus };
+}
+
+export async function coordinatedRollbackSnapshot({ exportRoot, expectedCurrentSnapshotVersion, rolledBackAt, failAt = null }) {
+  assertIso(rolledBackAt, "rolledBackAt");
+  if (typeof expectedCurrentSnapshotVersion !== "string" || expectedCurrentSnapshotVersion.length === 0) throw new Error("expectedCurrentSnapshotVersion is required.");
+  const paths = storePaths(exportRoot);
+  const store = await readJson(paths.store);
+  assertStore(store);
+  let storeStatus = store.status;
+  const rolledBack = await rollbackSnapshot({
+    exportRoot,
+    expectedCurrentSnapshotVersion,
+    rolledBackAt,
+    failAt,
+    lockPolicy: store.policy,
+    afterSwitch: async () => {
+      const next = await reconcileUnlocked(paths, store, rolledBackAt);
+      storeStatus = next.status;
+      if (next.status !== "healthy") throw new Error("post_rollback_reconcile_failed");
+    },
+    afterRecovery: async () => {
+      await reconcileUnlocked(paths, store, rolledBackAt);
+    },
+  });
+  return { ...rolledBack, store_status: storeStatus };
 }
 
 function protectedVersions(store) {
@@ -389,7 +427,16 @@ async function main() {
     process.stdout.write(`${JSON.stringify(result)}\n`);
     return;
   }
-  throw new Error("Usage: m2-snapshot-store.mjs <enable|status|reconcile|sweep|publish> --export-root <path> [options]");
+  if (command === "rollback") {
+    const result = await coordinatedRollbackSnapshot({
+      exportRoot,
+      expectedCurrentSnapshotVersion: options.expected_current,
+      rolledBackAt: at,
+    });
+    process.stdout.write(`${JSON.stringify(result)}\n`);
+    return;
+  }
+  throw new Error("Usage: m2-snapshot-store.mjs <enable|status|reconcile|sweep|publish|rollback> --export-root <path> [options]");
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

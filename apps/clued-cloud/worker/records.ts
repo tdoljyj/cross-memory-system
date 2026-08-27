@@ -6,6 +6,13 @@ export function recordsV2Enabled(env: RecordFeatureEnv) {
   return /^(1|true|on|enabled)$/i.test(env.PROJECT_VIEWS_V2?.trim() ?? "");
 }
 
+export const P6_AUTHORITY_CONFLICT_POLICY = {
+  current_fields: ["state", "task", "decision"],
+  log_role: "historical_event_evidence_only",
+  behavior: "retain_current_and_report_log_conflicts",
+  silent_merge: false,
+} as const;
+
 export const currentWorkContract = {
   version: "clued-v1.6-m1",
   read_order: [
