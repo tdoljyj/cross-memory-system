@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -24,6 +25,7 @@ from canonical_read import (
 NOW = dt.datetime(2026, 8, 27, 12, 0, tzinfo=dt.timezone.utc)
 PROJECT = "0597aa60-9b98-4da6-a4ab-63d7705b632f"
 OTHER = "09c99505-7971-4bca-a885-632350b05139"
+RECORD = "86fa71e8-3ab0-42e1-a24e-91ec473e70fc"
 
 
 def canonical_payload():
@@ -217,6 +219,7 @@ class DeterministicT1Gates(unittest.TestCase):
         memory = repo / "memory"
         (memory / "global").mkdir(parents=True)
         (memory / "objects" / "projects").mkdir(parents=True)
+        (memory / "objects" / "records").mkdir(parents=True)
         (memory / "profile.md").write_text("profile preference", encoding="utf-8")
         for name in ("state.md", "task.md", "decision.md"):
             (memory / "global" / name).write_text(f"global {name}", encoding="utf-8")
@@ -227,14 +230,74 @@ class DeterministicT1Gates(unittest.TestCase):
                 (project / name).write_text(f"project {name}", encoding="utf-8")
         if make_object:
             (memory / "objects" / "projects" / f"{PROJECT}.json").write_text(
-                json.dumps({"canonical_id": PROJECT}), encoding="utf-8",
+                json.dumps({
+                    "schema_version": 1,
+                    "snapshot_version": "snap_fixture",
+                    "canonical_version": "cv_fixture",
+                    "kind": "project",
+                    "canonical_id": PROJECT,
+                    "data": {
+                        "canonical_project_id": PROJECT,
+                        "name": "fixture project",
+                        "aliases": [],
+                        "certainty_status": "confirmed",
+                        "progress_status": "active",
+                        "lifecycle_status": "active",
+                        "merge_generation": 0,
+                        "merged_into_project_id": None,
+                        "project_schema_version": 1,
+                        "version": 1,
+                        "closed_at": None,
+                        "closed_reason": None,
+                        "closure_summary": None,
+                        "receipt_id": None,
+                        "recorded_at": "2026-08-27T00:00:00Z",
+                        "updated_at": "2026-08-27T00:00:00Z",
+                    },
+                }), encoding="utf-8",
             )
-        projects = {PROJECT: ["record"]} if indexed else {}
+        (memory / "objects" / "records" / f"{RECORD}.json").write_text(
+            json.dumps({"kind": "record", "canonical_id": RECORD}), encoding="utf-8",
+        )
+        projects = {PROJECT: [RECORD]} if indexed else {}
         (memory / "index.json").write_text(
-            json.dumps({"by_scope": {"projects": projects}}), encoding="utf-8",
+            json.dumps({
+                "schema_version": 1,
+                "snapshot_version": "snap_fixture",
+                "by_scope": {"projects": projects},
+                "by_id": {
+                    RECORD: {
+                        "kind": "record",
+                        "effective_scope": f"project:{PROJECT}",
+                        "lifecycle_status": "active",
+                        "path": f"objects/records/{RECORD}.json",
+                    },
+                },
+            }), encoding="utf-8",
         )
         self.addCleanup(temporary.cleanup)
         return repo
+
+    @staticmethod
+    def update_json(path, update):
+        value = json.loads(path.read_text(encoding="utf-8"))
+        update(value)
+        path.write_text(json.dumps(value), encoding="utf-8")
+
+    def assert_fails_before_project_views(self, repo, code):
+        original = Path.read_text
+        reads = []
+
+        def tracked(path, *args, **kwargs):
+            reads.append(path.as_posix())
+            return original(path, *args, **kwargs)
+
+        with mock.patch.object(Path, "read_text", tracked):
+            with self.assertRaisesRegex(P4ReadError, code):
+                self.plan(repo, project_id=PROJECT)
+        self.assertFalse(any(f"memory/projects/{PROJECT}/" in path for path in reads), reads)
+        self.assertFalse(any(f"memory/projects/{OTHER}/" in path for path in reads), reads)
+        return reads
 
     def plan(self, repo, query="Clued", project_id=None, history=False):
         return deterministic_t1_plan(
@@ -247,7 +310,8 @@ class DeterministicT1Gates(unittest.TestCase):
         self.assertEqual("T1", plan.access_tier)
         self.assertEqual("unique-canonical-project-route", plan.reason)
         self.assertEqual(3, len(plan.paths))
-        self.assertEqual(4, len(plan.sources_read))
+        self.assertEqual(5, len(plan.sources_read))
+        self.assertEqual(f"memory/objects/projects/{PROJECT}.json", plan.sources_read[0])
         self.assertTrue(all(PROJECT in path.as_posix() for path in plan.paths))
 
     def test_f20_missing_index_route_falls_back_to_exact_authority_object(self):
@@ -256,15 +320,93 @@ class DeterministicT1Gates(unittest.TestCase):
         self.assertIn(f"memory/objects/projects/{PROJECT}.json", plan.sources_read)
         self.assertTrue(all(OTHER not in source for source in plan.sources_read))
 
+    def test_f20_index_hit_missing_object_blocks_before_stale_views(self):
+        repo = self.make_repo(make_object=False)
+        self.assert_fails_before_project_views(repo, "PROJECT_OBJECT_INVALID")
+
     def test_f20_missing_target_blocks_even_if_index_claims_it(self):
-        with self.assertRaisesRegex(P4ReadError, "INDEX_TARGET_MISSING"):
+        with self.assertRaisesRegex(P4ReadError, "T1_TARGET_INCOMPLETE"):
             self.plan(self.make_repo(make_target=False), project_id=PROJECT)
 
-    def test_f20_invalid_index_blocks_without_directory_scan(self):
+    def test_f20_invalid_index_falls_back_only_after_exact_object_validation(self):
         repo = self.make_repo()
         (repo / "memory" / "index.json").write_text("not-json", encoding="utf-8")
-        with self.assertRaisesRegex(P4ReadError, "INDEX_INVALID"):
-            self.plan(repo, project_id=PROJECT)
+        plan = self.plan(repo, project_id=PROJECT)
+        self.assertEqual("index-rejected-exact-object-fallback", plan.reason)
+
+    def test_f20_project_object_identity_kind_and_lifecycle_fail_closed(self):
+        cases = (
+            ("canonical_id", lambda value: value.__setitem__("canonical_id", OTHER), "PROJECT_OBJECT_IDENTITY_MISMATCH"),
+            ("canonical_project_id", lambda value: value["data"].__setitem__("canonical_project_id", OTHER), "PROJECT_OBJECT_IDENTITY_MISMATCH"),
+            ("kind", lambda value: value.__setitem__("kind", "record"), "PROJECT_OBJECT_KIND_INVALID"),
+            ("lifecycle", lambda value: value["data"].__setitem__("lifecycle_status", "merged"), "PROJECT_OBJECT_LIFECYCLE_INVALID"),
+        )
+        for name, update, code in cases:
+            with self.subTest(name=name):
+                repo = self.make_repo()
+                self.update_json(repo / "memory" / "objects" / "projects" / f"{PROJECT}.json", update)
+                reads = self.assert_fails_before_project_views(repo, code)
+                self.assertFalse(any(path.endswith("memory/index.json") for path in reads), reads)
+
+    def test_f20_corrupt_or_incomplete_project_object_fails_closed(self):
+        repo = self.make_repo()
+        object_path = repo / "memory" / "objects" / "projects" / f"{PROJECT}.json"
+        object_path.write_text("not-json", encoding="utf-8")
+        reads = self.assert_fails_before_project_views(repo, "PROJECT_OBJECT_INVALID")
+        self.assertFalse(any(path.endswith("memory/index.json") for path in reads), reads)
+
+        repo = self.make_repo()
+        object_path = repo / "memory" / "objects" / "projects" / f"{PROJECT}.json"
+        self.update_json(object_path, lambda value: value["data"].pop("merged_into_project_id"))
+        reads = self.assert_fails_before_project_views(repo, "PROJECT_OBJECT_INVALID")
+        self.assertFalse(any(path.endswith("memory/index.json") for path in reads), reads)
+
+    def test_f20_project_object_snapshot_and_canonical_versions_must_match_request(self):
+        for field in ("snapshot_version", "canonical_version"):
+            with self.subTest(field=field):
+                repo = self.make_repo()
+                self.update_json(
+                    repo / "memory" / "objects" / "projects" / f"{PROJECT}.json",
+                    lambda value, field=field: value.__setitem__(field, "stale"),
+                )
+                reads = self.assert_fails_before_project_views(repo, "PROJECT_OBJECT_VERSION_MISMATCH")
+                self.assertFalse(any(path.endswith("memory/index.json") for path in reads), reads)
+
+    def test_f20_index_missing_record_id_rejected_to_exact_object_fallback(self):
+        repo = self.make_repo()
+        self.update_json(repo / "memory" / "index.json", lambda value: value["by_id"].clear())
+        self.assertEqual("index-rejected-exact-object-fallback", self.plan(repo, project_id=PROJECT).reason)
+
+    def test_f20_index_route_must_be_record_id_list_not_arbitrary_string(self):
+        repo = self.make_repo()
+        self.update_json(
+            repo / "memory" / "index.json",
+            lambda value: value["by_scope"]["projects"].__setitem__(PROJECT, "truthy-not-a-route"),
+        )
+        self.assertEqual("index-rejected-exact-object-fallback", self.plan(repo, project_id=PROJECT).reason)
+
+    def test_f20_index_record_scope_conflict_rejected_to_exact_object_fallback(self):
+        repo = self.make_repo()
+        self.update_json(
+            repo / "memory" / "index.json",
+            lambda value: value["by_id"][RECORD].__setitem__("effective_scope", f"project:{OTHER}"),
+        )
+        self.assertEqual("index-rejected-exact-object-fallback", self.plan(repo, project_id=PROJECT).reason)
+
+    def test_f20_index_record_path_escape_and_type_rejected_to_exact_object_fallback(self):
+        for bad_path in (f"objects/projects/{PROJECT}.json", ["objects", "records", RECORD]):
+            with self.subTest(path=bad_path):
+                repo = self.make_repo()
+                self.update_json(
+                    repo / "memory" / "index.json",
+                    lambda value, bad_path=bad_path: value["by_id"][RECORD].__setitem__("path", bad_path),
+                )
+                self.assertEqual("index-rejected-exact-object-fallback", self.plan(repo, project_id=PROJECT).reason)
+
+    def test_f20_index_record_target_missing_rejected_to_exact_object_fallback(self):
+        repo = self.make_repo()
+        (repo / "memory" / "objects" / "records" / f"{RECORD}.json").unlink()
+        self.assertEqual("index-rejected-exact-object-fallback", self.plan(repo, project_id=PROJECT).reason)
 
     def test_f21_query_canonical_id_is_unique_exact_selector(self):
         plan = self.plan(self.make_repo(), query=f"current {PROJECT}")
@@ -291,8 +433,20 @@ class DeterministicT1Gates(unittest.TestCase):
             self.plan(repo, query=f"{PROJECT} and {OTHER}")
 
     def test_f21_invalid_explicit_selector_is_rejected_before_path_access(self):
-        with self.assertRaisesRegex(P4ReadError, "T1_SELECTOR_INVALID"):
-            self.plan(self.make_repo(), project_id="../../outside")
+        repo = self.make_repo()
+        original = Path.read_text
+        reads = []
+
+        def tracked(path, *args, **kwargs):
+            reads.append(path.as_posix())
+            return original(path, *args, **kwargs)
+
+        with mock.patch.object(Path, "read_text", tracked):
+            with self.assertRaisesRegex(P4ReadError, "T1_SELECTOR_INVALID"):
+                self.plan(repo, project_id="../../outside")
+            with self.assertRaisesRegex(P4ReadError, "T1_SELECTOR_INVALID"):
+                self.plan(repo, query="project 0597aa6z-9b98-4da6-a4ab-63d7705b632f")
+        self.assertEqual([], reads)
 
     def test_history_expansion_is_explicit_and_keeps_field_boundaries(self):
         normal = self.plan(self.make_repo(), project_id=PROJECT)
@@ -312,7 +466,8 @@ class DeterministicT1Gates(unittest.TestCase):
         self.assertEqual(0, result.returncode, result.stderr)
         payload = json.loads(result.stdout)
         self.assertEqual("T1", payload["tier"])
-        self.assertEqual(4, len(payload["sources_read"]))
+        self.assertEqual(5, len(payload["sources_read"]))
+        self.assertIn(f"memory/objects/projects/{PROJECT}.json", payload["sources_read"])
         self.assertEqual(2, len(payload["source_versions"]))
         self.assertEqual("disabled", payload["routing"]["semantic_recall"])
 

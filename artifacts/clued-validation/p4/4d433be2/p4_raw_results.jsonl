@@ -1,12 +1,12 @@
-{"contract":"clued.p4-validation-result.v1","record_type":"baseline","repository":"tdoljyj/cross-memory-system","branch":"codex/p4-canonical-first-deterministic-t1","fixed_main":"4d433be2093afaaa74a6d1291d9f92a65c705aa2","parent":"4d433be2093afaaa74a6d1291d9f92a65c705aa2","result":"PASS"}
+{"contract":"clued.p4-validation-result.v1","record_type":"baseline","repository":"tdoljyj/cross-memory-system","branch":"codex/p4-canonical-first-deterministic-t1","fixed_main":"4d433be2093afaaa74a6d1291d9f92a65c705aa2","first_candidate":"ba0824c6687d2f33a769fe0f559c6d060aa3bc6f","required_parent":"ba0824c6687d2f33a769fe0f559c6d060aa3bc6f","review_round":2,"result":"PASS"}
 {"contract":"clued.p4-validation-result.v1","record_type":"scope","authority":"docs/clued-two-level-views/Clued_校验不变量与去重矩阵_v1.1.md","implemented":["F10","F11","F12","F13","F14","F20","F21","U02","U03","U05"],"semantic_recall":"disabled","result":"PASS"}
-{"contract":"clued.p4-validation-result.v1","gate":"P4_specialized","tests":24,"passed":24,"failed":0,"result":"PASS"}
+{"contract":"clued.p4-validation-result.v1","gate":"P4_specialized","tests":33,"passed":33,"failed":0,"result":"PASS"}
 {"contract":"clued.p4-validation-result.v1","gate":"P1_regression","tests":15,"passed":15,"failed":0,"result":"PASS"}
 {"contract":"clued.p4-validation-result.v1","gate":"P2_regression","tests":29,"passed":29,"failed":0,"result":"PASS"}
 {"contract":"clued.p4-validation-result.v1","gate":"P3_regression","tests":22,"passed":22,"failed":0,"result":"PASS"}
-{"contract":"clued.p4-validation-result.v1","gate":"python_all","tests":95,"passed":95,"failed":0,"includes":{"P1":15,"P2":29,"P3":22,"P4":24,"root_contract":5},"result":"PASS"}
+{"contract":"clued.p4-validation-result.v1","gate":"python_all","tests":104,"passed":104,"failed":0,"includes":{"P1":15,"P2":29,"P3":22,"P4":33,"root_contract":5},"result":"PASS"}
 {"contract":"clued.p4-validation-result.v1","gate":"cloud_verified_build","modules":[243,183,235,189,182],"existing_warnings":["vite-config-loader-native-forward-warning","proxy-environment-detected"],"result":"PASS"}
-{"contract":"clued.p4-validation-result.v1","gate":"cloud_offline_regression","tests":63,"passed":63,"failed":0,"duration_ms":2773.7948,"result":"PASS"}
+{"contract":"clued.p4-validation-result.v1","gate":"cloud_offline_regression","tests":63,"passed":63,"failed":0,"duration_ms":2440.3687,"result":"PASS"}
 {"contract":"clued.p4-validation-result.v1","gate":"memory_doctor","manifest_files":710,"snapshot_version":"snap_f6134235591bfcbfe4ba3a674383c3e0","canonical_version":"cv_155","result":"PASS"}
 {"contract":"clued.p4-validation-result.v1","gate":"sync_memory_doctor","repository_snapshot":"PASS","local_read_only_mirror":"PASS","result":"PASS"}
 {"contract":"clued.p4-validation-result.v1","gate":"powershell_NONE","context_reads":0,"git_reads":0,"memory_reads":0,"result":"PASS"}
@@ -14,4 +14,5 @@
 {"contract":"clued.p4-validation-result.v1","gate":"recall_golden_replay","cases":111,"corpus_hash":"1bc2374405f9678bf455b6bfffb2ed6fe3b4c12054fb2fe521e8ac9db3482c0e","replay_hash":"f4266eabd2bed94da36c5fa7d99fba17a3493418b849da3dfcfcee7e2842159c","critical_memory_recall_v2":0.7763,"false_recall_rate_v2":0.3444,"stale_recall_rate":0.0,"current_scope_leakage_count":0,"no_memory_violations":0,"secret_leaks":0,"result":"PASS"}
 {"contract":"clued.p4-validation-result.v1","gate":"python_compileall","result":"PASS"}
 {"contract":"clued.p4-validation-result.v1","gate":"git_diff_check","result":"PASS"}
+{"contract":"clued.p4-validation-result.v1","record_type":"independent_review_fix","blocked_by":"DERIVED_INDEX_OVERRIDING_PROJECT_OBJECT","object_first":true,"valid_project_sources_read":5,"object_failures_read_index":false,"object_failures_read_project_views":false,"index_is_rebuildable_projection":true,"result":"PASS"}
 {"contract":"clued.p4-validation-result.v1","record_type":"not_executed","items":["P5","P6","production-access","deployment","database","RLS","Worker","MCP","OAuth","Tag","Release","Snapshot","Manifest","Current-Pointer","root-VERSION","main-merge"],"result":"PASS"}

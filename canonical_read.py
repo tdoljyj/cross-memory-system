@@ -27,6 +27,11 @@ PROJECT_ID_RE = re.compile(
     r"(?<![0-9a-f])([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?![0-9a-f])",
     re.IGNORECASE,
 )
+PROJECT_ID_CANDIDATE_RE = re.compile(
+    r"(?<![0-9A-Za-z])([0-9A-Za-z]{8}-[0-9A-Za-z]{4}-[0-9A-Za-z]{4}-[0-9A-Za-z]{4}-[0-9A-Za-z]{12})(?![0-9A-Za-z])"
+)
+PROJECT_PROGRESS_STATUSES = frozenset({"active", "paused", "completed", "archived"})
+RECORD_LIFECYCLE_STATUSES = frozenset({"active", "archived", "superseded"})
 
 
 class P4ReadError(RuntimeError):
@@ -205,18 +210,111 @@ def _load_json(path: Path, code: str) -> Mapping:
     return value
 
 
+def _is_positive_int(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
+def _validate_project_object(
+    path: Path, *, project_id: str, snapshot_version: str, canonical_version: str,
+) -> Mapping:
+    """Validate the exact Project Object before consulting derived routing data."""
+    value = _load_json(path, "PROJECT_OBJECT_INVALID")
+    if value.get("kind") != "project":
+        raise P4ReadError("PROJECT_OBJECT_KIND_INVALID", project_id)
+    if value.get("canonical_id") != project_id:
+        raise P4ReadError("PROJECT_OBJECT_IDENTITY_MISMATCH", "canonical_id")
+    if value.get("snapshot_version") != snapshot_version:
+        raise P4ReadError("PROJECT_OBJECT_VERSION_MISMATCH", "snapshot_version")
+    if value.get("canonical_version") != canonical_version:
+        raise P4ReadError("PROJECT_OBJECT_VERSION_MISMATCH", "canonical_version")
+    if not _is_positive_int(value.get("schema_version")):
+        raise P4ReadError("PROJECT_OBJECT_INVALID", "schema_version")
+
+    data = value.get("data")
+    if not isinstance(data, Mapping):
+        raise P4ReadError("PROJECT_OBJECT_INVALID", "data")
+    if data.get("canonical_project_id") != project_id:
+        raise P4ReadError("PROJECT_OBJECT_IDENTITY_MISMATCH", "data.canonical_project_id")
+    required_strings = ("name", "certainty_status", "progress_status", "lifecycle_status", "recorded_at", "updated_at")
+    if any(not isinstance(data.get(field), str) or not data[field] for field in required_strings):
+        raise P4ReadError("PROJECT_OBJECT_INVALID", "required data string")
+    if not _is_positive_int(data.get("project_schema_version")) or not _is_positive_int(data.get("version")):
+        raise P4ReadError("PROJECT_OBJECT_INVALID", "data version")
+    merge_generation = data.get("merge_generation")
+    if not isinstance(merge_generation, int) or isinstance(merge_generation, bool) or merge_generation < 0:
+        raise P4ReadError("PROJECT_OBJECT_INVALID", "merge_generation")
+    aliases = data.get("aliases")
+    if not isinstance(aliases, list) or any(not isinstance(alias, str) for alias in aliases):
+        raise P4ReadError("PROJECT_OBJECT_INVALID", "aliases")
+    for field in ("closed_at", "closed_reason", "closure_summary", "receipt_id"):
+        if field not in data or (data[field] is not None and not isinstance(data[field], str)):
+            raise P4ReadError("PROJECT_OBJECT_INVALID", field)
+    if "merged_into_project_id" not in data:
+        raise P4ReadError("PROJECT_OBJECT_INVALID", "merged_into_project_id")
+    if (
+        data["certainty_status"] != "confirmed"
+        or data["lifecycle_status"] != "active"
+        or data["progress_status"] not in PROJECT_PROGRESS_STATUSES
+        or data.get("merged_into_project_id") is not None
+    ):
+        raise P4ReadError("PROJECT_OBJECT_LIFECYCLE_INVALID", project_id)
+    return value
+
+
+def _validate_project_index_route(
+    index: Mapping, *, memory: Path, project_id: str, snapshot_version: str,
+) -> str | None:
+    """Return a rejection reason, or None when the derived route is valid."""
+    if not _is_positive_int(index.get("schema_version")):
+        return "index-schema-version"
+    if index.get("snapshot_version") != snapshot_version:
+        return "index-snapshot-version"
+    by_scope = index.get("by_scope")
+    by_id = index.get("by_id")
+    projects = by_scope.get("projects") if isinstance(by_scope, Mapping) else None
+    if not isinstance(projects, Mapping) or not isinstance(by_id, Mapping):
+        return "index-schema"
+    route = projects.get(project_id)
+    if route is None:
+        return "index-route-missing"
+    if not isinstance(route, list) or not route:
+        return "index-route-type"
+    if any(
+        not isinstance(record_id, str)
+        or PROJECT_ID_RE.fullmatch(record_id) is None
+        or record_id != record_id.casefold()
+        for record_id in route
+    ):
+        return "index-record-id"
+    if len(route) != len(set(route)):
+        return "index-route-duplicate"
+    expected_scope = f"project:{project_id}"
+    for record_id in route:
+        entry = by_id.get(record_id)
+        if not isinstance(entry, Mapping) or entry.get("kind") != "record":
+            return "index-record-missing"
+        if entry.get("effective_scope") != expected_scope:
+            return "index-record-scope"
+        if entry.get("lifecycle_status") not in RECORD_LIFECYCLE_STATUSES:
+            return "index-record-lifecycle"
+        expected_path = f"objects/records/{record_id}.json"
+        if entry.get("path") != expected_path:
+            return "index-record-path"
+        if not (memory / expected_path).is_file():
+            return "index-record-target-missing"
+    return None
+
+
 def deterministic_t1_plan(
     repo: Path, *, query: str, project_id: str | None, history: bool,
     snapshot_version: str, canonical_version: str,
 ) -> T1Plan:
     """Resolve exact T1 selectors; zero-match becomes minimal T3 Global STD."""
-    memory = repo / "memory"
-    index_path = memory / "index.json"
-    index = _load_json(index_path, "INDEX_INVALID")
-    by_scope = index.get("by_scope")
-    projects = by_scope.get("projects") if isinstance(by_scope, Mapping) else None
-    if not isinstance(projects, Mapping):
-        raise P4ReadError("INDEX_INVALID", "by_scope.projects missing")
+    if not isinstance(query, str):
+        raise P4ReadError("T1_SELECTOR_INVALID", "query must be a string")
+    query_candidates = PROJECT_ID_CANDIDATE_RE.findall(query)
+    if any(PROJECT_ID_RE.fullmatch(candidate) is None for candidate in query_candidates):
+        raise P4ReadError("T1_SELECTOR_INVALID", "query contains a malformed UUID selector")
     query_ids = {match.casefold() for match in PROJECT_ID_RE.findall(query)}
     if project_id is not None and (
         not isinstance(project_id, str) or PROJECT_ID_RE.fullmatch(project_id) is None
@@ -231,43 +329,48 @@ def deterministic_t1_plan(
     if len(query_ids) > 1:
         raise P4ReadError("T1_SELECTOR_AMBIGUOUS", "multiple canonical project IDs")
 
+    # No filesystem path derived from user input is constructed before all
+    # selector syntax, conflict, and ambiguity checks above have completed.
+    memory = repo / "memory"
+    index_path = memory / "index.json"
+
     if selected:
-        project_root = memory / "projects" / selected
         object_path = memory / "objects" / "projects" / f"{selected}.json"
-        route = projects.get(selected)
-        route_valid = (
-            project_root.is_dir()
-            and (
-                (isinstance(route, str) and bool(route))
-                or (
-                    isinstance(route, Sequence)
-                    and not isinstance(route, (str, bytes))
-                    and bool(route)
-                    and all(isinstance(item, str) and item for item in route)
-                )
-            )
+        _validate_project_object(
+            object_path, project_id=selected,
+            snapshot_version=snapshot_version, canonical_version=canonical_version,
         )
-        sources = [index_path]
-        reason = "unique-canonical-project-route"
-        if not route_valid:
-            project_object = _load_json(object_path, "INDEX_TARGET_MISSING")
-            sources.append(object_path)
-            if project_object.get("canonical_id") != selected or not project_root.is_dir():
-                raise P4ReadError("INDEX_TARGET_MISSING", selected)
-            reason = "index-rejected-exact-object-fallback"
+        try:
+            index = _load_json(index_path, "INDEX_INVALID")
+            route_rejection = _validate_project_index_route(
+                index, memory=memory, project_id=selected, snapshot_version=snapshot_version,
+            )
+        except P4ReadError:
+            route_rejection = "index-invalid"
+        reason = (
+            "unique-canonical-project-route"
+            if route_rejection is None
+            else "index-rejected-exact-object-fallback"
+        )
+        project_root = memory / "projects" / selected
         names = ["state.md", "task.md", "decision.md"]
         if history:
             names.extend(("archive.md", "log.md"))
         paths = tuple(project_root / name for name in names)
         if any(not path.is_file() for path in paths):
             raise P4ReadError("T1_TARGET_INCOMPLETE", selected)
-        sources.extend(paths)
+        sources = [object_path, index_path, *paths]
         return T1Plan(
             "T1", "T1", reason, selector, selected, paths, _relative(repo, sources),
             (snapshot_version, canonical_version),
             "history-explicitly-requested" if history else None,
         )
 
+    index = _load_json(index_path, "INDEX_INVALID")
+    by_scope = index.get("by_scope")
+    projects = by_scope.get("projects") if isinstance(by_scope, Mapping) else None
+    if not isinstance(projects, Mapping):
+        raise P4ReadError("INDEX_INVALID", "by_scope.projects missing")
     folded = query.casefold()
     if any(trigger in folded for trigger in PROFILE_TRIGGERS):
         profile = memory / "profile.md"
