@@ -1,5 +1,7 @@
 export interface P5FeatureEnv {
   P5_TENANT_WRITES?: string;
+  /** Worker-only secret: a JWT whose database role is clued_p5_gateway. */
+  CLUED_P5_GATEWAY_TOKEN?: string;
 }
 
 export function p5TenantWritesEnabled(env: P5FeatureEnv) {

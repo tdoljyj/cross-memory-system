@@ -1,3 +1,4 @@
+{"gate":"P5_GATEWAY_RPC_PRIVILEGE_AND_ADVISOR","result":"PASS","evidence_file":"supabase_advisors_evidence.jsonl"}
 {"gate":"F15_same_base_real_concurrency","result":"PASS","evidence_file":"concurrent_cas_evidence.jsonl"}
 {"gate":"F16_F17_idempotency_matrix","result":"PASS","evidence_file":"idempotency_retry_evidence.jsonl"}
 {"gate":"F18_after_mutation","result":"PASS","evidence_file":"transaction_rollback_evidence.jsonl"}
@@ -5,7 +6,9 @@
 {"gate":"F18_receipt_write","result":"PASS","evidence_file":"transaction_rollback_evidence.jsonl"}
 {"gate":"F18_after_receipt","result":"PASS","evidence_file":"transaction_rollback_evidence.jsonl"}
 {"gate":"F18_audit_write","result":"PASS","evidence_file":"transaction_rollback_evidence.jsonl"}
-{"gate":"F18_transaction_commit_failure","result":"PASS","evidence_file":"transaction_rollback_evidence.jsonl"}
+{"gate":"F18_WORKER_REAL_TRANSACTION_COMMIT_FAILURE","result":"PASS","evidence_file":"transaction_rollback_evidence.jsonl"}
+{"gate":"P5_FEATURE_GATE_AND_WORKER_GATEWAY","result":"PASS","evidence_file":"tenant_workspace_rls_evidence.jsonl"}
+{"gate":"P5_ATTEMPT_FORGERY_AND_SINGLE_CONSUMPTION","result":"PASS","evidence_file":"transaction_rollback_evidence.jsonl"}
 {"gate":"F24_service_and_real_rls","result":"PASS","evidence_file":"tenant_workspace_rls_evidence.jsonl"}
 {"gate":"F22_fresh_authorization_matrix","result":"PASS","evidence_file":"binding_revocation_role_scope_evidence.jsonl"}
 {"gate":"P5_actor_identity_matrix","result":"PASS","evidence_file":"binding_revocation_role_scope_evidence.jsonl"}
@@ -14,5 +17,5 @@
 {"gate":"F29_canonical_only_and_projection_fail_closed","result":"PASS","evidence_file":"git_canonical_conflict_evidence.jsonl"}
 {"gate":"F23_workspace_switch_context_invalidation","result":"PASS","evidence_file":"binding_revocation_role_scope_evidence.jsonl"}
 {"gate":"P5_REAL_POSTGRES_SUMMARY","result":"PASS","evidence_file":"p5_raw_results.jsonl"}
-{"gate":"summary","result":"PASS","postgres_version":"PostgreSQL 18.4 on x86_64-windows, compiled by msvc-19.44.35226, 64-bit","migration_count":11,"assertions":102,"real_connections":true,"rls_executed":true,"production_access":false,"scenarios":15,"sources_read":["docs/clued-two-level-views/Clued_校验不变量与去重矩阵_v1.1.md","docs/clued-two-level-views/Clued_单一数据源与两级五视图架构方案_v1.6.md","apps/clued-cloud/AGENTS.md","apps/clued-cloud/worker/records.ts","apps/clued-cloud/worker/projects.ts","apps/clued-cloud/supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql","cloud/postgres/README.md","cloud/postgres/migrations/0001_cloud_data_foundation.up.sql"]}
-{"gate":"cross_stage_regression","result":"PASS","p1":"15/15","p2":"29/29","p3":"22/22","p4":"33/33","p5_real_postgres_assertions":"102/102","python_total":"104/104","cloud_verified_and_offline":"66/66","doctor_engine":"PASS","doctor_sync":"PASS","none_zero_read":"PASS","golden_contract":"19/19","golden_replay_cases":111,"compileall":"PASS","git_diff_check":"PASS"}
+{"gate":"summary","result":"PASS","postgres_version":"PostgreSQL 18.4 on x86_64-windows, compiled by msvc-19.44.35226, 64-bit","migration_count":12,"assertions":144,"real_connections":true,"rls_executed":true,"production_access":false,"scenarios":18,"sources_read":["docs/clued-two-level-views/Clued_校验不变量与去重矩阵_v1.1.md","docs/clued-two-level-views/Clued_单一数据源与两级五视图架构方案_v1.6.md","apps/clued-cloud/AGENTS.md","apps/clued-cloud/worker/continuity.ts","apps/clued-cloud/worker/records.ts","apps/clued-cloud/worker/projects.ts","apps/clued-cloud/supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql","apps/clued-cloud/supabase/migrations/20260827031728_clued_p5_tenant_isolation_concurrent_writes.sql","apps/clued-cloud/supabase/migrations/20260827050750_p5_gateway_attempt_commit_failure.sql","cloud/postgres/README.md","cloud/postgres/migrations/0001_cloud_data_foundation.up.sql"]}
+{"gate":"P5_SECOND_REVIEW_FIX_FULL_REGRESSION","result":"PASS","p1":"15/15","p2":"29/29","p3":"22/22","p4":"33/33","p5_real_postgres_assertions":"144/144","python":"104/104","cloud":"66/66","golden_contract":"19/19","golden_cases":111,"memory_doctor":"PASS","sync_doctor":"PASS","none":"PASS","compileall":"PASS","git_diff_check":"PASS","credential_scan":"PASS","supabase_security_advisors":"PASS"}

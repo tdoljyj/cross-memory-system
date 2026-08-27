@@ -40,11 +40,15 @@ export interface ContinuityEnv extends RecordFeatureEnv, P5FeatureEnv {
 
 type JsonRpcId = string | number | null;
 
-interface JsonRpcRequest {
+interface JsonRpcRequest extends Record<string, unknown> {
   jsonrpc: "2.0";
   id?: JsonRpcId;
   method: string;
   params?: Record<string, unknown>;
+}
+
+function isJsonRpcRequest(value: Record<string, unknown>): value is JsonRpcRequest {
+  return value.jsonrpc === "2.0" && typeof value.method === "string";
 }
 
 interface AuthenticatedUser {
@@ -223,9 +227,22 @@ async function parseBody(request: Request) {
   if (Number.isFinite(declaredLength) && declaredLength > MAX_JSON_BYTES) {
     throw new HttpError(413, "Request body is too large.");
   }
+  const bytes = new Uint8Array(await request.arrayBuffer());
+  if (bytes.byteLength > MAX_JSON_BYTES) throw new HttpError(413, "Request body is too large.");
+  let text: string;
   try {
-    return (await request.json()) as Record<string, unknown>;
+    text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   } catch {
+    throw new HttpError(400, "Request body must be valid UTF-8.");
+  }
+  try {
+    const value = JSON.parse(text) as unknown;
+    if (!value || Array.isArray(value) || typeof value !== "object") {
+      throw new HttpError(400, "Request body must be a JSON object.");
+    }
+    return value as Record<string, unknown>;
+  } catch (error) {
+    if (error instanceof HttpError) throw error;
     throw new HttpError(400, "Request body must be valid JSON.");
   }
 }
@@ -293,17 +310,28 @@ async function supabaseRequest(
   headers.set("authorization", `Bearer ${init.userToken ?? key}`);
   const response = await fetch(`${url}${path}`, { ...init, headers });
   const text = await response.text();
-  const payload = text ? JSON.parse(text) : null;
+  let payload: unknown = null;
+  if (text) {
+    try {
+      const parsed = JSON.parse(text) as unknown;
+      payload = parsed;
+    } catch {
+      payload = { message: response.statusText || "Clued storage returned a non-JSON response." };
+    }
+  }
   if (!response.ok) {
+    const details = payload && typeof payload === "object" && !Array.isArray(payload)
+      ? payload as Record<string, unknown>
+      : null;
     const message =
-      typeof payload?.message === "string"
-        ? payload.message
-        : typeof payload?.error_description === "string"
-          ? payload.error_description
+      typeof details?.message === "string"
+        ? details.message
+        : typeof details?.error_description === "string"
+          ? details.error_description
           : "Clued storage request failed.";
     const status =
       response.status >= 500 &&
-      payload?.code === "P0002" &&
+      details?.code === "P0002" &&
       (message === "project_not_found" || message === "record_not_found")
         ? 404
         : response.status;
@@ -314,6 +342,76 @@ async function supabaseRequest(
     );
   }
   return payload;
+}
+
+function p5GatewayToken(env: ContinuityEnv) {
+  const token = env.CLUED_P5_GATEWAY_TOKEN?.trim();
+  if (!token) throw new HttpError(503, "Clued P5 gateway is not configured.");
+  return token;
+}
+
+async function p5GatewayRpc(
+  env: ContinuityEnv,
+  rpc: string,
+  parameters: Record<string, unknown>,
+) {
+  const result = await supabaseRequest(env, `/rest/v1/rpc/${rpc}`, {
+    method: "POST",
+    userToken: p5GatewayToken(env),
+    body: JSON.stringify(parameters),
+  });
+  if (!result || typeof result !== "object" || Array.isArray(result)) {
+    throw new HttpError(502, "Clued P5 gateway returned an invalid response.");
+  }
+  return result as Record<string, unknown>;
+}
+
+function p5FailureKind(error: unknown) {
+  if (error instanceof HttpError) {
+    const details = error.details;
+    if (details && typeof details === "object" && !Array.isArray(details)
+      && (details as Record<string, unknown>).code === "P5_TRANSACTION_COMMIT_FAILED") {
+      return "database_commit_failure";
+    }
+  }
+  return "transport_failure";
+}
+
+async function callP5Mutation(
+  env: ContinuityEnv,
+  tokenHash: string,
+  input: Record<string, unknown>,
+) {
+  const parameters = { p_token_hash: tokenHash, p_input: input };
+  const attempt = await p5GatewayRpc(env, "clued_p5_attempt_begin", parameters);
+  if (attempt.status === "replayed") return attempt.canonical_result;
+  if (attempt.status !== "open" || typeof attempt.attempt_id !== "string") return attempt;
+  const attemptId = attempt.attempt_id;
+  try {
+    return await p5GatewayRpc(env, "clued_p5_mutate", {
+      ...parameters,
+      p_attempt_id: attemptId,
+    });
+  } catch (error) {
+    // A transport error can mean either commit succeeded and its response was
+    // lost, or the transaction failed at commit. Resolve the server-created
+    // Attempt before recording a failure so a successful commit is never
+    // overwritten by compensation.
+    const resolution = await p5GatewayRpc(env, "clued_p5_attempt_resolve", {
+      ...parameters,
+      p_attempt_id: attemptId,
+    });
+    if ((resolution.status === "completed" || resolution.status === "failed")
+      && resolution.canonical_result) {
+      return resolution.canonical_result;
+    }
+    if (resolution.status !== "open") return resolution;
+    return await p5GatewayRpc(env, "clued_p5_record_commit_failure", {
+      ...parameters,
+      p_attempt_id: attemptId,
+      p_failure_kind: p5FailureKind(error),
+    });
+  }
 }
 
 async function requireSupabaseUser(request: Request, env: ContinuityEnv) {
@@ -600,8 +698,21 @@ async function callRpc(
   }
   const payload = typeof args === "object" && args ? args : {};
 
-  if (name in p5RpcByTool && !token.startsWith("clued_bnd_")) {
-    throw new HttpError(403, "P5 tenant operations require an independent revocable Agent Binding.");
+  if (name in p5RpcByTool) {
+    if (!p5TenantWritesEnabled(env)) {
+      throw new HttpError(404, "Clued P5 tenant writes are disabled.");
+    }
+    if (!token.startsWith("clued_bnd_")) {
+      throw new HttpError(403, "P5 tenant operations require an independent revocable Agent Binding.");
+    }
+    const tokenHash = await sha256(token);
+    if (name === "clued_p5_mutate") {
+      return await callP5Mutation(env, tokenHash, payload as Record<string, unknown>);
+    }
+    return await p5GatewayRpc(env, rpcByTool[name], {
+      p_token_hash: tokenHash,
+      p_input: payload,
+    });
   }
 
   if (!token.startsWith("clued_bnd_")) {
@@ -673,12 +784,14 @@ async function handleMcp(request: Request, env: ContinuityEnv) {
 
   let rpc: JsonRpcRequest;
   try {
-    rpc = (await request.json()) as JsonRpcRequest;
-  } catch {
-    return json(rpcError(null, -32700, "Parse error"), 400, corsHeaders(request));
-  }
-  if (rpc.jsonrpc !== "2.0" || typeof rpc.method !== "string") {
-    return json(rpcError(rpc.id, -32600, "Invalid Request"), 400, corsHeaders(request));
+    const parsed = await parseBody(request);
+    if (!isJsonRpcRequest(parsed)) {
+      return json(rpcError(null, -32600, "Invalid Request"), 400, corsHeaders(request));
+    }
+    rpc = parsed;
+  } catch (error) {
+    const problem = error instanceof HttpError ? error : new HttpError(400, "Parse error");
+    return json(rpcError(null, -32700, problem.message), problem.status, corsHeaders(request));
   }
 
   try {

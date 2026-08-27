@@ -654,44 +654,6 @@ exception when others then
   return jsonb_build_object('status','rejected','error',jsonb_build_object('type',sqlerrm));
 end $$;
 
-create or replace function public.clued_p5_record_commit_failure(
-  p_token_hash text,p_input jsonb,p_error text
-) returns jsonb language plpgsql security definer set search_path='' as $$
-declare v record; v_receipt uuid:=gen_random_uuid(); v_hash text:=clued_private.p5_sha256(p_input-'session_token');
-  v_idem public.clued_p5_idempotency%rowtype; v_inserted integer; v_result jsonb;
-begin
-  select * into v from clued_private.p5_resolve_request(p_token_hash,p_input,'canonical:write');
-  insert into public.clued_p5_idempotency(
-    organization_id,workspace_id,user_id,binding_id,operation_family,idempotency_key,request_hash
-  ) values (v.organization_id,v.workspace_id,v.user_id,v.binding_id,'canonical_mutation',
-    p_input->>'idempotency_key',v_hash)
-  on conflict (organization_id,workspace_id,binding_id,operation_family,idempotency_key) do nothing;
-  get diagnostics v_inserted=row_count;
-  select * into v_idem from public.clued_p5_idempotency i
-   where i.organization_id=v.organization_id and i.workspace_id=v.workspace_id and i.binding_id=v.binding_id
-     and i.operation_family='canonical_mutation' and i.idempotency_key=p_input->>'idempotency_key' for update;
-  if v_inserted=0 then
-    if v_idem.request_hash<>v_hash then
-      return jsonb_build_object('status','rejected','error',jsonb_build_object('type','IDEMPOTENCY_PAYLOAD_CONFLICT'));
-    end if;
-    return v_idem.canonical_result;
-  end if;
-  v_result:=jsonb_build_object('status','failed','error',jsonb_build_object('type','TRANSACTION_COMMIT_FAILED'),
-    'receipt_id',v_receipt,'transaction_rolled_back',true);
-  insert into public.clued_p5_receipts(
-    id,organization_id,workspace_id,user_actor_id,binding_actor_id,actor_kind,idempotency_id,status,target_kind,target_id,
-    base_version,request_hash,error_type,evidence,canonical_result
-  ) values (v_receipt,v.organization_id,v.workspace_id,v.user_id,v.binding_id,v.actor_kind,v_idem.id,'failed',p_input->>'target_kind',
-    (p_input->>'target_id')::uuid,(p_input->>'base_version')::bigint,v_hash,'TRANSACTION_COMMIT_FAILED',
-    jsonb_build_object('database_error',p_error,'transaction_rolled_back',true),v_result);
-  update public.clued_p5_idempotency set state='failed',canonical_result=v_result,receipt_id=v_receipt,completed_at=now()
-    where id=v_idem.id;
-  perform clued_private.p5_audit(v,p_input->>'target_kind',(p_input->>'target_id')::uuid,
-    (p_input->>'base_version')::bigint,null,'failed',jsonb_build_object('scope','canonical:write','transaction_rolled_back',true),
-    'TRANSACTION_COMMIT_FAILED',v_receipt);
-  return v_result;
-end $$;
-
 create or replace function public.clued_p5_git_divergence(p_token_hash text,p_input jsonb)
 returns jsonb language plpgsql immutable set search_path='' as $$
 begin
@@ -791,11 +753,6 @@ grant execute on function clued_private.p5_rls_authorized(uuid,uuid,uuid,text,te
 
 revoke all on function public.clued_p5_session_open(text,jsonb),public.clued_p5_workspace_switch(text,jsonb),
   public.clued_p5_mutate(text,jsonb),public.clued_p5_pending_intent(text,jsonb),
-  public.clued_p5_record_commit_failure(text,jsonb,text),
-  public.clued_p5_git_divergence(text,jsonb) from public,authenticated;
-grant execute on function public.clued_p5_session_open(text,jsonb),public.clued_p5_workspace_switch(text,jsonb),
-  public.clued_p5_mutate(text,jsonb),public.clued_p5_pending_intent(text,jsonb),
-  public.clued_p5_record_commit_failure(text,jsonb,text),
-  public.clued_p5_git_divergence(text,jsonb) to anon;
+  public.clued_p5_git_divergence(text,jsonb) from public,anon,authenticated,service_role;
 
 notify pgrst,'reload schema';

@@ -22,13 +22,23 @@ test('P5 Worker surface is feature-gated and Binding-only', () => {
     assert.match(continuity, new RegExp('p5RpcByTool'));
   }
   assert.match(p5, /P5_TENANT_WRITES/);
+  assert.match(p5, /CLUED_P5_GATEWAY_TOKEN/);
   assert.match(continuity, /p5TenantWritesEnabled/);
+  assert.match(continuity, /p5GatewayToken/);
+  assert.match(continuity, /clued_p5_attempt_begin/);
+  assert.match(continuity, /clued_p5_attempt_resolve/);
+  assert.match(continuity, /clued_p5_record_commit_failure/);
+  assert.match(continuity, /database_commit_failure/);
+  assert.match(continuity, /transport_failure/);
   assert.match(continuity, /require an independent revocable Agent Binding/);
   assert.match(continuity, /!token\.startsWith\("clued_bnd_"\)/);
+  assert.match(continuity, /bytes\.byteLength > MAX_JSON_BYTES/);
+  assert.doesNotMatch(continuity, /as unknown as/);
 });
 
-test('P5 migration enforces CAS, immutable evidence, RLS, and canonical-only writes', () => {
+test('P5 migrations enforce gateway-only RPC, Attempt-bound failure, RLS, and canonical-only writes', () => {
   const migration = read('supabase/migrations/20260827031728_clued_p5_tenant_isolation_concurrent_writes.sql');
+  const fix = read('supabase/migrations/20260827050750_p5_gateway_attempt_commit_failure.sql');
   assert.match(migration, /version=v_base/);
   assert.match(migration, /CANONICAL_CAS_CONFLICT/);
   assert.match(migration, /IDEMPOTENCY_PAYLOAD_CONFLICT/);
@@ -40,5 +50,16 @@ test('P5 migration enforces CAS, immutable evidence, RLS, and canonical-only wri
   assert.match(migration, /p5_audit\(record,text,uuid,bigint,bigint,text,jsonb,text,uuid\).*from public,anon,authenticated/s);
   assert.match(migration, /revoke insert,update,delete on table public\.clued_memories,public\.clued_projects from authenticated/);
   assert.match(migration, /status text not null default 'pending' check \(status = 'pending'\)/);
-  assert.doesNotMatch(migration, /service_role/i);
+  assert.doesNotMatch(migration, /grant execute[\s\S]*to anon/);
+  assert.match(fix, /create role clued_p5_gateway nologin noinherit[\s\S]*nobypassrls/);
+  assert.match(fix, /grant clued_p5_gateway to authenticator/);
+  assert.match(fix, /clued_p5_gateway_attempts/);
+  assert.match(fix, /P5_ATTEMPT_NOT_FOUND/);
+  assert.match(fix, /P5_ATTEMPT_ALREADY_CONSUMED/);
+  assert.match(fix, /P5_ATTEMPT_REQUEST_MISMATCH/);
+  assert.match(fix, /P5_UNTRUSTED_FAILURE_CLASS/);
+  assert.match(fix, /from public,anon,authenticated,service_role/);
+  assert.match(fix, /to clued_p5_gateway/);
+  assert.doesNotMatch(fix, /grant execute[\s\S]*to (anon|authenticated|service_role)/);
+  assert.doesNotMatch(fix, /p_error text/);
 });
