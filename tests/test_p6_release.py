@@ -100,6 +100,7 @@ class P6ReleaseGate(unittest.TestCase):
             "OLD_REJECT_NEW_ACCEPT", "AUTHORITY_OR_SCOPE_DIFFERENCE",
             "CANONICAL_ID_DIFFERENCE", "CANONICAL_VERSION_DIFFERENCE",
             "SOURCES_READ_REDUCED", "REJECTION_AUDIT_REDUCED",
+            "BUSINESS_RESULT_DIFFERENCE", "UNCLASSIFIED_SEMANTIC_DIFFERENCE",
         ):
             self.assertIn(token, shadow)
         for token in (
@@ -110,6 +111,15 @@ class P6ReleaseGate(unittest.TestCase):
             self.assertIn(token, worker if token != "production_enabled" else (APP / "worker" / "continuity.ts").read_text(encoding="utf-8"))
         self.assertNotIn("Math.random", worker)
         self.assertNotIn("as unknown as", worker)
+
+    def test_publication_lock_uses_trusted_time_and_owner_token(self):
+        snapshot = (APP / "scripts" / "two-level-snapshot.mjs").read_text(encoding="utf-8")
+        store = (APP / "scripts" / "m2-snapshot-store.mjs").read_text(encoding="utf-8")
+        for token in ("randomUUID", "owner_token", "Date.now()", "requested_at", "releaseSnapshotPublicationLock"):
+            self.assertIn(token, snapshot)
+        self.assertNotIn("Date.parse(occurredAt) - lockStat.mtimeMs", snapshot)
+        self.assertNotIn("Date.parse(now) - lockStat.mtimeMs", store)
+        self.assertIn("withSnapshotPublicationLock", store)
 
     def test_f26_contract_keeps_current_views_above_log(self):
         records = (APP / "worker" / "records.ts").read_text(encoding="utf-8")
@@ -158,7 +168,7 @@ class P6ReleaseGate(unittest.TestCase):
         self.assertNotIn("apps/clued-cloud/package-lock.json", changed_paths())
 
     def test_p6_evidence_hashes_match_when_evidence_is_present(self):
-        directory = ROOT / "artifacts" / "clued-validation" / "p6" / "59ce5224"
+        directory = ROOT / "artifacts" / "clued-validation" / "p6" / "59ce5224-r2"
         if not directory.exists():
             self.skipTest("evidence is generated after implementation tests")
         rows = (directory / "SHA256SUMS").read_text(encoding="utf-8").splitlines()

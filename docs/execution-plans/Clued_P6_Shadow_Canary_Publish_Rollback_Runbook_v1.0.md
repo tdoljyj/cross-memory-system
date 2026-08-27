@@ -4,7 +4,7 @@
 
 - Authorization: `AUTHORIZATION / P6_LOCAL_IMPLEMENTATION_ONLY`
 - Fixed baseline: `59ce5224b18bad502184a26e8c00f9e51521e41e`
-- Candidate branch: `codex/p6-shadow-canary-publish-rollback`
+- Candidate branch: `codex/p6-shadow-canary-publish-rollback-r2`
 - Highest status this runbook can support: `PASS / P6_IMPLEMENTATION_CANDIDATE_READY_FOR_INDEPENDENT_REVIEW`
 - This runbook does not authorize or claim G6-3B, production Shadow, real Canary, merge, deployment, production database or Pointer operations, Tag, Release, 100% promotion, or legacy-path retirement.
 
@@ -26,9 +26,9 @@ It also permits the new P6 implementation, test, runbook, and evidence files nam
 
 ## Implemented local contracts
 
-Snapshot publication and rollback use one coordination lock, mandatory Expected-Current input, and CAS under the lock. Immutable snapshot staging is validated before promotion. Pointer updates use temp-write, file sync, rename, and directory sync. The formal entry point reads Pointer, immutable snapshot, and Manifest back after switching. A readback or post-switch audit failure restores the old Pointer and reconciles the persistent store before releasing the lock. The base CLI cannot activate or roll back without Expected-Current (`NONE` is explicit only for an initial empty Pointer).
+Snapshot publication and rollback use one coordination lock, mandatory Expected-Current input, and CAS under the lock. Lock staleness is measured from the trusted local wall clock and filesystem mtime, never from the caller's business timestamp. Every acquisition has an opaque owner token; release removes only the unchanged lock bearing that token, so an earlier holder cannot release a successor's lock. M2 reuses this single implementation instead of maintaining a second lock algorithm. Immutable snapshot staging is validated before promotion. Pointer updates use temp-write, file sync, rename, and directory sync. The formal entry point reads Pointer, immutable snapshot, and Manifest back after switching. A readback or post-switch audit failure restores the old Pointer and reconciles the persistent store before releasing the lock. The base CLI cannot activate or roll back without Expected-Current (`NONE` is explicit only for an initial empty Pointer).
 
-The Shadow comparator uses deterministic normalization and classifications. Volatile Receipt/Event/Evidence identifiers and timestamps are normalized; canonical identity, version, Snapshot, authority, scope, business result, conflict, source, and audit semantics remain comparison inputs. Old-reject/new-accept is always a hard difference. G6-3A uses fixed synthetic fixtures and two same-seed temporary databases only.
+The Shadow comparator uses deterministic normalization and classifications. Volatile Receipt/Event/Evidence identifiers and timestamps are normalized; operational IDs embedded in a business result are normalized without dropping business timestamps such as `updated_at`. Canonical identity, version, Snapshot, authority, scope, business result, conflict, source, and audit semantics remain comparison inputs. Unknown semantic envelope fields are retained in a dedicated shape and any mismatch increments `unclassified_difference_count`, causing fail-closed. Old-reject/new-accept is always a hard difference. G6-3A uses fixed synthetic fixtures and two same-seed temporary databases only.
 
 The Canary implementation contains the frozen 0%, 1%, 5%, 25%, 50%, and 100% state machine, minimum observation/sample gates, stop conditions, and two-consecutive-severe-window automatic rollback decision. It is implementation code only: `production_enabled` remains false and no traffic configuration is present.
 
@@ -79,7 +79,7 @@ The P6 gate also requires executable references for F01-F32 and re-hashes all fr
 
 ## Evidence and independent detached verification
 
-The immutable evidence directory is `artifacts/clued-validation/p6/59ce5224/`. `SHA256SUMS` covers every evidence and instruction file and is verified by `npm run p6:evidence:verify`. Evidence creation is exclusive/create-once; regeneration requires a new empty isolated output directory, never overwriting the frozen set.
+The replacement candidate's immutable evidence directory is `artifacts/clued-validation/p6/59ce5224-r2/`. The rejected predecessor's `artifacts/clued-validation/p6/59ce5224/` directory remains frozen and unchanged. `SHA256SUMS` covers every replacement evidence and instruction file and is verified by `npm run p6:evidence:verify`. Evidence creation is exclusive/create-once; regeneration requires a new empty isolated output directory, never overwriting either frozen set.
 
 For independent verification, create a new detached worktree at the candidate commit, install dependencies from the unchanged lockfile, and rerun the commands above. Confirm that the baseline is an ancestor, the range contains no merge commit, the exact allowlist passes, and the frozen evidence hashes reproduce. Do not use `origin/main` as a moving substitute for the fixed baseline.
 

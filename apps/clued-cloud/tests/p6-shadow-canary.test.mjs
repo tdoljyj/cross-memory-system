@@ -10,6 +10,7 @@ import EmbeddedPostgres from "embedded-postgres";
 
 import {
   buildSnapshot,
+  withSnapshotPublicationLock,
 } from "../scripts/two-level-snapshot.mjs";
 import {
   compareShadowPair,
@@ -319,6 +320,99 @@ test("Shadow hard differences are classified and old-reject/new-accept can never
   recordEvidence("isolated_shadow_evidence.jsonl", { scenario: "hard_difference_classification", result: "PASS", codes: [...codes].sort(), unclassified_differences: 0 });
 });
 
+test("Shadow preserves business-result timestamps and fails closed on unknown semantics", () => {
+  const businessDifference = compareShadowPair({
+    fixture_id: "business-result-timestamp",
+    baseline: envelope({ business_result: { content: "v2", updated_at: "2026-08-27T00:00:00.000Z" } }),
+    candidate: envelope({ business_result: { content: "v2", updated_at: "2026-08-27T00:00:01.000Z" } }),
+  });
+  assert.equal(businessDifference.result, "FAIL");
+  assert.equal(businessDifference.hard_difference_count, 1);
+  assert.equal(businessDifference.unclassified_difference_count, 0);
+  assert.equal(businessDifference.differences[0].code, "BUSINESS_RESULT_DIFFERENCE");
+
+  const unknownDifference = compareShadowPair({
+    fixture_id: "unknown-semantic-field",
+    baseline: envelope({ extension_contract: { mode: "baseline" } }),
+    candidate: envelope({ extension_contract: { mode: "candidate" } }),
+  });
+  assert.equal(unknownDifference.result, "FAIL");
+  assert.equal(unknownDifference.hard_difference_count, 0);
+  assert.equal(unknownDifference.unclassified_difference_count, 1);
+  assert.equal(unknownDifference.differences[0].code, "UNCLASSIFIED_SEMANTIC_DIFFERENCE");
+  recordEvidence("isolated_shadow_evidence.jsonl", {
+    scenario: "business_result_and_unknown_semantics_fail_closed",
+    business_result_code: businessDifference.differences[0].code,
+    unclassified_code: unknownDifference.differences[0].code,
+    result: "PASS",
+  });
+});
+
+test("Snapshot publication lock uses trusted stale time and token-scoped release", async () => {
+  const exportRoot = await mkdtemp(path.join(os.tmpdir(), "clued-p6-lock-race-"));
+  let releaseFirst;
+  let firstEntered;
+  const firstEnteredPromise = new Promise((resolve) => { firstEntered = resolve; });
+  const firstReleasePromise = new Promise((resolve) => { releaseFirst = resolve; });
+  const first = withSnapshotPublicationLock({
+    exportRoot,
+    occurredAt: BUILD_EPOCH,
+    operation: "first_holder",
+    policy: { stale_lock_seconds: 900, retry_schedule_ms: [] },
+  }, async () => {
+    firstEntered();
+    await firstReleasePromise;
+  });
+  await firstEnteredPromise;
+
+  await assert.rejects(withSnapshotPublicationLock({
+    exportRoot,
+    occurredAt: "2099-01-01T00:00:00.000Z",
+    operation: "future_business_clock_contender",
+    policy: { stale_lock_seconds: 900, retry_schedule_ms: [] },
+  }, async () => {}), /publication_lock_busy/);
+
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  let releaseSecond;
+  let secondEntered;
+  const secondEnteredPromise = new Promise((resolve) => { secondEntered = resolve; });
+  const secondReleasePromise = new Promise((resolve) => { releaseSecond = resolve; });
+  const second = withSnapshotPublicationLock({
+    exportRoot,
+    occurredAt: "2099-01-01T00:00:00.000Z",
+    operation: "stale_takeover",
+    policy: { stale_lock_seconds: 0, retry_schedule_ms: [0] },
+  }, async () => {
+    secondEntered();
+    await secondReleasePromise;
+  });
+  await secondEnteredPromise;
+
+  releaseFirst();
+  await first;
+  await assert.rejects(withSnapshotPublicationLock({
+    exportRoot,
+    occurredAt: "2099-01-01T00:00:00.000Z",
+    operation: "third_contender",
+    policy: { stale_lock_seconds: 900, retry_schedule_ms: [] },
+  }, async () => {}), /publication_lock_busy/);
+
+  releaseSecond();
+  await second;
+  await withSnapshotPublicationLock({
+    exportRoot,
+    occurredAt: BUILD_EPOCH,
+    operation: "post_release_probe",
+    policy: { stale_lock_seconds: 900, retry_schedule_ms: [] },
+  }, async () => {});
+  recordEvidence("f19_publish_rollback_evidence.jsonl", {
+    scenario: "trusted_stale_time_and_token_scoped_release",
+    future_business_clock_eviction_blocked: true,
+    previous_owner_cannot_release_successor_lock: true,
+    result: "PASS",
+  });
+});
+
 test("G6-3A fixed synthetic fixtures produce zero hard and zero unclassified differences", async () => {
   const fixtures = [
     { fixture_id: "current-read", response: envelope() },
@@ -564,7 +658,7 @@ test("G6-3A/G6-4 rebuild two same-seed PostgreSQL databases, replay writes, dry-
       baseline: envelope({ business_result: leftResult, canonical: { id: DB_IDS.recordA, version: 2, snapshot_version: "isolated-db" } }),
       candidate: envelope({ business_result: rightResult, canonical: { id: DB_IDS.recordA, version: 2, snapshot_version: "isolated-db" } }),
     });
-    assert.equal(replayComparison.result, "PASS");
+    assert.equal(replayComparison.result, "PASS", JSON.stringify({ leftResult, rightResult, replayComparison }));
 
     const [leftFingerprint, rightFingerprint] = await Promise.all([
       databaseFingerprint(left.server),
@@ -703,13 +797,13 @@ test("P6 deterministic frozen evidence set can be emitted only to an explicit is
   for (const name of required) {
     files[name] = `${frozenEvidence.get(name).map((row) => JSON.stringify(row)).join("\n")}\n`;
   }
-  files["independent-verification.md"] = [
-    "# P6 isolated candidate independent verification",
+  files["candidate-verification-scope.md"] = [
+    "# P6 isolated candidate verification scope",
     "",
     "This evidence set covers local/isolated implementation only.",
     "It does not claim G6-3B, production Shadow, real Canary, merge, deployment, rollback against production, Tag, or Release.",
     "",
-    "Recompute SHA-256 with `npm run p6:evidence:verify` and run the repository commands in the P6 Runbook from a fresh detached worktree.",
+    "Recompute SHA-256 with `npm run p6:evidence:verify` and run the repository commands in the P6 Runbook from a fresh detached clone.",
     "",
   ].join("\n");
   await writeImmutableEvidenceSet({ outputDirectory: EVIDENCE_DIR, files });

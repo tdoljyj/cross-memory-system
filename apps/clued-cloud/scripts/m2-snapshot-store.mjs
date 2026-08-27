@@ -7,7 +7,6 @@ import {
   readdir,
   rename,
   rm,
-  stat,
   writeFile,
 } from "node:fs/promises";
 import path from "node:path";
@@ -19,6 +18,7 @@ import {
   rollbackSnapshot,
   sha256,
   validateSnapshot,
+  withSnapshotPublicationLock,
 } from "./two-level-snapshot.mjs";
 
 export const M2_STORE_SCHEMA_VERSION = 1;
@@ -86,49 +86,13 @@ async function readJson(filePath) {
   return JSON.parse(await readFile(filePath, "utf8"));
 }
 
-async function sleep(milliseconds) {
-  if (milliseconds <= 0) return;
-  await new Promise((resolve) => setTimeout(resolve, milliseconds));
-}
-
-async function acquirePublicationLock(paths, { now, policy, operation }) {
-  await mkdir(paths.runtime, { recursive: true });
-  const schedule = [0, ...policy.retry_schedule_ms];
-  for (let attempt = 0; attempt < schedule.length; attempt += 1) {
-    await sleep(schedule[attempt]);
-    try {
-      const handle = await open(paths.lock, "wx");
-      const payload = {
-        lock_schema_version: 1,
-        operation,
-        owner_ref: `pid:${process.pid}`,
-        acquired_at: now,
-      };
-      await handle.writeFile(prettyJson(payload), "utf8");
-      await handle.sync();
-      await handle.close();
-      return payload;
-    } catch (error) {
-      if (error.code !== "EEXIST") throw error;
-      const lockStat = await stat(paths.lock);
-      const ageSeconds = (Date.parse(now) - lockStat.mtimeMs) / 1_000;
-      if (ageSeconds > policy.stale_lock_seconds) {
-        await rm(paths.lock, { force: true });
-        continue;
-      }
-      if (attempt === schedule.length - 1) throw new Error("publication_lock_busy");
-    }
-  }
-  throw new Error("publication_lock_busy");
-}
-
 async function withPublicationLock(paths, options, callback) {
-  await acquirePublicationLock(paths, options);
-  try {
-    return await callback();
-  } finally {
-    await rm(paths.lock, { force: true });
-  }
+  return withSnapshotPublicationLock({
+    exportRoot: paths.root,
+    occurredAt: options.now,
+    operation: options.operation,
+    policy: options.policy,
+  }, callback);
 }
 
 async function inspectPointer(paths) {

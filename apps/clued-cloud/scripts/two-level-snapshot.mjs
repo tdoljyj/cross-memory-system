@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   access,
   cp,
@@ -804,33 +804,86 @@ async function delay(milliseconds) {
   if (milliseconds > 0) await new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
+async function observePublicationLock(lockPath) {
+  try {
+    const [bytes, lockStat] = await Promise.all([readFile(lockPath), stat(lockPath)]);
+    let payload = null;
+    try {
+      payload = JSON.parse(bytes.toString("utf8"));
+    } catch {
+      // A malformed lock still participates in stale detection, but never in an owner release.
+    }
+    return {
+      identity: sha256(bytes),
+      lockStat,
+      payload,
+    };
+  } catch (error) {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+async function removePublicationLockIfUnchanged(lockPath, observation) {
+  const current = await observePublicationLock(lockPath);
+  if (!current) return false;
+  if (
+    current.identity !== observation.identity
+    || current.lockStat.size !== observation.lockStat.size
+    || current.lockStat.mtimeMs !== observation.lockStat.mtimeMs
+  ) return false;
+  await rm(lockPath, { force: false });
+  return true;
+}
+
+async function releaseSnapshotPublicationLock(lockPath, acquiredLock) {
+  const observation = await observePublicationLock(lockPath);
+  if (!observation) return false;
+  if (
+    typeof acquiredLock.owner_token !== "string"
+    || observation.payload?.owner_token !== acquiredLock.owner_token
+  ) return false;
+  return removePublicationLockIfUnchanged(lockPath, observation);
+}
+
 async function acquireSnapshotPublicationLock(paths, { occurredAt, operation, policy }) {
   assertIso(occurredAt, "occurredAt");
   await mkdir(paths.runtime, { recursive: true });
   const schedule = [0, ...(policy.retry_schedule_ms ?? [])];
   for (let attempt = 0; attempt < schedule.length; attempt += 1) {
     await delay(schedule[attempt]);
+    let handle;
     try {
-      const handle = await open(paths.lock, "wx");
-      const lock = {
-        lock_schema_version: 1,
-        operation,
-        owner_ref: `pid:${process.pid}`,
-        acquired_at: occurredAt,
-      };
-      await handle.writeFile(prettyJson(lock), "utf8");
-      await handle.sync();
-      await handle.close();
-      return lock;
+      handle = await open(paths.lock, "wx");
     } catch (error) {
       if (error.code !== "EEXIST") throw error;
-      const lockStat = await stat(paths.lock);
-      const ageSeconds = (Date.parse(occurredAt) - lockStat.mtimeMs) / 1_000;
+      const observation = await observePublicationLock(paths.lock);
+      if (!observation) continue;
+      const ageSeconds = Math.max(0, Date.now() - observation.lockStat.mtimeMs) / 1_000;
       if (ageSeconds > policy.stale_lock_seconds) {
-        await rm(paths.lock, { force: true });
-        continue;
+        if (await removePublicationLockIfUnchanged(paths.lock, observation)) continue;
       }
       if (attempt === schedule.length - 1) throw new Error("publication_lock_busy");
+      continue;
+    }
+
+    const lock = {
+      lock_schema_version: 2,
+      operation,
+      owner_ref: `pid:${process.pid}`,
+      owner_token: randomUUID(),
+      acquired_at: new Date().toISOString(),
+      requested_at: occurredAt,
+    };
+    try {
+      await handle.writeFile(prettyJson(lock), "utf8");
+      await handle.sync();
+      return lock;
+    } catch (error) {
+      await rm(paths.lock, { force: true });
+      throw error;
+    } finally {
+      await handle.close();
     }
   }
   throw new Error("publication_lock_busy");
@@ -843,11 +896,11 @@ export async function withSnapshotPublicationLock({
   policy = SNAPSHOT_PUBLICATION_LOCK_POLICY,
 }, callback) {
   const paths = publicationPaths(exportRoot);
-  await acquireSnapshotPublicationLock(paths, { occurredAt, operation, policy });
+  const acquiredLock = await acquireSnapshotPublicationLock(paths, { occurredAt, operation, policy });
   try {
     return await callback(paths);
   } finally {
-    await rm(paths.lock, { force: true });
+    await releaseSnapshotPublicationLock(paths.lock, acquiredLock);
   }
 }
 

@@ -36,6 +36,31 @@ const VOLATILE_FIELDS = new Set([
   "evidence_id",
 ]);
 
+const BUSINESS_RESULT_OPERATIONAL_FIELDS = new Set([
+  "duration_ms",
+  "request_id",
+  "trace_id",
+  "attempt_id",
+  "receipt_id",
+  "event_id",
+  "evidence_id",
+]);
+
+const CLASSIFIED_ENVELOPE_FIELDS = new Set([
+  "http_status",
+  "business_status",
+  "error_code",
+  "authority",
+  "canonical",
+  "business_result",
+  "events",
+  "receipts",
+  "evidence",
+  "sources_read",
+  "rejection_audit",
+  "conflicts",
+]);
+
 function normalize(value) {
   if (typeof value === "string") return value.normalize("NFC").replaceAll("\r\n", "\n").replaceAll("\r", "\n");
   if (Array.isArray(value)) return value.map(normalize);
@@ -65,6 +90,17 @@ function semanticShape(value) {
   return shaped;
 }
 
+function businessResultShape(value) {
+  if (Array.isArray(value)) return value.map(businessResultShape);
+  if (!value || typeof value !== "object") return normalize(value);
+  const shaped = {};
+  for (const key of Object.keys(value).sort()) {
+    if (BUSINESS_RESULT_OPERATIONAL_FIELDS.has(key)) continue;
+    shaped[key] = businessResultShape(value[key]);
+  }
+  return shaped;
+}
+
 function stringArray(value) {
   if (!Array.isArray(value)) return [];
   return [...new Set(value.filter((item) => typeof item === "string"))].sort();
@@ -73,6 +109,15 @@ function stringArray(value) {
 function semanticArray(value) {
   if (!Array.isArray(value)) return [];
   return value.map(semanticShape).sort((left, right) => canonicalJson(left).localeCompare(canonicalJson(right)));
+}
+
+function unclassifiedShape(value) {
+  const shaped = {};
+  for (const key of Object.keys(value).sort()) {
+    if (CLASSIFIED_ENVELOPE_FIELDS.has(key) || VOLATILE_FIELDS.has(key)) continue;
+    shaped[key] = semanticShape(value[key]);
+  }
+  return shaped;
 }
 
 export function normalizeShadowEnvelope(value) {
@@ -90,13 +135,14 @@ export function normalizeShadowEnvelope(value) {
       version: value.canonical?.version ?? null,
       snapshot_version: value.canonical?.snapshot_version ?? null,
     },
-    business_result: semanticShape(value.business_result ?? null),
+    business_result: businessResultShape(value.business_result ?? null),
     events: semanticArray(value.events),
     receipts: semanticArray(value.receipts),
     evidence: semanticArray(value.evidence),
     sources_read: stringArray(value.sources_read),
     rejection_audit: semanticArray(value.rejection_audit),
     conflicts: semanticArray(value.conflicts),
+    unclassified: unclassifiedShape(value),
   });
 }
 
@@ -122,36 +168,41 @@ function missingFrom(candidate, baseline) {
 export function compareShadowPair({ fixture_id, baseline, candidate }) {
   const left = normalizeShadowEnvelope(baseline);
   const right = normalizeShadowEnvelope(candidate);
-  const differences = [];
-  if (rejected(left) && !rejected(right)) differences.push(difference("OLD_REJECT_NEW_ACCEPT", "business_status", left.business_status, right.business_status));
-  if (left.http_status !== right.http_status) differences.push(difference("HTTP_STATUS_DIFFERENCE", "http_status", left.http_status, right.http_status));
-  if (left.business_status !== right.business_status) differences.push(difference("BUSINESS_STATUS_DIFFERENCE", "business_status", left.business_status, right.business_status));
-  if (left.error_code !== right.error_code) differences.push(difference("ERROR_CODE_DIFFERENCE", "error_code", left.error_code, right.error_code));
-  if (canonicalJson(left.authority) !== canonicalJson(right.authority)) differences.push(difference("AUTHORITY_OR_SCOPE_DIFFERENCE", "authority", left.authority, right.authority));
-  if (left.canonical.id !== right.canonical.id) differences.push(difference("CANONICAL_ID_DIFFERENCE", "canonical.id", left.canonical.id, right.canonical.id));
-  if (left.canonical.version !== right.canonical.version) differences.push(difference("CANONICAL_VERSION_DIFFERENCE", "canonical.version", left.canonical.version, right.canonical.version));
-  if (left.canonical.snapshot_version !== right.canonical.snapshot_version) differences.push(difference("SNAPSHOT_VERSION_DIFFERENCE", "canonical.snapshot_version", left.canonical.snapshot_version, right.canonical.snapshot_version));
-  if (canonicalJson(left.business_result) !== canonicalJson(right.business_result)) differences.push(difference("BUSINESS_RESULT_DIFFERENCE", "business_result", left.business_result, right.business_result));
+  const hardDifferences = [];
+  const unclassifiedDifferences = [];
+  if (rejected(left) && !rejected(right)) hardDifferences.push(difference("OLD_REJECT_NEW_ACCEPT", "business_status", left.business_status, right.business_status));
+  if (left.http_status !== right.http_status) hardDifferences.push(difference("HTTP_STATUS_DIFFERENCE", "http_status", left.http_status, right.http_status));
+  if (left.business_status !== right.business_status) hardDifferences.push(difference("BUSINESS_STATUS_DIFFERENCE", "business_status", left.business_status, right.business_status));
+  if (left.error_code !== right.error_code) hardDifferences.push(difference("ERROR_CODE_DIFFERENCE", "error_code", left.error_code, right.error_code));
+  if (canonicalJson(left.authority) !== canonicalJson(right.authority)) hardDifferences.push(difference("AUTHORITY_OR_SCOPE_DIFFERENCE", "authority", left.authority, right.authority));
+  if (left.canonical.id !== right.canonical.id) hardDifferences.push(difference("CANONICAL_ID_DIFFERENCE", "canonical.id", left.canonical.id, right.canonical.id));
+  if (left.canonical.version !== right.canonical.version) hardDifferences.push(difference("CANONICAL_VERSION_DIFFERENCE", "canonical.version", left.canonical.version, right.canonical.version));
+  if (left.canonical.snapshot_version !== right.canonical.snapshot_version) hardDifferences.push(difference("SNAPSHOT_VERSION_DIFFERENCE", "canonical.snapshot_version", left.canonical.snapshot_version, right.canonical.snapshot_version));
+  if (canonicalJson(left.business_result) !== canonicalJson(right.business_result)) hardDifferences.push(difference("BUSINESS_RESULT_DIFFERENCE", "business_result", left.business_result, right.business_result));
   for (const [field, code] of [
     ["events", "EVENT_SEMANTICS_DIFFERENCE"],
     ["receipts", "RECEIPT_SEMANTICS_DIFFERENCE"],
     ["evidence", "EVIDENCE_SEMANTICS_DIFFERENCE"],
     ["conflicts", "CONFLICT_EVIDENCE_DIFFERENCE"],
   ]) {
-    if (canonicalJson(left[field]) !== canonicalJson(right[field])) differences.push(difference(code, field, left[field], right[field]));
+    if (canonicalJson(left[field]) !== canonicalJson(right[field])) hardDifferences.push(difference(code, field, left[field], right[field]));
   }
   const missingSources = left.sources_read.filter((item) => !right.sources_read.includes(item));
-  if (missingSources.length > 0) differences.push(difference("SOURCES_READ_REDUCED", "sources_read", missingSources, right.sources_read));
+  if (missingSources.length > 0) hardDifferences.push(difference("SOURCES_READ_REDUCED", "sources_read", missingSources, right.sources_read));
   const missingAudit = missingFrom(right.rejection_audit, left.rejection_audit);
-  if (missingAudit.length > 0) differences.push(difference("REJECTION_AUDIT_REDUCED", "rejection_audit", missingAudit, right.rejection_audit));
+  if (missingAudit.length > 0) hardDifferences.push(difference("REJECTION_AUDIT_REDUCED", "rejection_audit", missingAudit, right.rejection_audit));
+  if (canonicalJson(left.unclassified) !== canonicalJson(right.unclassified)) {
+    unclassifiedDifferences.push(difference("UNCLASSIFIED_SEMANTIC_DIFFERENCE", "unclassified", left.unclassified, right.unclassified));
+  }
+  const differences = [...hardDifferences, ...unclassifiedDifferences];
   return {
     contract: P6_SHADOW_CONTRACT,
     fixture_id,
     baseline_sha256: sha256(canonicalJson(left)),
     candidate_sha256: sha256(canonicalJson(right)),
-    hard_difference_count: differences.length,
-    unclassified_difference_count: 0,
-    result: differences.length === 0 ? "PASS" : "FAIL",
+    hard_difference_count: hardDifferences.length,
+    unclassified_difference_count: unclassifiedDifferences.length,
+    result: hardDifferences.length === 0 && unclassifiedDifferences.length === 0 ? "PASS" : "FAIL",
     differences,
   };
 }
