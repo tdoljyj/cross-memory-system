@@ -173,7 +173,7 @@ class P6ReleaseGate(unittest.TestCase):
         self.assertNotIn("apps/clued-cloud/package-lock.json", changed_paths())
 
     def test_p6_evidence_hashes_match_when_evidence_is_present(self):
-        directory = ROOT / "artifacts" / "clued-validation" / "p6" / "59ce5224-r3"
+        directory = ROOT / "artifacts" / "clued-validation" / "p6" / "59ce5224-r4"
         if not directory.exists():
             self.skipTest("evidence is generated after implementation tests")
         rows = (directory / "SHA256SUMS").read_text(encoding="utf-8").splitlines()

@@ -10,6 +10,7 @@ import EmbeddedPostgres from "embedded-postgres";
 
 import {
   buildSnapshot,
+  isPublicationTransitionContentionError,
   withSnapshotPublicationLock,
 } from "../scripts/two-level-snapshot.mjs";
 import {
@@ -41,6 +42,15 @@ const DB_IDS = Object.freeze({
   recordB: "50000000-0000-4000-8000-000000000002",
 });
 const DB_TOKEN = "a".repeat(64);
+
+test("Snapshot transition lock retries only genuine cross-platform contention", () => {
+  assert.equal(isPublicationTransitionContentionError({ code: "EEXIST" }, "linux"), true);
+  assert.equal(isPublicationTransitionContentionError({ code: "EEXIST" }, "win32"), true);
+  assert.equal(isPublicationTransitionContentionError({ code: "EPERM" }, "win32"), true);
+  assert.equal(isPublicationTransitionContentionError({ code: "EPERM" }, "linux"), false);
+  assert.equal(isPublicationTransitionContentionError({ code: "EACCES" }, "win32"), false);
+  assert.equal(isPublicationTransitionContentionError(null, "win32"), false);
+});
 
 function recordEvidence(file, row) {
   if (!frozenEvidence.has(file)) frozenEvidence.set(file, []);

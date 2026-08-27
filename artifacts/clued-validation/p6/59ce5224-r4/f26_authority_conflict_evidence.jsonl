@@ -1,0 +1,4 @@
+{"contract":"clued.p6.validation-result.v1","surface":"snapshot","current_authority":"state_task_decision","log_role":"historical_event_evidence_only","conflict_reported":true,"result":"PASS"}
+{"contract":"clued.p6.validation-result.v1","surface":"api","current_authority":"state_task_decision","log_role":"historical_event_evidence_only","conflict_reported":true,"result":"PASS"}
+{"contract":"clued.p6.validation-result.v1","surface":"mcp","current_authority":"state_task_decision","log_role":"historical_event_evidence_only","conflict_reported":true,"result":"PASS"}
+{"contract":"clued.p6.validation-result.v1","surface":"ui_contract","current_authority":"state_task_decision","log_role":"historical_event_evidence_only","conflict_reported":true,"result":"PASS"}

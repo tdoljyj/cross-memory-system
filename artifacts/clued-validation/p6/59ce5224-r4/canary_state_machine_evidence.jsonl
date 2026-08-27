@@ -1,0 +1,2 @@
+{"contract":"clued.p6.validation-result.v1","scenario":"version_affinity_and_attribution","version_metadata_fields":["id","tag","timestamp"],"script_version_normalized":true,"production_enabled":false,"result":"PASS"}
+{"contract":"clued.p6.validation-result.v1","scenario":"frozen_state_machine","phases":[0,1,5,25,50,100],"actions_verified":["HOLD","STOP","AUTO_ROLLBACK","ADVANCE"],"real_canary_executed":false,"result":"PASS"}

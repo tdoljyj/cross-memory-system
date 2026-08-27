@@ -826,6 +826,10 @@ async function observePublicationLock(lockPath) {
   }
 }
 
+export function isPublicationTransitionContentionError(error, platform = process.platform) {
+  return error?.code === "EEXIST" || (platform === "win32" && error?.code === "EPERM");
+}
+
 async function acquirePublicationTransitionLock(paths, operation) {
   for (const waitMs of PUBLICATION_TRANSITION_RETRY_MS) {
     await delay(waitMs);
@@ -833,7 +837,7 @@ async function acquirePublicationTransitionLock(paths, operation) {
     try {
       handle = await open(paths.transitionLock, "wx");
     } catch (error) {
-      if (error.code !== "EEXIST") throw error;
+      if (!isPublicationTransitionContentionError(error)) throw error;
       continue;
     }
     const transition = {

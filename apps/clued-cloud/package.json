@@ -33,7 +33,7 @@
     "snapshot:m2:publish": "node scripts/m2-snapshot-store.mjs publish --export-root ../../artifacts/clued-two-level-snapshots",
     "snapshot:m2:rollback": "node scripts/m2-snapshot-store.mjs rollback --export-root ../../artifacts/clued-two-level-snapshots",
     "test:p6": "node --test tests/p6-shadow-canary.test.mjs",
-    "p6:evidence:verify": "node scripts/p6-shadow-canary.mjs verify-evidence --directory ../../artifacts/clued-validation/p6/59ce5224-r3",
+    "p6:evidence:verify": "node scripts/p6-shadow-canary.mjs verify-evidence --directory ../../artifacts/clued-validation/p6/59ce5224-r4",
     "test:bundle": "node --test tests/user-memory-bundle.test.mjs",
     "test:snapshot:v16": "node --test tests/two-level-snapshot.test.mjs",
     "typecheck": "tsc --noEmit --incremental false",
