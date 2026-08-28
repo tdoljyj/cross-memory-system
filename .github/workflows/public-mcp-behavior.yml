@@ -15,7 +15,7 @@ jobs:
       run:
         working-directory: apps/clued-cloud
     env:
-      PROMPTFOO_CONFIG_DIR: ${{ runner.temp }}/promptfoo
+      PROMPTFOO_CONFIG_DIR: /tmp/promptfoo
       PROMPTFOO_DISABLE_TELEMETRY: "true"
       MCP_ISOLATED_URL: http://127.0.0.1:8787/mcp
       MCP_BEARER_TOKEN: clued_bnd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
