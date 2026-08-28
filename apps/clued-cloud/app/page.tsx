@@ -164,7 +164,8 @@ const copy = {
     workRecordTitle: "Title",
     workRecordContent: "Detail",
     canonicalIdLabel: "Canonical ID",
-    viewStructuredRecord: "View structured record",
+    versionNotRecorded: "Version not recorded",
+    viewRawRecord: "View raw record",
     addWorkRecord: "Add canonical record",
     workViewsError: "Clued could not load the unified work views.",
     signingOut: "Signing out…",
@@ -297,7 +298,8 @@ const copy = {
     workRecordTitle: "标题",
     workRecordContent: "详细内容",
     canonicalIdLabel: "Canonical ID",
-    viewStructuredRecord: "查看结构化记录",
+    versionNotRecorded: "版本未记录",
+    viewRawRecord: "查看原始记录",
     addWorkRecord: "新增 canonical 记录",
     workViewsError: "Clued 暂时无法加载统一工作视图。",
     signingOut: "正在退出…",
@@ -1155,21 +1157,26 @@ export default function Home() {
                       <p className="empty-bindings">{t.noWorkRecords}</p>
                     ) : visibleRecords.map((record) => {
                       const item = presentCluedRecord(record, recordViewLabels[recordView]);
-                      const display = presentCluedRecordDisplay(record, recordViewLabels[recordView]);
+                      const display = presentCluedRecordDisplay(record, recordViewLabels[recordView], locale);
                       return (
                         <article className="record-item" key={item.id}>
                           <div>
-                            <strong>{item.title}</strong>
-                            <span>{item.status} · v{item.version ?? "n/a"} · {t.canonicalIdLabel}: {item.id}</span>
+                            <strong>{display.title}</strong>
+                            <span className="record-meta">
+                              {display.status} · {t.canonicalIdLabel}: {item.id} ·{" "}
+                              <time dateTime={display.updatedAt}>{new Date(display.updatedAt).toLocaleString(locale)}</time>
+                            </span>
                           </div>
                           <p>{display.summary || item.conclusion}</p>
+                          <span className="record-version-badge">
+                            {item.version === null ? t.versionNotRecorded : `v${item.version}`}
+                          </span>
                           {display.rawDetails && (
                             <details className="record-details">
-                              <summary>{t.viewStructuredRecord}</summary>
+                              <summary>{t.viewRawRecord}</summary>
                               <pre>{display.rawDetails}</pre>
                             </details>
                           )}
-                          <time dateTime={item.updatedAt}>{new Date(item.updatedAt).toLocaleString(locale)}</time>
                         </article>
                       );
                     })}
