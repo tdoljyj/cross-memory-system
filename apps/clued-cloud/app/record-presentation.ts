@@ -5,12 +5,26 @@ export type CluedRecord = {
   summary?: string;
   body?: string;
   record_type: "state" | "task" | "decision" | "archive" | "log" | "note";
-  status?: string;
+  status?: string | null;
   version?: number;
+  record_version?: number | null;
   project_id?: string | null;
   effective_project_id?: string | null;
-  event_type?: string;
-  payload?: Record<string, unknown>;
+  event_type?: string | null;
+  canonical_event_type?: string | null;
+  event_schema_version?: number | null;
+  committed_canonical_version?: number | null;
+  event_scope?: string | null;
+  origin_scope?: string | null;
+  target_refs?: unknown;
+  change_summary?: unknown;
+  result?: unknown;
+  receipt_id?: string | null;
+  audit_visibility?: string | null;
+  evidence_refs?: unknown;
+  artifact_refs?: unknown;
+  error_code?: string | null;
+  payload?: Record<string, unknown> | null;
   updated_at: string;
 };
 
@@ -62,6 +76,7 @@ const LOG_SUMMARY_FIELDS = [
   "summary",
   "message",
   "result",
+  "change_summary",
   "verification",
   "error",
   "reason",
@@ -182,6 +197,10 @@ const EVIDENCE_FIELDS: ReadonlyArray<readonly [string, string, string]> = [
   ["remote_main", "远端 main", "Remote main"],
   ["url", "链接", "URL"],
   ["path", "路径", "Path"],
+  ["receipt_id", "回执 ID", "Receipt ID"],
+  ["evidence_refs", "证据引用", "Evidence references"],
+  ["artifact_refs", "产物引用", "Artifact references"],
+  ["error_code", "错误代码", "Error code"],
   ["error", "错误", "Error"],
   ["reason", "原因", "Reason"],
 ];
@@ -241,17 +260,37 @@ function resolveExplicitStatus(
     record.status,
     root?.status,
     verification?.status,
+    root?.change_summary,
     root?.result,
   ];
 
   for (const candidate of candidates) {
-    const token = normalizeStatusToken(candidate);
-    if (token) {
+    const token = explicitStatusToken(candidate);
+    if (token !== null) {
       const entry = EXPLICIT_STATUS_TOKENS[token];
       return { token, tone: entry.tone, label: entry[locale] };
     }
   }
 
+  return null;
+}
+
+function explicitStatusToken(value: unknown): string | null {
+  const direct = normalizeStatusToken(value);
+  if (direct) return direct;
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      const token = explicitStatusToken(entry);
+      if (token) return token;
+    }
+    return null;
+  }
+  const record = asRecord(value);
+  if (!record) return null;
+  for (const key of ["status", "result", "verification"]) {
+    const token = explicitStatusToken(record[key]);
+    if (token) return token;
+  }
   return null;
 }
 
@@ -291,6 +330,7 @@ function logSummaryLines(value: StructuredValue): string[] {
   const lines: string[] = [];
   for (const field of LOG_SUMMARY_FIELDS) {
     for (const line of readableLines(value[field])) {
+      if (normalizeStatusToken(line)) continue;
       if (!lines.includes(line)) lines.push(line);
       if (lines.length >= MAX_SUMMARY_LINES) return lines;
     }
@@ -370,8 +410,9 @@ function buildTags(
 
   tags.push(`ID ${record.id}`);
 
-  if (record.version !== null && record.version !== undefined) {
-    tags.push(`v${record.version}`);
+  const version = record.version ?? record.record_version;
+  if (version !== null && version !== undefined) {
+    tags.push(`v${version}`);
   }
 
   return tags.slice(0, MAX_TAGS);
@@ -408,7 +449,7 @@ function buildEvidence(value: StructuredValue | null, locale: PresentationLocale
   const lines: LogDetailLine[] = [];
 
   for (const [key, zh, en] of EVIDENCE_FIELDS) {
-    const raw = root[key];
+    const raw = root[key] ?? nestedFieldValue(root.change_summary, key);
     if (raw === undefined) continue;
     const text = detailValueText(raw);
     if (text === null) continue;
@@ -426,12 +467,30 @@ function buildEvidence(value: StructuredValue | null, locale: PresentationLocale
   return lines;
 }
 
+function nestedFieldValue(value: unknown, key: string): unknown {
+  if (Array.isArray(value)) {
+    const matches = value
+      .map((entry) => nestedFieldValue(entry, key))
+      .filter((entry) => entry !== undefined);
+    return matches.length > 0 ? matches : undefined;
+  }
+  const record = asRecord(value);
+  if (!record) return undefined;
+  if (record[key] !== undefined) return record[key];
+  for (const nested of Object.values(record)) {
+    const match = nestedFieldValue(nested, key);
+    if (match !== undefined) return match;
+  }
+  return undefined;
+}
+
 function buildMetadata(
   record: CluedRecord,
   status: { tone: LogTone; label: string } | null,
   locale: PresentationLocale,
 ): LogDetailLine[] {
   const copy = LOG_CARD_COPY[locale];
+  const version = record.version ?? record.record_version;
 
   return [
     { label: copy.canonicalId, value: record.id },
@@ -439,16 +498,16 @@ function buildMetadata(
     {
       label: copy.version,
       value:
-        record.version === null || record.version === undefined
+        version === null || version === undefined
           ? copy.versionMissing
-          : `v${record.version}`,
+          : `v${version}`,
     },
     { label: copy.recordType, value: record.record_type },
     { label: copy.updatedAt, value: record.updated_at },
   ];
 }
 
-function stringifyStructuredValue(value: StructuredValue): string | null {
+function stringifyStructuredValue(value: unknown): string | null {
   try {
     return JSON.stringify(value, null, 2);
   } catch {
@@ -456,20 +515,66 @@ function stringifyStructuredValue(value: StructuredValue): string | null {
   }
 }
 
+function hasLogEnvelope(record: CluedRecord): boolean {
+  return [
+    record.event_type,
+    record.canonical_event_type,
+    record.record_version,
+    record.event_schema_version,
+    record.committed_canonical_version,
+    record.change_summary,
+    record.result,
+    record.receipt_id,
+    record.evidence_refs,
+    record.artifact_refs,
+    record.error_code,
+  ].some((value) => value !== null && value !== undefined);
+}
+
 function resolveLogSource(record: CluedRecord): {
   plainText: string | null;
   structuredValue: StructuredValue | null;
 } {
   const source = record.content ?? record.body ?? record.payload ?? record.summary ?? "";
+  const envelope: Record<string, unknown> = {};
+  const append = (key: string, value: unknown) => {
+    if (value !== null && value !== undefined) envelope[key] = value;
+  };
+
+  append("canonical_event_type", record.canonical_event_type);
+  append("event_type", record.event_type);
+  append("record_version", record.record_version);
+  append("event_schema_version", record.event_schema_version);
+  append("committed_canonical_version", record.committed_canonical_version);
+  append("event_scope", record.event_scope);
+  append("origin_scope", record.origin_scope);
+  append("target_refs", record.target_refs);
+  append("change_summary", record.change_summary);
+  append("result", record.result);
+  append("receipt_id", record.receipt_id);
+  append("audit_visibility", record.audit_visibility);
+  append("evidence_refs", record.evidence_refs);
+  append("artifact_refs", record.artifact_refs);
+  append("error_code", record.error_code);
+
+  const withEnvelope = (value: StructuredValue): StructuredValue => {
+    if (Object.keys(envelope).length === 0) return value;
+    return Array.isArray(value)
+      ? { result: value, ...envelope }
+      : { ...value, ...envelope };
+  };
+
   if (typeof source === "string") {
     const structuredValue = parseStructuredValue(source);
     return structuredValue
-      ? { plainText: null, structuredValue }
-      : { plainText: source, structuredValue: null };
+      ? { plainText: null, structuredValue: withEnvelope(structuredValue) }
+      : Object.keys(envelope).length > 0
+        ? { plainText: null, structuredValue: { summary: source, ...envelope } }
+        : { plainText: source, structuredValue: null };
   }
 
   if (source !== null && typeof source === "object") {
-    return { plainText: null, structuredValue: source as StructuredValue };
+    return { plainText: null, structuredValue: withEnvelope(source as StructuredValue) };
   }
 
   return { plainText: String(source), structuredValue: null };
@@ -488,7 +593,7 @@ export function presentCluedRecord(
     title: record.title ?? record.event_type ?? fallbackTitle,
     conclusion,
     status: record.status ?? record.record_type,
-    version: record.version ?? null,
+    version: record.version ?? record.record_version ?? null,
     updatedAt: record.updated_at,
   };
 }
@@ -518,7 +623,9 @@ export function presentCluedLogCard(
       tags: buildTags(record, null, status),
       evidence: [],
       metadata: buildMetadata(record, status, locale),
-      rawDetails: summary,
+      rawDetails: hasLogEnvelope(record)
+        ? stringifyStructuredValue(record) ?? summary
+        : summary,
     };
   }
 
@@ -533,7 +640,9 @@ export function presentCluedLogCard(
     tags: buildTags(record, structuredValue, status),
     evidence: buildEvidence(structuredValue, locale),
     metadata: buildMetadata(record, status, locale),
-    rawDetails: stringifyStructuredValue(structuredValue) ?? "",
+    rawDetails: hasLogEnvelope(record)
+      ? stringifyStructuredValue(record) ?? ""
+      : stringifyStructuredValue(structuredValue) ?? "",
   };
 }
 

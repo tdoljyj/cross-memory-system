@@ -55,14 +55,23 @@ test("keeps ordinary plain-text logs unchanged", () => {
 });
 
 test("1. ID 580 shape: deployment completion reads as a version deployment with test, build and healthz evidence", () => {
-  const content = JSON.stringify({
+  const payload = {
     canonical_event_type: "production_deployment_completed",
-    action: "production_deployment_completed",
-    result: ["测试 97/97 通过", "构建通过", "healthz 200"],
-    verification: { status: "COMPLETED", healthz: "200" },
-    version_id: "b4d1e2f9c3a4b5d6e7f8091a2b3c4d5",
-  });
-  const card = presentCluedLogCard(logRecord({ id: "580", content }), "日志", "zh-CN");
+  };
+  const card = presentCluedLogCard(logRecord({
+    id: "580",
+    event_type: "action",
+    canonical_event_type: "production_deployment_completed",
+    record_version: 7,
+    result: "SUCCESS",
+    change_summary: [
+      { summary: "测试 97/97 通过" },
+      { summary: "构建通过" },
+      { summary: "healthz 200" },
+    ],
+    artifact_refs: [{ kind: "worker_version", id: "b4d1e2f9c3a4b5d6e7f8091a2b3c4d5" }],
+    payload,
+  }), "日志", "zh-CN");
 
   assert.equal(card.title, "日志可读化版本已部署");
   assert.match(card.summary, /97\/97/);
@@ -70,8 +79,10 @@ test("1. ID 580 shape: deployment completion reads as a version deployment with 
   assert.match(card.summary, /healthz 200/);
   assert.equal(card.tone, "success");
   assert.ok(card.tags.includes("ID 580"));
-  assert.ok(card.tags.includes("完成"));
+  assert.ok(card.tags.includes("v7"));
+  assert.ok(card.tags.includes("成功"));
   assert.ok(card.evidence.some((line) => line.value.includes("b4d1e2f9c3a4b5d6e7f8091a2b3c4d5")));
+  assert.match(card.rawDetails, /"record_version"/);
 });
 
 test("2. ID 579 shape: never falls back to a structural placeholder for both title and summary", () => {
@@ -87,12 +98,16 @@ test("2. ID 579 shape: never falls back to a structural placeholder for both tit
 });
 
 test("3. ID 578 shape: branch merge reads with its result and production impact", () => {
-  const content = JSON.stringify({
+  const card = presentCluedLogCard(logRecord({
+    id: "578",
     canonical_event_type: "merge_and_close_integration_branch",
-    result: "集成分支已合并并关闭",
-    verification: { status: "COMPLETED", production: "生产流量未变化" },
-  });
-  const card = presentCluedLogCard(logRecord({ id: "578", content }), "日志", "zh-CN");
+    result: "COMPLETED",
+    change_summary: [
+      { result: "集成分支已合并并关闭" },
+      { production: "生产流量未变化" },
+    ],
+    payload: { canonical_event_type: "merge_and_close_integration_branch" },
+  }), "日志", "zh-CN");
 
   assert.equal(card.title, "合并并关闭集成分支");
   assert.match(card.summary, /合并并关闭/);
@@ -103,12 +118,10 @@ test("3. ID 578 shape: branch merge reads with its result and production impact"
 test("4. ID 577 shape: blocked records name the blocked target and never invent one", () => {
   const blocked = presentCluedLogCard(logRecord({
     id: "577",
-    status: "BLOCKED",
-    content: JSON.stringify({
-      canonical_event_type: "production_deployment_blocked",
-      decision: "Cloudflare 部署未执行",
-      reason: "缺少生产部署授权",
-    }),
+    canonical_event_type: "production_deployment_blocked",
+    result: "SUCCESS",
+    change_summary: [{ status: "BLOCKED", reason: "缺少生产部署授权" }],
+    payload: { canonical_event_type: "production_deployment_blocked" },
   }), "日志", "zh-CN");
 
   assert.equal(blocked.title, "Cloudflare 部署未执行");

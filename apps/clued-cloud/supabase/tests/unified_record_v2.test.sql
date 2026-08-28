@@ -1,7 +1,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(16);
+select plan(20);
 
 select has_column('public','clued_memories','record_type','Unified Record has a type');
 select has_column('public','clued_memories','version','Unified Record has optimistic versioning');
@@ -114,6 +114,61 @@ select ok(
        and e.record_version=1
   ),
   'Record, Event and Receipt are linked by the same transaction'
+);
+
+reset role;
+
+insert into public.clued_context_events(
+  id,user_id,context_key,event_type,payload,event_schema_version,
+  committed_canonical_version,canonical_event_type,target_refs,event_scope,
+  change_summary,result,audit_visibility,evidence_refs,artifact_refs,content_hash
+) values
+  (
+    880580,'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','global','action',
+    '{"canonical_event_type":"production_deployment_completed"}'::jsonb,1,580,
+    'production_deployment_completed','[]'::jsonb,'global',
+    '[{"summary":"97/97 PASS"},{"summary":"build PASS"},{"summary":"healthz 200"}]'::jsonb,
+    'success','work_log','{}'::uuid[],
+    '[{"kind":"worker_version","id":"version-580"}]'::jsonb,
+    repeat('a',64)
+  ),
+  (
+    880581,'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb','global','action',
+    '{"canonical_event_type":"must_remain_private"}'::jsonb,null,null,null,null,null,
+    null,null,null,null,null,null
+  );
+
+set local role authenticated;
+select set_config('request.jwt.claim.sub','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',true);
+select set_config('request.jwt.claims','{"sub":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","role":"authenticated"}',true);
+
+select is(
+  public.clued_user_record_list('{"level":"global","record_type":"log","limit":200}'::jsonb)
+    #>> '{records,0,canonical_event_type}',
+  'production_deployment_completed',
+  'Log list exposes the canonical event type'
+);
+
+select is(
+  public.clued_user_record_list('{"level":"global","record_type":"log","limit":200}'::jsonb)
+    #>> '{records,0,change_summary,2,summary}',
+  'healthz 200',
+  'Log list exposes readable change summary evidence'
+);
+
+select is(
+  public.clued_user_record_list('{"level":"global","record_type":"log","limit":200}'::jsonb)
+    #>> '{records,0,committed_canonical_version}',
+  '580',
+  'Log list exposes the committed canonical version'
+);
+
+select is(
+  jsonb_array_length(public.clued_user_record_list(
+    '{"level":"global","record_type":"log","limit":200}'::jsonb
+  )->'records'),
+  1,
+  'Log list keeps another user event isolated'
 );
 
 select * from finish();
