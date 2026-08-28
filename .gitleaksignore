@@ -2,7 +2,6 @@
 # EX-01..03: Supabase publishable keys. These are public client identifiers;
 # authorization remains enforced by grants and RLS. Both historical and current
 # line fingerprints are retained where the file moved within a commit.
-apps/clued-cloud/worker/continuity.ts:generic-api-key:2
 apps/clued-cloud/worker/continuity.ts:generic-api-key:25
 apps/clued-cloud/app/page.tsx:generic-api-key:8
 apps/clued-cloud/app/page.tsx:generic-api-key:9
