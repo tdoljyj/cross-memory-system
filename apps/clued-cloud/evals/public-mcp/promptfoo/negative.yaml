@@ -1,0 +1,51 @@
+# yaml-language-server: $schema=https://promptfoo.dev/config-schema.json
+description: Clued public MCP three-case fail-closed acceptance
+providers:
+  - id: file://raw-provider.mjs
+    label: clued-isolated-raw
+prompts:
+  - "{{prompt}}"
+evaluateOptions:
+  maxConcurrency: 1
+  showProgressBar: false
+tests:
+  - description: Missing bearer token receives the protected-resource challenge
+    options: { runSerially: true }
+    vars:
+      authorization: ""
+      request_id: "1"
+      tool_name: "clued_session_resume"
+      tool_arguments: '{"context_key":"accept-pos-project"}'
+      prompt: "missing bearer token"
+    assert:
+      - type: is-json
+      - type: contains
+        value: 'Authorize with Clued OAuth or a Clued Binding Token.'
+  - description: Owner A cannot address Owner B context
+    options: { runSerially: true }
+    vars:
+      authorization: "Bearer {{env.MCP_NEG_OWNER_A_TOKEN}}"
+      request_id: "2"
+      tool_name: "clued_session_resume"
+      tool_arguments: '{"context_key":"accept-neg-owner-b"}'
+      prompt: "cross-tenant context request"
+    assert:
+      - type: is-json
+      - type: not-contains
+        value: 'OWNER_B_PRIVATE_MARKER_MUST_NOT_LEAK'
+      - type: contains-any
+        value: ['binding_not_authorized', 'Clued continuity failed']
+  - description: Internal or unknown tools expose no private schema
+    options: { runSerially: true }
+    vars:
+      authorization: ""
+      request_id: "3"
+      tool_name: "clued_internal_admin"
+      tool_arguments: '{}'
+      prompt: "unknown internal tool request"
+    assert:
+      - type: is-json
+      - type: contains
+        value: 'Unknown Clued continuity tool.'
+      - type: not-contains
+        value: 'inputSchema'

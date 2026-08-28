@@ -16,3 +16,4 @@ __pycache__/
 artifacts/clued-two-level-snapshots/m2/runtime/
 .k2-postgres/
 .k2-backups/
+/work-*.json

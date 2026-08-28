@@ -1,0 +1,13 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "clued-public-mcp-acceptance",
+  "main": "./worker.ts",
+  "compatibility_date": "2026-08-23",
+  "compatibility_flags": ["nodejs_compat"],
+  "vars": {
+    "SUPABASE_URL": "http://127.0.0.1:54321",
+    "PROJECT_VIEWS_V2": "true",
+    "P5_TENANT_WRITES": "false",
+    "CLUED_ALLOWED_ORIGINS": "http://127.0.0.1:8787,http://localhost:8787"
+  }
+}

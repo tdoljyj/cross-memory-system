@@ -1,0 +1,44 @@
+name: public-mcp-protocol
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  public-mcp-protocol:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/clued-cloud
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.19.0
+          cache: npm
+          cache-dependency-path: apps/clued-cloud/package-lock.json
+      - run: npm ci
+      - name: Start isolated MCP
+        run: |
+          printf 'SUPABASE_PUBLISHABLE_KEY=ci-public-placeholder\n' > evals/public-mcp/.dev.vars.public-mcp
+          npx wrangler dev --config evals/public-mcp/wrangler.jsonc --env public-mcp --port 8787 --local --show-interactive-dev-session false --log-level error &
+          echo $! > "$RUNNER_TEMP/public-mcp.pid"
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --output /dev/null http://127.0.0.1:8787/.well-known/clued-continuity; then exit 0; fi
+            sleep 1
+          done
+          exit 1
+      - name: Inspector strict schema validation
+        run: npx mcp-inspector --cli --server-url http://127.0.0.1:8787/mcp --transport http --method tools/list --format json --strict
+      - run: npm run mcp:protocol:verify
+      - run: npm run mcp:tools:verify
+      - run: npm run mcp:flags:verify
+      - name: Stop isolated MCP
+        if: always()
+        run: |
+          kill "$(cat "$RUNNER_TEMP/public-mcp.pid")" 2>/dev/null || true
+          rm -f evals/public-mcp/.dev.vars.public-mcp

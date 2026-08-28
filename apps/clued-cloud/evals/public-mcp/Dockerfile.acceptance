@@ -1,0 +1,17 @@
+FROM node:24.19.0-alpine@sha256:2a49bdf71e9fd965a58c1703fd9ddd205b34e5782b692a72dd1d248abb0beb43 AS dependencies
+WORKDIR /opt/clued
+COPY package.json package-lock.json ./
+RUN npm ci --ignore-scripts
+
+FROM node:24.19.0-alpine@sha256:2a49bdf71e9fd965a58c1703fd9ddd205b34e5782b692a72dd1d248abb0beb43
+WORKDIR /opt/clued
+ENV NODE_ENV=development
+COPY --from=dependencies --chown=node:node /opt/clued/node_modules ./node_modules
+COPY --chown=node:node worker ./worker
+COPY --chown=node:node evals/public-mcp ./evals/public-mcp
+COPY --chown=node:node package.json package-lock.json tsconfig.json ./
+USER node
+EXPOSE 8787
+HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:8787/.well-known/clued-continuity').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+CMD ["./node_modules/.bin/wrangler", "dev", "--config", "evals/public-mcp/wrangler.jsonc", "--env", "public-mcp", "--ip", "0.0.0.0", "--port", "8787", "--local", "--show-interactive-dev-session", "false"]

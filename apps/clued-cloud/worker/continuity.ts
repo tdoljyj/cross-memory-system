@@ -741,6 +741,117 @@ const tools = [
   ...p5Tools,
 ] as const;
 
+type PublicToolName = (typeof tools)[number]["name"];
+
+type PublicToolPolicy = {
+  scopes: readonly Scope[];
+  readOnlyHint: boolean;
+  destructiveHint: boolean;
+  idempotentHint: boolean;
+  openWorldHint: boolean;
+};
+
+const structuredObjectOutputSchema = {
+  type: "object",
+  description: "Structured Clued result. Tool-specific fields are versioned by the Canonical Store contract.",
+  additionalProperties: true,
+} as const;
+
+const publicToolPolicies = {
+  clued_agent_bootstrap: {
+    scopes: [], readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false,
+  },
+  clued_session_resume: {
+    scopes: ["context:read"], readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true,
+  },
+  clued_append_event: {
+    scopes: ["context:write"], readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true,
+  },
+  clued_session_checkpoint: {
+    scopes: ["context:write"], readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true,
+  },
+  clued_search_context: {
+    scopes: ["context:read"], readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true,
+  },
+  clued_read_log: {
+    scopes: ["context:read"], readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true,
+  },
+  clued_import_log: {
+    scopes: ["context:write"], readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true,
+  },
+  clued_audit_receipts: {
+    scopes: ["audit:read"], readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true,
+  },
+  clued_project_mutate: {
+    scopes: ["context:write"], readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true,
+  },
+  clued_project_list: {
+    scopes: ["context:read"], readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true,
+  },
+  clued_record_list: {
+    scopes: ["context:read"], readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true,
+  },
+  clued_record_mutate: {
+    scopes: ["context:write"], readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true,
+  },
+  clued_decision_supersede: {
+    scopes: ["context:write"], readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true,
+  },
+  clued_evidence_ingest: {
+    scopes: ["context:write"], readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true,
+  },
+  clued_event_append: {
+    scopes: ["context:write"], readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true,
+  },
+  clued_canonical_export: {
+    scopes: ["context:read", "audit:read"], readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true,
+  },
+  clued_p5_session_open: {
+    scopes: ["context:read"], readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true,
+  },
+  clued_p5_mutate: {
+    scopes: ["context:write"], readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true,
+  },
+  clued_p5_workspace_switch: {
+    scopes: ["context:write"], readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true,
+  },
+  clued_p5_pending_intent: {
+    scopes: ["context:read"], readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true,
+  },
+  clued_p5_git_divergence: {
+    scopes: ["audit:read"], readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true,
+  },
+} as const satisfies Record<PublicToolName, PublicToolPolicy>;
+
+function publishTool<T extends (typeof tools)[number]>(tool: T) {
+  const policy = publicToolPolicies[tool.name];
+  const scopeStatement = policy.scopes.length
+    ? ` Required Clued scope${policy.scopes.length === 1 ? "" : "s"}: ${policy.scopes.join(", ")}.`
+    : " Public metadata call; no authenticated Clued scope is required.";
+  return {
+    ...tool,
+    description: `${tool.description}${scopeStatement}`,
+    outputSchema: structuredObjectOutputSchema,
+    annotations: {
+      readOnlyHint: policy.readOnlyHint,
+      destructiveHint: policy.destructiveHint,
+      idempotentHint: policy.idempotentHint,
+      openWorldHint: policy.openWorldHint,
+    },
+    _meta: {
+      "clued/requiredScopes": policy.scopes,
+      "clued/scopeEnforcement": "server-side",
+    },
+  };
+}
+
+export function publicMcpTools(env: Pick<ContinuityEnv, "PROJECT_VIEWS_V2" | "P5_TENANT_WRITES">) {
+  return tools.filter((tool) =>
+    (!(tool.name in recordRpcByTool) || recordsV2Enabled(env))
+    && (!(tool.name in p5RpcByTool) || p5TenantWritesEnabled(env))
+  ).map(publishTool);
+}
+
 const rpcByTool = {
   clued_session_resume: "clued_mcp_restore",
   clued_append_event: "clued_mcp_append_event",
@@ -889,11 +1000,7 @@ async function handleMcp(request: Request, env: ContinuityEnv) {
       return json(rpcResult(rpc.id, {}), 200, corsHeaders(request));
     }
     if (rpc.method === "tools/list") {
-      const visibleTools = tools.filter((tool) =>
-        (!(tool.name in recordRpcByTool) || recordsV2Enabled(env))
-        && (!(tool.name in p5RpcByTool) || p5TenantWritesEnabled(env))
-      );
-      return json(rpcResult(rpc.id, { tools: visibleTools }), 200, corsHeaders(request));
+      return json(rpcResult(rpc.id, { tools: publicMcpTools(env) }), 200, corsHeaders(request));
     }
     if (rpc.method === "tools/call") {
       const name = rpc.params?.name;
