@@ -1,6 +1,8 @@
 export type CluedRecord = {
   id: string;
   title?: string;
+  content?: string;
+  summary?: string;
   body?: string;
   record_type: "state" | "task" | "decision" | "archive" | "log" | "note";
   status?: string;
@@ -70,10 +72,14 @@ export function presentCluedRecord(
   record: CluedRecord,
   fallbackTitle: string,
 ): CluedRecordPresentation {
+  const conclusion = record.record_type === "log"
+    ? record.content ?? record.body ?? (record.payload ? JSON.stringify(record.payload) : record.summary ?? "")
+    : record.body ?? record.content ?? (record.payload ? JSON.stringify(record.payload) : record.summary ?? "");
+
   return {
     id: record.id,
     title: record.title ?? record.event_type ?? fallbackTitle,
-    conclusion: record.body ?? (record.payload ? JSON.stringify(record.payload) : ""),
+    conclusion,
     status: record.status ?? record.record_type,
     version: record.version ?? null,
     updatedAt: record.updated_at,
@@ -85,9 +91,21 @@ export function presentCluedRecordDisplay(
   fallbackTitle: string,
 ): CluedRecordDisplay {
   const presentation = presentCluedRecord(record, fallbackTitle);
-  const structuredValue = record.body
-    ? parseStructuredValue(record.body)
+  const structuredSource = record.body ?? record.content;
+  const structuredValue = structuredSource
+    ? parseStructuredValue(structuredSource)
     : record.payload ?? null;
+
+  if (record.record_type === "log") {
+    return {
+      ...presentation,
+      // A log's canonical content is evidence. Never replace or truncate it with
+      // an inferred label such as "action", "decision", or "blocker".
+      summary: record.content ?? record.body
+        ?? (record.payload ? JSON.stringify(record.payload) : record.summary ?? presentation.conclusion),
+      rawDetails: structuredValue ? JSON.stringify(structuredValue, null, 2) : null,
+    };
+  }
 
   if (!structuredValue) {
     return {

@@ -164,7 +164,7 @@ const copy = {
     workRecordTitle: "Title",
     workRecordContent: "Detail",
     canonicalIdLabel: "Canonical ID",
-    viewRawRecord: "View raw record",
+    viewStructuredRecord: "View structured record",
     addWorkRecord: "Add canonical record",
     workViewsError: "Clued could not load the unified work views.",
     signingOut: "Signing out…",
@@ -297,7 +297,7 @@ const copy = {
     workRecordTitle: "标题",
     workRecordContent: "详细内容",
     canonicalIdLabel: "Canonical ID",
-    viewRawRecord: "查看原始记录",
+    viewStructuredRecord: "查看结构化记录",
     addWorkRecord: "新增 canonical 记录",
     workViewsError: "Clued 暂时无法加载统一工作视图。",
     signingOut: "正在退出…",
@@ -1165,7 +1165,7 @@ export default function Home() {
                           <p>{display.summary || item.conclusion}</p>
                           {display.rawDetails && (
                             <details className="record-details">
-                              <summary>{t.viewRawRecord}</summary>
+                              <summary>{t.viewStructuredRecord}</summary>
                               <pre>{display.rawDetails}</pre>
                             </details>
                           )}

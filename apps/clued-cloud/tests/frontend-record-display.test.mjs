@@ -49,7 +49,36 @@ test("does not truncate plain-text record content", () => {
   assert.equal(item.rawDetails, null);
 });
 
-test("uses structured payloads and truncates oversized summaries", () => {
+test("shows canonical log content unchanged instead of an inferred structured summary", () => {
+  const content = "User-entered production log text. ".repeat(30);
+  const item = presentCluedRecordDisplay({
+    id: "record-log-content",
+    record_type: "log",
+    content,
+    body: JSON.stringify({ canonical_event_type: "blocker", conflict: "Retest needs authorization." }),
+    updated_at: updatedAt,
+  }, "Log");
+
+  assert.equal(item.summary, content);
+  assert.equal(item.conclusion, content);
+  assert.match(item.rawDetails, /"canonical_event_type": "blocker"/);
+});
+
+test("shows the complete log payload when the API has no separate content field", () => {
+  const payload = { action: "deploy", evidence: "7/7 PASS", nested: { preserved: true } };
+  const item = presentCluedRecordDisplay({
+    id: "record-log-payload",
+    record_type: "log",
+    payload,
+    updated_at: updatedAt,
+  }, "Log");
+
+  assert.equal(item.summary, JSON.stringify(payload));
+  assert.doesNotMatch(item.summary, /…$/);
+  assert.match(item.rawDetails, /"preserved": true/);
+});
+
+test("keeps structured log payloads complete instead of truncating them", () => {
   const longAction = "x".repeat(300);
   const item = presentCluedRecordDisplay({
     id: "record-3",
@@ -58,8 +87,8 @@ test("uses structured payloads and truncates oversized summaries", () => {
     updated_at: updatedAt,
   }, "Log");
 
-  assert.equal(item.summary.length, 238);
-  assert.match(item.summary, /…$/);
+  assert.equal(item.summary, JSON.stringify({ action: longAction, unknown_field: "preserved" }));
+  assert.doesNotMatch(item.summary, /…$/);
   assert.match(item.rawDetails, /"unknown_field": "preserved"/);
 });
 
@@ -76,6 +105,6 @@ test("ships wrapping containment and safe native raw-record rendering", async ()
   assert.match(page, /<details className="record-details">/);
   assert.match(page, /<pre>\{display\.rawDetails\}<\/pre>/);
   assert.doesNotMatch(page, /dangerouslySetInnerHTML/);
-  assert.match(page, /viewRawRecord: "View raw record"/);
-  assert.match(page, /viewRawRecord: "查看原始记录"/);
+  assert.match(page, /viewStructuredRecord: "View structured record"/);
+  assert.match(page, /viewStructuredRecord: "查看结构化记录"/);
 });
