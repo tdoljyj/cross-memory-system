@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { createClient, Session } from "@supabase/supabase-js";
 import Link from "next/link";
 import {
+  formatRecordTime,
   presentCluedLogCard,
   presentCluedRecord,
   presentCluedRecordDisplay,
@@ -175,6 +176,7 @@ const copy = {
     evidenceLabel: "Readable evidence",
     metadataLabel: "Metadata",
     rawRecordLabel: "Raw record",
+    viewFullJson: "View complete JSON",
     addWorkRecord: "Add canonical record",
     workViewsError: "Clued could not load the unified work views.",
     signingOut: "Signing out…",
@@ -313,6 +315,7 @@ const copy = {
     evidenceLabel: "可读证据",
     metadataLabel: "元数据",
     rawRecordLabel: "原始记录",
+    viewFullJson: "查看完整 JSON",
     addWorkRecord: "新增 canonical 记录",
     workViewsError: "Clued 暂时无法加载统一工作视图。",
     signingOut: "正在退出…",
@@ -1179,7 +1182,7 @@ export default function Home() {
                               <span className="log-card-dot" aria-hidden="true" />
                               <strong>{card.title}</strong>
                               <time className="log-card-time" dateTime={item.updatedAt}>
-                                {new Date(item.updatedAt).toLocaleString(locale)}
+                                {formatRecordTime(item.updatedAt, locale)}
                               </time>
                             </div>
                             <p className="log-card-summary">{card.summary}</p>
@@ -1190,37 +1193,42 @@ export default function Home() {
                                 ))}
                               </div>
                             )}
-                            <details className="record-details">
-                              <summary>{t.viewEvidence}</summary>
-                              {card.evidence.length > 0 && (
+                            {card.rawDetails && (
+                              <details className="record-details">
+                                <summary>{t.viewEvidence}</summary>
+                                {card.evidence.length > 0 && (
+                                  <div className="log-detail-group">
+                                    <h5>{t.evidenceLabel}</h5>
+                                    <dl className="log-detail-list">
+                                      {card.evidence.map((detail, index) => (
+                                        <div className="log-detail-row" key={`${detail.label}-${index}`}>
+                                          <dt>{detail.label}</dt>
+                                          <dd>{detail.value}</dd>
+                                        </div>
+                                      ))}
+                                    </dl>
+                                  </div>
+                                )}
                                 <div className="log-detail-group">
-                                  <h5>{t.evidenceLabel}</h5>
+                                  <h5>{t.metadataLabel}</h5>
                                   <dl className="log-detail-list">
-                                    {card.evidence.map((line) => (
-                                      <div className="log-detail-row" key={line.label}>
-                                        <dt>{line.label}</dt>
-                                        <dd>{line.value}</dd>
+                                    {card.metadata.map((detail) => (
+                                      <div className="log-detail-row" key={detail.label}>
+                                        <dt>{detail.label}</dt>
+                                        <dd>{detail.value}</dd>
                                       </div>
                                     ))}
                                   </dl>
                                 </div>
-                              )}
-                              <div className="log-detail-group">
-                                <h5>{t.metadataLabel}</h5>
-                                <dl className="log-detail-list">
-                                  {card.metadata.map((line) => (
-                                    <div className="log-detail-row" key={line.label}>
-                                      <dt>{line.label}</dt>
-                                      <dd>{line.value}</dd>
-                                    </div>
-                                  ))}
-                                </dl>
-                              </div>
-                              <div className="log-detail-group">
-                                <h5>{t.rawRecordLabel}</h5>
-                                <pre>{card.rawDetails}</pre>
-                              </div>
-                            </details>
+                                <details className="record-raw-details">
+                                  <summary>{t.viewFullJson}</summary>
+                                  <div className="log-detail-group">
+                                    <h5>{t.rawRecordLabel}</h5>
+                                    <pre>{card.rawDetails}</pre>
+                                  </div>
+                                </details>
+                              </details>
+                            )}
                           </article>
                         );
                       }

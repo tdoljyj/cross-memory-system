@@ -111,14 +111,16 @@ const ACTION_LABELS: Record<PresentationLocale, Record<string, string>> = {
   en: {
     merge_and_close_integrated_branches: "Merge and close integrated branches",
     merge_and_close_integration_branch: "Merge and close integration branch",
-    record_closed: "Close record",
+    record_closed: "Record closed",
+    record_updated: "Record updated",
     production_deployment_completed: "Readable log version deployed",
     production_deployment_blocked: "Cloudflare deployment not executed",
   },
   "zh-CN": {
     merge_and_close_integrated_branches: "合并并关闭集成分支",
     merge_and_close_integration_branch: "合并并关闭集成分支",
-    record_closed: "关闭记录",
+    record_closed: "记录已关闭",
+    record_updated: "记录已更新",
     production_deployment_completed: "日志可读化版本已部署",
     production_deployment_blocked: "Cloudflare 部署未执行",
   },
@@ -189,7 +191,7 @@ const LOG_CARD_COPY: Record<
   },
   "zh-CN": {
     systemEvent: "系统事件",
-    noSummary: "暂无可读摘要，请展开查看原始记录",
+    noSummary: "暂无可读摘要，请展开查看原始记录。",
     canonicalId: "Canonical ID",
     status: "状态",
     statusUnknown: "未记录",
@@ -280,7 +282,10 @@ function resolveExplicitStatus(
     record.status,
     root?.status,
     explicitOutcomeStatus(root?.outcome),
+    root?.verification,
     verification?.status,
+    root?.test_results,
+    root?.rollout,
     root?.change_summary,
     root?.result,
   ];
@@ -305,12 +310,22 @@ function explicitOutcomeStatus(value: unknown): string | null {
 function explicitStatusToken(value: unknown): string | null {
   const direct = normalizeStatusToken(value);
   if (direct) return direct;
-  if (Array.isArray(value)) {
-    for (const entry of value) {
-      const token = explicitStatusToken(entry);
-      if (token) return token;
-    }
+  if (typeof value === "string") {
+    const upper = value.toUpperCase();
+    if (/\b(FAILED|FAILURE|ERROR)\b|失败|错误/.test(upper)) return "FAILED";
+    if (/\bBLOCKED\b|阻断/.test(upper)) return "BLOCKED";
+    if (/\bPAUSED\b|暂停/.test(upper)) return "PAUSED";
+    if (/\b(PASS|PASSED|SUCCESS|SUCCEEDED)\b|成功|通过/.test(upper)) return "PASS";
+    if (/\b(COMPLETED|DONE)\b|完成/.test(upper)) return "COMPLETED";
     return null;
+  }
+  if (Array.isArray(value)) {
+    const tokens = value
+      .map(explicitStatusToken)
+      .filter((token): token is string => token !== null);
+    return tokens.find((token) => ["FAILED", "ERROR", "BLOCKED", "PAUSED"].includes(token))
+      ?? tokens[0]
+      ?? null;
   }
   const record = asRecord(value);
   if (!record) return null;
@@ -363,6 +378,31 @@ function logSummaryLines(value: StructuredValue): string[] {
     }
   }
   return lines;
+}
+
+function naturalizeMachineLine(value: string, locale: PresentationLocale): string {
+  const line = value.trim().replace(/\s+/g, " ");
+  if (locale !== "zh-CN") return line;
+  let match = line.match(/^npm test:?\s*(?:PASS|PASSED)\s*(\d+\/\d+)$/i);
+  if (match) return `测试 ${match[1]} 通过`;
+  match = line.match(/^frontend record display tests?:?\s*(?:PASS|PASSED)\s*(\d+\/\d+)$/i);
+  if (match) return `前端记录显示测试 ${match[1]} 通过`;
+  match = line.match(/^(\d+\/\d+)\s*(?:PASS|PASSED)$/i);
+  if (match) return `${match[1]} 项验证通过`;
+  if (/^build:?\s*(?:PASS|PASSED)$/i.test(line)) return "构建通过";
+  if (/^typecheck:?\s*(?:PASS|PASSED)$/i.test(line)) return "类型检查通过";
+  if (/^bidirectional:?\s*(?:PASS|PASSED)$/i.test(line)) return "双向检查通过";
+  match = line.match(/^healthz?\s*(\d{3})$/i);
+  if (match) return `健康检查返回 ${match[1]}`;
+  if (/^(main_worktree:\s*)?clean$/i.test(line)) return "工作树干净";
+  return line;
+}
+
+function formatLogSummary(lines: string[], locale: PresentationLocale): string {
+  const readable = [...new Set(lines.map((line) => naturalizeMachineLine(line, locale)))];
+  if (locale !== "zh-CN") return readable.join("; ");
+  const sentence = readable.join("；");
+  return /[。！？]$/.test(sentence) ? sentence : `${sentence}。`;
 }
 
 function humanizeIdentifier(value: string): string {
@@ -440,11 +480,27 @@ function buildTags(
   record: CluedRecord,
   value: StructuredValue | null,
   status: { tone: LogTone; label: string } | null,
+  locale: PresentationLocale,
 ): string[] {
   const tags: string[] = [];
 
   const eventType = eventTypeOf(record, value);
-  if (eventType) tags.push(eventType);
+  const root = asRecord(value);
+  const categorySource = [root?.action, eventType]
+    .filter((entry): entry is string => typeof entry === "string")
+    .join(" ")
+    .toLowerCase();
+  if (/deploy|production|rollout|cloudflare/.test(categorySource)) {
+    tags.push(locale === "zh-CN" ? "部署" : "Deploy");
+  } else if (/merge|branch|commit|git/.test(categorySource)) {
+    tags.push("Git");
+  } else if (/test|verif|candidate|check/.test(categorySource)) {
+    tags.push(locale === "zh-CN" ? "验证" : "Validation");
+  } else if (/record|archive/.test(categorySource)) {
+    tags.push(locale === "zh-CN" ? "记录" : "Record");
+  } else {
+    tags.push(locale === "zh-CN" ? "操作" : "Operation");
+  }
 
   if (status) tags.push(status.label);
 
@@ -660,7 +716,7 @@ export function presentCluedLogCard(
         : fallbackTitle || copy.systemEvent,
       summary,
       tone: status ? status.tone : "neutral",
-      tags: buildTags(record, null, status),
+      tags: buildTags(record, null, status, locale),
       evidence: [],
       metadata: buildMetadata(record, status, locale),
       rawDetails: hasLogEnvelope(record)
@@ -673,7 +729,7 @@ export function presentCluedLogCard(
   const summaryLines = logSummaryLines(structuredValue).filter((line) => line !== title);
   const eventType = eventTypeOf(record, structuredValue);
   const summary = summaryLines.length > 0
-    ? summaryLines.join("\n")
+    ? formatLogSummary(summaryLines, locale)
     : status && eventType
       ? `${actionLabel(eventType, locale)}${locale === "zh-CN" ? "：" : ": "}${status.label}`
       : copy.noSummary;
@@ -682,7 +738,7 @@ export function presentCluedLogCard(
     title,
     summary,
     tone: status ? status.tone : "neutral",
-    tags: buildTags(record, structuredValue, status),
+    tags: buildTags(record, structuredValue, status, locale),
     evidence: buildEvidence(structuredValue, locale),
     metadata: buildMetadata(record, status, locale),
     rawDetails: hasLogEnvelope(record)
@@ -726,6 +782,33 @@ export function presentCluedRecordDisplay(
     summary: summaryFromStructuredValue(structuredValue) ?? presentation.title,
     rawDetails: stringifyStructuredValue(structuredValue),
   };
+}
+
+export function formatRecordTime(
+  value: string,
+  locale: PresentationLocale,
+  now: Date = new Date(),
+): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  const time = date.toLocaleTimeString(locale, {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+  const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const startDate = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  const dayDifference = Math.round((startToday - startDate) / 86_400_000);
+  if (dayDifference === 0) return locale === "zh-CN" ? `今天 ${time}` : `Today ${time}`;
+  if (dayDifference === 1) return locale === "zh-CN" ? `昨天 ${time}` : `Yesterday ${time}`;
+  return date.toLocaleString(locale, {
+    year: date.getFullYear() === now.getFullYear() ? undefined : "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
 }
 
 export function formatCanonicalRecordReference(

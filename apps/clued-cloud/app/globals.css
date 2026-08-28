@@ -595,93 +595,6 @@ textarea:focus {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-.log-card { gap: 10px; }
-.log-card .log-card-head {
-  display: flex;
-  min-width: 0;
-  flex-wrap: wrap;
-  gap: 8px;
-  align-items: baseline;
-}
-.log-card .log-card-dot {
-  width: 7px;
-  height: 7px;
-  flex: none;
-  align-self: center;
-  border-radius: 999px;
-  background: #5c6b64;
-}
-.tone-success .log-card-dot { background: var(--green); }
-.tone-blocked .log-card-dot { background: #f0a05a; }
-.tone-error .log-card-dot { background: #ff6b6b; }
-.tone-neutral .log-card-dot { background: #5c6b64; }
-.log-card .log-card-head strong {
-  min-width: 0;
-  flex: 1 1 220px;
-  font-size: 12px;
-  overflow-wrap: anywhere;
-}
-.log-card .log-card-time {
-  flex: none;
-  margin-left: auto;
-  color: #68736c;
-  font-size: 9px;
-  white-space: nowrap;
-}
-.log-card .log-card-summary {
-  min-width: 0;
-  margin: 0;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
-  overflow: hidden;
-  color: #a7b0ab;
-  font-size: 11px;
-  line-height: 1.55;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-.log-card .log-card-tags { display: flex; min-width: 0; flex-wrap: wrap; gap: 6px; }
-.log-card .log-card-tag {
-  max-width: 100%;
-  padding: 3px 7px;
-  border: 1px solid rgba(255,255,255,.06);
-  border-radius: 999px;
-  background: rgba(255,255,255,.025);
-  color: #8d9891;
-  font-size: 9px;
-  overflow-wrap: anywhere;
-}
-.log-detail-group { min-width: 0; margin-top: 10px; }
-.log-detail-group h5 {
-  margin: 0 0 5px;
-  color: #8d9891;
-  font-size: 9px;
-  font-weight: 600;
-  letter-spacing: .04em;
-  text-transform: uppercase;
-}
-.log-detail-list { display: grid; min-width: 0; gap: 5px; margin: 0; }
-.log-detail-row {
-  display: grid;
-  min-width: 0;
-  grid-template-columns: minmax(72px, 34%) minmax(0, 1fr);
-  gap: 8px;
-  align-items: baseline;
-}
-.log-detail-row dt { min-width: 0; color: #68736c; font-size: 9px; overflow-wrap: anywhere; }
-.log-detail-row dd {
-  min-width: 0;
-  margin: 0;
-  color: #a7b0ab;
-  font-size: 10px;
-  overflow-wrap: anywhere;
-}
-@media (max-width: 560px) {
-  .log-card .log-card-head strong { flex-basis: 100%; }
-  .log-card .log-card-time { margin-left: 0; }
-  .log-detail-row { grid-template-columns: minmax(0, 1fr); gap: 2px; }
-}
 .record-details { min-width: 0; max-width: 100%; color: #7f8a84; font-size: 10px; }
 .record-details summary { width: fit-content; cursor: pointer; color: #8ff0bd; }
 .record-details pre {
@@ -698,6 +611,92 @@ textarea:focus {
   font: 10px/1.55 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+.log-card {
+  gap: 11px;
+  padding: 16px;
+  border-color: rgba(255,255,255,.075);
+  border-radius: 13px;
+  background: rgba(0,0,0,.14);
+}
+.log-card-head {
+  display: grid !important;
+  grid-template-columns: auto minmax(0,1fr) auto;
+  gap: 9px !important;
+  align-items: center !important;
+  justify-content: initial !important;
+}
+.log-card-head strong { font-size: 13px; line-height: 1.4; }
+.log-card-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #75837b;
+  box-shadow: 0 0 0 3px rgba(117,131,123,.08);
+}
+.tone-success .log-card-dot { background: var(--green); box-shadow: 0 0 0 3px rgba(65,226,155,.09); }
+.tone-blocked .log-card-dot { background: #f1b35b; box-shadow: 0 0 0 3px rgba(241,179,91,.09); }
+.tone-error .log-card-dot { background: #ff6f76; box-shadow: 0 0 0 3px rgba(255,111,118,.09); }
+.log-card-time {
+  color: #738079 !important;
+  font-size: 10px !important;
+  white-space: nowrap;
+}
+.log-card-summary,
+.log-card-tags,
+.log-card > .record-details { margin-left: 16px; }
+.log-card-summary { color: #b1bbb5 !important; font-size: 12px !important; line-height: 1.65 !important; }
+.log-card-tags {
+  display: flex !important;
+  flex-wrap: wrap;
+  justify-content: flex-start !important;
+  gap: 6px !important;
+}
+.log-card-tag {
+  width: fit-content;
+  max-width: 100%;
+  padding: 4px 9px;
+  color: #839089 !important;
+  border: 1px solid rgba(255,255,255,.07);
+  border-radius: 999px;
+  background: rgba(255,255,255,.025);
+  font-size: 10px !important;
+  line-height: 1.25;
+}
+.log-card > .record-details > summary { padding: 2px 0; font-size: 11px; }
+.log-card > .record-details[open] > summary { margin-bottom: 13px; }
+.log-detail-group {
+  display: grid !important;
+  gap: 8px !important;
+  justify-content: initial !important;
+  margin-top: 10px;
+  padding: 12px;
+  border: 1px solid rgba(255,255,255,.055);
+  border-radius: 10px;
+  background: rgba(255,255,255,.018);
+}
+.log-detail-group h5 { margin: 0; color: #8b9790; font-size: 10px; font-weight: 650; }
+.log-detail-list { display: grid; gap: 7px; margin: 0; }
+.log-detail-row {
+  display: grid !important;
+  grid-template-columns: minmax(105px,.34fr) minmax(0,1fr);
+  gap: 10px !important;
+  justify-content: initial !important;
+}
+.log-detail-row dt { color: #68756e; }
+.log-detail-row dd { min-width: 0; margin: 0; color: #a9b3ad; overflow-wrap: anywhere; }
+.record-raw-details { min-width: 0; max-width: 100%; margin-top: 12px; }
+.record-raw-details > summary { width: fit-content; cursor: pointer; color: #7ecfa4; }
+.record-raw-details .log-detail-group { padding: 0; border: 0; background: transparent; }
+.record-raw-details pre { margin-top: 0; }
+@media (max-width: 560px) {
+  .log-card { padding: 14px; }
+  .log-card-head { grid-template-columns: auto minmax(0,1fr); }
+  .log-card-time { grid-column: 2; }
+  .log-card-summary,
+  .log-card-tags,
+  .log-card > .record-details { margin-left: 16px; }
+  .log-detail-row { grid-template-columns: 1fr; gap: 3px !important; }
 }
 .continuity-panel {
   display: grid;
