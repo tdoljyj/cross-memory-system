@@ -3,7 +3,12 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { createClient, Session } from "@supabase/supabase-js";
 import Link from "next/link";
-import { presentCluedRecord, presentCluedRecordDisplay, type CluedRecord } from "./record-presentation";
+import {
+  presentCluedLogCard,
+  presentCluedRecord,
+  presentCluedRecordDisplay,
+  type CluedRecord,
+} from "./record-presentation";
 
 const SUPABASE_URL = "https://ccxsikzwxlolxqlosril.supabase.co";
 const SUPABASE_PUBLISHABLE_KEY =
@@ -166,6 +171,10 @@ const copy = {
     canonicalIdLabel: "Canonical ID",
     versionNotRecorded: "Version not recorded",
     viewRawRecord: "View raw record",
+    viewEvidence: "View evidence and raw record",
+    evidenceLabel: "Readable evidence",
+    metadataLabel: "Metadata",
+    rawRecordLabel: "Raw record",
     addWorkRecord: "Add canonical record",
     workViewsError: "Clued could not load the unified work views.",
     signingOut: "Signing out…",
@@ -300,6 +309,10 @@ const copy = {
     canonicalIdLabel: "Canonical ID",
     versionNotRecorded: "版本未记录",
     viewRawRecord: "查看原始记录",
+    viewEvidence: "查看证据与原始记录",
+    evidenceLabel: "可读证据",
+    metadataLabel: "元数据",
+    rawRecordLabel: "原始记录",
     addWorkRecord: "新增 canonical 记录",
     workViewsError: "Clued 暂时无法加载统一工作视图。",
     signingOut: "正在退出…",
@@ -1158,6 +1171,59 @@ export default function Home() {
                     ) : visibleRecords.map((record) => {
                       const item = presentCluedRecord(record, recordViewLabels[recordView]);
                       const display = presentCluedRecordDisplay(record, recordViewLabels[recordView], locale);
+                      if (record.record_type === "log") {
+                        const card = presentCluedLogCard(record, recordViewLabels[recordView], locale);
+                        return (
+                          <article className={`record-item log-card tone-${card.tone}`} key={item.id}>
+                            <div className="log-card-head">
+                              <span className="log-card-dot" aria-hidden="true" />
+                              <strong>{card.title}</strong>
+                              <time className="log-card-time" dateTime={item.updatedAt}>
+                                {new Date(item.updatedAt).toLocaleString(locale)}
+                              </time>
+                            </div>
+                            <p className="log-card-summary">{card.summary}</p>
+                            {card.tags.length > 0 && (
+                              <div className="log-card-tags">
+                                {card.tags.map((tag) => (
+                                  <span className="log-card-tag" key={tag}>{tag}</span>
+                                ))}
+                              </div>
+                            )}
+                            <details className="record-details">
+                              <summary>{t.viewEvidence}</summary>
+                              {card.evidence.length > 0 && (
+                                <div className="log-detail-group">
+                                  <h5>{t.evidenceLabel}</h5>
+                                  <dl className="log-detail-list">
+                                    {card.evidence.map((line) => (
+                                      <div className="log-detail-row" key={line.label}>
+                                        <dt>{line.label}</dt>
+                                        <dd>{line.value}</dd>
+                                      </div>
+                                    ))}
+                                  </dl>
+                                </div>
+                              )}
+                              <div className="log-detail-group">
+                                <h5>{t.metadataLabel}</h5>
+                                <dl className="log-detail-list">
+                                  {card.metadata.map((line) => (
+                                    <div className="log-detail-row" key={line.label}>
+                                      <dt>{line.label}</dt>
+                                      <dd>{line.value}</dd>
+                                    </div>
+                                  ))}
+                                </dl>
+                              </div>
+                              <div className="log-detail-group">
+                                <h5>{t.rawRecordLabel}</h5>
+                                <pre>{card.rawDetails}</pre>
+                              </div>
+                            </details>
+                          </article>
+                        );
+                      }
                       return (
                         <article className="record-item" key={item.id}>
                           <div>
