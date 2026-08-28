@@ -3,7 +3,7 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { createClient, Session } from "@supabase/supabase-js";
 import Link from "next/link";
-import { presentCluedRecord, type CluedRecord } from "./record-presentation";
+import { presentCluedRecord, presentCluedRecordDisplay, type CluedRecord } from "./record-presentation";
 
 const SUPABASE_URL = "https://ccxsikzwxlolxqlosril.supabase.co";
 const SUPABASE_PUBLISHABLE_KEY =
@@ -164,6 +164,7 @@ const copy = {
     workRecordTitle: "Title",
     workRecordContent: "Detail",
     canonicalIdLabel: "Canonical ID",
+    viewRawRecord: "View raw record",
     addWorkRecord: "Add canonical record",
     workViewsError: "Clued could not load the unified work views.",
     signingOut: "Signing out…",
@@ -296,6 +297,7 @@ const copy = {
     workRecordTitle: "标题",
     workRecordContent: "详细内容",
     canonicalIdLabel: "Canonical ID",
+    viewRawRecord: "查看原始记录",
     addWorkRecord: "新增 canonical 记录",
     workViewsError: "Clued 暂时无法加载统一工作视图。",
     signingOut: "正在退出…",
@@ -1153,13 +1155,20 @@ export default function Home() {
                       <p className="empty-bindings">{t.noWorkRecords}</p>
                     ) : visibleRecords.map((record) => {
                       const item = presentCluedRecord(record, recordViewLabels[recordView]);
+                      const display = presentCluedRecordDisplay(record, recordViewLabels[recordView]);
                       return (
                         <article className="record-item" key={item.id}>
                           <div>
                             <strong>{item.title}</strong>
                             <span>{item.status} · v{item.version ?? "n/a"} · {t.canonicalIdLabel}: {item.id}</span>
                           </div>
-                          <p>{item.conclusion}</p>
+                          <p>{display.summary || item.conclusion}</p>
+                          {display.rawDetails && (
+                            <details className="record-details">
+                              <summary>{t.viewRawRecord}</summary>
+                              <pre>{display.rawDetails}</pre>
+                            </details>
+                          )}
                           <time dateTime={item.updatedAt}>{new Date(item.updatedAt).toLocaleString(locale)}</time>
                         </article>
                       );
