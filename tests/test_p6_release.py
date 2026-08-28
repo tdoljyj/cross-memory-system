@@ -22,6 +22,8 @@ ALLOWED_EXACT = {
     "apps/clued-cloud/tests/p6-shadow-canary.test.mjs",
     "tests/test_p6_release.py",
     "docs/execution-plans/Clued_P6_Shadow_Canary_Publish_Rollback_Runbook_v1.0.md",
+    "docs/execution-plans/Clued_P6_Low_Cost_Shadow_Canary_Contract_v2.0.md",
+    "docs/execution-plans/Clued_P6_Low_Cost_Shadow_Canary_Contract_v3.0.md",
 }
 ALLOWED_PREFIXES = ("artifacts/clued-validation/p6/",)
 FORBIDDEN_PREFIXES = (

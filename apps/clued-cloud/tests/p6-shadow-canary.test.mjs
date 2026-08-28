@@ -620,7 +620,9 @@ test("Worker integration exposes optional Version Metadata, stable affinity, F26
     CF_VERSION_METADATA: { id: "version-candidate", tag: "p6-local", timestamp: "2026-08-27T00:00:00Z" },
   };
   const firstRequest = new Request("https://local.invalid/healthz");
-  const first = p6.decorateP6Response(firstRequest, Response.json({ ok: true }), metadata);
+  const mutableResponse = Response.json({ ok: true });
+  const first = p6.decorateP6Response(firstRequest, mutableResponse, metadata);
+  assert.equal(first, mutableResponse);
   assert.equal(first.headers.get("clued-version-id"), "version-candidate");
   const cookie = /clued_version_key=([^;]+)/.exec(first.headers.get("set-cookie") ?? "")?.[1];
   assert.ok(cookie);
@@ -633,6 +635,14 @@ test("Worker integration exposes optional Version Metadata, stable affinity, F26
   assert.equal(p6.resolveVersionAffinity(new Request("https://local.invalid", { headers: { cookie: `clued_version_key=${cookie}` } })).key, decodeURIComponent(cookie));
   assert.equal(p6.resolveVersionAffinity(new Request("https://local.invalid", { headers: { cookie: "clued_version_key=%E0%A4%A" } })).source, "generated_cookie");
   assert.equal(p6.normalizeScriptVersion({ id: "logpush-version", tag: "candidate" }).version_id, "logpush-version");
+  const immutableResponse = Response.redirect("https://local.invalid/next", 302);
+  const decoratedRedirect = p6.decorateP6Response(
+    new Request("https://local.invalid/redirect", { headers: { "Cloudflare-Workers-Version-Key": "probe-affinity-key" } }),
+    immutableResponse,
+    metadata,
+  );
+  assert.notEqual(decoratedRedirect, immutableResponse);
+  assert.equal(decoratedRedirect.headers.get("clued-version-id"), "version-candidate");
 
   const continuity = await bundleWorkerModule("worker/continuity.ts");
   const records = await bundleWorkerModule("worker/records.ts");
@@ -679,6 +689,7 @@ test("Canary state machine holds, stops, auto-rolls back, advances, and never re
     candidate_timeout_rate: 0.0005,
     p95_ratio: 1,
     p99_ratio: 1,
+    latency_measurement_contract: p6.P6_LATENCY_MEASUREMENT_CONTRACT,
     hard_violations: [],
     attribution_complete: true,
     receipts_complete: true,
@@ -693,8 +704,30 @@ test("Canary state machine holds, stops, auto-rolls back, advances, and never re
   const severeOnce = p6.evaluateCanaryWindow(state, { ...healthy, candidate_5xx_rate: 0.02 });
   assert.equal(severeOnce.action, "STOP");
   assert.equal(p6.evaluateCanaryWindow(severeOnce.next_state, { ...healthy, candidate_5xx_rate: 0.02 }).action, "AUTO_ROLLBACK");
-  assert.equal(p6.P6_CONTRACT, "clued.p6.shadow-canary-publish-rollback.v2");
+  assert.equal(p6.P6_CONTRACT, "clued.p6.shadow-canary-publish-rollback.v3");
   assert.equal(p6.P6_RELEASE_PROFILE, "fast-15m-1000-candidate-reads.v1");
+  assert.equal(p6.P6_LATENCY_MEASUREMENT_CONTRACT, "clued.p6.latency.sequential-mirrored-ab-ba.v1");
+  assert.deepEqual(
+    p6.evaluateCanaryWindow(state, {
+      ...healthy,
+      p95_ratio: 9,
+      p99_ratio: 9,
+      latency_measurement_contract: "concurrent-same-lane",
+    }),
+    {
+      action: "STOP",
+      reasons: ["STOP_LATENCY_MEASUREMENT_INVALID"],
+      next_state: state,
+    },
+  );
+  assert.equal(
+    p6.evaluateCanaryWindow(state, {
+      ...healthy,
+      latency_measurement_contract: "concurrent-same-lane",
+      hard_violations: ["CROSS_TENANT_LEAK"],
+    }).action,
+    "AUTO_ROLLBACK",
+  );
   assert.deepEqual(p6.P6_CANARY_PHASES, [
     { traffic_percent: 0, minimum_minutes: 2, minimum_requests: 100, purpose: "targeted_production_shadow" },
     { traffic_percent: 1, minimum_minutes: 2, minimum_requests: 50, purpose: "canary" },

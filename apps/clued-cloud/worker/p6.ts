@@ -1,5 +1,6 @@
-export const P6_CONTRACT = "clued.p6.shadow-canary-publish-rollback.v2";
+export const P6_CONTRACT = "clued.p6.shadow-canary-publish-rollback.v3";
 export const P6_RELEASE_PROFILE = "fast-15m-1000-candidate-reads.v1";
+export const P6_LATENCY_MEASUREMENT_CONTRACT = "clued.p6.latency.sequential-mirrored-ab-ba.v1";
 
 export interface P6FeatureEnv {
   CF_VERSION_METADATA?: WorkerVersionMetadata;
@@ -23,6 +24,7 @@ export interface CanaryWindow {
   candidate_timeout_rate: number;
   p95_ratio: number;
   p99_ratio: number;
+  latency_measurement_contract: string;
   hard_violations: string[];
   attribution_complete: boolean;
   receipts_complete: boolean;
@@ -111,10 +113,7 @@ function appendVary(headers: Headers, value: string) {
   headers.set("vary", [...values].join(", "));
 }
 
-export function decorateP6Response(request: Request, response: Response, env: P6FeatureEnv) {
-  const attribution = versionAttribution(env);
-  const affinity = resolveVersionAffinity(request);
-  const headers = new Headers(response.headers);
+function applyP6Headers(headers: Headers, attribution: P6VersionAttribution, affinity: ReturnType<typeof resolveVersionAffinity>) {
   headers.set("clued-version-id", attribution.version_id);
   headers.set("clued-version-tag", attribution.version_tag);
   headers.set("clued-version-attribution", attribution.source);
@@ -126,6 +125,19 @@ export function decorateP6Response(request: Request, response: Response, env: P6
       `clued_version_key=${encodeURIComponent(affinity.key)}; Path=/; Max-Age=31536000; Secure; HttpOnly; SameSite=Lax`,
     );
   }
+}
+
+export function decorateP6Response(request: Request, response: Response, env: P6FeatureEnv) {
+  const attribution = versionAttribution(env);
+  const affinity = resolveVersionAffinity(request);
+  try {
+    applyP6Headers(response.headers, attribution, affinity);
+    return response;
+  } catch (error) {
+    if (!(error instanceof TypeError)) throw error;
+  }
+  const headers = new Headers(response.headers);
+  applyP6Headers(headers, attribution, affinity);
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
 
@@ -154,10 +166,11 @@ export function evaluateCanaryWindow(state: CanaryState, window: CanaryWindow) {
 
   const immediateRollback = [...new Set(window.hard_violations)].sort();
   if (window.observability_blind_seconds > 120) immediateRollback.push("OBSERVABILITY_BLIND_OVER_120_SECONDS");
+  const latencyMeasurementValid = window.latency_measurement_contract === P6_LATENCY_MEASUREMENT_CONTRACT;
   const severe =
     window.candidate_5xx_rate > Math.max(0.01, window.baseline_5xx_rate + 0.005)
     || window.candidate_timeout_rate > Math.max(0.005, window.baseline_timeout_rate + 0.0025)
-    || window.p95_ratio > 1.25;
+    || (latencyMeasurementValid && window.p95_ratio > 1.25);
   const severeCount = severe ? state.consecutive_severe_windows + 1 : 0;
   if (severeCount >= 2) immediateRollback.push("TWO_CONSECUTIVE_SEVERE_WINDOWS");
   if (immediateRollback.length > 0) {
@@ -175,8 +188,9 @@ export function evaluateCanaryWindow(state: CanaryState, window: CanaryWindow) {
   if (window.candidate_timeout_rate > 0.005 || window.candidate_timeout_rate > window.baseline_timeout_rate + 0.001) {
     stopReasons.push("STOP_TIMEOUT_THRESHOLD");
   }
-  if (window.p95_ratio > 1.15) stopReasons.push("STOP_P95_THRESHOLD");
-  if (window.p99_ratio > 1.25) stopReasons.push("STOP_P99_THRESHOLD");
+  if (!latencyMeasurementValid) stopReasons.push("STOP_LATENCY_MEASUREMENT_INVALID");
+  if (latencyMeasurementValid && window.p95_ratio > 1.15) stopReasons.push("STOP_P95_THRESHOLD");
+  if (latencyMeasurementValid && window.p99_ratio > 1.25) stopReasons.push("STOP_P99_THRESHOLD");
   if (!window.attribution_complete) stopReasons.push("STOP_VERSION_ATTRIBUTION_INCOMPLETE");
   if (!window.receipts_complete) stopReasons.push("STOP_RECEIPT_OBSERVABILITY_INCOMPLETE");
   if (!window.rollback_ready) stopReasons.push("STOP_ROLLBACK_NOT_READY");
