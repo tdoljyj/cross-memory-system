@@ -19,6 +19,7 @@ import {
   operationReceipt,
   runIsolatedShadow,
   sha256,
+  summarizePairedLatency,
   verifyEvidenceSet,
   writeImmutableEvidenceSet,
 } from "../scripts/p6-shadow-canary.mjs";
@@ -655,6 +656,13 @@ test("Worker integration exposes optional Version Metadata, stable affinity, F26
   assert.equal(bootstrapResponse.headers.has("clued-version-id"), false);
   assert.equal(bootstrap.capabilities.p6_release_control.production_enabled, false);
   assert.equal(bootstrap.capabilities.p6_release_control.version_attribution.version_id, "version-candidate");
+  assert.equal(bootstrap.capabilities.p6_release_control.release_profile, "fast-15m-1000-candidate-reads.v2");
+  assert.equal(
+    bootstrap.capabilities.p6_release_control.latency_measurement_contract,
+    "clued.p6.latency.sequential-mirrored-ab-ba-robust.v2",
+  );
+  assert.equal(bootstrap.capabilities.p6_release_control.latency_policy.advisory_only_metrics.includes("p99_ratio"), true);
+  assert.equal(bootstrap.capabilities.p6_release_control.canary_budget.minimum_total_candidate_requests, 1_000);
   const gatedResponse = await continuity.handleContinuityRequest(
     new Request("https://local.invalid/v1/continuity/bootstrap"),
     { PROJECT_VIEWS_V2: "true", P6_RELEASE_CONTROL_ENABLED: "true", ...metadata },
@@ -687,6 +695,11 @@ test("Canary state machine holds, stops, auto-rolls back, advances, and never re
     candidate_5xx_rate: 0.001,
     baseline_timeout_rate: 0.0005,
     candidate_timeout_rate: 0.0005,
+    paired_sample_count: 20,
+    paired_median_delta_ms: 1,
+    paired_p80_delta_ms: 2,
+    paired_median_ratio: 1.01,
+    paired_p80_ratio: 1.02,
     p95_ratio: 1,
     p99_ratio: 1,
     latency_measurement_contract: p6.P6_LATENCY_MEASUREMENT_CONTRACT,
@@ -704,9 +717,25 @@ test("Canary state machine holds, stops, auto-rolls back, advances, and never re
   const severeOnce = p6.evaluateCanaryWindow(state, { ...healthy, candidate_5xx_rate: 0.02 });
   assert.equal(severeOnce.action, "STOP");
   assert.equal(p6.evaluateCanaryWindow(severeOnce.next_state, { ...healthy, candidate_5xx_rate: 0.02 }).action, "AUTO_ROLLBACK");
-  assert.equal(p6.P6_CONTRACT, "clued.p6.shadow-canary-publish-rollback.v3");
-  assert.equal(p6.P6_RELEASE_PROFILE, "fast-15m-1000-candidate-reads.v1");
-  assert.equal(p6.P6_LATENCY_MEASUREMENT_CONTRACT, "clued.p6.latency.sequential-mirrored-ab-ba.v1");
+  assert.equal(p6.P6_CONTRACT, "clued.p6.shadow-canary-publish-rollback.v4");
+  assert.equal(p6.P6_RELEASE_PROFILE, "fast-15m-1000-candidate-reads.v2");
+  assert.equal(p6.P6_LATENCY_MEASUREMENT_CONTRACT, "clued.p6.latency.sequential-mirrored-ab-ba-robust.v2");
+  assert.deepEqual(p6.P6_LATENCY_POLICY.advisory_only_metrics, ["p95_ratio", "p99_ratio"]);
+  assert.equal(p6.P6_LATENCY_POLICY.minimum_paired_samples_per_endpoint, 20);
+  assert.equal(
+    p6.evaluateCanaryWindow(state, { ...healthy, request_count: 100, p95_ratio: 9, p99_ratio: 9 }).action,
+    "ADVANCE",
+  );
+  assert.equal(
+    p6.evaluateCanaryWindow(state, { ...healthy, paired_p80_delta_ms: 16 }).action,
+    "STOP",
+  );
+  const robustSevereOnce = p6.evaluateCanaryWindow(state, { ...healthy, paired_median_ratio: 1.3 });
+  assert.equal(robustSevereOnce.action, "STOP");
+  assert.equal(
+    p6.evaluateCanaryWindow(robustSevereOnce.next_state, { ...healthy, paired_median_ratio: 1.3 }).action,
+    "AUTO_ROLLBACK",
+  );
   assert.deepEqual(
     p6.evaluateCanaryWindow(state, {
       ...healthy,
@@ -769,6 +798,99 @@ test("Canary state machine holds, stops, auto-rolls back, advances, and never re
     actions_verified: ["HOLD", "STOP", "AUTO_ROLLBACK", "ADVANCE"],
     real_canary_executed: false,
     result: "PASS",
+  });
+});
+
+test("G6-3B v4 treats single-point client p99 spikes as advisory while preserving robust paired gates", async () => {
+  const p6 = await bundleWorkerModule("worker/p6.ts");
+  const rows = Array.from({ length: 20 }, (_, index) => ({
+    endpoint: "/healthz",
+    baseline: { elapsed_ms: 100 },
+    candidate: { elapsed_ms: index === 19 ? 400 : 101 },
+  }));
+  const latency = summarizePairedLatency(rows);
+  assert.equal(latency.paired_sample_count, 20);
+  assert.equal(latency.paired_median_delta_ms, 1);
+  assert.equal(latency.paired_p80_delta_ms, 1);
+  assert.equal(latency.paired_median_ratio, 1.01);
+  assert.equal(latency.paired_p80_ratio, 1.01);
+  assert.equal(latency.p99_ratio, 4);
+  assert.equal(latency.percentile_role, "advisory_only");
+
+  const result = p6.evaluateCanaryWindow(
+    { phase_index: 0, consecutive_severe_windows: 0 },
+    {
+      request_count: 100,
+      duration_minutes: 2,
+      baseline_5xx_rate: 0,
+      candidate_5xx_rate: 0,
+      baseline_timeout_rate: 0,
+      candidate_timeout_rate: 0,
+      ...latency,
+      latency_measurement_contract: p6.P6_LATENCY_MEASUREMENT_CONTRACT,
+      hard_violations: [],
+      attribution_complete: true,
+      receipts_complete: true,
+      rollback_ready: true,
+      observability_blind_seconds: 0,
+    },
+  );
+  assert.equal(result.action, "ADVANCE");
+});
+
+test("G6-3B v4 paired latency summaries validate samples and gate every endpoint", async () => {
+  const p6 = await bundleWorkerModule("worker/p6.ts");
+  assert.throws(
+    () => summarizePairedLatency([{ endpoint: "/healthz", baseline: { elapsed_ms: 0 }, candidate: { elapsed_ms: 1 } }]),
+    /positive finite number/,
+  );
+  assert.throws(
+    () => summarizePairedLatency([{ endpoint: "", baseline: { elapsed_ms: 1 }, candidate: { elapsed_ms: 1 } }]),
+    /requires an endpoint/,
+  );
+
+  const rows = [
+    ...Array.from({ length: 20 }, () => ({
+      endpoint: "/healthz",
+      baseline: { elapsed_ms: 100 },
+      candidate: { elapsed_ms: 101 },
+    })),
+    ...Array.from({ length: 19 }, () => ({
+      endpoint: "/v1/continuity/bootstrap",
+      baseline: { elapsed_ms: 100 },
+      candidate: { elapsed_ms: 102 },
+    })),
+  ];
+  const latency = summarizePairedLatency(rows);
+  assert.equal(latency.endpoint_count, 2);
+  assert.equal(latency.paired_sample_count, 19);
+  assert.equal(latency.paired_median_delta_ms, 2);
+  assert.equal(latency.paired_p80_delta_ms, 2);
+  assert.equal(latency.paired_median_ratio, 1.02);
+  assert.equal(latency.paired_p80_ratio, 1.02);
+
+  const result = p6.evaluateCanaryWindow(
+    { phase_index: 0, consecutive_severe_windows: 0 },
+    {
+      request_count: 100,
+      duration_minutes: 2,
+      baseline_5xx_rate: 0,
+      candidate_5xx_rate: 0,
+      baseline_timeout_rate: 0,
+      candidate_timeout_rate: 0,
+      ...latency,
+      latency_measurement_contract: p6.P6_LATENCY_MEASUREMENT_CONTRACT,
+      hard_violations: [],
+      attribution_complete: true,
+      receipts_complete: true,
+      rollback_ready: true,
+      observability_blind_seconds: 0,
+    },
+  );
+  assert.deepEqual(result, {
+    action: "STOP",
+    reasons: ["STOP_LATENCY_MEASUREMENT_INVALID"],
+    next_state: { phase_index: 0, consecutive_severe_windows: 0 },
   });
 });
 

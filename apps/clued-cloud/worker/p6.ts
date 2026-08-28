@@ -1,6 +1,29 @@
-export const P6_CONTRACT = "clued.p6.shadow-canary-publish-rollback.v3";
-export const P6_RELEASE_PROFILE = "fast-15m-1000-candidate-reads.v1";
-export const P6_LATENCY_MEASUREMENT_CONTRACT = "clued.p6.latency.sequential-mirrored-ab-ba.v1";
+export const P6_CONTRACT = "clued.p6.shadow-canary-publish-rollback.v4";
+export const P6_RELEASE_PROFILE = "fast-15m-1000-candidate-reads.v2";
+export const P6_LATENCY_MEASUREMENT_CONTRACT = "clued.p6.latency.sequential-mirrored-ab-ba-robust.v2";
+
+export const P6_LATENCY_POLICY = Object.freeze({
+  minimum_paired_samples_per_endpoint: 20,
+  hard_gate_metrics: [
+    "paired_median_delta_ms",
+    "paired_p80_delta_ms",
+    "paired_median_ratio",
+    "paired_p80_ratio",
+  ],
+  advisory_only_metrics: ["p95_ratio", "p99_ratio"],
+  stop_thresholds: {
+    paired_median_delta_ms: 5,
+    paired_p80_delta_ms: 15,
+    paired_median_ratio: 1.1,
+    paired_p80_ratio: 1.2,
+  },
+  severe_thresholds: {
+    paired_median_delta_ms: 50,
+    paired_p80_delta_ms: 100,
+    paired_median_ratio: 1.25,
+    paired_p80_ratio: 1.5,
+  },
+} as const);
 
 export interface P6FeatureEnv {
   CF_VERSION_METADATA?: WorkerVersionMetadata;
@@ -22,6 +45,11 @@ export interface CanaryWindow {
   candidate_5xx_rate: number;
   baseline_timeout_rate: number;
   candidate_timeout_rate: number;
+  paired_sample_count: number;
+  paired_median_delta_ms: number;
+  paired_p80_delta_ms: number;
+  paired_median_ratio: number;
+  paired_p80_ratio: number;
   p95_ratio: number;
   p99_ratio: number;
   latency_measurement_contract: string;
@@ -53,6 +81,11 @@ export const P6_CANARY_BUDGET = Object.freeze({
 
 function finiteRate(value: number, field: string) {
   if (!Number.isFinite(value) || value < 0) throw new Error(`${field} must be a non-negative finite number.`);
+  return value;
+}
+
+function finiteNumber(value: number, field: string) {
+  if (!Number.isFinite(value)) throw new Error(`${field} must be a finite number.`);
   return value;
 }
 
@@ -161,16 +194,28 @@ export function evaluateCanaryWindow(state: CanaryState, window: CanaryWindow) {
   finiteRate(window.candidate_5xx_rate, "candidate_5xx_rate");
   finiteRate(window.baseline_timeout_rate, "baseline_timeout_rate");
   finiteRate(window.candidate_timeout_rate, "candidate_timeout_rate");
+  finiteRate(window.paired_sample_count, "paired_sample_count");
+  finiteNumber(window.paired_median_delta_ms, "paired_median_delta_ms");
+  finiteNumber(window.paired_p80_delta_ms, "paired_p80_delta_ms");
+  finiteRate(window.paired_median_ratio, "paired_median_ratio");
+  finiteRate(window.paired_p80_ratio, "paired_p80_ratio");
   finiteRate(window.p95_ratio, "p95_ratio");
   finiteRate(window.p99_ratio, "p99_ratio");
 
   const immediateRollback = [...new Set(window.hard_violations)].sort();
   if (window.observability_blind_seconds > 120) immediateRollback.push("OBSERVABILITY_BLIND_OVER_120_SECONDS");
-  const latencyMeasurementValid = window.latency_measurement_contract === P6_LATENCY_MEASUREMENT_CONTRACT;
+  const latencyMeasurementValid = window.latency_measurement_contract === P6_LATENCY_MEASUREMENT_CONTRACT
+    && window.paired_sample_count >= P6_LATENCY_POLICY.minimum_paired_samples_per_endpoint;
+  const robustLatencySevere = latencyMeasurementValid && (
+    window.paired_median_delta_ms > P6_LATENCY_POLICY.severe_thresholds.paired_median_delta_ms
+    || window.paired_p80_delta_ms > P6_LATENCY_POLICY.severe_thresholds.paired_p80_delta_ms
+    || window.paired_median_ratio > P6_LATENCY_POLICY.severe_thresholds.paired_median_ratio
+    || window.paired_p80_ratio > P6_LATENCY_POLICY.severe_thresholds.paired_p80_ratio
+  );
   const severe =
     window.candidate_5xx_rate > Math.max(0.01, window.baseline_5xx_rate + 0.005)
     || window.candidate_timeout_rate > Math.max(0.005, window.baseline_timeout_rate + 0.0025)
-    || (latencyMeasurementValid && window.p95_ratio > 1.25);
+    || robustLatencySevere;
   const severeCount = severe ? state.consecutive_severe_windows + 1 : 0;
   if (severeCount >= 2) immediateRollback.push("TWO_CONSECUTIVE_SEVERE_WINDOWS");
   if (immediateRollback.length > 0) {
@@ -189,8 +234,22 @@ export function evaluateCanaryWindow(state: CanaryState, window: CanaryWindow) {
     stopReasons.push("STOP_TIMEOUT_THRESHOLD");
   }
   if (!latencyMeasurementValid) stopReasons.push("STOP_LATENCY_MEASUREMENT_INVALID");
-  if (latencyMeasurementValid && window.p95_ratio > 1.15) stopReasons.push("STOP_P95_THRESHOLD");
-  if (latencyMeasurementValid && window.p99_ratio > 1.25) stopReasons.push("STOP_P99_THRESHOLD");
+  if (latencyMeasurementValid
+    && window.paired_median_delta_ms > P6_LATENCY_POLICY.stop_thresholds.paired_median_delta_ms) {
+    stopReasons.push("STOP_PAIRED_MEDIAN_DELTA_THRESHOLD");
+  }
+  if (latencyMeasurementValid
+    && window.paired_p80_delta_ms > P6_LATENCY_POLICY.stop_thresholds.paired_p80_delta_ms) {
+    stopReasons.push("STOP_PAIRED_P80_DELTA_THRESHOLD");
+  }
+  if (latencyMeasurementValid
+    && window.paired_median_ratio > P6_LATENCY_POLICY.stop_thresholds.paired_median_ratio) {
+    stopReasons.push("STOP_PAIRED_MEDIAN_RATIO_THRESHOLD");
+  }
+  if (latencyMeasurementValid
+    && window.paired_p80_ratio > P6_LATENCY_POLICY.stop_thresholds.paired_p80_ratio) {
+    stopReasons.push("STOP_PAIRED_P80_RATIO_THRESHOLD");
+  }
   if (!window.attribution_complete) stopReasons.push("STOP_VERSION_ATTRIBUTION_INCOMPLETE");
   if (!window.receipts_complete) stopReasons.push("STOP_RECEIPT_OBSERVABILITY_INCOMPLETE");
   if (!window.rollback_ready) stopReasons.push("STOP_ROLLBACK_NOT_READY");

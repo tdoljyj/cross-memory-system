@@ -79,6 +79,68 @@ export function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
 }
 
+function nearestRank(values, percentile) {
+  if (!Array.isArray(values) || values.length === 0) throw new Error("Latency percentile requires samples.");
+  const sorted = [...values].sort((left, right) => left - right);
+  const index = Math.max(0, Math.ceil(percentile * sorted.length) - 1);
+  return sorted[index];
+}
+
+function latencyNumber(value, field) {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    throw new Error(`${field} must be a positive finite number.`);
+  }
+  return value;
+}
+
+export function summarizePairedLatency(rows) {
+  if (!Array.isArray(rows) || rows.length === 0) throw new Error("Paired latency rows are required.");
+  const grouped = new Map();
+  for (const row of rows) {
+    if (!row || typeof row !== "object" || Array.isArray(row) || typeof row.endpoint !== "string" || !row.endpoint) {
+      throw new Error("Every paired latency row requires an endpoint.");
+    }
+    const baseline = latencyNumber(row.baseline?.elapsed_ms, "baseline.elapsed_ms");
+    const candidate = latencyNumber(row.candidate?.elapsed_ms, "candidate.elapsed_ms");
+    const group = grouped.get(row.endpoint) ?? { baseline: [], candidate: [], deltas: [], ratios: [] };
+    group.baseline.push(baseline);
+    group.candidate.push(candidate);
+    group.deltas.push(candidate - baseline);
+    group.ratios.push(candidate / baseline);
+    grouped.set(row.endpoint, group);
+  }
+
+  const perEndpoint = [...grouped.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([endpoint, group]) => {
+    const baselineP95 = nearestRank(group.baseline, 0.95);
+    const baselineP99 = nearestRank(group.baseline, 0.99);
+    return {
+      endpoint,
+      paired_sample_count: group.deltas.length,
+      paired_median_delta_ms: nearestRank(group.deltas, 0.5),
+      paired_p80_delta_ms: nearestRank(group.deltas, 0.8),
+      paired_median_ratio: nearestRank(group.ratios, 0.5),
+      paired_p80_ratio: nearestRank(group.ratios, 0.8),
+      p95_ratio: nearestRank(group.candidate, 0.95) / baselineP95,
+      p99_ratio: nearestRank(group.candidate, 0.99) / baselineP99,
+    };
+  });
+
+  const maximum = (field) => Math.max(...perEndpoint.map((item) => item[field]));
+  return {
+    contract: "clued.p6.paired-latency-summary.v1",
+    endpoint_count: perEndpoint.length,
+    paired_sample_count: Math.min(...perEndpoint.map((item) => item.paired_sample_count)),
+    paired_median_delta_ms: maximum("paired_median_delta_ms"),
+    paired_p80_delta_ms: maximum("paired_p80_delta_ms"),
+    paired_median_ratio: maximum("paired_median_ratio"),
+    paired_p80_ratio: maximum("paired_p80_ratio"),
+    p95_ratio: maximum("p95_ratio"),
+    p99_ratio: maximum("p99_ratio"),
+    percentile_role: "advisory_only",
+    per_endpoint: perEndpoint,
+  };
+}
+
 function semanticShape(value) {
   if (Array.isArray(value)) return value.map(semanticShape);
   if (!value || typeof value !== "object") return normalize(value);

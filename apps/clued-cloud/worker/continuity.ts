@@ -2,8 +2,12 @@ import { projectRpcByTool, projectTools } from "./projects";
 import { p5RpcByTool, p5TenantWritesEnabled, p5Tools, type P5FeatureEnv } from "./p5";
 import {
   decorateP6Response,
+  P6_CANARY_BUDGET,
   P6_CANARY_PHASES,
   P6_CONTRACT,
+  P6_LATENCY_MEASUREMENT_CONTRACT,
+  P6_LATENCY_POLICY,
+  P6_RELEASE_PROFILE,
   p6ReleaseControlEnabled,
   versionAttribution,
   type P6FeatureEnv,
@@ -171,11 +175,15 @@ function bootstrapContract(origin: string, env?: ContinuityEnv) {
       },
       p6_release_control: {
         contract: P6_CONTRACT,
+        release_profile: P6_RELEASE_PROFILE,
         implementation_scope: "isolated_candidate_code",
         production_enabled: false,
         version_attribution: versionAttribution(env ?? {}),
         affinity_input_header: "Cloudflare-Workers-Version-Key",
+        latency_measurement_contract: P6_LATENCY_MEASUREMENT_CONTRACT,
+        latency_policy: P6_LATENCY_POLICY,
         canary_phases: P6_CANARY_PHASES,
+        canary_budget: P6_CANARY_BUDGET,
       },
     },
     supported_mcp_versions: SUPPORTED_MCP_VERSIONS,
