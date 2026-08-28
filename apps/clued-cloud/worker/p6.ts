@@ -1,4 +1,5 @@
-export const P6_CONTRACT = "clued.p6.shadow-canary-publish-rollback.v1";
+export const P6_CONTRACT = "clued.p6.shadow-canary-publish-rollback.v2";
+export const P6_RELEASE_PROFILE = "fast-15m-1000-candidate-reads.v1";
 
 export interface P6FeatureEnv {
   CF_VERSION_METADATA?: WorkerVersionMetadata;
@@ -35,13 +36,18 @@ export interface CanaryState {
 }
 
 export const P6_CANARY_PHASES = Object.freeze([
-  { traffic_percent: 0, minimum_minutes: 24 * 60, minimum_requests: 1_000, purpose: "production_shadow" },
-  { traffic_percent: 1, minimum_minutes: 30, minimum_requests: 100, purpose: "canary" },
-  { traffic_percent: 5, minimum_minutes: 2 * 60, minimum_requests: 500, purpose: "canary" },
-  { traffic_percent: 25, minimum_minutes: 6 * 60, minimum_requests: 2_000, purpose: "canary" },
-  { traffic_percent: 50, minimum_minutes: 12 * 60, minimum_requests: 5_000, purpose: "canary" },
-  { traffic_percent: 100, minimum_minutes: 24 * 60, minimum_requests: 0, purpose: "stability_observation" },
+  { traffic_percent: 0, minimum_minutes: 2, minimum_requests: 100, purpose: "targeted_production_shadow" },
+  { traffic_percent: 1, minimum_minutes: 2, minimum_requests: 50, purpose: "canary" },
+  { traffic_percent: 5, minimum_minutes: 2, minimum_requests: 100, purpose: "canary" },
+  { traffic_percent: 25, minimum_minutes: 2, minimum_requests: 150, purpose: "canary" },
+  { traffic_percent: 50, minimum_minutes: 2, minimum_requests: 200, purpose: "canary" },
+  { traffic_percent: 100, minimum_minutes: 5, minimum_requests: 400, purpose: "stability_observation" },
 ] as const);
+
+export const P6_CANARY_BUDGET = Object.freeze({
+  minimum_total_minutes: P6_CANARY_PHASES.reduce((total, phase) => total + phase.minimum_minutes, 0),
+  minimum_total_candidate_requests: P6_CANARY_PHASES.reduce((total, phase) => total + phase.minimum_requests, 0),
+});
 
 function finiteRate(value: number, field: string) {
   if (!Number.isFinite(value) || value < 0) throw new Error(`${field} must be a non-negative finite number.`);

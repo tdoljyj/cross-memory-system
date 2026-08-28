@@ -671,8 +671,8 @@ test("Worker integration exposes optional Version Metadata, stable affinity, F26
 test("Canary state machine holds, stops, auto-rolls back, advances, and never relaxes frozen samples", async () => {
   const p6 = await bundleWorkerModule("worker/p6.ts");
   const healthy = {
-    request_count: 999,
-    duration_minutes: 24 * 60,
+    request_count: 99,
+    duration_minutes: 2,
     baseline_5xx_rate: 0.001,
     candidate_5xx_rate: 0.001,
     baseline_timeout_rate: 0.0005,
@@ -687,16 +687,52 @@ test("Canary state machine holds, stops, auto-rolls back, advances, and never re
   };
   const state = { phase_index: 0, consecutive_severe_windows: 0 };
   assert.equal(p6.evaluateCanaryWindow(state, healthy).action, "HOLD");
-  assert.equal(p6.evaluateCanaryWindow(state, { ...healthy, request_count: 1_000 }).action, "ADVANCE");
+  assert.equal(p6.evaluateCanaryWindow(state, { ...healthy, request_count: 100 }).action, "ADVANCE");
   assert.equal(p6.evaluateCanaryWindow(state, { ...healthy, candidate_5xx_rate: 0.004 }).action, "STOP");
   assert.equal(p6.evaluateCanaryWindow(state, { ...healthy, hard_violations: ["CROSS_TENANT_LEAK"] }).action, "AUTO_ROLLBACK");
   const severeOnce = p6.evaluateCanaryWindow(state, { ...healthy, candidate_5xx_rate: 0.02 });
   assert.equal(severeOnce.action, "STOP");
   assert.equal(p6.evaluateCanaryWindow(severeOnce.next_state, { ...healthy, candidate_5xx_rate: 0.02 }).action, "AUTO_ROLLBACK");
-  assert.deepEqual(p6.P6_CANARY_PHASES.map((phase) => phase.traffic_percent), [0, 1, 5, 25, 50, 100]);
+  assert.equal(p6.P6_CONTRACT, "clued.p6.shadow-canary-publish-rollback.v2");
+  assert.equal(p6.P6_RELEASE_PROFILE, "fast-15m-1000-candidate-reads.v1");
+  assert.deepEqual(p6.P6_CANARY_PHASES, [
+    { traffic_percent: 0, minimum_minutes: 2, minimum_requests: 100, purpose: "targeted_production_shadow" },
+    { traffic_percent: 1, minimum_minutes: 2, minimum_requests: 50, purpose: "canary" },
+    { traffic_percent: 5, minimum_minutes: 2, minimum_requests: 100, purpose: "canary" },
+    { traffic_percent: 25, minimum_minutes: 2, minimum_requests: 150, purpose: "canary" },
+    { traffic_percent: 50, minimum_minutes: 2, minimum_requests: 200, purpose: "canary" },
+    { traffic_percent: 100, minimum_minutes: 5, minimum_requests: 400, purpose: "stability_observation" },
+  ]);
+  assert.deepEqual(p6.P6_CANARY_BUDGET, {
+    minimum_total_minutes: 15,
+    minimum_total_candidate_requests: 1_000,
+  });
+  for (const [phaseIndex, phase] of p6.P6_CANARY_PHASES.entries()) {
+    const phaseState = { phase_index: phaseIndex, consecutive_severe_windows: 0 };
+    const atMinimum = {
+      ...healthy,
+      request_count: phase.minimum_requests,
+      duration_minutes: phase.minimum_minutes,
+    };
+    assert.notEqual(p6.evaluateCanaryWindow(phaseState, atMinimum).action, "HOLD");
+    if (phase.minimum_requests > 0) {
+      assert.equal(p6.evaluateCanaryWindow(phaseState, {
+        ...atMinimum,
+        request_count: phase.minimum_requests - 1,
+      }).action, "HOLD");
+    }
+    assert.equal(p6.evaluateCanaryWindow(phaseState, {
+      ...atMinimum,
+      duration_minutes: phase.minimum_minutes - 1,
+    }).action, "HOLD");
+  }
   recordEvidence("canary_state_machine_evidence.jsonl", {
-    scenario: "frozen_state_machine",
+    scenario: "fast_15m_1000_candidate_read_state_machine",
+    contract: p6.P6_CONTRACT,
+    release_profile: p6.P6_RELEASE_PROFILE,
     phases: [0, 1, 5, 25, 50, 100],
+    minimum_total_minutes: p6.P6_CANARY_BUDGET.minimum_total_minutes,
+    minimum_total_candidate_requests: p6.P6_CANARY_BUDGET.minimum_total_candidate_requests,
     actions_verified: ["HOLD", "STOP", "AUTO_ROLLBACK", "ADVANCE"],
     real_canary_executed: false,
     result: "PASS",
