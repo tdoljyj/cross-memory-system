@@ -78,6 +78,10 @@ const LOG_SUMMARY_FIELDS = [
   "result",
   "change_summary",
   "verification",
+  "test_results",
+  "rollout",
+  "merge_commits",
+  "outcome",
   "error",
   "reason",
 ] as const;
@@ -93,6 +97,10 @@ const NESTED_SUMMARY_FIELDS = [
   "production_impact",
   "impact",
   "note",
+  "frontend_record_display_tests",
+  "post_push_ancestor_check",
+  "main_worktree",
+  "remote_main",
 ] as const;
 
 const MAX_SUMMARY_LINES = 3;
@@ -113,6 +121,15 @@ const ACTION_LABELS: Record<PresentationLocale, Record<string, string>> = {
     record_closed: "关闭记录",
     production_deployment_completed: "日志可读化版本已部署",
     production_deployment_blocked: "Cloudflare 部署未执行",
+  },
+};
+
+const OUTCOME_LABELS: Record<PresentationLocale, Record<string, string>> = {
+  en: {
+    CLUED_LOG_DISPLAY_FIXED_IN_PRODUCTION: "Readable log version deployed",
+  },
+  "zh-CN": {
+    CLUED_LOG_DISPLAY_FIXED_IN_PRODUCTION: "日志可读化版本已部署",
   },
 };
 
@@ -153,6 +170,7 @@ const LOG_CARD_COPY: Record<
     updatedAt: string;
     zeroWrite: string;
     yes: string;
+    candidateValidation: string;
   }
 > = {
   en: {
@@ -167,6 +185,7 @@ const LOG_CARD_COPY: Record<
     updatedAt: "Updated at",
     zeroWrite: "Zero write",
     yes: "Yes",
+    candidateValidation: "Candidate validation",
   },
   "zh-CN": {
     systemEvent: "系统事件",
@@ -180,6 +199,7 @@ const LOG_CARD_COPY: Record<
     updatedAt: "更新时间",
     zeroWrite: "零写入",
     yes: "是",
+    candidateValidation: "候选版本验证",
   },
 };
 
@@ -259,6 +279,7 @@ function resolveExplicitStatus(
   const candidates: unknown[] = [
     record.status,
     root?.status,
+    explicitOutcomeStatus(root?.outcome),
     verification?.status,
     root?.change_summary,
     root?.result,
@@ -273,6 +294,12 @@ function resolveExplicitStatus(
   }
 
   return null;
+}
+
+function explicitOutcomeStatus(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const match = value.match(/^\s*(PASS|SUCCESS|COMPLETED|BLOCKED|PAUSED|FAILED|ERROR)\b/i);
+  return match ? match[1] : null;
 }
 
 function explicitStatusToken(value: unknown): string | null {
@@ -350,6 +377,14 @@ function actionLabel(value: string, locale: PresentationLocale): string {
   return ACTION_LABELS[locale][key] ?? humanizeIdentifier(key);
 }
 
+function outcomeLabel(value: unknown, locale: PresentationLocale): string | null {
+  if (typeof value !== "string") return null;
+  for (const [token, label] of Object.entries(OUTCOME_LABELS[locale])) {
+    if (value.includes(token)) return label;
+  }
+  return null;
+}
+
 function isTitlePlaceholder(value: string): boolean {
   return TITLE_PLACEHOLDERS.has(value.trim().toLowerCase());
 }
@@ -383,6 +418,11 @@ function resolveLogTitle(
   }
   if (root && typeof root.action === "string" && root.action.trim()) {
     candidates.push(actionLabel(root.action, locale));
+  }
+  const labeledOutcome = outcomeLabel(root?.outcome, locale);
+  if (labeledOutcome) candidates.push(labeledOutcome);
+  if (root && Array.isArray(root.test_results) && root.test_results.length > 0) {
+    candidates.push(copy.candidateValidation);
   }
   const eventType = eventTypeOf(record, value);
   if (eventType) candidates.push(actionLabel(eventType, locale));
@@ -631,7 +671,12 @@ export function presentCluedLogCard(
 
   const title = resolveLogTitle(record, structuredValue, locale);
   const summaryLines = logSummaryLines(structuredValue).filter((line) => line !== title);
-  const summary = summaryLines.length > 0 ? summaryLines.join("\n") : copy.noSummary;
+  const eventType = eventTypeOf(record, structuredValue);
+  const summary = summaryLines.length > 0
+    ? summaryLines.join("\n")
+    : status && eventType
+      ? `${actionLabel(eventType, locale)}${locale === "zh-CN" ? "：" : ": "}${status.label}`
+      : copy.noSummary;
 
   return {
     title,

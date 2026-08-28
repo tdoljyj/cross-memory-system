@@ -140,6 +140,82 @@ test("4. ID 577 shape: blocked records name the blocked target and never invent 
   assert.equal(insufficient.tone, "blocked");
 });
 
+test("production ID 577 envelope: a successful record close has a readable summary and preserves evidence", () => {
+  const card = presentCluedLogCard(logRecord({
+    id: "577",
+    event_type: "action",
+    canonical_event_type: "record_closed",
+    result: "success",
+    change_summary: [],
+    committed_canonical_version: 303,
+    receipt_id: "5a95db26-97a6-45bf-b575-e697bd4b163c",
+    evidence_refs: ["evidence-a", "evidence-b"],
+    payload: { canonical_event_type: "record_closed" },
+  }), "日志", "zh-CN");
+
+  assert.equal(card.title, "关闭记录");
+  assert.equal(card.summary, "关闭记录：成功");
+  assert.equal(card.tone, "success");
+  assert.ok(card.evidence.some((line) => line.label === "证据引用"));
+  assert.match(card.rawDetails, /5a95db26-97a6-45bf-b575-e697bd4b163c/);
+});
+
+test("production ID 578 payload: verification details become the merge summary", () => {
+  const card = presentCluedLogCard(logRecord({
+    id: "578",
+    event_type: "action",
+    payload: {
+      action: "merge_and_close_integrated_branches",
+      verification: {
+        remote_main: "c1789dd64d5e3717aa09fcf9588cb57d1ab009f6",
+        main_worktree: "clean",
+        post_push_ancestor_check: "bidirectional PASS",
+        frontend_record_display_tests: "7/7 PASS",
+      },
+    },
+  }), "日志", "zh-CN");
+
+  assert.equal(card.title, "合并并关闭集成分支");
+  assert.equal(card.summary, "7/7 PASS\nbidirectional PASS\nclean");
+  assert.equal(card.tone, "neutral");
+});
+
+test("production ID 579 payload: test results identify candidate validation and form its summary", () => {
+  const card = presentCluedLogCard(logRecord({
+    id: "579",
+    event_type: "action",
+    payload: {
+      branch: "codex/clued-log-display-readable-v1",
+      test_results: [
+        "npm test: PASS 97/97",
+        "frontend record display tests: PASS 13/13",
+        "typecheck: PASS",
+        "build: PASS",
+      ],
+    },
+  }), "日志", "zh-CN");
+
+  assert.equal(card.title, "候选版本验证");
+  assert.equal(card.summary, "npm test: PASS 97/97\nfrontend record display tests: PASS 13/13\ntypecheck: PASS");
+  assert.equal(card.tone, "neutral");
+});
+
+test("production ID 580 payload: outcome identifies the deployed version while verification stays primary", () => {
+  const card = presentCluedLogCard(logRecord({
+    id: "580",
+    event_type: "action",
+    payload: {
+      outcome: "PASS / CLUED_LOG_DISPLAY_FIXED_IN_PRODUCTION",
+      rollout: ["0% smoke PASS", "100% promotion PASS", "production P3 PASS"],
+      verification: ["npm test PASS 97/97", "build PASS", "healthz 200"],
+    },
+  }), "日志", "zh-CN");
+
+  assert.equal(card.title, "日志可读化版本已部署");
+  assert.equal(card.summary, "npm test PASS 97/97\nbuild PASS\nhealthz 200");
+  assert.equal(card.tone, "success");
+});
+
 test("5. explicit BLOCKED is shown as blocked while a missing status stays neutral", () => {
   const blocked = presentCluedLogCard(logRecord({
     id: "600",
