@@ -26,6 +26,7 @@
     "mcp:gate-receipt:test": "node --test evals/public-mcp/gate-receipt.test.mjs",
     "mcp:protocol:verify": "node evals/public-mcp/protocol-check.mjs",
     "mcp:latency:observe": "node evals/public-mcp/latency-check.mjs",
+    "mcp:a03:test": "node --test evals/public-mcp/a03-contract.test.mjs",
     "mcp:eval:positive": "promptfoo eval -c evals/public-mcp/promptfoo/positive.yaml --no-cache",
     "mcp:eval:negative": "promptfoo eval -c evals/public-mcp/promptfoo/negative.yaml --no-cache",
     "stage5:dry-run": "node scripts/stage5-legacy-dry-run.mjs --as-of 2026-08-24T05:35:54.968159Z --source-commit a11d73c139561d61cb3a2caaf3e3280771ac5562 --db-snapshot docs/clued-two-level-views/stage5-production-readonly-snapshot.json --output docs/clued-two-level-views/stage5-legacy-dry-run.json",

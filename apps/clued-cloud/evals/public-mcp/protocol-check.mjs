@@ -2,13 +2,28 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 
 const url = process.env.MCP_ISOLATED_URL ?? "http://127.0.0.1:8787/mcp";
-async function rpc(id, method, params = {}) {
+async function rpc(id, method, params = {}, authenticated = true) {
+  const headers = { "content-type": "application/json" };
+  if (authenticated) headers.authorization = `Bearer clued_bnd_${"a".repeat(43)}`;
   return await fetch(url, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers,
     body: JSON.stringify({ jsonrpc: "2.0", id, method, params }),
   });
 }
+
+const anonymousInitialize = await fetch(url, {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({
+    jsonrpc: "2.0",
+    id: 0,
+    method: "initialize",
+    params: { protocolVersion: "2025-06-18", capabilities: {} },
+  }),
+});
+assert.equal(anonymousInitialize.status, 401);
+assert.match(anonymousInitialize.headers.get("www-authenticate") ?? "", /^Bearer realm="Clued", resource_metadata=/);
 
 const initialize = await rpc(1, "initialize", {
   protocolVersion: "2025-06-18",
@@ -33,7 +48,7 @@ assert.deepEqual(listEnvelope.result.tools, baseline.tools);
 const protectedCall = await rpc(4, "tools/call", {
   name: "clued_session_resume",
   arguments: { context_key: "accept-pos-project" },
-});
+}, false);
 assert.equal(protectedCall.status, 401);
 assert.match(protectedCall.headers.get("www-authenticate") ?? "", /^Bearer realm="Clued", resource_metadata=/);
 assert.match((await protectedCall.json()).error.message, /Authorize with Clued OAuth or a Clued Binding Token/);
@@ -44,5 +59,6 @@ console.log(JSON.stringify({
   server_info: initialized.result.serverInfo,
   tool_count: listEnvelope.result.tools.length,
   protected_call_status: protectedCall.status,
+  initialization_challenge_status: anonymousInitialize.status,
   challenge_present: true,
 }));

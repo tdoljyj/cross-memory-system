@@ -974,6 +974,13 @@ async function handleMcp(request: Request, env: ContinuityEnv) {
   }
 
   try {
+    // Challenge during MCP connection setup, before Inspector can issue a
+    // protected tools/call.  The bearer is validated by the protected tool
+    // dispatcher; this gate only moves OAuth discovery/PKCE ahead of the
+    // business-call budget.
+    if (rpc.method === "initialize" && !bearerToken(request)) {
+      throw new HttpError(401, "Authorize with Clued OAuth or a Clued Binding Token.");
+    }
     if (rpc.method === "initialize") {
       const requestedVersion = rpc.params?.protocolVersion;
       const protocolVersion =
