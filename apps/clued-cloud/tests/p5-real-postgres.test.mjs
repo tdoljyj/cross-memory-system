@@ -546,7 +546,7 @@ test('P5 real PostgreSQL tenant isolation, concurrency, idempotency, rollback, a
     equal(logList[0].committed_canonical_version, 580);
     const logCard = presentCluedLogCard(logList[0], '日志', 'zh-CN');
     equal(logCard.title, '日志可读化版本已部署');
-    equal(logCard.summary, '97/97 PASS\nbuild PASS\nhealthz 200');
+    equal(logCard.summary, '97/97 项验证通过；构建通过；健康检查返回 200。');
     equal(logCard.tone, 'success');
     check(logCard.evidence.some((line) => line.value.includes('version-580')),
       'database artifact references reach the readable log card');

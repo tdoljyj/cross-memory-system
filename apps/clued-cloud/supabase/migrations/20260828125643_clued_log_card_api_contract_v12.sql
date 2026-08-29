@@ -37,9 +37,17 @@ begin
       ) as row_data
       from public.clued_context_events e
       left join public.clued_project_resolution_v2 r
-        on r.user_id=e.user_id and r.source_project_id=e.project_id
+        on r.user_id=e.user_id
+       and r.source_project_id=(substring(
+             e.event_scope
+             from '^project:([0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12})$'
+           ))::uuid
       where e.user_id=p_user_id
-        and (v_level='global' or coalesce(r.effective_project_id,e.project_id)=v_effective_project_id)
+        and e.audit_visibility='work_log'
+        and (
+          (v_level='global' and e.event_scope='global')
+          or (v_level='project' and r.effective_project_id=v_effective_project_id)
+        )
       order by e.id desc limit v_limit
     ) events;
   else
