@@ -1,0 +1,45 @@
+name: public-mcp-gate-receipt
+
+on:
+  pull_request:
+
+permissions:
+  actions: read
+  checks: read
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: public-mcp-gate-receipt-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  public-mcp-gate-receipt:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.19.0
+      - name: Verify exact-SHA four-green gate and issue receipt
+        env:
+          CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
+          GATE_REPOSITORY: ${{ github.repository }}
+          GATE_PR_NUMBER: ${{ github.event.pull_request.number }}
+          GATE_RECEIPT_OUTPUT: ${{ runner.temp }}/public-mcp-gate-receipt.json
+          GH_TOKEN: ${{ github.token }}
+        run: node apps/clued-cloud/evals/public-mcp/gate-receipt.mjs
+      - name: Hash gate receipt
+        run: sha256sum "${{ runner.temp }}/public-mcp-gate-receipt.json" > "${{ runner.temp }}/SHA256SUMS"
+      - name: Upload immutable gate evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: public-mcp-gate-receipt-${{ github.event.pull_request.head.sha }}
+          path: |
+            ${{ runner.temp }}/public-mcp-gate-receipt.json
+            ${{ runner.temp }}/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 90
