@@ -9,6 +9,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
 import { build, stop as stopEsbuild } from 'esbuild';
+import { presentCluedLogCard } from '../app/record-presentation.ts';
 
 const TEST_DIR = path.dirname(fileURLToPath(import.meta.url));
 const CLOUD_ROOT = path.resolve(TEST_DIR, '..');
@@ -522,6 +523,34 @@ test('P5 real PostgreSQL tenant isolation, concurrency, idempotency, rollback, a
     const migrationNames = await applyMigrations(admin);
     await seed(admin);
     const pgVersion = (await admin.query('select version() as version')).rows[0].version;
+
+    await admin.query(`insert into public.clued_context_events(
+      id,user_id,context_key,event_type,payload,event_schema_version,
+      committed_canonical_version,canonical_event_type,target_refs,event_scope,
+      change_summary,result,audit_visibility,evidence_refs,artifact_refs,content_hash
+    ) values
+      (880580,$1,'global','action','{"canonical_event_type":"production_deployment_completed"}',
+        1,580,'production_deployment_completed','[]','global',
+        '[{"summary":"97/97 PASS"},{"summary":"build PASS"},{"summary":"healthz 200"}]',
+        'success','work_log','{}','[{"kind":"worker_version","id":"version-580"}]',$3),
+      (880581,$2,'global','action','{"canonical_event_type":"must_remain_private"}',
+        null,null,null,null,null,null,null,null,null,null,null)`,
+    [IDS.userOwner, IDS.userTenantB, 'a'.repeat(64)]);
+    const logList = (await admin.query(
+      `select clued_private.record_list_core($1,'{"level":"global","record_type":"log","limit":200}') as result`,
+      [IDS.userOwner],
+    )).rows[0].result.records;
+    equal(logList.length, 1, 'log list keeps another tenant event isolated');
+    equal(logList[0].canonical_event_type, 'production_deployment_completed');
+    equal(logList[0].change_summary[2].summary, 'healthz 200');
+    equal(logList[0].committed_canonical_version, 580);
+    const logCard = presentCluedLogCard(logList[0], '日志', 'zh-CN');
+    equal(logCard.title, '日志可读化版本已部署');
+    equal(logCard.summary, '97/97 项验证通过；构建通过；健康检查返回 200。');
+    equal(logCard.tone, 'success');
+    check(logCard.evidence.some((line) => line.value.includes('version-580')),
+      'database artifact references reach the readable log card');
+    await admin.query('delete from public.clued_context_events where id in (880580,880581)');
 
     // Independent-review repair: every public P5 RPC is denied to Data API
     // roles even when the caller knows a valid Binding hash. Only the minimal
@@ -1784,6 +1813,7 @@ test('P5 real PostgreSQL tenant isolation, concurrency, idempotency, rollback, a
         'apps/clued-cloud/supabase/migrations/20260827062132_p5_concurrent_attempt_replay.sql',
         'apps/clued-cloud/supabase/migrations/20260827072012_p5_expired_attempt_reissue.sql',
         'apps/clued-cloud/supabase/migrations/20260827084500_p5_attempt_reissue_linearization.sql',
+        'apps/clued-cloud/supabase/migrations/20260828125643_clued_log_card_api_contract_v12.sql',
         'cloud/postgres/README.md',
         'cloud/postgres/migrations/0001_cloud_data_foundation.up.sql',
       ],
