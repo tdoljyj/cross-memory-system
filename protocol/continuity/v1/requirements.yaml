@@ -1,0 +1,61 @@
+{
+  "schema_version": "requirements-v1",
+  "registry_id": "urn:clued:requirements:continuity:v1:bootstrap-candidate",
+  "definition_version": "0.0.1-bootstrap",
+  "registry_status": "frozen_pending_g1",
+  "g1_qualified": false,
+  "source_contract_uri": "urn:clued:contract:kernel-next:v3.3",
+  "source_contract_digest": "sha256:f967fdf3e63028d29ed191160698726b5d707aaae63bd951f6ba2e8584936fec",
+  "canonicalization": "json-c14n-sorted-keys-v1",
+  "digest_basis": "sha256:utf8(statement)",
+  "requirements": [
+    {
+      "requirement_id": "REQ-V00-SOURCE-LOCK",
+      "typed_uri": "urn:clued:requirement:REQ-V00-SOURCE-LOCK:v1",
+      "definition_version": "0.0.1-bootstrap",
+      "rule_phase": "evaluation",
+      "canonical_kind": "requirement",
+      "canonical_uri": "protocol/continuity/v1/requirements.yaml",
+      "canonical_pointer": "#/requirements/0",
+      "source_refs": ["v3.3#0", "v1.5#V00"],
+      "statement": "V00 must lock exact contract, plan, candidate commit, tree, and release BOM digests before dispatch.",
+      "content_digest": "sha256:f32be9780a8a2ec4374edc9cdea5022349807afdfce490353958e2c09bccfc55"
+    },
+    {
+      "requirement_id": "REQ-V00-AUTHORIZATION-BOUNDARY",
+      "typed_uri": "urn:clued:requirement:REQ-V00-AUTHORIZATION-BOUNDARY:v1",
+      "definition_version": "0.0.1-bootstrap",
+      "rule_phase": "evaluation",
+      "canonical_kind": "requirement",
+      "canonical_uri": "protocol/continuity/v1/requirements.yaml",
+      "canonical_pointer": "#/requirements/1",
+      "source_refs": ["v3.3#authorization", "v1.5#human-approval"],
+      "statement": "V00 writes are limited to the run Evidence directory and must not authorize production, incremental cost, or waits over thirty minutes.",
+      "content_digest": "sha256:32af39e4a2b19f612f1c6bcc6c109e1e2f0520cf3d7fa562681bccdc320000f8"
+    },
+    {
+      "requirement_id": "REQ-V00-RECOVERY-INPUTS",
+      "typed_uri": "urn:clued:requirement:REQ-V00-RECOVERY-INPUTS:v1",
+      "definition_version": "0.0.1-bootstrap",
+      "rule_phase": "evaluation",
+      "canonical_kind": "requirement",
+      "canonical_uri": "protocol/continuity/v1/requirements.yaml",
+      "canonical_pointer": "#/requirements/2",
+      "source_refs": ["v3.3#27", "v1.5#2.1"],
+      "statement": "A V00 PASS requires a verified release BOM, executable pinned driver, authoritative v1 registry path, and deterministic generated-artifact verification.",
+      "content_digest": "sha256:317da74345139f3a10e5f625aac08e92f91b10bd923c2005c789799c33346583"
+    },
+    {
+      "requirement_id": "REQ-V00-DISPATCH-GUARD",
+      "typed_uri": "urn:clued:requirement:REQ-V00-DISPATCH-GUARD:v1",
+      "definition_version": "0.0.1-bootstrap",
+      "rule_phase": "evaluation",
+      "canonical_kind": "requirement",
+      "canonical_uri": "protocol/continuity/v1/requirements.yaml",
+      "canonical_pointer": "#/requirements/3",
+      "source_refs": ["v1.5#2.2", "v1.5#V01"],
+      "statement": "V00 completion may release only non-production preparation; implementation writes remain subject to V01 and V01A prerequisites.",
+      "content_digest": "sha256:ed57e8c8d21eeb4844535ad03f5a711693226246a1bc20e8c9ebf20c4fca3e36"
+    }
+  ]
+}
