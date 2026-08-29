@@ -13,15 +13,18 @@ It is implementation material only until the Worker change is separately approve
 
 The standard Supabase OAuth JWT does not promise an RFC 8707 `resource` claim. An absent claim is recorded as `null`; it is not rewritten into a synthetic PASS value. Resource selection is evidenced independently by protected-resource discovery and the authorization request.
 
+Inspector 2.4.0 Web stores OAuth tokens in `byIssuer[activeIssuer]`, while its CLI `--use-stored-auth` path reads only top-level token fields. The A03 session adapter stages only that CLI compatibility projection in the same isolated `oauth.json` during the one protected call and restores the original file bytes in `finally`. It never puts a token in argv, stdout, stderr, evidence, or Git.
+
 ## Fixed local configuration
 
-Use `a03-inspector-config.json` and an isolated state file:
+Use `a03-inspector-config.json` and an isolated storage directory. Inspector Web 2.4.0 resolves its OAuth state from `MCP_STORAGE_DIR`; the A03 session commands resolve the same `<directory>\oauth.json`:
 
 ```powershell
 $env:CLIENT_PORT='6400'
 $env:MCP_SANDBOX_PORT='6401'
 $env:MCP_APP_ORIGIN_PORT='6402'
-$env:MCP_INSPECTOR_OAUTH_STATE_PATH='<fresh-local-directory>\oauth.json'
+$env:MCP_STORAGE_DIR='<fresh-local-directory>'
+$env:MCP_INSPECTOR_OAUTH_STATE_PATH="$env:MCP_STORAGE_DIR\oauth.json"
 npx --no-install mcp-inspector --config evals/public-mcp/a03-inspector-config.json
 ```
 

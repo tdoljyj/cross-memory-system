@@ -52,6 +52,38 @@ export async function clearStoredA03State(statePath) {
   return { cleared_resource: A03.resource, other_server_count: Object.keys(state.servers).length };
 }
 
+export async function stageStoredAuthForInspectorCli(statePath) {
+  const original = await readFile(statePath);
+  const state = JSON.parse(original.toString("utf8"));
+  const resource = normalizedResource();
+  const key = state.servers?.[resource] ? resource : A03.resource;
+  const server = state.servers?.[key];
+  assert.ok(server, "A03 OAuth state is missing");
+  const slot = activeOAuthSlot(server);
+  const clientInformation = slot.clientInformation
+    ?? server.clientInformation
+    ?? server.preregisteredClientInformation;
+  const tokens = slot.tokens ?? server.tokens;
+  const serverMetadata = slot.serverMetadata ?? server.serverMetadata;
+  assert.equal(clientInformation?.client_id, A03.clientId, "stored OAuth client_id drift");
+  assert.equal(typeof tokens?.access_token, "string", "stored access token is missing");
+
+  // Inspector 2.4.0 Web persists issuer-scoped auth under byIssuer[activeIssuer],
+  // while its CLI --use-stored-auth reader only checks the top-level fields.
+  // Stage the minimum compatibility projection in the same isolated state file;
+  // callers must restore the exact original bytes in a finally block.
+  state.servers[key] = {
+    ...server,
+    tokens,
+    clientInformation,
+    ...(serverMetadata ? { serverMetadata } : {}),
+  };
+  await writeFile(statePath, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
+  return async function restoreOriginalState() {
+    await writeFile(statePath, original, { mode: 0o600 });
+  };
+}
+
 function summarizeInspectorResult(stdout) {
   const parsed = JSON.parse(stdout);
   const structured = parsed?.structuredContent
@@ -70,14 +102,26 @@ function summarizeInspectorResult(stdout) {
   };
 }
 
-export async function runExactReadonlyCall({ spawn = spawnSync } = {}) {
+export async function runExactReadonlyCall({
+  spawn = spawnSync,
+  statePath = oauthStatePath(),
+} = {}) {
   const { launcherPath } = await resolveInspectorInstall();
   const argv = exactReadonlyCallArgv(launcherPath);
-  const result = spawn(process.execPath, argv, {
-    encoding: "utf8",
-    env: process.env,
-    windowsHide: true,
-  });
+  const restoreOriginalState = await stageStoredAuthForInspectorCli(statePath);
+  let result;
+  try {
+    result = spawn(process.execPath, argv, {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        MCP_INSPECTOR_OAUTH_STATE_PATH: statePath,
+      },
+      windowsHide: true,
+    });
+  } finally {
+    await restoreOriginalState();
+  }
   if (result.error) throw result.error;
   if (result.status !== 0) {
     throw new Error(`Inspector call failed closed (exit ${String(result.status)}); no retry was attempted`);

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFileSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -9,7 +10,26 @@ import {
   validateAndRedactClaims,
   validateAuthorizationRequest,
 } from "./a03-contract.mjs";
-import { clearStoredA03State, readStoredAccessToken, runExactReadonlyCall } from "./a03-session.mjs";
+import {
+  clearStoredA03State,
+  readStoredAccessToken,
+  runExactReadonlyCall,
+} from "./a03-session.mjs";
+
+function isolatedOAuthState(accessToken = "test-access-token") {
+  return {
+    servers: {
+      [new URL(A03.resource).href]: {
+        activeIssuer: A03.issuer,
+        preregisteredClientInformation: { client_id: A03.clientId },
+        byIssuer: {
+          [A03.issuer]: { tokens: { access_token: accessToken } },
+        },
+      },
+    },
+    idpSessions: {},
+  };
+}
 
 test("accepts only the fixed A03 PKCE authorization request", () => {
   const url = new URL(`${A03.issuer}/authorize`);
@@ -58,27 +78,67 @@ test("builds one fail-closed Inspector call with exact empty arguments", () => {
 });
 
 test("executes the Inspector transport exactly once and emits no project bodies", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "clued-a03-call-"));
+  const statePath = path.join(directory, "oauth.json");
+  const original = `${JSON.stringify(isolatedOAuthState(), null, 2)}\n`;
+  await writeFile(statePath, original, { mode: 0o600 });
   const calls = [];
-  const summary = await runExactReadonlyCall({
-    spawn(command, argv, options) {
-      calls.push({ command, argv, options });
-      return {
-        status: 0,
-        stdout: JSON.stringify({ result: { structuredContent: { status: "ok", projects: [] } } }),
-        stderr: "",
-      };
-    },
-  });
-  assert.equal(calls.length, 1);
-  assert.deepEqual(summary, {
-    status: "ok",
-    inspector_version: "2.4.0",
-    tool: A03.tool,
-    arguments: {},
-    protected_tool_transport_attempts: 1,
-    project_count: 0,
-  });
-  assert.doesNotMatch(JSON.stringify(summary), /access_token|refresh_token|projects\s*:/i);
+  try {
+    const summary = await runExactReadonlyCall({
+      statePath,
+      spawn(command, argv, options) {
+        const staged = JSON.parse(readFileSync(options.env.MCP_INSPECTOR_OAUTH_STATE_PATH, "utf8"));
+        const server = staged.servers[new URL(A03.resource).href];
+        assert.equal(server.tokens.access_token, "test-access-token");
+        assert.equal(server.byIssuer[A03.issuer].tokens.access_token, "test-access-token");
+        calls.push({ command, argv, options });
+        return {
+          status: 0,
+          stdout: JSON.stringify({ result: { structuredContent: { status: "ok", projects: [] } } }),
+          stderr: "",
+        };
+      },
+    });
+    assert.equal(calls.length, 1);
+    assert.deepEqual(summary, {
+      status: "ok",
+      inspector_version: "2.4.0",
+      tool: A03.tool,
+      arguments: {},
+      protected_tool_transport_attempts: 1,
+      project_count: 0,
+    });
+    assert.doesNotMatch(JSON.stringify(summary), /access_token|refresh_token|projects\s*:/i);
+    assert.equal(await readFile(statePath, "utf8"), original);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("restores issuer-scoped OAuth state after one fail-closed Inspector attempt", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "clued-a03-fail-"));
+  const statePath = path.join(directory, "oauth.json");
+  const original = JSON.stringify(isolatedOAuthState("failure-path-token"));
+  await writeFile(statePath, original, { mode: 0o600 });
+  let attempts = 0;
+  try {
+    await assert.rejects(
+      runExactReadonlyCall({
+        statePath,
+        spawn(_command, _argv, options) {
+          attempts += 1;
+          const staged = JSON.parse(readFileSync(options.env.MCP_INSPECTOR_OAUTH_STATE_PATH, "utf8"));
+          assert.equal(staged.servers[new URL(A03.resource).href].tokens.access_token, "failure-path-token");
+          return { status: 3, stdout: "", stderr: "auth required" };
+        },
+      }),
+      /failed closed \(exit 3\); no retry was attempted/,
+    );
+    assert.equal(attempts, 1);
+    assert.equal(await readFile(statePath, "utf8"), original);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("reads and clears only the fixed A03 OAuth state", async () => {
