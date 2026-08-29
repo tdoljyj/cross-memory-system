@@ -19,3 +19,9 @@ clued/cloud_data/lifecycle.py:generic-api-key:106
 memory_engine/manifest_guard.py:generic-api-key:83
 docs/r4-gate0/evidence/frozen-eval-manifest.json:generic-api-key:566
 docs/r4-gate0/evidence/model-manifest.redacted.json:generic-api-key:22
+
+# EX-10..11: A03 reconciliation records the registered public OAuth client UUID
+# before and after the read-only call. The client uses token auth method `none`;
+# these exact UUID fields are identifiers, not credentials or authorization data.
+artifacts/clued-validation/public-mcp/a03/c1ef7a3b-20260829T062104Z/production-reconciliation.json:generic-api-key:19
+artifacts/clued-validation/public-mcp/a03/c1ef7a3b-20260829T062104Z/production-reconciliation.json:generic-api-key:20
