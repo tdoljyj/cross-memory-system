@@ -1,0 +1,22 @@
+{
+  "contract": "clued-pre-kernel-public-mcp-a12-p0-results/1",
+  "candidate_sha": "f4ae3a5279268fac72d80dc482a308d2965d9e85",
+  "result": "PASS",
+  "steps": [
+    {"id":"A00","result":"PASS","summary":"v1.0 source SHA recomputed; v1.1 amendment fixed; 38 unique items mapped"},
+    {"id":"A01","result":"PASS","summary":"Streamable HTTP, anonymous 401 challenge, initialize, ping and protocol version verified","run_id":33240424281},
+    {"id":"A02","result":"PASS","summary":"16-tool baseline, schemas, scopes, annotations, internal isolation and four flag combinations verified","run_id":33240424281},
+    {"id":"A03","result":"PASS","summary":"Production OAuth + PKCE S256 and exactly one approved read-only call; redacted evidence sealed","evidence_commit":"2b786acfa35a7230f69220ded40eea8e8f4d0f4c"},
+    {"id":"A04","result":"PASS","summary":"Five positive case definitions passed; append idempotency repeat also passed","run_id":33240424291},
+    {"id":"A05","result":"PASS","summary":"Three negative fail-closed cases passed with isolated fixtures","run_id":33240424291},
+    {"id":"A06","result":"PASS","summary":"Real PostgreSQL tenant, idempotency, CAS, receipt and transaction tests passed","run_id":33240424291},
+    {"id":"A07","result":"PASS","summary":"Gitleaks 8.30.1 complete-history scan passed after exact public-identifier exception","run_id":33240424282},
+    {"id":"A08","result":"PASS_OPTIONAL","summary":"Disposable Gitleaks detector self-test failed nonzero as required; fixture removed"},
+    {"id":"A09","result":"PASS","summary":"Trivy 0.74.0 vulnerability, secret and misconfiguration gates passed","run_id":33240424285},
+    {"id":"A10","result":"NOT_REQUIRED_P2","summary":"License/SBOM observation remains non-blocking"},
+    {"id":"A11","result":"PASS","summary":"Exact-SHA four-green Gate Receipt plus four controlled failures; workflow static scan found zero continue-on-error, set +e or || true patterns"},
+    {"id":"A12","result":"PASS","summary":"38/38 items structurally mapped; 37 executed PASS plus SC-14 trace-ready for mandatory independent A13; production zero write, redaction, manifest and digests sealed"}
+  ],
+  "p0_complete": 12,
+  "p0_expected": 12
+}

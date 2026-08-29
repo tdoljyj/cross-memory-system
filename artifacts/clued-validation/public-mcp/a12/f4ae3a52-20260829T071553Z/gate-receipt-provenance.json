@@ -1,0 +1,12 @@
+{
+  "contract": "clued-pre-kernel-public-mcp-gate-receipt-provenance/1",
+  "candidate_sha": "f4ae3a5279268fac72d80dc482a308d2965d9e85",
+  "workflow_run_id": 33240424303,
+  "workflow_job_id": 99068704337,
+  "artifact_id": 9711238776,
+  "artifact_name": "public-mcp-gate-receipt-f4ae3a5279268fac72d80dc482a308d2965d9e85",
+  "github_archive_sha256": "02953681a7ff8903ec4955d0b813833955fddaa6204b31439a1cab34e3e222b0",
+  "receipt_sha256": "c90e6124e1293303415ea68a46f2ad4d755eb64f5a41c0648552c6a4f2c803f5",
+  "artifact_internal_sha256sums_verified": true,
+  "result": "PASS"
+}
