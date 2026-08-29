@@ -15,6 +15,8 @@ const TEST_DIR = path.dirname(fileURLToPath(import.meta.url));
 const CLOUD_ROOT = path.resolve(TEST_DIR, '..');
 const REPO_ROOT = path.resolve(CLOUD_ROOT, '..', '..');
 const MIGRATIONS = path.join(CLOUD_ROOT, 'supabase', 'migrations');
+const PR8_LOG_MIGRATION = '20260828125643_clued_log_card_api_contract_v12.sql';
+const LOG_ISOLATION_FORWARD_MIGRATION = '20260829091757_clued_log_isolation_forward_fix.sql';
 const EVIDENCE_DIR = process.env.CLD_P5_EVIDENCE_DIR
   ? path.resolve(process.env.CLD_P5_EVIDENCE_DIR)
   : null;
@@ -118,6 +120,43 @@ async function unusedPort() {
   return port;
 }
 
+function deployedProductionPr8Sql(repairedMigrationSql) {
+  const repairedJoin = `left join public.clued_project_resolution_v2 r
+        on r.user_id=e.user_id
+       and r.source_project_id=(substring(
+             e.event_scope
+             from '^project:([0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12})$'
+           ))::uuid`;
+  const deployedJoin = `left join public.clued_project_resolution_v2 r
+        on r.user_id=e.user_id and r.source_project_id=e.project_id`;
+  const repairedFilter = `where e.user_id=p_user_id
+        and e.audit_visibility='work_log'
+        and (
+          (v_level='global' and e.event_scope='global')
+          or (v_level='project' and r.effective_project_id=v_effective_project_id)
+        )`;
+  const deployedFilter = `where e.user_id=p_user_id
+        and (v_level='global' or coalesce(r.effective_project_id,e.project_id)=v_effective_project_id)`;
+  const deployedSql = repairedMigrationSql
+    .replace(repairedJoin, deployedJoin)
+    .replace(repairedFilter, deployedFilter);
+  check(deployedSql !== repairedMigrationSql
+    && deployedSql.includes('coalesce(r.effective_project_id,e.project_id)=v_effective_project_id'),
+  'production PR8 fixture restores the already-deployed vulnerable function definition');
+  return deployedSql;
+}
+
+async function recordListFunctionIdentity(client) {
+  return (await client.query(`select p.oid::text as oid,
+    md5(pg_get_functiondef(p.oid)) as definition_md5,
+    pg_get_functiondef(p.oid) as definition,
+    has_function_privilege('anon',p.oid,'EXECUTE') as anon_execute,
+    has_function_privilege('authenticated',p.oid,'EXECUTE') as authenticated_execute
+    from pg_proc p join pg_namespace n on n.oid=p.pronamespace
+    where n.nspname='clued_private' and p.proname='record_list_core'
+      and pg_get_function_identity_arguments(p.oid)='p_user_id uuid, p_input jsonb'`)).rows[0];
+}
+
 async function applyMigrations(client) {
   await client.query(`
     create role authenticator nologin noinherit;
@@ -138,8 +177,45 @@ async function applyMigrations(client) {
     grant execute on function auth.uid(),auth.jwt() to anon,authenticated,service_role;
   `);
   const names = (await fs.readdir(MIGRATIONS)).filter((name) => name.endsWith('.sql')).sort();
-  for (const name of names) await client.query(await fs.readFile(path.join(MIGRATIONS, name), 'utf8'));
-  return names;
+  const pr8Index = names.indexOf(PR8_LOG_MIGRATION);
+  const forwardIndex = names.indexOf(LOG_ISOLATION_FORWARD_MIGRATION);
+  check(pr8Index >= 0 && forwardIndex > pr8Index,
+    'forward log-isolation migration sorts after the already-applied PR8 migration');
+  let productionBefore;
+  let upgradedAfter;
+  for (const name of names) {
+    if (name === LOG_ISOLATION_FORWARD_MIGRATION) {
+      const repairedPr8Sql = await fs.readFile(path.join(MIGRATIONS, PR8_LOG_MIGRATION), 'utf8');
+      await client.query(deployedProductionPr8Sql(repairedPr8Sql));
+      productionBefore = await recordListFunctionIdentity(client);
+      check(productionBefore.definition.includes('coalesce(r.effective_project_id,e.project_id)=v_effective_project_id')
+        && !productionBefore.definition.includes("e.audit_visibility = 'work_log'")
+        && !productionBefore.definition.includes("e.audit_visibility='work_log'"),
+      'pre-upgrade database has the production PR8 log-isolation defect');
+    }
+    await client.query(await fs.readFile(path.join(MIGRATIONS, name), 'utf8'));
+    if (name === LOG_ISOLATION_FORWARD_MIGRATION) upgradedAfter = await recordListFunctionIdentity(client);
+  }
+  check(productionBefore && upgradedAfter, 'upgrade probe observed both production-old and forward-migrated definitions');
+  equal(upgradedAfter.oid, productionBefore.oid,
+    'forward migration replaces record_list_core in place without changing its identity');
+  check(upgradedAfter.definition_md5 !== productionBefore.definition_md5
+    && (upgradedAfter.definition.includes("e.audit_visibility = 'work_log'")
+      || upgradedAfter.definition.includes("e.audit_visibility='work_log'")),
+  'forward migration replaces the production-old function with the work_log filter');
+  equal({ anon_execute: upgradedAfter.anon_execute, authenticated_execute: upgradedAfter.authenticated_execute },
+    { anon_execute: false, authenticated_execute: false },
+    'forward migration keeps the private core unavailable to Data API roles');
+  return {
+    names,
+    logIsolationUpgrade: {
+      from: PR8_LOG_MIGRATION,
+      through: LOG_ISOLATION_FORWARD_MIGRATION,
+      function_oid_preserved: upgradedAfter.oid === productionBefore.oid,
+      definition_replaced: upgradedAfter.definition_md5 !== productionBefore.definition_md5,
+      data_api_execute_revoked: !upgradedAfter.anon_execute && !upgradedAfter.authenticated_execute,
+    },
+  };
 }
 
 async function seed(client) {
@@ -520,7 +596,7 @@ test('P5 real PostgreSQL tenant isolation, concurrency, idempotency, rollback, a
     admin = server.getPgClient();
     clients.push(admin);
     await admin.connect();
-    const migrationNames = await applyMigrations(admin);
+    const { names: migrationNames, logIsolationUpgrade } = await applyMigrations(admin);
     await seed(admin);
     const pgVersion = (await admin.query('select version() as version')).rows[0].version;
 
@@ -550,6 +626,11 @@ test('P5 real PostgreSQL tenant isolation, concurrency, idempotency, rollback, a
     equal(logCard.tone, 'success');
     check(logCard.evidence.some((line) => line.value.includes('version-580')),
       'database artifact references reach the readable log card');
+    record('log_isolation_upgrade_evidence.jsonl', 'production_PR8_to_forward_migration', {
+      ...logIsolationUpgrade,
+      post_upgrade_global_isolation: logList.length === 1,
+      post_upgrade_expected_event: logList[0].canonical_event_type,
+    });
     await admin.query('delete from public.clued_context_events where id in (880580,880581)');
 
     // Independent-review repair: every public P5 RPC is denied to Data API
@@ -1795,6 +1876,7 @@ test('P5 real PostgreSQL tenant isolation, concurrency, idempotency, rollback, a
     const summary = {
       postgres_version: pgVersion,
       migration_count: migrationNames.length,
+      log_isolation_upgrade: logIsolationUpgrade,
       assertions: assertionCount,
       real_connections: true,
       rls_executed: true,
@@ -1814,6 +1896,7 @@ test('P5 real PostgreSQL tenant isolation, concurrency, idempotency, rollback, a
         'apps/clued-cloud/supabase/migrations/20260827072012_p5_expired_attempt_reissue.sql',
         'apps/clued-cloud/supabase/migrations/20260827084500_p5_attempt_reissue_linearization.sql',
         'apps/clued-cloud/supabase/migrations/20260828125643_clued_log_card_api_contract_v12.sql',
+        'apps/clued-cloud/supabase/migrations/20260829091757_clued_log_isolation_forward_fix.sql',
         'cloud/postgres/README.md',
         'cloud/postgres/migrations/0001_cloud_data_foundation.up.sql',
       ],
