@@ -10,6 +10,9 @@ export const A03 = Object.freeze({
   clientId: "87924be5-cec9-415f-b1a2-8a4d9ae9d1a8",
   callbackUrl: "http://localhost:6400/oauth/callback",
   issuer: "https://ccxsikzwxlolxqlosril.supabase.co/auth/v1",
+  authorizationEndpoint: "https://ccxsikzwxlolxqlosril.supabase.co/auth/v1/oauth/authorize",
+  inspectorProxyPort: 6400,
+  inspectorInternalPort: 6403,
   subject: "e9dc13e7-41b0-421b-bfa3-07890675e92d",
   oauthScopes: Object.freeze(["openid", "email", "profile"]),
   tool: "clued_project_list",
@@ -18,18 +21,24 @@ export const A03 = Object.freeze({
 export function validateAuthorizationRequest(value) {
   const url = value instanceof URL ? value : new URL(value);
   const scope = (url.searchParams.get("scope") ?? "").trim().split(/\s+/).filter(Boolean);
+  const challenge = url.searchParams.get("code_challenge") ?? "";
+  assert.equal(`${url.origin}${url.pathname}`, A03.authorizationEndpoint, "unexpected OAuth authorization endpoint");
+  assert.equal(url.searchParams.get("response_type"), "code", "unexpected OAuth response_type");
   assert.equal(url.searchParams.get("client_id"), A03.clientId, "unexpected OAuth client_id");
   assert.equal(url.searchParams.get("redirect_uri"), A03.callbackUrl, "unexpected OAuth redirect_uri");
   assert.deepEqual(url.searchParams.getAll("resource"), [A03.resource], "unexpected OAuth resource");
   assert.equal(url.searchParams.get("code_challenge_method"), "S256", "PKCE must use S256");
-  assert.ok(url.searchParams.get("code_challenge"), "PKCE code_challenge is required");
+  assert.ok(challenge, "PKCE code_challenge is required");
   assert.ok(scope.every((item) => A03.oauthScopes.includes(item)), "OAuth scope exceeds A03 allowance");
   return {
+    authorization_endpoint: A03.authorizationEndpoint,
+    response_type: "code",
     client_id: A03.clientId,
     redirect_uri: A03.callbackUrl,
     resource: A03.resource,
     code_challenge_method: "S256",
     code_challenge_present: true,
+    code_challenge_length: challenge.length,
     scope,
   };
 }

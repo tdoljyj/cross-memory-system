@@ -29,17 +29,19 @@ $env:MCP_INSPECTOR_OAUTH_STATE_PATH="$env:MCP_STORAGE_DIR\oauth.json"
 node evals/public-mcp/a03-session.mjs inspector
 ```
 
-`HOST=localhost` is mandatory: Inspector 2.4.0 otherwise defaults to `127.0.0.1` and derives the wrong OAuth callback origin. The session adapter overrides inherited `HOST` and `CLIENT_PORT` values for both Inspector Web and its stored-auth CLI process; use the adapter command above rather than launching Inspector directly.
+`HOST=localhost` is mandatory: Inspector 2.4.0 otherwise defaults to `127.0.0.1` and derives the wrong OAuth callback origin. The session adapter exposes a redacting loopback proxy on `localhost:6400`, runs Inspector itself on the fixed internal port `6403`, and disables Inspector's internal auto-open. Open only the bare `http://localhost:6400/` URL. The browser still derives the registered callback `http://localhost:6400/oauth/callback` from its visible origin.
+
+The proxy instruments the pinned Inspector 2.4.0 OAuth navigation hook in memory. Immediately before navigation it synchronously submits the authorization URL to a one-shot, nonce-bound, same-origin endpoint. The endpoint validates the fixed authorization server, response type, client, callback, resource, S256 method, non-empty challenge and scope allowance. It writes only `pkce-and-callback.redacted.json`; the complete URL, state, challenge, verifier, authorization code and tokens are never persisted or logged. A missing/drifted hook, rejected assertion, or duplicate assertion blocks navigation and fails the attempt closed. The installed Inspector package is never modified.
 
 Connect only to `clued-a03-production-readonly`. The Owner enters the password, verification code and consent. Do not capture the launcher URL because it contains the Inspector API token.
 
-Before consent, copy only the authorization-server URL from the browser and validate it through stdin so the complete challenge is never written to a command line or evidence file:
+After the authorization redirect has started, read only the already-redacted one-shot assertion:
 
 ```powershell
-Get-Clipboard | node evals/public-mcp/a03-session.mjs authorization-request
+node evals/public-mcp/a03-session.mjs pkce
 ```
 
-Store only this command's redacted output.
+The command must succeed before claims validation or any protected call. Store only this redacted output. Do not inspect the browser history, authorization URL, Inspector OAuth internals, or Supabase temporary authorization rows to reconstruct missing evidence.
 
 After consent, save only redacted claims:
 

@@ -1,22 +1,34 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { EventEmitter, once } from "node:events";
+import http from "node:http";
 import { readFileSync } from "node:fs";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
   A03,
   exactReadonlyCallArgv,
+  resolveInspectorInstall,
   validateAndRedactClaims,
   validateAuthorizationRequest,
 } from "./a03-contract.mjs";
 import {
   a03InspectorEnvironment,
+  a03InspectorWebEnvironment,
   clearStoredA03State,
+  readRedactedPkceAssertion,
   readStoredAccessToken,
   runExactReadonlyCall,
   runInspectorWeb,
 } from "./a03-session.mjs";
+import {
+  captureRedactedPkceAssertion,
+  createA03InspectorProxy,
+  instrumentInspectorBundle,
+  instrumentInspectorHtml,
+  pkceAssertionPath,
+} from "./a03-pkce-proxy.mjs";
 
 function isolatedOAuthState(accessToken = "test-access-token") {
   return {
@@ -34,7 +46,8 @@ function isolatedOAuthState(accessToken = "test-access-token") {
 }
 
 test("accepts only the fixed A03 PKCE authorization request", () => {
-  const url = new URL(`${A03.issuer}/authorize`);
+  const url = new URL(A03.authorizationEndpoint);
+  url.searchParams.set("response_type", "code");
   url.searchParams.set("client_id", A03.clientId);
   url.searchParams.set("redirect_uri", A03.callbackUrl);
   url.searchParams.set("resource", A03.resource);
@@ -42,11 +55,14 @@ test("accepts only the fixed A03 PKCE authorization request", () => {
   url.searchParams.set("code_challenge", "redacted-nonempty-value");
   url.searchParams.set("scope", "openid email profile");
   assert.deepEqual(validateAuthorizationRequest(url), {
+    authorization_endpoint: A03.authorizationEndpoint,
+    response_type: "code",
     client_id: A03.clientId,
     redirect_uri: A03.callbackUrl,
     resource: A03.resource,
     code_challenge_method: "S256",
     code_challenge_present: true,
+    code_challenge_length: 23,
     scope: ["openid", "email", "profile"],
   });
   const wrongCallback = new URL(url);
@@ -54,6 +70,161 @@ test("accepts only the fixed A03 PKCE authorization request", () => {
   assert.throws(() => validateAuthorizationRequest(wrongCallback), /redirect_uri/);
   url.searchParams.set("code_challenge_method", "plain");
   assert.throws(() => validateAuthorizationRequest(url), /S256/);
+});
+
+test("persists only a redacted one-shot PKCE assertion", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "clued-a03-pkce-"));
+  const outputPath = pkceAssertionPath(directory);
+  const url = new URL(A03.authorizationEndpoint);
+  url.searchParams.set("response_type", "code");
+  url.searchParams.set("client_id", A03.clientId);
+  url.searchParams.set("redirect_uri", A03.callbackUrl);
+  url.searchParams.set("resource", A03.resource);
+  url.searchParams.set("code_challenge_method", "S256");
+  url.searchParams.set("code_challenge", "complete-secret-challenge-must-not-persist");
+  url.searchParams.set("state", "complete-secret-state-must-not-persist");
+  url.searchParams.set("scope", "openid email profile");
+  try {
+    const assertion = await captureRedactedPkceAssertion(url.href, outputPath, {
+      now: () => new Date("2026-08-29T06:00:00.000Z"),
+    });
+    assert.equal(assertion.code_challenge_present, true);
+    assert.equal(assertion.code_challenge_length, 42);
+    const stored = await readFile(outputPath, "utf8");
+    assert.doesNotMatch(stored, /complete-secret-challenge|complete-secret-state|code_verifier|authorization_code/);
+    await assert.rejects(
+      captureRedactedPkceAssertion(url.href, outputPath),
+      (error) => error?.code === "EEXIST",
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("refuses to echo unexpected fields from a tampered PKCE assertion", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "clued-a03-pkce-tamper-"));
+  const outputPath = pkceAssertionPath(directory);
+  const valid = {
+    authorization_endpoint: A03.authorizationEndpoint,
+    captured_at: "2026-08-29T06:00:00.000Z",
+    client_id: A03.clientId,
+    code_challenge_length: 43,
+    code_challenge_method: "S256",
+    code_challenge_present: true,
+    contract: "clued-a03-pkce-redacted-v1",
+    redirect_uri: A03.callbackUrl,
+    resource: A03.resource,
+    response_type: "code",
+    scope: ["openid", "email", "profile"],
+  };
+  try {
+    await writeFile(outputPath, JSON.stringify({ ...valid, code_challenge: "must-not-echo" }));
+    await assert.rejects(
+      readRedactedPkceAssertion({ MCP_STORAGE_DIR: directory }),
+      /unexpected PKCE assertion fields/,
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("instruments the exact Inspector 2.4.0 navigation hook fail closed", () => {
+  const observerPath = `/__a03/pkce-assertion/${"a".repeat(64)}`;
+  const source = "before;return t?.(n),window.location.href=n.href,e?.(n);after";
+  const instrumented = instrumentInspectorBundle(source, observerPath);
+  assert.match(instrumented, /XMLHttpRequest/);
+  assert.match(instrumented, /A03 PKCE capture failed closed/);
+  assert.match(instrumented, new RegExp(observerPath));
+  assert.throws(() => instrumentInspectorBundle("hook drift", observerPath), /navigation hook drift/);
+});
+
+test("cache-busts the Inspector main bundle with the one-shot observer nonce", () => {
+  const nonce = "d".repeat(64);
+  const observerPath = `/__a03/pkce-assertion/${nonce}`;
+  const html = '<html><head><script type="module" src="/assets/index-fixed.js"></script></head></html>';
+  const instrumented = instrumentInspectorHtml(html, observerPath);
+  assert.match(instrumented, new RegExp(`/assets/index-fixed\\.js\\?a03_pkce=${nonce}`));
+  assert.throws(() => instrumentInspectorHtml("<html></html>", observerPath), /bundle reference drift/);
+});
+
+test("finds the pinned navigation hook in the installed Inspector 2.4.0 bundle", async () => {
+  const { packagePath } = await resolveInspectorInstall();
+  const assetsDirectory = path.join(path.dirname(packagePath), "clients", "web", "dist", "assets");
+  const bundleNames = (await readdir(assetsDirectory)).filter((name) => /^index-.*\.js$/.test(name));
+  assert.equal(bundleNames.length, 1);
+  const source = await readFile(path.join(assetsDirectory, bundleNames[0]), "utf8");
+  const instrumented = instrumentInspectorBundle(
+    source,
+    `/__a03/pkce-assertion/${"c".repeat(64)}`,
+  );
+  assert.ok(instrumented.length > source.length);
+  assert.match(instrumented, /A03 PKCE capture failed closed/);
+});
+
+test("proxies the Inspector bundle and accepts exactly one redacted assertion", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "clued-a03-proxy-"));
+  const source = "before;return t?.(n),window.location.href=n.href,e?.(n);after";
+  const upstream = http.createServer((request, response) => {
+    if (request.url === "/") {
+      response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      response.end('<html><head><script type="module" src="/assets/index-test.js"></script></head></html>');
+      return;
+    }
+    if (request.url === "/assets/index-test.js") {
+      response.writeHead(200, { "content-type": "text/javascript; charset=utf-8" });
+      response.end(source);
+      return;
+    }
+    response.writeHead(404);
+    response.end();
+  });
+  upstream.listen(0, "localhost");
+  await once(upstream, "listening");
+  const upstreamAddress = upstream.address();
+  assert.ok(upstreamAddress && typeof upstreamAddress === "object");
+  const proxy = await createA03InspectorProxy({
+    listenPort: 0,
+    internalPort: upstreamAddress.port,
+    storageDir: directory,
+    observerNonce: "b".repeat(64),
+  });
+  try {
+    const htmlResponse = await fetch(`http://localhost:${proxy.port}/`);
+    assert.equal(htmlResponse.status, 200);
+    assert.equal(htmlResponse.headers.get("cache-control"), "no-store");
+    assert.match(await htmlResponse.text(), /index-test\.js\?a03_pkce=b{64}/);
+    const bundleResponse = await fetch(`http://localhost:${proxy.port}/assets/index-test.js`);
+    assert.equal(bundleResponse.status, 200);
+    assert.equal(bundleResponse.headers.get("x-a03-pkce-capture"), "redacted-only");
+    assert.match(await bundleResponse.text(), /A03 PKCE capture failed closed/);
+
+    const url = new URL(A03.authorizationEndpoint);
+    url.searchParams.set("response_type", "code");
+    url.searchParams.set("client_id", A03.clientId);
+    url.searchParams.set("redirect_uri", A03.callbackUrl);
+    url.searchParams.set("resource", A03.resource);
+    url.searchParams.set("code_challenge_method", "S256");
+    url.searchParams.set("code_challenge", "proxy-secret-challenge");
+    url.searchParams.set("state", "proxy-secret-state");
+    url.searchParams.set("scope", "openid email profile");
+    const first = await fetch(`http://localhost:${proxy.port}${proxy.observerPath}`, {
+      method: "POST",
+      body: url.href,
+    });
+    assert.equal(first.status, 204);
+    const stored = await readFile(proxy.assertionPath, "utf8");
+    assert.doesNotMatch(stored, /proxy-secret-challenge|proxy-secret-state/);
+    const second = await fetch(`http://localhost:${proxy.port}${proxy.observerPath}`, {
+      method: "POST",
+      body: url.href,
+    });
+    assert.equal(second.status, 409);
+  } finally {
+    await proxy.close();
+    upstream.close();
+    await once(upstream, "close");
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("forces the registered localhost callback origin for every Inspector process", () => {
@@ -67,21 +238,40 @@ test("forces the registered localhost callback origin for every Inspector proces
   assert.equal(env.CLIENT_PORT, "6400");
   assert.equal(env.MCP_INSPECTOR_OAUTH_STATE_PATH, statePath);
   assert.equal(`http://${env.HOST}:${env.CLIENT_PORT}/oauth/callback`, A03.callbackUrl);
+  const webEnv = a03InspectorWebEnvironment(env, statePath);
+  assert.equal(webEnv.HOST, "localhost");
+  assert.equal(webEnv.CLIENT_PORT, String(A03.inspectorInternalPort));
+  assert.equal(webEnv.ALLOWED_ORIGINS, `http://localhost:${A03.inspectorProxyPort}`);
+  assert.equal(webEnv.MCP_AUTO_OPEN_ENABLED, "false");
 });
 
 test("launches Inspector Web only through the fixed A03 environment", async () => {
   const calls = [];
+  const proxyCalls = [];
+  let proxyClosed = false;
   await runInspectorWeb({
     env: { HOST: "127.0.0.1", CLIENT_PORT: "6274" },
     statePath: path.join("isolated", "oauth.json"),
-    spawn(command, argv, options) {
+    async proxyFactory(options) {
+      proxyCalls.push(options);
+      return { async close() { proxyClosed = true; } };
+    },
+    spawnProcess(command, argv, options) {
       calls.push({ command, argv, options });
-      return { status: 0 };
+      const child = new EventEmitter();
+      queueMicrotask(() => child.emit("exit", 0, null));
+      return child;
     },
   });
   assert.equal(calls.length, 1);
+  assert.equal(proxyCalls.length, 1);
+  assert.equal(proxyCalls[0].listenPort, A03.inspectorProxyPort);
+  assert.equal(proxyCalls[0].internalPort, A03.inspectorInternalPort);
+  assert.equal(proxyClosed, true);
   assert.equal(calls[0].options.env.HOST, "localhost");
-  assert.equal(calls[0].options.env.CLIENT_PORT, "6400");
+  assert.equal(calls[0].options.env.CLIENT_PORT, "6403");
+  assert.equal(calls[0].options.env.ALLOWED_ORIGINS, "http://localhost:6400");
+  assert.equal(calls[0].options.env.MCP_AUTO_OPEN_ENABLED, "false");
   assert.equal(calls[0].argv.at(-2), "--config");
   assert.match(calls[0].argv.at(-1), /a03-inspector-config\.json$/);
 });
