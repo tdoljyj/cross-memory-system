@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { homedir } from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { readFile, writeFile } from "node:fs/promises";
 import {
   A03,
@@ -16,6 +16,17 @@ import {
 export function oauthStatePath(env = process.env) {
   return env.MCP_INSPECTOR_OAUTH_STATE_PATH
     ?? path.join(env.MCP_STORAGE_DIR ?? path.join(homedir(), ".mcp-inspector", "storage"), "oauth.json");
+}
+
+export function a03InspectorEnvironment(env = process.env, statePath = oauthStatePath(env)) {
+  return {
+    ...env,
+    // Inspector 2.4.0 derives the OAuth redirect host from HOST. Its default is
+    // 127.0.0.1, but the registered public client permits only localhost:6400.
+    HOST: "localhost",
+    CLIENT_PORT: "6400",
+    MCP_INSPECTOR_OAUTH_STATE_PATH: statePath,
+  };
 }
 
 function normalizedResource() {
@@ -84,6 +95,24 @@ export async function stageStoredAuthForInspectorCli(statePath) {
   };
 }
 
+export async function runInspectorWeb({
+  spawn = spawnSync,
+  env = process.env,
+  statePath = oauthStatePath(env),
+} = {}) {
+  const { launcherPath } = await resolveInspectorInstall();
+  const configPath = fileURLToPath(new URL("./a03-inspector-config.json", import.meta.url));
+  const result = spawn(process.execPath, [launcherPath, "--config", configPath], {
+    env: a03InspectorEnvironment(env, statePath),
+    stdio: "inherit",
+    windowsHide: true,
+  });
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    throw new Error(`Inspector Web exited with status ${String(result.status)}`);
+  }
+}
+
 function summarizeInspectorResult(stdout) {
   const parsed = JSON.parse(stdout);
   const structured = parsed?.structuredContent
@@ -113,10 +142,7 @@ export async function runExactReadonlyCall({
   try {
     result = spawn(process.execPath, argv, {
       encoding: "utf8",
-      env: {
-        ...process.env,
-        MCP_INSPECTOR_OAUTH_STATE_PATH: statePath,
-      },
+      env: a03InspectorEnvironment(process.env, statePath),
       windowsHide: true,
     });
   } finally {
@@ -138,6 +164,10 @@ async function main() {
     process.stdout.write(`${JSON.stringify(validateAuthorizationRequest(input.trim()), null, 2)}\n`);
     return;
   }
+  if (command === "inspector") {
+    await runInspectorWeb({ statePath });
+    return;
+  }
   if (command === "claims") {
     const token = await readStoredAccessToken(statePath);
     process.stdout.write(`${JSON.stringify(validateAndRedactClaims(decodeJwtClaims(token)), null, 2)}\n`);
@@ -151,7 +181,7 @@ async function main() {
     process.stdout.write(`${JSON.stringify(await clearStoredA03State(statePath), null, 2)}\n`);
     return;
   }
-  throw new Error("Usage: node a03-session.mjs <authorization-request|claims|call|clear>");
+  throw new Error("Usage: node a03-session.mjs <inspector|authorization-request|claims|call|clear>");
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

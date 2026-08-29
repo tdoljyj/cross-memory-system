@@ -11,9 +11,11 @@ import {
   validateAuthorizationRequest,
 } from "./a03-contract.mjs";
 import {
+  a03InspectorEnvironment,
   clearStoredA03State,
   readStoredAccessToken,
   runExactReadonlyCall,
+  runInspectorWeb,
 } from "./a03-session.mjs";
 
 function isolatedOAuthState(accessToken = "test-access-token") {
@@ -47,8 +49,41 @@ test("accepts only the fixed A03 PKCE authorization request", () => {
     code_challenge_present: true,
     scope: ["openid", "email", "profile"],
   });
+  const wrongCallback = new URL(url);
+  wrongCallback.searchParams.set("redirect_uri", "http://127.0.0.1:6400/oauth/callback");
+  assert.throws(() => validateAuthorizationRequest(wrongCallback), /redirect_uri/);
   url.searchParams.set("code_challenge_method", "plain");
   assert.throws(() => validateAuthorizationRequest(url), /S256/);
+});
+
+test("forces the registered localhost callback origin for every Inspector process", () => {
+  const statePath = path.join("isolated", "oauth.json");
+  const env = a03InspectorEnvironment({
+    HOST: "127.0.0.1",
+    CLIENT_PORT: "6274",
+    MCP_INSPECTOR_OAUTH_STATE_PATH: "wrong-state.json",
+  }, statePath);
+  assert.equal(env.HOST, "localhost");
+  assert.equal(env.CLIENT_PORT, "6400");
+  assert.equal(env.MCP_INSPECTOR_OAUTH_STATE_PATH, statePath);
+  assert.equal(`http://${env.HOST}:${env.CLIENT_PORT}/oauth/callback`, A03.callbackUrl);
+});
+
+test("launches Inspector Web only through the fixed A03 environment", async () => {
+  const calls = [];
+  await runInspectorWeb({
+    env: { HOST: "127.0.0.1", CLIENT_PORT: "6274" },
+    statePath: path.join("isolated", "oauth.json"),
+    spawn(command, argv, options) {
+      calls.push({ command, argv, options });
+      return { status: 0 };
+    },
+  });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].options.env.HOST, "localhost");
+  assert.equal(calls[0].options.env.CLIENT_PORT, "6400");
+  assert.equal(calls[0].argv.at(-2), "--config");
+  assert.match(calls[0].argv.at(-1), /a03-inspector-config\.json$/);
 });
 
 test("records the documented Supabase audience and truthful absent resource", () => {
@@ -89,6 +124,8 @@ test("executes the Inspector transport exactly once and emits no project bodies"
       spawn(command, argv, options) {
         const staged = JSON.parse(readFileSync(options.env.MCP_INSPECTOR_OAUTH_STATE_PATH, "utf8"));
         const server = staged.servers[new URL(A03.resource).href];
+        assert.equal(options.env.HOST, "localhost");
+        assert.equal(options.env.CLIENT_PORT, "6400");
         assert.equal(server.tokens.access_token, "test-access-token");
         assert.equal(server.byIssuer[A03.issuer].tokens.access_token, "test-access-token");
         calls.push({ command, argv, options });

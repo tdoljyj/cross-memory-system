@@ -20,13 +20,16 @@ Inspector 2.4.0 Web stores OAuth tokens in `byIssuer[activeIssuer]`, while its C
 Use `a03-inspector-config.json` and an isolated storage directory. Inspector Web 2.4.0 resolves its OAuth state from `MCP_STORAGE_DIR`; the A03 session commands resolve the same `<directory>\oauth.json`:
 
 ```powershell
+$env:HOST='localhost'
 $env:CLIENT_PORT='6400'
 $env:MCP_SANDBOX_PORT='6401'
 $env:MCP_APP_ORIGIN_PORT='6402'
 $env:MCP_STORAGE_DIR='<fresh-local-directory>'
 $env:MCP_INSPECTOR_OAUTH_STATE_PATH="$env:MCP_STORAGE_DIR\oauth.json"
-npx --no-install mcp-inspector --config evals/public-mcp/a03-inspector-config.json
+node evals/public-mcp/a03-session.mjs inspector
 ```
+
+`HOST=localhost` is mandatory: Inspector 2.4.0 otherwise defaults to `127.0.0.1` and derives the wrong OAuth callback origin. The session adapter overrides inherited `HOST` and `CLIENT_PORT` values for both Inspector Web and its stored-auth CLI process; use the adapter command above rather than launching Inspector directly.
 
 Connect only to `clued-a03-production-readonly`. The Owner enters the password, verification code and consent. Do not capture the launcher URL because it contains the Inspector API token.
 
