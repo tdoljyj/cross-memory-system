@@ -1,0 +1,16 @@
+2026-08-29T06:29:00Z source plan SHA-256 recompute -> PASS
+2026-08-29T06:31:00Z Gitleaks 8.30.1 official archive checksum -> PASS
+2026-08-29T06:31:00Z gitleaks git full candidate history --redact -> PASS
+2026-08-29T06:34:00Z npm run mcp:a03:test -> PASS 14/14
+2026-08-29T06:34:00Z npm run mcp:tools:verify -> PASS 16 tools / metadata 100%
+2026-08-29T06:35:00Z npm run mcp:flags:verify -> PASS 4/4 flag combinations
+2026-08-29T06:35:00Z npm run mcp:gate-receipt:test -> PASS 4/4
+2026-08-29T06:37:00Z controlled public-mcp-protocol failure -> PASS / nonzero
+2026-08-29T06:37:00Z controlled public-mcp-behavior failure -> PASS / nonzero
+2026-08-29T06:40:00Z controlled gitleaks detector failure -> PASS / nonzero
+2026-08-29T06:40:00Z controlled trivy detector failure -> PASS / nonzero
+2026-08-29T06:42:55Z production read-only reconciliation SQL -> PASS / nine tables zero / no Binding drift
+2026-08-29T06:47:00Z isolated Inspector strict schema validation with synthetic Bearer -> PASS
+2026-08-29T06:47:00Z isolated protocol, tools baseline and flag matrix -> PASS
+2026-08-29T06:49:48Z exact-SHA Gate Receipt -> PASS 4/4
+2026-08-29T06:50:00Z A12 coverage 38/38 -> PASS

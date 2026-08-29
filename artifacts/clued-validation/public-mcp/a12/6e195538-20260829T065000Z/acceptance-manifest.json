@@ -1,0 +1,22 @@
+{
+  "contract": "clued-pre-kernel-public-mcp-a12-manifest/1",
+  "candidate_sha": "6e1955383267f41eea0574ae836c22f52fc65805",
+  "sealed_at": "2026-08-29T06:50:00Z",
+  "result": "PASS",
+  "payload_file_count": 9,
+  "files": [
+    {"path":"commands.log","sha256":"d13aeb149619ca1125a5ab3508f1518cf27d090c3f5b559c5bbf275c4dd074d1"},
+    {"path":"controlled-failures.json","sha256":"f45f2cd75a316add9f642092d5f748d4989621c1d61880d9c8c3269777e4f36b"},
+    {"path":"coverage.json","sha256":"98d57ebc670b7dd1fa04e65fe04bdcc475974b61beeb6ce670e3938ac41caad9"},
+    {"path":"gate-receipt.json","sha256":"01fe6565c5094d15d5e1982543703c95daaa4a92ac41261bf830b720ffc4c666"},
+    {"path":"p0-results.json","sha256":"0f82211bbff93125008b63b8c7ecfe1cbeca762f5f86315e8f9ec1ff8ca4407b"},
+    {"path":"production-reconciliation.json","sha256":"26e29352df043f03941165f9c34f426a1730d656a8209f29d9c28f1422a22020"},
+    {"path":"redaction-scan.json","sha256":"6360832fb4a1aa9cda1265cb9043d9348f63419c2f941e830c2ea5481f021077"},
+    {"path":"result.json","sha256":"a6ae519849e7eb8dc637d9c371ef24c46c1678c25422ab7531341fc20db58dd3"},
+    {"path":"source-plan.json","sha256":"c2e7f8ecfe5ad0a3091d69ccf0073743f77ef195c90007b411bcdc291a679a31"}
+  ],
+  "manifest_excludes": ["acceptance-manifest.json", "SHA256SUMS"],
+  "sha256sums_covers_manifest": true,
+  "merge_authorized": false,
+  "deployment_authorized": false
+}
