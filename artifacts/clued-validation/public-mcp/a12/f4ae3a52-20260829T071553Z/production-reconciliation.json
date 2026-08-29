@@ -1,0 +1,24 @@
+{
+  "contract": "clued-pre-kernel-public-mcp-a12-production-reconciliation/1",
+  "candidate_sha": "f4ae3a5279268fac72d80dc482a308d2965d9e85",
+  "result": "PASS",
+  "observed_at": "2026-08-29T06:42:55.280783Z",
+  "source_a03_reconciliation_sha256": "cd4571a1430e8e8c0fb70c27f15d2212774a80817089a6317bb7fa7bdc29d0c9",
+  "source_a03_sha256sums_sha256": "61532ce55122ae97e93211efce256df9fce0d1291cbb9a16a3bbcb94cb4ec21c",
+  "binding_contract_unchanged_since_a03": true,
+  "binding_last_used_at_unchanged_since_a03": true,
+  "reconciliation_reused_after_ci_cleanup_only_change": true,
+  "row_counts": {
+    "clued_projects": 0,
+    "clued_projects_m1": 0,
+    "clued_memories": 0,
+    "clued_records_v2": 0,
+    "clued_records_m1": 0,
+    "clued_context_events": 0,
+    "clued_events_m1": 0,
+    "clued_audit_receipts": 0,
+    "audit_receipts": 0
+  },
+  "a12_protected_production_tool_calls": 0,
+  "production_business_event_receipt_writes": 0
+}

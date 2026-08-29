@@ -1,0 +1,23 @@
+{
+  "contract": "clued-pre-kernel-public-mcp-a12-source-plan/1",
+  "plan_v1_0": {
+    "filename": "Clued_Kernel_Next前_公共MCP回归与安全基线_分布式验收执行计划_v1.0.md",
+    "repository_evidence_path": "source-plan-v1.0.md",
+    "sha256": "0ec1652d68d9f0ddad6b993174154e32b4e44538b049dac102dabcaf9d9cb822",
+    "hash_recomputed": true,
+    "fresh_clone_recomputable": true,
+    "coverage_contract": {
+      "core_functions": 14,
+      "interfaces": 10,
+      "scenarios": 14,
+      "total": 38
+    }
+  },
+  "amendment_v1_1": {
+    "repository_path": "docs/execution-plans/Clued_Kernel_Next前_公共MCP回归与安全基线_分布式验收执行计划_v1.1_修订说明.md",
+    "sha256": "7ad85ec195a1be122e484b0c063595777d2c95bd419ca977c85f3ed696e4b42f",
+    "hash_recomputed": true,
+    "github_free_private_repository_substitution_applies": true,
+    "substitution_evidence_path": "platform-substitution.json"
+  }
+}

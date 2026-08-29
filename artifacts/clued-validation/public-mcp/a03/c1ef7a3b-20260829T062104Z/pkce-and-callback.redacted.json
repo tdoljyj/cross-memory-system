@@ -1,0 +1,17 @@
+{
+  "authorization_endpoint": "https://ccxsikzwxlolxqlosril.supabase.co/auth/v1/oauth/authorize",
+  "captured_at": "2026-08-29T06:21:04.932Z",
+  "client_id": "87924be5-cec9-415f-b1a2-8a4d9ae9d1a8",
+  "code_challenge_length": 43,
+  "code_challenge_method": "S256",
+  "code_challenge_present": true,
+  "contract": "clued-a03-pkce-redacted-v1",
+  "redirect_uri": "http://localhost:6400/oauth/callback",
+  "resource": "https://clued.pixelgrav.com/mcp",
+  "response_type": "code",
+  "scope": [
+    "openid",
+    "email",
+    "profile"
+  ]
+}

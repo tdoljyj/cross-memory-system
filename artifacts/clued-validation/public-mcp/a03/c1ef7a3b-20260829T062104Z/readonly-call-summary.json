@@ -1,0 +1,12 @@
+{
+  "contract": "clued-a03-readonly-call-summary-v1",
+  "called_at": "2026-08-29T06:21:28Z",
+  "status": "ok",
+  "inspector_version": "2.4.0",
+  "tool": "clued_project_list",
+  "arguments": {},
+  "protected_tool_transport_attempts": 1,
+  "project_count": 0,
+  "project_bodies_persisted": false,
+  "other_protected_tools_called": 0
+}

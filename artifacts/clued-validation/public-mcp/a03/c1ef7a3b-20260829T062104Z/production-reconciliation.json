@@ -1,0 +1,50 @@
+{
+  "contract": "clued-a03-production-reconciliation-v1",
+  "result": "PASS",
+  "binding": {
+    "id": "b3603c56-0649-47ca-91e3-d1e8e06588c4",
+    "user_id": "e9dc13e7-41b0-421b-bfa3-07890675e92d",
+    "scopes_before": [
+      "context:read"
+    ],
+    "scopes_after": [
+      "context:read"
+    ],
+    "context_keys_before": [
+      "system:projects"
+    ],
+    "context_keys_after": [
+      "system:projects"
+    ],
+    "oauth_client_id_before": "87924be5-cec9-415f-b1a2-8a4d9ae9d1a8",
+    "oauth_client_id_after": "87924be5-cec9-415f-b1a2-8a4d9ae9d1a8",
+    "revoked_at_before": null,
+    "revoked_at_after": null,
+    "last_used_at_before": "2026-08-29 03:52:45.140639+00",
+    "last_used_at_after": "2026-08-29 06:21:28.750161+00",
+    "only_last_used_at_changed": true
+  },
+  "row_counts_before": {
+    "clued_projects": 0,
+    "clued_projects_m1": 0,
+    "clued_memories": 0,
+    "clued_records_v2": 0,
+    "clued_records_m1": 0,
+    "clued_context_events": 0,
+    "clued_events_m1": 0,
+    "clued_audit_receipts": 0,
+    "audit_receipts": 0
+  },
+  "row_counts_after": {
+    "clued_projects": 0,
+    "clued_projects_m1": 0,
+    "clued_memories": 0,
+    "clued_records_v2": 0,
+    "clued_records_m1": 0,
+    "clued_context_events": 0,
+    "clued_events_m1": 0,
+    "clued_audit_receipts": 0,
+    "audit_receipts": 0
+  },
+  "production_business_event_receipt_writes": 0
+}

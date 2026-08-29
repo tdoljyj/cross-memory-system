@@ -1,0 +1,19 @@
+{
+  "contract": "clued-pre-kernel-public-mcp-platform-substitution/1",
+  "candidate_sha": "f4ae3a5279268fac72d80dc482a308d2965d9e85",
+  "result": "NOT_APPLICABLE_BY_APPROVED_V1_1_SUBSTITUTION",
+  "platform_limit": "GitHub Free private repository does not provide the plan's required-check enforcement control",
+  "approved_amendment": "docs/execution-plans/Clued_Kernel_Next前_公共MCP回归与安全基线_分布式验收执行计划_v1.1_修订说明.md",
+  "substitute_controls": [
+    "exact-SHA public-mcp-protocol check must complete successfully",
+    "exact-SHA public-mcp-behavior check must complete successfully",
+    "exact-SHA gitleaks check must complete successfully",
+    "exact-SHA trivy check must complete successfully",
+    "Gate Receipt must bind those four completed successful checks to the exact candidate SHA",
+    "four controlled failures must exit nonzero",
+    "merge and deployment remain unauthorized"
+  ],
+  "required_checks_branch_protection_claimed": false,
+  "merge_authorized": false,
+  "deployment_authorized": false
+}

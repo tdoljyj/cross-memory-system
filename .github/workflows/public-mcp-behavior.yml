@@ -1,0 +1,59 @@
+name: public-mcp-behavior
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  public-mcp-behavior:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/clued-cloud
+    env:
+      PROMPTFOO_CONFIG_DIR: /tmp/promptfoo
+      PROMPTFOO_DISABLE_TELEMETRY: "true"
+      MCP_ISOLATED_URL: http://127.0.0.1:8787/mcp
+      MCP_BEARER_TOKEN: clued_bnd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      MCP_NEG_OWNER_A_TOKEN: clued_bnd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      MCP_SESSION_TOKEN: clued_ses_cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.19.0
+          cache: npm
+          cache-dependency-path: apps/clued-cloud/package-lock.json
+      - run: npm ci
+      - run: npm run db:start
+      - run: npm run db:reset
+      - run: npm run mcp:isolated:fixture
+      - name: Start isolated MCP
+        run: |
+          npm run mcp:isolated:start &
+          echo $! > "$RUNNER_TEMP/public-mcp.pid"
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --output /dev/null http://127.0.0.1:8787/.well-known/clued-continuity; then exit 0; fi
+            sleep 1
+          done
+          exit 1
+      - run: npm run mcp:eval:positive
+      - run: npm run mcp:isolated:fixture
+      - run: npm run mcp:eval:negative
+      - run: npm run test:p5:postgres
+      - name: Stop isolated services
+        if: always()
+        run: |
+          if [ -f "$RUNNER_TEMP/public-mcp.pid" ]; then
+            mcp_pid="$(cat "$RUNNER_TEMP/public-mcp.pid")"
+            if kill -0 "$mcp_pid" 2>/dev/null; then
+              kill "$mcp_pid"
+            fi
+          fi
+          if npx --yes supabase@2.115.0 status >/dev/null 2>&1; then
+            npx --yes supabase@2.115.0 stop --no-backup
+          fi

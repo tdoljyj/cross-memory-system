@@ -7,10 +7,14 @@ do $role$
 begin
   if not exists (select 1 from pg_roles where rolname='clued_p5_gateway') then
     create role clued_p5_gateway nologin noinherit nosuperuser nocreatedb nocreaterole noreplication nobypassrls;
+  elsif exists (
+    select 1 from pg_roles where rolname='clued_p5_gateway' and rolsuper
+  ) then
+    raise exception 'CLUED_P5_GATEWAY_MUST_NOT_BE_SUPERUSER';
   end if;
 end $role$;
 
-alter role clued_p5_gateway nologin noinherit nosuperuser nocreatedb nocreaterole noreplication nobypassrls;
+alter role clued_p5_gateway nologin noinherit nocreatedb nocreaterole noreplication nobypassrls;
 grant clued_p5_gateway to authenticator;
 grant usage on schema public to clued_p5_gateway;
 

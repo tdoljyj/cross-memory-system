@@ -1,0 +1,29 @@
+{
+  "contract": "clued-pre-kernel-public-mcp-a12-manifest/1.1",
+  "candidate_sha": "f4ae3a5279268fac72d80dc482a308d2965d9e85",
+  "sealed_at": "2026-08-29T07:39:36Z",
+  "result": "PASS_A12_SEALED_A13_REQUIRED",
+  "payload_file_count": 12,
+  "files": [
+    {"path":"commands.log","sha256":"d2951a8c9971e14b8dd56067f767fbc001e7f97371a5f78ae100225755975637"},
+    {"path":"controlled-failures.json","sha256":"83f847775790479c21b271483a1553e00c5a1a63078025cc419ce229c3b2d9f1"},
+    {"path":"coverage.json","sha256":"14a9ef29f08205178ad201388888e9cde0073c16be97e20646c09a04d25981f9"},
+    {"path":"gate-receipt-provenance.json","sha256":"5d5316c64b4cc90a9d2656b163e14baa9ad71e78a1b0c9716336f52cfbef752d"},
+    {"path":"gate-receipt.json","sha256":"c90e6124e1293303415ea68a46f2ad4d755eb64f5a41c0648552c6a4f2c803f5"},
+    {"path":"p0-results.json","sha256":"e8fa2e9d4a9941ecb67a9bfe1e181b9c718c5701d9b3d80c5411ba4aafd064e3"},
+    {"path":"platform-substitution.json","sha256":"47bdd13153cb5d45af153588940ccff559936d444da219c5cf8fb1e8fd6d6ee7"},
+    {"path":"production-reconciliation.json","sha256":"54a11a871495ea9a663e0fd12d86bb5618db0dcb98199d422afe170dde2b1a43"},
+    {"path":"redaction-scan.json","sha256":"f986121dd67cccc18ebb8de7e2f8e47a6fd488a30bec639b7b83a9361b011b44"},
+    {"path":"result.json","sha256":"8001cfe2523be9cf4e2afd66b1b12dd5b1504059edb4727dfb1e5042638de734"},
+    {"path":"source-plan-v1.0.md","sha256":"0ec1652d68d9f0ddad6b993174154e32b4e44538b049dac102dabcaf9d9cb822"},
+    {"path":"source-plan.json","sha256":"997e01b0018b5ba04bed717bbd22a868ece337bb75869fb3902a5a632725257f"}
+  ],
+  "manifest_excludes": ["acceptance-manifest.json", "SHA256SUMS"],
+  "sha256sums_covers_manifest": true,
+  "coverage_mapped": 38,
+  "coverage_executed_passed": 37,
+  "coverage_trace_ready_for_a13": 1,
+  "source_plan_embedded_and_recomputable": true,
+  "merge_authorized": false,
+  "deployment_authorized": false
+}

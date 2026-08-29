@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "contract_version": "clued-pre-kernel-public-mcp-gate-receipt/1.1",
+  "verdict": "PASS",
+  "repository": "tdoljyj/cross-memory-system",
+  "candidate_sha": "c2b180635aea0a151a1f3e0be1537803889d78a7",
+  "pull_request": 9,
+  "checked_at": "2026-08-29T07:47:10.518Z",
+  "required_checks": [
+    {
+      "name": "public-mcp-protocol",
+      "present": true,
+      "status": "completed",
+      "conclusion": "success",
+      "details_url": "https://github.com/tdoljyj/cross-memory-system/actions/runs/33241430463/job/99071338737",
+      "check_run_id": 99071338737
+    },
+    {
+      "name": "public-mcp-behavior",
+      "present": true,
+      "status": "completed",
+      "conclusion": "success",
+      "details_url": "https://github.com/tdoljyj/cross-memory-system/actions/runs/33241430410/job/99071338459",
+      "check_run_id": 99071338459
+    },
+    {
+      "name": "gitleaks",
+      "present": true,
+      "status": "completed",
+      "conclusion": "success",
+      "details_url": "https://github.com/tdoljyj/cross-memory-system/actions/runs/33241430397/job/99071338454",
+      "check_run_id": 99071338454
+    },
+    {
+      "name": "trivy",
+      "present": true,
+      "status": "completed",
+      "conclusion": "success",
+      "details_url": "https://github.com/tdoljyj/cross-memory-system/actions/runs/33241430404/job/99071338469",
+      "check_run_id": 99071338469
+    }
+  ],
+  "owner_merge_authorization_required": true,
+  "merge_authorized": false,
+  "deployment_authorized": false
+}

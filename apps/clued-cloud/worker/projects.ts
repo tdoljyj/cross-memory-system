@@ -12,7 +12,7 @@ export const projectTools = [
         operation: { type: "string", enum: ["create", "update", "complete", "archive", "restore"] },
         canonical_project_id: { type: "string", format: "uuid" },
         project_schema_version: { type: "integer", const: 1 },
-        base_version: { type: ["integer", "null"], minimum: 1 },
+        base_version: { anyOf: [{ type: "integer", minimum: 1 }, { type: "null" }] },
         idempotency_key: { type: "string", minLength: 8, maxLength: 160 },
         request_hash: { type: "string", pattern: "^[0-9a-f]{64}$" },
         mutation: { type: "object" },

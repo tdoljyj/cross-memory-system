@@ -1,0 +1,24 @@
+2026-08-29T07:41:00Z fresh clone candidate branch to C:/Users/Windows/Documents/Codex/a13-c2b18063 -> PASS
+2026-08-29T07:41:00Z detached checkout c2b180635aea0a151a1f3e0be1537803889d78a7 and git cat-file -t -> PASS / commit
+2026-08-29T07:42:41Z sync-memory.ps1 -AlignAndVerify -Access PROJECT -> PASS / doctor ALL PASS
+2026-08-29T07:43:00Z source plan v1.0/v1.1 SHA-256 recompute -> PASS
+2026-08-29T07:43:00Z A12 JSON, 12-entry manifest and 13-entry SHA256SUMS recompute -> PASS
+2026-08-29T07:43:00Z coverage structural recompute -> PASS / 38 mapped / 37 executed plus SC-14 trace-ready
+2026-08-29T07:43:00Z A03 9-file redacted evidence chain and SHA256SUMS recompute -> PASS
+2026-08-29T07:43:00Z workflow static scan -> PASS / continue-on-error=0 / set +e=0 / || true=0
+2026-08-29T07:44:00Z official Gitleaks 8.30.1 archive checksum -> PASS
+2026-08-29T07:44:00Z Gitleaks complete history and A12/A03 evidence directories --redact -> PASS / 394 commits / findings=0
+2026-08-29T07:46:00Z production single read-only SELECT -> PASS / Binding unchanged / nine table counts zero
+2026-08-29T07:47:10Z exact-c2b Gate Receipt download and internal SHA256SUMS recompute -> PASS / 4/4
+2026-08-29T07:44:30Z npm ci first attempt -> interrupted after dependency downloads at unused Playwright browser install
+2026-08-29T07:51:00Z npm ci --prefer-offline second attempt -> interrupted at unused Playwright browser install
+2026-08-29T07:52:00Z PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci --prefer-offline --no-audit --no-fund -> PASS / 1318 packages
+2026-08-29T07:55:00Z npm run mcp:a03:test -> PASS / 14/14
+2026-08-29T07:55:00Z npm run mcp:tools:verify -> PASS / 16 tools / metadata 100%
+2026-08-29T07:55:00Z npm run mcp:flags:verify -> Windows tsx environment exit 1; locked esbuild mechanical rerun -> PASS / 10,16,15,21
+2026-08-29T07:55:00Z npm run mcp:gate-receipt:test -> PASS / 4/4
+2026-08-29T07:57:00Z localhost:8791 protocol verification -> PASS / MCP 2025-06-18 / 16 tools / 401 challenges
+2026-08-29T07:57:00Z Inspector 2.4.0 strict tools/list with non-persisted synthetic authorization -> PASS / 16 tools
+2026-08-29T07:58:00Z localhost process, port, dev vars and temporary log cleanup -> PASS
+2026-08-29T07:59:13Z A13 coverage closure -> PASS / SC-14 PASS / 38/38
+2026-08-29T08:01:00Z final A13 Gitleaks initial public-identifier false positive -> raw public identifier omitted; retained only matches-expected boolean

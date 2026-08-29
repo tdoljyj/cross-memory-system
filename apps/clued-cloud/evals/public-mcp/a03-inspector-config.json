@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "clued-a03-production-readonly": {
+      "type": "streamable-http",
+      "url": "https://clued.pixelgrav.com/mcp",
+      "oauth": {
+        "clientId": "87924be5-cec9-415f-b1a2-8a4d9ae9d1a8",
+        "scopes": "openid email profile",
+        "requestRefreshToken": false
+      }
+    }
+  }
+}
