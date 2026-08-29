@@ -28,10 +28,18 @@ begin
      where r.user_id=p_user_id and r.source_project_id=v_project_id;
     if v_effective_project_id is null then raise exception 'project_not_found' using errcode='P0002'; end if;
 
-    select coalesce(array_agg('project:'||r.source_project_id::text order by r.source_project_id),'{}'::text[])
+    select coalesce(array_agg('project:'||unique_source.source_project_id::text
+                              order by unique_source.source_project_id),'{}'::text[])
       into v_project_scopes
-      from public.clued_project_resolution_v2 r
-     where r.user_id=p_user_id and r.effective_project_id=v_effective_project_id;
+      from (
+        select r.source_project_id,
+               (array_agg(distinct r.effective_project_id))[1] as effective_project_id
+          from public.clued_project_resolution_v2 r
+         where r.user_id=p_user_id and r.effective_project_id is not null
+         group by r.source_project_id
+        having count(distinct r.effective_project_id)=1
+      ) unique_source
+     where unique_source.effective_project_id=v_effective_project_id;
 
     with candidate_keys as (
       select r.effective_project_id,lower('project:'||p.id::text) as context_key
