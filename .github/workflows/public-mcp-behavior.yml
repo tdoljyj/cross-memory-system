@@ -48,5 +48,12 @@ jobs:
       - name: Stop isolated services
         if: always()
         run: |
-          kill "$(cat "$RUNNER_TEMP/public-mcp.pid")" 2>/dev/null || true
-          npx --yes supabase@2.115.0 stop --no-backup || true
+          if [ -f "$RUNNER_TEMP/public-mcp.pid" ]; then
+            mcp_pid="$(cat "$RUNNER_TEMP/public-mcp.pid")"
+            if kill -0 "$mcp_pid" 2>/dev/null; then
+              kill "$mcp_pid"
+            fi
+          fi
+          if npx --yes supabase@2.115.0 status >/dev/null 2>&1; then
+            npx --yes supabase@2.115.0 stop --no-backup
+          fi
