@@ -33,7 +33,14 @@ jobs:
           done
           exit 1
       - name: Inspector strict schema validation
-        run: npx mcp-inspector --cli --server-url http://127.0.0.1:8787/mcp --transport http --method tools/list --format json --strict
+        run: >-
+          npx mcp-inspector --cli
+          --server-url http://127.0.0.1:8787/mcp
+          --transport http
+          --header "Authorization: Bearer clued_bnd_$(printf 'a%.0s' {1..43})"
+          --method tools/list
+          --format json
+          --strict
       - run: npm run mcp:protocol:verify
       - run: npm run mcp:tools:verify
       - run: npm run mcp:flags:verify
