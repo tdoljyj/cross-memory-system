@@ -1,0 +1,14 @@
+2026-08-29T06:17:36Z npm run mcp:a03:test -> PASS 14/14
+2026-08-29T06:18:30Z node --test tests/continuity.test.mjs -> PASS 12/12
+2026-08-29T06:17:36Z npx tsc --noEmit --incremental false -> PASS
+2026-08-29T06:17:36Z targeted eslint -> PASS
+2026-08-29T06:19:00Z vinext build -> PASS
+2026-08-29T06:20:00Z production read-only preflight SQL -> PASS
+2026-08-29T06:20:40Z a03-session.mjs inspector -> STARTED; launcher output discarded
+2026-08-29T06:21:04Z Inspector Connect -> OAuth completed; no protected tool call
+2026-08-29T06:21:12Z a03-session.mjs pkce -> PASS; redacted output only
+2026-08-29T06:21:12Z a03-session.mjs claims -> PASS; redacted output only
+2026-08-29T06:21:28Z a03-session.mjs call -> PASS; exactly one clued_project_list with arguments={}
+2026-08-29T06:21:38Z production read-only reconciliation SQL -> PASS
+2026-08-29T06:24:00Z a03-session.mjs clear -> PASS; isolated A03 resource only
+2026-08-29T06:25:00Z browser and Inspector process cleanup -> PASS; ports 6400-6403 released

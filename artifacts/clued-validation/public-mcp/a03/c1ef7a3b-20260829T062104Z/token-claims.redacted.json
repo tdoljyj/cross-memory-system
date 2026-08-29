@@ -1,0 +1,17 @@
+{
+  "contract": "clued-a03-token-claims-redacted-v1",
+  "sub": "e9dc13e7-41b0-421b-bfa3-07890675e92d",
+  "client_id": "87924be5-cec9-415f-b1a2-8a4d9ae9d1a8",
+  "iss": "https://ccxsikzwxlolxqlosril.supabase.co/auth/v1",
+  "iat": 1787984467,
+  "exp": 1787988067,
+  "exp_gt_iat": true,
+  "aud": "authenticated",
+  "resource": null,
+  "scope": [
+    "openid",
+    "email",
+    "profile"
+  ],
+  "resource_contract": "absent-as-documented-for-standard-supabase-oauth-jwt"
+}
