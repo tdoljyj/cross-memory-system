@@ -46,6 +46,7 @@ test('P5 migrations enforce gateway-only RPC, Attempt-bound failure, RLS, and ca
   const replayFix = read('supabase/migrations/20260827062132_p5_concurrent_attempt_replay.sql');
   const expiryFix = read('supabase/migrations/20260827072012_p5_expired_attempt_reissue.sql');
   const linearizationFix = read('supabase/migrations/20260827084500_p5_attempt_reissue_linearization.sql');
+  const auditLintFix = read('supabase/migrations/20260828183205_p5_audit_lint_compatibility.sql');
   assert.match(migration, /version=v_base/);
   assert.match(migration, /CANONICAL_CAS_CONFLICT/);
   assert.match(migration, /IDEMPOTENCY_PAYLOAD_CONFLICT/);
@@ -59,6 +60,9 @@ test('P5 migrations enforce gateway-only RPC, Attempt-bound failure, RLS, and ca
   assert.match(migration, /status text not null default 'pending' check \(status = 'pending'\)/);
   assert.doesNotMatch(migration, /grant execute[\s\S]*to anon/);
   assert.match(fix, /create role clued_p5_gateway nologin noinherit[\s\S]*nobypassrls/);
+  assert.match(fix, /rolname='clued_p5_gateway' and rolsuper[\s\S]*CLUED_P5_GATEWAY_MUST_NOT_BE_SUPERUSER/);
+  assert.match(fix, /alter role clued_p5_gateway nologin noinherit nocreatedb nocreaterole noreplication nobypassrls/);
+  assert.doesNotMatch(fix, /alter role clued_p5_gateway[^;]*nosuperuser/);
   assert.match(fix, /grant clued_p5_gateway to authenticator/);
   assert.match(fix, /clued_p5_gateway_attempts/);
   assert.match(fix, /P5_ATTEMPT_NOT_FOUND/);
@@ -69,6 +73,10 @@ test('P5 migrations enforce gateway-only RPC, Attempt-bound failure, RLS, and ca
   assert.match(fix, /to clued_p5_gateway/);
   assert.doesNotMatch(fix, /grant execute[\s\S]*to (anon|authenticated|service_role)/);
   assert.doesNotMatch(fix, /p_error text/);
+  assert.match(auditLintFix, /function clued_private\.p5_audit_jsonb\([\s\S]*p_auth jsonb/);
+  assert.match(auditLintFix, /function clued_private\.p5_audit\([\s\S]*p_auth record[\s\S]*to_jsonb\(p_auth\)/);
+  assert.match(auditLintFix, /revoke all on function clued_private\.p5_audit_jsonb[\s\S]*clued_p5_gateway/);
+  assert.doesNotMatch(auditLintFix, /grant execute/);
   assert.match(replayFix,
     /P5_ATTEMPT_REQUEST_MISMATCH[\s\S]*v_attempt\.status in \('completed','failed'\)/,
     'request mismatch must be checked before terminal Attempt replay');

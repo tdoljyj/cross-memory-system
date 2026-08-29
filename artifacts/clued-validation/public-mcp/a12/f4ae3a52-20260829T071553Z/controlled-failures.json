@@ -1,0 +1,19 @@
+{
+  "contract": "clued-pre-kernel-public-mcp-controlled-failures/1.1",
+  "candidate_sha": "f4ae3a5279268fac72d80dc482a308d2965d9e85",
+  "result": "PASS",
+  "passed": 4,
+  "expected": 4,
+  "fixtures_committed": 0,
+  "fixtures_remaining": 0,
+  "cases": [
+    {"gate":"public-mcp-protocol","fixture":"tools/list baseline with exactly one frozen tool removed","runtime":"Node 24.19.0","exit_code":1,"expected_nonzero":true,"result":"PASS"},
+    {"gate":"public-mcp-behavior","fixture":"isolated MCP URL bound to unused localhost port 65534","tool_version":"Promptfoo 0.122.2","errors":6,"exit_code":100,"expected_nonzero":true,"production_requests":0,"local_eval_and_logs_removed":true,"result":"PASS"},
+    {"gate":"gitleaks","fixture":"random high-entropy fully synthetic detector sentinel","tool_version":"8.30.1","archive_sha256":"d29144deff3a68aa93ced33dddf84b7fdc26070add4aa0f4513094c8332afc4e","findings":1,"redacted":true,"exit_code":1,"expected_nonzero":true,"result":"PASS"},
+    {"gate":"trivy","fixture":"fully synthetic secret sentinel in an isolated temporary directory","tool_version":"0.74.0","archive_sha256":"94c40e0696e4b907a74b7b2e1438d5d72ebaca83115817407f568a002d520842","findings":1,"exit_code":1,"expected_nonzero":true,"result":"PASS"}
+  ],
+  "executed_against_exact_candidate": true,
+  "fresh_clone_clean_after_cleanup": true,
+  "unused_localhost_listener_count_after_cleanup": 0,
+  "production_requests": 0
+}

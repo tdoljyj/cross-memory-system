@@ -1,0 +1,18 @@
+{
+  "contract": "clued-pre-kernel-public-mcp-a12-redaction-scan/1",
+  "result": "PASS",
+  "files_scanned": 11,
+  "gitleaks_version": "8.30.1",
+  "gitleaks_evidence_directory_exit_code": 0,
+  "gitleaks_findings": 0,
+  "credential_shape_matches": 0,
+  "jwt_matches": 0,
+  "access_refresh_id_token_value_matches": 0,
+  "authorization_code_matches": 0,
+  "code_verifier_matches": 0,
+  "complete_code_challenge_matches": 0,
+  "cookie_password_otp_matches": 0,
+  "inspector_api_token_matches": 0,
+  "private_key_matches": 0,
+  "non_synthetic_business_content_matches": 0
+}

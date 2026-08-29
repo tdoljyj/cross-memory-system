@@ -1,0 +1,17 @@
+2026-08-29T07:15:53Z Get-FileHash -Algorithm SHA256 source-plan-v1.0.md -> exit=0 sha256=0ec1652d68d9f0ddad6b993174154e32b4e44538b049dac102dabcaf9d9cb822
+2026-08-29T07:15:53Z Get-FileHash -Algorithm SHA256 docs/execution-plans/*v1.1* -> exit=0 sha256=7ad85ec195a1be122e484b0c063595777d2c95bd419ca977c85f3ed696e4b42f
+2026-08-29T07:15:53Z rg 'continue-on-error|\\|\\|\\s*true|set\\s+\\+e' .github/workflows -> raw_exit=1 assertion_exit=0 matches=0
+2026-08-29T07:21:12Z GitHub exact-SHA checks for f4ae3a5279268fac72d80dc482a308d2965d9e85 -> exit=0 completed_success=4/4 runs=33240424281,33240424291,33240424282,33240424285
+2026-08-29T07:22:00Z Gate Receipt run 33240424303 artifact 9711238776 download and internal SHA256SUMS recompute -> exit=0 receipt_sha256=c90e6124e1293303415ea68a46f2ad4d755eb64f5a41c0648552c6a4f2c803f5
+2026-08-29T07:30:00Z node verify-tools.mjs <one-tool-removed-fixture> tools-list.baseline.json -> exit=1 expected_nonzero=true
+2026-08-29T07:35:22Z MCP_ISOLATED_URL=http://127.0.0.1:65534/mcp MCP_BEARER_TOKEN=[SYNTHETIC_REDACTED] npm run mcp:eval:positive -> exit=100 errors=6 expected_nonzero=true production_requests=0
+2026-08-29T07:35:40Z promptfoo delete eval <controlled-eval-id> and exact new-log cleanup -> exit=0 residual_controlled_eval_logs=0
+2026-08-29T07:36:00Z gitleaks 8.30.1 dir <isolated-synthetic-fixture> --redact --exit-code 1 -> exit=1 findings=1 expected_nonzero=true
+2026-08-29T07:36:00Z trivy 0.74.0 fs --scanners secret --exit-code 1 <isolated-synthetic-fixture> -> exit=1 findings=1 expected_nonzero=true
+2026-08-29T07:36:30Z controlled fixture cleanup and fresh clone git status -> exit=0 fixtures_remaining=0 clean=true
+2026-08-29T07:37:00Z source-plan/coverage structural recompute -> exit=0 CF=14 IF=10 SC=14 mapped=38 unique=38 executed_passed=37 trace_ready=1
+2026-08-29T07:37:00Z approved v1.1 GitHub Free private-repository substitution record -> exit=0 result=NOT_APPLICABLE_BY_APPROVED_V1_1_SUBSTITUTION
+2026-08-29T07:37:00Z A12 protected production calls -> count=0; prior read-only reconciliation reused after CI-cleanup-only change; business/Event/Receipt writes=0
+2026-08-29T07:39:00Z gitleaks 8.30.1 non-derived A12 payloads --redact -> exit=0 findings=0 files=11
+2026-08-29T07:39:00Z credential-shape scan over non-derived payloads -> exit=0 matches=0 files=11
+2026-08-29T07:39:36Z JSON parse, acceptance manifest and SHA256SUMS recompute -> exit=0 payload=12 sums=13

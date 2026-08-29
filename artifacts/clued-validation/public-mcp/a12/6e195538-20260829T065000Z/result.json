@@ -1,0 +1,23 @@
+{
+  "contract": "clued-pre-kernel-public-mcp-a12/1.1",
+  "task_id": "A12",
+  "verdict": "PASS",
+  "candidate_sha": "6e1955383267f41eea0574ae836c22f52fc65805",
+  "pull_request": 9,
+  "sealed_at": "2026-08-29T06:50:00Z",
+  "executor": "Codex@DESK-W-591",
+  "p0_steps_complete": 12,
+  "p0_steps_expected": 12,
+  "coverage_passed": 38,
+  "coverage_expected": 38,
+  "required_checks_passed": 4,
+  "required_checks_expected": 4,
+  "controlled_failures_passed": 4,
+  "controlled_failures_expected": 4,
+  "production_business_event_receipt_writes": 0,
+  "redaction_scan": "PASS",
+  "a13_required": true,
+  "final_baseline_issued": false,
+  "merge_authorized": false,
+  "deployment_authorized": false
+}

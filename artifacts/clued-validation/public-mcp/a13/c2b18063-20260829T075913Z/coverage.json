@@ -1,0 +1,18 @@
+{
+  "contract": "clued-pre-kernel-public-mcp-a13-coverage/1",
+  "candidate_sha": "c2b180635aea0a151a1f3e0be1537803889d78a7",
+  "source_a12_coverage_sha256": "14a9ef29f08205178ad201388888e9cde0073c16be97e20646c09a04d25981f9",
+  "source_a12_state": {"mapped":38,"executed_passed":37,"trace_ready":1},
+  "result": "PASS",
+  "mapped": 38,
+  "passed": 38,
+  "expected": 38,
+  "duplicate_ids": 0,
+  "unmapped_items": 0,
+  "categories": {"core_functions":14,"interfaces":10,"scenarios":14},
+  "items": [
+    {"id":"CF-01","result":"PASS"},{"id":"CF-02","result":"PASS"},{"id":"CF-03","result":"PASS"},{"id":"CF-04","result":"PASS"},{"id":"CF-05","result":"PASS"},{"id":"CF-06","result":"PASS"},{"id":"CF-07","result":"PASS"},{"id":"CF-08","result":"PASS"},{"id":"CF-09","result":"PASS"},{"id":"CF-10","result":"PASS"},{"id":"CF-11","result":"PASS"},{"id":"CF-12","result":"PASS"},{"id":"CF-13","result":"PASS"},{"id":"CF-14","result":"PASS"},
+    {"id":"IF-01","result":"PASS"},{"id":"IF-02","result":"PASS"},{"id":"IF-03","result":"PASS"},{"id":"IF-04","result":"PASS"},{"id":"IF-05","result":"PASS"},{"id":"IF-06","result":"PASS"},{"id":"IF-07","result":"PASS"},{"id":"IF-08","result":"PASS"},{"id":"IF-09","result":"PASS"},{"id":"IF-10","result":"PASS"},
+    {"id":"SC-01","result":"PASS"},{"id":"SC-02","result":"PASS"},{"id":"SC-03","result":"PASS"},{"id":"SC-04","result":"PASS"},{"id":"SC-05","result":"PASS"},{"id":"SC-06","result":"PASS"},{"id":"SC-07","result":"PASS"},{"id":"SC-08","result":"PASS"},{"id":"SC-09","result":"PASS"},{"id":"SC-10","result":"PASS"},{"id":"SC-11","result":"PASS"},{"id":"SC-12","result":"PASS"},{"id":"SC-13","result":"PASS"},{"id":"SC-14","result":"PASS","evidence":"independent fresh clone final A13"}
+  ]
+}

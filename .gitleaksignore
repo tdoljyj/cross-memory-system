@@ -1,0 +1,27 @@
+# Reviewed 2026-08-28; review due 2026-11-28.
+# EX-01..03: Supabase publishable keys. These are public client identifiers;
+# authorization remains enforced by grants and RLS. Both historical and current
+# line fingerprints are retained where the file moved within a commit.
+apps/clued-cloud/worker/continuity.ts:generic-api-key:2
+apps/clued-cloud/worker/continuity.ts:generic-api-key:25
+apps/clued-cloud/app/page.tsx:generic-api-key:8
+apps/clued-cloud/app/page.tsx:generic-api-key:9
+apps/clued-cloud/app/oauth/consent/page.tsx:generic-api-key:13
+
+# EX-04: synthetic pgTAP idempotency fixture, not a credential.
+apps/clued-cloud/supabase/tests/m1_runtime_contracts.test.sql:generic-api-key:65
+
+# EX-05..06: validation error-code constant, current and historical paths.
+legacy/local-memory-engine-vnext2/clued/cloud_data/lifecycle.py:generic-api-key:106
+clued/cloud_data/lifecycle.py:generic-api-key:106
+
+# EX-07..09: published SHA-256 integrity digests, not credentials.
+memory_engine/manifest_guard.py:generic-api-key:83
+docs/r4-gate0/evidence/frozen-eval-manifest.json:generic-api-key:566
+docs/r4-gate0/evidence/model-manifest.redacted.json:generic-api-key:22
+
+# EX-10..11: A03 reconciliation records the registered public OAuth client UUID
+# before and after the read-only call. The client uses token auth method `none`;
+# these exact UUID fields are identifiers, not credentials or authorization data.
+artifacts/clued-validation/public-mcp/a03/c1ef7a3b-20260829T062104Z/production-reconciliation.json:generic-api-key:19
+artifacts/clued-validation/public-mcp/a03/c1ef7a3b-20260829T062104Z/production-reconciliation.json:generic-api-key:20

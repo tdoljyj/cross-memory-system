@@ -1,0 +1,61 @@
+{
+  "contract": "clued-pre-kernel-public-mcp-a13-digest-recomputation/1",
+  "candidate_sha": "c2b180635aea0a151a1f3e0be1537803889d78a7",
+  "result": "PASS",
+  "fresh_clone": {
+    "head": "c2b180635aea0a151a1f3e0be1537803889d78a7",
+    "parent": "f4ae3a5279268fac72d80dc482a308d2965d9e85",
+    "object_type": "commit",
+    "detached": true
+  },
+  "source_plan": {
+    "v1_0_sha256": "0ec1652d68d9f0ddad6b993174154e32b4e44538b049dac102dabcaf9d9cb822",
+    "v1_1_sha256": "7ad85ec195a1be122e484b0c063595777d2c95bd419ca977c85f3ed696e4b42f",
+    "both_match_declared": true
+  },
+  "a12": {
+    "json_files_parsed": 11,
+    "json_parse_failures": 0,
+    "manifest_sha256": "3a77be1df9a43b2d9420ad76388350f013f6e09ceafb745a1dfc50363bb090ea",
+    "manifest_entries_verified": 12,
+    "manifest_mismatches": 0,
+    "sha256sums_sha256": "cbe8b006052345af489bdace7f9ebdd822b0ee62612f6ac02f1369041d292fea",
+    "sha256sums_entries_verified": 13,
+    "sha256sums_mismatches": 0,
+    "coverage_sha256": "14a9ef29f08205178ad201388888e9cde0073c16be97e20646c09a04d25981f9",
+    "redaction_scan_sha256": "f986121dd67cccc18ebb8de7e2f8e47a6fd488a30bec639b7b83a9361b011b44",
+    "result_sha256": "8001cfe2523be9cf4e2afd66b1b12dd5b1504059edb4727dfb1e5042638de734"
+  },
+  "a03": {
+    "files_verified": 9,
+    "json_parse_failures": 0,
+    "sha256sums_mismatches": 0,
+    "sha256sums_sha256": "61532ce55122ae97e93211efce256df9fce0d1291cbb9a16a3bbcb94cb4ec21c",
+    "production_reconciliation_sha256": "cd4571a1430e8e8c0fb70c27f15d2212774a80817089a6317bb7fa7bdc29d0c9",
+    "pkce_s256_redacted": true,
+    "token_claims_redacted": true,
+    "single_readonly_call": true
+  },
+  "exact_sha_gate_receipt": {
+    "workflow_run_id": 33241430466,
+    "workflow_job_id": 99071338809,
+    "artifact_id": 9711525655,
+    "artifact_archive_sha256": "40c22aa4903be42fab712f64bbbada513b8eb688da6289c3ce543403eb8b3624",
+    "receipt_sha256": "db5ba786b99c59429d5a2dac7b6780c49f8b298b14e78a3c3f692d96632f4a04",
+    "internal_sha256sums_match": true,
+    "checks_passed": 4,
+    "checks_expected": 4
+  },
+  "local_reruns": {
+    "npm_ci_locked_install": "PASS",
+    "playwright_browser_download_skipped_as_not_used_by_inspector_cli": true,
+    "a03_contract_tests": "14/14 PASS",
+    "tools_contract": "16 tools / metadata 100% PASS",
+    "flag_matrix": "10/16/15/21 PASS via locked esbuild workaround after Windows tsx environment error",
+    "gate_contract_tests": "4/4 PASS",
+    "protocol": "PASS / MCP 2025-06-18 / 16 tools / anonymous and protected 401",
+    "inspector_strict": "2.4.0 PASS / 16 tools",
+    "gitleaks": "8.30.1 PASS / 394 commits / no findings",
+    "trivy": "0.74.0 exact-SHA hosted runner PASS; local Docker daemon unavailable"
+  }
+}

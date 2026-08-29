@@ -1,0 +1,20 @@
+{
+  "contract": "clued-a03-production-readonly-oauth-pkce-v1",
+  "result": "PASS",
+  "completed_at": "2026-08-29T06:21:38Z",
+  "repository": "https://github.com/tdoljyj/cross-memory-system",
+  "branch": "codex/pre-kernel-public-mcp-v1",
+  "candidate_sha": "c1ef7a3b56746d7160a0903db828d2337336e2a9",
+  "pull_request": "https://github.com/tdoljyj/cross-memory-system/pull/9",
+  "production_mcp": "https://clued.pixelgrav.com/mcp",
+  "inspector_version": "2.4.0",
+  "oauth_result": "PASS",
+  "pkce_result": "PASS",
+  "claims_result": "PASS",
+  "readonly_call_result": "PASS",
+  "production_reconciliation_result": "PASS",
+  "local_cleanup_result": "PASS",
+  "protected_tool_transport_attempts": 1,
+  "production_business_write_count": 0,
+  "note": "This is the A03 result only; it does not issue the final A12/A13 regression-security baseline."
+}

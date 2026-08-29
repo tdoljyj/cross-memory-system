@@ -1,0 +1,69 @@
+# yaml-language-server: $schema=https://promptfoo.dev/config-schema.json
+description: Clued public MCP five-case deterministic positive acceptance
+providers:
+  - id: mcp
+    label: clued-isolated-authenticated
+    config:
+      enabled: true
+      timeout: 30000
+      pingOnConnect: true
+      server:
+        url: "{{env.MCP_ISOLATED_URL}}"
+        name: clued-isolated
+        auth:
+          type: bearer
+          token: "{{env.MCP_BEARER_TOKEN}}"
+prompts:
+  - "{{prompt}}"
+evaluateOptions:
+  maxConcurrency: 1
+  showProgressBar: false
+tests:
+  - description: Bootstrap contract is public and semantic recall stays disabled
+    options: { runSerially: true }
+    vars:
+      prompt: '{"tool":"clued_agent_bootstrap","args":{}}'
+    assert:
+      - type: is-json
+      - type: contains
+        value: 'semantic_recall'
+      - type: contains
+        value: 'false'
+  - description: Resume returns an isolated canonical session
+    options: { runSerially: true }
+    vars:
+      prompt: '{"tool":"clued_session_resume","args":{"context_key":"accept-pos-project","client_session_id":"APOS-resume"}}'
+    assert:
+      - type: is-json
+      - type: contains-any
+        value: ['empty', 'restored']
+      - type: contains
+        value: 'clued-cloud/supabase'
+  - description: Search is deterministic lexical and not semantic
+    options: { runSerially: true }
+    vars:
+      prompt: '{"tool":"clued_search_context","args":{"context_key":"accept-pos-project","session_token":"{{env.MCP_SESSION_TOKEN}}","query":"acceptance-needle","include_history":false,"limit":10}}'
+    assert:
+      - type: is-json
+      - type: contains
+        value: 'lexical'
+  - description: Append creates one event and receipt through the canonical RPC
+    options: { runSerially: true, repeat: 2 }
+    vars:
+      prompt: '{"tool":"clued_append_event","args":{"context_key":"accept-pos-project","session_token":"{{env.MCP_SESSION_TOKEN}}","base_version":0,"event_type":"action","payload":{"title":"acceptance-needle"},"idempotency_key":"APOS-append-0001"}}'
+    assert:
+      - type: is-json
+      - type: contains-any
+        value: ['appended', 'duplicate']
+      - type: contains
+        value: 'event_id'
+  - description: Checkpoint atomically closes the isolated session
+    options: { runSerially: true }
+    vars:
+      prompt: '{"tool":"clued_session_checkpoint","args":{"context_key":"accept-pos-project","session_token":"{{env.MCP_SESSION_TOKEN}}","base_version":1,"snapshot":{"state":"accepted"},"summary":"Positive acceptance checkpoint","next_action":"Verify evidence","idempotency_key":"APOS-checkpoint-0001"}}'
+    assert:
+      - type: is-json
+      - type: contains
+        value: 'committed'
+      - type: contains
+        value: 'receipt_id'

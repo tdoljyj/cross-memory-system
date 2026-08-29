@@ -1,0 +1,24 @@
+{
+  "contract": "clued-a03-coverage-v1",
+  "result": "PASS",
+  "passed": 15,
+  "total": 15,
+  "checks": {
+    "fresh_isolated_inspector_storage": "PASS",
+    "inspector_exact_version_2_4_0": "PASS",
+    "protected_resource_discovery": "PASS",
+    "authorization_server_discovery": "PASS",
+    "public_client_token_auth_none_supported": "PASS",
+    "authorization_endpoint_exact": "PASS",
+    "client_id_exact": "PASS",
+    "callback_exact_localhost_6400": "PASS",
+    "pkce_s256_nonempty": "PASS",
+    "oauth_scope_within_allowlist": "PASS",
+    "token_claims_exact": "PASS",
+    "single_clued_project_list_empty_arguments": "PASS",
+    "binding_immutable_fields_unchanged": "PASS",
+    "nine_table_counts_zero_before_and_after": "PASS",
+    "local_token_and_browser_cleanup": "PASS"
+  },
+  "coverage_note": "The isolated OAuth state, browser tab, Inspector processes and single-use runtime directory were cleared; no production resource was revoked or deleted."
+}

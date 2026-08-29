@@ -30,10 +30,28 @@ test("publishes a continuity health contract", async () => {
 
 test("implements MCP initialization and continuity tool discovery", async () => {
   const worker = await loadWorker();
-  const initialize = await worker.fetch(
+  const anonymousInitialize = await worker.fetch(
     new Request("https://clued.test/mcp", {
       method: "POST",
       headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 0, method: "initialize", params: {} }),
+    }),
+    env,
+    ctx,
+  );
+  assert.equal(anonymousInitialize.status, 401);
+  assert.match(
+    anonymousInitialize.headers.get("www-authenticate") ?? "",
+    /^Bearer realm="Clued", resource_metadata=/,
+  );
+
+  const initialize = await worker.fetch(
+    new Request("https://clued.test/mcp", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer clued_bnd_${"a".repeat(43)}`,
+        "content-type": "application/json",
+      },
       body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }),
     }),
     env,
