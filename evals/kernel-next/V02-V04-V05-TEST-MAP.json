@@ -1,0 +1,23 @@
+{
+  "schema_version": "clued.v15.v02-v04-v05-reference-test-map/1",
+  "status": "CANDIDATE_MAPPING_NOT_STAGE_PASS",
+  "V02": {
+    "required": ["CI-13","CI-29","CI-30","CI-33","CI-40","CI-42","EIA-16","EIA-24","EIA-27","EIA-38"],
+    "test_file": "evals/kernel-next/v02-reference-core.test.mjs",
+    "covers": ["atomic OperationCommit","fail-closed negotiation","LKG TTL and anti-rollback","checkpoint and pointer CAS"]
+  },
+  "V04": {
+    "required": ["CI-08","CI-12","CI-17","CI-31","CI-32","CI-35","CI-76","EIA-01","EIA-02","EIA-04","EIA-13","EIA-17","EIA-20","EIA-23","EIA-26","EIA-31","EIA-32","EIA-37"],
+    "test_file": "evals/kernel-next/v04-reference-core.test.mjs",
+    "covers": ["Attempt FSM legal edges","orthogonal result axes","UNKNOWN no automatic redispatch","unique successor","handoff/cancel/reconcile"]
+  },
+  "V05": {
+    "required": ["CI-10","CI-27","CI-84","CI-85","CI-87","EIA-03","EIA-19","EIA-21","EIA-22","EIA-33","EIA-35"],
+    "test_file": "evals/kernel-next/v05-reference-core.test.mjs",
+    "covers": ["APPROVAL-LEASE-01 two-transaction saga","unique approval use","complete binding/vector/plan/target/fencing","equality boundary rejection"]
+  },
+  "authority_effect": "NONE",
+  "v02_pass": false,
+  "v04_pass": false,
+  "v05_pass": false
+}
