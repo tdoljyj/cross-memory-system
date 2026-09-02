@@ -1,0 +1,260 @@
+{
+  "schema_version": "clued.v15.v11-model-test-map/1",
+  "object_type": "StageTestMap",
+  "candidate_status": "PASS_CANDIDATE_PREPARED",
+  "formal_stage_results": {
+    "V11": false
+  },
+  "authority_effect": "NONE",
+  "provider_profile": {
+    "kind": "none",
+    "execution": "NOT_RUN_PROVIDER_NONE",
+    "network_access": false,
+    "provider_sdk_access": false,
+    "secret_access": false,
+    "paid_calls": 0,
+    "external_calls": 0,
+    "external_writes": 0,
+    "canonical_writes": 0,
+    "production": false
+  },
+  "claim_boundary": {
+    "local_scripted_contract": "EXECUTABLE_AFTER_INTEGRATION",
+    "real_provider_execution": false,
+    "ci_eia_formal_execution": false,
+    "ci_eia_identifiers": "REGISTERED_TRACE_IDENTIFIERS_NOT_RUN_DEFINITION_ONLY",
+    "business_receipt_issued": false,
+    "canonical_candidate_status": "NOT_CANONICAL"
+  },
+  "predecessor": {
+    "g1_model_schema_v2_manifest": {
+      "path": "protocol/continuity/v1/manifest.json",
+      "sha256": "sha256:05ca5bb70c642dba9c3f58c0b943020d6188636e60cc569b3802c90a9afd36b5",
+      "content_tree_digest": "sha256:602f6574542e80e250553e1b030f429375727e9aea8c496fbf7dc809d1e68c0b"
+    },
+    "schemas": {
+      "protocol/continuity/v1/schemas/model/provider-descriptor.schema.json": "sha256:9fc150f7682a32799e5ca6e8439c28a0912804c16af70c034a5d080134b3f6b7",
+      "protocol/continuity/v1/schemas/model/model-invocation-request.schema.json": "sha256:4fe9f38171a925497631ff4bf59f06d6aed9db2d296a31f159a7e8f9f5f5f642",
+      "protocol/continuity/v1/schemas/model/model-invocation-attempt.schema.json": "sha256:9c7fe6dc0538b84fd680704594f3c8ef31266780804954ffb2b38860185c9aa8",
+      "protocol/continuity/v1/schemas/model/model-invocation-result.schema.json": "sha256:818f9eac55201fb442e45e7fd4f50b6c00b23b4c0bdea16a4a0e33023c893a1f",
+      "protocol/continuity/v1/schemas/model/model-output-candidate.schema.json": "sha256:69fdbe65eb86b4af54f5428c85e072df7b91adf2b33a84f5b248429444b569c5"
+    }
+  },
+  "target_paths": [
+    "kernel/policy/model-contract.mjs",
+    "evals/kernel-next/v11-model-contract.test.mjs",
+    "evals/kernel-next/V11-MODEL-TEST-MAP.json"
+  ],
+  "test_counts": {
+    "positive": 5,
+    "negative_schema": 21,
+    "negative_cross_object": 5,
+    "total": 31
+  },
+  "mappings": {
+    "positive": [
+      "V11-POS-01 provider descriptor schema and provider-none effect surface",
+      "V11-POS-02 request schema binds three-part currency and bounded invocation budgets",
+      "V11-POS-03 attempt schema binds retry deadline cancellation and late-result controls",
+      "V11-POS-04 result schema binds usage actual route timing outcome and sanitized error union",
+      "V11-POS-05 candidate schema plus provider-none cross-object semantic contract"
+    ],
+    "negative_schema": [
+      "V11-SNEG-01 descriptor missing regions",
+      "V11-SNEG-02 descriptor rejects canonical-write credential field",
+      "V11-SNEG-03 request missing currency",
+      "V11-SNEG-04 request rejects lowercase currency",
+      "V11-SNEG-05 request rejects fractional cost minor units",
+      "V11-SNEG-06 request missing concurrency bound",
+      "V11-SNEG-07 request rejects authority grant scope",
+      "V11-SNEG-08 request rejects provider training without opt-in receipt",
+      "V11-SNEG-09 attempt rejects unregistered retry trigger",
+      "V11-SNEG-10 retry attempt requires predecessor",
+      "V11-SNEG-11 late result cannot remain candidate eligible",
+      "V11-SNEG-12 cancelled attempt cannot remain candidate eligible",
+      "V11-SNEG-13 result missing adapter artifact digest",
+      "V11-SNEG-14 result missing actual model id",
+      "V11-SNEG-15 result rejects fractional cost minor units",
+      "V11-SNEG-16 successful result cannot carry error",
+      "V11-SNEG-17 failed result rejects unknown error taxonomy",
+      "V11-SNEG-18 candidate missing subject binding",
+      "V11-SNEG-19 candidate rejects second mutable status axis",
+      "V11-SNEG-20 candidate cannot become authoritative",
+      "V11-SNEG-21 candidate requires bounded expiry"
+    ],
+    "negative_cross_object": [
+      "V11-XNEG-01 result currency must equal request currency",
+      "V11-XNEG-02 result currency profile must equal request profile",
+      "V11-XNEG-03 result cost cannot exceed request budget",
+      "V11-XNEG-04 result attempt identity must equal request",
+      "V11-XNEG-05 late result cannot yield accepted candidate"
+    ]
+  },
+  "registered_trace_identifiers": {
+    "execution_status": "NOT_RUN_DEFINITION_ONLY",
+    "disclaimer": "Local provider-none tests are supporting executable contract evidence only; they do not constitute real Provider, formal CI, or formal EIA execution.",
+    "ci": {
+      "CI-88": [
+        "V11-POS-01 provider descriptor schema and provider-none effect surface",
+        "V11-SNEG-01 descriptor missing regions",
+        "V11-SNEG-02 descriptor rejects canonical-write credential field"
+      ],
+      "CI-89": [
+        "V11-POS-05 candidate schema plus provider-none cross-object semantic contract",
+        "V11-SNEG-18 candidate missing subject binding",
+        "V11-SNEG-19 candidate rejects second mutable status axis"
+      ],
+      "CI-90": [
+        "V11-POS-01 provider descriptor schema and provider-none effect surface"
+      ],
+      "CI-91": [
+        "V11-POS-02 request schema binds three-part currency and bounded invocation budgets",
+        "V11-POS-05 candidate schema plus provider-none cross-object semantic contract",
+        "V11-XNEG-04 result attempt identity must equal request"
+      ],
+      "CI-92": [
+        "V11-POS-02 request schema binds three-part currency and bounded invocation budgets",
+        "V11-POS-04 result schema binds usage actual route timing outcome and sanitized error union",
+        "V11-XNEG-01 result currency must equal request currency",
+        "V11-XNEG-02 result currency profile must equal request profile",
+        "V11-XNEG-03 result cost cannot exceed request budget"
+      ],
+      "CI-93": [
+        "V11-POS-02 request schema binds three-part currency and bounded invocation budgets",
+        "V11-POS-05 candidate schema plus provider-none cross-object semantic contract",
+        "V11-XNEG-04 result attempt identity must equal request",
+        "V11-XNEG-05 late result cannot yield accepted candidate"
+      ],
+      "CI-94": [
+        "V11-POS-03 attempt schema binds retry deadline cancellation and late-result controls",
+        "V11-POS-04 result schema binds usage actual route timing outcome and sanitized error union",
+        "V11-POS-05 candidate schema plus provider-none cross-object semantic contract",
+        "V11-SNEG-11 late result cannot remain candidate eligible",
+        "V11-SNEG-12 cancelled attempt cannot remain candidate eligible",
+        "V11-XNEG-05 late result cannot yield accepted candidate"
+      ],
+      "CI-95": [
+        "V11-POS-02 request schema binds three-part currency and bounded invocation budgets",
+        "V11-POS-03 attempt schema binds retry deadline cancellation and late-result controls",
+        "V11-POS-04 result schema binds usage actual route timing outcome and sanitized error union",
+        "V11-SNEG-03 request missing currency",
+        "V11-SNEG-04 request rejects lowercase currency",
+        "V11-SNEG-05 request rejects fractional cost minor units",
+        "V11-SNEG-06 request missing concurrency bound",
+        "V11-SNEG-15 result rejects fractional cost minor units",
+        "V11-XNEG-01 result currency must equal request currency",
+        "V11-XNEG-02 result currency profile must equal request profile"
+      ],
+      "CI-96": [
+        "V11-POS-01 provider descriptor schema and provider-none effect surface",
+        "V11-POS-04 result schema binds usage actual route timing outcome and sanitized error union",
+        "V11-SNEG-13 result missing adapter artifact digest",
+        "V11-SNEG-14 result missing actual model id"
+      ],
+      "CI-97": [
+        "V11-POS-01 provider descriptor schema and provider-none effect surface",
+        "V11-POS-02 request schema binds three-part currency and bounded invocation budgets",
+        "V11-POS-04 result schema binds usage actual route timing outcome and sanitized error union",
+        "V11-XNEG-03 result cost cannot exceed request budget"
+      ],
+      "CI-98": [
+        "V11-POS-05 candidate schema plus provider-none cross-object semantic contract",
+        "V11-SNEG-19 candidate rejects second mutable status axis",
+        "V11-SNEG-20 candidate cannot become authoritative",
+        "V11-SNEG-21 candidate requires bounded expiry"
+      ],
+      "CI-99": [
+        "V11-POS-02 request schema binds three-part currency and bounded invocation budgets",
+        "V11-POS-03 attempt schema binds retry deadline cancellation and late-result controls",
+        "V11-SNEG-09 attempt rejects unregistered retry trigger",
+        "V11-SNEG-10 retry attempt requires predecessor",
+        "V11-SNEG-11 late result cannot remain candidate eligible",
+        "V11-SNEG-12 cancelled attempt cannot remain candidate eligible"
+      ],
+      "CI-100": [
+        "V11-POS-04 result schema binds usage actual route timing outcome and sanitized error union",
+        "V11-POS-05 candidate schema plus provider-none cross-object semantic contract",
+        "V11-XNEG-04 result attempt identity must equal request"
+      ],
+      "CI-101": [
+        "V11-POS-04 result schema binds usage actual route timing outcome and sanitized error union",
+        "V11-POS-05 candidate schema plus provider-none cross-object semantic contract",
+        "V11-SNEG-20 candidate cannot become authoritative"
+      ],
+      "CI-102": [
+        "V11-POS-02 request schema binds three-part currency and bounded invocation budgets",
+        "V11-POS-04 result schema binds usage actual route timing outcome and sanitized error union",
+        "V11-POS-05 candidate schema plus provider-none cross-object semantic contract",
+        "V11-SNEG-07 request rejects authority grant scope",
+        "V11-SNEG-18 candidate missing subject binding",
+        "V11-XNEG-04 result attempt identity must equal request"
+      ]
+    },
+    "eia": {
+      "EIA-41": [
+        "V11-POS-03 attempt schema binds retry deadline cancellation and late-result controls",
+        "V11-POS-04 result schema binds usage actual route timing outcome and sanitized error union",
+        "V11-XNEG-05 late result cannot yield accepted candidate"
+      ],
+      "EIA-42": [
+        "V11-POS-02 request schema binds three-part currency and bounded invocation budgets",
+        "V11-POS-04 result schema binds usage actual route timing outcome and sanitized error union",
+        "V11-POS-05 candidate schema plus provider-none cross-object semantic contract",
+        "V11-XNEG-04 result attempt identity must equal request"
+      ],
+      "EIA-43": [
+        "V11-POS-02 request schema binds three-part currency and bounded invocation budgets",
+        "V11-POS-05 candidate schema plus provider-none cross-object semantic contract"
+      ],
+      "EIA-44": [
+        "V11-POS-05 candidate schema plus provider-none cross-object semantic contract",
+        "V11-SNEG-20 candidate cannot become authoritative",
+        "V11-XNEG-05 late result cannot yield accepted candidate"
+      ],
+      "EIA-45": [
+        "V11-POS-02 request schema binds three-part currency and bounded invocation budgets",
+        "V11-POS-03 attempt schema binds retry deadline cancellation and late-result controls",
+        "V11-SNEG-09 attempt rejects unregistered retry trigger",
+        "V11-SNEG-10 retry attempt requires predecessor"
+      ],
+      "EIA-46": [
+        "V11-POS-01 provider descriptor schema and provider-none effect surface",
+        "V11-POS-02 request schema binds three-part currency and bounded invocation budgets",
+        "V11-POS-04 result schema binds usage actual route timing outcome and sanitized error union",
+        "V11-XNEG-01 result currency must equal request currency",
+        "V11-XNEG-02 result currency profile must equal request profile",
+        "V11-XNEG-03 result cost cannot exceed request budget"
+      ],
+      "EIA-47": [
+        "V11-POS-01 provider descriptor schema and provider-none effect surface",
+        "V11-POS-04 result schema binds usage actual route timing outcome and sanitized error union",
+        "V11-POS-05 candidate schema plus provider-none cross-object semantic contract"
+      ],
+      "EIA-48": [
+        "V11-POS-03 attempt schema binds retry deadline cancellation and late-result controls",
+        "V11-POS-04 result schema binds usage actual route timing outcome and sanitized error union",
+        "V11-POS-05 candidate schema plus provider-none cross-object semantic contract",
+        "V11-SNEG-11 late result cannot remain candidate eligible",
+        "V11-SNEG-12 cancelled attempt cannot remain candidate eligible",
+        "V11-XNEG-05 late result cannot yield accepted candidate"
+      ],
+      "EIA-49": [
+        "V11-POS-02 request schema binds three-part currency and bounded invocation budgets",
+        "V11-POS-04 result schema binds usage actual route timing outcome and sanitized error union",
+        "V11-POS-05 candidate schema plus provider-none cross-object semantic contract",
+        "V11-SNEG-03 request missing currency",
+        "V11-SNEG-15 result rejects fractional cost minor units",
+        "V11-XNEG-01 result currency must equal request currency",
+        "V11-XNEG-02 result currency profile must equal request profile",
+        "V11-XNEG-03 result cost cannot exceed request budget"
+      ],
+      "EIA-50": [
+        "V11-POS-01 provider descriptor schema and provider-none effect surface",
+        "V11-POS-04 result schema binds usage actual route timing outcome and sanitized error union",
+        "V11-SNEG-01 descriptor missing regions",
+        "V11-SNEG-13 result missing adapter artifact digest",
+        "V11-SNEG-14 result missing actual model id"
+      ]
+    }
+  }
+}
