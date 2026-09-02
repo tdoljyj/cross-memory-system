@@ -100,6 +100,19 @@ test("V12-BUILD-02 artifact fixes epoch, LF JSON, path order and modes", () => {
   assert.deepEqual(parsed.entries.map((item) => [item.path, item.mode]), [["kernel/core.mjs", "0644"], ["scripts/run.mjs", "0755"]]);
 });
 
+test("V12-BUILD-02A artifact path order is locale-independent code-point order", () => {
+  const bytes = artifact([
+    { path: "ordering/a.mjs", bytes: "lower-a\n" },
+    { path: "ordering/é.mjs", bytes: "non-ascii\n" },
+    { path: "ordering/_.mjs", bytes: "underscore\n" },
+    { path: "ordering/Z.mjs", bytes: "upper-z\n" },
+    { path: "ordering/A.mjs", bytes: "upper-a\n" },
+  ]);
+  assert.deepEqual(parseDeterministicArtifact(bytes).entries.map((item) => item.path), [
+    "ordering/A.mjs", "ordering/Z.mjs", "ordering/_.mjs", "ordering/a.mjs", "ordering/é.mjs",
+  ]);
+});
+
 test("V12-BUILD-03 traversal, duplicate paths and special entries fail closed", () => {
   for (const path of ["../escape", "/absolute", "C:/drive", "a\\b", "a//b", "a/./b"]) assert.throws(() => normalizeArtifactPath(path), { code: "UNSAFE_ARTIFACT_PATH" });
   assert.throws(() => artifact([{ path: "same", bytes: "a" }, { path: "same", bytes: "b" }]), { code: "DUPLICATE_ARTIFACT_PATH" });

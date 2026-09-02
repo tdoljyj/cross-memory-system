@@ -98,7 +98,7 @@ export function buildDeterministicArtifact({
   requireString(environment, "environment");
   requireDigest(buildEnvironmentDigest, "buildEnvironmentDigest");
   if (!Array.isArray(files) || files.length === 0) fault("EMPTY_BUILD", "at least one file is required");
-  const entries = files.map(normalizeEntry).sort((left, right) => left.path.localeCompare(right.path));
+  const entries = files.map(normalizeEntry).sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0);
   if (new Set(entries.map((entry) => entry.path)).size !== entries.length) {
     fault("DUPLICATE_ARTIFACT_PATH", "artifact contains duplicate paths");
   }
