@@ -1,0 +1,133 @@
+{
+  "schema_version": "clued.v15.v03-reference-core-test-map/1",
+  "object_type": "StageTestMap",
+  "stage_id": "V03",
+  "status": "PASS_CANDIDATE_PREPARED",
+  "v03_pass": false,
+  "authority_effect": "NONE",
+  "required_test_ids": {
+    "ci": [
+      "CI-25",
+      "CI-26",
+      "CI-34",
+      "CI-39",
+      "CI-43",
+      "CI-44",
+      "CI-57",
+      "CI-58",
+      "CI-59",
+      "CI-64",
+      "CI-65",
+      "CI-66"
+    ],
+    "eia": [
+      "EIA-05",
+      "EIA-15",
+      "EIA-25",
+      "EIA-39",
+      "EIA-40"
+    ],
+    "special": [
+      "SEC-01",
+      "SEC-02",
+      "SEC-03",
+      "SEC-04",
+      "SEC-05",
+      "SEC-06",
+      "SEC-07",
+      "SEC-08",
+      "SEC-09",
+      "SEC-10"
+    ]
+  },
+  "runnable_case_mapping": {
+    "V03-ID-01": [
+      "CI-58",
+      "SEC-04",
+      "EIA-05",
+      "EIA-39"
+    ],
+    "V03-ID-02": [
+      "CI-25",
+      "CI-26",
+      "CI-34",
+      "CI-43",
+      "CI-58",
+      "CI-64",
+      "SEC-04",
+      "EIA-05",
+      "EIA-25",
+      "EIA-39"
+    ],
+    "V03-ID-03": [
+      "CI-25",
+      "CI-34",
+      "CI-44",
+      "CI-57",
+      "CI-58",
+      "SEC-02",
+      "SEC-03"
+    ],
+    "V03-KEY-01": [
+      "CI-64",
+      "CI-65",
+      "CI-66",
+      "EIA-40"
+    ],
+    "V03-DEL-01": [
+      "CI-39",
+      "CI-59",
+      "SEC-05",
+      "SEC-09",
+      "SEC-10",
+      "EIA-15"
+    ],
+    "V03-DEL-02": [
+      "CI-59",
+      "SEC-05"
+    ],
+    "V03-DEL-03": [
+      "CI-59",
+      "SEC-05"
+    ],
+    "V03-DEL-04": [
+      "CI-59",
+      "SEC-09"
+    ],
+    "V03-TENANT-01": [
+      "CI-57",
+      "CI-58",
+      "CI-66",
+      "SEC-01",
+      "SEC-02",
+      "SEC-03",
+      "SEC-06",
+      "SEC-08",
+      "EIA-15"
+    ],
+    "V03-TENANT-02": [
+      "CI-58",
+      "CI-66",
+      "SEC-01",
+      "SEC-02",
+      "SEC-03",
+      "EIA-15",
+      "EIA-25"
+    ],
+    "V03-ERASURE-01": [
+      "CI-26",
+      "CI-39",
+      "CI-58",
+      "CI-59",
+      "SEC-04",
+      "SEC-05",
+      "EIA-05",
+      "EIA-39"
+    ]
+  },
+  "notes": [
+    "Mappings prove only isolated reference-core candidate behavior.",
+    "Full stage acceptance still requires exact G1/V01/V01A binding, target integration, the complete V03 environment matrix, independent review, and a V03 WPR.",
+    "Test-generation key bytes exist only in memory and are destroyed before the test ends."
+  ]
+}
