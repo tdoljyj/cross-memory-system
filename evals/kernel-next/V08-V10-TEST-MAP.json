@@ -1,0 +1,91 @@
+{
+  "schema_version": "clued.v15.v08-v10-test-map/1",
+  "object_type": "StageTestMap",
+  "candidate_status": "PASS_CANDIDATE_PREPARED",
+  "formal_stage_results": {
+    "V08": false,
+    "V10": false
+  },
+  "authority_effect": "NONE",
+  "target_paths": [
+    "kernel/runtime/observability-port.mjs",
+    "kernel/policy/observation-manifest.mjs",
+    "kernel/domain/cross-host-continuity.mjs",
+    "kernel/runtime/cross-host-channel.mjs",
+    "kernel/runtime/external-invocation-ledger.mjs",
+    "kernel/policy/cross-host-policy.mjs"
+  ],
+  "mappings": {
+    "V08": {
+      "O01": [
+        "O01 four minimized envelopes validate and expose zero authority"
+      ],
+      "O02": [
+        "O02 deterministic sampling uses frozen seed and cannot affect canonical outcome",
+        "O02 per-tenant rate limit isolates a noisy tenant",
+        "O02 bounded queue drops telemetry under backpressure without throwing"
+      ],
+      "O03-PROVIDER-NONE": [
+        "O03-PROVIDER-NONE requires zero DSN and exports nothing",
+        "O03 adapter failure has bounded retry and leaves business result unchanged"
+      ],
+      "CI-51": [
+        "CI-51 irreversible correlation and allowlist prevent raw identifiers or forbidden fields",
+        "CI-51 cross-chunk sensitive value is quarantined before sampling or cache"
+      ],
+      "CI-52": [
+        "CI-52 fault tool manifest is frozen to isolated local targets"
+      ],
+      "CI-70": [
+        "CI-70 frozen A30 fuzz manifest enforces coverage, convergence and zero unresolved crashes"
+      ],
+      "CI-71": [
+        "CI-71 shadow manifest freezes candidate baseline threshold stop rollback and checkpoint"
+      ],
+      "CI-72": [
+        "CI-72 soak manifest freezes load quota caps SLO recovery and checkpoint"
+      ]
+    },
+    "V10": {
+      "XAG-01": [
+        "XAG-01 independent Host B resumes state blockers reason and unique next action"
+      ],
+      "XAG-02": [
+        "XAG-02 narrower Host B sees projection only and cannot write outside scope"
+      ],
+      "XAG-03": [
+        "XAG-03 concurrent handoff claims have one winner and loser reconciles"
+      ],
+      "XAG-04": [
+        "XAG-04 revoking A binding leaves B and context active"
+      ],
+      "XAG-05": [
+        "XAG-05 selects common protocol/profile and fails closed without common version"
+      ],
+      "CI-38": [
+        "CI-38 Pack isolation manifest denies Core secrets and undeclared permissions",
+        "optional Pack and External Executor may be N/A only with all machine proofs"
+      ],
+      "CI-54": [
+        "CI-54 untrusted content cannot mutate Plan Scope Target Gate or tool permissions"
+      ],
+      "CI-60": [
+        "CI-60 erased external copy cannot silently become current"
+      ],
+      "CI-86": [
+        "CI-86 only Kernel atomically consumes unique use before dispatch with nonce",
+        "external callback remains untrusted until Kernel OperationCommit finalization"
+      ],
+      "CI-102": [
+        "CI-102 tenant subject project and binding isolation is opaque and exact",
+        "two local process-host identities use distinct Binding Credential and Ed25519 key without shared secret",
+        "signed cross-host channel rejects replay audience and tenant confusion",
+        "pairwise subject alias is audience and connector specific without raw Subject"
+      ]
+    }
+  },
+  "optional_subcapability": {
+    "pack_external_executor": "N/A_WITH_PROOF_IF_OMITTED_FROM_FINAL_PROFILE_AND_BOM",
+    "current_disposition": "UNRESOLVED_PENDING_V00_FINAL_PROFILE_AND_BOM"
+  }
+}
