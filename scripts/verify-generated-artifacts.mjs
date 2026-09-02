@@ -12,6 +12,540 @@ const TRACE_PATH = 'protocol/continuity/v1/trace/requirement-test-gate-profile.j
 const REGISTRY_PATH = 'protocol/continuity/v1/registries/object-registry.json';
 const APPLICABILITY_PATH = 'protocol/continuity/v1/applicability/minimum-local-rc.json';
 const MANIFEST_PATH = 'protocol/continuity/v1/manifest.json';
+const MODEL_SCHEMA_V2_DEFINITION = '2.0.0-local-rc-v15-model';
+const MODEL_SCHEMA_V2_COVERAGE_KIND = 'SCHEMA_SUPPORT_ONLY_NOT_EXECUTION_EVIDENCE';
+const MODEL_SCHEMA_V2_SOURCE = 'sha256:f967fdf3e63028d29ed191160698726b5d707aaae63bd951f6ba2e8584936fec';
+const MODEL_SCHEMA_V2_CI = ["CI-88","CI-89","CI-90","CI-91","CI-92","CI-93","CI-94","CI-95","CI-96","CI-97","CI-98","CI-99","CI-100","CI-101","CI-102"];
+const MODEL_SCHEMA_V2_EIA = ["EIA-41","EIA-42","EIA-43","EIA-44","EIA-45","EIA-46","EIA-47","EIA-48","EIA-49","EIA-50"];
+const MODEL_SCHEMA_V2_ERRORS = ["MODEL_PROVIDER_UNAVAILABLE","MODEL_TIMEOUT","MODEL_CANCELLED","MODEL_BUDGET_EXCEEDED","MODEL_SCOPE_DENIED","MODEL_OUTPUT_INVALID","MODEL_POLICY_BLOCKED","MODEL_REVISION_DRIFT","MODEL_PAYLOAD_UNAVAILABLE","MODEL_INTERNAL_ERROR"];
+const MODEL_SCHEMA_V2 = {
+  "protocol/continuity/v1/schemas/model/provider-descriptor.schema.json": {
+    "id": "urn:clued:schema:model-provider-descriptor:v2",
+    "object_type": "ModelProviderDescriptor",
+    "properties": [
+      "adapter_version",
+      "artifact_digest",
+      "cancellation",
+      "capabilities",
+      "data_classes",
+      "health_ttl",
+      "idempotency",
+      "max_input_bytes",
+      "max_output_bytes",
+      "model_revisions",
+      "object_type",
+      "provider_id",
+      "provider_type",
+      "regions",
+      "retention_modes",
+      "schema_version",
+      "signature_ref",
+      "streaming",
+      "training_modes"
+    ],
+    "required": [
+      "adapter_version",
+      "artifact_digest",
+      "cancellation",
+      "capabilities",
+      "data_classes",
+      "health_ttl",
+      "idempotency",
+      "max_input_bytes",
+      "max_output_bytes",
+      "model_revisions",
+      "object_type",
+      "provider_id",
+      "provider_type",
+      "regions",
+      "retention_modes",
+      "schema_version",
+      "signature_ref",
+      "streaming",
+      "training_modes"
+    ],
+    "source_sections": [
+      "38.11",
+      "38.4",
+      "38.5",
+      "38.9"
+    ],
+    "coverage": {
+      "schema_support": {
+        "ci": [
+          "CI-88",
+          "CI-96",
+          "CI-97"
+        ],
+        "eia": [
+          "EIA-50"
+        ]
+      },
+      "semantic_runtime_required": {
+        "ci": [
+          "CI-101",
+          "CI-102",
+          "CI-90",
+          "CI-92"
+        ],
+        "eia": [
+          "EIA-46",
+          "EIA-47"
+        ]
+      }
+    }
+  },
+  "protocol/continuity/v1/schemas/model/model-invocation-request.schema.json": {
+    "id": "urn:clued:schema:model-invocation-request:v2",
+    "object_type": "ModelInvocationRequest",
+    "properties": [
+      "adapter_version",
+      "attempt_id",
+      "binding_ref",
+      "budgets",
+      "capability",
+      "context_slice_ref",
+      "correlation_id",
+      "data_classification",
+      "deadline",
+      "eval_set_digest",
+      "idempotency_key",
+      "input_digest",
+      "invocation_id",
+      "lease_hard_stop",
+      "model_revision",
+      "object_type",
+      "output_schema_digest",
+      "policy_snapshot_digest",
+      "project_ref",
+      "provider_id",
+      "provider_qualification_ref",
+      "provider_type",
+      "purpose",
+      "region",
+      "retention_mode",
+      "schema_version",
+      "scope_digest",
+      "security_profile_id",
+      "step_deadline",
+      "subject_ref",
+      "template_hash",
+      "training_mode",
+      "training_opt_in_receipt_ref"
+    ],
+    "required": [
+      "adapter_version",
+      "attempt_id",
+      "binding_ref",
+      "budgets",
+      "capability",
+      "context_slice_ref",
+      "correlation_id",
+      "data_classification",
+      "deadline",
+      "eval_set_digest",
+      "idempotency_key",
+      "input_digest",
+      "invocation_id",
+      "lease_hard_stop",
+      "model_revision",
+      "object_type",
+      "output_schema_digest",
+      "policy_snapshot_digest",
+      "project_ref",
+      "provider_id",
+      "provider_qualification_ref",
+      "provider_type",
+      "purpose",
+      "region",
+      "retention_mode",
+      "schema_version",
+      "scope_digest",
+      "security_profile_id",
+      "step_deadline",
+      "subject_ref",
+      "template_hash",
+      "training_mode",
+      "training_opt_in_receipt_ref"
+    ],
+    "source_sections": [
+      "38.10",
+      "38.11",
+      "38.5",
+      "38.8",
+      "38.9"
+    ],
+    "coverage": {
+      "schema_support": {
+        "ci": [
+          "CI-102",
+          "CI-91",
+          "CI-95",
+          "CI-97",
+          "CI-99"
+        ],
+        "eia": [
+          "EIA-42",
+          "EIA-43",
+          "EIA-45"
+        ]
+      },
+      "semantic_runtime_required": {
+        "ci": [
+          "CI-92",
+          "CI-93"
+        ],
+        "eia": [
+          "EIA-44",
+          "EIA-46",
+          "EIA-47",
+          "EIA-49"
+        ]
+      }
+    }
+  },
+  "protocol/continuity/v1/schemas/model/model-invocation-attempt.schema.json": {
+    "id": "urn:clued:schema:model-invocation-attempt:v2",
+    "object_type": "ModelInvocationAttempt",
+    "properties": [
+      "adapter_version",
+      "attempt_id",
+      "attempt_ordinal",
+      "backoff_ms",
+      "budget_reservation_ref",
+      "cancel_requested_at",
+      "candidate_acceptance_eligible",
+      "idempotency_key",
+      "invocation_id",
+      "jitter_ms",
+      "late_result",
+      "late_result_evidence_ref",
+      "lease_hard_stop",
+      "model_id",
+      "model_revision",
+      "object_type",
+      "output_merge_policy",
+      "predecessor_attempt_id",
+      "provider_deadline",
+      "provider_id",
+      "request_digest",
+      "result_received_at",
+      "retry_not_before",
+      "retry_trigger",
+      "schema_version",
+      "started_at",
+      "step_attempt_ref",
+      "step_deadline"
+    ],
+    "required": [
+      "adapter_version",
+      "attempt_id",
+      "attempt_ordinal",
+      "backoff_ms",
+      "budget_reservation_ref",
+      "cancel_requested_at",
+      "candidate_acceptance_eligible",
+      "idempotency_key",
+      "invocation_id",
+      "jitter_ms",
+      "late_result",
+      "late_result_evidence_ref",
+      "lease_hard_stop",
+      "model_id",
+      "model_revision",
+      "object_type",
+      "output_merge_policy",
+      "predecessor_attempt_id",
+      "provider_deadline",
+      "provider_id",
+      "request_digest",
+      "result_received_at",
+      "retry_not_before",
+      "retry_trigger",
+      "schema_version",
+      "started_at",
+      "step_attempt_ref",
+      "step_deadline"
+    ],
+    "source_sections": [
+      "10",
+      "38.10",
+      "38.11",
+      "38.6"
+    ],
+    "coverage": {
+      "schema_support": {
+        "ci": [
+          "CI-94",
+          "CI-95",
+          "CI-99"
+        ],
+        "eia": [
+          "EIA-41",
+          "EIA-45",
+          "EIA-48"
+        ]
+      },
+      "semantic_runtime_required": {
+        "ci": [],
+        "eia": []
+      }
+    }
+  },
+  "protocol/continuity/v1/schemas/model/model-invocation-result.schema.json": {
+    "id": "urn:clued:schema:model-invocation-result:v2",
+    "object_type": "ModelInvocationResult",
+    "properties": [
+      "adapter_artifact_digest",
+      "adapter_version",
+      "attempt_id",
+      "binding_projection",
+      "budget_reservation_ref",
+      "business_receipt_boundary",
+      "capability",
+      "completed_at",
+      "correlation_id",
+      "data_classification",
+      "error",
+      "input_digest",
+      "invocation_id",
+      "invocation_result_authority",
+      "model_id",
+      "model_revision",
+      "object_type",
+      "outcome",
+      "output_digest",
+      "output_schema_digest",
+      "payload_ref",
+      "policy_snapshot_digest",
+      "pre_output_schema_validation_status",
+      "project_projection",
+      "provider_id",
+      "provider_response_id",
+      "provider_type",
+      "purpose",
+      "region",
+      "request_budget_snapshot",
+      "request_digest",
+      "response_summary",
+      "result_id",
+      "retention_mode",
+      "retention_policy",
+      "routing_reason",
+      "schema_version",
+      "scope_digest",
+      "settlement_ref",
+      "started_at",
+      "stop_reason",
+      "subject_projection",
+      "template_hash",
+      "training_mode",
+      "usage"
+    ],
+    "required": [
+      "adapter_artifact_digest",
+      "adapter_version",
+      "attempt_id",
+      "binding_projection",
+      "budget_reservation_ref",
+      "business_receipt_boundary",
+      "capability",
+      "completed_at",
+      "correlation_id",
+      "data_classification",
+      "error",
+      "input_digest",
+      "invocation_id",
+      "invocation_result_authority",
+      "model_id",
+      "model_revision",
+      "object_type",
+      "outcome",
+      "output_digest",
+      "output_schema_digest",
+      "payload_ref",
+      "policy_snapshot_digest",
+      "pre_output_schema_validation_status",
+      "project_projection",
+      "provider_id",
+      "provider_response_id",
+      "provider_type",
+      "purpose",
+      "region",
+      "request_budget_snapshot",
+      "request_digest",
+      "response_summary",
+      "result_id",
+      "retention_mode",
+      "retention_policy",
+      "routing_reason",
+      "schema_version",
+      "scope_digest",
+      "settlement_ref",
+      "started_at",
+      "stop_reason",
+      "subject_projection",
+      "template_hash",
+      "training_mode",
+      "usage"
+    ],
+    "source_sections": [
+      "38.10",
+      "38.11",
+      "38.5",
+      "38.7",
+      "38.9"
+    ],
+    "coverage": {
+      "schema_support": {
+        "ci": [
+          "CI-100",
+          "CI-102",
+          "CI-92",
+          "CI-94",
+          "CI-95",
+          "CI-96"
+        ],
+        "eia": [
+          "EIA-41",
+          "EIA-42",
+          "EIA-46",
+          "EIA-47",
+          "EIA-48",
+          "EIA-49",
+          "EIA-50"
+        ]
+      },
+      "semantic_runtime_required": {
+        "ci": [
+          "CI-101",
+          "CI-97"
+        ],
+        "eia": []
+      }
+    }
+  },
+  "protocol/continuity/v1/schemas/model/model-output-candidate.schema.json": {
+    "id": "urn:clued:schema:model-output-candidate:v2",
+    "object_type": "ModelOutputCandidate",
+    "properties": [
+      "adapter_artifact_digest",
+      "adapter_version",
+      "attempt_id",
+      "authority",
+      "binding_ref",
+      "candidate_id",
+      "canonical_status",
+      "capability",
+      "correlation_id",
+      "data_classification",
+      "expires_at",
+      "generated_at",
+      "immutability",
+      "input_digest",
+      "invocation_id",
+      "invocation_result_digest",
+      "invocation_result_id",
+      "lifecycle_projection_authority",
+      "model_id",
+      "model_revision",
+      "object_type",
+      "output_digest",
+      "output_schema_digest",
+      "payload_ref",
+      "policy_snapshot_digest",
+      "project_ref",
+      "provider_id",
+      "provider_qualification_ref",
+      "provider_type",
+      "purpose",
+      "region",
+      "retention_mode",
+      "retention_policy",
+      "schema_version",
+      "scope_digest",
+      "subject_ref",
+      "template_hash",
+      "training_mode"
+    ],
+    "required": [
+      "adapter_artifact_digest",
+      "adapter_version",
+      "attempt_id",
+      "authority",
+      "binding_ref",
+      "candidate_id",
+      "canonical_status",
+      "capability",
+      "correlation_id",
+      "data_classification",
+      "expires_at",
+      "generated_at",
+      "immutability",
+      "input_digest",
+      "invocation_id",
+      "invocation_result_digest",
+      "invocation_result_id",
+      "lifecycle_projection_authority",
+      "model_id",
+      "model_revision",
+      "object_type",
+      "output_digest",
+      "output_schema_digest",
+      "payload_ref",
+      "policy_snapshot_digest",
+      "project_ref",
+      "provider_id",
+      "provider_qualification_ref",
+      "provider_type",
+      "purpose",
+      "region",
+      "retention_mode",
+      "retention_policy",
+      "schema_version",
+      "scope_digest",
+      "subject_ref",
+      "template_hash",
+      "training_mode"
+    ],
+    "source_sections": [
+      "38.10",
+      "38.11",
+      "38.6",
+      "38.7",
+      "38.8",
+      "38.9"
+    ],
+    "coverage": {
+      "schema_support": {
+        "ci": [
+          "CI-100",
+          "CI-102",
+          "CI-89",
+          "CI-93",
+          "CI-98"
+        ],
+        "eia": [
+          "EIA-42",
+          "EIA-43",
+          "EIA-47",
+          "EIA-48",
+          "EIA-49"
+        ]
+      },
+      "semantic_runtime_required": {
+        "ci": [
+          "CI-101",
+          "CI-91",
+          "CI-94"
+        ],
+        "eia": [
+          "EIA-44"
+        ]
+      }
+    }
+  }
+};
 const MODEL_RULES = new Set([
   'MODEL-AUDIT-01','MODEL-BOUNDARY-01','MODEL-BUDGET-01','MODEL-CANDIDATE-01',
   'MODEL-CANONICAL-01','MODEL-DEADLINE-01','MODEL-DRIFT-01','MODEL-FAILSAFE-01',
@@ -258,16 +792,71 @@ function validateTrace(root, requirements, manifest) {
   };
 }
 
+function validateModelSchemasV2(root) {
+  const exact = (actual, expected, label) => {
+    if (!same([...(actual || [])].sort(), [...expected].sort())) throw new Error(label + ' exact set mismatch');
+  };
+  const walkClosed = (node, label) => {
+    if (!node || typeof node !== 'object') return;
+    if (node.type === 'object') {
+      if (node.additionalProperties !== false || !node.properties || !Array.isArray(node.required)) throw new Error(label + ' object not closed');
+      exact(node.required, Object.keys(node.properties), label + ' required');
+    }
+    for (const [key, value] of Object.entries(node)) {
+      if (key === 'properties' && node.type === 'object') for (const [child, schema] of Object.entries(value)) walkClosed(schema, label + '/properties/' + child);
+      else walkClosed(value, label + '/' + key);
+    }
+  };
+  const ci = new Set();
+  const eia = new Set();
+  const loaded = new Map();
+  for (const [path, spec] of Object.entries(MODEL_SCHEMA_V2)) {
+    const schema = JSON.parse(readFileSync(repoPath(root, path), 'utf8'));
+    loaded.set(path, schema);
+    if (schema.$id !== spec.id || schema.properties.schema_version.const !== '2.0' || schema.properties.object_type.const !== spec.object_type || schema['x-clued-definition-version'] !== MODEL_SCHEMA_V2_DEFINITION || schema['x-clued-generated-from'] !== MODEL_SCHEMA_V2_SOURCE || schema['x-clued-coverage-kind'] !== MODEL_SCHEMA_V2_COVERAGE_KIND || schema['x-clued-registered-test-execution'] !== IDENTIFIER_EXECUTION) throw new Error('model schema v2 identity mismatch: ' + path);
+    exact(schema.required, spec.required, path + ' required');
+    exact(Object.keys(schema.properties || {}), spec.properties, path + ' properties');
+    exact(schema['x-clued-source-sections'], spec.source_sections, path + ' source');
+    if (!same(schema['x-clued-registered-test-coverage'], spec.coverage)) throw new Error(path + ' coverage mismatch');
+    for (const group of Object.values(spec.coverage)) {
+      group.ci.forEach((id) => ci.add(id));
+      group.eia.forEach((id) => eia.add(id));
+    }
+    walkClosed(schema, path);
+  }
+  exact([...ci], MODEL_SCHEMA_V2_CI, 'model schema v2 CI union');
+  exact([...eia], MODEL_SCHEMA_V2_EIA, 'model schema v2 EIA union');
+  const request = loaded.get('protocol/continuity/v1/schemas/model/model-invocation-request.schema.json');
+  const attempt = loaded.get('protocol/continuity/v1/schemas/model/model-invocation-attempt.schema.json');
+  const result = loaded.get('protocol/continuity/v1/schemas/model/model-invocation-result.schema.json');
+  const candidate = loaded.get('protocol/continuity/v1/schemas/model/model-output-candidate.schema.json');
+  const budget = request.properties.budgets;
+  const usage = result.properties.usage;
+  const snapshot = result.properties.request_budget_snapshot;
+  for (const key of ['currency','currency_exponent','currency_profile_digest']) {
+    if (!same(budget.properties[key], usage.properties[key]) || !same(budget.properties[key], snapshot.properties[key])) throw new Error('currency triple schema mismatch: ' + key);
+  }
+  if (!same(budget.properties.max_cost_minor_units, usage.properties.cost_minor_units)) throw new Error('minor-unit schema mismatch');
+  exact(result.$defs.standard_error.properties.code.enum, MODEL_SCHEMA_V2_ERRORS, 'standard errors');
+  if (attempt.properties.output_merge_policy.const !== 'FORBID_CROSS_ATTEMPT_MERGE' || !attempt['x-clued-derived-wire-contract']) throw new Error('attempt derived/retry boundary missing');
+  if (result.properties.invocation_result_authority.const !== 'PROVIDER_CALL_OUTCOME_ONLY' || result.properties.business_receipt_boundary.const !== 'SEPARATE_ID_SCHEMA_OUTCOME_AND_STORAGE' || !result['x-clued-outcome-contract']) throw new Error('result business boundary missing');
+  if (candidate.properties.authority.const !== 'NON_AUTHORITATIVE_CANDIDATE' || candidate.properties.canonical_status.const !== 'NOT_CANONICAL' || candidate.properties.immutability.const !== 'IMMUTABLE_APPEND_ONLY' || candidate.properties.lifecycle_projection_authority.const !== 'EVENT_DECISION_RECEIPT_ONLY') throw new Error('candidate boundary missing');
+  for (const forbidden of ['status','canonical_object_ref','canonical_receipt_id','business_outcome']) if (forbidden in candidate.properties) throw new Error('candidate forbidden field: ' + forbidden);
+  return { version: MODEL_SCHEMA_V2_DEFINITION, schemas: loaded.size, ci_registered: MODEL_SCHEMA_V2_CI.length, eia_registered: MODEL_SCHEMA_V2_EIA.length, execution_status: IDENTIFIER_EXECUTION, coverage_kind: MODEL_SCHEMA_V2_COVERAGE_KIND };
+}
+
 function validateSchemas(root, paths) {
   const schemaPaths = [...paths].filter((path) => path.includes('/schemas/') && path.endsWith('.schema.json'));
   if (schemaPaths.length !== 65) throw new Error('schema count must be 65, got ' + schemaPaths.length);
+  const modelPaths = new Set(Object.keys(MODEL_SCHEMA_V2));
   const ids = new Set();
   for (const path of schemaPaths) {
     const schema = JSON.parse(readFileSync(repoPath(root, path), 'utf8'));
-    if (schema.$schema !== 'https://json-schema.org/draft/2020-12/schema' || typeof schema.$id !== 'string' || ids.has(schema.$id) || schema['x-clued-definition-version'] !== '1.0.0-local-rc-v15' || schema.additionalProperties !== false || !Array.isArray(schema.required) || !schema.required.includes('schema_version') || !schema.required.includes('object_type')) throw new Error('invalid generated schema: ' + path);
+    const expectedDefinition = modelPaths.has(path) ? MODEL_SCHEMA_V2_DEFINITION : '1.0.0-local-rc-v15';
+    if (schema.$schema !== 'https://json-schema.org/draft/2020-12/schema' || typeof schema.$id !== 'string' || ids.has(schema.$id) || schema['x-clued-definition-version'] !== expectedDefinition || schema.additionalProperties !== false || !Array.isArray(schema.required) || !schema.required.includes('schema_version') || !schema.required.includes('object_type')) throw new Error('invalid generated schema: ' + path);
     ids.add(schema.$id);
   }
-  return schemaPaths.length;
+  return { count: schemaPaths.length, model_schema_v2: validateModelSchemasV2(root) };
 }
 
 function validateApplicability(root, manifest) {
@@ -311,7 +900,7 @@ function main() {
     const sourceProjection = readIntermediateSource(validated.manifest.generated_from.intermediate_source);
     const requirements = validateRequirements(root, validated.manifest, sourceProjection);
     const trace = validateTrace(root, requirements, validated.manifest);
-    const schemaCount = validateSchemas(root, validated.paths);
+    const schemaValidation = validateSchemas(root, validated.paths);
     const naCount = validateApplicability(root, validated.manifest);
     const generated = validated.manifest.generated_from;
     const pins = {
@@ -345,7 +934,8 @@ function main() {
       downstream_mapping_digest: validated.manifest.downstream_mapping_digest,
       requirements: 32,
       model_rules: requirements.modelRuleCount,
-      schemas: schemaCount,
+      schemas: schemaValidation.count,
+      model_schema_v2: schemaValidation.model_schema_v2,
       trace,
       na_proofs: naCount,
       repository_pins: pins,
