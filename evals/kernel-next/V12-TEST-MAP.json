@@ -1,0 +1,44 @@
+{
+  "schema_version": "clued.v15.v12-supply-chain-test-map/1",
+  "object_type": "StageTestMap",
+  "stage_id": "V12",
+  "status": "PASS_CANDIDATE_PREPARED",
+  "v12_pass": false,
+  "authority_effect": "NONE",
+  "primary_test_ids": {
+    "ci": ["CI-50"],
+    "eia": []
+  },
+  "collaborative_test_ids": {
+    "ci": ["CI-14", "CI-21", "CI-38", "CI-48", "CI-49", "CI-61", "CI-62", "CI-63", "CI-67", "CI-68", "CI-69"]
+  },
+  "runnable_case_mapping": {
+    "V12-BUILD-01": ["CI-50", "CI-61"],
+    "V12-BUILD-02": ["CI-50", "CI-61"],
+    "V12-BUILD-03": ["CI-14", "CI-50", "CI-61"],
+    "V12-BUILD-04": ["CI-50", "CI-61"],
+    "V12-SBOM-01": ["CI-50"],
+    "V12-PROV-SIGN-01": ["CI-50"],
+    "V12-OCI-01": ["CI-50"],
+    "V12-SURFACE-01": ["CI-21", "CI-38", "CI-48", "CI-49", "CI-50", "CI-62", "CI-63", "CI-67", "CI-68", "CI-69"],
+    "V12-OBS-01": ["CI-38", "CI-48", "CI-50"],
+    "V12-CHAIN-01": ["CI-50"],
+    "V12-CHAIN-02": ["CI-50", "CI-61", "CI-62"],
+    "V12-CLI-01": ["CI-50", "CI-61"],
+    "V12-NEG-01": ["CI-50"]
+  },
+  "claim_boundary": {
+    "scope": "V15_LOCAL_REFERENCE_SUPPLY_CHAIN_ONLY",
+    "actual_syft_cosign_oras_execution": false,
+    "cryptographic_gate_conformance": false,
+    "production": false,
+    "published": false,
+    "authority_effect": "NONE"
+  },
+  "notes": [
+    "V12 primary ownership is CI-50; collaborative IDs remain owned by their original stages.",
+    "The candidate provides deterministic content build and strict verifier behavior only.",
+    "Formal closure must bind final Commit/Tree/BOM, use two clean independent builders, and attach actual version-pinned Syft, Cosign and ORAS evidence or a truthful blocker.",
+    "No candidate test is a production, publication, signed Gate or full V12 PASS claim."
+  ]
+}
