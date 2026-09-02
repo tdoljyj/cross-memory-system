@@ -1,0 +1,210 @@
+{
+  "schema_version": "clued.v15.v06l-v07-reference-core-test-map/1",
+  "object_type": "StageTestMap",
+  "status": "PASS_CANDIDATE_PREPARED",
+  "v06l_pass": false,
+  "v07_pass": false,
+  "authority_effect": "NONE",
+  "required_test_ids": {
+    "v06l": {
+      "ci": [
+        "CI-09",
+        "CI-11",
+        "CI-14",
+        "CI-15",
+        "CI-16",
+        "CI-18",
+        "CI-28",
+        "CI-37",
+        "CI-45",
+        "CI-46",
+        "CI-73",
+        "CI-74",
+        "CI-75"
+      ],
+      "eia": [
+        "EIA-06",
+        "EIA-07",
+        "EIA-08",
+        "EIA-09",
+        "EIA-10",
+        "EIA-11",
+        "EIA-12",
+        "EIA-18",
+        "EIA-28",
+        "EIA-29",
+        "EIA-30",
+        "EIA-34",
+        "EIA-36"
+      ]
+    },
+    "v07": {
+      "ci": [
+        "CI-20",
+        "CI-24",
+        "CI-36",
+        "CI-53",
+        "CI-77",
+        "CI-78",
+        "CI-83"
+      ],
+      "eia": [
+        "EIA-14"
+      ],
+      "file": [
+        "FILE-01",
+        "FILE-02",
+        "FILE-03",
+        "FILE-04",
+        "FILE-05",
+        "FILE-06",
+        "FILE-07"
+      ],
+      "imp": [
+        "IMP-01",
+        "IMP-02",
+        "IMP-03",
+        "IMP-04",
+        "IMP-05",
+        "IMP-06"
+      ]
+    }
+  },
+  "runnable_case_mapping": {
+    "V06-FS-01": [
+      "CI-18",
+      "CI-28",
+      "FILE-03"
+    ],
+    "V06-FS-02": [
+      "CI-18",
+      "FILE-02",
+      "FILE-04"
+    ],
+    "V06-HTTP-01": [
+      "CI-37",
+      "CI-73",
+      "EIA-29"
+    ],
+    "V06-HTTP-02": [
+      "CI-37",
+      "CI-73",
+      "EIA-29",
+      "EIA-30"
+    ],
+    "V06-PROC-01": [
+      "CI-11",
+      "CI-45",
+      "CI-75",
+      "EIA-34"
+    ],
+    "V06-CAP-01": [
+      "CI-09",
+      "CI-14",
+      "CI-15",
+      "CI-16",
+      "EIA-06",
+      "EIA-07",
+      "EIA-11",
+      "EIA-12",
+      "EIA-18",
+      "EIA-28"
+    ],
+    "V06-OUTBOX-01": [
+      "RUNNER-OUTBOX-01",
+      "EIA-24-COLLABORATIVE"
+    ],
+    "V06-OUTBOX-02": [
+      "EIA-10",
+      "FILE-06"
+    ],
+    "V06-EVIDENCE-01": [
+      "CI-46",
+      "EIA-09"
+    ],
+    "V06-EVIDENCE-02": [
+      "CI-28",
+      "CI-46",
+      "EIA-08",
+      "EIA-36"
+    ],
+    "V07-FILE-01": [
+      "CI-74",
+      "FILE-01",
+      "FILE-02"
+    ],
+    "V07-FILE-02": [
+      "CI-18",
+      "FILE-03",
+      "FILE-04"
+    ],
+    "V07-FILE-03": [
+      "CI-74",
+      "FILE-05"
+    ],
+    "V07-FILE-04": [
+      "EIA-14",
+      "FILE-05",
+      "FILE-06"
+    ],
+    "V07-FILE-05": [
+      "CI-83",
+      "FILE-05",
+      "FILE-06"
+    ],
+    "V07-STORAGE-01": [
+      "CI-53"
+    ],
+    "V07-ARCHIVE-01": [
+      "CI-28",
+      "CI-77"
+    ],
+    "V07-ARCHIVE-02": [
+      "CI-28",
+      "CI-77"
+    ],
+    "V07-ARTIFACT-01": [
+      "FILE-07"
+    ],
+    "V07-ARTIFACT-02": [
+      "CI-24",
+      "IMP-06"
+    ],
+    "V07-ARTIFACT-03": [
+      "CI-78"
+    ],
+    "V07-IMPORT-APPLICABILITY-01": [
+      "CI-20",
+      "CI-36",
+      "IMP-01",
+      "IMP-02",
+      "IMP-03",
+      "IMP-04",
+      "IMP-05",
+      "IMP-06"
+    ]
+  },
+  "conditional_scope": {
+    "import_storage": {
+      "disposition_now": "UNRESOLVED_PENDING_FINAL_PROFILE_BOM",
+      "allowed_final_dispositions": [
+        "REQUIRED",
+        "N/A_WITH_PROOF"
+      ],
+      "na_rule": "N/A_WITH_PROOF_IF_OMITTED_FROM_FINAL_PROFILE_AND_BOM_AND_RUNTIME_ENTRYPOINT_SCAN_IS_ZERO_AND_NEGATIVE_INVOCATION_FAILS_CLOSED",
+      "full_imp_semantics_executed_by_this_candidate": false
+    }
+  },
+  "qualification_outstanding": [
+    "Exact G1/V01/V01A/post-V01A bindings.",
+    "Target-repository integration and tests from the target paths.",
+    "Real OS handle, filesystem crash/durability, DNS/connect-by-IP, process-loader and sandbox fixtures.",
+    "Adapter/Pack attestation and environment-specific EIA subcases.",
+    "Full import session/unit semantics only if import-storage is selected; otherwise final machine N/A proof.",
+    "Independent V06-L and V07 review/WPRs."
+  ],
+  "notes": [
+    "This map records reference-core candidate coverage only; it does not assert any stage test family has formally passed.",
+    "The optional import-storage subcapability is neither silently omitted nor prematurely classified N/A."
+  ]
+}
