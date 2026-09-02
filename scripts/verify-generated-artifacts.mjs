@@ -1,155 +1,362 @@
 #!/usr/bin/env node
-import { createHash, createPublicKey, verify as verifySignature } from "node:crypto";
-import { execFileSync } from "node:child_process";
-import { lstatSync, readFileSync, realpathSync, statSync } from "node:fs";
-import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { createHash, createPublicKey, verify as verifySignature } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
+import { lstatSync, readFileSync, realpathSync } from 'node:fs';
+import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 
-const REQUIRED_REGISTRY = "protocol/continuity/v1/requirements.yaml";
-const FORBIDDEN_REVERSE_FIELDS = new Set(["test_refs", "gate_refs", "profile_refs"]);
+const CONTRACT_STATUS = 'G1_LOCAL_MACHINE_CONTRACT_PASS';
+const IDENTIFIER_STATUS = 'REGISTERED_TRACE_IDENTIFIER';
+const IDENTIFIER_EXECUTION = 'NOT_RUN_DEFINITION_ONLY';
+const REQUIREMENTS_PATH = 'protocol/continuity/v1/requirements.yaml';
+const TRACE_PATH = 'protocol/continuity/v1/trace/requirement-test-gate-profile.json';
+const REGISTRY_PATH = 'protocol/continuity/v1/registries/object-registry.json';
+const APPLICABILITY_PATH = 'protocol/continuity/v1/applicability/minimum-local-rc.json';
+const MANIFEST_PATH = 'protocol/continuity/v1/manifest.json';
+const MODEL_RULES = new Set([
+  'MODEL-AUDIT-01','MODEL-BOUNDARY-01','MODEL-BUDGET-01','MODEL-CANDIDATE-01',
+  'MODEL-CANONICAL-01','MODEL-DEADLINE-01','MODEL-DRIFT-01','MODEL-FAILSAFE-01',
+  'MODEL-GATE-01','MODEL-IDEMPOTENCY-01','MODEL-MIN-DISCLOSURE-01','MODEL-NO-TRAINING-01',
+  'MODEL-OPTIONAL-01','MODEL-PROJECTION-01','MODEL-PROVENANCE-01','MODEL-SECRET-01',
+]);
 
-function fail(code, message, details = {}) {
-  process.stdout.write(JSON.stringify({ ok: false, code, message, details }) + "\n");
+function fail(code, message, details) {
+  process.stdout.write(JSON.stringify({ ok: false, code, message, details: details || {} }) + '\n');
   process.exit(1);
 }
-
-function sha256Bytes(value) {
-  return createHash("sha256").update(value).digest("hex");
+function sha256(value) {
+  return createHash('sha256').update(value).digest('hex');
 }
-
-function sha256File(path) {
-  return sha256Bytes(readFileSync(path));
-}
-
 function canonical(value) {
-  if (Array.isArray(value)) return "[" + value.map(canonical).join(",") + "]";
-  if (value && typeof value === "object") {
-    return "{" + Object.keys(value).sort().map((key) => JSON.stringify(key) + ":" + canonical(value[key])).join(",") + "}";
-  }
+  if (Array.isArray(value)) return '[' + value.map(canonical).join(',') + ']';
+  if (value && typeof value === 'object') return '{' + Object.keys(value).sort().map((key) => JSON.stringify(key) + ':' + canonical(value[key])).join(',') + '}';
   return JSON.stringify(value);
 }
-
-function bomPayload(bom) {
-  const copy = structuredClone(bom);
-  if (!copy.integrity) throw new Error("integrity is missing");
-  delete copy.integrity.content_digest;
-  delete copy.integrity.signature;
-  delete copy.integrity.public_key;
-  return Buffer.from(canonical(copy));
+function same(left, right) {
+  return canonical(left) === canonical(right);
 }
-
-function git(root, args) {
-  return execFileSync("git", ["-C", root, ...args], { encoding: "utf8" }).trim();
-}
-
-function repoPath(root, input) {
-  if (typeof input !== "string" || input.length === 0 || isAbsolute(input) || input.includes("\0")) {
-    throw new Error("invalid repository-relative path: " + String(input));
+function parseArgs(argv) {
+  const out = {};
+  for (let index = 0; index < argv.length; index += 1) {
+    if (!argv[index].startsWith('--')) continue;
+    const key = argv[index].slice(2);
+    if (key === 'allow-dirty') {
+      out[key] = true;
+      continue;
+    }
+    const value = argv[index + 1];
+    if (!value || value.startsWith('--')) fail('ARGUMENT_ERROR', 'missing value for --' + key);
+    out[key] = value;
+    index += 1;
   }
+  return out;
+}
+function git(root, args) {
+  return execFileSync('git', ['-C', root, ...args], { encoding: 'utf8' }).trim();
+}
+function repoPath(root, input) {
+  if (typeof input !== 'string' || !input || isAbsolute(input) || input.includes('\0')) throw new Error('invalid repository-relative path: ' + String(input));
   const lexical = resolve(root, input);
   const rel = relative(root, lexical);
-  if (rel === ".." || rel.startsWith(".." + sep) || isAbsolute(rel)) throw new Error("path escapes repository: " + input);
+  if (rel === '..' || rel.startsWith('..' + sep) || isAbsolute(rel)) throw new Error('path escapes repository: ' + input);
   const parent = realpathSync(dirname(lexical));
   const parentRel = relative(root, parent);
-  if (parentRel === ".." || parentRel.startsWith(".." + sep) || isAbsolute(parentRel)) {
-    throw new Error("path parent escapes repository: " + input);
-  }
-  if (lstatSync(lexical).isSymbolicLink()) throw new Error("symbolic link is not accepted: " + input);
+  if (parentRel === '..' || parentRel.startsWith('..' + sep) || isAbsolute(parentRel)) throw new Error('path parent escapes repository: ' + input);
+  if (lstatSync(lexical).isSymbolicLink()) throw new Error('symbolic link rejected: ' + input);
   return lexical;
 }
-
-function parseArgs(argv) {
-  const args = {};
-  for (let i = 0; i < argv.length; i += 1) {
-    if (!argv[i].startsWith("--")) continue;
-    const key = argv[i].slice(2);
-    const value = argv[i + 1];
-    if (!value || value.startsWith("--")) fail("ARGUMENT_ERROR", "missing value for --" + key);
-    args[key] = value;
-    i += 1;
+function bindingValid(binding) {
+  return binding && binding.path === 'work/g1-core-contract/20260902T074932126Z-v15/g1-core-source.json'
+    && /^sha256:[0-9a-f]{64}$/.test(binding.sha256)
+    && Number.isInteger(binding.size) && binding.size > 0
+    && typeof binding.workspace_root === 'string' && isAbsolute(binding.workspace_root);
+}
+function claimValid(boundary) {
+  return boundary && boundary.scope === 'V15_G1_LOCAL_MACHINE_CONTRACT_ONLY'
+    && boundary.g1_local_machine_contract_pass_allowed === true
+    && boundary.registered_trace_identifier_execution === IDENTIFIER_EXECUTION
+    && boundary.v3_3_cryptographic_gate_conformance === false
+    && boundary.production === false && boundary.published === false
+    && boundary.deployed === false && boundary.authority_effect === 'NONE';
+}
+function requireBindingEqual(actual, expected, label) {
+  if (!bindingValid(actual) || !same(actual, expected)) throw new Error(label + ' intermediate_source binding mismatch');
+}
+function readIntermediateSource(binding) {
+  if (!bindingValid(binding)) throw new Error('intermediate_source binding invalid');
+  const workspaceRoot = resolve(binding.workspace_root);
+  const sourcePath = resolve(workspaceRoot, binding.path);
+  const rel = relative(workspaceRoot, sourcePath);
+  if (rel === '..' || rel.startsWith('..' + sep) || isAbsolute(rel)) throw new Error('intermediate_source path escapes workspace');
+  const bytes = readFileSync(sourcePath);
+  if (bytes.length !== binding.size || 'sha256:' + sha256(bytes) !== binding.sha256) throw new Error('intermediate_source bytes binding mismatch');
+  const source = JSON.parse(bytes.toString('utf8'));
+  if (source.schema_version !== 'clued.v15.g1-core-source/1' || source.object_type !== 'G1CoreProtocolSource' || source.package_id !== 'G1_core_contract' || source.definition_version !== '1.0.0-local-rc-v15' || !Array.isArray(source.core_rules) || source.core_rules.length !== 16 || !Array.isArray(source.model_rules) || source.model_rules.length !== 16 || !claimValid(source.claim_boundary)) throw new Error('intermediate_source identity invalid');
+  const rules = [...source.core_rules, ...source.model_rules];
+  const ids = new Set();
+  for (const rule of rules) {
+    if (typeof rule.rule_id !== 'string' || ids.has(rule.rule_id) || typeof rule.statement !== 'string' || !Array.isArray(rule.source_refs) || !rule.source_refs.length || !Array.isArray(rule.tests) || !rule.tests.length || !Array.isArray(rule.gates) || !rule.gates.length || !Array.isArray(rule.profiles) || !rule.profiles.length) throw new Error('intermediate_source rule invalid');
+    ids.add(rule.rule_id);
   }
-  return args;
+  return { source, rules: rules.sort((left, right) => left.rule_id.localeCompare(right.rule_id)) };
 }
 
-function validateRequirements(path) {
-  const registry = JSON.parse(readFileSync(path, "utf8"));
-  if (registry.schema_version !== "requirements-v1") throw new Error("unexpected requirements schema_version");
-  if (registry.registry_status !== "frozen_pending_g1" || registry.g1_qualified !== false) {
-    throw new Error("bootstrap registry must remain frozen_pending_g1 and not G1-qualified");
+function validateManifest(root, manifestPath) {
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+  if (manifest.schema_version !== 'clued.protocol-manifest/1' || manifest.object_type !== 'ProtocolManifest' || manifest.status !== CONTRACT_STATUS) throw new Error('unexpected protocol manifest identity');
+  if (manifest.validation_scope !== 'G1_MACHINE_CONTRACT_GENERATION_AND_STRUCTURE_ONLY' || manifest.registered_identifier_execution !== IDENTIFIER_EXECUTION || !claimValid(manifest.claim_boundary)) throw new Error('manifest claim boundary exceeds G1 local machine contract');
+  const generated = manifest.generated_from;
+  if (!bindingValid(generated && generated.intermediate_source)) throw new Error('manifest intermediate_source binding invalid');
+  for (const key of ['baseline_commit','baseline_tree','baseline_memory_tree','baseline_protocol_v1_tree']) {
+    if (!/^[0-9a-f]{40}$/.test(generated && generated[key] || '')) throw new Error('manifest ' + key + ' invalid');
   }
-  if (!Array.isArray(registry.requirements) || registry.requirements.length === 0) throw new Error("requirements set is empty");
+  if (!Array.isArray(manifest.entries) || manifest.entries.length !== 91) throw new Error('manifest entry set must contain exact 91 non-manifest artifacts');
+  const paths = new Set();
+  for (const entry of manifest.entries) {
+    if (paths.has(entry.path)) throw new Error('duplicate manifest path: ' + entry.path);
+    paths.add(entry.path);
+    const bytes = readFileSync(repoPath(root, entry.path));
+    if (entry.sha256 !== 'sha256:' + sha256(bytes) || entry.size !== bytes.length) throw new Error('manifest binding mismatch: ' + entry.path);
+  }
+  for (const required of [REQUIREMENTS_PATH, TRACE_PATH, REGISTRY_PATH, APPLICABILITY_PATH, 'protocol/continuity/v1/profiles/core.profile.json', 'protocol/continuity/v1/profiles/model-capability.profile.json']) {
+    if (!paths.has(required)) throw new Error('required generated path missing: ' + required);
+  }
+  const computedTree = 'sha256:' + sha256(Buffer.from(canonical(manifest.entries), 'utf8'));
+  if (computedTree !== manifest.content_tree_digest) throw new Error('content tree digest mismatch');
+  return { manifest, paths };
+}
+
+function validateRequirements(root, manifest, sourceProjection) {
+  const registry = JSON.parse(readFileSync(repoPath(root, REQUIREMENTS_PATH), 'utf8'));
+  if (registry.schema_version !== 'requirements-v1' || registry.registry_status !== 'authoritative' || registry.g1_qualified !== true || registry.definition_version !== '1.0.0-local-rc-v15') throw new Error('requirements registry is not G1-qualified local-v15 authority');
+  requireBindingEqual(registry.intermediate_source, manifest.generated_from.intermediate_source, 'requirements');
+  if (!Array.isArray(registry.requirements) || registry.requirements.length !== 32) throw new Error('requirements count must be 32');
   const ids = new Set();
-  const uris = new Set();
+  const sourceRulesById = new Map(sourceProjection.rules.map((rule) => [rule.rule_id, rule]));
   for (let index = 0; index < registry.requirements.length; index += 1) {
     const item = registry.requirements[index];
-    for (const field of FORBIDDEN_REVERSE_FIELDS) if (field in item) throw new Error("forbidden reverse field: " + field);
-    if (!item.requirement_id || ids.has(item.requirement_id)) throw new Error("duplicate or missing requirement_id at " + index);
-    if (!item.typed_uri || uris.has(item.typed_uri)) throw new Error("duplicate or missing typed_uri at " + index);
-    if (item.canonical_uri !== REQUIRED_REGISTRY || item.canonical_pointer !== "#/requirements/" + index) {
-      throw new Error("non-canonical requirement pointer at " + index);
-    }
-    const expected = "sha256:" + sha256Bytes(Buffer.from(item.statement || "", "utf8"));
-    if (item.content_digest !== expected) throw new Error("requirement digest mismatch: " + item.requirement_id);
+    const sourceRule = sourceProjection.rules[index];
+    if (!item.requirement_id || ids.has(item.requirement_id)) throw new Error('duplicate/missing requirement id at ' + index);
     ids.add(item.requirement_id);
+    if (!sourceRule || item.requirement_id !== sourceRule.rule_id || item.statement !== sourceRule.statement || !same(item.source_refs, sourceRule.source_refs)) throw new Error('requirements registry is not exact intermediate_source projection at ' + index);
+    if (item.rule_phase !== 'authoritative' || item.canonical_uri !== REQUIREMENTS_PATH || item.canonical_pointer !== '#/requirements/' + index) throw new Error('non-authoritative requirement pointer: ' + item.requirement_id);
+    if (item.typed_uri !== 'urn:clued:requirement:' + item.requirement_id || item.content_digest !== 'sha256:' + sha256(Buffer.from(item.statement || '', 'utf8'))) throw new Error('requirement identity/digest mismatch: ' + item.requirement_id);
+    for (const key of ['test_refs','gate_refs','profile_refs']) if (key in item) throw new Error('reverse trace field forbidden in requirements authority: ' + item.requirement_id + '/' + key);
+  }
+  const actualModel = new Set([...ids].filter((id) => id.startsWith('MODEL-')));
+  if (actualModel.size !== 16 || [...MODEL_RULES].some((id) => !actualModel.has(id))) throw new Error('model rule set is not exact 16/16');
+  const computed = 'sha256:' + sha256(Buffer.from(canonical(registry.requirements), 'utf8'));
+  if (computed !== registry.rule_set_digest || computed !== manifest.rule_set_digest) throw new Error('rule set digest mismatch');
+  return { registry, ids, modelRuleCount: actualModel.size, sourceRulesById, sourceRules: sourceProjection.rules };
+}
+
+function assertRegistered(items, idKey, prefix, label) {
+  if (!Array.isArray(items) || items.length === 0) throw new Error(label + ' registered identifier set empty');
+  const uris = new Set();
+  for (const item of items) {
+    if (!item[idKey] || item.typed_uri !== prefix + item[idKey] || item.registration_status !== IDENTIFIER_STATUS || item.execution_status !== IDENTIFIER_EXECUTION || uris.has(item.typed_uri)) throw new Error(label + ' registered identifier invalid');
     uris.add(item.typed_uri);
   }
-  return { count: registry.requirements.length, ids: [...ids] };
+  return uris;
+}
+
+function validateTrace(root, requirements, manifest) {
+  const trace = JSON.parse(readFileSync(repoPath(root, TRACE_PATH), 'utf8'));
+  requireBindingEqual(trace.intermediate_source, manifest.generated_from.intermediate_source, 'trace');
+  if (trace.schema_version !== 'clued.requirement-trace/2' || trace.requirements_count !== 32 || trace.model_rule_count !== 16 || trace.rule_set_digest !== requirements.registry.rule_set_digest || trace.registered_identifier_execution !== IDENTIFIER_EXECUTION || !Array.isArray(trace.entries) || trace.entries.length !== 32) throw new Error('trace identity/count mismatch');
+  const testUris = assertRegistered(trace.registered_tests, 'test_id', 'urn:clued:test:', 'test');
+  const gateUris = assertRegistered(trace.registered_gates, 'gate_id', 'urn:clued:gate:', 'gate');
+  const profileUris = assertRegistered(trace.registered_release_profiles, 'profile_id', 'urn:clued:release-profile:', 'profile');
+  const expectedTestUris = [...new Set(requirements.sourceRules.flatMap((rule) => rule.tests).map((id) => 'urn:clued:test:' + id))].sort();
+  const expectedGateUris = [...new Set(requirements.sourceRules.flatMap((rule) => rule.gates).map((id) => 'urn:clued:gate:' + id))].sort();
+  const expectedProfileUris = [...new Set(requirements.sourceRules.flatMap((rule) => rule.profiles).map((id) => 'urn:clued:release-profile:' + id))].sort();
+  if (!same([...testUris].sort(), expectedTestUris) || !same([...gateUris].sort(), expectedGateUris) || !same([...profileUris].sort(), expectedProfileUris)) throw new Error('global registered identifier sets are not exact intermediate_source projection');
+  const seenRequirements = new Set();
+  const usedTests = new Set();
+  const usedGates = new Set();
+  const usedProfiles = new Set();
+  const expectedEdges = [];
+  const mappings = [];
+  const graph = new Map();
+  const indegree = new Map();
+  const addNode = (id) => {
+    if (!graph.has(id)) {
+      graph.set(id, new Set());
+      indegree.set(id, 0);
+    }
+  };
+  const addEdge = (left, right) => {
+    addNode(left);
+    addNode(right);
+    if (!graph.get(left).has(right)) {
+      graph.get(left).add(right);
+      indegree.set(right, indegree.get(right) + 1);
+    }
+  };
+  for (const entry of trace.entries) {
+    const id = entry.requirement_ref && entry.requirement_ref.replace('urn:clued:requirement:', '');
+    const sourceRule = requirements.sourceRulesById.get(id);
+    if (!requirements.ids.has(id) || seenRequirements.has(id) || entry.trace_entry_id !== 'TRACE-' + id || entry.execution_status !== IDENTIFIER_EXECUTION) throw new Error('unknown/duplicate trace requirement: ' + entry.requirement_ref);
+    seenRequirements.add(id);
+    const testRefs = entry.registered_test_refs;
+    const gateRefs = entry.registered_gate_refs;
+    const profileRefs = entry.registered_release_profile_refs;
+    const expectedTestRefs = [...new Set(sourceRule.tests)].sort().map((item) => 'urn:clued:test:' + item);
+    const expectedGateRefs = [...new Set(sourceRule.gates)].sort().map((item) => 'urn:clued:gate:' + item);
+    const expectedProfileRefs = [...new Set(sourceRule.profiles)].sort().map((item) => 'urn:clued:release-profile:' + item);
+    if (!same(testRefs, expectedTestRefs) || !same(gateRefs, expectedGateRefs) || !same(profileRefs, expectedProfileRefs)) throw new Error('per-rule trace is not exact intermediate_source projection: ' + id);
+    if (!Array.isArray(testRefs) || !testRefs.length || testRefs.some((ref) => !testUris.has(ref))) throw new Error('invalid registered test trace: ' + id);
+    if (!Array.isArray(gateRefs) || !gateRefs.length || gateRefs.some((ref) => !gateUris.has(ref))) throw new Error('invalid registered gate trace: ' + id);
+    if (!Array.isArray(profileRefs) || !profileRefs.length || profileRefs.some((ref) => !profileUris.has(ref))) throw new Error('invalid registered profile trace: ' + id);
+    testRefs.forEach((ref) => usedTests.add(ref));
+    gateRefs.forEach((ref) => usedGates.add(ref));
+    profileRefs.forEach((ref) => usedProfiles.add(ref));
+    const exactEdges = [
+      { ordinal: 1, source_kind: 'Requirement', source_refs: [entry.requirement_ref], target_kind: 'RegisteredTestIdentifierSet', target_refs: testRefs, edge_semantics: 'verified_by_registered_set' },
+      { ordinal: 2, source_kind: 'RegisteredTestIdentifierSet', source_refs: testRefs, target_kind: 'RegisteredGateIdentifierSet', target_refs: gateRefs, edge_semantics: 'accepted_by_registered_set' },
+      { ordinal: 3, source_kind: 'RegisteredGateIdentifierSet', source_refs: gateRefs, target_kind: 'RegisteredReleaseProfileIdentifierSet', target_refs: profileRefs, edge_semantics: 'included_in_registered_set' },
+    ];
+    if (!same(entry.trace_edges, exactEdges)) throw new Error('trace edge exact-set mismatch: ' + id);
+    for (const edge of exactEdges) expectedEdges.push({ trace_entry_id: entry.trace_entry_id, requirement_ref: entry.requirement_ref, ...edge });
+    mappings.push({ requirement_ref: entry.requirement_ref, registered_test_refs: testRefs, registered_gate_refs: gateRefs, registered_release_profile_refs: profileRefs });
+    const r = entry.requirement_ref;
+    const t = 'urn:clued:trace-layer:' + id + ':tests';
+    const g = 'urn:clued:trace-layer:' + id + ':gates';
+    const p = 'urn:clued:trace-layer:' + id + ':profiles';
+    addEdge(r, t);
+    addEdge(t, g);
+    addEdge(g, p);
+  }
+  if (seenRequirements.size !== requirements.ids.size || usedTests.size !== testUris.size || usedGates.size !== gateUris.size || usedProfiles.size !== profileUris.size) throw new Error('trace orphan detected');
+  const mappingDigest = 'sha256:' + sha256(Buffer.from(canonical(mappings), 'utf8'));
+  if (trace.downstream_mapping_digest !== mappingDigest || manifest.downstream_mapping_digest !== mappingDigest) throw new Error('downstream mapping digest mismatch');
+  const queue = [...indegree].filter((item) => item[1] === 0).map((item) => item[0]).sort();
+  let visited = 0;
+  while (queue.length) {
+    const id = queue.shift();
+    visited += 1;
+    for (const next of [...graph.get(id)].sort()) {
+      indegree.set(next, indegree.get(next) - 1);
+      if (indegree.get(next) === 0) {
+        queue.push(next);
+        queue.sort();
+      }
+    }
+  }
+  if (visited !== graph.size) throw new Error('Requirement-Test-Gate-ReleaseProfile trace DAG contains a cycle');
+  const objectRegistry = JSON.parse(readFileSync(repoPath(root, REGISTRY_PATH), 'utf8'));
+  requireBindingEqual(objectRegistry.intermediate_source, manifest.generated_from.intermediate_source, 'object registry');
+  if (objectRegistry.registered_identifier_execution !== IDENTIFIER_EXECUTION || objectRegistry.downstream_mapping_digest !== mappingDigest || !same(objectRegistry.registered_tests, trace.registered_tests) || !same(objectRegistry.registered_gates, trace.registered_gates) || !same(objectRegistry.registered_release_profiles, trace.registered_release_profiles) || !same(objectRegistry.construction_edges, expectedEdges)) throw new Error('object registry trace exact-set mismatch');
+  return {
+    entries: trace.entries.length,
+    trace_edges: expectedEdges.length,
+    registered_tests: testUris.size,
+    registered_gates: gateUris.size,
+    registered_release_profiles: profileUris.size,
+    downstream_mapping_digest: mappingDigest,
+    registered_identifier_execution: IDENTIFIER_EXECUTION,
+    dag_nodes: graph.size,
+  };
+}
+
+function validateSchemas(root, paths) {
+  const schemaPaths = [...paths].filter((path) => path.includes('/schemas/') && path.endsWith('.schema.json'));
+  if (schemaPaths.length !== 65) throw new Error('schema count must be 65, got ' + schemaPaths.length);
+  const ids = new Set();
+  for (const path of schemaPaths) {
+    const schema = JSON.parse(readFileSync(repoPath(root, path), 'utf8'));
+    if (schema.$schema !== 'https://json-schema.org/draft/2020-12/schema' || typeof schema.$id !== 'string' || ids.has(schema.$id) || schema['x-clued-definition-version'] !== '1.0.0-local-rc-v15' || schema.additionalProperties !== false || !Array.isArray(schema.required) || !schema.required.includes('schema_version') || !schema.required.includes('object_type')) throw new Error('invalid generated schema: ' + path);
+    ids.add(schema.$id);
+  }
+  return schemaPaths.length;
+}
+
+function validateApplicability(root, manifest) {
+  const proof = JSON.parse(readFileSync(repoPath(root, APPLICABILITY_PATH), 'utf8'));
+  requireBindingEqual(proof.intermediate_source, manifest.generated_from.intermediate_source, 'applicability');
+  if (proof.provider !== 'none' || proof.authority_effect !== 'NONE' || !claimValid(proof.claim_boundary) || proof.registered_identifier_execution !== IDENTIFIER_EXECUTION || !Array.isArray(proof.n_a_with_proof) || proof.n_a_with_proof.length !== 9) throw new Error('minimum local-RC applicability proof invalid');
+  return proof.n_a_with_proof.length;
+}
+
+function validateBom(root, bomPath, manifest, requirements) {
+  const bom = JSON.parse(readFileSync(resolve(bomPath), 'utf8'));
+  const head = git(root, ['rev-parse','HEAD']);
+  const tree = git(root, ['rev-parse','HEAD^{tree}']);
+  if (bom.source && (bom.source.commit_sha1 !== head || bom.source.tree_sha1 !== tree)) throw new Error('fresh V00 BOM does not bind current commit/tree');
+  const req = bom.machine_contract_inputs && bom.machine_contract_inputs.requirements;
+  const protocol = bom.machine_contract_inputs && bom.machine_contract_inputs.protocol_manifest;
+  const reqBytes = readFileSync(repoPath(root, REQUIREMENTS_PATH));
+  const manifestBytes = readFileSync(repoPath(root, MANIFEST_PATH));
+  if (!req || req.path !== REQUIREMENTS_PATH || req.sha256 !== 'sha256:' + sha256(reqBytes) || req.registry_status !== 'authoritative' || req.g1_qualified !== true) throw new Error('fresh V00 BOM requirements binding invalid');
+  if (!protocol || protocol.path !== MANIFEST_PATH || protocol.sha256 !== 'sha256:' + sha256(manifestBytes) || protocol.content_tree_digest !== manifest.content_tree_digest || protocol.rule_set_digest !== requirements.registry.rule_set_digest) throw new Error('fresh V00 BOM protocol manifest binding invalid');
+  if (!bom.authorization_boundary || bom.authorization_boundary.production_authorized !== false || !bom.integrity || bom.integrity.production_trusted !== false) throw new Error('fresh V00 BOM overclaims production');
+  if (bom.integrity.signature && bom.integrity.public_key && bom.integrity.content_digest) {
+    const copy = structuredClone(bom);
+    delete copy.integrity.content_digest;
+    delete copy.integrity.signature;
+    delete copy.integrity.public_key;
+    const payloadDigest = sha256(Buffer.from(canonical(copy)));
+    if (bom.integrity.content_digest !== 'sha256:' + payloadDigest || !verifySignature(null, Buffer.from(payloadDigest, 'hex'), createPublicKey(bom.integrity.public_key), Buffer.from(bom.integrity.signature, 'base64'))) throw new Error('fresh V00 BOM signature invalid');
+  }
+  return { commit: head, tree };
 }
 
 function main() {
   const args = parseArgs(process.argv.slice(2));
-  if (!args.bom) fail("ARGUMENT_ERROR", "--bom is required");
+  if (!args.manifest) fail('ARGUMENT_ERROR', '--manifest is required');
   try {
-    const root = git(process.cwd(), ["rev-parse", "--show-toplevel"]);
-    if (git(root, ["rev-parse", "--is-inside-work-tree"]) !== "true") throw new Error("not a Git worktree");
-    if (git(root, ["status", "--porcelain=v1"]) !== "") throw new Error("Git worktree is not clean");
-    const bom = JSON.parse(readFileSync(resolve(args.bom), "utf8"));
-    if (bom.schema_version !== "release-bom-v00.1" || bom.object_type !== "release_bom" ||
-        bom.release_scope !== "candidate_non_production") throw new Error("unexpected BOM identity or scope");
-    const digest = sha256Bytes(bomPayload(bom));
-    if (bom.integrity.content_digest !== "sha256:" + digest) throw new Error("BOM content digest mismatch");
-    const publicKey = createPublicKey(bom.integrity.public_key);
-    const valid = verifySignature(null, Buffer.from(digest, "hex"), publicKey, Buffer.from(bom.integrity.signature, "base64"));
-    if (!valid) throw new Error("BOM signature is invalid");
-    const head = git(root, ["rev-parse", "HEAD"]);
-    const tree = git(root, ["rev-parse", "HEAD^{tree}"]);
-    if (head !== bom.source.commit_sha1 || tree !== bom.source.tree_sha1) throw new Error("Git identity does not match BOM");
-    const boundary = bom.authorization_boundary;
-    if (boundary.production_authorized !== false || boundary.incremental_cost_authorized !== false ||
-        boundary.wait_over_30m_authorized !== false) throw new Error("authorization boundary is wider than V00");
-    if (bom.machine_contract_inputs.requirements.path !== REQUIRED_REGISTRY) throw new Error("requirements path is not authoritative v1 path");
-    if (bom.machine_contract_inputs.requirements.registry_status !== "frozen_pending_g1" ||
-        bom.machine_contract_inputs.requirements.g1_qualified !== false) throw new Error("BOM attempts to overstate G1 status");
-    for (const key of ["release_profile", "fixture", "policy", "observability"]) {
-      const profile = bom.embedded_profiles?.[key];
-      if (!profile || profile.sha256 !== "sha256:" + sha256Bytes(Buffer.from(canonical(profile.value)))) {
-        throw new Error("embedded profile digest mismatch: " + key);
-      }
-    }
-    if (bom.integrity.production_trusted !== false) throw new Error("V00 BOM cannot be production-trusted");
-    const pinned = [bom.tools.driver, bom.tools.verifier, bom.machine_contract_inputs.requirements, ...(bom.generated_artifacts || [])];
-    if (pinned.length < 4) throw new Error("generated artifact set is incomplete");
-    for (const entry of pinned) {
-      const path = repoPath(root, entry.path);
-      if ("sha256:" + sha256File(path) !== entry.sha256) throw new Error("artifact digest mismatch: " + entry.path);
-    }
-    const driverPath = repoPath(root, bom.tools.driver.path);
-    if ((statSync(driverPath).mode & 0o111) === 0) throw new Error("test driver is not executable");
-    const requirements = validateRequirements(repoPath(root, REQUIRED_REGISTRY));
+    const root = git(process.cwd(), ['rev-parse','--show-toplevel']);
+    if (!args['allow-dirty'] && git(root, ['status','--porcelain=v1']) !== '') throw new Error('Git worktree is not clean; use --allow-dirty only for pre-commit patch validation');
+    const manifestPath = resolve(args.manifest);
+    const validated = validateManifest(root, manifestPath);
+    const sourceProjection = readIntermediateSource(validated.manifest.generated_from.intermediate_source);
+    const requirements = validateRequirements(root, validated.manifest, sourceProjection);
+    const trace = validateTrace(root, requirements, validated.manifest);
+    const schemaCount = validateSchemas(root, validated.paths);
+    const naCount = validateApplicability(root, validated.manifest);
+    const generated = validated.manifest.generated_from;
+    const pins = {
+      commit: generated.baseline_commit,
+      tree: generated.baseline_tree,
+      memory_tree: generated.baseline_memory_tree,
+      protocol_v1_tree: generated.baseline_protocol_v1_tree,
+    };
+    const explicitPins = {
+      commit: args['expected-commit'],
+      tree: args['expected-tree'],
+      memory_tree: args['expected-memory-tree'],
+      protocol_v1_tree: args['expected-protocol-v1-tree'],
+    };
+    for (const key of Object.keys(explicitPins)) if (explicitPins[key] && explicitPins[key] !== pins[key]) throw new Error('explicit ' + key + ' must equal manifest pin');
+    const actual = {
+      commit: git(root, ['rev-parse','HEAD']),
+      tree: git(root, ['rev-parse','HEAD^{tree}']),
+      memory_tree: git(root, ['rev-parse','HEAD:memory']),
+      protocol_v1_tree: git(root, ['rev-parse','HEAD:protocol/continuity/v1']),
+    };
+    for (const key of Object.keys(pins)) if (!/^[0-9a-f]{40}$/.test(pins[key]) || actual[key] !== pins[key]) throw new Error(key + ' changed from manifest pin');
+    const bom = args.bom ? validateBom(root, args.bom, validated.manifest, requirements) : null;
     process.stdout.write(JSON.stringify({
       ok: true,
-      code: "GENERATED_ARTIFACTS_VERIFIED",
-      repository: bom.source.repository,
-      commit_sha1: head,
-      tree_sha1: tree,
-      bom_digest: "sha256:" + digest,
-      signature_valid: true,
-      requirements,
-      verified_paths: [...new Set(pinned.map((entry) => entry.path))].sort(),
+      code: CONTRACT_STATUS,
+      validation_scope: 'G1_MACHINE_CONTRACT_GENERATION_AND_STRUCTURE_ONLY',
+      manifest_sha256: 'sha256:' + sha256(readFileSync(manifestPath)),
+      content_tree_digest: validated.manifest.content_tree_digest,
+      rule_set_digest: validated.manifest.rule_set_digest,
+      downstream_mapping_digest: validated.manifest.downstream_mapping_digest,
+      requirements: 32,
+      model_rules: requirements.modelRuleCount,
+      schemas: schemaCount,
+      trace,
+      na_proofs: naCount,
+      repository_pins: pins,
+      repository_actual: actual,
+      bom,
+      registered_identifier_execution: IDENTIFIER_EXECUTION,
+      production: false,
       writes: [],
-    }) + "\n");
+    }) + '\n');
   } catch (error) {
-    fail("GENERATED_ARTIFACTS_INVALID", error.message);
+    fail('G1_GENERATED_ARTIFACTS_INVALID', error.message);
   }
 }
-
 main();

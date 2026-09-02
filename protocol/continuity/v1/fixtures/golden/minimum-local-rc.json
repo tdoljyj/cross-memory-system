@@ -1,0 +1,1 @@
+{"expected":{"authority_effect":"NONE","g1_qualified":true,"model_rule_count":16,"production":false,"registry_status":"authoritative","requirements_count":32},"fixture_id":"G1-MINIMUM-LOCAL-RC","object_type":"G1GoldenFixture","profile_id":"minimum-local-rc-v15","provider":"none","schema_version":"clued.g1.golden/1","synthetic":true}

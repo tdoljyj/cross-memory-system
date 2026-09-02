@@ -1,0 +1,1 @@
+{"definition_version":"1.0.0-local-rc-v15","generated_from":"sha256:f967fdf3e63028d29ed191160698726b5d707aaae63bd951f6ba2e8584936fec","maturity":"0.x-experimental","object_type":"ReleaseProfile","profile_id":"execution-experimental","required_rule_refs":["REV-MATRIX-01","INBOX-OUTBOX-01","APPROVAL-LEASE-01"],"runtime_selected":false,"schema_version":"clued.release-profile/1"}
