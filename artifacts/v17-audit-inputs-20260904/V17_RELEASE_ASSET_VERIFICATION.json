@@ -1,0 +1,396 @@
+{
+  "schema": "clued-v17-frozen-zip-integrity-report/2",
+  "generated_at": "2026-09-04T06:21:46.444125+00:00",
+  "scope": "FROZEN_BYTES_INTEGRITY_ONLY; not a G0A, lineage, or architecture-audit verdict",
+  "source_path": "C:\\Users\\17531\\Downloads\\Clued-Kernel-Next-V17-Local-RC-20260903.zip",
+  "expected_bytes": 848941,
+  "actual_bytes": 848941,
+  "expected_sha256": "66b71187e6e467a44aa1149bf5c757efa64bfb99620d37a43e0d5bf2678bb1b4",
+  "actual_sha256": "66b71187e6e467a44aa1149bf5c757efa64bfb99620d37a43e0d5bf2678bb1b4",
+  "zip_members": 89,
+  "payload_files": 89,
+  "uncompressed_bytes": 3286984,
+  "crc_bad": null,
+  "duplicate_names": [],
+  "portable_casefold_duplicates": [],
+  "unsafe_paths": [],
+  "encrypted_entries": [],
+  "symlinks": [],
+  "nested_archives": [],
+  "checksum_manifests": [
+    {
+      "path": "Clued-Kernel-Next-V17-Local-RC-20260903/02-v12-real-supply-chain/SHA256SUMS.txt",
+      "checked": 38,
+      "passed_by_relative_path": 38,
+      "historical_references_resolved_by_content": 0,
+      "passed": 38,
+      "failures": [],
+      "historical_reference_mappings": []
+    },
+    {
+      "path": "Clued-Kernel-Next-V17-Local-RC-20260903/03-v14-final/SHA256SUMS.txt",
+      "checked": 2,
+      "passed_by_relative_path": 2,
+      "historical_references_resolved_by_content": 0,
+      "passed": 2,
+      "failures": [],
+      "historical_reference_mappings": []
+    },
+    {
+      "path": "Clued-Kernel-Next-V17-Local-RC-20260903/03-v14-final/v14-formal-bind-r1/SHA256SUMS.txt",
+      "checked": 12,
+      "passed_by_relative_path": 12,
+      "historical_references_resolved_by_content": 0,
+      "passed": 12,
+      "failures": [],
+      "historical_reference_mappings": []
+    },
+    {
+      "path": "Clued-Kernel-Next-V17-Local-RC-20260903/04-v15/aggregate-r5-base/SHA256SUMS.txt",
+      "checked": 0,
+      "passed_by_relative_path": 0,
+      "historical_references_resolved_by_content": 0,
+      "passed": 0,
+      "failures": [],
+      "historical_reference_mappings": []
+    },
+    {
+      "path": "Clued-Kernel-Next-V17-Local-RC-20260903/04-v15/claim-scope-successor-r1/SHA256SUMS-v15.txt",
+      "checked": 9,
+      "passed_by_relative_path": 0,
+      "historical_references_resolved_by_content": 9,
+      "passed": 9,
+      "failures": [],
+      "historical_reference_mappings": [
+        {
+          "line": 1,
+          "historical_source_path": "C:\\Users\\17531\\AppData\\Local\\Temp\\clued-kernel-next-v33-v15\\v14-final\\e4b3cd08face6c-v15\\FINAL-HEAD-PREQUALIFICATION-BOM-v15.json",
+          "expected_sha256": "aa37fc753c83bab2094a1ef000c0da961d03efd9e277fdadb3f5e0116cd97fe5",
+          "archive_matches": [
+            "Clued-Kernel-Next-V17-Local-RC-20260903/03-v14-final/FINAL-HEAD-PREQUALIFICATION-BOM-v15.json"
+          ],
+          "status": "CONTENT_FOUND_BY_SHA256"
+        },
+        {
+          "line": 2,
+          "historical_source_path": "C:\\Users\\17531\\AppData\\Local\\Temp\\clued-kernel-next-v33-v15\\v15-aggregate\\e4b3cd08face6c-r5-claims-scope-successor-r1\\V15-CLAIM-SCOPE-CLARIFICATION-v15.json",
+          "expected_sha256": "c21ceec94c9126f80ffe5bfc067169c48a639e3f6cc337e23c66ce031de60094",
+          "archive_matches": [
+            "Clued-Kernel-Next-V17-Local-RC-20260903/04-v15/claim-scope-successor-r1/V15-CLAIM-SCOPE-CLARIFICATION-v15.json"
+          ],
+          "status": "CONTENT_FOUND_BY_SHA256"
+        },
+        {
+          "line": 3,
+          "historical_source_path": "C:\\Users\\17531\\AppData\\Local\\Temp\\clued-kernel-next-v33-v15\\v15-aggregate\\e4b3cd08face6c-r5-final\\FINAL-LOCAL-RC-MANIFEST-v15.json",
+          "expected_sha256": "0d711e15da2e0d7477995ef77560cb7404abf72da3f657448af379490247d390",
+          "archive_matches": [
+            "Clued-Kernel-Next-V17-Local-RC-20260903/04-v15/aggregate-r5-base/FINAL-LOCAL-RC-MANIFEST-v15.json"
+          ],
+          "status": "CONTENT_FOUND_BY_SHA256"
+        },
+        {
+          "line": 4,
+          "historical_source_path": "C:\\Users\\17531\\AppData\\Local\\Temp\\clued-kernel-next-v33-v15\\v15-aggregate\\e4b3cd08face6c-r5-integrity-successor-r2\\SHA256SUMS-v15.txt",
+          "expected_sha256": "66fdb72ab3e83e1206e86bf00fde44d47c2897b04659e4d81914c04d753f7245",
+          "archive_matches": [
+            "Clued-Kernel-Next-V17-Local-RC-20260903/04-v15/integrity-successor-r2/SHA256SUMS-v15.txt"
+          ],
+          "status": "CONTENT_FOUND_BY_SHA256"
+        },
+        {
+          "line": 5,
+          "historical_source_path": "C:\\Users\\17531\\AppData\\Local\\Temp\\clued-kernel-next-v33-v15\\v15-aggregate\\e4b3cd08face6c-r5-integrity-successor-r2\\V15-AGGREGATE-FINALIZATION-WRAPPER-v15.json",
+          "expected_sha256": "ea6e97dd5b0c2ecf71ebde0edb2a96d8d189f1373457a1d2d06f6126eb3937f7",
+          "archive_matches": [
+            "Clued-Kernel-Next-V17-Local-RC-20260903/04-v15/integrity-successor-r2/V15-AGGREGATE-FINALIZATION-WRAPPER-v15.json"
+          ],
+          "status": "CONTENT_FOUND_BY_SHA256"
+        },
+        {
+          "line": 6,
+          "historical_source_path": "C:\\Users\\17531\\AppData\\Local\\Temp\\clued-kernel-next-v33-v15\\v15-aggregate\\e4b3cd08face6c-r5-integrity-successor-r2\\V15-INTEGRITY-INVENTORY-v15.json",
+          "expected_sha256": "17ef62c9102cd571f432077f1b038ef0e54068e2221b8bc04f4f0288819b6054",
+          "archive_matches": [
+            "Clued-Kernel-Next-V17-Local-RC-20260903/04-v15/integrity-successor-r2/V15-INTEGRITY-INVENTORY-v15.json"
+          ],
+          "status": "CONTENT_FOUND_BY_SHA256"
+        },
+        {
+          "line": 7,
+          "historical_source_path": "C:\\Users\\17531\\AppData\\Local\\Temp\\clued-kernel-next-v33-v15\\v15-aggregate\\e4b3cd08face6c-r5-integrity-successor-r2\\V15-WPR-INTEGRITY-SUCCESSOR-v15.json",
+          "expected_sha256": "da6f3acdd325d42044d97281cc3b4699507fe5adfc948e06bd5501390dc8c396",
+          "archive_matches": [
+            "Clued-Kernel-Next-V17-Local-RC-20260903/04-v15/integrity-successor-r2/V15-WPR-INTEGRITY-SUCCESSOR-v15.json"
+          ],
+          "status": "CONTENT_FOUND_BY_SHA256"
+        },
+        {
+          "line": 8,
+          "historical_source_path": "C:\\Users\\17531\\Documents\\Codex\\2026-09-01\\windows-turing-zip-x20-md-zip\\outputs\\CLUED-V00-V17-v15-V16-PRODUCTION-AUTHORIZATION-AMENDMENT-20260902.json",
+          "expected_sha256": "39c5f0764f05cb97d0a76f445c435af2f5fc4297cf7c267b2f5e42513d4a7334",
+          "archive_matches": [
+            "Clued-Kernel-Next-V17-Local-RC-20260903/01-control/V16-PRODUCTION-AUTHORIZATION-AMENDMENT.json"
+          ],
+          "status": "CONTENT_FOUND_BY_SHA256"
+        },
+        {
+          "line": 9,
+          "historical_source_path": "C:\\Users\\17531\\Documents\\Codex\\2026-09-01\\windows-turing-zip-x20-md-zip\\work\\v16-final-disposition\\20260902T224054+0800-v15\\V16-FINAL-N-A-WITH-PROOF-SUCCESSOR-e4b3cd08-v15.json",
+          "expected_sha256": "287d5cbdf28199de360276faa30b03d45f02a5eeb3ece4b55b84024320f9a20d",
+          "archive_matches": [
+            "Clued-Kernel-Next-V17-Local-RC-20260903/05-v16/V16-FINAL-N-A-WITH-PROOF-SUCCESSOR-e4b3cd08-v15.json"
+          ],
+          "status": "CONTENT_FOUND_BY_SHA256"
+        }
+      ]
+    },
+    {
+      "path": "Clued-Kernel-Next-V17-Local-RC-20260903/04-v15/integrity-successor-r2/SHA256SUMS-v15.txt",
+      "checked": 16,
+      "passed_by_relative_path": 0,
+      "historical_references_resolved_by_content": 16,
+      "passed": 16,
+      "failures": [],
+      "historical_reference_mappings": [
+        {
+          "line": 1,
+          "historical_source_path": "C:\\Users\\17531\\AppData\\Local\\Temp\\clued-kernel-next-v33-v15\\v15-aggregate\\e4b3cd08face6c-r5-final\\FINAL-LOCAL-RC-MANIFEST-v15.json",
+          "expected_sha256": "0d711e15da2e0d7477995ef77560cb7404abf72da3f657448af379490247d390",
+          "archive_matches": [
+            "Clued-Kernel-Next-V17-Local-RC-20260903/04-v15/aggregate-r5-base/FINAL-LOCAL-RC-MANIFEST-v15.json"
+          ],
+          "status": "CONTENT_FOUND_BY_SHA256"
+        },
+        {
+          "line": 2,
+          "historical_source_path": "C:\\Users\\17531\\AppData\\Local\\Temp\\clued-kernel-next-v33-v15\\v15-aggregate\\e4b3cd08face6c-r5-final\\G7A-UNSIGNED-LOCAL-CHECKLIST-AUTHORIZATION-v15.json",
+          "expected_sha256": "8e0a11c932466ee7866c18c66283ecec7607b985dd263c5e54378ca8c02f2999",
+          "archive_matches": [
+            "Clued-Kernel-Next-V17-Local-RC-20260903/04-v15/aggregate-r5-base/G7A-UNSIGNED-LOCAL-CHECKLIST-AUTHORIZATION-v15.json"
+          ],
+          "status": "CONTENT_FOUND_BY_SHA256"
+        },
+        {
+          "line": 3,
+          "historical_source_path": "C:\\Users\\17531\\AppData\\Local\\Temp\\clued-kernel-next-v33-v15\\v15-aggregate\\e4b3cd08face6c-r5-final\\G7A-UNSIGNED-LOCAL-CHECKLIST-RESULT-v15.json",
+          "expected_sha256": "291397395f4d4243a1281068464d7ce3933a2ba11acfd5982309f0e815856d56",
+          "archive_matches": [
+            "Clued-Kernel-Next-V17-Local-RC-20260903/04-v15/aggregate-r5-base/G7A-UNSIGNED-LOCAL-CHECKLIST-RESULT-v15.json"
+          ],
+          "status": "CONTENT_FOUND_BY_SHA256"
+        },
+        {
+          "line": 4,
+          "historical_source_path": "C:\\Users\\17531\\AppData\\Local\\Temp\\clued-kernel-next-v33-v15\\v15-aggregate\\e4b3cd08face6c-r5-final\\RC-MANIFEST-v15.json",
+          "expected_sha256": "afc54628ca020dd637633e95de240a89a45a81ab5d5314b6faa98f8bfcc0e973",
+          "archive_matches": [
+            "Clued-Kernel-Next-V17-Local-RC-20260903/04-v15/aggregate-r5-base/RC-MANIFEST-v15.json"
+          ],
+          "status": "CONTENT_FOUND_BY_SHA256"
+        },
+        {
+          "line": 5,
+          "historical_source_path": "C:\\Users\\17531\\AppData\\Local\\Temp\\clued-kernel-next-v33-v15\\v15-aggregate\\e4b3cd08face6c-r5-final\\RELEASE-RISK-MANIFEST-v15.json",
+          "expected_sha256": "acff5ba68ae2db3dc0968862c8a97ddfbc855875ee69e01b83f60b33c0cf3d86",
+          "archive_matches": [
+            "Clued-Kernel-Next-V17-Local-RC-20260903/04-v15/aggregate-r5-base/RELEASE-RISK-MANIFEST-v15.json"
+          ],
+          "status": "CONTENT_FOUND_BY_SHA256"
+        },
+        {
+          "line": 6,
+          "historical_source_path": "C:\\Users\\17531\\AppData\\Local\\Temp\\clued-kernel-next-v33-v15\\v15-aggregate\\e4b3cd08face6c-r5-final\\RETRACTED-CLAIM-ACTIVE-REFERENCE-SCAN-v15.json",
+          "expected_sha256": "ecabf7604410187dcaaba4aa8181f77741da022fb071a8b8db05511a1fdeec8e",
+          "archive_matches": [
+            "Clued-Kernel-Next-V17-Local-RC-20260903/04-v15/aggregate-r5-base/RETRACTED-CLAIM-ACTIVE-REFERENCE-SCAN-v15.json"
+          ],
+          "status": "CONTENT_FOUND_BY_SHA256"
+        },
+        {
+          "line": 7,
+          "historical_source_path": "C:\\Users\\17531\\AppData\\Local\\Temp\\clued-kernel-next-v33-v15\\v15-aggregate\\e4b3cd08face6c-r5-final\\SHA256SUMS.txt",
+          "expected_sha256": "7eb70257593da06f682a3ddda54a9d260d4fc514f645237f5ca74b08f8da61a6",
+          "archive_matches": [
+            "Clued-Kernel-Next-V17-Local-RC-20260903/04-v15/aggregate-r5-base/SHA256SUMS.txt"
+          ],
+          "status": "CONTENT_FOUND_BY_SHA256"
+        },
+        {
+          "line": 8,
+          "historical_source_path": "C:\\Users\\17531\\AppData\\Local\\Temp\\clued-kernel-next-v33-v15\\v15-aggregate\\e4b3cd08face6c-r5-final\\V15-AGGREGATE-INPUT-v15.json",
+          "expected_sha256": "32e35aee8920e2a1d2a71e6002aab626cbb9e17968caa3d3833978426a3bab6c",
+          "archive_matches": [
+            "Clued-Kernel-Next-V17-Local-RC-20260903/04-v15/aggregate-r5-base/V15-AGGREGATE-INPUT-v15.json"
+          ],
+          "status": "CONTENT_FOUND_BY_SHA256"
+        },
+        {
+          "line": 9,
+          "historical_source_path": "C:\\Users\\17531\\AppData\\Local\\Temp\\clued-kernel-next-v33-v15\\v15-aggregate\\e4b3cd08face6c-r5-final\\V15-AUDIT-PATH-INDEX-v15.json",
+          "expected_sha256": "c3b830d2fe01184da2afa57b1dfa34467025d2fe0312a841ad4d0668db975648",
+          "archive_matches": [
+            "Clued-Kernel-Next-V17-Local-RC-20260903/04-v15/aggregate-r5-base/V15-AUDIT-PATH-INDEX-v15.json"
+          ],
+          "status": "CONTENT_FOUND_BY_SHA256"
+        },
+        {
+          "line": 10,
+          "historical_source_path": "C:\\Users\\17531\\AppData\\Local\\Temp\\clued-kernel-next-v33-v15\\v15-aggregate\\e4b3cd08face6c-r5-final\\V15-COVERAGE-RESULTS-v15.json",
+          "expected_sha256": "f70c13249c39b3f88046ec9ebcc15a8197d525d35d184bd2d102d22f13de2ec1",
+          "archive_matches": [
+            "Clued-Kernel-Next-V17-Local-RC-20260903/04-v15/aggregate-r5-base/V15-COVERAGE-RESULTS-v15.json"
+          ],
+          "status": "CONTENT_FOUND_BY_SHA256"
+        },
+        {
+          "line": 11,
+          "historical_source_path": "C:\\Users\\17531\\AppData\\Local\\Temp\\clued-kernel-next-v33-v15\\v15-aggregate\\e4b3cd08face6c-r5-final\\V15-LOCAL-AGGREGATE-RECEIPT-DRAFT-v15.json",
+          "expected_sha256": "0b76fdd0db4efe07ff916d910325809526081366f8bb27bdaf578ee3dc7b78b6",
+          "archive_matches": [
+            "Clued-Kernel-Next-V17-Local-RC-20260903/04-v15/aggregate-r5-base/V15-LOCAL-AGGREGATE-RECEIPT-DRAFT-v15.json"
+          ],
+          "status": "CONTENT_FOUND_BY_SHA256"
+        },
+        {
+          "line": 12,
+          "historical_source_path": "C:\\Users\\17531\\AppData\\Local\\Temp\\clued-kernel-next-v33-v15\\v15-aggregate\\e4b3cd08face6c-r5-final\\V15-STAGE-RECEIPTS-v15.json",
+          "expected_sha256": "2ae787fa6bbbebcef5a1fef4e99ef9de10ac8cc3004d49f448d168d77d1a64df",
+          "archive_matches": [
+            "Clued-Kernel-Next-V17-Local-RC-20260903/04-v15/aggregate-r5-base/V15-STAGE-RECEIPTS-v15.json"
+          ],
+          "status": "CONTENT_FOUND_BY_SHA256"
+        },
+        {
+          "line": 13,
+          "historical_source_path": "C:\\Users\\17531\\AppData\\Local\\Temp\\clued-kernel-next-v33-v15\\v15-aggregate\\e4b3cd08face6c-r5-final\\V15-WPR-v15.json",
+          "expected_sha256": "f8cdd2f608b7358bbdc5151f6ce4ff24747709450b6bad72d72a288b01668464",
+          "archive_matches": [
+            "Clued-Kernel-Next-V17-Local-RC-20260903/04-v15/aggregate-r5-base/V15-WPR-v15.json"
+          ],
+          "status": "CONTENT_FOUND_BY_SHA256"
+        },
+        {
+          "line": 14,
+          "historical_source_path": "C:\\Users\\17531\\AppData\\Local\\Temp\\clued-kernel-next-v33-v15\\v15-aggregate\\e4b3cd08face6c-r5-integrity-successor-r2\\FAILED-INTEGRITY-ATTEMPTS-RECEIPT-v15.json",
+          "expected_sha256": "a83cd318ded225360b49c3e4ee47c1f27ef04357a54aa11d37a0b48e7fa638dc",
+          "archive_matches": [
+            "Clued-Kernel-Next-V17-Local-RC-20260903/04-v15/integrity-successor-r2/FAILED-INTEGRITY-ATTEMPTS-RECEIPT-v15.json"
+          ],
+          "status": "CONTENT_FOUND_BY_SHA256"
+        },
+        {
+          "line": 15,
+          "historical_source_path": "C:\\Users\\17531\\AppData\\Local\\Temp\\clued-kernel-next-v33-v15\\v15-aggregate\\e4b3cd08face6c-r5-integrity-successor-r2\\V15-AGGREGATE-FINALIZATION-WRAPPER-v15.json",
+          "expected_sha256": "ea6e97dd5b0c2ecf71ebde0edb2a96d8d189f1373457a1d2d06f6126eb3937f7",
+          "archive_matches": [
+            "Clued-Kernel-Next-V17-Local-RC-20260903/04-v15/integrity-successor-r2/V15-AGGREGATE-FINALIZATION-WRAPPER-v15.json"
+          ],
+          "status": "CONTENT_FOUND_BY_SHA256"
+        },
+        {
+          "line": 16,
+          "historical_source_path": "C:\\Users\\17531\\AppData\\Local\\Temp\\clued-kernel-next-v33-v15\\v15-aggregate\\e4b3cd08face6c-r5-integrity-successor-r2\\V15-INTEGRITY-INVENTORY-v15.json",
+          "expected_sha256": "17ef62c9102cd571f432077f1b038ef0e54068e2221b8bc04f4f0288819b6054",
+          "archive_matches": [
+            "Clued-Kernel-Next-V17-Local-RC-20260903/04-v15/integrity-successor-r2/V15-INTEGRITY-INVENTORY-v15.json"
+          ],
+          "status": "CONTENT_FOUND_BY_SHA256"
+        }
+      ]
+    },
+    {
+      "path": "Clued-Kernel-Next-V17-Local-RC-20260903/SHA256SUMS.txt",
+      "checked": 88,
+      "passed_by_relative_path": 88,
+      "historical_references_resolved_by_content": 0,
+      "passed": 88,
+      "failures": [],
+      "historical_reference_mappings": []
+    }
+  ],
+  "terminal_receipt_matches": [
+    {
+      "path": "Clued-Kernel-Next-V17-Local-RC-20260903/06-v17/V17-INDEPENDENT-LOCAL-RC-REVIEW-v15.json",
+      "bytes": 5481,
+      "sha256": "24da22d93758b7a2a220eda0ca400ad62ba1190e8b53460805adced4f4b02a8a"
+    }
+  ],
+  "rc_artifact_matches": [
+    {
+      "path": "Clued-Kernel-Next-V17-Local-RC-20260903/02-v12-real-supply-chain/final-artifact.clued-local-rc.json",
+      "bytes": 951954,
+      "sha256": "f6d83b515581d2c8e9ed4d41bf329b83f22d07fe9e2b12e5fbf67c15c1695787"
+    },
+    {
+      "path": "Clued-Kernel-Next-V17-Local-RC-20260903/02-v12-real-supply-chain/oci-layout/blobs/sha256/f6d83b515581d2c8e9ed4d41bf329b83f22d07fe9e2b12e5fbf67c15c1695787",
+      "bytes": 951954,
+      "sha256": "f6d83b515581d2c8e9ed4d41bf329b83f22d07fe9e2b12e5fbf67c15c1695787"
+    }
+  ],
+  "issues": [],
+  "warnings": [
+    "HISTORICAL_ABSOLUTE_PATHS_NOT_PORTABLE; bytes located by SHA256: Clued-Kernel-Next-V17-Local-RC-20260903/04-v15/claim-scope-successor-r1/SHA256SUMS-v15.txt",
+    "HISTORICAL_ABSOLUTE_PATHS_NOT_PORTABLE; bytes located by SHA256: Clued-Kernel-Next-V17-Local-RC-20260903/04-v15/integrity-successor-r2/SHA256SUMS-v15.txt"
+  ],
+  "verdict": "PASS_WITH_HISTORICAL_PATH_WARNINGS",
+  "acquisition_method": "EXISTING_LOCAL_ORIGINAL_VERIFIED_AGAINST_AUTHENTICATED_RELEASE_METADATA; no download or archive rewrite performed",
+  "release_binding": {
+    "url": "https://github.com/tdoljyj/cross-memory-system/releases/tag/clued-kernel-next-v17-local-rc-2026-09-03",
+    "tag": "clued-kernel-next-v17-local-rc-2026-09-03",
+    "isDraft": false,
+    "isPrerelease": true,
+    "asset": {
+      "apiUrl": "https://api.github.com/repos/tdoljyj/cross-memory-system/releases/assets/541485544",
+      "contentType": "application/zip",
+      "createdAt": "2026-09-02T16:56:10Z",
+      "digest": "sha256:66b71187e6e467a44aa1149bf5c757efa64bfb99620d37a43e0d5bf2678bb1b4",
+      "downloadCount": 0,
+      "id": "RA_kwDOT42AV84gRmno",
+      "label": "",
+      "name": "Clued-Kernel-Next-V17-Local-RC-20260903.zip",
+      "size": 848941,
+      "state": "uploaded",
+      "updatedAt": "2026-09-02T16:56:10Z",
+      "url": "https://github.com/tdoljyj/cross-memory-system/releases/download/clued-kernel-next-v17-local-rc-2026-09-03/Clued-Kernel-Next-V17-Local-RC-20260903.zip"
+    }
+  },
+  "observed_terminal_claims": {
+    "status": "PASS",
+    "verdict": "PASS — CLUED_KERNEL_NEXT_LOCAL_IMPLEMENTATION_ACCEPTED_UNDER_V15 / LOCAL_RC_ONLY",
+    "candidate": {
+      "commit_sha1": "e4b3cd08face6c848cac941a6a00512a1ddf9ace",
+      "tree_sha1": "7205d419fa83171126c98e14585bdcf8de3962bf",
+      "protocol_v1_tree_sha1": "5e0b3fd821d391a342d5d7371f17d99cd5e818ca",
+      "memory_tree_sha1": "69df8930acb7907a3860008c31a9ad7402ab6b7f",
+      "candidate_digest": "sha256:1f4329688c32923beaa91d144fdd2e9efa7277a0825cf3b0e602f59ba24a141d",
+      "artifact_sha256": "sha256:f6d83b515581d2c8e9ed4d41bf329b83f22d07fe9e2b12e5fbf67c15c1695787",
+      "candidate_digest_is_not_artifact_sha256": true
+    },
+    "blockers": [],
+    "required_exclusions": [
+      "NO_REMOTE_GIT_WRITE",
+      "NO_PRODUCTION_DEPLOYMENT_OR_RUNTIME_CHANGE_PERFORMED",
+      "NOT_PUBLISHED",
+      "NO_V3_3_CRYPTOGRAPHIC_GATE_CONFORMANCE"
+    ],
+    "independent_claims_reaudited": false
+  },
+  "historical_empty_manifest_note": "04-v15/aggregate-r5-base/SHA256SUMS.txt contains zero checksum entries. It and the other payloads are covered by the 88-entry root package manifest. No standalone closure claim is inferred from this empty historical file.",
+  "next_action": "Upload the unchanged original ZIP to the waiting audit task. Recipient must reacquire the bytes and perform its own evidence/authority/lineage review. No Phase 1 Closeout Bridge or other authority is issued by this report.",
+  "sources_read": [
+    "Exact local original ZIP bytes",
+    "https://github.com/tdoljyj/cross-memory-system/releases/tag/clued-kernel-next-v17-local-rc-2026-09-03",
+    "All archive checksum manifests",
+    "Exact-hash-located V17 terminal receipt and RC artifact"
+  ],
+  "mutations": {
+    "frozen_zip": false,
+    "repository": false,
+    "branch": false,
+    "tag": false,
+    "release": false,
+    "production": false,
+    "canonical": false
+  }
+}

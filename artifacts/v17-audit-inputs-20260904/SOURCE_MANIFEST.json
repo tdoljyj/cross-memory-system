@@ -1,0 +1,68 @@
+{
+  "baseline_commit": "e4b3cd08face6c848cac941a6a00512a1ddf9ace",
+  "generated_at": "2026-09-04T08:35:49.3866688+00:00",
+  "transport": {
+    "parts": [
+      {
+        "sha256": "d8a08d7884519da2ecd7a1f98ebce074d384bb2213a88b4b1cd5667c5ae8a6b2",
+        "order": 1,
+        "path": "transport/ZIP.base64.part01.txt",
+        "bytes": 262144
+      },
+      {
+        "sha256": "212a8d95141f06e030e56fc83739a09c70cfee0f23a523f1d324c720d1cbc2bb",
+        "order": 2,
+        "path": "transport/ZIP.base64.part02.txt",
+        "bytes": 262144
+      },
+      {
+        "sha256": "7ae2a5cf25eb7ccd7bd61521b0e8218b53b9cf3840d8f664ad8ebf7cdcbe9103",
+        "order": 3,
+        "path": "transport/ZIP.base64.part03.txt",
+        "bytes": 262144
+      },
+      {
+        "sha256": "3c2e1b2ceff4baac02546e5900dc8022b244122d22d059dccf6771ddbeb79251",
+        "order": 4,
+        "path": "transport/ZIP.base64.part04.txt",
+        "bytes": 262144
+      },
+      {
+        "sha256": "053b72b751ad4ba5f403cd426a1cef63b8b3898de604dd13fdfb4d54522f0e2e",
+        "order": 5,
+        "path": "transport/ZIP.base64.part05.txt",
+        "bytes": 83348
+      }
+    ],
+    "decoded_bytes": 848941,
+    "encoding": "RFC4648 base64 without line breaks",
+    "decoded_sha256": "66b71187e6e467a44aa1149bf5c757efa64bfb99620d37a43e0d5bf2678bb1b4",
+    "reconstruction": "Concatenate listed parts in order, base64-decode, then independently verify ZIP bytes and SHA-256"
+  },
+  "purpose": "Byte distribution only; no gate, closeout, production or canonical authority is issued",
+  "files": [
+    {
+      "sha256": "66b71187e6e467a44aa1149bf5c757efa64bfb99620d37a43e0d5bf2678bb1b4",
+      "bytes": 848941,
+      "name": "Clued-Kernel-Next-V17-Local-RC-20260903.zip"
+    },
+    {
+      "sha256": "baeaccef7921241b4725b5d34e8158f3ef4dba3f9d54135f03150826c7f57e88",
+      "bytes": 2985,
+      "name": "V17_RELEASE_ASSET_VERIFICATION.md"
+    },
+    {
+      "sha256": "c2698e3a70b218f6f9f79dcd0fe7e418501165cb582a2fbaa2a535bf72733501",
+      "bytes": 20473,
+      "name": "V17_RELEASE_ASSET_VERIFICATION.json"
+    },
+    {
+      "sha256": "44fd9f66be957f2133c2d4b541eeec9b88e2f34e4c8ee9b1c8e16c300fe7b39c",
+      "bytes": 20585,
+      "name": "V17_CONTENT_INDEX.json"
+    }
+  ],
+  "original_release": "https://github.com/tdoljyj/cross-memory-system/releases/tag/clued-kernel-next-v17-local-rc-2026-09-03",
+  "baseline_tree": "7205d419fa83171126c98e14585bdcf8de3962bf",
+  "schema": "clued-v17-audit-input-distribution/1"
+}
