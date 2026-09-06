@@ -2,6 +2,9 @@ name: Phase2 v0.2.7 Validation
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - phase2-v027-validation
 
 jobs:
   validate-v027:
