@@ -2,11 +2,6 @@ name: Phase2 v0.2.7 Validation
 
 on:
   workflow_dispatch:
-    inputs:
-      candidate_url:
-        description: Optional one-run HTTPS transport for the exact bound candidate; identity digest/bytes/members are still mandatory
-        required: false
-        type: string
   push:
     branches:
       - phase2-v027-validation
@@ -27,74 +22,90 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          lfs: true
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Validate exact candidate source binding
+      - name: Validate exact GitHub Release source binding
         id: source
         shell: bash
+        env:
+          REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
-          python - "$IDENTITY_PATH" "$SOURCE_PATH" "$GITHUB_OUTPUT" <<'PY'
+          python - "$IDENTITY_PATH" "$SOURCE_PATH" "$GITHUB_OUTPUT" "$REPOSITORY" <<'PY'
           import json
-          import os
           import sys
 
-          identity_path, source_path, output_path = sys.argv[1:]
+          identity_path, source_path, output_path, repository = sys.argv[1:]
           with open(identity_path, encoding="utf-8") as f:
               identity = json.load(f)
           with open(source_path, encoding="utf-8") as f:
               source = json.load(f)
 
-          bound = source.get("candidate")
-          if not isinstance(bound, dict):
-              raise SystemExit("candidate-source.json: candidate binding missing")
+          candidate = source.get("candidate")
           expected = {
               "filename": identity.get("candidate"),
               "bytes": identity.get("bytes"),
               "members": identity.get("members"),
               "sha256": identity.get("sha256"),
           }
-          if bound != expected:
-              raise SystemExit(f"candidate source/identity mismatch: source={bound!r} identity={expected!r}")
+          if candidate != expected:
+              raise SystemExit(f"candidate source/identity mismatch: source={candidate!r} identity={expected!r}")
+
+          canonical = source.get("canonical_source")
+          if not isinstance(canonical, dict) or canonical.get("provider") != "github_release_asset":
+              raise SystemExit("candidate-source.json: canonical GitHub Release asset binding missing")
+          if canonical.get("repository") != repository:
+              raise SystemExit("candidate-source.json: repository mismatch")
+          if canonical.get("asset_bytes") != identity.get("bytes"):
+              raise SystemExit("candidate-source.json: release asset bytes mismatch identity")
+          expected_digest = "sha256:" + str(identity.get("sha256"))
+          if canonical.get("asset_digest") != expected_digest:
+              raise SystemExit("candidate-source.json: release asset digest mismatch identity")
+          if not isinstance(canonical.get("asset_id"), int) or canonical["asset_id"] <= 0:
+              raise SystemExit("candidate-source.json: invalid release asset id")
+          if not isinstance(canonical.get("release_id"), int) or canonical["release_id"] <= 0:
+              raise SystemExit("candidate-source.json: invalid release id")
+          if not isinstance(canonical.get("tag"), str) or not canonical["tag"]:
+              raise SystemExit("candidate-source.json: release tag missing")
+          if not isinstance(canonical.get("asset_name"), str) or not canonical["asset_name"]:
+              raise SystemExit("candidate-source.json: release asset name missing")
 
           transport = source.get("ci_transport")
-          if not isinstance(transport, dict):
-              raise SystemExit("candidate-source.json: ci_transport missing")
-          status = transport.get("status", "")
-          url = transport.get("https_url", "")
-          if url and not isinstance(url, str):
-              raise SystemExit("candidate-source.json: https_url must be a string")
-          if url and not url.startswith("https://"):
-              raise SystemExit("candidate-source.json: https_url must use https://")
+          if not isinstance(transport, dict) or transport.get("status") != "READY_PRIVATE_GITHUB_RELEASE_ASSET":
+              raise SystemExit("candidate-source.json: CI transport is not ready")
+          if transport.get("download_asset_id") != canonical.get("asset_id"):
+              raise SystemExit("candidate-source.json: transport asset id mismatch")
+          if transport.get("download_asset_name") != canonical.get("asset_name"):
+              raise SystemExit("candidate-source.json: transport asset name mismatch")
 
           with open(output_path, "a", encoding="utf-8") as out:
-              out.write(f"status={status}\n")
-              out.write(f"url={url}\n")
+              out.write(f"tag={canonical['tag']}\n")
+              out.write(f"asset_id={canonical['asset_id']}\n")
+              out.write(f"asset_name={canonical['asset_name']}\n")
           print(f"source binding: {source.get('binding_id')}")
-          print(f"canonical provider: {source.get('canonical_source', {}).get('provider')}")
-          print(f"CI transport status: {status}")
+          print(f"release id: {canonical['release_id']}")
+          print(f"asset id: {canonical['asset_id']}")
+          print(f"asset digest: {canonical['asset_digest']}")
           PY
 
-      - name: Resolve exact candidate bytes
+      - name: Download exact candidate from private GitHub Release
         id: candidate
         shell: bash
         env:
-          DISPATCH_CANDIDATE_URL: ${{ inputs.candidate_url }}
-          BOUND_CANDIDATE_URL: ${{ steps.source.outputs.url }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.source.outputs.tag }}
+          RELEASE_ASSET_NAME: ${{ steps.source.outputs.asset_name }}
         run: |
-          set -uo pipefail
+          set -euo pipefail
 
-          if ! candidate_name="$(python - "$IDENTITY_PATH" <<'PY'
+          candidate_name="$(python - "$IDENTITY_PATH" <<'PY'
           import json
           import sys
           from pathlib import Path
-
           with open(sys.argv[1], encoding="utf-8") as f:
               identity = json.load(f)
           name = identity["candidate"]
@@ -102,36 +113,23 @@ jobs:
               raise SystemExit("invalid candidate filename in identity")
           print(name)
           PY
-          )"; then
-            echo "::error::Unable to parse a safe candidate filename from identity; Candidate Gate will fail closed"
-            candidate_name="phase2-v027-invalid-identity.zip"
-          fi
+          )"
 
+          stage_dir="$RUNNER_TEMP/phase2-v027-release"
           candidate_path="$RUNNER_TEMP/$candidate_name"
-          repo_candidate="artifacts/clued-validation/phase2-v027/$candidate_name"
-          rm -f "$candidate_path" "$candidate_path.part"
+          rm -rf "$stage_dir"
+          mkdir -p "$stage_dir"
+          rm -f "$candidate_path"
 
-          if [[ -f "$repo_candidate" ]]; then
-            cp "$repo_candidate" "$candidate_path"
-            echo "candidate source: repository file"
-          else
-            candidate_url="${DISPATCH_CANDIDATE_URL:-${BOUND_CANDIDATE_URL:-}}"
-            if [[ -n "$candidate_url" ]]; then
-              if [[ "$candidate_url" != https://* ]]; then
-                echo "::error::candidate URL must use https://; Candidate Gate will fail closed"
-              elif curl --fail --location --retry 3 --retry-all-errors --proto '=https' --tlsv1.2 \
-                    --output "$candidate_path.part" "$candidate_url"; then
-                mv "$candidate_path.part" "$candidate_path"
-                echo "candidate source: HTTPS transport (exact identity is verified next)"
-              else
-                rm -f "$candidate_path.part"
-                echo "::error::Candidate download failed; Candidate Gate will fail closed"
-              fi
-            else
-              echo "::error::Exact candidate is bound in $SOURCE_PATH, but no runner-fetchable private transport is available. Candidate Gate will fail closed"
-            fi
-          fi
+          gh release download "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "$RELEASE_ASSET_NAME" \
+            --dir "$stage_dir"
 
+          downloaded="$stage_dir/$RELEASE_ASSET_NAME"
+          test -f "$downloaded"
+          mv "$downloaded" "$candidate_path"
+          echo "candidate source: private GitHub Release $RELEASE_TAG asset $RELEASE_ASSET_NAME"
           echo "path=$candidate_path" >> "$GITHUB_OUTPUT"
 
       - name: Run real Candidate / Manifest / Provenance / ProductIncrementInput gates
