@@ -1,9 +1,22 @@
 {
-  "candidate": "Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7_20260906.zip",
-  "bytes": 246708127,
+  "candidate": "Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip",
+  "bytes": 246612118,
   "members": 960,
-  "sha256": "72b9481ebdedbe995a8073156679560163db3955f69da4509d9d488626e16c98",
+  "sha256": "6e51374a6caedb4f84d2b6bb9fe05cd695b25732833f9d0217c341f17e1c1649",
   "root_prefix": "Clued_Phase2_三轨修订与补证_v0.2.7_20260906/",
+  "semantic_candidate": "v0.2.7",
+  "package_revision": "v0.2.7.1-manifest-repair",
+  "predecessor_candidate": {
+    "candidate": "Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7_20260906.zip",
+    "bytes": 246708127,
+    "members": 960,
+    "sha256": "72b9481ebdedbe995a8073156679560163db3955f69da4509d9d488626e16c98"
+  },
+  "repair_scope": [
+    "PACK_MANIFEST.json",
+    "SHA256SUMS.txt"
+  ],
+  "payload_member_bytes_changed": 0,
   "purpose": "Phase2 v0.2.7 validation lane",
   "scope": "candidate verification only",
   "architecture_acceptance": "NOT_ISSUED"
