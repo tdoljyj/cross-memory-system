@@ -2,6 +2,11 @@ name: Phase2 v0.2.7 Validation
 
 on:
   workflow_dispatch:
+    inputs:
+      candidate_url:
+        description: HTTPS URL for the exact v0.2.7 candidate ZIP (falls back to PHASE2_V027_CANDIDATE_URL repository variable)
+        required: false
+        type: string
   push:
     branches:
       - phase2-v027-validation
@@ -13,28 +18,87 @@ jobs:
   validate-v027:
     name: Validate Phase2 v0.2.7 candidate
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      IDENTITY_PATH: artifacts/clued-validation/phase2-v027/candidate-identity.json
+      RECEIPT_PATH: artifacts/clued-validation/phase2-v027/receipt/CIGateReceipt.json
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          lfs: true
 
-      - name: Load candidate identity
-        run: cat artifacts/clued-validation/phase2-v027/candidate-identity.json
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
 
-      - name: Candidate validation
+      - name: Resolve exact candidate bytes
+        id: candidate
+        shell: bash
+        env:
+          DISPATCH_CANDIDATE_URL: ${{ inputs.candidate_url }}
+          DEFAULT_CANDIDATE_URL: ${{ vars.PHASE2_V027_CANDIDATE_URL }}
         run: |
-          test -f artifacts/clued-validation/phase2-v027/candidate-identity.json
-          echo "identity PASS"
-          echo "manifest PASS"
-          echo "provenance PASS"
-          echo "ProductIncrementInput PASS"
+          set -uo pipefail
 
-      - name: Generate CI receipt
+          if ! candidate_name="$(python - "$IDENTITY_PATH" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          with open(sys.argv[1], encoding="utf-8") as f:
+              identity = json.load(f)
+          name = identity["candidate"]
+          if not isinstance(name, str) or Path(name).name != name or not name.endswith(".zip"):
+              raise SystemExit("invalid candidate filename in identity")
+          print(name)
+          PY
+          )"; then
+            echo "::error::Unable to parse a safe candidate filename from identity; Candidate Gate will fail closed"
+            candidate_name="phase2-v027-invalid-identity.zip"
+          fi
+
+          candidate_path="$RUNNER_TEMP/$candidate_name"
+          repo_candidate="artifacts/clued-validation/phase2-v027/$candidate_name"
+          rm -f "$candidate_path" "$candidate_path.part"
+
+          if [[ -f "$repo_candidate" ]]; then
+            cp "$repo_candidate" "$candidate_path"
+            echo "candidate source: repository file"
+          else
+            candidate_url="${DISPATCH_CANDIDATE_URL:-${DEFAULT_CANDIDATE_URL:-}}"
+            if [[ -n "$candidate_url" ]]; then
+              if [[ "$candidate_url" != https://* ]]; then
+                echo "::error::candidate_url must use https://; Candidate Gate will fail closed"
+              elif curl --fail --location --retry 3 --retry-all-errors --proto '=https' --tlsv1.2 \
+                    --output "$candidate_path.part" "$candidate_url"; then
+                mv "$candidate_path.part" "$candidate_path"
+                echo "candidate source: HTTPS URL"
+              else
+                rm -f "$candidate_path.part"
+                echo "::error::Candidate download failed; Candidate Gate will fail closed"
+              fi
+            else
+              echo "::error::Candidate bytes unavailable. Provide workflow_dispatch candidate_url, PHASE2_V027_CANDIDATE_URL, or a repository candidate file. Candidate Gate will fail closed"
+            fi
+          fi
+
+          echo "path=$candidate_path" >> "$GITHUB_OUTPUT"
+
+      - name: Run real Candidate / Manifest / Provenance / ProductIncrementInput gates
+        shell: bash
         run: |
-          mkdir -p artifacts/clued-validation/phase2-v027/receipt
-          echo '{"candidate":"v0.2.7","scope":"candidate verification only","checks":["identity","manifest","provenance","ProductIncrementInput"]}' > artifacts/clued-validation/phase2-v027/receipt/CIGateReceipt.json
+          python scripts/phase2-v027-validate.py \
+            --candidate "${{ steps.candidate.outputs.path }}" \
+            --identity "$IDENTITY_PATH" \
+            --receipt "$RECEIPT_PATH"
 
-      - name: Upload receipt
+      - name: Upload real gate receipt
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: phase2-v027-ci-receipt
           path: artifacts/clued-validation/phase2-v027/receipt/CIGateReceipt.json
+          if-no-files-found: error
