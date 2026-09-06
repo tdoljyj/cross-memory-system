@@ -1,0 +1,17 @@
+name: Phase2 v0.2.7 Validation
+
+on:
+  workflow_dispatch:
+
+jobs:
+  validate-v027:
+    name: Validate Phase2 v0.2.7 candidate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Candidate validation placeholder
+        run: |
+          echo "Phase2 v0.2.7 validation lane created"
+          echo "Checks: identity, manifest, provenance, ProductIncrementInput"
