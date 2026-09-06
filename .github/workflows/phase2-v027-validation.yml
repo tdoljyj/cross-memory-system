@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       candidate_url:
-        description: HTTPS URL for the exact v0.2.7 candidate ZIP (falls back to PHASE2_V027_CANDIDATE_URL repository variable)
+        description: Optional one-run HTTPS transport for the exact bound candidate; identity digest/bytes/members are still mandatory
         required: false
         type: string
   push:
@@ -21,6 +21,7 @@ jobs:
     timeout-minutes: 30
     env:
       IDENTITY_PATH: artifacts/clued-validation/phase2-v027/candidate-identity.json
+      SOURCE_PATH: artifacts/clued-validation/phase2-v027/candidate-source.json
       RECEIPT_PATH: artifacts/clued-validation/phase2-v027/receipt/CIGateReceipt.json
 
     steps:
@@ -34,12 +35,58 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Validate exact candidate source binding
+        id: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - "$IDENTITY_PATH" "$SOURCE_PATH" "$GITHUB_OUTPUT" <<'PY'
+          import json
+          import os
+          import sys
+
+          identity_path, source_path, output_path = sys.argv[1:]
+          with open(identity_path, encoding="utf-8") as f:
+              identity = json.load(f)
+          with open(source_path, encoding="utf-8") as f:
+              source = json.load(f)
+
+          bound = source.get("candidate")
+          if not isinstance(bound, dict):
+              raise SystemExit("candidate-source.json: candidate binding missing")
+          expected = {
+              "filename": identity.get("candidate"),
+              "bytes": identity.get("bytes"),
+              "members": identity.get("members"),
+              "sha256": identity.get("sha256"),
+          }
+          if bound != expected:
+              raise SystemExit(f"candidate source/identity mismatch: source={bound!r} identity={expected!r}")
+
+          transport = source.get("ci_transport")
+          if not isinstance(transport, dict):
+              raise SystemExit("candidate-source.json: ci_transport missing")
+          status = transport.get("status", "")
+          url = transport.get("https_url", "")
+          if url and not isinstance(url, str):
+              raise SystemExit("candidate-source.json: https_url must be a string")
+          if url and not url.startswith("https://"):
+              raise SystemExit("candidate-source.json: https_url must use https://")
+
+          with open(output_path, "a", encoding="utf-8") as out:
+              out.write(f"status={status}\n")
+              out.write(f"url={url}\n")
+          print(f"source binding: {source.get('binding_id')}")
+          print(f"canonical provider: {source.get('canonical_source', {}).get('provider')}")
+          print(f"CI transport status: {status}")
+          PY
+
       - name: Resolve exact candidate bytes
         id: candidate
         shell: bash
         env:
           DISPATCH_CANDIDATE_URL: ${{ inputs.candidate_url }}
-          DEFAULT_CANDIDATE_URL: ${{ vars.PHASE2_V027_CANDIDATE_URL }}
+          BOUND_CANDIDATE_URL: ${{ steps.source.outputs.url }}
         run: |
           set -uo pipefail
 
@@ -68,20 +115,20 @@ jobs:
             cp "$repo_candidate" "$candidate_path"
             echo "candidate source: repository file"
           else
-            candidate_url="${DISPATCH_CANDIDATE_URL:-${DEFAULT_CANDIDATE_URL:-}}"
+            candidate_url="${DISPATCH_CANDIDATE_URL:-${BOUND_CANDIDATE_URL:-}}"
             if [[ -n "$candidate_url" ]]; then
               if [[ "$candidate_url" != https://* ]]; then
-                echo "::error::candidate_url must use https://; Candidate Gate will fail closed"
+                echo "::error::candidate URL must use https://; Candidate Gate will fail closed"
               elif curl --fail --location --retry 3 --retry-all-errors --proto '=https' --tlsv1.2 \
                     --output "$candidate_path.part" "$candidate_url"; then
                 mv "$candidate_path.part" "$candidate_path"
-                echo "candidate source: HTTPS URL"
+                echo "candidate source: HTTPS transport (exact identity is verified next)"
               else
                 rm -f "$candidate_path.part"
                 echo "::error::Candidate download failed; Candidate Gate will fail closed"
               fi
             else
-              echo "::error::Candidate bytes unavailable. Provide workflow_dispatch candidate_url, PHASE2_V027_CANDIDATE_URL, or a repository candidate file. Candidate Gate will fail closed"
+              echo "::error::Exact candidate is bound in $SOURCE_PATH, but no runner-fetchable private transport is available. Candidate Gate will fail closed"
             fi
           fi
 
