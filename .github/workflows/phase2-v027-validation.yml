@@ -24,17 +24,17 @@ jobs:
         run: |
           mkdir -p artifacts/clued-validation/phase2-v027/receipt
           cat > artifacts/clued-validation/phase2-v027/receipt/CIGateReceipt.json <<'EOF'
-{
-  "candidate": "v0.2.7",
-  "scope": "candidate verification only",
-  "checks": [
-    "identity",
-    "manifest",
-    "provenance",
-    "ProductIncrementInput"
-  ]
-}
-EOF
+          {
+            "candidate": "v0.2.7",
+            "scope": "candidate verification only",
+            "checks": [
+              "identity",
+              "manifest",
+              "provenance",
+              "ProductIncrementInput"
+            ]
+          }
+          EOF
 
       - name: Upload receipt
         uses: actions/upload-artifact@v4
