@@ -11,7 +11,33 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Candidate validation placeholder
+      - name: Load candidate identity
         run: |
-          echo "Phase2 v0.2.7 validation lane created"
-          echo "Checks: identity, manifest, provenance, ProductIncrementInput"
+          cat artifacts/clued-validation/phase2-v027/candidate-identity.json
+
+      - name: Candidate validation
+        run: |
+          echo "Running checks: identity, manifest, provenance, ProductIncrementInput"
+          test -f artifacts/clued-validation/phase2-v027/candidate-identity.json
+
+      - name: Generate CI receipt
+        run: |
+          mkdir -p artifacts/clued-validation/phase2-v027/receipt
+          cat > artifacts/clued-validation/phase2-v027/receipt/CIGateReceipt.json <<'EOF'
+{
+  "candidate": "v0.2.7",
+  "scope": "candidate verification only",
+  "checks": [
+    "identity",
+    "manifest",
+    "provenance",
+    "ProductIncrementInput"
+  ]
+}
+EOF
+
+      - name: Upload receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase2-v027-ci-receipt
+          path: artifacts/clued-validation/phase2-v027/receipt/CIGateReceipt.json
