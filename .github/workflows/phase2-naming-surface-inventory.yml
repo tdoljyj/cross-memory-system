@@ -1,0 +1,119 @@
+name: Phase2 Naming Surface Inventory
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - phase2-naming-surface-inventory
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  inventory:
+    name: Inventory Clued naming surfaces
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      SCOPE_PATH: artifacts/clued-validation/structure-freeze-prep/naming/NamingSurfaceInventoryScope.json
+      OUTPUT_DIR: ${{ runner.temp }}/clued-naming-surface-inventory
+
+    steps:
+      - name: Checkout exact source commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Generate read-only repository and GitHub inventory
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rm -rf "$OUTPUT_DIR"
+          mkdir -p "$OUTPUT_DIR"
+          python scripts/clued-naming-surface-inventory.py \
+            --repo-root . \
+            --scope "$SCOPE_PATH" \
+            --output-dir "$OUTPUT_DIR" \
+            --repository "$GITHUB_REPOSITORY" \
+            --github-token "$GITHUB_TOKEN" \
+            --require-github \
+            | tee "$OUTPUT_DIR/GenerationResult.json"
+
+      - name: Validate generated inventory bindings
+        run: |
+          set -euo pipefail
+          python - "$OUTPUT_DIR" "$GITHUB_SHA" "$GITHUB_REPOSITORY" <<'PY'
+          import hashlib
+          import json
+          import sys
+          from pathlib import Path
+
+          output = Path(sys.argv[1])
+          expected_sha = sys.argv[2]
+          expected_repo = sys.argv[3]
+
+          def load(name):
+              path = output / name
+              if not path.is_file():
+                  raise SystemExit(f"missing output: {name}")
+              with path.open(encoding="utf-8") as handle:
+                  return json.load(handle)
+
+          manifest = load("NamingSurfaceInventoryManifest.json")
+          findings = load("NamingSurfaceInventoryFindings.json")
+          result = load("GenerationResult.json")
+
+          if manifest["source_lock"]["commit_sha"] != expected_sha:
+              raise SystemExit("manifest source commit does not match GitHub SHA")
+          if manifest["source_lock"]["repository"] != expected_repo:
+              raise SystemExit("manifest repository does not match GitHub repository")
+          if manifest["authority_effect"] != "NONE":
+              raise SystemExit("inventory must have no authority effect")
+          if manifest["boundaries"]["renaming_or_migration_performed"]:
+              raise SystemExit("inventory falsely reports a rename or migration")
+          if manifest["boundaries"]["registry_root_catalog_created"]:
+              raise SystemExit("inventory falsely reports Registry Root Catalog creation")
+          if not manifest["github_inventory"]["pagination_complete"]:
+              raise SystemExit("GitHub pagination is incomplete")
+          if findings["source_manifest_record_id"] != manifest["record_id"]:
+              raise SystemExit("findings do not bind the generated manifest")
+          if findings["count"] != len(findings["findings"]):
+              raise SystemExit("findings count mismatch")
+
+          for filename, digest_key in (
+              ("NamingSurfaceInventoryManifest.json", "manifest_sha256"),
+              ("NamingSurfaceInventoryFindings.json", "findings_sha256"),
+              ("NamingSurfaceInventorySummary.md", "summary_sha256"),
+          ):
+              actual = hashlib.sha256((output / filename).read_bytes()).hexdigest()
+              if result[digest_key] != actual:
+                  raise SystemExit(f"generation result digest mismatch: {filename}")
+
+          print(json.dumps({
+              "status": manifest["status"],
+              "tracked_entries": manifest["aggregate"]["tracked_entries"],
+              "identifier_tokens": manifest["aggregate"]["identifier_tokens"],
+              "inventory_observations": manifest["aggregate"]["inventory_observations"],
+              "pending_external_surfaces": manifest["aggregate"]["unresolved_external_surface_count"],
+          }, sort_keys=True))
+          PY
+
+      - name: Upload naming inventory evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase2-naming-surface-inventory-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/clued-naming-surface-inventory/NamingSurfaceInventoryManifest.json
+            ${{ runner.temp }}/clued-naming-surface-inventory/NamingSurfaceInventoryFindings.json
+            ${{ runner.temp }}/clued-naming-surface-inventory/NamingSurfaceInventorySummary.md
+            ${{ runner.temp }}/clued-naming-surface-inventory/GenerationResult.json
+          if-no-files-found: error
+          retention-days: 90
