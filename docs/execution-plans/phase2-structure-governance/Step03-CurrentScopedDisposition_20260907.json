@@ -1,0 +1,37 @@
+{
+  "schema": "clued.phase2-step3-scoped-disposition/v1",
+  "reviewer": "Codex@DESK-W-591 under the recorded explicit delegation",
+  "reviewed_source_commit": "5fad76df81c8a412e7768e08427841f0985a2588",
+  "original_ci_run": 34100327450,
+  "original_ci_bytes_modified": false,
+  "independent_review_sha256": "17078abbdb82572c58c5487301b99fc0ee2e5624a47767564d8b8453b9c60765",
+  "user_scope_amendment_sha256": "32b16e2938a5674b1d8b492e1bf0a0506f708c574913696d6ba281b99e108e9e",
+  "dispositions": [
+    {
+      "id": "NSI-GAP-TYPED-RULE-REVIEW",
+      "status": "RESOLVED_FOR_EXACT_REVIEWED_SUBJECT",
+      "evidence": "retained-step3-r2-20260907/typed-review/IndependentReview.actual-ci.json"
+    },
+    {
+      "id": "NSI-GAP-LIBRARY",
+      "status": "OUT_OF_SCOPE_BY_EXPLICIT_USER_AMENDMENT",
+      "blocking": false,
+      "evidence": "ScopeAmendment_CurrentDirectory_20260907.json"
+    },
+    {
+      "id": "NSI-GAP-AUTH",
+      "status": "RESOLVED_AT_OBSERVATION_TIME",
+      "blocking": false,
+      "evidence": "auth-config-20260907/Observation.json",
+      "evidence_sha256": "eea2b10dda1752263ab6e9105cb3cf23e963506f1a5c52ac98012449a1b91fb1"
+    }
+  ],
+  "step3_gate": "READY_FOR_NEXT_STEP_FOR_REVIEWED_SUBJECT_AND_AMENDED_SCOPE",
+  "does_not_claim": "No Architecture Acceptance, Structure Freeze, migration or runtime-login acceptance. The original CI remains bound to 5fad76d; later scoped decisions and observations supplement that subject without rewriting it.",
+  "next_step_after_required_evidence": "Step 4 Namespace Ownership under the amended current-directory scope.",
+  "remaining_obligations": [
+    "Apply the existing source/rule invalidation table to subsequent code or naming changes.",
+    "Bind namespace ownership, identities and actual consumers at their scheduled steps.",
+    "Auth observation is a current configuration inventory, not a login-flow test."
+  ]
+}

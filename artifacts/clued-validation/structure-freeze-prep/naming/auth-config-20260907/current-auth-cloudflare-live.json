@@ -1,0 +1,9 @@
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "{\n  \"recorded_at_utc\": \"2026-09-07T08:38:32.751Z\",\n  \"account_id\": \"a55e803685ebe14666dfca2635cd9403\",\n  \"deployments\": {\n    \"success\": true,\n    \"status\": 200,\n    \"active\": {\n      \"id\": \"b7fb9087-0ce8-4b84-8c69-f0403b547c2c\",\n      \"source\": \"wrangler\",\n      \"strategy\": \"percentage\",\n      \"author_email\": \"tdoljef@gmail.com\",\n      \"annotations\": {\n        \"workers/message\": \"Clued PR8 log isolation bf0baaa\",\n        \"workers/triggered_by\": \"deployment\"\n      },\n      \"versions\": [\n        {\n          \"version_id\": \"127811f4-997f-4815-b7ca-089dc387004c\",\n          \"percentage\": 100\n        }\n      ],\n      \"created_on\": \"2026-08-29T09:31:21.440923Z\"\n    }\n  },\n  \"domains\": {\n    \"success\": true,\n    \"status\": 200,\n    \"result\": [\n      {\n        \"id\": \"ab4414b0bc996030ae0e4c7a5b86295b5ef6cf7b\",\n        \"zone_id\": \"34fb613386b90534b627f79a4c190bd3\",\n        \"zone_name\": \"pixelgrav.com\",\n        \"hostname\": \"clued.pixelgrav.com\",\n        \"service\": \"clued-cloud\",\n        \"environment\": \"production\",\n        \"cert_id\": \"2d673c7a-0f5b-42d8-afa2-83eb3dcec36f\",\n        \"previews_enabled\": false,\n        \"enabled\": true\n      }\n    ],\n    \"result_info\": {\n      \"page\": 1,\n      \"per_page\": 1,\n      \"count\": 1,\n      \"total_count\": 1\n    }\n  }\n}"
+    }
+  ],
+  "isError": false
+}

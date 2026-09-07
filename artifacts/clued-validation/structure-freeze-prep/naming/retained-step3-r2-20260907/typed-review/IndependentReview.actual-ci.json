@@ -1,0 +1,288 @@
+{
+  "schema": "clued.independent-typed-naming-rule-review/v1",
+  "reviewer": "sequence_review (independent of scanner/classification author)",
+  "review_kind": "EXACT_CI_SUBJECT_RULE_AND_SOURCE_REVIEW",
+  "verdict": "SUPPORTED_FOR_EXACT_SUBJECT",
+  "source_commit": "5fad76df81c8a412e7768e08427841f0985a2588",
+  "source_tree": "39e9456e7334768f62f6135fe87b4ac0bd87ee45",
+  "scanner_path": "scripts/clued-naming-surface-inventory.py",
+  "scanner_sha256": "9ff7dc893b865a7736d6d9ffbe6f908c15f9c418e10a0602ae6fd33eedb8f81e",
+  "scope_sha256": "e8209cd50d6e066bf0b64b93c7c634816cf381a289c3dcd7cc8dda9cbac43af0",
+  "ci_run_id": 34100327450,
+  "ci_run_provenance": "Successful run/download identity provided by parent; artifact bytes, Git tree/blob identities and contents independently rechecked here.",
+  "ci_manifest_record_id": "CLUED_NAMING_SURFACE_INVENTORY_5FAD76DF81C8",
+  "ci_manifest_sha256": "e6e80781685b9cd76f1dbb19ba45fa9a9d623758271bde64a4999e30796dc882",
+  "ci_consolidated_sha256": "f68c0f8eb5a516fd7a006c62a32c249a36dd19b570c797ad80f5cd343ac9ffdd",
+  "ci_records_sha256": "70cefcec88ac793341d081b2d5e5d6f45c1173f9af0cc8be0a4e9b6835857501",
+  "classification_file": "UnresolvedReview.development.json",
+  "classification_sha256": "26ba84344047fba0deede667fdd1c94bee40b7958a897aedc84ed523c941a6ab",
+  "independent_checks_sha256": "467c135a110c8b9acb21073afe026406d019b9768e792df597f2ca62c8a8482a",
+  "scope_effect": {
+    "resolved_gap_ids": [
+      "NSI-GAP-TYPED-RULE-REVIEW"
+    ],
+    "basis": "Rule denominators, identified dynamic sources, exact source-backed dispositions and retained UNKNOWN observations have been independently reviewed.",
+    "does_not_resolve": [
+      "NSI-GAP-LIBRARY",
+      "NSI-GAP-AUTH"
+    ],
+    "does_not_issue": [
+      "STEP3_OVERALL_ACCEPTANCE",
+      "STRUCTURE_FREEZE",
+      "ARCHITECTURE_ACCEPTANCE",
+      "SEMANTIC_COMPLETENESS_PROOF",
+      "RUNTIME_AUTHORIZATION"
+    ],
+    "retain_original_ci_unchanged": true,
+    "required_retention": "Retain the reviewed 148-row classification, this attributed review record, source-backed helper supplement and all original CI UNKNOWN observations with their hashes; no cryptographic signature is asserted."
+  },
+  "counts": {
+    "tracked_files": 3961,
+    "typed_observations": 60146,
+    "unresolved_sites": 148,
+    "classified_sites": 148,
+    "classifications": {
+      "RUNTIME_OR_STEP6_BINDING": 85,
+      "FINITE_STATIC_MAPPING": 60,
+      "NON_NAME_SYMBOL_HOMONYM": 3
+    },
+    "referenced_source_files": 67,
+    "rpc_candidate_evidence_rows_checked": 51
+  },
+  "comparison_to_precommit_development": {
+    "base_commit_for_path_set": "f6bee6e01b05a65e0548af38b05e144814e6aa53",
+    "old_paths": 3911,
+    "new_paths": 3961,
+    "added_paths": [
+      "artifacts/clued-validation/structure-freeze-prep/naming/supplement-20260907/.gitattributes",
+      "artifacts/clued-validation/structure-freeze-prep/naming/supplement-20260907/SourceIndex.json",
+      "artifacts/clued-validation/structure-freeze-prep/naming/supplement-20260907/sites/downloads-library-evidence/InspectedSources.json",
+      "artifacts/clued-validation/structure-freeze-prep/naming/supplement-20260907/sites/downloads-library-evidence/SearchReport.json",
+      "artifacts/clued-validation/structure-freeze-prep/naming/supplement-20260907/sites/evidence/local-verification-summary.json",
+      "artifacts/clued-validation/structure-freeze-prep/naming/supplement-20260907/sites/evidence/sites-get-site-response.json",
+      "artifacts/clued-validation/structure-freeze-prep/naming/supplement-20260907/sites/evidence/sites-hosting-at-source-preservation.json",
+      "artifacts/clued-validation/structure-freeze-prep/naming/supplement-20260907/sites/evidence/sites-list-versions-response.json",
+      "artifacts/clued-validation/structure-freeze-prep/naming/supplement-20260907/sites/evidence/sites-retirement-commit.patch",
+      "artifacts/clued-validation/structure-freeze-prep/naming/supplement-20260907/sites/evidence/sites-retirement-commit.txt",
+      "artifacts/clued-validation/structure-freeze-prep/naming/supplement-20260907/sites/evidence/sites-retirement-log-section.md",
+      "artifacts/clued-validation/structure-freeze-prep/naming/supplement-20260907/sites/evidence/sites-source-preservation-commit.txt",
+      "artifacts/clued-validation/structure-freeze-prep/naming/supplement-20260907/sites/evidence/ui-control-stop.json",
+      "artifacts/clued-validation/structure-freeze-prep/naming/supplement-20260907/sites/findings.md",
+      "artifacts/clued-validation/structure-freeze-prep/naming/supplement-20260907/sites/sources/library-partial-metadata.json",
+      "artifacts/clued-validation/structure-freeze-prep/naming/supplement-20260907/sites/sources/site-retirement.json",
+      "artifacts/clued-validation/structure-freeze-prep/naming/supplement-20260907/sites/supplement-independent-review.md",
+      "artifacts/clued-validation/structure-freeze-prep/naming/supplement-20260907/sites/supplement-test-run.txt",
+      "artifacts/clued-validation/structure-freeze-prep/naming/supplement-20260907/supabase/Verification.md",
+      "artifacts/clued-validation/structure-freeze-prep/naming/supplement-20260907/supabase/catalog-query.sql",
+      "artifacts/clued-validation/structure-freeze-prep/naming/supplement-20260907/supabase/cost-and-scope-evidence.json",
+      "artifacts/clued-validation/structure-freeze-prep/naming/supplement-20260907/supabase/downloads-auth-evidence/SearchIndex.json",
+      "artifacts/clued-validation/structure-freeze-prep/naming/supplement-20260907/supabase/downloads-auth-evidence/search-downloads.py",
+      "artifacts/clued-validation/structure-freeze-prep/naming/supplement-20260907/supabase/pause-response.json",
+      "artifacts/clued-validation/structure-freeze-prep/naming/supplement-20260907/supabase/project-after-pause.json",
+      "artifacts/clued-validation/structure-freeze-prep/naming/supplement-20260907/supabase/project-after-restore.json",
+      "artifacts/clued-validation/structure-freeze-prep/naming/supplement-20260907/supabase/project-before.json",
+      "artifacts/clued-validation/structure-freeze-prep/naming/supplement-20260907/supabase/project-final.json",
+      "artifacts/clued-validation/structure-freeze-prep/naming/supplement-20260907/supabase/raw/page-0.json",
+      "artifacts/clued-validation/structure-freeze-prep/naming/supplement-20260907/supabase/raw/page-1.json",
+      "artifacts/clued-validation/structure-freeze-prep/naming/supplement-20260907/supabase/raw/page-2.json",
+      "artifacts/clued-validation/structure-freeze-prep/naming/supplement-20260907/supabase/raw/page-3.json",
+      "artifacts/clued-validation/structure-freeze-prep/naming/supplement-20260907/supabase/raw/page-4.json",
+      "artifacts/clued-validation/structure-freeze-prep/naming/supplement-20260907/supabase/raw/page-5.json",
+      "artifacts/clued-validation/structure-freeze-prep/naming/supplement-20260907/supabase/raw/page-6.json",
+      "artifacts/clued-validation/structure-freeze-prep/naming/supplement-20260907/supabase/raw/page-7.json",
+      "artifacts/clued-validation/structure-freeze-prep/naming/supplement-20260907/supabase/restore-active-after.json",
+      "artifacts/clued-validation/structure-freeze-prep/naming/supplement-20260907/supabase/restore-active-before.json",
+      "artifacts/clued-validation/structure-freeze-prep/naming/supplement-20260907/supabase/restore-catalog-verification.json",
+      "artifacts/clued-validation/structure-freeze-prep/naming/supplement-20260907/supabase/restore-catalog.json",
+      "artifacts/clued-validation/structure-freeze-prep/naming/supplement-20260907/supabase/restore-final-catalog-digest.json",
+      "artifacts/clued-validation/structure-freeze-prep/naming/supplement-20260907/supabase/restore-lifecycle.json",
+      "artifacts/clued-validation/structure-freeze-prep/naming/supplement-20260907/supabase/restore-response.json",
+      "artifacts/clued-validation/structure-freeze-prep/naming/supplement-20260907/supabase/root-final-state-verification.json",
+      "artifacts/clued-validation/structure-freeze-prep/naming/supplement-20260907/supabase/schema-probe.json",
+      "docs/execution-plans/phase2-structure-governance/ExecutionDelegation_20260907.json",
+      "docs/execution-plans/phase2-structure-governance/ExecutionReadinessReview_20260907.md",
+      "docs/execution-plans/phase2-structure-governance/Step03-SourceCompletionAndParserReview_20260907.md",
+      "tests/test_naming_inventory_semantic_surfaces.py",
+      "tests/test_naming_inventory_supplements.py"
+    ],
+    "removed_paths": [],
+    "new_file_observations": 1528,
+    "new_file_observations_by_rule": {
+      "json_names": 1500,
+      "module_references": 20,
+      "role_capability_scope": 8
+    },
+    "new_file_unresolved": 0,
+    "new_file_unresolved_rows": [],
+    "prior_final_development_observations": 58618,
+    "observation_count_delta": 1528,
+    "typed_payload_identical_to_fresh_exact_commit_capture": true,
+    "source_hash_sets_identical_to_fresh_capture": true
+  },
+  "rules": [
+    {
+      "rule_id": "json_names",
+      "selected_file_count": 3247,
+      "examined_file_count": 3247,
+      "candidate_sites": 57294,
+      "extracted_records": 57294,
+      "unresolved_sites": 0
+    },
+    {
+      "rule_id": "package_entries",
+      "selected_file_count": 1,
+      "examined_file_count": 1,
+      "candidate_sites": 71,
+      "extracted_records": 71,
+      "unresolved_sites": 0
+    },
+    {
+      "rule_id": "code_routes",
+      "selected_file_count": 273,
+      "examined_file_count": 273,
+      "candidate_sites": 43,
+      "extracted_records": 40,
+      "unresolved_sites": 3
+    },
+    {
+      "rule_id": "code_rpc",
+      "selected_file_count": 273,
+      "examined_file_count": 273,
+      "candidate_sites": 67,
+      "extracted_records": 59,
+      "unresolved_sites": 8
+    },
+    {
+      "rule_id": "module_references",
+      "selected_file_count": 275,
+      "examined_file_count": 275,
+      "candidate_sites": 1884,
+      "extracted_records": 1876,
+      "unresolved_sites": 8
+    },
+    {
+      "rule_id": "role_capability_scope",
+      "selected_file_count": 273,
+      "examined_file_count": 273,
+      "candidate_sites": 394,
+      "extracted_records": 365,
+      "unresolved_sites": 127
+    },
+    {
+      "rule_id": "config_names",
+      "selected_file_count": 14,
+      "examined_file_count": 14,
+      "candidate_sites": 60,
+      "extracted_records": 58,
+      "unresolved_sites": 2
+    },
+    {
+      "rule_id": "sql_object_declarations",
+      "selected_file_count": 32,
+      "examined_file_count": 32,
+      "candidate_sites": 383,
+      "extracted_records": 383,
+      "unresolved_sites": 0
+    },
+    {
+      "rule_id": "unsupported_language",
+      "selected_file_count": 0,
+      "examined_file_count": 0,
+      "candidate_sites": 0,
+      "extracted_records": 0,
+      "unresolved_sites": 0
+    }
+  ],
+  "supplemental_helper_source_observations": [
+    {
+      "current_name": "clued_p5_attempt_begin",
+      "source_kind": "literal_helper_argument",
+      "symbol": null,
+      "path": "apps/clued-cloud/worker/continuity.ts",
+      "line": 442,
+      "source_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+      "column": 43,
+      "literal_sha256": "92fa701e4b5ca81d9fa2c65cdaabfe69d2d70344841005672c8ad787ac09eb8c"
+    },
+    {
+      "current_name": "clued_p5_mutate",
+      "source_kind": "literal_helper_argument",
+      "symbol": null,
+      "path": "apps/clued-cloud/worker/continuity.ts",
+      "line": 448,
+      "source_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+      "column": 40,
+      "literal_sha256": "98dd546887ea3281e1a6ec790c2e509fb6752a419f03a2090562c6ce3227f38d"
+    },
+    {
+      "current_name": "clued_p5_attempt_resolve",
+      "source_kind": "literal_helper_argument",
+      "symbol": null,
+      "path": "apps/clued-cloud/worker/continuity.ts",
+      "line": 457,
+      "source_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+      "column": 48,
+      "literal_sha256": "e9780e4c4687ae419ea9484dd29b2468773dee010df899dcdbd729f79e365f98"
+    },
+    {
+      "current_name": "clued_p5_record_commit_failure",
+      "source_kind": "literal_helper_argument",
+      "symbol": null,
+      "path": "apps/clued-cloud/worker/continuity.ts",
+      "line": 464,
+      "source_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+      "column": 36,
+      "literal_sha256": "97b324b467c5dd1fc37cf94dc8184de92afd4cd836c5cae63cb9a55dbd4d0ad3"
+    },
+    {
+      "current_name": "clued_p5_attempt_resolve",
+      "source_kind": "literal_helper_argument",
+      "symbol": null,
+      "path": "apps/clued-cloud/worker/continuity.ts",
+      "line": 476,
+      "source_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+      "column": 46,
+      "literal_sha256": "e9780e4c4687ae419ea9484dd29b2468773dee010df899dcdbd729f79e365f98"
+    }
+  ],
+  "helper_names_in_general_identifier_index": [
+    {
+      "current_name": "clued_p5_attempt_begin",
+      "present_in_general_identifier_index": true,
+      "occurrence_count": 50
+    },
+    {
+      "current_name": "clued_p5_attempt_resolve",
+      "present_in_general_identifier_index": true,
+      "occurrence_count": 22
+    },
+    {
+      "current_name": "clued_p5_record_commit_failure",
+      "present_in_general_identifier_index": true,
+      "occurrence_count": 26
+    }
+  ],
+  "handoff_obligations": [
+    {
+      "step": 4,
+      "obligation": "Bind namespace owner, delegation and registry ownership; UNKNOWN is not delegated authority."
+    },
+    {
+      "step": 5,
+      "obligation": "Close canonical vocabulary, version axes, aliases and object/representation/copy identity; finite candidates are source families, not runtime reachability assertions."
+    },
+    {
+      "step": 6,
+      "obligation": "Bind actual consumers, exact typed inputs, authorization and receipt requirements, failure behavior and actual build/runtime instances."
+    },
+    {
+      "step": "history",
+      "obligation": "Keep frozen audit-only source observations; do not execute retired engines or promote historical authorization into current authority."
+    },
+    {
+      "step": "invalidation",
+      "obligation": "Re-review affected rules/sites when source or scanner hashes, selected languages, source coverage or naming definitions change; a later report-only sidecar does not retroactively mutate this CI subject."
+    }
+  ],
+  "errors": []
+}

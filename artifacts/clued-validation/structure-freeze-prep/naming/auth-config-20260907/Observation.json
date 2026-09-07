@@ -1,0 +1,20 @@
+{
+  "schema": "clued.auth-url-configuration-observation/v1",
+  "recorded_at_utc": "2026-09-07T08:51:29Z",
+  "collector": "root Codex",
+  "source": "Authenticated Supabase dashboard rendered DOM, read with the supported in-app browser after the user completed login",
+  "page_url": "https://supabase.com/dashboard/project/ccxsikzwxlolxqlosril/auth/url-configuration",
+  "project_id": "ccxsikzwxlolxqlosril",
+  "project_name": "clued-prod",
+  "project_branch": "main",
+  "site_url": "https://clued.pixelgrav.com",
+  "redirect_urls": ["https://clued.pixelgrav.com/**"],
+  "displayed_total_urls": 1,
+  "complete_for_displayed_configuration": true,
+  "save_changes_button": "disabled",
+  "configuration_modified": false,
+  "observed_dom_excerpt": "heading URL Configuration; button T clued-prod main; textbox Site URL: https://clued.pixelgrav.com; button Save changes [disabled]; heading Redirect URLs; generic https://clued.pixelgrav.com/**; paragraph Total URLs: 1",
+  "evidence_form": "Transcription of the successful browser tool result, not a Management API response or cryptographic service receipt.",
+  "disposition": "NSI-GAP-AUTH source enumeration resolved for the observed configuration at this time",
+  "boundaries": "This observation inventories the saved application Auth URLs. It does not inventory OAuth client registrations or assert every login/registration flow passes runtime tests. Recheck if the affected URL configuration changes."
+}

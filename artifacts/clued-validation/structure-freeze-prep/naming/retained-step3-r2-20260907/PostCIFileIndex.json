@@ -1,0 +1,62 @@
+{
+  "schema": "clued.post-ci-review-files/v1",
+  "authority_effect": "EVIDENCE_BINDINGS_ONLY",
+  "reviewed_source_commit": "5fad76df81c8a412e7768e08427841f0985a2588",
+  "files": [
+    {
+      "path": "downloads-auth-final/SearchIndex.json",
+      "bytes": 539574,
+      "sha256": "a23215c0fff496fd292841614559400c6539cddebd8442e91f7b1ab76b870743"
+    },
+    {
+      "path": "downloads-auth-final/Verification.md",
+      "bytes": 4516,
+      "sha256": "21da9c3f30715f3f07b9e74b167ad76139c84d6ef0465e9b2463c472b481b688"
+    },
+    {
+      "path": "EvidenceIndex.json",
+      "bytes": 2213,
+      "sha256": "6b8157e44a2b2f5f852557d07315e37dacb0c77064072853b0b596492684f0f3"
+    },
+    {
+      "path": "NamingInventory-5fad76d-CI.zip",
+      "bytes": 6217811,
+      "sha256": "0e9b2a52c20b70c13afd5953ac415a2cb14ba657338a300b4a14c430dd8d6db5"
+    },
+    {
+      "path": "RunEvidence.json",
+      "bytes": 3778,
+      "sha256": "b90d7109792dbb4117b87fdc4b1f4f1e36221c434c9896c18a68efec36f163a0"
+    },
+    {
+      "path": "typed-review/DevelopmentSummary.json",
+      "bytes": 7739,
+      "sha256": "ba1d5fde03728cf750f17ca10318522f495735a1da7afdee0fe46ecc3a618598"
+    },
+    {
+      "path": "typed-review/IndependentReview.actual-ci.json",
+      "bytes": 14859,
+      "sha256": "17078abbdb82572c58c5487301b99fc0ee2e5624a47767564d8b8453b9c60765"
+    },
+    {
+      "path": "typed-review/IndependentReview.actual-ci.md",
+      "bytes": 5201,
+      "sha256": "1ea0050eaad9e7a41a76d58288ce6681d7fea3129ebdfc54eeade092b12ac564"
+    },
+    {
+      "path": "typed-review/TypedSurfaceReview.development.md",
+      "bytes": 9085,
+      "sha256": "f7ab54c2ea2b94f8885c2d714d574649277a95e9d662375288e50d6112da1100"
+    },
+    {
+      "path": "typed-review/UnresolvedReview.development.json",
+      "bytes": 332728,
+      "sha256": "26ba84344047fba0deede667fdd1c94bee40b7958a897aedc84ed523c941a6ab"
+    },
+    {
+      "path": "TypedReviewReproduction.zip",
+      "bytes": 10012,
+      "sha256": "40f96fa075ac3489d4a593caf75a3b65b675c529e27cf33ea417ccc06dff42bb"
+    }
+  ]
+}

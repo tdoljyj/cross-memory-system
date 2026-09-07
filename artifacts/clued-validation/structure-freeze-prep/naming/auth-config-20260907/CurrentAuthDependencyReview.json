@@ -1,0 +1,179 @@
+{
+  "schema": "clued.current-auth-dependency-review/v1",
+  "authority_effect": "NONE",
+  "git_subject": "5fad76df81c8a412e7768e08427841f0985a2588",
+  "reviewed_at_utc": "2026-09-07T08:43:38.363970+00:00",
+  "conclusions": {
+    "current_worker_supabase_auth_dependency": "VERIFIED_POSITIVE_IMPLEMENTATION_EVIDENCE",
+    "supabase_auth_site_url": "UNKNOWN",
+    "supabase_auth_redirect_allowlist": "UNKNOWN",
+    "global_p0_blocker_for_pure_structure_and_naming": false,
+    "blocks_only_affected_change_when_actual_auth_address_dependency_exists": true,
+    "no_live_na_from_source_absence": true
+  },
+  "deployment": {
+    "domain": "clued.pixelgrav.com",
+    "worker": "clued-cloud",
+    "active_deployment_id": "b7fb9087-0ce8-4b84-8c69-f0403b547c2c",
+    "version_id": "127811f4-997f-4815-b7ca-089dc387004c",
+    "percentage": 100,
+    "annotation_source_commit": "bf0baaa785862b30f2c8331837d36a2dc692fb3d",
+    "annotation_is_cryptographic_attestation": false
+  },
+  "sources_read": [
+    {
+      "path": "apps/clued-cloud/worker/index.ts",
+      "git_blob": "f0c59f0ffe96c59e9a0fb6458831bc9dab47a6fb",
+      "lines": [
+        30,
+        47
+      ],
+      "sha256_recomputed_this_review": "43f0f1ac29ee491e9eb5ce748bfad9023f8fdbcd3e3c3e7bba0b9e91a54825fd",
+      "bytes": 1961
+    },
+    {
+      "path": "apps/clued-cloud/worker/continuity.ts",
+      "git_blob": "a1a16b255454e779a90137679ee4813bcc8a3c31",
+      "lines": [
+        136,
+        146,
+        324,
+        335,
+        485,
+        495,
+        524,
+        555,
+        897,
+        908,
+        1241,
+        1267
+      ],
+      "sha256_recomputed_this_review": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+      "bytes": 47981
+    },
+    {
+      "path": "apps/clued-cloud/app/page.tsx",
+      "git_blob": "a841cf8bfccf911f73e69ffe81c39bc3a77bd970",
+      "lines": [
+        444,
+        482,
+        601,
+        624
+      ],
+      "sha256_recomputed_this_review": "4534d4ca11390ca5fadae652c6b52ce2bc5428765214c04ed6ff13a8ff7ac5a6",
+      "bytes": 54598
+    },
+    {
+      "path": "apps/clued-cloud/app/oauth/consent/page.tsx",
+      "git_blob": "1327204b9e41bd3082eb869b3b65af7757ecd3ca",
+      "lines": [
+        44,
+        52,
+        76,
+        90,
+        97
+      ],
+      "sha256_recomputed_this_review": "ce7e6f8de06bd2c7757112b08148f4e19a361868091b88d5c2150b2f0087ef54",
+      "bytes": 7026
+    },
+    {
+      "path": "apps/clued-cloud/app/chatgpt-auth.ts",
+      "git_blob": "8d1fb3534463fb53fc0ff10ce6d5eccebf5964fa",
+      "lines": [
+        10,
+        18
+      ],
+      "sha256_recomputed_this_review": "17a965f8948b21510cdf8ecbd70c5fdf58100e10970463f6a8fd2cc4795f8044",
+      "bytes": 2404
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/202608250005_oauth_mcp_binding.sql",
+      "lines": [
+        27,
+        28
+      ],
+      "sha256_recomputed_this_review": "aebd32e782b68785be062a5ecf477d2645528651fa9c38a18464a209bb6ed25b",
+      "bytes": 4723
+    },
+    {
+      "path": "artifacts/clued-validation/structure-freeze-prep/naming/external-20260907/SourceIndex.json",
+      "sha256_recomputed_this_review": "6ff5e1e3d6a492f9a0214ab8584eb5abe2e47361e5ab5983d997ecd313522297",
+      "bytes": 2989
+    },
+    {
+      "path": "artifacts/clued-validation/structure-freeze-prep/naming/external-20260907/sources/cloudflare-worker-details.json",
+      "sha256_recomputed_this_review": "db9055b0aca0d9933bb57ea8acdc2f77ee31c7afd9692cc59ce5cb28ca25392f",
+      "bytes": 8456
+    },
+    {
+      "path": "artifacts/clued-validation/structure-freeze-prep/naming/external-20260907/sources/cloudflare-deployments-and-dns.json",
+      "sha256_recomputed_this_review": "3dd2eeb3ca649664f034745775039ee555395092234db1e33b49549d6299b1e8",
+      "bytes": 7216
+    },
+    {
+      "path": "artifacts/clued-validation/structure-freeze-prep/naming/external-20260907/sources/supabase-catalog.json",
+      "scope": "naming metadata only",
+      "sha256_recomputed_this_review": "bd9f5c36ec6c58da0425d5094519e0890a68573baaffb1dc8fb11192f7dc37d5",
+      "bytes": 434869
+    }
+  ],
+  "source_comparison": {
+    "from": "bf0baaa785862b30f2c8331837d36a2dc692fb3d",
+    "to": "5fad76df81c8a412e7768e08427841f0985a2588",
+    "first_five_source_files_identical": true,
+    "method": "git diff --stat produced no output and exit 0"
+  },
+  "cloudflare_evidence_files": [
+    "current-auth-cloudflare-live.json",
+    "current-auth-cloudflare-script-excerpts.json"
+  ],
+  "script_hash": {
+    "sha256": "52918aa6b01a8418458d170b97fee33483002ddf686eb3ddf3a3fee143ad70cc",
+    "scope": "UTF8 of Cloudflare tool response.result string, not raw HTTP",
+    "computed_in_cloudflare_tool_execution": true,
+    "independently_recomputed_locally": false,
+    "full_source_retained": false
+  },
+  "docs": {
+    "url": "https://supabase.com/docs/guides/auth/redirect-urls",
+    "retrieval": "Supabase search_docs",
+    "supports": [
+      "site_url default when redirectTo absent",
+      "email confirmation/password reset URL configuration relevance",
+      "user-login redirect list distinct from OAuth-server client redirect URIs"
+    ]
+  },
+  "limits": [
+    "No live login/sign-up/recovery operation performed",
+    "No actual Auth config values read",
+    "No credential or business-row query",
+    "No atomic deployment/script snapshot",
+    "No whole-bundle reproducible build comparison",
+    "Script snippets are sanitized selections, not full raw response"
+  ],
+  "effects": {
+    "ui": false,
+    "restore": false,
+    "external_mutation": false,
+    "canon_write": false,
+    "commit": false,
+    "push": false
+  },
+  "local_source_sha256": {
+    "current-auth-cloudflare-live.json": "9b1a13d3fb4977675bae2b522573a74447477d2b20b084b1154d582f2f2196bf",
+    "current-auth-cloudflare-script-excerpts.json": "19be8228bb29c6407639e28c4c16444cb7930dde0012b975dcced2bb9adc80f0"
+  },
+  "existing_catalog_auth_metadata": {
+    "count": 455,
+    "kind_counts": {
+      "column": 240,
+      "constraint": 94,
+      "function": 4,
+      "index": 91,
+      "relation": 24,
+      "schema": 1,
+      "trigger": 1
+    },
+    "not_live_auth_configuration": true
+  }
+}

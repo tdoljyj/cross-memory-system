@@ -1,0 +1,63 @@
+{
+  "schema": "clued.step3-retained-evidence/v1",
+  "authority_effect": "NONE",
+  "source_commit": "5fad76df81c8a412e7768e08427841f0985a2588",
+  "run_id": 34100327450,
+  "job_id": 101673052137,
+  "artifact_id": 10010210059,
+  "artifact_original_zip": "NamingInventory-5fad76d-CI.zip",
+  "artifact_original_zip_bytes": 6217811,
+  "artifact_original_zip_sha256": "0e9b2a52c20b70c13afd5953ac415a2cb14ba657338a300b4a14c430dd8d6db5",
+  "archive_matches_github_api_digest": true,
+  "members": [
+    {
+      "path": "CheckoutNormalizationEvidence.json",
+      "bytes": 586,
+      "sha256": "b58ce7f3b90d5ff18d6f624c11a2113d62c6395948772880736d62ea6a748984"
+    },
+    {
+      "path": "GenerationResult.json",
+      "bytes": 758,
+      "sha256": "cbcbf41d99dc8a075004a96a1c2185cc7094f8ff295eef7c5b4e8d59217049b4"
+    },
+    {
+      "path": "NamingSurfaceInventoryConsolidated.json",
+      "bytes": 7725,
+      "sha256": "f68c0f8eb5a516fd7a006c62a32c249a36dd19b570c797ad80f5cd343ac9ffdd"
+    },
+    {
+      "path": "NamingSurfaceInventoryFindings.json",
+      "bytes": 300667,
+      "sha256": "5dc5c7ebe1dbab593af38442ea2961d9f90c876f89889c435467222a2543fe01"
+    },
+    {
+      "path": "NamingSurfaceInventoryManifest.json",
+      "bytes": 60864987,
+      "sha256": "e6e80781685b9cd76f1dbb19ba45fa9a9d623758271bde64a4999e30796dc882"
+    },
+    {
+      "path": "NamingSurfaceInventoryRecords.jsonl",
+      "bytes": 79780545,
+      "sha256": "70cefcec88ac793341d081b2d5e5d6f45c1173f9af0cc8be0a4e9b6835857501"
+    },
+    {
+      "path": "NamingSurfaceInventorySummary.md",
+      "bytes": 3013,
+      "sha256": "3d326b35efbf147997142556cf87dae11336a08a601a881545e104e0236be4bf"
+    },
+    {
+      "path": "Step3Summary.md",
+      "bytes": 1717,
+      "sha256": "a87aec1b4b077da128d63380b8cefec2b33e7d65837060cf20cdc7642bd67986"
+    }
+  ],
+  "verified_record_count": 111863,
+  "required_fields_per_record": 16,
+  "step3_gate": "NOT_READY",
+  "gaps": [
+    "NSI-GAP-LIBRARY",
+    "NSI-GAP-AUTH",
+    "NSI-GAP-TYPED-RULE-REVIEW"
+  ],
+  "scope": "Exact original CI bytes for 5fad76d. Later retention and review files do not rebind this inventory to a later tree."
+}

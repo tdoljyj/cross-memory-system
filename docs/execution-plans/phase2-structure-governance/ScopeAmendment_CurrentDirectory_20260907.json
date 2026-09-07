@@ -1,0 +1,25 @@
+{
+  "schema": "clued.phase2-user-scope-amendment/v1",
+  "record_id": "CLUED_PHASE2_CURRENT_DIRECTORY_SCOPE_20260907",
+  "authority": "CURRENT_CONVERSATION_EXPLICIT_USER_CORRECTION",
+  "date": "2026-09-07",
+  "user_instruction": "这工程量有点大呀，并且感觉没什么意义啊，你看现在目录具体情况就行了，难道之前的一个文件对不上，我这个项目就不要就删了吗",
+  "supersedes_only": "The requirement to exhaustively enumerate and reconcile historical ChatGPT Library copies as a blocking prerequisite for this series.",
+  "inherited_baseline_sha256": "f465bcb77aced171b4f241da7a23c1e02133716700227caaabb7954be39899ad",
+  "inherited_inventory_scope_sha256": "e8209cd50d6e066bf0b64b93c7c634816cf381a289c3dcd7cc8dda9cbac43af0",
+  "effective_scope": {
+    "required": "Review the current repository directory and available current delivery artifacts, including active entry points and the objects actually referenced by current execution.",
+    "historical_library_copies": "Existing known references remain historical observations. Exhaustive historical Library listing, duplicate reconciliation and missing old copies are not blocking prerequisites.",
+    "active_dependency_exception": "If a specific active input can only be obtained from Library, retrieve that exact required object; do not expand it into a whole-Library history audit."
+  },
+  "gap_disposition": {
+    "id": "NSI-GAP-LIBRARY",
+    "status": "OUT_OF_SCOPE_BY_EXPLICIT_USER_AMENDMENT",
+    "blocking": false,
+    "does_not_claim": ["Library listing complete", "Library empty", "all historical copies matched", "historical files deleted"]
+  },
+  "auth_configuration": "Not waived by this instruction. First determine its actual applicability to the current deployed login flow and use available authorized read interfaces. Missing management configuration access alone is not evidence of a product defect.",
+  "preservation": "Keep the original baseline, scope and CI bytes unchanged. Apply this amendment prospectively and explicitly when reviewing the scoped inventory.",
+  "other_boundaries": "The remaining 21-step order and actual migration/acceptance checks continue. No project deletion or deletion of old files is requested or performed.",
+  "canonical_service_write": "NOT_PERFORMED"
+}
