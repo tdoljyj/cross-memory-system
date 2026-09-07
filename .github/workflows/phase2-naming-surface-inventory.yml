@@ -17,7 +17,7 @@ jobs:
     timeout-minutes: 30
     env:
       SCOPE_PATH: artifacts/clued-validation/structure-freeze-prep/naming/NamingSurfaceInventoryScope.json
-      OUTPUT_DIR: ${{ runner.temp }}/clued-naming-surface-inventory
+      OUTPUT_DIR: /tmp/clued-naming-surface-inventory
 
     steps:
       - name: Checkout exact source commit
@@ -111,9 +111,9 @@ jobs:
         with:
           name: phase2-naming-surface-inventory-${{ github.sha }}
           path: |
-            ${{ runner.temp }}/clued-naming-surface-inventory/NamingSurfaceInventoryManifest.json
-            ${{ runner.temp }}/clued-naming-surface-inventory/NamingSurfaceInventoryFindings.json
-            ${{ runner.temp }}/clued-naming-surface-inventory/NamingSurfaceInventorySummary.md
-            ${{ runner.temp }}/clued-naming-surface-inventory/GenerationResult.json
+            /tmp/clued-naming-surface-inventory/NamingSurfaceInventoryManifest.json
+            /tmp/clued-naming-surface-inventory/NamingSurfaceInventoryFindings.json
+            /tmp/clued-naming-surface-inventory/NamingSurfaceInventorySummary.md
+            /tmp/clued-naming-surface-inventory/GenerationResult.json
           if-no-files-found: error
           retention-days: 90
