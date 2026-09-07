@@ -1,0 +1,26 @@
+{
+  "type": "SkillProjectionAcceptanceDecision",
+  "step": 21,
+  "state": "ACCEPTED_FOR_THIN_INSTALLED_USER_ADAPTER",
+  "issued_at": "2026-09-07T11:47:11.892863+00:00",
+  "issuer": "Codex@DESK-W-591 under existing explicit execution/review delegation",
+  "predecessor": {
+    "path": "Step20-SkillProjectionAcceptance_20260907.json",
+    "sha256": "2c7da02632520187aa3b95ebfac4e5f9ba4d9a55d32e25d7eb3bccacab7ffc42"
+  },
+  "source": {
+    "path": "step21-skill-20260907/clued-user/SKILL.md",
+    "sha256": "a86b2710f013600f52bcb062d2d48393b3bba8700a006c84a22b7e9f79807724"
+  },
+  "installed": {
+    "path": "C:\\Users\\Windows\\.codex\\skills\\clued-user\\SKILL.md",
+    "sha256": "a86b2710f013600f52bcb062d2d48393b3bba8700a006c84a22b7e9f79807724"
+  },
+  "validation": {
+    "skill_creator_quick_validate_exit": 0,
+    "result": "Skill is valid!",
+    "validator_sha256": "6068513d924ed3559e186dfcdead7439129828dcf402167fd925c06dffbf2806"
+  },
+  "authority_effect": "NONE; existing Role/Capability/Scope only, no combined privileges",
+  "proof_boundary": "Installed thin instructions. Actual governance read/publish was verified in Step18. Public user bootstrap was observed live; this Skill creates no user Binding and makes no new private-operation acceptance claim."
+}

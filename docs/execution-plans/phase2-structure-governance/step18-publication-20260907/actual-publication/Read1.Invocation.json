@@ -1,0 +1,16 @@
+{
+  "type": "ActualTrustedLauncherInvocation",
+  "mode": "read",
+  "started_at": "2026-09-07T11:41:53.365836+00:00",
+  "finished_at": "2026-09-07T11:44:07.064651+00:00",
+  "exit_code": 0,
+  "response_sha256": "ecda55ec2b23ecf0e277ab6f591cff797c2c1b960c09b8320daf727d302cb86f",
+  "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "response_file": "Read1.json",
+  "status": "PASS",
+  "error": null,
+  "core_error": null,
+  "local_guard": "PASS",
+  "core_evidence": "LIVE_PLATFORM_RESPONSE_VERIFICATION",
+  "activation_sha256": null
+}

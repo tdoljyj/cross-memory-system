@@ -1,0 +1,75 @@
+{
+  "issuer": "Codex@DESK-W-591 under existing explicit delegated execution and review",
+  "issued_at": "2026-09-07T11:44:58.512973+00:00",
+  "delegation": {
+    "path": "ExecutionDelegation_20260907.json",
+    "sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8"
+  },
+  "freeze": {
+    "path": "Phase2StructureFreezeDecision_20260907.json",
+    "sha256": "f40c8af253f811f820e4b3eccc144d63ca3548663810aba10bebb22331661b36"
+  },
+  "subject_sha256": "741cf1fedefa35cec82e9f55bcf53bf2ce29fa6253fd68da2133ab0c2d724cbf",
+  "source_commit": "22c085d4f63c41629cdf96f68268c12b536bb872",
+  "signed_attestation_commit": "f74a0691f1578123dae9764847631a8fcbf66c2a",
+  "authority_effect": "NO_NEW_BUSINESS_AUTHORITY",
+  "type": "RequiredCheckNonBypassEvidence",
+  "step": 18,
+  "state": "ACCEPTED_FOR_SCOPED_TM19_QUALIFIED_PUBLICATION_AND_READ",
+  "predecessor": {
+    "path": "Step17-ScopedAcceptance_20260907.json",
+    "sha256": "a4d652aef2b799ee7f6b9d6e99b65c7ece646462d44c37ef2fdd64bc28b8c63a"
+  },
+  "fresh_evidence": {
+    "path": "Step15-17-EvidenceRefreshDecision_20260907.json",
+    "sha256": "3bd87b5083f91a609fc85916cd0ea216120f3a46edaac64070327abbf03129d9"
+  },
+  "policy": {
+    "path": "step18-publication-20260907/Policy.json",
+    "sha256": "15f3b467da195c8dee6d831d3ac4d7915cf56a8e950d0796023b7b1fa623959a"
+  },
+  "publication": {
+    "path": "step18-publication-20260907/actual-publication/Publish1.json",
+    "sha256": "e69ab037c247c35d4f15b2eab14f8764b870bc5af4b72ee1b3516a629f130768"
+  },
+  "independent_read": {
+    "path": "step18-publication-20260907/actual-publication/Read1.json",
+    "sha256": "ecda55ec2b23ecf0e277ab6f591cff797c2c1b960c09b8320daf727d302cb86f"
+  },
+  "local_controls": {
+    "path": "step18-publication-20260907/actual-local-controls/Report.json",
+    "sha256": "0d9524e31f7c20eeada1a19557afa716da0cfe3cf1b3cfaf76a01471a23f113a"
+  },
+  "platform_denial": {
+    "path": "step18-publication-20260907/platform-permission/PermissionObservation.json",
+    "sha256": "8185a1b8ba0c20247b808d89bcae6c07780de4e9718b3a170358fdfde35509dd"
+  },
+  "local_trust_acl": {
+    "path": "step18-publication-20260907/platform-permission/LocalTrustACL.json",
+    "sha256": "60e4c219e44fcf2088e9443cb31c4a45ce098dad46e80ac6064e24e47eee6a8a"
+  },
+  "independent_attestation_review": {
+    "path": "step18-publication-20260907/AttestationIndependentReview.json",
+    "sha256": "9cf664e73e3e8011e7d56cca728a11e6de03fbb3a1fed0fa7f660ce84c848de5"
+  },
+  "activation": {
+    "path": "development/authority-index/phase2/Activation.json",
+    "sha256": "609eb3f9be936d1d34a5038a6d9eb9499ae8749e9f0dda1d36975e7d733e5a23"
+  },
+  "publication_audit": {
+    "path": "artifacts/clued-validation/phase2-publication-receipts/e37c68271ee3df9b8bbd581a842218d55f7784972257067d005f0322ac98e105.json",
+    "sha256": "e37c68271ee3df9b8bbd581a842218d55f7784972257067d005f0322ac98e105"
+  },
+  "proof_scope": {
+    "ordinary_actor": "No ordinary human collaborator is currently granted repository write; actual contents:read integration write was denied by GitHub. The publisher refuses any changed collaborator set, rather than assuming a future writer is an admin.",
+    "omitted_local_script": "Bare Git may still merge under the owner. Qualified TM19 publish/read always runs independently pinned64/39 local guard and the live signed-artifact validator. A raw commit or PASS file alone cannot qualify.",
+    "registry_manifest_and_new_namespace": "All three actual mutations were rejected at the installed guard; original bytes/absence restored.",
+    "workflow_skips_stale_receipts_other_candidates": "The real successful permission-mode workflow has a skipped validation job and is not used as Naming/Gate evidence. Live positive publication/read bind exact workflow/source/run/attempt/artifact/hash and native15 rules/four Gates. The retained45 core tests cover skipped jobs, stale attempts, other sources, forged PASS metadata and signature/policy drift; these negative cases remain explicitly isolated tests.",
+    "administrator_exception": "GitHub owner and the local Windows owner/SYSTEM/Administrators can intentionally replace trust or raw main. ACL/Bootstrap/current actor checks and this record audit that exception; no claim of protection from the administrator or immutable bare main."
+  },
+  "limits": [
+    "This is equivalent enforcement for the selected TM19 governance publication/read consumer, not purchased GitHub branch protection.",
+    "No runtime/business Canon deployment, G1 full cryptographic cutover, additional customer access or automatic authority expansion.",
+    "GitHub online verification is trusted; no independent local GPG verification is claimed. Artifact expiration, permission changes, pinned-source/tool/config changes or new subject require revalidation/rebinding."
+  ]
+}

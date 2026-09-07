@@ -1,0 +1,16 @@
+{
+  "type": "ActualTrustedLauncherInvocation",
+  "mode": "publish",
+  "started_at": "2026-09-07T11:39:14.467953+00:00",
+  "finished_at": "2026-09-07T11:41:31.235449+00:00",
+  "exit_code": 0,
+  "response_sha256": "e69ab037c247c35d4f15b2eab14f8764b870bc5af4b72ee1b3516a629f130768",
+  "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "response_file": "Publish1.json",
+  "status": "PASS",
+  "error": null,
+  "core_error": null,
+  "local_guard": "PASS",
+  "core_evidence": "LIVE_PLATFORM_RESPONSE_VERIFICATION",
+  "activation_sha256": "609eb3f9be936d1d34a5038a6d9eb9499ae8749e9f0dda1d36975e7d733e5a23"
+}

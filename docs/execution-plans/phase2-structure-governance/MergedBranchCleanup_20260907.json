@@ -1,0 +1,26 @@
+{
+  "type": "MergedPhase2BranchCleanup",
+  "main_commit": "f74a0691f1578123dae9764847631a8fcbf66c2a",
+  "deleted_remote_branches": [
+    {
+      "branch": "phase2-naming-surface-inventory",
+      "retained_commit": "22c085d4f63c41629cdf96f68268c12b536bb872",
+      "ancestor_of_main": true
+    },
+    {
+      "branch": "phase2-v027-validation",
+      "retained_commit": "59ed841b8264ea4e246d595bc425d44373cee615",
+      "ancestor_of_main": true
+    },
+    {
+      "branch": "phase2-publication-attestation",
+      "retained_commit": "6deea306646dcaa63ac775a572d866d55815ade9",
+      "ancestor_of_main": true
+    }
+  ],
+  "remaining_remote_refs": [
+    "f74a0691f1578123dae9764847631a8fcbf66c2a\trefs/heads/main"
+  ],
+  "history_rewritten": false,
+  "other_checkout_files_modified": false
+}

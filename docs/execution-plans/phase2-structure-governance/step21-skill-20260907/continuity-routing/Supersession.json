@@ -1,0 +1,9 @@
+{
+  "type": "ContinuityAdapterSupersession",
+  "before_sha256": "15da15897839ef421a452b27adfa484541b23ac383074476e0c2f9d3518629cc",
+  "after_sha256": "7222bc35a6eb7490c620c35296553dddd7815c47d8c15ce0843789dc2b42824d",
+  "installed_path": "C:\\Users\\Windows\\.codex\\skills\\clued-continuity\\SKILL.md",
+  "reason": "The previous adapter mandated retired legacy log/local write paths; thin routing now uses the actual accepted developer/user adapters and read-only snapshot boundary. Previous instructions preserved for history, not current authority.",
+  "no_business_memory_write": true,
+  "step20_21_authority_expansion": false
+}

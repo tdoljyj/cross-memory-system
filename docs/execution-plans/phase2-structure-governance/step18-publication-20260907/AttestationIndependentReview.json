@@ -1,0 +1,345 @@
+{
+  "type": "ReadOnlyAttestationDeltaReview",
+  "reviewer": "evidence_review",
+  "created_at": "2026-09-07T11:38:02.168660+00:00",
+  "qualified_source_commit": "22c085d4f63c41629cdf96f68268c12b536bb872",
+  "reviewed_attestation_candidate_commit": "6deea306646dcaa63ac775a572d866d55815ade9",
+  "observed_branch": "phase2-publication-attestation",
+  "result": "PASS_FOR_REVIEWED_ATTESTATION_DELTA",
+  "findings": [],
+  "delta": {
+    "added_evidence_files": 38,
+    "modified_files": 1,
+    "modified_path": ".gitleaksignore",
+    "exact_added_historical_fingerprints": 1
+  },
+  "policy_sha256": "15f3b467da195c8dee6d831d3ac4d7915cf56a8e950d0796023b7b1fa623959a",
+  "statement_sha256": "2d52e55f23f09206a453c244201786d157665ae057a7ee7dd31c9b57532bdded",
+  "checks": [
+    {
+      "check": "exact_metadata_only_delta",
+      "passed": true,
+      "detail": {
+        "added_evidence_files": 38,
+        "modified_paths": [
+          ".gitleaksignore"
+        ],
+        "new_metadata_tree_old_CI_claim": false
+      }
+    },
+    {
+      "check": "runtime_workflows_business_sources_unchanged",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "check": "fixed_policy_and_statement_bytes",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "check": "statement_has_exact_prior_qualified_source",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "check": "all45_payloads_match_frozen_source_and_target",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "check": "all39_frozen_input_locks_unchanged",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "check": "exact_acceptance_and_subject_binding",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "check": "exact_freeze_and_subject_binding",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "check": "shared_source_digest_consistency_artifacts/clued-validation/phase2-v027/candidate-identity.json",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "check": "shared_source_digest_consistency_artifacts/clued-validation/phase2-v027/candidate-source.json",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "check": "shared_source_digest_consistency_artifacts/clued-validation/phase2-v027/negative-test-control.json",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "check": "shared_source_digest_consistency_docs/execution-plans/phase2-structure-governance/ArchitectureConstitutionAcceptanceDecision_20260907.json",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "check": "shared_source_digest_consistency_docs/execution-plans/phase2-structure-governance/step07-projection-20260907/ProjectionBindings.repository.json",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "check": "shared_source_digest_consistency_docs/execution-plans/phase2-structure-governance/step07-projection-20260907/project-governance.mjs",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "check": "shared_source_digest_consistency_docs/execution-plans/phase2-structure-governance/step08-validator-20260907/SourceLocators.json",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "check": "shared_source_digest_consistency_docs/execution-plans/phase2-structure-governance/step12-migration-20260907/ExecutionInputs.candidate.json",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "check": "shared_source_digest_consistency_scripts/naming-governance/ci_execution.py",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "check": "shared_source_digest_consistency_scripts/naming-governance/naming_validator.py",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "check": "shared_source_digest_consistency_scripts/naming-governance/post_migration.py",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "check": "shared_source_digest_consistency_scripts/naming-governance/projection-check.mjs",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "check": "shared_source_digest_consistency_scripts/naming-governance/publication.py",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "check": "shared_source_digest_consistency_scripts/naming-governance/run.py",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "check": "shared_source_digest_consistency_scripts/naming-governance/trusted_launcher.py",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "check": "shared_source_digest_consistency_scripts/phase2-v027-validate.py",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "check": "shared_source_digest_consistency_tests/test_naming_governance_post_migration.py",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "check": "shared_source_digest_consistency_tests/test_naming_governance_publication.py",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "check": "shared_source_digest_consistency_tests/test_naming_governance_trusted_launcher.py",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "check": "shared_source_digest_consistency_.github/workflows/gitleaks.yml",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "check": "shared_source_digest_consistency_apps/clued-cloud/.npmrc",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "check": "shared_source_digest_consistency_apps/clued-cloud/evals/public-mcp/worker.ts",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "check": "shared_source_digest_consistency_apps/clued-cloud/evals/public-mcp/wrangler.jsonc",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "check": "shared_source_digest_consistency_apps/clued-cloud/package-lock.json",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "check": "shared_source_digest_consistency_apps/clued-cloud/package.json",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "check": "shared_source_digest_consistency_apps/clued-cloud/tsconfig.json",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "check": "shared_source_digest_consistency_apps/clued-cloud/worker/continuity.ts",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "check": "shared_source_digest_consistency_apps/clued-cloud/worker/p5.ts",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "check": "shared_source_digest_consistency_apps/clued-cloud/worker/p6.ts",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "check": "shared_source_digest_consistency_apps/clued-cloud/worker/projects.ts",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "check": "shared_source_digest_consistency_apps/clued-cloud/worker/records.ts",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "check": "shared_source_digest_consistency_.github/workflows/trivy.yml",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "check": "all_trusted_source_hashes_exact_at_qualified_source",
+      "passed": true,
+      "detail": {
+        "unique_paths": 67
+      }
+    },
+    {
+      "check": "Step10_architecture_and_core_pins_preserved",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "check": "actual_positive_validation_run_and_artifact",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "check": "exact_six_native_members",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "check": "statement_four_gates_native_artifact_binding",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "check": "actual_four_gates_source_execution",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "check": "four_native_gates_and_package_PASS",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "check": "statement_naming_native_artifact_binding",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "check": "actual_naming_source_execution",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "check": "15_actual_naming_rules_PASS",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "check": "actual_positive_job_not_permission_skip",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "check": "actual_ordered_steps",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "check": "four_original_BASE_CORE_keys_retained",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "check": "actual_BASE_CORE_public-mcp-protocol_Run_binding",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "check": "actual_BASE_CORE_public-mcp-behavior_Run_binding",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "check": "actual_BASE_CORE_gitleaks_Run_binding",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "check": "actual_BASE_CORE_trivy_Run_binding",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "check": "one_exact_historical_fingerprint_only",
+      "passed": true,
+      "detail": {
+        "added_noncomment_entries": 1,
+        "line_delta": "+4/-0",
+        "scope": "Exact immutable prior Policy commit/rule/line; no path-wide or future exemption"
+      }
+    },
+    {
+      "check": "historical_policy_and_two_recomputed_SQL_hashes",
+      "passed": true,
+      "detail": {
+        "disposition_sha256": "81086237413f059d6f0bc88e01b7d41190c745aef1c28d2256d9744bdca149d0",
+        "classification": "Policy source-integrity SHA256 values, recomputed from exact source blobs; not credential values"
+      }
+    },
+    {
+      "check": "pending_signature_activation_and18_remain_explicit",
+      "passed": true,
+      "detail": null
+    }
+  ],
+  "review_scope": "Independent recomputation of root-authored final Git delta and actual evidence/source bindings. The reviewer previously authored the policy generator; this is not an independent review of that generator implementation or a Step18 decision.",
+  "limits": [
+    "All actual CI and BASE_CORE success claims belong to qualified source22c085d, not the later38-file attestation metadata tree or its new ignore entry.",
+    "Original old-source gitleaks input remains pinned in Policy; the single later historical Policy-fingerprint disposition is separately reviewed and does not retroactively change that source or expand future exemptions.",
+    "Root reports complete-history scan0 after this exact disposition. This bounded read-only delta review did not rerun that scan or the CI suites.",
+    "The original App/job selectors are pinned and actual local Run snapshots match; later live core still verifies platform jobs/checks/App, authorized signed merge and actual publication/read.",
+    "This review neither signs/merges/publishes nor issues Step18/19 acceptance. A later changed attestation tree requires an applicable delta review."
+  ],
+  "authority_effect": "NONE_NEW",
+  "tests_rerun": 0
+}
