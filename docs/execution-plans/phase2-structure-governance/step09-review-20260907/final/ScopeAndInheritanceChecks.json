@@ -1,0 +1,42 @@
+{
+  "incremental_naming_scope": {
+    "commit_delta_paths": 154,
+    "review_subject_paths": 154,
+    "sets_match": true
+  },
+  "migration_input_scope": {
+    "sha256": "37a6909deedae17dbfe97e844d8ec596c5de46e73c3cefafd4136008d3f3dcec",
+    "changed_paths_checked": 64,
+    "immutable_locks_checked": 39,
+    "protected_business_paths_selected": false,
+    "changes_before_and_payload_hashes_match": true,
+    "execution_performed": false
+  },
+  "historical_design_evidence_reuse": [
+    {
+      "member": "sources/architecture_v024/data/R5SupersessionCrosswalk.json",
+      "sha256": "e9646403ddaa489946699b53b6465bc9aa0e5b8deac05bcca3eeaaed5d4afd04",
+      "prior_independent_evidence_matches": 3,
+      "runtime_pass_inherited": false
+    },
+    {
+      "member": "sources/architecture_v024/data/ControlTypeAndAliasCrosswalk.json",
+      "sha256": "c871c80c13b6eee6abf6ddc5d5189d31644d0cb872f685bd7bf33c59185252a2",
+      "prior_independent_evidence_matches": 9,
+      "runtime_pass_inherited": false
+    },
+    {
+      "member": "sources/architecture_v024/data/ExperienceObjectCrosswalk.json",
+      "sha256": "2365d7d529b3d4ec4b93add0e6ff2d800ebd1f0b6bee3615420fbd8ab94749b1",
+      "prior_independent_evidence_matches": 3,
+      "runtime_pass_inherited": false
+    },
+    {
+      "member": "sources/architecture_v024/data/OldTargetDisposition.json",
+      "sha256": "72836ed6cec9773d9990d442762f6084eeca6ca99c0817114037731302ca868f",
+      "prior_independent_evidence_matches": 4,
+      "runtime_pass_inherited": false
+    }
+  ],
+  "authority_effect": "NONE"
+}

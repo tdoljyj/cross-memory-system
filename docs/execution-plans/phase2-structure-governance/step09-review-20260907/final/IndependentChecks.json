@@ -1,0 +1,1171 @@
+{
+  "reviewer": "/root/architecture_review",
+  "checks": [
+    {
+      "check": "source:namespace",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "source:domains",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "source:step4-acceptance",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "source:delegation",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "source:versions",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "source:aliases",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "source:step5-source-index",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "source:consumers",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "source:workflow",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "source:tool-routing",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "source:historical-status",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "source:existing-verifier",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "source:identity-policy",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "source:review-subject",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "source:step5-acceptance",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "source:original-consumer-matrix",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "source:typed-authorization",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "source:typed-receipts",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "source:step6-acceptance",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "independent_fact:step4_candidate_status",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "fact_provenance:step4_candidate_status",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "independent_fact:administrative_owner",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "fact_provenance:administrative_owner",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "independent_fact:namespace_groups",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "fact_provenance:namespace_groups",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "independent_fact:domain_registry_policy",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "fact_provenance:domain_registry_policy",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "independent_fact:step5_candidate_status",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "fact_provenance:step5_candidate_status",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "independent_fact:version_axes",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "fact_provenance:version_axes",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "independent_fact:stable_map_identity",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "fact_provenance:stable_map_identity",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "independent_fact:new_alias_entries",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "fact_provenance:new_alias_entries",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "independent_fact:direct_predecessor",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "fact_provenance:direct_predecessor",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "independent_fact:historical_namespaces_cannot_issue_current_state",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "fact_provenance:historical_namespaces_cannot_issue_current_state",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "independent_fact:step6_candidate_status",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "fact_provenance:step6_candidate_status",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "independent_fact:formal_domain_id",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "fact_provenance:formal_domain_id",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "independent_fact:formal_program_id",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "fact_provenance:formal_program_id",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "independent_fact:formal_stage_id",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "fact_provenance:formal_stage_id",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "independent_fact:consumer_count",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "fact_provenance:consumer_count",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "independent_fact:consumer_bindings",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "fact_provenance:consumer_bindings",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "independent_fact:step4_decision",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "fact_provenance:step4_decision",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "independent_fact:step5_decision",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "fact_provenance:step5_decision",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "independent_fact:step6_decision",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "fact_provenance:step6_decision",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "independent_lineage:step4-accepted-namespace-subject",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "independent_lineage:step4-accepted-domain-subject",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "independent_lineage:step5-upstream-namespace",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "independent_lineage:step5-upstream-domain",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "independent_lineage:step5-accepted-versions",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "independent_lineage:step5-accepted-aliases",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "independent_lineage:step6-accepted-consumers",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "independent_lineage:step6-accepted-typed-authorization",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "independent_lineage:step6-accepted-typed-receipts",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "step7_decision_exact",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "step8_decision_exact",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "output_digest:AGENTS.governance.md",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "output_digest:CURRENT_STATUS.history-original.md",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "output_digest:CURRENT_STATUS.projection.md",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "output_digest:ConsumerBindings.projection.json",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "output_digest:GovernanceDocs.projection.md",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "output_digest:GovernanceManifest.projection.json",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "output_digest:GovernanceRegistry.projection.json",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "output_digest:IdentityFiles.projection.json",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "output_digest:README.governance.md",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "output_digest:StatusMigrationPlan.candidate.json",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "output_digest:ToolRouting.projection.json",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "output_digest:WorkflowReferences.projection.json",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "step8_subject:SourceLocators.json",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "step8_subject:SourceIndex.json",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "step8_subject:CurrentBindingReceipt.json",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "step8_subject:FinalBindingVerification.json",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "step8_subject:Step8ValidatorEvidence_20260907.zip",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "step8_subject:FinalBindingControls.zip",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "manifest_registry_all_facts_identical",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "consumer_projection_exact",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "18_consumers_27_authorization_18_receipts",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "aggregate_ids_remain_null",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "historical_copy_exact",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "same_human_governance_block",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "human_metadata_equivalence",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "root_sensitive_value_not_in_new_governance_block",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "retained_exit:real_candidate_binding_qualification",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "retained_exit:N01_missing_namespace_owner",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "retained_rule:N01_missing_namespace_owner",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "retained_exit:N02_same_name_different_objects",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "retained_rule:N02_same_name_different_objects",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "retained_exit:N03_one_object_multiple_canonical",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "retained_rule:N03_one_object_multiple_canonical",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "retained_exit:N04_alias_missing_target",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "retained_rule:N04_alias_missing_target",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "retained_exit:N05_alias_new_write",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "retained_rule:N05_alias_new_write",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "retained_exit:N06_current_uses_historical",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "retained_rule:N06_current_uses_historical",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "retained_exit:N07_wrong_direct_predecessor",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "retained_rule:N07_wrong_direct_predecessor",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "retained_exit:N08_mixed_version_axis",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "retained_rule:N08_mixed_version_axis",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "retained_exit:N09_receipt_missing_subject",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "retained_rule:N09_receipt_missing_subject",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "retained_exit:N10_authorization_scope_escalation",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "retained_rule:N10_authorization_scope_escalation",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "retained_exit:N11_consumer_unauthorized_namespace",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "retained_rule:N11_consumer_unauthorized_namespace",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "retained_exit:N12_readme_registry_disagreement",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "retained_rule:N12_readme_registry_disagreement",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "retained_exit:N13_copy_claims_original",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "retained_rule:N13_copy_claims_original",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "retained_exit:N14_representation_claims_canonical",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "retained_rule:N14_representation_claims_canonical",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "retained_exit:N15_pending_projected_accepted",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "retained_rule:N15_pending_projected_accepted",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "retained_exit:N16_unexecuted_projected_pass",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "retained_rule:N16_unexecuted_projected_pass",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "retained_exit:extra_cross_consumer_authorization",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "retained_rule:extra_cross_consumer_authorization",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "retained_exit:extra_historical_ci_missing_subject",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "retained_rule:extra_historical_ci_missing_subject",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "retained_exit:extra_missing_core_identity",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "retained_rule:extra_missing_core_identity",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "retained_exit:extra_public_initialize_escalation",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "retained_rule:extra_public_initialize_escalation",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "retained_exit:extra_source_digest_drift",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "retained_rule:extra_source_digest_drift",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "retained_exit:positive_13_types",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "retained_all_found:Step8ValidatorEvidence_20260907.zip",
+      "pass": true,
+      "detail": []
+    },
+    {
+      "check": "retained_exit:accepted_upstream_drift",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "retained_rule:accepted_upstream_drift",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "retained_exit:pending_to_accepted",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "retained_rule:pending_to_accepted",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "retained_exit:readme_registry_drift",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "retained_rule:readme_registry_drift",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "retained_exit:unexecuted_to_pass",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "retained_rule:unexecuted_to_pass",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "retained_all_found:FinalBindingControls.zip",
+      "pass": true,
+      "detail": []
+    },
+    {
+      "check": "independent_actual_current_cli",
+      "pass": true,
+      "detail": "{\"status\": \"SCOPED_EVIDENCE_PASS\", \"exit_code\": 0, \"errors\": [], \"report\": \"C:\\\\Users\\\\Windows\\\\Documents\\\\Codex\\\\2026-09-07\\\\ni-6\\\\work\\\\step09-independent-final\\\\CurrentPositiveReceipt.json\"}\n"
+    },
+    {
+      "check": "current_cli_no_bindings_gaps",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "check": "duplicate_source_selection_rejected",
+      "pass": true,
+      "detail": [
+        {
+          "code": "INVALID_INPUT",
+          "detail": "duplicate JSON key: format"
+        }
+      ]
+    },
+    {
+      "check": "unexpected_current_output_rejected",
+      "pass": true,
+      "detail": null
+    }
+  ],
+  "passed": 152,
+  "failed": 0,
+  "sources": {
+    "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step07-projection-20260907\\ProjectionBindings.repository.json": {
+      "sha256": "7e526281339067dea908765cad2f8aa4b510d0371dcd9f2915cc31221e6802cd",
+      "bytes": 9087
+    },
+    "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step04-namespace-20260907\\NamespaceOwnershipManifest.candidate.json": {
+      "sha256": "40d7e87fed046c8aff18d8c1d0532ada075b802faf204059649c84faef1c0782",
+      "bytes": 40953
+    },
+    "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step04-namespace-20260907\\DomainRegistryOwnershipManifest.candidate.json": {
+      "sha256": "fa9e1b322356fc55d04b3eee078146a9b8304e48197c7d1767cd14d665b9c8ca",
+      "bytes": 34723
+    },
+    "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\Step04-ScopedAcceptance_20260907.json": {
+      "sha256": "6f2cc1c9cc28c2a717023029851d61a666815567bc30b3635479cb1b70382e6c",
+      "bytes": 3223
+    },
+    "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\ExecutionDelegation_20260907.json": {
+      "sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+      "bytes": 3350
+    },
+    "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step05-identity-20260907\\VersionAxisRegistry.candidate.json": {
+      "sha256": "1276845153b1fe93517533bc0ae18d466134a6e8651100369dd54493790f27da",
+      "bytes": 9355
+    },
+    "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step05-identity-20260907\\AliasRegistry.candidate.json": {
+      "sha256": "29d0d21d2d0fcecefdc9daaf841a77f411a6695d256a38993976f74660f19a40",
+      "bytes": 4737
+    },
+    "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step05-identity-20260907\\Sources.json": {
+      "sha256": "00b13dfa75569b23c19ece0f1babf35f4c9cbd36086cc904dbaafd29cdd0be9b",
+      "bytes": 10501
+    },
+    "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step06-bindings-20260907\\TypedConsumerRegistry.candidate.json": {
+      "sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+      "bytes": 243588
+    },
+    "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\.github\\workflows\\phase2-naming-surface-inventory.yml": {
+      "sha256": "a9264836297371da0a4bf6e6dada2699ce577c7f31476ac957190e14396aa77c",
+      "bytes": 9093
+    },
+    "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step07-projection-20260907\\inputs\\PreMigration-AGENTS.md": {
+      "sha256": "75d0788ff62a20d2d211115a66ab20fc38519a14fad890ab9a3d6f821e821793",
+      "bytes": 9637
+    },
+    "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step07-projection-20260907\\inputs\\PreMigration-CURRENT_STATUS.md": {
+      "sha256": "af52a717b2c37ebabf81a7123244aa3dd9a91042ea87037fd026925e8111f722",
+      "bytes": 2753
+    },
+    "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\scripts\\verify-generated-artifacts.mjs": {
+      "sha256": "db1da191aeeccf42a6956af2616554cb8e2d278c4bc0bdc1650bd46ca14124e1",
+      "bytes": 42533
+    },
+    "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step07-projection-20260907\\inputs\\CurrentArtifactIdentityPolicy.json": {
+      "sha256": "3a14df68ea81c6390316c5df09d51a049b52a640871ab57953c42acb30624bff",
+      "bytes": 776
+    },
+    "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step07-projection-20260907\\inputs\\ReviewSubjectContract.json": {
+      "sha256": "c2cd13dbe8fd046aa8f0344778141cb9b115fae0048a8c673b60bd25b03498d3",
+      "bytes": 1383
+    },
+    "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\Step05-ScopedAcceptance_20260907.json": {
+      "sha256": "a38536ed64ae7924235ab0318cae17716f1a549d89660acde807f4bb15a64a19",
+      "bytes": 2733
+    },
+    "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step6-consumer-candidate\\ConsumerMatrix.json": {
+      "sha256": "3fffec8fd9570352246425d60156d17988eb6311adab719e481c197a6eca5cee",
+      "bytes": 56180
+    },
+    "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step06-bindings-20260907\\TypedAuthorizationRegistry.candidate.json": {
+      "sha256": "359e7461ba3166bef63815f37ddd9c247aada317c14e4e62bdee3bc79cc3fcdd",
+      "bytes": 74695
+    },
+    "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step06-bindings-20260907\\TypedReceiptRegistry.candidate.json": {
+      "sha256": "05d182805b31ba9d5e6c1c3fa32ae2081527a92faaa76263debded6ffca5efa4",
+      "bytes": 91138
+    },
+    "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\Step06-ScopedAcceptance_20260907.json": {
+      "sha256": "bd40c82a21e7b19c2c36e56d7b877078e45c6bfdf1593590fb56ab364f47889a",
+      "bytes": 5319
+    },
+    "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step07-projection-20260907\\repository-generated\\GovernanceManifest.projection.json": {
+      "sha256": "682b0a2821d942d1c57bc6baa7926bc862b26f89ce1246bded37da97325a7493",
+      "bytes": 235275
+    },
+    "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\Step07-ScopedAcceptance_20260907.json": {
+      "sha256": "dec7601899be7118b3baff3d78793ecaf98b06316070b881ca30297a3b0f22b3",
+      "bytes": 3500
+    },
+    "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\Step08-ScopedAcceptance_20260907.json": {
+      "sha256": "8bac86599481c9effc67274bb29b7f352d59d4e656add8805e41f7437ced455c",
+      "bytes": 3346
+    },
+    "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step07-projection-20260907\\repository-generated\\AGENTS.governance.md": {
+      "sha256": "9bcc962497ff82bf86dd3650b6d965d6ffa683125275fa55e278eb4b3914a6f0",
+      "bytes": 2357
+    },
+    "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step07-projection-20260907\\repository-generated\\CURRENT_STATUS.history-original.md": {
+      "sha256": "af52a717b2c37ebabf81a7123244aa3dd9a91042ea87037fd026925e8111f722",
+      "bytes": 2753
+    },
+    "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step07-projection-20260907\\repository-generated\\CURRENT_STATUS.projection.md": {
+      "sha256": "2bb3a1c38e6e5229db62e232dbde74ae4759337bd77f01d22d0bc7dff4b7d98c",
+      "bytes": 2747
+    },
+    "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step07-projection-20260907\\repository-generated\\ConsumerBindings.projection.json": {
+      "sha256": "a3448f25eae721026d8fc8ec0cbad012964e46c81a84dadecc3e365fc38e2cef",
+      "bytes": 186284
+    },
+    "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step07-projection-20260907\\repository-generated\\GovernanceDocs.projection.md": {
+      "sha256": "9bcc962497ff82bf86dd3650b6d965d6ffa683125275fa55e278eb4b3914a6f0",
+      "bytes": 2357
+    },
+    "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step07-projection-20260907\\repository-generated\\GovernanceRegistry.projection.json": {
+      "sha256": "f1116caf940ca665193c60915f6df4e5dc506fafa0f1dea8e20d8ca702dd47f8",
+      "bytes": 232231
+    },
+    "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step07-projection-20260907\\repository-generated\\IdentityFiles.projection.json": {
+      "sha256": "6259c4d9326cb24e15a5863efa61b8ffe95762f295398fbb75cbc1bd8606c0b3",
+      "bytes": 9775
+    },
+    "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step07-projection-20260907\\repository-generated\\README.governance.md": {
+      "sha256": "9bcc962497ff82bf86dd3650b6d965d6ffa683125275fa55e278eb4b3914a6f0",
+      "bytes": 2357
+    },
+    "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step07-projection-20260907\\repository-generated\\StatusMigrationPlan.candidate.json": {
+      "sha256": "1881cc343304904893b561a7c9d6d5881981378eff40c7b06cad2c0b29e81ecb",
+      "bytes": 751
+    },
+    "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step07-projection-20260907\\repository-generated\\ToolRouting.projection.json": {
+      "sha256": "8f63d5eae3d643edf3639ba709fa99e5bee1cb5cae7b8cb19813f168d4fa4d10",
+      "bytes": 4772
+    },
+    "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step07-projection-20260907\\repository-generated\\WorkflowReferences.projection.json": {
+      "sha256": "5cb691e23d4f8c857e9babde7d5f4d0bc9ed7b774ee8870aa0b0766e2bf5124a",
+      "bytes": 4716
+    },
+    "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\SourceLocators.json": {
+      "sha256": "04aa73c7673b67bc046b8fa5dd37e8bbd9251e84766c09afa735d2a35fe8162b",
+      "bytes": 6210
+    },
+    "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\SourceIndex.json": {
+      "sha256": "2d43dd59ebac6038c1b1d0a30f6246e6bf87dda85e0b9ac9419def88c9ad3045",
+      "bytes": 43992
+    },
+    "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\CurrentBindingReceipt.json": {
+      "sha256": "a73cf7c10faae1bdf2e241e49f748f61c98adeded37f2e58d65485dcd79d9569",
+      "bytes": 160706
+    },
+    "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\FinalBindingVerification.json": {
+      "sha256": "085b8f54c8908ffc5c3e5c4b5621f6addd429b0520a8e6a24e04a01b427a577e",
+      "bytes": 20222
+    },
+    "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\Step8ValidatorEvidence_20260907.zip": {
+      "sha256": "87984a314dbdc176b451ceab0c1a0a4be4543e0ba4941b76f4e668c4302e1f2e",
+      "bytes": 3547622
+    },
+    "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\FinalBindingControls.zip": {
+      "sha256": "e08442a94fe41bcad4e035471e10df6a12a0769599b19667a82dc072c818e9c6",
+      "bytes": 531303
+    },
+    "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\RootIndependentStep8Review.json": {
+      "sha256": "0085b551a80d3aa533927c8f7da5679d7063fe559913fb40db3bdddb43afe20c",
+      "bytes": 8947
+    },
+    "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step09-independent-final\\CurrentPositiveReceipt.json": {
+      "sha256": "4c674ff8fe4b8251ec47a8875d15c8ca60fcaeb71d2625a3282846c149b6e807",
+      "bytes": 160706
+    },
+    "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step09-independent-final\\DuplicateKeyReceipt.json": {
+      "sha256": "5639ea9c276080c304b7073fcb5c8b92cabd34df358c998024d476e8341127df",
+      "bytes": 215
+    }
+  },
+  "retained_receipts": [
+    {
+      "case": "real_candidate_binding_qualification",
+      "archive": "Step8ValidatorEvidence_20260907.zip",
+      "member": "RealCandidateEvidence.json",
+      "sha256": "fa70549809803cf6c9bebcbbfc82f90f4e12cd09c2be34059e7138ea795a1fcc",
+      "exit_code": 0,
+      "target_rule": null
+    },
+    {
+      "case": "N01_missing_namespace_owner",
+      "archive": "Step8ValidatorEvidence_20260907.zip",
+      "member": "fixtures/N01_missing_namespace_owner/Receipt.json",
+      "sha256": "01b017e8688eb532f7dc3d94326a12e1eeeec98826b864d322900d9eb7b4584e",
+      "exit_code": 1,
+      "target_rule": "OWNER"
+    },
+    {
+      "case": "N02_same_name_different_objects",
+      "archive": "Step8ValidatorEvidence_20260907.zip",
+      "member": "fixtures/N02_same_name_different_objects/Receipt.json",
+      "sha256": "4eb60aadc0480d519bdbb2bb21e5ddd8a2553c626e0bbc59bdf918c29d9df0bf",
+      "exit_code": 1,
+      "target_rule": "CANONICAL_COLLISION"
+    },
+    {
+      "case": "N03_one_object_multiple_canonical",
+      "archive": "Step8ValidatorEvidence_20260907.zip",
+      "member": "fixtures/N03_one_object_multiple_canonical/Receipt.json",
+      "sha256": "cb48ce7de2afd173e1172725cc860d83f61625bc14d11f904c0826262a618031",
+      "exit_code": 1,
+      "target_rule": "MULTIPLE_CANONICAL"
+    },
+    {
+      "case": "N04_alias_missing_target",
+      "archive": "Step8ValidatorEvidence_20260907.zip",
+      "member": "fixtures/N04_alias_missing_target/Receipt.json",
+      "sha256": "d5a39bf473db540688cc80b65483900da9b7f38bf561fc4f0d636c925ed59b2a",
+      "exit_code": 1,
+      "target_rule": "ALIAS_TARGET"
+    },
+    {
+      "case": "N05_alias_new_write",
+      "archive": "Step8ValidatorEvidence_20260907.zip",
+      "member": "fixtures/N05_alias_new_write/Receipt.json",
+      "sha256": "f8696ac2fd5a44a472e4ce21989483a1c47f4c7d36fbfe60ebd7cdd92add6e97",
+      "exit_code": 1,
+      "target_rule": "ALIAS_WRITE"
+    },
+    {
+      "case": "N06_current_uses_historical",
+      "archive": "Step8ValidatorEvidence_20260907.zip",
+      "member": "fixtures/N06_current_uses_historical/Receipt.json",
+      "sha256": "8948ac7a6f68d649f5e987d7a86b599843e987018c0969c143f2ef421e6dabd0",
+      "exit_code": 1,
+      "target_rule": "CURRENT_HISTORICAL"
+    },
+    {
+      "case": "N07_wrong_direct_predecessor",
+      "archive": "Step8ValidatorEvidence_20260907.zip",
+      "member": "fixtures/N07_wrong_direct_predecessor/Receipt.json",
+      "sha256": "d4d6ac852f115ad47e304a468a353230ed153254143be84175d9edfcc2255064",
+      "exit_code": 1,
+      "target_rule": "PREDECESSOR"
+    },
+    {
+      "case": "N08_mixed_version_axis",
+      "archive": "Step8ValidatorEvidence_20260907.zip",
+      "member": "fixtures/N08_mixed_version_axis/Receipt.json",
+      "sha256": "dd8b903f3a73fb5767d478ab6a2c8b354026062ade01ec21b096fab30b9e1c02",
+      "exit_code": 1,
+      "target_rule": "VERSION_AXIS"
+    },
+    {
+      "case": "N09_receipt_missing_subject",
+      "archive": "Step8ValidatorEvidence_20260907.zip",
+      "member": "fixtures/N09_receipt_missing_subject/Receipt.json",
+      "sha256": "94f7caab842edaeec57f1b2c806dce130bb92f6b06d2dc497b48e8d57029e26b",
+      "exit_code": 1,
+      "target_rule": "RECEIPT_SUBJECT"
+    },
+    {
+      "case": "N10_authorization_scope_escalation",
+      "archive": "Step8ValidatorEvidence_20260907.zip",
+      "member": "fixtures/N10_authorization_scope_escalation/Receipt.json",
+      "sha256": "8655b24e08dca85c776676b5bf419fb862112ec3e935446491f54853f9c34a1d",
+      "exit_code": 1,
+      "target_rule": "AUTHORIZATION_SCOPE"
+    },
+    {
+      "case": "N11_consumer_unauthorized_namespace",
+      "archive": "Step8ValidatorEvidence_20260907.zip",
+      "member": "fixtures/N11_consumer_unauthorized_namespace/Receipt.json",
+      "sha256": "3cb16ab386134fd5e6be7c5d8b13532a7ad1164ec75c327e11f381db0b35bf4f",
+      "exit_code": 1,
+      "target_rule": "CONSUMER_NAMESPACE"
+    },
+    {
+      "case": "N12_readme_registry_disagreement",
+      "archive": "Step8ValidatorEvidence_20260907.zip",
+      "member": "fixtures/N12_readme_registry_disagreement/Receipt.json",
+      "sha256": "e586acf931221086738cf71a25491da20197f6deb753dd3b1826f58a188a104b",
+      "exit_code": 1,
+      "target_rule": "PROJECTION_DRIFT"
+    },
+    {
+      "case": "N13_copy_claims_original",
+      "archive": "Step8ValidatorEvidence_20260907.zip",
+      "member": "fixtures/N13_copy_claims_original/Receipt.json",
+      "sha256": "92663f4e9da8f62a59ca88a9473c40532f92a7e0c17d9747379e4764d4ad7aff",
+      "exit_code": 1,
+      "target_rule": "COPY_ORIGINAL"
+    },
+    {
+      "case": "N14_representation_claims_canonical",
+      "archive": "Step8ValidatorEvidence_20260907.zip",
+      "member": "fixtures/N14_representation_claims_canonical/Receipt.json",
+      "sha256": "6a11991dcae4c1972cd26c7c0a26df54b4c6e983078eca97da58152e9f6b4358",
+      "exit_code": 1,
+      "target_rule": "REPRESENTATION_CANONICAL"
+    },
+    {
+      "case": "N15_pending_projected_accepted",
+      "archive": "Step8ValidatorEvidence_20260907.zip",
+      "member": "fixtures/N15_pending_projected_accepted/Receipt.json",
+      "sha256": "f5a2796b8f0f8a429a41721dfbaf9064bb4b366e256ca61c5a9a0e3fd38a9643",
+      "exit_code": 1,
+      "target_rule": "PENDING_ACCEPTED"
+    },
+    {
+      "case": "N16_unexecuted_projected_pass",
+      "archive": "Step8ValidatorEvidence_20260907.zip",
+      "member": "fixtures/N16_unexecuted_projected_pass/Receipt.json",
+      "sha256": "3a37c64fbd045cc7aa9b63c4d019081c03cfc98d2b68a6e81ca5278b22c4dcc0",
+      "exit_code": 1,
+      "target_rule": "UNEXECUTED_PASS"
+    },
+    {
+      "case": "extra_cross_consumer_authorization",
+      "archive": "Step8ValidatorEvidence_20260907.zip",
+      "member": "fixtures/extra_cross_consumer_authorization/Receipt.json",
+      "sha256": "6ef6224047e78c69a75f929509064301fcfa394df23b25f77d91fe3ed100b77f",
+      "exit_code": 1,
+      "target_rule": "AUTHORIZATION_SCOPE"
+    },
+    {
+      "case": "extra_historical_ci_missing_subject",
+      "archive": "Step8ValidatorEvidence_20260907.zip",
+      "member": "fixtures/extra_historical_ci_missing_subject/Receipt.json",
+      "sha256": "6bedc6b96529140398c96f16cb0297dd3aaea33c56781a822280ca5842d4828e",
+      "exit_code": 1,
+      "target_rule": "RECEIPT_SUBJECT"
+    },
+    {
+      "case": "extra_missing_core_identity",
+      "archive": "Step8ValidatorEvidence_20260907.zip",
+      "member": "fixtures/extra_missing_core_identity/Receipt.json",
+      "sha256": "b403a874d825ad97deaabb6046f207527bca124f9936b5d4c0346857138b6979",
+      "exit_code": 1,
+      "target_rule": "FREEZE_BINDING"
+    },
+    {
+      "case": "extra_public_initialize_escalation",
+      "archive": "Step8ValidatorEvidence_20260907.zip",
+      "member": "fixtures/extra_public_initialize_escalation/Receipt.json",
+      "sha256": "e2a7fd61536e7a7877e33cd3a60d16f3e023ab8574641b8de585a01177df9d72",
+      "exit_code": 1,
+      "target_rule": "AUTHORIZATION_SCOPE"
+    },
+    {
+      "case": "extra_source_digest_drift",
+      "archive": "Step8ValidatorEvidence_20260907.zip",
+      "member": "fixtures/extra_source_digest_drift/Receipt.json",
+      "sha256": "7fb33c256b5e1d9481d9550b485a30c8a28dbb3a22f9d7f73875fc6c1c4bd7b5",
+      "exit_code": 1,
+      "target_rule": "SOURCE_DIGEST"
+    },
+    {
+      "case": "positive_13_types",
+      "archive": "Step8ValidatorEvidence_20260907.zip",
+      "member": "fixtures/positive_13_types/Receipt.json",
+      "sha256": "c8d03d84ce00af06889a5453903f43fd4c8539de16ff366b4ce2076d5d67517d",
+      "exit_code": 0,
+      "target_rule": null
+    },
+    {
+      "case": "accepted_upstream_drift",
+      "archive": "FinalBindingControls.zip",
+      "member": "accepted_upstream_drift/Receipt.json",
+      "sha256": "d9657d507320e0fa31dc7ae7a68a5a4b3c27f5b0c69adfe5fd663b0ac85b326b",
+      "exit_code": 1,
+      "target_rule": "PROJECTION_DRIFT"
+    },
+    {
+      "case": "pending_to_accepted",
+      "archive": "FinalBindingControls.zip",
+      "member": "pending_to_accepted/Receipt.json",
+      "sha256": "0b8e2ca373f7aa8033426a6ec63f48419121bd653dee7876dfb9485f647ae8eb",
+      "exit_code": 1,
+      "target_rule": "PENDING_ACCEPTED"
+    },
+    {
+      "case": "readme_registry_drift",
+      "archive": "FinalBindingControls.zip",
+      "member": "readme_registry_drift/Receipt.json",
+      "sha256": "069c4ee840391c6cb7d2fafac797bf14062426e1e974c901003da46f7aaf8094",
+      "exit_code": 1,
+      "target_rule": "PROJECTION_DRIFT"
+    },
+    {
+      "case": "unexecuted_to_pass",
+      "archive": "FinalBindingControls.zip",
+      "member": "unexecuted_to_pass/Receipt.json",
+      "sha256": "e77b6283c50eeaeb6861a291e187f4f89d8e3e346d6fa2fdd0b296cb0c6fa81f",
+      "exit_code": 1,
+      "target_rule": "UNEXECUTED_PASS"
+    }
+  ],
+  "no_authority_issued": true,
+  "not_repeated": [
+    "Full 246MB package hash already independently recomputed by root",
+    "All validator fixture runs",
+    "Live hosted services",
+    "Original complete historical/Library scan"
+  ]
+}
