@@ -887,6 +887,11 @@ footer {
 .oauth-form label { display: grid; gap: 7px; color: #aab3ae; font-size: 11px; }
 .oauth-card fieldset { min-width: 0; margin-inline: 0; }
 .oauth-card legend { max-width: 100%; overflow-wrap: anywhere; }
+.oauth-group-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 4px 0 12px; }
+.oauth-group-actions button { width: auto; min-height: 32px; padding: 5px 10px; border: 1px solid var(--line); border-radius: 6px; background: transparent; color: var(--green); font: inherit; cursor: pointer; }
+.oauth-group-actions button:disabled { opacity: .45; cursor: default; }
+.oauth-group-actions button:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+.oauth-group-actions span { color: var(--muted); font-size: 12px; }
 .oauth-card label:has(> input[type="checkbox"]) {
   display: flex;
   align-items: center;
@@ -928,3 +933,13 @@ footer {
   .oauth-card { padding: 28px 22px; }
   .oauth-actions { grid-template-columns: 1fr; }
 }
+
+/* Consent keeps a single-column resource list inside one keyboard-scrollable pane. */
+.oauth-consent .oauth-copy { margin: 12px 0; }
+.oauth-consent .oauth-details { margin-bottom: 12px; }
+.oauth-account-inline { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.oauth-account-switch { width: auto; padding: 3px 8px; min-height: 28px; background: transparent; border: 1px solid var(--line); border-radius: 6px; color: var(--green); font: inherit; cursor: pointer; }
+.oauth-scroll-hint { margin: 10px 0 6px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.oauth-permissions-scroll { max-height: min(50vh, 420px); max-height: min(50dvh, 420px); overflow-y: auto; scrollbar-gutter: stable; padding: 10px; margin-bottom: 14px; border: 1px solid var(--line); border-radius: 10px; }
+.oauth-permissions-scroll:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+.oauth-permissions-scroll h2 { margin: 0 0 8px; }

@@ -32,7 +32,7 @@ function fixture(compiled = consentSource, extraAuth = {}) {
  },AbortController,Error,TypeError,encodeURIComponent,URL,window:{setTimeout(cb){const id=++seq;timers.set(id,cb);return id;},clearTimeout(id){timers.delete(id);},location:{origin:'https://clued.example.test',assign(url){navigations.push(url);}}},
  fetch(url,options){let resolve;const promise=new Promise(a=>resolve=a);requests.push({url,options,resolve});return promise;}});
  function render(){cursor=0;root=exports.default({requestId:'a'.repeat(64)});while(effects.length)effects.shift()();return root;}
- function nodes(type){const out=[];function visit(n){if(Array.isArray(n))return n.forEach(visit);if(!n||typeof n!=='object')return;if(n.type===type)out.push(n);visit(n.props?.children);}visit(root);return out;}
+ function nodes(type,from=root){const out=[];function visit(n){if(Array.isArray(n))return n.forEach(visit);if(!n||typeof n!=='object')return;if(n.type===type)out.push(n);visit(n.props?.children);}visit(from);return out;}
  function text(n){if(arguments.length===0)n=root;if(Array.isArray(n))return n.map(text).join('');if(n==null||typeof n==='boolean')return '';return typeof n==='object'?text(n.props?.children ?? null):String(n);}
  async function settle(){for(let i=0;i<8;i++)await Promise.resolve();render();}
  const respond=(i,data)=>requests[i].resolve({ok:true,json:async()=>data});
@@ -148,4 +148,60 @@ test('unmounted recovery page ignores late acknowledgement', async t => {
   const { f, calls, submit } = recoveryFixture(t);
   const request = submit(); f.unmount(); calls[0].resolve({ error: null }); await request; await f.settle();
   assert.ok(!f.text().includes('你会收到密码重置链接'));
+});
+
+
+test('group shortcuts start empty, isolate exact resources/environments, and preserve manual choices', async t => {
+  const f = fixture(); t.after(() => f.unmount());
+  const eligible = [
+    { resource_kind: 'context', resource_id: '11111111-1111-4111-8111-111111111111', environment: 'test', name: 'Test workspace', actions: ['read', 'write', 'close'] },
+    { resource_kind: 'context', resource_id: '11111111-1111-4111-8111-111111111111', environment: 'preview', name: 'Preview workspace', actions: ['read'] },
+    { resource_kind: 'context', resource_id: '22222222-2222-4222-8222-222222222222', environment: 'test', name: 'Other workspace', actions: ['read', 'feedback_submit'] },
+  ];
+  f.emit('INITIAL_SESSION', session('A')); f.runTimers();
+  f.respond(0, { ...details('A'), requested_scopes: ['context:read', 'context:write'], eligible }); await f.settle();
+  const group = name => {
+    const node = f.nodes('fieldset').find(field => f.nodes('legend', field).some(legend => f.text(legend).includes(name)));
+    assert.ok(node, name); return node;
+  };
+  const boxes = name => f.nodes('input', group(name)).filter(node => node.props.type === 'checkbox');
+  const choice = name => boxes(name).map(node => node.props.checked);
+  const shortcut = (name, label) => {
+    const node = f.nodes('button', group(name)).find(button => f.text(button) === label);
+    assert.ok(node, name + ' ' + label); assert.equal(node.props.type, 'button'); return node;
+  };
+  const click = (name, label) => {
+    const button = shortcut(name, label); assert.equal(button.props.disabled, false);
+    button.props.onClick(); f.render();
+  };
+  for (const row of eligible) {
+    assert.deepEqual(choice(row.name), row.actions.map(() => false));
+    assert.match(f.text(group(row.name)), new RegExp('已选\\s*0\\s*/\\s*' + row.actions.length));
+  }
+  assert.equal(f.button('允许所选权限').props.disabled, true);
+  click('Test workspace', '全选本组');
+  assert.deepEqual(choice('Test workspace'), [true, true, true]);
+  assert.deepEqual(choice('Preview workspace'), [false], 'same context in another environment stays empty');
+  assert.deepEqual(choice('Other workspace'), [false, false], 'another resource stays empty');
+  assert.match(f.text(group('Test workspace')), /已选\s*3\s*\/\s*3/);
+  click('Preview workspace', '全选本组');
+  click('Test workspace', '清空本组');
+  assert.deepEqual(choice('Test workspace'), [false, false, false]);
+  assert.deepEqual(choice('Preview workspace'), [true], 'clearing one environment preserves the other');
+  boxes('Test workspace')[1].props.onChange({ target: { checked: true } }); f.render();
+  boxes('Other workspace')[1].props.onChange({ target: { checked: true } }); f.render();
+  assert.deepEqual(choice('Test workspace'), [false, true, false], 'manual write does not silently add read');
+  assert.deepEqual(choice('Other workspace'), [false, true]);
+  assert.equal(f.requests.length, 1, 'shortcuts only change local selection');
+  f.button('允许所选权限').props.onClick(); await f.settle();
+  const decision = JSON.parse(f.requests[1].options.body);
+  assert.deepEqual(decision.selected, eligible.map((row, index) => ({
+    resource_kind: row.resource_kind, resource_id: row.resource_id, environment: row.environment,
+    actions: index === 0 ? ['write'] : index === 1 ? ['read'] : ['feedback_submit'],
+  })));
+  for (const row of eligible) {
+    assert.equal(group(row.name).props.disabled, true);
+    assert.equal(shortcut(row.name, '全选本组').props.disabled, true);
+    assert.equal(shortcut(row.name, '清空本组').props.disabled, true);
+  }
 });

@@ -172,7 +172,7 @@ export default function DelegatedConsent({ requestId }: { requestId: string }) {
     { name: '项目协作', rows: details?.eligible.filter(row => row.resource_kind === 'scope' && row.resource_id.startsWith('project:')) || [] },
     { name: '项目开发', rows: details?.eligible.filter(row => row.resource_kind === 'context') || [] },
   ].filter(group => group.rows.length);
-  return <main className="oauth-shell"><section className="oauth-card" aria-busy={busy}>
+  return <main className="oauth-shell"><section className="oauth-card oauth-consent" aria-busy={busy}>
     <Link className="oauth-brand" href="/"><span className="brand-mark" aria-hidden="true">◆</span><span>CLUED</span></Link>
     {busy && <p role="status">正在核验授权…</p>}
     {error && <div className="oauth-error" role="alert"><strong>尚未完成</strong><p>{error}</p><button type="button" disabled={busy} onClick={() => void reload()}>重新读取请求</button></div>}
@@ -182,17 +182,23 @@ export default function DelegatedConsent({ requestId }: { requestId: string }) {
         <label>密码<input type="password" autoComplete="current-password" required value={password} onChange={e => setPassword(e.target.value)} /></label>
         <button className="primary-button" disabled={busy} type="submit">登录并继续</button>
       </form><p><Link href="/oauth/account" target="_blank" rel="noopener noreferrer">忘记密码</Link></p><p>没有账户的开发者，请在<Link href="/oauth/projects" target="_blank" rel="noopener noreferrer">开发项目页面</Link>注册，并打开项目所有者提供的邀请链接。</p></>}
-    {session && <div className="oauth-details"><p>登录账户：{session.user.email || session.user.id}</p><button className="oauth-secondary" type="button" disabled={authBusy} onClick={() => void switchAccount()}>切换账户</button></div>}
+    {session && !details && <div className="oauth-details"><p>登录账户：{session.user.email || session.user.id}</p><button className="oauth-secondary" type="button" disabled={authBusy} onClick={() => void switchAccount()}>切换账户</button></div>}
     {details && <>
       <h1>允许 {details.client_name} 使用 Clued</h1>
-      <dl className="oauth-details"><div><dt>当前账户</dt><dd>{details.user.email || details.user.id}</dd></div><div><dt>客户端标识</dt><dd style={{ overflowWrap: 'anywhere' }}>{details.client_id}</dd></div></dl>
-      <p className="oauth-copy">只勾选本次需要的权限。每个连接分别授权；安装 Skill 不会增加权限。</p>
+      <dl className="oauth-details"><div><dt>当前账户</dt><dd className="oauth-account-inline">{details.user.email || details.user.id}<button className="oauth-account-switch" type="button" disabled={busy} onClick={() => void switchAccount()}>切换账户</button></dd></div><div><dt>客户端标识</dt><dd style={{ overflowWrap: 'anywhere' }}>{details.client_id}</dd></div></dl>
+      <p className="oauth-copy">默认不选择任何权限，请按需勾选。全选仅作用于当前资源及环境，仍需点击下方按钮确认授权。</p>
       {!details.eligible.length && <p role="status">身份已验证，尚无可授权的业务资源。项目开发资格需要资源所有者授予。</p>}
       <p><Link href="/oauth/projects" target="_blank" rel="noopener noreferrer">查看或接受开发项目邀请</Link></p>
-      <div className="oauth-permissions">
-        {groups.map(group => <section key={group.name}><h2 style={{ fontSize: 18 }}>{group.name}</h2>{group.rows.map(row => <fieldset key={rowKey(row)} disabled={busy} style={{ marginBottom: 16, border: '1px solid var(--border, #ddd)', borderRadius: 8, padding: 12 }}>
+      <p className="oauth-scroll-hint">在下方区域滚动查看全部权限；每组可单独全选或清空。</p>
+      <div className="oauth-permissions oauth-permissions-scroll" role="region" aria-label="可授权的资源和权限" tabIndex={0}>
+        {groups.map(group => <section key={group.name}><h2 style={{ fontSize: 18 }}>{group.name}</h2>{group.rows.map(row => <fieldset key={rowKey(row)} disabled={busy} style={{ marginBottom: 10, border: '1px solid var(--border, #ddd)', borderRadius: 8, padding: 12 }}>
           <legend>{row.name || (row.resource_id === 'global' ? '我的个人记忆' : row.resource_id)} · {environmentLabels[row.environment] || row.environment}</legend>
-          {row.actions.map(action => <label key={action} style={{ display: 'flex', gap: 8, alignItems: 'center', margin: '8px 0' }}>
+          <div className="oauth-group-actions">
+            <button type="button" disabled={busy || row.actions.every(action => (selected[rowKey(row)] || []).includes(action))} onClick={() => setSelected(old => ({ ...old, [rowKey(row)]: [...row.actions] }))}>全选本组</button>
+            <button type="button" disabled={busy || !(selected[rowKey(row)] || []).length} onClick={() => setSelected(old => ({ ...old, [rowKey(row)]: [] }))}>清空本组</button>
+            <span>已选 {row.actions.filter(action => (selected[rowKey(row)] || []).includes(action)).length}/{row.actions.length} 项</span>
+          </div>
+          {row.actions.map(action => <label key={action} style={{ display: 'flex', gap: 8, alignItems: 'center', margin: '6px 0' }}>
             <input type="checkbox" checked={(selected[rowKey(row)] || []).includes(action)} onChange={event => {
               const checked = event.target.checked;
               setSelected(old => ({ ...old, [rowKey(row)]: checked ? [...(old[rowKey(row)] || []), action] : (old[rowKey(row)] || []).filter(a => a !== action) }));
