@@ -1,0 +1,230 @@
+{
+  "schema": "clued.phase2-validation-lane-closeout-index/v1",
+  "record_id": "CLUED_PHASE2_V027_VALIDATION_LANE_CLOSEOUT_INDEX_20260907",
+  "created_at_utc": "2026-09-07T00:17:07Z",
+  "status": "PASS",
+  "scope": "PHASE2_V027_VALIDATION_LANE_ONLY",
+  "authority_effect": "NONE",
+  "subject": {
+    "filename": "Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip",
+    "bytes": 246612118,
+    "members": 960,
+    "sha256": "6e51374a6caedb4f84d2b6bb9fe05cd695b25732833f9d0217c341f17e1c1649",
+    "semantic_candidate": "v0.2.7",
+    "package_revision": "v0.2.7.1-manifest-repair"
+  },
+  "implementation": {
+    "branch": "phase2-v027-validation",
+    "negative_harness_added_commit": "589f801c5de7a72dda135b845c7a11a85f1be8f2",
+    "negative_control_added_commit": "b03bb513a55bf0a3648e52db37831a8d2257500d",
+    "workflow_wiring_commit": "f5b9b275311876f617296c9f7ba20dc8b20924ea",
+    "validator": {
+      "path": "scripts/phase2-v027-validate.py",
+      "git_blob_sha1": "83b3346998a6a78171336607d6c8b298ed9afa4e",
+      "content_sha256": "e16cc9fa5fd2a54dc3922029851722936551a400979dc94dce691faa83bd7f4e"
+    },
+    "negative_harness": {
+      "path": "scripts/phase2-v027-negative-harness.py",
+      "git_blob_sha1": "6b0ee1440f925098462cce2bd78bf69c32a74dbc",
+      "content_sha256": "46520afc2175c468bb15162c7ec2fb43d157ddcbb05481ea062f7a31083f6860"
+    },
+    "workflow": {
+      "path": ".github/workflows/phase2-v027-validation.yml",
+      "git_blob_sha1": "9fcd0a6b9545d0ce3fce76a4c3ae77de4273b4d9"
+    },
+    "control": {
+      "path": "artifacts/clued-validation/phase2-v027/negative-test-control.json",
+      "final_mode": "none",
+      "git_blob_sha1": "47d639c349ca63e8fc393420f3651492444f3ba8"
+    }
+  },
+  "positive_run": {
+    "commit_sha": "07632caa673395e136c60d9cf4f2f884c03a59af",
+    "run_id": 34069116734,
+    "conclusion": "success",
+    "gate_statuses": {
+      "candidate_identity": "PASS",
+      "manifest_integrity": "PASS",
+      "provenance": "PASS",
+      "product_increment_input": "PASS"
+    },
+    "receipt": {
+      "bytes": 4213,
+      "sha256": "0a6bf0df65e722f2bb48fc6fd93767ec5ffcd8bb207b4189d4ff7d0863738091"
+    },
+    "artifact": {
+      "id": 9999876944,
+      "name": "phase2-v027-ci-receipt",
+      "bytes": 1660,
+      "sha256": "52a8288c0cfb4ce679020dbae00275836d862ef5a9a15e0dbda7df5b5a47050c"
+    },
+    "durable_library_copy": {
+      "path": "/Clued/Phase2/validation-lane-closeout/20260907/phase2-v027-positive-receipt-final.zip",
+      "file_id": "file_00000000bd2c820ba5a61fe80399a9b8",
+      "library_file_id": "libfile_7d2e2006908081919f76593767e9a28f"
+    }
+  },
+  "negative_runs": {
+    "candidate_identity": {
+      "commit_sha": "ca3292bb58dce28115636a31f1c09301b9bd1b30",
+      "run_id": 34068788695,
+      "conclusion": "failure",
+      "expected_and_actual_gate_statuses": {
+        "candidate_identity": "FAIL",
+        "manifest_integrity": "SKIPPED",
+        "provenance": "SKIPPED",
+        "product_increment_input": "SKIPPED"
+      },
+      "validator_exit_code": 1,
+      "base_candidate_unchanged": true,
+      "expected_behavior_confirmed": true,
+      "receipt": {
+        "bytes": 1733,
+        "sha256": "ce7fa36658702e553b2f1c95c2362fe3e27002ff7cd6b89bf6362725813bd7fb"
+      },
+      "fixture_manifest": {
+        "bytes": 2479,
+        "sha256": "6ac5d07d21a3e075dc098110f56932782eb67501d0b0cc50cb71ae85c9153548"
+      },
+      "artifact": {
+        "id": 9999786548,
+        "name": "phase2-v027-negative-candidate_identity",
+        "bytes": 2076,
+        "sha256": "39564eb18c06a9b04b65039a4726a8f8b561f3380faeb5b27acf2814624ced77"
+      },
+      "durable_library_copy": {
+        "path": "/Clued/Phase2/validation-lane-closeout/20260907/phase2-v027-negative-candidate-identity.zip",
+        "file_id": "file_000000008cec820b8fb9b843c23be56c",
+        "library_file_id": "libfile_d6cc45bcd31881918e5fd02de7500107"
+      }
+    },
+    "manifest_integrity": {
+      "commit_sha": "ea94e901f97507d6c7f600813b36acfe5db5bd4c",
+      "run_id": 34068853770,
+      "conclusion": "failure",
+      "expected_and_actual_gate_statuses": {
+        "candidate_identity": "PASS",
+        "manifest_integrity": "FAIL",
+        "provenance": "PASS",
+        "product_increment_input": "PASS"
+      },
+      "validator_exit_code": 1,
+      "base_candidate_unchanged": true,
+      "expected_behavior_confirmed": true,
+      "receipt": {
+        "bytes": 4222,
+        "sha256": "9752c47e8e09777ffd7e912d0c1b6b78b5571d7288ca1748ecd55f62dc07055c"
+      },
+      "fixture_manifest": {
+        "bytes": 2484,
+        "sha256": "04033a7ffaff54e111db648a9882903f6805eb9588e933ad3b5c25df6f88b917"
+      },
+      "artifact": {
+        "id": 9999806197,
+        "name": "phase2-v027-negative-manifest_integrity",
+        "bytes": 2967,
+        "sha256": "c4583019a5802c385dc81a48760fe452ef5c0bbfecfcfdb842507a0a624b8354"
+      },
+      "durable_library_copy": {
+        "path": "/Clued/Phase2/validation-lane-closeout/20260907/phase2-v027-negative-manifest-integrity.zip",
+        "file_id": "file_00000000dbdc820b8f7fe93994c21a38",
+        "library_file_id": "libfile_5fd60a5886f481918aabd2882108452e"
+      }
+    },
+    "provenance": {
+      "commit_sha": "9c657f8ffcf67296d394946b2050e049dc535664",
+      "run_id": 34068945665,
+      "conclusion": "failure",
+      "expected_and_actual_gate_statuses": {
+        "candidate_identity": "PASS",
+        "manifest_integrity": "PASS",
+        "provenance": "FAIL",
+        "product_increment_input": "PASS"
+      },
+      "validator_exit_code": 1,
+      "base_candidate_unchanged": true,
+      "expected_behavior_confirmed": true,
+      "receipt": {
+        "bytes": 3553,
+        "sha256": "71f218467f8c05fcd3854c65188336a80762fbc82b482977f46889b62c4d907e"
+      },
+      "fixture_manifest": {
+        "bytes": 2641,
+        "sha256": "cdae07d40fc39d4ce67e4bcee06238ef6a1b3f62fb3f2edf9af5471a2757fafb"
+      },
+      "artifact": {
+        "id": 9999831842,
+        "name": "phase2-v027-negative-provenance",
+        "bytes": 2756,
+        "sha256": "1cf6cd5ecbba62400c9e50d1b1a79edd0c8e972284159da665fb7af2b98f9bc3"
+      },
+      "durable_library_copy": {
+        "path": "/Clued/Phase2/validation-lane-closeout/20260907/phase2-v027-negative-provenance.zip",
+        "file_id": "file_000000002670820b9cb4443d2adb6843",
+        "library_file_id": "libfile_b6d58142f28081919e690912d8f485c4"
+      }
+    },
+    "product_increment_input": {
+      "commit_sha": "90d1e9fc72b39f918c536d5a375d7096af439668",
+      "run_id": 34069016068,
+      "conclusion": "failure",
+      "expected_and_actual_gate_statuses": {
+        "candidate_identity": "PASS",
+        "manifest_integrity": "PASS",
+        "provenance": "PASS",
+        "product_increment_input": "FAIL"
+      },
+      "validator_exit_code": 1,
+      "base_candidate_unchanged": true,
+      "expected_behavior_confirmed": true,
+      "receipt": {
+        "bytes": 3440,
+        "sha256": "0c909f66b9cf3c5a004801b02ecae12425a94cd2a8c6125433cea50daedf85fb"
+      },
+      "fixture_manifest": {
+        "bytes": 2546,
+        "sha256": "bb648d0acf9881f2afa2bf7551cdcec8e5cf8a465fddf72d93f16a4c1ceda13f"
+      },
+      "artifact": {
+        "id": 9999852995,
+        "name": "phase2-v027-negative-product_increment_input",
+        "bytes": 2639,
+        "sha256": "898f26e61266414ce9597a804b0eb9beb572e411ee290c403a98700b73666eb9"
+      },
+      "durable_library_copy": {
+        "path": "/Clued/Phase2/validation-lane-closeout/20260907/phase2-v027-negative-product-increment-input.zip",
+        "file_id": "file_0000000086dc820b8c9d5693f358c0c1",
+        "library_file_id": "libfile_857112373624819181178811c72a42cc"
+      }
+    }
+  },
+  "durable_complete_receipt": {
+    "path": "/Clued/Phase2/validation-lane-closeout/20260907/phase2-v027-validation-lane-closeout-receipt.json",
+    "bytes": 40520,
+    "sha256": "c1df25e53c449ee64f9ee5af0bae8f5fc40515dca0e4f75b694c5b6d446510ad",
+    "file_id": "file_0000000013bc820b9ba1391197b9307a",
+    "library_file_id": "libfile_b813083acb1c819185d1259e3eea6745",
+    "contains_exact_utf8_receipts_and_fixture_manifests": true
+  },
+  "aggregate_result": {
+    "positive_path": "PASS",
+    "fail_closed_behavior": "PASS",
+    "target_gate_isolation": "PASS",
+    "all_four_negative_jobs_red": true,
+    "all_negative_expected_behavior_confirmed": true,
+    "all_negative_base_candidate_unchanged": true,
+    "mutated_fixture_bytes_retained": false,
+    "original_candidate_mutated_or_republished": false,
+    "final_control_mode": "none",
+    "final_positive_run_after_negatives": "PASS"
+  },
+  "boundaries": {
+    "architecture_acceptance": "NOT_ISSUED",
+    "structure_freeze": "NOT_ISSUED",
+    "main_required_check": "NOT_ENABLED_BY_THIS_CLOSEOUT",
+    "release_candidate_created": false,
+    "base_candidate_modified": false,
+    "production_or_canonical_write": false
+  },
+  "next_authorized_work": "NAMING_SURFACE_INVENTORY_MANIFEST"
+}
