@@ -1,6 +1,6 @@
 {
   "schema": "clued.phase2-v027-negative-test-control/v1",
-  "case": "manifest_integrity",
+  "case": "provenance",
   "allowed_cases": [
     "none",
     "candidate_identity",
