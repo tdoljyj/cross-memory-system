@@ -18,7 +18,7 @@ verification confirmed the old context table and owner RPC are absent. The prior
 retention assumption in the historical supersession record is therefore no longer
 the installed baseline. Never reapply or edit that published retirement migration.
 
-The uninstalled v12/v13 candidates were resequenced after retirement. The successor
+The previously uninstalled v12/v13 candidates were resequenced after retirement. The successor
 creates only its necessary `development_*_v14` storage and new RPC entry points.
 It does not restore old Link, Acceptance, Publication or dual-consumer bridge
 surfaces. Existing canonical project identities remain stable. Candidate/new
@@ -56,10 +56,14 @@ installed migrations by content and dependency, and select only the reviewed
 new successor migrations. Do not run P5/P6 workflows or copy production private
 records into a test project.
 
-The only other discovered Supabase project is an inactive restore project.
-It is not an approved staging database and must not be resumed or repurposed
-without an explicit target/cost decision. Local PostgreSQL fixtures prove
-specific behavior, not a live Supabase/ChatGPT deployment.
+The approved hosted test environment is now Supabase project
+`uscrdifznmlvczcekqpw` and Worker `clued-auth-test` at
+`https://clued-auth-test.tdoljef.workers.dev`. Its 19 reviewed migrations and
+separate Auth, OAuth KV, issuer and callback configuration are installed.
+The inactive restore project remains a separate resource; it was not resumed
+or repurposed for these tests. Local PostgreSQL fixtures remain distinct from
+the hosted and real ChatGPT evidence recorded below. Production activation
+has not been authorized by this test work.
 
 ## Configuration contract
 
@@ -145,9 +149,10 @@ permissions and no user/client-pair inference is allowed.
 
 1. Complete the successor implementation and affected local checks; review the
    exact candidate commit, migration files/hashes, installed baseline, and gates.
-2. Use separately approved test identities and resources on an approved hosted
-   test environment. Complete real ChatGPT Web OAuth, partial consent, recovery,
-   expiry, role changes, concurrent connections and write/Receipt verification.
+2. Preserve the completed hosted-test evidence below and finish the remaining
+   real-browser scenarios, including partial consent, cancellation and expiry.
+   Verify host isolation and complete Skill behavior separately; successful
+   OAuth and tool discovery alone do not establish those properties.
 3. Prepare a concrete production change packet: exact Worker artifact/version,
    migration order and hashes, expected current versions, KV/secret targets,
    test evidence, affected old connections, owner and maintenance window.
@@ -186,3 +191,27 @@ responses. None substitutes for real ChatGPT Web, real email verification,
 Supabase Auth policy, Cloudflare runtime/KV, installed host Skill discovery, or
 production acceptance. The full repository migration-chain check does not
 license deploying migrations absent from the real production history.
+
+
+### Hosted test evidence — 2026-09-08
+
+The authorized test run has the following recorded evidence. These identifiers
+bind the results to the tested candidate and test environment; they do not
+approve production changes or declare the complete A01–A24 suite passed.
+
+| Scope | Recorded result |
+|---|---|
+| Candidate and CI | `ab9c974c7b80c737d31b18a100423e12f79d16c1`; all six CI checks passed |
+| Hosted test database | Supabase `uscrdifznmlvczcekqpw`; 19 reviewed migrations installed |
+| Hosted Worker | `clued-auth-test`; tested Worker version `dd233d1b-a02f-403a-ae3c-aaa105049639` |
+| Human identity and recovery | Both approved QQ and Gmail test identities completed real email confirmation; the QQ identity completed password recovery and subsequent login |
+| Real ChatGPT Web | Actual Clued login and consent, MCP tool discovery, and development-record reading completed; the read result has screenshot evidence and a precise database cross-check |
+| Exact record readback | Development record `b2f82377-d38c-41f2-8840-7ea3fa1193d2`, version `1`, matching record count `1` |
+| ChatGPT connection | Binding `cdc80ac1-b107-4b8c-8bac-313777d1e404`; development-operation rows attributed to this Binding: `0`, consistent with the observed read-only run |
+| Remote HTTP contracts | Read/write isolation, receipt-backed idempotent replay, invitation acceptance and wrong-recipient rejection, membership revocation, connection reduction/revocation, and rejection of refresh after revocation passed |
+
+The HTTP write/replay evidence and the real ChatGPT read evidence are separate:
+the latter does not claim a ChatGPT-originated write. Remaining real-browser
+partial-consent/cancellation scenarios, host isolation and complete installed
+Skill behavior still require their own evidence. The production authorization
+and cutover requirements above remain unchanged; P6 remains stopped.
