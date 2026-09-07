@@ -1,0 +1,68 @@
+{
+  "decision_id": "context-ownership-v11-supersession-20260908",
+  "decision_date": "2026-09-08",
+  "status": "SUPERSEDED_BEFORE_ACTIVATION",
+  "subject": {
+    "name": "context-ownership-publication-v11",
+    "source_branch": "codex/context-ownership-v11",
+    "source_commit": "5344d320ecee49655999bdf1f473406d38387fad",
+    "historical_scope_document": "docs/execution-plans/context-ownership-publication-v11/ScopeAndRelease.md"
+  },
+  "authority": {
+    "source": "explicit_user_execution_authorization_20260908",
+    "effect": "Terminate the old v1.1 publication and acceptance sequence and bind future authorization work to the successor candidate. This decision does not accept, deploy, or authorize the successor candidate for production."
+  },
+  "production_observation": {
+    "supabase_project": "ccxsikzwxlolxqlosril",
+    "recorded_migration": {
+      "version": "20260907140346",
+      "name": "clued_context_ownership_publication_v11"
+    },
+    "business_table_row_counts": {
+      "context_spaces_v11": 0,
+      "context_records_v11": 0,
+      "context_record_versions_v11": 0,
+      "context_grants_v11": 0,
+      "context_links_v11": 0,
+      "context_acceptances_v11": 0,
+      "context_publications_v11": 0,
+      "context_publication_heads_v11": 0,
+      "context_feedback_v11": 0,
+      "context_operations_v11": 0
+    },
+    "interpretation": "The v1.1 schema exists in production but there is no observed v1.1 business data dependency. Schema presence is not production capability acceptance."
+  },
+  "disposition": {
+    "old_publication_path": "STOPPED",
+    "old_dual_connection_acceptance": "NOT_TO_BE_EXECUTED",
+    "old_v11_grant_minting_for_release": "NOT_TO_BE_EXECUTED",
+    "old_worker_release_sequence": "NOT_TO_BE_EXECUTED_AS_THE_CURRENT_PLAN",
+    "schema": "RETAIN_AS_REUSABLE_SUCCESSOR_DEPENDENCY",
+    "drop_or_destructive_rollback": "PROHIBITED_WITHOUT_A_SEPARATE_EXPLICIT_DECISION",
+    "historical_evidence": "RETAIN_UNCHANGED"
+  },
+  "successor": {
+    "branch": "feat/clued-unified-skill-authorization",
+    "candidate_commit": "3dbda2396f1a8fdc78336950a8caa0b6bd81c15d",
+    "parent_commit": "5344d320ecee49655999bdf1f473406d38387fad",
+    "rollout_document": "apps/clued-cloud/docs/connection-authorization-rollout.md",
+    "current_status": "IMPLEMENTATION_CANDIDATE",
+    "relationship": "The successor replaces the old release/acceptance path with account-login plus explicit per-connection capability authorization. It may reuse the retained context v1.1 schema where its reviewed implementation requires it.",
+    "not_implied": [
+      "production acceptance",
+      "production deployment",
+      "A01-A24 acceptance",
+      "TM19 publication",
+      "automatic privilege inheritance",
+      "automatic grant of prior permissions"
+    ]
+  },
+  "execution_rules": [
+    "Do not resume the superseded v1.1 dual-consumer publication checklist as the active release plan.",
+    "Do not drop the v1.1 Canonical tables merely because the publication task is superseded.",
+    "Do not represent the applied migration or empty schema as an activated user capability.",
+    "Evaluate and release the successor only against its own current implementation, migration, authorization, runtime, evidence and production gates.",
+    "If the successor changes or no longer requires the retained v1.1 schema, handle that through a separate reviewed migration and explicit authority decision."
+  ],
+  "authority_effect": "This record changes task routing and release governance only. It does not mutate Canonical business records, grant end-user permissions, deploy a Worker, enable a feature flag, or publish the successor."
+}
