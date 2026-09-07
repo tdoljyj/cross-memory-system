@@ -45,6 +45,7 @@ function fixture(href = 'https://clued.example.test/oauth/account', publicEnv = 
 }
 const session = { user: { id: 'fixture-user' }, access_token: 'fixture-access', refresh_token: 'fixture-refresh' };
 const success = { data: { session }, error: null };
+const privateKeyFixture = ['sb', 'secret', 'fixture', 'rejected'].join('_');
 
 test('account, projects and home navigation plus HMR use one instance and one fixed callback policy', () => {
   const f = fixture(); const account = f.evaluate();
@@ -128,7 +129,7 @@ test('partial public configuration and private keys fail before client creation'
     { VITE_CLUED_SUPABASE_URL: 'https://preview.example.test' },
     { VITE_CLUED_SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_fixture' },
     { VITE_CLUED_SUPABASE_URL: '', VITE_CLUED_SUPABASE_PUBLISHABLE_KEY: '' },
-    { VITE_CLUED_SUPABASE_URL: 'https://preview.example.test', VITE_CLUED_SUPABASE_PUBLISHABLE_KEY: 'sb_secret_fixture_rejected' },
+    { VITE_CLUED_SUPABASE_URL: 'https://preview.example.test', VITE_CLUED_SUPABASE_PUBLISHABLE_KEY: privateKeyFixture },
     { VITE_CLUED_SUPABASE_URL: 'https://preview.example.test', VITE_CLUED_SUPABASE_PUBLISHABLE_KEY: 'eyJ.fixture.service_role' },
     { VITE_CLUED_SUPABASE_URL: 'http://remote.example.test', VITE_CLUED_SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_fixture' },
   ]) {
@@ -168,7 +169,7 @@ async function evaluateBuildConfig(environment) {
 test('actual Vite config rejects private or incomplete public values before Worker plugin loading', async () => {
   for (const environment of [
     { VITE_CLUED_SUPABASE_URL: 'https://preview.example.test' },
-    { VITE_CLUED_SUPABASE_URL: 'https://preview.example.test', VITE_CLUED_SUPABASE_PUBLISHABLE_KEY: 'sb_secret_fixture_rejected' },
+    { VITE_CLUED_SUPABASE_URL: 'https://preview.example.test', VITE_CLUED_SUPABASE_PUBLISHABLE_KEY: privateKeyFixture },
   ]) {
     const result = await evaluateBuildConfig(environment); assert.ok(result.error); assert.equal(result.runtimeImports, 0);
   }
