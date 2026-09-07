@@ -1,0 +1,361 @@
+{
+  "review_id": "CLUED_PHASE2_V024_FRESH_CONTEXT_INDEPENDENT_DELTA_REVIEW_20260905",
+  "type": "STRUCTURE_PREREQUISITE_BLOCK_ONLY_NOT_SUBSTANTIVE_FREEZE_ADJUDICATION",
+  "review_sequence": 2,
+  "prior_architecture_assessment": {
+    "path": "data/ReviewAssessment.json",
+    "sha256": "3e9d462c022d1396846d8594679f59eee96adca7bf6574850e0e88a623908c22",
+    "is_valid_architecture_acceptance_decision": false
+  },
+  "valid_prior_architecture_decision_ref": null,
+  "state": "BLOCKED_PENDING_VALID_ARCHITECTURE_ACCEPTANCE",
+  "structure_freeze": "NOT_ISSUED",
+  "formal_structure_freeze_adjudication_performed": false,
+  "original_eight_ids": [
+    "F-MAJ-001",
+    "F-MAJ-003",
+    "F-MAJ-004",
+    "F-MAJ-011",
+    "F-MAJ-014",
+    "F-MAJ-016",
+    "F-MAJ-017",
+    "F-MAJ-018"
+  ],
+  "original_atomic_condition_count": 28,
+  "rows": [
+    {
+      "finding_id": "F-MAJ-001",
+      "original_closure_conditions": [
+        "定义 local qualification 与 executable authority 的不同字段",
+        "若 G1 已通过，绑定 exact G1 GateResultReceipt 并统一重生成 Manifest/Registry/README/trace",
+        "若未通过，撤销 authoritative 表述并继续以 v3.3 为 pre-G1 authority"
+      ],
+      "conditions": [
+        {
+          "condition_id": "F-MAJ-001/C1",
+          "original_text": "定义 local qualification 与 executable authority 的不同字段",
+          "status": "NOT_ADJUDICATED_PENDING_VALID_ARCHITECTURE_ACCEPTANCE",
+          "formal_condition_closure": false,
+          "waiver_issued": false
+        },
+        {
+          "condition_id": "F-MAJ-001/C2",
+          "original_text": "若 G1 已通过，绑定 exact G1 GateResultReceipt 并统一重生成 Manifest/Registry/README/trace",
+          "status": "NOT_ADJUDICATED_PENDING_VALID_ARCHITECTURE_ACCEPTANCE",
+          "formal_condition_closure": false,
+          "waiver_issued": false
+        },
+        {
+          "condition_id": "F-MAJ-001/C3",
+          "original_text": "若未通过，撤销 authoritative 表述并继续以 v3.3 为 pre-G1 authority",
+          "status": "NOT_ADJUDICATED_PENDING_VALID_ARCHITECTURE_ACCEPTANCE",
+          "formal_condition_closure": false,
+          "waiver_issued": false
+        }
+      ],
+      "source": {
+        "candidate_member": "sources/review_v022/data/StructureFreezePrerequisiteAssessment.json",
+        "bytes": 23025,
+        "sha256": "277bf03bb6eec96391786165b1bfc655ebd09503791635a35adfb4fc4082b83e",
+        "locator": "F-MAJ-001"
+      }
+    },
+    {
+      "finding_id": "F-MAJ-003",
+      "original_closure_conditions": [
+        "采用 typed VersionVector",
+        "为每个轴记录 current/superseded/compatible-with/digest",
+        "任何 Gate/Status/Release Receipt 绑定完整适用向量而非单一 VERSION"
+      ],
+      "conditions": [
+        {
+          "condition_id": "F-MAJ-003/C1",
+          "original_text": "采用 typed VersionVector",
+          "status": "NOT_ADJUDICATED_PENDING_VALID_ARCHITECTURE_ACCEPTANCE",
+          "formal_condition_closure": false,
+          "waiver_issued": false
+        },
+        {
+          "condition_id": "F-MAJ-003/C2",
+          "original_text": "为每个轴记录 current/superseded/compatible-with/digest",
+          "status": "NOT_ADJUDICATED_PENDING_VALID_ARCHITECTURE_ACCEPTANCE",
+          "formal_condition_closure": false,
+          "waiver_issued": false
+        },
+        {
+          "condition_id": "F-MAJ-003/C3",
+          "original_text": "任何 Gate/Status/Release Receipt 绑定完整适用向量而非单一 VERSION",
+          "status": "NOT_ADJUDICATED_PENDING_VALID_ARCHITECTURE_ACCEPTANCE",
+          "formal_condition_closure": false,
+          "waiver_issued": false
+        }
+      ],
+      "source": {
+        "candidate_member": "sources/review_v022/data/StructureFreezePrerequisiteAssessment.json",
+        "bytes": 23025,
+        "sha256": "277bf03bb6eec96391786165b1bfc655ebd09503791635a35adfb4fc4082b83e",
+        "locator": "F-MAJ-003"
+      }
+    },
+    {
+      "finding_id": "F-MAJ-004",
+      "original_closure_conditions": [
+        "冻结 exact required check set",
+        "配置 branch/rules protection 或等价外部不可变 Gate Receipt",
+        "采用签名 tag/attestation 或透明签名制品",
+        "清理 merged duplicate branch with receipt"
+      ],
+      "conditions": [
+        {
+          "condition_id": "F-MAJ-004/C1",
+          "original_text": "冻结 exact required check set",
+          "status": "NOT_ADJUDICATED_PENDING_VALID_ARCHITECTURE_ACCEPTANCE",
+          "formal_condition_closure": false,
+          "waiver_issued": false
+        },
+        {
+          "condition_id": "F-MAJ-004/C2",
+          "original_text": "配置 branch/rules protection 或等价外部不可变 Gate Receipt",
+          "status": "NOT_ADJUDICATED_PENDING_VALID_ARCHITECTURE_ACCEPTANCE",
+          "formal_condition_closure": false,
+          "waiver_issued": false
+        },
+        {
+          "condition_id": "F-MAJ-004/C3",
+          "original_text": "采用签名 tag/attestation 或透明签名制品",
+          "status": "NOT_ADJUDICATED_PENDING_VALID_ARCHITECTURE_ACCEPTANCE",
+          "formal_condition_closure": false,
+          "waiver_issued": false
+        },
+        {
+          "condition_id": "F-MAJ-004/C4",
+          "original_text": "清理 merged duplicate branch with receipt",
+          "status": "NOT_ADJUDICATED_PENDING_VALID_ARCHITECTURE_ACCEPTANCE",
+          "formal_condition_closure": false,
+          "waiver_issued": false
+        }
+      ],
+      "source": {
+        "candidate_member": "sources/review_v022/data/StructureFreezePrerequisiteAssessment.json",
+        "bytes": 23025,
+        "sha256": "277bf03bb6eec96391786165b1bfc655ebd09503791635a35adfb4fc4082b83e",
+        "locator": "F-MAJ-004"
+      }
+    },
+    {
+      "finding_id": "F-MAJ-011",
+      "original_closure_conditions": [
+        "单独研究并形成通用候选合同",
+        "定义角色、职责、状态、Artifact identity、Human Approval、Publish Gate、Production Verification、Rollback、Receipt/Evidence",
+        "明确网站流程只是一个 domain projection"
+      ],
+      "conditions": [
+        {
+          "condition_id": "F-MAJ-011/C1",
+          "original_text": "单独研究并形成通用候选合同",
+          "status": "NOT_ADJUDICATED_PENDING_VALID_ARCHITECTURE_ACCEPTANCE",
+          "formal_condition_closure": false,
+          "waiver_issued": false
+        },
+        {
+          "condition_id": "F-MAJ-011/C2",
+          "original_text": "定义角色、职责、状态、Artifact identity、Human Approval、Publish Gate、Production Verification、Rollback、Receipt/Evidence",
+          "status": "NOT_ADJUDICATED_PENDING_VALID_ARCHITECTURE_ACCEPTANCE",
+          "formal_condition_closure": false,
+          "waiver_issued": false
+        },
+        {
+          "condition_id": "F-MAJ-011/C3",
+          "original_text": "明确网站流程只是一个 domain projection",
+          "status": "NOT_ADJUDICATED_PENDING_VALID_ARCHITECTURE_ACCEPTANCE",
+          "formal_condition_closure": false,
+          "waiver_issued": false
+        }
+      ],
+      "source": {
+        "candidate_member": "sources/review_v022/data/StructureFreezePrerequisiteAssessment.json",
+        "bytes": 23025,
+        "sha256": "277bf03bb6eec96391786165b1bfc655ebd09503791635a35adfb4fc4082b83e",
+        "locator": "F-MAJ-011"
+      }
+    },
+    {
+      "finding_id": "F-MAJ-014",
+      "original_closure_conditions": [
+        "在目标结构中把 User Bundle consumer snapshot 与 source/development control 分离",
+        "根 Authority Router 默认 NONE，不把用户数据当开发状态",
+        "敏感 owner/account refs 使用 endpoint policy，不进入可扩散审计/公共包",
+        "对现存历史做 access and leakage review"
+      ],
+      "conditions": [
+        {
+          "condition_id": "F-MAJ-014/C1",
+          "original_text": "在目标结构中把 User Bundle consumer snapshot 与 source/development control 分离",
+          "status": "NOT_ADJUDICATED_PENDING_VALID_ARCHITECTURE_ACCEPTANCE",
+          "formal_condition_closure": false,
+          "waiver_issued": false
+        },
+        {
+          "condition_id": "F-MAJ-014/C2",
+          "original_text": "根 Authority Router 默认 NONE，不把用户数据当开发状态",
+          "status": "NOT_ADJUDICATED_PENDING_VALID_ARCHITECTURE_ACCEPTANCE",
+          "formal_condition_closure": false,
+          "waiver_issued": false
+        },
+        {
+          "condition_id": "F-MAJ-014/C3",
+          "original_text": "敏感 owner/account refs 使用 endpoint policy，不进入可扩散审计/公共包",
+          "status": "NOT_ADJUDICATED_PENDING_VALID_ARCHITECTURE_ACCEPTANCE",
+          "formal_condition_closure": false,
+          "waiver_issued": false
+        },
+        {
+          "condition_id": "F-MAJ-014/C4",
+          "original_text": "对现存历史做 access and leakage review",
+          "status": "NOT_ADJUDICATED_PENDING_VALID_ARCHITECTURE_ACCEPTANCE",
+          "formal_condition_closure": false,
+          "waiver_issued": false
+        }
+      ],
+      "source": {
+        "candidate_member": "sources/review_v022/data/StructureFreezePrerequisiteAssessment.json",
+        "bytes": 23025,
+        "sha256": "277bf03bb6eec96391786165b1bfc655ebd09503791635a35adfb4fc4082b83e",
+        "locator": "F-MAJ-014"
+      }
+    },
+    {
+      "finding_id": "F-MAJ-016",
+      "original_closure_conditions": [
+        "冻结 ArtifactIdentity、ReleaseUnitIdentity、EditionIdentity、SKU/Offer/Entitlement typed refs",
+        "声明 technical qualification, distribution, commercial availability and user entitlement are separate states",
+        "Product/Store only project current Kernel/Registry facts"
+      ],
+      "conditions": [
+        {
+          "condition_id": "F-MAJ-016/C1",
+          "original_text": "冻结 ArtifactIdentity、ReleaseUnitIdentity、EditionIdentity、SKU/Offer/Entitlement typed refs",
+          "status": "NOT_ADJUDICATED_PENDING_VALID_ARCHITECTURE_ACCEPTANCE",
+          "formal_condition_closure": false,
+          "waiver_issued": false
+        },
+        {
+          "condition_id": "F-MAJ-016/C2",
+          "original_text": "声明 technical qualification, distribution, commercial availability and user entitlement are separate states",
+          "status": "NOT_ADJUDICATED_PENDING_VALID_ARCHITECTURE_ACCEPTANCE",
+          "formal_condition_closure": false,
+          "waiver_issued": false
+        },
+        {
+          "condition_id": "F-MAJ-016/C3",
+          "original_text": "Product/Store only project current Kernel/Registry facts",
+          "status": "NOT_ADJUDICATED_PENDING_VALID_ARCHITECTURE_ACCEPTANCE",
+          "formal_condition_closure": false,
+          "waiver_issued": false
+        }
+      ],
+      "source": {
+        "candidate_member": "sources/review_v022/data/StructureFreezePrerequisiteAssessment.json",
+        "bytes": 23025,
+        "sha256": "277bf03bb6eec96391786165b1bfc655ebd09503791635a35adfb4fc4082b83e",
+        "locator": "F-MAJ-016"
+      }
+    },
+    {
+      "finding_id": "F-MAJ-017",
+      "original_closure_conditions": [
+        "以 current Commit/Tree 做实测输入",
+        "Architecture v1.0 只冻结责任，不先锁死目录",
+        "Structure Plan 生成唯一 FrozenTargetMap 和 CurrentToTargetMap",
+        "旧 v3.3 target 每项标记 inherited/changed/retired"
+      ],
+      "conditions": [
+        {
+          "condition_id": "F-MAJ-017/C1",
+          "original_text": "以 current Commit/Tree 做实测输入",
+          "status": "NOT_ADJUDICATED_PENDING_VALID_ARCHITECTURE_ACCEPTANCE",
+          "formal_condition_closure": false,
+          "waiver_issued": false
+        },
+        {
+          "condition_id": "F-MAJ-017/C2",
+          "original_text": "Architecture v1.0 只冻结责任，不先锁死目录",
+          "status": "NOT_ADJUDICATED_PENDING_VALID_ARCHITECTURE_ACCEPTANCE",
+          "formal_condition_closure": false,
+          "waiver_issued": false
+        },
+        {
+          "condition_id": "F-MAJ-017/C3",
+          "original_text": "Structure Plan 生成唯一 FrozenTargetMap 和 CurrentToTargetMap",
+          "status": "NOT_ADJUDICATED_PENDING_VALID_ARCHITECTURE_ACCEPTANCE",
+          "formal_condition_closure": false,
+          "waiver_issued": false
+        },
+        {
+          "condition_id": "F-MAJ-017/C4",
+          "original_text": "旧 v3.3 target 每项标记 inherited/changed/retired",
+          "status": "NOT_ADJUDICATED_PENDING_VALID_ARCHITECTURE_ACCEPTANCE",
+          "formal_condition_closure": false,
+          "waiver_issued": false
+        }
+      ],
+      "source": {
+        "candidate_member": "sources/review_v022/data/StructureFreezePrerequisiteAssessment.json",
+        "bytes": 23025,
+        "sha256": "277bf03bb6eec96391786165b1bfc655ebd09503791635a35adfb4fc4082b83e",
+        "locator": "F-MAJ-017"
+      }
+    },
+    {
+      "finding_id": "F-MAJ-018",
+      "original_closure_conditions": [
+        "冻结 Phase2 MVP success metric and maximum active workstreams",
+        "只把 Slice A 放核心关键路径",
+        "Model M1-M7、Commerce、Marketplace、大规模训练均单独预算和 GO/NO-GO",
+        "每个阶段必须交付可运行纵向 E2E，不接受仅 Schema/Receipt 堆积"
+      ],
+      "conditions": [
+        {
+          "condition_id": "F-MAJ-018/C1",
+          "original_text": "冻结 Phase2 MVP success metric and maximum active workstreams",
+          "status": "NOT_ADJUDICATED_PENDING_VALID_ARCHITECTURE_ACCEPTANCE",
+          "formal_condition_closure": false,
+          "waiver_issued": false
+        },
+        {
+          "condition_id": "F-MAJ-018/C2",
+          "original_text": "只把 Slice A 放核心关键路径",
+          "status": "NOT_ADJUDICATED_PENDING_VALID_ARCHITECTURE_ACCEPTANCE",
+          "formal_condition_closure": false,
+          "waiver_issued": false
+        },
+        {
+          "condition_id": "F-MAJ-018/C3",
+          "original_text": "Model M1-M7、Commerce、Marketplace、大规模训练均单独预算和 GO/NO-GO",
+          "status": "NOT_ADJUDICATED_PENDING_VALID_ARCHITECTURE_ACCEPTANCE",
+          "formal_condition_closure": false,
+          "waiver_issued": false
+        },
+        {
+          "condition_id": "F-MAJ-018/C4",
+          "original_text": "每个阶段必须交付可运行纵向 E2E，不接受仅 Schema/Receipt 堆积",
+          "status": "NOT_ADJUDICATED_PENDING_VALID_ARCHITECTURE_ACCEPTANCE",
+          "formal_condition_closure": false,
+          "waiver_issued": false
+        }
+      ],
+      "source": {
+        "candidate_member": "sources/review_v022/data/StructureFreezePrerequisiteAssessment.json",
+        "bytes": 23025,
+        "sha256": "277bf03bb6eec96391786165b1bfc655ebd09503791635a35adfb4fc4082b83e",
+        "locator": "F-MAJ-018"
+      }
+    }
+  ],
+  "original_text_preserved": true,
+  "source_preservation_and_prerequisite_review_only": true,
+  "full_target_map_or_consumer_inventory_proved": false,
+  "signature": null,
+  "human_approval": null,
+  "authorization_effect": "NONE"
+}

@@ -1,0 +1,111 @@
+{
+  "id": "V025_ORIGINAL_28_STRUCTURE_CONDITION_PREPARATION",
+  "source": {
+    "path": "sources/architecture_review_v024/data/StructureFreezePrerequisiteStatus.json",
+    "bytes": 15203,
+    "sha256": "37306d420b8e1c7380cdb30998e835d1dbbcfc5f6f62754615a5e1b09ac72925"
+  },
+  "original_eight_ids": [
+    "F-MAJ-001",
+    "F-MAJ-003",
+    "F-MAJ-004",
+    "F-MAJ-011",
+    "F-MAJ-014",
+    "F-MAJ-016",
+    "F-MAJ-017",
+    "F-MAJ-018"
+  ],
+  "original_atomic_condition_count": 28,
+  "rows": [
+    {
+      "finding_id": "F-MAJ-001",
+      "original_closure_conditions": [
+        "定义 local qualification 与 executable authority 的不同字段",
+        "若 G1 已通过，绑定 exact G1 GateResultReceipt 并统一重生成 Manifest/Registry/README/trace",
+        "若未通过，撤销 authoritative 表述并继续以 v3.3 为 pre-G1 authority"
+      ],
+      "state": "RETAINED_PENDING_VALID_ARCHITECTURE_ACCEPTANCE_THEN_SEPARATE_ADJUDICATION",
+      "formal_condition_closures": 0
+    },
+    {
+      "finding_id": "F-MAJ-003",
+      "original_closure_conditions": [
+        "采用 typed VersionVector",
+        "为每个轴记录 current/superseded/compatible-with/digest",
+        "任何 Gate/Status/Release Receipt 绑定完整适用向量而非单一 VERSION"
+      ],
+      "state": "RETAINED_PENDING_VALID_ARCHITECTURE_ACCEPTANCE_THEN_SEPARATE_ADJUDICATION",
+      "formal_condition_closures": 0
+    },
+    {
+      "finding_id": "F-MAJ-004",
+      "original_closure_conditions": [
+        "冻结 exact required check set",
+        "配置 branch/rules protection 或等价外部不可变 Gate Receipt",
+        "采用签名 tag/attestation 或透明签名制品",
+        "清理 merged duplicate branch with receipt"
+      ],
+      "state": "RETAINED_PENDING_VALID_ARCHITECTURE_ACCEPTANCE_THEN_SEPARATE_ADJUDICATION",
+      "formal_condition_closures": 0
+    },
+    {
+      "finding_id": "F-MAJ-011",
+      "original_closure_conditions": [
+        "单独研究并形成通用候选合同",
+        "定义角色、职责、状态、Artifact identity、Human Approval、Publish Gate、Production Verification、Rollback、Receipt/Evidence",
+        "明确网站流程只是一个 domain projection"
+      ],
+      "state": "RETAINED_PENDING_VALID_ARCHITECTURE_ACCEPTANCE_THEN_SEPARATE_ADJUDICATION",
+      "formal_condition_closures": 0
+    },
+    {
+      "finding_id": "F-MAJ-014",
+      "original_closure_conditions": [
+        "在目标结构中把 User Bundle consumer snapshot 与 source/development control 分离",
+        "根 Authority Router 默认 NONE，不把用户数据当开发状态",
+        "敏感 owner/account refs 使用 endpoint policy，不进入可扩散审计/公共包",
+        "对现存历史做 access and leakage review"
+      ],
+      "state": "RETAINED_PENDING_VALID_ARCHITECTURE_ACCEPTANCE_THEN_SEPARATE_ADJUDICATION",
+      "formal_condition_closures": 0
+    },
+    {
+      "finding_id": "F-MAJ-016",
+      "original_closure_conditions": [
+        "冻结 ArtifactIdentity、ReleaseUnitIdentity、EditionIdentity、SKU/Offer/Entitlement typed refs",
+        "声明 technical qualification, distribution, commercial availability and user entitlement are separate states",
+        "Product/Store only project current Kernel/Registry facts"
+      ],
+      "state": "RETAINED_PENDING_VALID_ARCHITECTURE_ACCEPTANCE_THEN_SEPARATE_ADJUDICATION",
+      "formal_condition_closures": 0
+    },
+    {
+      "finding_id": "F-MAJ-017",
+      "original_closure_conditions": [
+        "以 current Commit/Tree 做实测输入",
+        "Architecture v1.0 只冻结责任，不先锁死目录",
+        "Structure Plan 生成唯一 FrozenTargetMap 和 CurrentToTargetMap",
+        "旧 v3.3 target 每项标记 inherited/changed/retired"
+      ],
+      "state": "RETAINED_PENDING_VALID_ARCHITECTURE_ACCEPTANCE_THEN_SEPARATE_ADJUDICATION",
+      "formal_condition_closures": 0
+    },
+    {
+      "finding_id": "F-MAJ-018",
+      "original_closure_conditions": [
+        "冻结 Phase2 MVP success metric and maximum active workstreams",
+        "只把 Slice A 放核心关键路径",
+        "Model M1-M7、Commerce、Marketplace、大规模训练均单独预算和 GO/NO-GO",
+        "每个阶段必须交付可运行纵向 E2E，不接受仅 Schema/Receipt 堆积"
+      ],
+      "state": "RETAINED_PENDING_VALID_ARCHITECTURE_ACCEPTANCE_THEN_SEPARATE_ADJUDICATION",
+      "formal_condition_closures": 0
+    }
+  ],
+  "architecture_acceptance_ref": null,
+  "architecture_acceptance_digest": null,
+  "structure_freeze": "NOT_ISSUED",
+  "formal_structure_freeze_adjudication_performed": false,
+  "frozen_target_map_ref": null,
+  "actual_full_consumer_inventory_proved": false
+}

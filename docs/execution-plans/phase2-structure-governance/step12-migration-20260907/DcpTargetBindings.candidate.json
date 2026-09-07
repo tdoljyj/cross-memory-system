@@ -1,0 +1,66 @@
+{
+  "status": "SUPPLEMENTARY_PHYSICAL_TARGET_CANDIDATE_NOT_FROZEN",
+  "authority_effect": "NONE",
+  "creates_new_dcp_service": false,
+  "global_canonical_registry_created": false,
+  "rows": [
+    {
+      "map_row": "TM-17",
+      "concrete_target": "development/contracts/phase2/SourceIndex.json",
+      "treatment": "GENERATED_REFERENCE_INDEX_TO_EXISTING_ACCEPTED_CONTRACTS",
+      "existing_source_family": "docs/execution-plans/phase2-structure-governance/step04-namespace-20260907 and final accepted Step5/Step6 contract sources",
+      "source_payload_relocation": false,
+      "source_semantic_authority_changes": false,
+      "ready_condition": "Freeze binds each exact accepted contract locator, digest, declared role and accepted decision; missing actual Step6 bindings remain pending."
+    },
+    {
+      "map_row": "TM-18",
+      "concrete_target": "development/projections/phase2/",
+      "treatment": "GENERATE_EXISTING_STEP7_MACHINE_AND_READABLE_VIEWS_FROM_FIXED_INPUTS",
+      "generator_ref": "work/step7-projection-candidate/project-governance.mjs",
+      "selected_views": [
+        "GovernanceManifest.projection.json",
+        "GovernanceRegistry.projection.json",
+        "IdentityFiles.projection.json",
+        "ConsumerBindings.projection.json",
+        "GovernanceDocs.projection.md"
+      ],
+      "hand_written_state_allowed": false,
+      "ready_condition": "Final Step7 input and output digests bound; preserve fixed routing and old Status inputs to prevent self-hash loops."
+    },
+    {
+      "map_row": "TM-19",
+      "concrete_target": "development/authority-index/phase2/SourceIndex.json",
+      "treatment": "GENERATED_REFERENCE_INDEX_NO_DECISION_ISSUANCE",
+      "observed_existing_decision_refs": [
+        {
+          "path": "docs/execution-plans/phase2-structure-governance/Step03-CurrentScopedDisposition_20260907.json",
+          "sha256": "88e92b7ea619bcc22bc9b7dc4d3fa2b16f0ad7a359966ac3f12a3ef65a58b0fc",
+          "source_status": null,
+          "decision_kind": null
+        },
+        {
+          "path": "docs/execution-plans/phase2-structure-governance/Step04-ScopedAcceptance_20260907.json",
+          "sha256": "6f2cc1c9cc28c2a717023029851d61a666815567bc30b3635479cb1b70382e6c",
+          "source_status": "ACCEPTED_FOR_STEP4_ADMINISTRATIVE_SCOPE",
+          "decision_kind": "SCOPED_STEP4_NAMESPACE_GOVERNANCE_ACCEPTANCE"
+        },
+        {
+          "path": "docs/execution-plans/phase2-structure-governance/Step05-ScopedAcceptance_20260907.json",
+          "sha256": "a38536ed64ae7924235ab0318cae17716f1a549d89660acde807f4bb15a64a19",
+          "source_status": "ACCEPTED_FOR_CURRENT_SCOPED_IDENTITY_CONTRACTS",
+          "decision_kind": "SCOPED_STEP5_IDENTITY_CONTRACT_ACCEPTANCE"
+        }
+      ],
+      "unissued_required_subject_types": [
+        "ArchitectureConstitutionAcceptanceDecision",
+        "Phase2StructureFreezeDecision"
+      ],
+      "ready_condition": "Bind actual accepted decision/Gate/Receipt bytes from the existing flow; do not fill an unissued subject with a fabricated accepted row."
+    }
+  ],
+  "index_identity_rule": "Entries are derived locators/digests/roles pointing to their original authority source; entry IDs do not replace original IDs and indexes grant no lease, writer role, Canonical object identity or service authority.",
+  "parent_plan_ref": "MigrationPlan.candidate.json",
+  "required_freeze_action": "Accept these concrete index/projection targets or record an explicit alternative against TM17-19; do not silently remove the rows from scope.",
+  "fixture_boundary": "The nine tests cover the 29 concrete existing-file operations and projection cycle. They do not claim to execute these future final-input DCP index generations."
+}

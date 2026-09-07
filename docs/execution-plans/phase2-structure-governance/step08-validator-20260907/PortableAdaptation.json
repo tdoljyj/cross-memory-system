@@ -1,0 +1,277 @@
+{
+  "status": "PASS",
+  "authority_effect": "NONE",
+  "core_predicates_unchanged": true,
+  "core_sha256": "f99eaf03737cc13f5ea2dea06a1e4d5b48033df22bb198f6eade22b00746bb8a",
+  "projection_adapter_unchanged": true,
+  "eight_original_test_method_asts_unchanged": true,
+  "adaptation_scope": [
+    "Explicit runtime/source/output/package locations",
+    "Preserve unmodified input bytes",
+    "Follow final typed-source selectors",
+    "Synthetic alias stays pending instead of forging accepted alias bytes",
+    "Default discovery explicitly skips; optional named existing test selection"
+  ],
+  "default_discovery_observation": {
+    "method": "unittest discover -s tests -p test_naming_governance_validator.py -v",
+    "tests_run": 0,
+    "skipped": 1,
+    "exit_code": 0,
+    "meaning": "NO_BOUND_INPUTS; NOT_A_TEST_PASS_CLAIM"
+  },
+  "portable_entry_actual_test": {
+    "status": "PASS",
+    "subprocess_cases": 1,
+    "cases_passed": 1,
+    "negative_baseline_cases": 16,
+    "positive_baseline_types": 13,
+    "formal_step8_gate": false,
+    "selected_test_methods": [
+      "test_positive_13_types"
+    ],
+    "all_baseline_cases_executed_in_this_invocation": false,
+    "fixture_green_is_not_real_freeze": true,
+    "cases": [
+      {
+        "case": "positive_13_types",
+        "purpose": "evidence",
+        "process_exit_code": 0,
+        "expected_exit_code": 0,
+        "target_rule": null,
+        "observed_error_codes": [],
+        "target_rule_failed": null,
+        "receipt": "fixtures\\positive_13_types\\Receipt.json",
+        "receipt_sha256": "fc7bfde6768f257aa704a2d67cce8879dcf9576efe0b3f93b850ff1f0001f234",
+        "fixture_bindings_sha256": "4987d309a139e582e5db99efb0debeb8c7ecd3a52adf5ab4bd02d18d75414a35",
+        "command": [
+          "C:\\Users\\Windows\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\python\\python.exe",
+          "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\scripts\\naming-governance\\run.py",
+          "--bindings",
+          "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\.portable-driver-check\\fixtures\\positive_13_types\\InputBindings.json",
+          "--source-root",
+          "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check",
+          "--purpose",
+          "evidence",
+          "--report",
+          "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\.portable-driver-check\\fixtures\\positive_13_types\\Receipt.json",
+          "--candidate-zip",
+          "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip"
+        ],
+        "passed": true
+      }
+    ]
+  },
+  "portable_driver_archive": {
+    "path": "PortableDriverCheck.zip",
+    "bytes": 188798,
+    "sha256": "6fca1429419f0048601613e4aa2aeea372c89ac28838a0bfe57f7565be8e91ce",
+    "members": [
+      {
+        "path": "fixtures/positive_13_types/aliases.json",
+        "bytes": 5412,
+        "sha256": "623e86954ab80460872fb9dd0b88bee6de8ff6b92d6cde8d2967f46acb9b485e"
+      },
+      {
+        "path": "fixtures/positive_13_types/ci_receipt.json",
+        "bytes": 4213,
+        "sha256": "0a6bf0df65e722f2bb48fc6fd93767ec5ffcd8bb207b4189d4ff7d0863738091"
+      },
+      {
+        "path": "fixtures/positive_13_types/consumers.json",
+        "bytes": 56180,
+        "sha256": "3fffec8fd9570352246425d60156d17988eb6311adab719e481c197a6eca5cee"
+      },
+      {
+        "path": "fixtures/positive_13_types/copy.json",
+        "bytes": 3263,
+        "sha256": "aa4d0092724c3b2d7d24ad6801d51438692912d87b8d7ce053785ded70a37b15"
+      },
+      {
+        "path": "fixtures/positive_13_types/current_registry.json",
+        "bytes": 15392,
+        "sha256": "1dafc859c9a0e51cf13e193e0226718e030bd0193ebeebb3a17288c78c6a1468"
+      },
+      {
+        "path": "fixtures/positive_13_types/export_scope_disposition.json",
+        "bytes": 4139,
+        "sha256": "fa2ba22146d5560f502d5e70d7045ead5577fea7c1af909b7ab51a9e64b718ff"
+      },
+      {
+        "path": "fixtures/positive_13_types/generated/AGENTS.governance.md",
+        "bytes": 2318,
+        "sha256": "f86a4af03c8e9d17fb46f8f935f2fc46e4c131ca5bd41fe92b7eac47b7c0b34c"
+      },
+      {
+        "path": "fixtures/positive_13_types/generated/ConsumerBindings.projection.json",
+        "bytes": 186648,
+        "sha256": "dc3e7e391bf0a87459166c083a1e789e67199fc1f574fe8f86f3daf7e621d417"
+      },
+      {
+        "path": "fixtures/positive_13_types/generated/CURRENT_STATUS.history-original.md",
+        "bytes": 2753,
+        "sha256": "af52a717b2c37ebabf81a7123244aa3dd9a91042ea87037fd026925e8111f722"
+      },
+      {
+        "path": "fixtures/positive_13_types/generated/CURRENT_STATUS.projection.md",
+        "bytes": 2708,
+        "sha256": "0d347cfe14c31546d8ed1841ae2fbe60f3364186ed1aff7521bc643938522f7d"
+      },
+      {
+        "path": "fixtures/positive_13_types/generated/GovernanceDocs.projection.md",
+        "bytes": 2318,
+        "sha256": "f86a4af03c8e9d17fb46f8f935f2fc46e4c131ca5bd41fe92b7eac47b7c0b34c"
+      },
+      {
+        "path": "fixtures/positive_13_types/generated/GovernanceManifest.projection.json",
+        "bytes": 233182,
+        "sha256": "3855cea9a31f204780ef9cdc8b27be34dc6b3bb8bd572c688bc4df15994d6ec4"
+      },
+      {
+        "path": "fixtures/positive_13_types/generated/GovernanceRegistry.projection.json",
+        "bytes": 230479,
+        "sha256": "34104ff5e9c9988a3d43419fcab1ca7474d291238713fb6732727760a38567a0"
+      },
+      {
+        "path": "fixtures/positive_13_types/generated/IdentityFiles.projection.json",
+        "bytes": 10667,
+        "sha256": "b79f39dd7d8a22613381f5996c5c03e39eecc78c97166284b9d27cd9e6878a0c"
+      },
+      {
+        "path": "fixtures/positive_13_types/generated/README.governance.md",
+        "bytes": 2318,
+        "sha256": "f86a4af03c8e9d17fb46f8f935f2fc46e4c131ca5bd41fe92b7eac47b7c0b34c"
+      },
+      {
+        "path": "fixtures/positive_13_types/generated/StatusMigrationPlan.candidate.json",
+        "bytes": 751,
+        "sha256": "1881cc343304904893b561a7c9d6d5881981378eff40c7b06cad2c0b29e81ecb"
+      },
+      {
+        "path": "fixtures/positive_13_types/generated/ToolRouting.projection.json",
+        "bytes": 5136,
+        "sha256": "46930f666964ebee44fc076410ce8fc2d05054837e3995b9ec3b42347eb7b704"
+      },
+      {
+        "path": "fixtures/positive_13_types/generated/WorkflowReferences.projection.json",
+        "bytes": 5080,
+        "sha256": "7b2f27fe8e55ed9ee5874d17fcb3360a792c0852cfd8c3b87836f444a010a159"
+      },
+      {
+        "path": "fixtures/positive_13_types/identity_policy.json",
+        "bytes": 776,
+        "sha256": "3a14df68ea81c6390316c5df09d51a049b52a640871ab57953c42acb30624bff"
+      },
+      {
+        "path": "fixtures/positive_13_types/InputBindings.json",
+        "bytes": 7075,
+        "sha256": "4987d309a139e582e5db99efb0debeb8c7ecd3a52adf5ab4bd02d18d75414a35"
+      },
+      {
+        "path": "fixtures/positive_13_types/logical.json",
+        "bytes": 11227,
+        "sha256": "ceb63f2ec16c63d160ae7f760992ec6dd9b17c5555679bba8c37bb7c1ea58296"
+      },
+      {
+        "path": "fixtures/positive_13_types/namespace_delegation.json",
+        "bytes": 5527,
+        "sha256": "cee24dff183aed36ea99a6ad51aea8ee6edf2b15544ac641a955c2393648d537"
+      },
+      {
+        "path": "fixtures/positive_13_types/ownership.json",
+        "bytes": 40953,
+        "sha256": "40d7e87fed046c8aff18d8c1d0532ada075b802faf204059649c84faef1c0782"
+      },
+      {
+        "path": "fixtures/positive_13_types/projection_bindings.json",
+        "bytes": 9407,
+        "sha256": "617621cb48075ec6105113c8080cc19f214fcb235d871f3f42a6e461bb9a2018"
+      },
+      {
+        "path": "fixtures/positive_13_types/Receipt.json",
+        "bytes": 161625,
+        "sha256": "fc7bfde6768f257aa704a2d67cce8879dcf9576efe0b3f93b850ff1f0001f234"
+      },
+      {
+        "path": "fixtures/positive_13_types/representation.json",
+        "bytes": 6339,
+        "sha256": "c278f906a3c081f4e70f771904eb5577f6df165eba99bb6e26cf2d036b128a67"
+      },
+      {
+        "path": "fixtures/positive_13_types/review_subject.json",
+        "bytes": 1383,
+        "sha256": "c2cd13dbe8fd046aa8f0344778141cb9b115fae0048a8c673b60bd25b03498d3"
+      },
+      {
+        "path": "fixtures/positive_13_types/stderr.txt",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "fixtures/positive_13_types/stdout.txt",
+        "bytes": 311,
+        "sha256": "1fd6dc041eac34f63948b778df002667b5500e3d8a8f3fc145a9ea1f72f9cb1e"
+      },
+      {
+        "path": "fixtures/positive_13_types/step4_sources.json",
+        "bytes": 10645,
+        "sha256": "ffe6ea867b76657553312b3c45571b1fee9bfaca14413fc3679c73c0d39508d3"
+      },
+      {
+        "path": "fixtures/positive_13_types/step5_sources.json",
+        "bytes": 16995,
+        "sha256": "18635b8e12ea817d77648227acec65accc5d342bb6fa3eba70405a3740246bd4"
+      },
+      {
+        "path": "fixtures/positive_13_types/step6_sources.json",
+        "bytes": 27246,
+        "sha256": "87d60f81c3e28de14a57b2a666308a403879d6ec7f03a07933887fd8d5aacc1e"
+      },
+      {
+        "path": "fixtures/positive_13_types/typed_authorization.json",
+        "bytes": 74695,
+        "sha256": "359e7461ba3166bef63815f37ddd9c247aada317c14e4e62bdee3bc79cc3fcdd"
+      },
+      {
+        "path": "fixtures/positive_13_types/typed_consumers.json",
+        "bytes": 243588,
+        "sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7"
+      },
+      {
+        "path": "fixtures/positive_13_types/typed_receipts.json",
+        "bytes": 91138,
+        "sha256": "05d182805b31ba9d5e6c1c3fa32ae2081527a92faaa76263debded6ffca5efa4"
+      },
+      {
+        "path": "fixtures/positive_13_types/versions.json",
+        "bytes": 9355,
+        "sha256": "1276845153b1fe93517533bc0ae18d466134a6e8651100369dd54493790f27da"
+      },
+      {
+        "path": "InputBindings.candidate.json",
+        "bytes": 6210,
+        "sha256": "04aa73c7673b67bc046b8fa5dd37e8bbd9251e84766c09afa735d2a35fe8162b"
+      },
+      {
+        "path": "PositiveTypeCoverage.json",
+        "bytes": 2868,
+        "sha256": "bb368b144a1d6ff1bd8af1486a9510080e8567fbedb494b8d363b71c0ddc765b"
+      },
+      {
+        "path": "TestResults.json",
+        "bytes": 2079,
+        "sha256": "ade43976be1a63fabba1eecc1eccc7ef0ff90fed119631191ddd3fcd59263e25"
+      }
+    ],
+    "all_members_recomputed_after_pack": true
+  },
+  "script_hashes": {
+    "scripts/naming-governance/naming_validator.py": "f99eaf03737cc13f5ea2dea06a1e4d5b48033df22bb198f6eade22b00746bb8a",
+    "scripts/naming-governance/run.py": "b7609198aade6f16f8445ffd2d3e5cb0075d3161e78eb222a01940f75ea73edb",
+    "scripts/naming-governance/projection-check.mjs": "c919ce66e9a4555c3ad86197b9044fe72585ccdce279112b4dd77c6878b75714",
+    "scripts/naming-governance/render-fixture.mjs": "28ad7b496fc70ba3c2e8dc587710bd9948578d6e342af5c1423090ee46774a46",
+    "tests/test_naming_governance_validator.py": "dfd44464ae4a5a7ef455a9915f22675c6229e519bd0e7d9495e14b7fcdb2554a",
+    "tests/naming_governance_final_binding_checks.py": "0b72d65fb0f9772c3652f0b32026df44668ab93c47bc172791756bf32dc7d497"
+  },
+  "formal_step8_gate": false,
+  "freeze_issued": false
+}

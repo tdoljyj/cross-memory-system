@@ -1,0 +1,1756 @@
+{
+  "schema": "clued.step6-existing-authorization-bindings/v1",
+  "authority_effect": "NONE_NEW",
+  "binding_count": 27,
+  "bindings": [
+    {
+      "consumer_id": "C01",
+      "profile": "public",
+      "authorization_type": "ExistingPublicDiscoveryPolicy",
+      "issuer": "existing Worker publicToolPolicies/handleMcp",
+      "capability": [
+        "initialize",
+        "tools/list",
+        "clued_agent_bootstrap"
+      ],
+      "runtime_subject": "anonymous HTTP/JSON-RPC caller",
+      "scope": "public discovery only; no canonical business read/write",
+      "constraints": [
+        "only declared public methods/tools",
+        "unknown tool is 404/JSON-RPC error"
+      ],
+      "expiry": "No bearer credential for public discovery; no token expiry invented",
+      "revocation": "Source/deployment policy change invalidates this binding",
+      "reusable": true,
+      "implementation_refs": [
+        {
+          "source_id": "apps/clued-cloud/worker/continuity.ts",
+          "sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "pointer": "",
+          "lines": [
+            760,
+            763,
+            918,
+            934
+          ]
+        }
+      ],
+      "grantee_binding": "RUNTIME_TYPED_SLOT; resolve presented request/process identity through the cited existing enforcement; no credential value or new grant issued",
+      "grant_issued": false,
+      "inventory_decision_refs": [
+        {
+          "source_id": "step4-acceptance",
+          "sha256": "6f2cc1c9cc28c2a717023029851d61a666815567bc30b3635479cb1b70382e6c",
+          "pointer": ""
+        },
+        {
+          "source_id": "step5-acceptance",
+          "sha256": "a38536ed64ae7924235ab0318cae17716f1a549d89660acde807f4bb15a64a19",
+          "pointer": ""
+        }
+      ],
+      "required_evidence": {
+        "kind": "EXISTING_REQUEST_VALIDATION_OUTPUT_NOT_NEW_PHASE2_APPROVAL",
+        "predicate": [
+          "only declared public methods/tools",
+          "unknown tool is 404/JSON-RPC error"
+        ],
+        "scope": "Existing cited caller/callee evaluates these at request time; Step4/5 decisions authorize the governance inventory, not user service operations."
+      }
+    },
+    {
+      "consumer_id": "C02",
+      "profile": "jwt",
+      "authorization_type": "ExistingSupabaseUserJWT",
+      "issuer": "Supabase Auth for project ccxsikzwxlolxqlosril; current URL observation identifies configuration only",
+      "capability": [
+        "account-bound selected operation"
+      ],
+      "runtime_subject": "user.id from successful /auth/v1/user or auth.uid() inside authenticated SQL wrapper",
+      "scope": "authenticated user and existing RLS/selected wrapper scope",
+      "constraints": [
+        "Bearer token present",
+        "clued_bnd_ prefix rejected as account JWT",
+        "GET /auth/v1/user returns nonempty user.id",
+        "database auth.uid/RLS remains authoritative"
+      ],
+      "expiry": "GoTrue validates the presented token/session; no expiry value is supplied by this inventory",
+      "revocation": "Actual Auth session validity plus per-request user verification; no new token minted",
+      "reusable": true,
+      "implementation_refs": [
+        {
+          "source_id": "apps/clued-cloud/worker/continuity.ts",
+          "sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "pointer": "",
+          "lines": [
+            485,
+            495,
+            1121,
+            1134
+          ]
+        },
+        {
+          "source_id": "apps/clued-cloud/supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql",
+          "sha256": "f59e414ec0de016cbe89d3ba24ded2d90e85a9e17fb554021b2d4d611f4d26c2",
+          "pointer": "",
+          "lines": [
+            712,
+            729
+          ]
+        }
+      ],
+      "grantee_binding": "RUNTIME_TYPED_SLOT; resolve presented request/process identity through the cited existing enforcement; no credential value or new grant issued",
+      "grant_issued": false,
+      "inventory_decision_refs": [
+        {
+          "source_id": "step4-acceptance",
+          "sha256": "6f2cc1c9cc28c2a717023029851d61a666815567bc30b3635479cb1b70382e6c",
+          "pointer": ""
+        },
+        {
+          "source_id": "step5-acceptance",
+          "sha256": "a38536ed64ae7924235ab0318cae17716f1a549d89660acde807f4bb15a64a19",
+          "pointer": ""
+        }
+      ],
+      "required_evidence": {
+        "kind": "EXISTING_REQUEST_VALIDATION_OUTPUT_NOT_NEW_PHASE2_APPROVAL",
+        "predicate": [
+          "Bearer token present",
+          "clued_bnd_ prefix rejected as account JWT",
+          "GET /auth/v1/user returns nonempty user.id",
+          "database auth.uid/RLS remains authoritative"
+        ],
+        "scope": "Existing cited caller/callee evaluates these at request time; Step4/5 decisions authorize the governance inventory, not user service operations."
+      }
+    },
+    {
+      "consumer_id": "C03",
+      "profile": "binding",
+      "authorization_type": "ExistingCluedAgentBindingToken",
+      "issuer": "existing authenticated account createBinding + public.clued_agent_bindings; no project delegation substituted",
+      "capability": [
+        "per selected RPC required scope"
+      ],
+      "runtime_subject": "binding.id/user_id resolved from SHA256(presented binding token)",
+      "scope": "required scope and selected context key at clued_private.resolve_binding",
+      "constraints": [
+        "p_token_hash matches ^[0-9a-f]{64}$",
+        "revoked_at is null",
+        "p_required_scope is an element of binding.scopes",
+        "* or exact p_context_key is in binding.context_keys"
+      ],
+      "expiry": "No expires_at check in inspected legacy resolve_binding; do not invent one",
+      "revocation": "revoked_at checked per resolve_binding; last_used_at updated as audit side effect",
+      "reusable": true,
+      "implementation_refs": [
+        {
+          "source_id": "apps/clued-cloud/supabase/migrations/202608230002_mandatory_continuity.sql",
+          "sha256": "9afc51a213bed869c143a7fdb5a23ab8a2e80df10639b3ea572a39aef203f57c",
+          "pointer": "",
+          "lines": [
+            95,
+            129
+          ]
+        },
+        {
+          "source_id": "apps/clued-cloud/worker/continuity.ts",
+          "sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "pointer": "",
+          "lines": [
+            897,
+            908
+          ]
+        }
+      ],
+      "grantee_binding": "RUNTIME_TYPED_SLOT; resolve presented request/process identity through the cited existing enforcement; no credential value or new grant issued",
+      "grant_issued": false,
+      "selected_operation_scope_contract": "context:read；audit调用audit:read；resolve_binding检查scope、context_keys、revoked_at",
+      "inventory_decision_refs": [
+        {
+          "source_id": "step4-acceptance",
+          "sha256": "6f2cc1c9cc28c2a717023029851d61a666815567bc30b3635479cb1b70382e6c",
+          "pointer": ""
+        },
+        {
+          "source_id": "step5-acceptance",
+          "sha256": "a38536ed64ae7924235ab0318cae17716f1a549d89660acde807f4bb15a64a19",
+          "pointer": ""
+        }
+      ],
+      "required_evidence": {
+        "kind": "EXISTING_REQUEST_VALIDATION_OUTPUT_NOT_NEW_PHASE2_APPROVAL",
+        "predicate": [
+          "p_token_hash matches ^[0-9a-f]{64}$",
+          "revoked_at is null",
+          "p_required_scope is an element of binding.scopes",
+          "* or exact p_context_key is in binding.context_keys"
+        ],
+        "scope": "Existing cited caller/callee evaluates these at request time; Step4/5 decisions authorize the governance inventory, not user service operations."
+      }
+    },
+    {
+      "consumer_id": "C03",
+      "profile": "jwt",
+      "authorization_type": "ExistingSupabaseUserJWT",
+      "issuer": "Supabase Auth for project ccxsikzwxlolxqlosril; current URL observation identifies configuration only",
+      "capability": [
+        "account-bound selected operation"
+      ],
+      "runtime_subject": "user.id from successful /auth/v1/user or auth.uid() inside authenticated SQL wrapper",
+      "scope": "authenticated user and existing RLS/selected wrapper scope",
+      "constraints": [
+        "Bearer token present",
+        "clued_bnd_ prefix rejected as account JWT",
+        "GET /auth/v1/user returns nonempty user.id",
+        "database auth.uid/RLS remains authoritative"
+      ],
+      "expiry": "GoTrue validates the presented token/session; no expiry value is supplied by this inventory",
+      "revocation": "Actual Auth session validity plus per-request user verification; no new token minted",
+      "reusable": true,
+      "implementation_refs": [
+        {
+          "source_id": "apps/clued-cloud/worker/continuity.ts",
+          "sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "pointer": "",
+          "lines": [
+            485,
+            495,
+            1121,
+            1134
+          ]
+        },
+        {
+          "source_id": "apps/clued-cloud/supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql",
+          "sha256": "f59e414ec0de016cbe89d3ba24ded2d90e85a9e17fb554021b2d4d611f4d26c2",
+          "pointer": "",
+          "lines": [
+            712,
+            729
+          ]
+        }
+      ],
+      "grantee_binding": "RUNTIME_TYPED_SLOT; resolve presented request/process identity through the cited existing enforcement; no credential value or new grant issued",
+      "grant_issued": false,
+      "inventory_decision_refs": [
+        {
+          "source_id": "step4-acceptance",
+          "sha256": "6f2cc1c9cc28c2a717023029851d61a666815567bc30b3635479cb1b70382e6c",
+          "pointer": ""
+        },
+        {
+          "source_id": "step5-acceptance",
+          "sha256": "a38536ed64ae7924235ab0318cae17716f1a549d89660acde807f4bb15a64a19",
+          "pointer": ""
+        }
+      ],
+      "required_evidence": {
+        "kind": "EXISTING_REQUEST_VALIDATION_OUTPUT_NOT_NEW_PHASE2_APPROVAL",
+        "predicate": [
+          "Bearer token present",
+          "clued_bnd_ prefix rejected as account JWT",
+          "GET /auth/v1/user returns nonempty user.id",
+          "database auth.uid/RLS remains authoritative"
+        ],
+        "scope": "Existing cited caller/callee evaluates these at request time; Step4/5 decisions authorize the governance inventory, not user service operations."
+      }
+    },
+    {
+      "consumer_id": "C04",
+      "profile": "binding",
+      "authorization_type": "ExistingCluedAgentBindingToken",
+      "issuer": "existing authenticated account createBinding + public.clued_agent_bindings; no project delegation substituted",
+      "capability": [
+        "per selected RPC required scope"
+      ],
+      "runtime_subject": "binding.id/user_id resolved from SHA256(presented binding token)",
+      "scope": "required scope and selected context key at clued_private.resolve_binding",
+      "constraints": [
+        "p_token_hash matches ^[0-9a-f]{64}$",
+        "revoked_at is null",
+        "p_required_scope is an element of binding.scopes",
+        "* or exact p_context_key is in binding.context_keys"
+      ],
+      "expiry": "No expires_at check in inspected legacy resolve_binding; do not invent one",
+      "revocation": "revoked_at checked per resolve_binding; last_used_at updated as audit side effect",
+      "reusable": true,
+      "implementation_refs": [
+        {
+          "source_id": "apps/clued-cloud/supabase/migrations/202608230002_mandatory_continuity.sql",
+          "sha256": "9afc51a213bed869c143a7fdb5a23ab8a2e80df10639b3ea572a39aef203f57c",
+          "pointer": "",
+          "lines": [
+            95,
+            129
+          ]
+        },
+        {
+          "source_id": "apps/clued-cloud/worker/continuity.ts",
+          "sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "pointer": "",
+          "lines": [
+            897,
+            908
+          ]
+        }
+      ],
+      "grantee_binding": "RUNTIME_TYPED_SLOT; resolve presented request/process identity through the cited existing enforcement; no credential value or new grant issued",
+      "grant_issued": false,
+      "selected_operation_scope_contract": "context:write；绑定scope/context范围+会话校验",
+      "inventory_decision_refs": [
+        {
+          "source_id": "step4-acceptance",
+          "sha256": "6f2cc1c9cc28c2a717023029851d61a666815567bc30b3635479cb1b70382e6c",
+          "pointer": ""
+        },
+        {
+          "source_id": "step5-acceptance",
+          "sha256": "a38536ed64ae7924235ab0318cae17716f1a549d89660acde807f4bb15a64a19",
+          "pointer": ""
+        }
+      ],
+      "required_evidence": {
+        "kind": "EXISTING_REQUEST_VALIDATION_OUTPUT_NOT_NEW_PHASE2_APPROVAL",
+        "predicate": [
+          "p_token_hash matches ^[0-9a-f]{64}$",
+          "revoked_at is null",
+          "p_required_scope is an element of binding.scopes",
+          "* or exact p_context_key is in binding.context_keys"
+        ],
+        "scope": "Existing cited caller/callee evaluates these at request time; Step4/5 decisions authorize the governance inventory, not user service operations."
+      }
+    },
+    {
+      "consumer_id": "C04",
+      "profile": "jwt",
+      "authorization_type": "ExistingSupabaseUserJWT",
+      "issuer": "Supabase Auth for project ccxsikzwxlolxqlosril; current URL observation identifies configuration only",
+      "capability": [
+        "account-bound selected operation"
+      ],
+      "runtime_subject": "user.id from successful /auth/v1/user or auth.uid() inside authenticated SQL wrapper",
+      "scope": "authenticated user and existing RLS/selected wrapper scope",
+      "constraints": [
+        "Bearer token present",
+        "clued_bnd_ prefix rejected as account JWT",
+        "GET /auth/v1/user returns nonempty user.id",
+        "database auth.uid/RLS remains authoritative"
+      ],
+      "expiry": "GoTrue validates the presented token/session; no expiry value is supplied by this inventory",
+      "revocation": "Actual Auth session validity plus per-request user verification; no new token minted",
+      "reusable": true,
+      "implementation_refs": [
+        {
+          "source_id": "apps/clued-cloud/worker/continuity.ts",
+          "sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "pointer": "",
+          "lines": [
+            485,
+            495,
+            1121,
+            1134
+          ]
+        },
+        {
+          "source_id": "apps/clued-cloud/supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql",
+          "sha256": "f59e414ec0de016cbe89d3ba24ded2d90e85a9e17fb554021b2d4d611f4d26c2",
+          "pointer": "",
+          "lines": [
+            712,
+            729
+          ]
+        }
+      ],
+      "grantee_binding": "RUNTIME_TYPED_SLOT; resolve presented request/process identity through the cited existing enforcement; no credential value or new grant issued",
+      "grant_issued": false,
+      "inventory_decision_refs": [
+        {
+          "source_id": "step4-acceptance",
+          "sha256": "6f2cc1c9cc28c2a717023029851d61a666815567bc30b3635479cb1b70382e6c",
+          "pointer": ""
+        },
+        {
+          "source_id": "step5-acceptance",
+          "sha256": "a38536ed64ae7924235ab0318cae17716f1a549d89660acde807f4bb15a64a19",
+          "pointer": ""
+        }
+      ],
+      "required_evidence": {
+        "kind": "EXISTING_REQUEST_VALIDATION_OUTPUT_NOT_NEW_PHASE2_APPROVAL",
+        "predicate": [
+          "Bearer token present",
+          "clued_bnd_ prefix rejected as account JWT",
+          "GET /auth/v1/user returns nonempty user.id",
+          "database auth.uid/RLS remains authoritative"
+        ],
+        "scope": "Existing cited caller/callee evaluates these at request time; Step4/5 decisions authorize the governance inventory, not user service operations."
+      }
+    },
+    {
+      "consumer_id": "C05",
+      "profile": "binding",
+      "authorization_type": "ExistingCluedAgentBindingToken",
+      "issuer": "existing authenticated account createBinding + public.clued_agent_bindings; no project delegation substituted",
+      "capability": [
+        "per selected RPC required scope"
+      ],
+      "runtime_subject": "binding.id/user_id resolved from SHA256(presented binding token)",
+      "scope": "required scope and selected context key at clued_private.resolve_binding",
+      "constraints": [
+        "p_token_hash matches ^[0-9a-f]{64}$",
+        "revoked_at is null",
+        "p_required_scope is an element of binding.scopes",
+        "* or exact p_context_key is in binding.context_keys"
+      ],
+      "expiry": "No expires_at check in inspected legacy resolve_binding; do not invent one",
+      "revocation": "revoked_at checked per resolve_binding; last_used_at updated as audit side effect",
+      "reusable": true,
+      "implementation_refs": [
+        {
+          "source_id": "apps/clued-cloud/supabase/migrations/202608230002_mandatory_continuity.sql",
+          "sha256": "9afc51a213bed869c143a7fdb5a23ab8a2e80df10639b3ea572a39aef203f57c",
+          "pointer": "",
+          "lines": [
+            95,
+            129
+          ]
+        },
+        {
+          "source_id": "apps/clued-cloud/worker/continuity.ts",
+          "sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "pointer": "",
+          "lines": [
+            897,
+            908
+          ]
+        }
+      ],
+      "grantee_binding": "RUNTIME_TYPED_SLOT; resolve presented request/process identity through the cited existing enforcement; no credential value or new grant issued",
+      "grant_issued": false,
+      "selected_operation_scope_contract": "用户JWT+auth.uid；Binding为context:read/write且system:projects范围",
+      "inventory_decision_refs": [
+        {
+          "source_id": "step4-acceptance",
+          "sha256": "6f2cc1c9cc28c2a717023029851d61a666815567bc30b3635479cb1b70382e6c",
+          "pointer": ""
+        },
+        {
+          "source_id": "step5-acceptance",
+          "sha256": "a38536ed64ae7924235ab0318cae17716f1a549d89660acde807f4bb15a64a19",
+          "pointer": ""
+        }
+      ],
+      "required_evidence": {
+        "kind": "EXISTING_REQUEST_VALIDATION_OUTPUT_NOT_NEW_PHASE2_APPROVAL",
+        "predicate": [
+          "p_token_hash matches ^[0-9a-f]{64}$",
+          "revoked_at is null",
+          "p_required_scope is an element of binding.scopes",
+          "* or exact p_context_key is in binding.context_keys"
+        ],
+        "scope": "Existing cited caller/callee evaluates these at request time; Step4/5 decisions authorize the governance inventory, not user service operations."
+      }
+    },
+    {
+      "consumer_id": "C05",
+      "profile": "jwt",
+      "authorization_type": "ExistingSupabaseUserJWT",
+      "issuer": "Supabase Auth for project ccxsikzwxlolxqlosril; current URL observation identifies configuration only",
+      "capability": [
+        "account-bound selected operation"
+      ],
+      "runtime_subject": "user.id from successful /auth/v1/user or auth.uid() inside authenticated SQL wrapper",
+      "scope": "authenticated user and existing RLS/selected wrapper scope",
+      "constraints": [
+        "Bearer token present",
+        "clued_bnd_ prefix rejected as account JWT",
+        "GET /auth/v1/user returns nonempty user.id",
+        "database auth.uid/RLS remains authoritative"
+      ],
+      "expiry": "GoTrue validates the presented token/session; no expiry value is supplied by this inventory",
+      "revocation": "Actual Auth session validity plus per-request user verification; no new token minted",
+      "reusable": true,
+      "implementation_refs": [
+        {
+          "source_id": "apps/clued-cloud/worker/continuity.ts",
+          "sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "pointer": "",
+          "lines": [
+            485,
+            495,
+            1121,
+            1134
+          ]
+        },
+        {
+          "source_id": "apps/clued-cloud/supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql",
+          "sha256": "f59e414ec0de016cbe89d3ba24ded2d90e85a9e17fb554021b2d4d611f4d26c2",
+          "pointer": "",
+          "lines": [
+            712,
+            729
+          ]
+        }
+      ],
+      "grantee_binding": "RUNTIME_TYPED_SLOT; resolve presented request/process identity through the cited existing enforcement; no credential value or new grant issued",
+      "grant_issued": false,
+      "inventory_decision_refs": [
+        {
+          "source_id": "step4-acceptance",
+          "sha256": "6f2cc1c9cc28c2a717023029851d61a666815567bc30b3635479cb1b70382e6c",
+          "pointer": ""
+        },
+        {
+          "source_id": "step5-acceptance",
+          "sha256": "a38536ed64ae7924235ab0318cae17716f1a549d89660acde807f4bb15a64a19",
+          "pointer": ""
+        }
+      ],
+      "required_evidence": {
+        "kind": "EXISTING_REQUEST_VALIDATION_OUTPUT_NOT_NEW_PHASE2_APPROVAL",
+        "predicate": [
+          "Bearer token present",
+          "clued_bnd_ prefix rejected as account JWT",
+          "GET /auth/v1/user returns nonempty user.id",
+          "database auth.uid/RLS remains authoritative"
+        ],
+        "scope": "Existing cited caller/callee evaluates these at request time; Step4/5 decisions authorize the governance inventory, not user service operations."
+      }
+    },
+    {
+      "consumer_id": "C06",
+      "profile": "binding",
+      "authorization_type": "ExistingCluedAgentBindingToken",
+      "issuer": "existing authenticated account createBinding + public.clued_agent_bindings; no project delegation substituted",
+      "capability": [
+        "per selected RPC required scope"
+      ],
+      "runtime_subject": "binding.id/user_id resolved from SHA256(presented binding token)",
+      "scope": "required scope and selected context key at clued_private.resolve_binding",
+      "constraints": [
+        "p_token_hash matches ^[0-9a-f]{64}$",
+        "revoked_at is null",
+        "p_required_scope is an element of binding.scopes",
+        "* or exact p_context_key is in binding.context_keys"
+      ],
+      "expiry": "No expires_at check in inspected legacy resolve_binding; do not invent one",
+      "revocation": "revoked_at checked per resolve_binding; last_used_at updated as audit side effect",
+      "reusable": true,
+      "implementation_refs": [
+        {
+          "source_id": "apps/clued-cloud/supabase/migrations/202608230002_mandatory_continuity.sql",
+          "sha256": "9afc51a213bed869c143a7fdb5a23ab8a2e80df10639b3ea572a39aef203f57c",
+          "pointer": "",
+          "lines": [
+            95,
+            129
+          ]
+        },
+        {
+          "source_id": "apps/clued-cloud/worker/continuity.ts",
+          "sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "pointer": "",
+          "lines": [
+            897,
+            908
+          ]
+        }
+      ],
+      "grantee_binding": "RUNTIME_TYPED_SLOT; resolve presented request/process identity through the cited existing enforcement; no credential value or new grant issued",
+      "grant_issued": false,
+      "selected_operation_scope_contract": "PROJECT_VIEWS_V2开关；用户JWT或context:read Binding+scope",
+      "inventory_decision_refs": [
+        {
+          "source_id": "step4-acceptance",
+          "sha256": "6f2cc1c9cc28c2a717023029851d61a666815567bc30b3635479cb1b70382e6c",
+          "pointer": ""
+        },
+        {
+          "source_id": "step5-acceptance",
+          "sha256": "a38536ed64ae7924235ab0318cae17716f1a549d89660acde807f4bb15a64a19",
+          "pointer": ""
+        }
+      ],
+      "required_evidence": {
+        "kind": "EXISTING_REQUEST_VALIDATION_OUTPUT_NOT_NEW_PHASE2_APPROVAL",
+        "predicate": [
+          "p_token_hash matches ^[0-9a-f]{64}$",
+          "revoked_at is null",
+          "p_required_scope is an element of binding.scopes",
+          "* or exact p_context_key is in binding.context_keys"
+        ],
+        "scope": "Existing cited caller/callee evaluates these at request time; Step4/5 decisions authorize the governance inventory, not user service operations."
+      }
+    },
+    {
+      "consumer_id": "C06",
+      "profile": "jwt",
+      "authorization_type": "ExistingSupabaseUserJWT",
+      "issuer": "Supabase Auth for project ccxsikzwxlolxqlosril; current URL observation identifies configuration only",
+      "capability": [
+        "account-bound selected operation"
+      ],
+      "runtime_subject": "user.id from successful /auth/v1/user or auth.uid() inside authenticated SQL wrapper",
+      "scope": "authenticated user and existing RLS/selected wrapper scope",
+      "constraints": [
+        "Bearer token present",
+        "clued_bnd_ prefix rejected as account JWT",
+        "GET /auth/v1/user returns nonempty user.id",
+        "database auth.uid/RLS remains authoritative"
+      ],
+      "expiry": "GoTrue validates the presented token/session; no expiry value is supplied by this inventory",
+      "revocation": "Actual Auth session validity plus per-request user verification; no new token minted",
+      "reusable": true,
+      "implementation_refs": [
+        {
+          "source_id": "apps/clued-cloud/worker/continuity.ts",
+          "sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "pointer": "",
+          "lines": [
+            485,
+            495,
+            1121,
+            1134
+          ]
+        },
+        {
+          "source_id": "apps/clued-cloud/supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql",
+          "sha256": "f59e414ec0de016cbe89d3ba24ded2d90e85a9e17fb554021b2d4d611f4d26c2",
+          "pointer": "",
+          "lines": [
+            712,
+            729
+          ]
+        }
+      ],
+      "grantee_binding": "RUNTIME_TYPED_SLOT; resolve presented request/process identity through the cited existing enforcement; no credential value or new grant issued",
+      "grant_issued": false,
+      "inventory_decision_refs": [
+        {
+          "source_id": "step4-acceptance",
+          "sha256": "6f2cc1c9cc28c2a717023029851d61a666815567bc30b3635479cb1b70382e6c",
+          "pointer": ""
+        },
+        {
+          "source_id": "step5-acceptance",
+          "sha256": "a38536ed64ae7924235ab0318cae17716f1a549d89660acde807f4bb15a64a19",
+          "pointer": ""
+        }
+      ],
+      "required_evidence": {
+        "kind": "EXISTING_REQUEST_VALIDATION_OUTPUT_NOT_NEW_PHASE2_APPROVAL",
+        "predicate": [
+          "Bearer token present",
+          "clued_bnd_ prefix rejected as account JWT",
+          "GET /auth/v1/user returns nonempty user.id",
+          "database auth.uid/RLS remains authoritative"
+        ],
+        "scope": "Existing cited caller/callee evaluates these at request time; Step4/5 decisions authorize the governance inventory, not user service operations."
+      }
+    },
+    {
+      "consumer_id": "C07",
+      "profile": "binding",
+      "authorization_type": "ExistingCluedAgentBindingToken",
+      "issuer": "existing authenticated account createBinding + public.clued_agent_bindings; no project delegation substituted",
+      "capability": [
+        "per selected RPC required scope"
+      ],
+      "runtime_subject": "binding.id/user_id resolved from SHA256(presented binding token)",
+      "scope": "required scope and selected context key at clued_private.resolve_binding",
+      "constraints": [
+        "p_token_hash matches ^[0-9a-f]{64}$",
+        "revoked_at is null",
+        "p_required_scope is an element of binding.scopes",
+        "* or exact p_context_key is in binding.context_keys"
+      ],
+      "expiry": "No expires_at check in inspected legacy resolve_binding; do not invent one",
+      "revocation": "revoked_at checked per resolve_binding; last_used_at updated as audit side effect",
+      "reusable": true,
+      "implementation_refs": [
+        {
+          "source_id": "apps/clued-cloud/supabase/migrations/202608230002_mandatory_continuity.sql",
+          "sha256": "9afc51a213bed869c143a7fdb5a23ab8a2e80df10639b3ea572a39aef203f57c",
+          "pointer": "",
+          "lines": [
+            95,
+            129
+          ]
+        },
+        {
+          "source_id": "apps/clued-cloud/worker/continuity.ts",
+          "sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "pointer": "",
+          "lines": [
+            897,
+            908
+          ]
+        }
+      ],
+      "grantee_binding": "RUNTIME_TYPED_SLOT; resolve presented request/process identity through the cited existing enforcement; no credential value or new grant issued",
+      "grant_issued": false,
+      "selected_operation_scope_contract": "用户JWT或context:write Binding；DB owner/scope/evidence/authority检查",
+      "inventory_decision_refs": [
+        {
+          "source_id": "step4-acceptance",
+          "sha256": "6f2cc1c9cc28c2a717023029851d61a666815567bc30b3635479cb1b70382e6c",
+          "pointer": ""
+        },
+        {
+          "source_id": "step5-acceptance",
+          "sha256": "a38536ed64ae7924235ab0318cae17716f1a549d89660acde807f4bb15a64a19",
+          "pointer": ""
+        }
+      ],
+      "required_evidence": {
+        "kind": "EXISTING_REQUEST_VALIDATION_OUTPUT_NOT_NEW_PHASE2_APPROVAL",
+        "predicate": [
+          "p_token_hash matches ^[0-9a-f]{64}$",
+          "revoked_at is null",
+          "p_required_scope is an element of binding.scopes",
+          "* or exact p_context_key is in binding.context_keys"
+        ],
+        "scope": "Existing cited caller/callee evaluates these at request time; Step4/5 decisions authorize the governance inventory, not user service operations."
+      }
+    },
+    {
+      "consumer_id": "C07",
+      "profile": "jwt",
+      "authorization_type": "ExistingSupabaseUserJWT",
+      "issuer": "Supabase Auth for project ccxsikzwxlolxqlosril; current URL observation identifies configuration only",
+      "capability": [
+        "account-bound selected operation"
+      ],
+      "runtime_subject": "user.id from successful /auth/v1/user or auth.uid() inside authenticated SQL wrapper",
+      "scope": "authenticated user and existing RLS/selected wrapper scope",
+      "constraints": [
+        "Bearer token present",
+        "clued_bnd_ prefix rejected as account JWT",
+        "GET /auth/v1/user returns nonempty user.id",
+        "database auth.uid/RLS remains authoritative"
+      ],
+      "expiry": "GoTrue validates the presented token/session; no expiry value is supplied by this inventory",
+      "revocation": "Actual Auth session validity plus per-request user verification; no new token minted",
+      "reusable": true,
+      "implementation_refs": [
+        {
+          "source_id": "apps/clued-cloud/worker/continuity.ts",
+          "sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "pointer": "",
+          "lines": [
+            485,
+            495,
+            1121,
+            1134
+          ]
+        },
+        {
+          "source_id": "apps/clued-cloud/supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql",
+          "sha256": "f59e414ec0de016cbe89d3ba24ded2d90e85a9e17fb554021b2d4d611f4d26c2",
+          "pointer": "",
+          "lines": [
+            712,
+            729
+          ]
+        }
+      ],
+      "grantee_binding": "RUNTIME_TYPED_SLOT; resolve presented request/process identity through the cited existing enforcement; no credential value or new grant issued",
+      "grant_issued": false,
+      "inventory_decision_refs": [
+        {
+          "source_id": "step4-acceptance",
+          "sha256": "6f2cc1c9cc28c2a717023029851d61a666815567bc30b3635479cb1b70382e6c",
+          "pointer": ""
+        },
+        {
+          "source_id": "step5-acceptance",
+          "sha256": "a38536ed64ae7924235ab0318cae17716f1a549d89660acde807f4bb15a64a19",
+          "pointer": ""
+        }
+      ],
+      "required_evidence": {
+        "kind": "EXISTING_REQUEST_VALIDATION_OUTPUT_NOT_NEW_PHASE2_APPROVAL",
+        "predicate": [
+          "Bearer token present",
+          "clued_bnd_ prefix rejected as account JWT",
+          "GET /auth/v1/user returns nonempty user.id",
+          "database auth.uid/RLS remains authoritative"
+        ],
+        "scope": "Existing cited caller/callee evaluates these at request time; Step4/5 decisions authorize the governance inventory, not user service operations."
+      }
+    },
+    {
+      "consumer_id": "C08",
+      "profile": "binding",
+      "authorization_type": "ExistingCluedAgentBindingToken",
+      "issuer": "existing authenticated account createBinding + public.clued_agent_bindings; no project delegation substituted",
+      "capability": [
+        "per selected RPC required scope"
+      ],
+      "runtime_subject": "binding.id/user_id resolved from SHA256(presented binding token)",
+      "scope": "required scope and selected context key at clued_private.resolve_binding",
+      "constraints": [
+        "p_token_hash matches ^[0-9a-f]{64}$",
+        "revoked_at is null",
+        "p_required_scope is an element of binding.scopes",
+        "* or exact p_context_key is in binding.context_keys"
+      ],
+      "expiry": "No expires_at check in inspected legacy resolve_binding; do not invent one",
+      "revocation": "revoked_at checked per resolve_binding; last_used_at updated as audit side effect",
+      "reusable": true,
+      "implementation_refs": [
+        {
+          "source_id": "apps/clued-cloud/supabase/migrations/202608230002_mandatory_continuity.sql",
+          "sha256": "9afc51a213bed869c143a7fdb5a23ab8a2e80df10639b3ea572a39aef203f57c",
+          "pointer": "",
+          "lines": [
+            95,
+            129
+          ]
+        },
+        {
+          "source_id": "apps/clued-cloud/worker/continuity.ts",
+          "sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "pointer": "",
+          "lines": [
+            897,
+            908
+          ]
+        }
+      ],
+      "grantee_binding": "RUNTIME_TYPED_SLOT; resolve presented request/process identity through the cited existing enforcement; no credential value or new grant issued",
+      "grant_issued": false,
+      "selected_operation_scope_contract": "context:write Binding或用户JWT；DB evidence owner/范围；内置业务Event不可伪造",
+      "inventory_decision_refs": [
+        {
+          "source_id": "step4-acceptance",
+          "sha256": "6f2cc1c9cc28c2a717023029851d61a666815567bc30b3635479cb1b70382e6c",
+          "pointer": ""
+        },
+        {
+          "source_id": "step5-acceptance",
+          "sha256": "a38536ed64ae7924235ab0318cae17716f1a549d89660acde807f4bb15a64a19",
+          "pointer": ""
+        }
+      ],
+      "required_evidence": {
+        "kind": "EXISTING_REQUEST_VALIDATION_OUTPUT_NOT_NEW_PHASE2_APPROVAL",
+        "predicate": [
+          "p_token_hash matches ^[0-9a-f]{64}$",
+          "revoked_at is null",
+          "p_required_scope is an element of binding.scopes",
+          "* or exact p_context_key is in binding.context_keys"
+        ],
+        "scope": "Existing cited caller/callee evaluates these at request time; Step4/5 decisions authorize the governance inventory, not user service operations."
+      }
+    },
+    {
+      "consumer_id": "C08",
+      "profile": "jwt",
+      "authorization_type": "ExistingSupabaseUserJWT",
+      "issuer": "Supabase Auth for project ccxsikzwxlolxqlosril; current URL observation identifies configuration only",
+      "capability": [
+        "account-bound selected operation"
+      ],
+      "runtime_subject": "user.id from successful /auth/v1/user or auth.uid() inside authenticated SQL wrapper",
+      "scope": "authenticated user and existing RLS/selected wrapper scope",
+      "constraints": [
+        "Bearer token present",
+        "clued_bnd_ prefix rejected as account JWT",
+        "GET /auth/v1/user returns nonempty user.id",
+        "database auth.uid/RLS remains authoritative"
+      ],
+      "expiry": "GoTrue validates the presented token/session; no expiry value is supplied by this inventory",
+      "revocation": "Actual Auth session validity plus per-request user verification; no new token minted",
+      "reusable": true,
+      "implementation_refs": [
+        {
+          "source_id": "apps/clued-cloud/worker/continuity.ts",
+          "sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "pointer": "",
+          "lines": [
+            485,
+            495,
+            1121,
+            1134
+          ]
+        },
+        {
+          "source_id": "apps/clued-cloud/supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql",
+          "sha256": "f59e414ec0de016cbe89d3ba24ded2d90e85a9e17fb554021b2d4d611f4d26c2",
+          "pointer": "",
+          "lines": [
+            712,
+            729
+          ]
+        }
+      ],
+      "grantee_binding": "RUNTIME_TYPED_SLOT; resolve presented request/process identity through the cited existing enforcement; no credential value or new grant issued",
+      "grant_issued": false,
+      "inventory_decision_refs": [
+        {
+          "source_id": "step4-acceptance",
+          "sha256": "6f2cc1c9cc28c2a717023029851d61a666815567bc30b3635479cb1b70382e6c",
+          "pointer": ""
+        },
+        {
+          "source_id": "step5-acceptance",
+          "sha256": "a38536ed64ae7924235ab0318cae17716f1a549d89660acde807f4bb15a64a19",
+          "pointer": ""
+        }
+      ],
+      "required_evidence": {
+        "kind": "EXISTING_REQUEST_VALIDATION_OUTPUT_NOT_NEW_PHASE2_APPROVAL",
+        "predicate": [
+          "Bearer token present",
+          "clued_bnd_ prefix rejected as account JWT",
+          "GET /auth/v1/user returns nonempty user.id",
+          "database auth.uid/RLS remains authoritative"
+        ],
+        "scope": "Existing cited caller/callee evaluates these at request time; Step4/5 decisions authorize the governance inventory, not user service operations."
+      }
+    },
+    {
+      "consumer_id": "C09",
+      "profile": "binding",
+      "authorization_type": "ExistingCluedAgentBindingToken",
+      "issuer": "existing authenticated account createBinding + public.clued_agent_bindings; no project delegation substituted",
+      "capability": [
+        "per selected RPC required scope"
+      ],
+      "runtime_subject": "binding.id/user_id resolved from SHA256(presented binding token)",
+      "scope": "required scope and selected context key at clued_private.resolve_binding",
+      "constraints": [
+        "p_token_hash matches ^[0-9a-f]{64}$",
+        "revoked_at is null",
+        "p_required_scope is an element of binding.scopes",
+        "* or exact p_context_key is in binding.context_keys"
+      ],
+      "expiry": "No expires_at check in inspected legacy resolve_binding; do not invent one",
+      "revocation": "revoked_at checked per resolve_binding; last_used_at updated as audit side effect",
+      "reusable": true,
+      "implementation_refs": [
+        {
+          "source_id": "apps/clued-cloud/supabase/migrations/202608230002_mandatory_continuity.sql",
+          "sha256": "9afc51a213bed869c143a7fdb5a23ab8a2e80df10639b3ea572a39aef203f57c",
+          "pointer": "",
+          "lines": [
+            95,
+            129
+          ]
+        },
+        {
+          "source_id": "apps/clued-cloud/worker/continuity.ts",
+          "sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "pointer": "",
+          "lines": [
+            897,
+            908
+          ]
+        }
+      ],
+      "grantee_binding": "RUNTIME_TYPED_SLOT; resolve presented request/process identity through the cited existing enforcement; no credential value or new grant issued",
+      "grant_issued": false,
+      "selected_operation_scope_contract": "声明context:read+audit:read；Binding SQL wrapper只resolve context:read/global，缺audit实测负例",
+      "known_contract_divergence_ref": "C09ExportScopeDisposition.json",
+      "inventory_decision_refs": [
+        {
+          "source_id": "step4-acceptance",
+          "sha256": "6f2cc1c9cc28c2a717023029851d61a666815567bc30b3635479cb1b70382e6c",
+          "pointer": ""
+        },
+        {
+          "source_id": "step5-acceptance",
+          "sha256": "a38536ed64ae7924235ab0318cae17716f1a549d89660acde807f4bb15a64a19",
+          "pointer": ""
+        }
+      ],
+      "required_evidence": {
+        "kind": "EXISTING_REQUEST_VALIDATION_OUTPUT_NOT_NEW_PHASE2_APPROVAL",
+        "predicate": [
+          "p_token_hash matches ^[0-9a-f]{64}$",
+          "revoked_at is null",
+          "p_required_scope is an element of binding.scopes",
+          "* or exact p_context_key is in binding.context_keys"
+        ],
+        "scope": "Existing cited caller/callee evaluates these at request time; Step4/5 decisions authorize the governance inventory, not user service operations."
+      }
+    },
+    {
+      "consumer_id": "C09",
+      "profile": "jwt",
+      "authorization_type": "ExistingSupabaseUserJWT",
+      "issuer": "Supabase Auth for project ccxsikzwxlolxqlosril; current URL observation identifies configuration only",
+      "capability": [
+        "account-bound selected operation"
+      ],
+      "runtime_subject": "user.id from successful /auth/v1/user or auth.uid() inside authenticated SQL wrapper",
+      "scope": "authenticated user and existing RLS/selected wrapper scope",
+      "constraints": [
+        "Bearer token present",
+        "clued_bnd_ prefix rejected as account JWT",
+        "GET /auth/v1/user returns nonempty user.id",
+        "database auth.uid/RLS remains authoritative"
+      ],
+      "expiry": "GoTrue validates the presented token/session; no expiry value is supplied by this inventory",
+      "revocation": "Actual Auth session validity plus per-request user verification; no new token minted",
+      "reusable": true,
+      "implementation_refs": [
+        {
+          "source_id": "apps/clued-cloud/worker/continuity.ts",
+          "sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "pointer": "",
+          "lines": [
+            485,
+            495,
+            1121,
+            1134
+          ]
+        },
+        {
+          "source_id": "apps/clued-cloud/supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql",
+          "sha256": "f59e414ec0de016cbe89d3ba24ded2d90e85a9e17fb554021b2d4d611f4d26c2",
+          "pointer": "",
+          "lines": [
+            712,
+            729
+          ]
+        }
+      ],
+      "grantee_binding": "RUNTIME_TYPED_SLOT; resolve presented request/process identity through the cited existing enforcement; no credential value or new grant issued",
+      "grant_issued": false,
+      "inventory_decision_refs": [
+        {
+          "source_id": "step4-acceptance",
+          "sha256": "6f2cc1c9cc28c2a717023029851d61a666815567bc30b3635479cb1b70382e6c",
+          "pointer": ""
+        },
+        {
+          "source_id": "step5-acceptance",
+          "sha256": "a38536ed64ae7924235ab0318cae17716f1a549d89660acde807f4bb15a64a19",
+          "pointer": ""
+        }
+      ],
+      "required_evidence": {
+        "kind": "EXISTING_REQUEST_VALIDATION_OUTPUT_NOT_NEW_PHASE2_APPROVAL",
+        "predicate": [
+          "Bearer token present",
+          "clued_bnd_ prefix rejected as account JWT",
+          "GET /auth/v1/user returns nonempty user.id",
+          "database auth.uid/RLS remains authoritative"
+        ],
+        "scope": "Existing cited caller/callee evaluates these at request time; Step4/5 decisions authorize the governance inventory, not user service operations."
+      }
+    },
+    {
+      "consumer_id": "C10",
+      "profile": "p5",
+      "authorization_type": "ExistingP5BindingAndGatewayCredential",
+      "issuer": "existing P5 gateway/database authorization path; no new issuer",
+      "capability": [
+        "selected P5 tool; read/write operation families remain distinct"
+      ],
+      "runtime_subject": "binding token hash plus returned attempt_id/session/tenant identities",
+      "scope": "actual organization/workspace/actor/binding/session enforced in existing P5 RPCs",
+      "constraints": [
+        "P5_TENANT_WRITES enabled for selected request",
+        "Binding-only token; account JWT rejected",
+        "gateway token present",
+        "gateway response object required",
+        "attempt status and exact attempt_id govern mutation/replay resolution"
+      ],
+      "expiry": "Existing session/lease validation applies; actual expiry values come from request/DB, not invented here",
+      "revocation": "Existing DB binding/session revocation checks; platform observation does not certify every row",
+      "reusable": false,
+      "implementation_refs": [
+        {
+          "source_id": "apps/clued-cloud/worker/continuity.ts",
+          "sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "pointer": "",
+          "lines": [
+            377,
+            390,
+            436,
+            451,
+            880,
+            894
+          ]
+        },
+        {
+          "source_id": "apps/clued-cloud/worker/p5.ts",
+          "sha256": "ce46bf7025f746579263b78c320f1df6e4d077e11bcbcc958865f20bfead418f",
+          "pointer": ""
+        }
+      ],
+      "grantee_binding": "RUNTIME_TYPED_SLOT; resolve presented request/process identity through the cited existing enforcement; no credential value or new grant issued",
+      "grant_issued": false,
+      "inventory_decision_refs": [
+        {
+          "source_id": "step4-acceptance",
+          "sha256": "6f2cc1c9cc28c2a717023029851d61a666815567bc30b3635479cb1b70382e6c",
+          "pointer": ""
+        },
+        {
+          "source_id": "step5-acceptance",
+          "sha256": "a38536ed64ae7924235ab0318cae17716f1a549d89660acde807f4bb15a64a19",
+          "pointer": ""
+        }
+      ],
+      "required_evidence": {
+        "kind": "EXISTING_REQUEST_VALIDATION_OUTPUT_NOT_NEW_PHASE2_APPROVAL",
+        "predicate": [
+          "P5_TENANT_WRITES enabled for selected request",
+          "Binding-only token; account JWT rejected",
+          "gateway token present",
+          "gateway response object required",
+          "attempt status and exact attempt_id govern mutation/replay resolution"
+        ],
+        "scope": "Existing cited caller/callee evaluates these at request time; Step4/5 decisions authorize the governance inventory, not user service operations."
+      }
+    },
+    {
+      "consumer_id": "C11",
+      "profile": "local",
+      "authorization_type": "ExistingScopedLocalEngineeringExecution",
+      "issuer": "existing user delegation for artifact preparation; OS filesystem access remains actual enforcement",
+      "capability": [
+        "read/build/validate derived artifact within explicit command arguments"
+      ],
+      "runtime_subject": "executing process under existing task authority",
+      "scope": "exact source/output directory and command action",
+      "constraints": [
+        "exact source hashes/manifest validation",
+        "no canonical business mutation",
+        "publication requires its own existing entry and predicates"
+      ],
+      "expiry": "task delegation ends/revokes per existing contract; no runtime credential invented",
+      "revocation": "delegation revocation and source/input drift invalidate use",
+      "reusable": true,
+      "implementation_refs": [
+        {
+          "source_id": "delegation",
+          "sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+          "pointer": ""
+        },
+        {
+          "source_id": "apps/clued-cloud/scripts/two-level-snapshot.mjs",
+          "sha256": "1dfcc8de7b481bc8a29cd055f711bb142fa390fff07a61730320866a477f6b7e",
+          "pointer": "",
+          "lines": [
+            328,
+            351,
+            726,
+            752
+          ]
+        }
+      ],
+      "grantee_binding": "RUNTIME_TYPED_SLOT; resolve presented request/process identity through the cited existing enforcement; no credential value or new grant issued",
+      "grant_issued": false,
+      "inventory_decision_refs": [
+        {
+          "source_id": "step4-acceptance",
+          "sha256": "6f2cc1c9cc28c2a717023029851d61a666815567bc30b3635479cb1b70382e6c",
+          "pointer": ""
+        },
+        {
+          "source_id": "step5-acceptance",
+          "sha256": "a38536ed64ae7924235ab0318cae17716f1a549d89660acde807f4bb15a64a19",
+          "pointer": ""
+        }
+      ],
+      "required_evidence": {
+        "kind": "EXISTING_REQUEST_VALIDATION_OUTPUT_NOT_NEW_PHASE2_APPROVAL",
+        "predicate": [
+          "exact source hashes/manifest validation",
+          "no canonical business mutation",
+          "publication requires its own existing entry and predicates"
+        ],
+        "scope": "Existing cited caller/callee evaluates these at request time; Step4/5 decisions authorize the governance inventory, not user service operations."
+      }
+    },
+    {
+      "consumer_id": "C12",
+      "profile": "publish",
+      "authorization_type": "ExistingSnapshotPublicationExecution",
+      "issuer": "delegated local publisher plus actual directory permissions; no privileged publisher isolation claimed",
+      "capability": [
+        "publish or rollback derived snapshot pointer"
+      ],
+      "runtime_subject": "invoking process; precise publication operation in returned receipt",
+      "scope": "exact exportRoot/current pointer and snapshot version",
+      "constraints": [
+        "validateSnapshot succeeds",
+        "expected-current equals actual current under shared lock",
+        "only current/live_rechecked/complete manifest may activate",
+        "atomic switch and readback; recover previous pointer after failure"
+      ],
+      "expiry": "expected-current CAS becomes stale on pointer advance; no separate token expiry invented",
+      "revocation": "task authority/filesystem permission changes; old expected-current invalidated",
+      "reusable": false,
+      "implementation_refs": [
+        {
+          "source_id": "apps/clued-cloud/scripts/two-level-snapshot.mjs",
+          "sha256": "1dfcc8de7b481bc8a29cd055f711bb142fa390fff07a61730320866a477f6b7e",
+          "pointer": "",
+          "lines": [
+            1033,
+            1090
+          ]
+        },
+        {
+          "source_id": "apps/clued-cloud/scripts/m2-snapshot-store.mjs",
+          "sha256": "d56e15f4821ff2b21de07a3c103aac4d9a963b3dac7ee2128543ea37036caf30",
+          "pointer": "",
+          "lines": [
+            244,
+            290
+          ]
+        }
+      ],
+      "grantee_binding": "RUNTIME_TYPED_SLOT; resolve presented request/process identity through the cited existing enforcement; no credential value or new grant issued",
+      "grant_issued": false,
+      "inventory_decision_refs": [
+        {
+          "source_id": "step4-acceptance",
+          "sha256": "6f2cc1c9cc28c2a717023029851d61a666815567bc30b3635479cb1b70382e6c",
+          "pointer": ""
+        },
+        {
+          "source_id": "step5-acceptance",
+          "sha256": "a38536ed64ae7924235ab0318cae17716f1a549d89660acde807f4bb15a64a19",
+          "pointer": ""
+        }
+      ],
+      "required_evidence": {
+        "kind": "EXISTING_REQUEST_VALIDATION_OUTPUT_NOT_NEW_PHASE2_APPROVAL",
+        "predicate": [
+          "validateSnapshot succeeds",
+          "expected-current equals actual current under shared lock",
+          "only current/live_rechecked/complete manifest may activate",
+          "atomic switch and readback; recover previous pointer after failure"
+        ],
+        "scope": "Existing cited caller/callee evaluates these at request time; Step4/5 decisions authorize the governance inventory, not user service operations."
+      }
+    },
+    {
+      "consumer_id": "C13",
+      "profile": "verification",
+      "authorization_type": "ExistingAuthorizationEvidenceAndEndpointTrust",
+      "issuer": "current request boundary with configured EndpointTrust; not a live Canonical write grant",
+      "capability": [
+        "read/verify source at one repository/candidate/local_mirror boundary"
+      ],
+      "runtime_subject": "request verification_id plus source owner/bundle_scope",
+      "scope": "exact boundary, source fingerprint and request mode",
+      "constraints": [
+        "known mode only",
+        "positive TTL",
+        "source envelope has read sources and versions",
+        "freshness enumerated; degraded state requires reason",
+        "fingerprint includes authorization and revocation inputs"
+      ],
+      "expiry": "request TTL and any session_expires_at; exact run assigns actual times",
+      "revocation": "changed source/authorization/scope/fingerprint invalidates cached evidence",
+      "reusable": false,
+      "implementation_refs": [
+        {
+          "source_id": "verification_context.py",
+          "sha256": "6a2d83a65921df60252aad350f3cecacfbab991be582368903aa40203c96d5ab",
+          "pointer": "",
+          "lines": [
+            85,
+            107,
+            151,
+            169,
+            390,
+            419
+          ]
+        }
+      ],
+      "grantee_binding": "RUNTIME_TYPED_SLOT; resolve presented request/process identity through the cited existing enforcement; no credential value or new grant issued",
+      "grant_issued": false,
+      "inventory_decision_refs": [
+        {
+          "source_id": "step4-acceptance",
+          "sha256": "6f2cc1c9cc28c2a717023029851d61a666815567bc30b3635479cb1b70382e6c",
+          "pointer": ""
+        },
+        {
+          "source_id": "step5-acceptance",
+          "sha256": "a38536ed64ae7924235ab0318cae17716f1a549d89660acde807f4bb15a64a19",
+          "pointer": ""
+        }
+      ],
+      "required_evidence": {
+        "kind": "EXISTING_REQUEST_VALIDATION_OUTPUT_NOT_NEW_PHASE2_APPROVAL",
+        "predicate": [
+          "known mode only",
+          "positive TTL",
+          "source envelope has read sources and versions",
+          "freshness enumerated; degraded state requires reason",
+          "fingerprint includes authorization and revocation inputs"
+        ],
+        "scope": "Existing cited caller/callee evaluates these at request time; Step4/5 decisions authorize the governance inventory, not user service operations."
+      }
+    },
+    {
+      "consumer_id": "C14",
+      "profile": "jwt",
+      "authorization_type": "ExistingSupabaseUserJWT",
+      "issuer": "Supabase Auth for project ccxsikzwxlolxqlosril; current URL observation identifies configuration only",
+      "capability": [
+        "account-bound selected operation"
+      ],
+      "runtime_subject": "user.id from successful /auth/v1/user or auth.uid() inside authenticated SQL wrapper",
+      "scope": "authenticated user and existing RLS/selected wrapper scope",
+      "constraints": [
+        "Bearer token present",
+        "clued_bnd_ prefix rejected as account JWT",
+        "GET /auth/v1/user returns nonempty user.id",
+        "database auth.uid/RLS remains authoritative"
+      ],
+      "expiry": "GoTrue validates the presented token/session; no expiry value is supplied by this inventory",
+      "revocation": "Actual Auth session validity plus per-request user verification; no new token minted",
+      "reusable": true,
+      "implementation_refs": [
+        {
+          "source_id": "apps/clued-cloud/worker/continuity.ts",
+          "sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "pointer": "",
+          "lines": [
+            485,
+            495,
+            1121,
+            1134
+          ]
+        },
+        {
+          "source_id": "apps/clued-cloud/supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql",
+          "sha256": "f59e414ec0de016cbe89d3ba24ded2d90e85a9e17fb554021b2d4d611f4d26c2",
+          "pointer": "",
+          "lines": [
+            712,
+            729
+          ]
+        }
+      ],
+      "grantee_binding": "RUNTIME_TYPED_SLOT; resolve presented request/process identity through the cited existing enforcement; no credential value or new grant issued",
+      "grant_issued": false,
+      "inventory_decision_refs": [
+        {
+          "source_id": "step4-acceptance",
+          "sha256": "6f2cc1c9cc28c2a717023029851d61a666815567bc30b3635479cb1b70382e6c",
+          "pointer": ""
+        },
+        {
+          "source_id": "step5-acceptance",
+          "sha256": "a38536ed64ae7924235ab0318cae17716f1a549d89660acde807f4bb15a64a19",
+          "pointer": ""
+        }
+      ],
+      "required_evidence": {
+        "kind": "EXISTING_REQUEST_VALIDATION_OUTPUT_NOT_NEW_PHASE2_APPROVAL",
+        "predicate": [
+          "Bearer token present",
+          "clued_bnd_ prefix rejected as account JWT",
+          "GET /auth/v1/user returns nonempty user.id",
+          "database auth.uid/RLS remains authoritative"
+        ],
+        "scope": "Existing cited caller/callee evaluates these at request time; Step4/5 decisions authorize the governance inventory, not user service operations."
+      }
+    },
+    {
+      "consumer_id": "C15",
+      "profile": "local",
+      "authorization_type": "ExistingScopedLocalEngineeringExecution",
+      "issuer": "existing user delegation for artifact preparation; OS filesystem access remains actual enforcement",
+      "capability": [
+        "read/build/validate derived artifact within explicit command arguments"
+      ],
+      "runtime_subject": "executing process under existing task authority",
+      "scope": "exact source/output directory and command action",
+      "constraints": [
+        "exact source hashes/manifest validation",
+        "no canonical business mutation",
+        "publication requires its own existing entry and predicates"
+      ],
+      "expiry": "task delegation ends/revokes per existing contract; no runtime credential invented",
+      "revocation": "delegation revocation and source/input drift invalidate use",
+      "reusable": true,
+      "implementation_refs": [
+        {
+          "source_id": "delegation",
+          "sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+          "pointer": ""
+        },
+        {
+          "source_id": "apps/clued-cloud/scripts/two-level-snapshot.mjs",
+          "sha256": "1dfcc8de7b481bc8a29cd055f711bb142fa390fff07a61730320866a477f6b7e",
+          "pointer": "",
+          "lines": [
+            328,
+            351,
+            726,
+            752
+          ]
+        }
+      ],
+      "grantee_binding": "RUNTIME_TYPED_SLOT; resolve presented request/process identity through the cited existing enforcement; no credential value or new grant issued",
+      "grant_issued": false,
+      "inventory_decision_refs": [
+        {
+          "source_id": "step4-acceptance",
+          "sha256": "6f2cc1c9cc28c2a717023029851d61a666815567bc30b3635479cb1b70382e6c",
+          "pointer": ""
+        },
+        {
+          "source_id": "step5-acceptance",
+          "sha256": "a38536ed64ae7924235ab0318cae17716f1a549d89660acde807f4bb15a64a19",
+          "pointer": ""
+        }
+      ],
+      "required_evidence": {
+        "kind": "EXISTING_REQUEST_VALIDATION_OUTPUT_NOT_NEW_PHASE2_APPROVAL",
+        "predicate": [
+          "exact source hashes/manifest validation",
+          "no canonical business mutation",
+          "publication requires its own existing entry and predicates"
+        ],
+        "scope": "Existing cited caller/callee evaluates these at request time; Step4/5 decisions authorize the governance inventory, not user service operations."
+      }
+    },
+    {
+      "consumer_id": "C15",
+      "profile": "github",
+      "authorization_type": "ExistingGitHubReadToken",
+      "issuer": "GitHub Actions github.token or existing authorized GH_TOKEN",
+      "capability": [
+        "read private repository/assets/checks/actions as workflow declares"
+      ],
+      "runtime_subject": "workflow run repository/commit/attempt; local read caller if CLI",
+      "scope": "tdoljyj/cross-memory-system and explicit exact candidate SHA",
+      "constraints": [
+        "token supplied securely by existing platform",
+        "receipt/check name alone is not merge or deployment authority",
+        "candidate/artifact/manifest identities checked before result acceptance"
+      ],
+      "expiry": "platform token lifetime; token body/expiry not copied",
+      "revocation": "platform token/repository access revocation; failed API read rejects",
+      "reusable": false,
+      "implementation_refs": [
+        {
+          "source_id": ".github/workflows/phase2-v027-validation.yml",
+          "sha256": "51334a15770991d2cbf13cb906a592494a96c87e55a8b6cb37f0792a1168bd53",
+          "pointer": "",
+          "lines": [
+            3,
+            21
+          ]
+        },
+        {
+          "source_id": ".github/workflows/public-mcp-gate-receipt.yml",
+          "sha256": "4e3784db5984933d859cd961f010c4fb2306eaf6b871cdd438eeb2cff9154ce8",
+          "pointer": "",
+          "lines": [
+            3,
+            12
+          ]
+        },
+        {
+          "source_id": "apps/clued-cloud/evals/public-mcp/gate-receipt.mjs",
+          "sha256": "9d1574e361a8fdd550578763755933e4d250a8076d55b1223ca9dfc40c1ec0c0",
+          "pointer": "",
+          "lines": [
+            57,
+            102
+          ]
+        }
+      ],
+      "grantee_binding": "RUNTIME_TYPED_SLOT; resolve presented request/process identity through the cited existing enforcement; no credential value or new grant issued",
+      "grant_issued": false,
+      "inventory_decision_refs": [
+        {
+          "source_id": "step4-acceptance",
+          "sha256": "6f2cc1c9cc28c2a717023029851d61a666815567bc30b3635479cb1b70382e6c",
+          "pointer": ""
+        },
+        {
+          "source_id": "step5-acceptance",
+          "sha256": "a38536ed64ae7924235ab0318cae17716f1a549d89660acde807f4bb15a64a19",
+          "pointer": ""
+        }
+      ],
+      "required_evidence": {
+        "kind": "EXISTING_REQUEST_VALIDATION_OUTPUT_NOT_NEW_PHASE2_APPROVAL",
+        "predicate": [
+          "token supplied securely by existing platform",
+          "receipt/check name alone is not merge or deployment authority",
+          "candidate/artifact/manifest identities checked before result acceptance"
+        ],
+        "scope": "Existing cited caller/callee evaluates these at request time; Step4/5 decisions authorize the governance inventory, not user service operations."
+      }
+    },
+    {
+      "consumer_id": "C16",
+      "profile": "local",
+      "authorization_type": "ExistingScopedLocalEngineeringExecution",
+      "issuer": "existing user delegation for artifact preparation; OS filesystem access remains actual enforcement",
+      "capability": [
+        "read/build/validate derived artifact within explicit command arguments"
+      ],
+      "runtime_subject": "executing process under existing task authority",
+      "scope": "exact source/output directory and command action",
+      "constraints": [
+        "exact source hashes/manifest validation",
+        "no canonical business mutation",
+        "publication requires its own existing entry and predicates"
+      ],
+      "expiry": "task delegation ends/revokes per existing contract; no runtime credential invented",
+      "revocation": "delegation revocation and source/input drift invalidate use",
+      "reusable": true,
+      "implementation_refs": [
+        {
+          "source_id": "delegation",
+          "sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+          "pointer": ""
+        },
+        {
+          "source_id": "apps/clued-cloud/scripts/two-level-snapshot.mjs",
+          "sha256": "1dfcc8de7b481bc8a29cd055f711bb142fa390fff07a61730320866a477f6b7e",
+          "pointer": "",
+          "lines": [
+            328,
+            351,
+            726,
+            752
+          ]
+        }
+      ],
+      "grantee_binding": "RUNTIME_TYPED_SLOT; resolve presented request/process identity through the cited existing enforcement; no credential value or new grant issued",
+      "grant_issued": false,
+      "inventory_decision_refs": [
+        {
+          "source_id": "step4-acceptance",
+          "sha256": "6f2cc1c9cc28c2a717023029851d61a666815567bc30b3635479cb1b70382e6c",
+          "pointer": ""
+        },
+        {
+          "source_id": "step5-acceptance",
+          "sha256": "a38536ed64ae7924235ab0318cae17716f1a549d89660acde807f4bb15a64a19",
+          "pointer": ""
+        }
+      ],
+      "required_evidence": {
+        "kind": "EXISTING_REQUEST_VALIDATION_OUTPUT_NOT_NEW_PHASE2_APPROVAL",
+        "predicate": [
+          "exact source hashes/manifest validation",
+          "no canonical business mutation",
+          "publication requires its own existing entry and predicates"
+        ],
+        "scope": "Existing cited caller/callee evaluates these at request time; Step4/5 decisions authorize the governance inventory, not user service operations."
+      }
+    },
+    {
+      "consumer_id": "C16",
+      "profile": "github",
+      "authorization_type": "ExistingGitHubReadToken",
+      "issuer": "GitHub Actions github.token or existing authorized GH_TOKEN",
+      "capability": [
+        "read private repository/assets/checks/actions as workflow declares"
+      ],
+      "runtime_subject": "workflow run repository/commit/attempt; local read caller if CLI",
+      "scope": "tdoljyj/cross-memory-system and explicit exact candidate SHA",
+      "constraints": [
+        "token supplied securely by existing platform",
+        "receipt/check name alone is not merge or deployment authority",
+        "candidate/artifact/manifest identities checked before result acceptance"
+      ],
+      "expiry": "platform token lifetime; token body/expiry not copied",
+      "revocation": "platform token/repository access revocation; failed API read rejects",
+      "reusable": false,
+      "implementation_refs": [
+        {
+          "source_id": ".github/workflows/phase2-v027-validation.yml",
+          "sha256": "51334a15770991d2cbf13cb906a592494a96c87e55a8b6cb37f0792a1168bd53",
+          "pointer": "",
+          "lines": [
+            3,
+            21
+          ]
+        },
+        {
+          "source_id": ".github/workflows/public-mcp-gate-receipt.yml",
+          "sha256": "4e3784db5984933d859cd961f010c4fb2306eaf6b871cdd438eeb2cff9154ce8",
+          "pointer": "",
+          "lines": [
+            3,
+            12
+          ]
+        },
+        {
+          "source_id": "apps/clued-cloud/evals/public-mcp/gate-receipt.mjs",
+          "sha256": "9d1574e361a8fdd550578763755933e4d250a8076d55b1223ca9dfc40c1ec0c0",
+          "pointer": "",
+          "lines": [
+            57,
+            102
+          ]
+        }
+      ],
+      "grantee_binding": "RUNTIME_TYPED_SLOT; resolve presented request/process identity through the cited existing enforcement; no credential value or new grant issued",
+      "grant_issued": false,
+      "inventory_decision_refs": [
+        {
+          "source_id": "step4-acceptance",
+          "sha256": "6f2cc1c9cc28c2a717023029851d61a666815567bc30b3635479cb1b70382e6c",
+          "pointer": ""
+        },
+        {
+          "source_id": "step5-acceptance",
+          "sha256": "a38536ed64ae7924235ab0318cae17716f1a549d89660acde807f4bb15a64a19",
+          "pointer": ""
+        }
+      ],
+      "required_evidence": {
+        "kind": "EXISTING_REQUEST_VALIDATION_OUTPUT_NOT_NEW_PHASE2_APPROVAL",
+        "predicate": [
+          "token supplied securely by existing platform",
+          "receipt/check name alone is not merge or deployment authority",
+          "candidate/artifact/manifest identities checked before result acceptance"
+        ],
+        "scope": "Existing cited caller/callee evaluates these at request time; Step4/5 decisions authorize the governance inventory, not user service operations."
+      }
+    },
+    {
+      "consumer_id": "C17",
+      "profile": "local",
+      "authorization_type": "ExistingScopedLocalEngineeringExecution",
+      "issuer": "existing user delegation for artifact preparation; OS filesystem access remains actual enforcement",
+      "capability": [
+        "read/build/validate derived artifact within explicit command arguments"
+      ],
+      "runtime_subject": "executing process under existing task authority",
+      "scope": "exact source/output directory and command action",
+      "constraints": [
+        "exact source hashes/manifest validation",
+        "no canonical business mutation",
+        "publication requires its own existing entry and predicates"
+      ],
+      "expiry": "task delegation ends/revokes per existing contract; no runtime credential invented",
+      "revocation": "delegation revocation and source/input drift invalidate use",
+      "reusable": true,
+      "implementation_refs": [
+        {
+          "source_id": "delegation",
+          "sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+          "pointer": ""
+        },
+        {
+          "source_id": "apps/clued-cloud/scripts/two-level-snapshot.mjs",
+          "sha256": "1dfcc8de7b481bc8a29cd055f711bb142fa390fff07a61730320866a477f6b7e",
+          "pointer": "",
+          "lines": [
+            328,
+            351,
+            726,
+            752
+          ]
+        }
+      ],
+      "grantee_binding": "RUNTIME_TYPED_SLOT; resolve presented request/process identity through the cited existing enforcement; no credential value or new grant issued",
+      "grant_issued": false,
+      "inventory_decision_refs": [
+        {
+          "source_id": "step4-acceptance",
+          "sha256": "6f2cc1c9cc28c2a717023029851d61a666815567bc30b3635479cb1b70382e6c",
+          "pointer": ""
+        },
+        {
+          "source_id": "step5-acceptance",
+          "sha256": "a38536ed64ae7924235ab0318cae17716f1a549d89660acde807f4bb15a64a19",
+          "pointer": ""
+        }
+      ],
+      "required_evidence": {
+        "kind": "EXISTING_REQUEST_VALIDATION_OUTPUT_NOT_NEW_PHASE2_APPROVAL",
+        "predicate": [
+          "exact source hashes/manifest validation",
+          "no canonical business mutation",
+          "publication requires its own existing entry and predicates"
+        ],
+        "scope": "Existing cited caller/callee evaluates these at request time; Step4/5 decisions authorize the governance inventory, not user service operations."
+      }
+    },
+    {
+      "consumer_id": "C18",
+      "profile": "github",
+      "authorization_type": "ExistingGitHubReadToken",
+      "issuer": "GitHub Actions github.token or existing authorized GH_TOKEN",
+      "capability": [
+        "read private repository/assets/checks/actions as workflow declares"
+      ],
+      "runtime_subject": "workflow run repository/commit/attempt; local read caller if CLI",
+      "scope": "tdoljyj/cross-memory-system and explicit exact candidate SHA",
+      "constraints": [
+        "token supplied securely by existing platform",
+        "receipt/check name alone is not merge or deployment authority",
+        "candidate/artifact/manifest identities checked before result acceptance"
+      ],
+      "expiry": "platform token lifetime; token body/expiry not copied",
+      "revocation": "platform token/repository access revocation; failed API read rejects",
+      "reusable": false,
+      "implementation_refs": [
+        {
+          "source_id": ".github/workflows/phase2-v027-validation.yml",
+          "sha256": "51334a15770991d2cbf13cb906a592494a96c87e55a8b6cb37f0792a1168bd53",
+          "pointer": "",
+          "lines": [
+            3,
+            21
+          ]
+        },
+        {
+          "source_id": ".github/workflows/public-mcp-gate-receipt.yml",
+          "sha256": "4e3784db5984933d859cd961f010c4fb2306eaf6b871cdd438eeb2cff9154ce8",
+          "pointer": "",
+          "lines": [
+            3,
+            12
+          ]
+        },
+        {
+          "source_id": "apps/clued-cloud/evals/public-mcp/gate-receipt.mjs",
+          "sha256": "9d1574e361a8fdd550578763755933e4d250a8076d55b1223ca9dfc40c1ec0c0",
+          "pointer": "",
+          "lines": [
+            57,
+            102
+          ]
+        }
+      ],
+      "grantee_binding": "RUNTIME_TYPED_SLOT; resolve presented request/process identity through the cited existing enforcement; no credential value or new grant issued",
+      "grant_issued": false,
+      "inventory_decision_refs": [
+        {
+          "source_id": "step4-acceptance",
+          "sha256": "6f2cc1c9cc28c2a717023029851d61a666815567bc30b3635479cb1b70382e6c",
+          "pointer": ""
+        },
+        {
+          "source_id": "step5-acceptance",
+          "sha256": "a38536ed64ae7924235ab0318cae17716f1a549d89660acde807f4bb15a64a19",
+          "pointer": ""
+        }
+      ],
+      "required_evidence": {
+        "kind": "EXISTING_REQUEST_VALIDATION_OUTPUT_NOT_NEW_PHASE2_APPROVAL",
+        "predicate": [
+          "token supplied securely by existing platform",
+          "receipt/check name alone is not merge or deployment authority",
+          "candidate/artifact/manifest identities checked before result acceptance"
+        ],
+        "scope": "Existing cited caller/callee evaluates these at request time; Step4/5 decisions authorize the governance inventory, not user service operations."
+      }
+    }
+  ]
+}

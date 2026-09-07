@@ -1,0 +1,61 @@
+{
+  "acceptor": "Codex@DESK-W-591 under CLUED_PHASE2_USER_DELEGATION_20260907",
+  "authority": {
+    "path": "ExecutionDelegation_20260907.json",
+    "sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8"
+  },
+  "issued_at": "2026-09-07T10:04:40.418378+00:00",
+  "invalidation": "Changed selected source/contract, generator or validator rules, scope, acceptance lineage or actual affected consumer wiring reopens the affected checks under I1-I8; historical evidence is not rewritten.",
+  "decision_kind": "SCOPED_STEP7_DETERMINISTIC_PROJECTION_ACCEPTANCE",
+  "decision_id": "CLUED_PHASE2_STEP07_ACCEPTANCE_20260907",
+  "status": "ACCEPTED_FOR_BOUND_DETERMINISTIC_GOVERNANCE_PROJECTIONS",
+  "predecessor": {
+    "path": "Step06-ScopedAcceptance_20260907.json",
+    "sha256": "bd40c82a21e7b19c2c36e56d7b877078e45c6bfdf1593590fb56ab364f47889a"
+  },
+  "subjects": {
+    "bindings": {
+      "path": "step07-projection-20260907/ProjectionBindings.repository.json",
+      "sha256": "7e526281339067dea908765cad2f8aa4b510d0371dcd9f2915cc31221e6802cd"
+    },
+    "generator": {
+      "path": "step07-projection-20260907/project-governance.mjs",
+      "sha256": "ffd35b923be0729fab18de13b2e234ce971788bdb5b6aa1ac8520c2a516755df"
+    },
+    "check": {
+      "path": "step07-projection-20260907/RepositoryProjectionCheck.json",
+      "sha256": "d4de7b9c3f5cefdb55c65e045903849841a2ec1d915644892065c778b6f25d88"
+    },
+    "output_sha256": {
+      "AGENTS.governance.md": "9bcc962497ff82bf86dd3650b6d965d6ffa683125275fa55e278eb4b3914a6f0",
+      "CURRENT_STATUS.history-original.md": "af52a717b2c37ebabf81a7123244aa3dd9a91042ea87037fd026925e8111f722",
+      "CURRENT_STATUS.projection.md": "2bb3a1c38e6e5229db62e232dbde74ae4759337bd77f01d22d0bc7dff4b7d98c",
+      "ConsumerBindings.projection.json": "a3448f25eae721026d8fc8ec0cbad012964e46c81a84dadecc3e365fc38e2cef",
+      "GovernanceDocs.projection.md": "9bcc962497ff82bf86dd3650b6d965d6ffa683125275fa55e278eb4b3914a6f0",
+      "GovernanceManifest.projection.json": "682b0a2821d942d1c57bc6baa7926bc862b26f89ce1246bded37da97325a7493",
+      "GovernanceRegistry.projection.json": "f1116caf940ca665193c60915f6df4e5dc506fafa0f1dea8e20d8ca702dd47f8",
+      "IdentityFiles.projection.json": "6259c4d9326cb24e15a5863efa61b8ffe95762f295398fbb75cbc1bd8606c0b3",
+      "README.governance.md": "9bcc962497ff82bf86dd3650b6d965d6ffa683125275fa55e278eb4b3914a6f0",
+      "StatusMigrationPlan.candidate.json": "1881cc343304904893b561a7c9d6d5881981378eff40c7b06cad2c0b29e81ecb",
+      "ToolRouting.projection.json": "8f63d5eae3d643edf3639ba709fa99e5bee1cb5cae7b8cb19813f168d4fa4d10",
+      "WorkflowReferences.projection.json": "5cb691e23d4f8c857e9babde7d5f4d0bc9ed7b774ee8870aa0b0766e2bf5124a"
+    }
+  },
+  "independent_review": {
+    "path": "step08-validator-20260907/IndependentStep7BindingReview.json",
+    "sha256": "2369b6a173f6e3cbe0beb38fea2130fdd8bc0ed536d55d9ea2b031c41a11c3a5"
+  },
+  "accepted_effect": [
+    "19 exact source selections and 9 accepted-subject lineage checks generate 12 deterministic governance outputs.",
+    "Typed 18-consumer bindings and three scoped decisions remain distinct from historical source states and runtime execution.",
+    "Root document migration may use these exact outputs only after Step11 Freeze."
+  ],
+  "not_granted": [
+    "Architecture Acceptance",
+    "Structure Freeze",
+    "Physical migration",
+    "Actual production consumer activation",
+    "Post-migration enforcement"
+  ],
+  "next_step": 8
+}

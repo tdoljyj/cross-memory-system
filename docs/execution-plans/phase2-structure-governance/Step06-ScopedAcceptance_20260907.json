@@ -1,0 +1,92 @@
+{
+  "decision_kind": "SCOPED_STEP6_TYPED_BINDINGS_ACCEPTANCE",
+  "decision_id": "CLUED_PHASE2_STEP06_ACCEPTANCE_20260907",
+  "status": "ACCEPTED_FOR_SOURCE_PRESERVING_TYPED_BINDINGS",
+  "issued_at": "2026-09-07T09:37:05.512361+00:00",
+  "acceptor": "Codex@DESK-W-591 under CLUED_PHASE2_USER_DELEGATION_20260907",
+  "author": "/root/sequence_review",
+  "independent_review": {
+    "reviewer": "/root",
+    "path": "step06-bindings-20260907/RootIndependentReview.json",
+    "sha256": "bc2fc121083422a9f13df635511ff11f9279612e2e00da893440772b1ccd92d7"
+  },
+  "authority": {
+    "path": "ExecutionDelegation_20260907.json",
+    "sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8"
+  },
+  "predecessor": {
+    "path": "Step05-ScopedAcceptance_20260907.json",
+    "sha256": "a38536ed64ae7924235ab0318cae17716f1a549d89660acde807f4bb15a64a19"
+  },
+  "subject_directory": "step06-bindings-20260907",
+  "subjects": {
+    "TypedConsumerRegistry.candidate.json": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+    "TypedAuthorizationRegistry.candidate.json": "359e7461ba3166bef63815f37ddd9c247aada317c14e4e62bdee3bc79cc3fcdd",
+    "TypedReceiptRegistry.candidate.json": "05d182805b31ba9d5e6c1c3fa32ae2081527a92faaa76263debded6ffca5efa4",
+    "C09ExportScopeDisposition.json": "fa2ba22146d5560f502d5e70d7045ead5577fea7c1af909b7ab51a9e64b718ff",
+    "ExecutionEvidenceReuse.json": "e49ef52041404d2b486d49bb3da4a4c414e61e472d93bc7970dc64802088d220",
+    "CurrentCIRunBinding.json": "9ce45d5526abbcac641c88ecea3d29d20f30e0ce97c953ff1740e65cd5707657"
+  },
+  "source_index_sha256": "d246a7ee943eeaa1071d0888b9737cd4be621e0dd01f866d62a10e4d49af044a",
+  "closure_assessment": {
+    "path": "step06-bindings-20260907/Step6ClosureAssessment.json",
+    "sha256": "094cbce78fd3f8675b46048dc8f469fceae420ac88d2f969f0f9a8ecc4222af6"
+  },
+  "scope": [
+    "No production Worker/Binding/export permission change; selected structural migration must preserve these exact contracts or reopen only affected bindings.",
+    "Existing runtime IDs are resolved by cited request-time predicates; no global Domain/Program/Stage ID or runtime grant is minted for a null field.",
+    "Scope excludes unrequested future model/commercial instances; original package counters remain historical facts.",
+    "Step8/13/16/18 retain their prescribed actual evidence obligations; Step6 does not claim all services were newly run."
+  ],
+  "accepted_effect": [
+    "Bind 18 actual source-qualified consumers to their input, owner/domain, 27 existing authorization contracts, 18 existing receipt requirements and exact validation entrypoints.",
+    "Preserve runtime-generated IDs as typed parameters with cited request-time checks; no global runtime identity or permission is minted.",
+    "C01 discovery and bearer-presence initialization are distinct policies; setup does not prove business identity.",
+    "C09 declared versus enforced scope mismatch and legacy unknown-return behavior remain explicit; no production permission or behavior claim is upgraded.",
+    "Proceed to Step 7 projection checks and Step 8 governance positive/negative tests."
+  ],
+  "retained_obligations": [
+    {
+      "step": 8,
+      "action": "Execute the selected governance validator/negative controls against this bound input and deterministic projection; reference this chain and C09 disposition. Do not treat all unexecuted hosted-service tests as missing Step6 identities.",
+      "affected_consumers": "Actual governance/validator inputs selected by Step8; parent assigned existing Step8 task."
+    },
+    {
+      "step": 13,
+      "action": "After actual physical migration, validate changed consumer entry paths/imports/input identities and compatibility. Run service/auth fixtures only if affected source or actual auth address/permission dependency changed.",
+      "affected_consumers": "Precisely selected moved/wired paths; unchanged hosted C01-C10/C14 not automatically retested."
+    },
+    {
+      "step": 16,
+      "action": "Fresh four Phase2 ZIP gates on migrated exact inputs with actual commit/run/artifact/receipt.",
+      "affected_consumers": [
+        "C15"
+      ]
+    },
+    {
+      "step": 18,
+      "action": "Prove selected actual publishing/write boundary is mandatory; C12 local CAS and C18 name-based green receipt alone do not prove non-bypass.",
+      "affected_consumers": [
+        "C12",
+        "C18",
+        "selected_governance_activation_boundary"
+      ]
+    },
+    {
+      "condition": "Only if C09 export scope/consumer is changed or dual-scope behavior is claimed",
+      "action": "Execute the existing guarded isolated SQL fixture and resolve intended permission contract; no production export or semantic policy fix is part of current source-preserving migration.",
+      "affected_consumers": [
+        "C09"
+      ]
+    }
+  ],
+  "not_granted": [
+    "Fresh runtime acceptance for all hosted services",
+    "Architecture Acceptance",
+    "Structure Freeze",
+    "Production permission changes",
+    "Required-check non-bypass PASS"
+  ],
+  "invalidation": "Changed source, scope, issuer/policy, target namespace, or actual consumer wiring reopens affected bindings and the required behavior tests. Unchanged hosted contracts do not trigger unrelated full regressions.",
+  "next_step": 7
+}

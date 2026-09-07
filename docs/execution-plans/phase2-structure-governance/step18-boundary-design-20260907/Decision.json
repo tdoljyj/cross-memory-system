@@ -1,0 +1,248 @@
+{
+  "schema_version": 1,
+  "type": "Step15Step18MinimalBoundaryDecision",
+  "reviewer": "/root/sequence_review",
+  "date": "2026-09-07",
+  "status": "ONE_CONDITIONAL_FREE_EXISTING_PATH; NOT_IMPLEMENTED_OR_ACCEPTED",
+  "step18_pass": false,
+  "pro_mandatory": false,
+  "enterprise_mandatory": false,
+  "authorization_requested": false,
+  "inspected_base_head": "40fea9e0fcd4d061946d0523f645c40893fced2b",
+  "source_binding": "Individual observed file bytes; not a claim that all current worktree additions are committed at inspected_base_head.",
+  "scope": "Current private repository Phase2 governance publication/activation; no claim of protected ordinary Git merge, immutable administrator policy, product deployment enforcement or all historical surfaces.",
+  "current_access": {
+    "repository": "tdoljyj/cross-memory-system",
+    "private": true,
+    "actual_admins": [
+      "tdoljyj"
+    ],
+    "ordinary_writers_observed": 0,
+    "zero_ordinary_writers_is_pass": false,
+    "existing_native_protection": "403 subscription restriction previously observed; not retested",
+    "future_write_grant": "INVALIDATE_CURRENT_BOUNDARY_REVIEW_BEFORE_GRANT; never classify new write actor as admin"
+  },
+  "factual_findings": [
+    "Naming workflow uploads with if: always(); artifact existence is not positive validation.",
+    "Four-gate negative harness may produce a successful job with an expected failing gate receipt; run success alone is not positive validation.",
+    "Current four-green receipt selects checks by name and explicitly grants neither merge nor deployment authority.",
+    "Existing snapshot publisher validates, uses expected-current CAS and atomic pointer, but has no mandatory Phase2 CI input or distinct proved Phase2 activation role.",
+    "Step7 candidate generator currently emits derived files; its existence is not proof that real formal consumers exclusively load its verified outputs."
+  ],
+  "candidate": {
+    "id": "EXISTING_PUBLISHER_ACTIONS_ARTIFACT_WITH_SIGNED_MERGE_BINDING",
+    "alternative_count": 1,
+    "implementation_status": "PROPOSAL_ONLY",
+    "intended_boundary": "Only validated artifact payload becomes the scoped formal governance input through an existing consumer/activation entry. Ordinary repository edits remain candidate input only if the real consumer enforces that rule.",
+    "build_and_receipt": [
+      "Use the existing Actions path; retain failure diagnostic uploads but give governed promotion an explicit positive required-check set and negative_case=none predicate.",
+      "Bind actual repository identity, candidate source commit, exact workflow/verifier/policy bytes, platform run ID and attempt, workflow path, required checks and receipt result, subject and candidate/registry/manifest hashes, accepted predecessors, artifact ID and digest.",
+      "Fetch platform metadata and exact retained artifact bytes; do not accept only names, a candidate-authored receipt, a same-named check, or a green negative-test harness."
+    ],
+    "signing": [
+      "Place an unambiguous publication attestation, including artifact and receipt digests and all relevant binding fields, in the tree of a GitHub service-created merge commit.",
+      "Require the actual returned commit verification to be verified=true and reason=valid, with nonempty signature/payload and matching commit/tree; retain verification, signed commit, relevant Git tree/blob proofs and platform PR/merge actor evidence. Verify against GitHub web-flow public key when locally available.",
+      "Official documentation supports GitHub web-interface signing; this proposal does not assume every REST merge method returns a signed commit. Reject unsigned/unverified actual output. No PR or merge was performed by this review.",
+      "Keep validated_candidate_commit and publication_attestation_commit separate. Publish the exact validated artifact; do not claim the later merge tree was covered by the earlier CI run. Changes to governed payload require a new candidate/run.",
+      "A signed commit whose signed tree contains the exact attestation can serve as a signed attestation candidate; a commit that merely mentions a release, an unsigned JSON hash, or the upload-artifact digest is insufficient."
+    ],
+    "mandatory_entry": [
+      "Extend and wire an existing actual Phase2 formal consumer/publication entry to require the binding before accepting Registry/Manifest/projection content; reuse existing publisher validation/CAS/rollback only where that publisher truly owns the governed state.",
+      "List and verify the actual canonical input path, activation function/command and authoritative target. Prove alternate direct inputs are rejected by the consuming path rather than relying on instructions to use a wrapper.",
+      "Check the trusted verifier/policy identity outside the candidate being validated. A future ordinary writer must not gain control of both this trust decision and the material it validates.",
+      "Combine real input-rejection evidence with actual platform write-denial evidence for an existing reduced-privilege principal. The current owner-only collaborator list supports the access scope but cannot replace those tests.",
+      "Retain actual administrator exceptions as identity/action/ref/time/outcome/evidence. Owner privileges remain an explicit exception, not a claim that administrators cannot bypass."
+    ],
+    "bounded_negative_tests": [
+      {
+        "case": "failed diagnostic or successful negative harness",
+        "required_result": "Actual formal entry rejects because positive required checks/receipt predicates fail."
+      },
+      {
+        "case": "same-name artifact, substituted Registry/Manifest or candidate",
+        "required_result": "Actual formal entry rejects digest/subject/source binding mismatch before state change."
+      },
+      {
+        "case": "candidate changes workflow/verifier/policy",
+        "required_result": "Reject unapproved trust identity; a green result from changed workflow is insufficient."
+      },
+      {
+        "case": "old receipt or another candidate PASS",
+        "required_result": "Reject exact subject/source/run/artifact binding mismatch; do not require arbitrary elapsed-time expiration if exact unchanged subject remains valid."
+      },
+      {
+        "case": "unsigned merge, wrong signed tree or attestation does not bind artifact",
+        "required_result": "Reject; signature verification alone is not validation correctness."
+      },
+      {
+        "case": "ordinary non-write principal attempts governed publication/direct write",
+        "required_result": "Record actual platform denial for the selected entry and verify no authoritative target changed. No live bypass push is authorized by this subtask."
+      },
+      {
+        "case": "local optional script skipped or direct canonical input substituted",
+        "required_result": "Real consumer does not accept unchecked state; offline wrapper tests alone cannot prove this."
+      }
+    ],
+    "currently_missing": [
+      "The exact current Phase2 formal canonical/activation entry is not yet established as mandatory by inspected sources. The memory snapshot publisher is not automatically the Phase2 registry consumer.",
+      "No actual signed publication-attestation merge binding this release/receipt has been produced or verified.",
+      "No actual publisher positive/negative results plus reduced-privilege platform write denial for that selected formal target were collected by this audit."
+    ]
+  },
+  "original_F_MAJ_004_mapping": {
+    "source": "Parent-supplied exact original ZIP/data/StructureFreezeEvidenceMatrix.json F-MAJ-004 conditions; no independent re-extraction in this bounded review.",
+    "required_check_set": "Preserve explicit exact set as contract; actual execution proof belongs to the scheduled enforcement/non-bypass stage, not automatic earlier PASS.",
+    "protection_or_equivalent_immutable_receipt": "GitHub upload-artifact@v4 provides an immutable artifact object, with platform artifact ID/digest and workflow run binding. It is not undeletable or perpetual: deletion/expiry must fail closed for an online-service-dependent reference, or retained signed bytes must remain independently verifiable.",
+    "signed_tag_attestation_or_signed_artifact": "Proposed GitHub-signed merge attestation can address this obligation if actual signature/tree/payload/digest/issuer checks pass; not yet satisfied. GitHub private-repository native artifact attestations require Enterprise Cloud, but that product is not required for this signed-commit alternative.",
+    "merged_duplicate_branch_cleanup": "Separate original obligation: only actual merged duplicate branches, after merge, with precise cleanup receipt and retention of source/evidence. No deletion or exemption performed here.",
+    "stage_rule": "Do not move all Step18 actual enforcement evidence before Step9/10/11; do not call any unexecuted original condition PASS."
+  },
+  "stop_rule": "If the existing actual governed input/activation target cannot be made exclusive with a bounded integration and existing permissions, stop this candidate and leave Step15/18 pending. Do not build a new service or stack optional wrappers.",
+  "lowest_cost_external_condition_if_candidate_fails": "A genuinely existing protected publication target/consumer boundary is necessary. If native private Git merge/write protection is selected instead, the observed account must become eligible for that feature; Pro was refused by the current plan. This is conditional, not authorization to upgrade or proof that the original baseline universally requires Pro.",
+  "no_mutations": [
+    "No repository code changes",
+    "No GitHub PR/merge/push",
+    "No production activation",
+    "No key generation",
+    "No permission or subscription change",
+    "No repeated protection probe"
+  ],
+  "sources": [
+    {
+      "path": "work/remaining-execution-readiness/AuthorizationAudit.json",
+      "kind": "REUSED_BOUNDED_AUDIT",
+      "note": "403 observation reused; no repeat GitHub protection request."
+    },
+    {
+      "path": "work/phase2-governance-check/docs/execution-plans/phase2-structure-governance/CurrentScopedAccessReview_20260907.json",
+      "sha256": "88a846d82338c77d30ba802895b2ce04e1b8ac76bcbae69dd0cabf070f9dc9a7",
+      "bytes": 5872
+    },
+    {
+      "path": "work/phase2-governance-check/.github/workflows/phase2-naming-surface-inventory.yml",
+      "sha256": "a9264836297371da0a4bf6e6dada2699ce577c7f31476ac957190e14396aa77c",
+      "bytes": 9093,
+      "lines": [
+        9,
+        10,
+        11,
+        184,
+        185,
+        186,
+        188
+      ]
+    },
+    {
+      "path": "work/phase2-governance-check/.github/workflows/phase2-v027-validation.yml",
+      "sha256": "51334a15770991d2cbf13cb906a592494a96c87e55a8b6cb37f0792a1168bd53",
+      "bytes": 9000,
+      "lines": [
+        10,
+        173,
+        182,
+        195,
+        196,
+        204
+      ]
+    },
+    {
+      "path": "work/phase2-governance-check/apps/clued-cloud/evals/public-mcp/gate-receipt.mjs",
+      "sha256": "9d1574e361a8fdd550578763755933e4d250a8076d55b1223ca9dfc40c1ec0c0",
+      "bytes": 5425,
+      "lines": [
+        23,
+        27,
+        30,
+        34,
+        69,
+        70
+      ]
+    },
+    {
+      "path": "work/phase2-governance-check/apps/clued-cloud/scripts/two-level-snapshot.mjs",
+      "sha256": "1dfcc8de7b481bc8a29cd055f711bb142fa390fff07a61730320866a477f6b7e",
+      "bytes": 58055,
+      "lines": [
+        1033,
+        1044,
+        1051,
+        1054,
+        1061,
+        1071,
+        1079
+      ]
+    },
+    {
+      "path": "work/phase2-governance-check/artifacts/clued-validation/phase2-v027/candidate-source.json",
+      "sha256": "b5eb6a0eee044cc2835f910dff49452583e360218cc2b629aa3a8c5745d4d3d6",
+      "bytes": 1696
+    },
+    {
+      "path": "work/step7-projection-candidate/project-governance.mjs",
+      "lines": [
+        182,
+        183,
+        199,
+        209
+      ],
+      "note": "Read-only entry check: --generate/--check; report explicitly says runtime consumers not activated. Parent is concurrently implementing integration; this observation must not be treated as a verdict on future changes."
+    }
+  ],
+  "official_references": [
+    {
+      "url": "https://github.com/actions/upload-artifact",
+      "claim": "v4 artifact immutability"
+    },
+    {
+      "url": "https://docs.github.com/en/rest/actions/artifacts",
+      "claim": "Artifact metadata includes IDs, digest and workflow_run source association; delete endpoint exists."
+    },
+    {
+      "url": "https://docs.github.com/en/authentication/managing-commit-signature-verification/about-commit-signature-verification",
+      "claim": "GitHub web-interface GPG signing, web-flow public key and persistent verification."
+    },
+    {
+      "url": "https://docs.github.com/en/rest/commits/commits",
+      "claim": "verification fields verified, reason, signature, payload, verified_at."
+    },
+    {
+      "url": "https://docs.github.com/en/actions/how-tos/secure-your-work/use-artifact-attestations/use-artifact-attestations",
+      "claim": "Private/internal native artifact attestations require Enterprise Cloud."
+    }
+  ],
+  "tm19_specific_route_review": {
+    "proposed_formal_entry": "development/authority-index/phase2/SourceIndex.json",
+    "basis": {
+      "source": "work/step2-evidence/package-inputs/data/StructureCandidateMap.json",
+      "sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965",
+      "pointer": "/current_to_target_rows/18",
+      "lines": [
+        334,
+        339,
+        340
+      ],
+      "row": "TM-19",
+      "original_target": "development/authority-index/",
+      "original_treatment": "Only references accepted contracts, Gates and Receipts; the directory itself grants no approval."
+    },
+    "scope_verdict": "FITS_ORIGINAL_TM19_AS_DERIVED_AUTHORITY_REFERENCE_INDEX_IF_ENFORCED; PROPOSAL_NOT_ACTUAL_PASS",
+    "entry_owner": "Existing accepted DCP governance ownership; no new runtime grant or external service.",
+    "implementation_constraints": [
+      "Publisher command accepts only exact trusted CI plus actually verified signed-tree statement and already accepted predecessor authority; emits derived activation references, never an independent approval authority.",
+      "Actual in-scope readers must revalidate trusted signature, exact subject/payload and current accepted reference; merely reading the new JSON path or following its current pointer is insufficient.",
+      "Ordinary candidate files cannot become current by placement, naming, direct pointer edits or a candidate-controlled policy hash.",
+      "Use the existing current/expected-current and append-only evidence semantics for stale activation/rollback; a valid old signature is not proof of current authorization.",
+      "Keep private identity/actor checks and administrative audit in the private governance evidence, without externalizing private account hints into User Skill.",
+      "No claim to control unchanged product Worker/Bindings; TM-07 remains unchanged."
+    ],
+    "minimum_actual_rejections": [
+      "STALE: valid former signed receipt/activation rejected after accepted subject/current reference changes, except separately authorized evidenced rollback.",
+      "WRONG_SHA: candidate, payload, SourceIndex, Manifest, receipt or artifact digest mismatch rejected before activation.",
+      "FORGED_WORKFLOW: modified workflow/verifier/policy, same-named green checks or negative-harness success rejected against independently accepted trust binding.",
+      "SKIP: omit publisher/local workflow and provide candidate/raw Registry directly; actual reader must refuse it as current.",
+      "BARE_POINTER: edit/copy activation pointer without full valid signed-tree/CI/subject binding; actual reader rejects it.",
+      "PRINCIPAL: actual existing low-privilege caller denied write/publication at the platform target; retain result and no-authoritative-change evidence."
+    ],
+    "remaining_proof": "Parent plans this integration. No publisher/reader implementation, signed publication statement, platform denial or actual entry negative results were executed by this review; Step18 remains pending until those exist."
+  }
+}

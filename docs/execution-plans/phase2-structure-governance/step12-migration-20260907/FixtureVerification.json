@@ -1,0 +1,13 @@
+{
+  "scope": "ISOLATED_CANDIDATE_FIXTURES_ONLY",
+  "tests_run": 9,
+  "failures": 0,
+  "errors": 0,
+  "skipped": 0,
+  "source_commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+  "plan_sha256": "d8e1b8bb5058e9b2e4be9b4c0e836ad101eeefe7a839e6bc3ac5338f8b8310d0",
+  "test_sha256": "cb2a0f500b5d7cab5ef832f81d0fc011c333c66b887f48548384fd18063f9a4a",
+  "real_repository_mutations": 0,
+  "formal_freeze_or_migration_issued": false,
+  "details": "test_19_historical_moves_preserve_original_bytes_and_rollback (__main__.FixtureChecks.test_19_historical_moves_preserve_original_bytes_and_rollback) ... ok\ntest_collision_source_drift_and_protected_path_fail_preflight (__main__.FixtureChecks.test_collision_source_drift_and_protected_path_fail_preflight) ... ok\ntest_history_links_resolve_against_original_commit_not_new_directory (__main__.FixtureChecks.test_history_links_resolve_against_original_commit_not_new_directory) ... ok\ntest_module_file_globals_and_dual_source_identity (__main__.FixtureChecks.test_module_file_globals_and_dual_source_identity) ... ok\ntest_old_and_direct_python_entries_preserve_output_exit_and_zero_read_paths (__main__.FixtureChecks.test_old_and_direct_python_entries_preserve_output_exit_and_zero_read_paths) ... ok\ntest_powershell_parameter_config_root_and_exitcode_forwarding (__main__.FixtureChecks.test_powershell_parameter_config_root_and_exitcode_forwarding) ... ok\ntest_projection_inputs_are_preserved_sources_and_do_not_hash_outputs (__main__.FixtureChecks.test_projection_inputs_are_preserved_sources_and_do_not_hash_outputs) ... ok\ntest_rollback_refuses_concurrent_change (__main__.FixtureChecks.test_rollback_refuses_concurrent_change) ... ok\ntest_specific_existing_caller_package_contains_implementations (__main__.FixtureChecks.test_specific_existing_caller_package_contains_implementations) ... ok\n\n----------------------------------------------------------------------\nRan 9 tests in 1.998s\n\nOK\n"
+}

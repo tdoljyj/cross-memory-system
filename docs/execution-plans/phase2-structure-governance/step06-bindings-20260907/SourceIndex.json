@@ -1,0 +1,485 @@
+{
+  "source_commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+  "source_tree": "e6de3a15047206e10bb52dd4480609f8c3ff48e2",
+  "original_matrix_source_hash_count": 45,
+  "original_matrix_sha256": "3fffec8fd9570352246425d60156d17988eb6311adab719e481c197a6eca5cee",
+  "sources": {
+    "original-matrix": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step6-consumer-candidate\\ConsumerMatrix.json",
+      "bytes": 56180,
+      "sha256": "3fffec8fd9570352246425d60156d17988eb6311adab719e481c197a6eca5cee"
+    },
+    "original-runtime-evidence-contract": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step6-consumer-candidate\\RuntimeConsumerEvidenceContract.json",
+      "bytes": 809,
+      "sha256": "6313bb5680762b712f0047d45b160313bbeece4b9581c9c95ceed79a790f09b3"
+    },
+    ".github/workflows/phase2-v027-validation.yml": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\.github\\workflows\\phase2-v027-validation.yml",
+      "bytes": 9000,
+      "sha256": "51334a15770991d2cbf13cb906a592494a96c87e55a8b6cb37f0792a1168bd53"
+    },
+    ".github/workflows/public-mcp-gate-receipt.yml": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\.github\\workflows\\public-mcp-gate-receipt.yml",
+      "bytes": 1500,
+      "sha256": "4e3784db5984933d859cd961f010c4fb2306eaf6b871cdd438eeb2cff9154ce8"
+    },
+    "apps/clued-cloud/app/oauth/consent/page.tsx": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\apps\\clued-cloud\\app\\oauth\\consent\\page.tsx",
+      "bytes": 7026,
+      "sha256": "ce7e6f8de06bd2c7757112b08148f4e19a361868091b88d5c2150b2f0087ef54"
+    },
+    "apps/clued-cloud/app/page.tsx": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\apps\\clued-cloud\\app\\page.tsx",
+      "bytes": 54598,
+      "sha256": "4534d4ca11390ca5fadae652c6b52ce2bc5428765214c04ed6ff13a8ff7ac5a6"
+    },
+    "apps/clued-cloud/evals/public-mcp/A03-RUNBOOK.md": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\apps\\clued-cloud\\evals\\public-mcp\\A03-RUNBOOK.md",
+      "bytes": 4648,
+      "sha256": "6a2910284849bb5d698849d4fa3234d1ae1bb8c8239f4db2b46f3fdad6fb3843"
+    },
+    "apps/clued-cloud/evals/public-mcp/a03-contract.mjs": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\apps\\clued-cloud\\evals\\public-mcp\\a03-contract.mjs",
+      "bytes": 4722,
+      "sha256": "88b3a75f3c89355528d2f8d14c78cbaaac07f52c02409bc15436a977bdb44609"
+    },
+    "apps/clued-cloud/evals/public-mcp/a03-contract.test.mjs": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\apps\\clued-cloud\\evals\\public-mcp\\a03-contract.test.mjs",
+      "bytes": 16708,
+      "sha256": "fc489427f631495cc641ed3c386f7ce3ad5f21b0d206028ff9a6c48eaf42ad9a"
+    },
+    "apps/clued-cloud/evals/public-mcp/a03-session.mjs": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\apps\\clued-cloud\\evals\\public-mcp\\a03-session.mjs",
+      "bytes": 9586,
+      "sha256": "a81989c08d9eae943091a28d9d7d6142ef3f53cd5a2d82deec634f19ff3bfffe"
+    },
+    "apps/clued-cloud/evals/public-mcp/fixtures.mjs": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\apps\\clued-cloud\\evals\\public-mcp\\fixtures.mjs",
+      "bytes": 3180,
+      "sha256": "876ca9731cbd35b30da64277a10829d39a83e2bea50bad4cf689106f7581ac7c"
+    },
+    "apps/clued-cloud/evals/public-mcp/gate-receipt.mjs": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\apps\\clued-cloud\\evals\\public-mcp\\gate-receipt.mjs",
+      "bytes": 5425,
+      "sha256": "9d1574e361a8fdd550578763755933e4d250a8076d55b1223ca9dfc40c1ec0c0"
+    },
+    "apps/clued-cloud/evals/public-mcp/gate-receipt.test.mjs": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\apps\\clued-cloud\\evals\\public-mcp\\gate-receipt.test.mjs",
+      "bytes": 2086,
+      "sha256": "8f9b8abe5bd2c62c84026d0d4d04321e7b1f5d0ccebf6fad9ddb1e6432dd228b"
+    },
+    "apps/clued-cloud/evals/public-mcp/start-isolated.mjs": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\apps\\clued-cloud\\evals\\public-mcp\\start-isolated.mjs",
+      "bytes": 1858,
+      "sha256": "ecee057792db190a57dd2b98ace9cf29a9e83c3c55010b983a394052a8be87e0"
+    },
+    "apps/clued-cloud/package.json": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\apps\\clued-cloud\\package.json",
+      "bytes": 5144,
+      "sha256": "e1b8dd060d0e0bb0f9758c3bd3db85fd87dc0077e58d961cea4f4e66bfebb4d3"
+    },
+    "apps/clued-cloud/scripts/m2-snapshot-store.mjs": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\apps\\clued-cloud\\scripts\\m2-snapshot-store.mjs",
+      "bytes": 16753,
+      "sha256": "d56e15f4821ff2b21de07a3c103aac4d9a963b3dac7ee2128543ea37036caf30"
+    },
+    "apps/clued-cloud/scripts/two-level-snapshot.mjs": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\apps\\clued-cloud\\scripts\\two-level-snapshot.mjs",
+      "bytes": 58055,
+      "sha256": "1dfcc8de7b481bc8a29cd055f711bb142fa390fff07a61730320866a477f6b7e"
+    },
+    "apps/clued-cloud/supabase/migrations/202608230002_mandatory_continuity.sql": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\apps\\clued-cloud\\supabase\\migrations\\202608230002_mandatory_continuity.sql",
+      "bytes": 31922,
+      "sha256": "9afc51a213bed869c143a7fdb5a23ab8a2e80df10639b3ea572a39aef203f57c"
+    },
+    "apps/clued-cloud/supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\apps\\clued-cloud\\supabase\\migrations\\20260825171129_clued_m1_runtime_contracts.sql",
+      "bytes": 72625,
+      "sha256": "f59e414ec0de016cbe89d3ba24ded2d90e85a9e17fb554021b2d4d611f4d26c2"
+    },
+    "apps/clued-cloud/supabase/tests/m1_runtime_contracts.test.sql": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\apps\\clued-cloud\\supabase\\tests\\m1_runtime_contracts.test.sql",
+      "bytes": 16449,
+      "sha256": "275f7344fcf7bca27b8bde071cfdcafd6463e6ca18a0b0e6038a46b1e4dcc57e"
+    },
+    "apps/clued-cloud/tests/continuity.test.mjs": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\apps\\clued-cloud\\tests\\continuity.test.mjs",
+      "bytes": 11961,
+      "sha256": "671808dcabb45dc551413c9a3d833f0dcde661220021674e3285f7600ce38b97"
+    },
+    "apps/clued-cloud/tests/m1-runtime-contracts.test.mjs": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\apps\\clued-cloud\\tests\\m1-runtime-contracts.test.mjs",
+      "bytes": 3342,
+      "sha256": "4b9e30db95b2c4cc12f5f596185edabf24525be696a3286c1c3de6002424b579"
+    },
+    "apps/clued-cloud/tests/p5-cloud-contracts.test.mjs": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\apps\\clued-cloud\\tests\\p5-cloud-contracts.test.mjs",
+      "bytes": 8544,
+      "sha256": "f0fcce4e7f9b68d0d2d7ac350abe950d56f9f15972dc37170f829aae647d415b"
+    },
+    "apps/clued-cloud/tests/p5-real-postgres.test.mjs": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\apps\\clued-cloud\\tests\\p5-real-postgres.test.mjs",
+      "bytes": 109679,
+      "sha256": "fb20a2bd63eb81c98be8fa0cf8f19286dcd5d6f4a218d7e59c9d2e904b0ebff8"
+    },
+    "apps/clued-cloud/tests/project-api.test.mjs": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\apps\\clued-cloud\\tests\\project-api.test.mjs",
+      "bytes": 5885,
+      "sha256": "1c9096ee9af6e1312763090387ab9293bdd5c3b741ab5938377a0119645696f7"
+    },
+    "apps/clued-cloud/tests/record-api.test.mjs": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\apps\\clued-cloud\\tests\\record-api.test.mjs",
+      "bytes": 10597,
+      "sha256": "914f6e1aa30248140b00418a1db9beace24a0482a18c899b8e971895e14ded9b"
+    },
+    "apps/clued-cloud/tests/two-level-snapshot.test.mjs": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\apps\\clued-cloud\\tests\\two-level-snapshot.test.mjs",
+      "bytes": 22725,
+      "sha256": "c077c0b07b24391439bb86c52eca977e31e271c9578294eed510c5600f388b9f"
+    },
+    "apps/clued-cloud/worker/continuity.ts": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\apps\\clued-cloud\\worker\\continuity.ts",
+      "bytes": 47981,
+      "sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba"
+    },
+    "apps/clued-cloud/worker/p5.ts": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\apps\\clued-cloud\\worker\\p5.ts",
+      "bytes": 4492,
+      "sha256": "ce46bf7025f746579263b78c320f1df6e4d077e11bcbcc958865f20bfead418f"
+    },
+    "apps/clued-cloud/worker/projects.ts": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\apps\\clued-cloud\\worker\\projects.ts",
+      "bytes": 2051,
+      "sha256": "8bb2d52643c4ffd62ee48de60294559161d750ea15d328b6585deb47aa2aa09f"
+    },
+    "apps/clued-cloud/worker/records.ts": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\apps\\clued-cloud\\worker\\records.ts",
+      "bytes": 8108,
+      "sha256": "43bfe74c4d6576476f3d4a08df82a6b0853da855c29124edf1e333c14d5bb35e"
+    },
+    "artifacts/clued-validation/public-mcp/a03/c1ef7a3b-20260829T062104Z/readonly-call-summary.json": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\artifacts\\clued-validation\\public-mcp\\a03\\c1ef7a3b-20260829T062104Z\\readonly-call-summary.json",
+      "bytes": 333,
+      "sha256": "4100958a1f511b60cafb7f43e381398368c4836a0d109fdf5bd26ac0d22eef57"
+    },
+    "artifacts/clued-validation/public-mcp/a13/c2b18063-20260829T075913Z/gate-receipt.json": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\artifacts\\clued-validation\\public-mcp\\a13\\c2b18063-20260829T075913Z\\gate-receipt.json",
+      "bytes": 1519,
+      "sha256": "db5ba786b99c59429d5a2dac7b6780c49f8b298b14e78a3c3f692d96632f4a04"
+    },
+    "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step1/34068945665/CIGateReceipt.json": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\artifacts\\clued-validation\\structure-freeze-prep\\acceptance-20260907\\step1\\34068945665\\CIGateReceipt.json",
+      "bytes": 3553,
+      "sha256": "71f218467f8c05fcd3854c65188336a80762fbc82b482977f46889b62c4d907e"
+    },
+    "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step1/34069116734/CIGateReceipt.json": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\artifacts\\clued-validation\\structure-freeze-prep\\acceptance-20260907\\step1\\34069116734\\CIGateReceipt.json",
+      "bytes": 4213,
+      "sha256": "0a6bf0df65e722f2bb48fc6fd93767ec5ffcd8bb207b4189d4ff7d0863738091"
+    },
+    "docs/execution-plans/phase2-structure-governance/FixedExecutionBaseline_20260907.md": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\FixedExecutionBaseline_20260907.md",
+      "bytes": 30836,
+      "sha256": "f465bcb77aced171b4f241da7a23c1e02133716700227caaabb7954be39899ad"
+    },
+    "docs/execution-plans/phase2-structure-governance/Step01-Step02-EvidenceReview.md": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\Step01-Step02-EvidenceReview.md",
+      "bytes": 17727,
+      "sha256": "8ecc17639985e449b89dc75ce54df531d4c1ba709cd050b56feed215721ec72d"
+    },
+    "protocol/continuity/v1/schemas/core/receipt.schema.json": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\protocol\\continuity\\v1\\schemas\\core\\receipt.schema.json",
+      "bytes": 713,
+      "sha256": "7a99391d3a8357f40ad7a030d211e2ebceec1f3c95451fe3d6c589c435e0132c"
+    },
+    "scripts/clued-naming-inventory-consolidate.py": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\scripts\\clued-naming-inventory-consolidate.py",
+      "bytes": 32673,
+      "sha256": "69f2fcc2e8c0e2802d7fa08de842345b88d208bec947d3ef4e88ef4c41907026"
+    },
+    "scripts/clued-naming-surface-inventory.py": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\scripts\\clued-naming-surface-inventory.py",
+      "bytes": 73510,
+      "sha256": "9ff7dc893b865a7736d6d9ffbe6f908c15f9c418e10a0602ae6fd33eedb8f81e"
+    },
+    "scripts/phase2-v027-negative-harness.py": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\scripts\\phase2-v027-negative-harness.py",
+      "bytes": 18552,
+      "sha256": "46520afc2175c468bb15162c7ec2fb43d157ddcbb05481ea062f7a31083f6860"
+    },
+    "scripts/phase2-v027-validate.py": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\scripts\\phase2-v027-validate.py",
+      "bytes": 20343,
+      "sha256": "e16cc9fa5fd2a54dc3922029851722936551a400979dc94dce691faa83bd7f4e"
+    },
+    "tests/test_naming_inventory_completeness.py": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\tests\\test_naming_inventory_completeness.py",
+      "bytes": 7407,
+      "sha256": "5a46d56736c2b4b0f7a03af757d9e483b91b82c4cd70441385414a1bbce7617d"
+    },
+    "tests/test_naming_inventory_semantic_surfaces.py": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\tests\\test_naming_inventory_semantic_surfaces.py",
+      "bytes": 10873,
+      "sha256": "9a26ac5b29df73b0f3d4a8d8fe4e4a887e4f6dd4fe6931305a2c1408c7b3624f"
+    },
+    "tests/test_naming_inventory_supplements.py": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\tests\\test_naming_inventory_supplements.py",
+      "bytes": 15781,
+      "sha256": "7269d1d6a244996347f6131c9ef6f38808eaca4a49b605f38279114adf9e0519"
+    },
+    "tests/test_p2_verification_context.py": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\tests\\test_p2_verification_context.py",
+      "bytes": 28595,
+      "sha256": "396503f7ca8d876c53414bd812e16dfe9788a2bb7848083fbde2192d2665b6f5"
+    },
+    "verification_context.py": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\verification_context.py",
+      "bytes": 32479,
+      "sha256": "6a2d83a65921df60252aad350f3cecacfbab991be582368903aa40203c96d5ab"
+    },
+    "delegation": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\ExecutionDelegation_20260907.json",
+      "bytes": 3350,
+      "sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8"
+    },
+    "step4-acceptance": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\Step04-ScopedAcceptance_20260907.json",
+      "bytes": 3223,
+      "sha256": "6f2cc1c9cc28c2a717023029851d61a666815567bc30b3635479cb1b70382e6c"
+    },
+    "step5-acceptance": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\Step05-ScopedAcceptance_20260907.json",
+      "bytes": 2733,
+      "sha256": "a38536ed64ae7924235ab0318cae17716f1a549d89660acde807f4bb15a64a19"
+    },
+    "step4-ownership": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step04-namespace-20260907\\NamespaceOwnershipManifest.candidate.json",
+      "bytes": 40953,
+      "sha256": "40d7e87fed046c8aff18d8c1d0532ada075b802faf204059649c84faef1c0782"
+    },
+    "step4-domains": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step04-namespace-20260907\\DomainRegistryOwnershipManifest.candidate.json",
+      "bytes": 34723,
+      "sha256": "fa9e1b322356fc55d04b3eee078146a9b8304e48197c7d1767cd14d665b9c8ca"
+    },
+    "step5-version": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step05-identity-20260907\\VersionAxisRegistry.candidate.json",
+      "bytes": 9355,
+      "sha256": "1276845153b1fe93517533bc0ae18d466134a6e8651100369dd54493790f27da"
+    },
+    "step5-logical": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step05-identity-20260907\\LogicalObjectIdentityContract.candidate.json",
+      "bytes": 11227,
+      "sha256": "ceb63f2ec16c63d160ae7f760992ec6dd9b17c5555679bba8c37bb7c1ea58296"
+    },
+    "step5-representation": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step05-identity-20260907\\RepresentationContract.candidate.json",
+      "bytes": 6339,
+      "sha256": "c278f906a3c081f4e70f771904eb5577f6df165eba99bb6e26cf2d036b128a67"
+    },
+    "structure-map": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\artifacts\\clued-validation\\structure-freeze-prep\\acceptance-20260907\\step2\\package-inputs\\data\\StructureCandidateMap.json",
+      "bytes": 33372,
+      "sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965"
+    },
+    "auth-urls": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\artifacts\\clued-validation\\structure-freeze-prep\\naming\\auth-config-20260907\\Observation.json",
+      "bytes": 1452,
+      "sha256": "eea2b10dda1752263ab6e9105cb3cf23e963506f1a5c52ac98012449a1b91fb1"
+    },
+    "auth-dependency-review": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\artifacts\\clued-validation\\structure-freeze-prep\\naming\\auth-config-20260907\\CurrentAuthDependencyReview.json",
+      "bytes": 6329,
+      "sha256": "82342ae534129ae73703b7a9b294c766daf0a9c353948e471192bac40f6154d4"
+    },
+    "cloudflare-deployments": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\artifacts\\clued-validation\\structure-freeze-prep\\naming\\external-20260907\\sources\\cloudflare-deployments-and-dns.json",
+      "bytes": 7216,
+      "sha256": "3dd2eeb3ca649664f034745775039ee555395092234db1e33b49549d6299b1e8"
+    },
+    "naming-ci-run": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\artifacts\\clued-validation\\structure-freeze-prep\\naming\\retained-step3-r2-20260907\\RunEvidence.json",
+      "bytes": 3778,
+      "sha256": "b90d7109792dbb4117b87fdc4b1f4f1e36221c434c9896c18a68efec36f163a0"
+    },
+    "typed-ci-independent-review": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\typed-surface-review\\IndependentReview.actual-ci.json",
+      "bytes": 14859,
+      "sha256": "17078abbdb82572c58c5487301b99fc0ee2e5624a47767564d8b8453b9c60765"
+    },
+    "typed-ci-binding": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\typed-surface-review\\CiReviewBindingReceipt.json",
+      "bytes": 1050,
+      "sha256": "baf2856fd05332487e6cad7f84b707f3b994d2be5efad484f7ad5a1f20ef27f5"
+    },
+    "export-scope-status": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step6-consumer-candidate\\ExportScopeFixtureStatus.md",
+      "bytes": 2387,
+      "sha256": "15de523e6bca471a6e37bdbcc2b62a6d5d953ea20219c78d8fa615acd94c9281"
+    },
+    "export-scope-fixture": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step6-consumer-candidate\\export-scope-fixture.sql",
+      "bytes": 3450,
+      "sha256": "6087ca1c03b749c5d8e23425308aece85fd53d189bd99397ddbd4f212ce361fd"
+    },
+    "execution-needs": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step6-consumer-candidate\\ExecutionNeeds.json",
+      "bytes": 8032,
+      "sha256": "8c45d5fa28b6847709ba3f5669961ce8ca48589c654248e4245e22fc4df930e1"
+    },
+    "apps/clued-cloud/worker/index.ts": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\apps\\clued-cloud\\worker\\index.ts",
+      "bytes": 1961,
+      "sha256": "43f0f1ac29ee491e9eb5ce748bfad9023f8fdbcd3e3c3e7bba0b9e91a54825fd"
+    },
+    "apps/clued-cloud/supabase/migrations/202608250005_oauth_mcp_binding.sql": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\apps\\clued-cloud\\supabase\\migrations\\202608250005_oauth_mcp_binding.sql",
+      "bytes": 4723,
+      "sha256": "aebd32e782b68785be062a5ecf477d2645528651fa9c38a18464a209bb6ed25b"
+    },
+    ".github/workflows/phase2-naming-surface-inventory.yml": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\.github\\workflows\\phase2-naming-surface-inventory.yml",
+      "bytes": 9093,
+      "sha256": "a9264836297371da0a4bf6e6dada2699ce577c7f31476ac957190e14396aa77c"
+    },
+    "current-ci/GenerationResult.json": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step3-ci-40fea9e\\GenerationResult.json",
+      "bytes": 758,
+      "sha256": "f1a8382677ab5f9aae62be1a3bc02cf428339a34d07a61248c1f40154ede086c"
+    },
+    "current-ci/NamingSurfaceInventoryManifest.json": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step3-ci-40fea9e\\NamingSurfaceInventoryManifest.json",
+      "bytes": 65085563,
+      "sha256": "e23e6f69aaeab09e6085a9b4089db5ee0f13acd8c38c7f2dc76c2b21ef46c596"
+    },
+    "current-ci/NamingSurfaceInventoryConsolidated.json": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step3-ci-40fea9e\\NamingSurfaceInventoryConsolidated.json",
+      "bytes": 7725,
+      "sha256": "2f9ff07305dcba3311cc97e4fc640a23333755b00caad2ccad5257dc38620ea5"
+    },
+    "current-ci/CheckoutNormalizationEvidence.json": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step3-ci-40fea9e\\CheckoutNormalizationEvidence.json",
+      "bytes": 705,
+      "sha256": "fa812be5971a0dc81288bc2ae54377987f846acd30e08e5faa463914030d0e92"
+    },
+    "current-ci/NamingSurfaceInventorySummary.md": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step3-ci-40fea9e\\NamingSurfaceInventorySummary.md",
+      "bytes": 3013,
+      "sha256": "ce63f9bd241922d13f82f3876d7deaa675d7c27b529f77333ae75381d45445ca"
+    },
+    "current-ci-run-binding": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step6-bindings\\CurrentCIRunBinding.json",
+      "bytes": 1205,
+      "sha256": "9ce45d5526abbcac641c88ecea3d29d20f30e0ce97c953ff1740e65cd5707657"
+    },
+    "ci-run/34069116734": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\artifacts\\clued-validation\\structure-freeze-prep\\acceptance-20260907\\step1\\34069116734\\run.json",
+      "bytes": 399,
+      "sha256": "dfcb635c7847450b70f72b34979401163020b89ce8b0bec0b2d9945dd6c77d18"
+    },
+    "ci-run/34068945665": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\artifacts\\clued-validation\\structure-freeze-prep\\acceptance-20260907\\step1\\34068945665\\run.json",
+      "bytes": 399,
+      "sha256": "4b10d3f518c20aee437646629e31323f274336cacdadbf1547019a3ab3b36d2f"
+    }
+  },
+  "unchanged_source_comparisons": [
+    {
+      "revision": "07632caa673395e136c60d9cf4f2f884c03a59af",
+      "path": "scripts/phase2-v027-validate.py",
+      "prior_sha256": "e16cc9fa5fd2a54dc3922029851722936551a400979dc94dce691faa83bd7f4e",
+      "current_sha256": "e16cc9fa5fd2a54dc3922029851722936551a400979dc94dce691faa83bd7f4e",
+      "identical": true
+    },
+    {
+      "revision": "9c657f8ffcf67296d394946b2050e049dc535664",
+      "path": "scripts/phase2-v027-validate.py",
+      "prior_sha256": "e16cc9fa5fd2a54dc3922029851722936551a400979dc94dce691faa83bd7f4e",
+      "current_sha256": "e16cc9fa5fd2a54dc3922029851722936551a400979dc94dce691faa83bd7f4e",
+      "identical": true
+    },
+    {
+      "revision": "5fad76df81c8a412e7768e08427841f0985a2588",
+      "path": "scripts/clued-naming-surface-inventory.py",
+      "prior_sha256": "9ff7dc893b865a7736d6d9ffbe6f908c15f9c418e10a0602ae6fd33eedb8f81e",
+      "current_sha256": "9ff7dc893b865a7736d6d9ffbe6f908c15f9c418e10a0602ae6fd33eedb8f81e",
+      "identical": true
+    },
+    {
+      "revision": "5fad76df81c8a412e7768e08427841f0985a2588",
+      "path": "scripts/clued-naming-inventory-consolidate.py",
+      "prior_sha256": "69f2fcc2e8c0e2802d7fa08de842345b88d208bec947d3ef4e88ef4c41907026",
+      "current_sha256": "69f2fcc2e8c0e2802d7fa08de842345b88d208bec947d3ef4e88ef4c41907026",
+      "identical": true
+    },
+    {
+      "revision": "5fad76df81c8a412e7768e08427841f0985a2588",
+      "path": "tests/test_naming_inventory_completeness.py",
+      "prior_sha256": "5a46d56736c2b4b0f7a03af757d9e483b91b82c4cd70441385414a1bbce7617d",
+      "current_sha256": "5a46d56736c2b4b0f7a03af757d9e483b91b82c4cd70441385414a1bbce7617d",
+      "identical": true
+    },
+    {
+      "revision": "5fad76df81c8a412e7768e08427841f0985a2588",
+      "path": "tests/test_naming_inventory_semantic_surfaces.py",
+      "prior_sha256": "9a26ac5b29df73b0f3d4a8d8fe4e4a887e4f6dd4fe6931305a2c1408c7b3624f",
+      "current_sha256": "9a26ac5b29df73b0f3d4a8d8fe4e4a887e4f6dd4fe6931305a2c1408c7b3624f",
+      "identical": true
+    },
+    {
+      "revision": "5fad76df81c8a412e7768e08427841f0985a2588",
+      "path": "tests/test_naming_inventory_supplements.py",
+      "prior_sha256": "7269d1d6a244996347f6131c9ef6f38808eaca4a49b605f38279114adf9e0519",
+      "current_sha256": "7269d1d6a244996347f6131c9ef6f38808eaca4a49b605f38279114adf9e0519",
+      "identical": true
+    },
+    {
+      "revision": "c2b180635aea0a151a1f3e0be1537803889d78a7",
+      "path": "apps/clued-cloud/evals/public-mcp/gate-receipt.mjs",
+      "prior_sha256": "9d1574e361a8fdd550578763755933e4d250a8076d55b1223ca9dfc40c1ec0c0",
+      "current_sha256": "9d1574e361a8fdd550578763755933e4d250a8076d55b1223ca9dfc40c1ec0c0",
+      "identical": true
+    },
+    {
+      "revision": "c2b180635aea0a151a1f3e0be1537803889d78a7",
+      "path": ".github/workflows/public-mcp-gate-receipt.yml",
+      "prior_sha256": "bbb448f4ac1dc80cad68409f6d3301dd456861e66a2bfaedb1463f6072dbb800",
+      "current_sha256": "4e3784db5984933d859cd961f010c4fb2306eaf6b871cdd438eeb2cff9154ce8",
+      "identical": false
+    },
+    {
+      "revision": "c1ef7a3b",
+      "path": "apps/clued-cloud/worker/continuity.ts",
+      "prior_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+      "current_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+      "identical": true
+    },
+    {
+      "revision": "c1ef7a3b",
+      "path": "apps/clued-cloud/app/oauth/consent/page.tsx",
+      "prior_sha256": "ce7e6f8de06bd2c7757112b08148f4e19a361868091b88d5c2150b2f0087ef54",
+      "current_sha256": "ce7e6f8de06bd2c7757112b08148f4e19a361868091b88d5c2150b2f0087ef54",
+      "identical": true
+    },
+    {
+      "revision": "c1ef7a3b",
+      "path": "apps/clued-cloud/evals/public-mcp/a03-contract.mjs",
+      "prior_sha256": "88b3a75f3c89355528d2f8d14c78cbaaac07f52c02409bc15436a977bdb44609",
+      "current_sha256": "88b3a75f3c89355528d2f8d14c78cbaaac07f52c02409bc15436a977bdb44609",
+      "identical": true
+    },
+    {
+      "revision": "c1ef7a3b",
+      "path": "apps/clued-cloud/evals/public-mcp/a03-session.mjs",
+      "prior_sha256": "a81989c08d9eae943091a28d9d7d6142ef3f53cd5a2d82deec634f19ff3bfffe",
+      "current_sha256": "a81989c08d9eae943091a28d9d7d6142ef3f53cd5a2d82deec634f19ff3bfffe",
+      "identical": true
+    }
+  ],
+  "business_memory_loaded": false,
+  "live_configuration_modified": false,
+  "new_runtime_tests_executed": 0,
+  "source_commit_scope": "Original 45-file matrix anchored to 9bc1e7f; later accepted governance inputs and current naming CI explicitly bound by their own file hash/run commit. No single aggregate commit is asserted for every evidence file."
+}

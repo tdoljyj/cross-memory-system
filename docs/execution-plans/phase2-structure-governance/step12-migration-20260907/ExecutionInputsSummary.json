@@ -1,0 +1,15 @@
+{
+  "status": "READY_FOR_FREEZE_BINDING_NOT_EXECUTED",
+  "execution_inputs_sha256": "37a6909deedae17dbfe97e844d8ec596c5de46e73c3cefafd4136008d3f3dcec",
+  "changed_paths": 64,
+  "immutable_input_locks": 39,
+  "contract_index_entries": 12,
+  "authority_index_decisions": 3,
+  "dcp_outputs": 7,
+  "root_projection_after_sha256": {
+    "AGENTS.md": "0d209391925dfc3c490cecfdb1e48c9266f0fd9c3d2e26903e023002f2eaf354",
+    "CURRENT_STATUS.md": "2bb3a1c38e6e5229db62e232dbde74ae4759337bd77f01d22d0bc7dff4b7d98c",
+    "README.md": "378fef921798a96d8833e9d7a03fa9485153f06e95b7b52b6968d4f21d188c54"
+  },
+  "actual_repository_writes": 0
+}

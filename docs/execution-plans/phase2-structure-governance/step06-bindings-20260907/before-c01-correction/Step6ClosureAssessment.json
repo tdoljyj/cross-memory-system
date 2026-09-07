@@ -1,0 +1,92 @@
+{
+  "review_kind": "BOUNDED_STEP6_EXISTING_BINDINGS_CLOSURE",
+  "author": "/root/sequence_review",
+  "status": "READY_FOR_SCOPED_STEP6_ACCEPTANCE",
+  "acceptance_issued": false,
+  "authority_effect": "NONE_NEW",
+  "step6_blockers_for_this_source_preserving_scope": [],
+  "conditions_of_scope": [
+    "No production Worker/Binding/export permission change; selected structural migration must preserve these exact contracts or reopen only affected bindings.",
+    "Existing runtime IDs are resolved by cited request-time predicates; no global Domain/Program/Stage ID or runtime grant is minted for a null field.",
+    "Scope excludes unrequested future model/commercial instances; original package counters remain historical facts.",
+    "Step8/13/16/18 retain their prescribed actual evidence obligations; Step6 does not claim all services were newly run."
+  ],
+  "source_binding_counts": {
+    "consumers": 18,
+    "authorization_bindings": 27,
+    "receipt_bindings": 18,
+    "owner_domain_program_stage_refs_bound": 18,
+    "exact_input_auth_receipt_gate_chains": 18,
+    "original_source_hashes_verified": 45,
+    "historical_source_comparisons": 13,
+    "source_digest_references_validated": 592,
+    "json_pointers_resolved": 112
+  },
+  "retained_actual_execution": {
+    "C15": "Original positive/negative four-gate CI receipts + exact unchanged validator code",
+    "C16": "Current naming CI 34105480323, commit40fea9e, manifest e23e6f69…, generated inventory and included 71 regressions",
+    "C17": "Same current run exact consolidation output/source binding",
+    "C14": "Historical A03 one read-only call + unchanged auth components and current saved Auth URLs; limited to that evidence",
+    "C18": "Historical receipt + unchanged producer script; workflow changed, so no current enforcement proof"
+  },
+  "scoped_dispositions": [
+    {
+      "id": "C09_PREEXISTING_SCOPE_DIFFERENCE",
+      "result": "Exact declared/enforced scopes bound separately; does not affect unrelated naming/structure work if Worker/Binding/SQL/permission semantics remain unchanged. Not dual-scope PASS and not waived for affected export wiring.",
+      "file": "C09ExportScopeDisposition.json"
+    },
+    {
+      "id": "C15_VERSION_AXIS_MIXUP",
+      "result": "Supplementary view corrects architecture v0.2.5 versus delivery ZIP v0.2.7.1 and legacy validator name v027; original matrix preserved."
+    },
+    {
+      "id": "LEGACY_M1_UNKNOWN_STATUS",
+      "result": "Existing HTTP200/default and MCP result.error semantics recorded precisely; not asserted as unknown-result fail-closed or changed by this source-preserving binding."
+    }
+  ],
+  "true_remaining_execution_items": [
+    {
+      "step": 8,
+      "action": "Execute the selected governance validator/negative controls against this bound input and deterministic projection; reference this chain and C09 disposition. Do not treat all unexecuted hosted-service tests as missing Step6 identities.",
+      "affected_consumers": "Actual governance/validator inputs selected by Step8; parent assigned existing Step8 task."
+    },
+    {
+      "step": 13,
+      "action": "After actual physical migration, validate changed consumer entry paths/imports/input identities and compatibility. Run service/auth fixtures only if affected source or actual auth address/permission dependency changed.",
+      "affected_consumers": "Precisely selected moved/wired paths; unchanged hosted C01-C10/C14 not automatically retested."
+    },
+    {
+      "step": 16,
+      "action": "Fresh four Phase2 ZIP gates on migrated exact inputs with actual commit/run/artifact/receipt.",
+      "affected_consumers": [
+        "C15"
+      ]
+    },
+    {
+      "step": 18,
+      "action": "Prove selected actual publishing/write boundary is mandatory; C12 local CAS and C18 name-based green receipt alone do not prove non-bypass.",
+      "affected_consumers": [
+        "C12",
+        "C18",
+        "selected_governance_activation_boundary"
+      ]
+    },
+    {
+      "condition": "Only if C09 export scope/consumer is changed or dual-scope behavior is claimed",
+      "action": "Execute the existing guarded isolated SQL fixture and resolve intended permission contract; no production export or semantic policy fix is part of current source-preserving migration.",
+      "affected_consumers": [
+        "C09"
+      ]
+    }
+  ],
+  "files_sha256": {
+    "TypedConsumerRegistry.candidate.json": "c14a299a40c2bcd7d915cb4e5dedaf6471220a3a242d2f9156620746745aa38a",
+    "TypedAuthorizationRegistry.candidate.json": "9b17e7bce4327abc179aeb4ce214670341bfed252658903a58244d916de73955",
+    "TypedReceiptRegistry.candidate.json": "05d182805b31ba9d5e6c1c3fa32ae2081527a92faaa76263debded6ffca5efa4",
+    "C09ExportScopeDisposition.json": "fa2ba22146d5560f502d5e70d7045ead5577fea7c1af909b7ab51a9e64b718ff",
+    "ExecutionEvidenceReuse.json": "e49ef52041404d2b486d49bb3da4a4c414e61e472d93bc7970dc64802088d220",
+    "CurrentCIRunBinding.json": "9ce45d5526abbcac641c88ecea3d29d20f30e0ce97c953ff1740e65cd5707657"
+  },
+  "source_index_sha256": "d246a7ee943eeaa1071d0888b9737cd4be621e0dd01f866d62a10e4d49af044a",
+  "validation_basis": "One bounded new-artifact reference/hash check; previous CI and service evidence reused by exact scope. No full test suite, production login, schema migration or service deployment was performed here."
+}

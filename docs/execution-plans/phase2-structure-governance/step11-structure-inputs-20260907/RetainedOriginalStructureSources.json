@@ -1,0 +1,31 @@
+{
+  "authority_effect": "NONE",
+  "original_28_adjudicated": false,
+  "sources": [
+    {
+      "path": "step11-structure-inputs-20260907/StructureFreezeEvidenceMatrix.json",
+      "original_member": "Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/StructureFreezeEvidenceMatrix.json",
+      "sha256": "396dc8a6f4118d224cff1765b42d8a395b4309e6ecc5889c6ab7a0e04cdbafd8",
+      "bytes": 4723
+    },
+    {
+      "path": "step11-structure-inputs-20260907/StructureFreezePrerequisiteStatus.json",
+      "original_member": "Clued_Phase2_三轨修订与补证_v0.2.7_20260906/sources/architecture_review_v024/data/StructureFreezePrerequisiteStatus.json",
+      "sha256": "37306d420b8e1c7380cdb30998e835d1dbbcfc5f6f62754615a5e1b09ac72925",
+      "bytes": 15203
+    },
+    {
+      "path": "step11-structure-inputs-20260907/RequiredCheckSetCandidate.json",
+      "original_member": "Clued_Phase2_三轨修订与补证_v0.2.7_20260906/sources/architecture_v024/data/RequiredCheckSetCandidate.json",
+      "sha256": "33dc28061671985750d5116751dffbba6c0907447bad3998186492101377670b",
+      "bytes": 10577
+    },
+    {
+      "path": "step11-structure-inputs-20260907/VersionCandidateOverlay.json",
+      "original_member": "Clued_Phase2_三轨修订与补证_v0.2.7_20260906/sources/architecture_v024/data/VersionCandidateOverlay.json",
+      "sha256": "3f12c52ebcf261990653433dfe6f803696048fbb457088d4e2a185c46f640911",
+      "bytes": 18219
+    }
+  ],
+  "scope": "Exact limited source preservation; formal 28-condition adjudication only after actual Step10 acceptance."
+}

@@ -1,0 +1,114 @@
+{
+  "type": "CurrentScopedAccessReview",
+  "observed_at": "2026-09-07T09:52:01.313301+00:00",
+  "scope": "Current private repository and selected Phase2 generated governance artifacts; not historical Library/global leakage certification.",
+  "repository": "tdoljyj/cross-memory-system",
+  "private": true,
+  "owner_type": "User",
+  "collaborators": [
+    {
+      "login": "tdoljyj",
+      "role_name": "admin",
+      "permissions": {
+        "admin": true,
+        "maintain": true,
+        "push": true,
+        "triage": true,
+        "pull": true
+      }
+    }
+  ],
+  "ordinary_write_contributors_observed": 0,
+  "observation_source": "Authenticated GitHub REST GET repository and collaborators; no permission or visibility mutation.",
+  "retained_routing_boundary": {
+    "path": "AGENTS.md",
+    "sha256": "75d0788ff62a20d2d211115a66ab20fc38519a14fad890ab9a3d6f821e821793",
+    "account_hint_and_owner_ref_present": true,
+    "disposition": "Private historical/source preservation only; no claim these references were externalized."
+  },
+  "projection_scan": [
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/repository-generated/AGENTS.governance.md",
+      "sha256": "9bcc962497ff82bf86dd3650b6d965d6ffa683125275fa55e278eb4b3914a6f0",
+      "credential_pattern_matches": 0,
+      "is_retained_historical_original": false
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/repository-generated/ConsumerBindings.projection.json",
+      "sha256": "a3448f25eae721026d8fc8ec0cbad012964e46c81a84dadecc3e365fc38e2cef",
+      "credential_pattern_matches": 0,
+      "is_retained_historical_original": false
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/repository-generated/CURRENT_STATUS.history-original.md",
+      "sha256": "af52a717b2c37ebabf81a7123244aa3dd9a91042ea87037fd026925e8111f722",
+      "credential_pattern_matches": 0,
+      "is_retained_historical_original": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/repository-generated/CURRENT_STATUS.projection.md",
+      "sha256": "2bb3a1c38e6e5229db62e232dbde74ae4759337bd77f01d22d0bc7dff4b7d98c",
+      "credential_pattern_matches": 0,
+      "is_retained_historical_original": false
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/repository-generated/GovernanceDocs.projection.md",
+      "sha256": "9bcc962497ff82bf86dd3650b6d965d6ffa683125275fa55e278eb4b3914a6f0",
+      "credential_pattern_matches": 0,
+      "is_retained_historical_original": false
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/repository-generated/GovernanceManifest.projection.json",
+      "sha256": "682b0a2821d942d1c57bc6baa7926bc862b26f89ce1246bded37da97325a7493",
+      "credential_pattern_matches": 0,
+      "is_retained_historical_original": false
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/repository-generated/GovernanceRegistry.projection.json",
+      "sha256": "f1116caf940ca665193c60915f6df4e5dc506fafa0f1dea8e20d8ca702dd47f8",
+      "credential_pattern_matches": 0,
+      "is_retained_historical_original": false
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/repository-generated/IdentityFiles.projection.json",
+      "sha256": "6259c4d9326cb24e15a5863efa61b8ffe95762f295398fbb75cbc1bd8606c0b3",
+      "credential_pattern_matches": 0,
+      "is_retained_historical_original": false
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/repository-generated/README.governance.md",
+      "sha256": "9bcc962497ff82bf86dd3650b6d965d6ffa683125275fa55e278eb4b3914a6f0",
+      "credential_pattern_matches": 0,
+      "is_retained_historical_original": false
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/repository-generated/StatusMigrationPlan.candidate.json",
+      "sha256": "1881cc343304904893b561a7c9d6d5881981378eff40c7b06cad2c0b29e81ecb",
+      "credential_pattern_matches": 0,
+      "is_retained_historical_original": false
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/repository-generated/ToolRouting.projection.json",
+      "sha256": "8f63d5eae3d643edf3639ba709fa99e5bee1cb5cae7b8cb19813f168d4fa4d10",
+      "credential_pattern_matches": 0,
+      "is_retained_historical_original": false
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/repository-generated/WorkflowReferences.projection.json",
+      "sha256": "5cb691e23d4f8c857e9babde7d5f4d0bc9ed7b774ee8870aa0b0766e2bf5124a",
+      "credential_pattern_matches": 0,
+      "is_retained_historical_original": false
+    }
+  ],
+  "new_projection_credential_matches": 0,
+  "semantic_scope_review": "Selected governance projections contain source-qualified contract/code/operation references; no new business Canonical export, business payload collection, public upload or privilege grant was performed.",
+  "distribution_rule": "Developer/User Skill outputs must not copy private account hints, owner references, credentials or business snapshot content. Review exact Skill bundle before delivery.",
+  "invalidation": [
+    "Repository visibility changes",
+    "Additional collaborator or actor privilege grants",
+    "New distribution audience",
+    "New artifact payload or Skill bundle"
+  ],
+  "non_bypass_pass": false,
+  "non_bypass_limit": "Owner-only admin observation is not proof of mandatory Naming validation. Future ordinary writer must not be reclassified as admin to waive enforcement."
+}

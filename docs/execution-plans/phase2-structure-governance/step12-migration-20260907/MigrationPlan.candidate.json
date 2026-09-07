@@ -1,0 +1,906 @@
+{
+  "candidate_status": "PREPARATION_ONLY_NOT_STEP11_FREEZE_OR_STEP12_EXECUTION",
+  "authority_effect": "NONE",
+  "source_commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+  "source_tree": "e6de3a15047206e10bb52dd4480609f8c3ff48e2",
+  "source_map": {
+    "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+    "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step2/package-inputs/data/StructureCandidateMap.json",
+    "git_blob": "63c9b9462e71957888dbaae7894dc7a823641346",
+    "sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965",
+    "bytes": 33372
+  },
+  "stable_map_id": "CANDIDATE_TARGET_MAP_V0_1_1",
+  "protected_paths": [
+    "memory/",
+    "artifacts/ (original bytes and current pointers)",
+    "apps/ and cloud/ Worker/Bindings"
+  ],
+  "operations": [
+    {
+      "operation_id": "H01",
+      "kind": "MOVE_EXACT_BYTES",
+      "map_rows": [
+        "TM-09",
+        "TM-16"
+      ],
+      "source": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "ADR-CLD-001-LKG-Max-Age-One-Hour.md",
+        "git_blob": "2c86afc5008e85036fb93a20b6aea7bbd5036960",
+        "sha256": "5663f2cad660a75765170cc5199edfcc5c99329344e7561145bd01c8be5f0485",
+        "bytes": 3454
+      },
+      "target": "docs/history/ADR-CLD-001-LKG-Max-Age-One-Hour.md",
+      "expected_target_sha256": "5663f2cad660a75765170cc5199edfcc5c99329344e7561145bd01c8be5f0485"
+    },
+    {
+      "operation_id": "H02",
+      "kind": "MOVE_EXACT_BYTES",
+      "map_rows": [
+        "TM-09",
+        "TM-16"
+      ],
+      "source": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "ADR-CLD-002-LOCKED-Recovery-Transition.md",
+        "git_blob": "3bd65320b4c255b3bf5abae3f0a4ab269642e83d",
+        "sha256": "bbb465429cf20945b60ce7ab65a3781e9a3db6b3fedbef5dc24ff7e3acd1fdec",
+        "bytes": 5060
+      },
+      "target": "docs/history/ADR-CLD-002-LOCKED-Recovery-Transition.md",
+      "expected_target_sha256": "bbb465429cf20945b60ce7ab65a3781e9a3db6b3fedbef5dc24ff7e3acd1fdec"
+    },
+    {
+      "operation_id": "H03",
+      "kind": "MOVE_EXACT_BYTES",
+      "map_rows": [
+        "TM-09",
+        "TM-16"
+      ],
+      "source": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "ADR-CLD-003-LKG-Policy-Profiles.md",
+        "git_blob": "1c73c11d97af01ed8a54a5efb474c99985c192a7",
+        "sha256": "3e030f7d0df898792dca815da25de77bca6e6ef12d8ad66c518b2c2d7228c070",
+        "bytes": 5549
+      },
+      "target": "docs/history/ADR-CLD-003-LKG-Policy-Profiles.md",
+      "expected_target_sha256": "3e030f7d0df898792dca815da25de77bca6e6ef12d8ad66c518b2c2d7228c070"
+    },
+    {
+      "operation_id": "H04",
+      "kind": "MOVE_EXACT_BYTES",
+      "map_rows": [
+        "TM-09",
+        "TM-16"
+      ],
+      "source": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "ADR-MIV-005A-001-Relevance-Threshold-and-Metric-v2.md",
+        "git_blob": "267a0a8cf535c31fa8e7eb1322375bfa44586b05",
+        "sha256": "86dce59f2269cbed5d155f5d18a32a832b86ee9bcdfae761b0bd7d5db8cdf64a",
+        "bytes": 25667
+      },
+      "target": "docs/history/ADR-MIV-005A-001-Relevance-Threshold-and-Metric-v2.md",
+      "expected_target_sha256": "86dce59f2269cbed5d155f5d18a32a832b86ee9bcdfae761b0bd7d5db8cdf64a"
+    },
+    {
+      "operation_id": "H05",
+      "kind": "MOVE_EXACT_BYTES",
+      "map_rows": [
+        "TM-09",
+        "TM-16"
+      ],
+      "source": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "ADR-MIV-005B-001-Lexical-Feasibility-Audit.md",
+        "git_blob": "e82ee32466f3a83bdc74a84d85f3af3c6856c5e6",
+        "sha256": "9fc3d13b8470823c60087975920bea87b56f0ff2ccd9c6b9fdd6cc8469028c2d",
+        "bytes": 7845
+      },
+      "target": "docs/history/ADR-MIV-005B-001-Lexical-Feasibility-Audit.md",
+      "expected_target_sha256": "9fc3d13b8470823c60087975920bea87b56f0ff2ccd9c6b9fdd6cc8469028c2d"
+    },
+    {
+      "operation_id": "H06",
+      "kind": "MOVE_EXACT_BYTES",
+      "map_rows": [
+        "TM-09",
+        "TM-16"
+      ],
+      "source": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "ADR-MIV-005B-002-Local-Embedding-Retrieval-Decision.md",
+        "git_blob": "c704a1d599e7c5e6918fb9c760e5c8bde6c8b722",
+        "sha256": "80755b77c5a2632949b935ad3e50b8cdc172c1db48008eff796214e118b704d9",
+        "bytes": 21497
+      },
+      "target": "docs/history/ADR-MIV-005B-002-Local-Embedding-Retrieval-Decision.md",
+      "expected_target_sha256": "80755b77c5a2632949b935ad3e50b8cdc172c1db48008eff796214e118b704d9"
+    },
+    {
+      "operation_id": "H07",
+      "kind": "MOVE_EXACT_BYTES",
+      "map_rows": [
+        "TM-09",
+        "TM-16"
+      ],
+      "source": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "ADR-MIV-006-001-Project-Scope-Isolation.md",
+        "git_blob": "92e1c713673c5f74f42dd4821a2db1dfd7f2e53c",
+        "sha256": "6f30c7601f95410c7d6d6e614bfa05defdcd4cc8b202203099a5ae173e79b679",
+        "bytes": 13615
+      },
+      "target": "docs/history/ADR-MIV-006-001-Project-Scope-Isolation.md",
+      "expected_target_sha256": "6f30c7601f95410c7d6d6e614bfa05defdcd4cc8b202203099a5ae173e79b679"
+    },
+    {
+      "operation_id": "H08",
+      "kind": "MOVE_EXACT_BYTES",
+      "map_rows": [
+        "TM-09",
+        "TM-16"
+      ],
+      "source": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "Clued-v0.1-Reference-Implementation-Report.md",
+        "git_blob": "9cc7a7f91f85ca497bd0a9da7445919801cbd2a5",
+        "sha256": "d3725396f8edfea08a68b6bb768afae7ff1d5baac83dedbcb70e96c1584eb1ff",
+        "bytes": 19177
+      },
+      "target": "docs/history/Clued-v0.1-Reference-Implementation-Report.md",
+      "expected_target_sha256": "d3725396f8edfea08a68b6bb768afae7ff1d5baac83dedbcb70e96c1584eb1ff"
+    },
+    {
+      "operation_id": "H09",
+      "kind": "MOVE_EXACT_BYTES",
+      "map_rows": [
+        "TM-09",
+        "TM-16"
+      ],
+      "source": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "Clued-v0.1-实施与复用文档.md",
+        "git_blob": "07de53c27c4a99d0133cdec83c694e73c79c224b",
+        "sha256": "7e57ac9e595fe697188b2a1c8da07f21f3c84bbe5128eb2ba9d3371ea0a0f434",
+        "bytes": 14090
+      },
+      "target": "docs/history/Clued-v0.1-实施与复用文档.md",
+      "expected_target_sha256": "7e57ac9e595fe697188b2a1c8da07f21f3c84bbe5128eb2ba9d3371ea0a0f434"
+    },
+    {
+      "operation_id": "H10",
+      "kind": "MOVE_EXACT_BYTES",
+      "map_rows": [
+        "TM-09",
+        "TM-16"
+      ],
+      "source": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "Clued-v0.2.0-LKG-Policy-Report.md",
+        "git_blob": "330272872aaa30b831cd2d2f23cd00b1ee08ccd9",
+        "sha256": "d348ad186fb6670882f8423c2e6d7ab3c38374a1a3ad48bf920558ed03bf2e5c",
+        "bytes": 11866
+      },
+      "target": "docs/history/Clued-v0.2.0-LKG-Policy-Report.md",
+      "expected_target_sha256": "d348ad186fb6670882f8423c2e6d7ab3c38374a1a3ad48bf920558ed03bf2e5c"
+    },
+    {
+      "operation_id": "H11",
+      "kind": "MOVE_EXACT_BYTES",
+      "map_rows": [
+        "TM-09",
+        "TM-16"
+      ],
+      "source": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "Clued_v0.1_智能体安装授权弱网降级与卸载协议.md",
+        "git_blob": "01344edd696c48561eca3996016bd87f6ea05f92",
+        "sha256": "0869cb7b8a850ea400e991fd0d4a23c4babfbf5954cb322b27b5c7798df28ae4",
+        "bytes": 56505
+      },
+      "target": "docs/history/Clued_v0.1_智能体安装授权弱网降级与卸载协议.md",
+      "expected_target_sha256": "0869cb7b8a850ea400e991fd0d4a23c4babfbf5954cb322b27b5c7798df28ae4"
+    },
+    {
+      "operation_id": "H12",
+      "kind": "MOVE_EXACT_BYTES",
+      "map_rows": [
+        "TM-09",
+        "TM-16"
+      ],
+      "source": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "Cross-Memory-System-vNext-2.1-Gate2R-MIV005B-Audit-Report.md",
+        "git_blob": "26d59a558a739fc0cc04b6e36ffb103765b183d1",
+        "sha256": "5f3aec42d02d815a93a65c302ea867904e5c0fb1b704949fc8aad30db86e8fa5",
+        "bytes": 16021
+      },
+      "target": "docs/history/Cross-Memory-System-vNext-2.1-Gate2R-MIV005B-Audit-Report.md",
+      "expected_target_sha256": "5f3aec42d02d815a93a65c302ea867904e5c0fb1b704949fc8aad30db86e8fa5"
+    },
+    {
+      "operation_id": "H13",
+      "kind": "MOVE_EXACT_BYTES",
+      "map_rows": [
+        "TM-09",
+        "TM-16"
+      ],
+      "source": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "Sprint3专项审计与封版报告-vNext-1.3.md",
+        "git_blob": "af0a6628cc9a695411a0664ffdefc7c23bc6975e",
+        "sha256": "155d7d5cd92d7bad533db1939c0a3690feb68016055e9b246738d89b527a7e82",
+        "bytes": 7699
+      },
+      "target": "docs/history/Sprint3专项审计与封版报告-vNext-1.3.md",
+      "expected_target_sha256": "155d7d5cd92d7bad533db1939c0a3690feb68016055e9b246738d89b527a7e82"
+    },
+    {
+      "operation_id": "H14",
+      "kind": "MOVE_EXACT_BYTES",
+      "map_rows": [
+        "TM-09",
+        "TM-16"
+      ],
+      "source": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "vNext-2.0-实施冲突记录.md",
+        "git_blob": "32cdbf3cf5945e337a9aab7d63cc800bf4d14bdb",
+        "sha256": "a030b270e80852d820367d393fa482939e738e91ddc46053f7356f584cc24f80",
+        "bytes": 5620
+      },
+      "target": "docs/history/vNext-2.0-实施冲突记录.md",
+      "expected_target_sha256": "a030b270e80852d820367d393fa482939e738e91ddc46053f7356f584cc24f80"
+    },
+    {
+      "operation_id": "H15",
+      "kind": "MOVE_EXACT_BYTES",
+      "map_rows": [
+        "TM-09",
+        "TM-16"
+      ],
+      "source": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "代码级Gap审计报告-vNext-1.3-2026-08-16.md",
+        "git_blob": "4c569c4ebf0e1a67ed24c7e885d6f79071d3473d",
+        "sha256": "1bb27a0cb74e5d0dd64713ecfc7c2b9cc209d9a94fc1f03714d16043b34cb736",
+        "bytes": 15658
+      },
+      "target": "docs/history/代码级Gap审计报告-vNext-1.3-2026-08-16.md",
+      "expected_target_sha256": "1bb27a0cb74e5d0dd64713ecfc7c2b9cc209d9a94fc1f03714d16043b34cb736"
+    },
+    {
+      "operation_id": "H16",
+      "kind": "MOVE_EXACT_BYTES",
+      "map_rows": [
+        "TM-09",
+        "TM-16"
+      ],
+      "source": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "技术评估报告-vNext-1.3-DSH-2026-08-16.md",
+        "git_blob": "3286f32cdf5cbb6cdc98c8fc221b80c7d42195d6",
+        "sha256": "b10ecf3d6179985de9b18ed246b5a727cb1adf463a925191d85a3e178cbce78c",
+        "bytes": 39809
+      },
+      "target": "docs/history/技术评估报告-vNext-1.3-DSH-2026-08-16.md",
+      "expected_target_sha256": "b10ecf3d6179985de9b18ed246b5a727cb1adf463a925191d85a3e178cbce78c"
+    },
+    {
+      "operation_id": "H17",
+      "kind": "MOVE_EXACT_BYTES",
+      "map_rows": [
+        "TM-09",
+        "TM-16"
+      ],
+      "source": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "架构基线文档-vNext-1.3.md",
+        "git_blob": "b5933a7d4a82a77150faab1928e840395a0fab06",
+        "sha256": "12475fe2e9f03238b182fd5a596b82d5b227ad8c22e083eb1ca990a9f6ac501c",
+        "bytes": 46858
+      },
+      "target": "docs/history/架构基线文档-vNext-1.3.md",
+      "expected_target_sha256": "12475fe2e9f03238b182fd5a596b82d5b227ad8c22e083eb1ca990a9f6ac501c"
+    },
+    {
+      "operation_id": "H18",
+      "kind": "MOVE_EXACT_BYTES",
+      "map_rows": [
+        "TM-09",
+        "TM-16"
+      ],
+      "source": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "架构基线文档-vNext-2.0.md",
+        "git_blob": "ed1640d263d28a60896af639f41879cb825c33ba",
+        "sha256": "528b026db8507c0ef9bca58f080d6e22b996ca5a1b91679aa117efacd829c8ed",
+        "bytes": 13671
+      },
+      "target": "docs/history/架构基线文档-vNext-2.0.md",
+      "expected_target_sha256": "528b026db8507c0ef9bca58f080d6e22b996ca5a1b91679aa117efacd829c8ed"
+    },
+    {
+      "operation_id": "H19",
+      "kind": "MOVE_EXACT_BYTES",
+      "map_rows": [
+        "TM-09",
+        "TM-16"
+      ],
+      "source": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "配置手册与数据包-v4.md",
+        "git_blob": "e5ee584fdad317330bf70237129a6a363a5bbeb9",
+        "sha256": "ac24b4f23dd34bd03b6a711e5b498a1716c7236fb94adfebe61f08422b352072",
+        "bytes": 29461
+      },
+      "target": "docs/history/配置手册与数据包-v4.md",
+      "expected_target_sha256": "ac24b4f23dd34bd03b6a711e5b498a1716c7236fb94adfebe61f08422b352072"
+    },
+    {
+      "operation_id": "P-CURRENT_STATUS.md",
+      "kind": "PRESERVE_BASELINE_THEN_PROJECT",
+      "map_rows": [
+        "TM-02"
+      ],
+      "source": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "CURRENT_STATUS.md",
+        "git_blob": "1256d0014296651eb26d2d036749295cc78f556d",
+        "sha256": "af52a717b2c37ebabf81a7123244aa3dd9a91042ea87037fd026925e8111f722",
+        "bytes": 2753
+      },
+      "archive_target": "docs/history/CURRENT_STATUS.before-phase2-af52a717b2c3.md",
+      "expected_archive_sha256": "af52a717b2c37ebabf81a7123244aa3dd9a91042ea87037fd026925e8111f722",
+      "new_output": "CURRENT_STATUS.md",
+      "replacement_bytes_state": "BIND_AFTER_FINAL_ACCEPTED_INPUTS_AND_STEP11_FREEZE",
+      "block_rule": "FULL_CURRENT_GOVERNANCE_REPLACEMENT",
+      "outside_block_sha256": null
+    },
+    {
+      "operation_id": "P-AGENTS.md",
+      "kind": "PRESERVE_BASELINE_THEN_PROJECT",
+      "map_rows": [
+        "TM-01"
+      ],
+      "source": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "AGENTS.md",
+        "git_blob": "7007225f55236d6132ae6ecb73f171102156d8a7",
+        "sha256": "75d0788ff62a20d2d211115a66ab20fc38519a14fad890ab9a3d6f821e821793",
+        "bytes": 9637
+      },
+      "archive_target": "docs/history/AGENTS.routing-baseline-75d0788ff62a.md",
+      "expected_archive_sha256": "75d0788ff62a20d2d211115a66ab20fc38519a14fad890ab9a3d6f821e821793",
+      "new_output": "AGENTS.md",
+      "replacement_bytes_state": "BIND_AFTER_FINAL_ACCEPTED_INPUTS_AND_STEP11_FREEZE",
+      "block_rule": "EXPLICIT_INITIAL_INSERT_AT_EOF_BOUND_TO_BASELINE_SHA_THEN_MARKED_BLOCK_ONLY",
+      "outside_block_sha256": "75d0788ff62a20d2d211115a66ab20fc38519a14fad890ab9a3d6f821e821793"
+    },
+    {
+      "operation_id": "P-README.md",
+      "kind": "PRESERVE_BASELINE_THEN_PROJECT",
+      "map_rows": [
+        "TM-03"
+      ],
+      "source": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "README.md",
+        "git_blob": "7e335b1200bfd8ac4ae97ec07c6e32d85a00754e",
+        "sha256": "d5f6ec6e821b9b1c71b0433e072804f48109ff55fc53f52b3a088b4205ecdaff",
+        "bytes": 2504
+      },
+      "archive_target": "docs/history/README.before-phase2-d5f6ec6e821b.md",
+      "expected_archive_sha256": "d5f6ec6e821b9b1c71b0433e072804f48109ff55fc53f52b3a088b4205ecdaff",
+      "new_output": "README.md",
+      "replacement_bytes_state": "BIND_AFTER_FINAL_ACCEPTED_INPUTS_AND_STEP11_FREEZE",
+      "block_rule": "EXPLICIT_INITIAL_INSERT_AT_EOF_BOUND_TO_BASELINE_SHA_THEN_MARKED_BLOCK_ONLY",
+      "outside_block_sha256": "d5f6ec6e821b9b1c71b0433e072804f48109ff55fc53f52b3a088b4205ecdaff"
+    },
+    {
+      "operation_id": "T-canonical_read.py",
+      "kind": "MOVE_IMPLEMENTATION_WITH_COMPATIBILITY",
+      "map_rows": [
+        "TM-10"
+      ],
+      "source": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "canonical_read.py",
+        "git_blob": "388a238a5bbcced40be5a63302d131a0e18ee06c",
+        "sha256": "7f4b5b7050bd069022e5ff7c7dbf8ff75a36432bffdb618371b0c90d36d86063",
+        "bytes": 18272
+      },
+      "target_implementation": {
+        "path": "scripts/canonical_read.py",
+        "payload_path": "payload/scripts/canonical_read.py",
+        "sha256": "7f4b5b7050bd069022e5ff7c7dbf8ff75a36432bffdb618371b0c90d36d86063",
+        "bytes": 18272
+      },
+      "compatibility_entry": {
+        "path": "canonical_read.py",
+        "payload_path": "payload/canonical_read.py",
+        "sha256": "3c467b498254a7de504d26e70630ffcdf9b150735ea2670b7fdc82de8d04e3a2",
+        "bytes": 462
+      },
+      "treatment": "MOVE_IMPLEMENTATION_KEEP_EXACT_OLD_ENTRY_NAME",
+      "implementation_original_bytes_preserved": true,
+      "retirement": "No compatibility entry retirement in Step12. Step13 consumer bindings and accepted window/rollback are required first.",
+      "validation_state": "CANDIDATE_PENDING_LOCAL_COMPATIBILITY_FIXTURE_AND_POST_FREEZE_EXISTING_REGRESSIONS"
+    },
+    {
+      "operation_id": "T-isolated_mirror.py",
+      "kind": "MOVE_IMPLEMENTATION_WITH_COMPATIBILITY",
+      "map_rows": [
+        "TM-10"
+      ],
+      "source": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "isolated_mirror.py",
+        "git_blob": "1f9d3e8241ec02cc0f89c106360084877e811a0a",
+        "sha256": "e228508a4df2b750cd3f304b8188fe5b10f0529ea1ccdbd2dc85a6cfbca82e31",
+        "bytes": 55260
+      },
+      "target_implementation": {
+        "path": "scripts/isolated_mirror.py",
+        "payload_path": "payload/scripts/isolated_mirror.py",
+        "sha256": "e228508a4df2b750cd3f304b8188fe5b10f0529ea1ccdbd2dc85a6cfbca82e31",
+        "bytes": 55260
+      },
+      "compatibility_entry": {
+        "path": "isolated_mirror.py",
+        "payload_path": "payload/isolated_mirror.py",
+        "sha256": "c4c0f63fd3a646cfa1dd8a9012a503af53b8d44181e137331667e0949f14c956",
+        "bytes": 463
+      },
+      "treatment": "MOVE_IMPLEMENTATION_KEEP_EXACT_OLD_ENTRY_NAME",
+      "implementation_original_bytes_preserved": true,
+      "retirement": "No compatibility entry retirement in Step12. Step13 consumer bindings and accepted window/rollback are required first.",
+      "validation_state": "CANDIDATE_PENDING_LOCAL_COMPATIBILITY_FIXTURE_AND_POST_FREEZE_EXISTING_REGRESSIONS"
+    },
+    {
+      "operation_id": "T-memory.py",
+      "kind": "MOVE_IMPLEMENTATION_WITH_COMPATIBILITY",
+      "map_rows": [
+        "TM-10"
+      ],
+      "source": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "memory.py",
+        "git_blob": "67e7f460f9e9293071c344b29921ff3af8924369",
+        "sha256": "479fd0e39a8a96287642ea59644d1975666fc314cc589f39a0086c3d9446dd85",
+        "bytes": 15511
+      },
+      "target_implementation": {
+        "path": "scripts/memory.py",
+        "payload_path": "payload/scripts/memory.py",
+        "sha256": "4f09d50797be8af183e79745d78a64fe5474d6ff5b7746c14a4f911894a43a10",
+        "bytes": 15660
+      },
+      "compatibility_entry": {
+        "path": "memory.py",
+        "payload_path": "payload/memory.py",
+        "sha256": "34c2c280e3bb2092d5c920edc2c3cbc3891274a3a6258bb702ba901fb9dc601c",
+        "bytes": 454
+      },
+      "treatment": "MOVE_IMPLEMENTATION_KEEP_EXACT_OLD_ENTRY_NAME",
+      "implementation_original_bytes_preserved": false,
+      "retirement": "No compatibility entry retirement in Step12. Step13 consumer bindings and accepted window/rollback are required first.",
+      "validation_state": "CANDIDATE_PENDING_LOCAL_COMPATIBILITY_FIXTURE_AND_POST_FREEZE_EXISTING_REGRESSIONS"
+    },
+    {
+      "operation_id": "T-sync-memory.ps1",
+      "kind": "MOVE_IMPLEMENTATION_WITH_COMPATIBILITY",
+      "map_rows": [
+        "TM-10"
+      ],
+      "source": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "sync-memory.ps1",
+        "git_blob": "bac39f557f7ed9ad6aed99f172bb4fa8739b279f",
+        "sha256": "48ffc824dee7ee66632299677c5f770de605d8ae2a413746b7a6b737528082ab",
+        "bytes": 1059
+      },
+      "target_implementation": {
+        "path": "scripts/sync-memory.ps1",
+        "payload_path": "payload/scripts/sync-memory.ps1",
+        "sha256": "1b0ec7934951a937c7b517841374817255bad9e430ae09adb72adf579fc7c6e8",
+        "bytes": 1088
+      },
+      "compatibility_entry": {
+        "path": "sync-memory.ps1",
+        "payload_path": "payload/sync-memory.ps1",
+        "sha256": "ce0113f0d79908a707645f73f2720ee63745e9a21738de1e5272aa6517f07800",
+        "bytes": 433
+      },
+      "treatment": "MOVE_IMPLEMENTATION_KEEP_EXACT_OLD_ENTRY_NAME",
+      "implementation_original_bytes_preserved": false,
+      "retirement": "No compatibility entry retirement in Step12. Step13 consumer bindings and accepted window/rollback are required first.",
+      "validation_state": "CANDIDATE_PENDING_LOCAL_COMPATIBILITY_FIXTURE_AND_POST_FREEZE_EXISTING_REGRESSIONS"
+    },
+    {
+      "operation_id": "T-sync-memory.py",
+      "kind": "MOVE_IMPLEMENTATION_WITH_COMPATIBILITY",
+      "map_rows": [
+        "TM-10"
+      ],
+      "source": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "sync-memory.py",
+        "git_blob": "09159f237b4bbb6aea884b74a2f8546c7ca4045e",
+        "sha256": "06d276884e3667b8758961b142c92a674ff743be05cca3dbef975f5f4bf93f64",
+        "bytes": 20741
+      },
+      "target_implementation": {
+        "path": "scripts/sync-memory.py",
+        "payload_path": "payload/scripts/sync-memory.py",
+        "sha256": "93dc66d3c6e0a7aa2310afa5d3386dd0a835fa840e3ab049676906d66bc8f94d",
+        "bytes": 20890
+      },
+      "compatibility_entry": {
+        "path": "sync-memory.py",
+        "payload_path": "payload/sync-memory.py",
+        "sha256": "3a295288ee381fc86c4368515223a068b012476159af199ee85e3c78239ba683",
+        "bytes": 459
+      },
+      "treatment": "MOVE_IMPLEMENTATION_KEEP_EXACT_OLD_ENTRY_NAME",
+      "implementation_original_bytes_preserved": false,
+      "retirement": "No compatibility entry retirement in Step12. Step13 consumer bindings and accepted window/rollback are required first.",
+      "validation_state": "CANDIDATE_PENDING_LOCAL_COMPATIBILITY_FIXTURE_AND_POST_FREEZE_EXISTING_REGRESSIONS"
+    },
+    {
+      "operation_id": "T-verification_context.py",
+      "kind": "MOVE_IMPLEMENTATION_WITH_COMPATIBILITY",
+      "map_rows": [
+        "TM-10"
+      ],
+      "source": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "verification_context.py",
+        "git_blob": "0aad9e3d24ac1da4f3cb32edaffe361f91f5cccf",
+        "sha256": "6a2d83a65921df60252aad350f3cecacfbab991be582368903aa40203c96d5ab",
+        "bytes": 32479
+      },
+      "target_implementation": {
+        "path": "scripts/verification_context.py",
+        "payload_path": "payload/scripts/verification_context.py",
+        "sha256": "6a2d83a65921df60252aad350f3cecacfbab991be582368903aa40203c96d5ab",
+        "bytes": 32479
+      },
+      "compatibility_entry": {
+        "path": "verification_context.py",
+        "payload_path": "payload/verification_context.py",
+        "sha256": "fc85e12ae3990c73bb573dd2241f8c20370db7ad8fc945c774b93daefee34882",
+        "bytes": 468
+      },
+      "treatment": "MOVE_IMPLEMENTATION_KEEP_EXACT_OLD_ENTRY_NAME",
+      "implementation_original_bytes_preserved": true,
+      "retirement": "No compatibility entry retirement in Step12. Step13 consumer bindings and accepted window/rollback are required first.",
+      "validation_state": "CANDIDATE_PENDING_LOCAL_COMPATIBILITY_FIXTURE_AND_POST_FREEZE_EXISTING_REGRESSIONS"
+    },
+    {
+      "operation_id": "C-P2-FIXTURE",
+      "kind": "UPDATE_SPECIFIC_CALLER_COPY_SET",
+      "map_rows": [
+        "TM-10",
+        "TM-11"
+      ],
+      "source": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "tests/test_p2_verification_context.py",
+        "git_blob": "69ceaef5663d9f6e72eaa48b7e3120b12dbcb9e0",
+        "sha256": "396503f7ca8d876c53414bd812e16dfe9788a2bb7848083fbde2192d2665b6f5",
+        "bytes": 28595
+      },
+      "target": "tests/test_p2_verification_context.py",
+      "replacement": {
+        "path": "tests/test_p2_verification_context.py",
+        "payload_path": "payload/tests/test_p2_verification_context.py",
+        "sha256": "af796d182f4dd43f8fbdf08564dc14f73289fd3935659d85f6e962ef73a8a26c",
+        "bytes": 28931
+      }
+    }
+  ],
+  "all_23_map_row_dispositions": [
+    {
+      "source_map_row_id": "TM-01",
+      "original_candidate_target": "AGENTS.md",
+      "disposition": "PROJECT_GOVERNANCE_ONLY",
+      "reason": "Retain root routing contract outside generated block; fixed original source copy avoids a self-hash cycle.",
+      "source_ref": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step2/package-inputs/data/StructureCandidateMap.json",
+        "pointer": "/current_to_target_rows/0"
+      }
+    },
+    {
+      "source_map_row_id": "TM-02",
+      "original_candidate_target": "CURRENT_STATUS.md",
+      "disposition": "ARCHIVE_AND_REPLACE_CURRENT_STATUS",
+      "reason": "Preserve old bytes first, then generate governance status from accepted/observed sources.",
+      "source_ref": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step2/package-inputs/data/StructureCandidateMap.json",
+        "pointer": "/current_to_target_rows/1"
+      }
+    },
+    {
+      "source_map_row_id": "TM-03",
+      "original_candidate_target": "README.md / VERSION",
+      "disposition": "PROJECT_README_KEEP_VERSION_AXIS",
+      "reason": "Keep tutorial/business text and VERSION product axis; add only the bound governance block.",
+      "source_ref": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step2/package-inputs/data/StructureCandidateMap.json",
+        "pointer": "/current_to_target_rows/2"
+      }
+    },
+    {
+      "source_map_row_id": "TM-04",
+      "original_candidate_target": "protocol/",
+      "disposition": "RETAIN_EXISTING_PATH_AND_BYTES",
+      "reason": "protocol/ is already the target; no new Schema or local-rc-v15 rewrite.",
+      "source_ref": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step2/package-inputs/data/StructureCandidateMap.json",
+        "pointer": "/current_to_target_rows/3"
+      }
+    },
+    {
+      "source_map_row_id": "TM-05",
+      "original_candidate_target": "kernel/",
+      "disposition": "RETAIN_EXISTING_PATH_AND_BYTES",
+      "reason": "kernel/ already matches target; Canonical semantics are outside migration.",
+      "source_ref": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step2/package-inputs/data/StructureCandidateMap.json",
+        "pointer": "/current_to_target_rows/4"
+      }
+    },
+    {
+      "source_map_row_id": "TM-06",
+      "original_candidate_target": "apps/",
+      "disposition": "RETAIN_EXISTING_PATH_AND_BYTES",
+      "reason": "apps/ already matches target; route/ownership bindings are handled in their existing contracts.",
+      "source_ref": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step2/package-inputs/data/StructureCandidateMap.json",
+        "pointer": "/current_to_target_rows/5"
+      }
+    },
+    {
+      "source_map_row_id": "TM-07",
+      "original_candidate_target": "cloud/",
+      "disposition": "RETAIN_EXISTING_PATH_AND_BINDINGS",
+      "reason": "Explicit original row says not to change Worker/Bindings this phase.",
+      "source_ref": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step2/package-inputs/data/StructureCandidateMap.json",
+        "pointer": "/current_to_target_rows/6"
+      }
+    },
+    {
+      "source_map_row_id": "TM-08",
+      "original_candidate_target": "config/",
+      "disposition": "RETAIN_EXISTING_PATH_AND_POLICY",
+      "reason": "config/ already matches target; secrets and account policies remain external.",
+      "source_ref": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step2/package-inputs/data/StructureCandidateMap.json",
+        "pointer": "/current_to_target_rows/7"
+      }
+    },
+    {
+      "source_map_row_id": "TM-09",
+      "original_candidate_target": "docs/",
+      "disposition": "MOVE_19_ROOT_HISTORY_FILES",
+      "reason": "Move exact bytes into docs/history; other docs remain in docs.",
+      "source_ref": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step2/package-inputs/data/StructureCandidateMap.json",
+        "pointer": "/current_to_target_rows/8"
+      }
+    },
+    {
+      "source_map_row_id": "TM-10",
+      "original_candidate_target": "scripts/ plus temporary compatibility launchers",
+      "disposition": "MOVE_SIX_IMPLEMENTATIONS_KEEP_SIX_COMPAT_ENTRIES",
+      "reason": "Candidate fixes repo-root anchors, module globals, PS1 parameters/config and caller fixture packaging; no extension-only move.",
+      "source_ref": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step2/package-inputs/data/StructureCandidateMap.json",
+        "pointer": "/current_to_target_rows/9"
+      }
+    },
+    {
+      "source_map_row_id": "TM-11",
+      "original_candidate_target": "tests/ / evals/",
+      "disposition": "RETAIN_PATH_UPDATE_ONE_CALLER_COPY_SET",
+      "reason": "tests/evals paths retained; one known fixture copy list includes the six implementations.",
+      "source_ref": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step2/package-inputs/data/StructureCandidateMap.json",
+        "pointer": "/current_to_target_rows/10"
+      }
+    },
+    {
+      "source_map_row_id": "TM-12",
+      "original_candidate_target": ".github/",
+      "disposition": "RETAIN_WORKFLOW_IDENTITIES",
+      "reason": "No job rename or Worker write. Any actual packaging/input-list references must consume the new changed-path manifest.",
+      "source_ref": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step2/package-inputs/data/StructureCandidateMap.json",
+        "pointer": "/current_to_target_rows/11"
+      }
+    },
+    {
+      "source_map_row_id": "TM-13",
+      "original_candidate_target": "legacy-preserved until exact projection mapping",
+      "disposition": "RETAIN_LEGACY_PENDING_EXACT_PROJECTION",
+      "reason": "Original map forbids guessing Skill identity; Step20/21 and exact installed consumers supply the later target.",
+      "source_ref": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step2/package-inputs/data/StructureCandidateMap.json",
+        "pointer": "/current_to_target_rows/12"
+      }
+    },
+    {
+      "source_map_row_id": "TM-14",
+      "original_candidate_target": "artifacts/",
+      "disposition": "RETAIN_ORIGINAL_ARTIFACTS_AND_POINTERS",
+      "reason": "Do not move original receipts/packages, historical artifacts or current snapshot pointer.",
+      "source_ref": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step2/package-inputs/data/StructureCandidateMap.json",
+        "pointer": "/current_to_target_rows/13"
+      }
+    },
+    {
+      "source_map_row_id": "TM-15",
+      "original_candidate_target": "EXTERNAL_USER_BUNDLE_STORE / compatibility consumer",
+      "disposition": "RETAIN_CURRENT_PRIVATE_COMPATIBILITY_BOUNDARY",
+      "reason": "Explicit task excludes memory/ moves; keep existing read-only compatibility and original IDs. Private-store transition needs its specific accepted access/path contract.",
+      "source_ref": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step2/package-inputs/data/StructureCandidateMap.json",
+        "pointer": "/current_to_target_rows/14"
+      }
+    },
+    {
+      "source_map_row_id": "TM-16",
+      "original_candidate_target": "legacy/ / docs/history/ (candidate)",
+      "disposition": "MOVE_ROOT_HISTORY_KEEP_LEGACY_BYTES",
+      "reason": "The 19 root histories move under docs/history; existing legacy/ remains audit-only.",
+      "source_ref": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step2/package-inputs/data/StructureCandidateMap.json",
+        "pointer": "/current_to_target_rows/15"
+      }
+    },
+    {
+      "source_map_row_id": "TM-17",
+      "original_candidate_target": "development/contracts/",
+      "disposition": "IN_SCOPE_PENDING_FROZEN_CONTRACT_LOCATION_BINDING",
+      "reason": "Resolve the existing accepted Schema/routing/responsibility sources into development/contracts via a generated reference index or explicit accepted relocation. Do not duplicate or invent contracts; choice must be bound in Step11.",
+      "source_ref": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step2/package-inputs/data/StructureCandidateMap.json",
+        "pointer": "/current_to_target_rows/16"
+      }
+    },
+    {
+      "source_map_row_id": "TM-18",
+      "original_candidate_target": "development/projections/",
+      "disposition": "IN_SCOPE_PENDING_FROZEN_PROJECTION_BINDING",
+      "reason": "Step7 outputs provide existing deterministic views. Bind a generated development/projections entry to those exact inputs at Freeze; no hand-maintained second status.",
+      "source_ref": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step2/package-inputs/data/StructureCandidateMap.json",
+        "pointer": "/current_to_target_rows/17"
+      }
+    },
+    {
+      "source_map_row_id": "TM-19",
+      "original_candidate_target": "development/authority-index/",
+      "disposition": "IN_SCOPE_PENDING_ACCEPTED_AUTHORITY_INDEX_INPUTS",
+      "reason": "Build only an index of exact accepted decisions/Gates/Receipts after their identities exist; directory/index grants no authority.",
+      "source_ref": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step2/package-inputs/data/StructureCandidateMap.json",
+        "pointer": "/current_to_target_rows/18"
+      }
+    },
+    {
+      "source_map_row_id": "TM-20",
+      "original_candidate_target": "mechanisms/",
+      "disposition": "RETAIN_DESIGN_NO_INSTALLABLE_MECHANISM_YET",
+      "reason": "Keep source mechanism contracts; accepted mechanism migration/semantic-no-change and later Skill stages remain required.",
+      "source_ref": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step2/package-inputs/data/StructureCandidateMap.json",
+        "pointer": "/current_to_target_rows/19"
+      }
+    },
+    {
+      "source_map_row_id": "TM-21",
+      "original_candidate_target": "integrations/<vendor>/{development,public-user}/",
+      "disposition": "RETAIN_DESIGN_NO_VENDOR_ACTIVATION",
+      "reason": "No new host role, credential union or Skill activation; exact developer/public-user projections belong to Step20/21.",
+      "source_ref": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step2/package-inputs/data/StructureCandidateMap.json",
+        "pointer": "/current_to_target_rows/20"
+      }
+    },
+    {
+      "source_map_row_id": "TM-22",
+      "original_candidate_target": "DCP_CONTROL_STORE (logical external namespace)",
+      "disposition": "LOGICAL_EXTERNAL_TARGET_NOT_SERVICE_CREATION",
+      "reason": "Original row is a logical external control store. Preserve its single-writer/revision contract; Git branches are not leases. No DCP service created.",
+      "source_ref": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step2/package-inputs/data/StructureCandidateMap.json",
+        "pointer": "/current_to_target_rows/21"
+      }
+    },
+    {
+      "source_map_row_id": "TM-23",
+      "original_candidate_target": "USER_BUNDLE_STORE (logical private namespace)",
+      "disposition": "LOGICAL_PRIVATE_TARGET_NOT_LOCAL_MOVE",
+      "reason": "Original row requires tenant/subject/revision and access policy plus approved concrete location. No private Bundle copy/move in this task.",
+      "source_ref": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step2/package-inputs/data/StructureCandidateMap.json",
+        "pointer": "/current_to_target_rows/22"
+      }
+    }
+  ],
+  "pending_freeze_bindings": [
+    "Applicable Step4-10 exact accepted inputs and Step11 decision",
+    "Fresh source/target hashes for final projection bytes",
+    "TM-17/18/19 physical index/relocation choice and exact source references",
+    "Step13 caller and preexisting regression execution plan"
+  ],
+  "projection_cycle_prevention": {
+    "tool_routing_input": {
+      "original": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "AGENTS.md",
+        "git_blob": "7007225f55236d6132ae6ecb73f171102156d8a7",
+        "sha256": "75d0788ff62a20d2d211115a66ab20fc38519a14fad890ab9a3d6f821e821793",
+        "bytes": 9637
+      },
+      "retained_path": "docs/history/AGENTS.routing-baseline-75d0788ff62a.md",
+      "expected_sha256": "75d0788ff62a20d2d211115a66ab20fc38519a14fad890ab9a3d6f821e821793"
+    },
+    "historical_status_input": {
+      "original": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "CURRENT_STATUS.md",
+        "git_blob": "1256d0014296651eb26d2d036749295cc78f556d",
+        "sha256": "af52a717b2c37ebabf81a7123244aa3dd9a91042ea87037fd026925e8111f722",
+        "bytes": 2753
+      },
+      "retained_path": "docs/history/CURRENT_STATUS.before-phase2-af52a717b2c3.md",
+      "expected_sha256": "af52a717b2c37ebabf81a7123244aa3dd9a91042ea87037fd026925e8111f722"
+    },
+    "readme_outside_block_baseline": {
+      "original": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "README.md",
+        "git_blob": "7e335b1200bfd8ac4ae97ec07c6e32d85a00754e",
+        "sha256": "d5f6ec6e821b9b1c71b0433e072804f48109ff55fc53f52b3a088b4205ecdaff",
+        "bytes": 2504
+      },
+      "retained_path": "docs/history/README.before-phase2-d5f6ec6e821b.md"
+    },
+    "rule": "Point projection inputs at immutable preserved sources. Check actual README/AGENTS outside-block bytes against their baseline independently. Never write new output AGENTS/CURRENT_STATUS hashes into their own input set.",
+    "history_archives_are_created_before_projection_generation": true
+  },
+  "rollback_rule": "Before any real move, bind originals to source commit/blob/digest and store actual after digests in migration receipt. Reverse only exact matching after-state; concurrent changes stop rollback instead of being overwritten. Rollback appends a new receipt/event and preserves prior evidence.",
+  "execution_cli_in_this_candidate": "READ_ONLY_PREFLIGHT_AND_ROLLBACK_PREFLIGHT_ONLY",
+  "repository_mutations_performed": false
+}
