@@ -6,6 +6,20 @@ The user-approved design is v1.1; its Canonical decision is
 `a7c41761-6a79-443d-ac24-10506ed5c11b`, receipt
 `f75fd2f6-6ef6-4ac2-88c8-51b05518cf54`.
 
+## Supersession relationship
+
+The earlier `context-ownership-publication-v11` publication/acceptance sequence is
+`SUPERSEDED_BEFORE_ACTIVATION` by
+`docs/execution-plans/context-ownership-publication-v11/SupersessionDecision_20260908.json`.
+Do not resume its old dual-consumer publication checklist, old Grant-minting release
+step, or old Worker release sequence as the active plan. Its already-applied
+`context_*_v11` schema is retained as a reusable successor dependency because the
+2026-09-08 production check found all ten v1.1 business tables empty. Retention of
+that schema is not evidence of an activated user capability, and supersession does
+not authorize destructive rollback. This successor remains an implementation
+candidate and must satisfy its own authorization, runtime, evidence and production
+gates.
+
 ## Ownership and identity
 
 `skills/clued/SKILL.md` is the single maintained entry, with operation-specific
