@@ -1,5 +1,6 @@
 import vinext from "vinext";
-import { defineConfig } from "vite";
+import { defineConfig, loadEnv } from "vite";
+import { resolveSupabasePublicConfig } from "./app/supabase-public-config";
 import hostingConfig from "./.openai/hosting.json";
 import { sites } from "./build/sites-vite-plugin";
 
@@ -42,7 +43,9 @@ const localBindingConfig = {
     : [],
 };
 
-export default defineConfig(async () => {
+export default defineConfig(async ({ mode }) => {
+  // Reject incomplete pairs or private keys before any client bundle is emitted.
+  resolveSupabasePublicConfig(loadEnv(mode, process.cwd(), "VITE_CLUED_"));
   // Keep Wrangler and Miniflare state project-local. These are non-secret tool
   // settings; application environment belongs in ignored `.env*` files.
   process.env.WRANGLER_WRITE_LOGS ??= "false";

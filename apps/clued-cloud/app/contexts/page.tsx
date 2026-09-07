@@ -2,14 +2,14 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { createClient, type Session } from "@supabase/supabase-js";
+import { type Session } from "@supabase/supabase-js";
+import { supabase } from "../supabase-browser";
 import { ContextSession, localDraft } from "./context-session";
 import "./contexts.css";
 
 type Item = Record<string, unknown>;
 const text = (value: unknown) => typeof value === "string" ? value : "";
 const objects = (value: unknown): Item[] => Array.isArray(value) ? value.filter(v => v && typeof v === "object") : [];
-const supabase = createClient("https://ccxsikzwxlolxqlosril.supabase.co", "sb_publishable_tVKKh7Ok4FhBhHtHyZfwBA_i2RJD2Fg");
 
 export default function ContextsPage() {
   const gate = useRef(new ContextSession());

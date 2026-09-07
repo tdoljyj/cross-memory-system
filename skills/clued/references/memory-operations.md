@@ -8,6 +8,8 @@ After the applicable prerequisites and `clued_session_resume`, read authorized G
 
 Resolve the project by its actual canonical ID. Do not create or confirm a project from a mention or an ambiguous name. A developer-only Binding may receive only its authorized Global projection; it must not read private personal Global data to satisfy the read order. Missing Global capability is a scoped limitation, not a reason to request unrestricted access.
 
+If the actual resume response is `scoped_context_ready` with `session_checkpoint_supported=false`, it is an authorized development-context projection, not a restored M1 checkpoint. Read only its returned authorized context IDs through the supported `clued_context` record-list operation in `development_history` mode, selecting relevant State/Task/Decision records. Do not infer access to personal Global records or another project from a shared name, and do not invent a session token. A missing or denied scope remains unavailable.
+
 Use current supported list/search tools. Preserve stable canonical IDs and versions in results; legacy envelopes are history, not current truth. Report `sources_read` for authoritative current-status answers. Cross-client continuity uses the service, not another client's private filesystem or ChatGPT Library.
 
 ## Make authorized changes once
@@ -33,4 +35,4 @@ When a business mutation succeeds, retain its canonical ID, version and Receipt/
 - CAS conflict: reread the current record and reconcile meaning; never overwrite a newer decision merely to make a request pass.
 - Missing authorization/capability: state exactly what is unavailable and continue unrelated work. No local Markdown fallback may be called a saved Clued record.
 
-Before ending or handing off a protected authorized session, use the supported session checkpoint with the actual session token and base version, completed evidence and next action. Keep lifecycle checkpoints distinct from business records; do not make extra event writes merely for narration.
+Before ending or handing off a protected authorized session, use the supported session checkpoint when the service returned an actual session token and base version. If it explicitly reports `session_checkpoint_supported=false`, retain and verify the actual development-operation receipts; do not claim a checkpoint was saved or expand permissions to create one. Keep lifecycle checkpoints distinct from business records; do not make extra event writes merely for narration.

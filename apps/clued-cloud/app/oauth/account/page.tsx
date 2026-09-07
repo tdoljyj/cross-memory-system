@@ -1,14 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { createClient } from "@supabase/supabase-js";
+import { supabase } from "../../supabase-browser";
 import Link from "next/link";
 
-const supabase = createClient(
-  "https://ccxsikzwxlolxqlosril.supabase.co",
-  "sb_publishable_tVKKh7Ok4FhBhHtHyZfwBA_i2RJD2Fg",
-  { auth: { detectSessionInUrl: false } },
-);
 
 export default function OAuthAccountPage() {
   const [email, setEmail] = useState("");

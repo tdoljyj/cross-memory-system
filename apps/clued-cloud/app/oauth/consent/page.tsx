@@ -2,19 +2,14 @@
 
 import { FormEvent, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import {
-  createClient,
   type OAuthAuthorizationDetails,
   type Session,
 } from "@supabase/supabase-js";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import DelegatedConsent from "./delegated-consent";
+import { supabase } from "../../supabase-browser";
 
-const SUPABASE_URL = "https://ccxsikzwxlolxqlosril.supabase.co";
-const SUPABASE_PUBLISHABLE_KEY =
-  "sb_publishable_tVKKh7Ok4FhBhHtHyZfwBA_i2RJD2Fg";
-
-const supabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 
 function redirectHost(uri: string) {
   try {

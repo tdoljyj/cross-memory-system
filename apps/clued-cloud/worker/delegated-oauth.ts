@@ -230,7 +230,7 @@ async function consentRoute(request: Request, env: DelegatedOAuthEnv): Promise<R
     // Never retry approval or create a second authorization silently. Attempt to
     // close only the exact newly-created grant; its secret has not been disclosed.
     await rpc(env, token, 'clued_authorization_manage_v12', { p_input: { op: 'revoke', binding_id: approved.binding_id, base_version: approved.version } }).catch(() => undefined);
-    throw new AuthorizationFailure(503, '客户端令牌未完成签发，请重新连接。');
+    throw new AuthorizationFailure(503, '客户端令牌签发结果尚未确认，请先在连接管理页核对状态，再重新连接。');
   }
 }
 export function requiredToolScopes(name: string, args: Json = {}): readonly string[] | null {

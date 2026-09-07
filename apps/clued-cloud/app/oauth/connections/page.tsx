@@ -1,13 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import { createClient, type Session } from "@supabase/supabase-js";
+import { type Session } from "@supabase/supabase-js";
+import { supabase } from "../../supabase-browser";
 import Link from "next/link";
 
-const supabase = createClient(
-  "https://ccxsikzwxlolxqlosril.supabase.co",
-  "sb_publishable_tVKKh7Ok4FhBhHtHyZfwBA_i2RJD2Fg",
-);
 const API = "/oauth/connections/api";
 
 type Grant = {
@@ -15,6 +12,8 @@ type Grant = {
   resource_id: string;
   environment: string;
   actions: string[];
+  effective_actions?: string[];
+  qualification_id?: string | null;
 };
 type Binding = {
   binding_id: string;
@@ -22,6 +21,8 @@ type Binding = {
   client_name: string;
   version: number;
   expires_at: string;
+  created_at?: string | null;
+  last_used_at?: string | null;
   active: boolean;
   grants: Grant[];
 };
@@ -42,15 +43,21 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
+function optionalDate(value: unknown): boolean {
+  return value === undefined || value === null || (typeof value === "string" && Number.isFinite(Date.parse(value)));
+}
+
 function isBinding(value: unknown): value is Binding {
   return isObject(value) && typeof value.binding_id === "string" && typeof value.client_id === "string"
     && typeof value.client_name === "string" && typeof value.version === "number"
     && Number.isSafeInteger(value.version) && typeof value.expires_at === "string"
     && Number.isFinite(Date.parse(value.expires_at)) && typeof value.active === "boolean"
+    && optionalDate(value.created_at) && optionalDate(value.last_used_at)
     && Array.isArray(value.grants) && value.grants.every(grant =>
       isObject(grant) && (grant.resource_kind === "scope" || grant.resource_kind === "context")
       && typeof grant.resource_id === "string" && typeof grant.environment === "string"
-      && Array.isArray(grant.actions) && grant.actions.every(action => typeof action === "string"));
+      && Array.isArray(grant.actions) && grant.actions.every(action => typeof action === "string")
+      && (grant.effective_actions === undefined || (Array.isArray(grant.effective_actions) && grant.effective_actions.every(action => typeof action === "string"))));
 }
 
 async function readResponse(response: Response, fallback: string): Promise<unknown> {
@@ -69,7 +76,7 @@ async function readResponse(response: Response, fallback: string): Promise<unkno
 
 function selectedGrants(binding: Binding, selection: Selection): Grant[] {
   return binding.grants.map(grant => ({
-    ...grant,
+    resource_kind: grant.resource_kind, resource_id: grant.resource_id, environment: grant.environment,
     actions: grant.actions.filter(action => (selection[binding.binding_id]?.[rowKey(grant)] ?? []).includes(action)),
   })).filter(grant => grant.actions.length > 0);
 }
@@ -292,6 +299,7 @@ export default function OAuthConnectionsPage() {
         <p className="oauth-kicker">账户授权</p>
         <h1>已连接的客户端</h1>
         <p className="oauth-copy">查看每个独立连接的权限，保留需要的操作，或停止该连接的后续访问。</p>
+        <p><Link href="/oauth/projects">开发项目资格与邀请</Link></p>
         {!authReady && <p role="status">正在确认登录状态…</p>}
         {error && <div className="oauth-error" role="alert">
           <strong>尚未完成</strong><p>{error}</p>
@@ -325,6 +333,8 @@ export default function OAuthConnectionsPage() {
               <h2 style={{ fontSize: 20, margin: "0 0 14px", overflowWrap: "anywhere" }}>{binding.client_name || binding.client_id}</h2>
               <dl className="oauth-details">
                 <div><dt>状态</dt><dd>{!binding.active ? "已撤销或失效" : expired ? "已过期" : "授权有效"}</dd></div>
+                <div><dt>授权日期</dt><dd>{binding.created_at ? <time dateTime={binding.created_at}>{new Date(binding.created_at).toLocaleString("zh-CN")}</time> : "暂无记录"}</dd></div>
+                <div><dt>最近使用</dt><dd>{binding.last_used_at ? <time dateTime={binding.last_used_at}>{new Date(binding.last_used_at).toLocaleString("zh-CN")}</time> : "暂无记录"}</dd></div>
                 <div><dt>有效期至</dt><dd><time dateTime={binding.expires_at}>{new Date(binding.expires_at).toLocaleString("zh-CN")}</time></dd></div>
                 <div><dt>连接编号</dt><dd>{binding.binding_id}</dd></div>
               </dl>
@@ -334,6 +344,7 @@ export default function OAuthConnectionsPage() {
                 <legend style={{ fontSize: 12, overflowWrap: "anywhere" }}>
                   {grant.resource_id === "global" ? "全局视图" : grant.resource_id} · {environmentLabels[grant.environment] || grant.environment}
                 </legend>
+                {grant.effective_actions && <p className="oauth-copy">当前实际可用：{grant.effective_actions.length ? grant.effective_actions.map(action => actionLabels[action] || action).join("、") : "无可用操作"}</p>}
                 {grant.actions.map(action => <label key={action} style={{ display: "flex", alignItems: "center", gap: 10, margin: "9px 0", fontSize: 13 }}>
                   <input type="checkbox" style={{ width: 18, height: 18, accentColor: "var(--green)" }}
                     checked={(selection[binding.binding_id]?.[rowKey(grant)] ?? []).includes(action)}
@@ -347,7 +358,7 @@ export default function OAuthConnectionsPage() {
                             : values.filter(item => item !== action),
                         } };
                       });
-                    }} />{actionLabels[action] || action}
+                    }} />{grant.resource_kind === "context" && action === "close" ? "关闭/撤回记录" : actionLabels[action] || action}
                 </label>)}
               </fieldset>)}
               {unavailable ? <p className="oauth-copy">此连接无法恢复。需要继续访问时，请从客户端重新发起授权。</p> : <>

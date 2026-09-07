@@ -5,11 +5,14 @@ on:
     paths:
       - '.github/workflows/clued-connection-authorization.yml'
       - 'apps/clued-cloud/worker/**'
-      - 'apps/clued-cloud/app/oauth/**'
+      - 'apps/clued-cloud/app/**'
+      - 'apps/clued-cloud/vite.config.ts'
       - 'apps/clued-cloud/supabase/migrations/**'
       - 'apps/clued-cloud/tests/*authorization*.test.mjs'
       - 'apps/clued-cloud/tests/delegated-oauth-transport.test.mjs'
       - 'apps/clued-cloud/tests/consent-account-race.test.mjs'
+      - 'apps/clued-cloud/tests/supabase-browser.test.mjs'
+      - 'apps/clued-cloud/tests/project-invitations-*.test.mjs'
       - 'apps/clued-cloud/package*.json'
   workflow_dispatch:
 
@@ -34,6 +37,7 @@ jobs:
       - run: npm run typecheck
       - run: npm run test:authorization:transport
       - run: npm run test:authorization:database
+      - run: npm run test:authorization:invitations
       - run: npm run test:authorization:migrations
       - run: npm run test:authorization:integration
       - run: npm run test:authorization:pages

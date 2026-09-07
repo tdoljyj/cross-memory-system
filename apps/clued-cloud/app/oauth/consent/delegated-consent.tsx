@@ -1,9 +1,9 @@
 "use client";
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
-import { createClient, type Session } from '@supabase/supabase-js';
+import { type Session } from '@supabase/supabase-js';
+import { supabase } from '../../supabase-browser';
 import Link from 'next/link';
 
-const supabase = createClient('https://ccxsikzwxlolxqlosril.supabase.co', 'sb_publishable_tVKKh7Ok4FhBhHtHyZfwBA_i2RJD2Fg');
 type Resource = { resource_kind: 'scope' | 'context'; resource_id: string; environment: string; name?: string; actions: string[] };
 type Details = { request_id: string; version: number; client_name: string; client_id: string; requested_scopes: string[]; eligible: Resource[]; user: { id: string; email?: string } };
 const actionLabels: Record<string, string> = { read: '读取', write: '新增和修改', close: '关闭和归档', restore: '恢复', feedback_submit: '提交反馈', audit: '查看审计回执' };
@@ -167,6 +167,11 @@ export default function DelegatedConsent({ requestId }: { requestId: string }) {
 
   const busy = loading || authBusy || sending;
   const count = Object.values(selected).reduce((n, actions) => n + actions.length, 0);
+  const groups = [
+    { name: '个人记忆', rows: details?.eligible.filter(row => row.resource_kind === 'scope' && !row.resource_id.startsWith('project:')) || [] },
+    { name: '项目协作', rows: details?.eligible.filter(row => row.resource_kind === 'scope' && row.resource_id.startsWith('project:')) || [] },
+    { name: '项目开发', rows: details?.eligible.filter(row => row.resource_kind === 'context') || [] },
+  ].filter(group => group.rows.length);
   return <main className="oauth-shell"><section className="oauth-card" aria-busy={busy}>
     <Link className="oauth-brand" href="/"><span className="brand-mark" aria-hidden="true">◆</span><span>CLUED</span></Link>
     {busy && <p role="status">正在核验授权…</p>}
@@ -176,24 +181,25 @@ export default function DelegatedConsent({ requestId }: { requestId: string }) {
         <label>邮箱<input type="email" autoComplete="email" required value={email} onChange={e => setEmail(e.target.value)} /></label>
         <label>密码<input type="password" autoComplete="current-password" required value={password} onChange={e => setPassword(e.target.value)} /></label>
         <button className="primary-button" disabled={busy} type="submit">登录并继续</button>
-      </form><p><Link href="/oauth/account" target="_blank" rel="noopener noreferrer">忘记密码</Link></p><p>没有账户的开发者，请先通过项目邀请完成账户注册与资格确认。</p></>}
+      </form><p><Link href="/oauth/account" target="_blank" rel="noopener noreferrer">忘记密码</Link></p><p>没有账户的开发者，请在<Link href="/oauth/projects" target="_blank" rel="noopener noreferrer">开发项目页面</Link>注册，并打开项目所有者提供的邀请链接。</p></>}
     {session && <div className="oauth-details"><p>登录账户：{session.user.email || session.user.id}</p><button className="oauth-secondary" type="button" disabled={authBusy} onClick={() => void switchAccount()}>切换账户</button></div>}
     {details && <>
       <h1>允许 {details.client_name} 使用 Clued</h1>
       <dl className="oauth-details"><div><dt>当前账户</dt><dd>{details.user.email || details.user.id}</dd></div><div><dt>客户端标识</dt><dd style={{ overflowWrap: 'anywhere' }}>{details.client_id}</dd></div></dl>
       <p className="oauth-copy">只勾选本次需要的权限。每个连接分别授权；安装 Skill 不会增加权限。</p>
       {!details.eligible.length && <p role="status">身份已验证，尚无可授权的业务资源。项目开发资格需要资源所有者授予。</p>}
+      <p><Link href="/oauth/projects" target="_blank" rel="noopener noreferrer">查看或接受开发项目邀请</Link></p>
       <div className="oauth-permissions">
-        {details.eligible.map(row => <fieldset key={rowKey(row)} disabled={busy} style={{ marginBottom: 16, border: '1px solid var(--border, #ddd)', borderRadius: 8, padding: 12 }}>
+        {groups.map(group => <section key={group.name}><h2 style={{ fontSize: 18 }}>{group.name}</h2>{group.rows.map(row => <fieldset key={rowKey(row)} disabled={busy} style={{ marginBottom: 16, border: '1px solid var(--border, #ddd)', borderRadius: 8, padding: 12 }}>
           <legend>{row.name || (row.resource_id === 'global' ? '我的个人记忆' : row.resource_id)} · {environmentLabels[row.environment] || row.environment}</legend>
           {row.actions.map(action => <label key={action} style={{ display: 'flex', gap: 8, alignItems: 'center', margin: '8px 0' }}>
             <input type="checkbox" checked={(selected[rowKey(row)] || []).includes(action)} onChange={event => {
               const checked = event.target.checked;
               setSelected(old => ({ ...old, [rowKey(row)]: checked ? [...(old[rowKey(row)] || []), action] : (old[rowKey(row)] || []).filter(a => a !== action) }));
-            }} />{actionLabels[action] || action}
+            }} />{row.resource_kind === "context" && action === "close" ? "关闭/撤回记录" : actionLabels[action] || action}
           </label>)}
           {row.resource_kind === 'context' && row.actions.includes('write') && <small>修改已有内容前，可另外选择读取权限来核对当前版本；系统不会自动追加。</small>}
-        </fieldset>)}
+        </fieldset>)}</section>)}
       </div>
       <label className="oauth-form">授权有效期<select disabled={busy} value={days} onChange={e => setDays(Number(e.target.value))}><option value={1}>1 天</option><option value={7}>7 天</option><option value={30}>30 天</option></select></label>
       <p className="oauth-note">此选择不包含成员管理、生产发布或大规模导出。可以随时在<Link href="/oauth/connections" target="_blank" rel="noopener noreferrer">连接管理</Link>中减少或撤销权限。</p>

@@ -1,7 +1,8 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
-import { createClient, Session } from "@supabase/supabase-js";
+import { FormEvent, useEffect, useState } from "react";
+import { type Session } from "@supabase/supabase-js";
+import { supabase, restoreBrowserSession } from "./supabase-browser";
 import Link from "next/link";
 import {
   formatRecordTime,
@@ -11,9 +12,6 @@ import {
   type CluedRecord,
 } from "./record-presentation";
 
-const SUPABASE_URL = "https://ccxsikzwxlolxqlosril.supabase.co";
-const SUPABASE_PUBLISHABLE_KEY =
-  "sb_publishable_tVKKh7Ok4FhBhHtHyZfwBA_i2RJD2Fg";
 const MIN_PASSWORD_LENGTH = 8;
 const MAX_PASSWORD_LENGTH = 128;
 const LANGUAGE_STORAGE_KEY = "clued-language";
@@ -381,17 +379,6 @@ function authErrorText(
 }
 
 export default function Home() {
-  const supabase = useMemo(
-    () =>
-      createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
-        auth: {
-          persistSession: true,
-          autoRefreshToken: true,
-          detectSessionInUrl: false,
-        },
-      }),
-    [],
-  );
 
   const [locale, setLocale] = useState<Locale>("en");
   const [view, setView] = useState<View>("loading");
@@ -438,33 +425,7 @@ export default function Home() {
     let mounted = true;
 
     async function restoreSession() {
-      const hash = new URLSearchParams(window.location.hash.slice(1));
-      const query = new URLSearchParams(window.location.search);
-      const accessToken = hash.get("access_token");
-      const refreshToken = hash.get("refresh_token");
-      const authType = hash.get("type") ?? query.get("type");
-
-      let nextSession: Session | null = null;
-      let authError: Error | null = null;
-
-      if (accessToken && refreshToken) {
-        const result = await supabase.auth.setSession({
-          access_token: accessToken,
-          refresh_token: refreshToken,
-        });
-        nextSession = result.data.session;
-        authError = result.error;
-      } else if (query.get("code")) {
-        const result = await supabase.auth.exchangeCodeForSession(
-          query.get("code") as string,
-        );
-        nextSession = result.data.session;
-        authError = result.error;
-      } else {
-        const result = await supabase.auth.getSession();
-        nextSession = result.data.session;
-        authError = result.error;
-      }
+      const { session: nextSession, error: authError, authType } = await restoreBrowserSession();
 
       if (!mounted) return;
 
@@ -494,7 +455,7 @@ export default function Home() {
       mounted = false;
       data.subscription.unsubscribe();
     };
-  }, [supabase]);
+  }, []);
 
   useEffect(() => {
     if (!session || view !== "account") return;

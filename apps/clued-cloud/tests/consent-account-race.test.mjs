@@ -27,13 +27,13 @@ function fixture(compiled = consentSource, extraAuth = {}) {
  vm.runInNewContext(compiled,{exports,require(name){
   if(name==='react')return React;
   if(name==='react/jsx-runtime')return {jsx:(type,props)=>({type,props}),jsxs:(type,props)=>({type,props}),Fragment:'fragment'};
-  if(name==='@supabase/supabase-js')return {createClient:()=>({auth})};
+  if(name.endsWith('/supabase-browser'))return {supabase:{auth},restoreBrowserSession:async()=>({session:null,error:null,authType:null})};
   if(name==='next/link')return {__esModule:true,default:'a'};throw Error(name);
  },AbortController,Error,TypeError,encodeURIComponent,URL,window:{setTimeout(cb){const id=++seq;timers.set(id,cb);return id;},clearTimeout(id){timers.delete(id);},location:{origin:'https://clued.example.test',assign(url){navigations.push(url);}}},
  fetch(url,options){let resolve;const promise=new Promise(a=>resolve=a);requests.push({url,options,resolve});return promise;}});
  function render(){cursor=0;root=exports.default({requestId:'a'.repeat(64)});while(effects.length)effects.shift()();return root;}
  function nodes(type){const out=[];function visit(n){if(Array.isArray(n))return n.forEach(visit);if(!n||typeof n!=='object')return;if(n.type===type)out.push(n);visit(n.props?.children);}visit(root);return out;}
- function text(n=root){if(Array.isArray(n))return n.map(text).join('');if(n==null||typeof n==='boolean')return '';return typeof n==='object'?text(n.props?.children ?? null):String(n);}
+ function text(n){if(arguments.length===0)n=root;if(Array.isArray(n))return n.map(text).join('');if(n==null||typeof n==='boolean')return '';return typeof n==='object'?text(n.props?.children ?? null):String(n);}
  async function settle(){for(let i=0;i<8;i++)await Promise.resolve();render();}
  const respond=(i,data)=>requests[i].resolve({ok:true,json:async()=>data});
  function emit(e,s){authCallback(e,s);render();}

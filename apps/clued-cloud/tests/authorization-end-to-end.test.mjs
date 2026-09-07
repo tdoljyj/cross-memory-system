@@ -12,6 +12,7 @@ import EmbeddedPostgres from 'embedded-postgres';
 // Real OAuth library -> application transport -> real migrated PostgreSQL.
 // Identity and HTTP plumbing are local fixtures, not a live Supabase/ChatGPT login.
 const U = '10000000-0000-4000-8000-000000000001';
+const V = '10000000-0000-4000-8000-000000000002';
 const P = '20000000-0000-4000-8000-000000000001';
 const origin = 'https://clued.example', resource = origin + '/mcp';
 const hash = value => crypto.createHash('sha256').update(value).digest('hex');
@@ -44,35 +45,36 @@ test('OAuth consent, MCP record receipt, replay and revoke use the real database
       grant usage on schema auth,extensions to anon,authenticated,service_role;
       grant execute on function auth.uid(),auth.jwt() to anon,authenticated,service_role;`);
     for (const name of (await fs.readdir('supabase/migrations')).filter(name => name.endsWith('.sql')).sort()) await db.query(await fs.readFile(path.join('supabase/migrations', name), 'utf8'));
-    await db.query("insert into auth.users values($1,'fixture@example.invalid',now())", [U]);
+    await db.query("insert into auth.users values($1,'fixture@example.invalid',now()),($2,'developer@example.invalid',now())", [U, V]);
     await db.query("insert into public.clued_projects(id,user_id,name,normalized_name,context_key) values($1,$2,'Integration project','integration project',$3)", [P, U, 'project:' + P]);
     const issuer = crypto.randomBytes(32).toString('hex');
     await db.query("insert into clued_private.authorization_issuers_v12(token_hash,resource,name) values($1,$2,'Integration fixture')", [hash(issuer), resource]);
-    const human = server.getPgClient(), anon = server.getPgClient();
-    for (const connection of [human, anon]) { connections.push(connection); await connection.connect(); }
+    const human = server.getPgClient(), anon = server.getPgClient(), invited = server.getPgClient();
+    for (const connection of [human, anon, invited]) { connections.push(connection); await connection.connect(); }
     await human.query('set role authenticated'); await human.query("select set_config('request.jwt.claim.sub',$1,false),set_config('request.jwt.claims',$2,false)", [U, JSON.stringify({ sub: U })]); await anon.query('set role anon');
+    await invited.query('set role authenticated'); await invited.query("select set_config('request.jwt.claim.sub',$1,false),set_config('request.jwt.claims',$2,false)", [V, JSON.stringify({ sub: V })]);
     const context = (await human.query("select public.clued_context_owner($1) value", [{ op: 'context_create', name: 'Integration development', project_id: P, environment: 'test', idempotency_key: crypto.randomUUID() }])).rows[0].value.result.id;
     const env = { OAUTH_KV: new MemoryKV(), CLUED_DELEGATED_OAUTH_V12: 'true', CLUED_OAUTH_ORIGIN: origin, CLUED_AUTHORIZATION_ISSUER_TOKEN: issuer, SUPABASE_URL: 'https://db.invalid', SUPABASE_PUBLISHABLE_KEY: 'fixture-public-key', PROJECT_VIEWS_V2: 'true', CONTEXT_OWNERSHIP_V11: 'true' };
     globalThis.fetch = async (url, options = {}) => {
       const parsed = new URL(url); assert.equal(parsed.origin, 'https://db.invalid');
-      const headers = new Headers(options.headers); const isHuman = headers.get('Authorization') === 'Bearer fixture-human';
-      if (parsed.pathname === '/auth/v1/user') return Response.json(isHuman ? { id: U, email: 'fixture@example.invalid' } : { error: 'unauthorized' }, { status: isHuman ? 200 : 401 });
+      const headers = new Headers(options.headers); const isOwner = headers.get('Authorization') === 'Bearer fixture-human'; const isInvited = headers.get('Authorization') === 'Bearer fixture-developer'; const isHuman = isOwner || isInvited;
+      if (parsed.pathname === '/auth/v1/user') return Response.json(isHuman ? { id: isOwner ? U : V, email: isOwner ? 'fixture@example.invalid' : 'developer@example.invalid' } : { error: 'unauthorized' }, { status: isHuman ? 200 : 401 });
       const name = parsed.pathname.split('/').at(-1); assert.match(name, /^clued_[a-z0-9_]+$/);
       const values = JSON.parse(options.body || '{}'), keys = Object.keys(values); assert.ok(keys.every(key => /^p_[a-z0-9_]+$/.test(key)));
       try {
-        const result = await (isHuman ? human : anon).query('select public.' + name + '(' + keys.map((key, index) => key + ' => $' + (index + 1)).join(',') + ') value', keys.map(key => typeof values[key] === 'object' && values[key] !== null ? JSON.stringify(values[key]) : values[key]));
+        const result = await (isOwner ? human : isInvited ? invited : anon).query('select public.' + name + '(' + keys.map((key, index) => key + ' => $' + (index + 1)).join(',') + ') value', keys.map(key => typeof values[key] === 'object' && values[key] !== null ? JSON.stringify(values[key]) : values[key]));
         return Response.json(result.rows[0].value);
       } catch (error) { return Response.json({ message: error.message, code: error.code }, { status: error.code === '40001' ? 409 : error.code === '42501' || error.code === '28000' ? 403 : 400 }); }
     };
     const run = (route, options = {}) => handleDelegatedOAuth(new Request(origin + route, options), env, { waitUntil() {}, passThroughOnException() {}, props: {} }, async () => new Response('not found', { status: 404 }));
     const registered = await run('/oauth/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ client_name: 'Integration client', redirect_uris: ['https://client.example/callback'], token_endpoint_auth_method: 'none', grant_types: ['authorization_code', 'refresh_token'], response_types: ['code'] }) });
     assert.equal(registered.status, 201); const clientId = (await registered.json()).client_id;
-    async function connect(actions) {
+    async function connect(actions, identityToken = 'fixture-human') {
       const verifier = crypto.randomBytes(32).toString('base64url');
       const query = new URLSearchParams({ client_id: clientId, redirect_uri: 'https://client.example/callback', response_type: 'code', scope: 'context:read context:write', state: 'integration', resource, code_challenge: crypto.createHash('sha256').update(verifier).digest('base64url'), code_challenge_method: 'S256' });
       const begun = await run('/oauth/authorize?' + query); assert.equal(begun.status, 302);
       const requestId = new URL(begun.headers.get('Location')).searchParams.get('request_id');
-      const headers = { Authorization: 'Bearer fixture-human', Cookie: begun.headers.get('Set-Cookie').split(';')[0] };
+      const headers = { Authorization: 'Bearer ' + identityToken, Cookie: begun.headers.get('Set-Cookie').split(';')[0] };
       const detailsResponse = await run('/oauth/request?request_id=' + requestId, { headers }); assert.equal(detailsResponse.status, 200, await detailsResponse.clone().text());
       const details = await detailsResponse.json(); assert.ok(details.eligible.some(row => row.resource_id === context));
       const decision = await run('/oauth/decision?request_id=' + requestId, { method: 'POST', headers: { ...headers, Origin: origin, 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'approve', version: details.version, days: 1, selected: [{ resource_kind: 'context', resource_id: context, environment: 'test', actions }] }) });
@@ -96,6 +98,27 @@ test('OAuth consent, MCP record receipt, replay and revoke use the real database
     const revoke = await run('/oauth/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ token: write.refresh_token, client_id: clientId }) });
     assert.equal(revoke.status, 200, await revoke.clone().text());
     assert.ok((await call(write.access_token, { ...input, idempotency_key: crypto.randomUUID() })).status >= 400);
+    assert.equal((await call(read.access_token, { op: 'record_list' })).status, 200);
+    const humanApi = async (identityToken, input) => {
+      const response = await run('/oauth/projects/api', { method: 'POST', headers: { Authorization: 'Bearer ' + identityToken, Origin: origin, 'Content-Type': 'application/json' }, body: JSON.stringify(input) });
+      assert.equal(response.status, 200, await response.clone().text()); return response.json();
+    };
+    const invitation = await humanApi('fixture-human', { op: 'invite_create', project_id: P, environment: 'test', target_email: 'developer@example.invalid', role: 'reader', actions: ['read'], expires_at: new Date(Date.now() + 3600000).toISOString(), idempotency_key: crypto.randomUUID() });
+    const inspected = await humanApi('fixture-developer', { op: 'invite_inspect', invite_token: invitation.invite_token });
+    assert.equal(inspected.project_id, P); assert.equal(inspected.environment, 'test');
+    const membership = await humanApi('fixture-developer', { op: 'invite_accept', invite_token: invitation.invite_token, base_version: inspected.version, idempotency_key: crypto.randomUUID() });
+    const developer = await connect(['read'], 'fixture-developer');
+    assert.equal((await call(developer.access_token, { op: 'record_list' })).status, 200);
+    assert.equal((await call(developer.access_token, input)).status, 403);
+    const resumed = await run('/mcp', { method: 'POST', headers: { Authorization: 'Bearer ' + developer.access_token, 'Content-Type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'clued_session_resume', arguments: { context_key: 'global', client_session_id: 'integration-developer' } } }) });
+    assert.equal(resumed.status, 200, await resumed.clone().text());
+    const envelope = await resumed.json();
+    const projection = envelope.result.structuredContent || JSON.parse(envelope.result.content[0].text);
+    assert.equal(projection.status, 'scoped_context_ready'); assert.equal(projection.session_checkpoint_supported, false);
+    assert.equal(projection.authorized_contexts.length, 1); assert.equal(projection.authorized_contexts[0].context_id, context);
+    assert.equal(projection.snapshot, undefined); assert.equal(projection.session_token, undefined);
+    await humanApi('fixture-human', { op: 'member_revoke', membership_id: membership.membership_id, base_version: membership.version, idempotency_key: crypto.randomUUID() });
+    assert.ok((await call(developer.access_token, { op: 'record_list' })).status >= 400);
     assert.equal((await call(read.access_token, { op: 'record_list' })).status, 200);
   } finally {
     globalThis.fetch = originalFetch;

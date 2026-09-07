@@ -63,6 +63,53 @@ selected actions; lifetime choices are 1, 7 or 30 days, access tokens last
 15 minutes, and database expiry/revocation remains authoritative on every
 protected call and refresh.
 
+The browser build uses `VITE_CLUED_SUPABASE_URL` and
+`VITE_CLUED_SUPABASE_PUBLISHABLE_KEY`. Supply both for the approved environment;
+when both are absent the existing production public configuration remains the
+compatibility default. The build rejects incomplete pairs, non-public keys and
+invalid origins before emitting assets. The Worker settings do not configure
+these browser values. Match both sides to the same environment and verify the
+resulting artifact. Never expose an issuer, service-role or secret key through
+Vite. One shared browser client handles explicit recovery/verification callbacks
+once and removes callback credentials from the URL before network processing.
+
+## Development invitation and recovery contracts
+
+Apply reviewed successors `20260907161611_clued_connection_authorization_v12.sql`
+then `20260907164550_clued_project_invitations_v13.sql`. The v13 invitation and
+membership tables reference the existing canonical project/context IDs and do
+not require the retired P5 membership schema. Human-only
+`clued_project_access_v13` supports list, invitation inspect/create/accept/revoke,
+and member reduce/revoke through `/oauth/projects/api`. Invitation acceptance
+requires the intended verified email, original one-time token and CAS version.
+Only its hash is retained in the database; lost create responses retain the
+original idempotency key and must not claim a recoverable token. Membership
+revocation and re-invitation cannot revive an old Binding.
+
+An invited developer uses their own stable Supabase subject. Context mutations
+retain both the real actor and resource owner in the existing Record/Event/
+Receipt contract. Reader/editor membership grants no publication, administrative
+or private personal-memory authority. Closing records is separate consent from
+writing. Context-only `clued_session_resume` returns `scoped_context_ready` and
+`session_checkpoint_supported=false`, with exact authorized context metadata;
+it creates no personal session, snapshot or checkpoint. The Skill follows the
+returned next operation instead of manufacturing personal Global access.
+
+Platform administrator registration is offline and distinct from account
+recovery and project permissions. Only the actual database owner of the
+SECURITY INVOKER procedures may call:
+
+- `clued_private.platform_admin_bootstrap_v13(subject, evidence_ref, reason)`:
+  one-time initialization at version 1.
+- `clued_private.platform_admin_recover_v13(subject, base_version, evidence_ref,
+  reason)`: CAS replacement by a different existing, verified and active subject.
+
+Both append an audit with actual database operator/session, old/new subjects,
+version, evidence and reason. `anon`, `authenticated` and `service_role` have no
+execute privilege. These procedures create no OAuth grant, membership or memory
+access. Running them requires a separately authorized exact subject and evidence;
+this candidate does not initialize any production administrator.
+
 ## Compatibility and cutover
 
 Applying the v1.2 connection migration disables the legacy broad Supabase OAuth
