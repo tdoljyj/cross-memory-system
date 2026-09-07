@@ -1,0 +1,1234 @@
+{
+  "schema": "clued.context-v11.db-evidence/1",
+  "results": [
+    {
+      "profile": "production-m1",
+      "name": "owner project picker includes only existing owned projects",
+      "result": "PASS"
+    },
+    {
+      "profile": "production-m1",
+      "name": "cross-owner project cannot create context",
+      "result": "PASS",
+      "rejection_expected": [
+        "42501",
+        "28000"
+      ]
+    },
+    {
+      "profile": "production-m1",
+      "name": "OAuth default full legacy scope grants no new context write",
+      "result": "PASS",
+      "rejection_expected": [
+        "42501",
+        "28000"
+      ]
+    },
+    {
+      "profile": "production-m1",
+      "name": "OAuth cannot use direct owner management",
+      "result": "PASS",
+      "rejection_expected": [
+        "42501",
+        "28000"
+      ]
+    },
+    {
+      "profile": "production-m1",
+      "name": "another owner cannot discover private context",
+      "result": "PASS",
+      "rejection_expected": [
+        "42501",
+        "28000"
+      ]
+    },
+    {
+      "profile": "production-m1",
+      "name": "private tables inaccessible under real role",
+      "result": "PASS",
+      "rejection_expected": [
+        "42501",
+        "28000"
+      ]
+    },
+    {
+      "profile": "production-m1",
+      "name": "private dispatcher inaccessible under real role",
+      "result": "PASS",
+      "rejection_expected": [
+        "42501",
+        "28000"
+      ]
+    },
+    {
+      "profile": "production-m1",
+      "name": "private tables inaccessible under real role",
+      "result": "PASS",
+      "rejection_expected": [
+        "42501",
+        "28000"
+      ]
+    },
+    {
+      "profile": "production-m1",
+      "name": "private dispatcher inaccessible under real role",
+      "result": "PASS",
+      "rejection_expected": [
+        "42501",
+        "28000"
+      ]
+    },
+    {
+      "profile": "production-m1",
+      "name": "private tables inaccessible under real role",
+      "result": "PASS",
+      "rejection_expected": [
+        "42501",
+        "28000"
+      ]
+    },
+    {
+      "profile": "production-m1",
+      "name": "private dispatcher inaccessible under real role",
+      "result": "PASS",
+      "rejection_expected": [
+        "42501",
+        "28000"
+      ]
+    },
+    {
+      "profile": "production-m1",
+      "name": "all private helpers explicitly revoke execute, beyond schema hiding",
+      "result": "PASS"
+    },
+    {
+      "profile": "production-m1",
+      "name": "OAuth cannot read sibling Binding hashes",
+      "result": "PASS"
+    },
+    {
+      "profile": "production-m1",
+      "name": "OAuth Binding hash cannot authenticate token entry",
+      "result": "PASS",
+      "rejection_expected": [
+        "42501",
+        "28000"
+      ]
+    },
+    {
+      "profile": "production-m1",
+      "name": "OAuth cannot mutate sibling Binding",
+      "result": "PASS"
+    },
+    {
+      "profile": "production-m1",
+      "name": "OAuth cannot create arbitrary delegated Binding",
+      "result": "PASS",
+      "rejection_expected": [
+        "42501",
+        "28000"
+      ]
+    },
+    {
+      "profile": "production-m1",
+      "name": "client owner override rejected",
+      "result": "PASS",
+      "rejection_expected": [
+        "42501",
+        "28000"
+      ]
+    },
+    {
+      "profile": "production-m1",
+      "name": "context_list defaults to ordinary unpublished-free view",
+      "result": "PASS"
+    },
+    {
+      "profile": "production-m1",
+      "name": "record committed with stable identity/hash before Dogfood grant",
+      "result": "PASS"
+    },
+    {
+      "profile": "production-m1",
+      "name": "saved record invisible before grant",
+      "result": "PASS",
+      "rejection_expected": [
+        "42501",
+        "28000"
+      ]
+    },
+    {
+      "profile": "production-m1",
+      "name": "history link is independent from access grant",
+      "result": "PASS",
+      "rejection_expected": [
+        "42501",
+        "28000"
+      ]
+    },
+    {
+      "profile": "production-m1",
+      "name": "later User Binding restores exact original ID and next action",
+      "result": "PASS"
+    },
+    {
+      "profile": "production-m1",
+      "name": "history mode must be explicit",
+      "result": "PASS",
+      "rejection_expected": [
+        "42501",
+        "28000"
+      ]
+    },
+    {
+      "profile": "production-m1",
+      "name": "User Binding cannot record_put",
+      "result": "PASS",
+      "rejection_expected": [
+        "42501",
+        "28000"
+      ]
+    },
+    {
+      "profile": "production-m1",
+      "name": "User Binding cannot accept",
+      "result": "PASS",
+      "rejection_expected": [
+        "42501",
+        "28000"
+      ]
+    },
+    {
+      "profile": "production-m1",
+      "name": "User Binding cannot publish",
+      "result": "PASS",
+      "rejection_expected": [
+        "42501",
+        "28000"
+      ]
+    },
+    {
+      "profile": "production-m1",
+      "name": "grant cannot cross environment",
+      "result": "PASS",
+      "rejection_expected": [
+        "42501",
+        "28000"
+      ]
+    },
+    {
+      "profile": "production-m1",
+      "name": "developer material not exposed in default ordinary context list",
+      "result": "PASS"
+    },
+    {
+      "profile": "production-m1",
+      "name": "EXISTING_ONLY+FIXED_AT_GRANT excludes future creation and revision",
+      "result": "PASS"
+    },
+    {
+      "profile": "production-m1",
+      "name": "SINCE_CURSOR uses server creation sequence, not spoofed observation dates",
+      "result": "PASS"
+    },
+    {
+      "profile": "production-m1",
+      "name": "explicit set and body field filtering constrain response",
+      "result": "PASS"
+    },
+    {
+      "profile": "production-m1",
+      "name": "User writes own context annotation; Developer source revision preserves authorship and marks changed",
+      "result": "PASS"
+    },
+    {
+      "profile": "production-m1",
+      "name": "forged annotation source version rejected",
+      "result": "PASS",
+      "rejection_expected": [
+        "42501",
+        "28000"
+      ]
+    },
+    {
+      "profile": "production-m1",
+      "name": "authorized pagination has continuation cursor",
+      "result": "PASS"
+    },
+    {
+      "profile": "production-m1",
+      "name": "future cursor rejected",
+      "result": "PASS",
+      "rejection_expected": [
+        "22023"
+      ]
+    },
+    {
+      "profile": "production-m1",
+      "name": "canonical search cannot expose private context without Grant (history=false)",
+      "result": "PASS"
+    },
+    {
+      "profile": "production-m1",
+      "name": "canonical search cannot expose private context without Grant (history=true)",
+      "result": "PASS"
+    },
+    {
+      "profile": "production-m1",
+      "name": "legacy clued_memories exposes no private payload",
+      "result": "PASS"
+    },
+    {
+      "profile": "production-m1",
+      "name": "legacy clued_context_events exposes no private payload",
+      "result": "PASS"
+    },
+    {
+      "profile": "production-m1",
+      "name": "legacy clued_audit_receipts exposes no private payload",
+      "result": "PASS"
+    },
+    {
+      "profile": "production-m1",
+      "name": "legacy clued_evidence exposes no private payload",
+      "result": "PASS"
+    },
+    {
+      "profile": "production-m1",
+      "name": "legacy log RPC cannot bypass Grant",
+      "result": "PASS"
+    },
+    {
+      "profile": "production-m1",
+      "name": "same key replays same atomic receipt",
+      "result": "PASS"
+    },
+    {
+      "profile": "production-m1",
+      "name": "returned Receipt/Event IDs resolve to real private typed objects over atomic operation",
+      "result": "PASS"
+    },
+    {
+      "profile": "production-m1",
+      "name": "same key changed payload rejected",
+      "result": "PASS",
+      "rejection_expected": [
+        "22023"
+      ]
+    },
+    {
+      "profile": "production-m1",
+      "name": "concurrent record CAS permits exactly one commit",
+      "result": "PASS"
+    },
+    {
+      "profile": "production-m1",
+      "name": "receipt insertion fault rolls back full transaction",
+      "result": "PASS",
+      "rejection_expected": [
+        "P0001"
+      ]
+    },
+    {
+      "profile": "production-m1",
+      "name": "record/event/receipt never partially commit",
+      "result": "PASS"
+    },
+    {
+      "profile": "production-m1",
+      "name": "new operations do not write legacy clued_memories",
+      "result": "PASS"
+    },
+    {
+      "profile": "production-m1",
+      "name": "new operations do not write legacy clued_context_events",
+      "result": "PASS"
+    },
+    {
+      "profile": "production-m1",
+      "name": "new operations do not write legacy clued_audit_receipts",
+      "result": "PASS"
+    },
+    {
+      "profile": "production-m1",
+      "name": "new operations do not write legacy clued_evidence",
+      "result": "PASS"
+    },
+    {
+      "profile": "production-m1",
+      "name": "unpublished development inaccessible to ordinary consumer",
+      "result": "PASS",
+      "rejection_expected": [
+        "42501",
+        "28000"
+      ]
+    },
+    {
+      "profile": "production-m1",
+      "name": "acceptance alone creates no publication",
+      "result": "PASS",
+      "rejection_expected": [
+        "42501",
+        "28000"
+      ]
+    },
+    {
+      "profile": "production-m1",
+      "name": "changed publication bytes reject old approval",
+      "result": "PASS",
+      "rejection_expected": [
+        "42501",
+        "28000"
+      ]
+    },
+    {
+      "profile": "production-m1",
+      "name": "broadened audience rejects old approval",
+      "result": "PASS",
+      "rejection_expected": [
+        "42501",
+        "28000"
+      ]
+    },
+    {
+      "profile": "production-m1",
+      "name": "different environment rejects publication",
+      "result": "PASS",
+      "rejection_expected": [
+        "42501",
+        "28000"
+      ]
+    },
+    {
+      "profile": "production-m1",
+      "name": "publication intent commits pending before consumer delivery",
+      "result": "PASS"
+    },
+    {
+      "profile": "production-m1",
+      "name": "pending publication is not current",
+      "result": "PASS",
+      "rejection_expected": [
+        "42501",
+        "28000"
+      ]
+    },
+    {
+      "profile": "production-m1",
+      "name": "publication expected-current CAS has exactly one winner",
+      "result": "PASS"
+    },
+    {
+      "profile": "production-m1",
+      "name": "one canonical_api consumer reads exact accepted payload",
+      "result": "PASS"
+    },
+    {
+      "profile": "production-m1",
+      "name": "ordinary publication excludes protected governance/source metadata",
+      "result": "PASS"
+    },
+    {
+      "profile": "production-m1",
+      "name": "ordinary context list discovers only published context",
+      "result": "PASS"
+    },
+    {
+      "profile": "production-m1",
+      "name": "stale current cannot overwrite publication",
+      "result": "PASS",
+      "rejection_expected": [
+        "40001"
+      ]
+    },
+    {
+      "profile": "production-m1",
+      "name": "pending followup retains previous verified head",
+      "result": "PASS"
+    },
+    {
+      "profile": "production-m1",
+      "name": "delivery pointer-switch fault is not reported verified",
+      "result": "PASS",
+      "rejection_expected": [
+        "P0001"
+      ]
+    },
+    {
+      "profile": "production-m1",
+      "name": "failed delivery preserves previous verified publication",
+      "result": "PASS"
+    },
+    {
+      "profile": "production-m1",
+      "name": "failed delivery rolls status back to pending",
+      "result": "PASS"
+    },
+    {
+      "profile": "production-m1",
+      "name": "delivery retry is idempotent after successful commit",
+      "result": "PASS"
+    },
+    {
+      "profile": "production-m1",
+      "name": "source modification invalidates dependent current publication",
+      "result": "PASS",
+      "rejection_expected": [
+        "42501",
+        "28000"
+      ]
+    },
+    {
+      "profile": "production-m1",
+      "name": "old acceptance cannot approve changed source",
+      "result": "PASS",
+      "rejection_expected": [
+        "42501",
+        "28000"
+      ]
+    },
+    {
+      "profile": "production-m1",
+      "name": "withdrawn current not served",
+      "result": "PASS",
+      "rejection_expected": [
+        "42501",
+        "28000"
+      ]
+    },
+    {
+      "profile": "production-m1",
+      "name": "withdrawal preserves immutable publication history",
+      "result": "PASS"
+    },
+    {
+      "profile": "production-m1",
+      "name": "real Worker developer route commits actual database Receipt",
+      "result": "PASS"
+    },
+    {
+      "profile": "production-m1",
+      "name": "real Worker late OAuth route restores exact canonical body and ID",
+      "result": "PASS"
+    },
+    {
+      "profile": "production-m1",
+      "name": "three real RPC paths exercised under actual owner/anon/OAuth roles",
+      "result": "PASS"
+    },
+    {
+      "profile": "production-m1",
+      "name": "instruction-like feedback stored as observation, not authority",
+      "result": "PASS"
+    },
+    {
+      "profile": "production-m1",
+      "name": "manager sees only explicitly shared evidence",
+      "result": "PASS"
+    },
+    {
+      "profile": "production-m1",
+      "name": "submitter can retrieve bounded disposition",
+      "result": "PASS"
+    },
+    {
+      "profile": "production-m1",
+      "name": "feedback candidate never auto-accepts",
+      "result": "PASS"
+    },
+    {
+      "profile": "production-m1",
+      "name": "feedback withdraw clears shared body and evidence",
+      "result": "PASS"
+    },
+    {
+      "profile": "production-m1",
+      "name": "immutable operation result does not retain withdrawn feedback body",
+      "result": "PASS"
+    },
+    {
+      "profile": "production-m1",
+      "name": "old User token denied immediately after Grant revocation",
+      "result": "PASS",
+      "rejection_expected": [
+        "42501",
+        "28000"
+      ]
+    },
+    {
+      "profile": "production-m1",
+      "name": "old idempotency key cannot bypass current Grant revocation",
+      "result": "PASS",
+      "rejection_expected": [
+        "42501",
+        "28000"
+      ]
+    },
+    {
+      "profile": "production-m1",
+      "name": "source Grant revoke preserves User-owned annotation and blocks source access",
+      "result": "PASS"
+    },
+    {
+      "profile": "production-m1",
+      "name": "current revocation overrides fixed historical grant",
+      "result": "PASS"
+    },
+    {
+      "profile": "production-m1",
+      "name": "TTL marks stale without deleting historical assertion",
+      "result": "PASS"
+    },
+    {
+      "profile": "production-m1",
+      "name": "stale current source cannot be newly accepted for publication",
+      "result": "PASS",
+      "rejection_expected": [
+        "42501",
+        "28000"
+      ]
+    },
+    {
+      "profile": "production-m1",
+      "name": "revoked Developer Binding denied without waiting JWT/token expiry",
+      "result": "PASS",
+      "rejection_expected": [
+        "42501",
+        "28000"
+      ]
+    },
+    {
+      "profile": "production-m1",
+      "name": "environment",
+      "result": "PASS",
+      "postgres": "PostgreSQL 18.4 on x86_64-windows, compiled by msvc-19.44.35226, 64-bit",
+      "migrations": [
+        "202608230001_clued_continuity.sql",
+        "202608230002_mandatory_continuity.sql",
+        "20260823182409_clued_memory_crud.sql",
+        "20260823182517_harden_clued_memory_grants.sql",
+        "202608240003_project_lifecycle_v1.sql",
+        "20260824014005_unified_record_v2.sql",
+        "20260824123000_map_optimistic_conflicts_to_http_409.sql",
+        "202608250005_oauth_mcp_binding.sql",
+        "20260825171129_clued_m1_runtime_contracts.sql",
+        "20260825183608_clued_m1_map_current_legacy_records.sql",
+        "20260907123955_clued_context_ownership_publication_v11.sql",
+        "20260907131834_clued_search_canonical_records.sql"
+      ],
+      "migration_sha256": "9987438b8a12af237b51eec93577e4617849d87e70d40deb7d5195b03c1d01db"
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "owner project picker includes only existing owned projects",
+      "result": "PASS"
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "cross-owner project cannot create context",
+      "result": "PASS",
+      "rejection_expected": [
+        "42501",
+        "28000"
+      ]
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "OAuth default full legacy scope grants no new context write",
+      "result": "PASS",
+      "rejection_expected": [
+        "42501",
+        "28000"
+      ]
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "OAuth cannot use direct owner management",
+      "result": "PASS",
+      "rejection_expected": [
+        "42501",
+        "28000"
+      ]
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "another owner cannot discover private context",
+      "result": "PASS",
+      "rejection_expected": [
+        "42501",
+        "28000"
+      ]
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "private tables inaccessible under real role",
+      "result": "PASS",
+      "rejection_expected": [
+        "42501",
+        "28000"
+      ]
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "private dispatcher inaccessible under real role",
+      "result": "PASS",
+      "rejection_expected": [
+        "42501",
+        "28000"
+      ]
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "private tables inaccessible under real role",
+      "result": "PASS",
+      "rejection_expected": [
+        "42501",
+        "28000"
+      ]
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "private dispatcher inaccessible under real role",
+      "result": "PASS",
+      "rejection_expected": [
+        "42501",
+        "28000"
+      ]
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "private tables inaccessible under real role",
+      "result": "PASS",
+      "rejection_expected": [
+        "42501",
+        "28000"
+      ]
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "private dispatcher inaccessible under real role",
+      "result": "PASS",
+      "rejection_expected": [
+        "42501",
+        "28000"
+      ]
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "all private helpers explicitly revoke execute, beyond schema hiding",
+      "result": "PASS"
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "OAuth cannot read sibling Binding hashes",
+      "result": "PASS"
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "OAuth Binding hash cannot authenticate token entry",
+      "result": "PASS",
+      "rejection_expected": [
+        "42501",
+        "28000"
+      ]
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "client owner override rejected",
+      "result": "PASS",
+      "rejection_expected": [
+        "42501",
+        "28000"
+      ]
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "context_list defaults to ordinary unpublished-free view",
+      "result": "PASS"
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "record committed with stable identity/hash before Dogfood grant",
+      "result": "PASS"
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "saved record invisible before grant",
+      "result": "PASS",
+      "rejection_expected": [
+        "42501",
+        "28000"
+      ]
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "history link is independent from access grant",
+      "result": "PASS",
+      "rejection_expected": [
+        "42501",
+        "28000"
+      ]
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "later User Binding restores exact original ID and next action",
+      "result": "PASS"
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "history mode must be explicit",
+      "result": "PASS",
+      "rejection_expected": [
+        "42501",
+        "28000"
+      ]
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "User Binding cannot record_put",
+      "result": "PASS",
+      "rejection_expected": [
+        "42501",
+        "28000"
+      ]
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "User Binding cannot accept",
+      "result": "PASS",
+      "rejection_expected": [
+        "42501",
+        "28000"
+      ]
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "User Binding cannot publish",
+      "result": "PASS",
+      "rejection_expected": [
+        "42501",
+        "28000"
+      ]
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "grant cannot cross environment",
+      "result": "PASS",
+      "rejection_expected": [
+        "42501",
+        "28000"
+      ]
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "developer material not exposed in default ordinary context list",
+      "result": "PASS"
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "EXISTING_ONLY+FIXED_AT_GRANT excludes future creation and revision",
+      "result": "PASS"
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "SINCE_CURSOR uses server creation sequence, not spoofed observation dates",
+      "result": "PASS"
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "explicit set and body field filtering constrain response",
+      "result": "PASS"
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "User writes own context annotation; Developer source revision preserves authorship and marks changed",
+      "result": "PASS"
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "forged annotation source version rejected",
+      "result": "PASS",
+      "rejection_expected": [
+        "42501",
+        "28000"
+      ]
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "authorized pagination has continuation cursor",
+      "result": "PASS"
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "future cursor rejected",
+      "result": "PASS",
+      "rejection_expected": [
+        "22023"
+      ]
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "canonical search cannot expose private context without Grant (history=false)",
+      "result": "PASS"
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "canonical search cannot expose private context without Grant (history=true)",
+      "result": "PASS"
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "legacy clued_memories exposes no private payload",
+      "result": "PASS"
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "legacy clued_context_events exposes no private payload",
+      "result": "PASS"
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "legacy clued_audit_receipts exposes no private payload",
+      "result": "PASS"
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "legacy clued_evidence exposes no private payload",
+      "result": "PASS"
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "legacy log RPC cannot bypass Grant",
+      "result": "PASS"
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "same key replays same atomic receipt",
+      "result": "PASS"
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "returned Receipt/Event IDs resolve to real private typed objects over atomic operation",
+      "result": "PASS"
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "same key changed payload rejected",
+      "result": "PASS",
+      "rejection_expected": [
+        "22023"
+      ]
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "concurrent record CAS permits exactly one commit",
+      "result": "PASS"
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "receipt insertion fault rolls back full transaction",
+      "result": "PASS",
+      "rejection_expected": [
+        "P0001"
+      ]
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "record/event/receipt never partially commit",
+      "result": "PASS"
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "new operations do not write legacy clued_memories",
+      "result": "PASS"
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "new operations do not write legacy clued_context_events",
+      "result": "PASS"
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "new operations do not write legacy clued_audit_receipts",
+      "result": "PASS"
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "new operations do not write legacy clued_evidence",
+      "result": "PASS"
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "unpublished development inaccessible to ordinary consumer",
+      "result": "PASS",
+      "rejection_expected": [
+        "42501",
+        "28000"
+      ]
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "acceptance alone creates no publication",
+      "result": "PASS",
+      "rejection_expected": [
+        "42501",
+        "28000"
+      ]
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "changed publication bytes reject old approval",
+      "result": "PASS",
+      "rejection_expected": [
+        "42501",
+        "28000"
+      ]
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "broadened audience rejects old approval",
+      "result": "PASS",
+      "rejection_expected": [
+        "42501",
+        "28000"
+      ]
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "different environment rejects publication",
+      "result": "PASS",
+      "rejection_expected": [
+        "42501",
+        "28000"
+      ]
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "publication intent commits pending before consumer delivery",
+      "result": "PASS"
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "pending publication is not current",
+      "result": "PASS",
+      "rejection_expected": [
+        "42501",
+        "28000"
+      ]
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "publication expected-current CAS has exactly one winner",
+      "result": "PASS"
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "one canonical_api consumer reads exact accepted payload",
+      "result": "PASS"
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "ordinary publication excludes protected governance/source metadata",
+      "result": "PASS"
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "ordinary context list discovers only published context",
+      "result": "PASS"
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "stale current cannot overwrite publication",
+      "result": "PASS",
+      "rejection_expected": [
+        "40001"
+      ]
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "pending followup retains previous verified head",
+      "result": "PASS"
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "delivery pointer-switch fault is not reported verified",
+      "result": "PASS",
+      "rejection_expected": [
+        "P0001"
+      ]
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "failed delivery preserves previous verified publication",
+      "result": "PASS"
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "failed delivery rolls status back to pending",
+      "result": "PASS"
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "delivery retry is idempotent after successful commit",
+      "result": "PASS"
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "source modification invalidates dependent current publication",
+      "result": "PASS",
+      "rejection_expected": [
+        "42501",
+        "28000"
+      ]
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "old acceptance cannot approve changed source",
+      "result": "PASS",
+      "rejection_expected": [
+        "42501",
+        "28000"
+      ]
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "withdrawn current not served",
+      "result": "PASS",
+      "rejection_expected": [
+        "42501",
+        "28000"
+      ]
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "withdrawal preserves immutable publication history",
+      "result": "PASS"
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "real Worker developer route commits actual database Receipt",
+      "result": "PASS"
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "real Worker late OAuth route restores exact canonical body and ID",
+      "result": "PASS"
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "three real RPC paths exercised under actual owner/anon/OAuth roles",
+      "result": "PASS"
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "instruction-like feedback stored as observation, not authority",
+      "result": "PASS"
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "manager sees only explicitly shared evidence",
+      "result": "PASS"
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "submitter can retrieve bounded disposition",
+      "result": "PASS"
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "feedback candidate never auto-accepts",
+      "result": "PASS"
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "feedback withdraw clears shared body and evidence",
+      "result": "PASS"
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "immutable operation result does not retain withdrawn feedback body",
+      "result": "PASS"
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "old User token denied immediately after Grant revocation",
+      "result": "PASS",
+      "rejection_expected": [
+        "42501",
+        "28000"
+      ]
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "old idempotency key cannot bypass current Grant revocation",
+      "result": "PASS",
+      "rejection_expected": [
+        "42501",
+        "28000"
+      ]
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "source Grant revoke preserves User-owned annotation and blocks source access",
+      "result": "PASS"
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "current revocation overrides fixed historical grant",
+      "result": "PASS"
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "TTL marks stale without deleting historical assertion",
+      "result": "PASS"
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "stale current source cannot be newly accepted for publication",
+      "result": "PASS",
+      "rejection_expected": [
+        "42501",
+        "28000"
+      ]
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "revoked Developer Binding denied without waiting JWT/token expiry",
+      "result": "PASS",
+      "rejection_expected": [
+        "42501",
+        "28000"
+      ]
+    },
+    {
+      "profile": "all-repository-migrations",
+      "name": "environment",
+      "result": "PASS",
+      "postgres": "PostgreSQL 18.4 on x86_64-windows, compiled by msvc-19.44.35226, 64-bit",
+      "migrations": [
+        "202608230001_clued_continuity.sql",
+        "202608230002_mandatory_continuity.sql",
+        "20260823182409_clued_memory_crud.sql",
+        "20260823182517_harden_clued_memory_grants.sql",
+        "202608240003_project_lifecycle_v1.sql",
+        "20260824014005_unified_record_v2.sql",
+        "20260824123000_map_optimistic_conflicts_to_http_409.sql",
+        "202608250005_oauth_mcp_binding.sql",
+        "20260825171129_clued_m1_runtime_contracts.sql",
+        "20260825183608_clued_m1_map_current_legacy_records.sql",
+        "20260827031728_clued_p5_tenant_isolation_concurrent_writes.sql",
+        "20260827050750_p5_gateway_attempt_commit_failure.sql",
+        "20260827062132_p5_concurrent_attempt_replay.sql",
+        "20260827072012_p5_expired_attempt_reissue.sql",
+        "20260827084500_p5_attempt_reissue_linearization.sql",
+        "20260828125643_clued_log_card_api_contract_v12.sql",
+        "20260828183205_p5_audit_lint_compatibility.sql",
+        "20260829091757_clued_log_isolation_forward_fix.sql",
+        "20260829100000_clued_legacy_log_alias_bridge.sql",
+        "20260907123955_clued_context_ownership_publication_v11.sql",
+        "20260907131834_clued_search_canonical_records.sql"
+      ],
+      "migration_sha256": "9987438b8a12af237b51eec93577e4617849d87e70d40deb7d5195b03c1d01db"
+    }
+  ]
+}

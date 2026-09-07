@@ -1,0 +1,24 @@
+▶ Context v1.1 real PostgreSQL: production-m1
+  ✔ authorization/actual role boundaries and no automatic context authority (27.2664ms)
+  ✔ independent developer save then new user history with exact stable IDs (34.3934ms)
+  ✔ private audit isolation, atomicity, idempotency and concurrent record CAS (150.8469ms)
+  ✔ exact acceptance/publication approval, CAS concurrency and source invalidation (58.7752ms)
+  ✔ real Worker REST dispatch → real authenticated PostgreSQL roles (73.4065ms)
+  ✔ feedback minimal disclosure, withdrawal, revocation/replay and freshness (13.2321ms)
+✔ Context v1.1 real PostgreSQL: production-m1 (3979.7074ms)
+▶ Context v1.1 real PostgreSQL: all-repository-migrations
+  ✔ authorization/actual role boundaries and no automatic context authority (24.6064ms)
+  ✔ independent developer save then new user history with exact stable IDs (29.3817ms)
+  ✔ private audit isolation, atomicity, idempotency and concurrent record CAS (42.5051ms)
+  ✔ exact acceptance/publication approval, CAS concurrency and source invalidation (56.0311ms)
+  ✔ real Worker REST dispatch → real authenticated PostgreSQL roles (31.6813ms)
+  ✔ feedback minimal disclosure, withdrawal, revocation/replay and freshness (10.9388ms)
+✔ Context v1.1 real PostgreSQL: all-repository-migrations (3849.814ms)
+ℹ tests 14
+ℹ suites 0
+ℹ pass 14
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 7911.0154

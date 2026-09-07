@@ -1,4 +1,5 @@
 import { projectRpcByTool, projectTools } from "./projects";
+import { contextRpcByTool, contextTools, contextsEnabled, sanitizeContextResult, type ContextFeatureEnv } from "./contexts";
 import { p5RpcByTool, p5TenantWritesEnabled, p5Tools, type P5FeatureEnv } from "./p5";
 import {
   decorateP6Response,
@@ -44,7 +45,7 @@ const KERNEL_VERSION = "0.3.1";
 
 type Scope = (typeof ALL_SCOPES)[number];
 
-export interface ContinuityEnv extends RecordFeatureEnv, P5FeatureEnv, P6FeatureEnv {
+export interface ContinuityEnv extends RecordFeatureEnv, P5FeatureEnv, P6FeatureEnv, ContextFeatureEnv {
   SUPABASE_URL?: string;
   SUPABASE_PUBLISHABLE_KEY?: string;
   CLUED_ALLOWED_ORIGINS?: string;
@@ -739,6 +740,7 @@ const tools = [
   ...projectTools,
   ...recordTools,
   ...p5Tools,
+  ...contextTools,
 ] as const;
 
 type PublicToolName = (typeof tools)[number]["name"];
@@ -758,6 +760,9 @@ const structuredObjectOutputSchema = {
 } as const;
 
 const publicToolPolicies = {
+  clued_context: {
+    scopes: ["context:read"], readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true,
+  },
   clued_agent_bootstrap: {
     scopes: [], readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false,
   },
@@ -845,14 +850,16 @@ function publishTool<T extends (typeof tools)[number]>(tool: T) {
   };
 }
 
-export function publicMcpTools(env: Pick<ContinuityEnv, "PROJECT_VIEWS_V2" | "P5_TENANT_WRITES">) {
+export function publicMcpTools(env: Pick<ContinuityEnv, "PROJECT_VIEWS_V2" | "P5_TENANT_WRITES" | "CONTEXT_OWNERSHIP_V11">) {
   return tools.filter((tool) =>
     (!(tool.name in recordRpcByTool) || recordsV2Enabled(env))
     && (!(tool.name in p5RpcByTool) || p5TenantWritesEnabled(env))
+    && (!(tool.name in contextRpcByTool) || contextsEnabled(env))
   ).map(publishTool);
 }
 
 const rpcByTool = {
+  ...contextRpcByTool,
   clued_session_resume: "clued_mcp_restore",
   clued_append_event: "clued_mcp_append_event",
   clued_session_checkpoint: "clued_mcp_commit_checkpoint",
@@ -876,6 +883,18 @@ async function callRpc(
     throw new HttpError(401, "Authorize with Clued OAuth or a Clued Binding Token.");
   }
   const payload = typeof args === "object" && args ? args : {};
+
+  if (name in contextRpcByTool) {
+    if (!contextsEnabled(env)) throw new HttpError(404, "Context ownership is disabled.");
+    const contextInput = { mode: "ordinary", ...payload };
+    return await supabaseRequest(env, `/rest/v1/rpc/${token.startsWith("clued_bnd_") ? "clued_context_call" : "clued_context_oauth_call"}`, {
+      method: "POST",
+      ...(token.startsWith("clued_bnd_") ? {} : { userToken: token }),
+      body: JSON.stringify(token.startsWith("clued_bnd_")
+        ? { p_token_hash: await sha256(token), p_input: contextInput }
+        : { p_input: contextInput }),
+    });
+  }
 
   if (name in p5RpcByTool) {
     if (!p5TenantWritesEnabled(env)) {
@@ -932,7 +951,8 @@ async function callTool(
   if (typeof name !== "string" || !(name in rpcByTool)) {
     throw new HttpError(404, "Unknown Clued continuity tool.");
   }
-  const result = sanitizeCluedResult(await callRpc(request, env, name as keyof typeof rpcByTool, args));
+  const rawResult = await callRpc(request, env, name as keyof typeof rpcByTool, args);
+  const result = name in contextRpcByTool ? sanitizeContextResult(rawResult) : sanitizeCluedResult(rawResult);
   return {
     content: [{ type: "text", text: JSON.stringify(result) }],
     structuredContent: result,
@@ -1250,6 +1270,23 @@ async function handleContinuityRequestInner(
       });
     }
     if (url.pathname === "/mcp") return await handleMcp(request, env);
+    if (url.pathname === "/v1/contexts" || url.pathname === "/v1/contexts/owner") {
+      validateOrigin(request, env);
+      if (!contextsEnabled(env)) return json({ error: "Context ownership is disabled." }, 404, corsHeaders(request));
+      if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders(request) });
+      if (request.method !== "POST") return json({ error: "Method not allowed." }, 405, { ...corsHeaders(request), allow: "POST, OPTIONS" });
+      const { input } = await parseCanonicalBody(request);
+      if (url.pathname.endsWith("/owner")) {
+        const token = bearerToken(request);
+        if (!token || token.startsWith("clued_bnd_")) throw new HttpError(403, "Sign in as the context owner to manage access.");
+        await requireSupabaseUser(request, env);
+        const result = await supabaseRequest(env, "/rest/v1/rpc/clued_context_owner", {
+          method: "POST", userToken: token, body: JSON.stringify({ p_input: input }),
+        });
+        return json(result, 200, corsHeaders(request));
+      }
+      return json(sanitizeContextResult(await callRpc(request, env, "clued_context", input)), 200, corsHeaders(request));
+    }
     if (url.pathname in restToolByPath) return await handleRestContinuity(request, env);
     if (url.pathname === "/v1/projects" || url.pathname.startsWith("/v1/projects/")) {
       return await handleProjectApi(request, env);

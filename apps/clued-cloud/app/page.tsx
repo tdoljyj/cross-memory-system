@@ -876,6 +876,7 @@ export default function Home() {
           <span>Clued</span>
         </Link>
         <div className="header-actions">
+          <Link href="/contexts">{locale === "zh-CN" ? "上下文" : "Contexts"}</Link>
           <span className="byline">{t.byline}</span>
           <div className="language-switch" role="group" aria-label={t.languageLabel}>
             <button

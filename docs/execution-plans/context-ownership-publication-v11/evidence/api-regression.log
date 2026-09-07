@@ -1,0 +1,28 @@
+✔ API: default-off rejects and does not contact storage; tool list unchanged (16.9199ms)
+✔ API: scoped binding hash only, ordinary default, no-store and stable IDs (4.279ms)
+✔ API: OAuth uses dedicated resolver and explicit development mode survives (1.7605ms)
+✔ API: no token, wrong origin and binding on management fail before DB (4.9186ms)
+✔ API: owner management authenticates JWT then invokes separate owner RPC (0.8709ms)
+✔ API: server authorization failure is not turned into a successful package (0.6074ms)
+✔ consumer: account/mode reset rejects a late completed old response even if transport ignores abort (0.5229ms)
+✔ consumer: unauthenticated local draft has no canonical claim or receipt (0.0995ms)
+✔ publishes a continuity health contract (53.7129ms)
+✔ implements MCP initialization and continuity tool discovery (14.306ms)
+✔ publishes a public bootstrap without user context (9.6404ms)
+✔ publishes vendor-neutral agent instructions (10.8298ms)
+✔ serves MCP bootstrap without a binding token (9.463ms)
+✔ publishes OAuth protected resource metadata for MCP clients (10.0801ms)
+✔ forwards canonical log imports to the production RPC contract (13.9529ms)
+✔ rejects cross-origin continuity calls by default (9.1377ms)
+✔ rejects MCP memory access without a scoped binding token (7.662ms)
+✔ issues a one-time binding token without storing the raw secret (13.0218ms)
+✔ forwards MCP calls as token-hash RPCs (10.8029ms)
+✔ forwards Supabase OAuth MCP calls through the authenticated dispatcher (9.1585ms)
+ℹ tests 20
+ℹ suites 0
+ℹ pass 20
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 251.9263

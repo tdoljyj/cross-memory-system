@@ -1,0 +1,42 @@
+✖ Context v1.1 real PostgreSQL: production-m1 (7.2188ms)
+✖ Context v1.1 real PostgreSQL: all-repository-migrations (2.1159ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 0
+ℹ fail 2
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 85.1295
+
+✖ failing tests:
+
+test at tests\context-ownership-db.test.mjs:32:3
+✖ Context v1.1 real PostgreSQL: production-m1 (7.2188ms)
+  SystemError [ERR_SYSTEM_ERROR]: A system error occurred: uv_os_get_passwd returned ENOMEM (not enough memory)
+      at userInfo (node:os:306:11)
+      at new EmbeddedPostgres (file:///C:/Users/Windows/.codex/projects/codex-memory-system/apps/clued-cloud/node_modules/embedded-postgres/dist/index.js:98:27)
+      at TestContext.<anonymous> (file:///C:/Users/Windows/Documents/Codex/2026-09-07/p/work/context-ownership-v11/apps/clued-cloud/tests/context-ownership-db.test.mjs:34:20)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    code: 'ERR_SYSTEM_ERROR',
+    info: { errno: -4057, code: 'ENOMEM', message: 'not enough memory', syscall: 'uv_os_get_passwd' },
+    errno: -4057,
+    syscall: 'uv_os_get_passwd'
+  }
+
+test at tests\context-ownership-db.test.mjs:32:3
+✖ Context v1.1 real PostgreSQL: all-repository-migrations (2.1159ms)
+  SystemError [ERR_SYSTEM_ERROR]: A system error occurred: uv_os_get_passwd returned ENOMEM (not enough memory)
+      at userInfo (node:os:306:11)
+      at new EmbeddedPostgres (file:///C:/Users/Windows/.codex/projects/codex-memory-system/apps/clued-cloud/node_modules/embedded-postgres/dist/index.js:98:27)
+      at TestContext.<anonymous> (file:///C:/Users/Windows/Documents/Codex/2026-09-07/p/work/context-ownership-v11/apps/clued-cloud/tests/context-ownership-db.test.mjs:34:20)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    code: 'ERR_SYSTEM_ERROR',
+    info: { errno: -4057, code: 'ENOMEM', message: 'not enough memory', syscall: 'uv_os_get_passwd' },
+    errno: -4057,
+    syscall: 'uv_os_get_passwd'
+  }

@@ -1,0 +1,63 @@
+{
+  "schema": "clued.context-v11.source-manifest/1",
+  "implementation_base": "3064d77c1390b4b4dbb9db903df9f2fee75bf27c",
+  "integration_base": "793fb0945e8b188d34b21af02dae87adc15d0abb",
+  "production_deployed": false,
+  "files": [
+    {
+      "path": "apps/clued-cloud/app/page.tsx",
+      "bytes": 54686,
+      "sha256": "be4f9ab38e997301a22ab5df1e7a9636c707b08091cdc6e0397348b912defb7e"
+    },
+    {
+      "path": "apps/clued-cloud/app/contexts/page.tsx",
+      "bytes": 19224,
+      "sha256": "6052c1bcb9a3334dec9ad1a9acbd11c674d941ce1b524659e5df32b83674f5ac"
+    },
+    {
+      "path": "apps/clued-cloud/app/contexts/context-session.ts",
+      "bytes": 1125,
+      "sha256": "aea328f3a0d5634d4edf0ba8050fcbca832ebeed137640f0dfc89f23d8c95616"
+    },
+    {
+      "path": "apps/clued-cloud/app/contexts/contexts.css",
+      "bytes": 1434,
+      "sha256": "5d574df8bdb4ec9d17393d0db589301ce138c37e79c95e8e4f9737d7f000a88f"
+    },
+    {
+      "path": "apps/clued-cloud/worker/continuity.ts",
+      "bytes": 50292,
+      "sha256": "16782f4323c70d119d55f9e69adbfe4d6a3439b371347adf5767853dcb42804b"
+    },
+    {
+      "path": "apps/clued-cloud/worker/contexts.ts",
+      "bytes": 3561,
+      "sha256": "066cd8b6955c0dde8592aea0c654c4d2306f07bb5e4c3e70255300bbc47702d5"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260907123955_clued_context_ownership_publication_v11.sql",
+      "bytes": 45538,
+      "sha256": "9987438b8a12af237b51eec93577e4617849d87e70d40deb7d5195b03c1d01db"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260907131834_clued_search_canonical_records.sql",
+      "bytes": 3895,
+      "sha256": "25fcf125a50400937cd9a0cca39336faf99fcf901d76d0539b8c68eae85df4d4"
+    },
+    {
+      "path": "apps/clued-cloud/tests/context-ownership-api.test.mjs",
+      "bytes": 6268,
+      "sha256": "f9c4a0d1f876d28dc5c22790dd6a38628abfb25d1a962c91dcd17aea6f6fca90"
+    },
+    {
+      "path": "apps/clued-cloud/tests/context-ownership-db.test.mjs",
+      "bytes": 32916,
+      "sha256": "dc9cac897fae142e9b882c55f90dab48b2afebd37ca1a3d04e25eb90e4e1bc94"
+    },
+    {
+      "path": "apps/clued-cloud/tests/context-ownership-independent.test.mjs",
+      "bytes": 12129,
+      "sha256": "835a35cd52ba6534e0413d8008bada191a0e0a8d5b2dabf52eb298bfa3a06a69"
+    }
+  ]
+}
