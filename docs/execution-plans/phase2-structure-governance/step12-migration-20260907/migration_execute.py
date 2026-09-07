@@ -33,8 +33,16 @@ def safe(root,name,mutating=False):
     rel=PurePosixPath(name)
     if rel.is_absolute() or '..' in rel.parts or ':' in name:raise MigrationError('unsafe relative path')
     path=root.joinpath(*rel.parts)
-    if not path.resolve().is_relative_to(root) or path.is_symlink():raise MigrationError('symlink or path escape')
-    if mutating and (rel.parts[0] in ['.git','memory','artifacts','apps','cloud','.codex','.agents']):raise MigrationError('protected migration path')
+    cursor=path
+    while cursor!=root:
+        if cursor.is_symlink() or (hasattr(cursor,'is_junction') and cursor.is_junction()):
+            raise MigrationError('symlink or junction in migration path')
+        cursor=cursor.parent
+    resolved=path.resolve()
+    if not resolved.is_relative_to(root):raise MigrationError('path escape')
+    protected={'.git','memory','artifacts','apps','cloud','.codex','.agents'}
+    if mutating and (rel.parts[0].casefold() in protected or resolved.relative_to(root).parts[0].casefold() in protected):
+        raise MigrationError('protected migration path')
     return path
 def file_hash(path):
     if path.is_symlink():raise MigrationError('symlink not allowed')
