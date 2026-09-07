@@ -32,19 +32,84 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Prepare isolated clean source worktree
+      - name: Prepare exact-blob source worktree
         shell: bash
         run: |
           set -euo pipefail
           rm -rf "$SOURCE_DIR" "$OUTPUT_DIR"
+          mkdir -p "$OUTPUT_DIR"
           GIT_LFS_SKIP_SMUDGE=1 git worktree add --detach "$SOURCE_DIR" "$GITHUB_SHA"
+
+          # The inherited .gitattributes forces `text eol=lf` for every path and
+          # therefore rewrites at least one tracked ZIP during checkout. For
+          # inventory, repository bytes must match the Git index exactly. Apply
+          # a runner-local, untracked binary override, then rematerialize index
+          # blobs. This changes no repository file or commit.
+          attributes_file="$(git -C "$SOURCE_DIR" rev-parse --git-path info/attributes)"
+          mkdir -p "$(dirname "$attributes_file")"
+          cat > "$attributes_file" <<'ATTRS'
+          *.7z -text
+          *.avi -text
+          *.bin -text
+          *.doc -text
+          *.docx -text
+          *.gif -text
+          *.gz -text
+          *.ico -text
+          *.jpeg -text
+          *.jpg -text
+          *.mov -text
+          *.mp3 -text
+          *.mp4 -text
+          *.pdf -text
+          *.png -text
+          *.ppt -text
+          *.pptx -text
+          *.tar -text
+          *.tgz -text
+          *.webp -text
+          *.xls -text
+          *.xlsx -text
+          *.zip -text
+          ATTRS
+          GIT_LFS_SKIP_SMUDGE=1 git -C "$SOURCE_DIR" checkout-index -a -f
+
           status="$(git -C "$SOURCE_DIR" status --porcelain=v1 --untracked-files=all)"
           if [ -n "$status" ]; then
             printf '%s\n' "$status"
-            echo "isolated source worktree is not byte-clean" >&2
+            echo "exact-blob source worktree is not clean" >&2
             exit 1
           fi
-          mkdir -p "$OUTPUT_DIR"
+
+          python - "$SOURCE_DIR" "$OUTPUT_DIR" "$GITHUB_SHA" <<'PY'
+          import hashlib
+          import json
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          source = Path(sys.argv[1])
+          output = Path(sys.argv[2])
+          commit = sys.argv[3]
+          attributes = (source / ".gitattributes").read_bytes()
+          record = {
+              "schema": "clued.naming-inventory-checkout-normalization-evidence/v1",
+              "source_commit": commit,
+              "repository_gitattributes_sha256": hashlib.sha256(attributes).hexdigest(),
+              "repository_gitattributes_text": attributes.decode("utf-8"),
+              "observed_problem": "The inherited wildcard text attribute rewrote a tracked ZIP in the default checkout.",
+              "runner_local_override_only": True,
+              "repository_bytes_modified": False,
+              "source_status_after_exact_blob_rematerialization": subprocess.check_output(
+                  ["git", "-C", str(source), "status", "--porcelain=v1", "--untracked-files=all"],
+                  text=True,
+              ),
+              "authority_effect": "NONE",
+          }
+          (output / "CheckoutNormalizationEvidence.json").write_text(
+              json.dumps(record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+          )
+          PY
 
       - name: Generate read-only repository and GitHub inventory
         env:
@@ -84,6 +149,7 @@ jobs:
           manifest = load("NamingSurfaceInventoryManifest.json")
           findings = load("NamingSurfaceInventoryFindings.json")
           result = load("GenerationResult.json")
+          checkout = load("CheckoutNormalizationEvidence.json")
 
           if manifest["source_lock"]["commit_sha"] != expected_sha:
               raise SystemExit("manifest source commit does not match GitHub SHA")
@@ -101,6 +167,10 @@ jobs:
               raise SystemExit("findings do not bind the generated manifest")
           if findings["count"] != len(findings["findings"]):
               raise SystemExit("findings count mismatch")
+          if checkout["source_commit"] != expected_sha or checkout["source_status_after_exact_blob_rematerialization"] != "":
+              raise SystemExit("exact-blob checkout normalization evidence is invalid")
+          if not checkout["runner_local_override_only"] or checkout["repository_bytes_modified"]:
+              raise SystemExit("checkout normalization crossed its read-only boundary")
 
           for filename, digest_key in (
               ("NamingSurfaceInventoryManifest.json", "manifest_sha256"),
@@ -130,5 +200,6 @@ jobs:
             /tmp/clued-naming-surface-inventory/NamingSurfaceInventoryFindings.json
             /tmp/clued-naming-surface-inventory/NamingSurfaceInventorySummary.md
             /tmp/clued-naming-surface-inventory/GenerationResult.json
+            /tmp/clued-naming-surface-inventory/CheckoutNormalizationEvidence.json
           if-no-files-found: error
           retention-days: 90
