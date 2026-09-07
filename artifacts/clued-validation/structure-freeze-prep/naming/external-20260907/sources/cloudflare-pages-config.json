@@ -1,0 +1,36 @@
+{
+  "recorded_at_utc": "2026-09-07T07:07:49.729Z",
+  "data": {
+    "path": "/accounts/a55e803685ebe14666dfca2635cd9403/pages/projects/clued-prototype-pwa",
+    "success": true,
+    "status": 200,
+    "result": {
+      "id": "ee0741af-93f9-4596-aeb2-24a688c3d481",
+      "name": "clued-prototype-pwa",
+      "subdomain": "clued-prototype-pwa.pages.dev",
+      "domains": [
+        "clued-prototype-pwa.pages.dev"
+      ],
+      "deployment_configs": [
+        {
+          "environment": "preview",
+          "env_var_names": [],
+          "kv_namespace_binding_names": [],
+          "durable_object_binding_names": [],
+          "d1_binding_names": [],
+          "r2_binding_names": [],
+          "service_binding_names": []
+        },
+        {
+          "environment": "production",
+          "env_var_names": [],
+          "kv_namespace_binding_names": [],
+          "durable_object_binding_names": [],
+          "d1_binding_names": [],
+          "r2_binding_names": [],
+          "service_binding_names": []
+        }
+      ]
+    }
+  }
+}

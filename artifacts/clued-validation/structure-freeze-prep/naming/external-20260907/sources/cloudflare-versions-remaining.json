@@ -1,0 +1,169 @@
+{
+  "recorded_at_utc": "2026-09-07T07:07:48.750Z",
+  "data": [
+    {
+      "source": "worker_versions_prod",
+      "path": "/accounts/a55e803685ebe14666dfca2635cd9403/workers/scripts/clued-cloud/versions",
+      "query": {
+        "page": 2,
+        "per_page": 10
+      },
+      "success": true,
+      "status": 200,
+      "result_info": {
+        "page": 2,
+        "per_page": 10,
+        "count": 10,
+        "total_count": 26
+      },
+      "result": [
+        {
+          "id": "a0ae9fbb-1b36-4854-a3d6-ac273f521e39",
+          "number": 16,
+          "metadata": {
+            "created_on": "2026-08-28T04:04:05.104636Z",
+            "source": "wrangler"
+          }
+        },
+        {
+          "id": "3ec54b05-bfc3-42d9-beda-de3c09df2dd5",
+          "number": 15,
+          "metadata": {
+            "created_on": "2026-08-28T02:12:37.656914Z",
+            "source": "wrangler"
+          }
+        },
+        {
+          "id": "37b506a1-c290-4146-a776-e2250c3b6f1a",
+          "number": 14,
+          "metadata": {
+            "created_on": "2026-08-28T01:44:18.682935Z",
+            "source": "wrangler"
+          }
+        },
+        {
+          "id": "83e591a4-1543-44c6-9a39-dbd0c0108a05",
+          "number": 13,
+          "metadata": {
+            "created_on": "2026-08-28T00:11:20.972989Z",
+            "source": "wrangler"
+          }
+        },
+        {
+          "id": "b7431319-718b-480b-a711-d73571d29c07",
+          "number": 12,
+          "metadata": {
+            "created_on": "2026-08-25T17:49:38.669781Z",
+            "source": "wrangler"
+          }
+        },
+        {
+          "id": "bb56e002-583f-4893-b53a-6a347267a978",
+          "number": 11,
+          "metadata": {
+            "created_on": "2026-08-25T10:38:36.946447Z",
+            "source": "wrangler"
+          }
+        },
+        {
+          "id": "928bb6ec-cdc2-4a9a-a630-87a1685e7915",
+          "number": 10,
+          "metadata": {
+            "created_on": "2026-08-25T08:43:35.192163Z",
+            "source": "wrangler"
+          }
+        },
+        {
+          "id": "fe916fce-fbb8-4287-9083-21ac5951affc",
+          "number": 9,
+          "metadata": {
+            "created_on": "2026-08-24T17:02:31.013575Z",
+            "source": "wrangler"
+          }
+        },
+        {
+          "id": "56d2a481-9d3c-4237-859c-7144b6f88059",
+          "number": 8,
+          "metadata": {
+            "created_on": "2026-08-24T15:24:26.042543Z",
+            "source": "wrangler"
+          }
+        },
+        {
+          "id": "3b5d1627-e53f-44cf-b26c-26717ebe6e5c",
+          "number": 7,
+          "metadata": {
+            "created_on": "2026-08-24T15:04:17.093999Z",
+            "source": "wrangler"
+          }
+        }
+      ]
+    },
+    {
+      "source": "worker_versions_prod",
+      "path": "/accounts/a55e803685ebe14666dfca2635cd9403/workers/scripts/clued-cloud/versions",
+      "query": {
+        "page": 3,
+        "per_page": 10
+      },
+      "success": true,
+      "status": 200,
+      "result_info": {
+        "page": 3,
+        "per_page": 10,
+        "count": 6,
+        "total_count": 26
+      },
+      "result": [
+        {
+          "id": "bf0038c3-1456-4653-bdcf-f962ff962ec4",
+          "number": 6,
+          "metadata": {
+            "created_on": "2026-08-23T18:28:37.026835Z",
+            "source": "wrangler"
+          }
+        },
+        {
+          "id": "9b4337ed-cd23-4bee-82f9-a619b3c2be92",
+          "number": 5,
+          "metadata": {
+            "created_on": "2026-08-23T17:20:50.823812Z",
+            "source": "wrangler"
+          }
+        },
+        {
+          "id": "3caaf3e1-9ee5-4cf6-b0a4-cf19c5371c32",
+          "number": 4,
+          "metadata": {
+            "created_on": "2026-08-23T13:31:52.243083Z",
+            "source": "wrangler"
+          }
+        },
+        {
+          "id": "a6264823-f1be-464f-bb55-e5555eee59f0",
+          "number": 3,
+          "metadata": {
+            "created_on": "2026-08-23T07:04:24.29765Z",
+            "source": "wrangler"
+          }
+        },
+        {
+          "id": "2040e1ae-e3b5-4911-b7c1-4a5e49d84db4",
+          "number": 2,
+          "metadata": {
+            "created_on": "2026-08-23T06:55:59.803804Z",
+            "source": "wrangler"
+          }
+        },
+        {
+          "id": "8033139d-380a-475d-9d8e-310f04d200e3",
+          "number": 1,
+          "metadata": {
+            "created_on": "2026-08-23T06:50:50.725967Z",
+            "source": "wrangler"
+          }
+        }
+      ]
+    }
+  ]
+}

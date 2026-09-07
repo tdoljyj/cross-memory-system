@@ -87,7 +87,6 @@ EXPLICIT_ID_KEYS = {
 }
 
 MAX_TEXT_BYTES_DEFAULT = 8 * 1024 * 1024
-MAX_LOCATIONS_PER_TOKEN = 50
 MAX_GITHUB_PAGES = 100
 
 
@@ -155,15 +154,12 @@ def add_index(
     )
     entry["types"].add(token_type)
     entry["occurrence_count"] += 1
-    if len(entry["locations"]) < MAX_LOCATIONS_PER_TOKEN:
-        location: dict[str, Any] = {"path": path, "line": line}
-        if pointer is not None:
-            location["pointer"] = pointer
-        if machine_surface is not None:
-            location["machine_surface"] = machine_surface
-        entry["locations"].append(location)
-    else:
-        entry["locations_truncated"] = True
+    location: dict[str, Any] = {"path": path, "line": line}
+    if pointer is not None:
+        location["pointer"] = pointer
+    if machine_surface is not None:
+        location["machine_surface"] = machine_surface
+    entry["locations"].append(location)
 
 
 def json_pointer(parts: list[str]) -> str:
@@ -187,7 +183,8 @@ def walk_json_fields(
                 key_text = str(key)
                 if key_text in EXPLICIT_ID_KEYS or ID_FIELD_RE.search(key_text):
                     rendered = child
-                    if isinstance(rendered, str) and len(rendered) > 1000:
+                    truncated = isinstance(rendered, str) and len(rendered) > 1000
+                    if truncated:
                         rendered = rendered[:1000] + "…"
                     out.append(
                         {
@@ -195,6 +192,9 @@ def walk_json_fields(
                             "pointer": json_pointer(child_parts),
                             "field": key_text,
                             "value": rendered,
+                            "value_truncated": truncated,
+                            **({"original_value_sha256": sha256_bytes(child.encode("utf-8")),
+                                "original_value_length": len(child)} if truncated else {}),
                         }
                     )
             walk_json_fields(child, path, out, child_parts)
@@ -304,9 +304,11 @@ def scan_repository(repo: Path, max_text_bytes: int) -> dict[str, Any]:
         data = full_path.read_bytes()
         record["size_bytes"] = len(data)
         record["content_sha256"] = sha256_bytes(data)
+        if data.startswith(b"\x89PNG\r\n\x1a\n"):
+            record["binary_signature"] = "PNG"
         content_map[record["content_sha256"]].append(path)
 
-        should_scan = suffix in TEXT_EXTENSIONS or path.startswith(MACHINE_PATH_PREFIXES)
+        should_scan = (suffix in TEXT_EXTENSIONS or path.startswith(MACHINE_PATH_PREFIXES)) and not record.get("binary_signature")
         if should_scan:
             if len(data) > max_text_bytes:
                 record["text_scan_status"] = "skipped_size_limit"

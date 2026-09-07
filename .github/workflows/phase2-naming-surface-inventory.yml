@@ -190,6 +190,18 @@ jobs:
           }, sort_keys=True))
           PY
 
+      - name: Verify inventory completeness regressions
+        run: python "$SOURCE_DIR/tests/test_naming_inventory_completeness.py"
+
+      - name: Consolidate detached external naming metadata
+        run: |
+          set -euo pipefail
+          python "$SOURCE_DIR/scripts/clued-naming-inventory-consolidate.py" \
+            --repository-inventory "$OUTPUT_DIR/NamingSurfaceInventoryManifest.json" \
+            --findings "$OUTPUT_DIR/NamingSurfaceInventoryFindings.json" \
+            --external-dir "$SOURCE_DIR/artifacts/clued-validation/structure-freeze-prep/naming/external-20260907" \
+            --output-dir "$OUTPUT_DIR"
+
       - name: Upload naming inventory evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -201,5 +213,8 @@ jobs:
             /tmp/clued-naming-surface-inventory/NamingSurfaceInventorySummary.md
             /tmp/clued-naming-surface-inventory/GenerationResult.json
             /tmp/clued-naming-surface-inventory/CheckoutNormalizationEvidence.json
+            /tmp/clued-naming-surface-inventory/NamingSurfaceInventoryConsolidated.json
+            /tmp/clued-naming-surface-inventory/NamingSurfaceInventoryRecords.jsonl
+            /tmp/clued-naming-surface-inventory/Step3Summary.md
           if-no-files-found: error
           retention-days: 90

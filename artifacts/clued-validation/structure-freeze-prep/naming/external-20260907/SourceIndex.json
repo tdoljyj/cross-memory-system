@@ -1,0 +1,82 @@
+{
+  "schema": "clued.naming-external-source-index/v1",
+  "authority_effect": "NONE",
+  "recorded_at_utc": "2026-09-07T07:14:55.309015+00:00",
+  "scope_record_id": "CLUED_NAMING_SURFACE_INVENTORY_SCOPE_20260907",
+  "scope_sha256": "e8209cd50d6e066bf0b64b93c7c634816cf381a289c3dcd7cc8dda9cbac43af0",
+  "source_method": "Authenticated Supabase/Cloudflare/Sites MCP, selected metadata only. Semantic response snapshots, not signed raw HTTP.",
+  "source_accounts": {
+    "supabase_production_project": "ccxsikzwxlolxqlosril",
+    "supabase_inactive_project": "gfnfxbphsdtayoaxitly",
+    "cloudflare_account": "a55e803685ebe14666dfca2635cd9403"
+  },
+  "freshness": "COLLECTION_WINDOW_NOT_ATOMIC; external changes require re-collection under I4",
+  "credential_scan": "PASS",
+  "files": [
+    {
+      "path": "sources/cloudflare-deployments-and-dns.json",
+      "bytes": 7216,
+      "sha256": "3dd2eeb3ca649664f034745775039ee555395092234db1e33b49549d6299b1e8"
+    },
+    {
+      "path": "sources/cloudflare-lists.json",
+      "bytes": 2939,
+      "sha256": "dcb978d80b210b2672fa92f86f616bcc25d6b832a65ef171bd5d7cf88aa77b1f"
+    },
+    {
+      "path": "sources/cloudflare-pages-config.json",
+      "bytes": 1041,
+      "sha256": "b0f92c29e27b2297a83d043b5242933d8c6f493e85a2e41c0750535951fc2c3d"
+    },
+    {
+      "path": "sources/cloudflare-versions-remaining.json",
+      "bytes": 4507,
+      "sha256": "0866be1c159938315c1ecf1a73ba3af2e1ba6ed1dc622140b2dc3115df229007"
+    },
+    {
+      "path": "sources/cloudflare-worker-details.json",
+      "bytes": 8456,
+      "sha256": "db9055b0aca0d9933bb57ea8acdc2f77ee31c7afd9692cc59ce5cb28ca25392f"
+    },
+    {
+      "path": "sources/collection-boundaries.json",
+      "bytes": 1621,
+      "sha256": "6132c9df00cc2ffe3c310475b0dcb7a86061f6efb2d5a03a31bfb524281d62f0"
+    },
+    {
+      "path": "sources/sites-accessible-projects.json",
+      "bytes": 383,
+      "sha256": "0134f9751caaa6a30c60054918d1ffdd8672914747c4ae8e5503b288a2e95eee"
+    },
+    {
+      "path": "sources/supabase-branches.json",
+      "bytes": 188,
+      "sha256": "c481cf581375cf199af7cfe152aaa4a11c5e47442e53a603785c306a34b0db24"
+    },
+    {
+      "path": "sources/supabase-buckets.json",
+      "bytes": 166,
+      "sha256": "81ae277cfe517a2f3411220fa2fff84786df248999f3d1926ead00357ea0fb9a"
+    },
+    {
+      "path": "sources/supabase-catalog-counts.json",
+      "bytes": 666,
+      "sha256": "f907e509ee1cf8c366c3c8dd8fc3e718512e175dc6af56afbc2baee4026a3971"
+    },
+    {
+      "path": "sources/supabase-catalog.json",
+      "bytes": 434869,
+      "sha256": "bd9f5c36ec6c58da0425d5094519e0890a68573baaffb1dc8fb11192f7dc37d5"
+    },
+    {
+      "path": "sources/supabase-edge-functions.json",
+      "bytes": 189,
+      "sha256": "f86a8a753d5894337c4c84961c12d639b63c4ec2be67e184c233f485b782202a"
+    },
+    {
+      "path": "sources/supabase-projects.json",
+      "bytes": 1284,
+      "sha256": "c26572ecda17132972ee8f0d25457030e027aad0f4e3c90842306f0c558d6f2d"
+    }
+  ]
+}

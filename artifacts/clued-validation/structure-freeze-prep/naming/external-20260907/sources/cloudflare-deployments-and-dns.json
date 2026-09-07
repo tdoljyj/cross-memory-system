@@ -1,0 +1,267 @@
+{
+  "recorded_at_utc": "2026-09-07T07:07:47.805Z",
+  "data": [
+    {
+      "source": "worker_versions_prod",
+      "path": "/accounts/a55e803685ebe14666dfca2635cd9403/workers/scripts/clued-cloud/versions",
+      "query": {
+        "page": 1,
+        "per_page": 10
+      },
+      "success": true,
+      "status": 200,
+      "result_info": {
+        "page": 1,
+        "per_page": 10,
+        "count": 10,
+        "total_count": 26
+      },
+      "result_keys": [
+        "items"
+      ],
+      "result": [
+        {
+          "id": "127811f4-997f-4815-b7ca-089dc387004c",
+          "number": 26,
+          "metadata": {
+            "created_on": "2026-08-29T09:31:19.251217Z",
+            "source": "wrangler"
+          }
+        },
+        {
+          "id": "6ef4005c-6b6c-470d-aea7-940b82ec0c43",
+          "number": 25,
+          "metadata": {
+            "created_on": "2026-08-29T04:36:33.423068Z",
+            "source": "wrangler"
+          }
+        },
+        {
+          "id": "ecbd4785-7a2d-4f46-9738-66d6fee81064",
+          "number": 24,
+          "metadata": {
+            "created_on": "2026-08-28T18:53:59.890189Z",
+            "source": "wrangler"
+          }
+        },
+        {
+          "id": "adc5ba6d-2bee-4751-a88c-ed2d99796602",
+          "number": 23,
+          "metadata": {
+            "created_on": "2026-08-28T14:14:27.019022Z",
+            "source": "wrangler"
+          }
+        },
+        {
+          "id": "1df1ce15-6ead-4d8d-84fc-ed1f3dcfd151",
+          "number": 22,
+          "metadata": {
+            "created_on": "2026-08-28T13:57:09.563545Z",
+            "source": "wrangler"
+          }
+        },
+        {
+          "id": "f203a1e0-b925-428a-9dbd-d3be8f1e48dd",
+          "number": 21,
+          "metadata": {
+            "created_on": "2026-08-28T11:22:24.162931Z",
+            "source": "wrangler"
+          }
+        },
+        {
+          "id": "8c2bece4-036e-4df7-be3b-8a1ac0ae456a",
+          "number": 20,
+          "metadata": {
+            "created_on": "2026-08-28T10:19:27.876431Z",
+            "source": "wrangler"
+          }
+        },
+        {
+          "id": "ff3239e5-2709-4566-b2a7-df8a91063014",
+          "number": 19,
+          "metadata": {
+            "created_on": "2026-08-28T10:07:33.050356Z",
+            "source": "wrangler"
+          }
+        },
+        {
+          "id": "13bd96d7-0117-48b4-9ee7-81c63008b9e9",
+          "number": 18,
+          "metadata": {
+            "created_on": "2026-08-28T09:42:59.787534Z",
+            "source": "wrangler"
+          }
+        },
+        {
+          "id": "e6563084-8e94-4ba3-87ee-dfa77d8d756e",
+          "number": 17,
+          "metadata": {
+            "created_on": "2026-08-28T09:19:46.340405Z",
+            "source": "wrangler"
+          }
+        }
+      ]
+    },
+    {
+      "source": "worker_versions_canary",
+      "path": "/accounts/a55e803685ebe14666dfca2635cd9403/workers/scripts/clued-cloud-canary/versions",
+      "query": {
+        "page": 1,
+        "per_page": 10
+      },
+      "success": true,
+      "status": 200,
+      "result_info": {
+        "page": 1,
+        "per_page": 10,
+        "count": 2,
+        "total_count": 2
+      },
+      "result_keys": [
+        "items"
+      ],
+      "result": [
+        {
+          "id": "5c47e7fd-8819-47d1-86e0-d6aa7f97e435",
+          "number": 2,
+          "metadata": {
+            "created_on": "2026-08-24T13:29:32.722883Z",
+            "source": "wrangler"
+          }
+        },
+        {
+          "id": "ffc3ff88-f80a-4340-a044-fd9350267681",
+          "number": 1,
+          "metadata": {
+            "created_on": "2026-08-24T11:51:24.19418Z",
+            "source": "wrangler"
+          }
+        }
+      ]
+    },
+    {
+      "source": "pages_deployments",
+      "path": "/accounts/a55e803685ebe14666dfca2635cd9403/pages/projects/clued-prototype-pwa/deployments",
+      "query": {
+        "page": 1,
+        "per_page": 10
+      },
+      "success": true,
+      "status": 200,
+      "result_info": {
+        "page": 1,
+        "per_page": 10,
+        "count": 1,
+        "total_count": 1,
+        "total_pages": 1
+      },
+      "result_keys": [
+        "0"
+      ],
+      "result": [
+        {
+          "id": "aeea6999-6d12-4fe8-b3ee-3767bf9d6fa5",
+          "environment": "production",
+          "url": "https://aeea6999.clued-prototype-pwa.pages.dev",
+          "aliases": null,
+          "created_on": "2026-09-05T12:52:53.357674Z",
+          "modified_on": "2026-09-05T12:52:54.539864Z"
+        }
+      ]
+    },
+    {
+      "source": "pages_domains",
+      "path": "/accounts/a55e803685ebe14666dfca2635cd9403/pages/projects/clued-prototype-pwa/domains",
+      "query": {},
+      "success": true,
+      "status": 200,
+      "result_info": {
+        "page": 1,
+        "per_page": 20,
+        "count": 0,
+        "total_count": 0,
+        "total_pages": 0
+      },
+      "result_keys": [],
+      "result": []
+    },
+    {
+      "source": "routes",
+      "path": "/zones/34fb613386b90534b627f79a4c190bd3/workers/routes",
+      "query": {},
+      "success": true,
+      "status": 200,
+      "result_keys": [],
+      "result": []
+    },
+    {
+      "source": "dns",
+      "path": "/zones/34fb613386b90534b627f79a4c190bd3/dns_records",
+      "query": {
+        "page": 1,
+        "per_page": 100
+      },
+      "success": true,
+      "status": 200,
+      "result_info": {
+        "page": 1,
+        "per_page": 100,
+        "count": 6,
+        "total_count": 6,
+        "total_pages": 1
+      },
+      "result_keys": [
+        "0",
+        "1",
+        "2",
+        "3",
+        "4",
+        "5"
+      ],
+      "result": [
+        {
+          "id": "7298a1a4b5906bd2ad930cb1b233a1c9",
+          "name": "send.auth.clued.pixelgrav.com",
+          "type": "MX",
+          "created_on": "2026-08-25T03:43:48.935908Z",
+          "modified_on": "2026-08-25T03:43:48.935908Z"
+        },
+        {
+          "id": "3f7e96b9c64b7797fdbfa243e72c2c66",
+          "name": "_cf-custom-hostname.clued.pixelgrav.com",
+          "type": "TXT",
+          "created_on": "2026-08-23T05:17:20.564543Z",
+          "modified_on": "2026-08-23T05:17:20.564543Z"
+        },
+        {
+          "id": "d55c670cd99562253543c96d412fc4ba",
+          "name": "_openai-site-verification.clued.pixelgrav.com",
+          "type": "TXT",
+          "created_on": "2026-08-23T05:16:38.081114Z",
+          "modified_on": "2026-08-23T05:16:38.081114Z"
+        },
+        {
+          "id": "a8c2799223577141b5a22ae352861f13",
+          "name": "resend._domainkey.auth.clued.pixelgrav.com",
+          "type": "TXT",
+          "created_on": "2026-08-25T03:35:29.011647Z",
+          "modified_on": "2026-08-25T03:35:29.011647Z"
+        },
+        {
+          "id": "9095a5acc3e47db7f462b93035342935",
+          "name": "send.auth.clued.pixelgrav.com",
+          "type": "TXT",
+          "created_on": "2026-08-25T03:36:35.525748Z",
+          "modified_on": "2026-08-25T03:36:35.525748Z"
+        },
+        {
+          "id": "b1f96bfdf43e82c64596af53b6ffd035",
+          "name": "clued.pixelgrav.com",
+          "type": "AAAA",
+          "created_on": "2026-08-23T07:04:27.987061Z",
+          "modified_on": "2026-08-23T07:04:27.987061Z"
+        }
+      ]
+    }
+  ]
+}

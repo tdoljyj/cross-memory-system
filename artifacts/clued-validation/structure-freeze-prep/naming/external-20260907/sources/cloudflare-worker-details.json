@@ -1,0 +1,286 @@
+{
+  "recorded_at_utc": "2026-09-07T07:05:32.711Z",
+  "source": "connected read-only MCP during this Step 3 collection; no credential values retained",
+  "data": [
+    {
+      "worker": "clued-cloud",
+      "leaf": "settings",
+      "path": "/accounts/a55e803685ebe14666dfca2635cd9403/workers/scripts/clued-cloud/settings",
+      "status": 200,
+      "success": true,
+      "result": {
+        "compatibility_date": "2026-08-23",
+        "compatibility_flags": [
+          "nodejs_compat"
+        ],
+        "tags": [],
+        "bindings": [
+          {
+            "name": "ASSETS",
+            "type": "assets"
+          },
+          {
+            "name": "IMAGES",
+            "type": "images"
+          },
+          {
+            "name": "P6_RELEASE_CONTROL_ENABLED",
+            "type": "plain_text"
+          },
+          {
+            "name": "PROJECT_VIEWS_V2",
+            "type": "plain_text"
+          }
+        ]
+      }
+    },
+    {
+      "worker": "clued-cloud",
+      "leaf": "secrets",
+      "path": "/accounts/a55e803685ebe14666dfca2635cd9403/workers/scripts/clued-cloud/secrets",
+      "status": 200,
+      "success": true,
+      "result": []
+    },
+    {
+      "worker": "clued-cloud",
+      "leaf": "deployments",
+      "path": "/accounts/a55e803685ebe14666dfca2635cd9403/workers/scripts/clued-cloud/deployments",
+      "status": 200,
+      "success": true,
+      "result": {
+        "deployments": [
+          {
+            "id": "b7fb9087-0ce8-4b84-8c69-f0403b547c2c",
+            "created_on": "2026-08-29T09:31:21.440923Z",
+            "source": "wrangler",
+            "strategy": "percentage",
+            "versions": [
+              {
+                "version_id": "127811f4-997f-4815-b7ca-089dc387004c",
+                "percentage": 100
+              }
+            ]
+          },
+          {
+            "id": "16c1f938-018e-45bd-a580-7afc1ea2e3c6",
+            "created_on": "2026-08-29T04:36:35.931097Z",
+            "source": "wrangler",
+            "strategy": "percentage",
+            "versions": [
+              {
+                "version_id": "6ef4005c-6b6c-470d-aea7-940b82ec0c43",
+                "percentage": 100
+              }
+            ]
+          },
+          {
+            "id": "b319130d-c07a-485d-a61f-57dd813924e4",
+            "created_on": "2026-08-28T18:58:07.430973Z",
+            "source": "api",
+            "strategy": "percentage",
+            "versions": [
+              {
+                "version_id": "ecbd4785-7a2d-4f46-9738-66d6fee81064",
+                "percentage": 100
+              }
+            ]
+          },
+          {
+            "id": "f8f2f407-cbfa-48d7-9446-6c8a25228316",
+            "created_on": "2026-08-28T18:55:44.148816Z",
+            "source": "api",
+            "strategy": "percentage",
+            "versions": [
+              {
+                "version_id": "adc5ba6d-2bee-4751-a88c-ed2d99796602",
+                "percentage": 100
+              },
+              {
+                "version_id": "ecbd4785-7a2d-4f46-9738-66d6fee81064",
+                "percentage": 0
+              }
+            ]
+          },
+          {
+            "id": "27edece0-f8b3-4ac1-8a3f-6b0ee6784abb",
+            "created_on": "2026-08-28T18:55:08.16577Z",
+            "source": "wrangler",
+            "strategy": "percentage",
+            "versions": [
+              {
+                "version_id": "adc5ba6d-2bee-4751-a88c-ed2d99796602",
+                "percentage": 100
+              },
+              {
+                "version_id": "ecbd4785-7a2d-4f46-9738-66d6fee81064",
+                "percentage": 0
+              }
+            ]
+          },
+          {
+            "id": "8fab036a-9489-45e5-a716-1f778d389cdd",
+            "created_on": "2026-08-28T14:17:01.567545Z",
+            "source": "wrangler",
+            "strategy": "percentage",
+            "versions": [
+              {
+                "version_id": "adc5ba6d-2bee-4751-a88c-ed2d99796602",
+                "percentage": 100
+              }
+            ]
+          },
+          {
+            "id": "151311fb-f3c5-405c-995a-d0607b8743dd",
+            "created_on": "2026-08-28T14:15:07.388453Z",
+            "source": "wrangler",
+            "strategy": "percentage",
+            "versions": [
+              {
+                "version_id": "1df1ce15-6ead-4d8d-84fc-ed1f3dcfd151",
+                "percentage": 100
+              },
+              {
+                "version_id": "adc5ba6d-2bee-4751-a88c-ed2d99796602",
+                "percentage": 0
+              }
+            ]
+          },
+          {
+            "id": "6b0b8daa-e69c-4838-a732-25f986293ee1",
+            "created_on": "2026-08-28T14:01:22.050995Z",
+            "source": "wrangler",
+            "strategy": "percentage",
+            "versions": [
+              {
+                "version_id": "1df1ce15-6ead-4d8d-84fc-ed1f3dcfd151",
+                "percentage": 100
+              }
+            ]
+          },
+          {
+            "id": "480d648a-e4de-4ec3-95af-afb72976883b",
+            "created_on": "2026-08-28T13:59:50.366253Z",
+            "source": "wrangler",
+            "strategy": "percentage",
+            "versions": [
+              {
+                "version_id": "f203a1e0-b925-428a-9dbd-d3be8f1e48dd",
+                "percentage": 100
+              },
+              {
+                "version_id": "1df1ce15-6ead-4d8d-84fc-ed1f3dcfd151",
+                "percentage": 0
+              }
+            ]
+          },
+          {
+            "id": "47b56f42-539a-4508-aff5-465e60783030",
+            "created_on": "2026-08-28T11:43:59.640953Z",
+            "source": "wrangler",
+            "strategy": "percentage",
+            "versions": [
+              {
+                "version_id": "f203a1e0-b925-428a-9dbd-d3be8f1e48dd",
+                "percentage": 100
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "worker": "clued-cloud",
+      "leaf": "subdomain",
+      "path": "/accounts/a55e803685ebe14666dfca2635cd9403/workers/scripts/clued-cloud/subdomain",
+      "status": 200,
+      "success": true,
+      "result": {
+        "enabled": true,
+        "previews_enabled": true
+      }
+    },
+    {
+      "worker": "clued-cloud-canary",
+      "leaf": "settings",
+      "path": "/accounts/a55e803685ebe14666dfca2635cd9403/workers/scripts/clued-cloud-canary/settings",
+      "status": 200,
+      "success": true,
+      "result": {
+        "compatibility_date": "2026-08-23",
+        "compatibility_flags": [
+          "nodejs_compat"
+        ],
+        "tags": [],
+        "bindings": [
+          {
+            "name": "ASSETS",
+            "type": "assets"
+          },
+          {
+            "name": "IMAGES",
+            "type": "images"
+          },
+          {
+            "name": "PROJECT_VIEWS_V2",
+            "type": "plain_text"
+          }
+        ]
+      }
+    },
+    {
+      "worker": "clued-cloud-canary",
+      "leaf": "secrets",
+      "path": "/accounts/a55e803685ebe14666dfca2635cd9403/workers/scripts/clued-cloud-canary/secrets",
+      "status": 200,
+      "success": true,
+      "result": []
+    },
+    {
+      "worker": "clued-cloud-canary",
+      "leaf": "deployments",
+      "path": "/accounts/a55e803685ebe14666dfca2635cd9403/workers/scripts/clued-cloud-canary/deployments",
+      "status": 200,
+      "success": true,
+      "result": {
+        "deployments": [
+          {
+            "id": "999dc223-655d-413b-a84c-6652e42ed6c6",
+            "created_on": "2026-08-24T13:29:33.796539Z",
+            "source": "wrangler",
+            "strategy": "percentage",
+            "versions": [
+              {
+                "version_id": "5c47e7fd-8819-47d1-86e0-d6aa7f97e435",
+                "percentage": 100
+              }
+            ]
+          },
+          {
+            "id": "cf6b777d-dec9-4232-a8e7-2d20abea344b",
+            "created_on": "2026-08-24T11:51:24.19418Z",
+            "source": "wrangler",
+            "strategy": "percentage",
+            "versions": [
+              {
+                "version_id": "ffc3ff88-f80a-4340-a044-fd9350267681",
+                "percentage": 100
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "worker": "clued-cloud-canary",
+      "leaf": "subdomain",
+      "path": "/accounts/a55e803685ebe14666dfca2635cd9403/workers/scripts/clued-cloud-canary/subdomain",
+      "status": 200,
+      "success": true,
+      "result": {
+        "enabled": true,
+        "previews_enabled": true
+      }
+    }
+  ]
+}
