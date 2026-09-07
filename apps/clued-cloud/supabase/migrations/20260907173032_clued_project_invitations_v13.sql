@@ -54,7 +54,7 @@ declare p public.clued_projects;
 begin
  select * into p from public.clued_projects where id=p_project and user_id=p_actor for share;
  if not found then raise exception 'project_owner_required' using errcode='42501'; end if;
- if p_environment is not null and not exists(select 1 from clued_private.context_spaces_v11 c
+ if p_environment is not null and not exists(select 1 from clued_private.development_spaces_v14 c
    where c.project_id=p.id and c.owner_id=p_actor and c.environment=p_environment) then
   raise exception 'owned_project_environment_required' using errcode='42501';
  end if;
@@ -94,7 +94,7 @@ begin
  if op='list' then
   return jsonb_build_object(
    'owned_projects',coalesce((select jsonb_agg(jsonb_build_object('project_id',p.id,'name',p.name,
-     'environments',coalesce((select jsonb_agg(distinct c.environment) from clued_private.context_spaces_v11 c where c.project_id=p.id and c.owner_id=actor),'[]')) order by p.name)
+     'environments',coalesce((select jsonb_agg(distinct c.environment) from clued_private.development_spaces_v14 c where c.project_id=p.id and c.owner_id=actor),'[]')) order by p.name)
       from public.clued_projects p where p.user_id=actor),'[]'),
    'memberships',coalesce((select jsonb_agg(jsonb_build_object('membership_id',m.id,'project_id',m.project_id,'project_name',p.name,
      'subject_id',m.subject_id,'environment',m.environment,'role',m.role,'actions',m.actions,'expires_at',m.expires_at,
@@ -195,21 +195,21 @@ end $$;
 -- A delegated entry remembers the qualification that was explicitly consented.
 -- Revoking it and issuing a new membership can never revive an old connection.
 alter table clued_private.authorization_entries_v12 add column qualification_id uuid references clued_private.project_memberships_v13(id);
-alter table clued_private.context_operations_v11 add column actor_user_id uuid references auth.users(id);
+
 -- Existing IDs/views are unchanged; the successor includes an explicit actor
 -- for new cross-account operations without guessing historical actors.
-create view clued_private.context_events_v13 with (security_invoker=true) as
- select e.*,o.actor_user_id from clued_private.context_events_v11 e join clued_private.context_operations_v11 o on o.id=e.operation_id;
-create view clued_private.context_receipts_v13 with (security_invoker=true) as
- select r.*,o.actor_user_id from clued_private.context_receipts_v11 r join clued_private.context_operations_v11 o on o.id=r.operation_id;
-revoke all on clued_private.context_events_v13,clued_private.context_receipts_v13 from public,anon,authenticated,service_role;
+create view clued_private.development_events_with_actor_v14 with (security_invoker=true) as
+ select e.*,o.actor_user_id from clued_private.development_events_v14 e join clued_private.development_operations_v14 o on o.id=e.operation_id;
+create view clued_private.development_receipts_with_actor_v14 with (security_invoker=true) as
+ select r.*,o.actor_user_id from clued_private.development_receipts_v14 r join clued_private.development_operations_v14 o on o.id=r.operation_id;
+revoke all on clued_private.development_events_with_actor_v14,clued_private.development_receipts_with_actor_v14 from public,anon,authenticated,service_role;
 
 create function clued_private.project_context_membership_v13(p_actor uuid,p_context uuid,p_environment text,p_membership uuid default null)
 returns clued_private.project_memberships_v13 language plpgsql security definer set search_path='' as $$
-declare m clued_private.project_memberships_v13; c clued_private.context_spaces_v11; p public.clued_projects;
+declare m clued_private.project_memberships_v13; c clued_private.development_spaces_v14; p public.clued_projects;
 begin
  -- Lock before reading ownership, so a queued call cannot validate an old owner.
- select * into c from clued_private.context_spaces_v11 where id=p_context for update;
+ select * into c from clued_private.development_spaces_v14 where id=p_context for update;
  if not found or c.environment<>p_environment then raise exception 'project_qualification_required' using errcode='42501'; end if;
  select * into m from clued_private.project_memberships_v13 x
   where x.subject_id=p_actor and x.project_id=c.project_id and x.environment=c.environment
@@ -230,7 +230,7 @@ returns jsonb language sql security definer set search_path='' as $$
       where case when a='read' then 'context:read' else 'context:write' end=any(p_scopes)))) order by c.id)
   from clued_private.project_memberships_v13 m
   join public.clued_projects p on p.id=m.project_id and p.user_id=m.resource_owner_id
-  join clued_private.context_spaces_v11 c on c.project_id=m.project_id and c.owner_id=m.resource_owner_id and c.environment=m.environment
+  join clued_private.development_spaces_v14 c on c.project_id=m.project_id and c.owner_id=m.resource_owner_id and c.environment=m.environment
   where m.subject_id=p_owner and c.owner_id<>p_owner and m.revoked_at is null and m.expires_at>clock_timestamp()
     and exists(select 1 from unnest(m.actions) a where case when a='read' then 'context:read' else 'context:write' end=any(p_scopes))
  ),'[]'::jsonb)
@@ -238,13 +238,13 @@ $$;
 alter function clued_private.authorization_resource_v12(uuid,text,text,text) rename to authorization_owner_resource_v12;
 create function clued_private.authorization_resource_v12(p_owner uuid,p_kind text,p_id text,p_environment text)
 returns void language plpgsql security definer set search_path='' as $$
-declare c clued_private.context_spaces_v11;
+declare c clued_private.development_spaces_v14;
 begin
  if p_kind='context' then
-  select * into c from clued_private.context_spaces_v11 where id::text=p_id;
+  select * into c from clued_private.development_spaces_v14 where id::text=p_id;
   if found and c.owner_id<>p_owner then
    perform clued_private.project_context_membership_v13(p_owner,c.id,p_environment);
-   perform 1 from clued_private.context_spaces_v11 where id=c.id and environment=p_environment for update;
+   perform 1 from clued_private.development_spaces_v14 where id=c.id and environment=p_environment for update;
    return;
   end if;
  end if;
@@ -266,7 +266,7 @@ begin
   if p_kind<>'context' then raise exception 'qualification_resource_mismatch' using errcode='42501'; end if;
   m:=clued_private.project_context_membership_v13(a.owner_id,p_id::uuid,p_environment,e.qualification_id);
   if not(p_action=any(m.actions)) then raise exception 'current_project_action_required' using errcode='42501'; end if;
-  perform 1 from clued_private.context_spaces_v11 where id=p_id::uuid and environment=p_environment for update;
+  perform 1 from clued_private.development_spaces_v14 where id=p_id::uuid and environment=p_environment for update;
  else
   -- A previously owned entry cannot silently acquire a new member role.
   perform clued_private.authorization_owner_resource_v12(a.owner_id,p_kind,p_id,p_environment);
@@ -305,22 +305,19 @@ end $$;
 
 create function clued_private.authorization_context_grant_v13(p_actor uuid,p_binding uuid,p_request uuid,p_item jsonb,p_expires_at timestamptz)
 returns void language plpgsql security definer set search_path='' as $$
-declare c clued_private.context_spaces_v11; e clued_private.authorization_entries_v12; m clued_private.project_memberships_v13;
- g clued_private.context_grants_v11; op_row clued_private.context_operations_v11; granted text[]; payload jsonb; v_result jsonb; action text;
+declare c clued_private.development_spaces_v14; e clued_private.authorization_entries_v12; m clued_private.project_memberships_v13;
+ g clued_private.development_grants_v14; op_row clued_private.development_operations_v14; granted text[]; payload jsonb; v_result jsonb; action text;
 begin
- select * into c from clued_private.context_spaces_v11 where id=(p_item->>'resource_id')::uuid for update;
+ select * into c from clued_private.development_spaces_v14 where id=(p_item->>'resource_id')::uuid for update;
  if not found then raise exception 'context_not_available' using errcode='42501'; end if;
  select * into e from clued_private.authorization_entries_v12 where binding_id=p_binding and resource_kind='context' and resource_id=c.id::text and environment=c.environment;
  if e.qualification_id is null then
   if c.owner_id<>p_actor then raise exception 'owner_qualification_required' using errcode='42501'; end if;
-  v_result:=public.clued_context_owner(jsonb_build_object('op','grant_upsert','context_id',c.id,'binding_id',p_binding,
+  v_result:=public.clued_development_owner_v14(jsonb_build_object('op','grant_upsert','context_id',c.id,'binding_id',p_binding,
    'actions',(select jsonb_agg(distinct case v when 'close' then 'write' else v end) from unnest(e.actions) v),
    'history_policy','EXISTING_AND_FUTURE','version_policy','LATEST','allowed_fields',jsonb_build_array('*'),
    'expires_at',p_expires_at,'idempotency_key',p_request::text||':'||c.id::text||':grant'));
-  if not('write'=any(e.actions)) then
-   perform public.clued_context_owner(jsonb_build_object('op','link_upsert','context_id',c.id,'project_id',c.project_id,
-    'grant_id',v_result->'result'->>'id','idempotency_key',p_request::text||':'||c.id::text||':link'));
-  end if;
+
   return;
  end if;
  m:=clued_private.project_context_membership_v13(p_actor,c.id,c.environment,e.qualification_id);
@@ -328,16 +325,16 @@ begin
   perform clued_private.authorization_assert_entry_v12(p_binding,'context',c.id::text,c.environment,action);
  end loop;
  select array_agg(distinct case x when 'close' then 'write' else x end) into granted from unnest(e.actions) x;
- insert into clued_private.context_grants_v11(context_id,binding_id,grantor,actions,history_policy,version_policy,freeze_cursor,allowed_fields,expires_at)
+ insert into clued_private.development_grants_v14(context_id,binding_id,grantor,actions,history_policy,version_policy,freeze_cursor,allowed_fields,expires_at)
   values(c.id,p_binding,m.grantor_id,granted,'EXISTING_AND_FUTURE','LATEST',c.cursor,array['*'],least(p_expires_at,m.expires_at)) returning * into g;
  payload:=jsonb_build_object('context_id',c.id,'binding_id',p_binding,'membership_id',m.id,'actions',e.actions);
- insert into clued_private.context_operations_v11(owner_id,actor_user_id,binding_ref,context_id,op,idempotency_key,request_hash,canonical_version,result)
+ insert into clued_private.development_operations_v14(owner_id,actor_user_id,binding_ref,context_id,op,idempotency_key,request_hash,canonical_version,result)
   values(c.owner_id,p_actor,p_binding::text,c.id,'grant_upsert',p_request::text||':'||c.id::text||':grant',
-   clued_private.context_hash_v11(payload),nextval('clued_private.canonical_version_seq'),'{}') returning * into op_row;
+   clued_private.development_hash_v14(payload),nextval('clued_private.canonical_version_seq'),'{}') returning * into op_row;
  v_result:=jsonb_build_object('status','committed','operation_id',op_row.id,'receipt_id',op_row.receipt_id,'event_id',op_row.event_id,
    'canonical_version',op_row.canonical_version,'result',to_jsonb(g),'replayed',false,
    'actor_user_id',p_actor,'resource_owner_id',c.owner_id);
- update clued_private.context_operations_v11 set result=v_result where id=op_row.id;
+ update clued_private.development_operations_v14 set result=v_result where id=op_row.id;
 end $$;
 -- Replace only the consent-to-grant adapter, keeping validation/CAS and exact
 -- idempotency contract already accepted for v1.2.
@@ -358,11 +355,11 @@ end $$;
 -- A distinct successor kernel: p_actor is the verified human behind p_binding;
 -- resource ownership is read from the locked context, never substituted into
 -- the caller's identity. Existing owner-only operations retain the v1.2 path.
-create function clued_private.context_member_execute_v13(p_actor uuid,p_binding uuid,p_input jsonb)
+create function clued_private.development_execute_authorized_v14(p_actor uuid,p_binding uuid,p_input jsonb)
 returns jsonb language plpgsql security definer set search_path='' as $$
 declare b public.clued_agent_bindings; a clued_private.authorizations_v12; e clued_private.authorization_entries_v12;
- c clued_private.context_spaces_v11; g clued_private.context_grants_v11; r clued_private.context_records_v11;
- f clued_private.context_feedback_v11; operation_row clued_private.context_operations_v11;
+ c clued_private.development_spaces_v14; g clued_private.development_grants_v14; r clued_private.development_records_v14;
+ f clued_private.development_feedback_v14; operation_row clued_private.development_operations_v14;
  op text:=p_input->>'op'; action text; required_scope text; ikey text:=p_input->>'idempotency_key';
  rhash text; seq bigint; rows jsonb; v_result jsonb; lim integer:=least(greatest(coalesce((p_input->>'limit')::integer,100),1),200);
 begin
@@ -371,7 +368,7 @@ begin
  if not found or b.revoked_at is not null or (to_jsonb(b)->>'expires_at')::timestamptz<=clock_timestamp() then raise exception 'binding_not_authorized' using errcode='42501'; end if;
  select * into a from clued_private.authorizations_v12 where binding_id=b.id and owner_id=p_actor for share;
  if not found or a.revoked_at is not null or a.expires_at<=clock_timestamp() then raise exception 'authorization_revoked_or_expired' using errcode='42501'; end if;
- select * into c from clued_private.context_spaces_v11 where id=(p_input->>'context_id')::uuid;
+ select * into c from clued_private.development_spaces_v14 where id=(p_input->>'context_id')::uuid;
  if not found then raise exception 'context_access_denied' using errcode='42501'; end if;
  if p_input ? 'environment' and p_input->>'environment' is distinct from c.environment then raise exception 'context_environment_denied' using errcode='42501'; end if;
  action:=case op when 'record_list' then 'read' when 'record_put' then 'write' when 'record_revoke' then 'close'
@@ -380,31 +377,31 @@ begin
  required_scope:=case when op='record_list' then 'context:read' else 'context:write' end;
  if not(required_scope=any(b.scopes)) or not(('project:'||c.project_id)=any(b.context_keys)) then raise exception 'binding_not_authorized' using errcode='42501'; end if;
  select * into e from clued_private.authorization_entries_v12 where binding_id=b.id and resource_kind='context' and resource_id=c.id::text and environment=c.environment;
- if not found or e.qualification_id is null then raise exception 'member_qualification_binding_required' using errcode='42501'; end if;
+ if not found then raise exception 'explicit_development_authorization_required' using errcode='42501'; end if;
  perform clued_private.authorization_assert_entry_v12(b.id,'context',c.id::text,c.environment,action);
  -- The authorization helper holds the current membership/project/context locks.
- select * into c from clued_private.context_spaces_v11 where id=c.id for update;
- select * into g from clued_private.context_grants_v11 where context_id=c.id and binding_id=b.id
+ select * into c from clued_private.development_spaces_v14 where id=c.id for update;
+ select * into g from clued_private.development_grants_v14 where context_id=c.id and binding_id=b.id
   and (case action when 'close' then 'write' else action end)=any(actions) and revoked_at is null and expires_at>clock_timestamp() for share;
  if not found then raise exception 'context_access_denied' using errcode='42501'; end if;
  if op='record_list' then
   if p_input->>'mode' is distinct from 'development_history' then raise exception 'explicit_development_history_mode_required' using errcode='42501'; end if;
   select coalesce(jsonb_agg(x.envelope order by x.created_cursor,x.id),'[]') into rows from (
    select z.* from (
-    select y.id,y.created_cursor,clued_private.context_member_visible_record_v13(y.id,g) envelope
-    from clued_private.context_records_v11 y where y.context_id=c.id and y.created_cursor>coalesce((p_input->>'after_cursor')::bigint,0)
+    select y.id,y.created_cursor,clued_private.development_visible_record_v14(y.id,g) envelope
+    from clued_private.development_records_v14 y where y.context_id=c.id and y.created_cursor>coalesce((p_input->>'after_cursor')::bigint,0)
    ) z where z.envelope is not null order by z.created_cursor,z.id limit lim) x;
   return jsonb_build_object('status','ok','records',rows,'next_cursor',case when jsonb_array_length(rows)=lim then rows->(lim-1)->'created_cursor' else null end,'cache_policy','no-store');
  elsif op='feedback_list' then
   select coalesce(jsonb_agg(jsonb_build_object('id',x.id,'version',x.version,'body',x.body,'selected_evidence',x.selected_evidence,
    'state',x.state,'response',x.response,'withdrawn_at',x.withdrawn_at) order by x.created_at),'[]') into rows
-   from clued_private.context_feedback_v11 x where x.context_id=c.id and x.submitter_binding_id=b.id;
+   from clued_private.development_feedback_v14 x where x.context_id=c.id and x.submitter_binding_id=b.id;
   return jsonb_build_object('status','ok','feedback',rows,'cache_policy','no-store');
  end if;
  if coalesce(length(ikey),0) not between 8 and 160 then raise exception 'idempotency_key_required' using errcode='22023'; end if;
- rhash:=clued_private.context_hash_v11(p_input);
+ rhash:=clued_private.development_hash_v14(p_input);
  perform pg_advisory_xact_lock(hashtextextended(c.owner_id::text||b.id::text||op||ikey,0));
- select * into operation_row from clued_private.context_operations_v11 x
+ select * into operation_row from clued_private.development_operations_v14 x
   where x.owner_id=c.owner_id and x.binding_ref=b.id::text and x.op=p_input->>'op' and x.idempotency_key=ikey;
  if found then
   if operation_row.request_hash<>rhash then raise exception 'idempotency_request_mismatch' using errcode='22023'; end if;
@@ -415,69 +412,69 @@ begin
   if p_input->>'record_type'='annotation' then
    perform clued_private.authorization_assert_entry_v12(b.id,'context',c.id::text,c.environment,'read');
    if p_input->'body'->'annotation_of'->>'context_id' is distinct from c.id::text
-    or clued_private.context_member_reference_status_v13(p_input->'body'->'annotation_of',b.id)<>'current' then
+    or clued_private.development_reference_status_v14(p_input->'body'->'annotation_of',b.id)<>'current' then
     raise exception 'authorized_exact_annotation_source_required' using errcode='42501'; end if;
   end if;
-  update clued_private.context_spaces_v11 set cursor=cursor+1 where id=c.id returning cursor into seq;
+  update clued_private.development_spaces_v14 set cursor=cursor+1 where id=c.id returning cursor into seq;
   if p_input ? 'record_id' then
-   select * into r from clued_private.context_records_v11 where id=(p_input->>'record_id')::uuid and context_id=c.id;
+   select * into r from clued_private.development_records_v14 where id=(p_input->>'record_id')::uuid and context_id=c.id;
    if not found or r.version is distinct from (p_input->>'base_version')::bigint or r.lifecycle_status<>'ACTIVE' or r.record_type<>p_input->>'record_type' then raise exception 'record_version_conflict' using errcode='40001'; end if;
-   update clued_private.context_records_v11 set version=version+1,body=p_input->'body',content_hash=clued_private.context_hash_v11(p_input->'body'),
+   update clued_private.development_records_v14 set version=version+1,body=p_input->'body',content_hash=clued_private.development_hash_v14(p_input->'body'),
     revision_cursor=seq,recorded_at=clock_timestamp(),actor_binding_id=b.id,observed_at=(p_input->>'observed_at')::timestamptz,
     valid_until=(p_input->>'valid_until')::timestamptz where id=r.id returning * into r;
   else
-   insert into clued_private.context_records_v11(context_id,version,record_type,body,content_hash,observed_at,created_cursor,revision_cursor,actor_binding_id,valid_until)
-    values(c.id,1,p_input->>'record_type',p_input->'body',clued_private.context_hash_v11(p_input->'body'),(p_input->>'observed_at')::timestamptz,
+   insert into clued_private.development_records_v14(context_id,version,record_type,body,content_hash,observed_at,created_cursor,revision_cursor,actor_binding_id,valid_until)
+    values(c.id,1,p_input->>'record_type',p_input->'body',clued_private.development_hash_v14(p_input->'body'),(p_input->>'observed_at')::timestamptz,
      seq,seq,b.id,(p_input->>'valid_until')::timestamptz) returning * into r;
   end if;
-  insert into clued_private.context_record_versions_v11 values(r.id,r.version,c.id,r.revision_cursor,to_jsonb(r));
+  insert into clued_private.development_record_versions_v14 values(r.id,r.version,c.id,r.revision_cursor,to_jsonb(r));
   v_result:=to_jsonb(r)-'body';
  elsif op='record_revoke' then
   if length(coalesce(p_input->>'reason',''))<1 then raise exception 'revocation_reason_required' using errcode='22023'; end if;
-  update clued_private.context_spaces_v11 set cursor=cursor+1 where id=c.id returning cursor into seq;
-  update clued_private.context_records_v11 set lifecycle_status='REVOKED',reason=p_input->>'reason',version=version+1,revision_cursor=seq,recorded_at=clock_timestamp(),actor_binding_id=b.id
+  update clued_private.development_spaces_v14 set cursor=cursor+1 where id=c.id returning cursor into seq;
+  update clued_private.development_records_v14 set lifecycle_status='REVOKED',reason=p_input->>'reason',version=version+1,revision_cursor=seq,recorded_at=clock_timestamp(),actor_binding_id=b.id
    where id=(p_input->>'record_id')::uuid and context_id=c.id and version=(p_input->>'base_version')::bigint returning * into r;
   if not found then raise exception 'record_version_conflict' using errcode='40001'; end if;
-  insert into clued_private.context_record_versions_v11 values(r.id,r.version,c.id,r.revision_cursor,to_jsonb(r));
-  v_result:=to_jsonb(r)-'body'-'reason';
+  insert into clued_private.development_record_versions_v14 values(r.id,r.version,c.id,r.revision_cursor,to_jsonb(r));
+  v_result:=jsonb_build_object('id',r.id,'context_id',r.context_id,'version',r.version,'lifecycle_status',r.lifecycle_status,'revision_cursor',r.revision_cursor,'actor_binding_id',r.actor_binding_id);
  elsif op='feedback_submit' then
   if jsonb_typeof(p_input->'body') is distinct from 'object' or jsonb_typeof(coalesce(p_input->'selected_evidence','[]')) is distinct from 'array' then raise exception 'invalid_feedback' using errcode='22023'; end if;
-  insert into clued_private.context_feedback_v11(context_id,submitter_binding_id,body,selected_evidence,source_ref)
+  insert into clued_private.development_feedback_v14(context_id,submitter_binding_id,body,selected_evidence,source_ref)
    values(c.id,b.id,p_input->'body',coalesce(p_input->'selected_evidence','[]'),p_input->'source_ref') returning * into f;
   v_result:=to_jsonb(f)-'body'-'selected_evidence'-'source_ref';
  elsif op='feedback_withdraw' then
-  select * into f from clued_private.context_feedback_v11 where id=(p_input->>'feedback_id')::uuid and context_id=c.id;
+  select * into f from clued_private.development_feedback_v14 where id=(p_input->>'feedback_id')::uuid and context_id=c.id;
   if not found or f.submitter_binding_id<>b.id then raise exception 'feedback_submitter_required' using errcode='42501'; end if;
   if f.version is distinct from (p_input->>'base_version')::bigint then raise exception 'feedback_version_conflict' using errcode='40001'; end if;
-  update clued_private.context_feedback_v11 set state='withdrawn',body='{}',selected_evidence='[]',source_ref=null,response=null,
+  update clued_private.development_feedback_v14 set state='withdrawn',body='{}',selected_evidence='[]',source_ref=null,response=null,
     withdrawn_at=clock_timestamp(),version=version+1 where id=f.id returning * into f;
   v_result:=to_jsonb(f)-'body'-'selected_evidence'-'source_ref'-'response';
  end if;
- insert into clued_private.context_operations_v11(owner_id,actor_user_id,binding_ref,context_id,op,idempotency_key,request_hash,canonical_version,result)
+ insert into clued_private.development_operations_v14(owner_id,actor_user_id,binding_ref,context_id,op,idempotency_key,request_hash,canonical_version,result)
   values(c.owner_id,p_actor,b.id::text,c.id,op,ikey,rhash,nextval('clued_private.canonical_version_seq'),'{}') returning * into operation_row;
  v_result:=jsonb_build_object('status','committed','operation_id',operation_row.id,'receipt_id',operation_row.receipt_id,'event_id',operation_row.event_id,
   'canonical_version',operation_row.canonical_version,'result',v_result,'replayed',false,'actor_user_id',p_actor,'resource_owner_id',c.owner_id,
   'receipt',jsonb_build_object('id',operation_row.receipt_id,'operation_id',operation_row.id,'status','committed','request_hash',rhash,'canonical_version',operation_row.canonical_version,'actor_user_id',p_actor,'resource_owner_id',c.owner_id),
   'event',jsonb_build_object('id',operation_row.event_id,'operation_id',operation_row.id,'receipt_id',operation_row.receipt_id,'event_type',op,'context_id',c.id,'canonical_version',operation_row.canonical_version,'actor_user_id',p_actor,'resource_owner_id',c.owner_id));
- update clued_private.context_operations_v11 set result=v_result where id=operation_row.id;
+ update clued_private.development_operations_v14 set result=v_result where id=operation_row.id;
  return v_result;
 end $$;
 
-alter function clued_private.context_execute_v11(uuid,uuid,boolean,jsonb) rename to context_execute_before_membership_v12;
-create function clued_private.context_execute_v11(p_owner uuid,p_binding uuid,p_management boolean,p_input jsonb)
+alter function clued_private.development_execute_v14(uuid,uuid,boolean,jsonb) rename to development_execute_before_membership_v14;
+create function clued_private.development_execute_v14(p_owner uuid,p_binding uuid,p_management boolean,p_input jsonb)
 returns jsonb language plpgsql security definer set search_path='' as $$
-declare e clued_private.authorization_entries_v12; c clued_private.context_spaces_v11; result jsonb; contexts jsonb;
+declare e clued_private.authorization_entries_v12; c clued_private.development_spaces_v14; result jsonb; contexts jsonb;
 begin
- if p_management then return clued_private.context_execute_before_membership_v12(p_owner,p_binding,true,p_input); end if;
+ if p_management then return clued_private.development_execute_before_membership_v14(p_owner,p_binding,true,p_input); end if;
  if p_input->>'op'='context_list' then
-  result:=clued_private.context_execute_before_membership_v12(p_owner,p_binding,false,p_input);
+  result:=clued_private.development_execute_before_membership_v14(p_owner,p_binding,false,p_input);
   contexts:=coalesce(result->'contexts','[]');
   if p_input->>'mode'='development_history' then
    for e in select * from clued_private.authorization_entries_v12 where binding_id=p_binding and resource_kind='context'
      and qualification_id is not null and 'read'=any(actions) order by resource_id loop
     begin
      if not('read'=any(clued_private.authorization_effective_actions_v13(p_binding,'context',e.resource_id,e.environment))) then continue; end if;
-     select * into c from clued_private.context_spaces_v11 where id::text=e.resource_id;
+     select * into c from clued_private.development_spaces_v14 where id::text=e.resource_id;
      if p_input ? 'environment' and p_input->>'environment' is distinct from c.environment then continue; end if;
      contexts:=contexts||jsonb_build_array(jsonb_build_object('id',c.id,'name',c.name,'project_id',c.project_id,'environment',c.environment,'access_source','project_membership'));
     exception when insufficient_privilege then null;
@@ -487,13 +484,13 @@ begin
   return jsonb_set(result,'{contexts}',contexts);
  end if;
  select * into e from clued_private.authorization_entries_v12 where binding_id=p_binding and resource_kind='context' and resource_id=p_input->>'context_id';
- if e.qualification_id is not null then return clued_private.context_member_execute_v13(p_owner,p_binding,p_input); end if;
- return clued_private.context_execute_before_membership_v12(p_owner,p_binding,false,p_input);
+ if e.qualification_id is not null then return clued_private.development_execute_authorized_v14(p_owner,p_binding,p_input); end if;
+ return clued_private.development_execute_before_membership_v14(p_owner,p_binding,false,p_input);
 end $$;
 
 create function clued_private.authorization_effective_actions_v13(p_binding uuid,p_kind text,p_id text,p_environment text)
 returns text[] language plpgsql security definer set search_path='' as $$
-declare b public.clued_agent_bindings; e clued_private.authorization_entries_v12; c clued_private.context_spaces_v11;
+declare b public.clued_agent_bindings; e clued_private.authorization_entries_v12; c clued_private.development_spaces_v14;
  a text; allowed text[]:='{}';
 begin
  select * into b from public.clued_agent_bindings where id=p_binding for share;
@@ -501,7 +498,7 @@ begin
  select * into e from clued_private.authorization_entries_v12 where binding_id=p_binding and resource_kind=p_kind and resource_id=p_id and environment=p_environment;
  if not found then return allowed; end if;
  if p_kind='context' then
-  select * into c from clued_private.context_spaces_v11 where id::text=p_id and environment=p_environment;
+  select * into c from clued_private.development_spaces_v14 where id::text=p_id and environment=p_environment;
   if not found or not(('project:'||c.project_id)=any(b.context_keys) or '*'=any(b.context_keys)) then return allowed; end if;
  elsif not(p_id=any(b.context_keys) or '*'=any(b.context_keys)) then return allowed;
  end if;
@@ -509,7 +506,7 @@ begin
   begin
    if (case a when 'read' then 'context:read' when 'audit' then 'audit:read' else 'context:write' end)=any(b.scopes) then
     perform clued_private.authorization_assert_entry_v12(p_binding,p_kind,p_id,p_environment,a);
-    if p_kind='context' and not exists(select 1 from clued_private.context_grants_v11 g
+    if p_kind='context' and not exists(select 1 from clued_private.development_grants_v14 g
       where g.context_id=c.id and g.binding_id=b.id and g.revoked_at is null and g.expires_at>clock_timestamp()
        and (case a when 'close' then 'write' else a end)=any(g.actions)) then continue; end if;
     allowed:=array_append(allowed,a);
@@ -543,46 +540,41 @@ end $$;
 do $$ declare f record; begin
  for f in select p.oid::regprocedure sig from pg_proc p join pg_namespace n on n.oid=p.pronamespace
   where n.nspname='clued_private' and p.prokind='f' and (p.proname like '%_v13' or p.proname like 'authorization_%_v12'
-    or p.proname='context_execute_v11') loop
+    or p.proname='development_execute_v14') loop
   execute format('revoke all on function %s from public,anon,authenticated,service_role',f.sig);
  end loop;
 end $$;
 
-create function clued_private.context_member_reference_status_v13(p_ref jsonb,p_binding uuid)
+create function clued_private.development_reference_status_v14(p_ref jsonb,p_binding uuid)
 returns text language plpgsql security definer set search_path='' as $$
-declare b public.clued_agent_bindings; c clued_private.context_spaces_v11; g clued_private.context_grants_v11; r clued_private.context_records_v11; v jsonb;
+declare b public.clued_agent_bindings; c clued_private.development_spaces_v14; g clued_private.development_grants_v14; r clued_private.development_records_v14; v jsonb;
 begin
  if jsonb_typeof(p_ref) is distinct from 'object' then return 'unavailable'; end if;
  select * into b from public.clued_agent_bindings where id=p_binding and revoked_at is null for share;
  if not found then return 'restricted'; end if;
- select * into c from clued_private.context_spaces_v11 where id=(p_ref->>'context_id')::uuid;
+ select * into c from clued_private.development_spaces_v14 where id=(p_ref->>'context_id')::uuid;
  if not found then return 'unavailable'; end if;
  if not('context:read'=any(b.scopes)) or not('*'=any(b.context_keys) or ('project:'||c.project_id)=any(b.context_keys)) then return 'restricted'; end if;
  perform clued_private.authorization_assert_entry_v12(b.id,'context',c.id::text,c.environment,'read');
- select * into g from clued_private.context_grants_v11 where context_id=c.id and binding_id=b.id
+ select * into g from clued_private.development_grants_v14 where context_id=c.id and binding_id=b.id
    and 'read'=any(actions) and revoked_at is null and expires_at>clock_timestamp() for share;
  if not found or not('*'=any(g.allowed_fields)) then return 'restricted'; end if;
- select * into r from clued_private.context_records_v11 where id=(p_ref->>'record_id')::uuid and context_id=c.id;
+ select * into r from clued_private.development_records_v14 where id=(p_ref->>'record_id')::uuid and context_id=c.id;
  if not found or r.lifecycle_status<>'ACTIVE' then return 'unavailable'; end if;
  if (g.history_policy='EXISTING_ONLY' and r.created_cursor>g.freeze_cursor)
   or (g.history_policy='SINCE_CURSOR' and r.created_cursor<=g.since_cursor)
   or (g.history_policy='EXPLICIT_SET' and not(r.id=any(g.explicit_record_ids))) then return 'restricted'; end if;
  if g.version_policy='FIXED_AT_GRANT' then
-  select envelope into v from clued_private.context_record_versions_v11 where record_id=r.id and revision_cursor<=g.freeze_cursor order by version desc limit 1;
+  select envelope into v from clued_private.development_record_versions_v14 where record_id=r.id and revision_cursor<=g.freeze_cursor order by version desc limit 1;
  else v:=to_jsonb(r); end if;
  if v is null then return 'restricted'; end if;
  if (v->>'version')::bigint is distinct from (p_ref->>'version')::bigint or v->>'content_hash' is distinct from p_ref->>'content_hash' then return 'changed'; end if;
  return 'current';
 exception when insufficient_privilege then return 'restricted';
 end $$;
-do $$ declare body text; begin
- body:=pg_get_functiondef('clued_private.context_visible_record_v11(uuid,clued_private.context_grants_v11)'::regprocedure);
- body:=replace(body,'context_visible_record_v11','context_member_visible_record_v13');
- body:=replace(body,'context_reference_status_v11','context_member_reference_status_v13');
- execute body;
-end $$;
-revoke all on function clued_private.context_member_reference_status_v13(jsonb,uuid),
- clued_private.context_member_visible_record_v13(uuid,clued_private.context_grants_v11) from public,anon,authenticated,service_role;
+
+revoke all on function clued_private.development_reference_status_v14(jsonb,uuid),
+ clued_private.development_visible_record_v14(uuid,clued_private.development_grants_v14) from public,anon,authenticated,service_role;
 
 -- A07 successor: context-only connections restore an authorized capability
 -- projection. They do not mint a Canonical continuity session or read personal
@@ -592,7 +584,7 @@ revoke all on function public.clued_mcp_restore_before_project_access_v13(text,j
 create function public.clued_mcp_restore(p_token_hash text,p_input jsonb default '{}'::jsonb)
 returns jsonb language plpgsql security definer set search_path='' as $$
 declare b public.clued_agent_bindings; a clued_private.authorizations_v12; e clued_private.authorization_entries_v12;
- c clued_private.context_spaces_v11; project_name text; allowed text[]; contexts jsonb:='[]'; sources jsonb:='[]';
+ c clued_private.development_spaces_v14; project_name text; allowed text[]; contexts jsonb:='[]'; sources jsonb:='[]';
  requested text:=coalesce(nullif(btrim(p_input->>'context_key'),''),'global');
 begin
  if p_token_hash is null or p_token_hash !~ '^[0-9a-f]{64}$' or length(requested) not between 1 and 160 then
@@ -616,7 +608,7 @@ begin
    and x.resource_kind='context' and 'read'=any(x.actions) order by x.resource_id,x.environment loop
   allowed:=clued_private.authorization_effective_actions_v13(b.id,e.resource_kind,e.resource_id,e.environment);
   if not('read'=any(allowed)) then continue; end if;
-  select * into c from clued_private.context_spaces_v11 where id::text=e.resource_id and environment=e.environment;
+  select * into c from clued_private.development_spaces_v14 where id::text=e.resource_id and environment=e.environment;
   if not found or (requested<>'global' and requested<>'project:'||c.project_id) then continue; end if;
   select name into project_name from public.clued_projects where id=c.project_id;
   contexts:=contexts||jsonb_build_array(jsonb_build_object('context_id',c.id,'name',c.name,
@@ -686,13 +678,10 @@ end $$;
 revoke all on procedure clued_private.platform_admin_bootstrap_v13(uuid,text,text),
  clued_private.platform_admin_recover_v13(uuid,bigint,text,text) from public,anon,authenticated,service_role;
 
--- Keep the owner path consistent with the same explicit feedback and close
--- semantics. No historical migration or receipt is rewritten.
-do $$ declare body text; changed text; begin
- body:=pg_get_functiondef('clued_private.context_execute_before_connection_authorization_v11(uuid,uuid,boolean,jsonb)'::regprocedure);
- changed:=replace(body,'op in (''record_list'',''publication_read'',''feedback_list'')','op in (''record_list'',''publication_read'')');
- changed:=replace(changed,'set lifecycle_status=''REVOKED'',reason=p_input->>''reason'',version=version+1,revision_cursor=seq,recorded_at=clock_timestamp()',
-  'set lifecycle_status=''REVOKED'',reason=p_input->>''reason'',version=version+1,revision_cursor=seq,recorded_at=clock_timestamp(),actor_binding_id=p_binding');
- if changed=body then raise exception 'owner_context_successor_source_mismatch'; end if;
- execute changed;
+
+do $$ declare f record; begin
+ for f in select p.oid::regprocedure sig from pg_proc p join pg_namespace n on n.oid=p.pronamespace
+  where n.nspname='clued_private' and p.prokind='f' and p.proname like 'development_%_v14' loop
+  execute format('revoke all on function %s from public,anon,authenticated,service_role',f.sig);
+ end loop;
 end $$;

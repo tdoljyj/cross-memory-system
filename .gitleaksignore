@@ -180,3 +180,8 @@ artifacts/clued-validation/public-mcp/a03/c1ef7a3b-20260829T062104Z/production-r
 # EX-13: Two source-integrity digests in immutable policy at one exact commit/line.
 # Recomputed from qualified source22c085d; not authentication credentials.
 99f615bdb924c510e62c41f3510cd76acb6ce2fb:docs/execution-plans/phase2-structure-governance/step18-publication-20260907/Policy.json:generic-api-key:1
+
+# EX-14: Existing browser Publishable key moved from app/page.tsx to shared public config.
+# Independently compared equal and sb_publishable_ typed; not a secret or service-role key.
+# Exact historical fingerprint only; no path/rule/key-pattern suppression.
+299869b5426b6cc1235527bd130dc5fb074558da:apps/clued-cloud/app/supabase-public-config.ts:generic-api-key:6

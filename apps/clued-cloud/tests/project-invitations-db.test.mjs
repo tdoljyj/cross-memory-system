@@ -9,7 +9,7 @@ import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
 
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
-const migration='20260907164550_clued_project_invitations_v13.sql';
+const migration='20260907173032_clued_project_invitations_v13.sql';
 const U='10000000-0000-4000-8000-000000000001', V='10000000-0000-4000-8000-000000000002';
 const P='20000000-0000-4000-8000-000000000001';
 const resource='https://mcp.example.invalid/mcp';
@@ -26,8 +26,10 @@ test('Project invitations v1.3: real PostgreSQL qualification and actor boundari
  try{
   await server.initialise();await server.start();admin=server.getPgClient();clients.push(admin);await admin.connect();
   await admin.query("create role anon nologin;create role authenticated nologin;create role service_role nologin bypassrls;create role authenticator nologin noinherit;create schema auth;create schema extensions;create extension pgcrypto with schema extensions;create table auth.users(id uuid primary key,email text);create function auth.uid() returns uuid language sql stable as $$select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid$$;create function auth.jwt() returns jsonb language sql stable as $$select coalesce(nullif(current_setting('request.jwt.claims',true),''),'{}')::jsonb$$;grant usage on schema auth,extensions to anon,authenticated,service_role;grant execute on function auth.uid(),auth.jwt() to anon,authenticated,service_role;");
-  const names=(await fs.readdir(path.join(root,'supabase/migrations'))).filter(n=>n.endsWith('.sql')&&(n<'20260826000000'||n.startsWith('20260907123955_')||n.startsWith('20260907131834_')||n.startsWith('20260907161611_')||n===migration)).sort();
-  for(const name of names){try{await admin.query(await fs.readFile(path.join(root,'supabase/migrations',name),'utf8'));}catch(e){e.message=name+': '+e.message;throw e;}}
+  const names=(await fs.readdir(path.join(root,'supabase/migrations'))).filter(n=>n.endsWith('.sql')&&(n<'20260826000000'||n.startsWith('20260907123955_')||n.startsWith('20260907131834_')||n.startsWith('20260907172309_')||n.startsWith('2026090717303'))).sort();
+  for(const name of names){if(name.startsWith('20260907173030_')){assert.equal((await admin.query("select to_regclass('clued_private.context_spaces_v11') old")).rows[0].old,null);}try{await admin.query(await fs.readFile(path.join(root,'supabase/migrations',name),'utf8'));}catch(e){e.message=name+': '+e.message;throw e;}}
+  assert.equal((await admin.query("select to_regclass('clued_private.context_spaces_v11') old,to_regprocedure('public.clued_context_call(text,jsonb)') rpc")).rows[0].old,null);
+  assert.equal((await admin.query("select count(*)::int n from pg_tables where schemaname='clued_private' and tablename like 'development_%_v14'")).rows[0].n,6);
   await admin.query("insert into auth.users values($1,'owner@example.invalid'),($2,'other@example.invalid')",[U,V]);
   await admin.query("insert into public.clued_projects(id,user_id,name,normalized_name,context_key) values($1,$2,'Test project','test project',$3)",[P,U,'project:'+P]);
   await admin.query("insert into clued_private.authorization_issuers_v12(token_hash,resource,name) values($1,$2,'Test gateway')",[issuer,resource]);
@@ -38,13 +40,13 @@ test('Project invitations v1.3: real PostgreSQL qualification and actor boundari
   const owner=await client('authenticated',U),other=await client('authenticated',V),oldOAuth=await client('authenticated',U,'shared-client'),anon=await client('anon'),service=await client('service_role');
   const rpc=async(db,name,args)=>(await db.query('select public.'+name+'('+args.map((_,n)=>'$'+(n+1)).join(',')+') value',args.map(a=>Array.isArray(a)?JSON.stringify(a):a))).rows[0].value;
   const denied=async(p,codes=['42501','28000'])=>assert.rejects(p,e=>codes.includes(e.code));
-  const own=input=>rpc(owner,'clued_context_owner',[{idempotency_key:key(),...input}]);
+  const own=input=>rpc(owner,'clued_development_owner_v14',[{idempotency_key:key(),...input}]);
   cid=(await own({op:'context_create',name:'Development test',project_id:P,environment:'test'})).result.id;
   const request=(scopes=['context:read','context:write','audit:read'])=>({request_digest:hash(),client_id:'shared-client',client_name:'Test AI',redirect_uri:'https://client.example.invalid/callback',resource,requested_scopes:scopes});
   const prepare=(r=request(),db=owner,ih=issuer)=>rpc(db,'clued_authorization_prepare_v12',[ih,r]);
   const approve=(r,selected,h=hash(),expires=future(),db=owner)=>rpc(db,'clued_authorization_approve_v12',[issuer,r.request_id,r.version,selected,h,expires]);
   const create=async(selected,scopes)=>{const r=await prepare(request(scopes));const h=hash(),expires=future();const a=await approve(r,selected,h,expires).catch(e=>{process.stderr.write('APPROVE: '+e.message+'; '+e.where+'\n');throw e;});return {r,h,expires,...a};};
-  const call=(b,input,db=anon)=>rpc(db,'clued_context_call',[b.h,{context_id:cid,...input}]);
+  const call=(b,input,db=anon)=>rpc(db,'clued_development_call_v14',[b.h,{context_id:cid,...input}]);
   const status=b=>rpc(anon,'clued_authorization_status_v12',[b.h]);
   const manage=(input,db=owner)=>rpc(db,'clued_authorization_manage_v12',[input]);
 
@@ -52,6 +54,23 @@ test('Project invitations v1.3: real PostgreSQL qualification and actor boundari
   const invite=(overrides={})=>access({op:'invite_create',project_id:P,environment:'test',target_email:'other@example.invalid',role:'editor',actions:['read','write','close','feedback_submit'],expires_at:future(),idempotency_key:key(),...overrides});
   await admin.query('alter table auth.users add column email_confirmed_at timestamptz');
   await admin.query('update auth.users set email_confirmed_at=now()');
+
+  await t.test('human owner setup creates only owned development contexts with stable receipts',async()=>{
+   for(const db of [anon,oldOAuth,service])await denied(rpc(db,'clued_development_owner_v14',[{op:'owner_list'}]));
+   const empty=await rpc(other,'clued_development_owner_v14',[{op:'owner_list'}]);assert.equal(empty.projects.length,0);assert.equal(empty.contexts.length,0);
+   const input={op:'context_create',project_id:P,name:'Owner setup fixture',environment:'preview',idempotency_key:key(),owner_id:V};
+   await denied(rpc(other,'clued_development_owner_v14',[input]));
+   const created=await rpc(owner,'clued_development_owner_v14',[input]),replayed=await rpc(owner,'clued_development_owner_v14',[input]);
+   assert.equal(created.status,'committed');assert.equal(created.result.owner_id,U);assert.equal(created.result.cursor,0);assert.equal(created.result.version,1);assert.ok(created.result.created_at);
+   assert.equal(replayed.receipt_id,created.receipt_id);assert.equal(replayed.replayed,true);
+   const overview=await rpc(owner,'clued_development_owner_v14',[{op:'owner_list'}]);assert.ok(overview.projects.some(p=>p.id===P));assert.ok(overview.contexts.some(c=>c.id===created.result.id));
+   const actor=(await admin.query('select actor_user_id from clued_private.development_operations_v14 where id=$1',[created.operation_id])).rows[0];assert.equal(actor.actor_user_id,U);
+   await denied(rpc(owner,'clued_development_owner_v14',[{op:'record_put',context_id:cid,record_type:'note',body:{content:'Human JWT cannot replace business grant'},idempotency_key:key()}]));
+   for(const op of ['link_upsert','accept','publish','publication_read'])await denied(rpc(owner,'clued_development_owner_v14',[{op,context_id:cid,idempotency_key:key()}]));
+   assert.equal((await admin.query("select to_regprocedure('public.clued_context_call(text,jsonb)') old_call,to_regprocedure('public.clued_context_owner(jsonb)') old_owner")).rows[0].old_call,null);
+   assert.equal((await admin.query("select to_regprocedure('public.clued_context_owner(jsonb)') old_owner")).rows[0].old_owner,null);
+  });
+
   let invitation,membership;
   await t.test('owner invitations bind exact resources and verified recipient with truthful token replay',async()=>{
    await denied(access({op:'list'},anon));await denied(access({op:'list'},oldOAuth));await denied(access({op:'list'},service));
@@ -113,7 +132,7 @@ test('Project invitations v1.3: real PostgreSQL qualification and actor boundari
    await denied(call(readerBinding,{op:'publish',idempotency_key:key()}));
    await denied(rpc(anon,'clued_record_list',[readerBinding.h,{level:'global'}]));
    await denied(rpc(anon,'clued_record_list',[readerBinding.h,{level:'project',project_id:P}]));
-   await denied(rpc(other,'clued_context_owner',[{op:'grant_upsert',context_id:cid,binding_id:readerBinding.binding_id,actions:['write'],idempotency_key:key()}]));
+   await denied(rpc(other,'clued_development_owner_v14',[{op:'grant_upsert',context_id:cid,binding_id:readerBinding.binding_id,actions:['write'],idempotency_key:key()}]));
    const overview=await manage({op:'list'},other);const x=overview.bindings.find(b=>b.binding_id===readerBinding.binding_id);
    assert.ok(x.created_at);assert.equal(x.last_used_at,null);assert.deepEqual(x.grants[0].effective_actions,['read']);
   });
@@ -130,11 +149,11 @@ test('Project invitations v1.3: real PostgreSQL qualification and actor boundari
    const input={op:'record_put',record_type:'note',body:{content:'Actual invited editor'},idempotency_key:key(),owner_id:V,actor_user_id:U};
    const written=await call(editorBinding,input);assert.equal(written.status,'committed');assert.equal(written.actor_user_id,V);assert.equal(written.resource_owner_id,U);
    assert.equal(written.result.actor_binding_id,editorBinding.binding_id);
-   const operation=(await admin.query('select owner_id,actor_user_id,binding_ref from clued_private.context_operations_v11 where id=$1',[written.operation_id])).rows[0];
+   const operation=(await admin.query('select owner_id,actor_user_id,binding_ref from clued_private.development_operations_v14 where id=$1',[written.operation_id])).rows[0];
    assert.deepEqual(operation,{owner_id:U,actor_user_id:V,binding_ref:editorBinding.binding_id});
    const replay=await call(editorBinding,input);assert.equal(replay.receipt_id,written.receipt_id);assert.equal(replay.replayed,true);
-   assert.equal((await admin.query('select count(*)::int n from clued_private.context_record_versions_v11 where record_id=$1',[written.result.id])).rows[0].n,1);
-   assert.equal((await admin.query('select id from clued_private.context_events_v13 where operation_id=$1',[written.operation_id])).rows[0].id,written.event_id);
+   assert.equal((await admin.query('select count(*)::int n from clued_private.development_record_versions_v14 where record_id=$1',[written.result.id])).rows[0].n,1);
+   assert.equal((await admin.query('select id from clued_private.development_events_with_actor_v14 where operation_id=$1',[written.operation_id])).rows[0].id,written.event_id);
    assert.equal((await admin.query('select count(*)::int n from public.clued_memories where user_id=$1',[V])).rows[0].n,0);
    await denied(call(editorBinding,{op:'accept',idempotency_key:key()}));
    await denied(call(editorBinding,{op:'grant_upsert',idempotency_key:key()}));
@@ -148,7 +167,10 @@ test('Project invitations v1.3: real PostgreSQL qualification and actor boundari
    const written=await call(writer,{op:'record_put',record_type:'note',body:{content:'Separate close consent'},idempotency_key:key()});
    await denied(call(writer,{op:'record_revoke',record_id:written.result.id,base_version:1,reason:'No close consent',idempotency_key:key()}));
    await denied(call(closer,{op:'record_put',record_type:'note',body:{content:'No write consent'},idempotency_key:key()}));
-   const closed=await call(closer,{op:'record_revoke',record_id:written.result.id,base_version:1,reason:'Explicit closure',idempotency_key:key()});
+   const closeInput={op:'record_revoke',record_id:written.result.id,base_version:1,reason:'Explicit closure',idempotency_key:key()};
+   const closed=await call(closer,closeInput),closeReplay=await call(closer,closeInput);
+   assert.deepEqual(Object.keys(closed.result).sort(),['actor_binding_id','context_id','id','lifecycle_status','revision_cursor','version']);
+   assert.deepEqual(closeReplay.result,closed.result);assert.equal(closeReplay.receipt_id,closed.receipt_id);
    assert.equal(closed.result.actor_binding_id,closer.binding_id);assert.equal(closed.actor_user_id,V);assert.equal(closed.result.lifecycle_status,'REVOKED');
    const submitted=await call(feedback,{op:'feedback_submit',body:{message:'Own test feedback'},idempotency_key:key()});
    assert.deepEqual((await admin.query('select scopes from public.clued_agent_bindings where id=$1',[feedback.binding_id])).rows[0].scopes,['context:write']);
@@ -163,7 +185,10 @@ test('Project invitations v1.3: real PostgreSQL qualification and actor boundari
   await t.test('owned context feedback and closure follow the same explicit action semantics',async()=>{
    const writer=await create([ctx(cid,['write'])]),closer=await create([ctx(cid,['close'])]),feedback=await create([ctx(cid,['feedback_submit'])]);
    const written=await call(writer,{op:'record_put',record_type:'note',body:{content:'Owner close actor fixture'},idempotency_key:key()});
-   const closed=await call(closer,{op:'record_revoke',record_id:written.result.id,base_version:1,reason:'Owner close explicitly allowed',idempotency_key:key()});
+   const closeInput={op:'record_revoke',record_id:written.result.id,base_version:1,reason:'Owner close explicitly allowed',idempotency_key:key()};
+   const closed=await call(closer,closeInput),closeReplay=await call(closer,closeInput);
+   assert.deepEqual(Object.keys(closed.result).sort(),['actor_binding_id','context_id','id','lifecycle_status','revision_cursor','version']);
+   assert.deepEqual(closeReplay.result,closed.result);assert.equal(closeReplay.receipt_id,closed.receipt_id);
    assert.equal(closed.result.actor_binding_id,closer.binding_id);
    const f=await call(feedback,{op:'feedback_submit',body:{message:'Owner own feedback'},idempotency_key:key()});
    assert.equal((await call(feedback,{op:'feedback_list'})).feedback[0].id,f.result.id);
@@ -188,7 +213,7 @@ test('Project invitations v1.3: real PostgreSQL qualification and actor boundari
   });
   await t.test('owner grant revocation removes displayed effective capabilities and scoped restore',async()=>{
    const b=await memberConnection(['read','write']);
-   const g=(await admin.query('select id,version from clued_private.context_grants_v11 where binding_id=$1 and context_id=$2',[b.binding_id,cid])).rows[0];
+   const g=(await admin.query('select id,version from clued_private.development_grants_v14 where binding_id=$1 and context_id=$2',[b.binding_id,cid])).rows[0];
    await own({op:'grant_revoke',context_id:cid,grant_id:g.id,base_version:Number(g.version)});
    await denied(call(b,{op:'record_list',mode:'development_history'}));
    const list=await call(b,{op:'context_list',mode:'development_history'});assert.equal(list.contexts.length,0);
@@ -217,7 +242,7 @@ test('Project invitations v1.3: real PostgreSQL qualification and actor boundari
    const reducing=access({op:'member_reduce',membership_id:editorMembership.membership_id,base_version:1,actions:['read'],idempotency_key:key()},reducer).then(r=>{done=true;return r;});
    await waitLock(reducer,'member reduction must wait for authorized business commit');assert.equal(done,false);
    await writer.query('commit');const reduced=await reducing;editorMembership.version=reduced.version;
-   assert.equal((await admin.query('select count(*)::int n from clued_private.context_operations_v11 where receipt_id=$1',[written.receipt_id])).rows[0].n,1);
+   assert.equal((await admin.query('select count(*)::int n from clued_private.development_operations_v14 where receipt_id=$1',[written.receipt_id])).rows[0].n,1);
    await denied(call(editorBinding,{op:'record_put',record_type:'note',body:{content:'After reduction denied'},idempotency_key:key()}));
    assert.ok((await call(editorBinding,{op:'record_list',mode:'development_history'})).records.length>=2);
    const summary=(await manage({op:'list'},other)).bindings.find(b=>b.binding_id===editorBinding.binding_id).grants[0];
@@ -232,7 +257,7 @@ test('Project invitations v1.3: real PostgreSQL qualification and actor boundari
    const pending=call(b,{op:'record_put',record_type:'note',body:{content:'Must not write revoked project'},idempotency_key:key()},writer).then(()=>null,e=>e);
    await waitLock(writer,'member write must wait for the membership revocation');
    await revoker.query('commit');assert.equal((await pending).code,'42501');
-   assert.equal((await admin.query("select count(*)::int n from clued_private.context_records_v11 where body->>'content'='Must not write revoked project'")).rows[0].n,0);
+   assert.equal((await admin.query("select count(*)::int n from clued_private.development_records_v14 where body->>'content'='Must not write revoked project'")).rows[0].n,0);
    await denied(call(editorBinding,{op:'record_list',mode:'development_history'}));
   });
   await t.test('invitation expiry, verified identity change and cancel/accept races fail closed',async()=>{
@@ -258,12 +283,12 @@ test('Project invitations v1.3: real PostgreSQL qualification and actor boundari
   await t.test('queued member work validates context ownership after the ownership change commits',async()=>{
    const i=await invite();await access({op:'invite_accept',invite_token:i.invite_token,base_version:i.version,idempotency_key:key()},other);
    const b=await memberConnection(['read','write']),changer=await client('postgres'),writer=await client('anon');
-   await changer.query('begin');await changer.query('update clued_private.context_spaces_v11 set owner_id=$1 where id=$2',[V,cid]);
+   await changer.query('begin');await changer.query('update clued_private.development_spaces_v14 set owner_id=$1 where id=$2',[V,cid]);
    const queued=call(b,{op:'record_put',record_type:'note',body:{content:'Forbidden after context owner changed'},idempotency_key:key()},writer).then(()=>null,e=>e);
    await waitLock(writer,'member must wait for locked context ownership');await changer.query('commit');
    assert.equal((await queued)?.code,'42501');
-   assert.equal((await admin.query("select count(*)::int n from clued_private.context_records_v11 where body->>'content'='Forbidden after context owner changed'")).rows[0].n,0);
-   await admin.query('update clued_private.context_spaces_v11 set owner_id=$1 where id=$2',[U,cid]);
+   assert.equal((await admin.query("select count(*)::int n from clued_private.development_records_v14 where body->>'content'='Forbidden after context owner changed'")).rows[0].n,0);
+   await admin.query('update clued_private.development_spaces_v14 set owner_id=$1 where id=$2',[U,cid]);
   });
 
   await t.test('offline administrator bootstrap is one-time, audited and never grants project or memory access',async()=>{
@@ -286,12 +311,21 @@ test('Project invitations v1.3: real PostgreSQL qualification and actor boundari
    await denied(access({op:'invite_create',project_id:P,environment:'test',target_email:'stranger@example.invalid',role:'reader',actions:['read'],expires_at:future(),idempotency_key:key()},other));
   });
 
+
+  await t.test('a historical context owner loses access when current project ownership changes',async()=>{
+   const b=await create([ctx(cid,['read'])]);
+   await admin.query('update public.clued_projects set user_id=$1 where id=$2',[V,P]);
+   await denied(call(b,{op:'record_list',mode:'development_history'}));
+   const overview=await rpc(owner,'clued_development_owner_v14',[{op:'owner_list'}]);assert.ok(!overview.contexts.some(c=>c.id===cid));
+   await admin.query('update public.clued_projects set user_id=$1 where id=$2',[U,P]);
+  });
+
   await t.test('invitation secrets and private actor helpers are not public data',async()=>{
    for(const db of [anon,owner,other,service]){
     await denied(db.query('select * from clued_private.project_memberships_v13'));
     await denied(db.query('select * from clued_private.project_access_requests_v13'));
    }
-   const grants=(await admin.query("select p.proname from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='clued_private' and p.proname like '%_v13' and (has_function_privilege('anon',p.oid,'execute') or has_function_privilege('authenticated',p.oid,'execute') or has_function_privilege('service_role',p.oid,'execute'))")).rows;
+   const grants=(await admin.query("select p.proname from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='clued_private' and (p.proname like '%_v13' or p.proname like 'development_%_v14') and (has_function_privilege('anon',p.oid,'execute') or has_function_privilege('authenticated',p.oid,'execute') or has_function_privilege('service_role',p.oid,'execute'))")).rows;
    assert.deepEqual(grants,[]);
    assert.equal((await admin.query("select count(*)::int n from clued_private.project_access_requests_v13 where result::text like '%clued_inv_%'")).rows[0].n,0);
    const stored=(await admin.query('select token_hash from clued_private.project_invitations_v13 where id=$1',[invitation.invitation_id])).rows[0].token_hash;

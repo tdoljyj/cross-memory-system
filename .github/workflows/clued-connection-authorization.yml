@@ -10,6 +10,8 @@ on:
       - 'apps/clued-cloud/supabase/migrations/**'
       - 'apps/clued-cloud/tests/*authorization*.test.mjs'
       - 'apps/clued-cloud/tests/delegated-oauth-transport.test.mjs'
+      - 'apps/clued-cloud/tests/development-context-api.test.mjs'
+      - 'apps/clued-cloud/tests/development-contexts-ui.test.mjs'
       - 'apps/clued-cloud/tests/consent-account-race.test.mjs'
       - 'apps/clued-cloud/tests/supabase-browser.test.mjs'
       - 'apps/clued-cloud/tests/project-invitations-*.test.mjs'

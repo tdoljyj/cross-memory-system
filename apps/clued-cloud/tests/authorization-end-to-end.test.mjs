@@ -53,8 +53,8 @@ test('OAuth consent, MCP record receipt, replay and revoke use the real database
     for (const connection of [human, anon, invited]) { connections.push(connection); await connection.connect(); }
     await human.query('set role authenticated'); await human.query("select set_config('request.jwt.claim.sub',$1,false),set_config('request.jwt.claims',$2,false)", [U, JSON.stringify({ sub: U })]); await anon.query('set role anon');
     await invited.query('set role authenticated'); await invited.query("select set_config('request.jwt.claim.sub',$1,false),set_config('request.jwt.claims',$2,false)", [V, JSON.stringify({ sub: V })]);
-    const context = (await human.query("select public.clued_context_owner($1) value", [{ op: 'context_create', name: 'Integration development', project_id: P, environment: 'test', idempotency_key: crypto.randomUUID() }])).rows[0].value.result.id;
-    const env = { OAUTH_KV: new MemoryKV(), CLUED_DELEGATED_OAUTH_V12: 'true', CLUED_OAUTH_ORIGIN: origin, CLUED_AUTHORIZATION_ISSUER_TOKEN: issuer, SUPABASE_URL: 'https://db.invalid', SUPABASE_PUBLISHABLE_KEY: 'fixture-public-key', PROJECT_VIEWS_V2: 'true', CONTEXT_OWNERSHIP_V11: 'true' };
+    const context = (await human.query("select public.clued_development_owner_v14($1) value", [{ op: 'context_create', name: 'Integration development', project_id: P, environment: 'test', idempotency_key: crypto.randomUUID() }])).rows[0].value.result.id;
+    const env = { OAUTH_KV: new MemoryKV(), CLUED_DELEGATED_OAUTH_V12: 'true', CLUED_OAUTH_ORIGIN: origin, CLUED_AUTHORIZATION_ISSUER_TOKEN: issuer, SUPABASE_URL: 'https://db.invalid', SUPABASE_PUBLISHABLE_KEY: 'fixture-public-key', PROJECT_VIEWS_V2: 'true', CLUED_DEVELOPMENT_CONTEXT_V14: 'true' };
     globalThis.fetch = async (url, options = {}) => {
       const parsed = new URL(url); assert.equal(parsed.origin, 'https://db.invalid');
       const headers = new Headers(options.headers); const isOwner = headers.get('Authorization') === 'Bearer fixture-human'; const isInvited = headers.get('Authorization') === 'Bearer fixture-developer'; const isHuman = isOwner || isInvited;
@@ -91,9 +91,9 @@ test('OAuth consent, MCP record receipt, replay and revoke use the real database
     assert.equal((await call(read.access_token, input)).status, 403);
     const written = await call(write.access_token, input); assert.equal(written.status, 200, await written.clone().text());
     const repeated = await call(write.access_token, input); assert.equal(repeated.status, 200, await repeated.clone().text());
-    const operations = await db.query("select id,receipt_id,event_id from clued_private.context_operations_v11 where op='record_put' and idempotency_key=$1", [input.idempotency_key]);
+    const operations = await db.query("select id,receipt_id,event_id from clued_private.development_operations_v14 where op='record_put' and idempotency_key=$1", [input.idempotency_key]);
     assert.equal(operations.rows.length, 1); assert.ok(operations.rows[0].receipt_id); assert.ok(operations.rows[0].event_id);
-    assert.equal((await db.query('select count(*)::int n from clued_private.context_records_v11 where context_id=$1', [context])).rows[0].n, 1);
+    assert.equal((await db.query('select count(*)::int n from clued_private.development_records_v14 where context_id=$1', [context])).rows[0].n, 1);
     assert.equal((await call(read.access_token, { op: 'record_list' })).status, 200);
     const revoke = await run('/oauth/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ token: write.refresh_token, client_id: clientId }) });
     assert.equal(revoke.status, 200, await revoke.clone().text());

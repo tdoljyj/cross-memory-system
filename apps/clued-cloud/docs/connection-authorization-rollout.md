@@ -12,13 +12,19 @@ The earlier `context-ownership-publication-v11` publication/acceptance sequence 
 `SUPERSEDED_BEFORE_ACTIVATION` by
 `docs/execution-plans/context-ownership-publication-v11/SupersessionDecision_20260908.json`.
 Do not resume its old dual-consumer publication checklist, old Grant-minting release
-step, or old Worker release sequence as the active plan. Its already-applied
-`context_*_v11` schema is retained as a reusable successor dependency because the
-2026-09-08 production check found all ten v1.1 business tables empty. Retention of
-that schema is not evidence of an activated user capability, and supersession does
-not authorize destructive rollback. This successor remains an implementation
-candidate and must satisfy its own authorization, runtime, evidence and production
-gates.
+step, or old Worker release sequence as the active plan. A later production action
+applied `20260907172309_retire_context_ownership_publication_v11.sql`; read-only
+verification confirmed the old context table and owner RPC are absent. The prior
+retention assumption in the historical supersession record is therefore no longer
+the installed baseline. Never reapply or edit that published retirement migration.
+
+The uninstalled v12/v13 candidates were resequenced after retirement. The successor
+creates only its necessary `development_*_v14` storage and new RPC entry points.
+It does not restore old Link, Acceptance, Publication or dual-consumer bridge
+surfaces. Existing canonical project identities remain stable. Candidate/new
+resources acquire new IDs from the service; do not manufacture old IDs or imply
+the removed empty schema is still available. Both the full repository order and
+the production-installed migration shape require an isolated upgrade check.
 
 ## Ownership and identity
 
@@ -43,7 +49,7 @@ Do not deploy this change to Sites as a substitute for the production Worker.
 Read-only inspection on 2026-09-08 found the new gateway flag disabled and no
 `OAUTH_KV` or authorization issuer binding on the production Worker. The active
 Supabase project uses PostgreSQL 17. Its recorded migration history includes
-M1, log bridges, search and context v1.1; it does not include the old P5
+M1, log bridges, search, context v1.1 and its later retirement; it does not include the old P5
 workspace membership migration. Therefore an unrestricted migration push that
 fills every repository gap is not an acceptable rollout command. Map the actual
 installed migrations by content and dependency, and select only the reviewed
@@ -69,7 +75,7 @@ configure these on the same reviewed Worker version:
 | `OAUTH_KV` | Dedicated OAuth provider namespace for that environment |
 | `CLUED_AUTHORIZATION_ISSUER_TOKEN` | Fresh server-only random credential, generated and stored through the approved secret channel; never commit it or paste it into chat |
 | Private issuer row | SHA256 of that credential, exact `{origin}/mcp` resource, descriptive name, active status |
-| `CONTEXT_OWNERSHIP_V11` | Existing context feature must be enabled for the development context tools |
+| `CLUED_DEVELOPMENT_CONTEXT_V14` | Explicitly enable the new development tools; the retired `CONTEXT_OWNERSHIP_V11` flag does not enable them |
 | Auth redirect allowlist | Include the exact approved origin `/?type=recovery` and the reviewed account/invitation verification callbacks |
 
 Do not copy credentials across environments. OAuth consent defaults to no
@@ -89,11 +95,17 @@ once and removes callback credentials from the URL before network processing.
 
 ## Development invitation and recovery contracts
 
-Apply reviewed successors `20260907161611_clued_connection_authorization_v12.sql`
-then `20260907164550_clued_project_invitations_v13.sql`. The v13 invitation and
+After the installed retirement, apply reviewed successors in order:
+`20260907173030_clued_development_context_runtime_v14.sql`,
+`20260907173031_clued_connection_authorization_v12.sql`, then
+`20260907173032_clued_project_invitations_v13.sql`. The v13 invitation and
 membership tables reference the existing canonical project/context IDs and do
-not require the retired P5 membership schema. Human-only
-`clued_project_access_v13` supports list, invitation inspect/create/accept/revoke,
+not require the retired P5 membership schema. Human context management uses `clued_development_owner_v14` at
+`/v1/development/owner`; only owner-list/context-create are exposed by its page.
+MCP `clued_context` uses `clued_development_call_v14`, with explicit
+`development_history` for reading development records. The old `/v1/contexts`
+routes and direct OAuth business JWT path cannot activate this successor.
+Human-only `clued_project_access_v13` supports list, invitation inspect/create/accept/revoke,
 and member reduce/revoke through `/oauth/projects/api`. Invitation acceptance
 requires the intended verified email, original one-time token and CAS version.
 Only its hash is retained in the database; lost create responses retain the

@@ -852,7 +852,7 @@ function publishTool<T extends (typeof tools)[number]>(tool: T) {
   };
 }
 
-export function publicMcpTools(env: Pick<ContinuityEnv, "PROJECT_VIEWS_V2" | "P5_TENANT_WRITES" | "CONTEXT_OWNERSHIP_V11">) {
+export function publicMcpTools(env: Pick<ContinuityEnv, "PROJECT_VIEWS_V2" | "P5_TENANT_WRITES" | "CLUED_DEVELOPMENT_CONTEXT_V14">) {
   return tools.filter((tool) =>
     (!(tool.name in recordRpcByTool) || recordsV2Enabled(env))
     && (!(tool.name in p5RpcByTool) || p5TenantWritesEnabled(env))
@@ -887,14 +887,12 @@ async function callRpc(
   const payload = typeof args === "object" && args ? args : {};
 
   if (name in contextRpcByTool) {
-    if (!contextsEnabled(env)) throw new HttpError(404, "Context ownership is disabled.");
+    if (!contextsEnabled(env)) throw new HttpError(404, "Development context is disabled.");
+    if (!token.startsWith("clued_bnd_")) throw new HttpError(403, "Use an explicitly consented Clued connection for development operations.");
     const contextInput = { mode: "ordinary", ...payload };
-    return await supabaseRequest(env, `/rest/v1/rpc/${token.startsWith("clued_bnd_") ? "clued_context_call" : "clued_context_oauth_call"}`, {
+    return await supabaseRequest(env, "/rest/v1/rpc/clued_development_call_v14", {
       method: "POST",
-      ...(token.startsWith("clued_bnd_") ? {} : { userToken: token }),
-      body: JSON.stringify(token.startsWith("clued_bnd_")
-        ? { p_token_hash: await sha256(token), p_input: contextInput }
-        : { p_input: contextInput }),
+      body: JSON.stringify({ p_token_hash: await sha256(token), p_input: contextInput }),
     });
   }
 
@@ -1272,9 +1270,9 @@ async function handleContinuityRequestInner(
       });
     }
     if (url.pathname === "/mcp") return await handleMcp(request, env);
-    if (url.pathname === "/v1/contexts" || url.pathname === "/v1/contexts/owner") {
+    if (url.pathname === "/v1/development" || url.pathname === "/v1/development/owner") {
       validateOrigin(request, env);
-      if (!contextsEnabled(env)) return json({ error: "Context ownership is disabled." }, 404, corsHeaders(request));
+      if (!contextsEnabled(env)) return json({ error: "Development context is disabled." }, 404, corsHeaders(request));
       if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders(request) });
       if (request.method !== "POST") return json({ error: "Method not allowed." }, 405, { ...corsHeaders(request), allow: "POST, OPTIONS" });
       const { input } = await parseCanonicalBody(request);
@@ -1282,7 +1280,7 @@ async function handleContinuityRequestInner(
         const token = bearerToken(request);
         if (!token || token.startsWith("clued_bnd_")) throw new HttpError(403, "Sign in as the context owner to manage access.");
         await requireSupabaseUser(request, env);
-        const result = await supabaseRequest(env, "/rest/v1/rpc/clued_context_owner", {
+        const result = await supabaseRequest(env, "/rest/v1/rpc/clued_development_owner_v14", {
           method: "POST", userToken: token, body: JSON.stringify({ p_input: input }),
         });
         return json(result, 200, corsHeaders(request));

@@ -236,7 +236,7 @@ async function consentRoute(request: Request, env: DelegatedOAuthEnv): Promise<R
 export function requiredToolScopes(name: string, args: Json = {}): readonly string[] | null {
   if (name === 'clued_context') {
     const operation = String(args.op);
-    if (['context_list', 'record_list', 'publication_read'].includes(operation)) return ['context:read'];
+    if (['context_list', 'record_list'].includes(operation)) return ['context:read'];
     if (['record_put', 'record_revoke', 'feedback_submit', 'feedback_list', 'feedback_withdraw'].includes(operation)) return ['context:write'];
     return null; // Publisher and membership operations require their separate governed flow.
   }

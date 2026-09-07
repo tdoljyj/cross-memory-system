@@ -9,7 +9,7 @@ import test from 'node:test';
 import EmbeddedPostgres from 'embedded-postgres';
 
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
-const migration='20260907161611_clued_connection_authorization_v12.sql';
+const migration='20260907173031_clued_connection_authorization_v12.sql';
 const U='10000000-0000-4000-8000-000000000001', V='10000000-0000-4000-8000-000000000002';
 const P='20000000-0000-4000-8000-000000000001';
 const resource='https://mcp.example.invalid/mcp';
@@ -26,8 +26,10 @@ test('Connection authorization v1.2: real PostgreSQL permission and transaction 
  try{
   await server.initialise();await server.start();admin=server.getPgClient();clients.push(admin);await admin.connect();
   await admin.query("create role anon nologin;create role authenticated nologin;create role service_role nologin bypassrls;create role authenticator nologin noinherit;create schema auth;create schema extensions;create extension pgcrypto with schema extensions;create table auth.users(id uuid primary key,email text);create function auth.uid() returns uuid language sql stable as $$select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid$$;create function auth.jwt() returns jsonb language sql stable as $$select coalesce(nullif(current_setting('request.jwt.claims',true),''),'{}')::jsonb$$;grant usage on schema auth,extensions to anon,authenticated,service_role;grant execute on function auth.uid(),auth.jwt() to anon,authenticated,service_role;");
-  const names=(await fs.readdir(path.join(root,'supabase/migrations'))).filter(n=>n.endsWith('.sql')&&(n<'20260826000000'||n.startsWith('20260907123955_')||n.startsWith('20260907131834_')||n===migration)).sort();
-  for(const name of names){try{await admin.query(await fs.readFile(path.join(root,'supabase/migrations',name),'utf8'));}catch(e){e.message=name+': '+e.message;throw e;}}
+  const names=(await fs.readdir(path.join(root,'supabase/migrations'))).filter(n=>n.endsWith('.sql')&&(n<'20260826000000'||n.startsWith('20260907123955_')||n.startsWith('20260907131834_')||n.startsWith('20260907172309_')||n.startsWith('2026090717303'))).sort();
+  for(const name of names){if(name.startsWith('20260907173030_')){assert.equal((await admin.query("select to_regclass('clued_private.context_spaces_v11') old")).rows[0].old,null);}try{await admin.query(await fs.readFile(path.join(root,'supabase/migrations',name),'utf8'));}catch(e){e.message=name+': '+e.message;throw e;}}
+  assert.equal((await admin.query("select to_regclass('clued_private.context_spaces_v11') old,to_regprocedure('public.clued_context_call(text,jsonb)') rpc")).rows[0].old,null);
+  assert.equal((await admin.query("select count(*)::int n from pg_tables where schemaname='clued_private' and tablename like 'development_%_v14'")).rows[0].n,6);
   await admin.query("insert into auth.users values($1,'owner@example.invalid'),($2,'other@example.invalid')",[U,V]);
   await admin.query("insert into public.clued_projects(id,user_id,name,normalized_name,context_key) values($1,$2,'Test project','test project',$3)",[P,U,'project:'+P]);
   await admin.query("insert into clued_private.authorization_issuers_v12(token_hash,resource,name) values($1,$2,'Test gateway')",[issuer,resource]);
@@ -38,13 +40,13 @@ test('Connection authorization v1.2: real PostgreSQL permission and transaction 
   const owner=await client('authenticated',U),other=await client('authenticated',V),oldOAuth=await client('authenticated',U,'shared-client'),anon=await client('anon'),service=await client('service_role');
   const rpc=async(db,name,args)=>(await db.query('select public.'+name+'('+args.map((_,n)=>'$'+(n+1)).join(',')+') value',args.map(a=>Array.isArray(a)?JSON.stringify(a):a))).rows[0].value;
   const denied=async(p,codes=['42501','28000'])=>assert.rejects(p,e=>codes.includes(e.code));
-  const own=input=>rpc(owner,'clued_context_owner',[{idempotency_key:key(),...input}]);
+  const own=input=>rpc(owner,'clued_development_owner_v14',[{idempotency_key:key(),...input}]);
   cid=(await own({op:'context_create',name:'Development test',project_id:P,environment:'test'})).result.id;
   const request=(scopes=['context:read','context:write','audit:read'])=>({request_digest:hash(),client_id:'shared-client',client_name:'Test AI',redirect_uri:'https://client.example.invalid/callback',resource,requested_scopes:scopes});
   const prepare=(r=request(),db=owner,ih=issuer)=>rpc(db,'clued_authorization_prepare_v12',[ih,r]);
   const approve=(r,selected,h=hash(),expires=future(),db=owner)=>rpc(db,'clued_authorization_approve_v12',[issuer,r.request_id,r.version,selected,h,expires]);
   const create=async(selected,scopes)=>{const r=await prepare(request(scopes));const h=hash(),expires=future();const a=await approve(r,selected,h,expires).catch(e=>{process.stderr.write('APPROVE: '+e.message+'; '+e.where+'\n');throw e;});return {r,h,expires,...a};};
-  const call=(b,input,db=anon)=>rpc(db,'clued_context_call',[b.h,{context_id:cid,...input}]);
+  const call=(b,input,db=anon)=>rpc(db,'clued_development_call_v14',[b.h,{context_id:cid,...input}]);
   const status=b=>rpc(anon,'clued_authorization_status_v12',[b.h]);
   const manage=(input,db=owner)=>rpc(db,'clued_authorization_manage_v12',[input]);
   let personal,developer,combined;
@@ -86,7 +88,7 @@ test('Connection authorization v1.2: real PostgreSQL permission and transaction 
   });
   await t.test('legacy JWT, tables, private helpers and whole-account exports cannot bypass selection',async()=>{
    await denied(rpc(oldOAuth,'clued_oauth_call',['record_list',{}]));
-   await denied(rpc(oldOAuth,'clued_context_oauth_call',[{op:'context_list'}]));
+   await denied(rpc(oldOAuth,'clued_development_oauth_call_v14',[{op:'context_list'}]));
    await denied(rpc(oldOAuth,'clued_user_project_list',[{}]));
    assert.equal((await oldOAuth.query('select * from public.clued_projects')).rows.length,0);
    for(const db of [anon,owner,service]) await denied(db.query('select * from clued_private.authorizations_v12'));
@@ -127,7 +129,7 @@ test('Connection authorization v1.2: real PostgreSQL permission and transaction 
    const pending=call(b,{op:'record_put',record_type:'note',body:{content:'revoked while queued'},idempotency_key:key()},writer).then(()=>{settled=true;return null;},e=>{settled=true;return e;});
    for(let n=0;n<100;n++){const q=await admin.query("select 1 from pg_stat_activity where pid=$1 and wait_event_type='Lock'",[writer.processID]);if(q.rows.length)break;if(n===99)assert.fail('write did not wait for revocation');await new Promise(r=>setTimeout(r,10));}
    assert.equal(settled,false);await revoker.query('commit');assert.equal((await pending).code,'42501');
-   assert.equal((await admin.query("select count(*)::int n from clued_private.context_records_v11 where body->>'content'='revoked while queued'")).rows[0].n,0);
+   assert.equal((await admin.query("select count(*)::int n from clued_private.development_records_v14 where body->>'content'='revoked while queued'")).rows[0].n,0);
   });
   await t.test('status/self-revoke are minimal and idempotent; expiry is live',async()=>{
    const b=await create([scope('global',['read'])]);const x=await rpc(anon,'clued_authorization_revoke_self_v12',[b.h]);
@@ -184,7 +186,7 @@ test('Connection authorization v1.2: real PostgreSQL permission and transaction 
    await banner.query('commit');assert.equal((await pending).code,'42501');
    assert.equal((await status(b)).active,false);
    await denied(prepare());await denied(rpc(owner,'clued_user_project_list',[{}]));
-   assert.equal((await admin.query("select count(*)::int n from clued_private.context_records_v11 where body->>'content'='must fail when banned'")).rows[0].n,0);
+   assert.equal((await admin.query("select count(*)::int n from clued_private.development_records_v14 where body->>'content'='must fail when banned'")).rows[0].n,0);
    await admin.query('update auth.users set banned_until=null where id=$1',[U]);
    assert.equal((await status(b)).active,true);
   });
