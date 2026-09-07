@@ -176,3 +176,7 @@ artifacts/clued-validation/public-mcp/a03/c1ef7a3b-20260829T062104Z/production-r
 9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa:artifacts/clued-validation/structure-freeze-prep/naming/retained-step3-r2-20260907/typed-review/UnresolvedReview.development.json:generic-api-key:6293
 9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa:artifacts/clued-validation/structure-freeze-prep/naming/retained-step3-r2-20260907/typed-review/UnresolvedReview.development.json:generic-api-key:6322
 9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa:artifacts/clued-validation/structure-freeze-prep/naming/retained-step3-r2-20260907/typed-review/UnresolvedReview.development.json:generic-api-key:6351
+
+# EX-13: Two source-integrity digests in immutable policy at one exact commit/line.
+# Recomputed from qualified source22c085d; not authentication credentials.
+99f615bdb924c510e62c41f3510cd76acb6ce2fb:docs/execution-plans/phase2-structure-governance/step18-publication-20260907/Policy.json:generic-api-key:1
