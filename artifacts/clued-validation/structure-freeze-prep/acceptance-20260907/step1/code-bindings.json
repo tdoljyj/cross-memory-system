@@ -1,0 +1,259 @@
+{
+  "checked_at_utc": "2026-09-07T06:21:28.687766+00:00",
+  "method": "Exact git cat-file blob bytes; SHA256 independently recomputed",
+  "commits": [
+    {
+      "commit": "ca3292bb58dce28115636a31f1c09301b9bd1b30",
+      "files": {
+        "scripts/phase2-v027-validate.py": {
+          "git_blob_sha1": "83b3346998a6a78171336607d6c8b298ed9afa4e",
+          "bytes": 20343,
+          "sha256": "e16cc9fa5fd2a54dc3922029851722936551a400979dc94dce691faa83bd7f4e"
+        },
+        "scripts/phase2-v027-negative-harness.py": {
+          "git_blob_sha1": "6b0ee1440f925098462cce2bd78bf69c32a74dbc",
+          "bytes": 18552,
+          "sha256": "46520afc2175c468bb15162c7ec2fb43d157ddcbb05481ea062f7a31083f6860"
+        },
+        ".github/workflows/phase2-v027-validation.yml": {
+          "git_blob_sha1": "9fcd0a6b9545d0ce3fce76a4c3ae77de4273b4d9",
+          "bytes": 9000,
+          "sha256": "51334a15770991d2cbf13cb906a592494a96c87e55a8b6cb37f0792a1168bd53"
+        },
+        "artifacts/clued-validation/phase2-v027/negative-test-control.json": {
+          "git_blob_sha1": "7ffffbf730773193e86907e0cff3ef04d3390652",
+          "bytes": 441,
+          "sha256": "ee1196b7d807a2d33b90c4ccc58824fc817a20a17d63623d0f4e665d9b6668ba"
+        },
+        "artifacts/clued-validation/phase2-v027/candidate-identity.json": {
+          "git_blob_sha1": "95440b4feb0ac2630b0f0ee399115ff8dac9d422",
+          "bytes": 887,
+          "sha256": "b9378cc1c40fe196b2c2496464e7a19e0af783078c2f08ac35a5bc242735a9f9"
+        },
+        "artifacts/clued-validation/phase2-v027/candidate-source.json": {
+          "git_blob_sha1": "a2d46ea9c4c1651b3d12d4478a583cd26004143b",
+          "bytes": 1696,
+          "sha256": "b5eb6a0eee044cc2835f910dff49452583e360218cc2b629aa3a8c5745d4d3d6"
+        }
+      },
+      "ancestor_of_reviewed_naming_head": true
+    },
+    {
+      "commit": "ea94e901f97507d6c7f600813b36acfe5db5bd4c",
+      "files": {
+        "scripts/phase2-v027-validate.py": {
+          "git_blob_sha1": "83b3346998a6a78171336607d6c8b298ed9afa4e",
+          "bytes": 20343,
+          "sha256": "e16cc9fa5fd2a54dc3922029851722936551a400979dc94dce691faa83bd7f4e"
+        },
+        "scripts/phase2-v027-negative-harness.py": {
+          "git_blob_sha1": "6b0ee1440f925098462cce2bd78bf69c32a74dbc",
+          "bytes": 18552,
+          "sha256": "46520afc2175c468bb15162c7ec2fb43d157ddcbb05481ea062f7a31083f6860"
+        },
+        ".github/workflows/phase2-v027-validation.yml": {
+          "git_blob_sha1": "9fcd0a6b9545d0ce3fce76a4c3ae77de4273b4d9",
+          "bytes": 9000,
+          "sha256": "51334a15770991d2cbf13cb906a592494a96c87e55a8b6cb37f0792a1168bd53"
+        },
+        "artifacts/clued-validation/phase2-v027/negative-test-control.json": {
+          "git_blob_sha1": "6e9f37b5abacaedc01a77e7d0bfe97edc5b12d78",
+          "bytes": 441,
+          "sha256": "8ba530fcca15c8bb4c81d202709e5d298821da9fb01807e4a8d4b5399b3f4f2b"
+        },
+        "artifacts/clued-validation/phase2-v027/candidate-identity.json": {
+          "git_blob_sha1": "95440b4feb0ac2630b0f0ee399115ff8dac9d422",
+          "bytes": 887,
+          "sha256": "b9378cc1c40fe196b2c2496464e7a19e0af783078c2f08ac35a5bc242735a9f9"
+        },
+        "artifacts/clued-validation/phase2-v027/candidate-source.json": {
+          "git_blob_sha1": "a2d46ea9c4c1651b3d12d4478a583cd26004143b",
+          "bytes": 1696,
+          "sha256": "b5eb6a0eee044cc2835f910dff49452583e360218cc2b629aa3a8c5745d4d3d6"
+        }
+      },
+      "ancestor_of_reviewed_naming_head": true
+    },
+    {
+      "commit": "9c657f8ffcf67296d394946b2050e049dc535664",
+      "files": {
+        "scripts/phase2-v027-validate.py": {
+          "git_blob_sha1": "83b3346998a6a78171336607d6c8b298ed9afa4e",
+          "bytes": 20343,
+          "sha256": "e16cc9fa5fd2a54dc3922029851722936551a400979dc94dce691faa83bd7f4e"
+        },
+        "scripts/phase2-v027-negative-harness.py": {
+          "git_blob_sha1": "6b0ee1440f925098462cce2bd78bf69c32a74dbc",
+          "bytes": 18552,
+          "sha256": "46520afc2175c468bb15162c7ec2fb43d157ddcbb05481ea062f7a31083f6860"
+        },
+        ".github/workflows/phase2-v027-validation.yml": {
+          "git_blob_sha1": "9fcd0a6b9545d0ce3fce76a4c3ae77de4273b4d9",
+          "bytes": 9000,
+          "sha256": "51334a15770991d2cbf13cb906a592494a96c87e55a8b6cb37f0792a1168bd53"
+        },
+        "artifacts/clued-validation/phase2-v027/negative-test-control.json": {
+          "git_blob_sha1": "ff1745f2a3aa30c50b180c987d90a54521ee1c81",
+          "bytes": 433,
+          "sha256": "3ae9bad059219e08737ab0f61bd3003adb6005a1261b3ba080f23bb8acf79784"
+        },
+        "artifacts/clued-validation/phase2-v027/candidate-identity.json": {
+          "git_blob_sha1": "95440b4feb0ac2630b0f0ee399115ff8dac9d422",
+          "bytes": 887,
+          "sha256": "b9378cc1c40fe196b2c2496464e7a19e0af783078c2f08ac35a5bc242735a9f9"
+        },
+        "artifacts/clued-validation/phase2-v027/candidate-source.json": {
+          "git_blob_sha1": "a2d46ea9c4c1651b3d12d4478a583cd26004143b",
+          "bytes": 1696,
+          "sha256": "b5eb6a0eee044cc2835f910dff49452583e360218cc2b629aa3a8c5745d4d3d6"
+        }
+      },
+      "ancestor_of_reviewed_naming_head": true
+    },
+    {
+      "commit": "90d1e9fc72b39f918c536d5a375d7096af439668",
+      "files": {
+        "scripts/phase2-v027-validate.py": {
+          "git_blob_sha1": "83b3346998a6a78171336607d6c8b298ed9afa4e",
+          "bytes": 20343,
+          "sha256": "e16cc9fa5fd2a54dc3922029851722936551a400979dc94dce691faa83bd7f4e"
+        },
+        "scripts/phase2-v027-negative-harness.py": {
+          "git_blob_sha1": "6b0ee1440f925098462cce2bd78bf69c32a74dbc",
+          "bytes": 18552,
+          "sha256": "46520afc2175c468bb15162c7ec2fb43d157ddcbb05481ea062f7a31083f6860"
+        },
+        ".github/workflows/phase2-v027-validation.yml": {
+          "git_blob_sha1": "9fcd0a6b9545d0ce3fce76a4c3ae77de4273b4d9",
+          "bytes": 9000,
+          "sha256": "51334a15770991d2cbf13cb906a592494a96c87e55a8b6cb37f0792a1168bd53"
+        },
+        "artifacts/clued-validation/phase2-v027/negative-test-control.json": {
+          "git_blob_sha1": "9ae24a11d804538cc90454b1717c000cf8df3af9",
+          "bytes": 446,
+          "sha256": "1b5dd4943190cdc82d7f3559a0661d294a2af7907d5e2fe019e7820a2e5ec970"
+        },
+        "artifacts/clued-validation/phase2-v027/candidate-identity.json": {
+          "git_blob_sha1": "95440b4feb0ac2630b0f0ee399115ff8dac9d422",
+          "bytes": 887,
+          "sha256": "b9378cc1c40fe196b2c2496464e7a19e0af783078c2f08ac35a5bc242735a9f9"
+        },
+        "artifacts/clued-validation/phase2-v027/candidate-source.json": {
+          "git_blob_sha1": "a2d46ea9c4c1651b3d12d4478a583cd26004143b",
+          "bytes": 1696,
+          "sha256": "b5eb6a0eee044cc2835f910dff49452583e360218cc2b629aa3a8c5745d4d3d6"
+        }
+      },
+      "ancestor_of_reviewed_naming_head": true
+    },
+    {
+      "commit": "07632caa673395e136c60d9cf4f2f884c03a59af",
+      "files": {
+        "scripts/phase2-v027-validate.py": {
+          "git_blob_sha1": "83b3346998a6a78171336607d6c8b298ed9afa4e",
+          "bytes": 20343,
+          "sha256": "e16cc9fa5fd2a54dc3922029851722936551a400979dc94dce691faa83bd7f4e"
+        },
+        "scripts/phase2-v027-negative-harness.py": {
+          "git_blob_sha1": "6b0ee1440f925098462cce2bd78bf69c32a74dbc",
+          "bytes": 18552,
+          "sha256": "46520afc2175c468bb15162c7ec2fb43d157ddcbb05481ea062f7a31083f6860"
+        },
+        ".github/workflows/phase2-v027-validation.yml": {
+          "git_blob_sha1": "9fcd0a6b9545d0ce3fce76a4c3ae77de4273b4d9",
+          "bytes": 9000,
+          "sha256": "51334a15770991d2cbf13cb906a592494a96c87e55a8b6cb37f0792a1168bd53"
+        },
+        "artifacts/clued-validation/phase2-v027/negative-test-control.json": {
+          "git_blob_sha1": "47d639c349ca63e8fc393420f3651492444f3ba8",
+          "bytes": 427,
+          "sha256": "1d7b4b3b49aaa86f8dcaf83eb680bb4a1c033da83cf7a557c641bfefbaf0c2c6"
+        },
+        "artifacts/clued-validation/phase2-v027/candidate-identity.json": {
+          "git_blob_sha1": "95440b4feb0ac2630b0f0ee399115ff8dac9d422",
+          "bytes": 887,
+          "sha256": "b9378cc1c40fe196b2c2496464e7a19e0af783078c2f08ac35a5bc242735a9f9"
+        },
+        "artifacts/clued-validation/phase2-v027/candidate-source.json": {
+          "git_blob_sha1": "a2d46ea9c4c1651b3d12d4478a583cd26004143b",
+          "bytes": 1696,
+          "sha256": "b5eb6a0eee044cc2835f910dff49452583e360218cc2b629aa3a8c5745d4d3d6"
+        }
+      },
+      "ancestor_of_reviewed_naming_head": true
+    },
+    {
+      "commit": "59ed841b8264ea4e246d595bc425d44373cee615",
+      "files": {
+        "scripts/phase2-v027-validate.py": {
+          "git_blob_sha1": "83b3346998a6a78171336607d6c8b298ed9afa4e",
+          "bytes": 20343,
+          "sha256": "e16cc9fa5fd2a54dc3922029851722936551a400979dc94dce691faa83bd7f4e"
+        },
+        "scripts/phase2-v027-negative-harness.py": {
+          "git_blob_sha1": "6b0ee1440f925098462cce2bd78bf69c32a74dbc",
+          "bytes": 18552,
+          "sha256": "46520afc2175c468bb15162c7ec2fb43d157ddcbb05481ea062f7a31083f6860"
+        },
+        ".github/workflows/phase2-v027-validation.yml": {
+          "git_blob_sha1": "9fcd0a6b9545d0ce3fce76a4c3ae77de4273b4d9",
+          "bytes": 9000,
+          "sha256": "51334a15770991d2cbf13cb906a592494a96c87e55a8b6cb37f0792a1168bd53"
+        },
+        "artifacts/clued-validation/phase2-v027/negative-test-control.json": {
+          "git_blob_sha1": "47d639c349ca63e8fc393420f3651492444f3ba8",
+          "bytes": 427,
+          "sha256": "1d7b4b3b49aaa86f8dcaf83eb680bb4a1c033da83cf7a557c641bfefbaf0c2c6"
+        },
+        "artifacts/clued-validation/phase2-v027/candidate-identity.json": {
+          "git_blob_sha1": "95440b4feb0ac2630b0f0ee399115ff8dac9d422",
+          "bytes": 887,
+          "sha256": "b9378cc1c40fe196b2c2496464e7a19e0af783078c2f08ac35a5bc242735a9f9"
+        },
+        "artifacts/clued-validation/phase2-v027/candidate-source.json": {
+          "git_blob_sha1": "a2d46ea9c4c1651b3d12d4478a583cd26004143b",
+          "bytes": 1696,
+          "sha256": "b5eb6a0eee044cc2835f910dff49452583e360218cc2b629aa3a8c5745d4d3d6"
+        }
+      },
+      "ancestor_of_reviewed_naming_head": true
+    },
+    {
+      "commit": "c39cfd68c09a5e970a2abcdbcb50a089a27b5ba5",
+      "files": {
+        "scripts/phase2-v027-validate.py": {
+          "git_blob_sha1": "83b3346998a6a78171336607d6c8b298ed9afa4e",
+          "bytes": 20343,
+          "sha256": "e16cc9fa5fd2a54dc3922029851722936551a400979dc94dce691faa83bd7f4e"
+        },
+        "scripts/phase2-v027-negative-harness.py": {
+          "git_blob_sha1": "6b0ee1440f925098462cce2bd78bf69c32a74dbc",
+          "bytes": 18552,
+          "sha256": "46520afc2175c468bb15162c7ec2fb43d157ddcbb05481ea062f7a31083f6860"
+        },
+        ".github/workflows/phase2-v027-validation.yml": {
+          "git_blob_sha1": "9fcd0a6b9545d0ce3fce76a4c3ae77de4273b4d9",
+          "bytes": 9000,
+          "sha256": "51334a15770991d2cbf13cb906a592494a96c87e55a8b6cb37f0792a1168bd53"
+        },
+        "artifacts/clued-validation/phase2-v027/negative-test-control.json": {
+          "git_blob_sha1": "47d639c349ca63e8fc393420f3651492444f3ba8",
+          "bytes": 427,
+          "sha256": "1d7b4b3b49aaa86f8dcaf83eb680bb4a1c033da83cf7a557c641bfefbaf0c2c6"
+        },
+        "artifacts/clued-validation/phase2-v027/candidate-identity.json": {
+          "git_blob_sha1": "95440b4feb0ac2630b0f0ee399115ff8dac9d422",
+          "bytes": 887,
+          "sha256": "b9378cc1c40fe196b2c2496464e7a19e0af783078c2f08ac35a5bc242735a9f9"
+        },
+        "artifacts/clued-validation/phase2-v027/candidate-source.json": {
+          "git_blob_sha1": "a2d46ea9c4c1651b3d12d4478a583cd26004143b",
+          "bytes": 1696,
+          "sha256": "b5eb6a0eee044cc2835f910dff49452583e360218cc2b629aa3a8c5745d4d3d6"
+        }
+      },
+      "ancestor_of_reviewed_naming_head": true
+    }
+  ],
+  "within_six_reviewed_input_paths_only_control_differs": true
+}

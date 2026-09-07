@@ -1,0 +1,22 @@
+{
+  "id": "V025_EXACT_IMMEDIATE_ARCHITECTURE_PREDECESSOR",
+  "revision": "v0.2.5",
+  "sole_direct_predecessor": {
+    "axis": "architecture",
+    "version": "v0.2.4",
+    "filename": "Clued_Phase2_三项设计候选_完整审查包_v0.2.4_20260905.zip",
+    "bytes": 168491377,
+    "sha256": "4aae92c37813772e983a14537be52ca8b428af666e644b72d40084ccd592d68b",
+    "members": 440
+  },
+  "archive_path": "archives/Architecture_v024_IndependentReview.zip",
+  "nested_zip_member": "Clued_Phase2_v0.2.4_独立差分审查结果_v0.1_20260905/input/Clued_Phase2_三项设计候选_完整审查包_v0.2.4_20260905.zip",
+  "root_prefix": "Clued_Phase2_三项设计候选_v0.2.4_20260905/",
+  "predecessor_external_review": {
+    "path": "archives/Architecture_v024_IndependentReview.zip",
+    "bytes": 168664134,
+    "sha256": "d3a2761b416efbc44b2c3f001c19573556ad490aca76c93accc7f01ad6a05b2e"
+  },
+  "mapping_is_architecture_predecessor": false,
+  "earlier_ancestry_resolved_inside_original_archive": true
+}

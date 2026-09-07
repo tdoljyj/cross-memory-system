@@ -1,0 +1,438 @@
+{
+  "schema": "clued.phase2.acceptance-evidence-preservation/v1",
+  "record_purpose": "Technical Step 1/2 review and preservation; not an issued acceptance, freeze, release or canonical business mutation",
+  "created_at_utc": "2026-09-07T06:38:57.221414+00:00",
+  "authority_effect": "NONE",
+  "source_branch": "phase2-naming-surface-inventory",
+  "source_commit": "c39cfd68c09a5e970a2abcdbcb50a089a27b5ba5",
+  "predecessor_validation_commit": "59ed841b8264ea4e246d595bc425d44373cee615",
+  "candidate": {
+    "candidate": "Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip",
+    "bytes": 246612118,
+    "members": 960,
+    "file_members": 960,
+    "sha256": "6e51374a6caedb4f84d2b6bb9fe05cd695b25732833f9d0217c341f17e1c1649",
+    "root_prefix": "Clued_Phase2_三轨修订与补证_v0.2.7_20260906/"
+  },
+  "candidate_origin": {
+    "repository": "tdoljyj/cross-memory-system",
+    "release_tag": "phase2-v0271-candidate-20260906",
+    "asset_id": 547244810,
+    "expected_sha256": "6e51374a6caedb4f84d2b6bb9fe05cd695b25732833f9d0217c341f17e1c1649",
+    "actual_sha256_recomputed": true,
+    "expected_bytes": 246612118,
+    "download_resumed": true,
+    "original_candidate_modified": false
+  },
+  "storage_policy": "Private repository exact-byte supplemental copies; original package/receipts remain unchanged. Git commit binds this manifest without a circular self-hash.",
+  "path_base": "repository root",
+  "source_git_inputs": [
+    {
+      "path": "artifacts/clued-validation/structure-freeze-prep/naming/NamingSurfaceInventoryScope.json",
+      "commit": "c39cfd68c09a5e970a2abcdbcb50a089a27b5ba5",
+      "bytes": 5171,
+      "sha256": "e8209cd50d6e066bf0b64b93c7c634816cf381a289c3dcd7cc8dda9cbac43af0",
+      "url": "https://github.com/tdoljyj/cross-memory-system/blob/c39cfd68c09a5e970a2abcdbcb50a089a27b5ba5/artifacts/clued-validation/structure-freeze-prep/naming/NamingSurfaceInventoryScope.json"
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-v027/candidate-identity.json",
+      "commit": "c39cfd68c09a5e970a2abcdbcb50a089a27b5ba5",
+      "bytes": 887,
+      "sha256": "b9378cc1c40fe196b2c2496464e7a19e0af783078c2f08ac35a5bc242735a9f9",
+      "url": "https://github.com/tdoljyj/cross-memory-system/blob/c39cfd68c09a5e970a2abcdbcb50a089a27b5ba5/artifacts/clued-validation/phase2-v027/candidate-identity.json"
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-v027/candidate-source.json",
+      "commit": "c39cfd68c09a5e970a2abcdbcb50a089a27b5ba5",
+      "bytes": 1696,
+      "sha256": "b5eb6a0eee044cc2835f910dff49452583e360218cc2b629aa3a8c5745d4d3d6",
+      "url": "https://github.com/tdoljyj/cross-memory-system/blob/c39cfd68c09a5e970a2abcdbcb50a089a27b5ba5/artifacts/clued-validation/phase2-v027/candidate-source.json"
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-v027/closeout/ValidationLaneCloseoutIndex.json",
+      "commit": "c39cfd68c09a5e970a2abcdbcb50a089a27b5ba5",
+      "bytes": 8977,
+      "sha256": "bf1757370b67caa85ace45baa669eba2fde919d118c8eb34ef19242abdfe829c",
+      "url": "https://github.com/tdoljyj/cross-memory-system/blob/c39cfd68c09a5e970a2abcdbcb50a089a27b5ba5/artifacts/clued-validation/phase2-v027/closeout/ValidationLaneCloseoutIndex.json"
+    },
+    {
+      "path": "scripts/phase2-v027-validate.py",
+      "commit": "c39cfd68c09a5e970a2abcdbcb50a089a27b5ba5",
+      "bytes": 20343,
+      "sha256": "e16cc9fa5fd2a54dc3922029851722936551a400979dc94dce691faa83bd7f4e",
+      "url": "https://github.com/tdoljyj/cross-memory-system/blob/c39cfd68c09a5e970a2abcdbcb50a089a27b5ba5/scripts/phase2-v027-validate.py"
+    },
+    {
+      "path": "scripts/phase2-v027-negative-harness.py",
+      "commit": "c39cfd68c09a5e970a2abcdbcb50a089a27b5ba5",
+      "bytes": 18552,
+      "sha256": "46520afc2175c468bb15162c7ec2fb43d157ddcbb05481ea062f7a31083f6860",
+      "url": "https://github.com/tdoljyj/cross-memory-system/blob/c39cfd68c09a5e970a2abcdbcb50a089a27b5ba5/scripts/phase2-v027-negative-harness.py"
+    },
+    {
+      "path": ".github/workflows/phase2-v027-validation.yml",
+      "commit": "c39cfd68c09a5e970a2abcdbcb50a089a27b5ba5",
+      "bytes": 9000,
+      "sha256": "51334a15770991d2cbf13cb906a592494a96c87e55a8b6cb37f0792a1168bd53",
+      "url": "https://github.com/tdoljyj/cross-memory-system/blob/c39cfd68c09a5e970a2abcdbcb50a089a27b5ba5/.github/workflows/phase2-v027-validation.yml"
+    },
+    {
+      "path": ".github/workflows/phase2-naming-surface-inventory.yml",
+      "commit": "c39cfd68c09a5e970a2abcdbcb50a089a27b5ba5",
+      "bytes": 8502,
+      "sha256": "d5b96ae18f1aeca1f96cfc58052e4e65784c9e839bfdb42b7e2d664f4590134d",
+      "url": "https://github.com/tdoljyj/cross-memory-system/blob/c39cfd68c09a5e970a2abcdbcb50a089a27b5ba5/.github/workflows/phase2-naming-surface-inventory.yml"
+    }
+  ],
+  "files": [
+    {
+      "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/.gitattributes",
+      "bytes": 8,
+      "sha256": "705fd4d6451a31d36b3df7de96f83f30ac976c9b4a6d1e51671d8e2f33e2d0da"
+    },
+    {
+      "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/LocalCandidateGateReceipt.json",
+      "bytes": 4154,
+      "sha256": "1c3aabf7a7d70b184bab1a11dbb510404d46db475ee50bce45c4375b63dd1308"
+    },
+    {
+      "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/LocalRecheckBinding.json",
+      "bytes": 1603,
+      "sha256": "2eacc632baac8ab4412dd59271d6b03d12b9e7ea4818afd81ef0f6d69a3ffc24"
+    },
+    {
+      "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step1/34068788695/artifacts.json",
+      "bytes": 764,
+      "sha256": "e33a25acead60288fd4055e58c61a73de5edac597c673b1b8378c124830d7488"
+    },
+    {
+      "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step1/34068788695/CIGateReceipt.json",
+      "bytes": 1733,
+      "sha256": "ce7fa36658702e553b2f1c95c2362fe3e27002ff7cd6b89bf6362725813bd7fb"
+    },
+    {
+      "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step1/34068788695/jobs.json",
+      "bytes": 3209,
+      "sha256": "e787d49e01ca3d1becb86d205c3ea720fc72a80f788e69065fbc516e5568319b"
+    },
+    {
+      "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step1/34068788695/NegativeFixtureManifest.json",
+      "bytes": 2479,
+      "sha256": "6ac5d07d21a3e075dc098110f56932782eb67501d0b0cc50cb71ae85c9153548"
+    },
+    {
+      "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step1/34068788695/run.json",
+      "bytes": 399,
+      "sha256": "d1310a78c6df886c939876ad87e7855cf930f2eabd778baed790b0dae4d4715c"
+    },
+    {
+      "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step1/34068853770/artifacts.json",
+      "bytes": 764,
+      "sha256": "31a496b1b2dff00f13a2dc86f17fc65453e01d039b55f5da03d0739f0c4aa09a"
+    },
+    {
+      "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step1/34068853770/CIGateReceipt.json",
+      "bytes": 4222,
+      "sha256": "9752c47e8e09777ffd7e912d0c1b6b78b5571d7288ca1748ecd55f62dc07055c"
+    },
+    {
+      "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step1/34068853770/jobs.json",
+      "bytes": 3209,
+      "sha256": "2f9dc150eff639727e843d3c81f7024fafbb814baff53e75c5412cae0e1b3736"
+    },
+    {
+      "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step1/34068853770/NegativeFixtureManifest.json",
+      "bytes": 2484,
+      "sha256": "04033a7ffaff54e111db648a9882903f6805eb9588e933ad3b5c25df6f88b917"
+    },
+    {
+      "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step1/34068853770/run.json",
+      "bytes": 399,
+      "sha256": "ded62930c06df3a7d7e79c551f063776adcda5e1471b922e95a9b775f356cf96"
+    },
+    {
+      "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step1/34068945665/artifacts.json",
+      "bytes": 756,
+      "sha256": "4c2e5939860b21b4bb9570d8e04620903dc6f7ee7cd485966c17bf2e3f9e02db"
+    },
+    {
+      "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step1/34068945665/CIGateReceipt.json",
+      "bytes": 3553,
+      "sha256": "71f218467f8c05fcd3854c65188336a80762fbc82b482977f46889b62c4d907e"
+    },
+    {
+      "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step1/34068945665/jobs.json",
+      "bytes": 3209,
+      "sha256": "aead936c9fbd70d8a64c3c973879d2ab7e83c2113c80ff1b915ba2c33628ebc7"
+    },
+    {
+      "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step1/34068945665/NegativeFixtureManifest.json",
+      "bytes": 2641,
+      "sha256": "cdae07d40fc39d4ce67e4bcee06238ef6a1b3f62fb3f2edf9af5471a2757fafb"
+    },
+    {
+      "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step1/34068945665/run.json",
+      "bytes": 399,
+      "sha256": "4b10d3f518c20aee437646629e31323f274336cacdadbf1547019a3ab3b36d2f"
+    },
+    {
+      "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step1/34069016068/artifacts.json",
+      "bytes": 769,
+      "sha256": "2737805041b36f94db01000ee4ba94553e4d8d7c99472b0ec412355154c324ef"
+    },
+    {
+      "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step1/34069016068/CIGateReceipt.json",
+      "bytes": 3440,
+      "sha256": "0c909f66b9cf3c5a004801b02ecae12425a94cd2a8c6125433cea50daedf85fb"
+    },
+    {
+      "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step1/34069016068/jobs.json",
+      "bytes": 3209,
+      "sha256": "be35834fc8e8c33c6e04164992b75be1590c9391a545ff54445c404faf447b2b"
+    },
+    {
+      "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step1/34069016068/NegativeFixtureManifest.json",
+      "bytes": 2546,
+      "sha256": "bb648d0acf9881f2afa2bf7551cdcec8e5cf8a465fddf72d93f16a4c1ceda13f"
+    },
+    {
+      "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step1/34069016068/run.json",
+      "bytes": 399,
+      "sha256": "b05a8300969462671d5d517d65ba08d3b3c7a57b57d982637e7127333448db55"
+    },
+    {
+      "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step1/34069116734/artifacts.json",
+      "bytes": 747,
+      "sha256": "2ed1c827ea1a642aef40c6a4aefcac77ab9bc598c66e292a99e510c5952d8df9"
+    },
+    {
+      "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step1/34069116734/CIGateReceipt.json",
+      "bytes": 4213,
+      "sha256": "0a6bf0df65e722f2bb48fc6fd93767ec5ffcd8bb207b4189d4ff7d0863738091"
+    },
+    {
+      "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step1/34069116734/jobs.json",
+      "bytes": 3209,
+      "sha256": "81b3d980911f08e70c054379422dd0466e01b549b1ee1056ff32b10982353abc"
+    },
+    {
+      "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step1/34069116734/run.json",
+      "bytes": 399,
+      "sha256": "dfcb635c7847450b70f72b34979401163020b89ce8b0bec0b2d9945dd6c77d18"
+    },
+    {
+      "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step1/34069453639/artifacts.json",
+      "bytes": 747,
+      "sha256": "89fabe64af52729a41d96468985c0375833bb0d1bd8bd6bf5aead2a3dcc695ee"
+    },
+    {
+      "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step1/34069453639/CIGateReceipt.json",
+      "bytes": 4213,
+      "sha256": "c1e5e7260ad601877de9d05a1d32aaca37b64f0f6297f57746013433e3de8ca2"
+    },
+    {
+      "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step1/34069453639/jobs.json",
+      "bytes": 3209,
+      "sha256": "8392095acc2cb296209ab1627268b6248b21b82762131e36b21f63e5d00d36ba"
+    },
+    {
+      "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step1/34069453639/run.json",
+      "bytes": 399,
+      "sha256": "bf569586e7383a1134dc545ae3183da897fb36e487d498198c2ae0e312ca7e47"
+    },
+    {
+      "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step1/9999786548.zip",
+      "bytes": 2076,
+      "sha256": "39564eb18c06a9b04b65039a4726a8f8b561f3380faeb5b27acf2814624ced77"
+    },
+    {
+      "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step1/9999806197.zip",
+      "bytes": 2967,
+      "sha256": "c4583019a5802c385dc81a48760fe452ef5c0bbfecfcfdb842507a0a624b8354"
+    },
+    {
+      "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step1/9999831842.zip",
+      "bytes": 2756,
+      "sha256": "1cf6cd5ecbba62400c9e50d1b1a79edd0c8e972284159da665fb7af2b98f9bc3"
+    },
+    {
+      "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step1/9999852995.zip",
+      "bytes": 2639,
+      "sha256": "898f26e61266414ce9597a804b0eb9beb572e411ee290c403a98700b73666eb9"
+    },
+    {
+      "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step1/9999876944.zip",
+      "bytes": 1660,
+      "sha256": "52a8288c0cfb4ce679020dbae00275836d862ef5a9a15e0dbda7df5b5a47050c"
+    },
+    {
+      "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step1/code-bindings.json",
+      "bytes": 12337,
+      "sha256": "547e4accf96f979feb8b3c4bf56c9a344496b1394a932a1ded33f606ae971901"
+    },
+    {
+      "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step1/findings.md",
+      "bytes": 10235,
+      "sha256": "ff5019de5d861659903433775a6471128c904d4df53d4e08a97d63b99c2e488e"
+    },
+    {
+      "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step1/validation-branch-runs.json",
+      "bytes": 2883,
+      "sha256": "118decb0caec79c6603bfd7520c5746a51f6a9ad15ae44ccbabc7e93c4a8cddb"
+    },
+    {
+      "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step1/verified-runs.json",
+      "bytes": 5570,
+      "sha256": "2d96474ba3bfaa5a72c5d6325b93ca4a55ac9d6d602f0f0917073da15949c8bf"
+    },
+    {
+      "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step2/findings.md",
+      "bytes": 24222,
+      "sha256": "384fd333fe6f0c6118d551b5c51d10a18ddfe2658736d756d50de03ff7b7abfb"
+    },
+    {
+      "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step2/package-inputs/00_README.md",
+      "bytes": 3151,
+      "sha256": "bc499f1ffc2d0a6ec576fd2935379163d74625522ce8dfd0cef38c0608be8b1b"
+    },
+    {
+      "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step2/package-inputs/Clued_Phase2_结构准备设计_候选_v0.1.4_20260906.md",
+      "bytes": 24745,
+      "sha256": "ae858e6e25431f6464a9d5b1227bc439e9f2db792de33d4f9ed659a3270ad3a0"
+    },
+    {
+      "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step2/package-inputs/data/ArchitectureAcceptanceEvidenceMatrix.json",
+      "bytes": 40480,
+      "sha256": "f2e5e19cd686269fd5e8d0c7c252ffa153a27a8df8393cd54b76bf5c76c79053"
+    },
+    {
+      "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step2/package-inputs/data/AuthorizationRequests_NOT_GRANTED.json",
+      "bytes": 8438,
+      "sha256": "f0f736a32fcae273504db1286e7c9b74f087ba42c8d09d53d6cdb9ffb9ea235b"
+    },
+    {
+      "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step2/package-inputs/data/CurrentArtifactRegistry.json",
+      "bytes": 15392,
+      "sha256": "1dafc859c9a0e51cf13e193e0226718e030bd0193ebeebb3a17288c78c6a1468"
+    },
+    {
+      "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step2/package-inputs/data/MappingAcceptanceIntake.json",
+      "bytes": 2539,
+      "sha256": "f5a9158048f837eaa078d095843887747e1a503f01331aaf6eb5a5c57d0a8c5b"
+    },
+    {
+      "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step2/package-inputs/data/PredecessorPackageBinding.json",
+      "bytes": 1001,
+      "sha256": "34cb8b8dd8a71ef2d34cc6529eaf2150a111fb5c8610b93540984f0601868adf"
+    },
+    {
+      "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step2/package-inputs/data/PriorFindingDisposition.json",
+      "bytes": 1493,
+      "sha256": "7572183dd8a9c1d7acde629dc7cce7c7a9d62e341c44288945c08b5398bbcb5b"
+    },
+    {
+      "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step2/package-inputs/data/RepositoryEvidenceObservation.json",
+      "bytes": 7302,
+      "sha256": "e64b838f04ec083d34d3644b9222f4aa873cdcb535960eb4a5b1588d12963af0"
+    },
+    {
+      "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step2/package-inputs/data/ReviewSubjectContract.json",
+      "bytes": 1383,
+      "sha256": "c2cd13dbe8fd046aa8f0344778141cb9b115fae0048a8c673b60bd25b03498d3"
+    },
+    {
+      "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step2/package-inputs/data/SourceLock.json",
+      "bytes": 1267,
+      "sha256": "469c518bb9fa08f830fb419724098c01515192b1d270995c579cacea67d51f18"
+    },
+    {
+      "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step2/package-inputs/data/SourceProvenance.json",
+      "bytes": 482017,
+      "sha256": "1d91a9a6d6033ed1bea84ba31e3fe74ab1c2620a2d832289eb4a009fae949114"
+    },
+    {
+      "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step2/package-inputs/data/StructureCandidateMap.json",
+      "bytes": 33372,
+      "sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965"
+    },
+    {
+      "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step2/package-inputs/data/StructureFreezeEvidenceMatrix.json",
+      "bytes": 4723,
+      "sha256": "396dc8a6f4118d224cff1765b42d8a395b4309e6ecc5889c6ab7a0e04cdbafd8"
+    },
+    {
+      "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step2/package-inputs/data/ThreeTrackChangeRegister.json",
+      "bytes": 1500,
+      "sha256": "0b957aef64f31197219766264678379acc0fdd0b0eb9e4a9745525c162b7dc6f"
+    },
+    {
+      "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step2/package-inputs/details/原28项结构冻结条件.md",
+      "bytes": 2197,
+      "sha256": "ba555e31043b0c87011b7901834810dd9283358f331b2b46706ebbe94513379d"
+    },
+    {
+      "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step2/package-inputs/review/DecisionTemplates_NOT_ISSUED.json",
+      "bytes": 1149,
+      "sha256": "24710bcfe94773a6648491356437ff60434e833f4d4db5752c443abcbfd0a295"
+    },
+    {
+      "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step2/package-inputs/review/FreshContextReviewHandoff_v025.md",
+      "bytes": 2999,
+      "sha256": "3c8e96de70e5cbf5d5137e2bd1d95a7206ee3e4fcaa0108b0e4a002186917b78"
+    },
+    {
+      "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step2/package-inputs/SOURCE_MAP.json",
+      "bytes": 7017,
+      "sha256": "1379f74436b5e7821b0990dc8d69865f896d12fa25aad1cebe6fd211e8d4c81e"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/.gitattributes",
+      "bytes": 8,
+      "sha256": "705fd4d6451a31d36b3df7de96f83f30ac976c9b4a6d1e51671d8e2f33e2d0da"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/AcceptanceAndInvalidation.md",
+      "bytes": 20571,
+      "sha256": "f2aed48ed74e688bfe280d3fa896243cc7907905fafcc467706a276367472f27"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/FixedExecutionBaseline_20260907.md",
+      "bytes": 30836,
+      "sha256": "f465bcb77aced171b4f241da7a23c1e02133716700227caaabb7954be39899ad"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/Step01-Step02-EvidenceReview.md",
+      "bytes": 17727,
+      "sha256": "8ecc17639985e449b89dc75ce54df531d4c1ba709cd050b56feed215721ec72d"
+    },
+    {
+      "path": "docs/README.md",
+      "bytes": 1399,
+      "sha256": "e9160157c6ad1c4cee6b961ff1c4a8787d02c403154f2de2e894b9798b5e4219"
+    }
+  ],
+  "verification": {
+    "matrix_steps": 21,
+    "invalidation_rules": 8,
+    "step1_checks": 6,
+    "step2_checks": 8,
+    "original_artifact_zips_verified": 5,
+    "original_receipts_verified": 5,
+    "negative_fixture_manifests_verified": 4,
+    "package_governance_originals_verified": 18,
+    "local_candidate_gates": {
+      "candidate_identity": "PASS",
+      "manifest_integrity": "PASS",
+      "provenance": "PASS",
+      "product_increment_input": "PASS"
+    },
+    "authored_document_links_checked": true,
+    "credential_pattern_scan": "PASS"
+  },
+  "limitations": [
+    "SHA256 is content identity, not issuer authority.",
+    "GitHub metadata snapshots are semantic API outputs, not HTTP wire captures.",
+    "Old Library copies and old v0.2.7 versus repaired package payload diff were not independently rechecked.",
+    "Step 2 readiness covers preparation for read-only inventory; future acceptance, freeze and runtime evidence remain pending."
+  ]
+}

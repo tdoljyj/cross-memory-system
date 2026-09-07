@@ -1,0 +1,58 @@
+{
+  "schema": "clued.phase2-v027-negative-fixture-manifest/v1",
+  "generated_at_utc": "2026-09-07T00:07:38.980969Z",
+  "test_fixture": true,
+  "authority_effect": "NONE",
+  "not_a_release_candidate": true,
+  "negative_case": "candidate_identity",
+  "expected_gate_statuses": {
+    "candidate_identity": "FAIL",
+    "manifest_integrity": "SKIPPED",
+    "provenance": "SKIPPED",
+    "product_increment_input": "SKIPPED"
+  },
+  "repository": "tdoljyj/cross-memory-system",
+  "commit_sha": "ca3292bb58dce28115636a31f1c09301b9bd1b30",
+  "workflow": "Phase2 v0.2.7 Validation",
+  "workflow_ref": "tdoljyj/cross-memory-system/.github/workflows/phase2-v027-validation.yml@refs/heads/phase2-v027-validation",
+  "run_id": "34068788695",
+  "run_attempt": "1",
+  "implementation": {
+    "harness_path": "/home/runner/work/cross-memory-system/cross-memory-system/scripts/phase2-v027-negative-harness.py",
+    "harness_sha256": "46520afc2175c468bb15162c7ec2fb43d157ddcbb05481ea062f7a31083f6860",
+    "validator_path": "scripts/phase2-v027-validate.py",
+    "validator_sha256": "e16cc9fa5fd2a54dc3922029851722936551a400979dc94dce691faa83bd7f4e"
+  },
+  "base_candidate": {
+    "filename": "Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip",
+    "bytes": 246612118,
+    "sha256_before": "6e51374a6caedb4f84d2b6bb9fe05cd695b25732833f9d0217c341f17e1c1649",
+    "bytes_after": 246612118,
+    "sha256_after": "6e51374a6caedb4f84d2b6bb9fe05cd695b25732833f9d0217c341f17e1c1649",
+    "unchanged": true
+  },
+  "expected_behavior_confirmed": true,
+  "mutation": {
+    "case": "candidate_identity",
+    "integrity_metadata_rebaselined": false,
+    "target": "outer_candidate_bytes",
+    "description": "append deterministic bytes while retaining the original identity record"
+  },
+  "mutated_fixture": {
+    "filename": "Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip",
+    "bytes": 246612142,
+    "members": 960,
+    "sha256": "aee31407289b281bb605d59921b93b530a3034b62283f60054fdf6a9e81a8aae",
+    "identity_sha256": "b9378cc1c40fe196b2c2496464e7a19e0af783078c2f08ac35a5bc242735a9f9",
+    "retained_after_run": false
+  },
+  "validator_exit_code": 1,
+  "actual_gate_statuses": {
+    "candidate_identity": "FAIL",
+    "manifest_integrity": "SKIPPED",
+    "provenance": "SKIPPED",
+    "product_increment_input": "SKIPPED"
+  },
+  "completed_at_utc": "2026-09-07T00:07:39.680257Z",
+  "intentional_job_exit_code": 1
+}

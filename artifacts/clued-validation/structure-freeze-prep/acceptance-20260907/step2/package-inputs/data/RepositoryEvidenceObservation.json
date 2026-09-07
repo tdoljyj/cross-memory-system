@@ -1,0 +1,180 @@
+{
+  "id": "V025_READ_ONLY_REPOSITORY_EVIDENCE_OBSERVATION",
+  "observed_on": "2026-09-06",
+  "timezone": "Asia/Singapore",
+  "repository": "tdoljyj/cross-memory-system",
+  "commit": "507c69b8f0638ff9202a4eeb140c606f9089e821",
+  "tree": "354e011fc68f3205e6a49708fd1e5f06037d025d",
+  "evidence_format": "AUTHOR_SAFE_FIELD_TRANSCRIPTION_OF_ACTUAL_CONNECTOR_RETURNS_NOT_RAW_API_BYTES",
+  "source_session": "THIS_V025_AUTHORING_SESSION",
+  "scope": "SELECTED_ENGINEERING_METADATA_AND_TWO_HUMAN_ENTRY_DOCUMENTS_NOT_USER_SNAPSHOT",
+  "reads": [
+    {
+      "id": "REPO25-01",
+      "endpoint": "https://api.github.com/repos/tdoljyj/cross-memory-system/branches/main",
+      "tool_result_ref": "turn4file0",
+      "observed": {
+        "sha": "507c69b8f0638ff9202a4eeb140c606f9089e821",
+        "tree": "354e011fc68f3205e6a49708fd1e5f06037d025d",
+        "protected": false,
+        "protection_enabled": false,
+        "required_status_check_enforcement": "off",
+        "required_contexts": []
+      },
+      "limit": "仅证明该接口返回；不证明等价外部门禁不存在。"
+    },
+    {
+      "id": "REPO25-02",
+      "endpoint": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/trees/354e011fc68f3205e6a49708fd1e5f06037d025d",
+      "tool_result_ref": "turn5file0",
+      "observed": {
+        "recursive": false,
+        "selected_blobs": {
+          "README.md": {
+            "git_blob_sha": "7e335b1200bfd8ac4ae97ec07c6e32d85a00754e",
+            "bytes": 2504
+          },
+          "AGENTS.md": {
+            "git_blob_sha": "7007225f55236d6132ae6ecb73f171102156d8a7",
+            "bytes": 9637
+          }
+        }
+      },
+      "limit": "根目录元数据，不是递归文件/调用图库存。"
+    },
+    {
+      "id": "REPO25-03",
+      "endpoint": "https://api.github.com/repos/tdoljyj/cross-memory-system/contents/.github/workflows?ref=507c69b8f0638ff9202a4eeb140c606f9089e821",
+      "tool_result_ref": "turn6file0",
+      "observed": {
+        "names": [
+          "clued-g4-database.yml",
+          "gitleaks.yml",
+          "memory-publication-gate.yml",
+          "public-mcp-behavior.yml",
+          "public-mcp-gate-receipt.yml",
+          "public-mcp-protocol.yml",
+          "trivy.yml"
+        ]
+      },
+      "limit": "仅目录和摘要；本轮只取memory-publication工作流正文，不声称重读全部7个工作流。"
+    },
+    {
+      "id": "REPO25-04",
+      "endpoint": "https://api.github.com/repos/tdoljyj/cross-memory-system/commits/507c69b8f0638ff9202a4eeb140c606f9089e821/check-runs?per_page=100",
+      "tool_result_ref": "turn7file0",
+      "observed": {
+        "total_count": 4,
+        "check_runs": [
+          {
+            "name": "gitleaks",
+            "id": 101264816700,
+            "run_id": 33950711481,
+            "head_sha": "507c69b8f0638ff9202a4eeb140c606f9089e821",
+            "conclusion": "success"
+          },
+          {
+            "name": "trivy",
+            "id": 101264816634,
+            "run_id": 33950711478,
+            "head_sha": "507c69b8f0638ff9202a4eeb140c606f9089e821",
+            "conclusion": "success"
+          },
+          {
+            "name": "public-mcp-behavior",
+            "id": 101264816598,
+            "run_id": 33950711487,
+            "head_sha": "507c69b8f0638ff9202a4eeb140c606f9089e821",
+            "conclusion": "success"
+          },
+          {
+            "name": "public-mcp-protocol",
+            "id": 101264816585,
+            "run_id": 33950711480,
+            "head_sha": "507c69b8f0638ff9202a4eeb140c606f9089e821",
+            "conclusion": "success"
+          }
+        ]
+      },
+      "limit": "这些检查于9月5日执行，本轮读取不是新执行；成功名/结论不能证明F009目标语义、制品或不可绕过性。"
+    },
+    {
+      "id": "REPO25-05",
+      "endpoint": "https://api.github.com/repos/tdoljyj/cross-memory-system/rulesets?includes_parents=true&per_page=100",
+      "observed": {
+        "http_status": 403,
+        "visibility": "UNAVAILABLE",
+        "provider_message_category": "FEATURE_OR_PLAN_RESTRICTION"
+      },
+      "limit": "不可见不是不存在；不改变套餐或公开仓库。"
+    },
+    {
+      "id": "REPO25-06",
+      "endpoint": "https://raw.githubusercontent.com/tdoljyj/cross-memory-system/507c69b8f0638ff9202a4eeb140c606f9089e821/.github/workflows/memory-publication-gate.yml",
+      "tool_result_ref": "turn8file0",
+      "observed": {
+        "workflow_name": "memory-publication-gate",
+        "event": "pull_request_target",
+        "paths": [
+          "memory/**",
+          "artifacts/clued-two-level-snapshots/**",
+          "scripts/verify-memory-publication.mjs",
+          ".github/workflows/memory-publication-gate.yml"
+        ],
+        "trusted_verifier": "trusted/scripts/verify-memory-publication.mjs",
+        "source_revision": "pull_request.base.sha",
+        "candidate_revision": "pull_request.head.sha"
+      },
+      "analysis": "所见workflow用于snapshot publication；路径过滤不直接覆盖README/AGENTS-only变更。未读verify脚本内部，不认定其覆盖四方接受入口一致性。"
+    },
+    {
+      "id": "REPO25-07",
+      "endpoint": "https://raw.githubusercontent.com/tdoljyj/cross-memory-system/507c69b8f0638ff9202a4eeb140c606f9089e821/README.md",
+      "tool_result_ref": "turn9file0",
+      "observed": {
+        "generated_from_metadata": false,
+        "source_digest_metadata": false,
+        "document_role": "v1.6 snapshot/Canonical human entry"
+      },
+      "limit": "本文声明的snapshot现状没有在本轮取私有payload复验。"
+    },
+    {
+      "id": "REPO25-08",
+      "endpoint": "https://raw.githubusercontent.com/tdoljyj/cross-memory-system/507c69b8f0638ff9202a4eeb140c606f9089e821/AGENTS.md",
+      "tool_result_ref": "turn10file0",
+      "observed": {
+        "generated_from_metadata": false,
+        "source_digest_metadata": false,
+        "root_default_access": "NONE",
+        "status_ready_describes": "snapshot eligibility not generated document status"
+      },
+      "limit": "只保留工程路由特征；账户/owner/个人载荷及下载令牌不写入新增观察文件。此读取不是历史泄漏审查。"
+    },
+    {
+      "id": "REPO25-09",
+      "endpoint": "https://api.github.com/repos/tdoljyj/cross-memory-system/actions/runs/33950711487/artifacts?per_page=100",
+      "tool_result_ref": "turn11file0",
+      "observed": {
+        "total_count": 0,
+        "artifacts": []
+      },
+      "limit": "仅此selected run在本次读取时无可列举artifact；不推断全仓历史均无证据。"
+    },
+    {
+      "id": "REPO25-10",
+      "endpoint": "https://api.github.com/repos/tdoljyj/cross-memory-system/actions/runs/33950711480/artifacts?per_page=100",
+      "tool_result_ref": "turn12file0",
+      "observed": {
+        "total_count": 0,
+        "artifacts": []
+      },
+      "limit": "仅此selected run；未下载原始日志或二进制CI制品。"
+    }
+  ],
+  "new_remote_runs": 0,
+  "workflow_dispatches": 0,
+  "repository_writes": 0,
+  "private_snapshot_or_historical_payload_reads": 0,
+  "repository_evidence_allows_acceptance": false,
+  "current_boundary": "截至本次只读观察的所选Commit；后续变化需重新核对，不产生持续有效current保证。"
+}

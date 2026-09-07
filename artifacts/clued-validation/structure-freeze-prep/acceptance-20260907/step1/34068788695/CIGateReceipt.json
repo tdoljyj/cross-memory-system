@@ -1,0 +1,42 @@
+{
+  "schema": "clued.phase2-v027-ci-gate-receipt/v1",
+  "generated_at_utc": "2026-09-07T00:07:39.390353Z",
+  "repository": "tdoljyj/cross-memory-system",
+  "commit_sha": "ca3292bb58dce28115636a31f1c09301b9bd1b30",
+  "workflow": "Phase2 v0.2.7 Validation",
+  "workflow_ref": "tdoljyj/cross-memory-system/.github/workflows/phase2-v027-validation.yml@refs/heads/phase2-v027-validation",
+  "run_id": "34068788695",
+  "run_attempt": "1",
+  "candidate_path": "/home/runner/work/_temp/phase2-v027-negative-fixture/Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip",
+  "identity_path": "/home/runner/work/_temp/phase2-v027-negative-fixture/candidate-identity.negative.json",
+  "gates": {
+    "candidate_identity": {
+      "gate": "GATE-01 Candidate Identity",
+      "status": "FAIL",
+      "started_at_utc": "2026-09-07T00:07:39.390688Z",
+      "completed_at_utc": "2026-09-07T00:07:39.390803Z",
+      "error_type": "VError",
+      "error": "candidate bytes mismatch actual=246612142 expected=246612118"
+    },
+    "manifest_integrity": {
+      "gate": "GATE-02 Manifest Integrity",
+      "status": "SKIPPED",
+      "reason": "candidate_identity_failed",
+      "started_at_utc": "2026-09-07T00:07:39.391063Z"
+    },
+    "provenance": {
+      "gate": "GATE-03 Provenance",
+      "status": "SKIPPED",
+      "reason": "candidate_identity_failed",
+      "started_at_utc": "2026-09-07T00:07:39.501677Z"
+    },
+    "product_increment_input": {
+      "gate": "GATE-04 ProductIncrementInput",
+      "status": "SKIPPED",
+      "reason": "candidate_identity_failed",
+      "started_at_utc": "2026-09-07T00:07:39.515227Z"
+    }
+  },
+  "overall": "FAIL",
+  "completed_at_utc": "2026-09-07T00:07:39.517691Z"
+}

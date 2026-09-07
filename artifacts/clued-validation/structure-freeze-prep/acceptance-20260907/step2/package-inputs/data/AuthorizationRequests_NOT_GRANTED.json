@@ -1,0 +1,248 @@
+{
+  "id": "V025_ACTIONABLE_EVIDENCE_AND_AUTHORIZATION_REQUESTS",
+  "state": "DRAFT_NOT_GRANTED",
+  "requests": [
+    {
+      "request_id": "AREQ-009",
+      "condition_ids": [
+        "F-MAJ-009/C1",
+        "F-MAJ-009/C2",
+        "F-MAJ-009/C3"
+      ],
+      "requested_authority_role": "Repository / CI / Authority Owner",
+      "proposed_action": "在隔离分支/审查工作区实现accepted-manifest入口生成和覆盖；任何repo写/CI dispatch之前需精确动作授权。",
+      "required_fields": [
+        "exact_commit_tree",
+        "accepted_manifest_ref",
+        "generator_revision",
+        "all_human_entry_inventory",
+        "ci_workflow_job_refs",
+        "negative_fixture_results",
+        "artifact_digest_and_retention",
+        "required_check_or_equivalent_gate",
+        "allowed_write_set",
+        "issuer_authority",
+        "scope_and_expiry",
+        "stop_and_rollback"
+      ],
+      "bindings": {
+        "exact_commit_tree": null,
+        "accepted_manifest_ref": null,
+        "generator_revision": null,
+        "all_human_entry_inventory": null,
+        "ci_workflow_job_refs": null,
+        "negative_fixture_results": null,
+        "artifact_digest_and_retention": null,
+        "required_check_or_equivalent_gate": null,
+        "allowed_write_set": null,
+        "issuer_authority": null,
+        "scope_and_expiry": null,
+        "stop_and_rollback": null
+      },
+      "stop_rule": "当前只有离线候选样例及所选只读证据，不具备真实强制性。",
+      "state": "NOT_GRANTED",
+      "execution_authorization_ref": null,
+      "human_approval": null,
+      "signature": null
+    },
+    {
+      "request_id": "AREQ-014",
+      "condition_ids": [
+        "F-MAJ-014/C4"
+      ],
+      "requested_authority_role": "Data Rights Holder / Privacy Reviewer",
+      "proposed_action": "对获准历史范围作access/leakage审查；授权前不读正文。",
+      "required_fields": [
+        "data_rights_holder",
+        "authorization_or_lease_ref",
+        "tenant_scope",
+        "time_window",
+        "object_selectors",
+        "allowed_fields",
+        "whether_body_read_allowed",
+        "masking_policy",
+        "retention_and_deletion",
+        "reviewer_scope",
+        "evidence_sink",
+        "expiry_and_revocation"
+      ],
+      "bindings": {
+        "data_rights_holder": null,
+        "authorization_or_lease_ref": null,
+        "tenant_scope": null,
+        "time_window": null,
+        "object_selectors": null,
+        "allowed_fields": null,
+        "whether_body_read_allowed": null,
+        "masking_policy": null,
+        "retention_and_deletion": null,
+        "reviewer_scope": null,
+        "evidence_sink": null,
+        "expiry_and_revocation": null
+      },
+      "stop_rule": "先目录/元数据、再必要最小正文；未知范围默认拒绝。",
+      "state": "NOT_GRANTED",
+      "execution_authorization_ref": null,
+      "human_approval": null,
+      "signature": null
+    },
+    {
+      "request_id": "AREQ-006-018",
+      "condition_ids": [
+        "F-MAJ-006/C1",
+        "F-MAJ-018/C1"
+      ],
+      "requested_authority_role": "Program Owner / Resource and Budget Authority",
+      "proposed_action": "确认核心/使能容量与原预登记指标，签发精确关键路径决定；不是立即运行授权。",
+      "required_fields": [
+        "program_owner",
+        "owner_authority_or_delegation",
+        "core_owner",
+        "enabling_owner_if_used",
+        "actual_capacity",
+        "scope",
+        "dataset_and_gold_binding",
+        "tokenizer_hardware",
+        "budget_amount_currency",
+        "request_and_token_caps",
+        "wallclock_and_wait_limits",
+        "storage_bandwidth_caps",
+        "stop_restart_policy",
+        "evidence_sink",
+        "validity"
+      ],
+      "bindings": {
+        "program_owner": null,
+        "owner_authority_or_delegation": null,
+        "core_owner": null,
+        "enabling_owner_if_used": null,
+        "actual_capacity": null,
+        "scope": null,
+        "dataset_and_gold_binding": null,
+        "tokenizer_hardware": null,
+        "budget_amount_currency": null,
+        "request_and_token_caps": null,
+        "wallclock_and_wait_limits": null,
+        "storage_bandwidth_caps": null,
+        "stop_restart_policy": null,
+        "evidence_sink": null,
+        "validity": null
+      },
+      "stop_rule": "USD5/WIP2及所有原上限是待审提案，不能替Owner填批准。",
+      "state": "NOT_GRANTED",
+      "execution_authorization_ref": null,
+      "human_approval": null,
+      "signature": null
+    },
+    {
+      "request_id": "AREQ-TYPED-PARENTS",
+      "condition_ids": [
+        "F-MAJ-007/C3"
+      ],
+      "requested_authority_role": "Architecture / Model Authority",
+      "proposed_action": "绑定两个不同类型的真实接受对象与兼容结果。",
+      "required_fields": [
+        "clued_architecture_constitution_ref",
+        "model_program_parent_architecture_ref",
+        "each_exact_digest_and_acceptance_scope",
+        "compatibility_assessment",
+        "qualification_evidence_if_required",
+        "revocation_dependencies"
+      ],
+      "bindings": {
+        "clued_architecture_constitution_ref": null,
+        "model_program_parent_architecture_ref": null,
+        "each_exact_digest_and_acceptance_scope": null,
+        "compatibility_assessment": null,
+        "qualification_evidence_if_required": null,
+        "revocation_dependencies": null
+      },
+      "stop_rule": "模型v0.8.1不改，设计组合不冒充正式接受或运行资格。",
+      "state": "NOT_GRANTED",
+      "execution_authorization_ref": null,
+      "human_approval": null,
+      "signature": null
+    },
+    {
+      "request_id": "AREQ-TYPED-CONSUMERS",
+      "condition_ids": [
+        "F-MAJ-010/C3",
+        "F-MAJ-016/C1"
+      ],
+      "requested_authority_role": "Contract / Runtime / Commerce Owner",
+      "proposed_action": "取得实际typed消费者与调用路径、负例证据和正式接受。",
+      "required_fields": [
+        "consumer_inventory",
+        "code_commit_tree",
+        "domain_id",
+        "program_id",
+        "stage_id",
+        "artifact_release_offer_entitlement_types",
+        "request_and_receipt_digest",
+        "rejection_path",
+        "runtime_result_and_raw_evidence",
+        "owner_and_scope",
+        "accepted_contract_ref"
+      ],
+      "bindings": {
+        "consumer_inventory": null,
+        "code_commit_tree": null,
+        "domain_id": null,
+        "program_id": null,
+        "stage_id": null,
+        "artifact_release_offer_entitlement_types": null,
+        "request_and_receipt_digest": null,
+        "rejection_path": null,
+        "runtime_result_and_raw_evidence": null,
+        "owner_and_scope": null,
+        "accepted_contract_ref": null
+      },
+      "stop_rule": "文档字段列表不等于实际消费者/运行接线。",
+      "state": "NOT_GRANTED",
+      "execution_authorization_ref": null,
+      "human_approval": null,
+      "signature": null
+    },
+    {
+      "request_id": "AREQ-STAGE-DISPOSITION",
+      "condition_ids": [
+        "F-MAJ-007/C2",
+        "F-MAJ-017/C3",
+        "F-MAJ-018/C3",
+        "F-MAJ-018/C4"
+      ],
+      "requested_authority_role": "Authorized Acceptance / Stage Owner",
+      "proposed_action": "逐条选择履行或合法阶段处置；无已签处置。",
+      "required_fields": [
+        "condition_id_and_original_text",
+        "exact_candidate_digest",
+        "issuer_identity_and_authority",
+        "evidence_basis",
+        "allowed_and_prohibited_scope",
+        "remaining_obligation",
+        "responsible_owner",
+        "nonbypassable_future_gate",
+        "expires_at",
+        "revocation_ref"
+      ],
+      "bindings": {
+        "condition_id_and_original_text": null,
+        "exact_candidate_digest": null,
+        "issuer_identity_and_authority": null,
+        "evidence_basis": null,
+        "allowed_and_prohibited_scope": null,
+        "remaining_obligation": null,
+        "responsible_owner": null,
+        "nonbypassable_future_gate": null,
+        "expires_at": null,
+        "revocation_ref": null
+      },
+      "stop_rule": "不可将四项未来义务自动N/A，不由作者代签。",
+      "state": "NOT_GRANTED",
+      "execution_authorization_ref": null,
+      "human_approval": null,
+      "signature": null
+    }
+  ],
+  "request_is_approval": false
+}

@@ -1,0 +1,84 @@
+{
+  "schema": "clued.phase2-v027-ci-gate-receipt/v1",
+  "generated_at_utc": "2026-09-07T00:11:58.759762Z",
+  "repository": "tdoljyj/cross-memory-system",
+  "commit_sha": "90d1e9fc72b39f918c536d5a375d7096af439668",
+  "workflow": "Phase2 v0.2.7 Validation",
+  "workflow_ref": "tdoljyj/cross-memory-system/.github/workflows/phase2-v027-validation.yml@refs/heads/phase2-v027-validation",
+  "run_id": "34069016068",
+  "run_attempt": "1",
+  "candidate_path": "/home/runner/work/_temp/phase2-v027-negative-fixture/Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip",
+  "identity_path": "/home/runner/work/_temp/phase2-v027-negative-fixture/candidate-identity.negative.json",
+  "gates": {
+    "candidate_identity": {
+      "gate": "GATE-01 Candidate Identity",
+      "status": "PASS",
+      "started_at_utc": "2026-09-07T00:11:58.760058Z",
+      "completed_at_utc": "2026-09-07T00:11:59.308291Z",
+      "details": {
+        "candidate": "Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip",
+        "bytes": 246727766,
+        "members": 960,
+        "file_members": 960,
+        "sha256": "963510edbb1124343896ce61ed47364006fb1ac49e74b73d3d6c6975683007b6",
+        "root_prefix": "Clued_Phase2_三轨修订与补证_v0.2.7_20260906/"
+      }
+    },
+    "manifest_integrity": {
+      "gate": "GATE-02 Manifest Integrity",
+      "status": "PASS",
+      "started_at_utc": "2026-09-07T00:11:59.308642Z",
+      "completed_at_utc": "2026-09-07T00:12:00.422209Z",
+      "details": {
+        "manifest_entries": 958,
+        "actual_payload_members": 958,
+        "sha256sum_entries": 959,
+        "coverage": "EXACT"
+      }
+    },
+    "provenance": {
+      "gate": "GATE-03 Provenance",
+      "status": "PASS",
+      "started_at_utc": "2026-09-07T00:12:00.422554Z",
+      "completed_at_utc": "2026-09-07T00:12:03.485781Z",
+      "details": {
+        "archive_bindings_verified": 2,
+        "source_copies_verified_against_package_and_origin": 744,
+        "direct_predecessor": {
+          "bytes": 168491377,
+          "members": 440,
+          "sha256": "4aae92c37813772e983a14537be52ca8b428af666e644b72d40084ccd592d68b"
+        },
+        "mapping_design_input": {
+          "bytes": 68888178,
+          "members": 257,
+          "sha256": "18ed0482bfb639b4fcc8cdce45782b2649b127609f65286c7328cd143dc93dbd"
+        },
+        "mapping_acceptance_decision": {
+          "path": "sources/mapping_review_v043/data/ScopedMappingAcceptanceDecision.json",
+          "bytes": 5119,
+          "sha256": "df82b2cad7693cf4d8b463fc108c1e476a6015189413181419e99bf67350a4ee"
+        },
+        "reference_resolution": "PASS"
+      }
+    },
+    "product_increment_input": {
+      "gate": "GATE-04 ProductIncrementInput",
+      "status": "FAIL",
+      "started_at_utc": "2026-09-07T00:12:03.578871Z",
+      "completed_at_utc": "2026-09-07T00:12:03.599633Z",
+      "error_type": "VError",
+      "error": "requirements count mismatch"
+    }
+  },
+  "overall": "FAIL",
+  "candidate": {
+    "candidate": "Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip",
+    "bytes": 246727766,
+    "members": 960,
+    "file_members": 960,
+    "sha256": "963510edbb1124343896ce61ed47364006fb1ac49e74b73d3d6c6975683007b6",
+    "root_prefix": "Clued_Phase2_三轨修订与补证_v0.2.7_20260906/"
+  },
+  "completed_at_utc": "2026-09-07T00:12:04.739273Z"
+}
