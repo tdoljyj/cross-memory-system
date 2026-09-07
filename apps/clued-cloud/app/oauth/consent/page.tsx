@@ -8,6 +8,7 @@ import {
 } from "@supabase/supabase-js";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
+import DelegatedConsent from "./delegated-consent";
 
 const SUPABASE_URL = "https://ccxsikzwxlolxqlosril.supabase.co";
 const SUPABASE_PUBLISHABLE_KEY =
@@ -173,10 +174,16 @@ function OAuthConsent() {
   );
 }
 
+function ConsentRouter() {
+  const params = useSearchParams();
+  const requestId = params.get("request_id");
+  return requestId ? <DelegatedConsent requestId={requestId} /> : <OAuthConsent />;
+}
+
 export default function OAuthConsentPage() {
   return (
     <Suspense fallback={<main className="oauth-shell"><section className="oauth-card"><div className="oauth-status"><span className="spinner" aria-hidden="true" /><p>正在加载授权页…</p></div></section></main>}>
-      <OAuthConsent />
+      <ConsentRouter />
     </Suspense>
   );
 }

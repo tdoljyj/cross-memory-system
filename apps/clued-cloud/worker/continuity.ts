@@ -46,6 +46,8 @@ const KERNEL_VERSION = "0.3.1";
 type Scope = (typeof ALL_SCOPES)[number];
 
 export interface ContinuityEnv extends RecordFeatureEnv, P5FeatureEnv, P6FeatureEnv, ContextFeatureEnv {
+  CLUED_DELEGATED_OAUTH_V12?: string;
+  CLUED_OAUTH_ORIGIN?: string;
   SUPABASE_URL?: string;
   SUPABASE_PUBLISHABLE_KEY?: string;
   CLUED_ALLOWED_ORIGINS?: string;
@@ -138,13 +140,13 @@ function bootstrapContract(origin: string, env?: ContinuityEnv) {
       scheme: "Bearer",
       oauth: {
         enabled: true,
-        authorization_server: `${supabaseConfig(env ?? {}).url}/auth/v1`,
+        authorization_server: env?.CLUED_DELEGATED_OAUTH_V12 === "true" ? (env.CLUED_OAUTH_ORIGIN ?? origin) : `${supabaseConfig(env ?? {}).url}/auth/v1`,
         consent_path: `${origin}/oauth/consent`,
         dynamic_client_registration: true,
       },
       binding_token_prefix: "clued_bnd_",
       token_storage: "hash-only",
-      binding_policy: "one independent, revocable, least-privilege binding per vendor client",
+      binding_policy: "one independent, revocable, least-privilege binding per authorization instance",
       scopes: ALL_SCOPES,
     },
     lifecycle: {
@@ -759,7 +761,7 @@ const structuredObjectOutputSchema = {
   additionalProperties: true,
 } as const;
 
-const publicToolPolicies = {
+export const publicToolPolicies = {
   clued_context: {
     scopes: ["context:read"], readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true,
   },

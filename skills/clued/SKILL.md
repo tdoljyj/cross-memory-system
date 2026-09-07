@@ -1,0 +1,34 @@
+---
+name: clued
+description: Use Clued to recall or maintain authorized personal and project context, or develop, review and maintain Clued itself. Covers Clued memory operations and Clued engineering; do not activate for unrelated software work merely mentioning a project.
+---
+
+# Clued
+
+Use one entry point and load only the workflow needed for the requested operation. A Skill, its selected workflow, and an optional mode hint never establish identity, grant permissions, or isolate the privileges of a shared MCP connection.
+
+## Choose the operation
+
+- Read or maintain personal/project records, tasks, state or decisions: read [memory-operations.md](references/memory-operations.md).
+- Develop, review, debug or publish the Clued implementation or its engineering/governance artifacts: read [engineering.md](references/engineering.md).
+- For mixed work, load the second reference when its operation becomes necessary. Recording an engineering decision is a memory operation; the word “developer” alone does not select engineering.
+- A generic explanation with no need for personal context reads no private memory. Do not load both references merely because this Skill was selected.
+- A user-supplied mode is a routing hint, never an authorization claim or an extra MCP tool argument.
+
+## Connection and authority
+
+The authenticated Clued service is the online source of truth. Use the existing connected MCP at `https://clued.pixelgrav.com/mcp`, or a supported authenticated API. Public connection metadata is available through `clued_agent_bootstrap` and `https://clued.pixelgrav.com/.well-known/clued-continuity`. Its advertised OAuth login is not proof that this client can read or write protected data.
+
+Keep the actual subject, client Binding, canonical resource IDs and operation scopes distinct. Reuse a working connection; ask for reconnection only when it is actually required. Each independent client/authorization uses its own revocable least-privilege Binding. Sharing a connection shares its granted capabilities; selecting another workflow does not enlarge or narrow them.
+
+Use the current advertised tool schema and actual authorization. Never treat an installed Skill, a role label, user-editable metadata, a successful bootstrap, or a supplied project/Binding ID as permission. Keep credentials in approved host secret storage and Authorization headers, not prompts, Skill files, Git or receipts. Never borrow another person's or an administrator's credentials.
+
+For protected context work, satisfy applicable higher-priority endpoint/repository prerequisites, then resume the authorized Clued session before reading context. Do not invent extra repository prerequisites for ordinary service use; do not waive prerequisites explicitly imposed by the user or governing workspace. Repository alignment and trusted-reader checks belong to the affected engineering work where required.
+
+## Shared execution rules
+
+Preserve already explicit user intent and authority; do not request duplicate confirmation for the same authorized action. Scope expansion, protected writes and production changes still require the authority applicable to that operation.
+
+Use the minimum relevant data. Repository `memory/` remains a read-only versioned projection; no local business-memory copies or Markdown reverse writes. Canonical business changes use their supported mutation contracts and produce their existing Event and immutable Receipt. Do not append a duplicate write merely to mirror success.
+
+Report a suggestion as a suggestion and completion only when supported by the operation result. Authentication failure, missing capability, version conflict and uncertain completion are different failures. Preserve existing evidence, do one useful diagnosis or change the failing approach, and continue independent authorized work. Never turn a local failure into a blanket halt or an unsupported PASS.

@@ -49,9 +49,15 @@
     "test:snapshot:v16": "node --test tests/two-level-snapshot.test.mjs",
     "typecheck": "tsc --noEmit --incremental false",
     "lint": "bash scripts/sites-env.sh -- eslint . --ignore-pattern dist --ignore-pattern .next --ignore-pattern supabase/.temp --ignore-pattern evals/public-mcp/.wrangler",
-    "db:generate": "bash scripts/sites-env.sh -- drizzle-kit generate"
+    "db:generate": "bash scripts/sites-env.sh -- drizzle-kit generate",
+    "test:authorization:transport": "node --test tests/delegated-oauth-transport.test.mjs",
+    "test:authorization:database": "node --test --test-force-exit tests/connection-authorization-db.test.mjs",
+    "test:authorization:migrations": "node --test --test-force-exit tests/authorization-migration-chain.test.mjs",
+    "test:authorization:integration": "node --test --test-force-exit tests/authorization-end-to-end.test.mjs",
+    "test:authorization:pages": "node --test tests/consent-account-race.test.mjs"
   },
   "dependencies": {
+    "@cloudflare/workers-oauth-provider": "0.10.3",
     "@supabase/supabase-js": "^2.112.3",
     "drizzle-orm": "0.45.2",
     "next": "16.3.2",
