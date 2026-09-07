@@ -1,38 +1,45 @@
-# Clued 仓库当前状态
+# Clued 当前治理状态
 
-最后核对：2026-08-25
-权威仓库：`tdoljyj/cross-memory-system`
-仓库基线：`vNext-2.0`
+本页只投影下列已绑定的治理来源；生产状态须查看其具体观察记录，不沿用旧文档中的过期 current 声明。
 
-## 生产事实
+<!-- BEGIN CLUED PHASE2 GOVERNANCE PROJECTION -->
 
-- Clued Kernel `0.3.1` 正式 V2 已启用，语义合同为 `two-level-five-view-v1`。
-- Supabase 是唯一生产 canonical store；Global/Project 是同一 Record 表的查询层，五视图是类型/事件过滤。
-- 正式写路径为认证 Record → 同事务 Event + Receipt → 派生视图；Markdown 不接受双写。
-- 当前账号已确认 4 个 Project、262 条 Unified Record；原始 Memory/Event/Receipt 审计证据继续保留。
-- 当前线上 deployment `8c42f2cc-9591-4a54-8270-da364a0fe5f1` / Version `bb56e002-583f-4893-b53a-6a347267a978`，100% 流量；发布前 Version `928bb6ec-cdc2-4a9a-a630-87a1685e7915` 是即时回滚点。
+本区块由已绑定的治理来源生成；候选、未定和历史状态保持原含义。它不授予权限，不写入业务 Canon，不宣告接受、冻结或实现。
 
-## User Memory Bundle v1
+来源集合摘要：`c7b4bf64ed6a802d3d1461eefcfddca327e494fa23d2e04c7fd2905674d40c02`；事实模型摘要：`cb0accfb9446a91d9fcddd289e1d39334e35081ca95292eda1df5686a259be73`。
 
-- `memory/` 已被定义为单用户可携带 Bundle/golden sample，不是在线多租户数据面。
-- 合同：`clued.user-memory-bundle@1.0.0`；机器合同位于
-  `apps/clued-cloud/schemas/user-memory-bundle-v1.schema.json`。
-- 实际导出 `umb_fdb167fd46d84c16047af70d`：4 个 Project、262 条 Record；校验、dry-run、认证导入、认证回读与确定性重放 PASS。
-- 导入结果为 262 个稳定 canonical ID、262 个稳定版本；重放生成 262 个不同 Event ID 与 262 个不同 Receipt ID，业务记录不重复。
-- 匿名隔离 401/401 PASS；第二个已确认账号缺失，因此 Bundle finalizer 的跨用户专项仍明确标为 pending，不冒充已完成。
-- 阶段 5 的 26 条 manual-review 已处置：25 条指向现有 canonical records，1 条标记为已被当前正式 V2 状态取代的历史证据；新增生产 Record 为 0。
+| 治理事实 | 来源值 |
+|---|---|
+| 投影性质 | PREPARATION_ONLY_NOT_STEP7_GATE |
+| Step 4 原状态 | PREPARATION_ONLY_NOT_STEP4_ACCEPTANCE |
+| 管理 Owner（仅任务管理） | current Clued project owner in the authenticated user conversation |
+| Namespace 候选组数 | 10 |
+| Step 5 原状态 | PREPARATION_ONLY_NOT_STEP5_ACCEPTANCE |
+| 稳定 Map | CANDIDATE_TARGET_MAP_V0_1_1 |
+| 本候选新增 Alias 数 | 0 |
+| 架构直接前序（原引用对象） | {"axis":"architecture","bytes":168491377,"filename":"Clued_Phase2_三项设计候选_完整审查包_v0.2.4_20260905.zip","members":440,"sha256":"4aae92c37813772e983a14537be52ca8b428af666e644b72d40084ccd592d68b","version":"v0.2.4"} |
+| 历史命名空间不得签发当前状态 | true |
+| Step 6 原状态 | SOURCE_BINDING_CANDIDATE_NOT_ACCEPTANCE |
+| 聚合 ID 不另行发行，见逐消费者绑定 | [null,null,null] |
+| 来源绑定行数（不等于新运行验收数） | 18 |
+| Step 4 / 5 / 6 Decision 来源状态 | ["ACCEPTED_FOR_STEP4_ADMINISTRATIVE_SCOPE","ACCEPTED_FOR_CURRENT_SCOPED_IDENTITY_CONTRACTS","ACCEPTED_FOR_SOURCE_PRESERVING_TYPED_BINDINGS"] |
+| 已选上游引用一致性 | SELECTED_LINEAGE_MATCHES |
 
-## 边界
+| 版本轴 | 来源身份 |
+|---|---|
+| product | Clued-v1.6 |
+| architecture | v0.2.5 |
+| mapping | v0.1.1 |
+| schema | {"core_definition":"1.0.0-local-rc-v15","model_schema_definition":"2.0.0-local-rc-v15-model"} |
+| artifact | per-entry path/bytes/sha256 |
+| skill | v0.1.5 |
+| runtime | null |
+| candidate_revision | v0.2.7.1 |
+| migration_revision | null |
+| protocol | {"definition_version":"1.0.0-local-rc-v15","path_namespace":"protocol/continuity/v1","schema_version":"clued.protocol-manifest/1"} |
 
-- 不用 service role 或 SQL 绕过用户认证/RLS，不直写 `auth.users`。
-- 不把 `index.json`、对象索引、routes、session 或审计 evidence 当成用户正文。
-- 不把访问令牌、用户 ID 或 service-role 凭据写入 Bundle、仓库或回执。
-- 相同 Bundle 使用确定性 idempotency key；恢复后必须做二次重放与计数/RLS复核。
+未绑定 Decision 不被解释为接受；无实际消费者证据的准备行不被解释为运行接线完成。新增 Alias 为零不证明历史或外部别名已经全量枚举。
 
-## 当前结果
+<!-- END CLUED PHASE2 GOVERNANCE PROJECTION -->
 
-- PR #5 已合并；旧账户页 Memory CRUD 已移除，`/api/memories` 与 `/api/memories/audit` 已在正式环境返回 HTTP 410，并指向 `/v1/records`。
-- 本轮不删除历史行、审计回执、Supabase schema、Canary、DNS、Binding、route 或 secret。
-- TypeScript、ESLint、生产构建、Node `47/47`、Wrangler dry-run 全部 PASS；正式入口固定观察 `10/10 PASS`，意外 5xx 为 0。
-- 发布后 canonical 计数仍为 Project `4`、Record `262`（`53/18/14/41/136`），无数据漂移。
-- 完整证据见 `docs/clued-two-level-views/20-扩大导入-manual-review-PR与旧路径下线验收报告.md`。
+原状态文档按原字节保留为[历史记录](docs/history/CURRENT_STATUS.before-phase2-af52a717b2c3.md)，不作为当前事实。此链接在正式 Step 12 保全后生效；本文件当前仅为迁移候选。

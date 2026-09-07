@@ -501,8 +501,15 @@ class RealRequestCallChains(unittest.TestCase):
                 "canonical_read.py",
                 "memory.py",
                 "verification_context.py",
+                "scripts/canonical_read.py",
+                "scripts/isolated_mirror.py",
+                "scripts/memory.py",
+                "scripts/sync-memory.ps1",
+                "scripts/sync-memory.py",
+                "scripts/verification_context.py",
                 "VERSION",
             ):
+                (repo / name).parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(ROOT / name, repo / name)
             shutil.copytree(ROOT / "memory", repo / "memory")
             shutil.copytree(ROOT / "config", repo / "config")
