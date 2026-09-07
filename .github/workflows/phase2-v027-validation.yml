@@ -2,15 +2,25 @@ name: Phase2 v0.2.7 Validation
 
 on:
   workflow_dispatch:
+    inputs:
+      mode:
+        description: Validation or the later read-only-token permission check
+        type: choice
+        default: validate
+        options:
+          - validate
+          - permission_check
   push:
     branches:
       - phase2-v027-validation
+      - phase2-naming-surface-inventory
 
 permissions:
   contents: read
 
 jobs:
   validate-v027:
+    if: github.event_name != 'workflow_dispatch' || inputs.mode == 'validate'
     name: Validate Phase2 v0.2.7 candidate
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -24,6 +34,18 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Preserve exact accepted Git blob bytes
+        shell: bash
+        run: |
+          mkdir -p .git/info
+          printf '* -text\n' > .git/info/attributes
+          git checkout-index --all --force
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24.19.0"
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -170,14 +192,37 @@ jobs:
           echo "candidate source: private GitHub Release $RELEASE_TAG asset $RELEASE_ASSET_NAME"
           echo "path=$candidate_path" >> "$GITHUB_OUTPUT"
 
+      - name: Run actual frozen naming boundary
+        if: steps.mode.outputs.negative_case == 'none'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/naming-governance/post_migration.py \
+            --repo . --freeze docs/execution-plans/phase2-structure-governance/Phase2StructureFreezeDecision_20260907.json \
+            --expected-freeze-sha f40c8af253f811f820e4b3eccc144d63ca3548663810aba10bebb22331661b36 \
+            --report artifacts/clued-validation/phase2-v027/receipt/PostMigrationBoundary.json
+          python scripts/naming-governance/run.py \
+            --bindings docs/execution-plans/phase2-structure-governance/step08-validator-20260907/SourceLocators.json \
+            --source-root . --candidate-zip "${{ steps.candidate.outputs.path }}" \
+            --node node --report artifacts/clued-validation/phase2-v027/receipt/NamingReceipt.json
+          python tests/test_naming_governance_post_migration.py --output-root "$RUNNER_TEMP/phase2-boundary-controls"
+          cp "$RUNNER_TEMP/phase2-boundary-controls/FixtureTestReport.json" artifacts/clued-validation/phase2-v027/receipt/BoundaryControls.json
+          python -m unittest discover -s tests -p test_naming_governance_publication.py -v
+          python -m unittest discover -s tests -p test_naming_governance_trusted_launcher.py -v
+          python scripts/naming-governance/ci_execution.py \
+            --negative-case none --report artifacts/clued-validation/phase2-v027/receipt/NamingExecution.json
+
       - name: Run real Candidate / Manifest / Provenance / ProductIncrementInput gates
         if: steps.mode.outputs.negative_case == 'none'
         shell: bash
         run: |
+          set -euo pipefail
           python scripts/phase2-v027-validate.py \
             --candidate "${{ steps.candidate.outputs.path }}" \
             --identity "$IDENTITY_PATH" \
             --receipt "$RECEIPT_PATH"
+          python scripts/naming-governance/ci_execution.py \
+            --negative-case none --report artifacts/clued-validation/phase2-v027/receipt/GateExecution.json
 
       - name: Run one isolated target-gate negative fixture
         if: steps.mode.outputs.negative_case != 'none'
@@ -197,7 +242,13 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: phase2-v027-ci-receipt
-          path: ${{ env.RECEIPT_PATH }}
+          path: |
+            ${{ env.RECEIPT_PATH }}
+            artifacts/clued-validation/phase2-v027/receipt/GateExecution.json
+            artifacts/clued-validation/phase2-v027/receipt/NamingReceipt.json
+            artifacts/clued-validation/phase2-v027/receipt/NamingExecution.json
+            artifacts/clued-validation/phase2-v027/receipt/PostMigrationBoundary.json
+            artifacts/clued-validation/phase2-v027/receipt/BoundaryControls.json
           if-no-files-found: error
 
       - name: Upload negative gate evidence
@@ -208,4 +259,65 @@ jobs:
           path: |
             ${{ env.RECEIPT_PATH }}
             ${{ env.NEGATIVE_MANIFEST_PATH }}
+          if-no-files-found: error
+
+  permission-check:
+    if: github.event_name == 'workflow_dispatch' && inputs.mode == 'permission_check'
+    name: Verify read-only workflow token cannot create a branch
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Check platform write permission using the read-only workflow token
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, os, urllib.request, urllib.error
+          repo = os.environ['GITHUB_REPOSITORY']
+          branch = 'phase2-permission-check-' + os.environ['GITHUB_RUN_ID']
+          endpoint = 'https://api.github.com/repos/' + repo + '/git/refs'
+          headers = {'Authorization': 'Bearer ' + os.environ['GH_TOKEN'],
+                     'Accept': 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28'}
+          payload = json.dumps({'ref':'refs/heads/' + branch, 'sha':os.environ['GITHUB_SHA']}).encode()
+          request = urllib.request.Request(endpoint, data=payload, headers=headers, method='POST')
+          try:
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  status, body = response.status, json.load(response)
+          except urllib.error.HTTPError as error:
+              status, body = error.code, json.loads(error.read())
+          record = {'type':'ActualWorkflowTokenPermissionObservation', 'repository':repo,
+                    'source_commit':os.environ['GITHUB_SHA'], 'run_id':os.environ['GITHUB_RUN_ID'],
+                    'run_attempt':os.environ['GITHUB_RUN_ATTEMPT'], 'credential_class':'GitHub Actions token with contents:read',
+                    'operation':'Create a uniquely named temporary branch at this exact existing commit',
+                    'attempted_ref':'refs/heads/' + branch,
+                    'http_status':status, 'response_message':body.get('message'),
+                    'write_denied':status == 403 and body.get('message') == 'Resource not accessible by integration',
+                    'step18_pass':False, 'authority_effect':'NONE'}
+          with open('PermissionObservation.json', 'w') as stream:
+              json.dump(record, stream, indent=2)
+          if status == 201:
+              cleanup = urllib.request.Request(endpoint + '/heads/' + branch, headers=headers, method='DELETE')
+              try:
+                  with urllib.request.urlopen(cleanup, timeout=30) as response:
+                      record['unexpected_created_branch_cleanup_status'] = response.status
+              except urllib.error.HTTPError as error:
+                  record['unexpected_created_branch_cleanup_status'] = error.code
+              except (urllib.error.URLError, TimeoutError) as error:
+                  record['unexpected_created_branch_cleanup_status'] = 'UNKNOWN_NETWORK_ERROR'
+          with open('PermissionObservation.json', 'w') as stream:
+              json.dump(record, stream, indent=2)
+          print(json.dumps(record))
+          if not record['write_denied']:
+              raise SystemExit('Expected actual platform permission denial was not observed')
+          PY
+
+      - name: Retain actual permission observation
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase2-readonly-token-permission
+          path: PermissionObservation.json
           if-no-files-found: error

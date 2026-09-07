@@ -1,0 +1,72 @@
+{
+  "type": "IndependentPostMigrationBoundaryReview",
+  "status": "FIXTURE_PREDICATES_VERIFIED_AFTER_MINIMAL_REPAIR",
+  "reviewer": "/root/sequence_review",
+  "fixture_only": true,
+  "actual_freeze_issued": false,
+  "actual_migration_performed": false,
+  "step15_pass": false,
+  "step18_pass": false,
+  "sources": {
+    "execution_inputs": {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/ExecutionInputs.candidate.json",
+      "sha256": "37a6909deedae17dbfe97e844d8ec596c5de46e73c3cefafd4136008d3f3dcec",
+      "changes": 64,
+      "payloads": 45,
+      "immutable_locks": 39
+    },
+    "original_checker_sha256": "e5ed26c8459d0fce43a24d84bb78f9a621a509f5aee9846067a8b0da1ecaa061",
+    "repaired_checker_sha256": "bbe3dfe6d6949357ae32643e8cad7493b27d487638e7750c6b5b279c181d882e",
+    "test_sha256": "30cea986703401f8722d558fe33d9853a67c4b63c08650f215a9535aa28a665c"
+  },
+  "findings": [
+    {
+      "id": "FREEZE_LEXICAL_LINK_BYPASS",
+      "status": "REPRODUCED_AND_FIXED",
+      "before": "Freeze input resolve() erased an in-repository junction before location() rejected links. The junction-selected synthetic Freeze incorrectly produced a PASS.",
+      "reproduction": "before-repair/FixtureTestReport.json",
+      "fix": "Preserve caller lexical path; make only relative paths absolute without resolving links, then run location() checks.",
+      "after": "after-repair/FixtureTestReport.json"
+    },
+    {
+      "id": "AUDIT_RECEIPT_NAMESPACE_COLLISION",
+      "status": "REPAIRED_PER_ROOT_DIRECTION",
+      "before": "The publisher wrote derived publication-receipts within the frozen TM19 file set, causing a later post-migration scan to flag legitimate audit events.",
+      "fix": "Move only publisher audit events to artifacts/clued-validation/phase2-publication-receipts/; preserve strict frozen namespace extra-write rejection.",
+      "publication_sha256": "8c34f48ec93eb7c962af4716bfd1a8ec8f52a3679b03acc33b7277cb6bd8cdd5",
+      "test_sha256": "486a1344e4a018e13d0614b33d347d2ba703ba875c25ecce96c3f62dcad24e07",
+      "validation": "Existing 42 publication tests PASS, including event placement assertion."
+    }
+  ],
+  "tests": {
+    "post_migration": {
+      "total": 12,
+      "passed": 12,
+      "skipped": 0,
+      "seconds": 1.046,
+      "kind": "Isolated actual-payload fixtures; no real Freeze",
+      "coverage": [
+        "45 actual payload installation:64 paths/39 locks",
+        "target-byte tamper",
+        "accepted source tamper/missing",
+        "extra governance writes in all 3 frozen namespaces",
+        "sealed old entry reopened",
+        "directory substituted for file",
+        "governance directory junction",
+        "Freeze lexical junction",
+        "execution-input and Freeze drift",
+        "Activation exception cannot imply publication acceptance"
+      ]
+    },
+    "publication_regression": {
+      "total": 42,
+      "passed": 42,
+      "seconds": 0.151
+    }
+  },
+  "limitations": [
+    "The file checker deliberately does not authenticate Activation.json; real publication.py read remains mandatory.",
+    "Tests use a synthetic Freeze pinned only within isolated test directories. No actual acceptance or Freeze is issued.",
+    "No complete candidate ZIP validation, full memory synchronization, product regression or live GitHub permission mutation was run."
+  ]
+}

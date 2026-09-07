@@ -1,0 +1,52 @@
+{
+  "type": "TrustedLauncherTemplateImplementation",
+  "status": "READY_FOR_INDEPENDENT_REVIEW_NOT_INSTALLED",
+  "files": [
+    {
+      "path": "scripts/naming-governance/trusted_launcher.py",
+      "sha256": "32d0d3e2fda441e589d33a0b63042482cf4c33630bb0eb63e69d2d7bd0e6d35a"
+    },
+    {
+      "path": "tests/test_naming_governance_trusted_launcher.py",
+      "sha256": "5b802a59e08e0bb4a70b47528860404de6f15c29d92291cd95bd09e7c47c0d3f"
+    }
+  ],
+  "post_migration_sha256": "bbe3dfe6d6949357ae32643e8cad7493b27d487638e7750c6b5b279c181d882e",
+  "publication_pin": "NOT_PREPOPULATED; root must use architecture_review final protected core bytes",
+  "tests": {
+    "count": 22,
+    "passed": 22,
+    "seconds": 3.577,
+    "skipped": 0,
+    "fixture_only": true,
+    "real_local_guard": true,
+    "synthetic_publication_core": true,
+    "real_gh_command": "--version only"
+  },
+  "actual_installation": false,
+  "actual_github_api_calls": 0,
+  "actual_publish": false,
+  "step15_pass": false,
+  "step18_pass": false,
+  "trust_anchor": "Independent local .git/clued-phase2 installation; no candidate-provided pins or bootstrap",
+  "every_mode_local_guard": true,
+  "guard_failure_blocks_core": true,
+  "environment_controls": [
+    "Python -I required before non-builtin imports",
+    "Pinned absolute Python executable",
+    "Pinned source/policy byte snapshots",
+    "Fixed private temporary cwd",
+    "PYTHON* variables removed",
+    "Fixed gh PATH and GitHub host",
+    "Trusted runner maps gh to exact absolute binary and checks hash before each execution",
+    "UTF-8 child mode and ASCII-safe JSON launcher output"
+  ],
+  "administrator_exception": "Same-UID owner/admin compromise or replacement of the local trust store/runtime is not claimed blocked.",
+  "root_next_steps": [
+    "Review/install actual final source bytes and actual policy independently",
+    "Issue Bootstrap under existing delegated authority",
+    "Run real launcher with actual signed statement/CI metadata",
+    "Execute real low-privilege platform rejection and audit privileged exceptions",
+    "Wire thin Skill to the tested installed entry"
+  ]
+}
