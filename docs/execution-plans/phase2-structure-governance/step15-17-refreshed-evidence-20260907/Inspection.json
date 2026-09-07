@@ -1,0 +1,57 @@
+{
+  "type": "ActualOrderedPostMigrationCIInspection",
+  "source_commit": "22c085d4f63c41629cdf96f68268c12b536bb872",
+  "run_id": 34116356189,
+  "attempt": 1,
+  "job_id": 101723990543,
+  "artifact_id": 10016413231,
+  "zip_sha256": "3f95fb1203629be0f84a7d1a46df3d2215db4c384b427d34753f00af1a58d33f",
+  "members": {
+    "CIGateReceipt.json": {
+      "sha256": "cb17aa1a2e7545851c15ba9553e9dcf7b4f6c3790f5127ca476cc05924cb9e8e",
+      "bytes": 4222
+    },
+    "GateExecution.json": {
+      "sha256": "97b6a996f918724ab9f401412fb71ca8221ce3e1eed61b05f8a3640918b33941",
+      "bytes": 434
+    },
+    "NamingReceipt.json": {
+      "sha256": "a7a297a67fda3d480f754f0d7060bd98a69e6b32322087b1d080fec22d9774b8",
+      "bytes": 153366
+    },
+    "NamingExecution.json": {
+      "sha256": "97b6a996f918724ab9f401412fb71ca8221ce3e1eed61b05f8a3640918b33941",
+      "bytes": 434
+    },
+    "PostMigrationBoundary.json": {
+      "sha256": "f44efa07addf90f3dc107e4881063d672687ed5126351f0ae245361ca047c752",
+      "bytes": 13929
+    },
+    "BoundaryControls.json": {
+      "sha256": "0bbbddd0237ddbe826d858d370b052f327af6ba5e0a70b8e73a9a62038de1639",
+      "bytes": 191880
+    }
+  },
+  "naming_actual_rules_passed": 15,
+  "installed_paths_checked": 64,
+  "immutable_sources_checked": 39,
+  "actual_ci_fixture_tests": [
+    12,
+    45,
+    22
+  ],
+  "real_four_gates_passed": [
+    "candidate_identity",
+    "manifest_integrity",
+    "provenance",
+    "product_increment_input"
+  ],
+  "platform_step_order": {
+    "naming_completed_at": "2026-09-07T11:23:39Z",
+    "four_gates_started_at": "2026-09-07T11:23:39Z",
+    "matches_fixed_step15_then_step16": true
+  },
+  "root_inspection": "Downloaded actual GitHub artifact and verified platform digest/size plus native receipt results/source/run/attempt, full actual installed boundary, source bindings, actual fixture outcomes and platform step timestamps.",
+  "authority_effect": "NONE_NEW",
+  "step18_pass": false
+}

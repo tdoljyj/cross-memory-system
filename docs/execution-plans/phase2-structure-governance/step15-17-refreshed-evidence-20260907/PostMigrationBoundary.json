@@ -1,0 +1,339 @@
+{
+  "type": "Phase2PostMigrationFileBoundaryEvidence",
+  "status": "PASS",
+  "exit_code": 0,
+  "observed_at": "2026-09-07T11:23:33.378603+00:00",
+  "freeze_sha256": "f40c8af253f811f820e4b3eccc144d63ca3548663810aba10bebb22331661b36",
+  "execution_inputs_sha256": "37a6909deedae17dbfe97e844d8ec596c5de46e73c3cefafd4136008d3f3dcec",
+  "checked_changed_paths": 64,
+  "checked_immutable_inputs": 39,
+  "installed_paths": [
+    {
+      "path": "development/authority-index/phase2/SourceIndex.json",
+      "expected": "2dc9a544e13dc7f2fd53f54cd31230f33ae429823e741e6f79906624f8c5a73d",
+      "actual": "2dc9a544e13dc7f2fd53f54cd31230f33ae429823e741e6f79906624f8c5a73d"
+    },
+    {
+      "path": "development/contracts/phase2/SourceIndex.json",
+      "expected": "af08da8b9a738a262624e07c1e5a9385590c47c085d12383b023b4b0b4c6a9e3",
+      "actual": "af08da8b9a738a262624e07c1e5a9385590c47c085d12383b023b4b0b4c6a9e3"
+    },
+    {
+      "path": "development/projections/phase2/ConsumerBindings.projection.json",
+      "expected": "a3448f25eae721026d8fc8ec0cbad012964e46c81a84dadecc3e365fc38e2cef",
+      "actual": "a3448f25eae721026d8fc8ec0cbad012964e46c81a84dadecc3e365fc38e2cef"
+    },
+    {
+      "path": "development/projections/phase2/GovernanceDocs.projection.md",
+      "expected": "9bcc962497ff82bf86dd3650b6d965d6ffa683125275fa55e278eb4b3914a6f0",
+      "actual": "9bcc962497ff82bf86dd3650b6d965d6ffa683125275fa55e278eb4b3914a6f0"
+    },
+    {
+      "path": "development/projections/phase2/GovernanceManifest.projection.json",
+      "expected": "682b0a2821d942d1c57bc6baa7926bc862b26f89ce1246bded37da97325a7493",
+      "actual": "682b0a2821d942d1c57bc6baa7926bc862b26f89ce1246bded37da97325a7493"
+    },
+    {
+      "path": "development/projections/phase2/GovernanceRegistry.projection.json",
+      "expected": "f1116caf940ca665193c60915f6df4e5dc506fafa0f1dea8e20d8ca702dd47f8",
+      "actual": "f1116caf940ca665193c60915f6df4e5dc506fafa0f1dea8e20d8ca702dd47f8"
+    },
+    {
+      "path": "development/projections/phase2/IdentityFiles.projection.json",
+      "expected": "6259c4d9326cb24e15a5863efa61b8ffe95762f295398fbb75cbc1bd8606c0b3",
+      "actual": "6259c4d9326cb24e15a5863efa61b8ffe95762f295398fbb75cbc1bd8606c0b3"
+    },
+    {
+      "path": "docs/history/ADR-CLD-001-LKG-Max-Age-One-Hour.md",
+      "expected": "5663f2cad660a75765170cc5199edfcc5c99329344e7561145bd01c8be5f0485",
+      "actual": "5663f2cad660a75765170cc5199edfcc5c99329344e7561145bd01c8be5f0485"
+    },
+    {
+      "path": "docs/history/ADR-CLD-002-LOCKED-Recovery-Transition.md",
+      "expected": "bbb465429cf20945b60ce7ab65a3781e9a3db6b3fedbef5dc24ff7e3acd1fdec",
+      "actual": "bbb465429cf20945b60ce7ab65a3781e9a3db6b3fedbef5dc24ff7e3acd1fdec"
+    },
+    {
+      "path": "docs/history/ADR-CLD-003-LKG-Policy-Profiles.md",
+      "expected": "3e030f7d0df898792dca815da25de77bca6e6ef12d8ad66c518b2c2d7228c070",
+      "actual": "3e030f7d0df898792dca815da25de77bca6e6ef12d8ad66c518b2c2d7228c070"
+    },
+    {
+      "path": "docs/history/ADR-MIV-005A-001-Relevance-Threshold-and-Metric-v2.md",
+      "expected": "86dce59f2269cbed5d155f5d18a32a832b86ee9bcdfae761b0bd7d5db8cdf64a",
+      "actual": "86dce59f2269cbed5d155f5d18a32a832b86ee9bcdfae761b0bd7d5db8cdf64a"
+    },
+    {
+      "path": "docs/history/ADR-MIV-005B-001-Lexical-Feasibility-Audit.md",
+      "expected": "9fc3d13b8470823c60087975920bea87b56f0ff2ccd9c6b9fdd6cc8469028c2d",
+      "actual": "9fc3d13b8470823c60087975920bea87b56f0ff2ccd9c6b9fdd6cc8469028c2d"
+    },
+    {
+      "path": "docs/history/ADR-MIV-005B-002-Local-Embedding-Retrieval-Decision.md",
+      "expected": "80755b77c5a2632949b935ad3e50b8cdc172c1db48008eff796214e118b704d9",
+      "actual": "80755b77c5a2632949b935ad3e50b8cdc172c1db48008eff796214e118b704d9"
+    },
+    {
+      "path": "docs/history/ADR-MIV-006-001-Project-Scope-Isolation.md",
+      "expected": "6f30c7601f95410c7d6d6e614bfa05defdcd4cc8b202203099a5ae173e79b679",
+      "actual": "6f30c7601f95410c7d6d6e614bfa05defdcd4cc8b202203099a5ae173e79b679"
+    },
+    {
+      "path": "docs/history/AGENTS.routing-baseline-75d0788ff62a.md",
+      "expected": "75d0788ff62a20d2d211115a66ab20fc38519a14fad890ab9a3d6f821e821793",
+      "actual": "75d0788ff62a20d2d211115a66ab20fc38519a14fad890ab9a3d6f821e821793"
+    },
+    {
+      "path": "docs/history/CURRENT_STATUS.before-phase2-af52a717b2c3.md",
+      "expected": "af52a717b2c37ebabf81a7123244aa3dd9a91042ea87037fd026925e8111f722",
+      "actual": "af52a717b2c37ebabf81a7123244aa3dd9a91042ea87037fd026925e8111f722"
+    },
+    {
+      "path": "docs/history/Clued-v0.1-Reference-Implementation-Report.md",
+      "expected": "d3725396f8edfea08a68b6bb768afae7ff1d5baac83dedbcb70e96c1584eb1ff",
+      "actual": "d3725396f8edfea08a68b6bb768afae7ff1d5baac83dedbcb70e96c1584eb1ff"
+    },
+    {
+      "path": "docs/history/Clued-v0.1-实施与复用文档.md",
+      "expected": "7e57ac9e595fe697188b2a1c8da07f21f3c84bbe5128eb2ba9d3371ea0a0f434",
+      "actual": "7e57ac9e595fe697188b2a1c8da07f21f3c84bbe5128eb2ba9d3371ea0a0f434"
+    },
+    {
+      "path": "docs/history/Clued-v0.2.0-LKG-Policy-Report.md",
+      "expected": "d348ad186fb6670882f8423c2e6d7ab3c38374a1a3ad48bf920558ed03bf2e5c",
+      "actual": "d348ad186fb6670882f8423c2e6d7ab3c38374a1a3ad48bf920558ed03bf2e5c"
+    },
+    {
+      "path": "docs/history/Clued_v0.1_智能体安装授权弱网降级与卸载协议.md",
+      "expected": "0869cb7b8a850ea400e991fd0d4a23c4babfbf5954cb322b27b5c7798df28ae4",
+      "actual": "0869cb7b8a850ea400e991fd0d4a23c4babfbf5954cb322b27b5c7798df28ae4"
+    },
+    {
+      "path": "docs/history/Cross-Memory-System-vNext-2.1-Gate2R-MIV005B-Audit-Report.md",
+      "expected": "5f3aec42d02d815a93a65c302ea867904e5c0fb1b704949fc8aad30db86e8fa5",
+      "actual": "5f3aec42d02d815a93a65c302ea867904e5c0fb1b704949fc8aad30db86e8fa5"
+    },
+    {
+      "path": "docs/history/README.before-phase2-d5f6ec6e821b.md",
+      "expected": "d5f6ec6e821b9b1c71b0433e072804f48109ff55fc53f52b3a088b4205ecdaff",
+      "actual": "d5f6ec6e821b9b1c71b0433e072804f48109ff55fc53f52b3a088b4205ecdaff"
+    },
+    {
+      "path": "docs/history/Sprint3专项审计与封版报告-vNext-1.3.md",
+      "expected": "155d7d5cd92d7bad533db1939c0a3690feb68016055e9b246738d89b527a7e82",
+      "actual": "155d7d5cd92d7bad533db1939c0a3690feb68016055e9b246738d89b527a7e82"
+    },
+    {
+      "path": "docs/history/vNext-2.0-实施冲突记录.md",
+      "expected": "a030b270e80852d820367d393fa482939e738e91ddc46053f7356f584cc24f80",
+      "actual": "a030b270e80852d820367d393fa482939e738e91ddc46053f7356f584cc24f80"
+    },
+    {
+      "path": "docs/history/代码级Gap审计报告-vNext-1.3-2026-08-16.md",
+      "expected": "1bb27a0cb74e5d0dd64713ecfc7c2b9cc209d9a94fc1f03714d16043b34cb736",
+      "actual": "1bb27a0cb74e5d0dd64713ecfc7c2b9cc209d9a94fc1f03714d16043b34cb736"
+    },
+    {
+      "path": "docs/history/技术评估报告-vNext-1.3-DSH-2026-08-16.md",
+      "expected": "b10ecf3d6179985de9b18ed246b5a727cb1adf463a925191d85a3e178cbce78c",
+      "actual": "b10ecf3d6179985de9b18ed246b5a727cb1adf463a925191d85a3e178cbce78c"
+    },
+    {
+      "path": "docs/history/架构基线文档-vNext-1.3.md",
+      "expected": "12475fe2e9f03238b182fd5a596b82d5b227ad8c22e083eb1ca990a9f6ac501c",
+      "actual": "12475fe2e9f03238b182fd5a596b82d5b227ad8c22e083eb1ca990a9f6ac501c"
+    },
+    {
+      "path": "docs/history/架构基线文档-vNext-2.0.md",
+      "expected": "528b026db8507c0ef9bca58f080d6e22b996ca5a1b91679aa117efacd829c8ed",
+      "actual": "528b026db8507c0ef9bca58f080d6e22b996ca5a1b91679aa117efacd829c8ed"
+    },
+    {
+      "path": "docs/history/配置手册与数据包-v4.md",
+      "expected": "ac24b4f23dd34bd03b6a711e5b498a1716c7236fb94adfebe61f08422b352072",
+      "actual": "ac24b4f23dd34bd03b6a711e5b498a1716c7236fb94adfebe61f08422b352072"
+    },
+    {
+      "path": "scripts/canonical_read.py",
+      "expected": "7f4b5b7050bd069022e5ff7c7dbf8ff75a36432bffdb618371b0c90d36d86063",
+      "actual": "7f4b5b7050bd069022e5ff7c7dbf8ff75a36432bffdb618371b0c90d36d86063"
+    },
+    {
+      "path": "scripts/isolated_mirror.py",
+      "expected": "e228508a4df2b750cd3f304b8188fe5b10f0529ea1ccdbd2dc85a6cfbca82e31",
+      "actual": "e228508a4df2b750cd3f304b8188fe5b10f0529ea1ccdbd2dc85a6cfbca82e31"
+    },
+    {
+      "path": "scripts/memory.py",
+      "expected": "4f09d50797be8af183e79745d78a64fe5474d6ff5b7746c14a4f911894a43a10",
+      "actual": "4f09d50797be8af183e79745d78a64fe5474d6ff5b7746c14a4f911894a43a10"
+    },
+    {
+      "path": "scripts/sync-memory.ps1",
+      "expected": "1b0ec7934951a937c7b517841374817255bad9e430ae09adb72adf579fc7c6e8",
+      "actual": "1b0ec7934951a937c7b517841374817255bad9e430ae09adb72adf579fc7c6e8"
+    },
+    {
+      "path": "scripts/sync-memory.py",
+      "expected": "93dc66d3c6e0a7aa2310afa5d3386dd0a835fa840e3ab049676906d66bc8f94d",
+      "actual": "93dc66d3c6e0a7aa2310afa5d3386dd0a835fa840e3ab049676906d66bc8f94d"
+    },
+    {
+      "path": "scripts/verification_context.py",
+      "expected": "6a2d83a65921df60252aad350f3cecacfbab991be582368903aa40203c96d5ab",
+      "actual": "6a2d83a65921df60252aad350f3cecacfbab991be582368903aa40203c96d5ab"
+    },
+    {
+      "path": "AGENTS.md",
+      "expected": "0d209391925dfc3c490cecfdb1e48c9266f0fd9c3d2e26903e023002f2eaf354",
+      "actual": "0d209391925dfc3c490cecfdb1e48c9266f0fd9c3d2e26903e023002f2eaf354"
+    },
+    {
+      "path": "CURRENT_STATUS.md",
+      "expected": "2bb3a1c38e6e5229db62e232dbde74ae4759337bd77f01d22d0bc7dff4b7d98c",
+      "actual": "2bb3a1c38e6e5229db62e232dbde74ae4759337bd77f01d22d0bc7dff4b7d98c"
+    },
+    {
+      "path": "README.md",
+      "expected": "378fef921798a96d8833e9d7a03fa9485153f06e95b7b52b6968d4f21d188c54",
+      "actual": "378fef921798a96d8833e9d7a03fa9485153f06e95b7b52b6968d4f21d188c54"
+    },
+    {
+      "path": "canonical_read.py",
+      "expected": "3c467b498254a7de504d26e70630ffcdf9b150735ea2670b7fdc82de8d04e3a2",
+      "actual": "3c467b498254a7de504d26e70630ffcdf9b150735ea2670b7fdc82de8d04e3a2"
+    },
+    {
+      "path": "isolated_mirror.py",
+      "expected": "c4c0f63fd3a646cfa1dd8a9012a503af53b8d44181e137331667e0949f14c956",
+      "actual": "c4c0f63fd3a646cfa1dd8a9012a503af53b8d44181e137331667e0949f14c956"
+    },
+    {
+      "path": "memory.py",
+      "expected": "34c2c280e3bb2092d5c920edc2c3cbc3891274a3a6258bb702ba901fb9dc601c",
+      "actual": "34c2c280e3bb2092d5c920edc2c3cbc3891274a3a6258bb702ba901fb9dc601c"
+    },
+    {
+      "path": "sync-memory.ps1",
+      "expected": "ce0113f0d79908a707645f73f2720ee63745e9a21738de1e5272aa6517f07800",
+      "actual": "ce0113f0d79908a707645f73f2720ee63745e9a21738de1e5272aa6517f07800"
+    },
+    {
+      "path": "sync-memory.py",
+      "expected": "3a295288ee381fc86c4368515223a068b012476159af199ee85e3c78239ba683",
+      "actual": "3a295288ee381fc86c4368515223a068b012476159af199ee85e3c78239ba683"
+    },
+    {
+      "path": "tests/test_p2_verification_context.py",
+      "expected": "af796d182f4dd43f8fbdf08564dc14f73289fd3935659d85f6e962ef73a8a26c",
+      "actual": "af796d182f4dd43f8fbdf08564dc14f73289fd3935659d85f6e962ef73a8a26c"
+    },
+    {
+      "path": "verification_context.py",
+      "expected": "fc85e12ae3990c73bb573dd2241f8c20370db7ad8fc945c774b93daefee34882",
+      "actual": "fc85e12ae3990c73bb573dd2241f8c20370db7ad8fc945c774b93daefee34882"
+    },
+    {
+      "path": "ADR-CLD-001-LKG-Max-Age-One-Hour.md",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "path": "ADR-CLD-002-LOCKED-Recovery-Transition.md",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "path": "ADR-CLD-003-LKG-Policy-Profiles.md",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "path": "ADR-MIV-005A-001-Relevance-Threshold-and-Metric-v2.md",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "path": "ADR-MIV-005B-001-Lexical-Feasibility-Audit.md",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "path": "ADR-MIV-005B-002-Local-Embedding-Retrieval-Decision.md",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "path": "ADR-MIV-006-001-Project-Scope-Isolation.md",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "path": "Clued-v0.1-Reference-Implementation-Report.md",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "path": "Clued-v0.1-实施与复用文档.md",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "path": "Clued-v0.2.0-LKG-Policy-Report.md",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "path": "Clued_v0.1_智能体安装授权弱网降级与卸载协议.md",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "path": "Cross-Memory-System-vNext-2.1-Gate2R-MIV005B-Audit-Report.md",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "path": "Sprint3专项审计与封版报告-vNext-1.3.md",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "path": "vNext-2.0-实施冲突记录.md",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "path": "代码级Gap审计报告-vNext-1.3-2026-08-16.md",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "path": "技术评估报告-vNext-1.3-DSH-2026-08-16.md",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "path": "架构基线文档-vNext-1.3.md",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "path": "架构基线文档-vNext-2.0.md",
+      "expected": null,
+      "actual": null
+    },
+    {
+      "path": "配置手册与数据包-v4.md",
+      "expected": null,
+      "actual": null
+    }
+  ],
+  "errors": [],
+  "authority_effect": "NONE",
+  "limits": [
+    "Actual file boundary only; naming semantics use the existing core validator.",
+    "Activation is not accepted by this file check; mandatory read/publish uses publication.py.",
+    "This evidence is not a production runtime test or Step18 non-bypass decision."
+  ]
+}

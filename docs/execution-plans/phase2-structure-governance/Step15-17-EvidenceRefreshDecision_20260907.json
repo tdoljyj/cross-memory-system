@@ -1,0 +1,84 @@
+{
+  "type": "ScopedPostMigrationEvidenceRefreshDecision",
+  "state": "ACCEPTED_FOR_UNCHANGED_IMPLEMENTATIONS_AND_FRESH_CI",
+  "issued_at": "2026-09-07T11:26:42.765479+00:00",
+  "issuer": "Codex@DESK-W-591 under existing explicit execution/review delegation",
+  "delegation": {
+    "path": "ExecutionDelegation_20260907.json",
+    "sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8"
+  },
+  "prior_source_commit": "722d3b20a1cee0c18f7203b4a786565b22e43c6e",
+  "source_commit": "22c085d4f63c41629cdf96f68268c12b536bb872",
+  "predecessor_decisions": {
+    "15": {
+      "path": "Step15-ScopedAcceptance_20260907.json",
+      "sha256": "e6f2b44100feb66b429ab0af42c656bde7b150191a74b5294d336f5c703a3e96"
+    },
+    "16": {
+      "path": "Step16-ScopedAcceptance_20260907.json",
+      "sha256": "23432db81babb59b7826a97fcd357c3ce5ea922d1cbe09cca9bf6f048a2ee1cc"
+    },
+    "17": {
+      "path": "Step17-ScopedAcceptance_20260907.json",
+      "sha256": "a4d652aef2b799ee7f6b9d6e99b65c7ece646462d44c37ef2fdd64bc28b8c63a"
+    }
+  },
+  "fresh_ordered_CI": {
+    "path": "step15-17-refreshed-evidence-20260907/Inspection.json",
+    "sha256": "08ec6d68c3b69f99b23b96319302b4c7780bded5177548983bb9ce9dcdaecd2b"
+  },
+  "fresh_semantic_comparison": {
+    "path": "step15-17-refreshed-evidence-20260907/Step17-CurrentBoundaryComparison.json",
+    "sha256": "b0b321a9d64cb1c7aa2ac891c7e4c65fed105b060ee4adc489c6b9d0afc9c569"
+  },
+  "exact_changes": [
+    ".gitleaksignore",
+    "docs/execution-plans/phase2-structure-governance/Step15-ScopedAcceptance_20260907.json",
+    "docs/execution-plans/phase2-structure-governance/Step16-ScopedAcceptance_20260907.json",
+    "docs/execution-plans/phase2-structure-governance/Step17-ScopedAcceptance_20260907.json",
+    "docs/execution-plans/phase2-structure-governance/gitleaks-review-20260907/AfterExactDisposition.log",
+    "docs/execution-plans/phase2-structure-governance/gitleaks-review-20260907/AfterExactDisposition.redacted.json",
+    "docs/execution-plans/phase2-structure-governance/gitleaks-review-20260907/Disposition.json",
+    "docs/execution-plans/phase2-structure-governance/gitleaks-review-20260907/Findings.redacted.json",
+    "docs/execution-plans/phase2-structure-governance/gitleaks-review-20260907/ReviewedFalsePositives.json",
+    "docs/execution-plans/phase2-structure-governance/gitleaks-review-20260907/ReviewedFingerprints.txt",
+    "docs/execution-plans/phase2-structure-governance/gitleaks-review-20260907/Scan.log",
+    "docs/execution-plans/phase2-structure-governance/step15-16-actual-ci-20260907/ActualJob.log",
+    "docs/execution-plans/phase2-structure-governance/step15-16-actual-ci-20260907/ArtifactMetadata.json",
+    "docs/execution-plans/phase2-structure-governance/step15-16-actual-ci-20260907/BoundaryControls.json",
+    "docs/execution-plans/phase2-structure-governance/step15-16-actual-ci-20260907/CIGateReceipt.json",
+    "docs/execution-plans/phase2-structure-governance/step15-16-actual-ci-20260907/GateExecution.json",
+    "docs/execution-plans/phase2-structure-governance/step15-16-actual-ci-20260907/Inspection.json",
+    "docs/execution-plans/phase2-structure-governance/step15-16-actual-ci-20260907/Jobs.json",
+    "docs/execution-plans/phase2-structure-governance/step15-16-actual-ci-20260907/NamingExecution.json",
+    "docs/execution-plans/phase2-structure-governance/step15-16-actual-ci-20260907/NamingReceipt.json",
+    "docs/execution-plans/phase2-structure-governance/step15-16-actual-ci-20260907/NativeEvidence.zip",
+    "docs/execution-plans/phase2-structure-governance/step15-16-actual-ci-20260907/PostMigrationBoundary.json",
+    "docs/execution-plans/phase2-structure-governance/step15-16-actual-ci-20260907/Run.json",
+    "docs/execution-plans/phase2-structure-governance/step15-enforcement-20260907/workflow-review/AllowedDifferences.json",
+    "docs/execution-plans/phase2-structure-governance/step15-enforcement-20260907/workflow-review/DeliveryManifest.json",
+    "docs/execution-plans/phase2-structure-governance/step15-enforcement-20260907/workflow-review/Review.json",
+    "docs/execution-plans/phase2-structure-governance/step15-enforcement-20260907/workflow-review/Review.md",
+    "docs/execution-plans/phase2-structure-governance/step15-enforcement-20260907/workflow-review/Workflow.diff",
+    "docs/execution-plans/phase2-structure-governance/step17-actual-verification-20260907/DeliveryManifest.json",
+    "docs/execution-plans/phase2-structure-governance/step17-actual-verification-20260907/InputBindings.json",
+    "docs/execution-plans/phase2-structure-governance/step17-actual-verification-20260907/README.md",
+    "docs/execution-plans/phase2-structure-governance/step17-actual-verification-20260907/Step17-ActualVerification.json",
+    "docs/execution-plans/phase2-structure-governance/step17-actual-verification-20260907/verify_step17_v2.py"
+  ],
+  "gitleaks_disposition": {
+    "path": "gitleaks-review-20260907/Disposition.json",
+    "sha256": "825253f53fb3abe160b330e05241e5c8a73eae02f0ce2ec96546113b50d2514a"
+  },
+  "effect": [
+    "Fresh source22c085d Naming and all four Phase2 Gates passed in actual CI run34116356189, with exact native artifact digest and actual Naming-before-Gates step times.",
+    "After that CI completed, the unchanged v2 semantic comparator passed22 current-boundary checks. It retains its original722d3b2 CI anchor; this decision additionally binds the fresh22c085d native CI evidence and the complete33-path delta. No claim that an old receipt ran on a new source.",
+    "The only existing-source delta is147 independently recomputed exact historical false-positive fingerprints in .gitleaksignore. Other32 files retain actual15-17 evidence. All workflows, validators, runtime,45 governed payloads,64 states and39 locks remain unchanged."
+  ],
+  "not_established": [
+    "Step18 trusted actual publication/read non-bypass",
+    "Step19 closeout",
+    "Production business runtime acceptance"
+  ],
+  "authority_effect": "NO_NEW_BUSINESS_AUTHORITY"
+}
