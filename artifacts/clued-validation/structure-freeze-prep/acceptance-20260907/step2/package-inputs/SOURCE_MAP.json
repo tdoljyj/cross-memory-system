@@ -1,0 +1,133 @@
+{
+  "candidate_file": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip",
+  "candidate_sha256_expected_and_parent_reverified": "6e51374a6caedb4f84d2b6bb9fe05cd695b25732833f9d0217c341f17e1c1649",
+  "scope": "selected governance originals only; no nested historical/private payload extraction",
+  "files": [
+    {
+      "package_member": "Clued_Phase2_三轨修订与补证_v0.2.7_20260906/00_README.md",
+      "local_relative_path": "package-inputs/00_README.md",
+      "bytes": 3151,
+      "sha256": "bc499f1ffc2d0a6ec576fd2935379163d74625522ce8dfd0cef38c0608be8b1b",
+      "saved_bytes_equal_zip_member": true
+    },
+    {
+      "package_member": "Clued_Phase2_三轨修订与补证_v0.2.7_20260906/Clued_Phase2_结构准备设计_候选_v0.1.4_20260906.md",
+      "local_relative_path": "package-inputs/Clued_Phase2_结构准备设计_候选_v0.1.4_20260906.md",
+      "bytes": 24745,
+      "sha256": "ae858e6e25431f6464a9d5b1227bc439e9f2db792de33d4f9ed659a3270ad3a0",
+      "saved_bytes_equal_zip_member": true
+    },
+    {
+      "package_member": "Clued_Phase2_三轨修订与补证_v0.2.7_20260906/review/FreshContextReviewHandoff_v025.md",
+      "local_relative_path": "package-inputs/review/FreshContextReviewHandoff_v025.md",
+      "bytes": 2999,
+      "sha256": "3c8e96de70e5cbf5d5137e2bd1d95a7206ee3e4fcaa0108b0e4a002186917b78",
+      "saved_bytes_equal_zip_member": true
+    },
+    {
+      "package_member": "Clued_Phase2_三轨修订与补证_v0.2.7_20260906/details/原28项结构冻结条件.md",
+      "local_relative_path": "package-inputs/details/原28项结构冻结条件.md",
+      "bytes": 2197,
+      "sha256": "ba555e31043b0c87011b7901834810dd9283358f331b2b46706ebbe94513379d",
+      "saved_bytes_equal_zip_member": true
+    },
+    {
+      "package_member": "Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/ReviewSubjectContract.json",
+      "local_relative_path": "package-inputs/data/ReviewSubjectContract.json",
+      "bytes": 1383,
+      "sha256": "c2cd13dbe8fd046aa8f0344778141cb9b115fae0048a8c673b60bd25b03498d3",
+      "saved_bytes_equal_zip_member": true
+    },
+    {
+      "package_member": "Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/SourceLock.json",
+      "local_relative_path": "package-inputs/data/SourceLock.json",
+      "bytes": 1267,
+      "sha256": "469c518bb9fa08f830fb419724098c01515192b1d270995c579cacea67d51f18",
+      "saved_bytes_equal_zip_member": true
+    },
+    {
+      "package_member": "Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/SourceProvenance.json",
+      "local_relative_path": "package-inputs/data/SourceProvenance.json",
+      "bytes": 482017,
+      "sha256": "1d91a9a6d6033ed1bea84ba31e3fe74ab1c2620a2d832289eb4a009fae949114",
+      "saved_bytes_equal_zip_member": true
+    },
+    {
+      "package_member": "Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/PredecessorPackageBinding.json",
+      "local_relative_path": "package-inputs/data/PredecessorPackageBinding.json",
+      "bytes": 1001,
+      "sha256": "34cb8b8dd8a71ef2d34cc6529eaf2150a111fb5c8610b93540984f0601868adf",
+      "saved_bytes_equal_zip_member": true
+    },
+    {
+      "package_member": "Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/MappingAcceptanceIntake.json",
+      "local_relative_path": "package-inputs/data/MappingAcceptanceIntake.json",
+      "bytes": 2539,
+      "sha256": "f5a9158048f837eaa078d095843887747e1a503f01331aaf6eb5a5c57d0a8c5b",
+      "saved_bytes_equal_zip_member": true
+    },
+    {
+      "package_member": "Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/StructureCandidateMap.json",
+      "local_relative_path": "package-inputs/data/StructureCandidateMap.json",
+      "bytes": 33372,
+      "sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965",
+      "saved_bytes_equal_zip_member": true
+    },
+    {
+      "package_member": "Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/StructureFreezeEvidenceMatrix.json",
+      "local_relative_path": "package-inputs/data/StructureFreezeEvidenceMatrix.json",
+      "bytes": 4723,
+      "sha256": "396dc8a6f4118d224cff1765b42d8a395b4309e6ecc5889c6ab7a0e04cdbafd8",
+      "saved_bytes_equal_zip_member": true
+    },
+    {
+      "package_member": "Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/ArchitectureAcceptanceEvidenceMatrix.json",
+      "local_relative_path": "package-inputs/data/ArchitectureAcceptanceEvidenceMatrix.json",
+      "bytes": 40480,
+      "sha256": "f2e5e19cd686269fd5e8d0c7c252ffa153a27a8df8393cd54b76bf5c76c79053",
+      "saved_bytes_equal_zip_member": true
+    },
+    {
+      "package_member": "Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/RepositoryEvidenceObservation.json",
+      "local_relative_path": "package-inputs/data/RepositoryEvidenceObservation.json",
+      "bytes": 7302,
+      "sha256": "e64b838f04ec083d34d3644b9222f4aa873cdcb535960eb4a5b1588d12963af0",
+      "saved_bytes_equal_zip_member": true
+    },
+    {
+      "package_member": "Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/CurrentArtifactRegistry.json",
+      "local_relative_path": "package-inputs/data/CurrentArtifactRegistry.json",
+      "bytes": 15392,
+      "sha256": "1dafc859c9a0e51cf13e193e0226718e030bd0193ebeebb3a17288c78c6a1468",
+      "saved_bytes_equal_zip_member": true
+    },
+    {
+      "package_member": "Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/AuthorizationRequests_NOT_GRANTED.json",
+      "local_relative_path": "package-inputs/data/AuthorizationRequests_NOT_GRANTED.json",
+      "bytes": 8438,
+      "sha256": "f0f736a32fcae273504db1286e7c9b74f087ba42c8d09d53d6cdb9ffb9ea235b",
+      "saved_bytes_equal_zip_member": true
+    },
+    {
+      "package_member": "Clued_Phase2_三轨修订与补证_v0.2.7_20260906/review/DecisionTemplates_NOT_ISSUED.json",
+      "local_relative_path": "package-inputs/review/DecisionTemplates_NOT_ISSUED.json",
+      "bytes": 1149,
+      "sha256": "24710bcfe94773a6648491356437ff60434e833f4d4db5752c443abcbfd0a295",
+      "saved_bytes_equal_zip_member": true
+    },
+    {
+      "package_member": "Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/ThreeTrackChangeRegister.json",
+      "local_relative_path": "package-inputs/data/ThreeTrackChangeRegister.json",
+      "bytes": 1500,
+      "sha256": "0b957aef64f31197219766264678379acc0fdd0b0eb9e4a9745525c162b7dc6f",
+      "saved_bytes_equal_zip_member": true
+    },
+    {
+      "package_member": "Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/PriorFindingDisposition.json",
+      "local_relative_path": "package-inputs/data/PriorFindingDisposition.json",
+      "bytes": 1493,
+      "sha256": "7572183dd8a9c1d7acde629dc7cce7c7a9d62e341c44288945c08b5398bbcb5b",
+      "saved_bytes_equal_zip_member": true
+    }
+  ]
+}

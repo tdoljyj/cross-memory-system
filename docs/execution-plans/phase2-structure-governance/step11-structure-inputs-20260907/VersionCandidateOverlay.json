@@ -1,0 +1,465 @@
+{
+  "inherited_source_record": {
+    "source": "CONTROL-VECTOR",
+    "source_axes": [
+      {
+        "axis": "BUSINESS_DESIGN_BASELINE",
+        "version": "v1.1",
+        "state": "CURRENT_INPUT_REGISTERED",
+        "binding": {
+          "source_id": "SRC-BUSINESS-1_1",
+          "path": "sources/business/Clued_完整商业方案_执行基线_v1.1_20260905.md",
+          "sha256": "ee03471d8f435646d3322c89a4dba9fd92902032337049f6f2be5c422849e914"
+        },
+        "supersedes": [
+          {
+            "ref": {
+              "source_id": "SRC-BUSINESS-1_0",
+              "path": "sources/business/Clued_完整商业方案_执行基线_v1.0_20260905.md",
+              "sha256": "ecb5b985ba2c51c7c1a2327efe008e22c8ecd57ad413a8e1b57932f87df38871"
+            },
+            "scope": "BUSINESS_DESIGN_ONLY"
+          }
+        ],
+        "compatibility": "NOT_INFERRED_FROM_VERSION_NUMBER"
+      },
+      {
+        "axis": "PRODUCT_DIRECTION",
+        "version": "v0.6",
+        "state": "PRESERVED_DESIGN_INPUT_WITH_EXPLICIT_DOWNSTREAM_DELTAS",
+        "binding": {
+          "source_id": "SRC-PROD-001",
+          "path": "sources/engineering/Clued_第一方产品_空间联系创作与数字能力生态方向总备忘_v0.6.md",
+          "sha256": "785ec1d1d73416f1da1167fcd9d0ea5b17e18ea18345b9405ad53856fd9fbc21"
+        },
+        "supersedes": [],
+        "compatibility": "NOT_INFERRED_FROM_VERSION_NUMBER"
+      },
+      {
+        "axis": "PRODUCT_ARCHITECTURE_IMPACT_MAP",
+        "version": "v0.2",
+        "state": "PRESERVED_PREDECESSOR_INPUT; V0_3_ABSORPTION_PENDING",
+        "binding": {
+          "source_id": "SRC-PROD-002",
+          "path": "sources/engineering/Clued_产品方向到架构影响映射_v0.2.md",
+          "sha256": "563a5eb9e3ec1ff166ba901e95d598629b4421a03e8a9bd8a57b9d733b7a3ef7"
+        },
+        "supersedes": [],
+        "compatibility": "NOT_INFERRED_FROM_VERSION_NUMBER"
+      },
+      {
+        "axis": "NEXT_PRODUCT_ARCHITECTURE_IMPACT_MAP",
+        "version": "v0.3",
+        "state": "PLANNED_NOT_ISSUED_BY_THIS_PACK",
+        "binding": null,
+        "supersedes": [],
+        "compatibility": "NOT_INFERRED_FROM_VERSION_NUMBER",
+        "required_input": {
+          "source_id": "SRC-BUSINESS-1_1",
+          "path": "sources/business/Clued_完整商业方案_执行基线_v1.1_20260905.md",
+          "sha256": "ee03471d8f435646d3322c89a4dba9fd92902032337049f6f2be5c422849e914"
+        }
+      },
+      {
+        "axis": "CLUED_ARCHITECTURE_CONSTITUTION",
+        "version": "v0.1",
+        "state": "CANDIDATE_NOT_ACCEPTED",
+        "binding": {
+          "source_id": "SRC-ARCH-001",
+          "path": "sources/engineering/Clued_Kernel_Architecture_架构母版候选_v0.1.md",
+          "sha256": "bcc0ef51721159026248d505643bec2e291b19b93e3d15d1baeda5c268785e70"
+        },
+        "supersedes": [],
+        "compatibility": "NOT_INFERRED_FROM_VERSION_NUMBER",
+        "next_candidate": "v0.2",
+        "next_candidate_binding": null
+      },
+      {
+        "axis": "MODEL_PROGRAM_PARENT_ARCHITECTURE",
+        "version": "v0.1",
+        "state": "MODEL_DOMAIN_DESIGN_INPUT_NOT_GLOBAL_CONSTITUTION",
+        "binding": {
+          "source_id": "SRC-MODEL-001",
+          "path": "sources/engineering/Clued_第一方模型系统总体架构_训练体系与演进路线_v0.1.md",
+          "sha256": "65b7384e94dea6f22f9678db88f8542010f16cc919010cdc546288f89641fbbc"
+        },
+        "supersedes": [],
+        "compatibility": "NOT_INFERRED_FROM_VERSION_NUMBER"
+      },
+      {
+        "axis": "MODEL_IMPLEMENTATION_PLAN",
+        "version": "v0.8.1",
+        "state": "PLAN_REVIEW_ACCEPTED_NONEXECUTABLE",
+        "binding": {
+          "source_id": "SRC-PLAN-001",
+          "path": "sources/engineering/Clued_第一方模型系统实施与验收计划_v0.8.1.md",
+          "sha256": "74aff641b3ed0e0d034357824e1c744b5f22225ca113e87d62fc56482f3e7617"
+        },
+        "supersedes": [],
+        "compatibility": "NEW_BUSINESS_THREE_TIER_DESIGN_REQUIRES_NEW_IMMUTABLE_MODEL_REVISION",
+        "review_ref": {
+          "source_id": "SRC-PLAN-003",
+          "path": "sources/engineering/Clued_第一方模型系统实施与验收计划_v0.8.1_PlanReviewAttestation_v0.1_PASS.yaml",
+          "sha256": "22ada2e449e9d30a82497d30183bd10978d89790ece25de69d34180b8e7a9a93"
+        },
+        "frozen_tier_count": 2
+      },
+      {
+        "axis": "KERNEL_NATURAL_LANGUAGE_CONTRACT",
+        "version": "v3.3",
+        "state": "CURRENT_PRE_G1_NORMATIVE_DESIGN_AND_ACCEPTANCE_SOURCE",
+        "binding": {
+          "source_id": "SRC-KN-001",
+          "path": "sources/engineering/Clued_Kernel_Next_多厂商连续性与执行基础设施完整整合方案_v3.3.md",
+          "sha256": "f967fdf3e63028d29ed191160698726b5d707aaae63bd951f6ba2e8584936fec"
+        },
+        "supersedes": [],
+        "compatibility": "NOT_INFERRED_FROM_VERSION_NUMBER"
+      },
+      {
+        "axis": "KERNEL_EXECUTION_PLAN",
+        "version": "v1.5",
+        "state": "ORCHESTRATION_SOURCE_FOR_LOCKED_SCOPE",
+        "binding": {
+          "source_id": "SRC-KN-002",
+          "path": "sources/engineering/Clued_Kernel_Next_v3.3_分布式实施与验收执行计划_v1.5.md",
+          "sha256": "33e1df57c95232c7696157a4ea7ab5814baf2251a82ff473a8ccce85a70be496"
+        },
+        "supersedes": [],
+        "compatibility": "NOT_INFERRED_FROM_VERSION_NUMBER"
+      },
+      {
+        "axis": "KERNEL_LOCAL_EXECUTION_CONTRACT",
+        "version": "v15",
+        "state": "CLOSED_LOCAL_RC_TRACK",
+        "binding": {
+          "source_id": "SRC-V15-CONTRACT",
+          "path": "sources/local_rc_evidence/V15-CONTRACT.md",
+          "sha256": "c3042e03658603a9eb95c087fd868c7952558fb68af3e3ebb71c55f858afde69"
+        },
+        "supersedes": [],
+        "compatibility": "NOT_INFERRED_FROM_VERSION_NUMBER"
+      },
+      {
+        "axis": "KERNEL_TERMINAL_STAGE",
+        "version": "V17",
+        "state": "PASS_LOCAL_RC_ONLY",
+        "binding": {
+          "source_id": "SRC-V17-RECEIPT",
+          "path": "sources/local_rc_evidence/V17-INDEPENDENT-LOCAL-RC-REVIEW-v15.json",
+          "sha256": "24da22d93758b7a2a220eda0ca400ad62ba1190e8b53460805adced4f4b02a8a"
+        },
+        "supersedes": [],
+        "compatibility": "NOT_INFERRED_FROM_VERSION_NUMBER"
+      },
+      {
+        "axis": "KERNEL_MACHINE_DEFINITION",
+        "version": "1.0.0-local-rc-v15",
+        "state": "QUALIFIED_REFERENCE_NOT_CUT_OVER",
+        "binding": {
+          "source_id": "SRC-G1-DECISION",
+          "path": "sources/bridge/05_G1_Machine_Authority_Cutover_Decision.yaml",
+          "sha256": "df82a7cd18b0addbc095a92aa99335b435ffc008b996765f961e8ff3e565760f"
+        },
+        "supersedes": [],
+        "compatibility": "NOT_INFERRED_FROM_VERSION_NUMBER",
+        "binding_kind": "OBSERVATION_AND_ADJUDICATION_NOT_RAW_PROTOCOL_SNAPSHOT",
+        "executable_authority": false
+      },
+      {
+        "axis": "PRODUCT_SERVICE_CONTRACT",
+        "version": "Clued-v1.6",
+        "state": "REPOSITORY_REPORTED_EXISTING_BOUNDARY_NOT_RUNTIME_REPROBED",
+        "binding": {
+          "source_id": "SRC-REPO-SNAPSHOT",
+          "path": "sources/audit/03_Current_Repository_Baseline.json",
+          "sha256": "915f24e9351495ad2493bd54a35bf58fc5e5c4b51b7791b7d13937910e1d754f"
+        },
+        "supersedes": [],
+        "compatibility": "NOT_INFERRED_FROM_VERSION_NUMBER",
+        "binding_kind": "HISTORICAL_OBSERVATION_NOT_LIVE_SERVICE_HASH"
+      },
+      {
+        "axis": "IMPLEMENTATION_SNAPSHOT",
+        "version": "e4b3cd08face6c848cac941a6a00512a1ddf9ace",
+        "state": "FIXED_LOCAL_RC_COMMIT_NOT_ASSERTED_CURRENT_HEAD",
+        "binding": {
+          "source_id": "SRC-BRIDGE-DECISION",
+          "path": "sources/bridge/04_Phase1_Closeout_Bridge_Decision.yaml",
+          "sha256": "b3b75ce0aa96b02e1d6304b3952d3ec7f19f8e055f9c1d4d9868d44ca58e609f"
+        },
+        "supersedes": [],
+        "compatibility": "NOT_INFERRED_FROM_VERSION_NUMBER",
+        "tree_sha1": "7205d419fa83171126c98e14585bdcf8de3962bf"
+      },
+      {
+        "axis": "EVIDENCE_DISTRIBUTION",
+        "version": "2026-09-04",
+        "state": "SOURCE_ONLY",
+        "binding": {
+          "source_id": "SRC-V17-BINDING",
+          "path": "sources/bridge/01_V17_Source_Byte_Binding.json",
+          "sha256": "59e29d9cca481153d28011c79655899e44e5ca641d090d32c386d00fec50925d"
+        },
+        "supersedes": [],
+        "compatibility": "NOT_INFERRED_FROM_VERSION_NUMBER",
+        "commit_sha1": "507c69b8f0638ff9202a4eeb140c606f9089e821",
+        "branch": "evidence/v17-audit-inputs-20260904"
+      },
+      {
+        "axis": "INFORMATION_FLOW_MVP0",
+        "version": "IF-MVP0-A/B/C",
+        "state": "DESIGN_SOURCES_BOUND_ORIGINAL_EXECUTION_PACKS_NOT_SUPPLIED",
+        "binding": {
+          "source_id": "SRC-CM-001",
+          "path": "sources/engineering/Clued_Information_Flow与Phase2_文件索引及保管清单_v1.0.md",
+          "sha256": "cde7411ab2c4db33a5f30b7682c7d3f8df048e0a7a054d5a79207a028ac43675"
+        },
+        "supersedes": [],
+        "compatibility": "NOT_INFERRED_FROM_VERSION_NUMBER"
+      },
+      {
+        "axis": "PHASE2_STRUCTURE",
+        "version": null,
+        "state": "NOT_FROZEN; FUTURE_PLAN_REQUIRED",
+        "binding": null,
+        "supersedes": [],
+        "compatibility": "NOT_INFERRED_FROM_VERSION_NUMBER"
+      },
+      {
+        "axis": "DEVELOPMENT_MECHANISM_AND_SKILL",
+        "version": null,
+        "state": "EXACT_NEW_IDENTITIES_NOT_ISSUED; LEGACY_IDENTITY_OPEN",
+        "binding": null,
+        "supersedes": [],
+        "compatibility": "NOT_INFERRED_FROM_VERSION_NUMBER"
+      }
+    ],
+    "axis_observations": [
+      {
+        "axis": "BUSINESS_DESIGN_BASELINE",
+        "state": "INHERITED_OBSERVATION_NOT_LIVE_RECHECKED",
+        "source_axis": "BUSINESS_DESIGN_BASELINE",
+        "effect": "NONE"
+      },
+      {
+        "axis": "PRODUCT_DIRECTION",
+        "state": "INHERITED_OBSERVATION_NOT_LIVE_RECHECKED",
+        "source_axis": "PRODUCT_DIRECTION",
+        "effect": "NONE"
+      },
+      {
+        "axis": "PRODUCT_ARCHITECTURE_IMPACT_MAP",
+        "state": "INHERITED_OBSERVATION_NOT_LIVE_RECHECKED",
+        "source_axis": "PRODUCT_ARCHITECTURE_IMPACT_MAP",
+        "effect": "NONE"
+      },
+      {
+        "axis": "NEXT_PRODUCT_ARCHITECTURE_IMPACT_MAP",
+        "observed_version": "v0.3",
+        "state": "AUTHOR_CANDIDATE_NOT_INDEPENDENTLY_ACCEPTED",
+        "candidate_ref": "data/ImpactModel.json",
+        "candidate_hash_binding": "PACK_MANIFEST.json",
+        "accepted_current_ref": null,
+        "effect": "candidate authored only"
+      },
+      {
+        "axis": "CLUED_ARCHITECTURE_CONSTITUTION",
+        "state": "INHERITED_OBSERVATION_NOT_LIVE_RECHECKED",
+        "source_axis": "CLUED_ARCHITECTURE_CONSTITUTION",
+        "effect": "NONE"
+      },
+      {
+        "axis": "MODEL_PROGRAM_PARENT_ARCHITECTURE",
+        "state": "INHERITED_OBSERVATION_NOT_LIVE_RECHECKED",
+        "source_axis": "MODEL_PROGRAM_PARENT_ARCHITECTURE",
+        "effect": "NONE"
+      },
+      {
+        "axis": "MODEL_IMPLEMENTATION_PLAN",
+        "state": "INHERITED_OBSERVATION_NOT_LIVE_RECHECKED",
+        "source_axis": "MODEL_IMPLEMENTATION_PLAN",
+        "effect": "NONE"
+      },
+      {
+        "axis": "KERNEL_NATURAL_LANGUAGE_CONTRACT",
+        "state": "INHERITED_OBSERVATION_NOT_LIVE_RECHECKED",
+        "source_axis": "KERNEL_NATURAL_LANGUAGE_CONTRACT",
+        "effect": "NONE"
+      },
+      {
+        "axis": "KERNEL_EXECUTION_PLAN",
+        "state": "INHERITED_OBSERVATION_NOT_LIVE_RECHECKED",
+        "source_axis": "KERNEL_EXECUTION_PLAN",
+        "effect": "NONE"
+      },
+      {
+        "axis": "KERNEL_LOCAL_EXECUTION_CONTRACT",
+        "state": "INHERITED_OBSERVATION_NOT_LIVE_RECHECKED",
+        "source_axis": "KERNEL_LOCAL_EXECUTION_CONTRACT",
+        "effect": "NONE"
+      },
+      {
+        "axis": "KERNEL_TERMINAL_STAGE",
+        "state": "INHERITED_OBSERVATION_NOT_LIVE_RECHECKED",
+        "source_axis": "KERNEL_TERMINAL_STAGE",
+        "effect": "NONE"
+      },
+      {
+        "axis": "KERNEL_MACHINE_DEFINITION",
+        "state": "INHERITED_OBSERVATION_NOT_LIVE_RECHECKED",
+        "source_axis": "KERNEL_MACHINE_DEFINITION",
+        "effect": "NONE"
+      },
+      {
+        "axis": "PRODUCT_SERVICE_CONTRACT",
+        "state": "INHERITED_OBSERVATION_NOT_LIVE_RECHECKED",
+        "source_axis": "PRODUCT_SERVICE_CONTRACT",
+        "effect": "NONE"
+      },
+      {
+        "axis": "IMPLEMENTATION_SNAPSHOT",
+        "state": "INHERITED_OBSERVATION_NOT_LIVE_RECHECKED",
+        "source_axis": "IMPLEMENTATION_SNAPSHOT",
+        "effect": "NONE"
+      },
+      {
+        "axis": "EVIDENCE_DISTRIBUTION",
+        "state": "INHERITED_OBSERVATION_NOT_LIVE_RECHECKED",
+        "source_axis": "EVIDENCE_DISTRIBUTION",
+        "effect": "NONE"
+      },
+      {
+        "axis": "INFORMATION_FLOW_MVP0",
+        "state": "INHERITED_OBSERVATION_NOT_LIVE_RECHECKED",
+        "source_axis": "INFORMATION_FLOW_MVP0",
+        "effect": "NONE"
+      },
+      {
+        "axis": "PHASE2_STRUCTURE",
+        "state": "INHERITED_OBSERVATION_NOT_LIVE_RECHECKED",
+        "source_axis": "PHASE2_STRUCTURE",
+        "effect": "NONE"
+      },
+      {
+        "axis": "DEVELOPMENT_MECHANISM_AND_SKILL",
+        "state": "INHERITED_OBSERVATION_NOT_LIVE_RECHECKED",
+        "source_axis": "DEVELOPMENT_MECHANISM_AND_SKILL",
+        "effect": "NONE"
+      }
+    ],
+    "installation": "NOT_APPLIED",
+    "current_engineering_baseline_replaced": false,
+    "typed_identity_crosswalk": [
+      {
+        "family": "产品目标档",
+        "old": "mobile_standard + personal_device_flagship in MODEL-PLAN",
+        "candidate": "mobile / standard / flagship as design-only labels",
+        "rule": "no automatic rename/split; new formal tier IDs/Profile/qualification required"
+      },
+      {
+        "family": "模型程序父与总体架构父",
+        "old": "model_program_parent_architecture_ref / clued_architecture_constitution_ref",
+        "candidate": "two exact independently accepted references",
+        "rule": "not interchangeable"
+      },
+      {
+        "family": "技术与商业",
+        "old": "Kernel RC + ModelReleaseUnit/Profile",
+        "candidate": "ArtifactRevision→Listing→Edition→SKU→Offer→Entitlement",
+        "rule": "Kernel conformance, model release, distribution and commercial rights independent"
+      },
+      {
+        "family": "阶段与指标",
+        "old": "IF-MVP0-A/B/C; MODEL-PROGRAM-M0..M7; M01..M20",
+        "candidate": "same source namespaces, no bare M0",
+        "rule": "metric M01 is not milestone M0"
+      },
+      {
+        "family": "最小切片",
+        "old": "IMPACT-V02-SLICE-A..I / ARCH-V01-SLICE-A..C",
+        "candidate": "PHASE2-CORE-SLICE-A is proposed mainline scope",
+        "rule": "same A letter does not establish same acceptance"
+      },
+      {
+        "family": "历史R5与Local RC版本",
+        "old": "R5 K0–K10 / local-rc-v15 / V17 release evidence",
+        "candidate": "retain lineage not parallel current gates",
+        "rule": "numeric version progression cannot infer authority"
+      }
+    ]
+  },
+  "inherited_axis_count": 18,
+  "observations": [
+    {
+      "axis": "CLUED_ARCHITECTURE_CONSTITUTION",
+      "version": "v0.2.3",
+      "state": "CANDIDATE_NOT_ACCEPTED",
+      "path": "Clued_架构收敛候选_v0.2.3_20260905.md",
+      "sha256": "0f308ba98f24b92e9c58a54e4b0a36cf11dacb388e2b2f3974309e8f45ac7b40",
+      "bytes": 45081
+    },
+    {
+      "axis": "PHASE2_CHARTER",
+      "version": "v0.1.3",
+      "state": "CANDIDATE_NOT_ACCEPTED",
+      "path": "Clued_Phase2_Charter_候选_v0.1.3_20260905.md",
+      "sha256": "84e8d77696fe4341f1654a7757b46d5f4c59bd17c5cabce1b804d6af28c47ad6",
+      "bytes": 16158
+    },
+    {
+      "axis": "PHASE2_STRUCTURE",
+      "version": "v0.1.3",
+      "state": "CANDIDATE_NOT_FROZEN",
+      "path": "Clued_Phase2_结构准备设计_候选_v0.1.3_20260905.md",
+      "sha256": "3d0f8ae045d7467429635c64b80f3afd6f396e655f289a6dd1212fe30a35a2a6",
+      "bytes": 23668
+    },
+    {
+      "axis": "GIT_MAIN_OBSERVATION",
+      "version": "507c69b8f0638ff9202a4eeb140c606f9089e821",
+      "tree": "354e011fc68f3205e6a49708fd1e5f06037d025d",
+      "state": "OBSERVED_ON_2026_09_05_NOT_RUNTIME_AUTHORITY",
+      "path": "data/RepositoryObservation.json",
+      "sha256": "1a3b2583e93c0c484a575968bc490439fc69280debc4202520993abf6b694fd8",
+      "bytes": 7822
+    },
+    {
+      "axis": "PRODUCT_RELEASE_INCREMENT",
+      "version": "v0.2.1",
+      "state": "EXTERNAL_LIMITED_DESIGN_ACCEPTANCE_ONLY",
+      "path": "input/Clued_成品优先商店与轻协作网络_产品升级增量_v0.2.1_20260905.zip",
+      "bytes": 1367376,
+      "sha256": "a79a733555eb45d731eb38c0c3984c2230fb8dd959f62dbfe3fe71f6cfe8c709",
+      "external_acceptance_ref": "sources/product_review_v021/data/ProductIncrementScopedAcceptanceDecision.json"
+    },
+    {
+      "axis": "PRODUCT_INCREMENT_SCOPED_REVIEW",
+      "version": "v0.1",
+      "state": "ISSUED_FOR_EXACT_PRODUCT_ONLY_NOT_ARCHITECTURE",
+      "path": "sources/product_review_v021/data/ProductIncrementScopedAcceptanceDecision.json",
+      "bytes": 2921,
+      "sha256": "c83f17bca52da7694bae164529a648a5a7d273ef3d9e6cb7e9d0f0435513a189"
+    }
+  ],
+  "supplementary_artifacts": [
+    {
+      "type": "Phase2CharterCandidate",
+      "version": "v0.1.3",
+      "path": "Clued_Phase2_Charter_候选_v0.1.3_20260905.md",
+      "sha256": "84e8d77696fe4341f1654a7757b46d5f4c59bd17c5cabce1b804d6af28c47ad6",
+      "bytes": 16158
+    },
+    {
+      "type": "HumanReviewPromotionGovernanceCandidate",
+      "version": "v0.1.3",
+      "path": "research/Clued_Human_Review_Promotion_Governance_研究与合同候选_v0.1.3.md",
+      "sha256": "fb2f5bea6cb3fdef49610c6338239b5dc0f3089667b82f5ef3d8d23c754cd675",
+      "bytes": 22272
+    }
+  ],
+  "repository_current_updated": false,
+  "version_order_has_no_authority_effect": true,
+  "repository_observation_rebound": true,
+  "scope_note": "原18轴记录不改；当前架构v0.2.3及产品轴、外部决定分开观察；不改仓库current或执行权。"
+}

@@ -1,0 +1,30 @@
+{
+  "result": "RESOLVED_FOR_EXACT_SCOPED_EXECUTOR",
+  "reviewer": "/root/architecture_review",
+  "method": "Independently examined exact Git diff and retained focused control source; correlated old/new hashes, real junction rejection and five fixture outputs. No repeat of unchanged 152 checks or original nine compatibility tests.",
+  "independent_source_conclusions": [
+    "Every parent below the fixed root is tested for symlink/junction before use.",
+    "Containment remains required after resolution.",
+    "Original and resolved first components are casefolded against protected prefixes.",
+    "Fixed 64path/39lock input and Step7/8 sources have unchanged exact blobs."
+  ],
+  "implementation": {
+    "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step12-migration-20260907\\migration_execute.py",
+    "sha256": "15ed103a96943125978e9134a8322c6195f62fe24d3e2e070a8ad538b17ea2fe"
+  },
+  "repair_evidence": {
+    "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step12-migration-20260907\\ParentLinkGuardRepair.json",
+    "sha256": "c746d7d58e796f8027bbd931091ab060d3cf033d7563e05d492dde21880378cd"
+  },
+  "retained_control_source": {
+    "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step12-migration-20260907\\verify-migration-parent-guard.retained.py",
+    "sha256": "09e01c889b5bc39569a2a0912de6226d0bd24d026ddbfd1be3872e2a943620a5"
+  },
+  "root_report_reused_as_observed_execution_not_authority": true,
+  "actual_current_migration_performed": false,
+  "non_bypass_accepted": false,
+  "subject_verification": {
+    "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step09-independent-final\\ExactSubjectVerification.r2.json",
+    "sha256": "e597c82f576b72b13130a68943cdec6ef25b664539d2f17708ea98d812142483"
+  }
+}

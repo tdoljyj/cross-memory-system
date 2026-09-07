@@ -1,0 +1,268 @@
+{
+  "candidate_status": "PREPARATION_ONLY_NOT_STEP5_ACCEPTANCE",
+  "authority_effect": "NONE_NEW_BY_CANDIDATE",
+  "base_repository_commit": "5fad76df81c8a412e7768e08427841f0985a2588",
+  "format_boundary": "Review views over existing contracts; not a new runtime schema, global registry, or Canonical Store.",
+  "scope_basis": {
+    "source_id": "scope-amendment",
+    "source_sha256": "32b16e2938a5674b1d8b492e1bf0a0506f708c574913696d6ba281b99e108e9e",
+    "pointer": ""
+  },
+  "management_owner_ref": {
+    "source_id": "delegation",
+    "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+    "pointer": "/delegator"
+  },
+  "preparation_delegate_ref": {
+    "source_id": "delegation",
+    "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+    "pointer": "/delegatee"
+  },
+  "step4_prerequisite": {
+    "candidate_ref": {
+      "source_id": "step4-ownership",
+      "source_sha256": "40d7e87fed046c8aff18d8c1d0532ada075b802faf204059649c84faef1c0782",
+      "pointer": ""
+    },
+    "formal_gate_asserted_here": false,
+    "accepted_decision_ref": {
+      "source_id": "step4-acceptance",
+      "source_sha256": "6f2cc1c9cc28c2a717023029851d61a666815567bc30b3635479cb1b70382e6c",
+      "pointer": ""
+    },
+    "accepted_effect_boundary": "Reuse the existing scoped Step4 administrative acceptance; this candidate issues no new acceptance, runtime authority or Freeze."
+  },
+  "physical_rename_performed": false,
+  "migration_performed": false,
+  "historical_bytes_or_ids_changed": false,
+  "status": "SCOPED_REVIEW_CLARIFICATIONS_NOT_REPLACEMENT_OF_PROTOCOL_VOCABULARY",
+  "existing_machine_vocabulary_ref": {
+    "source_id": "vocabulary-registry",
+    "source_sha256": "01340a4599b56e4a1a91b0b5eaf6570ce74ede6f9ce6faeb608a2bbe69c0289b",
+    "pointer": ""
+  },
+  "existing_machine_term_count": 16,
+  "scoped_clarifications": [
+    {
+      "term": "Candidate",
+      "candidate_definition": "A proposed subject awaiting its applicable acceptance; the label supplies no acceptance or runtime authority.",
+      "source_ref": {
+        "source_id": "review-subject",
+        "source_sha256": "c2cd13dbe8fd046aa8f0344778141cb9b115fae0048a8c673b60bd25b03498d3",
+        "pointer": "/subject"
+      },
+      "definition_status": "CANDIDATE_CLARIFICATION; SOURCE_CONTRACT_REMAINS_CONTROLLING"
+    },
+    {
+      "term": "Artifact",
+      "candidate_definition": "A typed, domain-scoped logical artifact revision bound to exact bytes/digest and provenance.",
+      "source_ref": {
+        "source_id": "type-crosswalk",
+        "source_sha256": "a4386a8b45b02e8dbd6ff2f400d3b1c9ecbfc9c6d07a2892f035994d2a78c685",
+        "pointer": "/rows/0"
+      },
+      "definition_status": "CANDIDATE_CLARIFICATION; SOURCE_CONTRACT_REMAINS_CONTROLLING"
+    },
+    {
+      "term": "Receipt",
+      "candidate_definition": "An evidence/result record scoped to the producing operation and verified inputs; the noun or a schema-valid body alone grants no authorization.",
+      "source_ref": {
+        "source_id": "protocol-manifest",
+        "source_sha256": "05ca5bb70c642dba9c3f58c0b943020d6188636e60cc569b3802c90a9afd36b5",
+        "pointer": ""
+      },
+      "definition_status": "CANDIDATE_CLARIFICATION; SOURCE_CONTRACT_REMAINS_CONTROLLING"
+    },
+    {
+      "term": "Authorization",
+      "candidate_definition": "A scoped permission from an applicable authority; project execution delegation and runtime consumer authorization retain separate subjects and capabilities.",
+      "source_ref": {
+        "source_id": "delegation",
+        "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+        "pointer": ""
+      },
+      "definition_status": "CANDIDATE_CLARIFICATION; SOURCE_CONTRACT_REMAINS_CONTROLLING"
+    },
+    {
+      "term": "Consumer",
+      "candidate_definition": "An identified component/principal that resolves or uses a specific contract/artifact under its allowed scope; a filename is not its authority.",
+      "source_ref": {
+        "source_id": "structure-map",
+        "source_sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965",
+        "pointer": "/current_to_target_rows"
+      },
+      "definition_status": "CANDIDATE_CLARIFICATION; SOURCE_CONTRACT_REMAINS_CONTROLLING"
+    },
+    {
+      "term": "Publisher",
+      "candidate_definition": "The actor permitted to publish a stated artifact/projection in a stated scope; publication does not accept architecture or activate a runtime.",
+      "source_ref": {
+        "source_id": "step4-ownership",
+        "source_sha256": "40d7e87fed046c8aff18d8c1d0532ada075b802faf204059649c84faef1c0782",
+        "pointer": "/role_definitions/Publisher"
+      },
+      "definition_status": "CANDIDATE_CLARIFICATION; SOURCE_CONTRACT_REMAINS_CONTROLLING"
+    },
+    {
+      "term": "Gate",
+      "candidate_definition": "A specified evaluation over bound inputs and conditions, whose result is confined to its declared scope.",
+      "source_ref": {
+        "source_id": "acceptance",
+        "source_sha256": "f2aed48ed74e688bfe280d3fa896243cc7907905fafcc467706a276367472f27",
+        "pointer": ""
+      },
+      "definition_status": "CANDIDATE_CLARIFICATION; SOURCE_CONTRACT_REMAINS_CONTROLLING"
+    },
+    {
+      "term": "Run",
+      "candidate_definition": "A bounded execution instance with explicit program/stage/subject/target and applicable authorization; no permanent activation follows.",
+      "source_ref": {
+        "source_id": "type-crosswalk",
+        "source_sha256": "a4386a8b45b02e8dbd6ff2f400d3b1c9ecbfc9c6d07a2892f035994d2a78c685",
+        "pointer": "/rows/8"
+      },
+      "definition_status": "CANDIDATE_CLARIFICATION; SOURCE_CONTRACT_REMAINS_CONTROLLING"
+    },
+    {
+      "term": "Commit",
+      "candidate_definition": "A commit identity is qualified by its domain: repository commit uses exact Git object identity; Canonical operation commit uses its existing service identity. Neither substitutes for the other.",
+      "source_ref": {
+        "source_id": "vocabulary-registry",
+        "source_sha256": "01340a4599b56e4a1a91b0b5eaf6570ce74ede6f9ce6faeb608a2bbe69c0289b",
+        "pointer": "/terms/15"
+      },
+      "definition_status": "CANDIDATE_CLARIFICATION; SOURCE_CONTRACT_REMAINS_CONTROLLING"
+    },
+    {
+      "term": "Subject",
+      "candidate_definition": "The exact object/revision or principal that a stated operation/review concerns; its role and enclosing contract determine interpretation.",
+      "source_ref": {
+        "source_id": "review-subject",
+        "source_sha256": "c2cd13dbe8fd046aa8f0344778141cb9b115fae0048a8c673b60bd25b03498d3",
+        "pointer": "/subject"
+      },
+      "definition_status": "CANDIDATE_CLARIFICATION; SOURCE_CONTRACT_REMAINS_CONTROLLING"
+    },
+    {
+      "term": "Direct Predecessor",
+      "candidate_definition": "The explicitly identified predecessor on the same version axis, bound by its source identity; not the numerically adjacent version elsewhere.",
+      "source_ref": {
+        "source_id": "review-subject",
+        "source_sha256": "c2cd13dbe8fd046aa8f0344778141cb9b115fae0048a8c673b60bd25b03498d3",
+        "pointer": "/sole_direct_predecessor"
+      },
+      "definition_status": "CANDIDATE_CLARIFICATION; SOURCE_CONTRACT_REMAINS_CONTROLLING"
+    },
+    {
+      "term": "Logical Object",
+      "candidate_definition": "The stable object identified by its owning contract; path, format and transport occurrence are separate locators or representations.",
+      "source_ref": {
+        "source_id": "type-crosswalk",
+        "source_sha256": "a4386a8b45b02e8dbd6ff2f400d3b1c9ecbfc9c6d07a2892f035994d2a78c685",
+        "pointer": "/rows/0"
+      },
+      "definition_status": "CANDIDATE_CLARIFICATION; SOURCE_CONTRACT_REMAINS_CONTROLLING"
+    },
+    {
+      "term": "Representation",
+      "candidate_definition": "A declared format/projection of a logical object whose bytes and derivation are separately bound; writable and conflict precedence are explicit.",
+      "source_ref": {
+        "source_id": "repo-agents",
+        "source_sha256": "75d0788ff62a20d2d211115a66ab20fc38519a14fad890ab9a3d6f821e821793",
+        "pointer": ""
+      },
+      "definition_status": "CANDIDATE_CLARIFICATION; SOURCE_CONTRACT_REMAINS_CONTROLLING"
+    },
+    {
+      "term": "Copy",
+      "candidate_definition": "A separately located occurrence with retained source/representation identity and its own locator/provenance; replication supplies no new owner or authority.",
+      "source_ref": {
+        "source_id": "repo-agents",
+        "source_sha256": "75d0788ff62a20d2d211115a66ab20fc38519a14fad890ab9a3d6f821e821793",
+        "pointer": ""
+      },
+      "definition_status": "CANDIDATE_CLARIFICATION; SOURCE_CONTRACT_REMAINS_CONTROLLING"
+    },
+    {
+      "term": "Alias",
+      "candidate_definition": "An explicitly registered scoped alternative resolving to one canonical target with lifecycle and read/write rules; resemblance or a directory move creates no alias.",
+      "source_ref": {
+        "source_id": "baseline",
+        "source_sha256": "f465bcb77aced171b4f241da7a23c1e02133716700227caaabb7954be39899ad",
+        "pointer": ""
+      },
+      "definition_status": "CANDIDATE_CLARIFICATION; SOURCE_CONTRACT_REMAINS_CONTROLLING"
+    },
+    {
+      "term": "Namespace",
+      "candidate_definition": "An explicitly bounded naming space with management ownership and delegation; a path prefix may locate it but does not grant rights.",
+      "source_ref": {
+        "source_id": "step4-ownership",
+        "source_sha256": "40d7e87fed046c8aff18d8c1d0532ada075b802faf204059649c84faef1c0782",
+        "pointer": ""
+      },
+      "definition_status": "CANDIDATE_CLARIFICATION; SOURCE_CONTRACT_REMAINS_CONTROLLING"
+    },
+    {
+      "term": "Domain",
+      "candidate_definition": "The contract-defined responsibility/authority domain; map labels, program issuer domains and directory groupings must not be silently equated.",
+      "source_ref": {
+        "source_id": "step4-domains",
+        "source_sha256": "fa9e1b322356fc55d04b3eee078146a9b8304e48197c7d1767cd14d665b9c8ca",
+        "pointer": ""
+      },
+      "definition_status": "CANDIDATE_CLARIFICATION; SOURCE_CONTRACT_REMAINS_CONTROLLING"
+    },
+    {
+      "term": "Scope",
+      "candidate_definition": "The named contract-defined bounds of an object, permission, consumer or operation; equal text in different contracts is not proof of equal scope.",
+      "source_ref": {
+        "source_id": "vocabulary-registry",
+        "source_sha256": "01340a4599b56e4a1a91b0b5eaf6570ce74ede6f9ce6faeb608a2bbe69c0289b",
+        "pointer": "/terms/3"
+      },
+      "definition_status": "CANDIDATE_CLARIFICATION; SOURCE_CONTRACT_REMAINS_CONTROLLING"
+    },
+    {
+      "term": "Authority",
+      "candidate_definition": "The applicable source/principal empowered for a stated decision or operation, supported by its explicit contract and delegation; authorship or ownership alone is insufficient for program grants.",
+      "source_ref": {
+        "source_id": "delegation",
+        "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+        "pointer": ""
+      },
+      "definition_status": "CANDIDATE_CLARIFICATION; SOURCE_CONTRACT_REMAINS_CONTROLLING"
+    },
+    {
+      "term": "Acceptance",
+      "candidate_definition": "The authorized decision over an exact subject and its required conditions; preparation, a prior subject decision, and author report do not substitute.",
+      "source_ref": {
+        "source_id": "review-subject",
+        "source_sha256": "c2cd13dbe8fd046aa8f0344778141cb9b115fae0048a8c673b60bd25b03498d3",
+        "pointer": "/acceptance_requirement"
+      },
+      "definition_status": "CANDIDATE_CLARIFICATION; SOURCE_CONTRACT_REMAINS_CONTROLLING"
+    },
+    {
+      "term": "Verification",
+      "candidate_definition": "A reproducible check of a specified claim against bound evidence; successful structural or digest checks retain that limited meaning.",
+      "source_ref": {
+        "source_id": "ci-review-binding",
+        "source_sha256": "baf2856fd05332487e6cad7f84b707f3b994d2be5efad484f7ad5a1f20ef27f5",
+        "pointer": "/trust_boundary"
+      },
+      "definition_status": "CANDIDATE_CLARIFICATION; SOURCE_CONTRACT_REMAINS_CONTROLLING"
+    },
+    {
+      "term": "Release",
+      "candidate_definition": "A type-specific release/distribution state with exact artifact dependencies; technical qualification, distribution, commerce and user entitlement remain independent.",
+      "source_ref": {
+        "source_id": "type-crosswalk",
+        "source_sha256": "a4386a8b45b02e8dbd6ff2f400d3b1c9ecbfc9c6d07a2892f035994d2a78c685",
+        "pointer": "/independent_state_axes"
+      },
+      "definition_status": "CANDIDATE_CLARIFICATION; SOURCE_CONTRACT_REMAINS_CONTROLLING"
+    }
+  ],
+  "conflict_rule": "Use the exact owning contract/Schema and subject; if a new consumer would conflate meanings, resolve that binding before wiring the consumer. Do not rewrite source vocabulary or infer global semantic acceptance."
+}

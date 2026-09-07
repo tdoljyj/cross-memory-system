@@ -1,0 +1,4749 @@
+{
+  "format": "STEP8_BOUNDED_VALIDATION_RECEIPT",
+  "run_id": "b49810a7-be68-4188-b1d9-f24c5cded378",
+  "executed_at_utc": "2026-09-07T09:56:20.622528+00:00",
+  "purpose": "evidence",
+  "status": "SCOPED_EVIDENCE_PASS",
+  "exit_code": 0,
+  "formal_step8_gate": false,
+  "freeze_ready": false,
+  "authority_effect": "NONE",
+  "fixture_only": false,
+  "subject": {
+    "bindings_path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\SourceLocators.json",
+    "sha256": "04aa73c7673b67bc046b8fa5dd37e8bbd9251e84766c09afa735d2a35fe8162b"
+  },
+  "validator_sha256": "f99eaf03737cc13f5ea2dea06a1e4d5b48033df22bb198f6eade22b00746bb8a",
+  "checks": [
+    {
+      "rule": "SOURCE_REFERENCE",
+      "status": "PASS",
+      "scope": "Selected existing source digests and JSON pointers; prose locators explicitly remain documented."
+    },
+    {
+      "rule": "OWNER",
+      "status": "PASS",
+      "scope": "Administrative namespace ownership only; no business-domain issuer authority inferred."
+    },
+    {
+      "rule": "CANONICAL_IDENTITY",
+      "status": "PASS",
+      "scope": "Existing source-bound type definitions, not invented runtime object instances."
+    },
+    {
+      "rule": "ALIAS_RESOLUTION",
+      "status": "PASS",
+      "scope": "Empty real registry is not an exercised alias; populated mappings are tested only in isolated fixtures."
+    },
+    {
+      "rule": "CURRENT_HISTORICAL",
+      "status": "PASS",
+      "scope": "Original current artifact registry cannot select sources/archives as current authoritative artifacts."
+    },
+    {
+      "rule": "PREDECESSOR",
+      "status": "PASS",
+      "scope": "Exact source-bound sole architecture predecessor tuple; no transport revision substitution."
+    },
+    {
+      "rule": "VERSION_AXIS",
+      "status": "PASS",
+      "scope": "Existing observed product/design/map/package axes, reserved unexecuted runtime/migration values stay null."
+    },
+    {
+      "rule": "RECEIPT_SUBJECT",
+      "status": "PASS",
+      "scope": "Recognized historical CI receipt binds its candidate tuple; it is not a fresh runtime/Step 8 PASS receipt."
+    },
+    {
+      "rule": "AUTHORIZATION_SCOPE",
+      "status": "PASS",
+      "scope": "Inherited task delegation actor/namespace/lifecycle constraints; not a runtime token authorizer."
+    },
+    {
+      "rule": "CONSUMER_NAMESPACE",
+      "status": "PASS",
+      "scope": "C01 public HTTP namespace is source-bound; protected runtime namespace/scope bindings remain Step 6 gaps."
+    },
+    {
+      "rule": "COPY_ORIGINAL",
+      "status": "PASS",
+      "scope": "Existing copy-identity contract preserves provenance; equal bytes create no independent original/writer."
+    },
+    {
+      "rule": "REPRESENTATION_CANONICAL",
+      "status": "PASS",
+      "scope": "Read-only mirror, human/compatibility/package/candidate projections cannot issue business Canonical state."
+    },
+    {
+      "rule": "PROJECTION_DRIFT",
+      "status": "PASS",
+      "scope": "Reuse the Step 7 renderer, exact outputs and upstream source lineage; no second renderer."
+    },
+    {
+      "rule": "STATUS_TRUTH",
+      "status": "PASS",
+      "scope": "Projected decisions must equal source facts; existing unexecuted consumers cannot acquire PASS in a derived output."
+    },
+    {
+      "rule": "TYPED_BINDING",
+      "status": "PASS",
+      "scope": "Resolve 18 qualified existing consumer identities and their administrative domain/owner, 27 auth and 18 receipt source references. Runtime slots are definitions, not newly executed runs."
+    }
+  ],
+  "errors": [],
+  "step6_binding_gaps": [],
+  "source_observations": {
+    "ownership": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step04-namespace-20260907\\NamespaceOwnershipManifest.candidate.json",
+      "sha256": "40d7e87fed046c8aff18d8c1d0532ada075b802faf204059649c84faef1c0782",
+      "bytes": 40953,
+      "digest_recomputed": true
+    },
+    "namespace_delegation": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step04-namespace-20260907\\NamespaceDelegationManifest.candidate.json",
+      "sha256": "cee24dff183aed36ea99a6ad51aea8ee6edf2b15544ac641a955c2393648d537",
+      "bytes": 5527,
+      "digest_recomputed": true
+    },
+    "step4_sources": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\step4_sources.portable.json",
+      "sha256": "ffe6ea867b76657553312b3c45571b1fee9bfaca14413fc3679c73c0d39508d3",
+      "bytes": 10645,
+      "digest_recomputed": true
+    },
+    "step5_sources": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\step5_sources.portable.json",
+      "sha256": "18635b8e12ea817d77648227acec65accc5d342bb6fa3eba70405a3740246bd4",
+      "bytes": 16995,
+      "digest_recomputed": true
+    },
+    "logical": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step05-identity-20260907\\LogicalObjectIdentityContract.candidate.json",
+      "sha256": "ceb63f2ec16c63d160ae7f760992ec6dd9b17c5555679bba8c37bb7c1ea58296",
+      "bytes": 11227,
+      "digest_recomputed": true
+    },
+    "aliases": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step05-identity-20260907\\AliasRegistry.candidate.json",
+      "sha256": "29d0d21d2d0fcecefdc9daaf841a77f411a6695d256a38993976f74660f19a40",
+      "bytes": 4737,
+      "digest_recomputed": true
+    },
+    "copy": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step05-identity-20260907\\CopyIdentityContract.candidate.json",
+      "sha256": "aa4d0092724c3b2d7d24ad6801d51438692912d87b8d7ce053785ded70a37b15",
+      "bytes": 3263,
+      "digest_recomputed": true
+    },
+    "representation": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step05-identity-20260907\\RepresentationContract.candidate.json",
+      "sha256": "c278f906a3c081f4e70f771904eb5577f6df165eba99bb6e26cf2d036b128a67",
+      "bytes": 6339,
+      "digest_recomputed": true
+    },
+    "versions": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step05-identity-20260907\\VersionAxisRegistry.candidate.json",
+      "sha256": "1276845153b1fe93517533bc0ae18d466134a6e8651100369dd54493790f27da",
+      "bytes": 9355,
+      "digest_recomputed": true
+    },
+    "consumers": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step6-consumer-candidate\\ConsumerMatrix.json",
+      "sha256": "3fffec8fd9570352246425d60156d17988eb6311adab719e481c197a6eca5cee",
+      "bytes": 56180,
+      "digest_recomputed": true
+    },
+    "current_registry": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\artifacts\\clued-validation\\structure-freeze-prep\\acceptance-20260907\\step2\\package-inputs\\data\\CurrentArtifactRegistry.json",
+      "sha256": "1dafc859c9a0e51cf13e193e0226718e030bd0193ebeebb3a17288c78c6a1468",
+      "bytes": 15392,
+      "digest_recomputed": true
+    },
+    "identity_policy": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step07-projection-20260907\\inputs\\CurrentArtifactIdentityPolicy.json",
+      "sha256": "3a14df68ea81c6390316c5df09d51a049b52a640871ab57953c42acb30624bff",
+      "bytes": 776,
+      "digest_recomputed": true
+    },
+    "review_subject": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step07-projection-20260907\\inputs\\ReviewSubjectContract.json",
+      "sha256": "c2cd13dbe8fd046aa8f0344778141cb9b115fae0048a8c673b60bd25b03498d3",
+      "bytes": 1383,
+      "digest_recomputed": true
+    },
+    "ci_receipt": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\artifacts\\clued-validation\\structure-freeze-prep\\acceptance-20260907\\step1\\34069116734\\CIGateReceipt.json",
+      "sha256": "0a6bf0df65e722f2bb48fc6fd93767ec5ffcd8bb207b4189d4ff7d0863738091",
+      "bytes": 4213,
+      "digest_recomputed": true
+    },
+    "worker_source": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\apps\\clued-cloud\\worker\\continuity.ts",
+      "sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+      "bytes": 47981,
+      "digest_recomputed": true
+    },
+    "projection_bindings": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step07-projection-20260907\\ProjectionBindings.repository.json",
+      "sha256": "7e526281339067dea908765cad2f8aa4b510d0371dcd9f2915cc31221e6802cd",
+      "bytes": 9087,
+      "digest_recomputed": true
+    },
+    "projection_generator": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step07-projection-20260907\\project-governance.mjs",
+      "sha256": "ffd35b923be0729fab18de13b2e234ce971788bdb5b6aa1ac8520c2a516755df",
+      "bytes": 16156,
+      "digest_recomputed": true
+    },
+    "typed_consumers": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step06-bindings-20260907\\TypedConsumerRegistry.candidate.json",
+      "sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+      "bytes": 243588,
+      "digest_recomputed": true
+    },
+    "typed_authorization": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step06-bindings-20260907\\TypedAuthorizationRegistry.candidate.json",
+      "sha256": "359e7461ba3166bef63815f37ddd9c247aada317c14e4e62bdee3bc79cc3fcdd",
+      "bytes": 74695,
+      "digest_recomputed": true
+    },
+    "typed_receipts": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step06-bindings-20260907\\TypedReceiptRegistry.candidate.json",
+      "sha256": "05d182805b31ba9d5e6c1c3fa32ae2081527a92faaa76263debded6ffca5efa4",
+      "bytes": 91138,
+      "digest_recomputed": true
+    },
+    "step6_sources": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\step6_sources.portable.json",
+      "sha256": "87d60f81c3e28de14a57b2a666308a403879d6ec7f03a07933887fd8d5aacc1e",
+      "bytes": 27246,
+      "digest_recomputed": true
+    },
+    "export_scope_disposition": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step06-bindings-20260907\\C09ExportScopeDisposition.json",
+      "sha256": "fa2ba22146d5560f502d5e70d7045ead5577fea7c1af909b7ab51a9e64b718ff",
+      "bytes": 4139,
+      "digest_recomputed": true
+    },
+    "catalog:scope-amendment": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\ReferencedSourceBytes.zip!32b16e2938a5674b1d8b492e1bf0a0506f708c574913696d6ba281b99e108e9e.json",
+      "sha256": "32b16e2938a5674b1d8b492e1bf0a0506f708c574913696d6ba281b99e108e9e",
+      "bytes": 2308,
+      "digest_recomputed": true
+    },
+    "catalog:baseline": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\ReferencedSourceBytes.zip!f465bcb77aced171b4f241da7a23c1e02133716700227caaabb7954be39899ad.md",
+      "sha256": "f465bcb77aced171b4f241da7a23c1e02133716700227caaabb7954be39899ad",
+      "bytes": 30836,
+      "digest_recomputed": true
+    },
+    "catalog:acceptance": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\ReferencedSourceBytes.zip!f2aed48ed74e688bfe280d3fa896243cc7907905fafcc467706a276367472f27.md",
+      "sha256": "f2aed48ed74e688bfe280d3fa896243cc7907905fafcc467706a276367472f27",
+      "bytes": 20571,
+      "digest_recomputed": true
+    },
+    "catalog:structure-map": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\ReferencedSourceBytes.zip!01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965.json",
+      "sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965",
+      "bytes": 33372,
+      "digest_recomputed": true
+    },
+    "catalog:delegation": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\ReferencedSourceBytes.zip!fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8.json",
+      "sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+      "bytes": 3350,
+      "digest_recomputed": true
+    },
+    "catalog:repo-agents": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\ReferencedSourceBytes.zip!75d0788ff62a20d2d211115a66ab20fc38519a14fad890ab9a3d6f821e821793.md",
+      "sha256": "75d0788ff62a20d2d211115a66ab20fc38519a14fad890ab9a3d6f821e821793",
+      "bytes": 9637,
+      "digest_recomputed": true
+    },
+    "catalog:identity-policy": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\ReferencedSourceBytes.zip!3a14df68ea81c6390316c5df09d51a049b52a640871ab57953c42acb30624bff.json",
+      "sha256": "3a14df68ea81c6390316c5df09d51a049b52a640871ab57953c42acb30624bff",
+      "bytes": 776,
+      "digest_recomputed": true
+    },
+    "catalog:legacy-readme": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\ReferencedSourceBytes.zip!7e1efdf92211c771d9f2d74195d9a8b42d84f6ae222a857c25a792289ddc8a15.md",
+      "sha256": "7e1efdf92211c771d9f2d74195d9a8b42d84f6ae222a857c25a792289ddc8a15",
+      "bytes": 698,
+      "digest_recomputed": true
+    },
+    "catalog:step4-ownership": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\ReferencedSourceBytes.zip!40d7e87fed046c8aff18d8c1d0532ada075b802faf204059649c84faef1c0782.json",
+      "sha256": "40d7e87fed046c8aff18d8c1d0532ada075b802faf204059649c84faef1c0782",
+      "bytes": 40953,
+      "digest_recomputed": true
+    },
+    "catalog:step4-acceptance": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\ReferencedSourceBytes.zip!6f2cc1c9cc28c2a717023029851d61a666815567bc30b3635479cb1b70382e6c.json",
+      "sha256": "6f2cc1c9cc28c2a717023029851d61a666815567bc30b3635479cb1b70382e6c",
+      "bytes": 3223,
+      "digest_recomputed": true
+    },
+    "catalog:type-crosswalk": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\ReferencedSourceBytes.zip!a4386a8b45b02e8dbd6ff2f400d3b1c9ecbfc9c6d07a2892f035994d2a78c685.json",
+      "sha256": "a4386a8b45b02e8dbd6ff2f400d3b1c9ecbfc9c6d07a2892f035994d2a78c685",
+      "bytes": 10781,
+      "digest_recomputed": true
+    },
+    "catalog:candidate-registry": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\ReferencedSourceBytes.zip!1dafc859c9a0e51cf13e193e0226718e030bd0193ebeebb3a17288c78c6a1468.json",
+      "sha256": "1dafc859c9a0e51cf13e193e0226718e030bd0193ebeebb3a17288c78c6a1468",
+      "bytes": 15392,
+      "digest_recomputed": true
+    },
+    "catalog:current-reader": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\ReferencedSourceBytes.zip!479fd0e39a8a96287642ea59644d1975666fc314cc589f39a0086c3d9446dd85.py",
+      "sha256": "479fd0e39a8a96287642ea59644d1975666fc314cc589f39a0086c3d9446dd85",
+      "bytes": 15511,
+      "digest_recomputed": true
+    },
+    "catalog:step4-domains": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\ReferencedSourceBytes.zip!fa9e1b322356fc55d04b3eee078146a9b8304e48197c7d1767cd14d665b9c8ca.json",
+      "sha256": "fa9e1b322356fc55d04b3eee078146a9b8304e48197c7d1767cd14d665b9c8ca",
+      "bytes": 34723,
+      "digest_recomputed": true
+    },
+    "catalog:ci-manifest": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\ReferencedSourceBytes.zip!e6e80781685b9cd76f1dbb19ba45fa9a9d623758271bde64a4999e30796dc882.json",
+      "sha256": "e6e80781685b9cd76f1dbb19ba45fa9a9d623758271bde64a4999e30796dc882",
+      "bytes": 60864987,
+      "digest_recomputed": true
+    },
+    "catalog:endpoint-trust": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\ReferencedSourceBytes.zip!3c6c76087b468f13e7010a54db92b7c8db13146558c8288c8830eb22d6fb78f4.json",
+      "sha256": "3c6c76087b468f13e7010a54db92b7c8db13146558c8288c8830eb22d6fb78f4",
+      "bytes": 209,
+      "digest_recomputed": true
+    },
+    "catalog:source-zip-container": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip",
+      "sha256": "6e51374a6caedb4f84d2b6bb9fe05cd695b25732833f9d0217c341f17e1c1649",
+      "bytes": 246612118,
+      "digest_recomputed": false,
+      "status": "INHERITED_PREVIOUSLY_VERIFIED_CONTAINER_DIGEST"
+    },
+    "catalog:review-subject": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\ReferencedSourceBytes.zip!c2cd13dbe8fd046aa8f0344778141cb9b115fae0048a8c673b60bd25b03498d3.json",
+      "sha256": "c2cd13dbe8fd046aa8f0344778141cb9b115fae0048a8c673b60bd25b03498d3",
+      "bytes": 1383,
+      "digest_recomputed": true
+    },
+    "catalog:version": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\ReferencedSourceBytes.zip!aa07c9e145d2246eb962877d8f3b4dccc25cfafd84115206bce546582628d02a.txt",
+      "sha256": "aa07c9e145d2246eb962877d8f3b4dccc25cfafd84115206bce546582628d02a",
+      "bytes": 11,
+      "digest_recomputed": true
+    },
+    "catalog:protocol-manifest": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\ReferencedSourceBytes.zip!05ca5bb70c642dba9c3f58c0b943020d6188636e60cc569b3802c90a9afd36b5.json",
+      "sha256": "05ca5bb70c642dba9c3f58c0b943020d6188636e60cc569b3802c90a9afd36b5",
+      "bytes": 18823,
+      "digest_recomputed": true
+    },
+    "catalog:original-matrix": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\ReferencedSourceBytes.zip!3fffec8fd9570352246425d60156d17988eb6311adab719e481c197a6eca5cee.json",
+      "sha256": "3fffec8fd9570352246425d60156d17988eb6311adab719e481c197a6eca5cee",
+      "bytes": 56180,
+      "digest_recomputed": true
+    },
+    "catalog:apps/clued-cloud/worker/continuity.ts": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\ReferencedSourceBytes.zip!7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba.ts",
+      "sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+      "bytes": 47981,
+      "digest_recomputed": true
+    },
+    "catalog:apps/clued-cloud/worker/index.ts": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\ReferencedSourceBytes.zip!43f0f1ac29ee491e9eb5ce748bfad9023f8fdbcd3e3c3e7bba0b9e91a54825fd.ts",
+      "sha256": "43f0f1ac29ee491e9eb5ce748bfad9023f8fdbcd3e3c3e7bba0b9e91a54825fd",
+      "bytes": 1961,
+      "digest_recomputed": true
+    },
+    "catalog:step5-acceptance": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\ReferencedSourceBytes.zip!a38536ed64ae7924235ab0318cae17716f1a549d89660acde807f4bb15a64a19.json",
+      "sha256": "a38536ed64ae7924235ab0318cae17716f1a549d89660acde807f4bb15a64a19",
+      "bytes": 2733,
+      "digest_recomputed": true
+    },
+    "catalog:auth-dependency-review": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\ReferencedSourceBytes.zip!82342ae534129ae73703b7a9b294c766daf0a9c353948e471192bac40f6154d4.json",
+      "sha256": "82342ae534129ae73703b7a9b294c766daf0a9c353948e471192bac40f6154d4",
+      "bytes": 6329,
+      "digest_recomputed": true
+    },
+    "catalog:auth-urls": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\ReferencedSourceBytes.zip!eea2b10dda1752263ab6e9105cb3cf23e963506f1a5c52ac98012449a1b91fb1.json",
+      "sha256": "eea2b10dda1752263ab6e9105cb3cf23e963506f1a5c52ac98012449a1b91fb1",
+      "bytes": 1452,
+      "digest_recomputed": true
+    },
+    "catalog:apps/clued-cloud/supabase/migrations/202608230002_mandatory_continuity.sql": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\ReferencedSourceBytes.zip!9afc51a213bed869c143a7fdb5a23ab8a2e80df10639b3ea572a39aef203f57c.sql",
+      "sha256": "9afc51a213bed869c143a7fdb5a23ab8a2e80df10639b3ea572a39aef203f57c",
+      "bytes": 31922,
+      "digest_recomputed": true
+    },
+    "catalog:apps/clued-cloud/worker/projects.ts": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\ReferencedSourceBytes.zip!8bb2d52643c4ffd62ee48de60294559161d750ea15d328b6585deb47aa2aa09f.ts",
+      "sha256": "8bb2d52643c4ffd62ee48de60294559161d750ea15d328b6585deb47aa2aa09f",
+      "bytes": 2051,
+      "digest_recomputed": true
+    },
+    "catalog:apps/clued-cloud/supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\ReferencedSourceBytes.zip!f59e414ec0de016cbe89d3ba24ded2d90e85a9e17fb554021b2d4d611f4d26c2.sql",
+      "sha256": "f59e414ec0de016cbe89d3ba24ded2d90e85a9e17fb554021b2d4d611f4d26c2",
+      "bytes": 72625,
+      "digest_recomputed": true
+    },
+    "catalog:apps/clued-cloud/worker/records.ts": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\ReferencedSourceBytes.zip!43bfe74c4d6576476f3d4a08df82a6b0853da855c29124edf1e333c14d5bb35e.ts",
+      "sha256": "43bfe74c4d6576476f3d4a08df82a6b0853da855c29124edf1e333c14d5bb35e",
+      "bytes": 8108,
+      "digest_recomputed": true
+    },
+    "catalog:apps/clued-cloud/worker/p5.ts": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\ReferencedSourceBytes.zip!ce46bf7025f746579263b78c320f1df6e4d077e11bcbcc958865f20bfead418f.ts",
+      "sha256": "ce46bf7025f746579263b78c320f1df6e4d077e11bcbcc958865f20bfead418f",
+      "bytes": 4492,
+      "digest_recomputed": true
+    },
+    "catalog:apps/clued-cloud/scripts/two-level-snapshot.mjs": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\ReferencedSourceBytes.zip!1dfcc8de7b481bc8a29cd055f711bb142fa390fff07a61730320866a477f6b7e.mjs",
+      "sha256": "1dfcc8de7b481bc8a29cd055f711bb142fa390fff07a61730320866a477f6b7e",
+      "bytes": 58055,
+      "digest_recomputed": true
+    },
+    "catalog:apps/clued-cloud/scripts/m2-snapshot-store.mjs": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\ReferencedSourceBytes.zip!d56e15f4821ff2b21de07a3c103aac4d9a963b3dac7ee2128543ea37036caf30.mjs",
+      "sha256": "d56e15f4821ff2b21de07a3c103aac4d9a963b3dac7ee2128543ea37036caf30",
+      "bytes": 16753,
+      "digest_recomputed": true
+    },
+    "catalog:verification_context.py": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\ReferencedSourceBytes.zip!6a2d83a65921df60252aad350f3cecacfbab991be582368903aa40203c96d5ab.py",
+      "sha256": "6a2d83a65921df60252aad350f3cecacfbab991be582368903aa40203c96d5ab",
+      "bytes": 32479,
+      "digest_recomputed": true
+    },
+    "catalog:apps/clued-cloud/app/page.tsx": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\ReferencedSourceBytes.zip!4534d4ca11390ca5fadae652c6b52ce2bc5428765214c04ed6ff13a8ff7ac5a6.tsx",
+      "sha256": "4534d4ca11390ca5fadae652c6b52ce2bc5428765214c04ed6ff13a8ff7ac5a6",
+      "bytes": 54598,
+      "digest_recomputed": true
+    },
+    "catalog:apps/clued-cloud/app/oauth/consent/page.tsx": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\ReferencedSourceBytes.zip!ce7e6f8de06bd2c7757112b08148f4e19a361868091b88d5c2150b2f0087ef54.tsx",
+      "sha256": "ce7e6f8de06bd2c7757112b08148f4e19a361868091b88d5c2150b2f0087ef54",
+      "bytes": 7026,
+      "digest_recomputed": true
+    },
+    "catalog:scripts/phase2-v027-validate.py": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\ReferencedSourceBytes.zip!e16cc9fa5fd2a54dc3922029851722936551a400979dc94dce691faa83bd7f4e.py",
+      "sha256": "e16cc9fa5fd2a54dc3922029851722936551a400979dc94dce691faa83bd7f4e",
+      "bytes": 20343,
+      "digest_recomputed": true
+    },
+    "catalog:.github/workflows/phase2-v027-validation.yml": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\ReferencedSourceBytes.zip!51334a15770991d2cbf13cb906a592494a96c87e55a8b6cb37f0792a1168bd53.yml",
+      "sha256": "51334a15770991d2cbf13cb906a592494a96c87e55a8b6cb37f0792a1168bd53",
+      "bytes": 9000,
+      "digest_recomputed": true
+    },
+    "catalog:artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step1/34069116734/CIGateReceipt.json": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\ReferencedSourceBytes.zip!0a6bf0df65e722f2bb48fc6fd93767ec5ffcd8bb207b4189d4ff7d0863738091.json",
+      "sha256": "0a6bf0df65e722f2bb48fc6fd93767ec5ffcd8bb207b4189d4ff7d0863738091",
+      "bytes": 4213,
+      "digest_recomputed": true
+    },
+    "catalog:ci-run/34069116734": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\ReferencedSourceBytes.zip!dfcb635c7847450b70f72b34979401163020b89ce8b0bec0b2d9945dd6c77d18.json",
+      "sha256": "dfcb635c7847450b70f72b34979401163020b89ce8b0bec0b2d9945dd6c77d18",
+      "bytes": 399,
+      "digest_recomputed": true
+    },
+    "catalog:artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step1/34068945665/CIGateReceipt.json": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\ReferencedSourceBytes.zip!71f218467f8c05fcd3854c65188336a80762fbc82b482977f46889b62c4d907e.json",
+      "sha256": "71f218467f8c05fcd3854c65188336a80762fbc82b482977f46889b62c4d907e",
+      "bytes": 3553,
+      "digest_recomputed": true
+    },
+    "catalog:ci-run/34068945665": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\ReferencedSourceBytes.zip!4b10d3f518c20aee437646629e31323f274336cacdadbf1547019a3ab3b36d2f.json",
+      "sha256": "4b10d3f518c20aee437646629e31323f274336cacdadbf1547019a3ab3b36d2f",
+      "bytes": 399,
+      "digest_recomputed": true
+    },
+    "catalog:scripts/clued-naming-surface-inventory.py": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\ReferencedSourceBytes.zip!9ff7dc893b865a7736d6d9ffbe6f908c15f9c418e10a0602ae6fd33eedb8f81e.py",
+      "sha256": "9ff7dc893b865a7736d6d9ffbe6f908c15f9c418e10a0602ae6fd33eedb8f81e",
+      "bytes": 73510,
+      "digest_recomputed": true
+    },
+    "catalog:current-ci-run-binding": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\ReferencedSourceBytes.zip!9ce45d5526abbcac641c88ecea3d29d20f30e0ce97c953ff1740e65cd5707657.json",
+      "sha256": "9ce45d5526abbcac641c88ecea3d29d20f30e0ce97c953ff1740e65cd5707657",
+      "bytes": 1205,
+      "digest_recomputed": true
+    },
+    "catalog:current-ci/NamingSurfaceInventoryManifest.json": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\ReferencedSourceBytes.zip!e23e6f69aaeab09e6085a9b4089db5ee0f13acd8c38c7f2dc76c2b21ef46c596.json",
+      "sha256": "e23e6f69aaeab09e6085a9b4089db5ee0f13acd8c38c7f2dc76c2b21ef46c596",
+      "bytes": 65085563,
+      "digest_recomputed": true
+    },
+    "catalog:current-ci/GenerationResult.json": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\ReferencedSourceBytes.zip!f1a8382677ab5f9aae62be1a3bc02cf428339a34d07a61248c1f40154ede086c.json",
+      "sha256": "f1a8382677ab5f9aae62be1a3bc02cf428339a34d07a61248c1f40154ede086c",
+      "bytes": 758,
+      "digest_recomputed": true
+    },
+    "catalog:current-ci/NamingSurfaceInventoryConsolidated.json": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\ReferencedSourceBytes.zip!2f9ff07305dcba3311cc97e4fc640a23333755b00caad2ccad5257dc38620ea5.json",
+      "sha256": "2f9ff07305dcba3311cc97e4fc640a23333755b00caad2ccad5257dc38620ea5",
+      "bytes": 7725,
+      "digest_recomputed": true
+    },
+    "catalog:current-ci/CheckoutNormalizationEvidence.json": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\ReferencedSourceBytes.zip!fa812be5971a0dc81288bc2ae54377987f846acd30e08e5faa463914030d0e92.json",
+      "sha256": "fa812be5971a0dc81288bc2ae54377987f846acd30e08e5faa463914030d0e92",
+      "bytes": 705,
+      "digest_recomputed": true
+    },
+    "catalog:.github/workflows/phase2-naming-surface-inventory.yml": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\ReferencedSourceBytes.zip!a9264836297371da0a4bf6e6dada2699ce577c7f31476ac957190e14396aa77c.yml",
+      "sha256": "a9264836297371da0a4bf6e6dada2699ce577c7f31476ac957190e14396aa77c",
+      "bytes": 9093,
+      "digest_recomputed": true
+    },
+    "catalog:scripts/clued-naming-inventory-consolidate.py": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\ReferencedSourceBytes.zip!69f2fcc2e8c0e2802d7fa08de842345b88d208bec947d3ef4e88ef4c41907026.py",
+      "sha256": "69f2fcc2e8c0e2802d7fa08de842345b88d208bec947d3ef4e88ef4c41907026",
+      "bytes": 32673,
+      "digest_recomputed": true
+    },
+    "catalog:apps/clued-cloud/evals/public-mcp/gate-receipt.mjs": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\ReferencedSourceBytes.zip!9d1574e361a8fdd550578763755933e4d250a8076d55b1223ca9dfc40c1ec0c0.mjs",
+      "sha256": "9d1574e361a8fdd550578763755933e4d250a8076d55b1223ca9dfc40c1ec0c0",
+      "bytes": 5425,
+      "digest_recomputed": true
+    },
+    "catalog:.github/workflows/public-mcp-gate-receipt.yml": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\ReferencedSourceBytes.zip!4e3784db5984933d859cd961f010c4fb2306eaf6b871cdd438eeb2cff9154ce8.yml",
+      "sha256": "4e3784db5984933d859cd961f010c4fb2306eaf6b871cdd438eeb2cff9154ce8",
+      "bytes": 1500,
+      "digest_recomputed": true
+    }
+  },
+  "scoped_step6_bindings_qualified": true,
+  "reference_observations": [
+    {
+      "source_id": "scope-amendment",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "baseline",
+      "pointer": "Step 4 / lines 192-256",
+      "status": "DOCUMENTED_PROSE_LOCATOR_NOT_MACHINE_RESOLVED"
+    },
+    {
+      "source_id": "acceptance",
+      "pointer": "Step 4",
+      "status": "DOCUMENTED_PROSE_LOCATOR_NOT_MACHINE_RESOLVED"
+    },
+    {
+      "source_id": "structure-map",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "/delegator",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "/delegatee",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "repo-agents",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "repo-agents",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "/delegatee",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "/delegatee",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "/delegatee",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "identity-policy",
+      "pointer": "/historical_namespaces_cannot_issue_current_state",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "legacy-readme",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "structure-map",
+      "pointer": "/current_to_target_rows/0",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "/delegator",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "/authority_source/account_ownership_context",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "structure-map",
+      "pointer": "/current_to_target_rows/1",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "structure-map",
+      "pointer": "/current_to_target_rows/2",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "structure-map",
+      "pointer": "/current_to_target_rows/8",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "/delegator",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "/authority_source/account_ownership_context",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "structure-map",
+      "pointer": "/current_to_target_rows/3",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "structure-map",
+      "pointer": "/current_to_target_rows/4",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "/delegator",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "/authority_source/account_ownership_context",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "structure-map",
+      "pointer": "/current_to_target_rows/5",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "/delegator",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "/authority_source/account_ownership_context",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "structure-map",
+      "pointer": "/current_to_target_rows/6",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "structure-map",
+      "pointer": "/current_to_target_rows/7",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "/delegator",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "/authority_source/account_ownership_context",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "structure-map",
+      "pointer": "/current_to_target_rows/9",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "structure-map",
+      "pointer": "/current_to_target_rows/10",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "structure-map",
+      "pointer": "/current_to_target_rows/11",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "/delegator",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "/authority_source/account_ownership_context",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "structure-map",
+      "pointer": "/current_to_target_rows/12",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "structure-map",
+      "pointer": "/current_to_target_rows/19",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "structure-map",
+      "pointer": "/current_to_target_rows/20",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "/delegator",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "/authority_source/account_ownership_context",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "structure-map",
+      "pointer": "/current_to_target_rows/13",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "structure-map",
+      "pointer": "/current_to_target_rows/15",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "/delegator",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "/authority_source/account_ownership_context",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "structure-map",
+      "pointer": "/current_to_target_rows/14",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "structure-map",
+      "pointer": "/current_to_target_rows/22",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "/delegator",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "/authority_source/account_ownership_context",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "structure-map",
+      "pointer": "/current_to_target_rows/16",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "structure-map",
+      "pointer": "/current_to_target_rows/17",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "structure-map",
+      "pointer": "/current_to_target_rows/18",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "structure-map",
+      "pointer": "/current_to_target_rows/21",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "/delegator",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "/authority_source/account_ownership_context",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "scope-amendment",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "baseline",
+      "pointer": "Step 4 / lines 192-256",
+      "status": "DOCUMENTED_PROSE_LOCATOR_NOT_MACHINE_RESOLVED"
+    },
+    {
+      "source_id": "acceptance",
+      "pointer": "Step 4",
+      "status": "DOCUMENTED_PROSE_LOCATOR_NOT_MACHINE_RESOLVED"
+    },
+    {
+      "source_id": "structure-map",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "/delegator",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "/delegatee",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "scope-amendment",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "/delegator",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "/delegatee",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-ownership",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "structure-map",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "type-crosswalk",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "type-crosswalk",
+      "pointer": "/rows/0",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "type-crosswalk",
+      "pointer": "/rows/1",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "type-crosswalk",
+      "pointer": "/rows/2",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "type-crosswalk",
+      "pointer": "/rows/3",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "type-crosswalk",
+      "pointer": "/rows/4",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "type-crosswalk",
+      "pointer": "/rows/5",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "type-crosswalk",
+      "pointer": "/rows/6",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "type-crosswalk",
+      "pointer": "/rows/7",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "type-crosswalk",
+      "pointer": "/rows/8",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "type-crosswalk",
+      "pointer": "/rows/9",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "type-crosswalk",
+      "pointer": "/rows/10",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "type-crosswalk",
+      "pointer": "/rows/11",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "type-crosswalk",
+      "pointer": "/rows/12",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "repo-agents",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "type-crosswalk",
+      "pointer": "/rows/0",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "structure-map",
+      "pointer": "/stable_map_identity",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "candidate-registry",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "scope-amendment",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "/delegator",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "/delegatee",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-ownership",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "identity-policy",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "structure-map",
+      "pointer": "/stable_map_identity",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "structure-map",
+      "pointer": "/current_to_target_rows/12",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "legacy-readme",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "current-reader",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-domains",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "scope-amendment",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "/delegator",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "/delegatee",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-ownership",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "ci-manifest",
+      "pointer": "/repository_inventory/duplicate_representations",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "scope-amendment",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "/delegator",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "/delegatee",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-ownership",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "repo-agents",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "repo-agents",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "current-reader",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "endpoint-trust",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "repo-agents",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "source-zip-container",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "candidate-registry",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "candidate-registry",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "review-subject",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "legacy-readme",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "structure-map",
+      "pointer": "/current_to_target_rows/12",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "scope-amendment",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "/delegator",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "/delegatee",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-ownership",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "structure-map",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "identity-policy",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "version",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "identity-policy",
+      "pointer": "/current_document_versions/architecture",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "structure-map",
+      "pointer": "/stable_map_identity",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "protocol-manifest",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "candidate-registry",
+      "pointer": "/artifacts",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "identity-policy",
+      "pointer": "/current_document_versions/skill_coexistence",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "type-crosswalk",
+      "pointer": "/rows/8",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "source-zip-container",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "structure-map",
+      "pointer": "/physical_targets_changed",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "protocol-manifest",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "identity-policy",
+      "pointer": "/current_document_versions",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "review-subject",
+      "pointer": "/sole_direct_predecessor",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "/delegator",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "/delegator",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "/delegator",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "/delegator",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "/delegator",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "/delegator",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "/delegator",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "/delegator",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "/delegator",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "/delegator",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "type-crosswalk",
+      "pointer": "/rows/0",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "type-crosswalk",
+      "pointer": "/rows/1",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "type-crosswalk",
+      "pointer": "/rows/2",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "type-crosswalk",
+      "pointer": "/rows/3",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "type-crosswalk",
+      "pointer": "/rows/4",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "type-crosswalk",
+      "pointer": "/rows/5",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "type-crosswalk",
+      "pointer": "/rows/6",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "type-crosswalk",
+      "pointer": "/rows/7",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "type-crosswalk",
+      "pointer": "/rows/8",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "type-crosswalk",
+      "pointer": "/rows/9",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "type-crosswalk",
+      "pointer": "/rows/10",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "type-crosswalk",
+      "pointer": "/rows/11",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "type-crosswalk",
+      "pointer": "/rows/12",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "review-subject",
+      "pointer": "/sole_direct_predecessor",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "version",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "identity-policy",
+      "pointer": "/current_document_versions/architecture",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "structure-map",
+      "pointer": "/stable_map_identity",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "protocol-manifest",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "candidate-registry",
+      "pointer": "/artifacts",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "identity-policy",
+      "pointer": "/current_document_versions/skill_coexistence",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "type-crosswalk",
+      "pointer": "/rows/8",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "source-zip-container",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "structure-map",
+      "pointer": "/physical_targets_changed",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "protocol-manifest",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "/delegator",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "/delegatee",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "original-matrix",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "original-matrix",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-domains",
+      "pointer": "/domains/3",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/index.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-ownership",
+      "pointer": "/namespaces/3/management_owner",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "/delegatee",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step5-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "auth-dependency-review",
+      "pointer": "/deployment",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "auth-urls",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-domains",
+      "pointer": "/domains/3",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/index.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-ownership",
+      "pointer": "/namespaces/3/management_owner",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "/delegatee",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step5-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "auth-dependency-review",
+      "pointer": "/deployment",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "auth-urls",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-domains",
+      "pointer": "/domains/3",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/index.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-ownership",
+      "pointer": "/namespaces/3/management_owner",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "/delegatee",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step5-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "auth-dependency-review",
+      "pointer": "/deployment",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "auth-urls",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/supabase/migrations/202608230002_mandatory_continuity.sql",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-domains",
+      "pointer": "/domains/3",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/index.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-ownership",
+      "pointer": "/namespaces/3/management_owner",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "/delegatee",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step5-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "auth-dependency-review",
+      "pointer": "/deployment",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "auth-urls",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/supabase/migrations/202608230002_mandatory_continuity.sql",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/projects.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-domains",
+      "pointer": "/domains/3",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/index.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/projects.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-ownership",
+      "pointer": "/namespaces/3/management_owner",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "/delegatee",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/projects.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/projects.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step5-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "auth-dependency-review",
+      "pointer": "/deployment",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "auth-urls",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/records.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-domains",
+      "pointer": "/domains/3",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/index.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/records.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-ownership",
+      "pointer": "/namespaces/3/management_owner",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "/delegatee",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/records.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/records.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step5-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "auth-dependency-review",
+      "pointer": "/deployment",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "auth-urls",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/records.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/records.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-domains",
+      "pointer": "/domains/3",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/index.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/records.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-ownership",
+      "pointer": "/namespaces/3/management_owner",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "/delegatee",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/records.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/records.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step5-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "auth-dependency-review",
+      "pointer": "/deployment",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "auth-urls",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/records.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-domains",
+      "pointer": "/domains/3",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/index.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/records.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-ownership",
+      "pointer": "/namespaces/3/management_owner",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "/delegatee",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/records.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/records.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step5-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "auth-dependency-review",
+      "pointer": "/deployment",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "auth-urls",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/records.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/records.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-domains",
+      "pointer": "/domains/3",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/index.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/records.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-ownership",
+      "pointer": "/namespaces/3/management_owner",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "/delegatee",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/records.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/records.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step5-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "auth-dependency-review",
+      "pointer": "/deployment",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "auth-urls",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/supabase/migrations/202608230002_mandatory_continuity.sql",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/p5.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-domains",
+      "pointer": "/domains/3",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/index.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/p5.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-ownership",
+      "pointer": "/namespaces/3/management_owner",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "/delegatee",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/p5.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/p5.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step5-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "auth-dependency-review",
+      "pointer": "/deployment",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "auth-urls",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/p5.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/scripts/two-level-snapshot.mjs",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/scripts/two-level-snapshot.mjs",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-domains",
+      "pointer": "/domains/3",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/scripts/two-level-snapshot.mjs",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/scripts/two-level-snapshot.mjs",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/scripts/two-level-snapshot.mjs",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-ownership",
+      "pointer": "/namespaces/3/management_owner",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "/delegatee",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/scripts/two-level-snapshot.mjs",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/scripts/two-level-snapshot.mjs",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/scripts/two-level-snapshot.mjs",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/scripts/two-level-snapshot.mjs",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step5-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/scripts/two-level-snapshot.mjs",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/scripts/m2-snapshot-store.mjs",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/scripts/m2-snapshot-store.mjs",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/scripts/two-level-snapshot.mjs",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-domains",
+      "pointer": "/domains/3",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/scripts/m2-snapshot-store.mjs",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/scripts/m2-snapshot-store.mjs",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/scripts/m2-snapshot-store.mjs",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/scripts/two-level-snapshot.mjs",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-ownership",
+      "pointer": "/namespaces/3/management_owner",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "/delegatee",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/scripts/m2-snapshot-store.mjs",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/scripts/m2-snapshot-store.mjs",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/scripts/two-level-snapshot.mjs",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/scripts/m2-snapshot-store.mjs",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/scripts/m2-snapshot-store.mjs",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/scripts/two-level-snapshot.mjs",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step5-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/scripts/two-level-snapshot.mjs",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/scripts/m2-snapshot-store.mjs",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "verification_context.py",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "verification_context.py",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "verification_context.py",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-domains",
+      "pointer": "/domains/5",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "verification_context.py",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "verification_context.py",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "verification_context.py",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "verification_context.py",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-ownership",
+      "pointer": "/namespaces/5/management_owner",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "/delegatee",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "verification_context.py",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "verification_context.py",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "verification_context.py",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "verification_context.py",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "verification_context.py",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "verification_context.py",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step5-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "verification_context.py",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/app/page.tsx",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/app/page.tsx",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/app/oauth/consent/page.tsx",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-domains",
+      "pointer": "/domains/3",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/app/page.tsx",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/app/page.tsx",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/app/page.tsx",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/app/oauth/consent/page.tsx",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-ownership",
+      "pointer": "/namespaces/3/management_owner",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "/delegatee",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/app/page.tsx",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/app/page.tsx",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/app/oauth/consent/page.tsx",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/app/page.tsx",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/app/page.tsx",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/app/oauth/consent/page.tsx",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step5-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "auth-dependency-review",
+      "pointer": "/deployment",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "auth-urls",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "auth-urls",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "auth-dependency-review",
+      "pointer": "/deployment",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/app/page.tsx",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/app/oauth/consent/page.tsx",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "auth-urls",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "scripts/phase2-v027-validate.py",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": ".github/workflows/phase2-v027-validation.yml",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-domains",
+      "pointer": "/domains/5",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": ".github/workflows/phase2-v027-validation.yml",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "scripts/phase2-v027-validate.py",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": ".github/workflows/phase2-v027-validation.yml",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-ownership",
+      "pointer": "/namespaces/5/management_owner",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "/delegatee",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "scripts/phase2-v027-validate.py",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": ".github/workflows/phase2-v027-validation.yml",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "scripts/phase2-v027-validate.py",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": ".github/workflows/phase2-v027-validation.yml",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step5-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step1/34069116734/CIGateReceipt.json",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "ci-run/34069116734",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step1/34068945665/CIGateReceipt.json",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "ci-run/34068945665",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "scripts/phase2-v027-validate.py",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": ".github/workflows/phase2-v027-validation.yml",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "scripts/clued-naming-surface-inventory.py",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "scripts/clued-naming-surface-inventory.py",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-domains",
+      "pointer": "/domains/5",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "scripts/clued-naming-surface-inventory.py",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "scripts/clued-naming-surface-inventory.py",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "scripts/clued-naming-surface-inventory.py",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-ownership",
+      "pointer": "/namespaces/5/management_owner",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "/delegatee",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "scripts/clued-naming-surface-inventory.py",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "scripts/clued-naming-surface-inventory.py",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "scripts/clued-naming-surface-inventory.py",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "scripts/clued-naming-surface-inventory.py",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step5-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "current-ci-run-binding",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "current-ci/NamingSurfaceInventoryManifest.json",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "current-ci/GenerationResult.json",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "current-ci/NamingSurfaceInventoryConsolidated.json",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "current-ci/CheckoutNormalizationEvidence.json",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": ".github/workflows/phase2-naming-surface-inventory.yml",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "scripts/clued-naming-surface-inventory.py",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": ".github/workflows/phase2-naming-surface-inventory.yml",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "scripts/clued-naming-inventory-consolidate.py",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "scripts/clued-naming-inventory-consolidate.py",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-domains",
+      "pointer": "/domains/5",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "scripts/clued-naming-inventory-consolidate.py",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "scripts/clued-naming-inventory-consolidate.py",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "scripts/clued-naming-inventory-consolidate.py",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-ownership",
+      "pointer": "/namespaces/5/management_owner",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "/delegatee",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "scripts/clued-naming-inventory-consolidate.py",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "scripts/clued-naming-inventory-consolidate.py",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "scripts/clued-naming-inventory-consolidate.py",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "scripts/clued-naming-inventory-consolidate.py",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step5-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "current-ci-run-binding",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "current-ci/NamingSurfaceInventoryManifest.json",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "current-ci/GenerationResult.json",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "current-ci/NamingSurfaceInventoryConsolidated.json",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "current-ci/CheckoutNormalizationEvidence.json",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": ".github/workflows/phase2-naming-surface-inventory.yml",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "scripts/clued-naming-inventory-consolidate.py",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/evals/public-mcp/gate-receipt.mjs",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": ".github/workflows/public-mcp-gate-receipt.yml",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-domains",
+      "pointer": "/domains/5",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": ".github/workflows/public-mcp-gate-receipt.yml",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/evals/public-mcp/gate-receipt.mjs",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": ".github/workflows/public-mcp-gate-receipt.yml",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-ownership",
+      "pointer": "/namespaces/5/management_owner",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "/delegatee",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/evals/public-mcp/gate-receipt.mjs",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": ".github/workflows/public-mcp-gate-receipt.yml",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/evals/public-mcp/gate-receipt.mjs",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": ".github/workflows/public-mcp-gate-receipt.yml",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step5-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/evals/public-mcp/gate-receipt.mjs",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": ".github/workflows/public-mcp-gate-receipt.yml",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step5-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step5-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/supabase/migrations/202608230002_mandatory_continuity.sql",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step5-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step5-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/supabase/migrations/202608230002_mandatory_continuity.sql",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step5-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step5-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/supabase/migrations/202608230002_mandatory_continuity.sql",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step5-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step5-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/supabase/migrations/202608230002_mandatory_continuity.sql",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step5-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step5-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/supabase/migrations/202608230002_mandatory_continuity.sql",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step5-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step5-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/supabase/migrations/202608230002_mandatory_continuity.sql",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step5-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step5-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/supabase/migrations/202608230002_mandatory_continuity.sql",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step5-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step5-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/p5.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step5-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/scripts/two-level-snapshot.mjs",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step5-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/scripts/two-level-snapshot.mjs",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/scripts/m2-snapshot-store.mjs",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step5-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "verification_context.py",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step5-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step5-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/scripts/two-level-snapshot.mjs",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step5-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": ".github/workflows/phase2-v027-validation.yml",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": ".github/workflows/public-mcp-gate-receipt.yml",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/evals/public-mcp/gate-receipt.mjs",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step5-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/scripts/two-level-snapshot.mjs",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step5-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": ".github/workflows/phase2-v027-validation.yml",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": ".github/workflows/public-mcp-gate-receipt.yml",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/evals/public-mcp/gate-receipt.mjs",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step5-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "delegation",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/scripts/two-level-snapshot.mjs",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step5-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": ".github/workflows/phase2-v027-validation.yml",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": ".github/workflows/public-mcp-gate-receipt.yml",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/evals/public-mcp/gate-receipt.mjs",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step5-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/projects.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/projects.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/records.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/records.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/records.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/records.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/records.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/records.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/records.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/records.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/p5.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/p5.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/scripts/two-level-snapshot.mjs",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/scripts/two-level-snapshot.mjs",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/scripts/two-level-snapshot.mjs",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/scripts/two-level-snapshot.mjs",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/scripts/m2-snapshot-store.mjs",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/scripts/m2-snapshot-store.mjs",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/scripts/two-level-snapshot.mjs",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/scripts/m2-snapshot-store.mjs",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/scripts/m2-snapshot-store.mjs",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/scripts/two-level-snapshot.mjs",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "verification_context.py",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "verification_context.py",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "verification_context.py",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "verification_context.py",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "verification_context.py",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "verification_context.py",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/app/page.tsx",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/app/page.tsx",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/app/oauth/consent/page.tsx",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/app/page.tsx",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/app/page.tsx",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/app/oauth/consent/page.tsx",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "auth-urls",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "auth-dependency-review",
+      "pointer": "/deployment",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "scripts/phase2-v027-validate.py",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": ".github/workflows/phase2-v027-validation.yml",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "scripts/phase2-v027-validate.py",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": ".github/workflows/phase2-v027-validation.yml",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step1/34069116734/CIGateReceipt.json",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "ci-run/34069116734",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step1/34068945665/CIGateReceipt.json",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "ci-run/34068945665",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "scripts/clued-naming-surface-inventory.py",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "scripts/clued-naming-surface-inventory.py",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "scripts/clued-naming-surface-inventory.py",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "scripts/clued-naming-surface-inventory.py",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "current-ci-run-binding",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "current-ci/NamingSurfaceInventoryManifest.json",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "current-ci/GenerationResult.json",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "current-ci/NamingSurfaceInventoryConsolidated.json",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "current-ci/CheckoutNormalizationEvidence.json",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "scripts/clued-naming-inventory-consolidate.py",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "scripts/clued-naming-inventory-consolidate.py",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "scripts/clued-naming-inventory-consolidate.py",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "scripts/clued-naming-inventory-consolidate.py",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "current-ci-run-binding",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "current-ci/NamingSurfaceInventoryManifest.json",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "current-ci/GenerationResult.json",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "current-ci/NamingSurfaceInventoryConsolidated.json",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "current-ci/CheckoutNormalizationEvidence.json",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/evals/public-mcp/gate-receipt.mjs",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": ".github/workflows/public-mcp-gate-receipt.yml",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/evals/public-mcp/gate-receipt.mjs",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": ".github/workflows/public-mcp-gate-receipt.yml",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-domains",
+      "pointer": "/domains/3",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/index.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-ownership",
+      "pointer": "/namespaces/3/management_owner",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-domains",
+      "pointer": "/domains/3",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/index.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-ownership",
+      "pointer": "/namespaces/3/management_owner",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-domains",
+      "pointer": "/domains/3",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/index.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-ownership",
+      "pointer": "/namespaces/3/management_owner",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-domains",
+      "pointer": "/domains/3",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/index.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-ownership",
+      "pointer": "/namespaces/3/management_owner",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-domains",
+      "pointer": "/domains/3",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/index.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-ownership",
+      "pointer": "/namespaces/3/management_owner",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-domains",
+      "pointer": "/domains/3",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/index.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-ownership",
+      "pointer": "/namespaces/3/management_owner",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-domains",
+      "pointer": "/domains/3",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/index.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-ownership",
+      "pointer": "/namespaces/3/management_owner",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-domains",
+      "pointer": "/domains/3",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/index.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-ownership",
+      "pointer": "/namespaces/3/management_owner",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-domains",
+      "pointer": "/domains/3",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/index.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-ownership",
+      "pointer": "/namespaces/3/management_owner",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-domains",
+      "pointer": "/domains/3",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/worker/index.ts",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-ownership",
+      "pointer": "/namespaces/3/management_owner",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-domains",
+      "pointer": "/domains/3",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/scripts/two-level-snapshot.mjs",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-ownership",
+      "pointer": "/namespaces/3/management_owner",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-domains",
+      "pointer": "/domains/3",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/scripts/m2-snapshot-store.mjs",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-ownership",
+      "pointer": "/namespaces/3/management_owner",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-domains",
+      "pointer": "/domains/5",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "verification_context.py",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-ownership",
+      "pointer": "/namespaces/5/management_owner",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-domains",
+      "pointer": "/domains/3",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "apps/clued-cloud/app/page.tsx",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-ownership",
+      "pointer": "/namespaces/3/management_owner",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-domains",
+      "pointer": "/domains/5",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": ".github/workflows/phase2-v027-validation.yml",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-ownership",
+      "pointer": "/namespaces/5/management_owner",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-domains",
+      "pointer": "/domains/5",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "scripts/clued-naming-surface-inventory.py",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-ownership",
+      "pointer": "/namespaces/5/management_owner",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-domains",
+      "pointer": "/domains/5",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "scripts/clued-naming-inventory-consolidate.py",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-ownership",
+      "pointer": "/namespaces/5/management_owner",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-domains",
+      "pointer": "/domains/5",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": ".github/workflows/public-mcp-gate-receipt.yml",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-ownership",
+      "pointer": "/namespaces/5/management_owner",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    },
+    {
+      "source_id": "step4-acceptance",
+      "pointer": "",
+      "status": "VERIFIED_SOURCE_HASH_AND_POINTER"
+    }
+  ],
+  "projection_summary": {
+    "mismatches": [],
+    "upstream_mismatches": [],
+    "outputs_checked": [
+      "README.governance.md",
+      "AGENTS.governance.md",
+      "GovernanceDocs.projection.md",
+      "CURRENT_STATUS.projection.md",
+      "CURRENT_STATUS.history-original.md",
+      "StatusMigrationPlan.candidate.json",
+      "GovernanceManifest.projection.json",
+      "GovernanceRegistry.projection.json",
+      "IdentityFiles.projection.json",
+      "ConsumerBindings.projection.json",
+      "WorkflowReferences.projection.json",
+      "ToolRouting.projection.json"
+    ],
+    "formal_step7_gate": false
+  },
+  "limits": [
+    "No runtime service tests or production changes executed.",
+    "Inherited complete ZIP digest is not recomputed in this candidate validator.",
+    "Typed design definitions, historical CI receipt, delegated administration and public C01 are bounded positive subjects.",
+    "Per-consumer qualified references supersede old aggregate nulls only for this unchanged-source naming scope.",
+    "No new login is demanded for unchanged consumers; later migration/actual gate/enforcement obligations remain.",
+    "Fixture green cannot satisfy missing Step 6 bindings or issue Step 8 acceptance/Step 11 Freeze."
+  ],
+  "execution_location_adapter": {
+    "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\scripts\\naming-governance\\run.py",
+    "sha256": "b7609198aade6f16f8445ffd2d3e5cb0075d3161e78eb222a01940f75ea73edb",
+    "core_predicates_modified": false,
+    "external_candidate_locator": "external/Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip",
+    "explicit_external_candidate_path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip",
+    "full_candidate_digest_recomputed_here": false,
+    "candidate_digest_basis": "Inherited exact prior package verification; source members are retained and independently rehashed by the core.",
+    "node": "node",
+    "python": "3.12.14"
+  }
+}

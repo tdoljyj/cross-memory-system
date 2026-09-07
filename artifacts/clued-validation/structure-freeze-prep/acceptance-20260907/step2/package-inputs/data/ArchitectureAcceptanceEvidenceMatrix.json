@@ -1,0 +1,761 @@
+{
+  "id": "V025_ORIGINAL_40_CONDITION_AUTHOR_EVIDENCE_MATRIX",
+  "type": "AUTHOR_PREPARATION_NOT_ACCEPTANCE",
+  "source": {
+    "path": "sources/architecture_review_v024/data/ArchitectureAcceptancePrerequisiteAssessment.json",
+    "bytes": 124602,
+    "sha256": "dce3d224dfc567c0a75cdfbae209bfacd1d6b0be118895b47a53b651709ca5b6"
+  },
+  "original_required_ids": [
+    "F-MAJ-005",
+    "F-MAJ-006",
+    "F-MAJ-007",
+    "F-MAJ-008",
+    "F-MAJ-009",
+    "F-MAJ-010",
+    "F-MAJ-011",
+    "F-MAJ-013",
+    "F-MAJ-014",
+    "F-MAJ-016",
+    "F-MAJ-017",
+    "F-MAJ-018"
+  ],
+  "original_atomic_condition_count": 40,
+  "rows": [
+    {
+      "finding_id": "F-MAJ-005",
+      "original_closure_conditions": [
+        "固定主线为 impact v0.3→Architecture convergence candidate v0.2→Phase2 Charter/Structure Plan→一个审核包",
+        "从同一审核包签发两个不同决定：ArchitectureConstitutionAcceptanceDecision 与 Phase2StructureFreezeDecision",
+        "废止/限定旧文档中的竞争性 next-step 语句"
+      ],
+      "conditions": [
+        {
+          "condition_id": "F-MAJ-005/C1",
+          "original_text": "固定主线为 impact v0.3→Architecture convergence candidate v0.2→Phase2 Charter/Structure Plan→一个审核包",
+          "prior_v024_independent_status": "CURRENT_BINDING_REPAIR_REQUIRED",
+          "current_author_status": "AUTHOR_DESIGN_SUPPORTED_PENDING_INDEPENDENT_ACCEPTANCE",
+          "author_progress": "原条件历史版本词逐字保留；本版应用链为精确v043接受→架构v025→Charter/结构v014→同一新精确包；真实阶段边subject解析同步，旧current仅存在sources原命名空间。待新上下文复验，不把作者修复当独立关闭。",
+          "evidence_refs": [
+            "data/ReviewSubjectContract.json"
+          ],
+          "authorization_request_id": null,
+          "formal_condition_closed": false,
+          "authorized_stage_disposition_ref": null,
+          "remaining_obligation_deleted": false,
+          "independent_assessment": "NOT_ISSUED"
+        },
+        {
+          "condition_id": "F-MAJ-005/C2",
+          "original_text": "从同一审核包签发两个不同决定：ArchitectureConstitutionAcceptanceDecision 与 Phase2StructureFreezeDecision",
+          "prior_v024_independent_status": "DESIGN_CONTENT_SUPPORTED_PENDING_VALID_ACCEPTANCE_AND_CURRENT_BINDING_REPAIR",
+          "current_author_status": "AUTHOR_DESIGN_SUPPORTED_PENDING_INDEPENDENT_ACCEPTANCE",
+          "author_progress": "原条件设计内容保留，并在当前精确v025作用域承接；作者自检支持不形成正式条件关闭。",
+          "evidence_refs": [
+            "data/ReviewSubjectContract.json"
+          ],
+          "authorization_request_id": null,
+          "formal_condition_closed": false,
+          "authorized_stage_disposition_ref": null,
+          "remaining_obligation_deleted": false,
+          "independent_assessment": "NOT_ISSUED"
+        },
+        {
+          "condition_id": "F-MAJ-005/C3",
+          "original_text": "废止/限定旧文档中的竞争性 next-step 语句",
+          "prior_v024_independent_status": "CURRENT_BINDING_REPAIR_REQUIRED",
+          "current_author_status": "AUTHOR_DESIGN_SUPPORTED_PENDING_INDEPENDENT_ACCEPTANCE",
+          "author_progress": "原条件历史版本词逐字保留；本版应用链为精确v043接受→架构v025→Charter/结构v014→同一新精确包；真实阶段边subject解析同步，旧current仅存在sources原命名空间。待新上下文复验，不把作者修复当独立关闭。",
+          "evidence_refs": [
+            "data/ReviewSubjectContract.json"
+          ],
+          "authorization_request_id": null,
+          "formal_condition_closed": false,
+          "authorized_stage_disposition_ref": null,
+          "remaining_obligation_deleted": false,
+          "independent_assessment": "NOT_ISSUED"
+        }
+      ]
+    },
+    {
+      "finding_id": "F-MAJ-006",
+      "original_closure_conditions": [
+        "签发 ProgramCriticalPathDecision",
+        "MODEL-PROGRAM-M0 可在共同 Readiness 后建立治理骨架",
+        "完整 M1-M7 只在逐阶段预算/实验授权下作为非关键并行轨道",
+        "PHASE2-CORE-SLICE-A 不依赖完整第一方模型 Stable"
+      ],
+      "conditions": [
+        {
+          "condition_id": "F-MAJ-006/C1",
+          "original_text": "签发 ProgramCriticalPathDecision",
+          "prior_v024_independent_status": "MISSING_EXACT_EVIDENCE_OR_AUTHORITY",
+          "current_author_status": "MISSING_EXACT_EVIDENCE_OR_AUTHORITY",
+          "author_progress": "已重绑新架构/Charter/测量/预算输入，提供具名确认请求；ProgramCriticalPathDecision仍未签。",
+          "evidence_refs": [
+            "data/ProgramCriticalPathDecisionCandidate.json"
+          ],
+          "authorization_request_id": "AREQ-006-018",
+          "formal_condition_closed": false,
+          "authorized_stage_disposition_ref": null,
+          "remaining_obligation_deleted": false,
+          "independent_assessment": "NOT_ISSUED"
+        },
+        {
+          "condition_id": "F-MAJ-006/C2",
+          "original_text": "MODEL-PROGRAM-M0 可在共同 Readiness 后建立治理骨架",
+          "prior_v024_independent_status": "DESIGN_CONTENT_SUPPORTED_PENDING_VALID_ACCEPTANCE_AND_CURRENT_BINDING_REPAIR",
+          "current_author_status": "AUTHOR_DESIGN_SUPPORTED_PENDING_INDEPENDENT_ACCEPTANCE",
+          "author_progress": "原条件设计内容保留，并在当前精确v025作用域承接；作者自检支持不形成正式条件关闭。",
+          "evidence_refs": [
+            "data/BusinessBranchDependencies.json"
+          ],
+          "authorization_request_id": null,
+          "formal_condition_closed": false,
+          "authorized_stage_disposition_ref": null,
+          "remaining_obligation_deleted": false,
+          "independent_assessment": "NOT_ISSUED"
+        },
+        {
+          "condition_id": "F-MAJ-006/C3",
+          "original_text": "完整 M1-M7 只在逐阶段预算/实验授权下作为非关键并行轨道",
+          "prior_v024_independent_status": "DESIGN_CONTENT_SUPPORTED_PENDING_VALID_ACCEPTANCE_AND_CURRENT_BINDING_REPAIR",
+          "current_author_status": "AUTHOR_DESIGN_SUPPORTED_PENDING_INDEPENDENT_ACCEPTANCE",
+          "author_progress": "原条件设计内容保留，并在当前精确v025作用域承接；作者自检支持不形成正式条件关闭。",
+          "evidence_refs": [
+            "data/BusinessBranchDependencies.json"
+          ],
+          "authorization_request_id": null,
+          "formal_condition_closed": false,
+          "authorized_stage_disposition_ref": null,
+          "remaining_obligation_deleted": false,
+          "independent_assessment": "NOT_ISSUED"
+        },
+        {
+          "condition_id": "F-MAJ-006/C4",
+          "original_text": "PHASE2-CORE-SLICE-A 不依赖完整第一方模型 Stable",
+          "prior_v024_independent_status": "DESIGN_CONTENT_SUPPORTED_PENDING_VALID_ACCEPTANCE_AND_CURRENT_BINDING_REPAIR",
+          "current_author_status": "AUTHOR_DESIGN_SUPPORTED_PENDING_INDEPENDENT_ACCEPTANCE",
+          "author_progress": "原条件设计内容保留，并在当前精确v025作用域承接；作者自检支持不形成正式条件关闭。",
+          "evidence_refs": [
+            "data/BusinessBranchDependencies.json"
+          ],
+          "authorization_request_id": null,
+          "formal_condition_closed": false,
+          "authorized_stage_disposition_ref": null,
+          "remaining_obligation_deleted": false,
+          "independent_assessment": "NOT_ISSUED"
+        }
+      ]
+    },
+    {
+      "finding_id": "F-MAJ-007",
+      "original_closure_conditions": [
+        "采用 typed references: model_program_parent_architecture_ref 与 clued_architecture_constitution_ref",
+        "M0 Authorization 同时绑定所需的两个接受对象，禁止 `<exact or Structure Review scope>` 含糊值",
+        "为 Architecture v1.0 与 Model Architecture revision 建立兼容矩阵"
+      ],
+      "conditions": [
+        {
+          "condition_id": "F-MAJ-007/C1",
+          "original_text": "采用 typed references: model_program_parent_architecture_ref 与 clued_architecture_constitution_ref",
+          "prior_v024_independent_status": "DESIGN_CONTENT_SUPPORTED_PENDING_VALID_ACCEPTANCE_AND_CURRENT_BINDING_REPAIR",
+          "current_author_status": "AUTHOR_DESIGN_SUPPORTED_PENDING_INDEPENDENT_ACCEPTANCE",
+          "author_progress": "原条件设计内容保留，并在当前精确v025作用域承接；作者自检支持不形成正式条件关闭。",
+          "evidence_refs": [
+            "data/ParentArchitectureCompatibility.json"
+          ],
+          "authorization_request_id": null,
+          "formal_condition_closed": false,
+          "authorized_stage_disposition_ref": null,
+          "remaining_obligation_deleted": false,
+          "independent_assessment": "NOT_ISSUED"
+        },
+        {
+          "condition_id": "F-MAJ-007/C2",
+          "original_text": "M0 Authorization 同时绑定所需的两个接受对象，禁止 `<exact or Structure Review scope>` 含糊值",
+          "prior_v024_independent_status": "FUTURE_STAGE_OBLIGATION_RETAINED_NOT_DISPOSITIONED",
+          "current_author_status": "FUTURE_STAGE_OBLIGATION_RETAINED_NOT_DISPOSITIONED",
+          "author_progress": "原阶段义务继续阻断适用未来动作；本作者不决定豁免或合法延期。需有权主体逐条绑定剩余义务、Owner、不可绕过Gate、有效期和撤销。",
+          "evidence_refs": [
+            "data/ParentArchitectureCompatibility.json"
+          ],
+          "authorization_request_id": null,
+          "formal_condition_closed": false,
+          "authorized_stage_disposition_ref": null,
+          "remaining_obligation_deleted": false,
+          "independent_assessment": "NOT_ISSUED"
+        },
+        {
+          "condition_id": "F-MAJ-007/C3",
+          "original_text": "为 Architecture v1.0 与 Model Architecture revision 建立兼容矩阵",
+          "prior_v024_independent_status": "MISSING_EXACT_EVIDENCE_OR_AUTHORITY",
+          "current_author_status": "MISSING_EXACT_EVIDENCE_OR_AUTHORITY",
+          "author_progress": "新增精确v025设计组合行与旧模型父架构/计划引用；不是未来Architecture v1.0正式接受或实际组合资格。",
+          "evidence_refs": [
+            "data/ParentArchitectureCompatibility.json"
+          ],
+          "authorization_request_id": "AREQ-TYPED-PARENTS",
+          "formal_condition_closed": false,
+          "authorized_stage_disposition_ref": null,
+          "remaining_obligation_deleted": false,
+          "independent_assessment": "NOT_ISSUED"
+        }
+      ]
+    },
+    {
+      "finding_id": "F-MAJ-008",
+      "original_closure_conditions": [
+        "建立 R5→v3.3 Supersession Crosswalk",
+        "逐项标记 inherited/absorbed/superseded/historical/open",
+        "明确 K0-K10 不再是 current parallel Gate authority"
+      ],
+      "conditions": [
+        {
+          "condition_id": "F-MAJ-008/C1",
+          "original_text": "建立 R5→v3.3 Supersession Crosswalk",
+          "prior_v024_independent_status": "DESIGN_CONTENT_SUPPORTED_PENDING_VALID_ACCEPTANCE_AND_CURRENT_BINDING_REPAIR",
+          "current_author_status": "AUTHOR_DESIGN_SUPPORTED_PENDING_INDEPENDENT_ACCEPTANCE",
+          "author_progress": "原条件设计内容保留，并在当前精确v025作用域承接；作者自检支持不形成正式条件关闭。",
+          "evidence_refs": [
+            "sources/architecture_v024/data/R5SupersessionCrosswalk.json"
+          ],
+          "authorization_request_id": null,
+          "formal_condition_closed": false,
+          "authorized_stage_disposition_ref": null,
+          "remaining_obligation_deleted": false,
+          "independent_assessment": "NOT_ISSUED"
+        },
+        {
+          "condition_id": "F-MAJ-008/C2",
+          "original_text": "逐项标记 inherited/absorbed/superseded/historical/open",
+          "prior_v024_independent_status": "DESIGN_CONTENT_SUPPORTED_PENDING_VALID_ACCEPTANCE_AND_CURRENT_BINDING_REPAIR",
+          "current_author_status": "AUTHOR_DESIGN_SUPPORTED_PENDING_INDEPENDENT_ACCEPTANCE",
+          "author_progress": "原条件设计内容保留，并在当前精确v025作用域承接；作者自检支持不形成正式条件关闭。",
+          "evidence_refs": [
+            "sources/architecture_v024/data/R5SupersessionCrosswalk.json"
+          ],
+          "authorization_request_id": null,
+          "formal_condition_closed": false,
+          "authorized_stage_disposition_ref": null,
+          "remaining_obligation_deleted": false,
+          "independent_assessment": "NOT_ISSUED"
+        },
+        {
+          "condition_id": "F-MAJ-008/C3",
+          "original_text": "明确 K0-K10 不再是 current parallel Gate authority",
+          "prior_v024_independent_status": "DESIGN_CONTENT_SUPPORTED_PENDING_VALID_ACCEPTANCE_AND_CURRENT_BINDING_REPAIR",
+          "current_author_status": "AUTHOR_DESIGN_SUPPORTED_PENDING_INDEPENDENT_ACCEPTANCE",
+          "author_progress": "原条件设计内容保留，并在当前精确v025作用域承接；作者自检支持不形成正式条件关闭。",
+          "evidence_refs": [
+            "sources/architecture_v024/data/R5SupersessionCrosswalk.json"
+          ],
+          "authorization_request_id": null,
+          "formal_condition_closed": false,
+          "authorized_stage_disposition_ref": null,
+          "remaining_obligation_deleted": false,
+          "independent_assessment": "NOT_ISSUED"
+        }
+      ]
+    },
+    {
+      "finding_id": "F-MAJ-009",
+      "original_closure_conditions": [
+        "从 accepted machine manifest 确定性生成 README/router",
+        "所有人类入口带 generated_from/source_digest/status",
+        "CI 比对 Registry、Manifest、README 和 Root AGENTS 路由"
+      ],
+      "conditions": [
+        {
+          "condition_id": "F-MAJ-009/C1",
+          "original_text": "从 accepted machine manifest 确定性生成 README/router",
+          "prior_v024_independent_status": "MISSING_EXACT_EVIDENCE_OR_AUTHORITY",
+          "current_author_status": "MISSING_EXACT_EVIDENCE_OR_AUTHORITY",
+          "author_progress": "提供确定性candidate-manifest入口生成器和离线样例；真实仓库尚无此精确accepted-manifest生成证据。",
+          "evidence_refs": [
+            "evidence/entry-preview/README.md"
+          ],
+          "authorization_request_id": "AREQ-009",
+          "formal_condition_closed": false,
+          "authorized_stage_disposition_ref": null,
+          "remaining_obligation_deleted": false,
+          "independent_assessment": "NOT_ISSUED"
+        },
+        {
+          "condition_id": "F-MAJ-009/C2",
+          "original_text": "所有人类入口带 generated_from/source_digest/status",
+          "prior_v024_independent_status": "MISSING_EXACT_EVIDENCE_OR_AUTHORITY",
+          "current_author_status": "MISSING_EXACT_EVIDENCE_OR_AUTHORITY",
+          "author_progress": "直接读取README/AGENTS两实际入口，确认未带generated_from/source_digest；全入口库存仍未齐。",
+          "evidence_refs": [
+            "data/RepositoryEvidenceObservation.json"
+          ],
+          "authorization_request_id": "AREQ-009",
+          "formal_condition_closed": false,
+          "authorized_stage_disposition_ref": null,
+          "remaining_obligation_deleted": false,
+          "independent_assessment": "NOT_ISSUED"
+        },
+        {
+          "condition_id": "F-MAJ-009/C3",
+          "original_text": "CI 比对 Registry、Manifest、README 和 Root AGENTS 路由",
+          "prior_v024_independent_status": "MISSING_EXACT_EVIDENCE_OR_AUTHORITY",
+          "current_author_status": "MISSING_EXACT_EVIDENCE_OR_AUTHORITY",
+          "author_progress": "读取7工作流目录、1工作流正文、4成功check-run、2运行artifact列表及保护可见性；没有四方一致性真实CI/负例/制品/不可绕过证据。",
+          "evidence_refs": [
+            "data/RepositoryEvidenceObservation.json"
+          ],
+          "authorization_request_id": "AREQ-009",
+          "formal_condition_closed": false,
+          "authorized_stage_disposition_ref": null,
+          "remaining_obligation_deleted": false,
+          "independent_assessment": "NOT_ISSUED"
+        }
+      ]
+    },
+    {
+      "finding_id": "F-MAJ-010",
+      "original_closure_conditions": [
+        "机器 ID 统一改为 IF-MVP0-A/B/C 与 MODEL-PROGRAM-M0..M7",
+        "旧文件名保留但在 alias registry 中映射",
+        "所有 Receipt/Authorization 必须带 domain_id/program_id/stage_id"
+      ],
+      "conditions": [
+        {
+          "condition_id": "F-MAJ-010/C1",
+          "original_text": "机器 ID 统一改为 IF-MVP0-A/B/C 与 MODEL-PROGRAM-M0..M7",
+          "prior_v024_independent_status": "DESIGN_CONTENT_SUPPORTED_PENDING_VALID_ACCEPTANCE_AND_CURRENT_BINDING_REPAIR",
+          "current_author_status": "AUTHOR_DESIGN_SUPPORTED_PENDING_INDEPENDENT_ACCEPTANCE",
+          "author_progress": "原条件设计内容保留，并在当前精确v025作用域承接；作者自检支持不形成正式条件关闭。",
+          "evidence_refs": [
+            "sources/architecture_v024/data/ControlTypeAndAliasCrosswalk.json"
+          ],
+          "authorization_request_id": null,
+          "formal_condition_closed": false,
+          "authorized_stage_disposition_ref": null,
+          "remaining_obligation_deleted": false,
+          "independent_assessment": "NOT_ISSUED"
+        },
+        {
+          "condition_id": "F-MAJ-010/C2",
+          "original_text": "旧文件名保留但在 alias registry 中映射",
+          "prior_v024_independent_status": "DESIGN_CONTENT_SUPPORTED_PENDING_VALID_ACCEPTANCE_AND_CURRENT_BINDING_REPAIR",
+          "current_author_status": "AUTHOR_DESIGN_SUPPORTED_PENDING_INDEPENDENT_ACCEPTANCE",
+          "author_progress": "原条件设计内容保留，并在当前精确v025作用域承接；作者自检支持不形成正式条件关闭。",
+          "evidence_refs": [
+            "sources/architecture_v024/data/ControlTypeAndAliasCrosswalk.json"
+          ],
+          "authorization_request_id": null,
+          "formal_condition_closed": false,
+          "authorized_stage_disposition_ref": null,
+          "remaining_obligation_deleted": false,
+          "independent_assessment": "NOT_ISSUED"
+        },
+        {
+          "condition_id": "F-MAJ-010/C3",
+          "original_text": "所有 Receipt/Authorization 必须带 domain_id/program_id/stage_id",
+          "prior_v024_independent_status": "MISSING_EXACT_EVIDENCE_OR_AUTHORITY",
+          "current_author_status": "MISSING_EXACT_EVIDENCE_OR_AUTHORITY",
+          "author_progress": "列出Receipt/Authorization域/程序/阶段消费者证据必填项；没有实际消费者调用图或运行结果。",
+          "evidence_refs": [
+            "data/RuntimeConsumerEvidenceContract.json"
+          ],
+          "authorization_request_id": "AREQ-TYPED-CONSUMERS",
+          "formal_condition_closed": false,
+          "authorized_stage_disposition_ref": null,
+          "remaining_obligation_deleted": false,
+          "independent_assessment": "NOT_ISSUED"
+        }
+      ]
+    },
+    {
+      "finding_id": "F-MAJ-011",
+      "original_closure_conditions": [
+        "单独研究并形成通用候选合同",
+        "定义角色、职责、状态、Artifact identity、Human Approval、Publish Gate、Production Verification、Rollback、Receipt/Evidence",
+        "明确网站流程只是一个 domain projection"
+      ],
+      "conditions": [
+        {
+          "condition_id": "F-MAJ-011/C1",
+          "original_text": "单独研究并形成通用候选合同",
+          "prior_v024_independent_status": "DESIGN_CONTENT_SUPPORTED_PENDING_VALID_ACCEPTANCE_AND_CURRENT_BINDING_REPAIR",
+          "current_author_status": "AUTHOR_DESIGN_SUPPORTED_PENDING_INDEPENDENT_ACCEPTANCE",
+          "author_progress": "原条件设计内容保留，并在当前精确v025作用域承接；作者自检支持不形成正式条件关闭。",
+          "evidence_refs": [
+            "data/HumanGovernanceProfiles.json"
+          ],
+          "authorization_request_id": null,
+          "formal_condition_closed": false,
+          "authorized_stage_disposition_ref": null,
+          "remaining_obligation_deleted": false,
+          "independent_assessment": "NOT_ISSUED"
+        },
+        {
+          "condition_id": "F-MAJ-011/C2",
+          "original_text": "定义角色、职责、状态、Artifact identity、Human Approval、Publish Gate、Production Verification、Rollback、Receipt/Evidence",
+          "prior_v024_independent_status": "DESIGN_CONTENT_SUPPORTED_PENDING_VALID_ACCEPTANCE_AND_CURRENT_BINDING_REPAIR",
+          "current_author_status": "AUTHOR_DESIGN_SUPPORTED_PENDING_INDEPENDENT_ACCEPTANCE",
+          "author_progress": "原条件设计内容保留，并在当前精确v025作用域承接；作者自检支持不形成正式条件关闭。",
+          "evidence_refs": [
+            "data/HumanGovernanceProfiles.json"
+          ],
+          "authorization_request_id": null,
+          "formal_condition_closed": false,
+          "authorized_stage_disposition_ref": null,
+          "remaining_obligation_deleted": false,
+          "independent_assessment": "NOT_ISSUED"
+        },
+        {
+          "condition_id": "F-MAJ-011/C3",
+          "original_text": "明确网站流程只是一个 domain projection",
+          "prior_v024_independent_status": "DESIGN_CONTENT_SUPPORTED_PENDING_VALID_ACCEPTANCE_AND_CURRENT_BINDING_REPAIR",
+          "current_author_status": "AUTHOR_DESIGN_SUPPORTED_PENDING_INDEPENDENT_ACCEPTANCE",
+          "author_progress": "原条件设计内容保留，并在当前精确v025作用域承接；作者自检支持不形成正式条件关闭。",
+          "evidence_refs": [
+            "data/HumanGovernanceProfiles.json"
+          ],
+          "authorization_request_id": null,
+          "formal_condition_closed": false,
+          "authorized_stage_disposition_ref": null,
+          "remaining_obligation_deleted": false,
+          "independent_assessment": "NOT_ISSUED"
+        }
+      ]
+    },
+    {
+      "finding_id": "F-MAJ-013",
+      "original_closure_conditions": [
+        "逐对象映射到 Kernel Evidence/Candidate/OperationalKnowledge 或 DCP noncanonical cache",
+        "禁止 Skill 本地 Claim/Policy 自动成为全局规则",
+        "定义 provenance, privacy, TTL, supersession, user correction and qualification"
+      ],
+      "conditions": [
+        {
+          "condition_id": "F-MAJ-013/C1",
+          "original_text": "逐对象映射到 Kernel Evidence/Candidate/OperationalKnowledge 或 DCP noncanonical cache",
+          "prior_v024_independent_status": "DESIGN_CONTENT_SUPPORTED_PENDING_VALID_ACCEPTANCE_AND_CURRENT_BINDING_REPAIR",
+          "current_author_status": "AUTHOR_DESIGN_SUPPORTED_PENDING_INDEPENDENT_ACCEPTANCE",
+          "author_progress": "原条件设计内容保留，并在当前精确v025作用域承接；作者自检支持不形成正式条件关闭。",
+          "evidence_refs": [
+            "sources/architecture_v024/data/ExperienceObjectCrosswalk.json"
+          ],
+          "authorization_request_id": null,
+          "formal_condition_closed": false,
+          "authorized_stage_disposition_ref": null,
+          "remaining_obligation_deleted": false,
+          "independent_assessment": "NOT_ISSUED"
+        },
+        {
+          "condition_id": "F-MAJ-013/C2",
+          "original_text": "禁止 Skill 本地 Claim/Policy 自动成为全局规则",
+          "prior_v024_independent_status": "DESIGN_CONTENT_SUPPORTED_PENDING_VALID_ACCEPTANCE_AND_CURRENT_BINDING_REPAIR",
+          "current_author_status": "AUTHOR_DESIGN_SUPPORTED_PENDING_INDEPENDENT_ACCEPTANCE",
+          "author_progress": "原条件设计内容保留，并在当前精确v025作用域承接；作者自检支持不形成正式条件关闭。",
+          "evidence_refs": [
+            "sources/architecture_v024/data/ExperienceObjectCrosswalk.json"
+          ],
+          "authorization_request_id": null,
+          "formal_condition_closed": false,
+          "authorized_stage_disposition_ref": null,
+          "remaining_obligation_deleted": false,
+          "independent_assessment": "NOT_ISSUED"
+        },
+        {
+          "condition_id": "F-MAJ-013/C3",
+          "original_text": "定义 provenance, privacy, TTL, supersession, user correction and qualification",
+          "prior_v024_independent_status": "DESIGN_CONTENT_SUPPORTED_PENDING_VALID_ACCEPTANCE_AND_CURRENT_BINDING_REPAIR",
+          "current_author_status": "AUTHOR_DESIGN_SUPPORTED_PENDING_INDEPENDENT_ACCEPTANCE",
+          "author_progress": "原条件设计内容保留，并在当前精确v025作用域承接；作者自检支持不形成正式条件关闭。",
+          "evidence_refs": [
+            "sources/architecture_v024/data/ExperienceObjectCrosswalk.json"
+          ],
+          "authorization_request_id": null,
+          "formal_condition_closed": false,
+          "authorized_stage_disposition_ref": null,
+          "remaining_obligation_deleted": false,
+          "independent_assessment": "NOT_ISSUED"
+        }
+      ]
+    },
+    {
+      "finding_id": "F-MAJ-014",
+      "original_closure_conditions": [
+        "在目标结构中把 User Bundle consumer snapshot 与 source/development control 分离",
+        "根 Authority Router 默认 NONE，不把用户数据当开发状态",
+        "敏感 owner/account refs 使用 endpoint policy，不进入可扩散审计/公共包",
+        "对现存历史做 access and leakage review"
+      ],
+      "conditions": [
+        {
+          "condition_id": "F-MAJ-014/C1",
+          "original_text": "在目标结构中把 User Bundle consumer snapshot 与 source/development control 分离",
+          "prior_v024_independent_status": "DESIGN_CONTENT_SUPPORTED_PENDING_VALID_ACCEPTANCE_AND_CURRENT_BINDING_REPAIR",
+          "current_author_status": "AUTHOR_DESIGN_SUPPORTED_PENDING_INDEPENDENT_ACCEPTANCE",
+          "author_progress": "原条件设计内容保留，并在当前精确v025作用域承接；作者自检支持不形成正式条件关闭。",
+          "evidence_refs": [
+            "data/StructureCandidateMap.json"
+          ],
+          "authorization_request_id": null,
+          "formal_condition_closed": false,
+          "authorized_stage_disposition_ref": null,
+          "remaining_obligation_deleted": false,
+          "independent_assessment": "NOT_ISSUED"
+        },
+        {
+          "condition_id": "F-MAJ-014/C2",
+          "original_text": "根 Authority Router 默认 NONE，不把用户数据当开发状态",
+          "prior_v024_independent_status": "DESIGN_CONTENT_SUPPORTED_PENDING_VALID_ACCEPTANCE_AND_CURRENT_BINDING_REPAIR",
+          "current_author_status": "AUTHOR_DESIGN_SUPPORTED_PENDING_INDEPENDENT_ACCEPTANCE",
+          "author_progress": "原条件设计内容保留，并在当前精确v025作用域承接；作者自检支持不形成正式条件关闭。",
+          "evidence_refs": [
+            "data/StructureCandidateMap.json"
+          ],
+          "authorization_request_id": null,
+          "formal_condition_closed": false,
+          "authorized_stage_disposition_ref": null,
+          "remaining_obligation_deleted": false,
+          "independent_assessment": "NOT_ISSUED"
+        },
+        {
+          "condition_id": "F-MAJ-014/C3",
+          "original_text": "敏感 owner/account refs 使用 endpoint policy，不进入可扩散审计/公共包",
+          "prior_v024_independent_status": "DESIGN_CONTENT_SUPPORTED_PENDING_VALID_ACCEPTANCE_AND_CURRENT_BINDING_REPAIR",
+          "current_author_status": "AUTHOR_DESIGN_SUPPORTED_PENDING_INDEPENDENT_ACCEPTANCE",
+          "author_progress": "原条件设计内容保留，并在当前精确v025作用域承接；作者自检支持不形成正式条件关闭。",
+          "evidence_refs": [
+            "data/StructureCandidateMap.json"
+          ],
+          "authorization_request_id": null,
+          "formal_condition_closed": false,
+          "authorized_stage_disposition_ref": null,
+          "remaining_obligation_deleted": false,
+          "independent_assessment": "NOT_ISSUED"
+        },
+        {
+          "condition_id": "F-MAJ-014/C4",
+          "original_text": "对现存历史做 access and leakage review",
+          "prior_v024_independent_status": "MISSING_EXACT_EVIDENCE_OR_AUTHORITY",
+          "current_author_status": "MISSING_EXACT_EVIDENCE_OR_AUTHORITY",
+          "author_progress": "形成最小化历史访问审查请求，明确必须先数据权利授权；本轮未读历史payload，不以AGENTS文档读取替代。",
+          "evidence_refs": [
+            "data/AuthorizationRequests_NOT_GRANTED.json"
+          ],
+          "authorization_request_id": "AREQ-014",
+          "formal_condition_closed": false,
+          "authorized_stage_disposition_ref": null,
+          "remaining_obligation_deleted": false,
+          "independent_assessment": "NOT_ISSUED"
+        }
+      ]
+    },
+    {
+      "finding_id": "F-MAJ-016",
+      "original_closure_conditions": [
+        "冻结 ArtifactIdentity、ReleaseUnitIdentity、EditionIdentity、SKU/Offer/Entitlement typed refs",
+        "声明 technical qualification, distribution, commercial availability and user entitlement are separate states",
+        "Product/Store only project current Kernel/Registry facts"
+      ],
+      "conditions": [
+        {
+          "condition_id": "F-MAJ-016/C1",
+          "original_text": "冻结 ArtifactIdentity、ReleaseUnitIdentity、EditionIdentity、SKU/Offer/Entitlement typed refs",
+          "prior_v024_independent_status": "MISSING_EXACT_EVIDENCE_OR_AUTHORITY",
+          "current_author_status": "MISSING_EXACT_EVIDENCE_OR_AUTHORITY",
+          "author_progress": "四权益、续费、来源批次与使用/更新分离已入当前typed设计；正式接受与真实消费者仍缺。",
+          "evidence_refs": [
+            "data/ArtifactAndReleaseIdentityCrosswalk.json"
+          ],
+          "authorization_request_id": "AREQ-TYPED-CONSUMERS",
+          "formal_condition_closed": false,
+          "authorized_stage_disposition_ref": null,
+          "remaining_obligation_deleted": false,
+          "independent_assessment": "NOT_ISSUED"
+        },
+        {
+          "condition_id": "F-MAJ-016/C2",
+          "original_text": "声明 technical qualification, distribution, commercial availability and user entitlement are separate states",
+          "prior_v024_independent_status": "DESIGN_CONTENT_SUPPORTED_PENDING_VALID_ACCEPTANCE_AND_CURRENT_BINDING_REPAIR",
+          "current_author_status": "AUTHOR_DESIGN_SUPPORTED_PENDING_INDEPENDENT_ACCEPTANCE",
+          "author_progress": "原条件设计内容保留，并在当前精确v025作用域承接；作者自检支持不形成正式条件关闭。",
+          "evidence_refs": [
+            "data/ArtifactAndReleaseIdentityCrosswalk.json"
+          ],
+          "authorization_request_id": null,
+          "formal_condition_closed": false,
+          "authorized_stage_disposition_ref": null,
+          "remaining_obligation_deleted": false,
+          "independent_assessment": "NOT_ISSUED"
+        },
+        {
+          "condition_id": "F-MAJ-016/C3",
+          "original_text": "Product/Store only project current Kernel/Registry facts",
+          "prior_v024_independent_status": "DESIGN_CONTENT_SUPPORTED_PENDING_VALID_ACCEPTANCE_AND_CURRENT_BINDING_REPAIR",
+          "current_author_status": "AUTHOR_DESIGN_SUPPORTED_PENDING_INDEPENDENT_ACCEPTANCE",
+          "author_progress": "原条件设计内容保留，并在当前精确v025作用域承接；作者自检支持不形成正式条件关闭。",
+          "evidence_refs": [
+            "data/ArtifactAndReleaseIdentityCrosswalk.json"
+          ],
+          "authorization_request_id": null,
+          "formal_condition_closed": false,
+          "authorized_stage_disposition_ref": null,
+          "remaining_obligation_deleted": false,
+          "independent_assessment": "NOT_ISSUED"
+        }
+      ]
+    },
+    {
+      "finding_id": "F-MAJ-017",
+      "original_closure_conditions": [
+        "以 current Commit/Tree 做实测输入",
+        "Architecture v1.0 只冻结责任，不先锁死目录",
+        "Structure Plan 生成唯一 FrozenTargetMap 和 CurrentToTargetMap",
+        "旧 v3.3 target 每项标记 inherited/changed/retired"
+      ],
+      "conditions": [
+        {
+          "condition_id": "F-MAJ-017/C1",
+          "original_text": "以 current Commit/Tree 做实测输入",
+          "prior_v024_independent_status": "DESIGN_CONTENT_SUPPORTED_PENDING_VALID_ACCEPTANCE_AND_CURRENT_BINDING_REPAIR",
+          "current_author_status": "AUTHOR_DESIGN_SUPPORTED_PENDING_INDEPENDENT_ACCEPTANCE",
+          "author_progress": "本轮实际GET再次核对Commit/Tree并固定所选入口证据；不宣称全量文件/consumer盘点完成。",
+          "evidence_refs": [
+            "data/RepositoryEvidenceObservation.json"
+          ],
+          "authorization_request_id": null,
+          "formal_condition_closed": false,
+          "authorized_stage_disposition_ref": null,
+          "remaining_obligation_deleted": false,
+          "independent_assessment": "NOT_ISSUED"
+        },
+        {
+          "condition_id": "F-MAJ-017/C2",
+          "original_text": "Architecture v1.0 只冻结责任，不先锁死目录",
+          "prior_v024_independent_status": "DESIGN_CONTENT_SUPPORTED_PENDING_VALID_ACCEPTANCE_AND_CURRENT_BINDING_REPAIR",
+          "current_author_status": "AUTHOR_DESIGN_SUPPORTED_PENDING_INDEPENDENT_ACCEPTANCE",
+          "author_progress": "原条件设计内容保留，并在当前精确v025作用域承接；作者自检支持不形成正式条件关闭。",
+          "evidence_refs": [
+            "data/StructureCandidateMap.json"
+          ],
+          "authorization_request_id": null,
+          "formal_condition_closed": false,
+          "authorized_stage_disposition_ref": null,
+          "remaining_obligation_deleted": false,
+          "independent_assessment": "NOT_ISSUED"
+        },
+        {
+          "condition_id": "F-MAJ-017/C3",
+          "original_text": "Structure Plan 生成唯一 FrozenTargetMap 和 CurrentToTargetMap",
+          "prior_v024_independent_status": "FUTURE_STAGE_OBLIGATION_RETAINED_NOT_DISPOSITIONED",
+          "current_author_status": "FUTURE_STAGE_OBLIGATION_RETAINED_NOT_DISPOSITIONED",
+          "author_progress": "原阶段义务继续阻断适用未来动作；本作者不决定豁免或合法延期。需有权主体逐条绑定剩余义务、Owner、不可绕过Gate、有效期和撤销。",
+          "evidence_refs": [
+            "data/StructureCandidateMap.json"
+          ],
+          "authorization_request_id": null,
+          "formal_condition_closed": false,
+          "authorized_stage_disposition_ref": null,
+          "remaining_obligation_deleted": false,
+          "independent_assessment": "NOT_ISSUED"
+        },
+        {
+          "condition_id": "F-MAJ-017/C4",
+          "original_text": "旧 v3.3 target 每项标记 inherited/changed/retired",
+          "prior_v024_independent_status": "DESIGN_CONTENT_SUPPORTED_PENDING_VALID_ACCEPTANCE_AND_CURRENT_BINDING_REPAIR",
+          "current_author_status": "AUTHOR_DESIGN_SUPPORTED_PENDING_INDEPENDENT_ACCEPTANCE",
+          "author_progress": "原条件设计内容保留，并在当前精确v025作用域承接；作者自检支持不形成正式条件关闭。",
+          "evidence_refs": [
+            "data/StructureCandidateMap.json"
+          ],
+          "authorization_request_id": null,
+          "formal_condition_closed": false,
+          "authorized_stage_disposition_ref": null,
+          "remaining_obligation_deleted": false,
+          "independent_assessment": "NOT_ISSUED"
+        }
+      ]
+    },
+    {
+      "finding_id": "F-MAJ-018",
+      "original_closure_conditions": [
+        "冻结 Phase2 MVP success metric and maximum active workstreams",
+        "只把 Slice A 放核心关键路径",
+        "Model M1-M7、Commerce、Marketplace、大规模训练均单独预算和 GO/NO-GO",
+        "每个阶段必须交付可运行纵向 E2E，不接受仅 Schema/Receipt 堆积"
+      ],
+      "conditions": [
+        {
+          "condition_id": "F-MAJ-018/C1",
+          "original_text": "冻结 Phase2 MVP success metric and maximum active workstreams",
+          "prior_v024_independent_status": "MISSING_EXACT_EVIDENCE_OR_AUTHORITY",
+          "current_author_status": "MISSING_EXACT_EVIDENCE_OR_AUTHORITY",
+          "author_progress": "原Slice A门槛、24case/72槽位与WIP上限保持，具名Owner、资源、预算、停止/证据端仍未批准。",
+          "evidence_refs": [
+            "data/CharterCandidate.json"
+          ],
+          "authorization_request_id": "AREQ-006-018",
+          "formal_condition_closed": false,
+          "authorized_stage_disposition_ref": null,
+          "remaining_obligation_deleted": false,
+          "independent_assessment": "NOT_ISSUED"
+        },
+        {
+          "condition_id": "F-MAJ-018/C2",
+          "original_text": "只把 Slice A 放核心关键路径",
+          "prior_v024_independent_status": "DESIGN_CONTENT_SUPPORTED_PENDING_VALID_ACCEPTANCE_AND_CURRENT_BINDING_REPAIR",
+          "current_author_status": "AUTHOR_DESIGN_SUPPORTED_PENDING_INDEPENDENT_ACCEPTANCE",
+          "author_progress": "原条件设计内容保留，并在当前精确v025作用域承接；作者自检支持不形成正式条件关闭。",
+          "evidence_refs": [
+            "data/CharterCandidate.json"
+          ],
+          "authorization_request_id": null,
+          "formal_condition_closed": false,
+          "authorized_stage_disposition_ref": null,
+          "remaining_obligation_deleted": false,
+          "independent_assessment": "NOT_ISSUED"
+        },
+        {
+          "condition_id": "F-MAJ-018/C3",
+          "original_text": "Model M1-M7、Commerce、Marketplace、大规模训练均单独预算和 GO/NO-GO",
+          "prior_v024_independent_status": "FUTURE_STAGE_OBLIGATION_RETAINED_NOT_DISPOSITIONED",
+          "current_author_status": "FUTURE_STAGE_OBLIGATION_RETAINED_NOT_DISPOSITIONED",
+          "author_progress": "原阶段义务继续阻断适用未来动作；本作者不决定豁免或合法延期。需有权主体逐条绑定剩余义务、Owner、不可绕过Gate、有效期和撤销。",
+          "evidence_refs": [
+            "data/CharterCandidate.json"
+          ],
+          "authorization_request_id": null,
+          "formal_condition_closed": false,
+          "authorized_stage_disposition_ref": null,
+          "remaining_obligation_deleted": false,
+          "independent_assessment": "NOT_ISSUED"
+        },
+        {
+          "condition_id": "F-MAJ-018/C4",
+          "original_text": "每个阶段必须交付可运行纵向 E2E，不接受仅 Schema/Receipt 堆积",
+          "prior_v024_independent_status": "FUTURE_STAGE_OBLIGATION_RETAINED_NOT_DISPOSITIONED",
+          "current_author_status": "FUTURE_STAGE_OBLIGATION_RETAINED_NOT_DISPOSITIONED",
+          "author_progress": "原阶段义务继续阻断适用未来动作；本作者不决定豁免或合法延期。需有权主体逐条绑定剩余义务、Owner、不可绕过Gate、有效期和撤销。",
+          "evidence_refs": [
+            "data/CharterCandidate.json"
+          ],
+          "authorization_request_id": null,
+          "formal_condition_closed": false,
+          "authorized_stage_disposition_ref": null,
+          "remaining_obligation_deleted": false,
+          "independent_assessment": "NOT_ISSUED"
+        }
+      ]
+    }
+  ],
+  "author_classification_counts": {
+    "AUTHOR_DESIGN_SUPPORTED_PENDING_INDEPENDENT_ACCEPTANCE": 27,
+    "MISSING_EXACT_EVIDENCE_OR_AUTHORITY": 9,
+    "FUTURE_STAGE_OBLIGATION_RETAINED_NOT_DISPOSITIONED": 4
+  },
+  "formal_condition_closures": 0,
+  "valid_architecture_acceptance_ref": null,
+  "authorized_stage_dispositions_issued": 0,
+  "architecture_acceptance": "NOT_ISSUED",
+  "structure_freeze_is_architecture_precondition": false,
+  "author_is_independent_reviewer": false
+}

@@ -1,0 +1,782 @@
+{
+  "type": "TargetConsumerBindingManifest",
+  "status": "ACTUAL_SCOPED_POST_MIGRATION_BINDINGS_VERIFIED",
+  "evidence_chain": {
+    "actual_migration_receipt": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-migration-transactions\\migration-da9d022d934e48809156fef4c7b828e6\\receipt.json",
+      "sha256": "7ba04bc7cf715a6b96f05f64db3d7f0281627e9c0919b15dd66aa3d26f9f6ca7"
+    },
+    "freeze_sha256": "f40c8af253f811f820e4b3eccc144d63ca3548663810aba10bebb22331661b36",
+    "before_boundary_sha256": "467890cdee11132fd2b0d96ecc5ba5b3e76ce1ef49143838ab48c31661a1a9f7",
+    "execution_inputs_sha256": "37a6909deedae17dbfe97e844d8ec596c5de46e73c3cefafd4136008d3f3dcec",
+    "Step13_report_sha256": "4b14aae44e5a29d07daeac3d8d137dd56ead49f33457a71429b4b0264b8ab483",
+    "Step14_report_sha256": "504db171ea977a75431daec3fc2a3d4030b42b84c4525473e18a6edffc6c8f0b",
+    "verifier_sha256": "52e9e6aa1fe4a3f1d6e606953abb1ec449c0eb1888f7025fbf3f301a58d6acfc",
+    "observed_head": "00ee8d1b796f27dbc3cac0c665ed4a69a87231b9"
+  },
+  "consumer_count": 18,
+  "source_authorization_count": 27,
+  "source_receipt_contract_count": 18,
+  "consumers": [
+    {
+      "consumer_id": "C01",
+      "bindings": [
+        {
+          "original_path": "apps/clued-cloud/worker/continuity.ts",
+          "target_path": "apps/clued-cloud/worker/continuity.ts",
+          "symbol": "bootstrapContract",
+          "expected_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "actual_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "passed": true,
+          "binding_mode": "UNCHANGED_CURRENT_SOURCE"
+        },
+        {
+          "original_path": "apps/clued-cloud/worker/continuity.ts",
+          "target_path": "apps/clued-cloud/worker/continuity.ts",
+          "symbol": "publicMcpTools",
+          "expected_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "actual_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "passed": true,
+          "binding_mode": "UNCHANGED_CURRENT_SOURCE"
+        },
+        {
+          "original_path": "apps/clued-cloud/worker/continuity.ts",
+          "target_path": "apps/clued-cloud/worker/continuity.ts",
+          "symbol": "handleMcp",
+          "expected_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "actual_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "passed": true,
+          "binding_mode": "UNCHANGED_CURRENT_SOURCE"
+        }
+      ],
+      "required_authorization": [
+        {
+          "file": "TypedAuthorizationRegistry.candidate.json",
+          "pointer": "/bindings/0"
+        }
+      ],
+      "required_receipt": {
+        "file": "TypedReceiptRegistry.candidate.json",
+        "pointer": "/bindings/0"
+      },
+      "scope": "Preserve existing source-qualified authority/receipt/unknown contract; no new hosted runtime qualification.",
+      "passed": true
+    },
+    {
+      "consumer_id": "C02",
+      "bindings": [
+        {
+          "original_path": "apps/clued-cloud/worker/continuity.ts",
+          "target_path": "apps/clued-cloud/worker/continuity.ts",
+          "symbol": "requireSupabaseUser",
+          "expected_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "actual_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "passed": true,
+          "binding_mode": "UNCHANGED_CURRENT_SOURCE"
+        },
+        {
+          "original_path": "apps/clued-cloud/worker/continuity.ts",
+          "target_path": "apps/clued-cloud/worker/continuity.ts",
+          "symbol": "listBindings",
+          "expected_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "actual_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "passed": true,
+          "binding_mode": "UNCHANGED_CURRENT_SOURCE"
+        },
+        {
+          "original_path": "apps/clued-cloud/worker/continuity.ts",
+          "target_path": "apps/clued-cloud/worker/continuity.ts",
+          "symbol": "createBinding",
+          "expected_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "actual_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "passed": true,
+          "binding_mode": "UNCHANGED_CURRENT_SOURCE"
+        },
+        {
+          "original_path": "apps/clued-cloud/worker/continuity.ts",
+          "target_path": "apps/clued-cloud/worker/continuity.ts",
+          "symbol": "revokeBinding",
+          "expected_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "actual_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "passed": true,
+          "binding_mode": "UNCHANGED_CURRENT_SOURCE"
+        }
+      ],
+      "required_authorization": [
+        {
+          "file": "TypedAuthorizationRegistry.candidate.json",
+          "pointer": "/bindings/1"
+        }
+      ],
+      "required_receipt": {
+        "file": "TypedReceiptRegistry.candidate.json",
+        "pointer": "/bindings/1"
+      },
+      "scope": "Preserve existing source-qualified authority/receipt/unknown contract; no new hosted runtime qualification.",
+      "passed": true
+    },
+    {
+      "consumer_id": "C03",
+      "bindings": [
+        {
+          "original_path": "apps/clued-cloud/worker/continuity.ts",
+          "target_path": "apps/clued-cloud/worker/continuity.ts",
+          "symbol": "rpcByTool",
+          "expected_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "actual_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "passed": true,
+          "binding_mode": "UNCHANGED_CURRENT_SOURCE"
+        },
+        {
+          "original_path": "apps/clued-cloud/worker/continuity.ts",
+          "target_path": "apps/clued-cloud/worker/continuity.ts",
+          "symbol": "callRpc",
+          "expected_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "actual_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "passed": true,
+          "binding_mode": "UNCHANGED_CURRENT_SOURCE"
+        },
+        {
+          "original_path": "apps/clued-cloud/worker/continuity.ts",
+          "target_path": "apps/clued-cloud/worker/continuity.ts",
+          "symbol": "restToolByPath",
+          "expected_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "actual_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "passed": true,
+          "binding_mode": "UNCHANGED_CURRENT_SOURCE"
+        }
+      ],
+      "required_authorization": [
+        {
+          "file": "TypedAuthorizationRegistry.candidate.json",
+          "pointer": "/bindings/2"
+        },
+        {
+          "file": "TypedAuthorizationRegistry.candidate.json",
+          "pointer": "/bindings/3"
+        }
+      ],
+      "required_receipt": {
+        "file": "TypedReceiptRegistry.candidate.json",
+        "pointer": "/bindings/2"
+      },
+      "scope": "Preserve existing source-qualified authority/receipt/unknown contract; no new hosted runtime qualification.",
+      "passed": true
+    },
+    {
+      "consumer_id": "C04",
+      "bindings": [
+        {
+          "original_path": "apps/clued-cloud/worker/continuity.ts",
+          "target_path": "apps/clued-cloud/worker/continuity.ts",
+          "symbol": "rpcByTool",
+          "expected_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "actual_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "passed": true,
+          "binding_mode": "UNCHANGED_CURRENT_SOURCE"
+        },
+        {
+          "original_path": "apps/clued-cloud/worker/continuity.ts",
+          "target_path": "apps/clued-cloud/worker/continuity.ts",
+          "symbol": "callRpc",
+          "expected_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "actual_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "passed": true,
+          "binding_mode": "UNCHANGED_CURRENT_SOURCE"
+        }
+      ],
+      "required_authorization": [
+        {
+          "file": "TypedAuthorizationRegistry.candidate.json",
+          "pointer": "/bindings/4"
+        },
+        {
+          "file": "TypedAuthorizationRegistry.candidate.json",
+          "pointer": "/bindings/5"
+        }
+      ],
+      "required_receipt": {
+        "file": "TypedReceiptRegistry.candidate.json",
+        "pointer": "/bindings/3"
+      },
+      "scope": "Preserve existing source-qualified authority/receipt/unknown contract; no new hosted runtime qualification.",
+      "passed": true
+    },
+    {
+      "consumer_id": "C05",
+      "bindings": [
+        {
+          "original_path": "apps/clued-cloud/worker/continuity.ts",
+          "target_path": "apps/clued-cloud/worker/continuity.ts",
+          "symbol": "callUserProjectRpc",
+          "expected_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "actual_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "passed": true,
+          "binding_mode": "UNCHANGED_CURRENT_SOURCE"
+        },
+        {
+          "original_path": "apps/clued-cloud/worker/continuity.ts",
+          "target_path": "apps/clued-cloud/worker/continuity.ts",
+          "symbol": "handleProjectApi",
+          "expected_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "actual_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "passed": true,
+          "binding_mode": "UNCHANGED_CURRENT_SOURCE"
+        },
+        {
+          "original_path": "apps/clued-cloud/worker/projects.ts",
+          "target_path": "apps/clued-cloud/worker/projects.ts",
+          "symbol": "projectTools",
+          "expected_sha256": "8bb2d52643c4ffd62ee48de60294559161d750ea15d328b6585deb47aa2aa09f",
+          "actual_sha256": "8bb2d52643c4ffd62ee48de60294559161d750ea15d328b6585deb47aa2aa09f",
+          "passed": true,
+          "binding_mode": "UNCHANGED_CURRENT_SOURCE"
+        }
+      ],
+      "required_authorization": [
+        {
+          "file": "TypedAuthorizationRegistry.candidate.json",
+          "pointer": "/bindings/6"
+        },
+        {
+          "file": "TypedAuthorizationRegistry.candidate.json",
+          "pointer": "/bindings/7"
+        }
+      ],
+      "required_receipt": {
+        "file": "TypedReceiptRegistry.candidate.json",
+        "pointer": "/bindings/4"
+      },
+      "scope": "Preserve existing source-qualified authority/receipt/unknown contract; no new hosted runtime qualification.",
+      "passed": true
+    },
+    {
+      "consumer_id": "C06",
+      "bindings": [
+        {
+          "original_path": "apps/clued-cloud/worker/continuity.ts",
+          "target_path": "apps/clued-cloud/worker/continuity.ts",
+          "symbol": "handleRecordApi",
+          "expected_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "actual_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "passed": true,
+          "binding_mode": "UNCHANGED_CURRENT_SOURCE"
+        },
+        {
+          "original_path": "apps/clued-cloud/worker/records.ts",
+          "target_path": "apps/clued-cloud/worker/records.ts",
+          "symbol": "recordTools",
+          "expected_sha256": "43bfe74c4d6576476f3d4a08df82a6b0853da855c29124edf1e333c14d5bb35e",
+          "actual_sha256": "43bfe74c4d6576476f3d4a08df82a6b0853da855c29124edf1e333c14d5bb35e",
+          "passed": true,
+          "binding_mode": "UNCHANGED_CURRENT_SOURCE"
+        }
+      ],
+      "required_authorization": [
+        {
+          "file": "TypedAuthorizationRegistry.candidate.json",
+          "pointer": "/bindings/8"
+        },
+        {
+          "file": "TypedAuthorizationRegistry.candidate.json",
+          "pointer": "/bindings/9"
+        }
+      ],
+      "required_receipt": {
+        "file": "TypedReceiptRegistry.candidate.json",
+        "pointer": "/bindings/5"
+      },
+      "scope": "Preserve existing source-qualified authority/receipt/unknown contract; no new hosted runtime qualification.",
+      "passed": true
+    },
+    {
+      "consumer_id": "C07",
+      "bindings": [
+        {
+          "original_path": "apps/clued-cloud/worker/continuity.ts",
+          "target_path": "apps/clued-cloud/worker/continuity.ts",
+          "symbol": "parseCanonicalBody",
+          "expected_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "actual_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "passed": true,
+          "binding_mode": "UNCHANGED_CURRENT_SOURCE"
+        },
+        {
+          "original_path": "apps/clued-cloud/worker/continuity.ts",
+          "target_path": "apps/clued-cloud/worker/continuity.ts",
+          "symbol": "handleRecordApi",
+          "expected_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "actual_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "passed": true,
+          "binding_mode": "UNCHANGED_CURRENT_SOURCE"
+        },
+        {
+          "original_path": "apps/clued-cloud/worker/records.ts",
+          "target_path": "apps/clued-cloud/worker/records.ts",
+          "symbol": "recordTools",
+          "expected_sha256": "43bfe74c4d6576476f3d4a08df82a6b0853da855c29124edf1e333c14d5bb35e",
+          "actual_sha256": "43bfe74c4d6576476f3d4a08df82a6b0853da855c29124edf1e333c14d5bb35e",
+          "passed": true,
+          "binding_mode": "UNCHANGED_CURRENT_SOURCE"
+        }
+      ],
+      "required_authorization": [
+        {
+          "file": "TypedAuthorizationRegistry.candidate.json",
+          "pointer": "/bindings/10"
+        },
+        {
+          "file": "TypedAuthorizationRegistry.candidate.json",
+          "pointer": "/bindings/11"
+        }
+      ],
+      "required_receipt": {
+        "file": "TypedReceiptRegistry.candidate.json",
+        "pointer": "/bindings/6"
+      },
+      "scope": "Preserve existing source-qualified authority/receipt/unknown contract; no new hosted runtime qualification.",
+      "passed": true
+    },
+    {
+      "consumer_id": "C08",
+      "bindings": [
+        {
+          "original_path": "apps/clued-cloud/worker/continuity.ts",
+          "target_path": "apps/clued-cloud/worker/continuity.ts",
+          "symbol": "mutationRoutes",
+          "expected_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "actual_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "passed": true,
+          "binding_mode": "UNCHANGED_CURRENT_SOURCE"
+        },
+        {
+          "original_path": "apps/clued-cloud/worker/records.ts",
+          "target_path": "apps/clued-cloud/worker/records.ts",
+          "symbol": "recordTools",
+          "expected_sha256": "43bfe74c4d6576476f3d4a08df82a6b0853da855c29124edf1e333c14d5bb35e",
+          "actual_sha256": "43bfe74c4d6576476f3d4a08df82a6b0853da855c29124edf1e333c14d5bb35e",
+          "passed": true,
+          "binding_mode": "UNCHANGED_CURRENT_SOURCE"
+        }
+      ],
+      "required_authorization": [
+        {
+          "file": "TypedAuthorizationRegistry.candidate.json",
+          "pointer": "/bindings/12"
+        },
+        {
+          "file": "TypedAuthorizationRegistry.candidate.json",
+          "pointer": "/bindings/13"
+        }
+      ],
+      "required_receipt": {
+        "file": "TypedReceiptRegistry.candidate.json",
+        "pointer": "/bindings/7"
+      },
+      "scope": "Preserve existing source-qualified authority/receipt/unknown contract; no new hosted runtime qualification.",
+      "passed": true
+    },
+    {
+      "consumer_id": "C09",
+      "bindings": [
+        {
+          "original_path": "apps/clued-cloud/worker/continuity.ts",
+          "target_path": "apps/clued-cloud/worker/continuity.ts",
+          "symbol": "publicToolPolicies",
+          "expected_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "actual_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "passed": true,
+          "binding_mode": "UNCHANGED_CURRENT_SOURCE"
+        },
+        {
+          "original_path": "apps/clued-cloud/worker/records.ts",
+          "target_path": "apps/clued-cloud/worker/records.ts",
+          "symbol": "recordTools",
+          "expected_sha256": "43bfe74c4d6576476f3d4a08df82a6b0853da855c29124edf1e333c14d5bb35e",
+          "actual_sha256": "43bfe74c4d6576476f3d4a08df82a6b0853da855c29124edf1e333c14d5bb35e",
+          "passed": true,
+          "binding_mode": "UNCHANGED_CURRENT_SOURCE"
+        },
+        {
+          "original_path": "apps/clued-cloud/supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql",
+          "target_path": "apps/clued-cloud/supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql",
+          "symbol": "clued_canonical_export",
+          "expected_sha256": "f59e414ec0de016cbe89d3ba24ded2d90e85a9e17fb554021b2d4d611f4d26c2",
+          "actual_sha256": "f59e414ec0de016cbe89d3ba24ded2d90e85a9e17fb554021b2d4d611f4d26c2",
+          "passed": true,
+          "binding_mode": "UNCHANGED_CURRENT_SOURCE"
+        }
+      ],
+      "required_authorization": [
+        {
+          "file": "TypedAuthorizationRegistry.candidate.json",
+          "pointer": "/bindings/14"
+        },
+        {
+          "file": "TypedAuthorizationRegistry.candidate.json",
+          "pointer": "/bindings/15"
+        }
+      ],
+      "required_receipt": {
+        "file": "TypedReceiptRegistry.candidate.json",
+        "pointer": "/bindings/8"
+      },
+      "scope": "Preserve existing source-qualified authority/receipt/unknown contract; no new hosted runtime qualification.",
+      "passed": true
+    },
+    {
+      "consumer_id": "C10",
+      "bindings": [
+        {
+          "original_path": "apps/clued-cloud/worker/continuity.ts",
+          "target_path": "apps/clued-cloud/worker/continuity.ts",
+          "symbol": "callP5Mutation",
+          "expected_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "actual_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "passed": true,
+          "binding_mode": "UNCHANGED_CURRENT_SOURCE"
+        },
+        {
+          "original_path": "apps/clued-cloud/worker/p5.ts",
+          "target_path": "apps/clued-cloud/worker/p5.ts",
+          "symbol": "FILE_ENTRYPOINT",
+          "expected_sha256": "ce46bf7025f746579263b78c320f1df6e4d077e11bcbcc958865f20bfead418f",
+          "actual_sha256": "ce46bf7025f746579263b78c320f1df6e4d077e11bcbcc958865f20bfead418f",
+          "passed": true,
+          "binding_mode": "UNCHANGED_CURRENT_SOURCE"
+        }
+      ],
+      "required_authorization": [
+        {
+          "file": "TypedAuthorizationRegistry.candidate.json",
+          "pointer": "/bindings/16"
+        }
+      ],
+      "required_receipt": {
+        "file": "TypedReceiptRegistry.candidate.json",
+        "pointer": "/bindings/9"
+      },
+      "scope": "Preserve existing source-qualified authority/receipt/unknown contract; no new hosted runtime qualification.",
+      "passed": true
+    },
+    {
+      "consumer_id": "C11",
+      "bindings": [
+        {
+          "original_path": "apps/clued-cloud/scripts/two-level-snapshot.mjs",
+          "target_path": "apps/clued-cloud/scripts/two-level-snapshot.mjs",
+          "symbol": "buildSnapshot",
+          "expected_sha256": "1dfcc8de7b481bc8a29cd055f711bb142fa390fff07a61730320866a477f6b7e",
+          "actual_sha256": "1dfcc8de7b481bc8a29cd055f711bb142fa390fff07a61730320866a477f6b7e",
+          "passed": true,
+          "binding_mode": "UNCHANGED_CURRENT_SOURCE"
+        },
+        {
+          "original_path": "apps/clued-cloud/scripts/two-level-snapshot.mjs",
+          "target_path": "apps/clued-cloud/scripts/two-level-snapshot.mjs",
+          "symbol": "validateSnapshot",
+          "expected_sha256": "1dfcc8de7b481bc8a29cd055f711bb142fa390fff07a61730320866a477f6b7e",
+          "actual_sha256": "1dfcc8de7b481bc8a29cd055f711bb142fa390fff07a61730320866a477f6b7e",
+          "passed": true,
+          "binding_mode": "UNCHANGED_CURRENT_SOURCE"
+        }
+      ],
+      "required_authorization": [
+        {
+          "file": "TypedAuthorizationRegistry.candidate.json",
+          "pointer": "/bindings/17"
+        }
+      ],
+      "required_receipt": {
+        "file": "TypedReceiptRegistry.candidate.json",
+        "pointer": "/bindings/10"
+      },
+      "scope": "Preserve existing source-qualified authority/receipt/unknown contract; no new hosted runtime qualification.",
+      "passed": true
+    },
+    {
+      "consumer_id": "C12",
+      "bindings": [
+        {
+          "original_path": "apps/clued-cloud/scripts/m2-snapshot-store.mjs",
+          "target_path": "apps/clued-cloud/scripts/m2-snapshot-store.mjs",
+          "symbol": "coordinatedPublishSnapshot",
+          "expected_sha256": "d56e15f4821ff2b21de07a3c103aac4d9a963b3dac7ee2128543ea37036caf30",
+          "actual_sha256": "d56e15f4821ff2b21de07a3c103aac4d9a963b3dac7ee2128543ea37036caf30",
+          "passed": true,
+          "binding_mode": "UNCHANGED_CURRENT_SOURCE"
+        },
+        {
+          "original_path": "apps/clued-cloud/scripts/m2-snapshot-store.mjs",
+          "target_path": "apps/clued-cloud/scripts/m2-snapshot-store.mjs",
+          "symbol": "coordinatedRollbackSnapshot",
+          "expected_sha256": "d56e15f4821ff2b21de07a3c103aac4d9a963b3dac7ee2128543ea37036caf30",
+          "actual_sha256": "d56e15f4821ff2b21de07a3c103aac4d9a963b3dac7ee2128543ea37036caf30",
+          "passed": true,
+          "binding_mode": "UNCHANGED_CURRENT_SOURCE"
+        },
+        {
+          "original_path": "apps/clued-cloud/scripts/two-level-snapshot.mjs",
+          "target_path": "apps/clued-cloud/scripts/two-level-snapshot.mjs",
+          "symbol": "publishSnapshot",
+          "expected_sha256": "1dfcc8de7b481bc8a29cd055f711bb142fa390fff07a61730320866a477f6b7e",
+          "actual_sha256": "1dfcc8de7b481bc8a29cd055f711bb142fa390fff07a61730320866a477f6b7e",
+          "passed": true,
+          "binding_mode": "UNCHANGED_CURRENT_SOURCE"
+        }
+      ],
+      "required_authorization": [
+        {
+          "file": "TypedAuthorizationRegistry.candidate.json",
+          "pointer": "/bindings/18"
+        }
+      ],
+      "required_receipt": {
+        "file": "TypedReceiptRegistry.candidate.json",
+        "pointer": "/bindings/11"
+      },
+      "scope": "Preserve existing source-qualified authority/receipt/unknown contract; no new hosted runtime qualification.",
+      "passed": true
+    },
+    {
+      "consumer_id": "C13",
+      "bindings": [
+        {
+          "original_path": "verification_context.py",
+          "target_path": "scripts/verification_context.py",
+          "symbol": "AuthorizationEvidence",
+          "expected_sha256": "6a2d83a65921df60252aad350f3cecacfbab991be582368903aa40203c96d5ab",
+          "actual_sha256": "6a2d83a65921df60252aad350f3cecacfbab991be582368903aa40203c96d5ab",
+          "passed": true,
+          "binding_mode": "MOVED_IMPLEMENTATION_WITH_ROOT_COMPATIBILITY"
+        },
+        {
+          "original_path": "verification_context.py",
+          "target_path": "scripts/verification_context.py",
+          "symbol": "SourceEnvelope",
+          "expected_sha256": "6a2d83a65921df60252aad350f3cecacfbab991be582368903aa40203c96d5ab",
+          "actual_sha256": "6a2d83a65921df60252aad350f3cecacfbab991be582368903aa40203c96d5ab",
+          "passed": true,
+          "binding_mode": "MOVED_IMPLEMENTATION_WITH_ROOT_COMPATIBILITY"
+        },
+        {
+          "original_path": "verification_context.py",
+          "target_path": "scripts/verification_context.py",
+          "symbol": "RequestVerificationContext",
+          "expected_sha256": "6a2d83a65921df60252aad350f3cecacfbab991be582368903aa40203c96d5ab",
+          "actual_sha256": "6a2d83a65921df60252aad350f3cecacfbab991be582368903aa40203c96d5ab",
+          "passed": true,
+          "binding_mode": "MOVED_IMPLEMENTATION_WITH_ROOT_COMPATIBILITY"
+        }
+      ],
+      "required_authorization": [
+        {
+          "file": "TypedAuthorizationRegistry.candidate.json",
+          "pointer": "/bindings/19"
+        }
+      ],
+      "required_receipt": {
+        "file": "TypedReceiptRegistry.candidate.json",
+        "pointer": "/bindings/12"
+      },
+      "scope": "Preserve existing source-qualified authority/receipt/unknown contract; no new hosted runtime qualification.",
+      "passed": true
+    },
+    {
+      "consumer_id": "C14",
+      "bindings": [
+        {
+          "original_path": "apps/clued-cloud/app/page.tsx",
+          "target_path": "apps/clued-cloud/app/page.tsx",
+          "symbol": "handleLogin",
+          "expected_sha256": "4534d4ca11390ca5fadae652c6b52ce2bc5428765214c04ed6ff13a8ff7ac5a6",
+          "actual_sha256": "4534d4ca11390ca5fadae652c6b52ce2bc5428765214c04ed6ff13a8ff7ac5a6",
+          "passed": true,
+          "binding_mode": "UNCHANGED_CURRENT_SOURCE"
+        },
+        {
+          "original_path": "apps/clued-cloud/app/page.tsx",
+          "target_path": "apps/clued-cloud/app/page.tsx",
+          "symbol": "handleCreateAccount",
+          "expected_sha256": "4534d4ca11390ca5fadae652c6b52ce2bc5428765214c04ed6ff13a8ff7ac5a6",
+          "actual_sha256": "4534d4ca11390ca5fadae652c6b52ce2bc5428765214c04ed6ff13a8ff7ac5a6",
+          "passed": true,
+          "binding_mode": "UNCHANGED_CURRENT_SOURCE"
+        },
+        {
+          "original_path": "apps/clued-cloud/app/oauth/consent/page.tsx",
+          "target_path": "apps/clued-cloud/app/oauth/consent/page.tsx",
+          "symbol": "loadAuthorization",
+          "expected_sha256": "ce7e6f8de06bd2c7757112b08148f4e19a361868091b88d5c2150b2f0087ef54",
+          "actual_sha256": "ce7e6f8de06bd2c7757112b08148f4e19a361868091b88d5c2150b2f0087ef54",
+          "passed": true,
+          "binding_mode": "UNCHANGED_CURRENT_SOURCE"
+        }
+      ],
+      "required_authorization": [
+        {
+          "file": "TypedAuthorizationRegistry.candidate.json",
+          "pointer": "/bindings/20"
+        }
+      ],
+      "required_receipt": {
+        "file": "TypedReceiptRegistry.candidate.json",
+        "pointer": "/bindings/13"
+      },
+      "scope": "Preserve existing source-qualified authority/receipt/unknown contract; no new hosted runtime qualification.",
+      "passed": true
+    },
+    {
+      "consumer_id": "C15",
+      "bindings": [
+        {
+          "original_path": "scripts/phase2-v027-validate.py",
+          "target_path": "scripts/phase2-v027-validate.py",
+          "symbol": "run",
+          "expected_sha256": "e16cc9fa5fd2a54dc3922029851722936551a400979dc94dce691faa83bd7f4e",
+          "actual_sha256": "e16cc9fa5fd2a54dc3922029851722936551a400979dc94dce691faa83bd7f4e",
+          "passed": true,
+          "binding_mode": "UNCHANGED_CURRENT_SOURCE"
+        },
+        {
+          "original_path": ".github/workflows/phase2-v027-validation.yml",
+          "target_path": ".github/workflows/phase2-v027-validation.yml",
+          "symbol": "FILE_ENTRYPOINT",
+          "expected_sha256": "51334a15770991d2cbf13cb906a592494a96c87e55a8b6cb37f0792a1168bd53",
+          "actual_sha256": "51334a15770991d2cbf13cb906a592494a96c87e55a8b6cb37f0792a1168bd53",
+          "passed": true,
+          "binding_mode": "UNCHANGED_CURRENT_SOURCE"
+        }
+      ],
+      "required_authorization": [
+        {
+          "file": "TypedAuthorizationRegistry.candidate.json",
+          "pointer": "/bindings/21"
+        },
+        {
+          "file": "TypedAuthorizationRegistry.candidate.json",
+          "pointer": "/bindings/22"
+        }
+      ],
+      "required_receipt": {
+        "file": "TypedReceiptRegistry.candidate.json",
+        "pointer": "/bindings/14"
+      },
+      "scope": "Preserve existing source-qualified authority/receipt/unknown contract; no new hosted runtime qualification.",
+      "passed": true
+    },
+    {
+      "consumer_id": "C16",
+      "bindings": [
+        {
+          "original_path": "scripts/clued-naming-surface-inventory.py",
+          "target_path": "scripts/clued-naming-surface-inventory.py",
+          "symbol": "scan_repository",
+          "expected_sha256": "9ff7dc893b865a7736d6d9ffbe6f908c15f9c418e10a0602ae6fd33eedb8f81e",
+          "actual_sha256": "9ff7dc893b865a7736d6d9ffbe6f908c15f9c418e10a0602ae6fd33eedb8f81e",
+          "passed": true,
+          "binding_mode": "UNCHANGED_CURRENT_SOURCE"
+        },
+        {
+          "original_path": "scripts/clued-naming-surface-inventory.py",
+          "target_path": "scripts/clued-naming-surface-inventory.py",
+          "symbol": "scan_github",
+          "expected_sha256": "9ff7dc893b865a7736d6d9ffbe6f908c15f9c418e10a0602ae6fd33eedb8f81e",
+          "actual_sha256": "9ff7dc893b865a7736d6d9ffbe6f908c15f9c418e10a0602ae6fd33eedb8f81e",
+          "passed": true,
+          "binding_mode": "UNCHANGED_CURRENT_SOURCE"
+        }
+      ],
+      "required_authorization": [
+        {
+          "file": "TypedAuthorizationRegistry.candidate.json",
+          "pointer": "/bindings/23"
+        },
+        {
+          "file": "TypedAuthorizationRegistry.candidate.json",
+          "pointer": "/bindings/24"
+        }
+      ],
+      "required_receipt": {
+        "file": "TypedReceiptRegistry.candidate.json",
+        "pointer": "/bindings/15"
+      },
+      "scope": "Preserve existing source-qualified authority/receipt/unknown contract; no new hosted runtime qualification.",
+      "passed": true
+    },
+    {
+      "consumer_id": "C17",
+      "bindings": [
+        {
+          "original_path": "scripts/clued-naming-inventory-consolidate.py",
+          "target_path": "scripts/clued-naming-inventory-consolidate.py",
+          "symbol": "verify_sources",
+          "expected_sha256": "69f2fcc2e8c0e2802d7fa08de842345b88d208bec947d3ef4e88ef4c41907026",
+          "actual_sha256": "69f2fcc2e8c0e2802d7fa08de842345b88d208bec947d3ef4e88ef4c41907026",
+          "passed": true,
+          "binding_mode": "UNCHANGED_CURRENT_SOURCE"
+        },
+        {
+          "original_path": "scripts/clued-naming-inventory-consolidate.py",
+          "target_path": "scripts/clued-naming-inventory-consolidate.py",
+          "symbol": "consolidate",
+          "expected_sha256": "69f2fcc2e8c0e2802d7fa08de842345b88d208bec947d3ef4e88ef4c41907026",
+          "actual_sha256": "69f2fcc2e8c0e2802d7fa08de842345b88d208bec947d3ef4e88ef4c41907026",
+          "passed": true,
+          "binding_mode": "UNCHANGED_CURRENT_SOURCE"
+        }
+      ],
+      "required_authorization": [
+        {
+          "file": "TypedAuthorizationRegistry.candidate.json",
+          "pointer": "/bindings/25"
+        }
+      ],
+      "required_receipt": {
+        "file": "TypedReceiptRegistry.candidate.json",
+        "pointer": "/bindings/16"
+      },
+      "scope": "Preserve existing source-qualified authority/receipt/unknown contract; no new hosted runtime qualification.",
+      "passed": true
+    },
+    {
+      "consumer_id": "C18",
+      "bindings": [
+        {
+          "original_path": "apps/clued-cloud/evals/public-mcp/gate-receipt.mjs",
+          "target_path": "apps/clued-cloud/evals/public-mcp/gate-receipt.mjs",
+          "symbol": "FILE_ENTRYPOINT",
+          "expected_sha256": "9d1574e361a8fdd550578763755933e4d250a8076d55b1223ca9dfc40c1ec0c0",
+          "actual_sha256": "9d1574e361a8fdd550578763755933e4d250a8076d55b1223ca9dfc40c1ec0c0",
+          "passed": true,
+          "binding_mode": "UNCHANGED_CURRENT_SOURCE"
+        },
+        {
+          "original_path": ".github/workflows/public-mcp-gate-receipt.yml",
+          "target_path": ".github/workflows/public-mcp-gate-receipt.yml",
+          "symbol": "FILE_ENTRYPOINT",
+          "expected_sha256": "4e3784db5984933d859cd961f010c4fb2306eaf6b871cdd438eeb2cff9154ce8",
+          "actual_sha256": "4e3784db5984933d859cd961f010c4fb2306eaf6b871cdd438eeb2cff9154ce8",
+          "passed": true,
+          "binding_mode": "UNCHANGED_CURRENT_SOURCE"
+        }
+      ],
+      "required_authorization": [
+        {
+          "file": "TypedAuthorizationRegistry.candidate.json",
+          "pointer": "/bindings/26"
+        }
+      ],
+      "required_receipt": {
+        "file": "TypedReceiptRegistry.candidate.json",
+        "pointer": "/bindings/17"
+      },
+      "scope": "Preserve existing source-qualified authority/receipt/unknown contract; no new hosted runtime qualification.",
+      "passed": true
+    }
+  ],
+  "source_contracts_preserved": true,
+  "actual_P2_regression": "29 tests PASS using python -m unittest discover -s tests -p test_p2_verification_context.py from the actual repository root",
+  "hosted_service_behavior": "UNCHANGED_SOURCES_NOT_NEWLY_REQUALIFIED",
+  "authority_effect": "NONE_NEW"
+}

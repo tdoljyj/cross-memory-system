@@ -1,0 +1,50 @@
+{
+  "six_identity_views_present": true,
+  "version_axes": 10,
+  "vocabulary_review_terms": 22,
+  "source_crosswalk_types_referenced": 13,
+  "stable_map_rows_referenced": 23,
+  "reviewed_sites": 148,
+  "classification_counts": {
+    "RUNTIME_OR_STEP6_BINDING": 85,
+    "FINITE_STATIC_MAPPING": 60,
+    "NON_NAME_SYMBOL_HOMONYM": 3
+  },
+  "ci_manifest_and_review_hashes_match_existing_binding_receipt": true,
+  "runtime_alias_entries_issued": 0,
+  "new_runtime_type_instances": 0,
+  "formal_gate_or_acceptance_issued": false,
+  "check_boundary": "Source and candidate-reference consistency only; no runtime/schema/acceptance claim.",
+  "json_pointer_references_checked": 64,
+  "candidate_files": {
+    "AliasRegistry.candidate.json": "29d0d21d2d0fcecefdc9daaf841a77f411a6695d256a38993976f74660f19a40",
+    "CanonicalVocabularyRegistry.candidate.json": "200ee148a8a19d7c107c9d259b012a065214bf03a7d6932d46706a3519f96f0b",
+    "ConflictsAndStep6Handoff.candidate.json": "d9af8303605920994f56f1c0ad916042bb8a1923b999bbc194fe0fcdc157f5d8",
+    "CopyIdentityContract.candidate.json": "aa4d0092724c3b2d7d24ad6801d51438692912d87b8d7ce053785ded70a37b15",
+    "LogicalObjectIdentityContract.candidate.json": "ceb63f2ec16c63d160ae7f760992ec6dd9b17c5555679bba8c37bb7c1ea58296",
+    "RepresentationContract.candidate.json": "c278f906a3c081f4e70f771904eb5577f6df165eba99bb6e26cf2d036b128a67",
+    "VersionAxisRegistry.candidate.json": "1276845153b1fe93517533bc0ae18d466134a6e8651100369dd54493790f27da"
+  },
+  "sources_sha256": "00b13dfa75569b23c19ece0f1babf35f4c9cbd36086cc904dbaafd29cdd0be9b",
+  "step4_accepted_predecessor_binding": {
+    "sha256": "6f2cc1c9cc28c2a717023029851d61a666815567bc30b3635479cb1b70382e6c",
+    "ownership_and_domain_hashes_match_retained_accepted_subjects": true,
+    "new_acceptance_issued": false
+  },
+  "independent_local_correction": {
+    "kind": "BIND_EXISTING_ACCEPTED_PREDECESSOR",
+    "reviewer": "/root/sequence_review",
+    "changed_candidate_files": [
+      "AliasRegistry.candidate.json",
+      "CanonicalVocabularyRegistry.candidate.json",
+      "ConflictsAndStep6Handoff.candidate.json",
+      "CopyIdentityContract.candidate.json",
+      "LogicalObjectIdentityContract.candidate.json",
+      "RepresentationContract.candidate.json",
+      "VersionAxisRegistry.candidate.json"
+    ],
+    "prior_step4_subject_hashes_were_already_current": true,
+    "identity_semantics_changed": false,
+    "large_inventory_or_tests_rerun": false
+  }
+}

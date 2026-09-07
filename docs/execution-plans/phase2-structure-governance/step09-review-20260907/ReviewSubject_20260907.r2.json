@@ -1,0 +1,842 @@
+{
+  "type": "IndependentReviewExactSubject",
+  "status": "READY_FOR_INDEPENDENT_REVIEW_NOT_ACCEPTANCE",
+  "created_at": "2026-09-07T10:20:49.482431+00:00",
+  "repository": "tdoljyj/cross-memory-system",
+  "branch": "phase2-naming-surface-inventory",
+  "candidate_commit": "039cfea5a0d91a4e4e02702f6cfdfe9379978b1e",
+  "candidate_tree": "cd87a2384ed330bdc1186f6db21d9978e414ba2e",
+  "supplement_predecessor_commit": "40fea9e0fcd4d061946d0523f645c40893fced2b",
+  "architecture_candidate": "CLUED_ARCHITECTURE_CONVERGENCE_V0_2_5",
+  "architecture_version": "v0.2.5",
+  "delivery_revision": "v0.2.7.1",
+  "package": {
+    "filename": "Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip",
+    "bytes": 246612118,
+    "sha256": "6e51374a6caedb4f84d2b6bb9fe05cd695b25732833f9d0217c341f17e1c1649",
+    "retrieval": "Registered private GitHub Release asset in artifacts/clued-validation/phase2-v027/candidate-source.json; existing local exact copy retained."
+  },
+  "direct_predecessor": {
+    "axis": "architecture",
+    "version": "v0.2.4",
+    "filename": "Clued_Phase2_三项设计候选_完整审查包_v0.2.4_20260905.zip",
+    "bytes": 168491377,
+    "sha256": "4aae92c37813772e983a14537be52ca8b428af666e644b72d40084ccd592d68b",
+    "members": 440
+  },
+  "supplementary_files": [
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/CurrentScopedAccessReview_20260907.json",
+      "bytes": 5872,
+      "sha256": "88a846d82338c77d30ba802895b2ce04e1b8ac76bcbae69dd0cabf070f9dc9a7"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/ExactBlobCheckoutCI_20260907.json",
+      "bytes": 1326,
+      "sha256": "d272374b217c68e93579bddbf43451e3ad532942ffe31562fb347b463cb2d34b"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/Step06-ScopedAcceptance_20260907.json",
+      "bytes": 5319,
+      "sha256": "bd40c82a21e7b19c2c36e56d7b877078e45c6bfdf1593590fb56ab364f47889a"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/Step07-ScopedAcceptance_20260907.json",
+      "bytes": 3500,
+      "sha256": "dec7601899be7118b3baff3d78793ecaf98b06316070b881ca30297a3b0f22b3"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/Step08-ScopedAcceptance_20260907.json",
+      "bytes": 3346,
+      "sha256": "8bac86599481c9effc67274bb29b7f352d59d4e656add8805e41f7437ced455c"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/BindingChecks.json",
+      "bytes": 1789,
+      "sha256": "5fd645db86210fcbcf9131202b88694a0335296a972339fba3a15b48c7f345ae"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/C09ExportScopeDisposition.json",
+      "bytes": 4139,
+      "sha256": "fa2ba22146d5560f502d5e70d7045ead5577fea7c1af909b7ab51a9e64b718ff"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/CurrentCIRunBinding.json",
+      "bytes": 1205,
+      "sha256": "9ce45d5526abbcac641c88ecea3d29d20f30e0ce97c953ff1740e65cd5707657"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/ExecutionEvidenceReuse.json",
+      "bytes": 7838,
+      "sha256": "e49ef52041404d2b486d49bb3da4a4c414e61e472d93bc7970dc64802088d220"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/RootIndependentReview.json",
+      "bytes": 1966,
+      "sha256": "bc2fc121083422a9f13df635511ff11f9279612e2e00da893440772b1ccd92d7"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/SourceIndex.json",
+      "bytes": 30351,
+      "sha256": "d246a7ee943eeaa1071d0888b9737cd4be621e0dd01f866d62a10e4d49af044a"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/Step6ClosureAssessment.json",
+      "bytes": 5842,
+      "sha256": "094cbce78fd3f8675b46048dc8f469fceae420ac88d2f969f0f9a8ecc4222af6"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/Step6ClosureAssessment.md",
+      "bytes": 5562,
+      "sha256": "9ef96ed7932cd7845e98b712276a6822ba0468856779438af04744fd06d76e79"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedAuthorizationRegistry.candidate.json",
+      "bytes": 74695,
+      "sha256": "359e7461ba3166bef63815f37ddd9c247aada317c14e4e62bdee3bc79cc3fcdd"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedConsumerRegistry.candidate.json",
+      "bytes": 243588,
+      "sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedReceiptRegistry.candidate.json",
+      "bytes": 91138,
+      "sha256": "05d182805b31ba9d5e6c1c3fa32ae2081527a92faaa76263debded6ffca5efa4"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/before-c01-correction/BindingChecks.json",
+      "bytes": 1557,
+      "sha256": "0e953b5e136a15210286e209ab024c83a6e724a9b1906fca78e4d0ae7db1ae97"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/before-c01-correction/Step6ClosureAssessment.json",
+      "bytes": 5436,
+      "sha256": "d7e98183fc9aef62de01dc969bd8749b46b3a10a7d3c27b2f860f40cedfad228"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/before-c01-correction/Step6ClosureAssessment.md",
+      "bytes": 5236,
+      "sha256": "9d832b55fc64ad838c9dc4b7a527ced3ff3a9551545174427df2c942bf01987c"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/before-c01-correction/TypedAuthorizationRegistry.candidate.json",
+      "bytes": 75170,
+      "sha256": "9b17e7bce4327abc179aeb4ce214670341bfed252658903a58244d916de73955"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/before-c01-correction/TypedConsumerRegistry.candidate.json",
+      "bytes": 248568,
+      "sha256": "c14a299a40c2bcd7d915cb4e5dedaf6471220a3a242d2f9156620746745aa38a"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/LocalVerification.md",
+      "bytes": 1792,
+      "sha256": "4daf8f97b9ff6b225d9a2b857f75c6f1dc87e791b1405235c0384ed5dad87dd4"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/OriginalEvidenceRetention.json",
+      "bytes": 734,
+      "sha256": "4b4476193e25a5ccf4c4d6d073c251cb7c6276cf00fb199d05c85bd67f70f6ef"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/OriginalStep7CandidateEvidence.zip",
+      "bytes": 606221,
+      "sha256": "0b56d46428cb6badb615edf52100e3aff6b446bfd580384700edf077b9b02e37"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/ProjectionBindings.candidate.json",
+      "bytes": 6313,
+      "sha256": "717cad53947753b27641d08cb23cb8252610c43aab9bac97295a56825a5527dc"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/ProjectionBindings.repository.json",
+      "bytes": 9087,
+      "sha256": "7e526281339067dea908765cad2f8aa4b510d0371dcd9f2915cc31221e6802cd"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/ProjectionCheckReport.json",
+      "bytes": 1969,
+      "sha256": "385cdef64f2610d74b97983dcc620adc3c590581c75f445906a1b5f9a851b078"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/ProjectionConsistencyReport.json",
+      "bytes": 1969,
+      "sha256": "385cdef64f2610d74b97983dcc620adc3c590581c75f445906a1b5f9a851b078"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/README.md",
+      "bytes": 1832,
+      "sha256": "a1c7044643f1f385474e206f6129cbaf9cf9ce158e3ac2ff16a1c8c677fdeb21"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/RepositoryProjectionCheck.json",
+      "bytes": 1997,
+      "sha256": "d4de7b9c3f5cefdb55c65e045903849841a2ec1d915644892065c778b6f25d88"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/RepositoryProjectionGeneration.json",
+      "bytes": 1997,
+      "sha256": "d4de7b9c3f5cefdb55c65e045903849841a2ec1d915644892065c778b6f25d88"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/RetainedSourceCopies.json",
+      "bytes": 1551,
+      "sha256": "57dc9437b90c3520ac51a92a23959ac4a5f86a4a4b590e1ba26ed6121b72688a"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/generated/AGENTS.governance.md",
+      "bytes": 2251,
+      "sha256": "a7f5e547cd0a8d6062285a0580c782feb2fe3fffa654a71b10c5e975d07253b6"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/generated/CURRENT_STATUS.history-original.md",
+      "bytes": 2753,
+      "sha256": "af52a717b2c37ebabf81a7123244aa3dd9a91042ea87037fd026925e8111f722"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/generated/CURRENT_STATUS.projection.md",
+      "bytes": 2641,
+      "sha256": "939392620e3147b51030201e548e6732c0f1c1bc12a7ec4762f14f20fb8e74cd"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/generated/ConsumerBindings.projection.json",
+      "bytes": 35867,
+      "sha256": "6000d1c819450d8e345bd3a1155d8746e89cda87a383a410ab83094e1c2065ba"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/generated/GovernanceDocs.projection.md",
+      "bytes": 2251,
+      "sha256": "a7f5e547cd0a8d6062285a0580c782feb2fe3fffa654a71b10c5e975d07253b6"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/generated/GovernanceManifest.projection.json",
+      "bytes": 75433,
+      "sha256": "eeca98c1eb3af0701bdb5a16898d710d25f6c9e555d48792ca3631ecc9d82b2b"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/generated/GovernanceRegistry.projection.json",
+      "bytes": 74172,
+      "sha256": "73837b86e206489299470ebb8bb094605e3584c4673bd81f6744292fff603bb7"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/generated/IdentityFiles.projection.json",
+      "bytes": 8361,
+      "sha256": "0137a2a726cdb1289e064135b6de7e45f61cb7dd1f991564b2e5e2327a935c26"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/generated/README.governance.md",
+      "bytes": 2251,
+      "sha256": "a7f5e547cd0a8d6062285a0580c782feb2fe3fffa654a71b10c5e975d07253b6"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/generated/StatusMigrationPlan.candidate.json",
+      "bytes": 679,
+      "sha256": "4712f84daf8a3447b4c8b2a4842311cfffc52fcd800b6538390ab58a9c585d38"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/generated/ToolRouting.projection.json",
+      "bytes": 3286,
+      "sha256": "3a42548d7e85247e831508b843a7f4f717f0a68868ebbe076a978de8616a56e5"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/generated/WorkflowReferences.projection.json",
+      "bytes": 3326,
+      "sha256": "eb832c3a885509e348a1566ed13ca9f48ba2b9ac4f30946b95df35c3f637d8ed"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/inputs/CurrentArtifactIdentityPolicy.json",
+      "bytes": 776,
+      "sha256": "3a14df68ea81c6390316c5df09d51a049b52a640871ab57953c42acb30624bff"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/inputs/PreMigration-AGENTS.md",
+      "bytes": 9637,
+      "sha256": "75d0788ff62a20d2d211115a66ab20fc38519a14fad890ab9a3d6f821e821793"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/inputs/PreMigration-CURRENT_STATUS.md",
+      "bytes": 2753,
+      "sha256": "af52a717b2c37ebabf81a7123244aa3dd9a91042ea87037fd026925e8111f722"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/inputs/ReviewSubjectContract.json",
+      "bytes": 1383,
+      "sha256": "c2cd13dbe8fd046aa8f0344778141cb9b115fae0048a8c673b60bd25b03498d3"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/project-governance.mjs",
+      "bytes": 16156,
+      "sha256": "ffd35b923be0729fab18de13b2e234ce971788bdb5b6aa1ac8520c2a516755df"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/repository-generated/AGENTS.governance.md",
+      "bytes": 2357,
+      "sha256": "9bcc962497ff82bf86dd3650b6d965d6ffa683125275fa55e278eb4b3914a6f0"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/repository-generated/CURRENT_STATUS.history-original.md",
+      "bytes": 2753,
+      "sha256": "af52a717b2c37ebabf81a7123244aa3dd9a91042ea87037fd026925e8111f722"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/repository-generated/CURRENT_STATUS.projection.md",
+      "bytes": 2747,
+      "sha256": "2bb3a1c38e6e5229db62e232dbde74ae4759337bd77f01d22d0bc7dff4b7d98c"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/repository-generated/ConsumerBindings.projection.json",
+      "bytes": 186284,
+      "sha256": "a3448f25eae721026d8fc8ec0cbad012964e46c81a84dadecc3e365fc38e2cef"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/repository-generated/GovernanceDocs.projection.md",
+      "bytes": 2357,
+      "sha256": "9bcc962497ff82bf86dd3650b6d965d6ffa683125275fa55e278eb4b3914a6f0"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/repository-generated/GovernanceManifest.projection.json",
+      "bytes": 235275,
+      "sha256": "682b0a2821d942d1c57bc6baa7926bc862b26f89ce1246bded37da97325a7493"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/repository-generated/GovernanceRegistry.projection.json",
+      "bytes": 232231,
+      "sha256": "f1116caf940ca665193c60915f6df4e5dc506fafa0f1dea8e20d8ca702dd47f8"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/repository-generated/IdentityFiles.projection.json",
+      "bytes": 9775,
+      "sha256": "6259c4d9326cb24e15a5863efa61b8ffe95762f295398fbb75cbc1bd8606c0b3"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/repository-generated/README.governance.md",
+      "bytes": 2357,
+      "sha256": "9bcc962497ff82bf86dd3650b6d965d6ffa683125275fa55e278eb4b3914a6f0"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/repository-generated/StatusMigrationPlan.candidate.json",
+      "bytes": 751,
+      "sha256": "1881cc343304904893b561a7c9d6d5881981378eff40c7b06cad2c0b29e81ecb"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/repository-generated/ToolRouting.projection.json",
+      "bytes": 4772,
+      "sha256": "8f63d5eae3d643edf3639ba709fa99e5bee1cb5cae7b8cb19813f168d4fa4d10"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/repository-generated/WorkflowReferences.projection.json",
+      "bytes": 4716,
+      "sha256": "5cb691e23d4f8c857e9babde7d5f4d0bc9ed7b774ee8870aa0b0766e2bf5124a"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step08-validator-20260907/CurrentBindingReceipt.json",
+      "bytes": 160706,
+      "sha256": "a73cf7c10faae1bdf2e241e49f748f61c98adeded37f2e58d65485dcd79d9569"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step08-validator-20260907/EvidenceIndex.json",
+      "bytes": 164190,
+      "sha256": "b20482d2084ad8c9ec91fea15cd98def54a4edd76428d81ee50a046f33399356"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step08-validator-20260907/FinalBindingControls.zip",
+      "bytes": 531303,
+      "sha256": "e08442a94fe41bcad4e035471e10df6a12a0769599b19667a82dc072c818e9c6"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step08-validator-20260907/FinalBindingVerification.json",
+      "bytes": 20222,
+      "sha256": "085b8f54c8908ffc5c3e5c4b5621f6addd429b0520a8e6a24e04a01b427a577e"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step08-validator-20260907/IndependentStep7BindingReview.json",
+      "bytes": 15412,
+      "sha256": "2369b6a173f6e3cbe0beb38fea2130fdd8bc0ed536d55d9ea2b031c41a11c3a5"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step08-validator-20260907/PortableAdaptation.json",
+      "bytes": 11900,
+      "sha256": "5add9682d2841e7c86a1d8878c56292e2e0b1cfea11ab582ecb3800eaa344fc0"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step08-validator-20260907/PortableDriverCheck.zip",
+      "bytes": 188798,
+      "sha256": "6fca1429419f0048601613e4aa2aeea372c89ac28838a0bfe57f7565be8e91ce"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step08-validator-20260907/README.md",
+      "bytes": 2906,
+      "sha256": "0143c06dfce2bd0ff6283d37182c6cbeafd86223390b2a08e937108e1af9fae0"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step08-validator-20260907/ReferencedSourceBytes.zip",
+      "bytes": 5521455,
+      "sha256": "42085d2d3880395e2eb9c5563d3d8dcdc5791a8ef65c43715b828ac6d639e7d5"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step08-validator-20260907/RootIndependentStep8Review.json",
+      "bytes": 8947,
+      "sha256": "0085b551a80d3aa533927c8f7da5679d7063fe559913fb40db3bdddb43afe20c"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step08-validator-20260907/SourceIndex.json",
+      "bytes": 43992,
+      "sha256": "2d43dd59ebac6038c1b1d0a30f6246e6bf87dda85e0b9ac9419def88c9ad3045"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step08-validator-20260907/SourceLocators.json",
+      "bytes": 6210,
+      "sha256": "04aa73c7673b67bc046b8fa5dd37e8bbd9251e84766c09afa735d2a35fe8162b"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step08-validator-20260907/Step8ValidatorEvidence_20260907.zip",
+      "bytes": 3547622,
+      "sha256": "87984a314dbdc176b451ceab0c1a0a4be4543e0ba4941b76f4e668c4302e1f2e"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step08-validator-20260907/step4_sources.portable.json",
+      "bytes": 10645,
+      "sha256": "ffe6ea867b76657553312b3c45571b1fee9bfaca14413fc3679c73c0d39508d3"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step08-validator-20260907/step5_sources.portable.json",
+      "bytes": 16995,
+      "sha256": "18635b8e12ea817d77648227acec65accc5d342bb6fa3eba70405a3740246bd4"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step08-validator-20260907/step6_sources.portable.json",
+      "bytes": 27246,
+      "sha256": "87d60f81c3e28de14a57b2a666308a403879d6ec7f03a07933887fd8d5aacc1e"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step09-review-20260907/ReviewSubject_20260907.json",
+      "bytes": 40677,
+      "sha256": "960cab1c1b87fb898f6c2ce0604e54cf8026125f29b9633543971b7ab7de43a9"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step09-review-20260907/disposition-review/Review.json",
+      "bytes": 15975,
+      "sha256": "21483daedf403b5033783491b2caaf9658df88fd39374f3393954f37e5bf8c04"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step09-review-20260907/disposition-review/Review.md",
+      "bytes": 3524,
+      "sha256": "c7754f714b4244b518adf000f16fe03d2c197dcada66484aa7e7104a18027219"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step09-review-20260907/preparation/Original40Assessment.preparation.json",
+      "bytes": 89677,
+      "sha256": "093baa56b20b449a0d868458ea129943b5585d534e01d54f7b34b9b28c0f529c"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step09-review-20260907/preparation/Original40Assessment.preparation.md",
+      "bytes": 10004,
+      "sha256": "6ad4dd6cf6cd9b009da9898a52c03bff2c4005b627cceac724b06dbe39e64296"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step09-review-20260907/preparation/RootSelectedDispositions.candidate.json",
+      "bytes": 1760,
+      "sha256": "c4fe3cc13670a886e6703ab191284ddb2d0077d481f674a3cab10b49d51e65b8"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step09-review-20260907/preparation/SourcesAndChecks.json",
+      "bytes": 16139,
+      "sha256": "559a08ecc2c4cf5e0a2cfc181812d58ce063fd758a8b3be7c25c4acd98a8ae4c"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step09-review-20260907/preparation/StagedDispositionProposal.json",
+      "bytes": 41422,
+      "sha256": "2d27c7b9a673dff1484caea6d3fb5ea409467346eafb96557c7123bd5a5ec653"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step11-structure-inputs-20260907/RequiredCheckSetCandidate.json",
+      "bytes": 10577,
+      "sha256": "33dc28061671985750d5116751dffbba6c0907447bad3998186492101377670b"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step11-structure-inputs-20260907/RetainedOriginalStructureSources.json",
+      "bytes": 1567,
+      "sha256": "57f56fe6e4383eca526f8c18ae56044bbbdec8d09cc0325c34b344f567bd1860"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step11-structure-inputs-20260907/StructureFreezeEvidenceMatrix.json",
+      "bytes": 4723,
+      "sha256": "396dc8a6f4118d224cff1765b42d8a395b4309e6ecc5889c6ab7a0e04cdbafd8"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step11-structure-inputs-20260907/StructureFreezePrerequisiteStatus.json",
+      "bytes": 15203,
+      "sha256": "37306d420b8e1c7380cdb30998e835d1dbbcfc5f6f62754615a5e1b09ac72925"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step11-structure-inputs-20260907/VersionCandidateOverlay.json",
+      "bytes": 18219,
+      "sha256": "3f12c52ebcf261990653433dfe6f803696048fbb457088d4e2a185c46f640911"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/DcpTargetBindings.candidate.json",
+      "bytes": 3803,
+      "sha256": "0b09223cdeda8042f39f31bc691403b537254fdda68d231521164e1999c8a717"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/EXECUTOR.md",
+      "bytes": 5484,
+      "sha256": "6f821d1a40baab83ddec329aa80fe436e23dbb08838fd302c3a9afa3cf6f7a11"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/ExecutionInputs.candidate.json",
+      "bytes": 32713,
+      "sha256": "37a6909deedae17dbfe97e844d8ec596c5de46e73c3cefafd4136008d3f3dcec"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/ExecutionInputsSummary.json",
+      "bytes": 644,
+      "sha256": "f52dbcf94fdb756a7d5bb147c66f38c98e4eb4b8bf7825ef4cbfce2ffbbd1749"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/ExecutorVerification.json",
+      "bytes": 1548,
+      "sha256": "963f2b608342cd0b3092f8255e0504a66e879e514c5552bfce284695c3875d6f"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/FixtureVerification.json",
+      "bytes": 1965,
+      "sha256": "6d47aecd089bd57a2dc5364e65bca13be9a2a5d3136e5abc22c5c8bd8e4bd7f5"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/HistoricalMoves.md",
+      "bytes": 3625,
+      "sha256": "721fff6c2c9062418fa70994db62a06a17462aebc5241a14565ca05d59997caa"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/HistoryPathMap.candidate.json",
+      "bytes": 14042,
+      "sha256": "094ad1bcc2b117025ab00897114eb362c198bf48fd4819d445d3decec992d174"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/MigrationPlan.candidate.json",
+      "bytes": 41261,
+      "sha256": "d8e1b8bb5058e9b2e4be9b4c0e836ad101eeefe7a839e6bc3ac5338f8b8310d0"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/OriginalMigrationTestSources.zip",
+      "bytes": 379602,
+      "sha256": "3c2cafd7c052969e470ed4a2a915202fa39421f040793f777132fa8a12f72d28"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/ParentLinkGuardRepair.json",
+      "bytes": 2062,
+      "sha256": "c746d7d58e796f8027bbd931091ab060d3cf033d7563e05d492dde21880378cd"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/RetentionAndRootReview.json",
+      "bytes": 1349,
+      "sha256": "c970089464bffcbf7cbc893f4b24cfa68d273df46fd60e232006ca26671fbbeb"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/ToolCompatibilityPlan.candidate.json",
+      "bytes": 8786,
+      "sha256": "baf0ca363fb8550970a2eba76a7e3d53d523f8dbd4002e767902bea6a68ad769"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/AGENTS.md",
+      "bytes": 11994,
+      "sha256": "0d209391925dfc3c490cecfdb1e48c9266f0fd9c3d2e26903e023002f2eaf354"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/CURRENT_STATUS.md",
+      "bytes": 2747,
+      "sha256": "2bb3a1c38e6e5229db62e232dbde74ae4759337bd77f01d22d0bc7dff4b7d98c"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/README.md",
+      "bytes": 4861,
+      "sha256": "378fef921798a96d8833e9d7a03fa9485153f06e95b7b52b6968d4f21d188c54"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/canonical_read.py",
+      "bytes": 462,
+      "sha256": "3c467b498254a7de504d26e70630ffcdf9b150735ea2670b7fdc82de8d04e3a2"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/development/authority-index/phase2/SourceIndex.json",
+      "bytes": 1912,
+      "sha256": "2dc9a544e13dc7f2fd53f54cd31230f33ae429823e741e6f79906624f8c5a73d"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/development/contracts/phase2/SourceIndex.json",
+      "bytes": 8754,
+      "sha256": "af08da8b9a738a262624e07c1e5a9385590c47c085d12383b023b4b0b4c6a9e3"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/development/projections/phase2/ConsumerBindings.projection.json",
+      "bytes": 186284,
+      "sha256": "a3448f25eae721026d8fc8ec0cbad012964e46c81a84dadecc3e365fc38e2cef"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/development/projections/phase2/GovernanceDocs.projection.md",
+      "bytes": 2357,
+      "sha256": "9bcc962497ff82bf86dd3650b6d965d6ffa683125275fa55e278eb4b3914a6f0"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/development/projections/phase2/GovernanceManifest.projection.json",
+      "bytes": 235275,
+      "sha256": "682b0a2821d942d1c57bc6baa7926bc862b26f89ce1246bded37da97325a7493"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/development/projections/phase2/GovernanceRegistry.projection.json",
+      "bytes": 232231,
+      "sha256": "f1116caf940ca665193c60915f6df4e5dc506fafa0f1dea8e20d8ca702dd47f8"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/development/projections/phase2/IdentityFiles.projection.json",
+      "bytes": 9775,
+      "sha256": "6259c4d9326cb24e15a5863efa61b8ffe95762f295398fbb75cbc1bd8606c0b3"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/docs/history/ADR-CLD-001-LKG-Max-Age-One-Hour.md",
+      "bytes": 3454,
+      "sha256": "5663f2cad660a75765170cc5199edfcc5c99329344e7561145bd01c8be5f0485"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/docs/history/ADR-CLD-002-LOCKED-Recovery-Transition.md",
+      "bytes": 5060,
+      "sha256": "bbb465429cf20945b60ce7ab65a3781e9a3db6b3fedbef5dc24ff7e3acd1fdec"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/docs/history/ADR-CLD-003-LKG-Policy-Profiles.md",
+      "bytes": 5549,
+      "sha256": "3e030f7d0df898792dca815da25de77bca6e6ef12d8ad66c518b2c2d7228c070"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/docs/history/ADR-MIV-005A-001-Relevance-Threshold-and-Metric-v2.md",
+      "bytes": 25667,
+      "sha256": "86dce59f2269cbed5d155f5d18a32a832b86ee9bcdfae761b0bd7d5db8cdf64a"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/docs/history/ADR-MIV-005B-001-Lexical-Feasibility-Audit.md",
+      "bytes": 7845,
+      "sha256": "9fc3d13b8470823c60087975920bea87b56f0ff2ccd9c6b9fdd6cc8469028c2d"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/docs/history/ADR-MIV-005B-002-Local-Embedding-Retrieval-Decision.md",
+      "bytes": 21497,
+      "sha256": "80755b77c5a2632949b935ad3e50b8cdc172c1db48008eff796214e118b704d9"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/docs/history/ADR-MIV-006-001-Project-Scope-Isolation.md",
+      "bytes": 13615,
+      "sha256": "6f30c7601f95410c7d6d6e614bfa05defdcd4cc8b202203099a5ae173e79b679"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/docs/history/AGENTS.routing-baseline-75d0788ff62a.md",
+      "bytes": 9637,
+      "sha256": "75d0788ff62a20d2d211115a66ab20fc38519a14fad890ab9a3d6f821e821793"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/docs/history/CURRENT_STATUS.before-phase2-af52a717b2c3.md",
+      "bytes": 2753,
+      "sha256": "af52a717b2c37ebabf81a7123244aa3dd9a91042ea87037fd026925e8111f722"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/docs/history/Clued-v0.1-Reference-Implementation-Report.md",
+      "bytes": 19177,
+      "sha256": "d3725396f8edfea08a68b6bb768afae7ff1d5baac83dedbcb70e96c1584eb1ff"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/docs/history/Clued-v0.1-实施与复用文档.md",
+      "bytes": 14090,
+      "sha256": "7e57ac9e595fe697188b2a1c8da07f21f3c84bbe5128eb2ba9d3371ea0a0f434"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/docs/history/Clued-v0.2.0-LKG-Policy-Report.md",
+      "bytes": 11866,
+      "sha256": "d348ad186fb6670882f8423c2e6d7ab3c38374a1a3ad48bf920558ed03bf2e5c"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/docs/history/Clued_v0.1_智能体安装授权弱网降级与卸载协议.md",
+      "bytes": 56505,
+      "sha256": "0869cb7b8a850ea400e991fd0d4a23c4babfbf5954cb322b27b5c7798df28ae4"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/docs/history/Cross-Memory-System-vNext-2.1-Gate2R-MIV005B-Audit-Report.md",
+      "bytes": 16021,
+      "sha256": "5f3aec42d02d815a93a65c302ea867904e5c0fb1b704949fc8aad30db86e8fa5"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/docs/history/README.before-phase2-d5f6ec6e821b.md",
+      "bytes": 2504,
+      "sha256": "d5f6ec6e821b9b1c71b0433e072804f48109ff55fc53f52b3a088b4205ecdaff"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/docs/history/Sprint3专项审计与封版报告-vNext-1.3.md",
+      "bytes": 7699,
+      "sha256": "155d7d5cd92d7bad533db1939c0a3690feb68016055e9b246738d89b527a7e82"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/docs/history/vNext-2.0-实施冲突记录.md",
+      "bytes": 5620,
+      "sha256": "a030b270e80852d820367d393fa482939e738e91ddc46053f7356f584cc24f80"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/docs/history/代码级Gap审计报告-vNext-1.3-2026-08-16.md",
+      "bytes": 15658,
+      "sha256": "1bb27a0cb74e5d0dd64713ecfc7c2b9cc209d9a94fc1f03714d16043b34cb736"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/docs/history/技术评估报告-vNext-1.3-DSH-2026-08-16.md",
+      "bytes": 39809,
+      "sha256": "b10ecf3d6179985de9b18ed246b5a727cb1adf463a925191d85a3e178cbce78c"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/docs/history/架构基线文档-vNext-1.3.md",
+      "bytes": 46858,
+      "sha256": "12475fe2e9f03238b182fd5a596b82d5b227ad8c22e083eb1ca990a9f6ac501c"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/docs/history/架构基线文档-vNext-2.0.md",
+      "bytes": 13671,
+      "sha256": "528b026db8507c0ef9bca58f080d6e22b996ca5a1b91679aa117efacd829c8ed"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/docs/history/配置手册与数据包-v4.md",
+      "bytes": 29461,
+      "sha256": "ac24b4f23dd34bd03b6a711e5b498a1716c7236fb94adfebe61f08422b352072"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/isolated_mirror.py",
+      "bytes": 463,
+      "sha256": "c4c0f63fd3a646cfa1dd8a9012a503af53b8d44181e137331667e0949f14c956"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/memory.py",
+      "bytes": 454,
+      "sha256": "34c2c280e3bb2092d5c920edc2c3cbc3891274a3a6258bb702ba901fb9dc601c"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/scripts/canonical_read.py",
+      "bytes": 18272,
+      "sha256": "7f4b5b7050bd069022e5ff7c7dbf8ff75a36432bffdb618371b0c90d36d86063"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/scripts/isolated_mirror.py",
+      "bytes": 55260,
+      "sha256": "e228508a4df2b750cd3f304b8188fe5b10f0529ea1ccdbd2dc85a6cfbca82e31"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/scripts/memory.py",
+      "bytes": 15660,
+      "sha256": "4f09d50797be8af183e79745d78a64fe5474d6ff5b7746c14a4f911894a43a10"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/scripts/sync-memory.ps1",
+      "bytes": 1088,
+      "sha256": "1b0ec7934951a937c7b517841374817255bad9e430ae09adb72adf579fc7c6e8"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/scripts/sync-memory.py",
+      "bytes": 20890,
+      "sha256": "93dc66d3c6e0a7aa2310afa5d3386dd0a835fa840e3ab049676906d66bc8f94d"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/scripts/verification_context.py",
+      "bytes": 32479,
+      "sha256": "6a2d83a65921df60252aad350f3cecacfbab991be582368903aa40203c96d5ab"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/sync-memory.ps1",
+      "bytes": 433,
+      "sha256": "ce0113f0d79908a707645f73f2720ee63745e9a21738de1e5272aa6517f07800"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/sync-memory.py",
+      "bytes": 459,
+      "sha256": "3a295288ee381fc86c4368515223a068b012476159af199ee85e3c78239ba683"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/tests/test_p2_verification_context.py",
+      "bytes": 28931,
+      "sha256": "af796d182f4dd43f8fbdf08564dc14f73289fd3935659d85f6e962ef73a8a26c"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/verification_context.py",
+      "bytes": 468,
+      "sha256": "fc85e12ae3990c73bb573dd2241f8c20370db7ad8fc945c774b93daefee34882"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/migration_execute.py",
+      "bytes": 19295,
+      "sha256": "15ed103a96943125978e9134a8322c6195f62fe24d3e2e070a8ad538b17ea2fe"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/verify-migration-parent-guard.retained.py",
+      "bytes": 3860,
+      "sha256": "09e01c889b5bc39569a2a0912de6226d0bd24d026ddbfd1be3872e2a943620a5"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step18-boundary-design-20260907/Decision.json",
+      "bytes": 16558,
+      "sha256": "69eb444bf4125dc1fdf0f8de11724af4b8f52913aed5f09a36b8a9123939b8c2"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step18-boundary-design-20260907/Decision.md",
+      "bytes": 7398,
+      "sha256": "873fe8b5d09ce2b0d34458307ac86a10440598647941d8d240e1d47e5181e42f"
+    },
+    {
+      "path": "scripts/naming-governance/README.md",
+      "bytes": 4057,
+      "sha256": "228a86c8732bcab54e9d46f16bda84fdbef0c312b2fefa009712b6204085362c"
+    },
+    {
+      "path": "scripts/naming-governance/naming_validator.py",
+      "bytes": 32723,
+      "sha256": "f99eaf03737cc13f5ea2dea06a1e4d5b48033df22bb198f6eade22b00746bb8a"
+    },
+    {
+      "path": "scripts/naming-governance/projection-check.mjs",
+      "bytes": 1130,
+      "sha256": "c919ce66e9a4555c3ad86197b9044fe72585ccdce279112b4dd77c6878b75714"
+    },
+    {
+      "path": "scripts/naming-governance/render-fixture.mjs",
+      "bytes": 950,
+      "sha256": "28ad7b496fc70ba3c2e8dc587710bd9948578d6e342af5c1423090ee46774a46"
+    },
+    {
+      "path": "scripts/naming-governance/run.py",
+      "bytes": 3281,
+      "sha256": "b7609198aade6f16f8445ffd2d3e5cb0075d3161e78eb222a01940f75ea73edb"
+    },
+    {
+      "path": "tests/naming_governance_final_binding_checks.py",
+      "bytes": 14184,
+      "sha256": "0b72d65fb0f9772c3652f0b32026df44668ab93c47bc172791756bf32dc7d497"
+    },
+    {
+      "path": "tests/test_naming_governance_validator.py",
+      "bytes": 16055,
+      "sha256": "dfd44464ae4a5a7ef455a9915f22675c6229e519bd0e7d9495e14b7fcdb2554a"
+    }
+  ],
+  "required_review": [
+    "Latest fixed Step9 focus and E1-E6 boundaries",
+    "Original 40 exact conditions; scoped evidence/dispositions do not remove future obligations",
+    "Final Steps4-8 source/decision/projection/validator bindings",
+    "Concrete migration targets and preservation/recovery scope",
+    "Existing Step15/18 unimplemented obligation and later actual evidence due"
+  ],
+  "selected_dispositions": "step09-review-20260907/preparation/RootSelectedDispositions.candidate.json",
+  "structure_28_rule": "Prepare only during Step9; distinct formal adjudication follows actual Step10 acceptance before Step11.",
+  "scope": "Current repository and current delivery artifacts under user amendments. No exhaustive historical Library, model/store activation, business Canonical mutation or new hosted control plane.",
+  "excluded_uncommitted_work": "Any concurrently prepared Step15 publication implementation is not part of this reviewed commit and cannot claim its review or tests.",
+  "authority_effect": "NONE",
+  "physical_migration_performed": false,
+  "prior_review_subject": {
+    "path": "step09-review-20260907/ReviewSubject_20260907.json",
+    "sha256": "960cab1c1b87fb898f6c2ce0604e54cf8026125f29b9633543971b7ab7de43a9"
+  },
+  "scoped_revision": "Migration executor rejects parent junction/symlink and case-variant protected paths; real junction negative plus five executor regressions pass. Fixed 64-path inputs and Steps4-8 unchanged. Independent ten-clause applicability review is attached."
+}

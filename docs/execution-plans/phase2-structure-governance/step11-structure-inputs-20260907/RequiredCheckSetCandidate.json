@@ -1,0 +1,246 @@
+{
+  "id": "REQUIRED_CHECK_SET_DESIGN_V0_1",
+  "state": "CANDIDATE_NOT_ENFORCED",
+  "observed_workflows": [
+    {
+      "id": "public-mcp-protocol",
+      "path": ".github/workflows/public-mcp-protocol.yml",
+      "git_blob_sha1": "7d5cc4e99475e954e454a4db8a3cb8d649d114eb",
+      "read_at_commit": "507c69b8f0638ff9202a4eeb140c606f9089e821",
+      "read_url": "https://github.com/tdoljyj/cross-memory-system/blob/507c69b8f0638ff9202a4eeb140c606f9089e821/.github/workflows/public-mcp-protocol.yml",
+      "record_kind": "SELECTED_BODY_FIELDS_TRANSCRIPTION_NOT_RAW_WORKFLOW_COPY",
+      "workflow_name": "public-mcp-protocol",
+      "job_id": "public-mcp-protocol",
+      "job_display_name": "public-mcp-protocol",
+      "events": [
+        "pull_request",
+        "push:main"
+      ],
+      "path_filters": [
+        "*"
+      ],
+      "observed_commands_or_steps": [
+        "npm ci",
+        "mcp:protocol:verify",
+        "mcp:tools:verify",
+        "mcp:flags:verify"
+      ],
+      "candidate_applicability": "BASE_CORE",
+      "runtime_run_id": null,
+      "runtime_result": "NOT_EXECUTED_IN_THIS_TASK",
+      "trusted_issuer_app_id": null,
+      "configured_required": false
+    },
+    {
+      "id": "public-mcp-behavior",
+      "path": ".github/workflows/public-mcp-behavior.yml",
+      "git_blob_sha1": "6c2cc91a9c478b8a9ae6bd5a3cc177af30318f9b",
+      "read_at_commit": "507c69b8f0638ff9202a4eeb140c606f9089e821",
+      "read_url": "https://github.com/tdoljyj/cross-memory-system/blob/507c69b8f0638ff9202a4eeb140c606f9089e821/.github/workflows/public-mcp-behavior.yml",
+      "record_kind": "SELECTED_BODY_FIELDS_TRANSCRIPTION_NOT_RAW_WORKFLOW_COPY",
+      "workflow_name": "public-mcp-behavior",
+      "job_id": "public-mcp-behavior",
+      "job_display_name": "public-mcp-behavior",
+      "events": [
+        "pull_request",
+        "push:main"
+      ],
+      "path_filters": [
+        "*"
+      ],
+      "observed_commands_or_steps": [
+        "db:start",
+        "db:reset",
+        "mcp:isolated:fixture",
+        "mcp:eval:positive",
+        "mcp:eval:negative",
+        "test:p5:postgres"
+      ],
+      "candidate_applicability": "BASE_CORE",
+      "runtime_run_id": null,
+      "runtime_result": "NOT_EXECUTED_IN_THIS_TASK",
+      "trusted_issuer_app_id": null,
+      "configured_required": false
+    },
+    {
+      "id": "public-mcp-gate-receipt",
+      "path": ".github/workflows/public-mcp-gate-receipt.yml",
+      "git_blob_sha1": "6318dd66254c96d9514605bae728efba22ac6903",
+      "read_at_commit": "507c69b8f0638ff9202a4eeb140c606f9089e821",
+      "read_url": "https://github.com/tdoljyj/cross-memory-system/blob/507c69b8f0638ff9202a4eeb140c606f9089e821/.github/workflows/public-mcp-gate-receipt.yml",
+      "record_kind": "SELECTED_BODY_FIELDS_TRANSCRIPTION_NOT_RAW_WORKFLOW_COPY",
+      "workflow_name": "public-mcp-gate-receipt",
+      "job_id": "public-mcp-gate-receipt",
+      "job_display_name": "public-mcp-gate-receipt",
+      "events": [
+        "pull_request_target"
+      ],
+      "path_filters": [
+        "*"
+      ],
+      "observed_commands_or_steps": [
+        "node trusted-gate/apps/clued-cloud/evals/public-mcp/gate-receipt.mjs",
+        "sha256sum receipt; print digest only"
+      ],
+      "candidate_applicability": "EXISTING_LIMITED_AGGREGATOR",
+      "runtime_run_id": null,
+      "runtime_result": "NOT_EXECUTED_IN_THIS_TASK",
+      "trusted_issuer_app_id": null,
+      "configured_required": false
+    },
+    {
+      "id": "gitleaks",
+      "path": ".github/workflows/gitleaks.yml",
+      "git_blob_sha1": "423407d4fb69e3cc3990cffaca6883ad40183da9",
+      "read_at_commit": "507c69b8f0638ff9202a4eeb140c606f9089e821",
+      "read_url": "https://github.com/tdoljyj/cross-memory-system/blob/507c69b8f0638ff9202a4eeb140c606f9089e821/.github/workflows/gitleaks.yml",
+      "record_kind": "SELECTED_BODY_FIELDS_TRANSCRIPTION_NOT_RAW_WORKFLOW_COPY",
+      "workflow_name": "gitleaks",
+      "job_id": "gitleaks",
+      "job_display_name": "gitleaks",
+      "events": [
+        "pull_request",
+        "push:main"
+      ],
+      "path_filters": [
+        "*"
+      ],
+      "observed_commands_or_steps": [
+        "pinned gitleaks8.30.1 complete history redact exit1"
+      ],
+      "candidate_applicability": "BASE_CORE",
+      "runtime_run_id": null,
+      "runtime_result": "NOT_EXECUTED_IN_THIS_TASK",
+      "trusted_issuer_app_id": null,
+      "configured_required": false
+    },
+    {
+      "id": "trivy",
+      "path": ".github/workflows/trivy.yml",
+      "git_blob_sha1": "bb352466ef93f918df32de3aceb24f1fae091d20",
+      "read_at_commit": "507c69b8f0638ff9202a4eeb140c606f9089e821",
+      "read_url": "https://github.com/tdoljyj/cross-memory-system/blob/507c69b8f0638ff9202a4eeb140c606f9089e821/.github/workflows/trivy.yml",
+      "record_kind": "SELECTED_BODY_FIELDS_TRANSCRIPTION_NOT_RAW_WORKFLOW_COPY",
+      "workflow_name": "trivy",
+      "job_id": "trivy",
+      "job_display_name": "trivy",
+      "events": [
+        "pull_request",
+        "push:main"
+      ],
+      "path_filters": [
+        "*"
+      ],
+      "observed_commands_or_steps": [
+        "pinned trivy0.74.0 vuln/secret/misconfig HIGH/CRITICAL exit1"
+      ],
+      "candidate_applicability": "BASE_CORE",
+      "runtime_run_id": null,
+      "runtime_result": "NOT_EXECUTED_IN_THIS_TASK",
+      "trusted_issuer_app_id": null,
+      "configured_required": false
+    },
+    {
+      "id": "memory-publication-gate",
+      "path": ".github/workflows/memory-publication-gate.yml",
+      "git_blob_sha1": "9eea684b303c3bd7c6a102bdbed74df51d25d308",
+      "read_at_commit": "507c69b8f0638ff9202a4eeb140c606f9089e821",
+      "read_url": "https://github.com/tdoljyj/cross-memory-system/blob/507c69b8f0638ff9202a4eeb140c606f9089e821/.github/workflows/memory-publication-gate.yml",
+      "record_kind": "SELECTED_BODY_FIELDS_TRANSCRIPTION_NOT_RAW_WORKFLOW_COPY",
+      "workflow_name": "memory-publication-gate",
+      "job_id": "memory-publication-gate",
+      "job_display_name": "memory-publication-gate",
+      "events": [
+        "pull_request_target"
+      ],
+      "path_filters": [
+        "memory/**",
+        "artifacts/clued-two-level-snapshots/**",
+        "scripts/verify-memory-publication.mjs",
+        ".github/workflows/memory-publication-gate.yml"
+      ],
+      "observed_commands_or_steps": [
+        "node trusted/scripts/verify-memory-publication.mjs --repo candidate --base base.sha --candidate head.sha"
+      ],
+      "candidate_applicability": "CONDITIONAL_BY_VERIFIED_CHANGESET",
+      "runtime_run_id": null,
+      "runtime_result": "NOT_EXECUTED_IN_THIS_TASK",
+      "trusted_issuer_app_id": null,
+      "configured_required": false
+    },
+    {
+      "id": "clued-g4-database",
+      "path": ".github/workflows/clued-g4-database.yml",
+      "git_blob_sha1": "f4e0d9a229b9b92307b73acc64826fe9cc5811dd",
+      "read_at_commit": "507c69b8f0638ff9202a4eeb140c606f9089e821",
+      "read_url": "https://github.com/tdoljyj/cross-memory-system/blob/507c69b8f0638ff9202a4eeb140c606f9089e821/.github/workflows/clued-g4-database.yml",
+      "record_kind": "SELECTED_BODY_FIELDS_TRANSCRIPTION_NOT_RAW_WORKFLOW_COPY",
+      "workflow_name": "Clued G4 Database Gate",
+      "job_id": "database-gate",
+      "job_display_name": "Supabase migration, RLS, transaction, and pgTAP",
+      "events": [
+        "workflow_dispatch",
+        "pull_request",
+        "push:feat/clued-two-level-views-v1"
+      ],
+      "path_filters": [
+        ".github/workflows/clued-g4-database.yml",
+        "apps/clued-cloud/package.json",
+        "apps/clued-cloud/package-lock.json",
+        "apps/clued-cloud/supabase/**"
+      ],
+      "observed_commands_or_steps": [
+        "db:start",
+        "db:reset",
+        "db:lint",
+        "db:test:m1"
+      ],
+      "candidate_applicability": "CONDITIONAL_BY_VERIFIED_CHANGESET",
+      "runtime_run_id": null,
+      "runtime_result": "NOT_EXECUTED_IN_THIS_TASK",
+      "trusted_issuer_app_id": null,
+      "configured_required": false
+    }
+  ],
+  "enforcement_status": "NOT_PROVEN; branch response off; rulesets query unavailable 403; external equivalent gate unverified",
+  "checks_identity": "repo + workflow path/blob + job id + event + candidate/base/merge SHA semantics + run_id/attempt + trusted App issuer + exact policy revision; display name alone is insufficient",
+  "always_run_aggregator_candidate": {
+    "name": "clued-phase2-integrity",
+    "implementation_path": null,
+    "state": "PROPOSED_NOT_IMPLEMENTED",
+    "inputs": [
+      "完整可信changed-file清单",
+      "固定check registry和scope映射",
+      "精确候选SHA/受信base verifier",
+      "适用各check实际结果/日志/Evidence",
+      "policy/profile/approval refs"
+    ],
+    "rules": [
+      "所有候选变化都触发，不通过路径跳过整个required workflow",
+      "if/needs导致skipped、cancelled、neutral、queued或缺失不能当适用用例PASS",
+      "有证明的不适用属于APPLICABILITY_NOT_REQUIRED，不伪装运行PASS；只针对此check此changeset，不创造旧计划N/A分支",
+      "当前数据库工作流push不覆盖main，需明确PR/授权dispatch或经接受的新触发，不能等main上自动出现",
+      "候选更改workflow/verifier时使用受信base/已接受版本，不执行不可信PR代码于高权限上下文",
+      "需要merge queue时另接merge_group和精确merge SHA，当前未假设已启用"
+    ]
+  },
+  "receipt_custody": "现有public-mcp-gate-receipt只在日志打印摘要；本候选要求取得完整receipt与原始Evidence的持久受控存储位置、bytes/digest、issuer签名/受众/用途/撤销证明；sha256日志不等于签名或可持久取回。",
+  "enforcement_options": [
+    {
+      "option": "BRANCH_OR_RULESET_PROTECTION",
+      "condition": "精确required checks及可信issuer、管理员/普通写入绕过行为经过验证；本轮未改配置"
+    },
+    {
+      "option": "EXPLICIT_SCOPED_EQUIVALENT_GATE",
+      "condition": "只有真正限定写入/合并或消费受信promotion指针的强制组件才可能等价；仅增加CI日志不等价。若不能阻止main被推入，必须明确只能保护release消费域，不能冒称主分支写保护已闭合。独立接受作用域。"
+    }
+  ],
+  "freeze_blockers": [
+    "精确运行/issuer身份未绑定",
+    "聚合器尚未实现",
+    "保护/等价强制与旁路负例未证明",
+    "完整receipt持久存储与签名链未证明"
+  ],
+  "authorization_effect": "NONE",
+  "v023_selected_evidence_ref": "data/ExistingCICoverageAssessment.json"
+}

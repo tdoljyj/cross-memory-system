@@ -1,0 +1,177 @@
+{
+  "source_commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+  "tools": [
+    {
+      "source": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "canonical_read.py",
+        "git_blob": "388a238a5bbcced40be5a63302d131a0e18ee06c",
+        "sha256": "7f4b5b7050bd069022e5ff7c7dbf8ff75a36432bffdb618371b0c90d36d86063",
+        "bytes": 18272
+      },
+      "target_implementation": {
+        "path": "scripts/canonical_read.py",
+        "payload_path": "payload/scripts/canonical_read.py",
+        "sha256": "7f4b5b7050bd069022e5ff7c7dbf8ff75a36432bffdb618371b0c90d36d86063",
+        "bytes": 18272
+      },
+      "compatibility_entry": {
+        "path": "canonical_read.py",
+        "payload_path": "payload/canonical_read.py",
+        "sha256": "3c467b498254a7de504d26e70630ffcdf9b150735ea2670b7fdc82de8d04e3a2",
+        "bytes": 462
+      },
+      "treatment": "MOVE_IMPLEMENTATION_KEEP_EXACT_OLD_ENTRY_NAME",
+      "implementation_original_bytes_preserved": true,
+      "retirement": "No compatibility entry retirement in Step12. Step13 consumer bindings and accepted window/rollback are required first.",
+      "validation_state": "CANDIDATE_PENDING_LOCAL_COMPATIBILITY_FIXTURE_AND_POST_FREEZE_EXISTING_REGRESSIONS"
+    },
+    {
+      "source": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "isolated_mirror.py",
+        "git_blob": "1f9d3e8241ec02cc0f89c106360084877e811a0a",
+        "sha256": "e228508a4df2b750cd3f304b8188fe5b10f0529ea1ccdbd2dc85a6cfbca82e31",
+        "bytes": 55260
+      },
+      "target_implementation": {
+        "path": "scripts/isolated_mirror.py",
+        "payload_path": "payload/scripts/isolated_mirror.py",
+        "sha256": "e228508a4df2b750cd3f304b8188fe5b10f0529ea1ccdbd2dc85a6cfbca82e31",
+        "bytes": 55260
+      },
+      "compatibility_entry": {
+        "path": "isolated_mirror.py",
+        "payload_path": "payload/isolated_mirror.py",
+        "sha256": "c4c0f63fd3a646cfa1dd8a9012a503af53b8d44181e137331667e0949f14c956",
+        "bytes": 463
+      },
+      "treatment": "MOVE_IMPLEMENTATION_KEEP_EXACT_OLD_ENTRY_NAME",
+      "implementation_original_bytes_preserved": true,
+      "retirement": "No compatibility entry retirement in Step12. Step13 consumer bindings and accepted window/rollback are required first.",
+      "validation_state": "CANDIDATE_PENDING_LOCAL_COMPATIBILITY_FIXTURE_AND_POST_FREEZE_EXISTING_REGRESSIONS"
+    },
+    {
+      "source": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "memory.py",
+        "git_blob": "67e7f460f9e9293071c344b29921ff3af8924369",
+        "sha256": "479fd0e39a8a96287642ea59644d1975666fc314cc589f39a0086c3d9446dd85",
+        "bytes": 15511
+      },
+      "target_implementation": {
+        "path": "scripts/memory.py",
+        "payload_path": "payload/scripts/memory.py",
+        "sha256": "4f09d50797be8af183e79745d78a64fe5474d6ff5b7746c14a4f911894a43a10",
+        "bytes": 15660
+      },
+      "compatibility_entry": {
+        "path": "memory.py",
+        "payload_path": "payload/memory.py",
+        "sha256": "34c2c280e3bb2092d5c920edc2c3cbc3891274a3a6258bb702ba901fb9dc601c",
+        "bytes": 454
+      },
+      "treatment": "MOVE_IMPLEMENTATION_KEEP_EXACT_OLD_ENTRY_NAME",
+      "implementation_original_bytes_preserved": false,
+      "retirement": "No compatibility entry retirement in Step12. Step13 consumer bindings and accepted window/rollback are required first.",
+      "validation_state": "CANDIDATE_PENDING_LOCAL_COMPATIBILITY_FIXTURE_AND_POST_FREEZE_EXISTING_REGRESSIONS"
+    },
+    {
+      "source": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "sync-memory.ps1",
+        "git_blob": "bac39f557f7ed9ad6aed99f172bb4fa8739b279f",
+        "sha256": "48ffc824dee7ee66632299677c5f770de605d8ae2a413746b7a6b737528082ab",
+        "bytes": 1059
+      },
+      "target_implementation": {
+        "path": "scripts/sync-memory.ps1",
+        "payload_path": "payload/scripts/sync-memory.ps1",
+        "sha256": "1b0ec7934951a937c7b517841374817255bad9e430ae09adb72adf579fc7c6e8",
+        "bytes": 1088
+      },
+      "compatibility_entry": {
+        "path": "sync-memory.ps1",
+        "payload_path": "payload/sync-memory.ps1",
+        "sha256": "ce0113f0d79908a707645f73f2720ee63745e9a21738de1e5272aa6517f07800",
+        "bytes": 433
+      },
+      "treatment": "MOVE_IMPLEMENTATION_KEEP_EXACT_OLD_ENTRY_NAME",
+      "implementation_original_bytes_preserved": false,
+      "retirement": "No compatibility entry retirement in Step12. Step13 consumer bindings and accepted window/rollback are required first.",
+      "validation_state": "CANDIDATE_PENDING_LOCAL_COMPATIBILITY_FIXTURE_AND_POST_FREEZE_EXISTING_REGRESSIONS"
+    },
+    {
+      "source": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "sync-memory.py",
+        "git_blob": "09159f237b4bbb6aea884b74a2f8546c7ca4045e",
+        "sha256": "06d276884e3667b8758961b142c92a674ff743be05cca3dbef975f5f4bf93f64",
+        "bytes": 20741
+      },
+      "target_implementation": {
+        "path": "scripts/sync-memory.py",
+        "payload_path": "payload/scripts/sync-memory.py",
+        "sha256": "93dc66d3c6e0a7aa2310afa5d3386dd0a835fa840e3ab049676906d66bc8f94d",
+        "bytes": 20890
+      },
+      "compatibility_entry": {
+        "path": "sync-memory.py",
+        "payload_path": "payload/sync-memory.py",
+        "sha256": "3a295288ee381fc86c4368515223a068b012476159af199ee85e3c78239ba683",
+        "bytes": 459
+      },
+      "treatment": "MOVE_IMPLEMENTATION_KEEP_EXACT_OLD_ENTRY_NAME",
+      "implementation_original_bytes_preserved": false,
+      "retirement": "No compatibility entry retirement in Step12. Step13 consumer bindings and accepted window/rollback are required first.",
+      "validation_state": "CANDIDATE_PENDING_LOCAL_COMPATIBILITY_FIXTURE_AND_POST_FREEZE_EXISTING_REGRESSIONS"
+    },
+    {
+      "source": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "verification_context.py",
+        "git_blob": "0aad9e3d24ac1da4f3cb32edaffe361f91f5cccf",
+        "sha256": "6a2d83a65921df60252aad350f3cecacfbab991be582368903aa40203c96d5ab",
+        "bytes": 32479
+      },
+      "target_implementation": {
+        "path": "scripts/verification_context.py",
+        "payload_path": "payload/scripts/verification_context.py",
+        "sha256": "6a2d83a65921df60252aad350f3cecacfbab991be582368903aa40203c96d5ab",
+        "bytes": 32479
+      },
+      "compatibility_entry": {
+        "path": "verification_context.py",
+        "payload_path": "payload/verification_context.py",
+        "sha256": "fc85e12ae3990c73bb573dd2241f8c20370db7ad8fc945c774b93daefee34882",
+        "bytes": 468
+      },
+      "treatment": "MOVE_IMPLEMENTATION_KEEP_EXACT_OLD_ENTRY_NAME",
+      "implementation_original_bytes_preserved": true,
+      "retirement": "No compatibility entry retirement in Step12. Step13 consumer bindings and accepted window/rollback are required first.",
+      "validation_state": "CANDIDATE_PENDING_LOCAL_COMPATIBILITY_FIXTURE_AND_POST_FREEZE_EXISTING_REGRESSIONS"
+    }
+  ],
+  "specific_caller_update": {
+    "source": {
+      "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+      "path": "tests/test_p2_verification_context.py",
+      "git_blob": "69ceaef5663d9f6e72eaa48b7e3120b12dbcb9e0",
+      "sha256": "396503f7ca8d876c53414bd812e16dfe9788a2bb7848083fbde2192d2665b6f5",
+      "bytes": 28595
+    },
+    "replacement": {
+      "path": "tests/test_p2_verification_context.py",
+      "payload_path": "payload/tests/test_p2_verification_context.py",
+      "sha256": "af796d182f4dd43f8fbdf08564dc14f73289fd3935659d85f6e962ef73a8a26c",
+      "bytes": 28931
+    }
+  },
+  "source_contract_notes": [
+    "memory.py and sync-memory.py anchor REPO to implementation parent.parent before local imports.",
+    "Root Python shims execute implementation in the same module globals, retaining patchable globals and canonical top-level module names; __file__ and traceback filename name the real implementation.",
+    "Root PS1 parameters/defaults forward unchanged. New implementation resolves config from repository root and invokes scripts/sync-memory.py; LASTEXITCODE is forwarded.",
+    "Direct CLI path and old compatibility CLI path must agree on args, cwd-independent roots, output and exit code. No online/memory access is required to check help, rejected writes, NONE or unknown mode.",
+    "Known existing P2 fixture copies root files only; its candidate patch adds six scripts implementations and creates destination parents."
+  ]
+}

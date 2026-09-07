@@ -1,0 +1,367 @@
+{
+  "type": "ArchitectureConstitutionAcceptanceDecision",
+  "decision_id": "CLUED_PHASE2_ARCHITECTURE_ACCEPTANCE_20260907",
+  "state": "ACCEPTED",
+  "issued_at": "2026-09-07T10:33:15.678937+00:00",
+  "issuer": "Codex@DESK-W-591 acting as the user-authorized accepting delegate",
+  "delegation": {
+    "path": "ExecutionDelegation_20260907.json",
+    "sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8"
+  },
+  "exact_subject": {
+    "path": "step09-review-20260907/ReviewSubject_20260907.r2.json",
+    "sha256": "741cf1fedefa35cec82e9f55bcf53bf2ce29fa6253fd68da2133ab0c2d724cbf"
+  },
+  "subject_sha256": "741cf1fedefa35cec82e9f55bcf53bf2ce29fa6253fd68da2133ab0c2d724cbf",
+  "candidate": "CLUED_ARCHITECTURE_CONVERGENCE_V0_2_5",
+  "architecture_version": "v0.2.5",
+  "delivery_revision": "v0.2.7.1",
+  "commit": "039cfea5a0d91a4e4e02702f6cfdfe9379978b1e",
+  "tree": "cd87a2384ed330bdc1186f6db21d9978e414ba2e",
+  "candidate_package": {
+    "filename": "Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip",
+    "bytes": 246612118,
+    "sha256": "6e51374a6caedb4f84d2b6bb9fe05cd695b25732833f9d0217c341f17e1c1649",
+    "retrieval": "Registered private GitHub Release asset in artifacts/clued-validation/phase2-v027/candidate-source.json; existing local exact copy retained."
+  },
+  "direct_predecessor": {
+    "axis": "architecture",
+    "version": "v0.2.4",
+    "filename": "Clued_Phase2_三项设计候选_完整审查包_v0.2.4_20260905.zip",
+    "bytes": 168491377,
+    "sha256": "4aae92c37813772e983a14537be52ca8b428af666e644b72d40084ccd592d68b",
+    "members": 440
+  },
+  "independent_review": {
+    "path": "step09-review-20260907/final/IndependentStructureArchitectureReview.json",
+    "sha256": "3e5276969f1e92858815d88a20b77c8070ac68b8676e0d6d66dfde8c15136599"
+  },
+  "review_evidence": [
+    {
+      "path": "step09-review-20260907/final/bind_subject.py",
+      "sha256": "986d82f3951048c306d1bd0bc134fab4487b7cf114288951a9dfbb5f6f789d8b"
+    },
+    {
+      "path": "step09-review-20260907/final/CurrentPositiveReceipt.json",
+      "sha256": "4c674ff8fe4b8251ec47a8875d15c8ca60fcaeb71d2625a3282846c149b6e807"
+    },
+    {
+      "path": "step09-review-20260907/final/DuplicateKey.bindings.json",
+      "sha256": "757486ca35bea3c46dc08311e03793fcf0f5f4d38bd82bf8da8aa9a97289213c"
+    },
+    {
+      "path": "step09-review-20260907/final/DuplicateKeyReceipt.json",
+      "sha256": "5639ea9c276080c304b7073fcb5c8b92cabd34df358c998024d476e8341127df"
+    },
+    {
+      "path": "step09-review-20260907/final/ExactSubjectVerification.json",
+      "sha256": "8b005d33edde9bff4fd438ea16d8084e6b722f87047e733b7612538315d334ba"
+    },
+    {
+      "path": "step09-review-20260907/final/ExactSubjectVerification.r2.json",
+      "sha256": "e597c82f576b72b13130a68943cdec6ef25b664539d2f17708ea98d812142483"
+    },
+    {
+      "path": "step09-review-20260907/final/ExecutorCorrectionVerification.json",
+      "sha256": "8a8025413964cc6057452fbb739076e58eff920ef62861b90eacd7ac504e4fc9"
+    },
+    {
+      "path": "step09-review-20260907/final/FinalExternalBindings.json",
+      "sha256": "3562a520c343f56fd1420a16b6491c362bad2a7c6e22c6be52ade012bb4457a5"
+    },
+    {
+      "path": "step09-review-20260907/final/finish_review.py",
+      "sha256": "1077813387ca4b44f3ad96d715e5ff8393af44ece2f5cca3eed1b51da1a396bf"
+    },
+    {
+      "path": "step09-review-20260907/final/IndependentChecks.json",
+      "sha256": "0d111c1f33d9beff1e0ee562b8f6b1602c00f4deb4a7d3b14efec369a40588b4"
+    },
+    {
+      "path": "step09-review-20260907/final/IndependentStructureArchitectureReview.json",
+      "sha256": "3e5276969f1e92858815d88a20b77c8070ac68b8676e0d6d66dfde8c15136599"
+    },
+    {
+      "path": "step09-review-20260907/final/IndependentStructureArchitectureReview.md",
+      "sha256": "5b5f272c818835c27afca6521613b070995fe6a587149d1d5928d1a121e526e2"
+    },
+    {
+      "path": "step09-review-20260907/final/review_checks.py",
+      "sha256": "24ba2ff362945d113bd8847197c7cffec10a8dd0b32070bd69e939ac1b8a4c5d"
+    },
+    {
+      "path": "step09-review-20260907/final/ScopeAndInheritanceChecks.json",
+      "sha256": "59effdae689b0e932eb61b3031b230f2f9de02bdfb5a7278f8024e5574b2fa5c"
+    },
+    {
+      "path": "step09-review-20260907/final/UnexpectedOutputControl.json",
+      "sha256": "9a1d90afc605919b5e9d3485ceac8c3e9f1e8f1a8698586f5fe9a90da8851b37"
+    },
+    {
+      "path": "step09-review-20260907/final/verify_r2.py",
+      "sha256": "a928a8368a712680f3e81d10401f85bb7901ad5dc30208f57901ca0a5e3dba6e"
+    }
+  ],
+  "accepted_scope": [
+    "Naming Constitution and scoped namespace/domain ownership",
+    "Six identity rules and source-preserving typed consumer/authorization/receipt contracts",
+    "Exact deterministic projections and preacceptance validator evidence",
+    "Independent Step9 conclusions and the ten explicitly staged design dispositions"
+  ],
+  "excluded_scope": [
+    "Unexecuted runtime or production behavior",
+    "Physical migration results or Structure Freeze",
+    "Post-migration enforcement and non-bypass",
+    "Model/commercial/paid experiment activation",
+    "Developer or User Skill qualification"
+  ],
+  "evidence": [
+    {
+      "path": "Step04-ScopedAcceptance_20260907.json",
+      "sha256": "6f2cc1c9cc28c2a717023029851d61a666815567bc30b3635479cb1b70382e6c"
+    },
+    {
+      "path": "Step05-ScopedAcceptance_20260907.json",
+      "sha256": "a38536ed64ae7924235ab0318cae17716f1a549d89660acde807f4bb15a64a19"
+    },
+    {
+      "path": "Step06-ScopedAcceptance_20260907.json",
+      "sha256": "bd40c82a21e7b19c2c36e56d7b877078e45c6bfdf1593590fb56ab364f47889a"
+    },
+    {
+      "path": "Step07-ScopedAcceptance_20260907.json",
+      "sha256": "dec7601899be7118b3baff3d78793ecaf98b06316070b881ca30297a3b0f22b3"
+    },
+    {
+      "path": "Step08-ScopedAcceptance_20260907.json",
+      "sha256": "8bac86599481c9effc67274bb29b7f352d59d4e656add8805e41f7437ced455c"
+    }
+  ],
+  "scoped_dispositions": [
+    {
+      "condition_id": "F-MAJ-005/C2",
+      "original_text": "从同一审核包签发两个不同决定：ArchitectureConstitutionAcceptanceDecision 与 Phase2StructureFreezeDecision",
+      "accepted_current_clause": "Accept the requirement that the same exact reviewed package and scoped supplement produce two distinct decisions. Issue ArchitectureConstitutionAcceptanceDecision after qualified independent Step9 review; issue Phase2StructureFreezeDecision only afterwards, once the exact target map and freeze inputs are bound. The later Freeze is a retained obligation, not a precondition retroactively imposed on Architecture Acceptance.",
+      "accepted_scope": "The two-decision governance contract and Step10's architecture scope only when actually issued.",
+      "excluded_scope": [
+        "An already-issued Structure Freeze",
+        "Physical migration",
+        "Runtime or production acceptance"
+      ],
+      "retained_obligation": "Root must issue the distinct Step11 decision against the same reviewed subject plus its explicit target binding before Step12.",
+      "obligation_due": "Before Step12; Step11 entry requires the actual Step10 decision digest.",
+      "owner": "Root accepting delegate for Step10 and Step11",
+      "stage_effect": "CURRENT_SCOPED_DISPOSITION_ISSUED",
+      "entire_original_condition_closed": false,
+      "remaining_obligation_deleted": false
+    },
+    {
+      "condition_id": "F-MAJ-006/C1",
+      "original_text": "签发 ProgramCriticalPathDecision",
+      "accepted_current_clause": "For this Phase2 governance series, adopt PHASE2-CORE-SLICE-A as the only core critical path. Preserve common applicable Readiness. Full Model M1–M7 and complete commerce/store are not core prerequisites. Apply the existing proposed maximum of one core and one independent enabling workstream, defaulting to one when separate capacity is not established. This decision supplies no experimental spending, model action or commercial activation budget.",
+      "accepted_scope": "Current critical-path selection, dependency exclusions and workstream ceiling as governance design.",
+      "excluded_scope": [
+        "Actual completion of common Readiness or Slice A",
+        "Activation of MODEL-PROGRAM-M0..M7",
+        "Approving the historical USD5/provider-request/token pilot proposal",
+        "Creating a second staffed team or service"
+      ],
+      "retained_obligation": "Before a future model, commercial or paid experiment is selected, apply only its existing matching budget, data-rights, action and stage gates. Before actual Slice A qualification, bind its test inputs and prerequisites.",
+      "obligation_due": "At selection/activation of the affected future action; not a prerequisite to unrelated naming or structural work.",
+      "owner": "Root accepting delegate within the current task; future resource owner remains required only if that resource is activated",
+      "stage_effect": "CURRENT_SCOPED_DISPOSITION_ISSUED",
+      "entire_original_condition_closed": false,
+      "remaining_obligation_deleted": false
+    },
+    {
+      "condition_id": "F-MAJ-007/C3",
+      "original_text": "为 Architecture v1.0 与 Model Architecture revision 建立兼容矩阵",
+      "accepted_current_clause": "Accept the current v0.2.5 design matrix's separation between clued_architecture_constitution_ref and model_program_parent_architecture_ref. Retain the original Architecture v1.0/Model Architecture revision compatibility obligation for the point when such an exact future combination is proposed for use. This task does not manufacture a v1.0 artifact, reissue model-parent acceptance or qualify an unexecuted model combination.",
+      "accepted_scope": "Typed parent identity and current design-only compatibility relationship.",
+      "excluded_scope": [
+        "Architecture v1.0 existence or acceptance",
+        "Actual model combination qualification",
+        "Model M0 authorization",
+        "Overwriting fixed model-plan semantics"
+      ],
+      "retained_obligation": "Before model activation uses a proposed combination, bind both actual accepted objects and exact revisions/digests in the compatibility matrix and applicable authorization; obtain the required actual qualification for that combination.",
+      "obligation_due": "Before the affected model combination is authorized or activated.",
+      "owner": "Root for current design disposition; the existing model-program owner/authorized maintainer for later activation",
+      "stage_effect": "CURRENT_SCOPED_DISPOSITION_ISSUED",
+      "entire_original_condition_closed": false,
+      "remaining_obligation_deleted": false
+    },
+    {
+      "condition_id": "F-MAJ-011/C2",
+      "original_text": "定义角色、职责、状态、Artifact identity、Human Approval、Publish Gate、Production Verification、Rollback、Receipt/Evidence",
+      "accepted_current_clause": "Adopt the common governance design facets already defined by HumanGovernanceCandidate and the applicable design profiles: responsibilities, state/events, artifact binding, approval, publish gate, production verification, rollback, evidence and receipt. Within this series, distinguish author/evidence producer, independent reviewer and root accepting delegate under the user's existing delegation. The author does not supply independent acceptance; approval does not fabricate service authorization or executed verification. Deferred production, public-publish, real-money and model profiles remain inactive unless separately selected within an actually authorized future scope.",
+      "accepted_scope": "The common design facets and the actual design/structure/critical-path roles used by this private governance task.",
+      "excluded_scope": [
+        "Invented human approval, signatures, keys or platform roles",
+        "Creating a trust root or DCP broker",
+        "Activating every future domain profile",
+        "Pretending rollback/production verification has already executed"
+      ],
+      "retained_obligation": "At the corresponding actual stage, record real executors/reviewers, exact artifacts and applicable operational results. Existing publish/verification/rollback requirements continue for actions that actually occur.",
+      "obligation_due": "Before the corresponding protected action; use fixed Step12–21 stage gates and existing domain contracts.",
+      "owner": "Root accepting delegate; the actual separately identified independent reviewer supplies review only",
+      "stage_effect": "CURRENT_SCOPED_DISPOSITION_ISSUED",
+      "entire_original_condition_closed": false,
+      "remaining_obligation_deleted": false
+    },
+    {
+      "condition_id": "F-MAJ-014/C3",
+      "original_text": "敏感 owner/account refs 使用 endpoint policy，不进入可扩散审计/公共包",
+      "accepted_current_clause": "For the current private, user-controlled repository, retain original historical evidence and existing endpoint-policy authority. Acknowledge that the preserved historical root routing text contains owner/account hints and has not thereby become a public-safe artifact. Current new governance projections and later Skill deliverables must not embed sensitive account values or business-memory payloads. The current structure work does not change repository visibility or copy user Bundle contents. Moving all historical account references is not required to accept this narrowly private structure scope.",
+      "accepted_scope": "Private preservation and current no-new-sensitive-payload/visibility-change boundary.",
+      "excluded_scope": [
+        "Certification that all account references are already externalized",
+        "Public-safe or unrestricted redistributable status for the preserved archive",
+        "Any claim of all-history no-leakage",
+        "Moving or deleting business-memory snapshots"
+      ],
+      "retained_obligation": "Before an artifact crosses the existing private audience or a Skill is distributed, use the existing output boundary to exclude payloads and remove/replace sensitive owner/account values with appropriate existing endpoint-policy references; verify the exact artifact. Reopen only that distribution/path if the boundary changes.",
+      "obligation_due": "At final current projection review, then before Step20/21 deliverable distribution or any later public/cross-permission publication.",
+      "owner": "Root accepting delegate and the existing artifact publisher for the exact audience",
+      "stage_effect": "CURRENT_SCOPED_DISPOSITION_ISSUED",
+      "entire_original_condition_closed": false,
+      "remaining_obligation_deleted": false
+    },
+    {
+      "condition_id": "F-MAJ-014/C4",
+      "original_text": "对现存历史做 access and leakage review",
+      "accepted_current_clause": "Apply the user's current-directory amendment and explicit self-owned test-account scope. Accept only the bounded current access review: this series operates on the user's private repository and available current artifacts, keeps existing access/visibility, uses metadata observations of hosted resources, and does not copy business-memory payloads into outputs or Skills. The historical AREQ-014 NOT_GRANTED record is preserved as a past fact; the later explicit delegation controls this task. Exhaustive historical Library enumeration is outside the accepted scope.",
+      "accepted_scope": "Current referenced artifacts, present access/distribution boundaries and the explicit no-new-payload-transfer constraint.",
+      "excluded_scope": [
+        "Exhaustive historical access/leakage audit",
+        "Proof that every historic Library copy is private or matched",
+        "Proof that no historical disclosure ever occurred",
+        "Granting access to another owner's data"
+      ],
+      "retained_obligation": "If a concrete current dependency or newly discovered exposure is identified, inspect and resolve that exact path. Any later public/cross-owner distribution triggers a scoped access/leakage review before distribution. No reclassification of untouched history as clean is allowed.",
+      "obligation_due": "Before the actual affected access/distribution change; concrete currently discovered exposure cannot be ignored.",
+      "owner": "Root accepting delegate within the user's own repository/data scope",
+      "stage_effect": "CURRENT_SCOPED_DISPOSITION_ISSUED",
+      "entire_original_condition_closed": false,
+      "remaining_obligation_deleted": false
+    },
+    {
+      "condition_id": "F-MAJ-016/C1",
+      "original_text": "冻结 ArtifactIdentity、ReleaseUnitIdentity、EditionIdentity、SKU/Offer/Entitlement typed refs",
+      "accepted_current_clause": "Accept the exact 13-row ArtifactAndReleaseIdentityCrosswalk and the Step5 scoped identity acceptance as the current typed design boundary. Preserve separate Artifact, release-unit, edition, SKU, offer and entitlement identities and their does-not-imply relationships. Final Step11 may freeze those names and contracts without pretending that inactive commerce/model consumers, schemas or economic rights have been implemented.",
+      "accepted_scope": "Current naming, type distinctions, source-owned identity contracts and their limited accepted design effect.",
+      "excluded_scope": [
+        "All future runtime schemas or consumers implemented",
+        "Commercial availability, orders, entitlement issuance or model qualification",
+        "Runtime permission or global registry ownership creation",
+        "Physical Freeze already signed by this proposal"
+      ],
+      "retained_obligation": "Before a dormant domain is activated, bind its actual consumers to these owning contracts and demonstrate applicable identity/authorization/receipt behavior. Current consumers use the already scoped Step6 bindings; only affected changes reopen them.",
+      "obligation_due": "Current type freeze at Step11; actual dormant-domain consumer proof before that domain's activation.",
+      "owner": "Root accepting delegate for current structure design; existing corresponding domain owner for later activation",
+      "stage_effect": "CURRENT_DESIGN_ACCEPTED; ACTUAL_STRUCTURE_FREEZE_REMAINS_STEP11",
+      "entire_original_condition_closed": false,
+      "remaining_obligation_deleted": false
+    },
+    {
+      "condition_id": "F-MAJ-017/C3",
+      "original_text": "Structure Plan 生成唯一 FrozenTargetMap 和 CurrentToTargetMap",
+      "accepted_current_clause": "Use the existing MigrationPlan's 29 exact existing-file operations, all 23 original map-row dispositions, unchanged/protected-path rules and DcpTargetBindings' three concrete TM17–19 targets as the sole current physical target candidate. Bind final Step7 outputs and Step10 authority references when available; then Step11 fixes one digest-bound FrozenTargetMap and CurrentToTargetMap, either by these exact equivalent artifacts or their deterministic projection. No duplicate map, service or second authority register is required.",
+      "accepted_scope": "The concrete target candidate and its source-preserving mapping contract; formal target freeze takes effect only in actual Step11.",
+      "excluded_scope": [
+        "Physical migration already occurred",
+        "Final target output hashes may remain unresolved at Freeze",
+        "Eliminating TM17–19 or the other original rows silently",
+        "Using Git branch existence as a DCP lease",
+        "Moving protected memory/ or original publication pointers"
+      ],
+      "retained_obligation": "Before signing Step11, root resolves the remaining final projection/source-reference bindings and cites the selected target digest. Before Step12 writes, apply the existing exact source/target preflight and recovery contract. Step13–18 then supply actual wiring and enforcement evidence.",
+      "obligation_due": "Final unique map binding before Step11 issuance; execution checks at Step12 and actual later gates.",
+      "owner": "Root accepting delegate for final target choice; existing authorized migration executor for subsequent actions",
+      "stage_effect": "CURRENT_DESIGN_ACCEPTED; ACTUAL_STRUCTURE_FREEZE_REMAINS_STEP11",
+      "entire_original_condition_closed": false,
+      "remaining_obligation_deleted": false
+    },
+    {
+      "condition_id": "F-MAJ-018/C1",
+      "original_text": "冻结 Phase2 MVP success metric and maximum active workstreams",
+      "accepted_current_clause": "Adopt the existing Charter numeric_effect_thresholds and SliceAPreregistration as future Slice A measurement design, without changing thresholds after results. Preserve 24 cases, three repetitions each, case-based statistics and the WIP ceiling of at most one core plus one independent enabling workstream, default one. This current governance decision does not approve the historical pilot-spend proposal or claim the Slice A experiment has run. Present governance verification remains bound to its actual Step7/8/12–19 requirements.",
+      "accepted_scope": "Pre-registered metric definitions and current workstream ceiling as design constraints.",
+      "excluded_scope": [
+        "An actual 24-case/72-slot result",
+        "Approved USD5, 400 requests, 500000 tokens or any other new spending envelope",
+        "An invented evaluation owner or verified staffing capacity",
+        "Production SLA or commercial benefit claims"
+      ],
+      "retained_obligation": "Before actual Slice A measurement, fix datasets/Gold, applicable implementation/environment/counting contract and actual evaluation responsibility under existing authority; preserve thresholds and stop/unknown behavior. Apply any real resource budget only when that experiment is selected and authorized.",
+      "obligation_due": "Before the first applicable Slice A measurement, not before unrelated current naming/structure evidence collection.",
+      "owner": "Root for current design/WIP disposition; actual evaluation owner to be bound when the experiment is selected",
+      "stage_effect": "CURRENT_SCOPED_DISPOSITION_ISSUED",
+      "entire_original_condition_closed": false,
+      "remaining_obligation_deleted": false
+    },
+    {
+      "condition_id": "F-MAJ-018/C4",
+      "original_text": "每个阶段必须交付可运行纵向 E2E，不接受仅 Schema/Receipt 堆积",
+      "accepted_current_clause": "Interpret the retained E2E obligation according to the stage that actually executes. Step7/8 must run the source-to-projection-to-validator path with real positive and targeted negative outcomes. Step12–19 must run the actual permitted migration, changed consumer paths, post-migration Gates and no-change/non-bypass checks in their fixed order. The future Slice A 24-case/72-slot product measurement remains due at its implementation stage. Documentation, schema counts or receipt presence alone cannot substitute for any required actual run.",
+      "accepted_scope": "The stage-to-executable-evidence allocation; it waives no required current run and creates no obligation to implement inactive model/store domains now.",
+      "excluded_scope": [
+        "Step7/8 completed merely because this clause is accepted",
+        "Migration, runtime, Step18 or product E2E already PASS",
+        "A schema-only qualification",
+        "Re-running unchanged unrelated hosted services for formality"
+      ],
+      "retained_obligation": "At each actual stage preserve exact input/code/environment, actual result and applicable evidence. Reopen tests only for affected changes or concrete failures. No unavailable evidence is rewritten as PASS or N/A.",
+      "obligation_due": "Step7/8 before Step9; Step12–19 at their respective gates; future product Slice A at actual implementation/qualification.",
+      "owner": "Existing stage executor produces evidence; independent reviewer reviews it; root signs only the appropriate actual stage decision",
+      "stage_effect": "CURRENT_SCOPED_DISPOSITION_ISSUED",
+      "entire_original_condition_closed": false,
+      "remaining_obligation_deleted": false
+    }
+  ],
+  "program_critical_path_decision": {
+    "type": "ProgramCriticalPathDecision",
+    "state": "ACCEPTED_FOR_CURRENT_GOVERNANCE_SCOPE",
+    "core_critical_path": "PHASE2-CORE-SLICE-A",
+    "maximum_core_workstreams": 1,
+    "maximum_independent_enabling_workstreams": 1,
+    "default_workstreams": 1,
+    "parallel_review_agents_within_one_workstream_allowed": true,
+    "new_spending_authorized": false,
+    "product_measurement_executed": false,
+    "source_condition": "F-MAJ-006/C1",
+    "source_proposal": {
+      "path": "step09-review-20260907/preparation/StagedDispositionProposal.json",
+      "sha256": "2d27c7b9a673dff1484caea6d3fb5ea409467346eafb96557c7123bd5a5ec653"
+    }
+  },
+  "unresolved_obligations": [
+    "Original 28 structure conditions require distinct formal adjudication after this actual decision and before Step11.",
+    "Step11 must fix exact 64-path target inputs and corrected executor SHA15ed103a96943125978e9134a8322c6195f62fe24d3e2e070a8ad538b17ea2fe before Step12.",
+    "Steps12–19 must supply actual migration, changed consumer wiring, sealing, enforcement, fresh four gates, semantic no-change and mandatory-boundary evidence.",
+    "F009/C3 actual CI/write-path enforcement remains due Step15; non-bypass remains due Step18.",
+    "Dormant model/commerce/measurement obligations remain due only before their applicable activation."
+  ],
+  "effective_authority": {
+    "origin": "Existing explicit user delegation; not the review report or an agent self-claim",
+    "effect": "Accept only the bound governance architecture and permit preparation/adjudication of the distinct Step11 Freeze",
+    "physical_migration_authorized_by_this_decision": false
+  },
+  "consumer_rights": [
+    "Read these accepted scoped naming/contracts as the design baseline.",
+    "Derive projections only from the exact accepted sources and declared lineage.",
+    "Use this decision as the prerequisite to separate Step11 adjudication; no production capability or data access is added."
+  ],
+  "prohibited_inference": [
+    "Review PASS alone equals user acceptance",
+    "Acceptance equals implementation, runtime PASS, release or enforcement",
+    "Historical pending/not-granted evidence can be rewritten",
+    "Package revision substitutes for architecture version",
+    "Future obligations have been waived or all original conditions globally closed"
+  ],
+  "invalidation": {
+    "path": "AcceptanceAndInvalidation.md",
+    "sha256": "f2aed48ed74e688bfe280d3fa896243cc7907905fafcc467706a276367472f27"
+  },
+  "next_step": 11
+}

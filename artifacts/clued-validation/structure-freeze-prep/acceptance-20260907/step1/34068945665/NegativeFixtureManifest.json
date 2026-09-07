@@ -1,0 +1,60 @@
+{
+  "schema": "clued.phase2-v027-negative-fixture-manifest/v1",
+  "generated_at_utc": "2026-09-07T00:10:34.696654Z",
+  "test_fixture": true,
+  "authority_effect": "NONE",
+  "not_a_release_candidate": true,
+  "negative_case": "provenance",
+  "expected_gate_statuses": {
+    "candidate_identity": "PASS",
+    "manifest_integrity": "PASS",
+    "provenance": "FAIL",
+    "product_increment_input": "PASS"
+  },
+  "repository": "tdoljyj/cross-memory-system",
+  "commit_sha": "9c657f8ffcf67296d394946b2050e049dc535664",
+  "workflow": "Phase2 v0.2.7 Validation",
+  "workflow_ref": "tdoljyj/cross-memory-system/.github/workflows/phase2-v027-validation.yml@refs/heads/phase2-v027-validation",
+  "run_id": "34068945665",
+  "run_attempt": "1",
+  "implementation": {
+    "harness_path": "/home/runner/work/cross-memory-system/cross-memory-system/scripts/phase2-v027-negative-harness.py",
+    "harness_sha256": "46520afc2175c468bb15162c7ec2fb43d157ddcbb05481ea062f7a31083f6860",
+    "validator_path": "scripts/phase2-v027-validate.py",
+    "validator_sha256": "e16cc9fa5fd2a54dc3922029851722936551a400979dc94dce691faa83bd7f4e"
+  },
+  "base_candidate": {
+    "filename": "Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip",
+    "bytes": 246612118,
+    "sha256_before": "6e51374a6caedb4f84d2b6bb9fe05cd695b25732833f9d0217c341f17e1c1649",
+    "bytes_after": 246612118,
+    "sha256_after": "6e51374a6caedb4f84d2b6bb9fe05cd695b25732833f9d0217c341f17e1c1649",
+    "unchanged": true
+  },
+  "expected_behavior_confirmed": true,
+  "mutation": {
+    "case": "provenance",
+    "integrity_metadata_rebaselined": true,
+    "target": "data/PredecessorPackageBinding.json",
+    "description": "change only the direct predecessor digest, then rebaseline root integrity metadata",
+    "old_digest": "4aae92c37813772e983a14537be52ca8b428af666e644b72d40084ccd592d68b",
+    "new_digest": "1aae92c37813772e983a14537be52ca8b428af666e644b72d40084ccd592d68b"
+  },
+  "mutated_fixture": {
+    "filename": "Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip",
+    "bytes": 246727754,
+    "members": 960,
+    "sha256": "ee000cd50aab3429c9df258c0678730977361e50474945dd6059b82d7d809b4e",
+    "identity_sha256": "97b01c7e7953c47d3cfb8255b0689221793498075217453c83256ee4441425af",
+    "retained_after_run": false
+  },
+  "validator_exit_code": 1,
+  "actual_gate_statuses": {
+    "candidate_identity": "PASS",
+    "manifest_integrity": "PASS",
+    "provenance": "FAIL",
+    "product_increment_input": "PASS"
+  },
+  "completed_at_utc": "2026-09-07T00:10:43.700463Z",
+  "intentional_job_exit_code": 1
+}

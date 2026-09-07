@@ -1,0 +1,11 @@
+{
+  "type": "Phase2PostMigrationFileBoundaryEvidence",
+  "status": "PASS",
+  "exit_code": 0,
+  "freeze_sha256": "f40c8af253f811f820e4b3eccc144d63ca3548663810aba10bebb22331661b36",
+  "execution_inputs_sha256": "37a6909deedae17dbfe97e844d8ec596c5de46e73c3cefafd4136008d3f3dcec",
+  "checked_changed_paths": 64,
+  "checked_immutable_inputs": 39,
+  "authority_effect": "NONE",
+  "errors": []
+}

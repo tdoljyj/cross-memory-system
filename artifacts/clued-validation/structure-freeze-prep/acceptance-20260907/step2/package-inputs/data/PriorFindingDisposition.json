@@ -1,0 +1,36 @@
+{
+  "id": "V025_AUTHOR_FINDING_DISPOSITION",
+  "source_review": {
+    "path": "archives/Architecture_v024_IndependentReview.zip",
+    "bytes": 168664134,
+    "sha256": "d3a2761b416efbc44b2c3f001c19573556ad490aca76c93accc7f01ad6a05b2e"
+  },
+  "rows": [
+    {
+      "id": "P2IR024-MIN-001",
+      "author_status": "REPAIRED_PENDING_INDEPENDENT_REVIEW",
+      "repair": "重建当前主模型与主文、Charter/结构/Skill版本，实际阶段边消费当前映射接受与本架构审查对象；旧状态移入精确sources命名空间。",
+      "independent_closure": "NOT_ISSUED"
+    },
+    {
+      "id": "P2IR024-OBS-001",
+      "author_status": "REPAIRED_PENDING_INDEPENDENT_REVIEW",
+      "repair": "根SHA256SUMS只排除根自身，嵌套同名清单全部计入；原封包未回写。",
+      "independent_closure": "NOT_ISSUED"
+    },
+    {
+      "id": "P2IR023-MIN-001",
+      "status": "CLOSED_FOR_EXACT_V024_SOURCE_WORDING_ONLY_BY_PRIOR_REVIEW",
+      "new_v025_closure": "NOT_ISSUED",
+      "current_regression_obligation": "PQUAL原20规格与来源描述保持，不重建或声称新增。"
+    },
+    {
+      "id": "P2IR022-MIN-001",
+      "status": "CLOSED_FOR_EXACT_V023_DESIGN_REPAIR_ONLY_BY_PRIOR_REVIEW",
+      "new_v025_closure": "NOT_ISSUED",
+      "current_regression_obligation": "Charter身份、23逻辑Map行及7/8治理保留；本轮还需独立整合审查。"
+    }
+  ],
+  "formal_engineering_major_closures": 0,
+  "author_is_independent_reviewer": false
+}

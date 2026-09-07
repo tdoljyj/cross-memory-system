@@ -1,0 +1,18 @@
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "SitesConnectorError: Sites project not found"
+    }
+  ],
+  "structuredContent": {
+    "error": "SitesConnectorError: Sites project not found",
+    "error_code": "NOT_FOUND",
+    "error_data": {
+      "type": "project_not_found",
+      "message": "Sites project not found",
+      "code": 404
+    }
+  },
+  "isError": true
+}

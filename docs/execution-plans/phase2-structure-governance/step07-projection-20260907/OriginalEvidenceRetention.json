@@ -1,0 +1,21 @@
+{
+  "status": "EXACT_ORIGINAL_EVIDENCE_RETAINED",
+  "archive": "OriginalStep7CandidateEvidence.zip",
+  "sha256": "0b56d46428cb6badb615edf52100e3aff6b446bfd580384700edf077b9b02e37",
+  "members": 159,
+  "all_members_compared": true,
+  "redundant_repository_fixture_directories_removed": [
+    "fixture-0dzVf5",
+    "fixture-9jdoyZ",
+    "fixture-gVrBEI",
+    "fixture-NcHHGu",
+    "fixture-NjOVgZ",
+    "fixture-p6B1sV",
+    "fixture-pe0sqK",
+    "fixture-Y9tH2l"
+  ],
+  "current_binding": "ProjectionBindings.repository.json",
+  "current_outputs": "repository-generated/",
+  "original_candidate_binding_and_tests": "OriginalStep7CandidateEvidence.zip; original paths are historical work-root locators.",
+  "authority_effect": "NONE"
+}

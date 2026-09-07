@@ -1,0 +1,32 @@
+{
+  "type": "DelegatedPublicationPreconditionReview",
+  "reviewer": "Codex@DESK-W-591",
+  "policy_sha256": "15f3b467da195c8dee6d831d3ac4d7915cf56a8e950d0796023b7b1fa623959a",
+  "source_commit": "22c085d4f63c41629cdf96f68268c12b536bb872",
+  "state": "READY_FOR_ACTUAL_SIGNED_ATTESTATION_NOT_YET_ACTIVATED",
+  "trusted_entry": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\.git\\clued-phase2\\trusted_launcher.py",
+  "installation_files": {
+    "Bootstrap.json": "4b65e4190dec621dc0083ce75615446cec33137aa3f2ef2834b0be6e0f4e38a4",
+    "policy.json": "15f3b467da195c8dee6d831d3ac4d7915cf56a8e950d0796023b7b1fa623959a",
+    "post_migration.py": "bbe3dfe6d6949357ae32643e8cad7493b27d487638e7750c6b5b279c181d882e",
+    "publication.py": "74026fd0b6cf859b53d4f925a1147b9a787a92a426f93985f98e4077a2a028b7",
+    "trust-config.json": "4f571efb9499684f61b3c8879110e9f62e24d28de96ac5ff0b992498dd126f23",
+    "trusted_launcher.py": "32d0d3e2fda441e589d33a0b63042482cf4c33630bb0eb63e69d2d7bd0e6d35a"
+  },
+  "source_review": [
+    "Policy checked using actual source22c085d,45 payloads,39 locks,Step10 architecture acceptance,Step17 acceptance,Freeze and all four original BASE_CORE successful runs.",
+    "Native Naming and four-Gate source/run/artifact identity and actual order rechecked. Exact fingerprints are deterministic review identifiers, not secrets; complete historical scan retained.",
+    "Pinned trust entry installed with independent delegated Bootstrap. Actual ACL now allows only current user,SYSTEM,Administrators; inherited sandbox/history SID writes removed only from this trust directory.",
+    "Actual six trusted-entry denial controls passed, including Registry/Manifest drift and new namespace write. Original bytes restored and64/39 boundary rechecked.",
+    "Actual read-only GitHub Actions integration write attempt returned403 Resource not accessible by integration; skipped validation job cannot replace Naming/Gate receipt."
+  ],
+  "required_non_bypass_boundary": "Formal TM19 accepted publication and reads through the independently installed launcher. Bare Git main remains writable by owner/admin; a merge or local script omission alone is not a qualified activation.",
+  "admin_exception": "Owner tdoljyj on GitHub and current Windows owner/System/Administrators may deliberately replace trust/configuration; such changes invalidate this installed boundary and require a separately recorded rebind.",
+  "still_required": [
+    "Actual GitHub-verified signed two-parent merge carrying the precise Statement",
+    "Live pinned publisher positive and independent read",
+    "Formal Step18 decision and Step19 closeout"
+  ],
+  "step18_pass": false,
+  "authority_effect": "NO_NEW_BUSINESS_AUTHORITY"
+}

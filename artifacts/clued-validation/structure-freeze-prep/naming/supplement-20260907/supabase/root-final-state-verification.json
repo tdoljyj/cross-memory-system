@@ -1,0 +1,15 @@
+{
+  "recorded_at_utc": "2026-09-07T07:59:57.759Z",
+  "project_id": "gfnfxbphsdtayoaxitly",
+  "status": "INACTIVE",
+  "method": "independent root authenticated Supabase get_project",
+  "tool_response": {
+    "content": [
+      {
+        "type": "text",
+        "text": "{\"id\":\"gfnfxbphsdtayoaxitly\",\"ref\":\"gfnfxbphsdtayoaxitly\",\"organization_id\":\"mqpgmvkdjrhukwmzvrug\",\"organization_slug\":\"mqpgmvkdjrhukwmzvrug\",\"name\":\"clued-restore-8b1\",\"region\":\"ap-northeast-2\",\"status\":\"INACTIVE\",\"database\":{\"host\":\"db.gfnfxbphsdtayoaxitly.supabase.co\",\"version\":\"17.6.1.155\",\"postgres_engine\":\"17\",\"release_channel\":\"ga\"},\"created_at\":\"2026-08-24T08:47:39.21878Z\"}"
+      }
+    ],
+    "isError": false
+  }
+}

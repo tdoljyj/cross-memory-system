@@ -1,0 +1,14 @@
+{
+  "scope": "NEW_EXECUTOR_ISOLATED_FIXTURES_ONLY",
+  "tests_run": 5,
+  "failures": 0,
+  "errors": 0,
+  "skipped": 0,
+  "executor_sha256": "5d116bb93b5d6509eec4edef3cd51ca56f746bcb191d68bcb1139c3c49747c84",
+  "execution_inputs_sha256": "37a6909deedae17dbfe97e844d8ec596c5de46e73c3cefafd4136008d3f3dcec",
+  "test_sha256": "f0cb3b10ae9ba2ce7411731b2c654c415230dfb7af6584c05f5eded5745048c2",
+  "previous_nine_tests_repeated": false,
+  "real_repository_writes": 0,
+  "actual_freeze_issued": false,
+  "details": "test_abrupt_process_exit_keeps_originals_and_manual_recovery_works (__main__.ExecutorTests.test_abrupt_process_exit_keeps_originals_and_manual_recovery_works) ... ok\ntest_actual_partial_failure_automatically_restores_prior_files (__main__.ExecutorTests.test_actual_partial_failure_automatically_restores_prior_files) ... ok\ntest_concurrent_after_change_and_corrupt_backup_block_rollback_without_overwrite (__main__.ExecutorTests.test_concurrent_after_change_and_corrupt_backup_block_rollback_without_overwrite) ... ok\ntest_full_64_path_apply_and_manual_rollback_preserve_original_bytes_and_evidence (__main__.ExecutorTests.test_full_64_path_apply_and_manual_rollback_preserve_original_bytes_and_evidence) ... ok\ntest_tampered_inputs_freeze_payload_source_or_existing_target_reject_before_mutation (__main__.ExecutorTests.test_tampered_inputs_freeze_payload_source_or_existing_target_reject_before_mutation) ... ok\n\n----------------------------------------------------------------------\nRan 5 tests in 5.540s\n\nOK\n"
+}

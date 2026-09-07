@@ -1,0 +1,51 @@
+{
+  "files": [
+    {
+      "path": "verify_migration.py",
+      "sha256": "52e9e6aa1fe4a3f1d6e606953abb1ec449c0eb1888f7025fbf3f301a58d6acfc",
+      "bytes": 16557
+    },
+    {
+      "path": "BeforeBoundary.json",
+      "sha256": "467890cdee11132fd2b0d96ecc5ba5b3e76ce1ef49143838ab48c31661a1a9f7",
+      "bytes": 776946
+    },
+    {
+      "path": "Step13-Attempt1-RunnerImportFailure.json",
+      "sha256": "a9d39a838ab7394f2b4579130b05556cae0a9b55956e5170d4fff88c5b485df7",
+      "bytes": 75482
+    },
+    {
+      "path": "Step13-ActualVerification.json",
+      "sha256": "4b14aae44e5a29d07daeac3d8d137dd56ead49f33457a71429b4b0264b8ab483",
+      "bytes": 75416
+    },
+    {
+      "path": "Step14-ActualVerification.json",
+      "sha256": "504db171ea977a75431daec3fc2a3d4030b42b84c4525473e18a6edffc6c8f0b",
+      "bytes": 90179
+    },
+    {
+      "path": "TargetConsumerBindingManifest.json",
+      "sha256": "6c82bc7c53a1f26e0dd07419acfcd67e3e65b772f4a3ee69f2f06c617b4fcece",
+      "bytes": 33972
+    },
+    {
+      "path": "HistoricalNameSealManifest.json",
+      "sha256": "66294f4c1a449896530e583f8ba588a269e04d5cb38509fb844844084130172e",
+      "bytes": 15581
+    },
+    {
+      "path": "LegacyWriteClosureEvidence.json",
+      "sha256": "1af83b1628c08881fcc5d0cee524645c1f87a15c2c2c9f9ceb31630319c37f4c",
+      "bytes": 1821
+    },
+    {
+      "path": "README.md",
+      "sha256": "6016e956e7080566eea397027ba08bf49f716ae81d1a623ebaed5b27e94f91ea",
+      "bytes": 1677
+    }
+  ],
+  "step17_status": "PREPARED_NOT_EXECUTED",
+  "not_included": "No temporary test fixtures or repository source copies."
+}

@@ -1,0 +1,64 @@
+{
+  "candidate_status": "PREPARATION_ONLY_NOT_STEP5_ACCEPTANCE",
+  "authority_effect": "NONE_NEW_BY_CANDIDATE",
+  "base_repository_commit": "5fad76df81c8a412e7768e08427841f0985a2588",
+  "format_boundary": "Review views over existing contracts; not a new runtime schema, global registry, or Canonical Store.",
+  "scope_basis": {
+    "source_id": "scope-amendment",
+    "source_sha256": "32b16e2938a5674b1d8b492e1bf0a0506f708c574913696d6ba281b99e108e9e",
+    "pointer": ""
+  },
+  "management_owner_ref": {
+    "source_id": "delegation",
+    "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+    "pointer": "/delegator"
+  },
+  "preparation_delegate_ref": {
+    "source_id": "delegation",
+    "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+    "pointer": "/delegatee"
+  },
+  "step4_prerequisite": {
+    "candidate_ref": {
+      "source_id": "step4-ownership",
+      "source_sha256": "40d7e87fed046c8aff18d8c1d0532ada075b802faf204059649c84faef1c0782",
+      "pointer": ""
+    },
+    "formal_gate_asserted_here": false,
+    "accepted_decision_ref": {
+      "source_id": "step4-acceptance",
+      "source_sha256": "6f2cc1c9cc28c2a717023029851d61a666815567bc30b3635479cb1b70382e6c",
+      "pointer": ""
+    },
+    "accepted_effect_boundary": "Reuse the existing scoped Step4 administrative acceptance; this candidate issues no new acceptance, runtime authority or Freeze."
+  },
+  "physical_rename_performed": false,
+  "migration_performed": false,
+  "historical_bytes_or_ids_changed": false,
+  "observed_duplicate_groups": {
+    "same_git_blob_multiple_paths": 727,
+    "same_sha256_multiple_paths": 727
+  },
+  "observation_source_ref": {
+    "source_id": "ci-manifest",
+    "source_sha256": "e6e80781685b9cd76f1dbb19ba45fa9a9d623758271bde64a4999e30796dc882",
+    "pointer": "/repository_inventory/duplicate_representations"
+  },
+  "copy_occurrence_locator": [
+    "source_commit_or_container_identity",
+    "path_or_member",
+    "representation_digest"
+  ],
+  "locator_boundary": "Evidence locator only, not a newly minted Canonical CopyID or a replacement of an existing embedded object ID.",
+  "rules": [
+    "Preserve existing embedded object IDs, revision references, source signatures and receipt IDs in exact-byte copies.",
+    "Retain each distinct occurrence/path/container in evidence even when its content digest matches another occurrence.",
+    "Same digest establishes byte equality only; logical equivalence and source lineage require the existing manifest/provenance binding.",
+    "A mirror is not independently writable, resignable, accepted or authoritative merely because it is copied into this repository.",
+    "If an actual future copy operation needs a receipt or copy identity, its owning typed contract must bind source and destination/occurrence; no runtime copy operation is performed in this preparation.",
+    "Copy/representation divergence invalidates relevant digest/projection checks; it does not authorize overwriting either history or the Canonical source."
+  ],
+  "same_digest_automatic_deduplication": false,
+  "independent_write_authority": false,
+  "new_signature_or_authority_issued": false
+}

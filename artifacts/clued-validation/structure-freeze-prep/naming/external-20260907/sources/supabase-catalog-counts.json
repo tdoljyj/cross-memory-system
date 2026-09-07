@@ -1,0 +1,29 @@
+{
+  "recorded_at_utc": "2026-09-07T07:05:28.530Z",
+  "source": "connected read-only MCP during this Step 3 collection; no credential values retained",
+  "data": [
+    {
+      "catalog_counts": {
+        "columns": 788,
+        "schemas": [
+          "auth",
+          "clued_private",
+          "extensions",
+          "graphql",
+          "graphql_public",
+          "pgbouncer",
+          "public",
+          "realtime",
+          "storage",
+          "supabase_migrations",
+          "vault"
+        ],
+        "database": "postgres",
+        "policies": 31,
+        "functions": 161,
+        "relations": 71,
+        "server_version": "17.6"
+      }
+    }
+  ]
+}

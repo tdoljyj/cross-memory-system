@@ -1,0 +1,1921 @@
+{
+  "schema": "clued.step6-existing-receipt-bindings/v1",
+  "historical_receipts_modified": false,
+  "binding_count": 18,
+  "receipt_rule": "Reference existing receipt types and source fields; this evidence index is not a replacement universal runtime receipt schema.",
+  "bindings": [
+    {
+      "consumer_id": "C01",
+      "receipt_type": "HTTP_OR_JSONRPC_OBSERVATION_NOT_BUSINESS_RECEIPT",
+      "producer": [
+        {
+          "repository": "tdoljyj/cross-memory-system",
+          "code_commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+          "code_tree": "e6de3a15047206e10bb52dd4480609f8c3ff48e2",
+          "path": "apps/clued-cloud/worker/continuity.ts",
+          "symbol": "bootstrapContract",
+          "line": 116,
+          "source_ref": {
+            "source_id": "apps/clued-cloud/worker/continuity.ts",
+            "sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+            "pointer": ""
+          },
+          "identity_kind": "EXISTING_CODE_LOCATION_QUALIFIED_BY_HASH; NOT_A_NEW_AUTHORITY_ID"
+        },
+        {
+          "repository": "tdoljyj/cross-memory-system",
+          "code_commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+          "code_tree": "e6de3a15047206e10bb52dd4480609f8c3ff48e2",
+          "path": "apps/clued-cloud/worker/continuity.ts",
+          "symbol": "publicMcpTools",
+          "line": 848,
+          "source_ref": {
+            "source_id": "apps/clued-cloud/worker/continuity.ts",
+            "sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+            "pointer": ""
+          },
+          "identity_kind": "EXISTING_CODE_LOCATION_QUALIFIED_BY_HASH; NOT_A_NEW_AUTHORITY_ID"
+        },
+        {
+          "repository": "tdoljyj/cross-memory-system",
+          "code_commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+          "code_tree": "e6de3a15047206e10bb52dd4480609f8c3ff48e2",
+          "path": "apps/clued-cloud/worker/continuity.ts",
+          "symbol": "handleMcp",
+          "line": 951,
+          "source_ref": {
+            "source_id": "apps/clued-cloud/worker/continuity.ts",
+            "sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+            "pointer": ""
+          },
+          "identity_kind": "EXISTING_CODE_LOCATION_QUALIFIED_BY_HASH; NOT_A_NEW_AUTHORITY_ID"
+        }
+      ],
+      "subject": {
+        "binding_kind": "TYPED_SLOT_OR_RETAINED_EXACT_RUN",
+        "predicate": "Match this consumer operation and exact input/target identity; do not reinterpret an unrelated schema-valid receipt."
+      },
+      "run_id": {
+        "binding_kind": "RUNTIME_TYPED_SLOT",
+        "predicate": "For CI use actual run_id/run_attempt; for HTTP/DB use returned request/transaction/receipt identity if contract defines it. Missing field on a read-only response is explicitly not a business receipt."
+      },
+      "candidate_id": {
+        "binding_kind": "OPERATION_SPECIFIC",
+        "predicate": "Exact candidate ZIP/artifact/manifest for governance tools; canonical ID and base_version for entity mutation. No artificial candidate field inserted into existing service receipts."
+      },
+      "commit": {
+        "binding_kind": "BOUND_CODE_SOURCE",
+        "value": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "tree": "e6de3a15047206e10bb52dd4480609f8c3ff48e2",
+        "meaning": "inspected implementation, not a claim that every retained run executed this aggregate commit"
+      },
+      "artifact": {
+        "binding_kind": "TYPED_DIGEST_SLOT",
+        "predicate": "Preserve actual returned artifact/source manifest digest when produced; read-only service results do not mint release artifacts."
+      },
+      "gate": {
+        "binding_kind": "SOURCE_DEFINED",
+        "value": [
+          "initialize",
+          "tools/list",
+          "clued_agent_bootstrap"
+        ],
+        "meaning": "actual selected handler/RPC or four exact ZIP gates, not invented global stage IDs"
+      },
+      "result": {
+        "binding_kind": "EXISTING_RESULT_CONTRACT",
+        "predicate": "非法JSON/未知method→4xx/JSON-RPC error"
+      },
+      "timestamp": {
+        "binding_kind": "PRODUCER_TIMESTAMP_SLOT",
+        "predicate": "Use actual producer timestamp; do not populate with preparation time as proof of execution"
+      },
+      "evidence_references": [],
+      "authority_effect": "NONE_OR_RETURN_EXISTING",
+      "scope": "/.well-known/clued-continuity；/mcp",
+      "source_refs": [
+        {
+          "source_id": "apps/clued-cloud/worker/continuity.ts",
+          "sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "pointer": ""
+        },
+        {
+          "source_id": "apps/clued-cloud/worker/continuity.ts",
+          "sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "pointer": ""
+        },
+        {
+          "source_id": "apps/clued-cloud/worker/continuity.ts",
+          "sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "pointer": ""
+        }
+      ]
+    },
+    {
+      "consumer_id": "C02",
+      "receipt_type": "BINDING_CONTROL_PLANE_RESPONSE_NOT_M1_BUSINESS_RECEIPT",
+      "producer": [
+        {
+          "repository": "tdoljyj/cross-memory-system",
+          "code_commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+          "code_tree": "e6de3a15047206e10bb52dd4480609f8c3ff48e2",
+          "path": "apps/clued-cloud/worker/continuity.ts",
+          "symbol": "requireSupabaseUser",
+          "line": 485,
+          "source_ref": {
+            "source_id": "apps/clued-cloud/worker/continuity.ts",
+            "sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+            "pointer": ""
+          },
+          "identity_kind": "EXISTING_CODE_LOCATION_QUALIFIED_BY_HASH; NOT_A_NEW_AUTHORITY_ID"
+        },
+        {
+          "repository": "tdoljyj/cross-memory-system",
+          "code_commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+          "code_tree": "e6de3a15047206e10bb52dd4480609f8c3ff48e2",
+          "path": "apps/clued-cloud/worker/continuity.ts",
+          "symbol": "listBindings",
+          "line": 524,
+          "source_ref": {
+            "source_id": "apps/clued-cloud/worker/continuity.ts",
+            "sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+            "pointer": ""
+          },
+          "identity_kind": "EXISTING_CODE_LOCATION_QUALIFIED_BY_HASH; NOT_A_NEW_AUTHORITY_ID"
+        },
+        {
+          "repository": "tdoljyj/cross-memory-system",
+          "code_commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+          "code_tree": "e6de3a15047206e10bb52dd4480609f8c3ff48e2",
+          "path": "apps/clued-cloud/worker/continuity.ts",
+          "symbol": "createBinding",
+          "line": 534,
+          "source_ref": {
+            "source_id": "apps/clued-cloud/worker/continuity.ts",
+            "sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+            "pointer": ""
+          },
+          "identity_kind": "EXISTING_CODE_LOCATION_QUALIFIED_BY_HASH; NOT_A_NEW_AUTHORITY_ID"
+        },
+        {
+          "repository": "tdoljyj/cross-memory-system",
+          "code_commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+          "code_tree": "e6de3a15047206e10bb52dd4480609f8c3ff48e2",
+          "path": "apps/clued-cloud/worker/continuity.ts",
+          "symbol": "revokeBinding",
+          "line": 584,
+          "source_ref": {
+            "source_id": "apps/clued-cloud/worker/continuity.ts",
+            "sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+            "pointer": ""
+          },
+          "identity_kind": "EXISTING_CODE_LOCATION_QUALIFIED_BY_HASH; NOT_A_NEW_AUTHORITY_ID"
+        }
+      ],
+      "subject": {
+        "binding_kind": "TYPED_SLOT_OR_RETAINED_EXACT_RUN",
+        "predicate": "Match this consumer operation and exact input/target identity; do not reinterpret an unrelated schema-valid receipt."
+      },
+      "run_id": {
+        "binding_kind": "RUNTIME_TYPED_SLOT",
+        "predicate": "For CI use actual run_id/run_attempt; for HTTP/DB use returned request/transaction/receipt identity if contract defines it. Missing field on a read-only response is explicitly not a business receipt."
+      },
+      "candidate_id": {
+        "binding_kind": "OPERATION_SPECIFIC",
+        "predicate": "Exact candidate ZIP/artifact/manifest for governance tools; canonical ID and base_version for entity mutation. No artificial candidate field inserted into existing service receipts."
+      },
+      "commit": {
+        "binding_kind": "BOUND_CODE_SOURCE",
+        "value": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "tree": "e6de3a15047206e10bb52dd4480609f8c3ff48e2",
+        "meaning": "inspected implementation, not a claim that every retained run executed this aggregate commit"
+      },
+      "artifact": {
+        "binding_kind": "TYPED_DIGEST_SLOT",
+        "predicate": "Preserve actual returned artifact/source manifest digest when produced; read-only service results do not mint release artifacts."
+      },
+      "gate": {
+        "binding_kind": "SOURCE_DEFINED",
+        "value": [
+          "listBindings",
+          "createBinding",
+          "revokeBinding"
+        ],
+        "meaning": "actual selected handler/RPC or four exact ZIP gates, not invented global stage IDs"
+      },
+      "result": {
+        "binding_kind": "EXISTING_RESULT_CONTRACT",
+        "predicate": "缺JWT/Binding代JWT→401；非法scope→400；撤销写入revoked_at"
+      },
+      "timestamp": {
+        "binding_kind": "PRODUCER_TIMESTAMP_SLOT",
+        "predicate": "Use actual producer timestamp; do not populate with preparation time as proof of execution"
+      },
+      "evidence_references": [],
+      "authority_effect": "Binding控制平面持久变更；非业务Record",
+      "scope": "/api/bindings；public.clued_agent_bindings",
+      "source_refs": [
+        {
+          "source_id": "apps/clued-cloud/worker/continuity.ts",
+          "sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "pointer": ""
+        },
+        {
+          "source_id": "apps/clued-cloud/worker/continuity.ts",
+          "sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "pointer": ""
+        },
+        {
+          "source_id": "apps/clued-cloud/worker/continuity.ts",
+          "sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "pointer": ""
+        },
+        {
+          "source_id": "apps/clued-cloud/worker/continuity.ts",
+          "sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "pointer": ""
+        }
+      ]
+    },
+    {
+      "consumer_id": "C03",
+      "receipt_type": "EXISTING_CONTEXT_OR_AUDIT_RESULT",
+      "producer": [
+        {
+          "repository": "tdoljyj/cross-memory-system",
+          "code_commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+          "code_tree": "e6de3a15047206e10bb52dd4480609f8c3ff48e2",
+          "path": "apps/clued-cloud/worker/continuity.ts",
+          "symbol": "rpcByTool",
+          "line": 855,
+          "source_ref": {
+            "source_id": "apps/clued-cloud/worker/continuity.ts",
+            "sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+            "pointer": ""
+          },
+          "identity_kind": "EXISTING_CODE_LOCATION_QUALIFIED_BY_HASH; NOT_A_NEW_AUTHORITY_ID"
+        },
+        {
+          "repository": "tdoljyj/cross-memory-system",
+          "code_commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+          "code_tree": "e6de3a15047206e10bb52dd4480609f8c3ff48e2",
+          "path": "apps/clued-cloud/worker/continuity.ts",
+          "symbol": "callRpc",
+          "line": 868,
+          "source_ref": {
+            "source_id": "apps/clued-cloud/worker/continuity.ts",
+            "sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+            "pointer": ""
+          },
+          "identity_kind": "EXISTING_CODE_LOCATION_QUALIFIED_BY_HASH; NOT_A_NEW_AUTHORITY_ID"
+        },
+        {
+          "repository": "tdoljyj/cross-memory-system",
+          "code_commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+          "code_tree": "e6de3a15047206e10bb52dd4480609f8c3ff48e2",
+          "path": "apps/clued-cloud/worker/continuity.ts",
+          "symbol": "restToolByPath",
+          "line": 1035,
+          "source_ref": {
+            "source_id": "apps/clued-cloud/worker/continuity.ts",
+            "sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+            "pointer": ""
+          },
+          "identity_kind": "EXISTING_CODE_LOCATION_QUALIFIED_BY_HASH; NOT_A_NEW_AUTHORITY_ID"
+        }
+      ],
+      "subject": {
+        "binding_kind": "TYPED_SLOT_OR_RETAINED_EXACT_RUN",
+        "predicate": "Match this consumer operation and exact input/target identity; do not reinterpret an unrelated schema-valid receipt."
+      },
+      "run_id": {
+        "binding_kind": "RUNTIME_TYPED_SLOT",
+        "predicate": "For CI use actual run_id/run_attempt; for HTTP/DB use returned request/transaction/receipt identity if contract defines it. Missing field on a read-only response is explicitly not a business receipt."
+      },
+      "candidate_id": {
+        "binding_kind": "OPERATION_SPECIFIC",
+        "predicate": "Exact candidate ZIP/artifact/manifest for governance tools; canonical ID and base_version for entity mutation. No artificial candidate field inserted into existing service receipts."
+      },
+      "commit": {
+        "binding_kind": "BOUND_CODE_SOURCE",
+        "value": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "tree": "e6de3a15047206e10bb52dd4480609f8c3ff48e2",
+        "meaning": "inspected implementation, not a claim that every retained run executed this aggregate commit"
+      },
+      "artifact": {
+        "binding_kind": "TYPED_DIGEST_SLOT",
+        "predicate": "Preserve actual returned artifact/source manifest digest when produced; read-only service results do not mint release artifacts."
+      },
+      "gate": {
+        "binding_kind": "SOURCE_DEFINED",
+        "value": [
+          "clued_session_resume",
+          "clued_search_context",
+          "clued_read_log",
+          "clued_audit_receipts"
+        ],
+        "meaning": "actual selected handler/RPC or four exact ZIP gates, not invented global stage IDs"
+      },
+      "result": {
+        "binding_kind": "EXISTING_RESULT_CONTRACT",
+        "predicate": "缺token401、跨origin403；DB授权/上下文错误传播"
+      },
+      "timestamp": {
+        "binding_kind": "PRODUCER_TIMESTAMP_SLOT",
+        "predicate": "Use actual producer timestamp; do not populate with preparation time as proof of execution"
+      },
+      "evidence_references": [],
+      "authority_effect": "NONE_OR_RETURN_EXISTING",
+      "scope": "context_key；clued_mcp_*；clued_oauth_call",
+      "source_refs": [
+        {
+          "source_id": "apps/clued-cloud/worker/continuity.ts",
+          "sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "pointer": ""
+        },
+        {
+          "source_id": "apps/clued-cloud/worker/continuity.ts",
+          "sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "pointer": ""
+        },
+        {
+          "source_id": "apps/clued-cloud/worker/continuity.ts",
+          "sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "pointer": ""
+        }
+      ],
+      "read_side_effect_boundary": "Business object is not mutated by reads; Binding resolution may update last_used_at. Do not interpret can_mutate_canonical_state=false as no audit write whatsoever."
+    },
+    {
+      "consumer_id": "C04",
+      "receipt_type": "DATABASE_CONTINUITY_TRANSACTION_RECEIPT",
+      "producer": [
+        {
+          "repository": "tdoljyj/cross-memory-system",
+          "code_commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+          "code_tree": "e6de3a15047206e10bb52dd4480609f8c3ff48e2",
+          "path": "apps/clued-cloud/worker/continuity.ts",
+          "symbol": "rpcByTool",
+          "line": 855,
+          "source_ref": {
+            "source_id": "apps/clued-cloud/worker/continuity.ts",
+            "sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+            "pointer": ""
+          },
+          "identity_kind": "EXISTING_CODE_LOCATION_QUALIFIED_BY_HASH; NOT_A_NEW_AUTHORITY_ID"
+        },
+        {
+          "repository": "tdoljyj/cross-memory-system",
+          "code_commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+          "code_tree": "e6de3a15047206e10bb52dd4480609f8c3ff48e2",
+          "path": "apps/clued-cloud/worker/continuity.ts",
+          "symbol": "callRpc",
+          "line": 868,
+          "source_ref": {
+            "source_id": "apps/clued-cloud/worker/continuity.ts",
+            "sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+            "pointer": ""
+          },
+          "identity_kind": "EXISTING_CODE_LOCATION_QUALIFIED_BY_HASH; NOT_A_NEW_AUTHORITY_ID"
+        }
+      ],
+      "subject": {
+        "binding_kind": "TYPED_SLOT_OR_RETAINED_EXACT_RUN",
+        "predicate": "Match this consumer operation and exact input/target identity; do not reinterpret an unrelated schema-valid receipt."
+      },
+      "run_id": {
+        "binding_kind": "RUNTIME_TYPED_SLOT",
+        "predicate": "For CI use actual run_id/run_attempt; for HTTP/DB use returned request/transaction/receipt identity if contract defines it. Missing field on a read-only response is explicitly not a business receipt."
+      },
+      "candidate_id": {
+        "binding_kind": "OPERATION_SPECIFIC",
+        "predicate": "Exact candidate ZIP/artifact/manifest for governance tools; canonical ID and base_version for entity mutation. No artificial candidate field inserted into existing service receipts."
+      },
+      "commit": {
+        "binding_kind": "BOUND_CODE_SOURCE",
+        "value": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "tree": "e6de3a15047206e10bb52dd4480609f8c3ff48e2",
+        "meaning": "inspected implementation, not a claim that every retained run executed this aggregate commit"
+      },
+      "artifact": {
+        "binding_kind": "TYPED_DIGEST_SLOT",
+        "predicate": "Preserve actual returned artifact/source manifest digest when produced; read-only service results do not mint release artifacts."
+      },
+      "gate": {
+        "binding_kind": "SOURCE_DEFINED",
+        "value": [
+          "clued_append_event",
+          "clued_session_checkpoint",
+          "clued_import_log"
+        ],
+        "meaning": "actual selected handler/RPC or four exact ZIP gates, not invented global stage IDs"
+      },
+      "result": {
+        "binding_kind": "EXISTING_RESULT_CONTRACT",
+        "predicate": "version冲突、会话/权限拒绝由DB返回；unknown对象仍需消费者测试"
+      },
+      "timestamp": {
+        "binding_kind": "PRODUCER_TIMESTAMP_SLOT",
+        "predicate": "Use actual producer timestamp; do not populate with preparation time as proof of execution"
+      },
+      "evidence_references": [],
+      "authority_effect": "同事务业务写与Receipt",
+      "scope": "clued_mcp_append_event / checkpoint / import_log",
+      "source_refs": [
+        {
+          "source_id": "apps/clued-cloud/worker/continuity.ts",
+          "sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "pointer": ""
+        },
+        {
+          "source_id": "apps/clued-cloud/worker/continuity.ts",
+          "sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "pointer": ""
+        }
+      ]
+    },
+    {
+      "consumer_id": "C05",
+      "receipt_type": "M1_TRANSACTION_RECEIPT_FOR_MUTATION_ONLY",
+      "producer": [
+        {
+          "repository": "tdoljyj/cross-memory-system",
+          "code_commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+          "code_tree": "e6de3a15047206e10bb52dd4480609f8c3ff48e2",
+          "path": "apps/clued-cloud/worker/continuity.ts",
+          "symbol": "callUserProjectRpc",
+          "line": 1063,
+          "source_ref": {
+            "source_id": "apps/clued-cloud/worker/continuity.ts",
+            "sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+            "pointer": ""
+          },
+          "identity_kind": "EXISTING_CODE_LOCATION_QUALIFIED_BY_HASH; NOT_A_NEW_AUTHORITY_ID"
+        },
+        {
+          "repository": "tdoljyj/cross-memory-system",
+          "code_commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+          "code_tree": "e6de3a15047206e10bb52dd4480609f8c3ff48e2",
+          "path": "apps/clued-cloud/worker/continuity.ts",
+          "symbol": "handleProjectApi",
+          "line": 1080,
+          "source_ref": {
+            "source_id": "apps/clued-cloud/worker/continuity.ts",
+            "sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+            "pointer": ""
+          },
+          "identity_kind": "EXISTING_CODE_LOCATION_QUALIFIED_BY_HASH; NOT_A_NEW_AUTHORITY_ID"
+        },
+        {
+          "repository": "tdoljyj/cross-memory-system",
+          "code_commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+          "code_tree": "e6de3a15047206e10bb52dd4480609f8c3ff48e2",
+          "path": "apps/clued-cloud/worker/projects.ts",
+          "symbol": "projectTools",
+          "line": 3,
+          "source_ref": {
+            "source_id": "apps/clued-cloud/worker/projects.ts",
+            "sha256": "8bb2d52643c4ffd62ee48de60294559161d750ea15d328b6585deb47aa2aa09f",
+            "pointer": ""
+          },
+          "identity_kind": "EXISTING_CODE_LOCATION_QUALIFIED_BY_HASH; NOT_A_NEW_AUTHORITY_ID"
+        }
+      ],
+      "subject": {
+        "binding_kind": "TYPED_SLOT_OR_RETAINED_EXACT_RUN",
+        "predicate": "Match this consumer operation and exact input/target identity; do not reinterpret an unrelated schema-valid receipt."
+      },
+      "run_id": {
+        "binding_kind": "RUNTIME_TYPED_SLOT",
+        "predicate": "For CI use actual run_id/run_attempt; for HTTP/DB use returned request/transaction/receipt identity if contract defines it. Missing field on a read-only response is explicitly not a business receipt."
+      },
+      "candidate_id": {
+        "binding_kind": "OPERATION_SPECIFIC",
+        "predicate": "Exact candidate ZIP/artifact/manifest for governance tools; canonical ID and base_version for entity mutation. No artificial candidate field inserted into existing service receipts."
+      },
+      "commit": {
+        "binding_kind": "BOUND_CODE_SOURCE",
+        "value": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "tree": "e6de3a15047206e10bb52dd4480609f8c3ff48e2",
+        "meaning": "inspected implementation, not a claim that every retained run executed this aggregate commit"
+      },
+      "artifact": {
+        "binding_kind": "TYPED_DIGEST_SLOT",
+        "predicate": "Preserve actual returned artifact/source manifest digest when produced; read-only service results do not mint release artifacts."
+      },
+      "gate": {
+        "binding_kind": "SOURCE_DEFINED",
+        "value": [
+          "clued_project_list",
+          "clued_project_mutate"
+        ],
+        "meaning": "actual selected handler/RPC or four exact ZIP gates, not invented global stage IDs"
+      },
+      "result": {
+        "binding_kind": "EXISTING_RESULT_CONTRACT",
+        "predicate": "缺账户401；merge未启用；CAS拒绝；PATCH路径id权威"
+      },
+      "timestamp": {
+        "binding_kind": "PRODUCER_TIMESTAMP_SLOT",
+        "predicate": "Use actual producer timestamp; do not populate with preparation time as proof of execution"
+      },
+      "evidence_references": [],
+      "authority_effect": "读无业务写；mutation同事务receipt",
+      "scope": "system:projects；/v1/projects；clued_(user_)project_*",
+      "source_refs": [
+        {
+          "source_id": "apps/clued-cloud/worker/continuity.ts",
+          "sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "pointer": ""
+        },
+        {
+          "source_id": "apps/clued-cloud/worker/continuity.ts",
+          "sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "pointer": ""
+        },
+        {
+          "source_id": "apps/clued-cloud/worker/projects.ts",
+          "sha256": "8bb2d52643c4ffd62ee48de60294559161d750ea15d328b6585deb47aa2aa09f",
+          "pointer": ""
+        }
+      ],
+      "read_side_effect_boundary": "Business object is not mutated by reads; Binding resolution may update last_used_at. Do not interpret can_mutate_canonical_state=false as no audit write whatsoever."
+    },
+    {
+      "consumer_id": "C06",
+      "receipt_type": "EXISTING_CANONICAL_READ_RESULT",
+      "producer": [
+        {
+          "repository": "tdoljyj/cross-memory-system",
+          "code_commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+          "code_tree": "e6de3a15047206e10bb52dd4480609f8c3ff48e2",
+          "path": "apps/clued-cloud/worker/continuity.ts",
+          "symbol": "handleRecordApi",
+          "line": 1145,
+          "source_ref": {
+            "source_id": "apps/clued-cloud/worker/continuity.ts",
+            "sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+            "pointer": ""
+          },
+          "identity_kind": "EXISTING_CODE_LOCATION_QUALIFIED_BY_HASH; NOT_A_NEW_AUTHORITY_ID"
+        },
+        {
+          "repository": "tdoljyj/cross-memory-system",
+          "code_commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+          "code_tree": "e6de3a15047206e10bb52dd4480609f8c3ff48e2",
+          "path": "apps/clued-cloud/worker/records.ts",
+          "symbol": "recordTools",
+          "line": 44,
+          "source_ref": {
+            "source_id": "apps/clued-cloud/worker/records.ts",
+            "sha256": "43bfe74c4d6576476f3d4a08df82a6b0853da855c29124edf1e333c14d5bb35e",
+            "pointer": ""
+          },
+          "identity_kind": "EXISTING_CODE_LOCATION_QUALIFIED_BY_HASH; NOT_A_NEW_AUTHORITY_ID"
+        }
+      ],
+      "subject": {
+        "binding_kind": "TYPED_SLOT_OR_RETAINED_EXACT_RUN",
+        "predicate": "Match this consumer operation and exact input/target identity; do not reinterpret an unrelated schema-valid receipt."
+      },
+      "run_id": {
+        "binding_kind": "RUNTIME_TYPED_SLOT",
+        "predicate": "For CI use actual run_id/run_attempt; for HTTP/DB use returned request/transaction/receipt identity if contract defines it. Missing field on a read-only response is explicitly not a business receipt."
+      },
+      "candidate_id": {
+        "binding_kind": "OPERATION_SPECIFIC",
+        "predicate": "Exact candidate ZIP/artifact/manifest for governance tools; canonical ID and base_version for entity mutation. No artificial candidate field inserted into existing service receipts."
+      },
+      "commit": {
+        "binding_kind": "BOUND_CODE_SOURCE",
+        "value": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "tree": "e6de3a15047206e10bb52dd4480609f8c3ff48e2",
+        "meaning": "inspected implementation, not a claim that every retained run executed this aggregate commit"
+      },
+      "artifact": {
+        "binding_kind": "TYPED_DIGEST_SLOT",
+        "predicate": "Preserve actual returned artifact/source manifest digest when produced; read-only service results do not mint release artifacts."
+      },
+      "gate": {
+        "binding_kind": "SOURCE_DEFINED",
+        "value": [
+          "clued_record_list"
+        ],
+        "meaning": "actual selected handler/RPC or four exact ZIP gates, not invented global stage IDs"
+      },
+      "result": {
+        "binding_kind": "EXISTING_RESULT_CONTRACT",
+        "predicate": "开关off404；数据库not-found保持404"
+      },
+      "timestamp": {
+        "binding_kind": "PRODUCER_TIMESTAMP_SLOT",
+        "predicate": "Use actual producer timestamp; do not populate with preparation time as proof of execution"
+      },
+      "evidence_references": [],
+      "authority_effect": "NONE_OR_RETURN_EXISTING",
+      "scope": "/v1/records；clued_(user_)record_list；stable canonical id",
+      "source_refs": [
+        {
+          "source_id": "apps/clued-cloud/worker/continuity.ts",
+          "sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "pointer": ""
+        },
+        {
+          "source_id": "apps/clued-cloud/worker/records.ts",
+          "sha256": "43bfe74c4d6576476f3d4a08df82a6b0853da855c29124edf1e333c14d5bb35e",
+          "pointer": ""
+        }
+      ],
+      "read_side_effect_boundary": "Business object is not mutated by reads; Binding resolution may update last_used_at. Do not interpret can_mutate_canonical_state=false as no audit write whatsoever."
+    },
+    {
+      "consumer_id": "C07",
+      "receipt_type": "M1_TRANSACTION_RECEIPT",
+      "producer": [
+        {
+          "repository": "tdoljyj/cross-memory-system",
+          "code_commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+          "code_tree": "e6de3a15047206e10bb52dd4480609f8c3ff48e2",
+          "path": "apps/clued-cloud/worker/continuity.ts",
+          "symbol": "parseCanonicalBody",
+          "line": 274,
+          "source_ref": {
+            "source_id": "apps/clued-cloud/worker/continuity.ts",
+            "sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+            "pointer": ""
+          },
+          "identity_kind": "EXISTING_CODE_LOCATION_QUALIFIED_BY_HASH; NOT_A_NEW_AUTHORITY_ID"
+        },
+        {
+          "repository": "tdoljyj/cross-memory-system",
+          "code_commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+          "code_tree": "e6de3a15047206e10bb52dd4480609f8c3ff48e2",
+          "path": "apps/clued-cloud/worker/continuity.ts",
+          "symbol": "handleRecordApi",
+          "line": 1145,
+          "source_ref": {
+            "source_id": "apps/clued-cloud/worker/continuity.ts",
+            "sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+            "pointer": ""
+          },
+          "identity_kind": "EXISTING_CODE_LOCATION_QUALIFIED_BY_HASH; NOT_A_NEW_AUTHORITY_ID"
+        },
+        {
+          "repository": "tdoljyj/cross-memory-system",
+          "code_commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+          "code_tree": "e6de3a15047206e10bb52dd4480609f8c3ff48e2",
+          "path": "apps/clued-cloud/worker/records.ts",
+          "symbol": "recordTools",
+          "line": 44,
+          "source_ref": {
+            "source_id": "apps/clued-cloud/worker/records.ts",
+            "sha256": "43bfe74c4d6576476f3d4a08df82a6b0853da855c29124edf1e333c14d5bb35e",
+            "pointer": ""
+          },
+          "identity_kind": "EXISTING_CODE_LOCATION_QUALIFIED_BY_HASH; NOT_A_NEW_AUTHORITY_ID"
+        }
+      ],
+      "subject": {
+        "binding_kind": "TYPED_SLOT_OR_RETAINED_EXACT_RUN",
+        "predicate": "Match this consumer operation and exact input/target identity; do not reinterpret an unrelated schema-valid receipt."
+      },
+      "run_id": {
+        "binding_kind": "RUNTIME_TYPED_SLOT",
+        "predicate": "For CI use actual run_id/run_attempt; for HTTP/DB use returned request/transaction/receipt identity if contract defines it. Missing field on a read-only response is explicitly not a business receipt."
+      },
+      "candidate_id": {
+        "binding_kind": "OPERATION_SPECIFIC",
+        "predicate": "Exact candidate ZIP/artifact/manifest for governance tools; canonical ID and base_version for entity mutation. No artificial candidate field inserted into existing service receipts."
+      },
+      "commit": {
+        "binding_kind": "BOUND_CODE_SOURCE",
+        "value": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "tree": "e6de3a15047206e10bb52dd4480609f8c3ff48e2",
+        "meaning": "inspected implementation, not a claim that every retained run executed this aggregate commit"
+      },
+      "artifact": {
+        "binding_kind": "TYPED_DIGEST_SLOT",
+        "predicate": "Preserve actual returned artifact/source manifest digest when produced; read-only service results do not mint release artifacts."
+      },
+      "gate": {
+        "binding_kind": "SOURCE_DEFINED",
+        "value": [
+          "clued_record_mutate",
+          "clued_decision_supersede"
+        ],
+        "meaning": "actual selected handler/RPC or four exact ZIP gates, not invented global stage IDs"
+      },
+      "result": {
+        "binding_kind": "EXISTING_RESULT_CONTRACT",
+        "predicate": "rejected→409/422、failed→500（REST）；MCP只看result.error存在局部未知状态风险"
+      },
+      "timestamp": {
+        "binding_kind": "PRODUCER_TIMESTAMP_SLOT",
+        "predicate": "Use actual producer timestamp; do not populate with preparation time as proof of execution"
+      },
+      "evidence_references": [],
+      "authority_effect": "同事务业务写与Receipt",
+      "scope": "profile/global/project:UUID；clued_(user_)record_mutate/decision_supersede",
+      "source_refs": [
+        {
+          "source_id": "apps/clued-cloud/worker/continuity.ts",
+          "sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "pointer": ""
+        },
+        {
+          "source_id": "apps/clued-cloud/worker/continuity.ts",
+          "sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "pointer": ""
+        },
+        {
+          "source_id": "apps/clued-cloud/worker/records.ts",
+          "sha256": "43bfe74c4d6576476f3d4a08df82a6b0853da855c29124edf1e333c14d5bb35e",
+          "pointer": ""
+        }
+      ]
+    },
+    {
+      "consumer_id": "C08",
+      "receipt_type": "M1_EVIDENCE_OR_EXTENSION_EVENT_RECEIPT",
+      "producer": [
+        {
+          "repository": "tdoljyj/cross-memory-system",
+          "code_commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+          "code_tree": "e6de3a15047206e10bb52dd4480609f8c3ff48e2",
+          "path": "apps/clued-cloud/worker/continuity.ts",
+          "symbol": "mutationRoutes",
+          "line": 1178,
+          "source_ref": {
+            "source_id": "apps/clued-cloud/worker/continuity.ts",
+            "sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+            "pointer": ""
+          },
+          "identity_kind": "EXISTING_CODE_LOCATION_QUALIFIED_BY_HASH; NOT_A_NEW_AUTHORITY_ID"
+        },
+        {
+          "repository": "tdoljyj/cross-memory-system",
+          "code_commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+          "code_tree": "e6de3a15047206e10bb52dd4480609f8c3ff48e2",
+          "path": "apps/clued-cloud/worker/records.ts",
+          "symbol": "recordTools",
+          "line": 44,
+          "source_ref": {
+            "source_id": "apps/clued-cloud/worker/records.ts",
+            "sha256": "43bfe74c4d6576476f3d4a08df82a6b0853da855c29124edf1e333c14d5bb35e",
+            "pointer": ""
+          },
+          "identity_kind": "EXISTING_CODE_LOCATION_QUALIFIED_BY_HASH; NOT_A_NEW_AUTHORITY_ID"
+        }
+      ],
+      "subject": {
+        "binding_kind": "TYPED_SLOT_OR_RETAINED_EXACT_RUN",
+        "predicate": "Match this consumer operation and exact input/target identity; do not reinterpret an unrelated schema-valid receipt."
+      },
+      "run_id": {
+        "binding_kind": "RUNTIME_TYPED_SLOT",
+        "predicate": "For CI use actual run_id/run_attempt; for HTTP/DB use returned request/transaction/receipt identity if contract defines it. Missing field on a read-only response is explicitly not a business receipt."
+      },
+      "candidate_id": {
+        "binding_kind": "OPERATION_SPECIFIC",
+        "predicate": "Exact candidate ZIP/artifact/manifest for governance tools; canonical ID and base_version for entity mutation. No artificial candidate field inserted into existing service receipts."
+      },
+      "commit": {
+        "binding_kind": "BOUND_CODE_SOURCE",
+        "value": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "tree": "e6de3a15047206e10bb52dd4480609f8c3ff48e2",
+        "meaning": "inspected implementation, not a claim that every retained run executed this aggregate commit"
+      },
+      "artifact": {
+        "binding_kind": "TYPED_DIGEST_SLOT",
+        "predicate": "Preserve actual returned artifact/source manifest digest when produced; read-only service results do not mint release artifacts."
+      },
+      "gate": {
+        "binding_kind": "SOURCE_DEFINED",
+        "value": [
+          "clued_evidence_ingest",
+          "clued_event_append"
+        ],
+        "meaning": "actual selected handler/RPC or four exact ZIP gates, not invented global stage IDs"
+      },
+      "result": {
+        "binding_kind": "EXISTING_RESULT_CONTRACT",
+        "predicate": "类型/权限/篡改hash拒绝；不同event族不能冒充内置业务结果"
+      },
+      "timestamp": {
+        "binding_kind": "PRODUCER_TIMESTAMP_SLOT",
+        "predicate": "Use actual producer timestamp; do not populate with preparation time as proof of execution"
+      },
+      "evidence_references": [],
+      "authority_effect": "canonical Evidence/Event与Receipt",
+      "scope": "clued_(user_)evidence_ingest/event_append；extension namespace",
+      "source_refs": [
+        {
+          "source_id": "apps/clued-cloud/worker/continuity.ts",
+          "sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "pointer": ""
+        },
+        {
+          "source_id": "apps/clued-cloud/worker/records.ts",
+          "sha256": "43bfe74c4d6576476f3d4a08df82a6b0853da855c29124edf1e333c14d5bb35e",
+          "pointer": ""
+        }
+      ]
+    },
+    {
+      "consumer_id": "C09",
+      "receipt_type": "M1_EXPORT_RECEIPT_AND_SNAPSHOT",
+      "producer": [
+        {
+          "repository": "tdoljyj/cross-memory-system",
+          "code_commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+          "code_tree": "e6de3a15047206e10bb52dd4480609f8c3ff48e2",
+          "path": "apps/clued-cloud/worker/continuity.ts",
+          "symbol": "publicToolPolicies",
+          "line": 760,
+          "source_ref": {
+            "source_id": "apps/clued-cloud/worker/continuity.ts",
+            "sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+            "pointer": ""
+          },
+          "identity_kind": "EXISTING_CODE_LOCATION_QUALIFIED_BY_HASH; NOT_A_NEW_AUTHORITY_ID"
+        },
+        {
+          "repository": "tdoljyj/cross-memory-system",
+          "code_commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+          "code_tree": "e6de3a15047206e10bb52dd4480609f8c3ff48e2",
+          "path": "apps/clued-cloud/worker/records.ts",
+          "symbol": "recordTools",
+          "line": 44,
+          "source_ref": {
+            "source_id": "apps/clued-cloud/worker/records.ts",
+            "sha256": "43bfe74c4d6576476f3d4a08df82a6b0853da855c29124edf1e333c14d5bb35e",
+            "pointer": ""
+          },
+          "identity_kind": "EXISTING_CODE_LOCATION_QUALIFIED_BY_HASH; NOT_A_NEW_AUTHORITY_ID"
+        },
+        {
+          "repository": "tdoljyj/cross-memory-system",
+          "code_commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+          "code_tree": "e6de3a15047206e10bb52dd4480609f8c3ff48e2",
+          "path": "apps/clued-cloud/supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql",
+          "symbol": "clued_canonical_export",
+          "line": 703,
+          "source_ref": {
+            "source_id": "apps/clued-cloud/supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql",
+            "sha256": "f59e414ec0de016cbe89d3ba24ded2d90e85a9e17fb554021b2d4d611f4d26c2",
+            "pointer": ""
+          },
+          "identity_kind": "EXISTING_CODE_LOCATION_QUALIFIED_BY_HASH; NOT_A_NEW_AUTHORITY_ID"
+        }
+      ],
+      "subject": {
+        "binding_kind": "TYPED_SLOT_OR_RETAINED_EXACT_RUN",
+        "predicate": "Match this consumer operation and exact input/target identity; do not reinterpret an unrelated schema-valid receipt."
+      },
+      "run_id": {
+        "binding_kind": "RUNTIME_TYPED_SLOT",
+        "predicate": "For CI use actual run_id/run_attempt; for HTTP/DB use returned request/transaction/receipt identity if contract defines it. Missing field on a read-only response is explicitly not a business receipt."
+      },
+      "candidate_id": {
+        "binding_kind": "OPERATION_SPECIFIC",
+        "predicate": "Exact candidate ZIP/artifact/manifest for governance tools; canonical ID and base_version for entity mutation. No artificial candidate field inserted into existing service receipts."
+      },
+      "commit": {
+        "binding_kind": "BOUND_CODE_SOURCE",
+        "value": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "tree": "e6de3a15047206e10bb52dd4480609f8c3ff48e2",
+        "meaning": "inspected implementation, not a claim that every retained run executed this aggregate commit"
+      },
+      "artifact": {
+        "binding_kind": "TYPED_DIGEST_SLOT",
+        "predicate": "Preserve actual returned artifact/source manifest digest when produced; read-only service results do not mint release artifacts."
+      },
+      "gate": {
+        "binding_kind": "SOURCE_DEFINED",
+        "value": [
+          "clued_canonical_export",
+          "clued_user_canonical_export"
+        ],
+        "meaning": "actual selected handler/RPC or four exact ZIP gates, not invented global stage IDs"
+      },
+      "result": {
+        "binding_kind": "EXISTING_RESULT_CONTRACT",
+        "predicate": "身份/幂等失败按DB；scope声明与执行存在差异候选"
+      },
+      "timestamp": {
+        "binding_kind": "PRODUCER_TIMESTAMP_SLOT",
+        "predicate": "Use actual producer timestamp; do not populate with preparation time as proof of execution"
+      },
+      "evidence_references": [],
+      "authority_effect": "生成export审计Receipt；非Record mutation",
+      "scope": "/v1/export；clued_(user_)canonical_export",
+      "source_refs": [
+        {
+          "source_id": "apps/clued-cloud/worker/continuity.ts",
+          "sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "pointer": ""
+        },
+        {
+          "source_id": "apps/clued-cloud/worker/records.ts",
+          "sha256": "43bfe74c4d6576476f3d4a08df82a6b0853da855c29124edf1e333c14d5bb35e",
+          "pointer": ""
+        },
+        {
+          "source_id": "apps/clued-cloud/supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql",
+          "sha256": "f59e414ec0de016cbe89d3ba24ded2d90e85a9e17fb554021b2d4d611f4d26c2",
+          "pointer": ""
+        }
+      ]
+    },
+    {
+      "consumer_id": "C10",
+      "receipt_type": "P5_ATTEMPT_BOUND_TRANSACTION_RECEIPT",
+      "producer": [
+        {
+          "repository": "tdoljyj/cross-memory-system",
+          "code_commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+          "code_tree": "e6de3a15047206e10bb52dd4480609f8c3ff48e2",
+          "path": "apps/clued-cloud/worker/continuity.ts",
+          "symbol": "callP5Mutation",
+          "line": 436,
+          "source_ref": {
+            "source_id": "apps/clued-cloud/worker/continuity.ts",
+            "sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+            "pointer": ""
+          },
+          "identity_kind": "EXISTING_CODE_LOCATION_QUALIFIED_BY_HASH; NOT_A_NEW_AUTHORITY_ID"
+        },
+        {
+          "repository": "tdoljyj/cross-memory-system",
+          "code_commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+          "code_tree": "e6de3a15047206e10bb52dd4480609f8c3ff48e2",
+          "path": "apps/clued-cloud/worker/p5.ts",
+          "symbol": "FILE_ENTRYPOINT",
+          "line": 1,
+          "source_ref": {
+            "source_id": "apps/clued-cloud/worker/p5.ts",
+            "sha256": "ce46bf7025f746579263b78c320f1df6e4d077e11bcbcc958865f20bfead418f",
+            "pointer": ""
+          },
+          "identity_kind": "EXISTING_CODE_LOCATION_QUALIFIED_BY_HASH; NOT_A_NEW_AUTHORITY_ID"
+        }
+      ],
+      "subject": {
+        "binding_kind": "TYPED_SLOT_OR_RETAINED_EXACT_RUN",
+        "predicate": "Match this consumer operation and exact input/target identity; do not reinterpret an unrelated schema-valid receipt."
+      },
+      "run_id": {
+        "binding_kind": "RUNTIME_TYPED_SLOT",
+        "predicate": "For CI use actual run_id/run_attempt; for HTTP/DB use returned request/transaction/receipt identity if contract defines it. Missing field on a read-only response is explicitly not a business receipt."
+      },
+      "candidate_id": {
+        "binding_kind": "OPERATION_SPECIFIC",
+        "predicate": "Exact candidate ZIP/artifact/manifest for governance tools; canonical ID and base_version for entity mutation. No artificial candidate field inserted into existing service receipts."
+      },
+      "commit": {
+        "binding_kind": "BOUND_CODE_SOURCE",
+        "value": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "tree": "e6de3a15047206e10bb52dd4480609f8c3ff48e2",
+        "meaning": "inspected implementation, not a claim that every retained run executed this aggregate commit"
+      },
+      "artifact": {
+        "binding_kind": "TYPED_DIGEST_SLOT",
+        "predicate": "Preserve actual returned artifact/source manifest digest when produced; read-only service results do not mint release artifacts."
+      },
+      "gate": {
+        "binding_kind": "SOURCE_DEFINED",
+        "value": [
+          "clued_p5_session_open",
+          "clued_p5_mutate",
+          "clued_p5_attempt_resolve"
+        ],
+        "meaning": "actual selected handler/RPC or four exact ZIP gates, not invented global stage IDs"
+      },
+      "result": {
+        "binding_kind": "EXISTING_RESULT_CONTRACT",
+        "predicate": "无gateway503；JWT被Binding-only拒绝；权限/CAS/过期/未解决Attempt失败闭合"
+      },
+      "timestamp": {
+        "binding_kind": "PRODUCER_TIMESTAMP_SLOT",
+        "predicate": "Use actual producer timestamp; do not populate with preparation time as proof of execution"
+      },
+      "evidence_references": [],
+      "authority_effect": "P5事务写；生产enablement未由本审查确认",
+      "scope": "clued_p5_*；organization/workspace/actor/Binding",
+      "source_refs": [
+        {
+          "source_id": "apps/clued-cloud/worker/continuity.ts",
+          "sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "pointer": ""
+        },
+        {
+          "source_id": "apps/clued-cloud/worker/p5.ts",
+          "sha256": "ce46bf7025f746579263b78c320f1df6e4d077e11bcbcc958865f20bfead418f",
+          "pointer": ""
+        }
+      ]
+    },
+    {
+      "consumer_id": "C11",
+      "receipt_type": "SNAPSHOT_MANIFEST_AND_EXPORT_RECEIPT_REFERENCE",
+      "producer": [
+        {
+          "repository": "tdoljyj/cross-memory-system",
+          "code_commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+          "code_tree": "e6de3a15047206e10bb52dd4480609f8c3ff48e2",
+          "path": "apps/clued-cloud/scripts/two-level-snapshot.mjs",
+          "symbol": "buildSnapshot",
+          "line": 460,
+          "source_ref": {
+            "source_id": "apps/clued-cloud/scripts/two-level-snapshot.mjs",
+            "sha256": "1dfcc8de7b481bc8a29cd055f711bb142fa390fff07a61730320866a477f6b7e",
+            "pointer": ""
+          },
+          "identity_kind": "EXISTING_CODE_LOCATION_QUALIFIED_BY_HASH; NOT_A_NEW_AUTHORITY_ID"
+        },
+        {
+          "repository": "tdoljyj/cross-memory-system",
+          "code_commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+          "code_tree": "e6de3a15047206e10bb52dd4480609f8c3ff48e2",
+          "path": "apps/clued-cloud/scripts/two-level-snapshot.mjs",
+          "symbol": "validateSnapshot",
+          "line": 726,
+          "source_ref": {
+            "source_id": "apps/clued-cloud/scripts/two-level-snapshot.mjs",
+            "sha256": "1dfcc8de7b481bc8a29cd055f711bb142fa390fff07a61730320866a477f6b7e",
+            "pointer": ""
+          },
+          "identity_kind": "EXISTING_CODE_LOCATION_QUALIFIED_BY_HASH; NOT_A_NEW_AUTHORITY_ID"
+        }
+      ],
+      "subject": {
+        "binding_kind": "TYPED_SLOT_OR_RETAINED_EXACT_RUN",
+        "predicate": "Match this consumer operation and exact input/target identity; do not reinterpret an unrelated schema-valid receipt."
+      },
+      "run_id": {
+        "binding_kind": "RUNTIME_TYPED_SLOT",
+        "predicate": "For CI use actual run_id/run_attempt; for HTTP/DB use returned request/transaction/receipt identity if contract defines it. Missing field on a read-only response is explicitly not a business receipt."
+      },
+      "candidate_id": {
+        "binding_kind": "OPERATION_SPECIFIC",
+        "predicate": "Exact candidate ZIP/artifact/manifest for governance tools; canonical ID and base_version for entity mutation. No artificial candidate field inserted into existing service receipts."
+      },
+      "commit": {
+        "binding_kind": "BOUND_CODE_SOURCE",
+        "value": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "tree": "e6de3a15047206e10bb52dd4480609f8c3ff48e2",
+        "meaning": "inspected implementation, not a claim that every retained run executed this aggregate commit"
+      },
+      "artifact": {
+        "binding_kind": "TYPED_DIGEST_SLOT",
+        "predicate": "Preserve actual returned artifact/source manifest digest when produced; read-only service results do not mint release artifacts."
+      },
+      "gate": {
+        "binding_kind": "SOURCE_DEFINED",
+        "value": [
+          "buildSnapshot",
+          "validateSnapshot"
+        ],
+        "meaning": "actual selected handler/RPC or four exact ZIP gates, not invented global stage IDs"
+      },
+      "result": {
+        "binding_kind": "EXISTING_RESULT_CONTRACT",
+        "predicate": "checksum drift、缺字段失败；历史输入不变为current"
+      },
+      "timestamp": {
+        "binding_kind": "PRODUCER_TIMESTAMP_SLOT",
+        "predicate": "Use actual producer timestamp; do not populate with preparation time as proof of execution"
+      },
+      "evidence_references": [],
+      "authority_effect": "NONE_OR_RETURN_EXISTING",
+      "scope": "只读导出Bundle；canonical id；legacy envelopes显式历史",
+      "source_refs": [
+        {
+          "source_id": "apps/clued-cloud/scripts/two-level-snapshot.mjs",
+          "sha256": "1dfcc8de7b481bc8a29cd055f711bb142fa390fff07a61730320866a477f6b7e",
+          "pointer": ""
+        },
+        {
+          "source_id": "apps/clued-cloud/scripts/two-level-snapshot.mjs",
+          "sha256": "1dfcc8de7b481bc8a29cd055f711bb142fa390fff07a61730320866a477f6b7e",
+          "pointer": ""
+        }
+      ]
+    },
+    {
+      "consumer_id": "C12",
+      "receipt_type": "clued.snapshot-publication-receipt.v1",
+      "producer": [
+        {
+          "repository": "tdoljyj/cross-memory-system",
+          "code_commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+          "code_tree": "e6de3a15047206e10bb52dd4480609f8c3ff48e2",
+          "path": "apps/clued-cloud/scripts/m2-snapshot-store.mjs",
+          "symbol": "coordinatedPublishSnapshot",
+          "line": 244,
+          "source_ref": {
+            "source_id": "apps/clued-cloud/scripts/m2-snapshot-store.mjs",
+            "sha256": "d56e15f4821ff2b21de07a3c103aac4d9a963b3dac7ee2128543ea37036caf30",
+            "pointer": ""
+          },
+          "identity_kind": "EXISTING_CODE_LOCATION_QUALIFIED_BY_HASH; NOT_A_NEW_AUTHORITY_ID"
+        },
+        {
+          "repository": "tdoljyj/cross-memory-system",
+          "code_commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+          "code_tree": "e6de3a15047206e10bb52dd4480609f8c3ff48e2",
+          "path": "apps/clued-cloud/scripts/m2-snapshot-store.mjs",
+          "symbol": "coordinatedRollbackSnapshot",
+          "line": 271,
+          "source_ref": {
+            "source_id": "apps/clued-cloud/scripts/m2-snapshot-store.mjs",
+            "sha256": "d56e15f4821ff2b21de07a3c103aac4d9a963b3dac7ee2128543ea37036caf30",
+            "pointer": ""
+          },
+          "identity_kind": "EXISTING_CODE_LOCATION_QUALIFIED_BY_HASH; NOT_A_NEW_AUTHORITY_ID"
+        },
+        {
+          "repository": "tdoljyj/cross-memory-system",
+          "code_commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+          "code_tree": "e6de3a15047206e10bb52dd4480609f8c3ff48e2",
+          "path": "apps/clued-cloud/scripts/two-level-snapshot.mjs",
+          "symbol": "publishSnapshot",
+          "line": 1033,
+          "source_ref": {
+            "source_id": "apps/clued-cloud/scripts/two-level-snapshot.mjs",
+            "sha256": "1dfcc8de7b481bc8a29cd055f711bb142fa390fff07a61730320866a477f6b7e",
+            "pointer": ""
+          },
+          "identity_kind": "EXISTING_CODE_LOCATION_QUALIFIED_BY_HASH; NOT_A_NEW_AUTHORITY_ID"
+        }
+      ],
+      "subject": {
+        "binding_kind": "TYPED_SLOT_OR_RETAINED_EXACT_RUN",
+        "predicate": "Match this consumer operation and exact input/target identity; do not reinterpret an unrelated schema-valid receipt."
+      },
+      "run_id": {
+        "binding_kind": "RUNTIME_TYPED_SLOT",
+        "predicate": "For CI use actual run_id/run_attempt; for HTTP/DB use returned request/transaction/receipt identity if contract defines it. Missing field on a read-only response is explicitly not a business receipt."
+      },
+      "candidate_id": {
+        "binding_kind": "OPERATION_SPECIFIC",
+        "predicate": "Exact candidate ZIP/artifact/manifest for governance tools; canonical ID and base_version for entity mutation. No artificial candidate field inserted into existing service receipts."
+      },
+      "commit": {
+        "binding_kind": "BOUND_CODE_SOURCE",
+        "value": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "tree": "e6de3a15047206e10bb52dd4480609f8c3ff48e2",
+        "meaning": "inspected implementation, not a claim that every retained run executed this aggregate commit"
+      },
+      "artifact": {
+        "binding_kind": "TYPED_DIGEST_SLOT",
+        "predicate": "Preserve actual returned artifact/source manifest digest when produced; read-only service results do not mint release artifacts."
+      },
+      "gate": {
+        "binding_kind": "SOURCE_DEFINED",
+        "value": [
+          "coordinatedPublishSnapshot",
+          "coordinatedRollbackSnapshot"
+        ],
+        "meaning": "actual selected handler/RPC or four exact ZIP gates, not invented global stage IDs"
+      },
+      "result": {
+        "binding_kind": "EXISTING_RESULT_CONTRACT",
+        "predicate": "锁/过期CAS/切换后审计失败保持或恢复旧pointer"
+      },
+      "timestamp": {
+        "binding_kind": "PRODUCER_TIMESTAMP_SLOT",
+        "predicate": "Use actual producer timestamp; do not populate with preparation time as proof of execution"
+      },
+      "evidence_references": [],
+      "authority_effect": "只发布derived snapshot pointer，不写canonical业务库",
+      "scope": "formal current.json；published snapshot registry",
+      "source_refs": [
+        {
+          "source_id": "apps/clued-cloud/scripts/m2-snapshot-store.mjs",
+          "sha256": "d56e15f4821ff2b21de07a3c103aac4d9a963b3dac7ee2128543ea37036caf30",
+          "pointer": ""
+        },
+        {
+          "source_id": "apps/clued-cloud/scripts/m2-snapshot-store.mjs",
+          "sha256": "d56e15f4821ff2b21de07a3c103aac4d9a963b3dac7ee2128543ea37036caf30",
+          "pointer": ""
+        },
+        {
+          "source_id": "apps/clued-cloud/scripts/two-level-snapshot.mjs",
+          "sha256": "1dfcc8de7b481bc8a29cd055f711bb142fa390fff07a61730320866a477f6b7e",
+          "pointer": ""
+        }
+      ]
+    },
+    {
+      "consumer_id": "C13",
+      "receipt_type": "BundleEvidence_and_SourceEnvelope",
+      "producer": [
+        {
+          "repository": "tdoljyj/cross-memory-system",
+          "code_commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+          "code_tree": "e6de3a15047206e10bb52dd4480609f8c3ff48e2",
+          "path": "verification_context.py",
+          "symbol": "AuthorizationEvidence",
+          "line": 85,
+          "source_ref": {
+            "source_id": "verification_context.py",
+            "sha256": "6a2d83a65921df60252aad350f3cecacfbab991be582368903aa40203c96d5ab",
+            "pointer": ""
+          },
+          "identity_kind": "EXISTING_CODE_LOCATION_QUALIFIED_BY_HASH; NOT_A_NEW_AUTHORITY_ID"
+        },
+        {
+          "repository": "tdoljyj/cross-memory-system",
+          "code_commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+          "code_tree": "e6de3a15047206e10bb52dd4480609f8c3ff48e2",
+          "path": "verification_context.py",
+          "symbol": "SourceEnvelope",
+          "line": 151,
+          "source_ref": {
+            "source_id": "verification_context.py",
+            "sha256": "6a2d83a65921df60252aad350f3cecacfbab991be582368903aa40203c96d5ab",
+            "pointer": ""
+          },
+          "identity_kind": "EXISTING_CODE_LOCATION_QUALIFIED_BY_HASH; NOT_A_NEW_AUTHORITY_ID"
+        },
+        {
+          "repository": "tdoljyj/cross-memory-system",
+          "code_commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+          "code_tree": "e6de3a15047206e10bb52dd4480609f8c3ff48e2",
+          "path": "verification_context.py",
+          "symbol": "RequestVerificationContext",
+          "line": 390,
+          "source_ref": {
+            "source_id": "verification_context.py",
+            "sha256": "6a2d83a65921df60252aad350f3cecacfbab991be582368903aa40203c96d5ab",
+            "pointer": ""
+          },
+          "identity_kind": "EXISTING_CODE_LOCATION_QUALIFIED_BY_HASH; NOT_A_NEW_AUTHORITY_ID"
+        }
+      ],
+      "subject": {
+        "binding_kind": "TYPED_SLOT_OR_RETAINED_EXACT_RUN",
+        "predicate": "Match this consumer operation and exact input/target identity; do not reinterpret an unrelated schema-valid receipt."
+      },
+      "run_id": {
+        "binding_kind": "RUNTIME_TYPED_SLOT",
+        "predicate": "For CI use actual run_id/run_attempt; for HTTP/DB use returned request/transaction/receipt identity if contract defines it. Missing field on a read-only response is explicitly not a business receipt."
+      },
+      "candidate_id": {
+        "binding_kind": "OPERATION_SPECIFIC",
+        "predicate": "Exact candidate ZIP/artifact/manifest for governance tools; canonical ID and base_version for entity mutation. No artificial candidate field inserted into existing service receipts."
+      },
+      "commit": {
+        "binding_kind": "BOUND_CODE_SOURCE",
+        "value": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "tree": "e6de3a15047206e10bb52dd4480609f8c3ff48e2",
+        "meaning": "inspected implementation, not a claim that every retained run executed this aggregate commit"
+      },
+      "artifact": {
+        "binding_kind": "TYPED_DIGEST_SLOT",
+        "predicate": "Preserve actual returned artifact/source manifest digest when produced; read-only service results do not mint release artifacts."
+      },
+      "gate": {
+        "binding_kind": "SOURCE_DEFINED",
+        "value": [
+          "RequestVerificationContext"
+        ],
+        "meaning": "actual selected handler/RPC or four exact ZIP gates, not invented global stage IDs"
+      },
+      "result": {
+        "binding_kind": "EXISTING_RESULT_CONTRACT",
+        "predicate": "owner/scope/TTL/path/manifest/pointer变化失效；不完整envelope非authoritative"
+      },
+      "timestamp": {
+        "binding_kind": "PRODUCER_TIMESTAMP_SLOT",
+        "predicate": "Use actual producer timestamp; do not populate with preparation time as proof of execution"
+      },
+      "evidence_references": [],
+      "authority_effect": "NONE_OR_RETURN_EXISTING",
+      "scope": "repository/candidate/local_mirror独立boundary；owner/bundle_scope",
+      "source_refs": [
+        {
+          "source_id": "verification_context.py",
+          "sha256": "6a2d83a65921df60252aad350f3cecacfbab991be582368903aa40203c96d5ab",
+          "pointer": ""
+        },
+        {
+          "source_id": "verification_context.py",
+          "sha256": "6a2d83a65921df60252aad350f3cecacfbab991be582368903aa40203c96d5ab",
+          "pointer": ""
+        },
+        {
+          "source_id": "verification_context.py",
+          "sha256": "6a2d83a65921df60252aad350f3cecacfbab991be582368903aa40203c96d5ab",
+          "pointer": ""
+        }
+      ]
+    },
+    {
+      "consumer_id": "C14",
+      "receipt_type": "AUTH_RESPONSE_AND_HISTORICAL_A03_OBSERVATION",
+      "producer": [
+        {
+          "repository": "tdoljyj/cross-memory-system",
+          "code_commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+          "code_tree": "e6de3a15047206e10bb52dd4480609f8c3ff48e2",
+          "path": "apps/clued-cloud/app/page.tsx",
+          "symbol": "handleLogin",
+          "line": 597,
+          "source_ref": {
+            "source_id": "apps/clued-cloud/app/page.tsx",
+            "sha256": "4534d4ca11390ca5fadae652c6b52ce2bc5428765214c04ed6ff13a8ff7ac5a6",
+            "pointer": ""
+          },
+          "identity_kind": "EXISTING_CODE_LOCATION_QUALIFIED_BY_HASH; NOT_A_NEW_AUTHORITY_ID"
+        },
+        {
+          "repository": "tdoljyj/cross-memory-system",
+          "code_commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+          "code_tree": "e6de3a15047206e10bb52dd4480609f8c3ff48e2",
+          "path": "apps/clued-cloud/app/page.tsx",
+          "symbol": "handleCreateAccount",
+          "line": 612,
+          "source_ref": {
+            "source_id": "apps/clued-cloud/app/page.tsx",
+            "sha256": "4534d4ca11390ca5fadae652c6b52ce2bc5428765214c04ed6ff13a8ff7ac5a6",
+            "pointer": ""
+          },
+          "identity_kind": "EXISTING_CODE_LOCATION_QUALIFIED_BY_HASH; NOT_A_NEW_AUTHORITY_ID"
+        },
+        {
+          "repository": "tdoljyj/cross-memory-system",
+          "code_commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+          "code_tree": "e6de3a15047206e10bb52dd4480609f8c3ff48e2",
+          "path": "apps/clued-cloud/app/oauth/consent/page.tsx",
+          "symbol": "loadAuthorization",
+          "line": 41,
+          "source_ref": {
+            "source_id": "apps/clued-cloud/app/oauth/consent/page.tsx",
+            "sha256": "ce7e6f8de06bd2c7757112b08148f4e19a361868091b88d5c2150b2f0087ef54",
+            "pointer": ""
+          },
+          "identity_kind": "EXISTING_CODE_LOCATION_QUALIFIED_BY_HASH; NOT_A_NEW_AUTHORITY_ID"
+        }
+      ],
+      "subject": {
+        "binding_kind": "TYPED_SLOT_OR_RETAINED_EXACT_RUN",
+        "predicate": "Match this consumer operation and exact input/target identity; do not reinterpret an unrelated schema-valid receipt."
+      },
+      "run_id": {
+        "binding_kind": "RUNTIME_TYPED_SLOT",
+        "predicate": "For CI use actual run_id/run_attempt; for HTTP/DB use returned request/transaction/receipt identity if contract defines it. Missing field on a read-only response is explicitly not a business receipt."
+      },
+      "candidate_id": {
+        "binding_kind": "OPERATION_SPECIFIC",
+        "predicate": "Exact candidate ZIP/artifact/manifest for governance tools; canonical ID and base_version for entity mutation. No artificial candidate field inserted into existing service receipts."
+      },
+      "commit": {
+        "binding_kind": "BOUND_CODE_SOURCE",
+        "value": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "tree": "e6de3a15047206e10bb52dd4480609f8c3ff48e2",
+        "meaning": "inspected implementation, not a claim that every retained run executed this aggregate commit"
+      },
+      "artifact": {
+        "binding_kind": "TYPED_DIGEST_SLOT",
+        "predicate": "Preserve actual returned artifact/source manifest digest when produced; read-only service results do not mint release artifacts."
+      },
+      "gate": {
+        "binding_kind": "SOURCE_DEFINED",
+        "value": [
+          "handleLogin",
+          "handleCreateAccount",
+          "loadAuthorization"
+        ],
+        "meaning": "actual selected handler/RPC or four exact ZIP gates, not invented global stage IDs"
+      },
+      "result": {
+        "binding_kind": "EXISTING_RESULT_CONTRACT",
+        "predicate": "invalidLink/login error；缺授权detail停止；A03一次调用预算"
+      },
+      "timestamp": {
+        "binding_kind": "PRODUCER_TIMESTAMP_SLOT",
+        "predicate": "Use actual producer timestamp; do not populate with preparation time as proof of execution"
+      },
+      "evidence_references": [
+        "artifacts/clued-validation/public-mcp/a03/c1ef7a3b-20260829T062104Z/readonly-call-summary.json"
+      ],
+      "authority_effect": "NONE_OR_RETURN_EXISTING",
+      "scope": "当前Worker vinext app；/oauth/consent；Supabase /auth/v1",
+      "source_refs": [
+        {
+          "source_id": "apps/clued-cloud/app/page.tsx",
+          "sha256": "4534d4ca11390ca5fadae652c6b52ce2bc5428765214c04ed6ff13a8ff7ac5a6",
+          "pointer": ""
+        },
+        {
+          "source_id": "apps/clued-cloud/app/page.tsx",
+          "sha256": "4534d4ca11390ca5fadae652c6b52ce2bc5428765214c04ed6ff13a8ff7ac5a6",
+          "pointer": ""
+        },
+        {
+          "source_id": "apps/clued-cloud/app/oauth/consent/page.tsx",
+          "sha256": "ce7e6f8de06bd2c7757112b08148f4e19a361868091b88d5c2150b2f0087ef54",
+          "pointer": ""
+        }
+      ],
+      "retained_execution_evidence": {
+        "grade": "HISTORICAL_EXECUTED_A03_SUBSET_AND_CURRENT_CONFIG_OBSERVATION",
+        "history_refs": [
+          "artifacts/clued-validation/public-mcp/a03/c1ef7a3b-20260829T062104Z/readonly-call-summary.json"
+        ],
+        "unchanged_source_evidence": "SourceIndex.unchanged_source_comparisons; A03 sources/consent/continuity unchanged",
+        "current_configuration": {
+          "source_id": "auth-urls",
+          "sha256": "eea2b10dda1752263ab6e9105cb3cf23e963506f1a5c52ac98012449a1b91fb1",
+          "pointer": ""
+        },
+        "deployment_locator": {
+          "source_id": "auth-dependency-review",
+          "sha256": "82342ae534129ae73703b7a9b294c766daf0a9c353948e471192bac40f6154d4",
+          "pointer": "/deployment"
+        },
+        "scope": "Historical one read-only clued_project_list call and current saved URLs only; does not prove all CRUD/login/negative flows or current session lifetime."
+      }
+    },
+    {
+      "consumer_id": "C15",
+      "receipt_type": "clued.phase2-v027-ci-gate-receipt/v1",
+      "producer": [
+        {
+          "repository": "tdoljyj/cross-memory-system",
+          "code_commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+          "code_tree": "e6de3a15047206e10bb52dd4480609f8c3ff48e2",
+          "path": "scripts/phase2-v027-validate.py",
+          "symbol": "run",
+          "line": 189,
+          "source_ref": {
+            "source_id": "scripts/phase2-v027-validate.py",
+            "sha256": "e16cc9fa5fd2a54dc3922029851722936551a400979dc94dce691faa83bd7f4e",
+            "pointer": ""
+          },
+          "identity_kind": "EXISTING_CODE_LOCATION_QUALIFIED_BY_HASH; NOT_A_NEW_AUTHORITY_ID"
+        },
+        {
+          "repository": "tdoljyj/cross-memory-system",
+          "code_commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+          "code_tree": "e6de3a15047206e10bb52dd4480609f8c3ff48e2",
+          "path": ".github/workflows/phase2-v027-validation.yml",
+          "symbol": "FILE_ENTRYPOINT",
+          "line": 1,
+          "source_ref": {
+            "source_id": ".github/workflows/phase2-v027-validation.yml",
+            "sha256": "51334a15770991d2cbf13cb906a592494a96c87e55a8b6cb37f0792a1168bd53",
+            "pointer": ""
+          },
+          "identity_kind": "EXISTING_CODE_LOCATION_QUALIFIED_BY_HASH; NOT_A_NEW_AUTHORITY_ID"
+        }
+      ],
+      "subject": {
+        "binding_kind": "TYPED_SLOT_OR_RETAINED_EXACT_RUN",
+        "predicate": "Match this consumer operation and exact input/target identity; do not reinterpret an unrelated schema-valid receipt."
+      },
+      "run_id": {
+        "binding_kind": "RUNTIME_TYPED_SLOT",
+        "predicate": "For CI use actual run_id/run_attempt; for HTTP/DB use returned request/transaction/receipt identity if contract defines it. Missing field on a read-only response is explicitly not a business receipt."
+      },
+      "candidate_id": {
+        "binding_kind": "OPERATION_SPECIFIC",
+        "predicate": "Exact candidate ZIP/artifact/manifest for governance tools; canonical ID and base_version for entity mutation. No artificial candidate field inserted into existing service receipts."
+      },
+      "commit": {
+        "binding_kind": "BOUND_CODE_SOURCE",
+        "value": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "tree": "e6de3a15047206e10bb52dd4480609f8c3ff48e2",
+        "meaning": "inspected implementation, not a claim that every retained run executed this aggregate commit"
+      },
+      "artifact": {
+        "binding_kind": "TYPED_DIGEST_SLOT",
+        "predicate": "Preserve actual returned artifact/source manifest digest when produced; read-only service results do not mint release artifacts."
+      },
+      "gate": {
+        "binding_kind": "SOURCE_DEFINED",
+        "value": [
+          "candidate_identity",
+          "manifest_integrity",
+          "provenance",
+          "product_increment_input"
+        ],
+        "meaning": "actual selected handler/RPC or four exact ZIP gates, not invented global stage IDs"
+      },
+      "result": {
+        "binding_kind": "EXISTING_RESULT_CONTRACT",
+        "predicate": "Identity失败则依赖gate SKIPPED；任何required非PASS overallFAIL/exit1"
+      },
+      "timestamp": {
+        "binding_kind": "PRODUCER_TIMESTAMP_SLOT",
+        "predicate": "Use actual producer timestamp; do not populate with preparation time as proof of execution"
+      },
+      "evidence_references": [
+        "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step1/34069116734/CIGateReceipt.json",
+        "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step1/34068945665/CIGateReceipt.json"
+      ],
+      "authority_effect": "EVIDENCE_ONLY; does not issue runtime grant, ArchitectureAcceptance, Freeze, merge or deploy authorization",
+      "scope": "exact review ZIP delivery v0.2.7.1; inner architecture v0.2.5; original mapping input v0.4.3; validator filename v027 is not the architecture version",
+      "source_refs": [
+        {
+          "source_id": "scripts/phase2-v027-validate.py",
+          "sha256": "e16cc9fa5fd2a54dc3922029851722936551a400979dc94dce691faa83bd7f4e",
+          "pointer": ""
+        },
+        {
+          "source_id": ".github/workflows/phase2-v027-validation.yml",
+          "sha256": "51334a15770991d2cbf13cb906a592494a96c87e55a8b6cb37f0792a1168bd53",
+          "pointer": ""
+        }
+      ],
+      "retained_execution_evidence": {
+        "grade": "RETAINED_ACTUAL_POSITIVE_AND_NEGATIVE_CI_WITH_UNCHANGED_VALIDATOR",
+        "refs": [
+          {
+            "receipt": {
+              "source_id": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step1/34069116734/CIGateReceipt.json",
+              "sha256": "0a6bf0df65e722f2bb48fc6fd93767ec5ffcd8bb207b4189d4ff7d0863738091",
+              "pointer": ""
+            },
+            "platform_run": {
+              "source_id": "ci-run/34069116734",
+              "sha256": "dfcb635c7847450b70f72b34979401163020b89ce8b0bec0b2d9945dd6c77d18",
+              "pointer": ""
+            },
+            "run_id": "34069116734",
+            "run_attempt": "1",
+            "execution_commit": "07632caa673395e136c60d9cf4f2f884c03a59af",
+            "overall": "PASS",
+            "gate_results": {
+              "candidate_identity": "PASS",
+              "manifest_integrity": "PASS",
+              "provenance": "PASS",
+              "product_increment_input": "PASS"
+            },
+            "candidate_sha256": "6e51374a6caedb4f84d2b6bb9fe05cd695b25732833f9d0217c341f17e1c1649",
+            "source_reuse": "Exact validator bytes equal current inspected source; retain original input and exact run meaning."
+          },
+          {
+            "receipt": {
+              "source_id": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step1/34068945665/CIGateReceipt.json",
+              "sha256": "71f218467f8c05fcd3854c65188336a80762fbc82b482977f46889b62c4d907e",
+              "pointer": ""
+            },
+            "platform_run": {
+              "source_id": "ci-run/34068945665",
+              "sha256": "4b10d3f518c20aee437646629e31323f274336cacdadbf1547019a3ab3b36d2f",
+              "pointer": ""
+            },
+            "run_id": "34068945665",
+            "run_attempt": "1",
+            "execution_commit": "9c657f8ffcf67296d394946b2050e049dc535664",
+            "overall": "FAIL",
+            "gate_results": {
+              "candidate_identity": "PASS",
+              "manifest_integrity": "PASS",
+              "provenance": "FAIL",
+              "product_increment_input": "PASS"
+            },
+            "candidate_sha256": "ee000cd50aab3429c9df258c0678730977361e50474945dd6059b82d7d809b4e",
+            "source_reuse": "Exact validator bytes equal current inspected source; retain original input and exact run meaning."
+          }
+        ],
+        "not_claimed": "Fresh migration Step16 result or MCP/product-wide regression"
+      }
+    },
+    {
+      "consumer_id": "C16",
+      "receipt_type": "NAMING_SURFACE_INVENTORY_MANIFEST",
+      "producer": [
+        {
+          "repository": "tdoljyj/cross-memory-system",
+          "code_commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+          "code_tree": "e6de3a15047206e10bb52dd4480609f8c3ff48e2",
+          "path": "scripts/clued-naming-surface-inventory.py",
+          "symbol": "scan_repository",
+          "line": 736,
+          "source_ref": {
+            "source_id": "scripts/clued-naming-surface-inventory.py",
+            "sha256": "9ff7dc893b865a7736d6d9ffbe6f908c15f9c418e10a0602ae6fd33eedb8f81e",
+            "pointer": ""
+          },
+          "identity_kind": "EXISTING_CODE_LOCATION_QUALIFIED_BY_HASH; NOT_A_NEW_AUTHORITY_ID"
+        },
+        {
+          "repository": "tdoljyj/cross-memory-system",
+          "code_commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+          "code_tree": "e6de3a15047206e10bb52dd4480609f8c3ff48e2",
+          "path": "scripts/clued-naming-surface-inventory.py",
+          "symbol": "scan_github",
+          "line": 1008,
+          "source_ref": {
+            "source_id": "scripts/clued-naming-surface-inventory.py",
+            "sha256": "9ff7dc893b865a7736d6d9ffbe6f908c15f9c418e10a0602ae6fd33eedb8f81e",
+            "pointer": ""
+          },
+          "identity_kind": "EXISTING_CODE_LOCATION_QUALIFIED_BY_HASH; NOT_A_NEW_AUTHORITY_ID"
+        }
+      ],
+      "subject": {
+        "binding_kind": "TYPED_SLOT_OR_RETAINED_EXACT_RUN",
+        "predicate": "Match this consumer operation and exact input/target identity; do not reinterpret an unrelated schema-valid receipt."
+      },
+      "run_id": {
+        "binding_kind": "RUNTIME_TYPED_SLOT",
+        "predicate": "For CI use actual run_id/run_attempt; for HTTP/DB use returned request/transaction/receipt identity if contract defines it. Missing field on a read-only response is explicitly not a business receipt."
+      },
+      "candidate_id": {
+        "binding_kind": "OPERATION_SPECIFIC",
+        "predicate": "Exact candidate ZIP/artifact/manifest for governance tools; canonical ID and base_version for entity mutation. No artificial candidate field inserted into existing service receipts."
+      },
+      "commit": {
+        "binding_kind": "BOUND_CODE_SOURCE",
+        "value": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "tree": "e6de3a15047206e10bb52dd4480609f8c3ff48e2",
+        "meaning": "inspected implementation, not a claim that every retained run executed this aggregate commit"
+      },
+      "artifact": {
+        "binding_kind": "TYPED_DIGEST_SLOT",
+        "predicate": "Preserve actual returned artifact/source manifest digest when produced; read-only service results do not mint release artifacts."
+      },
+      "gate": {
+        "binding_kind": "SOURCE_DEFINED",
+        "value": [
+          "scan_repository",
+          "scan_github"
+        ],
+        "meaning": "actual selected handler/RPC or four exact ZIP gates, not invented global stage IDs"
+      },
+      "result": {
+        "binding_kind": "EXISTING_RESULT_CONTRACT",
+        "predicate": "未扫描/页不足/未知保留为debt，不冒称complete"
+      },
+      "timestamp": {
+        "binding_kind": "PRODUCER_TIMESTAMP_SLOT",
+        "predicate": "Use actual producer timestamp; do not populate with preparation time as proof of execution"
+      },
+      "evidence_references": [],
+      "authority_effect": "EVIDENCE_ONLY; does not issue runtime grant, ArchitectureAcceptance, Freeze, merge or deploy authorization",
+      "scope": "机器路径/package/workflow/schema/namespace等受管范围",
+      "source_refs": [
+        {
+          "source_id": "scripts/clued-naming-surface-inventory.py",
+          "sha256": "9ff7dc893b865a7736d6d9ffbe6f908c15f9c418e10a0602ae6fd33eedb8f81e",
+          "pointer": ""
+        },
+        {
+          "source_id": "scripts/clued-naming-surface-inventory.py",
+          "sha256": "9ff7dc893b865a7736d6d9ffbe6f908c15f9c418e10a0602ae6fd33eedb8f81e",
+          "pointer": ""
+        }
+      ],
+      "retained_execution_evidence": {
+        "grade": "CURRENT_ACTUAL_CI_EXECUTION_AND_REGRESSION_EVIDENCE",
+        "run": {
+          "source_id": "current-ci-run-binding",
+          "sha256": "9ce45d5526abbcac641c88ecea3d29d20f30e0ce97c953ff1740e65cd5707657",
+          "pointer": ""
+        },
+        "manifest": {
+          "source_id": "current-ci/NamingSurfaceInventoryManifest.json",
+          "sha256": "e23e6f69aaeab09e6085a9b4089db5ee0f13acd8c38c7f2dc76c2b21ef46c596",
+          "pointer": ""
+        },
+        "generation": {
+          "source_id": "current-ci/GenerationResult.json",
+          "sha256": "f1a8382677ab5f9aae62be1a3bc02cf428339a34d07a61248c1f40154ede086c",
+          "pointer": ""
+        },
+        "consolidated": {
+          "source_id": "current-ci/NamingSurfaceInventoryConsolidated.json",
+          "sha256": "2f9ff07305dcba3311cc97e4fc640a23333755b00caad2ccad5257dc38620ea5",
+          "pointer": ""
+        },
+        "checkout": {
+          "source_id": "current-ci/CheckoutNormalizationEvidence.json",
+          "sha256": "fa812be5971a0dc81288bc2ae54377987f846acd30e08e5faa463914030d0e92",
+          "pointer": ""
+        },
+        "source_commit": "40fea9e0fcd4d061946d0523f645c40893fced2b",
+        "scope": "Actual naming generation/consolidation and 71 included regressions; no hosted service runtime claim."
+      }
+    },
+    {
+      "consumer_id": "C17",
+      "receipt_type": "CONSOLIDATED_NAMING_INVENTORY",
+      "producer": [
+        {
+          "repository": "tdoljyj/cross-memory-system",
+          "code_commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+          "code_tree": "e6de3a15047206e10bb52dd4480609f8c3ff48e2",
+          "path": "scripts/clued-naming-inventory-consolidate.py",
+          "symbol": "verify_sources",
+          "line": 166,
+          "source_ref": {
+            "source_id": "scripts/clued-naming-inventory-consolidate.py",
+            "sha256": "69f2fcc2e8c0e2802d7fa08de842345b88d208bec947d3ef4e88ef4c41907026",
+            "pointer": ""
+          },
+          "identity_kind": "EXISTING_CODE_LOCATION_QUALIFIED_BY_HASH; NOT_A_NEW_AUTHORITY_ID"
+        },
+        {
+          "repository": "tdoljyj/cross-memory-system",
+          "code_commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+          "code_tree": "e6de3a15047206e10bb52dd4480609f8c3ff48e2",
+          "path": "scripts/clued-naming-inventory-consolidate.py",
+          "symbol": "consolidate",
+          "line": 237,
+          "source_ref": {
+            "source_id": "scripts/clued-naming-inventory-consolidate.py",
+            "sha256": "69f2fcc2e8c0e2802d7fa08de842345b88d208bec947d3ef4e88ef4c41907026",
+            "pointer": ""
+          },
+          "identity_kind": "EXISTING_CODE_LOCATION_QUALIFIED_BY_HASH; NOT_A_NEW_AUTHORITY_ID"
+        }
+      ],
+      "subject": {
+        "binding_kind": "TYPED_SLOT_OR_RETAINED_EXACT_RUN",
+        "predicate": "Match this consumer operation and exact input/target identity; do not reinterpret an unrelated schema-valid receipt."
+      },
+      "run_id": {
+        "binding_kind": "RUNTIME_TYPED_SLOT",
+        "predicate": "For CI use actual run_id/run_attempt; for HTTP/DB use returned request/transaction/receipt identity if contract defines it. Missing field on a read-only response is explicitly not a business receipt."
+      },
+      "candidate_id": {
+        "binding_kind": "OPERATION_SPECIFIC",
+        "predicate": "Exact candidate ZIP/artifact/manifest for governance tools; canonical ID and base_version for entity mutation. No artificial candidate field inserted into existing service receipts."
+      },
+      "commit": {
+        "binding_kind": "BOUND_CODE_SOURCE",
+        "value": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "tree": "e6de3a15047206e10bb52dd4480609f8c3ff48e2",
+        "meaning": "inspected implementation, not a claim that every retained run executed this aggregate commit"
+      },
+      "artifact": {
+        "binding_kind": "TYPED_DIGEST_SLOT",
+        "predicate": "Preserve actual returned artifact/source manifest digest when produced; read-only service results do not mint release artifacts."
+      },
+      "gate": {
+        "binding_kind": "SOURCE_DEFINED",
+        "value": [
+          "verify_sources",
+          "consolidate"
+        ],
+        "meaning": "actual selected handler/RPC or four exact ZIP gates, not invented global stage IDs"
+      },
+      "result": {
+        "binding_kind": "EXISTING_RESULT_CONTRACT",
+        "predicate": "hash/subject/page/restore state证据错→拒绝；UNKNOWN保持局部"
+      },
+      "timestamp": {
+        "binding_kind": "PRODUCER_TIMESTAMP_SLOT",
+        "predicate": "Use actual producer timestamp; do not populate with preparation time as proof of execution"
+      },
+      "evidence_references": [],
+      "authority_effect": "EVIDENCE_ONLY; does not issue runtime grant, ArchitectureAcceptance, Freeze, merge or deploy authorization",
+      "scope": "scope-bound Supabase/CF/Sites/GitHub retained evidence",
+      "source_refs": [
+        {
+          "source_id": "scripts/clued-naming-inventory-consolidate.py",
+          "sha256": "69f2fcc2e8c0e2802d7fa08de842345b88d208bec947d3ef4e88ef4c41907026",
+          "pointer": ""
+        },
+        {
+          "source_id": "scripts/clued-naming-inventory-consolidate.py",
+          "sha256": "69f2fcc2e8c0e2802d7fa08de842345b88d208bec947d3ef4e88ef4c41907026",
+          "pointer": ""
+        }
+      ],
+      "retained_execution_evidence": {
+        "grade": "CURRENT_ACTUAL_CI_EXECUTION_AND_REGRESSION_EVIDENCE",
+        "run": {
+          "source_id": "current-ci-run-binding",
+          "sha256": "9ce45d5526abbcac641c88ecea3d29d20f30e0ce97c953ff1740e65cd5707657",
+          "pointer": ""
+        },
+        "manifest": {
+          "source_id": "current-ci/NamingSurfaceInventoryManifest.json",
+          "sha256": "e23e6f69aaeab09e6085a9b4089db5ee0f13acd8c38c7f2dc76c2b21ef46c596",
+          "pointer": ""
+        },
+        "generation": {
+          "source_id": "current-ci/GenerationResult.json",
+          "sha256": "f1a8382677ab5f9aae62be1a3bc02cf428339a34d07a61248c1f40154ede086c",
+          "pointer": ""
+        },
+        "consolidated": {
+          "source_id": "current-ci/NamingSurfaceInventoryConsolidated.json",
+          "sha256": "2f9ff07305dcba3311cc97e4fc640a23333755b00caad2ccad5257dc38620ea5",
+          "pointer": ""
+        },
+        "checkout": {
+          "source_id": "current-ci/CheckoutNormalizationEvidence.json",
+          "sha256": "fa812be5971a0dc81288bc2ae54377987f846acd30e08e5faa463914030d0e92",
+          "pointer": ""
+        },
+        "source_commit": "40fea9e0fcd4d061946d0523f645c40893fced2b",
+        "scope": "Actual naming generation/consolidation and 71 included regressions; no hosted service runtime claim."
+      }
+    },
+    {
+      "consumer_id": "C18",
+      "receipt_type": "clued-pre-kernel-public-mcp-gate-receipt/1.1",
+      "producer": [
+        {
+          "repository": "tdoljyj/cross-memory-system",
+          "code_commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+          "code_tree": "e6de3a15047206e10bb52dd4480609f8c3ff48e2",
+          "path": "apps/clued-cloud/evals/public-mcp/gate-receipt.mjs",
+          "symbol": "FILE_ENTRYPOINT",
+          "line": 1,
+          "source_ref": {
+            "source_id": "apps/clued-cloud/evals/public-mcp/gate-receipt.mjs",
+            "sha256": "9d1574e361a8fdd550578763755933e4d250a8076d55b1223ca9dfc40c1ec0c0",
+            "pointer": ""
+          },
+          "identity_kind": "EXISTING_CODE_LOCATION_QUALIFIED_BY_HASH; NOT_A_NEW_AUTHORITY_ID"
+        },
+        {
+          "repository": "tdoljyj/cross-memory-system",
+          "code_commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+          "code_tree": "e6de3a15047206e10bb52dd4480609f8c3ff48e2",
+          "path": ".github/workflows/public-mcp-gate-receipt.yml",
+          "symbol": "FILE_ENTRYPOINT",
+          "line": 1,
+          "source_ref": {
+            "source_id": ".github/workflows/public-mcp-gate-receipt.yml",
+            "sha256": "4e3784db5984933d859cd961f010c4fb2306eaf6b871cdd438eeb2cff9154ce8",
+            "pointer": ""
+          },
+          "identity_kind": "EXISTING_CODE_LOCATION_QUALIFIED_BY_HASH; NOT_A_NEW_AUTHORITY_ID"
+        }
+      ],
+      "subject": {
+        "binding_kind": "TYPED_SLOT_OR_RETAINED_EXACT_RUN",
+        "predicate": "Match this consumer operation and exact input/target identity; do not reinterpret an unrelated schema-valid receipt."
+      },
+      "run_id": {
+        "binding_kind": "RUNTIME_TYPED_SLOT",
+        "predicate": "For CI use actual run_id/run_attempt; for HTTP/DB use returned request/transaction/receipt identity if contract defines it. Missing field on a read-only response is explicitly not a business receipt."
+      },
+      "candidate_id": {
+        "binding_kind": "OPERATION_SPECIFIC",
+        "predicate": "Exact candidate ZIP/artifact/manifest for governance tools; canonical ID and base_version for entity mutation. No artificial candidate field inserted into existing service receipts."
+      },
+      "commit": {
+        "binding_kind": "BOUND_CODE_SOURCE",
+        "value": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "tree": "e6de3a15047206e10bb52dd4480609f8c3ff48e2",
+        "meaning": "inspected implementation, not a claim that every retained run executed this aggregate commit"
+      },
+      "artifact": {
+        "binding_kind": "TYPED_DIGEST_SLOT",
+        "predicate": "Preserve actual returned artifact/source manifest digest when produced; read-only service results do not mint release artifacts."
+      },
+      "gate": {
+        "binding_kind": "SOURCE_DEFINED",
+        "value": [
+          "evaluateCheckRuns",
+          "buildReceipt"
+        ],
+        "meaning": "actual selected handler/RPC or four exact ZIP gates, not invented global stage IDs"
+      },
+      "result": {
+        "binding_kind": "EXISTING_RESULT_CONTRACT",
+        "predicate": "missing/running/failure/skipped/neutral一律不可PASS"
+      },
+      "timestamp": {
+        "binding_kind": "PRODUCER_TIMESTAMP_SLOT",
+        "predicate": "Use actual producer timestamp; do not populate with preparation time as proof of execution"
+      },
+      "evidence_references": [
+        "artifacts/clued-validation/public-mcp/a13/c2b18063-20260829T075913Z/gate-receipt.json"
+      ],
+      "authority_effect": "EVIDENCE_ONLY; does not issue runtime grant, ArchitectureAcceptance, Freeze, merge or deploy authorization",
+      "scope": "public-mcp-protocol/behavior、gitleaks、trivy",
+      "source_refs": [
+        {
+          "source_id": "apps/clued-cloud/evals/public-mcp/gate-receipt.mjs",
+          "sha256": "9d1574e361a8fdd550578763755933e4d250a8076d55b1223ca9dfc40c1ec0c0",
+          "pointer": ""
+        },
+        {
+          "source_id": ".github/workflows/public-mcp-gate-receipt.yml",
+          "sha256": "4e3784db5984933d859cd961f010c4fb2306eaf6b871cdd438eeb2cff9154ce8",
+          "pointer": ""
+        }
+      ],
+      "retained_execution_evidence": {
+        "grade": "HISTORICAL_RECEIPT_PRODUCER_EVIDENCE_PARTIAL",
+        "history_refs": [
+          "artifacts/clued-validation/public-mcp/a13/c2b18063-20260829T075913Z/gate-receipt.json"
+        ],
+        "source_reuse": "gate-receipt.mjs unchanged; public-mcp-gate-receipt.yml differs from c2b18063",
+        "scope": "Existing old receipt can demonstrate exact original four-check response; not current-workflow enforcement or protected merge."
+      }
+    }
+  ]
+}

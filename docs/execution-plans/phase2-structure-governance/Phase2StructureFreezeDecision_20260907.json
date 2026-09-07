@@ -1,0 +1,167 @@
+{
+  "type": "Phase2StructureFreezeDecision",
+  "decision_id": "CLUED_PHASE2_STRUCTURE_FREEZE_20260907",
+  "state": "FROZEN",
+  "issued_at": "2026-09-07T10:39:55.278623+00:00",
+  "issuer": "Codex@DESK-W-591 under existing explicit user execution and accepting delegation",
+  "delegation": {
+    "path": "ExecutionDelegation_20260907.json",
+    "sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8"
+  },
+  "architecture_acceptance_ref": {
+    "path": "ArchitectureConstitutionAcceptanceDecision_20260907.json",
+    "sha256": "f2ec1d6cf3afbd80d415c65c7bc0f71d86d606bda9031a174d92517e421ac246"
+  },
+  "architecture_acceptance_digest": "f2ec1d6cf3afbd80d415c65c7bc0f71d86d606bda9031a174d92517e421ac246",
+  "exact_subject": {
+    "path": "step09-review-20260907/ReviewSubject_20260907.r2.json",
+    "sha256": "741cf1fedefa35cec82e9f55bcf53bf2ce29fa6253fd68da2133ab0c2d724cbf"
+  },
+  "subject_sha256": "741cf1fedefa35cec82e9f55bcf53bf2ce29fa6253fd68da2133ab0c2d724cbf",
+  "candidate": "CLUED_ARCHITECTURE_CONVERGENCE_V0_2_5",
+  "reviewed_commit": "039cfea5a0d91a4e4e02702f6cfdfe9379978b1e",
+  "reviewed_tree": "cd87a2384ed330bdc1186f6db21d9978e414ba2e",
+  "direct_predecessor": {
+    "axis": "architecture",
+    "version": "v0.2.4",
+    "filename": "Clued_Phase2_三项设计候选_完整审查包_v0.2.4_20260905.zip",
+    "bytes": 168491377,
+    "sha256": "4aae92c37813772e983a14537be52ca8b428af666e644b72d40084ccd592d68b",
+    "members": 440
+  },
+  "architecture_version": "v0.2.5",
+  "delivery_revision": "v0.2.7.1",
+  "actual_pre_freeze_repository_commit": "4686b74e06ec13a7a09d9051e63056aa53d4ecb4",
+  "original28_adjudication": {
+    "path": "step11-adjudication-20260907/Adjudication.json",
+    "sha256": "67137d1eb5726efb1035aa19d26cb6366b17664c1a90dc81c9ed797d72d1e355"
+  },
+  "adopted_binding_envelope": {
+    "path": "step11-adjudication-20260907/Adjudication.json",
+    "sha256": "67137d1eb5726efb1035aa19d26cb6366b17664c1a90dc81c9ed797d72d1e355",
+    "pointer": "/freeze_binding_envelope"
+  },
+  "frozen_contract_selections": {
+    "canonical_namespaces_ownership_domain_registry": {
+      "path": "step11-adjudication-20260907/Adjudication.json",
+      "sha256": "67137d1eb5726efb1035aa19d26cb6366b17664c1a90dc81c9ed797d72d1e355",
+      "pointer": "/freeze_binding_envelope/canonical_namespaces_ownership_domain_registry"
+    },
+    "version_vocabulary_logical_representation_copy_rules": {
+      "path": "step11-adjudication-20260907/Adjudication.json",
+      "sha256": "67137d1eb5726efb1035aa19d26cb6366b17664c1a90dc81c9ed797d72d1e355",
+      "pointer": "/freeze_binding_envelope/version_vocabulary_logical_representation_copy_rules"
+    },
+    "typed_receipt_authorization_consumer_contract": {
+      "path": "step11-adjudication-20260907/Adjudication.json",
+      "sha256": "67137d1eb5726efb1035aa19d26cb6366b17664c1a90dc81c9ed797d72d1e355",
+      "pointer": "/freeze_binding_envelope/typed_receipt_authorization_consumer_contract"
+    },
+    "deterministic_projection_contract": {
+      "path": "step11-adjudication-20260907/Adjudication.json",
+      "sha256": "67137d1eb5726efb1035aa19d26cb6366b17664c1a90dc81c9ed797d72d1e355",
+      "pointer": "/freeze_binding_envelope/deterministic_projection_contract"
+    },
+    "source_preserving_logical_map": {
+      "path": "step11-adjudication-20260907/Adjudication.json",
+      "sha256": "67137d1eb5726efb1035aa19d26cb6366b17664c1a90dc81c9ed797d72d1e355",
+      "pointer": "/freeze_binding_envelope/source_preserving_logical_map"
+    },
+    "old_to_new_history_resolution": {
+      "path": "step11-adjudication-20260907/Adjudication.json",
+      "sha256": "67137d1eb5726efb1035aa19d26cb6366b17664c1a90dc81c9ed797d72d1e355",
+      "pointer": "/freeze_binding_envelope/old_to_new_history_resolution"
+    },
+    "g1_authority_selection": {
+      "path": "step11-adjudication-20260907/Adjudication.json",
+      "sha256": "67137d1eb5726efb1035aa19d26cb6366b17664c1a90dc81c9ed797d72d1e355",
+      "pointer": "/freeze_binding_envelope/g1_authority_selection"
+    },
+    "typed_version_vector_selection": {
+      "path": "step11-adjudication-20260907/Adjudication.json",
+      "sha256": "67137d1eb5726efb1035aa19d26cb6366b17664c1a90dc81c9ed797d72d1e355",
+      "pointer": "/freeze_binding_envelope/typed_version_vector_selection"
+    },
+    "required_check_selection": {
+      "path": "step11-adjudication-20260907/Adjudication.json",
+      "sha256": "67137d1eb5726efb1035aa19d26cb6366b17664c1a90dc81c9ed797d72d1e355",
+      "pointer": "/freeze_binding_envelope/required_check_selection"
+    }
+  },
+  "migration_execution_inputs_ref": {
+    "path": "step12-migration-20260907/ExecutionInputs.candidate.json",
+    "sha256": "37a6909deedae17dbfe97e844d8ec596c5de46e73c3cefafd4136008d3f3dcec"
+  },
+  "migration_executor_ref": {
+    "path": "step12-migration-20260907/migration_execute.py",
+    "sha256": "15ed103a96943125978e9134a8322c6195f62fe24d3e2e070a8ad538b17ea2fe"
+  },
+  "frozen_target_map": {
+    "selection": {
+      "path": "step12-migration-20260907/ExecutionInputs.candidate.json",
+      "sha256": "37a6909deedae17dbfe97e844d8ec596c5de46e73c3cefafd4136008d3f3dcec",
+      "pointer": "/changes"
+    },
+    "source_map_rows": 23,
+    "original_operations": 29,
+    "changed_paths": 64,
+    "immutable_locks": {
+      "path": "step12-migration-20260907/ExecutionInputs.candidate.json",
+      "sha256": "37a6909deedae17dbfe97e844d8ec596c5de46e73c3cefafd4136008d3f3dcec",
+      "pointer": "/immutable_input_locks"
+    },
+    "immutable_lock_count": 39,
+    "payload_files": 45,
+    "unresolved_final_targets": 0,
+    "equivalence": "The exact changes and all original map-row dispositions form the unique FrozenTargetMap/CurrentToTargetMap; candidate source bytes remain unchanged and gain only this scoped decision effect."
+  },
+  "current_to_target_map": {
+    "path": "step12-migration-20260907/MigrationPlan.candidate.json",
+    "sha256": "d8e1b8bb5058e9b2e4be9b4c0e836ad101eeefe7a839e6bc3ac5338f8b8310d0",
+    "pointer": "/all_23_map_row_dispositions"
+  },
+  "g1_authority_branch": "NO_FULL_G1_CUTOVER; v3.3 pre-G1 normative contract and Clued-v1.6 product axis remain separate; executable_authority=false",
+  "frozen_effect": [
+    "Freeze the exact scoped naming/ownership/identity/typed-contract/projection rules and selected repository/DCP logical targets.",
+    "Permit the already authorized Step12 executor to apply only the 64 exact paths after its actual source/target preflight.",
+    "Freeze the required-check design and typed-vector selection, retaining actual enforcement and signed proof at Steps15/18."
+  ],
+  "not_established": [
+    "Physical migration completed",
+    "Old write paths sealed",
+    "Production or publication enforcement",
+    "Fresh four Gate results",
+    "Canonical Semantic No-Change result",
+    "Non-bypass proof",
+    "Naming Integrity closeout",
+    "Skill qualification or release"
+  ],
+  "retained_obligations": {
+    "path": "step11-adjudication-20260907/Adjudication.json",
+    "sha256": "67137d1eb5726efb1035aa19d26cb6366b17664c1a90dc81c9ed797d72d1e355",
+    "pointer": "/rows"
+  },
+  "stage_order": "12 actual migration -> 13 consumer wiring -> 14 sealing -> 15 enforcement -> 16 fresh four gates -> 17 no-change -> 18 non-bypass -> 19 closeout -> 20 Developer Skill -> 21 User Skill",
+  "source_and_target_check_at_issuance": {
+    "changed_paths_before_match": 64,
+    "immutable_sources_match": 39,
+    "exact_payloads_match": 45,
+    "physical_mutation_performed": false
+  },
+  "protected_scope": [
+    "memory/ read-only business snapshot",
+    "apps/ and existing hosted runtime bindings",
+    "original artifacts and existing publication pointers"
+  ],
+  "recovery": {
+    "rule": "Persist all originals before mutation; rollback only if each affected path is still its original or recorded after-state. Preserve all transaction evidence.",
+    "transaction_store": "Outside this repository; preserve all original bytes and write-ahead journal before actual mutation."
+  },
+  "projection_status_scope": "Frozen projections retain the exact selected preparation/source states; actual issued decisions and later installed/publication states are separate bound records. This decision does not rewrite historical candidate or pending source bytes.",
+  "invalidation": {
+    "path": "AcceptanceAndInvalidation.md",
+    "sha256": "f2aed48ed74e688bfe280d3fa896243cc7907905fafcc467706a276367472f27"
+  },
+  "new_business_or_runtime_authority": false,
+  "next_step": 12
+}

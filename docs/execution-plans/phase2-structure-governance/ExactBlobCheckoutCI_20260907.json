@@ -1,0 +1,28 @@
+{
+  "record_kind": "ACTUAL_CI_VERIFICATION_AFTER_CHECKOUT_FIX",
+  "run": {
+    "conclusion": "success",
+    "createdAt": "2026-09-07T09:20:44Z",
+    "databaseId": 34105480323,
+    "headSha": "40fea9e0fcd4d061946d0523f645c40893fced2b",
+    "status": "completed",
+    "updatedAt": "2026-09-07T09:21:20Z",
+    "url": "https://github.com/tdoljyj/cross-memory-system/actions/runs/34105480323"
+  },
+  "artifact": {
+    "id": 10012182337,
+    "name": "phase2-naming-surface-inventory-40fea9e0fcd4d061946d0523f645c40893fced2b",
+    "size_in_bytes": 6596618,
+    "digest": "sha256:582503968bdca0508a37d25d1874726ace60c0fa6a12310fa0ce337c7b7068cc",
+    "expired": false,
+    "expires_at": "2026-12-06T09:20:44Z"
+  },
+  "download": "Downloaded and extracted using gh run download; manifest digest matches actual CI log. Original ZIP bytes were not retained in this checkpoint.",
+  "manifest_sha256": "e23e6f69aaeab09e6085a9b4089db5ee0f13acd8c38c7f2dc76c2b21ef46c596",
+  "tests": {
+    "count": 71,
+    "source": "Actual CI log: Ran 71 tests in 1.062s; completeness regression step success"
+  },
+  "previous_failed_run": 34103173736,
+  "claim": "The corrected workflow succeeds on exact commit 40fea9e. Prior Step 3 scoped review remains attached to its original subject; this result is not Architecture Acceptance or naming closeout."
+}

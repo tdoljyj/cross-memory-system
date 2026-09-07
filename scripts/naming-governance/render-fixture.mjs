@@ -1,0 +1,12 @@
+import {mkdirSync, readFileSync, writeFileSync} from 'node:fs';
+import {resolve, relative, dirname} from 'node:path';
+import {fileURLToPath, pathToFileURL} from 'node:url';
+const [generator, bindingPath, sourceRoot, outputRoot, fixtureRoot] = process.argv.slice(2);
+if (!fixtureRoot) throw Error('explicit isolated fixture root required');
+const allowed = resolve(fixtureRoot);
+if (!relative(allowed, resolve(outputRoot)) || relative(allowed, resolve(outputRoot)).startsWith('..')) throw Error('fixture output escape');
+const {buildModel, renderOutputs} = await import(pathToFileURL(generator));
+const model = buildModel(JSON.parse(readFileSync(bindingPath, 'utf8')), sourceRoot);
+const outputs = renderOutputs(model, readFileSync(resolve(sourceRoot, model.sources['historical-status'].path)));
+mkdirSync(outputRoot, {recursive:true});
+for (const [name, bytes] of Object.entries(outputs)) writeFileSync(resolve(outputRoot, name), bytes);

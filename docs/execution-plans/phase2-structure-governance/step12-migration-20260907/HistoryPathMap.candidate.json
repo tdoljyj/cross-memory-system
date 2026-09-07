@@ -1,0 +1,310 @@
+{
+  "source_commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+  "entries": [
+    {
+      "original": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "ADR-CLD-001-LKG-Max-Age-One-Hour.md",
+        "git_blob": "2c86afc5008e85036fb93a20b6aea7bbd5036960",
+        "sha256": "5663f2cad660a75765170cc5199edfcc5c99329344e7561145bd01c8be5f0485",
+        "bytes": 3454
+      },
+      "target": "docs/history/ADR-CLD-001-LKG-Max-Age-One-Hour.md",
+      "target_sha256": "5663f2cad660a75765170cc5199edfcc5c99329344e7561145bd01c8be5f0485",
+      "relative_reference_base": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "ADR-CLD-001-LKG-Max-Age-One-Hour.md"
+      },
+      "original_text_changed": false
+    },
+    {
+      "original": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "ADR-CLD-002-LOCKED-Recovery-Transition.md",
+        "git_blob": "3bd65320b4c255b3bf5abae3f0a4ab269642e83d",
+        "sha256": "bbb465429cf20945b60ce7ab65a3781e9a3db6b3fedbef5dc24ff7e3acd1fdec",
+        "bytes": 5060
+      },
+      "target": "docs/history/ADR-CLD-002-LOCKED-Recovery-Transition.md",
+      "target_sha256": "bbb465429cf20945b60ce7ab65a3781e9a3db6b3fedbef5dc24ff7e3acd1fdec",
+      "relative_reference_base": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "ADR-CLD-002-LOCKED-Recovery-Transition.md"
+      },
+      "original_text_changed": false
+    },
+    {
+      "original": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "ADR-CLD-003-LKG-Policy-Profiles.md",
+        "git_blob": "1c73c11d97af01ed8a54a5efb474c99985c192a7",
+        "sha256": "3e030f7d0df898792dca815da25de77bca6e6ef12d8ad66c518b2c2d7228c070",
+        "bytes": 5549
+      },
+      "target": "docs/history/ADR-CLD-003-LKG-Policy-Profiles.md",
+      "target_sha256": "3e030f7d0df898792dca815da25de77bca6e6ef12d8ad66c518b2c2d7228c070",
+      "relative_reference_base": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "ADR-CLD-003-LKG-Policy-Profiles.md"
+      },
+      "original_text_changed": false
+    },
+    {
+      "original": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "ADR-MIV-005A-001-Relevance-Threshold-and-Metric-v2.md",
+        "git_blob": "267a0a8cf535c31fa8e7eb1322375bfa44586b05",
+        "sha256": "86dce59f2269cbed5d155f5d18a32a832b86ee9bcdfae761b0bd7d5db8cdf64a",
+        "bytes": 25667
+      },
+      "target": "docs/history/ADR-MIV-005A-001-Relevance-Threshold-and-Metric-v2.md",
+      "target_sha256": "86dce59f2269cbed5d155f5d18a32a832b86ee9bcdfae761b0bd7d5db8cdf64a",
+      "relative_reference_base": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "ADR-MIV-005A-001-Relevance-Threshold-and-Metric-v2.md"
+      },
+      "original_text_changed": false
+    },
+    {
+      "original": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "ADR-MIV-005B-001-Lexical-Feasibility-Audit.md",
+        "git_blob": "e82ee32466f3a83bdc74a84d85f3af3c6856c5e6",
+        "sha256": "9fc3d13b8470823c60087975920bea87b56f0ff2ccd9c6b9fdd6cc8469028c2d",
+        "bytes": 7845
+      },
+      "target": "docs/history/ADR-MIV-005B-001-Lexical-Feasibility-Audit.md",
+      "target_sha256": "9fc3d13b8470823c60087975920bea87b56f0ff2ccd9c6b9fdd6cc8469028c2d",
+      "relative_reference_base": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "ADR-MIV-005B-001-Lexical-Feasibility-Audit.md"
+      },
+      "original_text_changed": false
+    },
+    {
+      "original": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "ADR-MIV-005B-002-Local-Embedding-Retrieval-Decision.md",
+        "git_blob": "c704a1d599e7c5e6918fb9c760e5c8bde6c8b722",
+        "sha256": "80755b77c5a2632949b935ad3e50b8cdc172c1db48008eff796214e118b704d9",
+        "bytes": 21497
+      },
+      "target": "docs/history/ADR-MIV-005B-002-Local-Embedding-Retrieval-Decision.md",
+      "target_sha256": "80755b77c5a2632949b935ad3e50b8cdc172c1db48008eff796214e118b704d9",
+      "relative_reference_base": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "ADR-MIV-005B-002-Local-Embedding-Retrieval-Decision.md"
+      },
+      "original_text_changed": false
+    },
+    {
+      "original": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "ADR-MIV-006-001-Project-Scope-Isolation.md",
+        "git_blob": "92e1c713673c5f74f42dd4821a2db1dfd7f2e53c",
+        "sha256": "6f30c7601f95410c7d6d6e614bfa05defdcd4cc8b202203099a5ae173e79b679",
+        "bytes": 13615
+      },
+      "target": "docs/history/ADR-MIV-006-001-Project-Scope-Isolation.md",
+      "target_sha256": "6f30c7601f95410c7d6d6e614bfa05defdcd4cc8b202203099a5ae173e79b679",
+      "relative_reference_base": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "ADR-MIV-006-001-Project-Scope-Isolation.md"
+      },
+      "original_text_changed": false
+    },
+    {
+      "original": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "Clued-v0.1-Reference-Implementation-Report.md",
+        "git_blob": "9cc7a7f91f85ca497bd0a9da7445919801cbd2a5",
+        "sha256": "d3725396f8edfea08a68b6bb768afae7ff1d5baac83dedbcb70e96c1584eb1ff",
+        "bytes": 19177
+      },
+      "target": "docs/history/Clued-v0.1-Reference-Implementation-Report.md",
+      "target_sha256": "d3725396f8edfea08a68b6bb768afae7ff1d5baac83dedbcb70e96c1584eb1ff",
+      "relative_reference_base": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "Clued-v0.1-Reference-Implementation-Report.md"
+      },
+      "original_text_changed": false
+    },
+    {
+      "original": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "Clued-v0.1-实施与复用文档.md",
+        "git_blob": "07de53c27c4a99d0133cdec83c694e73c79c224b",
+        "sha256": "7e57ac9e595fe697188b2a1c8da07f21f3c84bbe5128eb2ba9d3371ea0a0f434",
+        "bytes": 14090
+      },
+      "target": "docs/history/Clued-v0.1-实施与复用文档.md",
+      "target_sha256": "7e57ac9e595fe697188b2a1c8da07f21f3c84bbe5128eb2ba9d3371ea0a0f434",
+      "relative_reference_base": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "Clued-v0.1-实施与复用文档.md"
+      },
+      "original_text_changed": false
+    },
+    {
+      "original": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "Clued-v0.2.0-LKG-Policy-Report.md",
+        "git_blob": "330272872aaa30b831cd2d2f23cd00b1ee08ccd9",
+        "sha256": "d348ad186fb6670882f8423c2e6d7ab3c38374a1a3ad48bf920558ed03bf2e5c",
+        "bytes": 11866
+      },
+      "target": "docs/history/Clued-v0.2.0-LKG-Policy-Report.md",
+      "target_sha256": "d348ad186fb6670882f8423c2e6d7ab3c38374a1a3ad48bf920558ed03bf2e5c",
+      "relative_reference_base": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "Clued-v0.2.0-LKG-Policy-Report.md"
+      },
+      "original_text_changed": false
+    },
+    {
+      "original": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "Clued_v0.1_智能体安装授权弱网降级与卸载协议.md",
+        "git_blob": "01344edd696c48561eca3996016bd87f6ea05f92",
+        "sha256": "0869cb7b8a850ea400e991fd0d4a23c4babfbf5954cb322b27b5c7798df28ae4",
+        "bytes": 56505
+      },
+      "target": "docs/history/Clued_v0.1_智能体安装授权弱网降级与卸载协议.md",
+      "target_sha256": "0869cb7b8a850ea400e991fd0d4a23c4babfbf5954cb322b27b5c7798df28ae4",
+      "relative_reference_base": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "Clued_v0.1_智能体安装授权弱网降级与卸载协议.md"
+      },
+      "original_text_changed": false
+    },
+    {
+      "original": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "Cross-Memory-System-vNext-2.1-Gate2R-MIV005B-Audit-Report.md",
+        "git_blob": "26d59a558a739fc0cc04b6e36ffb103765b183d1",
+        "sha256": "5f3aec42d02d815a93a65c302ea867904e5c0fb1b704949fc8aad30db86e8fa5",
+        "bytes": 16021
+      },
+      "target": "docs/history/Cross-Memory-System-vNext-2.1-Gate2R-MIV005B-Audit-Report.md",
+      "target_sha256": "5f3aec42d02d815a93a65c302ea867904e5c0fb1b704949fc8aad30db86e8fa5",
+      "relative_reference_base": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "Cross-Memory-System-vNext-2.1-Gate2R-MIV005B-Audit-Report.md"
+      },
+      "original_text_changed": false
+    },
+    {
+      "original": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "Sprint3专项审计与封版报告-vNext-1.3.md",
+        "git_blob": "af0a6628cc9a695411a0664ffdefc7c23bc6975e",
+        "sha256": "155d7d5cd92d7bad533db1939c0a3690feb68016055e9b246738d89b527a7e82",
+        "bytes": 7699
+      },
+      "target": "docs/history/Sprint3专项审计与封版报告-vNext-1.3.md",
+      "target_sha256": "155d7d5cd92d7bad533db1939c0a3690feb68016055e9b246738d89b527a7e82",
+      "relative_reference_base": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "Sprint3专项审计与封版报告-vNext-1.3.md"
+      },
+      "original_text_changed": false
+    },
+    {
+      "original": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "vNext-2.0-实施冲突记录.md",
+        "git_blob": "32cdbf3cf5945e337a9aab7d63cc800bf4d14bdb",
+        "sha256": "a030b270e80852d820367d393fa482939e738e91ddc46053f7356f584cc24f80",
+        "bytes": 5620
+      },
+      "target": "docs/history/vNext-2.0-实施冲突记录.md",
+      "target_sha256": "a030b270e80852d820367d393fa482939e738e91ddc46053f7356f584cc24f80",
+      "relative_reference_base": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "vNext-2.0-实施冲突记录.md"
+      },
+      "original_text_changed": false
+    },
+    {
+      "original": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "代码级Gap审计报告-vNext-1.3-2026-08-16.md",
+        "git_blob": "4c569c4ebf0e1a67ed24c7e885d6f79071d3473d",
+        "sha256": "1bb27a0cb74e5d0dd64713ecfc7c2b9cc209d9a94fc1f03714d16043b34cb736",
+        "bytes": 15658
+      },
+      "target": "docs/history/代码级Gap审计报告-vNext-1.3-2026-08-16.md",
+      "target_sha256": "1bb27a0cb74e5d0dd64713ecfc7c2b9cc209d9a94fc1f03714d16043b34cb736",
+      "relative_reference_base": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "代码级Gap审计报告-vNext-1.3-2026-08-16.md"
+      },
+      "original_text_changed": false
+    },
+    {
+      "original": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "技术评估报告-vNext-1.3-DSH-2026-08-16.md",
+        "git_blob": "3286f32cdf5cbb6cdc98c8fc221b80c7d42195d6",
+        "sha256": "b10ecf3d6179985de9b18ed246b5a727cb1adf463a925191d85a3e178cbce78c",
+        "bytes": 39809
+      },
+      "target": "docs/history/技术评估报告-vNext-1.3-DSH-2026-08-16.md",
+      "target_sha256": "b10ecf3d6179985de9b18ed246b5a727cb1adf463a925191d85a3e178cbce78c",
+      "relative_reference_base": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "技术评估报告-vNext-1.3-DSH-2026-08-16.md"
+      },
+      "original_text_changed": false
+    },
+    {
+      "original": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "架构基线文档-vNext-1.3.md",
+        "git_blob": "b5933a7d4a82a77150faab1928e840395a0fab06",
+        "sha256": "12475fe2e9f03238b182fd5a596b82d5b227ad8c22e083eb1ca990a9f6ac501c",
+        "bytes": 46858
+      },
+      "target": "docs/history/架构基线文档-vNext-1.3.md",
+      "target_sha256": "12475fe2e9f03238b182fd5a596b82d5b227ad8c22e083eb1ca990a9f6ac501c",
+      "relative_reference_base": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "架构基线文档-vNext-1.3.md"
+      },
+      "original_text_changed": false
+    },
+    {
+      "original": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "架构基线文档-vNext-2.0.md",
+        "git_blob": "ed1640d263d28a60896af639f41879cb825c33ba",
+        "sha256": "528b026db8507c0ef9bca58f080d6e22b996ca5a1b91679aa117efacd829c8ed",
+        "bytes": 13671
+      },
+      "target": "docs/history/架构基线文档-vNext-2.0.md",
+      "target_sha256": "528b026db8507c0ef9bca58f080d6e22b996ca5a1b91679aa117efacd829c8ed",
+      "relative_reference_base": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "架构基线文档-vNext-2.0.md"
+      },
+      "original_text_changed": false
+    },
+    {
+      "original": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "配置手册与数据包-v4.md",
+        "git_blob": "e5ee584fdad317330bf70237129a6a363a5bbeb9",
+        "sha256": "ac24b4f23dd34bd03b6a711e5b498a1716c7236fb94adfebe61f08422b352072",
+        "bytes": 29461
+      },
+      "target": "docs/history/配置手册与数据包-v4.md",
+      "target_sha256": "ac24b4f23dd34bd03b6a711e5b498a1716c7236fb94adfebe61f08422b352072",
+      "relative_reference_base": {
+        "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+        "path": "配置手册与数据包-v4.md"
+      },
+      "original_text_changed": false
+    }
+  ],
+  "link_rule": "Resolve relative references against original commit+original path, then use mapped destination when present; do not rewrite archived document bytes."
+}

@@ -1,0 +1,41 @@
+{
+  "schema": "clued.phase2-v027-candidate-source/v2",
+  "binding_id": "CLUED_PHASE2_V0271_CANDIDATE_SOURCE_BINDING_20260906",
+  "candidate": {
+    "filename": "Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip",
+    "bytes": 246612118,
+    "members": 960,
+    "sha256": "6e51374a6caedb4f84d2b6bb9fe05cd695b25732833f9d0217c341f17e1c1649"
+  },
+  "canonical_source": {
+    "provider": "github_release_asset",
+    "repository": "tdoljyj/cross-memory-system",
+    "release_id": 383599566,
+    "tag": "phase2-v0271-candidate-20260906",
+    "target_commitish": "phase2-v027-validation",
+    "prerelease": true,
+    "asset_id": 547244810,
+    "asset_name": "Clued_Phase2_._._v0.2.7.1_Manifest._20260906.zip",
+    "asset_bytes": 246612118,
+    "asset_digest": "sha256:6e51374a6caedb4f84d2b6bb9fe05cd695b25732833f9d0217c341f17e1c1649",
+    "private_repository": true
+  },
+  "retained_library_copy": {
+    "provider": "chatgpt_library",
+    "file_id": "file_000000002a0081faa87b33a8c495cdaf",
+    "library_file_id": "libfile_166b5a53113881918230fca80b49027c",
+    "library_path": "/Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip"
+  },
+  "ci_transport": {
+    "status": "READY_PRIVATE_GITHUB_RELEASE_ASSET",
+    "method": "gh_release_download",
+    "authentication": "GITHUB_TOKEN",
+    "required_permissions": "contents: read",
+    "download_asset_id": 547244810,
+    "download_asset_name": "Clued_Phase2_._._v0.2.7.1_Manifest._20260906.zip",
+    "rename_after_download_to_candidate_filename": true,
+    "public_fallback_allowed": false
+  },
+  "scope": "candidate verification only",
+  "authority_effect": "NONE"
+}

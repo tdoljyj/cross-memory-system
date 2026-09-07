@@ -1,0 +1,25 @@
+{
+  "type": "AttestationSourceDigestScannerDisposition",
+  "source_commit": "22c085d4f63c41629cdf96f68268c12b536bb872",
+  "attestation_commit_reviewed": "99f615bdb924c510e62c41f3510cd76acb6ce2fb",
+  "policy_sha256": "15f3b467da195c8dee6d831d3ac4d7915cf56a8e950d0796023b7b1fa623959a",
+  "reported_findings": 2,
+  "verified": [
+    {
+      "path": "apps/clued-cloud/supabase/migrations/202608250005_oauth_mcp_binding.sql",
+      "classification": "EXACT_RECOMPUTED_SOURCE_INTEGRITY_DIGEST_NOT_CREDENTIAL",
+      "matches_pinned_source_bytes": true
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260828125643_clued_log_card_api_contract_v12.sql",
+      "classification": "EXACT_RECOMPUTED_SOURCE_INTEGRITY_DIGEST_NOT_CREDENTIAL",
+      "matches_pinned_source_bytes": true
+    }
+  ],
+  "exact_fingerprint": "99f615bdb924c510e62c41f3510cd76acb6ce2fb:docs/execution-plans/phase2-structure-governance/step18-publication-20260907/Policy.json:generic-api-key:1",
+  "scope": "Only this immutable historical policy commit/line; no future policy/rule/path exemption. Existing qualified source and installed policy bytes remain unchanged.",
+  "ignore_before_sha256": "e4fa58ff14babcb91056d651fb3ff40c88be908e317b3f88f3e0bc679a08a6e8",
+  "ignore_after_sha256": "4c54fb77de1764219d2feace5646e692bb8cccab35173050c194689828ed712c",
+  "reviewer": "Codex@DESK-W-591",
+  "not_a_new_candidate_acceptance": true
+}

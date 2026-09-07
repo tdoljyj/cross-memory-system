@@ -1,0 +1,22 @@
+{
+  "status": "VERIFIED",
+  "project_id": "gfnfxbphsdtayoaxitly",
+  "rows": 1156,
+  "unique_identities": 1156,
+  "rows_per_page": [
+    150,
+    150,
+    150,
+    150,
+    150,
+    150,
+    150,
+    106
+  ],
+  "identity_set_md5_recomputed": "baf4cca7964126f09df2329a2c56f55c",
+  "identity_set_sha256_recomputed": "9d989f25f67b784de97f07f8541159b5c4e5076f70262b229b4b8e01b4f0dcde",
+  "database_final_identity_md5_matches": true,
+  "source_file_bytes": 294314,
+  "source_file_sha256": "1b7bad2eb7aba024249cf70727d3984faa564c3e3b2b2f9e0bf88c5430e47e8c",
+  "scope": "schema/relation/column/function identity args/constraint/index/policy/trigger/role names; no business payloads"
+}

@@ -1,0 +1,70 @@
+{
+  "acceptor": "Codex@DESK-W-591 under CLUED_PHASE2_USER_DELEGATION_20260907",
+  "authority": {
+    "path": "ExecutionDelegation_20260907.json",
+    "sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8"
+  },
+  "issued_at": "2026-09-07T10:04:40.418378+00:00",
+  "invalidation": "Changed selected source/contract, generator or validator rules, scope, acceptance lineage or actual affected consumer wiring reopens the affected checks under I1-I8; historical evidence is not rewritten.",
+  "decision_kind": "SCOPED_STEP8_PREACCEPTANCE_VALIDATOR_ACCEPTANCE",
+  "decision_id": "CLUED_PHASE2_STEP08_ACCEPTANCE_20260907",
+  "status": "ACCEPTED_FOR_PREACCEPTANCE_GOVERNANCE_EVIDENCE",
+  "predecessor": {
+    "path": "Step07-ScopedAcceptance_20260907.json",
+    "sha256": "dec7601899be7118b3baff3d78793ecaf98b06316070b881ca30297a3b0f22b3"
+  },
+  "subjects": {
+    "SourceLocators.json": {
+      "path": "step08-validator-20260907/SourceLocators.json",
+      "sha256": "04aa73c7673b67bc046b8fa5dd37e8bbd9251e84766c09afa735d2a35fe8162b"
+    },
+    "SourceIndex.json": {
+      "path": "step08-validator-20260907/SourceIndex.json",
+      "sha256": "2d43dd59ebac6038c1b1d0a30f6246e6bf87dda85e0b9ac9419def88c9ad3045"
+    },
+    "CurrentBindingReceipt.json": {
+      "path": "step08-validator-20260907/CurrentBindingReceipt.json",
+      "sha256": "a73cf7c10faae1bdf2e241e49f748f61c98adeded37f2e58d65485dcd79d9569"
+    },
+    "FinalBindingVerification.json": {
+      "path": "step08-validator-20260907/FinalBindingVerification.json",
+      "sha256": "085b8f54c8908ffc5c3e5c4b5621f6addd429b0520a8e6a24e04a01b427a577e"
+    },
+    "Step8ValidatorEvidence_20260907.zip": {
+      "path": "step08-validator-20260907/Step8ValidatorEvidence_20260907.zip",
+      "sha256": "87984a314dbdc176b451ceab0c1a0a4be4543e0ba4941b76f4e668c4302e1f2e"
+    },
+    "FinalBindingControls.zip": {
+      "path": "step08-validator-20260907/FinalBindingControls.zip",
+      "sha256": "e08442a94fe41bcad4e035471e10df6a12a0769599b19667a82dc072c818e9c6"
+    }
+  },
+  "validator_sha256": "f99eaf03737cc13f5ea2dea06a1e4d5b48033df22bb198f6eade22b00746bb8a",
+  "adapter": {
+    "path": "scripts/naming-governance/run.py",
+    "sha256": "b7609198aade6f16f8445ffd2d3e5cb0075d3161e78eb222a01940f75ea73edb"
+  },
+  "independent_review": {
+    "path": "step08-validator-20260907/RootIndependentStep8Review.json",
+    "sha256": "0085b551a80d3aa533927c8f7da5679d7063fe559913fb40db3bdddb43afe20c"
+  },
+  "accepted_effect": [
+    "13 positive categories and 16 baseline negative cases have actual retained CLI evidence in 23 checked runs.",
+    "Final repository bindings pass the real validator, with four changed-input projection controls rejected by their intended rules.",
+    "Proceed to independent Step9 against the exact committed candidate and the preserved original 40-condition assessment."
+  ],
+  "not_granted": [
+    "Architecture Acceptance",
+    "Structure Freeze",
+    "Any unexecuted runtime/service PASS",
+    "Post-migration enforcement",
+    "Required-check non-bypass PASS"
+  ],
+  "retained_obligations": [
+    "Step9 independent full scoped review",
+    "Step12/13 actual migration and changed-consumer checks",
+    "Step15 actual enforcement; Step16 fresh four Gates",
+    "Step17 semantic comparison and Step18 mandatory-boundary proof"
+  ],
+  "next_step": 9
+}

@@ -1,0 +1,143 @@
+{
+  "candidate_status": "PREPARATION_ONLY_NOT_STEP5_ACCEPTANCE",
+  "authority_effect": "NONE_NEW_BY_CANDIDATE",
+  "base_repository_commit": "5fad76df81c8a412e7768e08427841f0985a2588",
+  "format_boundary": "Review views over existing contracts; not a new runtime schema, global registry, or Canonical Store.",
+  "scope_basis": {
+    "source_id": "scope-amendment",
+    "source_sha256": "32b16e2938a5674b1d8b492e1bf0a0506f708c574913696d6ba281b99e108e9e",
+    "pointer": ""
+  },
+  "management_owner_ref": {
+    "source_id": "delegation",
+    "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+    "pointer": "/delegator"
+  },
+  "preparation_delegate_ref": {
+    "source_id": "delegation",
+    "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+    "pointer": "/delegatee"
+  },
+  "step4_prerequisite": {
+    "candidate_ref": {
+      "source_id": "step4-ownership",
+      "source_sha256": "40d7e87fed046c8aff18d8c1d0532ada075b802faf204059649c84faef1c0782",
+      "pointer": ""
+    },
+    "formal_gate_asserted_here": false,
+    "accepted_decision_ref": {
+      "source_id": "step4-acceptance",
+      "source_sha256": "6f2cc1c9cc28c2a717023029851d61a666815567bc30b3635479cb1b70382e6c",
+      "pointer": ""
+    },
+    "accepted_effect_boundary": "Reuse the existing scoped Step4 administrative acceptance; this candidate issues no new acceptance, runtime authority or Freeze."
+  },
+  "physical_rename_performed": false,
+  "migration_performed": false,
+  "historical_bytes_or_ids_changed": false,
+  "representations": [
+    {
+      "kind": "canonical_machine",
+      "subject": "authenticated online Canonical objects",
+      "source_ref": {
+        "source_id": "repo-agents",
+        "source_sha256": "75d0788ff62a20d2d211115a66ab20fc38519a14fad890ab9a3d6f821e821793",
+        "pointer": ""
+      },
+      "canonical_for_business_state": true,
+      "write_rule": "existing authenticated M1/API/MCP writers only; no new writer created here"
+    },
+    {
+      "kind": "read_only_mirror",
+      "subject": "repository memory/ two-level/five-view snapshot",
+      "source_refs": [
+        {
+          "source_id": "repo-agents",
+          "source_sha256": "75d0788ff62a20d2d211115a66ab20fc38519a14fad890ab9a3d6f821e821793",
+          "pointer": ""
+        },
+        {
+          "source_id": "current-reader",
+          "source_sha256": "479fd0e39a8a96287642ea59644d1975666fc314cc589f39a0086c3d9446dd85",
+          "pointer": ""
+        },
+        {
+          "source_id": "endpoint-trust",
+          "source_sha256": "3c6c76087b468f13e7010a54db92b7c8db13146558c8288c8830eb22d6fb78f4",
+          "pointer": ""
+        }
+      ],
+      "canonical_for_business_state": false,
+      "write_rule": "read-only; current-use checks require its exact existing manifest/trust contract; no business memory loaded for this candidate"
+    },
+    {
+      "kind": "human_projection",
+      "subject": "snapshot Markdown/current docs and derived indexes",
+      "source_ref": {
+        "source_id": "repo-agents",
+        "source_sha256": "75d0788ff62a20d2d211115a66ab20fc38519a14fad890ab9a3d6f821e821793",
+        "pointer": ""
+      },
+      "canonical_for_business_state": false,
+      "write_rule": "cannot reverse-write or resolve a Canonical conflict from prose alone"
+    },
+    {
+      "kind": "transport_package",
+      "subject": "immutable review ZIP and its original members",
+      "source_refs": [
+        {
+          "source_id": "source-zip-container",
+          "source_sha256": "6e51374a6caedb4f84d2b6bb9fe05cd695b25732833f9d0217c341f17e1c1649",
+          "pointer": ""
+        },
+        {
+          "source_id": "candidate-registry",
+          "source_sha256": "1dafc859c9a0e51cf13e193e0226718e030bd0193ebeebb3a17288c78c6a1468",
+          "pointer": ""
+        }
+      ],
+      "canonical_for_business_state": false,
+      "write_rule": "preserve original bytes; container and member digests are different evidence subjects"
+    },
+    {
+      "kind": "candidate_machine_and_readable_design",
+      "subject": "current author candidate Registry/model/documents",
+      "source_refs": [
+        {
+          "source_id": "candidate-registry",
+          "source_sha256": "1dafc859c9a0e51cf13e193e0226718e030bd0193ebeebb3a17288c78c6a1468",
+          "pointer": ""
+        },
+        {
+          "source_id": "review-subject",
+          "source_sha256": "c2cd13dbe8fd046aa8f0344778141cb9b115fae0048a8c673b60bd25b03498d3",
+          "pointer": ""
+        }
+      ],
+      "canonical_for_business_state": false,
+      "write_rule": "source-bound design only; a changed current candidate requires new revision/digest and applicable independent review"
+    },
+    {
+      "kind": "compatibility_projection",
+      "subject": "historical contract and future explicitly mapped consumer projection",
+      "source_refs": [
+        {
+          "source_id": "legacy-readme",
+          "source_sha256": "7e1efdf92211c771d9f2d74195d9a8b42d84f6ae222a857c25a792289ddc8a15",
+          "pointer": ""
+        },
+        {
+          "source_id": "structure-map",
+          "source_sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965",
+          "pointer": "/current_to_target_rows/12"
+        }
+      ],
+      "canonical_for_business_state": false,
+      "write_rule": "historical read only; future exact compatibility entry must declare its actual consumer/role/host and expiry"
+    }
+  ],
+  "logical_identity_rule": "JSON and Markdown or regenerated bytes share a logical object only when existing source envelopes/derivation bind that identity; extension, title or byte equality does not establish it.",
+  "conflict_resolution": "For business state use authenticated Canonical identity/version and verified projections. For design use exact source registry/subject and accepted decision when issued. Conflicting unbound representations remain disputed; no newest-filename or prose-wins heuristic.",
+  "regeneration": "Changed bytes produce a new representation/artifact digest and any required revision; retain the stable logical ID only with an explicit owning-contract provenance binding.",
+  "reverse_edit_allowed": false
+}

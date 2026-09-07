@@ -1,0 +1,219 @@
+{
+  "kind": "INDEPENDENT_SCOPED_STEP8_EVIDENCE_REVIEW",
+  "reviewer": "/root",
+  "author": "/root/step1_verify",
+  "status": "PASS",
+  "issued_at": "2026-09-07T10:04:40.418378+00:00",
+  "scope": "Current source-preserving governance validator and final projection bindings; not post-migration enforcement or hosted service runtime acceptance.",
+  "checks": {
+    "original_23_actual_receipts_match_hash_exit_and_target_rule": true,
+    "baseline_13_positive_types_16_negative_cases_retained": true,
+    "current_final_input_actual_pass_without_binding_gaps": true,
+    "four_affected_projection_negatives_rejected_by_expected_rules": true,
+    "core_validator_rules_unchanged": true,
+    "current_external_candidate_full_digest_recomputed_once": true
+  },
+  "code_review": "Root independently inspected source loading/digest and pointer resolution, ownership, identities, aliases, version axes, historical/current policy, receipt subject, delegated scope, C01 source guard, typed consumer/auth/receipt cross-binding, deterministic output comparison and status-truth predicates. The portable adapter adds only one explicit read-only external package locator; it does not qualify a live service or authenticate a publisher.",
+  "original_cases": [
+    {
+      "case": "real_candidate_binding_qualification",
+      "exit_code": 0,
+      "target_rule": null,
+      "receipt_sha256": "fa70549809803cf6c9bebcbbfc82f90f4e12cd09c2be34059e7138ea795a1fcc"
+    },
+    {
+      "case": "extra_historical_ci_missing_subject",
+      "exit_code": 1,
+      "target_rule": "RECEIPT_SUBJECT",
+      "receipt_sha256": "6bedc6b96529140398c96f16cb0297dd3aaea33c56781a822280ca5842d4828e"
+    },
+    {
+      "case": "extra_source_digest_drift",
+      "exit_code": 1,
+      "target_rule": "SOURCE_DIGEST",
+      "receipt_sha256": "7fb33c256b5e1d9481d9550b485a30c8a28dbb3a22f9d7f73875fc6c1c4bd7b5"
+    },
+    {
+      "case": "extra_missing_core_identity",
+      "exit_code": 1,
+      "target_rule": "FREEZE_BINDING",
+      "receipt_sha256": "b403a874d825ad97deaabb6046f207527bca124f9936b5d4c0346857138b6979"
+    },
+    {
+      "case": "N01_missing_namespace_owner",
+      "exit_code": 1,
+      "target_rule": "OWNER",
+      "receipt_sha256": "01b017e8688eb532f7dc3d94326a12e1eeeec98826b864d322900d9eb7b4584e"
+    },
+    {
+      "case": "N02_same_name_different_objects",
+      "exit_code": 1,
+      "target_rule": "CANONICAL_COLLISION",
+      "receipt_sha256": "4eb60aadc0480d519bdbb2bb21e5ddd8a2553c626e0bbc59bdf918c29d9df0bf"
+    },
+    {
+      "case": "N03_one_object_multiple_canonical",
+      "exit_code": 1,
+      "target_rule": "MULTIPLE_CANONICAL",
+      "receipt_sha256": "cb48ce7de2afd173e1172725cc860d83f61625bc14d11f904c0826262a618031"
+    },
+    {
+      "case": "N04_alias_missing_target",
+      "exit_code": 1,
+      "target_rule": "ALIAS_TARGET",
+      "receipt_sha256": "d5a39bf473db540688cc80b65483900da9b7f38bf561fc4f0d636c925ed59b2a"
+    },
+    {
+      "case": "N05_alias_new_write",
+      "exit_code": 1,
+      "target_rule": "ALIAS_WRITE",
+      "receipt_sha256": "f8696ac2fd5a44a472e4ce21989483a1c47f4c7d36fbfe60ebd7cdd92add6e97"
+    },
+    {
+      "case": "N06_current_uses_historical",
+      "exit_code": 1,
+      "target_rule": "CURRENT_HISTORICAL",
+      "receipt_sha256": "8948ac7a6f68d649f5e987d7a86b599843e987018c0969c143f2ef421e6dabd0"
+    },
+    {
+      "case": "N07_wrong_direct_predecessor",
+      "exit_code": 1,
+      "target_rule": "PREDECESSOR",
+      "receipt_sha256": "d4d6ac852f115ad47e304a468a353230ed153254143be84175d9edfcc2255064"
+    },
+    {
+      "case": "N08_mixed_version_axis",
+      "exit_code": 1,
+      "target_rule": "VERSION_AXIS",
+      "receipt_sha256": "dd8b903f3a73fb5767d478ab6a2c8b354026062ade01ec21b096fab30b9e1c02"
+    },
+    {
+      "case": "N09_receipt_missing_subject",
+      "exit_code": 1,
+      "target_rule": "RECEIPT_SUBJECT",
+      "receipt_sha256": "94f7caab842edaeec57f1b2c806dce130bb92f6b06d2dc497b48e8d57029e26b"
+    },
+    {
+      "case": "N10_authorization_scope_escalation",
+      "exit_code": 1,
+      "target_rule": "AUTHORIZATION_SCOPE",
+      "receipt_sha256": "8655b24e08dca85c776676b5bf419fb862112ec3e935446491f54853f9c34a1d"
+    },
+    {
+      "case": "N11_consumer_unauthorized_namespace",
+      "exit_code": 1,
+      "target_rule": "CONSUMER_NAMESPACE",
+      "receipt_sha256": "3cb16ab386134fd5e6be7c5d8b13532a7ad1164ec75c327e11f381db0b35bf4f"
+    },
+    {
+      "case": "N12_readme_registry_disagreement",
+      "exit_code": 1,
+      "target_rule": "PROJECTION_DRIFT",
+      "receipt_sha256": "e586acf931221086738cf71a25491da20197f6deb753dd3b1826f58a188a104b"
+    },
+    {
+      "case": "N13_copy_claims_original",
+      "exit_code": 1,
+      "target_rule": "COPY_ORIGINAL",
+      "receipt_sha256": "92663f4e9da8f62a59ca88a9473c40532f92a7e0c17d9747379e4764d4ad7aff"
+    },
+    {
+      "case": "N14_representation_claims_canonical",
+      "exit_code": 1,
+      "target_rule": "REPRESENTATION_CANONICAL",
+      "receipt_sha256": "6a11991dcae4c1972cd26c7c0a26df54b4c6e983078eca97da58152e9f6b4358"
+    },
+    {
+      "case": "N15_pending_projected_accepted",
+      "exit_code": 1,
+      "target_rule": "PENDING_ACCEPTED",
+      "receipt_sha256": "f5a2796b8f0f8a429a41721dfbaf9064bb4b366e256ca61c5a9a0e3fd38a9643"
+    },
+    {
+      "case": "N16_unexecuted_projected_pass",
+      "exit_code": 1,
+      "target_rule": "UNEXECUTED_PASS",
+      "receipt_sha256": "3a37c64fbd045cc7aa9b63c4d019081c03cfc98d2b68a6e81ca5278b22c4dcc0"
+    },
+    {
+      "case": "positive_13_types",
+      "exit_code": 0,
+      "target_rule": null,
+      "receipt_sha256": "c8d03d84ce00af06889a5453903f43fd4c8539de16ff366b4ce2076d5d67517d"
+    },
+    {
+      "case": "extra_cross_consumer_authorization",
+      "exit_code": 1,
+      "target_rule": "AUTHORIZATION_SCOPE",
+      "receipt_sha256": "6ef6224047e78c69a75f929509064301fcfa394df23b25f77d91fe3ed100b77f"
+    },
+    {
+      "case": "extra_public_initialize_escalation",
+      "exit_code": 1,
+      "target_rule": "AUTHORIZATION_SCOPE",
+      "receipt_sha256": "e2a7fd61536e7a7877e33cd3a60d16f3e023ab8574641b8de585a01177df9d72"
+    }
+  ],
+  "final_controls": [
+    {
+      "case": "readme_registry_drift",
+      "target_rule": "PROJECTION_DRIFT",
+      "receipt_sha256": "069c4ee840391c6cb7d2fafac797bf14062426e1e974c901003da46f7aaf8094"
+    },
+    {
+      "case": "pending_to_accepted",
+      "target_rule": "PENDING_ACCEPTED",
+      "receipt_sha256": "0b8e2ca373f7aa8033426a6ec63f48419121bd653dee7876dfb9485f647ae8eb"
+    },
+    {
+      "case": "unexecuted_to_pass",
+      "target_rule": "UNEXECUTED_PASS",
+      "receipt_sha256": "e77b6283c50eeaeb6861a291e187f4f89d8e3e346d6fa2fdd0b296cb0c6fa81f"
+    },
+    {
+      "case": "accepted_upstream_drift",
+      "target_rule": "PROJECTION_DRIFT",
+      "receipt_sha256": "d9657d507320e0fa31dc7ae7a68a5a4b3c27f5b0c69adfe5fd663b0ac85b326b"
+    }
+  ],
+  "external_package": {
+    "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip",
+    "bytes": 246612118,
+    "sha256": "6e51374a6caedb4f84d2b6bb9fe05cd695b25732833f9d0217c341f17e1c1649",
+    "hash_recomputed": true,
+    "full_package_gate_rerun": false
+  },
+  "subjects": {
+    "SourceLocators.json": {
+      "path": "step08-validator-20260907/SourceLocators.json",
+      "sha256": "04aa73c7673b67bc046b8fa5dd37e8bbd9251e84766c09afa735d2a35fe8162b"
+    },
+    "SourceIndex.json": {
+      "path": "step08-validator-20260907/SourceIndex.json",
+      "sha256": "2d43dd59ebac6038c1b1d0a30f6246e6bf87dda85e0b9ac9419def88c9ad3045"
+    },
+    "CurrentBindingReceipt.json": {
+      "path": "step08-validator-20260907/CurrentBindingReceipt.json",
+      "sha256": "a73cf7c10faae1bdf2e241e49f748f61c98adeded37f2e58d65485dcd79d9569"
+    },
+    "FinalBindingVerification.json": {
+      "path": "step08-validator-20260907/FinalBindingVerification.json",
+      "sha256": "085b8f54c8908ffc5c3e5c4b5621f6addd429b0520a8e6a24e04a01b427a577e"
+    },
+    "Step8ValidatorEvidence_20260907.zip": {
+      "path": "step08-validator-20260907/Step8ValidatorEvidence_20260907.zip",
+      "sha256": "87984a314dbdc176b451ceab0c1a0a4be4543e0ba4941b76f4e668c4302e1f2e"
+    },
+    "FinalBindingControls.zip": {
+      "path": "step08-validator-20260907/FinalBindingControls.zip",
+      "sha256": "e08442a94fe41bcad4e035471e10df6a12a0769599b19667a82dc072c818e9c6"
+    }
+  },
+  "core_validator_sha256": "f99eaf03737cc13f5ea2dea06a1e4d5b48033df22bb198f6eade22b00746bb8a",
+  "authority_effect": "NONE",
+  "known_limits": [
+    "Rule set qualifies these existing source-bound contracts; it is not a general arbitrary-code permission analyzer.",
+    "Step15 must validate actual changed write/consumer paths; Step18 must establish and test the actual mandatory boundary.",
+    "Fixture aliases and runtime slots do not create active runtime instances or rights."
+  ]
+}

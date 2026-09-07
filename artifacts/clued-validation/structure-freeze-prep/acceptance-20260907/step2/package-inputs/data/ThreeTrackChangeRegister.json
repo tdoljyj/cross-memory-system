@@ -1,0 +1,49 @@
+{
+  "id": "V025_THREE_TRACK_AUTHOR_CHANGE_REGISTER",
+  "tracks": [
+    {
+      "id": "TRACK-1",
+      "name": "已接受映射到架构实际设计",
+      "deliverables": [
+        "data/DomainIntegrationContracts.json",
+        "data/ArchitectureCandidateModel.json",
+        "data/ArchitectureIntakeCompletion.json"
+      ],
+      "counts": {
+        "deltas": 24,
+        "contracts": 22,
+        "design_receiving_targets": 13,
+        "new_domain_integration_contracts": 10
+      },
+      "state": "AUTHOR_APPLIED_PENDING_INDEPENDENT_INTEGRATION_REVIEW"
+    },
+    {
+      "id": "TRACK-2",
+      "name": "current身份/引用和完整checksum修订",
+      "deliverables": [
+        "data/ReviewSubjectContract.json",
+        "data/CurrentArtifactRegistry.json",
+        "data/PriorFindingDisposition.json",
+        "SHA256SUMS.txt"
+      ],
+      "state": "AUTHOR_REPAIRED_PENDING_INDEPENDENT_REVIEW"
+    },
+    {
+      "id": "TRACK-3",
+      "name": "原接受条件补证",
+      "deliverables": [
+        "data/RepositoryEvidenceObservation.json",
+        "data/ArchitectureAcceptanceEvidenceMatrix.json",
+        "data/AuthorizationRequests_NOT_GRANTED.json",
+        "scripts/entry_manifest_design.py"
+      ],
+      "state": "EVIDENCE_PREPARATION_AND_SELECTED_READS_COMPLETE_GAPS_REMAIN"
+    }
+  ],
+  "architecture_acceptance": "NOT_ISSUED",
+  "structure_freeze": "NOT_ISSUED",
+  "Entry": "NOT_ISSUED",
+  "G1": "NOT_CUT_OVER",
+  "runtime_executed": 0,
+  "authorization_effect": "NONE"
+}

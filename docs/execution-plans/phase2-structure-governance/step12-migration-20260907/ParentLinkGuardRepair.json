@@ -1,0 +1,33 @@
+{
+  "kind": "INDEPENDENT_FINDING_MIGRATION_PARENT_LINK_GUARD_REPAIR",
+  "status": "PASS",
+  "reviewer_finding_source": "/root/architecture_review",
+  "repair_author": "/root",
+  "original_executor_sha256": "5d116bb93b5d6509eec4edef3cd51ca56f746bcb191d68bcb1139c3c49747c84",
+  "repaired_executor_sha256": "15ed103a96943125978e9134a8322c6195f62fe24d3e2e070a8ad538b17ea2fe",
+  "unchanged_execution_inputs_sha256": "37a6909deedae17dbfe97e844d8ec596c5de46e73c3cefafd4136008d3f3dcec",
+  "real_parent_link_kind": "Windows directory junction",
+  "old_implementation_read_only_control_admitted_protected_target": true,
+  "new_implementation_rejections": [
+    {
+      "path": "docs/bridge/protected.txt",
+      "result": "REJECTED",
+      "reason": "symlink or junction in migration path"
+    },
+    {
+      "path": "Memory/protected.txt",
+      "result": "REJECTED",
+      "reason": "protected migration path"
+    }
+  ],
+  "ordinary_path_allowed": true,
+  "isolated_marker_unchanged": true,
+  "five_existing_executor_tests_rerun_on_repaired_code": {
+    "exit_code": 0,
+    "stdout": "{\"scope\": \"NEW_EXECUTOR_ISOLATED_FIXTURES_ONLY\", \"tests_run\": 5, \"failures\": 0, \"errors\": 0, \"skipped\": 0, \"executor_sha256\": \"15ed103a96943125978e9134a8322c6195f62fe24d3e2e070a8ad538b17ea2fe\", \"execution_inputs_sha256\": \"37a6909deedae17dbfe97e844d8ec596c5de46e73c3cefafd4136008d3f3dcec\", \"test_sha256\": \"f0cb3b10ae9ba2ce7411731b2c654c415230dfb7af6584c05f5eded5745048c2\", \"previous_nine_tests_repeated\": false, \"real_repository_writes\": 0, \"actual_freeze_issued\": false}\n",
+    "stderr": "",
+    "test_source_sha256": "f0cb3b10ae9ba2ce7411731b2c654c415230dfb7af6584c05f5eded5745048c2"
+  },
+  "source_scope": "Only execution path guard changed; 64 target paths, exact payload/inputs and Step7/8 source/validator inputs unchanged. No real repository migration or Canonical mutation.",
+  "acceptance_effect": "Closes the parent-link execution safety finding for these verified inputs; does not issue Architecture Acceptance, Freeze or Step12 completion."
+}

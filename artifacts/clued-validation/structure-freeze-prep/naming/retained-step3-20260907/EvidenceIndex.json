@@ -1,0 +1,64 @@
+{
+  "schema": "clued.step3-retained-evidence/v1",
+  "authority_effect": "NONE",
+  "source_commit": "d7f9b29c7450cb45d1bf07454847b9ed3a3955c1",
+  "run_id": 34095598965,
+  "job_id": 101658448460,
+  "artifact_id": 10008464260,
+  "artifact_original_zip": "NamingInventory-d7f9b29-CI.zip",
+  "artifact_original_zip_sha256": "c77a3d1076e86c90956f9c75607d53dc3ea246dec061a4703ffbc721192a1ced",
+  "artifact_original_zip_bytes": 3342545,
+  "archive_matches_github_api_digest": true,
+  "members": [
+    {
+      "path": "CheckoutNormalizationEvidence.json",
+      "bytes": 586,
+      "sha256": "b1cf919c1b39f78f0c2f135261aea773381a8c43c1cc3978225deda1d2f79190"
+    },
+    {
+      "path": "GenerationResult.json",
+      "bytes": 758,
+      "sha256": "c01b9bf011ca348c8b2c7d84b9b69dda3407172843023e17e3cc36f61aac6d69"
+    },
+    {
+      "path": "NamingSurfaceInventoryConsolidated.json",
+      "bytes": 6834,
+      "sha256": "1c5bc1c5620c455ff74f6ccf5d7d3cc94de7f1bc2bd2ba8a65aca29091e20d88"
+    },
+    {
+      "path": "NamingSurfaceInventoryFindings.json",
+      "bytes": 298852,
+      "sha256": "6e4a832b583c42c0fb99ac89ae145c8925025a2c45a4ffe9f6bbf7679b634bdd"
+    },
+    {
+      "path": "NamingSurfaceInventoryManifest.json",
+      "bytes": 31803897,
+      "sha256": "8cff020b7fcbb7db4a8cbafd653ab0b6df477b786030adb4b2bd6cc30b277eba"
+    },
+    {
+      "path": "NamingSurfaceInventoryRecords.jsonl",
+      "bytes": 32586533,
+      "sha256": "8302b936f79a7249b5b1b083262127c3d21f1565c2757afaf3405dcd4ab2ccc1"
+    },
+    {
+      "path": "NamingSurfaceInventorySummary.md",
+      "bytes": 3013,
+      "sha256": "11980556986320cb5e353392832db1a04a2b00986d007c6bebceafd1a6ddb165"
+    },
+    {
+      "path": "Step3Summary.md",
+      "bytes": 1725,
+      "sha256": "370ea09b5523955388ac38af4fd4be495d9c5577db18c2ea4b9adb0c9b6a1263"
+    }
+  ],
+  "verified_record_count": 49197,
+  "required_fields_per_record": 16,
+  "step3_gate": "NOT_READY",
+  "gaps": [
+    "NSI-GAP-LIBRARY",
+    "NSI-GAP-RESTORE",
+    "NSI-GAP-AUTH",
+    "NSI-GAP-SITES"
+  ],
+  "scope": "Exact original Actions ZIP and member bytes of source d7f9b29; retaining these files creates a later repository tree and does not silently rebind this inventory to that later commit."
+}

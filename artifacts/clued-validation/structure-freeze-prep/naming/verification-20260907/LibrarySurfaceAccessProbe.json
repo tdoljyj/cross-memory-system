@@ -1,0 +1,70 @@
+{
+  "schema": "clued.naming-library-access-probe/v1",
+  "observed_on": "2026-09-07",
+  "surface": "CHATGPT_LIBRARY_METADATA",
+  "scope": "Clued-related file and folder names, paths, IDs, sizes, timestamps, and pagination evidence only",
+  "status": "UNAVAILABLE_CONTROL_PLANE",
+  "coverage": "NOT_OBSERVED",
+  "authority_effect": "NONE",
+  "account_scope": "User states all Clued accounts belong to the user and are test accounts; no unrelated-account blocker inferred",
+  "attempts": [
+    {
+      "sequence": 1,
+      "method": "cua.createBrowserTab",
+      "parameters": {
+        "browser": "chrome",
+        "url": "https://chatgpt.com",
+        "sessionName": "📚 Clued盘点"
+      },
+      "requested_timeout_ms": 40000,
+      "elapsed_seconds_reported_by_tool": 76.8104,
+      "result": "TIMEOUT_KERNEL_RESET",
+      "exact_error": "js execution timed out; kernel reset, rerun your request",
+      "effect_verification": "A new ChatGPT tab was subsequently visible in surface inventory; no page content was returned by this attempt."
+    },
+    {
+      "sequence": 2,
+      "method": "cua.getState",
+      "requested_timeout_ms": 20000,
+      "elapsed_seconds_reported_by_tool": 6.2789,
+      "result": "BROWSER_TAB_METADATA_AVAILABLE",
+      "relevant_observations_only": {
+        "browser_id": "1",
+        "browser_name": "Chrome",
+        "browser_type": "extension",
+        "chatgpt_tabs": [
+          {"id": "850492327", "title": "ChatGPT", "url": "https://chatgpt.com/"},
+          {"id": "850492296", "title": "ChatGPT", "url": "https://chatgpt.com/"}
+        ]
+      },
+      "limit": "Browser tab inventory is not ChatGPT Library metadata. No account identity, login state, file list, or Library pagination was visible."
+    },
+    {
+      "sequence": 3,
+      "method": "cua.getTab",
+      "parameters": {"tab_id": "850492327", "browser": "1"},
+      "requested_timeout_ms": 20000,
+      "elapsed_seconds_reported_by_tool": 26.5634,
+      "result": "TIMEOUT_KERNEL_RESET",
+      "exact_error": "js execution timed out; kernel reset, rerun your request",
+      "limit": "The correct tab/browser IDs were taken from the immediately preceding successful surface inventory. No AX page state was returned."
+    }
+  ],
+  "library_file_records_observed": null,
+  "pagination_complete": false,
+  "pagination_evidence": "NOT_OBSERVED",
+  "file_contents_downloaded": false,
+  "file_mutations_performed": false,
+  "repository_mutations_performed": false,
+  "permissions_changed": false,
+  "secrets_or_credentials_read": false,
+  "stopping_reason": "Repeated page-control timeouts despite successful browser inventory; parent requested stop after sufficient independent connection-layer evidence.",
+  "closure_allowed": false,
+  "not_claimed": [
+    "Library is empty",
+    "Library is NOT_APPLICABLE",
+    "Library account authorization failed",
+    "The computer has no network",
+    "The Library inventory is complete"
+  ]
+}

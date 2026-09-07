@@ -1,0 +1,1308 @@
+{
+  "report_id": "CLUED_PHASE2_ORIGINAL40_INDEPENDENT_PREPARATION_20260907",
+  "status": "PREPARATION_FOR_LATER_STEP9_NOT_STEP9_ACCEPTANCE",
+  "reviewer": "/root/architecture_review",
+  "author_context_separated": true,
+  "provided_root_source_commit": "40fea9e0fcd4d061946d0523f645c40893fced2b",
+  "later_migration_candidate_source_commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+  "binding_rule": "Exact byte hashes below control. Different commit labels are not silently equated; final subject is locked by root after Step8.",
+  "authority_source": {
+    "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\ExecutionDelegation_20260907.json",
+    "bytes": 3350,
+    "sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8"
+  },
+  "counts": {
+    "A": 22,
+    "B": 10,
+    "C": 4,
+    "D": 4
+  },
+  "classification_definitions": {
+    "A": "本轮已有确切证据可承接",
+    "B": "需根按既有委托签发具体治理决定或阶段处置",
+    "C": "真正当前必须补证",
+    "D": "未来非核心义务保留"
+  },
+  "checks": {
+    "original_40_ids_and_text_match": true,
+    "original_assessment_hash_matches_matrix": true,
+    "review_subject_repository_copy_matches_zip": true,
+    "r5_complete_K0_to_K10": true,
+    "r5_no_parallel_authority": true,
+    "r5_all_rows_dispositioned": true,
+    "old_target_rows": 318,
+    "old_targets_all_have_source_line_and_disposition": true,
+    "experience_objects": 7,
+    "experience_every_object_has_six_semantic_facets": true,
+    "all_23_original_map_ids_preserved": true,
+    "concrete_existing_path_operations": 29,
+    "concrete_dcp_targets": 3,
+    "migration_source_map_hash_matches_preserved_object": true,
+    "source_hashes_are_identity_not_issuer_proofs": true
+  },
+  "rows": [
+    {
+      "condition_id": "F-MAJ-005/C1",
+      "original_text": "固定主线为 impact v0.3→Architecture convergence candidate v0.2→Phase2 Charter/Structure Plan→一个审核包",
+      "classification": "A",
+      "classification_label": "本轮已有确切证据可承接",
+      "independent_scope_assessment": "同包ReviewSubject绑定架构v0.2.5、唯一架构前任v0.2.4；包修订v0.2.7.1是另一版本轴。承接固定主线合同，最终Step9再绑定本轮补充材料摘要。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/ReviewSubjectContract.json",
+          "bytes": 1383,
+          "sha256": "c2cd13dbe8fd046aa8f0344778141cb9b115fae0048a8c673b60bd25b03498d3",
+          "source_key": "data/ReviewSubjectContract.json",
+          "pointer": "/subject",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "stage_disposition_issued": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "current_blocking": false,
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission."
+    },
+    {
+      "condition_id": "F-MAJ-005/C2",
+      "original_text": "从同一审核包签发两个不同决定：ArchitectureConstitutionAcceptanceDecision 与 Phase2StructureFreezeDecision",
+      "classification": "B",
+      "classification_label": "需根按既有委托签发具体治理决定或阶段处置",
+      "independent_scope_assessment": "根在Step9合格后依次签Step10与Step11，两决定引用同一精确包与受控增量；不能要求Step11先存在才接受架构。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/ReviewSubjectContract.json",
+          "bytes": 1383,
+          "sha256": "c2cd13dbe8fd046aa8f0344778141cb9b115fae0048a8c673b60bd25b03498d3",
+          "source_key": "data/ReviewSubjectContract.json",
+          "pointer": "/structure_rule",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "stage_disposition_issued": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "current_blocking": false,
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission."
+    },
+    {
+      "condition_id": "F-MAJ-005/C3",
+      "original_text": "废止/限定旧文档中的竞争性 next-step 语句",
+      "classification": "C",
+      "classification_label": "真正当前必须补证",
+      "independent_scope_assessment": "原ReviewSubject只定义主线，不能独自证明全部当前入口已限制旧next-step；需Step7/8真实投影和漂移负例覆盖当前README/AGENTS/Status/Registry；历史原文保留。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/ReviewSubjectContract.json",
+          "bytes": 1383,
+          "sha256": "c2cd13dbe8fd046aa8f0344778141cb9b115fae0048a8c673b60bd25b03498d3",
+          "source_key": "data/ReviewSubjectContract.json",
+          "pointer": "/structure_rule",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "stage_disposition_issued": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "current_blocking": true,
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission."
+    },
+    {
+      "condition_id": "F-MAJ-006/C1",
+      "original_text": "签发 ProgramCriticalPathDecision",
+      "classification": "B",
+      "classification_label": "需根按既有委托签发具体治理决定或阶段处置",
+      "independent_scope_assessment": "签限定ProgramCriticalPathDecision：只Slice A是核心，模型/商业非核心，本轮WIP默认1、最多1核心+1独立使能；不激活预算外实验，引用既有用户委托。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/ProgramCriticalPathDecisionCandidate.json",
+          "bytes": 3098,
+          "sha256": "a19e1706c590b2c32895179ed37d1fd85f8ce29c9032fbbf4959253182c3545d",
+          "source_key": "data/ProgramCriticalPathDecisionCandidate.json",
+          "pointer": "/core_critical_path",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/sources/architecture_v024/data/SliceAPreregistration.json",
+          "bytes": 3396,
+          "sha256": "289dd3f7091b41a319b6604d6246010d4acd60e8f44955b6ce8b67ec13f8a033",
+          "source_key": "sources/architecture_v024/data/SliceAPreregistration.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/sources/architecture_v024/data/CapacityBudgetProposal.json",
+          "bytes": 2930,
+          "sha256": "ce62f0aac382f1f225794186ae33d26e6cfb9a62087a60315d478f8a5a818af8",
+          "source_key": "sources/architecture_v024/data/CapacityBudgetProposal.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "stage_disposition_issued": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "current_blocking": false,
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission."
+    },
+    {
+      "condition_id": "F-MAJ-006/C2",
+      "original_text": "MODEL-PROGRAM-M0 可在共同 Readiness 后建立治理骨架",
+      "classification": "D",
+      "classification_label": "未来非核心义务保留",
+      "independent_scope_assessment": "M0治理骨架是共同Readiness后的条件能力；本轮不申请激活M0。保留适用Readiness与双父引用，不能为此要求现在实现完整模型域。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/BusinessBranchDependencies.json",
+          "bytes": 2370,
+          "sha256": "f323a33b483cbd3f3b9cb25fab9c1ddc5be48f5e5fd27444c6b8d1b0c8641d7c",
+          "source_key": "data/BusinessBranchDependencies.json",
+          "pointer": "/nodes",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "stage_disposition_issued": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "current_blocking": false,
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission."
+    },
+    {
+      "condition_id": "F-MAJ-006/C3",
+      "original_text": "完整 M1-M7 只在逐阶段预算/实验授权下作为非关键并行轨道",
+      "classification": "A",
+      "classification_label": "本轮已有确切证据可承接",
+      "independent_scope_assessment": "直接分支模型将MODEL_M1_M7列为SEPARATE_CONDITIONAL_TRACK并要求逐阶段预算/数据权利与模型授权；可承接其设计约束，未来真实执行仍禁启。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/BusinessBranchDependencies.json",
+          "bytes": 2370,
+          "sha256": "f323a33b483cbd3f3b9cb25fab9c1ddc5be48f5e5fd27444c6b8d1b0c8641d7c",
+          "source_key": "data/BusinessBranchDependencies.json",
+          "pointer": "/nodes/7",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "stage_disposition_issued": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "current_blocking": false,
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission."
+    },
+    {
+      "condition_id": "F-MAJ-006/C4",
+      "original_text": "PHASE2-CORE-SLICE-A 不依赖完整第一方模型 Stable",
+      "classification": "A",
+      "classification_label": "本轮已有确切证据可承接",
+      "independent_scope_assessment": "Slice A节点明确does_not_require MODEL_M1_M7；Charter也明确full_model_stable_is_core_prerequisite=false。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/BusinessBranchDependencies.json",
+          "bytes": 2370,
+          "sha256": "f323a33b483cbd3f3b9cb25fab9c1ddc5be48f5e5fd27444c6b8d1b0c8641d7c",
+          "source_key": "data/BusinessBranchDependencies.json",
+          "pointer": "/nodes/0",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "stage_disposition_issued": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "current_blocking": false,
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission."
+    },
+    {
+      "condition_id": "F-MAJ-007/C1",
+      "original_text": "采用 typed references: model_program_parent_architecture_ref 与 clued_architecture_constitution_ref",
+      "classification": "A",
+      "classification_label": "本轮已有确切证据可承接",
+      "independent_scope_assessment": "current_combination分开两个typed parent refs并绑定候选摘要；只能承接类型/身份设计，acceptance_ref仍null不冒充正式接受。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/ParentArchitectureCompatibility.json",
+          "bytes": 1686,
+          "sha256": "f5bed57c2dca9b445b8f6512890a6cc8195187545adb42cd5ec472ebae6623ba",
+          "source_key": "data/ParentArchitectureCompatibility.json",
+          "pointer": "/current_combination",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "stage_disposition_issued": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "current_blocking": false,
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission."
+    },
+    {
+      "condition_id": "F-MAJ-007/C2",
+      "original_text": "M0 Authorization 同时绑定所需的两个接受对象，禁止 `<exact or Structure Review scope>` 含糊值",
+      "classification": "D",
+      "classification_label": "未来非核心义务保留",
+      "independent_scope_assessment": "尚不启动M0；在其实际授权前必须绑定两个有效接受对象及精确摘要，禁含糊占位；该义务局部阻断模型动作。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/ParentArchitectureCompatibility.json",
+          "bytes": 1686,
+          "sha256": "f5bed57c2dca9b445b8f6512890a6cc8195187545adb42cd5ec472ebae6623ba",
+          "source_key": "data/ParentArchitectureCompatibility.json",
+          "pointer": "/current_combination",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "stage_disposition_issued": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "current_blocking": false,
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission."
+    },
+    {
+      "condition_id": "F-MAJ-007/C3",
+      "original_text": "为 Architecture v1.0 与 Model Architecture revision 建立兼容矩阵",
+      "classification": "B",
+      "classification_label": "需根按既有委托签发具体治理决定或阶段处置",
+      "independent_scope_assessment": "当前组合矩阵是v0.2.5设计组合，非未来Architecture v1.0资格；根可明确接受当前类型关系并把未来v1.0/Model revision实际兼容资格绑定为模型激活前置。不得伪造v1.0。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/ParentArchitectureCompatibility.json",
+          "bytes": 1686,
+          "sha256": "f5bed57c2dca9b445b8f6512890a6cc8195187545adb42cd5ec472ebae6623ba",
+          "source_key": "data/ParentArchitectureCompatibility.json",
+          "pointer": "/current_combination",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "stage_disposition_issued": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "current_blocking": false,
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission."
+    },
+    {
+      "condition_id": "F-MAJ-008/C1",
+      "original_text": "建立 R5→v3.3 Supersession Crosswalk",
+      "classification": "A",
+      "classification_label": "本轮已有确切证据可承接",
+      "independent_scope_assessment": "独立读取crosswalk，K0–K10全11条具来源定位、目标合同和语义义务；只承接语义交叉映射，不转移历史PASS。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/sources/architecture_v024/data/R5SupersessionCrosswalk.json",
+          "bytes": 33250,
+          "sha256": "e9646403ddaa489946699b53b6465bc9aa0e5b8deac05bcca3eeaaed5d4afd04",
+          "source_key": "sources/architecture_v024/data/R5SupersessionCrosswalk.json",
+          "pointer": "/rows",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "stage_disposition_issued": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "current_blocking": false,
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission."
+    },
+    {
+      "condition_id": "F-MAJ-008/C2",
+      "original_text": "逐项标记 inherited/absorbed/superseded/historical/open",
+      "classification": "A",
+      "classification_label": "本轮已有确切证据可承接",
+      "independent_scope_assessment": "全部11条有显式disposition，K7仍OPEN_QUALIFICATION_TRACK_HISTORICAL_GATE，余项责任吸收；原义务未删除。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/sources/architecture_v024/data/R5SupersessionCrosswalk.json",
+          "bytes": 33250,
+          "sha256": "e9646403ddaa489946699b53b6465bc9aa0e5b8deac05bcca3eeaaed5d4afd04",
+          "source_key": "sources/architecture_v024/data/R5SupersessionCrosswalk.json",
+          "pointer": "/rows",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "stage_disposition_issued": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "current_blocking": false,
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission."
+    },
+    {
+      "condition_id": "F-MAJ-008/C3",
+      "original_text": "明确 K0-K10 不再是 current parallel Gate authority",
+      "classification": "A",
+      "classification_label": "本轮已有确切证据可承接",
+      "independent_scope_assessment": "11条current_parallel_gate_authority均false；历史Gate名称不成为第二现行权威。正式采用此解释由Step10决定承接。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/sources/architecture_v024/data/R5SupersessionCrosswalk.json",
+          "bytes": 33250,
+          "sha256": "e9646403ddaa489946699b53b6465bc9aa0e5b8deac05bcca3eeaaed5d4afd04",
+          "source_key": "sources/architecture_v024/data/R5SupersessionCrosswalk.json",
+          "pointer": "/rows",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "stage_disposition_issued": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "current_blocking": false,
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission."
+    },
+    {
+      "condition_id": "F-MAJ-009/C1",
+      "original_text": "从 accepted machine manifest 确定性生成 README/router",
+      "classification": "C",
+      "classification_label": "真正当前必须补证",
+      "independent_scope_assessment": "Step7/8需实际可运行的源→README/router生成与正确/变异对照；当前candidate source须如实标pending。Step10后引用accepted source的生效动作可阶段处理，不能倒填accepted。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/evidence/entry-preview/README.md",
+          "bytes": 887,
+          "sha256": "bc8c8cbc3966143808fc20a1c8c1054568c7dbe3f847c867dab5830ecb42f46a",
+          "source_key": "evidence/entry-preview/README.md",
+          "pointer": null,
+          "selector_kind": "WHOLE_DOCUMENT"
+        }
+      ],
+      "formal_condition_closed": false,
+      "stage_disposition_issued": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "current_blocking": true,
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission."
+    },
+    {
+      "condition_id": "F-MAJ-009/C2",
+      "original_text": "所有人类入口带 generated_from/source_digest/status",
+      "classification": "C",
+      "classification_label": "真正当前必须补证",
+      "independent_scope_assessment": "本轮人类入口范围内必须有generated_from/source_digest/status及外部非生成区来源约束；需最终Step7输入/输出精确摘要，不以原包历史Observation证明今天仍缺或已修。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/RepositoryEvidenceObservation.json",
+          "bytes": 7302,
+          "sha256": "e64b838f04ec083d34d3644b9222f4aa873cdcb535960eb4a5b1588d12963af0",
+          "source_key": "data/RepositoryEvidenceObservation.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "stage_disposition_issued": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "current_blocking": true,
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission."
+    },
+    {
+      "condition_id": "F-MAJ-009/C3",
+      "original_text": "CI 比对 Registry、Manifest、README 和 Root AGENTS 路由",
+      "classification": "C",
+      "classification_label": "真正当前必须补证",
+      "independent_scope_assessment": "需Step7/8同一候选的Registry/Manifest/README/AGENTS比较和定点负例执行证据；原历史CI观察不足。迁移后Enforcement与Step18不可绕过留后序，不能前置全做。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/RepositoryEvidenceObservation.json",
+          "bytes": 7302,
+          "sha256": "e64b838f04ec083d34d3644b9222f4aa873cdcb535960eb4a5b1588d12963af0",
+          "source_key": "data/RepositoryEvidenceObservation.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "stage_disposition_issued": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "current_blocking": true,
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission."
+    },
+    {
+      "condition_id": "F-MAJ-010/C1",
+      "original_text": "机器 ID 统一改为 IF-MVP0-A/B/C 与 MODEL-PROGRAM-M0..M7",
+      "classification": "A",
+      "classification_label": "本轮已有确切证据可承接",
+      "independent_scope_assessment": "11条alias_routes分别落IF-MVP0-A/B/C与MODEL-PROGRAM-M0..M7；裸M0拒绝。承接Step5已接受身份合同，不改历史文件或全局wire schema。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/sources/architecture_v024/data/ControlTypeAndAliasCrosswalk.json",
+          "bytes": 15529,
+          "sha256": "c871c80c13b6eee6abf6ddc5d5189d31644d0cb872f685bd7bf33c59185252a2",
+          "source_key": "sources/architecture_v024/data/ControlTypeAndAliasCrosswalk.json",
+          "pointer": "/alias_routes",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\Step05-ScopedAcceptance_20260907.json",
+          "bytes": 2733,
+          "sha256": "a38536ed64ae7924235ab0318cae17716f1a549d89660acde807f4bb15a64a19",
+          "source_key": "Step05-ScopedAcceptance_20260907.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "stage_disposition_issued": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "current_blocking": false,
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission."
+    },
+    {
+      "condition_id": "F-MAJ-010/C2",
+      "original_text": "旧文件名保留但在 alias registry 中映射",
+      "classification": "A",
+      "classification_label": "本轮已有确切证据可承接",
+      "independent_scope_assessment": "原名保持，alias只在来源已精确确定时解析；Step5明确不宣称全历史alias资格。当前受控alias可承接，未知旧副本无需全Library追索。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/sources/architecture_v024/data/ControlTypeAndAliasCrosswalk.json",
+          "bytes": 15529,
+          "sha256": "c871c80c13b6eee6abf6ddc5d5189d31644d0cb872f685bd7bf33c59185252a2",
+          "source_key": "sources/architecture_v024/data/ControlTypeAndAliasCrosswalk.json",
+          "pointer": "/alias_routes",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\Step05-ScopedAcceptance_20260907.json",
+          "bytes": 2733,
+          "sha256": "a38536ed64ae7924235ab0318cae17716f1a549d89660acde807f4bb15a64a19",
+          "source_key": "Step05-ScopedAcceptance_20260907.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "stage_disposition_issued": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "current_blocking": false,
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission."
+    },
+    {
+      "condition_id": "F-MAJ-010/C3",
+      "original_text": "所有 Receipt/Authorization 必须带 domain_id/program_id/stage_id",
+      "classification": "A",
+      "classification_label": "本轮已有确切证据可承接",
+      "independent_scope_assessment": "原runtime合同要求三typed ID；本轮Step6接受18消费者/27授权/18Receipt，以既有运行时参数及原检查绑定，非伪造全局值。保留Step8/13/16/18实际行为义务。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/RuntimeConsumerEvidenceContract.json",
+          "bytes": 809,
+          "sha256": "6313bb5680762b712f0047d45b160313bbeece4b9581c9c95ceed79a790f09b3",
+          "source_key": "data/RuntimeConsumerEvidenceContract.json",
+          "pointer": "/required_identifiers",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\Step06-ScopedAcceptance_20260907.json",
+          "bytes": 5319,
+          "sha256": "bd40c82a21e7b19c2c36e56d7b877078e45c6bfdf1593590fb56ab364f47889a",
+          "source_key": "Step06-ScopedAcceptance_20260907.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step6-bindings\\RootIndependentReview.json",
+          "bytes": 1966,
+          "sha256": "bc2fc121083422a9f13df635511ff11f9279612e2e00da893440772b1ccd92d7",
+          "source_key": "step6-RootIndependentReview.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\Step05-ScopedAcceptance_20260907.json",
+          "bytes": 2733,
+          "sha256": "a38536ed64ae7924235ab0318cae17716f1a549d89660acde807f4bb15a64a19",
+          "source_key": "Step05-ScopedAcceptance_20260907.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "stage_disposition_issued": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "current_blocking": false,
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission."
+    },
+    {
+      "condition_id": "F-MAJ-011/C1",
+      "original_text": "单独研究并形成通用候选合同",
+      "classification": "A",
+      "classification_label": "本轮已有确切证据可承接",
+      "independent_scope_assessment": "独立读到通用HumanGovernanceCandidate及7适用设计profiles/8禁激活profiles，选择COMMON_KERNEL_CONTROL_SEMANTICS_WITH_DOMAIN_PROFILES；承接设计候选存在，不自称runtime通过。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/HumanGovernanceProfiles.json",
+          "bytes": 18547,
+          "sha256": "c03093120227047bffe408eb1f4fe7cfa4581f2706d410e75752ccda94689c3f",
+          "source_key": "data/HumanGovernanceProfiles.json",
+          "pointer": "/included_profiles",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/sources/architecture_v024/data/HumanGovernanceCandidate.json",
+          "bytes": 1977,
+          "sha256": "d23351bb11e61bae68d861583b8d0ba75df858d6da09c83cb0418de4f7786a26",
+          "source_key": "sources/architecture_v024/data/HumanGovernanceCandidate.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "stage_disposition_issued": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "current_blocking": false,
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission."
+    },
+    {
+      "condition_id": "F-MAJ-011/C2",
+      "original_text": "定义角色、职责、状态、Artifact identity、Human Approval、Publish Gate、Production Verification、Rollback、Receipt/Evidence",
+      "classification": "B",
+      "classification_label": "需根按既有委托签发具体治理决定或阶段处置",
+      "independent_scope_assessment": "已有通用9设计facet、设计审查/结构/关键路径profile及拒绝/撤销规则；根按既有委托接受本轮治理角色和合同适用范围。未来Publish/Production/Rollback运行profile仍禁激活，现有委托不必逐项重问。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/HumanGovernanceProfiles.json",
+          "bytes": 18547,
+          "sha256": "c03093120227047bffe408eb1f4fe7cfa4581f2706d410e75752ccda94689c3f",
+          "source_key": "data/HumanGovernanceProfiles.json",
+          "pointer": "/included_profiles",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/sources/architecture_v024/data/HumanGovernanceCandidate.json",
+          "bytes": 1977,
+          "sha256": "d23351bb11e61bae68d861583b8d0ba75df858d6da09c83cb0418de4f7786a26",
+          "source_key": "sources/architecture_v024/data/HumanGovernanceCandidate.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "stage_disposition_issued": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "current_blocking": false,
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission."
+    },
+    {
+      "condition_id": "F-MAJ-011/C3",
+      "original_text": "明确网站流程只是一个 domain projection",
+      "classification": "A",
+      "classification_label": "本轮已有确切证据可承接",
+      "independent_scope_assessment": "通用合同与分域profile覆盖设计/信息/隔离资格，网站不是共同权威源；网站发布profile仍deferred，不能从网站流程推出所有域授权。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/HumanGovernanceProfiles.json",
+          "bytes": 18547,
+          "sha256": "c03093120227047bffe408eb1f4fe7cfa4581f2706d410e75752ccda94689c3f",
+          "source_key": "data/HumanGovernanceProfiles.json",
+          "pointer": "/deferred_profiles",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/sources/architecture_v024/data/HumanGovernanceCandidate.json",
+          "bytes": 1977,
+          "sha256": "d23351bb11e61bae68d861583b8d0ba75df858d6da09c83cb0418de4f7786a26",
+          "source_key": "sources/architecture_v024/data/HumanGovernanceCandidate.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "stage_disposition_issued": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "current_blocking": false,
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission."
+    },
+    {
+      "condition_id": "F-MAJ-013/C1",
+      "original_text": "逐对象映射到 Kernel Evidence/Candidate/OperationalKnowledge 或 DCP noncanonical cache",
+      "classification": "A",
+      "classification_label": "本轮已有确切证据可承接",
+      "independent_scope_assessment": "独立逐条核对7对象都有目标type：Kernel候选/知识或noncanonical DCP映射；仅设计边界，旧Skill字节/消费者迁移未证明仍保留。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/sources/architecture_v024/data/ExperienceObjectCrosswalk.json",
+          "bytes": 16540,
+          "sha256": "2365d7d529b3d4ec4b93add0e6ff2d800ebd1f0b6bee3615420fbd8ab94749b1",
+          "source_key": "sources/architecture_v024/data/ExperienceObjectCrosswalk.json",
+          "pointer": "/objects",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "stage_disposition_issued": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "current_blocking": false,
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission."
+    },
+    {
+      "condition_id": "F-MAJ-013/C2",
+      "original_text": "禁止 Skill 本地 Claim/Policy 自动成为全局规则",
+      "classification": "A",
+      "classification_label": "本轮已有确切证据可承接",
+      "independent_scope_assessment": "Policy/Claim明确不能以本地ACTIVE/规则自动产生全局权威；UEP保持建议/有界Guard，不新增永久发布锁。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/sources/architecture_v024/data/ExperienceObjectCrosswalk.json",
+          "bytes": 16540,
+          "sha256": "2365d7d529b3d4ec4b93add0e6ff2d800ebd1f0b6bee3615420fbd8ab94749b1",
+          "source_key": "sources/architecture_v024/data/ExperienceObjectCrosswalk.json",
+          "pointer": "/objects/2/authority_boundary",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "stage_disposition_issued": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "current_blocking": false,
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission."
+    },
+    {
+      "condition_id": "F-MAJ-013/C3",
+      "original_text": "定义 provenance, privacy, TTL, supersession, user correction and qualification",
+      "classification": "A",
+      "classification_label": "本轮已有确切证据可承接",
+      "independent_scope_assessment": "7对象全部具provenance、privacy、TTL/currentness、supersession/user correction、qualification；类型义务齐，不意味着生命周期实现已验收。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/sources/architecture_v024/data/ExperienceObjectCrosswalk.json",
+          "bytes": 16540,
+          "sha256": "2365d7d529b3d4ec4b93add0e6ff2d800ebd1f0b6bee3615420fbd8ab94749b1",
+          "source_key": "sources/architecture_v024/data/ExperienceObjectCrosswalk.json",
+          "pointer": "/objects",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "stage_disposition_issued": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "current_blocking": false,
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission."
+    },
+    {
+      "condition_id": "F-MAJ-014/C1",
+      "original_text": "在目标结构中把 User Bundle consumer snapshot 与 source/development control 分离",
+      "classification": "A",
+      "classification_label": "本轮已有确切证据可承接",
+      "independent_scope_assessment": "23行map分开TM15/23用户Bundle与TM17–19 DCP；当前迁移候选保护memory/原制品/Worker，保留私有兼容边界，不把用户业务快照当开发状态。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/StructureCandidateMap.json",
+          "bytes": 33372,
+          "sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965",
+          "source_key": "data/StructureCandidateMap.json",
+          "pointer": "/current_to_target_rows",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step12-migration-candidate\\MigrationPlan.candidate.json",
+          "bytes": 41261,
+          "sha256": "d8e1b8bb5058e9b2e4be9b4c0e836ad101eeefe7a839e6bc3ac5338f8b8310d0",
+          "source_key": "MigrationPlan.candidate.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step12-migration-candidate\\DcpTargetBindings.candidate.json",
+          "bytes": 3803,
+          "sha256": "0b09223cdeda8042f39f31bc691403b537254fdda68d231521164e1999c8a717",
+          "source_key": "DcpTargetBindings.candidate.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "stage_disposition_issued": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "current_blocking": false,
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission."
+    },
+    {
+      "condition_id": "F-MAJ-014/C2",
+      "original_text": "根 Authority Router 默认 NONE，不把用户数据当开发状态",
+      "classification": "A",
+      "classification_label": "本轮已有确切证据可承接",
+      "independent_scope_assessment": "本轮已直接读根AGENTS的默认NONE与read-only Canonical export边界；迁移计划保全根路由源且只生成治理区。实际无业务memory召回。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/StructureCandidateMap.json",
+          "bytes": 33372,
+          "sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965",
+          "source_key": "data/StructureCandidateMap.json",
+          "pointer": "/current_to_target_rows/0",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step12-migration-candidate\\MigrationPlan.candidate.json",
+          "bytes": 41261,
+          "sha256": "d8e1b8bb5058e9b2e4be9b4c0e836ad101eeefe7a839e6bc3ac5338f8b8310d0",
+          "source_key": "MigrationPlan.candidate.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step12-migration-candidate\\DcpTargetBindings.candidate.json",
+          "bytes": 3803,
+          "sha256": "0b09223cdeda8042f39f31bc691403b537254fdda68d231521164e1999c8a717",
+          "source_key": "DcpTargetBindings.candidate.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "stage_disposition_issued": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "current_blocking": false,
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission."
+    },
+    {
+      "condition_id": "F-MAJ-014/C3",
+      "original_text": "敏感 owner/account refs 使用 endpoint policy，不进入可扩散审计/公共包",
+      "classification": "B",
+      "classification_label": "需根按既有委托签发具体治理决定或阶段处置",
+      "independent_scope_assessment": "当前根路由历史源仍含owner/account提示；用户控制私库不等于公共泄漏，但也非完成敏感引用外置。根应明确仅私有保全，本轮新投影/Skill不得带业务正文或敏感账号值；公开/跨权限分发前再外置/脱敏并验证。无需新信任根。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/StructureCandidateMap.json",
+          "bytes": 33372,
+          "sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965",
+          "source_key": "data/StructureCandidateMap.json",
+          "pointer": "/current_to_target_rows/7",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step12-migration-candidate\\MigrationPlan.candidate.json",
+          "bytes": 41261,
+          "sha256": "d8e1b8bb5058e9b2e4be9b4c0e836ad101eeefe7a839e6bc3ac5338f8b8310d0",
+          "source_key": "MigrationPlan.candidate.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step12-migration-candidate\\DcpTargetBindings.candidate.json",
+          "bytes": 3803,
+          "sha256": "0b09223cdeda8042f39f31bc691403b537254fdda68d231521164e1999c8a717",
+          "source_key": "DcpTargetBindings.candidate.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "stage_disposition_issued": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "current_blocking": false,
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission."
+    },
+    {
+      "condition_id": "F-MAJ-014/C4",
+      "original_text": "对现存历史做 access and leakage review",
+      "classification": "B",
+      "classification_label": "需根按既有委托签发具体治理决定或阶段处置",
+      "independent_scope_assessment": "用户已声明全部自有测试账号并修订为当前目录；原包AREQ-014未授权状态仅历史。根可记录当前私库、制品、无新增外部可见性/无业务payload分发的限定access review，历史全量Library审查不阻断；不得声称全历史无泄漏。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/AuthorizationRequests_NOT_GRANTED.json",
+          "bytes": 8438,
+          "sha256": "f0f736a32fcae273504db1286e7c9b74f087ba42c8d09d53d6cdb9ffb9ea235b",
+          "source_key": "data/AuthorizationRequests_NOT_GRANTED.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step12-migration-candidate\\MigrationPlan.candidate.json",
+          "bytes": 41261,
+          "sha256": "d8e1b8bb5058e9b2e4be9b4c0e836ad101eeefe7a839e6bc3ac5338f8b8310d0",
+          "source_key": "MigrationPlan.candidate.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step12-migration-candidate\\DcpTargetBindings.candidate.json",
+          "bytes": 3803,
+          "sha256": "0b09223cdeda8042f39f31bc691403b537254fdda68d231521164e1999c8a717",
+          "source_key": "DcpTargetBindings.candidate.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "stage_disposition_issued": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "current_blocking": false,
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission."
+    },
+    {
+      "condition_id": "F-MAJ-016/C1",
+      "original_text": "冻结 ArtifactIdentity、ReleaseUnitIdentity、EditionIdentity、SKU/Offer/Entitlement typed refs",
+      "classification": "B",
+      "classification_label": "需根按既有委托签发具体治理决定或阶段处置",
+      "independent_scope_assessment": "13 typed设计行已存在，Step5接受其当前身份合同；根可冻结命名/类型边界并保留商业/模型实际消费者接线为适用域启用前置，不能要求未申请商店先实现。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/ArtifactAndReleaseIdentityCrosswalk.json",
+          "bytes": 10781,
+          "sha256": "a4386a8b45b02e8dbd6ff2f400d3b1c9ecbfc9c6d07a2892f035994d2a78c685",
+          "source_key": "data/ArtifactAndReleaseIdentityCrosswalk.json",
+          "pointer": "/rows",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\Step05-ScopedAcceptance_20260907.json",
+          "bytes": 2733,
+          "sha256": "a38536ed64ae7924235ab0318cae17716f1a549d89660acde807f4bb15a64a19",
+          "source_key": "Step05-ScopedAcceptance_20260907.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "stage_disposition_issued": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "current_blocking": false,
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission."
+    },
+    {
+      "condition_id": "F-MAJ-016/C2",
+      "original_text": "声明 technical qualification, distribution, commercial availability and user entitlement are separate states",
+      "classification": "A",
+      "classification_label": "本轮已有确切证据可承接",
+      "independent_scope_assessment": "四个independent_state_axes明确分开；各type列出does_not_imply。技术资格不推出分发/可售/权益。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/ArtifactAndReleaseIdentityCrosswalk.json",
+          "bytes": 10781,
+          "sha256": "a4386a8b45b02e8dbd6ff2f400d3b1c9ecbfc9c6d07a2892f035994d2a78c685",
+          "source_key": "data/ArtifactAndReleaseIdentityCrosswalk.json",
+          "pointer": "/independent_state_axes",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "stage_disposition_issued": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "current_blocking": false,
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission."
+    },
+    {
+      "condition_id": "F-MAJ-016/C3",
+      "original_text": "Product/Store only project current Kernel/Registry facts",
+      "classification": "D",
+      "classification_label": "未来非核心义务保留",
+      "independent_scope_assessment": "Product/Store真实消费者尚未启用；必须只投影有效Kernel/Registry事实。保留实际启用前正负例与currentness规则，本轮不能将设计crosswalk冒充真实商店证明。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/ArtifactAndReleaseIdentityCrosswalk.json",
+          "bytes": 10781,
+          "sha256": "a4386a8b45b02e8dbd6ff2f400d3b1c9ecbfc9c6d07a2892f035994d2a78c685",
+          "source_key": "data/ArtifactAndReleaseIdentityCrosswalk.json",
+          "pointer": "/rows",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "stage_disposition_issued": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "current_blocking": false,
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission."
+    },
+    {
+      "condition_id": "F-MAJ-017/C1",
+      "original_text": "以 current Commit/Tree 做实测输入",
+      "classification": "A",
+      "classification_label": "本轮已有确切证据可承接",
+      "independent_scope_assessment": "原Observation是历史；本轮具体MigrationPlan已有源commit/tree和逐源blob/hash，Step6已有当前CI绑定。只承接精确字节且源不变的范围，不以9月5日观察代表今天。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/RepositoryEvidenceObservation.json",
+          "bytes": 7302,
+          "sha256": "e64b838f04ec083d34d3644b9222f4aa873cdcb535960eb4a5b1588d12963af0",
+          "source_key": "data/RepositoryEvidenceObservation.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step12-migration-candidate\\MigrationPlan.candidate.json",
+          "bytes": 41261,
+          "sha256": "d8e1b8bb5058e9b2e4be9b4c0e836ad101eeefe7a839e6bc3ac5338f8b8310d0",
+          "source_key": "MigrationPlan.candidate.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step12-migration-candidate\\DcpTargetBindings.candidate.json",
+          "bytes": 3803,
+          "sha256": "0b09223cdeda8042f39f31bc691403b537254fdda68d231521164e1999c8a717",
+          "source_key": "DcpTargetBindings.candidate.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "stage_disposition_issued": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "current_blocking": false,
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission."
+    },
+    {
+      "condition_id": "F-MAJ-017/C2",
+      "original_text": "Architecture v1.0 只冻结责任，不先锁死目录",
+      "classification": "A",
+      "classification_label": "本轮已有确切证据可承接",
+      "independent_scope_assessment": "架构责任与物理选择分开；当前map23责任行保持，唯一具体目标由Step11冻结。不能把架构v0.2.5接受写成v1.0版本发布。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/StructureCandidateMap.json",
+          "bytes": 33372,
+          "sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965",
+          "source_key": "data/StructureCandidateMap.json",
+          "pointer": "/map_kind",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step12-migration-candidate\\MigrationPlan.candidate.json",
+          "bytes": 41261,
+          "sha256": "d8e1b8bb5058e9b2e4be9b4c0e836ad101eeefe7a839e6bc3ac5338f8b8310d0",
+          "source_key": "MigrationPlan.candidate.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step12-migration-candidate\\DcpTargetBindings.candidate.json",
+          "bytes": 3803,
+          "sha256": "0b09223cdeda8042f39f31bc691403b537254fdda68d231521164e1999c8a717",
+          "source_key": "DcpTargetBindings.candidate.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "stage_disposition_issued": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "current_blocking": false,
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission."
+    },
+    {
+      "condition_id": "F-MAJ-017/C3",
+      "original_text": "Structure Plan 生成唯一 FrozenTargetMap 和 CurrentToTargetMap",
+      "classification": "B",
+      "classification_label": "需根按既有委托签发具体治理决定或阶段处置",
+      "independent_scope_assessment": "新MigrationPlan有29具体既有文件操作及全23行处置，DcpTargetBindings补TM17–19具体目录；根需最终绑定Step7/8/10精确输入并在Step11签唯一FrozenTargetMap。未迁移不是缺Freeze输入；最终源摘要/目标选择仍不可占位。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/StructureCandidateMap.json",
+          "bytes": 33372,
+          "sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965",
+          "source_key": "data/StructureCandidateMap.json",
+          "pointer": "/current_to_target_rows",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step12-migration-candidate\\MigrationPlan.candidate.json",
+          "bytes": 41261,
+          "sha256": "d8e1b8bb5058e9b2e4be9b4c0e836ad101eeefe7a839e6bc3ac5338f8b8310d0",
+          "source_key": "MigrationPlan.candidate.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step12-migration-candidate\\DcpTargetBindings.candidate.json",
+          "bytes": 3803,
+          "sha256": "0b09223cdeda8042f39f31bc691403b537254fdda68d231521164e1999c8a717",
+          "source_key": "DcpTargetBindings.candidate.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "stage_disposition_issued": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "current_blocking": false,
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission."
+    },
+    {
+      "condition_id": "F-MAJ-017/C4",
+      "original_text": "旧 v3.3 target 每项标记 inherited/changed/retired",
+      "classification": "A",
+      "classification_label": "本轮已有确切证据可承接",
+      "independent_scope_assessment": "独立读取OldTargetDisposition的318条，每条含源行、路径、disposition；属于旧目标责任清单不冒充current文件。当前未变路径规则和新迁移候选承接相关行，无需复查所有历史副本。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/StructureCandidateMap.json",
+          "bytes": 33372,
+          "sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965",
+          "source_key": "data/StructureCandidateMap.json",
+          "pointer": "/source_v3_3_target_disposition",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step12-migration-candidate\\MigrationPlan.candidate.json",
+          "bytes": 41261,
+          "sha256": "d8e1b8bb5058e9b2e4be9b4c0e836ad101eeefe7a839e6bc3ac5338f8b8310d0",
+          "source_key": "MigrationPlan.candidate.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step12-migration-candidate\\DcpTargetBindings.candidate.json",
+          "bytes": 3803,
+          "sha256": "0b09223cdeda8042f39f31bc691403b537254fdda68d231521164e1999c8a717",
+          "source_key": "DcpTargetBindings.candidate.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/sources/architecture_v024/data/OldTargetDisposition.json",
+          "bytes": 264804,
+          "sha256": "72836ed6cec9773d9990d442762f6084eeca6ca99c0817114037731302ca868f",
+          "source_key": "sources/architecture_v024/data/OldTargetDisposition.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "stage_disposition_issued": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "current_blocking": false,
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission."
+    },
+    {
+      "condition_id": "F-MAJ-018/C1",
+      "original_text": "冻结 Phase2 MVP success metric and maximum active workstreams",
+      "classification": "B",
+      "classification_label": "需根按既有委托签发具体治理决定或阶段处置",
+      "independent_scope_assessment": "Charter已有明确阈值、24case/72槽位及WIP≤2；根可接受设计测量/工作流上限并记实际角色，默认单写执行。原$5/400请求/50万token只是未批实验提案，本次不得据此支出或声称实验通过。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/CharterCandidate.json",
+          "bytes": 2468,
+          "sha256": "44010776cae2a816d4db8134c96a0ee0f07a692b84bae47fc37a6effc7e302c8",
+          "source_key": "data/CharterCandidate.json",
+          "pointer": "/numeric_effect_thresholds",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/sources/architecture_v024/data/SliceAPreregistration.json",
+          "bytes": 3396,
+          "sha256": "289dd3f7091b41a319b6604d6246010d4acd60e8f44955b6ce8b67ec13f8a033",
+          "source_key": "sources/architecture_v024/data/SliceAPreregistration.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/sources/architecture_v024/data/CapacityBudgetProposal.json",
+          "bytes": 2930,
+          "sha256": "ce62f0aac382f1f225794186ae33d26e6cfb9a62087a60315d478f8a5a818af8",
+          "source_key": "sources/architecture_v024/data/CapacityBudgetProposal.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "stage_disposition_issued": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "current_blocking": false,
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission."
+    },
+    {
+      "condition_id": "F-MAJ-018/C2",
+      "original_text": "只把 Slice A 放核心关键路径",
+      "classification": "A",
+      "classification_label": "本轮已有确切证据可承接",
+      "independent_scope_assessment": "Charter.core_slice精确为PHASE2-CORE-SLICE-A；full_store/full_model不是前提，符合当前成本约束。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/CharterCandidate.json",
+          "bytes": 2468,
+          "sha256": "44010776cae2a816d4db8134c96a0ee0f07a692b84bae47fc37a6effc7e302c8",
+          "source_key": "data/CharterCandidate.json",
+          "pointer": "/core_slice",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/sources/architecture_v024/data/SliceAPreregistration.json",
+          "bytes": 3396,
+          "sha256": "289dd3f7091b41a319b6604d6246010d4acd60e8f44955b6ce8b67ec13f8a033",
+          "source_key": "sources/architecture_v024/data/SliceAPreregistration.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/sources/architecture_v024/data/CapacityBudgetProposal.json",
+          "bytes": 2930,
+          "sha256": "ce62f0aac382f1f225794186ae33d26e6cfb9a62087a60315d478f8a5a818af8",
+          "source_key": "sources/architecture_v024/data/CapacityBudgetProposal.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "stage_disposition_issued": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "current_blocking": false,
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission."
+    },
+    {
+      "condition_id": "F-MAJ-018/C3",
+      "original_text": "Model M1-M7、Commerce、Marketplace、大规模训练均单独预算和 GO/NO-GO",
+      "classification": "D",
+      "classification_label": "未来非核心义务保留",
+      "independent_scope_assessment": "模型M1–M7/Commerce/Marketplace/大训练继续独立预算、GO/NO-GO和数据权利前置；本轮未选择激活，只阻断对应未来动作，不全局阻断当前命名结构。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/CharterCandidate.json",
+          "bytes": 2468,
+          "sha256": "44010776cae2a816d4db8134c96a0ee0f07a692b84bae47fc37a6effc7e302c8",
+          "source_key": "data/CharterCandidate.json",
+          "pointer": "/product_dependency_boundary",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/sources/architecture_v024/data/SliceAPreregistration.json",
+          "bytes": 3396,
+          "sha256": "289dd3f7091b41a319b6604d6246010d4acd60e8f44955b6ce8b67ec13f8a033",
+          "source_key": "sources/architecture_v024/data/SliceAPreregistration.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/sources/architecture_v024/data/CapacityBudgetProposal.json",
+          "bytes": 2930,
+          "sha256": "ce62f0aac382f1f225794186ae33d26e6cfb9a62087a60315d478f8a5a818af8",
+          "source_key": "sources/architecture_v024/data/CapacityBudgetProposal.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "stage_disposition_issued": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "current_blocking": false,
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission."
+    },
+    {
+      "condition_id": "F-MAJ-018/C4",
+      "original_text": "每个阶段必须交付可运行纵向 E2E，不接受仅 Schema/Receipt 堆积",
+      "classification": "B",
+      "classification_label": "需根按既有委托签发具体治理决定或阶段处置",
+      "independent_scope_assessment": "根应按阶段接受可运行纵向证据义务：本轮Step7/8必须真运行投影/Validator；Step12–19按真实迁移/接线/回归收口；产品Slice A的24case/72槽位留实际实施阶段，不能把schema堆积或未跑E2E写成功。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/CharterCandidate.json",
+          "bytes": 2468,
+          "sha256": "44010776cae2a816d4db8134c96a0ee0f07a692b84bae47fc37a6effc7e302c8",
+          "source_key": "data/CharterCandidate.json",
+          "pointer": "/measured_results",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/sources/architecture_v024/data/SliceAPreregistration.json",
+          "bytes": 3396,
+          "sha256": "289dd3f7091b41a319b6604d6246010d4acd60e8f44955b6ce8b67ec13f8a033",
+          "source_key": "sources/architecture_v024/data/SliceAPreregistration.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/sources/architecture_v024/data/CapacityBudgetProposal.json",
+          "bytes": 2930,
+          "sha256": "ce62f0aac382f1f225794186ae33d26e6cfb9a62087a60315d478f8a5a818af8",
+          "source_key": "sources/architecture_v024/data/CapacityBudgetProposal.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "stage_disposition_issued": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "current_blocking": false,
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission."
+    }
+  ],
+  "not_performed": [
+    "Step9 final review",
+    "Step10 ArchitectureConstitutionAcceptanceDecision",
+    "Step11 StructureFreezeDecision",
+    "runtime/model/commercial activation",
+    "Step18 non-bypass proof",
+    "repository or original evidence mutation",
+    "business memory payload read"
+  ],
+  "limitations": [
+    "Crosswalk contents independently inspected as design contracts, not all historical source documents or runtime behavior.",
+    "Step7/8 still being finalized; C clauses identify concrete evidence handoffs, not findings that final unpublished candidate necessarily fails.",
+    "Migration candidate is preparation; its test PASS is not used as independent executed-migration evidence.",
+    "F014 private access scope supplied by the root task, not independently queried as live hosting/platform policy; root must bind its existing metadata evidence or issue the bounded stage disposition without claiming all-history no-leakage."
+  ]
+}

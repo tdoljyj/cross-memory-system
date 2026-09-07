@@ -1,0 +1,32 @@
+{
+  "identity-policy": {
+    "original_source": {
+      "kind": "immutable_zip_member",
+      "archive_path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip",
+      "member": "Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/CurrentArtifactIdentityPolicy.json",
+      "bytes": 776,
+      "sha256": "3a14df68ea81c6390316c5df09d51a049b52a640871ab57953c42acb30624bff"
+    },
+    "retained_copy": {
+      "path": "step7-projection-candidate/inputs/CurrentArtifactIdentityPolicy.json",
+      "sha256": "3a14df68ea81c6390316c5df09d51a049b52a640871ab57953c42acb30624bff",
+      "kind": "json"
+    },
+    "byte_identity_verified": true
+  },
+  "review-subject": {
+    "original_source": {
+      "kind": "immutable_zip_member",
+      "archive_path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip",
+      "member": "Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/ReviewSubjectContract.json",
+      "bytes": 1383,
+      "sha256": "c2cd13dbe8fd046aa8f0344778141cb9b115fae0048a8c673b60bd25b03498d3"
+    },
+    "retained_copy": {
+      "path": "step7-projection-candidate/inputs/ReviewSubjectContract.json",
+      "sha256": "c2cd13dbe8fd046aa8f0344778141cb9b115fae0048a8c673b60bd25b03498d3",
+      "kind": "json"
+    },
+    "byte_identity_verified": true
+  }
+}

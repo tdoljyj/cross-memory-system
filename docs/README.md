@@ -6,6 +6,7 @@
 2. [R5 内核架构与合同](r5-kernel/01-Architecture-and-Contract-Freeze.md)
 3. [R5 K0 债务闭合](r5-kernel/02-K0-Debt-Closure.md)
 4. [R3 Gate 终态资料](r3-gate3/R3-Gate3-Report.md)
+5. [Phase 2 每步验收与失效规则](execution-plans/phase2-structure-governance/AcceptanceAndInvalidation.md) · [2026-09-07 Step 1 / Step 2 证据核对](execution-plans/phase2-structure-governance/Step01-Step02-EvidenceReview.md)（执行补充与证据记录，不签发接受或冻结）
 
 ## 目录含义
 

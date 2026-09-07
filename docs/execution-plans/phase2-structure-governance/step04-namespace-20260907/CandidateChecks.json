@@ -1,0 +1,30 @@
+{
+  "status": "CANDIDATE_STRUCTURE_CHECKS_PASS_NOT_GATE_ACCEPTANCE",
+  "source_rows_exactly_once": 23,
+  "namespace_groups": 10,
+  "domain_rows": 8,
+  "total_core_rows": 18,
+  "source_references_consistent": 138,
+  "new_runtime_authorizations": 0,
+  "repository_source_edits": 0,
+  "files": {
+    "DomainRegistryOwnershipManifest.candidate.json": "fa9e1b322356fc55d04b3eee078146a9b8304e48197c7d1767cd14d665b9c8ca",
+    "KeyConflicts.candidate.json": "b39a65380c04cf97c7e364729657f55448b3358ba1fa9e2194448b6ea3b303f3",
+    "NamespaceDelegationManifest.candidate.json": "cee24dff183aed36ea99a6ad51aea8ee6edf2b15544ac641a955c2393648d537",
+    "NamespaceOwnershipManifest.candidate.json": "40d7e87fed046c8aff18d8c1d0532ada075b802faf204059649c84faef1c0782",
+    "Sources.json": "660dc97f3644eca7f9a8a5078a167b72ea8e897e583bcc2a4e2917cb1d033427"
+  },
+  "independent_local_patch": {
+    "reviewer": "/root/sequence_review",
+    "reused_candidate_checks_sha256": "3fc273a62abc059a7993deba1986973e421d1ed3da704639a8c98dc9c70f84c9",
+    "reused_source_reference_checks": 138,
+    "patch": "Add a candidate scoped governance registry designation and reciprocal namespace/domain pointers only.",
+    "governance_registry_rows": 8,
+    "namespace_to_domain_links": 10,
+    "domain_to_namespace_links": 10,
+    "all_links_resolve": true,
+    "original_structure_rows_unchanged": true,
+    "runtime_grants_added": 0,
+    "acceptance_issued": false
+  }
+}

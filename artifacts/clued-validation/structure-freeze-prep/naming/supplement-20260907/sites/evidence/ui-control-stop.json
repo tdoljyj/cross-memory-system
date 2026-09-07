@@ -1,0 +1,12 @@
+{
+  "date": "2026-09-07",
+  "collector": "root Codex",
+  "tool": "mcp__node_repl__js with installed computer-use @oai/sky",
+  "operation": "Read Chrome window state after selecting a returned window",
+  "result": "TOOL_POLICY_STOP",
+  "message": "Computer Use has been stopped for this turn because it could not determine the current browser URL on Windows with enough confidence to enforce policy.",
+  "subsequent_ui_input": "NONE",
+  "handling": "Stopped UI control and notified agents; continued authorized file, Git and service API work, including restoring the test project's original paused state.",
+  "auth_or_library_metadata_obtained": false,
+  "authority_effect": "NONE"
+}

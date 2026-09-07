@@ -1,0 +1,12 @@
+{
+  "status": "FAIL",
+  "exit_code": 1,
+  "formal_step8_gate": false,
+  "freeze_ready": false,
+  "errors": [
+    {
+      "code": "INVALID_INPUT",
+      "detail": "duplicate JSON key: format"
+    }
+  ]
+}

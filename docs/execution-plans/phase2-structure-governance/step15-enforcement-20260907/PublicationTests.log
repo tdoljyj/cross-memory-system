@@ -1,0 +1,50 @@
+test_additional_check_wrong_source_app_rejected (test_naming_governance_publication.PublicationTests.test_additional_check_wrong_source_app_rejected) ... ok
+test_artifact_from_previous_attempt (test_naming_governance_publication.PublicationTests.test_artifact_from_previous_attempt) ... ok
+test_bare_pointer_reader_rejected (test_naming_governance_publication.PublicationTests.test_bare_pointer_reader_rejected) ... ok
+test_cli_has_no_fixture_metadata_option (test_naming_governance_publication.PublicationTests.test_cli_has_no_fixture_metadata_option) ... ok
+test_different_execution_workflow_sha_rejected (test_naming_governance_publication.PublicationTests.test_different_execution_workflow_sha_rejected) ... ok
+test_expired_artifact (test_naming_governance_publication.PublicationTests.test_expired_artifact) ... ok
+test_failed_publish_does_not_write_activation (test_naming_governance_publication.PublicationTests.test_failed_publish_does_not_write_activation) ... ok
+test_forged_verifier (test_naming_governance_publication.PublicationTests.test_forged_verifier) ... ok
+test_forged_workflow_bytes (test_naming_governance_publication.PublicationTests.test_forged_workflow_bytes) ... ok
+test_four_gate_failure_behind_green_run (test_naming_governance_publication.PublicationTests.test_four_gate_failure_behind_green_run) ... ok
+test_freeze_changed (test_naming_governance_publication.PublicationTests.test_freeze_changed) ... ok
+test_missing_additional_base_core_run_rejected (test_naming_governance_publication.PublicationTests.test_missing_additional_base_core_run_rejected) ... ok
+test_missing_evidence_role (test_naming_governance_publication.PublicationTests.test_missing_evidence_role) ... ok
+test_missing_freeze_field_rejected (test_naming_governance_publication.PublicationTests.test_missing_freeze_field_rejected) ... ok
+test_missing_naming_rule (test_naming_governance_publication.PublicationTests.test_missing_naming_rule) ... ok
+test_missing_signature (test_naming_governance_publication.PublicationTests.test_missing_signature) ... ok
+test_naming_failure_behind_green_run (test_naming_governance_publication.PublicationTests.test_naming_failure_behind_green_run) ... ok
+test_naming_fixture_rejected (test_naming_governance_publication.PublicationTests.test_naming_fixture_rejected) ... ok
+test_new_writer_invalidates_current_scope (test_naming_governance_publication.PublicationTests.test_new_writer_invalidates_current_scope) ... ok
+test_non_service_signature_issuer_rejected (test_naming_governance_publication.PublicationTests.test_non_service_signature_issuer_rejected) ... ok
+test_nonboolean_signature_flag_rejected (test_naming_governance_publication.PublicationTests.test_nonboolean_signature_flag_rejected) ... ok
+test_nonwindows_publisher_fails_before_validation (test_naming_governance_publication.PublicationTests.test_nonwindows_publisher_fails_before_validation) ... ok
+test_original_base_core_platform_checks_included (test_naming_governance_publication.PublicationTests.test_original_base_core_platform_checks_included) ... ok
+test_other_package_pass_rejected (test_naming_governance_publication.PublicationTests.test_other_package_pass_rejected) ... ok
+test_parent_swap_during_validation_is_denied_and_handles_release (test_naming_governance_publication.PublicationTests.test_parent_swap_during_validation_is_denied_and_handles_release) ... ok
+test_preexisting_parent_junction_is_rejected_without_outside_write (test_naming_governance_publication.PublicationTests.test_preexisting_parent_junction_is_rejected_without_outside_write) ... ok
+test_publish_isolated_cas_and_readback (test_naming_governance_publication.PublicationTests.test_publish_isolated_cas_and_readback) ... ok
+test_reader_revalidates_remote_after_valid_local_pointer (test_naming_governance_publication.PublicationTests.test_reader_revalidates_remote_after_valid_local_pointer) ... ok
+test_replaced_artifact_bytes (test_naming_governance_publication.PublicationTests.test_replaced_artifact_bytes) ... ok
+test_replayed_attempt (test_naming_governance_publication.PublicationTests.test_replayed_attempt) ... ok
+test_reversed_actual_steps_rejected (test_naming_governance_publication.PublicationTests.test_reversed_actual_steps_rejected) ... ok
+test_same_named_different_workflow_id (test_naming_governance_publication.PublicationTests.test_same_named_different_workflow_id) ... ok
+test_same_run_and_artifact_for_two_native_proofs (test_naming_governance_publication.PublicationTests.test_same_run_and_artifact_for_two_native_proofs) ... ok
+test_signature_forgery_in_selector_not_trusted (test_naming_governance_publication.PublicationTests.test_signature_forgery_in_selector_not_trusted) ... ok
+test_signature_wrong_tree (test_naming_governance_publication.PublicationTests.test_signature_wrong_tree) ... ok
+test_skip_validator_cannot_publish_candidate_pointer (test_naming_governance_publication.PublicationTests.test_skip_validator_cannot_publish_candidate_pointer) ... ok
+test_stale_sequence (test_naming_governance_publication.PublicationTests.test_stale_sequence) ... ok
+test_stale_subject (test_naming_governance_publication.PublicationTests.test_stale_subject) ... ok
+test_successful_negative_harness_not_positive (test_naming_governance_publication.PublicationTests.test_successful_negative_harness_not_positive) ... ok
+test_unauthorized_merge_actor (test_naming_governance_publication.PublicationTests.test_unauthorized_merge_actor) ... ok
+test_unpinned_policy_rejected (test_naming_governance_publication.PublicationTests.test_unpinned_policy_rejected) ... ok
+test_valid_different_source_and_attestation_commits (test_naming_governance_publication.PublicationTests.test_valid_different_source_and_attestation_commits) ... ok
+test_wrong_candidate_in_receipt_even_when_run_green (test_naming_governance_publication.PublicationTests.test_wrong_candidate_in_receipt_even_when_run_green) ... ok
+test_wrong_ci_sha (test_naming_governance_publication.PublicationTests.test_wrong_ci_sha) ... ok
+test_wrong_governed_source_index (test_naming_governance_publication.PublicationTests.test_wrong_governed_source_index) ... ok
+
+----------------------------------------------------------------------
+Ran 45 tests in 0.267s
+
+OK

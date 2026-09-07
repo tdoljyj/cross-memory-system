@@ -1,0 +1,156 @@
+{
+  "checked_at_utc": "2026-09-07T06:16:33.6896494Z",
+  "scope": "Retrieved GitHub run/jobs/artifact and exact downloaded receipt bytes; no fresh validator rerun",
+  "results": [
+    {
+      "case": "positive",
+      "status": "VERIFIED",
+      "run_id": 34069116734,
+      "run_attempt": 1,
+      "commit_sha": "07632caa673395e136c60d9cf4f2f884c03a59af",
+      "job_id": 101583082537,
+      "gate_step_executed": true,
+      "run_conclusion": "success",
+      "artifact_id": 9999876944,
+      "artifact_bytes_and_hash_recomputed": {
+        "bytes": 1660,
+        "sha256": "52a8288c0cfb4ce679020dbae00275836d862ef5a9a15e0dbda7df5b5a47050c"
+      },
+      "expires_at": "2026-12-06T00:13:25Z",
+      "receipt_bytes_and_hash_recomputed": {
+        "bytes": 4213,
+        "sha256": "0a6bf0df65e722f2bb48fc6fd93767ec5ffcd8bb207b4189d4ff7d0863738091"
+      },
+      "receipt_binding": "MATCH",
+      "fixture": null
+    },
+    {
+      "case": "candidate_identity",
+      "status": "VERIFIED",
+      "run_id": 34068788695,
+      "run_attempt": 1,
+      "commit_sha": "ca3292bb58dce28115636a31f1c09301b9bd1b30",
+      "job_id": 101582207251,
+      "gate_step_executed": true,
+      "run_conclusion": "failure",
+      "artifact_id": 9999786548,
+      "artifact_bytes_and_hash_recomputed": {
+        "bytes": 2076,
+        "sha256": "39564eb18c06a9b04b65039a4726a8f8b561f3380faeb5b27acf2814624ced77"
+      },
+      "expires_at": "2026-12-06T00:07:25Z",
+      "receipt_bytes_and_hash_recomputed": {
+        "bytes": 1733,
+        "sha256": "ce7fa36658702e553b2f1c95c2362fe3e27002ff7cd6b89bf6362725813bd7fb"
+      },
+      "receipt_binding": "MATCH",
+      "fixture": {
+        "file_identity": {
+          "bytes": 2479,
+          "sha256": "6ac5d07d21a3e075dc098110f56932782eb67501d0b0cc50cb71ae85c9153548"
+        },
+        "expected_behavior_confirmed": true,
+        "base_candidate_before_after_matches": true,
+        "validator_exit_code": 1,
+        "intentional_job_exit_code": 1,
+        "implementation_matches_index": true
+      }
+    },
+    {
+      "case": "manifest_integrity",
+      "status": "VERIFIED",
+      "run_id": 34068853770,
+      "run_attempt": 1,
+      "commit_sha": "ea94e901f97507d6c7f600813b36acfe5db5bd4c",
+      "job_id": 101582380520,
+      "gate_step_executed": true,
+      "run_conclusion": "failure",
+      "artifact_id": 9999806197,
+      "artifact_bytes_and_hash_recomputed": {
+        "bytes": 2967,
+        "sha256": "c4583019a5802c385dc81a48760fe452ef5c0bbfecfcfdb842507a0a624b8354"
+      },
+      "expires_at": "2026-12-06T00:08:40Z",
+      "receipt_bytes_and_hash_recomputed": {
+        "bytes": 4222,
+        "sha256": "9752c47e8e09777ffd7e912d0c1b6b78b5571d7288ca1748ecd55f62dc07055c"
+      },
+      "receipt_binding": "MATCH",
+      "fixture": {
+        "file_identity": {
+          "bytes": 2484,
+          "sha256": "04033a7ffaff54e111db648a9882903f6805eb9588e933ad3b5c25df6f88b917"
+        },
+        "expected_behavior_confirmed": true,
+        "base_candidate_before_after_matches": true,
+        "validator_exit_code": 1,
+        "intentional_job_exit_code": 1,
+        "implementation_matches_index": true
+      }
+    },
+    {
+      "case": "provenance",
+      "status": "VERIFIED",
+      "run_id": 34068945665,
+      "run_attempt": 1,
+      "commit_sha": "9c657f8ffcf67296d394946b2050e049dc535664",
+      "job_id": 101582622092,
+      "gate_step_executed": true,
+      "run_conclusion": "failure",
+      "artifact_id": 9999831842,
+      "artifact_bytes_and_hash_recomputed": {
+        "bytes": 2756,
+        "sha256": "1cf6cd5ecbba62400c9e50d1b1a79edd0c8e972284159da665fb7af2b98f9bc3"
+      },
+      "expires_at": "2026-12-06T00:10:18Z",
+      "receipt_bytes_and_hash_recomputed": {
+        "bytes": 3553,
+        "sha256": "71f218467f8c05fcd3854c65188336a80762fbc82b482977f46889b62c4d907e"
+      },
+      "receipt_binding": "MATCH",
+      "fixture": {
+        "file_identity": {
+          "bytes": 2641,
+          "sha256": "cdae07d40fc39d4ce67e4bcee06238ef6a1b3f62fb3f2edf9af5471a2757fafb"
+        },
+        "expected_behavior_confirmed": true,
+        "base_candidate_before_after_matches": true,
+        "validator_exit_code": 1,
+        "intentional_job_exit_code": 1,
+        "implementation_matches_index": true
+      }
+    },
+    {
+      "case": "product_increment_input",
+      "status": "VERIFIED",
+      "run_id": 34069016068,
+      "run_attempt": 1,
+      "commit_sha": "90d1e9fc72b39f918c536d5a375d7096af439668",
+      "job_id": 101582812255,
+      "gate_step_executed": true,
+      "run_conclusion": "failure",
+      "artifact_id": 9999852995,
+      "artifact_bytes_and_hash_recomputed": {
+        "bytes": 2639,
+        "sha256": "898f26e61266414ce9597a804b0eb9beb572e411ee290c403a98700b73666eb9"
+      },
+      "expires_at": "2026-12-06T00:11:33Z",
+      "receipt_bytes_and_hash_recomputed": {
+        "bytes": 3440,
+        "sha256": "0c909f66b9cf3c5a004801b02ecae12425a94cd2a8c6125433cea50daedf85fb"
+      },
+      "receipt_binding": "MATCH",
+      "fixture": {
+        "file_identity": {
+          "bytes": 2546,
+          "sha256": "bb648d0acf9881f2afa2bf7551cdcec8e5cf8a465fddf72d93f16a4c1ceda13f"
+        },
+        "expected_behavior_confirmed": true,
+        "base_candidate_before_after_matches": true,
+        "validator_exit_code": 1,
+        "intentional_job_exit_code": 1,
+        "implementation_matches_index": true
+      }
+    }
+  ]
+}

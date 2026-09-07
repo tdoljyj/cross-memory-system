@@ -1,0 +1,299 @@
+{
+  "type": "Phase2ActualTrustedEntryNegativeControls",
+  "status": "PASS",
+  "fixture_only": false,
+  "started_at": "2026-09-07T11:32:04.719142+00:00",
+  "runner_sha256": "c6e914511bd54650369c90cea4874880e62c3f89a1795c52d489aadd81d6113a",
+  "step18_pass": false,
+  "authority_effect": "NONE",
+  "cases": [
+    {
+      "id": "no-python-isolation",
+      "expected_exit": 1,
+      "expected_error": "trusted launcher requires Python -I",
+      "process": {
+        "exit_code": 1,
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr_sha256": "da03861796e96658c3c00c8f7fb3b7fcbf31f97836b8ae5d0df6f757c5eb381e",
+        "stdout_bytes": 0,
+        "stderr_bytes": 85,
+        "structured_error": {
+          "status": "FAIL",
+          "step18_pass": false,
+          "error": "trusted launcher requires Python -I",
+          "error_sha256": "bbef3d2d4ae9c0e06619a081fc1f5a6a2808d3f77cbbada01504710935dd66e3"
+        },
+        "api_reachability": {
+          "reached": false,
+          "basis": "Exact reviewed launcher digest; actual isolation/parser/selector rejection before core.",
+          "launcher_sha256": "32d0d3e2fda441e589d33a0b63042482cf4c33630bb0eb63e69d2d7bd0e6d35a"
+        }
+      },
+      "result": "PASS"
+    },
+    {
+      "id": "caller-policy-override",
+      "expected_exit": 2,
+      "expected_error": "ARGPARSE_REJECTED_POLICY_OVERRIDE",
+      "process": {
+        "exit_code": 2,
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr_sha256": "0d9231e0b04a0c327efabe9f07ccf1f4c82ae3992c2f266c8ad7d64edfb0ad93",
+        "stdout_bytes": 0,
+        "stderr_bytes": 348,
+        "structured_error": {
+          "origin": "actual argparse stderr",
+          "code": "ARGPARSE_REJECTED_POLICY_OVERRIDE",
+          "message": "unrecognized arguments: --policy C:/not-a-trusted-policy.json",
+          "raw_stderr_sha256": "0d9231e0b04a0c327efabe9f07ccf1f4c82ae3992c2f266c8ad7d64edfb0ad93"
+        },
+        "api_reachability": {
+          "reached": false,
+          "basis": "Exact reviewed launcher digest; actual isolation/parser/selector rejection before core.",
+          "launcher_sha256": "32d0d3e2fda441e589d33a0b63042482cf4c33630bb0eb63e69d2d7bd0e6d35a"
+        }
+      },
+      "result": "PASS"
+    },
+    {
+      "id": "publish-missing-cas",
+      "expected_exit": 1,
+      "expected_error": "publish requires exact expected-current SHA or NONE",
+      "process": {
+        "exit_code": 1,
+        "stdout_sha256": "ca48668c1a3d1053348328a17a20780fe774910ba8734249e0a028d5009b3456",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stdout_bytes": 188,
+        "stderr_bytes": 0,
+        "structured_error": {
+          "type": "Phase2TrustedLauncherExecution",
+          "status": "FAIL",
+          "step15_pass": false,
+          "step18_pass": false,
+          "error": "publish requires exact expected-current SHA or NONE",
+          "error_sha256": "14d9abd2033e3296542bc387d5beb7f80e1afc26c31a3fc34c287ddbf5762ee8"
+        },
+        "api_reachability": {
+          "reached": false,
+          "basis": "Exact reviewed launcher digest; actual isolation/parser/selector rejection before core.",
+          "launcher_sha256": "32d0d3e2fda441e589d33a0b63042482cf4c33630bb0eb63e69d2d7bd0e6d35a"
+        }
+      },
+      "result": "PASS",
+      "unused_selectors": "Zero SHA and PR 1 are syntax-only negative-test inputs; never resolved, no run or attestation claim."
+    },
+    {
+      "id": "append-lf-GovernanceRegistry.projection.json",
+      "path": "development/projections/phase2/GovernanceRegistry.projection.json",
+      "expected_error": "FROZEN_TARGET_DRIFT",
+      "original_sha256": "f1116caf940ca665193c60915f6df4e5dc506fafa0f1dea8e20d8ca702dd47f8",
+      "injected_sha256": "f829a7691a20bdbb0f6f24142739e149b9ce1f501a018dd3a97a49479c9b73ad",
+      "process": {
+        "exit_code": 1,
+        "stdout_sha256": "211db191e5336b77a150d7790f1312d04c2e5d3fcc9449f8694953987f14ddeb",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stdout_bytes": 13001,
+        "stderr_bytes": 0,
+        "structured_error": {
+          "type": "Phase2TrustedLauncherExecution",
+          "status": "FAIL",
+          "step15_pass": false,
+          "step18_pass": false,
+          "error": "local post-migration guard rejected before publication",
+          "error_sha256": "c5294b33dc27a3a445bac9a21b8286b0441ec2b4c148e0e3994860e2c8b7fdf6",
+          "local_post_migration_guard": {
+            "type": "Phase2PostMigrationFileBoundaryEvidence",
+            "status": "FAIL",
+            "exit_code": 1,
+            "freeze_sha256": "f40c8af253f811f820e4b3eccc144d63ca3548663810aba10bebb22331661b36",
+            "execution_inputs_sha256": "37a6909deedae17dbfe97e844d8ec596c5de46e73c3cefafd4136008d3f3dcec",
+            "checked_changed_paths": 64,
+            "checked_immutable_inputs": 39,
+            "authority_effect": "NONE",
+            "errors": [
+              {
+                "code": "FROZEN_TARGET_DRIFT",
+                "path": "development/projections/phase2/GovernanceRegistry.projection.json",
+                "expected": "f1116caf940ca665193c60915f6df4e5dc506fafa0f1dea8e20d8ca702dd47f8",
+                "actual": "f829a7691a20bdbb0f6f24142739e149b9ce1f501a018dd3a97a49479c9b73ad"
+              }
+            ]
+          }
+        },
+        "api_reachability": {
+          "reached": false,
+          "basis": "Exact reviewed launcher digest + actual pre-core guard rejection branch; no packet/process telemetry claim.",
+          "launcher_sha256": "32d0d3e2fda441e589d33a0b63042482cf4c33630bb0eb63e69d2d7bd0e6d35a"
+        }
+      },
+      "result": "PASS",
+      "restored_sha256": "f1116caf940ca665193c60915f6df4e5dc506fafa0f1dea8e20d8ca702dd47f8",
+      "restored_path_sha256": "f1116caf940ca665193c60915f6df4e5dc506fafa0f1dea8e20d8ca702dd47f8",
+      "restored": true
+    },
+    {
+      "id": "append-lf-GovernanceManifest.projection.json",
+      "path": "development/projections/phase2/GovernanceManifest.projection.json",
+      "expected_error": "FROZEN_TARGET_DRIFT",
+      "original_sha256": "682b0a2821d942d1c57bc6baa7926bc862b26f89ce1246bded37da97325a7493",
+      "injected_sha256": "5e3fa0895d17cf7c13bde236f6558dba69b94633c6222915438d85e1f958b592",
+      "process": {
+        "exit_code": 1,
+        "stdout_sha256": "72ff6cd01af5a91657c510ad5db828faa26ca26bb8c34a2a7a76c2976deff201",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stdout_bytes": 13001,
+        "stderr_bytes": 0,
+        "structured_error": {
+          "type": "Phase2TrustedLauncherExecution",
+          "status": "FAIL",
+          "step15_pass": false,
+          "step18_pass": false,
+          "error": "local post-migration guard rejected before publication",
+          "error_sha256": "c5294b33dc27a3a445bac9a21b8286b0441ec2b4c148e0e3994860e2c8b7fdf6",
+          "local_post_migration_guard": {
+            "type": "Phase2PostMigrationFileBoundaryEvidence",
+            "status": "FAIL",
+            "exit_code": 1,
+            "freeze_sha256": "f40c8af253f811f820e4b3eccc144d63ca3548663810aba10bebb22331661b36",
+            "execution_inputs_sha256": "37a6909deedae17dbfe97e844d8ec596c5de46e73c3cefafd4136008d3f3dcec",
+            "checked_changed_paths": 64,
+            "checked_immutable_inputs": 39,
+            "authority_effect": "NONE",
+            "errors": [
+              {
+                "code": "FROZEN_TARGET_DRIFT",
+                "path": "development/projections/phase2/GovernanceManifest.projection.json",
+                "expected": "682b0a2821d942d1c57bc6baa7926bc862b26f89ce1246bded37da97325a7493",
+                "actual": "5e3fa0895d17cf7c13bde236f6558dba69b94633c6222915438d85e1f958b592"
+              }
+            ]
+          }
+        },
+        "api_reachability": {
+          "reached": false,
+          "basis": "Exact reviewed launcher digest + actual pre-core guard rejection branch; no packet/process telemetry claim.",
+          "launcher_sha256": "32d0d3e2fda441e589d33a0b63042482cf4c33630bb0eb63e69d2d7bd0e6d35a"
+        }
+      },
+      "result": "PASS",
+      "restored_sha256": "682b0a2821d942d1c57bc6baa7926bc862b26f89ce1246bded37da97325a7493",
+      "restored_path_sha256": "682b0a2821d942d1c57bc6baa7926bc862b26f89ce1246bded37da97325a7493",
+      "restored": true
+    },
+    {
+      "id": "exclusive-extra-namespace-file",
+      "path": "development/contracts/phase2/.step18-live-control-48ed1c400e434534a684e204754f90fc.json",
+      "expected_error": "UNREGISTERED_GOVERNANCE_WRITE",
+      "owned_bytes_sha256": "7501c09b94483c3441dd46537a33ba312e4a3dde3047bf260596a846084f5411",
+      "process": {
+        "exit_code": 1,
+        "stdout_sha256": "314b54f528a8fd2674a7eb8d2054da4b53d84ed551a4cdd0aa7be43386204d32",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stdout_bytes": 12875,
+        "stderr_bytes": 0,
+        "structured_error": {
+          "type": "Phase2TrustedLauncherExecution",
+          "status": "FAIL",
+          "step15_pass": false,
+          "step18_pass": false,
+          "error": "local post-migration guard rejected before publication",
+          "error_sha256": "c5294b33dc27a3a445bac9a21b8286b0441ec2b4c148e0e3994860e2c8b7fdf6",
+          "local_post_migration_guard": {
+            "type": "Phase2PostMigrationFileBoundaryEvidence",
+            "status": "FAIL",
+            "exit_code": 1,
+            "freeze_sha256": "f40c8af253f811f820e4b3eccc144d63ca3548663810aba10bebb22331661b36",
+            "execution_inputs_sha256": "37a6909deedae17dbfe97e844d8ec596c5de46e73c3cefafd4136008d3f3dcec",
+            "checked_changed_paths": 64,
+            "checked_immutable_inputs": 39,
+            "authority_effect": "NONE",
+            "errors": [
+              {
+                "code": "UNREGISTERED_GOVERNANCE_WRITE",
+                "path": "development/contracts/phase2/.step18-live-control-48ed1c400e434534a684e204754f90fc.json"
+              }
+            ]
+          }
+        },
+        "api_reachability": {
+          "reached": false,
+          "basis": "Exact reviewed launcher digest + actual pre-core guard rejection branch; no packet/process telemetry claim.",
+          "launcher_sha256": "32d0d3e2fda441e589d33a0b63042482cf4c33630bb0eb63e69d2d7bd0e6d35a"
+        }
+      },
+      "result": "PASS",
+      "cleanup_object_sha256": "7501c09b94483c3441dd46537a33ba312e4a3dde3047bf260596a846084f5411",
+      "restored_absence": true
+    }
+  ],
+  "limits": [
+    "Limited local trusted entry rejection evidence; not Git-main protection or Step18 acceptance.",
+    "No activation mutation. No business payloads or credentials retained in the evidence.",
+    "No-API findings use exact reviewed control flow, not independent network telemetry."
+  ],
+  "binding": {
+    "launcher_sha256": "32d0d3e2fda441e589d33a0b63042482cf4c33630bb0eb63e69d2d7bd0e6d35a",
+    "post_migration_sha256": "bbe3dfe6d6949357ae32643e8cad7493b27d487638e7750c6b5b279c181d882e",
+    "freeze_sha256": "f40c8af253f811f820e4b3eccc144d63ca3548663810aba10bebb22331661b36",
+    "execution_inputs_sha256": "37a6909deedae17dbfe97e844d8ec596c5de46e73c3cefafd4136008d3f3dcec",
+    "trust_config_sha256": "4f571efb9499684f61b3c8879110e9f62e24d28de96ac5ff0b992498dd126f23",
+    "bootstrap_sha256": "4b65e4190dec621dc0083ce75615446cec33137aa3f2ef2834b0be6e0f4e38a4",
+    "publication_sha256": "74026fd0b6cf859b53d4f925a1147b9a787a92a426f93985f98e4077a2a028b7",
+    "policy_sha256": "15f3b467da195c8dee6d831d3ac4d7915cf56a8e950d0796023b7b1fa623959a",
+    "python_sha256": "b7a12c3af0b4db44191eec14ea095eba731b7328917f570806183093d19ddca2",
+    "changed_paths": 64,
+    "payloads": 45,
+    "immutable_inputs": 39
+  },
+  "baseline_before": {
+    "process": {
+      "exit_code": 0,
+      "stdout_sha256": "17b3b2407a9b50f13f9fee72964f3e70a2f647244d6d554590ad553917409997",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_bytes": 50,
+      "stderr_bytes": 0,
+      "structured_response": {
+        "status": "PASS",
+        "exit_code": 0
+      }
+    },
+    "guard": {
+      "type": "Phase2PostMigrationFileBoundaryEvidence",
+      "status": "PASS",
+      "exit_code": 0,
+      "freeze_sha256": "f40c8af253f811f820e4b3eccc144d63ca3548663810aba10bebb22331661b36",
+      "execution_inputs_sha256": "37a6909deedae17dbfe97e844d8ec596c5de46e73c3cefafd4136008d3f3dcec",
+      "checked_changed_paths": 64,
+      "checked_immutable_inputs": 39,
+      "authority_effect": "NONE",
+      "errors": []
+    },
+    "evidence_file": "baseline-2a926df025b740fda59877956d9a7519.json"
+  },
+  "baseline_after": {
+    "process": {
+      "exit_code": 0,
+      "stdout_sha256": "17b3b2407a9b50f13f9fee72964f3e70a2f647244d6d554590ad553917409997",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_bytes": 50,
+      "stderr_bytes": 0,
+      "structured_response": {
+        "status": "PASS",
+        "exit_code": 0
+      }
+    },
+    "guard": {
+      "type": "Phase2PostMigrationFileBoundaryEvidence",
+      "status": "PASS",
+      "exit_code": 0,
+      "freeze_sha256": "f40c8af253f811f820e4b3eccc144d63ca3548663810aba10bebb22331661b36",
+      "execution_inputs_sha256": "37a6909deedae17dbfe97e844d8ec596c5de46e73c3cefafd4136008d3f3dcec",
+      "checked_changed_paths": 64,
+      "checked_immutable_inputs": 39,
+      "authority_effect": "NONE",
+      "errors": []
+    },
+    "evidence_file": "baseline-39ac6378d6ed4d8e99710fd280b13bb5.json"
+  },
+  "finished_at": "2026-09-07T11:32:05.548371+00:00"
+}

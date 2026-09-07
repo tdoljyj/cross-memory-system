@@ -1,0 +1,310 @@
+{
+  "type": "IndependentStagedDispositionApplicabilityReview",
+  "state": "PASS_FOR_TEN_SCOPED_CLAUSES_NOT_DECISIONS",
+  "reviewer": "/root/evidence_review",
+  "reviewed_at": "2026-09-07T10:17:52.973665+00:00",
+  "subject": {
+    "root_selection": {
+      "path": "step09-review-20260907/preparation/RootSelectedDispositions.candidate.json",
+      "sha256": "c4fe3cc13670a886e6703ab191284ddb2d0077d481f674a3cab10b49d51e65b8"
+    },
+    "proposal": {
+      "path": "step09-review-20260907/preparation/StagedDispositionProposal.json",
+      "sha256": "2d27c7b9a673dff1484caea6d3fb5ea409467346eafb96557c7123bd5a5ec653"
+    }
+  },
+  "independence": {
+    "clause_author": "/root/architecture_review",
+    "selector": "/root",
+    "reviewer_authored_these_clauses": false,
+    "prior_work_disclosure": "Reviewer authored Step4/5 candidates, initial Step7 projection work and Step12 migration tooling. Those implementations and their test sufficiency are excluded from this review. Existing scoped acceptance records are read as upstream decisions, not independently reaccepted here.",
+    "scope": "Only applicability of the selected ten staged clauses against original cited contracts, latest fixed sequence, explicit amendments, delegation and bounded current access record."
+  },
+  "counts": {
+    "PASS": 10,
+    "REVISE": 0,
+    "tests_run": 0,
+    "new_dispositions_issued": 0,
+    "formal_condition_closures": 0
+  },
+  "overall_conclusion": "十条可由既有受托接受者在实际Step10/11按所列范围签发；无需新增授权或现在实现未来商业/模型域。此判断不替代完整独立Step9，不签架构接受或Freeze，不提前裁原28项，也不证明审查者自己编写的迁移实现。",
+  "issuance_boundaries": [
+    "实际Step10须绑定最终候选、commit、前任、Step7/8精确补充证据、完整独立Step9与本次处置审查；候选null字段在实际决定中不能保留未绑定。",
+    "ProgramCriticalPathDecision保留独立可识别typed效果；不以一句总结替代，不发放实验预算。",
+    "实际Step11在Step10后另裁原28项并绑定最终唯一目标/执行输入；本条款适用性PASS不能代替原结构条件裁决。",
+    "失效和撤销沿用现有授权的任务终止/撤销与相关对象漂移规则；不凭候选自述期限新造自动探针或权限。",
+    "所有行保留限定已接受范围与后续义务；不得对部分阶段条件写无范围的全局closed=true。"
+  ],
+  "rows": [
+    {
+      "condition_id": "F-MAJ-005/C2",
+      "verdict": "PASS",
+      "verdict_scope": "STAGED_CLAUSE_APPLICABILITY_ONLY",
+      "effective_stage": "Step10；另在Step11生效",
+      "independent_reason": "最新基线与原 ReviewSubjectContract 均要求先架构接受再结构冻结，两个决定可指向同一精确受审包。",
+      "non_removable_obligation": "Step11须引用实际Step10摘要并另裁原28项；Step12之前实际签发Freeze。",
+      "original_source_pointers": [
+        {
+          "source_key": "data/ReviewSubjectContract.json",
+          "pointer": "/structure_rule",
+          "sha256": "c2cd13dbe8fd046aa8f0344778141cb9b115fae0048a8c673b60bd25b03498d3",
+          "original_source_digest_verified": true
+        }
+      ],
+      "implementation_review_performed": false,
+      "formal_condition_closed": false
+    },
+    {
+      "condition_id": "F-MAJ-006/C1",
+      "verdict": "PASS",
+      "verdict_scope": "STAGED_CLAUSE_APPLICABILITY_ONLY",
+      "effective_stage": "Step10，独立可识别的typed关键路径决定",
+      "independent_reason": "选择核心Slice A与排除完整模型/商店依赖属于现有受托范围；WIP限制作用于产品工作流，有界并行子审查不另算产品主线。",
+      "non_removable_obligation": "保留共同Readiness；未来实际切片须绑定输入和资格；不批准历史试验预算或虚构第二团队。",
+      "original_source_pointers": [
+        {
+          "source_key": "data/ProgramCriticalPathDecisionCandidate.json",
+          "pointer": "/core_critical_path",
+          "sha256": "a19e1706c590b2c32895179ed37d1fd85f8ce29c9032fbbf4959253182c3545d",
+          "original_source_digest_verified": true
+        },
+        {
+          "source_key": "sources/architecture_v024/data/SliceAPreregistration.json",
+          "pointer": "",
+          "sha256": "289dd3f7091b41a319b6604d6246010d4acd60e8f44955b6ce8b67ec13f8a033",
+          "original_source_digest_verified": true
+        },
+        {
+          "source_key": "sources/architecture_v024/data/CapacityBudgetProposal.json",
+          "pointer": "",
+          "sha256": "ce62f0aac382f1f225794186ae33d26e6cfb9a62087a60315d478f8a5a818af8",
+          "original_source_digest_verified": true
+        }
+      ],
+      "implementation_review_performed": false,
+      "formal_condition_closed": false
+    },
+    {
+      "condition_id": "F-MAJ-007/C3",
+      "verdict": "PASS",
+      "verdict_scope": "STAGED_CLAUSE_APPLICABILITY_ONLY",
+      "effective_stage": "Step10设计范围",
+      "independent_reason": "原兼容矩阵明确为当前v0.2.5设计组合，未执行未来模型组合；不需要制造Architecture v1.0。",
+      "non_removable_obligation": "使用未来模型组合之前绑定两个实际接受对象、精确版本/摘要及对应资格，旧模型语义不改。",
+      "original_source_pointers": [
+        {
+          "source_key": "data/ParentArchitectureCompatibility.json",
+          "pointer": "/current_combination",
+          "sha256": "f5bed57c2dca9b445b8f6512890a6cc8195187545adb42cd5ec472ebae6623ba",
+          "original_source_digest_verified": true
+        }
+      ],
+      "implementation_review_performed": false,
+      "formal_condition_closed": false
+    },
+    {
+      "condition_id": "F-MAJ-011/C2",
+      "verdict": "PASS",
+      "verdict_scope": "STAGED_CLAUSE_APPLICABILITY_ONLY",
+      "effective_stage": "Step10治理设计；Step11适用结构决定",
+      "independent_reason": "原设计Profile允许Owner明确委托；本轮授权允许代审和有界独立审查，作者、评审者、接受者仍须分开记录。",
+      "non_removable_obligation": "独立Step9与实际决策不可由作者自测代替；后续发布、验证、回滚与原28项仍按适用阶段裁决。",
+      "original_source_pointers": [
+        {
+          "source_key": "data/HumanGovernanceProfiles.json",
+          "pointer": "/included_profiles",
+          "sha256": "c03093120227047bffe408eb1f4fe7cfa4581f2706d410e75752ccda94689c3f",
+          "original_source_digest_verified": true
+        },
+        {
+          "source_key": "sources/architecture_v024/data/HumanGovernanceCandidate.json",
+          "pointer": "",
+          "sha256": "d23351bb11e61bae68d861583b8d0ba75df858d6da09c83cb0418de4f7786a26",
+          "original_source_digest_verified": true
+        }
+      ],
+      "implementation_review_performed": false,
+      "formal_condition_closed": false
+    },
+    {
+      "condition_id": "F-MAJ-014/C3",
+      "verdict": "PASS",
+      "verdict_scope": "STAGED_CLAUSE_APPLICABILITY_ONLY",
+      "effective_stage": "Step10当前私域范围",
+      "independent_reason": "当前访问记录明确私库、原AGENTS账号提示仍保留；选定新投影检查与语义范围审查支持有限处置，不是全历史无泄漏证明。",
+      "non_removable_obligation": "原敏感引用不宣称已外置；Step20/21及跨现有受众分发前核对精确产物，排除账号值、凭据和业务快照。",
+      "original_source_pointers": [
+        {
+          "source_key": "data/StructureCandidateMap.json",
+          "pointer": "/current_to_target_rows/7",
+          "sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965",
+          "original_source_digest_verified": true
+        }
+      ],
+      "implementation_review_performed": false,
+      "formal_condition_closed": false
+    },
+    {
+      "condition_id": "F-MAJ-014/C4",
+      "verdict": "PASS",
+      "verdict_scope": "STAGED_CLAUSE_APPLICABILITY_ONLY",
+      "effective_stage": "Step10当前目录范围",
+      "independent_reason": "明确目录修订取消全Library历史核对前置；后续授权可适用于当前动作，历史AREQ-014 NOT_GRANTED保持原事实。",
+      "non_removable_obligation": "具体当前暴露或活动依赖须定点处理；受众/权限变化前做对应访问检查，不能将未查历史写成干净或完整。",
+      "original_source_pointers": [
+        {
+          "source_key": "data/AuthorizationRequests_NOT_GRANTED.json",
+          "pointer": "",
+          "sha256": "f0f736a32fcae273504db1286e7c9b74f087ba42c8d09d53d6cdb9ffb9ea235b",
+          "original_source_digest_verified": true
+        }
+      ],
+      "implementation_review_performed": false,
+      "formal_condition_closed": false
+    },
+    {
+      "condition_id": "F-MAJ-016/C1",
+      "verdict": "PASS",
+      "verdict_scope": "STAGED_CLAUSE_APPLICABILITY_ONLY",
+      "effective_stage": "Step10身份设计；Step11类型冻结",
+      "independent_reason": "原13行身份表及已接受Step5/6保留类型分离和does-not-imply关系，不要求当前激活休眠商业/模型消费者。",
+      "non_removable_obligation": "当前受影响消费者仍须Step13实测；未来域启用前绑定实际身份、授权、回执与资格，不由设计接受生成运行权。",
+      "original_source_pointers": [
+        {
+          "source_key": "data/ArtifactAndReleaseIdentityCrosswalk.json",
+          "pointer": "/rows",
+          "sha256": "a4386a8b45b02e8dbd6ff2f400d3b1c9ecbfc9c6d07a2892f035994d2a78c685",
+          "original_source_digest_verified": true
+        }
+      ],
+      "implementation_review_performed": false,
+      "formal_condition_closed": false
+    },
+    {
+      "condition_id": "F-MAJ-017/C3",
+      "verdict": "PASS",
+      "verdict_scope": "STAGED_CLAUSE_APPLICABILITY_ONLY",
+      "effective_stage": "Step10处置规则；实际Step11绑定唯一目标",
+      "independent_reason": "基线允许等价制品；唯一目标可用原23行映射及具体执行输入精确选择，不要求复制出竞争事实源。这里只判断条款适用性。",
+      "non_removable_obligation": "Step11引用最终输入/目标摘要而非旧pending元数据，保留23行及TM17–19；Step12真实预检/恢复和后续接线验证不可免。",
+      "original_source_pointers": [
+        {
+          "source_key": "data/StructureCandidateMap.json",
+          "pointer": "/current_to_target_rows",
+          "sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965",
+          "original_source_digest_verified": true
+        }
+      ],
+      "implementation_review_performed": false,
+      "formal_condition_closed": false
+    },
+    {
+      "condition_id": "F-MAJ-018/C1",
+      "verdict": "PASS",
+      "verdict_scope": "STAGED_CLAUSE_APPLICABILITY_ONLY",
+      "effective_stage": "Step10预登记设计",
+      "independent_reason": "原24例×3次、按case统计和阈值可作为未来测量设计接受；明确不将USD5等候选上限改为已批准预算。",
+      "non_removable_obligation": "实际测量前固定Gold、数据、环境/计数方法与独立评测责任；不得看结果后放宽阈值，样本不足仍按原规则阻断该指标。",
+      "original_source_pointers": [
+        {
+          "source_key": "data/CharterCandidate.json",
+          "pointer": "/numeric_effect_thresholds",
+          "sha256": "44010776cae2a816d4db8134c96a0ee0f07a692b84bae47fc37a6effc7e302c8",
+          "original_source_digest_verified": true
+        },
+        {
+          "source_key": "sources/architecture_v024/data/SliceAPreregistration.json",
+          "pointer": "",
+          "sha256": "289dd3f7091b41a319b6604d6246010d4acd60e8f44955b6ce8b67ec13f8a033",
+          "original_source_digest_verified": true
+        },
+        {
+          "source_key": "sources/architecture_v024/data/CapacityBudgetProposal.json",
+          "pointer": "",
+          "sha256": "ce62f0aac382f1f225794186ae33d26e6cfb9a62087a60315d478f8a5a818af8",
+          "original_source_digest_verified": true
+        }
+      ],
+      "implementation_review_performed": false,
+      "formal_condition_closed": false
+    },
+    {
+      "condition_id": "F-MAJ-018/C4",
+      "verdict": "PASS",
+      "verdict_scope": "STAGED_CLAUSE_APPLICABILITY_ONLY",
+      "effective_stage": "Step10阶段分配规则",
+      "independent_reason": "已接受Step7/8记录指向实际正负例；最新基线把迁移后执行与产品实验放在各自阶段，不需前置不相关模型实现。",
+      "non_removable_obligation": "Step12–19真实运行、Step16四Gate新结果、Step17语义比较和Step18不可绕过证明不可由旧PASS或Schema/Receipt数量代替。",
+      "original_source_pointers": [
+        {
+          "source_key": "data/CharterCandidate.json",
+          "pointer": "/measured_results",
+          "sha256": "44010776cae2a816d4db8134c96a0ee0f07a692b84bae47fc37a6effc7e302c8",
+          "original_source_digest_verified": true
+        },
+        {
+          "source_key": "sources/architecture_v024/data/SliceAPreregistration.json",
+          "pointer": "",
+          "sha256": "289dd3f7091b41a319b6604d6246010d4acd60e8f44955b6ce8b67ec13f8a033",
+          "original_source_digest_verified": true
+        },
+        {
+          "source_key": "sources/architecture_v024/data/CapacityBudgetProposal.json",
+          "pointer": "",
+          "sha256": "ce62f0aac382f1f225794186ae33d26e6cfb9a62087a60315d478f8a5a818af8",
+          "original_source_digest_verified": true
+        }
+      ],
+      "implementation_review_performed": false,
+      "formal_condition_closed": false
+    }
+  ],
+  "sources_read": [
+    {
+      "path": "ExecutionDelegation_20260907.json",
+      "sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8"
+    },
+    {
+      "path": "ScopeAmendment_CurrentDirectory_20260907.json",
+      "sha256": "32b16e2938a5674b1d8b492e1bf0a0506f708c574913696d6ba281b99e108e9e"
+    },
+    {
+      "path": "CostControlExecutionAmendment_20260907.md",
+      "sha256": "0626a40f12022442e78455ab4f06c44f90c03f343d535c743b4c58c3a749fa2d"
+    },
+    {
+      "path": "CurrentScopedAccessReview_20260907.json",
+      "sha256": "88a846d82338c77d30ba802895b2ce04e1b8ac76bcbae69dd0cabf070f9dc9a7"
+    },
+    {
+      "path": "FixedExecutionBaseline_20260907.md",
+      "sha256": "f465bcb77aced171b4f241da7a23c1e02133716700227caaabb7954be39899ad"
+    },
+    {
+      "path": "AcceptanceAndInvalidation.md",
+      "sha256": "f2aed48ed74e688bfe280d3fa896243cc7907905fafcc467706a276367472f27"
+    },
+    {
+      "path": "Step04-ScopedAcceptance_20260907.json",
+      "sha256": "6f2cc1c9cc28c2a717023029851d61a666815567bc30b3635479cb1b70382e6c"
+    },
+    {
+      "path": "Step05-ScopedAcceptance_20260907.json",
+      "sha256": "a38536ed64ae7924235ab0318cae17716f1a549d89660acde807f4bb15a64a19"
+    },
+    {
+      "path": "Step06-ScopedAcceptance_20260907.json",
+      "sha256": "bd40c82a21e7b19c2c36e56d7b877078e45c6bfdf1593590fb56ab364f47889a"
+    },
+    {
+      "path": "Step07-ScopedAcceptance_20260907.json",
+      "sha256": "dec7601899be7118b3baff3d78793ecaf98b06316070b881ca30297a3b0f22b3"
+    },
+    {
+      "path": "Step08-ScopedAcceptance_20260907.json",
+      "sha256": "8bac86599481c9effc67274bb29b7f352d59d4e656add8805e41f7437ced455c"
+    }
+  ],
+  "review_method": "Read-only independent clause-to-source comparison and exact reference hash checks; no tests, service queries, business-memory reads or repository mutations. No current Canon status claim.",
+  "supersedes": null
+}

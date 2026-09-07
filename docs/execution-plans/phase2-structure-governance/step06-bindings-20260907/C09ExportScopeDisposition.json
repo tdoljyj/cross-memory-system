@@ -1,0 +1,71 @@
+{
+  "kind": "EXISTING_EXPORT_SCOPE_DIFFERENCE_SCOPED_DISPOSITION_CANDIDATE",
+  "authority_effect": "NONE; NO_POLICY_WAIVER_OR_RUNTIME_GRANT",
+  "status": "SOURCE_DIFFERENCE_VERIFIED; RUNTIME_EFFECT_NOT_EXECUTED",
+  "consumer_id": "C09",
+  "observed_difference": {
+    "declared": "continuity.ts publicToolPolicies.clued_canonical_export scopes=[context:read,audit:read]",
+    "binding_wrapper": "clued_canonical_export → resolve_binding(p_token_hash,context:read,global)",
+    "resolver_predicate": "token hash + not revoked + requested scope + context membership; one supplied scope is evaluated",
+    "user_wrapper": "clued_user_canonical_export follows authenticated auth.uid() path; not equivalent to testing a Binding lacking audit:read",
+    "core": "canonical_export_core creates export receipt and projects current user-owned data; no additional audit:read check observed in inspected core"
+  },
+  "source_refs": [
+    {
+      "source_id": "apps/clued-cloud/worker/continuity.ts",
+      "lines": [
+        806,
+        807,
+        897,
+        908,
+        1178,
+        1187
+      ],
+      "sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+      "pointer": ""
+    },
+    {
+      "source_id": "apps/clued-cloud/supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql",
+      "lines": [
+        703,
+        709,
+        795,
+        811
+      ],
+      "sha256": "f59e414ec0de016cbe89d3ba24ded2d90e85a9e17fb554021b2d4d611f4d26c2",
+      "pointer": ""
+    },
+    {
+      "source_id": "apps/clued-cloud/supabase/migrations/202608230002_mandatory_continuity.sql",
+      "lines": [
+        95,
+        129
+      ],
+      "sha256": "9afc51a213bed869c143a7fdb5a23ab8a2e80df10639b3ea572a39aef203f57c",
+      "pointer": ""
+    }
+  ],
+  "bounded_decision": {
+    "pure_structure_naming_migration": "Preserve existing Worker/Bindings/export RPC source and authorization behavior. Record both declared and enforced scopes without calling them equal. This pre-existing difference does not itself require a production permission change to rename unrelated engineering files.",
+    "not_a_global_step6_identity_blocker": "C09 identity/caller/callee/issuer/scope-check location are now bound; the unresolved question is accepted scope behavior, not missing identity for every consumer.",
+    "affected_path_blocker": "Do not certify audit:read fail-closed export behavior, alter/export through a new Binding consumer, or treat this Binding export as an accepted least-privilege publishing prerequisite until the difference is resolved with the applicable contract and a focused isolated test.",
+    "semantic_no_change": "Adding audit:read enforcement changes accepted caller permissions and could reject existing context:read clients. Such a fix is not a zero-semantic file move and is outside the present no-Worker/Binding-change migration.",
+    "existing_fixture": "Reuse existing export-scope-fixture.sql and its isolated DB guard if an affected path needs execution; no production export, synthetic platform identity or full service rebuild required now.",
+    "existing_run_status": "SQL fixture not executed; no live exploit/overbroad export proven by this audit.",
+    "step13_17_condition": "Show Worker/SQL/Binding scope bytes unchanged for the selected structural migration. If migration instead selects these paths, this item becomes a precise authorization blocker for that affected path."
+  },
+  "input_fixture_status_ref": "export-scope-status",
+  "original_draft_patch_applied": false,
+  "production_configuration_changed": false,
+  "current_scope_reference": "StructureCandidateMap TM-07 no Worker/Binding change; Step5 accepted identity contracts; user current-directory scope.",
+  "structure_map_ref": {
+    "source_id": "structure-map",
+    "sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965",
+    "pointer": ""
+  },
+  "accepted_identity_ref": {
+    "source_id": "step5-acceptance",
+    "sha256": "a38536ed64ae7924235ab0318cae17716f1a549d89660acde807f4bb15a64a19",
+    "pointer": ""
+  }
+}

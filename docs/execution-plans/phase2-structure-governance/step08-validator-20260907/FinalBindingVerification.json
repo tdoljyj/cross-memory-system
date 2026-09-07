@@ -1,0 +1,444 @@
+{
+  "status": "PASS",
+  "actual_input_check_reused": {
+    "path": "CurrentBindingReceipt.json",
+    "sha256": "a73cf7c10faae1bdf2e241e49f748f61c98adeded37f2e58d65485dcd79d9569",
+    "exit_code": 0
+  },
+  "final_projection_controls_executed": 4,
+  "cases": [
+    {
+      "case": "readme_registry_drift",
+      "target_rule": "PROJECTION_DRIFT",
+      "actual_exit_code": 1,
+      "error_codes": [
+        "PROJECTION_DRIFT"
+      ],
+      "receipt_sha256": "069c4ee840391c6cb7d2fafac797bf14062426e1e974c901003da46f7aaf8094",
+      "command": [
+        "C:\\Users\\Windows\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\python\\python.exe",
+        "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\scripts\\naming-governance\\run.py",
+        "--bindings",
+        "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\.final-binding-controls\\readme_registry_drift\\SourceLocators.json",
+        "--source-root",
+        "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check",
+        "--candidate-zip",
+        "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip",
+        "--report",
+        "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\.final-binding-controls\\readme_registry_drift\\Receipt.json"
+      ],
+      "upstream_mismatch_count": 0
+    },
+    {
+      "case": "pending_to_accepted",
+      "target_rule": "PENDING_ACCEPTED",
+      "actual_exit_code": 1,
+      "error_codes": [
+        "PROJECTION_DRIFT",
+        "PENDING_ACCEPTED"
+      ],
+      "receipt_sha256": "0b8e2ca373f7aa8033426a6ec63f48419121bd653dee7876dfb9485f647ae8eb",
+      "command": [
+        "C:\\Users\\Windows\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\python\\python.exe",
+        "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\scripts\\naming-governance\\run.py",
+        "--bindings",
+        "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\.final-binding-controls\\pending_to_accepted\\SourceLocators.json",
+        "--source-root",
+        "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check",
+        "--candidate-zip",
+        "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip",
+        "--report",
+        "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\.final-binding-controls\\pending_to_accepted\\Receipt.json"
+      ],
+      "upstream_mismatch_count": 0
+    },
+    {
+      "case": "unexecuted_to_pass",
+      "target_rule": "UNEXECUTED_PASS",
+      "actual_exit_code": 1,
+      "error_codes": [
+        "PROJECTION_DRIFT",
+        "UNEXECUTED_PASS"
+      ],
+      "receipt_sha256": "e77b6283c50eeaeb6861a291e187f4f89d8e3e346d6fa2fdd0b296cb0c6fa81f",
+      "command": [
+        "C:\\Users\\Windows\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\python\\python.exe",
+        "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\scripts\\naming-governance\\run.py",
+        "--bindings",
+        "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\.final-binding-controls\\unexecuted_to_pass\\SourceLocators.json",
+        "--source-root",
+        "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check",
+        "--candidate-zip",
+        "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip",
+        "--report",
+        "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\.final-binding-controls\\unexecuted_to_pass\\Receipt.json"
+      ],
+      "upstream_mismatch_count": 0
+    },
+    {
+      "case": "accepted_upstream_drift",
+      "target_rule": "PROJECTION_DRIFT",
+      "actual_exit_code": 1,
+      "error_codes": [
+        "PROJECTION_DRIFT"
+      ],
+      "receipt_sha256": "d9657d507320e0fa31dc7ae7a68a5a4b3c27f5b0c69adfe5fd663b0ac85b326b",
+      "command": [
+        "C:\\Users\\Windows\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\python\\python.exe",
+        "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\scripts\\naming-governance\\run.py",
+        "--bindings",
+        "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\.final-binding-controls\\accepted_upstream_drift\\SourceLocators.json",
+        "--source-root",
+        "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check",
+        "--candidate-zip",
+        "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip",
+        "--report",
+        "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step08-validator-20260907\\.final-binding-controls\\accepted_upstream_drift\\Receipt.json"
+      ],
+      "upstream_mismatch_count": 1
+    }
+  ],
+  "core_rules_sha256": "f99eaf03737cc13f5ea2dea06a1e4d5b48033df22bb198f6eade22b00746bb8a",
+  "unchanged_13_positive_16_negative_evidence_reused": "Step8ValidatorEvidence_20260907.zip + EvidenceIndex.json",
+  "artifact": {
+    "path": "FinalBindingControls.zip",
+    "bytes": 531303,
+    "sha256": "e08442a94fe41bcad4e035471e10df6a12a0769599b19667a82dc072c818e9c6",
+    "members": [
+      {
+        "path": "accepted_upstream_drift/generated/AGENTS.governance.md",
+        "bytes": 2360,
+        "sha256": "ce2352612e6dd0814210abb859a9f8f6f184b4c3f7194914f9cfa117e1658b71"
+      },
+      {
+        "path": "accepted_upstream_drift/generated/ConsumerBindings.projection.json",
+        "bytes": 186336,
+        "sha256": "d62f7a18fdfa811cc41b8a193cc574c36ba13dd2cc284a6cb42ef19044909afa"
+      },
+      {
+        "path": "accepted_upstream_drift/generated/CURRENT_STATUS.history-original.md",
+        "bytes": 2753,
+        "sha256": "af52a717b2c37ebabf81a7123244aa3dd9a91042ea87037fd026925e8111f722"
+      },
+      {
+        "path": "accepted_upstream_drift/generated/CURRENT_STATUS.projection.md",
+        "bytes": 2750,
+        "sha256": "e4b9245b7fe5f37d12206d1fe64a4e5fcbe849f9992bc3b1e75322fa822453bb"
+      },
+      {
+        "path": "accepted_upstream_drift/generated/GovernanceDocs.projection.md",
+        "bytes": 2360,
+        "sha256": "ce2352612e6dd0814210abb859a9f8f6f184b4c3f7194914f9cfa117e1658b71"
+      },
+      {
+        "path": "accepted_upstream_drift/generated/GovernanceManifest.projection.json",
+        "bytes": 235349,
+        "sha256": "f3bbb4079285abe921450a2f5792254de68d2c432376d318c93df4cd641d72ef"
+      },
+      {
+        "path": "accepted_upstream_drift/generated/GovernanceRegistry.projection.json",
+        "bytes": 232283,
+        "sha256": "ce7b8c05a0b563e6765bdb96dc227ccc7d245b148c890967fc9e93b4343c601d"
+      },
+      {
+        "path": "accepted_upstream_drift/generated/IdentityFiles.projection.json",
+        "bytes": 9827,
+        "sha256": "c71f2f1b3f5fae0dba4dc85545947228a11fed0f0a21df9dd9c5049594040618"
+      },
+      {
+        "path": "accepted_upstream_drift/generated/README.governance.md",
+        "bytes": 2360,
+        "sha256": "ce2352612e6dd0814210abb859a9f8f6f184b4c3f7194914f9cfa117e1658b71"
+      },
+      {
+        "path": "accepted_upstream_drift/generated/StatusMigrationPlan.candidate.json",
+        "bytes": 751,
+        "sha256": "1881cc343304904893b561a7c9d6d5881981378eff40c7b06cad2c0b29e81ecb"
+      },
+      {
+        "path": "accepted_upstream_drift/generated/ToolRouting.projection.json",
+        "bytes": 4824,
+        "sha256": "aaa1d116d417e1d3f484a8e596d2964362e22ebba7116d291c6686df9e064ec1"
+      },
+      {
+        "path": "accepted_upstream_drift/generated/WorkflowReferences.projection.json",
+        "bytes": 4768,
+        "sha256": "a4321ed815bae313be0c40febfd08dd304ca808e4a147a79f64945115c5bcbca"
+      },
+      {
+        "path": "accepted_upstream_drift/ProjectionBindings.json",
+        "bytes": 9389,
+        "sha256": "1fff7d5d3d2b85d2a12cf7fb48b37eb6713771558dddaf6c82d041d6ae1942ce"
+      },
+      {
+        "path": "accepted_upstream_drift/Receipt.json",
+        "bytes": 535527,
+        "sha256": "d9657d507320e0fa31dc7ae7a68a5a4b3c27f5b0c69adfe5fd663b0ac85b326b"
+      },
+      {
+        "path": "accepted_upstream_drift/SourceLocators.json",
+        "bytes": 6330,
+        "sha256": "cdb92eb38cb4e72eb1dd8fb18bd08eeacd053cd561e6cf098ade2f26ab286888"
+      },
+      {
+        "path": "accepted_upstream_drift/stderr.txt",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "accepted_upstream_drift/stdout.txt",
+        "bytes": 310,
+        "sha256": "c5ab7a46e8e2927c921c24dd4ad968d302be48d67b0db0930285b620ff9e19c9"
+      },
+      {
+        "path": "accepted_upstream_drift/TypedAuthorizationRegistry.candidate.json",
+        "bytes": 76501,
+        "sha256": "267cf2f2d515aea0fe0789277243fc6dc8f0864896438f41754edee00f7f0f21"
+      },
+      {
+        "path": "pending_to_accepted/generated/AGENTS.governance.md",
+        "bytes": 2357,
+        "sha256": "9bcc962497ff82bf86dd3650b6d965d6ffa683125275fa55e278eb4b3914a6f0"
+      },
+      {
+        "path": "pending_to_accepted/generated/ConsumerBindings.projection.json",
+        "bytes": 186284,
+        "sha256": "a3448f25eae721026d8fc8ec0cbad012964e46c81a84dadecc3e365fc38e2cef"
+      },
+      {
+        "path": "pending_to_accepted/generated/CURRENT_STATUS.history-original.md",
+        "bytes": 2753,
+        "sha256": "af52a717b2c37ebabf81a7123244aa3dd9a91042ea87037fd026925e8111f722"
+      },
+      {
+        "path": "pending_to_accepted/generated/CURRENT_STATUS.projection.md",
+        "bytes": 2747,
+        "sha256": "2bb3a1c38e6e5229db62e232dbde74ae4759337bd77f01d22d0bc7dff4b7d98c"
+      },
+      {
+        "path": "pending_to_accepted/generated/GovernanceDocs.projection.md",
+        "bytes": 2357,
+        "sha256": "9bcc962497ff82bf86dd3650b6d965d6ffa683125275fa55e278eb4b3914a6f0"
+      },
+      {
+        "path": "pending_to_accepted/generated/GovernanceManifest.projection.json",
+        "bytes": 342431,
+        "sha256": "6d18ec103e370cac5ecd0a7e48d90b83cc59e924175942b5108f77679cadffcb"
+      },
+      {
+        "path": "pending_to_accepted/generated/GovernanceRegistry.projection.json",
+        "bytes": 232231,
+        "sha256": "f1116caf940ca665193c60915f6df4e5dc506fafa0f1dea8e20d8ca702dd47f8"
+      },
+      {
+        "path": "pending_to_accepted/generated/IdentityFiles.projection.json",
+        "bytes": 9775,
+        "sha256": "6259c4d9326cb24e15a5863efa61b8ffe95762f295398fbb75cbc1bd8606c0b3"
+      },
+      {
+        "path": "pending_to_accepted/generated/README.governance.md",
+        "bytes": 2357,
+        "sha256": "9bcc962497ff82bf86dd3650b6d965d6ffa683125275fa55e278eb4b3914a6f0"
+      },
+      {
+        "path": "pending_to_accepted/generated/StatusMigrationPlan.candidate.json",
+        "bytes": 751,
+        "sha256": "1881cc343304904893b561a7c9d6d5881981378eff40c7b06cad2c0b29e81ecb"
+      },
+      {
+        "path": "pending_to_accepted/generated/ToolRouting.projection.json",
+        "bytes": 4772,
+        "sha256": "8f63d5eae3d643edf3639ba709fa99e5bee1cb5cae7b8cb19813f168d4fa4d10"
+      },
+      {
+        "path": "pending_to_accepted/generated/WorkflowReferences.projection.json",
+        "bytes": 4716,
+        "sha256": "5cb691e23d4f8c857e9babde7d5f4d0bc9ed7b774ee8870aa0b0766e2bf5124a"
+      },
+      {
+        "path": "pending_to_accepted/Receipt.json",
+        "bytes": 534678,
+        "sha256": "0b8e2ca373f7aa8033426a6ec63f48419121bd653dee7876dfb9485f647ae8eb"
+      },
+      {
+        "path": "pending_to_accepted/SourceLocators.json",
+        "bytes": 6241,
+        "sha256": "b048ebeadbcde09a18c5938b494ead11349c93109356688d4dc52a58f184c1cb"
+      },
+      {
+        "path": "pending_to_accepted/stderr.txt",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "pending_to_accepted/stdout.txt",
+        "bytes": 326,
+        "sha256": "6d16382751f98254679da488eb32aae63b420521f520c055efebe39f873dd531"
+      },
+      {
+        "path": "readme_registry_drift/generated/AGENTS.governance.md",
+        "bytes": 2357,
+        "sha256": "9bcc962497ff82bf86dd3650b6d965d6ffa683125275fa55e278eb4b3914a6f0"
+      },
+      {
+        "path": "readme_registry_drift/generated/ConsumerBindings.projection.json",
+        "bytes": 186284,
+        "sha256": "a3448f25eae721026d8fc8ec0cbad012964e46c81a84dadecc3e365fc38e2cef"
+      },
+      {
+        "path": "readme_registry_drift/generated/CURRENT_STATUS.history-original.md",
+        "bytes": 2753,
+        "sha256": "af52a717b2c37ebabf81a7123244aa3dd9a91042ea87037fd026925e8111f722"
+      },
+      {
+        "path": "readme_registry_drift/generated/CURRENT_STATUS.projection.md",
+        "bytes": 2747,
+        "sha256": "2bb3a1c38e6e5229db62e232dbde74ae4759337bd77f01d22d0bc7dff4b7d98c"
+      },
+      {
+        "path": "readme_registry_drift/generated/GovernanceDocs.projection.md",
+        "bytes": 2357,
+        "sha256": "9bcc962497ff82bf86dd3650b6d965d6ffa683125275fa55e278eb4b3914a6f0"
+      },
+      {
+        "path": "readme_registry_drift/generated/GovernanceManifest.projection.json",
+        "bytes": 235275,
+        "sha256": "682b0a2821d942d1c57bc6baa7926bc862b26f89ce1246bded37da97325a7493"
+      },
+      {
+        "path": "readme_registry_drift/generated/GovernanceRegistry.projection.json",
+        "bytes": 232231,
+        "sha256": "f1116caf940ca665193c60915f6df4e5dc506fafa0f1dea8e20d8ca702dd47f8"
+      },
+      {
+        "path": "readme_registry_drift/generated/IdentityFiles.projection.json",
+        "bytes": 9775,
+        "sha256": "6259c4d9326cb24e15a5863efa61b8ffe95762f295398fbb75cbc1bd8606c0b3"
+      },
+      {
+        "path": "readme_registry_drift/generated/README.governance.md",
+        "bytes": 2382,
+        "sha256": "c8d7b1d2ddcde235c3a4aa07d18e31b02169fabee3bc303a20041fd9ea457837"
+      },
+      {
+        "path": "readme_registry_drift/generated/StatusMigrationPlan.candidate.json",
+        "bytes": 751,
+        "sha256": "1881cc343304904893b561a7c9d6d5881981378eff40c7b06cad2c0b29e81ecb"
+      },
+      {
+        "path": "readme_registry_drift/generated/ToolRouting.projection.json",
+        "bytes": 4772,
+        "sha256": "8f63d5eae3d643edf3639ba709fa99e5bee1cb5cae7b8cb19813f168d4fa4d10"
+      },
+      {
+        "path": "readme_registry_drift/generated/WorkflowReferences.projection.json",
+        "bytes": 4716,
+        "sha256": "5cb691e23d4f8c857e9babde7d5f4d0bc9ed7b774ee8870aa0b0766e2bf5124a"
+      },
+      {
+        "path": "readme_registry_drift/Receipt.json",
+        "bytes": 534560,
+        "sha256": "069c4ee840391c6cb7d2fafac797bf14062426e1e974c901003da46f7aaf8094"
+      },
+      {
+        "path": "readme_registry_drift/SourceLocators.json",
+        "bytes": 6243,
+        "sha256": "54e83305aa449f47bb892e4491c3bc9571ef80c2a24f39d3533c7e11402dab23"
+      },
+      {
+        "path": "readme_registry_drift/stderr.txt",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "readme_registry_drift/stdout.txt",
+        "bytes": 308,
+        "sha256": "ff3c9cd3e4229fd8deebde7d7bafc63d5c131a8c2e516a56acde7b7869111991"
+      },
+      {
+        "path": "unexecuted_to_pass/generated/AGENTS.governance.md",
+        "bytes": 2357,
+        "sha256": "9bcc962497ff82bf86dd3650b6d965d6ffa683125275fa55e278eb4b3914a6f0"
+      },
+      {
+        "path": "unexecuted_to_pass/generated/ConsumerBindings.projection.json",
+        "bytes": 186284,
+        "sha256": "a3448f25eae721026d8fc8ec0cbad012964e46c81a84dadecc3e365fc38e2cef"
+      },
+      {
+        "path": "unexecuted_to_pass/generated/CURRENT_STATUS.history-original.md",
+        "bytes": 2753,
+        "sha256": "af52a717b2c37ebabf81a7123244aa3dd9a91042ea87037fd026925e8111f722"
+      },
+      {
+        "path": "unexecuted_to_pass/generated/CURRENT_STATUS.projection.md",
+        "bytes": 2747,
+        "sha256": "2bb3a1c38e6e5229db62e232dbde74ae4759337bd77f01d22d0bc7dff4b7d98c"
+      },
+      {
+        "path": "unexecuted_to_pass/generated/GovernanceDocs.projection.md",
+        "bytes": 2357,
+        "sha256": "9bcc962497ff82bf86dd3650b6d965d6ffa683125275fa55e278eb4b3914a6f0"
+      },
+      {
+        "path": "unexecuted_to_pass/generated/GovernanceManifest.projection.json",
+        "bytes": 342461,
+        "sha256": "8506dcd6126fd508a0003e83d6444f19e95a500cebee2f47510de22034ea16dd"
+      },
+      {
+        "path": "unexecuted_to_pass/generated/GovernanceRegistry.projection.json",
+        "bytes": 232231,
+        "sha256": "f1116caf940ca665193c60915f6df4e5dc506fafa0f1dea8e20d8ca702dd47f8"
+      },
+      {
+        "path": "unexecuted_to_pass/generated/IdentityFiles.projection.json",
+        "bytes": 9775,
+        "sha256": "6259c4d9326cb24e15a5863efa61b8ffe95762f295398fbb75cbc1bd8606c0b3"
+      },
+      {
+        "path": "unexecuted_to_pass/generated/README.governance.md",
+        "bytes": 2357,
+        "sha256": "9bcc962497ff82bf86dd3650b6d965d6ffa683125275fa55e278eb4b3914a6f0"
+      },
+      {
+        "path": "unexecuted_to_pass/generated/StatusMigrationPlan.candidate.json",
+        "bytes": 751,
+        "sha256": "1881cc343304904893b561a7c9d6d5881981378eff40c7b06cad2c0b29e81ecb"
+      },
+      {
+        "path": "unexecuted_to_pass/generated/ToolRouting.projection.json",
+        "bytes": 4772,
+        "sha256": "8f63d5eae3d643edf3639ba709fa99e5bee1cb5cae7b8cb19813f168d4fa4d10"
+      },
+      {
+        "path": "unexecuted_to_pass/generated/WorkflowReferences.projection.json",
+        "bytes": 4716,
+        "sha256": "5cb691e23d4f8c857e9babde7d5f4d0bc9ed7b774ee8870aa0b0766e2bf5124a"
+      },
+      {
+        "path": "unexecuted_to_pass/Receipt.json",
+        "bytes": 534713,
+        "sha256": "e77b6283c50eeaeb6861a291e187f4f89d8e3e346d6fa2fdd0b296cb0c6fa81f"
+      },
+      {
+        "path": "unexecuted_to_pass/SourceLocators.json",
+        "bytes": 6240,
+        "sha256": "b31f781f0e7de5d515c42ead001797a01d641c6093279f898f2de0275ca70a7a"
+      },
+      {
+        "path": "unexecuted_to_pass/stderr.txt",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "unexecuted_to_pass/stdout.txt",
+        "bytes": 324,
+        "sha256": "3c178a77632336e850520701113f79370447c3d52f26b2b18c8e89a00cbf91a4"
+      }
+    ],
+    "all_member_digests_recomputed_after_pack": true
+  },
+  "formal_step8_gate": false,
+  "acceptance_issued": false,
+  "created_at_utc": "2026-09-07T10:00:25.823361+00:00"
+}

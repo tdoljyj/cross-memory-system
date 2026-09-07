@@ -1,0 +1,9 @@
+{
+  "control": "ISOLATED_CONCURRENT_PARENT_SWAP_AFTER_INITIAL_GUARD",
+  "source_sha256": "8c34f48ec93eb7c962af4716bfd1a8ec8f52a3679b03acc33b7277cb6bd8cdd5",
+  "published": true,
+  "outside_activation_created": true,
+  "fixture_root": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step15-18-independent-review\\publication-race-59y5u8i6",
+  "network_validation_stub": "Only supplies a success after simulating filesystem change in real network validation window; does not weaken filesystem writer logic. Not real signature or CI evidence.",
+  "actual_user_data_changed": false
+}

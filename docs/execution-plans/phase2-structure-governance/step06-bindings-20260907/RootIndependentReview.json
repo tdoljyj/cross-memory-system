@@ -1,0 +1,37 @@
+{
+  "reviewer": "/root",
+  "review_scope": "Independent source/control-flow review of Step6 closure and correction of C01 setup authorization inventory",
+  "original_author": "/root/sequence_review",
+  "finding": "C01 previously described initialize as anonymous public discovery; current handleMcp requires a bearer to be presented. This is an inventory error, not a production code change.",
+  "source_evidence": [
+    {
+      "path": "apps/clued-cloud/worker/continuity.ts",
+      "sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+      "lines": [
+        985,
+        988,
+        1013,
+        1014
+      ]
+    },
+    {
+      "path": "apps/clued-cloud/tests/continuity.test.mjs",
+      "sha256": "671808dcabb45dc551413c9a3d833f0dcde661220021674e3285f7600ce38b97",
+      "assertion": "anonymousInitialize.status == 401"
+    }
+  ],
+  "correction": "Represent per-operation policy in the existing C01 binding: anonymous list/bootstrap versus bearer-presence setup; do not equate presented bearer with validated identity.",
+  "before": {
+    "TypedAuthorizationRegistry.candidate.json": "9b17e7bce4327abc179aeb4ce214670341bfed252658903a58244d916de73955",
+    "TypedConsumerRegistry.candidate.json": "c14a299a40c2bcd7d915cb4e5dedaf6471220a3a242d2f9156620746745aa38a"
+  },
+  "after": {
+    "TypedAuthorizationRegistry.candidate.json": "359e7461ba3166bef63815f37ddd9c247aada317c14e4e62bdee3bc79cc3fcdd",
+    "TypedConsumerRegistry.candidate.json": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7"
+  },
+  "unchanged_consumer_rows": 17,
+  "authorization_binding_count": 27,
+  "source_or_production_edits": false,
+  "previous_reference_checks_reused": "592 digest references /112 pointers from unchanged source bindings; corrected C01 uses the same source references and updates exact line selectors.",
+  "acceptance_supported": "SCOPED_STEP6_SOURCE_BINDING; actual Step8/13/16/18 obligations and C09 disposition retained"
+}

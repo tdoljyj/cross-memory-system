@@ -1,0 +1,253 @@
+{
+  "format": "SOURCE_REFERENCE_SELECTIONS_NOT_CANONICAL_REGISTRY",
+  "authority_effect": "NONE",
+  "sources": {
+    "namespace": {
+      "path": "docs/execution-plans/phase2-structure-governance/step04-namespace-20260907/NamespaceOwnershipManifest.candidate.json",
+      "sha256": "40d7e87fed046c8aff18d8c1d0532ada075b802faf204059649c84faef1c0782",
+      "kind": "json"
+    },
+    "domains": {
+      "path": "docs/execution-plans/phase2-structure-governance/step04-namespace-20260907/DomainRegistryOwnershipManifest.candidate.json",
+      "sha256": "fa9e1b322356fc55d04b3eee078146a9b8304e48197c7d1767cd14d665b9c8ca",
+      "kind": "json"
+    },
+    "step4-acceptance": {
+      "path": "docs/execution-plans/phase2-structure-governance/Step04-ScopedAcceptance_20260907.json",
+      "sha256": "6f2cc1c9cc28c2a717023029851d61a666815567bc30b3635479cb1b70382e6c",
+      "kind": "json"
+    },
+    "delegation": {
+      "path": "docs/execution-plans/phase2-structure-governance/ExecutionDelegation_20260907.json",
+      "sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+      "kind": "json"
+    },
+    "versions": {
+      "path": "docs/execution-plans/phase2-structure-governance/step05-identity-20260907/VersionAxisRegistry.candidate.json",
+      "sha256": "1276845153b1fe93517533bc0ae18d466134a6e8651100369dd54493790f27da",
+      "kind": "json"
+    },
+    "aliases": {
+      "path": "docs/execution-plans/phase2-structure-governance/step05-identity-20260907/AliasRegistry.candidate.json",
+      "sha256": "29d0d21d2d0fcecefdc9daaf841a77f411a6695d256a38993976f74660f19a40",
+      "kind": "json"
+    },
+    "step5-source-index": {
+      "path": "docs/execution-plans/phase2-structure-governance/step05-identity-20260907/Sources.json",
+      "sha256": "00b13dfa75569b23c19ece0f1babf35f4c9cbd36086cc904dbaafd29cdd0be9b",
+      "kind": "json"
+    },
+    "consumers": {
+      "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedConsumerRegistry.candidate.json",
+      "sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+      "kind": "json"
+    },
+    "workflow": {
+      "path": ".github/workflows/phase2-naming-surface-inventory.yml",
+      "sha256": "a9264836297371da0a4bf6e6dada2699ce577c7f31476ac957190e14396aa77c",
+      "kind": "text"
+    },
+    "tool-routing": {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/inputs/PreMigration-AGENTS.md",
+      "sha256": "75d0788ff62a20d2d211115a66ab20fc38519a14fad890ab9a3d6f821e821793",
+      "kind": "text"
+    },
+    "historical-status": {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/inputs/PreMigration-CURRENT_STATUS.md",
+      "sha256": "af52a717b2c37ebabf81a7123244aa3dd9a91042ea87037fd026925e8111f722",
+      "kind": "text"
+    },
+    "existing-verifier": {
+      "path": "scripts/verify-generated-artifacts.mjs",
+      "sha256": "db1da191aeeccf42a6956af2616554cb8e2d278c4bc0bdc1650bd46ca14124e1",
+      "kind": "text"
+    },
+    "identity-policy": {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/inputs/CurrentArtifactIdentityPolicy.json",
+      "sha256": "3a14df68ea81c6390316c5df09d51a049b52a640871ab57953c42acb30624bff",
+      "kind": "json"
+    },
+    "review-subject": {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/inputs/ReviewSubjectContract.json",
+      "sha256": "c2cd13dbe8fd046aa8f0344778141cb9b115fae0048a8c673b60bd25b03498d3",
+      "kind": "json"
+    },
+    "step5-acceptance": {
+      "path": "docs/execution-plans/phase2-structure-governance/Step05-ScopedAcceptance_20260907.json",
+      "sha256": "a38536ed64ae7924235ab0318cae17716f1a549d89660acde807f4bb15a64a19",
+      "kind": "json"
+    },
+    "original-consumer-matrix": {
+      "path": "docs/execution-plans/phase2-structure-governance/step6-consumer-candidate/ConsumerMatrix.json",
+      "sha256": "3fffec8fd9570352246425d60156d17988eb6311adab719e481c197a6eca5cee",
+      "kind": "json"
+    },
+    "typed-authorization": {
+      "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedAuthorizationRegistry.candidate.json",
+      "sha256": "359e7461ba3166bef63815f37ddd9c247aada317c14e4e62bdee3bc79cc3fcdd",
+      "kind": "json"
+    },
+    "typed-receipts": {
+      "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedReceiptRegistry.candidate.json",
+      "sha256": "05d182805b31ba9d5e6c1c3fa32ae2081527a92faaa76263debded6ffca5efa4",
+      "kind": "json"
+    },
+    "step6-acceptance": {
+      "path": "docs/execution-plans/phase2-structure-governance/Step06-ScopedAcceptance_20260907.json",
+      "sha256": "bd40c82a21e7b19c2c36e56d7b877078e45c6bfdf1593590fb56ab364f47889a",
+      "kind": "json"
+    }
+  },
+  "facts": {
+    "step4_candidate_status": {
+      "source_id": "namespace",
+      "pointer": "/candidate_status"
+    },
+    "administrative_owner": {
+      "source_id": "delegation",
+      "pointer": "/delegator"
+    },
+    "namespace_groups": {
+      "source_id": "namespace",
+      "pointer": "/namespaces"
+    },
+    "domain_registry_policy": {
+      "source_id": "domains",
+      "pointer": "/canonical_governance_registry_policy"
+    },
+    "step5_candidate_status": {
+      "source_id": "versions",
+      "pointer": "/candidate_status"
+    },
+    "version_axes": {
+      "source_id": "versions",
+      "pointer": "/axes"
+    },
+    "stable_map_identity": {
+      "source_id": "versions",
+      "pointer": "/scope/target_map_id"
+    },
+    "new_alias_entries": {
+      "source_id": "aliases",
+      "pointer": "/new_runtime_alias_entries"
+    },
+    "direct_predecessor": {
+      "source_id": "review-subject",
+      "pointer": "/sole_direct_predecessor"
+    },
+    "historical_namespaces_cannot_issue_current_state": {
+      "source_id": "identity-policy",
+      "pointer": "/historical_namespaces_cannot_issue_current_state"
+    },
+    "step6_candidate_status": {
+      "source_id": "consumers",
+      "pointer": "/status"
+    },
+    "formal_domain_id": {
+      "source_id": "original-consumer-matrix",
+      "pointer": "/formal_domain_id"
+    },
+    "formal_program_id": {
+      "source_id": "original-consumer-matrix",
+      "pointer": "/formal_program_id"
+    },
+    "formal_stage_id": {
+      "source_id": "original-consumer-matrix",
+      "pointer": "/formal_stage_id"
+    },
+    "consumer_count": {
+      "source_id": "consumers",
+      "pointer": "/consumer_count"
+    },
+    "consumer_bindings": {
+      "source_id": "consumers",
+      "pointer": "/consumers"
+    },
+    "step4_decision": {
+      "source_id": "step4-acceptance",
+      "pointer": ""
+    },
+    "step5_decision": {
+      "source_id": "step5-acceptance",
+      "pointer": ""
+    },
+    "step6_decision": {
+      "source_id": "step6-acceptance",
+      "pointer": ""
+    }
+  },
+  "lineage_checks": [
+    {
+      "id": "step4-accepted-namespace-subject",
+      "expected_digest": {
+        "source_id": "step4-acceptance",
+        "pointer": "/subjects/NamespaceOwnershipManifest.candidate.json"
+      },
+      "target_source_id": "namespace"
+    },
+    {
+      "id": "step4-accepted-domain-subject",
+      "expected_digest": {
+        "source_id": "step4-acceptance",
+        "pointer": "/subjects/DomainRegistryOwnershipManifest.candidate.json"
+      },
+      "target_source_id": "domains"
+    },
+    {
+      "id": "step5-upstream-namespace",
+      "expected_digest": {
+        "source_id": "step5-source-index",
+        "pointer": "/sources/step4-ownership/sha256"
+      },
+      "target_source_id": "namespace"
+    },
+    {
+      "id": "step5-upstream-domain",
+      "expected_digest": {
+        "source_id": "step5-source-index",
+        "pointer": "/sources/step4-domains/sha256"
+      },
+      "target_source_id": "domains"
+    },
+    {
+      "id": "step5-accepted-versions",
+      "expected_digest": {
+        "source_id": "step5-acceptance",
+        "pointer": "/subjects/VersionAxisRegistry.candidate.json"
+      },
+      "target_source_id": "versions"
+    },
+    {
+      "id": "step5-accepted-aliases",
+      "expected_digest": {
+        "source_id": "step5-acceptance",
+        "pointer": "/subjects/AliasRegistry.candidate.json"
+      },
+      "target_source_id": "aliases"
+    },
+    {
+      "id": "step6-accepted-consumers",
+      "expected_digest": {
+        "source_id": "step6-acceptance",
+        "pointer": "/subjects/TypedConsumerRegistry.candidate.json"
+      },
+      "target_source_id": "consumers"
+    },
+    {
+      "id": "step6-accepted-typed-authorization",
+      "expected_digest": {
+        "source_id": "step6-acceptance",
+        "pointer": "/subjects/TypedAuthorizationRegistry.candidate.json"
+      },
+      "target_source_id": "typed-authorization"
+    },
+    {
+      "id": "step6-accepted-typed-receipts",
+      "expected_digest": {
+        "source_id": "step6-acceptance",
+        "pointer": "/subjects/TypedReceiptRegistry.candidate.json"
+      },
+      "target_source_id": "typed-receipts"
+    }
+  ]
+}

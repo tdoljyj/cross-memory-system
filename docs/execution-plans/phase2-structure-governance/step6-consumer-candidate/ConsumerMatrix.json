@@ -1,0 +1,1088 @@
+{
+  "schema": "clued.step6-consumer-candidate-matrix/v1",
+  "authority_effect": "NONE",
+  "status": "PREPARATION_ONLY_NOT_STEP6_PASS",
+  "source_commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+  "formal_domain_id": null,
+  "formal_program_id": null,
+  "formal_stage_id": null,
+  "local_scope_label": "Existing Clued service and structure-governance consumers; no new commercial model",
+  "consumer_count": 18,
+  "tests_executed_this_review": 0,
+  "live_login_performed": false,
+  "candidate_contract": {
+    "path": "RuntimeConsumerEvidenceContract.json",
+    "sha256": "6313bb5680762b712f0047d45b160313bbeece4b9581c9c95ceed79a790f09b3",
+    "original_actual_runtime_consumers_bound": 0,
+    "original_executed_runtime_tests": 0,
+    "original_unmodified": true
+  },
+  "future_domains_not_requested_to_build": [
+    "ReleaseUnit",
+    "Edition",
+    "SKU",
+    "OfferRevision",
+    "Entitlement",
+    "ResourceUsage",
+    "SourceLot"
+  ],
+  "consumers": [
+    {
+      "consumer_id": "C01",
+      "label": "公开 bootstrap / MCP discovery",
+      "consumer_type": "runtime_service",
+      "consumer_path_and_symbol": [
+        "apps/clued-cloud/worker/continuity.ts:116#bootstrapContract",
+        "apps/clued-cloud/worker/continuity.ts:848#publicMcpTools",
+        "apps/clued-cloud/worker/continuity.ts:951#handleMcp"
+      ],
+      "exact_input_contract": "HTTP Request / JSON-RPC2.0 initialize、tools/list、clued_agent_bootstrap；tools schema+policy",
+      "accepted_namespace": "/.well-known/clued-continuity；/mcp",
+      "accepted_version_axis": "continuity bootstrap contract、MCP protocol negotiated version",
+      "required_authorization": "公开bootstrap无用户数据；非公开入口由后续鉴权处理",
+      "required_receipt": "无业务Receipt；可保存HTTP/协议测试观察",
+      "failure_behavior": "非法JSON/未知method→4xx/JSON-RPC error",
+      "unknown_behavior": "数据库/内部函数具体合同决定；未执行 unknown 注入测试，不以文档保证替代",
+      "can_publish": false,
+      "can_mutate_canonical_state": false,
+      "receipt_or_audit_side_effect": "NONE_OR_RETURN_EXISTING",
+      "positive_and_negative_test_sources": [
+        "apps/clued-cloud/tests/continuity.test.mjs:15",
+        "apps/clued-cloud/tests/continuity.test.mjs:31",
+        "apps/clued-cloud/tests/continuity.test.mjs:93",
+        "apps/clued-cloud/tests/continuity.test.mjs:208"
+      ],
+      "positive_and_negative_run_refs": [],
+      "evidence_status": "TEST_SOURCE_PRESENT_NOT_EXECUTED_THIS_REVIEW",
+      "owner": "UNBOUND_CODE_OWNER_ROLE",
+      "environment": "LOCAL_MOCK_OR_ISOLATED_DB",
+      "accepted_contract_ref": [
+        "apps/clued-cloud/worker/continuity.ts:116#bootstrapContract",
+        "apps/clued-cloud/worker/continuity.ts:848#publicMcpTools",
+        "apps/clued-cloud/worker/continuity.ts:951#handleMcp"
+      ],
+      "required_binding_gaps": [
+        "domain_id/program_id/stage_id 的正式注册映射",
+        "明确 owner",
+        "本候选正负 run refs 与 raw evidence digests"
+      ]
+    },
+    {
+      "consumer_id": "C02",
+      "label": "账户JWT与Binding管理",
+      "consumer_type": "runtime_service",
+      "consumer_path_and_symbol": [
+        "apps/clued-cloud/worker/continuity.ts:485#requireSupabaseUser",
+        "apps/clued-cloud/worker/continuity.ts:524#listBindings",
+        "apps/clued-cloud/worker/continuity.ts:534#createBinding",
+        "apps/clued-cloud/worker/continuity.ts:584#revokeBinding"
+      ],
+      "exact_input_contract": "Bearer用户JWT；Binding vendor/agentName/scopes/contextKeys；GoTrue /auth/v1/user",
+      "accepted_namespace": "/api/bindings；public.clued_agent_bindings",
+      "accepted_version_axis": "用户JWT issuer/expiry；Binding id/revoked_at，不是candidate版本",
+      "required_authorization": "真实用户JWT+RLS；clued_bnd_不被当作账户JWT；scope/contextKey规范化",
+      "required_receipt": "创建时返回Binding元数据；本体token仅一次；此路径未见统一Step6 Receipt",
+      "failure_behavior": "缺JWT/Binding代JWT→401；非法scope→400；撤销写入revoked_at",
+      "unknown_behavior": "数据库/内部函数具体合同决定；未执行 unknown 注入测试，不以文档保证替代",
+      "can_publish": false,
+      "can_mutate_canonical_state": true,
+      "receipt_or_audit_side_effect": "Binding控制平面持久变更；非业务Record",
+      "positive_and_negative_test_sources": [
+        "apps/clued-cloud/tests/continuity.test.mjs:228",
+        "apps/clued-cloud/tests/project-api.test.mjs:104"
+      ],
+      "positive_and_negative_run_refs": [],
+      "evidence_status": "TEST_SOURCE_PRESENT_NOT_EXECUTED_THIS_REVIEW",
+      "owner": "UNBOUND_CODE_OWNER_ROLE",
+      "environment": "LOCAL_MOCK_OR_ISOLATED_DB",
+      "accepted_contract_ref": [
+        "apps/clued-cloud/worker/continuity.ts:485#requireSupabaseUser",
+        "apps/clued-cloud/worker/continuity.ts:524#listBindings",
+        "apps/clued-cloud/worker/continuity.ts:534#createBinding",
+        "apps/clued-cloud/worker/continuity.ts:584#revokeBinding"
+      ],
+      "required_binding_gaps": [
+        "domain_id/program_id/stage_id 的正式注册映射",
+        "明确 owner",
+        "本候选正负 run refs 与 raw evidence digests"
+      ]
+    },
+    {
+      "consumer_id": "C03",
+      "label": "连续性读取/审计",
+      "consumer_type": "runtime_service",
+      "consumer_path_and_symbol": [
+        "apps/clued-cloud/worker/continuity.ts:855#rpcByTool",
+        "apps/clued-cloud/worker/continuity.ts:868#callRpc",
+        "apps/clued-cloud/worker/continuity.ts:1035#restToolByPath"
+      ],
+      "exact_input_contract": "resume/search/log/audit tool inputSchema→p_input JSONB；token hash或OAuth JWT",
+      "accepted_namespace": "context_key；clued_mcp_*；clued_oauth_call",
+      "accepted_version_axis": "context version / session scope；不能混作schema或candidate版",
+      "required_authorization": "context:read；audit调用audit:read；resolve_binding检查scope、context_keys、revoked_at",
+      "required_receipt": "读取返回已有checkpoint/Event/Receipt；请求观察不是新业务Receipt",
+      "failure_behavior": "缺token401、跨origin403；DB授权/上下文错误传播",
+      "unknown_behavior": "数据库/内部函数具体合同决定；未执行 unknown 注入测试，不以文档保证替代",
+      "can_publish": false,
+      "can_mutate_canonical_state": false,
+      "receipt_or_audit_side_effect": "NONE_OR_RETURN_EXISTING",
+      "positive_and_negative_test_sources": [
+        "apps/clued-cloud/tests/continuity.test.mjs:194",
+        "apps/clued-cloud/tests/continuity.test.mjs:208",
+        "apps/clued-cloud/tests/continuity.test.mjs:279",
+        "apps/clued-cloud/tests/continuity.test.mjs:319"
+      ],
+      "positive_and_negative_run_refs": [],
+      "evidence_status": "TEST_SOURCE_PRESENT_NOT_EXECUTED_THIS_REVIEW",
+      "owner": "UNBOUND_CODE_OWNER_ROLE",
+      "environment": "LOCAL_MOCK_OR_ISOLATED_DB",
+      "accepted_contract_ref": [
+        "apps/clued-cloud/worker/continuity.ts:855#rpcByTool",
+        "apps/clued-cloud/worker/continuity.ts:868#callRpc",
+        "apps/clued-cloud/worker/continuity.ts:1035#restToolByPath"
+      ],
+      "required_binding_gaps": [
+        "domain_id/program_id/stage_id 的正式注册映射",
+        "明确 owner",
+        "本候选正负 run refs 与 raw evidence digests"
+      ]
+    },
+    {
+      "consumer_id": "C04",
+      "label": "连续性 append/checkpoint/import",
+      "consumer_type": "runtime_service",
+      "consumer_path_and_symbol": [
+        "apps/clued-cloud/worker/continuity.ts:855#rpcByTool",
+        "apps/clued-cloud/worker/continuity.ts:868#callRpc"
+      ],
+      "exact_input_contract": "已声明inputSchema→JSONB；context_key/session_token/base_version/idempotency_key由对应RPC裁定",
+      "accepted_namespace": "clued_mcp_append_event / checkpoint / import_log",
+      "accepted_version_axis": "context base_version 与幂等键",
+      "required_authorization": "context:write；绑定scope/context范围+会话校验",
+      "required_receipt": "数据库RPC事务生成Event/checkpoint/immutable Receipt；Worker转发",
+      "failure_behavior": "version冲突、会话/权限拒绝由DB返回；unknown对象仍需消费者测试",
+      "unknown_behavior": "数据库/内部函数具体合同决定；未执行 unknown 注入测试，不以文档保证替代",
+      "can_publish": false,
+      "can_mutate_canonical_state": true,
+      "receipt_or_audit_side_effect": "同事务业务写与Receipt",
+      "positive_and_negative_test_sources": [
+        "apps/clued-cloud/tests/continuity.test.mjs:158",
+        "apps/clued-cloud/tests/continuity.test.mjs:279"
+      ],
+      "positive_and_negative_run_refs": [],
+      "evidence_status": "TEST_SOURCE_PRESENT_NOT_EXECUTED_THIS_REVIEW",
+      "owner": "UNBOUND_CODE_OWNER_ROLE",
+      "environment": "LOCAL_MOCK_OR_ISOLATED_DB",
+      "accepted_contract_ref": [
+        "apps/clued-cloud/worker/continuity.ts:855#rpcByTool",
+        "apps/clued-cloud/worker/continuity.ts:868#callRpc"
+      ],
+      "required_binding_gaps": [
+        "domain_id/program_id/stage_id 的正式注册映射",
+        "明确 owner",
+        "本候选正负 run refs 与 raw evidence digests"
+      ]
+    },
+    {
+      "consumer_id": "C05",
+      "label": "Project REST/MCP",
+      "consumer_type": "runtime_service",
+      "consumer_path_and_symbol": [
+        "apps/clued-cloud/worker/continuity.ts:1063#callUserProjectRpc",
+        "apps/clued-cloud/worker/continuity.ts:1080#handleProjectApi",
+        "apps/clued-cloud/worker/projects.ts:3#projectTools"
+      ],
+      "exact_input_contract": "project_schema_version=1；operation枚举；canonical_project_id UUID；base_version；幂等键",
+      "accepted_namespace": "system:projects；/v1/projects；clued_(user_)project_*",
+      "accepted_version_axis": "Project实体version/CAS与schema version分离",
+      "required_authorization": "用户JWT+auth.uid；Binding为context:read/write且system:projects范围",
+      "required_receipt": "m1_begin_receipt/m1_finish_receipt：Project+Event+Receipt",
+      "failure_behavior": "缺账户401；merge未启用；CAS拒绝；PATCH路径id权威",
+      "unknown_behavior": "数据库/内部函数具体合同决定；未执行 unknown 注入测试，不以文档保证替代",
+      "can_publish": false,
+      "can_mutate_canonical_state": true,
+      "receipt_or_audit_side_effect": "读无业务写；mutation同事务receipt",
+      "positive_and_negative_test_sources": [
+        "apps/clued-cloud/tests/project-api.test.mjs:29",
+        "apps/clued-cloud/tests/project-api.test.mjs:68",
+        "apps/clued-cloud/tests/project-api.test.mjs:81",
+        "apps/clued-cloud/tests/project-api.test.mjs:95",
+        "apps/clued-cloud/supabase/tests/m1_runtime_contracts.test.sql:27"
+      ],
+      "positive_and_negative_run_refs": [],
+      "evidence_status": "TEST_SOURCE_PRESENT_NOT_EXECUTED_THIS_REVIEW",
+      "owner": "UNBOUND_CODE_OWNER_ROLE",
+      "environment": "LOCAL_MOCK_OR_ISOLATED_DB",
+      "accepted_contract_ref": [
+        "apps/clued-cloud/worker/continuity.ts:1063#callUserProjectRpc",
+        "apps/clued-cloud/worker/continuity.ts:1080#handleProjectApi",
+        "apps/clued-cloud/worker/projects.ts:3#projectTools"
+      ],
+      "required_binding_gaps": [
+        "domain_id/program_id/stage_id 的正式注册映射",
+        "明确 owner",
+        "本候选正负 run refs 与 raw evidence digests"
+      ]
+    },
+    {
+      "consumer_id": "C06",
+      "label": "Record读取与视图",
+      "consumer_type": "runtime_service",
+      "consumer_path_and_symbol": [
+        "apps/clued-cloud/worker/continuity.ts:1145#handleRecordApi",
+        "apps/clued-cloud/worker/records.ts:44#recordTools"
+      ],
+      "exact_input_contract": "record_type enum；level global/project；project_id UUID；limit",
+      "accepted_namespace": "/v1/records；clued_(user_)record_list；stable canonical id",
+      "accepted_version_axis": "clued-v1.6-m1；实体version≠schema_version",
+      "required_authorization": "PROJECT_VIEWS_V2开关；用户JWT或context:read Binding+scope",
+      "required_receipt": "读取现有实体引用；不自动生成mutation receipt",
+      "failure_behavior": "开关off404；数据库not-found保持404",
+      "unknown_behavior": "数据库/内部函数具体合同决定；未执行 unknown 注入测试，不以文档保证替代",
+      "can_publish": false,
+      "can_mutate_canonical_state": false,
+      "receipt_or_audit_side_effect": "NONE_OR_RETURN_EXISTING",
+      "positive_and_negative_test_sources": [
+        "apps/clued-cloud/tests/record-api.test.mjs:60",
+        "apps/clued-cloud/tests/record-api.test.mjs:79",
+        "apps/clued-cloud/tests/record-api.test.mjs:141",
+        "apps/clued-cloud/tests/record-api.test.mjs:170"
+      ],
+      "positive_and_negative_run_refs": [],
+      "evidence_status": "TEST_SOURCE_PRESENT_NOT_EXECUTED_THIS_REVIEW",
+      "owner": "UNBOUND_CODE_OWNER_ROLE",
+      "environment": "LOCAL_MOCK_OR_ISOLATED_DB",
+      "accepted_contract_ref": [
+        "apps/clued-cloud/worker/continuity.ts:1145#handleRecordApi",
+        "apps/clued-cloud/worker/records.ts:44#recordTools"
+      ],
+      "required_binding_gaps": [
+        "domain_id/program_id/stage_id 的正式注册映射",
+        "明确 owner",
+        "本候选正负 run refs 与 raw evidence digests"
+      ]
+    },
+    {
+      "consumer_id": "C07",
+      "label": "Record mutation / Decision supersede",
+      "consumer_type": "runtime_service",
+      "consumer_path_and_symbol": [
+        "apps/clued-cloud/worker/continuity.ts:274#parseCanonicalBody",
+        "apps/clued-cloud/worker/continuity.ts:1173#handleRecordApi",
+        "apps/clued-cloud/worker/records.ts:69#recordTools"
+      ],
+      "exact_input_contract": "record_schema_version=1、operation、scope、authority、source_refs、base_version、idempotency_key；Decision多目标CAS",
+      "accepted_namespace": "profile/global/project:UUID；clued_(user_)record_mutate/decision_supersede",
+      "accepted_version_axis": "实体CAS+record schema v1；receivedPayloadHash与幂等family",
+      "required_authorization": "用户JWT或context:write Binding；DB owner/scope/evidence/authority检查",
+      "required_receipt": "DB m1_begin_receipt/finish_receipt事务写Record+Event+Receipt",
+      "failure_behavior": "rejected→409/422、failed→500（REST）；MCP只看result.error存在局部未知状态风险",
+      "unknown_behavior": "m1HttpStatus对非failed/rejected未知status默认200；callTool isError只看result.error，需隔离负例查明合同",
+      "can_publish": false,
+      "can_mutate_canonical_state": true,
+      "receipt_or_audit_side_effect": "同事务业务写与Receipt",
+      "positive_and_negative_test_sources": [
+        "apps/clued-cloud/tests/record-api.test.mjs:195",
+        "apps/clued-cloud/tests/m1-runtime-contracts.test.mjs:23",
+        "apps/clued-cloud/supabase/tests/m1_runtime_contracts.test.sql:49"
+      ],
+      "positive_and_negative_run_refs": [],
+      "evidence_status": "TEST_SOURCE_PRESENT_NOT_EXECUTED_THIS_REVIEW",
+      "owner": "UNBOUND_CODE_OWNER_ROLE",
+      "environment": "LOCAL_MOCK_OR_ISOLATED_DB",
+      "accepted_contract_ref": [
+        "apps/clued-cloud/worker/continuity.ts:274#parseCanonicalBody",
+        "apps/clued-cloud/worker/continuity.ts:1173#handleRecordApi",
+        "apps/clued-cloud/worker/records.ts:69#recordTools"
+      ],
+      "required_binding_gaps": [
+        "domain_id/program_id/stage_id 的正式注册映射",
+        "明确 owner",
+        "本候选正负 run refs 与 raw evidence digests"
+      ]
+    },
+    {
+      "consumer_id": "C08",
+      "label": "Evidence ingest / extension Event",
+      "consumer_type": "runtime_service",
+      "consumer_path_and_symbol": [
+        "apps/clued-cloud/worker/continuity.ts:1178#mutationRoutes",
+        "apps/clued-cloud/worker/records.ts:108#recordTools"
+      ],
+      "exact_input_contract": "evidence_schema_version=1、content_hash、storage_ref；event_schema_version=1、extension:name:type、scope",
+      "accepted_namespace": "clued_(user_)evidence_ingest/event_append；extension namespace",
+      "accepted_version_axis": "Evidence/Event schema v1；幂等operation family",
+      "required_authorization": "context:write Binding或用户JWT；DB evidence owner/范围；内置业务Event不可伪造",
+      "required_receipt": "Evidence+Receipt原子写，独立ingest不另写工作Event；extension Event+Receipt",
+      "failure_behavior": "类型/权限/篡改hash拒绝；不同event族不能冒充内置业务结果",
+      "unknown_behavior": "数据库/内部函数具体合同决定；未执行 unknown 注入测试，不以文档保证替代",
+      "can_publish": false,
+      "can_mutate_canonical_state": true,
+      "receipt_or_audit_side_effect": "canonical Evidence/Event与Receipt",
+      "positive_and_negative_test_sources": [
+        "apps/clued-cloud/tests/m1-runtime-contracts.test.mjs:11",
+        "apps/clued-cloud/tests/m1-runtime-contracts.test.mjs:31",
+        "apps/clued-cloud/supabase/tests/m1_runtime_contracts.test.sql:39"
+      ],
+      "positive_and_negative_run_refs": [],
+      "evidence_status": "TEST_SOURCE_PRESENT_NOT_EXECUTED_THIS_REVIEW",
+      "owner": "UNBOUND_CODE_OWNER_ROLE",
+      "environment": "LOCAL_MOCK_OR_ISOLATED_DB",
+      "accepted_contract_ref": [
+        "apps/clued-cloud/worker/continuity.ts:1178#mutationRoutes",
+        "apps/clued-cloud/worker/records.ts:108#recordTools"
+      ],
+      "required_binding_gaps": [
+        "domain_id/program_id/stage_id 的正式注册映射",
+        "明确 owner",
+        "本候选正负 run refs 与 raw evidence digests"
+      ]
+    },
+    {
+      "consumer_id": "C09",
+      "label": "Canonical Export",
+      "consumer_type": "runtime_service",
+      "consumer_path_and_symbol": [
+        "apps/clued-cloud/worker/continuity.ts:806#publicToolPolicies",
+        "apps/clued-cloud/worker/records.ts:125#recordTools",
+        "apps/clued-cloud/supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql:703#clued_canonical_export"
+      ],
+      "exact_input_contract": "idempotency_key/request_hash；返回snapshot+export Receipt",
+      "accepted_namespace": "/v1/export；clued_(user_)canonical_export",
+      "accepted_version_axis": "canonical version/source snapshot/receipt identity各自分离",
+      "required_authorization": "声明context:read+audit:read；Binding SQL wrapper只resolve context:read/global，缺audit实测负例",
+      "required_receipt": "canonical_export_core生成export Receipt，含已有Receipt引用；业务Record不改变",
+      "failure_behavior": "身份/幂等失败按DB；scope声明与执行存在差异候选",
+      "unknown_behavior": "UNKNOWN：缺audit scope Binding是否应拒绝，需局部隔离测试，不进行生产导出",
+      "can_publish": false,
+      "can_mutate_canonical_state": false,
+      "receipt_or_audit_side_effect": "生成export审计Receipt；非Record mutation",
+      "positive_and_negative_test_sources": [
+        "apps/clued-cloud/tests/m1-runtime-contracts.test.mjs:55",
+        "apps/clued-cloud/supabase/tests/m1_runtime_contracts.test.sql:99"
+      ],
+      "positive_and_negative_run_refs": [],
+      "evidence_status": "TEST_SOURCE_PRESENT_NOT_EXECUTED_THIS_REVIEW",
+      "owner": "UNBOUND_CODE_OWNER_ROLE",
+      "environment": "LOCAL_MOCK_OR_ISOLATED_DB",
+      "accepted_contract_ref": [
+        "apps/clued-cloud/worker/continuity.ts:806#publicToolPolicies",
+        "apps/clued-cloud/worker/records.ts:125#recordTools",
+        "apps/clued-cloud/supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql:703#clued_canonical_export"
+      ],
+      "required_binding_gaps": [
+        "domain_id/program_id/stage_id 的正式注册映射",
+        "明确 owner",
+        "本候选正负 run refs 与 raw evidence digests"
+      ]
+    },
+    {
+      "consumer_id": "C10",
+      "label": "P5 tenant Session/Attempt mutation",
+      "consumer_type": "runtime_service",
+      "consumer_path_and_symbol": [
+        "apps/clued-cloud/worker/continuity.ts:436#callP5Mutation",
+        "apps/clued-cloud/worker/p5.ts"
+      ],
+      "exact_input_contract": "P5 typed tools→tokenHash/session/attempt、canonical p_input、CAS；gateway RPC",
+      "accepted_namespace": "clued_p5_*；organization/workspace/actor/Binding",
+      "accepted_version_axis": "Session、Attempt、entity version、lease/revocation分别校验",
+      "required_authorization": "P5_TENANT_WRITES gate；独立Binding-only；CLUED_P5_GATEWAY_TOKEN；DB tenant/RLS/role",
+      "required_receipt": "DB attempt-bound mutation结果、Event、Receipt；lost response须resolve canonical result",
+      "failure_behavior": "无gateway503；JWT被Binding-only拒绝；权限/CAS/过期/未解决Attempt失败闭合",
+      "unknown_behavior": "数据库/内部函数具体合同决定；未执行 unknown 注入测试，不以文档保证替代",
+      "can_publish": false,
+      "can_mutate_canonical_state": true,
+      "receipt_or_audit_side_effect": "P5事务写；生产enablement未由本审查确认",
+      "positive_and_negative_test_sources": [
+        "apps/clued-cloud/tests/p5-cloud-contracts.test.mjs:10",
+        "apps/clued-cloud/tests/p5-real-postgres.test.mjs:584"
+      ],
+      "positive_and_negative_run_refs": [],
+      "evidence_status": "TEST_SOURCE_PRESENT_NOT_EXECUTED_THIS_REVIEW",
+      "owner": "UNBOUND_CODE_OWNER_ROLE",
+      "environment": "ISOLATED_EMBEDDED_POSTGRES",
+      "accepted_contract_ref": [
+        "apps/clued-cloud/worker/continuity.ts:436#callP5Mutation",
+        "apps/clued-cloud/worker/p5.ts"
+      ],
+      "required_binding_gaps": [
+        "domain_id/program_id/stage_id 的正式注册映射",
+        "明确 owner",
+        "本候选正负 run refs 与 raw evidence digests"
+      ]
+    },
+    {
+      "consumer_id": "C11",
+      "label": "Snapshot build/validate",
+      "consumer_type": "artifact_producer",
+      "consumer_path_and_symbol": [
+        "apps/clued-cloud/scripts/two-level-snapshot.mjs:460#buildSnapshot",
+        "apps/clued-cloud/scripts/two-level-snapshot.mjs:726#validateSnapshot"
+      ],
+      "exact_input_contract": "经过校验的导出source→Manifest v5、profile/global/projects、hashes/index",
+      "accepted_namespace": "只读导出Bundle；canonical id；legacy envelopes显式历史",
+      "accepted_version_axis": "snapshot_version/canonical_version/build_epoch/schema_version不同轴",
+      "required_authorization": "源export receipt/owner scope；离线源不可冒充live ready",
+      "required_receipt": "Bundle中保存export_receipt_id/receipt refs；build结果非发布Receipt",
+      "failure_behavior": "checksum drift、缺字段失败；历史输入不变为current",
+      "unknown_behavior": "数据库/内部函数具体合同决定；未执行 unknown 注入测试，不以文档保证替代",
+      "can_publish": false,
+      "can_mutate_canonical_state": false,
+      "receipt_or_audit_side_effect": "NONE_OR_RETURN_EXISTING",
+      "positive_and_negative_test_sources": [
+        "apps/clued-cloud/tests/two-level-snapshot.test.mjs:154",
+        "apps/clued-cloud/tests/two-level-snapshot.test.mjs:185",
+        "apps/clued-cloud/tests/two-level-snapshot.test.mjs:194"
+      ],
+      "positive_and_negative_run_refs": [],
+      "evidence_status": "TEST_SOURCE_PRESENT_NOT_EXECUTED_THIS_REVIEW",
+      "owner": "UNBOUND_CODE_OWNER_ROLE",
+      "environment": "LOCAL_MOCK_OR_ISOLATED_DB",
+      "accepted_contract_ref": [
+        "apps/clued-cloud/scripts/two-level-snapshot.mjs:460#buildSnapshot",
+        "apps/clued-cloud/scripts/two-level-snapshot.mjs:726#validateSnapshot"
+      ],
+      "required_binding_gaps": [
+        "domain_id/program_id/stage_id 的正式注册映射",
+        "明确 owner",
+        "本候选正负 run refs 与 raw evidence digests"
+      ]
+    },
+    {
+      "consumer_id": "C12",
+      "label": "M2 snapshot publish/rollback",
+      "consumer_type": "publication_consumer",
+      "consumer_path_and_symbol": [
+        "apps/clued-cloud/scripts/m2-snapshot-store.mjs:244#coordinatedPublishSnapshot",
+        "apps/clued-cloud/scripts/m2-snapshot-store.mjs:271#coordinatedRollbackSnapshot",
+        "apps/clued-cloud/scripts/two-level-snapshot.mjs:1033#publishSnapshot"
+      ],
+      "exact_input_contract": "ready immutable Bundle+expectedCurrentSnapshotVersion+shared lock",
+      "accepted_namespace": "formal current.json；published snapshot registry",
+      "accepted_version_axis": "Expected-Current CAS；snapshot version；publication contract v1",
+      "required_authorization": "可信source readiness/owner；本地执行授权与目录权限；冻结flags不自动打开",
+      "required_receipt": "clued.snapshot-publication-receipt.v1；持久audit和readback",
+      "failure_behavior": "锁/过期CAS/切换后审计失败保持或恢复旧pointer",
+      "unknown_behavior": "数据库/内部函数具体合同决定；未执行 unknown 注入测试，不以文档保证替代",
+      "can_publish": true,
+      "can_mutate_canonical_state": false,
+      "receipt_or_audit_side_effect": "只发布derived snapshot pointer，不写canonical业务库",
+      "positive_and_negative_test_sources": [
+        "apps/clued-cloud/tests/two-level-snapshot.test.mjs:212",
+        "apps/clued-cloud/tests/two-level-snapshot.test.mjs:243",
+        "apps/clued-cloud/tests/two-level-snapshot.test.mjs:388",
+        "apps/clued-cloud/tests/two-level-snapshot.test.mjs:413"
+      ],
+      "positive_and_negative_run_refs": [],
+      "evidence_status": "TEST_SOURCE_PRESENT_NOT_EXECUTED_THIS_REVIEW",
+      "owner": "UNBOUND_CODE_OWNER_ROLE",
+      "environment": "LOCAL_MOCK_OR_ISOLATED_DB",
+      "accepted_contract_ref": [
+        "apps/clued-cloud/scripts/m2-snapshot-store.mjs:244#coordinatedPublishSnapshot",
+        "apps/clued-cloud/scripts/m2-snapshot-store.mjs:271#coordinatedRollbackSnapshot",
+        "apps/clued-cloud/scripts/two-level-snapshot.mjs:1033#publishSnapshot"
+      ],
+      "required_binding_gaps": [
+        "domain_id/program_id/stage_id 的正式注册映射",
+        "明确 owner",
+        "本候选正负 run refs 与 raw evidence digests"
+      ]
+    },
+    {
+      "consumer_id": "C13",
+      "label": "Endpoint RequestVerificationContext",
+      "consumer_type": "authorization_checker",
+      "consumer_path_and_symbol": [
+        "verification_context.py:85#AuthorizationEvidence",
+        "verification_context.py:151#SourceEnvelope",
+        "verification_context.py:390#RequestVerificationContext"
+      ],
+      "exact_input_contract": "source/root/Manifest/current pointer/EndpointTrust/AuthorizationEvidence+Request context",
+      "accepted_namespace": "repository/candidate/local_mirror独立boundary；owner/bundle_scope",
+      "accepted_version_axis": "git SHA+tags+VERSION+snapshot/TTL/validator axes",
+      "required_authorization": "read-only snapshot purpose/role；授权版本、撤销、expiry；不能复用其他boundary PASS",
+      "required_receipt": "BundleEvidence+SourceEnvelope；请求内evidence_id；不序列化复用",
+      "failure_behavior": "owner/scope/TTL/path/manifest/pointer变化失效；不完整envelope非authoritative",
+      "unknown_behavior": "数据库/内部函数具体合同决定；未执行 unknown 注入测试，不以文档保证替代",
+      "can_publish": false,
+      "can_mutate_canonical_state": false,
+      "receipt_or_audit_side_effect": "NONE_OR_RETURN_EXISTING",
+      "positive_and_negative_test_sources": [
+        "tests/test_p2_verification_context.py:154",
+        "tests/test_p2_verification_context.py:177",
+        "tests/test_p2_verification_context.py:200",
+        "tests/test_p2_verification_context.py:329"
+      ],
+      "positive_and_negative_run_refs": [],
+      "evidence_status": "TEST_SOURCE_PRESENT_NOT_EXECUTED_THIS_REVIEW",
+      "owner": "UNBOUND_CODE_OWNER_ROLE",
+      "environment": "LOCAL_MOCK_OR_ISOLATED_DB",
+      "accepted_contract_ref": [
+        "verification_context.py:85#AuthorizationEvidence",
+        "verification_context.py:151#SourceEnvelope",
+        "verification_context.py:390#RequestVerificationContext"
+      ],
+      "required_binding_gaps": [
+        "domain_id/program_id/stage_id 的正式注册映射",
+        "明确 owner",
+        "本候选正负 run refs 与 raw evidence digests"
+      ]
+    },
+    {
+      "consumer_id": "C14",
+      "label": "账户页面与OAuth consent",
+      "consumer_type": "runtime_service",
+      "consumer_path_and_symbol": [
+        "apps/clued-cloud/app/page.tsx:601#handleLogin",
+        "apps/clued-cloud/app/page.tsx:624#handleCreateAccount",
+        "apps/clued-cloud/app/oauth/consent/page.tsx:41#loadAuthorization"
+      ],
+      "exact_input_contract": "Supabase Auth session/code；OAuth authorization_id→details/approve/deny；emailRedirectTo origin",
+      "accepted_namespace": "当前Worker vinext app；/oauth/consent；Supabase /auth/v1",
+      "accepted_version_axis": "JWT/session expiry；OAuth PKCE/client/resource；非candidate axis",
+      "required_authorization": "实际账户密码/会话；用户同意授权；管理token不等于用户JWT",
+      "required_receipt": "Auth响应非Phase2 Gate Receipt；A03仅保留redacted claims/callback/call summary",
+      "failure_behavior": "invalidLink/login error；缺授权detail停止；A03一次调用预算",
+      "unknown_behavior": "数据库/内部函数具体合同决定；未执行 unknown 注入测试，不以文档保证替代",
+      "can_publish": false,
+      "can_mutate_canonical_state": false,
+      "receipt_or_audit_side_effect": "NONE_OR_RETURN_EXISTING",
+      "positive_and_negative_test_sources": [
+        "apps/clued-cloud/evals/public-mcp/a03-contract.test.mjs:48",
+        "apps/clued-cloud/evals/public-mcp/a03-contract.test.mjs:104"
+      ],
+      "positive_and_negative_run_refs": [
+        "artifacts/clued-validation/public-mcp/a03/c1ef7a3b-20260829T062104Z/readonly-call-summary.json"
+      ],
+      "evidence_status": "HISTORICAL_RECEIPT_ONLY_NOT_REEXECUTED",
+      "owner": "UNBOUND_CODE_OWNER_ROLE",
+      "environment": "LOCAL_CONTRACT_TEST_OR_EXPLICIT_LIVE_OAUTH",
+      "accepted_contract_ref": [
+        "apps/clued-cloud/app/page.tsx:601#handleLogin",
+        "apps/clued-cloud/app/page.tsx:624#handleCreateAccount",
+        "apps/clued-cloud/app/oauth/consent/page.tsx:41#loadAuthorization"
+      ],
+      "required_binding_gaps": [
+        "domain_id/program_id/stage_id 的正式注册映射",
+        "明确 owner",
+        "本候选正负 run refs 与 raw evidence digests"
+      ]
+    },
+    {
+      "consumer_id": "C15",
+      "label": "Phase2四Gate validator / CI",
+      "consumer_type": "ci_validator",
+      "consumer_path_and_symbol": [
+        "scripts/phase2-v027-validate.py:189#run",
+        ".github/workflows/phase2-v027-validation.yml"
+      ],
+      "exact_input_contract": "exact ZIP+candidate-identity/source+negative control→Identity/Manifest/Provenance/ProductIncrementInput",
+      "accepted_namespace": "v0.2.7.1 ZIP物理修订与架构v0.2.7、Mapping v0.4.3分轴",
+      "accepted_version_axis": "Git commit/run/attempt、ZIP SHA、subject、direct predecessor",
+      "required_authorization": "本地只读包无需账号；CI github.token contents:read仅下载私有asset",
+      "required_receipt": "clued.phase2-v027-ci-gate-receipt/v1；CI run/commit由运行环境记录",
+      "failure_behavior": "Identity失败则依赖gate SKIPPED；任何required非PASS overallFAIL/exit1",
+      "unknown_behavior": "数据库/内部函数具体合同决定；未执行 unknown 注入测试，不以文档保证替代",
+      "can_publish": false,
+      "can_mutate_canonical_state": false,
+      "receipt_or_audit_side_effect": "NONE_OR_RETURN_EXISTING",
+      "positive_and_negative_test_sources": [
+        "scripts/phase2-v027-negative-harness.py",
+        "docs/execution-plans/phase2-structure-governance/Step01-Step02-EvidenceReview.md:47"
+      ],
+      "positive_and_negative_run_refs": [
+        "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step1/34069116734/CIGateReceipt.json",
+        "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step1/34068945665/CIGateReceipt.json"
+      ],
+      "evidence_status": "HISTORICAL_RECEIPT_ONLY_NOT_REEXECUTED",
+      "owner": "UNBOUND_CODE_OWNER_ROLE",
+      "environment": "OFFLINE_PYTHON_OR_GITHUB_ACTIONS",
+      "accepted_contract_ref": [
+        "scripts/phase2-v027-validate.py:189#run",
+        ".github/workflows/phase2-v027-validation.yml"
+      ],
+      "required_binding_gaps": [
+        "domain_id/program_id/stage_id 的正式注册映射",
+        "明确 owner",
+        "本候选正负 run refs 与 raw evidence digests"
+      ]
+    },
+    {
+      "consumer_id": "C16",
+      "label": "Naming scanner",
+      "consumer_type": "developer_tooling",
+      "consumer_path_and_symbol": [
+        "scripts/clued-naming-surface-inventory.py:736#scan_repository",
+        "scripts/clued-naming-surface-inventory.py:1008#scan_github"
+      ],
+      "exact_input_contract": "exact tracked blobs+scope+optionalGitHubmetadata→Repo/GitHub inventory+typed surfaces",
+      "accepted_namespace": "机器路径/package/workflow/schema/namespace等受管范围",
+      "accepted_version_axis": "source Git tree/SHA+scope hash+scanner version",
+      "required_authorization": "本地只读；GitHubcontents/actions read；AUTHORITY_EFFECT=NONE",
+      "required_receipt": "Inventory manifest/source hashes，不产生业务授权Receipt",
+      "failure_behavior": "未扫描/页不足/未知保留为debt，不冒称complete",
+      "unknown_behavior": "数据库/内部函数具体合同决定；未执行 unknown 注入测试，不以文档保证替代",
+      "can_publish": false,
+      "can_mutate_canonical_state": false,
+      "receipt_or_audit_side_effect": "NONE_OR_RETURN_EXISTING",
+      "positive_and_negative_test_sources": [
+        "tests/test_naming_inventory_completeness.py",
+        "tests/test_naming_inventory_semantic_surfaces.py"
+      ],
+      "positive_and_negative_run_refs": [],
+      "evidence_status": "TEST_SOURCE_PRESENT_NOT_EXECUTED_THIS_REVIEW",
+      "owner": "UNBOUND_CODE_OWNER_ROLE",
+      "environment": "LOCAL_MOCK_OR_ISOLATED_DB",
+      "accepted_contract_ref": [
+        "scripts/clued-naming-surface-inventory.py:736#scan_repository",
+        "scripts/clued-naming-surface-inventory.py:1008#scan_github"
+      ],
+      "required_binding_gaps": [
+        "domain_id/program_id/stage_id 的正式注册映射",
+        "明确 owner",
+        "本候选正负 run refs 与 raw evidence digests"
+      ]
+    },
+    {
+      "consumer_id": "C17",
+      "label": "Naming external consolidator",
+      "consumer_type": "registry_reader",
+      "consumer_path_and_symbol": [
+        "scripts/clued-naming-inventory-consolidate.py:166#verify_sources",
+        "scripts/clued-naming-inventory-consolidate.py:237#consolidate"
+      ],
+      "exact_input_contract": "repo findings+SourceIndex+scoped supplemental Observation/disposition→consolidated typedinventory",
+      "accepted_namespace": "scope-bound Supabase/CF/Sites/GitHub retained evidence",
+      "accepted_version_axis": "original/supplemental SHA+project/domain/subject+observation time",
+      "required_authorization": "Source authority_effect范围核对；未知不由不相干证据解除",
+      "required_receipt": "仅派生inventory evidence；no Canon write",
+      "failure_behavior": "hash/subject/page/restore state证据错→拒绝；UNKNOWN保持局部",
+      "unknown_behavior": "数据库/内部函数具体合同决定；未执行 unknown 注入测试，不以文档保证替代",
+      "can_publish": false,
+      "can_mutate_canonical_state": false,
+      "receipt_or_audit_side_effect": "NONE_OR_RETURN_EXISTING",
+      "positive_and_negative_test_sources": [
+        "tests/test_naming_inventory_supplements.py:117",
+        "tests/test_naming_inventory_supplements.py:128",
+        "tests/test_naming_inventory_supplements.py:219",
+        "tests/test_naming_inventory_supplements.py:294"
+      ],
+      "positive_and_negative_run_refs": [],
+      "evidence_status": "TEST_SOURCE_PRESENT_NOT_EXECUTED_THIS_REVIEW",
+      "owner": "UNBOUND_CODE_OWNER_ROLE",
+      "environment": "LOCAL_MOCK_OR_ISOLATED_DB",
+      "accepted_contract_ref": [
+        "scripts/clued-naming-inventory-consolidate.py:166#verify_sources",
+        "scripts/clued-naming-inventory-consolidate.py:237#consolidate"
+      ],
+      "required_binding_gaps": [
+        "domain_id/program_id/stage_id 的正式注册映射",
+        "明确 owner",
+        "本候选正负 run refs 与 raw evidence digests"
+      ]
+    },
+    {
+      "consumer_id": "C18",
+      "label": "公开MCP required-check Receipt producer",
+      "consumer_type": "receipt_producer",
+      "consumer_path_and_symbol": [
+        "apps/clued-cloud/evals/public-mcp/gate-receipt.mjs",
+        ".github/workflows/public-mcp-gate-receipt.yml"
+      ],
+      "exact_input_contract": "exact repository+candidateSHA+PR+required check run records",
+      "accepted_namespace": "public-mcp-protocol/behavior、gitleaks、trivy",
+      "accepted_version_axis": "contract clued-pre-kernel-public-mcp-gate-receipt/1.1；exact candidateSHA",
+      "required_authorization": "GH_TOKEN/GITHUB_TOKEN读checks；PASS不授予merge/deploy",
+      "required_receipt": "SHA-bound gate-receipt with check_run_id/details_url",
+      "failure_behavior": "missing/running/failure/skipped/neutral一律不可PASS",
+      "unknown_behavior": "数据库/内部函数具体合同决定；未执行 unknown 注入测试，不以文档保证替代",
+      "can_publish": false,
+      "can_mutate_canonical_state": false,
+      "receipt_or_audit_side_effect": "NONE_OR_RETURN_EXISTING",
+      "positive_and_negative_test_sources": [
+        "apps/clued-cloud/evals/public-mcp/gate-receipt.test.mjs:23",
+        "apps/clued-cloud/evals/public-mcp/gate-receipt.test.mjs:40",
+        "apps/clued-cloud/evals/public-mcp/gate-receipt.test.mjs:47"
+      ],
+      "positive_and_negative_run_refs": [
+        "artifacts/clued-validation/public-mcp/a13/c2b18063-20260829T075913Z/gate-receipt.json"
+      ],
+      "evidence_status": "HISTORICAL_RECEIPT_ONLY_NOT_REEXECUTED",
+      "owner": "UNBOUND_CODE_OWNER_ROLE",
+      "environment": "GITHUB_ACTIONS_OR_AUTHORIZED_READ_API",
+      "accepted_contract_ref": [
+        "apps/clued-cloud/evals/public-mcp/gate-receipt.mjs",
+        ".github/workflows/public-mcp-gate-receipt.yml"
+      ],
+      "required_binding_gaps": [
+        "domain_id/program_id/stage_id 的正式注册映射",
+        "明确 owner",
+        "本候选正负 run refs 与 raw evidence digests"
+      ]
+    }
+  ],
+  "source_digests": [
+    {
+      "path": ".github/workflows/phase2-v027-validation.yml",
+      "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+      "git_blob": "9fcd0a6b9545d0ce3fce76a4c3ae77de4273b4d9",
+      "bytes": 9000,
+      "sha256": "51334a15770991d2cbf13cb906a592494a96c87e55a8b6cb37f0792a1168bd53",
+      "hash_recomputed_this_review": true
+    },
+    {
+      "path": ".github/workflows/public-mcp-gate-receipt.yml",
+      "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+      "git_blob": "6318dd66254c96d9514605bae728efba22ac6903",
+      "bytes": 1500,
+      "sha256": "4e3784db5984933d859cd961f010c4fb2306eaf6b871cdd438eeb2cff9154ce8",
+      "hash_recomputed_this_review": true
+    },
+    {
+      "path": "apps/clued-cloud/app/oauth/consent/page.tsx",
+      "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+      "git_blob": "1327204b9e41bd3082eb869b3b65af7757ecd3ca",
+      "bytes": 7026,
+      "sha256": "ce7e6f8de06bd2c7757112b08148f4e19a361868091b88d5c2150b2f0087ef54",
+      "hash_recomputed_this_review": true
+    },
+    {
+      "path": "apps/clued-cloud/app/page.tsx",
+      "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+      "git_blob": "a841cf8bfccf911f73e69ffe81c39bc3a77bd970",
+      "bytes": 54598,
+      "sha256": "4534d4ca11390ca5fadae652c6b52ce2bc5428765214c04ed6ff13a8ff7ac5a6",
+      "hash_recomputed_this_review": true
+    },
+    {
+      "path": "apps/clued-cloud/evals/public-mcp/A03-RUNBOOK.md",
+      "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+      "git_blob": "2276deae1c10826cbd6c00f570d4e41772cd56af",
+      "bytes": 4648,
+      "sha256": "6a2910284849bb5d698849d4fa3234d1ae1bb8c8239f4db2b46f3fdad6fb3843",
+      "hash_recomputed_this_review": true
+    },
+    {
+      "path": "apps/clued-cloud/evals/public-mcp/a03-contract.mjs",
+      "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+      "git_blob": "c41def63a383b5743a7329044b820e14d754e5c7",
+      "bytes": 4722,
+      "sha256": "88b3a75f3c89355528d2f8d14c78cbaaac07f52c02409bc15436a977bdb44609",
+      "hash_recomputed_this_review": true
+    },
+    {
+      "path": "apps/clued-cloud/evals/public-mcp/a03-contract.test.mjs",
+      "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+      "git_blob": "08b779a09f5ab07ff834d56b722fc23b35eacdf2",
+      "bytes": 16708,
+      "sha256": "fc489427f631495cc641ed3c386f7ce3ad5f21b0d206028ff9a6c48eaf42ad9a",
+      "hash_recomputed_this_review": true
+    },
+    {
+      "path": "apps/clued-cloud/evals/public-mcp/a03-session.mjs",
+      "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+      "git_blob": "3298957f1b9cec3d581aff0534aeb7ebcfecb6cf",
+      "bytes": 9586,
+      "sha256": "a81989c08d9eae943091a28d9d7d6142ef3f53cd5a2d82deec634f19ff3bfffe",
+      "hash_recomputed_this_review": true
+    },
+    {
+      "path": "apps/clued-cloud/evals/public-mcp/fixtures.mjs",
+      "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+      "git_blob": "a156016b1a7254346038d15dcd5ffbf31fa3577d",
+      "bytes": 3180,
+      "sha256": "876ca9731cbd35b30da64277a10829d39a83e2bea50bad4cf689106f7581ac7c",
+      "hash_recomputed_this_review": true
+    },
+    {
+      "path": "apps/clued-cloud/evals/public-mcp/gate-receipt.mjs",
+      "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+      "git_blob": "44ad6b6c0be385088a19c5a4b90269531dd24e7b",
+      "bytes": 5425,
+      "sha256": "9d1574e361a8fdd550578763755933e4d250a8076d55b1223ca9dfc40c1ec0c0",
+      "hash_recomputed_this_review": true
+    },
+    {
+      "path": "apps/clued-cloud/evals/public-mcp/gate-receipt.test.mjs",
+      "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+      "git_blob": "dcf7cfadf7a90780408a6523da77fe7a23ddf6e9",
+      "bytes": 2086,
+      "sha256": "8f9b8abe5bd2c62c84026d0d4d04321e7b1f5d0ccebf6fad9ddb1e6432dd228b",
+      "hash_recomputed_this_review": true
+    },
+    {
+      "path": "apps/clued-cloud/evals/public-mcp/start-isolated.mjs",
+      "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+      "git_blob": "abc356b0a00d07243db08be01398da2d67307c95",
+      "bytes": 1858,
+      "sha256": "ecee057792db190a57dd2b98ace9cf29a9e83c3c55010b983a394052a8be87e0",
+      "hash_recomputed_this_review": true
+    },
+    {
+      "path": "apps/clued-cloud/package.json",
+      "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+      "git_blob": "c24a0ad6057c95e13de70d808ff0da84d207337b",
+      "bytes": 5144,
+      "sha256": "e1b8dd060d0e0bb0f9758c3bd3db85fd87dc0077e58d961cea4f4e66bfebb4d3",
+      "hash_recomputed_this_review": true
+    },
+    {
+      "path": "apps/clued-cloud/scripts/m2-snapshot-store.mjs",
+      "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+      "git_blob": "2738d065c8db6ff3ad35a2aea55fca2de6188b69",
+      "bytes": 16753,
+      "sha256": "d56e15f4821ff2b21de07a3c103aac4d9a963b3dac7ee2128543ea37036caf30",
+      "hash_recomputed_this_review": true
+    },
+    {
+      "path": "apps/clued-cloud/scripts/two-level-snapshot.mjs",
+      "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+      "git_blob": "1ed4678efb36087cf389dedd57fcec027598e2c8",
+      "bytes": 58055,
+      "sha256": "1dfcc8de7b481bc8a29cd055f711bb142fa390fff07a61730320866a477f6b7e",
+      "hash_recomputed_this_review": true
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/202608230002_mandatory_continuity.sql",
+      "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+      "git_blob": "9fa55d35b8fa47197c99bc031c074f1980468fbc",
+      "bytes": 31922,
+      "sha256": "9afc51a213bed869c143a7fdb5a23ab8a2e80df10639b3ea572a39aef203f57c",
+      "hash_recomputed_this_review": true
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql",
+      "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+      "git_blob": "0ce020a8cabbcdf287926bf88af171c65470fa65",
+      "bytes": 72625,
+      "sha256": "f59e414ec0de016cbe89d3ba24ded2d90e85a9e17fb554021b2d4d611f4d26c2",
+      "hash_recomputed_this_review": true
+    },
+    {
+      "path": "apps/clued-cloud/supabase/tests/m1_runtime_contracts.test.sql",
+      "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+      "git_blob": "680be90126ad07030b4948cc6fb7bdda3ead6da3",
+      "bytes": 16449,
+      "sha256": "275f7344fcf7bca27b8bde071cfdcafd6463e6ca18a0b0e6038a46b1e4dcc57e",
+      "hash_recomputed_this_review": true
+    },
+    {
+      "path": "apps/clued-cloud/tests/continuity.test.mjs",
+      "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+      "git_blob": "9c75bf934ee0f0d2a809013643b11b808b9a3a51",
+      "bytes": 11961,
+      "sha256": "671808dcabb45dc551413c9a3d833f0dcde661220021674e3285f7600ce38b97",
+      "hash_recomputed_this_review": true
+    },
+    {
+      "path": "apps/clued-cloud/tests/m1-runtime-contracts.test.mjs",
+      "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+      "git_blob": "6b54271acf6216593074c2685a07483a1a8e68a1",
+      "bytes": 3342,
+      "sha256": "4b9e30db95b2c4cc12f5f596185edabf24525be696a3286c1c3de6002424b579",
+      "hash_recomputed_this_review": true
+    },
+    {
+      "path": "apps/clued-cloud/tests/p5-cloud-contracts.test.mjs",
+      "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+      "git_blob": "dda2a36466c3ffcaf532bbf4fac67997b27d19c1",
+      "bytes": 8544,
+      "sha256": "f0fcce4e7f9b68d0d2d7ac350abe950d56f9f15972dc37170f829aae647d415b",
+      "hash_recomputed_this_review": true
+    },
+    {
+      "path": "apps/clued-cloud/tests/p5-real-postgres.test.mjs",
+      "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+      "git_blob": "2d1069602d480df852987772d524e26b0bc31165",
+      "bytes": 109679,
+      "sha256": "fb20a2bd63eb81c98be8fa0cf8f19286dcd5d6f4a218d7e59c9d2e904b0ebff8",
+      "hash_recomputed_this_review": true
+    },
+    {
+      "path": "apps/clued-cloud/tests/project-api.test.mjs",
+      "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+      "git_blob": "3471d903db771e3117a9541c1c137bfb73710925",
+      "bytes": 5885,
+      "sha256": "1c9096ee9af6e1312763090387ab9293bdd5c3b741ab5938377a0119645696f7",
+      "hash_recomputed_this_review": true
+    },
+    {
+      "path": "apps/clued-cloud/tests/record-api.test.mjs",
+      "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+      "git_blob": "93a8908965925e36709456d52f277f7b3197ae21",
+      "bytes": 10597,
+      "sha256": "914f6e1aa30248140b00418a1db9beace24a0482a18c899b8e971895e14ded9b",
+      "hash_recomputed_this_review": true
+    },
+    {
+      "path": "apps/clued-cloud/tests/two-level-snapshot.test.mjs",
+      "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+      "git_blob": "d152fde7fb438c2ee623a18068bdbf8a657c218e",
+      "bytes": 22725,
+      "sha256": "c077c0b07b24391439bb86c52eca977e31e271c9578294eed510c5600f388b9f",
+      "hash_recomputed_this_review": true
+    },
+    {
+      "path": "apps/clued-cloud/worker/continuity.ts",
+      "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+      "git_blob": "a1a16b255454e779a90137679ee4813bcc8a3c31",
+      "bytes": 47981,
+      "sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+      "hash_recomputed_this_review": true
+    },
+    {
+      "path": "apps/clued-cloud/worker/p5.ts",
+      "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+      "git_blob": "42a7c6b4d383fd6c9374b5189e0f3db4c5d4ff47",
+      "bytes": 4492,
+      "sha256": "ce46bf7025f746579263b78c320f1df6e4d077e11bcbcc958865f20bfead418f",
+      "hash_recomputed_this_review": true
+    },
+    {
+      "path": "apps/clued-cloud/worker/projects.ts",
+      "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+      "git_blob": "1df919b3471c71e28f1b45fbdedccfe5657df644",
+      "bytes": 2051,
+      "sha256": "8bb2d52643c4ffd62ee48de60294559161d750ea15d328b6585deb47aa2aa09f",
+      "hash_recomputed_this_review": true
+    },
+    {
+      "path": "apps/clued-cloud/worker/records.ts",
+      "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+      "git_blob": "fcd22bb2014750547e33efe9ce10b169d571b09e",
+      "bytes": 8108,
+      "sha256": "43bfe74c4d6576476f3d4a08df82a6b0853da855c29124edf1e333c14d5bb35e",
+      "hash_recomputed_this_review": true
+    },
+    {
+      "path": "artifacts/clued-validation/public-mcp/a03/c1ef7a3b-20260829T062104Z/readonly-call-summary.json",
+      "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+      "git_blob": "e13cde1b54b457cbde03c55267506a368927ed6e",
+      "bytes": 333,
+      "sha256": "4100958a1f511b60cafb7f43e381398368c4836a0d109fdf5bd26ac0d22eef57",
+      "hash_recomputed_this_review": true
+    },
+    {
+      "path": "artifacts/clued-validation/public-mcp/a13/c2b18063-20260829T075913Z/gate-receipt.json",
+      "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+      "git_blob": "18ab44fb36c30d57332196cf9889eb343967c1e7",
+      "bytes": 1519,
+      "sha256": "db5ba786b99c59429d5a2dac7b6780c49f8b298b14e78a3c3f692d96632f4a04",
+      "hash_recomputed_this_review": true
+    },
+    {
+      "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step1/34068945665/CIGateReceipt.json",
+      "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+      "git_blob": "a699259bc23cf28f752ed5cf55aea0c2d3185994",
+      "bytes": 3553,
+      "sha256": "71f218467f8c05fcd3854c65188336a80762fbc82b482977f46889b62c4d907e",
+      "hash_recomputed_this_review": true
+    },
+    {
+      "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step1/34069116734/CIGateReceipt.json",
+      "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+      "git_blob": "2b0fc3959da09acc280db6569375210bbd4e2655",
+      "bytes": 4213,
+      "sha256": "0a6bf0df65e722f2bb48fc6fd93767ec5ffcd8bb207b4189d4ff7d0863738091",
+      "hash_recomputed_this_review": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/FixedExecutionBaseline_20260907.md",
+      "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+      "git_blob": "819ea05e425a26559821661d128960289ec84d11",
+      "bytes": 30836,
+      "sha256": "f465bcb77aced171b4f241da7a23c1e02133716700227caaabb7954be39899ad",
+      "hash_recomputed_this_review": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/Step01-Step02-EvidenceReview.md",
+      "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+      "git_blob": "bf327efa9f0033885d3ccb1b38ba69ca4feeb8bc",
+      "bytes": 17727,
+      "sha256": "8ecc17639985e449b89dc75ce54df531d4c1ba709cd050b56feed215721ec72d",
+      "hash_recomputed_this_review": true
+    },
+    {
+      "path": "protocol/continuity/v1/schemas/core/receipt.schema.json",
+      "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+      "git_blob": "75973cfe12772ae2135bd2f04b9199f7fcf0a7c5",
+      "bytes": 713,
+      "sha256": "7a99391d3a8357f40ad7a030d211e2ebceec1f3c95451fe3d6c589c435e0132c",
+      "hash_recomputed_this_review": true
+    },
+    {
+      "path": "scripts/clued-naming-inventory-consolidate.py",
+      "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+      "git_blob": "37e9c1320cc71412d20217b0b344b8ab58d13cbe",
+      "bytes": 32673,
+      "sha256": "69f2fcc2e8c0e2802d7fa08de842345b88d208bec947d3ef4e88ef4c41907026",
+      "hash_recomputed_this_review": true
+    },
+    {
+      "path": "scripts/clued-naming-surface-inventory.py",
+      "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+      "git_blob": "bce68afca416666d40ecfed04bc4cfc78c5c104f",
+      "bytes": 73510,
+      "sha256": "9ff7dc893b865a7736d6d9ffbe6f908c15f9c418e10a0602ae6fd33eedb8f81e",
+      "hash_recomputed_this_review": true
+    },
+    {
+      "path": "scripts/phase2-v027-negative-harness.py",
+      "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+      "git_blob": "6b0ee1440f925098462cce2bd78bf69c32a74dbc",
+      "bytes": 18552,
+      "sha256": "46520afc2175c468bb15162c7ec2fb43d157ddcbb05481ea062f7a31083f6860",
+      "hash_recomputed_this_review": true
+    },
+    {
+      "path": "scripts/phase2-v027-validate.py",
+      "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+      "git_blob": "83b3346998a6a78171336607d6c8b298ed9afa4e",
+      "bytes": 20343,
+      "sha256": "e16cc9fa5fd2a54dc3922029851722936551a400979dc94dce691faa83bd7f4e",
+      "hash_recomputed_this_review": true
+    },
+    {
+      "path": "tests/test_naming_inventory_completeness.py",
+      "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+      "git_blob": "ca9e0ca670cda817dcc20e32704bece3d223e512",
+      "bytes": 7407,
+      "sha256": "5a46d56736c2b4b0f7a03af757d9e483b91b82c4cd70441385414a1bbce7617d",
+      "hash_recomputed_this_review": true
+    },
+    {
+      "path": "tests/test_naming_inventory_semantic_surfaces.py",
+      "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+      "git_blob": "1d048f9bfe2bedb91c8e9d33a6470d0340d3eeab",
+      "bytes": 10873,
+      "sha256": "9a26ac5b29df73b0f3d4a8d8fe4e4a887e4f6dd4fe6931305a2c1408c7b3624f",
+      "hash_recomputed_this_review": true
+    },
+    {
+      "path": "tests/test_naming_inventory_supplements.py",
+      "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+      "git_blob": "cc802a325cc5b0dce3aa0c102069ba4b1e31c4d8",
+      "bytes": 15781,
+      "sha256": "7269d1d6a244996347f6131c9ef6f38808eaca4a49b605f38279114adf9e0519",
+      "hash_recomputed_this_review": true
+    },
+    {
+      "path": "tests/test_p2_verification_context.py",
+      "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+      "git_blob": "69ceaef5663d9f6e72eaa48b7e3120b12dbcb9e0",
+      "bytes": 28595,
+      "sha256": "396503f7ca8d876c53414bd812e16dfe9788a2bb7848083fbde2192d2665b6f5",
+      "hash_recomputed_this_review": true
+    },
+    {
+      "path": "verification_context.py",
+      "commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+      "git_blob": "0aad9e3d24ac1da4f3cb32edaffe361f91f5cccf",
+      "bytes": 32479,
+      "sha256": "6a2d83a65921df60252aad350f3cecacfbab991be582368903aa40203c96d5ab",
+      "hash_recomputed_this_review": true
+    }
+  ],
+  "recorded_at_utc": "2026-09-07T09:12:48.820300+00:00"
+}

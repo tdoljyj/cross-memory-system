@@ -1,0 +1,34 @@
+{
+  "kind": "ROOT_SELECTED_STAGED_DISPOSITION_CANDIDATE",
+  "state": "SELECTED_FOR_INDEPENDENT_REVIEW_NOT_ISSUED",
+  "authority_effect": "NONE",
+  "author": "/root",
+  "source_proposal": {
+    "path": "step09-review-20260907/preparation/StagedDispositionProposal.json",
+    "sha256": "2d27c7b9a673dff1484caea6d3fb5ea409467346eafb96557c7123bd5a5ec653"
+  },
+  "selected_condition_ids": [
+    "F-MAJ-005/C2",
+    "F-MAJ-006/C1",
+    "F-MAJ-007/C3",
+    "F-MAJ-011/C2",
+    "F-MAJ-014/C3",
+    "F-MAJ-014/C4",
+    "F-MAJ-016/C1",
+    "F-MAJ-017/C3",
+    "F-MAJ-018/C1",
+    "F-MAJ-018/C4"
+  ],
+  "root_review": "Root reviewed each proposed clause against the latest fixed sequence, current scoped acceptance records and user cost/scope amendments. Select the ten scoped clauses without activating future domains or deleting outstanding obligations; issue applicable clauses only as part of actual Step10, and the distinct target-freeze clause at actual Step11.",
+  "current_access_evidence": {
+    "path": "CurrentScopedAccessReview_20260907.json",
+    "sha256": "88a846d82338c77d30ba802895b2ce04e1b8ac76bcbae69dd0cabf070f9dc9a7"
+  },
+  "workstream_interpretation": "The original maximum one core plus one enabling product workstream does not forbid the explicitly user-authorized bounded review/test subagents inside this single governance workstream; mutations remain owned and coordinated.",
+  "scope_limits": [
+    "No experimental spending/model activation/commercial operation authorized by these clauses.",
+    "No rewrite of preserved historical current/PASS claims.",
+    "Step12–19 actual obligations remain mandatory at their stated stages.",
+    "The original 28 structure conditions remain distinct and will be adjudicated only after Step10."
+  ]
+}

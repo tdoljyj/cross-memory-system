@@ -1,0 +1,38 @@
+{
+  "type": "LegacyWriteClosureEvidence",
+  "status": "ACTUAL_OLD_BUSINESS_WRITE_ENTRIES_REJECTED",
+  "evidence_chain": {
+    "actual_migration_receipt": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-migration-transactions\\migration-da9d022d934e48809156fef4c7b828e6\\receipt.json",
+      "sha256": "7ba04bc7cf715a6b96f05f64db3d7f0281627e9c0919b15dd66aa3d26f9f6ca7"
+    },
+    "freeze_sha256": "f40c8af253f811f820e4b3eccc144d63ca3548663810aba10bebb22331661b36",
+    "before_boundary_sha256": "467890cdee11132fd2b0d96ecc5ba5b3e76ce1ef49143838ab48c31661a1a9f7",
+    "execution_inputs_sha256": "37a6909deedae17dbfe97e844d8ec596c5de46e73c3cefafd4136008d3f3dcec",
+    "Step13_report_sha256": "4b14aae44e5a29d07daeac3d8d137dd56ead49f33457a71429b4b0264b8ab483",
+    "Step14_report_sha256": "504db171ea977a75431daec3fc2a3d4030b42b84c4525473e18a6edffc6c8f0b",
+    "verifier_sha256": "52e9e6aa1fe4a3f1d6e606953abb1ec449c0eb1888f7025fbf3f301a58d6acfc",
+    "observed_head": "00ee8d1b796f27dbc3cac0c665ed4a69a87231b9"
+  },
+  "business_memory_commands": [
+    "add",
+    "update",
+    "supersede",
+    "consolidate",
+    "procedural",
+    "rebuild-index",
+    "migrate",
+    "delete",
+    "reject",
+    "audit"
+  ],
+  "business_memory_expected_exit": 2,
+  "sync_push_expected_exit": 2,
+  "both_root_and_scripts_entries_executed": true,
+  "zero_new_canonical_writes": true,
+  "protected_byte_count": 3490,
+  "protected_bytes_unchanged": true,
+  "compatibility_scope": "Six shims retain read-only business access and existing explicitly controlled engineering maintenance; CommitRepo was not executed. Do not label every possible tool operation read-only.",
+  "non_bypass_enforcement": "NOT_CLAIMED; Step15/18 remain due",
+  "authority_effect": "NONE_NEW"
+}

@@ -1,0 +1,15 @@
+{
+  "status": "EXACT_RUNTIME_INPUTS_AND_ORIGINAL_TEST_SOURCES_RETAINED",
+  "authority_effect": "NONE",
+  "execution_inputs_sha256": "37a6909deedae17dbfe97e844d8ec596c5de46e73c3cefafd4136008d3f3dcec",
+  "executor_sha256": "5d116bb93b5d6509eec4edef3cd51ca56f746bcb191d68bcb1139c3c49747c84",
+  "archive": {
+    "path": "OriginalMigrationTestSources.zip",
+    "sha256": "3c2cafd7c052969e470ed4a2a915202fa39421f040793f777132fa8a12f72d28",
+    "members": 67,
+    "all_members_compared": true
+  },
+  "original_test_locator_boundary": "Retained exact historical test scripts use their original work-root and selected source-byte locations; they are not presented as automatically portable repository tests.",
+  "root_independent_review": "Root read the complete executor: pinned existing Freeze/Acceptance, exact input/source/payload verification, source backups before mutation, journal before intended writes, after-state readback, partial failure rollback, abrupt-termination recovery, concurrent-change refusal and protected path exclusions. Existing 5 actual executor tests plus 9 compatibility tests cover the declared scope; no live migration occurred.",
+  "current_runtime": "migration_execute.py preflight/apply/rollback with explicit repo/inputs/digests/Freeze/transaction-store CLI arguments; no inherited absolute work path used by real CLI."
+}

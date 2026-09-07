@@ -1,0 +1,17 @@
+{
+  "repository": "tdoljyj/cross-memory-system",
+  "run_id": 34105480323,
+  "run_url": "https://github.com/tdoljyj/cross-memory-system/actions/runs/34105480323",
+  "source_commit": "40fea9e0fcd4d061946d0523f645c40893fced2b",
+  "source_tree": "5d7927fc1ee35c53147d4ab02b572ed2f53ed5f9",
+  "conclusion": "SUCCESS",
+  "tests_passed": 71,
+  "artifact_id": 10012182337,
+  "artifact_metadata_size_bytes": 6596618,
+  "artifact_metadata_sha256": "582503968bdca0508a37d25d1874726ace60c0fa6a12310fa0ce337c7b7068cc",
+  "metadata_source": "Parent root real GitHub run/artifact query and official gh download; not independently refetched by this reviewer",
+  "download_mode": "gh official artifact extraction; original ZIP not locally downloaded or independently hashed",
+  "manifest_sha256_independently_recomputed": "e23e6f69aaeab09e6085a9b4089db5ee0f13acd8c38c7f2dc76c2b21ef46c596",
+  "parent_provided_workflow_scope": "new current naming workflow, including byte preservation fix and 71 existing tests",
+  "result_limit": "SUCCESS authenticates execution completion as observed; original inventory status remains INVENTORY_CANDIDATE_NOT_CLOSEOUT, no blanket Step3 or runtime gate PASS inferred"
+}

@@ -1,0 +1,14 @@
+{
+  "type": "ReviewedSecretScannerFalsePositiveDisposition",
+  "reviewed_count": 147,
+  "root_independent_recomputed_count": 147,
+  "unresolved": 0,
+  "ignore_before_sha256": "f3479d72893362d64af38c550efba95026f2225ddfeba8457711c78dcc24d9d8",
+  "ignore_after_sha256": "e4fa58ff14babcb91056d651fb3ff40c88be908e317b3f88f3e0bc679a08a6e8",
+  "scope": "Exact commit/path/rule/line only; same scanner, complete Git history and all BASE_CORE requirements retained.",
+  "scanner_version": "8.30.1",
+  "native_release_zip_sha256": "d29144deff3a68aa93ced33dddf84b7fdc26070add4aa0f4513094c8332afc4e",
+  "prior_ci_run": 34114655438,
+  "source_before_fix": "722d3b20a1cee0c18f7203b4a786565b22e43c6e",
+  "fresh_ci_required": true
+}

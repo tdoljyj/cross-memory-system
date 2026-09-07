@@ -1,0 +1,38 @@
+{
+  "id": "V025_RUNTIME_CONSUMER_EVIDENCE_INTAKE_DESIGN",
+  "required_identifiers": [
+    "domain_id",
+    "program_id",
+    "stage_id"
+  ],
+  "required_bindings": [
+    "exact_code_commit_tree",
+    "consumer_path_and_symbol",
+    "caller_and_callee_types",
+    "authorization_scope",
+    "positive_and_negative_run_refs",
+    "raw_evidence_digests",
+    "owner",
+    "environment",
+    "accepted_contract_ref"
+  ],
+  "typed_domains": [
+    "Artifact",
+    "ReleaseUnit",
+    "Edition",
+    "SKU",
+    "OfferRevision",
+    "Entitlement",
+    "ResourceUsage",
+    "SourceLot"
+  ],
+  "not_equivalent": [
+    "schema_only",
+    "document_fixture",
+    "check_run_name_only",
+    "author_claim"
+  ],
+  "actual_runtime_consumers_bound": 0,
+  "actual_runtime_consumer_total": null,
+  "executed_runtime_tests": 0
+}

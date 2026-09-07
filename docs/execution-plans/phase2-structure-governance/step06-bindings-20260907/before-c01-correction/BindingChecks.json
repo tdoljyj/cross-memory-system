@@ -1,0 +1,45 @@
+{
+  "result": "PASS",
+  "meaning": "Exact candidate-reference and source-chain integrity; not runtime execution PASS",
+  "consumer_ids": [
+    "C01",
+    "C02",
+    "C03",
+    "C04",
+    "C05",
+    "C06",
+    "C07",
+    "C08",
+    "C09",
+    "C10",
+    "C11",
+    "C12",
+    "C13",
+    "C14",
+    "C15",
+    "C16",
+    "C17",
+    "C18"
+  ],
+  "checks": {
+    "consumers": 18,
+    "authorization_bindings": 27,
+    "receipt_bindings": 18,
+    "owner_domain_program_stage_refs_bound": 18,
+    "exact_input_auth_receipt_gate_chains": 18,
+    "original_source_hashes_verified": 45,
+    "historical_source_comparisons": 13,
+    "source_digest_references_validated": 592,
+    "json_pointers_resolved": 112
+  },
+  "original_matrix_unchanged": true,
+  "candidate_files": {
+    "TypedConsumerRegistry.candidate.json": "c14a299a40c2bcd7d915cb4e5dedaf6471220a3a242d2f9156620746745aa38a",
+    "TypedAuthorizationRegistry.candidate.json": "9b17e7bce4327abc179aeb4ce214670341bfed252658903a58244d916de73955",
+    "TypedReceiptRegistry.candidate.json": "05d182805b31ba9d5e6c1c3fa32ae2081527a92faaa76263debded6ffca5efa4",
+    "C09ExportScopeDisposition.json": "fa2ba22146d5560f502d5e70d7045ead5577fea7c1af909b7ab51a9e64b718ff",
+    "ExecutionEvidenceReuse.json": "e49ef52041404d2b486d49bb3da4a4c414e61e472d93bc7970dc64802088d220",
+    "CurrentCIRunBinding.json": "9ce45d5526abbcac641c88ecea3d29d20f30e0ce97c953ff1740e65cd5707657"
+  },
+  "source_index_sha256": "d246a7ee943eeaa1071d0888b9737cd4be621e0dd01f866d62a10e4d49af044a"
+}

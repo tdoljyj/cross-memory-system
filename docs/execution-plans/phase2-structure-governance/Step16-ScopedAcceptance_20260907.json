@@ -1,0 +1,65 @@
+{
+  "type": "ScopedPostMigrationAcceptanceDecision",
+  "issuer": "Codex@DESK-W-591 under existing explicit accepting delegation",
+  "delegation": {
+    "path": "ExecutionDelegation_20260907.json",
+    "sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8"
+  },
+  "freeze": {
+    "path": "Phase2StructureFreezeDecision_20260907.json",
+    "sha256": "f40c8af253f811f820e4b3eccc144d63ca3548663810aba10bebb22331661b36"
+  },
+  "subject_sha256": "741cf1fedefa35cec82e9f55bcf53bf2ce29fa6253fd68da2133ab0c2d724cbf",
+  "source_commit": "722d3b20a1cee0c18f7203b4a786565b22e43c6e",
+  "run_id": 34114596702,
+  "run_attempt": 1,
+  "actual_evidence": {
+    "path": "step15-16-actual-ci-20260907/Inspection.json",
+    "sha256": "9238abf3c28f36bcfbfc5b87ab885b2195a53de5ca0bcadee936c9910236240c"
+  },
+  "native_artifact": {
+    "path": "step15-16-actual-ci-20260907/NativeEvidence.zip",
+    "sha256": "0ffee607d3e78c4e07f8fecd629fa2e833a18edc28aa7f146f038e5122ec3210"
+  },
+  "platform_run": {
+    "path": "step15-16-actual-ci-20260907/Run.json",
+    "sha256": "aee8d3eab2a153c6be803e71bfc279104ed8fc1dc64b964c8db6a185a6e4bb65"
+  },
+  "platform_jobs": {
+    "path": "step15-16-actual-ci-20260907/Jobs.json",
+    "sha256": "c47475c188d1de6cc1a802943eb423897d416501d0920cfa4ddf1c80c88888bc"
+  },
+  "invalidation": {
+    "path": "AcceptanceAndInvalidation.md",
+    "sha256": "f2aed48ed74e688bfe280d3fa896243cc7907905fafcc467706a276367472f27"
+  },
+  "new_business_authority": false,
+  "step": 16,
+  "issued_at": "2026-09-07T11:09:12.443492+00:00",
+  "state": "ACCEPTED_FOR_FRESH_FOUR_PHASE2_GATES",
+  "predecessor": {
+    "path": "Step15-ScopedAcceptance_20260907.json",
+    "sha256": "e6f2b44100feb66b429ab0af42c656bde7b150191a74b5294d336f5c703a3e96"
+  },
+  "accepted_effect": [
+    "The four actual CandidateIdentity, ManifestIntegrity, Provenance and ProductIncrementInput checks were freshly executed after the successful Naming step against the exact retained delivery ZIP in the migrated source commit."
+  ],
+  "native_receipts": [
+    {
+      "path": "step15-16-actual-ci-20260907/CIGateReceipt.json",
+      "sha256": "20187233fad240195cb5227d6e34b8d1f1041ab05107b66063ae01a834ef97a6"
+    },
+    {
+      "path": "step15-16-actual-ci-20260907/GateExecution.json",
+      "sha256": "8255bc7dc37bede9047ee23d29d6c6296f3d8d787e15c424b9b63b1917f169a4"
+    }
+  ],
+  "not_established": [
+    "Full G1 cryptographic authority cutover",
+    "Production business runtime acceptance",
+    "Protection of bare Git main writes",
+    "Actual trusted reader/publisher installation, signature chain or Step18 non-bypass",
+    "Step19 closeout or Skills"
+  ],
+  "next_step": 17
+}

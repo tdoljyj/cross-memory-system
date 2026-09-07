@@ -1,0 +1,108 @@
+{
+  "candidate_status": "PREPARATION_ONLY_NOT_STEP5_ACCEPTANCE",
+  "authority_effect": "NONE_NEW_BY_CANDIDATE",
+  "base_repository_commit": "5fad76df81c8a412e7768e08427841f0985a2588",
+  "format_boundary": "Review views over existing contracts; not a new runtime schema, global registry, or Canonical Store.",
+  "scope_basis": {
+    "source_id": "scope-amendment",
+    "source_sha256": "32b16e2938a5674b1d8b492e1bf0a0506f708c574913696d6ba281b99e108e9e",
+    "pointer": ""
+  },
+  "management_owner_ref": {
+    "source_id": "delegation",
+    "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+    "pointer": "/delegator"
+  },
+  "preparation_delegate_ref": {
+    "source_id": "delegation",
+    "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+    "pointer": "/delegatee"
+  },
+  "step4_prerequisite": {
+    "candidate_ref": {
+      "source_id": "step4-ownership",
+      "source_sha256": "40d7e87fed046c8aff18d8c1d0532ada075b802faf204059649c84faef1c0782",
+      "pointer": ""
+    },
+    "formal_gate_asserted_here": false,
+    "accepted_decision_ref": {
+      "source_id": "step4-acceptance",
+      "source_sha256": "6f2cc1c9cc28c2a717023029851d61a666815567bc30b3635479cb1b70382e6c",
+      "pointer": ""
+    },
+    "accepted_effect_boundary": "Reuse the existing scoped Step4 administrative acceptance; this candidate issues no new acceptance, runtime authority or Freeze."
+  },
+  "physical_rename_performed": false,
+  "migration_performed": false,
+  "historical_bytes_or_ids_changed": false,
+  "entry_schema_policy": "Use the baseline alias fields when a real compatibility mapping is proposed; no parallel runtime registry/schema is introduced here.",
+  "required_mapping_fields": [
+    "alias",
+    "namespace_or_contract",
+    "canonical_target",
+    "read_only_compatibility",
+    "new_writes_allowed",
+    "lifecycle",
+    "retirement_conditions",
+    "reverse_resolution",
+    "ambiguity_disposition",
+    "source_evidence"
+  ],
+  "new_runtime_alias_entries": [],
+  "observation_limit": "Typed inventory is a bounded surface extraction, not a global alias detector. Zero newly issued aliases is not a claim that every historical or external alias has been enumerated.",
+  "explicit_dispositions": [
+    {
+      "case": "Map and package version labels",
+      "action": "KEEP_DISTINCT_IDENTITIES_NO_ALIAS",
+      "source_refs": [
+        {
+          "source_id": "identity-policy",
+          "source_sha256": "3a14df68ea81c6390316c5df09d51a049b52a640871ab57953c42acb30624bff",
+          "pointer": ""
+        },
+        {
+          "source_id": "structure-map",
+          "source_sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965",
+          "pointer": "/stable_map_identity"
+        }
+      ]
+    },
+    {
+      "case": "skills/clued-continuity and possible clued-kernel-developer target",
+      "action": "NO_INFERRED_ALIAS_OR_RETIREMENT; exact installed projection/consumer mapping required only if that migration is proposed",
+      "source_ref": {
+        "source_id": "structure-map",
+        "source_sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965",
+        "pointer": "/current_to_target_rows/12"
+      }
+    },
+    {
+      "case": "retired local Memory Engine root path contract",
+      "action": "HISTORICAL_ONLY_NO_REDIRECT_TO_CURRENT_WRITER; retain pre-cutover tag and original names",
+      "source_refs": [
+        {
+          "source_id": "legacy-readme",
+          "source_sha256": "7e1efdf92211c771d9f2d74195d9a8b42d84f6ae222a857c25a792289ddc8a15",
+          "pointer": ""
+        },
+        {
+          "source_id": "current-reader",
+          "source_sha256": "479fd0e39a8a96287642ea59644d1975666fc314cc589f39a0086c3d9446dd85",
+          "pointer": ""
+        }
+      ]
+    },
+    {
+      "case": "namespace grouping labels versus program domain IDs",
+      "action": "NO_IMPLICIT_ALIAS; use exact Step 4 source map/domain references",
+      "source_ref": {
+        "source_id": "step4-domains",
+        "source_sha256": "fa9e1b322356fc55d04b3eee078146a9b8304e48197c7d1767cd14d665b9c8ca",
+        "pointer": ""
+      }
+    }
+  ],
+  "future_resolution_rule": "A new alias must resolve to exactly one typed target in its scope and record reverse lookup. Absent or ambiguous mapping rejects the proposed rename/consumer change, not unrelated source-preserving preparation.",
+  "new_write_default": false,
+  "retirement_rule": "Retain actual old entry until that specific consumer mapping, accepted compatibility window and rollback evidence exist; never repair historical bytes in place."
+}

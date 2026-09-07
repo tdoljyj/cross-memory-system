@@ -1,0 +1,1613 @@
+{
+  "type": "IndependentOriginal28SourceAndBindingChecks",
+  "reviewer": "/root/architecture_review",
+  "actual_step10": {
+    "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\ArchitectureConstitutionAcceptanceDecision_20260907.json",
+    "sha256": "f2ec1d6cf3afbd80d415c65c7bc0f71d86d606bda9031a174d92517e421ac246",
+    "pointer": ""
+  },
+  "draft": {
+    "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step11-original28-preparation\\Rows.json",
+    "sha256": "1e1a4e878634cee835e168d4dfe2558e04c91a1c0ecb71cfd65d59a1356f3ec3",
+    "pointer": ""
+  },
+  "source_checks": [
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\ExecutionDelegation_20260907.json",
+      "sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+      "pointer": "",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\FixedExecutionBaseline_20260907.md",
+      "sha256": "f465bcb77aced171b4f241da7a23c1e02133716700227caaabb7954be39899ad",
+      "pointer": "",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\AcceptanceAndInvalidation.md",
+      "sha256": "f2aed48ed74e688bfe280d3fa896243cc7907905fafcc467706a276367472f27",
+      "pointer": "",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\ScopeAmendment_CurrentDirectory_20260907.json",
+      "sha256": "32b16e2938a5674b1d8b492e1bf0a0506f708c574913696d6ba281b99e108e9e",
+      "pointer": "",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\CostControlExecutionAmendment_20260907.md",
+      "sha256": "0626a40f12022442e78455ab4f06c44f90c03f343d535c743b4c58c3a749fa2d",
+      "pointer": "",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\CurrentScopedAccessReview_20260907.json",
+      "sha256": "88a846d82338c77d30ba802895b2ce04e1b8ac76bcbae69dd0cabf070f9dc9a7",
+      "pointer": "",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\Step04-ScopedAcceptance_20260907.json",
+      "sha256": "6f2cc1c9cc28c2a717023029851d61a666815567bc30b3635479cb1b70382e6c",
+      "pointer": "",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\Step05-ScopedAcceptance_20260907.json",
+      "sha256": "a38536ed64ae7924235ab0318cae17716f1a549d89660acde807f4bb15a64a19",
+      "pointer": "",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\Step06-ScopedAcceptance_20260907.json",
+      "sha256": "bd40c82a21e7b19c2c36e56d7b877078e45c6bfdf1593590fb56ab364f47889a",
+      "pointer": "",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\Step07-ScopedAcceptance_20260907.json",
+      "sha256": "dec7601899be7118b3baff3d78793ecaf98b06316070b881ca30297a3b0f22b3",
+      "pointer": "",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\Step08-ScopedAcceptance_20260907.json",
+      "sha256": "8bac86599481c9effc67274bb29b7f352d59d4e656add8805e41f7437ced455c",
+      "pointer": "",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\ReviewSubject_20260907.r2.json",
+      "sha256": "741cf1fedefa35cec82e9f55bcf53bf2ce29fa6253fd68da2133ab0c2d724cbf",
+      "pointer": "",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\preparation\\RootSelectedDispositions.candidate.json",
+      "sha256": "c4fe3cc13670a886e6703ab191284ddb2d0077d481f674a3cab10b49d51e65b8",
+      "pointer": "",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\preparation\\StagedDispositionProposal.json",
+      "sha256": "2d27c7b9a673dff1484caea6d3fb5ea409467346eafb96557c7123bd5a5ec653",
+      "pointer": "",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\disposition-review\\Review.json",
+      "sha256": "21483daedf403b5033783491b2caaf9658df88fd39374f3393954f37e5bf8c04",
+      "pointer": "",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step12-migration-20260907\\ExecutionInputs.candidate.json",
+      "sha256": "37a6909deedae17dbfe97e844d8ec596c5de46e73c3cefafd4136008d3f3dcec",
+      "pointer": "",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step11-structure-inputs-20260907\\StructureFreezePrerequisiteStatus.json",
+      "sha256": "37306d420b8e1c7380cdb30998e835d1dbbcfc5f6f62754615a5e1b09ac72925",
+      "pointer": "/rows/0/conditions/0",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step11-structure-inputs-20260907\\StructureFreezeEvidenceMatrix.json",
+      "sha256": "396dc8a6f4118d224cff1765b42d8a395b4309e6ecc5889c6ab7a0e04cdbafd8",
+      "pointer": "/rows/0/original_closure_conditions/0",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step11-structure-inputs-20260907\\VersionCandidateOverlay.json",
+      "sha256": "3f12c52ebcf261990653433dfe6f803696048fbb457088d4e2a185c46f640911",
+      "pointer": "/inherited_source_record/source_axes/11",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\protocol\\continuity\\v1\\manifest.json",
+      "sha256": "05ca5bb70c642dba9c3f58c0b943020d6188636e60cc569b3802c90a9afd36b5",
+      "pointer": "/claim_boundary",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step11-structure-inputs-20260907\\StructureFreezePrerequisiteStatus.json",
+      "sha256": "37306d420b8e1c7380cdb30998e835d1dbbcfc5f6f62754615a5e1b09ac72925",
+      "pointer": "/rows/0/conditions/1",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step11-structure-inputs-20260907\\StructureFreezeEvidenceMatrix.json",
+      "sha256": "396dc8a6f4118d224cff1765b42d8a395b4309e6ecc5889c6ab7a0e04cdbafd8",
+      "pointer": "/rows/0/original_closure_conditions/1",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step11-structure-inputs-20260907\\VersionCandidateOverlay.json",
+      "sha256": "3f12c52ebcf261990653433dfe6f803696048fbb457088d4e2a185c46f640911",
+      "pointer": "/inherited_source_record/source_axes/11",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\protocol\\continuity\\v1\\manifest.json",
+      "sha256": "05ca5bb70c642dba9c3f58c0b943020d6188636e60cc569b3802c90a9afd36b5",
+      "pointer": "/claim_boundary",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step11-structure-inputs-20260907\\StructureFreezePrerequisiteStatus.json",
+      "sha256": "37306d420b8e1c7380cdb30998e835d1dbbcfc5f6f62754615a5e1b09ac72925",
+      "pointer": "/rows/0/conditions/2",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step11-structure-inputs-20260907\\StructureFreezeEvidenceMatrix.json",
+      "sha256": "396dc8a6f4118d224cff1765b42d8a395b4309e6ecc5889c6ab7a0e04cdbafd8",
+      "pointer": "/rows/0/original_closure_conditions/2",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step11-structure-inputs-20260907\\VersionCandidateOverlay.json",
+      "sha256": "3f12c52ebcf261990653433dfe6f803696048fbb457088d4e2a185c46f640911",
+      "pointer": "/inherited_source_record/source_axes/11",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\protocol\\continuity\\v1\\manifest.json",
+      "sha256": "05ca5bb70c642dba9c3f58c0b943020d6188636e60cc569b3802c90a9afd36b5",
+      "pointer": "/claim_boundary",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step11-structure-inputs-20260907\\StructureFreezePrerequisiteStatus.json",
+      "sha256": "37306d420b8e1c7380cdb30998e835d1dbbcfc5f6f62754615a5e1b09ac72925",
+      "pointer": "/rows/1/conditions/0",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step11-structure-inputs-20260907\\StructureFreezeEvidenceMatrix.json",
+      "sha256": "396dc8a6f4118d224cff1765b42d8a395b4309e6ecc5889c6ab7a0e04cdbafd8",
+      "pointer": "/rows/1/original_closure_conditions/0",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/sources/architecture_v024/sources/control/TypedVersionVector.json",
+      "sha256": "5afa3195fd1148f7f09e0dd6f430e65f5537a6718ac9f5735eab04156c793a2e",
+      "pointer": "/gate_binding_policy",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step11-structure-inputs-20260907\\VersionCandidateOverlay.json",
+      "sha256": "3f12c52ebcf261990653433dfe6f803696048fbb457088d4e2a185c46f640911",
+      "pointer": "",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step05-identity-20260907\\VersionAxisRegistry.candidate.json",
+      "sha256": "1276845153b1fe93517533bc0ae18d466134a6e8651100369dd54493790f27da",
+      "pointer": "",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step11-structure-inputs-20260907\\StructureFreezePrerequisiteStatus.json",
+      "sha256": "37306d420b8e1c7380cdb30998e835d1dbbcfc5f6f62754615a5e1b09ac72925",
+      "pointer": "/rows/1/conditions/1",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step11-structure-inputs-20260907\\StructureFreezeEvidenceMatrix.json",
+      "sha256": "396dc8a6f4118d224cff1765b42d8a395b4309e6ecc5889c6ab7a0e04cdbafd8",
+      "pointer": "/rows/1/original_closure_conditions/1",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/sources/architecture_v024/sources/control/TypedVersionVector.json",
+      "sha256": "5afa3195fd1148f7f09e0dd6f430e65f5537a6718ac9f5735eab04156c793a2e",
+      "pointer": "/gate_binding_policy",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step11-structure-inputs-20260907\\VersionCandidateOverlay.json",
+      "sha256": "3f12c52ebcf261990653433dfe6f803696048fbb457088d4e2a185c46f640911",
+      "pointer": "",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step05-identity-20260907\\VersionAxisRegistry.candidate.json",
+      "sha256": "1276845153b1fe93517533bc0ae18d466134a6e8651100369dd54493790f27da",
+      "pointer": "",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step11-structure-inputs-20260907\\StructureFreezePrerequisiteStatus.json",
+      "sha256": "37306d420b8e1c7380cdb30998e835d1dbbcfc5f6f62754615a5e1b09ac72925",
+      "pointer": "/rows/1/conditions/2",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step11-structure-inputs-20260907\\StructureFreezeEvidenceMatrix.json",
+      "sha256": "396dc8a6f4118d224cff1765b42d8a395b4309e6ecc5889c6ab7a0e04cdbafd8",
+      "pointer": "/rows/1/original_closure_conditions/2",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/sources/architecture_v024/sources/control/TypedVersionVector.json",
+      "sha256": "5afa3195fd1148f7f09e0dd6f430e65f5537a6718ac9f5735eab04156c793a2e",
+      "pointer": "/gate_binding_policy",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step11-structure-inputs-20260907\\VersionCandidateOverlay.json",
+      "sha256": "3f12c52ebcf261990653433dfe6f803696048fbb457088d4e2a185c46f640911",
+      "pointer": "",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step05-identity-20260907\\VersionAxisRegistry.candidate.json",
+      "sha256": "1276845153b1fe93517533bc0ae18d466134a6e8651100369dd54493790f27da",
+      "pointer": "",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step11-structure-inputs-20260907\\StructureFreezePrerequisiteStatus.json",
+      "sha256": "37306d420b8e1c7380cdb30998e835d1dbbcfc5f6f62754615a5e1b09ac72925",
+      "pointer": "/rows/2/conditions/0",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step11-structure-inputs-20260907\\StructureFreezeEvidenceMatrix.json",
+      "sha256": "396dc8a6f4118d224cff1765b42d8a395b4309e6ecc5889c6ab7a0e04cdbafd8",
+      "pointer": "/rows/2/original_closure_conditions/0",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step11-structure-inputs-20260907\\RequiredCheckSetCandidate.json",
+      "sha256": "33dc28061671985750d5116751dffbba6c0907447bad3998186492101377670b",
+      "pointer": "",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step11-structure-inputs-20260907\\StructureFreezePrerequisiteStatus.json",
+      "sha256": "37306d420b8e1c7380cdb30998e835d1dbbcfc5f6f62754615a5e1b09ac72925",
+      "pointer": "/rows/2/conditions/1",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step11-structure-inputs-20260907\\StructureFreezeEvidenceMatrix.json",
+      "sha256": "396dc8a6f4118d224cff1765b42d8a395b4309e6ecc5889c6ab7a0e04cdbafd8",
+      "pointer": "/rows/2/original_closure_conditions/1",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step11-structure-inputs-20260907\\RequiredCheckSetCandidate.json",
+      "sha256": "33dc28061671985750d5116751dffbba6c0907447bad3998186492101377670b",
+      "pointer": "",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step11-structure-inputs-20260907\\StructureFreezePrerequisiteStatus.json",
+      "sha256": "37306d420b8e1c7380cdb30998e835d1dbbcfc5f6f62754615a5e1b09ac72925",
+      "pointer": "/rows/2/conditions/2",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step11-structure-inputs-20260907\\StructureFreezeEvidenceMatrix.json",
+      "sha256": "396dc8a6f4118d224cff1765b42d8a395b4309e6ecc5889c6ab7a0e04cdbafd8",
+      "pointer": "/rows/2/original_closure_conditions/2",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step11-structure-inputs-20260907\\RequiredCheckSetCandidate.json",
+      "sha256": "33dc28061671985750d5116751dffbba6c0907447bad3998186492101377670b",
+      "pointer": "",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step11-structure-inputs-20260907\\StructureFreezePrerequisiteStatus.json",
+      "sha256": "37306d420b8e1c7380cdb30998e835d1dbbcfc5f6f62754615a5e1b09ac72925",
+      "pointer": "/rows/2/conditions/3",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step11-structure-inputs-20260907\\StructureFreezeEvidenceMatrix.json",
+      "sha256": "396dc8a6f4118d224cff1765b42d8a395b4309e6ecc5889c6ab7a0e04cdbafd8",
+      "pointer": "/rows/2/original_closure_conditions/3",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step11-structure-inputs-20260907\\RequiredCheckSetCandidate.json",
+      "sha256": "33dc28061671985750d5116751dffbba6c0907447bad3998186492101377670b",
+      "pointer": "",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step11-structure-inputs-20260907\\StructureFreezePrerequisiteStatus.json",
+      "sha256": "37306d420b8e1c7380cdb30998e835d1dbbcfc5f6f62754615a5e1b09ac72925",
+      "pointer": "/rows/3/conditions/0",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step11-structure-inputs-20260907\\StructureFreezeEvidenceMatrix.json",
+      "sha256": "396dc8a6f4118d224cff1765b42d8a395b4309e6ecc5889c6ab7a0e04cdbafd8",
+      "pointer": "/rows/3/original_closure_conditions/0",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/HumanGovernanceProfiles.json",
+      "sha256": "c03093120227047bffe408eb1f4fe7cfa4581f2706d410e75752ccda94689c3f",
+      "pointer": "/included_profiles",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/sources/architecture_v024/data/HumanGovernanceCandidate.json",
+      "sha256": "d23351bb11e61bae68d861583b8d0ba75df858d6da09c83cb0418de4f7786a26",
+      "pointer": "",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step11-structure-inputs-20260907\\StructureFreezePrerequisiteStatus.json",
+      "sha256": "37306d420b8e1c7380cdb30998e835d1dbbcfc5f6f62754615a5e1b09ac72925",
+      "pointer": "/rows/3/conditions/1",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step11-structure-inputs-20260907\\StructureFreezeEvidenceMatrix.json",
+      "sha256": "396dc8a6f4118d224cff1765b42d8a395b4309e6ecc5889c6ab7a0e04cdbafd8",
+      "pointer": "/rows/3/original_closure_conditions/1",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/HumanGovernanceProfiles.json",
+      "sha256": "c03093120227047bffe408eb1f4fe7cfa4581f2706d410e75752ccda94689c3f",
+      "pointer": "/included_profiles",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/sources/architecture_v024/data/HumanGovernanceCandidate.json",
+      "sha256": "d23351bb11e61bae68d861583b8d0ba75df858d6da09c83cb0418de4f7786a26",
+      "pointer": "",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step11-structure-inputs-20260907\\StructureFreezePrerequisiteStatus.json",
+      "sha256": "37306d420b8e1c7380cdb30998e835d1dbbcfc5f6f62754615a5e1b09ac72925",
+      "pointer": "/rows/3/conditions/2",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step11-structure-inputs-20260907\\StructureFreezeEvidenceMatrix.json",
+      "sha256": "396dc8a6f4118d224cff1765b42d8a395b4309e6ecc5889c6ab7a0e04cdbafd8",
+      "pointer": "/rows/3/original_closure_conditions/2",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/HumanGovernanceProfiles.json",
+      "sha256": "c03093120227047bffe408eb1f4fe7cfa4581f2706d410e75752ccda94689c3f",
+      "pointer": "/deferred_profiles",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/sources/architecture_v024/data/HumanGovernanceCandidate.json",
+      "sha256": "d23351bb11e61bae68d861583b8d0ba75df858d6da09c83cb0418de4f7786a26",
+      "pointer": "",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step11-structure-inputs-20260907\\StructureFreezePrerequisiteStatus.json",
+      "sha256": "37306d420b8e1c7380cdb30998e835d1dbbcfc5f6f62754615a5e1b09ac72925",
+      "pointer": "/rows/4/conditions/0",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step11-structure-inputs-20260907\\StructureFreezeEvidenceMatrix.json",
+      "sha256": "396dc8a6f4118d224cff1765b42d8a395b4309e6ecc5889c6ab7a0e04cdbafd8",
+      "pointer": "/rows/4/original_closure_conditions/0",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/StructureCandidateMap.json",
+      "sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965",
+      "pointer": "/current_to_target_rows",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step12-migration-candidate\\MigrationPlan.candidate.json",
+      "sha256": "d8e1b8bb5058e9b2e4be9b4c0e836ad101eeefe7a839e6bc3ac5338f8b8310d0",
+      "pointer": "",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step12-migration-candidate\\DcpTargetBindings.candidate.json",
+      "sha256": "0b09223cdeda8042f39f31bc691403b537254fdda68d231521164e1999c8a717",
+      "pointer": "",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step11-structure-inputs-20260907\\StructureFreezePrerequisiteStatus.json",
+      "sha256": "37306d420b8e1c7380cdb30998e835d1dbbcfc5f6f62754615a5e1b09ac72925",
+      "pointer": "/rows/4/conditions/1",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step11-structure-inputs-20260907\\StructureFreezeEvidenceMatrix.json",
+      "sha256": "396dc8a6f4118d224cff1765b42d8a395b4309e6ecc5889c6ab7a0e04cdbafd8",
+      "pointer": "/rows/4/original_closure_conditions/1",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/StructureCandidateMap.json",
+      "sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965",
+      "pointer": "/current_to_target_rows/0",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step12-migration-candidate\\MigrationPlan.candidate.json",
+      "sha256": "d8e1b8bb5058e9b2e4be9b4c0e836ad101eeefe7a839e6bc3ac5338f8b8310d0",
+      "pointer": "",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step12-migration-candidate\\DcpTargetBindings.candidate.json",
+      "sha256": "0b09223cdeda8042f39f31bc691403b537254fdda68d231521164e1999c8a717",
+      "pointer": "",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step11-structure-inputs-20260907\\StructureFreezePrerequisiteStatus.json",
+      "sha256": "37306d420b8e1c7380cdb30998e835d1dbbcfc5f6f62754615a5e1b09ac72925",
+      "pointer": "/rows/4/conditions/2",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step11-structure-inputs-20260907\\StructureFreezeEvidenceMatrix.json",
+      "sha256": "396dc8a6f4118d224cff1765b42d8a395b4309e6ecc5889c6ab7a0e04cdbafd8",
+      "pointer": "/rows/4/original_closure_conditions/2",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/StructureCandidateMap.json",
+      "sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965",
+      "pointer": "/current_to_target_rows/7",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step12-migration-candidate\\MigrationPlan.candidate.json",
+      "sha256": "d8e1b8bb5058e9b2e4be9b4c0e836ad101eeefe7a839e6bc3ac5338f8b8310d0",
+      "pointer": "",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step12-migration-candidate\\DcpTargetBindings.candidate.json",
+      "sha256": "0b09223cdeda8042f39f31bc691403b537254fdda68d231521164e1999c8a717",
+      "pointer": "",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step11-structure-inputs-20260907\\StructureFreezePrerequisiteStatus.json",
+      "sha256": "37306d420b8e1c7380cdb30998e835d1dbbcfc5f6f62754615a5e1b09ac72925",
+      "pointer": "/rows/4/conditions/3",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step11-structure-inputs-20260907\\StructureFreezeEvidenceMatrix.json",
+      "sha256": "396dc8a6f4118d224cff1765b42d8a395b4309e6ecc5889c6ab7a0e04cdbafd8",
+      "pointer": "/rows/4/original_closure_conditions/3",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/AuthorizationRequests_NOT_GRANTED.json",
+      "sha256": "f0f736a32fcae273504db1286e7c9b74f087ba42c8d09d53d6cdb9ffb9ea235b",
+      "pointer": "",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step12-migration-candidate\\MigrationPlan.candidate.json",
+      "sha256": "d8e1b8bb5058e9b2e4be9b4c0e836ad101eeefe7a839e6bc3ac5338f8b8310d0",
+      "pointer": "",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step12-migration-candidate\\DcpTargetBindings.candidate.json",
+      "sha256": "0b09223cdeda8042f39f31bc691403b537254fdda68d231521164e1999c8a717",
+      "pointer": "",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step11-structure-inputs-20260907\\StructureFreezePrerequisiteStatus.json",
+      "sha256": "37306d420b8e1c7380cdb30998e835d1dbbcfc5f6f62754615a5e1b09ac72925",
+      "pointer": "/rows/5/conditions/0",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step11-structure-inputs-20260907\\StructureFreezeEvidenceMatrix.json",
+      "sha256": "396dc8a6f4118d224cff1765b42d8a395b4309e6ecc5889c6ab7a0e04cdbafd8",
+      "pointer": "/rows/5/original_closure_conditions/0",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/ArtifactAndReleaseIdentityCrosswalk.json",
+      "sha256": "a4386a8b45b02e8dbd6ff2f400d3b1c9ecbfc9c6d07a2892f035994d2a78c685",
+      "pointer": "/rows",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\Step05-ScopedAcceptance_20260907.json",
+      "sha256": "a38536ed64ae7924235ab0318cae17716f1a549d89660acde807f4bb15a64a19",
+      "pointer": "",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step11-structure-inputs-20260907\\StructureFreezePrerequisiteStatus.json",
+      "sha256": "37306d420b8e1c7380cdb30998e835d1dbbcfc5f6f62754615a5e1b09ac72925",
+      "pointer": "/rows/5/conditions/1",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step11-structure-inputs-20260907\\StructureFreezeEvidenceMatrix.json",
+      "sha256": "396dc8a6f4118d224cff1765b42d8a395b4309e6ecc5889c6ab7a0e04cdbafd8",
+      "pointer": "/rows/5/original_closure_conditions/1",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/ArtifactAndReleaseIdentityCrosswalk.json",
+      "sha256": "a4386a8b45b02e8dbd6ff2f400d3b1c9ecbfc9c6d07a2892f035994d2a78c685",
+      "pointer": "/independent_state_axes",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step11-structure-inputs-20260907\\StructureFreezePrerequisiteStatus.json",
+      "sha256": "37306d420b8e1c7380cdb30998e835d1dbbcfc5f6f62754615a5e1b09ac72925",
+      "pointer": "/rows/5/conditions/2",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step11-structure-inputs-20260907\\StructureFreezeEvidenceMatrix.json",
+      "sha256": "396dc8a6f4118d224cff1765b42d8a395b4309e6ecc5889c6ab7a0e04cdbafd8",
+      "pointer": "/rows/5/original_closure_conditions/2",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/ArtifactAndReleaseIdentityCrosswalk.json",
+      "sha256": "a4386a8b45b02e8dbd6ff2f400d3b1c9ecbfc9c6d07a2892f035994d2a78c685",
+      "pointer": "/rows",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step11-structure-inputs-20260907\\StructureFreezePrerequisiteStatus.json",
+      "sha256": "37306d420b8e1c7380cdb30998e835d1dbbcfc5f6f62754615a5e1b09ac72925",
+      "pointer": "/rows/6/conditions/0",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step11-structure-inputs-20260907\\StructureFreezeEvidenceMatrix.json",
+      "sha256": "396dc8a6f4118d224cff1765b42d8a395b4309e6ecc5889c6ab7a0e04cdbafd8",
+      "pointer": "/rows/6/original_closure_conditions/0",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/RepositoryEvidenceObservation.json",
+      "sha256": "e64b838f04ec083d34d3644b9222f4aa873cdcb535960eb4a5b1588d12963af0",
+      "pointer": "",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step12-migration-candidate\\MigrationPlan.candidate.json",
+      "sha256": "d8e1b8bb5058e9b2e4be9b4c0e836ad101eeefe7a839e6bc3ac5338f8b8310d0",
+      "pointer": "",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step12-migration-candidate\\DcpTargetBindings.candidate.json",
+      "sha256": "0b09223cdeda8042f39f31bc691403b537254fdda68d231521164e1999c8a717",
+      "pointer": "",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step11-structure-inputs-20260907\\StructureFreezePrerequisiteStatus.json",
+      "sha256": "37306d420b8e1c7380cdb30998e835d1dbbcfc5f6f62754615a5e1b09ac72925",
+      "pointer": "/rows/6/conditions/1",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step11-structure-inputs-20260907\\StructureFreezeEvidenceMatrix.json",
+      "sha256": "396dc8a6f4118d224cff1765b42d8a395b4309e6ecc5889c6ab7a0e04cdbafd8",
+      "pointer": "/rows/6/original_closure_conditions/1",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/StructureCandidateMap.json",
+      "sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965",
+      "pointer": "/map_kind",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step12-migration-candidate\\MigrationPlan.candidate.json",
+      "sha256": "d8e1b8bb5058e9b2e4be9b4c0e836ad101eeefe7a839e6bc3ac5338f8b8310d0",
+      "pointer": "",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step12-migration-candidate\\DcpTargetBindings.candidate.json",
+      "sha256": "0b09223cdeda8042f39f31bc691403b537254fdda68d231521164e1999c8a717",
+      "pointer": "",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step11-structure-inputs-20260907\\StructureFreezePrerequisiteStatus.json",
+      "sha256": "37306d420b8e1c7380cdb30998e835d1dbbcfc5f6f62754615a5e1b09ac72925",
+      "pointer": "/rows/6/conditions/2",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step11-structure-inputs-20260907\\StructureFreezeEvidenceMatrix.json",
+      "sha256": "396dc8a6f4118d224cff1765b42d8a395b4309e6ecc5889c6ab7a0e04cdbafd8",
+      "pointer": "/rows/6/original_closure_conditions/2",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/StructureCandidateMap.json",
+      "sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965",
+      "pointer": "/current_to_target_rows",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step12-migration-candidate\\MigrationPlan.candidate.json",
+      "sha256": "d8e1b8bb5058e9b2e4be9b4c0e836ad101eeefe7a839e6bc3ac5338f8b8310d0",
+      "pointer": "",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step12-migration-candidate\\DcpTargetBindings.candidate.json",
+      "sha256": "0b09223cdeda8042f39f31bc691403b537254fdda68d231521164e1999c8a717",
+      "pointer": "",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step11-structure-inputs-20260907\\StructureFreezePrerequisiteStatus.json",
+      "sha256": "37306d420b8e1c7380cdb30998e835d1dbbcfc5f6f62754615a5e1b09ac72925",
+      "pointer": "/rows/6/conditions/3",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step11-structure-inputs-20260907\\StructureFreezeEvidenceMatrix.json",
+      "sha256": "396dc8a6f4118d224cff1765b42d8a395b4309e6ecc5889c6ab7a0e04cdbafd8",
+      "pointer": "/rows/6/original_closure_conditions/3",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/StructureCandidateMap.json",
+      "sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965",
+      "pointer": "/source_v3_3_target_disposition",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step12-migration-candidate\\MigrationPlan.candidate.json",
+      "sha256": "d8e1b8bb5058e9b2e4be9b4c0e836ad101eeefe7a839e6bc3ac5338f8b8310d0",
+      "pointer": "",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step12-migration-candidate\\DcpTargetBindings.candidate.json",
+      "sha256": "0b09223cdeda8042f39f31bc691403b537254fdda68d231521164e1999c8a717",
+      "pointer": "",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/sources/architecture_v024/data/OldTargetDisposition.json",
+      "sha256": "72836ed6cec9773d9990d442762f6084eeca6ca99c0817114037731302ca868f",
+      "pointer": "",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step11-structure-inputs-20260907\\StructureFreezePrerequisiteStatus.json",
+      "sha256": "37306d420b8e1c7380cdb30998e835d1dbbcfc5f6f62754615a5e1b09ac72925",
+      "pointer": "/rows/7/conditions/0",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step11-structure-inputs-20260907\\StructureFreezeEvidenceMatrix.json",
+      "sha256": "396dc8a6f4118d224cff1765b42d8a395b4309e6ecc5889c6ab7a0e04cdbafd8",
+      "pointer": "/rows/7/original_closure_conditions/0",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/CharterCandidate.json",
+      "sha256": "44010776cae2a816d4db8134c96a0ee0f07a692b84bae47fc37a6effc7e302c8",
+      "pointer": "/numeric_effect_thresholds",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/sources/architecture_v024/data/SliceAPreregistration.json",
+      "sha256": "289dd3f7091b41a319b6604d6246010d4acd60e8f44955b6ce8b67ec13f8a033",
+      "pointer": "",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/sources/architecture_v024/data/CapacityBudgetProposal.json",
+      "sha256": "ce62f0aac382f1f225794186ae33d26e6cfb9a62087a60315d478f8a5a818af8",
+      "pointer": "",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step11-structure-inputs-20260907\\StructureFreezePrerequisiteStatus.json",
+      "sha256": "37306d420b8e1c7380cdb30998e835d1dbbcfc5f6f62754615a5e1b09ac72925",
+      "pointer": "/rows/7/conditions/1",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step11-structure-inputs-20260907\\StructureFreezeEvidenceMatrix.json",
+      "sha256": "396dc8a6f4118d224cff1765b42d8a395b4309e6ecc5889c6ab7a0e04cdbafd8",
+      "pointer": "/rows/7/original_closure_conditions/1",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/CharterCandidate.json",
+      "sha256": "44010776cae2a816d4db8134c96a0ee0f07a692b84bae47fc37a6effc7e302c8",
+      "pointer": "/core_slice",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/sources/architecture_v024/data/SliceAPreregistration.json",
+      "sha256": "289dd3f7091b41a319b6604d6246010d4acd60e8f44955b6ce8b67ec13f8a033",
+      "pointer": "",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/sources/architecture_v024/data/CapacityBudgetProposal.json",
+      "sha256": "ce62f0aac382f1f225794186ae33d26e6cfb9a62087a60315d478f8a5a818af8",
+      "pointer": "",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step11-structure-inputs-20260907\\StructureFreezePrerequisiteStatus.json",
+      "sha256": "37306d420b8e1c7380cdb30998e835d1dbbcfc5f6f62754615a5e1b09ac72925",
+      "pointer": "/rows/7/conditions/2",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step11-structure-inputs-20260907\\StructureFreezeEvidenceMatrix.json",
+      "sha256": "396dc8a6f4118d224cff1765b42d8a395b4309e6ecc5889c6ab7a0e04cdbafd8",
+      "pointer": "/rows/7/original_closure_conditions/2",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/CharterCandidate.json",
+      "sha256": "44010776cae2a816d4db8134c96a0ee0f07a692b84bae47fc37a6effc7e302c8",
+      "pointer": "/product_dependency_boundary",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/sources/architecture_v024/data/SliceAPreregistration.json",
+      "sha256": "289dd3f7091b41a319b6604d6246010d4acd60e8f44955b6ce8b67ec13f8a033",
+      "pointer": "",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/sources/architecture_v024/data/CapacityBudgetProposal.json",
+      "sha256": "ce62f0aac382f1f225794186ae33d26e6cfb9a62087a60315d478f8a5a818af8",
+      "pointer": "",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step11-structure-inputs-20260907\\StructureFreezePrerequisiteStatus.json",
+      "sha256": "37306d420b8e1c7380cdb30998e835d1dbbcfc5f6f62754615a5e1b09ac72925",
+      "pointer": "/rows/7/conditions/3",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step11-structure-inputs-20260907\\StructureFreezeEvidenceMatrix.json",
+      "sha256": "396dc8a6f4118d224cff1765b42d8a395b4309e6ecc5889c6ab7a0e04cdbafd8",
+      "pointer": "/rows/7/original_closure_conditions/3",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/CharterCandidate.json",
+      "sha256": "44010776cae2a816d4db8134c96a0ee0f07a692b84bae47fc37a6effc7e302c8",
+      "pointer": "/measured_results",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/sources/architecture_v024/data/SliceAPreregistration.json",
+      "sha256": "289dd3f7091b41a319b6604d6246010d4acd60e8f44955b6ce8b67ec13f8a033",
+      "pointer": "",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/sources/architecture_v024/data/CapacityBudgetProposal.json",
+      "sha256": "ce62f0aac382f1f225794186ae33d26e6cfb9a62087a60315d478f8a5a818af8",
+      "pointer": "",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/sources/architecture_v024/sources/control/TypedVersionVector.json",
+      "sha256": "5afa3195fd1148f7f09e0dd6f430e65f5537a6718ac9f5735eab04156c793a2e",
+      "pointer": "",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step05-identity-20260907\\VersionAxisRegistry.candidate.json",
+      "sha256": "1276845153b1fe93517533bc0ae18d466134a6e8651100369dd54493790f27da",
+      "pointer": "/axes",
+      "resolved": true
+    },
+    {
+      "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/sources/architecture_v024/data/OldTargetDisposition.json",
+      "sha256": "72836ed6cec9773d9990d442762f6084eeca6ca99c0817114037731302ca868f",
+      "pointer": "/rows",
+      "resolved": true
+    }
+  ],
+  "unique_source_bytes_read": 35,
+  "original_rows_and_text_verified": 28,
+  "current_vector_axes": 10,
+  "historical_vector_axes": 18,
+  "old_target_dispositions": 318,
+  "workflow_definitions": [
+    {
+      "check_id": "public-mcp-protocol",
+      "definition": {
+        "commit": "039cfea5a0d91a4e4e02702f6cfdfe9379978b1e",
+        "path": ".github/workflows/public-mcp-protocol.yml",
+        "sha256": "c9ef671606c11af44dbe63dfad5da4e69ca70e388abee1cd8dcc721854e30d75",
+        "git_blob_sha1": "7d5cc4e99475e954e454a4db8a3cb8d649d114eb"
+      },
+      "independently_read": true,
+      "class": "BASE_CORE"
+    },
+    {
+      "check_id": "public-mcp-behavior",
+      "definition": {
+        "commit": "039cfea5a0d91a4e4e02702f6cfdfe9379978b1e",
+        "path": ".github/workflows/public-mcp-behavior.yml",
+        "sha256": "b994c37366161edf1ca68238dd001e79adda502345846a567447f3e0430570c9",
+        "git_blob_sha1": "6c2cc91a9c478b8a9ae6bd5a3cc177af30318f9b"
+      },
+      "independently_read": true,
+      "class": "BASE_CORE"
+    },
+    {
+      "check_id": "public-mcp-gate-receipt",
+      "definition": {
+        "commit": "039cfea5a0d91a4e4e02702f6cfdfe9379978b1e",
+        "path": ".github/workflows/public-mcp-gate-receipt.yml",
+        "sha256": "4e3784db5984933d859cd961f010c4fb2306eaf6b871cdd438eeb2cff9154ce8",
+        "git_blob_sha1": "6318dd66254c96d9514605bae728efba22ac6903"
+      },
+      "independently_read": true,
+      "class": "EXISTING_LIMITED_AGGREGATOR"
+    },
+    {
+      "check_id": "gitleaks",
+      "definition": {
+        "commit": "039cfea5a0d91a4e4e02702f6cfdfe9379978b1e",
+        "path": ".github/workflows/gitleaks.yml",
+        "sha256": "b4609ae7ca81a6243f3da102f405329e50ad89191bd93c13b5ed0ab1e2ca3f01",
+        "git_blob_sha1": "423407d4fb69e3cc3990cffaca6883ad40183da9"
+      },
+      "independently_read": true,
+      "class": "BASE_CORE"
+    },
+    {
+      "check_id": "trivy",
+      "definition": {
+        "commit": "039cfea5a0d91a4e4e02702f6cfdfe9379978b1e",
+        "path": ".github/workflows/trivy.yml",
+        "sha256": "b2dc2fdb34baf7cdbe832df4a957cf8a4349ea3f8a5def83c3b452c919fc5a11",
+        "git_blob_sha1": "bb352466ef93f918df32de3aceb24f1fae091d20"
+      },
+      "independently_read": true,
+      "class": "BASE_CORE"
+    },
+    {
+      "check_id": "memory-publication-gate",
+      "definition": {
+        "commit": "039cfea5a0d91a4e4e02702f6cfdfe9379978b1e",
+        "path": ".github/workflows/memory-publication-gate.yml",
+        "sha256": "b24432a04d5d803c133b631497c7770c80baf55acdaf50c3e826795782d1c561",
+        "git_blob_sha1": "9eea684b303c3bd7c6a102bdbed74df51d25d308"
+      },
+      "independently_read": true,
+      "class": "CONDITIONAL_BY_VERIFIED_CHANGESET"
+    },
+    {
+      "check_id": "clued-g4-database",
+      "definition": {
+        "commit": "039cfea5a0d91a4e4e02702f6cfdfe9379978b1e",
+        "path": ".github/workflows/clued-g4-database.yml",
+        "sha256": "50782be8b917a6acbebb1d1bb63ab882dd44ff1294d11801d6fc5c1580f94626",
+        "git_blob_sha1": "f4e0d9a229b9b92307b73acc64826fe9cc5811dd"
+      },
+      "independently_read": true,
+      "class": "CONDITIONAL_BY_VERIFIED_CHANGESET"
+    },
+    {
+      "check_id": "phase2-naming-surface-inventory",
+      "definition": {
+        "commit": "039cfea5a0d91a4e4e02702f6cfdfe9379978b1e",
+        "path": ".github/workflows/phase2-naming-surface-inventory.yml",
+        "sha256": "a9264836297371da0a4bf6e6dada2699ce577c7f31476ac957190e14396aa77c"
+      },
+      "independently_read": true,
+      "class": "CURRENT_ADDITIONAL_PHASE2_EVIDENCE_WORKFLOW"
+    },
+    {
+      "check_id": "phase2-v027-validation",
+      "definition": {
+        "commit": "039cfea5a0d91a4e4e02702f6cfdfe9379978b1e",
+        "path": ".github/workflows/phase2-v027-validation.yml",
+        "sha256": "51334a15770991d2cbf13cb906a592494a96c87e55a8b6cb37f0792a1168bd53"
+      },
+      "independently_read": true,
+      "class": "CURRENT_ADDITIONAL_PHASE2_EVIDENCE_WORKFLOW"
+    }
+  ],
+  "conditional_applicability": [
+    {
+      "check_id": "memory-publication-gate",
+      "patterns_read_from_workflow": [
+        "memory/**",
+        "artifacts/clued-two-level-snapshots/**",
+        "scripts/verify-memory-publication.mjs",
+        ".github/workflows/memory-publication-gate.yml"
+      ],
+      "matches": {
+        "candidate_supplement": [],
+        "migration": []
+      },
+      "effect": "NOT_REQUIRED_FOR_THESE_EXACT_TWO_CHANGESETS; RECOMPUTE_ON_CHANGE; NOT_RUNTIME_PASS"
+    },
+    {
+      "check_id": "clued-g4-database",
+      "patterns_read_from_workflow": [
+        ".github/workflows/clued-g4-database.yml",
+        "apps/clued-cloud/package.json",
+        "apps/clued-cloud/package-lock.json",
+        "apps/clued-cloud/supabase/**"
+      ],
+      "matches": {
+        "candidate_supplement": [],
+        "migration": []
+      },
+      "effect": "NOT_REQUIRED_FOR_THESE_EXACT_TWO_CHANGESETS; RECOMPUTE_ON_CHANGE; NOT_RUNTIME_PASS"
+    }
+  ],
+  "exact_candidate_paths": 159,
+  "target_checks": [
+    {
+      "path": "development/authority-index/phase2/SourceIndex.json",
+      "before_sha256": null,
+      "after_sha256": "2dc9a544e13dc7f2fd53f54cd31230f33ae429823e741e6f79906624f8c5a73d",
+      "phase": 0,
+      "verified": true
+    },
+    {
+      "path": "development/contracts/phase2/SourceIndex.json",
+      "before_sha256": null,
+      "after_sha256": "af08da8b9a738a262624e07c1e5a9385590c47c085d12383b023b4b0b4c6a9e3",
+      "phase": 0,
+      "verified": true
+    },
+    {
+      "path": "development/projections/phase2/ConsumerBindings.projection.json",
+      "before_sha256": null,
+      "after_sha256": "a3448f25eae721026d8fc8ec0cbad012964e46c81a84dadecc3e365fc38e2cef",
+      "phase": 0,
+      "verified": true
+    },
+    {
+      "path": "development/projections/phase2/GovernanceDocs.projection.md",
+      "before_sha256": null,
+      "after_sha256": "9bcc962497ff82bf86dd3650b6d965d6ffa683125275fa55e278eb4b3914a6f0",
+      "phase": 0,
+      "verified": true
+    },
+    {
+      "path": "development/projections/phase2/GovernanceManifest.projection.json",
+      "before_sha256": null,
+      "after_sha256": "682b0a2821d942d1c57bc6baa7926bc862b26f89ce1246bded37da97325a7493",
+      "phase": 0,
+      "verified": true
+    },
+    {
+      "path": "development/projections/phase2/GovernanceRegistry.projection.json",
+      "before_sha256": null,
+      "after_sha256": "f1116caf940ca665193c60915f6df4e5dc506fafa0f1dea8e20d8ca702dd47f8",
+      "phase": 0,
+      "verified": true
+    },
+    {
+      "path": "development/projections/phase2/IdentityFiles.projection.json",
+      "before_sha256": null,
+      "after_sha256": "6259c4d9326cb24e15a5863efa61b8ffe95762f295398fbb75cbc1bd8606c0b3",
+      "phase": 0,
+      "verified": true
+    },
+    {
+      "path": "docs/history/ADR-CLD-001-LKG-Max-Age-One-Hour.md",
+      "before_sha256": null,
+      "after_sha256": "5663f2cad660a75765170cc5199edfcc5c99329344e7561145bd01c8be5f0485",
+      "phase": 0,
+      "verified": true
+    },
+    {
+      "path": "docs/history/ADR-CLD-002-LOCKED-Recovery-Transition.md",
+      "before_sha256": null,
+      "after_sha256": "bbb465429cf20945b60ce7ab65a3781e9a3db6b3fedbef5dc24ff7e3acd1fdec",
+      "phase": 0,
+      "verified": true
+    },
+    {
+      "path": "docs/history/ADR-CLD-003-LKG-Policy-Profiles.md",
+      "before_sha256": null,
+      "after_sha256": "3e030f7d0df898792dca815da25de77bca6e6ef12d8ad66c518b2c2d7228c070",
+      "phase": 0,
+      "verified": true
+    },
+    {
+      "path": "docs/history/ADR-MIV-005A-001-Relevance-Threshold-and-Metric-v2.md",
+      "before_sha256": null,
+      "after_sha256": "86dce59f2269cbed5d155f5d18a32a832b86ee9bcdfae761b0bd7d5db8cdf64a",
+      "phase": 0,
+      "verified": true
+    },
+    {
+      "path": "docs/history/ADR-MIV-005B-001-Lexical-Feasibility-Audit.md",
+      "before_sha256": null,
+      "after_sha256": "9fc3d13b8470823c60087975920bea87b56f0ff2ccd9c6b9fdd6cc8469028c2d",
+      "phase": 0,
+      "verified": true
+    },
+    {
+      "path": "docs/history/ADR-MIV-005B-002-Local-Embedding-Retrieval-Decision.md",
+      "before_sha256": null,
+      "after_sha256": "80755b77c5a2632949b935ad3e50b8cdc172c1db48008eff796214e118b704d9",
+      "phase": 0,
+      "verified": true
+    },
+    {
+      "path": "docs/history/ADR-MIV-006-001-Project-Scope-Isolation.md",
+      "before_sha256": null,
+      "after_sha256": "6f30c7601f95410c7d6d6e614bfa05defdcd4cc8b202203099a5ae173e79b679",
+      "phase": 0,
+      "verified": true
+    },
+    {
+      "path": "docs/history/AGENTS.routing-baseline-75d0788ff62a.md",
+      "before_sha256": null,
+      "after_sha256": "75d0788ff62a20d2d211115a66ab20fc38519a14fad890ab9a3d6f821e821793",
+      "phase": 0,
+      "verified": true
+    },
+    {
+      "path": "docs/history/CURRENT_STATUS.before-phase2-af52a717b2c3.md",
+      "before_sha256": null,
+      "after_sha256": "af52a717b2c37ebabf81a7123244aa3dd9a91042ea87037fd026925e8111f722",
+      "phase": 0,
+      "verified": true
+    },
+    {
+      "path": "docs/history/Clued-v0.1-Reference-Implementation-Report.md",
+      "before_sha256": null,
+      "after_sha256": "d3725396f8edfea08a68b6bb768afae7ff1d5baac83dedbcb70e96c1584eb1ff",
+      "phase": 0,
+      "verified": true
+    },
+    {
+      "path": "docs/history/Clued-v0.1-实施与复用文档.md",
+      "before_sha256": null,
+      "after_sha256": "7e57ac9e595fe697188b2a1c8da07f21f3c84bbe5128eb2ba9d3371ea0a0f434",
+      "phase": 0,
+      "verified": true
+    },
+    {
+      "path": "docs/history/Clued-v0.2.0-LKG-Policy-Report.md",
+      "before_sha256": null,
+      "after_sha256": "d348ad186fb6670882f8423c2e6d7ab3c38374a1a3ad48bf920558ed03bf2e5c",
+      "phase": 0,
+      "verified": true
+    },
+    {
+      "path": "docs/history/Clued_v0.1_智能体安装授权弱网降级与卸载协议.md",
+      "before_sha256": null,
+      "after_sha256": "0869cb7b8a850ea400e991fd0d4a23c4babfbf5954cb322b27b5c7798df28ae4",
+      "phase": 0,
+      "verified": true
+    },
+    {
+      "path": "docs/history/Cross-Memory-System-vNext-2.1-Gate2R-MIV005B-Audit-Report.md",
+      "before_sha256": null,
+      "after_sha256": "5f3aec42d02d815a93a65c302ea867904e5c0fb1b704949fc8aad30db86e8fa5",
+      "phase": 0,
+      "verified": true
+    },
+    {
+      "path": "docs/history/README.before-phase2-d5f6ec6e821b.md",
+      "before_sha256": null,
+      "after_sha256": "d5f6ec6e821b9b1c71b0433e072804f48109ff55fc53f52b3a088b4205ecdaff",
+      "phase": 0,
+      "verified": true
+    },
+    {
+      "path": "docs/history/Sprint3专项审计与封版报告-vNext-1.3.md",
+      "before_sha256": null,
+      "after_sha256": "155d7d5cd92d7bad533db1939c0a3690feb68016055e9b246738d89b527a7e82",
+      "phase": 0,
+      "verified": true
+    },
+    {
+      "path": "docs/history/vNext-2.0-实施冲突记录.md",
+      "before_sha256": null,
+      "after_sha256": "a030b270e80852d820367d393fa482939e738e91ddc46053f7356f584cc24f80",
+      "phase": 0,
+      "verified": true
+    },
+    {
+      "path": "docs/history/代码级Gap审计报告-vNext-1.3-2026-08-16.md",
+      "before_sha256": null,
+      "after_sha256": "1bb27a0cb74e5d0dd64713ecfc7c2b9cc209d9a94fc1f03714d16043b34cb736",
+      "phase": 0,
+      "verified": true
+    },
+    {
+      "path": "docs/history/技术评估报告-vNext-1.3-DSH-2026-08-16.md",
+      "before_sha256": null,
+      "after_sha256": "b10ecf3d6179985de9b18ed246b5a727cb1adf463a925191d85a3e178cbce78c",
+      "phase": 0,
+      "verified": true
+    },
+    {
+      "path": "docs/history/架构基线文档-vNext-1.3.md",
+      "before_sha256": null,
+      "after_sha256": "12475fe2e9f03238b182fd5a596b82d5b227ad8c22e083eb1ca990a9f6ac501c",
+      "phase": 0,
+      "verified": true
+    },
+    {
+      "path": "docs/history/架构基线文档-vNext-2.0.md",
+      "before_sha256": null,
+      "after_sha256": "528b026db8507c0ef9bca58f080d6e22b996ca5a1b91679aa117efacd829c8ed",
+      "phase": 0,
+      "verified": true
+    },
+    {
+      "path": "docs/history/配置手册与数据包-v4.md",
+      "before_sha256": null,
+      "after_sha256": "ac24b4f23dd34bd03b6a711e5b498a1716c7236fb94adfebe61f08422b352072",
+      "phase": 0,
+      "verified": true
+    },
+    {
+      "path": "scripts/canonical_read.py",
+      "before_sha256": null,
+      "after_sha256": "7f4b5b7050bd069022e5ff7c7dbf8ff75a36432bffdb618371b0c90d36d86063",
+      "phase": 0,
+      "verified": true
+    },
+    {
+      "path": "scripts/isolated_mirror.py",
+      "before_sha256": null,
+      "after_sha256": "e228508a4df2b750cd3f304b8188fe5b10f0529ea1ccdbd2dc85a6cfbca82e31",
+      "phase": 0,
+      "verified": true
+    },
+    {
+      "path": "scripts/memory.py",
+      "before_sha256": null,
+      "after_sha256": "4f09d50797be8af183e79745d78a64fe5474d6ff5b7746c14a4f911894a43a10",
+      "phase": 0,
+      "verified": true
+    },
+    {
+      "path": "scripts/sync-memory.ps1",
+      "before_sha256": null,
+      "after_sha256": "1b0ec7934951a937c7b517841374817255bad9e430ae09adb72adf579fc7c6e8",
+      "phase": 0,
+      "verified": true
+    },
+    {
+      "path": "scripts/sync-memory.py",
+      "before_sha256": null,
+      "after_sha256": "93dc66d3c6e0a7aa2310afa5d3386dd0a835fa840e3ab049676906d66bc8f94d",
+      "phase": 0,
+      "verified": true
+    },
+    {
+      "path": "scripts/verification_context.py",
+      "before_sha256": null,
+      "after_sha256": "6a2d83a65921df60252aad350f3cecacfbab991be582368903aa40203c96d5ab",
+      "phase": 0,
+      "verified": true
+    },
+    {
+      "path": "AGENTS.md",
+      "before_sha256": "75d0788ff62a20d2d211115a66ab20fc38519a14fad890ab9a3d6f821e821793",
+      "after_sha256": "0d209391925dfc3c490cecfdb1e48c9266f0fd9c3d2e26903e023002f2eaf354",
+      "phase": 1,
+      "verified": true
+    },
+    {
+      "path": "CURRENT_STATUS.md",
+      "before_sha256": "af52a717b2c37ebabf81a7123244aa3dd9a91042ea87037fd026925e8111f722",
+      "after_sha256": "2bb3a1c38e6e5229db62e232dbde74ae4759337bd77f01d22d0bc7dff4b7d98c",
+      "phase": 1,
+      "verified": true
+    },
+    {
+      "path": "README.md",
+      "before_sha256": "d5f6ec6e821b9b1c71b0433e072804f48109ff55fc53f52b3a088b4205ecdaff",
+      "after_sha256": "378fef921798a96d8833e9d7a03fa9485153f06e95b7b52b6968d4f21d188c54",
+      "phase": 1,
+      "verified": true
+    },
+    {
+      "path": "canonical_read.py",
+      "before_sha256": "7f4b5b7050bd069022e5ff7c7dbf8ff75a36432bffdb618371b0c90d36d86063",
+      "after_sha256": "3c467b498254a7de504d26e70630ffcdf9b150735ea2670b7fdc82de8d04e3a2",
+      "phase": 1,
+      "verified": true
+    },
+    {
+      "path": "isolated_mirror.py",
+      "before_sha256": "e228508a4df2b750cd3f304b8188fe5b10f0529ea1ccdbd2dc85a6cfbca82e31",
+      "after_sha256": "c4c0f63fd3a646cfa1dd8a9012a503af53b8d44181e137331667e0949f14c956",
+      "phase": 1,
+      "verified": true
+    },
+    {
+      "path": "memory.py",
+      "before_sha256": "479fd0e39a8a96287642ea59644d1975666fc314cc589f39a0086c3d9446dd85",
+      "after_sha256": "34c2c280e3bb2092d5c920edc2c3cbc3891274a3a6258bb702ba901fb9dc601c",
+      "phase": 1,
+      "verified": true
+    },
+    {
+      "path": "sync-memory.ps1",
+      "before_sha256": "48ffc824dee7ee66632299677c5f770de605d8ae2a413746b7a6b737528082ab",
+      "after_sha256": "ce0113f0d79908a707645f73f2720ee63745e9a21738de1e5272aa6517f07800",
+      "phase": 1,
+      "verified": true
+    },
+    {
+      "path": "sync-memory.py",
+      "before_sha256": "06d276884e3667b8758961b142c92a674ff743be05cca3dbef975f5f4bf93f64",
+      "after_sha256": "3a295288ee381fc86c4368515223a068b012476159af199ee85e3c78239ba683",
+      "phase": 1,
+      "verified": true
+    },
+    {
+      "path": "tests/test_p2_verification_context.py",
+      "before_sha256": "396503f7ca8d876c53414bd812e16dfe9788a2bb7848083fbde2192d2665b6f5",
+      "after_sha256": "af796d182f4dd43f8fbdf08564dc14f73289fd3935659d85f6e962ef73a8a26c",
+      "phase": 1,
+      "verified": true
+    },
+    {
+      "path": "verification_context.py",
+      "before_sha256": "6a2d83a65921df60252aad350f3cecacfbab991be582368903aa40203c96d5ab",
+      "after_sha256": "fc85e12ae3990c73bb573dd2241f8c20370db7ad8fc945c774b93daefee34882",
+      "phase": 1,
+      "verified": true
+    },
+    {
+      "path": "ADR-CLD-001-LKG-Max-Age-One-Hour.md",
+      "before_sha256": "5663f2cad660a75765170cc5199edfcc5c99329344e7561145bd01c8be5f0485",
+      "after_sha256": null,
+      "phase": 2,
+      "verified": true
+    },
+    {
+      "path": "ADR-CLD-002-LOCKED-Recovery-Transition.md",
+      "before_sha256": "bbb465429cf20945b60ce7ab65a3781e9a3db6b3fedbef5dc24ff7e3acd1fdec",
+      "after_sha256": null,
+      "phase": 2,
+      "verified": true
+    },
+    {
+      "path": "ADR-CLD-003-LKG-Policy-Profiles.md",
+      "before_sha256": "3e030f7d0df898792dca815da25de77bca6e6ef12d8ad66c518b2c2d7228c070",
+      "after_sha256": null,
+      "phase": 2,
+      "verified": true
+    },
+    {
+      "path": "ADR-MIV-005A-001-Relevance-Threshold-and-Metric-v2.md",
+      "before_sha256": "86dce59f2269cbed5d155f5d18a32a832b86ee9bcdfae761b0bd7d5db8cdf64a",
+      "after_sha256": null,
+      "phase": 2,
+      "verified": true
+    },
+    {
+      "path": "ADR-MIV-005B-001-Lexical-Feasibility-Audit.md",
+      "before_sha256": "9fc3d13b8470823c60087975920bea87b56f0ff2ccd9c6b9fdd6cc8469028c2d",
+      "after_sha256": null,
+      "phase": 2,
+      "verified": true
+    },
+    {
+      "path": "ADR-MIV-005B-002-Local-Embedding-Retrieval-Decision.md",
+      "before_sha256": "80755b77c5a2632949b935ad3e50b8cdc172c1db48008eff796214e118b704d9",
+      "after_sha256": null,
+      "phase": 2,
+      "verified": true
+    },
+    {
+      "path": "ADR-MIV-006-001-Project-Scope-Isolation.md",
+      "before_sha256": "6f30c7601f95410c7d6d6e614bfa05defdcd4cc8b202203099a5ae173e79b679",
+      "after_sha256": null,
+      "phase": 2,
+      "verified": true
+    },
+    {
+      "path": "Clued-v0.1-Reference-Implementation-Report.md",
+      "before_sha256": "d3725396f8edfea08a68b6bb768afae7ff1d5baac83dedbcb70e96c1584eb1ff",
+      "after_sha256": null,
+      "phase": 2,
+      "verified": true
+    },
+    {
+      "path": "Clued-v0.1-实施与复用文档.md",
+      "before_sha256": "7e57ac9e595fe697188b2a1c8da07f21f3c84bbe5128eb2ba9d3371ea0a0f434",
+      "after_sha256": null,
+      "phase": 2,
+      "verified": true
+    },
+    {
+      "path": "Clued-v0.2.0-LKG-Policy-Report.md",
+      "before_sha256": "d348ad186fb6670882f8423c2e6d7ab3c38374a1a3ad48bf920558ed03bf2e5c",
+      "after_sha256": null,
+      "phase": 2,
+      "verified": true
+    },
+    {
+      "path": "Clued_v0.1_智能体安装授权弱网降级与卸载协议.md",
+      "before_sha256": "0869cb7b8a850ea400e991fd0d4a23c4babfbf5954cb322b27b5c7798df28ae4",
+      "after_sha256": null,
+      "phase": 2,
+      "verified": true
+    },
+    {
+      "path": "Cross-Memory-System-vNext-2.1-Gate2R-MIV005B-Audit-Report.md",
+      "before_sha256": "5f3aec42d02d815a93a65c302ea867904e5c0fb1b704949fc8aad30db86e8fa5",
+      "after_sha256": null,
+      "phase": 2,
+      "verified": true
+    },
+    {
+      "path": "Sprint3专项审计与封版报告-vNext-1.3.md",
+      "before_sha256": "155d7d5cd92d7bad533db1939c0a3690feb68016055e9b246738d89b527a7e82",
+      "after_sha256": null,
+      "phase": 2,
+      "verified": true
+    },
+    {
+      "path": "vNext-2.0-实施冲突记录.md",
+      "before_sha256": "a030b270e80852d820367d393fa482939e738e91ddc46053f7356f584cc24f80",
+      "after_sha256": null,
+      "phase": 2,
+      "verified": true
+    },
+    {
+      "path": "代码级Gap审计报告-vNext-1.3-2026-08-16.md",
+      "before_sha256": "1bb27a0cb74e5d0dd64713ecfc7c2b9cc209d9a94fc1f03714d16043b34cb736",
+      "after_sha256": null,
+      "phase": 2,
+      "verified": true
+    },
+    {
+      "path": "技术评估报告-vNext-1.3-DSH-2026-08-16.md",
+      "before_sha256": "b10ecf3d6179985de9b18ed246b5a727cb1adf463a925191d85a3e178cbce78c",
+      "after_sha256": null,
+      "phase": 2,
+      "verified": true
+    },
+    {
+      "path": "架构基线文档-vNext-1.3.md",
+      "before_sha256": "12475fe2e9f03238b182fd5a596b82d5b227ad8c22e083eb1ca990a9f6ac501c",
+      "after_sha256": null,
+      "phase": 2,
+      "verified": true
+    },
+    {
+      "path": "架构基线文档-vNext-2.0.md",
+      "before_sha256": "528b026db8507c0ef9bca58f080d6e22b996ca5a1b91679aa117efacd829c8ed",
+      "after_sha256": null,
+      "phase": 2,
+      "verified": true
+    },
+    {
+      "path": "配置手册与数据包-v4.md",
+      "before_sha256": "ac24b4f23dd34bd03b6a711e5b498a1716c7236fb94adfebe61f08422b352072",
+      "after_sha256": null,
+      "phase": 2,
+      "verified": true
+    }
+  ],
+  "immutable_locks": [
+    {
+      "path": ".github/workflows/phase2-naming-surface-inventory.yml",
+      "sha256": "a9264836297371da0a4bf6e6dada2699ce577c7f31476ac957190e14396aa77c"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/ExecutionDelegation_20260907.json",
+      "sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/Step04-ScopedAcceptance_20260907.json",
+      "sha256": "6f2cc1c9cc28c2a717023029851d61a666815567bc30b3635479cb1b70382e6c"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/Step05-ScopedAcceptance_20260907.json",
+      "sha256": "a38536ed64ae7924235ab0318cae17716f1a549d89660acde807f4bb15a64a19"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/Step06-ScopedAcceptance_20260907.json",
+      "sha256": "bd40c82a21e7b19c2c36e56d7b877078e45c6bfdf1593590fb56ab364f47889a"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step04-namespace-20260907/DomainRegistryOwnershipManifest.candidate.json",
+      "sha256": "fa9e1b322356fc55d04b3eee078146a9b8304e48197c7d1767cd14d665b9c8ca"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step04-namespace-20260907/NamespaceDelegationManifest.candidate.json",
+      "sha256": "cee24dff183aed36ea99a6ad51aea8ee6edf2b15544ac641a955c2393648d537"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step04-namespace-20260907/NamespaceOwnershipManifest.candidate.json",
+      "sha256": "40d7e87fed046c8aff18d8c1d0532ada075b802faf204059649c84faef1c0782"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step05-identity-20260907/AliasRegistry.candidate.json",
+      "sha256": "29d0d21d2d0fcecefdc9daaf841a77f411a6695d256a38993976f74660f19a40"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step05-identity-20260907/CanonicalVocabularyRegistry.candidate.json",
+      "sha256": "200ee148a8a19d7c107c9d259b012a065214bf03a7d6932d46706a3519f96f0b"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step05-identity-20260907/CopyIdentityContract.candidate.json",
+      "sha256": "aa4d0092724c3b2d7d24ad6801d51438692912d87b8d7ce053785ded70a37b15"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step05-identity-20260907/LogicalObjectIdentityContract.candidate.json",
+      "sha256": "ceb63f2ec16c63d160ae7f760992ec6dd9b17c5555679bba8c37bb7c1ea58296"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step05-identity-20260907/RepresentationContract.candidate.json",
+      "sha256": "c278f906a3c081f4e70f771904eb5577f6df165eba99bb6e26cf2d036b128a67"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step05-identity-20260907/Sources.json",
+      "sha256": "00b13dfa75569b23c19ece0f1babf35f4c9cbd36086cc904dbaafd29cdd0be9b"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step05-identity-20260907/VersionAxisRegistry.candidate.json",
+      "sha256": "1276845153b1fe93517533bc0ae18d466134a6e8651100369dd54493790f27da"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedAuthorizationRegistry.candidate.json",
+      "sha256": "359e7461ba3166bef63815f37ddd9c247aada317c14e4e62bdee3bc79cc3fcdd"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedConsumerRegistry.candidate.json",
+      "sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedReceiptRegistry.candidate.json",
+      "sha256": "05d182805b31ba9d5e6c1c3fa32ae2081527a92faaa76263debded6ffca5efa4"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/ProjectionBindings.repository.json",
+      "sha256": "7e526281339067dea908765cad2f8aa4b510d0371dcd9f2915cc31221e6802cd"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/RepositoryProjectionCheck.json",
+      "sha256": "d4de7b9c3f5cefdb55c65e045903849841a2ec1d915644892065c778b6f25d88"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/inputs/CurrentArtifactIdentityPolicy.json",
+      "sha256": "3a14df68ea81c6390316c5df09d51a049b52a640871ab57953c42acb30624bff"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/inputs/PreMigration-AGENTS.md",
+      "sha256": "75d0788ff62a20d2d211115a66ab20fc38519a14fad890ab9a3d6f821e821793"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/inputs/PreMigration-CURRENT_STATUS.md",
+      "sha256": "af52a717b2c37ebabf81a7123244aa3dd9a91042ea87037fd026925e8111f722"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/inputs/ReviewSubjectContract.json",
+      "sha256": "c2cd13dbe8fd046aa8f0344778141cb9b115fae0048a8c673b60bd25b03498d3"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/project-governance.mjs",
+      "sha256": "ffd35b923be0729fab18de13b2e234ce971788bdb5b6aa1ac8520c2a516755df"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/repository-generated/AGENTS.governance.md",
+      "sha256": "9bcc962497ff82bf86dd3650b6d965d6ffa683125275fa55e278eb4b3914a6f0"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/repository-generated/CURRENT_STATUS.history-original.md",
+      "sha256": "af52a717b2c37ebabf81a7123244aa3dd9a91042ea87037fd026925e8111f722"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/repository-generated/CURRENT_STATUS.projection.md",
+      "sha256": "2bb3a1c38e6e5229db62e232dbde74ae4759337bd77f01d22d0bc7dff4b7d98c"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/repository-generated/ConsumerBindings.projection.json",
+      "sha256": "a3448f25eae721026d8fc8ec0cbad012964e46c81a84dadecc3e365fc38e2cef"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/repository-generated/GovernanceDocs.projection.md",
+      "sha256": "9bcc962497ff82bf86dd3650b6d965d6ffa683125275fa55e278eb4b3914a6f0"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/repository-generated/GovernanceManifest.projection.json",
+      "sha256": "682b0a2821d942d1c57bc6baa7926bc862b26f89ce1246bded37da97325a7493"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/repository-generated/GovernanceRegistry.projection.json",
+      "sha256": "f1116caf940ca665193c60915f6df4e5dc506fafa0f1dea8e20d8ca702dd47f8"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/repository-generated/IdentityFiles.projection.json",
+      "sha256": "6259c4d9326cb24e15a5863efa61b8ffe95762f295398fbb75cbc1bd8606c0b3"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/repository-generated/README.governance.md",
+      "sha256": "9bcc962497ff82bf86dd3650b6d965d6ffa683125275fa55e278eb4b3914a6f0"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/repository-generated/StatusMigrationPlan.candidate.json",
+      "sha256": "1881cc343304904893b561a7c9d6d5881981378eff40c7b06cad2c0b29e81ecb"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/repository-generated/ToolRouting.projection.json",
+      "sha256": "8f63d5eae3d643edf3639ba709fa99e5bee1cb5cae7b8cb19813f168d4fa4d10"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/repository-generated/WorkflowReferences.projection.json",
+      "sha256": "5cb691e23d4f8c857e9babde7d5f4d0bc9ed7b774ee8870aa0b0766e2bf5124a"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step6-consumer-candidate/ConsumerMatrix.json",
+      "sha256": "3fffec8fd9570352246425d60156d17988eb6311adab719e481c197a6eca5cee"
+    },
+    {
+      "path": "scripts/verify-generated-artifacts.mjs",
+      "sha256": "db1da191aeeccf42a6956af2616554cb8e2d278c4bc0bdc1650bd46ca14124e1"
+    }
+  ],
+  "prior_exact_executor_review": {
+    "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step09-independent-final\\ExecutorCorrectionVerification.json",
+    "sha256": "8a8025413964cc6057452fbb739076e58eff920ef62861b90eacd7ac504e4fc9",
+    "pointer": ""
+  },
+  "tests_rerun": 0,
+  "business_memory_reads": 0,
+  "repository_mutations": 0
+}

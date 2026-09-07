@@ -1,0 +1,48 @@
+{
+  "type": "ScopedPostMigrationAcceptanceDecision",
+  "step": 13,
+  "state": "ACCEPTED_FOR_ACTUAL_SCOPED_CONSUMER_BINDING",
+  "issued_at": "2026-09-07T10:48:14.317746+00:00",
+  "issuer": "Codex@DESK-W-591 under existing explicit accepting delegation",
+  "delegation": {
+    "path": "ExecutionDelegation_20260907.json",
+    "sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8"
+  },
+  "freeze": {
+    "path": "Phase2StructureFreezeDecision_20260907.json",
+    "sha256": "f40c8af253f811f820e4b3eccc144d63ca3548663810aba10bebb22331661b36"
+  },
+  "migration_receipt": {
+    "path": "step12-actual-migration-20260907/receipt.json",
+    "sha256": "7ba04bc7cf715a6b96f05f64db3d7f0281627e9c0919b15dd66aa3d26f9f6ca7"
+  },
+  "verification": {
+    "path": "step13-14-actual-verification-20260907/Step13-ActualVerification.json",
+    "sha256": "4b14aae44e5a29d07daeac3d8d137dd56ead49f33457a71429b4b0264b8ab483"
+  },
+  "before_boundary": {
+    "path": "step13-14-actual-verification-20260907/BeforeBoundary.json",
+    "sha256": "467890cdee11132fd2b0d96ecc5ba5b3e76ce1ef49143838ab48c31661a1a9f7"
+  },
+  "root_review": "Root inspected exact after-state/source-lock/consumer mappings and paired root/direct behavior checks, actual exit codes and protected-byte equality. The first unsupported test-runner invocation is preserved separately; the corrected supported unittest entry passed 29 existing tests.",
+  "accepted_effect": [
+    "18 source-qualified consumers mapped to actual installed paths; six moved tools retain module/CLI/PowerShell compatibility; 64 targets and 39 sources match; 29 existing packaging regressions passed."
+  ],
+  "specific_manifest": {
+    "path": "step13-14-actual-verification-20260907/TargetConsumerBindingManifest.json",
+    "sha256": "6c82bc7c53a1f26e0dd07419acfcd67e3e65b772f4a3ee69f2f06c617b4fcece"
+  },
+  "not_established": [
+    "Post-migration hosted CI enforcement",
+    "Fresh four Phase2 gates",
+    "Formal Step17 semantic no-change",
+    "Step18 mandatory publisher/reader boundary",
+    "Closeout or Skill acceptance"
+  ],
+  "compatibility_limit": "Explicit CommitRepo engineering maintenance remains available under its existing rules; preserving it is not reopening business Canonical writes.",
+  "invalidation": {
+    "path": "AcceptanceAndInvalidation.md",
+    "sha256": "f2aed48ed74e688bfe280d3fa896243cc7907905fafcc467706a276367472f27"
+  },
+  "next_step": 14
+}

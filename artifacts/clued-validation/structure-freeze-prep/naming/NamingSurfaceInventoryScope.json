@@ -1,0 +1,110 @@
+{
+  "schema": "clued.naming-surface-inventory-scope/v1",
+  "record_id": "CLUED_NAMING_SURFACE_INVENTORY_SCOPE_20260907",
+  "created_at_utc": "2026-09-07T00:56:00Z",
+  "status": "FIXED_INPUT_FOR_STRUCTURE_FREEZE_PREPARATION",
+  "authority_effect": "NONE",
+  "repository": "tdoljyj/cross-memory-system",
+  "predecessor_validation_closeout": {
+    "branch": "phase2-v027-validation",
+    "commit_sha": "59ed841b8264ea4e246d595bc425d44373cee615",
+    "workflow_run_id": 34069453639,
+    "result": "PASS",
+    "exact_candidate_sha256": "6e51374a6caedb4f84d2b6bb9fe05cd695b25732833f9d0217c341f17e1c1649"
+  },
+  "purpose": "Enumerate every controlled Clued naming surface before any physical rename, repository migration, Registry Root Catalog construction, Architecture Acceptance, or Structure Freeze decision.",
+  "inventory_principles": [
+    "READ_ONLY_DISCOVERY_BEFORE_RENAME",
+    "LOGICAL_OBJECT_NE_REPRESENTATION_NE_PHYSICAL_COPY",
+    "ONE_OWNER_PER_NAMESPACE_IS_A_TARGET_RULE_NOT_A_CURRENT_CLAIM",
+    "VERSION_NUMBERS_NEVER_CROSS_INFER_BETWEEN_AXES",
+    "UNKNOWN_OR_AMBIGUOUS_RESOLUTION_FAILS_CLOSED",
+    "HISTORICAL_BYTES_ARE_NOT_REWRITTEN",
+    "OBSERVATION_IS_NOT_AUTOMATIC_SEVERITY_OR_CLOSURE"
+  ],
+  "required_surfaces": [
+    {
+      "surface_id": "REPOSITORY_TRACKED_PATHS",
+      "required": true,
+      "scope": "Every git-index path, basename, path segment, blob identity, content digest, normalization form, and copy-like or lifecycle-like suffix at the exact source commit."
+    },
+    {
+      "surface_id": "REPOSITORY_TEXT_IDENTIFIERS",
+      "required": true,
+      "scope": "Registered and observed URNs, typed IDs, schema/contract IDs, version tokens, stage tokens, structured JSON identity fields, and their exact locations on selected UTF-8 text and machine surfaces."
+    },
+    {
+      "surface_id": "GITHUB_BRANCHES_TAGS_RELEASES_WORKFLOWS_ARTIFACTS",
+      "required": true,
+      "scope": "All paginated repository branches, tags, releases, release assets, workflow definitions, and non-expired or historical Actions artifact metadata available through the repository token."
+    },
+    {
+      "surface_id": "HUMAN_AND_AGENT_ENTRY_PROJECTIONS",
+      "required": true,
+      "scope": "README, AGENTS, CURRENT_STATUS, manifests, indexes, status routers, generated projections, and any source/status/freshness metadata used by humans or agents."
+    },
+    {
+      "surface_id": "CHATGPT_LIBRARY_METADATA",
+      "required": true,
+      "scope": "Metadata-only listing of Clued-related Library folders and files, including duplicate-safe suffixes, physical-copy identifiers, sizes, timestamps, and durable closeout locations. File contents are read only when separately justified."
+    },
+    {
+      "surface_id": "SUPABASE_IDENTIFIERS",
+      "required": true,
+      "scope": "Project, schema, table, column, function, policy, storage bucket, edge function, auth redirect, and deployment identifiers that are controlled by Clued. No private row payload is required for naming inventory."
+    },
+    {
+      "surface_id": "CLOUDFLARE_AND_DEPLOYMENT_IDENTIFIERS",
+      "required": true,
+      "scope": "Worker, Pages project, deployment, route, domain, binding, environment, and related external resource identifiers; retired resources require explicit retirement evidence rather than silent omission."
+    },
+    {
+      "surface_id": "SKILL_MECHANISM_ADAPTER_PROVIDER_IDENTIFIERS",
+      "required": true,
+      "scope": "Developer Skill, User Skill, vendor projection, mechanism revision, adapter, provider, capability, runtime, and activation pointer names in repository and connected systems."
+    },
+    {
+      "surface_id": "CANDIDATE_DECISION_EVIDENCE_RECEIPT_AUTHORIZATION",
+      "required": true,
+      "scope": "All active and historical typed identities, filenames, aliases, digests, version axes, domain/program/stage bindings, and consumers for candidates, decisions, evidence, receipts, and authorizations."
+    }
+  ],
+  "content_exclusions": [
+    {
+      "category": "PRIVATE_USER_CANONICAL_PAYLOAD",
+      "rule": "Do not read private user record bodies merely to inventory names. Inventory only metadata and identifiers required to classify the surface."
+    },
+    {
+      "category": "SECRETS_AND_CREDENTIAL_VALUES",
+      "rule": "Inventory secret or binding names only; never read or persist secret values."
+    }
+  ],
+  "completion_rule": {
+    "all_required_surfaces_accounted_for": true,
+    "allowed_terminal_surface_states": [
+      "SCANNED",
+      "MIGRATED",
+      "REMOVED",
+      "SEALED_HISTORICAL",
+      "READ_ONLY_COMPATIBILITY",
+      "NOT_APPLICABLE_WITH_PROOF"
+    ],
+    "forbidden_closeout_states": [
+      "UNSCANNED",
+      "UNAVAILABLE_WITHOUT_DISPOSITION",
+      "UNKNOWN",
+      "TODO",
+      "TEMPORARY_WAIVER",
+      "UNOWNED"
+    ]
+  },
+  "boundaries": {
+    "renaming_or_migration_authorized": false,
+    "registry_root_catalog_authorized": false,
+    "architecture_acceptance": "NOT_ISSUED",
+    "structure_freeze": "NOT_ISSUED",
+    "main_required_check": "NOT_ENABLED",
+    "developer_skill_work": "NOT_STARTED_BY_THIS_SCOPE",
+    "user_skill_work": "NOT_STARTED_BY_THIS_SCOPE"
+  }
+}

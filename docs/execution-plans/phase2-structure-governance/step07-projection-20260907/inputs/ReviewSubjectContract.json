@@ -1,0 +1,30 @@
+{
+  "id": "V025_REVIEW_SUBJECT_CONTRACT",
+  "subject": {
+    "candidate_id": "CLUED_ARCHITECTURE_CONVERGENCE_V0_2_5",
+    "version": "v0.2.5",
+    "package_identity": "BOUND_NONCIRCULARLY_BY_EXTERNAL_DELIVERY_REGISTRY",
+    "main_model": "data/ArchitectureCandidateModel.json",
+    "main_document": "Clued_架构收敛候选_v0.2.5_20260906.md"
+  },
+  "sole_direct_predecessor": {
+    "axis": "architecture",
+    "version": "v0.2.4",
+    "filename": "Clued_Phase2_三项设计候选_完整审查包_v0.2.4_20260905.zip",
+    "bytes": 168491377,
+    "sha256": "4aae92c37813772e983a14537be52ca8b428af666e644b72d40084ccd592d68b",
+    "members": 440
+  },
+  "upstream_mapping_acceptance_ref": "data/MappingAcceptanceIntake.json",
+  "required_review": "FRESH_CONTEXT_SEPARATE_FROM_V025_AUTHOR_WITH_FULL_40_CONDITION_ASSESSMENT",
+  "acceptance_requirement": {
+    "type": "ArchitectureConstitutionAcceptanceDecision",
+    "must_bind_exact_new_zip": true,
+    "must_cover_all_40_conditions_or_valid_per_condition_authorized_disposition": true,
+    "author_report_is_acceptance": false,
+    "prior_mapping_or_architecture_review_is_acceptance_of_this_candidate": false,
+    "state": "NOT_ISSUED"
+  },
+  "structure_rule": "只有有效架构接受及其摘要先成立，才另裁原8组28项结构条件；结构冻结不是架构接受的倒置前置。",
+  "authorization_effect": "NONE"
+}

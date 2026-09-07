@@ -1,0 +1,120 @@
+{
+  "format": "STEP8_SOURCE_LOCATORS_ONLY",
+  "authority_effect": "NONE",
+  "fixture_only": false,
+  "node": "node",
+  "external_candidate_locator": "external/Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip",
+  "projection_output": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/repository-generated",
+  "inputs": {
+    "ownership": {
+      "path": "docs/execution-plans/phase2-structure-governance/step04-namespace-20260907/NamespaceOwnershipManifest.candidate.json",
+      "kind": "json",
+      "sha256": "40d7e87fed046c8aff18d8c1d0532ada075b802faf204059649c84faef1c0782"
+    },
+    "namespace_delegation": {
+      "path": "docs/execution-plans/phase2-structure-governance/step04-namespace-20260907/NamespaceDelegationManifest.candidate.json",
+      "kind": "json",
+      "sha256": "cee24dff183aed36ea99a6ad51aea8ee6edf2b15544ac641a955c2393648d537"
+    },
+    "step4_sources": {
+      "path": "docs/execution-plans/phase2-structure-governance/step08-validator-20260907/step4_sources.portable.json",
+      "kind": "json",
+      "sha256": "ffe6ea867b76657553312b3c45571b1fee9bfaca14413fc3679c73c0d39508d3"
+    },
+    "step5_sources": {
+      "path": "docs/execution-plans/phase2-structure-governance/step08-validator-20260907/step5_sources.portable.json",
+      "kind": "json",
+      "sha256": "18635b8e12ea817d77648227acec65accc5d342bb6fa3eba70405a3740246bd4"
+    },
+    "logical": {
+      "path": "docs/execution-plans/phase2-structure-governance/step05-identity-20260907/LogicalObjectIdentityContract.candidate.json",
+      "kind": "json",
+      "sha256": "ceb63f2ec16c63d160ae7f760992ec6dd9b17c5555679bba8c37bb7c1ea58296"
+    },
+    "aliases": {
+      "path": "docs/execution-plans/phase2-structure-governance/step05-identity-20260907/AliasRegistry.candidate.json",
+      "kind": "json",
+      "sha256": "29d0d21d2d0fcecefdc9daaf841a77f411a6695d256a38993976f74660f19a40"
+    },
+    "copy": {
+      "path": "docs/execution-plans/phase2-structure-governance/step05-identity-20260907/CopyIdentityContract.candidate.json",
+      "kind": "json",
+      "sha256": "aa4d0092724c3b2d7d24ad6801d51438692912d87b8d7ce053785ded70a37b15"
+    },
+    "representation": {
+      "path": "docs/execution-plans/phase2-structure-governance/step05-identity-20260907/RepresentationContract.candidate.json",
+      "kind": "json",
+      "sha256": "c278f906a3c081f4e70f771904eb5577f6df165eba99bb6e26cf2d036b128a67"
+    },
+    "versions": {
+      "path": "docs/execution-plans/phase2-structure-governance/step05-identity-20260907/VersionAxisRegistry.candidate.json",
+      "kind": "json",
+      "sha256": "1276845153b1fe93517533bc0ae18d466134a6e8651100369dd54493790f27da"
+    },
+    "consumers": {
+      "path": "docs/execution-plans/phase2-structure-governance/step6-consumer-candidate/ConsumerMatrix.json",
+      "kind": "json",
+      "sha256": "3fffec8fd9570352246425d60156d17988eb6311adab719e481c197a6eca5cee"
+    },
+    "current_registry": {
+      "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step2/package-inputs/data/CurrentArtifactRegistry.json",
+      "kind": "json",
+      "sha256": "1dafc859c9a0e51cf13e193e0226718e030bd0193ebeebb3a17288c78c6a1468"
+    },
+    "identity_policy": {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/inputs/CurrentArtifactIdentityPolicy.json",
+      "kind": "json",
+      "sha256": "3a14df68ea81c6390316c5df09d51a049b52a640871ab57953c42acb30624bff"
+    },
+    "review_subject": {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/inputs/ReviewSubjectContract.json",
+      "kind": "json",
+      "sha256": "c2cd13dbe8fd046aa8f0344778141cb9b115fae0048a8c673b60bd25b03498d3"
+    },
+    "ci_receipt": {
+      "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step1/34069116734/CIGateReceipt.json",
+      "kind": "json",
+      "sha256": "0a6bf0df65e722f2bb48fc6fd93767ec5ffcd8bb207b4189d4ff7d0863738091"
+    },
+    "worker_source": {
+      "path": "apps/clued-cloud/worker/continuity.ts",
+      "kind": "text",
+      "sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba"
+    },
+    "projection_bindings": {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/ProjectionBindings.repository.json",
+      "kind": "json",
+      "sha256": "7e526281339067dea908765cad2f8aa4b510d0371dcd9f2915cc31221e6802cd"
+    },
+    "projection_generator": {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/project-governance.mjs",
+      "kind": "text",
+      "sha256": "ffd35b923be0729fab18de13b2e234ce971788bdb5b6aa1ac8520c2a516755df"
+    },
+    "typed_consumers": {
+      "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedConsumerRegistry.candidate.json",
+      "kind": "json",
+      "sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7"
+    },
+    "typed_authorization": {
+      "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedAuthorizationRegistry.candidate.json",
+      "kind": "json",
+      "sha256": "359e7461ba3166bef63815f37ddd9c247aada317c14e4e62bdee3bc79cc3fcdd"
+    },
+    "typed_receipts": {
+      "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedReceiptRegistry.candidate.json",
+      "kind": "json",
+      "sha256": "05d182805b31ba9d5e6c1c3fa32ae2081527a92faaa76263debded6ffca5efa4"
+    },
+    "step6_sources": {
+      "path": "docs/execution-plans/phase2-structure-governance/step08-validator-20260907/step6_sources.portable.json",
+      "kind": "json",
+      "sha256": "87d60f81c3e28de14a57b2a666308a403879d6ec7f03a07933887fd8d5aacc1e"
+    },
+    "export_scope_disposition": {
+      "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/C09ExportScopeDisposition.json",
+      "kind": "json",
+      "sha256": "fa2ba22146d5560f502d5e70d7045ead5577fea7c1af909b7ab51a9e64b718ff"
+    }
+  }
+}

@@ -1,0 +1,265 @@
+{
+  "review_kind": "BOUNDED_INDEPENDENT_STEP5_IDENTITY_REVIEW",
+  "reviewer": "/root/sequence_review",
+  "author": "/root/evidence_review",
+  "verdict": "SUPPORTED_FOR_SCOPED_STEP5_ACCEPTANCE",
+  "acceptance_issued_by_this_review": false,
+  "freeze_or_runtime_authority_issued": false,
+  "scope": "Six identity closure contracts for current-directory governance and actual active dependencies; no all-history semantic certification or runtime wiring claim.",
+  "subjects": {
+    "AliasRegistry.candidate.json": "29d0d21d2d0fcecefdc9daaf841a77f411a6695d256a38993976f74660f19a40",
+    "CanonicalVocabularyRegistry.candidate.json": "200ee148a8a19d7c107c9d259b012a065214bf03a7d6932d46706a3519f96f0b",
+    "ConflictsAndStep6Handoff.candidate.json": "d9af8303605920994f56f1c0ad916042bb8a1923b999bbc194fe0fcdc157f5d8",
+    "CopyIdentityContract.candidate.json": "aa4d0092724c3b2d7d24ad6801d51438692912d87b8d7ce053785ded70a37b15",
+    "LogicalObjectIdentityContract.candidate.json": "ceb63f2ec16c63d160ae7f760992ec6dd9b17c5555679bba8c37bb7c1ea58296",
+    "RepresentationContract.candidate.json": "c278f906a3c081f4e70f771904eb5577f6df165eba99bb6e26cf2d036b128a67",
+    "VersionAxisRegistry.candidate.json": "1276845153b1fe93517533bc0ae18d466134a6e8651100369dd54493790f27da"
+  },
+  "sources_sha256": "00b13dfa75569b23c19ece0f1babf35f4c9cbd36086cc904dbaafd29cdd0be9b",
+  "candidate_checks_sha256": "83b981f58fdceb68bb420bd34a1813e64e9c70f7d8c873998a58265972781793",
+  "step4_acceptance_sha256": "6f2cc1c9cc28c2a717023029851d61a666815567bc30b3635479cb1b70382e6c",
+  "reused_prior_independent_ci_review": {
+    "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\typed-surface-review\\IndependentReview.actual-ci.json",
+    "sha256": "17078abbdb82572c58c5487301b99fc0ee2e5624a47767564d8b8453b9c60765",
+    "subject_commit": "5fad76df81c8a412e7768e08427841f0985a2588",
+    "manifest_sha256": "e6e80781685b9cd76f1dbb19ba45fa9a9d623758271bde64a4999e30796dc882"
+  },
+  "independent_checks": {
+    "source_hash_checks": [
+      {
+        "source_id": "baseline",
+        "sha256": "f465bcb77aced171b4f241da7a23c1e02133716700227caaabb7954be39899ad",
+        "check": "EXACT_BYTES_HASH_VERIFIED"
+      },
+      {
+        "source_id": "acceptance",
+        "sha256": "f2aed48ed74e688bfe280d3fa896243cc7907905fafcc467706a276367472f27",
+        "check": "EXACT_BYTES_HASH_VERIFIED"
+      },
+      {
+        "source_id": "repo-agents",
+        "sha256": "75d0788ff62a20d2d211115a66ab20fc38519a14fad890ab9a3d6f821e821793",
+        "check": "EXACT_BYTES_HASH_VERIFIED"
+      },
+      {
+        "source_id": "delegation",
+        "sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+        "check": "EXACT_BYTES_HASH_VERIFIED"
+      },
+      {
+        "source_id": "scope-amendment",
+        "sha256": "32b16e2938a5674b1d8b492e1bf0a0506f708c574913696d6ba281b99e108e9e",
+        "check": "EXACT_BYTES_HASH_VERIFIED"
+      },
+      {
+        "source_id": "structure-map",
+        "sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965",
+        "check": "EXACT_BYTES_HASH_VERIFIED"
+      },
+      {
+        "source_id": "protocol-manifest",
+        "sha256": "05ca5bb70c642dba9c3f58c0b943020d6188636e60cc569b3802c90a9afd36b5",
+        "check": "EXACT_BYTES_HASH_VERIFIED"
+      },
+      {
+        "source_id": "vocabulary-registry",
+        "sha256": "01340a4599b56e4a1a91b0b5eaf6570ce74ede6f9ce6faeb608a2bbe69c0289b",
+        "check": "EXACT_BYTES_HASH_VERIFIED"
+      },
+      {
+        "source_id": "endpoint-trust",
+        "sha256": "3c6c76087b468f13e7010a54db92b7c8db13146558c8288c8830eb22d6fb78f4",
+        "check": "EXACT_BYTES_HASH_VERIFIED"
+      },
+      {
+        "source_id": "legacy-readme",
+        "sha256": "7e1efdf92211c771d9f2d74195d9a8b42d84f6ae222a857c25a792289ddc8a15",
+        "check": "EXACT_BYTES_HASH_VERIFIED"
+      },
+      {
+        "source_id": "version",
+        "sha256": "aa07c9e145d2246eb962877d8f3b4dccc25cfafd84115206bce546582628d02a",
+        "check": "EXACT_BYTES_HASH_VERIFIED"
+      },
+      {
+        "source_id": "current-reader",
+        "sha256": "479fd0e39a8a96287642ea59644d1975666fc314cc589f39a0086c3d9446dd85",
+        "check": "EXACT_BYTES_HASH_VERIFIED"
+      },
+      {
+        "source_id": "step4-ownership",
+        "sha256": "40d7e87fed046c8aff18d8c1d0532ada075b802faf204059649c84faef1c0782",
+        "check": "EXACT_BYTES_HASH_VERIFIED"
+      },
+      {
+        "source_id": "step4-domains",
+        "sha256": "fa9e1b322356fc55d04b3eee078146a9b8304e48197c7d1767cd14d665b9c8ca",
+        "check": "EXACT_BYTES_HASH_VERIFIED"
+      },
+      {
+        "source_id": "ci-manifest",
+        "sha256": "e6e80781685b9cd76f1dbb19ba45fa9a9d623758271bde64a4999e30796dc882",
+        "check": "REUSED_PREVIOUSLY_VERIFIED_IMMUTABLE_SOURCE; SIZE_UNCHANGED; FULL_HASH_NOT_REPEATED"
+      },
+      {
+        "source_id": "typed-review",
+        "sha256": "26ba84344047fba0deede667fdd1c94bee40b7958a897aedc84ed523c941a6ab",
+        "check": "EXACT_BYTES_HASH_VERIFIED"
+      },
+      {
+        "source_id": "ci-review-binding",
+        "sha256": "baf2856fd05332487e6cad7f84b707f3b994d2be5efad484f7ad5a1f20ef27f5",
+        "check": "EXACT_BYTES_HASH_VERIFIED"
+      },
+      {
+        "source_id": "rpc-supplement",
+        "sha256": "3583906d1ffa795cdc35bfe9d21b1bdf9e1b1ebfbed02941e871a2876e59a006",
+        "check": "EXACT_BYTES_HASH_VERIFIED"
+      },
+      {
+        "source_id": "identity-policy",
+        "sha256": "3a14df68ea81c6390316c5df09d51a049b52a640871ab57953c42acb30624bff",
+        "check": "EXACT_BYTES_HASH_VERIFIED"
+      },
+      {
+        "source_id": "type-crosswalk",
+        "sha256": "a4386a8b45b02e8dbd6ff2f400d3b1c9ecbfc9c6d07a2892f035994d2a78c685",
+        "check": "EXACT_BYTES_HASH_VERIFIED"
+      },
+      {
+        "source_id": "review-subject",
+        "sha256": "c2cd13dbe8fd046aa8f0344778141cb9b115fae0048a8c673b60bd25b03498d3",
+        "check": "EXACT_BYTES_HASH_VERIFIED"
+      },
+      {
+        "source_id": "candidate-registry",
+        "sha256": "1dafc859c9a0e51cf13e193e0226718e030bd0193ebeebb3a17288c78c6a1468",
+        "check": "EXACT_BYTES_HASH_VERIFIED"
+      },
+      {
+        "source_id": "source-zip-container",
+        "sha256": "6e51374a6caedb4f84d2b6bb9fe05cd695b25732833f9d0217c341f17e1c1649",
+        "check": "REUSED_PREVIOUSLY_VERIFIED_IMMUTABLE_SOURCE; SIZE_UNCHANGED; FULL_HASH_NOT_REPEATED"
+      },
+      {
+        "source_id": "step4-acceptance",
+        "sha256": "6f2cc1c9cc28c2a717023029851d61a666815567bc30b3635479cb1b70382e6c",
+        "check": "EXACT_BYTES_HASH_VERIFIED"
+      }
+    ],
+    "candidate_source_references_checked": 128,
+    "nonempty_json_pointers_independently_resolved": 61,
+    "nonempty_json_pointers_reused_from_existing_ci_evidence": [
+      {
+        "source_id": "ci-manifest",
+        "pointer": "/repository_inventory/duplicate_representations",
+        "basis": "Author CandidateChecks plus existing exact-CI independent review; no new inventory parse"
+      },
+      {
+        "source_id": "ci-manifest",
+        "pointer": "/repository_inventory/stage_references",
+        "basis": "Author CandidateChecks plus existing exact-CI independent review; no new inventory parse"
+      },
+      {
+        "source_id": "ci-manifest",
+        "pointer": "/repository_inventory/duplicate_representations",
+        "basis": "Author CandidateChecks plus existing exact-CI independent review; no new inventory parse"
+      }
+    ],
+    "all_seven_candidate_file_hashes_match_updated_candidate_checks": true,
+    "version_axes": 10,
+    "core_vocabulary_terms": 22,
+    "original_identity_types": 13,
+    "unchanged_map_rows": 23,
+    "reviewed_sites": 148,
+    "classifications": {
+      "RUNTIME_OR_STEP6_BINDING": 85,
+      "FINITE_STATIC_MAPPING": 60,
+      "NON_NAME_SYMBOL_HOMONYM": 3
+    },
+    "runtime_historical_sites": 58,
+    "runtime_nonlegacy_sites_including_tests": 27,
+    "new_runtime_aliases": 0,
+    "new_runtime_type_instances": 0,
+    "source_scan_or_test_suite_repeated": false
+  },
+  "findings": [
+    {
+      "id": "S5-R01",
+      "severity": "BOUNDED_PREDECESSOR_BINDING_CORRECTION",
+      "status": "CORRECTED_IN_CANDIDATE",
+      "finding": "Step4 ownership/domain hashes already matched final bytes. Candidate predecessor pointed only to preparation files and did not reference the separately issued Step4 administrative acceptance.",
+      "correction": "Point to retained accepted same-byte subjects; add exact existing acceptance reference in seven candidate views; clarify inherited commit labels; update Sources, CandidateChecks, README and construction helper. Identity rules unchanged."
+    }
+  ],
+  "six_closure_assessment": [
+    {
+      "closure": "VersionAxis",
+      "baseline_lines": [
+        268,
+        289
+      ],
+      "assessment": "Ten axes explicitly separated; product, architecture, package, map and schema retain distinct source-bound identities. Runtime and migration instance assignment properly awaits the actual owning operation."
+    },
+    {
+      "closure": "Vocabulary",
+      "baseline_lines": [
+        293,
+        322
+      ],
+      "assessment": "Twenty-two core terms given scoped definitions and owning-source references; Git commit and Canonical commit, administration and runtime grants, map groups and program Domains explicitly distinguished."
+    },
+    {
+      "closure": "Alias",
+      "baseline_lines": [
+        326,
+        340
+      ],
+      "assessment": "Required alias mapping/lifecycle/read-write/reverse-resolution rules plus four concrete keep-distinct/legacy dispositions exist. No alias is inferred or issued; this is not a claim that external aliases are globally zero."
+    },
+    {
+      "closure": "LogicalObject",
+      "baseline_lines": [
+        344,
+        356
+      ],
+      "assessment": "Existing object identities, 13 crosswalk types, stable Map identities and Registry entry relationships are source-bound; file path, title and byte equality do not mint or merge logical identity."
+    },
+    {
+      "closure": "Representation",
+      "baseline_lines": [
+        360,
+        375
+      ],
+      "assessment": "Canonical business objects, read-only mirror, human projection, transport package, candidate design and compatibility views are differentiated. Derivation, conflict precedence, regenerated digests and reverse-write rules are explicit."
+    },
+    {
+      "closure": "Copy",
+      "baseline_lines": [
+        379,
+        388
+      ],
+      "assessment": "Existing embedded IDs/signatures/receipts retained; each occurrence separately located and source-bound. No independently writable/resignable/authoritative copy created; actual future copy receipts follow owning contract."
+    }
+  ],
+  "blocking_findings_in_this_scoped_step5_subject": [],
+  "step6_obligations": [
+    {
+      "item": "Actual runtime and consumer identity",
+      "obligation": "Bind domain/program/stage/run, actor/grantee, capability/scope, issuer, exact input/version, receipt and authorization, failure/unknown behavior, publish/mutate rights, expiry/revocation/drift before affected wiring. Do not convert task delegation into runtime authority."
+    },
+    {
+      "item": "Known dynamic naming families",
+      "obligation": "Carry 60 finite mappings and 85 runtime family sources under exact site keys, plus separate RPC helper supplement; retain 58 historical sites as audit-only and distinguish tests among 27 nonlegacy sites. No need to enumerate nonexistent runtime values or rerun retired code."
+    },
+    {
+      "item": "Concrete alias or projection migration",
+      "obligation": "Before using a renamed active alias or installed Skill projection, bind exact source/target/host/role/consumer and compatibility/rollback conditions. TM-13 does not assert clued-continuity equals clued-kernel-developer."
+    },
+    {
+      "item": "Unbound identity conflict",
+      "obligation": "Any newly discovered conflicting owning contract blocks the affected binding, not unrelated accepted evidence. Do not call this review global semantic completeness."
+    }
+  ],
+  "nonblocking_later_stage_gap": "Step15/18 actual non-bypass proof is separate and pending; Step5 identity definitions do not claim paid GitHub protection or completed equivalent enforcement."
+}

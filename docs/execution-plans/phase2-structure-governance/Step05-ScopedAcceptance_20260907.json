@@ -1,0 +1,48 @@
+{
+  "decision_kind": "SCOPED_STEP5_IDENTITY_CONTRACT_ACCEPTANCE",
+  "decision_id": "CLUED_PHASE2_STEP05_ACCEPTANCE_20260907",
+  "status": "ACCEPTED_FOR_CURRENT_SCOPED_IDENTITY_CONTRACTS",
+  "issued_at": "2026-09-07T09:18:29.287486+00:00",
+  "acceptor": "Codex@DESK-W-591 under CLUED_PHASE2_USER_DELEGATION_20260907",
+  "author": "/root/evidence_review",
+  "independent_reviewer": "/root/sequence_review",
+  "authority": {
+    "path": "ExecutionDelegation_20260907.json",
+    "sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8"
+  },
+  "predecessor": {
+    "path": "Step04-ScopedAcceptance_20260907.json",
+    "sha256": "6f2cc1c9cc28c2a717023029851d61a666815567bc30b3635479cb1b70382e6c"
+  },
+  "review": {
+    "path": "step05-identity-20260907/IndependentReview.json",
+    "sha256": "67170b7284cc95b5885dc7712cba898d1b2ed3087d76df26e7c0a647f3a5efb0"
+  },
+  "subject_directory": "step05-identity-20260907",
+  "subjects": {
+    "AliasRegistry.candidate.json": "29d0d21d2d0fcecefdc9daaf841a77f411a6695d256a38993976f74660f19a40",
+    "CanonicalVocabularyRegistry.candidate.json": "200ee148a8a19d7c107c9d259b012a065214bf03a7d6932d46706a3519f96f0b",
+    "ConflictsAndStep6Handoff.candidate.json": "d9af8303605920994f56f1c0ad916042bb8a1923b999bbc194fe0fcdc157f5d8",
+    "CopyIdentityContract.candidate.json": "aa4d0092724c3b2d7d24ad6801d51438692912d87b8d7ce053785ded70a37b15",
+    "LogicalObjectIdentityContract.candidate.json": "ceb63f2ec16c63d160ae7f760992ec6dd9b17c5555679bba8c37bb7c1ea58296",
+    "RepresentationContract.candidate.json": "c278f906a3c081f4e70f771904eb5577f6df165eba99bb6e26cf2d036b128a67",
+    "VersionAxisRegistry.candidate.json": "1276845153b1fe93517533bc0ae18d466134a6e8651100369dd54493790f27da"
+  },
+  "sources_sha256": "00b13dfa75569b23c19ece0f1babf35f4c9cbd36086cc904dbaafd29cdd0be9b",
+  "accepted_effect": [
+    "Adopt the six scoped Version/Vocabulary/Alias/Logical/Representation/Copy contracts by exact reviewed bytes.",
+    "Preserve 23 original Map rows, 13 source identity types, historical bytes, source IDs and independently reviewed 148-site classifications.",
+    "Use existing owning contracts as semantic sources; the accepted views neither create a global runtime schema nor issue runtime privileges.",
+    "Proceed to Step 6 exact consumer/authorization/receipt binding."
+  ],
+  "not_granted": [
+    "Architecture Acceptance",
+    "Structure Freeze",
+    "Physical migration",
+    "Runtime permission changes",
+    "All-history alias certification",
+    "Commercial or model domain activation"
+  ],
+  "invalidation": "Changes to identity source, predecessor, user scope or owning contract invalidate affected mappings; unchanged prior evidence is reused.",
+  "next_step": 6
+}

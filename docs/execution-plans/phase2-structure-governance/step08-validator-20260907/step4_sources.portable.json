@@ -1,0 +1,192 @@
+{
+  "kind": "PORTABLE_SOURCE_LOCATION_VIEW_NOT_RUNTIME_REGISTRY",
+  "authority_effect": "NONE",
+  "original_catalog": {
+    "path": "docs/execution-plans/phase2-structure-governance/step04-namespace-20260907/Sources.json",
+    "sha256": "660dc97f3644eca7f9a8a5078a167b72ea8e897e583bcc2a4e2917cb1d033427"
+  },
+  "sources": {
+    "baseline": {
+      "kind": "immutable_zip_member",
+      "archive_path": "docs/execution-plans/phase2-structure-governance/step08-validator-20260907/ReferencedSourceBytes.zip",
+      "member": "f465bcb77aced171b4f241da7a23c1e02133716700227caaabb7954be39899ad.md",
+      "bytes": 30836,
+      "sha256": "f465bcb77aced171b4f241da7a23c1e02133716700227caaabb7954be39899ad",
+      "origin": {
+        "kind": "repository_file",
+        "repository_commit_observed": "5fad76df81c8a412e7768e08427841f0985a2588",
+        "path": "docs/execution-plans/phase2-structure-governance/FixedExecutionBaseline_20260907.md",
+        "bytes": 30836,
+        "sha256": "f465bcb77aced171b4f241da7a23c1e02133716700227caaabb7954be39899ad"
+      }
+    },
+    "acceptance": {
+      "kind": "immutable_zip_member",
+      "archive_path": "docs/execution-plans/phase2-structure-governance/step08-validator-20260907/ReferencedSourceBytes.zip",
+      "member": "f2aed48ed74e688bfe280d3fa896243cc7907905fafcc467706a276367472f27.md",
+      "bytes": 20571,
+      "sha256": "f2aed48ed74e688bfe280d3fa896243cc7907905fafcc467706a276367472f27",
+      "origin": {
+        "kind": "repository_file",
+        "repository_commit_observed": "5fad76df81c8a412e7768e08427841f0985a2588",
+        "path": "docs/execution-plans/phase2-structure-governance/AcceptanceAndInvalidation.md",
+        "bytes": 20571,
+        "sha256": "f2aed48ed74e688bfe280d3fa896243cc7907905fafcc467706a276367472f27"
+      }
+    },
+    "repo-agents": {
+      "kind": "immutable_zip_member",
+      "archive_path": "docs/execution-plans/phase2-structure-governance/step08-validator-20260907/ReferencedSourceBytes.zip",
+      "member": "75d0788ff62a20d2d211115a66ab20fc38519a14fad890ab9a3d6f821e821793.md",
+      "bytes": 9637,
+      "sha256": "75d0788ff62a20d2d211115a66ab20fc38519a14fad890ab9a3d6f821e821793",
+      "origin": {
+        "kind": "repository_file",
+        "repository_commit_observed": "5fad76df81c8a412e7768e08427841f0985a2588",
+        "path": "AGENTS.md",
+        "bytes": 9637,
+        "sha256": "75d0788ff62a20d2d211115a66ab20fc38519a14fad890ab9a3d6f821e821793"
+      }
+    },
+    "delegation": {
+      "kind": "immutable_zip_member",
+      "archive_path": "docs/execution-plans/phase2-structure-governance/step08-validator-20260907/ReferencedSourceBytes.zip",
+      "member": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8.json",
+      "bytes": 3350,
+      "sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+      "origin": {
+        "kind": "repository_file",
+        "repository_commit_observed": "5fad76df81c8a412e7768e08427841f0985a2588",
+        "path": "docs/execution-plans/phase2-structure-governance/ExecutionDelegation_20260907.json",
+        "bytes": 3350,
+        "sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8"
+      }
+    },
+    "scope-amendment": {
+      "kind": "immutable_zip_member",
+      "archive_path": "docs/execution-plans/phase2-structure-governance/step08-validator-20260907/ReferencedSourceBytes.zip",
+      "member": "32b16e2938a5674b1d8b492e1bf0a0506f708c574913696d6ba281b99e108e9e.json",
+      "bytes": 2308,
+      "sha256": "32b16e2938a5674b1d8b492e1bf0a0506f708c574913696d6ba281b99e108e9e",
+      "origin": {
+        "kind": "repository_file",
+        "repository_commit_observed": "5fad76df81c8a412e7768e08427841f0985a2588",
+        "path": "docs/execution-plans/phase2-structure-governance/ScopeAmendment_CurrentDirectory_20260907.json",
+        "bytes": 2308,
+        "sha256": "32b16e2938a5674b1d8b492e1bf0a0506f708c574913696d6ba281b99e108e9e"
+      }
+    },
+    "structure-map": {
+      "kind": "immutable_zip_member",
+      "archive_path": "docs/execution-plans/phase2-structure-governance/step08-validator-20260907/ReferencedSourceBytes.zip",
+      "member": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965.json",
+      "bytes": 33372,
+      "sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965",
+      "origin": {
+        "kind": "repository_file",
+        "repository_commit_observed": "5fad76df81c8a412e7768e08427841f0985a2588",
+        "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step2/package-inputs/data/StructureCandidateMap.json",
+        "bytes": 33372,
+        "sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965"
+      }
+    },
+    "protocol-manifest": {
+      "kind": "immutable_zip_member",
+      "archive_path": "docs/execution-plans/phase2-structure-governance/step08-validator-20260907/ReferencedSourceBytes.zip",
+      "member": "05ca5bb70c642dba9c3f58c0b943020d6188636e60cc569b3802c90a9afd36b5.json",
+      "bytes": 18823,
+      "sha256": "05ca5bb70c642dba9c3f58c0b943020d6188636e60cc569b3802c90a9afd36b5",
+      "origin": {
+        "kind": "repository_file",
+        "repository_commit_observed": "5fad76df81c8a412e7768e08427841f0985a2588",
+        "path": "protocol/continuity/v1/manifest.json",
+        "bytes": 18823,
+        "sha256": "05ca5bb70c642dba9c3f58c0b943020d6188636e60cc569b3802c90a9afd36b5"
+      }
+    },
+    "endpoint-trust": {
+      "kind": "immutable_zip_member",
+      "archive_path": "docs/execution-plans/phase2-structure-governance/step08-validator-20260907/ReferencedSourceBytes.zip",
+      "member": "3c6c76087b468f13e7010a54db92b7c8db13146558c8288c8830eb22d6fb78f4.json",
+      "bytes": 209,
+      "sha256": "3c6c76087b468f13e7010a54db92b7c8db13146558c8288c8830eb22d6fb78f4",
+      "origin": {
+        "kind": "repository_file",
+        "repository_commit_observed": "5fad76df81c8a412e7768e08427841f0985a2588",
+        "path": "config/clued-endpoint-trust.json",
+        "bytes": 209,
+        "sha256": "3c6c76087b468f13e7010a54db92b7c8db13146558c8288c8830eb22d6fb78f4"
+      }
+    },
+    "legacy-readme": {
+      "kind": "immutable_zip_member",
+      "archive_path": "docs/execution-plans/phase2-structure-governance/step08-validator-20260907/ReferencedSourceBytes.zip",
+      "member": "7e1efdf92211c771d9f2d74195d9a8b42d84f6ae222a857c25a792289ddc8a15.md",
+      "bytes": 698,
+      "sha256": "7e1efdf92211c771d9f2d74195d9a8b42d84f6ae222a857c25a792289ddc8a15",
+      "origin": {
+        "kind": "repository_file",
+        "repository_commit_observed": "5fad76df81c8a412e7768e08427841f0985a2588",
+        "path": "legacy/local-memory-engine-vnext2/README.md",
+        "bytes": 698,
+        "sha256": "7e1efdf92211c771d9f2d74195d9a8b42d84f6ae222a857c25a792289ddc8a15"
+      }
+    },
+    "identity-policy": {
+      "kind": "immutable_zip_member",
+      "archive_path": "docs/execution-plans/phase2-structure-governance/step08-validator-20260907/ReferencedSourceBytes.zip",
+      "member": "3a14df68ea81c6390316c5df09d51a049b52a640871ab57953c42acb30624bff.json",
+      "bytes": 776,
+      "sha256": "3a14df68ea81c6390316c5df09d51a049b52a640871ab57953c42acb30624bff",
+      "origin": {
+        "kind": "immutable_zip_member",
+        "archive_path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip",
+        "member": "Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/CurrentArtifactIdentityPolicy.json",
+        "bytes": 776,
+        "sha256": "3a14df68ea81c6390316c5df09d51a049b52a640871ab57953c42acb30624bff"
+      }
+    },
+    "type-crosswalk": {
+      "kind": "immutable_zip_member",
+      "archive_path": "docs/execution-plans/phase2-structure-governance/step08-validator-20260907/ReferencedSourceBytes.zip",
+      "member": "a4386a8b45b02e8dbd6ff2f400d3b1c9ecbfc9c6d07a2892f035994d2a78c685.json",
+      "bytes": 10781,
+      "sha256": "a4386a8b45b02e8dbd6ff2f400d3b1c9ecbfc9c6d07a2892f035994d2a78c685",
+      "origin": {
+        "kind": "immutable_zip_member",
+        "archive_path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip",
+        "member": "Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/ArtifactAndReleaseIdentityCrosswalk.json",
+        "bytes": 10781,
+        "sha256": "a4386a8b45b02e8dbd6ff2f400d3b1c9ecbfc9c6d07a2892f035994d2a78c685"
+      }
+    },
+    "candidate-registry": {
+      "kind": "immutable_zip_member",
+      "archive_path": "docs/execution-plans/phase2-structure-governance/step08-validator-20260907/ReferencedSourceBytes.zip",
+      "member": "1dafc859c9a0e51cf13e193e0226718e030bd0193ebeebb3a17288c78c6a1468.json",
+      "bytes": 15392,
+      "sha256": "1dafc859c9a0e51cf13e193e0226718e030bd0193ebeebb3a17288c78c6a1468",
+      "origin": {
+        "kind": "immutable_zip_member",
+        "archive_path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip",
+        "member": "Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/CurrentArtifactRegistry.json",
+        "bytes": 15392,
+        "sha256": "1dafc859c9a0e51cf13e193e0226718e030bd0193ebeebb3a17288c78c6a1468"
+      }
+    },
+    "source-zip-container": {
+      "kind": "immutable_source_container",
+      "path": "external/Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip",
+      "bytes": 246612118,
+      "sha256": "6e51374a6caedb4f84d2b6bb9fe05cd695b25732833f9d0217c341f17e1c1649",
+      "digest_basis": "Previously independently verified full candidate ZIP in this task; selected member bytes hashed again for this construction.",
+      "origin": {
+        "kind": "immutable_source_container",
+        "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip",
+        "bytes": 246612118,
+        "sha256": "6e51374a6caedb4f84d2b6bb9fe05cd695b25732833f9d0217c341f17e1c1649",
+        "digest_basis": "Previously independently verified full candidate ZIP in this task; selected member bytes hashed again for this construction."
+      }
+    }
+  }
+}

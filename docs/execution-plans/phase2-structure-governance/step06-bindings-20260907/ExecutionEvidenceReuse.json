@@ -1,0 +1,184 @@
+{
+  "status": "SOURCE_AND_RETAINED_RUN_BINDING_COMPLETE_FOR_LISTED_COMPONENTS",
+  "source_comparisons": [
+    {
+      "revision": "07632caa673395e136c60d9cf4f2f884c03a59af",
+      "path": "scripts/phase2-v027-validate.py",
+      "prior_sha256": "e16cc9fa5fd2a54dc3922029851722936551a400979dc94dce691faa83bd7f4e",
+      "current_sha256": "e16cc9fa5fd2a54dc3922029851722936551a400979dc94dce691faa83bd7f4e",
+      "identical": true
+    },
+    {
+      "revision": "9c657f8ffcf67296d394946b2050e049dc535664",
+      "path": "scripts/phase2-v027-validate.py",
+      "prior_sha256": "e16cc9fa5fd2a54dc3922029851722936551a400979dc94dce691faa83bd7f4e",
+      "current_sha256": "e16cc9fa5fd2a54dc3922029851722936551a400979dc94dce691faa83bd7f4e",
+      "identical": true
+    },
+    {
+      "revision": "5fad76df81c8a412e7768e08427841f0985a2588",
+      "path": "scripts/clued-naming-surface-inventory.py",
+      "prior_sha256": "9ff7dc893b865a7736d6d9ffbe6f908c15f9c418e10a0602ae6fd33eedb8f81e",
+      "current_sha256": "9ff7dc893b865a7736d6d9ffbe6f908c15f9c418e10a0602ae6fd33eedb8f81e",
+      "identical": true
+    },
+    {
+      "revision": "5fad76df81c8a412e7768e08427841f0985a2588",
+      "path": "scripts/clued-naming-inventory-consolidate.py",
+      "prior_sha256": "69f2fcc2e8c0e2802d7fa08de842345b88d208bec947d3ef4e88ef4c41907026",
+      "current_sha256": "69f2fcc2e8c0e2802d7fa08de842345b88d208bec947d3ef4e88ef4c41907026",
+      "identical": true
+    },
+    {
+      "revision": "5fad76df81c8a412e7768e08427841f0985a2588",
+      "path": "tests/test_naming_inventory_completeness.py",
+      "prior_sha256": "5a46d56736c2b4b0f7a03af757d9e483b91b82c4cd70441385414a1bbce7617d",
+      "current_sha256": "5a46d56736c2b4b0f7a03af757d9e483b91b82c4cd70441385414a1bbce7617d",
+      "identical": true
+    },
+    {
+      "revision": "5fad76df81c8a412e7768e08427841f0985a2588",
+      "path": "tests/test_naming_inventory_semantic_surfaces.py",
+      "prior_sha256": "9a26ac5b29df73b0f3d4a8d8fe4e4a887e4f6dd4fe6931305a2c1408c7b3624f",
+      "current_sha256": "9a26ac5b29df73b0f3d4a8d8fe4e4a887e4f6dd4fe6931305a2c1408c7b3624f",
+      "identical": true
+    },
+    {
+      "revision": "5fad76df81c8a412e7768e08427841f0985a2588",
+      "path": "tests/test_naming_inventory_supplements.py",
+      "prior_sha256": "7269d1d6a244996347f6131c9ef6f38808eaca4a49b605f38279114adf9e0519",
+      "current_sha256": "7269d1d6a244996347f6131c9ef6f38808eaca4a49b605f38279114adf9e0519",
+      "identical": true
+    },
+    {
+      "revision": "c2b180635aea0a151a1f3e0be1537803889d78a7",
+      "path": "apps/clued-cloud/evals/public-mcp/gate-receipt.mjs",
+      "prior_sha256": "9d1574e361a8fdd550578763755933e4d250a8076d55b1223ca9dfc40c1ec0c0",
+      "current_sha256": "9d1574e361a8fdd550578763755933e4d250a8076d55b1223ca9dfc40c1ec0c0",
+      "identical": true
+    },
+    {
+      "revision": "c2b180635aea0a151a1f3e0be1537803889d78a7",
+      "path": ".github/workflows/public-mcp-gate-receipt.yml",
+      "prior_sha256": "bbb448f4ac1dc80cad68409f6d3301dd456861e66a2bfaedb1463f6072dbb800",
+      "current_sha256": "4e3784db5984933d859cd961f010c4fb2306eaf6b871cdd438eeb2cff9154ce8",
+      "identical": false
+    },
+    {
+      "revision": "c1ef7a3b",
+      "path": "apps/clued-cloud/worker/continuity.ts",
+      "prior_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+      "current_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+      "identical": true
+    },
+    {
+      "revision": "c1ef7a3b",
+      "path": "apps/clued-cloud/app/oauth/consent/page.tsx",
+      "prior_sha256": "ce7e6f8de06bd2c7757112b08148f4e19a361868091b88d5c2150b2f0087ef54",
+      "current_sha256": "ce7e6f8de06bd2c7757112b08148f4e19a361868091b88d5c2150b2f0087ef54",
+      "identical": true
+    },
+    {
+      "revision": "c1ef7a3b",
+      "path": "apps/clued-cloud/evals/public-mcp/a03-contract.mjs",
+      "prior_sha256": "88b3a75f3c89355528d2f8d14c78cbaaac07f52c02409bc15436a977bdb44609",
+      "current_sha256": "88b3a75f3c89355528d2f8d14c78cbaaac07f52c02409bc15436a977bdb44609",
+      "identical": true
+    },
+    {
+      "revision": "c1ef7a3b",
+      "path": "apps/clued-cloud/evals/public-mcp/a03-session.mjs",
+      "prior_sha256": "a81989c08d9eae943091a28d9d7d6142ef3f53cd5a2d82deec634f19ff3bfffe",
+      "current_sha256": "a81989c08d9eae943091a28d9d7d6142ef3f53cd5a2d82deec634f19ff3bfffe",
+      "identical": true
+    }
+  ],
+  "bindings": [
+    {
+      "consumer_id": "C14",
+      "result": "REUSE_UNCHANGED_HISTORICAL_AUTH_PATH_SUBSET; CONFIG_METADATA_CURRENT"
+    },
+    {
+      "consumer_id": "C15",
+      "result": "EXACT_COMPONENT_SOURCE_REUSE",
+      "refs": [
+        {
+          "receipt": {
+            "source_id": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step1/34069116734/CIGateReceipt.json",
+            "sha256": "0a6bf0df65e722f2bb48fc6fd93767ec5ffcd8bb207b4189d4ff7d0863738091",
+            "pointer": ""
+          },
+          "platform_run": {
+            "source_id": "ci-run/34069116734",
+            "sha256": "dfcb635c7847450b70f72b34979401163020b89ce8b0bec0b2d9945dd6c77d18",
+            "pointer": ""
+          },
+          "run_id": "34069116734",
+          "run_attempt": "1",
+          "execution_commit": "07632caa673395e136c60d9cf4f2f884c03a59af",
+          "overall": "PASS",
+          "gate_results": {
+            "candidate_identity": "PASS",
+            "manifest_integrity": "PASS",
+            "provenance": "PASS",
+            "product_increment_input": "PASS"
+          },
+          "candidate_sha256": "6e51374a6caedb4f84d2b6bb9fe05cd695b25732833f9d0217c341f17e1c1649",
+          "source_reuse": "Exact validator bytes equal current inspected source; retain original input and exact run meaning."
+        },
+        {
+          "receipt": {
+            "source_id": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step1/34068945665/CIGateReceipt.json",
+            "sha256": "71f218467f8c05fcd3854c65188336a80762fbc82b482977f46889b62c4d907e",
+            "pointer": ""
+          },
+          "platform_run": {
+            "source_id": "ci-run/34068945665",
+            "sha256": "4b10d3f518c20aee437646629e31323f274336cacdadbf1547019a3ab3b36d2f",
+            "pointer": ""
+          },
+          "run_id": "34068945665",
+          "run_attempt": "1",
+          "execution_commit": "9c657f8ffcf67296d394946b2050e049dc535664",
+          "overall": "FAIL",
+          "gate_results": {
+            "candidate_identity": "PASS",
+            "manifest_integrity": "PASS",
+            "provenance": "FAIL",
+            "product_increment_input": "PASS"
+          },
+          "candidate_sha256": "ee000cd50aab3429c9df258c0678730977361e50474945dd6059b82d7d809b4e",
+          "source_reuse": "Exact validator bytes equal current inspected source; retain original input and exact run meaning."
+        }
+      ]
+    },
+    {
+      "consumer_id": "C16",
+      "result": "CURRENT_CI_REUSED_NO_RERUN",
+      "run_id": 34105480323
+    },
+    {
+      "consumer_id": "C17",
+      "result": "CURRENT_CI_REUSED_NO_RERUN",
+      "run_id": 34105480323
+    },
+    {
+      "consumer_id": "C18",
+      "result": "SCRIPT_SOURCE_REUSABLE; CURRENT_WORKFLOW_NONBYPASS_PROOF_PENDING"
+    }
+  ],
+  "new_tests_executed_here": 0,
+  "all_18_consumers_newly_runtime_tested": false,
+  "phase2_four_gates": [
+    "candidate_identity",
+    "manifest_integrity",
+    "provenance",
+    "product_increment_input"
+  ],
+  "not_equivalent_to": [
+    "public MCP all-product regression",
+    "new live OAuth login",
+    "full runtime authorization qualification",
+    "post-migration Step16 evidence"
+  ]
+}

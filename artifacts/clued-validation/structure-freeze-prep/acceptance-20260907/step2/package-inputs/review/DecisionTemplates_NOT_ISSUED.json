@@ -1,0 +1,41 @@
+{
+  "ArchitectureConstitutionAcceptanceDecision": {
+    "type": "ArchitectureConstitutionAcceptanceDecision",
+    "state": "NOT_ISSUED",
+    "subject_contract": "data/ReviewSubjectContract.json",
+    "exact_candidate_sha256": null,
+    "independent_reviewer": null,
+    "condition_assessments": null,
+    "issuer_authority": null,
+    "acceptance_scope": null,
+    "signature": null
+  },
+  "Phase2StructureFreezeDecision": {
+    "type": "Phase2StructureFreezeDecision",
+    "state": "NOT_ISSUED",
+    "architecture_acceptance_ref": null,
+    "architecture_acceptance_digest": null,
+    "original_28_condition_assessments": null,
+    "frozen_target_map_ref": null,
+    "signature": null
+  },
+  "ConditionStageDisposition": {
+    "state": "NOT_ISSUED",
+    "required_fields": [
+      "condition_id",
+      "original_text_digest",
+      "exact_candidate_digest",
+      "issuer",
+      "authority_or_delegation_ref",
+      "evidence_refs",
+      "scope",
+      "remaining_obligation",
+      "owner",
+      "nonbypassable_future_gate",
+      "expires_at",
+      "revocation_ref"
+    ],
+    "filled_record": null
+  },
+  "templates_are_authority": false
+}

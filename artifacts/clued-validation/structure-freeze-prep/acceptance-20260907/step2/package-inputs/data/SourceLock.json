@@ -1,0 +1,28 @@
+{
+  "id": "V025_EXACT_SOURCE_LOCK",
+  "direct_architecture_predecessor": {
+    "axis": "architecture",
+    "version": "v0.2.4",
+    "filename": "Clued_Phase2_三项设计候选_完整审查包_v0.2.4_20260905.zip",
+    "bytes": 168491377,
+    "sha256": "4aae92c37813772e983a14537be52ca8b428af666e644b72d40084ccd592d68b",
+    "members": 440
+  },
+  "mapping_design_input": {
+    "axis": "product_architecture_mapping",
+    "version": "v0.4.3",
+    "filename": "Clued_商业v1.2_产品架构差分承接_v0.4.3_定点修订审查候选包_20260906.zip",
+    "bytes": 68888178,
+    "sha256": "18ed0482bfb639b4fcc8cdce45782b2649b127609f65286c7328cd143dc93dbd",
+    "members": 257
+  },
+  "archives": "data/SourceProvenance.json",
+  "architecture_source_namespace": "sources/architecture_v024",
+  "mapping_source_namespace": "sources/mapping_v043",
+  "architecture_review_namespace": "sources/architecture_review_v024",
+  "mapping_review_namespace": "sources/mapping_review_v043",
+  "source_ids_policy": "各原包S编号不合并、不机械改写；当前消费者使用本包明确路径与JSON Pointer。",
+  "originals_modified": false,
+  "conflict_policy": "FAIL_CLOSED_NEW_IMMUTABLE_CANDIDATE",
+  "external_live_evidence": "data/RepositoryEvidenceObservation.json"
+}

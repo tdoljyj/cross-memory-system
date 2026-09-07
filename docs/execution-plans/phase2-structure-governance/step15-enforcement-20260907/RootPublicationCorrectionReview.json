@@ -1,0 +1,44 @@
+{
+  "type": "RootIndependentPublicationCorrectionReview",
+  "state": "SCOPED_IMPLEMENTATION_REVIEWED_NOT_ACTUAL_PUBLICATION",
+  "reviewer": "/root",
+  "original_author": "/root/sequence_review",
+  "correction_author": "/root/architecture_review",
+  "observed_at": "2026-09-07T10:52:21.411942+00:00",
+  "sources": {
+    "publication.py": {
+      "path": "scripts/naming-governance/publication.py",
+      "sha256": "74026fd0b6cf859b53d4f925a1147b9a787a92a426f93985f98e4077a2a028b7"
+    },
+    "post_migration.py": {
+      "path": "scripts/naming-governance/post_migration.py",
+      "sha256": "bbe3dfe6d6949357ae32643e8cad7493b27d487638e7750c6b5b279c181d882e"
+    },
+    "ci_execution.py": {
+      "path": "scripts/naming-governance/ci_execution.py",
+      "sha256": "c316b3ef3dde4f89d2c2f23125fae15b2f959552de38cbc93d8efb1c6e375a78"
+    }
+  },
+  "independent_review": "Root inspected live platform response validation, exact source/subject/decision/payload bindings, native 15-rule Naming and four-gate receipts, real workflow/run/attempt/artifact identity and step order, original four BASE_CORE jobs and source app checks, current collaborator scope, GitHub verified signing/PR/tree relationships and atomic derived activation with expected-current comparison.",
+  "correction_review": "Root inspected Windows directory handles held from repository root through both write parents, GENERIC_READ, share read/write without delete, OPEN_REPARSE_POINT and BACKUP_SEMANTICS, rejection of existing links and release in finally. Non-Windows publish refuses instead of silently dropping the guard. Validate/read retain their explicit separate scope.",
+  "actual_root_regression": {
+    "command": "python -m unittest discover -s tests -p test_naming_governance_publication.py -v",
+    "tests": 45,
+    "process_exit_code": 0,
+    "log": {
+      "path": "docs/execution-plans/phase2-structure-governance/step15-enforcement-20260907/PublicationTests.log",
+      "sha256": "39532a0c294f2f3bc349c5d7ae2a6a6c3a71596ca9d2da57984c5b5d52ad4778"
+    },
+    "fixture_only": true,
+    "real_github_publication": false
+  },
+  "known_remaining_integration": [
+    "Trusted launcher must pin code/policy outside candidate control, use isolated Python and fixed GitHub CLI, and check actual installed files on each read/publish.",
+    "Actual CI evidence, signed publication and ordinary-principal permission rejection remain required before scoped Step18 acceptance.",
+    "This mechanism does not protect bare Git main branch writes or grant new runtime authority."
+  ],
+  "interrupted_parallel_report": "After delivering the correction and reported 45 passing tests, the correcting agent was interrupted by platform content review. No final independent acceptance is inferred from that interrupted turn; this root review and independently retained actual test run qualify the correction only.",
+  "step15_complete": false,
+  "step18_complete": false,
+  "authority_effect": "NONE_NEW"
+}

@@ -1,0 +1,78 @@
+{
+  "schema": "clued.historical-sites-retirement-evidence/v1",
+  "recorded_at_utc": "2026-09-07T07:45:54.882965+00:00",
+  "status": "REMOVED",
+  "covered_resource": {
+    "project_id": "appgprj_6a8a7bff59548191b5250e5c28b8c80c",
+    "hostname": "clued-cloud.tdoljyj.chatgpt.site",
+    "historical_title": "Clued",
+    "historical_slug": "clued-cloud"
+  },
+  "scope": "Only this exact historical Sites instance, not all Sites or all accounts.",
+  "historical_deletion": {
+    "commit": "414e6714c241443dda125811e512251dc3323388",
+    "committed_at": "2026-08-24T01:57:10+08:00",
+    "source_path": "memory/contexts/projects/clued/日志.md",
+    "source_lines": "888-913 (added section 26 only)",
+    "source_git_blob": "4c4c832dfad83d48c4331240fa6e0f3ccf54e0bd",
+    "user_authorization_recorded": true,
+    "permanent_deletion_confirmation_recorded": true,
+    "ui_result_recorded": "已永久删除 Clued",
+    "evidence_kind": "CONTEMPORANEOUS_GIT_PRESERVED_OPERATOR_RECORD; original UI screenshot not asserted present"
+  },
+  "source_preservation": {
+    "commit": "920601a448a5ea8c99f99192cc2b3e59fd8a8843",
+    "scope": "Sites version 4 source, 37 files, apps/clued-cloud/",
+    "hosting_project_id_verified": "appgprj_6a8a7bff59548191b5250e5c28b8c80c",
+    "source_preservation_is_not_deletion": true
+  },
+  "current_corroboration": {
+    "get_site": "NOT_FOUND/404",
+    "list_site_versions": "NOT_FOUND/404",
+    "exact_project_id_used": true,
+    "not_inferred_from_empty_list_alone": true
+  },
+  "scope_disposition": {
+    "basis": "Explicit delegated evidence-backed review; historical user-confirmed deletion plus source identity and current exact-object absence.",
+    "claims_all_sites_absent": false,
+    "new_deletion_or_deployment_performed": false
+  },
+  "evidence_refs": [
+    {
+      "path": "evidence/sites-retirement-log-section.md",
+      "bytes": 1621,
+      "sha256": "74f99c2246931995555e46f609e95cb63eb498bf81f6047a0ddb0cb7a4c99c52"
+    },
+    {
+      "path": "evidence/sites-retirement-commit.patch",
+      "bytes": 2018,
+      "sha256": "dba33184ab6bb71ed0131dfb31eacdb3e93a952629425c69a4e7945a7dc83192"
+    },
+    {
+      "path": "evidence/sites-retirement-commit.txt",
+      "bytes": 311,
+      "sha256": "068f8d3234fa4054039d75b86fa4ad33f2ee5ee642050be6581e66e5f64a87ca"
+    },
+    {
+      "path": "evidence/sites-source-preservation-commit.txt",
+      "bytes": 2700,
+      "sha256": "edd2077e05927a9e1c758ede075de65ab0524b82a9f7fe102990d46952ecd1d5"
+    },
+    {
+      "path": "evidence/sites-hosting-at-source-preservation.json",
+      "bytes": 91,
+      "sha256": "2f07baf61ac93dafb7574ec9f634b2ffd2bfb58bb3211d19ab0f91330d0ebfb8"
+    },
+    {
+      "path": "evidence/sites-get-site-response.json",
+      "bytes": 382,
+      "sha256": "bba13d32a694e32dee9d9e010a7ee3dcf5a4365113f167e4d188590e3c9c9e16"
+    },
+    {
+      "path": "evidence/sites-list-versions-response.json",
+      "bytes": 382,
+      "sha256": "bba13d32a694e32dee9d9e010a7ee3dcf5a4365113f167e4d188590e3c9c9e16"
+    }
+  ],
+  "authority_effect": "NAMING_INVENTORY_DISPOSITION_ONLY; no new deletion/freeze/architecture acceptance"
+}

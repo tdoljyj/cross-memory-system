@@ -1,0 +1,45 @@
+{
+  "id": "V025_EXACT_MAPPING_ACCEPTANCE_INTAKE",
+  "decision": {
+    "path": "sources/mapping_review_v043/data/ScopedMappingAcceptanceDecision.json",
+    "bytes": 5119,
+    "sha256": "df82b2cad7693cf4d8b463fc108c1e476a6015189413181419e99bf67350a4ee"
+  },
+  "decision_id": "CLUED_V043_SCOPED_MAPPING_DESIGN_ACCEPTANCE_20260906",
+  "candidate": {
+    "axis": "product_architecture_mapping",
+    "version": "v0.4.3",
+    "filename": "Clued_商业v1.2_产品架构差分承接_v0.4.3_定点修订审查候选包_20260906.zip",
+    "bytes": 68888178,
+    "sha256": "18ed0482bfb639b4fcc8cdce45782b2649b127609f65286c7328cd143dc93dbd",
+    "members": 257
+  },
+  "author_outer_registry": {
+    "path": "sources/mapping_review_v043/input/Clued_v0.4.3_定点修订_交付与异目录复验登记_20260906.json",
+    "bytes": 23759,
+    "sha256": "2142161f0282da9dd9ffc77ad1fa6ad57bde59819faa0f2069fe4cb24a2e515b"
+  },
+  "impact_model": {
+    "path": "sources/mapping_v043/data/ImpactModel.json",
+    "bytes": 331183,
+    "sha256": "bb864788fd5ea8260bf242e209fd8ce73b0c52d113a7b0e18f39721ef4a626e3"
+  },
+  "review_subject_contract": {
+    "path": "sources/mapping_v043/data/ReviewSubjectContract.json",
+    "bytes": 2453,
+    "sha256": "a23867b07b724cebb8068d908fa1df7640c8fe3cbc8463a61cba51bd74f6f25e"
+  },
+  "mapping_design_input_precondition": "SATISFIED_FOR_EXACT_SUBJECT_ONLY",
+  "accepted_scope": "EXACT_CURRENT_MAPPING_FOR_DOWNSTREAM_DESIGN_ONLY",
+  "acceptance_limits": [
+    "仅对本精确v043及登记绑定的设计映射签发限定接受；不自动覆盖未来修订、架构或Console。",
+    "后续新不可变架构候选可将此决定作为已满足的映射设计输入前置，但本次用户仅授权独立复验，本轮不编制架构。",
+    "原架构v024的MINOR/OBS、12组40条件和8组28条件仍各自处理；先有效架构接受，再另裁结构冻结。",
+    "保留原产品CF/OD、Readiness、PRE/POST Entry、R06精确边界与独立模型计划；所有实际Owner、消费者、预算和执行资格仍需另绑定。",
+    "不确认真实许可、法规/平台资格、样品可用性、市场效果、现金/奖励/支付、模型或运行结果；只读文档检查不能代替运行证据。",
+    "本包内NOT_ISSUED为原作者封包时状态，不回填。当前接受由本包外决定独立存在，不将原模板或包外作者登记改成接受。"
+  ],
+  "new_architecture_acceptance": "NOT_ISSUED",
+  "future_candidate_automatically_accepted": false,
+  "authorization_effect": "NONE"
+}

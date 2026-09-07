@@ -1,0 +1,193 @@
+{
+  "type": "ActualFrozenMigrationExecutionRetention",
+  "state": "ACTUAL_64_PATH_MIGRATION_COMPLETED",
+  "observed_at": "2026-09-07T10:42:18.150921+00:00",
+  "executor_sha256": "15ed103a96943125978e9134a8322c6195f62fe24d3e2e070a8ad538b17ea2fe",
+  "freeze_sha256": "f40c8af253f811f820e4b3eccc144d63ca3548663810aba10bebb22331661b36",
+  "before_execution_commit": "819ed459b608ef224d621d70a9294f6b24481676",
+  "inputs_sha256": "37a6909deedae17dbfe97e844d8ec596c5de46e73c3cefafd4136008d3f3dcec",
+  "process_exit_code": 0,
+  "transaction_receipt": {
+    "path": "receipt.json",
+    "sha256": "7ba04bc7cf715a6b96f05f64db3d7f0281627e9c0919b15dd66aa3d26f9f6ca7"
+  },
+  "durable_originals": {
+    "path": "OriginalsAndTransaction.zip",
+    "sha256": "aef9f75fd4cb360d862daa83586e4a1bc96ad0f58c6daf3c66572ccff0ebcf5d",
+    "members": [
+      {
+        "path": "backups/0035.bin",
+        "sha256": "75d0788ff62a20d2d211115a66ab20fc38519a14fad890ab9a3d6f821e821793",
+        "bytes": 9637
+      },
+      {
+        "path": "backups/0036.bin",
+        "sha256": "af52a717b2c37ebabf81a7123244aa3dd9a91042ea87037fd026925e8111f722",
+        "bytes": 2753
+      },
+      {
+        "path": "backups/0037.bin",
+        "sha256": "d5f6ec6e821b9b1c71b0433e072804f48109ff55fc53f52b3a088b4205ecdaff",
+        "bytes": 2504
+      },
+      {
+        "path": "backups/0038.bin",
+        "sha256": "7f4b5b7050bd069022e5ff7c7dbf8ff75a36432bffdb618371b0c90d36d86063",
+        "bytes": 18272
+      },
+      {
+        "path": "backups/0039.bin",
+        "sha256": "e228508a4df2b750cd3f304b8188fe5b10f0529ea1ccdbd2dc85a6cfbca82e31",
+        "bytes": 55260
+      },
+      {
+        "path": "backups/0040.bin",
+        "sha256": "479fd0e39a8a96287642ea59644d1975666fc314cc589f39a0086c3d9446dd85",
+        "bytes": 15511
+      },
+      {
+        "path": "backups/0041.bin",
+        "sha256": "48ffc824dee7ee66632299677c5f770de605d8ae2a413746b7a6b737528082ab",
+        "bytes": 1059
+      },
+      {
+        "path": "backups/0042.bin",
+        "sha256": "06d276884e3667b8758961b142c92a674ff743be05cca3dbef975f5f4bf93f64",
+        "bytes": 20741
+      },
+      {
+        "path": "backups/0043.bin",
+        "sha256": "396503f7ca8d876c53414bd812e16dfe9788a2bb7848083fbde2192d2665b6f5",
+        "bytes": 28595
+      },
+      {
+        "path": "backups/0044.bin",
+        "sha256": "6a2d83a65921df60252aad350f3cecacfbab991be582368903aa40203c96d5ab",
+        "bytes": 32479
+      },
+      {
+        "path": "backups/0045.bin",
+        "sha256": "5663f2cad660a75765170cc5199edfcc5c99329344e7561145bd01c8be5f0485",
+        "bytes": 3454
+      },
+      {
+        "path": "backups/0046.bin",
+        "sha256": "bbb465429cf20945b60ce7ab65a3781e9a3db6b3fedbef5dc24ff7e3acd1fdec",
+        "bytes": 5060
+      },
+      {
+        "path": "backups/0047.bin",
+        "sha256": "3e030f7d0df898792dca815da25de77bca6e6ef12d8ad66c518b2c2d7228c070",
+        "bytes": 5549
+      },
+      {
+        "path": "backups/0048.bin",
+        "sha256": "86dce59f2269cbed5d155f5d18a32a832b86ee9bcdfae761b0bd7d5db8cdf64a",
+        "bytes": 25667
+      },
+      {
+        "path": "backups/0049.bin",
+        "sha256": "9fc3d13b8470823c60087975920bea87b56f0ff2ccd9c6b9fdd6cc8469028c2d",
+        "bytes": 7845
+      },
+      {
+        "path": "backups/0050.bin",
+        "sha256": "80755b77c5a2632949b935ad3e50b8cdc172c1db48008eff796214e118b704d9",
+        "bytes": 21497
+      },
+      {
+        "path": "backups/0051.bin",
+        "sha256": "6f30c7601f95410c7d6d6e614bfa05defdcd4cc8b202203099a5ae173e79b679",
+        "bytes": 13615
+      },
+      {
+        "path": "backups/0052.bin",
+        "sha256": "d3725396f8edfea08a68b6bb768afae7ff1d5baac83dedbcb70e96c1584eb1ff",
+        "bytes": 19177
+      },
+      {
+        "path": "backups/0053.bin",
+        "sha256": "7e57ac9e595fe697188b2a1c8da07f21f3c84bbe5128eb2ba9d3371ea0a0f434",
+        "bytes": 14090
+      },
+      {
+        "path": "backups/0054.bin",
+        "sha256": "d348ad186fb6670882f8423c2e6d7ab3c38374a1a3ad48bf920558ed03bf2e5c",
+        "bytes": 11866
+      },
+      {
+        "path": "backups/0055.bin",
+        "sha256": "0869cb7b8a850ea400e991fd0d4a23c4babfbf5954cb322b27b5c7798df28ae4",
+        "bytes": 56505
+      },
+      {
+        "path": "backups/0056.bin",
+        "sha256": "5f3aec42d02d815a93a65c302ea867904e5c0fb1b704949fc8aad30db86e8fa5",
+        "bytes": 16021
+      },
+      {
+        "path": "backups/0057.bin",
+        "sha256": "155d7d5cd92d7bad533db1939c0a3690feb68016055e9b246738d89b527a7e82",
+        "bytes": 7699
+      },
+      {
+        "path": "backups/0058.bin",
+        "sha256": "a030b270e80852d820367d393fa482939e738e91ddc46053f7356f584cc24f80",
+        "bytes": 5620
+      },
+      {
+        "path": "backups/0059.bin",
+        "sha256": "1bb27a0cb74e5d0dd64713ecfc7c2b9cc209d9a94fc1f03714d16043b34cb736",
+        "bytes": 15658
+      },
+      {
+        "path": "backups/0060.bin",
+        "sha256": "b10ecf3d6179985de9b18ed246b5a727cb1adf463a925191d85a3e178cbce78c",
+        "bytes": 39809
+      },
+      {
+        "path": "backups/0061.bin",
+        "sha256": "12475fe2e9f03238b182fd5a596b82d5b227ad8c22e083eb1ca990a9f6ac501c",
+        "bytes": 46858
+      },
+      {
+        "path": "backups/0062.bin",
+        "sha256": "528b026db8507c0ef9bca58f080d6e22b996ca5a1b91679aa117efacd829c8ed",
+        "bytes": 13671
+      },
+      {
+        "path": "backups/0063.bin",
+        "sha256": "ac24b4f23dd34bd03b6a711e5b498a1716c7236fb94adfebe61f08422b352072",
+        "bytes": 29461
+      },
+      {
+        "path": "events.jsonl",
+        "sha256": "255d6e5d785fed114e8313d1bfedc9dd7bdee0c77d407f54bf5e15b8ecb3d268",
+        "bytes": 12457
+      },
+      {
+        "path": "freeze.json",
+        "sha256": "f40c8af253f811f820e4b3eccc144d63ca3548663810aba10bebb22331661b36",
+        "bytes": 8500
+      },
+      {
+        "path": "inputs.json",
+        "sha256": "37a6909deedae17dbfe97e844d8ec596c5de46e73c3cefafd4136008d3f3dcec",
+        "bytes": 32713
+      },
+      {
+        "path": "receipt.json",
+        "sha256": "7ba04bc7cf715a6b96f05f64db3d7f0281627e9c0919b15dd66aa3d26f9f6ca7",
+        "bytes": 7741
+      },
+      {
+        "path": "state.json",
+        "sha256": "4913d7f6e2772d988277e0cc4f274fa528f783f43f3e040161aa6562c73e4be6",
+        "bytes": 3511
+      }
+    ]
+  },
+  "recovery": "Original transaction remains outside repository. Retained ZIP preserves every original/metadata/intent/event for recovery; do not overwrite a concurrent changed path.",
+  "later_steps_accepted": false,
+  "authority_effect": "NONE_NEW; execution of the existing scoped Freeze only"
+}

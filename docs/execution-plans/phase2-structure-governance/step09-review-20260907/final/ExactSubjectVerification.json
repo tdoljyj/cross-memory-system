@@ -1,0 +1,1092 @@
+{
+  "review_subject": {
+    "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\ReviewSubject_20260907.json",
+    "sha256": "960cab1c1b87fb898f6c2ce0604e54cf8026125f29b9633543971b7ab7de43a9"
+  },
+  "candidate_commit": "b53e601385653038078c55b513f5cbeb80a6205e",
+  "candidate_tree": "b40062abcb206e7be849ff9c1f30f6577ebb586c",
+  "files_verified": 154,
+  "verified_files": [
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/CurrentScopedAccessReview_20260907.json",
+      "bytes": 5872,
+      "sha256": "88a846d82338c77d30ba802895b2ce04e1b8ac76bcbae69dd0cabf070f9dc9a7",
+      "git_blob": "e16e2c13d6cf58f9f8bd9461ff797a3c7e8dc070",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/ExactBlobCheckoutCI_20260907.json",
+      "bytes": 1326,
+      "sha256": "d272374b217c68e93579bddbf43451e3ad532942ffe31562fb347b463cb2d34b",
+      "git_blob": "89a06ca0b5bfbdc022dfd3d95e4b94a711ac3e1e",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/Step06-ScopedAcceptance_20260907.json",
+      "bytes": 5319,
+      "sha256": "bd40c82a21e7b19c2c36e56d7b877078e45c6bfdf1593590fb56ab364f47889a",
+      "git_blob": "d5f1f495bb12a8451f905679a9799f195e5ad617",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/Step07-ScopedAcceptance_20260907.json",
+      "bytes": 3500,
+      "sha256": "dec7601899be7118b3baff3d78793ecaf98b06316070b881ca30297a3b0f22b3",
+      "git_blob": "fcd71d34f12decabef9f9bfb28dfe2c9e81e9a8f",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/Step08-ScopedAcceptance_20260907.json",
+      "bytes": 3346,
+      "sha256": "8bac86599481c9effc67274bb29b7f352d59d4e656add8805e41f7437ced455c",
+      "git_blob": "7a75c7141e74d4dd501760f4081c8e657ff255a6",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/BindingChecks.json",
+      "bytes": 1789,
+      "sha256": "5fd645db86210fcbcf9131202b88694a0335296a972339fba3a15b48c7f345ae",
+      "git_blob": "64ebc775c3337ecc019c19ad93766be80d5dfc37",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/C09ExportScopeDisposition.json",
+      "bytes": 4139,
+      "sha256": "fa2ba22146d5560f502d5e70d7045ead5577fea7c1af909b7ab51a9e64b718ff",
+      "git_blob": "89625b7ef84099e6177b67d08c10d9f24f541326",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/CurrentCIRunBinding.json",
+      "bytes": 1205,
+      "sha256": "9ce45d5526abbcac641c88ecea3d29d20f30e0ce97c953ff1740e65cd5707657",
+      "git_blob": "e129327049542eaa5a92d1acfa29674ad7001654",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/ExecutionEvidenceReuse.json",
+      "bytes": 7838,
+      "sha256": "e49ef52041404d2b486d49bb3da4a4c414e61e472d93bc7970dc64802088d220",
+      "git_blob": "075cddfe3d7ee7bc38bf86214ae3d686e8297656",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/RootIndependentReview.json",
+      "bytes": 1966,
+      "sha256": "bc2fc121083422a9f13df635511ff11f9279612e2e00da893440772b1ccd92d7",
+      "git_blob": "057c7984c209ffce24f0a073e1af6c7d9f1678b3",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/SourceIndex.json",
+      "bytes": 30351,
+      "sha256": "d246a7ee943eeaa1071d0888b9737cd4be621e0dd01f866d62a10e4d49af044a",
+      "git_blob": "0cfd7a8a124890082619b63663933ef011937d0d",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/Step6ClosureAssessment.json",
+      "bytes": 5842,
+      "sha256": "094cbce78fd3f8675b46048dc8f469fceae420ac88d2f969f0f9a8ecc4222af6",
+      "git_blob": "09c77fadc6d618734c40a0733e52ec95f3d3c5f3",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/Step6ClosureAssessment.md",
+      "bytes": 5562,
+      "sha256": "9ef96ed7932cd7845e98b712276a6822ba0468856779438af04744fd06d76e79",
+      "git_blob": "cf4c2011af910c642719c8f9178344256461bd9f",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedAuthorizationRegistry.candidate.json",
+      "bytes": 74695,
+      "sha256": "359e7461ba3166bef63815f37ddd9c247aada317c14e4e62bdee3bc79cc3fcdd",
+      "git_blob": "80fd4cbcbba4a4c3b77e8d84c83b7d8ae8f33cd2",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedConsumerRegistry.candidate.json",
+      "bytes": 243588,
+      "sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+      "git_blob": "fbd12e470cc5cd2af30ff4240a17a33f11b9b2a3",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedReceiptRegistry.candidate.json",
+      "bytes": 91138,
+      "sha256": "05d182805b31ba9d5e6c1c3fa32ae2081527a92faaa76263debded6ffca5efa4",
+      "git_blob": "57ebb746deb260a11da055a318ac5eecff32b850",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/before-c01-correction/BindingChecks.json",
+      "bytes": 1557,
+      "sha256": "0e953b5e136a15210286e209ab024c83a6e724a9b1906fca78e4d0ae7db1ae97",
+      "git_blob": "a101c0533a342f76d52f359ba7348fa497716d7c",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/before-c01-correction/Step6ClosureAssessment.json",
+      "bytes": 5436,
+      "sha256": "d7e98183fc9aef62de01dc969bd8749b46b3a10a7d3c27b2f860f40cedfad228",
+      "git_blob": "4d3d55ce1e3d4ec2253dbb4306dfb67e1b59a4d4",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/before-c01-correction/Step6ClosureAssessment.md",
+      "bytes": 5236,
+      "sha256": "9d832b55fc64ad838c9dc4b7a527ced3ff3a9551545174427df2c942bf01987c",
+      "git_blob": "74873d59fb5f6965d4f7e0e842a095b61ec2105b",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/before-c01-correction/TypedAuthorizationRegistry.candidate.json",
+      "bytes": 75170,
+      "sha256": "9b17e7bce4327abc179aeb4ce214670341bfed252658903a58244d916de73955",
+      "git_blob": "09532a0270de6b6e502a2dc63251ad979048848b",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/before-c01-correction/TypedConsumerRegistry.candidate.json",
+      "bytes": 248568,
+      "sha256": "c14a299a40c2bcd7d915cb4e5dedaf6471220a3a242d2f9156620746745aa38a",
+      "git_blob": "85597c54a1e307bcfe048c10a0e089265475ea61",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/LocalVerification.md",
+      "bytes": 1792,
+      "sha256": "4daf8f97b9ff6b225d9a2b857f75c6f1dc87e791b1405235c0384ed5dad87dd4",
+      "git_blob": "81a2b63632647f93caa73af994f2d7b56e8dd1c5",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/OriginalEvidenceRetention.json",
+      "bytes": 734,
+      "sha256": "4b4476193e25a5ccf4c4d6d073c251cb7c6276cf00fb199d05c85bd67f70f6ef",
+      "git_blob": "fc77da158c7315f926a150c4e3f18a8ae19a67cf",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/OriginalStep7CandidateEvidence.zip",
+      "bytes": 606221,
+      "sha256": "0b56d46428cb6badb615edf52100e3aff6b446bfd580384700edf077b9b02e37",
+      "git_blob": "bc896f87766ce591c20b4f16e1ad9b46fc61bfea",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/ProjectionBindings.candidate.json",
+      "bytes": 6313,
+      "sha256": "717cad53947753b27641d08cb23cb8252610c43aab9bac97295a56825a5527dc",
+      "git_blob": "ac2d68e11a89e975ab2a5cf1eaa35812fc6d89e2",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/ProjectionBindings.repository.json",
+      "bytes": 9087,
+      "sha256": "7e526281339067dea908765cad2f8aa4b510d0371dcd9f2915cc31221e6802cd",
+      "git_blob": "4f2df08ab31c6ff8c8a2a96cbf0934081a35af80",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/ProjectionCheckReport.json",
+      "bytes": 1969,
+      "sha256": "385cdef64f2610d74b97983dcc620adc3c590581c75f445906a1b5f9a851b078",
+      "git_blob": "bf680a16200cf2b010c9aa199f3cc6230923bdcd",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/ProjectionConsistencyReport.json",
+      "bytes": 1969,
+      "sha256": "385cdef64f2610d74b97983dcc620adc3c590581c75f445906a1b5f9a851b078",
+      "git_blob": "bf680a16200cf2b010c9aa199f3cc6230923bdcd",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/README.md",
+      "bytes": 1832,
+      "sha256": "a1c7044643f1f385474e206f6129cbaf9cf9ce158e3ac2ff16a1c8c677fdeb21",
+      "git_blob": "32b2524e0cb49e992e8f0fae37a25e3c74e9f94f",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/RepositoryProjectionCheck.json",
+      "bytes": 1997,
+      "sha256": "d4de7b9c3f5cefdb55c65e045903849841a2ec1d915644892065c778b6f25d88",
+      "git_blob": "c3fa5dea4b3656067dc217716270f4b5a2e7fdbc",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/RepositoryProjectionGeneration.json",
+      "bytes": 1997,
+      "sha256": "d4de7b9c3f5cefdb55c65e045903849841a2ec1d915644892065c778b6f25d88",
+      "git_blob": "c3fa5dea4b3656067dc217716270f4b5a2e7fdbc",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/RetainedSourceCopies.json",
+      "bytes": 1551,
+      "sha256": "57dc9437b90c3520ac51a92a23959ac4a5f86a4a4b590e1ba26ed6121b72688a",
+      "git_blob": "b981277c615ac8069e86bb14107ca2605fc638fc",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/generated/AGENTS.governance.md",
+      "bytes": 2251,
+      "sha256": "a7f5e547cd0a8d6062285a0580c782feb2fe3fffa654a71b10c5e975d07253b6",
+      "git_blob": "5efb950cf4e19e4a20b99f9047b89651e000aac6",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/generated/CURRENT_STATUS.history-original.md",
+      "bytes": 2753,
+      "sha256": "af52a717b2c37ebabf81a7123244aa3dd9a91042ea87037fd026925e8111f722",
+      "git_blob": "1256d0014296651eb26d2d036749295cc78f556d",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/generated/CURRENT_STATUS.projection.md",
+      "bytes": 2641,
+      "sha256": "939392620e3147b51030201e548e6732c0f1c1bc12a7ec4762f14f20fb8e74cd",
+      "git_blob": "edaf702b96e4429d66fe6808304a708f5b515c85",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/generated/ConsumerBindings.projection.json",
+      "bytes": 35867,
+      "sha256": "6000d1c819450d8e345bd3a1155d8746e89cda87a383a410ab83094e1c2065ba",
+      "git_blob": "fc739cc4ff68904b7d266d86fc31a38a3fcfd7fe",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/generated/GovernanceDocs.projection.md",
+      "bytes": 2251,
+      "sha256": "a7f5e547cd0a8d6062285a0580c782feb2fe3fffa654a71b10c5e975d07253b6",
+      "git_blob": "5efb950cf4e19e4a20b99f9047b89651e000aac6",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/generated/GovernanceManifest.projection.json",
+      "bytes": 75433,
+      "sha256": "eeca98c1eb3af0701bdb5a16898d710d25f6c9e555d48792ca3631ecc9d82b2b",
+      "git_blob": "ebdd41a9924e79b215d5b0dcd1874671e4e8deae",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/generated/GovernanceRegistry.projection.json",
+      "bytes": 74172,
+      "sha256": "73837b86e206489299470ebb8bb094605e3584c4673bd81f6744292fff603bb7",
+      "git_blob": "a7ead1f15a96eac499df2a1bf9cfaa94b22b3824",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/generated/IdentityFiles.projection.json",
+      "bytes": 8361,
+      "sha256": "0137a2a726cdb1289e064135b6de7e45f61cb7dd1f991564b2e5e2327a935c26",
+      "git_blob": "179b16a90beb943f99814b52407aed3d79fccd96",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/generated/README.governance.md",
+      "bytes": 2251,
+      "sha256": "a7f5e547cd0a8d6062285a0580c782feb2fe3fffa654a71b10c5e975d07253b6",
+      "git_blob": "5efb950cf4e19e4a20b99f9047b89651e000aac6",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/generated/StatusMigrationPlan.candidate.json",
+      "bytes": 679,
+      "sha256": "4712f84daf8a3447b4c8b2a4842311cfffc52fcd800b6538390ab58a9c585d38",
+      "git_blob": "d99374053490ad5d589da3883b2d92786e2a911d",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/generated/ToolRouting.projection.json",
+      "bytes": 3286,
+      "sha256": "3a42548d7e85247e831508b843a7f4f717f0a68868ebbe076a978de8616a56e5",
+      "git_blob": "72bfc69b62c197a7db6a2851ac1e7343c3a554c5",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/generated/WorkflowReferences.projection.json",
+      "bytes": 3326,
+      "sha256": "eb832c3a885509e348a1566ed13ca9f48ba2b9ac4f30946b95df35c3f637d8ed",
+      "git_blob": "b3e81ae4dfa099146bb1d588819b477f6cd5efb4",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/inputs/CurrentArtifactIdentityPolicy.json",
+      "bytes": 776,
+      "sha256": "3a14df68ea81c6390316c5df09d51a049b52a640871ab57953c42acb30624bff",
+      "git_blob": "a063c4eb0490fe6d4971a8e983384db4f95ef08c",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/inputs/PreMigration-AGENTS.md",
+      "bytes": 9637,
+      "sha256": "75d0788ff62a20d2d211115a66ab20fc38519a14fad890ab9a3d6f821e821793",
+      "git_blob": "7007225f55236d6132ae6ecb73f171102156d8a7",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/inputs/PreMigration-CURRENT_STATUS.md",
+      "bytes": 2753,
+      "sha256": "af52a717b2c37ebabf81a7123244aa3dd9a91042ea87037fd026925e8111f722",
+      "git_blob": "1256d0014296651eb26d2d036749295cc78f556d",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/inputs/ReviewSubjectContract.json",
+      "bytes": 1383,
+      "sha256": "c2cd13dbe8fd046aa8f0344778141cb9b115fae0048a8c673b60bd25b03498d3",
+      "git_blob": "3e629ea0305fbcaed417fda16a2e6fb9e967ac45",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/project-governance.mjs",
+      "bytes": 16156,
+      "sha256": "ffd35b923be0729fab18de13b2e234ce971788bdb5b6aa1ac8520c2a516755df",
+      "git_blob": "1498d36ac7aa376ffbc78b6e6bbc49471cc8b8a4",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/repository-generated/AGENTS.governance.md",
+      "bytes": 2357,
+      "sha256": "9bcc962497ff82bf86dd3650b6d965d6ffa683125275fa55e278eb4b3914a6f0",
+      "git_blob": "ea2edaafe2e429df6a1355f944aa4ee7f9f0323e",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/repository-generated/CURRENT_STATUS.history-original.md",
+      "bytes": 2753,
+      "sha256": "af52a717b2c37ebabf81a7123244aa3dd9a91042ea87037fd026925e8111f722",
+      "git_blob": "1256d0014296651eb26d2d036749295cc78f556d",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/repository-generated/CURRENT_STATUS.projection.md",
+      "bytes": 2747,
+      "sha256": "2bb3a1c38e6e5229db62e232dbde74ae4759337bd77f01d22d0bc7dff4b7d98c",
+      "git_blob": "9163be41b892ac1d9d510ec6ec93f5b9293049f7",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/repository-generated/ConsumerBindings.projection.json",
+      "bytes": 186284,
+      "sha256": "a3448f25eae721026d8fc8ec0cbad012964e46c81a84dadecc3e365fc38e2cef",
+      "git_blob": "af404b229e3414de7c3e5ce6bfe0146483db4db8",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/repository-generated/GovernanceDocs.projection.md",
+      "bytes": 2357,
+      "sha256": "9bcc962497ff82bf86dd3650b6d965d6ffa683125275fa55e278eb4b3914a6f0",
+      "git_blob": "ea2edaafe2e429df6a1355f944aa4ee7f9f0323e",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/repository-generated/GovernanceManifest.projection.json",
+      "bytes": 235275,
+      "sha256": "682b0a2821d942d1c57bc6baa7926bc862b26f89ce1246bded37da97325a7493",
+      "git_blob": "c12158bae167b9e78ad242cbdf8bf1560cfb377b",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/repository-generated/GovernanceRegistry.projection.json",
+      "bytes": 232231,
+      "sha256": "f1116caf940ca665193c60915f6df4e5dc506fafa0f1dea8e20d8ca702dd47f8",
+      "git_blob": "c7039709e030c487983730445740c80f14dc16b6",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/repository-generated/IdentityFiles.projection.json",
+      "bytes": 9775,
+      "sha256": "6259c4d9326cb24e15a5863efa61b8ffe95762f295398fbb75cbc1bd8606c0b3",
+      "git_blob": "ec2ea54830b2046d55a6403622dc4092ac71a9f6",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/repository-generated/README.governance.md",
+      "bytes": 2357,
+      "sha256": "9bcc962497ff82bf86dd3650b6d965d6ffa683125275fa55e278eb4b3914a6f0",
+      "git_blob": "ea2edaafe2e429df6a1355f944aa4ee7f9f0323e",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/repository-generated/StatusMigrationPlan.candidate.json",
+      "bytes": 751,
+      "sha256": "1881cc343304904893b561a7c9d6d5881981378eff40c7b06cad2c0b29e81ecb",
+      "git_blob": "69e9d98e4a8300ca232e91a9d6ed26537490da6a",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/repository-generated/ToolRouting.projection.json",
+      "bytes": 4772,
+      "sha256": "8f63d5eae3d643edf3639ba709fa99e5bee1cb5cae7b8cb19813f168d4fa4d10",
+      "git_blob": "bff3773c731534150315241082d8018f1dfc82f6",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/repository-generated/WorkflowReferences.projection.json",
+      "bytes": 4716,
+      "sha256": "5cb691e23d4f8c857e9babde7d5f4d0bc9ed7b774ee8870aa0b0766e2bf5124a",
+      "git_blob": "b5766c35c471ee2cc9c2832dbb30ac2f2c48b797",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step08-validator-20260907/CurrentBindingReceipt.json",
+      "bytes": 160706,
+      "sha256": "a73cf7c10faae1bdf2e241e49f748f61c98adeded37f2e58d65485dcd79d9569",
+      "git_blob": "74143eb0a501765d07833b5dd1f6832bafbb50dd",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step08-validator-20260907/EvidenceIndex.json",
+      "bytes": 164190,
+      "sha256": "b20482d2084ad8c9ec91fea15cd98def54a4edd76428d81ee50a046f33399356",
+      "git_blob": "f191fd25859eb995507d9e0864e9af8f66c50edd",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step08-validator-20260907/FinalBindingControls.zip",
+      "bytes": 531303,
+      "sha256": "e08442a94fe41bcad4e035471e10df6a12a0769599b19667a82dc072c818e9c6",
+      "git_blob": "7363d5b82556de6b8156835a6191422f0d12ef54",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step08-validator-20260907/FinalBindingVerification.json",
+      "bytes": 20222,
+      "sha256": "085b8f54c8908ffc5c3e5c4b5621f6addd429b0520a8e6a24e04a01b427a577e",
+      "git_blob": "ba80fe22a6c63cea3c37c6c028cbf99290493d09",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step08-validator-20260907/IndependentStep7BindingReview.json",
+      "bytes": 15412,
+      "sha256": "2369b6a173f6e3cbe0beb38fea2130fdd8bc0ed536d55d9ea2b031c41a11c3a5",
+      "git_blob": "5de60a2dce664d0dccd37b17f7847ba2278645d9",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step08-validator-20260907/PortableAdaptation.json",
+      "bytes": 11900,
+      "sha256": "5add9682d2841e7c86a1d8878c56292e2e0b1cfea11ab582ecb3800eaa344fc0",
+      "git_blob": "9dbf70a72e8492ea5532c63bfec7e27a6b2b2aaa",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step08-validator-20260907/PortableDriverCheck.zip",
+      "bytes": 188798,
+      "sha256": "6fca1429419f0048601613e4aa2aeea372c89ac28838a0bfe57f7565be8e91ce",
+      "git_blob": "52114d0a743db45e0d6b8d5501b9e6bc51ce9003",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step08-validator-20260907/README.md",
+      "bytes": 2906,
+      "sha256": "0143c06dfce2bd0ff6283d37182c6cbeafd86223390b2a08e937108e1af9fae0",
+      "git_blob": "e8cbbcb4442baac95d37f8130a73c17d3b0352ec",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step08-validator-20260907/ReferencedSourceBytes.zip",
+      "bytes": 5521455,
+      "sha256": "42085d2d3880395e2eb9c5563d3d8dcdc5791a8ef65c43715b828ac6d639e7d5",
+      "git_blob": "0967047a8b315592a5d1563696c25f4f8de11c7b",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step08-validator-20260907/RootIndependentStep8Review.json",
+      "bytes": 8947,
+      "sha256": "0085b551a80d3aa533927c8f7da5679d7063fe559913fb40db3bdddb43afe20c",
+      "git_blob": "ba8fbc5366580a5513d2343b7ec25990b3a069a8",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step08-validator-20260907/SourceIndex.json",
+      "bytes": 43992,
+      "sha256": "2d43dd59ebac6038c1b1d0a30f6246e6bf87dda85e0b9ac9419def88c9ad3045",
+      "git_blob": "102e1399a97f7783b233e95b3cfe533b0f73d597",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step08-validator-20260907/SourceLocators.json",
+      "bytes": 6210,
+      "sha256": "04aa73c7673b67bc046b8fa5dd37e8bbd9251e84766c09afa735d2a35fe8162b",
+      "git_blob": "105d552d4e9ef02885209720ba7cff80d374e78d",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step08-validator-20260907/Step8ValidatorEvidence_20260907.zip",
+      "bytes": 3547622,
+      "sha256": "87984a314dbdc176b451ceab0c1a0a4be4543e0ba4941b76f4e668c4302e1f2e",
+      "git_blob": "f80be2de8bb962604c1b8a493280db5e28b8ecde",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step08-validator-20260907/step4_sources.portable.json",
+      "bytes": 10645,
+      "sha256": "ffe6ea867b76657553312b3c45571b1fee9bfaca14413fc3679c73c0d39508d3",
+      "git_blob": "03894096cd87fa581d34d41c6e86c210ffef9bf2",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step08-validator-20260907/step5_sources.portable.json",
+      "bytes": 16995,
+      "sha256": "18635b8e12ea817d77648227acec65accc5d342bb6fa3eba70405a3740246bd4",
+      "git_blob": "390a487fb206be040f5fe52a94793c6c72c8f997",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step08-validator-20260907/step6_sources.portable.json",
+      "bytes": 27246,
+      "sha256": "87d60f81c3e28de14a57b2a666308a403879d6ec7f03a07933887fd8d5aacc1e",
+      "git_blob": "3e4fcb627785389e59723aee01231d6afb4f5785",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step09-review-20260907/preparation/Original40Assessment.preparation.json",
+      "bytes": 89677,
+      "sha256": "093baa56b20b449a0d868458ea129943b5585d534e01d54f7b34b9b28c0f529c",
+      "git_blob": "2907617500ad0c3c97aa4a56f27ef89e5860e0ef",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step09-review-20260907/preparation/Original40Assessment.preparation.md",
+      "bytes": 10004,
+      "sha256": "6ad4dd6cf6cd9b009da9898a52c03bff2c4005b627cceac724b06dbe39e64296",
+      "git_blob": "fed09b4eadfcb794c739a1364caec1a15b9f3139",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step09-review-20260907/preparation/RootSelectedDispositions.candidate.json",
+      "bytes": 1760,
+      "sha256": "c4fe3cc13670a886e6703ab191284ddb2d0077d481f674a3cab10b49d51e65b8",
+      "git_blob": "c2e875f09981ca7b760f979de6389c1c32cbf946",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step09-review-20260907/preparation/SourcesAndChecks.json",
+      "bytes": 16139,
+      "sha256": "559a08ecc2c4cf5e0a2cfc181812d58ce063fd758a8b3be7c25c4acd98a8ae4c",
+      "git_blob": "58a9b843be9317e777b31176b79cead50a61fabc",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step09-review-20260907/preparation/StagedDispositionProposal.json",
+      "bytes": 41422,
+      "sha256": "2d27c7b9a673dff1484caea6d3fb5ea409467346eafb96557c7123bd5a5ec653",
+      "git_blob": "d186e4951b738bbb6b8916f1bde094a202e3c330",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step11-structure-inputs-20260907/RequiredCheckSetCandidate.json",
+      "bytes": 10577,
+      "sha256": "33dc28061671985750d5116751dffbba6c0907447bad3998186492101377670b",
+      "git_blob": "142818a8d834c58c694d9f6eb5eb8f009a1a8a06",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step11-structure-inputs-20260907/RetainedOriginalStructureSources.json",
+      "bytes": 1567,
+      "sha256": "57f56fe6e4383eca526f8c18ae56044bbbdec8d09cc0325c34b344f567bd1860",
+      "git_blob": "cce29b0280534add1caaeb3c498996b62733c4d4",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step11-structure-inputs-20260907/StructureFreezeEvidenceMatrix.json",
+      "bytes": 4723,
+      "sha256": "396dc8a6f4118d224cff1765b42d8a395b4309e6ecc5889c6ab7a0e04cdbafd8",
+      "git_blob": "5716aaf9e6844b27d8fb00e9c08496b02156728f",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step11-structure-inputs-20260907/StructureFreezePrerequisiteStatus.json",
+      "bytes": 15203,
+      "sha256": "37306d420b8e1c7380cdb30998e835d1dbbcfc5f6f62754615a5e1b09ac72925",
+      "git_blob": "fba9bc14c04876d0b9f3e9a7bfc68ec5934d3506",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step11-structure-inputs-20260907/VersionCandidateOverlay.json",
+      "bytes": 18219,
+      "sha256": "3f12c52ebcf261990653433dfe6f803696048fbb457088d4e2a185c46f640911",
+      "git_blob": "66b09f857a292424a9e5439340e76b067ecfa00e",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/DcpTargetBindings.candidate.json",
+      "bytes": 3803,
+      "sha256": "0b09223cdeda8042f39f31bc691403b537254fdda68d231521164e1999c8a717",
+      "git_blob": "4034629e0009a039ec8f09f316ef47f293491d06",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/EXECUTOR.md",
+      "bytes": 5484,
+      "sha256": "6f821d1a40baab83ddec329aa80fe436e23dbb08838fd302c3a9afa3cf6f7a11",
+      "git_blob": "738728b9adde397b3bf1ae5cec6740e53afdf748",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/ExecutionInputs.candidate.json",
+      "bytes": 32713,
+      "sha256": "37a6909deedae17dbfe97e844d8ec596c5de46e73c3cefafd4136008d3f3dcec",
+      "git_blob": "77ac328283994f59d3f7bc0bc34ffb267561fad8",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/ExecutionInputsSummary.json",
+      "bytes": 644,
+      "sha256": "f52dbcf94fdb756a7d5bb147c66f38c98e4eb4b8bf7825ef4cbfce2ffbbd1749",
+      "git_blob": "a1b09c9c5b25076c55d9dcf7270f502c61f024b0",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/ExecutorVerification.json",
+      "bytes": 1548,
+      "sha256": "963f2b608342cd0b3092f8255e0504a66e879e514c5552bfce284695c3875d6f",
+      "git_blob": "861ecdf3dc7bdf420517c7818f1a0ddf047d274f",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/FixtureVerification.json",
+      "bytes": 1965,
+      "sha256": "6d47aecd089bd57a2dc5364e65bca13be9a2a5d3136e5abc22c5c8bd8e4bd7f5",
+      "git_blob": "41adc2d4f8719e34a645df4e578a02b1674946ba",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/HistoricalMoves.md",
+      "bytes": 3625,
+      "sha256": "721fff6c2c9062418fa70994db62a06a17462aebc5241a14565ca05d59997caa",
+      "git_blob": "7de878c85c5d88c66471932ed9d624d5b5b796c5",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/HistoryPathMap.candidate.json",
+      "bytes": 14042,
+      "sha256": "094ad1bcc2b117025ab00897114eb362c198bf48fd4819d445d3decec992d174",
+      "git_blob": "bcbd25797965467a2479742b1eff03f02fadaa27",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/MigrationPlan.candidate.json",
+      "bytes": 41261,
+      "sha256": "d8e1b8bb5058e9b2e4be9b4c0e836ad101eeefe7a839e6bc3ac5338f8b8310d0",
+      "git_blob": "7313daec366a28809456bf6fed82091ec7391893",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/OriginalMigrationTestSources.zip",
+      "bytes": 379602,
+      "sha256": "3c2cafd7c052969e470ed4a2a915202fa39421f040793f777132fa8a12f72d28",
+      "git_blob": "925b7680ad76799ad64a11a638873e0a3b861c9a",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/RetentionAndRootReview.json",
+      "bytes": 1349,
+      "sha256": "c970089464bffcbf7cbc893f4b24cfa68d273df46fd60e232006ca26671fbbeb",
+      "git_blob": "cd1a3177540f5427b68fcb6475205e5d9322f603",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/ToolCompatibilityPlan.candidate.json",
+      "bytes": 8786,
+      "sha256": "baf0ca363fb8550970a2eba76a7e3d53d523f8dbd4002e767902bea6a68ad769",
+      "git_blob": "90b7be29ea08cec457928f31fb2a9491e086dfa3",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/AGENTS.md",
+      "bytes": 11994,
+      "sha256": "0d209391925dfc3c490cecfdb1e48c9266f0fd9c3d2e26903e023002f2eaf354",
+      "git_blob": "ffe98659c38a5f773b3664dca143c3cdb8597274",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/CURRENT_STATUS.md",
+      "bytes": 2747,
+      "sha256": "2bb3a1c38e6e5229db62e232dbde74ae4759337bd77f01d22d0bc7dff4b7d98c",
+      "git_blob": "9163be41b892ac1d9d510ec6ec93f5b9293049f7",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/README.md",
+      "bytes": 4861,
+      "sha256": "378fef921798a96d8833e9d7a03fa9485153f06e95b7b52b6968d4f21d188c54",
+      "git_blob": "b15ae99ec6676da45d647f369e07cd73a1673438",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/canonical_read.py",
+      "bytes": 462,
+      "sha256": "3c467b498254a7de504d26e70630ffcdf9b150735ea2670b7fdc82de8d04e3a2",
+      "git_blob": "2b5ea6e6c9a5bb0b2b25a405a464c1a8e82aa0f8",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/development/authority-index/phase2/SourceIndex.json",
+      "bytes": 1912,
+      "sha256": "2dc9a544e13dc7f2fd53f54cd31230f33ae429823e741e6f79906624f8c5a73d",
+      "git_blob": "ab082aeb3a075996a255d0cf187f6c103277bd23",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/development/contracts/phase2/SourceIndex.json",
+      "bytes": 8754,
+      "sha256": "af08da8b9a738a262624e07c1e5a9385590c47c085d12383b023b4b0b4c6a9e3",
+      "git_blob": "6c9937bf282e12aafb7744dfd17f7a5319c6ecb8",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/development/projections/phase2/ConsumerBindings.projection.json",
+      "bytes": 186284,
+      "sha256": "a3448f25eae721026d8fc8ec0cbad012964e46c81a84dadecc3e365fc38e2cef",
+      "git_blob": "af404b229e3414de7c3e5ce6bfe0146483db4db8",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/development/projections/phase2/GovernanceDocs.projection.md",
+      "bytes": 2357,
+      "sha256": "9bcc962497ff82bf86dd3650b6d965d6ffa683125275fa55e278eb4b3914a6f0",
+      "git_blob": "ea2edaafe2e429df6a1355f944aa4ee7f9f0323e",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/development/projections/phase2/GovernanceManifest.projection.json",
+      "bytes": 235275,
+      "sha256": "682b0a2821d942d1c57bc6baa7926bc862b26f89ce1246bded37da97325a7493",
+      "git_blob": "c12158bae167b9e78ad242cbdf8bf1560cfb377b",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/development/projections/phase2/GovernanceRegistry.projection.json",
+      "bytes": 232231,
+      "sha256": "f1116caf940ca665193c60915f6df4e5dc506fafa0f1dea8e20d8ca702dd47f8",
+      "git_blob": "c7039709e030c487983730445740c80f14dc16b6",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/development/projections/phase2/IdentityFiles.projection.json",
+      "bytes": 9775,
+      "sha256": "6259c4d9326cb24e15a5863efa61b8ffe95762f295398fbb75cbc1bd8606c0b3",
+      "git_blob": "ec2ea54830b2046d55a6403622dc4092ac71a9f6",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/docs/history/ADR-CLD-001-LKG-Max-Age-One-Hour.md",
+      "bytes": 3454,
+      "sha256": "5663f2cad660a75765170cc5199edfcc5c99329344e7561145bd01c8be5f0485",
+      "git_blob": "2c86afc5008e85036fb93a20b6aea7bbd5036960",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/docs/history/ADR-CLD-002-LOCKED-Recovery-Transition.md",
+      "bytes": 5060,
+      "sha256": "bbb465429cf20945b60ce7ab65a3781e9a3db6b3fedbef5dc24ff7e3acd1fdec",
+      "git_blob": "3bd65320b4c255b3bf5abae3f0a4ab269642e83d",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/docs/history/ADR-CLD-003-LKG-Policy-Profiles.md",
+      "bytes": 5549,
+      "sha256": "3e030f7d0df898792dca815da25de77bca6e6ef12d8ad66c518b2c2d7228c070",
+      "git_blob": "1c73c11d97af01ed8a54a5efb474c99985c192a7",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/docs/history/ADR-MIV-005A-001-Relevance-Threshold-and-Metric-v2.md",
+      "bytes": 25667,
+      "sha256": "86dce59f2269cbed5d155f5d18a32a832b86ee9bcdfae761b0bd7d5db8cdf64a",
+      "git_blob": "267a0a8cf535c31fa8e7eb1322375bfa44586b05",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/docs/history/ADR-MIV-005B-001-Lexical-Feasibility-Audit.md",
+      "bytes": 7845,
+      "sha256": "9fc3d13b8470823c60087975920bea87b56f0ff2ccd9c6b9fdd6cc8469028c2d",
+      "git_blob": "e82ee32466f3a83bdc74a84d85f3af3c6856c5e6",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/docs/history/ADR-MIV-005B-002-Local-Embedding-Retrieval-Decision.md",
+      "bytes": 21497,
+      "sha256": "80755b77c5a2632949b935ad3e50b8cdc172c1db48008eff796214e118b704d9",
+      "git_blob": "c704a1d599e7c5e6918fb9c760e5c8bde6c8b722",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/docs/history/ADR-MIV-006-001-Project-Scope-Isolation.md",
+      "bytes": 13615,
+      "sha256": "6f30c7601f95410c7d6d6e614bfa05defdcd4cc8b202203099a5ae173e79b679",
+      "git_blob": "92e1c713673c5f74f42dd4821a2db1dfd7f2e53c",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/docs/history/AGENTS.routing-baseline-75d0788ff62a.md",
+      "bytes": 9637,
+      "sha256": "75d0788ff62a20d2d211115a66ab20fc38519a14fad890ab9a3d6f821e821793",
+      "git_blob": "7007225f55236d6132ae6ecb73f171102156d8a7",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/docs/history/CURRENT_STATUS.before-phase2-af52a717b2c3.md",
+      "bytes": 2753,
+      "sha256": "af52a717b2c37ebabf81a7123244aa3dd9a91042ea87037fd026925e8111f722",
+      "git_blob": "1256d0014296651eb26d2d036749295cc78f556d",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/docs/history/Clued-v0.1-Reference-Implementation-Report.md",
+      "bytes": 19177,
+      "sha256": "d3725396f8edfea08a68b6bb768afae7ff1d5baac83dedbcb70e96c1584eb1ff",
+      "git_blob": "9cc7a7f91f85ca497bd0a9da7445919801cbd2a5",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/docs/history/Clued-v0.1-实施与复用文档.md",
+      "bytes": 14090,
+      "sha256": "7e57ac9e595fe697188b2a1c8da07f21f3c84bbe5128eb2ba9d3371ea0a0f434",
+      "git_blob": "07de53c27c4a99d0133cdec83c694e73c79c224b",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/docs/history/Clued-v0.2.0-LKG-Policy-Report.md",
+      "bytes": 11866,
+      "sha256": "d348ad186fb6670882f8423c2e6d7ab3c38374a1a3ad48bf920558ed03bf2e5c",
+      "git_blob": "330272872aaa30b831cd2d2f23cd00b1ee08ccd9",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/docs/history/Clued_v0.1_智能体安装授权弱网降级与卸载协议.md",
+      "bytes": 56505,
+      "sha256": "0869cb7b8a850ea400e991fd0d4a23c4babfbf5954cb322b27b5c7798df28ae4",
+      "git_blob": "01344edd696c48561eca3996016bd87f6ea05f92",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/docs/history/Cross-Memory-System-vNext-2.1-Gate2R-MIV005B-Audit-Report.md",
+      "bytes": 16021,
+      "sha256": "5f3aec42d02d815a93a65c302ea867904e5c0fb1b704949fc8aad30db86e8fa5",
+      "git_blob": "26d59a558a739fc0cc04b6e36ffb103765b183d1",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/docs/history/README.before-phase2-d5f6ec6e821b.md",
+      "bytes": 2504,
+      "sha256": "d5f6ec6e821b9b1c71b0433e072804f48109ff55fc53f52b3a088b4205ecdaff",
+      "git_blob": "7e335b1200bfd8ac4ae97ec07c6e32d85a00754e",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/docs/history/Sprint3专项审计与封版报告-vNext-1.3.md",
+      "bytes": 7699,
+      "sha256": "155d7d5cd92d7bad533db1939c0a3690feb68016055e9b246738d89b527a7e82",
+      "git_blob": "af0a6628cc9a695411a0664ffdefc7c23bc6975e",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/docs/history/vNext-2.0-实施冲突记录.md",
+      "bytes": 5620,
+      "sha256": "a030b270e80852d820367d393fa482939e738e91ddc46053f7356f584cc24f80",
+      "git_blob": "32cdbf3cf5945e337a9aab7d63cc800bf4d14bdb",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/docs/history/代码级Gap审计报告-vNext-1.3-2026-08-16.md",
+      "bytes": 15658,
+      "sha256": "1bb27a0cb74e5d0dd64713ecfc7c2b9cc209d9a94fc1f03714d16043b34cb736",
+      "git_blob": "4c569c4ebf0e1a67ed24c7e885d6f79071d3473d",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/docs/history/技术评估报告-vNext-1.3-DSH-2026-08-16.md",
+      "bytes": 39809,
+      "sha256": "b10ecf3d6179985de9b18ed246b5a727cb1adf463a925191d85a3e178cbce78c",
+      "git_blob": "3286f32cdf5cbb6cdc98c8fc221b80c7d42195d6",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/docs/history/架构基线文档-vNext-1.3.md",
+      "bytes": 46858,
+      "sha256": "12475fe2e9f03238b182fd5a596b82d5b227ad8c22e083eb1ca990a9f6ac501c",
+      "git_blob": "b5933a7d4a82a77150faab1928e840395a0fab06",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/docs/history/架构基线文档-vNext-2.0.md",
+      "bytes": 13671,
+      "sha256": "528b026db8507c0ef9bca58f080d6e22b996ca5a1b91679aa117efacd829c8ed",
+      "git_blob": "ed1640d263d28a60896af639f41879cb825c33ba",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/docs/history/配置手册与数据包-v4.md",
+      "bytes": 29461,
+      "sha256": "ac24b4f23dd34bd03b6a711e5b498a1716c7236fb94adfebe61f08422b352072",
+      "git_blob": "e5ee584fdad317330bf70237129a6a363a5bbeb9",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/isolated_mirror.py",
+      "bytes": 463,
+      "sha256": "c4c0f63fd3a646cfa1dd8a9012a503af53b8d44181e137331667e0949f14c956",
+      "git_blob": "b1c4af4a62b61c58abafd099c9bff5256f51e07a",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/memory.py",
+      "bytes": 454,
+      "sha256": "34c2c280e3bb2092d5c920edc2c3cbc3891274a3a6258bb702ba901fb9dc601c",
+      "git_blob": "7405ddcd812afe526cac4188988c5c5dc8880d04",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/scripts/canonical_read.py",
+      "bytes": 18272,
+      "sha256": "7f4b5b7050bd069022e5ff7c7dbf8ff75a36432bffdb618371b0c90d36d86063",
+      "git_blob": "388a238a5bbcced40be5a63302d131a0e18ee06c",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/scripts/isolated_mirror.py",
+      "bytes": 55260,
+      "sha256": "e228508a4df2b750cd3f304b8188fe5b10f0529ea1ccdbd2dc85a6cfbca82e31",
+      "git_blob": "1f9d3e8241ec02cc0f89c106360084877e811a0a",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/scripts/memory.py",
+      "bytes": 15660,
+      "sha256": "4f09d50797be8af183e79745d78a64fe5474d6ff5b7746c14a4f911894a43a10",
+      "git_blob": "f55ab666210c83c37756b883a5d1267e07f92e17",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/scripts/sync-memory.ps1",
+      "bytes": 1088,
+      "sha256": "1b0ec7934951a937c7b517841374817255bad9e430ae09adb72adf579fc7c6e8",
+      "git_blob": "dec3deaa98d44edce8c0113bb4f380d3b38e2e38",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/scripts/sync-memory.py",
+      "bytes": 20890,
+      "sha256": "93dc66d3c6e0a7aa2310afa5d3386dd0a835fa840e3ab049676906d66bc8f94d",
+      "git_blob": "69e1d36fa0500f908794ff70d74ad109829bc02e",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/scripts/verification_context.py",
+      "bytes": 32479,
+      "sha256": "6a2d83a65921df60252aad350f3cecacfbab991be582368903aa40203c96d5ab",
+      "git_blob": "0aad9e3d24ac1da4f3cb32edaffe361f91f5cccf",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/sync-memory.ps1",
+      "bytes": 433,
+      "sha256": "ce0113f0d79908a707645f73f2720ee63745e9a21738de1e5272aa6517f07800",
+      "git_blob": "895c60fda2a6f9460018445b98024da000e6bc6e",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/sync-memory.py",
+      "bytes": 459,
+      "sha256": "3a295288ee381fc86c4368515223a068b012476159af199ee85e3c78239ba683",
+      "git_blob": "c4e396bf67be7ae9c8ba552894d13e8154528e6a",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/tests/test_p2_verification_context.py",
+      "bytes": 28931,
+      "sha256": "af796d182f4dd43f8fbdf08564dc14f73289fd3935659d85f6e962ef73a8a26c",
+      "git_blob": "ba54808928dfbfe1baf0e0bb2714f4e888af4dc5",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/verification_context.py",
+      "bytes": 468,
+      "sha256": "fc85e12ae3990c73bb573dd2241f8c20370db7ad8fc945c774b93daefee34882",
+      "git_blob": "da2fadaa3146864ce0ca9525776924c83ab5c5c1",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/migration_execute.py",
+      "bytes": 18963,
+      "sha256": "5d116bb93b5d6509eec4edef3cd51ca56f746bcb191d68bcb1139c3c49747c84",
+      "git_blob": "73c80bd0a4adae10dcca4f9999922adcac5016bf",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step18-boundary-design-20260907/Decision.json",
+      "bytes": 16558,
+      "sha256": "69eb444bf4125dc1fdf0f8de11724af4b8f52913aed5f09a36b8a9123939b8c2",
+      "git_blob": "865f37fbdc06d3b7a135a0a41ee828c1dea9f5d2",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step18-boundary-design-20260907/Decision.md",
+      "bytes": 7398,
+      "sha256": "873fe8b5d09ce2b0d34458307ac86a10440598647941d8d240e1d47e5181e42f",
+      "git_blob": "323e4846c675b529a9fcc7f53f91810a2038c374",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "scripts/naming-governance/README.md",
+      "bytes": 4057,
+      "sha256": "228a86c8732bcab54e9d46f16bda84fdbef0c312b2fefa009712b6204085362c",
+      "git_blob": "5c328b2d8e09626a5791724baa5db69ce37a50fb",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "scripts/naming-governance/naming_validator.py",
+      "bytes": 32723,
+      "sha256": "f99eaf03737cc13f5ea2dea06a1e4d5b48033df22bb198f6eade22b00746bb8a",
+      "git_blob": "9b54b0752c421e59260bf0292b9796901cf6709b",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "scripts/naming-governance/projection-check.mjs",
+      "bytes": 1130,
+      "sha256": "c919ce66e9a4555c3ad86197b9044fe72585ccdce279112b4dd77c6878b75714",
+      "git_blob": "1c34b7bc4b8d47984350e37676012797f6520043",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "scripts/naming-governance/render-fixture.mjs",
+      "bytes": 950,
+      "sha256": "28ad7b496fc70ba3c2e8dc587710bd9948578d6e342af5c1423090ee46774a46",
+      "git_blob": "8219385b925d05592ace673fda4854023c2ffc07",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "scripts/naming-governance/run.py",
+      "bytes": 3281,
+      "sha256": "b7609198aade6f16f8445ffd2d3e5cb0075d3161e78eb222a01940f75ea73edb",
+      "git_blob": "684ea2fe457db75b37d5dcd80b781ec62dcaff51",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "tests/naming_governance_final_binding_checks.py",
+      "bytes": 14184,
+      "sha256": "0b72d65fb0f9772c3652f0b32026df44668ab93c47bc172791756bf32dc7d497",
+      "git_blob": "0d857e244c857be6e6e3079bee3a3e95c9ab36bb",
+      "commit_bytes_and_worktree_match": true
+    },
+    {
+      "path": "tests/test_naming_governance_validator.py",
+      "bytes": 16055,
+      "sha256": "dfd44464ae4a5a7ef455a9915f22675c6229e519bd0e7d9495e14b7fcdb2554a",
+      "git_blob": "4c30a660f9abd15e80add3c2d35f8bb8638e8e6d",
+      "commit_bytes_and_worktree_match": true
+    }
+  ],
+  "independent_method": "git cat-file --batch exact commit:path, independent SHA256/size and working-file equality; no whole repository or memory payload inventory",
+  "result": "EXACT_SUBJECT_MATCH",
+  "authority_effect": "NONE"
+}

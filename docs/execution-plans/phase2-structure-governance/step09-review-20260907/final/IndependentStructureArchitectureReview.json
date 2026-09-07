@@ -1,0 +1,3291 @@
+{
+  "type": "IndependentStructureArchitectureReview",
+  "review_id": "CLUED_PHASE2_STEP09_INDEPENDENT_REVIEW_20260907",
+  "issued_at": "2026-09-07T10:28:11.164074+00:00",
+  "reviewer": "/root/architecture_review",
+  "result": "PASS_FOR_SCOPED_STEP10_PREPARATION_WITH_RETAINED_STAGE_OBLIGATIONS",
+  "step9_gate": "READY_FOR_STEP10_DELEGATED_ACCEPTANCE",
+  "subject": {
+    "type": "IndependentReviewExactSubject",
+    "status": "READY_FOR_INDEPENDENT_REVIEW_NOT_ACCEPTANCE",
+    "created_at": "2026-09-07T10:20:49.482431+00:00",
+    "repository": "tdoljyj/cross-memory-system",
+    "branch": "phase2-naming-surface-inventory",
+    "candidate_commit": "039cfea5a0d91a4e4e02702f6cfdfe9379978b1e",
+    "candidate_tree": "cd87a2384ed330bdc1186f6db21d9978e414ba2e",
+    "supplement_predecessor_commit": "40fea9e0fcd4d061946d0523f645c40893fced2b",
+    "architecture_candidate": "CLUED_ARCHITECTURE_CONVERGENCE_V0_2_5",
+    "architecture_version": "v0.2.5",
+    "delivery_revision": "v0.2.7.1",
+    "package": {
+      "filename": "Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip",
+      "bytes": 246612118,
+      "sha256": "6e51374a6caedb4f84d2b6bb9fe05cd695b25732833f9d0217c341f17e1c1649",
+      "retrieval": "Registered private GitHub Release asset in artifacts/clued-validation/phase2-v027/candidate-source.json; existing local exact copy retained."
+    },
+    "direct_predecessor": {
+      "axis": "architecture",
+      "version": "v0.2.4",
+      "filename": "Clued_Phase2_三项设计候选_完整审查包_v0.2.4_20260905.zip",
+      "bytes": 168491377,
+      "sha256": "4aae92c37813772e983a14537be52ca8b428af666e644b72d40084ccd592d68b",
+      "members": 440
+    },
+    "supplementary_files": [
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/CurrentScopedAccessReview_20260907.json",
+        "bytes": 5872,
+        "sha256": "88a846d82338c77d30ba802895b2ce04e1b8ac76bcbae69dd0cabf070f9dc9a7"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/ExactBlobCheckoutCI_20260907.json",
+        "bytes": 1326,
+        "sha256": "d272374b217c68e93579bddbf43451e3ad532942ffe31562fb347b463cb2d34b"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/Step06-ScopedAcceptance_20260907.json",
+        "bytes": 5319,
+        "sha256": "bd40c82a21e7b19c2c36e56d7b877078e45c6bfdf1593590fb56ab364f47889a"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/Step07-ScopedAcceptance_20260907.json",
+        "bytes": 3500,
+        "sha256": "dec7601899be7118b3baff3d78793ecaf98b06316070b881ca30297a3b0f22b3"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/Step08-ScopedAcceptance_20260907.json",
+        "bytes": 3346,
+        "sha256": "8bac86599481c9effc67274bb29b7f352d59d4e656add8805e41f7437ced455c"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/BindingChecks.json",
+        "bytes": 1789,
+        "sha256": "5fd645db86210fcbcf9131202b88694a0335296a972339fba3a15b48c7f345ae"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/C09ExportScopeDisposition.json",
+        "bytes": 4139,
+        "sha256": "fa2ba22146d5560f502d5e70d7045ead5577fea7c1af909b7ab51a9e64b718ff"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/CurrentCIRunBinding.json",
+        "bytes": 1205,
+        "sha256": "9ce45d5526abbcac641c88ecea3d29d20f30e0ce97c953ff1740e65cd5707657"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/ExecutionEvidenceReuse.json",
+        "bytes": 7838,
+        "sha256": "e49ef52041404d2b486d49bb3da4a4c414e61e472d93bc7970dc64802088d220"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/RootIndependentReview.json",
+        "bytes": 1966,
+        "sha256": "bc2fc121083422a9f13df635511ff11f9279612e2e00da893440772b1ccd92d7"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/SourceIndex.json",
+        "bytes": 30351,
+        "sha256": "d246a7ee943eeaa1071d0888b9737cd4be621e0dd01f866d62a10e4d49af044a"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/Step6ClosureAssessment.json",
+        "bytes": 5842,
+        "sha256": "094cbce78fd3f8675b46048dc8f469fceae420ac88d2f969f0f9a8ecc4222af6"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/Step6ClosureAssessment.md",
+        "bytes": 5562,
+        "sha256": "9ef96ed7932cd7845e98b712276a6822ba0468856779438af04744fd06d76e79"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedAuthorizationRegistry.candidate.json",
+        "bytes": 74695,
+        "sha256": "359e7461ba3166bef63815f37ddd9c247aada317c14e4e62bdee3bc79cc3fcdd"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedConsumerRegistry.candidate.json",
+        "bytes": 243588,
+        "sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedReceiptRegistry.candidate.json",
+        "bytes": 91138,
+        "sha256": "05d182805b31ba9d5e6c1c3fa32ae2081527a92faaa76263debded6ffca5efa4"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/before-c01-correction/BindingChecks.json",
+        "bytes": 1557,
+        "sha256": "0e953b5e136a15210286e209ab024c83a6e724a9b1906fca78e4d0ae7db1ae97"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/before-c01-correction/Step6ClosureAssessment.json",
+        "bytes": 5436,
+        "sha256": "d7e98183fc9aef62de01dc969bd8749b46b3a10a7d3c27b2f860f40cedfad228"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/before-c01-correction/Step6ClosureAssessment.md",
+        "bytes": 5236,
+        "sha256": "9d832b55fc64ad838c9dc4b7a527ced3ff3a9551545174427df2c942bf01987c"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/before-c01-correction/TypedAuthorizationRegistry.candidate.json",
+        "bytes": 75170,
+        "sha256": "9b17e7bce4327abc179aeb4ce214670341bfed252658903a58244d916de73955"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/before-c01-correction/TypedConsumerRegistry.candidate.json",
+        "bytes": 248568,
+        "sha256": "c14a299a40c2bcd7d915cb4e5dedaf6471220a3a242d2f9156620746745aa38a"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/LocalVerification.md",
+        "bytes": 1792,
+        "sha256": "4daf8f97b9ff6b225d9a2b857f75c6f1dc87e791b1405235c0384ed5dad87dd4"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/OriginalEvidenceRetention.json",
+        "bytes": 734,
+        "sha256": "4b4476193e25a5ccf4c4d6d073c251cb7c6276cf00fb199d05c85bd67f70f6ef"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/OriginalStep7CandidateEvidence.zip",
+        "bytes": 606221,
+        "sha256": "0b56d46428cb6badb615edf52100e3aff6b446bfd580384700edf077b9b02e37"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/ProjectionBindings.candidate.json",
+        "bytes": 6313,
+        "sha256": "717cad53947753b27641d08cb23cb8252610c43aab9bac97295a56825a5527dc"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/ProjectionBindings.repository.json",
+        "bytes": 9087,
+        "sha256": "7e526281339067dea908765cad2f8aa4b510d0371dcd9f2915cc31221e6802cd"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/ProjectionCheckReport.json",
+        "bytes": 1969,
+        "sha256": "385cdef64f2610d74b97983dcc620adc3c590581c75f445906a1b5f9a851b078"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/ProjectionConsistencyReport.json",
+        "bytes": 1969,
+        "sha256": "385cdef64f2610d74b97983dcc620adc3c590581c75f445906a1b5f9a851b078"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/README.md",
+        "bytes": 1832,
+        "sha256": "a1c7044643f1f385474e206f6129cbaf9cf9ce158e3ac2ff16a1c8c677fdeb21"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/RepositoryProjectionCheck.json",
+        "bytes": 1997,
+        "sha256": "d4de7b9c3f5cefdb55c65e045903849841a2ec1d915644892065c778b6f25d88"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/RepositoryProjectionGeneration.json",
+        "bytes": 1997,
+        "sha256": "d4de7b9c3f5cefdb55c65e045903849841a2ec1d915644892065c778b6f25d88"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/RetainedSourceCopies.json",
+        "bytes": 1551,
+        "sha256": "57dc9437b90c3520ac51a92a23959ac4a5f86a4a4b590e1ba26ed6121b72688a"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/generated/AGENTS.governance.md",
+        "bytes": 2251,
+        "sha256": "a7f5e547cd0a8d6062285a0580c782feb2fe3fffa654a71b10c5e975d07253b6"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/generated/CURRENT_STATUS.history-original.md",
+        "bytes": 2753,
+        "sha256": "af52a717b2c37ebabf81a7123244aa3dd9a91042ea87037fd026925e8111f722"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/generated/CURRENT_STATUS.projection.md",
+        "bytes": 2641,
+        "sha256": "939392620e3147b51030201e548e6732c0f1c1bc12a7ec4762f14f20fb8e74cd"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/generated/ConsumerBindings.projection.json",
+        "bytes": 35867,
+        "sha256": "6000d1c819450d8e345bd3a1155d8746e89cda87a383a410ab83094e1c2065ba"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/generated/GovernanceDocs.projection.md",
+        "bytes": 2251,
+        "sha256": "a7f5e547cd0a8d6062285a0580c782feb2fe3fffa654a71b10c5e975d07253b6"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/generated/GovernanceManifest.projection.json",
+        "bytes": 75433,
+        "sha256": "eeca98c1eb3af0701bdb5a16898d710d25f6c9e555d48792ca3631ecc9d82b2b"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/generated/GovernanceRegistry.projection.json",
+        "bytes": 74172,
+        "sha256": "73837b86e206489299470ebb8bb094605e3584c4673bd81f6744292fff603bb7"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/generated/IdentityFiles.projection.json",
+        "bytes": 8361,
+        "sha256": "0137a2a726cdb1289e064135b6de7e45f61cb7dd1f991564b2e5e2327a935c26"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/generated/README.governance.md",
+        "bytes": 2251,
+        "sha256": "a7f5e547cd0a8d6062285a0580c782feb2fe3fffa654a71b10c5e975d07253b6"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/generated/StatusMigrationPlan.candidate.json",
+        "bytes": 679,
+        "sha256": "4712f84daf8a3447b4c8b2a4842311cfffc52fcd800b6538390ab58a9c585d38"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/generated/ToolRouting.projection.json",
+        "bytes": 3286,
+        "sha256": "3a42548d7e85247e831508b843a7f4f717f0a68868ebbe076a978de8616a56e5"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/generated/WorkflowReferences.projection.json",
+        "bytes": 3326,
+        "sha256": "eb832c3a885509e348a1566ed13ca9f48ba2b9ac4f30946b95df35c3f637d8ed"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/inputs/CurrentArtifactIdentityPolicy.json",
+        "bytes": 776,
+        "sha256": "3a14df68ea81c6390316c5df09d51a049b52a640871ab57953c42acb30624bff"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/inputs/PreMigration-AGENTS.md",
+        "bytes": 9637,
+        "sha256": "75d0788ff62a20d2d211115a66ab20fc38519a14fad890ab9a3d6f821e821793"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/inputs/PreMigration-CURRENT_STATUS.md",
+        "bytes": 2753,
+        "sha256": "af52a717b2c37ebabf81a7123244aa3dd9a91042ea87037fd026925e8111f722"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/inputs/ReviewSubjectContract.json",
+        "bytes": 1383,
+        "sha256": "c2cd13dbe8fd046aa8f0344778141cb9b115fae0048a8c673b60bd25b03498d3"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/project-governance.mjs",
+        "bytes": 16156,
+        "sha256": "ffd35b923be0729fab18de13b2e234ce971788bdb5b6aa1ac8520c2a516755df"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/repository-generated/AGENTS.governance.md",
+        "bytes": 2357,
+        "sha256": "9bcc962497ff82bf86dd3650b6d965d6ffa683125275fa55e278eb4b3914a6f0"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/repository-generated/CURRENT_STATUS.history-original.md",
+        "bytes": 2753,
+        "sha256": "af52a717b2c37ebabf81a7123244aa3dd9a91042ea87037fd026925e8111f722"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/repository-generated/CURRENT_STATUS.projection.md",
+        "bytes": 2747,
+        "sha256": "2bb3a1c38e6e5229db62e232dbde74ae4759337bd77f01d22d0bc7dff4b7d98c"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/repository-generated/ConsumerBindings.projection.json",
+        "bytes": 186284,
+        "sha256": "a3448f25eae721026d8fc8ec0cbad012964e46c81a84dadecc3e365fc38e2cef"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/repository-generated/GovernanceDocs.projection.md",
+        "bytes": 2357,
+        "sha256": "9bcc962497ff82bf86dd3650b6d965d6ffa683125275fa55e278eb4b3914a6f0"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/repository-generated/GovernanceManifest.projection.json",
+        "bytes": 235275,
+        "sha256": "682b0a2821d942d1c57bc6baa7926bc862b26f89ce1246bded37da97325a7493"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/repository-generated/GovernanceRegistry.projection.json",
+        "bytes": 232231,
+        "sha256": "f1116caf940ca665193c60915f6df4e5dc506fafa0f1dea8e20d8ca702dd47f8"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/repository-generated/IdentityFiles.projection.json",
+        "bytes": 9775,
+        "sha256": "6259c4d9326cb24e15a5863efa61b8ffe95762f295398fbb75cbc1bd8606c0b3"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/repository-generated/README.governance.md",
+        "bytes": 2357,
+        "sha256": "9bcc962497ff82bf86dd3650b6d965d6ffa683125275fa55e278eb4b3914a6f0"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/repository-generated/StatusMigrationPlan.candidate.json",
+        "bytes": 751,
+        "sha256": "1881cc343304904893b561a7c9d6d5881981378eff40c7b06cad2c0b29e81ecb"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/repository-generated/ToolRouting.projection.json",
+        "bytes": 4772,
+        "sha256": "8f63d5eae3d643edf3639ba709fa99e5bee1cb5cae7b8cb19813f168d4fa4d10"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step07-projection-20260907/repository-generated/WorkflowReferences.projection.json",
+        "bytes": 4716,
+        "sha256": "5cb691e23d4f8c857e9babde7d5f4d0bc9ed7b774ee8870aa0b0766e2bf5124a"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step08-validator-20260907/CurrentBindingReceipt.json",
+        "bytes": 160706,
+        "sha256": "a73cf7c10faae1bdf2e241e49f748f61c98adeded37f2e58d65485dcd79d9569"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step08-validator-20260907/EvidenceIndex.json",
+        "bytes": 164190,
+        "sha256": "b20482d2084ad8c9ec91fea15cd98def54a4edd76428d81ee50a046f33399356"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step08-validator-20260907/FinalBindingControls.zip",
+        "bytes": 531303,
+        "sha256": "e08442a94fe41bcad4e035471e10df6a12a0769599b19667a82dc072c818e9c6"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step08-validator-20260907/FinalBindingVerification.json",
+        "bytes": 20222,
+        "sha256": "085b8f54c8908ffc5c3e5c4b5621f6addd429b0520a8e6a24e04a01b427a577e"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step08-validator-20260907/IndependentStep7BindingReview.json",
+        "bytes": 15412,
+        "sha256": "2369b6a173f6e3cbe0beb38fea2130fdd8bc0ed536d55d9ea2b031c41a11c3a5"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step08-validator-20260907/PortableAdaptation.json",
+        "bytes": 11900,
+        "sha256": "5add9682d2841e7c86a1d8878c56292e2e0b1cfea11ab582ecb3800eaa344fc0"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step08-validator-20260907/PortableDriverCheck.zip",
+        "bytes": 188798,
+        "sha256": "6fca1429419f0048601613e4aa2aeea372c89ac28838a0bfe57f7565be8e91ce"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step08-validator-20260907/README.md",
+        "bytes": 2906,
+        "sha256": "0143c06dfce2bd0ff6283d37182c6cbeafd86223390b2a08e937108e1af9fae0"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step08-validator-20260907/ReferencedSourceBytes.zip",
+        "bytes": 5521455,
+        "sha256": "42085d2d3880395e2eb9c5563d3d8dcdc5791a8ef65c43715b828ac6d639e7d5"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step08-validator-20260907/RootIndependentStep8Review.json",
+        "bytes": 8947,
+        "sha256": "0085b551a80d3aa533927c8f7da5679d7063fe559913fb40db3bdddb43afe20c"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step08-validator-20260907/SourceIndex.json",
+        "bytes": 43992,
+        "sha256": "2d43dd59ebac6038c1b1d0a30f6246e6bf87dda85e0b9ac9419def88c9ad3045"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step08-validator-20260907/SourceLocators.json",
+        "bytes": 6210,
+        "sha256": "04aa73c7673b67bc046b8fa5dd37e8bbd9251e84766c09afa735d2a35fe8162b"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step08-validator-20260907/Step8ValidatorEvidence_20260907.zip",
+        "bytes": 3547622,
+        "sha256": "87984a314dbdc176b451ceab0c1a0a4be4543e0ba4941b76f4e668c4302e1f2e"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step08-validator-20260907/step4_sources.portable.json",
+        "bytes": 10645,
+        "sha256": "ffe6ea867b76657553312b3c45571b1fee9bfaca14413fc3679c73c0d39508d3"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step08-validator-20260907/step5_sources.portable.json",
+        "bytes": 16995,
+        "sha256": "18635b8e12ea817d77648227acec65accc5d342bb6fa3eba70405a3740246bd4"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step08-validator-20260907/step6_sources.portable.json",
+        "bytes": 27246,
+        "sha256": "87d60f81c3e28de14a57b2a666308a403879d6ec7f03a07933887fd8d5aacc1e"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step09-review-20260907/ReviewSubject_20260907.json",
+        "bytes": 40677,
+        "sha256": "960cab1c1b87fb898f6c2ce0604e54cf8026125f29b9633543971b7ab7de43a9"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step09-review-20260907/disposition-review/Review.json",
+        "bytes": 15975,
+        "sha256": "21483daedf403b5033783491b2caaf9658df88fd39374f3393954f37e5bf8c04"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step09-review-20260907/disposition-review/Review.md",
+        "bytes": 3524,
+        "sha256": "c7754f714b4244b518adf000f16fe03d2c197dcada66484aa7e7104a18027219"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step09-review-20260907/preparation/Original40Assessment.preparation.json",
+        "bytes": 89677,
+        "sha256": "093baa56b20b449a0d868458ea129943b5585d534e01d54f7b34b9b28c0f529c"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step09-review-20260907/preparation/Original40Assessment.preparation.md",
+        "bytes": 10004,
+        "sha256": "6ad4dd6cf6cd9b009da9898a52c03bff2c4005b627cceac724b06dbe39e64296"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step09-review-20260907/preparation/RootSelectedDispositions.candidate.json",
+        "bytes": 1760,
+        "sha256": "c4fe3cc13670a886e6703ab191284ddb2d0077d481f674a3cab10b49d51e65b8"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step09-review-20260907/preparation/SourcesAndChecks.json",
+        "bytes": 16139,
+        "sha256": "559a08ecc2c4cf5e0a2cfc181812d58ce063fd758a8b3be7c25c4acd98a8ae4c"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step09-review-20260907/preparation/StagedDispositionProposal.json",
+        "bytes": 41422,
+        "sha256": "2d27c7b9a673dff1484caea6d3fb5ea409467346eafb96557c7123bd5a5ec653"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step11-structure-inputs-20260907/RequiredCheckSetCandidate.json",
+        "bytes": 10577,
+        "sha256": "33dc28061671985750d5116751dffbba6c0907447bad3998186492101377670b"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step11-structure-inputs-20260907/RetainedOriginalStructureSources.json",
+        "bytes": 1567,
+        "sha256": "57f56fe6e4383eca526f8c18ae56044bbbdec8d09cc0325c34b344f567bd1860"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step11-structure-inputs-20260907/StructureFreezeEvidenceMatrix.json",
+        "bytes": 4723,
+        "sha256": "396dc8a6f4118d224cff1765b42d8a395b4309e6ecc5889c6ab7a0e04cdbafd8"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step11-structure-inputs-20260907/StructureFreezePrerequisiteStatus.json",
+        "bytes": 15203,
+        "sha256": "37306d420b8e1c7380cdb30998e835d1dbbcfc5f6f62754615a5e1b09ac72925"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step11-structure-inputs-20260907/VersionCandidateOverlay.json",
+        "bytes": 18219,
+        "sha256": "3f12c52ebcf261990653433dfe6f803696048fbb457088d4e2a185c46f640911"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/DcpTargetBindings.candidate.json",
+        "bytes": 3803,
+        "sha256": "0b09223cdeda8042f39f31bc691403b537254fdda68d231521164e1999c8a717"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/EXECUTOR.md",
+        "bytes": 5484,
+        "sha256": "6f821d1a40baab83ddec329aa80fe436e23dbb08838fd302c3a9afa3cf6f7a11"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/ExecutionInputs.candidate.json",
+        "bytes": 32713,
+        "sha256": "37a6909deedae17dbfe97e844d8ec596c5de46e73c3cefafd4136008d3f3dcec"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/ExecutionInputsSummary.json",
+        "bytes": 644,
+        "sha256": "f52dbcf94fdb756a7d5bb147c66f38c98e4eb4b8bf7825ef4cbfce2ffbbd1749"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/ExecutorVerification.json",
+        "bytes": 1548,
+        "sha256": "963f2b608342cd0b3092f8255e0504a66e879e514c5552bfce284695c3875d6f"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/FixtureVerification.json",
+        "bytes": 1965,
+        "sha256": "6d47aecd089bd57a2dc5364e65bca13be9a2a5d3136e5abc22c5c8bd8e4bd7f5"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/HistoricalMoves.md",
+        "bytes": 3625,
+        "sha256": "721fff6c2c9062418fa70994db62a06a17462aebc5241a14565ca05d59997caa"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/HistoryPathMap.candidate.json",
+        "bytes": 14042,
+        "sha256": "094ad1bcc2b117025ab00897114eb362c198bf48fd4819d445d3decec992d174"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/MigrationPlan.candidate.json",
+        "bytes": 41261,
+        "sha256": "d8e1b8bb5058e9b2e4be9b4c0e836ad101eeefe7a839e6bc3ac5338f8b8310d0"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/OriginalMigrationTestSources.zip",
+        "bytes": 379602,
+        "sha256": "3c2cafd7c052969e470ed4a2a915202fa39421f040793f777132fa8a12f72d28"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/ParentLinkGuardRepair.json",
+        "bytes": 2062,
+        "sha256": "c746d7d58e796f8027bbd931091ab060d3cf033d7563e05d492dde21880378cd"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/RetentionAndRootReview.json",
+        "bytes": 1349,
+        "sha256": "c970089464bffcbf7cbc893f4b24cfa68d273df46fd60e232006ca26671fbbeb"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/ToolCompatibilityPlan.candidate.json",
+        "bytes": 8786,
+        "sha256": "baf0ca363fb8550970a2eba76a7e3d53d523f8dbd4002e767902bea6a68ad769"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/AGENTS.md",
+        "bytes": 11994,
+        "sha256": "0d209391925dfc3c490cecfdb1e48c9266f0fd9c3d2e26903e023002f2eaf354"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/CURRENT_STATUS.md",
+        "bytes": 2747,
+        "sha256": "2bb3a1c38e6e5229db62e232dbde74ae4759337bd77f01d22d0bc7dff4b7d98c"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/README.md",
+        "bytes": 4861,
+        "sha256": "378fef921798a96d8833e9d7a03fa9485153f06e95b7b52b6968d4f21d188c54"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/canonical_read.py",
+        "bytes": 462,
+        "sha256": "3c467b498254a7de504d26e70630ffcdf9b150735ea2670b7fdc82de8d04e3a2"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/development/authority-index/phase2/SourceIndex.json",
+        "bytes": 1912,
+        "sha256": "2dc9a544e13dc7f2fd53f54cd31230f33ae429823e741e6f79906624f8c5a73d"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/development/contracts/phase2/SourceIndex.json",
+        "bytes": 8754,
+        "sha256": "af08da8b9a738a262624e07c1e5a9385590c47c085d12383b023b4b0b4c6a9e3"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/development/projections/phase2/ConsumerBindings.projection.json",
+        "bytes": 186284,
+        "sha256": "a3448f25eae721026d8fc8ec0cbad012964e46c81a84dadecc3e365fc38e2cef"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/development/projections/phase2/GovernanceDocs.projection.md",
+        "bytes": 2357,
+        "sha256": "9bcc962497ff82bf86dd3650b6d965d6ffa683125275fa55e278eb4b3914a6f0"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/development/projections/phase2/GovernanceManifest.projection.json",
+        "bytes": 235275,
+        "sha256": "682b0a2821d942d1c57bc6baa7926bc862b26f89ce1246bded37da97325a7493"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/development/projections/phase2/GovernanceRegistry.projection.json",
+        "bytes": 232231,
+        "sha256": "f1116caf940ca665193c60915f6df4e5dc506fafa0f1dea8e20d8ca702dd47f8"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/development/projections/phase2/IdentityFiles.projection.json",
+        "bytes": 9775,
+        "sha256": "6259c4d9326cb24e15a5863efa61b8ffe95762f295398fbb75cbc1bd8606c0b3"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/docs/history/ADR-CLD-001-LKG-Max-Age-One-Hour.md",
+        "bytes": 3454,
+        "sha256": "5663f2cad660a75765170cc5199edfcc5c99329344e7561145bd01c8be5f0485"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/docs/history/ADR-CLD-002-LOCKED-Recovery-Transition.md",
+        "bytes": 5060,
+        "sha256": "bbb465429cf20945b60ce7ab65a3781e9a3db6b3fedbef5dc24ff7e3acd1fdec"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/docs/history/ADR-CLD-003-LKG-Policy-Profiles.md",
+        "bytes": 5549,
+        "sha256": "3e030f7d0df898792dca815da25de77bca6e6ef12d8ad66c518b2c2d7228c070"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/docs/history/ADR-MIV-005A-001-Relevance-Threshold-and-Metric-v2.md",
+        "bytes": 25667,
+        "sha256": "86dce59f2269cbed5d155f5d18a32a832b86ee9bcdfae761b0bd7d5db8cdf64a"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/docs/history/ADR-MIV-005B-001-Lexical-Feasibility-Audit.md",
+        "bytes": 7845,
+        "sha256": "9fc3d13b8470823c60087975920bea87b56f0ff2ccd9c6b9fdd6cc8469028c2d"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/docs/history/ADR-MIV-005B-002-Local-Embedding-Retrieval-Decision.md",
+        "bytes": 21497,
+        "sha256": "80755b77c5a2632949b935ad3e50b8cdc172c1db48008eff796214e118b704d9"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/docs/history/ADR-MIV-006-001-Project-Scope-Isolation.md",
+        "bytes": 13615,
+        "sha256": "6f30c7601f95410c7d6d6e614bfa05defdcd4cc8b202203099a5ae173e79b679"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/docs/history/AGENTS.routing-baseline-75d0788ff62a.md",
+        "bytes": 9637,
+        "sha256": "75d0788ff62a20d2d211115a66ab20fc38519a14fad890ab9a3d6f821e821793"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/docs/history/CURRENT_STATUS.before-phase2-af52a717b2c3.md",
+        "bytes": 2753,
+        "sha256": "af52a717b2c37ebabf81a7123244aa3dd9a91042ea87037fd026925e8111f722"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/docs/history/Clued-v0.1-Reference-Implementation-Report.md",
+        "bytes": 19177,
+        "sha256": "d3725396f8edfea08a68b6bb768afae7ff1d5baac83dedbcb70e96c1584eb1ff"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/docs/history/Clued-v0.1-实施与复用文档.md",
+        "bytes": 14090,
+        "sha256": "7e57ac9e595fe697188b2a1c8da07f21f3c84bbe5128eb2ba9d3371ea0a0f434"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/docs/history/Clued-v0.2.0-LKG-Policy-Report.md",
+        "bytes": 11866,
+        "sha256": "d348ad186fb6670882f8423c2e6d7ab3c38374a1a3ad48bf920558ed03bf2e5c"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/docs/history/Clued_v0.1_智能体安装授权弱网降级与卸载协议.md",
+        "bytes": 56505,
+        "sha256": "0869cb7b8a850ea400e991fd0d4a23c4babfbf5954cb322b27b5c7798df28ae4"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/docs/history/Cross-Memory-System-vNext-2.1-Gate2R-MIV005B-Audit-Report.md",
+        "bytes": 16021,
+        "sha256": "5f3aec42d02d815a93a65c302ea867904e5c0fb1b704949fc8aad30db86e8fa5"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/docs/history/README.before-phase2-d5f6ec6e821b.md",
+        "bytes": 2504,
+        "sha256": "d5f6ec6e821b9b1c71b0433e072804f48109ff55fc53f52b3a088b4205ecdaff"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/docs/history/Sprint3专项审计与封版报告-vNext-1.3.md",
+        "bytes": 7699,
+        "sha256": "155d7d5cd92d7bad533db1939c0a3690feb68016055e9b246738d89b527a7e82"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/docs/history/vNext-2.0-实施冲突记录.md",
+        "bytes": 5620,
+        "sha256": "a030b270e80852d820367d393fa482939e738e91ddc46053f7356f584cc24f80"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/docs/history/代码级Gap审计报告-vNext-1.3-2026-08-16.md",
+        "bytes": 15658,
+        "sha256": "1bb27a0cb74e5d0dd64713ecfc7c2b9cc209d9a94fc1f03714d16043b34cb736"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/docs/history/技术评估报告-vNext-1.3-DSH-2026-08-16.md",
+        "bytes": 39809,
+        "sha256": "b10ecf3d6179985de9b18ed246b5a727cb1adf463a925191d85a3e178cbce78c"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/docs/history/架构基线文档-vNext-1.3.md",
+        "bytes": 46858,
+        "sha256": "12475fe2e9f03238b182fd5a596b82d5b227ad8c22e083eb1ca990a9f6ac501c"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/docs/history/架构基线文档-vNext-2.0.md",
+        "bytes": 13671,
+        "sha256": "528b026db8507c0ef9bca58f080d6e22b996ca5a1b91679aa117efacd829c8ed"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/docs/history/配置手册与数据包-v4.md",
+        "bytes": 29461,
+        "sha256": "ac24b4f23dd34bd03b6a711e5b498a1716c7236fb94adfebe61f08422b352072"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/isolated_mirror.py",
+        "bytes": 463,
+        "sha256": "c4c0f63fd3a646cfa1dd8a9012a503af53b8d44181e137331667e0949f14c956"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/memory.py",
+        "bytes": 454,
+        "sha256": "34c2c280e3bb2092d5c920edc2c3cbc3891274a3a6258bb702ba901fb9dc601c"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/scripts/canonical_read.py",
+        "bytes": 18272,
+        "sha256": "7f4b5b7050bd069022e5ff7c7dbf8ff75a36432bffdb618371b0c90d36d86063"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/scripts/isolated_mirror.py",
+        "bytes": 55260,
+        "sha256": "e228508a4df2b750cd3f304b8188fe5b10f0529ea1ccdbd2dc85a6cfbca82e31"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/scripts/memory.py",
+        "bytes": 15660,
+        "sha256": "4f09d50797be8af183e79745d78a64fe5474d6ff5b7746c14a4f911894a43a10"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/scripts/sync-memory.ps1",
+        "bytes": 1088,
+        "sha256": "1b0ec7934951a937c7b517841374817255bad9e430ae09adb72adf579fc7c6e8"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/scripts/sync-memory.py",
+        "bytes": 20890,
+        "sha256": "93dc66d3c6e0a7aa2310afa5d3386dd0a835fa840e3ab049676906d66bc8f94d"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/scripts/verification_context.py",
+        "bytes": 32479,
+        "sha256": "6a2d83a65921df60252aad350f3cecacfbab991be582368903aa40203c96d5ab"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/sync-memory.ps1",
+        "bytes": 433,
+        "sha256": "ce0113f0d79908a707645f73f2720ee63745e9a21738de1e5272aa6517f07800"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/sync-memory.py",
+        "bytes": 459,
+        "sha256": "3a295288ee381fc86c4368515223a068b012476159af199ee85e3c78239ba683"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/tests/test_p2_verification_context.py",
+        "bytes": 28931,
+        "sha256": "af796d182f4dd43f8fbdf08564dc14f73289fd3935659d85f6e962ef73a8a26c"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/execution-payload/verification_context.py",
+        "bytes": 468,
+        "sha256": "fc85e12ae3990c73bb573dd2241f8c20370db7ad8fc945c774b93daefee34882"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/migration_execute.py",
+        "bytes": 19295,
+        "sha256": "15ed103a96943125978e9134a8322c6195f62fe24d3e2e070a8ad538b17ea2fe"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/verify-migration-parent-guard.retained.py",
+        "bytes": 3860,
+        "sha256": "09e01c889b5bc39569a2a0912de6226d0bd24d026ddbfd1be3872e2a943620a5"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step18-boundary-design-20260907/Decision.json",
+        "bytes": 16558,
+        "sha256": "69eb444bf4125dc1fdf0f8de11724af4b8f52913aed5f09a36b8a9123939b8c2"
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step18-boundary-design-20260907/Decision.md",
+        "bytes": 7398,
+        "sha256": "873fe8b5d09ce2b0d34458307ac86a10440598647941d8d240e1d47e5181e42f"
+      },
+      {
+        "path": "scripts/naming-governance/README.md",
+        "bytes": 4057,
+        "sha256": "228a86c8732bcab54e9d46f16bda84fdbef0c312b2fefa009712b6204085362c"
+      },
+      {
+        "path": "scripts/naming-governance/naming_validator.py",
+        "bytes": 32723,
+        "sha256": "f99eaf03737cc13f5ea2dea06a1e4d5b48033df22bb198f6eade22b00746bb8a"
+      },
+      {
+        "path": "scripts/naming-governance/projection-check.mjs",
+        "bytes": 1130,
+        "sha256": "c919ce66e9a4555c3ad86197b9044fe72585ccdce279112b4dd77c6878b75714"
+      },
+      {
+        "path": "scripts/naming-governance/render-fixture.mjs",
+        "bytes": 950,
+        "sha256": "28ad7b496fc70ba3c2e8dc587710bd9948578d6e342af5c1423090ee46774a46"
+      },
+      {
+        "path": "scripts/naming-governance/run.py",
+        "bytes": 3281,
+        "sha256": "b7609198aade6f16f8445ffd2d3e5cb0075d3161e78eb222a01940f75ea73edb"
+      },
+      {
+        "path": "tests/naming_governance_final_binding_checks.py",
+        "bytes": 14184,
+        "sha256": "0b72d65fb0f9772c3652f0b32026df44668ab93c47bc172791756bf32dc7d497"
+      },
+      {
+        "path": "tests/test_naming_governance_validator.py",
+        "bytes": 16055,
+        "sha256": "dfd44464ae4a5a7ef455a9915f22675c6229e519bd0e7d9495e14b7fcdb2554a"
+      }
+    ],
+    "required_review": [
+      "Latest fixed Step9 focus and E1-E6 boundaries",
+      "Original 40 exact conditions; scoped evidence/dispositions do not remove future obligations",
+      "Final Steps4-8 source/decision/projection/validator bindings",
+      "Concrete migration targets and preservation/recovery scope",
+      "Existing Step15/18 unimplemented obligation and later actual evidence due"
+    ],
+    "selected_dispositions": "step09-review-20260907/preparation/RootSelectedDispositions.candidate.json",
+    "structure_28_rule": "Prepare only during Step9; distinct formal adjudication follows actual Step10 acceptance before Step11.",
+    "scope": "Current repository and current delivery artifacts under user amendments. No exhaustive historical Library, model/store activation, business Canonical mutation or new hosted control plane.",
+    "excluded_uncommitted_work": "Any concurrently prepared Step15 publication implementation is not part of this reviewed commit and cannot claim its review or tests.",
+    "authority_effect": "NONE",
+    "physical_migration_performed": false,
+    "prior_review_subject": {
+      "path": "step09-review-20260907/ReviewSubject_20260907.json",
+      "sha256": "960cab1c1b87fb898f6c2ce0604e54cf8026125f29b9633543971b7ab7de43a9"
+    },
+    "scoped_revision": "Migration executor rejects parent junction/symlink and case-variant protected paths; real junction negative plus five executor regressions pass. Fixed 64-path inputs and Steps4-8 unchanged. Independent ten-clause applicability review is attached."
+  },
+  "subject_ref": {
+    "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\ReviewSubject_20260907.r2.json",
+    "sha256": "741cf1fedefa35cec82e9f55bcf53bf2ce29fa6253fd68da2133ab0c2d724cbf",
+    "bytes": 42323,
+    "pointer": ""
+  },
+  "executor_supplement": [
+    {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step12-migration-20260907\\migration_execute.py",
+      "sha256": "15ed103a96943125978e9134a8322c6195f62fe24d3e2e070a8ad538b17ea2fe"
+    },
+    {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step12-migration-20260907\\ParentLinkGuardRepair.json",
+      "sha256": "c746d7d58e796f8027bbd931091ab060d3cf033d7563e05d492dde21880378cd"
+    },
+    {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step09-independent-final\\ExecutorCorrectionVerification.json",
+      "sha256": "8a8025413964cc6057452fbb739076e58eff920ef62861b90eacd7ac504e4fc9"
+    }
+  ],
+  "independence": {
+    "candidate_implementation_authors": [
+      "/root/step1_verify",
+      "/root/evidence_review",
+      "/root/sequence_review",
+      "/root"
+    ],
+    "primary_reviewer_authored_step7_step8_or_migration_implementation": false,
+    "primary_reviewer_authored_original_v025_candidate": false,
+    "preparatory_applicability_proposals_authored_by_primary_reviewer": true,
+    "those_proposals_not_counted_as_their_own_independent_acceptance": true,
+    "separate_disposition_reviewer": "/root/evidence_review",
+    "separate_disposition_review": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\disposition-review\\Review.json",
+      "sha256": "21483daedf403b5033783491b2caaf9658df88fd39374f3393954f37e5bf8c04"
+    },
+    "method": "Independent source/fact/digest/blob derivation, raw receipt correlation, focused actual execution, and independently found executor flaw; prior scoped reviews reused only on unchanged exact evidence."
+  },
+  "scope": "Current privately controlled naming/structure candidate under explicit current-directory and cost amendments; design and preacceptance evidence only.",
+  "sources": {
+    "exact_subject": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\ReviewSubject_20260907.r2.json",
+      "sha256": "741cf1fedefa35cec82e9f55bcf53bf2ce29fa6253fd68da2133ab0c2d724cbf",
+      "bytes": 42323,
+      "pointer": ""
+    },
+    "subject_verification": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step09-independent-final\\ExactSubjectVerification.r2.json",
+      "sha256": "e597c82f576b72b13130a68943cdec6ef25b664539d2f17708ea98d812142483",
+      "bytes": 60884,
+      "pointer": ""
+    },
+    "original_subject_verification": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step09-independent-final\\ExactSubjectVerification.json",
+      "sha256": "8b005d33edde9bff4fd438ea16d8084e6b722f87047e733b7612538315d334ba",
+      "bytes": 56888,
+      "pointer": ""
+    },
+    "independent_checks": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step09-independent-final\\IndependentChecks.json",
+      "sha256": "0d111c1f33d9beff1e0ee562b8f6b1602c00f4deb4a7d3b14efec369a40588b4",
+      "bytes": 40856,
+      "pointer": ""
+    },
+    "scope_checks": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step09-independent-final\\ScopeAndInheritanceChecks.json",
+      "sha256": "59effdae689b0e932eb61b3031b230f2f9de02bdfb5a7278f8024e5574b2fa5c",
+      "bytes": 1609,
+      "pointer": ""
+    },
+    "step7_acceptance": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\Step07-ScopedAcceptance_20260907.json",
+      "sha256": "dec7601899be7118b3baff3d78793ecaf98b06316070b881ca30297a3b0f22b3",
+      "bytes": 3500,
+      "pointer": ""
+    },
+    "step8_acceptance": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\Step08-ScopedAcceptance_20260907.json",
+      "sha256": "8bac86599481c9effc67274bb29b7f352d59d4e656add8805e41f7437ced455c",
+      "bytes": 3346,
+      "pointer": ""
+    },
+    "root_selected_dispositions": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\preparation\\RootSelectedDispositions.candidate.json",
+      "sha256": "c4fe3cc13670a886e6703ab191284ddb2d0077d481f674a3cab10b49d51e65b8",
+      "bytes": 1760,
+      "pointer": ""
+    },
+    "original40_preparation": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\preparation\\Original40Assessment.preparation.json",
+      "sha256": "093baa56b20b449a0d868458ea129943b5585d534e01d54f7b34b9b28c0f529c",
+      "bytes": 89677,
+      "pointer": ""
+    },
+    "staged_disposition_proposal": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\preparation\\StagedDispositionProposal.json",
+      "sha256": "2d27c7b9a673dff1484caea6d3fb5ea409467346eafb96557c7123bd5a5ec653",
+      "bytes": 41422,
+      "pointer": ""
+    },
+    "disposition_independent_review": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\disposition-review\\Review.json",
+      "sha256": "21483daedf403b5033783491b2caaf9658df88fd39374f3393954f37e5bf8c04"
+    },
+    "fixed_baseline": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\FixedExecutionBaseline_20260907.md",
+      "sha256": "f465bcb77aced171b4f241da7a23c1e02133716700227caaabb7954be39899ad",
+      "bytes": 30836,
+      "pointer": ""
+    },
+    "acceptance_and_invalidation": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\AcceptanceAndInvalidation.md",
+      "sha256": "f2aed48ed74e688bfe280d3fa896243cc7907905fafcc467706a276367472f27",
+      "bytes": 20571,
+      "pointer": ""
+    },
+    "current_access_review": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\CurrentScopedAccessReview_20260907.json",
+      "sha256": "88a846d82338c77d30ba802895b2ce04e1b8ac76bcbae69dd0cabf070f9dc9a7",
+      "bytes": 5872,
+      "pointer": ""
+    },
+    "migration_inputs": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step12-migration-20260907\\ExecutionInputs.candidate.json",
+      "sha256": "37a6909deedae17dbfe97e844d8ec596c5de46e73c3cefafd4136008d3f3dcec",
+      "bytes": 32713,
+      "pointer": ""
+    }
+  },
+  "checks_summary": {
+    "independent_check_count": 152,
+    "independent_checks_failed": 0,
+    "exact_git_blob_files": 159,
+    "initial_incremental_naming_delta_paths": 154,
+    "r2_unchanged_blob_reuses": 153,
+    "r2_new_or_changed_blob_checks": 6,
+    "raw_receipts_correlated": 27,
+    "current_positive_cli_runs": 1,
+    "new_focused_negative_controls": 2,
+    "migration_source_target_paths_checked": 64,
+    "immutable_locks_checked": 39,
+    "original_condition_count": 40
+  },
+  "baseline_step9_topics": [
+    {
+      "id": "S09-01",
+      "topic": "Naming Surface completeness",
+      "conclusion": "SUPPORTED_WITH_EXPLICIT_CURRENT_SCOPE",
+      "independent_reasoning": "The accepted Step3 current-directory scope excludes exhaustive Library history. Independently compared the initial 154 changed paths against their exact subject, then verified r2 contains precisely one implementation repair and five evidence metadata additions: final 159 files, 153 unchanged blob reuses and six new/changed exact blob checks. No unbound changed path. Existing Step4 namespaces and typed input references cover the current governed delta; dormant external domains are not falsely inventoried as active."
+    },
+    {
+      "id": "S09-02",
+      "topic": "Namespace ownership",
+      "conclusion": "SUPPORTED_SCOPED_ADMINISTRATION",
+      "independent_reasoning": "Directly inspected namespace/delegation predicates and resolved exact source/acceptance lineage. Current governance ownership is delegated administration, not issuance of new runtime owners, global registry power or credentials."
+    },
+    {
+      "id": "S09-03",
+      "topic": "Alias safety",
+      "conclusion": "SUPPORTED_SCOPED_DESIGN_AND_FIXTURE_BEHAVIOR",
+      "independent_reasoning": "Current new runtime alias set is zero, explicitly not all-history completeness. Preserved IF-MVP0 and MODEL-PROGRAM aliases retain exact source-qualified rules; real N04/N05 receipt evidence shows missing-target and new-write refusal. No source byte rename is treated as a new canonical ID."
+    },
+    {
+      "id": "S09-04",
+      "topic": "Version axes",
+      "conclusion": "SUPPORTED",
+      "independent_reasoning": "Product Clued-v1.6, architecture v0.2.5, map v0.1.1, schema/protocol local-rc versions and delivery v0.2.7.1 remain separate. Runtime and migration axes remain null until bound. Sole architecture predecessor is v0.2.4, not mapping acceptance or package revision."
+    },
+    {
+      "id": "S09-05",
+      "topic": "Logical object / representation / copy identity",
+      "conclusion": "SUPPORTED_SCOPED_CONTRACTS",
+      "independent_reasoning": "Owning type definitions are hash/pointer bound; paths do not become logical identity. Representations do not reverse-write Canonical state, and equal-byte copies do not gain authority. Actual negative evidence covers canonical collisions, copies and representation promotion."
+    },
+    {
+      "id": "S09-06",
+      "topic": "Typed receipts / authorization / consumers",
+      "conclusion": "SUPPORTED_WITH_RETAINED_RUNTIME_LIMITS",
+      "independent_reasoning": "Independent source cross-check and real current validator bind 18 source-qualified consumers, 27 existing authorization bindings and 18 receipt requirements. Aggregate nulls are not invented IDs. C01 bearer-presence versus identity validation and C09 declared/enforced scope difference remain explicit, not runtime PASS."
+    },
+    {
+      "id": "S09-07",
+      "topic": "Deterministic projection reality",
+      "conclusion": "SUPPORTED_EXECUTED_PREACCEPTANCE",
+      "independent_reasoning": "Independently derived 19 facts from 19 exact sources, checked 9 accepted-source lineage relations, all 12 output hashes and full Manifest/Registry equality. The actual current validator executes the single original renderer; candidate root installation is deferred to Step12."
+    },
+    {
+      "id": "S09-08",
+      "topic": "Validator detects actual errors",
+      "conclusion": "SUPPORTED_EXECUTED_PREACCEPTANCE",
+      "independent_reasoning": "Inspected loader/digest/pointer, owner, identity, alias, version, receipt, scope, typed-chain and projection predicates. Executed current positive CLI and two additional isolated controls: duplicate JSON source selection and unexpected current projection file; both fail for the intended specific reason."
+    },
+    {
+      "id": "S09-09",
+      "topic": "Targeted negative evidence",
+      "conclusion": "SUPPORTED",
+      "independent_reasoning": "Independently located and hashed all 27 preserved raw receipts: original 23 runs including 13 positive categories and 16 baseline negative cases, plus four final-binding controls. Exit codes and target error rules match. Infrastructure failure is not counted as intended gate rejection."
+    },
+    {
+      "id": "S09-10",
+      "topic": "Bypass paths",
+      "conclusion": "BOUNDED_REVIEW_WITH_LATER_ENFORCEMENT_OBLIGATION",
+      "independent_reasoning": "Current validator is an evidence producer, not an enforcement authority. A concrete internal symlink/junction-parent migration protection flaw was found independently and corrected in the separately bound executor supplement. Real CI/write-path mandatory checks and owner/admin exceptions still require Step15/18 evidence."
+    },
+    {
+      "id": "S09-11",
+      "topic": "Canonical Semantic No-Change",
+      "conclusion": "DESIGN_BOUNDARY_SUPPORTED_EXECUTION_PROOF_RETAINED",
+      "independent_reasoning": "Exact 64path migration inputs and 39 immutable locks exclude memory/, original artifacts, Worker/SQL/Binding and hosted paths. The task changes engineering placement/projections, not canonical identities/permissions. Actual before/after semantic no-change is still Step17; C09 permission repair is outside this no-change migration."
+    },
+    {
+      "id": "S09-12",
+      "topic": "Remaining structural gaps",
+      "conclusion": "NO_BLOCKER_TO_SCOPED_ARCHITECTURE_ACCEPTANCE_WITH_RETAINED_GATES",
+      "independent_reasoning": "All original40 conditions are retained and dispositioned by scope; root-selected ten clauses have separate independent applicability review. Stage11 exact Freeze, original28 formal structure adjudication, execution, CI/non-bypass, Skills and future model/commercial obligations are not erased. No independent reviewer issues user acceptance authority."
+    }
+  ],
+  "original40_assessments": [
+    {
+      "condition_id": "F-MAJ-005/C1",
+      "original_text": "固定主线为 impact v0.3→Architecture convergence candidate v0.2→Phase2 Charter/Structure Plan→一个审核包",
+      "classification": "A",
+      "classification_label": "本轮已有确切证据可承接",
+      "independent_scope_assessment": "同包ReviewSubject绑定架构v0.2.5、唯一架构前任v0.2.4；包修订v0.2.7.1是另一版本轴。承接固定主线合同，最终Step9再绑定本轮补充材料摘要。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/ReviewSubjectContract.json",
+          "bytes": 1383,
+          "sha256": "c2cd13dbe8fd046aa8f0344778141cb9b115fae0048a8c673b60bd25b03498d3",
+          "source_key": "data/ReviewSubjectContract.json",
+          "pointer": "/subject",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission.",
+      "preparation_category": "A",
+      "review_conclusion": "DESIGN_OR_SCOPED_BINDING_SUPPORTED",
+      "blocks_current_step10_scope": false,
+      "final_review_evidence": [
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\preparation\\Original40Assessment.preparation.json",
+          "sha256": "093baa56b20b449a0d868458ea129943b5585d534e01d54f7b34b9b28c0f529c",
+          "bytes": 89677,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\ReviewSubject_20260907.r2.json",
+          "sha256": "741cf1fedefa35cec82e9f55bcf53bf2ce29fa6253fd68da2133ab0c2d724cbf",
+          "bytes": 42323,
+          "pointer": ""
+        }
+      ]
+    },
+    {
+      "condition_id": "F-MAJ-005/C2",
+      "original_text": "从同一审核包签发两个不同决定：ArchitectureConstitutionAcceptanceDecision 与 Phase2StructureFreezeDecision",
+      "classification": "B",
+      "classification_label": "需根按既有委托签发具体治理决定或阶段处置",
+      "independent_scope_assessment": "根在Step9合格后依次签Step10与Step11，两决定引用同一精确包与受控增量；不能要求Step11先存在才接受架构。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/ReviewSubjectContract.json",
+          "bytes": 1383,
+          "sha256": "c2cd13dbe8fd046aa8f0344778141cb9b115fae0048a8c673b60bd25b03498d3",
+          "source_key": "data/ReviewSubjectContract.json",
+          "pointer": "/structure_rule",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission.",
+      "preparation_category": "B",
+      "review_conclusion": "ROOT_SELECTED_STAGED_DISPOSITION_SUPPORTED",
+      "blocks_current_step10_scope": false,
+      "final_review_evidence": [
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\preparation\\Original40Assessment.preparation.json",
+          "sha256": "093baa56b20b449a0d868458ea129943b5585d534e01d54f7b34b9b28c0f529c",
+          "bytes": 89677,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\ReviewSubject_20260907.r2.json",
+          "sha256": "741cf1fedefa35cec82e9f55bcf53bf2ce29fa6253fd68da2133ab0c2d724cbf",
+          "bytes": 42323,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\preparation\\RootSelectedDispositions.candidate.json",
+          "sha256": "c4fe3cc13670a886e6703ab191284ddb2d0077d481f674a3cab10b49d51e65b8",
+          "bytes": 1760,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\disposition-review\\Review.json",
+          "sha256": "21483daedf403b5033783491b2caaf9658df88fd39374f3393954f37e5bf8c04"
+        }
+      ]
+    },
+    {
+      "condition_id": "F-MAJ-005/C3",
+      "original_text": "废止/限定旧文档中的竞争性 next-step 语句",
+      "classification": "C",
+      "classification_label": "真正当前必须补证",
+      "independent_scope_assessment": "Current artifact policy forbids historical namespaces issuing current authority; source-built Status separates the retained historical original, and README/AGENTS/Registry are exactly derived from scoped accepted Step4–6 records. Independent facts/lineage derivation and actual drift controls pass. Installing the candidate into root entrypoints remains Step12; historical text is not silently rewritten.",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/ReviewSubjectContract.json",
+          "bytes": 1383,
+          "sha256": "c2cd13dbe8fd046aa8f0344778141cb9b115fae0048a8c673b60bd25b03498d3",
+          "source_key": "data/ReviewSubjectContract.json",
+          "pointer": "/structure_rule",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission.",
+      "preparation_category": "C",
+      "review_conclusion": "CURRENT_PREACCEPTANCE_EVIDENCE_SUPPORTED",
+      "blocks_current_step10_scope": false,
+      "final_review_evidence": [
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\preparation\\Original40Assessment.preparation.json",
+          "sha256": "093baa56b20b449a0d868458ea129943b5585d534e01d54f7b34b9b28c0f529c",
+          "bytes": 89677,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\ReviewSubject_20260907.r2.json",
+          "sha256": "741cf1fedefa35cec82e9f55bcf53bf2ce29fa6253fd68da2133ab0c2d724cbf",
+          "bytes": 42323,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\Step07-ScopedAcceptance_20260907.json",
+          "sha256": "dec7601899be7118b3baff3d78793ecaf98b06316070b881ca30297a3b0f22b3",
+          "bytes": 3500,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\Step08-ScopedAcceptance_20260907.json",
+          "sha256": "8bac86599481c9effc67274bb29b7f352d59d4e656add8805e41f7437ced455c",
+          "bytes": 3346,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step09-independent-final\\IndependentChecks.json",
+          "sha256": "0d111c1f33d9beff1e0ee562b8f6b1602c00f4deb4a7d3b14efec369a40588b4",
+          "bytes": 40856,
+          "pointer": ""
+        }
+      ],
+      "retained_applicable_stage_obligations": [
+        {
+          "stage": 12,
+          "obligation": "Install the exact governed projection only after actual Step11, preserve source/history and validate affected consumers."
+        }
+      ]
+    },
+    {
+      "condition_id": "F-MAJ-006/C1",
+      "original_text": "签发 ProgramCriticalPathDecision",
+      "classification": "B",
+      "classification_label": "需根按既有委托签发具体治理决定或阶段处置",
+      "independent_scope_assessment": "签限定ProgramCriticalPathDecision：只Slice A是核心，模型/商业非核心，本轮WIP默认1、最多1核心+1独立使能；不激活预算外实验，引用既有用户委托。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/ProgramCriticalPathDecisionCandidate.json",
+          "bytes": 3098,
+          "sha256": "a19e1706c590b2c32895179ed37d1fd85f8ce29c9032fbbf4959253182c3545d",
+          "source_key": "data/ProgramCriticalPathDecisionCandidate.json",
+          "pointer": "/core_critical_path",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/sources/architecture_v024/data/SliceAPreregistration.json",
+          "bytes": 3396,
+          "sha256": "289dd3f7091b41a319b6604d6246010d4acd60e8f44955b6ce8b67ec13f8a033",
+          "source_key": "sources/architecture_v024/data/SliceAPreregistration.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/sources/architecture_v024/data/CapacityBudgetProposal.json",
+          "bytes": 2930,
+          "sha256": "ce62f0aac382f1f225794186ae33d26e6cfb9a62087a60315d478f8a5a818af8",
+          "source_key": "sources/architecture_v024/data/CapacityBudgetProposal.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission.",
+      "preparation_category": "B",
+      "review_conclusion": "ROOT_SELECTED_STAGED_DISPOSITION_SUPPORTED",
+      "blocks_current_step10_scope": false,
+      "final_review_evidence": [
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\preparation\\Original40Assessment.preparation.json",
+          "sha256": "093baa56b20b449a0d868458ea129943b5585d534e01d54f7b34b9b28c0f529c",
+          "bytes": 89677,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\ReviewSubject_20260907.r2.json",
+          "sha256": "741cf1fedefa35cec82e9f55bcf53bf2ce29fa6253fd68da2133ab0c2d724cbf",
+          "bytes": 42323,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\preparation\\RootSelectedDispositions.candidate.json",
+          "sha256": "c4fe3cc13670a886e6703ab191284ddb2d0077d481f674a3cab10b49d51e65b8",
+          "bytes": 1760,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\disposition-review\\Review.json",
+          "sha256": "21483daedf403b5033783491b2caaf9658df88fd39374f3393954f37e5bf8c04"
+        }
+      ]
+    },
+    {
+      "condition_id": "F-MAJ-006/C2",
+      "original_text": "MODEL-PROGRAM-M0 可在共同 Readiness 后建立治理骨架",
+      "classification": "D",
+      "classification_label": "未来非核心义务保留",
+      "independent_scope_assessment": "M0治理骨架是共同Readiness后的条件能力；本轮不申请激活M0。保留适用Readiness与双父引用，不能为此要求现在实现完整模型域。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/BusinessBranchDependencies.json",
+          "bytes": 2370,
+          "sha256": "f323a33b483cbd3f3b9cb25fab9c1ddc5be48f5e5fd27444c6b8d1b0c8641d7c",
+          "source_key": "data/BusinessBranchDependencies.json",
+          "pointer": "/nodes",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission.",
+      "preparation_category": "D",
+      "review_conclusion": "FUTURE_ACTION_OBLIGATION_RETAINED",
+      "blocks_current_step10_scope": false,
+      "final_review_evidence": [
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\preparation\\Original40Assessment.preparation.json",
+          "sha256": "093baa56b20b449a0d868458ea129943b5585d534e01d54f7b34b9b28c0f529c",
+          "bytes": 89677,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\ReviewSubject_20260907.r2.json",
+          "sha256": "741cf1fedefa35cec82e9f55bcf53bf2ce29fa6253fd68da2133ab0c2d724cbf",
+          "bytes": 42323,
+          "pointer": ""
+        }
+      ],
+      "root_decision_requirement": "Step10 retains this original ID, future activation predicate and obligation; no corresponding action is authorized or represented as executed."
+    },
+    {
+      "condition_id": "F-MAJ-006/C3",
+      "original_text": "完整 M1-M7 只在逐阶段预算/实验授权下作为非关键并行轨道",
+      "classification": "A",
+      "classification_label": "本轮已有确切证据可承接",
+      "independent_scope_assessment": "直接分支模型将MODEL_M1_M7列为SEPARATE_CONDITIONAL_TRACK并要求逐阶段预算/数据权利与模型授权；可承接其设计约束，未来真实执行仍禁启。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/BusinessBranchDependencies.json",
+          "bytes": 2370,
+          "sha256": "f323a33b483cbd3f3b9cb25fab9c1ddc5be48f5e5fd27444c6b8d1b0c8641d7c",
+          "source_key": "data/BusinessBranchDependencies.json",
+          "pointer": "/nodes/7",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission.",
+      "preparation_category": "A",
+      "review_conclusion": "DESIGN_OR_SCOPED_BINDING_SUPPORTED",
+      "blocks_current_step10_scope": false,
+      "final_review_evidence": [
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\preparation\\Original40Assessment.preparation.json",
+          "sha256": "093baa56b20b449a0d868458ea129943b5585d534e01d54f7b34b9b28c0f529c",
+          "bytes": 89677,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\ReviewSubject_20260907.r2.json",
+          "sha256": "741cf1fedefa35cec82e9f55bcf53bf2ce29fa6253fd68da2133ab0c2d724cbf",
+          "bytes": 42323,
+          "pointer": ""
+        }
+      ]
+    },
+    {
+      "condition_id": "F-MAJ-006/C4",
+      "original_text": "PHASE2-CORE-SLICE-A 不依赖完整第一方模型 Stable",
+      "classification": "A",
+      "classification_label": "本轮已有确切证据可承接",
+      "independent_scope_assessment": "Slice A节点明确does_not_require MODEL_M1_M7；Charter也明确full_model_stable_is_core_prerequisite=false。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/BusinessBranchDependencies.json",
+          "bytes": 2370,
+          "sha256": "f323a33b483cbd3f3b9cb25fab9c1ddc5be48f5e5fd27444c6b8d1b0c8641d7c",
+          "source_key": "data/BusinessBranchDependencies.json",
+          "pointer": "/nodes/0",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission.",
+      "preparation_category": "A",
+      "review_conclusion": "DESIGN_OR_SCOPED_BINDING_SUPPORTED",
+      "blocks_current_step10_scope": false,
+      "final_review_evidence": [
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\preparation\\Original40Assessment.preparation.json",
+          "sha256": "093baa56b20b449a0d868458ea129943b5585d534e01d54f7b34b9b28c0f529c",
+          "bytes": 89677,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\ReviewSubject_20260907.r2.json",
+          "sha256": "741cf1fedefa35cec82e9f55bcf53bf2ce29fa6253fd68da2133ab0c2d724cbf",
+          "bytes": 42323,
+          "pointer": ""
+        }
+      ]
+    },
+    {
+      "condition_id": "F-MAJ-007/C1",
+      "original_text": "采用 typed references: model_program_parent_architecture_ref 与 clued_architecture_constitution_ref",
+      "classification": "A",
+      "classification_label": "本轮已有确切证据可承接",
+      "independent_scope_assessment": "current_combination分开两个typed parent refs并绑定候选摘要；只能承接类型/身份设计，acceptance_ref仍null不冒充正式接受。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/ParentArchitectureCompatibility.json",
+          "bytes": 1686,
+          "sha256": "f5bed57c2dca9b445b8f6512890a6cc8195187545adb42cd5ec472ebae6623ba",
+          "source_key": "data/ParentArchitectureCompatibility.json",
+          "pointer": "/current_combination",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission.",
+      "preparation_category": "A",
+      "review_conclusion": "DESIGN_OR_SCOPED_BINDING_SUPPORTED",
+      "blocks_current_step10_scope": false,
+      "final_review_evidence": [
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\preparation\\Original40Assessment.preparation.json",
+          "sha256": "093baa56b20b449a0d868458ea129943b5585d534e01d54f7b34b9b28c0f529c",
+          "bytes": 89677,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\ReviewSubject_20260907.r2.json",
+          "sha256": "741cf1fedefa35cec82e9f55bcf53bf2ce29fa6253fd68da2133ab0c2d724cbf",
+          "bytes": 42323,
+          "pointer": ""
+        }
+      ]
+    },
+    {
+      "condition_id": "F-MAJ-007/C2",
+      "original_text": "M0 Authorization 同时绑定所需的两个接受对象，禁止 `<exact or Structure Review scope>` 含糊值",
+      "classification": "D",
+      "classification_label": "未来非核心义务保留",
+      "independent_scope_assessment": "尚不启动M0；在其实际授权前必须绑定两个有效接受对象及精确摘要，禁含糊占位；该义务局部阻断模型动作。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/ParentArchitectureCompatibility.json",
+          "bytes": 1686,
+          "sha256": "f5bed57c2dca9b445b8f6512890a6cc8195187545adb42cd5ec472ebae6623ba",
+          "source_key": "data/ParentArchitectureCompatibility.json",
+          "pointer": "/current_combination",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission.",
+      "preparation_category": "D",
+      "review_conclusion": "FUTURE_ACTION_OBLIGATION_RETAINED",
+      "blocks_current_step10_scope": false,
+      "final_review_evidence": [
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\preparation\\Original40Assessment.preparation.json",
+          "sha256": "093baa56b20b449a0d868458ea129943b5585d534e01d54f7b34b9b28c0f529c",
+          "bytes": 89677,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\ReviewSubject_20260907.r2.json",
+          "sha256": "741cf1fedefa35cec82e9f55bcf53bf2ce29fa6253fd68da2133ab0c2d724cbf",
+          "bytes": 42323,
+          "pointer": ""
+        }
+      ],
+      "root_decision_requirement": "Step10 retains this original ID, future activation predicate and obligation; no corresponding action is authorized or represented as executed."
+    },
+    {
+      "condition_id": "F-MAJ-007/C3",
+      "original_text": "为 Architecture v1.0 与 Model Architecture revision 建立兼容矩阵",
+      "classification": "B",
+      "classification_label": "需根按既有委托签发具体治理决定或阶段处置",
+      "independent_scope_assessment": "当前组合矩阵是v0.2.5设计组合，非未来Architecture v1.0资格；根可明确接受当前类型关系并把未来v1.0/Model revision实际兼容资格绑定为模型激活前置。不得伪造v1.0。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/ParentArchitectureCompatibility.json",
+          "bytes": 1686,
+          "sha256": "f5bed57c2dca9b445b8f6512890a6cc8195187545adb42cd5ec472ebae6623ba",
+          "source_key": "data/ParentArchitectureCompatibility.json",
+          "pointer": "/current_combination",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission.",
+      "preparation_category": "B",
+      "review_conclusion": "ROOT_SELECTED_STAGED_DISPOSITION_SUPPORTED",
+      "blocks_current_step10_scope": false,
+      "final_review_evidence": [
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\preparation\\Original40Assessment.preparation.json",
+          "sha256": "093baa56b20b449a0d868458ea129943b5585d534e01d54f7b34b9b28c0f529c",
+          "bytes": 89677,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\ReviewSubject_20260907.r2.json",
+          "sha256": "741cf1fedefa35cec82e9f55bcf53bf2ce29fa6253fd68da2133ab0c2d724cbf",
+          "bytes": 42323,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\preparation\\RootSelectedDispositions.candidate.json",
+          "sha256": "c4fe3cc13670a886e6703ab191284ddb2d0077d481f674a3cab10b49d51e65b8",
+          "bytes": 1760,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\disposition-review\\Review.json",
+          "sha256": "21483daedf403b5033783491b2caaf9658df88fd39374f3393954f37e5bf8c04"
+        }
+      ]
+    },
+    {
+      "condition_id": "F-MAJ-008/C1",
+      "original_text": "建立 R5→v3.3 Supersession Crosswalk",
+      "classification": "A",
+      "classification_label": "本轮已有确切证据可承接",
+      "independent_scope_assessment": "独立读取crosswalk，K0–K10全11条具来源定位、目标合同和语义义务；只承接语义交叉映射，不转移历史PASS。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/sources/architecture_v024/data/R5SupersessionCrosswalk.json",
+          "bytes": 33250,
+          "sha256": "e9646403ddaa489946699b53b6465bc9aa0e5b8deac05bcca3eeaaed5d4afd04",
+          "source_key": "sources/architecture_v024/data/R5SupersessionCrosswalk.json",
+          "pointer": "/rows",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission.",
+      "preparation_category": "A",
+      "review_conclusion": "DESIGN_OR_SCOPED_BINDING_SUPPORTED",
+      "blocks_current_step10_scope": false,
+      "final_review_evidence": [
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\preparation\\Original40Assessment.preparation.json",
+          "sha256": "093baa56b20b449a0d868458ea129943b5585d534e01d54f7b34b9b28c0f529c",
+          "bytes": 89677,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\ReviewSubject_20260907.r2.json",
+          "sha256": "741cf1fedefa35cec82e9f55bcf53bf2ce29fa6253fd68da2133ab0c2d724cbf",
+          "bytes": 42323,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step09-independent-final\\ScopeAndInheritanceChecks.json",
+          "sha256": "59effdae689b0e932eb61b3031b230f2f9de02bdfb5a7278f8024e5574b2fa5c",
+          "bytes": 1609,
+          "pointer": ""
+        }
+      ]
+    },
+    {
+      "condition_id": "F-MAJ-008/C2",
+      "original_text": "逐项标记 inherited/absorbed/superseded/historical/open",
+      "classification": "A",
+      "classification_label": "本轮已有确切证据可承接",
+      "independent_scope_assessment": "全部11条有显式disposition，K7仍OPEN_QUALIFICATION_TRACK_HISTORICAL_GATE，余项责任吸收；原义务未删除。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/sources/architecture_v024/data/R5SupersessionCrosswalk.json",
+          "bytes": 33250,
+          "sha256": "e9646403ddaa489946699b53b6465bc9aa0e5b8deac05bcca3eeaaed5d4afd04",
+          "source_key": "sources/architecture_v024/data/R5SupersessionCrosswalk.json",
+          "pointer": "/rows",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission.",
+      "preparation_category": "A",
+      "review_conclusion": "DESIGN_OR_SCOPED_BINDING_SUPPORTED",
+      "blocks_current_step10_scope": false,
+      "final_review_evidence": [
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\preparation\\Original40Assessment.preparation.json",
+          "sha256": "093baa56b20b449a0d868458ea129943b5585d534e01d54f7b34b9b28c0f529c",
+          "bytes": 89677,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\ReviewSubject_20260907.r2.json",
+          "sha256": "741cf1fedefa35cec82e9f55bcf53bf2ce29fa6253fd68da2133ab0c2d724cbf",
+          "bytes": 42323,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step09-independent-final\\ScopeAndInheritanceChecks.json",
+          "sha256": "59effdae689b0e932eb61b3031b230f2f9de02bdfb5a7278f8024e5574b2fa5c",
+          "bytes": 1609,
+          "pointer": ""
+        }
+      ]
+    },
+    {
+      "condition_id": "F-MAJ-008/C3",
+      "original_text": "明确 K0-K10 不再是 current parallel Gate authority",
+      "classification": "A",
+      "classification_label": "本轮已有确切证据可承接",
+      "independent_scope_assessment": "11条current_parallel_gate_authority均false；历史Gate名称不成为第二现行权威。正式采用此解释由Step10决定承接。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/sources/architecture_v024/data/R5SupersessionCrosswalk.json",
+          "bytes": 33250,
+          "sha256": "e9646403ddaa489946699b53b6465bc9aa0e5b8deac05bcca3eeaaed5d4afd04",
+          "source_key": "sources/architecture_v024/data/R5SupersessionCrosswalk.json",
+          "pointer": "/rows",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission.",
+      "preparation_category": "A",
+      "review_conclusion": "DESIGN_OR_SCOPED_BINDING_SUPPORTED",
+      "blocks_current_step10_scope": false,
+      "final_review_evidence": [
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\preparation\\Original40Assessment.preparation.json",
+          "sha256": "093baa56b20b449a0d868458ea129943b5585d534e01d54f7b34b9b28c0f529c",
+          "bytes": 89677,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\ReviewSubject_20260907.r2.json",
+          "sha256": "741cf1fedefa35cec82e9f55bcf53bf2ce29fa6253fd68da2133ab0c2d724cbf",
+          "bytes": 42323,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step09-independent-final\\ScopeAndInheritanceChecks.json",
+          "sha256": "59effdae689b0e932eb61b3031b230f2f9de02bdfb5a7278f8024e5574b2fa5c",
+          "bytes": 1609,
+          "pointer": ""
+        }
+      ]
+    },
+    {
+      "condition_id": "F-MAJ-009/C1",
+      "original_text": "从 accepted machine manifest 确定性生成 README/router",
+      "classification": "C",
+      "classification_label": "真正当前必须补证",
+      "independent_scope_assessment": "Current accepted Step4–6 machine source records deterministically generate the governed README/router blocks and machine views. Independent source/fact/lineage verification and actual CLI pass establish Pre-Acceptance execution. The broader architecture source is still a candidate until real Step10; do not backfill its state. Step12 installs the exact governed blocks after Freeze.",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/evidence/entry-preview/README.md",
+          "bytes": 887,
+          "sha256": "bc8c8cbc3966143808fc20a1c8c1054568c7dbe3f847c867dab5830ecb42f46a",
+          "source_key": "evidence/entry-preview/README.md",
+          "pointer": null,
+          "selector_kind": "WHOLE_DOCUMENT"
+        }
+      ],
+      "formal_condition_closed": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission.",
+      "preparation_category": "C",
+      "review_conclusion": "CURRENT_PREACCEPTANCE_EVIDENCE_SUPPORTED",
+      "blocks_current_step10_scope": false,
+      "final_review_evidence": [
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\preparation\\Original40Assessment.preparation.json",
+          "sha256": "093baa56b20b449a0d868458ea129943b5585d534e01d54f7b34b9b28c0f529c",
+          "bytes": 89677,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\ReviewSubject_20260907.r2.json",
+          "sha256": "741cf1fedefa35cec82e9f55bcf53bf2ce29fa6253fd68da2133ab0c2d724cbf",
+          "bytes": 42323,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\Step07-ScopedAcceptance_20260907.json",
+          "sha256": "dec7601899be7118b3baff3d78793ecaf98b06316070b881ca30297a3b0f22b3",
+          "bytes": 3500,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\Step08-ScopedAcceptance_20260907.json",
+          "sha256": "8bac86599481c9effc67274bb29b7f352d59d4e656add8805e41f7437ced455c",
+          "bytes": 3346,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step09-independent-final\\IndependentChecks.json",
+          "sha256": "0d111c1f33d9beff1e0ee562b8f6b1602c00f4deb4a7d3b14efec369a40588b4",
+          "bytes": 40856,
+          "pointer": ""
+        }
+      ],
+      "retained_applicable_stage_obligations": [
+        {
+          "stage": 12,
+          "obligation": "Install the exact governed projection only after actual Step11, preserve source/history and validate affected consumers."
+        }
+      ]
+    },
+    {
+      "condition_id": "F-MAJ-009/C2",
+      "original_text": "所有人类入口带 generated_from/source_digest/status",
+      "classification": "C",
+      "classification_label": "真正当前必须补证",
+      "independent_scope_assessment": "Bound human blocks expose source-set digest, facts-model digest and explicit preparation/source status in human-readable equivalent fields. Exact output hashes, source pointer mapping and cross-view equality verify this semantic metadata contract; literal English key spelling is not present in the human Markdown and is not claimed. Historical preserved originals are explicitly history, not newly generated current claims.",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/RepositoryEvidenceObservation.json",
+          "bytes": 7302,
+          "sha256": "e64b838f04ec083d34d3644b9222f4aa873cdcb535960eb4a5b1588d12963af0",
+          "source_key": "data/RepositoryEvidenceObservation.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission.",
+      "preparation_category": "C",
+      "review_conclusion": "CURRENT_PREACCEPTANCE_EVIDENCE_SUPPORTED",
+      "blocks_current_step10_scope": false,
+      "final_review_evidence": [
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\preparation\\Original40Assessment.preparation.json",
+          "sha256": "093baa56b20b449a0d868458ea129943b5585d534e01d54f7b34b9b28c0f529c",
+          "bytes": 89677,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\ReviewSubject_20260907.r2.json",
+          "sha256": "741cf1fedefa35cec82e9f55bcf53bf2ce29fa6253fd68da2133ab0c2d724cbf",
+          "bytes": 42323,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\Step07-ScopedAcceptance_20260907.json",
+          "sha256": "dec7601899be7118b3baff3d78793ecaf98b06316070b881ca30297a3b0f22b3",
+          "bytes": 3500,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\Step08-ScopedAcceptance_20260907.json",
+          "sha256": "8bac86599481c9effc67274bb29b7f352d59d4e656add8805e41f7437ced455c",
+          "bytes": 3346,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step09-independent-final\\IndependentChecks.json",
+          "sha256": "0d111c1f33d9beff1e0ee562b8f6b1602c00f4deb4a7d3b14efec369a40588b4",
+          "bytes": 40856,
+          "pointer": ""
+        }
+      ],
+      "retained_applicable_stage_obligations": [
+        {
+          "stage": 12,
+          "obligation": "Install the exact governed projection only after actual Step11, preserve source/history and validate affected consumers."
+        }
+      ]
+    },
+    {
+      "condition_id": "F-MAJ-009/C3",
+      "original_text": "CI 比对 Registry、Manifest、README 和 Root AGENTS 路由",
+      "classification": "C",
+      "classification_label": "真正当前必须补证",
+      "independent_scope_assessment": "The actual current CLI comparison and targeted negatives cover Registry/Manifest/README/AGENTS in Pre-Acceptance Evidence Mode. This satisfies the current Step7/8 evidence gate, not the original clause’s entire CI/deployed enforcement effect. Root Step10 must retain actual current/write/CI integration for Step15 and mandatory-boundary proof for Step18. No hosted-service or non-bypass PASS is inferred.",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/RepositoryEvidenceObservation.json",
+          "bytes": 7302,
+          "sha256": "e64b838f04ec083d34d3644b9222f4aa873cdcb535960eb4a5b1588d12963af0",
+          "source_key": "data/RepositoryEvidenceObservation.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission.",
+      "preparation_category": "C",
+      "review_conclusion": "CURRENT_PREACCEPTANCE_EVIDENCE_SUPPORTED",
+      "blocks_current_step10_scope": false,
+      "final_review_evidence": [
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\preparation\\Original40Assessment.preparation.json",
+          "sha256": "093baa56b20b449a0d868458ea129943b5585d534e01d54f7b34b9b28c0f529c",
+          "bytes": 89677,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\ReviewSubject_20260907.r2.json",
+          "sha256": "741cf1fedefa35cec82e9f55bcf53bf2ce29fa6253fd68da2133ab0c2d724cbf",
+          "bytes": 42323,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\Step07-ScopedAcceptance_20260907.json",
+          "sha256": "dec7601899be7118b3baff3d78793ecaf98b06316070b881ca30297a3b0f22b3",
+          "bytes": 3500,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\Step08-ScopedAcceptance_20260907.json",
+          "sha256": "8bac86599481c9effc67274bb29b7f352d59d4e656add8805e41f7437ced455c",
+          "bytes": 3346,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step09-independent-final\\IndependentChecks.json",
+          "sha256": "0d111c1f33d9beff1e0ee562b8f6b1602c00f4deb4a7d3b14efec369a40588b4",
+          "bytes": 40856,
+          "pointer": ""
+        }
+      ],
+      "retained_applicable_stage_obligations": [
+        {
+          "stage": 12,
+          "obligation": "Install the exact governed projection only after actual Step11, preserve source/history and validate affected consumers."
+        },
+        {
+          "stage": 15,
+          "obligation": "Integrate and exercise the comparator at the actual selected CI/write or equivalent publication boundary."
+        },
+        {
+          "stage": 18,
+          "obligation": "Prove mandatory non-bypass for actual protected operations, roles and exception policy; a local green report or private-admin observation is insufficient."
+        }
+      ]
+    },
+    {
+      "condition_id": "F-MAJ-010/C1",
+      "original_text": "机器 ID 统一改为 IF-MVP0-A/B/C 与 MODEL-PROGRAM-M0..M7",
+      "classification": "A",
+      "classification_label": "本轮已有确切证据可承接",
+      "independent_scope_assessment": "11条alias_routes分别落IF-MVP0-A/B/C与MODEL-PROGRAM-M0..M7；裸M0拒绝。承接Step5已接受身份合同，不改历史文件或全局wire schema。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/sources/architecture_v024/data/ControlTypeAndAliasCrosswalk.json",
+          "bytes": 15529,
+          "sha256": "c871c80c13b6eee6abf6ddc5d5189d31644d0cb872f685bd7bf33c59185252a2",
+          "source_key": "sources/architecture_v024/data/ControlTypeAndAliasCrosswalk.json",
+          "pointer": "/alias_routes",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\Step05-ScopedAcceptance_20260907.json",
+          "bytes": 2733,
+          "sha256": "a38536ed64ae7924235ab0318cae17716f1a549d89660acde807f4bb15a64a19",
+          "source_key": "Step05-ScopedAcceptance_20260907.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission.",
+      "preparation_category": "A",
+      "review_conclusion": "DESIGN_OR_SCOPED_BINDING_SUPPORTED",
+      "blocks_current_step10_scope": false,
+      "final_review_evidence": [
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\preparation\\Original40Assessment.preparation.json",
+          "sha256": "093baa56b20b449a0d868458ea129943b5585d534e01d54f7b34b9b28c0f529c",
+          "bytes": 89677,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\ReviewSubject_20260907.r2.json",
+          "sha256": "741cf1fedefa35cec82e9f55bcf53bf2ce29fa6253fd68da2133ab0c2d724cbf",
+          "bytes": 42323,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step09-independent-final\\ScopeAndInheritanceChecks.json",
+          "sha256": "59effdae689b0e932eb61b3031b230f2f9de02bdfb5a7278f8024e5574b2fa5c",
+          "bytes": 1609,
+          "pointer": ""
+        }
+      ]
+    },
+    {
+      "condition_id": "F-MAJ-010/C2",
+      "original_text": "旧文件名保留但在 alias registry 中映射",
+      "classification": "A",
+      "classification_label": "本轮已有确切证据可承接",
+      "independent_scope_assessment": "原名保持，alias只在来源已精确确定时解析；Step5明确不宣称全历史alias资格。当前受控alias可承接，未知旧副本无需全Library追索。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/sources/architecture_v024/data/ControlTypeAndAliasCrosswalk.json",
+          "bytes": 15529,
+          "sha256": "c871c80c13b6eee6abf6ddc5d5189d31644d0cb872f685bd7bf33c59185252a2",
+          "source_key": "sources/architecture_v024/data/ControlTypeAndAliasCrosswalk.json",
+          "pointer": "/alias_routes",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\Step05-ScopedAcceptance_20260907.json",
+          "bytes": 2733,
+          "sha256": "a38536ed64ae7924235ab0318cae17716f1a549d89660acde807f4bb15a64a19",
+          "source_key": "Step05-ScopedAcceptance_20260907.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission.",
+      "preparation_category": "A",
+      "review_conclusion": "DESIGN_OR_SCOPED_BINDING_SUPPORTED",
+      "blocks_current_step10_scope": false,
+      "final_review_evidence": [
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\preparation\\Original40Assessment.preparation.json",
+          "sha256": "093baa56b20b449a0d868458ea129943b5585d534e01d54f7b34b9b28c0f529c",
+          "bytes": 89677,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\ReviewSubject_20260907.r2.json",
+          "sha256": "741cf1fedefa35cec82e9f55bcf53bf2ce29fa6253fd68da2133ab0c2d724cbf",
+          "bytes": 42323,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step09-independent-final\\ScopeAndInheritanceChecks.json",
+          "sha256": "59effdae689b0e932eb61b3031b230f2f9de02bdfb5a7278f8024e5574b2fa5c",
+          "bytes": 1609,
+          "pointer": ""
+        }
+      ]
+    },
+    {
+      "condition_id": "F-MAJ-010/C3",
+      "original_text": "所有 Receipt/Authorization 必须带 domain_id/program_id/stage_id",
+      "classification": "A",
+      "classification_label": "本轮已有确切证据可承接",
+      "independent_scope_assessment": "原runtime合同要求三typed ID；本轮Step6接受18消费者/27授权/18Receipt，以既有运行时参数及原检查绑定，非伪造全局值。保留Step8/13/16/18实际行为义务。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/RuntimeConsumerEvidenceContract.json",
+          "bytes": 809,
+          "sha256": "6313bb5680762b712f0047d45b160313bbeece4b9581c9c95ceed79a790f09b3",
+          "source_key": "data/RuntimeConsumerEvidenceContract.json",
+          "pointer": "/required_identifiers",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\Step06-ScopedAcceptance_20260907.json",
+          "bytes": 5319,
+          "sha256": "bd40c82a21e7b19c2c36e56d7b877078e45c6bfdf1593590fb56ab364f47889a",
+          "source_key": "Step06-ScopedAcceptance_20260907.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step6-bindings\\RootIndependentReview.json",
+          "bytes": 1966,
+          "sha256": "bc2fc121083422a9f13df635511ff11f9279612e2e00da893440772b1ccd92d7",
+          "source_key": "step6-RootIndependentReview.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\Step05-ScopedAcceptance_20260907.json",
+          "bytes": 2733,
+          "sha256": "a38536ed64ae7924235ab0318cae17716f1a549d89660acde807f4bb15a64a19",
+          "source_key": "Step05-ScopedAcceptance_20260907.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission.",
+      "preparation_category": "A",
+      "review_conclusion": "DESIGN_OR_SCOPED_BINDING_SUPPORTED",
+      "blocks_current_step10_scope": false,
+      "final_review_evidence": [
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\preparation\\Original40Assessment.preparation.json",
+          "sha256": "093baa56b20b449a0d868458ea129943b5585d534e01d54f7b34b9b28c0f529c",
+          "bytes": 89677,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\ReviewSubject_20260907.r2.json",
+          "sha256": "741cf1fedefa35cec82e9f55bcf53bf2ce29fa6253fd68da2133ab0c2d724cbf",
+          "bytes": 42323,
+          "pointer": ""
+        }
+      ]
+    },
+    {
+      "condition_id": "F-MAJ-011/C1",
+      "original_text": "单独研究并形成通用候选合同",
+      "classification": "A",
+      "classification_label": "本轮已有确切证据可承接",
+      "independent_scope_assessment": "独立读到通用HumanGovernanceCandidate及7适用设计profiles/8禁激活profiles，选择COMMON_KERNEL_CONTROL_SEMANTICS_WITH_DOMAIN_PROFILES；承接设计候选存在，不自称runtime通过。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/HumanGovernanceProfiles.json",
+          "bytes": 18547,
+          "sha256": "c03093120227047bffe408eb1f4fe7cfa4581f2706d410e75752ccda94689c3f",
+          "source_key": "data/HumanGovernanceProfiles.json",
+          "pointer": "/included_profiles",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/sources/architecture_v024/data/HumanGovernanceCandidate.json",
+          "bytes": 1977,
+          "sha256": "d23351bb11e61bae68d861583b8d0ba75df858d6da09c83cb0418de4f7786a26",
+          "source_key": "sources/architecture_v024/data/HumanGovernanceCandidate.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission.",
+      "preparation_category": "A",
+      "review_conclusion": "DESIGN_OR_SCOPED_BINDING_SUPPORTED",
+      "blocks_current_step10_scope": false,
+      "final_review_evidence": [
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\preparation\\Original40Assessment.preparation.json",
+          "sha256": "093baa56b20b449a0d868458ea129943b5585d534e01d54f7b34b9b28c0f529c",
+          "bytes": 89677,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\ReviewSubject_20260907.r2.json",
+          "sha256": "741cf1fedefa35cec82e9f55bcf53bf2ce29fa6253fd68da2133ab0c2d724cbf",
+          "bytes": 42323,
+          "pointer": ""
+        }
+      ]
+    },
+    {
+      "condition_id": "F-MAJ-011/C2",
+      "original_text": "定义角色、职责、状态、Artifact identity、Human Approval、Publish Gate、Production Verification、Rollback、Receipt/Evidence",
+      "classification": "B",
+      "classification_label": "需根按既有委托签发具体治理决定或阶段处置",
+      "independent_scope_assessment": "已有通用9设计facet、设计审查/结构/关键路径profile及拒绝/撤销规则；根按既有委托接受本轮治理角色和合同适用范围。未来Publish/Production/Rollback运行profile仍禁激活，现有委托不必逐项重问。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/HumanGovernanceProfiles.json",
+          "bytes": 18547,
+          "sha256": "c03093120227047bffe408eb1f4fe7cfa4581f2706d410e75752ccda94689c3f",
+          "source_key": "data/HumanGovernanceProfiles.json",
+          "pointer": "/included_profiles",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/sources/architecture_v024/data/HumanGovernanceCandidate.json",
+          "bytes": 1977,
+          "sha256": "d23351bb11e61bae68d861583b8d0ba75df858d6da09c83cb0418de4f7786a26",
+          "source_key": "sources/architecture_v024/data/HumanGovernanceCandidate.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission.",
+      "preparation_category": "B",
+      "review_conclusion": "ROOT_SELECTED_STAGED_DISPOSITION_SUPPORTED",
+      "blocks_current_step10_scope": false,
+      "final_review_evidence": [
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\preparation\\Original40Assessment.preparation.json",
+          "sha256": "093baa56b20b449a0d868458ea129943b5585d534e01d54f7b34b9b28c0f529c",
+          "bytes": 89677,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\ReviewSubject_20260907.r2.json",
+          "sha256": "741cf1fedefa35cec82e9f55bcf53bf2ce29fa6253fd68da2133ab0c2d724cbf",
+          "bytes": 42323,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\preparation\\RootSelectedDispositions.candidate.json",
+          "sha256": "c4fe3cc13670a886e6703ab191284ddb2d0077d481f674a3cab10b49d51e65b8",
+          "bytes": 1760,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\disposition-review\\Review.json",
+          "sha256": "21483daedf403b5033783491b2caaf9658df88fd39374f3393954f37e5bf8c04"
+        }
+      ]
+    },
+    {
+      "condition_id": "F-MAJ-011/C3",
+      "original_text": "明确网站流程只是一个 domain projection",
+      "classification": "A",
+      "classification_label": "本轮已有确切证据可承接",
+      "independent_scope_assessment": "通用合同与分域profile覆盖设计/信息/隔离资格，网站不是共同权威源；网站发布profile仍deferred，不能从网站流程推出所有域授权。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/HumanGovernanceProfiles.json",
+          "bytes": 18547,
+          "sha256": "c03093120227047bffe408eb1f4fe7cfa4581f2706d410e75752ccda94689c3f",
+          "source_key": "data/HumanGovernanceProfiles.json",
+          "pointer": "/deferred_profiles",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/sources/architecture_v024/data/HumanGovernanceCandidate.json",
+          "bytes": 1977,
+          "sha256": "d23351bb11e61bae68d861583b8d0ba75df858d6da09c83cb0418de4f7786a26",
+          "source_key": "sources/architecture_v024/data/HumanGovernanceCandidate.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission.",
+      "preparation_category": "A",
+      "review_conclusion": "DESIGN_OR_SCOPED_BINDING_SUPPORTED",
+      "blocks_current_step10_scope": false,
+      "final_review_evidence": [
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\preparation\\Original40Assessment.preparation.json",
+          "sha256": "093baa56b20b449a0d868458ea129943b5585d534e01d54f7b34b9b28c0f529c",
+          "bytes": 89677,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\ReviewSubject_20260907.r2.json",
+          "sha256": "741cf1fedefa35cec82e9f55bcf53bf2ce29fa6253fd68da2133ab0c2d724cbf",
+          "bytes": 42323,
+          "pointer": ""
+        }
+      ]
+    },
+    {
+      "condition_id": "F-MAJ-013/C1",
+      "original_text": "逐对象映射到 Kernel Evidence/Candidate/OperationalKnowledge 或 DCP noncanonical cache",
+      "classification": "A",
+      "classification_label": "本轮已有确切证据可承接",
+      "independent_scope_assessment": "独立逐条核对7对象都有目标type：Kernel候选/知识或noncanonical DCP映射；仅设计边界，旧Skill字节/消费者迁移未证明仍保留。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/sources/architecture_v024/data/ExperienceObjectCrosswalk.json",
+          "bytes": 16540,
+          "sha256": "2365d7d529b3d4ec4b93add0e6ff2d800ebd1f0b6bee3615420fbd8ab94749b1",
+          "source_key": "sources/architecture_v024/data/ExperienceObjectCrosswalk.json",
+          "pointer": "/objects",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission.",
+      "preparation_category": "A",
+      "review_conclusion": "DESIGN_OR_SCOPED_BINDING_SUPPORTED",
+      "blocks_current_step10_scope": false,
+      "final_review_evidence": [
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\preparation\\Original40Assessment.preparation.json",
+          "sha256": "093baa56b20b449a0d868458ea129943b5585d534e01d54f7b34b9b28c0f529c",
+          "bytes": 89677,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\ReviewSubject_20260907.r2.json",
+          "sha256": "741cf1fedefa35cec82e9f55bcf53bf2ce29fa6253fd68da2133ab0c2d724cbf",
+          "bytes": 42323,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step09-independent-final\\ScopeAndInheritanceChecks.json",
+          "sha256": "59effdae689b0e932eb61b3031b230f2f9de02bdfb5a7278f8024e5574b2fa5c",
+          "bytes": 1609,
+          "pointer": ""
+        }
+      ]
+    },
+    {
+      "condition_id": "F-MAJ-013/C2",
+      "original_text": "禁止 Skill 本地 Claim/Policy 自动成为全局规则",
+      "classification": "A",
+      "classification_label": "本轮已有确切证据可承接",
+      "independent_scope_assessment": "Policy/Claim明确不能以本地ACTIVE/规则自动产生全局权威；UEP保持建议/有界Guard，不新增永久发布锁。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/sources/architecture_v024/data/ExperienceObjectCrosswalk.json",
+          "bytes": 16540,
+          "sha256": "2365d7d529b3d4ec4b93add0e6ff2d800ebd1f0b6bee3615420fbd8ab94749b1",
+          "source_key": "sources/architecture_v024/data/ExperienceObjectCrosswalk.json",
+          "pointer": "/objects/2/authority_boundary",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission.",
+      "preparation_category": "A",
+      "review_conclusion": "DESIGN_OR_SCOPED_BINDING_SUPPORTED",
+      "blocks_current_step10_scope": false,
+      "final_review_evidence": [
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\preparation\\Original40Assessment.preparation.json",
+          "sha256": "093baa56b20b449a0d868458ea129943b5585d534e01d54f7b34b9b28c0f529c",
+          "bytes": 89677,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\ReviewSubject_20260907.r2.json",
+          "sha256": "741cf1fedefa35cec82e9f55bcf53bf2ce29fa6253fd68da2133ab0c2d724cbf",
+          "bytes": 42323,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step09-independent-final\\ScopeAndInheritanceChecks.json",
+          "sha256": "59effdae689b0e932eb61b3031b230f2f9de02bdfb5a7278f8024e5574b2fa5c",
+          "bytes": 1609,
+          "pointer": ""
+        }
+      ]
+    },
+    {
+      "condition_id": "F-MAJ-013/C3",
+      "original_text": "定义 provenance, privacy, TTL, supersession, user correction and qualification",
+      "classification": "A",
+      "classification_label": "本轮已有确切证据可承接",
+      "independent_scope_assessment": "7对象全部具provenance、privacy、TTL/currentness、supersession/user correction、qualification；类型义务齐，不意味着生命周期实现已验收。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/sources/architecture_v024/data/ExperienceObjectCrosswalk.json",
+          "bytes": 16540,
+          "sha256": "2365d7d529b3d4ec4b93add0e6ff2d800ebd1f0b6bee3615420fbd8ab94749b1",
+          "source_key": "sources/architecture_v024/data/ExperienceObjectCrosswalk.json",
+          "pointer": "/objects",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission.",
+      "preparation_category": "A",
+      "review_conclusion": "DESIGN_OR_SCOPED_BINDING_SUPPORTED",
+      "blocks_current_step10_scope": false,
+      "final_review_evidence": [
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\preparation\\Original40Assessment.preparation.json",
+          "sha256": "093baa56b20b449a0d868458ea129943b5585d534e01d54f7b34b9b28c0f529c",
+          "bytes": 89677,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\ReviewSubject_20260907.r2.json",
+          "sha256": "741cf1fedefa35cec82e9f55bcf53bf2ce29fa6253fd68da2133ab0c2d724cbf",
+          "bytes": 42323,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step09-independent-final\\ScopeAndInheritanceChecks.json",
+          "sha256": "59effdae689b0e932eb61b3031b230f2f9de02bdfb5a7278f8024e5574b2fa5c",
+          "bytes": 1609,
+          "pointer": ""
+        }
+      ]
+    },
+    {
+      "condition_id": "F-MAJ-014/C1",
+      "original_text": "在目标结构中把 User Bundle consumer snapshot 与 source/development control 分离",
+      "classification": "A",
+      "classification_label": "本轮已有确切证据可承接",
+      "independent_scope_assessment": "23行map分开TM15/23用户Bundle与TM17–19 DCP；当前迁移候选保护memory/原制品/Worker，保留私有兼容边界，不把用户业务快照当开发状态。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/StructureCandidateMap.json",
+          "bytes": 33372,
+          "sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965",
+          "source_key": "data/StructureCandidateMap.json",
+          "pointer": "/current_to_target_rows",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step12-migration-candidate\\MigrationPlan.candidate.json",
+          "bytes": 41261,
+          "sha256": "d8e1b8bb5058e9b2e4be9b4c0e836ad101eeefe7a839e6bc3ac5338f8b8310d0",
+          "source_key": "MigrationPlan.candidate.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step12-migration-candidate\\DcpTargetBindings.candidate.json",
+          "bytes": 3803,
+          "sha256": "0b09223cdeda8042f39f31bc691403b537254fdda68d231521164e1999c8a717",
+          "source_key": "DcpTargetBindings.candidate.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission.",
+      "preparation_category": "A",
+      "review_conclusion": "DESIGN_OR_SCOPED_BINDING_SUPPORTED",
+      "blocks_current_step10_scope": false,
+      "final_review_evidence": [
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\preparation\\Original40Assessment.preparation.json",
+          "sha256": "093baa56b20b449a0d868458ea129943b5585d534e01d54f7b34b9b28c0f529c",
+          "bytes": 89677,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\ReviewSubject_20260907.r2.json",
+          "sha256": "741cf1fedefa35cec82e9f55bcf53bf2ce29fa6253fd68da2133ab0c2d724cbf",
+          "bytes": 42323,
+          "pointer": ""
+        }
+      ]
+    },
+    {
+      "condition_id": "F-MAJ-014/C2",
+      "original_text": "根 Authority Router 默认 NONE，不把用户数据当开发状态",
+      "classification": "A",
+      "classification_label": "本轮已有确切证据可承接",
+      "independent_scope_assessment": "本轮已直接读根AGENTS的默认NONE与read-only Canonical export边界；迁移计划保全根路由源且只生成治理区。实际无业务memory召回。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/StructureCandidateMap.json",
+          "bytes": 33372,
+          "sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965",
+          "source_key": "data/StructureCandidateMap.json",
+          "pointer": "/current_to_target_rows/0",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step12-migration-candidate\\MigrationPlan.candidate.json",
+          "bytes": 41261,
+          "sha256": "d8e1b8bb5058e9b2e4be9b4c0e836ad101eeefe7a839e6bc3ac5338f8b8310d0",
+          "source_key": "MigrationPlan.candidate.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step12-migration-candidate\\DcpTargetBindings.candidate.json",
+          "bytes": 3803,
+          "sha256": "0b09223cdeda8042f39f31bc691403b537254fdda68d231521164e1999c8a717",
+          "source_key": "DcpTargetBindings.candidate.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission.",
+      "preparation_category": "A",
+      "review_conclusion": "DESIGN_OR_SCOPED_BINDING_SUPPORTED",
+      "blocks_current_step10_scope": false,
+      "final_review_evidence": [
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\preparation\\Original40Assessment.preparation.json",
+          "sha256": "093baa56b20b449a0d868458ea129943b5585d534e01d54f7b34b9b28c0f529c",
+          "bytes": 89677,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\ReviewSubject_20260907.r2.json",
+          "sha256": "741cf1fedefa35cec82e9f55bcf53bf2ce29fa6253fd68da2133ab0c2d724cbf",
+          "bytes": 42323,
+          "pointer": ""
+        }
+      ]
+    },
+    {
+      "condition_id": "F-MAJ-014/C3",
+      "original_text": "敏感 owner/account refs 使用 endpoint policy，不进入可扩散审计/公共包",
+      "classification": "B",
+      "classification_label": "需根按既有委托签发具体治理决定或阶段处置",
+      "independent_scope_assessment": "当前根路由历史源仍含owner/account提示；用户控制私库不等于公共泄漏，但也非完成敏感引用外置。根应明确仅私有保全，本轮新投影/Skill不得带业务正文或敏感账号值；公开/跨权限分发前再外置/脱敏并验证。无需新信任根。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/StructureCandidateMap.json",
+          "bytes": 33372,
+          "sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965",
+          "source_key": "data/StructureCandidateMap.json",
+          "pointer": "/current_to_target_rows/7",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step12-migration-candidate\\MigrationPlan.candidate.json",
+          "bytes": 41261,
+          "sha256": "d8e1b8bb5058e9b2e4be9b4c0e836ad101eeefe7a839e6bc3ac5338f8b8310d0",
+          "source_key": "MigrationPlan.candidate.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step12-migration-candidate\\DcpTargetBindings.candidate.json",
+          "bytes": 3803,
+          "sha256": "0b09223cdeda8042f39f31bc691403b537254fdda68d231521164e1999c8a717",
+          "source_key": "DcpTargetBindings.candidate.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission.",
+      "preparation_category": "B",
+      "review_conclusion": "ROOT_SELECTED_STAGED_DISPOSITION_SUPPORTED",
+      "blocks_current_step10_scope": false,
+      "final_review_evidence": [
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\preparation\\Original40Assessment.preparation.json",
+          "sha256": "093baa56b20b449a0d868458ea129943b5585d534e01d54f7b34b9b28c0f529c",
+          "bytes": 89677,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\ReviewSubject_20260907.r2.json",
+          "sha256": "741cf1fedefa35cec82e9f55bcf53bf2ce29fa6253fd68da2133ab0c2d724cbf",
+          "bytes": 42323,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\preparation\\RootSelectedDispositions.candidate.json",
+          "sha256": "c4fe3cc13670a886e6703ab191284ddb2d0077d481f674a3cab10b49d51e65b8",
+          "bytes": 1760,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\disposition-review\\Review.json",
+          "sha256": "21483daedf403b5033783491b2caaf9658df88fd39374f3393954f37e5bf8c04"
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\CurrentScopedAccessReview_20260907.json",
+          "sha256": "88a846d82338c77d30ba802895b2ce04e1b8ac76bcbae69dd0cabf070f9dc9a7",
+          "bytes": 5872,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step09-independent-final\\IndependentChecks.json",
+          "sha256": "0d111c1f33d9beff1e0ee562b8f6b1602c00f4deb4a7d3b14efec369a40588b4",
+          "bytes": 40856,
+          "pointer": ""
+        }
+      ],
+      "additional_scope_limit": "Root’s authenticated observation establishes private repository and sole admin at the recorded time, not all-history leakage or mandatory enforcement. I independently matched current generated bytes and checked that known account/owner hints do not enter the new human governance block. Original private routing history remains preserved."
+    },
+    {
+      "condition_id": "F-MAJ-014/C4",
+      "original_text": "对现存历史做 access and leakage review",
+      "classification": "B",
+      "classification_label": "需根按既有委托签发具体治理决定或阶段处置",
+      "independent_scope_assessment": "用户已声明全部自有测试账号并修订为当前目录；原包AREQ-014未授权状态仅历史。根可记录当前私库、制品、无新增外部可见性/无业务payload分发的限定access review，历史全量Library审查不阻断；不得声称全历史无泄漏。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/AuthorizationRequests_NOT_GRANTED.json",
+          "bytes": 8438,
+          "sha256": "f0f736a32fcae273504db1286e7c9b74f087ba42c8d09d53d6cdb9ffb9ea235b",
+          "source_key": "data/AuthorizationRequests_NOT_GRANTED.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step12-migration-candidate\\MigrationPlan.candidate.json",
+          "bytes": 41261,
+          "sha256": "d8e1b8bb5058e9b2e4be9b4c0e836ad101eeefe7a839e6bc3ac5338f8b8310d0",
+          "source_key": "MigrationPlan.candidate.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step12-migration-candidate\\DcpTargetBindings.candidate.json",
+          "bytes": 3803,
+          "sha256": "0b09223cdeda8042f39f31bc691403b537254fdda68d231521164e1999c8a717",
+          "source_key": "DcpTargetBindings.candidate.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission.",
+      "preparation_category": "B",
+      "review_conclusion": "ROOT_SELECTED_STAGED_DISPOSITION_SUPPORTED",
+      "blocks_current_step10_scope": false,
+      "final_review_evidence": [
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\preparation\\Original40Assessment.preparation.json",
+          "sha256": "093baa56b20b449a0d868458ea129943b5585d534e01d54f7b34b9b28c0f529c",
+          "bytes": 89677,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\ReviewSubject_20260907.r2.json",
+          "sha256": "741cf1fedefa35cec82e9f55bcf53bf2ce29fa6253fd68da2133ab0c2d724cbf",
+          "bytes": 42323,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\preparation\\RootSelectedDispositions.candidate.json",
+          "sha256": "c4fe3cc13670a886e6703ab191284ddb2d0077d481f674a3cab10b49d51e65b8",
+          "bytes": 1760,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\disposition-review\\Review.json",
+          "sha256": "21483daedf403b5033783491b2caaf9658df88fd39374f3393954f37e5bf8c04"
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\CurrentScopedAccessReview_20260907.json",
+          "sha256": "88a846d82338c77d30ba802895b2ce04e1b8ac76bcbae69dd0cabf070f9dc9a7",
+          "bytes": 5872,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step09-independent-final\\IndependentChecks.json",
+          "sha256": "0d111c1f33d9beff1e0ee562b8f6b1602c00f4deb4a7d3b14efec369a40588b4",
+          "bytes": 40856,
+          "pointer": ""
+        }
+      ],
+      "additional_scope_limit": "Root’s authenticated observation establishes private repository and sole admin at the recorded time, not all-history leakage or mandatory enforcement. I independently matched current generated bytes and checked that known account/owner hints do not enter the new human governance block. Original private routing history remains preserved."
+    },
+    {
+      "condition_id": "F-MAJ-016/C1",
+      "original_text": "冻结 ArtifactIdentity、ReleaseUnitIdentity、EditionIdentity、SKU/Offer/Entitlement typed refs",
+      "classification": "B",
+      "classification_label": "需根按既有委托签发具体治理决定或阶段处置",
+      "independent_scope_assessment": "13 typed设计行已存在，Step5接受其当前身份合同；根可冻结命名/类型边界并保留商业/模型实际消费者接线为适用域启用前置，不能要求未申请商店先实现。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/ArtifactAndReleaseIdentityCrosswalk.json",
+          "bytes": 10781,
+          "sha256": "a4386a8b45b02e8dbd6ff2f400d3b1c9ecbfc9c6d07a2892f035994d2a78c685",
+          "source_key": "data/ArtifactAndReleaseIdentityCrosswalk.json",
+          "pointer": "/rows",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\Step05-ScopedAcceptance_20260907.json",
+          "bytes": 2733,
+          "sha256": "a38536ed64ae7924235ab0318cae17716f1a549d89660acde807f4bb15a64a19",
+          "source_key": "Step05-ScopedAcceptance_20260907.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission.",
+      "preparation_category": "B",
+      "review_conclusion": "ROOT_SELECTED_STAGED_DISPOSITION_SUPPORTED",
+      "blocks_current_step10_scope": false,
+      "final_review_evidence": [
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\preparation\\Original40Assessment.preparation.json",
+          "sha256": "093baa56b20b449a0d868458ea129943b5585d534e01d54f7b34b9b28c0f529c",
+          "bytes": 89677,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\ReviewSubject_20260907.r2.json",
+          "sha256": "741cf1fedefa35cec82e9f55bcf53bf2ce29fa6253fd68da2133ab0c2d724cbf",
+          "bytes": 42323,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\preparation\\RootSelectedDispositions.candidate.json",
+          "sha256": "c4fe3cc13670a886e6703ab191284ddb2d0077d481f674a3cab10b49d51e65b8",
+          "bytes": 1760,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\disposition-review\\Review.json",
+          "sha256": "21483daedf403b5033783491b2caaf9658df88fd39374f3393954f37e5bf8c04"
+        }
+      ]
+    },
+    {
+      "condition_id": "F-MAJ-016/C2",
+      "original_text": "声明 technical qualification, distribution, commercial availability and user entitlement are separate states",
+      "classification": "A",
+      "classification_label": "本轮已有确切证据可承接",
+      "independent_scope_assessment": "四个independent_state_axes明确分开；各type列出does_not_imply。技术资格不推出分发/可售/权益。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/ArtifactAndReleaseIdentityCrosswalk.json",
+          "bytes": 10781,
+          "sha256": "a4386a8b45b02e8dbd6ff2f400d3b1c9ecbfc9c6d07a2892f035994d2a78c685",
+          "source_key": "data/ArtifactAndReleaseIdentityCrosswalk.json",
+          "pointer": "/independent_state_axes",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission.",
+      "preparation_category": "A",
+      "review_conclusion": "DESIGN_OR_SCOPED_BINDING_SUPPORTED",
+      "blocks_current_step10_scope": false,
+      "final_review_evidence": [
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\preparation\\Original40Assessment.preparation.json",
+          "sha256": "093baa56b20b449a0d868458ea129943b5585d534e01d54f7b34b9b28c0f529c",
+          "bytes": 89677,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\ReviewSubject_20260907.r2.json",
+          "sha256": "741cf1fedefa35cec82e9f55bcf53bf2ce29fa6253fd68da2133ab0c2d724cbf",
+          "bytes": 42323,
+          "pointer": ""
+        }
+      ]
+    },
+    {
+      "condition_id": "F-MAJ-016/C3",
+      "original_text": "Product/Store only project current Kernel/Registry facts",
+      "classification": "D",
+      "classification_label": "未来非核心义务保留",
+      "independent_scope_assessment": "Product/Store真实消费者尚未启用；必须只投影有效Kernel/Registry事实。保留实际启用前正负例与currentness规则，本轮不能将设计crosswalk冒充真实商店证明。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/ArtifactAndReleaseIdentityCrosswalk.json",
+          "bytes": 10781,
+          "sha256": "a4386a8b45b02e8dbd6ff2f400d3b1c9ecbfc9c6d07a2892f035994d2a78c685",
+          "source_key": "data/ArtifactAndReleaseIdentityCrosswalk.json",
+          "pointer": "/rows",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission.",
+      "preparation_category": "D",
+      "review_conclusion": "FUTURE_ACTION_OBLIGATION_RETAINED",
+      "blocks_current_step10_scope": false,
+      "final_review_evidence": [
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\preparation\\Original40Assessment.preparation.json",
+          "sha256": "093baa56b20b449a0d868458ea129943b5585d534e01d54f7b34b9b28c0f529c",
+          "bytes": 89677,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\ReviewSubject_20260907.r2.json",
+          "sha256": "741cf1fedefa35cec82e9f55bcf53bf2ce29fa6253fd68da2133ab0c2d724cbf",
+          "bytes": 42323,
+          "pointer": ""
+        }
+      ],
+      "root_decision_requirement": "Step10 retains this original ID, future activation predicate and obligation; no corresponding action is authorized or represented as executed."
+    },
+    {
+      "condition_id": "F-MAJ-017/C1",
+      "original_text": "以 current Commit/Tree 做实测输入",
+      "classification": "A",
+      "classification_label": "本轮已有确切证据可承接",
+      "independent_scope_assessment": "原Observation是历史；本轮具体MigrationPlan已有源commit/tree和逐源blob/hash，Step6已有当前CI绑定。只承接精确字节且源不变的范围，不以9月5日观察代表今天。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/RepositoryEvidenceObservation.json",
+          "bytes": 7302,
+          "sha256": "e64b838f04ec083d34d3644b9222f4aa873cdcb535960eb4a5b1588d12963af0",
+          "source_key": "data/RepositoryEvidenceObservation.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step12-migration-candidate\\MigrationPlan.candidate.json",
+          "bytes": 41261,
+          "sha256": "d8e1b8bb5058e9b2e4be9b4c0e836ad101eeefe7a839e6bc3ac5338f8b8310d0",
+          "source_key": "MigrationPlan.candidate.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step12-migration-candidate\\DcpTargetBindings.candidate.json",
+          "bytes": 3803,
+          "sha256": "0b09223cdeda8042f39f31bc691403b537254fdda68d231521164e1999c8a717",
+          "source_key": "DcpTargetBindings.candidate.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission.",
+      "preparation_category": "A",
+      "review_conclusion": "DESIGN_OR_SCOPED_BINDING_SUPPORTED",
+      "blocks_current_step10_scope": false,
+      "final_review_evidence": [
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\preparation\\Original40Assessment.preparation.json",
+          "sha256": "093baa56b20b449a0d868458ea129943b5585d534e01d54f7b34b9b28c0f529c",
+          "bytes": 89677,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\ReviewSubject_20260907.r2.json",
+          "sha256": "741cf1fedefa35cec82e9f55bcf53bf2ce29fa6253fd68da2133ab0c2d724cbf",
+          "bytes": 42323,
+          "pointer": ""
+        }
+      ]
+    },
+    {
+      "condition_id": "F-MAJ-017/C2",
+      "original_text": "Architecture v1.0 只冻结责任，不先锁死目录",
+      "classification": "A",
+      "classification_label": "本轮已有确切证据可承接",
+      "independent_scope_assessment": "架构责任与物理选择分开；当前map23责任行保持，唯一具体目标由Step11冻结。不能把架构v0.2.5接受写成v1.0版本发布。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/StructureCandidateMap.json",
+          "bytes": 33372,
+          "sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965",
+          "source_key": "data/StructureCandidateMap.json",
+          "pointer": "/map_kind",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step12-migration-candidate\\MigrationPlan.candidate.json",
+          "bytes": 41261,
+          "sha256": "d8e1b8bb5058e9b2e4be9b4c0e836ad101eeefe7a839e6bc3ac5338f8b8310d0",
+          "source_key": "MigrationPlan.candidate.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step12-migration-candidate\\DcpTargetBindings.candidate.json",
+          "bytes": 3803,
+          "sha256": "0b09223cdeda8042f39f31bc691403b537254fdda68d231521164e1999c8a717",
+          "source_key": "DcpTargetBindings.candidate.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission.",
+      "preparation_category": "A",
+      "review_conclusion": "DESIGN_OR_SCOPED_BINDING_SUPPORTED",
+      "blocks_current_step10_scope": false,
+      "final_review_evidence": [
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\preparation\\Original40Assessment.preparation.json",
+          "sha256": "093baa56b20b449a0d868458ea129943b5585d534e01d54f7b34b9b28c0f529c",
+          "bytes": 89677,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\ReviewSubject_20260907.r2.json",
+          "sha256": "741cf1fedefa35cec82e9f55bcf53bf2ce29fa6253fd68da2133ab0c2d724cbf",
+          "bytes": 42323,
+          "pointer": ""
+        }
+      ]
+    },
+    {
+      "condition_id": "F-MAJ-017/C3",
+      "original_text": "Structure Plan 生成唯一 FrozenTargetMap 和 CurrentToTargetMap",
+      "classification": "B",
+      "classification_label": "需根按既有委托签发具体治理决定或阶段处置",
+      "independent_scope_assessment": "Final 37a6909… ExecutionInputs deterministically binds 64 changed paths, 39 immutable source locks, all 23 original map-row dispositions and the three concrete DCP targets. I independently checked source-before/payload digests, protected path exclusion and initial full 154-file commit delta and bounded r2 supplement. The exact mapping is sufficient candidate input for later Step11; no physical migration or formal 28-condition structure acceptance is claimed.",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/StructureCandidateMap.json",
+          "bytes": 33372,
+          "sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965",
+          "source_key": "data/StructureCandidateMap.json",
+          "pointer": "/current_to_target_rows",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step12-migration-candidate\\MigrationPlan.candidate.json",
+          "bytes": 41261,
+          "sha256": "d8e1b8bb5058e9b2e4be9b4c0e836ad101eeefe7a839e6bc3ac5338f8b8310d0",
+          "source_key": "MigrationPlan.candidate.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step12-migration-candidate\\DcpTargetBindings.candidate.json",
+          "bytes": 3803,
+          "sha256": "0b09223cdeda8042f39f31bc691403b537254fdda68d231521164e1999c8a717",
+          "source_key": "DcpTargetBindings.candidate.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission.",
+      "preparation_category": "B",
+      "review_conclusion": "ROOT_SELECTED_STAGED_DISPOSITION_SUPPORTED",
+      "blocks_current_step10_scope": false,
+      "final_review_evidence": [
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\preparation\\Original40Assessment.preparation.json",
+          "sha256": "093baa56b20b449a0d868458ea129943b5585d534e01d54f7b34b9b28c0f529c",
+          "bytes": 89677,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\ReviewSubject_20260907.r2.json",
+          "sha256": "741cf1fedefa35cec82e9f55bcf53bf2ce29fa6253fd68da2133ab0c2d724cbf",
+          "bytes": 42323,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\preparation\\RootSelectedDispositions.candidate.json",
+          "sha256": "c4fe3cc13670a886e6703ab191284ddb2d0077d481f674a3cab10b49d51e65b8",
+          "bytes": 1760,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\disposition-review\\Review.json",
+          "sha256": "21483daedf403b5033783491b2caaf9658df88fd39374f3393954f37e5bf8c04"
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step12-migration-20260907\\ExecutionInputs.candidate.json",
+          "sha256": "37a6909deedae17dbfe97e844d8ec596c5de46e73c3cefafd4136008d3f3dcec",
+          "bytes": 32713,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step09-independent-final\\ScopeAndInheritanceChecks.json",
+          "sha256": "59effdae689b0e932eb61b3031b230f2f9de02bdfb5a7278f8024e5574b2fa5c",
+          "bytes": 1609,
+          "pointer": ""
+        }
+      ],
+      "retained_applicable_stage_obligations": [
+        {
+          "stage": 11,
+          "obligation": "After actual Step10 and separate formal 28-condition adjudication, issue the exact frozen map decision and bind corrected executor supplement."
+        },
+        {
+          "stage": 12,
+          "obligation": "Do not execute original vulnerable executor; use reviewed guarded correction and fresh unchanged-input/source-target preflight."
+        }
+      ]
+    },
+    {
+      "condition_id": "F-MAJ-017/C4",
+      "original_text": "旧 v3.3 target 每项标记 inherited/changed/retired",
+      "classification": "A",
+      "classification_label": "本轮已有确切证据可承接",
+      "independent_scope_assessment": "独立读取OldTargetDisposition的318条，每条含源行、路径、disposition；属于旧目标责任清单不冒充current文件。当前未变路径规则和新迁移候选承接相关行，无需复查所有历史副本。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/StructureCandidateMap.json",
+          "bytes": 33372,
+          "sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965",
+          "source_key": "data/StructureCandidateMap.json",
+          "pointer": "/source_v3_3_target_disposition",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step12-migration-candidate\\MigrationPlan.candidate.json",
+          "bytes": 41261,
+          "sha256": "d8e1b8bb5058e9b2e4be9b4c0e836ad101eeefe7a839e6bc3ac5338f8b8310d0",
+          "source_key": "MigrationPlan.candidate.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step12-migration-candidate\\DcpTargetBindings.candidate.json",
+          "bytes": 3803,
+          "sha256": "0b09223cdeda8042f39f31bc691403b537254fdda68d231521164e1999c8a717",
+          "source_key": "DcpTargetBindings.candidate.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/sources/architecture_v024/data/OldTargetDisposition.json",
+          "bytes": 264804,
+          "sha256": "72836ed6cec9773d9990d442762f6084eeca6ca99c0817114037731302ca868f",
+          "source_key": "sources/architecture_v024/data/OldTargetDisposition.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission.",
+      "preparation_category": "A",
+      "review_conclusion": "DESIGN_OR_SCOPED_BINDING_SUPPORTED",
+      "blocks_current_step10_scope": false,
+      "final_review_evidence": [
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\preparation\\Original40Assessment.preparation.json",
+          "sha256": "093baa56b20b449a0d868458ea129943b5585d534e01d54f7b34b9b28c0f529c",
+          "bytes": 89677,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\ReviewSubject_20260907.r2.json",
+          "sha256": "741cf1fedefa35cec82e9f55bcf53bf2ce29fa6253fd68da2133ab0c2d724cbf",
+          "bytes": 42323,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step09-independent-final\\ScopeAndInheritanceChecks.json",
+          "sha256": "59effdae689b0e932eb61b3031b230f2f9de02bdfb5a7278f8024e5574b2fa5c",
+          "bytes": 1609,
+          "pointer": ""
+        }
+      ]
+    },
+    {
+      "condition_id": "F-MAJ-018/C1",
+      "original_text": "冻结 Phase2 MVP success metric and maximum active workstreams",
+      "classification": "B",
+      "classification_label": "需根按既有委托签发具体治理决定或阶段处置",
+      "independent_scope_assessment": "Charter已有明确阈值、24case/72槽位及WIP≤2；根可接受设计测量/工作流上限并记实际角色，默认单写执行。原$5/400请求/50万token只是未批实验提案，本次不得据此支出或声称实验通过。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/CharterCandidate.json",
+          "bytes": 2468,
+          "sha256": "44010776cae2a816d4db8134c96a0ee0f07a692b84bae47fc37a6effc7e302c8",
+          "source_key": "data/CharterCandidate.json",
+          "pointer": "/numeric_effect_thresholds",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/sources/architecture_v024/data/SliceAPreregistration.json",
+          "bytes": 3396,
+          "sha256": "289dd3f7091b41a319b6604d6246010d4acd60e8f44955b6ce8b67ec13f8a033",
+          "source_key": "sources/architecture_v024/data/SliceAPreregistration.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/sources/architecture_v024/data/CapacityBudgetProposal.json",
+          "bytes": 2930,
+          "sha256": "ce62f0aac382f1f225794186ae33d26e6cfb9a62087a60315d478f8a5a818af8",
+          "source_key": "sources/architecture_v024/data/CapacityBudgetProposal.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission.",
+      "preparation_category": "B",
+      "review_conclusion": "ROOT_SELECTED_STAGED_DISPOSITION_SUPPORTED",
+      "blocks_current_step10_scope": false,
+      "final_review_evidence": [
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\preparation\\Original40Assessment.preparation.json",
+          "sha256": "093baa56b20b449a0d868458ea129943b5585d534e01d54f7b34b9b28c0f529c",
+          "bytes": 89677,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\ReviewSubject_20260907.r2.json",
+          "sha256": "741cf1fedefa35cec82e9f55bcf53bf2ce29fa6253fd68da2133ab0c2d724cbf",
+          "bytes": 42323,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\preparation\\RootSelectedDispositions.candidate.json",
+          "sha256": "c4fe3cc13670a886e6703ab191284ddb2d0077d481f674a3cab10b49d51e65b8",
+          "bytes": 1760,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\disposition-review\\Review.json",
+          "sha256": "21483daedf403b5033783491b2caaf9658df88fd39374f3393954f37e5bf8c04"
+        }
+      ]
+    },
+    {
+      "condition_id": "F-MAJ-018/C2",
+      "original_text": "只把 Slice A 放核心关键路径",
+      "classification": "A",
+      "classification_label": "本轮已有确切证据可承接",
+      "independent_scope_assessment": "Charter.core_slice精确为PHASE2-CORE-SLICE-A；full_store/full_model不是前提，符合当前成本约束。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/CharterCandidate.json",
+          "bytes": 2468,
+          "sha256": "44010776cae2a816d4db8134c96a0ee0f07a692b84bae47fc37a6effc7e302c8",
+          "source_key": "data/CharterCandidate.json",
+          "pointer": "/core_slice",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/sources/architecture_v024/data/SliceAPreregistration.json",
+          "bytes": 3396,
+          "sha256": "289dd3f7091b41a319b6604d6246010d4acd60e8f44955b6ce8b67ec13f8a033",
+          "source_key": "sources/architecture_v024/data/SliceAPreregistration.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/sources/architecture_v024/data/CapacityBudgetProposal.json",
+          "bytes": 2930,
+          "sha256": "ce62f0aac382f1f225794186ae33d26e6cfb9a62087a60315d478f8a5a818af8",
+          "source_key": "sources/architecture_v024/data/CapacityBudgetProposal.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission.",
+      "preparation_category": "A",
+      "review_conclusion": "DESIGN_OR_SCOPED_BINDING_SUPPORTED",
+      "blocks_current_step10_scope": false,
+      "final_review_evidence": [
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\preparation\\Original40Assessment.preparation.json",
+          "sha256": "093baa56b20b449a0d868458ea129943b5585d534e01d54f7b34b9b28c0f529c",
+          "bytes": 89677,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\ReviewSubject_20260907.r2.json",
+          "sha256": "741cf1fedefa35cec82e9f55bcf53bf2ce29fa6253fd68da2133ab0c2d724cbf",
+          "bytes": 42323,
+          "pointer": ""
+        }
+      ]
+    },
+    {
+      "condition_id": "F-MAJ-018/C3",
+      "original_text": "Model M1-M7、Commerce、Marketplace、大规模训练均单独预算和 GO/NO-GO",
+      "classification": "D",
+      "classification_label": "未来非核心义务保留",
+      "independent_scope_assessment": "模型M1–M7/Commerce/Marketplace/大训练继续独立预算、GO/NO-GO和数据权利前置；本轮未选择激活，只阻断对应未来动作，不全局阻断当前命名结构。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/CharterCandidate.json",
+          "bytes": 2468,
+          "sha256": "44010776cae2a816d4db8134c96a0ee0f07a692b84bae47fc37a6effc7e302c8",
+          "source_key": "data/CharterCandidate.json",
+          "pointer": "/product_dependency_boundary",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/sources/architecture_v024/data/SliceAPreregistration.json",
+          "bytes": 3396,
+          "sha256": "289dd3f7091b41a319b6604d6246010d4acd60e8f44955b6ce8b67ec13f8a033",
+          "source_key": "sources/architecture_v024/data/SliceAPreregistration.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/sources/architecture_v024/data/CapacityBudgetProposal.json",
+          "bytes": 2930,
+          "sha256": "ce62f0aac382f1f225794186ae33d26e6cfb9a62087a60315d478f8a5a818af8",
+          "source_key": "sources/architecture_v024/data/CapacityBudgetProposal.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission.",
+      "preparation_category": "D",
+      "review_conclusion": "FUTURE_ACTION_OBLIGATION_RETAINED",
+      "blocks_current_step10_scope": false,
+      "final_review_evidence": [
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\preparation\\Original40Assessment.preparation.json",
+          "sha256": "093baa56b20b449a0d868458ea129943b5585d534e01d54f7b34b9b28c0f529c",
+          "bytes": 89677,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\ReviewSubject_20260907.r2.json",
+          "sha256": "741cf1fedefa35cec82e9f55bcf53bf2ce29fa6253fd68da2133ab0c2d724cbf",
+          "bytes": 42323,
+          "pointer": ""
+        }
+      ],
+      "root_decision_requirement": "Step10 retains this original ID, future activation predicate and obligation; no corresponding action is authorized or represented as executed."
+    },
+    {
+      "condition_id": "F-MAJ-018/C4",
+      "original_text": "每个阶段必须交付可运行纵向 E2E，不接受仅 Schema/Receipt 堆积",
+      "classification": "B",
+      "classification_label": "需根按既有委托签发具体治理决定或阶段处置",
+      "independent_scope_assessment": "根应按阶段接受可运行纵向证据义务：本轮Step7/8必须真运行投影/Validator；Step12–19按真实迁移/接线/回归收口；产品Slice A的24case/72槽位留实际实施阶段，不能把schema堆积或未跑E2E写成功。",
+      "evidence": [
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/CharterCandidate.json",
+          "bytes": 2468,
+          "sha256": "44010776cae2a816d4db8134c96a0ee0f07a692b84bae47fc37a6effc7e302c8",
+          "source_key": "data/CharterCandidate.json",
+          "pointer": "/measured_results",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/sources/architecture_v024/data/SliceAPreregistration.json",
+          "bytes": 3396,
+          "sha256": "289dd3f7091b41a319b6604d6246010d4acd60e8f44955b6ce8b67ec13f8a033",
+          "source_key": "sources/architecture_v024/data/SliceAPreregistration.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        },
+        {
+          "locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip!/Clued_Phase2_三轨修订与补证_v0.2.7_20260906/sources/architecture_v024/data/CapacityBudgetProposal.json",
+          "bytes": 2930,
+          "sha256": "ce62f0aac382f1f225794186ae33d26e6cfb9a62087a60315d478f8a5a818af8",
+          "source_key": "sources/architecture_v024/data/CapacityBudgetProposal.json",
+          "pointer": "",
+          "selector_kind": "JSON_POINTER"
+        }
+      ],
+      "formal_condition_closed": false,
+      "remaining_obligation_deleted": false,
+      "owner": "Root accepting delegate under existing ExecutionDelegation; applicable implementer retains execution obligations",
+      "invalidation": "Changed subject/source digest, scope/delegation, affected implementation or proposed target reopens only affected dependencies (I1-I8).",
+      "activation_guard": "Future actions remain unavailable until their actual fixed-step prerequisites and scoped evidence hold; this preparation issues no permission.",
+      "preparation_category": "B",
+      "review_conclusion": "ROOT_SELECTED_STAGED_DISPOSITION_SUPPORTED",
+      "blocks_current_step10_scope": false,
+      "final_review_evidence": [
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\preparation\\Original40Assessment.preparation.json",
+          "sha256": "093baa56b20b449a0d868458ea129943b5585d534e01d54f7b34b9b28c0f529c",
+          "bytes": 89677,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\ReviewSubject_20260907.r2.json",
+          "sha256": "741cf1fedefa35cec82e9f55bcf53bf2ce29fa6253fd68da2133ab0c2d724cbf",
+          "bytes": 42323,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\preparation\\RootSelectedDispositions.candidate.json",
+          "sha256": "c4fe3cc13670a886e6703ab191284ddb2d0077d481f674a3cab10b49d51e65b8",
+          "bytes": 1760,
+          "pointer": ""
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step09-review-20260907\\disposition-review\\Review.json",
+          "sha256": "21483daedf403b5033783491b2caaf9658df88fd39374f3393954f37e5bf8c04"
+        }
+      ]
+    }
+  ],
+  "findings": [
+    {
+      "finding_id": "S09-EXEC-PATH-001",
+      "severity": "P2",
+      "affected_original_conditions": [
+        "F-MAJ-014/C1",
+        "F-MAJ-017/C3"
+      ],
+      "location": {
+        "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/migration_execute.py",
+        "symbol": "safe"
+      },
+      "independent_finding": "Original safe() checks only the final path symlink and original text prefix. A parent symlink/junction targeting a protected directory inside the same repository can satisfy within-root validation while bypassing the original protected prefix check.",
+      "original_subject_effect": "Blocks execution through that uncorrected path guard, not the accepted architecture or logical target mapping. No business write or actual current leakage observed.",
+      "disposition": "RESOLVED_BY_EXACT_R2_EXECUTOR_REPAIR_AND_FOCUSED_EVIDENCE",
+      "evidence": [
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step12-migration-20260907\\migration_execute.py",
+          "sha256": "15ed103a96943125978e9134a8322c6195f62fe24d3e2e070a8ad538b17ea2fe"
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step12-migration-20260907\\ParentLinkGuardRepair.json",
+          "sha256": "c746d7d58e796f8027bbd931091ab060d3cf033d7563e05d492dde21880378cd"
+        },
+        {
+          "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step09-independent-final\\ExecutorCorrectionVerification.json",
+          "sha256": "8a8025413964cc6057452fbb739076e58eff920ef62861b90eacd7ac504e4fc9"
+        }
+      ],
+      "acceptance_requirement": "Root must bind the corrected executor supplement before Step12; original bytes remain historical and must not be used for migration."
+    },
+    {
+      "finding_id": "S09-RETAIN-CI-001",
+      "severity": "STAGE_OBLIGATION",
+      "affected_original_conditions": [
+        "F-MAJ-009/C3",
+        "F-MAJ-018/C4"
+      ],
+      "independent_finding": "Local current comparison/negative receipts establish Pre-Acceptance behavior; they do not establish actual CI/write publication integration or non-bypass.",
+      "disposition": "RETAIN_AT_STEPS15_AND18_UNDER_EXPLICIT_LATEST_BASELINE",
+      "reason": "AcceptanceAndInvalidation explicitly forbids using Step18 as an inverted prerequisite for every earlier stage. Retaining enforcement at its prescribed stage is legitimate, not a waiver or PASS."
+    }
+  ],
+  "blocking_findings_for_step10": [],
+  "required_root_decision_effects": [
+    "Actually issue the scoped ArchitectureConstitutionAcceptanceDecision; this review alone has no acceptance authority.",
+    "Carry all40 original IDs, the ten selected staged clauses and the four dormant-domain obligations; do not mark staged runtime obligations globally closed.",
+    "Preserve F009/C3 actual CI/write integration at Step15 and final mandatory-boundary proof at Step18.",
+    "Treat formal original28 structure adjudication as a separate action after actual Step10 and before Step11.",
+    "Bind exact corrected executor supplement in the execution contract before Step12; no reuse of the known vulnerable original."
+  ],
+  "not_accepted": [
+    "Architecture v1.0 release or model combination qualification",
+    "Model/commerce/public activation or new spending",
+    "Actual migration or runtime/production success",
+    "Step18 non-bypass",
+    "Formal original28 structure acceptance",
+    "Structure Freeze or Skill acceptance"
+  ],
+  "authority_effect": "NONE_REVIEW_ONLY",
+  "architecture_acceptance_issued": false,
+  "structure_freeze_issued": false,
+  "formal_original28_adjudication_performed": false,
+  "invalidation": "Relevant source/subject/authority/target/rule changes reopen only affected I1–I8 dependencies. The executor correction is an explicit bounded supplement; old subject bytes are retained. Uncommitted unrelated Step15 work is excluded."
+}
