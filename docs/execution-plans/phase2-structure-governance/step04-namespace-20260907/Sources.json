@@ -1,0 +1,155 @@
+{
+  "source_repository_commit": "5fad76df81c8a412e7768e08427841f0985a2588",
+  "sources": {
+    "baseline": {
+      "kind": "repository_file",
+      "repository_commit_observed": "5fad76df81c8a412e7768e08427841f0985a2588",
+      "path": "docs/execution-plans/phase2-structure-governance/FixedExecutionBaseline_20260907.md",
+      "bytes": 30836,
+      "sha256": "f465bcb77aced171b4f241da7a23c1e02133716700227caaabb7954be39899ad"
+    },
+    "acceptance": {
+      "kind": "repository_file",
+      "repository_commit_observed": "5fad76df81c8a412e7768e08427841f0985a2588",
+      "path": "docs/execution-plans/phase2-structure-governance/AcceptanceAndInvalidation.md",
+      "bytes": 20571,
+      "sha256": "f2aed48ed74e688bfe280d3fa896243cc7907905fafcc467706a276367472f27"
+    },
+    "repo-agents": {
+      "kind": "repository_file",
+      "repository_commit_observed": "5fad76df81c8a412e7768e08427841f0985a2588",
+      "path": "AGENTS.md",
+      "bytes": 9637,
+      "sha256": "75d0788ff62a20d2d211115a66ab20fc38519a14fad890ab9a3d6f821e821793"
+    },
+    "delegation": {
+      "kind": "repository_file",
+      "repository_commit_observed": "5fad76df81c8a412e7768e08427841f0985a2588",
+      "path": "docs/execution-plans/phase2-structure-governance/ExecutionDelegation_20260907.json",
+      "bytes": 3350,
+      "sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8"
+    },
+    "scope-amendment": {
+      "kind": "repository_file",
+      "repository_commit_observed": "5fad76df81c8a412e7768e08427841f0985a2588",
+      "path": "docs/execution-plans/phase2-structure-governance/ScopeAmendment_CurrentDirectory_20260907.json",
+      "bytes": 2308,
+      "sha256": "32b16e2938a5674b1d8b492e1bf0a0506f708c574913696d6ba281b99e108e9e"
+    },
+    "structure-map": {
+      "kind": "repository_file",
+      "repository_commit_observed": "5fad76df81c8a412e7768e08427841f0985a2588",
+      "path": "artifacts/clued-validation/structure-freeze-prep/acceptance-20260907/step2/package-inputs/data/StructureCandidateMap.json",
+      "bytes": 33372,
+      "sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965"
+    },
+    "protocol-manifest": {
+      "kind": "repository_file",
+      "repository_commit_observed": "5fad76df81c8a412e7768e08427841f0985a2588",
+      "path": "protocol/continuity/v1/manifest.json",
+      "bytes": 18823,
+      "sha256": "05ca5bb70c642dba9c3f58c0b943020d6188636e60cc569b3802c90a9afd36b5"
+    },
+    "object-registry": {
+      "kind": "repository_file",
+      "repository_commit_observed": "5fad76df81c8a412e7768e08427841f0985a2588",
+      "path": "protocol/continuity/v1/registries/object-registry.json",
+      "bytes": 62426,
+      "sha256": "3a4fde87c4b90c03681134314aa6a295e33b230cebd475e42964ea79ea73a214"
+    },
+    "vocabulary-registry": {
+      "kind": "repository_file",
+      "repository_commit_observed": "5fad76df81c8a412e7768e08427841f0985a2588",
+      "path": "protocol/continuity/v1/registries/vocabulary-registry.json",
+      "bytes": 1071,
+      "sha256": "01340a4599b56e4a1a91b0b5eaf6570ce74ede6f9ce6faeb608a2bbe69c0289b"
+    },
+    "binding-schema": {
+      "kind": "repository_file",
+      "repository_commit_observed": "5fad76df81c8a412e7768e08427841f0985a2588",
+      "path": "protocol/continuity/v1/schemas/core/binding.schema.json",
+      "bytes": 766,
+      "sha256": "14922eb6039034749af1e94163cf57794a899b69f3efd0cc91c438bff88e7c3b"
+    },
+    "requirements-schema": {
+      "kind": "repository_file",
+      "repository_commit_observed": "5fad76df81c8a412e7768e08427841f0985a2588",
+      "path": "protocol/continuity/v1/schemas/core/requirements.schema.json",
+      "bytes": 890,
+      "sha256": "695c10a38c0004a1aa717c078b64aedd65aa108db8c50b5d625ea631c3cf1a26"
+    },
+    "endpoint-trust": {
+      "kind": "repository_file",
+      "repository_commit_observed": "5fad76df81c8a412e7768e08427841f0985a2588",
+      "path": "config/clued-endpoint-trust.json",
+      "bytes": 209,
+      "sha256": "3c6c76087b468f13e7010a54db92b7c8db13146558c8288c8830eb22d6fb78f4"
+    },
+    "legacy-readme": {
+      "kind": "repository_file",
+      "repository_commit_observed": "5fad76df81c8a412e7768e08427841f0985a2588",
+      "path": "legacy/local-memory-engine-vnext2/README.md",
+      "bytes": 698,
+      "sha256": "7e1efdf92211c771d9f2d74195d9a8b42d84f6ae222a857c25a792289ddc8a15"
+    },
+    "current-worker": {
+      "kind": "repository_file",
+      "repository_commit_observed": "5fad76df81c8a412e7768e08427841f0985a2588",
+      "path": "apps/clued-cloud/worker/continuity.ts",
+      "bytes": 47981,
+      "sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba"
+    },
+    "architecture": {
+      "kind": "immutable_zip_member",
+      "archive_path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip",
+      "member": "Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/ArchitectureCandidateModel.json",
+      "bytes": 719170,
+      "sha256": "f6a1f9dfd4ad181df26ed01217935dc59ff50aa394a965945b9bd168b8b88777"
+    },
+    "identity-policy": {
+      "kind": "immutable_zip_member",
+      "archive_path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip",
+      "member": "Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/CurrentArtifactIdentityPolicy.json",
+      "bytes": 776,
+      "sha256": "3a14df68ea81c6390316c5df09d51a049b52a640871ab57953c42acb30624bff"
+    },
+    "type-crosswalk": {
+      "kind": "immutable_zip_member",
+      "archive_path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip",
+      "member": "Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/ArtifactAndReleaseIdentityCrosswalk.json",
+      "bytes": 10781,
+      "sha256": "a4386a8b45b02e8dbd6ff2f400d3b1c9ecbfc9c6d07a2892f035994d2a78c685"
+    },
+    "domain-contracts": {
+      "kind": "immutable_zip_member",
+      "archive_path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip",
+      "member": "Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/DomainIntegrationContracts.json",
+      "bytes": 18942,
+      "sha256": "083a981dfd3a64f63991095b5932d67a55c81a20846ad80c0008e30420c4eaa2"
+    },
+    "candidate-registry": {
+      "kind": "immutable_zip_member",
+      "archive_path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip",
+      "member": "Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/CurrentArtifactRegistry.json",
+      "bytes": 15392,
+      "sha256": "1dafc859c9a0e51cf13e193e0226718e030bd0193ebeebb3a17288c78c6a1468"
+    },
+    "source-zip-container": {
+      "kind": "immutable_source_container",
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip",
+      "bytes": 246612118,
+      "sha256": "6e51374a6caedb4f84d2b6bb9fe05cd695b25732833f9d0217c341f17e1c1649",
+      "digest_basis": "Previously independently verified full candidate ZIP in this task; selected member bytes hashed again for this construction."
+    }
+  },
+  "no_business_memory_loaded": true,
+  "source_map_rows": 23,
+  "ownership_groups": 10,
+  "domain_rows": 8,
+  "total_core_rows": 18,
+  "source_map_rows_canonical_sha256": "126a6f43f8906695797e89f74ff5a017ed5b2d3639bbe0bcfacbd4516571d485",
+  "stable_map_id": "CANDIDATE_TARGET_MAP_V0_1_1",
+  "original_source_bytes_modified": false,
+  "formal_step4_acceptance_issued": false,
+  "schema_validation_claim": "NO_RUNTIME_SCHEMA_CONFORMANCE_CLAIM; structural checks validate candidate references and source-row coverage only."
+}

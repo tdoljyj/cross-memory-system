@@ -1,0 +1,114 @@
+{
+  "candidate_status": "PREPARATION_ONLY_NOT_STEP4_ACCEPTANCE",
+  "authority_effect": "NONE_NEW_BY_CANDIDATE",
+  "source_repository_commit": "5fad76df81c8a412e7768e08427841f0985a2588",
+  "scope_basis": {
+    "source_id": "scope-amendment",
+    "source_sha256": "32b16e2938a5674b1d8b492e1bf0a0506f708c574913696d6ba281b99e108e9e",
+    "pointer": ""
+  },
+  "task_boundary": "Only construct a bounded Step 4 candidate and conflict list; no migration, freeze, production change or Canonical service write.",
+  "formal_activation_condition": "The parent task determines applicable preceding-gate readiness; this candidate does not waive an actual dependency or issue acceptance.",
+  "construction_basis": [
+    {
+      "source_id": "baseline",
+      "source_sha256": "f465bcb77aced171b4f241da7a23c1e02133716700227caaabb7954be39899ad",
+      "pointer": "Step 4 / lines 192-256"
+    },
+    {
+      "source_id": "acceptance",
+      "source_sha256": "f2aed48ed74e688bfe280d3fa896243cc7907905fafcc467706a276367472f27",
+      "pointer": "Step 4"
+    },
+    {
+      "source_id": "structure-map",
+      "source_sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965",
+      "pointer": ""
+    },
+    {
+      "source_id": "delegation",
+      "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+      "pointer": ""
+    }
+  ],
+  "existing_schema_policy": "Use existing contract/registry IDs and field meanings by reference. No new runtime JSON Schema or global registry authority is created.",
+  "document_kind": "NamespaceDelegationManifest",
+  "delegations": [
+    {
+      "delegation_source_record_id": "CLUED_PHASE2_USER_DELEGATION_20260907",
+      "delegator": {
+        "source_id": "delegation",
+        "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+        "pointer": "/delegator"
+      },
+      "delegatee": {
+        "source_id": "delegation",
+        "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+        "pointer": "/delegatee"
+      },
+      "namespace_group_refs": [
+        {
+          "file": "NamespaceOwnershipManifest.candidate.json",
+          "group_key": "ROOT_ROUTER"
+        },
+        {
+          "file": "NamespaceOwnershipManifest.candidate.json",
+          "group_key": "CURRENT_PROJECTION"
+        },
+        {
+          "file": "NamespaceOwnershipManifest.candidate.json",
+          "group_key": "DOMAIN_CONTRACT"
+        },
+        {
+          "file": "NamespaceOwnershipManifest.candidate.json",
+          "group_key": "PRODUCT_IMPL"
+        },
+        {
+          "file": "NamespaceOwnershipManifest.candidate.json",
+          "group_key": "HOSTED_IMPL"
+        },
+        {
+          "file": "NamespaceOwnershipManifest.candidate.json",
+          "group_key": "TOOLS"
+        },
+        {
+          "file": "NamespaceOwnershipManifest.candidate.json",
+          "group_key": "MECHANISM_SOURCE"
+        },
+        {
+          "file": "NamespaceOwnershipManifest.candidate.json",
+          "group_key": "VERSIONED_ARTIFACT"
+        },
+        {
+          "file": "NamespaceOwnershipManifest.candidate.json",
+          "group_key": "PRIVATE_BUNDLE"
+        },
+        {
+          "file": "NamespaceOwnershipManifest.candidate.json",
+          "group_key": "DEVELOPMENT_CONTRACTS"
+        }
+      ],
+      "capability": [
+        "prepare and maintain naming/namespace candidate definitions",
+        "resolve scoped findings and perform delegated review",
+        "record scoped decisions when existing evidence and preceding gates are satisfied",
+        "delegate bounded independent review"
+      ],
+      "scope": "The current Clued repository and current delivery artifacts governed by the inherited 21-step task and explicit scope amendment; only candidate preparation performed here.",
+      "start_condition": "This explicit user instruction has been received; each action additionally meets the applicable preceding step gate.",
+      "end_condition": "The stated 21-step series is completed, or the user revokes or changes the delegation.",
+      "revocation": "Any later user instruction revoking or narrowing this authority takes precedence for subsequent actions; retain prior evidence and history.",
+      "approval_requirement": "No repeat user confirmation for actions and decisions already within this delegated task. Effective host permissions, available authenticated service scopes and any actual external authorization requirements still apply.",
+      "prohibited_actions": [
+        "This delegation does not itself mean any step has passed, the architecture is accepted, the structure is frozen, or the project is released.",
+        "It does not supply unavailable metadata, convert UNKNOWN into PASS, or permit skipping or silently narrowing the fixed baseline.",
+        "It does not assign new platform credentials or bypass denied access.",
+        "It does not authorize unrelated work or alteration of preserved historical evidence.",
+        "No inference of program Domain issuer authority from management ownership.",
+        "No rewriting original Map rows or published historical artifacts.",
+        "No migration, freezing or production changes in this candidate-preparation subtask."
+      ],
+      "effective_authority": "INHERITED_EXPLICIT_TASK_DELEGATION; THIS_DOCUMENT_DOES_NOT_ISSUE_A_NEW_RUNTIME_AUTHORIZATION"
+    }
+  ]
+}

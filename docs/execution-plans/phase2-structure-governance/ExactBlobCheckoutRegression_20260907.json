@@ -1,0 +1,12 @@
+{
+  "status": "PASS_FOR_EXACT_BLOB_CHECKOUT_REGRESSION",
+  "failed_ci_run": 34103173736,
+  "source_commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+  "evidence_source": "artifacts/clued-validation/structure-freeze-prep/naming/auth-config-20260907/NamingRecords.jsonl",
+  "source_sha256": "d93c77f5a5d5e7c6c7c6dc019ea6b458506d271cf42f8bf211086f5f1b7bdd58",
+  "previous_binary_only_override_status": "M evidence.jsonl",
+  "all_file_override_status": "",
+  "bytes_preserved": true,
+  "immutable_evidence_modified": false,
+  "scope": "Actual Git clean/smudge/index reproduction; not a new Step 3 inventory or CI PASS."
+}

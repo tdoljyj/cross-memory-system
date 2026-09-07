@@ -1,0 +1,73 @@
+{
+  "reviewer": "/root/sequence_review",
+  "review_scope": "Bounded Step 4 administrative Namespace Ownership / Delegation / Domain Registry review",
+  "verdict": "SUPPORTED_FOR_SCOPED_STEP4_ACCEPTANCE",
+  "acceptance_issued": false,
+  "candidate_status_preserved": "PREPARATION_ONLY_NOT_STEP4_ACCEPTANCE",
+  "source_repository_commit_observed": "5fad76df81c8a412e7768e08427841f0985a2588",
+  "effective_source_basis": "Exact source bytes and JSON pointers in Sources.json; observed checkout commit is not a claim that every later scope-amendment file already belongs to that commit.",
+  "reused_candidate_checks_sha256": "3fc273a62abc059a7993deba1986973e421d1ed3da704639a8c98dc9c70f84c9",
+  "candidate_checks_sha256": "2773d3f274fb9c61094be66bccff7b880a47ba16db993ded121fe9ec2a8af36a",
+  "candidate_files_sha256": {
+    "DomainRegistryOwnershipManifest.candidate.json": "fa9e1b322356fc55d04b3eee078146a9b8304e48197c7d1767cd14d665b9c8ca",
+    "KeyConflicts.candidate.json": "b39a65380c04cf97c7e364729657f55448b3358ba1fa9e2194448b6ea3b303f3",
+    "NamespaceDelegationManifest.candidate.json": "cee24dff183aed36ea99a6ad51aea8ee6edf2b15544ac641a955c2393648d537",
+    "NamespaceOwnershipManifest.candidate.json": "40d7e87fed046c8aff18d8c1d0532ada075b802faf204059649c84faef1c0782",
+    "Sources.json": "660dc97f3644eca7f9a8a5078a167b72ea8e897e583bcc2a4e2917cb1d033427"
+  },
+  "before_patch_files_sha256": {
+    "DomainRegistryOwnershipManifest.candidate.json": "450e605a4e94ea8dff4b3d43f95a70e5b7ef401d1f3d45c9f943210e20f22622",
+    "KeyConflicts.candidate.json": "96bdff46b271f215849ad942037b097bf834756771344f542dabcc47ad1db273",
+    "NamespaceDelegationManifest.candidate.json": "cee24dff183aed36ea99a6ad51aea8ee6edf2b15544ac641a955c2393648d537",
+    "NamespaceOwnershipManifest.candidate.json": "2dfff848366f431ff023902a4cde8c733eec4e585f242aaf086f8f6470d9f26a",
+    "Sources.json": "660dc97f3644eca7f9a8a5078a167b72ea8e897e583bcc2a4e2917cb1d033427"
+  },
+  "checks_reused": {
+    "source_rows_exactly_once": 23,
+    "source_references_consistent": 138,
+    "source_zip_full_rescan": false,
+    "repository_wide_rescan": false
+  },
+  "minimal_requirements": {
+    "namespace_owner": "10/10 management owners resolve to the explicit user/project owner, not inferred from tool access alone.",
+    "roles": "All eight Step 4 roles are distinguished; actual runtime actors and independent Step 9 reviewer remain separate.",
+    "delegation": "All required delegator/delegatee/namespace/capability/scope/start/end/revocation/approval/prohibition fields present; all 10 groups included.",
+    "domain_registry": "8/8 domains now explicitly identify the candidate scoped governance registry and its owner/maintainer; 10 bidirectional namespace mappings resolve.",
+    "new_identity_authority": "Definitions and scoped decisions belong to the owner or explicitly delegated task role; runtime grants still require their actual contract and prerequisites.",
+    "domain_lifecycle_and_identity": "All 8 domains record add/modify/retire governance, stable source identifiers and historical-resolution rules; NS-C03 records cross-layer conflicts rather than inventing aliases."
+  },
+  "direct_fix": {
+    "issue": "The original candidate recorded only null runtime Domain registries, leaving the distinct current governance registration location implicit.",
+    "resolution": "Added a candidate governance register designation and reciprocal pointers; exact structure-definition sources and runtime-null fields retained.",
+    "activation": "Only after the accepting delegate issues a digest-bound scoped Step 4 acceptance; this review does not issue it."
+  },
+  "may_accept_routinely_under_existing_delegation": [
+    "The explicit user/project owner as administrative namespace and registry owner for the 10 scoped groups and 8 inherited responsibility domains.",
+    "The existing Codex task delegate as bounded maintainer, artifact publisher and accepting delegate, with inherited revocation and prerequisites.",
+    "The proposed current-task governance register and namespace/domain mappings, while preserving original definition sources."
+  ],
+  "handoff_obligations_not_step4_blockers": [
+    {
+      "step": 5,
+      "item": "Canonical vocabulary, Domain aliases, version axes and identity/copy crosswalks; source Map labels and IMC Domain identities must not be silently equated."
+    },
+    {
+      "step": 6,
+      "item": "Exact active program issuers, runtime readers/writers, typed consumer authorization and receipt bindings; management ownership is not proof of runtime authority."
+    },
+    {
+      "step": 9,
+      "item": "Identify the actual independent reviewer and satisfy the dedicated evidence review contract when that review occurs."
+    },
+    {
+      "step": "specific future activation",
+      "item": "Bind any actually needed external/private/canonical runtime registry before activating or mutating that precise namespace; do not activate speculative or retired stores just to fill cells."
+    }
+  ],
+  "remaining_step4_candidate_blockers": [],
+  "constraints": [
+    "No Step 4 acceptance, Freeze, migration, production mutation or Canonical service write is issued here.",
+    "The latest user scope amendment and low-cost instruction control the current scope; obsolete full-history Library prerequisites are not revived.",
+    "Source, owner, delegation or applicable scope changes invalidate the affected relationships and dependent decisions only."
+  ]
+}

@@ -40,37 +40,14 @@ jobs:
           mkdir -p "$OUTPUT_DIR"
           GIT_LFS_SKIP_SMUDGE=1 git worktree add --detach "$SOURCE_DIR" "$GITHUB_SHA"
 
-          # The inherited .gitattributes forces `text eol=lf` for every path and
-          # therefore rewrites at least one tracked ZIP during checkout. For
-          # inventory, repository bytes must match the Git index exactly. Apply
-          # a runner-local, untracked binary override, then rematerialize index
-          # blobs. This changes no repository file or commit.
+          # Inventory must observe exact Git blobs, including retained JSON
+          # evidence with CRLF and binary archives. The inherited text rule can
+          # normalize either kind. Disable conversion for this read-only source
+          # worktree, then rematerialize the index without changing source blobs.
           attributes_file="$(git -C "$SOURCE_DIR" rev-parse --git-path info/attributes)"
           mkdir -p "$(dirname "$attributes_file")"
           cat > "$attributes_file" <<'ATTRS'
-          *.7z -text
-          *.avi -text
-          *.bin -text
-          *.doc -text
-          *.docx -text
-          *.gif -text
-          *.gz -text
-          *.ico -text
-          *.jpeg -text
-          *.jpg -text
-          *.mov -text
-          *.mp3 -text
-          *.mp4 -text
-          *.pdf -text
-          *.png -text
-          *.ppt -text
-          *.pptx -text
-          *.tar -text
-          *.tgz -text
-          *.webp -text
-          *.xls -text
-          *.xlsx -text
-          *.zip -text
+          * -text
           ATTRS
           GIT_LFS_SKIP_SMUDGE=1 git -C "$SOURCE_DIR" checkout-index -a -f
 
@@ -97,7 +74,8 @@ jobs:
               "source_commit": commit,
               "repository_gitattributes_sha256": hashlib.sha256(attributes).hexdigest(),
               "repository_gitattributes_text": attributes.decode("utf-8"),
-              "observed_problem": "The inherited wildcard text attribute rewrote a tracked ZIP in the default checkout.",
+              "observed_problem": "The inherited wildcard text attribute rewrote ZIP bytes and normalized retained CRLF JSON evidence in default checkouts.",
+              "exact_blob_scope": "all tracked files, without text or end-of-line conversion",
               "runner_local_override_only": True,
               "repository_bytes_modified": False,
               "source_status_after_exact_blob_rematerialization": subprocess.check_output(

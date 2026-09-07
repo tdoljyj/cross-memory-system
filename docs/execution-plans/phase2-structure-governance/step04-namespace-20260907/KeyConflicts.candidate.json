@@ -1,0 +1,103 @@
+{
+  "candidate_status": "PREPARATION_ONLY",
+  "conflicts": [
+    {
+      "id": "NS-C01",
+      "finding": "Management owner is known; program issuer is not thereby assigned.",
+      "evidence": [
+        {
+          "source_id": "delegation",
+          "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+          "pointer": "/authority_source"
+        },
+        {
+          "source_id": "architecture",
+          "source_sha256": "f6a1f9dfd4ad181df26ed01217935dc59ff50aa394a965945b9bd168b8b88777",
+          "pointer": "/contract_allocations"
+        }
+      ],
+      "candidate_resolution": "Bind the actual user/project-owner and task delegate for administration now; retain program issuer/consumer fields pending exact Step 6 binding. Do not ask the user to confirm every null role field.",
+      "blocking_scope": "Only effective program/domain grants or their Freeze claims while applicable bindings remain absent; candidate preparation continues."
+    },
+    {
+      "id": "NS-C02",
+      "finding": "Physical apps/ responsibility is not exclusive Product Projection authority.",
+      "evidence": [
+        {
+          "source_id": "structure-map",
+          "source_sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965",
+          "pointer": "/current_to_target_rows/5"
+        },
+        {
+          "source_id": "current-worker",
+          "source_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "pointer": ""
+        }
+      ],
+      "candidate_resolution": "Keep TM-06 administrative grouping; bind worker API/RPC/authorization consumers to their actual contracts individually. No folder-based transfer of Canonical write authority.",
+      "blocking_scope": "A later classification/migration that treats every apps/ descendant as projection-only; unrelated naming preparation continues."
+    },
+    {
+      "id": "NS-C03",
+      "finding": "Source Map labels, Architecture IMC domains and scoped registries are different identifier layers.",
+      "evidence": [
+        {
+          "source_id": "structure-map",
+          "source_sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965",
+          "pointer": "/stable_map_identity"
+        },
+        {
+          "source_id": "architecture",
+          "source_sha256": "f6a1f9dfd4ad181df26ed01217935dc59ff50aa394a965945b9bd168b8b88777",
+          "pointer": "/contract_allocations"
+        },
+        {
+          "source_id": "protocol-manifest",
+          "source_sha256": "05ca5bb70c642dba9c3f58c0b943020d6188636e60cc569b3802c90a9afd36b5",
+          "pointer": "/claim_boundary"
+        },
+        {
+          "source_id": "identity-policy",
+          "source_sha256": "3a14df68ea81c6390316c5df09d51a049b52a640871ab57953c42acb30624bff",
+          "pointer": ""
+        }
+      ],
+      "candidate_resolution": "Retain all original IDs and show related-role references without declaring aliases. Reuse current registry content in its exact scope; assign an effective runtime Domain registry only when the existing contract/acceptance path supplies it.",
+      "blocking_scope": "Any promotion of candidate/global authority or silent Domain aliasing; not a demand to implement every commercial/model domain now.",
+      "governance_register_disposition": "The candidate DomainRegistryOwnershipManifest explicitly indexes scoped administrative ownership after its own acceptance; StructureCandidateMap remains the source of structural definitions, and runtime Domain registry/issuer binding remains separate."
+    },
+    {
+      "id": "NS-C04",
+      "finding": "Historical/private/external logical targets are not new current writers.",
+      "evidence": [
+        {
+          "source_id": "structure-map",
+          "source_sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965",
+          "pointer": "/current_to_target_rows/21"
+        },
+        {
+          "source_id": "structure-map",
+          "source_sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965",
+          "pointer": "/current_to_target_rows/22"
+        },
+        {
+          "source_id": "identity-policy",
+          "source_sha256": "3a14df68ea81c6390316c5df09d51a049b52a640871ab57953c42acb30624bff",
+          "pointer": "/source_namespaces"
+        },
+        {
+          "source_id": "legacy-readme",
+          "source_sha256": "7e1efdf92211c771d9f2d74195d9a8b42d84f6ae222a857c25a792289ddc8a15",
+          "pointer": ""
+        },
+        {
+          "source_id": "endpoint-trust",
+          "source_sha256": "3c6c76087b468f13e7010a54db92b7c8db13146558c8288c8830eb22d6fb78f4",
+          "pointer": ""
+        }
+      ],
+      "candidate_resolution": "Keep historical byte/identity resolution and existing per-owner snapshot trust; logical DCP/Bundle stores remain referenced candidates until actually needed. Noncritical external unknowns do not block independent in-repo candidate work.",
+      "blocking_scope": "Only activation or mutation of the specific unresolved external/private namespace; no migration or store creation is implied."
+    }
+  ]
+}

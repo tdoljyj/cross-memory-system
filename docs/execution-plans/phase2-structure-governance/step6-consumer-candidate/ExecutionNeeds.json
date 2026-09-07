@@ -1,0 +1,157 @@
+{
+  "schema": "clued.step6-13-16-execution-needs/v1",
+  "authority_effect": "NONE",
+  "requires_user_presence_now": false,
+  "actual_login_or_test_run_performed": false,
+  "baseline_interpretation": {
+    "step6": "typed identities and current consumer wiring; not an unconditional production-login gate",
+    "step13_ref": "docs/execution-plans/phase2-structure-governance/FixedExecutionBaseline_20260907.md:826",
+    "step13": "target consumers correct namespace/identity/version/closed legacy writes/fail closed/receipts/scope",
+    "step16_ref": "docs/execution-plans/phase2-structure-governance/FixedExecutionBaseline_20260907.md:923",
+    "step16": "fresh rerun of four existing Phase2 ZIP gates on migrated structure; A03 is not one of these four",
+    "a03_unconditionally_required": false
+  },
+  "historical_auth_reuse": {
+    "source": "c1ef7a3b",
+    "target": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+    "identical_files": [
+      "apps/clued-cloud/worker/continuity.ts",
+      "apps/clued-cloud/app/oauth/consent/page.tsx",
+      "apps/clued-cloud/app/chatgpt-auth.ts",
+      "apps/clued-cloud/evals/public-mcp/a03-contract.mjs",
+      "apps/clued-cloud/evals/public-mcp/a03-session.mjs"
+    ],
+    "page_diff_scope": "log-card presentation and text; no login/signup/session/consent handler change in observed diff",
+    "claim": "Historical actual A03 evidence remains usable for unchanged auth path; not a fresh migration PASS or live session claim",
+    "invalidate_on": [
+      "auth route/issuer/resource/client/callback/PKCE/scope/consent implementation changed",
+      "relevant account/client/Binding permission or revocation state changed",
+      "Inspector version/storage/proxy navigation hook changed",
+      "candidate requirement explicitly needs fresh live execution",
+      "new failure gives contrary evidence"
+    ],
+    "not_invalidated_only_by": [
+      "unrelated naming report added",
+      "log presentation changed",
+      "a new process is reviewing same historical run"
+    ]
+  },
+  "environments": [
+    {
+      "id": "E01",
+      "purpose": "Worker HTTP/MCP/auth/Binding routing unit tests",
+      "accounts": "synthetic mocked users/JWT/Binding markers; no real accounts",
+      "required_environment": [
+        "Node >=22.13.0",
+        "project dev dependencies/build expected by test imports"
+      ],
+      "provider": "existing test sources can generate fixtures; install/build availability NOT_CHECKED",
+      "needs_live_secret": false,
+      "user_presence": false
+    },
+    {
+      "id": "E02",
+      "purpose": "P5/P6 real Postgres behavior and cross-tenant/revoked/role negative tests",
+      "accounts": "fixture owner/editor/reader/tenantB/denied and revoked/user/service/automation/worker bindings",
+      "required_environment": [
+        "embedded-postgres 18.4.0-beta.17 package + platform binary",
+        "pg/esbuild",
+        "isolated ephemeral database/ports",
+        "optional CLD_P5_EVIDENCE_DIR or CLD_P6_EVIDENCE_DIR"
+      ],
+      "provider": "existing test creates synthetic identities; no user login; no shared production DB",
+      "needs_live_secret": false,
+      "user_presence": false
+    },
+    {
+      "id": "E03",
+      "purpose": "local Supabase SQL tests and isolated MCP positive/negative flow",
+      "accounts": "fixtures.mjs ownerA/ownerB, Binding A/B and sessionA; generated locally",
+      "required_environment": [
+        "Supabase CLI pinned 2.115.0",
+        "local service stack/container runtime",
+        "SUPABASE_DB_URL restricted to isolated local DB (default127.0.0.1:54322)",
+        "local SUPABASE_PUBLISHABLE_KEY obtained by existing status helper",
+        "MCP_ISOLATED_PORT(default8787) or MCP_ISOLATED_URL",
+        "PROJECT_VIEWS_V2/P5_TENANT_WRITES controlled test flag matrix"
+      ],
+      "provider": "existing scripts can create isolated fixtures; CLI/container readiness NOT_CHECKED; no production reset",
+      "needs_live_secret": false,
+      "user_presence": false
+    },
+    {
+      "id": "E04",
+      "purpose": "Step16 four Phase2 gates",
+      "accounts": "none for offline candidate; GitHub Actions repository identity only for CI transport",
+      "required_environment": [
+        "Python3.12",
+        "exact migrated candidate ZIP/identity/source/negativecontrol",
+        "GITHUB_SHA/RUN_ID/RUN_ATTEMPT and artifact capture under CI",
+        "GITHUB_TOKEN(contents:read) supplied by Actions for private release asset"
+      ],
+      "provider": "candidate already retained locally; authorized GitHub channel/Actions can provide CI scope; no Auth login",
+      "needs_live_secret": false,
+      "user_presence": false
+    },
+    {
+      "id": "E05",
+      "purpose": "conditional fresh production email/password/session and Binding CRUD acceptance",
+      "accounts": "dedicated authorized Clued test account; valid GoTrue userJWT (not management token); explicitly chosen fixture Binding",
+      "required_environment": [
+        "production or isolated accepted target",
+        "secure existing browser user session or interactive login",
+        "negative no-token/malformed-token needs no identity; revoke/scope tests use isolated fixtures"
+      ],
+      "provider": "current Supabase management connection reads project/config/schema but does not supply authenticated Clued end-user JWT; no exposed Clued login/Binding tool in current available surface",
+      "needs_live_secret": true,
+      "user_presence": "ONLY_IF_LIVE_TEST_IS_REQUIRED_AND_NO_VALID_AUTHORIZED_SESSION"
+    },
+    {
+      "id": "E06",
+      "purpose": "conditional live A03 OAuth/PKCE",
+      "accounts": "fixed subject e9dc13e7-41b0-421b-bfa3-07890675e92d; client87924be5-cec9-415f-b1a2-8a4d9ae9d1a8",
+      "required_environment": [
+        "Inspector2.4.0",
+        "HOST=localhost",
+        "CLIENT_PORT=6400",
+        "MCP_SANDBOX_PORT=6401",
+        "MCP_APP_ORIGIN_PORT=6402",
+        "MCP_STORAGE_DIR=fresh isolated local directory",
+        "MCP_INSPECTOR_OAUTH_STATE_PATH=<directory>/oauth.json",
+        "callback http://localhost:6400/oauth/callback",
+        "resource https://clued.pixelgrav.com/mcp",
+        "openid email profile scope only"
+      ],
+      "provider": "A03-RUNBOOK owner login/verification/consent during Connect; existing API authority cannot substitute; one protected tools/call budget",
+      "needs_live_secret": true,
+      "user_presence": "CONDITIONAL_NOT_REQUIRED_BY_STEP6_OR_FOUR_PHASE2_GATES"
+    },
+    {
+      "id": "E07",
+      "purpose": "conditional live read/write Binding scope acceptance",
+      "accounts": "one least-privilege reader and writer plus other-owner/revoked/expired negative fixture; never revoke real existing Binding just for negative test",
+      "required_environment": [
+        "scope/context-bound Binding delivered through an authorized secret channel if live required",
+        "test-only storage context",
+        "P5 gateway token only if P5 route is explicitly enabled/in-scope"
+      ],
+      "provider": "do not extract stored production tokens; existing isolated fixture suite preferred; management metadata cannot prove end-user/Binding capability",
+      "needs_live_secret": true,
+      "user_presence": "ONLY_FOR_NEW_USER_AUTHORIZATION_IF_REQUIRED"
+    },
+    {
+      "id": "E08",
+      "purpose": "required-check receipt production and inventory sources",
+      "accounts": "GitHub repository read identity; already-connected CF/Supabase management scope",
+      "required_environment": [
+        "GH_TOKEN/GITHUB_TOKEN from existing authorized context, never printed",
+        "GATE_REPOSITORY/CANDIDATE_SHA/GATE_PR_NUMBER/GATE_RECEIPT_OUTPUT as applicable",
+        "read-only source APIs"
+      ],
+      "provider": "existing authorized connectors/CI; no Clued password required",
+      "needs_live_secret": false,
+      "user_presence": false
+    }
+  ],
+  "credential_handling": "Names/roles/env keys only. No secret values copied, credential stores inspected, user JWT minted, existing Binding revoked, or browser reopened."
+}

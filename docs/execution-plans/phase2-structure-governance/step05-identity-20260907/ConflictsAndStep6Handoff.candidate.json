@@ -1,0 +1,220 @@
+{
+  "candidate_status": "PREPARATION_ONLY_NOT_STEP5_ACCEPTANCE",
+  "authority_effect": "NONE_NEW_BY_CANDIDATE",
+  "base_repository_commit": "5fad76df81c8a412e7768e08427841f0985a2588",
+  "format_boundary": "Review views over existing contracts; not a new runtime schema, global registry, or Canonical Store.",
+  "scope_basis": {
+    "source_id": "scope-amendment",
+    "source_sha256": "32b16e2938a5674b1d8b492e1bf0a0506f708c574913696d6ba281b99e108e9e",
+    "pointer": ""
+  },
+  "management_owner_ref": {
+    "source_id": "delegation",
+    "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+    "pointer": "/delegator"
+  },
+  "preparation_delegate_ref": {
+    "source_id": "delegation",
+    "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+    "pointer": "/delegatee"
+  },
+  "step4_prerequisite": {
+    "candidate_ref": {
+      "source_id": "step4-ownership",
+      "source_sha256": "40d7e87fed046c8aff18d8c1d0532ada075b802faf204059649c84faef1c0782",
+      "pointer": ""
+    },
+    "formal_gate_asserted_here": false,
+    "accepted_decision_ref": {
+      "source_id": "step4-acceptance",
+      "source_sha256": "6f2cc1c9cc28c2a717023029851d61a666815567bc30b3635479cb1b70382e6c",
+      "pointer": ""
+    },
+    "accepted_effect_boundary": "Reuse the existing scoped Step4 administrative acceptance; this candidate issues no new acceptance, runtime authority or Freeze."
+  },
+  "physical_rename_performed": false,
+  "migration_performed": false,
+  "historical_bytes_or_ids_changed": false,
+  "conflicts": [
+    {
+      "id": "ID-C01",
+      "evidence_class": "OBSERVED_MULTIPLE_VERSION_AXES_NOT_AN_IMPLEMENTATION_FAILURE",
+      "finding": "v0.2.7.1 package, v0.2.5 architecture, v0.1.4 structure document, v0.1.1 stable Map and Clued-v1.6 repository label are distinct subjects.",
+      "candidate_disposition": "RESOLVED_IN_CANDIDATE_BY_AXIS_AND_EXACT_SOURCE_REFERENCES",
+      "source_refs": [
+        {
+          "source_id": "identity-policy",
+          "source_sha256": "3a14df68ea81c6390316c5df09d51a049b52a640871ab57953c42acb30624bff",
+          "pointer": ""
+        },
+        {
+          "source_id": "version",
+          "source_sha256": "aa07c9e145d2246eb962877d8f3b4dccc25cfafd84115206bce546582628d02a",
+          "pointer": ""
+        },
+        {
+          "source_id": "source-zip-container",
+          "source_sha256": "6e51374a6caedb4f84d2b6bb9fe05cd695b25732833f9d0217c341f17e1c1649",
+          "pointer": ""
+        }
+      ]
+    },
+    {
+      "id": "ID-C02",
+      "evidence_class": "EXPLICIT_SOURCE_FORBIDS_IDENTITY_GUESS",
+      "finding": "TM-13 does not prove clued-continuity equals clued-kernel-developer.",
+      "candidate_disposition": "PRESERVE_LEGACY; bind exact host/role/artifact/consumer only before proposing that projection migration.",
+      "source_refs": [
+        {
+          "source_id": "structure-map",
+          "source_sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965",
+          "pointer": "/current_to_target_rows/12"
+        }
+      ]
+    },
+    {
+      "id": "ID-C03",
+      "evidence_class": "OBSERVED_DUPLICATE_BYTES_WITHOUT_GLOBAL_LOGICAL_PROOF",
+      "finding": "727 SHA256 groups and 727 Git blob groups contain multiple paths; byte equality is not object/copy/authority equality.",
+      "candidate_disposition": "PRESERVE_OCCURRENCES_AND_IDS; no deduplication or logical equivalence inferred.",
+      "source_refs": [
+        {
+          "source_id": "ci-manifest",
+          "source_sha256": "e6e80781685b9cd76f1dbb19ba45fa9a9d623758271bde64a4999e30796dc882",
+          "pointer": "/repository_inventory/duplicate_representations"
+        }
+      ]
+    },
+    {
+      "id": "ID-C04",
+      "evidence_class": "OBSERVED_BARE_MACHINE_STAGE_REFERENCES",
+      "finding": "Bare stage tokens require their actual owning program/domain/contract for interpretation.",
+      "candidate_disposition": "RETAIN_TOKEN_AND_SOURCE_SITE; namespace/type binding is performed for affected active consumers at Step 6 and naming rules at Step 7; history is not renamed.",
+      "source_refs": [
+        {
+          "source_id": "ci-manifest",
+          "source_sha256": "e6e80781685b9cd76f1dbb19ba45fa9a9d623758271bde64a4999e30796dc882",
+          "pointer": "/repository_inventory/stage_references"
+        }
+      ]
+    },
+    {
+      "id": "ID-C05",
+      "evidence_class": "SOURCE_CANDIDATE_TYPES_NOT_RUNTIME_IMPLEMENTATION",
+      "finding": "13 crosswalk type definitions and local protocol structure are design/scoped machine contracts, not newly accepted runtime grants.",
+      "candidate_disposition": "REUSE_SOURCE_TYPES; inactive model/commercial families remain uninstantiated; applicable current consumer bindings continue at Step 6.",
+      "source_refs": [
+        {
+          "source_id": "type-crosswalk",
+          "source_sha256": "a4386a8b45b02e8dbd6ff2f400d3b1c9ecbfc9c6d07a2892f035994d2a78c685",
+          "pointer": ""
+        },
+        {
+          "source_id": "protocol-manifest",
+          "source_sha256": "05ca5bb70c642dba9c3f58c0b943020d6188636e60cc569b3802c90a9afd36b5",
+          "pointer": ""
+        }
+      ]
+    }
+  ],
+  "reviewed_site_total": 148,
+  "classification_counts": {
+    "RUNTIME_OR_STEP6_BINDING": 85,
+    "FINITE_STATIC_MAPPING": 60,
+    "NON_NAME_SYMBOL_HOMONYM": 3
+  },
+  "site_set_source_ref": {
+    "source_id": "typed-review",
+    "source_sha256": "26ba84344047fba0deede667fdd1c94bee40b7958a897aedc84ed523c941a6ab",
+    "pointer": "/sites"
+  },
+  "exact_ci_binding_ref": {
+    "source_id": "ci-review-binding",
+    "source_sha256": "baf2856fd05332487e6cad7f84b707f3b994d2be5efad484f7ad5a1f20ef27f5",
+    "pointer": ""
+  },
+  "site_keys_are_reused_not_regenerated": true,
+  "ci_evidence_boundary": "Previously independently downloaded and bound CI artifact; this candidate only checks existing receipt/manifest/review consistency and does not reauthenticate CI origin or run a fresh scan.",
+  "handoff": [
+    {
+      "item": "Typed-name finite mappings",
+      "count": 60,
+      "action": "Reuse the exact reviewed site keys, finite values and definition source hashes; where a consumer uses a value, bind its owning typed contract rather than invent a second vocabulary.",
+      "source_ref": {
+        "source_id": "typed-review",
+        "source_sha256": "26ba84344047fba0deede667fdd1c94bee40b7958a897aedc84ed523c941a6ab",
+        "pointer": "/sites"
+      }
+    },
+    {
+      "item": "Runtime or Step 6 named families",
+      "count": 85,
+      "legacy_audit_only_sites": 58,
+      "non_legacy_sites_including_tests": 27,
+      "action": "Use source-bound family/structure contracts. Select actual active consumer sites before runtime evidence; tests remain tests and historical retired code is not executed for enumeration.",
+      "source_ref": {
+        "source_id": "typed-review",
+        "source_sha256": "26ba84344047fba0deede667fdd1c94bee40b7958a897aedc84ed523c941a6ab",
+        "pointer": "/sites"
+      }
+    },
+    {
+      "item": "Non-name symbol homonyms",
+      "count": 3,
+      "action": "Keep reviewed homonym classification; no invented scope/role identity or additional runtime binding is necessary.",
+      "source_ref": {
+        "source_id": "typed-review",
+        "source_sha256": "26ba84344047fba0deede667fdd1c94bee40b7958a897aedc84ed523c941a6ab",
+        "pointer": "/sites"
+      }
+    },
+    {
+      "item": "Three helper RPC names missing from original primary typed RPC observations",
+      "action": "Carry the existing source-bound supplementary helper-call observations alongside the original inventory. Do not silently increase the original CI primary denominator or infer a runtime grant from the name.",
+      "source_ref": {
+        "source_id": "rpc-supplement",
+        "source_sha256": "3583906d1ffa795cdc35bfe9d21b1bdf9e1b1ebfbed02941e871a2876e59a006",
+        "pointer": ""
+      }
+    },
+    {
+      "item": "Applicable Receipt/Authorization/Consumer contract",
+      "action": "Bind actual domain/program/stage/run, subject/actor, capability/scope, issuer and consumer schema/version, source/target revision/digest and drift/expiry/revocation. Existing project delegation supplies task administration, not these runtime instances.",
+      "source_refs": [
+        {
+          "source_id": "delegation",
+          "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+          "pointer": ""
+        },
+        {
+          "source_id": "type-crosswalk",
+          "source_sha256": "a4386a8b45b02e8dbd6ff2f400d3b1c9ecbfc9c6d07a2892f035994d2a78c685",
+          "pointer": "/rows/8"
+        },
+        {
+          "source_id": "type-crosswalk",
+          "source_sha256": "a4386a8b45b02e8dbd6ff2f400d3b1c9ecbfc9c6d07a2892f035994d2a78c685",
+          "pointer": "/rows/12"
+        }
+      ]
+    },
+    {
+      "item": "Actual current dependencies and compatibility consumers",
+      "action": "Resolve any necessary external Auth/config or exact installed Skill projection only for the real dependent path. An unproved active dependency cannot be declared N/A; unrelated preparation does not activate it.",
+      "source_refs": [
+        {
+          "source_id": "scope-amendment",
+          "source_sha256": "32b16e2938a5674b1d8b492e1bf0a0506f708c574913696d6ba281b99e108e9e",
+          "pointer": ""
+        },
+        {
+          "source_id": "structure-map",
+          "source_sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965",
+          "pointer": "/current_to_target_rows/12"
+        }
+      ]
+    }
+  ],
+  "step5_decision": "CANDIDATE_PREPARED_FOR_REVIEW_ONLY; no formal Step 5 gate or Step 9 acceptance is issued.",
+  "dependency_rule": "An unresolved new identity ambiguity blocks the affected proposed consumer or migration. Known runtime assignments explicitly retained for Step 6, and preserved inactive history, do not require fabricated enumeration to prepare this candidate."
+}

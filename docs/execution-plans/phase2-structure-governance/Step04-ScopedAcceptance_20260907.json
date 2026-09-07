@@ -1,0 +1,63 @@
+{
+  "decision_kind": "SCOPED_STEP4_NAMESPACE_GOVERNANCE_ACCEPTANCE",
+  "decision_id": "CLUED_PHASE2_STEP04_ACCEPTANCE_20260907",
+  "status": "ACCEPTED_FOR_STEP4_ADMINISTRATIVE_SCOPE",
+  "issued_at": "2026-09-07T09:08:46.633814+00:00",
+  "acceptor": "Codex@DESK-W-591 acting under CLUED_PHASE2_USER_DELEGATION_20260907",
+  "author": "/root/evidence_review",
+  "independent_reviewer": "/root/sequence_review",
+  "authority": {
+    "path": "ExecutionDelegation_20260907.json",
+    "sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8"
+  },
+  "predecessor": {
+    "path": "Step03-CurrentScopedDisposition_20260907.json",
+    "sha256": "88e92b7ea619bcc22bc9b7dc4d3fa2b16f0ad7a359966ac3f12a3ef65a58b0fc"
+  },
+  "review": {
+    "path": "step04-namespace-20260907/IndependentReview.json",
+    "sha256": "9982821c0762fdb2da1228b248718a1fa71629e2f123a9f1c6d673c07e8b8ec3"
+  },
+  "subjects": {
+    "DomainRegistryOwnershipManifest.candidate.json": "fa9e1b322356fc55d04b3eee078146a9b8304e48197c7d1767cd14d665b9c8ca",
+    "KeyConflicts.candidate.json": "b39a65380c04cf97c7e364729657f55448b3358ba1fa9e2194448b6ea3b303f3",
+    "NamespaceDelegationManifest.candidate.json": "cee24dff183aed36ea99a6ad51aea8ee6edf2b15544ac641a955c2393648d537",
+    "NamespaceOwnershipManifest.candidate.json": "40d7e87fed046c8aff18d8c1d0532ada075b802faf204059649c84faef1c0782",
+    "Sources.json": "660dc97f3644eca7f9a8a5078a167b72ea8e897e583bcc2a4e2917cb1d033427"
+  },
+  "subject_directory": "step04-namespace-20260907",
+  "source_binding": "The reviewed bytes and source hashes control; historical observed-commit labels do not claim later amendments were present in 5fad76d.",
+  "source_file_hashes_rechecked_at_acceptance": [
+    "baseline",
+    "acceptance",
+    "repo-agents",
+    "delegation",
+    "scope-amendment",
+    "structure-map",
+    "protocol-manifest",
+    "object-registry",
+    "vocabulary-registry",
+    "binding-schema",
+    "requirements-schema",
+    "endpoint-trust",
+    "legacy-readme",
+    "current-worker"
+  ],
+  "accepted_effect": [
+    "Confirm the existing explicit user/project owner and task delegation for the 10 administrative namespace groups.",
+    "Adopt the 8-row DomainRegistryOwnershipManifest governance ownership register and reciprocal namespace mappings within this task.",
+    "Preserve all 23 original StructureCandidateMap rows and original definition sources.",
+    "Continue to Step 5; bind actual program consumers and runtime authority at Step 6 before any dependent Freeze or activation."
+  ],
+  "candidate_history": "Retained candidate documents preserve their original preparation status. This separate digest-bound decision supplies only the accepted administrative effect above.",
+  "not_granted": [
+    "New runtime issuer or service permissions",
+    "Global canonical registry authority",
+    "Architecture Acceptance",
+    "Structure Freeze",
+    "Physical migration",
+    "Naming closeout"
+  ],
+  "invalidation": "Changed source identity, scoped owner, delegation, mapping, or user scope invalidates the affected relations and dependent decisions. Unchanged independent evidence is reused.",
+  "next_step": 5
+}

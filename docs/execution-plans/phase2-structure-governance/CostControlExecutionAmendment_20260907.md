@@ -10,3 +10,7 @@
 - Library 历史全量清点不再是前置条件，具体范围以 ScopeAmendment_CurrentDirectory_20260907.json 为准。
 
 本轮 Auth 后台当前值已直接读取：Site URL 为 https://clued.pixelgrav.com，Redirect URLs 仅 https://clued.pixelgrav.com/**。未修改配置。来源保存在 naming/auth-config-20260907/Observation.json。此项补证已完成，不再阻断命名盘点；涉及认证行为或地址变更时仍执行对应实际验收。
+
+## 桌面版本再次确认
+
+用户再次指定 `C:/Users/Windows/Desktop/执行计划生成提示词-直用版.md`；全文已读取，SHA256 为 `26d19527d75e82c287c224d5f384c96dc1da8ae0f49a7a05e2ec32ac7de7e9ec`，与此前微信目录版本字节一致。继续使用现有执行表，不重制计划。仅做影响验收的增量工作：既有结果一次独立验证即可；局部缺口局部处理；优先接口和现有发布/写入校验，不把 GitHub Pro 等可选付费路径提升为必需前提。等价方案仍须提供真实负例与不可绕过证据，未证明前不标 PASS。

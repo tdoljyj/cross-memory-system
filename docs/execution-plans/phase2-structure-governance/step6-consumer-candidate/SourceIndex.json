@@ -1,0 +1,64 @@
+{
+  "schema": "clued.step6-preparation-source-index/v1",
+  "authority_effect": "NONE",
+  "source_commit": "9bc1e7f7225bddeec491c38e5ea1017e6ffb69fa",
+  "tests_executed": 0,
+  "postgres_fixture_status": "NOT_EXECUTED_ENVIRONMENT_UNAVAILABLE",
+  "files": [
+    {
+      "path": "A03-source-diff.patch",
+      "bytes": 4456,
+      "sha256": "9f5be8532ab3cd93d5eb14800d5dd79a7305818de9f3223bdcc6e3b08ad76b2a"
+    },
+    {
+      "path": "ConsumerMatrix.json",
+      "bytes": 56180,
+      "sha256": "3fffec8fd9570352246425d60156d17988eb6311adab719e481c197a6eca5cee"
+    },
+    {
+      "path": "ConsumerMatrix.md",
+      "bytes": 8949,
+      "sha256": "f01ca7fad905bce7df478e35cd275df2579ad34fedd9d4e6bff37e53be435f3d"
+    },
+    {
+      "path": "ExecutionNeeds.json",
+      "bytes": 8032,
+      "sha256": "8c45d5fa28b6847709ba3f5669961ce8ca48589c654248e4245e22fc4df930e1"
+    },
+    {
+      "path": "export-scope-fixture.sql",
+      "bytes": 3450,
+      "sha256": "6087ca1c03b749c5d8e23425308aece85fd53d189bd99397ddbd4f212ce361fd"
+    },
+    {
+      "path": "export-scope-forward-migration.DRAFT.sql",
+      "bytes": 947,
+      "sha256": "ff20548e699bac53ed9fd292a487bcb3b7a27fac33025fff694e290d73422389"
+    },
+    {
+      "path": "ExportScopeFixtureStatus.md",
+      "bytes": 2387,
+      "sha256": "15de523e6bca471a6e37bdbcc2b62a6d5d953ea20219c78d8fa615acd94c9281"
+    },
+    {
+      "path": "finalize-sources.py",
+      "bytes": 2896,
+      "sha256": "85d09f0601de7f925a399a027572b3e5953c9a5b8848d31538e4a305cd5201ae"
+    },
+    {
+      "path": "GapsAndExecutionNeeds.md",
+      "bytes": 7938,
+      "sha256": "682a4404937723e4cf66d33cdd28199cb7ff562e69f9e6b9caf044830a7593ca"
+    },
+    {
+      "path": "read-candidate.py",
+      "bytes": 514,
+      "sha256": "670e0fb07fc33356f481a867e4274596dceca59bf0c140ca44e6979695ccd4d5"
+    },
+    {
+      "path": "RuntimeConsumerEvidenceContract.json",
+      "bytes": 809,
+      "sha256": "6313bb5680762b712f0047d45b160313bbeece4b9581c9c95ceed79a790f09b3"
+    }
+  ]
+}

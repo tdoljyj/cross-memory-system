@@ -1,0 +1,709 @@
+{
+  "candidate_status": "PREPARATION_ONLY_NOT_STEP4_ACCEPTANCE",
+  "authority_effect": "NONE_NEW_BY_CANDIDATE",
+  "source_repository_commit": "5fad76df81c8a412e7768e08427841f0985a2588",
+  "scope_basis": {
+    "source_id": "scope-amendment",
+    "source_sha256": "32b16e2938a5674b1d8b492e1bf0a0506f708c574913696d6ba281b99e108e9e",
+    "pointer": ""
+  },
+  "task_boundary": "Only construct a bounded Step 4 candidate and conflict list; no migration, freeze, production change or Canonical service write.",
+  "formal_activation_condition": "The parent task determines applicable preceding-gate readiness; this candidate does not waive an actual dependency or issue acceptance.",
+  "construction_basis": [
+    {
+      "source_id": "baseline",
+      "source_sha256": "f465bcb77aced171b4f241da7a23c1e02133716700227caaabb7954be39899ad",
+      "pointer": "Step 4 / lines 192-256"
+    },
+    {
+      "source_id": "acceptance",
+      "source_sha256": "f2aed48ed74e688bfe280d3fa896243cc7907905fafcc467706a276367472f27",
+      "pointer": "Step 4"
+    },
+    {
+      "source_id": "structure-map",
+      "source_sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965",
+      "pointer": ""
+    },
+    {
+      "source_id": "delegation",
+      "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+      "pointer": ""
+    }
+  ],
+  "existing_schema_policy": "Use existing contract/registry IDs and field meanings by reference. No new runtime JSON Schema or global registry authority is created.",
+  "document_kind": "DomainRegistryOwnershipManifest",
+  "domains": [
+    {
+      "domain_id": "ROOT_ROUTER",
+      "domain_id_status": "EXACT_SOURCE_MAP_RESPONSIBILITY_LABEL; NOT_NEWLY_REGISTERED_RUNTIME_DOMAIN",
+      "registry_owner_management_ref": {
+        "source_id": "delegation",
+        "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+        "pointer": "/delegator"
+      },
+      "registry_maintainer_ref": {
+        "source_id": "delegation",
+        "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+        "pointer": "/delegatee"
+      },
+      "namespace_group_keys": [
+        "ROOT_ROUTER"
+      ],
+      "existing_definition_registry_ref": null,
+      "existing_registry_scope": "No standalone runtime Domain registry established by the inspected current contracts.",
+      "canonical_runtime_domain_registry_ref": null,
+      "canonical_runtime_registry_status": "PENDING_BINDING; DO_NOT_PROMOTE_EXISTING_SCOPED_OR_DESIGN_REGISTRY_TO_GLOBAL_AUTHORITY",
+      "related_allocation_refs": [],
+      "add_modify_retire_authority": {
+        "proposal_and_review_actor_ref": {
+          "source_id": "delegation",
+          "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+          "pointer": "/delegatee"
+        },
+        "administrative_authorizer_ref": {
+          "source_id": "delegation",
+          "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+          "pointer": "/delegator"
+        },
+        "effective_program_issuer_ref": null,
+        "condition": "Bind the applicable accepted Domain contract, exact scope and current consumer evidence before effective program/domain mutation; inherited task authorization needs no repeated user confirmation."
+      },
+      "stable_id_rule": "Keep the source label and exact source Map identity; any later accepted ID/alias needs an explicit crosswalk, never a folder rename or guessed equality.",
+      "historical_resolution_rule": "Resolve source/archive identifiers in their original namespace and version axis; they cannot issue current state.",
+      "program_authority_state": "NOT_INFERRED_FROM_ACCOUNT_OWNERSHIP",
+      "canonical_governance_registry_ref": {
+        "file": "DomainRegistryOwnershipManifest.candidate.json",
+        "pointer": "/domains/0",
+        "layer": "CURRENT_PHASE2_NAMESPACE_ADMINISTRATIVE_OWNERSHIP",
+        "state": "PROPOSED_EFFECTIVE_ONLY_ON_SCOPED_STEP4_ACCEPTANCE"
+      },
+      "namespace_ownership_refs": [
+        {
+          "file": "NamespaceOwnershipManifest.candidate.json",
+          "pointer": "/namespaces/0",
+          "group_key": "ROOT_ROUTER"
+        }
+      ]
+    },
+    {
+      "domain_id": "DCP",
+      "domain_id_status": "EXACT_SOURCE_MAP_RESPONSIBILITY_LABEL; NOT_NEWLY_REGISTERED_RUNTIME_DOMAIN",
+      "registry_owner_management_ref": {
+        "source_id": "delegation",
+        "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+        "pointer": "/delegator"
+      },
+      "registry_maintainer_ref": {
+        "source_id": "delegation",
+        "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+        "pointer": "/delegatee"
+      },
+      "namespace_group_keys": [
+        "CURRENT_PROJECTION",
+        "VERSIONED_ARTIFACT",
+        "DEVELOPMENT_CONTRACTS"
+      ],
+      "existing_definition_registry_ref": {
+        "source_id": "candidate-registry",
+        "source_sha256": "1dafc859c9a0e51cf13e193e0226718e030bd0193ebeebb3a17288c78c6a1468",
+        "pointer": ""
+      },
+      "existing_registry_scope": "CURRENT_AUTHOR_DESIGN_CANDIDATE_IDENTITY_ONLY",
+      "canonical_runtime_domain_registry_ref": null,
+      "canonical_runtime_registry_status": "PENDING_BINDING; DO_NOT_PROMOTE_EXISTING_SCOPED_OR_DESIGN_REGISTRY_TO_GLOBAL_AUTHORITY",
+      "related_allocation_refs": [
+        {
+          "source_ref": {
+            "source_id": "architecture",
+            "source_sha256": "f6a1f9dfd4ad181df26ed01217935dc59ff50aa394a965945b9bd168b8b88777",
+            "pointer": "/contract_allocations/20"
+          },
+          "contract_id": "IMC21",
+          "declared_responsibility_domain": "DEVELOPMENT_CONTROL",
+          "declared_owner_role": "Development-control owner",
+          "named_owner": null,
+          "relationship": "RELATED_CANDIDATE_RESPONSIBILITY; NOT_AN_ACCEPTED_DOMAIN_ALIAS"
+        },
+        {
+          "source_ref": {
+            "source_id": "architecture",
+            "source_sha256": "f6a1f9dfd4ad181df26ed01217935dc59ff50aa394a965945b9bd168b8b88777",
+            "pointer": "/contract_allocations/21"
+          },
+          "contract_id": "IMC22",
+          "declared_responsibility_domain": "SOURCE_AND_VERSION_GOVERNANCE",
+          "declared_owner_role": "Version/Source owner",
+          "named_owner": null,
+          "relationship": "RELATED_CANDIDATE_RESPONSIBILITY; NOT_AN_ACCEPTED_DOMAIN_ALIAS"
+        }
+      ],
+      "add_modify_retire_authority": {
+        "proposal_and_review_actor_ref": {
+          "source_id": "delegation",
+          "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+          "pointer": "/delegatee"
+        },
+        "administrative_authorizer_ref": {
+          "source_id": "delegation",
+          "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+          "pointer": "/delegator"
+        },
+        "effective_program_issuer_ref": null,
+        "condition": "Bind the applicable accepted Domain contract, exact scope and current consumer evidence before effective program/domain mutation; inherited task authorization needs no repeated user confirmation."
+      },
+      "stable_id_rule": "Keep the source label and exact source Map identity; any later accepted ID/alias needs an explicit crosswalk, never a folder rename or guessed equality.",
+      "historical_resolution_rule": "Resolve source/archive identifiers in their original namespace and version axis; they cannot issue current state.",
+      "program_authority_state": "NOT_INFERRED_FROM_ACCOUNT_OWNERSHIP",
+      "canonical_governance_registry_ref": {
+        "file": "DomainRegistryOwnershipManifest.candidate.json",
+        "pointer": "/domains/1",
+        "layer": "CURRENT_PHASE2_NAMESPACE_ADMINISTRATIVE_OWNERSHIP",
+        "state": "PROPOSED_EFFECTIVE_ONLY_ON_SCOPED_STEP4_ACCEPTANCE"
+      },
+      "namespace_ownership_refs": [
+        {
+          "file": "NamespaceOwnershipManifest.candidate.json",
+          "pointer": "/namespaces/1",
+          "group_key": "CURRENT_PROJECTION"
+        },
+        {
+          "file": "NamespaceOwnershipManifest.candidate.json",
+          "pointer": "/namespaces/7",
+          "group_key": "VERSIONED_ARTIFACT"
+        },
+        {
+          "file": "NamespaceOwnershipManifest.candidate.json",
+          "pointer": "/namespaces/9",
+          "group_key": "DEVELOPMENT_CONTRACTS"
+        }
+      ]
+    },
+    {
+      "domain_id": "AUTHORITY_CORE",
+      "domain_id_status": "EXACT_SOURCE_MAP_RESPONSIBILITY_LABEL; NOT_NEWLY_REGISTERED_RUNTIME_DOMAIN",
+      "registry_owner_management_ref": {
+        "source_id": "delegation",
+        "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+        "pointer": "/delegator"
+      },
+      "registry_maintainer_ref": {
+        "source_id": "delegation",
+        "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+        "pointer": "/delegatee"
+      },
+      "namespace_group_keys": [
+        "DOMAIN_CONTRACT"
+      ],
+      "existing_definition_registry_ref": {
+        "source_id": "object-registry",
+        "source_sha256": "3a4fde87c4b90c03681134314aa6a295e33b230cebd475e42964ea79ea73a214",
+        "pointer": ""
+      },
+      "existing_registry_scope": "V15_G1_LOCAL_MACHINE_CONTRACT_ONLY",
+      "canonical_runtime_domain_registry_ref": null,
+      "canonical_runtime_registry_status": "PENDING_BINDING; DO_NOT_PROMOTE_EXISTING_SCOPED_OR_DESIGN_REGISTRY_TO_GLOBAL_AUTHORITY",
+      "related_allocation_refs": [
+        {
+          "source_ref": {
+            "source_id": "architecture",
+            "source_sha256": "f6a1f9dfd4ad181df26ed01217935dc59ff50aa394a965945b9bd168b8b88777",
+            "pointer": "/contract_allocations/0"
+          },
+          "contract_id": "IMC01",
+          "declared_responsibility_domain": "AUTHORITY_CORE",
+          "declared_owner_role": "Authority/Core owner",
+          "named_owner": null,
+          "relationship": "RELATED_CANDIDATE_RESPONSIBILITY; NOT_AN_ACCEPTED_DOMAIN_ALIAS"
+        }
+      ],
+      "add_modify_retire_authority": {
+        "proposal_and_review_actor_ref": {
+          "source_id": "delegation",
+          "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+          "pointer": "/delegatee"
+        },
+        "administrative_authorizer_ref": {
+          "source_id": "delegation",
+          "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+          "pointer": "/delegator"
+        },
+        "effective_program_issuer_ref": null,
+        "condition": "Bind the applicable accepted Domain contract, exact scope and current consumer evidence before effective program/domain mutation; inherited task authorization needs no repeated user confirmation."
+      },
+      "stable_id_rule": "Keep the source label and exact source Map identity; any later accepted ID/alias needs an explicit crosswalk, never a folder rename or guessed equality.",
+      "historical_resolution_rule": "Resolve source/archive identifiers in their original namespace and version axis; they cannot issue current state.",
+      "program_authority_state": "NOT_INFERRED_FROM_ACCOUNT_OWNERSHIP",
+      "canonical_governance_registry_ref": {
+        "file": "DomainRegistryOwnershipManifest.candidate.json",
+        "pointer": "/domains/2",
+        "layer": "CURRENT_PHASE2_NAMESPACE_ADMINISTRATIVE_OWNERSHIP",
+        "state": "PROPOSED_EFFECTIVE_ONLY_ON_SCOPED_STEP4_ACCEPTANCE"
+      },
+      "namespace_ownership_refs": [
+        {
+          "file": "NamespaceOwnershipManifest.candidate.json",
+          "pointer": "/namespaces/2",
+          "group_key": "DOMAIN_CONTRACT"
+        }
+      ]
+    },
+    {
+      "domain_id": "PRODUCT_PROJECTION",
+      "domain_id_status": "EXACT_SOURCE_MAP_RESPONSIBILITY_LABEL; NOT_NEWLY_REGISTERED_RUNTIME_DOMAIN",
+      "registry_owner_management_ref": {
+        "source_id": "delegation",
+        "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+        "pointer": "/delegator"
+      },
+      "registry_maintainer_ref": {
+        "source_id": "delegation",
+        "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+        "pointer": "/delegatee"
+      },
+      "namespace_group_keys": [
+        "PRODUCT_IMPL"
+      ],
+      "existing_definition_registry_ref": null,
+      "existing_registry_scope": "No standalone runtime Domain registry established by the inspected current contracts.",
+      "canonical_runtime_domain_registry_ref": null,
+      "canonical_runtime_registry_status": "PENDING_BINDING; DO_NOT_PROMOTE_EXISTING_SCOPED_OR_DESIGN_REGISTRY_TO_GLOBAL_AUTHORITY",
+      "related_allocation_refs": [
+        {
+          "source_ref": {
+            "source_id": "architecture",
+            "source_sha256": "f6a1f9dfd4ad181df26ed01217935dc59ff50aa394a965945b9bd168b8b88777",
+            "pointer": "/contract_allocations/2"
+          },
+          "contract_id": "IMC03",
+          "declared_responsibility_domain": "PRODUCT_PROJECTION",
+          "declared_owner_role": "Product/Identity owner",
+          "named_owner": null,
+          "relationship": "RELATED_CANDIDATE_RESPONSIBILITY; NOT_AN_ACCEPTED_DOMAIN_ALIAS"
+        }
+      ],
+      "add_modify_retire_authority": {
+        "proposal_and_review_actor_ref": {
+          "source_id": "delegation",
+          "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+          "pointer": "/delegatee"
+        },
+        "administrative_authorizer_ref": {
+          "source_id": "delegation",
+          "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+          "pointer": "/delegator"
+        },
+        "effective_program_issuer_ref": null,
+        "condition": "Bind the applicable accepted Domain contract, exact scope and current consumer evidence before effective program/domain mutation; inherited task authorization needs no repeated user confirmation."
+      },
+      "stable_id_rule": "Keep the source label and exact source Map identity; any later accepted ID/alias needs an explicit crosswalk, never a folder rename or guessed equality.",
+      "historical_resolution_rule": "Resolve source/archive identifiers in their original namespace and version axis; they cannot issue current state.",
+      "program_authority_state": "NOT_INFERRED_FROM_ACCOUNT_OWNERSHIP",
+      "canonical_governance_registry_ref": {
+        "file": "DomainRegistryOwnershipManifest.candidate.json",
+        "pointer": "/domains/3",
+        "layer": "CURRENT_PHASE2_NAMESPACE_ADMINISTRATIVE_OWNERSHIP",
+        "state": "PROPOSED_EFFECTIVE_ONLY_ON_SCOPED_STEP4_ACCEPTANCE"
+      },
+      "namespace_ownership_refs": [
+        {
+          "file": "NamespaceOwnershipManifest.candidate.json",
+          "pointer": "/namespaces/3",
+          "group_key": "PRODUCT_IMPL"
+        }
+      ]
+    },
+    {
+      "domain_id": "PLATFORM",
+      "domain_id_status": "EXACT_SOURCE_MAP_RESPONSIBILITY_LABEL; NOT_NEWLY_REGISTERED_RUNTIME_DOMAIN",
+      "registry_owner_management_ref": {
+        "source_id": "delegation",
+        "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+        "pointer": "/delegator"
+      },
+      "registry_maintainer_ref": {
+        "source_id": "delegation",
+        "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+        "pointer": "/delegatee"
+      },
+      "namespace_group_keys": [
+        "HOSTED_IMPL"
+      ],
+      "existing_definition_registry_ref": null,
+      "existing_registry_scope": "No standalone runtime Domain registry established by the inspected current contracts.",
+      "canonical_runtime_domain_registry_ref": null,
+      "canonical_runtime_registry_status": "PENDING_BINDING; DO_NOT_PROMOTE_EXISTING_SCOPED_OR_DESIGN_REGISTRY_TO_GLOBAL_AUTHORITY",
+      "related_allocation_refs": [
+        {
+          "source_ref": {
+            "source_id": "architecture",
+            "source_sha256": "f6a1f9dfd4ad181df26ed01217935dc59ff50aa394a965945b9bd168b8b88777",
+            "pointer": "/contract_allocations/10"
+          },
+          "contract_id": "IMC11",
+          "declared_responsibility_domain": "MODEL_CAPABILITY_PORT",
+          "declared_owner_role": "Provider/Supply-chain owner",
+          "named_owner": null,
+          "relationship": "RELATED_CANDIDATE_RESPONSIBILITY; NOT_AN_ACCEPTED_DOMAIN_ALIAS"
+        },
+        {
+          "source_ref": {
+            "source_id": "architecture",
+            "source_sha256": "f6a1f9dfd4ad181df26ed01217935dc59ff50aa394a965945b9bd168b8b88777",
+            "pointer": "/contract_allocations/11"
+          },
+          "contract_id": "IMC12",
+          "declared_responsibility_domain": "SUPERVISION_PLATFORM",
+          "declared_owner_role": "Supervision owner",
+          "named_owner": null,
+          "relationship": "RELATED_CANDIDATE_RESPONSIBILITY; NOT_AN_ACCEPTED_DOMAIN_ALIAS"
+        },
+        {
+          "source_ref": {
+            "source_id": "architecture",
+            "source_sha256": "f6a1f9dfd4ad181df26ed01217935dc59ff50aa394a965945b9bd168b8b88777",
+            "pointer": "/contract_allocations/12"
+          },
+          "contract_id": "IMC13",
+          "declared_responsibility_domain": "DEVICE_CONTROL_PLATFORM",
+          "declared_owner_role": "Device/Privacy owner",
+          "named_owner": null,
+          "relationship": "RELATED_CANDIDATE_RESPONSIBILITY; NOT_AN_ACCEPTED_DOMAIN_ALIAS"
+        },
+        {
+          "source_ref": {
+            "source_id": "architecture",
+            "source_sha256": "f6a1f9dfd4ad181df26ed01217935dc59ff50aa394a965945b9bd168b8b88777",
+            "pointer": "/contract_allocations/13"
+          },
+          "contract_id": "IMC14",
+          "declared_responsibility_domain": "RESOURCE_POOL_PLATFORM",
+          "declared_owner_role": "Resource/Security owner",
+          "named_owner": null,
+          "relationship": "RELATED_CANDIDATE_RESPONSIBILITY; NOT_AN_ACCEPTED_DOMAIN_ALIAS"
+        },
+        {
+          "source_ref": {
+            "source_id": "architecture",
+            "source_sha256": "f6a1f9dfd4ad181df26ed01217935dc59ff50aa394a965945b9bd168b8b88777",
+            "pointer": "/contract_allocations/14"
+          },
+          "contract_id": "IMC15",
+          "declared_responsibility_domain": "REGIONAL_POLICY",
+          "declared_owner_role": "Regional/Channel owner",
+          "named_owner": null,
+          "relationship": "RELATED_CANDIDATE_RESPONSIBILITY; NOT_AN_ACCEPTED_DOMAIN_ALIAS"
+        }
+      ],
+      "add_modify_retire_authority": {
+        "proposal_and_review_actor_ref": {
+          "source_id": "delegation",
+          "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+          "pointer": "/delegatee"
+        },
+        "administrative_authorizer_ref": {
+          "source_id": "delegation",
+          "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+          "pointer": "/delegator"
+        },
+        "effective_program_issuer_ref": null,
+        "condition": "Bind the applicable accepted Domain contract, exact scope and current consumer evidence before effective program/domain mutation; inherited task authorization needs no repeated user confirmation."
+      },
+      "stable_id_rule": "Keep the source label and exact source Map identity; any later accepted ID/alias needs an explicit crosswalk, never a folder rename or guessed equality.",
+      "historical_resolution_rule": "Resolve source/archive identifiers in their original namespace and version axis; they cannot issue current state.",
+      "program_authority_state": "NOT_INFERRED_FROM_ACCOUNT_OWNERSHIP",
+      "canonical_governance_registry_ref": {
+        "file": "DomainRegistryOwnershipManifest.candidate.json",
+        "pointer": "/domains/4",
+        "layer": "CURRENT_PHASE2_NAMESPACE_ADMINISTRATIVE_OWNERSHIP",
+        "state": "PROPOSED_EFFECTIVE_ONLY_ON_SCOPED_STEP4_ACCEPTANCE"
+      },
+      "namespace_ownership_refs": [
+        {
+          "file": "NamespaceOwnershipManifest.candidate.json",
+          "pointer": "/namespaces/4",
+          "group_key": "HOSTED_IMPL"
+        }
+      ]
+    },
+    {
+      "domain_id": "DEVELOPMENT",
+      "domain_id_status": "EXACT_SOURCE_MAP_RESPONSIBILITY_LABEL; NOT_NEWLY_REGISTERED_RUNTIME_DOMAIN",
+      "registry_owner_management_ref": {
+        "source_id": "delegation",
+        "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+        "pointer": "/delegator"
+      },
+      "registry_maintainer_ref": {
+        "source_id": "delegation",
+        "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+        "pointer": "/delegatee"
+      },
+      "namespace_group_keys": [
+        "TOOLS"
+      ],
+      "existing_definition_registry_ref": null,
+      "existing_registry_scope": "No standalone runtime Domain registry established by the inspected current contracts.",
+      "canonical_runtime_domain_registry_ref": null,
+      "canonical_runtime_registry_status": "PENDING_BINDING; DO_NOT_PROMOTE_EXISTING_SCOPED_OR_DESIGN_REGISTRY_TO_GLOBAL_AUTHORITY",
+      "related_allocation_refs": [
+        {
+          "source_ref": {
+            "source_id": "architecture",
+            "source_sha256": "f6a1f9dfd4ad181df26ed01217935dc59ff50aa394a965945b9bd168b8b88777",
+            "pointer": "/contract_allocations/18"
+          },
+          "contract_id": "IMC19",
+          "declared_responsibility_domain": "EXPERIMENT_AND_EVOLUTION",
+          "declared_owner_role": "Evaluation owner",
+          "named_owner": null,
+          "relationship": "RELATED_CANDIDATE_RESPONSIBILITY; NOT_AN_ACCEPTED_DOMAIN_ALIAS"
+        },
+        {
+          "source_ref": {
+            "source_id": "architecture",
+            "source_sha256": "f6a1f9dfd4ad181df26ed01217935dc59ff50aa394a965945b9bd168b8b88777",
+            "pointer": "/contract_allocations/19"
+          },
+          "contract_id": "IMC20",
+          "declared_responsibility_domain": "PROGRAM_ORCHESTRATION",
+          "declared_owner_role": "Program owner",
+          "named_owner": null,
+          "relationship": "RELATED_CANDIDATE_RESPONSIBILITY; NOT_AN_ACCEPTED_DOMAIN_ALIAS"
+        },
+        {
+          "source_ref": {
+            "source_id": "architecture",
+            "source_sha256": "f6a1f9dfd4ad181df26ed01217935dc59ff50aa394a965945b9bd168b8b88777",
+            "pointer": "/contract_allocations/20"
+          },
+          "contract_id": "IMC21",
+          "declared_responsibility_domain": "DEVELOPMENT_CONTROL",
+          "declared_owner_role": "Development-control owner",
+          "named_owner": null,
+          "relationship": "RELATED_CANDIDATE_RESPONSIBILITY; NOT_AN_ACCEPTED_DOMAIN_ALIAS"
+        }
+      ],
+      "add_modify_retire_authority": {
+        "proposal_and_review_actor_ref": {
+          "source_id": "delegation",
+          "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+          "pointer": "/delegatee"
+        },
+        "administrative_authorizer_ref": {
+          "source_id": "delegation",
+          "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+          "pointer": "/delegator"
+        },
+        "effective_program_issuer_ref": null,
+        "condition": "Bind the applicable accepted Domain contract, exact scope and current consumer evidence before effective program/domain mutation; inherited task authorization needs no repeated user confirmation."
+      },
+      "stable_id_rule": "Keep the source label and exact source Map identity; any later accepted ID/alias needs an explicit crosswalk, never a folder rename or guessed equality.",
+      "historical_resolution_rule": "Resolve source/archive identifiers in their original namespace and version axis; they cannot issue current state.",
+      "program_authority_state": "NOT_INFERRED_FROM_ACCOUNT_OWNERSHIP",
+      "canonical_governance_registry_ref": {
+        "file": "DomainRegistryOwnershipManifest.candidate.json",
+        "pointer": "/domains/5",
+        "layer": "CURRENT_PHASE2_NAMESPACE_ADMINISTRATIVE_OWNERSHIP",
+        "state": "PROPOSED_EFFECTIVE_ONLY_ON_SCOPED_STEP4_ACCEPTANCE"
+      },
+      "namespace_ownership_refs": [
+        {
+          "file": "NamespaceOwnershipManifest.candidate.json",
+          "pointer": "/namespaces/5",
+          "group_key": "TOOLS"
+        }
+      ]
+    },
+    {
+      "domain_id": "MECHANISM",
+      "domain_id_status": "EXACT_SOURCE_MAP_RESPONSIBILITY_LABEL; NOT_NEWLY_REGISTERED_RUNTIME_DOMAIN",
+      "registry_owner_management_ref": {
+        "source_id": "delegation",
+        "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+        "pointer": "/delegator"
+      },
+      "registry_maintainer_ref": {
+        "source_id": "delegation",
+        "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+        "pointer": "/delegatee"
+      },
+      "namespace_group_keys": [
+        "MECHANISM_SOURCE"
+      ],
+      "existing_definition_registry_ref": null,
+      "existing_registry_scope": "No standalone runtime Domain registry established by the inspected current contracts.",
+      "canonical_runtime_domain_registry_ref": null,
+      "canonical_runtime_registry_status": "PENDING_BINDING; DO_NOT_PROMOTE_EXISTING_SCOPED_OR_DESIGN_REGISTRY_TO_GLOBAL_AUTHORITY",
+      "related_allocation_refs": [],
+      "add_modify_retire_authority": {
+        "proposal_and_review_actor_ref": {
+          "source_id": "delegation",
+          "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+          "pointer": "/delegatee"
+        },
+        "administrative_authorizer_ref": {
+          "source_id": "delegation",
+          "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+          "pointer": "/delegator"
+        },
+        "effective_program_issuer_ref": null,
+        "condition": "Bind the applicable accepted Domain contract, exact scope and current consumer evidence before effective program/domain mutation; inherited task authorization needs no repeated user confirmation."
+      },
+      "stable_id_rule": "Keep the source label and exact source Map identity; any later accepted ID/alias needs an explicit crosswalk, never a folder rename or guessed equality.",
+      "historical_resolution_rule": "Resolve source/archive identifiers in their original namespace and version axis; they cannot issue current state.",
+      "program_authority_state": "NOT_INFERRED_FROM_ACCOUNT_OWNERSHIP",
+      "canonical_governance_registry_ref": {
+        "file": "DomainRegistryOwnershipManifest.candidate.json",
+        "pointer": "/domains/6",
+        "layer": "CURRENT_PHASE2_NAMESPACE_ADMINISTRATIVE_OWNERSHIP",
+        "state": "PROPOSED_EFFECTIVE_ONLY_ON_SCOPED_STEP4_ACCEPTANCE"
+      },
+      "namespace_ownership_refs": [
+        {
+          "file": "NamespaceOwnershipManifest.candidate.json",
+          "pointer": "/namespaces/6",
+          "group_key": "MECHANISM_SOURCE"
+        }
+      ]
+    },
+    {
+      "domain_id": "USER_DATA",
+      "domain_id_status": "EXACT_SOURCE_MAP_RESPONSIBILITY_LABEL; NOT_NEWLY_REGISTERED_RUNTIME_DOMAIN",
+      "registry_owner_management_ref": {
+        "source_id": "delegation",
+        "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+        "pointer": "/delegator"
+      },
+      "registry_maintainer_ref": {
+        "source_id": "delegation",
+        "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+        "pointer": "/delegatee"
+      },
+      "namespace_group_keys": [
+        "PRIVATE_BUNDLE"
+      ],
+      "existing_definition_registry_ref": null,
+      "existing_registry_scope": "No standalone runtime Domain registry established by the inspected current contracts.",
+      "canonical_runtime_domain_registry_ref": null,
+      "canonical_runtime_registry_status": "PENDING_BINDING; DO_NOT_PROMOTE_EXISTING_SCOPED_OR_DESIGN_REGISTRY_TO_GLOBAL_AUTHORITY",
+      "related_allocation_refs": [
+        {
+          "source_ref": {
+            "source_id": "architecture",
+            "source_sha256": "f6a1f9dfd4ad181df26ed01217935dc59ff50aa394a965945b9bd168b8b88777",
+            "pointer": "/contract_allocations/1"
+          },
+          "contract_id": "IMC02",
+          "declared_responsibility_domain": "INFORMATION_FABRIC",
+          "declared_owner_role": "Information/Privacy owner",
+          "named_owner": null,
+          "relationship": "RELATED_CANDIDATE_RESPONSIBILITY; NOT_AN_ACCEPTED_DOMAIN_ALIAS"
+        }
+      ],
+      "add_modify_retire_authority": {
+        "proposal_and_review_actor_ref": {
+          "source_id": "delegation",
+          "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+          "pointer": "/delegatee"
+        },
+        "administrative_authorizer_ref": {
+          "source_id": "delegation",
+          "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+          "pointer": "/delegator"
+        },
+        "effective_program_issuer_ref": null,
+        "condition": "Bind the applicable accepted Domain contract, exact scope and current consumer evidence before effective program/domain mutation; inherited task authorization needs no repeated user confirmation."
+      },
+      "stable_id_rule": "Keep the source label and exact source Map identity; any later accepted ID/alias needs an explicit crosswalk, never a folder rename or guessed equality.",
+      "historical_resolution_rule": "Resolve source/archive identifiers in their original namespace and version axis; they cannot issue current state.",
+      "program_authority_state": "NOT_INFERRED_FROM_ACCOUNT_OWNERSHIP",
+      "canonical_governance_registry_ref": {
+        "file": "DomainRegistryOwnershipManifest.candidate.json",
+        "pointer": "/domains/7",
+        "layer": "CURRENT_PHASE2_NAMESPACE_ADMINISTRATIVE_OWNERSHIP",
+        "state": "PROPOSED_EFFECTIVE_ONLY_ON_SCOPED_STEP4_ACCEPTANCE"
+      },
+      "namespace_ownership_refs": [
+        {
+          "file": "NamespaceOwnershipManifest.candidate.json",
+          "pointer": "/namespaces/8",
+          "group_key": "PRIVATE_BUNDLE"
+        }
+      ]
+    }
+  ],
+  "canonical_source_reuse": {
+    "existing_protocol_manifest": {
+      "source_id": "protocol-manifest",
+      "source_sha256": "05ca5bb70c642dba9c3f58c0b943020d6188636e60cc569b3802c90a9afd36b5",
+      "pointer": ""
+    },
+    "existing_object_registry": {
+      "source_id": "object-registry",
+      "source_sha256": "3a4fde87c4b90c03681134314aa6a295e33b230cebd475e42964ea79ea73a214",
+      "pointer": ""
+    },
+    "existing_vocabulary_registry": {
+      "source_id": "vocabulary-registry",
+      "source_sha256": "01340a4599b56e4a1a91b0b5eaf6570ce74ede6f9ce6faeb608a2bbe69c0289b",
+      "pointer": ""
+    },
+    "existing_candidate_artifact_registry": {
+      "source_id": "candidate-registry",
+      "source_sha256": "1dafc859c9a0e51cf13e193e0226718e030bd0193ebeebb3a17288c78c6a1468",
+      "pointer": ""
+    },
+    "existing_candidate_identity_policy": {
+      "source_id": "identity-policy",
+      "source_sha256": "3a14df68ea81c6390316c5df09d51a049b52a640871ab57953c42acb30624bff",
+      "pointer": ""
+    },
+    "existing_type_crosswalk": {
+      "source_id": "type-crosswalk",
+      "source_sha256": "a4386a8b45b02e8dbd6ff2f400d3b1c9ecbfc9c6d07a2892f035994d2a78c685",
+      "pointer": ""
+    },
+    "existing_domain_contracts": {
+      "source_id": "domain-contracts",
+      "source_sha256": "083a981dfd3a64f63991095b5932d67a55c81a20846ad80c0008e30420c4eaa2",
+      "pointer": ""
+    }
+  },
+  "schema_compatibility": {
+    "binding_schema": {
+      "source_ref": {
+        "source_id": "binding-schema",
+        "source_sha256": "14922eb6039034749af1e94163cf57794a899b69f3efd0cc91c438bff88e7c3b",
+        "pointer": ""
+      },
+      "id": "urn:clued:schema:binding:v1",
+      "scope": "Local-RC machine structure; not a Namespace Delegation Schema."
+    },
+    "requirements_schema": {
+      "source_ref": {
+        "source_id": "requirements-schema",
+        "source_sha256": "695c10a38c0004a1aa717c078b64aedd65aa108db8c50b5d625ea631c3cf1a26",
+        "pointer": ""
+      },
+      "id": "urn:clued:schema:requirements-registry:v1",
+      "scope": "Existing RequirementsRegistry shape; not a whole-product Domain registry."
+    }
+  },
+  "single_source_rule": "This document indexes existing sources and records proposed governance binding only. It is not a second Canonical Store, a replacement CurrentArtifactRegistry, or an accepted runtime Domain registry.",
+  "canonical_governance_registry_policy": {
+    "registry_file": "DomainRegistryOwnershipManifest.candidate.json",
+    "registry_pointer": "/domains",
+    "layer": "CURRENT_PHASE2_NAMESPACE_ADMINISTRATIVE_OWNERSHIP",
+    "designation_status": "CANDIDATE_DESIGNATION_NOT_YET_ACCEPTED",
+    "activation_condition": "An explicit scoped Step 4 acceptance by the existing authorized accepting delegate binds the final candidate digests after applicable preceding gates.",
+    "canonical_fact_boundary": "After acceptance, this register is canonical only for the scoped administrative owner, maintainer and namespace-to-domain governance relationships recorded here.",
+    "structure_definition_source": {
+      "source_id": "structure-map",
+      "source_sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965",
+      "pointer": "/current_to_target_rows"
+    },
+    "original_definition_sources_unchanged": true,
+    "runtime_effect": "NONE; no runtime registry, program issuer, credential, consumer grant or accepted Domain alias is created."
+  }
+}

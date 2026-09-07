@@ -1,0 +1,218 @@
+{
+  "candidate_status": "PREPARATION_ONLY_NOT_STEP5_ACCEPTANCE",
+  "authority_effect": "NONE_NEW_BY_CANDIDATE",
+  "base_repository_commit": "5fad76df81c8a412e7768e08427841f0985a2588",
+  "format_boundary": "Review views over existing contracts; not a new runtime schema, global registry, or Canonical Store.",
+  "scope_basis": {
+    "source_id": "scope-amendment",
+    "source_sha256": "32b16e2938a5674b1d8b492e1bf0a0506f708c574913696d6ba281b99e108e9e",
+    "pointer": ""
+  },
+  "management_owner_ref": {
+    "source_id": "delegation",
+    "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+    "pointer": "/delegator"
+  },
+  "preparation_delegate_ref": {
+    "source_id": "delegation",
+    "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+    "pointer": "/delegatee"
+  },
+  "step4_prerequisite": {
+    "candidate_ref": {
+      "source_id": "step4-ownership",
+      "source_sha256": "40d7e87fed046c8aff18d8c1d0532ada075b802faf204059649c84faef1c0782",
+      "pointer": ""
+    },
+    "formal_gate_asserted_here": false,
+    "accepted_decision_ref": {
+      "source_id": "step4-acceptance",
+      "source_sha256": "6f2cc1c9cc28c2a717023029851d61a666815567bc30b3635479cb1b70382e6c",
+      "pointer": ""
+    },
+    "accepted_effect_boundary": "Reuse the existing scoped Step4 administrative acceptance; this candidate issues no new acceptance, runtime authority or Freeze."
+  },
+  "physical_rename_performed": false,
+  "migration_performed": false,
+  "historical_bytes_or_ids_changed": false,
+  "scope": {
+    "current_scope": "Current repository, present delivery artifacts, and actual current dependencies under the recorded user scope amendment.",
+    "target_map_ref": {
+      "source_id": "structure-map",
+      "source_sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965",
+      "pointer": ""
+    },
+    "target_map_id": "CANDIDATE_TARGET_MAP_V0_1_1",
+    "source_map_row_ids": [
+      "TM-01",
+      "TM-02",
+      "TM-03",
+      "TM-04",
+      "TM-05",
+      "TM-06",
+      "TM-07",
+      "TM-08",
+      "TM-09",
+      "TM-10",
+      "TM-11",
+      "TM-12",
+      "TM-13",
+      "TM-14",
+      "TM-15",
+      "TM-16",
+      "TM-17",
+      "TM-18",
+      "TM-19",
+      "TM-20",
+      "TM-21",
+      "TM-22",
+      "TM-23"
+    ],
+    "rows_canonical_sha256": "126a6f43f8906695797e89f74ff5a017ed5b2d3639bbe0bcfacbd4516571d485",
+    "target_map_state": "CANDIDATE_NOT_FROZEN",
+    "physical_targets_changed": false,
+    "target_rule": "The 23 original rows remain the sole proposed responsibility/target crosswalk. No new file-by-file target map or FrozenTargetMap is issued here.",
+    "history_rule": "Preserve source/archive/legacy identifiers and exact bytes. Current references may later point to an explicit compatibility record; historical artifacts are not rewritten.",
+    "inactive_domains": "Model/commercial/entitlement types remain design references. No SKU, Offer, Entitlement, ModelReleaseUnit or activation instance is created; those inactive futures do not gate this bounded identity preparation."
+  },
+  "source_policy_ref": {
+    "source_id": "identity-policy",
+    "source_sha256": "3a14df68ea81c6390316c5df09d51a049b52a640871ab57953c42acb30624bff",
+    "pointer": ""
+  },
+  "axes": [
+    {
+      "axis": "product",
+      "subject": "current repository product/version label",
+      "observed_or_reserved_identity": "Clued-v1.6",
+      "source_ref": {
+        "source_id": "version",
+        "source_sha256": "aa07c9e145d2246eb962877d8f3b4dccc25cfafd84115206bce546582628d02a",
+        "pointer": ""
+      },
+      "interpretation": "The product input v0.2.1 is an upstream design input, not this repository release label."
+    },
+    {
+      "axis": "architecture",
+      "subject": "architecture author candidate",
+      "observed_or_reserved_identity": "v0.2.5",
+      "source_ref": {
+        "source_id": "identity-policy",
+        "source_sha256": "3a14df68ea81c6390316c5df09d51a049b52a640871ab57953c42acb30624bff",
+        "pointer": "/current_document_versions/architecture"
+      },
+      "interpretation": "Sole direct predecessor is architecture v0.2.4 bound by ReviewSubjectContract; no architecture acceptance is inferred."
+    },
+    {
+      "axis": "mapping",
+      "subject": "stable 23-row target map",
+      "observed_or_reserved_identity": "v0.1.1",
+      "source_ref": {
+        "source_id": "structure-map",
+        "source_sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965",
+        "pointer": "/stable_map_identity"
+      },
+      "interpretation": "Map row revision v0.1.1; structure document revision v0.1.4; upstream mapping input v0.4.3 is a separate input identity."
+    },
+    {
+      "axis": "schema",
+      "subject": "per-schema definition identities",
+      "observed_or_reserved_identity": {
+        "core_definition": "1.0.0-local-rc-v15",
+        "model_schema_definition": "2.0.0-local-rc-v15-model"
+      },
+      "source_ref": {
+        "source_id": "protocol-manifest",
+        "source_sha256": "05ca5bb70c642dba9c3f58c0b943020d6188636e60cc569b3802c90a9afd36b5",
+        "pointer": ""
+      },
+      "interpretation": "Resolve exact schema ID and manifest digest per consumer; schema-only local evidence is not runtime qualification."
+    },
+    {
+      "axis": "artifact",
+      "subject": "existing current author artifact registry entries",
+      "observed_or_reserved_identity": "per-entry path/bytes/sha256",
+      "source_ref": {
+        "source_id": "candidate-registry",
+        "source_sha256": "1dafc859c9a0e51cf13e193e0226718e030bd0193ebeebb3a17288c78c6a1468",
+        "pointer": "/artifacts"
+      },
+      "interpretation": "Artifact logical/revision/domain/type semantics use the original crosswalk; same path alone does not identify bytes."
+    },
+    {
+      "axis": "skill",
+      "subject": "coexistence design document",
+      "observed_or_reserved_identity": "v0.1.5",
+      "source_ref": {
+        "source_id": "identity-policy",
+        "source_sha256": "3a14df68ea81c6390316c5df09d51a049b52a640871ab57953c42acb30624bff",
+        "pointer": "/current_document_versions/skill_coexistence"
+      },
+      "interpretation": "This is a design document version, not an installed SkillRevision or Kernel version; exact host/role/bytes remain per-projection binding."
+    },
+    {
+      "axis": "runtime",
+      "subject": "actual component or run",
+      "observed_or_reserved_identity": null,
+      "source_ref": {
+        "source_id": "type-crosswalk",
+        "source_sha256": "a4386a8b45b02e8dbd6ff2f400d3b1c9ecbfc9c6d07a2892f035994d2a78c685",
+        "pointer": "/rows/8"
+      },
+      "interpretation": "No new aggregate runtime version is assigned. Step 6 binds applicable component/run/target revisions; existing runtime is not declared absent."
+    },
+    {
+      "axis": "candidate_revision",
+      "subject": "delivered review package",
+      "observed_or_reserved_identity": "v0.2.7.1",
+      "source_ref": {
+        "source_id": "source-zip-container",
+        "source_sha256": "6e51374a6caedb4f84d2b6bb9fe05cd695b25732833f9d0217c341f17e1c1649",
+        "pointer": ""
+      },
+      "interpretation": "Transport candidate revision is identified by exact ZIP digest; inner design identities retain their own axes."
+    },
+    {
+      "axis": "migration_revision",
+      "subject": "future authorized migration plan/run",
+      "observed_or_reserved_identity": null,
+      "source_ref": {
+        "source_id": "structure-map",
+        "source_sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965",
+        "pointer": "/physical_targets_changed"
+      },
+      "interpretation": "No migration has run. Revision will be assigned to the actual plan/run at its prescribed step, without editing historical source IDs."
+    },
+    {
+      "axis": "protocol",
+      "subject": "continuity protocol and local manifest",
+      "observed_or_reserved_identity": {
+        "path_namespace": "protocol/continuity/v1",
+        "schema_version": "clued.protocol-manifest/1",
+        "definition_version": "1.0.0-local-rc-v15"
+      },
+      "source_ref": {
+        "source_id": "protocol-manifest",
+        "source_sha256": "05ca5bb70c642dba9c3f58c0b943020d6188636e60cc569b3802c90a9afd36b5",
+        "pointer": ""
+      },
+      "interpretation": "Protocol namespace, manifest schema and definition version are separate fields; no product/architecture predecessor inferred."
+    }
+  ],
+  "other_design_versions": {
+    "source_ref": {
+      "source_id": "identity-policy",
+      "source_sha256": "3a14df68ea81c6390316c5df09d51a049b52a640871ab57953c42acb30624bff",
+      "pointer": "/current_document_versions"
+    },
+    "rule": "Retain all original values without promoting design-document versions to product/runtime/Schema versions."
+  },
+  "direct_predecessor": {
+    "source_ref": {
+      "source_id": "review-subject",
+      "source_sha256": "c2cd13dbe8fd046aa8f0344778141cb9b115fae0048a8c673b60bd25b03498d3",
+      "pointer": "/sole_direct_predecessor"
+    },
+    "cross_axis_predecessor_inference_allowed": false
+  }
+}

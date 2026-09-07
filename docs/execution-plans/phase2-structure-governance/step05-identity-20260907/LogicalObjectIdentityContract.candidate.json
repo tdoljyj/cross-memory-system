@@ -1,0 +1,283 @@
+{
+  "candidate_status": "PREPARATION_ONLY_NOT_STEP5_ACCEPTANCE",
+  "authority_effect": "NONE_NEW_BY_CANDIDATE",
+  "base_repository_commit": "5fad76df81c8a412e7768e08427841f0985a2588",
+  "format_boundary": "Review views over existing contracts; not a new runtime schema, global registry, or Canonical Store.",
+  "scope_basis": {
+    "source_id": "scope-amendment",
+    "source_sha256": "32b16e2938a5674b1d8b492e1bf0a0506f708c574913696d6ba281b99e108e9e",
+    "pointer": ""
+  },
+  "management_owner_ref": {
+    "source_id": "delegation",
+    "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+    "pointer": "/delegator"
+  },
+  "preparation_delegate_ref": {
+    "source_id": "delegation",
+    "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+    "pointer": "/delegatee"
+  },
+  "step4_prerequisite": {
+    "candidate_ref": {
+      "source_id": "step4-ownership",
+      "source_sha256": "40d7e87fed046c8aff18d8c1d0532ada075b802faf204059649c84faef1c0782",
+      "pointer": ""
+    },
+    "formal_gate_asserted_here": false,
+    "accepted_decision_ref": {
+      "source_id": "step4-acceptance",
+      "source_sha256": "6f2cc1c9cc28c2a717023029851d61a666815567bc30b3635479cb1b70382e6c",
+      "pointer": ""
+    },
+    "accepted_effect_boundary": "Reuse the existing scoped Step4 administrative acceptance; this candidate issues no new acceptance, runtime authority or Freeze."
+  },
+  "physical_rename_performed": false,
+  "migration_performed": false,
+  "historical_bytes_or_ids_changed": false,
+  "scope": {
+    "current_scope": "Current repository, present delivery artifacts, and actual current dependencies under the recorded user scope amendment.",
+    "target_map_ref": {
+      "source_id": "structure-map",
+      "source_sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965",
+      "pointer": ""
+    },
+    "target_map_id": "CANDIDATE_TARGET_MAP_V0_1_1",
+    "source_map_row_ids": [
+      "TM-01",
+      "TM-02",
+      "TM-03",
+      "TM-04",
+      "TM-05",
+      "TM-06",
+      "TM-07",
+      "TM-08",
+      "TM-09",
+      "TM-10",
+      "TM-11",
+      "TM-12",
+      "TM-13",
+      "TM-14",
+      "TM-15",
+      "TM-16",
+      "TM-17",
+      "TM-18",
+      "TM-19",
+      "TM-20",
+      "TM-21",
+      "TM-22",
+      "TM-23"
+    ],
+    "rows_canonical_sha256": "126a6f43f8906695797e89f74ff5a017ed5b2d3639bbe0bcfacbd4516571d485",
+    "target_map_state": "CANDIDATE_NOT_FROZEN",
+    "physical_targets_changed": false,
+    "target_rule": "The 23 original rows remain the sole proposed responsibility/target crosswalk. No new file-by-file target map or FrozenTargetMap is issued here.",
+    "history_rule": "Preserve source/archive/legacy identifiers and exact bytes. Current references may later point to an explicit compatibility record; historical artifacts are not rewritten.",
+    "inactive_domains": "Model/commercial/entitlement types remain design references. No SKU, Offer, Entitlement, ModelReleaseUnit or activation instance is created; those inactive futures do not gate this bounded identity preparation."
+  },
+  "existing_identity_crosswalk_ref": {
+    "source_id": "type-crosswalk",
+    "source_sha256": "a4386a8b45b02e8dbd6ff2f400d3b1c9ecbfc9c6d07a2892f035994d2a78c685",
+    "pointer": ""
+  },
+  "identity_types": [
+    {
+      "type": "ArtifactRevisionIdentity",
+      "namespace": "ARTIFACT",
+      "source_ref": {
+        "source_id": "type-crosswalk",
+        "source_sha256": "a4386a8b45b02e8dbd6ff2f400d3b1c9ecbfc9c6d07a2892f035994d2a78c685",
+        "pointer": "/rows/0"
+      },
+      "source_state": "CANDIDATE_TYPE_NOT_RUNTIME_SCHEMA",
+      "source_implementation": "NOT_PERFORMED",
+      "new_runtime_instances_created": 0
+    },
+    {
+      "type": "KernelRCIdentity",
+      "namespace": "KERNEL_RC",
+      "source_ref": {
+        "source_id": "type-crosswalk",
+        "source_sha256": "a4386a8b45b02e8dbd6ff2f400d3b1c9ecbfc9c6d07a2892f035994d2a78c685",
+        "pointer": "/rows/1"
+      },
+      "source_state": "CANDIDATE_TYPE_NOT_RUNTIME_SCHEMA",
+      "source_implementation": "NOT_PERFORMED",
+      "new_runtime_instances_created": 0
+    },
+    {
+      "type": "ModelReleaseUnitIdentity",
+      "namespace": "MODEL_RELEASE_UNIT",
+      "source_ref": {
+        "source_id": "type-crosswalk",
+        "source_sha256": "a4386a8b45b02e8dbd6ff2f400d3b1c9ecbfc9c6d07a2892f035994d2a78c685",
+        "pointer": "/rows/2"
+      },
+      "source_state": "CANDIDATE_TYPE_NOT_RUNTIME_SCHEMA",
+      "source_implementation": "NOT_PERFORMED",
+      "new_runtime_instances_created": 0
+    },
+    {
+      "type": "PackageVariantIdentity",
+      "namespace": "PACKAGE_VARIANT",
+      "source_ref": {
+        "source_id": "type-crosswalk",
+        "source_sha256": "a4386a8b45b02e8dbd6ff2f400d3b1c9ecbfc9c6d07a2892f035994d2a78c685",
+        "pointer": "/rows/3"
+      },
+      "source_state": "CANDIDATE_TYPE_NOT_RUNTIME_SCHEMA",
+      "source_implementation": "NOT_PERFORMED",
+      "new_runtime_instances_created": 0
+    },
+    {
+      "type": "EditionIdentity",
+      "namespace": "EDITION",
+      "source_ref": {
+        "source_id": "type-crosswalk",
+        "source_sha256": "a4386a8b45b02e8dbd6ff2f400d3b1c9ecbfc9c6d07a2892f035994d2a78c685",
+        "pointer": "/rows/4"
+      },
+      "source_state": "CANDIDATE_TYPE_NOT_RUNTIME_SCHEMA",
+      "source_implementation": "NOT_PERFORMED",
+      "new_runtime_instances_created": 0
+    },
+    {
+      "type": "SKUIdentity",
+      "namespace": "SKU",
+      "source_ref": {
+        "source_id": "type-crosswalk",
+        "source_sha256": "a4386a8b45b02e8dbd6ff2f400d3b1c9ecbfc9c6d07a2892f035994d2a78c685",
+        "pointer": "/rows/5"
+      },
+      "source_state": "CANDIDATE_TYPE_NOT_RUNTIME_SCHEMA",
+      "source_implementation": "NOT_PERFORMED",
+      "new_runtime_instances_created": 0
+    },
+    {
+      "type": "OfferRevisionIdentity",
+      "namespace": "OFFER",
+      "source_ref": {
+        "source_id": "type-crosswalk",
+        "source_sha256": "a4386a8b45b02e8dbd6ff2f400d3b1c9ecbfc9c6d07a2892f035994d2a78c685",
+        "pointer": "/rows/6"
+      },
+      "source_state": "CANDIDATE_TYPE_NOT_RUNTIME_SCHEMA",
+      "source_implementation": "NOT_PERFORMED",
+      "new_runtime_instances_created": 0
+    },
+    {
+      "type": "EntitlementIdentity",
+      "namespace": "ENTITLEMENT",
+      "source_ref": {
+        "source_id": "type-crosswalk",
+        "source_sha256": "a4386a8b45b02e8dbd6ff2f400d3b1c9ecbfc9c6d07a2892f035994d2a78c685",
+        "pointer": "/rows/7"
+      },
+      "source_state": "CANDIDATE_TYPE_NOT_RUNTIME_SCHEMA",
+      "source_implementation": "NOT_PERFORMED",
+      "new_runtime_instances_created": 0
+    },
+    {
+      "type": "RunUsageIdentity",
+      "namespace": "RUN_USAGE",
+      "source_ref": {
+        "source_id": "type-crosswalk",
+        "source_sha256": "a4386a8b45b02e8dbd6ff2f400d3b1c9ecbfc9c6d07a2892f035994d2a78c685",
+        "pointer": "/rows/8"
+      },
+      "source_state": "CANDIDATE_TYPE_NOT_RUNTIME_SCHEMA",
+      "source_implementation": "NOT_PERFORMED",
+      "new_runtime_instances_created": 0
+    },
+    {
+      "type": "MechanismRevisionIdentity",
+      "namespace": "MECHANISM_REVISION",
+      "source_ref": {
+        "source_id": "type-crosswalk",
+        "source_sha256": "a4386a8b45b02e8dbd6ff2f400d3b1c9ecbfc9c6d07a2892f035994d2a78c685",
+        "pointer": "/rows/9"
+      },
+      "source_state": "CANDIDATE_TYPE_NOT_RUNTIME_SCHEMA",
+      "source_implementation": "NOT_PERFORMED",
+      "new_runtime_instances_created": 0
+    },
+    {
+      "type": "SkillRevisionIdentity",
+      "namespace": "SKILL_REVISION",
+      "source_ref": {
+        "source_id": "type-crosswalk",
+        "source_sha256": "a4386a8b45b02e8dbd6ff2f400d3b1c9ecbfc9c6d07a2892f035994d2a78c685",
+        "pointer": "/rows/10"
+      },
+      "source_state": "CANDIDATE_TYPE_NOT_RUNTIME_SCHEMA",
+      "source_implementation": "NOT_PERFORMED",
+      "new_runtime_instances_created": 0
+    },
+    {
+      "type": "QualificationIdentity",
+      "namespace": "QUALIFICATION",
+      "source_ref": {
+        "source_id": "type-crosswalk",
+        "source_sha256": "a4386a8b45b02e8dbd6ff2f400d3b1c9ecbfc9c6d07a2892f035994d2a78c685",
+        "pointer": "/rows/11"
+      },
+      "source_state": "CANDIDATE_TYPE_NOT_RUNTIME_SCHEMA",
+      "source_implementation": "NOT_PERFORMED",
+      "new_runtime_instances_created": 0
+    },
+    {
+      "type": "ActivationIdentity",
+      "namespace": "ACTIVATION",
+      "source_ref": {
+        "source_id": "type-crosswalk",
+        "source_sha256": "a4386a8b45b02e8dbd6ff2f400d3b1c9ecbfc9c6d07a2892f035994d2a78c685",
+        "pointer": "/rows/12"
+      },
+      "source_state": "CANDIDATE_TYPE_NOT_RUNTIME_SCHEMA",
+      "source_implementation": "NOT_PERFORMED",
+      "new_runtime_instances_created": 0
+    }
+  ],
+  "logical_rules": [
+    {
+      "kind": "Canonical service objects",
+      "rule": "Retain the exact existing Record/Project/Event/Evidence/Receipt IDs from their authenticated service envelopes. No ID is minted from a path, alias, registry entry or title.",
+      "source_ref": {
+        "source_id": "repo-agents",
+        "source_sha256": "75d0788ff62a20d2d211115a66ab20fc38519a14fad890ab9a3d6f821e821793",
+        "pointer": ""
+      }
+    },
+    {
+      "kind": "Artifacts",
+      "rule": "Reuse ArtifactRevisionIdentity minimum fields verbatim through source reference. An artifact revision is not the transport package, a live logical Canonical object, or proof of rights.",
+      "source_ref": {
+        "source_id": "type-crosswalk",
+        "source_sha256": "a4386a8b45b02e8dbd6ff2f400d3b1c9ecbfc9c6d07a2892f035994d2a78c685",
+        "pointer": "/rows/0"
+      }
+    },
+    {
+      "kind": "Stable target map",
+      "logical_id": "CANDIDATE_TARGET_MAP_V0_1_1",
+      "rule": "23 unchanged original row identities retain Map row revision v0.1.1; document revision v0.1.4 describes that map without creating a new Map identity.",
+      "source_ref": {
+        "source_id": "structure-map",
+        "source_sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965",
+        "pointer": "/stable_map_identity"
+      }
+    },
+    {
+      "kind": "Registry versus object",
+      "rule": "An entry is a reference/index subject. Its entry key does not replace the referenced object ID or elevate an author candidate registry to runtime authority.",
+      "source_ref": {
+        "source_id": "candidate-registry",
+        "source_sha256": "1dafc859c9a0e51cf13e193e0226718e030bd0193ebeebb3a17288c78c6a1468",
+        "pointer": ""
+      }
+    }
+  ],
+  "inactive_type_boundary": "Model/commercial/entitlement types remain design references. No SKU, Offer, Entitlement, ModelReleaseUnit or activation instance is created; those inactive futures do not gate this bounded identity preparation.",
+  "physical_path_is_identity": false,
+  "source_history_identity_rewrite_allowed": false
+}

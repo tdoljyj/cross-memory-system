@@ -1,0 +1,169 @@
+{
+  "base_repository_commit": "5fad76df81c8a412e7768e08427841f0985a2588",
+  "sources": {
+    "baseline": {
+      "kind": "repository_worktree_file",
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\FixedExecutionBaseline_20260907.md",
+      "bytes": 30836,
+      "sha256": "f465bcb77aced171b4f241da7a23c1e02133716700227caaabb7954be39899ad",
+      "base_repository_commit": "5fad76df81c8a412e7768e08427841f0985a2588"
+    },
+    "acceptance": {
+      "kind": "repository_worktree_file",
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\AcceptanceAndInvalidation.md",
+      "bytes": 20571,
+      "sha256": "f2aed48ed74e688bfe280d3fa896243cc7907905fafcc467706a276367472f27",
+      "base_repository_commit": "5fad76df81c8a412e7768e08427841f0985a2588"
+    },
+    "repo-agents": {
+      "kind": "repository_worktree_file",
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\AGENTS.md",
+      "bytes": 9637,
+      "sha256": "75d0788ff62a20d2d211115a66ab20fc38519a14fad890ab9a3d6f821e821793",
+      "base_repository_commit": "5fad76df81c8a412e7768e08427841f0985a2588"
+    },
+    "delegation": {
+      "kind": "repository_worktree_file",
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\ExecutionDelegation_20260907.json",
+      "bytes": 3350,
+      "sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+      "base_repository_commit": "5fad76df81c8a412e7768e08427841f0985a2588"
+    },
+    "scope-amendment": {
+      "kind": "repository_worktree_file",
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\ScopeAmendment_CurrentDirectory_20260907.json",
+      "bytes": 2308,
+      "sha256": "32b16e2938a5674b1d8b492e1bf0a0506f708c574913696d6ba281b99e108e9e",
+      "base_repository_commit": "5fad76df81c8a412e7768e08427841f0985a2588"
+    },
+    "structure-map": {
+      "kind": "repository_worktree_file",
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\artifacts\\clued-validation\\structure-freeze-prep\\acceptance-20260907\\step2\\package-inputs\\data\\StructureCandidateMap.json",
+      "bytes": 33372,
+      "sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965",
+      "base_repository_commit": "5fad76df81c8a412e7768e08427841f0985a2588"
+    },
+    "protocol-manifest": {
+      "kind": "repository_worktree_file",
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\protocol\\continuity\\v1\\manifest.json",
+      "bytes": 18823,
+      "sha256": "05ca5bb70c642dba9c3f58c0b943020d6188636e60cc569b3802c90a9afd36b5",
+      "base_repository_commit": "5fad76df81c8a412e7768e08427841f0985a2588"
+    },
+    "vocabulary-registry": {
+      "kind": "repository_worktree_file",
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\protocol\\continuity\\v1\\registries\\vocabulary-registry.json",
+      "bytes": 1071,
+      "sha256": "01340a4599b56e4a1a91b0b5eaf6570ce74ede6f9ce6faeb608a2bbe69c0289b",
+      "base_repository_commit": "5fad76df81c8a412e7768e08427841f0985a2588"
+    },
+    "endpoint-trust": {
+      "kind": "repository_worktree_file",
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\config\\clued-endpoint-trust.json",
+      "bytes": 209,
+      "sha256": "3c6c76087b468f13e7010a54db92b7c8db13146558c8288c8830eb22d6fb78f4",
+      "base_repository_commit": "5fad76df81c8a412e7768e08427841f0985a2588"
+    },
+    "legacy-readme": {
+      "kind": "repository_worktree_file",
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\legacy\\local-memory-engine-vnext2\\README.md",
+      "bytes": 698,
+      "sha256": "7e1efdf92211c771d9f2d74195d9a8b42d84f6ae222a857c25a792289ddc8a15",
+      "base_repository_commit": "5fad76df81c8a412e7768e08427841f0985a2588"
+    },
+    "version": {
+      "kind": "repository_worktree_file",
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\VERSION",
+      "bytes": 11,
+      "sha256": "aa07c9e145d2246eb962877d8f3b4dccc25cfafd84115206bce546582628d02a"
+    },
+    "current-reader": {
+      "kind": "repository_worktree_file",
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\memory.py",
+      "bytes": 15511,
+      "sha256": "479fd0e39a8a96287642ea59644d1975666fc314cc589f39a0086c3d9446dd85"
+    },
+    "step4-ownership": {
+      "kind": "accepted_step4_retained_subject",
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step04-namespace-20260907\\NamespaceOwnershipManifest.candidate.json",
+      "bytes": 40953,
+      "sha256": "40d7e87fed046c8aff18d8c1d0532ada075b802faf204059649c84faef1c0782"
+    },
+    "step4-domains": {
+      "kind": "accepted_step4_retained_subject",
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\step04-namespace-20260907\\DomainRegistryOwnershipManifest.candidate.json",
+      "bytes": 34723,
+      "sha256": "fa9e1b322356fc55d04b3eee078146a9b8304e48197c7d1767cd14d665b9c8ca"
+    },
+    "ci-manifest": {
+      "kind": "previously_verified_downloaded_ci_artifact",
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step3-ci-5fad76d\\phase2-naming-surface-inventory-5fad76df81c8a412e7768e08427841f0985a2588\\NamingSurfaceInventoryManifest.json",
+      "bytes": 60864987,
+      "sha256": "e6e80781685b9cd76f1dbb19ba45fa9a9d623758271bde64a4999e30796dc882"
+    },
+    "typed-review": {
+      "kind": "local_evidence_file",
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\typed-surface-review\\UnresolvedReview.development.json",
+      "bytes": 332728,
+      "sha256": "26ba84344047fba0deede667fdd1c94bee40b7958a897aedc84ed523c941a6ab"
+    },
+    "ci-review-binding": {
+      "kind": "local_evidence_file",
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\typed-surface-review\\CiReviewBindingReceipt.json",
+      "bytes": 1050,
+      "sha256": "baf2856fd05332487e6cad7f84b707f3b994d2be5efad484f7ad5a1f20ef27f5"
+    },
+    "rpc-supplement": {
+      "kind": "local_evidence_file",
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\typed-surface-review\\SupplementalRpcObservations.development.json",
+      "bytes": 2565,
+      "sha256": "3583906d1ffa795cdc35bfe9d21b1bdf9e1b1ebfbed02941e871a2876e59a006"
+    },
+    "identity-policy": {
+      "kind": "immutable_zip_member",
+      "archive_path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip",
+      "member": "Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/CurrentArtifactIdentityPolicy.json",
+      "bytes": 776,
+      "sha256": "3a14df68ea81c6390316c5df09d51a049b52a640871ab57953c42acb30624bff"
+    },
+    "type-crosswalk": {
+      "kind": "immutable_zip_member",
+      "archive_path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip",
+      "member": "Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/ArtifactAndReleaseIdentityCrosswalk.json",
+      "bytes": 10781,
+      "sha256": "a4386a8b45b02e8dbd6ff2f400d3b1c9ecbfc9c6d07a2892f035994d2a78c685"
+    },
+    "review-subject": {
+      "kind": "immutable_zip_member",
+      "archive_path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip",
+      "member": "Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/ReviewSubjectContract.json",
+      "bytes": 1383,
+      "sha256": "c2cd13dbe8fd046aa8f0344778141cb9b115fae0048a8c673b60bd25b03498d3"
+    },
+    "candidate-registry": {
+      "kind": "immutable_zip_member",
+      "archive_path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip",
+      "member": "Clued_Phase2_三轨修订与补证_v0.2.7_20260906/data/CurrentArtifactRegistry.json",
+      "bytes": 15392,
+      "sha256": "1dafc859c9a0e51cf13e193e0226718e030bd0193ebeebb3a17288c78c6a1468"
+    },
+    "source-zip-container": {
+      "kind": "immutable_source_container",
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip",
+      "bytes": 246612118,
+      "sha256": "6e51374a6caedb4f84d2b6bb9fe05cd695b25732833f9d0217c341f17e1c1649",
+      "digest_basis": "Previously independently verified full candidate ZIP in this task; selected member bytes hashed again for this construction."
+    },
+    "step4-acceptance": {
+      "kind": "existing_scoped_acceptance_decision",
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\phase2-governance-check\\docs\\execution-plans\\phase2-structure-governance\\Step04-ScopedAcceptance_20260907.json",
+      "bytes": 3223,
+      "sha256": "6f2cc1c9cc28c2a717023029851d61a666815567bc30b3635479cb1b70382e6c"
+    }
+  },
+  "raw_original_contracts_copied_or_changed": false,
+  "business_memory_loaded": false,
+  "new_repository_scan_performed": false,
+  "existing_tests_repeated": false,
+  "commit_label_boundary": "base_repository_commit is the inherited inventory/source baseline anchor, not an assertion that later delegation, scope amendment or Step4 acceptance existed in that commit. Exact per-source hashes bind the inspected governance inputs."
+}

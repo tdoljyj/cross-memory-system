@@ -1,0 +1,995 @@
+{
+  "candidate_status": "PREPARATION_ONLY_NOT_STEP4_ACCEPTANCE",
+  "authority_effect": "NONE_NEW_BY_CANDIDATE",
+  "source_repository_commit": "5fad76df81c8a412e7768e08427841f0985a2588",
+  "scope_basis": {
+    "source_id": "scope-amendment",
+    "source_sha256": "32b16e2938a5674b1d8b492e1bf0a0506f708c574913696d6ba281b99e108e9e",
+    "pointer": ""
+  },
+  "task_boundary": "Only construct a bounded Step 4 candidate and conflict list; no migration, freeze, production change or Canonical service write.",
+  "formal_activation_condition": "The parent task determines applicable preceding-gate readiness; this candidate does not waive an actual dependency or issue acceptance.",
+  "construction_basis": [
+    {
+      "source_id": "baseline",
+      "source_sha256": "f465bcb77aced171b4f241da7a23c1e02133716700227caaabb7954be39899ad",
+      "pointer": "Step 4 / lines 192-256"
+    },
+    {
+      "source_id": "acceptance",
+      "source_sha256": "f2aed48ed74e688bfe280d3fa896243cc7907905fafcc467706a276367472f27",
+      "pointer": "Step 4"
+    },
+    {
+      "source_id": "structure-map",
+      "source_sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965",
+      "pointer": ""
+    },
+    {
+      "source_id": "delegation",
+      "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+      "pointer": ""
+    }
+  ],
+  "existing_schema_policy": "Use existing contract/registry IDs and field meanings by reference. No new runtime JSON Schema or global registry authority is created.",
+  "document_kind": "NamespaceOwnershipManifest",
+  "format_status": "CANDIDATE_DOCUMENT_FIELDS_FROM_FIXED_STEP4_NOT_ACCEPTED_RUNTIME_SCHEMA",
+  "stable_map_identity_preserved": {
+    "map_id": "CANDIDATE_TARGET_MAP_V0_1_1",
+    "map_row_revision": "v0.1.1",
+    "document_revision": "v0.1.4",
+    "rows_inherited_from": {
+      "path": "sources/architecture_v024/data/StructureCandidateMap.json",
+      "bytes": 33254,
+      "sha256": "f841129b9d3aa8514e84fe10d9bb1d07df5ef657db18ce769485442908a15757",
+      "pointer": "/current_to_target_rows"
+    },
+    "rows_canonical_sha256": "126a6f43f8906695797e89f74ff5a017ed5b2d3639bbe0bcfacbd4516571d485",
+    "rows_changed": false,
+    "meaning": "23条责任级候选行未改变；文档修订号不等于逻辑Map修订，更不等于FrozenTargetMap。"
+  },
+  "projection_definition": "The ten groups are a view of the 23 source rows; original StructureCandidateMap remains the source of each responsibility/path/target fact.",
+  "role_definitions": {
+    "NamespaceOwner": {
+      "actor_ref": {
+        "source_id": "delegation",
+        "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+        "pointer": "/delegator"
+      },
+      "scope": "project naming governance administration",
+      "state": "BOUND_TO_EXPLICIT_USER_OWNER_CONTEXT"
+    },
+    "DelegatedMaintainer": {
+      "actor_ref": {
+        "source_id": "delegation",
+        "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+        "pointer": "/delegatee"
+      },
+      "delegation_ref": "NamespaceDelegationManifest.candidate.json#/delegations/0",
+      "state": "BOUND_FOR_SCOPED_TASK_ADMINISTRATION"
+    },
+    "ReadConsumer": {
+      "actor_ref": null,
+      "state": "EXISTING_SCOPED_READERS_RETAINED; EXACT_PROGRAM_BINDINGS_AT_STEP6",
+      "source_refs": [
+        {
+          "source_id": "repo-agents",
+          "source_sha256": "75d0788ff62a20d2d211115a66ab20fc38519a14fad890ab9a3d6f821e821793",
+          "pointer": ""
+        }
+      ]
+    },
+    "WriteConsumer": {
+      "actor_ref": null,
+      "state": "EXISTING_AUTHENTICATED_WRITERS_RETAINED; NO_NEW_RUNTIME_GRANT",
+      "source_refs": [
+        {
+          "source_id": "repo-agents",
+          "source_sha256": "75d0788ff62a20d2d211115a66ab20fc38519a14fad890ab9a3d6f821e821793",
+          "pointer": ""
+        }
+      ]
+    },
+    "Publisher": {
+      "actor_ref": {
+        "source_id": "delegation",
+        "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+        "pointer": "/delegatee"
+      },
+      "scope": "authorized private-repository engineering artifacts only",
+      "state": "EXPLICIT_DELEGATION; EXISTING_SERVICE_PUBLISHERS_UNCHANGED"
+    },
+    "Reviewer": {
+      "accepting_delegate_ref": {
+        "source_id": "delegation",
+        "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+        "pointer": "/delegatee"
+      },
+      "independent_reviewer_ref": null,
+      "state": "INDEPENDENT_REVIEW_ACTOR_BOUND_WHEN_REVIEW_OCCURS; NO_STEP9_DECISION_HERE"
+    },
+    "MigrationExecutor": {
+      "actor_ref": {
+        "source_id": "delegation",
+        "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+        "pointer": "/delegatee"
+      },
+      "state": "DELEGATED_CONDITIONALLY; NOT_EXECUTED",
+      "start_condition": "applicable preceding gates and effective Step 11 Freeze before Step 12 migration"
+    },
+    "HistoricalCompatibilityReader": {
+      "actor_ref": null,
+      "state": "READ_ONLY_SOURCE/IDENTITY_COMPATIBILITY; NO_CURRENT_STATE_ISSUANCE",
+      "source_refs": [
+        {
+          "source_id": "identity-policy",
+          "source_sha256": "3a14df68ea81c6390316c5df09d51a049b52a640871ab57953c42acb30624bff",
+          "pointer": "/historical_namespaces_cannot_issue_current_state"
+        },
+        {
+          "source_id": "legacy-readme",
+          "source_sha256": "7e1efdf92211c771d9f2d74195d9a8b42d84f6ae222a857c25a792289ddc8a15",
+          "pointer": ""
+        }
+      ]
+    }
+  },
+  "namespaces": [
+    {
+      "group_key": "ROOT_ROUTER",
+      "group_key_kind": "INHERITED_RESPONSIBILITY_LABEL_NOT_NEW_NAMESPACE_ID",
+      "title": "根路由",
+      "source_map_id": "CANDIDATE_TARGET_MAP_V0_1_1",
+      "source_map_row_ids": [
+        "TM-01"
+      ],
+      "source_map_refs": [
+        {
+          "source_id": "structure-map",
+          "source_sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965",
+          "pointer": "/current_to_target_rows/0"
+        }
+      ],
+      "namespace_boundary": "保持精确 authority/ref/status/expiry 路由，不成为命名或业务事实新源。",
+      "source_declared_current_paths": [
+        "AGENTS.md"
+      ],
+      "candidate_targets": [
+        "AGENTS.md"
+      ],
+      "path_semantics": "LOCATORS_ONLY; neither prefix nor proposed target is itself a grant or Domain ID.",
+      "responsibility_domain": "ROOT_ROUTER",
+      "management_owner": {
+        "kind": "PROJECT_NAMING_AND_NAMESPACE_ADMINISTRATION",
+        "owner_ref": {
+          "source_id": "delegation",
+          "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+          "pointer": "/delegator"
+        },
+        "owner_status": "EXPLICIT_PROJECT_OWNER_CONTEXT",
+        "evidence": {
+          "source_id": "delegation",
+          "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+          "pointer": "/authority_source/account_ownership_context"
+        },
+        "platform_principal_binding": "NO_NEW_PLATFORM_PRINCIPAL_OR_DOMAIN_CREDENTIAL_INFERRED"
+      },
+      "roles": {
+        "NamespaceOwner": {
+          "role_definition_ref": "#/role_definitions/NamespaceOwner"
+        },
+        "DelegatedMaintainer": {
+          "role_definition_ref": "#/role_definitions/DelegatedMaintainer"
+        },
+        "ReadConsumer": {
+          "role_definition_ref": "#/role_definitions/ReadConsumer"
+        },
+        "WriteConsumer": {
+          "role_definition_ref": "#/role_definitions/WriteConsumer"
+        },
+        "Publisher": {
+          "role_definition_ref": "#/role_definitions/Publisher"
+        },
+        "Reviewer": {
+          "role_definition_ref": "#/role_definitions/Reviewer"
+        },
+        "MigrationExecutor": {
+          "role_definition_ref": "#/role_definitions/MigrationExecutor"
+        },
+        "HistoricalCompatibilityReader": {
+          "role_definition_ref": "#/role_definitions/HistoricalCompatibilityReader"
+        }
+      },
+      "runtime_program_domain_authority_ref": null,
+      "runtime_program_domain_authority_state": "PENDING_EXACT_CONTRACT_AND_CONSUMER_BINDING; NO_NEW_RIGHTS_ISSUED",
+      "source_named_owner_fields_preserved": true,
+      "candidate_state": "PREPARATION_ONLY_NOT_ACCEPTED_OR_FROZEN",
+      "governance_domain_registry_ref": {
+        "file": "DomainRegistryOwnershipManifest.candidate.json",
+        "pointer": "/domains/0",
+        "domain_id": "ROOT_ROUTER",
+        "state": "PROPOSED_EFFECTIVE_ONLY_ON_SCOPED_STEP4_ACCEPTANCE"
+      }
+    },
+    {
+      "group_key": "CURRENT_PROJECTION",
+      "group_key_kind": "INHERITED_RESPONSIBILITY_LABEL_NOT_NEW_NAMESPACE_ID",
+      "title": "状态、版本及设计入口",
+      "source_map_id": "CANDIDATE_TARGET_MAP_V0_1_1",
+      "source_map_row_ids": [
+        "TM-02",
+        "TM-03",
+        "TM-09"
+      ],
+      "source_map_refs": [
+        {
+          "source_id": "structure-map",
+          "source_sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965",
+          "pointer": "/current_to_target_rows/1"
+        },
+        {
+          "source_id": "structure-map",
+          "source_sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965",
+          "pointer": "/current_to_target_rows/2"
+        },
+        {
+          "source_id": "structure-map",
+          "source_sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965",
+          "pointer": "/current_to_target_rows/8"
+        }
+      ],
+      "namespace_boundary": "状态与README是来源投影；VERSION仅用于其自身版本轴。",
+      "source_declared_current_paths": [
+        "CURRENT_STATUS.md",
+        "README.md / VERSION",
+        "docs/ and root ADR/report files"
+      ],
+      "candidate_targets": [
+        "CURRENT_STATUS.md",
+        "README.md / VERSION",
+        "docs/"
+      ],
+      "path_semantics": "LOCATORS_ONLY; neither prefix nor proposed target is itself a grant or Domain ID.",
+      "responsibility_domain": "DCP",
+      "management_owner": {
+        "kind": "PROJECT_NAMING_AND_NAMESPACE_ADMINISTRATION",
+        "owner_ref": {
+          "source_id": "delegation",
+          "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+          "pointer": "/delegator"
+        },
+        "owner_status": "EXPLICIT_PROJECT_OWNER_CONTEXT",
+        "evidence": {
+          "source_id": "delegation",
+          "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+          "pointer": "/authority_source/account_ownership_context"
+        },
+        "platform_principal_binding": "NO_NEW_PLATFORM_PRINCIPAL_OR_DOMAIN_CREDENTIAL_INFERRED"
+      },
+      "roles": {
+        "NamespaceOwner": {
+          "role_definition_ref": "#/role_definitions/NamespaceOwner"
+        },
+        "DelegatedMaintainer": {
+          "role_definition_ref": "#/role_definitions/DelegatedMaintainer"
+        },
+        "ReadConsumer": {
+          "role_definition_ref": "#/role_definitions/ReadConsumer"
+        },
+        "WriteConsumer": {
+          "role_definition_ref": "#/role_definitions/WriteConsumer"
+        },
+        "Publisher": {
+          "role_definition_ref": "#/role_definitions/Publisher"
+        },
+        "Reviewer": {
+          "role_definition_ref": "#/role_definitions/Reviewer"
+        },
+        "MigrationExecutor": {
+          "role_definition_ref": "#/role_definitions/MigrationExecutor"
+        },
+        "HistoricalCompatibilityReader": {
+          "role_definition_ref": "#/role_definitions/HistoricalCompatibilityReader"
+        }
+      },
+      "runtime_program_domain_authority_ref": null,
+      "runtime_program_domain_authority_state": "PENDING_EXACT_CONTRACT_AND_CONSUMER_BINDING; NO_NEW_RIGHTS_ISSUED",
+      "source_named_owner_fields_preserved": true,
+      "candidate_state": "PREPARATION_ONLY_NOT_ACCEPTED_OR_FROZEN",
+      "governance_domain_registry_ref": {
+        "file": "DomainRegistryOwnershipManifest.candidate.json",
+        "pointer": "/domains/1",
+        "domain_id": "DCP",
+        "state": "PROPOSED_EFFECTIVE_ONLY_ON_SCOPED_STEP4_ACCEPTANCE"
+      }
+    },
+    {
+      "group_key": "DOMAIN_CONTRACT",
+      "group_key_kind": "INHERITED_RESPONSIBILITY_LABEL_NOT_NEW_NAMESPACE_ID",
+      "title": "协议与内核",
+      "source_map_id": "CANDIDATE_TARGET_MAP_V0_1_1",
+      "source_map_row_ids": [
+        "TM-04",
+        "TM-05"
+      ],
+      "source_map_refs": [
+        {
+          "source_id": "structure-map",
+          "source_sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965",
+          "pointer": "/current_to_target_rows/3"
+        },
+        {
+          "source_id": "structure-map",
+          "source_sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965",
+          "pointer": "/current_to_target_rows/4"
+        }
+      ],
+      "namespace_boundary": "复用现有 v1 Registry/Schema 与 Kernel；不得借结构治理改变 Canonical 提交语义。",
+      "source_declared_current_paths": [
+        "protocol/",
+        "kernel/"
+      ],
+      "candidate_targets": [
+        "protocol/",
+        "kernel/"
+      ],
+      "path_semantics": "LOCATORS_ONLY; neither prefix nor proposed target is itself a grant or Domain ID.",
+      "responsibility_domain": "AUTHORITY_CORE",
+      "management_owner": {
+        "kind": "PROJECT_NAMING_AND_NAMESPACE_ADMINISTRATION",
+        "owner_ref": {
+          "source_id": "delegation",
+          "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+          "pointer": "/delegator"
+        },
+        "owner_status": "EXPLICIT_PROJECT_OWNER_CONTEXT",
+        "evidence": {
+          "source_id": "delegation",
+          "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+          "pointer": "/authority_source/account_ownership_context"
+        },
+        "platform_principal_binding": "NO_NEW_PLATFORM_PRINCIPAL_OR_DOMAIN_CREDENTIAL_INFERRED"
+      },
+      "roles": {
+        "NamespaceOwner": {
+          "role_definition_ref": "#/role_definitions/NamespaceOwner"
+        },
+        "DelegatedMaintainer": {
+          "role_definition_ref": "#/role_definitions/DelegatedMaintainer"
+        },
+        "ReadConsumer": {
+          "role_definition_ref": "#/role_definitions/ReadConsumer"
+        },
+        "WriteConsumer": {
+          "role_definition_ref": "#/role_definitions/WriteConsumer"
+        },
+        "Publisher": {
+          "role_definition_ref": "#/role_definitions/Publisher"
+        },
+        "Reviewer": {
+          "role_definition_ref": "#/role_definitions/Reviewer"
+        },
+        "MigrationExecutor": {
+          "role_definition_ref": "#/role_definitions/MigrationExecutor"
+        },
+        "HistoricalCompatibilityReader": {
+          "role_definition_ref": "#/role_definitions/HistoricalCompatibilityReader"
+        }
+      },
+      "runtime_program_domain_authority_ref": null,
+      "runtime_program_domain_authority_state": "PENDING_EXACT_CONTRACT_AND_CONSUMER_BINDING; NO_NEW_RIGHTS_ISSUED",
+      "source_named_owner_fields_preserved": true,
+      "candidate_state": "PREPARATION_ONLY_NOT_ACCEPTED_OR_FROZEN",
+      "governance_domain_registry_ref": {
+        "file": "DomainRegistryOwnershipManifest.candidate.json",
+        "pointer": "/domains/2",
+        "domain_id": "AUTHORITY_CORE",
+        "state": "PROPOSED_EFFECTIVE_ONLY_ON_SCOPED_STEP4_ACCEPTANCE"
+      }
+    },
+    {
+      "group_key": "PRODUCT_IMPL",
+      "group_key_kind": "INHERITED_RESPONSIBILITY_LABEL_NOT_NEW_NAMESPACE_ID",
+      "title": "应用与产品投影",
+      "source_map_id": "CANDIDATE_TARGET_MAP_V0_1_1",
+      "source_map_row_ids": [
+        "TM-06"
+      ],
+      "source_map_refs": [
+        {
+          "source_id": "structure-map",
+          "source_sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965",
+          "pointer": "/current_to_target_rows/5"
+        }
+      ],
+      "namespace_boundary": "apps/ 的目录管理归属不改变 worker 中实际权限/写入/运行职责。",
+      "source_declared_current_paths": [
+        "apps/"
+      ],
+      "candidate_targets": [
+        "apps/"
+      ],
+      "path_semantics": "LOCATORS_ONLY; neither prefix nor proposed target is itself a grant or Domain ID.",
+      "responsibility_domain": "PRODUCT_PROJECTION",
+      "management_owner": {
+        "kind": "PROJECT_NAMING_AND_NAMESPACE_ADMINISTRATION",
+        "owner_ref": {
+          "source_id": "delegation",
+          "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+          "pointer": "/delegator"
+        },
+        "owner_status": "EXPLICIT_PROJECT_OWNER_CONTEXT",
+        "evidence": {
+          "source_id": "delegation",
+          "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+          "pointer": "/authority_source/account_ownership_context"
+        },
+        "platform_principal_binding": "NO_NEW_PLATFORM_PRINCIPAL_OR_DOMAIN_CREDENTIAL_INFERRED"
+      },
+      "roles": {
+        "NamespaceOwner": {
+          "role_definition_ref": "#/role_definitions/NamespaceOwner"
+        },
+        "DelegatedMaintainer": {
+          "role_definition_ref": "#/role_definitions/DelegatedMaintainer"
+        },
+        "ReadConsumer": {
+          "role_definition_ref": "#/role_definitions/ReadConsumer"
+        },
+        "WriteConsumer": {
+          "role_definition_ref": "#/role_definitions/WriteConsumer"
+        },
+        "Publisher": {
+          "role_definition_ref": "#/role_definitions/Publisher"
+        },
+        "Reviewer": {
+          "role_definition_ref": "#/role_definitions/Reviewer"
+        },
+        "MigrationExecutor": {
+          "role_definition_ref": "#/role_definitions/MigrationExecutor"
+        },
+        "HistoricalCompatibilityReader": {
+          "role_definition_ref": "#/role_definitions/HistoricalCompatibilityReader"
+        }
+      },
+      "runtime_program_domain_authority_ref": null,
+      "runtime_program_domain_authority_state": "PENDING_EXACT_CONTRACT_AND_CONSUMER_BINDING; NO_NEW_RIGHTS_ISSUED",
+      "source_named_owner_fields_preserved": true,
+      "candidate_state": "PREPARATION_ONLY_NOT_ACCEPTED_OR_FROZEN",
+      "governance_domain_registry_ref": {
+        "file": "DomainRegistryOwnershipManifest.candidate.json",
+        "pointer": "/domains/3",
+        "domain_id": "PRODUCT_PROJECTION",
+        "state": "PROPOSED_EFFECTIVE_ONLY_ON_SCOPED_STEP4_ACCEPTANCE"
+      }
+    },
+    {
+      "group_key": "HOSTED_IMPL",
+      "group_key_kind": "INHERITED_RESPONSIBILITY_LABEL_NOT_NEW_NAMESPACE_ID",
+      "title": "云端与配置",
+      "source_map_id": "CANDIDATE_TARGET_MAP_V0_1_1",
+      "source_map_row_ids": [
+        "TM-07",
+        "TM-08"
+      ],
+      "source_map_refs": [
+        {
+          "source_id": "structure-map",
+          "source_sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965",
+          "pointer": "/current_to_target_rows/6"
+        },
+        {
+          "source_id": "structure-map",
+          "source_sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965",
+          "pointer": "/current_to_target_rows/7"
+        }
+      ],
+      "namespace_boundary": "维护非敏感配置定义；真实资源、Secret 和账号策略不由目录所有权授予。",
+      "source_declared_current_paths": [
+        "cloud/",
+        "config/"
+      ],
+      "candidate_targets": [
+        "cloud/",
+        "config/"
+      ],
+      "path_semantics": "LOCATORS_ONLY; neither prefix nor proposed target is itself a grant or Domain ID.",
+      "responsibility_domain": "PLATFORM",
+      "management_owner": {
+        "kind": "PROJECT_NAMING_AND_NAMESPACE_ADMINISTRATION",
+        "owner_ref": {
+          "source_id": "delegation",
+          "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+          "pointer": "/delegator"
+        },
+        "owner_status": "EXPLICIT_PROJECT_OWNER_CONTEXT",
+        "evidence": {
+          "source_id": "delegation",
+          "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+          "pointer": "/authority_source/account_ownership_context"
+        },
+        "platform_principal_binding": "NO_NEW_PLATFORM_PRINCIPAL_OR_DOMAIN_CREDENTIAL_INFERRED"
+      },
+      "roles": {
+        "NamespaceOwner": {
+          "role_definition_ref": "#/role_definitions/NamespaceOwner"
+        },
+        "DelegatedMaintainer": {
+          "role_definition_ref": "#/role_definitions/DelegatedMaintainer"
+        },
+        "ReadConsumer": {
+          "role_definition_ref": "#/role_definitions/ReadConsumer"
+        },
+        "WriteConsumer": {
+          "role_definition_ref": "#/role_definitions/WriteConsumer"
+        },
+        "Publisher": {
+          "role_definition_ref": "#/role_definitions/Publisher"
+        },
+        "Reviewer": {
+          "role_definition_ref": "#/role_definitions/Reviewer"
+        },
+        "MigrationExecutor": {
+          "role_definition_ref": "#/role_definitions/MigrationExecutor"
+        },
+        "HistoricalCompatibilityReader": {
+          "role_definition_ref": "#/role_definitions/HistoricalCompatibilityReader"
+        }
+      },
+      "runtime_program_domain_authority_ref": null,
+      "runtime_program_domain_authority_state": "PENDING_EXACT_CONTRACT_AND_CONSUMER_BINDING; NO_NEW_RIGHTS_ISSUED",
+      "source_named_owner_fields_preserved": true,
+      "candidate_state": "PREPARATION_ONLY_NOT_ACCEPTED_OR_FROZEN",
+      "governance_domain_registry_ref": {
+        "file": "DomainRegistryOwnershipManifest.candidate.json",
+        "pointer": "/domains/4",
+        "domain_id": "PLATFORM",
+        "state": "PROPOSED_EFFECTIVE_ONLY_ON_SCOPED_STEP4_ACCEPTANCE"
+      }
+    },
+    {
+      "group_key": "TOOLS",
+      "group_key_kind": "INHERITED_RESPONSIBILITY_LABEL_NOT_NEW_NAMESPACE_ID",
+      "title": "工具、测试和CI",
+      "source_map_id": "CANDIDATE_TARGET_MAP_V0_1_1",
+      "source_map_row_ids": [
+        "TM-10",
+        "TM-11",
+        "TM-12"
+      ],
+      "source_map_refs": [
+        {
+          "source_id": "structure-map",
+          "source_sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965",
+          "pointer": "/current_to_target_rows/9"
+        },
+        {
+          "source_id": "structure-map",
+          "source_sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965",
+          "pointer": "/current_to_target_rows/10"
+        },
+        {
+          "source_id": "structure-map",
+          "source_sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965",
+          "pointer": "/current_to_target_rows/11"
+        }
+      ],
+      "namespace_boundary": "复用现有执行入口与检查身份；代码维护权不自动成为业务写入权。",
+      "source_declared_current_paths": [
+        "scripts/ and root *.py / *.ps1",
+        "tests/ / evals/",
+        ".github/"
+      ],
+      "candidate_targets": [
+        "scripts/ plus temporary compatibility launchers",
+        "tests/ / evals/",
+        ".github/"
+      ],
+      "path_semantics": "LOCATORS_ONLY; neither prefix nor proposed target is itself a grant or Domain ID.",
+      "responsibility_domain": "DEVELOPMENT",
+      "management_owner": {
+        "kind": "PROJECT_NAMING_AND_NAMESPACE_ADMINISTRATION",
+        "owner_ref": {
+          "source_id": "delegation",
+          "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+          "pointer": "/delegator"
+        },
+        "owner_status": "EXPLICIT_PROJECT_OWNER_CONTEXT",
+        "evidence": {
+          "source_id": "delegation",
+          "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+          "pointer": "/authority_source/account_ownership_context"
+        },
+        "platform_principal_binding": "NO_NEW_PLATFORM_PRINCIPAL_OR_DOMAIN_CREDENTIAL_INFERRED"
+      },
+      "roles": {
+        "NamespaceOwner": {
+          "role_definition_ref": "#/role_definitions/NamespaceOwner"
+        },
+        "DelegatedMaintainer": {
+          "role_definition_ref": "#/role_definitions/DelegatedMaintainer"
+        },
+        "ReadConsumer": {
+          "role_definition_ref": "#/role_definitions/ReadConsumer"
+        },
+        "WriteConsumer": {
+          "role_definition_ref": "#/role_definitions/WriteConsumer"
+        },
+        "Publisher": {
+          "role_definition_ref": "#/role_definitions/Publisher"
+        },
+        "Reviewer": {
+          "role_definition_ref": "#/role_definitions/Reviewer"
+        },
+        "MigrationExecutor": {
+          "role_definition_ref": "#/role_definitions/MigrationExecutor"
+        },
+        "HistoricalCompatibilityReader": {
+          "role_definition_ref": "#/role_definitions/HistoricalCompatibilityReader"
+        }
+      },
+      "runtime_program_domain_authority_ref": null,
+      "runtime_program_domain_authority_state": "PENDING_EXACT_CONTRACT_AND_CONSUMER_BINDING; NO_NEW_RIGHTS_ISSUED",
+      "source_named_owner_fields_preserved": true,
+      "candidate_state": "PREPARATION_ONLY_NOT_ACCEPTED_OR_FROZEN",
+      "governance_domain_registry_ref": {
+        "file": "DomainRegistryOwnershipManifest.candidate.json",
+        "pointer": "/domains/5",
+        "domain_id": "DEVELOPMENT",
+        "state": "PROPOSED_EFFECTIVE_ONLY_ON_SCOPED_STEP4_ACCEPTANCE"
+      }
+    },
+    {
+      "group_key": "MECHANISM_SOURCE",
+      "group_key_kind": "INHERITED_RESPONSIBILITY_LABEL_NOT_NEW_NAMESPACE_ID",
+      "title": "机制、Skill及厂商投影",
+      "source_map_id": "CANDIDATE_TARGET_MAP_V0_1_1",
+      "source_map_row_ids": [
+        "TM-13",
+        "TM-20",
+        "TM-21"
+      ],
+      "source_map_refs": [
+        {
+          "source_id": "structure-map",
+          "source_sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965",
+          "pointer": "/current_to_target_rows/12"
+        },
+        {
+          "source_id": "structure-map",
+          "source_sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965",
+          "pointer": "/current_to_target_rows/19"
+        },
+        {
+          "source_id": "structure-map",
+          "source_sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965",
+          "pointer": "/current_to_target_rows/20"
+        }
+      ],
+      "namespace_boundary": "复用原 Mechanism/Skill 类型；开发与普通用户投影隔离，旧Skill不猜成新Skill。",
+      "source_declared_current_paths": [
+        "skills/"
+      ],
+      "candidate_targets": [
+        "legacy-preserved until exact projection mapping",
+        "mechanisms/",
+        "integrations/<vendor>/{development,public-user}/"
+      ],
+      "path_semantics": "LOCATORS_ONLY; neither prefix nor proposed target is itself a grant or Domain ID.",
+      "responsibility_domain": "MECHANISM",
+      "management_owner": {
+        "kind": "PROJECT_NAMING_AND_NAMESPACE_ADMINISTRATION",
+        "owner_ref": {
+          "source_id": "delegation",
+          "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+          "pointer": "/delegator"
+        },
+        "owner_status": "EXPLICIT_PROJECT_OWNER_CONTEXT",
+        "evidence": {
+          "source_id": "delegation",
+          "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+          "pointer": "/authority_source/account_ownership_context"
+        },
+        "platform_principal_binding": "NO_NEW_PLATFORM_PRINCIPAL_OR_DOMAIN_CREDENTIAL_INFERRED"
+      },
+      "roles": {
+        "NamespaceOwner": {
+          "role_definition_ref": "#/role_definitions/NamespaceOwner"
+        },
+        "DelegatedMaintainer": {
+          "role_definition_ref": "#/role_definitions/DelegatedMaintainer"
+        },
+        "ReadConsumer": {
+          "role_definition_ref": "#/role_definitions/ReadConsumer"
+        },
+        "WriteConsumer": {
+          "role_definition_ref": "#/role_definitions/WriteConsumer"
+        },
+        "Publisher": {
+          "role_definition_ref": "#/role_definitions/Publisher"
+        },
+        "Reviewer": {
+          "role_definition_ref": "#/role_definitions/Reviewer"
+        },
+        "MigrationExecutor": {
+          "role_definition_ref": "#/role_definitions/MigrationExecutor"
+        },
+        "HistoricalCompatibilityReader": {
+          "role_definition_ref": "#/role_definitions/HistoricalCompatibilityReader"
+        }
+      },
+      "runtime_program_domain_authority_ref": null,
+      "runtime_program_domain_authority_state": "PENDING_EXACT_CONTRACT_AND_CONSUMER_BINDING; NO_NEW_RIGHTS_ISSUED",
+      "source_named_owner_fields_preserved": true,
+      "candidate_state": "PREPARATION_ONLY_NOT_ACCEPTED_OR_FROZEN",
+      "governance_domain_registry_ref": {
+        "file": "DomainRegistryOwnershipManifest.candidate.json",
+        "pointer": "/domains/6",
+        "domain_id": "MECHANISM",
+        "state": "PROPOSED_EFFECTIVE_ONLY_ON_SCOPED_STEP4_ACCEPTANCE"
+      }
+    },
+    {
+      "group_key": "VERSIONED_ARTIFACT",
+      "group_key_kind": "INHERITED_RESPONSIBILITY_LABEL_NOT_NEW_NAMESPACE_ID",
+      "title": "版本化制品及历史",
+      "source_map_id": "CANDIDATE_TARGET_MAP_V0_1_1",
+      "source_map_row_ids": [
+        "TM-14",
+        "TM-16"
+      ],
+      "source_map_refs": [
+        {
+          "source_id": "structure-map",
+          "source_sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965",
+          "pointer": "/current_to_target_rows/13"
+        },
+        {
+          "source_id": "structure-map",
+          "source_sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965",
+          "pointer": "/current_to_target_rows/15"
+        }
+      ],
+      "namespace_boundary": "保留原字节、current指针和旧身份；历史命名空间不能签发当前状态。",
+      "source_declared_current_paths": [
+        "artifacts/",
+        "legacy/ and historical reports"
+      ],
+      "candidate_targets": [
+        "artifacts/",
+        "legacy/ / docs/history/ (candidate)"
+      ],
+      "path_semantics": "LOCATORS_ONLY; neither prefix nor proposed target is itself a grant or Domain ID.",
+      "responsibility_domain": "DCP",
+      "management_owner": {
+        "kind": "PROJECT_NAMING_AND_NAMESPACE_ADMINISTRATION",
+        "owner_ref": {
+          "source_id": "delegation",
+          "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+          "pointer": "/delegator"
+        },
+        "owner_status": "EXPLICIT_PROJECT_OWNER_CONTEXT",
+        "evidence": {
+          "source_id": "delegation",
+          "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+          "pointer": "/authority_source/account_ownership_context"
+        },
+        "platform_principal_binding": "NO_NEW_PLATFORM_PRINCIPAL_OR_DOMAIN_CREDENTIAL_INFERRED"
+      },
+      "roles": {
+        "NamespaceOwner": {
+          "role_definition_ref": "#/role_definitions/NamespaceOwner"
+        },
+        "DelegatedMaintainer": {
+          "role_definition_ref": "#/role_definitions/DelegatedMaintainer"
+        },
+        "ReadConsumer": {
+          "role_definition_ref": "#/role_definitions/ReadConsumer"
+        },
+        "WriteConsumer": {
+          "role_definition_ref": "#/role_definitions/WriteConsumer"
+        },
+        "Publisher": {
+          "role_definition_ref": "#/role_definitions/Publisher"
+        },
+        "Reviewer": {
+          "role_definition_ref": "#/role_definitions/Reviewer"
+        },
+        "MigrationExecutor": {
+          "role_definition_ref": "#/role_definitions/MigrationExecutor"
+        },
+        "HistoricalCompatibilityReader": {
+          "role_definition_ref": "#/role_definitions/HistoricalCompatibilityReader"
+        }
+      },
+      "runtime_program_domain_authority_ref": null,
+      "runtime_program_domain_authority_state": "PENDING_EXACT_CONTRACT_AND_CONSUMER_BINDING; NO_NEW_RIGHTS_ISSUED",
+      "source_named_owner_fields_preserved": true,
+      "candidate_state": "PREPARATION_ONLY_NOT_ACCEPTED_OR_FROZEN",
+      "governance_domain_registry_ref": {
+        "file": "DomainRegistryOwnershipManifest.candidate.json",
+        "pointer": "/domains/1",
+        "domain_id": "DCP",
+        "state": "PROPOSED_EFFECTIVE_ONLY_ON_SCOPED_STEP4_ACCEPTANCE"
+      }
+    },
+    {
+      "group_key": "PRIVATE_BUNDLE",
+      "group_key_kind": "INHERITED_RESPONSIBILITY_LABEL_NOT_NEW_NAMESPACE_ID",
+      "title": "本人只读Bundle及兼容入口",
+      "source_map_id": "CANDIDATE_TARGET_MAP_V0_1_1",
+      "source_map_row_ids": [
+        "TM-15",
+        "TM-23"
+      ],
+      "source_map_refs": [
+        {
+          "source_id": "structure-map",
+          "source_sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965",
+          "pointer": "/current_to_target_rows/14"
+        },
+        {
+          "source_id": "structure-map",
+          "source_sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965",
+          "pointer": "/current_to_target_rows/22"
+        }
+      ],
+      "namespace_boundary": "已有owner_ref仅限定单用户快照；不推广为所有程序Domain的owner身份。",
+      "source_declared_current_paths": [
+        "memory/"
+      ],
+      "candidate_targets": [
+        "EXTERNAL_USER_BUNDLE_STORE / compatibility consumer",
+        "USER_BUNDLE_STORE (logical private namespace)"
+      ],
+      "path_semantics": "LOCATORS_ONLY; neither prefix nor proposed target is itself a grant or Domain ID.",
+      "responsibility_domain": "USER_DATA",
+      "management_owner": {
+        "kind": "PROJECT_NAMING_AND_NAMESPACE_ADMINISTRATION",
+        "owner_ref": {
+          "source_id": "delegation",
+          "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+          "pointer": "/delegator"
+        },
+        "owner_status": "EXPLICIT_PROJECT_OWNER_CONTEXT",
+        "evidence": {
+          "source_id": "delegation",
+          "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+          "pointer": "/authority_source/account_ownership_context"
+        },
+        "platform_principal_binding": "NO_NEW_PLATFORM_PRINCIPAL_OR_DOMAIN_CREDENTIAL_INFERRED"
+      },
+      "roles": {
+        "NamespaceOwner": {
+          "role_definition_ref": "#/role_definitions/NamespaceOwner"
+        },
+        "DelegatedMaintainer": {
+          "role_definition_ref": "#/role_definitions/DelegatedMaintainer"
+        },
+        "ReadConsumer": {
+          "role_definition_ref": "#/role_definitions/ReadConsumer"
+        },
+        "WriteConsumer": {
+          "role_definition_ref": "#/role_definitions/WriteConsumer"
+        },
+        "Publisher": {
+          "role_definition_ref": "#/role_definitions/Publisher"
+        },
+        "Reviewer": {
+          "role_definition_ref": "#/role_definitions/Reviewer"
+        },
+        "MigrationExecutor": {
+          "role_definition_ref": "#/role_definitions/MigrationExecutor"
+        },
+        "HistoricalCompatibilityReader": {
+          "role_definition_ref": "#/role_definitions/HistoricalCompatibilityReader"
+        }
+      },
+      "runtime_program_domain_authority_ref": null,
+      "runtime_program_domain_authority_state": "PENDING_EXACT_CONTRACT_AND_CONSUMER_BINDING; NO_NEW_RIGHTS_ISSUED",
+      "source_named_owner_fields_preserved": true,
+      "candidate_state": "PREPARATION_ONLY_NOT_ACCEPTED_OR_FROZEN",
+      "governance_domain_registry_ref": {
+        "file": "DomainRegistryOwnershipManifest.candidate.json",
+        "pointer": "/domains/7",
+        "domain_id": "USER_DATA",
+        "state": "PROPOSED_EFFECTIVE_ONLY_ON_SCOPED_STEP4_ACCEPTANCE"
+      }
+    },
+    {
+      "group_key": "DEVELOPMENT_CONTRACTS",
+      "group_key_kind": "INHERITED_RESPONSIBILITY_LABEL_NOT_NEW_NAMESPACE_ID",
+      "title": "开发合同、投影、索引及控制日志",
+      "source_map_id": "CANDIDATE_TARGET_MAP_V0_1_1",
+      "source_map_row_ids": [
+        "TM-17",
+        "TM-18",
+        "TM-19",
+        "TM-22"
+      ],
+      "source_map_refs": [
+        {
+          "source_id": "structure-map",
+          "source_sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965",
+          "pointer": "/current_to_target_rows/16"
+        },
+        {
+          "source_id": "structure-map",
+          "source_sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965",
+          "pointer": "/current_to_target_rows/17"
+        },
+        {
+          "source_id": "structure-map",
+          "source_sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965",
+          "pointer": "/current_to_target_rows/18"
+        },
+        {
+          "source_id": "structure-map",
+          "source_sha256": "01a84a60d92611206466af4f54bf9c88bdc3173fff10d56ba13d22750b6a1965",
+          "pointer": "/current_to_target_rows/21"
+        }
+      ],
+      "namespace_boundary": "源合同、派生投影、权威索引、控制日志分别保留身份；DCP外部store是逻辑候选，不凭目录创建而生效。",
+      "source_declared_current_paths": [],
+      "candidate_targets": [
+        "development/contracts/",
+        "development/projections/",
+        "development/authority-index/",
+        "DCP_CONTROL_STORE (logical external namespace)"
+      ],
+      "path_semantics": "LOCATORS_ONLY; neither prefix nor proposed target is itself a grant or Domain ID.",
+      "responsibility_domain": "DCP",
+      "management_owner": {
+        "kind": "PROJECT_NAMING_AND_NAMESPACE_ADMINISTRATION",
+        "owner_ref": {
+          "source_id": "delegation",
+          "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+          "pointer": "/delegator"
+        },
+        "owner_status": "EXPLICIT_PROJECT_OWNER_CONTEXT",
+        "evidence": {
+          "source_id": "delegation",
+          "source_sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+          "pointer": "/authority_source/account_ownership_context"
+        },
+        "platform_principal_binding": "NO_NEW_PLATFORM_PRINCIPAL_OR_DOMAIN_CREDENTIAL_INFERRED"
+      },
+      "roles": {
+        "NamespaceOwner": {
+          "role_definition_ref": "#/role_definitions/NamespaceOwner"
+        },
+        "DelegatedMaintainer": {
+          "role_definition_ref": "#/role_definitions/DelegatedMaintainer"
+        },
+        "ReadConsumer": {
+          "role_definition_ref": "#/role_definitions/ReadConsumer"
+        },
+        "WriteConsumer": {
+          "role_definition_ref": "#/role_definitions/WriteConsumer"
+        },
+        "Publisher": {
+          "role_definition_ref": "#/role_definitions/Publisher"
+        },
+        "Reviewer": {
+          "role_definition_ref": "#/role_definitions/Reviewer"
+        },
+        "MigrationExecutor": {
+          "role_definition_ref": "#/role_definitions/MigrationExecutor"
+        },
+        "HistoricalCompatibilityReader": {
+          "role_definition_ref": "#/role_definitions/HistoricalCompatibilityReader"
+        }
+      },
+      "runtime_program_domain_authority_ref": null,
+      "runtime_program_domain_authority_state": "PENDING_EXACT_CONTRACT_AND_CONSUMER_BINDING; NO_NEW_RIGHTS_ISSUED",
+      "source_named_owner_fields_preserved": true,
+      "candidate_state": "PREPARATION_ONLY_NOT_ACCEPTED_OR_FROZEN",
+      "governance_domain_registry_ref": {
+        "file": "DomainRegistryOwnershipManifest.candidate.json",
+        "pointer": "/domains/1",
+        "domain_id": "DCP",
+        "state": "PROPOSED_EFFECTIVE_ONLY_ON_SCOPED_STEP4_ACCEPTANCE"
+      }
+    }
+  ]
+}
