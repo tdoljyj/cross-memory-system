@@ -1,0 +1,12 @@
+{
+  "type": "SkillRouterRemovalReceipt",
+  "removed_from": "C:\\Users\\Windows\\.codex\\skills\\clued-continuity",
+  "backup_directory": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\skill-router-removal-backup\\clued-continuity",
+  "router_no_longer_in_skills_directory": true,
+  "backed_up_skill_sha256": "7222bc35a6eb7490c620c35296553dddd7815c47d8c15ce0843789dc2b42824d",
+  "remaining_clued_skills": [
+    "clued-developer",
+    "clued-user"
+  ],
+  "project_or_user_data_deleted": false
+}

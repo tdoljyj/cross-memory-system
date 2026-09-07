@@ -1,0 +1,20 @@
+{
+  "type": "SkillRoutingSimplification",
+  "issued_at": "2026-09-07T12:12:59.955836+00:00",
+  "user_request": "Reduce token overhead by merging necessary continuation location into Developer Skill and removing Clued Continuity router.",
+  "supersedes": "Installed routing state only; original Step20/21 evidence remains historical and unchanged.",
+  "developer_before_sha256": "a7daf4644401600609c9d6d1bab1b61e512012833b35d01498aaca44da398269",
+  "developer_after_sha256": "e8edda4d71448b8c5181219ab815d0f6701e3f1a9bfeeb735234c4a8f42c3659",
+  "user_skill_sha256": "a86b2710f013600f52bcb062d2d48393b3bba8700a006c84a22b7e9f79807724",
+  "user_skill_unchanged": true,
+  "router_before_sha256": "7222bc35a6eb7490c620c35296553dddd7815c47d8c15ce0843789dc2b42824d",
+  "router_body_bytes_removed": 3294,
+  "developer_net_bytes_added": 430,
+  "validation": {
+    "exit_code": 0,
+    "result": "Skill is valid!"
+  },
+  "new_authority": false,
+  "runtime_or_frozen_payload_changes": false,
+  "removal_receipt": "RemovalReceipt.json; actual directory move and absence verified."
+}
