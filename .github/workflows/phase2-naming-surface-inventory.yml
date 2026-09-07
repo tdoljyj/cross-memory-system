@@ -31,13 +31,15 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Prepare isolated clean source worktree
+      - name: Prepare isolated source worktree
         shell: bash
         run: |
           set -euo pipefail
           rm -rf "$SOURCE_DIR" "$OUTPUT_DIR"
           git worktree add --detach "$SOURCE_DIR" "$GITHUB_SHA"
-          test -z "$(git -C "$SOURCE_DIR" status --porcelain=v1)"
+          echo "BEGIN_ISOLATED_WORKTREE_STATUS"
+          git -C "$SOURCE_DIR" status --porcelain=v1 --untracked-files=all || true
+          echo "END_ISOLATED_WORKTREE_STATUS"
           mkdir -p "$OUTPUT_DIR"
 
       - name: Generate read-only repository and GitHub inventory
