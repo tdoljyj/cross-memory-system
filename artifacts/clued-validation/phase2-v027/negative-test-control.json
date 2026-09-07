@@ -1,6 +1,6 @@
 {
   "schema": "clued.phase2-v027-negative-test-control/v1",
-  "case": "product_increment_input",
+  "case": "none",
   "allowed_cases": [
     "none",
     "candidate_identity",
