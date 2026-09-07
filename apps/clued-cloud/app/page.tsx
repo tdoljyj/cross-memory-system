@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { type Session } from "@supabase/supabase-js";
 import { supabase, restoreBrowserSession } from "./supabase-browser";
 import Link from "next/link";
@@ -147,8 +147,8 @@ const copy = {
     noUnconfirmedProjects: "No unconfirmed projects.",
     noConfirmedProjects: "No confirmed projects.",
     confirmProject: "Confirm",
-    dismissProject: "Dismiss",
-    projectError: "Clued could not update projects. The lifecycle migration may still need to be applied.",
+    archiveProject: "Archive",
+    projectError: "The project change was not confirmed. Your input is kept; please try again.",
     progressNotStarted: "Not started",
     progressActive: "Active",
     progressPaused: "Paused",
@@ -286,8 +286,8 @@ const copy = {
     noUnconfirmedProjects: "暂无未确定项目。",
     noConfirmedProjects: "暂无已确定项目。",
     confirmProject: "确定",
-    dismissProject: "忽略",
-    projectError: "Clued 暂时无法更新项目；项目生命周期迁移可能尚未生效。",
+    archiveProject: "归档",
+    projectError: "项目变更尚未确认，已保留输入，请重试。",
     progressNotStarted: "未开始",
     progressActive: "进行中",
     progressPaused: "已暂停",
@@ -401,6 +401,14 @@ export default function Home() {
   const [projectName, setProjectName] = useState("");
   const [projectBusy, setProjectBusy] = useState(false);
   const [projectError, setProjectError] = useState(false);
+  const pendingProjectCreate = useRef<{ subject: string; name: string; body: string } | null>(null);
+
+  useEffect(function clearChangedProjectCreate() {
+    const pending = pendingProjectCreate.current;
+    if (pending && (pending.subject !== session?.user.id || pending.name !== projectName.trim())) {
+      pendingProjectCreate.current = null;
+    }
+  }, [session?.user.id, projectName]);
   const [recordsEnabled, setRecordsEnabled] = useState(false);
   const [recordView, setRecordView] = useState<RecordView>("state");
   const [recordLevel, setRecordLevel] = useState<RecordLevel>("global");
@@ -692,41 +700,96 @@ export default function Home() {
   async function handleCreateProject(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!session || !projectName.trim()) return;
+    const name = projectName.trim();
+    if (pendingProjectCreate.current?.subject !== session.user.id || pendingProjectCreate.current?.name !== name) {
+      pendingProjectCreate.current = {
+        subject: session.user.id,
+        name,
+        body: JSON.stringify({
+          operation: "create",
+          project_schema_version: 1,
+          base_version: null,
+          idempotency_key: crypto.randomUUID(),
+          mutation: { name, certainty_status: "unconfirmed", progress_status: "paused", aliases: [] },
+        }),
+      };
+    }
+    const pending = pendingProjectCreate.current;
     setProjectBusy(true);
     setProjectError(false);
     try {
-      const response = await fetch("/v1/projects/observe", {
+      const response = await fetch("/v1/projects", {
         method: "POST",
         headers: {
           authorization: `Bearer ${session.access_token}`,
           "content-type": "application/json",
         },
-        body: JSON.stringify({
-          name: projectName.trim(),
-          intent: "possible",
-          confidence: 1,
-          source_ref: "clued-project-ui",
-          idempotency_key: crypto.randomUUID(),
-        }),
+        body: pending.body,
       });
       if (!response.ok) throw new Error("project-create-failed");
-      const result = (await response.json()) as { project: Project | null };
-      if (result.project) {
-        setProjects((current) => [result.project as Project, ...current.filter((item) => item.id !== result.project?.id)]);
+      const result = (await response.json()) as {
+        status: string;
+        replayed?: boolean;
+        target_refs?: { role: string; kind: string; id: string }[];
+        supplemental?: { project?: Project };
+      };
+      if (pendingProjectCreate.current !== pending) return;
+      if (result.status !== "committed") throw new Error("project-create-not-committed");
+      let project = result.supplemental?.project;
+      if (!project && result.replayed) {
+        const projectId = result.target_refs?.find((ref) => ref.role === "primary" && ref.kind === "project")?.id;
+        if (!projectId) throw new Error("project-create-reference-missing");
+        const listed = await fetch("/v1/projects?limit=200", {
+          headers: { authorization: `Bearer ${session.access_token}` },
+        });
+        if (!listed.ok) throw new Error("project-create-reload-failed");
+        const data = (await listed.json()) as { projects?: Project[] };
+        if (pendingProjectCreate.current !== pending) return;
+        project = data.projects?.find((item) => item.id === projectId);
       }
+      if (!project?.id) throw new Error("project-create-not-confirmed");
+      const created = project;
+      setProjects((current) => [created, ...current.filter((item) => item.id !== created.id)]);
+      pendingProjectCreate.current = null;
       setProjectName("");
     } catch {
-      setProjectError(true);
+      if (pendingProjectCreate.current === pending) setProjectError(true);
     } finally {
-      setProjectBusy(false);
+      if (!pendingProjectCreate.current || pendingProjectCreate.current === pending) setProjectBusy(false);
     }
   }
 
-  async function updateProject(project: Project, action: string, extra: Record<string, unknown> = {}) {
+  async function updateProject(project: Project, action: "confirm" | "set_progress" | "archive", extra: Record<string, unknown> = {}) {
     if (!session) return;
     setProjectBusy(true);
     setProjectError(false);
     try {
+      const terminal = project.progress_status === "completed" || project.progress_status === "archived";
+      let operation: "update" | "complete" | "archive" | "restore";
+      const mutation: Record<string, unknown> = {};
+      if (action === "confirm") {
+        if (terminal) throw new Error("project-restore-required");
+        operation = "update";
+        mutation.certainty_status = "confirmed";
+      } else if (action === "archive") {
+        operation = "archive";
+      } else {
+        const progress = extra.progress_status;
+        if (progress === project.progress_status) return;
+        if (terminal) {
+          if (progress !== "active") throw new Error("project-restore-required");
+          operation = "restore";
+        } else if (progress === "completed") {
+          operation = "complete";
+        } else if (progress === "archived") {
+          operation = "archive";
+        } else if (progress === "active" || progress === "paused") {
+          operation = "update";
+          mutation.progress_status = progress;
+        } else {
+          throw new Error("unsupported-project-progress");
+        }
+      }
       const response = await fetch(`/v1/projects/${project.id}`, {
         method: "PATCH",
         headers: {
@@ -734,19 +797,20 @@ export default function Home() {
           "content-type": "application/json",
         },
         body: JSON.stringify({
-          action,
+          operation,
+          project_schema_version: 1,
           base_version: project.version,
           idempotency_key: crypto.randomUUID(),
-          ...extra,
+          mutation,
         }),
       });
       if (!response.ok) throw new Error("project-update-failed");
-      const result = (await response.json()) as { project: Project };
-      setProjects((current) =>
-        action === "dismiss"
-          ? current.filter((item) => item.id !== project.id)
-          : current.map((item) => (item.id === project.id ? result.project : item)),
-      );
+      const result = (await response.json()) as { status: string; supplemental?: { project?: Project } };
+      const updated = result.supplemental?.project;
+      if (result.status !== "committed" || updated?.id !== project.id || updated.version <= project.version) {
+        throw new Error("project-update-not-committed");
+      }
+      setProjects((current) => current.map((item) => item.id === project.id ? updated : item));
     } catch {
       setProjectError(true);
     } finally {
@@ -1035,7 +1099,7 @@ export default function Home() {
                             <span>{projectProgressLabels[project.progress_status]}</span>
                           </div>
                           <div className="project-actions">
-                            {certainty === "unconfirmed" && (
+                            {certainty === "unconfirmed" && ["active", "paused"].includes(project.progress_status) && (
                               <button type="button" onClick={() => updateProject(project, "confirm")} disabled={projectBusy}>
                                 {t.confirmProject}
                               </button>
@@ -1046,11 +1110,14 @@ export default function Home() {
                               onChange={(event) => updateProject(project, "set_progress", { progress_status: event.target.value })}
                               disabled={projectBusy}
                             >
-                              {Object.entries(projectProgressLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}
+                              {Object.entries(projectProgressLabels)
+                                .filter(([value]) => value !== "not_started" || value === project.progress_status)
+                                .filter(([value]) => !["completed", "archived"].includes(project.progress_status) || value === "active" || value === project.progress_status)
+                                .map(([value, label]) => <option value={value} key={value} disabled={value === "not_started"}>{label}</option>)}
                             </select>
-                            <button type="button" onClick={() => updateProject(project, "dismiss")} disabled={projectBusy}>
-                              {t.dismissProject}
-                            </button>
+                            {project.progress_status !== "archived" && <button type="button" onClick={() => updateProject(project, "archive")} disabled={projectBusy}>
+                              {t.archiveProject}
+                            </button>}
                           </div>
                         </article>
                       ))}

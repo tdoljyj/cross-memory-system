@@ -54,7 +54,7 @@
     "test:authorization:database": "node --test --test-force-exit tests/connection-authorization-db.test.mjs",
     "test:authorization:migrations": "node --test --test-force-exit tests/authorization-migration-chain.test.mjs",
     "test:authorization:integration": "node --test --test-force-exit tests/authorization-end-to-end.test.mjs",
-    "test:authorization:pages": "node --test tests/consent-account-race.test.mjs tests/project-invitations-ui.test.mjs tests/supabase-browser.test.mjs tests/development-contexts-ui.test.mjs",
+    "test:authorization:pages": "node --test tests/consent-account-race.test.mjs tests/project-invitations-ui.test.mjs tests/supabase-browser.test.mjs tests/development-contexts-ui.test.mjs tests/home-project-create.test.mjs",
     "test:authorization:invitations": "node --test --test-force-exit tests/project-invitations-db.test.mjs"
   },
   "dependencies": {
