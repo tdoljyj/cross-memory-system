@@ -1,0 +1,99 @@
+{
+  "type": "IndependentStep15WorkflowWiringReview",
+  "reviewer": "evidence_review",
+  "scope": "Root-authored workflow and execution recorder only; not independent review of my earlier migration implementation.",
+  "created_at": "2026-09-07T11:06:10.356276+00:00",
+  "result": "PASS_FOR_SCOPED_STATIC_REVIEW",
+  "remaining_required_revisions": [],
+  "reviewed_files": [
+    {
+      "path": ".github/workflows/phase2-v027-validation.yml",
+      "before_sha256": "51334a15770991d2cbf13cb906a592494a96c87e55a8b6cb37f0792a1168bd53",
+      "after_sha256": "9a45acb955d1eee8e84491257043056eeefe8a088be6425f4b7cfa8cded0b520",
+      "effect": "Exact Git bytes; Node; Freeze boundary then Naming and three directed test commands then unchanged four gates; execution context and six reports; separate later fail-closed permission check."
+    },
+    {
+      "path": "scripts/naming-governance/ci_execution.py",
+      "before_sha256": null,
+      "before_meaning": "Absent in exact committed tree, not a claim about untracked historical files.",
+      "after_sha256": "c316b3ef3dde4f89d2c2f23125fae15b2f959552de38cbc93d8efb1c6e375a78",
+      "effect": "Platform execution identity only, no acceptance or signature."
+    }
+  ],
+  "checks": [
+    {
+      "id": "CI01",
+      "result": "PASS",
+      "finding": "Original candidate source/identity, one ZIP download, four Gate arguments and isolated legacy negative fixture retained."
+    },
+    {
+      "id": "CI02",
+      "result": "PASS",
+      "finding": "Positive execution orders exact Freeze boundary, Naming with same ZIP, three directed tests, original four Gate validator under set -euo pipefail."
+    },
+    {
+      "id": "CI03",
+      "result": "PASS",
+      "finding": "Explicit --output-root retains boundary fixture report; fixture-only markers remain. Publication and trusted-launcher test success must be observed in actual job."
+    },
+    {
+      "id": "CI04",
+      "result": "PASS",
+      "finding": "NamingExecution and GateExecution follow successful commands and contain repository/source/workflow/run/attempt context, not acceptance or signature."
+    },
+    {
+      "id": "CI05",
+      "result": "PASS",
+      "finding": "Six positive reports and old negative artifact remain scoped to validate-v027. Artifact presence alone is not PASS."
+    },
+    {
+      "id": "CI06",
+      "result": "PASS",
+      "finding": "All eight other workflows are byte-identical, including four BASE_CORE. Original conditional checks and their applicability obligations are not removed."
+    },
+    {
+      "id": "CI07",
+      "result": "PASS",
+      "finding": "Normal push/default dispatch validate; permission dispatch uses a separate job and skips validation without claiming its PASS."
+    },
+    {
+      "id": "CI08",
+      "result": "PASS",
+      "finding": "Only HTTP403 with exact Resource not accessible by integration passes permission observation. Other403 or unexpected results fail."
+    },
+    {
+      "id": "CI09",
+      "result": "PASS",
+      "finding": "Only actual201 triggers deletion of exactly the new ref. Initial outcome and attempted ref are persisted before cleanup; HTTP/network/timeout cleanup outcomes are retained. Unexpected creation always fails."
+    },
+    {
+      "id": "CI10",
+      "result": "PASS",
+      "finding": "Both reviewed files exactly match staged Git blobs. Reviewer changed no source files and ran no tests."
+    }
+  ],
+  "resolved_findings": [
+    {
+      "id": "R1",
+      "issue": "Any403 could misclassify rate limiting as permission refusal.",
+      "resolution": "Now requires exact explicit permission-denial message; all other403 fail."
+    },
+    {
+      "id": "R2",
+      "issue": "Unexpected successful creation followed by cleanup network failure could lose recovery record.",
+      "resolution": "Attempted ref and201 are saved before cleanup; network/timeout failures retained."
+    }
+  ],
+  "allowed_differences_sha256": "9f79ca2b833f2f91d6b90228d6a6719ba2ddcf479e09a143b12c0f10df4fa54b",
+  "actual_tests_executed_by_reviewer": 0,
+  "actual_step16_verified": false,
+  "actual_step17_executed": false,
+  "actual_step18_permission_observed": false,
+  "claim_boundary": [
+    "Step16 requires successful actual validate-v027 and exact source/candidate/workflow/run/attempt-bound reports; skipped, neutral, missing or failed applicable checks are not PASS.",
+    "Execution identity JSON is not authenticated custody, issuer signature or non-bypass evidence by itself.",
+    "This contents:read token create-ref refusal does not prove admin/contributor non-bypass or all Step18 enforcement.",
+    "If unexpected201 cleanup is not204, root must recover the unique recorded ref; workflow stays failed.",
+    "No dispatch, deployment, migration, acceptance or Freeze was performed in this review."
+  ]
+}

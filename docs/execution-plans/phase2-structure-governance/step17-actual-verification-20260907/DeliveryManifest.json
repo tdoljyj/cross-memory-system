@@ -1,0 +1,25 @@
+{
+  "type": "ActualStep17Delivery",
+  "files": [
+    {
+      "path": "InputBindings.json",
+      "sha256": "e790772ee2237a00335570e8fede23cc0f583a165d028f8ede10c47aa86dc564",
+      "bytes": 4549
+    },
+    {
+      "path": "README.md",
+      "sha256": "e3742623590fb46b02b1585cdf64c7a54a7dc6234dfaf1bb3521b58cd242db92",
+      "bytes": 1616
+    },
+    {
+      "path": "Step17-ActualVerification.json",
+      "sha256": "9f25a96ea98e556aaaac41c485b71f0ab359b4e05b7a54483e7dd319aa342678",
+      "bytes": 73516
+    },
+    {
+      "path": "verify_step17_v2.py",
+      "sha256": "eeee3f6562d7d7c5fc5d210d737568f9af61d51697451e8c64d84ec427dd4b31",
+      "bytes": 13737
+    }
+  ]
+}

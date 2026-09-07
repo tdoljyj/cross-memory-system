@@ -1,0 +1,78 @@
+{
+  "type": "Step17ExactAllowedEngineeringDiff",
+  "schema_version": 1,
+  "state": "INDEPENDENTLY_REVIEWED_CI_WIRING_PENDING_ROOT_ADOPTION",
+  "authority_effect": "NONE_NEW",
+  "step17_executed": false,
+  "before_boundary_sha256": "467890cdee11132fd2b0d96ecc5ba5b3e76ce1ef49143838ab48c31661a1a9f7",
+  "before_commit": "4686b74e06ec13a7a09d9051e63056aa53d4ecb4",
+  "migration_execution_inputs_sha256": "37a6909deedae17dbfe97e844d8ec596c5de46e73c3cefafd4136008d3f3dcec",
+  "freeze_sha256": "f40c8af253f811f820e4b3eccc144d63ca3548663810aba10bebb22331661b36",
+  "files": [
+    {
+      "path": ".github/workflows/phase2-v027-validation.yml",
+      "before_sha256": "51334a15770991d2cbf13cb906a592494a96c87e55a8b6cb37f0792a1168bd53",
+      "after_sha256": "9a45acb955d1eee8e84491257043056eeefe8a088be6425f4b7cfa8cded0b520",
+      "effect": "Exact Git bytes; Node; Freeze boundary then Naming and three directed test commands then unchanged four gates; execution context and six reports; separate later fail-closed permission check."
+    },
+    {
+      "path": "scripts/naming-governance/ci_execution.py",
+      "before_sha256": null,
+      "before_meaning": "Absent in exact committed tree, not a claim about untracked historical files.",
+      "after_sha256": "c316b3ef3dde4f89d2c2f23125fae15b2f959552de38cbc93d8efb1c6e375a78",
+      "effect": "Platform execution identity only, no acceptance or signature."
+    }
+  ],
+  "other_workflows_preserved": [
+    {
+      "path": ".github/workflows/clued-g4-database.yml",
+      "before_and_current_sha256": "50782be8b917a6acbebb1d1bb63ab882dd44ff1294d11801d6fc5c1580f94626"
+    },
+    {
+      "path": ".github/workflows/gitleaks.yml",
+      "before_and_current_sha256": "b4609ae7ca81a6243f3da102f405329e50ad89191bd93c13b5ed0ab1e2ca3f01"
+    },
+    {
+      "path": ".github/workflows/memory-publication-gate.yml",
+      "before_and_current_sha256": "b24432a04d5d803c133b631497c7770c80baf55acdaf50c3e826795782d1c561"
+    },
+    {
+      "path": ".github/workflows/phase2-naming-surface-inventory.yml",
+      "before_and_current_sha256": "a9264836297371da0a4bf6e6dada2699ce577c7f31476ac957190e14396aa77c"
+    },
+    {
+      "path": ".github/workflows/public-mcp-behavior.yml",
+      "before_and_current_sha256": "b994c37366161edf1ca68238dd001e79adda502345846a567447f3e0430570c9"
+    },
+    {
+      "path": ".github/workflows/public-mcp-gate-receipt.yml",
+      "before_and_current_sha256": "4e3784db5984933d859cd961f010c4fb2306eaf6b871cdd438eeb2cff9154ce8"
+    },
+    {
+      "path": ".github/workflows/public-mcp-protocol.yml",
+      "before_and_current_sha256": "c9ef671606c11af44dbe63dfad5da4e69ca70e388abee1cd8dcc721854e30d75"
+    },
+    {
+      "path": ".github/workflows/trivy.yml",
+      "before_and_current_sha256": "b2dc2fdb34baf7cdbe832df4a957cf8a4349ea3f8a5def83c3b452c919fc5a11"
+    }
+  ],
+  "base_core_preserved": [
+    "public-mcp-protocol",
+    "public-mcp-behavior",
+    "gitleaks",
+    "trivy"
+  ],
+  "invariants": [
+    "Only these two exact path/before/after pairs; no wildcard or semantic-only equivalence.",
+    "BeforeBoundary bytes stay immutable. Record reviewed successor comparisons explicitly without rewriting historical hashes.",
+    "All 64 frozen after states and 39 immutable locks remain checked without exception.",
+    "All tracked memory/apps/artifacts bytes and protected path membership remain checked without exception.",
+    "All other workflow bytes and workflow path membership remain checked without exception.",
+    "For typed consumer C15 validation-workflow binding, retain original contract/digest and compare this exact reviewed successor digest; all other consumer expectations remain unchanged.",
+    "Check allowed before states against the exact baseline tree, including absence of ci_execution.py; check both current after digests. Any mismatch fails before runtime probes.",
+    "Bind this manifest by separately retained exact digest and root adoption; it creates no new authority.",
+    "Permission mode with skipped validate-v027 cannot prove Step16.",
+    "Run Step17 only after root records actual Step16 evidence. This preparation did not run Step17."
+  ]
+}

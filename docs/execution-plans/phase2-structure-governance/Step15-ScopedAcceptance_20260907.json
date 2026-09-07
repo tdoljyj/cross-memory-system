@@ -1,0 +1,91 @@
+{
+  "type": "ScopedPostMigrationAcceptanceDecision",
+  "issuer": "Codex@DESK-W-591 under existing explicit accepting delegation",
+  "delegation": {
+    "path": "ExecutionDelegation_20260907.json",
+    "sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8"
+  },
+  "freeze": {
+    "path": "Phase2StructureFreezeDecision_20260907.json",
+    "sha256": "f40c8af253f811f820e4b3eccc144d63ca3548663810aba10bebb22331661b36"
+  },
+  "subject_sha256": "741cf1fedefa35cec82e9f55bcf53bf2ce29fa6253fd68da2133ab0c2d724cbf",
+  "source_commit": "722d3b20a1cee0c18f7203b4a786565b22e43c6e",
+  "run_id": 34114596702,
+  "run_attempt": 1,
+  "actual_evidence": {
+    "path": "step15-16-actual-ci-20260907/Inspection.json",
+    "sha256": "9238abf3c28f36bcfbfc5b87ab885b2195a53de5ca0bcadee936c9910236240c"
+  },
+  "native_artifact": {
+    "path": "step15-16-actual-ci-20260907/NativeEvidence.zip",
+    "sha256": "0ffee607d3e78c4e07f8fecd629fa2e833a18edc28aa7f146f038e5122ec3210"
+  },
+  "platform_run": {
+    "path": "step15-16-actual-ci-20260907/Run.json",
+    "sha256": "aee8d3eab2a153c6be803e71bfc279104ed8fc1dc64b964c8db6a185a6e4bb65"
+  },
+  "platform_jobs": {
+    "path": "step15-16-actual-ci-20260907/Jobs.json",
+    "sha256": "c47475c188d1de6cc1a802943eb423897d416501d0920cfa4ddf1c80c88888bc"
+  },
+  "invalidation": {
+    "path": "AcceptanceAndInvalidation.md",
+    "sha256": "f2aed48ed74e688bfe280d3fa896243cc7907905fafcc467706a276367472f27"
+  },
+  "new_business_authority": false,
+  "step": 15,
+  "issued_at": "2026-09-07T11:09:12.442492+00:00",
+  "state": "ACCEPTED_FOR_ACTUAL_SCOPED_POST_MIGRATION_CHECK_ENFORCEMENT",
+  "predecessor": {
+    "path": "Step14-ScopedAcceptance_20260907.json",
+    "sha256": "21040ca75a3ba95affef41b23d3e4d2fed39c71c57607daa4ebf21d68f4eaa3b"
+  },
+  "accepted_effect": [
+    "The actual automatic workflow checks the installed 64-path/39-source boundary and 15 Naming rules before allowing the four Gate step to run.",
+    "Actual CI ran 12 frozen-boundary, 45 publication-core and 22 isolated-launcher tests. Expected mutation/reopen/invalid-source failures remain distinct from the actual positive candidate.",
+    "Local actual checks and the same GitHub workflow enforce qualification of registry/manifest/namespace/alias/version-source changes and receipt/artifact production; an unrelated PASS cannot replace this bound result."
+  ],
+  "native_receipts": [
+    {
+      "path": "step15-16-actual-ci-20260907/NamingReceipt.json",
+      "sha256": "4eeadcf418b18ee8090ca02b0bd825cdaa315e53610e6db4e10b82ca71d4b883"
+    },
+    {
+      "path": "step15-16-actual-ci-20260907/PostMigrationBoundary.json",
+      "sha256": "de25b470f178ef3d67b2dbfcaf0f7cf970007eca25778f5353b1f7d1663ea81b"
+    },
+    {
+      "path": "step15-16-actual-ci-20260907/BoundaryControls.json",
+      "sha256": "1de871c2c782966c9dadcab7189a73cc31c7f5904495dc929d30ee3726c406b3"
+    },
+    {
+      "path": "step15-16-actual-ci-20260907/NamingExecution.json",
+      "sha256": "8255bc7dc37bede9047ee23d29d6c6296f3d8d787e15c424b9b63b1917f169a4"
+    }
+  ],
+  "not_established": [
+    "Full G1 cryptographic authority cutover",
+    "Production business runtime acceptance",
+    "Protection of bare Git main writes",
+    "Actual trusted reader/publisher installation, signature chain or Step18 non-bypass",
+    "Step19 closeout or Skills"
+  ],
+  "next_step": 16,
+  "independent_workflow_review": {
+    "path": "step15-enforcement-20260907/workflow-review/Review.json",
+    "sha256": "61c988b6025ffef9532d8d0694d6675b71916f27bba4b4c4658463c36b229d75"
+  },
+  "exact_allowed_implementation_successor": {
+    "path": "step15-enforcement-20260907/workflow-review/AllowedDifferences.json",
+    "sha256": "9f79ca2b833f2f91d6b90228d6a6719ba2ddcf479e09a143b12c0f10df4fa54b"
+  },
+  "C15_workflow_binding_successor": {
+    "consumer_id": "C15",
+    "implementation_path": ".github/workflows/phase2-v027-validation.yml",
+    "implementation_sha256": "9a45acb955d1eee8e84491257043056eeefe8a088be6425f4b7cfa8cded0b520",
+    "effect": "Current actual workflow binding supplements the retained historical typed-source identity; no old source bytes or authority/receipt scope are rewritten.",
+    "actual_run_id": 34114596702
+  },
+  "remaining_step18_obligation": "The actual locally pinned publisher/reader and signed artifact boundary still require installation and real positive/denial evidence. Current checks do not claim to prevent every raw file edit or bare Git merge."
+}

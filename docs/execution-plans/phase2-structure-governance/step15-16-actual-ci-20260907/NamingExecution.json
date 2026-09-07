@@ -1,0 +1,10 @@
+{
+  "repository": "tdoljyj/cross-memory-system",
+  "source_commit": "722d3b20a1cee0c18f7203b4a786565b22e43c6e",
+  "workflow_ref": "tdoljyj/cross-memory-system/.github/workflows/phase2-v027-validation.yml@refs/heads/phase2-naming-surface-inventory",
+  "workflow_sha": "722d3b20a1cee0c18f7203b4a786565b22e43c6e",
+  "run_id": "34114596702",
+  "run_attempt": "1",
+  "contract": "clued.phase2.ci-execution/v1",
+  "negative_case": "none"
+}

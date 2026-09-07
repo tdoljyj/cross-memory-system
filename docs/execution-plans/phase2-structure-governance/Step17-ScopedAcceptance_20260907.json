@@ -1,0 +1,90 @@
+{
+  "type": "ScopedPostMigrationAcceptanceDecision",
+  "issuer": "Codex@DESK-W-591 under existing explicit accepting delegation",
+  "delegation": {
+    "path": "ExecutionDelegation_20260907.json",
+    "sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8"
+  },
+  "freeze": {
+    "path": "Phase2StructureFreezeDecision_20260907.json",
+    "sha256": "f40c8af253f811f820e4b3eccc144d63ca3548663810aba10bebb22331661b36"
+  },
+  "subject_sha256": "741cf1fedefa35cec82e9f55bcf53bf2ce29fa6253fd68da2133ab0c2d724cbf",
+  "source_commit": "722d3b20a1cee0c18f7203b4a786565b22e43c6e",
+  "run_id": 34114596702,
+  "run_attempt": 1,
+  "step": 17,
+  "issued_at": "2026-09-07T11:17:11.609659+00:00",
+  "state": "ACCEPTED_FOR_ACTUAL_SCOPED_SEMANTIC_NO_CHANGE",
+  "predecessor": {
+    "path": "Step16-ScopedAcceptance_20260907.json",
+    "sha256": "23432db81babb59b7826a97fcd357c3ce5ea922d1cbe09cca9bf6f048a2ee1cc"
+  },
+  "verification": {
+    "path": "step17-actual-verification-20260907/Step17-ActualVerification.json",
+    "sha256": "9f25a96ea98e556aaaac41c485b71f0ab359b4e05b7a54483e7dd319aa342678"
+  },
+  "comparator": {
+    "path": "step17-actual-verification-20260907/verify_step17_v2.py",
+    "sha256": "eeee3f6562d7d7c5fc5d210d737568f9af61d51697451e8c64d84ec427dd4b31"
+  },
+  "input_bindings": {
+    "path": "step17-actual-verification-20260907/InputBindings.json",
+    "sha256": "e790772ee2237a00335570e8fede23cc0f583a165d028f8ede10c47aa86dc564"
+  },
+  "delivery_manifest": {
+    "path": "step17-actual-verification-20260907/DeliveryManifest.json",
+    "sha256": "3cfd0640ec95e318d27c0879cae2dc1da13fb2eab0e81d159d17e7273bdd90a1"
+  },
+  "before_boundary": {
+    "path": "step13-14-actual-verification-20260907/BeforeBoundary.json",
+    "sha256": "467890cdee11132fd2b0d96ecc5ba5b3e76ce1ef49143838ab48c31661a1a9f7"
+  },
+  "exact_allowed_implementation_successor": {
+    "path": "step15-enforcement-20260907/workflow-review/AllowedDifferences.json",
+    "sha256": "9f79ca2b833f2f91d6b90228d6a6719ba2ddcf479e09a143b12c0f10df4fa54b"
+  },
+  "execution_inputs": {
+    "path": "step12-migration-20260907/ExecutionInputs.candidate.json",
+    "sha256": "37a6909deedae17dbfe97e844d8ec596c5de46e73c3cefafd4136008d3f3dcec"
+  },
+  "actual_evidence": {
+    "path": "step15-16-actual-ci-20260907/Inspection.json",
+    "sha256": "9238abf3c28f36bcfbfc5b87ab885b2195a53de5ca0bcadee936c9910236240c"
+  },
+  "native_artifact": {
+    "path": "step15-16-actual-ci-20260907/NativeEvidence.zip",
+    "sha256": "0ffee607d3e78c4e07f8fecd629fa2e833a18edc28aa7f146f038e5122ec3210"
+  },
+  "platform_run": {
+    "path": "step15-16-actual-ci-20260907/Run.json",
+    "sha256": "aee8d3eab2a153c6be803e71bfc279104ed8fc1dc64b964c8db6a185a6e4bb65"
+  },
+  "platform_jobs": {
+    "path": "step15-16-actual-ci-20260907/Jobs.json",
+    "sha256": "c47475c188d1de6cc1a802943eb423897d416501d0920cfa4ddf1c80c88888bc"
+  },
+  "issuance_scope": "Issued by evidence_review under root explicit bounded instruction to preserve the stable Step17 evidence and issue this existing-format scoped decision. This is not a claim of independent review of this agent-authored migration implementation or comparator.",
+  "accepted_effect": [
+    "Actual comparison of source722d3b20a1cee0c18f7203b4a786565b22e43c6e after the bound successful Step15/16 run passed22 selected checks. The actual comparison observed this same HEAD.",
+    "All64 frozen after states,39 immutable inputs,3490 protected tracked files including workflows, protected path membership and19 historical-path seals satisfy the accepted migration boundary. Business memory/apps/artifacts bytes remain exact; this is the bounded evidence for no business-semantic change.",
+    "The only approved engineering successors are the two exact before/after pairs in the retained AllowedDifferences record. C15 uses the same reviewed current workflow digest while retaining its original typed contract and historical source identity.",
+    "All18 source-qualified consumers,27 authorization bindings and18 receipt bindings are retained. Six tool implementations contain only the accepted path corrections; no new business Canonical write path is accepted.",
+    "Original BeforeBoundary, Step13/14 evidence and comparator remain unchanged. Prior actual compatibility results are reused through unchanged accepted implementation bytes, not represented as newly executed tests."
+  ],
+  "not_established": [
+    "Resolution or PASS of the four BASE_CORE checks; root is separately diagnosing the gitleaks findings. This Step17 decision does not adjudicate them.",
+    "New production business runtime acceptance or a fresh hosted semantic/runtime test",
+    "Full G1 cryptographic authority cutover or bare Git main write protection",
+    "Step18 trusted reader/publisher installation, signature chain, permission observations or non-bypass completion",
+    "Step19 closeout, release/promotion qualification or Skills acceptance"
+  ],
+  "compatibility_limit": "Existing explicit CommitRepo engineering maintenance remains governed by its original rules; the retained shims do not reopen business Canonical writes.",
+  "invalidation": {
+    "path": "AcceptanceAndInvalidation.md",
+    "sha256": "f2aed48ed74e688bfe280d3fa896243cc7907905fafcc467706a276367472f27"
+  },
+  "new_business_authority": false,
+  "acceptance_scope_limit": "Only the exact source and evidence identities above. A later implementation or protected-byte change requires the applicable checks under AcceptanceAndInvalidation; this decision does not exempt BASE_CORE or future stages.",
+  "next_step": 18
+}

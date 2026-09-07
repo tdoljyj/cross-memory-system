@@ -1,0 +1,88 @@
+{
+  "type": "Step17ComparatorInputBindings",
+  "inputs": [
+    {
+      "role": "original_helpers",
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step13-17-verification\\verify_migration.py",
+      "sha256": "52e9e6aa1fe4a3f1d6e606953abb1ec449c0eb1888f7025fbf3f301a58d6acfc"
+    },
+    {
+      "role": "immutable_before_boundary",
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step13-17-verification\\BeforeBoundary.json",
+      "sha256": "467890cdee11132fd2b0d96ecc5ba5b3e76ce1ef49143838ab48c31661a1a9f7"
+    },
+    {
+      "role": "original_Step13_report",
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step13-17-verification\\Step13-ActualVerification.json",
+      "sha256": "4b14aae44e5a29d07daeac3d8d137dd56ead49f33457a71429b4b0264b8ab483"
+    },
+    {
+      "role": "original_Step14_report",
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step13-17-verification\\Step14-ActualVerification.json",
+      "sha256": "504db171ea977a75431daec3fc2a3d4030b42b84c4525473e18a6edffc6c8f0b"
+    },
+    {
+      "role": "reviewed_successors",
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step15-workflow-review\\AllowedDifferences.json",
+      "sha256": "9f79ca2b833f2f91d6b90228d6a6719ba2ddcf479e09a143b12c0f10df4fa54b"
+    },
+    {
+      "role": "original_wiring_review",
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step15-workflow-review\\Review.json",
+      "sha256": "61c988b6025ffef9532d8d0694d6675b71916f27bba4b4c4658463c36b229d75"
+    },
+    {
+      "role": "actual_CI_NativeEvidence.zip",
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step15-16-actual-ci\\NativeEvidence.zip",
+      "sha256": "0ffee607d3e78c4e07f8fecd629fa2e833a18edc28aa7f146f038e5122ec3210"
+    },
+    {
+      "role": "actual_CI_Run.json",
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step15-16-actual-ci\\Run.json",
+      "sha256": "aee8d3eab2a153c6be803e71bfc279104ed8fc1dc64b964c8db6a185a6e4bb65"
+    },
+    {
+      "role": "actual_CI_Jobs.json",
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step15-16-actual-ci\\Jobs.json",
+      "sha256": "c47475c188d1de6cc1a802943eb423897d416501d0920cfa4ddf1c80c88888bc"
+    },
+    {
+      "role": "actual_CI_ArtifactMetadata.json",
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step15-16-actual-ci\\ArtifactMetadata.json",
+      "sha256": "0a7eaffe45dfe2a7d4502e96854890126e202680e856ee81e2a83c963b637c0d"
+    },
+    {
+      "role": "actual_CI_GateExecution.json",
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step15-16-actual-ci\\GateExecution.json",
+      "sha256": "8255bc7dc37bede9047ee23d29d6c6296f3d8d787e15c424b9b63b1917f169a4"
+    },
+    {
+      "role": "actual_CI_NamingExecution.json",
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step15-16-actual-ci\\NamingExecution.json",
+      "sha256": "8255bc7dc37bede9047ee23d29d6c6296f3d8d787e15c424b9b63b1917f169a4"
+    },
+    {
+      "role": "actual_CI_CIGateReceipt.json",
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step15-16-actual-ci\\CIGateReceipt.json",
+      "sha256": "20187233fad240195cb5227d6e34b8d1f1041ab05107b66063ae01a834ef97a6"
+    },
+    {
+      "role": "actual_CI_NamingReceipt.json",
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step15-16-actual-ci\\NamingReceipt.json",
+      "sha256": "4eeadcf418b18ee8090ca02b0bd825cdaa315e53610e6db4e10b82ca71d4b883"
+    },
+    {
+      "role": "actual_CI_PostMigrationBoundary.json",
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step15-16-actual-ci\\PostMigrationBoundary.json",
+      "sha256": "de25b470f178ef3d67b2dbfcaf0f7cf970007eca25778f5353b1f7d1663ea81b"
+    },
+    {
+      "role": "actual_CI_BoundaryControls.json",
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\step15-16-actual-ci\\BoundaryControls.json",
+      "sha256": "1de871c2c782966c9dadcab7189a73cc31c7f5904495dc929d30ee3726c406b3"
+    }
+  ],
+  "root_adoption": "Root task instruction authorizes actual Step17 using exact reviewed two-file successor scope after actual CI run34114596702.",
+  "formal_step16_and_step17_acceptance": "Not issued by this artifact; root must bind formal Step16 decision when accepting Step17.",
+  "authority_effect": "NONE_NEW"
+}
