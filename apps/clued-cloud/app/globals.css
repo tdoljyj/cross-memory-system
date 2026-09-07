@@ -888,9 +888,6 @@ footer {
 .oauth-card fieldset { min-width: 0; margin-inline: 0; }
 .oauth-card legend { max-width: 100%; overflow-wrap: anywhere; }
 .oauth-group-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 4px 0 12px; }
-.oauth-group-actions button { width: auto; min-height: 32px; padding: 5px 10px; border: 1px solid var(--line); border-radius: 6px; background: transparent; color: var(--green); font: inherit; cursor: pointer; }
-.oauth-group-actions button:disabled { opacity: .45; cursor: default; }
-.oauth-group-actions button:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
 .oauth-group-actions span { color: var(--muted); font-size: 12px; }
 .oauth-card label:has(> input[type="checkbox"]) {
   display: flex;
@@ -943,3 +940,16 @@ footer {
 .oauth-permissions-scroll { max-height: min(50vh, 420px); max-height: min(50dvh, 420px); overflow-y: auto; scrollbar-gutter: stable; padding: 10px; margin-bottom: 14px; border: 1px solid var(--line); border-radius: 10px; }
 .oauth-permissions-scroll:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
 .oauth-permissions-scroll h2 { margin: 0 0 8px; }
+
+.oauth-group-actions label { margin: 0; font-weight: 600; }
+.oauth-card .oauth-group-checkbox:indeterminate {
+  appearance: none;
+  -webkit-appearance: none;
+  background: var(--green);
+  border: 1px solid var(--green);
+  box-shadow: none;
+  background-image: none;
+}
+@media (forced-colors: active) {
+  .oauth-card .oauth-group-checkbox:indeterminate { forced-color-adjust: none; background: Highlight; border-color: CanvasText; }
+}

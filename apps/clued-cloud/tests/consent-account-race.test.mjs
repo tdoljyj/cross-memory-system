@@ -46,7 +46,7 @@ const session = id => ({ user: { id, email: `${id}@example.test` }, access_token
 const details = id => ({ request_id: `request-${id}`, version: 1, client_name: 'Fixture client', client_id: 'fixture-client',
   requested_scopes: ['context:read'], eligible: [{ resource_kind: 'scope', resource_id: 'global', environment: 'canonical', actions: ['read'] }],
   user: { id, email: `${id}@example.test` } });
-const checkbox = f => f.nodes('input').find(node => node.props.type === 'checkbox');
+const checkbox = f => f.nodes('input').find(node => node.props.type === 'checkbox' && node.props.className !== 'oauth-group-checkbox');
 async function ready(t, id = 'A') {
   const f = fixture(); t.after(() => f.unmount());
   f.emit('INITIAL_SESSION', session(id)); f.runTimers(); f.respond(0, details(id)); await f.settle();
@@ -151,7 +151,7 @@ test('unmounted recovery page ignores late acknowledgement', async t => {
 });
 
 
-test('group shortcuts start empty, isolate exact resources/environments, and preserve manual choices', async t => {
+test('tri-state group checkbox isolates exact resources/environments and preserves manual choices', async t => {
   const f = fixture(); t.after(() => f.unmount());
   const eligible = [
     { resource_kind: 'context', resource_id: '11111111-1111-4111-8111-111111111111', environment: 'test', name: 'Test workspace', actions: ['read', 'write', 'close'] },
@@ -164,35 +164,58 @@ test('group shortcuts start empty, isolate exact resources/environments, and pre
     const node = f.nodes('fieldset').find(field => f.nodes('legend', field).some(legend => f.text(legend).includes(name)));
     assert.ok(node, name); return node;
   };
-  const boxes = name => f.nodes('input', group(name)).filter(node => node.props.type === 'checkbox');
+  const boxes = name => f.nodes('input', group(name)).filter(node => node.props.type === 'checkbox' && node.props.className !== 'oauth-group-checkbox');
   const choice = name => boxes(name).map(node => node.props.checked);
-  const shortcut = (name, label) => {
-    const node = f.nodes('button', group(name)).find(button => f.text(button) === label);
-    assert.ok(node, name + ' ' + label); assert.equal(node.props.type, 'button'); return node;
+  const master = name => {
+    const inputs = f.nodes('input', group(name)).filter(node => node.props.className === 'oauth-group-checkbox');
+    assert.equal(inputs.length, 1, name + ' has exactly one group control');
+    assert.equal(inputs[0].props.type, 'checkbox'); return inputs[0];
   };
-  const click = (name, label) => {
-    const button = shortcut(name, label); assert.equal(button.props.disabled, false);
-    button.props.onClick(); f.render();
+  const domInputs = new Map();
+  const checkState = (name, expected) => {
+    const input = master(name);
+    assert.equal(input.props.checked, expected === 'all', name + ' checked state');
+    assert.equal(input.props['aria-checked'], expected === 'partial' ? 'mixed' : expected === 'all', name + ' accessible state');
+    // Invoke the actual ref callback on a persistent input-like DOM object: JSX alone cannot set indeterminate.
+    if (!domInputs.has(name)) domInputs.set(name, { indeterminate: true });
+    const node = domInputs.get(name);
+    assert.equal(typeof input.props.ref, 'function'); input.props.ref(node);
+    assert.equal(node.indeterminate, expected === 'partial', name + ' DOM indeterminate state');
+    assert.doesNotThrow(() => input.props.ref(null));
+  };
+  const clickMaster = name => {
+    const input = master(name); assert.equal(input.props.disabled, false);
+    input.props.onChange({ target: { checked: !input.props.checked } }); f.render();
   };
   for (const row of eligible) {
-    assert.deepEqual(choice(row.name), row.actions.map(() => false));
-    assert.match(f.text(group(row.name)), new RegExp('已选\\s*0\\s*/\\s*' + row.actions.length));
+    assert.deepEqual(choice(row.name), row.actions.map(() => false)); checkState(row.name, 'none');
+    assert.ok(f.text(group(row.name)).replaceAll(' ', '').includes('已选0/' + row.actions.length));
   }
   assert.equal(f.button('允许所选权限').props.disabled, true);
-  click('Test workspace', '全选本组');
-  assert.deepEqual(choice('Test workspace'), [true, true, true]);
+  boxes('Test workspace')[1].props.onChange({ target: { checked: true } }); f.render();
+  assert.deepEqual(choice('Test workspace'), [false, true, false], 'manual write does not silently add read');
+  checkState('Test workspace', 'partial'); checkState('Preview workspace', 'none'); checkState('Other workspace', 'none');
+  clickMaster('Test workspace');
+  assert.deepEqual(choice('Test workspace'), [true, true, true], 'clicking a partial group selects its complete allowed action set');
+  checkState('Test workspace', 'all');
   assert.deepEqual(choice('Preview workspace'), [false], 'same context in another environment stays empty');
   assert.deepEqual(choice('Other workspace'), [false, false], 'another resource stays empty');
-  assert.match(f.text(group('Test workspace')), /已选\s*3\s*\/\s*3/);
-  click('Preview workspace', '全选本组');
-  click('Test workspace', '清空本组');
-  assert.deepEqual(choice('Test workspace'), [false, false, false]);
+  assert.ok(f.text(group('Test workspace')).replaceAll(' ', '').includes('已选3/3'));
+  clickMaster('Preview workspace'); checkState('Preview workspace', 'all');
+  boxes('Test workspace')[0].props.onChange({ target: { checked: false } }); f.render();
+  checkState('Test workspace', 'partial');
+  clickMaster('Test workspace'); checkState('Test workspace', 'all');
+  clickMaster('Test workspace');
+  assert.deepEqual(choice('Test workspace'), [false, false, false], 'clicking an all-selected group clears it');
+  checkState('Test workspace', 'none');
   assert.deepEqual(choice('Preview workspace'), [true], 'clearing one environment preserves the other');
+  checkState('Preview workspace', 'all');
   boxes('Test workspace')[1].props.onChange({ target: { checked: true } }); f.render();
   boxes('Other workspace')[1].props.onChange({ target: { checked: true } }); f.render();
-  assert.deepEqual(choice('Test workspace'), [false, true, false], 'manual write does not silently add read');
+  assert.deepEqual(choice('Test workspace'), [false, true, false]);
   assert.deepEqual(choice('Other workspace'), [false, true]);
-  assert.equal(f.requests.length, 1, 'shortcuts only change local selection');
+  checkState('Test workspace', 'partial'); checkState('Other workspace', 'partial');
+  assert.equal(f.requests.length, 1, 'group control only changes local selection');
   f.button('允许所选权限').props.onClick(); await f.settle();
   const decision = JSON.parse(f.requests[1].options.body);
   assert.deepEqual(decision.selected, eligible.map((row, index) => ({
@@ -201,7 +224,6 @@ test('group shortcuts start empty, isolate exact resources/environments, and pre
   })));
   for (const row of eligible) {
     assert.equal(group(row.name).props.disabled, true);
-    assert.equal(shortcut(row.name, '全选本组').props.disabled, true);
-    assert.equal(shortcut(row.name, '清空本组').props.disabled, true);
+    assert.equal(master(row.name).props.disabled, true);
   }
 });

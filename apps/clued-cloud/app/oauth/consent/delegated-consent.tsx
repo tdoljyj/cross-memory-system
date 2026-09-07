@@ -194,8 +194,15 @@ export default function DelegatedConsent({ requestId }: { requestId: string }) {
         {groups.map(group => <section key={group.name}><h2 style={{ fontSize: 18 }}>{group.name}</h2>{group.rows.map(row => <fieldset key={rowKey(row)} disabled={busy} style={{ marginBottom: 10, border: '1px solid var(--border, #ddd)', borderRadius: 8, padding: 12 }}>
           <legend>{row.name || (row.resource_id === 'global' ? '我的个人记忆' : row.resource_id)} · {environmentLabels[row.environment] || row.environment}</legend>
           <div className="oauth-group-actions">
-            <button type="button" disabled={busy || row.actions.every(action => (selected[rowKey(row)] || []).includes(action))} onClick={() => setSelected(old => ({ ...old, [rowKey(row)]: [...row.actions] }))}>全选本组</button>
-            <button type="button" disabled={busy || !(selected[rowKey(row)] || []).length} onClick={() => setSelected(old => ({ ...old, [rowKey(row)]: [] }))}>清空本组</button>
+            <label>
+              <input className="oauth-group-checkbox" type="checkbox"
+                checked={row.actions.length > 0 && row.actions.every(action => (selected[rowKey(row)] || []).includes(action))}
+                aria-checked={row.actions.some(action => (selected[rowKey(row)] || []).includes(action)) && !row.actions.every(action => (selected[rowKey(row)] || []).includes(action)) ? 'mixed' : row.actions.length > 0 && row.actions.every(action => (selected[rowKey(row)] || []).includes(action))}
+                ref={node => { if (node) node.indeterminate = row.actions.some(action => (selected[rowKey(row)] || []).includes(action)) && !row.actions.every(action => (selected[rowKey(row)] || []).includes(action)); }}
+                disabled={busy || row.actions.length === 0}
+                onChange={() => setSelected(old => ({ ...old, [rowKey(row)]: row.actions.every(action => (old[rowKey(row)] || []).includes(action)) ? [] : [...row.actions] }))}
+              />本组全部权限
+            </label>
             <span>已选 {row.actions.filter(action => (selected[rowKey(row)] || []).includes(action)).length}/{row.actions.length} 项</span>
           </div>
           {row.actions.map(action => <label key={action} style={{ display: 'flex', gap: 8, alignItems: 'center', margin: '6px 0' }}>
