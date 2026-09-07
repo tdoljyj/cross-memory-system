@@ -13,13 +13,18 @@ Structure Freeze decision and not a naming closeout.
 from __future__ import annotations
 
 import argparse
+import ast
+from bisect import bisect_right
 import datetime as dt
 import hashlib
+import io
 import json
 import os
 import re
 import subprocess
 import sys
+import tomllib
+import tokenize
 import unicodedata
 import urllib.error
 import urllib.parse
@@ -88,6 +93,505 @@ EXPLICIT_ID_KEYS = {
 
 MAX_TEXT_BYTES_DEFAULT = 8 * 1024 * 1024
 MAX_GITHUB_PAGES = 100
+
+# A bounded syntax inventory, not an evaluator or a semantic-completeness claim.
+TYPED_CODE_EXTENSIONS = {'.js', '.jsx', '.mjs', '.mts', '.ts', '.tsx', '.py'}
+TYPED_RULES = {
+    'json_names': 'Selected name/identity fields, string arrays, and registry/manifest/schema keys in JSON.',
+    'package_entries': 'package.json name, script/dependency keys and import/export entries.',
+    'code_routes': 'Literal route registrations, pathname comparisons/prefixes, route-map keys and pathname regexes.',
+    'code_rpc': 'Literal RPC calls, /rpc/ references and explicitly named RPC maps.',
+    'module_references': 'JS/TS import/export/require module specifiers, Python imports and PowerShell module statements.',
+    'role_capability_scope': 'Explicit role/capability/scope/namespace fields and literal arrays in source.',
+    'config_names': 'TOML fields and selected YAML metadata; YAML anchors/dynamic values remain unresolved.',
+    'sql_object_declarations': 'CREATE/ALTER/DROP schema/table/function/procedure/policy/role declarations.',
+    'unsupported_language': 'Tracked source-language files without a typed extractor remain explicitly unresolved.',
+}
+TYPED_NAME_KEYS = {
+    'name', 'names', 'namespace', 'namespaces', 'domain', 'domain_id',
+    'role', 'roles', 'owner', 'owner_role', 'capability', 'capabilities',
+    'scope', 'scopes', 'route', 'routes', 'rpc', 'rpcs', 'module', 'modules',
+    'package', 'packages', 'consumer', 'consumer_type', 'receipt_type',
+    'authorization_type', 'alias', 'aliases', 'binding', 'bindings',
+}
+SOURCE_STRING_RE = re.compile(r'''(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`)''', re.S)
+
+
+def new_typed_surface_inventory() -> dict[str, Any]:
+    return {
+        'schema': 'clued.naming-typed-surface-observations/v1',
+        'authority_effect': 'NONE',
+        'semantic_completeness': 'NOT_PROVEN',
+        'status': 'OBSERVED_REQUIRES_RULESET_REVIEW',
+        'scope_limit': 'Explicit syntax rules only. Dynamic values, unparsed files and unsupported forms require source-backed disposition; zero matches is not proof that a naming surface is absent.',
+        'records': [], 'unresolved': [],
+        'rule_coverage': {key: {'rule_id': key, 'selection': selection,
+            'selected_files': [], 'examined_files': [], 'candidate_sites': 0,
+            'extracted_records': 0, 'unresolved_sites': 0}
+            for key, selection in TYPED_RULES.items()},
+    }
+
+
+def typed_rules_for_path(path: str) -> list[str]:
+    p = PurePosixPath(path)
+    suffix = p.suffix.lower()
+    rules = []
+    if suffix == '.json': rules.append('json_names')
+    if p.name == 'package.json': rules.append('package_entries')
+    if suffix in TYPED_CODE_EXTENSIONS:
+        rules += ['code_routes', 'code_rpc', 'module_references', 'role_capability_scope']
+    if suffix == '.ps1': rules.append('module_references')
+    if suffix in {'.toml', '.yaml', '.yml'}: rules.append('config_names')
+    if suffix == '.sql': rules.append('sql_object_declarations')
+    if suffix in {'.c', '.cc', '.cpp', '.h', '.hpp', '.java', '.go', '.rb', '.rs'}:
+        rules.append('unsupported_language')
+    return rules
+
+
+def collect_typed_surfaces(text: str | None, path: str, inventory: dict[str, Any],
+                           *, read_error: str | None = None) -> None:
+    """Record literal observations and explicit unresolved syntax, never execute source."""
+    selected = typed_rules_for_path(path)
+    for rule in selected:
+        inventory['rule_coverage'][rule]['selected_files'].append(path)
+
+    def location(offset: int) -> dict[str, Any]:
+        before = (text or '')[:offset]
+        return {'path': path, 'line': before.count('\n') + 1,
+                'column': offset - before.rfind('\n')}
+
+    def unresolved(rule: str, reason: str, expression: str, offset: int = 0,
+                   pointer: str | None = None) -> None:
+        coverage = inventory['rule_coverage'][rule]
+        coverage['unresolved_sites'] += 1
+        inventory['unresolved'].append({**location(offset), 'rule_id': rule,
+            'reason': reason, 'pointer': pointer,
+            'expression_sha256': sha256_bytes(expression.encode('utf-8'))})
+
+    def add(rule: str, kind: str, value: str, offset: int = 0,
+            pointer: str | None = None, extraction: str = 'literal') -> None:
+        inventory['rule_coverage'][rule]['extracted_records'] += 1
+        inventory['records'].append({**location(offset), 'rule_id': rule,
+            'surface_kind': kind, 'current_name': value, 'pointer': pointer,
+            'extraction': extraction, 'observation_only': True})
+
+    def site(rule: str) -> None:
+        inventory['rule_coverage'][rule]['candidate_sites'] += 1
+
+    if text is None:
+        for rule in selected:
+            unresolved(rule, read_error or 'SOURCE_NOT_READ', '')
+        return
+    for rule in selected:
+        inventory['rule_coverage'][rule]['examined_files'].append(path)
+    if 'unsupported_language' in selected:
+        unresolved('unsupported_language', 'NO_TYPED_EXTRACTOR_FOR_LANGUAGE', path)
+
+    def literal(expression: str) -> str | None:
+        expression = expression.strip()
+        if not SOURCE_STRING_RE.fullmatch(expression): return None
+        if expression.startswith('`'):
+            if '${' in expression: return None
+            return expression[1:-1].replace('\\`', '`')
+        try:
+            value = ast.literal_eval(expression)
+            return value if isinstance(value, str) else None
+        except (ValueError, SyntaxError):
+            return None
+
+    def observe_expression(rule: str, kind: str, expression: str, offset: int,
+                           pointer: str | None = None) -> None:
+        site(rule)
+        value = literal(expression)
+        if value is None:
+            unresolved(rule, 'DYNAMIC_OR_UNSUPPORTED_EXPRESSION', expression, offset, pointer)
+        else:
+            add(rule, kind, value, offset, pointer)
+
+    class DynamicNameExpression:
+        def __init__(self, expression: str, position: int):
+            self.expression, self.position = expression, position
+
+    def static_js_structure(source: str) -> Any:
+        """Read literal structure; preserve executable value expressions as gaps."""
+        cursor = 0
+        def space() -> None:
+            nonlocal cursor
+            while cursor < len(source) and source[cursor].isspace(): cursor += 1
+        def value() -> Any:
+            nonlocal cursor
+            space()
+            token = SOURCE_STRING_RE.match(source, cursor)
+            if token:
+                parsed = literal(token.group())
+                if parsed is None:
+                    parsed = DynamicNameExpression(token.group(), cursor)
+                cursor = token.end(); return parsed
+            if source[cursor:cursor+1] in {'{', '['}:
+                is_object = source[cursor] == '{'
+                closing = '}' if is_object else ']'
+                cursor += 1; result = {} if is_object else []
+                space()
+                while source[cursor:cursor+1] != closing:
+                    if is_object:
+                        key_token = SOURCE_STRING_RE.match(source, cursor) or re.compile(r'[A-Za-z_$][\w$]*').match(source, cursor)
+                        if not key_token: raise ValueError('computed or unsupported object key')
+                        key = literal(key_token.group()) if key_token.group()[0] in '\"\'`' else key_token.group()
+                        if key is None: raise ValueError('dynamic object key')
+                        cursor = key_token.end(); space()
+                        if source[cursor:cursor+1] != ':': raise ValueError('nonliteral object entry')
+                        cursor += 1
+                        if key in result: raise ValueError('duplicate object key')
+                        result[key] = value()
+                    else: result.append(value())
+                    space()
+                    if source[cursor:cursor+1] == closing: break
+                    if source[cursor:cursor+1] != ',': raise ValueError('expression inside literal')
+                    cursor += 1; space()
+                if source[cursor:cursor+1] != closing: raise ValueError('unterminated structure')
+                cursor += 1; return result
+            token = re.compile(r'(?:true|false|null)\b|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b').match(source, cursor)
+            if not token:
+                start = cursor; depth = 0
+                while cursor < len(source):
+                    string = SOURCE_STRING_RE.match(source, cursor)
+                    if string: cursor = string.end(); continue
+                    char = source[cursor]
+                    if char in '([{': depth += 1
+                    elif char in ')]}':
+                        if depth == 0: break
+                        depth -= 1
+                    elif char == ',' and depth == 0: break
+                    cursor += 1
+                if cursor == start or depth != 0: raise ValueError('unparsed value expression')
+                return DynamicNameExpression(source[start:cursor].strip(), start)
+            cursor = token.end(); return json.loads(token.group())
+        result = value()
+        space()
+        # The container must be the assigned expression, not a prefix of a
+        # conditional, property access, call, or spread-derived expression.
+        if cursor < len(source) and source[cursor] not in ',;)}\r\n':
+            raise ValueError('expression continues after literal')
+        return result
+
+    def structure_names(value: Any, offset: int, parts: list[str]) -> None:
+        """Observe compound name keys/schema constraints without treating JSON as a name."""
+        rule = 'role_capability_scope'
+        if isinstance(value, dict):
+            for key, child in value.items():
+                key = str(key)
+                pointer = json_pointer([*parts, key])
+                add(rule, 'compound_name_field', key, offset, pointer)
+                if isinstance(child, str) and (key in TYPED_NAME_KEYS or key in {'mode', 'level', 'const', 'pattern', 'capability_id'}):
+                    add(rule, 'name_constraint_pattern' if key == 'pattern' else 'compound_name_value', child, offset, pointer,
+                        extraction='pattern' if key == 'pattern' else 'literal')
+                if isinstance(child, (dict, list, tuple, set)):
+                    structure_names(child, offset, [*parts, key])
+                elif isinstance(child, DynamicNameExpression):
+                    unresolved(rule, 'DYNAMIC_COMPOUND_NAME_FIELD', child.expression, offset + child.position, pointer)
+        elif isinstance(value, (list, tuple, set)):
+            for i, child in enumerate(value):
+                if isinstance(child, str): add(rule, 'compound_name_value', child, offset, json_pointer([*parts, str(i)]))
+                elif isinstance(child, (dict, list, tuple, set)): structure_names(child, offset, [*parts, str(i)])
+                elif isinstance(child, DynamicNameExpression):
+                    unresolved(rule, 'DYNAMIC_COMPOUND_NAME_FIELD', child.expression, offset + child.position, json_pointer([*parts, str(i)]))
+
+    def walk_names(value: Any, rule: str, parts: list[str] | None = None,
+                   inherited_key: str | None = None, registry_keys: bool = False) -> None:
+        parts = [] if parts is None else parts
+        if isinstance(value, dict):
+            for key, child in value.items():
+                pointer = json_pointer([*parts, str(key)])
+                if registry_keys:
+                    site(rule); add(rule, 'registry_or_manifest_key', str(key), pointer=pointer)
+                key_normal = str(key).lower().replace('-', '_')
+                is_name = (key_normal in TYPED_NAME_KEYS or key_normal in EXPLICIT_ID_KEYS or bool(ID_FIELD_RE.search(key_normal))
+                           or key_normal in {'enum', 'const'} and any(p in TYPED_NAME_KEYS for p in parts[-3:]))
+                if is_name and isinstance(child, str):
+                    site(rule); add(rule, 'named_field:'+key_normal, child, pointer=pointer)
+                elif is_name and isinstance(child, list):
+                    for i, item in enumerate(child):
+                        if isinstance(item, str):
+                            site(rule); add(rule, 'named_array:'+key_normal, item,
+                                           pointer=json_pointer([*parts, str(key), str(i)]))
+                        elif not isinstance(item, dict):
+                            site(rule); unresolved(rule, 'NON_LITERAL_NAME_ARRAY_ITEM', repr(item), pointer=pointer+'/'+str(i))
+                walk_names(child, rule, [*parts, str(key)], key_normal, registry_keys)
+        elif isinstance(value, list):
+            for i, child in enumerate(value):
+                walk_names(child, rule, [*parts, str(i)], inherited_key, registry_keys)
+
+    suffix = PurePosixPath(path).suffix.lower()
+    if suffix == '.json':
+        try: parsed = json.loads(text)
+        except json.JSONDecodeError as exc:
+            for rule in selected: unresolved(rule, 'JSON_PARSE_ERROR', text, exc.pos)
+        else:
+            registry_keys = any(word in PurePosixPath(path).name.lower() for word in ('registry', 'manifest', '.schema.'))
+            walk_names(parsed, 'json_names', registry_keys=registry_keys)
+            if 'package_entries' in selected and isinstance(parsed, dict):
+                for key in ('name',):
+                    if isinstance(parsed.get(key), str):
+                        site('package_entries'); add('package_entries', 'package_name', parsed[key], pointer='/'+key)
+                for key in ('scripts', 'dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies'):
+                    values = parsed.get(key, {})
+                    if not isinstance(values, dict):
+                        site('package_entries'); unresolved('package_entries', 'PACKAGE_MAP_NOT_OBJECT', repr(values), pointer='/'+key)
+                        continue
+                    for name in values:
+                        site('package_entries'); add('package_entries', 'package_script' if key == 'scripts' else 'package_dependency', name, pointer=json_pointer([key, name]))
+                def package_targets(value: Any, parts: list[str]) -> None:
+                    if isinstance(value, str):
+                        site('package_entries'); add('package_entries', 'package_module_target', value, pointer=json_pointer(parts))
+                    elif isinstance(value, dict):
+                        for key, child in value.items():
+                            site('package_entries'); add('package_entries', 'package_module_export_key', key, pointer=json_pointer([*parts, key]))
+                            package_targets(child, [*parts, key])
+                    elif isinstance(value, list):
+                        for i, child in enumerate(value): package_targets(child, [*parts, str(i)])
+                    elif value is not None:
+                        site('package_entries'); unresolved('package_entries', 'UNSUPPORTED_PACKAGE_TARGET', repr(value), pointer=json_pointer(parts))
+                for key in ('exports', 'imports', 'main', 'module', 'browser', 'bin'):
+                    if key in parsed: package_targets(parsed[key], [key])
+
+    if suffix == '.toml':
+        try: parsed = tomllib.loads(text)
+        except tomllib.TOMLDecodeError:
+            unresolved('config_names', 'TOML_PARSE_ERROR', text)
+        else: walk_names(parsed, 'config_names')
+    if suffix in {'.yaml', '.yml'}:
+        for match in re.finditer(r'(?m)^\s*(?:-\s+)?(name|role|roles|scope|scopes|capability|capabilities|namespace|binding)\s*:\s*([^\n]*)', text):
+            key, expression = match.group(1), match.group(2).strip()
+            site('config_names')
+            if not expression or expression.startswith(('|', '>', '&', '*', '[', '{')) or '${' in expression:
+                unresolved('config_names', 'YAML_NON_SCALAR_OR_DYNAMIC_NAME', expression, match.start())
+            else:
+                value = literal(expression)
+                add('config_names', 'config_field:'+key, value if value is not None else expression.split(' #', 1)[0], match.start())
+        if re.search(r'(?m)^\s*<<\s*:|[\s:]&[\w-]+', text):
+            unresolved('config_names', 'YAML_MERGE_OR_ANCHOR_REQUIRES_EXPANSION', text)
+
+    if suffix in TYPED_CODE_EXTENSIONS:
+        # Mask comments but retain offsets/line numbers. Strings are retained for
+        # literal extraction; dynamic expressions are recorded rather than evaluated.
+        comment_re = re.compile(SOURCE_STRING_RE.pattern+r'|/\*.*?\*/|//[^\n]*', re.S)
+        code = comment_re.sub(lambda m: ''.join('\n' if c == '\n' else ' ' for c in m.group())
+                              if m.group().startswith(('//', '/*')) else m.group(), text)
+        if suffix == '.py':
+            offsets = [0]
+            for line in text.splitlines(keepends=True): offsets.append(offsets[-1] + len(line))
+            chars = list(text)
+            python_string_spans = []
+            try:
+                for token in tokenize.generate_tokens(io.StringIO(text).readline):
+                    if token.type in {tokenize.COMMENT, tokenize.STRING}:
+                        start = offsets[token.start[0]-1] + token.start[1]
+                        end = offsets[token.end[0]-1] + token.end[1]
+                        if token.type == tokenize.COMMENT:
+                            chars[start:end] = ' ' * (end-start)
+                        else: python_string_spans.append((start, end))
+            except (tokenize.TokenError, IndentationError):
+                unresolved('module_references', 'PYTHON_TOKENIZATION_INCOMPLETE', text)
+            code = ''.join(chars)
+        string_spans = python_string_spans if suffix == '.py' else [(m.start(), m.end()) for m in SOURCE_STRING_RE.finditer(code)]
+        string_starts = [start for start, _ in string_spans]
+        def code_matches(pattern: str):
+            for match in re.finditer(pattern, code):
+                index = bisect_right(string_starts, match.start()) - 1
+                if index >= 0 and string_spans[index][0] < match.start() < string_spans[index][1]:
+                    continue
+                yield match
+        arg = r'('+SOURCE_STRING_RE.pattern+r'(?:\s*\+\s*[^,;\n)]+)?|[^,;\n)]+)'
+        route_rules = [
+            (r'\b(?:\w+\.)?pathname\s*(?:===|==|!==|!=)\s*'+arg, 'http_route'),
+            (r'\b(?:\w+\.)?pathname\.(?:startsWith|endsWith)\(\s*'+arg, 'http_route_pattern'),
+            (r'\b(?:app|router|server)\.(?:get|post|put|patch|delete|options|head|all|route)\(\s*'+arg, 'http_route'),
+        ]
+        for pattern, kind in route_rules:
+            for match in code_matches(pattern):
+                observe_expression('code_routes', kind, match.group(1), match.start(1))
+        for match in code_matches('('+SOURCE_STRING_RE.pattern+r')\s*:'):
+            value = literal(match.group(1))
+            if value is not None and value.startswith('/'):
+                site('code_routes'); add('code_routes', 'route_map_key', value, match.start(1))
+        for match in code_matches(r'(/(?:\\.|[^/\n])+/[gimsuy]*)\.(?:exec|test)\(\s*(?:\w+\.)?pathname\s*\)'):
+            site('code_routes'); add('code_routes', 'http_route_regex', match.group(1), match.start(1), extraction='pattern')
+        # A local helper may put the RPC name after a client/id parameter. Bind
+        # only a uniquely named literal parameter position; never guess first.
+        rpc_declarations = list(code_matches(r'\bfunction\s+rpc\s*\(([^)]*)\)'))
+        rpc_name_index = None
+        if len(rpc_declarations) == 1:
+            parameters = [part.strip().split('=')[0].strip() for part in rpc_declarations[0].group(1).split(',')]
+            indices = [i for i, parameter in enumerate(parameters) if parameter in {'name', 'method', 'rpcName', 'rpc_name'}]
+            if len(indices) == 1: rpc_name_index = indices[0]
+        for match in code_matches(r'\brpc\(\s*'):
+            if any(declaration.start() <= match.start() < declaration.end() for declaration in rpc_declarations): continue
+            member_call = code[:match.start()].rstrip().endswith('.')
+            index = 0 if member_call or not rpc_declarations else rpc_name_index
+            if index is None:
+                site('code_rpc'); unresolved('code_rpc', 'RPC_HELPER_SIGNATURE_REQUIRES_BINDING', code[match.start():match.end()], match.start()); continue
+            cursor = match.end()
+            arguments = []
+            start = cursor
+            depth = 0
+            while cursor < len(code):
+                string = SOURCE_STRING_RE.match(code, cursor)
+                if string: cursor = string.end(); continue
+                char = code[cursor]
+                if char in '([{': depth += 1
+                elif char in ')]}':
+                    if char == ')' and depth == 0:
+                        arguments.append((code[start:cursor], start)); break
+                    depth -= 1
+                elif char == ',' and depth == 0:
+                    arguments.append((code[start:cursor], start)); start = cursor + 1
+                    if len(arguments) > index: break
+                cursor += 1
+            if len(arguments) <= index:
+                site('code_rpc'); unresolved('code_rpc', 'RPC_CALL_ARGUMENT_UNPARSED', code[match.end():cursor], match.end())
+            else:
+                expression, offset = arguments[index]
+                observe_expression('code_rpc', 'rpc_name', expression, offset)
+        for start, end in string_spans:
+            expression = code[start:end]
+            if '/rpc/' in expression:
+                if suffix == '.py':
+                    # Python triple-quoted strings have tokenizer-owned spans;
+                    # splitting them with a JS string regex invents expressions.
+                    try: value = ast.literal_eval(expression)
+                    except (ValueError, SyntaxError): value = None
+                    if isinstance(value, str):
+                        site('code_rpc'); add('code_rpc', 'rpc_route_reference', value, start)
+                    else: observe_expression('code_rpc', 'rpc_route_reference', expression, start)
+                else: observe_expression('code_rpc', 'rpc_route_reference', expression, start)
+        for match in code_matches(r'\b(?:const|let|var|export\s+const)\s+\w*(?:Rpc|rpc)\w*\s*(?::[^=\n]+)?=\s*\{([^}]+)\}'):
+            body = match.group(1)
+            for entry in re.finditer(r'[\w$]+\s*:\s*('+SOURCE_STRING_RE.pattern+r'|[^,\n]+)', body):
+                observe_expression('code_rpc', 'rpc_map_target', entry.group(1), match.start(1)+entry.start(1))
+            for spread in re.finditer(r'\.\.\.([^,\n]+)', body):
+                site('code_rpc'); unresolved('code_rpc', 'RPC_MAP_SPREAD_REQUIRES_BINDING', spread.group(1), match.start(1)+spread.start())
+        name_pattern = r'(?:role|roles|scope|scopes|capability|capabilities|namespace|namespaces)'
+        for match in ([] if suffix == '.py' else code_matches(r'\b'+name_pattern+r'\s*(?::|=(?!=))\s*')):
+            tail = code[match.end():]
+            rule = 'role_capability_scope'
+            # Type-only annotations do not assign a runtime name.
+            if re.match(r'(?:string|number|boolean|unknown)\b', tail): continue
+            type_reference = re.match(r'(?:readonly\s+)?([A-Z][\w$]*)\[\]\s*;', tail)
+            if type_reference:
+                site(rule); add(rule, 'type_reference', type_reference.group(1), match.end()); continue
+            if tail.startswith(('{', '[')):
+                try: compound = static_js_structure(tail)
+                except (ValueError, IndexError, RecursionError): pass
+                else:
+                    site(rule); structure_names(compound, match.end(), [match.group().split(':', 1)[0].split('=', 1)[0].strip()]); continue
+            if tail.startswith('['):
+                end = tail.find(']')
+                site(rule)
+                if end < 0:
+                    unresolved(rule, 'UNTERMINATED_NAME_ARRAY', tail[:200], match.start()); continue
+                body = tail[1:end]
+                for value in SOURCE_STRING_RE.finditer(body):
+                    name = literal(value.group())
+                    if name is None: unresolved(rule, 'DYNAMIC_NAME_ARRAY_ITEM', value.group(), match.end()+1+value.start())
+                    else: add(rule, 'role_capability_scope_name', name, match.end()+1+value.start())
+                remainder = SOURCE_STRING_RE.sub('', body).strip(' ,\r\n\t')
+                if remainder: unresolved(rule, 'NON_LITERAL_NAME_ARRAY_ITEM', remainder, match.start())
+            else:
+                expression = re.match(arg, tail)
+                if expression: observe_expression(rule, 'role_capability_scope_name', expression.group(1), match.end())
+        if suffix != '.py':
+            for match in code_matches(r'\b'+name_pattern+r'\s*(?:===|==|!==|!=)\s*('+SOURCE_STRING_RE.pattern+r')'):
+                observe_expression('role_capability_scope', 'name_comparison_literal', match.group(1), match.start(1))
+            for match in code_matches(r'\b(?:import|export)\s+(?:[\w$*,{}\s]+?\s+from\s*)?('+SOURCE_STRING_RE.pattern+r')'):
+                observe_expression('module_references', 'module_specifier', match.group(1), match.start(1))
+            for match in code_matches(r'\b(?:import|require)\(\s*'+arg):
+                observe_expression('module_references', 'module_specifier', match.group(1), match.start(1))
+            for match in code_matches(r'\bexport\s+(?:default\s+)?(?:async\s+)?(?:function|class|const|let|var|type|interface|enum)\s+([\w$]+)'):
+                site('module_references'); add('module_references', 'exported_symbol', match.group(1), match.start(1))
+            for match in code_matches(r'\bexport\s*\{([^}]+)\}'):
+                for item in match.group(1).split(','):
+                    item = item.strip()
+                    if not item: continue
+                    site('module_references')
+                    if re.fullmatch(r'[\w$]+(?:\s+as\s+[\w$]+)?', item):
+                        add('module_references', 'exported_symbol', item.split()[-1], match.start(1))
+                    else: unresolved('module_references', 'UNSUPPORTED_EXPORT_SPECIFIER', item, match.start(1))
+        else:
+            try: tree = ast.parse(text)
+            except SyntaxError:
+                unresolved('module_references', 'PYTHON_PARSE_ERROR', text)
+            else:
+                def node_offset(node: ast.AST) -> int:
+                    line = text.splitlines(keepends=True)[node.lineno-1]
+                    column = len(line.encode('utf-8')[:node.col_offset].decode('utf-8'))
+                    return offsets[node.lineno-1] + column
+                def field_name(node: ast.AST) -> str | None:
+                    name = node.id if isinstance(node, ast.Name) else node.attr if isinstance(node, ast.Attribute) else node.value if isinstance(node, ast.Constant) and isinstance(node.value, str) else None
+                    return name if name and re.fullmatch(name_pattern, name) else None
+                def python_name_value(node: ast.AST, kind: str = 'role_capability_scope_name') -> None:
+                    if isinstance(node, ast.Constant) and node.value is None: return
+                    if isinstance(node, ast.Dict):
+                        try: compound = ast.literal_eval(node)
+                        except (ValueError, TypeError): pass
+                        else:
+                            site('role_capability_scope'); structure_names(compound, node_offset(node), ['scope_structure']); return
+                    if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+                        for item in node.elts: python_name_value(item, kind)
+                        return
+                    expression = ast.get_source_segment(text, node) or ast.dump(node)
+                    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                        site('role_capability_scope'); add('role_capability_scope', kind, node.value, node_offset(node))
+                    else:
+                        site('role_capability_scope'); unresolved('role_capability_scope', 'DYNAMIC_OR_UNSUPPORTED_EXPRESSION', expression, node_offset(node))
+                for node in ast.walk(tree):
+                    if isinstance(node, (ast.Import, ast.ImportFrom)):
+                        offset = sum(len(line) for line in text.splitlines(keepends=True)[:node.lineno-1])
+                        names = [x.name for x in node.names] if isinstance(node, ast.Import) else ['.'*node.level+(node.module or '')]
+                        for name in names:
+                            site('module_references'); add('module_references', 'python_module', name, offset)
+                    elif isinstance(node, ast.Assign) and any(field_name(target) for target in node.targets):
+                        python_name_value(node.value)
+                    elif isinstance(node, ast.AnnAssign) and field_name(node.target) and node.value is not None:
+                        python_name_value(node.value)
+                    elif isinstance(node, ast.keyword) and node.arg and re.fullmatch(name_pattern, node.arg):
+                        python_name_value(node.value)
+                    elif isinstance(node, ast.arguments):
+                        positional = [*node.posonlyargs, *node.args]
+                        defaults = list(zip(positional[len(positional)-len(node.defaults):], node.defaults))
+                        defaults += list(zip(node.kwonlyargs, node.kw_defaults))
+                        for argument, default in defaults:
+                            if default is not None and re.fullmatch(name_pattern, argument.arg):
+                                python_name_value(default, 'name_parameter_default')
+                    elif isinstance(node, ast.Dict):
+                        for key, value in zip(node.keys, node.values):
+                            if key is not None and field_name(key): python_name_value(value)
+                    elif isinstance(node, ast.Compare) and field_name(node.left):
+                        for operator, value in zip(node.ops, node.comparators):
+                            if isinstance(operator, (ast.Eq, ast.NotEq, ast.In, ast.NotIn)):
+                                python_name_value(value, 'name_comparison_literal')
+
+    if suffix == '.ps1':
+        for match in re.finditer(r'(?im)\b(?:Import-Module|Export-ModuleMember)\s+(?:-(?:Name|Function|Cmdlet|Alias)\s+)?([^\r\n;]+)', text):
+            expression = match.group(1).strip(); site('module_references')
+            value = literal(expression)
+            if value is not None or re.fullmatch(r'[\w.\\/-]+', expression):
+                add('module_references', 'powershell_module_reference', value or expression, match.start(1))
+            else: unresolved('module_references', 'POWERSHELL_DYNAMIC_MODULE_REFERENCE', expression, match.start(1))
+    if suffix == '.sql':
+        sql = re.sub(r'--[^\n]*|/\*.*?\*/', lambda m: ''.join('\n' if c == '\n' else ' ' for c in m.group()), text, flags=re.S)
+        for match in re.finditer(r'(?i)\b(?:CREATE(?:\s+OR\s+REPLACE)?|ALTER|DROP)\s+(?:UNIQUE\s+)?(SCHEMA|TABLE|VIEW|FUNCTION|PROCEDURE|POLICY|ROLE|INDEX|TRIGGER)\s+(?:IF\s+(?:NOT\s+)?EXISTS\s+)?((?:"[^"]+"|[\w$]+)(?:\.(?:"[^"]+"|[\w$]+))*)', sql):
+            site('sql_object_declarations'); add('sql_object_declarations', 'sql_'+match.group(1).lower(), match.group(2), match.start(2))
+
+
+def finalize_typed_surface_inventory(inventory: dict[str, Any]) -> dict[str, Any]:
+    for coverage in inventory['rule_coverage'].values():
+        coverage['selected_files'] = sorted(set(coverage['selected_files']))
+        coverage['examined_files'] = sorted(set(coverage['examined_files']))
+        coverage['selected_file_count'] = len(coverage['selected_files'])
+        coverage['examined_file_count'] = len(coverage['examined_files'])
+    inventory['rule_coverage'] = list(inventory['rule_coverage'].values())
+    inventory['status'] = 'OBSERVED_WITH_UNRESOLVED' if inventory['unresolved'] else 'OBSERVED_REQUIRES_RULESET_REVIEW'
+    return inventory
 
 
 class InventoryError(RuntimeError):
@@ -238,6 +742,7 @@ def scan_repository(repo: Path, max_text_bytes: int) -> dict[str, Any]:
     bare_stage_refs: list[dict[str, Any]] = []
     canonical_stage_refs: list[dict[str, Any]] = []
     path_flags: list[dict[str, Any]] = []
+    typed_surfaces = new_typed_surface_inventory()
 
     casefold_map: dict[str, list[str]] = defaultdict(list)
     nfc_map: dict[str, list[str]] = defaultdict(list)
@@ -298,6 +803,7 @@ def scan_repository(repo: Path, max_text_bytes: int) -> dict[str, Any]:
             continue
         if not full_path.is_file() and not full_path.is_symlink():
             record["read_status"] = "missing_from_checkout"
+            collect_typed_surfaces(None, path, typed_surfaces, read_error='MISSING_FROM_CHECKOUT')
             file_records.append(record)
             continue
 
@@ -315,13 +821,16 @@ def scan_repository(repo: Path, max_text_bytes: int) -> dict[str, Any]:
                 skipped_text.append(
                     {"path": path, "size_bytes": len(data), "limit_bytes": max_text_bytes, "reason": "size_limit"}
                 )
+                collect_typed_surfaces(None, path, typed_surfaces, read_error='SIZE_LIMIT')
             else:
                 text, decode_error = decode_text(data)
                 if text is None:
                     record["text_scan_status"] = "skipped_non_utf8"
                     skipped_text.append({"path": path, "size_bytes": len(data), "reason": decode_error})
+                    collect_typed_surfaces(None, path, typed_surfaces, read_error=decode_error)
                 else:
                     record["text_scan_status"] = "scanned"
+                    collect_typed_surfaces(text, path, typed_surfaces)
                     machine_surface = is_machine_surface(path, suffix)
                     for line_no, line in enumerate(text.splitlines(), 1):
                         for token in URN_RE.findall(line):
@@ -391,6 +900,7 @@ def scan_repository(repo: Path, max_text_bytes: int) -> dict[str, Any]:
 
     return {
         "tracked_entry_count": len(entries),
+        "typed_surface_inventory": finalize_typed_surface_inventory(typed_surfaces),
         "file_count": sum(1 for entry in entries if entry["mode"] != "160000"),
         "gitlink_count": sum(1 for entry in entries if entry["mode"] == "160000"),
         "files": sorted(file_records, key=lambda item: item["path"]),

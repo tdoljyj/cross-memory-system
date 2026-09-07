@@ -17,6 +17,42 @@ consolidator = importlib.util.module_from_spec(consolidator_spec)
 consolidator_spec.loader.exec_module(consolidator)
 
 class CompletenessTests(unittest.TestCase):
+    def mutate_external_source(self, filename, mutate):
+        source=Path(__file__).resolve().parents[1]/'artifacts/clued-validation/structure-freeze-prep/naming/external-20260907'
+        temporary=tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root=Path(temporary.name)/'copy'
+        shutil.copytree(source, root)
+        path=root/'sources'/filename
+        doc=json.loads(path.read_text(encoding='utf-8'))
+        mutate(doc)
+        path.write_text(json.dumps(doc),encoding='utf-8')
+        index_path=root/'SourceIndex.json'
+        index=json.loads(index_path.read_text(encoding='utf-8'))
+        for row in index['files']:
+            if row['path']=='sources/'+filename:
+                row.update(bytes=path.stat().st_size,sha256=hashlib.sha256(path.read_bytes()).hexdigest())
+        index_path.write_text(json.dumps(index),encoding='utf-8')
+        return root
+
+    def test_failed_worker_settings_rejected_even_with_rehashed_source(self):
+        root=self.mutate_external_source('cloudflare-worker-details.json',
+            lambda doc:doc['data'][0].update(success=False,status=403))
+        with self.assertRaisesRegex(ValueError,'detail request failed'):
+            consolidator.verify_sources(root)
+
+    def test_missing_worker_detail_rejected_even_with_rehashed_source(self):
+        root=self.mutate_external_source('cloudflare-worker-details.json',
+            lambda doc:doc['data'].pop())
+        with self.assertRaisesRegex(ValueError,'detail coverage mismatch'):
+            consolidator.verify_sources(root)
+
+    def test_failed_pages_config_rejected_even_with_rehashed_source(self):
+        root=self.mutate_external_source('cloudflare-pages-config.json',
+            lambda doc:doc['data'].update(success=False,status=403))
+        with self.assertRaisesRegex(ValueError,'detail request failed'):
+            consolidator.verify_sources(root)
+
     def scan_single_fixture(self, payload, path='apps/fixture/name.png'):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

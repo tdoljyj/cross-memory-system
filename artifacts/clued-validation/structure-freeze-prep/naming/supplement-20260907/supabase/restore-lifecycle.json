@@ -1,0 +1,91 @@
+{
+  "schema": "clued.naming-supabase-restore-lifecycle/v1",
+  "project_id": "gfnfxbphsdtayoaxitly",
+  "project_name": "clued-restore-8b1",
+  "recorded_at_utc": "2026-09-07T07:55:20.519276+00:00",
+  "authority_effect": "NONE",
+  "purpose": "Temporarily restore existing free test project for schema naming inventory and restore original paused state",
+  "no_upgrade": true,
+  "no_paid_addon": true,
+  "no_new_project_or_branch": true,
+  "no_schema_migration_by_agent": true,
+  "no_business_row_queries_or_dml_by_agent": true,
+  "no_production_auth_config_change": true,
+  "cost_evidence_ref": {
+    "path": "cost-and-scope-evidence.json",
+    "bytes": 850,
+    "sha256": "d739e539b96c86cc834a791ce0951938fa2b08c978bb8ec35a1dff9e4edb83f9"
+  },
+  "catalog_ref": {
+    "path": "restore-catalog.json",
+    "bytes": 294314,
+    "sha256": "1b7bad2eb7aba024249cf70727d3984faa564c3e3b2b2f9e0bf88c5430e47e8c"
+  },
+  "catalog_verification_ref": {
+    "path": "restore-catalog-verification.json",
+    "bytes": 699,
+    "sha256": "3e24e54ed4d21f9ef6e131bb43772f0e0d75f98697e99c60f3759787cddf4ea1"
+  },
+  "before": {
+    "status": "INACTIVE",
+    "project_id": "gfnfxbphsdtayoaxitly",
+    "source_ref": {
+      "path": "project-before.json",
+      "bytes": 678,
+      "sha256": "644e32ec8ab664cc8586f78a5fdc93d5236e5e43a24a42cf00f026df20b39c35"
+    }
+  },
+  "during": {
+    "status": "ACTIVE_HEALTHY",
+    "project_id": "gfnfxbphsdtayoaxitly",
+    "source_ref": {
+      "path": "restore-active-after.json",
+      "bytes": 622,
+      "sha256": "27f4fc46606e315b150c2495d7ff6cd2b6adf3a43cfc1f82971c1065fdd5d717"
+    }
+  },
+  "after": {
+    "status": "INACTIVE",
+    "project_id": "gfnfxbphsdtayoaxitly",
+    "source_ref": {
+      "path": "project-final.json",
+      "bytes": 656,
+      "sha256": "1d39241036b07e6ec087e0fce19c87877f35472d7b996bd8f51487415bee8e0e"
+    }
+  },
+  "restore": {
+    "success": true,
+    "source_ref": {
+      "path": "restore-response.json",
+      "bytes": 200,
+      "sha256": "655bf0519cb5170a6fb1257f57c3df3143f401212e9ea44f04ae525aa924ec7c"
+    }
+  },
+  "pause": {
+    "success": true,
+    "source_ref": {
+      "path": "pause-response.json",
+      "bytes": 240,
+      "sha256": "6884ce3ef6bca216f3f13c97f4edfe750aa016dcded48ae968a332c71cc1d384"
+    }
+  },
+  "status": "VERIFIED_ORIGINAL_INACTIVE_STATE_RESTORED",
+  "identity_digest_spec": {
+    "fields": [
+      "kind",
+      "schema_name",
+      "parent",
+      "name",
+      "detail"
+    ],
+    "ordering": "ascending tuple order, PostgreSQL COLLATE C on each field",
+    "field_separator": "U+001F",
+    "record_separator": "U+001E",
+    "trailing_separator": false,
+    "encoding": "UTF-8",
+    "db_md5": "baf4cca7964126f09df2329a2c56f55c",
+    "local_md5_match": true,
+    "local_sha256": "9d989f25f67b784de97f07f8541159b5c4e5076f70262b229b4b8e01b4f0dcde",
+    "cryptographic_authority": "None; identity-set digest is consistency evidence, not a signature"
+  }
+}

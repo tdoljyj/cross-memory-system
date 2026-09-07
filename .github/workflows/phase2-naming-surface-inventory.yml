@@ -191,7 +191,7 @@ jobs:
           PY
 
       - name: Verify inventory completeness regressions
-        run: python "$SOURCE_DIR/tests/test_naming_inventory_completeness.py"
+        run: python -m unittest discover -s "$SOURCE_DIR/tests" -p "test_naming_inventory_*.py"
 
       - name: Consolidate detached external naming metadata
         run: |
@@ -200,6 +200,7 @@ jobs:
             --repository-inventory "$OUTPUT_DIR/NamingSurfaceInventoryManifest.json" \
             --findings "$OUTPUT_DIR/NamingSurfaceInventoryFindings.json" \
             --external-dir "$SOURCE_DIR/artifacts/clued-validation/structure-freeze-prep/naming/external-20260907" \
+            --supplemental-dir "$SOURCE_DIR/artifacts/clued-validation/structure-freeze-prep/naming/supplement-20260907" \
             --output-dir "$OUTPUT_DIR"
 
       - name: Upload naming inventory evidence

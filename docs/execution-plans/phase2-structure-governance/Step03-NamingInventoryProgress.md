@@ -1,5 +1,7 @@
 # Step 3：Naming Surface 盘点与外部补证
 
+续接修订：[来源补证与命名提取复核](Step03-SourceCompletionAndParserReview_20260907.md)。以下保留首轮盘点及其当时的缺口，不作为后续补证后的唯一状态入口。
+
 日期：2026-09-07。固定顺序依据 [21 步基线](FixedExecutionBaseline_20260907.md)，验收依据 [统一验收与证据失效表](AcceptanceAndInvalidation.md)。进入依据为 [Step 1/2 核对报告](Step01-Step02-EvidenceReview.md)。本记录不签发 Acceptance、Freeze 或 Naming Integrity Closeout。
 
 ## 已落实的工作

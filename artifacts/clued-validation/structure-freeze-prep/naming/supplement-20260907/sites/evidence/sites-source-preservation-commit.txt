@@ -1,0 +1,46 @@
+commit 920601a448a5ea8c99f99192cc2b3e59fd8a8843
+Author:     tdoljyj <52366662+tdoljyj@users.noreply.github.com>
+AuthorDate: Mon Aug 24 00:36:18 2026 +0800
+Commit:     tdoljyj <52366662+tdoljyj@users.noreply.github.com>
+CommitDate: Mon Aug 24 00:36:18 2026 +0800
+
+    [Codex@WORKMODE] cloud: preserve ChatGPT Sites version 4 source
+
+ apps/clued-cloud/.gitignore                        |    42 +
+ apps/clued-cloud/.npmrc                            |     4 +
+ apps/clued-cloud/.openai/hosting.json              |     5 +
+ apps/clued-cloud/AGENTS.md                         |    14 +
+ apps/clued-cloud/README.md                         |   107 +
+ apps/clued-cloud/app/chatgpt-auth.ts               |    86 +
+ apps/clued-cloud/app/globals.css                   |   485 +
+ apps/clued-cloud/app/layout.tsx                    |    47 +
+ apps/clued-cloud/app/page.tsx                      |   753 ++
+ apps/clued-cloud/build/sites-vite-plugin.ts        |    45 +
+ apps/clued-cloud/db/index.ts                       |    13 +
+ apps/clued-cloud/db/schema.ts                      |     4 +
+ apps/clued-cloud/drizzle.config.ts                 |     7 +
+ apps/clued-cloud/drizzle/meta/_journal.json        |     5 +
+ apps/clued-cloud/eslint.config.mjs                 |    18 +
+ .../clued-cloud/examples/d1/app/api/notes/route.ts |    58 +
+ apps/clued-cloud/examples/d1/db/schema.ts          |     9 +
+ apps/clued-cloud/next.config.ts                    |     7 +
+ apps/clued-cloud/package-lock.json                 | 11246 +++++++++++++++++++
+ apps/clued-cloud/package.json                      |    44 +
+ apps/clued-cloud/postcss.config.mjs                |     7 +
+ apps/clued-cloud/public/favicon.svg                |     7 +
+ apps/clued-cloud/public/file.svg                   |     1 +
+ apps/clued-cloud/public/globe.svg                  |     1 +
+ apps/clued-cloud/public/og.png                     |   Bin 0 -> 648092 bytes
+ apps/clued-cloud/public/window.svg                 |     1 +
+ apps/clued-cloud/scripts/build-verified.sh         |    26 +
+ apps/clued-cloud/scripts/install-ci.sh             |   189 +
+ apps/clued-cloud/scripts/sites-env.sh              |    52 +
+ .../migrations/202608230001_clued_continuity.sql   |   507 +
+ apps/clued-cloud/tests/continuity.test.mjs         |   175 +
+ apps/clued-cloud/tests/migration-contract.test.mjs |    18 +
+ apps/clued-cloud/tests/rendered-html.test.mjs      |    29 +
+ apps/clued-cloud/tsconfig.json                     |    34 +
+ apps/clued-cloud/vite.config.ts                    |    64 +
+ apps/clued-cloud/worker/continuity.ts              |   602 +
+ apps/clued-cloud/worker/index.ts                   |    51 +
+ 37 files changed, 14763 insertions(+)

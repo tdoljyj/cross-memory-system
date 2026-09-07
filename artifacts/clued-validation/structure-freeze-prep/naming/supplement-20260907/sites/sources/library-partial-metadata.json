@@ -1,0 +1,716 @@
+{
+  "schema": "clued.library-metadata-partial-evidence/v1",
+  "recorded_at_utc": "2026-09-07T07:45:54.882965+00:00",
+  "surface": "CHATGPT_LIBRARY_METADATA",
+  "status": "PARTIAL_KNOWN_REFERENCES_LIVE_LIST_UNAVAILABLE",
+  "coverage_complete": false,
+  "pagination_complete": false,
+  "known_bound_record_count": 7,
+  "records": [
+    {
+      "source_path": "artifacts/clued-validation/phase2-v027/candidate-source.json",
+      "json_pointer": "/retained_library_copy",
+      "library_file_id": "libfile_166b5a53113881918230fca80b49027c",
+      "file_id": "file_000000002a0081faa87b33a8c495cdaf",
+      "library_path": "/Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip",
+      "name": "Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip",
+      "library_timestamp": null,
+      "library_size_bytes": null,
+      "live_rechecked": false,
+      "bound_content_bytes_claimed": 246612118,
+      "bound_content_sha256_claimed": "6e51374a6caedb4f84d2b6bb9fe05cd695b25732833f9d0217c341f17e1c1649",
+      "source_record_created_at_utc": null,
+      "claimed_content_binding_not_live_copy_verification": true
+    },
+    {
+      "source_path": "artifacts/clued-validation/phase2-v027/closeout/ValidationLaneCloseoutIndex.json",
+      "json_pointer": "/positive_run/durable_library_copy",
+      "library_file_id": "libfile_7d2e2006908081919f76593767e9a28f",
+      "file_id": "file_00000000bd2c820ba5a61fe80399a9b8",
+      "library_path": "/Clued/Phase2/validation-lane-closeout/20260907/phase2-v027-positive-receipt-final.zip",
+      "name": "phase2-v027-positive-receipt-final.zip",
+      "library_timestamp": null,
+      "library_size_bytes": null,
+      "live_rechecked": false,
+      "bound_content_bytes_claimed": 1660,
+      "bound_content_sha256_claimed": "52a8288c0cfb4ce679020dbae00275836d862ef5a9a15e0dbda7df5b5a47050c",
+      "source_record_created_at_utc": "2026-09-07T00:17:07Z",
+      "claimed_content_binding_not_live_copy_verification": true
+    },
+    {
+      "source_path": "artifacts/clued-validation/phase2-v027/closeout/ValidationLaneCloseoutIndex.json",
+      "json_pointer": "/negative_runs/candidate_identity/durable_library_copy",
+      "library_file_id": "libfile_d6cc45bcd31881918e5fd02de7500107",
+      "file_id": "file_000000008cec820b8fb9b843c23be56c",
+      "library_path": "/Clued/Phase2/validation-lane-closeout/20260907/phase2-v027-negative-candidate-identity.zip",
+      "name": "phase2-v027-negative-candidate-identity.zip",
+      "library_timestamp": null,
+      "library_size_bytes": null,
+      "live_rechecked": false,
+      "bound_content_bytes_claimed": 2076,
+      "bound_content_sha256_claimed": "39564eb18c06a9b04b65039a4726a8f8b561f3380faeb5b27acf2814624ced77",
+      "source_record_created_at_utc": "2026-09-07T00:17:07Z",
+      "claimed_content_binding_not_live_copy_verification": true
+    },
+    {
+      "source_path": "artifacts/clued-validation/phase2-v027/closeout/ValidationLaneCloseoutIndex.json",
+      "json_pointer": "/negative_runs/manifest_integrity/durable_library_copy",
+      "library_file_id": "libfile_5fd60a5886f481918aabd2882108452e",
+      "file_id": "file_00000000dbdc820b8f7fe93994c21a38",
+      "library_path": "/Clued/Phase2/validation-lane-closeout/20260907/phase2-v027-negative-manifest-integrity.zip",
+      "name": "phase2-v027-negative-manifest-integrity.zip",
+      "library_timestamp": null,
+      "library_size_bytes": null,
+      "live_rechecked": false,
+      "bound_content_bytes_claimed": 2967,
+      "bound_content_sha256_claimed": "c4583019a5802c385dc81a48760fe452ef5c0bbfecfcfdb842507a0a624b8354",
+      "source_record_created_at_utc": "2026-09-07T00:17:07Z",
+      "claimed_content_binding_not_live_copy_verification": true
+    },
+    {
+      "source_path": "artifacts/clued-validation/phase2-v027/closeout/ValidationLaneCloseoutIndex.json",
+      "json_pointer": "/negative_runs/provenance/durable_library_copy",
+      "library_file_id": "libfile_b6d58142f28081919e690912d8f485c4",
+      "file_id": "file_000000002670820b9cb4443d2adb6843",
+      "library_path": "/Clued/Phase2/validation-lane-closeout/20260907/phase2-v027-negative-provenance.zip",
+      "name": "phase2-v027-negative-provenance.zip",
+      "library_timestamp": null,
+      "library_size_bytes": null,
+      "live_rechecked": false,
+      "bound_content_bytes_claimed": 2756,
+      "bound_content_sha256_claimed": "1cf6cd5ecbba62400c9e50d1b1a79edd0c8e972284159da665fb7af2b98f9bc3",
+      "source_record_created_at_utc": "2026-09-07T00:17:07Z",
+      "claimed_content_binding_not_live_copy_verification": true
+    },
+    {
+      "source_path": "artifacts/clued-validation/phase2-v027/closeout/ValidationLaneCloseoutIndex.json",
+      "json_pointer": "/negative_runs/product_increment_input/durable_library_copy",
+      "library_file_id": "libfile_857112373624819181178811c72a42cc",
+      "file_id": "file_0000000086dc820b8c9d5693f358c0c1",
+      "library_path": "/Clued/Phase2/validation-lane-closeout/20260907/phase2-v027-negative-product-increment-input.zip",
+      "name": "phase2-v027-negative-product-increment-input.zip",
+      "library_timestamp": null,
+      "library_size_bytes": null,
+      "live_rechecked": false,
+      "bound_content_bytes_claimed": 2639,
+      "bound_content_sha256_claimed": "898f26e61266414ce9597a804b0eb9beb572e411ee290c403a98700b73666eb9",
+      "source_record_created_at_utc": "2026-09-07T00:17:07Z",
+      "claimed_content_binding_not_live_copy_verification": true
+    },
+    {
+      "source_path": "artifacts/clued-validation/phase2-v027/closeout/ValidationLaneCloseoutIndex.json",
+      "json_pointer": "/durable_complete_receipt",
+      "library_file_id": "libfile_b813083acb1c819185d1259e3eea6745",
+      "file_id": "file_0000000013bc820b9ba1391197b9307a",
+      "library_path": "/Clued/Phase2/validation-lane-closeout/20260907/phase2-v027-validation-lane-closeout-receipt.json",
+      "name": "phase2-v027-validation-lane-closeout-receipt.json",
+      "library_timestamp": null,
+      "library_size_bytes": null,
+      "live_rechecked": false,
+      "bound_content_bytes_claimed": null,
+      "bound_content_sha256_claimed": null,
+      "source_record_created_at_utc": "2026-09-07T00:17:07Z",
+      "claimed_content_binding_not_live_copy_verification": true
+    }
+  ],
+  "source_refs": [
+    {
+      "repository_path": "artifacts/clued-validation/phase2-v027/candidate-source.json",
+      "sha256": "b5eb6a0eee044cc2835f910dff49452583e360218cc2b629aa3a8c5745d4d3d6"
+    },
+    {
+      "repository_path": "artifacts/clued-validation/phase2-v027/closeout/ValidationLaneCloseoutIndex.json",
+      "sha256": "bf1757370b67caa85ace45baa669eba2fde919d118c8eb34ef19242abdfe829c"
+    }
+  ],
+  "local_download_candidates": [
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\Clued 第一方产品信息架构建议.md",
+      "name": "Clued 第一方产品信息架构建议.md",
+      "bytes": 9979,
+      "modified_at_utc": "2026-09-01T08:52:27.016516+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\clued-continuity-workbuddy.zip",
+      "name": "clued-continuity-workbuddy.zip",
+      "bytes": 3892,
+      "modified_at_utc": "2026-08-27T11:19:06.382013+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\clued-continuity.zip",
+      "name": "clued-continuity.zip",
+      "bytes": 8001,
+      "modified_at_utc": "2026-08-27T09:08:55.008152+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\clued-github-project-priority-2026-08-27-v1.1.md",
+      "name": "clued-github-project-priority-2026-08-27-v1.1.md",
+      "bytes": 25230,
+      "modified_at_utc": "2026-08-27T12:45:53.158759+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\clued-github-project-priority-2026-08-27.md",
+      "name": "clued-github-project-priority-2026-08-27.md",
+      "bytes": 37212,
+      "modified_at_utc": "2026-08-27T12:16:43.508240+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\clued-ia-revision.md",
+      "name": "clued-ia-revision.md",
+      "bytes": 1842,
+      "modified_at_utc": "2026-09-01T09:07:36.835741+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\Clued_Current_Work_日志可读化修复执行计划_v1.1.md",
+      "name": "Clued_Current_Work_日志可读化修复执行计划_v1.1.md",
+      "bytes": 8286,
+      "modified_at_utc": "2026-08-28T09:18:01.713880+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\Clued_Kernel_Architecture_架构母版候选_v0.1.md",
+      "name": "Clued_Kernel_Architecture_架构母版候选_v0.1.md",
+      "bytes": 54019,
+      "modified_at_utc": "2026-08-31T04:57:52.506267+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\Clued_Kernel_Next_AI模型能力接口方案_v1.0.md",
+      "name": "Clued_Kernel_Next_AI模型能力接口方案_v1.0.md",
+      "bytes": 37207,
+      "modified_at_utc": "2026-08-28T07:33:45.583514+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\Clued_Kernel_Next_v3.1_最终定版审查报告.md",
+      "name": "Clued_Kernel_Next_v3.1_最终定版审查报告.md",
+      "bytes": 24707,
+      "modified_at_utc": "2026-08-28T08:29:02.178817+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\Clued_Kernel_Next_v3.2_分布式实施与验收执行计划_v1.2.md",
+      "name": "Clued_Kernel_Next_v3.2_分布式实施与验收执行计划_v1.2.md",
+      "bytes": 73464,
+      "modified_at_utc": "2026-08-29T08:02:22.218581+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\Clued_Kernel_Next_v3.3_分布式实施与验收执行计划_v1.4.md",
+      "name": "Clued_Kernel_Next_v3.3_分布式实施与验收执行计划_v1.4.md",
+      "bytes": 83437,
+      "modified_at_utc": "2026-08-29T09:00:13.762411+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\Clued_Kernel_Next_v3.3_定点复验报告.md",
+      "name": "Clued_Kernel_Next_v3.3_定点复验报告.md",
+      "bytes": 3077,
+      "modified_at_utc": "2026-08-29T09:00:13.745344+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\Clued_Kernel_Next_多厂商连续性与执行基础设施完整整合方案_v2.0.md",
+      "name": "Clued_Kernel_Next_多厂商连续性与执行基础设施完整整合方案_v2.0.md",
+      "bytes": 54134,
+      "modified_at_utc": "2026-08-27T08:42:02.185519+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\Clued_Kernel_Next_多厂商连续性与执行基础设施完整整合方案_v2.1.md",
+      "name": "Clued_Kernel_Next_多厂商连续性与执行基础设施完整整合方案_v2.1.md",
+      "bytes": 75706,
+      "modified_at_utc": "2026-08-27T09:38:14.708036+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\Clued_Kernel_Next_多厂商连续性与执行基础设施完整整合方案_v2.2.md",
+      "name": "Clued_Kernel_Next_多厂商连续性与执行基础设施完整整合方案_v2.2.md",
+      "bytes": 114752,
+      "modified_at_utc": "2026-08-27T11:00:12.970278+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\Clued_Kernel_Next_多厂商连续性与执行基础设施完整整合方案_v2.3.md",
+      "name": "Clued_Kernel_Next_多厂商连续性与执行基础设施完整整合方案_v2.3.md",
+      "bytes": 133196,
+      "modified_at_utc": "2026-08-27T11:40:30.703948+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\Clued_Kernel_Next_多厂商连续性与执行基础设施完整整合方案_v2.4.md",
+      "name": "Clued_Kernel_Next_多厂商连续性与执行基础设施完整整合方案_v2.4.md",
+      "bytes": 152766,
+      "modified_at_utc": "2026-08-27T12:16:32.026679+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\Clued_Kernel_Next_多厂商连续性与执行基础设施完整整合方案_v2.6.md",
+      "name": "Clued_Kernel_Next_多厂商连续性与执行基础设施完整整合方案_v2.6.md",
+      "bytes": 174344,
+      "modified_at_utc": "2026-08-27T13:24:11.811827+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\Clued_Kernel_Next_多厂商连续性与执行基础设施完整整合方案_v2.7.md",
+      "name": "Clued_Kernel_Next_多厂商连续性与执行基础设施完整整合方案_v2.7.md",
+      "bytes": 474177,
+      "modified_at_utc": "2026-08-28T06:01:36.815264+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\Clued_Kernel_Next_多厂商连续性与执行基础设施完整整合方案_v2.8.md",
+      "name": "Clued_Kernel_Next_多厂商连续性与执行基础设施完整整合方案_v2.8.md",
+      "bytes": 482556,
+      "modified_at_utc": "2026-08-28T06:14:41.700856+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\Clued_Kernel_Next_多厂商连续性与执行基础设施完整整合方案_v2.9.md",
+      "name": "Clued_Kernel_Next_多厂商连续性与执行基础设施完整整合方案_v2.9.md",
+      "bytes": 494128,
+      "modified_at_utc": "2026-08-28T06:51:05.065239+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\Clued_Kernel_Next_多厂商连续性与执行基础设施完整整合方案_v3.0.md",
+      "name": "Clued_Kernel_Next_多厂商连续性与执行基础设施完整整合方案_v3.0.md",
+      "bytes": 512159,
+      "modified_at_utc": "2026-08-28T07:09:43.789872+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\Clued_Kernel_Next_多厂商连续性与执行基础设施完整整合方案_v3.1.md",
+      "name": "Clued_Kernel_Next_多厂商连续性与执行基础设施完整整合方案_v3.1.md",
+      "bytes": 543385,
+      "modified_at_utc": "2026-08-28T08:08:51.538812+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\Clued_Kernel_Next_多厂商连续性与执行基础设施完整整合方案_v3.2.md",
+      "name": "Clued_Kernel_Next_多厂商连续性与执行基础设施完整整合方案_v3.2.md",
+      "bytes": 553092,
+      "modified_at_utc": "2026-08-28T08:54:26.579090+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\Clued_Kernel_Next_多厂商连续性与执行基础设施完整整合方案_v3.3.md",
+      "name": "Clued_Kernel_Next_多厂商连续性与执行基础设施完整整合方案_v3.3.md",
+      "bytes": 557313,
+      "modified_at_utc": "2026-08-29T08:59:30.988030+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\Clued_Kernel_Next_多厂商连续性与执行基础设施完整整合方案_v3_0.md",
+      "name": "Clued_Kernel_Next_多厂商连续性与执行基础设施完整整合方案_v3_0.md",
+      "bytes": 512159,
+      "modified_at_utc": "2026-08-28T07:08:28.596072+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\Clued_Kernel_Next前_公共MCP回归与安全基线_分布式验收执行计划_v1.0.md",
+      "name": "Clued_Kernel_Next前_公共MCP回归与安全基线_分布式验收执行计划_v1.0.md",
+      "bytes": 31913,
+      "modified_at_utc": "2026-08-28T08:58:17.568089+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\Clued_Kernel_R5_云端权威记忆内核_完整执行计划.md",
+      "name": "Clued_Kernel_R5_云端权威记忆内核_完整执行计划.md",
+      "bytes": 54432,
+      "modified_at_utc": "2026-08-22T04:35:29.730924+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\clued_logo_concept.png",
+      "name": "clued_logo_concept.png",
+      "bytes": 252661,
+      "modified_at_utc": "2026-09-02T03:47:13.864946+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\clued_logo_concept.svg",
+      "name": "clued_logo_concept.svg",
+      "bytes": 13424,
+      "modified_at_utc": "2026-09-02T07:59:45.744078+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\clued_logo_concept_A_spiral.svg",
+      "name": "clued_logo_concept_A_spiral.svg",
+      "bytes": 9526,
+      "modified_at_utc": "2026-09-02T09:40:27.804295+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\clued_logo_concept_B_threshold.svg",
+      "name": "clued_logo_concept_B_threshold.svg",
+      "bytes": 8361,
+      "modified_at_utc": "2026-09-02T09:40:29.020835+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\clued_logo_overview.svg",
+      "name": "clued_logo_overview.svg",
+      "bytes": 11961,
+      "modified_at_utc": "2026-09-02T09:40:26.674881+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\clued_logo_variants_size_test.svg",
+      "name": "clued_logo_variants_size_test.svg",
+      "bytes": 60042,
+      "modified_at_utc": "2026-09-02T07:59:34.912921+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\Clued_Phase2_三项设计候选_完整审查包_v0.2.1_20260905.zip",
+      "name": "Clued_Phase2_三项设计候选_完整审查包_v0.2.1_20260905.zip",
+      "bytes": 19499226,
+      "modified_at_utc": "2026-09-05T08:33:12.416575+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\Clued_Phase2_三项设计候选_完整审查包_v0.2.2_20260905.zip",
+      "name": "Clued_Phase2_三项设计候选_完整审查包_v0.2.2_20260905.zip",
+      "bytes": 39357265,
+      "modified_at_utc": "2026-09-05T09:31:35.617179+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\Clued_Phase2_结构治理与_Naming_Integrity_固定执行基线_20260907.md",
+      "name": "Clued_Phase2_结构治理与_Naming_Integrity_固定执行基线_20260907.md",
+      "bytes": 30836,
+      "modified_at_utc": "2026-09-07T05:45:59.648665+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\Clued_Product_Next_综合后台与Kernel_Phase_2核心方向决策备忘_v0.1.md",
+      "name": "Clued_Product_Next_综合后台与Kernel_Phase_2核心方向决策备忘_v0.1.md",
+      "bytes": 11684,
+      "modified_at_utc": "2026-08-31T03:05:09.052917+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\Clued_R4_Gate0_语义召回质量收口_详细执行计划.md",
+      "name": "Clued_R4_Gate0_语义召回质量收口_详细执行计划.md",
+      "bytes": 32782,
+      "modified_at_utc": "2026-08-20T11:54:40.745293+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\Clued_User_Memory_Bundle_v1.1_Resilient_Importer.zip",
+      "name": "Clued_User_Memory_Bundle_v1.1_Resilient_Importer.zip",
+      "bytes": 158513,
+      "modified_at_utc": "2026-08-25T05:53:32.220882+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\Clued_User_Memory_Bundle_v1.2_Final_Importer.zip",
+      "name": "Clued_User_Memory_Bundle_v1.2_Final_Importer.zip",
+      "bytes": 158569,
+      "modified_at_utc": "2026-08-25T06:14:05.122034+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\Clued_User_Memory_Bundle_v1.3_Finalizer.zip",
+      "name": "Clued_User_Memory_Bundle_v1.3_Finalizer.zip",
+      "bytes": 161558,
+      "modified_at_utc": "2026-08-25T06:28:11.390064+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\Clued_User_Memory_Bundle_v1.4_Finalizer.zip",
+      "name": "Clued_User_Memory_Bundle_v1.4_Finalizer.zip",
+      "bytes": 161554,
+      "modified_at_utc": "2026-08-25T06:36:32.801792+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\Clued_User_Memory_Bundle_v1_Local_Importer.zip",
+      "name": "Clued_User_Memory_Bundle_v1_Local_Importer.zip",
+      "bytes": 157227,
+      "modified_at_utc": "2026-08-25T05:17:20.837906+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\Clued_v0.1_DeepSeek_下一步修正与验收执行计划.md",
+      "name": "Clued_v0.1_DeepSeek_下一步修正与验收执行计划.md",
+      "bytes": 19150,
+      "modified_at_utc": "2026-08-18T09:24:09.391849+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\Clued_v0.1_智能体安装授权弱网降级与卸载协议.md",
+      "name": "Clued_v0.1_智能体安装授权弱网降级与卸载协议.md",
+      "bytes": 51155,
+      "modified_at_utc": "2026-08-18T09:38:02.543349+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\Clued_Web_Preview_人工审核与发布流程方案对比_v1.0.md",
+      "name": "Clued_Web_Preview_人工审核与发布流程方案对比_v1.0.md",
+      "bytes": 25567,
+      "modified_at_utc": "2026-08-31T02:46:43.788152+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\Clued_产品方向到架构影响映射_v0.1 (1).md",
+      "name": "Clued_产品方向到架构影响映射_v0.1 (1).md",
+      "bytes": 50555,
+      "modified_at_utc": "2026-09-03T07:01:20.424816+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\Clued_产品方向到架构影响映射_v0.2.md",
+      "name": "Clued_产品方向到架构影响映射_v0.2.md",
+      "bytes": 84526,
+      "modified_at_utc": "2026-09-03T07:30:06.520550+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\Clued_内核架构原则_WikiSkill与小模型方向讨论汇总_v0.1.md",
+      "name": "Clued_内核架构原则_WikiSkill与小模型方向讨论汇总_v0.1.md",
+      "bytes": 19969,
+      "modified_at_utc": "2026-08-31T03:40:06.581449+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\Clued_单一数据源与两级五视图架构方案.md",
+      "name": "Clued_单一数据源与两级五视图架构方案.md",
+      "bytes": 14128,
+      "modified_at_utc": "2026-08-25T11:41:48.078654+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\Clued_单一数据源与两级五视图架构方案_v1.1.md",
+      "name": "Clued_单一数据源与两级五视图架构方案_v1.1.md",
+      "bytes": 25025,
+      "modified_at_utc": "2026-08-25T11:55:34.268236+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\Clued_单一数据源与两级五视图架构方案_v1.2.md",
+      "name": "Clued_单一数据源与两级五视图架构方案_v1.2.md",
+      "bytes": 29019,
+      "modified_at_utc": "2026-08-25T12:12:48.569489+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\Clued_单一数据源与两级五视图架构方案_v1.4.md",
+      "name": "Clued_单一数据源与两级五视图架构方案_v1.4.md",
+      "bytes": 38220,
+      "modified_at_utc": "2026-08-25T13:18:54.035531+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\Clued_单一数据源与两级五视图架构方案_v1_3.md",
+      "name": "Clued_单一数据源与两级五视图架构方案_v1_3.md",
+      "bytes": 32384,
+      "modified_at_utc": "2026-08-25T12:59:52.972553+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\Clued_商业方案完整交付包_v1.0_20260905.zip",
+      "name": "Clued_商业方案完整交付包_v1.0_20260905.zip",
+      "bytes": 125713,
+      "modified_at_utc": "2026-09-05T03:20:03.301751+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\Clued_商业方案完整交付包_v1.1_20260905.zip",
+      "name": "Clued_商业方案完整交付包_v1.1_20260905.zip",
+      "bytes": 314271,
+      "modified_at_utc": "2026-09-05T04:21:50.733798+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\Clued_商业评估_用户共建生态修订与风险落实清单_v0.1_20260905.md",
+      "name": "Clued_商业评估_用户共建生态修订与风险落实清单_v0.1_20260905.md",
+      "bytes": 17671,
+      "modified_at_utc": "2026-09-05T02:28:43.995714+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\Clued_完整商业方案_执行基线_v1.0_20260905.docx",
+      "name": "Clued_完整商业方案_执行基线_v1.0_20260905.docx",
+      "bytes": 82924,
+      "modified_at_utc": "2026-09-05T03:19:54.912631+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\Clued_完整商业方案_执行基线_v1.0_20260905.md",
+      "name": "Clued_完整商业方案_执行基线_v1.0_20260905.md",
+      "bytes": 74691,
+      "modified_at_utc": "2026-09-05T03:19:56.369557+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\Clued_战略定位与数据捕获闭环决策备忘_v0.1.md",
+      "name": "Clued_战略定位与数据捕获闭环决策备忘_v0.1.md",
+      "bytes": 8003,
+      "modified_at_utc": "2026-08-31T02:42:42.561366+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\Clued_手机端接入与公共插件发布决策备忘_v1.0.md",
+      "name": "Clued_手机端接入与公共插件发布决策备忘_v1.0.md",
+      "bytes": 6433,
+      "modified_at_utc": "2026-08-31T02:33:20.722073+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\Clued_校验不变量与去重矩阵_v1.0.md",
+      "name": "Clued_校验不变量与去重矩阵_v1.0.md",
+      "bytes": 32779,
+      "modified_at_utc": "2026-08-26T05:03:32.488977+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\Clued_校验不变量与去重矩阵_v1.0_审查报告.md",
+      "name": "Clued_校验不变量与去重矩阵_v1.0_审查报告.md",
+      "bytes": 19243,
+      "modified_at_utc": "2026-08-26T05:44:39.552625+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\Clued_校验不变量与去重矩阵_v1.1.md",
+      "name": "Clued_校验不变量与去重矩阵_v1.1.md",
+      "bytes": 43036,
+      "modified_at_utc": "2026-08-26T06:41:11.036683+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\Clued_校验不变量与去重矩阵_v1.1_第二轮静态审查报告.md",
+      "name": "Clued_校验不变量与去重矩阵_v1.1_第二轮静态审查报告.md",
+      "bytes": 5702,
+      "modified_at_utc": "2026-08-26T06:41:14.476628+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\Clued_校验不变量与去重矩阵_v1.1_调整修改方案.md",
+      "name": "Clued_校验不变量与去重矩阵_v1.1_调整修改方案.md",
+      "bytes": 22996,
+      "modified_at_utc": "2026-08-26T06:10:24.201209+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\Clued_第一方产品_空间联系创作与数字能力生态方向总备忘_v0.6.md",
+      "name": "Clued_第一方产品_空间联系创作与数字能力生态方向总备忘_v0.6.md",
+      "bytes": 56013,
+      "modified_at_utc": "2026-09-01T11:54:44.693894+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\Clued_第一方产品_空间联系语卡与数字能力生态方向总备忘_v0.3.md",
+      "name": "Clued_第一方产品_空间联系语卡与数字能力生态方向总备忘_v0.3.md",
+      "bytes": 44367,
+      "modified_at_utc": "2026-09-01T10:16:30.519786+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\Clued_第一方产品_语卡与自然交互方向备忘_v0.1.md",
+      "name": "Clued_第一方产品_语卡与自然交互方向备忘_v0.1.md",
+      "bytes": 24172,
+      "modified_at_utc": "2026-08-31T10:13:47.479507+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\Clued_第一方产品_语卡卡链与数字能力生态方向总备忘_v0.2.md",
+      "name": "Clued_第一方产品_语卡卡链与数字能力生态方向总备忘_v0.2.md",
+      "bytes": 62044,
+      "modified_at_utc": "2026-09-01T08:39:43.610423+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\Clued_第一方模型系统实施与验收计划_v0.1.md",
+      "name": "Clued_第一方模型系统实施与验收计划_v0.1.md",
+      "bytes": 71814,
+      "modified_at_utc": "2026-09-03T09:47:20.244622+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\Clued_第一方模型系统实施与验收计划_v0.8.1_独立终审包_v0.1_FINAL.zip",
+      "name": "Clued_第一方模型系统实施与验收计划_v0.8.1_独立终审包_v0.1_FINAL.zip",
+      "bytes": 4754179,
+      "modified_at_utc": "2026-09-04T03:21:35.481305+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\Clued_第一方模型系统实施与验收计划_v0.8_独立终审包_v0.2_FINAL.zip",
+      "name": "Clued_第一方模型系统实施与验收计划_v0.8_独立终审包_v0.2_FINAL.zip",
+      "bytes": 2253813,
+      "modified_at_utc": "2026-09-04T01:36:14.761615+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\Clued_第一方模型系统总体架构_训练体系与演进路线_v0.1.md",
+      "name": "Clued_第一方模型系统总体架构_训练体系与演进路线_v0.1.md",
+      "bytes": 54232,
+      "modified_at_utc": "2026-09-03T09:00:39.668980+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\Clued_第三商业循环_用户共建生态与商店积分回流_固定决定_v0.2_20260905.md",
+      "name": "Clued_第三商业循环_用户共建生态与商店积分回流_固定决定_v0.2_20260905.md",
+      "bytes": 12538,
+      "modified_at_utc": "2026-09-05T02:28:43.016381+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\Clued最终收口_LKG策略与Cross-Memory瘦身下一阶段计划.md",
+      "name": "Clued最终收口_LKG策略与Cross-Memory瘦身下一阶段计划.md",
+      "bytes": 13941,
+      "modified_at_utc": "2026-08-18T11:06:18.610148+00:00",
+      "library_identity_bound": false
+    },
+    {
+      "path": "C:\\Users\\Windows\\Downloads\\执行提示词_精简版_Clued_PreKernel验收计划.md",
+      "name": "执行提示词_精简版_Clued_PreKernel验收计划.md",
+      "bytes": 5253,
+      "modified_at_utc": "2026-08-28T09:11:55.222918+00:00",
+      "library_identity_bound": false
+    }
+  ],
+  "local_downloads_are_complete_library_export": false,
+  "local_scope": "top-level Downloads filename containing Clued, sizes/mtimes only, no bodies",
+  "candidate_package_search": {
+    "candidate_sha256": "6e51374a6caedb4f84d2b6bb9fe05cd695b25732833f9d0217c341f17e1c1649",
+    "metadata_named_json_members_scanned": 60,
+    "hits": [],
+    "manifest_is_not_library_listing": true
+  },
+  "browser_probe": {
+    "get_state": "SUCCESS: browser1 ChatGPT tab850492327",
+    "get_tab": "TIMEOUT_KERNEL_RESET",
+    "elapsed_seconds": 20.3228,
+    "error": "js execution timed out; kernel reset, rerun your request",
+    "further_retries": 0
+  },
+  "remaining_gap": "No complete live Library listing or metadata export with exhaustive account-scoped pagination. Known references and downloaded packages cannot establish absence of other files/copies.",
+  "authority_effect": "NONE",
+  "closure_allowed": false,
+  "additional_local_filename_search": {
+    "root": "C:/Users/Windows/Documents/Codex",
+    "patterns": [
+      "*Library*",
+      "*library*",
+      "*Catalog*",
+      "*Listing*",
+      "*metadata*.json"
+    ],
+    "result": "No complete Clued Library export discovered in searched filename candidates; unrelated dependency catalogs excluded from evidence.",
+    "not_a_proof_of_global_absence": true
+  },
+  "ui_policy_stop": {
+    "source": "parent tool report in current task",
+    "message": "Computer Use has been stopped for this turn because it could not determine current browser URL with enough confidence to enforce policy",
+    "effect": "No further UI actions or alternative UI route attempted after receipt of this restriction."
+  }
+}

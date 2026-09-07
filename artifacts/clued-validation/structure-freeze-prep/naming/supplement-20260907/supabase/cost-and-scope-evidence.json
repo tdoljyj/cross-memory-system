@@ -1,0 +1,17 @@
+{
+  "recorded_at_utc": "2026-09-07T07:54:01.348Z",
+  "project_id": "gfnfxbphsdtayoaxitly",
+  "organization": {
+    "id": "mqpgmvkdjrhukwmzvrug",
+    "plan": "free"
+  },
+  "operation": "Restore existing free test project for metadata inventory, then Pause; no new project, branch, upgrade or paid addon",
+  "expected_incremental_service_charge_usd": 0,
+  "cost_classification": "Expected from observed Free plan and existing resource; not an audited final invoice",
+  "official_docs": [
+    "https://supabase.com/docs/guides/platform/free-project-pausing",
+    "https://supabase.com/docs/guides/platform/upgrading"
+  ],
+  "documented_historical_scope": "docs/clued-two-level-views/13-阶段8B-1-生产基线备份与恢复演练报告.md",
+  "authority": "Parent reviewed concrete cost and necessity; user's current all-steps authorization applied"
+}

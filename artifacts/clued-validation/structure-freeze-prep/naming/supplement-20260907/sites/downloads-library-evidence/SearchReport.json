@@ -1,0 +1,197 @@
+{
+  "schema": "clued.downloads-library-search/v1",
+  "root": "C:\\Users\\Windows\\Downloads",
+  "recursive": true,
+  "all_discovered_file_count": 22558,
+  "project_candidate_count": 708,
+  "inspected_source_count": 571,
+  "archives": [
+    {
+      "archive": "C:\\Users\\Windows\\Downloads\\clued-continuity.zip",
+      "member_count": 5,
+      "selected_count": 0
+    },
+    {
+      "archive": "C:\\Users\\Windows\\Downloads\\clued-continuity-workbuddy.zip",
+      "member_count": 1,
+      "selected_count": 0
+    },
+    {
+      "archive": "C:\\Users\\Windows\\Downloads\\Clued_User_Memory_Bundle_v1_Local_Importer.zip",
+      "member_count": 54,
+      "selected_count": 3
+    },
+    {
+      "archive": "C:\\Users\\Windows\\Downloads\\Clued_商业方案完整交付包_v1.1_20260905.zip",
+      "member_count": 9,
+      "selected_count": 2
+    },
+    {
+      "archive": "C:\\Users\\Windows\\Downloads\\Clued_商业方案完整交付包_v1.0_20260905.zip",
+      "member_count": 7,
+      "selected_count": 3
+    },
+    {
+      "archive": "C:\\Users\\Windows\\Downloads\\Clued_第一方模型系统实施与验收计划_v0.8_独立终审包_v0.2_FINAL.zip",
+      "member_count": 71,
+      "selected_count": 23
+    },
+    {
+      "archive": "C:\\Users\\Windows\\Downloads\\Clued_第一方模型系统实施与验收计划_v0.8.1_独立终审包_v0.1_FINAL.zip",
+      "member_count": 82,
+      "selected_count": 29
+    },
+    {
+      "archive": "C:\\Users\\Windows\\Downloads\\Clued_User_Memory_Bundle_v1.4_Finalizer.zip",
+      "member_count": 56,
+      "selected_count": 3
+    },
+    {
+      "archive": "C:\\Users\\Windows\\Downloads\\Clued_Phase2_三项设计候选_完整审查包_v0.2.1_20260905.zip",
+      "member_count": 164,
+      "selected_count": 60
+    },
+    {
+      "archive": "C:\\Users\\Windows\\Downloads\\Clued_Phase2_三项设计候选_完整审查包_v0.2.2_20260905.zip",
+      "member_count": 217,
+      "selected_count": 87
+    },
+    {
+      "archive": "C:\\Users\\Windows\\Downloads\\Clued_User_Memory_Bundle_v1.1_Resilient_Importer.zip",
+      "member_count": 54,
+      "selected_count": 3
+    },
+    {
+      "archive": "C:\\Users\\Windows\\Downloads\\Clued_User_Memory_Bundle_v1.3_Finalizer.zip",
+      "member_count": 56,
+      "selected_count": 3
+    },
+    {
+      "archive": "C:\\Users\\Windows\\Downloads\\Clued_User_Memory_Bundle_v1.2_Final_Importer.zip",
+      "member_count": 54,
+      "selected_count": 3
+    }
+  ],
+  "hits": [
+    {
+      "source": "C:\\Users\\Windows\\Downloads\\Clued_Kernel_Next_多厂商连续性与执行基础设施完整整合方案_v3.0.md",
+      "bytes": 512159,
+      "sha256": "685fe56b1b7c03e0f96e176bdf304d756ac8cff273d81fecaba091cc80709d0c",
+      "matches": [
+        {
+          "line": 2102,
+          "matched_terms": [
+            "LIBRARY_PATH"
+          ]
+        }
+      ]
+    },
+    {
+      "source": "C:\\Users\\Windows\\Downloads\\Clued_Kernel_Next_多厂商连续性与执行基础设施完整整合方案_v2.9.md",
+      "bytes": 494128,
+      "sha256": "13cbcfdcde61d02fc766ba7cc52458b526d2266d4128f672d49c59bacdfb2cf4",
+      "matches": [
+        {
+          "line": 2026,
+          "matched_terms": [
+            "LIBRARY_PATH"
+          ]
+        }
+      ]
+    },
+    {
+      "source": "C:\\Users\\Windows\\Downloads\\Clued_Kernel_Next_多厂商连续性与执行基础设施完整整合方案_v2.8.md",
+      "bytes": 482556,
+      "sha256": "acf38c89d17f6281063f316a64b90d9ba3bba1d33e1ff56c56fa52d74f25122a",
+      "matches": [
+        {
+          "line": 2013,
+          "matched_terms": [
+            "LIBRARY_PATH"
+          ]
+        }
+      ]
+    },
+    {
+      "source": "C:\\Users\\Windows\\Downloads\\Clued_Kernel_Next_多厂商连续性与执行基础设施完整整合方案_v2.7.md",
+      "bytes": 474177,
+      "sha256": "8dae34ef0df24087d2ba11a6a256dd0b8f92754150bd08860ef1282bd746de09",
+      "matches": [
+        {
+          "line": 2013,
+          "matched_terms": [
+            "LIBRARY_PATH"
+          ]
+        }
+      ]
+    },
+    {
+      "source": "C:\\Users\\Windows\\Downloads\\Clued_Kernel_R5_云端权威记忆内核_完整执行计划.md",
+      "bytes": 54432,
+      "sha256": "6bd2ac5bdc7a8307a59ebf47fc989b32987ef3746ab0425c4d80477f80270fba",
+      "matches": [
+        {
+          "line": 557,
+          "matched_terms": [
+            "next_cursor"
+          ]
+        }
+      ]
+    },
+    {
+      "source": "C:\\Users\\Windows\\Downloads\\Clued_Kernel_Next_多厂商连续性与执行基础设施完整整合方案_v3_0.md",
+      "bytes": 512159,
+      "sha256": "685fe56b1b7c03e0f96e176bdf304d756ac8cff273d81fecaba091cc80709d0c",
+      "matches": [
+        {
+          "line": 2102,
+          "matched_terms": [
+            "LIBRARY_PATH"
+          ]
+        }
+      ]
+    },
+    {
+      "source": "C:\\Users\\Windows\\Downloads\\Clued_Kernel_Next_多厂商连续性与执行基础设施完整整合方案_v3.3.md",
+      "bytes": 557313,
+      "sha256": "f967fdf3e63028d29ed191160698726b5d707aaae63bd951f6ba2e8584936fec",
+      "matches": [
+        {
+          "line": 2140,
+          "matched_terms": [
+            "LIBRARY_PATH"
+          ]
+        }
+      ]
+    },
+    {
+      "source": "C:\\Users\\Windows\\Downloads\\Clued_Kernel_Next_多厂商连续性与执行基础设施完整整合方案_v3.2.md",
+      "bytes": 553092,
+      "sha256": "ef743d7d59151be4cbb1c4eb565966f10e3ec9eee70dc6f465e4d94157bccf60",
+      "matches": [
+        {
+          "line": 2140,
+          "matched_terms": [
+            "LIBRARY_PATH"
+          ]
+        }
+      ]
+    },
+    {
+      "source": "C:\\Users\\Windows\\Downloads\\Clued_Kernel_Next_多厂商连续性与执行基础设施完整整合方案_v3.1.md",
+      "bytes": 543385,
+      "sha256": "e822c73e522a4c74670dbde264a19e964db99b0ddb5a5872a82c9463abe6a5fc",
+      "matches": [
+        {
+          "line": 2140,
+          "matched_terms": [
+            "LIBRARY_PATH"
+          ]
+        }
+      ]
+    }
+  ],
+  "library_coverage_complete": false,
+  "status": "LOCAL_SOURCE_SEARCH_NOT_LIVE_LIBRARY_EXPORT",
+  "limitations": "Only project-related text and archive metadata searched; local files and historical references do not establish complete live Library pagination."
+}
