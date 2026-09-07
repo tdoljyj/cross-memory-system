@@ -17,6 +17,7 @@ jobs:
     timeout-minutes: 30
     env:
       SCOPE_PATH: artifacts/clued-validation/structure-freeze-prep/naming/NamingSurfaceInventoryScope.json
+      SOURCE_DIR: /tmp/clued-naming-surface-source
       OUTPUT_DIR: /tmp/clued-naming-surface-inventory
 
     steps:
@@ -30,16 +31,23 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Prepare isolated clean source worktree
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "$SOURCE_DIR" "$OUTPUT_DIR"
+          git worktree add --detach "$SOURCE_DIR" "$GITHUB_SHA"
+          test -z "$(git -C "$SOURCE_DIR" status --porcelain=v1)"
+          mkdir -p "$OUTPUT_DIR"
+
       - name: Generate read-only repository and GitHub inventory
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          rm -rf "$OUTPUT_DIR"
-          mkdir -p "$OUTPUT_DIR"
-          python scripts/clued-naming-surface-inventory.py \
-            --repo-root . \
-            --scope "$SCOPE_PATH" \
+          python "$SOURCE_DIR/scripts/clued-naming-surface-inventory.py" \
+            --repo-root "$SOURCE_DIR" \
+            --scope "$SOURCE_DIR/$SCOPE_PATH" \
             --output-dir "$OUTPUT_DIR" \
             --repository "$GITHUB_REPOSITORY" \
             --github-token "$GITHUB_TOKEN" \
