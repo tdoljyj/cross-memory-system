@@ -1,0 +1,73 @@
+{
+  "record_kind": "USER_APPROVED_A10_MEASUREMENT_SCOPE_AMENDMENT",
+  "record_id": "CLUED_PHASE2_A10_AGENT_HANDOFF_AMENDMENT_20260908",
+  "date": "2026-09-08",
+  "status": "SCOPE_CHANGE_APPROVED_PROTOCOL_PENDING_INDEPENDENT_REVIEW_NOT_EXECUTED",
+  "source_commit": "4d7f93c17cf7d126e771cf8aca6299c868cba0a9",
+  "authority_source": {
+    "kind": "EXPLICIT_CURRENT_CONVERSATION_USER_INSTRUCTION",
+    "task_id": "01a07f5e-510d-7db3-877d-f56e9bfa07ea",
+    "verbatim": "这个你代替和并发 代替真人交接测量",
+    "context": "User quoted the original requirement for at least 12 real-human handoff measurements and explicitly replaced the participants with the coordinator and parallel agents.",
+    "provenance": "Exact current-turn instruction relayed by coordinator /root to implementer /root/controller_candidate.",
+    "effect": "The explicit user instruction changes A10 acceptance population and metric to real agent handoff measurement. Human participation is no longer a completion prerequisite for this amended A10. No agent measurement may be labelled human."
+  },
+  "original_sources_preserved": [
+    {
+      "path": "C:/Users/Windows/Documents/Codex/2026-09-08/ia/work/slice-a-contracts/Charter.md",
+      "sha256": "bd8a96afad8d174e0333c92a01281d6f8613f5fff33b98365609f72f2c525b72",
+      "relevant_scope": "§10; original 24 cases, 72 slots, handoff median ratio and latency/security thresholds"
+    },
+    {
+      "path": "C:/Users/Windows/Documents/Codex/2026-09-08/ia/work/slice-a-contracts/CharterCandidate.json",
+      "sha256": "44010776cae2a816d4db8134c96a0ee0f07a692b84bae47fc37a6effc7e302c8"
+    },
+    {
+      "path": "C:/Users/Windows/Documents/Codex/2026-09-08/ia/work/slice-a-contracts/SliceAPreregistration.json",
+      "sha256": "289dd3f7091b41a319b6604d6246010d4acd60e8f44955b6ce8b67ec13f8a033",
+      "relevant_scope": "thresholds.median_active_human_handoff_time_ratio_max and measurement.paired_baseline/time"
+    },
+    {
+      "path": "C:/Users/Windows/Documents/Codex/2026-09-08/ia/work/slice-a-contracts/SliceACaseCatalog.json",
+      "sha256": "c07b1450cd3615ee66d56fffbca11966a0de1cc1bc75b8855fc81df42c58ed86",
+      "relevant_scope": "Case identity binding only; no private Gold read by implementer"
+    }
+  ],
+  "amendment": {
+    "only_changed_item": "A10",
+    "original_population": "Real humans performing paired active handoff measurements",
+    "replacement_population": "Coordinator and actual parallel agents performing instrumented handoff and continuation tasks",
+    "metric_name": "median_paired_agent_active_handoff_time_ratio",
+    "metric_formula": "median over valid normal cases of median(three Clued agent active handoff durations) / one baseline agent active handoff duration",
+    "metric_max": 0.8,
+    "minimum_valid_case_pairs": 12,
+    "planned_normal_case_pairs": 16,
+    "baseline_repetitions_per_normal_case": 1,
+    "clued_repetitions_per_normal_case": 3,
+    "statistical_unit": "CASE_PAIR_NOT_AGENT_COUNT_OR_REPETITION",
+    "human_efficiency_claim_allowed": false,
+    "self_assigned_score_substitutes_for_timing": false,
+    "measurement_execution_started": false,
+    "measured_results": []
+  },
+  "preserved_requirements": {
+    "A08": "Independent Gold custody, preregistered task/input digests, fixed tokenizer/environment/schedule and 72 run slots unchanged.",
+    "A09": "24 cases, 16 normal and 8 expected blocked, 3 repetitions each; normal success at least 15/16 with all three runs correct, blocked 8/8 with all three correct denials; unchanged functional/safety thresholds.",
+    "security": "Unauthorized side effects, cross-scope disclosures and forged success/approval all remain zero; critical constraint and exact Canonical provenance retention remain 100%.",
+    "context": "2048-token ContextPack budget with fixed tokenizer; cold/warm P95 each at most 3 seconds with at least 12 samples per group; any single generation over 10 seconds fails. A10 timing does not replace these measurements.",
+    "original_bytes": "All original documents remain unchanged, including their historical human metric names and status. This separate amendment records the approved successor semantics.",
+    "real_evidence": "Actual host-measured start/end, input/output hashes, actor/session IDs, trace, interruptions and exclusions; blinded independent correctness assessment. Agent self-evaluation or synthetic durations cannot replace these."
+  },
+  "execution_boundary": {
+    "protocol": "MeasurementProtocol.md",
+    "protocol_status": "PREPARED_PENDING_INDEPENDENT_REVIEW",
+    "formal_entry_required": true,
+    "slice_a_scoped_authorization_required": true,
+    "gold_read_by_implementer": false,
+    "authority_expansion": "No new model/provider/paid/production permission, concurrency capacity, Profile, controller qualification or GA is supplied. Existing lower limits still apply.",
+    "parallelism": "Use real coordinator and parallel agents in separately bound roles; measured work is serial by default under current one-active-isolated-test limit. Parallel agent preparation/evidence work does not multiply controlled execution capacity or reduce elapsed times by arithmetic.",
+    "pass_condition": "Independent protocol acceptance plus actual eligible runs, at least 12 valid pairs and ratio at most 0.8, with all other applicable functional/safety/Entry conditions satisfied. No PASS from this amendment alone.",
+    "stage_pass_issued": false,
+    "signature_publication": "Coordinator handles integration and any required actual signature binding separately; no future signature/merge predeclared."
+  }
+}
