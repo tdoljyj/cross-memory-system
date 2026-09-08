@@ -1,0 +1,173 @@
+{
+  "state": "EXACT_ENGINEERING_SUCCESSOR_PREPARED_REQUIRES_INDEPENDENT_ACCEPTANCE",
+  "files": [
+    {
+      "path": "work/kernel-phase2-repo/scripts/phase2-qualification/control-context-verifier-evidence-blob-successor/original-inputs-blob.mjs",
+      "sha256": "4b81b7a0207b0f8c9a5d3461542dd1abb6393b3eab5b616180484585f6bf9ade",
+      "bytes": 7453
+    },
+    {
+      "path": "work/kernel-phase2-repo/scripts/phase2-qualification/control-context-verifier-evidence-blob-successor/original_input_publisher.py",
+      "sha256": "fdc71e98bb88988fceddd498de9b1489df3de1df83a198a089d42fa22143c449",
+      "bytes": 16152
+    },
+    {
+      "path": "work/kernel-phase2-repo/scripts/phase2-qualification/control-context-verifier-evidence-blob-successor/result-terminal.mjs",
+      "sha256": "f1dc26baf79a95849b5ea176293b7cee86194b84623b7bc4cb6075347632f06a",
+      "bytes": 7602
+    },
+    {
+      "path": "work/kernel-phase2-repo/scripts/phase2-qualification/control-context-verifier-evidence-blob-successor/context.mjs",
+      "sha256": "742ebe382d1db757c0be72403b8ba27ee051476e97a8e6aec183827937756a8c",
+      "bytes": 22296
+    },
+    {
+      "path": "work/kernel-phase2-repo/scripts/phase2-qualification/control-context-verifier-evidence-blob-successor/source-publication.mjs",
+      "sha256": "8e0201880b396ea6d5c9ef881cbfcebec7066ec5e8ca95209699c0fe25eaef36",
+      "bytes": 3138
+    },
+    {
+      "path": "work/kernel-phase2-repo/scripts/phase2-qualification/control-context-verifier-evidence-blob-successor/cli.mjs",
+      "sha256": "670a22a1f298fd52a2ff9f5b140df2aea6d031eed41777851b443fa2814f356f",
+      "bytes": 1732
+    },
+    {
+      "path": "work/kernel-phase2-repo/scripts/phase2-qualification/control-context-verifier-evidence-blob-successor/tool-entry.functions.js",
+      "sha256": "10ed077cf5fb3003374fa1ced12bb83ed93fcd51e4abeb9bd0b05955c976314e",
+      "bytes": 9975
+    },
+    {
+      "path": "work/kernel-phase2-repo/scripts/phase2-qualification/control-context-verifier-evidence-blob-successor/ControllerSourceManifest.candidate.json",
+      "sha256": "0ff3e4bed5587805b69e5c9e1787d60b789d46c32a9c02ae20c8dfb899af98b2",
+      "bytes": 47995
+    },
+    {
+      "path": "work/kernel-phase2-repo/scripts/phase2-qualification/control-context-verifier-evidence-blob-successor/GateDefinitionCandidate.json",
+      "sha256": "71130c92be95a3b16d44d3ebe7fb439dfe8fc8b44354b5adfd79652425346958",
+      "bytes": 12863
+    },
+    {
+      "path": "work/kernel-phase2-repo/scripts/phase2-qualification/control-context-verifier-evidence-blob-successor/preentry-skill-qualification.json",
+      "sha256": "006403a5c790fc088f24681b142467c18d97528b97f41b2c3071d3381671769a",
+      "bytes": 124570
+    },
+    {
+      "path": "work/kernel-phase2-repo/scripts/phase2-qualification/control-context-verifier-evidence-blob-successor/RegistrySuccessorCandidate.json",
+      "sha256": "aab112c993a3a1749e216e58af5d970a7b6a8bb2edecf24cec650372b091fc5e",
+      "bytes": 2271
+    },
+    {
+      "path": "work/kernel-phase2-repo/scripts/phase2-qualification/control-context-verifier-evidence-blob-successor/StaticInputChangeSet.json",
+      "sha256": "0c9bb3414135b3549fe05e20179588b0d099c43d90140eb98bc944fe146ff441",
+      "bytes": 2007
+    },
+    {
+      "path": "work/kernel-phase2-repo/scripts/phase2-qualification/control-context-verifier-evidence-blob-successor/build-controller-manifest.mjs",
+      "sha256": "edd305beb038a8ab8574ba198c6824d5c9e36903bb03983cd5ffa4ce3a127579",
+      "bytes": 8021
+    },
+    {
+      "path": "work/kernel-phase2-repo/scripts/phase2-qualification/control-context-verifier-evidence-blob-successor/build-static-inputs.mjs",
+      "sha256": "4bc89a60a2e88f4c1273c18ba22215ea9035e3671a6073247ebe7fb15b7ae3a8",
+      "bytes": 4639
+    },
+    {
+      "path": "work/kernel-phase2-repo/scripts/phase2-qualification/control-context-verifier-evidence-blob-successor/python-import-catalog.py",
+      "sha256": "d47aa99b3d09d9f868c13a0c1a2ed5310881d7e7e4765009c638043f3ae5efc5",
+      "bytes": 1801
+    },
+    {
+      "path": "work/kernel-phase2-repo/scripts/phase2-qualification/control-context-verifier-evidence-blob-successor/blob-inputs.test.mjs",
+      "sha256": "6f6eca279a8671b05fbb07a2cfb57652396faf3369fbd6199777cca575eb9708",
+      "bytes": 2585
+    },
+    {
+      "path": "work/kernel-phase2-repo/scripts/phase2-qualification/control-context-verifier-evidence-blob-successor/blob-response.test.mjs",
+      "sha256": "b9af6e661bed188f1de4b6f1f3ae2d8f072a4a098c4da5faa10d505da0e60464",
+      "bytes": 3147
+    },
+    {
+      "path": "work/normal600-pipe-evidence-blob/PreparationEvidence.json",
+      "sha256": "ad099007d980072e0e6bc38bc4ebf4b952f5f1a8f62fbc39e0a2c9e75244d0dc",
+      "bytes": 1864
+    },
+    {
+      "path": "work/binding-evidence-tests/ComponentEvidence.json",
+      "sha256": "27d41e4ac6ef7753e4b02bb62d970c9c9902484cfc23f9564b65b763bf000084",
+      "bytes": 2029
+    },
+    {
+      "path": "work/binding-evidence-tests/FunctionDefinitions.json",
+      "sha256": "27f3e076aaa62a46aecb93341f2c79dfa858c871b6f557b8a89e303d0682ddf6",
+      "bytes": 29579
+    },
+    {
+      "path": "work/prepare-ordinary-binding-forward.mjs",
+      "sha256": "dc57a2623a35cba38c6bfa472444da2fbb83a80867f9aef6a5d477b6d812025c",
+      "bytes": 5457
+    },
+    {
+      "path": "work/test-original-input-publisher.py",
+      "sha256": "1e7a4cfc21e0732d41e13a3115c80b81a9dde9cd391ff7b02a1f9cc2cfe538e7",
+      "bytes": 1345
+    }
+  ],
+  "controller_manifest_sha256": "0ff3e4bed5587805b69e5c9e1787d60b789d46c32a9c02ae20c8dfb899af98b2",
+  "old_controller_sha256": "edf31377656e1a9a473d0095df72231c058266007e4fd4046e0a9b8c2d6a60d9",
+  "sources": 218,
+  "loaded_python_modules": 106,
+  "source_boundary": "Full old dependency set retained; explicit new terminal/context/CLI/source-publication/tool entry; exact fixed external pipe files included as runtime dependencies; old 201 never modified",
+  "tests": [
+    {
+      "kind": "pure full historical original input and strict envelope guards",
+      "tests": 2,
+      "pass": 2,
+      "duration_ms": 135.265,
+      "network": false
+    },
+    {
+      "kind": "actual production decoder function bodies under explicit synthetic Git response fixture; private/tree/blob negatives and local cache",
+      "tests": 1,
+      "pass": 1,
+      "duration_ms": 125.5059,
+      "network": false
+    },
+    {
+      "kind": "publisher local fixed target/type/size",
+      "positive_bytes": 683291,
+      "negative_cases": 4,
+      "network": false
+    },
+    {
+      "kind": "private SQL forward projection integration",
+      "tests": 4,
+      "pass": 4,
+      "duration_ms": 3041.1382,
+      "source": "work/binding-evidence-tests/ComponentEvidence.json"
+    },
+    {
+      "kind": "PostgreSQL canonical DDL metadata capture only",
+      "tests": 1,
+      "pass": 1,
+      "duration_ms": 3212.0689
+    }
+  ],
+  "unchanged": [
+    "Profile d1c / original child98c4 / parent065d / 600 seconds / Docker limits",
+    "Root/gen2/issuer algorithms",
+    "SQL original 131072 full request and evidence index limits",
+    "original fault input observations and their actual old checkCurrentSemantics call source",
+    "old DEFLATE_V1 decoding path",
+    "original complete history and all counters/receipts"
+  ],
+  "remaining": [
+    "new exact Scope/HostConfig/qualification/runtime/Status actual signatures and source refs",
+    "one accepted fixed forward-binding registration with actual full terminal before-image",
+    "root new pure budget/GA helper exact new accepted inputs",
+    "actual ordinary original-input measurement followed by fixed publisher/readback; no fabricated blob publication",
+    "new execution / all actual independent case results; no PQUAL PASS claimed"
+  ],
+  "authority_issued": false,
+  "remote_sql_written": false,
+  "new_ga_or_budget_created": false
+}

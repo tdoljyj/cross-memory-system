@@ -1,0 +1,54 @@
+{
+  "state": "ACCEPTED_EXACT_EVIDENCE_BLOB_CONTROLLER_SOURCE_AND_STATIC_SUCCESSOR",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "reviewed_at": "2026-09-08T22:38:12.624Z",
+  "reviewer_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/e7f738ae3c247e41733872ab95387440205c736a",
+    "sha256": "e09ef634712ce1206600402552073bae91e7296f2b4e2d3f99855bd760c944bd"
+  },
+  "source_evidence_sha256": "4f70ecfd1c393620d079fcd070f44fd6240273b47a86214a13306979c7fa7f26",
+  "controller_digest": "0ff3e4bed5587805b69e5c9e1787d60b789d46c32a9c02ae20c8dfb899af98b2",
+  "old_controller_digest": "edf31377656e1a9a473d0095df72231c058266007e4fd4046e0a9b8c2d6a60d9",
+  "gate_digest": "71130c92be95a3b16d44d3ebe7fb439dfe8fc8b44354b5adfd79652425346958",
+  "suite_digest": "006403a5c790fc088f24681b142467c18d97528b97f41b2c3071d3381671769a",
+  "gate_version": "fixed-synthetic-20260909.v4-evidence-blob",
+  "profile_digest": "d1c060b85f0b842a397a478105ea57a208e62eb0a5a2d4c2cd8f93f63eae88f5",
+  "transport": {
+    "preparation_sha256": "ad099007d980072e0e6bc38bc4ebf4b952f5f1a8f62fbc39e0a2c9e75244d0dc",
+    "wrapper_sha256": "38ed24e697568e48856c6bb18dd11d41d1c7805f05519ddc47c3788f54561b08",
+    "entry_sha256": "10ed077cf5fb3003374fa1ced12bb83ed93fcd51e4abeb9bd0b05955c976314e",
+    "predecessor_acceptance_sha256": "d3062ecd30bca9d39834ce1ed32d67d718f5270e847aa1e9a57fead3953d729e"
+  },
+  "sql_component_acceptance_sha256": "29853915b44709cd7c5753f09e40a3a2d4fb5927eda163ed43e05ae691780dd7",
+  "independent_validation": {
+    "受查清单文件数": 22,
+    "完整执行源数": 218,
+    "旧源逐条保留数": 201,
+    "全部文件实际SHA与长度匹配": true,
+    "十九项原测试与oracle仅更新明确输入绑定": true,
+    "原fault重建函数除decoder会话参数逐字相同": true,
+    "原context与CLI除真实模块引用逐字相同": true,
+    "source_publication新固定manifest路径实际接线": true,
+    "新transport与entry实际解析及完整entry_raw摘要检查": true,
+    "validation_observation": "Existing 2 pure envelope checks, 1 production-body synthetic Git-response check and local Python boundary check reviewed; no rerun, network publication, SQL, host or actual PQUAL performed in this source review."
+  },
+  "accepted_boundary": [
+    "Original complete verifier input remains canonical UTF-8 with exact SHA/length and a 1048576-byte cap; the new envelope is at most4096 bytes and binds the same private repository, fixed GA evidence path, immutable commit/tree/blob and exact original urn.",
+    "Consumer performs actual private repository and full immutable commit/tree/path/mode/blob reads. A module-private opaque verification session caches only the already verified immutable original strings for that terminal call; each fault still independently reconstructs the actual input and checks GA/test/digests.",
+    "Legacy DEFLATE_V1 delegates to its original decoder. SQL, full evidence index and escaped transition retain 131072-byte limits.",
+    "Publisher is a fixed root-only ordinary Evidence writer with same private branch, one create-only original-inputs-<ga>/result.json, durable once tickets and exact readback; no child network or publication permission is introduced.",
+    "New context/source-publication/terminal/CLI/tools and byte-pipe loader actually route the successor. Original Root/issuer/signature/freshness/dispatch/STOP/result-CAS semantics remain.",
+    "The accepted private binding SQL is a separate implementation component. Source acceptance does not register a new binding or admit an old GA."
+  ],
+  "preparation_helper_boundary": "prepare-ordinary-binding-forward dc57 is only a data preparation fragment. Final registration must additionally guard the full actual function/table/security/stored-Status state and bind the exact Gate inside the signed suite, all source signatures, complete prior history and current sequence. Its output is not independently executable approval.",
+  "required_before_new_run": [
+    "Actual same-scope Host/Scope/Gate/qualification/runtime and Status input bindings, source commit and Owner signatures",
+    "Exact guarded forward registration with fresh full postimage and immutable old receipts/budgets preserved",
+    "New precise budget/GA data helper consuming the new bindings and actual state",
+    "Actual original-input measurement and fixed publisher/readback before the final evidence envelope; no prefilled test verdict"
+  ],
+  "qualification_issued": false,
+  "old_qualification_extended": false,
+  "new_action_authorized": false,
+  "budget_refund": false
+}

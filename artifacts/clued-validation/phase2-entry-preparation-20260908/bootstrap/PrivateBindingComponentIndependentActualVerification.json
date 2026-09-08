@@ -1,0 +1,91 @@
+{
+  "state": "ACCEPTED_EXACT_PRIVATE_BINDING_COMPONENT_ACTUAL_INSTALLATION",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "observed_at": "2026-09-08 22:38:48.555686+00",
+  "project_ref": "uscrdifznmlvczcekqpw",
+  "guard_acceptance_sha256": "dd86ffc79215c73a681cebf9f2a3cd5cca4b3392344f798a86b255383b2aaa2e",
+  "sql_sha256": "6e300f60853ebe871f1b5a5056495692ec4c895aaa98cb4674d5846372d1104e",
+  "full_actual_readback_sha256": "2289f45e1bc0ed2b31932b07f4263f7971f24edb1e6b8b8813ad1941b323f18f",
+  "full_expected_postimage_matched": true,
+  "functions": 15,
+  "tables": 8,
+  "counts": {
+    "gate_attempts": 2,
+    "control_objects": 1,
+    "execution_events": 9,
+    "execution_binding": 1,
+    "execution_current": 1
+  },
+  "changed_functions": [
+    {
+      "acl": "{postgres=X/postgres}",
+      "name": "effective_execution_binding",
+      "owner": "postgres",
+      "config": [
+        "search_path=\"\"",
+        "TimeZone=UTC"
+      ],
+      "sha256": "82e3f6e50cacad6143e0ee3fe591e66d008b6dfebc2d211952a9a9da6f447c26",
+      "arguments": "",
+      "prosrc_sha256": "898643df5f7faa32cd089ad766029f68a830fb9c826359c7a1ef11cfbf5213aa",
+      "security_definer": true
+    },
+    {
+      "acl": "{postgres=X/postgres,service_role=X/postgres}",
+      "name": "read_execution",
+      "owner": "postgres",
+      "config": [
+        "search_path=\"\"",
+        "TimeZone=UTC"
+      ],
+      "sha256": "742fe33f0bb9f0f957e182573c8b0f049d8aef838df9e9e7db37c5007dfb98fe",
+      "arguments": "",
+      "prosrc_sha256": "bc6cd2c65deabc43328f4789bc41741247399988e8a3d080a99588ca1f08ec9a",
+      "security_definer": true
+    },
+    {
+      "acl": "{postgres=X/postgres,service_role=X/postgres}",
+      "name": "reserve_execution_budget",
+      "owner": "postgres",
+      "config": [
+        "search_path=\"\"",
+        "TimeZone=UTC"
+      ],
+      "sha256": "aa2025c1c4b9cc2959f5697e9ec2266e92ddeda004be2ce97ed4345a40b7b30b",
+      "arguments": "p_raw text, p_sha text",
+      "prosrc_sha256": "81d259feedf387a0d2c60a55fc6370d5a0860047a6d2f9da224fe16b4b6516b6",
+      "security_definer": true
+    },
+    {
+      "acl": "{postgres=X/postgres,service_role=X/postgres}",
+      "name": "reserve_gate",
+      "owner": "postgres",
+      "config": [
+        "search_path=\"\"",
+        "TimeZone=UTC"
+      ],
+      "sha256": "dcc14a0fc2d7b8fbe5df1bc12d60bb13ecc13c11764fa228e606ffde455177bb",
+      "arguments": "p_raw text, p_sha text",
+      "prosrc_sha256": "4c1801c3d4256518f4961bdd1839f9d7a02bb0e30511f97b3bdeca867ec965de",
+      "security_definer": true
+    }
+  ],
+  "preserved": {
+    "root_full_object": true,
+    "original_immutable_binding": true,
+    "all_nine_events": true,
+    "both_complete_BLOCKED_receipts": true,
+    "stored_status_complete": true,
+    "all_table_acl_rls": true,
+    "all_other_function_bytes_and_security": true,
+    "charged_seconds": 2706,
+    "charged_evidence_bytes": 590982067,
+    "active_ga_id": null,
+    "pending_budget_sequence": null,
+    "current_sequence": 9
+  },
+  "applicability": "Only the accepted private getter/three-reader component is installed. No forward binding event, new Status, budget or GA was added. The effective binding still equals the immutable original because no successor event exists. New source/runtime/signature acceptance and a separately guarded registration remain required.",
+  "new_action_authorized": false,
+  "old_qualification_extended": false,
+  "budget_refund": false
+}
