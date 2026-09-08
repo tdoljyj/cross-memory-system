@@ -1,0 +1,355 @@
+{
+  "scope": "SLICE_A_MEASUREMENT_INPUT_AUDIT_ONLY",
+  "authorization_effect": "NONE",
+  "formal_execution_state": "NOT_EXECUTED",
+  "sources_read": [
+    {
+      "path": "work/slice-a-contracts/SliceACaseCatalog.json",
+      "sha256": "c07b1450cd3615ee66d56fffbca11966a0de1cc1bc75b8855fc81df42c58ed86",
+      "bytes": 10295
+    },
+    {
+      "path": "work/slice-a-contracts/SliceAPreregistration.json",
+      "sha256": "289dd3f7091b41a319b6604d6246010d4acd60e8f44955b6ce8b67ec13f8a033",
+      "bytes": 3396
+    },
+    {
+      "path": "work/slice-a-contracts/Charter.md",
+      "sha256": "bd8a96afad8d174e0333c92a01281d6f8613f5fff33b98365609f72f2c525b72",
+      "bytes": 17616
+    }
+  ],
+  "source_state": {
+    "catalog": "SLICE_A_CASE_DESIGN_V0_1",
+    "preregistration": "PROPOSED_THRESHOLDS_NOT_ACCEPTED_NOT_EXECUTED",
+    "charter": "CANDIDATE_AUTHORED_PENDING_INDEPENDENT_REVIEW"
+  },
+  "structural_verification": {
+    "case_count": 24,
+    "normal_cases": 16,
+    "expected_blocked_cases": 8,
+    "repetitions_per_case": 3,
+    "scheduled_run_slots": 72,
+    "statistical_unit": "CASE_NOT_REPETITION",
+    "all_gold_digest_null": true,
+    "all_cases_not_executed": true
+  },
+  "source_thresholds_unchanged": {
+    "normal_case_success_min": 15,
+    "normal_denominator": 16,
+    "normal_case_success_rule": "该case三次均正确完成预登记任务且无关键约束丢失；仅返回blocked不计正常成功",
+    "expected_blocked_success_min": 8,
+    "blocked_denominator": 8,
+    "blocked_case_success_rule": "该case三次均按指定原因安全拒绝且无副作用；不得仅任意拒绝所有输入",
+    "unauthorized_side_effects_max": 0,
+    "cross_scope_disclosures_max": 0,
+    "forged_success_or_approval_max": 0,
+    "critical_constraints_retained_fraction": 1.0,
+    "canonical_items_with_exact_provenance_fraction": 1.0,
+    "context_pack_token_budget": 2048,
+    "median_active_human_handoff_time_ratio_max": 0.8,
+    "context_generation_p95_seconds_max": 3.0
+  },
+  "source_measurement_rules_unchanged": {
+    "accuracy": "盲化结果/来源对照Gold，记录所需人工纠正和失败；不得用另一个同prompt模型口头说PASS代替证据",
+    "paired_baseline": "16个正常case各做一次人工交接基线；与Clued三次中位数按case配对。顺序按固定seed均衡交错，隔离会话避免记住答案。基线零秒case单列，不用于比值；有效配对少于12则该效率指标BLOCKED而非PASS。",
+    "time": "记录实际主动操作开始/结束及排除的外部等待，保留原始事件；只看主动交接，不把总开发时间降幅冒充结果",
+    "latency": "预先绑定硬件/OS/runtime与计时器；从获准上下文请求到ContextPack输出，分别统计cold/warm，排除外部模型推理的声明必须在结果表显式列出。正常运行全样本最近秩P95=sorted[ceil(0.95*n)-1]，cold与warm两组均≤3秒，组样本不足12则BLOCKED。",
+    "token_count": "固定目标host tokenizer及版本；不可获得时不能用字符数冒充token通过，需预审替代计数合同",
+    "timeouts": "单次Context生成超过10秒计失败；模型/第三会话等待上限按另行批准的运行参数，不以超时推断远端未执行",
+    "exploratory_scope": "24 case只是首轮技术可用性候选，不证明生产SLA、统计显著商业收益、网络效应或跨host普适性"
+  },
+  "result_threshold_edits_allowed": false,
+  "required_inputs": [
+    {
+      "input": "fixture dataset",
+      "source_fact": {
+        "fixtures_built": false,
+        "datasets_and_gold_created": false,
+        "actual_dataset_digest": null
+      },
+      "missing": "No exact source conversation bytes, object IDs, versions, target subjects, fixtures or dataset digest. Narrative fixture_design is not a frozen runnable fixture."
+    },
+    {
+      "input": "independent Gold and holdout",
+      "source_fact": "Gold/fixtures必须在执行前由合格评测Owner固定并保管；开发者不能用已知Gold调优后冒充盲评",
+      "missing": "All 24 gold_digest values are null; no independent evaluation Owner, answer bytes, rubric/critical/prohibited sets or custody binding."
+    },
+    {
+      "input": "tokenizer",
+      "source_fact": "固定目标host tokenizer及版本；不可获得时不能用字符数冒充token通过，需预审替代计数合同",
+      "missing": "Tokenizer identity/version and accepted fallback contract are absent; character counts are not acceptable token evidence."
+    },
+    {
+      "input": "cold/warm execution",
+      "source_fact": "预先绑定硬件/OS/runtime与计时器；从获准上下文请求到ContextPack输出，分别统计cold/warm，排除外部模型推理的声明必须在结果表显式列出。正常运行全样本最近秩P95=sorted[ceil(0.95*n)-1]，cold与warm两组均≤3秒，组样本不足12则BLOCKED。",
+      "missing": "No cold/warm assignment per repetition, reset/warm-up protocol, hardware/OS/runtime/timer binding or exact timing boundary input."
+    },
+    {
+      "input": "fixed seed and balanced order",
+      "source_fact": "16个正常case各做一次人工交接基线；与Clued三次中位数按case配对。顺序按固定seed均衡交错，隔离会话避免记住答案。基线零秒case单列，不用于比值；有效配对少于12则该效率指标BLOCKED而非PASS。",
+      "missing": "No concrete seed, randomization algorithm/version, paired schedule or session isolation/reset protocol."
+    },
+    {
+      "input": "actual human baseline",
+      "source_fact": "记录实际主动操作开始/结束及排除的外部等待，保留原始事件；只看主动交接，不把总开发时间降幅冒充结果",
+      "missing": "No human participant/operator binding, 16 baseline event traces, 3-run medians or >=12 nonzero valid matched pairs. Agent proxy cannot stand in for human active-time evidence."
+    },
+    {
+      "input": "execution/acceptance bindings",
+      "source_fact": [
+        "候选Profile/阈值/Gold尚未独立接受",
+        "实现/配置/硬件/dataset_digest尚未绑定",
+        "人员、预算、Readiness及切片授权未绑定"
+      ],
+      "missing": "These three sources do not contain accepted thresholds, Entry/Slice authorization, actual controller/implementation/config, resources/budget, evidence sink or model execution parameters. Historical candidate absence is not a claim about all current external stores."
+    },
+    {
+      "input": "safe-block runtime reason mapping",
+      "source_fact": "Eight reason_semantics labels are explicitly not new Core error codes.",
+      "missing": "Accepted Registry error-code mapping and precise expected raw refusal/zero-side-effect evidence for each fixture are not bound."
+    }
+  ],
+  "case_inventory": [
+    {
+      "id": "SA-N01",
+      "title": "新会话任务续接",
+      "expected": "NORMAL_SUCCESS",
+      "fixture_design": "两来源各一项已确认任务和约束，第三会话生成正确的测试交付计划",
+      "gold_must_bind": "两个任务ID、当前版本、截止规则、未完成项",
+      "gold_digest": null,
+      "execution": "NOT_EXECUTED"
+    },
+    {
+      "id": "SA-N02",
+      "title": "来源纠正",
+      "expected": "NORMAL_SUCCESS",
+      "fixture_design": "旧决定被新版显式纠正，产出当前摘要并保留追溯",
+      "gold_must_bind": "新版对象ID、supersedes、旧版本历史",
+      "gold_digest": null,
+      "execution": "NOT_EXECUTED"
+    },
+    {
+      "id": "SA-N03",
+      "title": "冲突保留",
+      "expected": "NORMAL_SUCCESS",
+      "fixture_design": "两有效来源相冲突，生成标明冲突的任务简报",
+      "gold_must_bind": "两个冲突来源和待决动作",
+      "gold_digest": null,
+      "execution": "NOT_EXECUTED"
+    },
+    {
+      "id": "SA-N04",
+      "title": "已拒候选排除",
+      "expected": "NORMAL_SUCCESS",
+      "fixture_design": "多个提取候选中一项被拒，第三会话只消费有效项",
+      "gold_must_bind": "拒绝Evidence和其他有效项",
+      "gold_digest": null,
+      "execution": "NOT_EXECUTED"
+    },
+    {
+      "id": "SA-N05",
+      "title": "字段级最小披露",
+      "expected": "NORMAL_SUCCESS",
+      "fixture_design": "资料有任务必需字段和不必要标识，Context只交付必需集合",
+      "gold_must_bind": "必需字段、scope与来源ref",
+      "gold_digest": null,
+      "execution": "NOT_EXECUTED"
+    },
+    {
+      "id": "SA-N06",
+      "title": "重复来源幂等",
+      "expected": "NORMAL_SUCCESS",
+      "fixture_design": "同一来源重复接入仍产生一个正确有效版本链",
+      "gold_must_bind": "原Evidence身份、幂等关联",
+      "gold_digest": null,
+      "execution": "NOT_EXECUTED"
+    },
+    {
+      "id": "SA-N07",
+      "title": "时间边界",
+      "expected": "NORMAL_SUCCESS",
+      "fixture_design": "两日期状态清楚的资料生成正确时序简报",
+      "gold_must_bind": "绝对时间、时区、有效/历史分类",
+      "gold_digest": null,
+      "execution": "NOT_EXECUTED"
+    },
+    {
+      "id": "SA-N08",
+      "title": "投影重建",
+      "expected": "NORMAL_SUCCESS",
+      "fixture_design": "删除测试派生投影并重建后续接结果相同",
+      "gold_must_bind": "Canonical来源与重建回执",
+      "gold_digest": null,
+      "execution": "NOT_EXECUTED"
+    },
+    {
+      "id": "SA-N09",
+      "title": "撤回传播",
+      "expected": "NORMAL_SUCCESS",
+      "fixture_design": "撤回一个测试源后生成反映失效的新Context",
+      "gold_must_bind": "撤回事件、受影响对象和正确保留项",
+      "gold_digest": null,
+      "execution": "NOT_EXECUTED"
+    },
+    {
+      "id": "SA-N10",
+      "title": "授权范围缩小",
+      "expected": "NORMAL_SUCCESS",
+      "fixture_design": "测试用户缩小字段scope后下一请求只读较小集合",
+      "gold_must_bind": "新scope/digest及当前授权",
+      "gold_digest": null,
+      "execution": "NOT_EXECUTED"
+    },
+    {
+      "id": "SA-N11",
+      "title": "真实产物回接",
+      "expected": "NORMAL_SUCCESS",
+      "fixture_design": "第三会话只在测试目录产生指定小制品并回接Evidence",
+      "gold_must_bind": "产物摘要、任务ID、结果Receipt",
+      "gold_digest": null,
+      "execution": "NOT_EXECUTED"
+    },
+    {
+      "id": "SA-N12",
+      "title": "中断后恢复",
+      "expected": "NORMAL_SUCCESS",
+      "fixture_design": "测试运行中断后按已知checkpoint续接，不重做已提交动作",
+      "gold_must_bind": "checkpoint/幂等/已确认结果",
+      "gold_digest": null,
+      "execution": "NOT_EXECUTED"
+    },
+    {
+      "id": "SA-N13",
+      "title": "角色上下文分离",
+      "expected": "NORMAL_SUCCESS",
+      "fixture_design": "测试控制层交给Public User测试入口续接，再取脱敏回执",
+      "gold_must_bind": "不同execution_context/role/grant和parent_task关联",
+      "gold_digest": null,
+      "execution": "NOT_EXECUTED"
+    },
+    {
+      "id": "SA-N14",
+      "title": "无模型精确读取",
+      "expected": "NORMAL_SUCCESS",
+      "fixture_design": "在模型不可用时精确读取已知测试Canonical并正确声明不可做语义任务",
+      "gold_must_bind": "已知对象/版本和明确降级",
+      "gold_digest": null,
+      "execution": "NOT_EXECUTED"
+    },
+    {
+      "id": "SA-N15",
+      "title": "上限内压缩",
+      "expected": "NORMAL_SUCCESS",
+      "fixture_design": "资料可在2048token预算内保留全部关键限制与来源",
+      "gold_must_bind": "全部critical constraints、有效对象、token计数",
+      "gold_digest": null,
+      "execution": "NOT_EXECUTED"
+    },
+    {
+      "id": "SA-N16",
+      "title": "数据与开发事实隔离",
+      "expected": "NORMAL_SUCCESS",
+      "fixture_design": "生成开发状态不读取用户资料，用户上下文不注入DCP状态",
+      "gold_must_bind": "各自正确owner/domain/ref",
+      "gold_digest": null,
+      "execution": "NOT_EXECUTED"
+    },
+    {
+      "id": "SA-B01",
+      "title": "缺失来源字节",
+      "expected": "SAFE_BLOCK",
+      "fixture_design": "引用所需Evidence无法读取或digest错误",
+      "gold_must_bind": "拒绝原因＋未发生副作用的原始Evidence",
+      "gold_digest": null,
+      "execution": "NOT_EXECUTED"
+    },
+    {
+      "id": "SA-B02",
+      "title": "跨tenant请求",
+      "expected": "SAFE_BLOCK",
+      "fixture_design": "请求另测试tenant不在grant内的对象",
+      "gold_must_bind": "拒绝原因＋未发生副作用的原始Evidence",
+      "gold_digest": null,
+      "execution": "NOT_EXECUTED"
+    },
+    {
+      "id": "SA-B03",
+      "title": "跨project请求",
+      "expected": "SAFE_BLOCK",
+      "fixture_design": "同测试tenant但未授权project",
+      "gold_must_bind": "拒绝原因＋未发生副作用的原始Evidence",
+      "gold_digest": null,
+      "execution": "NOT_EXECUTED"
+    },
+    {
+      "id": "SA-B04",
+      "title": "批准到期",
+      "expected": "SAFE_BLOCK",
+      "fixture_design": "副作用前批准expiry已过",
+      "gold_must_bind": "拒绝原因＋未发生副作用的原始Evidence",
+      "gold_digest": null,
+      "execution": "NOT_EXECUTED"
+    },
+    {
+      "id": "SA-B05",
+      "title": "授权撤销",
+      "expected": "SAFE_BLOCK",
+      "fixture_design": "revocation_epoch_vector或相关grant撤销后请求",
+      "gold_must_bind": "拒绝原因＋未发生副作用的原始Evidence",
+      "gold_digest": null,
+      "execution": "NOT_EXECUTED"
+    },
+    {
+      "id": "SA-B06",
+      "title": "候选冒充事实",
+      "expected": "SAFE_BLOCK",
+      "fixture_design": "唯一依据是未接受Candidate且用途非审查",
+      "gold_must_bind": "拒绝原因＋未发生副作用的原始Evidence",
+      "gold_digest": null,
+      "execution": "NOT_EXECUTED"
+    },
+    {
+      "id": "SA-B07",
+      "title": "关键上下文不充分",
+      "expected": "SAFE_BLOCK",
+      "fixture_design": "在预算内无法保留任务必需约束且不能获准加预算",
+      "gold_must_bind": "拒绝原因＋未发生副作用的原始Evidence",
+      "gold_digest": null,
+      "execution": "NOT_EXECUTED"
+    },
+    {
+      "id": "SA-B08",
+      "title": "Host隔离不足",
+      "expected": "SAFE_BLOCK",
+      "fixture_design": "普通用户执行器继承Development credential或上下文",
+      "gold_must_bind": "拒绝原因＋未发生副作用的原始Evidence",
+      "gold_digest": null,
+      "execution": "NOT_EXECUTED"
+    }
+  ],
+  "preparation_decision": "Original sources still contain no exact dataset/Gold. A separate independent-agent-authored candidate supplies synthetic two-session inputs and objective expected fields for 12 non-runtime-bound cases, NOT_ACCEPTED_NOT_FROZEN. Remaining 12 require actual interface/identity/Registry/side-effect bindings; no fabricated fixture/Gold or result is supplied. Do not generate 72 apparently runnable slots before binding fixture/Gold/cold-warm/seed.",
+  "independently_authored_candidate": {
+    "file": "GoldCandidate.private.json",
+    "sha256": "3c50a4b7c82788cb26d39b386057af0b056aedf90b092ff53aab7d793022d48f",
+    "bytes": 15378,
+    "case_count": 12,
+    "case_ids": [
+      "SA-N01",
+      "SA-N02",
+      "SA-N03",
+      "SA-N04",
+      "SA-N05",
+      "SA-N06",
+      "SA-N07",
+      "SA-N09",
+      "SA-N10",
+      "SA-N14",
+      "SA-N15",
+      "SA-N16"
+    ],
+    "state": "INDEPENDENT_AGENT_AUTHORED_NOT_ACCEPTED_NOT_FROZEN",
+    "execution_state": "NOT_EXECUTED",
+    "custody": "Coordinator and implementation agents should not read answer body; receive only path/hash/completeness. Shared workspace is not an OS secrecy boundary."
+  }
+}

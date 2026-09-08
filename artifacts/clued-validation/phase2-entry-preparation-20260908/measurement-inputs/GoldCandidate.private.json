@@ -1,0 +1,430 @@
+{
+  "id": "SLICE_A_SYNTHETIC_GOLD_CANDIDATE_20260908",
+  "state": "INDEPENDENT_AGENT_AUTHORED_NOT_ACCEPTED_NOT_FROZEN",
+  "authority_effect": "NONE",
+  "formal_qualification": false,
+  "execution_state": "NOT_EXECUTED",
+  "author_role": "qualification_cases; separate task agent from implementation; not evidence of a legally qualified evaluation Owner",
+  "custody": "Implementation agents and coordinator receive path, digest and completeness only; no claim of OS-enforced secrecy in shared workspace.",
+  "input_semantics": "Synthetic source-session text and logical fixture IDs only. No IDs are actual Canonical IDs, grants, issuers or receipts. Runtime binding and external accepted authority are absent.",
+  "gold_scope": "Objective expected fields and prohibitions, not a mandatory answer wording. Byte/hash and semantic assertions must both be bound by an accepted evaluation contract before execution.",
+  "cases": [
+    {
+      "id": "SA-N01",
+      "source_sessions": [
+        {
+          "logical_source_id": "source-A",
+          "text": "Confirmed task T-A version 1: deliver a plain-text inventory by 2026-09-10T09:00:00Z. Constraint C-A: only the isolated fixture directory may be written. T-A is not completed."
+        },
+        {
+          "logical_source_id": "source-B",
+          "text": "Confirmed task T-B version 2: review the inventory after T-A is delivered and before 2026-09-11T09:00:00Z. T-B is not completed. An export suggestion is candidate-only and unaccepted."
+        }
+      ],
+      "registered_task": "Return the two confirmed pending tasks, their versions, deadlines, dependency, and write constraint.",
+      "gold_candidate": {
+        "pending_tasks": [
+          {
+            "id": "T-A",
+            "version": 1,
+            "deadline": "2026-09-10T09:00:00Z"
+          },
+          {
+            "id": "T-B",
+            "version": 2,
+            "deadline": "2026-09-11T09:00:00Z",
+            "depends_on": "T-A"
+          }
+        ],
+        "critical_constraints": [
+          "only isolated fixture directory may be written"
+        ],
+        "excluded_facts": [
+          "export suggestion accepted",
+          "T-A completed",
+          "T-B completed"
+        ]
+      },
+      "state": "NOT_ACCEPTED_NOT_FROZEN",
+      "execution": "NOT_EXECUTED"
+    },
+    {
+      "id": "SA-N02",
+      "source_sessions": [
+        {
+          "logical_source_id": "source-A",
+          "text": "Accepted decision D-1 version 1: output format is CSV."
+        },
+        {
+          "logical_source_id": "source-B",
+          "text": "Accepted decision D-2 version 2 explicitly supersedes D-1. Current output format is JSON. D-1 remains historical and must not be deleted."
+        }
+      ],
+      "registered_task": "Return the current output-format decision and its historical predecessor.",
+      "gold_candidate": {
+        "current": {
+          "id": "D-2",
+          "version": 2,
+          "format": "JSON",
+          "supersedes": "D-1"
+        },
+        "historical": [
+          {
+            "id": "D-1",
+            "version": 1,
+            "format": "CSV"
+          }
+        ],
+        "excluded_facts": [
+          "CSV currently active",
+          "D-1 deleted"
+        ]
+      },
+      "state": "NOT_ACCEPTED_NOT_FROZEN",
+      "execution": "NOT_EXECUTED"
+    },
+    {
+      "id": "SA-N03",
+      "source_sessions": [
+        {
+          "logical_source_id": "source-A",
+          "text": "Accepted source S-A says task T-3 delivery deadline is 2026-09-10T10:00:00Z."
+        },
+        {
+          "logical_source_id": "source-B",
+          "text": "Accepted source S-B says task T-3 delivery deadline is 2026-09-12T10:00:00Z. Both sources remain valid; no precedence or resolution is supplied."
+        }
+      ],
+      "registered_task": "Return the conflict and required next action without selecting a deadline.",
+      "gold_candidate": {
+        "task": "T-3",
+        "conflict_values": [
+          "2026-09-10T10:00:00Z",
+          "2026-09-12T10:00:00Z"
+        ],
+        "source_refs": [
+          "S-A",
+          "S-B"
+        ],
+        "next_action": "obtain an authorized resolution",
+        "selected_deadline": null
+      },
+      "state": "NOT_ACCEPTED_NOT_FROZEN",
+      "execution": "NOT_EXECUTED"
+    },
+    {
+      "id": "SA-N04",
+      "source_sessions": [
+        {
+          "logical_source_id": "source-A",
+          "text": "Candidate C-41 proposes task T-41, write inventory. Candidate C-42 proposes task T-42, publish inventory."
+        },
+        {
+          "logical_source_id": "source-B",
+          "text": "Acceptance E-41 confirms C-41 only. Rejection E-42 rejects C-42. No publication is authorized."
+        }
+      ],
+      "registered_task": "Return the accepted pending task and retain the rejection as provenance, without scheduling publication.",
+      "gold_candidate": {
+        "accepted_task_ids": [
+          "T-41"
+        ],
+        "acceptance_refs": [
+          "E-41"
+        ],
+        "rejected_candidate_ids": [
+          "C-42"
+        ],
+        "rejection_refs": [
+          "E-42"
+        ],
+        "forbidden_actions": [
+          "publish inventory"
+        ]
+      },
+      "state": "NOT_ACCEPTED_NOT_FROZEN",
+      "execution": "NOT_EXECUTED"
+    },
+    {
+      "id": "SA-N05",
+      "source_sessions": [
+        {
+          "logical_source_id": "source-A",
+          "text": "Fixture record R-51: task_id=T-51; title=inventory; deadline=2026-09-10; contact_tag=SYNTHETIC_PRIVATE_CONTACT_51; internal_note=SYNTHETIC_PRIVATE_NOTE_51."
+        },
+        {
+          "logical_source_id": "source-B",
+          "text": "Current field scope SC-51 allows only task_id, title and deadline from R-51. The requested task is to summarize those three fields. contact_tag and internal_note must not appear in Context or logs."
+        }
+      ],
+      "registered_task": "Return only authorized task fields with source reference R-51 and scope reference SC-51.",
+      "gold_candidate": {
+        "fields": {
+          "task_id": "T-51",
+          "title": "inventory",
+          "deadline": "2026-09-10"
+        },
+        "source_refs": [
+          "R-51"
+        ],
+        "scope_ref": "SC-51",
+        "forbidden_strings": [
+          "SYNTHETIC_PRIVATE_CONTACT_51",
+          "SYNTHETIC_PRIVATE_NOTE_51"
+        ],
+        "forbidden_fields": [
+          "contact_tag",
+          "internal_note"
+        ]
+      },
+      "state": "NOT_ACCEPTED_NOT_FROZEN",
+      "execution": "NOT_EXECUTED"
+    },
+    {
+      "id": "SA-N06",
+      "source_sessions": [
+        {
+          "logical_source_id": "source-A",
+          "text": "Source evidence E-61 version 1 confirms pending task T-61, title=inventory. Ingest idempotency key IK-61."
+        },
+        {
+          "logical_source_id": "source-B",
+          "text": "This session retransmits the identical source E-61 version 1, task T-61, title=inventory, with the same idempotency key IK-61. It is not a second task or an execution result."
+        }
+      ],
+      "registered_task": "Return the unique pending task and the duplicate's provenance relationship.",
+      "gold_candidate": {
+        "unique_task_count": 1,
+        "task_ids": [
+          "T-61"
+        ],
+        "source_evidence": "E-61",
+        "version": 1,
+        "idempotency_key": "IK-61",
+        "duplicate_ingest_is_new_task": false,
+        "task_completed": false
+      },
+      "state": "NOT_ACCEPTED_NOT_FROZEN",
+      "execution": "NOT_EXECUTED"
+    },
+    {
+      "id": "SA-N07",
+      "source_sessions": [
+        {
+          "logical_source_id": "source-A",
+          "text": "State R-71 is valid from 2026-09-07T00:00:00Z until 2026-09-08T00:00:00Z (exclusive): review=waiting."
+        },
+        {
+          "logical_source_id": "source-B",
+          "text": "State R-72 is valid from 2026-09-08T00:00:00Z onward: review=ready. Evaluate at fixture time 2026-09-08T00:00:00Z, timezone UTC."
+        }
+      ],
+      "registered_task": "At the supplied fixture time, return current and historical state, with exact temporal boundaries.",
+      "gold_candidate": {
+        "evaluation_time": "2026-09-08T00:00:00Z",
+        "timezone": "UTC",
+        "current": {
+          "id": "R-72",
+          "review": "ready"
+        },
+        "historical": {
+          "id": "R-71",
+          "review": "waiting",
+          "valid_until_exclusive": "2026-09-08T00:00:00Z"
+        }
+      },
+      "state": "NOT_ACCEPTED_NOT_FROZEN",
+      "execution": "NOT_EXECUTED"
+    },
+    {
+      "id": "SA-N09",
+      "source_sessions": [
+        {
+          "logical_source_id": "source-A",
+          "text": "Accepted source E-91 supports task T-91, prepare inventory. Accepted source E-92 supports task T-92, review inventory."
+        },
+        {
+          "logical_source_id": "source-B",
+          "text": "Withdrawal event W-91 withdraws E-91 and invalidates its supported task T-91 for future Context. E-92 and T-92 remain valid. No other source supports T-91."
+        }
+      ],
+      "registered_task": "Return the valid task and explain the invalidated source/task without treating it as active.",
+      "gold_candidate": {
+        "active_task_ids": [
+          "T-92"
+        ],
+        "active_source_ids": [
+          "E-92"
+        ],
+        "withdrawal_event": "W-91",
+        "invalid_source_ids": [
+          "E-91"
+        ],
+        "invalid_task_ids": [
+          "T-91"
+        ]
+      },
+      "state": "NOT_ACCEPTED_NOT_FROZEN",
+      "execution": "NOT_EXECUTED"
+    },
+    {
+      "id": "SA-N10",
+      "source_sessions": [
+        {
+          "logical_source_id": "source-A",
+          "text": "Record R-101 contains title=inventory, deadline=2026-09-10 and synthetic_contact=SYNTHETIC_CONTACT_101. Previous scope SC-101-v1 allowed all three."
+        },
+        {
+          "logical_source_id": "source-B",
+          "text": "Current scope SC-101-v2 allows only title from R-101 and explicitly replaces SC-101-v1. A prior cache containing deadline and synthetic_contact is stale and unauthorized for the next request."
+        }
+      ],
+      "registered_task": "Return the next authorized Context with the current scope and permitted fields only.",
+      "gold_candidate": {
+        "fields": {
+          "title": "inventory"
+        },
+        "scope_ref": "SC-101-v2",
+        "forbidden_fields": [
+          "deadline",
+          "synthetic_contact"
+        ],
+        "forbidden_strings": [
+          "SYNTHETIC_CONTACT_101"
+        ],
+        "old_scope_may_authorize_next_request": false
+      },
+      "state": "NOT_ACCEPTED_NOT_FROZEN",
+      "execution": "NOT_EXECUTED"
+    },
+    {
+      "id": "SA-N14",
+      "source_sessions": [
+        {
+          "logical_source_id": "source-A",
+          "text": "Known exact fixture object R-141 version 3 has status=ready and title=inventory. Exact deterministic reading is available."
+        },
+        {
+          "logical_source_id": "source-B",
+          "text": "All semantic model capability is unavailable for this request; no cloud fallback is authorized. The requested task has an exact-reading part and a semantic-rewrite part."
+        }
+      ],
+      "registered_task": "Return the exact known object and explicitly mark the semantic rewrite unavailable; do not manufacture a rewrite.",
+      "gold_candidate": {
+        "exact_object": {
+          "id": "R-141",
+          "version": 3,
+          "status": "ready",
+          "title": "inventory"
+        },
+        "semantic_rewrite_available": false,
+        "model_invoked": false,
+        "cloud_fallback_allowed": false
+      },
+      "state": "NOT_ACCEPTED_NOT_FROZEN",
+      "execution": "NOT_EXECUTED"
+    },
+    {
+      "id": "SA-N15",
+      "source_sessions": [
+        {
+          "logical_source_id": "source-A",
+          "text": "Confirmed task T-151 version 1: prepare an inventory. Critical constraints: C-151 only isolated fixture files; C-152 no network; C-153 preserve source references; C-154 do not mark completion before artifact exists."
+        },
+        {
+          "logical_source_id": "source-B",
+          "text": "Accepted source E-152 confirms all four constraints remain in force. Required Context budget is 2048 target-host tokens. If all critical constraints cannot be retained under the accepted budget, do not silently remove one."
+        }
+      ],
+      "registered_task": "Create a concise Context retaining task identity, all four constraints and both source references; actual token counting is performed by the separately bound tokenizer.",
+      "gold_candidate": {
+        "task": {
+          "id": "T-151",
+          "version": 1
+        },
+        "critical_constraint_ids": [
+          "C-151",
+          "C-152",
+          "C-153",
+          "C-154"
+        ],
+        "critical_constraint_meanings": [
+          "only isolated fixture files",
+          "no network",
+          "preserve source references",
+          "do not mark completion before artifact exists"
+        ],
+        "source_refs": [
+          "source-A",
+          "E-152"
+        ],
+        "context_budget": 2048,
+        "token_count": null
+      },
+      "state": "NOT_ACCEPTED_NOT_FROZEN",
+      "execution": "NOT_EXECUTED"
+    },
+    {
+      "id": "SA-N16",
+      "source_sessions": [
+        {
+          "logical_source_id": "source-A",
+          "text": "Domain USER, owner U-161, project display name Orchid: task UT-161 is to prepare a garden inventory. Its source is UE-161."
+        },
+        {
+          "logical_source_id": "source-B",
+          "text": "Domain DEVELOPMENT, owner D-161, project display name Orchid: task DT-161 is to build an internal compiler. Its source is DE-161. These are unrelated domains; the shared display name grants no cross-domain access."
+        }
+      ],
+      "registered_task": "Produce separate User and Development summaries, each containing only its own owner, task and source; do not copy facts across domains.",
+      "gold_candidate": {
+        "user": {
+          "domain": "USER",
+          "owner": "U-161",
+          "task_ids": [
+            "UT-161"
+          ],
+          "source_refs": [
+            "UE-161"
+          ]
+        },
+        "development": {
+          "domain": "DEVELOPMENT",
+          "owner": "D-161",
+          "task_ids": [
+            "DT-161"
+          ],
+          "source_refs": [
+            "DE-161"
+          ]
+        },
+        "cross_domain_copy_allowed": false
+      },
+      "state": "NOT_ACCEPTED_NOT_FROZEN",
+      "execution": "NOT_EXECUTED"
+    }
+  ],
+  "unprepared_case_ids": [
+    "SA-N08",
+    "SA-N11",
+    "SA-N12",
+    "SA-N13",
+    "SA-B01",
+    "SA-B02",
+    "SA-B03",
+    "SA-B04",
+    "SA-B05",
+    "SA-B06",
+    "SA-B07",
+    "SA-B08"
+  ],
+  "unprepared_reason": "Actual reconstruction/output/checkpoint/role execution contracts and exact subject, authorization, registry-error and side-effect bindings are absent; do not invent them as accepted semantics.",
+  "still_required": [
+    "Qualified evaluation Owner and accepted custody",
+    "Exact runtime fixtures and logical-to-Canonical mapping before freezing Gold",
+    "Accepted rubric and source/Gold digests",
+    "Tokenizer and cold/warm/seed/session-reset binding",
+    "Applicable real Entry/controller/Profile/GA/budget/sink",
+    "Actual observations; this file contains no results"
+  ]
+}

@@ -1,0 +1,346 @@
+{
+  "kind": "SLICE_A_EXISTING_CAPABILITY_MAP",
+  "status": "READ_ONLY_PREPARATION_NOT_ENTRY_IMPLEMENTATION",
+  "source_commit": "950a40b18d637d0f924a835efd93a09950fc7b81",
+  "requested_baseline": "dc67669f0f03d24f2ce6b5cbc1584e8929a4cf71",
+  "baseline_note": "Independent request alignment resolved newer main 950a40b; local HEAD matched it. No probe or implementation test was rerun.",
+  "authorization_effect": "NONE",
+  "entry_issued": false,
+  "slice_a_executed": false,
+  "inspection_scope": [
+    "apps/clued-cloud/worker",
+    "apps/clued-cloud/app",
+    "apps/clued-cloud/supabase/migrations",
+    "apps/clued-cloud/scripts",
+    "apps/clued-cloud/tests",
+    "kernel",
+    "cloud/postgres",
+    "evals/kernel-next",
+    "scripts",
+    "tests"
+  ],
+  "inputs": [
+    "outputs/Clued_Phase2_执行与续接.md:A04-A07",
+    "work/slice-a-contracts/Charter.md:3,10,12",
+    "work/slice-a-contracts/SliceACaseCatalog.json"
+  ],
+  "evidence_rule": "Source locations and existing check definitions only. Listed tests were inspected, not executed in this request. Existing service success, mocks, reference-core tests and deterministic snapshots are not a Slice A or 72-slot acceptance result.",
+  "capabilities": [
+    {
+      "id": "SOURCE_INGEST",
+      "actions": [
+        "A04"
+      ],
+      "cases": [
+        "SA-N06",
+        "SA-B01"
+      ],
+      "state": "PARTIAL_SERVICE_PRIMITIVE",
+      "entrypoints": [
+        "apps/clued-cloud/worker/records.ts:105",
+        "apps/clued-cloud/supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql:896"
+      ],
+      "provided": [
+        "Evidence type/storage_ref/content_hash metadata and immutable receipt in one transaction; owner-bound source_refs validation on record mutation.",
+        "M1 operation-family/idempotency-key payload-hash replay and conflict detection."
+      ],
+      "checks": [
+        "apps/clued-cloud/tests/m1-runtime-contracts.test.mjs:11 (static contract assertions)",
+        "apps/clued-cloud/tests/authorization-end-to-end.test.mjs:26 (real database receipt/replay integration; different subject)"
+      ],
+      "gaps": [
+        "Ingest verifies digest syntax, not retrieval and hashing of actual source bytes.",
+        "No session A/B byte ingestion, bounded chunking, chunk provenance or content-hash dedup path found in inspected service code. Different idempotency keys can ingest the same source hash."
+      ],
+      "next_after_entry": "Reuse evidence_ingest and M1 receipts; add the smallest source-byte verification/chunk-candidate adapter after its accepted source contract and storage scope are bound."
+    },
+    {
+      "id": "CANDIDATE_CONFIRMATION",
+      "actions": [
+        "A04"
+      ],
+      "cases": [
+        "SA-N02",
+        "SA-N03",
+        "SA-N04",
+        "SA-B06"
+      ],
+      "state": "GOVERNED_MUTATION_EXISTS_CANDIDATE_FLOW_NOT_FOUND",
+      "entrypoints": [
+        "apps/clued-cloud/worker/records.ts:64",
+        "apps/clued-cloud/supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql:208",
+        "apps/clued-cloud/supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql:282",
+        "apps/clued-cloud/worker/projects.ts:30",
+        "kernel/policy/model-contract.mjs:309"
+      ],
+      "provided": [
+        "Record mutation supports authority/source references, CAS and transaction receipts; decision_supersede preserves replacement provenance.",
+        "Project confirmation is a distinct confirmed/unconfirmed lifecycle; model-contract validates NON_AUTHORITATIVE_CANDIDATE as a reference contract."
+      ],
+      "checks": [
+        "apps/clued-cloud/tests/m1-runtime-contracts.test.mjs:11",
+        "apps/clued-cloud/tests/record-api.test.mjs:195",
+        "evals/kernel-next/v11-model-contract.test.mjs"
+      ],
+      "gaps": [
+        "Project confirmation is not acceptance of extracted source facts.",
+        "No persisted extracted-candidate accept/reject/conflict workflow found in the service entry. M1 create requires active and permits inferred authority with confidence; it is not a quarantine/confirmation gate.",
+        "Search results include matching Events regardless of include_history; compiler must not interpret rejected or superseded historical material as current facts."
+      ],
+      "next_after_entry": "Bind the accepted candidate control type and decision receipt, then connect accept/reject/conflict handling to the existing M1 mutation path. Do not create a second Canonical store."
+    },
+    {
+      "id": "AUTH_BEFORE_RETRIEVAL",
+      "actions": [
+        "A05"
+      ],
+      "cases": [
+        "SA-N05",
+        "SA-N16",
+        "SA-B02",
+        "SA-B03",
+        "SA-B04",
+        "SA-B05"
+      ],
+      "state": "EXACT_SCOPE_SEARCH_EXISTS_AGGREGATE_ORDER_GAP",
+      "entrypoints": [
+        "apps/clued-cloud/supabase/migrations/20260907131834_clued_search_canonical_records.sql:13",
+        "apps/clued-cloud/supabase/migrations/20260907173031_clued_connection_authorization_v12.sql:301",
+        "apps/clued-cloud/supabase/migrations/20260907173031_clued_connection_authorization_v12.sql:318",
+        "apps/clued-cloud/supabase/migrations/20260907173031_clued_connection_authorization_v12.sql:458",
+        "apps/clued-cloud/supabase/migrations/20260908073933_clued_project_list_authorized_scope.sql:4"
+      ],
+      "provided": [
+        "Exact-context search validates binding and session before SELECT, then constrains owner and canonical scope.",
+        "Authorization reads current binding, selected resource/action, expiry/revocation and account state; project list filters authorized projects before LIMIT."
+      ],
+      "checks": [
+        "apps/clued-cloud/supabase/tests/canonical_search_regression.sql:1",
+        "apps/clued-cloud/tests/connection-authorization-db.test.mjs:98",
+        "apps/clued-cloud/tests/project-list-authorization-db.test.mjs:45"
+      ],
+      "gaps": [
+        "Delegated global record_list first calls record_list_core, then removes unauthorized source rows from returned JSON. This is output filtering, not proof that all private retrieval was prefiltered.",
+        "Canonical record results contain content and type_fields; no task-specific canonical field policy/compiler boundary found. Development-context allowed_fields is a separate domain."
+      ],
+      "next_after_entry": "Reuse exact-context authorized retrieval as the minimum route. Inspect and, if in Slice A scope, move aggregate source authorization into the retrieval query before using global aggregation."
+    },
+    {
+      "id": "MINIMUM_CONTEXT_COMPILER",
+      "actions": [
+        "A05"
+      ],
+      "cases": [
+        "SA-N07",
+        "SA-N15",
+        "SA-B07"
+      ],
+      "state": "SERVICE_COMPILER_NOT_FOUND",
+      "entrypoints": [
+        "apps/clued-cloud/supabase/migrations/20260907131834_clued_search_canonical_records.sql:16",
+        "apps/clued-cloud/worker/records.ts:16",
+        "kernel/domain/cross-host-continuity.mjs:98"
+      ],
+      "provided": [
+        "Search emits exact IDs/versions and lexical results; service describes current State/Task/Decision versus historical Log/Archive.",
+        "Reference InMemoryContinuityLedger projects allowlisted fields; this is not a persistent service Context Compiler."
+      ],
+      "checks": [
+        "apps/clued-cloud/supabase/tests/canonical_search_regression.sql:1",
+        "evals/kernel-next/v10-reference-core.test.mjs:52"
+      ],
+      "gaps": [
+        "No integrated Context Pack assembler or actual tokenizer/budget enforcement found in inspected runtime directories.",
+        "No proven critical-constraint/source retention, current/historical and absolute-time selection, or fail-closed insufficiency decision at <=2048 tokens.",
+        "JSON size and result LIMIT are not model-token counts."
+      ],
+      "next_after_entry": "Add one deterministic compiler around authorized current records with source references and critical constraints. Bind tokenizer/version and independently fixed rubric before measuring; refuse insufficient authorized context."
+    },
+    {
+      "id": "SOURCE_WITHDRAWAL",
+      "actions": [
+        "A07"
+      ],
+      "cases": [
+        "SA-N09"
+      ],
+      "state": "RECORD_LIFECYCLE_EXISTS_SOURCE_CASCADE_NOT_FOUND",
+      "entrypoints": [
+        "apps/clued-cloud/supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql:75",
+        "apps/clued-cloud/supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql:282",
+        "apps/clued-cloud/supabase/migrations/20260907131834_clued_search_canonical_records.sql:27"
+      ],
+      "provided": [
+        "Records support closed/archived/revoked lifecycle and evidence link/unlink events; current record search excludes revoked/archived/superseded records."
+      ],
+      "checks": [
+        "apps/clued-cloud/supabase/tests/canonical_search_regression.sql:34",
+        "apps/clued-cloud/tests/connection-authorization-db.test.mjs:218"
+      ],
+      "gaps": [
+        "Evidence schema/ingest has no source-withdrawal lifecycle or dependency invalidation handler in inspected code.",
+        "No observed propagation from source retraction to dependent Canonical records, checkpoint snapshots or derived Context Packs. A retraction event alone does not prove propagation."
+      ],
+      "next_after_entry": "Bind accepted retraction semantics, index affected source_refs and invalidate/recompile the smallest affected test scope; preserve original evidence and all unrelated valid material."
+    },
+    {
+      "id": "SCOPE_REDUCTION",
+      "actions": [
+        "A07"
+      ],
+      "cases": [
+        "SA-N10"
+      ],
+      "state": "LIVE_RESOURCE_REDUCTION_EXISTS_FIELD_PACK_INVALIDATION_GAP",
+      "entrypoints": [
+        "apps/clued-cloud/supabase/migrations/20260907173031_clued_connection_authorization_v12.sql:266",
+        "apps/clued-cloud/supabase/migrations/20260907173032_clued_project_invitations_v13.sql:278",
+        "apps/clued-cloud/supabase/migrations/20260907173032_clued_project_invitations_v13.sql:491",
+        "apps/clued-cloud/supabase/migrations/20260907173030_clued_development_context_runtime_v14.sql:80"
+      ],
+      "provided": [
+        "Connection reduce is CAS protected and cannot grow selections; runtime rechecks actual current entries rather than stale token scopes.",
+        "Development records support field projection within their own grant."
+      ],
+      "checks": [
+        "apps/clued-cloud/tests/connection-authorization-db.test.mjs:104",
+        "apps/clued-cloud/tests/connection-authorization-db.test.mjs:113",
+        "apps/clued-cloud/tests/project-list-authorization-db.test.mjs:63"
+      ],
+      "gaps": [
+        "Canonical task-specific field scope and Context Pack/cache scope-digest invalidation not found.",
+        "Existing resource reduction does not erase already delivered context from another process; no proof of future compiler cache invalidation exists."
+      ],
+      "next_after_entry": "Keep live permission checks; bind compiled output to current scope/digest and revocation generation, and deny reuse after shrink. Do not borrow development grants for Canonical data."
+    },
+    {
+      "id": "PROJECTION_REBUILD",
+      "actions": [
+        "A07"
+      ],
+      "cases": [
+        "SA-N08"
+      ],
+      "state": "DETERMINISTIC_SNAPSHOT_BUILDER_EXISTS_SLICE_REBUILD_UNRUN",
+      "entrypoints": [
+        "apps/clued-cloud/supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql:795",
+        "apps/clued-cloud/scripts/two-level-snapshot.mjs:396",
+        "apps/clued-cloud/scripts/two-level-snapshot.mjs:460",
+        "apps/clued-cloud/scripts/two-level-snapshot.mjs:726",
+        "apps/clued-cloud/supabase/migrations/20260907173031_clued_connection_authorization_v12.sql:504"
+      ],
+      "provided": [
+        "Receipt-backed export and deterministic object/view/index/manifest building exist, with integrity checks and CAS publication mechanisms."
+      ],
+      "checks": [
+        "apps/clued-cloud/tests/two-level-snapshot.test.mjs:154",
+        "apps/clued-cloud/tests/two-level-snapshot.test.mjs:185",
+        "apps/clued-cloud/tests/two-level-snapshot.test.mjs:194"
+      ],
+      "gaps": [
+        "No Slice A test that deletes only a disposable derived projection and rebuilds from authorized Canonical input has run.",
+        "Current delegated connections explicitly cannot use whole-account canonical_export. This is a real permission boundary, not permission to use admin export or old local memory."
+      ],
+      "next_after_entry": "Reuse buildSnapshot on a properly authorized, exact isolated Canonical export; perform disposable projection deletion/rebuild only under that test scope. Do not touch the formal pointer or root memory."
+    },
+    {
+      "id": "INTERRUPTION_IDEMPOTENCY",
+      "actions": [
+        "A07"
+      ],
+      "cases": [
+        "SA-N12"
+      ],
+      "state": "M1_IDEMPOTENCY_EXISTS_CHECKPOINT_REPLAY_GAP",
+      "entrypoints": [
+        "apps/clued-cloud/supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql:595",
+        "apps/clued-cloud/supabase/migrations/202608230002_mandatory_continuity.sql:314",
+        "apps/clued-cloud/supabase/migrations/202608230002_mandatory_continuity.sql:473",
+        "kernel/domain/attempt-fsm.mjs:34",
+        "kernel/domain/operation-commit.mjs:17"
+      ],
+      "provided": [
+        "M1 receipt keys bind owner/operation and request hash; same payload replays and changed payload conflicts.",
+        "Continuity restore/checkpoint persists versioned state with CAS; reference AttemptCoordinator keeps UNKNOWN separate from terminal authority."
+      ],
+      "checks": [
+        "apps/clued-cloud/tests/authorization-end-to-end.test.mjs:26",
+        "apps/clued-cloud/tests/p5-real-postgres.test.mjs:584",
+        "evals/kernel-next/v04-reference-core.test.mjs:18"
+      ],
+      "gaps": [
+        "Legacy checkpoint duplicate-key branch returns existing checkpoint by user/binding/key before comparing incoming payload or context; it is not equivalent to M1 request-hash idempotency.",
+        "No Slice A interruption across ingest -> confirmation -> Context -> third-session artifact -> result receipt has been observed.",
+        "In-memory reference ledgers are not crash-durable runtime stores; the synthetic candidate controller is not wired to these service operations."
+      ],
+      "next_after_entry": "Prefer M1 receipt reconciliation for committed actions. Bind checkpoint key to exact context/payload and inject only the necessary actual interruption windows; preserve UNKNOWN without blind redispatch."
+    },
+    {
+      "id": "NO_MODEL_READ",
+      "actions": [
+        "A07"
+      ],
+      "cases": [
+        "SA-N14"
+      ],
+      "state": "DETERMINISTIC_SERVICE_READ_EXISTS_DEGRADATION_CONTRACT_UNRUN",
+      "entrypoints": [
+        "apps/clued-cloud/supabase/migrations/20260907131834_clued_search_canonical_records.sql:57",
+        "apps/clued-cloud/supabase/migrations/20260907173031_clued_connection_authorization_v12.sql:458",
+        "apps/clued-cloud/worker/records.ts:40"
+      ],
+      "provided": [
+        "Record list and lexical search are deterministic SQL paths; their inspected path does not require model/provider invocation. Search labels its mode lexical."
+      ],
+      "checks": [
+        "apps/clued-cloud/supabase/tests/canonical_search_regression.sql:1",
+        "apps/clued-cloud/tests/record-api.test.mjs:141"
+      ],
+      "gaps": [
+        "The exact-object/version no-model Slice A fixture and explicit semantic-unavailable response have not been exercised.",
+        "A deterministic read does not establish third-AI task completion; no replay may be counted as live model generation."
+      ],
+      "next_after_entry": "Reuse exact Canonical ID/version reads; make semantic inability explicit and demonstrate no silent provider fallback under a bound no-model test."
+    },
+    {
+      "id": "THIRD_SESSION_ARTIFACT_RETURN",
+      "actions": [
+        "A06"
+      ],
+      "cases": [
+        "SA-N01",
+        "SA-N11",
+        "SA-N13",
+        "SA-B08"
+      ],
+      "state": "PRIMITIVES_EXIST_REAL_CHAIN_NOT_EXECUTED",
+      "entrypoints": [
+        "apps/clued-cloud/worker/continuity.ts:624",
+        "apps/clued-cloud/worker/continuity.ts:665",
+        "apps/clued-cloud/worker/records.ts:105",
+        "apps/clued-cloud/worker/records.ts:118",
+        "kernel/domain/cross-host-continuity.mjs:31"
+      ],
+      "provided": [
+        "Formal session restore/checkpoint, Evidence ingestion and extension Events can represent continuation and artifact references.",
+        "Cross-host reference tests cover distinct identities, narrower fields, handoff and revocation."
+      ],
+      "checks": [
+        "evals/kernel-next/v10-reference-core.test.mjs:42",
+        "evals/kernel-next/v10-reference-core.test.mjs:86"
+      ],
+      "gaps": [
+        "No actual bound third AI session has consumed the new two-source compiled pack, produced the pre-registered artifact and returned its receipt.",
+        "Host probe proves limited properties for a fixed synthetic child only; full credential/context isolation, controller qualification and permitted execution channel remain absent."
+      ],
+      "next_after_entry": "After real Entry, scoped execution and necessary provider authorization, use a distinct legitimate session/credential and exact isolated task; bind actual artifact bytes/hash and result receipt. Do not label present MCP success as Slice A acceptance."
+    }
+  ],
+  "deferred_execution": [
+    "No Entry-post code changes",
+    "No production calls or data mutations",
+    "No existing tests or AppContainer probes rerun",
+    "No Gold/tokenizer/72 slots frozen or executed",
+    "No acceptance/profile/authority issued"
+  ]
+}
