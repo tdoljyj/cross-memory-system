@@ -1,0 +1,234 @@
+{
+  "state": "ENGINEERING_PREPARATION_ONLY",
+  "authority_effect": "NONE",
+  "source_commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+  "active_entry": "clued",
+  "skill_source_last_change_commit": "a1c7e8607d5ed9a6ae78fae302e565ed748d4f66",
+  "current_files": [
+    {
+      "source": {
+        "path": "skills/clued/SKILL.md",
+        "bytes": 3913,
+        "sha256": "8a5e6d9548731874b94ebe3edc046f7393c96fd75531f22231228e055206096f",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "8a5e6d9548731874b94ebe3edc046f7393c96fd75531f22231228e055206096f",
+        "worktree_byte_relation": "EXACT",
+        "pointer": ""
+      },
+      "installed_path": "C:\\Users\\Windows\\.codex\\skills\\clued\\SKILL.md",
+      "installed_sha256": "8a5e6d9548731874b94ebe3edc046f7393c96fd75531f22231228e055206096f",
+      "installed_bytes": 3913,
+      "source_bytes_equal_installed": true
+    },
+    {
+      "source": {
+        "path": "skills/clued/references/engineering.md",
+        "bytes": 5780,
+        "sha256": "ffff299ea0a1793f9b0b4963fc5bf099762fabce96ed96086cfc5494acbb8d29",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "ffff299ea0a1793f9b0b4963fc5bf099762fabce96ed96086cfc5494acbb8d29",
+        "worktree_byte_relation": "EXACT",
+        "pointer": ""
+      },
+      "installed_path": "C:\\Users\\Windows\\.codex\\skills\\clued\\references\\engineering.md",
+      "installed_sha256": "ffff299ea0a1793f9b0b4963fc5bf099762fabce96ed96086cfc5494acbb8d29",
+      "installed_bytes": 5780,
+      "source_bytes_equal_installed": true
+    },
+    {
+      "source": {
+        "path": "skills/clued/references/memory-operations.md",
+        "bytes": 5166,
+        "sha256": "a05feabc8ad4ccac535bb059fbf35179f79884dfb1113abdd18b21281bfda538",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "a05feabc8ad4ccac535bb059fbf35179f79884dfb1113abdd18b21281bfda538",
+        "worktree_byte_relation": "EXACT",
+        "pointer": ""
+      },
+      "installed_path": "C:\\Users\\Windows\\.codex\\skills\\clued\\references\\memory-operations.md",
+      "installed_sha256": "a05feabc8ad4ccac535bb059fbf35179f79884dfb1113abdd18b21281bfda538",
+      "installed_bytes": 5166,
+      "source_bytes_equal_installed": true
+    }
+  ],
+  "documented_old_entries": [
+    {
+      "historical_identity": "clued-developer",
+      "historical_artifact": {
+        "path": "docs/execution-plans/phase2-structure-governance/step20-skill-20260907/clued-developer/SKILL.md",
+        "bytes": 5151,
+        "sha256": "a7daf4644401600609c9d6d1bab1b61e512012833b35d01498aaca44da398269",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "a7daf4644401600609c9d6d1bab1b61e512012833b35d01498aaca44da398269",
+        "worktree_byte_relation": "EXACT",
+        "pointer": ""
+      },
+      "current_install_path": "C:\\Users\\Windows\\.codex\\skills\\clued-developer",
+      "currently_present": false,
+      "documented_successor": "clued",
+      "successor_ref": {
+        "path": "skills/README.md",
+        "bytes": 2614,
+        "sha256": "6930cfcd300010b287dc08f58ae8b441639033ee4a705f66f775a36603087c6c",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "6930cfcd300010b287dc08f58ae8b441639033ee4a705f66f775a36603087c6c",
+        "worktree_byte_relation": "EXACT",
+        "pointer": ""
+      },
+      "retirement_implementation_ref": {
+        "path": "scripts/update_clued_skills.py",
+        "bytes": 4737,
+        "sha256": "ef976d161813c6d1ed1d60cbaf05a8e4a825c41db35fda6eb32b6fd40ab05e67",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "ef976d161813c6d1ed1d60cbaf05a8e4a825c41db35fda6eb32b6fd40ab05e67",
+        "worktree_byte_relation": "EXACT",
+        "pointer": ""
+      },
+      "meaning": "Updater explicitly retires this named entry; historical acceptance remains bound to its own bytes."
+    },
+    {
+      "historical_identity": "clued-user",
+      "historical_artifact": {
+        "path": "docs/execution-plans/phase2-structure-governance/step21-skill-20260907/clued-user/SKILL.md",
+        "bytes": 4816,
+        "sha256": "a86b2710f013600f52bcb062d2d48393b3bba8700a006c84a22b7e9f79807724",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "a86b2710f013600f52bcb062d2d48393b3bba8700a006c84a22b7e9f79807724",
+        "worktree_byte_relation": "EXACT",
+        "pointer": ""
+      },
+      "current_install_path": "C:\\Users\\Windows\\.codex\\skills\\clued-user",
+      "currently_present": false,
+      "documented_successor": "clued",
+      "successor_ref": {
+        "path": "skills/README.md",
+        "bytes": 2614,
+        "sha256": "6930cfcd300010b287dc08f58ae8b441639033ee4a705f66f775a36603087c6c",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "6930cfcd300010b287dc08f58ae8b441639033ee4a705f66f775a36603087c6c",
+        "worktree_byte_relation": "EXACT",
+        "pointer": ""
+      },
+      "retirement_implementation_ref": {
+        "path": "scripts/update_clued_skills.py",
+        "bytes": 4737,
+        "sha256": "ef976d161813c6d1ed1d60cbaf05a8e4a825c41db35fda6eb32b6fd40ab05e67",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "ef976d161813c6d1ed1d60cbaf05a8e4a825c41db35fda6eb32b6fd40ab05e67",
+        "worktree_byte_relation": "EXACT",
+        "pointer": ""
+      },
+      "meaning": "Updater explicitly retires this named entry; historical acceptance remains bound to its own bytes."
+    },
+    {
+      "historical_identity": "clued-continuity",
+      "historical_artifact": {
+        "path": "docs/execution-plans/phase2-structure-governance/step21-skill-20260907/continuity-routing/SKILL.md",
+        "bytes": 3294,
+        "sha256": "7222bc35a6eb7490c620c35296553dddd7815c47d8c15ce0843789dc2b42824d",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "7222bc35a6eb7490c620c35296553dddd7815c47d8c15ce0843789dc2b42824d",
+        "worktree_byte_relation": "EXACT",
+        "pointer": ""
+      },
+      "current_install_path": "C:\\Users\\Windows\\.codex\\skills\\clued-continuity",
+      "currently_present": false,
+      "documented_successor": "clued",
+      "successor_ref": {
+        "path": "skills/README.md",
+        "bytes": 2614,
+        "sha256": "6930cfcd300010b287dc08f58ae8b441639033ee4a705f66f775a36603087c6c",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "6930cfcd300010b287dc08f58ae8b441639033ee4a705f66f775a36603087c6c",
+        "worktree_byte_relation": "EXACT",
+        "pointer": ""
+      },
+      "retirement_implementation_ref": {
+        "path": "scripts/update_clued_skills.py",
+        "bytes": 4737,
+        "sha256": "ef976d161813c6d1ed1d60cbaf05a8e4a825c41db35fda6eb32b6fd40ab05e67",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "ef976d161813c6d1ed1d60cbaf05a8e4a825c41db35fda6eb32b6fd40ab05e67",
+        "worktree_byte_relation": "EXACT",
+        "pointer": ""
+      },
+      "meaning": "Updater explicitly retires this named entry; historical acceptance remains bound to its own bytes."
+    }
+  ],
+  "projection_routes": [
+    {
+      "operation": "engineering",
+      "entry": "skills/clued/SKILL.md",
+      "reference": "skills/clued/references/engineering.md",
+      "actual_mechanism_refs": [
+        {
+          "path": "AGENTS.md",
+          "bytes": 11994,
+          "sha256": "0d209391925dfc3c490cecfdb1e48c9266f0fd9c3d2e26903e023002f2eaf354",
+          "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+          "worktree_sha256": "0d209391925dfc3c490cecfdb1e48c9266f0fd9c3d2e26903e023002f2eaf354",
+          "worktree_byte_relation": "EXACT",
+          "pointer": ""
+        },
+        {
+          "path": "scripts/sync-memory.py",
+          "bytes": 20890,
+          "sha256": "93dc66d3c6e0a7aa2310afa5d3386dd0a835fa840e3ab049676906d66bc8f94d",
+          "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+          "worktree_sha256": "93dc66d3c6e0a7aa2310afa5d3386dd0a835fa840e3ab049676906d66bc8f94d",
+          "worktree_byte_relation": "EXACT",
+          "pointer": ""
+        },
+        {
+          "path": "scripts/sync-memory.ps1",
+          "bytes": 1088,
+          "sha256": "1b0ec7934951a937c7b517841374817255bad9e430ae09adb72adf579fc7c6e8",
+          "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+          "worktree_sha256": "1b0ec7934951a937c7b517841374817255bad9e430ae09adb72adf579fc7c6e8",
+          "worktree_byte_relation": "EXACT",
+          "pointer": ""
+        }
+      ],
+      "boundary": "Authorized checkout alignment and existing trusted publisher/reader; Skill grants no issuer or runtime authority."
+    },
+    {
+      "operation": "memory",
+      "entry": "skills/clued/SKILL.md",
+      "reference": "skills/clued/references/memory-operations.md",
+      "actual_mechanism_refs": [
+        {
+          "path": "apps/clued-cloud/worker/continuity.ts",
+          "bytes": 50783,
+          "sha256": "53746991a483bf4bbac4402440ae86fb7cd296032a7a10359758bbaf77997dc5",
+          "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+          "worktree_sha256": "53746991a483bf4bbac4402440ae86fb7cd296032a7a10359758bbaf77997dc5",
+          "worktree_byte_relation": "EXACT",
+          "pointer": ""
+        }
+      ],
+      "boundary": "Formal authenticated Clued service; no repository memory write-back or permission union."
+    }
+  ],
+  "unresolved_legacy_identity": {
+    "name": "clued-kernel-developer",
+    "identity_status": "NO_PROVEN_ALIAS_OR_RETIREMENT_CHAIN",
+    "currently_present_at_this_host": false,
+    "scope_rule": {
+      "path": "docs/execution-plans/phase2-structure-governance/step05-identity-20260907/AliasRegistry.candidate.json",
+      "bytes": 4737,
+      "sha256": "29d0d21d2d0fcecefdc9daaf841a77f411a6695d256a38993976f74660f19a40",
+      "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+      "worktree_sha256": "29d0d21d2d0fcecefdc9daaf841a77f411a6695d256a38993976f74660f19a40",
+      "worktree_byte_relation": "EXACT",
+      "pointer": "/explicit_dispositions/1"
+    },
+    "required_action": "Bind its actual historical artifact/host/role/consumer if this R13 subject applies; absence alone is not deprecation or N/A."
+  },
+  "not_established": [
+    "Current host discovery in every client",
+    "R09 mechanism freeze",
+    "R11 actual Shadow",
+    "Qualified Skill activation",
+    "New Binding or expanded privilege"
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "schema": "clued.controller-candidate.v1",
+  "mode": "LOCAL_ENGINEERING_ONLY",
+  "idempotency_key": "synthetic-probe-1",
+  "operation": "fixture_write",
+  "parameters": {
+    "fixture_id": "synthetic-v1"
+  },
+  "timeout_seconds": 5,
+  "expected_runner_sha256": "ec72de3116c6e2af88a10c9a980414c11586dd17feffb82fa0ffba32823cc26f",
+  "expected_control_generation": 1
+}

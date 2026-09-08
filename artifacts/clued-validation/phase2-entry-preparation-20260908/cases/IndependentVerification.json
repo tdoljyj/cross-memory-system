@@ -1,0 +1,876 @@
+{
+  "scope": "LOCAL_ENGINEERING_ONLY",
+  "formal_execution_state": "NOT_EXECUTED",
+  "authorization_effect": "NONE",
+  "qualified": false,
+  "controller_sha256": "ec72de3116c6e2af88a10c9a980414c11586dd17feffb82fa0ffba32823cc26f",
+  "controller_file": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-08\\ia\\work\\kernel-phase2-repo\\scripts\\phase2-qualification\\controller.py",
+  "test_file_sha256": "b0c0539fbf93be7651e4716bb602836b6062832d101662e3a8108f1ae8a46689",
+  "executed_checks": 28,
+  "passed": 28,
+  "failed": 0,
+  "checks": [
+    {
+      "check": "noop",
+      "source_pqual": [
+        "PQUAL-01",
+        "PQUAL-20"
+      ],
+      "scope": "LOCAL_ENGINEERING_ONLY",
+      "status": "PASS",
+      "assertion": "Fixed local child completes with no authority.",
+      "observation": {
+        "schema": "clued.controller-candidate.v1",
+        "status": "COMPLETED",
+        "reason": "local_synthetic_probe_only",
+        "qualified": false,
+        "authorization_effect": "NONE",
+        "formal_regressions_executed": false,
+        "limitations": [
+          "OS_NETWORK_ISOLATION_NOT_PROVEN",
+          "OS_FILESYSTEM_ISOLATION_NOT_PROVEN",
+          "QUALIFIED_ACTOR_ISSUER_AUTHORITY_NOT_BOUND",
+          "CONTROLLER_QUALIFICATION_NOT_ISSUED",
+          "PROFILE_AND_PER_ACTION_AUTHORIZATION_NOT_ISSUED",
+          "LOCAL_CONTROL_IS_NOT_SERVICE_REVOCATION_OR_DISTRIBUTED_FENCING",
+          "FILESYSTEM_FSYNC_IS_NOT_INDEPENDENT_REMOTE_DURABILITY_ATTESTATION"
+        ],
+        "worker": {
+          "environment_keys": [
+            "SYSTEMROOT"
+          ],
+          "fixed_worker": true,
+          "pid": 58880,
+          "exit_code": 0,
+          "termination_observed": true,
+          "credential_values_recorded": false
+        },
+        "target_sha256": null,
+        "idempotency_key": "probe",
+        "configuration_sha256": "b9d1a9d6653467c6091090235483d2c7b11768516b50ed7a8369636b85d51272",
+        "intent_sha256": "89c075af6a95a04a67161e9fa16cddaad9c8786257a9d6d1e80ca9f1291077aa"
+      }
+    },
+    {
+      "check": "fixture-write",
+      "source_pqual": [
+        "PQUAL-20"
+      ],
+      "scope": "LOCAL_ENGINEERING_ONLY",
+      "status": "PASS",
+      "assertion": "Exact built-in synthetic fixture bytes match receipt hash.",
+      "observation": {
+        "schema": "clued.controller-candidate.v1",
+        "status": "COMPLETED",
+        "reason": "local_synthetic_probe_only",
+        "qualified": false,
+        "authorization_effect": "NONE",
+        "formal_regressions_executed": false,
+        "limitations": [
+          "OS_NETWORK_ISOLATION_NOT_PROVEN",
+          "OS_FILESYSTEM_ISOLATION_NOT_PROVEN",
+          "QUALIFIED_ACTOR_ISSUER_AUTHORITY_NOT_BOUND",
+          "CONTROLLER_QUALIFICATION_NOT_ISSUED",
+          "PROFILE_AND_PER_ACTION_AUTHORIZATION_NOT_ISSUED",
+          "LOCAL_CONTROL_IS_NOT_SERVICE_REVOCATION_OR_DISTRIBUTED_FENCING",
+          "FILESYSTEM_FSYNC_IS_NOT_INDEPENDENT_REMOTE_DURABILITY_ATTESTATION"
+        ],
+        "worker": {
+          "environment_keys": [
+            "SYSTEMROOT"
+          ],
+          "fixed_worker": true,
+          "pid": 58944,
+          "exit_code": 0,
+          "termination_observed": true,
+          "credential_values_recorded": false
+        },
+        "target_sha256": "4e741227f713ea9622f27a2cfe41ed6854ff95dbc2aa77a8b98d64db0994a2db",
+        "idempotency_key": "probe",
+        "configuration_sha256": "eccdb92d5afad62bad8c185463bf832d77d724cea8875b5d372ad45ada098a75",
+        "intent_sha256": "1a035545da2e55adf5fb541c39b902174b09bc675c21a49e97b554a09344ac3f"
+      }
+    },
+    {
+      "check": "completed-replay",
+      "source_pqual": [
+        "PQUAL-16"
+      ],
+      "scope": "LOCAL_ENGINEERING_ONLY",
+      "status": "PASS",
+      "assertion": "Completed same-key request replays evidence without changing target.",
+      "observation": {
+        "authorization_effect": "NONE",
+        "configuration_sha256": "eccdb92d5afad62bad8c185463bf832d77d724cea8875b5d372ad45ada098a75",
+        "formal_regressions_executed": false,
+        "idempotency_key": "probe",
+        "intent_sha256": "1a035545da2e55adf5fb541c39b902174b09bc675c21a49e97b554a09344ac3f",
+        "limitations": [
+          "OS_NETWORK_ISOLATION_NOT_PROVEN",
+          "OS_FILESYSTEM_ISOLATION_NOT_PROVEN",
+          "QUALIFIED_ACTOR_ISSUER_AUTHORITY_NOT_BOUND",
+          "CONTROLLER_QUALIFICATION_NOT_ISSUED",
+          "PROFILE_AND_PER_ACTION_AUTHORIZATION_NOT_ISSUED",
+          "LOCAL_CONTROL_IS_NOT_SERVICE_REVOCATION_OR_DISTRIBUTED_FENCING",
+          "FILESYSTEM_FSYNC_IS_NOT_INDEPENDENT_REMOTE_DURABILITY_ATTESTATION"
+        ],
+        "qualified": false,
+        "reason": "local_synthetic_probe_only",
+        "schema": "clued.controller-candidate.v1",
+        "status": "COMPLETED",
+        "target_sha256": "4e741227f713ea9622f27a2cfe41ed6854ff95dbc2aa77a8b98d64db0994a2db",
+        "worker": {
+          "credential_values_recorded": false,
+          "environment_keys": [
+            "SYSTEMROOT"
+          ],
+          "exit_code": 0,
+          "fixed_worker": true,
+          "pid": 58944,
+          "termination_observed": true
+        },
+        "replayed_evidence_only": true
+      }
+    },
+    {
+      "check": "changed-key-parameters",
+      "source_pqual": [
+        "PQUAL-16"
+      ],
+      "scope": "LOCAL_ENGINEERING_ONLY",
+      "status": "PASS",
+      "assertion": "Same key with changed operation is denied.",
+      "observation": {
+        "schema": "clued.controller-candidate.v1",
+        "status": "BLOCKED",
+        "reason": "Denied:same_key_changed_parameters",
+        "qualified": false,
+        "authorization_effect": "NONE",
+        "formal_regressions_executed": false,
+        "limitations": [
+          "OS_NETWORK_ISOLATION_NOT_PROVEN",
+          "OS_FILESYSTEM_ISOLATION_NOT_PROVEN",
+          "QUALIFIED_ACTOR_ISSUER_AUTHORITY_NOT_BOUND",
+          "CONTROLLER_QUALIFICATION_NOT_ISSUED",
+          "PROFILE_AND_PER_ACTION_AUTHORIZATION_NOT_ISSUED",
+          "LOCAL_CONTROL_IS_NOT_SERVICE_REVOCATION_OR_DISTRIBUTED_FENCING",
+          "FILESYSTEM_FSYNC_IS_NOT_INDEPENDENT_REMOTE_DURABILITY_ATTESTATION"
+        ]
+      }
+    },
+    {
+      "check": "reconcile",
+      "source_pqual": [
+        "PQUAL-16"
+      ],
+      "scope": "LOCAL_ENGINEERING_ONLY",
+      "status": "PASS",
+      "assertion": "Reconcile observes exact target, stays UNKNOWN, changes no files and grants no action.",
+      "observation": {
+        "schema": "clued.controller-candidate.v1",
+        "status": "UNKNOWN",
+        "reason": "target_matches_intent",
+        "qualified": false,
+        "authorization_effect": "NONE",
+        "formal_regressions_executed": false,
+        "limitations": [
+          "OS_NETWORK_ISOLATION_NOT_PROVEN",
+          "OS_FILESYSTEM_ISOLATION_NOT_PROVEN",
+          "QUALIFIED_ACTOR_ISSUER_AUTHORITY_NOT_BOUND",
+          "CONTROLLER_QUALIFICATION_NOT_ISSUED",
+          "PROFILE_AND_PER_ACTION_AUTHORIZATION_NOT_ISSUED",
+          "LOCAL_CONTROL_IS_NOT_SERVICE_REVOCATION_OR_DISTRIBUTED_FENCING",
+          "FILESYSTEM_FSYNC_IS_NOT_INDEPENDENT_REMOTE_DURABILITY_ATTESTATION"
+        ],
+        "target_matches": true,
+        "new_action_allowed": false,
+        "capacity_released": false,
+        "terminal_receipt_issued": false
+      }
+    },
+    {
+      "check": "forged-result-authority",
+      "source_pqual": [
+        "PQUAL-16",
+        "PQUAL-20"
+      ],
+      "scope": "LOCAL_ENGINEERING_ONLY",
+      "status": "PASS",
+      "assertion": "Corrupt existing receipt is rejected without rerun or claimed authority; original evidence is retained.",
+      "observation": {
+        "schema": "clued.controller-candidate.v1",
+        "status": "BLOCKED",
+        "reason": "Denied:invalid_result_evidence",
+        "qualified": false,
+        "authorization_effect": "NONE",
+        "formal_regressions_executed": false,
+        "limitations": [
+          "OS_NETWORK_ISOLATION_NOT_PROVEN",
+          "OS_FILESYSTEM_ISOLATION_NOT_PROVEN",
+          "QUALIFIED_ACTOR_ISSUER_AUTHORITY_NOT_BOUND",
+          "CONTROLLER_QUALIFICATION_NOT_ISSUED",
+          "PROFILE_AND_PER_ACTION_AUTHORIZATION_NOT_ISSUED",
+          "LOCAL_CONTROL_IS_NOT_SERVICE_REVOCATION_OR_DISTRIBUTED_FENCING",
+          "FILESYSTEM_FSYNC_IS_NOT_INDEPENDENT_REMOTE_DURABILITY_ATTESTATION"
+        ]
+      }
+    },
+    {
+      "check": "forged-result-binding",
+      "source_pqual": [
+        "PQUAL-16",
+        "PQUAL-20"
+      ],
+      "scope": "LOCAL_ENGINEERING_ONLY",
+      "status": "PASS",
+      "assertion": "Corrupt existing receipt is rejected without rerun or claimed authority; original evidence is retained.",
+      "observation": {
+        "schema": "clued.controller-candidate.v1",
+        "status": "BLOCKED",
+        "reason": "Denied:invalid_result_evidence",
+        "qualified": false,
+        "authorization_effect": "NONE",
+        "formal_regressions_executed": false,
+        "limitations": [
+          "OS_NETWORK_ISOLATION_NOT_PROVEN",
+          "OS_FILESYSTEM_ISOLATION_NOT_PROVEN",
+          "QUALIFIED_ACTOR_ISSUER_AUTHORITY_NOT_BOUND",
+          "CONTROLLER_QUALIFICATION_NOT_ISSUED",
+          "PROFILE_AND_PER_ACTION_AUTHORIZATION_NOT_ISSUED",
+          "LOCAL_CONTROL_IS_NOT_SERVICE_REVOCATION_OR_DISTRIBUTED_FENCING",
+          "FILESYSTEM_FSYNC_IS_NOT_INDEPENDENT_REMOTE_DURABILITY_ATTESTATION"
+        ]
+      }
+    },
+    {
+      "check": "truncated-result-after-effect",
+      "source_pqual": [
+        "PQUAL-16",
+        "PQUAL-17",
+        "PQUAL-20"
+      ],
+      "scope": "LOCAL_ENGINEERING_ONLY",
+      "status": "PASS",
+      "assertion": "Existing side effect with corrupt evidence stays UNKNOWN; no replay, overwrite or re-execution.",
+      "observation": {
+        "schema": "clued.controller-candidate.v1",
+        "status": "UNKNOWN",
+        "reason": "JSONDecodeError:Expecting value: line 1 column 11 (char 10)",
+        "qualified": false,
+        "authorization_effect": "NONE",
+        "formal_regressions_executed": false,
+        "limitations": [
+          "OS_NETWORK_ISOLATION_NOT_PROVEN",
+          "OS_FILESYSTEM_ISOLATION_NOT_PROVEN",
+          "QUALIFIED_ACTOR_ISSUER_AUTHORITY_NOT_BOUND",
+          "CONTROLLER_QUALIFICATION_NOT_ISSUED",
+          "PROFILE_AND_PER_ACTION_AUTHORIZATION_NOT_ISSUED",
+          "LOCAL_CONTROL_IS_NOT_SERVICE_REVOCATION_OR_DISTRIBUTED_FENCING",
+          "FILESYSTEM_FSYNC_IS_NOT_INDEPENDENT_REMOTE_DURABILITY_ATTESTATION"
+        ]
+      }
+    },
+    {
+      "check": "truncated-intent-after-effect",
+      "source_pqual": [
+        "PQUAL-16",
+        "PQUAL-17",
+        "PQUAL-20"
+      ],
+      "scope": "LOCAL_ENGINEERING_ONLY",
+      "status": "PASS",
+      "assertion": "Existing side effect with corrupt evidence stays UNKNOWN; no replay, overwrite or re-execution.",
+      "observation": {
+        "schema": "clued.controller-candidate.v1",
+        "status": "UNKNOWN",
+        "reason": "JSONDecodeError:Expecting value: line 1 column 18 (char 17)",
+        "qualified": false,
+        "authorization_effect": "NONE",
+        "formal_regressions_executed": false,
+        "limitations": [
+          "OS_NETWORK_ISOLATION_NOT_PROVEN",
+          "OS_FILESYSTEM_ISOLATION_NOT_PROVEN",
+          "QUALIFIED_ACTOR_ISSUER_AUTHORITY_NOT_BOUND",
+          "CONTROLLER_QUALIFICATION_NOT_ISSUED",
+          "PROFILE_AND_PER_ACTION_AUTHORIZATION_NOT_ISSUED",
+          "LOCAL_CONTROL_IS_NOT_SERVICE_REVOCATION_OR_DISTRIBUTED_FENCING",
+          "FILESYSTEM_FSYNC_IS_NOT_INDEPENDENT_REMOTE_DURABILITY_ATTESTATION"
+        ]
+      }
+    },
+    {
+      "check": "changed-target-after-effect",
+      "source_pqual": [
+        "PQUAL-16",
+        "PQUAL-17",
+        "PQUAL-20"
+      ],
+      "scope": "LOCAL_ENGINEERING_ONLY",
+      "status": "PASS",
+      "assertion": "Existing side effect with corrupt evidence stays UNKNOWN; no replay, overwrite or re-execution.",
+      "observation": {
+        "schema": "clued.controller-candidate.v1",
+        "status": "UNKNOWN",
+        "reason": "completed_target_drift_requires_reconciliation",
+        "qualified": false,
+        "authorization_effect": "NONE",
+        "formal_regressions_executed": false,
+        "limitations": [
+          "OS_NETWORK_ISOLATION_NOT_PROVEN",
+          "OS_FILESYSTEM_ISOLATION_NOT_PROVEN",
+          "QUALIFIED_ACTOR_ISSUER_AUTHORITY_NOT_BOUND",
+          "CONTROLLER_QUALIFICATION_NOT_ISSUED",
+          "PROFILE_AND_PER_ACTION_AUTHORIZATION_NOT_ISSUED",
+          "LOCAL_CONTROL_IS_NOT_SERVICE_REVOCATION_OR_DISTRIBUTED_FENCING",
+          "FILESYSTEM_FSYNC_IS_NOT_INDEPENDENT_REMOTE_DURABILITY_ATTESTATION"
+        ]
+      }
+    },
+    {
+      "check": "formal-mode-denied-pre_entry_skill_qualification",
+      "source_pqual": [
+        "PQUAL-01",
+        "PQUAL-02",
+        "PQUAL-07",
+        "PQUAL-18",
+        "PQUAL-19"
+      ],
+      "scope": "LOCAL_ENGINEERING_ONLY",
+      "status": "PASS",
+      "assertion": "Rejected before fixture side effect: formal_or_unknown_mode_denied",
+      "observation": {
+        "schema": "clued.controller-candidate.v1",
+        "status": "BLOCKED",
+        "reason": "Denied:formal_or_unknown_mode_denied",
+        "qualified": false,
+        "authorization_effect": "NONE",
+        "formal_regressions_executed": false,
+        "limitations": [
+          "OS_NETWORK_ISOLATION_NOT_PROVEN",
+          "OS_FILESYSTEM_ISOLATION_NOT_PROVEN",
+          "QUALIFIED_ACTOR_ISSUER_AUTHORITY_NOT_BOUND",
+          "CONTROLLER_QUALIFICATION_NOT_ISSUED",
+          "PROFILE_AND_PER_ACTION_AUTHORIZATION_NOT_ISSUED",
+          "LOCAL_CONTROL_IS_NOT_SERVICE_REVOCATION_OR_DISTRIBUTED_FENCING",
+          "FILESYSTEM_FSYNC_IS_NOT_INDEPENDENT_REMOTE_DURABILITY_ATTESTATION"
+        ]
+      }
+    },
+    {
+      "check": "formal-mode-denied-post_entry_slice_a",
+      "source_pqual": [
+        "PQUAL-01",
+        "PQUAL-02",
+        "PQUAL-07",
+        "PQUAL-18",
+        "PQUAL-19"
+      ],
+      "scope": "LOCAL_ENGINEERING_ONLY",
+      "status": "PASS",
+      "assertion": "Rejected before fixture side effect: formal_or_unknown_mode_denied",
+      "observation": {
+        "schema": "clued.controller-candidate.v1",
+        "status": "BLOCKED",
+        "reason": "Denied:formal_or_unknown_mode_denied",
+        "qualified": false,
+        "authorization_effect": "NONE",
+        "formal_regressions_executed": false,
+        "limitations": [
+          "OS_NETWORK_ISOLATION_NOT_PROVEN",
+          "OS_FILESYSTEM_ISOLATION_NOT_PROVEN",
+          "QUALIFIED_ACTOR_ISSUER_AUTHORITY_NOT_BOUND",
+          "CONTROLLER_QUALIFICATION_NOT_ISSUED",
+          "PROFILE_AND_PER_ACTION_AUTHORIZATION_NOT_ISSUED",
+          "LOCAL_CONTROL_IS_NOT_SERVICE_REVOCATION_OR_DISTRIBUTED_FENCING",
+          "FILESYSTEM_FSYNC_IS_NOT_INDEPENDENT_REMOTE_DURABILITY_ATTESTATION"
+        ]
+      }
+    },
+    {
+      "check": "unknown-operation",
+      "source_pqual": [
+        "PQUAL-06",
+        "PQUAL-07",
+        "PQUAL-09",
+        "PQUAL-10",
+        "PQUAL-17"
+      ],
+      "scope": "LOCAL_ENGINEERING_ONLY",
+      "status": "PASS",
+      "assertion": "Rejected before fixture side effect: operation_not_allowlisted",
+      "observation": {
+        "schema": "clued.controller-candidate.v1",
+        "status": "BLOCKED",
+        "reason": "Denied:operation_not_allowlisted",
+        "qualified": false,
+        "authorization_effect": "NONE",
+        "formal_regressions_executed": false,
+        "limitations": [
+          "OS_NETWORK_ISOLATION_NOT_PROVEN",
+          "OS_FILESYSTEM_ISOLATION_NOT_PROVEN",
+          "QUALIFIED_ACTOR_ISSUER_AUTHORITY_NOT_BOUND",
+          "CONTROLLER_QUALIFICATION_NOT_ISSUED",
+          "PROFILE_AND_PER_ACTION_AUTHORIZATION_NOT_ISSUED",
+          "LOCAL_CONTROL_IS_NOT_SERVICE_REVOCATION_OR_DISTRIBUTED_FENCING",
+          "FILESYSTEM_FSYNC_IS_NOT_INDEPENDENT_REMOTE_DURABILITY_ATTESTATION"
+        ]
+      }
+    },
+    {
+      "check": "runner-drift",
+      "source_pqual": [
+        "PQUAL-12"
+      ],
+      "scope": "LOCAL_ENGINEERING_ONLY",
+      "status": "PASS",
+      "assertion": "Rejected before fixture side effect: runner_digest_drift",
+      "observation": {
+        "schema": "clued.controller-candidate.v1",
+        "status": "BLOCKED",
+        "reason": "Denied:runner_digest_drift",
+        "qualified": false,
+        "authorization_effect": "NONE",
+        "formal_regressions_executed": false,
+        "limitations": [
+          "OS_NETWORK_ISOLATION_NOT_PROVEN",
+          "OS_FILESYSTEM_ISOLATION_NOT_PROVEN",
+          "QUALIFIED_ACTOR_ISSUER_AUTHORITY_NOT_BOUND",
+          "CONTROLLER_QUALIFICATION_NOT_ISSUED",
+          "PROFILE_AND_PER_ACTION_AUTHORIZATION_NOT_ISSUED",
+          "LOCAL_CONTROL_IS_NOT_SERVICE_REVOCATION_OR_DISTRIBUTED_FENCING",
+          "FILESYSTEM_FSYNC_IS_NOT_INDEPENDENT_REMOTE_DURABILITY_ATTESTATION"
+        ]
+      }
+    },
+    {
+      "check": "control-generation-drift",
+      "source_pqual": [
+        "PQUAL-12",
+        "PQUAL-13"
+      ],
+      "scope": "LOCAL_ENGINEERING_ONLY",
+      "status": "PASS",
+      "assertion": "Rejected before fixture side effect: revoked_or_generation_changed",
+      "observation": {
+        "schema": "clued.controller-candidate.v1",
+        "status": "BLOCKED",
+        "reason": "Denied:revoked_or_generation_changed",
+        "qualified": false,
+        "authorization_effect": "NONE",
+        "formal_regressions_executed": false,
+        "limitations": [
+          "OS_NETWORK_ISOLATION_NOT_PROVEN",
+          "OS_FILESYSTEM_ISOLATION_NOT_PROVEN",
+          "QUALIFIED_ACTOR_ISSUER_AUTHORITY_NOT_BOUND",
+          "CONTROLLER_QUALIFICATION_NOT_ISSUED",
+          "PROFILE_AND_PER_ACTION_AUTHORIZATION_NOT_ISSUED",
+          "LOCAL_CONTROL_IS_NOT_SERVICE_REVOCATION_OR_DISTRIBUTED_FENCING",
+          "FILESYSTEM_FSYNC_IS_NOT_INDEPENDENT_REMOTE_DURABILITY_ATTESTATION"
+        ]
+      }
+    },
+    {
+      "check": "revoked-before-run",
+      "source_pqual": [
+        "PQUAL-13"
+      ],
+      "scope": "LOCAL_ENGINEERING_ONLY",
+      "status": "PASS",
+      "assertion": "Rejected before fixture side effect: revoked_or_generation_changed",
+      "observation": {
+        "schema": "clued.controller-candidate.v1",
+        "status": "BLOCKED",
+        "reason": "Denied:revoked_or_generation_changed",
+        "qualified": false,
+        "authorization_effect": "NONE",
+        "formal_regressions_executed": false,
+        "limitations": [
+          "OS_NETWORK_ISOLATION_NOT_PROVEN",
+          "OS_FILESYSTEM_ISOLATION_NOT_PROVEN",
+          "QUALIFIED_ACTOR_ISSUER_AUTHORITY_NOT_BOUND",
+          "CONTROLLER_QUALIFICATION_NOT_ISSUED",
+          "PROFILE_AND_PER_ACTION_AUTHORIZATION_NOT_ISSUED",
+          "LOCAL_CONTROL_IS_NOT_SERVICE_REVOCATION_OR_DISTRIBUTED_FENCING",
+          "FILESYSTEM_FSYNC_IS_NOT_INDEPENDENT_REMOTE_DURABILITY_ATTESTATION"
+        ]
+      }
+    },
+    {
+      "check": "stop-before-run",
+      "source_pqual": [
+        "PQUAL-11"
+      ],
+      "scope": "LOCAL_ENGINEERING_ONLY",
+      "status": "PASS",
+      "assertion": "Rejected before fixture side effect: stop_requested",
+      "observation": {
+        "schema": "clued.controller-candidate.v1",
+        "status": "BLOCKED",
+        "reason": "Denied:stop_requested",
+        "qualified": false,
+        "authorization_effect": "NONE",
+        "formal_regressions_executed": false,
+        "limitations": [
+          "OS_NETWORK_ISOLATION_NOT_PROVEN",
+          "OS_FILESYSTEM_ISOLATION_NOT_PROVEN",
+          "QUALIFIED_ACTOR_ISSUER_AUTHORITY_NOT_BOUND",
+          "CONTROLLER_QUALIFICATION_NOT_ISSUED",
+          "PROFILE_AND_PER_ACTION_AUTHORIZATION_NOT_ISSUED",
+          "LOCAL_CONTROL_IS_NOT_SERVICE_REVOCATION_OR_DISTRIBUTED_FENCING",
+          "FILESYSTEM_FSYNC_IS_NOT_INDEPENDENT_REMOTE_DURABILITY_ATTESTATION"
+        ]
+      }
+    },
+    {
+      "check": "path-traversal",
+      "source_pqual": [
+        "PQUAL-09"
+      ],
+      "scope": "LOCAL_ENGINEERING_ONLY",
+      "status": "PASS",
+      "assertion": "Rejected before fixture side effect: invalid_idempotency_key",
+      "observation": {
+        "schema": "clued.controller-candidate.v1",
+        "status": "BLOCKED",
+        "reason": "Denied:invalid_idempotency_key",
+        "qualified": false,
+        "authorization_effect": "NONE",
+        "formal_regressions_executed": false,
+        "limitations": [
+          "OS_NETWORK_ISOLATION_NOT_PROVEN",
+          "OS_FILESYSTEM_ISOLATION_NOT_PROVEN",
+          "QUALIFIED_ACTOR_ISSUER_AUTHORITY_NOT_BOUND",
+          "CONTROLLER_QUALIFICATION_NOT_ISSUED",
+          "PROFILE_AND_PER_ACTION_AUTHORIZATION_NOT_ISSUED",
+          "LOCAL_CONTROL_IS_NOT_SERVICE_REVOCATION_OR_DISTRIBUTED_FENCING",
+          "FILESYSTEM_FSYNC_IS_NOT_INDEPENDENT_REMOTE_DURABILITY_ATTESTATION"
+        ]
+      }
+    },
+    {
+      "check": "non-synthetic-payload",
+      "source_pqual": [
+        "PQUAL-09"
+      ],
+      "scope": "LOCAL_ENGINEERING_ONLY",
+      "status": "PASS",
+      "assertion": "Rejected before fixture side effect: non_synthetic_parameters_denied",
+      "observation": {
+        "schema": "clued.controller-candidate.v1",
+        "status": "BLOCKED",
+        "reason": "Denied:non_synthetic_parameters_denied",
+        "qualified": false,
+        "authorization_effect": "NONE",
+        "formal_regressions_executed": false,
+        "limitations": [
+          "OS_NETWORK_ISOLATION_NOT_PROVEN",
+          "OS_FILESYSTEM_ISOLATION_NOT_PROVEN",
+          "QUALIFIED_ACTOR_ISSUER_AUTHORITY_NOT_BOUND",
+          "CONTROLLER_QUALIFICATION_NOT_ISSUED",
+          "PROFILE_AND_PER_ACTION_AUTHORIZATION_NOT_ISSUED",
+          "LOCAL_CONTROL_IS_NOT_SERVICE_REVOCATION_OR_DISTRIBUTED_FENCING",
+          "FILESYSTEM_FSYNC_IS_NOT_INDEPENDENT_REMOTE_DURABILITY_ATTESTATION"
+        ]
+      }
+    },
+    {
+      "check": "environment-not-inherited",
+      "source_pqual": [
+        "PQUAL-08"
+      ],
+      "scope": "LOCAL_ENGINEERING_ONLY",
+      "status": "PASS",
+      "assertion": "Real isolated Python child does not inherit synthetic credential environment keys; OS filesystem/network isolation remains unproven.",
+      "observation": {
+        "schema": "clued.controller-candidate.v1",
+        "status": "COMPLETED",
+        "reason": "local_synthetic_probe_only",
+        "qualified": false,
+        "authorization_effect": "NONE",
+        "formal_regressions_executed": false,
+        "limitations": [
+          "OS_NETWORK_ISOLATION_NOT_PROVEN",
+          "OS_FILESYSTEM_ISOLATION_NOT_PROVEN",
+          "QUALIFIED_ACTOR_ISSUER_AUTHORITY_NOT_BOUND",
+          "CONTROLLER_QUALIFICATION_NOT_ISSUED",
+          "PROFILE_AND_PER_ACTION_AUTHORIZATION_NOT_ISSUED",
+          "LOCAL_CONTROL_IS_NOT_SERVICE_REVOCATION_OR_DISTRIBUTED_FENCING",
+          "FILESYSTEM_FSYNC_IS_NOT_INDEPENDENT_REMOTE_DURABILITY_ATTESTATION"
+        ],
+        "worker": {
+          "environment_keys": [
+            "SYSTEMROOT"
+          ],
+          "fixed_worker": true,
+          "pid": 14164,
+          "exit_code": 0,
+          "termination_observed": true,
+          "credential_values_recorded": false
+        },
+        "target_sha256": null,
+        "idempotency_key": "probe",
+        "configuration_sha256": "b9d1a9d6653467c6091090235483d2c7b11768516b50ed7a8369636b85d51272",
+        "intent_sha256": "89c075af6a95a04a67161e9fa16cddaad9c8786257a9d6d1e80ca9f1291077aa"
+      }
+    },
+    {
+      "check": "stop-during-run",
+      "source_pqual": [
+        "PQUAL-11"
+      ],
+      "scope": "LOCAL_ENGINEERING_ONLY",
+      "status": "PASS",
+      "assertion": "Real mutation after durable intent; observed STOPPED.",
+      "observation": {
+        "schema": "clued.controller-candidate.v1",
+        "status": "STOPPED",
+        "reason": "stop_or_control_invalidated",
+        "qualified": false,
+        "authorization_effect": "NONE",
+        "formal_regressions_executed": false,
+        "limitations": [
+          "OS_NETWORK_ISOLATION_NOT_PROVEN",
+          "OS_FILESYSTEM_ISOLATION_NOT_PROVEN",
+          "QUALIFIED_ACTOR_ISSUER_AUTHORITY_NOT_BOUND",
+          "CONTROLLER_QUALIFICATION_NOT_ISSUED",
+          "PROFILE_AND_PER_ACTION_AUTHORIZATION_NOT_ISSUED",
+          "LOCAL_CONTROL_IS_NOT_SERVICE_REVOCATION_OR_DISTRIBUTED_FENCING",
+          "FILESYSTEM_FSYNC_IS_NOT_INDEPENDENT_REMOTE_DURABILITY_ATTESTATION"
+        ],
+        "worker": {
+          "stopped": true,
+          "reason": "stop_or_control_invalidated",
+          "pid": 6116,
+          "exit_code": 1,
+          "termination_observed": true
+        },
+        "idempotency_key": "probe",
+        "configuration_sha256": "075dcbea1a3c119b3bc6d4a86749d5297ce9e28c64db3291bc3dcb65c61e416b",
+        "intent_sha256": "737606dc099825fbd429857c7aa3d1525993376e0d91b81d55e473b11c1e000b"
+      }
+    },
+    {
+      "check": "revoke-during-run",
+      "source_pqual": [
+        "PQUAL-13"
+      ],
+      "scope": "LOCAL_ENGINEERING_ONLY",
+      "status": "PASS",
+      "assertion": "Real mutation after durable intent; observed STOPPED.",
+      "observation": {
+        "schema": "clued.controller-candidate.v1",
+        "status": "STOPPED",
+        "reason": "stop_or_control_invalidated",
+        "qualified": false,
+        "authorization_effect": "NONE",
+        "formal_regressions_executed": false,
+        "limitations": [
+          "OS_NETWORK_ISOLATION_NOT_PROVEN",
+          "OS_FILESYSTEM_ISOLATION_NOT_PROVEN",
+          "QUALIFIED_ACTOR_ISSUER_AUTHORITY_NOT_BOUND",
+          "CONTROLLER_QUALIFICATION_NOT_ISSUED",
+          "PROFILE_AND_PER_ACTION_AUTHORIZATION_NOT_ISSUED",
+          "LOCAL_CONTROL_IS_NOT_SERVICE_REVOCATION_OR_DISTRIBUTED_FENCING",
+          "FILESYSTEM_FSYNC_IS_NOT_INDEPENDENT_REMOTE_DURABILITY_ATTESTATION"
+        ],
+        "worker": {
+          "stopped": true,
+          "reason": "stop_or_control_invalidated",
+          "pid": 25456,
+          "exit_code": 1,
+          "termination_observed": true
+        },
+        "idempotency_key": "probe",
+        "configuration_sha256": "075dcbea1a3c119b3bc6d4a86749d5297ce9e28c64db3291bc3dcb65c61e416b",
+        "intent_sha256": "737606dc099825fbd429857c7aa3d1525993376e0d91b81d55e473b11c1e000b"
+      }
+    },
+    {
+      "check": "generation-during-run",
+      "source_pqual": [
+        "PQUAL-12",
+        "PQUAL-13"
+      ],
+      "scope": "LOCAL_ENGINEERING_ONLY",
+      "status": "PASS",
+      "assertion": "Real mutation after durable intent; observed STOPPED.",
+      "observation": {
+        "schema": "clued.controller-candidate.v1",
+        "status": "STOPPED",
+        "reason": "stop_or_control_invalidated",
+        "qualified": false,
+        "authorization_effect": "NONE",
+        "formal_regressions_executed": false,
+        "limitations": [
+          "OS_NETWORK_ISOLATION_NOT_PROVEN",
+          "OS_FILESYSTEM_ISOLATION_NOT_PROVEN",
+          "QUALIFIED_ACTOR_ISSUER_AUTHORITY_NOT_BOUND",
+          "CONTROLLER_QUALIFICATION_NOT_ISSUED",
+          "PROFILE_AND_PER_ACTION_AUTHORIZATION_NOT_ISSUED",
+          "LOCAL_CONTROL_IS_NOT_SERVICE_REVOCATION_OR_DISTRIBUTED_FENCING",
+          "FILESYSTEM_FSYNC_IS_NOT_INDEPENDENT_REMOTE_DURABILITY_ATTESTATION"
+        ],
+        "worker": {
+          "stopped": true,
+          "reason": "stop_or_control_invalidated",
+          "pid": 25324,
+          "exit_code": 1,
+          "termination_observed": true
+        },
+        "idempotency_key": "probe",
+        "configuration_sha256": "075dcbea1a3c119b3bc6d4a86749d5297ce9e28c64db3291bc3dcb65c61e416b",
+        "intent_sha256": "737606dc099825fbd429857c7aa3d1525993376e0d91b81d55e473b11c1e000b"
+      }
+    },
+    {
+      "check": "timeout-termination",
+      "source_pqual": [
+        "PQUAL-11",
+        "PQUAL-15"
+      ],
+      "scope": "LOCAL_ENGINEERING_ONLY",
+      "status": "PASS",
+      "assertion": "Deadline kills fixed child and observes termination; no claim about remote process/capacity fencing.",
+      "observation": {
+        "schema": "clued.controller-candidate.v1",
+        "status": "STOPPED",
+        "reason": "deadline_exceeded",
+        "qualified": false,
+        "authorization_effect": "NONE",
+        "formal_regressions_executed": false,
+        "limitations": [
+          "OS_NETWORK_ISOLATION_NOT_PROVEN",
+          "OS_FILESYSTEM_ISOLATION_NOT_PROVEN",
+          "QUALIFIED_ACTOR_ISSUER_AUTHORITY_NOT_BOUND",
+          "CONTROLLER_QUALIFICATION_NOT_ISSUED",
+          "PROFILE_AND_PER_ACTION_AUTHORIZATION_NOT_ISSUED",
+          "LOCAL_CONTROL_IS_NOT_SERVICE_REVOCATION_OR_DISTRIBUTED_FENCING",
+          "FILESYSTEM_FSYNC_IS_NOT_INDEPENDENT_REMOTE_DURABILITY_ATTESTATION"
+        ],
+        "worker": {
+          "stopped": true,
+          "reason": "deadline_exceeded",
+          "pid": 54068,
+          "exit_code": 1,
+          "termination_observed": true
+        },
+        "idempotency_key": "probe",
+        "configuration_sha256": "d0297422bb6ad3330f4bf93a5798dcca8a80d976c977b41e5d8eb11f33040337",
+        "intent_sha256": "2ef070f6a7274a04e3a2e35216fd0842a39fa485cbe14e8e571d463b2d6b4858"
+      }
+    },
+    {
+      "check": "sink-failure-after-intent",
+      "source_pqual": [
+        "PQUAL-16",
+        "PQUAL-17"
+      ],
+      "scope": "LOCAL_ENGINEERING_ONLY",
+      "status": "PASS",
+      "assertion": "Real mutation after durable intent; observed UNKNOWN.",
+      "observation": {
+        "schema": "clued.controller-candidate.v1",
+        "status": "UNKNOWN",
+        "reason": "PermissionError:[Errno 13] Permission denied: 'C:\\\\Users\\\\Windows\\\\Documents\\\\Codex\\\\2026-09-08\\\\ia\\\\work\\\\independent-controller-attempt3\\\\sink-failure-after-intent\\\\runs\\\\probe\\\\result.json'",
+        "qualified": false,
+        "authorization_effect": "NONE",
+        "formal_regressions_executed": false,
+        "limitations": [
+          "OS_NETWORK_ISOLATION_NOT_PROVEN",
+          "OS_FILESYSTEM_ISOLATION_NOT_PROVEN",
+          "QUALIFIED_ACTOR_ISSUER_AUTHORITY_NOT_BOUND",
+          "CONTROLLER_QUALIFICATION_NOT_ISSUED",
+          "PROFILE_AND_PER_ACTION_AUTHORIZATION_NOT_ISSUED",
+          "LOCAL_CONTROL_IS_NOT_SERVICE_REVOCATION_OR_DISTRIBUTED_FENCING",
+          "FILESYSTEM_FSYNC_IS_NOT_INDEPENDENT_REMOTE_DURABILITY_ATTESTATION"
+        ]
+      }
+    },
+    {
+      "check": "unknown-no-retry",
+      "source_pqual": [
+        "PQUAL-16"
+      ],
+      "scope": "LOCAL_ENGINEERING_ONLY",
+      "status": "PASS",
+      "assertion": "Actual result persistence failure stays UNKNOWN; same key does not rerun. Injected empty directory preserved by rename.",
+      "observation": {
+        "schema": "clued.controller-candidate.v1",
+        "status": "UNKNOWN",
+        "reason": "unresolved_intent_no_automatic_retry",
+        "qualified": false,
+        "authorization_effect": "NONE",
+        "formal_regressions_executed": false,
+        "limitations": [
+          "OS_NETWORK_ISOLATION_NOT_PROVEN",
+          "OS_FILESYSTEM_ISOLATION_NOT_PROVEN",
+          "QUALIFIED_ACTOR_ISSUER_AUTHORITY_NOT_BOUND",
+          "CONTROLLER_QUALIFICATION_NOT_ISSUED",
+          "PROFILE_AND_PER_ACTION_AUTHORIZATION_NOT_ISSUED",
+          "LOCAL_CONTROL_IS_NOT_SERVICE_REVOCATION_OR_DISTRIBUTED_FENCING",
+          "FILESYSTEM_FSYNC_IS_NOT_INDEPENDENT_REMOTE_DURABILITY_ATTESTATION"
+        ],
+        "idempotency_key": "probe"
+      }
+    },
+    {
+      "check": "unknown-no-target",
+      "source_pqual": [
+        "PQUAL-16"
+      ],
+      "scope": "LOCAL_ENGINEERING_ONLY",
+      "status": "PASS",
+      "assertion": "No observable target cannot prove execution or authorize retry.",
+      "observation": {
+        "schema": "clued.controller-candidate.v1",
+        "status": "UNKNOWN",
+        "reason": "no_target_observation_cannot_prove_execution",
+        "qualified": false,
+        "authorization_effect": "NONE",
+        "formal_regressions_executed": false,
+        "limitations": [
+          "OS_NETWORK_ISOLATION_NOT_PROVEN",
+          "OS_FILESYSTEM_ISOLATION_NOT_PROVEN",
+          "QUALIFIED_ACTOR_ISSUER_AUTHORITY_NOT_BOUND",
+          "CONTROLLER_QUALIFICATION_NOT_ISSUED",
+          "PROFILE_AND_PER_ACTION_AUTHORIZATION_NOT_ISSUED",
+          "LOCAL_CONTROL_IS_NOT_SERVICE_REVOCATION_OR_DISTRIBUTED_FENCING",
+          "FILESYSTEM_FSYNC_IS_NOT_INDEPENDENT_REMOTE_DURABILITY_ATTESTATION"
+        ]
+      }
+    },
+    {
+      "check": "sink-is-file",
+      "source_pqual": [
+        "PQUAL-17"
+      ],
+      "scope": "LOCAL_ENGINEERING_ONLY",
+      "status": "PASS",
+      "assertion": "Non-directory evidence sink denied with original bytes unchanged.",
+      "observation": {
+        "schema": "clued.controller-candidate.v1",
+        "status": "BLOCKED",
+        "reason": "Denied:evidence_directory_must_exist",
+        "qualified": false,
+        "authorization_effect": "NONE",
+        "formal_regressions_executed": false,
+        "limitations": [
+          "OS_NETWORK_ISOLATION_NOT_PROVEN",
+          "OS_FILESYSTEM_ISOLATION_NOT_PROVEN",
+          "QUALIFIED_ACTOR_ISSUER_AUTHORITY_NOT_BOUND",
+          "CONTROLLER_QUALIFICATION_NOT_ISSUED",
+          "PROFILE_AND_PER_ACTION_AUTHORIZATION_NOT_ISSUED",
+          "LOCAL_CONTROL_IS_NOT_SERVICE_REVOCATION_OR_DISTRIBUTED_FENCING",
+          "FILESYSTEM_FSYNC_IS_NOT_INDEPENDENT_REMOTE_DURABILITY_ATTESTATION"
+        ]
+      }
+    }
+  ],
+  "limitations": [
+    "No real actor/issuer/Profile/GA validation",
+    "No service credential, production or model calls",
+    "No real OS filesystem or network isolation",
+    "No distributed fencing, grant expiry/renewal, budget or scope-shrink semantics",
+    "No real Skill loading, R11, human measurement or Slice A acceptance"
+  ]
+}

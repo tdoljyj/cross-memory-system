@@ -1,0 +1,818 @@
+{
+  "purpose": "PQUAL_INPUT_AND_EVIDENCE_PREPARATION_ONLY",
+  "source_commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+  "source_ref": "work/slice-a-contracts/QualificationRegressionSpecifications.json",
+  "source_specification_count": 20,
+  "schema_note": "Planning artifact; mutations describe existing source contract fields or fault injection, not a new runtime wire schema.",
+  "authorization_effect": "NONE",
+  "formal_execution_state": "NOT_EXECUTED",
+  "local_execution_scope": "LOCAL_ENGINEERING_ONLY",
+  "formal_base_requirements": [
+    "Resolvable existing Control Evidence Store and trust-root generation; no new trust root",
+    "Accepted Profile and valid eligible actor/issuer/Owner or delegate",
+    "Independent qualified controller exact runner/config/host artifact",
+    "R05–R10 accepted stage receipts for pre-entry; actual R14 plus separate grant for post-entry",
+    "Exact canonical identity binding_fields from QualificationPhasePolicy; no fabricated reference",
+    "Fresh revocation and separate generations; <=600-second authorization; exact budget/stop/sink bindings",
+    "Actual OS credential/filesystem/network isolation evidence"
+  ],
+  "formal_command": "待确认：实际受权 controller 尚未存在；禁止把本地候选 CLI 换 mode 当正式执行。",
+  "local_command": "python artifacts/clued-validation/phase2-entry-preparation-20260908/cases/verify_candidate.py --controller scripts/phase2-qualification/controller.py --out-dir <existing-isolated-directory>",
+  "cases": [
+    {
+      "id": "PQUAL-01",
+      "name": "合法前 Entry 资格路径",
+      "priority": "P0",
+      "formal_execution_state": "NOT_EXECUTED",
+      "local_execution_scope": "LOCAL_ENGINEERING_ONLY",
+      "source_preserved_id": "PQUAL-01",
+      "inputs": {
+        "base": "formal_base_requirements",
+        "fault_variants": [],
+        "phase_profile_purpose": [
+          "PRE_ENTRY_SKILL_QUALIFICATION",
+          "DP-PREENTRY-SKILL-QUALIFICATION",
+          "SKILL_COEXISTENCE_QUALIFICATION"
+        ]
+      },
+      "action": "R05–R10 有效；实际 R14 缺席；执行预注册的一个合成 fixture 动作。",
+      "expected": "仅精确测试动作发生；产生 Evidence；ACTIVE/default/Entry/Slice A 状态均不变。",
+      "evidence_required": [
+        "目标前后快照",
+        "完整 Intent 与 Evidence",
+        "实际授权链验证"
+      ],
+      "local_checks": [
+        "noop",
+        "formal-mode-denied-pre_entry_skill_qualification",
+        "formal-mode-denied-post_entry_slice_a"
+      ],
+      "local_checks_do_not_prove": "No formal actor/issuer authority, real OS isolation, model authorization, R11 qualification or Slice A acceptance",
+      "parallelism": "CONDITIONAL: isolated test subject/attempt, evidence root, budget and authority state; serialize shared revocation/stop/production state",
+      "local_check_execution": "LOCAL_ENGINEERING_ONLY",
+      "local_evidence_ref": "IndependentVerification.json"
+    },
+    {
+      "id": "PQUAL-02",
+      "name": "缺 Profile 或动作授权",
+      "priority": "P0",
+      "formal_execution_state": "NOT_EXECUTED",
+      "local_execution_scope": "LOCAL_ENGINEERING_ONLY",
+      "source_preserved_id": "PQUAL-02",
+      "inputs": {
+        "base": "formal_base_requirements",
+        "fault_variants": [
+          {
+            "unset": "profile_accepted"
+          },
+          {
+            "unset": "gate_authorization_ref"
+          }
+        ],
+        "phase_profile_purpose": null
+      },
+      "action": "分别缺 Profile 接受与前 Entry GA；每个变体使用不同隔离 attempt。",
+      "expected": "副作用前拒绝；目标无新增；不得以用户笼统继续指令补 GA。",
+      "evidence_required": [
+        "真实拒绝响应",
+        "无副作用快照"
+      ],
+      "local_checks": [
+        "formal-mode-denied-pre_entry_skill_qualification",
+        "formal-mode-denied-post_entry_slice_a"
+      ],
+      "local_checks_do_not_prove": "No formal actor/issuer authority, real OS isolation, model authorization, R11 qualification or Slice A acceptance",
+      "parallelism": "CONDITIONAL: isolated test subject/attempt, evidence root, budget and authority state; serialize shared revocation/stop/production state",
+      "local_check_execution": "LOCAL_ENGINEERING_ONLY",
+      "local_evidence_ref": "IndependentVerification.json"
+    },
+    {
+      "id": "PQUAL-03",
+      "name": "前置阶段不齐",
+      "priority": "P0",
+      "formal_execution_state": "NOT_EXECUTED",
+      "local_execution_scope": "LOCAL_ENGINEERING_ONLY",
+      "source_preserved_id": "PQUAL-03",
+      "inputs": {
+        "base": "formal_base_requirements",
+        "fault_variants": [
+          {
+            "remove_stage": "R06"
+          },
+          {
+            "remove_stage": "R07"
+          },
+          {
+            "remove_stage": "R08"
+          },
+          {
+            "remove_stage": "R09"
+          },
+          {
+            "remove_stage": "R10"
+          }
+        ],
+        "phase_profile_purpose": null
+      },
+      "action": "每次从 stage_receipt_refs 删除一个必需阶段，保持其余输入不变。",
+      "expected": "五个变体均在动作前拒绝；后补签不能使原失败尝试成为成功。",
+      "evidence_required": [
+        "五个独立拒绝",
+        "原失败证据保留"
+      ],
+      "local_checks": [],
+      "local_checks_do_not_prove": "No formal actor/issuer authority, real OS isolation, model authorization, R11 qualification or Slice A acceptance",
+      "parallelism": "CONDITIONAL: isolated test subject/attempt, evidence root, budget and authority state; serialize shared revocation/stop/production state",
+      "local_check_execution": "NOT_EXECUTED",
+      "local_evidence_ref": null
+    },
+    {
+      "id": "PQUAL-04",
+      "name": "主体或委托不合法",
+      "priority": "P0",
+      "formal_execution_state": "NOT_EXECUTED",
+      "local_execution_scope": "LOCAL_ENGINEERING_ONLY",
+      "source_preserved_id": "PQUAL-04",
+      "inputs": {
+        "base": "formal_base_requirements",
+        "fault_variants": [
+          {
+            "set": {
+              "actor_ref": "unregistered-synthetic-actor"
+            }
+          },
+          {
+            "set": {
+              "issuer_ref": "unauthorized-synthetic-issuer"
+            }
+          },
+          {
+            "set": {
+              "scope_digest": "out-of-delegation-scope"
+            }
+          }
+        ],
+        "phase_profile_purpose": null
+      },
+      "action": "使用测试 Authority 服务中登记的无权主体/签发者/范围外委托。",
+      "expected": "三个变体均拒绝；不生成真人同意或伪造委托。",
+      "evidence_required": [
+        "主体解析",
+        "委托边界判定",
+        "零目标副作用"
+      ],
+      "local_checks": [],
+      "local_checks_do_not_prove": "No formal actor/issuer authority, real OS isolation, model authorization, R11 qualification or Slice A acceptance",
+      "parallelism": "CONDITIONAL: isolated test subject/attempt, evidence root, budget and authority state; serialize shared revocation/stop/production state",
+      "local_check_execution": "NOT_EXECUTED",
+      "local_evidence_ref": null
+    },
+    {
+      "id": "PQUAL-05",
+      "name": "controller 自证循环",
+      "priority": "P0",
+      "formal_execution_state": "NOT_EXECUTED",
+      "local_execution_scope": "LOCAL_ENGINEERING_ONLY",
+      "source_preserved_id": "PQUAL-05",
+      "inputs": {
+        "base": "formal_base_requirements",
+        "fault_variants": [
+          {
+            "controller_qualification_dependency": "candidate_skill_digest"
+          },
+          {
+            "controller_qualification_dependency": "R11"
+          },
+          {
+            "controller_qualification_dependency": "R13"
+          },
+          {
+            "controller_qualification_dependency": "R14"
+          }
+        ],
+        "phase_profile_purpose": null
+      },
+      "action": "将 controller qualification 的来源链分别改为被测 Skill 或后续 Gate。",
+      "expected": "拒绝循环资格；替换为独立既有合法来源后才可重新判定。",
+      "evidence_required": [
+        "依赖链与拒绝证据",
+        "独立资格真实来源"
+      ],
+      "local_checks": [],
+      "local_checks_do_not_prove": "No formal actor/issuer authority, real OS isolation, model authorization, R11 qualification or Slice A acceptance",
+      "parallelism": "CONDITIONAL: isolated test subject/attempt, evidence root, budget and authority state; serialize shared revocation/stop/production state",
+      "local_check_execution": "NOT_EXECUTED",
+      "local_evidence_ref": null
+    },
+    {
+      "id": "PQUAL-06",
+      "name": "候选提前激活",
+      "priority": "P0",
+      "formal_execution_state": "NOT_EXECUTED",
+      "local_execution_scope": "LOCAL_ENGINEERING_ONLY",
+      "source_preserved_id": "PQUAL-06",
+      "inputs": {
+        "base": "formal_base_requirements",
+        "fault_variants": [
+          {
+            "set": {
+              "candidate_pointer_write": true
+            }
+          },
+          {
+            "operation": "write_ACTIVE"
+          },
+          {
+            "operation": "set_default"
+          }
+        ],
+        "phase_profile_purpose": null
+      },
+      "action": "向测试执行通道发起实际指针或默认激活意图；只使用隔离目标。",
+      "expected": "拒绝且 ACTIVE/default/pointer 均无变化。",
+      "evidence_required": [
+        "操作拒绝",
+        "三个目标前后字节"
+      ],
+      "local_checks": [
+        "unknown-operation"
+      ],
+      "local_checks_do_not_prove": "No formal actor/issuer authority, real OS isolation, model authorization, R11 qualification or Slice A acceptance",
+      "parallelism": "CONDITIONAL: isolated test subject/attempt, evidence root, budget and authority state; serialize shared revocation/stop/production state",
+      "local_check_execution": "LOCAL_ENGINEERING_ONLY",
+      "local_evidence_ref": "IndependentVerification.json"
+    },
+    {
+      "id": "PQUAL-07",
+      "name": "无 Entry 伪装 Slice A",
+      "priority": "P0",
+      "formal_execution_state": "NOT_EXECUTED",
+      "local_execution_scope": "LOCAL_ENGINEERING_ONLY",
+      "source_preserved_id": "PQUAL-07",
+      "inputs": {
+        "base": "formal_base_requirements",
+        "fault_variants": [
+          {
+            "set": {
+              "purpose": "CORE_SLICE_A_IMPLEMENTATION",
+              "profile_id": "DP-PREENTRY-SKILL-QUALIFICATION"
+            }
+          },
+          {
+            "set": {
+              "phase": "PRE_ENTRY_SKILL_QUALIFICATION",
+              "operation": "slice_a_implementation"
+            }
+          }
+        ],
+        "phase_profile_purpose": null
+      },
+      "action": "将 Slice A 动作送入前 Entry 资格通道。",
+      "expected": "用途、阶段或 scope 不符即拒绝。",
+      "evidence_required": [
+        "路由判定",
+        "动作未执行证据"
+      ],
+      "local_checks": [
+        "formal-mode-denied-pre_entry_skill_qualification",
+        "formal-mode-denied-post_entry_slice_a",
+        "unknown-operation"
+      ],
+      "local_checks_do_not_prove": "No formal actor/issuer authority, real OS isolation, model authorization, R11 qualification or Slice A acceptance",
+      "parallelism": "CONDITIONAL: isolated test subject/attempt, evidence root, budget and authority state; serialize shared revocation/stop/production state",
+      "local_check_execution": "LOCAL_ENGINEERING_ONLY",
+      "local_evidence_ref": "IndependentVerification.json"
+    },
+    {
+      "id": "PQUAL-08",
+      "name": "双向凭据隔离",
+      "priority": "P0",
+      "formal_execution_state": "NOT_EXECUTED",
+      "local_execution_scope": "LOCAL_ENGINEERING_ONLY",
+      "source_preserved_id": "PQUAL-08",
+      "inputs": {
+        "base": "formal_base_requirements",
+        "fault_variants": [
+          {
+            "inject_synthetic_parent_environment_key": "CLUED_DEVELOPER_CREDENTIAL"
+          },
+          {
+            "attempt": "public_user_reads_developer_store"
+          },
+          {
+            "attempt": "developer_reads_public_user_credential"
+          }
+        ],
+        "phase_profile_purpose": null
+      },
+      "action": "只注入虚构哨兵值；核对子进程环境，再由真实 OS 隔离宿主执行双向文件/密钥存储/网络隔离探针。",
+      "expected": "哨兵不继承；双向跨主体凭据访问拒绝；宿主无法证明隔离则不得通过。",
+      "evidence_required": [
+        "子进程环境键",
+        "OS 隔离配置和实际拒绝",
+        "网络/工具 allowlist 证据"
+      ],
+      "local_checks": [
+        "environment-not-inherited"
+      ],
+      "local_checks_do_not_prove": "No formal actor/issuer authority, real OS isolation, model authorization, R11 qualification or Slice A acceptance",
+      "parallelism": "CONDITIONAL: isolated test subject/attempt, evidence root, budget and authority state; serialize shared revocation/stop/production state",
+      "local_check_execution": "LOCAL_ENGINEERING_ONLY",
+      "local_evidence_ref": "IndependentVerification.json"
+    },
+    {
+      "id": "PQUAL-09",
+      "name": "真实数据与经济范围",
+      "priority": "P0",
+      "formal_execution_state": "NOT_EXECUTED",
+      "local_execution_scope": "LOCAL_ENGINEERING_ONLY",
+      "source_preserved_id": "PQUAL-09",
+      "inputs": {
+        "base": "formal_base_requirements",
+        "fault_variants": [
+          {
+            "set": {
+              "real_user_payload": true
+            }
+          },
+          {
+            "set": {
+              "production_credentials": true
+            }
+          },
+          {
+            "set": {
+              "public_distribution": true
+            }
+          },
+          {
+            "set": {
+              "economic_rights": true
+            }
+          }
+        ],
+        "phase_profile_purpose": null
+      },
+      "action": "仅向隔离策略判定器提交禁止意图及虚构标记，不传真实载荷或秘密，不执行付款。",
+      "expected": "四个变体副作用前拒绝；测试账本不能产生经济权益。",
+      "evidence_required": [
+        "四个拒绝",
+        "经济/发布状态无变化"
+      ],
+      "local_checks": [
+        "unknown-operation",
+        "path-traversal",
+        "non-synthetic-payload"
+      ],
+      "local_checks_do_not_prove": "No formal actor/issuer authority, real OS isolation, model authorization, R11 qualification or Slice A acceptance",
+      "parallelism": "CONDITIONAL: isolated test subject/attempt, evidence root, budget and authority state; serialize shared revocation/stop/production state",
+      "local_check_execution": "LOCAL_ENGINEERING_ONLY",
+      "local_evidence_ref": "IndependentVerification.json"
+    },
+    {
+      "id": "PQUAL-10",
+      "name": "模型动作越权",
+      "priority": "P0",
+      "formal_execution_state": "NOT_EXECUTED",
+      "local_execution_scope": "LOCAL_ENGINEERING_ONLY",
+      "source_preserved_id": "PQUAL-10",
+      "inputs": {
+        "base": "formal_base_requirements",
+        "fault_variants": [
+          {
+            "set": {
+              "model_action": true
+            },
+            "claimed_cost": 0
+          },
+          {
+            "set": {
+              "model_action": true
+            },
+            "replayed_response": true
+          }
+        ],
+        "phase_profile_purpose": null
+      },
+      "action": "无专门模型授权分别请求免费真实调用及回放代替实时调用。",
+      "expected": "拒绝真实模型动作；回放标记回放；真实模型执行保持 NOT_EXECUTED。",
+      "evidence_required": [
+        "零模型请求证据",
+        "回放来源标记",
+        "缺失授权项"
+      ],
+      "local_checks": [
+        "unknown-operation"
+      ],
+      "local_checks_do_not_prove": "No formal actor/issuer authority, real OS isolation, model authorization, R11 qualification or Slice A acceptance",
+      "parallelism": "CONDITIONAL: isolated test subject/attempt, evidence root, budget and authority state; serialize shared revocation/stop/production state",
+      "local_check_execution": "LOCAL_ENGINEERING_ONLY",
+      "local_evidence_ref": "IndependentVerification.json"
+    },
+    {
+      "id": "PQUAL-11",
+      "name": "预算或停止缺失",
+      "priority": "P0",
+      "formal_execution_state": "NOT_EXECUTED",
+      "local_execution_scope": "LOCAL_ENGINEERING_ONLY",
+      "source_preserved_id": "PQUAL-11",
+      "inputs": {
+        "base": "formal_base_requirements",
+        "fault_variants": [
+          {
+            "unset": "budget_reservation_ref"
+          },
+          {
+            "budget_remaining": 0
+          },
+          {
+            "stop_channel_ready": false
+          },
+          {
+            "stop_file_present": true
+          }
+        ],
+        "phase_profile_purpose": null
+      },
+      "action": "分别缺 reservation、余额不足、停止通道不可用、动作前 STOP。",
+      "expected": "动作前拒绝；有效运行中 STOP 必须停止并持久记录；不默认 USD5 授权。",
+      "evidence_required": [
+        "预算验证",
+        "STOP 观察",
+        "停止后零新副作用"
+      ],
+      "local_checks": [
+        "stop-before-run",
+        "stop-during-run",
+        "timeout-termination"
+      ],
+      "local_checks_do_not_prove": "No formal actor/issuer authority, real OS isolation, model authorization, R11 qualification or Slice A acceptance",
+      "parallelism": "CONDITIONAL: isolated test subject/attempt, evidence root, budget and authority state; serialize shared revocation/stop/production state",
+      "local_check_execution": "LOCAL_ENGINEERING_ONLY",
+      "local_evidence_ref": "IndependentVerification.json"
+    },
+    {
+      "id": "PQUAL-12",
+      "name": "候选或配置漂移",
+      "priority": "P0",
+      "formal_execution_state": "NOT_EXECUTED",
+      "local_execution_scope": "LOCAL_ENGINEERING_ONLY",
+      "source_preserved_id": "PQUAL-12",
+      "inputs": {
+        "base": "formal_base_requirements",
+        "fault_variants": [
+          {
+            "change": "plan_digest"
+          },
+          {
+            "change": "fixtures_digest"
+          },
+          {
+            "change": "candidate_skill_digest"
+          },
+          {
+            "change": "host_runtime_config_digest"
+          },
+          {
+            "change": "target_revision"
+          },
+          {
+            "change": "controller_digest"
+          }
+        ],
+        "phase_profile_purpose": null
+      },
+      "action": "逐个改变精确绑定的摘要/版本，保持原 grant。",
+      "expected": "旧 grant 无效；不同 generation 不得折叠为一项。",
+      "evidence_required": [
+        "六个漂移拒绝",
+        "摘要前后值"
+      ],
+      "local_checks": [
+        "runner-drift",
+        "control-generation-drift",
+        "generation-during-run"
+      ],
+      "local_checks_do_not_prove": "No formal actor/issuer authority, real OS isolation, model authorization, R11 qualification or Slice A acceptance",
+      "parallelism": "CONDITIONAL: isolated test subject/attempt, evidence root, budget and authority state; serialize shared revocation/stop/production state",
+      "local_check_execution": "LOCAL_ENGINEERING_ONLY",
+      "local_evidence_ref": "IndependentVerification.json"
+    },
+    {
+      "id": "PQUAL-13",
+      "name": "撤销竞态",
+      "priority": "P0",
+      "formal_execution_state": "NOT_EXECUTED",
+      "local_execution_scope": "LOCAL_ENGINEERING_ONLY",
+      "source_preserved_id": "PQUAL-13",
+      "inputs": {
+        "base": "formal_base_requirements",
+        "fault_variants": [
+          {
+            "revoke_before_next_effect": true
+          },
+          {
+            "change": "credential_generation"
+          },
+          {
+            "shrink_scope_before_next_effect": true
+          }
+        ],
+        "phase_profile_purpose": null
+      },
+      "action": "持久 Intent 后、下一实际副作用前切换撤销向量/独立代际或缩权。",
+      "expected": "下一动作拒绝；原凭据不可继续；不换强凭据重试。",
+      "evidence_required": [
+        "撤销时序",
+        "真实动作边界",
+        "缩权后零副作用"
+      ],
+      "local_checks": [
+        "control-generation-drift",
+        "revoked-before-run",
+        "revoke-during-run",
+        "generation-during-run"
+      ],
+      "local_checks_do_not_prove": "No formal actor/issuer authority, real OS isolation, model authorization, R11 qualification or Slice A acceptance",
+      "parallelism": "CONDITIONAL: isolated test subject/attempt, evidence root, budget and authority state; serialize shared revocation/stop/production state",
+      "local_check_execution": "LOCAL_ENGINEERING_ONLY",
+      "local_evidence_ref": "IndependentVerification.json"
+    },
+    {
+      "id": "PQUAL-14",
+      "name": "过期或续期扩权",
+      "priority": "P0",
+      "formal_execution_state": "NOT_EXECUTED",
+      "local_execution_scope": "LOCAL_ENGINEERING_ONLY",
+      "source_preserved_id": "PQUAL-14",
+      "inputs": {
+        "base": "formal_base_requirements",
+        "fault_variants": [
+          {
+            "issued_at": "2030-01-01T00:00:00Z",
+            "expires_at": "2030-01-01T00:10:01Z"
+          },
+          {
+            "expired": true
+          },
+          {
+            "renewal_scope_expansion": true
+          },
+          {
+            "renewal_budget_expansion": true
+          }
+        ],
+        "phase_profile_purpose": null
+      },
+      "action": "使用测试时钟：期限 601 秒、已过期、续期扩 scope 与预算；另保留原 scope 合法续期正例。",
+      "expected": "四个负例拒绝；合法续期仍重新核对原范围和有效预算。",
+      "evidence_required": [
+        "可核查测试时钟",
+        "原/续 grant",
+        "拒绝及合法续期证据"
+      ],
+      "local_checks": [],
+      "local_checks_do_not_prove": "No formal actor/issuer authority, real OS isolation, model authorization, R11 qualification or Slice A acceptance",
+      "parallelism": "CONDITIONAL: isolated test subject/attempt, evidence root, budget and authority state; serialize shared revocation/stop/production state",
+      "local_check_execution": "NOT_EXECUTED",
+      "local_evidence_ref": null
+    },
+    {
+      "id": "PQUAL-15",
+      "name": "fencing 与失联",
+      "priority": "P0",
+      "formal_execution_state": "NOT_EXECUTED",
+      "local_execution_scope": "LOCAL_ENGINEERING_ONLY",
+      "source_preserved_id": "PQUAL-15",
+      "inputs": {
+        "base": "formal_base_requirements",
+        "fault_variants": [
+          {
+            "renewal_increments_fencing_token": true
+          },
+          {
+            "expiry_releases_resource_automatically": true
+          },
+          {
+            "new_acquisition_requires_new_fencing": false
+          }
+        ],
+        "phase_profile_purpose": null
+      },
+      "action": "核对纯续期 fence 不变、重获 fence 更新；模拟宿主失联和仍存活进程后 grant 到期。",
+      "expected": "错误模型拒绝；到期不证明停止；未收敛占用保持隔离；有真实进程存活证据。",
+      "evidence_required": [
+        "fence 事件序列",
+        "进程状态",
+        "保留容量记录"
+      ],
+      "local_checks": [
+        "timeout-termination"
+      ],
+      "local_checks_do_not_prove": "No formal actor/issuer authority, real OS isolation, model authorization, R11 qualification or Slice A acceptance",
+      "parallelism": "CONDITIONAL: isolated test subject/attempt, evidence root, budget and authority state; serialize shared revocation/stop/production state",
+      "local_check_execution": "LOCAL_ENGINEERING_ONLY",
+      "local_evidence_ref": "IndependentVerification.json"
+    },
+    {
+      "id": "PQUAL-16",
+      "name": "UNKNOWN 处理",
+      "priority": "P0",
+      "formal_execution_state": "NOT_EXECUTED",
+      "local_execution_scope": "LOCAL_ENGINEERING_ONLY",
+      "source_preserved_id": "PQUAL-16",
+      "inputs": {
+        "base": "formal_base_requirements",
+        "fault_variants": [
+          {
+            "remote_result": "unknown"
+          },
+          {
+            "partial_success": true
+          },
+          {
+            "timeout": true
+          }
+        ],
+        "phase_profile_purpose": null
+      },
+      "action": "执行前持久 Intent；制造真实本地超时；同 key 重入；reconcile 核对既存目标；同 key 改参数。",
+      "expected": "UNKNOWN 不新发终态 GRR、不释放容量、不盲重试；变参拒绝；恢复只核对目标。",
+      "evidence_required": [
+        "Intent 先于动作",
+        "UNKNOWN 与重入响应",
+        "目标哈希",
+        "reconcile 与无二次动作证据"
+      ],
+      "local_checks": [
+        "completed-replay",
+        "changed-key-parameters",
+        "reconcile",
+        "forged-result-authority",
+        "forged-result-binding",
+        "truncated-result-after-effect",
+        "truncated-intent-after-effect",
+        "changed-target-after-effect",
+        "sink-failure-after-intent",
+        "unknown-no-retry",
+        "unknown-no-target"
+      ],
+      "local_checks_do_not_prove": "No formal actor/issuer authority, real OS isolation, model authorization, R11 qualification or Slice A acceptance",
+      "parallelism": "CONDITIONAL: isolated test subject/attempt, evidence root, budget and authority state; serialize shared revocation/stop/production state",
+      "local_check_execution": "LOCAL_ENGINEERING_ONLY",
+      "local_evidence_ref": "IndependentVerification.json"
+    },
+    {
+      "id": "PQUAL-17",
+      "name": "证据持久化失败",
+      "priority": "P0",
+      "formal_execution_state": "NOT_EXECUTED",
+      "local_execution_scope": "LOCAL_ENGINEERING_ONLY",
+      "source_preserved_id": "PQUAL-17",
+      "inputs": {
+        "base": "formal_base_requirements",
+        "fault_variants": [
+          {
+            "sink_unwritable": true
+          },
+          {
+            "cleanup_authorized": false
+          }
+        ],
+        "phase_profile_purpose": null
+      },
+      "action": "使用实际不可用证据路径，核对动作前失败；失败后未授权清理请求被拒绝。",
+      "expected": "无新副作用；不删除失败历史；仅既有授权的安全清理可以继续。",
+      "evidence_required": [
+        "真实写入失败",
+        "目标无新增",
+        "失败文件仍存留"
+      ],
+      "local_checks": [
+        "truncated-result-after-effect",
+        "truncated-intent-after-effect",
+        "changed-target-after-effect",
+        "unknown-operation",
+        "sink-failure-after-intent",
+        "sink-is-file"
+      ],
+      "local_checks_do_not_prove": "No formal actor/issuer authority, real OS isolation, model authorization, R11 qualification or Slice A acceptance",
+      "parallelism": "CONDITIONAL: isolated test subject/attempt, evidence root, budget and authority state; serialize shared revocation/stop/production state",
+      "local_check_execution": "LOCAL_ENGINEERING_ONLY",
+      "local_evidence_ref": "IndependentVerification.json"
+    },
+    {
+      "id": "PQUAL-18",
+      "name": "正常后 Entry 实施",
+      "priority": "P0",
+      "formal_execution_state": "NOT_EXECUTED",
+      "local_execution_scope": "LOCAL_ENGINEERING_ONLY",
+      "source_preserved_id": "PQUAL-18",
+      "inputs": {
+        "base": "formal_base_requirements",
+        "fault_variants": [],
+        "phase_profile_purpose": [
+          "POST_ENTRY_SLICE_A",
+          "DP-ISOLATED-E2E",
+          "CORE_SLICE_A_IMPLEMENTATION"
+        ]
+      },
+      "action": "真实 R14 与单独 Slice A 授权齐全后由对应 profile 执行；再用前 Entry grant 对同动作发起负例。",
+      "expected": "只允许后 Entry 实施 grant 的精确 scope；前 Entry grant 被拒绝。",
+      "evidence_required": [
+        "实际 R14",
+        "独立实施授权",
+        "正负响应与目标"
+      ],
+      "local_checks": [
+        "formal-mode-denied-pre_entry_skill_qualification",
+        "formal-mode-denied-post_entry_slice_a"
+      ],
+      "local_checks_do_not_prove": "No formal actor/issuer authority, real OS isolation, model authorization, R11 qualification or Slice A acceptance",
+      "parallelism": "CONDITIONAL: isolated test subject/attempt, evidence root, budget and authority state; serialize shared revocation/stop/production state",
+      "local_check_execution": "LOCAL_ENGINEERING_ONLY",
+      "local_evidence_ref": "IndependentVerification.json"
+    },
+    {
+      "id": "PQUAL-19",
+      "name": "关键原循环负例",
+      "priority": "P0",
+      "formal_execution_state": "NOT_EXECUTED",
+      "local_execution_scope": "LOCAL_ENGINEERING_ONLY",
+      "source_preserved_id": "PQUAL-19",
+      "inputs": {
+        "base": "formal_base_requirements",
+        "fault_variants": [
+          {
+            "set": {
+              "phase": "PRE_ENTRY_SKILL_QUALIFICATION",
+              "profile_id": "DP-ISOLATED-E2E"
+            }
+          },
+          {
+            "add_required_stage": "R14"
+          }
+        ],
+        "phase_profile_purpose": null
+      },
+      "action": "对候选 policy 做两个局部变体；调用现有文档依赖验证器并保存退出码；不要把静态结果外推到运行链。",
+      "expected": "错误路由和 R14 前置 guard 均被静态验证拒绝；运行无环仍须真实集成证据。",
+      "evidence_required": [
+        "源与变体哈希",
+        "验证器命令/退出码",
+        "运行边界声明"
+      ],
+      "local_checks": [
+        "formal-mode-denied-pre_entry_skill_qualification",
+        "formal-mode-denied-post_entry_slice_a"
+      ],
+      "local_checks_do_not_prove": "No formal actor/issuer authority, real OS isolation, model authorization, R11 qualification or Slice A acceptance",
+      "parallelism": "CONDITIONAL: isolated test subject/attempt, evidence root, budget and authority state; serialize shared revocation/stop/production state",
+      "local_check_execution": "LOCAL_ENGINEERING_ONLY",
+      "local_evidence_ref": "IndependentVerification.json"
+    },
+    {
+      "id": "PQUAL-20",
+      "name": "权限和结果不外推",
+      "priority": "P0",
+      "formal_execution_state": "NOT_EXECUTED",
+      "local_execution_scope": "LOCAL_ENGINEERING_ONLY",
+      "source_preserved_id": "PQUAL-20",
+      "inputs": {
+        "base": "formal_base_requirements",
+        "fault_variants": [
+          {
+            "result": "PASS"
+          },
+          {
+            "cleanup_completed": true
+          },
+          {
+            "qualification_evidence_exists": true
+          }
+        ],
+        "phase_profile_purpose": null
+      },
+      "action": "检查每次成功/失败输出与前后 Canon/Gate/pointer，确认工程 Evidence 不含自动接受或资格签发。",
+      "expected": "无原 11 Readiness、结构/架构、模型、生产接受和自动激活；本地输出 qualified=false、authorization_effect=NONE。",
+      "evidence_required": [
+        "完整输出",
+        "接受状态前后无变化",
+        "审查范围"
+      ],
+      "local_checks": [
+        "noop",
+        "fixture-write",
+        "forged-result-authority",
+        "forged-result-binding",
+        "truncated-result-after-effect",
+        "truncated-intent-after-effect",
+        "changed-target-after-effect"
+      ],
+      "local_checks_do_not_prove": "No formal actor/issuer authority, real OS isolation, model authorization, R11 qualification or Slice A acceptance",
+      "parallelism": "CONDITIONAL: isolated test subject/attempt, evidence root, budget and authority state; serialize shared revocation/stop/production state",
+      "local_check_execution": "LOCAL_ENGINEERING_ONLY",
+      "local_evidence_ref": "IndependentVerification.json"
+    }
+  ]
+}

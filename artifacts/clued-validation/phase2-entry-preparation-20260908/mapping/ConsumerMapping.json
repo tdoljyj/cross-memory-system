@@ -1,0 +1,2456 @@
+{
+  "state": "ENGINEERING_PREPARATION_ONLY",
+  "authority_effect": "NONE",
+  "source_commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+  "consumer_count": 18,
+  "authorization_contract_count": 27,
+  "receipt_contract_count": 18,
+  "observation_boundary": "Read/hash current pinned source files; historical symbols and runtime behavior are not newly tested.",
+  "step17_successor_ref": {
+    "path": "docs/execution-plans/phase2-structure-governance/step15-enforcement-20260907/workflow-review/AllowedDifferences.json",
+    "bytes": 4152,
+    "sha256": "9f79ca2b833f2f91d6b90228d6a6719ba2ddcf479e09a143b12c0f10df4fa54b",
+    "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+    "worktree_sha256": "9f79ca2b833f2f91d6b90228d6a6719ba2ddcf479e09a143b12c0f10df4fa54b",
+    "worktree_byte_relation": "EXACT",
+    "pointer": ""
+  },
+  "consumers": [
+    {
+      "consumer_id": "C01",
+      "label": "公开 bootstrap / MCP discovery",
+      "consumer_type": "runtime_service",
+      "governance_domain": "PRODUCT_PROJECTION",
+      "declared_owner": {
+        "owner_ref": {
+          "source_id": "step4-ownership",
+          "sha256": "40d7e87fed046c8aff18d8c1d0532ada075b802faf204059649c84faef1c0782",
+          "pointer": "/namespaces/3/management_owner"
+        },
+        "acceptance_ref": {
+          "source_id": "step4-acceptance",
+          "sha256": "6f2cc1c9cc28c2a717023029851d61a666815567bc30b3635479cb1b70382e6c",
+          "pointer": ""
+        },
+        "maintainer_ref": {
+          "source_id": "delegation",
+          "sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+          "pointer": "/delegatee"
+        },
+        "runtime_issuer_not_inferred": true
+      },
+      "operations": [
+        "initialize",
+        "tools/list",
+        "clued_agent_bootstrap"
+      ],
+      "current_code_bindings": [
+        {
+          "original_path": "apps/clued-cloud/worker/continuity.ts",
+          "current_source": {
+            "path": "apps/clued-cloud/worker/continuity.ts",
+            "bytes": 50783,
+            "sha256": "53746991a483bf4bbac4402440ae86fb7cd296032a7a10359758bbaf77997dc5",
+            "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+            "worktree_sha256": "53746991a483bf4bbac4402440ae86fb7cd296032a7a10359758bbaf77997dc5",
+            "worktree_byte_relation": "EXACT",
+            "pointer": ""
+          },
+          "historical_symbol": "bootstrapContract",
+          "historical_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "applicable_step17_expected_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "applicability": "CHANGED_SOURCE_REQUIRES_TARGETED_REVIEW",
+          "symbol_or_behavior_requalified": false
+        },
+        {
+          "original_path": "apps/clued-cloud/worker/continuity.ts",
+          "current_source": {
+            "path": "apps/clued-cloud/worker/continuity.ts",
+            "bytes": 50783,
+            "sha256": "53746991a483bf4bbac4402440ae86fb7cd296032a7a10359758bbaf77997dc5",
+            "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+            "worktree_sha256": "53746991a483bf4bbac4402440ae86fb7cd296032a7a10359758bbaf77997dc5",
+            "worktree_byte_relation": "EXACT",
+            "pointer": ""
+          },
+          "historical_symbol": "publicMcpTools",
+          "historical_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "applicable_step17_expected_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "applicability": "CHANGED_SOURCE_REQUIRES_TARGETED_REVIEW",
+          "symbol_or_behavior_requalified": false
+        },
+        {
+          "original_path": "apps/clued-cloud/worker/continuity.ts",
+          "current_source": {
+            "path": "apps/clued-cloud/worker/continuity.ts",
+            "bytes": 50783,
+            "sha256": "53746991a483bf4bbac4402440ae86fb7cd296032a7a10359758bbaf77997dc5",
+            "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+            "worktree_sha256": "53746991a483bf4bbac4402440ae86fb7cd296032a7a10359758bbaf77997dc5",
+            "worktree_byte_relation": "EXACT",
+            "pointer": ""
+          },
+          "historical_symbol": "handleMcp",
+          "historical_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "applicable_step17_expected_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "applicability": "CHANGED_SOURCE_REQUIRES_TARGETED_REVIEW",
+          "symbol_or_behavior_requalified": false
+        }
+      ],
+      "typed_consumer_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedConsumerRegistry.candidate.json",
+        "bytes": 243588,
+        "sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/0"
+      },
+      "historical_actual_binding_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step13-14-actual-verification-20260907/TargetConsumerBindingManifest.json",
+        "bytes": 33972,
+        "sha256": "6c82bc7c53a1f26e0dd07419acfcd67e3e65b772f4a3ee69f2f06c617b4fcece",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "6c82bc7c53a1f26e0dd07419acfcd67e3e65b772f4a3ee69f2f06c617b4fcece",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/0"
+      },
+      "required_authorization_contracts": [
+        {
+          "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedAuthorizationRegistry.candidate.json",
+          "bytes": 74695,
+          "sha256": "359e7461ba3166bef63815f37ddd9c247aada317c14e4e62bdee3bc79cc3fcdd",
+          "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+          "worktree_sha256": "359e7461ba3166bef63815f37ddd9c247aada317c14e4e62bdee3bc79cc3fcdd",
+          "worktree_byte_relation": "EXACT",
+          "pointer": "/bindings/0"
+        }
+      ],
+      "required_receipt_contract": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedReceiptRegistry.candidate.json",
+        "bytes": 91138,
+        "sha256": "05d182805b31ba9d5e6c1c3fa32ae2081527a92faaa76263debded6ffca5efa4",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "05d182805b31ba9d5e6c1c3fa32ae2081527a92faaa76263debded6ffca5efa4",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/bindings/0"
+      },
+      "authority_rule": "Original source-qualified contracts retained; these references issue no current grant.",
+      "failure_behavior_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedConsumerRegistry.candidate.json",
+        "bytes": 243588,
+        "sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/0/failure_behavior"
+      },
+      "unknown_behavior_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedConsumerRegistry.candidate.json",
+        "bytes": 243588,
+        "sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/0/unknown_behavior"
+      }
+    },
+    {
+      "consumer_id": "C02",
+      "label": "账户JWT与Binding管理",
+      "consumer_type": "runtime_service",
+      "governance_domain": "PRODUCT_PROJECTION",
+      "declared_owner": {
+        "owner_ref": {
+          "source_id": "step4-ownership",
+          "sha256": "40d7e87fed046c8aff18d8c1d0532ada075b802faf204059649c84faef1c0782",
+          "pointer": "/namespaces/3/management_owner"
+        },
+        "acceptance_ref": {
+          "source_id": "step4-acceptance",
+          "sha256": "6f2cc1c9cc28c2a717023029851d61a666815567bc30b3635479cb1b70382e6c",
+          "pointer": ""
+        },
+        "maintainer_ref": {
+          "source_id": "delegation",
+          "sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+          "pointer": "/delegatee"
+        },
+        "runtime_issuer_not_inferred": true
+      },
+      "operations": [
+        "listBindings",
+        "createBinding",
+        "revokeBinding"
+      ],
+      "current_code_bindings": [
+        {
+          "original_path": "apps/clued-cloud/worker/continuity.ts",
+          "current_source": {
+            "path": "apps/clued-cloud/worker/continuity.ts",
+            "bytes": 50783,
+            "sha256": "53746991a483bf4bbac4402440ae86fb7cd296032a7a10359758bbaf77997dc5",
+            "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+            "worktree_sha256": "53746991a483bf4bbac4402440ae86fb7cd296032a7a10359758bbaf77997dc5",
+            "worktree_byte_relation": "EXACT",
+            "pointer": ""
+          },
+          "historical_symbol": "requireSupabaseUser",
+          "historical_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "applicable_step17_expected_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "applicability": "CHANGED_SOURCE_REQUIRES_TARGETED_REVIEW",
+          "symbol_or_behavior_requalified": false
+        },
+        {
+          "original_path": "apps/clued-cloud/worker/continuity.ts",
+          "current_source": {
+            "path": "apps/clued-cloud/worker/continuity.ts",
+            "bytes": 50783,
+            "sha256": "53746991a483bf4bbac4402440ae86fb7cd296032a7a10359758bbaf77997dc5",
+            "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+            "worktree_sha256": "53746991a483bf4bbac4402440ae86fb7cd296032a7a10359758bbaf77997dc5",
+            "worktree_byte_relation": "EXACT",
+            "pointer": ""
+          },
+          "historical_symbol": "listBindings",
+          "historical_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "applicable_step17_expected_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "applicability": "CHANGED_SOURCE_REQUIRES_TARGETED_REVIEW",
+          "symbol_or_behavior_requalified": false
+        },
+        {
+          "original_path": "apps/clued-cloud/worker/continuity.ts",
+          "current_source": {
+            "path": "apps/clued-cloud/worker/continuity.ts",
+            "bytes": 50783,
+            "sha256": "53746991a483bf4bbac4402440ae86fb7cd296032a7a10359758bbaf77997dc5",
+            "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+            "worktree_sha256": "53746991a483bf4bbac4402440ae86fb7cd296032a7a10359758bbaf77997dc5",
+            "worktree_byte_relation": "EXACT",
+            "pointer": ""
+          },
+          "historical_symbol": "createBinding",
+          "historical_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "applicable_step17_expected_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "applicability": "CHANGED_SOURCE_REQUIRES_TARGETED_REVIEW",
+          "symbol_or_behavior_requalified": false
+        },
+        {
+          "original_path": "apps/clued-cloud/worker/continuity.ts",
+          "current_source": {
+            "path": "apps/clued-cloud/worker/continuity.ts",
+            "bytes": 50783,
+            "sha256": "53746991a483bf4bbac4402440ae86fb7cd296032a7a10359758bbaf77997dc5",
+            "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+            "worktree_sha256": "53746991a483bf4bbac4402440ae86fb7cd296032a7a10359758bbaf77997dc5",
+            "worktree_byte_relation": "EXACT",
+            "pointer": ""
+          },
+          "historical_symbol": "revokeBinding",
+          "historical_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "applicable_step17_expected_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "applicability": "CHANGED_SOURCE_REQUIRES_TARGETED_REVIEW",
+          "symbol_or_behavior_requalified": false
+        }
+      ],
+      "typed_consumer_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedConsumerRegistry.candidate.json",
+        "bytes": 243588,
+        "sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/1"
+      },
+      "historical_actual_binding_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step13-14-actual-verification-20260907/TargetConsumerBindingManifest.json",
+        "bytes": 33972,
+        "sha256": "6c82bc7c53a1f26e0dd07419acfcd67e3e65b772f4a3ee69f2f06c617b4fcece",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "6c82bc7c53a1f26e0dd07419acfcd67e3e65b772f4a3ee69f2f06c617b4fcece",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/1"
+      },
+      "required_authorization_contracts": [
+        {
+          "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedAuthorizationRegistry.candidate.json",
+          "bytes": 74695,
+          "sha256": "359e7461ba3166bef63815f37ddd9c247aada317c14e4e62bdee3bc79cc3fcdd",
+          "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+          "worktree_sha256": "359e7461ba3166bef63815f37ddd9c247aada317c14e4e62bdee3bc79cc3fcdd",
+          "worktree_byte_relation": "EXACT",
+          "pointer": "/bindings/1"
+        }
+      ],
+      "required_receipt_contract": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedReceiptRegistry.candidate.json",
+        "bytes": 91138,
+        "sha256": "05d182805b31ba9d5e6c1c3fa32ae2081527a92faaa76263debded6ffca5efa4",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "05d182805b31ba9d5e6c1c3fa32ae2081527a92faaa76263debded6ffca5efa4",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/bindings/1"
+      },
+      "authority_rule": "Original source-qualified contracts retained; these references issue no current grant.",
+      "failure_behavior_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedConsumerRegistry.candidate.json",
+        "bytes": 243588,
+        "sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/1/failure_behavior"
+      },
+      "unknown_behavior_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedConsumerRegistry.candidate.json",
+        "bytes": 243588,
+        "sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/1/unknown_behavior"
+      }
+    },
+    {
+      "consumer_id": "C03",
+      "label": "连续性读取/审计",
+      "consumer_type": "runtime_service",
+      "governance_domain": "PRODUCT_PROJECTION",
+      "declared_owner": {
+        "owner_ref": {
+          "source_id": "step4-ownership",
+          "sha256": "40d7e87fed046c8aff18d8c1d0532ada075b802faf204059649c84faef1c0782",
+          "pointer": "/namespaces/3/management_owner"
+        },
+        "acceptance_ref": {
+          "source_id": "step4-acceptance",
+          "sha256": "6f2cc1c9cc28c2a717023029851d61a666815567bc30b3635479cb1b70382e6c",
+          "pointer": ""
+        },
+        "maintainer_ref": {
+          "source_id": "delegation",
+          "sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+          "pointer": "/delegatee"
+        },
+        "runtime_issuer_not_inferred": true
+      },
+      "operations": [
+        "clued_session_resume",
+        "clued_search_context",
+        "clued_read_log",
+        "clued_audit_receipts"
+      ],
+      "current_code_bindings": [
+        {
+          "original_path": "apps/clued-cloud/worker/continuity.ts",
+          "current_source": {
+            "path": "apps/clued-cloud/worker/continuity.ts",
+            "bytes": 50783,
+            "sha256": "53746991a483bf4bbac4402440ae86fb7cd296032a7a10359758bbaf77997dc5",
+            "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+            "worktree_sha256": "53746991a483bf4bbac4402440ae86fb7cd296032a7a10359758bbaf77997dc5",
+            "worktree_byte_relation": "EXACT",
+            "pointer": ""
+          },
+          "historical_symbol": "rpcByTool",
+          "historical_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "applicable_step17_expected_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "applicability": "CHANGED_SOURCE_REQUIRES_TARGETED_REVIEW",
+          "symbol_or_behavior_requalified": false
+        },
+        {
+          "original_path": "apps/clued-cloud/worker/continuity.ts",
+          "current_source": {
+            "path": "apps/clued-cloud/worker/continuity.ts",
+            "bytes": 50783,
+            "sha256": "53746991a483bf4bbac4402440ae86fb7cd296032a7a10359758bbaf77997dc5",
+            "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+            "worktree_sha256": "53746991a483bf4bbac4402440ae86fb7cd296032a7a10359758bbaf77997dc5",
+            "worktree_byte_relation": "EXACT",
+            "pointer": ""
+          },
+          "historical_symbol": "callRpc",
+          "historical_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "applicable_step17_expected_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "applicability": "CHANGED_SOURCE_REQUIRES_TARGETED_REVIEW",
+          "symbol_or_behavior_requalified": false
+        },
+        {
+          "original_path": "apps/clued-cloud/worker/continuity.ts",
+          "current_source": {
+            "path": "apps/clued-cloud/worker/continuity.ts",
+            "bytes": 50783,
+            "sha256": "53746991a483bf4bbac4402440ae86fb7cd296032a7a10359758bbaf77997dc5",
+            "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+            "worktree_sha256": "53746991a483bf4bbac4402440ae86fb7cd296032a7a10359758bbaf77997dc5",
+            "worktree_byte_relation": "EXACT",
+            "pointer": ""
+          },
+          "historical_symbol": "restToolByPath",
+          "historical_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "applicable_step17_expected_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "applicability": "CHANGED_SOURCE_REQUIRES_TARGETED_REVIEW",
+          "symbol_or_behavior_requalified": false
+        }
+      ],
+      "typed_consumer_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedConsumerRegistry.candidate.json",
+        "bytes": 243588,
+        "sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/2"
+      },
+      "historical_actual_binding_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step13-14-actual-verification-20260907/TargetConsumerBindingManifest.json",
+        "bytes": 33972,
+        "sha256": "6c82bc7c53a1f26e0dd07419acfcd67e3e65b772f4a3ee69f2f06c617b4fcece",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "6c82bc7c53a1f26e0dd07419acfcd67e3e65b772f4a3ee69f2f06c617b4fcece",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/2"
+      },
+      "required_authorization_contracts": [
+        {
+          "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedAuthorizationRegistry.candidate.json",
+          "bytes": 74695,
+          "sha256": "359e7461ba3166bef63815f37ddd9c247aada317c14e4e62bdee3bc79cc3fcdd",
+          "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+          "worktree_sha256": "359e7461ba3166bef63815f37ddd9c247aada317c14e4e62bdee3bc79cc3fcdd",
+          "worktree_byte_relation": "EXACT",
+          "pointer": "/bindings/2"
+        },
+        {
+          "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedAuthorizationRegistry.candidate.json",
+          "bytes": 74695,
+          "sha256": "359e7461ba3166bef63815f37ddd9c247aada317c14e4e62bdee3bc79cc3fcdd",
+          "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+          "worktree_sha256": "359e7461ba3166bef63815f37ddd9c247aada317c14e4e62bdee3bc79cc3fcdd",
+          "worktree_byte_relation": "EXACT",
+          "pointer": "/bindings/3"
+        }
+      ],
+      "required_receipt_contract": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedReceiptRegistry.candidate.json",
+        "bytes": 91138,
+        "sha256": "05d182805b31ba9d5e6c1c3fa32ae2081527a92faaa76263debded6ffca5efa4",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "05d182805b31ba9d5e6c1c3fa32ae2081527a92faaa76263debded6ffca5efa4",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/bindings/2"
+      },
+      "authority_rule": "Original source-qualified contracts retained; these references issue no current grant.",
+      "failure_behavior_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedConsumerRegistry.candidate.json",
+        "bytes": 243588,
+        "sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/2/failure_behavior"
+      },
+      "unknown_behavior_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedConsumerRegistry.candidate.json",
+        "bytes": 243588,
+        "sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/2/unknown_behavior"
+      }
+    },
+    {
+      "consumer_id": "C04",
+      "label": "连续性 append/checkpoint/import",
+      "consumer_type": "runtime_service",
+      "governance_domain": "PRODUCT_PROJECTION",
+      "declared_owner": {
+        "owner_ref": {
+          "source_id": "step4-ownership",
+          "sha256": "40d7e87fed046c8aff18d8c1d0532ada075b802faf204059649c84faef1c0782",
+          "pointer": "/namespaces/3/management_owner"
+        },
+        "acceptance_ref": {
+          "source_id": "step4-acceptance",
+          "sha256": "6f2cc1c9cc28c2a717023029851d61a666815567bc30b3635479cb1b70382e6c",
+          "pointer": ""
+        },
+        "maintainer_ref": {
+          "source_id": "delegation",
+          "sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+          "pointer": "/delegatee"
+        },
+        "runtime_issuer_not_inferred": true
+      },
+      "operations": [
+        "clued_append_event",
+        "clued_session_checkpoint",
+        "clued_import_log"
+      ],
+      "current_code_bindings": [
+        {
+          "original_path": "apps/clued-cloud/worker/continuity.ts",
+          "current_source": {
+            "path": "apps/clued-cloud/worker/continuity.ts",
+            "bytes": 50783,
+            "sha256": "53746991a483bf4bbac4402440ae86fb7cd296032a7a10359758bbaf77997dc5",
+            "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+            "worktree_sha256": "53746991a483bf4bbac4402440ae86fb7cd296032a7a10359758bbaf77997dc5",
+            "worktree_byte_relation": "EXACT",
+            "pointer": ""
+          },
+          "historical_symbol": "rpcByTool",
+          "historical_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "applicable_step17_expected_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "applicability": "CHANGED_SOURCE_REQUIRES_TARGETED_REVIEW",
+          "symbol_or_behavior_requalified": false
+        },
+        {
+          "original_path": "apps/clued-cloud/worker/continuity.ts",
+          "current_source": {
+            "path": "apps/clued-cloud/worker/continuity.ts",
+            "bytes": 50783,
+            "sha256": "53746991a483bf4bbac4402440ae86fb7cd296032a7a10359758bbaf77997dc5",
+            "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+            "worktree_sha256": "53746991a483bf4bbac4402440ae86fb7cd296032a7a10359758bbaf77997dc5",
+            "worktree_byte_relation": "EXACT",
+            "pointer": ""
+          },
+          "historical_symbol": "callRpc",
+          "historical_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "applicable_step17_expected_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "applicability": "CHANGED_SOURCE_REQUIRES_TARGETED_REVIEW",
+          "symbol_or_behavior_requalified": false
+        }
+      ],
+      "typed_consumer_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedConsumerRegistry.candidate.json",
+        "bytes": 243588,
+        "sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/3"
+      },
+      "historical_actual_binding_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step13-14-actual-verification-20260907/TargetConsumerBindingManifest.json",
+        "bytes": 33972,
+        "sha256": "6c82bc7c53a1f26e0dd07419acfcd67e3e65b772f4a3ee69f2f06c617b4fcece",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "6c82bc7c53a1f26e0dd07419acfcd67e3e65b772f4a3ee69f2f06c617b4fcece",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/3"
+      },
+      "required_authorization_contracts": [
+        {
+          "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedAuthorizationRegistry.candidate.json",
+          "bytes": 74695,
+          "sha256": "359e7461ba3166bef63815f37ddd9c247aada317c14e4e62bdee3bc79cc3fcdd",
+          "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+          "worktree_sha256": "359e7461ba3166bef63815f37ddd9c247aada317c14e4e62bdee3bc79cc3fcdd",
+          "worktree_byte_relation": "EXACT",
+          "pointer": "/bindings/4"
+        },
+        {
+          "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedAuthorizationRegistry.candidate.json",
+          "bytes": 74695,
+          "sha256": "359e7461ba3166bef63815f37ddd9c247aada317c14e4e62bdee3bc79cc3fcdd",
+          "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+          "worktree_sha256": "359e7461ba3166bef63815f37ddd9c247aada317c14e4e62bdee3bc79cc3fcdd",
+          "worktree_byte_relation": "EXACT",
+          "pointer": "/bindings/5"
+        }
+      ],
+      "required_receipt_contract": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedReceiptRegistry.candidate.json",
+        "bytes": 91138,
+        "sha256": "05d182805b31ba9d5e6c1c3fa32ae2081527a92faaa76263debded6ffca5efa4",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "05d182805b31ba9d5e6c1c3fa32ae2081527a92faaa76263debded6ffca5efa4",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/bindings/3"
+      },
+      "authority_rule": "Original source-qualified contracts retained; these references issue no current grant.",
+      "failure_behavior_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedConsumerRegistry.candidate.json",
+        "bytes": 243588,
+        "sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/3/failure_behavior"
+      },
+      "unknown_behavior_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedConsumerRegistry.candidate.json",
+        "bytes": 243588,
+        "sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/3/unknown_behavior"
+      }
+    },
+    {
+      "consumer_id": "C05",
+      "label": "Project REST/MCP",
+      "consumer_type": "runtime_service",
+      "governance_domain": "PRODUCT_PROJECTION",
+      "declared_owner": {
+        "owner_ref": {
+          "source_id": "step4-ownership",
+          "sha256": "40d7e87fed046c8aff18d8c1d0532ada075b802faf204059649c84faef1c0782",
+          "pointer": "/namespaces/3/management_owner"
+        },
+        "acceptance_ref": {
+          "source_id": "step4-acceptance",
+          "sha256": "6f2cc1c9cc28c2a717023029851d61a666815567bc30b3635479cb1b70382e6c",
+          "pointer": ""
+        },
+        "maintainer_ref": {
+          "source_id": "delegation",
+          "sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+          "pointer": "/delegatee"
+        },
+        "runtime_issuer_not_inferred": true
+      },
+      "operations": [
+        "clued_project_list",
+        "clued_project_mutate"
+      ],
+      "current_code_bindings": [
+        {
+          "original_path": "apps/clued-cloud/worker/continuity.ts",
+          "current_source": {
+            "path": "apps/clued-cloud/worker/continuity.ts",
+            "bytes": 50783,
+            "sha256": "53746991a483bf4bbac4402440ae86fb7cd296032a7a10359758bbaf77997dc5",
+            "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+            "worktree_sha256": "53746991a483bf4bbac4402440ae86fb7cd296032a7a10359758bbaf77997dc5",
+            "worktree_byte_relation": "EXACT",
+            "pointer": ""
+          },
+          "historical_symbol": "callUserProjectRpc",
+          "historical_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "applicable_step17_expected_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "applicability": "CHANGED_SOURCE_REQUIRES_TARGETED_REVIEW",
+          "symbol_or_behavior_requalified": false
+        },
+        {
+          "original_path": "apps/clued-cloud/worker/continuity.ts",
+          "current_source": {
+            "path": "apps/clued-cloud/worker/continuity.ts",
+            "bytes": 50783,
+            "sha256": "53746991a483bf4bbac4402440ae86fb7cd296032a7a10359758bbaf77997dc5",
+            "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+            "worktree_sha256": "53746991a483bf4bbac4402440ae86fb7cd296032a7a10359758bbaf77997dc5",
+            "worktree_byte_relation": "EXACT",
+            "pointer": ""
+          },
+          "historical_symbol": "handleProjectApi",
+          "historical_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "applicable_step17_expected_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "applicability": "CHANGED_SOURCE_REQUIRES_TARGETED_REVIEW",
+          "symbol_or_behavior_requalified": false
+        },
+        {
+          "original_path": "apps/clued-cloud/worker/projects.ts",
+          "current_source": {
+            "path": "apps/clued-cloud/worker/projects.ts",
+            "bytes": 2051,
+            "sha256": "8bb2d52643c4ffd62ee48de60294559161d750ea15d328b6585deb47aa2aa09f",
+            "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+            "worktree_sha256": "8bb2d52643c4ffd62ee48de60294559161d750ea15d328b6585deb47aa2aa09f",
+            "worktree_byte_relation": "EXACT",
+            "pointer": ""
+          },
+          "historical_symbol": "projectTools",
+          "historical_sha256": "8bb2d52643c4ffd62ee48de60294559161d750ea15d328b6585deb47aa2aa09f",
+          "applicable_step17_expected_sha256": "8bb2d52643c4ffd62ee48de60294559161d750ea15d328b6585deb47aa2aa09f",
+          "applicability": "CURRENT_BYTES_MATCH_BOUND_SOURCE",
+          "symbol_or_behavior_requalified": false
+        }
+      ],
+      "typed_consumer_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedConsumerRegistry.candidate.json",
+        "bytes": 243588,
+        "sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/4"
+      },
+      "historical_actual_binding_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step13-14-actual-verification-20260907/TargetConsumerBindingManifest.json",
+        "bytes": 33972,
+        "sha256": "6c82bc7c53a1f26e0dd07419acfcd67e3e65b772f4a3ee69f2f06c617b4fcece",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "6c82bc7c53a1f26e0dd07419acfcd67e3e65b772f4a3ee69f2f06c617b4fcece",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/4"
+      },
+      "required_authorization_contracts": [
+        {
+          "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedAuthorizationRegistry.candidate.json",
+          "bytes": 74695,
+          "sha256": "359e7461ba3166bef63815f37ddd9c247aada317c14e4e62bdee3bc79cc3fcdd",
+          "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+          "worktree_sha256": "359e7461ba3166bef63815f37ddd9c247aada317c14e4e62bdee3bc79cc3fcdd",
+          "worktree_byte_relation": "EXACT",
+          "pointer": "/bindings/6"
+        },
+        {
+          "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedAuthorizationRegistry.candidate.json",
+          "bytes": 74695,
+          "sha256": "359e7461ba3166bef63815f37ddd9c247aada317c14e4e62bdee3bc79cc3fcdd",
+          "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+          "worktree_sha256": "359e7461ba3166bef63815f37ddd9c247aada317c14e4e62bdee3bc79cc3fcdd",
+          "worktree_byte_relation": "EXACT",
+          "pointer": "/bindings/7"
+        }
+      ],
+      "required_receipt_contract": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedReceiptRegistry.candidate.json",
+        "bytes": 91138,
+        "sha256": "05d182805b31ba9d5e6c1c3fa32ae2081527a92faaa76263debded6ffca5efa4",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "05d182805b31ba9d5e6c1c3fa32ae2081527a92faaa76263debded6ffca5efa4",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/bindings/4"
+      },
+      "authority_rule": "Original source-qualified contracts retained; these references issue no current grant.",
+      "failure_behavior_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedConsumerRegistry.candidate.json",
+        "bytes": 243588,
+        "sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/4/failure_behavior"
+      },
+      "unknown_behavior_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedConsumerRegistry.candidate.json",
+        "bytes": 243588,
+        "sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/4/unknown_behavior"
+      }
+    },
+    {
+      "consumer_id": "C06",
+      "label": "Record读取与视图",
+      "consumer_type": "runtime_service",
+      "governance_domain": "PRODUCT_PROJECTION",
+      "declared_owner": {
+        "owner_ref": {
+          "source_id": "step4-ownership",
+          "sha256": "40d7e87fed046c8aff18d8c1d0532ada075b802faf204059649c84faef1c0782",
+          "pointer": "/namespaces/3/management_owner"
+        },
+        "acceptance_ref": {
+          "source_id": "step4-acceptance",
+          "sha256": "6f2cc1c9cc28c2a717023029851d61a666815567bc30b3635479cb1b70382e6c",
+          "pointer": ""
+        },
+        "maintainer_ref": {
+          "source_id": "delegation",
+          "sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+          "pointer": "/delegatee"
+        },
+        "runtime_issuer_not_inferred": true
+      },
+      "operations": [
+        "clued_record_list"
+      ],
+      "current_code_bindings": [
+        {
+          "original_path": "apps/clued-cloud/worker/continuity.ts",
+          "current_source": {
+            "path": "apps/clued-cloud/worker/continuity.ts",
+            "bytes": 50783,
+            "sha256": "53746991a483bf4bbac4402440ae86fb7cd296032a7a10359758bbaf77997dc5",
+            "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+            "worktree_sha256": "53746991a483bf4bbac4402440ae86fb7cd296032a7a10359758bbaf77997dc5",
+            "worktree_byte_relation": "EXACT",
+            "pointer": ""
+          },
+          "historical_symbol": "handleRecordApi",
+          "historical_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "applicable_step17_expected_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "applicability": "CHANGED_SOURCE_REQUIRES_TARGETED_REVIEW",
+          "symbol_or_behavior_requalified": false
+        },
+        {
+          "original_path": "apps/clued-cloud/worker/records.ts",
+          "current_source": {
+            "path": "apps/clued-cloud/worker/records.ts",
+            "bytes": 8108,
+            "sha256": "43bfe74c4d6576476f3d4a08df82a6b0853da855c29124edf1e333c14d5bb35e",
+            "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+            "worktree_sha256": "43bfe74c4d6576476f3d4a08df82a6b0853da855c29124edf1e333c14d5bb35e",
+            "worktree_byte_relation": "EXACT",
+            "pointer": ""
+          },
+          "historical_symbol": "recordTools",
+          "historical_sha256": "43bfe74c4d6576476f3d4a08df82a6b0853da855c29124edf1e333c14d5bb35e",
+          "applicable_step17_expected_sha256": "43bfe74c4d6576476f3d4a08df82a6b0853da855c29124edf1e333c14d5bb35e",
+          "applicability": "CURRENT_BYTES_MATCH_BOUND_SOURCE",
+          "symbol_or_behavior_requalified": false
+        }
+      ],
+      "typed_consumer_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedConsumerRegistry.candidate.json",
+        "bytes": 243588,
+        "sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/5"
+      },
+      "historical_actual_binding_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step13-14-actual-verification-20260907/TargetConsumerBindingManifest.json",
+        "bytes": 33972,
+        "sha256": "6c82bc7c53a1f26e0dd07419acfcd67e3e65b772f4a3ee69f2f06c617b4fcece",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "6c82bc7c53a1f26e0dd07419acfcd67e3e65b772f4a3ee69f2f06c617b4fcece",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/5"
+      },
+      "required_authorization_contracts": [
+        {
+          "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedAuthorizationRegistry.candidate.json",
+          "bytes": 74695,
+          "sha256": "359e7461ba3166bef63815f37ddd9c247aada317c14e4e62bdee3bc79cc3fcdd",
+          "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+          "worktree_sha256": "359e7461ba3166bef63815f37ddd9c247aada317c14e4e62bdee3bc79cc3fcdd",
+          "worktree_byte_relation": "EXACT",
+          "pointer": "/bindings/8"
+        },
+        {
+          "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedAuthorizationRegistry.candidate.json",
+          "bytes": 74695,
+          "sha256": "359e7461ba3166bef63815f37ddd9c247aada317c14e4e62bdee3bc79cc3fcdd",
+          "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+          "worktree_sha256": "359e7461ba3166bef63815f37ddd9c247aada317c14e4e62bdee3bc79cc3fcdd",
+          "worktree_byte_relation": "EXACT",
+          "pointer": "/bindings/9"
+        }
+      ],
+      "required_receipt_contract": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedReceiptRegistry.candidate.json",
+        "bytes": 91138,
+        "sha256": "05d182805b31ba9d5e6c1c3fa32ae2081527a92faaa76263debded6ffca5efa4",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "05d182805b31ba9d5e6c1c3fa32ae2081527a92faaa76263debded6ffca5efa4",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/bindings/5"
+      },
+      "authority_rule": "Original source-qualified contracts retained; these references issue no current grant.",
+      "failure_behavior_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedConsumerRegistry.candidate.json",
+        "bytes": 243588,
+        "sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/5/failure_behavior"
+      },
+      "unknown_behavior_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedConsumerRegistry.candidate.json",
+        "bytes": 243588,
+        "sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/5/unknown_behavior"
+      }
+    },
+    {
+      "consumer_id": "C07",
+      "label": "Record mutation / Decision supersede",
+      "consumer_type": "runtime_service",
+      "governance_domain": "PRODUCT_PROJECTION",
+      "declared_owner": {
+        "owner_ref": {
+          "source_id": "step4-ownership",
+          "sha256": "40d7e87fed046c8aff18d8c1d0532ada075b802faf204059649c84faef1c0782",
+          "pointer": "/namespaces/3/management_owner"
+        },
+        "acceptance_ref": {
+          "source_id": "step4-acceptance",
+          "sha256": "6f2cc1c9cc28c2a717023029851d61a666815567bc30b3635479cb1b70382e6c",
+          "pointer": ""
+        },
+        "maintainer_ref": {
+          "source_id": "delegation",
+          "sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+          "pointer": "/delegatee"
+        },
+        "runtime_issuer_not_inferred": true
+      },
+      "operations": [
+        "clued_record_mutate",
+        "clued_decision_supersede"
+      ],
+      "current_code_bindings": [
+        {
+          "original_path": "apps/clued-cloud/worker/continuity.ts",
+          "current_source": {
+            "path": "apps/clued-cloud/worker/continuity.ts",
+            "bytes": 50783,
+            "sha256": "53746991a483bf4bbac4402440ae86fb7cd296032a7a10359758bbaf77997dc5",
+            "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+            "worktree_sha256": "53746991a483bf4bbac4402440ae86fb7cd296032a7a10359758bbaf77997dc5",
+            "worktree_byte_relation": "EXACT",
+            "pointer": ""
+          },
+          "historical_symbol": "parseCanonicalBody",
+          "historical_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "applicable_step17_expected_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "applicability": "CHANGED_SOURCE_REQUIRES_TARGETED_REVIEW",
+          "symbol_or_behavior_requalified": false
+        },
+        {
+          "original_path": "apps/clued-cloud/worker/continuity.ts",
+          "current_source": {
+            "path": "apps/clued-cloud/worker/continuity.ts",
+            "bytes": 50783,
+            "sha256": "53746991a483bf4bbac4402440ae86fb7cd296032a7a10359758bbaf77997dc5",
+            "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+            "worktree_sha256": "53746991a483bf4bbac4402440ae86fb7cd296032a7a10359758bbaf77997dc5",
+            "worktree_byte_relation": "EXACT",
+            "pointer": ""
+          },
+          "historical_symbol": "handleRecordApi",
+          "historical_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "applicable_step17_expected_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "applicability": "CHANGED_SOURCE_REQUIRES_TARGETED_REVIEW",
+          "symbol_or_behavior_requalified": false
+        },
+        {
+          "original_path": "apps/clued-cloud/worker/records.ts",
+          "current_source": {
+            "path": "apps/clued-cloud/worker/records.ts",
+            "bytes": 8108,
+            "sha256": "43bfe74c4d6576476f3d4a08df82a6b0853da855c29124edf1e333c14d5bb35e",
+            "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+            "worktree_sha256": "43bfe74c4d6576476f3d4a08df82a6b0853da855c29124edf1e333c14d5bb35e",
+            "worktree_byte_relation": "EXACT",
+            "pointer": ""
+          },
+          "historical_symbol": "recordTools",
+          "historical_sha256": "43bfe74c4d6576476f3d4a08df82a6b0853da855c29124edf1e333c14d5bb35e",
+          "applicable_step17_expected_sha256": "43bfe74c4d6576476f3d4a08df82a6b0853da855c29124edf1e333c14d5bb35e",
+          "applicability": "CURRENT_BYTES_MATCH_BOUND_SOURCE",
+          "symbol_or_behavior_requalified": false
+        }
+      ],
+      "typed_consumer_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedConsumerRegistry.candidate.json",
+        "bytes": 243588,
+        "sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/6"
+      },
+      "historical_actual_binding_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step13-14-actual-verification-20260907/TargetConsumerBindingManifest.json",
+        "bytes": 33972,
+        "sha256": "6c82bc7c53a1f26e0dd07419acfcd67e3e65b772f4a3ee69f2f06c617b4fcece",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "6c82bc7c53a1f26e0dd07419acfcd67e3e65b772f4a3ee69f2f06c617b4fcece",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/6"
+      },
+      "required_authorization_contracts": [
+        {
+          "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedAuthorizationRegistry.candidate.json",
+          "bytes": 74695,
+          "sha256": "359e7461ba3166bef63815f37ddd9c247aada317c14e4e62bdee3bc79cc3fcdd",
+          "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+          "worktree_sha256": "359e7461ba3166bef63815f37ddd9c247aada317c14e4e62bdee3bc79cc3fcdd",
+          "worktree_byte_relation": "EXACT",
+          "pointer": "/bindings/10"
+        },
+        {
+          "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedAuthorizationRegistry.candidate.json",
+          "bytes": 74695,
+          "sha256": "359e7461ba3166bef63815f37ddd9c247aada317c14e4e62bdee3bc79cc3fcdd",
+          "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+          "worktree_sha256": "359e7461ba3166bef63815f37ddd9c247aada317c14e4e62bdee3bc79cc3fcdd",
+          "worktree_byte_relation": "EXACT",
+          "pointer": "/bindings/11"
+        }
+      ],
+      "required_receipt_contract": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedReceiptRegistry.candidate.json",
+        "bytes": 91138,
+        "sha256": "05d182805b31ba9d5e6c1c3fa32ae2081527a92faaa76263debded6ffca5efa4",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "05d182805b31ba9d5e6c1c3fa32ae2081527a92faaa76263debded6ffca5efa4",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/bindings/6"
+      },
+      "authority_rule": "Original source-qualified contracts retained; these references issue no current grant.",
+      "failure_behavior_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedConsumerRegistry.candidate.json",
+        "bytes": 243588,
+        "sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/6/failure_behavior"
+      },
+      "unknown_behavior_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedConsumerRegistry.candidate.json",
+        "bytes": 243588,
+        "sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/6/unknown_behavior"
+      }
+    },
+    {
+      "consumer_id": "C08",
+      "label": "Evidence ingest / extension Event",
+      "consumer_type": "runtime_service",
+      "governance_domain": "PRODUCT_PROJECTION",
+      "declared_owner": {
+        "owner_ref": {
+          "source_id": "step4-ownership",
+          "sha256": "40d7e87fed046c8aff18d8c1d0532ada075b802faf204059649c84faef1c0782",
+          "pointer": "/namespaces/3/management_owner"
+        },
+        "acceptance_ref": {
+          "source_id": "step4-acceptance",
+          "sha256": "6f2cc1c9cc28c2a717023029851d61a666815567bc30b3635479cb1b70382e6c",
+          "pointer": ""
+        },
+        "maintainer_ref": {
+          "source_id": "delegation",
+          "sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+          "pointer": "/delegatee"
+        },
+        "runtime_issuer_not_inferred": true
+      },
+      "operations": [
+        "clued_evidence_ingest",
+        "clued_event_append"
+      ],
+      "current_code_bindings": [
+        {
+          "original_path": "apps/clued-cloud/worker/continuity.ts",
+          "current_source": {
+            "path": "apps/clued-cloud/worker/continuity.ts",
+            "bytes": 50783,
+            "sha256": "53746991a483bf4bbac4402440ae86fb7cd296032a7a10359758bbaf77997dc5",
+            "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+            "worktree_sha256": "53746991a483bf4bbac4402440ae86fb7cd296032a7a10359758bbaf77997dc5",
+            "worktree_byte_relation": "EXACT",
+            "pointer": ""
+          },
+          "historical_symbol": "mutationRoutes",
+          "historical_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "applicable_step17_expected_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "applicability": "CHANGED_SOURCE_REQUIRES_TARGETED_REVIEW",
+          "symbol_or_behavior_requalified": false
+        },
+        {
+          "original_path": "apps/clued-cloud/worker/records.ts",
+          "current_source": {
+            "path": "apps/clued-cloud/worker/records.ts",
+            "bytes": 8108,
+            "sha256": "43bfe74c4d6576476f3d4a08df82a6b0853da855c29124edf1e333c14d5bb35e",
+            "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+            "worktree_sha256": "43bfe74c4d6576476f3d4a08df82a6b0853da855c29124edf1e333c14d5bb35e",
+            "worktree_byte_relation": "EXACT",
+            "pointer": ""
+          },
+          "historical_symbol": "recordTools",
+          "historical_sha256": "43bfe74c4d6576476f3d4a08df82a6b0853da855c29124edf1e333c14d5bb35e",
+          "applicable_step17_expected_sha256": "43bfe74c4d6576476f3d4a08df82a6b0853da855c29124edf1e333c14d5bb35e",
+          "applicability": "CURRENT_BYTES_MATCH_BOUND_SOURCE",
+          "symbol_or_behavior_requalified": false
+        }
+      ],
+      "typed_consumer_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedConsumerRegistry.candidate.json",
+        "bytes": 243588,
+        "sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/7"
+      },
+      "historical_actual_binding_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step13-14-actual-verification-20260907/TargetConsumerBindingManifest.json",
+        "bytes": 33972,
+        "sha256": "6c82bc7c53a1f26e0dd07419acfcd67e3e65b772f4a3ee69f2f06c617b4fcece",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "6c82bc7c53a1f26e0dd07419acfcd67e3e65b772f4a3ee69f2f06c617b4fcece",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/7"
+      },
+      "required_authorization_contracts": [
+        {
+          "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedAuthorizationRegistry.candidate.json",
+          "bytes": 74695,
+          "sha256": "359e7461ba3166bef63815f37ddd9c247aada317c14e4e62bdee3bc79cc3fcdd",
+          "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+          "worktree_sha256": "359e7461ba3166bef63815f37ddd9c247aada317c14e4e62bdee3bc79cc3fcdd",
+          "worktree_byte_relation": "EXACT",
+          "pointer": "/bindings/12"
+        },
+        {
+          "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedAuthorizationRegistry.candidate.json",
+          "bytes": 74695,
+          "sha256": "359e7461ba3166bef63815f37ddd9c247aada317c14e4e62bdee3bc79cc3fcdd",
+          "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+          "worktree_sha256": "359e7461ba3166bef63815f37ddd9c247aada317c14e4e62bdee3bc79cc3fcdd",
+          "worktree_byte_relation": "EXACT",
+          "pointer": "/bindings/13"
+        }
+      ],
+      "required_receipt_contract": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedReceiptRegistry.candidate.json",
+        "bytes": 91138,
+        "sha256": "05d182805b31ba9d5e6c1c3fa32ae2081527a92faaa76263debded6ffca5efa4",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "05d182805b31ba9d5e6c1c3fa32ae2081527a92faaa76263debded6ffca5efa4",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/bindings/7"
+      },
+      "authority_rule": "Original source-qualified contracts retained; these references issue no current grant.",
+      "failure_behavior_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedConsumerRegistry.candidate.json",
+        "bytes": 243588,
+        "sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/7/failure_behavior"
+      },
+      "unknown_behavior_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedConsumerRegistry.candidate.json",
+        "bytes": 243588,
+        "sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/7/unknown_behavior"
+      }
+    },
+    {
+      "consumer_id": "C09",
+      "label": "Canonical Export",
+      "consumer_type": "runtime_service",
+      "governance_domain": "PRODUCT_PROJECTION",
+      "declared_owner": {
+        "owner_ref": {
+          "source_id": "step4-ownership",
+          "sha256": "40d7e87fed046c8aff18d8c1d0532ada075b802faf204059649c84faef1c0782",
+          "pointer": "/namespaces/3/management_owner"
+        },
+        "acceptance_ref": {
+          "source_id": "step4-acceptance",
+          "sha256": "6f2cc1c9cc28c2a717023029851d61a666815567bc30b3635479cb1b70382e6c",
+          "pointer": ""
+        },
+        "maintainer_ref": {
+          "source_id": "delegation",
+          "sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+          "pointer": "/delegatee"
+        },
+        "runtime_issuer_not_inferred": true
+      },
+      "operations": [
+        "clued_canonical_export",
+        "clued_user_canonical_export"
+      ],
+      "current_code_bindings": [
+        {
+          "original_path": "apps/clued-cloud/worker/continuity.ts",
+          "current_source": {
+            "path": "apps/clued-cloud/worker/continuity.ts",
+            "bytes": 50783,
+            "sha256": "53746991a483bf4bbac4402440ae86fb7cd296032a7a10359758bbaf77997dc5",
+            "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+            "worktree_sha256": "53746991a483bf4bbac4402440ae86fb7cd296032a7a10359758bbaf77997dc5",
+            "worktree_byte_relation": "EXACT",
+            "pointer": ""
+          },
+          "historical_symbol": "publicToolPolicies",
+          "historical_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "applicable_step17_expected_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "applicability": "CHANGED_SOURCE_REQUIRES_TARGETED_REVIEW",
+          "symbol_or_behavior_requalified": false
+        },
+        {
+          "original_path": "apps/clued-cloud/worker/records.ts",
+          "current_source": {
+            "path": "apps/clued-cloud/worker/records.ts",
+            "bytes": 8108,
+            "sha256": "43bfe74c4d6576476f3d4a08df82a6b0853da855c29124edf1e333c14d5bb35e",
+            "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+            "worktree_sha256": "43bfe74c4d6576476f3d4a08df82a6b0853da855c29124edf1e333c14d5bb35e",
+            "worktree_byte_relation": "EXACT",
+            "pointer": ""
+          },
+          "historical_symbol": "recordTools",
+          "historical_sha256": "43bfe74c4d6576476f3d4a08df82a6b0853da855c29124edf1e333c14d5bb35e",
+          "applicable_step17_expected_sha256": "43bfe74c4d6576476f3d4a08df82a6b0853da855c29124edf1e333c14d5bb35e",
+          "applicability": "CURRENT_BYTES_MATCH_BOUND_SOURCE",
+          "symbol_or_behavior_requalified": false
+        },
+        {
+          "original_path": "apps/clued-cloud/supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql",
+          "current_source": {
+            "path": "apps/clued-cloud/supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql",
+            "bytes": 72625,
+            "sha256": "f59e414ec0de016cbe89d3ba24ded2d90e85a9e17fb554021b2d4d611f4d26c2",
+            "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+            "worktree_sha256": "f59e414ec0de016cbe89d3ba24ded2d90e85a9e17fb554021b2d4d611f4d26c2",
+            "worktree_byte_relation": "EXACT",
+            "pointer": ""
+          },
+          "historical_symbol": "clued_canonical_export",
+          "historical_sha256": "f59e414ec0de016cbe89d3ba24ded2d90e85a9e17fb554021b2d4d611f4d26c2",
+          "applicable_step17_expected_sha256": "f59e414ec0de016cbe89d3ba24ded2d90e85a9e17fb554021b2d4d611f4d26c2",
+          "applicability": "CURRENT_BYTES_MATCH_BOUND_SOURCE",
+          "symbol_or_behavior_requalified": false
+        }
+      ],
+      "typed_consumer_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedConsumerRegistry.candidate.json",
+        "bytes": 243588,
+        "sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/8"
+      },
+      "historical_actual_binding_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step13-14-actual-verification-20260907/TargetConsumerBindingManifest.json",
+        "bytes": 33972,
+        "sha256": "6c82bc7c53a1f26e0dd07419acfcd67e3e65b772f4a3ee69f2f06c617b4fcece",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "6c82bc7c53a1f26e0dd07419acfcd67e3e65b772f4a3ee69f2f06c617b4fcece",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/8"
+      },
+      "required_authorization_contracts": [
+        {
+          "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedAuthorizationRegistry.candidate.json",
+          "bytes": 74695,
+          "sha256": "359e7461ba3166bef63815f37ddd9c247aada317c14e4e62bdee3bc79cc3fcdd",
+          "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+          "worktree_sha256": "359e7461ba3166bef63815f37ddd9c247aada317c14e4e62bdee3bc79cc3fcdd",
+          "worktree_byte_relation": "EXACT",
+          "pointer": "/bindings/14"
+        },
+        {
+          "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedAuthorizationRegistry.candidate.json",
+          "bytes": 74695,
+          "sha256": "359e7461ba3166bef63815f37ddd9c247aada317c14e4e62bdee3bc79cc3fcdd",
+          "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+          "worktree_sha256": "359e7461ba3166bef63815f37ddd9c247aada317c14e4e62bdee3bc79cc3fcdd",
+          "worktree_byte_relation": "EXACT",
+          "pointer": "/bindings/15"
+        }
+      ],
+      "required_receipt_contract": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedReceiptRegistry.candidate.json",
+        "bytes": 91138,
+        "sha256": "05d182805b31ba9d5e6c1c3fa32ae2081527a92faaa76263debded6ffca5efa4",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "05d182805b31ba9d5e6c1c3fa32ae2081527a92faaa76263debded6ffca5efa4",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/bindings/8"
+      },
+      "authority_rule": "Original source-qualified contracts retained; these references issue no current grant.",
+      "failure_behavior_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedConsumerRegistry.candidate.json",
+        "bytes": 243588,
+        "sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/8/failure_behavior"
+      },
+      "unknown_behavior_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedConsumerRegistry.candidate.json",
+        "bytes": 243588,
+        "sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/8/unknown_behavior"
+      }
+    },
+    {
+      "consumer_id": "C10",
+      "label": "P5 tenant Session/Attempt mutation",
+      "consumer_type": "runtime_service",
+      "governance_domain": "PRODUCT_PROJECTION",
+      "declared_owner": {
+        "owner_ref": {
+          "source_id": "step4-ownership",
+          "sha256": "40d7e87fed046c8aff18d8c1d0532ada075b802faf204059649c84faef1c0782",
+          "pointer": "/namespaces/3/management_owner"
+        },
+        "acceptance_ref": {
+          "source_id": "step4-acceptance",
+          "sha256": "6f2cc1c9cc28c2a717023029851d61a666815567bc30b3635479cb1b70382e6c",
+          "pointer": ""
+        },
+        "maintainer_ref": {
+          "source_id": "delegation",
+          "sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+          "pointer": "/delegatee"
+        },
+        "runtime_issuer_not_inferred": true
+      },
+      "operations": [
+        "clued_p5_session_open",
+        "clued_p5_mutate",
+        "clued_p5_attempt_resolve"
+      ],
+      "current_code_bindings": [
+        {
+          "original_path": "apps/clued-cloud/worker/continuity.ts",
+          "current_source": {
+            "path": "apps/clued-cloud/worker/continuity.ts",
+            "bytes": 50783,
+            "sha256": "53746991a483bf4bbac4402440ae86fb7cd296032a7a10359758bbaf77997dc5",
+            "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+            "worktree_sha256": "53746991a483bf4bbac4402440ae86fb7cd296032a7a10359758bbaf77997dc5",
+            "worktree_byte_relation": "EXACT",
+            "pointer": ""
+          },
+          "historical_symbol": "callP5Mutation",
+          "historical_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "applicable_step17_expected_sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba",
+          "applicability": "CHANGED_SOURCE_REQUIRES_TARGETED_REVIEW",
+          "symbol_or_behavior_requalified": false
+        },
+        {
+          "original_path": "apps/clued-cloud/worker/p5.ts",
+          "current_source": {
+            "path": "apps/clued-cloud/worker/p5.ts",
+            "bytes": 4492,
+            "sha256": "ce46bf7025f746579263b78c320f1df6e4d077e11bcbcc958865f20bfead418f",
+            "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+            "worktree_sha256": "ce46bf7025f746579263b78c320f1df6e4d077e11bcbcc958865f20bfead418f",
+            "worktree_byte_relation": "EXACT",
+            "pointer": ""
+          },
+          "historical_symbol": "FILE_ENTRYPOINT",
+          "historical_sha256": "ce46bf7025f746579263b78c320f1df6e4d077e11bcbcc958865f20bfead418f",
+          "applicable_step17_expected_sha256": "ce46bf7025f746579263b78c320f1df6e4d077e11bcbcc958865f20bfead418f",
+          "applicability": "CURRENT_BYTES_MATCH_BOUND_SOURCE",
+          "symbol_or_behavior_requalified": false
+        }
+      ],
+      "typed_consumer_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedConsumerRegistry.candidate.json",
+        "bytes": 243588,
+        "sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/9"
+      },
+      "historical_actual_binding_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step13-14-actual-verification-20260907/TargetConsumerBindingManifest.json",
+        "bytes": 33972,
+        "sha256": "6c82bc7c53a1f26e0dd07419acfcd67e3e65b772f4a3ee69f2f06c617b4fcece",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "6c82bc7c53a1f26e0dd07419acfcd67e3e65b772f4a3ee69f2f06c617b4fcece",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/9"
+      },
+      "required_authorization_contracts": [
+        {
+          "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedAuthorizationRegistry.candidate.json",
+          "bytes": 74695,
+          "sha256": "359e7461ba3166bef63815f37ddd9c247aada317c14e4e62bdee3bc79cc3fcdd",
+          "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+          "worktree_sha256": "359e7461ba3166bef63815f37ddd9c247aada317c14e4e62bdee3bc79cc3fcdd",
+          "worktree_byte_relation": "EXACT",
+          "pointer": "/bindings/16"
+        }
+      ],
+      "required_receipt_contract": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedReceiptRegistry.candidate.json",
+        "bytes": 91138,
+        "sha256": "05d182805b31ba9d5e6c1c3fa32ae2081527a92faaa76263debded6ffca5efa4",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "05d182805b31ba9d5e6c1c3fa32ae2081527a92faaa76263debded6ffca5efa4",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/bindings/9"
+      },
+      "authority_rule": "Original source-qualified contracts retained; these references issue no current grant.",
+      "failure_behavior_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedConsumerRegistry.candidate.json",
+        "bytes": 243588,
+        "sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/9/failure_behavior"
+      },
+      "unknown_behavior_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedConsumerRegistry.candidate.json",
+        "bytes": 243588,
+        "sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/9/unknown_behavior"
+      }
+    },
+    {
+      "consumer_id": "C11",
+      "label": "Snapshot build/validate",
+      "consumer_type": "artifact_producer",
+      "governance_domain": "PRODUCT_PROJECTION",
+      "declared_owner": {
+        "owner_ref": {
+          "source_id": "step4-ownership",
+          "sha256": "40d7e87fed046c8aff18d8c1d0532ada075b802faf204059649c84faef1c0782",
+          "pointer": "/namespaces/3/management_owner"
+        },
+        "acceptance_ref": {
+          "source_id": "step4-acceptance",
+          "sha256": "6f2cc1c9cc28c2a717023029851d61a666815567bc30b3635479cb1b70382e6c",
+          "pointer": ""
+        },
+        "maintainer_ref": {
+          "source_id": "delegation",
+          "sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+          "pointer": "/delegatee"
+        },
+        "runtime_issuer_not_inferred": true
+      },
+      "operations": [
+        "buildSnapshot",
+        "validateSnapshot"
+      ],
+      "current_code_bindings": [
+        {
+          "original_path": "apps/clued-cloud/scripts/two-level-snapshot.mjs",
+          "current_source": {
+            "path": "apps/clued-cloud/scripts/two-level-snapshot.mjs",
+            "bytes": 58055,
+            "sha256": "1dfcc8de7b481bc8a29cd055f711bb142fa390fff07a61730320866a477f6b7e",
+            "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+            "worktree_sha256": "1dfcc8de7b481bc8a29cd055f711bb142fa390fff07a61730320866a477f6b7e",
+            "worktree_byte_relation": "EXACT",
+            "pointer": ""
+          },
+          "historical_symbol": "buildSnapshot",
+          "historical_sha256": "1dfcc8de7b481bc8a29cd055f711bb142fa390fff07a61730320866a477f6b7e",
+          "applicable_step17_expected_sha256": "1dfcc8de7b481bc8a29cd055f711bb142fa390fff07a61730320866a477f6b7e",
+          "applicability": "CURRENT_BYTES_MATCH_BOUND_SOURCE",
+          "symbol_or_behavior_requalified": false
+        },
+        {
+          "original_path": "apps/clued-cloud/scripts/two-level-snapshot.mjs",
+          "current_source": {
+            "path": "apps/clued-cloud/scripts/two-level-snapshot.mjs",
+            "bytes": 58055,
+            "sha256": "1dfcc8de7b481bc8a29cd055f711bb142fa390fff07a61730320866a477f6b7e",
+            "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+            "worktree_sha256": "1dfcc8de7b481bc8a29cd055f711bb142fa390fff07a61730320866a477f6b7e",
+            "worktree_byte_relation": "EXACT",
+            "pointer": ""
+          },
+          "historical_symbol": "validateSnapshot",
+          "historical_sha256": "1dfcc8de7b481bc8a29cd055f711bb142fa390fff07a61730320866a477f6b7e",
+          "applicable_step17_expected_sha256": "1dfcc8de7b481bc8a29cd055f711bb142fa390fff07a61730320866a477f6b7e",
+          "applicability": "CURRENT_BYTES_MATCH_BOUND_SOURCE",
+          "symbol_or_behavior_requalified": false
+        }
+      ],
+      "typed_consumer_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedConsumerRegistry.candidate.json",
+        "bytes": 243588,
+        "sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/10"
+      },
+      "historical_actual_binding_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step13-14-actual-verification-20260907/TargetConsumerBindingManifest.json",
+        "bytes": 33972,
+        "sha256": "6c82bc7c53a1f26e0dd07419acfcd67e3e65b772f4a3ee69f2f06c617b4fcece",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "6c82bc7c53a1f26e0dd07419acfcd67e3e65b772f4a3ee69f2f06c617b4fcece",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/10"
+      },
+      "required_authorization_contracts": [
+        {
+          "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedAuthorizationRegistry.candidate.json",
+          "bytes": 74695,
+          "sha256": "359e7461ba3166bef63815f37ddd9c247aada317c14e4e62bdee3bc79cc3fcdd",
+          "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+          "worktree_sha256": "359e7461ba3166bef63815f37ddd9c247aada317c14e4e62bdee3bc79cc3fcdd",
+          "worktree_byte_relation": "EXACT",
+          "pointer": "/bindings/17"
+        }
+      ],
+      "required_receipt_contract": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedReceiptRegistry.candidate.json",
+        "bytes": 91138,
+        "sha256": "05d182805b31ba9d5e6c1c3fa32ae2081527a92faaa76263debded6ffca5efa4",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "05d182805b31ba9d5e6c1c3fa32ae2081527a92faaa76263debded6ffca5efa4",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/bindings/10"
+      },
+      "authority_rule": "Original source-qualified contracts retained; these references issue no current grant.",
+      "failure_behavior_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedConsumerRegistry.candidate.json",
+        "bytes": 243588,
+        "sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/10/failure_behavior"
+      },
+      "unknown_behavior_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedConsumerRegistry.candidate.json",
+        "bytes": 243588,
+        "sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/10/unknown_behavior"
+      }
+    },
+    {
+      "consumer_id": "C12",
+      "label": "M2 snapshot publish/rollback",
+      "consumer_type": "publication_consumer",
+      "governance_domain": "PRODUCT_PROJECTION",
+      "declared_owner": {
+        "owner_ref": {
+          "source_id": "step4-ownership",
+          "sha256": "40d7e87fed046c8aff18d8c1d0532ada075b802faf204059649c84faef1c0782",
+          "pointer": "/namespaces/3/management_owner"
+        },
+        "acceptance_ref": {
+          "source_id": "step4-acceptance",
+          "sha256": "6f2cc1c9cc28c2a717023029851d61a666815567bc30b3635479cb1b70382e6c",
+          "pointer": ""
+        },
+        "maintainer_ref": {
+          "source_id": "delegation",
+          "sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+          "pointer": "/delegatee"
+        },
+        "runtime_issuer_not_inferred": true
+      },
+      "operations": [
+        "coordinatedPublishSnapshot",
+        "coordinatedRollbackSnapshot"
+      ],
+      "current_code_bindings": [
+        {
+          "original_path": "apps/clued-cloud/scripts/m2-snapshot-store.mjs",
+          "current_source": {
+            "path": "apps/clued-cloud/scripts/m2-snapshot-store.mjs",
+            "bytes": 16753,
+            "sha256": "d56e15f4821ff2b21de07a3c103aac4d9a963b3dac7ee2128543ea37036caf30",
+            "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+            "worktree_sha256": "d56e15f4821ff2b21de07a3c103aac4d9a963b3dac7ee2128543ea37036caf30",
+            "worktree_byte_relation": "EXACT",
+            "pointer": ""
+          },
+          "historical_symbol": "coordinatedPublishSnapshot",
+          "historical_sha256": "d56e15f4821ff2b21de07a3c103aac4d9a963b3dac7ee2128543ea37036caf30",
+          "applicable_step17_expected_sha256": "d56e15f4821ff2b21de07a3c103aac4d9a963b3dac7ee2128543ea37036caf30",
+          "applicability": "CURRENT_BYTES_MATCH_BOUND_SOURCE",
+          "symbol_or_behavior_requalified": false
+        },
+        {
+          "original_path": "apps/clued-cloud/scripts/m2-snapshot-store.mjs",
+          "current_source": {
+            "path": "apps/clued-cloud/scripts/m2-snapshot-store.mjs",
+            "bytes": 16753,
+            "sha256": "d56e15f4821ff2b21de07a3c103aac4d9a963b3dac7ee2128543ea37036caf30",
+            "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+            "worktree_sha256": "d56e15f4821ff2b21de07a3c103aac4d9a963b3dac7ee2128543ea37036caf30",
+            "worktree_byte_relation": "EXACT",
+            "pointer": ""
+          },
+          "historical_symbol": "coordinatedRollbackSnapshot",
+          "historical_sha256": "d56e15f4821ff2b21de07a3c103aac4d9a963b3dac7ee2128543ea37036caf30",
+          "applicable_step17_expected_sha256": "d56e15f4821ff2b21de07a3c103aac4d9a963b3dac7ee2128543ea37036caf30",
+          "applicability": "CURRENT_BYTES_MATCH_BOUND_SOURCE",
+          "symbol_or_behavior_requalified": false
+        },
+        {
+          "original_path": "apps/clued-cloud/scripts/two-level-snapshot.mjs",
+          "current_source": {
+            "path": "apps/clued-cloud/scripts/two-level-snapshot.mjs",
+            "bytes": 58055,
+            "sha256": "1dfcc8de7b481bc8a29cd055f711bb142fa390fff07a61730320866a477f6b7e",
+            "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+            "worktree_sha256": "1dfcc8de7b481bc8a29cd055f711bb142fa390fff07a61730320866a477f6b7e",
+            "worktree_byte_relation": "EXACT",
+            "pointer": ""
+          },
+          "historical_symbol": "publishSnapshot",
+          "historical_sha256": "1dfcc8de7b481bc8a29cd055f711bb142fa390fff07a61730320866a477f6b7e",
+          "applicable_step17_expected_sha256": "1dfcc8de7b481bc8a29cd055f711bb142fa390fff07a61730320866a477f6b7e",
+          "applicability": "CURRENT_BYTES_MATCH_BOUND_SOURCE",
+          "symbol_or_behavior_requalified": false
+        }
+      ],
+      "typed_consumer_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedConsumerRegistry.candidate.json",
+        "bytes": 243588,
+        "sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/11"
+      },
+      "historical_actual_binding_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step13-14-actual-verification-20260907/TargetConsumerBindingManifest.json",
+        "bytes": 33972,
+        "sha256": "6c82bc7c53a1f26e0dd07419acfcd67e3e65b772f4a3ee69f2f06c617b4fcece",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "6c82bc7c53a1f26e0dd07419acfcd67e3e65b772f4a3ee69f2f06c617b4fcece",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/11"
+      },
+      "required_authorization_contracts": [
+        {
+          "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedAuthorizationRegistry.candidate.json",
+          "bytes": 74695,
+          "sha256": "359e7461ba3166bef63815f37ddd9c247aada317c14e4e62bdee3bc79cc3fcdd",
+          "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+          "worktree_sha256": "359e7461ba3166bef63815f37ddd9c247aada317c14e4e62bdee3bc79cc3fcdd",
+          "worktree_byte_relation": "EXACT",
+          "pointer": "/bindings/18"
+        }
+      ],
+      "required_receipt_contract": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedReceiptRegistry.candidate.json",
+        "bytes": 91138,
+        "sha256": "05d182805b31ba9d5e6c1c3fa32ae2081527a92faaa76263debded6ffca5efa4",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "05d182805b31ba9d5e6c1c3fa32ae2081527a92faaa76263debded6ffca5efa4",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/bindings/11"
+      },
+      "authority_rule": "Original source-qualified contracts retained; these references issue no current grant.",
+      "failure_behavior_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedConsumerRegistry.candidate.json",
+        "bytes": 243588,
+        "sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/11/failure_behavior"
+      },
+      "unknown_behavior_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedConsumerRegistry.candidate.json",
+        "bytes": 243588,
+        "sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/11/unknown_behavior"
+      }
+    },
+    {
+      "consumer_id": "C13",
+      "label": "Endpoint RequestVerificationContext",
+      "consumer_type": "authorization_checker",
+      "governance_domain": "DEVELOPMENT",
+      "declared_owner": {
+        "owner_ref": {
+          "source_id": "step4-ownership",
+          "sha256": "40d7e87fed046c8aff18d8c1d0532ada075b802faf204059649c84faef1c0782",
+          "pointer": "/namespaces/5/management_owner"
+        },
+        "acceptance_ref": {
+          "source_id": "step4-acceptance",
+          "sha256": "6f2cc1c9cc28c2a717023029851d61a666815567bc30b3635479cb1b70382e6c",
+          "pointer": ""
+        },
+        "maintainer_ref": {
+          "source_id": "delegation",
+          "sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+          "pointer": "/delegatee"
+        },
+        "runtime_issuer_not_inferred": true
+      },
+      "operations": [
+        "RequestVerificationContext"
+      ],
+      "current_code_bindings": [
+        {
+          "original_path": "verification_context.py",
+          "current_source": {
+            "path": "scripts/verification_context.py",
+            "bytes": 32479,
+            "sha256": "6a2d83a65921df60252aad350f3cecacfbab991be582368903aa40203c96d5ab",
+            "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+            "worktree_sha256": "6a2d83a65921df60252aad350f3cecacfbab991be582368903aa40203c96d5ab",
+            "worktree_byte_relation": "EXACT",
+            "pointer": ""
+          },
+          "historical_symbol": "AuthorizationEvidence",
+          "historical_sha256": "6a2d83a65921df60252aad350f3cecacfbab991be582368903aa40203c96d5ab",
+          "applicable_step17_expected_sha256": "6a2d83a65921df60252aad350f3cecacfbab991be582368903aa40203c96d5ab",
+          "applicability": "CURRENT_BYTES_MATCH_BOUND_SOURCE",
+          "symbol_or_behavior_requalified": false
+        },
+        {
+          "original_path": "verification_context.py",
+          "current_source": {
+            "path": "scripts/verification_context.py",
+            "bytes": 32479,
+            "sha256": "6a2d83a65921df60252aad350f3cecacfbab991be582368903aa40203c96d5ab",
+            "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+            "worktree_sha256": "6a2d83a65921df60252aad350f3cecacfbab991be582368903aa40203c96d5ab",
+            "worktree_byte_relation": "EXACT",
+            "pointer": ""
+          },
+          "historical_symbol": "SourceEnvelope",
+          "historical_sha256": "6a2d83a65921df60252aad350f3cecacfbab991be582368903aa40203c96d5ab",
+          "applicable_step17_expected_sha256": "6a2d83a65921df60252aad350f3cecacfbab991be582368903aa40203c96d5ab",
+          "applicability": "CURRENT_BYTES_MATCH_BOUND_SOURCE",
+          "symbol_or_behavior_requalified": false
+        },
+        {
+          "original_path": "verification_context.py",
+          "current_source": {
+            "path": "scripts/verification_context.py",
+            "bytes": 32479,
+            "sha256": "6a2d83a65921df60252aad350f3cecacfbab991be582368903aa40203c96d5ab",
+            "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+            "worktree_sha256": "6a2d83a65921df60252aad350f3cecacfbab991be582368903aa40203c96d5ab",
+            "worktree_byte_relation": "EXACT",
+            "pointer": ""
+          },
+          "historical_symbol": "RequestVerificationContext",
+          "historical_sha256": "6a2d83a65921df60252aad350f3cecacfbab991be582368903aa40203c96d5ab",
+          "applicable_step17_expected_sha256": "6a2d83a65921df60252aad350f3cecacfbab991be582368903aa40203c96d5ab",
+          "applicability": "CURRENT_BYTES_MATCH_BOUND_SOURCE",
+          "symbol_or_behavior_requalified": false
+        }
+      ],
+      "typed_consumer_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedConsumerRegistry.candidate.json",
+        "bytes": 243588,
+        "sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/12"
+      },
+      "historical_actual_binding_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step13-14-actual-verification-20260907/TargetConsumerBindingManifest.json",
+        "bytes": 33972,
+        "sha256": "6c82bc7c53a1f26e0dd07419acfcd67e3e65b772f4a3ee69f2f06c617b4fcece",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "6c82bc7c53a1f26e0dd07419acfcd67e3e65b772f4a3ee69f2f06c617b4fcece",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/12"
+      },
+      "required_authorization_contracts": [
+        {
+          "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedAuthorizationRegistry.candidate.json",
+          "bytes": 74695,
+          "sha256": "359e7461ba3166bef63815f37ddd9c247aada317c14e4e62bdee3bc79cc3fcdd",
+          "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+          "worktree_sha256": "359e7461ba3166bef63815f37ddd9c247aada317c14e4e62bdee3bc79cc3fcdd",
+          "worktree_byte_relation": "EXACT",
+          "pointer": "/bindings/19"
+        }
+      ],
+      "required_receipt_contract": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedReceiptRegistry.candidate.json",
+        "bytes": 91138,
+        "sha256": "05d182805b31ba9d5e6c1c3fa32ae2081527a92faaa76263debded6ffca5efa4",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "05d182805b31ba9d5e6c1c3fa32ae2081527a92faaa76263debded6ffca5efa4",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/bindings/12"
+      },
+      "authority_rule": "Original source-qualified contracts retained; these references issue no current grant.",
+      "failure_behavior_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedConsumerRegistry.candidate.json",
+        "bytes": 243588,
+        "sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/12/failure_behavior"
+      },
+      "unknown_behavior_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedConsumerRegistry.candidate.json",
+        "bytes": 243588,
+        "sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/12/unknown_behavior"
+      }
+    },
+    {
+      "consumer_id": "C14",
+      "label": "账户页面与OAuth consent",
+      "consumer_type": "runtime_service",
+      "governance_domain": "PRODUCT_PROJECTION",
+      "declared_owner": {
+        "owner_ref": {
+          "source_id": "step4-ownership",
+          "sha256": "40d7e87fed046c8aff18d8c1d0532ada075b802faf204059649c84faef1c0782",
+          "pointer": "/namespaces/3/management_owner"
+        },
+        "acceptance_ref": {
+          "source_id": "step4-acceptance",
+          "sha256": "6f2cc1c9cc28c2a717023029851d61a666815567bc30b3635479cb1b70382e6c",
+          "pointer": ""
+        },
+        "maintainer_ref": {
+          "source_id": "delegation",
+          "sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+          "pointer": "/delegatee"
+        },
+        "runtime_issuer_not_inferred": true
+      },
+      "operations": [
+        "handleLogin",
+        "handleCreateAccount",
+        "loadAuthorization"
+      ],
+      "current_code_bindings": [
+        {
+          "original_path": "apps/clued-cloud/app/page.tsx",
+          "current_source": {
+            "path": "apps/clued-cloud/app/page.tsx",
+            "bytes": 57180,
+            "sha256": "4e5caa4015b4382a4cd9329b71ecf2079ff9a79e3c0f6d74f9bdc02345ffbc83",
+            "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+            "worktree_sha256": "4e5caa4015b4382a4cd9329b71ecf2079ff9a79e3c0f6d74f9bdc02345ffbc83",
+            "worktree_byte_relation": "EXACT",
+            "pointer": ""
+          },
+          "historical_symbol": "handleLogin",
+          "historical_sha256": "4534d4ca11390ca5fadae652c6b52ce2bc5428765214c04ed6ff13a8ff7ac5a6",
+          "applicable_step17_expected_sha256": "4534d4ca11390ca5fadae652c6b52ce2bc5428765214c04ed6ff13a8ff7ac5a6",
+          "applicability": "CHANGED_SOURCE_REQUIRES_TARGETED_REVIEW",
+          "symbol_or_behavior_requalified": false
+        },
+        {
+          "original_path": "apps/clued-cloud/app/page.tsx",
+          "current_source": {
+            "path": "apps/clued-cloud/app/page.tsx",
+            "bytes": 57180,
+            "sha256": "4e5caa4015b4382a4cd9329b71ecf2079ff9a79e3c0f6d74f9bdc02345ffbc83",
+            "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+            "worktree_sha256": "4e5caa4015b4382a4cd9329b71ecf2079ff9a79e3c0f6d74f9bdc02345ffbc83",
+            "worktree_byte_relation": "EXACT",
+            "pointer": ""
+          },
+          "historical_symbol": "handleCreateAccount",
+          "historical_sha256": "4534d4ca11390ca5fadae652c6b52ce2bc5428765214c04ed6ff13a8ff7ac5a6",
+          "applicable_step17_expected_sha256": "4534d4ca11390ca5fadae652c6b52ce2bc5428765214c04ed6ff13a8ff7ac5a6",
+          "applicability": "CHANGED_SOURCE_REQUIRES_TARGETED_REVIEW",
+          "symbol_or_behavior_requalified": false
+        },
+        {
+          "original_path": "apps/clued-cloud/app/oauth/consent/page.tsx",
+          "current_source": {
+            "path": "apps/clued-cloud/app/oauth/consent/page.tsx",
+            "bytes": 7088,
+            "sha256": "54ad239f01cbcbd1fb4bac04ff6b080bd55f1465163f34b557e237ccea83051f",
+            "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+            "worktree_sha256": "54ad239f01cbcbd1fb4bac04ff6b080bd55f1465163f34b557e237ccea83051f",
+            "worktree_byte_relation": "EXACT",
+            "pointer": ""
+          },
+          "historical_symbol": "loadAuthorization",
+          "historical_sha256": "ce7e6f8de06bd2c7757112b08148f4e19a361868091b88d5c2150b2f0087ef54",
+          "applicable_step17_expected_sha256": "ce7e6f8de06bd2c7757112b08148f4e19a361868091b88d5c2150b2f0087ef54",
+          "applicability": "CHANGED_SOURCE_REQUIRES_TARGETED_REVIEW",
+          "symbol_or_behavior_requalified": false
+        }
+      ],
+      "typed_consumer_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedConsumerRegistry.candidate.json",
+        "bytes": 243588,
+        "sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/13"
+      },
+      "historical_actual_binding_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step13-14-actual-verification-20260907/TargetConsumerBindingManifest.json",
+        "bytes": 33972,
+        "sha256": "6c82bc7c53a1f26e0dd07419acfcd67e3e65b772f4a3ee69f2f06c617b4fcece",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "6c82bc7c53a1f26e0dd07419acfcd67e3e65b772f4a3ee69f2f06c617b4fcece",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/13"
+      },
+      "required_authorization_contracts": [
+        {
+          "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedAuthorizationRegistry.candidate.json",
+          "bytes": 74695,
+          "sha256": "359e7461ba3166bef63815f37ddd9c247aada317c14e4e62bdee3bc79cc3fcdd",
+          "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+          "worktree_sha256": "359e7461ba3166bef63815f37ddd9c247aada317c14e4e62bdee3bc79cc3fcdd",
+          "worktree_byte_relation": "EXACT",
+          "pointer": "/bindings/20"
+        }
+      ],
+      "required_receipt_contract": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedReceiptRegistry.candidate.json",
+        "bytes": 91138,
+        "sha256": "05d182805b31ba9d5e6c1c3fa32ae2081527a92faaa76263debded6ffca5efa4",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "05d182805b31ba9d5e6c1c3fa32ae2081527a92faaa76263debded6ffca5efa4",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/bindings/13"
+      },
+      "authority_rule": "Original source-qualified contracts retained; these references issue no current grant.",
+      "failure_behavior_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedConsumerRegistry.candidate.json",
+        "bytes": 243588,
+        "sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/13/failure_behavior"
+      },
+      "unknown_behavior_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedConsumerRegistry.candidate.json",
+        "bytes": 243588,
+        "sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/13/unknown_behavior"
+      }
+    },
+    {
+      "consumer_id": "C15",
+      "label": "Phase2四Gate validator / CI",
+      "consumer_type": "ci_validator",
+      "governance_domain": "DEVELOPMENT",
+      "declared_owner": {
+        "owner_ref": {
+          "source_id": "step4-ownership",
+          "sha256": "40d7e87fed046c8aff18d8c1d0532ada075b802faf204059649c84faef1c0782",
+          "pointer": "/namespaces/5/management_owner"
+        },
+        "acceptance_ref": {
+          "source_id": "step4-acceptance",
+          "sha256": "6f2cc1c9cc28c2a717023029851d61a666815567bc30b3635479cb1b70382e6c",
+          "pointer": ""
+        },
+        "maintainer_ref": {
+          "source_id": "delegation",
+          "sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+          "pointer": "/delegatee"
+        },
+        "runtime_issuer_not_inferred": true
+      },
+      "operations": [
+        "candidate_identity",
+        "manifest_integrity",
+        "provenance",
+        "product_increment_input"
+      ],
+      "current_code_bindings": [
+        {
+          "original_path": "scripts/phase2-v027-validate.py",
+          "current_source": {
+            "path": "scripts/phase2-v027-validate.py",
+            "bytes": 20343,
+            "sha256": "e16cc9fa5fd2a54dc3922029851722936551a400979dc94dce691faa83bd7f4e",
+            "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+            "worktree_sha256": "e16cc9fa5fd2a54dc3922029851722936551a400979dc94dce691faa83bd7f4e",
+            "worktree_byte_relation": "EXACT",
+            "pointer": ""
+          },
+          "historical_symbol": "run",
+          "historical_sha256": "e16cc9fa5fd2a54dc3922029851722936551a400979dc94dce691faa83bd7f4e",
+          "applicable_step17_expected_sha256": "e16cc9fa5fd2a54dc3922029851722936551a400979dc94dce691faa83bd7f4e",
+          "applicability": "CURRENT_BYTES_MATCH_BOUND_SOURCE",
+          "symbol_or_behavior_requalified": false
+        },
+        {
+          "original_path": ".github/workflows/phase2-v027-validation.yml",
+          "current_source": {
+            "path": ".github/workflows/phase2-v027-validation.yml",
+            "bytes": 15230,
+            "sha256": "9a45acb955d1eee8e84491257043056eeefe8a088be6425f4b7cfa8cded0b520",
+            "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+            "worktree_sha256": "9a45acb955d1eee8e84491257043056eeefe8a088be6425f4b7cfa8cded0b520",
+            "worktree_byte_relation": "EXACT",
+            "pointer": ""
+          },
+          "historical_symbol": "FILE_ENTRYPOINT",
+          "historical_sha256": "51334a15770991d2cbf13cb906a592494a96c87e55a8b6cb37f0792a1168bd53",
+          "applicable_step17_expected_sha256": "9a45acb955d1eee8e84491257043056eeefe8a088be6425f4b7cfa8cded0b520",
+          "applicability": "CURRENT_BYTES_MATCH_BOUND_SOURCE",
+          "symbol_or_behavior_requalified": false
+        }
+      ],
+      "typed_consumer_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedConsumerRegistry.candidate.json",
+        "bytes": 243588,
+        "sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/14"
+      },
+      "historical_actual_binding_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step13-14-actual-verification-20260907/TargetConsumerBindingManifest.json",
+        "bytes": 33972,
+        "sha256": "6c82bc7c53a1f26e0dd07419acfcd67e3e65b772f4a3ee69f2f06c617b4fcece",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "6c82bc7c53a1f26e0dd07419acfcd67e3e65b772f4a3ee69f2f06c617b4fcece",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/14"
+      },
+      "required_authorization_contracts": [
+        {
+          "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedAuthorizationRegistry.candidate.json",
+          "bytes": 74695,
+          "sha256": "359e7461ba3166bef63815f37ddd9c247aada317c14e4e62bdee3bc79cc3fcdd",
+          "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+          "worktree_sha256": "359e7461ba3166bef63815f37ddd9c247aada317c14e4e62bdee3bc79cc3fcdd",
+          "worktree_byte_relation": "EXACT",
+          "pointer": "/bindings/21"
+        },
+        {
+          "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedAuthorizationRegistry.candidate.json",
+          "bytes": 74695,
+          "sha256": "359e7461ba3166bef63815f37ddd9c247aada317c14e4e62bdee3bc79cc3fcdd",
+          "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+          "worktree_sha256": "359e7461ba3166bef63815f37ddd9c247aada317c14e4e62bdee3bc79cc3fcdd",
+          "worktree_byte_relation": "EXACT",
+          "pointer": "/bindings/22"
+        }
+      ],
+      "required_receipt_contract": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedReceiptRegistry.candidate.json",
+        "bytes": 91138,
+        "sha256": "05d182805b31ba9d5e6c1c3fa32ae2081527a92faaa76263debded6ffca5efa4",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "05d182805b31ba9d5e6c1c3fa32ae2081527a92faaa76263debded6ffca5efa4",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/bindings/14"
+      },
+      "authority_rule": "Original source-qualified contracts retained; these references issue no current grant.",
+      "failure_behavior_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedConsumerRegistry.candidate.json",
+        "bytes": 243588,
+        "sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/14/failure_behavior"
+      },
+      "unknown_behavior_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedConsumerRegistry.candidate.json",
+        "bytes": 243588,
+        "sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/14/unknown_behavior"
+      }
+    },
+    {
+      "consumer_id": "C16",
+      "label": "Naming scanner",
+      "consumer_type": "developer_tooling",
+      "governance_domain": "DEVELOPMENT",
+      "declared_owner": {
+        "owner_ref": {
+          "source_id": "step4-ownership",
+          "sha256": "40d7e87fed046c8aff18d8c1d0532ada075b802faf204059649c84faef1c0782",
+          "pointer": "/namespaces/5/management_owner"
+        },
+        "acceptance_ref": {
+          "source_id": "step4-acceptance",
+          "sha256": "6f2cc1c9cc28c2a717023029851d61a666815567bc30b3635479cb1b70382e6c",
+          "pointer": ""
+        },
+        "maintainer_ref": {
+          "source_id": "delegation",
+          "sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+          "pointer": "/delegatee"
+        },
+        "runtime_issuer_not_inferred": true
+      },
+      "operations": [
+        "scan_repository",
+        "scan_github"
+      ],
+      "current_code_bindings": [
+        {
+          "original_path": "scripts/clued-naming-surface-inventory.py",
+          "current_source": {
+            "path": "scripts/clued-naming-surface-inventory.py",
+            "bytes": 73510,
+            "sha256": "9ff7dc893b865a7736d6d9ffbe6f908c15f9c418e10a0602ae6fd33eedb8f81e",
+            "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+            "worktree_sha256": "9ff7dc893b865a7736d6d9ffbe6f908c15f9c418e10a0602ae6fd33eedb8f81e",
+            "worktree_byte_relation": "EXACT",
+            "pointer": ""
+          },
+          "historical_symbol": "scan_repository",
+          "historical_sha256": "9ff7dc893b865a7736d6d9ffbe6f908c15f9c418e10a0602ae6fd33eedb8f81e",
+          "applicable_step17_expected_sha256": "9ff7dc893b865a7736d6d9ffbe6f908c15f9c418e10a0602ae6fd33eedb8f81e",
+          "applicability": "CURRENT_BYTES_MATCH_BOUND_SOURCE",
+          "symbol_or_behavior_requalified": false
+        },
+        {
+          "original_path": "scripts/clued-naming-surface-inventory.py",
+          "current_source": {
+            "path": "scripts/clued-naming-surface-inventory.py",
+            "bytes": 73510,
+            "sha256": "9ff7dc893b865a7736d6d9ffbe6f908c15f9c418e10a0602ae6fd33eedb8f81e",
+            "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+            "worktree_sha256": "9ff7dc893b865a7736d6d9ffbe6f908c15f9c418e10a0602ae6fd33eedb8f81e",
+            "worktree_byte_relation": "EXACT",
+            "pointer": ""
+          },
+          "historical_symbol": "scan_github",
+          "historical_sha256": "9ff7dc893b865a7736d6d9ffbe6f908c15f9c418e10a0602ae6fd33eedb8f81e",
+          "applicable_step17_expected_sha256": "9ff7dc893b865a7736d6d9ffbe6f908c15f9c418e10a0602ae6fd33eedb8f81e",
+          "applicability": "CURRENT_BYTES_MATCH_BOUND_SOURCE",
+          "symbol_or_behavior_requalified": false
+        }
+      ],
+      "typed_consumer_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedConsumerRegistry.candidate.json",
+        "bytes": 243588,
+        "sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/15"
+      },
+      "historical_actual_binding_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step13-14-actual-verification-20260907/TargetConsumerBindingManifest.json",
+        "bytes": 33972,
+        "sha256": "6c82bc7c53a1f26e0dd07419acfcd67e3e65b772f4a3ee69f2f06c617b4fcece",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "6c82bc7c53a1f26e0dd07419acfcd67e3e65b772f4a3ee69f2f06c617b4fcece",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/15"
+      },
+      "required_authorization_contracts": [
+        {
+          "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedAuthorizationRegistry.candidate.json",
+          "bytes": 74695,
+          "sha256": "359e7461ba3166bef63815f37ddd9c247aada317c14e4e62bdee3bc79cc3fcdd",
+          "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+          "worktree_sha256": "359e7461ba3166bef63815f37ddd9c247aada317c14e4e62bdee3bc79cc3fcdd",
+          "worktree_byte_relation": "EXACT",
+          "pointer": "/bindings/23"
+        },
+        {
+          "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedAuthorizationRegistry.candidate.json",
+          "bytes": 74695,
+          "sha256": "359e7461ba3166bef63815f37ddd9c247aada317c14e4e62bdee3bc79cc3fcdd",
+          "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+          "worktree_sha256": "359e7461ba3166bef63815f37ddd9c247aada317c14e4e62bdee3bc79cc3fcdd",
+          "worktree_byte_relation": "EXACT",
+          "pointer": "/bindings/24"
+        }
+      ],
+      "required_receipt_contract": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedReceiptRegistry.candidate.json",
+        "bytes": 91138,
+        "sha256": "05d182805b31ba9d5e6c1c3fa32ae2081527a92faaa76263debded6ffca5efa4",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "05d182805b31ba9d5e6c1c3fa32ae2081527a92faaa76263debded6ffca5efa4",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/bindings/15"
+      },
+      "authority_rule": "Original source-qualified contracts retained; these references issue no current grant.",
+      "failure_behavior_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedConsumerRegistry.candidate.json",
+        "bytes": 243588,
+        "sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/15/failure_behavior"
+      },
+      "unknown_behavior_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedConsumerRegistry.candidate.json",
+        "bytes": 243588,
+        "sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/15/unknown_behavior"
+      }
+    },
+    {
+      "consumer_id": "C17",
+      "label": "Naming external consolidator",
+      "consumer_type": "registry_reader",
+      "governance_domain": "DEVELOPMENT",
+      "declared_owner": {
+        "owner_ref": {
+          "source_id": "step4-ownership",
+          "sha256": "40d7e87fed046c8aff18d8c1d0532ada075b802faf204059649c84faef1c0782",
+          "pointer": "/namespaces/5/management_owner"
+        },
+        "acceptance_ref": {
+          "source_id": "step4-acceptance",
+          "sha256": "6f2cc1c9cc28c2a717023029851d61a666815567bc30b3635479cb1b70382e6c",
+          "pointer": ""
+        },
+        "maintainer_ref": {
+          "source_id": "delegation",
+          "sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+          "pointer": "/delegatee"
+        },
+        "runtime_issuer_not_inferred": true
+      },
+      "operations": [
+        "verify_sources",
+        "consolidate"
+      ],
+      "current_code_bindings": [
+        {
+          "original_path": "scripts/clued-naming-inventory-consolidate.py",
+          "current_source": {
+            "path": "scripts/clued-naming-inventory-consolidate.py",
+            "bytes": 32673,
+            "sha256": "69f2fcc2e8c0e2802d7fa08de842345b88d208bec947d3ef4e88ef4c41907026",
+            "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+            "worktree_sha256": "69f2fcc2e8c0e2802d7fa08de842345b88d208bec947d3ef4e88ef4c41907026",
+            "worktree_byte_relation": "EXACT",
+            "pointer": ""
+          },
+          "historical_symbol": "verify_sources",
+          "historical_sha256": "69f2fcc2e8c0e2802d7fa08de842345b88d208bec947d3ef4e88ef4c41907026",
+          "applicable_step17_expected_sha256": "69f2fcc2e8c0e2802d7fa08de842345b88d208bec947d3ef4e88ef4c41907026",
+          "applicability": "CURRENT_BYTES_MATCH_BOUND_SOURCE",
+          "symbol_or_behavior_requalified": false
+        },
+        {
+          "original_path": "scripts/clued-naming-inventory-consolidate.py",
+          "current_source": {
+            "path": "scripts/clued-naming-inventory-consolidate.py",
+            "bytes": 32673,
+            "sha256": "69f2fcc2e8c0e2802d7fa08de842345b88d208bec947d3ef4e88ef4c41907026",
+            "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+            "worktree_sha256": "69f2fcc2e8c0e2802d7fa08de842345b88d208bec947d3ef4e88ef4c41907026",
+            "worktree_byte_relation": "EXACT",
+            "pointer": ""
+          },
+          "historical_symbol": "consolidate",
+          "historical_sha256": "69f2fcc2e8c0e2802d7fa08de842345b88d208bec947d3ef4e88ef4c41907026",
+          "applicable_step17_expected_sha256": "69f2fcc2e8c0e2802d7fa08de842345b88d208bec947d3ef4e88ef4c41907026",
+          "applicability": "CURRENT_BYTES_MATCH_BOUND_SOURCE",
+          "symbol_or_behavior_requalified": false
+        }
+      ],
+      "typed_consumer_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedConsumerRegistry.candidate.json",
+        "bytes": 243588,
+        "sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/16"
+      },
+      "historical_actual_binding_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step13-14-actual-verification-20260907/TargetConsumerBindingManifest.json",
+        "bytes": 33972,
+        "sha256": "6c82bc7c53a1f26e0dd07419acfcd67e3e65b772f4a3ee69f2f06c617b4fcece",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "6c82bc7c53a1f26e0dd07419acfcd67e3e65b772f4a3ee69f2f06c617b4fcece",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/16"
+      },
+      "required_authorization_contracts": [
+        {
+          "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedAuthorizationRegistry.candidate.json",
+          "bytes": 74695,
+          "sha256": "359e7461ba3166bef63815f37ddd9c247aada317c14e4e62bdee3bc79cc3fcdd",
+          "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+          "worktree_sha256": "359e7461ba3166bef63815f37ddd9c247aada317c14e4e62bdee3bc79cc3fcdd",
+          "worktree_byte_relation": "EXACT",
+          "pointer": "/bindings/25"
+        }
+      ],
+      "required_receipt_contract": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedReceiptRegistry.candidate.json",
+        "bytes": 91138,
+        "sha256": "05d182805b31ba9d5e6c1c3fa32ae2081527a92faaa76263debded6ffca5efa4",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "05d182805b31ba9d5e6c1c3fa32ae2081527a92faaa76263debded6ffca5efa4",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/bindings/16"
+      },
+      "authority_rule": "Original source-qualified contracts retained; these references issue no current grant.",
+      "failure_behavior_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedConsumerRegistry.candidate.json",
+        "bytes": 243588,
+        "sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/16/failure_behavior"
+      },
+      "unknown_behavior_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedConsumerRegistry.candidate.json",
+        "bytes": 243588,
+        "sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/16/unknown_behavior"
+      }
+    },
+    {
+      "consumer_id": "C18",
+      "label": "公开MCP required-check Receipt producer",
+      "consumer_type": "receipt_producer",
+      "governance_domain": "DEVELOPMENT",
+      "declared_owner": {
+        "owner_ref": {
+          "source_id": "step4-ownership",
+          "sha256": "40d7e87fed046c8aff18d8c1d0532ada075b802faf204059649c84faef1c0782",
+          "pointer": "/namespaces/5/management_owner"
+        },
+        "acceptance_ref": {
+          "source_id": "step4-acceptance",
+          "sha256": "6f2cc1c9cc28c2a717023029851d61a666815567bc30b3635479cb1b70382e6c",
+          "pointer": ""
+        },
+        "maintainer_ref": {
+          "source_id": "delegation",
+          "sha256": "fb5b2c8767fa477b67f1d90183a3c9dd14ae9378520e61320ec0df486008d8c8",
+          "pointer": "/delegatee"
+        },
+        "runtime_issuer_not_inferred": true
+      },
+      "operations": [
+        "evaluateCheckRuns",
+        "buildReceipt"
+      ],
+      "current_code_bindings": [
+        {
+          "original_path": "apps/clued-cloud/evals/public-mcp/gate-receipt.mjs",
+          "current_source": {
+            "path": "apps/clued-cloud/evals/public-mcp/gate-receipt.mjs",
+            "bytes": 5425,
+            "sha256": "9d1574e361a8fdd550578763755933e4d250a8076d55b1223ca9dfc40c1ec0c0",
+            "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+            "worktree_sha256": "9d1574e361a8fdd550578763755933e4d250a8076d55b1223ca9dfc40c1ec0c0",
+            "worktree_byte_relation": "EXACT",
+            "pointer": ""
+          },
+          "historical_symbol": "FILE_ENTRYPOINT",
+          "historical_sha256": "9d1574e361a8fdd550578763755933e4d250a8076d55b1223ca9dfc40c1ec0c0",
+          "applicable_step17_expected_sha256": "9d1574e361a8fdd550578763755933e4d250a8076d55b1223ca9dfc40c1ec0c0",
+          "applicability": "CURRENT_BYTES_MATCH_BOUND_SOURCE",
+          "symbol_or_behavior_requalified": false
+        },
+        {
+          "original_path": ".github/workflows/public-mcp-gate-receipt.yml",
+          "current_source": {
+            "path": ".github/workflows/public-mcp-gate-receipt.yml",
+            "bytes": 1500,
+            "sha256": "4e3784db5984933d859cd961f010c4fb2306eaf6b871cdd438eeb2cff9154ce8",
+            "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+            "worktree_sha256": "4e3784db5984933d859cd961f010c4fb2306eaf6b871cdd438eeb2cff9154ce8",
+            "worktree_byte_relation": "EXACT",
+            "pointer": ""
+          },
+          "historical_symbol": "FILE_ENTRYPOINT",
+          "historical_sha256": "4e3784db5984933d859cd961f010c4fb2306eaf6b871cdd438eeb2cff9154ce8",
+          "applicable_step17_expected_sha256": "4e3784db5984933d859cd961f010c4fb2306eaf6b871cdd438eeb2cff9154ce8",
+          "applicability": "CURRENT_BYTES_MATCH_BOUND_SOURCE",
+          "symbol_or_behavior_requalified": false
+        }
+      ],
+      "typed_consumer_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedConsumerRegistry.candidate.json",
+        "bytes": 243588,
+        "sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/17"
+      },
+      "historical_actual_binding_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step13-14-actual-verification-20260907/TargetConsumerBindingManifest.json",
+        "bytes": 33972,
+        "sha256": "6c82bc7c53a1f26e0dd07419acfcd67e3e65b772f4a3ee69f2f06c617b4fcece",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "6c82bc7c53a1f26e0dd07419acfcd67e3e65b772f4a3ee69f2f06c617b4fcece",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/17"
+      },
+      "required_authorization_contracts": [
+        {
+          "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedAuthorizationRegistry.candidate.json",
+          "bytes": 74695,
+          "sha256": "359e7461ba3166bef63815f37ddd9c247aada317c14e4e62bdee3bc79cc3fcdd",
+          "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+          "worktree_sha256": "359e7461ba3166bef63815f37ddd9c247aada317c14e4e62bdee3bc79cc3fcdd",
+          "worktree_byte_relation": "EXACT",
+          "pointer": "/bindings/26"
+        }
+      ],
+      "required_receipt_contract": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedReceiptRegistry.candidate.json",
+        "bytes": 91138,
+        "sha256": "05d182805b31ba9d5e6c1c3fa32ae2081527a92faaa76263debded6ffca5efa4",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "05d182805b31ba9d5e6c1c3fa32ae2081527a92faaa76263debded6ffca5efa4",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/bindings/17"
+      },
+      "authority_rule": "Original source-qualified contracts retained; these references issue no current grant.",
+      "failure_behavior_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedConsumerRegistry.candidate.json",
+        "bytes": 243588,
+        "sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/17/failure_behavior"
+      },
+      "unknown_behavior_ref": {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedConsumerRegistry.candidate.json",
+        "bytes": 243588,
+        "sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "worktree_byte_relation": "EXACT",
+        "pointer": "/consumers/17/unknown_behavior"
+      }
+    }
+  ]
+}

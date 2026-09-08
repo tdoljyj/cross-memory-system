@@ -1,0 +1,332 @@
+{
+  "state": "ENGINEERING_PREPARATION_ONLY",
+  "authority_effect": "NONE",
+  "source_commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+  "no_formal_decisions_issued": true,
+  "stages": [
+    {
+      "id": "R07",
+      "depends_on": [
+        "R06"
+      ],
+      "mapped_readiness": [
+        "RepositoryDevelopmentMigrationReceipt",
+        "ResponsibilityTransferClosureReceipt"
+      ],
+      "evidence": [
+        {
+          "path": "docs/execution-plans/phase2-structure-governance/step12-actual-migration-20260907/receipt.json",
+          "bytes": 7741,
+          "sha256": "7ba04bc7cf715a6b96f05f64db3d7f0281627e9c0919b15dd66aa3d26f9f6ca7",
+          "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+          "worktree_sha256": "7ba04bc7cf715a6b96f05f64db3d7f0281627e9c0919b15dd66aa3d26f9f6ca7",
+          "worktree_byte_relation": "EXACT",
+          "pointer": ""
+        },
+        {
+          "path": "docs/execution-plans/phase2-structure-governance/Step06-ScopedAcceptance_20260907.json",
+          "bytes": 5319,
+          "sha256": "bd40c82a21e7b19c2c36e56d7b877078e45c6bfdf1593590fb56ab364f47889a",
+          "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+          "worktree_sha256": "bd40c82a21e7b19c2c36e56d7b877078e45c6bfdf1593590fb56ab364f47889a",
+          "worktree_byte_relation": "EXACT",
+          "pointer": ""
+        },
+        {
+          "path": "docs/execution-plans/phase2-structure-governance/Step13-ScopedAcceptance_20260907.json",
+          "bytes": 2421,
+          "sha256": "562046e42bcbbea73bb99412cdc8161945b8e50fc519f335402f6529ca638acd",
+          "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+          "worktree_sha256": "562046e42bcbbea73bb99412cdc8161945b8e50fc519f335402f6529ca638acd",
+          "worktree_byte_relation": "EXACT",
+          "pointer": ""
+        },
+        {
+          "path": "docs/execution-plans/phase2-structure-governance/step13-14-actual-verification-20260907/TargetConsumerBindingManifest.json",
+          "bytes": 33972,
+          "sha256": "6c82bc7c53a1f26e0dd07419acfcd67e3e65b772f4a3ee69f2f06c617b4fcece",
+          "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+          "worktree_sha256": "6c82bc7c53a1f26e0dd07419acfcd67e3e65b772f4a3ee69f2f06c617b4fcece",
+          "worktree_byte_relation": "EXACT",
+          "pointer": ""
+        }
+      ],
+      "reusable": "64-path migration and scoped 18-consumer wiring are historical actual evidence, retained without rerunning.",
+      "dimensions": [
+        {
+          "name": "Responsibility",
+          "mapping": "ConsumerMapping.json maps every C01–C18 source-qualified domain/owner/operation to actual source paths. No new owner IDs are minted."
+        },
+        {
+          "name": "Authority",
+          "mapping": "All 27 typed authorization contract pointers remain exact; they do not constitute active service or controller grants."
+        },
+        {
+          "name": "Evidence",
+          "mapping": "All 18 typed receipt contract pointers remain exact; actual Step12/13 records are separately bound."
+        },
+        {
+          "name": "Gate",
+          "mapping": "C15 and C18 retain exact validation workflow/receipt entry points; historical result is not a current gate result."
+        },
+        {
+          "name": "Pointer",
+          "mapping": "AGENTS.md keeps formal current pointer/immutable bundle reader; this package creates no pointer or canonical write."
+        },
+        {
+          "name": "Compatibility",
+          "mapping": "Step13 source-qualified six-tool compatibility remains evidence only where current bytes match or an accepted exact successor applies."
+        },
+        {
+          "name": "Rollback",
+          "mapping": "Existing Step12 transaction record and current updater backup/restore code are identified; current end-to-end control-plane rollback qualification is not inferred."
+        }
+      ],
+      "gaps": [
+        "Accept exact reuse/changed-source dispositions for the R07 subject, including any current responsibilities outside historical 18-consumer scope.",
+        "Bind applicable live authority, pointer and rollback actors; governance owner fields are not runtime issuers."
+      ],
+      "next_action": "Review the changed consumer rows and complete current scoped transfer mapping; reuse unchanged evidence only within its original boundary.",
+      "stage_definition_ref": {
+        "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-08\\ia\\work\\slice-a-contracts\\ReadinessAndGateCandidate.json",
+        "bytes": 38514,
+        "sha256": "6d8adc8e29c3be0cd18e25925851559494f94384f79f8a2e530a68f3802d4ceb",
+        "scope": "Observed extracted candidate input; historical status is not a current authority decision.",
+        "pointer": "/source_record/stage_nodes/7"
+      },
+      "original_stage_name": "授权的仓库/开发控制面迁移与职责/Authority/Evidence/Gate/Pointer/Compatibility/Rollback 闭合"
+    },
+    {
+      "id": "R08",
+      "depends_on": [
+        "R07"
+      ],
+      "mapped_readiness": [
+        "CanonicalSemanticNoChangeReceipt"
+      ],
+      "evidence": [
+        {
+          "path": "docs/execution-plans/phase2-structure-governance/Step17-ScopedAcceptance_20260907.json",
+          "bytes": 5582,
+          "sha256": "a4d652aef2b799ee7f6b9d6e99b65c7ece646462d44c37ef2fdd64bc28b8c63a",
+          "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+          "worktree_sha256": "a4d652aef2b799ee7f6b9d6e99b65c7ece646462d44c37ef2fdd64bc28b8c63a",
+          "worktree_byte_relation": "EXACT",
+          "pointer": ""
+        },
+        {
+          "path": "docs/execution-plans/phase2-structure-governance/Step15-17-EvidenceRefreshDecision_20260907.json",
+          "bytes": 6014,
+          "sha256": "3bd87b5083f91a609fc85916cd0ea216120f3a46edaac64070327abbf03129d9",
+          "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+          "worktree_sha256": "3bd87b5083f91a609fc85916cd0ea216120f3a46edaac64070327abbf03129d9",
+          "worktree_byte_relation": "EXACT",
+          "pointer": ""
+        },
+        {
+          "path": "docs/execution-plans/phase2-structure-governance/step15-enforcement-20260907/workflow-review/AllowedDifferences.json",
+          "bytes": 4152,
+          "sha256": "9f79ca2b833f2f91d6b90228d6a6719ba2ddcf479e09a143b12c0f10df4fa54b",
+          "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+          "worktree_sha256": "9f79ca2b833f2f91d6b90228d6a6719ba2ddcf479e09a143b12c0f10df4fa54b",
+          "worktree_byte_relation": "EXACT",
+          "pointer": ""
+        },
+        {
+          "path": "docs/execution-plans/phase2-structure-governance/AcceptanceAndInvalidation.md",
+          "bytes": 20571,
+          "sha256": "f2aed48ed74e688bfe280d3fa896243cc7907905fafcc467706a276367472f27",
+          "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+          "worktree_sha256": "f2aed48ed74e688bfe280d3fa896243cc7907905fafcc467706a276367472f27",
+          "worktree_byte_relation": "EXACT",
+          "pointer": ""
+        }
+      ],
+      "reusable": "Step17 source722d3b2/run34114596702 and refreshed evidence prove original migration semantics, not subsequent business runtime equivalence.",
+      "gaps": [
+        "Current changed consumer paths require targeted semantic dispositions; the migration comparison cannot be relabeled as acceptance of later OAuth/project-list behavior."
+      ],
+      "next_action": "Bind the R07 change set to semantic invariants and existing applicable successor evidence; run only missing affected comparisons, never reset all historical gates.",
+      "stage_definition_ref": {
+        "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-08\\ia\\work\\slice-a-contracts\\ReadinessAndGateCandidate.json",
+        "bytes": 38514,
+        "sha256": "6d8adc8e29c3be0cd18e25925851559494f94384f79f8a2e530a68f3802d4ceb",
+        "scope": "Observed extracted candidate input; historical status is not a current authority decision.",
+        "pointer": "/source_record/stage_nodes/8"
+      },
+      "original_stage_name": "Canonical Semantic No-Change Verification"
+    },
+    {
+      "id": "R09",
+      "depends_on": [
+        "R08"
+      ],
+      "mapped_readiness": [
+        "DevelopmentMechanismFreezeReceipt"
+      ],
+      "evidence": [
+        {
+          "path": "AGENTS.md",
+          "bytes": 11994,
+          "sha256": "0d209391925dfc3c490cecfdb1e48c9266f0fd9c3d2e26903e023002f2eaf354",
+          "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+          "worktree_sha256": "0d209391925dfc3c490cecfdb1e48c9266f0fd9c3d2e26903e023002f2eaf354",
+          "worktree_byte_relation": "EXACT",
+          "pointer": ""
+        },
+        {
+          "path": "skills/clued/references/engineering.md",
+          "bytes": 5780,
+          "sha256": "ffff299ea0a1793f9b0b4963fc5bf099762fabce96ed96086cfc5494acbb8d29",
+          "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+          "worktree_sha256": "ffff299ea0a1793f9b0b4963fc5bf099762fabce96ed96086cfc5494acbb8d29",
+          "worktree_byte_relation": "EXACT",
+          "pointer": ""
+        },
+        {
+          "path": "docs/execution-plans/phase2-structure-governance/NamingIntegrityCloseoutDecision_20260907.json",
+          "bytes": 3907,
+          "sha256": "f077de340810bef827ebdd92e2c2bdda3eef2bc894f7e9975edbf54623133740",
+          "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+          "worktree_sha256": "f077de340810bef827ebdd92e2c2bdda3eef2bc894f7e9975edbf54623133740",
+          "worktree_byte_relation": "EXACT",
+          "pointer": ""
+        }
+      ],
+      "reusable": "Current vendor-independent workflow instructions, actual consumer paths, trusted publication boundary and scoped naming acceptance are available as inputs.",
+      "gaps": [
+        "No current accepted DevelopmentMechanismFreezeReceipt located in this bounded source set.",
+        "Mechanism subject must bind authority, execution channels, evidence, stop/revocation, rollback and exact immutable identities; naming freeze is not this freeze."
+      ],
+      "next_action": "Assemble the precise mechanism review subject from mapped components and retain unknown authority/controller fields; obtain applicable scoped acceptance without modifying old Frozen Registry or pins.",
+      "stage_definition_ref": {
+        "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-08\\ia\\work\\slice-a-contracts\\ReadinessAndGateCandidate.json",
+        "bytes": 38514,
+        "sha256": "6d8adc8e29c3be0cd18e25925851559494f94384f79f8a2e530a68f3802d4ceb",
+        "scope": "Observed extracted candidate input; historical status is not a current authority decision.",
+        "pointer": "/source_record/stage_nodes/9"
+      },
+      "original_stage_name": "厂商无关 Clued Development Mechanism 冻结"
+    },
+    {
+      "id": "R10",
+      "depends_on": [
+        "R09"
+      ],
+      "mapped_readiness": [
+        "DevelopmentSkillProjectionReceipt"
+      ],
+      "evidence": [
+        {
+          "path": "docs/execution-plans/phase2-structure-governance/Step20-SkillProjectionAcceptance_20260907.json",
+          "bytes": 1285,
+          "sha256": "2c7da02632520187aa3b95ebfac4e5f9ba4d9a55d32e25d7eb3bccacab7ffc42",
+          "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+          "worktree_sha256": "2c7da02632520187aa3b95ebfac4e5f9ba4d9a55d32e25d7eb3bccacab7ffc42",
+          "worktree_byte_relation": "EXACT",
+          "pointer": ""
+        },
+        {
+          "path": "docs/execution-plans/phase2-structure-governance/Step21-SkillProjectionAcceptance_20260907.json",
+          "bytes": 1271,
+          "sha256": "7e34dc5fdf3c95b5f964217f55bc5088cbb120eaea4fc778e8b657e43d6df08b",
+          "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+          "worktree_sha256": "7e34dc5fdf3c95b5f964217f55bc5088cbb120eaea4fc778e8b657e43d6df08b",
+          "worktree_byte_relation": "EXACT",
+          "pointer": ""
+        },
+        {
+          "path": "skills/README.md",
+          "bytes": 2614,
+          "sha256": "6930cfcd300010b287dc08f58ae8b441639033ee4a705f66f775a36603087c6c",
+          "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+          "worktree_sha256": "6930cfcd300010b287dc08f58ae8b441639033ee4a705f66f775a36603087c6c",
+          "worktree_byte_relation": "EXACT",
+          "pointer": ""
+        },
+        {
+          "path": "scripts/update_clued_skills.py",
+          "bytes": 4737,
+          "sha256": "ef976d161813c6d1ed1d60cbaf05a8e4a825c41db35fda6eb32b6fd40ab05e67",
+          "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+          "worktree_sha256": "ef976d161813c6d1ed1d60cbaf05a8e4a825c41db35fda6eb32b6fd40ab05e67",
+          "worktree_byte_relation": "EXACT",
+          "pointer": ""
+        },
+        {
+          "path": "skills/clued/SKILL.md",
+          "bytes": 3913,
+          "sha256": "8a5e6d9548731874b94ebe3edc046f7393c96fd75531f22231228e055206096f",
+          "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+          "worktree_sha256": "8a5e6d9548731874b94ebe3edc046f7393c96fd75531f22231228e055206096f",
+          "worktree_byte_relation": "EXACT",
+          "pointer": ""
+        },
+        {
+          "path": "skills/clued/references/engineering.md",
+          "bytes": 5780,
+          "sha256": "ffff299ea0a1793f9b0b4963fc5bf099762fabce96ed96086cfc5494acbb8d29",
+          "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+          "worktree_sha256": "ffff299ea0a1793f9b0b4963fc5bf099762fabce96ed96086cfc5494acbb8d29",
+          "worktree_byte_relation": "EXACT",
+          "pointer": ""
+        },
+        {
+          "path": "skills/clued/references/memory-operations.md",
+          "bytes": 5166,
+          "sha256": "a05feabc8ad4ccac535bb059fbf35179f79884dfb1113abdd18b21281bfda538",
+          "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+          "worktree_sha256": "a05feabc8ad4ccac535bb059fbf35179f79884dfb1113abdd18b21281bfda538",
+          "worktree_byte_relation": "EXACT",
+          "pointer": ""
+        }
+      ],
+      "reusable": "Current unified clued files exactly match installation, with explicit old-entry retirement code and separated engineering/memory references.",
+      "gaps": [
+        "Current unified projection must bind the actual R09 mechanism subject; old thin-adapter acceptance is not automatically its qualification.",
+        "R11 requires accepted qualification profile, independent qualified controller and actual action authorization."
+      ],
+      "next_action": "Review SkillLineage.json against the accepted R09 subject, preserve precise old identities, then admit only authorized isolated qualification work.",
+      "stage_definition_ref": {
+        "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-08\\ia\\work\\slice-a-contracts\\ReadinessAndGateCandidate.json",
+        "bytes": 38514,
+        "sha256": "6d8adc8e29c3be0cd18e25925851559494f94384f79f8a2e530a68f3802d4ceb",
+        "scope": "Observed extracted candidate input; historical status is not a current authority decision.",
+        "pointer": "/source_record/stage_nodes/10"
+      },
+      "original_stage_name": "新 Development Skill / Vendor Projection"
+    }
+  ],
+  "separate_current_service_evidence": {
+    "refs": [
+      {
+        "path": "artifacts/clued-validation/project-list-auth-repair-20260908/README.md",
+        "bytes": 2579,
+        "sha256": "e890ca58019e9eb6511b903e46b4dc75f0abe828b3ae8b0c81b2f1c92d757af1",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "5127c361406ae053bbe410d63a71cf204203bb29b4ec2f217bc5b9348a1c4862",
+        "worktree_byte_relation": "LINE_ENDINGS_ONLY",
+        "pointer": ""
+      },
+      {
+        "path": "artifacts/clued-validation/project-list-auth-repair-20260908/production-deployment.json",
+        "bytes": 215,
+        "sha256": "9b18a55e6ae6780c0f163cd2dbe2cf36426f32e91e4ed7b74f7cece3a9dc84df",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "worktree_sha256": "64e249e0dd1b4e906671b193156e80418cf70452d2b9831620264aa32964a757",
+        "worktree_byte_relation": "LINE_ENDINGS_ONLY",
+        "pointer": ""
+      }
+    ],
+    "scope": "Actual scoped project-list and transport repair; does not requalify every consumer operation, OAuth UI or core Entry."
+  },
+  "later_stage_boundary": "R11 actual Shadow -> R12 governance -> R13 activation/deprecation -> R14 Entry. Mapping is not readiness issuance.",
+  "cleared_historical_gaps": [
+    "M0 originals recovered with 206 files verified",
+    "Formal project-list authorization repair completed in its own evidence scope"
+  ],
+  "do_not_restart": [
+    "Completed 21-step Naming/Structure series",
+    "Retired P5/P6 or old Developer-to-User grant/link bridge"
+  ]
+}

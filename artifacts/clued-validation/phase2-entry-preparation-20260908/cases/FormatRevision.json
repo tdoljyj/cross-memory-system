@@ -1,0 +1,46 @@
+{
+  "scope": "FORMATTING_ONLY_NOT_NEW_EXECUTION",
+  "authority_effect": "NONE",
+  "controller_unchanged_sha256": "ec72de3116c6e2af88a10c9a980414c11586dd17feffb82fa0ffba32823cc26f",
+  "executed_test_file_sha256_preserved": "b0c0539fbf93be7651e4716bb602836b6062832d101662e3a8108f1ae8a46689",
+  "current_test_file_sha256": "d6be0aa5a077ac8acf9f6ef0c569c6503757d03a46f40d4766d40ab07fa88688",
+  "changes": [
+    {
+      "file": "IndependentVerification.json",
+      "before_sha256": "ace2521b3083749517cb04b885450ca53269ccf33048cbdb8f1e302d4695bd42",
+      "after_sha256": "f9d88a0be3daca09a498daad11c609c707707e2fd543a25a840c135842de627e",
+      "changed": true,
+      "crlf_count_after": 0
+    },
+    {
+      "file": "QualificationCases.json",
+      "before_sha256": "40130ba07b69ef4c6f9439b16c086623885f2f88973bbf5886bddfc4d0665eb1",
+      "after_sha256": "85ab8bb1e49fde2dc8fa16370bf784a999d67b747947d53635a2b2d5fe5991b3",
+      "changed": true,
+      "crlf_count_after": 0
+    },
+    {
+      "file": "README.md",
+      "before_sha256": "2d715d4cb4d6362a1eaf0204ec08094f1237bb4d6b093f18815eed8b00aee84c",
+      "after_sha256": "2d715d4cb4d6362a1eaf0204ec08094f1237bb4d6b093f18815eed8b00aee84c",
+      "changed": false,
+      "crlf_count_after": 0
+    },
+    {
+      "file": "SourceBindings.json",
+      "before_sha256": "a3821f849f312ca8bed264e1aa1afb50fc884fabf475726297475ceca25932c8",
+      "after_sha256": "a3821f849f312ca8bed264e1aa1afb50fc884fabf475726297475ceca25932c8",
+      "changed": false,
+      "crlf_count_after": 0
+    },
+    {
+      "file": "verify_candidate.py",
+      "before_sha256": "b0c0539fbf93be7651e4716bb602836b6062832d101662e3a8108f1ae8a46689",
+      "after_sha256": "d6be0aa5a077ac8acf9f6ef0c569c6503757d03a46f40d4766d40ab07fa88688",
+      "changed": true,
+      "crlf_count_after": 0
+    }
+  ],
+  "verification_reused": "28 existing checks; runner and assertions unchanged; only writer now emits explicit LF",
+  "source_bindings_review": "SourceBindings.json hashes refer only to three source contracts outside this write set; none changed and no source hash was revised."
+}

@@ -1,0 +1,62 @@
+{
+  "state": "ENGINEERING_PREPARATION_ONLY",
+  "verification_scope": "Reference existence, exact pinned Git bytes, SHA256, JSON pointer consumer IDs and installed Skill bytes only",
+  "source_commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+  "repository_sources_checked": 47,
+  "prior_sources_reused": 12,
+  "consumers_mapped": 18,
+  "authorization_pointers_checked": 27,
+  "receipt_pointers_checked": 18,
+  "skill_files_matching_installation": 3,
+  "external_members_matching_locked_hashes": 2,
+  "local_candidate_inputs_hashed": 2,
+  "stage_dependencies_matched_to_source": 4,
+  "changed_consumer_paths": [
+    "apps/clued-cloud/app/oauth/consent/page.tsx",
+    "apps/clued-cloud/app/page.tsx",
+    "apps/clued-cloud/worker/continuity.ts"
+  ],
+  "tests_executed": 0,
+  "readiness_decisions_issued": 0,
+  "new_authority_grants": 0,
+  "frozen_sources_modified": false,
+  "canonical_writes": 0,
+  "pins_modified": false,
+  "file_results": [
+    {
+      "path": "build_mapping.py",
+      "bytes": 18491,
+      "sha256": "65dc48ecb305068ad5616fbf1afd3839900c9a30c865ef074d8f8721d2f76ecb"
+    },
+    {
+      "path": "ConsumerMapping.json",
+      "bytes": 126173,
+      "sha256": "1f12e1e4c4949eebc60b521e4b812fa1f575266785cb6745c1ebe9abe807a107"
+    },
+    {
+      "path": "ControllerSourceBoundary.json",
+      "bytes": 3410,
+      "sha256": "e9b125eac46cc918d7e7a19bafff0b813d9101973b61854e4ce19441ce984b27"
+    },
+    {
+      "path": "ReadinessMapping.json",
+      "bytes": 16797,
+      "sha256": "061160074e9f0d95efd93b428fc339ff7d2b6a6058a03171e26e8dff24e2fb12"
+    },
+    {
+      "path": "README.md",
+      "bytes": 4202,
+      "sha256": "ce228d2be85e9544bce0272c4ef48d9e78d886475762209f0f2bed6181640a90"
+    },
+    {
+      "path": "SkillLineage.json",
+      "bytes": 10634,
+      "sha256": "70824780b810fd9e9c913facb6a513d9290f6f0b502b8f36287b42ca9f6b5a95"
+    },
+    {
+      "path": "SourceBindings.json",
+      "bytes": 21249,
+      "sha256": "7cadb76b75c1852a45bc9a829df3b4877d1f9b8af60d2bd39867124da7cb651e"
+    }
+  ]
+}

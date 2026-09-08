@@ -1,0 +1,77 @@
+{
+  "state": "ENGINEERING_PREPARATION_ONLY",
+  "authority_effect": "NONE",
+  "source_commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+  "references": [
+    {
+      "source_id": "S06",
+      "container_locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip",
+      "member": "Clued_Phase2_三轨修订与补证_v0.2.7_20260906/sources/architecture_v024/sources/Clued_Kernel_Next_多厂商连续性与执行基础设施完整整合方案_v3.3.md",
+      "bytes": 557313,
+      "sha256": "f967fdf3e63028d29ed191160698726b5d707aaae63bd951f6ba2e8584936fec",
+      "reference_scope": "Existing exact two-hop source trace; not an active controller or authority."
+    },
+    {
+      "source_id": "ACTUAL_QUALIFICATION_BINDINGS",
+      "container_locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip",
+      "member": "Clued_Phase2_三轨修订与补证_v0.2.7_20260906/sources/architecture_v024/data/ActualQualificationBindings.json",
+      "bytes": 926,
+      "sha256": "61fc5a4ac9e0980e1ccf602d4008a7d1f0b275f20a81cba217384ee80feb3d65",
+      "reference_scope": "Existing exact two-hop source trace; not an active controller or authority."
+    }
+  ],
+  "qualification_plan_ref": {
+    "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-08\\ia\\work\\slice-a-contracts\\TestControllerQualificationPlan.json",
+    "bytes": 2059,
+    "sha256": "b482c08ad0cb85fcec388da6505849d58e6b5d22a5982bcfefc7a2a19b204087",
+    "scope": "Observed extracted candidate input; historical status is not a current authority decision."
+  },
+  "s06_boundary": {
+    "lines": [
+      5,
+      10,
+      12,
+      3876,
+      3885,
+      3887
+    ],
+    "status": "frozen_pending_g1 natural-language contract; not live Gate Baseline"
+  },
+  "actual_bindings_id": "V022_ACTUAL_PREENTRY_QUALIFICATION_BINDINGS",
+  "actual_bindings_state": "NOT_REQUESTED_NOT_ISSUED_NOT_EXECUTED",
+  "unbound_fields": [
+    "profile_accepted_ref",
+    "named_owner",
+    "owner_authority_or_delegation_ref",
+    "controller_artifact_ref",
+    "controller_qualification_ref",
+    "controller_qualification_authority_ref",
+    "candidate_skill_ref",
+    "mechanism_ref",
+    "host_config_ref",
+    "test_plan_ref",
+    "fixtures_ref",
+    "scope_ref",
+    "budget_authorization_ref",
+    "budget_reservation_ref",
+    "stop_policy_ref",
+    "evidence_sink_ref",
+    "gate_authorization_ref",
+    "grant_ref",
+    "signature",
+    "human_approval"
+  ],
+  "real_execution_results": [],
+  "missing_ref_behavior": "DENY_NOT_A_WILDCARD",
+  "required_external_inputs": [
+    "Current verifiable Control Evidence Store and existing trust-root generation/issuer purpose/expiry/revocation source",
+    "Exact runner/config/host and independent scoped qualification",
+    "Accepted applicable profile and actual scoped time-bounded authorization"
+  ],
+  "local_preparation_allowed": [
+    "Pin source and input digests",
+    "Prepare isolated controller candidate and negative cases",
+    "Prepare evidence/stop/revocation/UNKNOWN recovery design"
+  ],
+  "not_claimed": "No reusable qualified controller is established by this reference chain; no claim that other authorized environments have none."
+}

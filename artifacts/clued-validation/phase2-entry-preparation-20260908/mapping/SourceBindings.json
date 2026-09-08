@@ -1,0 +1,425 @@
+{
+  "state": "ENGINEERING_PREPARATION_ONLY",
+  "authority_effect": "NONE",
+  "source_commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+  "prior_index": {
+    "path": "artifacts/clued-validation/phase2-entry-readiness-20260908/EvidenceIndex.json",
+    "bytes": 3925,
+    "sha256": "3cb1d8fde1731a28078b363827651963f5cd1d20950844de14b043a1a4ff4522",
+    "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+    "worktree_sha256": "53421c05c3702d7d5a31bf4b11680a71197b488940eeb4c3484af0e82039e3f3",
+    "worktree_byte_relation": "LINE_ENDINGS_ONLY",
+    "pointer": ""
+  },
+  "prior_sources_reused": 12,
+  "sources": [
+    {
+      "path": ".github/workflows/phase2-v027-validation.yml",
+      "bytes": 15230,
+      "sha256": "9a45acb955d1eee8e84491257043056eeefe8a088be6425f4b7cfa8cded0b520",
+      "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+      "worktree_sha256": "9a45acb955d1eee8e84491257043056eeefe8a088be6425f4b7cfa8cded0b520",
+      "worktree_byte_relation": "EXACT"
+    },
+    {
+      "path": ".github/workflows/public-mcp-gate-receipt.yml",
+      "bytes": 1500,
+      "sha256": "4e3784db5984933d859cd961f010c4fb2306eaf6b871cdd438eeb2cff9154ce8",
+      "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+      "worktree_sha256": "4e3784db5984933d859cd961f010c4fb2306eaf6b871cdd438eeb2cff9154ce8",
+      "worktree_byte_relation": "EXACT"
+    },
+    {
+      "path": "AGENTS.md",
+      "bytes": 11994,
+      "sha256": "0d209391925dfc3c490cecfdb1e48c9266f0fd9c3d2e26903e023002f2eaf354",
+      "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+      "worktree_sha256": "0d209391925dfc3c490cecfdb1e48c9266f0fd9c3d2e26903e023002f2eaf354",
+      "worktree_byte_relation": "EXACT"
+    },
+    {
+      "path": "apps/clued-cloud/app/oauth/consent/page.tsx",
+      "bytes": 7088,
+      "sha256": "54ad239f01cbcbd1fb4bac04ff6b080bd55f1465163f34b557e237ccea83051f",
+      "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+      "worktree_sha256": "54ad239f01cbcbd1fb4bac04ff6b080bd55f1465163f34b557e237ccea83051f",
+      "worktree_byte_relation": "EXACT"
+    },
+    {
+      "path": "apps/clued-cloud/app/page.tsx",
+      "bytes": 57180,
+      "sha256": "4e5caa4015b4382a4cd9329b71ecf2079ff9a79e3c0f6d74f9bdc02345ffbc83",
+      "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+      "worktree_sha256": "4e5caa4015b4382a4cd9329b71ecf2079ff9a79e3c0f6d74f9bdc02345ffbc83",
+      "worktree_byte_relation": "EXACT"
+    },
+    {
+      "path": "apps/clued-cloud/evals/public-mcp/gate-receipt.mjs",
+      "bytes": 5425,
+      "sha256": "9d1574e361a8fdd550578763755933e4d250a8076d55b1223ca9dfc40c1ec0c0",
+      "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+      "worktree_sha256": "9d1574e361a8fdd550578763755933e4d250a8076d55b1223ca9dfc40c1ec0c0",
+      "worktree_byte_relation": "EXACT"
+    },
+    {
+      "path": "apps/clued-cloud/scripts/m2-snapshot-store.mjs",
+      "bytes": 16753,
+      "sha256": "d56e15f4821ff2b21de07a3c103aac4d9a963b3dac7ee2128543ea37036caf30",
+      "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+      "worktree_sha256": "d56e15f4821ff2b21de07a3c103aac4d9a963b3dac7ee2128543ea37036caf30",
+      "worktree_byte_relation": "EXACT"
+    },
+    {
+      "path": "apps/clued-cloud/scripts/two-level-snapshot.mjs",
+      "bytes": 58055,
+      "sha256": "1dfcc8de7b481bc8a29cd055f711bb142fa390fff07a61730320866a477f6b7e",
+      "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+      "worktree_sha256": "1dfcc8de7b481bc8a29cd055f711bb142fa390fff07a61730320866a477f6b7e",
+      "worktree_byte_relation": "EXACT"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql",
+      "bytes": 72625,
+      "sha256": "f59e414ec0de016cbe89d3ba24ded2d90e85a9e17fb554021b2d4d611f4d26c2",
+      "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+      "worktree_sha256": "f59e414ec0de016cbe89d3ba24ded2d90e85a9e17fb554021b2d4d611f4d26c2",
+      "worktree_byte_relation": "EXACT"
+    },
+    {
+      "path": "apps/clued-cloud/worker/continuity.ts",
+      "bytes": 50783,
+      "sha256": "53746991a483bf4bbac4402440ae86fb7cd296032a7a10359758bbaf77997dc5",
+      "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+      "worktree_sha256": "53746991a483bf4bbac4402440ae86fb7cd296032a7a10359758bbaf77997dc5",
+      "worktree_byte_relation": "EXACT"
+    },
+    {
+      "path": "apps/clued-cloud/worker/p5.ts",
+      "bytes": 4492,
+      "sha256": "ce46bf7025f746579263b78c320f1df6e4d077e11bcbcc958865f20bfead418f",
+      "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+      "worktree_sha256": "ce46bf7025f746579263b78c320f1df6e4d077e11bcbcc958865f20bfead418f",
+      "worktree_byte_relation": "EXACT"
+    },
+    {
+      "path": "apps/clued-cloud/worker/projects.ts",
+      "bytes": 2051,
+      "sha256": "8bb2d52643c4ffd62ee48de60294559161d750ea15d328b6585deb47aa2aa09f",
+      "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+      "worktree_sha256": "8bb2d52643c4ffd62ee48de60294559161d750ea15d328b6585deb47aa2aa09f",
+      "worktree_byte_relation": "EXACT"
+    },
+    {
+      "path": "apps/clued-cloud/worker/records.ts",
+      "bytes": 8108,
+      "sha256": "43bfe74c4d6576476f3d4a08df82a6b0853da855c29124edf1e333c14d5bb35e",
+      "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+      "worktree_sha256": "43bfe74c4d6576476f3d4a08df82a6b0853da855c29124edf1e333c14d5bb35e",
+      "worktree_byte_relation": "EXACT"
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-readiness-20260908/EvidenceIndex.json",
+      "bytes": 3925,
+      "sha256": "3cb1d8fde1731a28078b363827651963f5cd1d20950844de14b043a1a4ff4522",
+      "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+      "worktree_sha256": "53421c05c3702d7d5a31bf4b11680a71197b488940eeb4c3484af0e82039e3f3",
+      "worktree_byte_relation": "LINE_ENDINGS_ONLY"
+    },
+    {
+      "path": "artifacts/clued-validation/project-list-auth-repair-20260908/README.md",
+      "bytes": 2579,
+      "sha256": "e890ca58019e9eb6511b903e46b4dc75f0abe828b3ae8b0c81b2f1c92d757af1",
+      "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+      "worktree_sha256": "5127c361406ae053bbe410d63a71cf204203bb29b4ec2f217bc5b9348a1c4862",
+      "worktree_byte_relation": "LINE_ENDINGS_ONLY"
+    },
+    {
+      "path": "artifacts/clued-validation/project-list-auth-repair-20260908/production-deployment.json",
+      "bytes": 215,
+      "sha256": "9b18a55e6ae6780c0f163cd2dbe2cf36426f32e91e4ed7b74f7cece3a9dc84df",
+      "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+      "worktree_sha256": "64e249e0dd1b4e906671b193156e80418cf70452d2b9831620264aa32964a757",
+      "worktree_byte_relation": "LINE_ENDINGS_ONLY"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/AcceptanceAndInvalidation.md",
+      "bytes": 20571,
+      "sha256": "f2aed48ed74e688bfe280d3fa896243cc7907905fafcc467706a276367472f27",
+      "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+      "worktree_sha256": "f2aed48ed74e688bfe280d3fa896243cc7907905fafcc467706a276367472f27",
+      "worktree_byte_relation": "EXACT"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/ArchitectureConstitutionAcceptanceDecision_20260907.json",
+      "bytes": 26611,
+      "sha256": "f2ec1d6cf3afbd80d415c65c7bc0f71d86d606bda9031a174d92517e421ac246",
+      "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+      "worktree_sha256": "f2ec1d6cf3afbd80d415c65c7bc0f71d86d606bda9031a174d92517e421ac246",
+      "worktree_byte_relation": "EXACT"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/NamingIntegrityCloseoutDecision_20260907.json",
+      "bytes": 3907,
+      "sha256": "f077de340810bef827ebdd92e2c2bdda3eef2bc894f7e9975edbf54623133740",
+      "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+      "worktree_sha256": "f077de340810bef827ebdd92e2c2bdda3eef2bc894f7e9975edbf54623133740",
+      "worktree_byte_relation": "EXACT"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/Step06-ScopedAcceptance_20260907.json",
+      "bytes": 5319,
+      "sha256": "bd40c82a21e7b19c2c36e56d7b877078e45c6bfdf1593590fb56ab364f47889a",
+      "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+      "worktree_sha256": "bd40c82a21e7b19c2c36e56d7b877078e45c6bfdf1593590fb56ab364f47889a",
+      "worktree_byte_relation": "EXACT"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/Step13-ScopedAcceptance_20260907.json",
+      "bytes": 2421,
+      "sha256": "562046e42bcbbea73bb99412cdc8161945b8e50fc519f335402f6529ca638acd",
+      "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+      "worktree_sha256": "562046e42bcbbea73bb99412cdc8161945b8e50fc519f335402f6529ca638acd",
+      "worktree_byte_relation": "EXACT"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/Step15-17-EvidenceRefreshDecision_20260907.json",
+      "bytes": 6014,
+      "sha256": "3bd87b5083f91a609fc85916cd0ea216120f3a46edaac64070327abbf03129d9",
+      "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+      "worktree_sha256": "3bd87b5083f91a609fc85916cd0ea216120f3a46edaac64070327abbf03129d9",
+      "worktree_byte_relation": "EXACT"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/Step17-ScopedAcceptance_20260907.json",
+      "bytes": 5582,
+      "sha256": "a4d652aef2b799ee7f6b9d6e99b65c7ece646462d44c37ef2fdd64bc28b8c63a",
+      "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+      "worktree_sha256": "a4d652aef2b799ee7f6b9d6e99b65c7ece646462d44c37ef2fdd64bc28b8c63a",
+      "worktree_byte_relation": "EXACT"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/Step20-SkillProjectionAcceptance_20260907.json",
+      "bytes": 1285,
+      "sha256": "2c7da02632520187aa3b95ebfac4e5f9ba4d9a55d32e25d7eb3bccacab7ffc42",
+      "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+      "worktree_sha256": "2c7da02632520187aa3b95ebfac4e5f9ba4d9a55d32e25d7eb3bccacab7ffc42",
+      "worktree_byte_relation": "EXACT"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/Step21-SkillProjectionAcceptance_20260907.json",
+      "bytes": 1271,
+      "sha256": "7e34dc5fdf3c95b5f964217f55bc5088cbb120eaea4fc778e8b657e43d6df08b",
+      "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+      "worktree_sha256": "7e34dc5fdf3c95b5f964217f55bc5088cbb120eaea4fc778e8b657e43d6df08b",
+      "worktree_byte_relation": "EXACT"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step05-identity-20260907/AliasRegistry.candidate.json",
+      "bytes": 4737,
+      "sha256": "29d0d21d2d0fcecefdc9daaf841a77f411a6695d256a38993976f74660f19a40",
+      "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+      "worktree_sha256": "29d0d21d2d0fcecefdc9daaf841a77f411a6695d256a38993976f74660f19a40",
+      "worktree_byte_relation": "EXACT"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedAuthorizationRegistry.candidate.json",
+      "bytes": 74695,
+      "sha256": "359e7461ba3166bef63815f37ddd9c247aada317c14e4e62bdee3bc79cc3fcdd",
+      "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+      "worktree_sha256": "359e7461ba3166bef63815f37ddd9c247aada317c14e4e62bdee3bc79cc3fcdd",
+      "worktree_byte_relation": "EXACT"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedConsumerRegistry.candidate.json",
+      "bytes": 243588,
+      "sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+      "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+      "worktree_sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+      "worktree_byte_relation": "EXACT"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedReceiptRegistry.candidate.json",
+      "bytes": 91138,
+      "sha256": "05d182805b31ba9d5e6c1c3fa32ae2081527a92faaa76263debded6ffca5efa4",
+      "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+      "worktree_sha256": "05d182805b31ba9d5e6c1c3fa32ae2081527a92faaa76263debded6ffca5efa4",
+      "worktree_byte_relation": "EXACT"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-actual-migration-20260907/receipt.json",
+      "bytes": 7741,
+      "sha256": "7ba04bc7cf715a6b96f05f64db3d7f0281627e9c0919b15dd66aa3d26f9f6ca7",
+      "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+      "worktree_sha256": "7ba04bc7cf715a6b96f05f64db3d7f0281627e9c0919b15dd66aa3d26f9f6ca7",
+      "worktree_byte_relation": "EXACT"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step13-14-actual-verification-20260907/TargetConsumerBindingManifest.json",
+      "bytes": 33972,
+      "sha256": "6c82bc7c53a1f26e0dd07419acfcd67e3e65b772f4a3ee69f2f06c617b4fcece",
+      "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+      "worktree_sha256": "6c82bc7c53a1f26e0dd07419acfcd67e3e65b772f4a3ee69f2f06c617b4fcece",
+      "worktree_byte_relation": "EXACT"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step15-enforcement-20260907/workflow-review/AllowedDifferences.json",
+      "bytes": 4152,
+      "sha256": "9f79ca2b833f2f91d6b90228d6a6719ba2ddcf479e09a143b12c0f10df4fa54b",
+      "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+      "worktree_sha256": "9f79ca2b833f2f91d6b90228d6a6719ba2ddcf479e09a143b12c0f10df4fa54b",
+      "worktree_byte_relation": "EXACT"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step20-skill-20260907/clued-developer/SKILL.md",
+      "bytes": 5151,
+      "sha256": "a7daf4644401600609c9d6d1bab1b61e512012833b35d01498aaca44da398269",
+      "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+      "worktree_sha256": "a7daf4644401600609c9d6d1bab1b61e512012833b35d01498aaca44da398269",
+      "worktree_byte_relation": "EXACT"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step21-skill-20260907/IndependentBehaviorReview.json",
+      "bytes": 11465,
+      "sha256": "f63879a2075c36ee52a3d82d9306b3189fa1be4cf58b36736e94832603ff8f98",
+      "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+      "worktree_sha256": "f63879a2075c36ee52a3d82d9306b3189fa1be4cf58b36736e94832603ff8f98",
+      "worktree_byte_relation": "EXACT"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step21-skill-20260907/clued-user/SKILL.md",
+      "bytes": 4816,
+      "sha256": "a86b2710f013600f52bcb062d2d48393b3bba8700a006c84a22b7e9f79807724",
+      "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+      "worktree_sha256": "a86b2710f013600f52bcb062d2d48393b3bba8700a006c84a22b7e9f79807724",
+      "worktree_byte_relation": "EXACT"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step21-skill-20260907/continuity-routing/SKILL.md",
+      "bytes": 3294,
+      "sha256": "7222bc35a6eb7490c620c35296553dddd7815c47d8c15ce0843789dc2b42824d",
+      "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+      "worktree_sha256": "7222bc35a6eb7490c620c35296553dddd7815c47d8c15ce0843789dc2b42824d",
+      "worktree_byte_relation": "EXACT"
+    },
+    {
+      "path": "scripts/clued-naming-inventory-consolidate.py",
+      "bytes": 32673,
+      "sha256": "69f2fcc2e8c0e2802d7fa08de842345b88d208bec947d3ef4e88ef4c41907026",
+      "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+      "worktree_sha256": "69f2fcc2e8c0e2802d7fa08de842345b88d208bec947d3ef4e88ef4c41907026",
+      "worktree_byte_relation": "EXACT"
+    },
+    {
+      "path": "scripts/clued-naming-surface-inventory.py",
+      "bytes": 73510,
+      "sha256": "9ff7dc893b865a7736d6d9ffbe6f908c15f9c418e10a0602ae6fd33eedb8f81e",
+      "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+      "worktree_sha256": "9ff7dc893b865a7736d6d9ffbe6f908c15f9c418e10a0602ae6fd33eedb8f81e",
+      "worktree_byte_relation": "EXACT"
+    },
+    {
+      "path": "scripts/phase2-v027-validate.py",
+      "bytes": 20343,
+      "sha256": "e16cc9fa5fd2a54dc3922029851722936551a400979dc94dce691faa83bd7f4e",
+      "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+      "worktree_sha256": "e16cc9fa5fd2a54dc3922029851722936551a400979dc94dce691faa83bd7f4e",
+      "worktree_byte_relation": "EXACT"
+    },
+    {
+      "path": "scripts/sync-memory.ps1",
+      "bytes": 1088,
+      "sha256": "1b0ec7934951a937c7b517841374817255bad9e430ae09adb72adf579fc7c6e8",
+      "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+      "worktree_sha256": "1b0ec7934951a937c7b517841374817255bad9e430ae09adb72adf579fc7c6e8",
+      "worktree_byte_relation": "EXACT"
+    },
+    {
+      "path": "scripts/sync-memory.py",
+      "bytes": 20890,
+      "sha256": "93dc66d3c6e0a7aa2310afa5d3386dd0a835fa840e3ab049676906d66bc8f94d",
+      "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+      "worktree_sha256": "93dc66d3c6e0a7aa2310afa5d3386dd0a835fa840e3ab049676906d66bc8f94d",
+      "worktree_byte_relation": "EXACT"
+    },
+    {
+      "path": "scripts/update_clued_skills.py",
+      "bytes": 4737,
+      "sha256": "ef976d161813c6d1ed1d60cbaf05a8e4a825c41db35fda6eb32b6fd40ab05e67",
+      "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+      "worktree_sha256": "ef976d161813c6d1ed1d60cbaf05a8e4a825c41db35fda6eb32b6fd40ab05e67",
+      "worktree_byte_relation": "EXACT"
+    },
+    {
+      "path": "scripts/verification_context.py",
+      "bytes": 32479,
+      "sha256": "6a2d83a65921df60252aad350f3cecacfbab991be582368903aa40203c96d5ab",
+      "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+      "worktree_sha256": "6a2d83a65921df60252aad350f3cecacfbab991be582368903aa40203c96d5ab",
+      "worktree_byte_relation": "EXACT"
+    },
+    {
+      "path": "skills/README.md",
+      "bytes": 2614,
+      "sha256": "6930cfcd300010b287dc08f58ae8b441639033ee4a705f66f775a36603087c6c",
+      "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+      "worktree_sha256": "6930cfcd300010b287dc08f58ae8b441639033ee4a705f66f775a36603087c6c",
+      "worktree_byte_relation": "EXACT"
+    },
+    {
+      "path": "skills/clued/SKILL.md",
+      "bytes": 3913,
+      "sha256": "8a5e6d9548731874b94ebe3edc046f7393c96fd75531f22231228e055206096f",
+      "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+      "worktree_sha256": "8a5e6d9548731874b94ebe3edc046f7393c96fd75531f22231228e055206096f",
+      "worktree_byte_relation": "EXACT"
+    },
+    {
+      "path": "skills/clued/references/engineering.md",
+      "bytes": 5780,
+      "sha256": "ffff299ea0a1793f9b0b4963fc5bf099762fabce96ed96086cfc5494acbb8d29",
+      "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+      "worktree_sha256": "ffff299ea0a1793f9b0b4963fc5bf099762fabce96ed96086cfc5494acbb8d29",
+      "worktree_byte_relation": "EXACT"
+    },
+    {
+      "path": "skills/clued/references/memory-operations.md",
+      "bytes": 5166,
+      "sha256": "a05feabc8ad4ccac535bb059fbf35179f79884dfb1113abdd18b21281bfda538",
+      "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+      "worktree_sha256": "a05feabc8ad4ccac535bb059fbf35179f79884dfb1113abdd18b21281bfda538",
+      "worktree_byte_relation": "EXACT"
+    }
+  ],
+  "external_references": [
+    {
+      "source_id": "S06",
+      "container_locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip",
+      "member": "Clued_Phase2_三轨修订与补证_v0.2.7_20260906/sources/architecture_v024/sources/Clued_Kernel_Next_多厂商连续性与执行基础设施完整整合方案_v3.3.md",
+      "bytes": 557313,
+      "sha256": "f967fdf3e63028d29ed191160698726b5d707aaae63bd951f6ba2e8584936fec",
+      "reference_scope": "Existing exact two-hop source trace; not an active controller or authority."
+    },
+    {
+      "source_id": "ACTUAL_QUALIFICATION_BINDINGS",
+      "container_locator": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-07\\ni-6\\work\\candidate-source\\Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip",
+      "member": "Clued_Phase2_三轨修订与补证_v0.2.7_20260906/sources/architecture_v024/data/ActualQualificationBindings.json",
+      "bytes": 926,
+      "sha256": "61fc5a4ac9e0980e1ccf602d4008a7d1f0b275f20a81cba217384ee80feb3d65",
+      "reference_scope": "Existing exact two-hop source trace; not an active controller or authority."
+    }
+  ],
+  "local_candidate_inputs": [
+    {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-08\\ia\\work\\slice-a-contracts\\ReadinessAndGateCandidate.json",
+      "bytes": 38514,
+      "sha256": "6d8adc8e29c3be0cd18e25925851559494f94384f79f8a2e530a68f3802d4ceb",
+      "scope": "Observed extracted candidate input; historical status is not a current authority decision."
+    },
+    {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-08\\ia\\work\\slice-a-contracts\\TestControllerQualificationPlan.json",
+      "bytes": 2059,
+      "sha256": "b482c08ad0cb85fcec388da6505849d58e6b5d22a5982bcfefc7a2a19b204087",
+      "scope": "Observed extracted candidate input; historical status is not a current authority decision."
+    }
+  ]
+}
