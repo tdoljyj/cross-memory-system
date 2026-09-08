@@ -1,0 +1,2 @@
+# Preserve the independently hashed observation's original terminal blank line.
+ProductionIndependentReadback.json whitespace=-blank-at-eof
