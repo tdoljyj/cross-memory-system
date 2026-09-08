@@ -2,7 +2,7 @@
 
 These rules apply to every task under `apps/clued-cloud/`.
 
-1. Use `clued-developer` for Clued engineering and `clued-user` for authorized personal context operations. Their maintained sources are `skills/clued-developer/SKILL.md` and `skills/clued-user/SKILL.md` at the repository root. The former continuity router was intentionally removed; do not restore it.
+1. Use the unified `clued` Skill at `skills/clued/SKILL.md` in the repository root. Load its `references/engineering.md` for Clued engineering or `references/memory-operations.md` for authorized context operations, according to the requested operation. These workflows share an authorized connection without granting or combining privileges. The former independent developer, user and continuity entries are retired; do not restore duplicate active Skills.
 2. The authenticated Clued service backed by Supabase is the only online Canonical Store. Repository `memory/` is a read-only export of the formal M2 pointer, never a business-write target.
 3. Before using the export as current truth, validate `memory/manifest.json`: `baseline_claim=current`, `source_verification=live_rechecked`, `views_complete=true`, `status=ready`, and all file hashes valid.
 4. For current work read Global State/Task/Decision, then the exact confirmed Project State/Task/Decision. Read Log/Archive only for history or evidence, and always report `sources_read`.

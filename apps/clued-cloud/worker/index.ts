@@ -3,7 +3,9 @@ import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } fr
 import handler from "vinext/server/app-router-entry";
 import { handleContinuityRequest, type ContinuityEnv } from "./continuity";
 
-interface Env extends ContinuityEnv {
+import { delegatedOAuthEnabled, handleDelegatedOAuth, type DelegatedOAuthEnv } from "./delegated-oauth";
+
+interface Env extends ContinuityEnv, DelegatedOAuthEnv {
   ASSETS: Fetcher;
   DB: D1Database;
   IMAGES: {
@@ -26,7 +28,7 @@ interface ExecutionContext {
 // dangerouslyAllowSVG: true in next.config.js and uncomment below:
 // const imageConfig: ImageConfig = { dangerouslyAllowSVG: true };
 
-const worker = {
+const legacyWorker = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
 
@@ -45,6 +47,15 @@ const worker = {
     }
 
     return handler.fetch(request, env, ctx);
+  },
+};
+
+const worker = {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    if (delegatedOAuthEnabled(env)) {
+      return handleDelegatedOAuth(request, env, ctx as globalThis.ExecutionContext, (next) => legacyWorker.fetch(next, env, ctx));
+    }
+    return legacyWorker.fetch(request, env, ctx);
   },
 };
 

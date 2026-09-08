@@ -1,0 +1,9 @@
+title = "Clued Gitleaks configuration"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Known test-only Supabase private-key rejection fixture; never a credential"
+regexTarget = "secret"
+regexes = ['''^sb_secret_fixture_rejected$''']
