@@ -1,0 +1,11 @@
+{
+  "status": "PASS_REFERENCE_CORRECTION",
+  "manifest_files_verified": 88,
+  "acceptance_references_verified": 10,
+  "stage_count": 20,
+  "original_zip_sha256": "66b71187e6e467a44aa1149bf5c757efa64bfb99620d37a43e0d5bf2678bb1b4",
+  "original_receipt_sha256": "24da22d93758b7a2a220eda0ca400ad62ba1190e8b53460805adced4f4b02a8a",
+  "corrected_target_sha256": "sha256:4a8ecad99eca37c1979bfa49b0ec000d8fce3a0d236d7b2f51e45786cca002c5",
+  "scope": "append-only reference correction; no new stage or production acceptance",
+  "erratum_sha256": "d17f654911df110debe5a8318741c7909523af6ec3a8940d5d6bb29f7014cd0b"
+}
