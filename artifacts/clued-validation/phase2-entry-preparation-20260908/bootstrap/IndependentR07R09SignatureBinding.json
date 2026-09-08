@@ -1,0 +1,48 @@
+{
+  "status": "VERIFIED_EXACT_SIGNED_ENGINEERING_DECISIONS",
+  "reviewer": "/root/project_list_auth_fix",
+  "observed_at": "2026-09-08T10:18:26.401Z",
+  "method": "Independent authenticated read-only GitHub API reads of PR22, its merge commit and four contents objects at the exact merge ref. GitHub signature attestation was checked; no local GPG verification or new signing key was used.",
+  "repository": "tdoljyj/cross-memory-system",
+  "pull_request": {
+    "number": 22,
+    "url": "https://github.com/tdoljyj/cross-memory-system/pull/22",
+    "merged": true,
+    "merged_by": "tdoljyj",
+    "merged_at": "2026-09-08T10:17:06Z",
+    "head_sha": "c4ff6c64b8d01dae9bb4e73c4830ffa2f6bd9c97",
+    "base_sha": "750f957df20e5fc461ad3b392fc0577eec2fa653"
+  },
+  "signed_merge": {
+    "sha": "1a720b3ad3e2c181921bedd372d8121eafd9e005",
+    "author_login": "tdoljyj",
+    "committer_login": "web-flow",
+    "tree": "b49bb4c53bbc207077bc3dd3ac5ffc667638e6cb",
+    "parents": ["750f957df20e5fc461ad3b392fc0577eec2fa653", "c4ff6c64b8d01dae9bb4e73c4830ffa2f6bd9c97"],
+    "verified": true,
+    "reason": "valid",
+    "verified_at": "2026-09-08T10:17:06Z",
+    "signed_payload_tree_and_parents_match": true,
+    "pr_head_and_merge_parents_match": true
+  },
+  "exact_blobs": [
+    {"path": "R07R08CurrentSubject.json", "sha256": "fb864569613aa68589cbd24ae443927562aa7456ebafaf9718dcbf1c6f0b202c", "git_blob": "a36a16a228a02a71b708f5a525f6a1a93eb1e3d0", "bytes": 4148},
+    {"path": "R07R08IndependentAcceptance.json", "sha256": "eb25e99392049c28f198472fbca69df0e6d75fc9fc9d033d3aa250f3272105ea", "git_blob": "31c4574a6a34e951f4d70cc8525ac3ff6cb59136", "bytes": 4150},
+    {"path": "R09MechanismCandidate.json", "sha256": "ac7d4a13c069dddd7acd8fa5258052e61e28108844701e5988c0d5105470f70f", "git_blob": "0d12ab13157fa80457851705abb9411057485695", "bytes": 36771},
+    {"path": "R09IndependentFreezeDecision.json", "sha256": "83814ca7d19173034d107da31bcd1456d34125bdafae6048fce00fa6f0907e25", "git_blob": "040c393cda6090c9ac3c9f33b3e8568a40595837", "bytes": 7193}
+  ],
+  "blob_path_base": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/",
+  "blob_checks": "All four GitHub exact-merge file bytes matched the independent pre-merge expected SHA256 and local reviewed bytes. Git blob SHA1 was independently recomputed from each length-prefixed blob and matched the API object ID.",
+  "effect": "The actual independent R07/R08 acceptance and subsequent R09 definition freeze are now bound to a real verified Owner web-flow merge. Their exact limits remain unchanged. This satisfies signature publication of those engineering decisions and permits the subsequent bounded R10 projection assessment.",
+  "owner_window": {
+    "original_owner_merge": "4f722ea9d78488b749c15d27fe9145e9d9f9d2c2",
+    "expires_at": "2026-09-09T09:28:59Z",
+    "renewed_by_this_merge": false
+  },
+  "limits": [
+    "This observation is not a continuously fresh revocation service or permission to execute a candidate.",
+    "No CI completion is inferred from a signed merge.",
+    "No operational GA, controller/Profile qualification, production authority, Kernel wire schema or canonical readiness mutation is issued.",
+    "Signed records retain their original prepared/pending fields as historical bytes; this separate verification binds them without rewriting signed evidence."
+  ]
+}

@@ -1,0 +1,59 @@
+{
+  "decision_id": "CLUED_PHASE2_R10_UNIFIED_SKILL_PROJECTION_ACCEPTANCE_20260908",
+  "status": "ACCEPTED_FOR_EXACT_CURRENT_PROJECTION_PENDING_SIGNATURE_BINDING",
+  "reviewer": "/root/project_list_auth_fix",
+  "independence": "Reviewer did not implement or modify these Skill files, their installer or the candidate runtime.",
+  "scope": "Actual independent source-level acceptance of the existing unified Clued three-file projection against the already accepted and signed R09 mechanism definition. No Skill execution, installation change, activation, retirement or controller qualification is performed.",
+  "signed_parent": {
+    "merge_commit": "1a720b3ad3e2c181921bedd372d8121eafd9e005",
+    "r09_decision": "R09IndependentFreezeDecision.json",
+    "r09_decision_sha256": "83814ca7d19173034d107da31bcd1456d34125bdafae6048fce00fa6f0907e25",
+    "r09_subject": "R09MechanismCandidate.json",
+    "r09_subject_sha256": "ac7d4a13c069dddd7acd8fa5258052e61e28108844701e5988c0d5105470f70f",
+    "independent_signature_binding": "IndependentR07R09SignatureBinding.json",
+    "independent_signature_binding_sha256": "b7276afedb93c133cb63d80813f70359e48e263bab1318235980b690ee01523c",
+    "ordering": "R07/R08 acceptance preceded R09 independent freeze; PR22 signed both, its signature and exact blobs were independently verified before this R10 assessment."
+  },
+  "authority_basis": {
+    "owner_merge": "4f722ea9d78488b749c15d27fe9145e9d9f9d2c2",
+    "delegation_sha256": "e09ef634712ce1206600402552073bae91e7296f2b4e2d3f99855bd760c944bd",
+    "scope": "Existing Owner-authorized independent nonproduction engineering assessment. No extension of the original 24-hour window or any business permissions."
+  },
+  "subject": {
+    "entry_name": "clued",
+    "source_commit": "1a720b3ad3e2c181921bedd372d8121eafd9e005",
+    "installed_root_observed": "C:/Users/Windows/.codex/skills/clued",
+    "files": [
+      {"path": "skills/clued/SKILL.md", "sha256": "8a5e6d9548731874b94ebe3edc046f7393c96fd75531f22231228e055206096f", "bytes": 3913},
+      {"path": "skills/clued/references/engineering.md", "sha256": "ffff299ea0a1793f9b0b4963fc5bf099762fabce96ed96086cfc5494acbb8d29", "bytes": 5780},
+      {"path": "skills/clued/references/memory-operations.md", "sha256": "a05feabc8ad4ccac535bb059fbf35179f79884dfb1113abdd18b21281bfda538", "bytes": 5166}
+    ],
+    "identity_check": "Each file was independently compared to the Git blob at the signed merge, the current working file and its actual installed file: all byte-identical. The current installed-file inventory and installer constraints from R09 are reused; no discovery or behavior result is inferred.",
+    "installer": {"path": "scripts/update_clued_skills.py", "sha256": "ef976d161813c6d1ed1d60cbaf05a8e4a825c41db35fda6eb32b6fd40ab05e67", "review": "Reuse accepted R09 exact installer boundary: explicit package comparison, backup outside discovery and process-local recovery; no crash-atomic guarantee."}
+  },
+  "projection_checks": [
+    {"mechanism": "B01", "decision": "ACCEPTED", "refs": ["skills/clued/SKILL.md:18", "skills/clued/SKILL.md:28", "skills/clued/references/memory-operations.md:5"], "finding": "Service authority, Binding/resource identity, least privilege, credential separation and read-only repository projection are explicit. Workflow/mode/discovery does not authorize access."},
+    {"mechanism": "B02", "decision": "ACCEPTED", "refs": ["skills/clued/references/engineering.md:5"], "finding": "Uses endpoint-resolved existing verification once per independent request, NONE zero-read behavior, branch and invalidation rules. No copied verifier or periodic alignment is introduced."},
+    {"mechanism": "B03", "decision": "ACCEPTED", "refs": ["skills/clued/references/memory-operations.md:5", "skills/clued/references/memory-operations.md:17", "skills/clued/references/memory-operations.md:33"], "finding": "Advertised schemas and supported canonical mutation contracts govern actual operations. Exact IDs, supported CAS/idempotency, transaction-owned Event/Receipt and reread are preserved. Scoped development projection cannot fabricate a session or personal Global authority; checkpoint cannot substitute for entity mutation."},
+    {"mechanism": "B04", "decision": "ACCEPTED", "refs": ["skills/clued/references/engineering.md:17", "skills/clued/references/engineering.md:36"], "finding": "Existing trusted publisher, pins, real selectors, exact accepted source and applicable checks remain prerequisites. Skill or repository wrapper cannot grant publication, production or qualification."},
+    {"mechanism": "B05", "decision": "ACCEPTED", "refs": ["skills/clued/SKILL.md:10", "skills/clued/SKILL.md:18"], "finding": "Single entry routes by actual operation and loads only the necessary reference. Mixed work explicitly loads its second workflow. Provider-neutral mechanism is preserved; host-specific checkout and launcher paths are resolved by the endpoint. Shared connection scope is not narrowed by a prompt branch."},
+    {"mechanism": "B06", "decision": "ACCEPTED", "refs": ["skills/clued/SKILL.md:28", "skills/clued/references/engineering.md:30", "skills/clued/references/engineering.md:36", "skills/clued/references/memory-operations.md:33"], "finding": "Retains original request identity and uncertainty, distinguishes rejection/CAS/revocation, preserves evidence, reuses unaffected checks and restricts rollback to real state and authority. No generalized OS enforcement or executable supervisor is claimed."}
+  ],
+  "legacy_disposition": "Historical Step20/21 are supporting lineage evidence for their old exact thin adapters only. This decision independently accepts the current three-file successor. It neither asserts clued-kernel-developer is an alias nor retires it; R13 handles that separate obligation.",
+  "remaining_defects_within_this_projection_scope": [],
+  "accepted_isolated_test_subject": "These exact three source files may be referenced as the fixed prospective Skill test object in the already authorized PRE_ENTRY_SKILL_QUALIFICATION preparation. Their test execution remains unavailable until applicable actual controller/Profile/GA/isolation and evidence prerequisites are satisfied; projection acceptance is not runtime qualification.",
+  "signature_binding": null,
+  "next_minimal_dependencies": [
+    "Bind this exact R10 decision and its parent through the existing real verified signature workflow; no repeated Owner approval or old-source retest is required for this assessment scope.",
+    "Bind the exact prospective Skill object, fixed qualification driver/configuration/fixtures and applicable PRE_ENTRY Profile into independent runtime acceptance. Reuse completed engineering observations only within their actual limits.",
+    "Before genuine isolated PQUAL/Shadow execution, supply the currently missing complete OS capability/allowlist and network-denial proof, durable remote Intent/result evidence, bounded budget reservation, time-bounded GA and current Owner/GA revocation checks. Controller qualification cannot be inferred from this document or the Owner signature.",
+    "Execute only the authorized PQUAL cases with synthetic data after those prerequisites; no real model/paid actions or PQUAL18 post-Entry positive. Record actual results, including UNKNOWN and failures. R11 behavior and later governance/cutover/Entry stay separate."
+  ],
+  "formal_record_boundary": "This is a real independent engineering projection acceptance ready for exact signature binding. It does not fabricate a schema-validated Kernel DevelopmentSkillProjectionReceipt or write Canonical readiness state. Absence of an unprovided wire schema is not used to withhold the completed source assessment or to repeat it indefinitely.",
+  "invalidation": "Any change to this three-file set, routing semantics or applicable frozen parent requires affected-scope successor review and exact binding. Environment changes invalidate only the installation/runtime observation that depends on them, not the historical decision.",
+  "runtime_tests_executed": 0,
+  "skill_or_install_writes": 0,
+  "operational_authorizations_issued": [],
+  "controller_qualification_issued": false,
+  "shadow_or_entry_pass_issued": false
+}
