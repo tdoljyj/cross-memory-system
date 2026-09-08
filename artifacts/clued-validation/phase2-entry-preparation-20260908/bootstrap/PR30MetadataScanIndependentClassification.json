@@ -1,0 +1,47 @@
+{
+  "state": "ACCEPTED_FIVE_EXACT_NON_SECRET_SCAN_CLASSIFICATIONS",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "observed_at": "2026-09-08T17:59:10.441907+00:00",
+  "immutable_commit": "50fc3a16874cc5c313d81160c09cceabf8892972",
+  "findings": [
+    {
+      "fingerprint": "50fc3a16874cc5c313d81160c09cceabf8892972:scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-runtime600-final/HostRuntimeConfig.json:generic-api-key:29",
+      "blob_sha256": "967a842b4dcb2dc8fadd1a62ae05231ab313eda1b1d74f34025306568a706587",
+      "line": 29,
+      "classification": "OFFICIAL_PYTHON_IMAGE_PUBLIC_GPG_FINGERPRINT",
+      "exact_public_value": "7169605F62C751356D054A26A821E680E5FA6305"
+    },
+    {
+      "fingerprint": "50fc3a16874cc5c313d81160c09cceabf8892972:scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-runtime600/HostRuntimeConfig.json:generic-api-key:29",
+      "blob_sha256": "bcafb3ba3e8b47832ff9a743098453013690f3127e96136e6289d712358e40ef",
+      "line": 29,
+      "classification": "OFFICIAL_PYTHON_IMAGE_PUBLIC_GPG_FINGERPRINT",
+      "exact_public_value": "7169605F62C751356D054A26A821E680E5FA6305"
+    },
+    {
+      "fingerprint": "50fc3a16874cc5c313d81160c09cceabf8892972:artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/QualificationRuntimeSuccessorIndependentReview.json:generic-api-key:22",
+      "blob_sha256": "62e09c32a24da5d855408e59ac4b9e6362d7dbbf68e70c70745cd465480019cd",
+      "line": 22,
+      "classification": "RECOMPUTED_TEST_SOURCE_SHA256",
+      "exact_public_value": "6746fae60b997a0004dcb4c2b3a24d77f654a43b165ca521145a52445d6719f6"
+    },
+    {
+      "fingerprint": "50fc3a16874cc5c313d81160c09cceabf8892972:scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions/HostRuntimeConfig.json:generic-api-key:29",
+      "blob_sha256": "63851834dccf34cf33dfeee09fb9b3b06077bcb68aad04e6a3d4114842342f9a",
+      "line": 29,
+      "classification": "OFFICIAL_PYTHON_IMAGE_PUBLIC_GPG_FINGERPRINT",
+      "exact_public_value": "7169605F62C751356D054A26A821E680E5FA6305"
+    },
+    {
+      "fingerprint": "50fc3a16874cc5c313d81160c09cceabf8892972:artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/Runtime180RemoteEvidenceIndependentReview.json:generic-api-key:25",
+      "blob_sha256": "249f47b9f0762753e05e9fd254df2514d7eb964382ac2430555d74d2983a1573",
+      "line": 25,
+      "classification": "RECOMPUTED_TEST_SOURCE_SHA256",
+      "exact_public_value": "6746fae60b997a0004dcb4c2b3a24d77f654a43b165ca521145a52445d6719f6"
+    }
+  ],
+  "evidence": "Independent git show of all five exact committed blobs and exact flagged lines; recomputed current event-key-fix.test.mjs SHA256. Public Python fingerprint identity reuses the prior independently verified official image binding, without repeating image operations.",
+  "disposition": "Only these five exact commit:path:rule:line fingerprints are eligible for exceptions. No wildcard, global rule, future value or credential exemption.",
+  "authority_effect": "NONE",
+  "source_changed": false
+}
