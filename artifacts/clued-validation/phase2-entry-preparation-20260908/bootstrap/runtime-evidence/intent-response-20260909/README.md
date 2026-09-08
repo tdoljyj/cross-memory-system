@@ -1,0 +1,3 @@
+# Original Intent response evidence
+
+OriginalEvidence.zip preserves original workspace-relative paths and exact bytes. Manifest.json lists every size and SHA-256; every archive entry was read back and compared with its original. The archive includes the six selected B files, original dependency/source bytes, acceptance, guarded install, actual installation/readback and independent live verification. Pending/candidate labels in historical files are not rewritten. Option A is unselected. Historical tests are preserved evidence, not a relocated runnable test package. No credentials matched the explicit high-confidence scan. No SQL, PG rerun, commit or push was performed during packaging.

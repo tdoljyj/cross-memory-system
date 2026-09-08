@@ -222,3 +222,11 @@ artifacts/clued-validation/public-mcp/a03/c1ef7a3b-20260829T062104Z/production-r
 50fc3a16874cc5c313d81160c09cceabf8892972:scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-runtime600-final/HostRuntimeConfig.json:generic-api-key:29
 50fc3a16874cc5c313d81160c09cceabf8892972:scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-runtime600/HostRuntimeConfig.json:generic-api-key:29
 50fc3a16874cc5c313d81160c09cceabf8892972:scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions/HostRuntimeConfig.json:generic-api-key:29
+
+# EX-21: Four exact historical occurrences of the recorded Intent idempotency
+# identifier. They compare the committed event identity; never an auth credential.
+# No path-wide, rule-wide or future-value exception; source bytes stay frozen.
+d5e63a2dab088f63167b9b1085ae050d1a4731cc:scripts/phase2-qualification/recorded-intent-nonpass-successor/alter.candidate.sql:generic-api-key:87
+d5e63a2dab088f63167b9b1085ae050d1a4731cc:scripts/phase2-qualification/recorded-intent-nonpass-successor/build.mjs:generic-api-key:13
+d5e63a2dab088f63167b9b1085ae050d1a4731cc:scripts/phase2-qualification/recorded-intent-nonpass-successor/build.mjs:generic-api-key:37
+d5e63a2dab088f63167b9b1085ae050d1a4731cc:scripts/phase2-qualification/recorded-intent-nonpass-successor/not-started.mjs:generic-api-key:17

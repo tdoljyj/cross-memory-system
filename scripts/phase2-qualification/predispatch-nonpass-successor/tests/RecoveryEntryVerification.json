@@ -1,0 +1,25 @@
+{
+  "state": "LOCAL_ENGINEERING_ONLY",
+  "actual_run": {
+    "command": "node --test scripts/phase2-qualification/predispatch-nonpass-successor/tests/recovery-entry.test.mjs",
+    "tests": 1,
+    "inputs": [
+      "CREATE",
+      "START"
+    ],
+    "pass": 1,
+    "fail": 0,
+    "duration_ms": 118.2009,
+    "result": "Actual imported prepareTrustedToolMaterial rejects both operations before any metadata or network access with RECOVERY_NONPASS_GRR_ONLY"
+  },
+  "test": {
+    "path": "work/kernel-phase2-repo/scripts/phase2-qualification/predispatch-nonpass-successor/tests/recovery-entry.test.mjs",
+    "sha256": "b350d31763f79ae6b788adec674cfe82b13c6afe1ddc36e31a78592496b8b443",
+    "bytes": 370
+  },
+  "network": false,
+  "sql": false,
+  "host": false,
+  "qualification": false,
+  "authority_effect": "NONE"
+}

@@ -1,0 +1,18 @@
+{
+  "state": "LOCAL_ENGINEERING_ONLY_TEMPORARY_PG",
+  "started_at": "2026-09-08T19:17:22.200Z",
+  "folder": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-08\\ia\\work\\kernel-phase2-repo\\scripts\\phase2-qualification\\predispatch-nonpass-successor\\tests\\pg-run-K9Fkby",
+  "checks": [
+    {
+      "check": "not_started_nonpass_unique_budget_preserved",
+      "charged_seconds": 2100,
+      "charged_evidence_bytes": 421918152
+    }
+  ],
+  "production": false,
+  "authority_effect": "NONE",
+  "sql_sha256": "ea114e8f65f08d223fa7dd2fc64ce3c4fd66a6de822311c706a3e6f6c8c78f31",
+  "completed": true,
+  "ended_at": "2026-09-08T19:17:25.272Z",
+  "server_stopped": true
+}

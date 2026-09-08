@@ -1,0 +1,66 @@
+{
+  "state": "EXACT_RECORDED_INTENT_NONPASS_RECOVERY_CANDIDATE_NOT_EXECUTOR_QUALIFICATION",
+  "ga_id": "ga_a7a420f7de4a4037b9dcb5cd7dae796e",
+  "ga_sha256": "30739d18ac4b6d6836799f292533a0ce71cf2e1b3f05a38724ab61945b0d72fa",
+  "original_controller_digest": "edf31377656e1a9a473d0095df72231c058266007e4fd4046e0a9b8c2d6a60d9",
+  "old_qualification_extended": false,
+  "new_action_authorized": false,
+  "parent_manifest_sha256": "411625aded962a68c7d4cfa0243ac2e2c29a9209a45749129ce31335cbd27368",
+  "files": [
+    {
+      "path": "OriginalSourceBindings.json",
+      "sha256": "28615f033991058fe493c4d3fd1c4a03a9000e919504490bd533cea3e81571ad",
+      "bytes": 1877
+    },
+    {
+      "path": "alter.candidate.sql",
+      "sha256": "acc8caf890671c50af13a45b9e6947086e47d7e3322539c6570465a463fea626",
+      "bytes": 13702
+    },
+    {
+      "path": "build.mjs",
+      "sha256": "305095503e382a39c500ec0f7b70b84fee1920d69a293f1d321233750be09f8f",
+      "bytes": 9199
+    },
+    {
+      "path": "grr.mjs",
+      "sha256": "1e18235caa8b5d9dd1df119ee9601335417645c93c8dc7c716e6263cedd055b8",
+      "bytes": 5769
+    },
+    {
+      "path": "not-started.mjs",
+      "sha256": "382e61ee8d4be35978bfd1b45ffb0312b934bf6c77fa205b731328894f51f355",
+      "bytes": 12348
+    },
+    {
+      "path": "recovery-sources.mjs",
+      "sha256": "d1bf48986928680e553a58b4c5db21222f3aeb1b7e65cd5688fafbc0a17f7212",
+      "bytes": 3390
+    },
+    {
+      "path": "result-terminal.mjs",
+      "sha256": "4485ce71864a6c6439b88e9cc940317aebba7933592966cdc19ec2b43b2962e3",
+      "bytes": 7595
+    },
+    {
+      "path": "write-targets.mjs",
+      "sha256": "045e3018d8e738d2bcb198755754a219c51b3df7af53404dc19d3e69b88c4338",
+      "bytes": 6416
+    },
+    {
+      "path": "recovery-context.mjs",
+      "sha256": "e01857b2ba7a66e314f219a5e3347577edee2c3b08100802962588f871f4e2b8",
+      "bytes": 20318
+    },
+    {
+      "path": "recovery-cli.mjs",
+      "sha256": "4a17d112482919d77c6138e84832c999658803f23fa2602692f5bc43ab36b9ae",
+      "bytes": 1717
+    },
+    {
+      "path": "tool-entry.functions.js",
+      "sha256": "44a243074c8fcc137b72277014a3919b53660989e6bbeda365604a42ba868153",
+      "bytes": 9398
+    }
+  ]
+}
