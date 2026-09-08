@@ -1,0 +1,55 @@
+{
+  "baseline": "6b1778a1-30dc-42d1-a531-b8bcc395870c",
+  "candidate": "c09168db-1b18-4280-9ba5-c0879fbc1649",
+  "status": "MATCH",
+  "binding_count": 11,
+  "different_binding_names": [],
+  "runtime_matches": true,
+  "bindings": [
+    {
+      "name": "ASSETS",
+      "type": "assets"
+    },
+    {
+      "name": "CLUED_AUTHORIZATION_ISSUER_TOKEN",
+      "type": "secret_text"
+    },
+    {
+      "name": "CLUED_DELEGATED_OAUTH_V12",
+      "type": "plain_text"
+    },
+    {
+      "name": "CLUED_DEVELOPMENT_CONTEXT_V14",
+      "type": "plain_text"
+    },
+    {
+      "name": "CLUED_OAUTH_ORIGIN",
+      "type": "plain_text"
+    },
+    {
+      "name": "IMAGES",
+      "type": "images"
+    },
+    {
+      "name": "OAUTH_KV",
+      "type": "kv_namespace"
+    },
+    {
+      "name": "P6_RELEASE_CONTROL_ENABLED",
+      "type": "plain_text"
+    },
+    {
+      "name": "PROJECT_VIEWS_V2",
+      "type": "plain_text"
+    },
+    {
+      "name": "SUPABASE_PUBLISHABLE_KEY",
+      "type": "plain_text"
+    },
+    {
+      "name": "SUPABASE_URL",
+      "type": "plain_text"
+    }
+  ],
+  "secret_values_read": false
+}
