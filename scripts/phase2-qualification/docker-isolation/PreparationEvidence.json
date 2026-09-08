@@ -1,0 +1,138 @@
+{
+  "kind": "FIXED_DOCKER_PROBE_CODE_PREPARATION_EVIDENCE",
+  "status": "CODE_PREPARED_NOT_EXECUTED",
+  "observed_utc": "2026-09-08T10:45:08.062163+00:00",
+  "authority_effect": "NONE",
+  "qualified": false,
+  "base_local_commit": "2ff9f9cee4b651d58c4762216392b92eb48e227e",
+  "base_remote_commit": "9bcdb538dd6ed97ed893b03c6a229ac14fb68157",
+  "version_relation": "local-ahead ancestor relationship; shared root integration was not moved",
+  "source_files": [
+    {
+      "path": ".gitignore",
+      "sha256": "7c0e3807a109f275f04fa607825e26c8d69f2e23f684cf4ca68e03df1173780a",
+      "bytes": 19,
+      "crlf_count": 0
+    },
+    {
+      "path": "example.json",
+      "sha256": "7f217780d079673d0d4974c7cde0a82337ff15897591142c4304b8fb4c9acd54",
+      "bytes": 39,
+      "crlf_count": 0
+    },
+    {
+      "path": "probe.py",
+      "sha256": "2168145b42166b4de1ea470b4fd232549d661542761ffe279955d0ace5580523",
+      "bytes": 6109,
+      "crlf_count": 0
+    },
+    {
+      "path": "prepare.py",
+      "sha256": "c5255a601c5f88893d8765654ab884d3c1fe93a81f393a8cd8ee630de16e9474",
+      "bytes": 7349,
+      "crlf_count": 0
+    },
+    {
+      "path": "test_preparation.py",
+      "sha256": "3b314a057f17299d864a3ff0e9a3fc1a5fe057fdb5248f4db531df18f5e2d2b6",
+      "bytes": 5322,
+      "crlf_count": 0
+    },
+    {
+      "path": "test_review_fixes.py",
+      "sha256": "b9dfdf5e45a817addbd533f9d43ed599e296aec129808ba115965f7b22125be2",
+      "bytes": 4263,
+      "crlf_count": 0
+    },
+    {
+      "path": "README.md",
+      "sha256": "b86d65a2fa05d0848be70ad2892b70ce4c28fb5848ac2e101e17edbfff81dec9",
+      "bytes": 4853,
+      "crlf_count": 0
+    }
+  ],
+  "actual_image_digest": null,
+  "actual_image_locally_inspected": false,
+  "docker_or_wsl_calls": 0,
+  "image_pulls": 0,
+  "container_starts": 0,
+  "skill_executions": 0,
+  "actual_isolation_observations": null,
+  "validation": {
+    "command": "python -I -S test_review_fixes.py",
+    "tests": 5,
+    "passed": 5,
+    "failed": 0,
+    "scope": "Only changed readiness/STOP predicates: pure functions and AST; no Docker/WSL/Linux probe execution",
+    "original_nine_test_suite_rerun": false
+  },
+  "execution_entries": {
+    "run": "BLOCKED",
+    "formal": "BLOCKED"
+  },
+  "local_intent_boundary": "CreateNew/fsync/read-back only; no remote durable sink or accepted GA claim",
+  "remaining": [
+    "Real approved exact locally available Python image/runtime/environment must be fixed",
+    "Actual engine and Docker restrictions must be independently inspected",
+    "Run fixed Linux driver and observe real network/file/credential/tree-stop outcomes",
+    "Implement and review fixed lifecycle supervisor with actual sink, budgets, authorization/revocation before qualification"
+  ],
+  "canonical_writes": 0,
+  "old_frozen_files_modified": 0,
+  "historical_validation": [
+    {
+      "evidence_sha256": "e23800052b837ea185d9b6bbf0f10dbb120112c9f67a98a7a8808151efbab531",
+      "source_files": [
+        {
+          "path": ".gitignore",
+          "sha256": "7c0e3807a109f275f04fa607825e26c8d69f2e23f684cf4ca68e03df1173780a",
+          "bytes": 19,
+          "crlf_count": 0
+        },
+        {
+          "path": "example.json",
+          "sha256": "7f217780d079673d0d4974c7cde0a82337ff15897591142c4304b8fb4c9acd54",
+          "bytes": 39,
+          "crlf_count": 0
+        },
+        {
+          "path": "probe.py",
+          "sha256": "261a90bba1198b8adba6ca4766e27809b71e2fd5bd19f0731abc90b4caa14bd1",
+          "bytes": 5007,
+          "crlf_count": 0
+        },
+        {
+          "path": "prepare.py",
+          "sha256": "c5a07201c324cd10686d20d43b051b6d4bfa8849e21ce624e3f3d2c2ca86073c",
+          "bytes": 6827,
+          "crlf_count": 0
+        },
+        {
+          "path": "test_preparation.py",
+          "sha256": "3b314a057f17299d864a3ff0e9a3fc1a5fe057fdb5248f4db531df18f5e2d2b6",
+          "bytes": 5322,
+          "crlf_count": 0
+        },
+        {
+          "path": "README.md",
+          "sha256": "a444e1e8b1abcb74395c45e4ffe8d1b3f6adefd300e711efde6e027163a8013a",
+          "bytes": 3799,
+          "crlf_count": 0
+        }
+      ],
+      "validation": {
+        "command": "python -I -S test_preparation.py",
+        "python": "3.12.10 (tags/v3.12.10:0cc8128, Apr  8 2025, 12:21:36) [MSC v.1943 64 bit (AMD64)]",
+        "tests": 9,
+        "passed": 9,
+        "failed": 0,
+        "scope": "Static preparation and rejection paths only; synthetic digest is a parser fixture, never an actual image"
+      },
+      "note": "Original 9 checks were not rerun after the two independent review fixes."
+    }
+  ],
+  "review_fixes": [
+    "Install SIGTERM ignore before descendant ready publication; parent requires complete typed exact PID/PPID/uid/handler record in bounded wait",
+    "STOP requires typed state, integer-zero PID and valid nonzero RFC3339 FinishedAt; no bool coercion or garbage timestamps"
+  ]
+}
