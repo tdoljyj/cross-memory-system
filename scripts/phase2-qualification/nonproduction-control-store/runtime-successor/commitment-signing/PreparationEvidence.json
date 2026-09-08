@@ -1,0 +1,21 @@
+{
+  "state": "PREPARED_FOR_INDEPENDENT_REVIEW",
+  "supersedes_evidence_sha256": "f4379ec9e2eeac633244ad3b687d5344fc7f3baa0d737728043babd165b3e2b4",
+  "files": {
+    "README.md": "dd7388676fd5f54ea8d6f345d2dacdace75cd8408efa2a02857b4044c2ad9505",
+    "binding-fix.test.mjs": "170e4576184c7c15184c27049e490574c082bde3319301a8256049fdfff53b18",
+    "signing.mjs": "d425ee50e82f8cc983b5dc5983d8ab7cd4c42b18215ce592d5fa5004c29c438b",
+    "signing.test.mjs": "d6b373e9d22da3d1feaa7a72dfa569caa1eea76f8d670414cd45841b9550c98a",
+    "generation-successor.test.mjs": "7230ab47002bfcd46ec3728a4fd43a6cdbe7d52cc6fb66d9fadd3a47d8f97cf4"
+  },
+  "new_local_tests": {
+    "scope": "generation binding only",
+    "failed": 0,
+    "duration_ms": 53.1527,
+    "passed": 2
+  },
+  "old_tests_not_rerun": true,
+  "generation_id": "ctrgen_dd30fbc7e0ba43fa8ba9f734867bcf12",
+  "generation_currentness": "NOT_OBSERVED_NOT_REGISTERED_BY_THIS_MODULE",
+  "authority_effect": "NONE"
+}

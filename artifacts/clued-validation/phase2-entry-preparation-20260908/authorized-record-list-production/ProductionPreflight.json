@@ -1,0 +1,31 @@
+{
+  "state": "PRODUCTION_CURRENT_BODIES_MATCH_EXACT_REVIEWED_SOURCES_NO_MUTATION",
+  "project_ref": "ccxsikzwxlolxqlosril",
+  "observed_at": "2026-09-08T14:01:32.255693+00:00",
+  "functions": [
+    {
+      "signature": "clued_private.record_list_core(uuid,jsonb)",
+      "definition_sha256": "b9082eacf97db02df526beb2c21882adb73c8e2f403106b11d38d454f2a0e82d",
+      "body_sha256": "b12d551f072d7d9b9b75863430d4ad591ec74823265dfbb10354e70748f3e6c2",
+      "acl": "{postgres=X/postgres}",
+      "config": [
+        "search_path=\"\""
+      ],
+      "security_definer": true
+    },
+    {
+      "signature": "clued_record_list(text,jsonb)",
+      "definition_sha256": "cfa5b4d8025c1201a41f146038ab192689b4323eb302ff6cc2f9df6599b25c1a",
+      "body_sha256": "a8e6eec9bc559f94d10fb6be7c0459d751af7bda721ae627b703624ac9884a84",
+      "acl": "{postgres=X/postgres,anon=X/postgres}",
+      "config": [
+        "search_path=\"\""
+      ],
+      "security_definer": true
+    }
+  ],
+  "new_overload_absent": true,
+  "authorized_sql_sha256": "dcf72c18e574bf07ddcfb11a5d419df4bec47136b23331358f7e77f51d19e4f8",
+  "independent_review_sha256": "fbef6a52501506a84e1e5c663ec4cd4b4643dc866913f6b75d04364352dd08be",
+  "production_changes": 0
+}

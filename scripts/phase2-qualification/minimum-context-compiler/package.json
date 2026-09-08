@@ -1,0 +1,9 @@
+{
+  "name": "clued-minimum-context-compiler-candidate",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "js-tiktoken": "1.0.21"
+  }
+}

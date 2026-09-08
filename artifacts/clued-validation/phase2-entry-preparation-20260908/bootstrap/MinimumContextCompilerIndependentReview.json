@@ -1,0 +1,78 @@
+{
+  "kind": "MINIMUM_CONTEXT_COMPILER_INDEPENDENT_ENGINEERING_REVIEW",
+  "state": "ACCEPTED_EXACT_LOCAL_COMPILER_PREPARATION_NOT_RUNTIME_OR_HOST_QUALIFICATION",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "observed_at": "2026-09-08T14:12:05.788Z",
+  "candidate_evidence_sha256": "8dfe6e826a43349c29fa8d46dbc560f1b3d46424be02abc34bcb0aa04ec75418",
+  "compiler_sha256": "4ca26d2f274080c376b0d4ed0709f1c795f83a35ce81c17f3b50c98cba420e1f",
+  "tokenizer_sha256": "3dd935d31711582d2aaa2e945c0188141e78fc8feec9fed03feeec2bd59019be",
+  "tokenizer_binding_sha256": "b7350be2f38f9d28aa6377670f0e72636c9ea9675cff4f0b1a60cec7f6c2fefd",
+  "existing_rpc_source": {
+    "path": "apps/clued-cloud/supabase/migrations/20260907131834_clued_search_canonical_records.sql",
+    "sha256": "25fcf125a50400937cd9a0cca39336faf99fcf901d76d0539b8c68eae85df4d4"
+  },
+  "actual_fixed_defect": {
+    "prior_evidence_sha256": "47b0f25eef3507ae948b59f47e25268c5a706cca64296695024076d11061bac8",
+    "problem": "Bare import base64-js could resolve through unverified dependency package metadata; unverified root package name/exports could redirect js-tiktoken self-reference.",
+    "resolution": "Pin exact root package.json and base64-js/package.json hashes and sizes before either dynamic import. Existing code/ranks and package metadata remain fixed.",
+    "new_targeted_implementation_checks": "Two isolated metadata-redirection scenarios, one test PASS; malicious target canary not created. Reused outcome, not rerun old PG/pure suite.",
+    "history_preserved": true
+  },
+  "validation": {
+    "exact_files": 10,
+    "exact_dependency_files": 7,
+    "source_hash_verified": true,
+    "independent_new_checks": 2,
+    "independent_results": "PASS: mismatched requested scope rejects before SQL; exact parameterized SQL/include_history=false/session input verified then query-echo mismatch rejects.",
+    "database_calls_by_reviewer": 0,
+    "model_calls": 0,
+    "reported_engineering_and_pg_history": [
+      {
+        "run": "Initial combined",
+        "command": "node --test compiler.test.mjs compiler-db.test.mjs",
+        "engineering_passed": 4,
+        "database_setup_failed": 1,
+        "failure": "Synthetic fixture missing M1 required fields; database constraint preserved",
+        "duration_ms": 3087.1436
+      },
+      {
+        "run": "Affected database-only rerun after fixture correction",
+        "command": "node --test compiler-db.test.mjs",
+        "passed": 4,
+        "children": 3,
+        "failed": 0,
+        "skipped": 0,
+        "duration_ms": 3463.7924
+      },
+      {
+        "run": "Independent package metadata fix only",
+        "command": "node --test metadata-drift.test.mjs",
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "duration_ms": 68.8496,
+        "scenarios": [
+          "base64-js package main redirection rejected before import",
+          "root package name/exports self-reference rejected before import"
+        ],
+        "original_dependencies_changed": false,
+        "old_pure_or_pg_tests_rerun": false
+      }
+    ]
+  },
+  "accepted_boundaries": [
+    "Actual library BPE counts entire serialized candidate text, including references and critical constraints; above required budget rejects without truncation.",
+    "Only WeakSet-bound frozen tokenizer instances accepted; target explicitly o200k_base/gpt-4.1-2025-04-14, not current Codex host.",
+    "Existing authorized scope/session RPC remains source; no export/cache/fallback or new authorization engine. Required source ID/version/scope/current schema/lifecycle and exact field/constraint grounding checked.",
+    "No source binding/session credential parameter in pack output; only accepted-policy selected string fields and exact provenance projected.",
+    "No Canonical write/model call; existing RPC session-last-seen effect remains unchanged."
+  ],
+  "remaining_conditions": [
+    "Formal caller must bind independently accepted exact task/field/constraint policy and prevent policy/input drift. Direct compileSearchResult with caller fixtures is not authenticated retrieval.",
+    "Real evaluation-host/model-tokenizer acceptance absent; standalone text count does not include enclosing prompts/tools/transport or billing.",
+    "Current RPC lacks original Evidence IDs/content hashes; this pack binds returned Canonical records/selected text only, not independent raw-source integrity.",
+    "No semantic summarizer/conflict resolver; complete required fields may cause explicit insufficiency.",
+    "Dependency checking assumes trusted unchanged loader/filesystem during import/use; not an OS sandbox, module-cache isolation or continuous filesystem attestation.",
+    "No A05/Slice A/Entry/72-slot/Gold/controller qualification or GA acceptance from this engineering report."
+  ]
+}

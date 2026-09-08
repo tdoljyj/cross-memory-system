@@ -1,0 +1,62 @@
+{
+  "kind": "DYNAMIC_SIGNATURE_COMMITMENT_INDEPENDENT_ENGINEERING_REVIEW",
+  "state": "ACCEPTED_EXACT_PREPARATION_AND_OBSERVATION_VALIDATOR_NOT_ACTIVE_SIGNING_CONFIG",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "observed_at": "2026-09-08T14:23:02.026Z",
+  "evidence_sha256": "f4379ec9e2eeac633244ad3b687d5344fc7f3baa0d737728043babd165b3e2b4",
+  "signing_source_sha256": "ff453db685e883abfb6dc54affc174621085b51761d196a7ac9ac48deaea431d",
+  "algorithm": "GITHUB_API_VERIFIED_OWNER_SINGLE_PARENT_COMMITMENT_V1_CANDIDATE",
+  "scope": {
+    "repository": "tdoljyj/cross-memory-system",
+    "branch": "codex/phase2-qualification-evidence-20260908",
+    "prefix": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/runtime-evidence/dynamic-signature-commitments/",
+    "project_ref": "uscrdifznmlvczcekqpw",
+    "audience": "urn:clued:audience:skill-coexistence-qualification:uscrdifznmlvczcekqpw",
+    "purposes": [
+      "GATE_AUTHORIZATION",
+      "GATE_RESULT"
+    ]
+  },
+  "actual_defects_fixed": [
+    "Prior verifier accepted cloned/modified plan outside fixed prefix; new plan WeakMap commitment plus recursive freeze rejects.",
+    "Prior signed commit blob identity was not bound to returned raw; new commit-tree identity, complete tree, unique ordinary blob, Git blob SHA and comparison SHA must match exact expected bytes."
+  ],
+  "validation": {
+    "current_files": 4,
+    "preserved_prior_files": 3,
+    "reported_fix_tests": 2,
+    "prior_four_tests_rerun": false,
+    "independent_new_negative_checks": 3,
+    "checks": [
+      "Cloned plan rejected before verification.",
+      "Duplicate exact tree paths rejected.",
+      "Missing exact tree path rejected."
+    ],
+    "actual_signature_observed": false,
+    "network_mutations": 0
+  },
+  "authorization_applicability": {
+    "conclusion": "Same Owner and same approved nonproduction qualification purpose may use a specifically accepted signing-channel/configuration successor without automatically seeking repeated Owner permission. This file accepts preparation only, not an unknown or unregistered configuration.",
+    "basis": "OwnerDelegation scope.allowed permits exact same-scope independently accepted successors; its two-parent PR signature_binding requirement authenticates that delegation itself (these exact bytes). The existing e4c issuer-purpose metadata nevertheless explicitly binds OWNER_MERGE and cannot silently accept this new algorithm.",
+    "identity": "Ordinary engineering source commits remain Codex-authored. A future dynamic signature proof records actual tdoljyj author and web-flow committer plus separate Codex executor provenance; no false attribution or new key.",
+    "source_refs": [
+      "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/OwnerDelegation_20260908.json",
+      "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/LimitedIssuerPurposeIndependentAcceptance.json"
+    ],
+    "official_api": "https://docs.github.com/en/graphql/reference/commits",
+    "api_observation": "Single parent, expectedHeadOid CAS, authenticated credential-owner author, no author/committer override; automatic signing conditional on support, actual verified signature mandatory."
+  },
+  "required_root_successor": "Keep Root itself signed under the accepted Owner PR-merge algorithm and keep old Root/accepted_binding immutable. Independently accept purpose-specific configuration metadata for this commitment channel, then register an exact forward Root generation referencing that metadata and actual predecessor/history. Old issuer qualification_ref e4c does not support the new channel. No new trust root is needed; no new generation is issued by this review.",
+  "remaining_before_actual_runtime_use": [
+    "Current hardcoded old rootGeneration is candidate input only; bind exact accepted forward generation in a new source successor.",
+    "Accept precise live GA/GRR and detached proof URI mapping/persistence in the original private control-store domain; no live payload/currentness in Git.",
+    "Actual submitter must enforce fixed endpoint/read-set/head/path and durable exclusive attempt reservation before mutation; this module only constructs and validates supplied observations.",
+    "Independent authenticated API observations must prove actual Owner/service, valid signature, immutable commit/tree/blob and all exact bytes; synthetic tests are not real signature evidence.",
+    "The payload must pass accepted full GA/GRR schema and policy before commitment construction; this small builder does not validate all authority fields, safe numeric semantics, actual deadline, budget or Gate qualification.",
+    "Fresh current Root/Owner/GA/revocation/generations, actual budget/STOP and unique terminal reservation/outbox remain required; UNKNOWN never triggers blind re-sign or release."
+  ],
+  "not_issued": [
+    "No GraphQL mutation, GA, GRR, Root generation, currentness or controller qualification.",
+    "No production/model/paid/Slice A or post-Entry PQUAL18 permission."
+  ]
+}

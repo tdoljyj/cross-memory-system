@@ -1,0 +1,52 @@
+{
+  "state": "PREPARED_NOT_REGISTERED_FORWARD_GENERATION",
+  "files": [
+    {
+      "path": "prepare.mjs",
+      "sha256": "20535a1ba453c40b28d10a8f91201a933dfa4d41d9251d822d324b00880c847d",
+      "bytes": 5691
+    },
+    {
+      "path": "prepare.test.mjs",
+      "sha256": "5d90d06355dfba5f9f4ddd34c31d35de06c90b9f5b0c78a4c340de4c3dad816e",
+      "bytes": 1765
+    },
+    {
+      "path": "README.md",
+      "sha256": "cc6d89632b0a4160d463da57c713da033d1fbc27c5721e2874c05e8b1380a7a6",
+      "bytes": 1610
+    },
+    {
+      "path": "RootReviewSubject.json",
+      "sha256": "13ed3095061fb97a80bc0b992e89ce4bb0a3963e867c2738d350d42db6e3dd30",
+      "bytes": 4989
+    },
+    {
+      "path": "signing.mjs",
+      "sha256": "f52f756a474f907ebb5adf01311be1670b63c8e9dbb6901ea92d7316d4623c93",
+      "bytes": 4177
+    }
+  ],
+  "review_subject_sha256": "9dd122f398c7e281f9b6fdf0c772d0ee972569acfcb97119fc04867a5ce00c12",
+  "actual_source_observation": {
+    "observed_at_utc": "2026-09-08 14:30:26.302161+00",
+    "current_sequence": 1,
+    "current_generation": "ctrgen_352785779b64458a889d571360e2d2d5",
+    "current_root_canonical_sha256": "df0544694243768a473a7d45b50aa612937755aee9bf6b785ce8165363f2325a",
+    "history_prefix_canonical_sha256": "6fdce11ff8f9a0e31430771acc322e911994e66a39855ad05b3b4734db2a9493",
+    "metadata_binding_sha256": "793aa13a245153c36a2806eb78dc9c3f677ddb8ad678b3afe5fe2f63a0c2e4fb",
+    "source_readback_file_sha256": "8235ccd893f79f87812dffd8e62a20221f4e0d3ffa27edf0d8c933ba58e73f5d"
+  },
+  "validation": {
+    "tests": 3,
+    "passed": 3,
+    "failed": 0,
+    "skipped": 0,
+    "duration_ms": 91.1189,
+    "scope": "Actual observed predecessor input; reject changed/incomplete history and crossed/changed accepted purpose bytes",
+    "network_mutations": 0,
+    "source_not_committed": true
+  },
+  "old_root_or_binding_changes": false,
+  "authority_effect": "NONE"
+}

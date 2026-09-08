@@ -1,0 +1,89 @@
+{
+  "scope": {
+    "profile_id": "DP-PREENTRY-SKILL-QUALIFICATION",
+    "repository": "tdoljyj/cross-memory-system",
+    "environment": "ISOLATED_TEST",
+    "paid_budget": 0,
+    "project_ref": "uscrdifznmlvczcekqpw",
+    "model_budget": 0
+  },
+  "status": "REGISTERED",
+  "history": {
+    "index_uri": "urn:clued:control-trust-root-set:uscrdifznmlvczcekqpw:ctr_414bd3c724264a83894b0c55cf2ab878#history",
+    "prefix_digest": "6fdce11ff8f9a0e31430771acc322e911994e66a39855ad05b3b4734db2a9493",
+    "prefix_sequence": 1,
+    "minimum_accepted_generation": "ctrgen_dd30fbc7e0ba43fa8ba9f734867bcf12"
+  },
+  "purpose": "SKILL_COEXISTENCE_QUALIFICATION",
+  "audience": "urn:clued:audience:skill-coexistence-qualification:uscrdifznmlvczcekqpw",
+  "expires_at": "2026-09-09T09:28:59Z",
+  "not_before": "2026-09-08T14:40:13.950Z",
+  "revocation": {
+    "as_of": "2026-09-08T14:40:13.950Z",
+    "events_uri": "urn:clued:control-trust-root-set:uscrdifznmlvczcekqpw:ctr_414bd3c724264a83894b0c55cf2ab878#revocations",
+    "expires_at": "2026-09-09T09:28:59Z",
+    "event_set_digest": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570"
+  },
+  "object_type": "ControlTrustRootSet",
+  "predecessor": {
+    "generation_id": "ctrgen_352785779b64458a889d571360e2d2d5",
+    "sha256": "df0544694243768a473a7d45b50aa612937755aee9bf6b785ce8165363f2325a"
+  },
+  "root_set_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+  "schema_digest": "87f094fa079034aa886d6c568730370a3264e106529b4bfd79bc3369f30b79e5",
+  "schema_version": "1.0",
+  "issuer_bindings": [
+    {
+      "purpose": "STATUS",
+      "audience": "urn:clued:audience:skill-coexistence-qualification:uscrdifznmlvczcekqpw",
+      "subject_id": "tdoljyj",
+      "signing_service": "web-flow",
+      "qualification_ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/c700d5b9fc6b9156ecd3cc77615856b9e0aedea9",
+        "sha256": "23ca2fe807dd454d8037168531a1d05890be6fbb5575cd18e8e6482f2ef47b80"
+      }
+    },
+    {
+      "purpose": "GATE_AUTHORIZATION",
+      "audience": "urn:clued:audience:skill-coexistence-qualification:uscrdifznmlvczcekqpw",
+      "subject_id": "tdoljyj",
+      "signing_service": "web-flow",
+      "qualification_ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/c1f800d405010066371dfa401cee2544db22e25e",
+        "sha256": "9f475e2c2eedc02e50a5438c80d89f625ed5aa0ef2465a0581e349a1e8caa16d"
+      }
+    },
+    {
+      "purpose": "GATE_RESULT",
+      "audience": "urn:clued:audience:skill-coexistence-qualification:uscrdifznmlvczcekqpw",
+      "subject_id": "tdoljyj",
+      "signing_service": "web-flow",
+      "qualification_ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/c1f800d405010066371dfa401cee2544db22e25e",
+        "sha256": "9f475e2c2eedc02e50a5438c80d89f625ed5aa0ef2465a0581e349a1e8caa16d"
+      }
+    }
+  ],
+  "algorithm_config": {
+    "digest_algorithm": "SHA-256",
+    "accepted_config_ref": {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/b25abb05e00f72bb2ae910035ba9916a97c822dc",
+      "sha256": "988cdf823eb63806dc3385aa1840e812c1cb1df5ed06e72ca2adf56244b88d20"
+    },
+    "canonicalization_id": "SORTED_JSON_UTF8_NO_FLOATS_LF_V1_CANDIDATE",
+    "signature_verification": "GITHUB_API_VERIFIED_OWNER_MERGE",
+    "signed_payload_excluded_fields": [
+      "signature_binding"
+    ]
+  },
+  "generation_ordinal": 2,
+  "owner_approval_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/9b288600bd9ddff6695e763c44e877ab34b828f6",
+    "sha256": "3d9c4c9e06217c7c2ef0d32dba77bb5aa66bd745a8f92f0ea255b19a95127aea"
+  },
+  "control_trust_root_generation": "ctrgen_dd30fbc7e0ba43fa8ba9f734867bcf12",
+  "independent_acceptance_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/ebb43ee4e2f31581f832c9eee0d8d0e020f92ee2",
+    "sha256": "a5e292ca64cdd4d39e176ef28a2dff3a3aeb8353ebe49a5fe5251ceab75d814a"
+  }
+}
