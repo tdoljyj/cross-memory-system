@@ -1,0 +1,30 @@
+{
+  "kind": "LOCAL_WINDOWS_APPCONTAINER_CAPABILITY_EVIDENCE",
+  "status": "PARTIAL_CAPABILITY_OBSERVED_NOT_QUALIFIED",
+  "authorization_effect": "NONE",
+  "qualified": false,
+  "scope": "fixed synthetic child and local disposable resources only",
+  "actual_authority_profile_qualification_issued": false,
+  "attempt_02": {
+    "source": "../AppContainerProbe.cs",
+    "source_sha256": "c1a15d489df2beae41e69d05b45edafdad1133717716c39f1efede0e2ff58f4e",
+    "compiler": "C:/Windows/Microsoft.NET/Framework64/v4.0.30319/csc.exe",
+    "compiler_arguments": ["/nologo", "/target:exe", "/platform:x64", "/r:System.Web.Extensions.dll"],
+    "executable_sha256": "f89fbf0582b0e88f9c194372e7e07996d3e07240d5bbb48fea00335b5a03a643",
+    "observation": "Attempt02.json",
+    "observation_sha256": "4d9af41ac3e67a4cb24e7aa207e63bf8f50ffe7dfba5aefdd91d8e96ec2f3ea5"
+  },
+  "attempt_01": {
+    "source_digest_recorded": false,
+    "observation": "Attempt01.json",
+    "observation_sha256": "ae5fcb300f73142f3194aaca53f1e9de2fb9ec551e7aa683754f6737e1b3364d",
+    "failure_preserved": "canary ACL restoration comparison false",
+    "cleanup": "Attempt01Cleanup.json"
+  },
+  "remaining_gaps": [
+    "Loopback timeout is not explicit access-denied evidence; complete network isolation not proven",
+    "Regular AppContainer retains some shared system-resource access; strict filesystem allowlist not proven",
+    "Descendant containment and distributed stop/revocation not exercised",
+    "Controller qualification and accepted authority/Profile bindings remain absent"
+  ]
+}

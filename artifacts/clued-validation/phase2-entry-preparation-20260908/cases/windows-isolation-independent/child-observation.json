@@ -1,0 +1,1 @@
+{"token":{"is_appcontainer":true,"capability_count":0,"appcontainer_sid":"S-1-15-2-779317686-3644967238-2128170489-2268822338-2184196097-1211515086-3060849823"},"allowed_write":true,"outside_read_denied":true,"outside_error_code":5,"loopback_denied":false,"network_observation":"TIMEOUT_NOT_DENIAL_PROOF","credential_canary_inherited":false}

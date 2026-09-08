@@ -1,0 +1,1193 @@
+{
+  "state": "ENGINEERING_PREPARATION_ONLY",
+  "authority_effect": "NONE",
+  "source_commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+  "historical_commit": "00ee8d1b796f27dbc3cac0c665ed4a69a87231b9",
+  "method": "Read-only Git diff and TypeScript AST source-text hashing, plus reuse of recorded PR19 checks; no tests or business operations executed.",
+  "baseline_manifest": {
+    "path": "docs/execution-plans/phase2-structure-governance/step13-14-actual-verification-20260907/TargetConsumerBindingManifest.json",
+    "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+    "bytes": 33972,
+    "sha256": "6c82bc7c53a1f26e0dd07419acfcd67e3e65b772f4a3ee69f2f06c617b4fcece"
+  },
+  "file_reviews": [
+    {
+      "historical_source": {
+        "path": "apps/clued-cloud/worker/continuity.ts",
+        "commit": "00ee8d1b796f27dbc3cac0c665ed4a69a87231b9",
+        "bytes": 47981,
+        "sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba"
+      },
+      "current_source": {
+        "path": "apps/clued-cloud/worker/continuity.ts",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "bytes": 50783,
+        "sha256": "53746991a483bf4bbac4402440ae86fb7cd296032a7a10359758bbaf77997dc5"
+      },
+      "historical_manifest_digest_verified": true,
+      "diff_hunks": [
+        "@@ -1,0 +2 @@ import { projectRpcByTool, projectTools } from \"./projects\";",
+        "@@ -47 +48,3 @@ type Scope = (typeof ALL_SCOPES)[number];",
+        "@@ -140 +143 @@ function bootstrapContract(origin: string, env?: ContinuityEnv) {",
+        "@@ -146 +149 @@ function bootstrapContract(origin: string, env?: ContinuityEnv) {",
+        "@@ -355,0 +359,4 @@ async function supabaseRequest(",
+        "@@ -357 +364,3 @@ async function supabaseRequest(",
+        "@@ -741,0 +751 @@ const tools = [",
+        "@@ -760 +770,4 @@ const structuredObjectOutputSchema = {",
+        "@@ -848 +861 @@ function publishTool<T extends (typeof tools)[number]>(tool: T) {",
+        "@@ -851,0 +865 @@ export function publicMcpTools(env: Pick<ContinuityEnv, \"PROJECT_VIEWS_V2\" | \"P5",
+        "@@ -855,0 +870 @@ const rpcByTool = {",
+        "@@ -879,0 +895,10 @@ async function callRpc(",
+        "@@ -935 +960,2 @@ async function callTool(",
+        "@@ -1252,0 +1279,17 @@ async function handleContinuityRequestInner("
+      ],
+      "symbols": [
+        {
+          "name": "bootstrapContract",
+          "before": {
+            "line_start": 116,
+            "line_end": 191,
+            "sha256": "545e257f96400a3be5cc0561fe7fc3be84f139ec2a648a857c59dca14764e7cd"
+          },
+          "after": {
+            "line_start": 119,
+            "line_end": 194,
+            "sha256": "767aed61e449d7c96a0d92355a90bd0f837deecfead32b4f853ca40da3a23029"
+          },
+          "relation": "CHANGED",
+          "meaning": "AST source text comparison; unchanged caller text does not prove unchanged transitive behavior."
+        },
+        {
+          "name": "publicMcpTools",
+          "before": {
+            "line_start": 848,
+            "line_end": 853,
+            "sha256": "a37cdb36cf3f87ccd7e2f10d64a8f15971173811bd1a6b9413ff70ac1a171931"
+          },
+          "after": {
+            "line_start": 861,
+            "line_end": 867,
+            "sha256": "01db76aef248d8700ad59c4d2fee345e6d53ba1a7a959ad8487e61bc5bb9428e"
+          },
+          "relation": "CHANGED",
+          "meaning": "AST source text comparison; unchanged caller text does not prove unchanged transitive behavior."
+        },
+        {
+          "name": "handleMcp",
+          "before": {
+            "line_start": 951,
+            "line_end": 1033,
+            "sha256": "1cc264f16fa73ced76f668f4d8a942dbf113d62f25a145a183a272e41b016391"
+          },
+          "after": {
+            "line_start": 977,
+            "line_end": 1059,
+            "sha256": "1cc264f16fa73ced76f668f4d8a942dbf113d62f25a145a183a272e41b016391"
+          },
+          "relation": "EXACT_SOURCE_TEXT_UNCHANGED",
+          "meaning": "AST source text comparison; unchanged caller text does not prove unchanged transitive behavior."
+        },
+        {
+          "name": "requireSupabaseUser",
+          "before": {
+            "line_start": 485,
+            "line_end": 496,
+            "sha256": "af295912b4007a8d0bbb17518311bbd13c236da66b1bebbecf362e20550372a3"
+          },
+          "after": {
+            "line_start": 494,
+            "line_end": 505,
+            "sha256": "af295912b4007a8d0bbb17518311bbd13c236da66b1bebbecf362e20550372a3"
+          },
+          "relation": "EXACT_SOURCE_TEXT_UNCHANGED",
+          "meaning": "AST source text comparison; unchanged caller text does not prove unchanged transitive behavior."
+        },
+        {
+          "name": "listBindings",
+          "before": {
+            "line_start": 524,
+            "line_end": 532,
+            "sha256": "e43627314cc6259439dad2959c3918aebc37290cc2d457a8d03593019c9edf68"
+          },
+          "after": {
+            "line_start": 533,
+            "line_end": 541,
+            "sha256": "e43627314cc6259439dad2959c3918aebc37290cc2d457a8d03593019c9edf68"
+          },
+          "relation": "EXACT_SOURCE_TEXT_UNCHANGED",
+          "meaning": "AST source text comparison; unchanged caller text does not prove unchanged transitive behavior."
+        },
+        {
+          "name": "createBinding",
+          "before": {
+            "line_start": 534,
+            "line_end": 582,
+            "sha256": "5d5259794e48e2e7953a6e361a811e6bf4484abae6c8db70a1f2b5245481898b"
+          },
+          "after": {
+            "line_start": 543,
+            "line_end": 591,
+            "sha256": "5d5259794e48e2e7953a6e361a811e6bf4484abae6c8db70a1f2b5245481898b"
+          },
+          "relation": "EXACT_SOURCE_TEXT_UNCHANGED",
+          "meaning": "AST source text comparison; unchanged caller text does not prove unchanged transitive behavior."
+        },
+        {
+          "name": "revokeBinding",
+          "before": {
+            "line_start": 584,
+            "line_end": 599,
+            "sha256": "01debb46ae0f62e38fe46f4ee198ca3759ffa897e5352653516cb16f4887e523"
+          },
+          "after": {
+            "line_start": 593,
+            "line_end": 608,
+            "sha256": "01debb46ae0f62e38fe46f4ee198ca3759ffa897e5352653516cb16f4887e523"
+          },
+          "relation": "EXACT_SOURCE_TEXT_UNCHANGED",
+          "meaning": "AST source text comparison; unchanged caller text does not prove unchanged transitive behavior."
+        },
+        {
+          "name": "rpcByTool",
+          "before": {
+            "line_start": 855,
+            "line_end": 866,
+            "sha256": "46d55f0ace3f6b1f04f7fccfb5c58f14278ee1df886b741c0a77b59ddc85efc8"
+          },
+          "after": {
+            "line_start": 869,
+            "line_end": 881,
+            "sha256": "3ed8c9362fca86caeec0dc4cf7f10d19ccb6d3e594d74c05fed5061de1b149a7"
+          },
+          "relation": "CHANGED",
+          "meaning": "AST source text comparison; unchanged caller text does not prove unchanged transitive behavior."
+        },
+        {
+          "name": "callRpc",
+          "before": {
+            "line_start": 868,
+            "line_end": 910,
+            "sha256": "3ca378f1552b01c7d2d9ab1eb9c2c5605dc6726dddc29d6a1fd93aaadc74d149"
+          },
+          "after": {
+            "line_start": 883,
+            "line_end": 935,
+            "sha256": "50d24b428c5743bda07d61097f3414ca0e40bbd7d16dc09fce292432721a59c9"
+          },
+          "relation": "CHANGED",
+          "meaning": "AST source text comparison; unchanged caller text does not prove unchanged transitive behavior."
+        },
+        {
+          "name": "restToolByPath",
+          "before": {
+            "line_start": 1035,
+            "line_end": 1043,
+            "sha256": "99a6526fe55d682ef654ebddcf81650a83e853038be0036be9a8e39067d6bfbd"
+          },
+          "after": {
+            "line_start": 1061,
+            "line_end": 1069,
+            "sha256": "99a6526fe55d682ef654ebddcf81650a83e853038be0036be9a8e39067d6bfbd"
+          },
+          "relation": "EXACT_SOURCE_TEXT_UNCHANGED",
+          "meaning": "AST source text comparison; unchanged caller text does not prove unchanged transitive behavior."
+        },
+        {
+          "name": "callUserProjectRpc",
+          "before": {
+            "line_start": 1063,
+            "line_end": 1078,
+            "sha256": "bcd478c60cdeb6523c98f3187f39cd986baeb7db2a7272288fdaac63e3db2bf8"
+          },
+          "after": {
+            "line_start": 1089,
+            "line_end": 1104,
+            "sha256": "bcd478c60cdeb6523c98f3187f39cd986baeb7db2a7272288fdaac63e3db2bf8"
+          },
+          "relation": "EXACT_SOURCE_TEXT_UNCHANGED",
+          "meaning": "AST source text comparison; unchanged caller text does not prove unchanged transitive behavior."
+        },
+        {
+          "name": "handleProjectApi",
+          "before": {
+            "line_start": 1080,
+            "line_end": 1119,
+            "sha256": "6c3b7a7a0e7ea1641efd40abf86a8376f08531d6b77d11cff7d87e521b8d1e8a"
+          },
+          "after": {
+            "line_start": 1106,
+            "line_end": 1145,
+            "sha256": "6c3b7a7a0e7ea1641efd40abf86a8376f08531d6b77d11cff7d87e521b8d1e8a"
+          },
+          "relation": "EXACT_SOURCE_TEXT_UNCHANGED",
+          "meaning": "AST source text comparison; unchanged caller text does not prove unchanged transitive behavior."
+        },
+        {
+          "name": "handleRecordApi",
+          "before": {
+            "line_start": 1145,
+            "line_end": 1194,
+            "sha256": "06b8467783bcadf9023b9f8a2e72312594a494881ea59d02c533fa608c33c9ac"
+          },
+          "after": {
+            "line_start": 1171,
+            "line_end": 1220,
+            "sha256": "06b8467783bcadf9023b9f8a2e72312594a494881ea59d02c533fa608c33c9ac"
+          },
+          "relation": "EXACT_SOURCE_TEXT_UNCHANGED",
+          "meaning": "AST source text comparison; unchanged caller text does not prove unchanged transitive behavior."
+        },
+        {
+          "name": "parseCanonicalBody",
+          "before": {
+            "line_start": 274,
+            "line_end": 297,
+            "sha256": "9962ec09b504e07fceac4f37152e293540618e835bf82418cfe67791bf0ed37b"
+          },
+          "after": {
+            "line_start": 277,
+            "line_end": 300,
+            "sha256": "9962ec09b504e07fceac4f37152e293540618e835bf82418cfe67791bf0ed37b"
+          },
+          "relation": "EXACT_SOURCE_TEXT_UNCHANGED",
+          "meaning": "AST source text comparison; unchanged caller text does not prove unchanged transitive behavior."
+        },
+        {
+          "name": "mutationRoutes",
+          "before": {
+            "line_start": 1178,
+            "line_end": 1183,
+            "sha256": "5d5bdf5fb95dc21f6c41b5b457f75c00cde812e3285e2a84589e541ae84fd66f"
+          },
+          "after": {
+            "line_start": 1204,
+            "line_end": 1209,
+            "sha256": "5d5bdf5fb95dc21f6c41b5b457f75c00cde812e3285e2a84589e541ae84fd66f"
+          },
+          "relation": "EXACT_SOURCE_TEXT_UNCHANGED",
+          "meaning": "AST source text comparison; unchanged caller text does not prove unchanged transitive behavior."
+        },
+        {
+          "name": "publicToolPolicies",
+          "before": {
+            "line_start": 760,
+            "line_end": 824,
+            "sha256": "ae470938ac307d8c4a70689ecb87ca2ef0ca4b1d495d53ef58dcbde2e645c18c"
+          },
+          "after": {
+            "line_start": 770,
+            "line_end": 837,
+            "sha256": "9ac7ebfa4da604cbbd942688e6cc38a0d05fb1d3c4f51ba61dc8c19defc80adf"
+          },
+          "relation": "CHANGED",
+          "meaning": "AST source text comparison; unchanged caller text does not prove unchanged transitive behavior."
+        },
+        {
+          "name": "callP5Mutation",
+          "before": {
+            "line_start": 436,
+            "line_end": 483,
+            "sha256": "9b4af1893f711d758ae25873d17d13b1687e89743f053299aee1170d87a6ef3b"
+          },
+          "after": {
+            "line_start": 445,
+            "line_end": 492,
+            "sha256": "9b4af1893f711d758ae25873d17d13b1687e89743f053299aee1170d87a6ef3b"
+          },
+          "relation": "EXACT_SOURCE_TEXT_UNCHANGED",
+          "meaning": "AST source text comparison; unchanged caller text does not prove unchanged transitive behavior."
+        },
+        {
+          "name": "supabaseRequest",
+          "before": {
+            "line_start": 324,
+            "line_end": 369,
+            "sha256": "90fd7180a947e9d859116e7e1b34ed6a76b2c86dd4b07f185dbae82a710e4dd1"
+          },
+          "after": {
+            "line_start": 327,
+            "line_end": 378,
+            "sha256": "3fb5ab3a0b5a8e55507389b7f430b0a2fd0c3fba8925e7cf81fd21dcfd1a4871"
+          },
+          "relation": "CHANGED",
+          "meaning": "AST source text comparison; unchanged caller text does not prove unchanged transitive behavior."
+        },
+        {
+          "name": "callTool",
+          "before": {
+            "line_start": 912,
+            "line_end": 941,
+            "sha256": "83ceb8ec417fa1259a5554e1884d4ee2e5b5e9ccb47fe6a099a50dd50cd89dd5"
+          },
+          "after": {
+            "line_start": 937,
+            "line_end": 967,
+            "sha256": "1bbd012d4db1767b2d5a05a651830882b0081cdf3bc854798e0da87893c37b86"
+          },
+          "relation": "CHANGED",
+          "meaning": "AST source text comparison; unchanged caller text does not prove unchanged transitive behavior."
+        },
+        {
+          "name": "sanitizeCluedResult",
+          "before": {
+            "line_start": 299,
+            "line_end": 308,
+            "sha256": "3cb6f43cad6543d007e750bd3c7e4a341289e328b1ca0d311aa6fa6645fae798"
+          },
+          "after": {
+            "line_start": 302,
+            "line_end": 311,
+            "sha256": "3cb6f43cad6543d007e750bd3c7e4a341289e328b1ca0d311aa6fa6645fae798"
+          },
+          "relation": "EXACT_SOURCE_TEXT_UNCHANGED",
+          "meaning": "AST source text comparison; unchanged caller text does not prove unchanged transitive behavior."
+        },
+        {
+          "name": "p5GatewayRpc",
+          "before": {
+            "line_start": 377,
+            "line_end": 391,
+            "sha256": "3c0a7a821560e4cd421434a2f24b9a266b62e7f0a44cde80da884d0d8006711f"
+          },
+          "after": {
+            "line_start": 386,
+            "line_end": 400,
+            "sha256": "3c0a7a821560e4cd421434a2f24b9a266b62e7f0a44cde80da884d0d8006711f"
+          },
+          "relation": "EXACT_SOURCE_TEXT_UNCHANGED",
+          "meaning": "AST source text comparison; unchanged caller text does not prove unchanged transitive behavior."
+        }
+      ]
+    },
+    {
+      "historical_source": {
+        "path": "apps/clued-cloud/app/page.tsx",
+        "commit": "00ee8d1b796f27dbc3cac0c665ed4a69a87231b9",
+        "bytes": 54598,
+        "sha256": "4534d4ca11390ca5fadae652c6b52ce2bc5428765214c04ed6ff13a8ff7ac5a6"
+      },
+      "current_source": {
+        "path": "apps/clued-cloud/app/page.tsx",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "bytes": 57180,
+        "sha256": "4e5caa4015b4382a4cd9329b71ecf2079ff9a79e3c0f6d74f9bdc02345ffbc83"
+      },
+      "historical_manifest_digest_verified": true,
+      "diff_hunks": [
+        "@@ -3,2 +3,3 @@",
+        "@@ -14,3 +14,0 @@ import {",
+        "@@ -152,2 +150,2 @@ const copy = {",
+        "@@ -291,2 +289,2 @@ const copy = {",
+        "@@ -384,11 +381,0 @@ export default function Home() {",
+        "@@ -416,0 +404,8 @@ export default function Home() {",
+        "@@ -441,27 +436 @@ export default function Home() {",
+        "@@ -497 +466 @@ export default function Home() {",
+        "@@ -733,0 +703,15 @@ export default function Home() {",
+        "@@ -737 +721 @@ export default function Home() {",
+        "@@ -743,7 +727 @@ export default function Home() {",
+        "@@ -752,3 +730,19 @@ export default function Home() {",
+        "@@ -755,0 +750,4 @@ export default function Home() {",
+        "@@ -758 +756 @@ export default function Home() {",
+        "@@ -760 +758 @@ export default function Home() {",
+        "@@ -764 +762 @@ export default function Home() {",
+        "@@ -768,0 +767,26 @@ export default function Home() {",
+        "@@ -776 +800,2 @@ export default function Home() {",
+        "@@ -779 +804 @@ export default function Home() {",
+        "@@ -783,6 +808,6 @@ export default function Home() {",
+        "@@ -878,0 +904 @@ export default function Home() {",
+        "@@ -1076 +1102 @@ export default function Home() {",
+        "@@ -1087 +1113,4 @@ export default function Home() {",
+        "@@ -1089,3 +1118,3 @@ export default function Home() {"
+      ],
+      "symbols": [
+        {
+          "name": "handleLogin",
+          "before": {
+            "line_start": 597,
+            "line_end": 610,
+            "sha256": "a857fb3f14a9e115d053e97183aece503cf2b91d4aead12841fe92d659901597"
+          },
+          "after": {
+            "line_start": 566,
+            "line_end": 579,
+            "sha256": "a857fb3f14a9e115d053e97183aece503cf2b91d4aead12841fe92d659901597"
+          },
+          "relation": "EXACT_SOURCE_TEXT_UNCHANGED",
+          "meaning": "AST source text comparison; unchanged caller text does not prove unchanged transitive behavior."
+        },
+        {
+          "name": "handleCreateAccount",
+          "before": {
+            "line_start": 612,
+            "line_end": 635,
+            "sha256": "3dbf60f03d9bc281620b8372ce15a1160ed028f9f0ecc478cdcdfda2f05164a1"
+          },
+          "after": {
+            "line_start": 581,
+            "line_end": 604,
+            "sha256": "3dbf60f03d9bc281620b8372ce15a1160ed028f9f0ecc478cdcdfda2f05164a1"
+          },
+          "relation": "EXACT_SOURCE_TEXT_UNCHANGED",
+          "meaning": "AST source text comparison; unchanged caller text does not prove unchanged transitive behavior."
+        },
+        {
+          "name": "handleCreateProject",
+          "before": {
+            "line_start": 731,
+            "line_end": 762,
+            "sha256": "1a4bd78ee95360e3c6d8bd890534da22a00e3d0b250a12084510fb0d1e7e14f2"
+          },
+          "after": {
+            "line_start": 700,
+            "line_end": 760,
+            "sha256": "d02293a880a40645945f5d9356073c5004580844ca03e9c418dd26f8b02bbeb0"
+          },
+          "relation": "CHANGED",
+          "meaning": "AST source text comparison; unchanged caller text does not prove unchanged transitive behavior."
+        },
+        {
+          "name": "updateProject",
+          "before": {
+            "line_start": 764,
+            "line_end": 794,
+            "sha256": "db66067a15efca0cf9f3bc2ccb1d2ed6ecc22fc2476cca7c85626843d3aabbdd"
+          },
+          "after": {
+            "line_start": 762,
+            "line_end": 819,
+            "sha256": "025910c3a1486da42868890e6c2000f6d7eef55bac785bc2222a528a0aa1789d"
+          },
+          "relation": "CHANGED",
+          "meaning": "AST source text comparison; unchanged caller text does not prove unchanged transitive behavior."
+        }
+      ]
+    },
+    {
+      "historical_source": {
+        "path": "apps/clued-cloud/app/oauth/consent/page.tsx",
+        "commit": "00ee8d1b796f27dbc3cac0c665ed4a69a87231b9",
+        "bytes": 7026,
+        "sha256": "ce7e6f8de06bd2c7757112b08148f4e19a361868091b88d5c2150b2f0087ef54"
+      },
+      "current_source": {
+        "path": "apps/clued-cloud/app/oauth/consent/page.tsx",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "bytes": 7088,
+        "sha256": "54ad239f01cbcbd1fb4bac04ff6b080bd55f1465163f34b557e237ccea83051f"
+      },
+      "historical_manifest_digest_verified": true,
+      "diff_hunks": [
+        "@@ -5 +4,0 @@ import {",
+        "@@ -10,0 +10,2 @@ import { useSearchParams } from \"next/navigation\";",
+        "@@ -12,5 +12,0 @@ import { useSearchParams } from \"next/navigation\";",
+        "@@ -175,0 +172,6 @@ function OAuthConsent() {",
+        "@@ -179 +181 @@ export default function OAuthConsentPage() {"
+      ],
+      "symbols": [
+        {
+          "name": "loadAuthorization",
+          "before": {
+            "line_start": 41,
+            "line_end": 64,
+            "sha256": "f1091700e1b25401bfda94933e6a656fe5523c3de3887d9b68dd4f1c40cbd52b"
+          },
+          "after": {
+            "line_start": 37,
+            "line_end": 60,
+            "sha256": "f1091700e1b25401bfda94933e6a656fe5523c3de3887d9b68dd4f1c40cbd52b"
+          },
+          "relation": "EXACT_SOURCE_TEXT_UNCHANGED",
+          "meaning": "AST source text comparison; unchanged caller text does not prove unchanged transitive behavior."
+        },
+        {
+          "name": "signIn",
+          "before": {
+            "line_start": 72,
+            "line_end": 83,
+            "sha256": "95991d94455c262a98c539b3c279445f99786b13fb33fa8265c81eb28f1bc684"
+          },
+          "after": {
+            "line_start": 68,
+            "line_end": 79,
+            "sha256": "95991d94455c262a98c539b3c279445f99786b13fb33fa8265c81eb28f1bc684"
+          },
+          "relation": "EXACT_SOURCE_TEXT_UNCHANGED",
+          "meaning": "AST source text comparison; unchanged caller text does not prove unchanged transitive behavior."
+        },
+        {
+          "name": "decide",
+          "before": {
+            "line_start": 85,
+            "line_end": 98,
+            "sha256": "f790cf2c8bd161561881b33845f8546b886cc8e4a41f7966b848168b3b9e7d6e"
+          },
+          "after": {
+            "line_start": 81,
+            "line_end": 94,
+            "sha256": "f790cf2c8bd161561881b33845f8546b886cc8e4a41f7966b848168b3b9e7d6e"
+          },
+          "relation": "EXACT_SOURCE_TEXT_UNCHANGED",
+          "meaning": "AST source text comparison; unchanged caller text does not prove unchanged transitive behavior."
+        },
+        {
+          "name": "ConsentRouter",
+          "before": null,
+          "after": {
+            "line_start": 172,
+            "line_end": 176,
+            "sha256": "9596ad1d0f6305c4b42e186ad3168795269182d1016e44985840a20e4e4f3a72"
+          },
+          "relation": "ADDED",
+          "meaning": "AST source text comparison; unchanged caller text does not prove unchanged transitive behavior."
+        }
+      ]
+    }
+  ],
+  "consumers": [
+    {
+      "consumer_id": "C01",
+      "label": "公开 bootstrap / MCP discovery",
+      "direct": "bootstrap issuer now selects delegated origin when enabled; binding policy says authorization instance. Context adds only clued_context and a feature filter. handleMcp body is unchanged.",
+      "scope": "Old tool names, scopes and policies stay unchanged; context tool has a distinct key. Discovery changes are intended metadata/feature exposure changes, not source equivalence.",
+      "reuse": [
+        "delegated-oauth-transport.test.mjs",
+        "development-context-api.test.mjs"
+      ],
+      "checks": [
+        "CA01"
+      ],
+      "operations": [
+        {
+          "operation": "initialize",
+          "applicability": "CHANGED_SURFACE_WITH_SCOPED_EXISTING_EVIDENCE",
+          "required_check_ids": [
+            "CA01"
+          ]
+        },
+        {
+          "operation": "tools/list",
+          "applicability": "CHANGED_SURFACE_WITH_SCOPED_EXISTING_EVIDENCE",
+          "required_check_ids": [
+            "CA01"
+          ]
+        },
+        {
+          "operation": "clued_agent_bootstrap",
+          "applicability": "CHANGED_SURFACE_WITH_SCOPED_EXISTING_EVIDENCE",
+          "required_check_ids": [
+            "CA01"
+          ]
+        }
+      ],
+      "decision_effect": "NONE"
+    },
+    {
+      "consumer_id": "C02",
+      "label": "账户JWT与Binding管理",
+      "direct": "requireSupabaseUser/listBindings/createBinding/revokeBinding source bodies unchanged. Shared storage error classifier changed.",
+      "scope": "Account JWT requirement, token hashing, stored scopes/context keys and revoke operation retain original source behavior. No privilege expansion is introduced by changing an error status; transitive error envelope is affected.",
+      "reuse": [
+        "mcp-authorization-errors.test.mjs"
+      ],
+      "checks": [
+        "CA02"
+      ],
+      "operations": [
+        {
+          "operation": "listBindings",
+          "applicability": "OLD_DISPATCH_PRESERVED_SHARED_ERROR_CHANGE",
+          "required_check_ids": [
+            "CA02"
+          ]
+        },
+        {
+          "operation": "createBinding",
+          "applicability": "OLD_DISPATCH_PRESERVED_SHARED_ERROR_CHANGE",
+          "required_check_ids": [
+            "CA02"
+          ]
+        },
+        {
+          "operation": "revokeBinding",
+          "applicability": "OLD_DISPATCH_PRESERVED_SHARED_ERROR_CHANGE",
+          "required_check_ids": [
+            "CA02"
+          ]
+        }
+      ],
+      "decision_effect": "NONE"
+    },
+    {
+      "consumer_id": "C03",
+      "label": "连续性读取/审计",
+      "direct": "Old RPC entries and REST route map unchanged; added context branch matches only clued_context. Shared supabaseRequest changes 401+42501 to 403.",
+      "scope": "Existing resume/search/read_log/audit inputs, binding hash vs OAuth route and legacy result sanitizer remain the same for those tool names. Non-success status semantics intentionally change.",
+      "reuse": [
+        "mcp-authorization-errors.test.mjs",
+        "authorization-end-to-end.test.mjs"
+      ],
+      "checks": [
+        "CA02"
+      ],
+      "operations": [
+        {
+          "operation": "clued_session_resume",
+          "applicability": "OLD_DISPATCH_PRESERVED_SHARED_ERROR_CHANGE",
+          "required_check_ids": [
+            "CA02"
+          ]
+        },
+        {
+          "operation": "clued_search_context",
+          "applicability": "OLD_DISPATCH_PRESERVED_SHARED_ERROR_CHANGE",
+          "required_check_ids": [
+            "CA02"
+          ]
+        },
+        {
+          "operation": "clued_read_log",
+          "applicability": "OLD_DISPATCH_PRESERVED_SHARED_ERROR_CHANGE",
+          "required_check_ids": [
+            "CA02"
+          ]
+        },
+        {
+          "operation": "clued_audit_receipts",
+          "applicability": "OLD_DISPATCH_PRESERVED_SHARED_ERROR_CHANGE",
+          "required_check_ids": [
+            "CA02"
+          ]
+        }
+      ],
+      "decision_effect": "NONE"
+    },
+    {
+      "consumer_id": "C04",
+      "label": "连续性 append/checkpoint/import",
+      "direct": "Existing append/checkpoint/import RPC entries unchanged; new context branch is disjoint and old sanitizer remains selected.",
+      "scope": "No new event/checkpoint/import mutation body or commit logic in this diff. Shared denial status is affected; no need to rerun each write solely for this common classifier.",
+      "reuse": [
+        "mcp-authorization-errors.test.mjs"
+      ],
+      "checks": [
+        "CA02"
+      ],
+      "operations": [
+        {
+          "operation": "clued_append_event",
+          "applicability": "OLD_DISPATCH_PRESERVED_SHARED_ERROR_CHANGE",
+          "required_check_ids": [
+            "CA02"
+          ]
+        },
+        {
+          "operation": "clued_session_checkpoint",
+          "applicability": "OLD_DISPATCH_PRESERVED_SHARED_ERROR_CHANGE",
+          "required_check_ids": [
+            "CA02"
+          ]
+        },
+        {
+          "operation": "clued_import_log",
+          "applicability": "OLD_DISPATCH_PRESERVED_SHARED_ERROR_CHANGE",
+          "required_check_ids": [
+            "CA02"
+          ]
+        }
+      ],
+      "decision_effect": "NONE"
+    },
+    {
+      "consumer_id": "C05",
+      "label": "Project REST/MCP",
+      "direct": "callUserProjectRpc/handleProjectApi unchanged. Project tool module unchanged. New SQL project-list migration is a separate intentional authorization repair.",
+      "scope": "Mutation forwarding and CAS parsing are unchanged. List authorization meaning changed from system:projects gate to exact readable project grants and has scoped real-PG evidence; do not label all project semantics unchanged.",
+      "reuse": [
+        "project-list-authorization-db.test.mjs",
+        "mcp-authorization-errors.test.mjs"
+      ],
+      "checks": [
+        "CA02"
+      ],
+      "operations": [
+        {
+          "operation": "clued_project_list",
+          "applicability": "OLD_DISPATCH_PRESERVED_SHARED_ERROR_CHANGE",
+          "required_check_ids": [
+            "CA02"
+          ]
+        },
+        {
+          "operation": "clued_project_mutate",
+          "applicability": "OLD_DISPATCH_PRESERVED_SHARED_ERROR_CHANGE",
+          "required_check_ids": [
+            "CA02"
+          ]
+        }
+      ],
+      "decision_effect": "NONE"
+    },
+    {
+      "consumer_id": "C06",
+      "label": "Record读取与视图",
+      "direct": "handleRecordApi and record tool module unchanged; shared storage error classifier affected.",
+      "scope": "Record list/view dispatch and inputs retain source bindings. Formal allowed State/Task/Decision reads and out-of-scope denial support only those exercised service operations.",
+      "reuse": [
+        "mcp-authorization-errors.test.mjs",
+        "authorization-end-to-end.test.mjs"
+      ],
+      "checks": [
+        "CA02"
+      ],
+      "operations": [
+        {
+          "operation": "clued_record_list",
+          "applicability": "OLD_DISPATCH_PRESERVED_SHARED_ERROR_CHANGE",
+          "required_check_ids": [
+            "CA02"
+          ]
+        }
+      ],
+      "decision_effect": "NONE"
+    },
+    {
+      "consumer_id": "C07",
+      "label": "Record mutation / Decision supersede",
+      "direct": "parseCanonicalBody/handleRecordApi and record tool module unchanged; shared storage error classifier affected.",
+      "scope": "Mutation path identity, envelope and Decision supersede dispatch are unchanged. Actual engineering-state write/readback and integration receipt/replay tests do not constitute a fresh supersede qualification.",
+      "reuse": [
+        "mcp-authorization-errors.test.mjs",
+        "authorization-end-to-end.test.mjs"
+      ],
+      "checks": [
+        "CA02"
+      ],
+      "operations": [
+        {
+          "operation": "clued_record_mutate",
+          "applicability": "OLD_DISPATCH_PRESERVED_SHARED_ERROR_CHANGE",
+          "required_check_ids": [
+            "CA02"
+          ]
+        },
+        {
+          "operation": "clued_decision_supersede",
+          "applicability": "OLD_DISPATCH_PRESERVED_SHARED_ERROR_CHANGE",
+          "required_check_ids": [
+            "CA02"
+          ]
+        }
+      ],
+      "decision_effect": "NONE"
+    },
+    {
+      "consumer_id": "C08",
+      "label": "Evidence ingest / extension Event",
+      "direct": "mutationRoutes and record tool module unchanged; new /v1/development route is an exact separate route.",
+      "scope": "Evidence ingest/event append still enter their original route/RPC. No new evidence or event semantics in this diff; shared denial classifier affected.",
+      "reuse": [
+        "mcp-authorization-errors.test.mjs",
+        "development-context-api.test.mjs"
+      ],
+      "checks": [
+        "CA02"
+      ],
+      "operations": [
+        {
+          "operation": "clued_evidence_ingest",
+          "applicability": "OLD_DISPATCH_PRESERVED_SHARED_ERROR_CHANGE",
+          "required_check_ids": [
+            "CA02"
+          ]
+        },
+        {
+          "operation": "clued_event_append",
+          "applicability": "OLD_DISPATCH_PRESERVED_SHARED_ERROR_CHANGE",
+          "required_check_ids": [
+            "CA02"
+          ]
+        }
+      ],
+      "decision_effect": "NONE"
+    },
+    {
+      "consumer_id": "C09",
+      "label": "Canonical Export",
+      "direct": "publicToolPolicies now exports the object and adds only clued_context; existing export entries remain textually unchanged. Record tool module and frozen export SQL unchanged.",
+      "scope": "Canonical export scopes/annotations and dispatch remain intact. This does not audit unrelated later migrations or issue export permission; common error status changes.",
+      "reuse": [
+        "mcp-authorization-errors.test.mjs"
+      ],
+      "checks": [
+        "CA02"
+      ],
+      "operations": [
+        {
+          "operation": "clued_canonical_export",
+          "applicability": "OLD_DISPATCH_PRESERVED_SHARED_ERROR_CHANGE",
+          "required_check_ids": [
+            "CA02"
+          ]
+        },
+        {
+          "operation": "clued_user_canonical_export",
+          "applicability": "OLD_DISPATCH_PRESERVED_SHARED_ERROR_CHANGE",
+          "required_check_ids": [
+            "CA02"
+          ]
+        }
+      ],
+      "decision_effect": "NONE"
+    },
+    {
+      "consumer_id": "C10",
+      "label": "P5 tenant Session/Attempt mutation",
+      "direct": "callP5Mutation and p5GatewayRpc bodies unchanged; added context branch cannot match P5 names.",
+      "scope": "Existing P5 guard, independent Binding requirement and gateway path remain unchanged. P5 uses its own gateway error handling. No new P5/P6 enablement or rerun is needed for this diff.",
+      "reuse": [
+        "development-context-api.test.mjs"
+      ],
+      "checks": [],
+      "operations": [
+        {
+          "operation": "clued_p5_session_open",
+          "applicability": "DIRECT_PATH_UNCHANGED_NO_NEW_ENABLEMENT",
+          "required_check_ids": []
+        },
+        {
+          "operation": "clued_p5_mutate",
+          "applicability": "DIRECT_PATH_UNCHANGED_NO_NEW_ENABLEMENT",
+          "required_check_ids": []
+        },
+        {
+          "operation": "clued_p5_attempt_resolve",
+          "applicability": "DIRECT_PATH_UNCHANGED_NO_NEW_ENABLEMENT",
+          "required_check_ids": []
+        }
+      ],
+      "decision_effect": "NONE"
+    },
+    {
+      "consumer_id": "C14",
+      "label": "账户页面与OAuth consent",
+      "direct": "handleLogin/handleCreateAccount/loadAuthorization bodies unchanged, but shared browser client and session restoration are real transitive changes. request_id selects DelegatedConsent. Home create/update now use the M1 contract and committed receipts.",
+      "scope": "Password argument/error handling source is unchanged; route/session identity and project presentation cannot be inferred from that. Home project actions expand the old three-symbol consumer mapping and must be explicitly included in current review scope.",
+      "reuse": [
+        "supabase-browser.test.mjs",
+        "consent-account-race.test.mjs",
+        "home-project-create.test.mjs",
+        "authorization-end-to-end.test.mjs"
+      ],
+      "checks": [
+        "CA03",
+        "CA04"
+      ],
+      "operations": [
+        {
+          "operation": "handleLogin",
+          "applicability": "CHANGED_SURFACE_WITH_SCOPED_EXISTING_EVIDENCE",
+          "required_check_ids": [
+            "CA03",
+            "CA04"
+          ]
+        },
+        {
+          "operation": "handleCreateAccount",
+          "applicability": "CHANGED_SURFACE_WITH_SCOPED_EXISTING_EVIDENCE",
+          "required_check_ids": [
+            "CA03",
+            "CA04"
+          ]
+        },
+        {
+          "operation": "loadAuthorization",
+          "applicability": "CHANGED_SURFACE_WITH_SCOPED_EXISTING_EVIDENCE",
+          "required_check_ids": [
+            "CA03",
+            "CA04"
+          ]
+        }
+      ],
+      "decision_effect": "NONE"
+    }
+  ],
+  "existing_evidence": [
+    {
+      "source": {
+        "path": "apps/clued-cloud/tests/mcp-authorization-errors.test.mjs",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "bytes": 3194,
+        "sha256": "a92db52ee3c2151e0f085906154e09c5331fa15d38be13f06c31f067cdf383f6"
+      },
+      "scope": "MCP 42501 remains denied as 403/no OAuth challenge; invalid JWT/missing credential remain 401; empty authorized list succeeds.",
+      "execution_evidence": "PR19 seven-check success recorded in repair README; authorization workflow invokes these suites. This review did not execute them."
+    },
+    {
+      "source": {
+        "path": "apps/clued-cloud/tests/project-list-authorization-db.test.mjs",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "bytes": 11216,
+        "sha256": "6669eed654d40dd777f0742d28c248878b7cd2f43c39bd0b25f5eda1c642241e"
+      },
+      "scope": "Real PG exact project consent, filter-before-limit, global-only/write-only exclusion, narrowing, revocation/expiry/disabled owner, membership non-escalation and privileges.",
+      "execution_evidence": "PR19 seven-check success recorded in repair README; authorization workflow invokes these suites. This review did not execute them."
+    },
+    {
+      "source": {
+        "path": "apps/clued-cloud/tests/development-context-api.test.mjs",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "bytes": 6664,
+        "sha256": "24d2fc67496c956328c584c108a8c1a2e8e87212e81fb9e9f8e692e2ea029fb1"
+      },
+      "scope": "Context flag/tool exposure, scoped hash, ordinary default, legacy route/JWT exclusion, owner authentication and denied storage result.",
+      "execution_evidence": "PR19 seven-check success recorded in repair README; authorization workflow invokes these suites. This review did not execute them."
+    },
+    {
+      "source": {
+        "path": "apps/clued-cloud/tests/delegated-oauth-transport.test.mjs",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "bytes": 17263,
+        "sha256": "977b66e8c00718f115df31964d788d0df8caf0a0aaea5a5c3284a99f73203079"
+      },
+      "scope": "Delegated discovery/PKCE/origin/cookie, independent instances, scope narrowing, revocation and refresh outage. Does not assert both bootstrapContract issuer branches.",
+      "execution_evidence": "PR19 seven-check success recorded in repair README; authorization workflow invokes these suites. This review did not execute them."
+    },
+    {
+      "source": {
+        "path": "apps/clued-cloud/tests/authorization-end-to-end.test.mjs",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "bytes": 14475,
+        "sha256": "9a7a2785d810a25ba6583c5fc1afe7ecf1eefe528cc75142d142ecd036dec5c1"
+      },
+      "scope": "Real database OAuth consent, MCP record receipt, replay and revoke together.",
+      "execution_evidence": "PR19 seven-check success recorded in repair README; authorization workflow invokes these suites. This review did not execute them."
+    },
+    {
+      "source": {
+        "path": "apps/clued-cloud/tests/supabase-browser.test.mjs",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "bytes": 11585,
+        "sha256": "0aca416874c9fc5bbe49909f512e500e756b6691a276e5aff6c64c4aeeac8520"
+      },
+      "scope": "Shared browser client, SSR isolation, callback/recovery/PKCE once, malformed/racing callbacks and public build configuration.",
+      "execution_evidence": "PR19 seven-check success recorded in repair README; authorization workflow invokes these suites. This review did not execute them."
+    },
+    {
+      "source": {
+        "path": "apps/clued-cloud/tests/consent-account-race.test.mjs",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "bytes": 15214,
+        "sha256": "3ad6df42b2cd68319ad711afc2be6565453b6bd5e7f1b0acc58e5658f9f456f5"
+      },
+      "scope": "Delegated consent account race and late redirects, choice isolation, password recovery and group selection; not the legacy consent router in a real browser.",
+      "execution_evidence": "PR19 seven-check success recorded in repair README; authorization workflow invokes these suites. This review did not execute them."
+    },
+    {
+      "source": {
+        "path": "apps/clued-cloud/tests/home-project-create.test.mjs",
+        "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "bytes": 10851,
+        "sha256": "b03dfb1d3a9951fb5870180ca16d5d0984a3b14c54ad57aa895321f003a13565"
+      },
+      "scope": "Actual extracted handlers: M1 creation/update, CAS, invalid receipts, retry key, replay lookup, account/name reset. No full browser render/navigation.",
+      "execution_evidence": "PR19 seven-check success recorded in repair README; authorization workflow invokes these suites. This review did not execute them."
+    }
+  ],
+  "production_evidence": [
+    {
+      "path": "artifacts/clued-validation/project-list-auth-repair-20260908/README.md",
+      "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+      "bytes": 2579,
+      "sha256": "e890ca58019e9eb6511b903e46b4dc75f0abe828b3ae8b0c81b2f1c92d757af1"
+    },
+    {
+      "path": "artifacts/clued-validation/project-list-auth-repair-20260908/final-verification.json",
+      "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+      "bytes": 181,
+      "sha256": "50b359e769b78be7c438b49a980d948bbe872f4051842e4dd9efbaae9d8794ed"
+    }
+  ],
+  "remaining_checks": [
+    {
+      "id": "CA01",
+      "priority": "TARGETED_AUTOMATED_CHECK",
+      "scope": "bootstrapContract issuer/flags only",
+      "steps": [
+        "Call existing public bootstrap with delegated flag unset and true, with explicit CLUED_OAUTH_ORIGIN and with origin fallback.",
+        "Assert original Supabase issuer for unset flag, delegated issuer/fallback for true; retain public no-auth/no-storage behavior and original legacy tool entries."
+      ],
+      "reason": "Provider discovery tests prove its metadata endpoint, not every changed bootstrapContract issuer branch. Do not rerun all discovery tests."
+    },
+    {
+      "id": "CA02",
+      "priority": "TARGETED_AUTOMATED_CHECK",
+      "scope": "Shared error classifier through representative account REST paths",
+      "steps": [
+        "For GET /v1/projects authenticate a fixture user, make its storage RPC return HTTP401/code42501; assert denied 403 with no authentication challenge and no success payload.",
+        "For the same REST path make /auth/v1/user return genuine auth error 401; assert it stays 401 and no project RPC follows."
+      ],
+      "reason": "PR19 exercises the classifier through MCP; REST/account callers share it but have a different handler envelope. Two representative paths suffice; no live business writes or one test per C03–C09 operation is needed."
+    },
+    {
+      "id": "CA03",
+      "priority": "TARGETED_ROUTER_CHECK",
+      "scope": "ConsentRouter integration with shared client",
+      "steps": [
+        "Render actual consent page with request_id, with only authorization_id, and with both; assert only the selected consent branch mounts (current request_id priority is explicit).",
+        "Assert missing IDs do not load an authorization; valid legacy authorization_id reaches existing loadAuthorization using the shared client."
+      ],
+      "reason": "Existing account-race tests exercise delegated-consent directly; no located test executes ConsentRouter branch selection. Use isolated rendering and stub auth; do not issue a grant."
+    },
+    {
+      "id": "CA04",
+      "priority": "ACTUAL_BROWSER_EVIDENCE_IF_UI_ACCEPTANCE_IN_SCOPE",
+      "scope": "Formal browser navigation/auth readiness",
+      "steps": [
+        "On an authorized browser session observe home -> consent -> home navigation, selected identity and request context persistence; avoid approving or creating data merely for smoke.",
+        "Record actual rendered page/navigation evidence; preserve Cloudflare1010/client preview blockage until an allowed browser path succeeds."
+      ],
+      "reason": "Handler and shared-client tests plus formal connector read/write do not prove rendered production pages. Prior repair README explicitly leaves page smoke unverified."
+    }
+  ],
+  "semantic_conclusion": "These are intentional successor changes, not a global no-change result. Preserve original migration acceptance and attach scoped successor evidence; missing evidence is bounded by CA01–CA04.",
+  "limitations": [
+    "No formal consumer acceptance or R07/R08 decision issued.",
+    "Static unchanged source is not transitive runtime equivalence or whole-database audit.",
+    "This review does not reactivate retired P5/P6.",
+    "C14 home project create/update must be included despite not being named in its historical three-symbol manifest."
+  ],
+  "sources": [
+    {
+      "path": "apps/clued-cloud/worker/continuity.ts",
+      "commit": "00ee8d1b796f27dbc3cac0c665ed4a69a87231b9",
+      "bytes": 47981,
+      "sha256": "7bbb574963bc48ea94c6022eb49520ba092f3a084e7e1ae21e00a40e5f3cd3ba"
+    },
+    {
+      "path": "apps/clued-cloud/worker/continuity.ts",
+      "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+      "bytes": 50783,
+      "sha256": "53746991a483bf4bbac4402440ae86fb7cd296032a7a10359758bbaf77997dc5"
+    },
+    {
+      "path": "apps/clued-cloud/app/page.tsx",
+      "commit": "00ee8d1b796f27dbc3cac0c665ed4a69a87231b9",
+      "bytes": 54598,
+      "sha256": "4534d4ca11390ca5fadae652c6b52ce2bc5428765214c04ed6ff13a8ff7ac5a6"
+    },
+    {
+      "path": "apps/clued-cloud/app/page.tsx",
+      "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+      "bytes": 57180,
+      "sha256": "4e5caa4015b4382a4cd9329b71ecf2079ff9a79e3c0f6d74f9bdc02345ffbc83"
+    },
+    {
+      "path": "apps/clued-cloud/app/oauth/consent/page.tsx",
+      "commit": "00ee8d1b796f27dbc3cac0c665ed4a69a87231b9",
+      "bytes": 7026,
+      "sha256": "ce7e6f8de06bd2c7757112b08148f4e19a361868091b88d5c2150b2f0087ef54"
+    },
+    {
+      "path": "apps/clued-cloud/app/oauth/consent/page.tsx",
+      "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+      "bytes": 7088,
+      "sha256": "54ad239f01cbcbd1fb4bac04ff6b080bd55f1465163f34b557e237ccea83051f"
+    },
+    {
+      "path": "apps/clued-cloud/tests/mcp-authorization-errors.test.mjs",
+      "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+      "bytes": 3194,
+      "sha256": "a92db52ee3c2151e0f085906154e09c5331fa15d38be13f06c31f067cdf383f6"
+    },
+    {
+      "path": "apps/clued-cloud/tests/project-list-authorization-db.test.mjs",
+      "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+      "bytes": 11216,
+      "sha256": "6669eed654d40dd777f0742d28c248878b7cd2f43c39bd0b25f5eda1c642241e"
+    },
+    {
+      "path": "apps/clued-cloud/tests/development-context-api.test.mjs",
+      "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+      "bytes": 6664,
+      "sha256": "24d2fc67496c956328c584c108a8c1a2e8e87212e81fb9e9f8e692e2ea029fb1"
+    },
+    {
+      "path": "apps/clued-cloud/tests/delegated-oauth-transport.test.mjs",
+      "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+      "bytes": 17263,
+      "sha256": "977b66e8c00718f115df31964d788d0df8caf0a0aaea5a5c3284a99f73203079"
+    },
+    {
+      "path": "apps/clued-cloud/tests/authorization-end-to-end.test.mjs",
+      "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+      "bytes": 14475,
+      "sha256": "9a7a2785d810a25ba6583c5fc1afe7ecf1eefe528cc75142d142ecd036dec5c1"
+    },
+    {
+      "path": "apps/clued-cloud/tests/supabase-browser.test.mjs",
+      "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+      "bytes": 11585,
+      "sha256": "0aca416874c9fc5bbe49909f512e500e756b6691a276e5aff6c64c4aeeac8520"
+    },
+    {
+      "path": "apps/clued-cloud/tests/consent-account-race.test.mjs",
+      "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+      "bytes": 15214,
+      "sha256": "3ad6df42b2cd68319ad711afc2be6565453b6bd5e7f1b0acc58e5658f9f456f5"
+    },
+    {
+      "path": "apps/clued-cloud/tests/home-project-create.test.mjs",
+      "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+      "bytes": 10851,
+      "sha256": "b03dfb1d3a9951fb5870180ca16d5d0984a3b14c54ad57aa895321f003a13565"
+    },
+    {
+      "path": "apps/clued-cloud/package.json",
+      "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+      "bytes": 6123,
+      "sha256": "fb322edd2e0714a851d16015d7ae4938bd3e7f014834297494da1982885ee7cd"
+    },
+    {
+      "path": ".github/workflows/clued-connection-authorization.yml",
+      "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+      "bytes": 1945,
+      "sha256": "8316f74e87e0d85201e994bdb6b1722d1b4c9c20c1877e1650c865d94a01a578"
+    },
+    {
+      "path": "apps/clued-cloud/app/supabase-browser.ts",
+      "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+      "bytes": 4533,
+      "sha256": "572598d4159cbe8fef4179bbd26d11d42eb539a9bc1215435699ef09a4597340"
+    },
+    {
+      "path": "apps/clued-cloud/app/oauth/consent/delegated-consent.tsx",
+      "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+      "bytes": 16195,
+      "sha256": "2ec06c0b517063539998f9056cd5433686c490c09c788c8c6948bcdae7210f65"
+    },
+    {
+      "path": "apps/clued-cloud/worker/contexts.ts",
+      "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+      "bytes": 2871,
+      "sha256": "5a036a37640ea8bd1f9de3cfd771d859167de4aca6189215369ad5566e040365"
+    },
+    {
+      "path": "artifacts/clued-validation/project-list-auth-repair-20260908/README.md",
+      "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+      "bytes": 2579,
+      "sha256": "e890ca58019e9eb6511b903e46b4dc75f0abe828b3ae8b0c81b2f1c92d757af1"
+    },
+    {
+      "path": "artifacts/clued-validation/project-list-auth-repair-20260908/final-verification.json",
+      "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+      "bytes": 181,
+      "sha256": "50b359e769b78be7c438b49a980d948bbe872f4051842e4dd9efbaae9d8794ed"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step13-14-actual-verification-20260907/TargetConsumerBindingManifest.json",
+      "commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+      "bytes": 33972,
+      "sha256": "6c82bc7c53a1f26e0dd07419acfcd67e3e65b772f4a3ee69f2f06c617b4fcece"
+    }
+  ]
+}

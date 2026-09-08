@@ -1,0 +1,29 @@
+{
+  "scope": "INDEPENDENT_READ_ONLY_CLEANUP_CHECK",
+  "qualified": false,
+  "authorization_effect": "NONE",
+  "profiles": [
+    {
+      "evidence": "scripts/phase2-qualification/windows-isolation/evidence/Attempt01.json",
+      "profile_name": "CluedSyntheticProbe.e7d01b3b0038461cb2c10d0539bb8f4b",
+      "recorded_delete_hresult": 0,
+      "appcontainer_folder_exists": false,
+      "profile_parent_exists": false
+    },
+    {
+      "evidence": "scripts/phase2-qualification/windows-isolation/evidence/Attempt02.json",
+      "profile_name": "CluedSyntheticProbe.1a7ce54e292143fb867106c3df0179f1",
+      "recorded_delete_hresult": 0,
+      "appcontainer_folder_exists": false,
+      "profile_parent_exists": false
+    },
+    {
+      "evidence": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-08\\ia\\work\\kernel-phase2-repo\\artifacts\\clued-validation\\phase2-entry-preparation-20260908\\cases\\windows-isolation-independent\\probe-result.json",
+      "profile_name": "CluedSyntheticProbe.47cefce6c58e48bd935691abefee1fc3",
+      "recorded_delete_hresult": 0,
+      "appcontainer_folder_exists": false,
+      "profile_parent_exists": false
+    }
+  ],
+  "attempt01_canary_exists": false
+}

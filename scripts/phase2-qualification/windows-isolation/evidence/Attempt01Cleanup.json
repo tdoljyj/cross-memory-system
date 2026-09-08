@@ -1,0 +1,7 @@
+{
+  "action": "delete_only_fresh_synthetic_canary_after_incomplete_acl_restore",
+  "file": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-08\\ia\\work\\kernel-phase2-repo\\scripts\\phase2-qualification\\windows-isolation\\work\\probe-a630136550924963bb9d974d2ab70715\\outside-synthetic-canary.txt",
+  "deleted": true,
+  "first_attempt_failure_preserved": true,
+  "time_utc": "2026-09-08T08:43:15.6662136Z"
+}

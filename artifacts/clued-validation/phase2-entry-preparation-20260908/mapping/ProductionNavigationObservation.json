@@ -1,0 +1,14 @@
+{
+  "date": "2026-09-08",
+  "case": "CA04",
+  "status": "NOT_VERIFIED_BROWSER_CONTROL_UNAVAILABLE",
+  "authorization_effect": "NONE",
+  "production_url": "https://clued.pixelgrav.com/",
+  "observations": [
+    "Browser inventory found an existing Chrome tab with the production URL and Clued title; inventory alone does not prove current rendered behavior.",
+    "Selecting that exact existing tab timed out and reset the browser-control session.",
+    "A separate Chrome tab creation with the same production URL also timed out and reset the session."
+  ],
+  "conclusion": "No production navigation acceptance claimed. This browser-control failure does not negate the separate successful formal Clued MCP calls.",
+  "next_action": "When browser control is available, capture actual homepage and consent navigation observations. Do not repeat unchanged failures or change security settings."
+}

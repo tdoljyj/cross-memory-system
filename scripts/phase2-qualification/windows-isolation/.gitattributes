@@ -1,0 +1,2 @@
+# Preserve the original PowerShell cleanup observation bytes.
+evidence/Attempt01Cleanup.json -text whitespace=cr-at-eol
