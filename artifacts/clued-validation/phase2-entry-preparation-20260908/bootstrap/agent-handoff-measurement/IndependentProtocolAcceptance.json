@@ -1,0 +1,115 @@
+{
+  "schema_version": 1,
+  "state": "ACCEPTED_EXACT_A10_AGENT_HANDOFF_SCOPE_AND_MEASUREMENT_PROTOCOL_NOT_EXECUTED",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "observed_at_utc": "2026-09-08T11:34:17.686Z",
+  "review_scope": "Independent bounded document review and exact original-source hash verification only. Reviewer did not implement protocol, read private Gold, execute Slice A or assign a measured score.",
+  "authority": {
+    "source": "Explicit current user instructions, independently relayed by coordinator /root in this task",
+    "first_verbatim": "这个你代替和并发 代替真人交接测量",
+    "later_verbatim": "我命令 这个你和并发 代替真人交接测量",
+    "provenance": "Coordinator confirmed both are real successive user messages; original first quote is accurate. No additional user confirmation requested.",
+    "effect": "Current A10 population is actually participating coordinator/parallel agents. The original human population is preserved historically and is not a prerequisite for this amended A10."
+  },
+  "accepted_subjects": [
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/agent-handoff-measurement/ScopeAmendment.json",
+      "sha256": "1ead1644bc98eb7898efe7dca13e96be208563b7a3bc32b2126befafb11c7dc2",
+      "bytes": 5610,
+      "lf_only": true
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/agent-handoff-measurement/ScopeAmendment.md",
+      "sha256": "876f65e9563fd7847eebf1f63dc18b5b3f124e6c1767b34a57f1eb498d0b73b7",
+      "bytes": 1808,
+      "lf_only": true
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/agent-handoff-measurement/MeasurementProtocol.md",
+      "sha256": "f6eaa15b5b373609bc57b780fdb4d005a278a497820ffe751de17f86f202d88e",
+      "bytes": 6725,
+      "lf_only": true
+    }
+  ],
+  "original_source_hashes_verified": [
+    {
+      "path": "C:/Users/Windows/Documents/Codex/2026-09-08/ia/work/slice-a-contracts/Charter.md",
+      "sha256": "bd8a96afad8d174e0333c92a01281d6f8613f5fff33b98365609f72f2c525b72",
+      "actual_sha256": "bd8a96afad8d174e0333c92a01281d6f8613f5fff33b98365609f72f2c525b72"
+    },
+    {
+      "path": "C:/Users/Windows/Documents/Codex/2026-09-08/ia/work/slice-a-contracts/CharterCandidate.json",
+      "sha256": "44010776cae2a816d4db8134c96a0ee0f07a692b84bae47fc37a6effc7e302c8",
+      "actual_sha256": "44010776cae2a816d4db8134c96a0ee0f07a692b84bae47fc37a6effc7e302c8"
+    },
+    {
+      "path": "C:/Users/Windows/Documents/Codex/2026-09-08/ia/work/slice-a-contracts/SliceAPreregistration.json",
+      "sha256": "289dd3f7091b41a319b6604d6246010d4acd60e8f44955b6ce8b67ec13f8a033",
+      "actual_sha256": "289dd3f7091b41a319b6604d6246010d4acd60e8f44955b6ce8b67ec13f8a033"
+    },
+    {
+      "path": "C:/Users/Windows/Documents/Codex/2026-09-08/ia/work/slice-a-contracts/SliceACaseCatalog.json",
+      "sha256": "c07b1450cd3615ee66d56fffbca11966a0de1cc1bc75b8855fc81df42c58ed86",
+      "actual_sha256": "c07b1450cd3615ee66d56fffbca11966a0de1cc1bc75b8855fc81df42c58ed86"
+    }
+  ],
+  "determinations": [
+    {
+      "id": "AH01",
+      "decision": "ACCEPT",
+      "boundary": "Only A10 population and metric interpretation change to AgentHandoff; no Human efficiency claim. Original four source files remain exact bytes."
+    },
+    {
+      "id": "AH02",
+      "decision": "ACCEPT",
+      "boundary": "16 normal case pairs; one baseline and three Clued observations per case; at least 12 valid nonzero pairs; median of per-case median(three Clued)/baseline ratios <=0.8. Case is statistical unit; all 16 failures/invalids reported, no speed-based selection."
+    },
+    {
+      "id": "AH03",
+      "decision": "ACCEPT",
+      "boundary": "Host monotonic start/end with UTC correlation, immutable trace/artifact/session/input/config links, machine-checkable completion then blinded independent correctness; no invented timers or AI self-rating. Normal inference/tool/queue time remains included; externally interrupted exclusions are preregistered, evidenced and unioned."
+    },
+    {
+      "id": "AH04",
+      "decision": "ACCEPT",
+      "boundary": "Baseline and Clued arms use equal legal source/task/information boundaries and fixed contracts, fresh isolated sessions/state. Seed 20260908 SHA256 case ordering with 8/8 arm-order balance is deterministic and fixed before outcomes. The executor cannot accept its own result or learn hidden Gold from preceding arms."
+    },
+    {
+      "id": "AH05",
+      "decision": "ACCEPT",
+      "boundary": "Measured activity serial by default; actual coordinator and parallel roles do not increase one-active-controlled-test capacity. A09 slot reuse only for identical real runs with complete trace, never retroactively invented timing or enlarged sample count."
+    },
+    {
+      "id": "AH06",
+      "decision": "ACCEPT",
+      "boundary": "A08/A09 24 cases, 72 slots, 16 normal/8 blocked, success/denial/security/provenance/token/cold-warm thresholds unchanged. Unknown, interruption and retries preserve original evidence and capacity under applicable stop/recovery rules."
+    },
+    {
+      "id": "AH07",
+      "decision": "ACCEPT",
+      "boundary": "Formal Entry, slice-specific actual authority, fixed Gold/host/config/timer/current-source/remaining budget required before execution. This acceptance adds no provider/model/paid/production scope, controller qualification or GA."
+    }
+  ],
+  "earlier_audit_supersession": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/RemainingAuthorizationAudit.json",
+    "sha256": "e93d051c0878f396757eef91042110a0a834a431997b313e84ed0f8161af803c",
+    "affected_item": "actual_external_or_additional_decisions EX01 / original A10 human-dependency discussion",
+    "status": "SUPERSEDED_FOR_CURRENT_A10_BY_LATER_EXPLICIT_USER_SCOPE_CHANGE",
+    "preservation": "Do not edit historical audit. Do not request human participation or another approval for the now-authorized AgentHandoff population. Other conditional model/paid/reboot/expiry/scope boundaries remain."
+  },
+  "remaining_actual_inputs": [
+    "Complete A08 accepted synthetic fixture/Gold custody, task and baseline contract, all exact source/host/config/tokenizer/model settings and deterministic schedule bindings",
+    "Applicable real Entry/slice execution authorization and capacities; this protocol does not reuse PRE_ENTRY GA for post-Entry execution",
+    "Actual instrumented agent runs and independent trace/correctness/statistical assessment; ratio threshold may actually fail"
+  ],
+  "formal_effect": {
+    "protocol_accepted": true,
+    "a10_pass": false,
+    "human_measurement": false,
+    "measurement_executed": false,
+    "entry_pass": false,
+    "ga_issued": false,
+    "signature_publication": "Pending coordinator integration and any applicable real signature binding; no future merge claimed"
+  },
+  "next": "Integrate exact protocol acceptance; prepare complete bounded execution inputs without another population-change approval. Run only when applicable prerequisites are actually satisfied."
+}

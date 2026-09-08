@@ -1,0 +1,115 @@
+{
+  "record_kind": "APPROVED_BASELINE_CONFLICT_SUPPLEMENT_DECISION",
+  "record_id": "CLUED_PHASE2_STABILITY_BASELINE_CONFLICT_SUPPLEMENT_20260908",
+  "date": "2026-09-08",
+  "status": "USER_APPROVED_SCOPE_DISPOSITION_SIGNATURE_PUBLICATION_PENDING",
+  "source_commit": "78fb8a0edcd09a526ffeeece4aa19fb27c1790b6",
+  "authority_source": {
+    "kind": "EXPLICIT_CURRENT_CONVERSATION_USER_APPROVAL",
+    "task_id": "01a07f5e-510d-7db3-877d-f56e9bfa07ea",
+    "verbatim_plaintext": "批准这份已独立核对的基线冲突处置建议作为单独补充决定",
+    "transcription_note": "The linked document title is rendered as plain text; exact user wording and link were supplied to the implementer by coordinator /root.",
+    "linked_document": "C:/Users/Windows/Documents/Codex/2026-09-08/ia/work/kernel-phase2-repo/artifacts/clued-validation/kernel-stability-hardening-20260908/ReviewFindings.md",
+    "approved_document_sha256": "54301bbfabc7de5ca6d85a2611f3d80f4a3cc6ca5eb442684552d5d7aac24ecb",
+    "effect": "Approves RF-01 through RF-03 as this separate scope and applicability disposition; not an execution grant or Gate result."
+  },
+  "exact_sources": [
+    {
+      "role": "ORIGINAL_21_STEP_BASELINE",
+      "path": "C:/Users/Windows/Documents/Codex/2026-09-07/ni-6/outputs/Clued_Phase2_结构治理与_Naming_Integrity_固定执行基线_20260907.md",
+      "sha256": "f465bcb77aced171b4f241da7a23c1e02133716700227caaabb7954be39899ad"
+    },
+    {
+      "role": "STABILITY_TRANSVERSE_BASELINE",
+      "path": "C:/Users/Windows/Downloads/Clued_Phase2_Kernel_Stability_Hardening_横向接入执行方案_v0.1_正式基线_20260908.md",
+      "sha256": "936cb966a75765ca156f5706237467b940ea32891bbc98c2c21ec9a8b8ec06a0"
+    },
+    {
+      "role": "HEALTH_SURGICAL_BASELINE",
+      "path": "C:/Users/Windows/Downloads/Clued_Kernel_Health_Surgical_Repair_接入执行方案_v0.1_FIXED_20260908.md",
+      "sha256": "44f59133c78e113710d5ee19e89c8a12a1393b15da27bb9290b521e8294a0b26"
+    }
+  ],
+  "preservation": {
+    "original_21_steps": "All original numbers, meanings, ordering, required evidence and accepted object scopes remain unchanged; no renumbering, compression, substitution or blanket historical rerun.",
+    "original_step16_through_21": {
+      "16": "现有四个 Phase 2 Gate 重跑",
+      "17": "Canonical Semantic No-Change PASS",
+      "18": "不可绕过 required check 或等价强制证明",
+      "19": "Naming Integrity Closeout",
+      "20": "Developer Skill",
+      "21": "User Skill"
+    },
+    "source_bytes": "All three exact baseline files and ReviewFindings.md remain unchanged. Their historical preparation/proposal labels are not retroactively rewritten; this separately approved successor records the disposition.",
+    "accepted_objects": "Existing naming/structure closeout and historical thin Developer/User adapter acceptance remain limited to their accepted objects. Current later accepted Skill objects likewise retain their actual scope; none becomes Stability runtime acceptance by inference."
+  },
+  "dispositions": {
+    "RF-01": "APPROVED: Keep original Step16-21 semantics. Record the six new activities as unnumbered transverse Hooks below, retaining their actual dependencies instead of reusing old step labels.",
+    "RF-02": "APPROVED: Map historical accepted objects separately from newly affected objects. Reuse evidence only when object, version, scope and invalidation conditions match. New Stability Freeze requires current applicable review/acceptance; HS0 formal Freeze remains after current applicable R07-R10 P0 closure and before R11. Do not retroactively claim old Freeze accepted new contracts, reopen all historical steps or omit an applicable Gate.",
+    "RF-03": "APPROVED: Bind R11 to actual transverse runtime alignment and qualified execution prerequisites. HS3 retains all original Health prerequisites and applicable release authorization. Neither old Step16/21 acceptance nor Step12-14 Local Warning substitutes for these Gates."
+  },
+  "unnumbered_transverse_hooks": [
+    {
+      "name": "Stability 运行时与治理对齐 Hook",
+      "source": "Stability §12.9 / §27",
+      "requires": ["本轮适用 Stability 合同及 HS0 Freeze 的真实前置与接受", "受影响对象的 S1-S6 实现、消费者接线、旧写入口关闭和强制执行证据"],
+      "before": "R11",
+      "scope_rule": "Bind actual runtime/governance objects and evidence; original Step16 four-Gate rerun remains independently applicable."
+    },
+    {
+      "name": "Developer Tooling 与 Console 非生产接线 Hook",
+      "source": "Stability §12.12 / §27",
+      "requires": ["适用 R11 与 HS1 前置及实际结果", "本 Hook 的非生产范围、可信投影和受控操作契约"],
+      "before": "Evidence 与具名批准 Hook",
+      "scope_rule": "Console does not become Kernel Authority; no replacement for original Step17 semantic no-change proof."
+    },
+    {
+      "name": "Evidence 与具名批准 Hook",
+      "source": "Stability §12.13-12.14 / §27",
+      "requires": ["前述非生产接线及适用变更的真实可复验证据", "每个动作实际 reviewer/approver 身份、范围和有效授权；六组原请求逐项映射"],
+      "before": "HS2 非生产 Surgical Drill",
+      "scope_rule": "Named authorization is verified before each applicable action throughout the chain; this collection Hook does not postpone or confer that authorization. Original Step18 non-bypass proof remains required."
+    },
+    {
+      "name": "冻结后治理与例外 Hook",
+      "source": "Stability §12.15-12.16 / §27",
+      "requires": ["原 Naming Integrity Closeout 的适用已接受范围", "本轮后继链中的 HS2、完整 Slice A 接受与 HS2.5 Repairability Gate"],
+      "before": "首批 Product Inputs Hook",
+      "scope_rule": "Changes trigger applicability/invalidation checks; exceptions require owner, scope, expiry and evidence. This does not reopen or replace original Step19."
+    },
+    {
+      "name": "首批 Product Inputs Hook",
+      "source": "Stability §12.16 / §27",
+      "requires": ["冻结后治理与例外 Hook 的适用条件", "产品输入自身范围和接受条件；不含生产数据", "新增能力与 Consumer 遵守统一稳定性合同及 CAS/State/Receipt 写链"],
+      "before": "架构接受复验与发布 Hook",
+      "scope_rule": "No restoration of direct-write or disabling invariants for speed; original Step20 Developer Skill acceptance cannot satisfy product-input acceptance."
+    },
+    {
+      "name": "架构接受复验与发布 Hook",
+      "source": "Stability §12.17 / §27",
+      "requires": ["实际待发布对象和首批 Product Inputs 的适用接受", "身份唯一性、消费者写链、Stability/Health Hook 一致性及关键负例复验", "Shadow 无未解释严重漂移", "独立的实际适用发布授权"],
+      "before": "仅在全部 Health 前置满足后评估 HS3",
+      "scope_rule": "Test success does not establish production safety; original Step21 User Skill acceptance cannot satisfy architecture/release acceptance."
+    }
+  ],
+  "unchanged_gate_dependencies": {
+    "current_P0": "Apply Stability §13 to current affected R07-R10 / A01-A11 risk only: close touched checkpoint/mutation/retry/receipt/authorization/revision/state defects. No A12/A13/A14 package or full future Command Engine prerequisite. Future conditional P0 items remain mapped to their applicable stages, not silently removed or made cyclic blanket predecessors.",
+    "new_affected_objects": "Record actual dependencies for new contract review/acceptance, Stability Freeze, HS0 Freeze, implementation, consumer rewiring, old-entry closure, enforcement and runtime alignment as transverse work; preserve original structure/architecture prerequisites wherever applicable.",
+    "HS0": "Health §4.1: formal Contract/Hook Freeze after current applicable R07-R10 P0 closure and before R11; no HS0 Freeze issued here.",
+    "R11": "Applicable runtime alignment plus actual qualified controller/actor, accepted Profile, exact eligible subject/runtime/config, scoped action authorization, stop/revocation freshness, budget and durable evidence sink. No new R11 PASS; Local Warning is insufficient.",
+    "HS1": "After actual applicable R11; Detect/Classify/Diagnose/Report only, no automatic production repair.",
+    "HS2": "After applicable evidence and named approval; separate scoped non-production fault injection and safe recovery authority remains required.",
+    "HS3": "Health §9: all applicable P0, R11, HS1, HS2, full Slice A and Repairability conditions must be satisfied, together with actual applicable release authorization. Only then assess the controlled Surgical lane; no SurgicalGrant issued here.",
+    "HS4": "Remains after HS3 under the original Health ordering."
+  },
+  "implementation_and_authority_boundary": {
+    "approved_now": "Only the exact RF-01/02/03 scope and baseline-compatibility disposition, and its separate documentary implementation.",
+    "not_approved_by_this_record": ["Any new unapproved scope", "Production SQL or Worker deployment", "Fault injection or Surgical authority", "Controller/Profile qualification or GateAuthorization", "Entry or Slice A execution", "Control-root registration, new root keys or old pin changes"],
+    "existing_authorizations": "Existing separately authorized work is neither revoked nor widened by this supplement; use its actual limits and fresh prerequisites.",
+    "signature_publication": "Coordinator /root integrates and binds actual signature/publication evidence separately; do not predeclare a future commit, signature or acceptance receipt.",
+    "signature_evidence": null,
+    "stage_pass_issued": false,
+    "canonical_business_write_performed": false,
+    "runtime_modified": false
+  }
+}
