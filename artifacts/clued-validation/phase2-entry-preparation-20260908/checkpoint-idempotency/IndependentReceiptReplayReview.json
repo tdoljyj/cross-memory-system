@@ -1,0 +1,113 @@
+{
+  "kind": "INDEPENDENT_CHECKPOINT_RECEIPT_REPLAY_REVIEW",
+  "status": "LOCAL_ENGINEERING_VERIFIED",
+  "reviewed_at_utc": "2026-09-08T10:24:34.1038865Z",
+  "scope": "Successor repair limited to returning the unique original receipt_id from the existing public.clued_mcp_commit_checkpoint(text,jsonb) duplicate response. Not a re-review of the predecessor repair or a production deployment.",
+  "sources": {
+    "migration": {
+      "path": "apps/clued-cloud/supabase/migrations/20260908102500_clued_checkpoint_replay_receipt.sql",
+      "sha256": "35ba727d2729a74417677ed7bc1da3addd7b8ff33d9b722f45a982346786151e"
+    },
+    "test": {
+      "path": "apps/clued-cloud/tests/checkpoint-replay-receipt-db.test.mjs",
+      "sha256": "d737cc6ba0339b13fdd3f97b7087996ac00b29ad01521d7a811bcd262bf3ccdf"
+    },
+    "predecessor": {
+      "path": "apps/clued-cloud/supabase/migrations/20260908094000_clued_checkpoint_idempotency_binding.sql",
+      "sha256": "0a4ec410e9475698b1dd2b2f670cbe2532441ed750c798a01d25333e3ebf03ea",
+      "role": "Exact diff comparison only; previous PG suite not rerun"
+    },
+    "receipt_contract": {
+      "path": "docs/clued-two-level-views/Clued_单一数据源与两级五视图架构方案_v1.6.md",
+      "sha256": "5ec70daed214ed6518dfb6998ce809a7a532b25fde6979fe18303cbe791f98af",
+      "section": "9.5",
+      "line": 962,
+      "meaning": "Exact idempotent replay returns the original Receipt. This is an existing rule, not a new Stability requirement."
+    },
+    "payload_constraint": {
+      "path": "docs/clued-two-level-views/Clued_校验不变量与去重矩阵_v1.1.md",
+      "sha256": "2e2205aeb73c1f36fc65816b2bc7243c05ce3645661b0854590fd05190879b1c",
+      "line": 127,
+      "id": "C04",
+      "meaning": "The same key cannot map to different payload; this constrains replay and does not independently define the Receipt-reference field."
+    }
+  },
+  "static_review": {
+    "semantic_delta": [
+      "Add (array_agg(r.id))[1] to the existing matching-original-Receipt aggregate and assign the existing v_receipt_id variable.",
+      "Add receipt_id to duplicate return only after existing count=1/non-null base/exact effective-payload validation."
+    ],
+    "migration_lines": [
+      55,
+      56,
+      72
+    ],
+    "zero_or_multiple_receipts": "Existing count<>1 check returns conflict before any receipt_id is disclosed; aggregation order does not affect the single-row accepted case.",
+    "unchanged": [
+      "Function signature",
+      "SECURITY DEFINER and empty search_path",
+      "Binding and session authorization before lookup",
+      "Owner/binding/key namespace and advisory lock",
+      "Original Receipt owner/binding/operation/object/version match",
+      "Non-null original base and effective context/snapshot/summary/next_action comparisons",
+      "CAS and fresh-commit write path",
+      "No top-level data updates, GRANT, revoke or new relation"
+    ],
+    "finding": "No scope expansion or blocking issue found in the frozen successor."
+  },
+  "independent_execution": {
+    "command": "node --test tests/checkpoint-replay-receipt-db.test.mjs",
+    "cwd": "apps/clued-cloud",
+    "runs": 1,
+    "engine": "Actual embedded PostgreSQL, private random local temporary cluster; authenticated synthetic binding exercised through anon-role RPC",
+    "exit_code": 0,
+    "tests": 7,
+    "subtests": 6,
+    "parent_test": 1,
+    "pass": 7,
+    "fail": 0,
+    "skipped": 0,
+    "cancelled": 0,
+    "duration_ms": 3306.5394,
+    "frozen_hashes_matched_before_and_after": true,
+    "raw_result_locator": "Current child task tool output chunk 6c5718; result counts and named checks reproduced here.",
+    "checks": [
+      {
+        "name": "Predecessor counterexample",
+        "result": "Observed duplicate omits the actual persisted original Receipt id."
+      },
+      {
+        "name": "Legacy replay through two fresh valid sessions",
+        "result": "Both return the exact original checkpoint/version/receipt_id; checkpoint count, checkpoint Receipt count, complete streams and heads unchanged after each replay."
+      },
+      {
+        "name": "New post-patch commit then replay",
+        "result": "Commit has a Receipt; fresh-session replay returns the same checkpoint/Receipt with exactly one matching checkpoint Receipt and no changes to counts/streams/heads."
+      },
+      {
+        "name": "Changed snapshot/summary/next_action/base_version/context",
+        "result": "All conflict, disclose no receipt_id, and leave counts/streams/heads unchanged after each request."
+      },
+      {
+        "name": "Zero and two matching original Receipts",
+        "result": "Synthetic malformed-history fixtures each conflict with no receipt_id and no added facts or changed stream/head state. Fixture injection is local only."
+      },
+      {
+        "name": "Repeat migration immutability and privileges",
+        "result": "Original checkpoint and Receipt complete row JSON unchanged; proacl, prosecdef and proconfig exactly preserved."
+      }
+    ],
+    "test_strengthening": "Independent review requested the necessary state/privilege assertions before freeze; implementation owner added them. This lane did not edit SQL or tests."
+  },
+  "limits": [
+    "No production write or deployment by this reviewer.",
+    "No new production receipt replay result claimed; the earlier production observation of missing receipt_id remains truthful for its predecessor function.",
+    "No new GA/GRR, formal qualification, R11, Slice A or whole Phase2 acceptance.",
+    "Exact new response repair only; no comprehensive re-test of prior payload/CAS/authorization repair."
+  ],
+  "authority_effect": "NONE",
+  "production_operations": 0,
+  "implementation_files_modified_by_reviewer": 0,
+  "commit_or_push": false,
+  "anomalies": []
+}

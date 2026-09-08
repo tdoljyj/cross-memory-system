@@ -1,0 +1,78 @@
+{
+  "kind": "CHECKPOINT_RECEIPT_REPLAY_FORWARD_REPAIR_CANDIDATE",
+  "status": "LOCAL_ENGINEERING_VERIFIED_NOT_DEPLOYED",
+  "authority_effect": "NONE",
+  "observed_utc": "2026-09-08T10:25:10.454940+00:00",
+  "source_commit": "8af1121b858a7f44c0210e17c751203e529cdc26",
+  "contract_applicability": {
+    "existing_v16_receipt_section": "9.5",
+    "source_lines": [
+      962,
+      992
+    ],
+    "c04_receipt_type": "DATABASE_CONTINUITY_TRANSACTION_RECEIPT",
+    "existing_fresh_response": "receipt_id already returned on committed",
+    "gap": "duplicate omits the unique original receipt_id that is already verified",
+    "stability_is_new_requirement_source": false
+  },
+  "production_boundary": "Coordinator reported production duplicate behavior; this implementer ran no production read/write/deploy.",
+  "change": {
+    "function": "public.clued_mcp_commit_checkpoint(text,jsonb)",
+    "return_change": "Add unique original receipt_id only on already validated duplicate result",
+    "namespace": "existing user,binding,idempotency_key",
+    "old_migration_modified": false,
+    "existing_rows_or_grants_modified": false
+  },
+  "validation": {
+    "command": "node --test tests/checkpoint-replay-receipt-db.test.mjs",
+    "cwd": "apps/clued-cloud",
+    "database": "fresh embedded PostgreSQL, synthetic fixtures only",
+    "tests": 7,
+    "pass_count": 7,
+    "fail_count": 0,
+    "skipped": 0,
+    "coverage": [
+      "predecessor missing-receipt counterexample",
+      "legacy replay/new valid sessions use original Receipt",
+      "new commit/replay exact Receipt id",
+      "all five effective payload/context changes conflict with no Receipt disclosure",
+      "zero/multiple original Receipts conflict",
+      "replay/rejection preserve checkpoint and receipt counts, stream/head state",
+      "immutable old rows and proacl/prosecdef/proconfig unchanged"
+    ],
+    "independent_review": "PENDING_SEPARATE_REVIEW",
+    "production_deployed": false
+  },
+  "files": [
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260908094000_clued_checkpoint_idempotency_binding.sql",
+      "sha256": "0a4ec410e9475698b1dd2b2f670cbe2532441ed750c798a01d25333e3ebf03ea",
+      "bytes": 6546,
+      "crlf_count": 0
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260908102500_clued_checkpoint_replay_receipt.sql",
+      "sha256": "35ba727d2729a74417677ed7bc1da3addd7b8ff33d9b722f45a982346786151e",
+      "bytes": 6612,
+      "crlf_count": 0
+    },
+    {
+      "path": "apps/clued-cloud/tests/checkpoint-replay-receipt-db.test.mjs",
+      "sha256": "d737cc6ba0339b13fdd3f97b7087996ac00b29ad01521d7a811bcd262bf3ccdf",
+      "bytes": 9586,
+      "crlf_count": 0
+    },
+    {
+      "path": "docs/clued-two-level-views/Clued_单一数据源与两级五视图架构方案_v1.6.md",
+      "sha256": "5ec70daed214ed6518dfb6998ce809a7a532b25fde6979fe18303cbe791f98af",
+      "bytes": 136753,
+      "crlf_count": 0
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedReceiptRegistry.candidate.json",
+      "sha256": "05d182805b31ba9d5e6c1c3fa32ae2081527a92faaa76263debded6ffca5efa4",
+      "bytes": 91138,
+      "crlf_count": 1921
+    }
+  ]
+}

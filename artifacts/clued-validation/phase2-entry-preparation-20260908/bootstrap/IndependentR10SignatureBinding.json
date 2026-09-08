@@ -1,0 +1,50 @@
+{
+  "status": "VERIFIED_EXACT_SIGNED_R10_PROJECTION_ACCEPTANCE",
+  "reviewer": "/root/project_list_auth_fix",
+  "observed_at": "2026-09-08T10:29:23.288Z",
+  "method": "Independent read-only GitHub API reads of PR23, its exact merge commit, the R10 acceptance blob and its preceding signature-binding blob. GitHub signature attestation checked; no local GPG verification or new signer.",
+  "repository": "tdoljyj/cross-memory-system",
+  "pull_request": {
+    "number": 23,
+    "url": "https://github.com/tdoljyj/cross-memory-system/pull/23",
+    "merged": true,
+    "merged_by": "tdoljyj",
+    "merged_at": "2026-09-08T10:27:11Z",
+    "head_sha": "fbe26b7c536615e5c8ee246670d2de9a6e571574",
+    "base_sha": "1a720b3ad3e2c181921bedd372d8121eafd9e005"
+  },
+  "signed_merge": {
+    "sha": "9bcdb538dd6ed97ed893b03c6a229ac14fb68157",
+    "committer_login": "web-flow",
+    "tree": "c65ccd206a91fa308590f7bdcf2a0f96f03e52a0",
+    "parents": ["1a720b3ad3e2c181921bedd372d8121eafd9e005", "fbe26b7c536615e5c8ee246670d2de9a6e571574"],
+    "verified": true,
+    "reason": "valid",
+    "signed_payload_tree_and_parents_match": true,
+    "pr_head_base_and_merge_parents_match": true
+  },
+  "subject": {
+    "path": "R10IndependentProjectionAcceptance.json",
+    "sha256": "e19261b718cad252c1881cd5559e2e65b115d475952f5dbcd8d9ebe0dc7250be",
+    "git_blob": "6f13b5c4a8efcdee00072035bbbc32407e570f80",
+    "bytes": 8216,
+    "independent_git_blob_sha1_matches": true,
+    "remote_bytes_match_prior_review_and_current_local": true
+  },
+  "parent_binding": {
+    "path": "IndependentR07R09SignatureBinding.json",
+    "sha256": "b7276afedb93c133cb63d80813f70359e48e263bab1318235980b690ee01523c",
+    "git_blob": "078a28cfddc63f984db6136854e0e4179ac7e29a",
+    "signed_merge": "1a720b3ad3e2c181921bedd372d8121eafd9e005",
+    "r09_decision_sha256": "83814ca7d19173034d107da31bcd1456d34125bdafae6048fce00fa6f0907e25",
+    "r09_subject_sha256": "ac7d4a13c069dddd7acd8fa5258052e61e28108844701e5988c0d5105470f70f",
+    "matches_exact_r10_parent_references": true
+  },
+  "path_base": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/",
+  "effect": "Actual independent R10 projection acceptance is now bound to a real verified merge after the verified R07/R08 and R09 decisions. No projection review or unchanged test was repeated.",
+  "limits": [
+    "The original Owner delegation still expires at 2026-09-09T09:28:59Z; this merge does not renew it.",
+    "This is point-in-time signature and exact-content verification, not fresh runtime revocation enforcement.",
+    "No CI status, model/PQUAL execution, controller/Profile qualification, GA, new trust root, generation, Kernel wire receipt or production right is inferred."
+  ]
+}
