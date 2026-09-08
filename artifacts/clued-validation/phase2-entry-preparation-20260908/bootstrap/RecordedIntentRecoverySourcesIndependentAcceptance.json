@@ -1,0 +1,30 @@
+{
+  "state": "ACCEPTED_EXACT_RECORDED_INTENT_NONPASS_RECOVERY_SOURCES",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "reviewer_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/e7f738ae3c247e41733872ab95387440205c736a",
+    "sha256": "e09ef634712ce1206600402552073bae91e7296f2b4e2d3f99855bd760c944bd"
+  },
+  "recovery_source_manifest_sha256": "60f929af4be23e6f35faabd068b4158ce1e894382a6edefd3707efa2347bf0a4",
+  "original_controller_digest": "edf31377656e1a9a473d0095df72231c058266007e4fd4046e0a9b8c2d6a60d9",
+  "ga_id": "ga_a7a420f7de4a4037b9dcb5cd7dae796e",
+  "ga_sha256": "30739d18ac4b6d6836799f292533a0ce71cf2e1b3f05a38724ab61945b0d72fa",
+  "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+  "scope_digest": "07cd9c900eb6132e2affe3b7e6b129aba659ff3a49c963e141e92e11b65e8d6f",
+  "allowed_results": ["FAIL", "BLOCKED", "STALE"],
+  "old_qualification_extended": false,
+  "new_action_authorized": false,
+  "budget_refund": false,
+  "bundle_sha256": "06ed110ce2735bf05237e0c085e73434e40af156dedbed23220c2f376cdae78d",
+  "data_helper_sha256": "976928b698c36b74e226f1be0a0e318fc311b99d4f2a9c9f34bf94f5dfc9aed7",
+  "transport_preparation_sha256": "8219e2c273d20d57193b5f9dc86314ae9eef41287d121c7be68b6e8553194c53",
+  "transport_sha256": "8fbf1b8ba8302588ba3369c7e03be3e0502d27d691479fd507161fc999c49e3f",
+  "guarded_install_sql_sha256": "aec7407df11a4240dd8b25d75663f0c20b3fe22ef5a50e03cdbac14a77d00fc3",
+  "reconciliation_assessment_sha256": "87a3ed9239cdf7128d57326a95688438715fc8ed98ca52a3fe082c810f8d1104",
+  "acceptance": "Only the exact recorded CREATE Intent at sequence 6, followed by revocation without any dispatch/effect/container, may use this nonPASS reconciliation. Persisted Intent is retained and is not represented as absent. Complete original SQL/transport bytes, cancellation and stdout, exact host inventory, and independent overall BLOCKED assessment remain bound through the lossless source pack and original decision/index/GATE_RESULT chain. No STOP, fixture execution or test PASS is fabricated; tests remain empty.",
+  "verification": "Reviewed the 11-source recovery path, pure data helper, fixed byte transport, guard and local test observations. Independently verified 31 indexed file entries and regenerated the exact guarded SQL from the actual 21:00:31.433324Z independent database snapshot. Only execution_transition changes; all data, permissions, old receipt/history and the accepted B record_effect_intent definition are retained. Historical 17 semantic checks, final 3 shared-source checks, 10 local PostgreSQL checks, 2 guard checks and 2 transport mock checks are engineering evidence, not a formal recovery execution.",
+  "execution_conditions": "One atomic guarded installation may proceed. Real DECISION/SIGNING transitions, real original-purpose signature verification, same-process fresh authority checks, the 15-second CAS boundary, unique commit and complete readback remain mandatory. Measure the actual full prepared request against 131072 bytes before submission. Unknown results remain preserved and are not automatically retried.",
+  "future_runtime_boundary": "This acceptance is confined to this GA recovery. While the new execution_transition is installed it is covered by this recovery source manifest, not by a claim that the old 201-source runtime database identity is unchanged. Future effect execution requires the exact original transition restoration and actual alignment checks, together with the separately accepted B compatibility appendix e433f421b768c548d992cb490a5b5f266c133006b2aecaa9386899d6d1b9f0d6 and all original admission conditions. No new binding API, Root generation or authority is introduced.",
+  "actual_recovery_execution_claimed": false,
+  "formal_pqual_result": null
+}

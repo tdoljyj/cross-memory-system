@@ -1,0 +1,61 @@
+{
+  "state": "EXACT_PARENT_PRESERVED_NEW_RECORDED_INTENT_RECOVERY_CANDIDATE",
+  "parent_manifest_sha256": "411625aded962a68c7d4cfa0243ac2e2c29a9209a45749129ce31335cbd27368",
+  "parent_files": [
+    {
+      "path": "OriginalSourceBindings.json",
+      "sha256": "70bcc46fb75103d0d74bfc082552d0fbcd6acccc8d10b9df68f2c26cde53af31",
+      "bytes": 897
+    },
+    {
+      "path": "alter.candidate.sql",
+      "sha256": "ea114e8f65f08d223fa7dd2fc64ce3c4fd66a6de822311c706a3e6f6c8c78f31",
+      "bytes": 12389
+    },
+    {
+      "path": "build.mjs",
+      "sha256": "50037a51b01e3072496349ec8010fc0eb9f4287a8a3af3b830563594737d3ddf",
+      "bytes": 8694
+    },
+    {
+      "path": "grr.mjs",
+      "sha256": "1e18235caa8b5d9dd1df119ee9601335417645c93c8dc7c716e6263cedd055b8",
+      "bytes": 5769
+    },
+    {
+      "path": "not-started.mjs",
+      "sha256": "fee318f9ed0b10eff1fad7217f5756abf5fd7226947cddc8404b060557b7e9b7",
+      "bytes": 7900
+    },
+    {
+      "path": "recovery-sources.mjs",
+      "sha256": "1a0b12c940100ad6e02a2544cf3d5f162ace070a667266b82a5a53bad6294dd9",
+      "bytes": 3386
+    },
+    {
+      "path": "result-terminal.mjs",
+      "sha256": "876822b5c33f7d618f8c798463c68e1ee1e1fd412c7055783a9e3f5afcee1984",
+      "bytes": 7579
+    },
+    {
+      "path": "write-targets.mjs",
+      "sha256": "045e3018d8e738d2bcb198755754a219c51b3df7af53404dc19d3e69b88c4338",
+      "bytes": 6416
+    },
+    {
+      "path": "recovery-context.mjs",
+      "sha256": "6fea4140af9d5a63a93e808f8fcfbf258eaa8f2987a533630aeb9a819c931a3d",
+      "bytes": 20302
+    },
+    {
+      "path": "recovery-cli.mjs",
+      "sha256": "4a17d112482919d77c6138e84832c999658803f23fa2602692f5bc43ab36b9ae",
+      "bytes": 1717
+    },
+    {
+      "path": "tool-entry.functions.js",
+      "sha256": "4e204535d7cbcf2ecc504caef3907a9243d4bef0b495a2b43c51c6f454c60db2",
+      "bytes": 9386
+    }
+  ]
+}

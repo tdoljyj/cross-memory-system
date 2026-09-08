@@ -1,0 +1,21 @@
+{
+  "state": "EXACT_SIGNING_STATE_UNCHANGED_AFTER_PRECHALLENGE_VERIFIER_FAILURE",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "observed_at": "2026-09-08 21:19:40.004076+00",
+  "ga_id": "ga_a7a420f7de4a4037b9dcb5cd7dae796e",
+  "receipt_id": "grr_recorded_intent_a7a420f7de4a4037b9dcb5cd7dae796e",
+  "actual_failure": "FRESH_SQL_OBSERVATION_REQUIRED",
+  "actual_exit_code": 1,
+  "challenge_sent": false,
+  "commit_sent": false,
+  "independent_live_check": "Complete execution state equals the prior actual SIGNING readback after excluding only observation timestamps. Sequence 9, Root, binding, nine events, previous receipt, current reservation and budget are unchanged; this GA remains revoked SIGNING with no container or receipt.",
+  "charged_seconds": 2706,
+  "charged_evidence_bytes": 590982067,
+  "transport_observation": "The recorded 905978-character first input ends in a real LF; send was recorded at 21:16:15.363Z through 21:16:16.499Z. The later second transfer contains zero characters. These tool timings do not establish when the original CLI consumed the complete line. The first currentness check precedes signature/network verification in recovery-context.",
+  "permitted_next_step": "Prepare and independently review a narrowly bounded transport correction and explicit new pure-verification attempt for exactly the same GA, already-signed receipt and reserved decision. Preserve the original UNKNOWN attempt and all raw outputs. Verify unchanged actual state before restarting. The original 11-source semantics, 15-second freshness requirement, same-process second challenge and unique terminal CAS remain mandatory.",
+  "automatic_retry_authorized": false,
+  "direct_cas_authorized": false,
+  "new_signature_authorized": false,
+  "new_budget_or_effect_authorized": false,
+  "formal_result": null
+}
