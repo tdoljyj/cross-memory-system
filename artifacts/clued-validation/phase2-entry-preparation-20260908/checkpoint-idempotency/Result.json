@@ -1,0 +1,47 @@
+{
+  "kind": "EXISTING_CHECKPOINT_IDEMPOTENCY_REPAIR",
+  "status": "LOCAL_DATABASE_VERIFIED_NOT_DEPLOYED",
+  "authorization_effect": "NONE",
+  "qualification_issued": false,
+  "production_mutated": false,
+  "production_read": {
+    "subject": "public.clued_mcp_commit_checkpoint(text,jsonb) function definition only",
+    "definition_sha256": "4108527277332f9c45741e064d1f5d29b48ee215ad2c394146910429d421b059",
+    "observed_at": "2026-09-08T09:09:51.431127Z",
+    "successor_guard_found": false,
+    "worker_mapping": "apps/clued-cloud/worker/continuity.ts:873"
+  },
+  "candidate": {
+    "migration": "apps/clued-cloud/supabase/migrations/20260908094000_clued_checkpoint_idempotency_binding.sql",
+    "migration_sha256": "0a4ec410e9475698b1dd2b2f670cbe2532441ed750c798a01d25333e3ebf03ea",
+    "test": "apps/clued-cloud/tests/checkpoint-idempotency-db.test.mjs",
+    "test_sha256": "d100f98dee396d741c4e16eef4509dbfe85b34f89c185e91f50d6d775387e42c"
+  },
+  "before_fix_reproductions": [
+    {"input": "same owner/binding/key, changed summary", "required": "conflict", "observed": "duplicate with original checkpoint ID"},
+    {"input": "same owner/binding/key, changed authorized context", "required": "conflict", "observed": "duplicate with original checkpoint ID labelled as different context"},
+    {"input": "fresh key, null base_version", "required": "reject invalid CAS input", "observed": "committed"}
+  ],
+  "after_fix": {
+    "runner": "node --test --test-force-exit tests/checkpoint-idempotency-db.test.mjs",
+    "environment": "disposable embedded PostgreSQL with synthetic users, bindings, contexts and payloads",
+    "tests": 12,
+    "subtests": 11,
+    "pass": 12,
+    "fail": 0,
+    "skip": 0,
+    "duration_ms": 3174.405,
+    "checks": [
+      "normal legacy same-effective-payload replay with fresh valid session",
+      "snapshot/summary/next_action/base/context drift conflicts with no new checkpoint or receipt",
+      "null and negative base rejected; bigint maximum has no overflow",
+      "legacy null-base original receipt cannot be replaced with inferred version-minus-one",
+      "foreign-binding session rejected; legitimate independent binding/owner namespaces preserved",
+      "same-key concurrent identical requests commit once and replay once",
+      "same-key concurrent different contexts commit once and conflict once",
+      "ended/expired session and revoked binding cannot replay",
+      "repeatable migration preserves original checkpoint, immutable receipt and RPC privileges"
+    ]
+  },
+  "remaining": ["independent review", "integration into existing CI database command by coordinator", "no production rollout authorized in this subtask"]
+}

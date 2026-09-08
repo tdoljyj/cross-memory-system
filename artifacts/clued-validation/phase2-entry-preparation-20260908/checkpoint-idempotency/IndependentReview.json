@@ -1,0 +1,76 @@
+{
+  "scope": "INDEPENDENT_LOCAL_POSTGRESQL_REVIEW",
+  "authorization_effect": "NONE",
+  "production_deployed": false,
+  "formal_phase2_qualification": false,
+  "reviewer": "qualification_cases independent from controller_candidate implementation",
+  "verified_source_commit": "4f1727fad10ec7d0e72d58f3b3e696bd7b07dc8d",
+  "subjects": [
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260908094000_clued_checkpoint_idempotency_binding.sql",
+      "sha256": "0a4ec410e9475698b1dd2b2f670cbe2532441ed750c798a01d25333e3ebf03ea"
+    },
+    {
+      "path": "apps/clued-cloud/tests/checkpoint-idempotency-db.test.mjs",
+      "sha256": "d100f98dee396d741c4e16eef4509dbfe85b34f89c185e91f50d6d775387e42c"
+    }
+  ],
+  "review_result": "PASS_FOR_SCOPED_CHECKPOINT_IDEMPOTENCY_REPAIR",
+  "independent_execution": {
+    "command": "node --test --test-force-exit tests/checkpoint-idempotency-db.test.mjs",
+    "working_directory": "apps/clued-cloud",
+    "node_version": "v24.19.0",
+    "database": "Real isolated embedded PostgreSQL, anon-role RPC clients, synthetic identities and payloads",
+    "exit_code": 0,
+    "tests": 12,
+    "behavior_subtests": 11,
+    "passed": 12,
+    "failed": 0,
+    "skipped": 0,
+    "stdout": "▶ checkpoint replay binds effective payload and context inside the existing binding namespace\n  ✔ pre-fix counterexample: changed payload and context falsely return duplicate (3.7187ms)\n  ✔ pre-fix counterexample: null base version bypasses the CAS comparison (2.0808ms)\n  ✔ same effective payload replays a legacy checkpoint with a fresh session (5.817ms)\n  ✔ changed snapshot, summary, next action, base version and context conflict without writes (7.5324ms)\n  ✔ null and negative base versions reject; bigint maximum conflicts without overflow (2.0919ms)\n  ✔ a legacy null-base commit cannot be replayed by inventing version minus one (1.7921ms)\n  ✔ foreign binding session is denied; legitimate bindings retain separate key namespaces (4.59ms)\n  ✔ concurrent same-key same-payload has one commit and one replay (9.2467ms)\n  ✔ concurrent same key across authorized contexts cannot commit twice (3.2612ms)\n  ✔ revoked binding and ended or expired sessions cannot replay (3.4326ms)\n  ✔ forward migration is repeatable and preserves legacy checkpoint, receipt and grants (1.3249ms)\n✔ checkpoint replay binds effective payload and context inside the existing binding namespace (3084.6745ms)\nℹ tests 12\nℹ suites 0\nℹ pass 12\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 3158.8724\n"
+  },
+  "continuation_check": {
+    "prior_test_completed": true,
+    "restarted": false,
+    "matching_background_test_or_postgres_processes": 0,
+    "process_scope": "Only node/postgres/pg_ctl commands containing checkpoint-idempotency-db or clued-checkpoint-idempotency-"
+  },
+  "findings_resolved": [
+    {
+      "finding": "Old same (owner,binding,key) replay ignored effective payload and context.",
+      "evidence": "Independent execution reproduced changed summary/context returning the old duplicate before applying the migration.",
+      "repair": "Compare context, original receipt-backed base_version, JSONB snapshot and normalized summary/next_action. Mismatches return idempotency_key_conflict without checkpoint/receipt writes."
+    },
+    {
+      "finding": "Old JSON null base_version bypassed SQL CAS inequality.",
+      "evidence": "Independent execution reproduced a successful old null-base commit.",
+      "repair": "Reject null/negative bases; bigint maximum conflicts without arithmetic overflow."
+    },
+    {
+      "finding": "version-1 cannot prove the original input base for historical null-base commits.",
+      "evidence": "A pre-migration null-base checkpoint cannot be replayed with an invented version-minus-one base.",
+      "repair": "Require exactly one original immutable checkpoint audit receipt with non-null base_version; do not backfill or edit old evidence."
+    }
+  ],
+  "verified_behaviors": [
+    "Same effective legacy payload with a new valid session replays the exact old checkpoint; normalized surrounding whitespace and JSONB key order are equivalent.",
+    "Changing context/base_version/snapshot/summary/next_action conflicts with no new checkpoint or checkpoint receipt.",
+    "Borrowing another binding's session is denied with SQLSTATE 42501.",
+    "Separate legitimate bindings and users retain independent idempotency namespaces; existing stream CAS still applies.",
+    "Concurrent same-key/same-payload produces exactly one checkpoint and one duplicate response.",
+    "Concurrent same key across two authorized contexts produces one commit and one conflict.",
+    "Ended/expired sessions and a revoked binding cannot replay.",
+    "Applying the migration again preserves the selected historical checkpoint, immutable receipt and existing function grants."
+  ],
+  "static_review": {
+    "surface": "One CREATE OR REPLACE FUNCTION; no row rewrite, table/schema grant expansion, credential change or new idempotency namespace.",
+    "authorization": "Existing resolve_binding and resolve_session remain before replay lookup; anon-role tests use those actual repository RPC functions.",
+    "serialization": "Transaction advisory lock uses existing owner/binding/key namespace, so cross-context attempts with the same key serialize before lookup.",
+    "legacy_evidence": "Original base is read from existing audit metadata; missing/ambiguous/null evidence is not fabricated from checkpoint version."
+  },
+  "limitations": [
+    "This is independent real local PostgreSQL regression and code review, not production deployment or a live Clued/OAuth end-to-end verification.",
+    "The test uses synthetic auth fixtures and selected repository migrations matching the affected function chain.",
+    "No R11, Entry, full Slice A, model or human-efficiency acceptance is issued."
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "scope": "EXISTING_CHECKPOINT_REPAIR_LOCAL_INTEGRATION",
+  "production_deployed": false,
+  "ci_entry": "apps/clued-cloud/package.json scripts.test:authorization:database",
+  "new_test": "tests/checkpoint-idempotency-db.test.mjs",
+  "migration_chain_check": {
+    "command": "node --test --test-force-exit tests/authorization-migration-chain.test.mjs",
+    "environment": "approved local Windows host with disposable embedded PostgreSQL",
+    "passed": 2,
+    "failed": 0,
+    "skipped": 0,
+    "cases": ["complete-repository", "production-installed-shape"]
+  },
+  "reused_evidence": "The exact migration and checkpoint tests already passed the maintainer and independent real PostgreSQL runs (12/12 each); unchanged checks were not repeated.",
+  "authorization_effect": "NONE",
+  "qualification_issued": false
+}
