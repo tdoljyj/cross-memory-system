@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "state": "RECORDED_EXACT_ISSUER_METADATA_TEMPORAL_APPLICABILITY_CLARIFICATION",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "decided_at_utc": "2026-09-08T15:00:42.510Z",
+  "clarifies": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/Generation2DynamicIssuerPurposeIndependentAcceptance.json",
+    "sha256": "9f475e2c2eedc02e50a5438c80d89f625ed5aa0ef2465a0581e349a1e8caa16d",
+    "field": "/signature_requirements/6",
+    "exact_phrase": "Profile current max is 90 seconds, additionally within original 600-second GA ceiling and unchanged Owner expiry."
+  },
+  "interpretation": "The word current reports the signed Profile in effect when this metadata was decided. It does not add a permanent 90-second issuer-purpose ceiling. The same metadata explicitly retains the Owner GA ceiling <=600 seconds and fixes profile_id, not its definition version. This clarification changes no original bytes, accepted signature algorithm, purpose, issuer, Audience or Root generation.",
+  "concrete_candidate_scope": {
+    "profile_id": "DP-PREENTRY-SKILL-QUALIFICATION",
+    "proposed_new_definition_maximum_seconds": 180,
+    "old_signed_definition_maximum_seconds": 90,
+    "owner_per_ga_maximum_seconds": 600,
+    "total_controlled_execution_seconds": 7200,
+    "new_evidence_bytes_limit": 1073741824,
+    "maximum_active": 1,
+    "model_calls": 0,
+    "paid_calls": 0,
+    "expires_at": "2026-09-09T09:28:59Z"
+  },
+  "decision": "A fixed 180-second same-purpose Profile successor may be built and independently reviewed under existing Owner authorization without another permission request. It is not yet accepted by this clarification. No Root generation3 is required merely because of this within-ceiling Profile lifetime successor.",
+  "mandatory_before_180_use": [
+    "Precise new Profile version/schema/input definitions independently accepted and actually signed/published/read back.",
+    "Every affected fixed host/controller/static Test reference and runtime binding must match the accepted successor; old90 guards remain enforceable until the exact replacement is accepted.",
+    "Current Root purpose, original Owner expiry, <=600 perGA and unchanged cumulative budgets/capacity continue to be checked.",
+    "An isolated GA deadline edit cannot activate180 or override the accepted90 Profile."
+  ],
+  "not_authorized": [
+    "Other business purpose or production",
+    "Owner expiry extension",
+    "Increased total budget, concurrent capacity, model or paid actions",
+    "Any Gate PASS, qualification or new GA issuance"
+  ],
+  "old_metadata_modified": false,
+  "new_profile_accepted": false,
+  "root_generation_changed": false,
+  "authority_effect": "NONE"
+}

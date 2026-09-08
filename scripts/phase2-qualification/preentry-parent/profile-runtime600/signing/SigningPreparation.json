@@ -1,0 +1,17 @@
+{
+  "state": "ACCEPTED_EXACT_PROFILE_PAYLOAD_READY_FOR_REAL_OWNER_PR_SIGNATURE",
+  "review_subject_sha256": "44da35f244fb36b25b41c6aa14bc26fe6ca2450815630d2931bf3e88a7eac1c3",
+  "payload_sha256": "097e17c886fa2ae0902ba33dde9ff34c29a4b9805a0e554fe7f2dab79aaba795",
+  "file_sha256": "8528d857f6cf20f7330e47e39bf05aa16eeccb4ebe5406c61ee0c84ffb692ece",
+  "acceptance": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/FixedSyntheticProfile600IndependentAcceptance.json",
+    "sha256": "266ae65aba7faec0af6b4c257a6c289d6bdf3cd3719a74bca145cae00ce99177",
+    "git_blob_sha": "e80107408c3f259f01ac7e871ac485b44a1768b1"
+  },
+  "preparation_source_sha256": "25c671f0063d5c131dfc014e1555cb1719b9e60aa71bbf741112bbbde2751a22",
+  "signatures_created": 0,
+  "signature_verified": false,
+  "ga_issued": false,
+  "controller_qualified": false,
+  "pqual_runs": 0
+}

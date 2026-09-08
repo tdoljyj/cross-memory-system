@@ -1,0 +1,31 @@
+{
+  "definition_state": "PREPARED_FOR_EXACT_INDEPENDENT_SCOPE_ACCEPTANCE",
+  "authority_effect": "NONE",
+  "controller_manifest_bound": true,
+  "controller_qualified": false,
+  "ga_issued": false,
+  "kind": "EXISTING_PRIVATE_CONTROL_EVIDENCE_SINK_BINDING",
+  "project_ref": "uscrdifznmlvczcekqpw",
+  "schema": "clued_control",
+  "installed_sql": {
+    "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/budget-reservation-successor/install.candidate.sql",
+    "sha256": "8f732dd4013a18adde33a254631cdd5a04022f300d4c0a13d05dffbf36f97285",
+    "bytes": 40646
+  },
+  "installed_successor_sql": {
+    "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/runtime600-successor/alter.candidate.sql",
+    "sha256": "0ab15bbbc2f80421cb619b50de8816095359d9ffab1e96e372960c063bc80c9b",
+    "bytes": 12444
+  },
+  "table_roles": {
+    "execution_events": "immutable full raw Intent/Result/budget evidence, exact SHA and sequence",
+    "gate_attempts": "complete live GA/one unique terminal GRR and immutable decision/index",
+    "control_objects": "complete original immutable StatusManifest; unique original typed URI",
+    "execution_current": "current sequence, independent generations, pending/active reservation and conservative counters"
+  },
+  "durability": "Existing PostgreSQL transaction commit followed by fresh actual typed readback; pre-dispatch prior transaction required",
+  "authority_boundary": "Existing same-domain evidence storage is not a new Canon/issuer. Root currentness comes only from the existing Root control tables.",
+  "unknown": "Retain original event, pending/active capacity and budget; no automatic redispatch/refund/deletion",
+  "ga_grr_signatures": "Full live payload remains private SQL; accepted fixed GitHub commitment signature channel binds complete payload digest",
+  "status_signature": "Original STATUS Owner-merge algorithm; complete live Status raw stays private SQL"
+}

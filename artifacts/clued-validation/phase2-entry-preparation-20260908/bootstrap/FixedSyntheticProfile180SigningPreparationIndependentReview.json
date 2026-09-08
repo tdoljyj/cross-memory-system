@@ -1,0 +1,17 @@
+{
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "reviewed_at": "2026-09-08T15:46:43.291Z",
+  "state": "ACCEPTED_EXACT_ASSEMBLY_FOR_REAL_OWNER_SIGNATURE",
+  "authority_effect": "NONE",
+  "signatures_verified": 0,
+  "preparation_source_sha256": "797469e3cbcdd3786e7fa3b5453ba0de951a6884b3e8e9e89fd079cba92bfa85",
+  "payload_file_sha256": "f0fb2615f47995841791a0b131c427c4727daacdfb211e2f99c551c1f61109af",
+  "signature_payload_sha256": "64b8a3e2513dcc48b80addd6a3f95f9e57fc34eff286cccc8d4b2d09e36e7ce2",
+  "review_subject_sha256": "f9df9dceec46a72c90db11dd38bae302c9c5ed86bb541534f180e4feab28b291",
+  "acceptance": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/FixedSyntheticProfile180IndependentAcceptance.json",
+    "sha256": "a1f6c3d41d761c92d45a8cc820b133bce26929bd192393675f05bd7cfdada10e",
+    "git_blob_sha": "9892afee73222696928017cd34d4b12ce764f1f8"
+  },
+  "check": "Read-only exact review subject + actual independent acceptance bytes/blob + canonical payload recomputation; no assembly rerun/overwrite, signature or qualification assumed."
+}

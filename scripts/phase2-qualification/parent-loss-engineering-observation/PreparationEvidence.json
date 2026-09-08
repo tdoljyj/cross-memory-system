@@ -1,0 +1,44 @@
+{
+  "object_type": "EngineeringPreparationEvidence",
+  "state": "PREPARED_FOR_EXACT_INDEPENDENT_REVIEW",
+  "authority_effect": "NONE",
+  "executed": false,
+  "nonce": "bce1e6dc03104d59b068854a8c12d540",
+  "files": [
+    {
+      "path": "scripts\\phase2-qualification\\parent-loss-engineering-observation\\observe.py",
+      "sha256": "8b3a405e6736d6334b02d93a7e10976c40d6b7804c93a446ecdb4d7c785638f5",
+      "bytes": 11126
+    },
+    {
+      "path": "scripts\\phase2-qualification\\parent-loss-engineering-observation\\test_observe.py",
+      "sha256": "54fa2d006f3efc010120784f2b507cf9356b9d9b2afa03f7a7728fe8df4259ae",
+      "bytes": 4126
+    },
+    {
+      "path": "scripts\\phase2-qualification\\parent-loss-engineering-observation\\README.md",
+      "sha256": "c4eb8df5b354621d00e0afba432b15a236c840139e022c30bad0ae92c4f05cb0",
+      "bytes": 4030
+    }
+  ],
+  "checks": [
+    {
+      "command": "python -I -S -B test_observe.py",
+      "passed": 5,
+      "failed": 0,
+      "elapsed_seconds": 0.018,
+      "scope": "pure/mock only before added fixed Owner-window guard"
+    },
+    {
+      "command": "python -I -S -B test_observe.py ParentLossChecks.test_request_has_no_ga_or_signature_and_reserves_nonzero_history",
+      "passed": 1,
+      "failed": 0,
+      "elapsed_seconds": 0,
+      "scope": "changed request construction only after fixed Owner-window guard"
+    }
+  ],
+  "docker_operations": 0,
+  "real_parent_loss_observation": false,
+  "formal_ga_used": false,
+  "qualified": false
+}

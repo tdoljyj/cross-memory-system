@@ -1,0 +1,97 @@
+{
+  "kind": "QUALIFICATION_RUNTIME_STORAGE_AND_SUPERVISOR_INDEPENDENT_ENGINEERING_REVIEW",
+  "state": "ACCEPTED_EXACT_EMPTY_NONPRODUCTION_STORE_INSTALL_AND_SUPERVISOR_PREPARATION",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "observed_at": "2026-09-08T14:31:08.052Z",
+  "subjects": [
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/PreparationEvidence.json",
+      "sha256": "2a6708fc388694d372eda15b7d2121fe3f9fce2edf8d50389668b026298136e0",
+      "files": {
+        "install.candidate.sql": "d2456386ab630438ccd3c5a7e2fdd837d394afa88c3f88e03c285df2a4539e16",
+        "client.mjs": "69edd25f2d0a0fdffb70dcc683ced28a9221803d147f1180d6150b0bd3889f78",
+        "store.test.mjs": "b51c80a5b001fcf6877ac5c2336b9a1b165dd7dd5c71b5cd0cfa7d6b8cccd333",
+        "README.md": "075e3edb6eb67e99779eb1b202dd97756c1e01fb9301a9adf9f685d0860ca81a"
+      }
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/runtime-successor/PreparationEvidence.json",
+      "sha256": "327f7d93b14e89a81d5b73353c35d971813f0c4c1d89db16184188cd35c0e59c",
+      "files": {
+        "supervisor.mjs": "4b769a0f34c67928c88e929ab88d6c3439ea265cf012f4fb96aa1fedead1c53e",
+        "event-key-fix.test.mjs": "6746fae60b997a0004dcb4c2b3a24d77f654a43b165ca521145a52445d6719f6",
+        "supervisor.test.mjs": "c84e6d938560f685afe9a89e660a1909502ee1b4551e4eda03141a96e1397455",
+        "README.md": "f7c06d45165bedef6ebd6956dfe28644e6729326bd7c29b773463ab56ad0147a"
+      }
+    }
+  ],
+  "accepted_installation_sql_sha256": "d2456386ab630438ccd3c5a7e2fdd837d394afa88c3f88e03c285df2a4539e16",
+  "scope": {
+    "project_ref": "uscrdifznmlvczcekqpw",
+    "schema": "clued_control",
+    "new_empty_tables": [
+      "execution_binding",
+      "execution_current",
+      "gate_attempts",
+      "execution_events"
+    ],
+    "service_role_callable_functions": [
+      "read_execution",
+      "reserve_gate",
+      "execution_transition",
+      "rotate_execution_generation",
+      "commit_gate_result"
+    ],
+    "provision_rows": false,
+    "root_metadata_changes": false,
+    "production_actions": false
+  },
+  "actual_defects_fixed": [
+    "Independent real PostgreSQL reproduced two GA rows committed with the same grr_id. New unique receipt_id and same-transaction assignment reject the second, preserving its SIGNING reservation and active slot.",
+    "Independent real PostgreSQL reproduced read_execution changing with TimeZone. UTC function configuration now gives exact equality across UTC and Asia/Shanghai.",
+    "Original 128-character valid GA key overflowed transition limit when suffixed. Supervisor now derives fixed 70-character domain-separated SHA256 keys over complete GA bytes, operation and stage."
+  ],
+  "validation": {
+    "independent_command": "node --test work/runtime-store-independent-targeted.mjs",
+    "independent_script_sha256": "1e97291caa7ca1cec1987396c776cc206d867c0bf5f8915a65bc99e8220096bf",
+    "pre_fix_run": {
+      "passed": 2,
+      "meaning": "Assertions confirmed actual two defects, not product correctness.",
+      "duration_ms": 2925.8282
+    },
+    "post_fix_run": {
+      "passed": 2,
+      "child_checks": 1,
+      "failed": 0,
+      "skipped": 0,
+      "duration_ms": 3170.2975
+    },
+    "reported_new_supervisor_tests": 2,
+    "old_pg_10_and_supervisor_6_rerun": false,
+    "network_or_docker_actions": 0
+  },
+  "review_findings": [
+    "Installer creates only four new empty private tables and functions; target marker/existing control domain required. No Gate, issuer, Root, generation or execution-binding row is installed.",
+    "Original Root lock is acquired before runtime row lock; CAS/unique attempt idempotency and one active budget charge serialize conflicting operations. DUPLICATE is historical recovery with authority NONE.",
+    "Send states precede CREATE/START; exact container bound for observation/STOP. UNKNOWN and revoked/expired attempts retain active slot, with exact discovered-container cleanup only.",
+    "Immutable GA raw/digest/decision/terminal result and append-only events protected; independent generation rollback checked against history. Service role has callable functions, no direct table access; all four tables RLS.",
+    "Supervisor requires trusted executable ports, two fresh checks around durable Intent readback, new SQL send acknowledgment, deadline and live START watchdog; no automatic redispatch after DUPLICATE/UNKNOWN.",
+    "This source still depends on real accepted tool-side verifier, current SQL bridge, fixed Docker/watchdog and evidence ports. Mock functions passing tests are not those accepted ports."
+  ],
+  "installation_conditions": [
+    "Coordinator may install this exact SQL atomically into uscrdifznmlvczcekqpw under the approved same-domain bootstrap preparation. No execution_binding/current rows, signatures, GA or grant activation included.",
+    "Read back new four tables empty/RLS and exact function bodies/ACL; compare previous Root table/function metadata and existing Root state without altering them.",
+    "Provisioning and actual execution require separately accepted exact controller/Profile/Gate/source/issuer/proof/Root-generation/budget/currentness bindings. Current enumeration seeds no applicable Gate; no synthetic G1 may be promoted."
+  ],
+  "remaining_runtime_conditions": [
+    "Full original GA/GRR Schema, exact Gate version/digest, all credentials/NA/purpose/Audience/signatures and signed generation transitions are external trusted-host obligations; SQL storage shape does not prove them.",
+    "Real current state must be fetched before each effect; SQL transaction cannot atomically fence later external Docker execution. Actual host-check timing and crash/STOP behavior need real observation for this supervisor.",
+    "GRR signing, unique decision/outbox flow and actual stopped evidence must be independently validated before commit. No recorded PASS from fixture booleans.",
+    "Budget initial values must conservatively cover actual previous usage when provisioning; reservations charge full window/128MiB and never auto-refund unknown work.",
+    "Root expiry/revocation and current issuer configuration remain authoritative; no historical snapshot as a future lease."
+  ],
+  "not_accepted": [
+    "No controller qualification, usable GA/GRR, PQUAL result, Entry or Slice A acceptance.",
+    "No production permissions, models/paid actions, arbitrary host commands or existing Root configuration rewrite."
+  ]
+}

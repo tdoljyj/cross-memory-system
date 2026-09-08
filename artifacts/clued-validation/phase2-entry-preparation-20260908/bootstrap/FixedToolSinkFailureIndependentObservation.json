@@ -1,0 +1,86 @@
+{
+  "schema_version": 1,
+  "state": "ACTUAL_FIXED_TOOL_PROGRAM_CONTROLLED_SINK_FAULT_OBSERVATIONS",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "source": {
+    "path": "scripts/phase2-qualification/control-context-verifier-runtime600/tool-entry.functions.js",
+    "sha256": "a9fe73cb6c0d2492eb0c96276f2b1d0b5a3e4c137b37e609575b08d404179cf7"
+  },
+  "controller_manifest_sha256": "edf31377656e1a9a473d0095df72231c058266007e4fd4046e0a9b8c2d6a60d9",
+  "observed_at": "2026-09-08T17:51:11.655Z",
+  "method": "Executed the unchanged real tools program in an isolated JS VM; only external SQL/process/Node-session ports were replaced with explicit synthetic fault injection. The observed calls and thrown errors are actual execution of that source.",
+  "observations": [
+    {
+      "fault": "record_tool_error",
+      "error": "EXACT_NONERROR_SQL_BLOCK_REQUIRED",
+      "calls": [
+        {
+          "type": "verifier_stdin",
+          "chars": "",
+          "session": 12345
+        },
+        {
+          "type": "sql",
+          "project": "uscrdifznmlvczcekqpw",
+          "query": "select clued_control.record_effect_intent('ga_synthetic_sink_fault','intent_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','{\"operation\":\"START\",\"raw\":\"{\\\"synthetic\\\":true}\\n\",\"sha256\":\"cb8daed7b30399a1c3c8b83b3b7bee4b774a30fc389afc1d375e4c23a3cc4ae8\"}'::jsonb) as recorded"
+        }
+      ],
+      "stores": [],
+      "nonempty_challenge_writes": 0,
+      "process_invocations": 0,
+      "automatic_retry": false
+    },
+    {
+      "fault": "record_not_new",
+      "error": "NO_DISPATCH_ON_OLD_OR_UNKNOWN_INTENT",
+      "calls": [
+        {
+          "type": "verifier_stdin",
+          "chars": "",
+          "session": 12345
+        },
+        {
+          "type": "sql",
+          "project": "uscrdifznmlvczcekqpw",
+          "query": "select clued_control.record_effect_intent('ga_synthetic_sink_fault','intent_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','{\"operation\":\"START\",\"raw\":\"{\\\"synthetic\\\":true}\\n\",\"sha256\":\"cb8daed7b30399a1c3c8b83b3b7bee4b774a30fc389afc1d375e4c23a3cc4ae8\"}'::jsonb) as recorded"
+        }
+      ],
+      "stores": [],
+      "nonempty_challenge_writes": 0,
+      "process_invocations": 0,
+      "automatic_retry": false
+    },
+    {
+      "fault": "dispatch_tool_error",
+      "error": "EXACT_NONERROR_SQL_BLOCK_REQUIRED",
+      "calls": [
+        {
+          "type": "verifier_stdin",
+          "chars": "",
+          "session": 12345
+        },
+        {
+          "type": "sql",
+          "project": "uscrdifznmlvczcekqpw",
+          "query": "select clued_control.record_effect_intent('ga_synthetic_sink_fault','intent_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','{\"operation\":\"START\",\"raw\":\"{\\\"synthetic\\\":true}\\n\",\"sha256\":\"cb8daed7b30399a1c3c8b83b3b7bee4b774a30fc389afc1d375e4c23a3cc4ae8\"}'::jsonb) as recorded"
+        },
+        {
+          "type": "sql",
+          "project": "uscrdifznmlvczcekqpw",
+          "query": "select clued_control.dispatch_recorded_intent('ga_synthetic_sink_fault','START_SENT','clued_cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',1,'cb8daed7b30399a1c3c8b83b3b7bee4b774a30fc389afc1d375e4c23a3cc4ae8') as dispatched"
+        }
+      ],
+      "stores": [],
+      "nonempty_challenge_writes": 0,
+      "process_invocations": 0,
+      "automatic_retry": false
+    }
+  ],
+  "accepted_component_conclusion": "When the existing recordIntent tool rejects, returns a non-new result, or subsequent dispatch tool rejects, the fixed coordinator sends no successful dispatch challenge back to Node and invokes no process; no durable-result or capacity-release success is recorded.",
+  "combination_boundary": "Combine with separately accepted actual PG25006/42501 retained-state observations and actual authorized STOP observations. This is controlled fault injection at the original port, not an actual Supabase outage or a single real sink-failure-to-Docker-cleanup run.",
+  "authority_effect": "NONE",
+  "real_sql_calls": 0,
+  "real_node_sessions": 0,
+  "real_docker_calls": 0,
+  "complete_case_pass": false
+}

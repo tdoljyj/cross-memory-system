@@ -1,0 +1,28 @@
+{
+  "child_path": "scripts/phase2-qualification/qualification-runtime/fixed_skill_fixture.py",
+  "child_sha256": "98c4d0165144a4ebfbd4889a98da65a8c6d3a71fbf082af393c15b9d00a3c18a",
+  "subject_acceptance": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/R10IndependentProjectionAcceptance.json",
+  "primitive_independent_review": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/FixedFixturePrimitiveIndependentReview.json",
+  "primitive_review_sha256": "174fa3304b2761d463a4d519943ed38afbd1d5c73a6d22ed40e92e7afc3b259d",
+  "parent_path": "scripts/phase2-qualification/preentry-parent/runtime-successor/host-runtime600/parent600.py",
+  "parent_sha256": "065d64eb2c7b2f3471967f72fdd5b494a413a69d932bb351e705d43f3e6d85d6",
+  "image": "docker.io/library/python@sha256:285a71327884a4d50efbea30104473b0fa43ecefa499458899670ca30dae76e5",
+  "child_model_calls": 0,
+  "child_business_credentials": 0,
+  "network": "none",
+  "mounts": [
+    "fixed exact /driver directory read-only",
+    "attempt-specific synthetic /allowed read-write"
+  ],
+  "cpu": 0.5,
+  "memory_bytes": 134217728,
+  "pid_limit": 16,
+  "deadline_seconds": 600,
+  "parent_role": "Immutable fixed argv/prestart dependency, not the complete runtime executor",
+  "complete_executor_binding": {
+    "required": "same independently accepted exact controller source-set manifest in Profile inputs, Gate and TestManifest before execution",
+    "state": "NOT_YET_BOUND",
+    "accepted_ref": null
+  },
+  "child_completion_policy": "The fixed controller literal flushes the fixture report then waits at most600 seconds, with SIGTERM normal exit, so Running and actual STOP remain observable; independent host deadline/STOP reserve applies earlier. Skill and fixture source bytes are unchanged."
+}

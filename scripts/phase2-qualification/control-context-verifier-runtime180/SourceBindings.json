@@ -1,0 +1,247 @@
+{
+  "state": "FROZEN_FOR_INDEPENDENT_ENGINEERING_REVIEW",
+  "files": [
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime180/README.md",
+      "bytes": 12959,
+      "sha256": "ec5c4c79270d743e456c017deaff2b208afc19c2b223bd340df9cb60440ac45f"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime180/VerifierChangeSet.json",
+      "bytes": 2621,
+      "sha256": "8c363a7908beaa60bbe398939087d53dc0690c1e0e71306dadeb730d5d207aa5"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime180/budget-evidence.mjs",
+      "bytes": 2389,
+      "sha256": "5bb9ef6defbb0626c24af3b9d25fee18f49432b3dd8079df01e5cfce0adeec8f"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime180/build-controller-manifest.mjs",
+      "bytes": 6430,
+      "sha256": "d06dec06d30eaf5ec25de43feca8083dce6b48bfbd870251a526a1e63a31b8a8"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime180/build-static-inputs.mjs",
+      "bytes": 4623,
+      "sha256": "a6cce6d648a2120bb8156d5f4aea924f3fb89eacc95e9d0ba5c8e3c3877ad43b"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime180/build-verifier.mjs",
+      "bytes": 3907,
+      "sha256": "d9ea3b9f7643a3b6fe7bc48453c33b959144e4db90b7abddcc9b9c43d5cacaf1"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime180/cli.mjs",
+      "bytes": 1732,
+      "sha256": "b537b3072939d3496db5309dada9319fe2794cbbdcada13b004d2be735253588"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime180/context.mjs",
+      "bytes": 22035,
+      "sha256": "fdb618b52c20661c98140798131020bb5ed446cacf83eb1930c4da13cee65343"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime180/dispatch-evidence.mjs",
+      "bytes": 1915,
+      "sha256": "b99e260dae4274f5040870bc927e2388e3a6ca7e10fc4a0f5ac9e3280a30c30f"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime180/freeze-evidence.mjs",
+      "bytes": 4935,
+      "sha256": "08df2fb07aa6ba2a0701e856c7ce57f3628279b32df16ea1fd4b456dd7e3e4f1"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime180/gate-result-receipt.candidate.schema.json",
+      "bytes": 8302,
+      "sha256": "2ea5fb9cc905ddbbf8769a438a1e1d5d9bdfe5d72363091033663112e9304c0b"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime180/grr.mjs",
+      "bytes": 4283,
+      "sha256": "d5c8c273c378c61e339f5ef43e3afc3681ba112867cc340404fb12e9088aa74b"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime180/host-effect.mjs",
+      "bytes": 2724,
+      "sha256": "e169f2c2289c44d67df7d2f95a0dc7e33788bad92fc6df51b61ba09ab780fae2"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime180/late-bound-policy.mjs",
+      "bytes": 1029,
+      "sha256": "afd21f9e8dfe4a5bd391299bab4c3db3a6823b94cc16f5834673a85f62b2aa7f"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime180/python-import-catalog.py",
+      "bytes": 1256,
+      "sha256": "bf33fe2da6087eea366ce52e8fd389edd3f684e413a78a7fdb76d7bf5ed9191a"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime180/result-terminal.mjs",
+      "bytes": 3977,
+      "sha256": "47530bcdd1a75fe9c83a7974b427da4cb09a09076a1873dee0a3d84b7090e9f1"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime180/source-publication.mjs",
+      "bytes": 3088,
+      "sha256": "a287a6f240c133696d17e9c10f1fda967c2e0f28456c72b5753da789c8384c09"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime180/status-manifest.candidate.schema.json",
+      "bytes": 5562,
+      "sha256": "6ba12ed51b3fc0e457c13e83f47e1ad1aa6cc680d8f28c668f8c65d12742ecc2"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime180/tool-entry.functions.js",
+      "bytes": 9690,
+      "sha256": "3ae032b29a2e20c78d7897679255e373afeaad8861189623055496a5080c85e0"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime180/tool-entry.template.js",
+      "bytes": 7530,
+      "sha256": "6ce13cee85214b2acf2648a8d3928dfe5aa22ba586314ca7a11ed895487f715b"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime180/transport.mjs",
+      "bytes": 2209,
+      "sha256": "e2391023805c858c2c8f5499069a4060f7c773a3cc29732bea37f9d281698d0e"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime180/trusted-github.mjs",
+      "bytes": 6083,
+      "sha256": "ea33a927db1cfe35a2c99dee7389e3b71a7080e5d11a483c4861fbc048c7c5a6"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime180/verify.test.mjs",
+      "bytes": 10350,
+      "sha256": "dfe028d3c4c7f943789a6fabb7c657201b6ccacef77f39d84dba0c28869d52bc"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime180/wire-runtime.mjs",
+      "bytes": 11520,
+      "sha256": "3837fda97294783f1d88287ad9b5b808af2ae19c0ef1ff7f30876480e6446515"
+    }
+  ],
+  "external_fixed_sources": [
+    {
+      "path": "scripts/phase2-qualification/result-evidence-resolution/resolve.mjs",
+      "bytes": 8191,
+      "sha256": "9d7df85eea925f22f35fe81d1faef61288be43c1b20e7214205f662ffc2784cb"
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/runtime-successor/supervisor.mjs",
+      "bytes": 5384,
+      "sha256": "4b769a0f34c67928c88e929ab88d6c3439ea265cf012f4fb96aa1fedead1c53e"
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/runtime-successor/sql_effect.mjs",
+      "bytes": 3495,
+      "sha256": "f3c87164a45730576054286a5d099c1f77886e2b5721214032561cf6bc958457"
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/runtime-successor/host-binding/fixed_host.py",
+      "bytes": 14375,
+      "sha256": "430445f80986ba99a6f9b149a5a73cffe88182b26b0574b9f83fcdcbf64e69b2"
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/parent.py",
+      "bytes": 9328,
+      "sha256": "a4bff96f76d6ed5598833cbd6f73efec547eaaf9cd039f47f8eef6e925efe79e"
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/runtime-successor/host-tool-bridge/bridge.py",
+      "bytes": 5145,
+      "sha256": "11e64259e075481d3311ebd6db7378d2d52e9f8cf537775b39051b3478ad0a7c"
+    },
+    {
+      "path": "scripts/phase2-qualification/docker-engineering-observation/observe.py",
+      "bytes": 18679,
+      "sha256": "cc3498e6dc5eed1f13fb0b84c4dd4df75f5ee76fb5d24d4167852cb92588ef5a"
+    },
+    {
+      "path": "scripts/phase2-qualification/docker-engineering-observation/validation.py",
+      "bytes": 5777,
+      "sha256": "3ac10b11456ddc2de9155fb2b9f8f8c8c20ac0da51957e587d3081339767ac2e"
+    },
+    {
+      "path": "scripts/phase2-qualification/linux-docker-driver/candidate.py",
+      "bytes": 14097,
+      "sha256": "7eed6b480010c5aebba39e109356a9a499f8ecc96ced184d3ee926fa52346457"
+    },
+    {
+      "path": "scripts/phase2-qualification/docker-isolation/probe.py",
+      "bytes": 6109,
+      "sha256": "2168145b42166b4de1ea470b4fd232549d661542761ffe279955d0ace5580523"
+    },
+    {
+      "path": "scripts/phase2-qualification/docker-isolation/prepare.py",
+      "bytes": 7349,
+      "sha256": "c5255a601c5f88893d8765654ab884d3c1fe93a81f393a8cd8ee630de16e9474"
+    },
+    {
+      "path": "scripts/phase2-qualification/qualification-runtime/remote_evidence.py",
+      "bytes": 15623,
+      "sha256": "a7373982ee405890fc7f260b96987d69d8133a0f5c318fc6e85c44d7fbb28969"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-root-registration/verify.py",
+      "bytes": 21930,
+      "sha256": "040ef7b7a8536d6b210ada9a15a26af6749e58c5da10cd401b98c36155373093"
+    },
+    {
+      "path": "scripts/phase2-qualification/qualification-runtime/fixed_skill_fixture.py",
+      "bytes": 5084,
+      "sha256": "98c4d0165144a4ebfbd4889a98da65a8c6d3a71fbf082af393c15b9d00a3c18a"
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/budget-reservation-successor/install.candidate.sql",
+      "bytes": 40646,
+      "sha256": "8f732dd4013a18adde33a254631cdd5a04022f300d4c0a13d05dffbf36f97285"
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/budget-reservation-successor/client.mjs",
+      "bytes": 726,
+      "sha256": "5eb8b6ad2d8b68f98dcffc5cc11fcd032ea176572c248d615a5d977ee9a4bd1c"
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/control-objects-successor/client.mjs",
+      "bytes": 767,
+      "sha256": "de049d0dafc16d225a9884ff2a8899976883f539e417f20d8a34eeab33b571ae"
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/client.mjs",
+      "bytes": 2129,
+      "sha256": "b8e0080118d94128a163ca9efd57d01706ec8ecc45060135f092a896f4583816"
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/commitment-signing/signing.mjs",
+      "bytes": 6636,
+      "sha256": "d425ee50e82f8cc983b5dc5983d8ab7cd4c42b18215ce592d5fa5004c29c438b"
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/protocol-successor/validate-successor.mjs",
+      "bytes": 4871,
+      "sha256": "e2844900272bcd9f2aba18aae256567e33d0c598f0a114d7ed01a6fb2fdf1ca5"
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/protocol-successor/control-trust-root-set.schema.json",
+      "bytes": 6122,
+      "sha256": "87f094fa079034aa886d6c568730370a3264e106529b4bfd79bc3369f30b79e5"
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/profile-runtime180/ProfileDefinition.json",
+      "bytes": 3325,
+      "sha256": "cce4d4966dddbdb9685c8fab9242ffde48ca6210c919bd2615cc9c0bfc011f51"
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/profile-successor/revocation-epoch-vector.candidate.schema.json",
+      "bytes": 9724,
+      "sha256": "f57cceb29853c67f8702c1560017c3be7b96626d6358299b5215add63d01e916"
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/profile-successor/gate-authorization.candidate.schema.json",
+      "bytes": 15448,
+      "sha256": "f7f7e2a011f3f81a005e46f9cf7683edeb010dc7812eadfb4473f6ad5368a1ce"
+    }
+  ]
+}

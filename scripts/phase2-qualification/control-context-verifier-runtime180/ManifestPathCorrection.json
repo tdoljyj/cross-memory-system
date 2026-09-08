@@ -1,0 +1,25 @@
+{
+  "state": "BOUNDED_GENERATOR_CORRECTION_NOT_RUNTIME_AUTHORITY",
+  "predecessor_candidate_sha256": "270551fad13e299727022d8894bd7bb8a316800a0979a571f0e9177f8507b595",
+  "predecessor_source_bindings_sha256": "1c28671cf8d2820c971dfca597619807ca9b16c52622fe5a55d8df394a214e8c",
+  "observed_failure": "Actual build-controller-manifest invocation rejected IMPORT_OUTSIDE_FIXED_RUNTIME before wx manifest creation.",
+  "cause": "The fixed Python executable uses forward slash literals; path.dirname preserved them, while Python-imported absolute paths normalized to backslashes. Previous direct string-prefix comparison used different separator representations.",
+  "changed_file": "scripts/phase2-qualification/control-context-verifier-runtime180/build-controller-manifest.mjs",
+  "predecessor_sha256": "d06dec06d30eaf5ec25de43feca8083dce6b48bfbd870251a526a1e63a31b8a8",
+  "successor_sha256": "326fe92f12e4c852be543f41418a1a5982dfeafef445ba229b4d50fa1dba8792",
+  "change": "Resolve both paths and use native path.relative; require empty relative path or a non-absolute descendant without a parent-traversal prefix. Fixed allowed roots are unchanged.",
+  "targeted_test": {
+    "path": "scripts/phase2-qualification/control-context-verifier-runtime180/manifest-path.test.mjs",
+    "sha256": "f9e869435aefa37409a5b81bbd5ed5de148c84df2d4ec78e97d4b7f71367c5fe",
+    "pass": 1,
+    "fail": 0,
+    "skip": 0,
+    "duration_ms": 106.94,
+    "covers": "Mixed Windows separators/case accepted; same root accepted; sibling prefix, parent traversal and other drive rejected."
+  },
+  "old_nine_checks_rerun": false,
+  "runtime_source_changed": false,
+  "manifest_generated_by_this_correction": false,
+  "historical_evidence_rewritten": false,
+  "authority_effect": "NONE"
+}

@@ -1,0 +1,17 @@
+{
+  "kind": "ROOT_REFERENCE_OBSERVATION_NOT_LIVE_AUTHORITY",
+  "authority_source_ref": {
+    "uri": "urn:clued:control-trust-root-set:uscrdifznmlvczcekqpw:ctr_414bd3c724264a83894b0c55cf2ab878",
+    "sha256": "fa58df2b1a7572848c288dc862767a4a9983d42696d50dbc4064af7275cec328"
+  },
+  "root_generation": "ctrgen_dd30fbc7e0ba43fa8ba9f734867bcf12",
+  "sequence": 2,
+  "observation_provenance": {
+    "observed_at": "2026-09-08T16:08:51Z",
+    "channel": "Root coordinator actual private Supabase readback, canonicalDigest recomputed from complete body",
+    "independent_check": "Root reported independent 16:11 UTC deepEqual; this description is provenance, not a replacement for the original independent report"
+  },
+  "digest_domain": "Existing accepted Root canonicalDigest(body), not the hash of this observation file",
+  "use_rule": "The actual current Root must be freshly read, canonicalDigest recomputed and reference/generation/revocation checked by the fixed verifier before each applicable action. This historical reference does not itself establish currentness.",
+  "authority_effect": "NONE"
+}

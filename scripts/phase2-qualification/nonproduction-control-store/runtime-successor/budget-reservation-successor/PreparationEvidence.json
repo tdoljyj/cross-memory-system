@@ -1,0 +1,55 @@
+{
+  "state": "PREPARED_FIXED_PRE_GA_BUDGET_SUCCESSOR_FOR_INDEPENDENT_REVIEW",
+  "predecessor_sql_sha256": "a242db8504f1cbd9c04ee8a22d8072e7b9ee0d6897433393e88c6e14a8e4ea27",
+  "files": [
+    {
+      "path": "scripts\\phase2-qualification\\nonproduction-control-store\\runtime-successor\\budget-reservation-successor\\build.mjs",
+      "sha256": "118034467bf0ff5281e8b02d4fa7b89843bcb983f067d41188e20dd28b36082e",
+      "bytes": 8988
+    },
+    {
+      "path": "scripts\\phase2-qualification\\nonproduction-control-store\\runtime-successor\\budget-reservation-successor\\install.candidate.sql",
+      "sha256": "8f732dd4013a18adde33a254631cdd5a04022f300d4c0a13d05dffbf36f97285",
+      "bytes": 40646
+    },
+    {
+      "path": "scripts\\phase2-qualification\\nonproduction-control-store\\runtime-successor\\budget-reservation-successor\\client.mjs",
+      "sha256": "5eb8b6ad2d8b68f98dcffc5cc11fcd032ea176572c248d615a5d977ee9a4bd1c",
+      "bytes": 726
+    },
+    {
+      "path": "scripts\\phase2-qualification\\nonproduction-control-store\\runtime-successor\\budget-reservation-successor\\create-test.mjs",
+      "sha256": "71ac31cef62988dc5b3708cb07e2788a3129e03dbba59dad4d91b40563238750",
+      "bytes": 6206
+    },
+    {
+      "path": "scripts\\phase2-qualification\\nonproduction-control-store\\runtime-successor\\budget-reservation-successor\\budget.test.mjs",
+      "sha256": "a1988d8036f916f330dd2b375fe351c0fa47a242e241f0ee7e0aaf3e3671f5d5",
+      "bytes": 11013
+    },
+    {
+      "path": "scripts\\phase2-qualification\\nonproduction-control-store\\runtime-successor\\budget-reservation-successor\\README.md",
+      "sha256": "255dee60fe50cc3f293f1e0825c470b650a169043564b8ebd198d644556ef899",
+      "bytes": 4955
+    }
+  ],
+  "tests": {
+    "passed": 7,
+    "failed": 0,
+    "skipped": 0,
+    "duration_ms": 3057.9047,
+    "scope": "new disposable local PG; actual two connections"
+  },
+  "new_tables_compared_to_predecessor": 0,
+  "remote_runtime_tables_installed": 0,
+  "deployed": false,
+  "authority_effect": "NONE",
+  "qualified": false,
+  "typed_key_successor": {
+    "predecessor_evidence_sha256": "64f7d6cff1c0287734d73cf040ba8eda6fe2a7447e86c153a360a48e924b59e4",
+    "predecessor_sql_sha256": "2dc58a97d42cf8c499a47f58c910e00acf418a68451bc2d46eed76e93c9e4b67",
+    "change": "require actual JSON string idempotency_key; numeric text coercion denied",
+    "new_independent_pg_check": "PENDING",
+    "old_seven_checks_repeated": false
+  }
+}

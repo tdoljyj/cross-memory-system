@@ -1,0 +1,82 @@
+{
+  "state": "EXACT_LOCAL_CLOSURE_BOUND_PENDING_INDEPENDENT_REVIEW",
+  "definitions": {
+    "host_runtime_config": {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-runtime600-final/HostRuntimeConfig.json",
+      "sha256": "967a842b4dcb2dc8fadd1a62ae05231ab313eda1b1d74f34025306568a706587",
+      "bytes": 4635
+    },
+    "evidence_sink": {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-runtime600-final/EvidenceSinkDefinition.json",
+      "sha256": "c96c25a932b3fc93bb0ee6310ab3f8d58915ed7387bd9189ff08bf5a196abedd",
+      "bytes": 1967
+    },
+    "scope": {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-runtime600-final/ExecutionScopeDefinition.json",
+      "sha256": "07cd9c900eb6132e2affe3b7e6b129aba659ff3a49c963e141e92e11b65e8d6f",
+      "bytes": 13280
+    },
+    "binding": {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-runtime600-final/ControlBindingDefinition.json",
+      "sha256": "7bf4b5925793cfc1b3de438d24b7632292ecc92d74ff1e1358e140ac533c751a",
+      "bytes": 2303
+    }
+  },
+  "field_values": {
+    "host_runtime_config_digest": "967a842b4dcb2dc8fadd1a62ae05231ab313eda1b1d74f34025306568a706587",
+    "allowed_read_set": [
+      "/driver/SKILL.md",
+      "/driver/references/engineering.md",
+      "/driver/references/memory-operations.md",
+      "/driver/fixed_skill_fixture.py",
+      "/proc/self/status",
+      "/sys/class/net",
+      "host:exact ControllerSourceManifest files and accepted immutable input/ref bytes",
+      "host:exact accepted historical component raw evidence and original source/time; read-only revalidation without restarting PostgreSQL",
+      "host:existing fixed authenticated GitHub source/signature read interface for tdoljyj/cross-memory-system",
+      "host:existing trusted Supabase fixed clued_control current/read_execution/read_execution_event interfaces for uscrdifznmlvczcekqpw",
+      "host:exact Docker image and this attempt container inspection",
+      "host:preentry-parent/work/<nonce>/ exact retained local evidence and fixed empty Docker config"
+    ],
+    "allowed_write_set": [
+      "/allowed/fixture.json",
+      "host:preentry-parent/work/<nonce>/ fixed source staging and CreateNew local Intent/output/STOP evidence",
+      "host:Docker create/start/stop/wait for the one fixed synthetic container; mutation always uses exact observed ID after create",
+      "host:clued_control immutable execution_events and exact current/gate_attempts transitions through accepted fixed functions only",
+      "host:fixed private auxiliary signature commitment path for this exact GA/GRR through accepted Owner channel"
+    ],
+    "forbidden_actions": [
+      "production or business Canon mutation",
+      "business credential/token issuance or export",
+      "real user payload or private Gold read",
+      "real model or paid action",
+      "arbitrary command, executable, environment, mount or target",
+      "candidate Skill self-qualification or authority assertion",
+      "PQUAL-18 post-Entry positive or any Entry/RC/production grant",
+      "Root/Owner/issuer purpose expansion or old pins rewrite",
+      "automatic UNKNOWN redispatch, capacity release or budget refund",
+      "container/image/volume removal or evidence deletion"
+    ],
+    "scope_digest": "07cd9c900eb6132e2affe3b7e6b129aba659ff3a49c963e141e92e11b65e8d6f",
+    "dominant_role": "TEST_CONTROLLER",
+    "upstream_gate_result_receipt_refs": [],
+    "authority_source_ref": {
+      "uri": "urn:clued:control-trust-root-set:uscrdifznmlvczcekqpw:ctr_414bd3c724264a83894b0c55cf2ab878",
+      "sha256": "fa58df2b1a7572848c288dc862767a4a9983d42696d50dbc4064af7275cec328"
+    }
+  },
+  "authority_reference_observation": {
+    "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-runtime600-final/AuthorityReferenceObservation.json",
+    "sha256": "a290275abc10fd3f58d290673120105583e5b23765ca4e149049579b41f5a61c",
+    "bytes": 1103
+  },
+  "fixed_controller_digest": "edf31377656e1a9a473d0095df72231c058266007e4fd4046e0a9b8c2d6a60d9",
+  "reference_fields_require_actual_publication": [
+    "scope_ref",
+    "binding_ref",
+    "evidence_sink_ref"
+  ],
+  "authority_effect": "NONE",
+  "accepted": false,
+  "executable": false
+}

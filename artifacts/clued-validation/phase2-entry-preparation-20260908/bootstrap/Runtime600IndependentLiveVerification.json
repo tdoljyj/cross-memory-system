@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "state": "VERIFIED_EXACT_NONPRODUCTION_RUNTIME600_TWO_FUNCTION_UPDATE",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "project_id": "uscrdifznmlvczcekqpw",
+  "observed_at": "2026-09-08 17:20:03.517685+00",
+  "method": "Independent live read-only Supabase execute_sql; complete values compared with actual preflight and postread, not a replay of the parent response.",
+  "accepted_sql_sha256": "0ab15bbbc2f80421cb619b50de8816095359d9ffab1e96e372960c063bc80c9b",
+  "prior_independent_acceptance_sha256": "b71e7dd6ccfe6f03627725b1740b2a54f84a5ca6ab3735ba10e602dfb2cecab0",
+  "actual_changed_functions": [
+    {
+      "name": "reserve_execution_budget",
+      "sha256": "902d457f964257defb4baffec91dfc672b34dca745e90ded4ff4d8beaef3b76d",
+      "prosrc_sha256": "1c515e21bcf910c7ae5aea842d2fe40055f87c97df4141f3aacc299eef68e29d"
+    },
+    {
+      "name": "reserve_gate",
+      "sha256": "684a55eefba5350b368c5f068d0687a5e41f242e00587cc52422b43178ac5de1",
+      "prosrc_sha256": "6cc430f83e978a38d7307fdc9abd29e9ea6b345812ba6fdb0c26e2292e85db3b"
+    }
+  ],
+  "checks": {
+    "exact_actual_parent_postread_matches": true,
+    "only_two_expected_function_definitions_changed": true,
+    "all_14_function_owner_acl_security_config_and_signatures_unchanged": true,
+    "all_8_table_acl_rls_unchanged": true,
+    "complete_root_state_unchanged": true,
+    "five_runtime_counts": {
+      "gate_attempts": 0,
+      "control_objects": 0,
+      "execution_events": 0,
+      "execution_binding": 0,
+      "execution_current": 0
+    },
+    "read_execution_is_null": true
+  },
+  "root_comparison_digest_sha256": "5fefb88fc4de11eed4c3a9bf1b5e980a420baf18a5d19d5562d75ef3d803c7bc",
+  "private_evidence": {
+    "preflight": {
+      "path": "work/runtime600-actual-preflight.json",
+      "sha256": "179828bb0a31f30771df65da43a2fc3884515ffb89b7114f792b2b847aa01c97"
+    },
+    "parent_postread": {
+      "path": "work/runtime600-actual-postread.json",
+      "sha256": "e7a2bd36d69a8219b7fca054ebf3805bfe72afc00af265d1e70afdb4b955ad79"
+    },
+    "independent_live": {
+      "path": "work/runtime600-independent-live.json",
+      "sha256": "7138ff524d3af1145eda00ae14ad22968c986b84ff6eea6e80d5484721700bf7"
+    }
+  },
+  "limits": [
+    "This verifies only the exact two-function forward configuration update and unchanged empty runtime/Root boundary.",
+    "No binding seed, budget reservation, GateAuthorization, controller qualification, PQUAL execution or production authority is issued by this observation.",
+    "No local PostgreSQL tests were repeated; the prior targeted checks remain attributed to their original evidence."
+  ]
+}

@@ -1,0 +1,73 @@
+{
+  "state": "ACCEPTED_EXACT_EMPTY_RUNTIME_INSTALL_WITH_COMMITTED_PRE_GA_BUDGET",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "reviewed_at": "2026-09-08T16:05:10.602Z",
+  "authority_effect": "NONE",
+  "project_ref": "uscrdifznmlvczcekqpw",
+  "accepted_sql": {
+    "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/budget-reservation-successor/install.candidate.sql",
+    "sha256": "8f732dd4013a18adde33a254631cdd5a04022f300d4c0a13d05dffbf36f97285",
+    "bytes": 40646
+  },
+  "preparation_evidence_sha256": "2ff9d9a93ed20e98fd5115d9171256b5e3c16dda1cb7a51650c8b8330c3c4b8f",
+  "prior_empty_install_acceptance": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/ControlObjectRuntimeEmptyInstallIndependentAcceptance.json",
+    "sha256": "31bd64b70980cae8bacafe284a91120d80d8842b6812a50801c1561ab7513b9b"
+  },
+  "scope": {
+    "existing_root_tables_unchanged": 3,
+    "new_empty_runtime_tables": 5,
+    "extra_tables_for_budget": 0,
+    "original_execution_binding_foreign_keys_retained": true,
+    "seed_rows": 0,
+    "ga_issued": false,
+    "controller_qualified": false,
+    "production_touched": false
+  },
+  "accepted_budget_mapping": {
+    "uri_template": "urn:clued:control-evidence:uscrdifznmlvczcekqpw:execution-events:<sequence>",
+    "read_function": "clued_control.read_execution_event(bigint)",
+    "meaning": "Exact immutable BUDGET_RESERVED request.body.raw plus SHA, not a new control-object family or historical literal URI.",
+    "allocated_seconds": 180,
+    "evidence_bytes": 134217728,
+    "semantics": [
+      "Provision actual independently accepted execution binding before reservation; no pre-binding bypass.",
+      "Root/current locks serialize current root generation/revocation, three independent control generations, Profile/controller/scope and Owner window checks with the cumulative charge.",
+      "Reserve budget in its own committed transaction; pending budget sequence blocks another pending or active allocation. Raw excludes GA identity/hash, avoiding self-reference.",
+      "Complete GA must reference the actual prior committed event, match all scope/generation/window bindings, then consume exactly once. Unique immutable attempt.budget_sequence and clearing only pending pointer prevent repeated consumption.",
+      "GA consumption does not charge again. Duplicate identical requests return DUPLICATE, do not imply fresh admission. UNKNOWN/expiry do not refund or release capacity."
+    ]
+  },
+  "checks": {
+    "exact_files": 6,
+    "builder_output_equals_installer": true,
+    "lf": true,
+    "only_fix_from_2dc": "JSON idempotency key must be a string.",
+    "actual_before": {
+      "tests": 2,
+      "duration_ms": 3367.9544,
+      "result": "Defect reproduced: numeric 123 was accepted in rollback transaction; not an acceptance of old SQL."
+    },
+    "actual_after": {
+      "command": "node --test C:/Users/Windows/Documents/Codex/2026-09-08/ia/work/budget-independent-targeted.mjs",
+      "passed": 2,
+      "failed": 0,
+      "skipped": 0,
+      "duration_ms": 2928.0554,
+      "result": "Numeric 123 rejected; string 123 persists once, second-connection exact replay DUPLICATE, immutable raw readback matches and charged total stays1590."
+    },
+    "reused_implementation": {
+      "passed": 7,
+      "duration_ms": 3057.9047,
+      "source_sql_sha256": "2dc58a97d42cf8c499a47f58c910e00acf418a68451bc2d46eed76e93c9e4b67",
+      "not_rerun": true,
+      "coverage": "Actual two-connection competing reservation, same-transaction refusal, changed raw/expired or out-of-window GA refusal retaining pending, unique consumption and UNKNOWN capacity retention."
+    }
+  },
+  "install_conditions": [
+    "Fresh authorized project check; original Root3 remains intact and all five runtime tables absent.",
+    "Install this exact full SQL once in a transaction with the existing target_project guard; inspect unknown outcome instead of blind retry.",
+    "Read back five empty runtime tables, RLS/function ACL/config and unchanged original Root state/functions. No execution binding, Status, allocation, GA or qualification seed in the empty-install action."
+  ],
+  "remaining": "Actual complete runtime/controller acceptance and publication, source closure, late-bound reservation/status/revision resolver and live exact binding remain required before a real reservation or effect."
+}

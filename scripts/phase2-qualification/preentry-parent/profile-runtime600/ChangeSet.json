@@ -1,0 +1,39 @@
+{
+  "state": "PREPARED_NOT_ACTIVE",
+  "predecessor_profile_sha256": "cce4d4966dddbdb9685c8fab9242ffde48ca6210c919bd2615cc9c0bfc011f51",
+  "changes": [
+    {
+      "path": "/profile_definition/definition_version",
+      "before": "fixed-synthetic-skill-input-20260908.v2-runtime180",
+      "after": "fixed-synthetic-skill-input-20260908.v3-runtime600"
+    },
+    {
+      "path": "/profile_definition/max_lifetime_seconds",
+      "before": 180,
+      "after": 600
+    },
+    {
+      "path": "/FixedInputScope/deadline_seconds",
+      "before": 180,
+      "after": 600
+    }
+  ],
+  "derived_changes": [
+    "Profile Schema exact version/lifetime constants and reference",
+    "Profile subject fixed input reference, descriptive boundary and review digest",
+    "Fixed parent dependency points to the600 literal flush/hold/STOP successor"
+  ],
+  "unchanged": [
+    "Profile ID/purpose/environment",
+    "All R05-R10 and N/A reasons",
+    "Original GA/vector schemas",
+    "Skill and fixture bytes; CPU0.5/memory128MiB/PID16/networknone/two mounts",
+    "Zero model/paid/business credentials/production actions",
+    "7200 aggregate seconds/1GiB aggregate evidence/one active reservation",
+    "Owner absolute expiry 2026-09-09T09:28:59Z",
+    "Actual prior budget 1500 seconds and 287700424 bytes remains charged"
+  ],
+  "applicability_source": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/QualificationExecutionWindowApplicabilityDecision.json",
+  "reason": "Use the already approved <=600-second per-GA ceiling for actual serial trusted-tool current reads and complete controlled qualification observations; no new authority or unapproved warmup protocol",
+  "authority_effect": "NONE"
+}

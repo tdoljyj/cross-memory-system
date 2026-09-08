@@ -1,0 +1,82 @@
+{
+  "profile_id": "DP-PREENTRY-SKILL-QUALIFICATION",
+  "definition_version": "fixed-synthetic-skill-input-20260908.v3-runtime600",
+  "purpose": "SKILL_COEXISTENCE_QUALIFICATION",
+  "allowed_environments": [
+    "ISOLATED_TEST"
+  ],
+  "allowed_subject_kinds": [
+    "ISOLATED_TEST_SUBJECT"
+  ],
+  "allowed_candidate_states": [
+    "UNQUALIFIED_QUARANTINED_TEST_SUBJECT_ONLY"
+  ],
+  "required_stages": [
+    "R05",
+    "R06",
+    "R07",
+    "R08",
+    "R09",
+    "R10"
+  ],
+  "candidate_must_differ_from_controller": true,
+  "required_true": [
+    "profile_accepted",
+    "authority_chain_verified",
+    "owner_or_delegate_verified",
+    "phase_authorization_valid",
+    "controller_qualification_valid",
+    "isolated_host_proven",
+    "scope_contained",
+    "exact_digests_bound",
+    "budget_reserved",
+    "evidence_sink_durable",
+    "stop_channel_ready",
+    "revocation_fresh",
+    "target_revision_matches",
+    "no_credential_crossing",
+    "pre_registered_expectations"
+  ],
+  "required_false": [
+    "real_user_payload",
+    "production_credentials",
+    "public_distribution",
+    "economic_rights",
+    "model_action",
+    "scope_expansion",
+    "candidate_pointer_write"
+  ],
+  "gate_control_type": "GateAuthorization",
+  "terminal_receipt_control_type": "GateResultReceipt",
+  "max_lifetime_seconds": 600,
+  "not_applicable_layer_permissions": {
+    "account": {
+      "reason": "该固定child没有Clued业务account、业务用户令牌或账户API；只读取明确三Skill文本和固定合成fixture。GitHub Owner控制身份仍存在并单独核验，不与此Clued业务account层混同。",
+      "accepted_schema_ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/1622355e303cd0f22e2b0d0b4b0beb943559c78d",
+        "sha256": "f57cceb29853c67f8702c1560017c3be7b96626d6358299b5215add63d01e916"
+      }
+    },
+    "integration_installation": {
+      "reason": "没有Clued集成安装实例、集成业务凭据或installation接口调用；宿主Docker安装及受信Git发布渠道不是本合成业务层installation，其控制/凭据代际继续独立核验。",
+      "accepted_schema_ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/1622355e303cd0f22e2b0d0b4b0beb943559c78d",
+        "sha256": "f57cceb29853c67f8702c1560017c3be7b96626d6358299b5215add63d01e916"
+      }
+    },
+    "context": {
+      "reason": "不创建或读取ContextStream/context/session业务对象；/allowed/fixture.json不是ContextStream或Canon。父监督会话session_generation不因此消失。",
+      "accepted_schema_ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/1622355e303cd0f22e2b0d0b4b0beb943559c78d",
+        "sha256": "f57cceb29853c67f8702c1560017c3be7b96626d6358299b5215add63d01e916"
+      }
+    },
+    "binding": {
+      "reason": "没有Clued Binding发行、选择、资源绑定或Binding token；纯固定文件挂载不是业务Binding。确切container/Skill/Scope/Root引用仍必须绑定且禁止改变。",
+      "accepted_schema_ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/1622355e303cd0f22e2b0d0b4b0beb943559c78d",
+        "sha256": "f57cceb29853c67f8702c1560017c3be7b96626d6358299b5215add63d01e916"
+      }
+    }
+  }
+}

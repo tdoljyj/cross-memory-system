@@ -1,0 +1,17 @@
+{
+  "kind": "EXACT_PARENT_EXIT_ENGINEERING_OBSERVATION_CLOSEOUT",
+  "recorded_at": "2026-09-08T15:45:34.566067+00:00",
+  "container_id": "3488203dfd2a5a06226c65e2d19ed5f1ec863d2735d5764e0aad080ae08f5fd9",
+  "independent_result_sha256": "014bfb0f435e645101d9cfd0626de3984953409a9476c94a2b65745ca21b57bc",
+  "this_attempt_active_slot_released": true,
+  "unrelated_attempts_released": false,
+  "budget_refunded": false,
+  "conservative_cumulative_seconds_reserved": 1500,
+  "conservative_reserved_evidence_bytes": 287700424,
+  "parent_execution_result": "UNKNOWN_PRESERVED",
+  "evidence_deleted": false,
+  "container_removed": false,
+  "redispatch_allowed": false,
+  "controller_qualified": false,
+  "authority_effect": "NONE"
+}

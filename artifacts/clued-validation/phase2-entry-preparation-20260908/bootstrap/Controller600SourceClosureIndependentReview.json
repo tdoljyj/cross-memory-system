@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "state": "ACCEPTED_EXACT_PREENTRY_CONTROLLER_SOURCE_AND_STATIC_TEST_INPUTS",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "candidate": {
+    "path": "scripts/phase2-qualification/control-context-verifier-runtime600/CandidateEvidence.json",
+    "sha256": "4a86c7a8be8d6251807e1b9d1e059b71b5a36a875989e8c4d44555f826e058e9",
+    "bytes": 6218
+  },
+  "source_bindings": {
+    "path": "scripts/phase2-qualification/control-context-verifier-runtime600/SourceBindings.json",
+    "sha256": "40ce8f4a764a85f29a0710e4cd75473f148f2317b401db9193f8f9a45ce613a9",
+    "bytes": 8559
+  },
+  "controller_manifest": {
+    "path": "scripts/phase2-qualification/control-context-verifier-runtime600/ControllerSourceManifest.candidate.json",
+    "sha256": "edf31377656e1a9a473d0095df72231c058266007e4fd4046e0a9b8c2d6a60d9",
+    "bytes": 44103
+  },
+  "static_inputs": [
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime600/GateDefinitionCandidate.json",
+      "sha256": "0b91f11a6f6c717483781f879ba66b58f18dd88be5bed17d6f24ca79e2ac2cba",
+      "bytes": 12803
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime600/preentry-skill-qualification.json",
+      "sha256": "1cda5e0fdad2d3afdf9760b983ca97c5012c8301dea661357e964106a00512fa",
+      "bytes": 123959
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime600/RegistrySuccessorCandidate.json",
+      "sha256": "55708c527f4e576086b9739b7af74a860481c9c3a25debc892575399652a7b83",
+      "bytes": 2268
+    }
+  ],
+  "checks": {
+    "all_201_unique_runtime_file_hashes_and_sizes_matched": true,
+    "all_local_source_and_accepted_source_hashes_matched": false,
+    "original_19_case_setup_and_oracle_text_exact": true,
+    "PQUAL18_excluded": true,
+    "six_R05_R10_prerequisites_preserved": true,
+    "manifest_self_reference_absent": true,
+    "packed_terminal_chain_called_after_original_evidence_resolution": true,
+    "all_bound_source_bytes_verified_with_explicit_document_successor": true,
+    "document_only_original_Create_baseline_schedule_corrected": true
+  },
+  "reviewed_changes": [
+    "Exact600 Profile, host/bridge, actual installed two-function SQL successor and original independent generations/current source checks.",
+    "Fixed same-process trusted-tool preflight, prior committed Intent, one-shot fresh dispatch and direct fixed host; result-only fresh challenge and exact original SQL terminal CAS/readback.",
+    "Exact observed STOP ID/Pid0/status/calendar and write-target mapping through original STOPPED; final receipt/signature transport has its own mandatory chain, no self-precondition.",
+    "Original independent raw assessments use existing actual named Owner delegation; the original GATE_RESULT signature adopts the complete Evidence/decision chain, without an additional oracle PR.",
+    "Five historical component raw/source/applicability blobs are actually resolved and checked; no formal PostgreSQL execution is added.",
+    "Accepted lossless original baseline package is actually decoded for each measured denial, bound to this original GA/test and actual input hashes.",
+    "Fixed PQUAL01 synthetic fixture/STOP and PQUAL20 cleanup-completed nonauthority observations preserve the original oracle alternatives.",
+    "RunOrder historical hash46d673 is preserved; explicit SchedulingCorrection binds current bab49efb. CREATE denial baseline is collected while PENDING before CREATE, not at STOPPED. Runtime201 source bytes are unaffected.",
+    "RunOrder historical hash46d673 is preserved; explicit SchedulingCorrection binds current bab49efb. CREATE denial baseline is collected while PENDING before CREATE, not at STOPPED. Runtime201 source bytes are unaffected."
+  ],
+  "validation_reuse": [
+    "Earlier accepted real PostgreSQL, Docker isolation and parent-exit observations remain separately attributed to their exact sources.",
+    "New implementation pure checks and independent targeted packed/signer checks were reviewed; no broad old suite or real PQUAL was rerun here."
+  ],
+  "authority_effect": "NONE",
+  "pqual_pass_issued": false,
+  "requires_actual_normal_source_publication": true,
+  "document_scheduling_successor": {
+    "path": "scripts/phase2-qualification/control-context-verifier-runtime600/SchedulingCorrection.json",
+    "sha256": "6ed7c1b341e73a451eeedb7a5ee29dc82c71f2bb5dd07035c99b5b04cf8090d8",
+    "bytes": 1106
+  }
+}

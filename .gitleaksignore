@@ -209,3 +209,16 @@ artifacts/clued-validation/public-mcp/a03/c1ef7a3b-20260829T062104Z/production-r
 604148e4a14553933ea9a259d1538c309893765d:artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/MinimumContextCompilerIndependentReview.json:generic-api-key:8
 604148e4a14553933ea9a259d1538c309893765d:artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/MinimumContextCompilerIndependentReview.json:generic-api-key:9
 604148e4a14553933ea9a259d1538c309893765d:scripts/phase2-qualification/nonproduction-control-store/generation2/signing.mjs:generic-api-key:44
+
+# EX-19: Independently recomputed event-key regression source SHA256, no credential.
+# RuntimeEventKeySourceDigestIndependentClassification.json; two exact occurrences only.
+7dedb36a504d00aa81f60d3854f172e3dd86b836:scripts/phase2-qualification/preentry-parent/runtime-successor/PreparationEvidence.json:generic-api-key:9
+7dedb36a504d00aa81f60d3854f172e3dd86b836:scripts/phase2-qualification/preentry-parent/runtime-successor/history/327f7d93/PreparationEvidence.json:generic-api-key:6
+
+# EX-20: Independently verified public Python GPG fingerprint and exact source SHA256.
+# Five immutable occurrences only; no generic rule/path exclusion.
+50fc3a16874cc5c313d81160c09cceabf8892972:artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/QualificationRuntimeSuccessorIndependentReview.json:generic-api-key:22
+50fc3a16874cc5c313d81160c09cceabf8892972:artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/Runtime180RemoteEvidenceIndependentReview.json:generic-api-key:25
+50fc3a16874cc5c313d81160c09cceabf8892972:scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-runtime600-final/HostRuntimeConfig.json:generic-api-key:29
+50fc3a16874cc5c313d81160c09cceabf8892972:scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-runtime600/HostRuntimeConfig.json:generic-api-key:29
+50fc3a16874cc5c313d81160c09cceabf8892972:scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions/HostRuntimeConfig.json:generic-api-key:29

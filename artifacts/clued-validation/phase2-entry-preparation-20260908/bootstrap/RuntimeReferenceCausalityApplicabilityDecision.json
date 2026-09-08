@@ -1,0 +1,36 @@
+{
+  "state": "ACCEPTED_LIMITED_REFERENCE_ASSEMBLY_RULES_PENDING_EXACT_IMPLEMENTATION_REVIEW",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "authority_effect": "NONE",
+  "controller_qualified": false,
+  "ga_issued": false,
+  "scope": "Existing nonproduction PRE_ENTRY SKILL_COEXISTENCE_QUALIFICATION only",
+  "sources": {
+    "S06_sha256": "f967fdf3e63028d29ed191160698726b5d707aaae63bd951f6ba2e8584936fec",
+    "S06_lines": [3879, 3885, 4308, 4309, 4310, 4316],
+    "QualificationPhasePolicy_sha256": "154a5ca0e3d6786877662b68a173176ecd54712744400805ef4b2a93f5946f22",
+    "original_ga_schema_sha256_unchanged": "f7f7e2a011f3f81a005e46f9cf7683edeb010dc7812eadfb4473f6ad5368a1ce"
+  },
+  "rationale": "An independent static runtime decision cannot contain the digest of a future signed Status wrapper, future budget reservation or its own publication commit. Exact per-instance signature/source/currentness validation remains mandatory. Fixing these future values into expected_ga was an implementation constraint, not an original permission requirement.",
+  "limited_late_binding": {
+    "budget_reservation_ref": "Resolve one actually committed immutable BUDGET_RESERVED event in the existing private execution_events store. Check exact raw SHA and sequence, pending/unconsumed identity, Root/Profile/controller/scope, all three actual control generations, allocated 180 seconds and 134217728 evidence bytes, Owner validity and actual cumulative reservation. GA window must fit reservation validity. Full reference enters the GA signature. No arbitrary URI, double charge, reuse, automatic refund or expiry-based capacity release.",
+    "status_manifest_ref": "Bind the exact independently accepted Status signed payload digest, issuer/purpose/generation, source refs and observations in static runtime policy. Obtain the actual signed wrapper only after real Owner publication. Resolve and verify its true signature and exact full raw bytes in private SQL, then require the GA reference to equal that object URI and full raw SHA.",
+    "target_revision": "Derive only from the actual verified Owner publication containing this runtime acceptance and its exact accepted source closure. Verify real commit/tree/blob membership. A caller-selected or merely reachable commit is insufficient.",
+    "source_ref": "Prefer the precomputable immutable SourceManifest blob and exact SHA as a fixed value. If an implementation specifically uses a publication-commit locator, it must be bound to the same verified publication as target_revision; no independent arbitrary late-bound source."
+  },
+  "static_reference_meanings": {
+    "controller_qualification_ref": "Independent qualification binds exact controller source, host and scope. It precedes runtime acceptance and must not contain that future runtime acceptance digest.",
+    "binding_ref": "An exact independent control binding description may bind Owner/Root/fixed subject/Host/source/scope and control-generation rules. S06 does not define this GA field as necessarily a business BindingReceipt. This Profile's accepted business-binding N/A remains unchanged. Do not claim a business BindingReceipt, token or new business generation exists.",
+    "release_risk_manifest_digest": "Digest an actual independently assessed risk description for this limited synthetic qualification action, including UNKNOWN, STOP and remaining external-dispatch uncertainty. It is not an acceptance of product Release risk or production operation.",
+    "credential_scope": "Exact trusted host tool and audience boundaries, with no business/model/production credentials. A scope description does not issue credentials."
+  },
+  "budget_causality": "Keep existing execution_binding foreign keys and default-closed state. First publish/accept the static runtime with the exact reservation-validation rule; then provision the accepted execution binding; then reserve actual budget; then assemble/sign/reserve the complete GA using that actual reservation. No pre-binding bypass or extra Store is required.",
+  "store_reference_encoding": "S06 does not specify a literal BudgetReservation URI. A scoped execution-event locator such as urn:clued:control-evidence:uscrdifznmlvczcekqpw:execution-events:<sequence> is a proposed concrete read mapping to existing read_execution_event, not a new historical wire literal or control-object family. Exact resolver and byte checks require independent implementation acceptance.",
+  "unchanged": [
+    "Original complete GA Schema and full-payload signature requirements",
+    "Original live ControlEvidenceStore ownership and immutable evidence",
+    "Owner 24-hour window, per-GA ceiling, cumulative budget and one-active limit",
+    "Root generation 2, current revocation and separate control generations",
+    "No production, model, paid, Gold, PQUAL18 positive or business permission"
+  ]
+}

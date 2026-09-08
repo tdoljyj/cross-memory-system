@@ -1,0 +1,34 @@
+{
+  "state": "ACCEPTED_EXACT_SCOPED_GENERATION_CONFIGURATION_NOT_ACTIVE",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "accepted_at": "2026-09-08T16:24:21.717Z",
+  "source": {
+    "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/PreparedRuntimeGenerations.json",
+    "sha256": "bac3ff3db114ccce5ac85890697c2387b4efac37083a54c853535fae8013182a",
+    "git_blob_sha": "66fac8a5cc10f12eb7fcf852592aed53cd8f8fd5"
+  },
+  "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+  "root_generation": "ctrgen_dd30fbc7e0ba43fa8ba9f734867bcf12",
+  "project_ref": "uscrdifznmlvczcekqpw",
+  "accepted_generations": {
+    "runner_generation": "runnergen_a256855fec9441839105c69b746c5244",
+    "credential_generation": "credgen_bac92a11e7144a3fb9e67f40a6a07d11",
+    "session_generation": "sessiongen_ffb02a907d334b0da0b37bf457a758c2"
+  },
+  "expires_at": "2026-09-09T09:28:59Z",
+  "authority_effect": "NONE",
+  "registered": false,
+  "credential_rotation_performed": false,
+  "credential_generation_meaning": "Independent control-domain generation for the existing accepted host transport scope; no secret rotation, new credential or broader access is claimed.",
+  "status_observation_applicability": {
+    "mode": "ACCEPTED_CONFIGURATION_DEFINITION_OBSERVED_NOT_LIVE_RUNTIME_STATE",
+    "requirement": "Status source_refs/digests must bind these exact definition and independent acceptance bytes. Its actual as_of follows reading that accepted configuration. No claim that execution_current exists, runtime is active, credentials were rotated or future live values were already observed.",
+    "original_source": "S06 L3878 requires as_of/generation/source_digests/expiry for observation; it does not grant authority. This limited observation concerns actual accepted configuration definitions, while actual running state remains independently checked."
+  },
+  "activation_conditions": [
+    "Actual complete runtime acceptance and verified Owner publication before initialization of execution_current.",
+    "Initialize exactly these three independent values once under accepted live Root and scope; no borrowed or business-layer N/A generations.",
+    "Before every effect use fresh actual SQL values, exact accepted execution binding and current revocation; absent or mismatched rows refuse.",
+    "A Status configuration observation does not authorize effects or replace actual currentness."
+  ]
+}

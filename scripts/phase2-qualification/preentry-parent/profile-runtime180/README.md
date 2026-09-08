@@ -1,0 +1,9 @@
+# Explicit runtime-180 Profile successor
+
+Prepared, not active or signed. The old signed 90-second Profile, its Schema, review subject and acceptance remain byte-for-byte unchanged in profile-successor. This new directory changes the same execution Profile's definition version and maximum lifetime to 180 seconds; it does not silently extend an existing GA.
+
+Root's observed Supabase tool calls take about 11–12 seconds. The complete STOP chain requires 24 seconds plus six seconds of evidence/scheduling allowance; START itself needs its full six-second CLI budget before that window. A 90-second Profile therefore leaves at most about 54 seconds for dispatch, making several real remote steps plus signing and inspection impractical. This explicit 180-second candidate stays below the original Owner's 600-second per-GA ceiling and preserves the absolute expiry, aggregate 7200-second/1GiB bounds, resource caps, zero-model/paid limits and all scope/denial rules.
+
+ChangeSet.json also records an identity clarification, not just a timing change: the old a4bff parent reference identifies the immutable argv/prestart dependency. The complete new executor must be the same independently accepted exact source-set manifest in Profile input binding, Gate and TestManifest. It is not replaced by an arbitrary new SHA inside a GA. FixedInputScope keeps every original child/resource field, changes deadline to 180, and explicitly records this unresolved complete-executor binding. No controller qualification is inferred.
+
+Two local tests validate that only the two Profile definition fields change, the exact new Schema accepts 180 and rejects other versions/bounds, and every old resource field is preserved apart from the recorded deadline/identity clarification. They passed as part of the 3155.3081-ms combined run; a separate SQL row-projection issue from that run was subsequently fixed and verified. No Profile activation or real execution occurred.

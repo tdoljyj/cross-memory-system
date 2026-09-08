@@ -1,0 +1,65 @@
+{
+  "state": "EXACT_EIGHT_PUBLIC_FINGERPRINT_FINDINGS_CLASSIFIED",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "items": [
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/work/bce1e6dc03104d59b068854a8c12d540/probe-parent-before-start.stdout",
+      "line": 192,
+      "rule": "generic-api-key",
+      "source_sha256": "70bde3de9d116332c78d30a971a5a04f5ac5c2b2e8efa86742e03d020e72f67a",
+      "classification": "OFFICIAL_PYTHON_PUBLIC_GPG_FINGERPRINT_NOT_A_SECRET"
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/work/bce1e6dc03104d59b068854a8c12d540/probe-parent-image.stdout",
+      "line": 16,
+      "rule": "generic-api-key",
+      "source_sha256": "247b588547de85af7fb6f0a462eb0905ef047157dc279078db0fc5fe35aa1a94",
+      "classification": "OFFICIAL_PYTHON_PUBLIC_GPG_FINGERPRINT_NOT_A_SECRET"
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/work/bce1e6dc03104d59b068854a8c12d540/main-observer-final-inspect.stdout",
+      "line": 192,
+      "rule": "generic-api-key",
+      "source_sha256": "e006ad6e549e276dd685357400b6d299c0d6760c57f69a8e909466b0ecbd0989",
+      "classification": "OFFICIAL_PYTHON_PUBLIC_GPG_FINGERPRINT_NOT_A_SECRET"
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/work/bce1e6dc03104d59b068854a8c12d540/probe-parent-running.stdout",
+      "line": 192,
+      "rule": "generic-api-key",
+      "source_sha256": "1a6e1841dec41806f2fee09b325bd62d38b6e3d9b6b080848085bb8bfec73098",
+      "classification": "OFFICIAL_PYTHON_PUBLIC_GPG_FINGERPRINT_NOT_A_SECRET"
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/work/bce1e6dc03104d59b068854a8c12d540/parent-exit-intent.json",
+      "line": 40,
+      "rule": "generic-api-key",
+      "source_sha256": "900e384514f291727f2318452d4e6991c3d27b95a5818e08d1e6a9f6fcdbc47a",
+      "classification": "OFFICIAL_PYTHON_PUBLIC_GPG_FINGERPRINT_NOT_A_SECRET"
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/work/bce1e6dc03104d59b068854a8c12d540/watchdog-after-stop.stdout",
+      "line": 192,
+      "rule": "generic-api-key",
+      "source_sha256": "e006ad6e549e276dd685357400b6d299c0d6760c57f69a8e909466b0ecbd0989",
+      "classification": "OFFICIAL_PYTHON_PUBLIC_GPG_FINGERPRINT_NOT_A_SECRET"
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/work/bce1e6dc03104d59b068854a8c12d540/watchdog-before-stop.stdout",
+      "line": 192,
+      "rule": "generic-api-key",
+      "source_sha256": "1a6e1841dec41806f2fee09b325bd62d38b6e3d9b6b080848085bb8bfec73098",
+      "classification": "OFFICIAL_PYTHON_PUBLIC_GPG_FINGERPRINT_NOT_A_SECRET"
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/work/bce1e6dc03104d59b068854a8c12d540/watchdog-stopped.json",
+      "line": 29,
+      "rule": "generic-api-key",
+      "source_sha256": "2aa14d12eb82f1c074fd87b97a163d4e08f56f823f8bd5630ed3ebdaf8fb110e",
+      "classification": "OFFICIAL_PYTHON_PUBLIC_GPG_FINGERPRINT_NOT_A_SECRET"
+    }
+  ],
+  "public_fingerprint": "7169605F62C751356D054A26A821E680E5FA6305",
+  "policy_change": false,
+  "raw_archive_changed": false
+}

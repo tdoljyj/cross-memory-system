@@ -1,0 +1,151 @@
+{
+  "kind": "FIXED_SYNTHETIC_PROFILE_SCHEMA_INDEPENDENT_ACCEPTANCE",
+  "state": "ACCEPTED_EXACT_PROFILE_DEFINITION_AND_LAYER_APPLICABILITY_FOR_SIGNING",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "observed_at": "2026-09-08T17:10:28.131Z",
+  "review_subject_sha256": "44da35f244fb36b25b41c6aa14bc26fe6ca2450815630d2931bf3e88a7eac1c3",
+  "subject_file": {
+    "path": "scripts/phase2-qualification/preentry-parent/profile-runtime600/ProfileReviewSubject.json",
+    "sha256": "e6013425f51671fa9fa301a7201254f56211963df1d3c3c6ce003528c48956dc"
+  },
+  "preparation_evidence": {
+    "path": "scripts/phase2-qualification/preentry-parent/profile-runtime600/PreparationEvidence.json",
+    "sha256": "5b8bd26f24856f861fa027944cacbc3d50abdf97b355f3c0b57f0262f09483f5"
+  },
+  "accepted_profile_definition": {
+    "profile_id": "DP-PREENTRY-SKILL-QUALIFICATION",
+    "definition_version": "fixed-synthetic-skill-input-20260908.v3-runtime600",
+    "purpose": "SKILL_COEXISTENCE_QUALIFICATION",
+    "allowed_environments": [
+      "ISOLATED_TEST"
+    ],
+    "allowed_subject_kinds": [
+      "ISOLATED_TEST_SUBJECT"
+    ],
+    "allowed_candidate_states": [
+      "UNQUALIFIED_QUARANTINED_TEST_SUBJECT_ONLY"
+    ],
+    "required_stages": [
+      "R05",
+      "R06",
+      "R07",
+      "R08",
+      "R09",
+      "R10"
+    ],
+    "candidate_must_differ_from_controller": true,
+    "required_true": [
+      "profile_accepted",
+      "authority_chain_verified",
+      "owner_or_delegate_verified",
+      "phase_authorization_valid",
+      "controller_qualification_valid",
+      "isolated_host_proven",
+      "scope_contained",
+      "exact_digests_bound",
+      "budget_reserved",
+      "evidence_sink_durable",
+      "stop_channel_ready",
+      "revocation_fresh",
+      "target_revision_matches",
+      "no_credential_crossing",
+      "pre_registered_expectations"
+    ],
+    "required_false": [
+      "real_user_payload",
+      "production_credentials",
+      "public_distribution",
+      "economic_rights",
+      "model_action",
+      "scope_expansion",
+      "candidate_pointer_write"
+    ],
+    "gate_control_type": "GateAuthorization",
+    "terminal_receipt_control_type": "GateResultReceipt",
+    "max_lifetime_seconds": 600,
+    "not_applicable_layer_permissions": {
+      "account": {
+        "reason": "该固定child没有Clued业务account、业务用户令牌或账户API；只读取明确三Skill文本和固定合成fixture。GitHub Owner控制身份仍存在并单独核验，不与此Clued业务account层混同。",
+        "accepted_schema_ref": {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/1622355e303cd0f22e2b0d0b4b0beb943559c78d",
+          "sha256": "f57cceb29853c67f8702c1560017c3be7b96626d6358299b5215add63d01e916"
+        }
+      },
+      "integration_installation": {
+        "reason": "没有Clued集成安装实例、集成业务凭据或installation接口调用；宿主Docker安装及受信Git发布渠道不是本合成业务层installation，其控制/凭据代际继续独立核验。",
+        "accepted_schema_ref": {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/1622355e303cd0f22e2b0d0b4b0beb943559c78d",
+          "sha256": "f57cceb29853c67f8702c1560017c3be7b96626d6358299b5215add63d01e916"
+        }
+      },
+      "context": {
+        "reason": "不创建或读取ContextStream/context/session业务对象；/allowed/fixture.json不是ContextStream或Canon。父监督会话session_generation不因此消失。",
+        "accepted_schema_ref": {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/1622355e303cd0f22e2b0d0b4b0beb943559c78d",
+          "sha256": "f57cceb29853c67f8702c1560017c3be7b96626d6358299b5215add63d01e916"
+        }
+      },
+      "binding": {
+        "reason": "没有Clued Binding发行、选择、资源绑定或Binding token；纯固定文件挂载不是业务Binding。确切container/Skill/Scope/Root引用仍必须绑定且禁止改变。",
+        "accepted_schema_ref": {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/1622355e303cd0f22e2b0d0b4b0beb943559c78d",
+          "sha256": "f57cceb29853c67f8702c1560017c3be7b96626d6358299b5215add63d01e916"
+        }
+      }
+    }
+  },
+  "accepted_schema_refs": {
+    "preentry-profile.candidate.schema.json": {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/5d8ccf27c5576af74c6c6501870cc1ff40429359",
+      "sha256": "467ffde7212f6ddb9a8dbf9121a26ef5138129b43f7bb3722392adf7f17f90ef"
+    },
+    "revocation-epoch-vector.candidate.schema.json": {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/1622355e303cd0f22e2b0d0b4b0beb943559c78d",
+      "sha256": "f57cceb29853c67f8702c1560017c3be7b96626d6358299b5215add63d01e916"
+    },
+    "gate-authorization.candidate.schema.json": {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/90be47cb00542eafe33d07d0d2678718b3efc845",
+      "sha256": "f7f7e2a011f3f81a005e46f9cf7683edeb010dc7812eadfb4473f6ad5368a1ce"
+    }
+  },
+  "accepted_fixed_input_scope": {
+    "path": "scripts/phase2-qualification/preentry-parent/profile-runtime600/FixedInputScope.json",
+    "sha256": "a79afda0e8b0089b731d68d1ceae36c44c48933c5c15c802892ada9b848bf85f"
+  },
+  "change_applicability": {
+    "predecessor_profile_sha256": "cce4d4966dddbdb9685c8fab9242ffde48ca6210c919bd2615cc9c0bfc011f51",
+    "only_profile_changes": [
+      "definition_version",
+      "max_lifetime_seconds180_to600"
+    ],
+    "only_profile_schema_changes": "The same two constants; original GA/vector schemas unchanged.",
+    "fixed_input_delta": "600deadline and exact parent600 dependency. Its literal reports the unchanged fixed fixture then remains observable for bounded STOP, rather than exiting before a Running observation.",
+    "business_layer_na_and_child_resources_unchanged": true,
+    "scope_decision_sha256": "0db24386c7fc771317e46c2c239c468fc7eb91b48cfbd2740b8eb0906a7536ef"
+  },
+  "validation": {
+    "actual_eight_files_sha_size_lf": true,
+    "actual_profile_schema_diff_and_subject_digest": true,
+    "actual_schema_blob_refs": true,
+    "reported_new_pure_checks": {
+      "pass": 1,
+      "fail": 0,
+      "skip": 0,
+      "duration_ms": 86.0182,
+      "kind": "pure exact Profile successor check"
+    },
+    "old_checks_rerun": false
+  },
+  "conditions": [
+    "Actual signed publication and exact readback of this subject and acceptance before use; no old180 overwrite.",
+    "Complete accepted executor source-set must bind this new parent/host/bridge and actual test/scope before any effect. NOT_YET_BOUND is not an admission.",
+    "Same Owner absolute expiry2026-09-09T09:28:59Z,600 per GA,7200 aggregate seconds,1GiB aggregate evidence,oneactive,zero real model/paid/business/production actions.",
+    "Formal local PostgreSQL execution is not added. Historical real control-component evidence may be independently revalidated with its actual old time/source; this does not claim a new PG run.",
+    "Fixture flush/hold is controller scaffolding, not Skill instructions or a qualification result. Existing OS and STOP observations are reused only for unchanged isolation/guard logic; actual new qualified positive execution remains to be observed."
+  ],
+  "profile_active": false,
+  "controller_qualified": false,
+  "ga_issued": false,
+  "gate_pass": false,
+  "authority_effect": "NONE"
+}

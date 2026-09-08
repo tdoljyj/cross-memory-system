@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "state": "ACCEPTED_EXACT_LOSSLESS_ORIGINAL_INPUT_PACKAGING_COMPONENT",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "source": {
+    "path": "scripts/phase2-qualification/scenario-observations/request-denials-packed.mjs",
+    "sha256": "1abd2123f5c1d9b68fe9fe09e12c52c0c709221959eeedcbc6413d987fa95753"
+  },
+  "prior_unaccepted_source_sha256": "7efaa1266a7e8d8594e33463cd15f11df745e962e5dd48f3530dec8bd86e360b",
+  "resolved_findings": [
+    {
+      "test": "pretty_original_ga_unchanged",
+      "result": "ACCEPTED"
+    },
+    {
+      "test": "extra_top_level_and_unknown_operation",
+      "result": "REJECTED",
+      "error": "EXACT_CALLED_ARGUMENT_BOUNDARY"
+    },
+    {
+      "test": "invalid_utf8_original",
+      "result": "REJECTED",
+      "error": "EXACT_ORIGINAL_UTF8_BYTES"
+    }
+  ],
+  "targeted_checks": {
+    "unchanged_pretty_original_ga_preserved": true,
+    "changed_ga_exact_original_compact_encoding": true,
+    "extra_argument_and_unknown_operation_rejected": true,
+    "invalid_original_utf8_rejected": true,
+    "prototype_path_rejected": true,
+    "reference_tampering_rejected": true,
+    "over_1MiB_uncompressed_input_rejected": true,
+    "actual_verifier_measurements": 0,
+    "network_calls": 0,
+    "host_effects": 0
+  },
+  "accepted_boundary": [
+    "The shared baseline is preserved as exact compressed original bytes with original URI/SHA/length; original individual observation raw remains unchanged.",
+    "Exact reconstruction is constrained to the original four call arguments and CREATE/MODEL; original unchanged GA byte formatting is retained only when both semantics and recorded actual hash match.",
+    "Both packed raw and restored original bytes remain bounded; the existing index/SQL transport limits are unchanged.",
+    "Final result admission must actually decode this source chain, check the original actual call/baseline hashes and independently assess the case; packaging itself never proves a denial, oracle PASS, signature or authority."
+  ],
+  "authority_effect": "NONE",
+  "complete_pqual_pass": false
+}

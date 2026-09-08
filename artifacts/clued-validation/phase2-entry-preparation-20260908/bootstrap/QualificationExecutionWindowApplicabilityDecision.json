@@ -1,0 +1,47 @@
+{
+  "state": "ACCEPTED_SCOPED_PROFILE600_SUCCESSOR_PREPARATION",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "authority_effect": "NONE",
+  "owner_delegation_sha256": "e09ef634712ce1206600402552073bae91e7296f2b4e2d3f99855bd760c944bd",
+  "owner_window_expires_at": "2026-09-09T09:28:59Z",
+  "existing_authorized_per_ga_maximum_seconds": 600,
+  "prior_profile180_sha256": "cce4d4966dddbdb9685c8fab9242ffde48ca6210c919bd2615cc9c0bfc011f51",
+  "prior_profile180_acceptance_sha256": "a1f6c3d41d761c92d45a8cc820b133bce26929bd192393675f05bd7cfdada10e",
+  "review_finding": {
+    "assessment_publication_finding_sha256": "2ce044d44178ccc0466991fe242caf33aab397decc52ddbb5d1f07a6fcc5de2e",
+    "actual_sql_latency_basis": "Coordinator repeatedly observed approximately 11-12 seconds per actual fixed Supabase tool call. This is an observed engineering estimate, not a guaranteed bound.",
+    "current_sequential_sql_calls": {
+      "reserve_gate": 1,
+      "create_initial_current_intent_dispatch_result": 4,
+      "start_initial_current_intent_dispatch_result": 4,
+      "stop_sent_and_stopped": 2,
+      "decision_reserved_and_signing": 2,
+      "result_initial_current_fresh_current_commit_readback": 4,
+      "total": 17
+    },
+    "estimated_sql_only_seconds": [187,204],
+    "excluded_additional_elapsed_time": ["Actual dynamic GA/GRR signing and verification", "Cold immutable GitHub source verification", "Fixed host effects and STOP observations", "Real independent assessment and coordinator execution"],
+    "conclusion": "The current fixed sequencing has no credible 180-second operating margin even after removing the extra per-assessment PR. Adding a new long-lived multi-operation/warmup protocol solely to meet 180 seconds is a larger control-state change than using the already authorized 600-second ceiling."
+  },
+  "recommended_minimum_path": {
+    "profile": "Same DP-PREENTRY-SKILL-QUALIFICATION identity, explicit new definition version, maximum600 seconds",
+    "aggregate_seconds_max": 7200,
+    "aggregate_evidence_bytes_max": 1073741824,
+    "per_attempt_evidence_bytes": 134217728,
+    "maximum_active_attempts": 1,
+    "purpose": "SKILL_COEXISTENCE_QUALIFICATION",
+    "environment": "ISOLATED_TEST",
+    "scope_and_business_permissions_changed": false,
+    "models_or_paid_actions_added": false,
+    "owner_total_window_extended": false,
+    "root_generation_or_issuer_purpose_change_required_solely_for_lifetime": false,
+    "new_user_permission_required": false,
+    "preserve": "All prior90/180 accepted definitions, source packages and actual installation evidence remain immutable history.",
+    "implementation_boundary": "Prepare an explicit forward Profile/Gate/host/runtime-source and narrow SQL function successor. The five actual runtime tables are presently empty and unseeded; do not pretend they are uninstalled or edit old installation evidence. Preserve original Root tables, privileges, generations, history, fixed scope and all data. Require exact independent successor acceptance before installation/activation.",
+    "budget_boundary": "Reserve the actual chosen600-second allocation before GA, charge once under the existing7200-second aggregate with the actual historical charges, consume once, and never refund UNKNOWN or treat expiry as stopped capacity.",
+    "expiry_boundary": "GA deadline and expiry remain at most600 seconds after issue and no later than Owner/Root/Profile/qualification expiry; every currentness check, STOP reserve and refusal remains. No pre-signed fictional measurements and no expired/revoked PASS.",
+    "protocol_boundary": "Do not add a new warmup or multi-operation session protocol merely for time compression. Existing immutable read caches may remain; mutable authority/currentness is never cached as current."
+  },
+  "not_yet_accepted": ["Exact600 Profile/source/SQL bytes", "Actual controller qualification and runtime acceptance", "Any GA or GRR instance", "Any PQUAL result"],
+  "practical_limit": "600 seconds provides roughly396 seconds beyond the upper observed SQL-only estimate after the unnecessary assessment PR is removed. This is a realistic scheduling margin, not an execution guarantee; real elapsed time and fixed deadlines still govern."
+}

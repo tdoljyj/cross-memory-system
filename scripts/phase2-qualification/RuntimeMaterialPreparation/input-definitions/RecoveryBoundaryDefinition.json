@@ -1,0 +1,18 @@
+{
+  "definition_state": "PREPARED_FOR_INDEPENDENT_SCOPE_ACCEPTANCE",
+  "authority_effect": "NONE",
+  "kind": "ISOLATED_ATTEMPT_SAFE_STATE_AND_RECOVERY_BOUNDARY",
+  "rollback_point": "Before CREATE: no container, no child fixture, immutable signed source bytes retained",
+  "safe_state": "Exact attempt container stopped, no live process, no child external writes",
+  "permitted_reconciliation": "Inspect known exact container and preserve actual STOP observation",
+  "container_remove": false,
+  "evidence_delete": false,
+  "authority_restore_or_expand": false,
+  "business_canonical_writes": false,
+  "automatic_retry": false,
+  "automatic_budget_refund": false,
+  "stop_policy_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/425ffa113c801dc6baf1d14807c503214927d7c4",
+    "sha256": "ff69f6518567651db3a99057eee1ec2a572171d9e59a0397f93d5fcaa4c2d016"
+  }
+}

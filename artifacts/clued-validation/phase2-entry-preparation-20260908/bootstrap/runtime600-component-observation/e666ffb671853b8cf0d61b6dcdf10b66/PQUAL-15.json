@@ -1,0 +1,1115 @@
+{
+  "case_id": "PQUAL-15",
+  "kind": "ACTUAL_SYNTHETIC_COMPONENT_OBSERVATION_NOT_OUTER_GA_EXECUTION",
+  "started_at": "2026-09-08T17:20:46.940Z",
+  "ended_at": "2026-09-08T17:20:48.737Z",
+  "before": {
+    "root": {
+      "state": "STORED_NO_GATE_AUTHORITY",
+      "events": [],
+      "sequence": 2,
+      "root_set_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+      "generation_id": "ctrgen_dd30fbc7e0ba43fa8ba9f734867bcf12",
+      "authority_effect": "NONE",
+      "metadata_binding_sha256": "f0d100e4e1f87e4ca2605f696356334cc66b950536636a8b7822a97a6649d66b"
+    },
+    "events": [
+      {
+        "request": {
+          "body": {
+            "raw": "{\"controller_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"credential_generation\":\"credential-initial\",\"environment\":\"ISOLATED_TEST\",\"evidence_bytes\":134217728,\"expires_at\":\"2026-09-08T17:30:46.902Z\",\"idempotency_key\":\"engineering_budget\",\"not_before\":\"2026-09-08T17:20:45.902Z\",\"profile_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"purpose\":\"SKILL_COEXISTENCE_QUALIFICATION\",\"root_generation\":\"ctrgen_dd30fbc7e0ba43fa8ba9f734867bcf12\",\"runner_generation\":\"runner-initial\",\"scope_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"seconds\":600,\"session_generation\":\"session-initial\"}\n",
+            "sha256": "3fc67aef1cfaa471fafe4efbf58547fdedbe7e6254fda51db1432d90bb2dc720"
+          },
+          "operation": "BUDGET_RESERVED"
+        },
+        "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+        "sequence": 1,
+        "recorded_at": "2026-09-08T17:20:46.907565+00:00",
+        "idempotency_key": "engineering_budget",
+        "recording_transaction_id": "763"
+      },
+      {
+        "request": {
+          "body": {
+            "raw": "{\"ga_id\":\"ga_component\",\"ga_sha256\":\"e8b6fa431b4933f773e90d7a98f88c0bb50bd93d9266562085fce64a090cc639\",\"operation\":\"CREATE\"}\n",
+            "sha256": "715c22ef7204d2bed1e5eb016cba46fbc3b8b9f46f7574a855912e5b304f970f",
+            "operation": "CREATE"
+          },
+          "ga_id": "ga_component",
+          "operation": "INTENT_RECORDED",
+          "idempotency_key": "intent_original",
+          "expected_sequence": 1
+        },
+        "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+        "sequence": 2,
+        "recorded_at": "2026-09-08T17:20:46.924756+00:00",
+        "idempotency_key": "intent_original",
+        "recording_transaction_id": "766"
+      },
+      {
+        "request": {
+          "body": {
+            "intent_sha256": "715c22ef7204d2bed1e5eb016cba46fbc3b8b9f46f7574a855912e5b304f970f",
+            "intent_sequence": 2
+          },
+          "ga_id": "ga_component",
+          "operation": "CREATE_SENT",
+          "idempotency_key": "sent_original",
+          "expected_sequence": 2
+        },
+        "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+        "sequence": 3,
+        "recorded_at": "2026-09-08T17:20:46.92675+00:00",
+        "idempotency_key": "sent_original",
+        "recording_transaction_id": "767"
+      },
+      {
+        "request": {
+          "body": {},
+          "ga_id": "ga_component",
+          "operation": "UNKNOWN",
+          "idempotency_key": "unknown",
+          "expected_sequence": 3
+        },
+        "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+        "sequence": 4,
+        "recorded_at": "2026-09-08T17:20:46.927986+00:00",
+        "idempotency_key": "unknown",
+        "recording_transaction_id": "768"
+      },
+      {
+        "request": {
+          "previous": "credential-initial",
+          "replacement": "credential-next",
+          "generation_kind": "credential_generation",
+          "idempotency_key": "rotate",
+          "expected_sequence": 4,
+          "signed_source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+        "sequence": 5,
+        "recorded_at": "2026-09-08T17:20:46.935264+00:00",
+        "idempotency_key": "rotate",
+        "recording_transaction_id": "770"
+      }
+    ],
+    "binding": {
+      "gate_id": "G-PREENTRY-SKILL-QUALIFICATION",
+      "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+      "gate_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "gate_version": "SYNTHETIC_NOT_ACCEPTED",
+      "scope_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "prior_seconds": 1500,
+      "profile_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "controller_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "prior_evidence_bytes": 287700424,
+      "qualification_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "runtime_acceptance_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "current": {
+      "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+      "sequence": 5,
+      "active_ga_id": "ga_component",
+      "charged_seconds": 2100,
+      "runner_generation": "runner-initial",
+      "session_generation": "session-initial",
+      "credential_generation": "credential-initial",
+      "charged_evidence_bytes": 421918152,
+      "pending_budget_sequence": null
+    },
+    "attempts": [
+      {
+        "ga": {
+          "gate_id": "G-PREENTRY-SKILL-QUALIFICATION",
+          "purpose": "SKILL_COEXISTENCE_QUALIFICATION",
+          "deadline": "2026-09-08T17:20:48.702Z",
+          "issued_at": "2026-09-08T17:20:46.802Z",
+          "expires_at": "2026-09-08T17:20:48.702Z",
+          "environment": "ISOLATED_TEST",
+          "scope_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "profile_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "idempotency_key": "component",
+          "controller_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "runner_generation": "runner-initial",
+          "session_generation": "session-initial",
+          "status_manifest_ref": {
+            "uri": "control://status-manifests/sm_component",
+            "sha256": "c1f8d4f7f7344d3992e901756ef7129403a2b8ff2eafcc39485b3d4884e07212"
+          },
+          "authorization_status": "AUTHORIZED",
+          "credential_generation": "credential-initial",
+          "gate_authorization_id": "ga_component",
+          "budget_reservation_ref": {
+            "uri": "urn:clued:control-evidence:uscrdifznmlvczcekqpw:execution-events:1",
+            "sha256": "3fc67aef1cfaa471fafe4efbf58547fdedbe7e6254fda51db1432d90bb2dc720"
+          },
+          "controller_qualification_ref": {
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "control_trust_root_generation": "ctrgen_dd30fbc7e0ba43fa8ba9f734867bcf12"
+        },
+        "ga_id": "ga_component",
+        "phase": "UNKNOWN",
+        "ga_raw": "{\"gate_authorization_id\":\"ga_component\",\"idempotency_key\":\"component\",\"authorization_status\":\"AUTHORIZED\",\"purpose\":\"SKILL_COEXISTENCE_QUALIFICATION\",\"environment\":\"ISOLATED_TEST\",\"profile_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"controller_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"scope_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"gate_id\":\"G-PREENTRY-SKILL-QUALIFICATION\",\"controller_qualification_ref\":{\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},\"control_trust_root_generation\":\"ctrgen_dd30fbc7e0ba43fa8ba9f734867bcf12\",\"runner_generation\":\"runner-initial\",\"credential_generation\":\"credential-initial\",\"session_generation\":\"session-initial\",\"issued_at\":\"2026-09-08T17:20:46.802Z\",\"deadline\":\"2026-09-08T17:20:48.702Z\",\"expires_at\":\"2026-09-08T17:20:48.702Z\",\"status_manifest_ref\":{\"uri\":\"control://status-manifests/sm_component\",\"sha256\":\"c1f8d4f7f7344d3992e901756ef7129403a2b8ff2eafcc39485b3d4884e07212\"},\"budget_reservation_ref\":{\"uri\":\"urn:clued:control-evidence:uscrdifznmlvczcekqpw:execution-events:1\",\"sha256\":\"3fc67aef1cfaa471fafe4efbf58547fdedbe7e6254fda51db1432d90bb2dc720\"}}\n",
+        "revoked": false,
+        "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+        "decision": null,
+        "sequence": 3,
+        "ga_sha256": "e8b6fa431b4933f773e90d7a98f88c0bb50bd93d9266562085fce64a090cc639",
+        "expires_at": "2026-09-08T17:20:48.702+00:00",
+        "receipt_id": null,
+        "receipt_raw": null,
+        "container_id": null,
+        "receipt_sha256": null,
+        "budget_sequence": 1,
+        "idempotency_key": "component"
+      }
+    ],
+    "control_objects": [
+      {
+        "raw": "{\"object_type\":\"StatusManifest\",\"schema_version\":\"1.0\",\"schema_digest\":\"6ba12ed51b3fc0e457c13e83f47e1ad1aa6cc680d8f28c668f8c65d12742ecc2\",\"status_manifest_id\":\"sm_component\",\"issuer_purpose\":\"STATUS\",\"audience\":\"urn:clued:audience:skill-coexistence-qualification:uscrdifznmlvczcekqpw\",\"control_trust_root_generation\":\"ctrgen_dd30fbc7e0ba43fa8ba9f734867bcf12\",\"generation\":1,\"as_of\":\"2026-09-08T17:20:45.897Z\",\"expires_at\":\"2026-09-08T17:30:46.897Z\",\"signature_binding\":{\"synthetic_only\":true}}\n",
+        "uri": "control://status-manifests/sm_component",
+        "sha256": "c1f8d4f7f7344d3992e901756ef7129403a2b8ff2eafcc39485b3d4884e07212",
+        "object_type": "StatusManifest"
+      }
+    ],
+    "authority_effect": "NONE"
+  },
+  "queries": [
+    {
+      "at": "2026-09-08T17:20:46.940Z",
+      "connection": 1,
+      "sql": "select clued_control.read_execution() value",
+      "values": [],
+      "rows": [
+        {
+          "value": {
+            "root": {
+              "state": "STORED_NO_GATE_AUTHORITY",
+              "events": [],
+              "sequence": 2,
+              "root_set_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+              "generation_id": "ctrgen_dd30fbc7e0ba43fa8ba9f734867bcf12",
+              "authority_effect": "NONE",
+              "metadata_binding_sha256": "f0d100e4e1f87e4ca2605f696356334cc66b950536636a8b7822a97a6649d66b"
+            },
+            "events": [
+              {
+                "request": {
+                  "body": {
+                    "raw": "{\"controller_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"credential_generation\":\"credential-initial\",\"environment\":\"ISOLATED_TEST\",\"evidence_bytes\":134217728,\"expires_at\":\"2026-09-08T17:30:46.902Z\",\"idempotency_key\":\"engineering_budget\",\"not_before\":\"2026-09-08T17:20:45.902Z\",\"profile_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"purpose\":\"SKILL_COEXISTENCE_QUALIFICATION\",\"root_generation\":\"ctrgen_dd30fbc7e0ba43fa8ba9f734867bcf12\",\"runner_generation\":\"runner-initial\",\"scope_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"seconds\":600,\"session_generation\":\"session-initial\"}\n",
+                    "sha256": "3fc67aef1cfaa471fafe4efbf58547fdedbe7e6254fda51db1432d90bb2dc720"
+                  },
+                  "operation": "BUDGET_RESERVED"
+                },
+                "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+                "sequence": 1,
+                "recorded_at": "2026-09-08T17:20:46.907565+00:00",
+                "idempotency_key": "engineering_budget",
+                "recording_transaction_id": "763"
+              },
+              {
+                "request": {
+                  "body": {
+                    "raw": "{\"ga_id\":\"ga_component\",\"ga_sha256\":\"e8b6fa431b4933f773e90d7a98f88c0bb50bd93d9266562085fce64a090cc639\",\"operation\":\"CREATE\"}\n",
+                    "sha256": "715c22ef7204d2bed1e5eb016cba46fbc3b8b9f46f7574a855912e5b304f970f",
+                    "operation": "CREATE"
+                  },
+                  "ga_id": "ga_component",
+                  "operation": "INTENT_RECORDED",
+                  "idempotency_key": "intent_original",
+                  "expected_sequence": 1
+                },
+                "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+                "sequence": 2,
+                "recorded_at": "2026-09-08T17:20:46.924756+00:00",
+                "idempotency_key": "intent_original",
+                "recording_transaction_id": "766"
+              },
+              {
+                "request": {
+                  "body": {
+                    "intent_sha256": "715c22ef7204d2bed1e5eb016cba46fbc3b8b9f46f7574a855912e5b304f970f",
+                    "intent_sequence": 2
+                  },
+                  "ga_id": "ga_component",
+                  "operation": "CREATE_SENT",
+                  "idempotency_key": "sent_original",
+                  "expected_sequence": 2
+                },
+                "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+                "sequence": 3,
+                "recorded_at": "2026-09-08T17:20:46.92675+00:00",
+                "idempotency_key": "sent_original",
+                "recording_transaction_id": "767"
+              },
+              {
+                "request": {
+                  "body": {},
+                  "ga_id": "ga_component",
+                  "operation": "UNKNOWN",
+                  "idempotency_key": "unknown",
+                  "expected_sequence": 3
+                },
+                "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+                "sequence": 4,
+                "recorded_at": "2026-09-08T17:20:46.927986+00:00",
+                "idempotency_key": "unknown",
+                "recording_transaction_id": "768"
+              },
+              {
+                "request": {
+                  "previous": "credential-initial",
+                  "replacement": "credential-next",
+                  "generation_kind": "credential_generation",
+                  "idempotency_key": "rotate",
+                  "expected_sequence": 4,
+                  "signed_source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                },
+                "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+                "sequence": 5,
+                "recorded_at": "2026-09-08T17:20:46.935264+00:00",
+                "idempotency_key": "rotate",
+                "recording_transaction_id": "770"
+              }
+            ],
+            "binding": {
+              "gate_id": "G-PREENTRY-SKILL-QUALIFICATION",
+              "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+              "gate_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "gate_version": "SYNTHETIC_NOT_ACCEPTED",
+              "scope_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "prior_seconds": 1500,
+              "profile_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "controller_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "prior_evidence_bytes": 287700424,
+              "qualification_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "runtime_acceptance_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            "current": {
+              "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+              "sequence": 5,
+              "active_ga_id": "ga_component",
+              "charged_seconds": 2100,
+              "runner_generation": "runner-initial",
+              "session_generation": "session-initial",
+              "credential_generation": "credential-initial",
+              "charged_evidence_bytes": 421918152,
+              "pending_budget_sequence": null
+            },
+            "attempts": [
+              {
+                "ga": {
+                  "gate_id": "G-PREENTRY-SKILL-QUALIFICATION",
+                  "purpose": "SKILL_COEXISTENCE_QUALIFICATION",
+                  "deadline": "2026-09-08T17:20:48.702Z",
+                  "issued_at": "2026-09-08T17:20:46.802Z",
+                  "expires_at": "2026-09-08T17:20:48.702Z",
+                  "environment": "ISOLATED_TEST",
+                  "scope_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "profile_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "idempotency_key": "component",
+                  "controller_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "runner_generation": "runner-initial",
+                  "session_generation": "session-initial",
+                  "status_manifest_ref": {
+                    "uri": "control://status-manifests/sm_component",
+                    "sha256": "c1f8d4f7f7344d3992e901756ef7129403a2b8ff2eafcc39485b3d4884e07212"
+                  },
+                  "authorization_status": "AUTHORIZED",
+                  "credential_generation": "credential-initial",
+                  "gate_authorization_id": "ga_component",
+                  "budget_reservation_ref": {
+                    "uri": "urn:clued:control-evidence:uscrdifznmlvczcekqpw:execution-events:1",
+                    "sha256": "3fc67aef1cfaa471fafe4efbf58547fdedbe7e6254fda51db1432d90bb2dc720"
+                  },
+                  "controller_qualification_ref": {
+                    "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                  },
+                  "control_trust_root_generation": "ctrgen_dd30fbc7e0ba43fa8ba9f734867bcf12"
+                },
+                "ga_id": "ga_component",
+                "phase": "UNKNOWN",
+                "ga_raw": "{\"gate_authorization_id\":\"ga_component\",\"idempotency_key\":\"component\",\"authorization_status\":\"AUTHORIZED\",\"purpose\":\"SKILL_COEXISTENCE_QUALIFICATION\",\"environment\":\"ISOLATED_TEST\",\"profile_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"controller_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"scope_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"gate_id\":\"G-PREENTRY-SKILL-QUALIFICATION\",\"controller_qualification_ref\":{\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},\"control_trust_root_generation\":\"ctrgen_dd30fbc7e0ba43fa8ba9f734867bcf12\",\"runner_generation\":\"runner-initial\",\"credential_generation\":\"credential-initial\",\"session_generation\":\"session-initial\",\"issued_at\":\"2026-09-08T17:20:46.802Z\",\"deadline\":\"2026-09-08T17:20:48.702Z\",\"expires_at\":\"2026-09-08T17:20:48.702Z\",\"status_manifest_ref\":{\"uri\":\"control://status-manifests/sm_component\",\"sha256\":\"c1f8d4f7f7344d3992e901756ef7129403a2b8ff2eafcc39485b3d4884e07212\"},\"budget_reservation_ref\":{\"uri\":\"urn:clued:control-evidence:uscrdifznmlvczcekqpw:execution-events:1\",\"sha256\":\"3fc67aef1cfaa471fafe4efbf58547fdedbe7e6254fda51db1432d90bb2dc720\"}}\n",
+                "revoked": false,
+                "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+                "decision": null,
+                "sequence": 3,
+                "ga_sha256": "e8b6fa431b4933f773e90d7a98f88c0bb50bd93d9266562085fce64a090cc639",
+                "expires_at": "2026-09-08T17:20:48.702+00:00",
+                "receipt_id": null,
+                "receipt_raw": null,
+                "container_id": null,
+                "receipt_sha256": null,
+                "budget_sequence": 1,
+                "idempotency_key": "component"
+              }
+            ],
+            "control_objects": [
+              {
+                "raw": "{\"object_type\":\"StatusManifest\",\"schema_version\":\"1.0\",\"schema_digest\":\"6ba12ed51b3fc0e457c13e83f47e1ad1aa6cc680d8f28c668f8c65d12742ecc2\",\"status_manifest_id\":\"sm_component\",\"issuer_purpose\":\"STATUS\",\"audience\":\"urn:clued:audience:skill-coexistence-qualification:uscrdifznmlvczcekqpw\",\"control_trust_root_generation\":\"ctrgen_dd30fbc7e0ba43fa8ba9f734867bcf12\",\"generation\":1,\"as_of\":\"2026-09-08T17:20:45.897Z\",\"expires_at\":\"2026-09-08T17:30:46.897Z\",\"signature_binding\":{\"synthetic_only\":true}}\n",
+                "uri": "control://status-manifests/sm_component",
+                "sha256": "c1f8d4f7f7344d3992e901756ef7129403a2b8ff2eafcc39485b3d4884e07212",
+                "object_type": "StatusManifest"
+              }
+            ],
+            "authority_effect": "NONE"
+          }
+        }
+      ]
+    },
+    {
+      "at": "2026-09-08T17:20:46.940Z",
+      "connection": 1,
+      "sql": "select clued_control.read_execution() value",
+      "values": [],
+      "rows": [
+        {
+          "value": {
+            "root": {
+              "state": "STORED_NO_GATE_AUTHORITY",
+              "events": [],
+              "sequence": 2,
+              "root_set_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+              "generation_id": "ctrgen_dd30fbc7e0ba43fa8ba9f734867bcf12",
+              "authority_effect": "NONE",
+              "metadata_binding_sha256": "f0d100e4e1f87e4ca2605f696356334cc66b950536636a8b7822a97a6649d66b"
+            },
+            "events": [
+              {
+                "request": {
+                  "body": {
+                    "raw": "{\"controller_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"credential_generation\":\"credential-initial\",\"environment\":\"ISOLATED_TEST\",\"evidence_bytes\":134217728,\"expires_at\":\"2026-09-08T17:30:46.902Z\",\"idempotency_key\":\"engineering_budget\",\"not_before\":\"2026-09-08T17:20:45.902Z\",\"profile_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"purpose\":\"SKILL_COEXISTENCE_QUALIFICATION\",\"root_generation\":\"ctrgen_dd30fbc7e0ba43fa8ba9f734867bcf12\",\"runner_generation\":\"runner-initial\",\"scope_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"seconds\":600,\"session_generation\":\"session-initial\"}\n",
+                    "sha256": "3fc67aef1cfaa471fafe4efbf58547fdedbe7e6254fda51db1432d90bb2dc720"
+                  },
+                  "operation": "BUDGET_RESERVED"
+                },
+                "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+                "sequence": 1,
+                "recorded_at": "2026-09-08T17:20:46.907565+00:00",
+                "idempotency_key": "engineering_budget",
+                "recording_transaction_id": "763"
+              },
+              {
+                "request": {
+                  "body": {
+                    "raw": "{\"ga_id\":\"ga_component\",\"ga_sha256\":\"e8b6fa431b4933f773e90d7a98f88c0bb50bd93d9266562085fce64a090cc639\",\"operation\":\"CREATE\"}\n",
+                    "sha256": "715c22ef7204d2bed1e5eb016cba46fbc3b8b9f46f7574a855912e5b304f970f",
+                    "operation": "CREATE"
+                  },
+                  "ga_id": "ga_component",
+                  "operation": "INTENT_RECORDED",
+                  "idempotency_key": "intent_original",
+                  "expected_sequence": 1
+                },
+                "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+                "sequence": 2,
+                "recorded_at": "2026-09-08T17:20:46.924756+00:00",
+                "idempotency_key": "intent_original",
+                "recording_transaction_id": "766"
+              },
+              {
+                "request": {
+                  "body": {
+                    "intent_sha256": "715c22ef7204d2bed1e5eb016cba46fbc3b8b9f46f7574a855912e5b304f970f",
+                    "intent_sequence": 2
+                  },
+                  "ga_id": "ga_component",
+                  "operation": "CREATE_SENT",
+                  "idempotency_key": "sent_original",
+                  "expected_sequence": 2
+                },
+                "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+                "sequence": 3,
+                "recorded_at": "2026-09-08T17:20:46.92675+00:00",
+                "idempotency_key": "sent_original",
+                "recording_transaction_id": "767"
+              },
+              {
+                "request": {
+                  "body": {},
+                  "ga_id": "ga_component",
+                  "operation": "UNKNOWN",
+                  "idempotency_key": "unknown",
+                  "expected_sequence": 3
+                },
+                "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+                "sequence": 4,
+                "recorded_at": "2026-09-08T17:20:46.927986+00:00",
+                "idempotency_key": "unknown",
+                "recording_transaction_id": "768"
+              },
+              {
+                "request": {
+                  "previous": "credential-initial",
+                  "replacement": "credential-next",
+                  "generation_kind": "credential_generation",
+                  "idempotency_key": "rotate",
+                  "expected_sequence": 4,
+                  "signed_source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                },
+                "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+                "sequence": 5,
+                "recorded_at": "2026-09-08T17:20:46.935264+00:00",
+                "idempotency_key": "rotate",
+                "recording_transaction_id": "770"
+              }
+            ],
+            "binding": {
+              "gate_id": "G-PREENTRY-SKILL-QUALIFICATION",
+              "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+              "gate_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "gate_version": "SYNTHETIC_NOT_ACCEPTED",
+              "scope_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "prior_seconds": 1500,
+              "profile_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "controller_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "prior_evidence_bytes": 287700424,
+              "qualification_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "runtime_acceptance_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            "current": {
+              "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+              "sequence": 5,
+              "active_ga_id": "ga_component",
+              "charged_seconds": 2100,
+              "runner_generation": "runner-initial",
+              "session_generation": "session-initial",
+              "credential_generation": "credential-initial",
+              "charged_evidence_bytes": 421918152,
+              "pending_budget_sequence": null
+            },
+            "attempts": [
+              {
+                "ga": {
+                  "gate_id": "G-PREENTRY-SKILL-QUALIFICATION",
+                  "purpose": "SKILL_COEXISTENCE_QUALIFICATION",
+                  "deadline": "2026-09-08T17:20:48.702Z",
+                  "issued_at": "2026-09-08T17:20:46.802Z",
+                  "expires_at": "2026-09-08T17:20:48.702Z",
+                  "environment": "ISOLATED_TEST",
+                  "scope_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "profile_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "idempotency_key": "component",
+                  "controller_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "runner_generation": "runner-initial",
+                  "session_generation": "session-initial",
+                  "status_manifest_ref": {
+                    "uri": "control://status-manifests/sm_component",
+                    "sha256": "c1f8d4f7f7344d3992e901756ef7129403a2b8ff2eafcc39485b3d4884e07212"
+                  },
+                  "authorization_status": "AUTHORIZED",
+                  "credential_generation": "credential-initial",
+                  "gate_authorization_id": "ga_component",
+                  "budget_reservation_ref": {
+                    "uri": "urn:clued:control-evidence:uscrdifznmlvczcekqpw:execution-events:1",
+                    "sha256": "3fc67aef1cfaa471fafe4efbf58547fdedbe7e6254fda51db1432d90bb2dc720"
+                  },
+                  "controller_qualification_ref": {
+                    "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                  },
+                  "control_trust_root_generation": "ctrgen_dd30fbc7e0ba43fa8ba9f734867bcf12"
+                },
+                "ga_id": "ga_component",
+                "phase": "UNKNOWN",
+                "ga_raw": "{\"gate_authorization_id\":\"ga_component\",\"idempotency_key\":\"component\",\"authorization_status\":\"AUTHORIZED\",\"purpose\":\"SKILL_COEXISTENCE_QUALIFICATION\",\"environment\":\"ISOLATED_TEST\",\"profile_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"controller_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"scope_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"gate_id\":\"G-PREENTRY-SKILL-QUALIFICATION\",\"controller_qualification_ref\":{\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},\"control_trust_root_generation\":\"ctrgen_dd30fbc7e0ba43fa8ba9f734867bcf12\",\"runner_generation\":\"runner-initial\",\"credential_generation\":\"credential-initial\",\"session_generation\":\"session-initial\",\"issued_at\":\"2026-09-08T17:20:46.802Z\",\"deadline\":\"2026-09-08T17:20:48.702Z\",\"expires_at\":\"2026-09-08T17:20:48.702Z\",\"status_manifest_ref\":{\"uri\":\"control://status-manifests/sm_component\",\"sha256\":\"c1f8d4f7f7344d3992e901756ef7129403a2b8ff2eafcc39485b3d4884e07212\"},\"budget_reservation_ref\":{\"uri\":\"urn:clued:control-evidence:uscrdifznmlvczcekqpw:execution-events:1\",\"sha256\":\"3fc67aef1cfaa471fafe4efbf58547fdedbe7e6254fda51db1432d90bb2dc720\"}}\n",
+                "revoked": false,
+                "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+                "decision": null,
+                "sequence": 3,
+                "ga_sha256": "e8b6fa431b4933f773e90d7a98f88c0bb50bd93d9266562085fce64a090cc639",
+                "expires_at": "2026-09-08T17:20:48.702+00:00",
+                "receipt_id": null,
+                "receipt_raw": null,
+                "container_id": null,
+                "receipt_sha256": null,
+                "budget_sequence": 1,
+                "idempotency_key": "component"
+              }
+            ],
+            "control_objects": [
+              {
+                "raw": "{\"object_type\":\"StatusManifest\",\"schema_version\":\"1.0\",\"schema_digest\":\"6ba12ed51b3fc0e457c13e83f47e1ad1aa6cc680d8f28c668f8c65d12742ecc2\",\"status_manifest_id\":\"sm_component\",\"issuer_purpose\":\"STATUS\",\"audience\":\"urn:clued:audience:skill-coexistence-qualification:uscrdifznmlvczcekqpw\",\"control_trust_root_generation\":\"ctrgen_dd30fbc7e0ba43fa8ba9f734867bcf12\",\"generation\":1,\"as_of\":\"2026-09-08T17:20:45.897Z\",\"expires_at\":\"2026-09-08T17:30:46.897Z\",\"signature_binding\":{\"synthetic_only\":true}}\n",
+                "uri": "control://status-manifests/sm_component",
+                "sha256": "c1f8d4f7f7344d3992e901756ef7129403a2b8ff2eafcc39485b3d4884e07212",
+                "object_type": "StatusManifest"
+              }
+            ],
+            "authority_effect": "NONE"
+          }
+        }
+      ]
+    },
+    {
+      "at": "2026-09-08T17:20:46.940Z",
+      "connection": 1,
+      "sql": "select clued_control.execution_transition($1::jsonb) value",
+      "values": [
+        "{\"ga_id\":\"ga_component\",\"idempotency_key\":\"wrong_renew\",\"operation\":\"RENEW_WITH_NEW_FENCE\",\"body\":{},\"expected_sequence\":5}"
+      ],
+      "error": {
+        "code": "P0001",
+        "message": "unsupported_transition"
+      }
+    },
+    {
+      "at": "2026-09-08T17:20:48.735Z",
+      "connection": 2,
+      "sql": "select clued_control.read_execution() value",
+      "values": [],
+      "rows": [
+        {
+          "value": {
+            "root": {
+              "state": "STORED_NO_GATE_AUTHORITY",
+              "events": [],
+              "sequence": 2,
+              "root_set_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+              "generation_id": "ctrgen_dd30fbc7e0ba43fa8ba9f734867bcf12",
+              "authority_effect": "NONE",
+              "metadata_binding_sha256": "f0d100e4e1f87e4ca2605f696356334cc66b950536636a8b7822a97a6649d66b"
+            },
+            "events": [
+              {
+                "request": {
+                  "body": {
+                    "raw": "{\"controller_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"credential_generation\":\"credential-initial\",\"environment\":\"ISOLATED_TEST\",\"evidence_bytes\":134217728,\"expires_at\":\"2026-09-08T17:30:46.902Z\",\"idempotency_key\":\"engineering_budget\",\"not_before\":\"2026-09-08T17:20:45.902Z\",\"profile_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"purpose\":\"SKILL_COEXISTENCE_QUALIFICATION\",\"root_generation\":\"ctrgen_dd30fbc7e0ba43fa8ba9f734867bcf12\",\"runner_generation\":\"runner-initial\",\"scope_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"seconds\":600,\"session_generation\":\"session-initial\"}\n",
+                    "sha256": "3fc67aef1cfaa471fafe4efbf58547fdedbe7e6254fda51db1432d90bb2dc720"
+                  },
+                  "operation": "BUDGET_RESERVED"
+                },
+                "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+                "sequence": 1,
+                "recorded_at": "2026-09-08T17:20:46.907565+00:00",
+                "idempotency_key": "engineering_budget",
+                "recording_transaction_id": "763"
+              },
+              {
+                "request": {
+                  "body": {
+                    "raw": "{\"ga_id\":\"ga_component\",\"ga_sha256\":\"e8b6fa431b4933f773e90d7a98f88c0bb50bd93d9266562085fce64a090cc639\",\"operation\":\"CREATE\"}\n",
+                    "sha256": "715c22ef7204d2bed1e5eb016cba46fbc3b8b9f46f7574a855912e5b304f970f",
+                    "operation": "CREATE"
+                  },
+                  "ga_id": "ga_component",
+                  "operation": "INTENT_RECORDED",
+                  "idempotency_key": "intent_original",
+                  "expected_sequence": 1
+                },
+                "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+                "sequence": 2,
+                "recorded_at": "2026-09-08T17:20:46.924756+00:00",
+                "idempotency_key": "intent_original",
+                "recording_transaction_id": "766"
+              },
+              {
+                "request": {
+                  "body": {
+                    "intent_sha256": "715c22ef7204d2bed1e5eb016cba46fbc3b8b9f46f7574a855912e5b304f970f",
+                    "intent_sequence": 2
+                  },
+                  "ga_id": "ga_component",
+                  "operation": "CREATE_SENT",
+                  "idempotency_key": "sent_original",
+                  "expected_sequence": 2
+                },
+                "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+                "sequence": 3,
+                "recorded_at": "2026-09-08T17:20:46.92675+00:00",
+                "idempotency_key": "sent_original",
+                "recording_transaction_id": "767"
+              },
+              {
+                "request": {
+                  "body": {},
+                  "ga_id": "ga_component",
+                  "operation": "UNKNOWN",
+                  "idempotency_key": "unknown",
+                  "expected_sequence": 3
+                },
+                "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+                "sequence": 4,
+                "recorded_at": "2026-09-08T17:20:46.927986+00:00",
+                "idempotency_key": "unknown",
+                "recording_transaction_id": "768"
+              },
+              {
+                "request": {
+                  "previous": "credential-initial",
+                  "replacement": "credential-next",
+                  "generation_kind": "credential_generation",
+                  "idempotency_key": "rotate",
+                  "expected_sequence": 4,
+                  "signed_source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                },
+                "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+                "sequence": 5,
+                "recorded_at": "2026-09-08T17:20:46.935264+00:00",
+                "idempotency_key": "rotate",
+                "recording_transaction_id": "770"
+              }
+            ],
+            "binding": {
+              "gate_id": "G-PREENTRY-SKILL-QUALIFICATION",
+              "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+              "gate_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "gate_version": "SYNTHETIC_NOT_ACCEPTED",
+              "scope_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "prior_seconds": 1500,
+              "profile_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "controller_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "prior_evidence_bytes": 287700424,
+              "qualification_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "runtime_acceptance_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            "current": {
+              "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+              "sequence": 5,
+              "active_ga_id": "ga_component",
+              "charged_seconds": 2100,
+              "runner_generation": "runner-initial",
+              "session_generation": "session-initial",
+              "credential_generation": "credential-initial",
+              "charged_evidence_bytes": 421918152,
+              "pending_budget_sequence": null
+            },
+            "attempts": [
+              {
+                "ga": {
+                  "gate_id": "G-PREENTRY-SKILL-QUALIFICATION",
+                  "purpose": "SKILL_COEXISTENCE_QUALIFICATION",
+                  "deadline": "2026-09-08T17:20:48.702Z",
+                  "issued_at": "2026-09-08T17:20:46.802Z",
+                  "expires_at": "2026-09-08T17:20:48.702Z",
+                  "environment": "ISOLATED_TEST",
+                  "scope_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "profile_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "idempotency_key": "component",
+                  "controller_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "runner_generation": "runner-initial",
+                  "session_generation": "session-initial",
+                  "status_manifest_ref": {
+                    "uri": "control://status-manifests/sm_component",
+                    "sha256": "c1f8d4f7f7344d3992e901756ef7129403a2b8ff2eafcc39485b3d4884e07212"
+                  },
+                  "authorization_status": "AUTHORIZED",
+                  "credential_generation": "credential-initial",
+                  "gate_authorization_id": "ga_component",
+                  "budget_reservation_ref": {
+                    "uri": "urn:clued:control-evidence:uscrdifznmlvczcekqpw:execution-events:1",
+                    "sha256": "3fc67aef1cfaa471fafe4efbf58547fdedbe7e6254fda51db1432d90bb2dc720"
+                  },
+                  "controller_qualification_ref": {
+                    "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                  },
+                  "control_trust_root_generation": "ctrgen_dd30fbc7e0ba43fa8ba9f734867bcf12"
+                },
+                "ga_id": "ga_component",
+                "phase": "UNKNOWN",
+                "ga_raw": "{\"gate_authorization_id\":\"ga_component\",\"idempotency_key\":\"component\",\"authorization_status\":\"AUTHORIZED\",\"purpose\":\"SKILL_COEXISTENCE_QUALIFICATION\",\"environment\":\"ISOLATED_TEST\",\"profile_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"controller_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"scope_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"gate_id\":\"G-PREENTRY-SKILL-QUALIFICATION\",\"controller_qualification_ref\":{\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},\"control_trust_root_generation\":\"ctrgen_dd30fbc7e0ba43fa8ba9f734867bcf12\",\"runner_generation\":\"runner-initial\",\"credential_generation\":\"credential-initial\",\"session_generation\":\"session-initial\",\"issued_at\":\"2026-09-08T17:20:46.802Z\",\"deadline\":\"2026-09-08T17:20:48.702Z\",\"expires_at\":\"2026-09-08T17:20:48.702Z\",\"status_manifest_ref\":{\"uri\":\"control://status-manifests/sm_component\",\"sha256\":\"c1f8d4f7f7344d3992e901756ef7129403a2b8ff2eafcc39485b3d4884e07212\"},\"budget_reservation_ref\":{\"uri\":\"urn:clued:control-evidence:uscrdifznmlvczcekqpw:execution-events:1\",\"sha256\":\"3fc67aef1cfaa471fafe4efbf58547fdedbe7e6254fda51db1432d90bb2dc720\"}}\n",
+                "revoked": false,
+                "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+                "decision": null,
+                "sequence": 3,
+                "ga_sha256": "e8b6fa431b4933f773e90d7a98f88c0bb50bd93d9266562085fce64a090cc639",
+                "expires_at": "2026-09-08T17:20:48.702+00:00",
+                "receipt_id": null,
+                "receipt_raw": null,
+                "container_id": null,
+                "receipt_sha256": null,
+                "budget_sequence": 1,
+                "idempotency_key": "component"
+              }
+            ],
+            "control_objects": [
+              {
+                "raw": "{\"object_type\":\"StatusManifest\",\"schema_version\":\"1.0\",\"schema_digest\":\"6ba12ed51b3fc0e457c13e83f47e1ad1aa6cc680d8f28c668f8c65d12742ecc2\",\"status_manifest_id\":\"sm_component\",\"issuer_purpose\":\"STATUS\",\"audience\":\"urn:clued:audience:skill-coexistence-qualification:uscrdifznmlvczcekqpw\",\"control_trust_root_generation\":\"ctrgen_dd30fbc7e0ba43fa8ba9f734867bcf12\",\"generation\":1,\"as_of\":\"2026-09-08T17:20:45.897Z\",\"expires_at\":\"2026-09-08T17:30:46.897Z\",\"signature_binding\":{\"synthetic_only\":true}}\n",
+                "uri": "control://status-manifests/sm_component",
+                "sha256": "c1f8d4f7f7344d3992e901756ef7129403a2b8ff2eafcc39485b3d4884e07212",
+                "object_type": "StatusManifest"
+              }
+            ],
+            "authority_effect": "NONE"
+          }
+        }
+      ]
+    },
+    {
+      "at": "2026-09-08T17:20:48.736Z",
+      "connection": 2,
+      "sql": "select clued_control.read_execution() value",
+      "values": [],
+      "rows": [
+        {
+          "value": {
+            "root": {
+              "state": "STORED_NO_GATE_AUTHORITY",
+              "events": [],
+              "sequence": 2,
+              "root_set_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+              "generation_id": "ctrgen_dd30fbc7e0ba43fa8ba9f734867bcf12",
+              "authority_effect": "NONE",
+              "metadata_binding_sha256": "f0d100e4e1f87e4ca2605f696356334cc66b950536636a8b7822a97a6649d66b"
+            },
+            "events": [
+              {
+                "request": {
+                  "body": {
+                    "raw": "{\"controller_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"credential_generation\":\"credential-initial\",\"environment\":\"ISOLATED_TEST\",\"evidence_bytes\":134217728,\"expires_at\":\"2026-09-08T17:30:46.902Z\",\"idempotency_key\":\"engineering_budget\",\"not_before\":\"2026-09-08T17:20:45.902Z\",\"profile_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"purpose\":\"SKILL_COEXISTENCE_QUALIFICATION\",\"root_generation\":\"ctrgen_dd30fbc7e0ba43fa8ba9f734867bcf12\",\"runner_generation\":\"runner-initial\",\"scope_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"seconds\":600,\"session_generation\":\"session-initial\"}\n",
+                    "sha256": "3fc67aef1cfaa471fafe4efbf58547fdedbe7e6254fda51db1432d90bb2dc720"
+                  },
+                  "operation": "BUDGET_RESERVED"
+                },
+                "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+                "sequence": 1,
+                "recorded_at": "2026-09-08T17:20:46.907565+00:00",
+                "idempotency_key": "engineering_budget",
+                "recording_transaction_id": "763"
+              },
+              {
+                "request": {
+                  "body": {
+                    "raw": "{\"ga_id\":\"ga_component\",\"ga_sha256\":\"e8b6fa431b4933f773e90d7a98f88c0bb50bd93d9266562085fce64a090cc639\",\"operation\":\"CREATE\"}\n",
+                    "sha256": "715c22ef7204d2bed1e5eb016cba46fbc3b8b9f46f7574a855912e5b304f970f",
+                    "operation": "CREATE"
+                  },
+                  "ga_id": "ga_component",
+                  "operation": "INTENT_RECORDED",
+                  "idempotency_key": "intent_original",
+                  "expected_sequence": 1
+                },
+                "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+                "sequence": 2,
+                "recorded_at": "2026-09-08T17:20:46.924756+00:00",
+                "idempotency_key": "intent_original",
+                "recording_transaction_id": "766"
+              },
+              {
+                "request": {
+                  "body": {
+                    "intent_sha256": "715c22ef7204d2bed1e5eb016cba46fbc3b8b9f46f7574a855912e5b304f970f",
+                    "intent_sequence": 2
+                  },
+                  "ga_id": "ga_component",
+                  "operation": "CREATE_SENT",
+                  "idempotency_key": "sent_original",
+                  "expected_sequence": 2
+                },
+                "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+                "sequence": 3,
+                "recorded_at": "2026-09-08T17:20:46.92675+00:00",
+                "idempotency_key": "sent_original",
+                "recording_transaction_id": "767"
+              },
+              {
+                "request": {
+                  "body": {},
+                  "ga_id": "ga_component",
+                  "operation": "UNKNOWN",
+                  "idempotency_key": "unknown",
+                  "expected_sequence": 3
+                },
+                "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+                "sequence": 4,
+                "recorded_at": "2026-09-08T17:20:46.927986+00:00",
+                "idempotency_key": "unknown",
+                "recording_transaction_id": "768"
+              },
+              {
+                "request": {
+                  "previous": "credential-initial",
+                  "replacement": "credential-next",
+                  "generation_kind": "credential_generation",
+                  "idempotency_key": "rotate",
+                  "expected_sequence": 4,
+                  "signed_source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                },
+                "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+                "sequence": 5,
+                "recorded_at": "2026-09-08T17:20:46.935264+00:00",
+                "idempotency_key": "rotate",
+                "recording_transaction_id": "770"
+              }
+            ],
+            "binding": {
+              "gate_id": "G-PREENTRY-SKILL-QUALIFICATION",
+              "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+              "gate_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "gate_version": "SYNTHETIC_NOT_ACCEPTED",
+              "scope_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "prior_seconds": 1500,
+              "profile_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "controller_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "prior_evidence_bytes": 287700424,
+              "qualification_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "runtime_acceptance_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            "current": {
+              "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+              "sequence": 5,
+              "active_ga_id": "ga_component",
+              "charged_seconds": 2100,
+              "runner_generation": "runner-initial",
+              "session_generation": "session-initial",
+              "credential_generation": "credential-initial",
+              "charged_evidence_bytes": 421918152,
+              "pending_budget_sequence": null
+            },
+            "attempts": [
+              {
+                "ga": {
+                  "gate_id": "G-PREENTRY-SKILL-QUALIFICATION",
+                  "purpose": "SKILL_COEXISTENCE_QUALIFICATION",
+                  "deadline": "2026-09-08T17:20:48.702Z",
+                  "issued_at": "2026-09-08T17:20:46.802Z",
+                  "expires_at": "2026-09-08T17:20:48.702Z",
+                  "environment": "ISOLATED_TEST",
+                  "scope_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "profile_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "idempotency_key": "component",
+                  "controller_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "runner_generation": "runner-initial",
+                  "session_generation": "session-initial",
+                  "status_manifest_ref": {
+                    "uri": "control://status-manifests/sm_component",
+                    "sha256": "c1f8d4f7f7344d3992e901756ef7129403a2b8ff2eafcc39485b3d4884e07212"
+                  },
+                  "authorization_status": "AUTHORIZED",
+                  "credential_generation": "credential-initial",
+                  "gate_authorization_id": "ga_component",
+                  "budget_reservation_ref": {
+                    "uri": "urn:clued:control-evidence:uscrdifznmlvczcekqpw:execution-events:1",
+                    "sha256": "3fc67aef1cfaa471fafe4efbf58547fdedbe7e6254fda51db1432d90bb2dc720"
+                  },
+                  "controller_qualification_ref": {
+                    "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                  },
+                  "control_trust_root_generation": "ctrgen_dd30fbc7e0ba43fa8ba9f734867bcf12"
+                },
+                "ga_id": "ga_component",
+                "phase": "UNKNOWN",
+                "ga_raw": "{\"gate_authorization_id\":\"ga_component\",\"idempotency_key\":\"component\",\"authorization_status\":\"AUTHORIZED\",\"purpose\":\"SKILL_COEXISTENCE_QUALIFICATION\",\"environment\":\"ISOLATED_TEST\",\"profile_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"controller_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"scope_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"gate_id\":\"G-PREENTRY-SKILL-QUALIFICATION\",\"controller_qualification_ref\":{\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},\"control_trust_root_generation\":\"ctrgen_dd30fbc7e0ba43fa8ba9f734867bcf12\",\"runner_generation\":\"runner-initial\",\"credential_generation\":\"credential-initial\",\"session_generation\":\"session-initial\",\"issued_at\":\"2026-09-08T17:20:46.802Z\",\"deadline\":\"2026-09-08T17:20:48.702Z\",\"expires_at\":\"2026-09-08T17:20:48.702Z\",\"status_manifest_ref\":{\"uri\":\"control://status-manifests/sm_component\",\"sha256\":\"c1f8d4f7f7344d3992e901756ef7129403a2b8ff2eafcc39485b3d4884e07212\"},\"budget_reservation_ref\":{\"uri\":\"urn:clued:control-evidence:uscrdifznmlvczcekqpw:execution-events:1\",\"sha256\":\"3fc67aef1cfaa471fafe4efbf58547fdedbe7e6254fda51db1432d90bb2dc720\"}}\n",
+                "revoked": false,
+                "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+                "decision": null,
+                "sequence": 3,
+                "ga_sha256": "e8b6fa431b4933f773e90d7a98f88c0bb50bd93d9266562085fce64a090cc639",
+                "expires_at": "2026-09-08T17:20:48.702+00:00",
+                "receipt_id": null,
+                "receipt_raw": null,
+                "container_id": null,
+                "receipt_sha256": null,
+                "budget_sequence": 1,
+                "idempotency_key": "component"
+              }
+            ],
+            "control_objects": [
+              {
+                "raw": "{\"object_type\":\"StatusManifest\",\"schema_version\":\"1.0\",\"schema_digest\":\"6ba12ed51b3fc0e457c13e83f47e1ad1aa6cc680d8f28c668f8c65d12742ecc2\",\"status_manifest_id\":\"sm_component\",\"issuer_purpose\":\"STATUS\",\"audience\":\"urn:clued:audience:skill-coexistence-qualification:uscrdifznmlvczcekqpw\",\"control_trust_root_generation\":\"ctrgen_dd30fbc7e0ba43fa8ba9f734867bcf12\",\"generation\":1,\"as_of\":\"2026-09-08T17:20:45.897Z\",\"expires_at\":\"2026-09-08T17:30:46.897Z\",\"signature_binding\":{\"synthetic_only\":true}}\n",
+                "uri": "control://status-manifests/sm_component",
+                "sha256": "c1f8d4f7f7344d3992e901756ef7129403a2b8ff2eafcc39485b3d4884e07212",
+                "object_type": "StatusManifest"
+              }
+            ],
+            "authority_effect": "NONE"
+          }
+        }
+      ]
+    }
+  ],
+  "after": {
+    "root": {
+      "state": "STORED_NO_GATE_AUTHORITY",
+      "events": [],
+      "sequence": 2,
+      "root_set_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+      "generation_id": "ctrgen_dd30fbc7e0ba43fa8ba9f734867bcf12",
+      "authority_effect": "NONE",
+      "metadata_binding_sha256": "f0d100e4e1f87e4ca2605f696356334cc66b950536636a8b7822a97a6649d66b"
+    },
+    "events": [
+      {
+        "request": {
+          "body": {
+            "raw": "{\"controller_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"credential_generation\":\"credential-initial\",\"environment\":\"ISOLATED_TEST\",\"evidence_bytes\":134217728,\"expires_at\":\"2026-09-08T17:30:46.902Z\",\"idempotency_key\":\"engineering_budget\",\"not_before\":\"2026-09-08T17:20:45.902Z\",\"profile_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"purpose\":\"SKILL_COEXISTENCE_QUALIFICATION\",\"root_generation\":\"ctrgen_dd30fbc7e0ba43fa8ba9f734867bcf12\",\"runner_generation\":\"runner-initial\",\"scope_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"seconds\":600,\"session_generation\":\"session-initial\"}\n",
+            "sha256": "3fc67aef1cfaa471fafe4efbf58547fdedbe7e6254fda51db1432d90bb2dc720"
+          },
+          "operation": "BUDGET_RESERVED"
+        },
+        "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+        "sequence": 1,
+        "recorded_at": "2026-09-08T17:20:46.907565+00:00",
+        "idempotency_key": "engineering_budget",
+        "recording_transaction_id": "763"
+      },
+      {
+        "request": {
+          "body": {
+            "raw": "{\"ga_id\":\"ga_component\",\"ga_sha256\":\"e8b6fa431b4933f773e90d7a98f88c0bb50bd93d9266562085fce64a090cc639\",\"operation\":\"CREATE\"}\n",
+            "sha256": "715c22ef7204d2bed1e5eb016cba46fbc3b8b9f46f7574a855912e5b304f970f",
+            "operation": "CREATE"
+          },
+          "ga_id": "ga_component",
+          "operation": "INTENT_RECORDED",
+          "idempotency_key": "intent_original",
+          "expected_sequence": 1
+        },
+        "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+        "sequence": 2,
+        "recorded_at": "2026-09-08T17:20:46.924756+00:00",
+        "idempotency_key": "intent_original",
+        "recording_transaction_id": "766"
+      },
+      {
+        "request": {
+          "body": {
+            "intent_sha256": "715c22ef7204d2bed1e5eb016cba46fbc3b8b9f46f7574a855912e5b304f970f",
+            "intent_sequence": 2
+          },
+          "ga_id": "ga_component",
+          "operation": "CREATE_SENT",
+          "idempotency_key": "sent_original",
+          "expected_sequence": 2
+        },
+        "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+        "sequence": 3,
+        "recorded_at": "2026-09-08T17:20:46.92675+00:00",
+        "idempotency_key": "sent_original",
+        "recording_transaction_id": "767"
+      },
+      {
+        "request": {
+          "body": {},
+          "ga_id": "ga_component",
+          "operation": "UNKNOWN",
+          "idempotency_key": "unknown",
+          "expected_sequence": 3
+        },
+        "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+        "sequence": 4,
+        "recorded_at": "2026-09-08T17:20:46.927986+00:00",
+        "idempotency_key": "unknown",
+        "recording_transaction_id": "768"
+      },
+      {
+        "request": {
+          "previous": "credential-initial",
+          "replacement": "credential-next",
+          "generation_kind": "credential_generation",
+          "idempotency_key": "rotate",
+          "expected_sequence": 4,
+          "signed_source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+        "sequence": 5,
+        "recorded_at": "2026-09-08T17:20:46.935264+00:00",
+        "idempotency_key": "rotate",
+        "recording_transaction_id": "770"
+      }
+    ],
+    "binding": {
+      "gate_id": "G-PREENTRY-SKILL-QUALIFICATION",
+      "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+      "gate_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "gate_version": "SYNTHETIC_NOT_ACCEPTED",
+      "scope_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "prior_seconds": 1500,
+      "profile_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "controller_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "prior_evidence_bytes": 287700424,
+      "qualification_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "runtime_acceptance_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "current": {
+      "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+      "sequence": 5,
+      "active_ga_id": "ga_component",
+      "charged_seconds": 2100,
+      "runner_generation": "runner-initial",
+      "session_generation": "session-initial",
+      "credential_generation": "credential-initial",
+      "charged_evidence_bytes": 421918152,
+      "pending_budget_sequence": null
+    },
+    "attempts": [
+      {
+        "ga": {
+          "gate_id": "G-PREENTRY-SKILL-QUALIFICATION",
+          "purpose": "SKILL_COEXISTENCE_QUALIFICATION",
+          "deadline": "2026-09-08T17:20:48.702Z",
+          "issued_at": "2026-09-08T17:20:46.802Z",
+          "expires_at": "2026-09-08T17:20:48.702Z",
+          "environment": "ISOLATED_TEST",
+          "scope_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "profile_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "idempotency_key": "component",
+          "controller_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "runner_generation": "runner-initial",
+          "session_generation": "session-initial",
+          "status_manifest_ref": {
+            "uri": "control://status-manifests/sm_component",
+            "sha256": "c1f8d4f7f7344d3992e901756ef7129403a2b8ff2eafcc39485b3d4884e07212"
+          },
+          "authorization_status": "AUTHORIZED",
+          "credential_generation": "credential-initial",
+          "gate_authorization_id": "ga_component",
+          "budget_reservation_ref": {
+            "uri": "urn:clued:control-evidence:uscrdifznmlvczcekqpw:execution-events:1",
+            "sha256": "3fc67aef1cfaa471fafe4efbf58547fdedbe7e6254fda51db1432d90bb2dc720"
+          },
+          "controller_qualification_ref": {
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "control_trust_root_generation": "ctrgen_dd30fbc7e0ba43fa8ba9f734867bcf12"
+        },
+        "ga_id": "ga_component",
+        "phase": "UNKNOWN",
+        "ga_raw": "{\"gate_authorization_id\":\"ga_component\",\"idempotency_key\":\"component\",\"authorization_status\":\"AUTHORIZED\",\"purpose\":\"SKILL_COEXISTENCE_QUALIFICATION\",\"environment\":\"ISOLATED_TEST\",\"profile_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"controller_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"scope_digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"gate_id\":\"G-PREENTRY-SKILL-QUALIFICATION\",\"controller_qualification_ref\":{\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},\"control_trust_root_generation\":\"ctrgen_dd30fbc7e0ba43fa8ba9f734867bcf12\",\"runner_generation\":\"runner-initial\",\"credential_generation\":\"credential-initial\",\"session_generation\":\"session-initial\",\"issued_at\":\"2026-09-08T17:20:46.802Z\",\"deadline\":\"2026-09-08T17:20:48.702Z\",\"expires_at\":\"2026-09-08T17:20:48.702Z\",\"status_manifest_ref\":{\"uri\":\"control://status-manifests/sm_component\",\"sha256\":\"c1f8d4f7f7344d3992e901756ef7129403a2b8ff2eafcc39485b3d4884e07212\"},\"budget_reservation_ref\":{\"uri\":\"urn:clued:control-evidence:uscrdifznmlvczcekqpw:execution-events:1\",\"sha256\":\"3fc67aef1cfaa471fafe4efbf58547fdedbe7e6254fda51db1432d90bb2dc720\"}}\n",
+        "revoked": false,
+        "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+        "decision": null,
+        "sequence": 3,
+        "ga_sha256": "e8b6fa431b4933f773e90d7a98f88c0bb50bd93d9266562085fce64a090cc639",
+        "expires_at": "2026-09-08T17:20:48.702+00:00",
+        "receipt_id": null,
+        "receipt_raw": null,
+        "container_id": null,
+        "receipt_sha256": null,
+        "budget_sequence": 1,
+        "idempotency_key": "component"
+      }
+    ],
+    "control_objects": [
+      {
+        "raw": "{\"object_type\":\"StatusManifest\",\"schema_version\":\"1.0\",\"schema_digest\":\"6ba12ed51b3fc0e457c13e83f47e1ad1aa6cc680d8f28c668f8c65d12742ecc2\",\"status_manifest_id\":\"sm_component\",\"issuer_purpose\":\"STATUS\",\"audience\":\"urn:clued:audience:skill-coexistence-qualification:uscrdifznmlvczcekqpw\",\"control_trust_root_generation\":\"ctrgen_dd30fbc7e0ba43fa8ba9f734867bcf12\",\"generation\":1,\"as_of\":\"2026-09-08T17:20:45.897Z\",\"expires_at\":\"2026-09-08T17:30:46.897Z\",\"signature_binding\":{\"synthetic_only\":true}}\n",
+        "uri": "control://status-manifests/sm_component",
+        "sha256": "c1f8d4f7f7344d3992e901756ef7129403a2b8ff2eafcc39485b3d4884e07212",
+        "object_type": "StatusManifest"
+      }
+    ],
+    "authority_effect": "NONE"
+  },
+  "original_source_refs": [
+    {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-08\\ia\\work\\kernel-phase2-repo\\scripts\\phase2-qualification\\nonproduction-control-store\\install.candidate.sql",
+      "sha256": "3cbbed94e1c9ef5fec4db281526ca69b9b30a24d2812b5a8bb5eb6bc728146fb",
+      "bytes": 8741
+    },
+    {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-08\\ia\\work\\kernel-phase2-repo\\scripts\\phase2-qualification\\nonproduction-control-store\\runtime-successor\\budget-reservation-successor\\install.candidate.sql",
+      "sha256": "8f732dd4013a18adde33a254631cdd5a04022f300d4c0a13d05dffbf36f97285",
+      "bytes": 40646
+    },
+    {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-08\\ia\\work\\kernel-phase2-repo\\scripts\\phase2-qualification\\nonproduction-control-store\\runtime-successor\\runtime600-successor\\alter.candidate.sql",
+      "sha256": "0ab15bbbc2f80421cb619b50de8816095359d9ffab1e96e372960c063bc80c9b",
+      "bytes": 12444
+    },
+    {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-08\\ia\\work\\kernel-phase2-repo\\scripts\\phase2-qualification\\nonproduction-control-store\\runtime-successor\\runtime600-successor\\targeted-component-evidence.mjs",
+      "sha256": "a835ad33baf5e0f40364732db7b0320c4371ed6f23c1d9d77d95a7ab96eb3e5a",
+      "bytes": 15420
+    }
+  ],
+  "authority_effect": "NONE"
+}

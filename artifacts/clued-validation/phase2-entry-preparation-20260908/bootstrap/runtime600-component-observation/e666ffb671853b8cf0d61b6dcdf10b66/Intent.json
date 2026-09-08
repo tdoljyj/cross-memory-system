@@ -1,0 +1,44 @@
+{
+  "kind": "L26_SYNTHETIC_COMPONENT_ENGINEERING_OBSERVATION",
+  "nonce": "e666ffb671853b8cf0d61b6dcdf10b66",
+  "started_at": "2026-09-08T17:20:43.629Z",
+  "deadline": "2026-09-08T17:21:13.629Z",
+  "sourceRefs": [
+    {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-08\\ia\\work\\kernel-phase2-repo\\scripts\\phase2-qualification\\nonproduction-control-store\\install.candidate.sql",
+      "sha256": "3cbbed94e1c9ef5fec4db281526ca69b9b30a24d2812b5a8bb5eb6bc728146fb",
+      "bytes": 8741
+    },
+    {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-08\\ia\\work\\kernel-phase2-repo\\scripts\\phase2-qualification\\nonproduction-control-store\\runtime-successor\\budget-reservation-successor\\install.candidate.sql",
+      "sha256": "8f732dd4013a18adde33a254631cdd5a04022f300d4c0a13d05dffbf36f97285",
+      "bytes": 40646
+    },
+    {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-08\\ia\\work\\kernel-phase2-repo\\scripts\\phase2-qualification\\nonproduction-control-store\\runtime-successor\\runtime600-successor\\alter.candidate.sql",
+      "sha256": "0ab15bbbc2f80421cb619b50de8816095359d9ffab1e96e372960c063bc80c9b",
+      "bytes": 12444
+    },
+    {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-08\\ia\\work\\kernel-phase2-repo\\scripts\\phase2-qualification\\nonproduction-control-store\\runtime-successor\\runtime600-successor\\targeted-component-evidence.mjs",
+      "sha256": "a835ad33baf5e0f40364732db7b0320c4371ed6f23c1d9d77d95a7ab96eb3e5a",
+      "bytes": 15420
+    }
+  ],
+  "binaries": {
+    "initdb": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-08\\ia\\work\\kernel-phase2-repo\\apps\\clued-cloud\\node_modules\\@embedded-postgres\\windows-x64\\native\\bin\\initdb.exe",
+      "sha256": "acf1b9cb9a2c670f290a747365b8945d66ddeedabc027d80e2d7e1749ac7a8ce"
+    },
+    "postgres": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-08\\ia\\work\\kernel-phase2-repo\\apps\\clued-cloud\\node_modules\\@embedded-postgres\\windows-x64\\native\\bin\\postgres.exe",
+      "sha256": "becadfa646f4576467452ec94c513b1414e8bfeedc36f63e94d37c55219206ff"
+    },
+    "pg_ctl": {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-08\\ia\\work\\kernel-phase2-repo\\apps\\clued-cloud\\node_modules\\@embedded-postgres\\windows-x64\\native\\bin\\pg_ctl.exe",
+      "sha256": "e8da3e874baab290a3a9da4d7ef11879724d23562aaf4cf83fd4502b3f89fc8e"
+    }
+  },
+  "outer_ga": null,
+  "authority_effect": "NONE"
+}

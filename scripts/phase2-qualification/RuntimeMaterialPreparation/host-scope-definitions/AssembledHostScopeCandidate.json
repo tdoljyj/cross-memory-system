@@ -1,0 +1,681 @@
+{
+  "state": "NON_ISSUING_THREE_RESOLVER_RUNTIME_PREPARATION",
+  "authority_effect": "NONE",
+  "executable": false,
+  "accepted": false,
+  "signature_issued": false,
+  "ga_issued": false,
+  "definition_sources": [
+    {
+      "relative": "preentry-parent/profile-successor/gate-authorization.candidate.schema.json",
+      "sha256": "f7f7e2a011f3f81a005e46f9cf7683edeb010dc7812eadfb4473f6ad5368a1ce",
+      "bytes": 15448
+    },
+    {
+      "relative": "preentry-parent/profile-runtime180/ProfileDefinition.json",
+      "sha256": "cce4d4966dddbdb9685c8fab9242ffde48ca6210c919bd2615cc9c0bfc011f51",
+      "bytes": 3325
+    },
+    {
+      "relative": "preentry-parent/profile-successor/revocation-epoch-vector.candidate.schema.json",
+      "sha256": "f57cceb29853c67f8702c1560017c3be7b96626d6358299b5215add63d01e916",
+      "bytes": 9724
+    },
+    {
+      "relative": "nonproduction-control-store/generation2/RootSigningPayload.json",
+      "sha256": "cbe469eab09d83596df3bdfffb5e7fac9252c8588806c2a843eb8bd8025ac9b0",
+      "bytes": 4014
+    },
+    {
+      "relative": "preentry-parent/profile-runtime180/signing/ProfileSigningPayload.json",
+      "sha256": "f0fb2615f47995841791a0b131c427c4727daacdfb211e2f99c551c1f61109af",
+      "bytes": 11285
+    },
+    {
+      "relative": "RuntimeMaterialPreparation/StageSourceMapping.json",
+      "sha256": "64b933e3371898f5e2574671e52c5ac32a873684830258a00f552336f66d1472",
+      "bytes": 2783
+    }
+  ],
+  "expected_ga": {
+    "gate_id": "G-PREENTRY-SKILL-QUALIFICATION",
+    "profile_ref": {
+      "profile_id": "DP-PREENTRY-SKILL-QUALIFICATION",
+      "definition_version": "fixed-synthetic-skill-input-20260908.v2-runtime180",
+      "content_digest": "cce4d4966dddbdb9685c8fab9242ffde48ca6210c919bd2615cc9c0bfc011f51",
+      "accepted_ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/9892afee73222696928017cd34d4b12ce764f1f8",
+        "sha256": "a1f6c3d41d761c92d45a8cc820b133bce26929bd192393675f05bd7cfdada10e"
+      }
+    },
+    "purpose": "SKILL_COEXISTENCE_QUALIFICATION",
+    "environment": "ISOLATED_TEST",
+    "repository_ref": {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/7298987da2b0b87987325daa9efff2e439ff14ec",
+      "sha256": "3033331775dc211f8ce7b1d11b6e7876c6ce3f84cf27cf37b1c8261fd4043a1f"
+    },
+    "source_ref": null,
+    "artifact_refs": [
+      {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/2b5a89d354aae493ed4cd3fd89ee270e81207dd3",
+        "sha256": "f359a4ecc92ffeec93f3fac36949cfe1669bf017dd7cf4760220a2c3f9e8da1f"
+      },
+      {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/b3575b5e70084e16622b999c88e0bb5c23083018",
+        "sha256": "98c4d0165144a4ebfbd4889a98da65a8c6d3a71fbf082af393c15b9d00a3c18a"
+      },
+      {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/24542f289435b6bd7d138783d6c4172471693d2a",
+        "sha256": "63851834dccf34cf33dfeee09fb9b3b06077bcb68aad04e6a3d4114842342f9a"
+      },
+      {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/fc95f77b8f3c8d010acba1f0f1d539400aeaba53",
+        "sha256": "bf80e4464b1c299344a4a569d3598d7f8c6c37e5de7c957d4f27901d3193048f"
+      },
+      {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/23108fc7d1d6737a5e8f009d50a1ba99eddbe4c7",
+        "sha256": "2d633acc1665ae406a322d6edd9c0f546206fbfe6c250a71765f841227bc7394"
+      },
+      {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/dd9f88c054d41027da750a1ea56abd41646e6dcc",
+        "sha256": "75a01e49d64363bc4f09f65130e43a861b82a9ffd32066942fe80e2c2ba38e63"
+      },
+      {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/01896948c22687fc5cd785fffb4c35771057e8eb",
+        "sha256": "2dedbf340a171da8e91b6b60f55bade95ff6ac6b416a286b1cde637c80789c10"
+      },
+      {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/362abc01f0919f1e7371b323ab9060cb68d14cdf",
+        "sha256": "e1ba591cb8cf56a88cdf01aa3ff027c048b4bf0f0e692a7b868cfd6d4fae6d2e"
+      },
+      {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/8d1360b6c25b78a3e86679f4d0ad7156a0478db0",
+        "sha256": "9129e5c506b3c12e7689a281bcd4852adeb15100936bef0c3313fd8eac698d14"
+      }
+    ],
+    "host_runtime_config_digest": "63851834dccf34cf33dfeee09fb9b3b06077bcb68aad04e6a3d4114842342f9a",
+    "upstream_gate_result_receipt_refs": [],
+    "release_risk_manifest_digest": "fd26cba8a3969629769b16fb9aa8f491c0faf34220bc450d2e1c1d8ce1a31480",
+    "actor_ref": {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/5e07bbc54b334bf195fe36aadb8cb497d1f11699",
+      "sha256": "276df786fd7e5e9af9724fdcea6f03bb8661a005aeffeb40a0d6905ba8b4c807"
+    },
+    "subject_ref": {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/2b5a89d354aae493ed4cd3fd89ee270e81207dd3",
+      "sha256": "f359a4ecc92ffeec93f3fac36949cfe1669bf017dd7cf4760220a2c3f9e8da1f"
+    },
+    "binding_ref": {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/dd9f88c054d41027da750a1ea56abd41646e6dcc",
+      "sha256": "75a01e49d64363bc4f09f65130e43a861b82a9ffd32066942fe80e2c2ba38e63"
+    },
+    "scope_ref": {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/fc95f77b8f3c8d010acba1f0f1d539400aeaba53",
+      "sha256": "bf80e4464b1c299344a4a569d3598d7f8c6c37e5de7c957d4f27901d3193048f"
+    },
+    "issuer_ref": {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/c1f800d405010066371dfa401cee2544db22e25e",
+      "sha256": "9f475e2c2eedc02e50a5438c80d89f625ed5aa0ef2465a0581e349a1e8caa16d"
+    },
+    "authority_source_ref": {
+      "uri": "urn:clued:control-trust-root-set:uscrdifznmlvczcekqpw:ctr_414bd3c724264a83894b0c55cf2ab878",
+      "sha256": "fa58df2b1a7572848c288dc862767a4a9983d42696d50dbc4064af7275cec328"
+    },
+    "audience": "urn:clued:audience:skill-coexistence-qualification:uscrdifznmlvczcekqpw",
+    "issuer_purpose": "GATE_AUTHORIZATION",
+    "schema_digest": "f7f7e2a011f3f81a005e46f9cf7683edeb010dc7812eadfb4473f6ad5368a1ce",
+    "control_trust_root_generation": "ctrgen_dd30fbc7e0ba43fa8ba9f734867bcf12",
+    "allowed_read_set": [
+      "/driver/SKILL.md",
+      "/driver/references/engineering.md",
+      "/driver/references/memory-operations.md",
+      "/driver/fixed_skill_fixture.py",
+      "/proc/self/status",
+      "/sys/class/net",
+      "host:exact ControllerSourceManifest files and accepted immutable input/ref bytes",
+      "host:existing fixed authenticated GitHub source/signature read interface for tdoljyj/cross-memory-system",
+      "host:existing trusted Supabase fixed clued_control current/read_execution/read_execution_event interfaces for uscrdifznmlvczcekqpw",
+      "host:exact Docker image and this attempt container inspection",
+      "host:preentry-parent/work/<nonce>/ exact retained local evidence and fixed empty Docker config"
+    ],
+    "allowed_write_set": [
+      "/allowed/fixture.json",
+      "host:preentry-parent/work/<nonce>/ fixed source staging and CreateNew local Intent/output/STOP evidence",
+      "host:Docker create/start/stop/wait for the one fixed synthetic container; mutation always uses exact observed ID after create",
+      "host:clued_control immutable execution_events and exact current/gate_attempts transitions through accepted fixed functions only",
+      "host:fixed private auxiliary signature commitment path for this exact GA/GRR through accepted Owner channel"
+    ],
+    "forbidden_actions": [
+      "production or business Canon mutation",
+      "business credential/token issuance or export",
+      "real user payload or private Gold read",
+      "real model or paid action",
+      "arbitrary command, executable, environment, mount or target",
+      "candidate Skill self-qualification or authority assertion",
+      "PQUAL-18 post-Entry positive or any Entry/RC/production grant",
+      "Root/Owner/issuer purpose expansion or old pins rewrite",
+      "automatic UNKNOWN redispatch, capacity release or budget refund",
+      "container/image/volume removal or evidence deletion"
+    ],
+    "credential_scope": {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/ba367aecfacebdb7cefcbafea979bade712f6fef",
+      "sha256": "905dbb512b2ed9605da90ee90ff78db190e1560204a2e8d84621ee621c9e834d"
+    },
+    "stop_policy_digest": "ff69f6518567651db3a99057eee1ec2a572171d9e59a0397f93d5fcaa4c2d016",
+    "rollback_point_ref": {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/f2d009828eed5b13aaac8f5764669fdadff28f7d",
+      "sha256": "aff99a0c74a7f8210fc7bf04164e1ad2b9723bec79b56acfdabb45f8437f3add"
+    },
+    "evidence_sink_ref": {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/23108fc7d1d6737a5e8f009d50a1ba99eddbe4c7",
+      "sha256": "2d633acc1665ae406a322d6edd9c0f546206fbfe6c250a71765f841227bc7394"
+    },
+    "controller_digest": "2dedbf340a171da8e91b6b60f55bade95ff6ac6b416a286b1cde637c80789c10",
+    "controller_qualification_ref": null,
+    "candidate_skill_digest": "f359a4ecc92ffeec93f3fac36949cfe1669bf017dd7cf4760220a2c3f9e8da1f",
+    "mechanism_digest": "ac7d4a13c069dddd7acd8fa5258052e61e28108844701e5988c0d5105470f70f",
+    "plan_digest": "e1ba591cb8cf56a88cdf01aa3ff027c048b4bf0f0e692a7b868cfd6d4fae6d2e",
+    "fixtures_digest": "98c4d0165144a4ebfbd4889a98da65a8c6d3a71fbf082af393c15b9d00a3c18a",
+    "stage_receipt_refs": [
+      {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/d911dbdfeec1bf0000c77da86597f6c6bd0969d5",
+        "sha256": "f2ec1d6cf3afbd80d415c65c7bc0f71d86d606bda9031a174d92517e421ac246"
+      },
+      {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/2c81fac919b2fe03b919609762af701a9d8bd62a",
+        "sha256": "f40c8af253f811f820e4b3eccc144d63ca3548663810aba10bebb22331661b36"
+      },
+      {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/31c4574a6a34e951f4d70cc8525ac3ff6cb59136",
+        "sha256": "eb25e99392049c28f198472fbca69df0e6d75fc9fc9d033d3aa250f3272105ea"
+      },
+      {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/31c4574a6a34e951f4d70cc8525ac3ff6cb59136",
+        "sha256": "eb25e99392049c28f198472fbca69df0e6d75fc9fc9d033d3aa250f3272105ea"
+      },
+      {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/040c393cda6090c9ac3c9f33b3e8568a40595837",
+        "sha256": "83814ca7d19173034d107da31bcd1456d34125bdafae6048fce00fa6f0907e25"
+      },
+      {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/6f13b5c4a8efcdee00072035bbbc32407e570f80",
+        "sha256": "e19261b718cad252c1881cd5559e2e65b115d475952f5dbcd8d9ebe0dc7250be"
+      }
+    ],
+    "revocation_epoch_vector": {
+      "vector_schema_version": "clued.fixed-synthetic-skill-input/1",
+      "not_applicable_evidence": {
+        "account": {
+          "reason": "该固定child没有Clued业务account、业务用户令牌或账户API；只读取明确三Skill文本和固定合成fixture。GitHub Owner控制身份仍存在并单独核验，不与此Clued业务account层混同。",
+          "accepted_schema_ref": {
+            "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/1622355e303cd0f22e2b0d0b4b0beb943559c78d",
+            "sha256": "f57cceb29853c67f8702c1560017c3be7b96626d6358299b5215add63d01e916"
+          }
+        },
+        "integration_installation": {
+          "reason": "没有Clued集成安装实例、集成业务凭据或installation接口调用；宿主Docker安装及受信Git发布渠道不是本合成业务层installation，其控制/凭据代际继续独立核验。",
+          "accepted_schema_ref": {
+            "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/1622355e303cd0f22e2b0d0b4b0beb943559c78d",
+            "sha256": "f57cceb29853c67f8702c1560017c3be7b96626d6358299b5215add63d01e916"
+          }
+        },
+        "context": {
+          "reason": "不创建或读取ContextStream/context/session业务对象；/allowed/fixture.json不是ContextStream或Canon。父监督会话session_generation不因此消失。",
+          "accepted_schema_ref": {
+            "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/1622355e303cd0f22e2b0d0b4b0beb943559c78d",
+            "sha256": "f57cceb29853c67f8702c1560017c3be7b96626d6358299b5215add63d01e916"
+          }
+        },
+        "binding": {
+          "reason": "没有Clued Binding发行、选择、资源绑定或Binding token；纯固定文件挂载不是业务Binding。确切container/Skill/Scope/Root引用仍必须绑定且禁止改变。",
+          "accepted_schema_ref": {
+            "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/1622355e303cd0f22e2b0d0b4b0beb943559c78d",
+            "sha256": "f57cceb29853c67f8702c1560017c3be7b96626d6358299b5215add63d01e916"
+          }
+        }
+      },
+      "account_scope_ref": "not_applicable",
+      "account_epoch": "not_applicable",
+      "integration_installation_scope_ref": "not_applicable",
+      "integration_installation_epoch": "not_applicable",
+      "context_scope_ref": "not_applicable",
+      "context_epoch": "not_applicable",
+      "binding_scope_ref": "not_applicable",
+      "binding_epoch": "not_applicable"
+    },
+    "scope_digest": "bf80e4464b1c299344a4a569d3598d7f8c6c37e5de7c957d4f27901d3193048f",
+    "profile_digest": "cce4d4966dddbdb9685c8fab9242ffde48ca6210c919bd2615cc9c0bfc011f51",
+    "dominant_role": "TEST_CONTROLLER"
+  },
+  "dynamic_fields_deliberately_absent": [
+    "gate_authorization_id",
+    "authorization_status",
+    "issued_at",
+    "expires_at",
+    "deadline",
+    "idempotency_key",
+    "signature",
+    "runner_generation",
+    "credential_generation",
+    "session_generation"
+  ],
+  "unresolved_fields": [
+    "source_ref",
+    "controller_qualification_ref"
+  ],
+  "field_source_map": [
+    {
+      "field": "gate_id",
+      "state": "EXACT_EXISTING_DEFINITION_VALUE_REQUIRES_FINAL_CURRENT_BINDING",
+      "source_requirement": "Registered exact Gate definition and accepted forward input binding",
+      "existing_location_or_minimum_input": "preentry-parent/gate-successor/GateDefinitionCandidate.json; current 180/controller Gate successor from agent3",
+      "supplied_provenance": null
+    },
+    {
+      "field": "profile_ref",
+      "state": "EXACT_EXISTING_DEFINITION_VALUE_REQUIRES_FINAL_CURRENT_BINDING",
+      "source_requirement": "Actual signed Profile180 definition plus its exact independent acceptance reference",
+      "existing_location_or_minimum_input": "preentry-parent/profile-runtime180/ProfileDefinition.json; bootstrap/FixedSyntheticProfile180IndependentAcceptance.json; actual publication proof",
+      "supplied_provenance": null
+    },
+    {
+      "field": "purpose",
+      "state": "EXACT_EXISTING_DEFINITION_VALUE_REQUIRES_FINAL_CURRENT_BINDING",
+      "source_requirement": "Existing qualification purpose",
+      "existing_location_or_minimum_input": "QualificationPhasePolicy.json / approved Profile",
+      "supplied_provenance": null
+    },
+    {
+      "field": "environment",
+      "state": "EXACT_EXISTING_DEFINITION_VALUE_REQUIRES_FINAL_CURRENT_BINDING",
+      "source_requirement": "Existing isolated environment scope",
+      "existing_location_or_minimum_input": "approved Profile allowed_environments",
+      "supplied_provenance": null
+    },
+    {
+      "field": "repository_ref",
+      "state": "SUPPLIED_PREPARATION_NOT_INDEPENDENTLY_VERIFIED",
+      "source_requirement": "Exact fixed private repository identity source; URI and digest must describe the same declared object",
+      "existing_location_or_minimum_input": "tdoljyj/cross-memory-system; actual signed repository/host scope metadata, not a fabricated URL digest",
+      "supplied_provenance": {
+        "source": "scripts/phase2-qualification/RuntimeMaterialPreparation/input-definitions/RepositoryIdentity.json",
+        "sha256": "3033331775dc211f8ce7b1d11b6e7876c6ce3f84cf27cf37b1c8261fd4043a1f"
+      }
+    },
+    {
+      "field": "source_ref",
+      "state": "REQUIRES_EXACT_SOURCE_AND_INDEPENDENT_BINDING",
+      "source_requirement": "Actual final publication commit, tree and every referenced immutable source blob",
+      "existing_location_or_minimum_input": "Final complete SourceManifest and actual GitHub publication readback; do not insert a future commit",
+      "supplied_provenance": null
+    },
+    {
+      "field": "artifact_refs",
+      "state": "SUPPLIED_PREPARATION_NOT_INDEPENDENTLY_VERIFIED",
+      "source_requirement": "Precise Gate/fixture/Skill/controller artifacts consumed by this accepted runtime",
+      "existing_location_or_minimum_input": "Final accepted Gate/Test input successor and closed SourceManifest; include actual Gate definition digest",
+      "supplied_provenance": {
+        "source": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions/ArtifactReferencesCandidate.json",
+        "sha256": "a4d0b11623e96e238cfaf6a31ae3a2e31c513ec63580b8646d261d930c93e3b4"
+      }
+    },
+    {
+      "field": "host_runtime_config_digest",
+      "state": "SUPPLIED_PREPARATION_NOT_INDEPENDENTLY_VERIFIED",
+      "source_requirement": "Complete accepted fixed host configuration bytes including exact executables/image/limits/entry source closure",
+      "existing_location_or_minimum_input": "PythonImageBinding.json; Profile180 FixedInputScope; final host/controller SourceManifest",
+      "supplied_provenance": {
+        "source": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions/HostRuntimeConfig.json",
+        "sha256": "63851834dccf34cf33dfeee09fb9b3b06077bcb68aad04e6a3d4114842342f9a"
+      }
+    },
+    {
+      "field": "upstream_gate_result_receipt_refs",
+      "state": "SUPPLIED_PREPARATION_NOT_INDEPENDENTLY_VERIFIED",
+      "source_requirement": "Only actual applicable upstream original GRRs; empty requires explicit no-upstream applicability decision",
+      "existing_location_or_minimum_input": "Original Gate definition/prerequisites; no stage engineering decision relabeled as GRR",
+      "supplied_provenance": {
+        "source": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions/ExecutionScopeDefinition.json",
+        "sha256": "bf80e4464b1c299344a4a569d3598d7f8c6c37e5de7c957d4f27901d3193048f"
+      }
+    },
+    {
+      "field": "release_risk_manifest_digest",
+      "state": "SUPPLIED_PREPARATION_NOT_INDEPENDENTLY_VERIFIED",
+      "source_requirement": "Actual applicable risk manifest or accepted exact applicability successor",
+      "existing_location_or_minimum_input": "Original S06 GA field. No current dedicated accepted manifest located; do not substitute Profile/schema digest",
+      "supplied_provenance": {
+        "source": "scripts/phase2-qualification/RuntimeMaterialPreparation/input-definitions/ScopedRiskManifest.json",
+        "sha256": "fd26cba8a3969629769b16fb9aa8f491c0faf34220bc450d2e1c1d8ce1a31480"
+      }
+    },
+    {
+      "field": "actor_ref",
+      "state": "SUPPLIED_PREPARATION_NOT_INDEPENDENTLY_VERIFIED",
+      "source_requirement": "Actual control actor identity and its scoped delegation provenance",
+      "existing_location_or_minimum_input": "OwnerDelegation_20260908.json + actual Owner signature; Root issuer tdoljyj/web-flow; exact role mapping needed",
+      "supplied_provenance": {
+        "source": "scripts/phase2-qualification/RuntimeMaterialPreparation/input-definitions/ControlActorDefinition.json",
+        "sha256": "276df786fd7e5e9af9724fdcea6f03bb8661a005aeffeb40a0d6905ba8b4c807"
+      }
+    },
+    {
+      "field": "subject_ref",
+      "state": "SUPPLIED_PREPARATION_NOT_INDEPENDENTLY_VERIFIED",
+      "source_requirement": "Exact quarantined prospective unified Clued three-file subject",
+      "existing_location_or_minimum_input": "R10IndependentProjectionAcceptance.json /subject/files; final accepted Skill input manifest",
+      "supplied_provenance": {
+        "source": "scripts/phase2-qualification/RuntimeMaterialPreparation/input-definitions/SkillSubjectManifest.json",
+        "sha256": "f359a4ecc92ffeec93f3fac36949cfe1669bf017dd7cf4760220a2c3f9e8da1f"
+      }
+    },
+    {
+      "field": "binding_ref",
+      "state": "SUPPLIED_PREPARATION_NOT_INDEPENDENTLY_VERIFIED",
+      "source_requirement": "Exact accepted runtime binding metadata; never a nonexistent business Binding",
+      "existing_location_or_minimum_input": "Same-domain execution_binding immutable accepted metadata and final subject; actual reference encoding must be accepted",
+      "supplied_provenance": {
+        "source": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions/ControlBindingDefinition.json",
+        "sha256": "75a01e49d64363bc4f09f65130e43a861b82a9ffd32066942fe80e2c2ba38e63"
+      }
+    },
+    {
+      "field": "scope_ref",
+      "state": "SUPPLIED_PREPARATION_NOT_INDEPENDENTLY_VERIFIED",
+      "source_requirement": "Complete accepted run read/write/deny and applicable control scope, not the old parent alone",
+      "existing_location_or_minimum_input": "Profile180 + final closed executor + Gate/Test manifest input successor",
+      "supplied_provenance": {
+        "source": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions/ExecutionScopeDefinition.json",
+        "sha256": "bf80e4464b1c299344a4a569d3598d7f8c6c37e5de7c957d4f27901d3193048f"
+      }
+    },
+    {
+      "field": "issuer_ref",
+      "state": "EXACT_EXISTING_DEFINITION_VALUE_REQUIRES_FINAL_CURRENT_BINDING",
+      "source_requirement": "Actual current Root2 GATE_AUTHORIZATION issuer qualification_ref",
+      "existing_location_or_minimum_input": "Real read_root current generation body issuer_bindings, then exact remote immutable metadata resolution",
+      "supplied_provenance": null
+    },
+    {
+      "field": "authority_source_ref",
+      "state": "SUPPLIED_PREPARATION_NOT_INDEPENDENTLY_VERIFIED",
+      "source_requirement": "Actual current complete RootSet canonical digest and existing RootSet URI",
+      "existing_location_or_minimum_input": "Fresh private read_root; original accepted Root canonicalDigest algorithm; never main HEAD or local control.json",
+      "supplied_provenance": {
+        "source": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions/AuthorityReferenceObservation.json",
+        "sha256": "a290275abc10fd3f58d290673120105583e5b23765ca4e149049579b41f5a61c"
+      }
+    },
+    {
+      "field": "audience",
+      "state": "EXACT_EXISTING_DEFINITION_VALUE_REQUIRES_FINAL_CURRENT_BINDING",
+      "source_requirement": "Exact existing audience",
+      "existing_location_or_minimum_input": "Root/Profile fixed nonproduction project audience",
+      "supplied_provenance": null
+    },
+    {
+      "field": "issuer_purpose",
+      "state": "EXACT_EXISTING_DEFINITION_VALUE_REQUIRES_FINAL_CURRENT_BINDING",
+      "source_requirement": "Distinct original GA issuing purpose",
+      "existing_location_or_minimum_input": "Root2 GATE_AUTHORIZATION purpose qualification",
+      "supplied_provenance": null
+    },
+    {
+      "field": "schema_digest",
+      "state": "EXACT_EXISTING_DEFINITION_VALUE_REQUIRES_FINAL_CURRENT_BINDING",
+      "source_requirement": "Exact accepted full original-field GA schema bytes",
+      "existing_location_or_minimum_input": "preentry-parent/profile-successor/gate-authorization.candidate.schema.json",
+      "supplied_provenance": null
+    },
+    {
+      "field": "control_trust_root_generation",
+      "state": "EXACT_EXISTING_DEFINITION_VALUE_REQUIRES_FINAL_CURRENT_BINDING",
+      "source_requirement": "Actual independently verified and registered Root2 generation",
+      "existing_location_or_minimum_input": "Root current live store; fixed candidate value still requires fresh live confirmation",
+      "supplied_provenance": null
+    },
+    {
+      "field": "allowed_read_set",
+      "state": "SUPPLIED_PREPARATION_NOT_INDEPENDENTLY_VERIFIED",
+      "source_requirement": "Actual accepted child and supervising host read allowlist",
+      "existing_location_or_minimum_input": "Final accepted Gate/Profile full scope; old child /driver-only list cannot omit control-plane evidence reads",
+      "supplied_provenance": {
+        "source": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions/ExecutionScopeDefinition.json",
+        "sha256": "bf80e4464b1c299344a4a569d3598d7f8c6c37e5de7c957d4f27901d3193048f"
+      }
+    },
+    {
+      "field": "allowed_write_set",
+      "state": "SUPPLIED_PREPARATION_NOT_INDEPENDENTLY_VERIFIED",
+      "source_requirement": "Actual accepted synthetic and control-evidence write allowlist",
+      "existing_location_or_minimum_input": "Final accepted Gate/Profile scope, exact single same-domain event paths and per-attempt synthetic directory",
+      "supplied_provenance": {
+        "source": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions/ExecutionScopeDefinition.json",
+        "sha256": "bf80e4464b1c299344a4a569d3598d7f8c6c37e5de7c957d4f27901d3193048f"
+      }
+    },
+    {
+      "field": "forbidden_actions",
+      "state": "SUPPLIED_PREPARATION_NOT_INDEPENDENTLY_VERIFIED",
+      "source_requirement": "Exact accepted prohibitions",
+      "existing_location_or_minimum_input": "Owner scope + Profile required_false + Gate deny boundary; no model, production, arbitrary command or PQUAL18 positive",
+      "supplied_provenance": {
+        "source": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions/ExecutionScopeDefinition.json",
+        "sha256": "bf80e4464b1c299344a4a569d3598d7f8c6c37e5de7c957d4f27901d3193048f"
+      }
+    },
+    {
+      "field": "credential_scope",
+      "state": "SUPPLIED_PREPARATION_NOT_INDEPENDENTLY_VERIFIED",
+      "source_requirement": "Accepted actual credential boundary, including trusted parent channels and no child credentials",
+      "existing_location_or_minimum_input": "Profile four-layer N/A + fixed host environment + trusted Supabase/GitHub tool caller; not business credential issuance",
+      "supplied_provenance": {
+        "source": "scripts/phase2-qualification/RuntimeMaterialPreparation/input-definitions/CredentialScopeDefinition.json",
+        "sha256": "905dbb512b2ed9605da90ee90ff78db190e1560204a2e8d84621ee621c9e834d"
+      }
+    },
+    {
+      "field": "stop_policy_digest",
+      "state": "SUPPLIED_PREPARATION_NOT_INDEPENDENTLY_VERIFIED",
+      "source_requirement": "Exact accepted deadline/STOP/UNKNOWN policy object",
+      "existing_location_or_minimum_input": "host430445 watchdog reserve30/START6 + accepted parent-loss actual evidence + supervisor fixed UNKNOWN policy",
+      "supplied_provenance": {
+        "source": "scripts/phase2-qualification/RuntimeMaterialPreparation/input-definitions/StopPolicyDefinition.json",
+        "sha256": "ff69f6518567651db3a99057eee1ec2a572171d9e59a0397f93d5fcaa4c2d016"
+      }
+    },
+    {
+      "field": "rollback_point_ref",
+      "state": "SUPPLIED_PREPARATION_NOT_INDEPENDENTLY_VERIFIED",
+      "source_requirement": "Actual recoverable pre-action state/reference",
+      "existing_location_or_minimum_input": "Empty new attempt plus existing immutable Intent/idempotency and container reconciliation; no invented checkpoint",
+      "supplied_provenance": {
+        "source": "scripts/phase2-qualification/RuntimeMaterialPreparation/input-definitions/RecoveryBoundaryDefinition.json",
+        "sha256": "aff99a0c74a7f8210fc7bf04164e1ad2b9723bec79b56acfdabb45f8437f3add"
+      }
+    },
+    {
+      "field": "evidence_sink_ref",
+      "state": "SUPPLIED_PREPARATION_NOT_INDEPENDENTLY_VERIFIED",
+      "source_requirement": "Exact existing same-domain immutable event sink binding",
+      "existing_location_or_minimum_input": "Accepted/deployed control-objects successor SQL, execution_events exact raw/sha/readback. Local fsync and Git history are not current authority",
+      "supplied_provenance": {
+        "source": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions/EvidenceSinkDefinition.json",
+        "sha256": "2d633acc1665ae406a322d6edd9c0f546206fbfe6c250a71765f841227bc7394"
+      }
+    },
+    {
+      "field": "controller_digest",
+      "state": "SUPPLIED_PREPARATION_NOT_INDEPENDENTLY_VERIFIED",
+      "source_requirement": "Digest of complete accepted executable source closure, not only matching caller/SQL fields",
+      "existing_location_or_minimum_input": "Agent3 final SourceManifest excludes itself and acceptance metadata; every entry checked before process start",
+      "supplied_provenance": {
+        "source": "scripts/phase2-qualification/control-context-verifier-runtime180/ControllerSourceManifest.candidate.json",
+        "sha256": "2dedbf340a171da8e91b6b60f55bade95ff6ac6b416a286b1cde637c80789c10"
+      }
+    },
+    {
+      "field": "controller_qualification_ref",
+      "state": "REQUIRES_EXACT_SOURCE_AND_INDEPENDENT_BINDING",
+      "source_requirement": "Actual independent scoped controller qualification record after its required engineering checks",
+      "existing_location_or_minimum_input": "Final independent reviewer decision and actual signed publication; no fabricated ACCEPTED or Receipt",
+      "supplied_provenance": null
+    },
+    {
+      "field": "candidate_skill_digest",
+      "state": "SUPPLIED_PREPARATION_NOT_INDEPENDENTLY_VERIFIED",
+      "source_requirement": "Digest of the exact accepted three-file Skill subject under explicit accepted byte-set algorithm",
+      "existing_location_or_minimum_input": "R10 subject/files + final Skill input manifest. fixed_skill_fixture.py is not the Skill digest",
+      "supplied_provenance": {
+        "source": "scripts/phase2-qualification/RuntimeMaterialPreparation/input-definitions/SkillSubjectManifest.json",
+        "sha256": "f359a4ecc92ffeec93f3fac36949cfe1669bf017dd7cf4760220a2c3f9e8da1f"
+      }
+    },
+    {
+      "field": "mechanism_digest",
+      "state": "EXACT_EXISTING_DEFINITION_VALUE_REQUIRES_FINAL_CURRENT_BINDING",
+      "source_requirement": "Exact currently accepted R09 mechanism definition",
+      "existing_location_or_minimum_input": "bootstrap/R09MechanismCandidate.json ac7d4a13… and signed R09 independent freeze",
+      "supplied_provenance": null
+    },
+    {
+      "field": "plan_digest",
+      "state": "SUPPLIED_PREPARATION_NOT_INDEPENDENTLY_VERIFIED",
+      "source_requirement": "Exact accepted fixed applicable PQUAL execution plan",
+      "existing_location_or_minimum_input": "TestControllerQualificationPlan.json plus final TestManifest/driver scope successor; not an old model-only harness",
+      "supplied_provenance": {
+        "source": "scripts/phase2-qualification/control-context-verifier-runtime180/preentry-skill-qualification.json",
+        "sha256": "e1ba591cb8cf56a88cdf01aa3ff027c048b4bf0f0e692a7b868cfd6d4fae6d2e"
+      }
+    },
+    {
+      "field": "fixtures_digest",
+      "state": "SUPPLIED_PREPARATION_NOT_INDEPENDENTLY_VERIFIED",
+      "source_requirement": "Exact accepted synthetic fixture set and oracle inputs",
+      "existing_location_or_minimum_input": "FixedFixturePreparation + final TestManifest fixture bindings; no private Gold access before Entry",
+      "supplied_provenance": {
+        "source": "scripts/phase2-qualification/qualification-runtime/fixed_skill_fixture.py",
+        "sha256": "98c4d0165144a4ebfbd4889a98da65a8c6d3a71fbf082af393c15b9d00a3c18a"
+      }
+    },
+    {
+      "field": "stage_receipt_refs",
+      "state": "EXACT_EXISTING_DEFINITION_VALUE_REQUIRES_FINAL_CURRENT_BINDING",
+      "source_requirement": "Six actual R05–R10 prerequisite source references with accepted type/applicability mapping",
+      "existing_location_or_minimum_input": "Agent3 exact R05–R10 signed source mapping; do not label engineering acceptance as an absent Kernel wire receipt",
+      "supplied_provenance": null
+    },
+    {
+      "field": "revocation_epoch_vector",
+      "state": "EXACT_EXISTING_DEFINITION_VALUE_REQUIRES_FINAL_CURRENT_BINDING",
+      "source_requirement": "Exact accepted business-layer N/A reasons/schema; preserves independent applicable control generations",
+      "existing_location_or_minimum_input": "Profile180 not_applicable_layer_permissions and accepted vector schema",
+      "supplied_provenance": null
+    },
+    {
+      "field": "scope_digest",
+      "state": "SUPPLIED_PREPARATION_NOT_INDEPENDENTLY_VERIFIED",
+      "source_requirement": "Digest of same complete accepted scope object as scope_ref",
+      "existing_location_or_minimum_input": "Must equal scope_ref.sha256 and actual immutable binding; no arbitrary hash substitution",
+      "supplied_provenance": {
+        "source": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions/ExecutionScopeDefinition.json",
+        "sha256": "bf80e4464b1c299344a4a569d3598d7f8c6c37e5de7c957d4f27901d3193048f"
+      }
+    },
+    {
+      "field": "profile_digest",
+      "state": "EXACT_EXISTING_DEFINITION_VALUE_REQUIRES_FINAL_CURRENT_BINDING",
+      "source_requirement": "Exact independently accepted Profile180 bytes",
+      "existing_location_or_minimum_input": "preentry-parent/profile-runtime180/ProfileDefinition.json",
+      "supplied_provenance": null
+    },
+    {
+      "field": "dominant_role",
+      "state": "SUPPLIED_PREPARATION_NOT_INDEPENDENTLY_VERIFIED",
+      "source_requirement": "Actually accepted dominant control role for this fixed operation",
+      "existing_location_or_minimum_input": "QualificationPhasePolicy identity_binding_fields; final actor/subject scope mapping, not assumed Owner identity role",
+      "supplied_provenance": {
+        "source": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions/ExecutionScopeDefinition.json",
+        "sha256": "bf80e4464b1c299344a4a569d3598d7f8c6c37e5de7c957d4f27901d3193048f"
+      }
+    }
+  ],
+  "final_review_required_even_if_all_fields_supplied": true,
+  "late_bound_fields": {
+    "budget_reservation_ref": {
+      "resolver": "CURRENT_EXACT_EXECUTION_BUDGET_EVENT_V1",
+      "maximum_seconds": 180,
+      "maximum_evidence_bytes": 134217728
+    },
+    "status_manifest_ref": {
+      "resolver": "STORED_STATUS_FROM_EXACT_OWNER_SIGNED_PAYLOAD_V1",
+      "signed_payload_sha256": null
+    },
+    "target_revision": {
+      "resolver": "ACTUAL_RUNTIME_AND_SOURCE_MANIFEST_OWNER_MERGE_V1"
+    }
+  },
+  "pending_policy_inputs": [
+    "actual original Status signing payload SHA; no fake signature_binding"
+  ],
+  "required_stages": [
+    "R05",
+    "R06",
+    "R07",
+    "R08",
+    "R09",
+    "R10"
+  ],
+  "policy_applicability": "Exact assessor-authorized successor preparation; resolver implementation, final independent runtime acceptance and actual source/current reads remain mandatory",
+  "host_scope_state": "EXACT_LOCAL_CLOSURE_BOUND_PENDING_INDEPENDENT_REVIEW",
+  "runtime_subject_additional_inputs": {
+    "result_reviewer_ref": {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/e7f738ae3c247e41733872ab95387440205c736a",
+      "sha256": "e09ef634712ce1206600402552073bae91e7296f2b4e2d3f99855bd760c944bd"
+    },
+    "result_reviewer_semantics": {
+      "role_pointer": "/scope/independent_assessor",
+      "expected": "/root/project_list_auth_fix",
+      "independence_pointer": "/independence",
+      "source": "Actual Owner delegation exact original bytes, not a new identity Registry"
+    },
+    "gate_suite_ref": {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/362abc01f0919f1e7371b323ab9060cb68d14cdf",
+      "sha256": "e1ba591cb8cf56a88cdf01aa3ff027c048b4bf0f0e692a7b868cfd6d4fae6d2e"
+    },
+    "control_schema_sources": {
+      "StatusManifest": {
+        "source": {
+          "path": "scripts/phase2-qualification/control-context-verifier-runtime180/status-manifest.candidate.schema.json",
+          "sha256": "6ba12ed51b3fc0e457c13e83f47e1ad1aa6cc680d8f28c668f8c65d12742ecc2",
+          "bytes": 5562
+        },
+        "prospective_ref": {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/0254cf080eabea2d2849f63642dc05c5dabd966f",
+          "sha256": "6ba12ed51b3fc0e457c13e83f47e1ad1aa6cc680d8f28c668f8c65d12742ecc2"
+        }
+      },
+      "GateResultReceipt": {
+        "source": {
+          "path": "scripts/phase2-qualification/control-context-verifier-runtime180/gate-result-receipt.candidate.schema.json",
+          "sha256": "2ea5fb9cc905ddbbf8769a438a1e1d5d9bdfe5d72363091033663112e9304c0b",
+          "bytes": 8302
+        },
+        "prospective_ref": {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/341bdcb9fd8ceb83abfbf764b4ca5d6fd017c01d",
+          "sha256": "2ea5fb9cc905ddbbf8769a438a1e1d5d9bdfe5d72363091033663112e9304c0b"
+        }
+      }
+    },
+    "control_schema_refs": {
+      "StatusManifest": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/0254cf080eabea2d2849f63642dc05c5dabd966f",
+        "sha256": "6ba12ed51b3fc0e457c13e83f47e1ad1aa6cc680d8f28c668f8c65d12742ecc2"
+      },
+      "GateResultReceipt": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/341bdcb9fd8ceb83abfbf764b4ca5d6fd017c01d",
+        "sha256": "2ea5fb9cc905ddbbf8769a438a1e1d5d9bdfe5d72363091033663112e9304c0b"
+      }
+    }
+  },
+  "publication_verified": false
+}

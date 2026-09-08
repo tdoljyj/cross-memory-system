@@ -1,0 +1,64 @@
+{
+  "authority_effect": "NONE",
+  "reason": "600-second same-scope successor: only STOP deadline/source and resulting recovery/risk dependency references change.",
+  "originals": [
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/input-definitions/StopPolicyDefinition.json",
+      "sha256": "ff69f6518567651db3a99057eee1ec2a572171d9e59a0397f93d5fcaa4c2d016",
+      "bytes": 968
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/input-definitions/RecoveryBoundaryDefinition.json",
+      "sha256": "aff99a0c74a7f8210fc7bf04164e1ad2b9723bec79b56acfdabb45f8437f3add",
+      "bytes": 896
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/input-definitions/ScopedRiskManifest.json",
+      "sha256": "fd26cba8a3969629769b16fb9aa8f491c0faf34220bc450d2e1c1d8ce1a31480",
+      "bytes": 2134
+    }
+  ],
+  "successors": [
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-runtime600/StopPolicyDefinition.json",
+      "sha256": "5a96306bae4af3d27694abc5533510301ae968a81b9995d8283ba3b4204e1dd5",
+      "bytes": 971
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-runtime600/RecoveryBoundaryDefinition.json",
+      "sha256": "cc67aeb4a35c998bb103c62be52dd00c6507bccba4c374af4bee6d27b412263a",
+      "bytes": 896
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-runtime600/ScopedRiskManifest.json",
+      "sha256": "2ef3b21b3e65084987308e5fa0b8286a67dfedb993cb96e977d1d0c52fe02b98",
+      "bytes": 2134
+    }
+  ],
+  "bindings": {
+    "stop_policy_digest": {
+      "value": "5a96306bae4af3d27694abc5533510301ae968a81b9995d8283ba3b4204e1dd5",
+      "provenance": {
+        "source": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-runtime600/StopPolicyDefinition.json",
+        "sha256": "5a96306bae4af3d27694abc5533510301ae968a81b9995d8283ba3b4204e1dd5"
+      }
+    },
+    "rollback_point_ref": {
+      "value": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/43835f9dcc2e6b29236ba3fb5935cb7f182c4e11",
+        "sha256": "cc67aeb4a35c998bb103c62be52dd00c6507bccba4c374af4bee6d27b412263a"
+      },
+      "provenance": {
+        "source": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-runtime600/RecoveryBoundaryDefinition.json",
+        "sha256": "cc67aeb4a35c998bb103c62be52dd00c6507bccba4c374af4bee6d27b412263a"
+      }
+    },
+    "release_risk_manifest_digest": {
+      "value": "2ef3b21b3e65084987308e5fa0b8286a67dfedb993cb96e977d1d0c52fe02b98",
+      "provenance": {
+        "source": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-runtime600/ScopedRiskManifest.json",
+        "sha256": "2ef3b21b3e65084987308e5fa0b8286a67dfedb993cb96e977d1d0c52fe02b98"
+      }
+    }
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "state": "CONFIRMED_SOURCE_FILE_SHA256_NOT_A_SECRET",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "findings": [
+    {"path":"scripts/phase2-qualification/preentry-parent/runtime-successor/PreparationEvidence.json","line":9,"rule":"generic-api-key"},
+    {"path":"scripts/phase2-qualification/preentry-parent/runtime-successor/history/327f7d93/PreparationEvidence.json","line":6,"rule":"generic-api-key"}
+  ],
+  "exact_value": "6746fae60b997a0004dcb4c2b3a24d77f654a43b165ca521145a52445d6719f6",
+  "actual_independent_checks": {
+    "both_fields": "files.event-key-fix.test.mjs",
+    "source_current": "scripts/phase2-qualification/preentry-parent/runtime-successor/event-key-fix.test.mjs",
+    "source_historical": "scripts/phase2-qualification/preentry-parent/runtime-successor/history/327f7d93/event-key-fix.test.mjs",
+    "recomputed_sha256_of_both_files_matches": true,
+    "source_read": "Fixed synthetic event-key tests using ga_synthetic, repeated literal a and small JSON values; the flagged value is the hash of the test source, not an authentication value."
+  },
+  "disposition": "Only these exact immutable commit/path/rule/line fingerprints may be excepted after the real commit is known. No global rule, path wildcard or future changed value is approved.",
+  "source_modified": false,
+  "credential_read_or_changed": false,
+  "authority_effect": "NONE"
+}

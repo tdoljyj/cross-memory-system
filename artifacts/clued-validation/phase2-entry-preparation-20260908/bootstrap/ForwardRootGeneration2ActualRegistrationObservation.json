@@ -1,0 +1,25 @@
+{
+  "state": "FORWARD_GENERATION_REGISTERED_PENDING_INDEPENDENT_LIVE_REVIEW",
+  "observed_at": "2026-09-08T15:13:14.199013+00:00",
+  "registered_at": "2026-09-08T15:13:14.185495+00:00",
+  "project_ref": "uscrdifznmlvczcekqpw",
+  "root_set_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+  "generation_id": "ctrgen_dd30fbc7e0ba43fa8ba9f734867bcf12",
+  "generation_ordinal": 2,
+  "sequence": 2,
+  "counts": [
+    1,
+    2,
+    1
+  ],
+  "metadata_binding_sha256": "793aa13a245153c36a2806eb78dc9c3f677ddb8ad678b3afe5fe2f63a0c2e4fb",
+  "canonical_root_sha256": "fa58df2b1a7572848c288dc862767a4a9983d42696d50dbc4064af7275cec328",
+  "predecessor_generation": "ctrgen_352785779b64458a889d571360e2d2d5",
+  "predecessor_event_exactly_preserved": true,
+  "signature_report_sha256": "442051339642831694f2dd344ce77aad84a82b34dda5d711870de5dbe528c215",
+  "signature_merge": "21bf9c073200d264feda31ee1f555db589ace8ed",
+  "ga_issued": false,
+  "controller_qualified": false,
+  "authority_effect": "NONE",
+  "live_root_stored_in_git": false
+}

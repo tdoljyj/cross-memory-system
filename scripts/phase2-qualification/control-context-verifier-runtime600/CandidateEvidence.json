@@ -1,0 +1,123 @@
+{
+  "state": "PREPARED_NOT_QUALIFIED_NOT_EXECUTED",
+  "generated_at": "2026-09-08T17:39:13.510Z",
+  "source_bindings_sha256": "40ce8f4a764a85f29a0710e4cd75473f148f2317b401db9193f8f9a45ce613a9",
+  "controller_manifest": {
+    "path": "scripts/phase2-qualification/control-context-verifier-runtime600/ControllerSourceManifest.candidate.json",
+    "bytes": 44103,
+    "sha256": "edf31377656e1a9a473d0095df72231c058266007e4fd4046e0a9b8c2d6a60d9"
+  },
+  "static_inputs": [
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime600/GateDefinitionCandidate.json",
+      "bytes": 12803,
+      "sha256": "0b91f11a6f6c717483781f879ba66b58f18dd88be5bed17d6f24ca79e2ac2cba"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime600/preentry-skill-qualification.json",
+      "bytes": 123959,
+      "sha256": "1cda5e0fdad2d3afdf9760b983ca97c5012c8301dea661357e964106a00512fa"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime600/RegistrySuccessorCandidate.json",
+      "bytes": 2268,
+      "sha256": "55708c527f4e576086b9739b7af74a860481c9c3a25debc892575399652a7b83"
+    }
+  ],
+  "actual_builds": {
+    "controller": {
+      "exit_code": 0,
+      "files": 201,
+      "loaded_python_modules": 105,
+      "read_only_python_import": true,
+      "no_container_or_network": true
+    },
+    "static": {
+      "exit_code": 0,
+      "gate_version": "fixed-synthetic-20260908.v3-runtime600",
+      "original_applicable_cases": 19,
+      "post_entry_case18_excluded": true
+    }
+  },
+  "engineering_checks": {
+    "scope": "LOCAL_ENGINEERING_ONLY",
+    "initial_run": {
+      "tests": 4,
+      "pass": 3,
+      "fail": 1,
+      "duration_ms": 107.7612
+    },
+    "actual_failure": "New Docker check incorrectly equated container inspect.Image with config digest1148. Actual preserved inspect2481ef and accepted host600 require manifest285a in this engine. Corrected to actual field binding; config1148 remains separate source domain.",
+    "affected_only_rerun": {
+      "tests": 1,
+      "pass": 1,
+      "fail": 0,
+      "duration_ms": 103.1504
+    },
+    "covered": [
+      "600/601 and expiry vs nonPASS result-only lifetime",
+      "Actual original consumed budget shape/600/raw hash/unique attempt; synthetic input",
+      "Exact independent assessment raw/hash/ref/role; synthetic input, no actual oracle",
+      "Historical actual STOP and image digest-domain observation with identity/Pid/calendar mutants"
+    ],
+    "old_nine_rerun": false,
+    "pg_rerun": false,
+    "actual_600_host_or_ga_or_grr": false,
+    "post_check_change": "Added fixed historical raw-chain readback and compact wrapper integration; source/import and syntax checked, no actual signed historical runtime input yet."
+  },
+  "changes": [
+    "Same approved purpose under600 cap, exact actual Profile/host/SQL source binding; no new persistent protocol",
+    "Actual MCP wrapper and same-process fresh SQL/Intent/dispatch/host path; fixed managed permission request",
+    "Final GRR exact STOP/reservation/oracle/currentness and original real signature followed by SQL CAS/readback",
+    "Original independent Evidence assessments require actual named delegation and complete signed GRR adoption, not additional individual PRs",
+    "Concrete observed test write targets through STOPPED; own later GRR signature/persistence remains independently mandatory and outside self-preconditions",
+    "Five original PG component raw/source/time/applicability are actually fetched and checked under signed runtime bindings; no new PG execution",
+    "Actual fixed request-denials, publication-denial, positive fixture/cleanup, historical-readback and single-shot GA/GRR signing executable included in complete source closure"
+  ],
+  "preserved_predecessor": {
+    "manifest_sha256": "2dedbf340a171da8e91b6b60f55bade95ff6ac6b416a286b1cde637c80789c10",
+    "gate_sha256": "9129e5c506b3c12e7689a281bcd4852adeb15100936bef0c3313fd8eac698d14",
+    "suite_sha256": "e1ba591cb8cf56a88cdf01aa3ff027c048b4bf0f0e692a7b868cfd6d4fae6d2e",
+    "exact_old_repository_bytes_unchanged": true
+  },
+  "runtime_installation": {
+    "actual_nonproduction_600_two_function_successor_report": {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/Runtime600ActualTwoFunctionApplication.json",
+      "bytes": 8520,
+      "sha256": "87f2fdc24ab01d621bdf3bcf4ddae9e6f0896b1fd38e9530ac2f1c5afc6d9db9"
+    },
+    "production": false
+  },
+  "remaining_actual_inputs": [
+    "Independent exact600 runtime/controller/Scope acceptance and normal actual source publication",
+    "Real Status complete stored bytes, runtime seed, one actual600 budget event and full genuinely signed GA",
+    "Actual CREATE/START/STOP case observations and readback, named independent original case assessments",
+    "Full original signed GRR and fresh same-reservation terminal CAS/readback"
+  ],
+  "packed_input_successor": {
+    "predecessor_manifest_sha256": "5f640f67e3df7ec0b50453b9955fc4d964a962f05e515dd72c37ed39ab9c0b14",
+    "predecessor_candidate_sha256": "0a7679adcd2233538a4acaef416abd4d2f84cc59e16b5f243ab4c5bc06bb2bbb",
+    "preserved_at": "scripts/phase2-qualification/control-context-verifier-runtime600/history-before-packed-input-successor/",
+    "source": {
+      "path": "scripts/phase2-qualification/scenario-observations/request-denials-packed.mjs",
+      "bytes": 6044,
+      "sha256": "1abd2123f5c1d9b68fe9fe09e12c52c0c709221959eeedcbc6413d987fa95753"
+    },
+    "actual_terminal_integration_check": {
+      "command": "node --test scripts/phase2-qualification/control-context-verifier-runtime600/packed-chain.test.mjs",
+      "tests": 1,
+      "pass": 1,
+      "fail": 0,
+      "duration_ms": 111.73,
+      "scope": "SYNTHETIC_LOCAL_ENGINEERING_ONLY",
+      "actual_ga_executed": false
+    },
+    "change": "Lossless shared original baseline, bounded actual decompression and exact fault reconstruction in final GRR verifier; original measurement raw/SQL/index131072 cap unchanged"
+  },
+  "controller_qualification_issued": false,
+  "pqual_executed": false,
+  "ga_issued": false,
+  "grr_issued": false,
+  "entry_pass": false,
+  "authority_effect": "NONE"
+}

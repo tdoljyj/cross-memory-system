@@ -1,0 +1,132 @@
+{
+  "kind": "EXACT_HOST_SCOPE600_PREPARATION",
+  "state": "PREPARED_FOR_INDEPENDENT_ACCEPTANCE",
+  "authority_effect": "NONE",
+  "sources": [
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-runtime600/ArtifactReferencesCandidate.json",
+      "sha256": "375ded9c25eda106cd3cf5d4fbc76d616863710ffc5784ac5ad60f31460cf548",
+      "bytes": 8692
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-runtime600/AssembledHostScopeCandidate.json",
+      "sha256": "556d99e214a158dcb8d9f3ea54408706b8d750d620925a728981772c9368f4da",
+      "bytes": 37170
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-runtime600/AuthorityReferenceObservation.json",
+      "sha256": "a290275abc10fd3f58d290673120105583e5b23765ca4e149049579b41f5a61c",
+      "bytes": 1103
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-runtime600/ControlBindingDefinition.json",
+      "sha256": "ff41afe497dab923301efd62b1ec2f7103e151cbc9fd3c5fcb92f869d8ffad11",
+      "bytes": 2291
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-runtime600/EvidenceSinkDefinition.json",
+      "sha256": "c96c25a932b3fc93bb0ee6310ab3f8d58915ed7387bd9189ff08bf5a196abedd",
+      "bytes": 1967
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-runtime600/ExecutionScopeDefinition.json",
+      "sha256": "8e3fefe5f2262464ac129c1d001097b96156d1984722e9ac2d22cf54c7df7791",
+      "bytes": 12526
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-runtime600/HostRuntimeConfig.json",
+      "sha256": "bcafb3ba3e8b47832ff9a743098453013690f3127e96136e6289d712358e40ef",
+      "bytes": 4629
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-runtime600/HostScopeBindingsCandidate.json",
+      "sha256": "57645a16bbc9062771efbb792ffc825294f9de7266202764ccedec29a710249a",
+      "bytes": 12201
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-runtime600/HostScopePreparation.json",
+      "sha256": "30cc2bb609a5f5ee8d2e13a00887d6aebb7d621dceab6b9a7895c894f86919c4",
+      "bytes": 4349
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-runtime600/InputDefinitionSuccessor.json",
+      "sha256": "39a7bf6abd897e16ffc04a8ea9c837092fe30f64acea7abf3fd7c17fb2cdb6c4",
+      "bytes": 2962
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-runtime600/README.md",
+      "sha256": "c0a29428b565c29920df7f322aed6ccb9a8f4bc946a490e25145fbe75cac3076",
+      "bytes": 763
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-runtime600/RecoveryBoundaryDefinition.json",
+      "sha256": "cc67aeb4a35c998bb103c62be52dd00c6507bccba4c374af4bee6d27b412263a",
+      "bytes": 896
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-runtime600/RuntimeAcceptedSubjectCandidate.json",
+      "sha256": "ad0723542d3b61fef66d451db7f1834eaa170cd0084e152059ffa69e19d4c30d",
+      "bytes": 16367
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-runtime600/ScopedRiskManifest.json",
+      "sha256": "2ef3b21b3e65084987308e5fa0b8286a67dfedb993cb96e977d1d0c52fe02b98",
+      "bytes": 2134
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-runtime600/StopPolicyDefinition.json",
+      "sha256": "5a96306bae4af3d27694abc5533510301ae968a81b9995d8283ba3b4204e1dd5",
+      "bytes": 971
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-runtime600/build.mjs",
+      "sha256": "2a5c064c4379a708ea41896eaa78b6aa5f617b7f90457b449e571fb9f9d9a195",
+      "bytes": 23265
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-runtime600/definitions.test.mjs",
+      "sha256": "8a4ccc059996fdff80468acdcdeb85fd9b1086ff920f6290499179337fa7a2ae",
+      "bytes": 3869
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-runtime600/prepare-late600.mjs",
+      "sha256": "3dbdede3b91f1dc1bcfdcfa33a470f71ac0123b09188731c025390bb7836d307",
+      "bytes": 1849
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-runtime600/prepare600.mjs",
+      "sha256": "323c391753517f7e573cb3d615247680051af97ed9916b856c124df694328fdd",
+      "bytes": 13229
+    }
+  ],
+  "tests": {
+    "command": "node --test scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-runtime600/definitions.test.mjs",
+    "actual_passed": 2,
+    "failed": 0,
+    "skipped": 0,
+    "duration_ms": 52.1514,
+    "mode": "PURE_METADATA_NO_NETWORK_PROCESS_OR_DATABASE"
+  },
+  "exact_controller_digest": "5f640f67e3df7ec0b50453b9955fc4d964a962f05e515dd72c37ed39ab9c0b14",
+  "exact_gate_digest": "567a54cab66c3be670952ea33d80ae9ca0e45e247cd4873fa74bc1e9a5ae1552",
+  "exact_suite_digest": "c7131b5209498dd0a5fbe920e69311a994c470cf58b558452af729d98d162f4a",
+  "unresolved_fixed_fields": [
+    "source_ref",
+    "controller_qualification_ref"
+  ],
+  "pending_policy_input": "Actual root-created original Status signing payload SHA",
+  "changes": [
+    "Accepted Profile600 and closed 600-second runtime source set; no change to total 7200 seconds/1GiB/oneactive/Owner expiry.",
+    "STOP600 definition and source; Recovery changes only stop_ref; Risk changes only recovery_ref. The five unchanged coordinator definitions retain their original exact references.",
+    "Exact fixedWriteTargetRules imported from frozen verifier; completed test effects through STOPPED only, avoiding final GRR self-reference.",
+    "Historical actual component source/time/raw are read-only inputs; no PostgreSQL run phase, credential or write permission is introduced."
+  ],
+  "not_claimed": [
+    "Actual source publication",
+    "Independent controller qualification",
+    "Status issuance",
+    "Runtime acceptance",
+    "GA or PQUAL execution"
+  ],
+  "original_180_bytes_preserved": true
+}

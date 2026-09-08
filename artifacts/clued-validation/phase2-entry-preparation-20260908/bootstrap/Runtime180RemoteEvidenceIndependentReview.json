@@ -1,0 +1,82 @@
+{
+  "schema_version": 1,
+  "state": "ACCEPTED_EXACT_RUNTIME180_REMOTE_EVIDENCE_ENGINEERING_SUCCESSOR_NOT_ACTIVE",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "observed_at_utc": "2026-09-08T15:26:59.926Z",
+  "accepted_manifest_sha256s": {
+    "store": "5e63ef18ffb80b68a675a584e24df6583cf9a4f2e54ce8280f4c2828bdaa65e5",
+    "supervisor": "05cba0bcea885e976dfbe58cd2d826cbde289882f17f7aac41d40d4a6262d3cc",
+    "host": "c6a7b4d06c375c6c1e8b34c3fa7dc10800b5d2eeca2c0f865b370b83d8c860f9"
+  },
+  "accepted_sql_sha256": "b8063e0776f691a1b9a2fe990c377bfb82d13270206ecfc900d0f73c723f64d2",
+  "accepted_source_files": {
+    "store": {
+      "install.candidate.sql": "b8063e0776f691a1b9a2fe990c377bfb82d13270206ecfc900d0f73c723f64d2",
+      "store.test.mjs": "6358eda23c2be5b84306f176d649092ec838f05bb4b0fb1ab058b2c22ed41cff",
+      "README.md": "35e26708bad9b2eeed693d2de9e028b4cef9ad53e6ec97aa2f6a3105098be56d",
+      "evidence.test.mjs": "643afe6b68499c670bc43e550a7a8ae1aa2adfd1477ffd7a696383178f424678",
+      "client.mjs": "b8e0080118d94128a163ca9efd57d01706ec8ecc45060135f092a896f4583816"
+    },
+    "supervisor": {
+      "README.md": "ad1fc169b47f81d8fcd434e3aeb82a50b6522f539303c06c800d52ddb2f825f4",
+      "supervisor.test.mjs": "c84e6d938560f685afe9a89e660a1909502ee1b4551e4eda03141a96e1397455",
+      "sql_effect.mjs": "f3c87164a45730576054286a5d099c1f77886e2b5721214032561cf6bc958457",
+      "supervisor.mjs": "4b769a0f34c67928c88e929ab88d6c3439ea265cf012f4fb96aa1fedead1c53e",
+      "event-key-fix.test.mjs": "6746fae60b997a0004dcb4c2b3a24d77f654a43b165ca521145a52445d6719f6",
+      "sql_effect.test.mjs": "46aed93096696d7c2cc76dea2e5b515210837753a24e2a3083142cbefca45494"
+    },
+    "host": {
+      "test_start_window_fix.py": "8c9433c6391cbaeaf8d4cf4746ae9be212f44545ac222eb0242b092d038b1339",
+      "test_stop_budget_fix.py": "0609bfe14035ed7bd246004e5102c47963379e9c8ead94f175b8b6a20814cb1f",
+      "test_fixed_host.py": "b980f0574e33ff4052d38c15d7a7f9e6868ccfde1aafb83cc56d3146c5fc9a8b",
+      "fixed_host.py": "430445f80986ba99a6f9b149a5a73cffe88182b26b0574b9f83fcdcbf64e69b2",
+      "README.md": "bea32cc39a9b19de6640574a33a35d460b0e0a5676818ec53fcf3a7a3f4db939"
+    }
+  },
+  "scope": "Same nonproduction clued_control domain. Four new empty runtime tables, original Root objects unchanged. Full synthetic Intent/Result raw+SHA stored in immutable execution_events with exact operation/GA binding. Native xid8 requires prior committed transaction; fixed dispatch wrapper includes that exact Intent and fresh serialized current context.",
+  "independent_postgres": {
+    "command": "node --test ../runtime180-independent-targeted.mjs",
+    "tests_passed": 3,
+    "child_cases": 2,
+    "failed": 0,
+    "skipped": 0,
+    "duration_ms": 3074.5569,
+    "cases": [
+      "Second connection cannot see uncommitted Intent, sees exact bytes after commit; xid8 is actual native type and authority NONE.",
+      "Root revocation after committed Intent rejects second-connection dispatch; PENDING/active capacity and exact immutable Intent remain. Replay DUPLICATE/NONE and new functions denied to anon/authenticated."
+    ],
+    "first_attempt": "Assessor SQL-string quote error before PG start; corrected only harness, candidate unchanged.",
+    "remote_connections": 0,
+    "docker_calls": 0
+  },
+  "validation": {
+    "sixteen_current_source_files_sha_and_lf": true,
+    "host_only_explicit180_constant_change_verified_by_normalized_old_source_hash": true,
+    "supervisor_old_source_unchanged": true,
+    "reused_sql_tests": {
+      "node_passed": 6,
+      "old_broad_checks_not_rerun": true,
+      "duration_ms": 2951.5857,
+      "node_failed": 0
+    },
+    "reused_supervisor_tests": {
+      "new_passed": 2,
+      "failed": 0,
+      "duration_ms": 51.2543
+    },
+    "old_broad_tests_not_rerun": true
+  },
+  "deployment_boundary": "Parent explicitly confirmed four runtime tables not yet installed. This is a new-table installer, not an ALTER migration. Earlier assessor assumption of installed tables was withdrawn; independent Root security query selected only original3 and was not an inventory. Wait exact Gate/status/proof integration and fresh target/schema preflight for final deployment SQL; this review does not execute or approve a later different digest.",
+  "remaining": [
+    "Actual typed status/GRR proof mapping, fixed Gate allowlist, complete controller source-set and actual signature/currentness tool bridge still require exact acceptance.",
+    "SQL byte checks are not cryptographic verification or external Docker fencing. Trusted verifier remains mandatory immediately before the effect.",
+    "dispatchPreparedIntent returns an effect pending durable Result persistence; real raw output must subsequently be stored/read back. *_SENT/UNKNOWN retain capacity and never permit automatic re-dispatch.",
+    "Actual signed180 Profile and matching bindings required before180 execution; old90 objects remain unchanged.",
+    "New guard fault observation and full PQUAL behavior not demonstrated here."
+  ],
+  "installed": false,
+  "controller_qualified": false,
+  "ga_issued": false,
+  "gate_pass": false,
+  "authority_effect": "NONE"
+}

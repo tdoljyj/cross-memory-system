@@ -1,0 +1,19 @@
+{
+  "state": "DOCUMENT_SCHEDULING_CORRECTION_ONLY",
+  "old_candidate_sha256": "4a86c7a8be8d6251807e1b9d1e059b71b5a36a875989e8c4d44555f826e058e9",
+  "old_source_bindings_sha256": "40ce8f4a764a85f29a0710e4cd75473f148f2317b401db9193f8f9a45ce613a9",
+  "old_document": {
+    "path": "scripts/phase2-qualification/control-context-verifier-runtime600/history-before-scheduling-correction/RunOrder.md",
+    "sha256": "46d673f73e9ba13ae473517b2a6fc8419597f2e845fe98a962734b35b7b07b33"
+  },
+  "current_document": {
+    "path": "scripts/phase2-qualification/control-context-verifier-runtime600/RunOrder.md",
+    "sha256": "bab49efb0c79801d23214baebfcd780b4a2120316cc2160366d74ed187f4bae7"
+  },
+  "change": "Collect actual denial adapter at fresh PENDING after reserve_gate and before CREATE; preserve it for terminal index. Never call CREATE baseline at STOPPED.",
+  "runtime_manifest_sha256": "edf31377656e1a9a473d0095df72231c058266007e4fd4046e0a9b8c2d6a60d9",
+  "manifest_contains_document": false,
+  "runtime_sources_changed": false,
+  "manifest_or_static_inputs_regenerated": false,
+  "formal_execution": false
+}

@@ -1,0 +1,42 @@
+{
+  "state": "ACCEPTED_EXACT_REQUEST_BOUNDARY_MEASUREMENT_ADAPTER",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "subject": {
+    "path": "scripts/phase2-qualification/scenario-observations/request-denials.mjs",
+    "sha256": "b39e92969a2410374b9ec3f930af74e07d6062cfba0fdaf98e3036fa06f537e6",
+    "prior_reviewed_sha256": "9ee73f4e976a5ccd92f1782fa7316d6ffb5a6615c9edfa178d3f85c2cc3ca16f"
+  },
+  "actual_review": {
+    "method": "Independent exact source reading and current SHA256 recomputation; coordinator's node --check is syntax evidence only. No qualification measurement or host/database effect was run by this review.",
+    "baseline": "First executes the actual600 checkCurrentSemantics against the collected exact SQL observation and supplied GA/runtime/qualification. Baseline failure aborts before collecting negatives.",
+    "raw_input_preservation": "Stores the complete baseline argument serializations once. Each fault stores deterministic field changes and input digests; reconstruction must byte-match the actual call arguments before that call executes. The unchanged observed SQL object is verified afterward.",
+    "measurement": "Executes the actual semantic validator and retains exact returned value or exception, real UTC timestamps and real hrtime.bigint elapsed nanoseconds as a decimal string. No floating point evidence number remains.",
+    "effects": "The measured exported semantic function has no host/API mutation path. The adapter does not call full signed admission, dispatch, network or live revocation. Zero effect invocation fields describe this inspected call surface, not an assertion about external service state.",
+    "corrected_target_boundary": "Removed the target_revision mutation because the semantic layer deliberately delegates that field to actual publication verification. It remains explicitly uncovered by this adapter.",
+    "result_boundary": "denied only describes a thrown exception. Each actual reason must match the original test oracle; unrelated errors, stale observations or wrong setup cannot become case PASS. The adapter always leaves complete_case_pass and complete_pqual_pass false."
+  },
+  "coverage": {
+    "request_subcases": ["PQUAL-02","PQUAL-03","PQUAL-04","PQUAL-05","PQUAL-06","PQUAL-07","PQUAL-08","PQUAL-09","PQUAL-10","PQUAL-11","PQUAL-12","PQUAL-13","PQUAL-14","PQUAL-19"],
+    "minimum_remaining_real_evidence": [
+      "PQUAL01: actual complete signed/fresh entry, exact isolated Skill input and synthetic effect, original remote evidence readback.",
+      "PQUAL08: actual same-scope credential and OS isolation, not only changed credential_scope metadata.",
+      "PQUAL11: actual budget excess and unavailable STOP channel boundaries beyond the missing-reference request.",
+      "PQUAL12: actual source/target publication verification boundary and source drift rejection beyond request digest comparisons.",
+      "PQUAL13: real independent control-state mutation/concurrent read in a precisely accepted synthetic control fixture; changing a request string is not live revocation.",
+      "PQUAL15/16/17: actual unconverged capacity, unknown/partial outcome, immutable Intent/no duplicate terminal, and failed sink refusal under exact accepted fixture actions.",
+      "PQUAL20: actual result closeout does not write ACTIVE/Entry/Readiness or extend model/production authority.",
+      "Independent evaluation of every listed original fault and expected outcome. Unexercised alternatives remain uncovered."
+    ],
+    "source_contract_sha256": "8d35a391a728703a527cfef3137867bb80c70a0a78bd869051fe47406192dafe",
+    "PQUAL18_positive_excluded": true
+  },
+  "activation_conditions": [
+    "Bind this exact adapter and its actual600 validator dependency in the final accepted controller source manifest and applicable Test/Scope.",
+    "The coordinator must supply actually obtained, independently verified material and run under the applicable real authorization. A JSON object passing semantic checks is not signed admission.",
+    "Retain original input artifacts, differences and actual results within the accepted bounded evidence format without truncation."
+  ],
+  "controller_qualification_issued_by_this_review": false,
+  "ga_or_grr_issued": false,
+  "actual_pqual_measurement_performed": false,
+  "authority_effect": "NONE"
+}

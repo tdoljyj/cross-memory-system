@@ -1,0 +1,29 @@
+{
+  "definition_state": "PREPARED_FOR_INDEPENDENT_SCOPE_ACCEPTANCE",
+  "authority_effect": "NONE",
+  "kind": "EXACT_PROSPECTIVE_SKILL_INPUT_SET",
+  "input_role": "QUARANTINED_TEST_DATA_NOT_EXECUTABLE_CONTROLLER",
+  "files": [
+    {
+      "path": "skills/clued/SKILL.md",
+      "sha256": "8a5e6d9548731874b94ebe3edc046f7393c96fd75531f22231228e055206096f",
+      "bytes": 3913
+    },
+    {
+      "path": "skills/clued/references/engineering.md",
+      "sha256": "ffff299ea0a1793f9b0b4963fc5bf099762fabce96ed96086cfc5494acbb8d29",
+      "bytes": 5780
+    },
+    {
+      "path": "skills/clued/references/memory-operations.md",
+      "sha256": "a05feabc8ad4ccac535bb059fbf35179f79884dfb1113abdd18b21281bfda538",
+      "bytes": 5166
+    }
+  ],
+  "source_acceptance_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/6f13b5c4a8efcdee00072035bbbc32407e570f80",
+    "sha256": "e19261b718cad252c1881cd5559e2e65b115d475952f5dbcd8d9ebe0dc7250be"
+  },
+  "digest_algorithm": "SHA256_OF_EXACT_MANIFEST_FILE_BYTES",
+  "runtime_acceptance_required": true
+}

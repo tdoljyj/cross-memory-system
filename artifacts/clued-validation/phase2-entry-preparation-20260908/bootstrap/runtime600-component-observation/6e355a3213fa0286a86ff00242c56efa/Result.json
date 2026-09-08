@@ -1,0 +1,37 @@
+{
+  "kind": "ACTUAL_ENGINEERING_COMPONENT_EVIDENCE",
+  "started_at": "2026-09-08T17:15:22.480Z",
+  "ended_at": "2026-09-08T17:15:22.607Z",
+  "elapsed_ms": 127,
+  "completed": [],
+  "original_sources": [
+    {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-08\\ia\\work\\kernel-phase2-repo\\scripts\\phase2-qualification\\nonproduction-control-store\\install.candidate.sql",
+      "sha256": "3cbbed94e1c9ef5fec4db281526ca69b9b30a24d2812b5a8bb5eb6bc728146fb",
+      "bytes": 8741
+    },
+    {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-08\\ia\\work\\kernel-phase2-repo\\scripts\\phase2-qualification\\nonproduction-control-store\\runtime-successor\\budget-reservation-successor\\install.candidate.sql",
+      "sha256": "8f732dd4013a18adde33a254631cdd5a04022f300d4c0a13d05dffbf36f97285",
+      "bytes": 40646
+    },
+    {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-08\\ia\\work\\kernel-phase2-repo\\scripts\\phase2-qualification\\nonproduction-control-store\\runtime-successor\\runtime600-successor\\alter.candidate.sql",
+      "sha256": "0ab15bbbc2f80421cb619b50de8816095359d9ffab1e96e372960c063bc80c9b",
+      "bytes": 12444
+    },
+    {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-08\\ia\\work\\kernel-phase2-repo\\scripts\\phase2-qualification\\nonproduction-control-store\\runtime-successor\\runtime600-successor\\targeted-component-evidence.mjs",
+      "sha256": "4a3f354d08a1a9a98bf95e012c73c76bac2d5c8fe4c4cdc499bb1fec17cb0a09",
+      "bytes": 15411
+    }
+  ],
+  "postgres_pid": null,
+  "port": null,
+  "stop": null,
+  "status": null,
+  "stopped": false,
+  "outer_ga": null,
+  "pqual_pass_issued": false,
+  "authority_effect": "NONE"
+}

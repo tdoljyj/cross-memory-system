@@ -1,0 +1,91 @@
+{
+  "state": "FROZEN_EXACT_HOST_SCOPE_PREPARATION_PENDING_INDEPENDENT_ACCEPTANCE",
+  "observed_at": "2026-09-08T16:44:02.624Z",
+  "controller_digest": "2dedbf340a171da8e91b6b60f55bade95ff6ac6b416a286b1cde637c80789c10",
+  "plan_digest": "e1ba591cb8cf56a88cdf01aa3ff027c048b4bf0f0e692a7b868cfd6d4fae6d2e",
+  "scope_digest": "bf80e4464b1c299344a4a569d3598d7f8c6c37e5de7c957d4f27901d3193048f",
+  "files": [
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions/ArtifactReferencesCandidate.json",
+      "sha256": "a4d0b11623e96e238cfaf6a31ae3a2e31c513ec63580b8646d261d930c93e3b4",
+      "bytes": 6494
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions/AssembledHostScopeCandidate.json",
+      "sha256": "74acfdb3d21f207c2c210a5224a6999d4198a7b1feceb60ade11c26492599d3e",
+      "bytes": 37786
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions/AuthorityReferenceObservation.json",
+      "sha256": "a290275abc10fd3f58d290673120105583e5b23765ca4e149049579b41f5a61c",
+      "bytes": 1103
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions/ControlBindingDefinition.json",
+      "sha256": "75a01e49d64363bc4f09f65130e43a861b82a9ffd32066942fe80e2c2ba38e63",
+      "bytes": 2268
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions/EvidenceSinkDefinition.json",
+      "sha256": "2d633acc1665ae406a322d6edd9c0f546206fbfe6c250a71765f841227bc7394",
+      "bytes": 1699
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions/ExecutionScopeDefinition.json",
+      "sha256": "bf80e4464b1c299344a4a569d3598d7f8c6c37e5de7c957d4f27901d3193048f",
+      "bytes": 7039
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions/HostRuntimeConfig.json",
+      "sha256": "63851834dccf34cf33dfeee09fb9b3b06077bcb68aad04e6a3d4114842342f9a",
+      "bytes": 4613
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions/HostScopeBindingsCandidate.json",
+      "sha256": "fc4c456cc2f0cb4b24a25107a469a7f41d91657f002fb1e5e5cbaea736b797dd",
+      "bytes": 12839
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions/HostScopePreparation.json",
+      "sha256": "c23ef69722b4408247460064480c0244d3cef75725841e361b1b38a9f85222c7",
+      "bytes": 4151
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions/README.md",
+      "sha256": "e7ff864f2c802bade71eb47213f1e8a014cf6529ce2cc600afbb8dfd4e681698",
+      "bytes": 2525
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions/RuntimeAcceptedSubjectCandidate.json",
+      "sha256": "aea4bf4e978cbe3227b3256edbf4744305db931a001939a85d04fd36ae8a7f74",
+      "bytes": 16014
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions/build.mjs",
+      "sha256": "ba6c0b11dce8c9486043ed5c7156e85678f61dcd74fabbb0ff7eb620b6cd15b8",
+      "bytes": 20825
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions/definitions.test.mjs",
+      "sha256": "edefd0712371d9269737b24b316591069aed5b4f6e06d5dc5e5bb7b618770b8d",
+      "bytes": 2748
+    }
+  ],
+  "checks": {
+    "command": "node --test scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions/definitions.test.mjs",
+    "pass": 2,
+    "fail": 0,
+    "skip": 0,
+    "duration_ms": 50.223,
+    "boundary": "Pure final metadata/dependency checks only; no Docker, SQL, Skill or qualification execution"
+  },
+  "fixed_ga_fields": 38,
+  "unresolved_fields": [
+    "source_ref",
+    "controller_qualification_ref"
+  ],
+  "additional_pending_input": "Actual Status canonical signing-payload digest from root; prospective artifact refs require actual publication readback",
+  "authority_effect": "NONE",
+  "accepted": false,
+  "ga_issued": false
+}

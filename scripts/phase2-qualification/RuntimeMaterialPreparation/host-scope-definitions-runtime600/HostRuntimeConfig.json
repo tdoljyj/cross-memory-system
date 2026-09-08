@@ -1,0 +1,107 @@
+{
+  "definition_state": "PREPARED_FOR_EXACT_INDEPENDENT_SCOPE_ACCEPTANCE",
+  "authority_effect": "NONE",
+  "controller_manifest_bound": true,
+  "controller_qualified": false,
+  "ga_issued": false,
+  "kind": "FIXED_HOST_RUNTIME_CONFIG",
+  "controller_source_manifest": {
+    "path": "scripts/phase2-qualification/control-context-verifier-runtime600/ControllerSourceManifest.candidate.json",
+    "sha256": "5f640f67e3df7ec0b50453b9955fc4d964a962f05e515dd72c37ed39ab9c0b14",
+    "bytes": 43898
+  },
+  "endpoint": "Codex@DESK-W-591",
+  "host_platform": "Windows",
+  "docker_endpoint": "npipe:////./pipe/dockerDesktopLinuxEngine",
+  "runtime_binaries": "Exact Node/Python/GitHub CLI/Docker executable and loaded dependencies are in controller_source_manifest; recheck every byte before launch",
+  "docker_engine": {
+    "version": "29.7.2",
+    "os": "linux",
+    "architecture": "amd64"
+  },
+  "image": {
+    "reference": "docker.io/library/python@sha256:285a71327884a4d50efbea30104473b0fa43ecefa499458899670ca30dae76e5",
+    "manifest_digest": "sha256:285a71327884a4d50efbea30104473b0fa43ecefa499458899670ca30dae76e5",
+    "config_digest": "sha256:1148adc3b50891ee01e6add44be22d277dedeb8dcac2f7cc8b700dd710c75c4d",
+    "public_environment": [
+      "PATH=/usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+      "LANG=C.UTF-8",
+      "GPG_KEY=7169605F62C751356D054A26A821E680E5FA6305",
+      "PYTHON_VERSION=3.12.14",
+      "PYTHON_SHA256=5c8462af5790baf43a321a1559dbe0db06d1be4300fb85fb53c40060668e548a"
+    ]
+  },
+  "profile": {
+    "profile_id": "DP-PREENTRY-SKILL-QUALIFICATION",
+    "definition_version": "fixed-synthetic-skill-input-20260908.v3-runtime600",
+    "sha256": "d1c060b85f0b842a397a478105ea57a208e62eb0a5a2d4c2cd8f93f63eae88f5"
+  },
+  "resources": {
+    "max_execution_seconds": 600,
+    "cpu_millicores": 500,
+    "memory_bytes": 134217728,
+    "pids_limit": 16,
+    "nonroot_uid": 10001,
+    "network": "none",
+    "read_only_rootfs": true,
+    "cap_drop": [
+      "ALL"
+    ],
+    "no_new_privileges": true
+  },
+  "mounts": [
+    {
+      "destination": "/driver",
+      "access": "READ_ONLY",
+      "content": "Exactly accepted three Skill files and fixed_skill_fixture.py"
+    },
+    {
+      "destination": "/allowed",
+      "access": "READ_WRITE",
+      "content": "One attempt-specific synthetic directory"
+    }
+  ],
+  "child_program": "Exact literal parent.CMD in the closed source manifest; Skill text is input data, never code",
+  "trusted_python_bridge_environment": {
+    "SystemRoot": "C:/Windows",
+    "WINDIR": "C:/Windows",
+    "TEMP": "C:/Users/Windows/AppData/Local/Temp",
+    "TMP": "C:/Users/Windows/AppData/Local/Temp",
+    "HOMEDRIVE": "",
+    "HOMEPATH": "",
+    "LOGONSERVER": "",
+    "PATH": "",
+    "SYSTEMDRIVE": "",
+    "USERDOMAIN": "",
+    "USERNAME": "",
+    "USERPROFILE": ""
+  },
+  "trusted_python_bridge_environment_rule": "Exactly four fixed nonempty public infrastructure values and eight explicitly empty Windows variables prevent Node/libuv automatic inheritance; no caller process.env values are copied. The final source manifest must bind the enforcing launcher.",
+  "process_environment_boundary": "Docker/watchdog use the exact source-level public allowlist. The trusted bridge launcher must be separately checked in the final closed entry; no inherited credentials are permitted into the isolated child.",
+  "host_control_transports": [
+    "existing authenticated GitHub CLI for fixed private repository",
+    "existing Supabase MCP for uscrdifznmlvczcekqpw",
+    "existing fixed local Docker CLI"
+  ],
+  "credential_scope": {
+    "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/input-definitions/CredentialScopeDefinition.json",
+    "sha256": "905dbb512b2ed9605da90ee90ff78db190e1560204a2e8d84621ee621c9e834d",
+    "bytes": 809
+  },
+  "stop_policy": {
+    "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-runtime600/StopPolicyDefinition.json",
+    "sha256": "5a96306bae4af3d27694abc5533510301ae968a81b9995d8283ba3b4204e1dd5",
+    "bytes": 971
+  },
+  "image_observation": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/PythonImageBinding.json",
+    "sha256": "f2f8d7f5d4e9d77ff4dd42ccbcafedeb1c5a7658f84f17252422fdecdb25d876",
+    "bytes": 7856
+  },
+  "independent_control_generations": [
+    "runner_generation",
+    "credential_generation",
+    "session_generation"
+  ],
+  "source_freshness": "Actual current Root and execution state through the fixed trusted Supabase tool, then same-process fixed-source verifier; no local snapshot authority"
+}

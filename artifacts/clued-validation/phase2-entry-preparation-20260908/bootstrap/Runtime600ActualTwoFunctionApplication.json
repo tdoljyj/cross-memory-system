@@ -1,0 +1,223 @@
+{
+  "state": "ACTUAL_PRIVATE_RUNTIME600_TWO_FUNCTION_SUCCESSOR_APPLIED_AND_READ_BACK",
+  "project_ref": "uscrdifznmlvczcekqpw",
+  "migration_name": "phase2_private_runtime600_exact_two_functions_20260908",
+  "exact_sql_sha256": "0ab15bbbc2f80421cb619b50de8816095359d9ffab1e96e372960c063bc80c9b",
+  "independent_pre_application_acceptance_sha256": "b71e7dd6ccfe6f03627725b1740b2a54f84a5ca6ab3735ba10e602dfb2cecab0",
+  "prior_installed_sql_sha256": "8f732dd4013a18adde33a254631cdd5a04022f300d4c0a13d05dffbf36f97285",
+  "preflight_at": "2026-09-08 17:09:35.009106+00",
+  "postread_at": "2026-09-08 17:12:45.608813+00",
+  "operation": "One transaction; fixed project, locked prior Root/empty runtime/14 exact functions and security guards; exact accepted SQL; complete Root/security/empty postguards and exact new source-body equality; commit.",
+  "changed_functions": [
+    "reserve_execution_budget",
+    "reserve_gate"
+  ],
+  "actual_function_after_observations": [
+    {
+      "acl": "{postgres=X/postgres,service_role=X/postgres}",
+      "name": "append_event",
+      "owner": "postgres",
+      "config": [
+        "search_path=\"\"",
+        "TimeZone=UTC"
+      ],
+      "sha256": "deab3678f32d8e89821cd04689d4957bcd4b5b220142b9024492ff786168d909",
+      "arguments": "p jsonb",
+      "prosrc_sha256": "8e6a70387c53653888a9e97777e88362f38cb69c01ae15a99826599846378a74",
+      "security_definer": true
+    },
+    {
+      "acl": "{postgres=X/postgres,service_role=X/postgres}",
+      "name": "append_status_manifest",
+      "owner": "postgres",
+      "config": [
+        "search_path=\"\"",
+        "TimeZone=UTC"
+      ],
+      "sha256": "e57105e5ae0098852941923b2d3e129fbf3dc0e24828998588e645467a13f6fc",
+      "arguments": "p_raw text, p_sha text",
+      "prosrc_sha256": "89a92db585a8bd336c7e33b38a33e01c4d0cf1f230891084998cdd1f28779a36",
+      "security_definer": true
+    },
+    {
+      "acl": "{postgres=X/postgres,service_role=X/postgres}",
+      "name": "commit_gate_result",
+      "owner": "postgres",
+      "config": [
+        "search_path=\"\"",
+        "TimeZone=UTC"
+      ],
+      "sha256": "705915e4c9b930a5d03bfc37fd1b4e690b9f7817f9f6c8dbaeb856742d9067e3",
+      "arguments": "p_raw text, p_sha text, p_decision_sha text",
+      "prosrc_sha256": "89dca2d0845b3f125237ce5d5ae45057fa92b2859a8416d054135c7be122643e",
+      "security_definer": true
+    },
+    {
+      "acl": "{postgres=X/postgres}",
+      "name": "deny_mutation",
+      "owner": "postgres",
+      "config": [
+        "search_path=\"\""
+      ],
+      "sha256": "c38b11d91bcc6e6ce0c25b3d2636158a9fbbccbe92093a08d74f72302d0ca92c",
+      "arguments": "",
+      "prosrc_sha256": "85266d225fb3825130ded0de923f7f40e85d618666379a8b9b727aa96176fed8",
+      "security_definer": false
+    },
+    {
+      "acl": "{postgres=X/postgres,service_role=X/postgres}",
+      "name": "dispatch_recorded_intent",
+      "owner": "postgres",
+      "config": [
+        "search_path=\"\""
+      ],
+      "sha256": "843d423dde2b6cd469f05f89b6197eb338e966a8ec0c7d3fd3c3269b7343a681",
+      "arguments": "p_ga text, p_operation text, p_key text, p_intent_sequence bigint, p_sha text",
+      "prosrc_sha256": "db9839aac8c47828f4db2c21f2813ad1985e4acf24eab8470d3216e83f85cf1b",
+      "security_definer": true
+    },
+    {
+      "acl": "{postgres=X/postgres,service_role=X/postgres}",
+      "name": "execution_transition",
+      "owner": "postgres",
+      "config": [
+        "search_path=\"\"",
+        "TimeZone=UTC"
+      ],
+      "sha256": "e75e18bbe3c7ed3125aba7b7b2c5db95e23b8022cd05b5bf0e818440becbca88",
+      "arguments": "p jsonb",
+      "prosrc_sha256": "3df5c3213dc97d0e5be5f5e748f36e0e1a50ab55a96e4603f53c828f7056078d",
+      "security_definer": true
+    },
+    {
+      "acl": "{postgres=X/postgres}",
+      "name": "guard_gate_bytes",
+      "owner": "postgres",
+      "config": [
+        "search_path=\"\""
+      ],
+      "sha256": "e6644adad3ea6233cb6705e650058b7007e5502b8e037fbf5f973957de620ba9",
+      "arguments": "",
+      "prosrc_sha256": "dd27489d8cc7e558f851c98c58a41fc7056786c0cb854a34aa944663d66a444f",
+      "security_definer": false
+    },
+    {
+      "acl": "{postgres=X/postgres,service_role=X/postgres}",
+      "name": "read_execution",
+      "owner": "postgres",
+      "config": [
+        "search_path=\"\"",
+        "TimeZone=UTC"
+      ],
+      "sha256": "6322ba2c573991f6d355eb0dbe2e81478bc6012f4fd05355508f20e36038879e",
+      "arguments": "",
+      "prosrc_sha256": "215de1aa18bc3d83b59810771343695cd856f9037bb970c22b135fab1b562084",
+      "security_definer": true
+    },
+    {
+      "acl": "{postgres=X/postgres,service_role=X/postgres}",
+      "name": "read_execution_event",
+      "owner": "postgres",
+      "config": [
+        "search_path=\"\"",
+        "TimeZone=UTC"
+      ],
+      "sha256": "c32313e1025916b90d2c10f2bc7c7fe8fdd059822231b3bcef54082f83a22ac6",
+      "arguments": "p_sequence bigint",
+      "prosrc_sha256": "7c4eed3809eae23a3cfaa6ce7fb2f64a8a8ca9d69ceca7fc7e6088c784e6bb20",
+      "security_definer": true
+    },
+    {
+      "acl": "{postgres=X/postgres,service_role=X/postgres}",
+      "name": "read_root",
+      "owner": "postgres",
+      "config": [
+        "search_path=\"\"",
+        "TimeZone=UTC"
+      ],
+      "sha256": "e1f496ad7e43ba08eca97c4e2cfa13a162660ae90d6628aac16af9c2c26cc47c",
+      "arguments": "p_root_id text",
+      "prosrc_sha256": "fadda2c5df99162f20dd45d58d24582aee6e900c66acfde7e26145e33c1e4b84",
+      "security_definer": true
+    },
+    {
+      "acl": "{postgres=X/postgres,service_role=X/postgres}",
+      "name": "record_effect_intent",
+      "owner": "postgres",
+      "config": [
+        "search_path=\"\""
+      ],
+      "sha256": "8b23ccd60b861f38e48d740b87ae3bb288bc9ac69619fbbb7ccc5610d5fb5bf1",
+      "arguments": "p_ga text, p_key text, p_body jsonb",
+      "prosrc_sha256": "4c0f7c5f1447eca0f091c727165b8e35085a9b3c104cf72df88fe90c324da3e8",
+      "security_definer": true
+    },
+    {
+      "acl": "{postgres=X/postgres,service_role=X/postgres}",
+      "name": "reserve_execution_budget",
+      "owner": "postgres",
+      "config": [
+        "search_path=\"\"",
+        "TimeZone=UTC"
+      ],
+      "sha256": "902d457f964257defb4baffec91dfc672b34dca745e90ded4ff4d8beaef3b76d",
+      "arguments": "p_raw text, p_sha text",
+      "prosrc_sha256": "1c515e21bcf910c7ae5aea842d2fe40055f87c97df4141f3aacc299eef68e29d",
+      "security_definer": true
+    },
+    {
+      "acl": "{postgres=X/postgres,service_role=X/postgres}",
+      "name": "reserve_gate",
+      "owner": "postgres",
+      "config": [
+        "search_path=\"\"",
+        "TimeZone=UTC"
+      ],
+      "sha256": "684a55eefba5350b368c5f068d0687a5e41f242e00587cc52422b43178ac5de1",
+      "arguments": "p_raw text, p_sha text",
+      "prosrc_sha256": "6cc430f83e978a38d7307fdc9abd29e9ea6b345812ba6fdb0c26e2292e85db3b",
+      "security_definer": true
+    },
+    {
+      "acl": "{postgres=X/postgres,service_role=X/postgres}",
+      "name": "rotate_execution_generation",
+      "owner": "postgres",
+      "config": [
+        "search_path=\"\""
+      ],
+      "sha256": "aa77059377a0bc83042dbf75d82f36c29cd736178fb34a3b573da7819fa050d4",
+      "arguments": "p jsonb",
+      "prosrc_sha256": "8f93e4f0bd970d8c2449ffcc8044f38f3ab7c4c7479bff9a57bc896c4b86b445",
+      "security_definer": true
+    }
+  ],
+  "all_other_function_bodies_unchanged": true,
+  "all_function_acls_owners_configs_unchanged": true,
+  "all_eight_tables_rls_acls_unchanged": true,
+  "complete_original_root_unchanged": true,
+  "counts": {
+    "gate_attempts": 0,
+    "control_objects": 0,
+    "execution_events": 0,
+    "execution_binding": 0,
+    "execution_current": 0
+  },
+  "read_execution": null,
+  "tables_created_or_removed": 0,
+  "private_original_readbacks": [
+    {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-08\\ia\\work\\runtime600-actual-preflight.json",
+      "sha256": "179828bb0a31f30771df65da43a2fc3884515ffb89b7114f792b2b847aa01c97"
+    },
+    {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-08\\ia\\work\\runtime600-actual-postread.json",
+      "sha256": "e7a2bd36d69a8219b7fca054ebf3805bfe72afc00af265d1e70afdb4b955ad79"
+    }
+  ],
+  "independent_post_application_live_review": "Separate reviewer report pending when this observation was written; do not overwrite this original observation.",
+  "runtime_binding_seeded": false,
+  "ga_or_grr_issued": false,
+  "qualification_or_pqual_pass_claimed": false,
+  "authority_effect": "NONE",
+  "repeat_application_forbidden_without_new_review": true
+}

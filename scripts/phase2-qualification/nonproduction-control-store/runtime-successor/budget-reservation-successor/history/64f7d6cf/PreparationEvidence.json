@@ -1,0 +1,48 @@
+{
+  "state": "PREPARED_FIXED_PRE_GA_BUDGET_SUCCESSOR_FOR_INDEPENDENT_REVIEW",
+  "predecessor_sql_sha256": "a242db8504f1cbd9c04ee8a22d8072e7b9ee0d6897433393e88c6e14a8e4ea27",
+  "files": [
+    {
+      "path": "scripts\\phase2-qualification\\nonproduction-control-store\\runtime-successor\\budget-reservation-successor\\build.mjs",
+      "sha256": "18d7e1137d9e92b51c74763c3fb48fc178196c7431cc8b1135a2ce51b031dbb5",
+      "bytes": 8923
+    },
+    {
+      "path": "scripts\\phase2-qualification\\nonproduction-control-store\\runtime-successor\\budget-reservation-successor\\install.candidate.sql",
+      "sha256": "2dc58a97d42cf8c499a47f58c910e00acf418a68451bc2d46eed76e93c9e4b67",
+      "bytes": 40581
+    },
+    {
+      "path": "scripts\\phase2-qualification\\nonproduction-control-store\\runtime-successor\\budget-reservation-successor\\client.mjs",
+      "sha256": "5eb8b6ad2d8b68f98dcffc5cc11fcd032ea176572c248d615a5d977ee9a4bd1c",
+      "bytes": 726
+    },
+    {
+      "path": "scripts\\phase2-qualification\\nonproduction-control-store\\runtime-successor\\budget-reservation-successor\\create-test.mjs",
+      "sha256": "71ac31cef62988dc5b3708cb07e2788a3129e03dbba59dad4d91b40563238750",
+      "bytes": 6206
+    },
+    {
+      "path": "scripts\\phase2-qualification\\nonproduction-control-store\\runtime-successor\\budget-reservation-successor\\budget.test.mjs",
+      "sha256": "a1988d8036f916f330dd2b375fe351c0fa47a242e241f0ee7e0aaf3e3671f5d5",
+      "bytes": 11013
+    },
+    {
+      "path": "scripts\\phase2-qualification\\nonproduction-control-store\\runtime-successor\\budget-reservation-successor\\README.md",
+      "sha256": "c5f2e0aed9abe9e483a5db86b9ef48413ef2283901eafbf8af37e249ffe744ad",
+      "bytes": 4467
+    }
+  ],
+  "tests": {
+    "passed": 7,
+    "failed": 0,
+    "skipped": 0,
+    "duration_ms": 3057.9047,
+    "scope": "new disposable local PG; actual two connections"
+  },
+  "new_tables_compared_to_predecessor": 0,
+  "remote_runtime_tables_installed": 0,
+  "deployed": false,
+  "authority_effect": "NONE",
+  "qualified": false
+}

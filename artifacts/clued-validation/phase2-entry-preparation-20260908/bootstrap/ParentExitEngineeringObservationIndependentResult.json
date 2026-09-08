@@ -1,0 +1,63 @@
+{
+  "state": "ACCEPTED_OBSERVED_PARENT_EXIT_AND_DEADLINE_GUARD_STOP",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "reviewed_at": "2026-09-08T15:44:20.092Z",
+  "authority_effect": "NONE",
+  "qualified": false,
+  "pqual_executed": false,
+  "accepted_harness_sha256": "8b3a405e6736d6334b02d93a7e10976c40d6b7804c93a446ecdb4d7c785638f5",
+  "prior_scope_acceptance_sha256": "d4fd4327e11ef1b9c561ad970c9090b1cb4b7e1dbda481d6cc368145818c7d77",
+  "raw_directory": "scripts/phase2-qualification/preentry-parent/work/bce1e6dc03104d59b068854a8c12d540",
+  "archive": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/parent-exit-observation-20260908/RawEngineeringObservation.zip",
+    "sha256": "813f9235b70ee5ba4041f8891bf694b4389af64d7bd196f1a1e48de5f7eef776",
+    "index_path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/parent-exit-observation-20260908/EvidenceIndex.json",
+    "index_sha256": "00d18e04f67b3b80e09a07289c0517d70c242c03ff47affff406400fd34cc635"
+  },
+  "observations": {
+    "parent_pid": 51296,
+    "parent_exit_code": 77,
+    "parent_exit_utc": "2026-09-08T15:40:31.058308+00:00",
+    "guard_pid": 58464,
+    "container_id": "3488203dfd2a5a06226c65e2d19ed5f1ec863d2735d5764e0aad080ae08f5fd9",
+    "stop_dispatch_monotonic": 879174.89,
+    "finished_at": "2026-09-08T15:41:28.56032594Z",
+    "exit_code": 137,
+    "elapsed_seconds": 62.76500000001397,
+    "raw_stdout_stderr_hashes_checked": 5,
+    "dependency_hashes_checked": 9,
+    "independent_live_inspect_sha256": "dce3faea56cff9e7714c2a0e770901a87432f8b7cdab8a07d782bc8ad1e06272",
+    "live_state": {
+      "Status": "exited",
+      "Running": false,
+      "Paused": false,
+      "Restarting": false,
+      "OOMKilled": false,
+      "Dead": false,
+      "Pid": 0,
+      "ExitCode": 137,
+      "Error": "",
+      "StartedAt": "2026-09-08T15:40:30.300130759Z",
+      "FinishedAt": "2026-09-08T15:41:28.56032594Z"
+    },
+    "probe_uid": 10001,
+    "term_ignoring_descendant_pid": 7,
+    "network_errno": 101,
+    "canary_errno": 13,
+    "rootfs_errno": 30
+  },
+  "scope_limits": [
+    "Actual parent Popen handle observed exit 77 after persisted running probe and guard identity. Independent guard stopped the exact container at its scheduled deadline minus 30 seconds; immediate parent-death detection was not tested.",
+    "Read-only Docker inspect independently confirms exact stopped container with PID 0 and finished time before deadline. The original parent action outcome remains UNKNOWN; this observation is not a GA, GRR, PQUAL PASS, or controller qualification.",
+    "The two recorded Windows process IDs were absent from the subsequent Get-Process result; absence is supplementary, not inferred proof of their earlier identities."
+  ],
+  "capacity_decision": {
+    "this_exact_engineering_observation_slot_may_be_released": true,
+    "basis": "Exact container independently observed stopped; raw stop/wait/final inspection consistent; no re-dispatch.",
+    "historical_parent_unknown_preserved": true,
+    "container_and_evidence_retained": true,
+    "budget_refund": false,
+    "cumulative_reserved_seconds_upper_bound": 1500,
+    "does_not_release_unrelated_attempts": true
+  }
+}
