@@ -1,0 +1,7 @@
+{
+  "profile_delete_hresult": 0,
+  "profile_folder_removed": true,
+  "synthetic_canary_acl_restore_api_success": true,
+  "synthetic_canary_acl_restored_readback": true,
+  "tree_termination_observed_before_cleanup": true
+}

@@ -1,0 +1,19 @@
+{
+  "kind": "TARGETED_CI_FINDING_REMEDIATION",
+  "failed_run": 34210035477,
+  "affected_gate_run": 34210035576,
+  "original_candidate": "f2c3f0907a7e388eda97ea420e428534c1caed4e",
+  "scanner_version": "8.30.1",
+  "historical_commits_scanned": 535,
+  "before_findings": 2,
+  "after_findings": 0,
+  "classification": "SYNTHETIC_LOCAL_ENGINEERING_IDEMPOTENCY_IDENTIFIERS_NOT_CREDENTIALS",
+  "exact_fingerprints": [
+    "7d435110a3b2a05fa1773f2609932094550ab94e:scripts/phase2-qualification/example.local.json:generic-api-key:4",
+    "7d435110a3b2a05fa1773f2609932094550ab94e:scripts/phase2-qualification/README.md:generic-api-key:27"
+  ],
+  "changed_file": ".gitleaksignore",
+  "scope": "Two exact historical commit/path/rule/line exceptions; no rule-wide, path-wide, secret-pattern or frozen-file change.",
+  "review": "Identified values index local fixture run directories and receipts in controller.py; they are not used for authentication.",
+  "evidence_boundary": "Local full-history scan passed. The original failed CI/gate remains failed; a later candidate requires its actual CI results."
+}

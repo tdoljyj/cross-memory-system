@@ -1,0 +1,17 @@
+{
+  "baseline_id": "CLUED-PHASE2-KERNEL-STABILITY-HARDENING-INTEGRATION-v0.1-20260908",
+  "source_file": "Clued_Phase2_Kernel_Stability_Hardening_横向接入执行方案_v0.1_正式基线_20260908.md",
+  "sha256": "936cb966a75765ca156f5706237467b940ea32891bbc98c2c21ec9a8b8ec06a0",
+  "size_bytes": 38666,
+  "authority_source": "Explicit user instruction in current task 01a07f5e-510d-7db3-877d-f56e9bfa07ea on 2026-09-08",
+  "verification": "Source SHA independently recomputed before reading or copying; exact original bytes retained without newline normalization.",
+  "excluded_pre_freeze_candidate_sha256": "1e421dcd3a262b3e20185d83beae8c3a981bf12e806f9df9dede521d0458bd24",
+  "status": "EXECUTION_BASELINE_ADOPTED_PREPARATION_ONLY",
+  "contract_frozen": false,
+  "runtime_implemented_by_this_adoption": false,
+  "authorization_effect": "No new Authorization, Receipt system, Canonical Store, Surgical Authority, production scope or P0 batch.",
+  "priority": "Existing applicable R07-R10 / A01-A11 P0 closeout remains first.",
+  "formal_r11_boundary": "Formal R11 requires Step 16 completion and all existing prerequisites. Step 12-14 Pre-enforcement Instrumentation / Local Warning is not R11 or Health/Surgical authority.",
+  "conflict_policy": "Report Review Finding against higher-priority Kernel, Phase 2, Authorization or Health-Surgical baselines; stop authority expansion; never silently rewrite sequence, Authority, Gate or fixed baseline bytes.",
+  "preparation_evidence": "artifacts/clued-validation/kernel-stability-hardening-20260908/"
+}

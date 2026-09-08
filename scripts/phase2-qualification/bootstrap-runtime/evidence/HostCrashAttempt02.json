@@ -1,0 +1,53 @@
+{
+  "kind": "FIXED_BOOTSTRAP_ENGINEERING_CHECKS",
+  "checks": [
+    {
+      "fault": "host_crash",
+      "run_folder": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-08\\ia\\work\\kernel-phase2-repo\\scripts\\phase2-qualification\\bootstrap-runtime\\work\\host_crash-a81600a6125146e492aba13e47a9de08",
+      "binding": {
+        "source_sha256": "9cb4c0ba2499d516fcc7b06a69a9f8b7e6ef5471613f1553a87b19f89c5eaff1",
+        "exe_sha256": "4e91497c0703975add14ae3823c75fd3505272f76a96c8af51e07879226be49d",
+        "compiler_path": "C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe",
+        "compiler_sha256": "46809206887326d2d24db1eff1f3064de972c3451abe766b49111450a5e08e00",
+        "arguments": [
+          "/nologo",
+          "/target:exe",
+          "/platform:x64",
+          "/r:System.Web.Extensions.dll",
+          "/out:C:\\Users\\Windows\\Documents\\Codex\\2026-09-08\\ia\\work\\kernel-phase2-repo\\scripts\\phase2-qualification\\bootstrap-runtime\\work\\build-6e35210f1cee454b8f48f2e3f47f4d46\\BootstrapNativeHost.exe",
+          "C:\\Users\\Windows\\Documents\\Codex\\2026-09-08\\ia\\work\\kernel-phase2-repo\\scripts\\phase2-qualification\\bootstrap-runtime\\NativeHost.cs"
+        ]
+      },
+      "qualified": false,
+      "authorization_effect": "NONE",
+      "formal_execution": false,
+      "active_tree": {
+        "profile_name": "CluedBootstrap.4678bb07ae114d5395a43e587f8243b4",
+        "profile_folder": "C:\\Users\\Windows\\AppData\\Local\\Packages\\cluedbootstrap.4678bb07ae114d5395a43e587f8243b4\\AC",
+        "parent_pid": 41892,
+        "child_pid": 56384,
+        "descendant_pid": 46092,
+        "job_kill_on_close": true
+      },
+      "exact_tree_termination_observed": true,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "host_exit_code": 1,
+      "status": "UNKNOWN",
+      "reexecuted": false,
+      "cleanup": {
+        "profile_delete_hresult": 0,
+        "profile_folder_removed": true,
+        "synthetic_canary_acl_restore_api_success": true,
+        "synthetic_canary_acl_restored_readback": true,
+        "tree_termination_observed_before_cleanup": true
+      },
+      "engineering_assertions_satisfied": true,
+      "elapsed_seconds": 1.891
+    }
+  ],
+  "all_engineering_assertions_satisfied": true,
+  "qualified": false,
+  "authorization_effect": "NONE",
+  "formal_execution": false
+}

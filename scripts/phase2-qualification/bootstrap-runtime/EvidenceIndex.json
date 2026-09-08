@@ -1,0 +1,98 @@
+{
+  "kind": "BOOTSTRAP_ENGINEERING_EVIDENCE_INDEX",
+  "observed_utc": "2026-09-08T09:50:51.106049+00:00",
+  "qualified": false,
+  "authorization_effect": "NONE",
+  "formal_execution": false,
+  "files": [
+    {
+      "path": "NativeHost.cs",
+      "sha256": "9cb4c0ba2499d516fcc7b06a69a9f8b7e6ef5471613f1553a87b19f89c5eaff1",
+      "bytes": 20140,
+      "crlf_count": 0
+    },
+    {
+      "path": "engineering_check.py",
+      "sha256": "b9f86aa5e4806e3ac1c75b43367033b4954759e8928cfa3e3f85d84723a27004",
+      "bytes": 13583,
+      "crlf_count": 0
+    },
+    {
+      "path": "README.md",
+      "sha256": "5ecd1b1418a3f042ee1962facf99bef189918f7626b01727320bb576f3309a48",
+      "bytes": 6901,
+      "crlf_count": 0
+    },
+    {
+      "path": ".gitignore",
+      "sha256": "7c0e3807a109f275f04fa607825e26c8d69f2e23f684cf4ca68e03df1173780a",
+      "bytes": 19,
+      "crlf_count": 0
+    },
+    {
+      "path": "evidence/JobTree01.json",
+      "sha256": "4c433d28f48725ed43b54a9792e7f184befa8598f4781953bac25142adcd8e77",
+      "bytes": 1788,
+      "crlf_count": 0
+    },
+    {
+      "path": "evidence/StopCrashAttempt01.json",
+      "sha256": "efa6568c6620e91aa0e0abfa48bf0691cf880ecdf30d37858421f4f0d5a886ed",
+      "bytes": 6892,
+      "crlf_count": 0
+    },
+    {
+      "path": "evidence/StopCrashAttempt01Cleanup.json",
+      "sha256": "b2043765ae9ef1ce68d0232d2d5640532a4101e281cfd32f23bb777ef2eefbd7",
+      "bytes": 222,
+      "crlf_count": 0
+    },
+    {
+      "path": "evidence/HostCrashAttempt02.json",
+      "sha256": "688e13742e72112e9bb820cc505fbe868a02857c0098b7db3fb298f01e53b502",
+      "bytes": 2484,
+      "crlf_count": 0
+    }
+  ],
+  "known_exact_profile_cleanup": [
+    {
+      "profile_name": "CluedBootstrap.f1f7af5da4944758a419df7f42b47955",
+      "profile_ac_exists": false,
+      "profile_parent_exists": false
+    },
+    {
+      "profile_name": "CluedBootstrap.71535ff9043341adb84700f5396d8109",
+      "profile_ac_exists": false,
+      "profile_parent_exists": false
+    },
+    {
+      "profile_name": "CluedBootstrap.c6d3255132704f6d835114c0fce07aff",
+      "profile_ac_exists": false,
+      "profile_parent_exists": false
+    },
+    {
+      "profile_name": "CluedBootstrap.4678bb07ae114d5395a43e587f8243b4",
+      "profile_ac_exists": false,
+      "profile_parent_exists": false
+    }
+  ],
+  "reservation_exists": false,
+  "initial_job_build": {
+    "source_sha256": "6bcc2ce246f2c121a75b27758f783bb30aa1b043d86396fd68a350df1209349b",
+    "exe_sha256": "b19e1ac74a0ebd005968d5c952522335aadfb5cd5ddee3f227fb936ff77f10e9",
+    "boundary": "Earlier source bytes not retained; initial observation is not a final-source build acceptance"
+  },
+  "final_engineering_script_sha256": "b9f86aa5e4806e3ac1c75b43367033b4954759e8928cfa3e3f85d84723a27004",
+  "formal_entry_observation": {
+    "argument": "--formal",
+    "status": "BLOCKED",
+    "qualification": false,
+    "process_started": false
+  },
+  "known_gaps": [
+    "Network timeout is not denial",
+    "No exact OS executable/filesystem allowlist",
+    "No accepted Profile/Skill/GA/R05-R10/current revocation chain",
+    "No remote durable sink or aggregate Owner budget accounting"
+  ]
+}

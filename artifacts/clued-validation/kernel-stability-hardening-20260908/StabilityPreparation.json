@@ -1,0 +1,473 @@
+{
+  "baseline": {
+    "id": "CLUED-PHASE2-KERNEL-STABILITY-HARDENING-INTEGRATION-v0.1-20260908",
+    "path": "C:\\Users\\Windows\\Downloads\\Clued_Phase2_Kernel_Stability_Hardening_横向接入执行方案_v0.1_正式基线_20260908.md",
+    "sha256": "936cb966a75765ca156f5706237467b940ea32891bbc98c2c21ec9a8b8ec06a0",
+    "bytes": 38666,
+    "source_archive_owner": "root; this lane does not copy or modify frozen source"
+  },
+  "state": "PREPARATION_ONLY",
+  "source_commit": "260b085f4af94305c9bbc846dc3629dabb46a33b",
+  "authority_effect": "NONE",
+  "runtime_modified": false,
+  "tests_rerun": false,
+  "gold_read": false,
+  "new_p0_created": false,
+  "source_artifacts": {
+    "HS0": {
+      "path": "artifacts/clued-validation/kernel-health-surgical-repair-20260908/HS0Preparation.json",
+      "sha256": "2cba78e1329ece019fdc5e62df6f329d9b943c409121ff3c39a297ae1ee6808f"
+    },
+    "capabilities": {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/slice-a-capability-map/CapabilityMap.json",
+      "sha256": "76940ef98e4f0baf4011c5dc2909e6aeee5b0fd2f4ec8de1e0cc744144e21397"
+    },
+    "checkpoint_review": {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/checkpoint-idempotency/IndependentReview.json",
+      "sha256": "67a1f720f5f27429c7244e99f1f727e3c6b4ce36bcc9b1331f860698d9f0e9c7"
+    },
+    "checkpoint_result": {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/checkpoint-idempotency/Result.json",
+      "sha256": "cef433f4add7cf87213623623893ed01d265335c693f8f15a0df629005a6eed3"
+    },
+    "naming_closeout": {
+      "path": "docs/execution-plans/phase2-structure-governance/NamingIntegrityCloseoutDecision_20260907.json",
+      "sha256": "f077de340810bef827ebdd92e2c2bdda3eef2bc894f7e9975edbf54623133740"
+    },
+    "old_step20": {
+      "path": "docs/execution-plans/phase2-structure-governance/Step20-SkillProjectionAcceptance_20260907.json",
+      "sha256": "2c7da02632520187aa3b95ebfac4e5f9ba4d9a55d32e25d7eb3bccacab7ffc42"
+    },
+    "old_step21": {
+      "path": "docs/execution-plans/phase2-structure-governance/Step21-SkillProjectionAcceptance_20260907.json",
+      "sha256": "7e34dc5fdf3c95b5f964217f55bc5088cbb120eaea4fc778e8b657e43d6df08b"
+    }
+  },
+  "reuse_rule": "Reuse exact prior scope only. CapabilityMap legacy checkpoint gap is superseded for repaired source by checkpoint review/Result; no production rollout inferred. All other inventory gaps retain their original inspected scope.",
+  "S1_S7_drafts": [
+    {
+      "id": "S1",
+      "name": "Deterministic Command",
+      "state": "DRAFTED",
+      "authority_effect": "NONE",
+      "logical_draft_names": [
+        "CommandEnvelope",
+        "OperationIdentity"
+      ],
+      "existing_hs0_anchors": [
+        "MCP",
+        "CANON_WRITE",
+        "CHECKPOINT"
+      ],
+      "existing_capability_ids": [
+        "SOURCE_INGEST",
+        "INTERRUPTION_IDEMPOTENCY"
+      ],
+      "draft_semantics": "Bind stable logical operation/command, actor/subject, action/scope/resource/environment, expected revision, schema/policy/registry, correlation and deterministic effective-input fingerprint. IDs are never authority.",
+      "unready": "Existing RPCs and M1/checkpoint fields carry part of this meaning; no uniform command/environment/policy/registry binding proved for every consumer.",
+      "tests_run_in_this_task": false
+    },
+    {
+      "id": "S2",
+      "name": "Idempotency / Retry Safety",
+      "state": "DRAFTED",
+      "authority_effect": "NONE",
+      "logical_draft_names": [
+        "IdempotencyContract"
+      ],
+      "existing_hs0_anchors": [
+        "CHECKPOINT",
+        "FIX_REPLAY",
+        "FIX_CONCURRENT"
+      ],
+      "existing_capability_ids": [
+        "INTERRUPTION_IDEMPOTENCY"
+      ],
+      "draft_semantics": "Durable scope/key/fingerprint maps to one canonical result and original receipt; committed retries do not mutate; in-progress never duplicates effects; uncertain completion is reconciled before any retry.",
+      "unready": "Checkpoint exact-payload repair has scoped real PG evidence. Exactly 10 repeats, lost-response and external-effect boundaries are not yet exercised as ST cases. Duplicate response currently identifies checkpoint/version but does not return original receipt_id.",
+      "tests_run_in_this_task": false
+    },
+    {
+      "id": "S3",
+      "name": "Revision CAS / Concurrency Safety",
+      "state": "DRAFTED",
+      "authority_effect": "NONE",
+      "logical_draft_names": [
+        "ExpectedRevisionContract"
+      ],
+      "existing_hs0_anchors": [
+        "CHECKPOINT",
+        "STATE",
+        "FIX_BOUNDARY"
+      ],
+      "existing_capability_ids": [
+        "CANDIDATE_CONFIRMATION"
+      ],
+      "draft_semantics": "Updates require exact revision, creates require absence/uniqueness, stale writers conflict; authorization/CAS/invariant/commit share a defined safe boundary.",
+      "unready": "Checkpoint null/negative base now rejected and normal CAS exists. Distinct-key writers on one revision and mid-operation revoke/kill boundaries need actual targeted evidence.",
+      "tests_run_in_this_task": false
+    },
+    {
+      "id": "S4",
+      "name": "Canonical State Machine & Invariants",
+      "state": "DRAFTED",
+      "authority_effect": "NONE",
+      "logical_draft_names": [
+        "StateTransitionContract",
+        "CanonicalMutationContract"
+      ],
+      "existing_hs0_anchors": [
+        "STATE",
+        "CANON_WRITE",
+        "SUPERSEDE"
+      ],
+      "existing_capability_ids": [
+        "CANDIDATE_CONFIRMATION",
+        "SOURCE_WITHDRAWAL"
+      ],
+      "draft_semantics": "Per-object allowed states/transitions, preconditions, terminal boundaries, authority and evidence; forbid guessed state and silent overwrite. Prefer transactional constraints.",
+      "unready": "Existing M1 lifecycle validation is partial reuse, not proof of all target consumers/objects. Extracted candidate and source-withdrawal propagation remain capability-map gaps.",
+      "tests_run_in_this_task": false
+    },
+    {
+      "id": "S5",
+      "name": "Receipt / Replay / Traceability",
+      "state": "DRAFTED",
+      "authority_effect": "NONE",
+      "logical_draft_names": [
+        "ReceiptDeterminismContract"
+      ],
+      "existing_hs0_anchors": [
+        "RECEIPT",
+        "CHECKPOINT_RECEIPT",
+        "FIX_IMMUTABLE"
+      ],
+      "existing_capability_ids": [
+        "SOURCE_INGEST",
+        "INTERRUPTION_IDEMPOTENCY"
+      ],
+      "draft_semantics": "Bind original operation/command, actor/subject, authorization, target, pre/post revisions and states, policy/registry, transition/result/commit/correlation. Replay verifies history without new effects.",
+      "unready": "Existing receipts and preserved old checkpoint receipts are real. Complete new minimum field mapping, original receipt reference on checkpoint duplicate response, failed receipt persistence and external durable intent/outbox are not fully demonstrated.",
+      "tests_run_in_this_task": false
+    },
+    {
+      "id": "S6",
+      "name": "Fail-Closed & Blast-Radius Control",
+      "state": "DRAFTED",
+      "authority_effect": "NONE",
+      "logical_draft_names": [
+        "FailClosedContract"
+      ],
+      "existing_hs0_anchors": [
+        "AUTH",
+        "ACTION_AUTH",
+        "CAP_DISABLE",
+        "REVOKE"
+      ],
+      "existing_capability_ids": [
+        "AUTH_BEFORE_RETRIEVAL",
+        "SCOPE_REDUCTION"
+      ],
+      "draft_semantics": "Use only existing pre-authorized deny/read-only/disable/pause/revoke/isolate; scope by environment/resource/action/consumer/principal/worker/projection. Uncertainty never grants authority.",
+      "unready": "Existing scope/revocation/feature gates are reusable, not new containment authority. Whole-consumer boundary inventory and exact containment/recovery authorization remain to be bound; no global hard deny is introduced.",
+      "tests_run_in_this_task": false
+    },
+    {
+      "id": "S7",
+      "name": "Stability Signals & Repairability",
+      "state": "DRAFTED",
+      "authority_effect": "NONE",
+      "logical_draft_names": [
+        "StabilitySignalContract"
+      ],
+      "existing_hs0_anchors": [
+        "ERROR",
+        "DUPLICATE_SIGNAL",
+        "PROJECTION_VERIFY",
+        "MIRROR_RECOVERY"
+      ],
+      "existing_capability_ids": [
+        "PROJECTION_REBUILD",
+        "INTERRUPTION_IDEMPOTENCY"
+      ],
+      "draft_semantics": "Feed existing HealthFinding/FindingSeverity semantics; collect scoped duplicate/retry/CAS/state/auth/receipt/projection/safe-state metrics and false positives; no automatic repair or new severity system.",
+      "unready": "HS0 is preparation only. No formal R11/HS1 sample, detector, SLO, HS2 drill or Repairability result exists in these reused artifacts. Step12–14 Local Warning is not R11.",
+      "tests_run_in_this_task": false
+    }
+  ],
+  "negative_cases": [
+    {
+      "id": "ST-N01",
+      "scenario": "同一 command 连续提交 10 次",
+      "expected": "仅一个 Canonical 结果，返回同一逻辑 Receipt",
+      "state": "DRAFTED_NOT_EXECUTED",
+      "source_hs0_anchors": [
+        "FIX_REPLAY"
+      ],
+      "evidence_reuse_and_gap": "Exact 10 submissions and same logical Receipt response not exercised; existing test only proves scoped same-payload checkpoint replay."
+    },
+    {
+      "id": "ST-N02",
+      "scenario": "commit 成功、响应丢失、客户端 retry",
+      "expected": "不重复 commit",
+      "state": "DRAFTED_NOT_EXECUTED",
+      "source_hs0_anchors": [
+        "FIX_REPLAY"
+      ],
+      "evidence_reuse_and_gap": "No deliberate committed-response loss/transport timeout injection; replay behavior is only a partial prerequisite."
+    },
+    {
+      "id": "ST-N03",
+      "scenario": "同 idempotency key、不同 payload",
+      "expected": "明确 conflict",
+      "state": "DRAFTED_NOT_EXECUTED",
+      "source_hs0_anchors": [
+        "FIX_BOUNDARY"
+      ],
+      "evidence_reuse_and_gap": "Existing real local PG checkpoint payload/context conflicts reusable; not an all-operation ST execution."
+    },
+    {
+      "id": "ST-N04",
+      "scenario": "两 writer 同 expected_revision",
+      "expected": "仅一个成功，另一个 revision conflict",
+      "state": "DRAFTED_NOT_EXECUTED",
+      "source_hs0_anchors": [
+        "FIX_CONCURRENT"
+      ],
+      "evidence_reuse_and_gap": "Existing same-key concurrency is commit+duplicate, not two distinct operation writers racing same revision; separate case unexecuted."
+    },
+    {
+      "id": "ST-N05",
+      "scenario": "stale revision write",
+      "expected": "拒绝",
+      "state": "DRAFTED_NOT_EXECUTED",
+      "source_hs0_anchors": [
+        "FIX_BOUNDARY",
+        "FIX_BINDING"
+      ],
+      "evidence_reuse_and_gap": "Existing stale-base rejection is scoped checkpoint evidence; target-wide matrix remains unexecuted."
+    },
+    {
+      "id": "ST-N06",
+      "scenario": "非法 state transition",
+      "expected": "拒绝且可诊断",
+      "state": "DRAFTED_NOT_EXECUTED",
+      "source_hs0_anchors": [
+        "STATE"
+      ],
+      "evidence_reuse_and_gap": "Existing state validation source only; per-object invalid-transition ST injection not executed."
+    },
+    {
+      "id": "ST-N07",
+      "scenario": "未授权 Consumer 直接 mutation",
+      "expected": "拒绝",
+      "state": "DRAFTED_NOT_EXECUTED",
+      "source_hs0_anchors": [
+        "AUTH",
+        "FIX_BINDING"
+      ],
+      "evidence_reuse_and_gap": "Borrowed binding session denial is tested locally; complete consumer-direct-mutation case not executed."
+    },
+    {
+      "id": "ST-N08",
+      "scenario": "旧 direct-write endpoint",
+      "expected": "Step 14 后不可用于 current Canonical write",
+      "state": "DRAFTED_NOT_EXECUTED",
+      "source_hs0_anchors": [
+        "MCP",
+        "AUTH"
+      ],
+      "evidence_reuse_and_gap": "Historical naming closure cannot prove all current direct-write routes closed; retain approved scope and identify affected runtime paths without closing any now."
+    },
+    {
+      "id": "ST-N09",
+      "scenario": "checkpoint exact duplicate",
+      "expected": "幂等返回，不重复事实",
+      "state": "DRAFTED_NOT_EXECUTED",
+      "source_hs0_anchors": [
+        "FIX_REPLAY",
+        "FIX_CONCURRENT"
+      ],
+      "evidence_reuse_and_gap": "Existing exact checkpoint replay/concurrency evidence can be reused for its exact source; ST aggregate acceptance not issued."
+    },
+    {
+      "id": "ST-N10",
+      "scenario": "checkpoint identity 相同但内容不同",
+      "expected": "conflict",
+      "state": "DRAFTED_NOT_EXECUTED",
+      "source_hs0_anchors": [
+        "FIX_BOUNDARY"
+      ],
+      "evidence_reuse_and_gap": "Existing changed checkpoint payload/context conflict evidence can be reused; no new ST run."
+    },
+    {
+      "id": "ST-N11",
+      "scenario": "Receipt 写入/绑定异常",
+      "expected": "不得产生不可证明的 silent success",
+      "state": "DRAFTED_NOT_EXECUTED",
+      "source_hs0_anchors": [
+        "CHECKPOINT_RECEIPT",
+        "FIX_IMMUTABLE"
+      ],
+      "evidence_reuse_and_gap": "Historical null/missing binding conservatism is not an actual receipt write failure or commit-point injection."
+    },
+    {
+      "id": "ST-N12",
+      "scenario": "Projection 延迟",
+      "expected": "Canonical 不受影响，Shadow 能检测",
+      "state": "DRAFTED_NOT_EXECUTED",
+      "source_hs0_anchors": [
+        "PROJECTION_VERIFY"
+      ],
+      "evidence_reuse_and_gap": "No running online projection-delay Shadow detector/evidence."
+    },
+    {
+      "id": "ST-N13",
+      "scenario": "Projection 内容与 Canonical 不一致",
+      "expected": "发现 drift，不反向覆盖 Canonical",
+      "state": "DRAFTED_NOT_EXECUTED",
+      "source_hs0_anchors": [
+        "PROJECTION_VERIFY",
+        "PROJECTION_SOURCE"
+      ],
+      "evidence_reuse_and_gap": "Existing snapshot integrity mechanisms are partial; current Canonical projection drift/reverse-write ST case unexecuted."
+    },
+    {
+      "id": "ST-N14",
+      "scenario": "Worker duplicate delivery",
+      "expected": "外部 effect / canonical effect 不重复",
+      "state": "DRAFTED_NOT_EXECUTED",
+      "source_hs0_anchors": [
+        "CONTROLLER_RECONCILE"
+      ],
+      "evidence_reuse_and_gap": "Local candidate reconciliation is not durable Worker/external-effect duplicate delivery verification."
+    },
+    {
+      "id": "ST-N15",
+      "scenario": "Authorization 在未提交 operation 中撤销",
+      "expected": "未提交部分 fail-closed",
+      "state": "DRAFTED_NOT_EXECUTED",
+      "source_hs0_anchors": [
+        "REVOKE",
+        "FIX_REVOKED"
+      ],
+      "evidence_reuse_and_gap": "Tests reject already revoked credentials; no in-flight revoke-before-commit ST schedule executed."
+    },
+    {
+      "id": "ST-N16",
+      "scenario": "kill at CAS/commit boundary",
+      "expected": "最终状态只能是确定的 pre 或 post，不得半写",
+      "state": "DRAFTED_NOT_EXECUTED",
+      "source_hs0_anchors": [
+        "CHECKPOINT"
+      ],
+      "evidence_reuse_and_gap": "No process kill at actual CAS/commit boundary performed in this task or identified scoped checkpoint tests."
+    },
+    {
+      "id": "ST-N17",
+      "scenario": "kill at outbox boundary",
+      "expected": "effect intent 可恢复且不重复业务事实",
+      "state": "DRAFTED_NOT_EXECUTED",
+      "source_hs0_anchors": [
+        "CONTROLLER_RECONCILE"
+      ],
+      "evidence_reuse_and_gap": "No real integrated outbox kill/recovery evidence; synthetic local Intent is not the service outbox."
+    },
+    {
+      "id": "ST-N18",
+      "scenario": "Health unavailable",
+      "expected": "不自动扩大写能力；核心 Kernel 行为按既有安全策略运行",
+      "state": "DRAFTED_NOT_EXECUTED",
+      "source_hs0_anchors": [
+        "AUTH",
+        "CAP_DISABLE"
+      ],
+      "evidence_reuse_and_gap": "Health is not wired by HS0; no unavailable-Health runtime fault case or implicit capability expansion is executed."
+    }
+  ],
+  "historical_21_step_comparison": [
+    {
+      "step": 16,
+      "old": {
+        "line": 923,
+        "text": "现有四个 Phase 2 Gate 重跑"
+      },
+      "new": {
+        "line": 673,
+        "text": "运行时只读证据与治理对象对齐核验"
+      },
+      "proposal": "Keep the historical Step 16 semantics unchanged. Express the new requirement as a separately scoped transverse hook/task without reusing or renumbering the 21 steps; map real prerequisites explicitly. Proposal only, not effective."
+    },
+    {
+      "step": 17,
+      "old": {
+        "line": 947,
+        "text": "Canonical Semantic No-Change PASS"
+      },
+      "new": {
+        "line": 674,
+        "text": "开发者工具链与 Console 接线（非生产）"
+      },
+      "proposal": "Keep the historical Step 17 semantics unchanged. Express the new requirement as a separately scoped transverse hook/task without reusing or renumbering the 21 steps; map real prerequisites explicitly. Proposal only, not effective."
+    },
+    {
+      "step": 18,
+      "old": {
+        "line": 991,
+        "text": "不可绕过 required check 或等价强制证明"
+      },
+      "new": {
+        "line": 675,
+        "text": "真实证据补齐与具名批准（六组原请求）"
+      },
+      "proposal": "Keep the historical Step 18 semantics unchanged. Express the new requirement as a separately scoped transverse hook/task without reusing or renumbering the 21 steps; map real prerequisites explicitly. Proposal only, not effective."
+    },
+    {
+      "step": 19,
+      "old": {
+        "line": 1028,
+        "text": "Naming Integrity Closeout"
+      },
+      "new": {
+        "line": 676,
+        "text": "Phase 2 结构冻结后续治理与例外机制"
+      },
+      "proposal": "Keep the historical Step 19 semantics unchanged. Express the new requirement as a separately scoped transverse hook/task without reusing or renumbering the 21 steps; map real prerequisites explicitly. Proposal only, not effective."
+    },
+    {
+      "step": 20,
+      "old": {
+        "line": 1064,
+        "text": "Developer Skill"
+      },
+      "new": {
+        "line": 677,
+        "text": "结构冻结后第一批产品输入合并（不含生产数据）"
+      },
+      "proposal": "Keep the historical Step 20 semantics unchanged. Express the new requirement as a separately scoped transverse hook/task without reusing or renumbering the 21 steps; map real prerequisites explicitly. Proposal only, not effective."
+    },
+    {
+      "step": 21,
+      "old": {
+        "line": 1098,
+        "text": "User Skill"
+      },
+      "new": {
+        "line": 678,
+        "text": "结构冻结后第一批架构接受复验与发布 Gate"
+      },
+      "proposal": "Keep the historical Step 21 semantics unchanged. Express the new requirement as a separately scoped transverse hook/task without reusing or renumbering the 21 steps; map real prerequisites explicitly. Proposal only, not effective."
+    }
+  ],
+  "baseline_precedence": "New baseline §29 explicitly defers to existing higher-priority fixed Kernel/Phase2/Authorization/Health baseline; report conflicts, do not self-authorize reorder.",
+  "local_warning_boundary": "Step12–14 pre-enforcement instrumentation/local warning is not R11. Formal R11 requires the applicable runtime alignment and existing qualification gates; none newly accepted here.",
+  "authorization_dependencies": {
+    "current_preparation": "Already authorized; no new permission required for these three files.",
+    "freeze_and_gate_mapping": "Resolve the exact historical/new subject and hook applicability through an explicit reviewed successor or accepted conflict disposition; old structure acceptance does not freeze new runtime contracts.",
+    "implementation": "Keep current P0 work within its existing authority; this baseline does not itself grant broader production SQL/Worker changes or require a whole Command Engine before current P0 closure.",
+    "R11_HS1": "Actual qualified controller/actor, accepted profile/scoped action authorization, runtime/config, stop/revocation/budget/sink and exact eligible subject remain required.",
+    "HS2": "Separate non-production scoped fault injection and safe recovery authority; no production Surgical authority.",
+    "HS3": "Only after existing SliceA+Repairability and all actual Health conditions; no grant created by this preparation."
+  },
+  "acceptance": "No contract freeze, implementation completion, R11, HS1, HS2, Repairability or production readiness is claimed."
+}

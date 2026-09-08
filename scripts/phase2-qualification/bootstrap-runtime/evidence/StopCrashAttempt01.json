@@ -1,0 +1,144 @@
+{
+  "kind": "FIXED_BOOTSTRAP_ENGINEERING_CHECKS",
+  "checks": [
+    {
+      "fault": "stop",
+      "run_folder": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-08\\ia\\work\\kernel-phase2-repo\\scripts\\phase2-qualification\\bootstrap-runtime\\work\\stop-45a86d67a48449f5bb584714e6bd8787",
+      "binding": {
+        "source_sha256": "9cb4c0ba2499d516fcc7b06a69a9f8b7e6ef5471613f1553a87b19f89c5eaff1",
+        "exe_sha256": "d6fccc052b75a6e405f6da7d48ffa27698f3afdd5b8fdc99e70feed65617e6ae",
+        "compiler_path": "C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe",
+        "compiler_sha256": "46809206887326d2d24db1eff1f3064de972c3451abe766b49111450a5e08e00",
+        "arguments": [
+          "/nologo",
+          "/target:exe",
+          "/platform:x64",
+          "/r:System.Web.Extensions.dll",
+          "/out:C:\\Users\\Windows\\Documents\\Codex\\2026-09-08\\ia\\work\\kernel-phase2-repo\\scripts\\phase2-qualification\\bootstrap-runtime\\work\\build-6a55dde158f040869f1be8bd7e585d39\\BootstrapNativeHost.exe",
+          "C:\\Users\\Windows\\Documents\\Codex\\2026-09-08\\ia\\work\\kernel-phase2-repo\\scripts\\phase2-qualification\\bootstrap-runtime\\NativeHost.cs"
+        ]
+      },
+      "qualified": false,
+      "authorization_effect": "NONE",
+      "formal_execution": false,
+      "active_tree": {
+        "profile_name": "CluedBootstrap.71535ff9043341adb84700f5396d8109",
+        "profile_folder": "C:\\Users\\Windows\\AppData\\Local\\Packages\\cluedbootstrap.71535ff9043341adb84700f5396d8109\\AC",
+        "parent_pid": 15792,
+        "child_pid": 17672,
+        "descendant_pid": 59176,
+        "job_kill_on_close": true
+      },
+      "exact_tree_termination_observed": true,
+      "stdout_sha256": "5902883a5b1763bdb49328288363cf815f3d8de212b97f2cfaae426e3414a03c",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "host_exit_code": 0,
+      "native_observation": {
+        "kind": "BOOTSTRAP_JOB_ENGINEERING_OBSERVATION",
+        "qualified": false,
+        "authorization_effect": "NONE",
+        "profile_name": "CluedBootstrap.71535ff9043341adb84700f5396d8109",
+        "os_version": "Microsoft Windows NT 6.2.9200.0",
+        "runtime": "4.0.30319.42000",
+        "network_capabilities_requested": 0,
+        "global_security_settings_changed": false,
+        "exe_sha256": "d6fccc052b75a6e405f6da7d48ffa27698f3afdd5b8fdc99e70feed65617e6ae",
+        "parent_credential_canary_present": true,
+        "profile_sid": "S-1-15-2-3636005313-3319283643-3286775964-3774274295-3029568277-3644462547-1524476669",
+        "profile_folder": "C:\\Users\\Windows\\AppData\\Local\\Packages\\cluedbootstrap.71535ff9043341adb84700f5396d8109\\AC",
+        "host_loopback_control_connected": true,
+        "assigned_before_resume": true,
+        "job_active_process_limit": 2,
+        "job_kill_on_close": true,
+        "job_breakaway_allowed": false,
+        "pid": 17672,
+        "parent_observed_token": {
+          "is_appcontainer": true,
+          "capability_count": 0,
+          "appcontainer_sid": "S-1-15-2-3636005313-3319283643-3286775964-3774274295-3029568277-3644462547-1524476669"
+        },
+        "child_observation": {
+          "token": {
+            "is_appcontainer": true,
+            "capability_count": 0,
+            "appcontainer_sid": "S-1-15-2-3636005313-3319283643-3286775964-3774274295-3029568277-3644462547-1524476669"
+          },
+          "in_job": true,
+          "descendant_pid": 59176,
+          "allowed_write": true,
+          "outside_read_denied": true,
+          "outside_error_code": 5,
+          "loopback_denied": false,
+          "network_observation": "TIMEOUT_NOT_DENIAL_PROOF",
+          "credential_canary_inherited": false
+        },
+        "descendant_observation": {
+          "pid": 59176,
+          "token": {
+            "is_appcontainer": true,
+            "capability_count": 0,
+            "appcontainer_sid": "S-1-15-2-3636005313-3319283643-3286775964-3774274295-3029568277-3644462547-1524476669"
+          },
+          "in_job": true
+        },
+        "descendant_in_exact_job": true,
+        "stop_reason": "STOP_REQUESTED",
+        "alive_before_stop": true,
+        "termination_observed": true,
+        "exit_code": 77,
+        "descendant_termination_observed": true,
+        "status": "OBSERVED_NOT_QUALIFIED",
+        "profile_delete_hresult": 0,
+        "profile_folder_removed": true,
+        "synthetic_canary_acl_restored": true
+      },
+      "status": "ENGINEERING_OBSERVED",
+      "engineering_assertions_satisfied": true,
+      "elapsed_seconds": 1.906
+    },
+    {
+      "fault": "host_crash",
+      "run_folder": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-08\\ia\\work\\kernel-phase2-repo\\scripts\\phase2-qualification\\bootstrap-runtime\\work\\host_crash-d71f8cbfb05a4f2f8e0cf8cddd280875",
+      "binding": {
+        "source_sha256": "9cb4c0ba2499d516fcc7b06a69a9f8b7e6ef5471613f1553a87b19f89c5eaff1",
+        "exe_sha256": "d6fccc052b75a6e405f6da7d48ffa27698f3afdd5b8fdc99e70feed65617e6ae",
+        "compiler_path": "C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe",
+        "compiler_sha256": "46809206887326d2d24db1eff1f3064de972c3451abe766b49111450a5e08e00",
+        "arguments": [
+          "/nologo",
+          "/target:exe",
+          "/platform:x64",
+          "/r:System.Web.Extensions.dll",
+          "/out:C:\\Users\\Windows\\Documents\\Codex\\2026-09-08\\ia\\work\\kernel-phase2-repo\\scripts\\phase2-qualification\\bootstrap-runtime\\work\\build-6a55dde158f040869f1be8bd7e585d39\\BootstrapNativeHost.exe",
+          "C:\\Users\\Windows\\Documents\\Codex\\2026-09-08\\ia\\work\\kernel-phase2-repo\\scripts\\phase2-qualification\\bootstrap-runtime\\NativeHost.cs"
+        ]
+      },
+      "qualified": false,
+      "authorization_effect": "NONE",
+      "formal_execution": false,
+      "active_tree": {
+        "profile_name": "CluedBootstrap.c6d3255132704f6d835114c0fce07aff",
+        "profile_folder": "C:\\Users\\Windows\\AppData\\Local\\Packages\\cluedbootstrap.c6d3255132704f6d835114c0fce07aff\\AC",
+        "parent_pid": 53400,
+        "child_pid": 9796,
+        "descendant_pid": 54496,
+        "job_kill_on_close": true
+      },
+      "exact_tree_termination_observed": true,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "host_exit_code": 1,
+      "status": "UNKNOWN",
+      "reexecuted": false,
+      "engineering_assertions_satisfied": false,
+      "error_type": "RuntimeError",
+      "error": "Canary ACL read-back differs from captured original",
+      "capacity_retained": true,
+      "elapsed_seconds": 1.844
+    }
+  ],
+  "all_engineering_assertions_satisfied": false,
+  "qualified": false,
+  "authorization_effect": "NONE",
+  "formal_execution": false
+}

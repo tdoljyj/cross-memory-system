@@ -1,0 +1,20 @@
+{
+  "kind": "LOCAL_READ_ONLY_CACHE_RECOVERY_OBSERVATION",
+  "initial_result": "no-op Evidence invalid: target identity, ACL, volume, or read-only state changed",
+  "diagnosis": {"path_identity_match": false, "read_only_fingerprint_match": true, "writable_manifest_files": 0, "cause_of_identity_change": "NOT_ESTABLISHED"},
+  "preserved_original": "C:/Users/Windows/Documents/Codex/memory.quarantine-phase2-20260908-0957",
+  "original_manifest_and_generation_preserved_by_hash": true,
+  "recovery": "Preserved old cache by same-parent move, then ran the original sync-memory.ps1 -AlignAndVerify -Access PROJECT to rebuild the missing read-only cache through complete verification.",
+  "observed_at": "2026-09-08T09:53:48.248380Z",
+  "remote_head": "260b085f4af94305c9bbc846dc3629dabb46a33b",
+  "verification_id": "d42ce8c376b54122a639926e16607065",
+  "evidence_id": "6d331a15d26f42ac9c4ad5fb4c173414",
+  "result": "MIRRORED_AND_DOCTOR_ALL_PASS",
+  "full_validation_count": 3,
+  "original_development_checkout": "REMOTE_AHEAD_PRESERVED",
+  "active_engineering_worktree": "260b085f4af94305c9bbc846dc3629dabb46a33b_ALIGNED",
+  "trust_or_validator_changes": false,
+  "canonical_business_writes": false,
+  "deleted_originals": false,
+  "limitation": "This request-local verification is not reusable qualification or a periodic probe."
+}
