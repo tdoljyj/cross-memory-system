@@ -1,0 +1,99 @@
+{
+  "source_commit": "0972627dbe7823f2d01d79fef9aaf339e4306d4b",
+  "purpose": "EVIDENCE_APPLICABILITY_PREPARATION_ONLY",
+  "authority_effect": "NONE",
+  "entry_decision_issued": false,
+  "sources": [
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-actual-migration-20260907/receipt.json",
+      "sha256": "7ba04bc7cf715a6b96f05f64db3d7f0281627e9c0919b15dd66aa3d26f9f6ca7",
+      "bytes": 7741
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/Step06-ScopedAcceptance_20260907.json",
+      "sha256": "bd40c82a21e7b19c2c36e56d7b877078e45c6bfdf1593590fb56ab364f47889a",
+      "bytes": 5319
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/Step13-ScopedAcceptance_20260907.json",
+      "sha256": "562046e42bcbbea73bb99412cdc8161945b8e50fc519f335402f6529ca638acd",
+      "bytes": 2421
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/Step17-ScopedAcceptance_20260907.json",
+      "sha256": "a4d652aef2b799ee7f6b9d6e99b65c7ece646462d44c37ef2fdd64bc28b8c63a",
+      "bytes": 5582
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/Step15-17-EvidenceRefreshDecision_20260907.json",
+      "sha256": "3bd87b5083f91a609fc85916cd0ea216120f3a46edaac64070327abbf03129d9",
+      "bytes": 6014
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/Step20-SkillProjectionAcceptance_20260907.json",
+      "sha256": "2c7da02632520187aa3b95ebfac4e5f9ba4d9a55d32e25d7eb3bccacab7ffc42",
+      "bytes": 1285
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/Step21-SkillProjectionAcceptance_20260907.json",
+      "sha256": "7e34dc5fdf3c95b5f964217f55bc5088cbb120eaea4fc778e8b657e43d6df08b",
+      "bytes": 1271
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step21-skill-20260907/IndependentBehaviorReview.json",
+      "sha256": "f63879a2075c36ee52a3d82d9306b3189fa1be4cf58b36736e94832603ff8f98",
+      "bytes": 11465
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/NamingIntegrityCloseoutDecision_20260907.json",
+      "sha256": "f077de340810bef827ebdd92e2c2bdda3eef2bc894f7e9975edbf54623133740",
+      "bytes": 3907
+    },
+    {
+      "path": "skills/clued/SKILL.md",
+      "sha256": "8a5e6d9548731874b94ebe3edc046f7393c96fd75531f22231228e055206096f",
+      "bytes": 3913,
+      "installed_matches_source": true
+    },
+    {
+      "path": "skills/clued/references/engineering.md",
+      "sha256": "ffff299ea0a1793f9b0b4963fc5bf099762fabce96ed96086cfc5494acbb8d29",
+      "bytes": 5780,
+      "installed_matches_source": true
+    },
+    {
+      "path": "skills/clued/references/memory-operations.md",
+      "sha256": "a05feabc8ad4ccac535bb059fbf35179f79884dfb1113abdd18b21281bfda538",
+      "bytes": 5166,
+      "installed_matches_source": true
+    }
+  ],
+  "prior_behavior_review_scope": {
+    "actual_skill_files_read": 2,
+    "scenarios_reasoned": 3,
+    "private_data_reads": 0,
+    "service_calls": 0,
+    "business_writes": 0,
+    "repository_or_skill_modifications": 0,
+    "new_accounts_or_bindings": 0,
+    "user_authorization_requests": 0,
+    "step15_16_reruns": 0,
+    "trusted_reader_live_calls": 0,
+    "behavioral_simulation_only": true,
+    "production_behavior_verified": false,
+    "step20_21_acceptance_issued": false
+  },
+  "qualification_profile": {
+    "id": "CLUED_QUALIFICATION_PHASE_POLICY_CANDIDATE_V0_1",
+    "state": "PROPOSED_NOT_ACCEPTED_NOT_ACTIVATED",
+    "accepted_ref": null,
+    "authorization_effect": "NONE"
+  },
+  "controller_plan": {
+    "id": "TEST_CONTROLLER_QUALIFICATION_INPUT_PLAN_V0_1",
+    "state": "REQUIRED_EVIDENCE_NOT_OBTAINED",
+    "authority_source": "S06 pre-G1 v3.3及其当前合法控制信任根/适用Gate；不是本候选或未合格新Skill",
+    "no_assumed_current_controller": true,
+    "schema_or_runtime_wiring_complete": false
+  }
+}
