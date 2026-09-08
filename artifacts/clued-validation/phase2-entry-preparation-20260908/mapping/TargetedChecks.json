@@ -1,0 +1,147 @@
+{
+  "state": "ENGINEERING_PREPARATION_ONLY",
+  "authority_effect": "NONE",
+  "source_commits": {
+    "reviewed": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+    "executed_main": "7d435110a3b2a05fa1773f2609932094550ab94e"
+  },
+  "source_equivalence": {
+    "command": "git diff --exit-code f3d0066197c06220d34f825dd59c74bcf968cdfd 7d435110a3b2a05fa1773f2609932094550ab94e -- apps/clued-cloud",
+    "exit_code": 0,
+    "changed_tracked_app_paths": [],
+    "tested_source_files": [
+      {
+        "path": "apps/clued-cloud/worker/continuity.ts",
+        "bytes": 50783,
+        "sha256": "53746991a483bf4bbac4402440ae86fb7cd296032a7a10359758bbaf77997dc5",
+        "same_at_both_commits_and_tested_worktree": true
+      },
+      {
+        "path": "apps/clued-cloud/worker/projects.ts",
+        "bytes": 2051,
+        "sha256": "8bb2d52643c4ffd62ee48de60294559161d750ea15d328b6585deb47aa2aa09f",
+        "same_at_both_commits_and_tested_worktree": true
+      },
+      {
+        "path": "apps/clued-cloud/worker/contexts.ts",
+        "bytes": 2871,
+        "sha256": "5a036a37640ea8bd1f9de3cfd771d859167de4aca6189215369ad5566e040365",
+        "same_at_both_commits_and_tested_worktree": true
+      },
+      {
+        "path": "apps/clued-cloud/worker/p5.ts",
+        "bytes": 4492,
+        "sha256": "ce46bf7025f746579263b78c320f1df6e4d077e11bcbcc958865f20bfead418f",
+        "same_at_both_commits_and_tested_worktree": true
+      },
+      {
+        "path": "apps/clued-cloud/worker/p6.ts",
+        "bytes": 11789,
+        "sha256": "989111afdc6a02bb5707ec8d10f35caed3b225d49da71e4a6a981079332dbb97",
+        "same_at_both_commits_and_tested_worktree": true
+      },
+      {
+        "path": "apps/clued-cloud/worker/records.ts",
+        "bytes": 8108,
+        "sha256": "43bfe74c4d6576476f3d4a08df82a6b0853da855c29124edf1e333c14d5bb35e",
+        "same_at_both_commits_and_tested_worktree": true
+      },
+      {
+        "path": "apps/clued-cloud/app/oauth/consent/page.tsx",
+        "bytes": 7088,
+        "sha256": "54ad239f01cbcbd1fb4bac04ff6b080bd55f1465163f34b557e237ccea83051f",
+        "same_at_both_commits_and_tested_worktree": true
+      }
+    ]
+  },
+  "test_source": {
+    "path": "apps/clued-cloud/scripts/test-phase2-change-applicability.mjs",
+    "sha256": "3d7a6ee950be00a9e8e26b3a15543faf0fdcaafa94d1979a9549347e7ab61c8a",
+    "bytes": 8875
+  },
+  "execution": {
+    "command": "node --test scripts/test-phase2-change-applicability.mjs",
+    "cwd": "C:/Users/Windows/Documents/Codex/2026-09-08/ia/work/kernel-phase2-repo/apps/clued-cloud",
+    "node": "v24.19.0",
+    "environment": "Windows host; mocked fetch and auth; no live service calls",
+    "observed_at": "2026-09-08T16:51:29.5591967+08:00",
+    "exit_code": 0,
+    "tests": 11,
+    "pass": 11,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 0,
+    "todo": 0,
+    "duration_ms": 274.0122,
+    "cases": [
+      {
+        "name": "CA01 bootstrap: disabled uses Supabase",
+        "result": "passed"
+      },
+      {
+        "name": "CA01 bootstrap: disabled ignores delegated override",
+        "result": "passed"
+      },
+      {
+        "name": "CA01 bootstrap: enabled uses explicit issuer",
+        "result": "passed"
+      },
+      {
+        "name": "CA01 bootstrap: enabled falls back to request origin",
+        "result": "passed"
+      },
+      {
+        "name": "CA01 context exposure preserves all legacy tool metadata",
+        "result": "passed"
+      },
+      {
+        "name": "CA02 account REST resource denial is 403 without an OAuth challenge",
+        "result": "passed"
+      },
+      {
+        "name": "CA02 account REST invalid JWT stays 401 and never calls project RPC",
+        "result": "passed"
+      },
+      {
+        "name": "CA03 only delegated branch mounts: request_id=request-one",
+        "result": "passed"
+      },
+      {
+        "name": "CA03 only delegated branch mounts: request_id=request-one&authorization_id=legacy-one",
+        "result": "passed"
+      },
+      {
+        "name": "CA03 legacy authorization uses the shared client and exact authorization ID",
+        "result": "passed"
+      },
+      {
+        "name": "CA03 missing IDs display the legacy empty state without authorization lookup",
+        "result": "passed"
+      }
+    ],
+    "initial_attempt": {
+      "exit_code": 1,
+      "phase": "esbuild source bundling before test cases",
+      "reason": "Sandbox filesystem denied source resolution",
+      "resolution": "Same test script run through authorized host tool; no business code change"
+    }
+  },
+  "coverage": {
+    "CA01": "Four issuer branches through actual public MCP bootstrap, no storage/auth challenge; context enabled list preserves all legacy metadata.",
+    "CA02": "Actual account REST handler authenticates then preserves resource denial as403; actual JWT failure remains401 and short-circuits before project RPC.",
+    "CA03": "Actual transpiled page, ConsentRouter and legacy OAuthConsent; delegated boundary stub only, shared auth stub; request_id priority, legacy ID and missing ID behaviors.",
+    "CA04": "NOT_EXECUTED; owned by parent browser work"
+  },
+  "non_claims": [
+    "No production OAuth grants or business writes",
+    "No browser rendering or production navigation acceptance",
+    "No full CI rerun",
+    "No formal readiness/qualification/acceptance issued"
+  ],
+  "business_code_modified": false,
+  "package_json_modified": false,
+  "related_review": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/mapping/ChangeApplicabilityReview.json",
+    "sha256": "08a9c39d710fc5e4b1cf825c5c96c62648323dc68747e8336a5940b2034080e1"
+  }
+}
