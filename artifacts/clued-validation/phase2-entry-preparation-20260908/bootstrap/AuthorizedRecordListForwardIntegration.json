@@ -1,0 +1,13 @@
+{
+  "state": "EXACT_ACCEPTED_SQL_INTEGRATED_FORWARD_MIGRATION_NOT_DEPLOYED",
+  "migration": "apps/clued-cloud/supabase/migrations/20260908135500_authorized_record_list_before_limit.sql",
+  "sha256": "dcf72c18e574bf07ddcfb11a5d419df4bec47136b23331358f7e77f51d19e4f8",
+  "source_candidate": "scripts/phase2-qualification/authorized-record-list-preparation/authorized-record-list.candidate.sql",
+  "independent_acceptance_sha256": "fbef6a52501506a84e1e5c663ec4cd4b4643dc866913f6b75d04364352dd08be",
+  "source_bytes_unchanged": true,
+  "old_migrations_unchanged": true,
+  "runtime_deployed": false,
+  "production_calls": 0,
+  "real_pg_evidence": "Implementation6 and independent2 PASS; existing checks not repeated merely for byte copy",
+  "whole_slice_a_pass": false
+}

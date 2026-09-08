@@ -1,0 +1,21 @@
+{
+  "state": "LOCAL_CANDIDATE_NOT_DEPLOYED",
+  "sources": [
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260829100000_clued_legacy_log_alias_bridge.sql",
+      "sha256": "625656c79824cc7f0f8d4bb96ff999566fba0a388a61ca381d2548cd0c988d8e"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260907173031_clued_connection_authorization_v12.sql",
+      "sha256": "6f1379187f1f36c836e99f6cf2083334e733fcb10cd59f789797b9e3c5225f8d"
+    }
+  ],
+  "core_changes": [
+    "Private explicit trusted scopes argument",
+    "Event source-scope WHERE predicate before JSON projection/LIMIT",
+    "Record source-scope EXISTS predicate before JSON projection/LIMIT"
+  ],
+  "public_changes": "Derive same existing permitted source scopes before invoking core; remove post-LIMIT JSON filtering",
+  "authority_semantics_changed": false,
+  "sql_sha256": "dcf72c18e574bf07ddcfb11a5d419df4bec47136b23331358f7e77f51d19e4f8"
+}

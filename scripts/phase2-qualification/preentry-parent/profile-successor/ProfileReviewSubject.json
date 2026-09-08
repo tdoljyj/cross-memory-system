@@ -1,0 +1,231 @@
+{
+  "state": "EXACT_PROFILE_SCHEMA_SUBJECT_READY_FOR_INDEPENDENT_REVIEW",
+  "review_subject_sha256": "e3e2b296c3fbe49fa2e0670a5e87be989a3bb0f10a65bc8e94c657db1d2ffbf7",
+  "subject": {
+    "profile_definition": {
+      "profile_id": "DP-PREENTRY-SKILL-QUALIFICATION",
+      "definition_version": "fixed-synthetic-skill-input-20260908.v1",
+      "purpose": "SKILL_COEXISTENCE_QUALIFICATION",
+      "allowed_environments": [
+        "ISOLATED_TEST"
+      ],
+      "allowed_subject_kinds": [
+        "ISOLATED_TEST_SUBJECT"
+      ],
+      "allowed_candidate_states": [
+        "UNQUALIFIED_QUARANTINED_TEST_SUBJECT_ONLY"
+      ],
+      "required_stages": [
+        "R05",
+        "R06",
+        "R07",
+        "R08",
+        "R09",
+        "R10"
+      ],
+      "candidate_must_differ_from_controller": true,
+      "required_true": [
+        "profile_accepted",
+        "authority_chain_verified",
+        "owner_or_delegate_verified",
+        "phase_authorization_valid",
+        "controller_qualification_valid",
+        "isolated_host_proven",
+        "scope_contained",
+        "exact_digests_bound",
+        "budget_reserved",
+        "evidence_sink_durable",
+        "stop_channel_ready",
+        "revocation_fresh",
+        "target_revision_matches",
+        "no_credential_crossing",
+        "pre_registered_expectations"
+      ],
+      "required_false": [
+        "real_user_payload",
+        "production_credentials",
+        "public_distribution",
+        "economic_rights",
+        "model_action",
+        "scope_expansion",
+        "candidate_pointer_write"
+      ],
+      "gate_control_type": "GateAuthorization",
+      "terminal_receipt_control_type": "GateResultReceipt",
+      "max_lifetime_seconds": 90,
+      "not_applicable_layer_permissions": {
+        "account": {
+          "reason": "该固定child没有Clued业务account、业务用户令牌或账户API；只读取明确三Skill文本和固定合成fixture。GitHub Owner控制身份仍存在并单独核验，不与此Clued业务account层混同。",
+          "accepted_schema_ref": {
+            "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/1622355e303cd0f22e2b0d0b4b0beb943559c78d",
+            "sha256": "f57cceb29853c67f8702c1560017c3be7b96626d6358299b5215add63d01e916"
+          }
+        },
+        "integration_installation": {
+          "reason": "没有Clued集成安装实例、集成业务凭据或installation接口调用；宿主Docker安装及受信Git发布渠道不是本合成业务层installation，其控制/凭据代际继续独立核验。",
+          "accepted_schema_ref": {
+            "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/1622355e303cd0f22e2b0d0b4b0beb943559c78d",
+            "sha256": "f57cceb29853c67f8702c1560017c3be7b96626d6358299b5215add63d01e916"
+          }
+        },
+        "context": {
+          "reason": "不创建或读取ContextStream/context/session业务对象；/allowed/fixture.json不是ContextStream或Canon。父监督会话session_generation不因此消失。",
+          "accepted_schema_ref": {
+            "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/1622355e303cd0f22e2b0d0b4b0beb943559c78d",
+            "sha256": "f57cceb29853c67f8702c1560017c3be7b96626d6358299b5215add63d01e916"
+          }
+        },
+        "binding": {
+          "reason": "没有Clued Binding发行、选择、资源绑定或Binding token；纯固定文件挂载不是业务Binding。确切container/Skill/Scope/Root引用仍必须绑定且禁止改变。",
+          "accepted_schema_ref": {
+            "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/1622355e303cd0f22e2b0d0b4b0beb943559c78d",
+            "sha256": "f57cceb29853c67f8702c1560017c3be7b96626d6358299b5215add63d01e916"
+          }
+        }
+      }
+    },
+    "schema_refs": {
+      "preentry-profile.candidate.schema.json": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/c3d0fd5c475fcc2f0da618453a9f015b4e50e90d",
+        "sha256": "678942e70d6579df4f737472f606f61463c58c6307b1b810ef741ee667771338"
+      },
+      "revocation-epoch-vector.candidate.schema.json": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/1622355e303cd0f22e2b0d0b4b0beb943559c78d",
+        "sha256": "f57cceb29853c67f8702c1560017c3be7b96626d6358299b5215add63d01e916"
+      },
+      "gate-authorization.candidate.schema.json": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/90be47cb00542eafe33d07d0d2678718b3efc845",
+        "sha256": "f7f7e2a011f3f81a005e46f9cf7683edeb010dc7812eadfb4473f6ad5368a1ce"
+      }
+    },
+    "source_refs": {
+      "R09MechanismCandidate.json": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/0d12ab13157fa80457851705abb9411057485695",
+        "sha256": "ac7d4a13c069dddd7acd8fa5258052e61e28108844701e5988c0d5105470f70f"
+      },
+      "R09IndependentFreezeDecision.json": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/040c393cda6090c9ac3c9f33b3e8568a40595837",
+        "sha256": "83814ca7d19173034d107da31bcd1456d34125bdafae6048fce00fa6f0907e25"
+      },
+      "IndependentR07R09SignatureBinding.json": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/078a28cfddc63f984db6136854e0e4179ac7e29a",
+        "sha256": "b7276afedb93c133cb63d80813f70359e48e263bab1318235980b690ee01523c"
+      },
+      "R10IndependentProjectionAcceptance.json": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/6f13b5c4a8efcdee00072035bbbc32407e570f80",
+        "sha256": "e19261b718cad252c1881cd5559e2e65b115d475952f5dbcd8d9ebe0dc7250be"
+      },
+      "IndependentR10SignatureBinding.json": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/a41422c6cba49560403ec168575faaa68fabb9cb",
+        "sha256": "7458fcfcc3a06fd701ff4422d4493a356db3b20180946b97f6fc6a97e0b93a4c"
+      },
+      "FixedFixturePrimitiveIndependentReview.json": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/b2cbfbbc68fcbd3f6f46e8bada3bfabc56d95781",
+        "sha256": "174fa3304b2761d463a4d519943ed38afbd1d5c73a6d22ed40e92e7afc3b259d"
+      }
+    },
+    "mechanism_boundaries": [
+      {
+        "id": "B01",
+        "name": "Authority and storage",
+        "refs": [
+          "AGENTS.md",
+          "skills/clued/SKILL.md",
+          "skills/clued/references/memory-operations.md"
+        ],
+        "rule": "Authenticated Clued is business authority; repo memory is a read-only projection. A Skill/role/mode/tool discovery does not grant identity, Binding, scope or publishing authority."
+      },
+      {
+        "id": "B02",
+        "name": "Request-local engineering alignment",
+        "refs": [
+          "scripts/sync-memory.ps1",
+          "scripts/sync-memory.py",
+          "scripts/verification_context.py",
+          "skills/clued/references/engineering.md"
+        ],
+        "rule": "One unified alignment/doctor Context per independent request; exact boundary/source envelope and invalidation checks; NONE does no Git or memory read. No periodic freshness or duplicate doctor."
+      },
+      {
+        "id": "B03",
+        "name": "Typed service operations and receipts",
+        "refs": [
+          "apps/clued-cloud/worker/continuity.ts",
+          "apps/clued-cloud/worker/records.ts",
+          "artifacts/clued-validation/phase2-entry-preparation-20260908/mapping/ConsumerMapping.json"
+        ],
+        "rule": "Use actual advertised tool schema and authenticated server capability, exact IDs/Binding, supported CAS/idempotency. Business write transaction supplies Event/immutable Receipt; checkpoint cannot replace it. Scoped context with no session token does not support M1 checkpoint."
+      },
+      {
+        "id": "B04",
+        "name": "Governance publication boundary",
+        "refs": [
+          "skills/clued/references/engineering.md",
+          "development/authority-index/phase2/SourceIndex.json",
+          "development/contracts/phase2/SourceIndex.json",
+          "apps/clued-cloud/scripts/m2-snapshot-store.mjs"
+        ],
+        "rule": "Existing configured trusted reader/publisher and accepted exact source, live qualification, actual signed selectors and applicable four Gates remain required. A repository wrapper, local PASS or this candidate cannot supply those prerequisites."
+      },
+      {
+        "id": "B05",
+        "name": "Projection and installation separation",
+        "refs": [
+          "skills/README.md",
+          "scripts/update_clued_skills.py",
+          "skills/clued/SKILL.md"
+        ],
+        "rule": "The unified three-file package chooses engineering or memory operations by action; installed file equality does not accept the underlying mechanism or R10/R11 behavior. New client discovery has not been re-observed here."
+      },
+      {
+        "id": "B06",
+        "name": "Scoped change, stop and rollback",
+        "refs": [
+          "skills/clued/references/engineering.md",
+          "skills/clued/references/memory-operations.md",
+          "artifacts/clued-validation/phase2-entry-preparation-20260908/mapping/ConsumerMapping.json"
+        ],
+        "rule": "Keep actual permission, exact source, uncertainty, original evidence and operation identity. Reuse unaffected evidence; expired/revoked/changed authority denies affected actions. Recovery uses real prior/current state and never restores revoked permission. No general accepted process-tree/revocation supervisor is claimed."
+      }
+    ],
+    "mechanism_boundary_type": "Existing B01-B06 mechanism definitions, NOT Gate IDs or new Gate registry entries",
+    "fixed_input_ref": {
+      "source_ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/5e949748e77eed96063818d0d15a378519c571ea",
+        "sha256": "215fc1d0c6327cef514879faa60dad9cf4e727ec207d867e4fe2eb8f3c7d7f89"
+      },
+      "json_pointer": "/fixed_input"
+    },
+    "retained_current_checks": [
+      "Owner delegation/signature/expiry/current revocation",
+      "RootSet current registered generation and issuer purpose/Audience",
+      "Exact accepted Profile and signed GA/current GA revocation",
+      "runner_generation",
+      "credential_generation for parent trusted transport even though child has none",
+      "session_generation for parent supervised attempt",
+      "Target revision/Scope/Skill/config/fixture exact hashes",
+      "Actual durable remote Intent readback and immutable Result linkage",
+      "Single-active reservation, cumulative 7200s and 1GiB limits; UNKNOWN does not release",
+      "PQUAL13 next-action rejection on independent generation change or tampered N/A and Scope references",
+      "PQUAL08/09 actual no credential/data crossing evidence"
+    ],
+    "applicability": {
+      "source": "S06",
+      "sha256": "f967fdf3e63028d29ed191160698726b5d707aaae63bd951f6ba2e8584936fec",
+      "lines": [
+        3010,
+        3011,
+        3012,
+        3435,
+        3437,
+        3439,
+        3441
+      ],
+      "profile_type": "QualificationPhasePolicy PRE_ENTRY_SKILL_QUALIFICATION execution Profile; not Release Profile",
+      "actual_ga_atomic_gate_definition_still_required": true,
+      "na_permissions_apply_only_to_fixed_input": true
+    },
+    "deadline": "2026-09-09T09:28:59Z",
+    "execution_boundary": "Definition/Schema acceptance and signing only. No GA/controller qualification/PQUAL execution; no model/production/paid scope."
+  }
+}

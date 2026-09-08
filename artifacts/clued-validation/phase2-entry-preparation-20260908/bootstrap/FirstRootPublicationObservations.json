@@ -1,0 +1,184 @@
+{
+  "kind": "FIRST_ROOT_PUBLICATION_OBSERVATIONS",
+  "observed_at": "2026-09-08T13:40:10.538107+00:00",
+  "main_pr": 27,
+  "main_merge": "f47fbae12738674ec780a9a79de72e94238b8f10",
+  "head": "468b19c0240708b0df66e45994b2aa5fce2d748a",
+  "ci_runs": {
+    "gitleaks": 34231243034,
+    "trivy": 34231243004,
+    "public-mcp-protocol": 34231243248,
+    "public-mcp-behavior": 34231243210,
+    "public-mcp-gate-receipt": 34231242975
+  },
+  "ci_observation": "All five actual runs succeeded before merge",
+  "first_report": {
+    "sha256": "ee70929ece9dcebba435ad76abc5023623183abd07915cd6e3b51fd31341dc54",
+    "publication": {
+      "status": "UNKNOWN",
+      "reason": "Blocked",
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/runtime-evidence/root-registration-20260908/result.json",
+      "expected_sha256": "ee70929ece9dcebba435ad76abc5023623183abd07915cd6e3b51fd31341dc54",
+      "automatic_retry_allowed": false,
+      "known_immutable_objects": {},
+      "authorization_effect": "NONE",
+      "execution_enabled": false,
+      "current_authority_verified": false,
+      "controller_qualified": false
+    },
+    "classification": "UNKNOWN retained; no automatic replay, no zero-remote-write claim. A Git object could precede parsing failure without a remembered SHA. No action capacity released.",
+    "subsequent_read_only_diagnosis": {
+      "read_only": true,
+      "writes": 0,
+      "observations": [
+        {
+          "stage": "",
+          "status": "READ_OK"
+        },
+        {
+          "stage": "/git/ref/heads/codex/phase2-qualification-evidence-20260908",
+          "status": "READ_OK"
+        },
+        {
+          "stage": "/git/commits/2eec225cdfee5ebbdf5e10cae7eaa5c5b6c80faa",
+          "status": "READ_OK"
+        },
+        {
+          "stage": "/git/trees/cbc413e0e68f40468905b89a6ea0bb1a12d31d05?recursive=1",
+          "status": "READ_OK",
+          "rows": 4926,
+          "truncated": false
+        }
+      ],
+      "api_observations": [
+        {
+          "endpoint": "https://api.github.com/repos/tdoljyj/cross-memory-system",
+          "observed_at_utc": "2026-09-08T13:33:20.006027+00:00",
+          "response_sha256": "70a6d4f1a51c7adee8d3258b8f7694217991b6662a5512ebd9f933d4d91308b2"
+        },
+        {
+          "endpoint": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/ref/heads/codex/phase2-qualification-evidence-20260908",
+          "observed_at_utc": "2026-09-08T13:33:20.769834+00:00",
+          "response_sha256": "a02f40375ed8f7249dd9a1d15eb8f01e2a9850e09f4b62da1b4365adf9647137"
+        },
+        {
+          "endpoint": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/commits/2eec225cdfee5ebbdf5e10cae7eaa5c5b6c80faa",
+          "observed_at_utc": "2026-09-08T13:33:21.551375+00:00",
+          "response_sha256": "a844bceef138d7752447252444376748a1ae1fb3fc8492507af64687a20fcc03"
+        },
+        {
+          "endpoint": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/trees/cbc413e0e68f40468905b89a6ea0bb1a12d31d05?recursive=1",
+          "observed_at_utc": "2026-09-08T13:33:23.943142+00:00",
+          "response_sha256": "fbfd044de6c784822f23739437a33ee58274748ec81f4f021838275981e32875"
+        }
+      ]
+    }
+  },
+  "independent_new_report": {
+    "sha256": "e62e2da61b3d92f270c6f2294f950ba8c0e5c57866a9798968febcad65164f99",
+    "distinct_evidence_identity": true,
+    "publication_and_readback": {
+      "proof": {
+        "status": "IMMUTABLE_REMOTE_BYTES_READ_BACK",
+        "reference": {
+          "repository": "tdoljyj/cross-memory-system",
+          "commit": "f0ae25ae49752ab2e218120436585f7d70a90cc2",
+          "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/runtime-evidence/root-registration-independent-20260908/result.json",
+          "sha256": "e62e2da61b3d92f270c6f2294f950ba8c0e5c57866a9798968febcad65164f99",
+          "git_blob_sha": "4ccbb758059ebd145e3ab634cd98eeb821884dd7",
+          "size": 6063
+        },
+        "remote_bytes_verified": true,
+        "authorization_effect": "NONE",
+        "execution_enabled": false,
+        "current_authority_verified": false,
+        "controller_qualified": false
+      },
+      "observations": [
+        {
+          "endpoint": "https://api.github.com/repos/tdoljyj/cross-memory-system",
+          "observed_at_utc": "2026-09-08T13:34:44.077783+00:00",
+          "response_sha256": "db59f35aaf3473a08095dca4271c46b7f7fd66642540d93bf0433130a3543918"
+        },
+        {
+          "endpoint": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/ref/heads/codex/phase2-qualification-evidence-20260908",
+          "observed_at_utc": "2026-09-08T13:34:44.937963+00:00",
+          "response_sha256": "a02f40375ed8f7249dd9a1d15eb8f01e2a9850e09f4b62da1b4365adf9647137"
+        },
+        {
+          "endpoint": "https://api.github.com/repos/tdoljyj/cross-memory-system",
+          "observed_at_utc": "2026-09-08T13:34:46.808596+00:00",
+          "response_sha256": "7955c16f5be8262b0f48b5ae2370983f78197a53ad6fbb1c11fab701926d7e8c"
+        },
+        {
+          "endpoint": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/ref/heads/codex/phase2-qualification-evidence-20260908",
+          "observed_at_utc": "2026-09-08T13:34:48.039784+00:00",
+          "response_sha256": "a02f40375ed8f7249dd9a1d15eb8f01e2a9850e09f4b62da1b4365adf9647137"
+        },
+        {
+          "endpoint": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/commits/2eec225cdfee5ebbdf5e10cae7eaa5c5b6c80faa",
+          "observed_at_utc": "2026-09-08T13:34:48.806442+00:00",
+          "response_sha256": "a844bceef138d7752447252444376748a1ae1fb3fc8492507af64687a20fcc03"
+        },
+        {
+          "endpoint": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/trees/cbc413e0e68f40468905b89a6ea0bb1a12d31d05?recursive=1",
+          "observed_at_utc": "2026-09-08T13:34:49.969464+00:00",
+          "response_sha256": "fbfd044de6c784822f23739437a33ee58274748ec81f4f021838275981e32875"
+        },
+        {
+          "endpoint": "https://api.github.com/repos/tdoljyj/cross-memory-system",
+          "observed_at_utc": "2026-09-08T13:34:50.766293+00:00",
+          "response_sha256": "a954e7bae4105d4e2b19e44ccf043f28834a44109b47eacf676a1c7dc738fbfb"
+        },
+        {
+          "endpoint": "https://api.github.com/repos/tdoljyj/cross-memory-system",
+          "observed_at_utc": "2026-09-08T13:34:53.301084+00:00",
+          "response_sha256": "d48023045f19e876ea542212c1885496c29d572e46753233426486e4579cbfe0"
+        },
+        {
+          "endpoint": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/trees/000c878d60031d2dcf5c6d5a09a7caece39f1fc2?recursive=1",
+          "observed_at_utc": "2026-09-08T13:34:56.057215+00:00",
+          "response_sha256": "9a873452bf758e97bc594e1c7178a205803b605175d8e677454850000931c797"
+        },
+        {
+          "endpoint": "https://api.github.com/repos/tdoljyj/cross-memory-system",
+          "observed_at_utc": "2026-09-08T13:34:57.704754+00:00",
+          "response_sha256": "2f74431c847511866790ee7a875c0705fec5ea9a8bf085faaf6fd0046e2e292a"
+        },
+        {
+          "endpoint": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/ref/heads/codex/phase2-qualification-evidence-20260908",
+          "observed_at_utc": "2026-09-08T13:34:59.761572+00:00",
+          "response_sha256": "a02f40375ed8f7249dd9a1d15eb8f01e2a9850e09f4b62da1b4365adf9647137"
+        },
+        {
+          "endpoint": "https://api.github.com/repos/tdoljyj/cross-memory-system",
+          "observed_at_utc": "2026-09-08T13:35:01.807988+00:00",
+          "response_sha256": "3a97266c443def95526841619d10bf9173a6fcdc5b467e2379507dc4f1d36479"
+        },
+        {
+          "endpoint": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/ref/heads/codex/phase2-qualification-evidence-20260908",
+          "observed_at_utc": "2026-09-08T13:35:04.019426+00:00",
+          "response_sha256": "7e5420c1a5c8ea303808cb80927792eb596425c93d3721340fcd4c0cfe525a1b"
+        },
+        {
+          "endpoint": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/commits/f0ae25ae49752ab2e218120436585f7d70a90cc2",
+          "observed_at_utc": "2026-09-08T13:35:04.813688+00:00",
+          "response_sha256": "26c58ab096829752f027797e2e1a94a2c347e4e5af5b819326ea63b2ad6fd0bc"
+        },
+        {
+          "endpoint": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/trees/000c878d60031d2dcf5c6d5a09a7caece39f1fc2?recursive=1",
+          "observed_at_utc": "2026-09-08T13:35:06.759536+00:00",
+          "response_sha256": "9a873452bf758e97bc594e1c7178a205803b605175d8e677454850000931c797"
+        },
+        {
+          "endpoint": "https://api.github.com/repos/tdoljyj/cross-memory-system/contents/artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/runtime-evidence/root-registration-independent-20260908/result.json?ref=f0ae25ae49752ab2e218120436585f7d70a90cc2",
+          "observed_at_utc": "2026-09-08T13:35:07.858598+00:00",
+          "response_sha256": "4e85ce574148dcc20d5e5d4684f3fdd377ac8ea6e78dbe02c40824bc574de3a9"
+        }
+      ]
+    }
+  },
+  "authority_effect": "NONE",
+  "root_registration": "Separate transaction and live readback required",
+  "historical_observation_only": true
+}

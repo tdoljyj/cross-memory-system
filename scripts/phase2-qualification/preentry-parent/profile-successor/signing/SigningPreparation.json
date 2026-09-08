@@ -1,0 +1,18 @@
+{
+  "state": "ACCEPTED_EXACT_PROFILE_PAYLOAD_READY_FOR_REAL_OWNER_PR_SIGNATURE",
+  "review_subject_sha256": "e3e2b296c3fbe49fa2e0670a5e87be989a3bb0f10a65bc8e94c657db1d2ffbf7",
+  "payload_sha256": "ed0557c4ca7b3a3b90916c1f5be940189eb062146138f193bf8a282852d5fe3c",
+  "file_sha256": "d9d8a4c18def2985e4152e7835c91b1c5d84820d4b7af7e40dccefe56d7ca6bb",
+  "acceptance": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/FixedSyntheticProfileSchemaIndependentAcceptance.json",
+    "sha256": "bc25963e3236a483b829bde92854f814aa71998b7d9ab5450d9707bfd3e98c6e",
+    "git_blob_sha": "952aa967354c326b74f30a327b434b78dd2701bf"
+  },
+  "preparation_source_sha256": "c44e287937f6ab06cdf6dd76abb2113da899e3e95cef59f6f090372735e059bb",
+  "signatures_created": 0,
+  "signature_verified": false,
+  "ga_issued": false,
+  "controller_qualified": false,
+  "pqual_runs": 0,
+  "publication_boundary": "Publish exact accepted Profile, specialized Schemas and this payload through existing Owner PR; actual verified signed merge/read-back remains required. No signature placeholder or current authority inference."
+}

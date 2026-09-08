@@ -1,0 +1,90 @@
+{
+  "kind": "FIRST_NONPRODUCTION_ROOT_REGISTRATION_INDEPENDENT_LIVE_VERIFICATION",
+  "state": "VERIFIED_REGISTERED_EXACT_SUBJECT_NO_GATE_AUTHORITY",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "observed_at": "2026-09-08T13:46:58.200523+00:00",
+  "project_ref": "uscrdifznmlvczcekqpw",
+  "root_set_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+  "generation_id": "ctrgen_352785779b64458a889d571360e2d2d5",
+  "sequence": 1,
+  "event_recorded_at": "2026-09-08T13:44:30.425601+00:00",
+  "metadata_binding_sha256": "793aa13a245153c36a2806eb78dc9c3f677ddb8ad678b3afe5fe2f63a0c2e4fb",
+  "exact_assembled_root_match": true,
+  "exact_sixteen_field_binding_match": true,
+  "timestamp_comparison": "timestamptz normalized to exact instant; all other fields deep equal",
+  "counts": {
+    "accepted_binding": 1,
+    "events": 1,
+    "current_head": 1
+  },
+  "store_state": "STORED_NO_GATE_AUTHORITY",
+  "authority_effect": "NONE",
+  "root_file_sha256": "2ade97c5ee7db38d126c6834294c47fd462790a76fa13624480c69bf94aaf898",
+  "binding_file_sha256": "5caf2077d14cb98a1259d3d1afed734936e6c04ab02a2d4600590660db412671",
+  "accepted_subject_sha256": "e8f60f842a5c0d6dd2eb161d1eda35deb3e60c68236d489c4f98b22356a5cf8d",
+  "signed_payload_sha256": "8487344cdcf4e976d5f7db0514a25aea7b447875cbd74c4780d5ba6c9d5113be",
+  "owner_merge_commit": "f47fbae12738674ec780a9a79de72e94238b8f10",
+  "signature_evidence_sha256": "e62e2da61b3d92f270c6f2294f950ba8c0e5c57866a9798968febcad65164f99",
+  "registration_acceptance_sha256": "b3d4422ba8d4150bd2988fc713217b3f310b7bf1c34c058e17a221f435afc49b",
+  "owner_expires_at": "2026-09-09T09:28:59Z",
+  "permissions_observation": {
+    "rpcs": [
+      {
+        "acl": "{postgres=X/postgres,service_role=X/postgres}",
+        "name": "append_event",
+        "config": [
+          "search_path=\"\"",
+          "TimeZone=UTC"
+        ],
+        "definition_sha256": "deab3678f32d8e89821cd04689d4957bcd4b5b220142b9024492ff786168d909"
+      },
+      {
+        "acl": "{postgres=X/postgres}",
+        "name": "deny_mutation",
+        "config": [
+          "search_path=\"\""
+        ],
+        "definition_sha256": "c38b11d91bcc6e6ce0c25b3d2636158a9fbbccbe92093a08d74f72302d0ca92c"
+      },
+      {
+        "acl": "{postgres=X/postgres,service_role=X/postgres}",
+        "name": "read_root",
+        "config": [
+          "search_path=\"\"",
+          "TimeZone=UTC"
+        ],
+        "definition_sha256": "e1f496ad7e43ba08eca97c4e2cfa13a162660ae90d6628aac16af9c2c26cc47c"
+      }
+    ],
+    "tables": [
+      {
+        "acl": "{postgres=arwdDxtm/postgres}",
+        "rls": true,
+        "name": "accepted_binding"
+      },
+      {
+        "acl": "{postgres=arwdDxtm/postgres}",
+        "rls": true,
+        "name": "current_head"
+      },
+      {
+        "acl": "{postgres=arwdDxtm/postgres}",
+        "rls": true,
+        "name": "events"
+      }
+    ],
+    "business_table_count": 13
+  },
+  "raw_observation": {
+    "path": "scripts/phase2-qualification/nonproduction-control-store/first-registration/work/signed-root-v2/IndependentLiveReadback.json",
+    "sha256": "2e85fee56d74cdead8cb6171e893bc80820c3ba49e21d5855e73d5b5687ad9fb",
+    "local_ignored_only": true
+  },
+  "limitations": [
+    "Report contains summaries and digests, not live Root body.",
+    "This verifies actual limited nonproduction registration only; no GA, GRR, Profile signature, controller qualification or PQUAL execution.",
+    "No production read/write or business permissions changed by this review.",
+    "Read-only snapshot is not a future freshness lease. Every actual next effect still verifies current authority, revocation, generations, scope and budget.",
+    "Business table count observed 13; this query does not claim a fresh full business data or metadata equivalence audit."
+  ]
+}

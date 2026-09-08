@@ -1,0 +1,190 @@
+{
+  "kind": "FIXED_SYNTHETIC_PROFILE_SCHEMA_INDEPENDENT_ACCEPTANCE",
+  "state": "ACCEPTED_EXACT_PROFILE_DEFINITION_AND_LAYER_APPLICABILITY_FOR_SIGNING",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "observed_at": "2026-09-08T13:45:45.354Z",
+  "review_subject_sha256": "e3e2b296c3fbe49fa2e0670a5e87be989a3bb0f10a65bc8e94c657db1d2ffbf7",
+  "subject_file": {
+    "path": "scripts/phase2-qualification/preentry-parent/profile-successor/ProfileReviewSubject.json",
+    "sha256": "9d56ebb0311938d050aa652c86f2369c729a1fd8232e376f52fb12f489f52e98"
+  },
+  "preparation_evidence": {
+    "path": "scripts/phase2-qualification/preentry-parent/profile-successor/PreparationEvidence.json",
+    "sha256": "127eec25f7d47b8b9a8a13155487b69df7698bf76773f54fbc3808acc4a31073"
+  },
+  "accepted_profile_definition": {
+    "profile_id": "DP-PREENTRY-SKILL-QUALIFICATION",
+    "definition_version": "fixed-synthetic-skill-input-20260908.v1",
+    "purpose": "SKILL_COEXISTENCE_QUALIFICATION",
+    "allowed_environments": [
+      "ISOLATED_TEST"
+    ],
+    "allowed_subject_kinds": [
+      "ISOLATED_TEST_SUBJECT"
+    ],
+    "allowed_candidate_states": [
+      "UNQUALIFIED_QUARANTINED_TEST_SUBJECT_ONLY"
+    ],
+    "required_stages": [
+      "R05",
+      "R06",
+      "R07",
+      "R08",
+      "R09",
+      "R10"
+    ],
+    "candidate_must_differ_from_controller": true,
+    "required_true": [
+      "profile_accepted",
+      "authority_chain_verified",
+      "owner_or_delegate_verified",
+      "phase_authorization_valid",
+      "controller_qualification_valid",
+      "isolated_host_proven",
+      "scope_contained",
+      "exact_digests_bound",
+      "budget_reserved",
+      "evidence_sink_durable",
+      "stop_channel_ready",
+      "revocation_fresh",
+      "target_revision_matches",
+      "no_credential_crossing",
+      "pre_registered_expectations"
+    ],
+    "required_false": [
+      "real_user_payload",
+      "production_credentials",
+      "public_distribution",
+      "economic_rights",
+      "model_action",
+      "scope_expansion",
+      "candidate_pointer_write"
+    ],
+    "gate_control_type": "GateAuthorization",
+    "terminal_receipt_control_type": "GateResultReceipt",
+    "max_lifetime_seconds": 90,
+    "not_applicable_layer_permissions": {
+      "account": {
+        "reason": "该固定child没有Clued业务account、业务用户令牌或账户API；只读取明确三Skill文本和固定合成fixture。GitHub Owner控制身份仍存在并单独核验，不与此Clued业务account层混同。",
+        "accepted_schema_ref": {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/1622355e303cd0f22e2b0d0b4b0beb943559c78d",
+          "sha256": "f57cceb29853c67f8702c1560017c3be7b96626d6358299b5215add63d01e916"
+        }
+      },
+      "integration_installation": {
+        "reason": "没有Clued集成安装实例、集成业务凭据或installation接口调用；宿主Docker安装及受信Git发布渠道不是本合成业务层installation，其控制/凭据代际继续独立核验。",
+        "accepted_schema_ref": {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/1622355e303cd0f22e2b0d0b4b0beb943559c78d",
+          "sha256": "f57cceb29853c67f8702c1560017c3be7b96626d6358299b5215add63d01e916"
+        }
+      },
+      "context": {
+        "reason": "不创建或读取ContextStream/context/session业务对象；/allowed/fixture.json不是ContextStream或Canon。父监督会话session_generation不因此消失。",
+        "accepted_schema_ref": {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/1622355e303cd0f22e2b0d0b4b0beb943559c78d",
+          "sha256": "f57cceb29853c67f8702c1560017c3be7b96626d6358299b5215add63d01e916"
+        }
+      },
+      "binding": {
+        "reason": "没有Clued Binding发行、选择、资源绑定或Binding token；纯固定文件挂载不是业务Binding。确切container/Skill/Scope/Root引用仍必须绑定且禁止改变。",
+        "accepted_schema_ref": {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/1622355e303cd0f22e2b0d0b4b0beb943559c78d",
+          "sha256": "f57cceb29853c67f8702c1560017c3be7b96626d6358299b5215add63d01e916"
+        }
+      }
+    }
+  },
+  "accepted_schema_refs": {
+    "preentry-profile.candidate.schema.json": {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/c3d0fd5c475fcc2f0da618453a9f015b4e50e90d",
+      "sha256": "678942e70d6579df4f737472f606f61463c58c6307b1b810ef741ee667771338"
+    },
+    "revocation-epoch-vector.candidate.schema.json": {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/1622355e303cd0f22e2b0d0b4b0beb943559c78d",
+      "sha256": "f57cceb29853c67f8702c1560017c3be7b96626d6358299b5215add63d01e916"
+    },
+    "gate-authorization.candidate.schema.json": {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/90be47cb00542eafe33d07d0d2678718b3efc845",
+      "sha256": "f7f7e2a011f3f81a005e46f9cf7683edeb010dc7812eadfb4473f6ad5368a1ce"
+    }
+  },
+  "accepted_fixed_input_ref": {
+    "source_ref": {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/5e949748e77eed96063818d0d15a378519c571ea",
+      "sha256": "215fc1d0c6327cef514879faa60dad9cf4e727ec207d867e4fe2eb8f3c7d7f89"
+    },
+    "json_pointer": "/fixed_input"
+  },
+  "accepted_vector_schema_version": "clued.fixed-synthetic-skill-input/1",
+  "accepted_layer_permissions": {
+    "account": {
+      "reason": "该固定child没有Clued业务account、业务用户令牌或账户API；只读取明确三Skill文本和固定合成fixture。GitHub Owner控制身份仍存在并单独核验，不与此Clued业务account层混同。",
+      "accepted_schema_ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/1622355e303cd0f22e2b0d0b4b0beb943559c78d",
+        "sha256": "f57cceb29853c67f8702c1560017c3be7b96626d6358299b5215add63d01e916"
+      }
+    },
+    "integration_installation": {
+      "reason": "没有Clued集成安装实例、集成业务凭据或installation接口调用；宿主Docker安装及受信Git发布渠道不是本合成业务层installation，其控制/凭据代际继续独立核验。",
+      "accepted_schema_ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/1622355e303cd0f22e2b0d0b4b0beb943559c78d",
+        "sha256": "f57cceb29853c67f8702c1560017c3be7b96626d6358299b5215add63d01e916"
+      }
+    },
+    "context": {
+      "reason": "不创建或读取ContextStream/context/session业务对象；/allowed/fixture.json不是ContextStream或Canon。父监督会话session_generation不因此消失。",
+      "accepted_schema_ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/1622355e303cd0f22e2b0d0b4b0beb943559c78d",
+        "sha256": "f57cceb29853c67f8702c1560017c3be7b96626d6358299b5215add63d01e916"
+      }
+    },
+    "binding": {
+      "reason": "没有Clued Binding发行、选择、资源绑定或Binding token；纯固定文件挂载不是业务Binding。确切container/Skill/Scope/Root引用仍必须绑定且禁止改变。",
+      "accepted_schema_ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/1622355e303cd0f22e2b0d0b4b0beb943559c78d",
+        "sha256": "f57cceb29853c67f8702c1560017c3be7b96626d6358299b5215add63d01e916"
+      }
+    }
+  },
+  "deadline": "2026-09-09T09:28:59Z",
+  "source_applicability": {
+    "s06_sha256": "f967fdf3e63028d29ed191160698726b5d707aaae63bd951f6ba2e8584936fec",
+    "vector_rule_lines": [
+      3010,
+      3011,
+      3012
+    ],
+    "release_profile_only_lines": [
+      3435,
+      3437
+    ],
+    "atomic_gate_obligations_retained_lines": [
+      3439,
+      3441
+    ],
+    "qualification_policy": "Original DP-PREENTRY policy has no gate_refs/set-digest combination fields; remove only incorrect Release Profile generalization. B01-B06 remain mechanism definitions."
+  },
+  "decision_scope": "Accept this exact nonproduction execution Profile definition and explicit four-layer N/A encoding for the fixed child/input only. This is an actual independent definition decision, ready for authentic signature binding; not controller qualification, active GA or execution approval.",
+  "layer_rationale": "No Clued business account, installation, context or binding is accessed/issued by the exact fixed child. Control Owner identity, Root revocation, runner/credential/session generations, parent transport permissions and actual scope checks remain applicable.",
+  "validation": {
+    "exact_current_files": 8,
+    "exact_source_refs": 6,
+    "canonical_subject_verified": true,
+    "additional_mutation_checks_passed": 23,
+    "reported_existing_tests_reused": 4,
+    "existing_tests_rerun": false,
+    "network_or_execution_actions": 0
+  },
+  "required_before_use": [
+    "Publish and independently read back the exact new Schema/Profile/acceptance bytes and actual signing merge. Local Git blob calculation is not remote persistence.",
+    "Validate each actual Vector against this exact version/schema, match exact accepted Profile reasons and references, and verify full fixed input/Scope; shape alone is not authority.",
+    "A real GateAuthorization still binds a valid registered atomic Gate definition/version/digest and actual inputs; no B01-B06 Gate renaming. The unchanged GA candidate shape is not accepted as complete runtime enforcement.",
+    "All original fifteen positive/seven negative conditions and R05-R10 actual evidence remain required; controller qualification/current Root/Owner/GA/independent generations, durable Intent, budget and STOP must be genuinely connected.",
+    "PQUAL08/09 crossing controls and PQUAL13 next-action generation/revocation/tampered-N/A rejection require real observations. Three-file byte equality does not prove Skill behavior."
+  ],
+  "not_accepted": [
+    "No running parent/controller qualification or PQUAL result.",
+    "No generalized N/A for production, business credentials, arbitrary isolated tasks, models, paid actions, Slice A or post-Entry PQUAL18.",
+    "No permission from unverified accepted_schema_ref syntax; no default omitted or zero epochs."
+  ]
+}

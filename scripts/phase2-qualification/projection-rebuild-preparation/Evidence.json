@@ -1,0 +1,45 @@
+{
+  "state": "A07_EXISTING_PROJECTION_PATH_LOCAL_REBUILD_VERIFIED",
+  "conclusion": "Existing builder sufficient for bounded offline rebuild; no runtime code change required",
+  "files": [
+    {
+      "path": "rebuild.test.mjs",
+      "sha256": "24720eaafad32a732df98f8a86737dc17bf74daf72c55a9c12f6f44774e879b9",
+      "bytes": 6424
+    },
+    {
+      "path": "Observation.json",
+      "sha256": "c585dd787180a371fcf8e6b1d635c0592e37ff59b1830fe6d326b79f83a559a3",
+      "bytes": 1991
+    },
+    {
+      "path": "README.md",
+      "sha256": "6c2f410a822389095a0b78c83c41193ca7237032e9d0905324b50bfc177f4f4c",
+      "bytes": 2726
+    }
+  ],
+  "runtime_source": {
+    "path": "apps/clued-cloud/scripts/two-level-snapshot.mjs",
+    "sha256": "1dfcc8de7b481bc8a29cd055f711bb142fa390fff07a61730320866a477f6b7e",
+    "build_entry_line": 460,
+    "validate_entry_line": 726
+  },
+  "alignment_remote": "f47fbae12738674ec780a9a79de72e94238b8f10",
+  "validation": {
+    "command": "node --test scripts/phase2-qualification/projection-rebuild-preparation/rebuild.test.mjs",
+    "passed": 1,
+    "failed": 0,
+    "skipped": 0,
+    "duration_ms": 92.6867,
+    "actual_files_compared": 11,
+    "observation_events": 6,
+    "temporary_scope_cleaned": true
+  },
+  "existing_old_tests_repeated": false,
+  "private_gold_read": false,
+  "production_calls": 0,
+  "real_receipt_issued": false,
+  "formal_pointer_touched": false,
+  "formal_slice_slots_executed": 0,
+  "authority_effect": "NONE"
+}

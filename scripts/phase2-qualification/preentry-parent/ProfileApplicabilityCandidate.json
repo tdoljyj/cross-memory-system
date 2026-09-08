@@ -1,0 +1,152 @@
+{
+  "kind": "CONCRETE_PROFILE_APPLICABILITY_CANDIDATE",
+  "status": "PREPARED_FOR_INDEPENDENT_APPLICABILITY_REVIEW_NOT_ACCEPTED",
+  "scope": "Only fixed synthetic-v1 action with exact three accepted Skill files as data; not Skill behavior qualification",
+  "source_rule": {
+    "source": "S06",
+    "sha256": "f967fdf3e63028d29ed191160698726b5d707aaae63bd951f6ba2e8584936fec",
+    "lines": [
+      3010,
+      3011,
+      3012
+    ],
+    "rule": "All four scope-ref/epoch pairs retained; only explicit accepted Schema with layer reason allows not_applicable"
+  },
+  "schema_candidates": [
+    {
+      "path": "scripts/phase2-qualification/contract-candidates/preentry-profile.candidate.schema.json",
+      "sha256": "bad887a19c0c9f4f3ebcbc2ef38912869adc432ba7599bae63745b2ca48f4ee1"
+    },
+    {
+      "path": "scripts/phase2-qualification/contract-candidates/revocation-epoch-vector.candidate.schema.json",
+      "sha256": "c3c3c2ae05cd1f4f844f2f9898f1d29b2bfad2940975104847df41e1610831fe"
+    },
+    {
+      "path": "scripts/phase2-qualification/contract-candidates/gate-authorization.candidate.schema.json",
+      "sha256": "f7f7e2a011f3f81a005e46f9cf7683edeb010dc7812eadfb4473f6ad5368a1ce"
+    }
+  ],
+  "proposed_profile_fields": {
+    "profile_id": "DP-PREENTRY-SKILL-QUALIFICATION",
+    "definition_version": "fixed-synthetic-input-20260908-candidate",
+    "purpose": "SKILL_COEXISTENCE_QUALIFICATION",
+    "allowed_environments": [
+      "ISOLATED_TEST"
+    ],
+    "allowed_subject_kinds": [
+      "ISOLATED_TEST_SUBJECT"
+    ],
+    "allowed_candidate_states": [
+      "UNQUALIFIED_QUARANTINED_TEST_SUBJECT_ONLY"
+    ],
+    "required_stages": [
+      "R05",
+      "R06",
+      "R07",
+      "R08",
+      "R09",
+      "R10"
+    ],
+    "candidate_must_differ_from_controller": true,
+    "required_true": [
+      "profile_accepted",
+      "authority_chain_verified",
+      "owner_or_delegate_verified",
+      "phase_authorization_valid",
+      "controller_qualification_valid",
+      "isolated_host_proven",
+      "scope_contained",
+      "exact_digests_bound",
+      "budget_reserved",
+      "evidence_sink_durable",
+      "stop_channel_ready",
+      "revocation_fresh",
+      "target_revision_matches",
+      "no_credential_crossing",
+      "pre_registered_expectations"
+    ],
+    "required_false": [
+      "real_user_payload",
+      "production_credentials",
+      "public_distribution",
+      "economic_rights",
+      "model_action",
+      "scope_expansion",
+      "candidate_pointer_write"
+    ],
+    "gate_control_type": "GateAuthorization",
+    "terminal_receipt_control_type": "GateResultReceipt",
+    "gate_refs": null,
+    "gate_definition_set_digest": null,
+    "max_lifetime_seconds": 90,
+    "not_applicable_layer_permissions": {
+      "account": {
+        "reason": "该固定child没有Clued业务account、业务用户令牌或账户API；只读取明确三Skill文本和固定合成fixture。GitHub Owner控制身份仍存在并单独核验，不与此Clued业务account层混同。",
+        "accepted_schema_ref": null
+      },
+      "integration_installation": {
+        "reason": "没有Clued集成安装实例、集成业务凭据或installation接口调用；宿主Docker安装及受信Git发布渠道不是本合成业务层installation，其控制/凭据代际继续独立核验。",
+        "accepted_schema_ref": null
+      },
+      "context": {
+        "reason": "不创建或读取ContextStream/context/session业务对象；/allowed/fixture.json不是ContextStream或Canon。父监督会话session_generation不因此消失。",
+        "accepted_schema_ref": null
+      },
+      "binding": {
+        "reason": "没有Clued Binding发行、选择、资源绑定或Binding token；纯固定文件挂载不是业务Binding。确切container/Skill/Scope/Root引用仍必须绑定且禁止改变。",
+        "accepted_schema_ref": null
+      }
+    }
+  },
+  "unresolved_slots": [
+    "Actual accepted Schema reference for each N/A layer",
+    "Existing applicable accepted gate_refs and gate_definition_set_digest",
+    "Actual independently accepted Profile reference and signature binding"
+  ],
+  "wire_instance_complete": false,
+  "nulls_mean_unresolved_not_allowed": true,
+  "fixed_input": {
+    "child_path": "scripts/phase2-qualification/qualification-runtime/fixed_skill_fixture.py",
+    "child_sha256": "98c4d0165144a4ebfbd4889a98da65a8c6d3a71fbf082af393c15b9d00a3c18a",
+    "subject_acceptance": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/R10IndependentProjectionAcceptance.json",
+    "primitive_independent_review": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/FixedFixturePrimitiveIndependentReview.json",
+    "primitive_review_sha256": "174fa3304b2761d463a4d519943ed38afbd1d5c73a6d22ed40e92e7afc3b259d",
+    "parent_path": "scripts/phase2-qualification/preentry-parent/parent.py",
+    "parent_sha256": "a4bff96f76d6ed5598833cbd6f73efec547eaaf9cd039f47f8eef6e925efe79e",
+    "image": "docker.io/library/python@sha256:285a71327884a4d50efbea30104473b0fa43ecefa499458899670ca30dae76e5",
+    "child_model_calls": 0,
+    "child_business_credentials": 0,
+    "network": "none",
+    "mounts": [
+      "fixed exact /driver directory read-only",
+      "attempt-specific synthetic /allowed read-write"
+    ],
+    "cpu": 0.5,
+    "memory_bytes": 134217728,
+    "pid_limit": 16,
+    "deadline_seconds": 90
+  },
+  "retained_current_checks": [
+    "Owner delegation/signature/expiry/current revocation",
+    "RootSet current registered generation and issuer purpose/Audience",
+    "Exact accepted Profile and signed GA/current GA revocation",
+    "runner_generation",
+    "credential_generation for parent trusted transport even though child has none",
+    "session_generation for parent supervised attempt",
+    "Target revision/Scope/Skill/config/fixture exact hashes",
+    "Actual durable remote Intent readback and immutable Result linkage",
+    "Single-active reservation, cumulative 7200s and 1GiB limits; UNKNOWN does not release",
+    "PQUAL13 next-action rejection on independent generation change or tampered N/A and Scope references",
+    "PQUAL08/09 actual no credential/data crossing evidence"
+  ],
+  "pqual_boundary": {
+    "PQUAL01": "Only fixed synthetic action primitive; no formal run yet",
+    "PQUAL10": "Real model operation must be rejected; no mock treated as a live model run",
+    "PQUAL13": "Retained next-side-effect independent generation/revocation denial and N/A/Scope tamper rejection",
+    "PQUAL18": "Post-Entry positive excluded; no Entry/ACTIVE/default mutation"
+  },
+  "authorization_effect": "NONE",
+  "formal_execution_enabled": false,
+  "qualified": false,
+  "independent_acceptance_ref": null
+}

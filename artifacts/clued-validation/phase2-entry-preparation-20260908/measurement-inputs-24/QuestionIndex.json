@@ -1,0 +1,344 @@
+{
+  "state": "PUBLIC_QUESTION_AND_HASH_INDEX_NOT_EXECUTED",
+  "digest_encoding": "SHA256 of sorted compact JSON UTF8 plus LF for each complete case record; source_text hashes exact UTF8 only",
+  "cases": [
+    {
+      "case_id": "SA-N01",
+      "title": "新会话任务续接",
+      "registered_task": "Return the two confirmed pending tasks, their versions, deadlines, dependency, and write constraint.",
+      "input_sha256": "373e0e1e76fc1fa1d700a2d7fbc20ff3a20ad4ea07322f299c4bf5abc19c0272",
+      "gold_sha256": "9044f8d0f0f6eb9797f774b1b650eed4485130e414d4dd9e73e7fa7fe7dfaf09",
+      "source_text_sha256": [
+        "29fff1d84c65cedbf930f8fae2f35eab7b9c50458ca16f7a715bcfcc1a8727c8",
+        "3f2e2ca9f8e39e006b94c3909c3a758e20054ba3a37747390eae5f380ac6ad98"
+      ],
+      "input_delivery": "Custodian supplies only that arm authorized source/input subset at run time; not this Gold file",
+      "origin": "REUSED_ORIGINAL_12_UNCHANGED",
+      "execution": "NOT_EXECUTED"
+    },
+    {
+      "case_id": "SA-N02",
+      "title": "来源纠正",
+      "registered_task": "Return the current output-format decision and its historical predecessor.",
+      "input_sha256": "f00e55e5d3870f8f79aa9b053917c73ab4e1154f823a87f005cb98ffa0966654",
+      "gold_sha256": "e6a7d2f028a9d2e7a66b262a4835d9171be001b4d7d00bbb29be3a321d5d8831",
+      "source_text_sha256": [
+        "deba157f9a1aa4d46b24e90c552d2ca90a5c3fd76d13f6c6cfc85cc49810577f",
+        "1230b1bf5d82bd35fc84f66742ce00d2ff2dc13fb20cd684ef30819ee6ad0da1"
+      ],
+      "input_delivery": "Custodian supplies only that arm authorized source/input subset at run time; not this Gold file",
+      "origin": "REUSED_ORIGINAL_12_UNCHANGED",
+      "execution": "NOT_EXECUTED"
+    },
+    {
+      "case_id": "SA-N03",
+      "title": "冲突保留",
+      "registered_task": "Return the conflict and required next action without selecting a deadline.",
+      "input_sha256": "0a8593032b56237ec67eb5de6472d22a522dd24723ecfc65c0886dd0f8bd7048",
+      "gold_sha256": "cff998d373bc311fc8bf4dcb07a7c14f858e46e4ddab00ff5bed66c505d15ee2",
+      "source_text_sha256": [
+        "54b1e0a35804ca5c0f4b8b4dd8d8e0243979c76195c4827e612515774fb01e89",
+        "353562e05d38bdc604cbedf611415d67d777d2437c6603397bcf48dc376d58b8"
+      ],
+      "input_delivery": "Custodian supplies only that arm authorized source/input subset at run time; not this Gold file",
+      "origin": "REUSED_ORIGINAL_12_UNCHANGED",
+      "execution": "NOT_EXECUTED"
+    },
+    {
+      "case_id": "SA-N04",
+      "title": "已拒候选排除",
+      "registered_task": "Return the accepted pending task and retain the rejection as provenance, without scheduling publication.",
+      "input_sha256": "28e33554ca5c06d5df91596702556bc95f3c232325f1c35f6d6f19803d4c2137",
+      "gold_sha256": "10d4a60e8c15f71d09a5077e0e87bc8a54f7c146d1ded4b02ff47457ed9c92b7",
+      "source_text_sha256": [
+        "2cb40c6e6bcd9e1e1ba8a898c8d1109716e0a3caa03d06353ecf956f355bd1d6",
+        "25b3a66fe089358212f7e129fa4f8e29c2dac245e28d4dcd9f8ccaf9264f6c0f"
+      ],
+      "input_delivery": "Custodian supplies only that arm authorized source/input subset at run time; not this Gold file",
+      "origin": "REUSED_ORIGINAL_12_UNCHANGED",
+      "execution": "NOT_EXECUTED"
+    },
+    {
+      "case_id": "SA-N05",
+      "title": "字段级最小披露",
+      "registered_task": "Return only authorized task fields with source reference R-51 and scope reference SC-51.",
+      "input_sha256": "16f3c0041882136e2ff035d128f7d54c4ee1cc123c0f0514bd7b487bc3a22633",
+      "gold_sha256": "9352ee9f243fb15f3bee0c9cf99404b09e45e91b58852506f535c7725ba9a2e4",
+      "source_text_sha256": [
+        "18981f13d8a38a3d19115a26a393eeebaac6fdc7ac99ef0d792480910ecea6ca",
+        "f8365ef60c88ddd75b26211c740dcea6818a5dd30d1f0494f86b533026a614e2"
+      ],
+      "input_delivery": "Custodian supplies only that arm authorized source/input subset at run time; not this Gold file",
+      "origin": "REUSED_ORIGINAL_12_UNCHANGED",
+      "execution": "NOT_EXECUTED"
+    },
+    {
+      "case_id": "SA-N06",
+      "title": "重复来源幂等",
+      "registered_task": "Return the unique pending task and the duplicate's provenance relationship.",
+      "input_sha256": "caf6a48e31930e8f1e3bb29643b1023ff3cc163bf0d67d86e944c26f7b231e1a",
+      "gold_sha256": "3aa39cbd669f014110b941c64d04011ac4c9543ce6a945b044f9be66b089ceea",
+      "source_text_sha256": [
+        "6d794f6af9b1fe5c6d8dbc34b55cd33ceb2ebc0cbaf75c446b7781f78aae8d68",
+        "e3708046accd27cbba1aaab29aae450f70e2c723ad0a8f935632620737d9e1f0"
+      ],
+      "input_delivery": "Custodian supplies only that arm authorized source/input subset at run time; not this Gold file",
+      "origin": "REUSED_ORIGINAL_12_UNCHANGED",
+      "execution": "NOT_EXECUTED"
+    },
+    {
+      "case_id": "SA-N07",
+      "title": "时间边界",
+      "registered_task": "At the supplied fixture time, return current and historical state, with exact temporal boundaries.",
+      "input_sha256": "4185ec2ec132329cc8e519dae9825cbf74e6362ec0a7ee640500f265c02c6197",
+      "gold_sha256": "67f1b6100274e9428a7730fe019a5aaabc8e661c8033faa8ad88b3ba40254ad8",
+      "source_text_sha256": [
+        "39dba30e6480693bd7cae1225afde44282b387a158e6744998cc031ff170765a",
+        "113027b6fb45176488bc2e8b966116a45697c2af0fdf119c0cffceeb72373c70"
+      ],
+      "input_delivery": "Custodian supplies only that arm authorized source/input subset at run time; not this Gold file",
+      "origin": "REUSED_ORIGINAL_12_UNCHANGED",
+      "execution": "NOT_EXECUTED"
+    },
+    {
+      "case_id": "SA-N08",
+      "title": "投影重建",
+      "registered_task": "Produce a continuation task summary before and after deleting only the designated disposable derived projection and rebuilding it from the same authorized Canonical records. Return actual reconstruction evidence.",
+      "input_sha256": "3e6e3b98fce23277856009dd59704987da57d6003be62c23b5f6d2d37919c7a1",
+      "gold_sha256": "5a13268d47206031876e49617be1a977ae3d00b405993fd3b952f878a84c4497",
+      "source_text_sha256": [
+        "2909ba6b1a80b3aabd44601fc5fcfe50336141b1af57764d002dafcbe2eed67a",
+        "27630d416d9a6266c9f9dce3086245cdc03381d215b132c5e9ce853cfb154b3c"
+      ],
+      "input_delivery": "Custodian supplies only that arm authorized source/input subset at run time; not this Gold file",
+      "origin": "NEW_INDEPENDENT_SYNTHETIC_CANDIDATE",
+      "execution": "NOT_EXECUTED"
+    },
+    {
+      "case_id": "SA-N09",
+      "title": "撤回传播",
+      "registered_task": "Return the valid task and explain the invalidated source/task without treating it as active.",
+      "input_sha256": "5e313f0a9d8d004ee10efcc6a92e4b96803e3e8972c58b808d6f3919761b28e4",
+      "gold_sha256": "8a51070d58a60196e9e331d9aee78ca9ee9a0929ce1c7a40f2a05cbbb92ab0b7",
+      "source_text_sha256": [
+        "2a4600a19706b647038d5ce2a5c9411c1db6a1e67b3a28920aecfdbff47feac7",
+        "2e4bb82abf9024c55d6d14f61bcf2bac171e4e288530d0684c60c7450d645ba7"
+      ],
+      "input_delivery": "Custodian supplies only that arm authorized source/input subset at run time; not this Gold file",
+      "origin": "REUSED_ORIGINAL_12_UNCHANGED",
+      "execution": "NOT_EXECUTED"
+    },
+    {
+      "case_id": "SA-N10",
+      "title": "授权范围缩小",
+      "registered_task": "Return the next authorized Context with the current scope and permitted fields only.",
+      "input_sha256": "a5ea9711351c43608e331969da27966f33680c11f881d9dd9c96904b8d6f46ca",
+      "gold_sha256": "372c821071e04bbbc3a6e048232a27efe14a6fa79abd1a9007dc701e49fce59b",
+      "source_text_sha256": [
+        "033dfe8cfc71b1b6ddc35cbf471a10cf87acaa1650983d79798b8682a5a95f2c",
+        "c883518be500dd1203395df390b13fffe4053069ae139a7a879b83a07acb0020"
+      ],
+      "input_delivery": "Custodian supplies only that arm authorized source/input subset at run time; not this Gold file",
+      "origin": "REUSED_ORIGINAL_12_UNCHANGED",
+      "execution": "NOT_EXECUTED"
+    },
+    {
+      "case_id": "SA-N11",
+      "title": "真实产物回接",
+      "registered_task": "Create the specified small artifact in the bound test output directory, return its byte digest, task identity and actual Evidence/Receipt references.",
+      "input_sha256": "5a46f26568ed7b93061a74a5f948e63907a64ad75ac174588382d22b370e854d",
+      "gold_sha256": "fd6c2c062c21a705acc384471e4ea4461b735b6b0bf0f5dd32d6fd1f4e7e8ee3",
+      "source_text_sha256": [
+        "0a043b6fdd952e45a4e2a41b22eab5063ca51692f1daf9c783cad4ee898edac8",
+        "cb37a4a43a73772ed797f495b07cfacb104c9ce401736101253e0a33315c5285"
+      ],
+      "input_delivery": "Custodian supplies only that arm authorized source/input subset at run time; not this Gold file",
+      "origin": "NEW_INDEPENDENT_SYNTHETIC_CANDIDATE",
+      "execution": "NOT_EXECUTED"
+    },
+    {
+      "case_id": "SA-N12",
+      "title": "中断后恢复",
+      "registered_task": "Recover the committed first action by exact same-key reconciliation, finish only the pending second action, and return original and final real evidence without executing the first action again.",
+      "input_sha256": "8206e632c60ffad5a04d672415e9dd6949891f3b039732d38763824f7e06c51c",
+      "gold_sha256": "0facf1452fd4dd14e0ca1c4a462096be2e090ed817617ea9f4cd8435de3dfc94",
+      "source_text_sha256": [
+        "64c4da90743017449f53a4078b3079cb3fca3bf4570bc4e697cb948168f6cdc5",
+        "5b75c32bfff9ec6589fa729b201a19ee73990edeb167671f49ae9d6fbad49dbe"
+      ],
+      "input_delivery": "Custodian supplies only that arm authorized source/input subset at run time; not this Gold file",
+      "origin": "NEW_INDEPENDENT_SYNTHETIC_CANDIDATE",
+      "execution": "NOT_EXECUTED"
+    },
+    {
+      "case_id": "SA-N13",
+      "title": "角色上下文分离",
+      "registered_task": "Through the scoped Public User test entry, complete the authorized garden inventory handoff and return only the permitted correlation and redacted real result evidence.",
+      "input_sha256": "3d3e1a095d74a6761298066ae8ac1a25d52aea8cfbe2bd1b1532bdd189fc2595",
+      "gold_sha256": "c567deadda28f426d6249dd0665ea8ed964bee6aa9ead077d91780f6c1c662bf",
+      "source_text_sha256": [
+        "94e21cf186cae874d2c04bb962dfdc2ddebb6d48bfc45d718dea2d1979b9f43e",
+        "a6ae1a2ae8b12c1c815ac5368218e7b2500844b0a128e0f27fe21c47f8cc2428"
+      ],
+      "input_delivery": "Custodian supplies only that arm authorized source/input subset at run time; not this Gold file",
+      "origin": "NEW_INDEPENDENT_SYNTHETIC_CANDIDATE",
+      "execution": "NOT_EXECUTED"
+    },
+    {
+      "case_id": "SA-N14",
+      "title": "无模型精确读取",
+      "registered_task": "Return the exact known object and explicitly mark the semantic rewrite unavailable; do not manufacture a rewrite.",
+      "input_sha256": "04e82e7f6a9a35a93c3f039a785a3e0be531e7e0ced5440671feee8fd29493b4",
+      "gold_sha256": "182dadab8b7e3e0afe28bc92f74601712b6a25a761235a4877a409ca318a33ac",
+      "source_text_sha256": [
+        "bc911669e3bf56c809ab8b8fc6be801a418bf84be562321768f67129bca9ed33",
+        "a623283c590ab43322586826882bddf020d5e28d4de697622940535f00ede979"
+      ],
+      "input_delivery": "Custodian supplies only that arm authorized source/input subset at run time; not this Gold file",
+      "origin": "REUSED_ORIGINAL_12_UNCHANGED",
+      "execution": "NOT_EXECUTED"
+    },
+    {
+      "case_id": "SA-N15",
+      "title": "上限内压缩",
+      "registered_task": "Create a concise Context retaining task identity, all four constraints and both source references; actual token counting is performed by the separately bound tokenizer.",
+      "input_sha256": "ffb11d34a0f50b8fb9f4fe2f173f07c0421aa86345b08f1986908b1034ad4afc",
+      "gold_sha256": "a1a389e27998c08168a5b5f3f578e6aa89cd1167c197d365a12fff3bf7ef6a0d",
+      "source_text_sha256": [
+        "8ee1d28b8274bc463bc805b377eb41e5905280ed06d84a62eb946b2b63406671",
+        "8aafbef73a62285e20e0bcbb072df59ae39aec688903067e3af269448e855723"
+      ],
+      "input_delivery": "Custodian supplies only that arm authorized source/input subset at run time; not this Gold file",
+      "origin": "REUSED_ORIGINAL_12_UNCHANGED",
+      "execution": "NOT_EXECUTED"
+    },
+    {
+      "case_id": "SA-N16",
+      "title": "数据与开发事实隔离",
+      "registered_task": "Produce separate User and Development summaries, each containing only its own owner, task and source; do not copy facts across domains.",
+      "input_sha256": "4ef833fbfc66ed44d2a0aaaa62370b906c7a720c650e9e1e5bda4824c323a2a2",
+      "gold_sha256": "909209547f01cb86b6f89dc769df513dd57d52bbe44ef843b88d7e9b5db8a4d1",
+      "source_text_sha256": [
+        "9f5d2a6abbadcd28a7be8a595f9f998c6e9603c17499804a4a6b9268a03ef930",
+        "592413837d18e72d87a7a96364d5c887453645f60c8cf857ca4b3dcc3928aced"
+      ],
+      "input_delivery": "Custodian supplies only that arm authorized source/input subset at run time; not this Gold file",
+      "origin": "REUSED_ORIGINAL_12_UNCHANGED",
+      "execution": "NOT_EXECUTED"
+    },
+    {
+      "case_id": "SA-B01",
+      "title": "缺失来源字节",
+      "registered_task": "Attempt continuation requiring E-B01 through the accepted integrity-checked source entry and preserve actual outcome evidence.",
+      "input_sha256": "63b3d8035cc3c235bbd4bf2508e1494faeaced018a178f039555dc3034200a67",
+      "gold_sha256": "67317ab59abfcb131029748e6ad1988e2374f087a328897523662c0696a61b1b",
+      "source_text_sha256": [
+        "cb7011c45f7199ff65a7b7633945b7c631dcbbd356a61d9e5a6515e3f534b3d4",
+        "5de6042c8410545d4522d95f40c1d045ea08ca1ede6f26c0f390831e933be3b8"
+      ],
+      "input_delivery": "Custodian supplies only that arm authorized source/input subset at run time; not this Gold file",
+      "origin": "NEW_INDEPENDENT_SYNTHETIC_CANDIDATE",
+      "execution": "NOT_EXECUTED"
+    },
+    {
+      "case_id": "SA-B02",
+      "title": "跨tenant请求",
+      "registered_task": "Using only the legitimate requester grant, attempt the exact other-tenant object read and record the service outcome.",
+      "input_sha256": "33b81ab1b6f47c9585621f37d8862668c90fa1798a0619ea36ce0b0262b5f9cd",
+      "gold_sha256": "0c4080bbe9af23b74f64404bedc92f23cb41cec494ce36522ad6f29d57d53998",
+      "source_text_sha256": [
+        "d6dbb848eee8748ca16cd4838c5c70c2260f7418ce51e4ecc49d1fe0e973b59b",
+        "169b71439b92b90d5eae531003a549cc75030c3ff1c5fc045bcb06a95b64cbaa"
+      ],
+      "input_delivery": "Custodian supplies only that arm authorized source/input subset at run time; not this Gold file",
+      "origin": "NEW_INDEPENDENT_SYNTHETIC_CANDIDATE",
+      "execution": "NOT_EXECUTED"
+    },
+    {
+      "case_id": "SA-B03",
+      "title": "跨project请求",
+      "registered_task": "Attempt the same-tenant ungranted-project object read through the existing exact scoped entry and retain its actual outcome.",
+      "input_sha256": "4a0b570f65f005abbfd91da808cf9732772c83134dfd7bdb27a03bb9e52f507c",
+      "gold_sha256": "db5d3d057c5554b9b5cad8498a099220ea2b86862f52152bdc4e9a48b07f89d7",
+      "source_text_sha256": [
+        "173891e3db91a5b852129d9e3a8e14a8f8a3228ba999fa72d18c69416c321430",
+        "bc76eb7ceee904e63ef279f0c30976c62e38a2164b58b9c48c1a4f5c3c4311c0"
+      ],
+      "input_delivery": "Custodian supplies only that arm authorized source/input subset at run time; not this Gold file",
+      "origin": "NEW_INDEPENDENT_SYNTHETIC_CANDIDATE",
+      "execution": "NOT_EXECUTED"
+    },
+    {
+      "case_id": "SA-B04",
+      "title": "批准到期",
+      "registered_task": "Request the bound test action after the actual grant deadline and record the authority decision plus unchanged state.",
+      "input_sha256": "87d5cd039f135c33c715d023e3b5546252fcbee072130e0232fb3b386c955f92",
+      "gold_sha256": "ca524740af6dcabda6d677d898faae7112454a2eda1b729f9bdb3bdac4e424c3",
+      "source_text_sha256": [
+        "38c908252cb1c30ce4ae5f20294b6c73cdcb2d6683822000b502aa750bec4502",
+        "9379ef29e0af21ea9450c0083f58c8d1f0c2d2164bb34574b3777126d78af58d"
+      ],
+      "input_delivery": "Custodian supplies only that arm authorized source/input subset at run time; not this Gold file",
+      "origin": "NEW_INDEPENDENT_SYNTHETIC_CANDIDATE",
+      "execution": "NOT_EXECUTED"
+    },
+    {
+      "case_id": "SA-B05",
+      "title": "授权撤销",
+      "registered_task": "Attempt a new request using the revoked original credential and retain the original rejection and no-effect evidence.",
+      "input_sha256": "ab2f2fb3bb2bc4036bb8aa153b08b8cf784b57fded7582c42499e76da0829b82",
+      "gold_sha256": "a89f3cc7fac68652ed4d8996fa944d7141f8cae30da7ffe983fe6d7cdc92fb36",
+      "source_text_sha256": [
+        "51420675c74058752e38b5e9c1d9f49f6e73a0d575e1f3ae634831803cc52910",
+        "a25fd5669ff7c0de0a8eeb2a9e3acad008d03c8dd0e6e0d3696b0b36580e472b"
+      ],
+      "input_delivery": "Custodian supplies only that arm authorized source/input subset at run time; not this Gold file",
+      "origin": "NEW_INDEPENDENT_SYNTHETIC_CANDIDATE",
+      "execution": "NOT_EXECUTED"
+    },
+    {
+      "case_id": "SA-B06",
+      "title": "候选冒充事实",
+      "registered_task": "Attempt continuation whose sole required fact is the unaccepted candidate; keep the actual refusal and absence of execution.",
+      "input_sha256": "fc6f3f63ab4acba2eec05654c695fb17f58281f5cbf1e6bf316460a9fd29d76a",
+      "gold_sha256": "790ef20cc4f5645c4944ed86ffd7a7676ca7fa98f0eed92ab8937da0aee553db",
+      "source_text_sha256": [
+        "d5048a93d68a5476103517fbb78bdb5d5928b3b7902285f0377b732884e2d061",
+        "09af5ee3617716de12c729c621dc5da36ef85253df404746a2a995ee30c44340"
+      ],
+      "input_delivery": "Custodian supplies only that arm authorized source/input subset at run time; not this Gold file",
+      "origin": "NEW_INDEPENDENT_SYNTHETIC_CANDIDATE",
+      "execution": "NOT_EXECUTED"
+    },
+    {
+      "case_id": "SA-B07",
+      "title": "关键上下文不充分",
+      "registered_task": "Attempt to build the required complete Context under the unchanged actual token budget; preserve token measurement and the resulting safe outcome.",
+      "input_sha256": "11d5476e5223b7940ddff07e18f0118f1fb089fd56b4a6a29b61624e7af83074",
+      "gold_sha256": "5b90acdfa30a05c6a0093bb005b06445a8d1acb53bd4815b3fe6518482c81d9a",
+      "source_text_sha256": [
+        "c73f681825ba02cbc58d2d42041e46fb251d096ea01f07a1c5002963e768d58c",
+        "1b6275f64e084eb513fd83738844a829395a7b1ef403233b22cdc36036bfc2f5"
+      ],
+      "input_delivery": "Custodian supplies only that arm authorized source/input subset at run time; not this Gold file",
+      "origin": "NEW_INDEPENDENT_SYNTHETIC_CANDIDATE",
+      "execution": "NOT_EXECUTED"
+    },
+    {
+      "case_id": "SA-B08",
+      "title": "Host隔离不足",
+      "registered_task": "Attempt admission of the deliberately ineligible test executor and retain the real isolation check and no-action evidence.",
+      "input_sha256": "e17264d440d887bc50cc8f757e584acb70419b28f946e3bff9cd0a36952c5e44",
+      "gold_sha256": "5df25967214821b712909d5047d03b2935eb818af1db3ed1639b5d123ce9c64f",
+      "source_text_sha256": [
+        "d11ccd56b0891d144f18c8b3a73ef7919b032dfa7f4f9f5a08f7feb3178b50ff",
+        "ef5b663d94f34b7f7e541e5802fe2a7c70c140d890ddf163286880afae0aa76f"
+      ],
+      "input_delivery": "Custodian supplies only that arm authorized source/input subset at run time; not this Gold file",
+      "origin": "NEW_INDEPENDENT_SYNTHETIC_CANDIDATE",
+      "execution": "NOT_EXECUTED"
+    }
+  ],
+  "answer_contents_included": false,
+  "source_contents_included": false
+}

@@ -1,0 +1,37 @@
+{
+  "kind": "PREENTRY_PARENT_PROFILE_CANDIDATE",
+  "state": "PREPARED_PENDING_INDEPENDENT_REVIEW",
+  "files": [
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/parent.py",
+      "sha256": "a4bff96f76d6ed5598833cbd6f73efec547eaaf9cd039f47f8eef6e925efe79e"
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/test_parent.py",
+      "sha256": "2b3f6bd19ef2f2435fee9c7d17a41b8bcdddaed141909d9fa0ffa1bc80e959dd"
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/ProfileApplicabilityCandidate.json",
+      "sha256": "215fc1d0c6327cef514879faa60dad9cf4e727ec207d867e4fe2eb8f3c7d7f89"
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/README.md",
+      "sha256": "5685290d667aad0fe316cca85261a9b1aa064967f24d056150dd031b3ade28ef"
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/.gitignore",
+      "sha256": "7c0e3807a109f275f04fa607825e26c8d69f2e23f684cf4ca68e03df1173780a"
+    }
+  ],
+  "tests": {
+    "command": "python -I -S -B -X utf8 scripts/phase2-qualification/preentry-parent/test_parent.py",
+    "passed": 6,
+    "failed": 0,
+    "skipped": 0,
+    "seconds": 0.011
+  },
+  "live_calls": 0,
+  "formal_execution_enabled": false,
+  "qualified": false,
+  "changed_check_reason": "Added exact Profile lifetime bound and 91-second negative; affected new six tests rerun once, old frozen packages untouched"
+}

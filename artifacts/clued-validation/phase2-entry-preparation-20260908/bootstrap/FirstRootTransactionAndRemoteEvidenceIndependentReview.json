@@ -1,0 +1,41 @@
+{
+  "kind": "FIRST_ROOT_REGISTRATION_TRANSACTION_INDEPENDENT_REVIEW",
+  "state": "ACCEPTED_EXACT_NONPRODUCTION_FIRST_REGISTRATION_TRANSACTION",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "observed_at": "2026-09-08T13:43:39.261389+00:00",
+  "remote_evidence": {
+    "repository": "tdoljyj/cross-memory-system",
+    "private": true,
+    "commit": "f0ae25ae49752ab2e218120436585f7d70a90cc2",
+    "tree": "000c878d60031d2dcf5c6d5a09a7caece39f1fc2",
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/runtime-evidence/root-registration-independent-20260908/result.json",
+    "blob": "4ccbb758059ebd145e3ab634cd98eeb821884dd7",
+    "sha256": "e62e2da61b3d92f270c6f2294f950ba8c0e5c57866a9798968febcad65164f99",
+    "size": 6063,
+    "exact_local_report_bytes": true,
+    "complete_tree": true,
+    "author_and_committer": "Codex@DESK-W-591 <codex@local>",
+    "authority": "EVIDENCE_ONLY_NOT_ROOT_OR_GA"
+  },
+  "transaction": {
+    "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-08\\ia\\work\\kernel-phase2-repo\\scripts\\phase2-qualification\\nonproduction-control-store\\first-registration\\work\\signed-root-v2\\RegisterFirstRoot.sql",
+    "sha256": "f81aeabe00a16ebb2d78dd3afef72c77630f243486d802b5467825b625afade8",
+    "target": "uscrdifznmlvczcekqpw",
+    "binding_json_exact": true,
+    "root_json_exact": true,
+    "checks": [
+      "Single transaction: exclusive lock three new control tables; reject any nonempty table.",
+      "Actual clock Owner window checked after locks; original append checks remain.",
+      "Exact sixteen-field insert; no conflict overwrite; UTC config digest from inserted row.",
+      "Expected sequence 0; original accepted append_event; require APPENDED sequence 1; exceptions roll back both binding and event.",
+      "COMMIT precedes separate final readback; failed/missing response requires read-only reconciliation, never blind retry."
+    ],
+    "live_registration_performed_by_reviewer": false
+  },
+  "limitations": [
+    "No GA/Profile/controller qualification or business permission issued.",
+    "Historical unknown publication remains UNKNOWN; no zero-write inference from empty known IDs.",
+    "Root object remains live only in nonproduction ControlEvidenceStore; remote blob is evidence.",
+    "Fresh store/Owner state required at execution; SQL checks enforce local first-registration conditions."
+  ]
+}

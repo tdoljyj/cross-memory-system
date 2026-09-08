@@ -1,0 +1,19 @@
+# A05 existing record-list source authorization candidate
+
+Status: local forward SQL candidate, not deployed and not a Slice A/Entry acceptance. This changes the existing `public.clued_record_list` call chain in a disposable local PostgreSQL instance; it is not an independent demo compiler. No production calls were made.
+
+The v12 wrapper first calls the existing two-argument `record_list_core`, then removes JSON rows whose actual source scopes are not in the delegated grant. The core has already sorted and applied LIMIT. In the actual local migration chain, a higher-priority ungranted profile record consumes a global limit of one, and an ungranted merged-source project record/event consumes its permitted effective project's limit of one. The wrapper returns an empty list although permitted source rows exist. Higher limits hide this availability defect; output filtering also occurs after JSON materialization.
+
+The candidate moves the same scope conditions into the two existing record/event queries before JSON projection and LIMIT. It factors the unchanged core body into one private three-argument overload. The existing two-argument owner entry delegates with a null internal restriction, preserving its original behavior. The public endpoint retains its exact signature, input/output shape, resolver, current authorization locks and source selection rules; it derives the internal scope array only from the existing binding's current authorization entries and current owned project resources. Clients cannot supply that argument through JSON or call the private overload. Empty delegated scope sets deny all sources; null is used only for the previously supported nondelegated path.
+
+This reuses the original core's effective-project resolution, alias handling, work-log classification, lifecycle/type selection, ordering and row projection. No second semantics engine, Canonical store, authorization domain, Receipt type, public schema, table or role is added. The current conservative source-scope treatment of legacy aliases remains unchanged. Both old functions keep their prior grants/search_path/security-definer configuration. The new overload explicitly denies PUBLIC, anon, authenticated and service_role execution.
+
+`build-candidate.py` records exact source hashes in `SourceBindings.json` and produces `authorized-record-list.candidate.sql` by three bounded changes to the original core, then replaces the existing wrapper. It does not modify the original frozen migration files. Integration into a real forward migration/deployment remains the coordinator's independently reviewed step.
+
+Actual validation: one dedicated local PostgreSQL migration chain, five child checks plus its parent, 6/6 PASS, zero skips. It first demonstrates the old three empty-list failures, then tests corrected permitted results, JSON scope injection rejection, private function permissions, exact project authorization, invalid credential denial, live scope reduction/revocation, unchanged owner entry, repeatable installation, preserved function attributes, and complete Canonical record/Event/Receipt equality before/after. Test-only authorization management creates its normal local audit effects; no real account or database is touched. The dedicated server is stopped and only its verified temp directory cleaned afterward.
+
+These observations establish logical query filtering and limit behavior. They do not prove the database never reads a disk page containing another row, OS isolation, task-specific field minimization, Context Pack token accounting, or full Slice A qualification. All remaining compiler, Profile, Entry, model and measurement requirements stay in force; no private Gold was read for this work.
+
+```powershell
+node --test scripts/phase2-qualification/authorized-record-list-preparation/record-list.test.mjs
+```

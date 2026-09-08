@@ -1,0 +1,18 @@
+{
+  "state": "LOCAL_PRIVATE_CUSTODY_AND_COMMITMENT_CHECKS_ONLY",
+  "preparation_sha256": "6364dc9bf7d40a269a250764f42bf9425b2b0f971aae3d1ee71c862ede4e5d0e",
+  "verifier_sha256": "ca96ff373a772f8f2527625e2ae49aae4e26a5b54379741342e6a46d9ecdb81d",
+  "checks": {
+    "all_24_input_and_gold_case_commitments_match": true,
+    "all_48_source_text_hashes_match": true,
+    "no_answer_objects_or_source_bodies_in_public_question_index": true,
+    "no_hidden_canary_values_in_public_question_index": true,
+    "actual_seed_order_and_8_8_arm_balance_match": true,
+    "all_72_slots_unique_exact_3_each_and_not_executed": true,
+    "all_bound_private_and_public_file_hashes_match": true
+  },
+  "custody_boundary": "Original 12-case historical private file stays unchanged at prior repository path. New 24-case inputs, answers and authoring code are outside repository. Separate directories plus no-read instructions provide procedural custody, not OS-enforced secrecy between agents sharing the same account. Each future executor receives only permitted source inputs and never Gold.",
+  "formal_gold_accepted": false,
+  "formal_slots_executed": 0,
+  "answers_exposed_in_report": false
+}

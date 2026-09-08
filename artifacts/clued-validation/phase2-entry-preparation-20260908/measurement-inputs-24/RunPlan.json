@@ -1,0 +1,871 @@
+{
+  "state": "CANDIDATE_SCHEDULE_BYTES_FIXED_NOT_EXECUTED",
+  "seed": 20260908,
+  "pair_order_algorithm": "Ascending SHA256 UTF8(20260908|case_id); 1-based odd baseline first, even Clued first",
+  "pairs": [
+    {
+      "case_id": "SA-N12",
+      "position": 1,
+      "sort_digest": "08f8a1a13c9762fc79155f60133402f15216fdfbb1f028d7fda85ab52edff120",
+      "arm_order": [
+        "BASELINE",
+        "CLUED"
+      ],
+      "baseline_id": "SA-N12-BASELINE-01",
+      "clued_slot_ids": [
+        "SA-N12-R1",
+        "SA-N12-R2",
+        "SA-N12-R3"
+      ],
+      "session_policy": "NEW_ISOLATED_SESSION_AND_STATE_PER_ARM_AND_REPETITION",
+      "status": "NOT_EXECUTED"
+    },
+    {
+      "case_id": "SA-N03",
+      "position": 2,
+      "sort_digest": "0c2f660b8c8d527ad8173b7df728a28e0dd73c1738c1af96f9edac8a14a807f3",
+      "arm_order": [
+        "CLUED",
+        "BASELINE"
+      ],
+      "baseline_id": "SA-N03-BASELINE-01",
+      "clued_slot_ids": [
+        "SA-N03-R1",
+        "SA-N03-R2",
+        "SA-N03-R3"
+      ],
+      "session_policy": "NEW_ISOLATED_SESSION_AND_STATE_PER_ARM_AND_REPETITION",
+      "status": "NOT_EXECUTED"
+    },
+    {
+      "case_id": "SA-N02",
+      "position": 3,
+      "sort_digest": "0f1f09fa208be658116fa570f7a8f3b281c016a73fe4bbe68bbf4a5f591e1b07",
+      "arm_order": [
+        "BASELINE",
+        "CLUED"
+      ],
+      "baseline_id": "SA-N02-BASELINE-01",
+      "clued_slot_ids": [
+        "SA-N02-R1",
+        "SA-N02-R2",
+        "SA-N02-R3"
+      ],
+      "session_policy": "NEW_ISOLATED_SESSION_AND_STATE_PER_ARM_AND_REPETITION",
+      "status": "NOT_EXECUTED"
+    },
+    {
+      "case_id": "SA-N08",
+      "position": 4,
+      "sort_digest": "410011c3c4d3341eb7a68010049329af5497190eb2642f53b88cdb76b28b3918",
+      "arm_order": [
+        "CLUED",
+        "BASELINE"
+      ],
+      "baseline_id": "SA-N08-BASELINE-01",
+      "clued_slot_ids": [
+        "SA-N08-R1",
+        "SA-N08-R2",
+        "SA-N08-R3"
+      ],
+      "session_policy": "NEW_ISOLATED_SESSION_AND_STATE_PER_ARM_AND_REPETITION",
+      "status": "NOT_EXECUTED"
+    },
+    {
+      "case_id": "SA-N07",
+      "position": 5,
+      "sort_digest": "5d2ec935af4bf86c6ff2b443f378fb863699e152d163a50a554c97768c4c1401",
+      "arm_order": [
+        "BASELINE",
+        "CLUED"
+      ],
+      "baseline_id": "SA-N07-BASELINE-01",
+      "clued_slot_ids": [
+        "SA-N07-R1",
+        "SA-N07-R2",
+        "SA-N07-R3"
+      ],
+      "session_policy": "NEW_ISOLATED_SESSION_AND_STATE_PER_ARM_AND_REPETITION",
+      "status": "NOT_EXECUTED"
+    },
+    {
+      "case_id": "SA-N10",
+      "position": 6,
+      "sort_digest": "5f59a237067317947defb40018939c8ce25ab9637f9b27e6f8616b4078fcd85f",
+      "arm_order": [
+        "CLUED",
+        "BASELINE"
+      ],
+      "baseline_id": "SA-N10-BASELINE-01",
+      "clued_slot_ids": [
+        "SA-N10-R1",
+        "SA-N10-R2",
+        "SA-N10-R3"
+      ],
+      "session_policy": "NEW_ISOLATED_SESSION_AND_STATE_PER_ARM_AND_REPETITION",
+      "status": "NOT_EXECUTED"
+    },
+    {
+      "case_id": "SA-N05",
+      "position": 7,
+      "sort_digest": "69e9fc5d3a89a9455d1c81207032755f7977ca73b1c956fbd69dfa4be0138ee9",
+      "arm_order": [
+        "BASELINE",
+        "CLUED"
+      ],
+      "baseline_id": "SA-N05-BASELINE-01",
+      "clued_slot_ids": [
+        "SA-N05-R1",
+        "SA-N05-R2",
+        "SA-N05-R3"
+      ],
+      "session_policy": "NEW_ISOLATED_SESSION_AND_STATE_PER_ARM_AND_REPETITION",
+      "status": "NOT_EXECUTED"
+    },
+    {
+      "case_id": "SA-N09",
+      "position": 8,
+      "sort_digest": "6e0213c5c42b6a7ee4d60ae3ce91190367184571c1a6f9237c7c69117a77fa92",
+      "arm_order": [
+        "CLUED",
+        "BASELINE"
+      ],
+      "baseline_id": "SA-N09-BASELINE-01",
+      "clued_slot_ids": [
+        "SA-N09-R1",
+        "SA-N09-R2",
+        "SA-N09-R3"
+      ],
+      "session_policy": "NEW_ISOLATED_SESSION_AND_STATE_PER_ARM_AND_REPETITION",
+      "status": "NOT_EXECUTED"
+    },
+    {
+      "case_id": "SA-N04",
+      "position": 9,
+      "sort_digest": "71d42ba790a1e60acc80ef3f952fdf90fea11676280e493683ffb906f5e8ee13",
+      "arm_order": [
+        "BASELINE",
+        "CLUED"
+      ],
+      "baseline_id": "SA-N04-BASELINE-01",
+      "clued_slot_ids": [
+        "SA-N04-R1",
+        "SA-N04-R2",
+        "SA-N04-R3"
+      ],
+      "session_policy": "NEW_ISOLATED_SESSION_AND_STATE_PER_ARM_AND_REPETITION",
+      "status": "NOT_EXECUTED"
+    },
+    {
+      "case_id": "SA-N11",
+      "position": 10,
+      "sort_digest": "86196e4f2f0a550ed326d5dc8534acb5e205f74a3f3804d74f3673ffa9afc427",
+      "arm_order": [
+        "CLUED",
+        "BASELINE"
+      ],
+      "baseline_id": "SA-N11-BASELINE-01",
+      "clued_slot_ids": [
+        "SA-N11-R1",
+        "SA-N11-R2",
+        "SA-N11-R3"
+      ],
+      "session_policy": "NEW_ISOLATED_SESSION_AND_STATE_PER_ARM_AND_REPETITION",
+      "status": "NOT_EXECUTED"
+    },
+    {
+      "case_id": "SA-N01",
+      "position": 11,
+      "sort_digest": "9be2b7fbc6d068a8cfd4562b0b9b371e28c54f8370067ca89501b826a38c48ef",
+      "arm_order": [
+        "BASELINE",
+        "CLUED"
+      ],
+      "baseline_id": "SA-N01-BASELINE-01",
+      "clued_slot_ids": [
+        "SA-N01-R1",
+        "SA-N01-R2",
+        "SA-N01-R3"
+      ],
+      "session_policy": "NEW_ISOLATED_SESSION_AND_STATE_PER_ARM_AND_REPETITION",
+      "status": "NOT_EXECUTED"
+    },
+    {
+      "case_id": "SA-N15",
+      "position": 12,
+      "sort_digest": "b8fcd8295b99fb3de856f0783b068b5483ec37044b33e5d66f90da6d9b0e20ef",
+      "arm_order": [
+        "CLUED",
+        "BASELINE"
+      ],
+      "baseline_id": "SA-N15-BASELINE-01",
+      "clued_slot_ids": [
+        "SA-N15-R1",
+        "SA-N15-R2",
+        "SA-N15-R3"
+      ],
+      "session_policy": "NEW_ISOLATED_SESSION_AND_STATE_PER_ARM_AND_REPETITION",
+      "status": "NOT_EXECUTED"
+    },
+    {
+      "case_id": "SA-N13",
+      "position": 13,
+      "sort_digest": "c9ba97a0b999a4df0de01cee18286cfb98f7d88a2719cb9168871c25b522dda7",
+      "arm_order": [
+        "BASELINE",
+        "CLUED"
+      ],
+      "baseline_id": "SA-N13-BASELINE-01",
+      "clued_slot_ids": [
+        "SA-N13-R1",
+        "SA-N13-R2",
+        "SA-N13-R3"
+      ],
+      "session_policy": "NEW_ISOLATED_SESSION_AND_STATE_PER_ARM_AND_REPETITION",
+      "status": "NOT_EXECUTED"
+    },
+    {
+      "case_id": "SA-N16",
+      "position": 14,
+      "sort_digest": "c9bc3fbf016559358fa222b948650dd402d8964f330cc4d1131577c1f1e770af",
+      "arm_order": [
+        "CLUED",
+        "BASELINE"
+      ],
+      "baseline_id": "SA-N16-BASELINE-01",
+      "clued_slot_ids": [
+        "SA-N16-R1",
+        "SA-N16-R2",
+        "SA-N16-R3"
+      ],
+      "session_policy": "NEW_ISOLATED_SESSION_AND_STATE_PER_ARM_AND_REPETITION",
+      "status": "NOT_EXECUTED"
+    },
+    {
+      "case_id": "SA-N06",
+      "position": 15,
+      "sort_digest": "da3da0b4a3f0dad97a371974684bb6f5e8dfbc2aaec69d6e2802bd078b9f907d",
+      "arm_order": [
+        "BASELINE",
+        "CLUED"
+      ],
+      "baseline_id": "SA-N06-BASELINE-01",
+      "clued_slot_ids": [
+        "SA-N06-R1",
+        "SA-N06-R2",
+        "SA-N06-R3"
+      ],
+      "session_policy": "NEW_ISOLATED_SESSION_AND_STATE_PER_ARM_AND_REPETITION",
+      "status": "NOT_EXECUTED"
+    },
+    {
+      "case_id": "SA-N14",
+      "position": 16,
+      "sort_digest": "f1adb09e98e11eaabccaaa758dea4f3effa11e4228212d78c23c934372a83ea2",
+      "arm_order": [
+        "CLUED",
+        "BASELINE"
+      ],
+      "baseline_id": "SA-N14-BASELINE-01",
+      "clued_slot_ids": [
+        "SA-N14-R1",
+        "SA-N14-R2",
+        "SA-N14-R3"
+      ],
+      "session_policy": "NEW_ISOLATED_SESSION_AND_STATE_PER_ARM_AND_REPETITION",
+      "status": "NOT_EXECUTED"
+    }
+  ],
+  "slots": [
+    {
+      "slot_id": "SA-N01-R1",
+      "case_id": "SA-N01",
+      "repetition": 1,
+      "cache_state": "COLD",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-N01-R2",
+      "case_id": "SA-N01",
+      "repetition": 2,
+      "cache_state": "WARM",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-N01-R3",
+      "case_id": "SA-N01",
+      "repetition": 3,
+      "cache_state": "WARM",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-N02-R1",
+      "case_id": "SA-N02",
+      "repetition": 1,
+      "cache_state": "COLD",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-N02-R2",
+      "case_id": "SA-N02",
+      "repetition": 2,
+      "cache_state": "WARM",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-N02-R3",
+      "case_id": "SA-N02",
+      "repetition": 3,
+      "cache_state": "WARM",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-N03-R1",
+      "case_id": "SA-N03",
+      "repetition": 1,
+      "cache_state": "COLD",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-N03-R2",
+      "case_id": "SA-N03",
+      "repetition": 2,
+      "cache_state": "WARM",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-N03-R3",
+      "case_id": "SA-N03",
+      "repetition": 3,
+      "cache_state": "WARM",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-N04-R1",
+      "case_id": "SA-N04",
+      "repetition": 1,
+      "cache_state": "COLD",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-N04-R2",
+      "case_id": "SA-N04",
+      "repetition": 2,
+      "cache_state": "WARM",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-N04-R3",
+      "case_id": "SA-N04",
+      "repetition": 3,
+      "cache_state": "WARM",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-N05-R1",
+      "case_id": "SA-N05",
+      "repetition": 1,
+      "cache_state": "COLD",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-N05-R2",
+      "case_id": "SA-N05",
+      "repetition": 2,
+      "cache_state": "WARM",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-N05-R3",
+      "case_id": "SA-N05",
+      "repetition": 3,
+      "cache_state": "WARM",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-N06-R1",
+      "case_id": "SA-N06",
+      "repetition": 1,
+      "cache_state": "COLD",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-N06-R2",
+      "case_id": "SA-N06",
+      "repetition": 2,
+      "cache_state": "WARM",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-N06-R3",
+      "case_id": "SA-N06",
+      "repetition": 3,
+      "cache_state": "WARM",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-N07-R1",
+      "case_id": "SA-N07",
+      "repetition": 1,
+      "cache_state": "COLD",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-N07-R2",
+      "case_id": "SA-N07",
+      "repetition": 2,
+      "cache_state": "WARM",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-N07-R3",
+      "case_id": "SA-N07",
+      "repetition": 3,
+      "cache_state": "WARM",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-N08-R1",
+      "case_id": "SA-N08",
+      "repetition": 1,
+      "cache_state": "COLD",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-N08-R2",
+      "case_id": "SA-N08",
+      "repetition": 2,
+      "cache_state": "WARM",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-N08-R3",
+      "case_id": "SA-N08",
+      "repetition": 3,
+      "cache_state": "WARM",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-N09-R1",
+      "case_id": "SA-N09",
+      "repetition": 1,
+      "cache_state": "COLD",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-N09-R2",
+      "case_id": "SA-N09",
+      "repetition": 2,
+      "cache_state": "WARM",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-N09-R3",
+      "case_id": "SA-N09",
+      "repetition": 3,
+      "cache_state": "WARM",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-N10-R1",
+      "case_id": "SA-N10",
+      "repetition": 1,
+      "cache_state": "COLD",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-N10-R2",
+      "case_id": "SA-N10",
+      "repetition": 2,
+      "cache_state": "WARM",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-N10-R3",
+      "case_id": "SA-N10",
+      "repetition": 3,
+      "cache_state": "WARM",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-N11-R1",
+      "case_id": "SA-N11",
+      "repetition": 1,
+      "cache_state": "COLD",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-N11-R2",
+      "case_id": "SA-N11",
+      "repetition": 2,
+      "cache_state": "WARM",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-N11-R3",
+      "case_id": "SA-N11",
+      "repetition": 3,
+      "cache_state": "WARM",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-N12-R1",
+      "case_id": "SA-N12",
+      "repetition": 1,
+      "cache_state": "COLD",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-N12-R2",
+      "case_id": "SA-N12",
+      "repetition": 2,
+      "cache_state": "WARM",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-N12-R3",
+      "case_id": "SA-N12",
+      "repetition": 3,
+      "cache_state": "WARM",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-N13-R1",
+      "case_id": "SA-N13",
+      "repetition": 1,
+      "cache_state": "COLD",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-N13-R2",
+      "case_id": "SA-N13",
+      "repetition": 2,
+      "cache_state": "WARM",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-N13-R3",
+      "case_id": "SA-N13",
+      "repetition": 3,
+      "cache_state": "WARM",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-N14-R1",
+      "case_id": "SA-N14",
+      "repetition": 1,
+      "cache_state": "COLD",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-N14-R2",
+      "case_id": "SA-N14",
+      "repetition": 2,
+      "cache_state": "WARM",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-N14-R3",
+      "case_id": "SA-N14",
+      "repetition": 3,
+      "cache_state": "WARM",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-N15-R1",
+      "case_id": "SA-N15",
+      "repetition": 1,
+      "cache_state": "COLD",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-N15-R2",
+      "case_id": "SA-N15",
+      "repetition": 2,
+      "cache_state": "WARM",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-N15-R3",
+      "case_id": "SA-N15",
+      "repetition": 3,
+      "cache_state": "WARM",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-N16-R1",
+      "case_id": "SA-N16",
+      "repetition": 1,
+      "cache_state": "COLD",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-N16-R2",
+      "case_id": "SA-N16",
+      "repetition": 2,
+      "cache_state": "WARM",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-N16-R3",
+      "case_id": "SA-N16",
+      "repetition": 3,
+      "cache_state": "WARM",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-B01-R1",
+      "case_id": "SA-B01",
+      "repetition": 1,
+      "cache_state": "COLD",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-B01-R2",
+      "case_id": "SA-B01",
+      "repetition": 2,
+      "cache_state": "WARM",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-B01-R3",
+      "case_id": "SA-B01",
+      "repetition": 3,
+      "cache_state": "WARM",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-B02-R1",
+      "case_id": "SA-B02",
+      "repetition": 1,
+      "cache_state": "COLD",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-B02-R2",
+      "case_id": "SA-B02",
+      "repetition": 2,
+      "cache_state": "WARM",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-B02-R3",
+      "case_id": "SA-B02",
+      "repetition": 3,
+      "cache_state": "WARM",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-B03-R1",
+      "case_id": "SA-B03",
+      "repetition": 1,
+      "cache_state": "COLD",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-B03-R2",
+      "case_id": "SA-B03",
+      "repetition": 2,
+      "cache_state": "WARM",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-B03-R3",
+      "case_id": "SA-B03",
+      "repetition": 3,
+      "cache_state": "WARM",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-B04-R1",
+      "case_id": "SA-B04",
+      "repetition": 1,
+      "cache_state": "COLD",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-B04-R2",
+      "case_id": "SA-B04",
+      "repetition": 2,
+      "cache_state": "WARM",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-B04-R3",
+      "case_id": "SA-B04",
+      "repetition": 3,
+      "cache_state": "WARM",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-B05-R1",
+      "case_id": "SA-B05",
+      "repetition": 1,
+      "cache_state": "COLD",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-B05-R2",
+      "case_id": "SA-B05",
+      "repetition": 2,
+      "cache_state": "WARM",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-B05-R3",
+      "case_id": "SA-B05",
+      "repetition": 3,
+      "cache_state": "WARM",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-B06-R1",
+      "case_id": "SA-B06",
+      "repetition": 1,
+      "cache_state": "COLD",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-B06-R2",
+      "case_id": "SA-B06",
+      "repetition": 2,
+      "cache_state": "WARM",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-B06-R3",
+      "case_id": "SA-B06",
+      "repetition": 3,
+      "cache_state": "WARM",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-B07-R1",
+      "case_id": "SA-B07",
+      "repetition": 1,
+      "cache_state": "COLD",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-B07-R2",
+      "case_id": "SA-B07",
+      "repetition": 2,
+      "cache_state": "WARM",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-B07-R3",
+      "case_id": "SA-B07",
+      "repetition": 3,
+      "cache_state": "WARM",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-B08-R1",
+      "case_id": "SA-B08",
+      "repetition": 1,
+      "cache_state": "COLD",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-B08-R2",
+      "case_id": "SA-B08",
+      "repetition": 2,
+      "cache_state": "WARM",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    },
+    {
+      "slot_id": "SA-B08-R3",
+      "case_id": "SA-B08",
+      "repetition": 3,
+      "cache_state": "WARM",
+      "status": "NOT_EXECUTED",
+      "actual_run_id": null
+    }
+  ],
+  "normal_cases": 16,
+  "blocked_cases": 8,
+  "formal_slots": 72,
+  "baseline_runs_outside_72": 16,
+  "cold_warm_assignment": "Candidate explicit proposal: each case R1 COLD, R2/R3 WARM. Actual cache reset/warm-up mechanism and runtime/timer must be accepted and bound before execution; prewarming may not expose prior answer or preserve unauthorized grants.",
+  "planned_normal_latency_samples": {
+    "COLD": 16,
+    "WARM": 32
+  },
+  "capacity": "SERIAL_ONE_ACTIVE_TEST",
+  "gold_visible_to_executors": false,
+  "a10_minimum_valid_nonzero_pairs": 12,
+  "a10_ratio_max": 0.8,
+  "actual_results": []
+}
