@@ -1,0 +1,77 @@
+{
+  "schema": "clued.phase2-execution-delegation/v1",
+  "record_id": "CLUED_PHASE2_PREENTRY_BOOTSTRAP_OWNER_DELEGATION_20260908",
+  "status": "GRANTED_BY_EXPLICIT_USER_INSTRUCTION",
+  "authority_source": {
+    "kind": "CURRENT_CONVERSATION_USER_INSTRUCTION",
+    "task_id": "01a07f5e-510d-7db3-877d-f56e9bfa07ea",
+    "date": "2026-09-08",
+    "verbatim": "批准这份非生产资格启动方案",
+    "approved_proposal": "artifacts/clued-validation/phase2-entry-preparation-20260908/AuthorityUnblockProposal.md",
+    "proposal_commit": "6e8849cbfb296079a6c10fd53c338f28934ba0bb",
+    "proposal_sha256": "2860a0884a2a33bfd57a03789f1d6eab02f7e0d4a8a3725f1d4b640737e0cc3d",
+    "evidence_boundary": "This records the actual user reply; it is not a platform-issued agent identity, a service credential, or a qualification result. The signed merge evidence must be independently verified before this bootstrap is used."
+  },
+  "delegator": "Clued governance Owner, authenticated conversation user; verified GitHub identity tdoljyj",
+  "repository": "tdoljyj/cross-memory-system",
+  "identity_observation": {
+    "observed_on": "2026-09-08",
+    "method": "Read-only gh api user and repository metadata",
+    "login": "tdoljyj",
+    "repository_private": true,
+    "admin": true,
+    "boundary": "Repository administration is identity/access evidence only; the new limited authorization purpose comes from the explicit Owner decision."
+  },
+  "scope": {
+    "purpose": "SKILL_COEXISTENCE_QUALIFICATION",
+    "phase": "PRE_ENTRY_SKILL_QUALIFICATION",
+    "profile_id": "DP-PREENTRY-SKILL-QUALIFICATION",
+    "environment": "ISOLATED_TEST",
+    "policy_change": "A forward, once-scoped bootstrap exception permits the existing verified tdoljyj/GitHub signed-merge identity infrastructure to authenticate this new limited authorization purpose. Old TM19 qualification, roots, pins, frozen sources and publication scopes remain unchanged.",
+    "implementer": "/root/controller_candidate",
+    "independent_assessor": "/root/project_list_auth_fix",
+    "coordinator": "/root",
+    "actor_binding_boundary": "These are the actual coordinated tasks in this conversation, explicitly selected by the Owner through the approved proposal; they are not represented as platform-certified or previously qualified identities.",
+    "allowed": [
+      "Build the fixed qualification driver and isolated exact-digest Skill test subject within the approved source contracts.",
+      "The named independent assessor may assess and accept the applicable Profile and exact runner, host, configuration, fixtures, allowlists and test subjects when real prerequisite evidence satisfies the approved scope.",
+      "The coordinator may issue exact short-lived GateAuthorization only from real independent acceptance and complete prerequisites, then execute the applicable fixed isolated PQUAL actions.",
+      "Same-scope successors require new exact bindings, independent acceptance and freshly verified authorization; they do not require repeated Owner confirmation within this delegation."
+    ],
+    "required_before_each_authorization": [
+      "Verified signed Owner merge, current unrevoked delegation and remaining window/budget",
+      "Applicable valid R05-R10 evidence and independently accepted Profile",
+      "Exact immutable runner/build/dependency/config/fixture/Skill/mechanism/host bindings",
+      "Actual OS isolation, fixed tool/network/executable allowlists and no credential crossing",
+      "Reserved budget, durable evidence sink, stop/revocation freshness and independent generations",
+      "Observed process-tree termination and UNKNOWN reconciliation without blind retry"
+    ],
+    "pqual_boundary": "Only applicable pre-Entry actions in PQUAL-01 through PQUAL-17 and PQUAL-19 through PQUAL-20. PQUAL-10 may verify rejection of unauthorized model action; no real model action is authorized. PQUAL-18 post-Entry positive execution still requires R14 and separate Slice A authorization; a pre-Entry denial is not its positive-case PASS."
+  },
+  "signature_binding": {
+    "required": "A merged pull request in the specified repository containing these exact bytes, merged_by tdoljyj, with verified GitHub web-flow signature and two commit parents. Verify exact proposal and delegation blobs, merge/tree/base/source identities and merge time through the authenticated GitHub API.",
+    "reuse_boundary": "Reuse the existing signature verification method only; do not invoke the old publication validator as if it accepted a new subject or change its pins.",
+    "derived_receipt": "Record the actual PR, merge SHA, verified signature evidence, exact blob digests and timestamp separately after merging. This file does not predeclare a future SHA or signature."
+  },
+  "limits": {
+    "owner_window_seconds_from_verified_merge": 86400,
+    "per_gate_authorization_max_seconds": 600,
+    "max_active_isolated_tests": 1,
+    "cumulative_controlled_execution_seconds": 7200,
+    "new_local_evidence_bytes": 1073741824,
+    "model_budget": 0,
+    "paid_budget": 0
+  },
+  "start_condition": "The explicit Owner approval is received and the required signed merge is independently verified; qualification actions additionally satisfy each real prerequisite.",
+  "revocation": "Any later Owner withdrawal or narrowing takes precedence. Verify current status before each side effect. Unknown/offline status, expired authorization or changed independent generation denies execution. Expiry never proves process termination or releases capacity automatically.",
+  "independence": "The named assessor must not implement the controller or candidate Skill. The coordinator cannot override rejection. If independence or actor binding is lost, stop the affected qualified path rather than silently appointing another assessor.",
+  "prohibited_inference": [
+    "No qualification, Profile acceptance, Gate PASS, R11, Entry or Slice A completion follows from this delegation alone.",
+    "No new local signing key or trust root, old pin rewrite, retrospective source change, or reuse of old signatures for new subjects.",
+    "No real user payload, production credential or business permission change, model action, paid purchase, public distribution, arbitrary host command or candidate pointer write.",
+    "No default Skill activation, Slice A implementation before Entry, transfer of authority, scope expansion or bypass of effective host/service permissions.",
+    "The current noop/wait/fixture_write controller and separate AppContainer probe are unqualified starting components, not a finished Skill qualification executor."
+  ],
+  "issued_qualification": null,
+  "canonical_service_write": "NOT_PERFORMED"
+}
