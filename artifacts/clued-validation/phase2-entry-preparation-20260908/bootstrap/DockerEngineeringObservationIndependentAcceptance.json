@@ -1,0 +1,132 @@
+{
+  "schema_version": 1,
+  "state": "ACCEPTED_FOR_ONE_FIXED_PRE_GA_SYNTHETIC_ENGINEERING_OBSERVATION",
+  "independent_assessor": "/root/project_list_auth_fix",
+  "accepted_at_utc": "2026-09-08T12:04:19.924Z",
+  "source_head": "2eec225cdfee5ebbdf5e10cae7eaa5c5b6c80faa",
+  "subject": {
+    "plan_path": "scripts/phase2-qualification/docker-engineering-observation/EngineeringObservationPlan.json",
+    "plan_sha256": "029e9b25add78a6b7295bcc2735b87045f0dd5f2a93b4fd60d35b49ee6368e28",
+    "source_files": [
+      {
+        "path": "scripts/phase2-qualification/docker-engineering-observation/observe.py",
+        "sha256": "cc3498e6dc5eed1f13fb0b84c4dd4df75f5ee76fb5d24d4167852cb92588ef5a"
+      },
+      {
+        "path": "scripts/phase2-qualification/docker-engineering-observation/validation.py",
+        "sha256": "3ac10b11456ddc2de9155fb2b9f8f8c8c20ac0da51957e587d3081339767ac2e"
+      },
+      {
+        "path": "scripts/phase2-qualification/docker-engineering-observation/test_observation.py",
+        "sha256": "215ecc18d54e50252fc865ed12486d2ce6acce2698ac10f98dede9929d41b9ad"
+      },
+      {
+        "path": "scripts/phase2-qualification/docker-engineering-observation/test_review_fixes.py",
+        "sha256": "8d04a3265130da14eb3ffd111530af16f459314aa74aa6f3bb1739f5359025fa"
+      },
+      {
+        "path": "scripts/phase2-qualification/docker-engineering-observation/README.md",
+        "sha256": "b3a0605d76684c46f93926f707c4a4c7dde8b499d2bda60d1da7974d66671e55"
+      },
+      {
+        "path": "scripts/phase2-qualification/docker-engineering-observation/.gitignore",
+        "sha256": "7c0e3807a109f275f04fa607825e26c8d69f2e23f684cf4ca68e03df1173780a"
+      }
+    ],
+    "input_bindings": [
+      {
+        "path": "scripts/phase2-qualification/docker-isolation/probe.py",
+        "sha256": "2168145b42166b4de1ea470b4fd232549d661542761ffe279955d0ace5580523"
+      },
+      {
+        "path": "scripts/phase2-qualification/linux-docker-driver/candidate.py",
+        "sha256": "7eed6b480010c5aebba39e109356a9a499f8ecc96ced184d3ee926fa52346457"
+      },
+      {
+        "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/PythonImageBinding.json",
+        "sha256": "f2f8d7f5d4e9d77ff4dd42ccbcafedeb1c5a7658f84f17252422fdecdb25d876"
+      }
+    ],
+    "host_python_path": "C:/Users/Windows/AppData/Local/Programs/Python/Python312/python.exe",
+    "host_python_sha256": "4d6f5f81a4bca11191c4c7c6b43632694d0a4ce74e068619d8fdc161d469859a"
+  },
+  "scope_basis": {
+    "proposal_sha256": "2860a0884a2a33bfd57a03789f1d6eab02f7e0d4a8a3725f1d4b640737e0cc3d",
+    "specific_basis": "Approved AuthorityUnblockProposal L26 explicitly requires actual implementation and independent observations BEFORE deciding whether to issue authorization. OwnerDelegation L36–38 separates construction/assessment from qualified PQUAL execution; L65 states qualification actions additionally satisfy their prerequisites.",
+    "conclusion": "This fixed synthetic OS/STOP engineering observation is authorized prerequisite construction/verification. No exact applicable source forbids it before GA; no Skill/PQUAL/Slice A is relabeled to avoid requirements.",
+    "owner_signed_merge": "4f722ea9d78488b749c15d27fe9145e9d9f9d2c2",
+    "owner_expires_at": "2026-09-09T09:28:59Z"
+  },
+  "accepted_execution": {
+    "actor": "/root coordinator",
+    "invocations": 1,
+    "command": "C:/Users/Windows/AppData/Local/Programs/Python/Python312/python.exe -I -S -B -X utf8 scripts/phase2-qualification/docker-engineering-observation/observe.py observe",
+    "caller_checks": [
+      "Exact accepted plan/source/input/Python/CLI hashes still match before this one call",
+      "Current real Owner instructions unrevoked, fixed window active, one controlled observation capacity available",
+      "Honor prior 1320-second conservative reservation plus90, and153482696 total reserved evidence bytes; these are engineering bounds, not a completed formal budget ledger",
+      "Serialize actual Docker run with database deployment"
+    ],
+    "bounds": {
+      "absolute_seconds": 90,
+      "watchdog_stop_starts_seconds": 65,
+      "memory_bytes": 134217728,
+      "cpu": 0.5,
+      "pids": 16,
+      "mounts": 2,
+      "new_evidence_bytes": 134217728,
+      "model_actions": 0,
+      "paid_actions": 0
+    }
+  },
+  "accepted_controls": [
+    "Fixed docker.exe digest and local dockerDesktopLinuxEngine npipe; empty isolated Docker config; only constructed SystemRoot/WINDIR/TEMP/TMP host-child environment. No inherited Docker target, credential or registry login.",
+    "Exact manifest285a713/config1148adc image; only five byte-exact public image Env defaults. Narrow successor adaptation does not modify old model. No image entrypoint/healthcheck/user/volume surprise.",
+    "Two exact mounts: staged hash-checked probe read-only and dedicated synthetic allowed directory writable. No repository, control/evidence directories, Docker socket or host config mounted. Nonroot10001, networknone, readonlyrootfs, allcapsdrop, nonewprivileges, bounded CPU/memory/PIDs/log/tmpfs and no healthcheck checked before start.",
+    "Atomic one-shot folder reservation, fsynced CreateNew Intent/readback and per-command request before launch; damaged/existing evidence never reset or redispatched. Full container ID bound to nonce/name/image/labels, independently rechecked before STOP mutation.",
+    "All CLI calls share absolute90s with shorter call limits and launch-time recheck after persistence/file opens. Fixed watchdog before create; readiness exact typed pid/nonce/deadline/liveness checked at loop/final/start.",
+    "Parent and watchdog stop only this verified full ID; wait code plus typed exited/Pid0/nonzero timestamp required. No rm/prune, no image/volume removal; retain container/evidence/UNKNOWN and capacity.",
+    "Actual probe checks allowed write, rootfs and chmod0 canary denial, loopback positive control plus ENETUNREACH/EPERM/EACCES to TEST-NET, no inherited credential canary, zero caps/NoNewPrivs, live SIGTERM-resistant descendant. Timeout or refused connection does not pass network check.",
+    "No Skill, PQUAL, model/paid action or formal GA. formal entry rejects; no authority/result issuer."
+  ],
+  "resolved_findings": [
+    {
+      "id": "DO-F01",
+      "old_observe_sha256": "5bcfdf9cd3f84b78d5ce5751e7ac5a47a16b869391d0a9c48a6dfafa7038fcc3",
+      "issue": "Request fsync/log opens could cross deadline after initial check and still launch.",
+      "fix": "Immediately before Popen, recheck min(absolute deadline, call-start+limit).",
+      "state": "FIXED"
+    },
+    {
+      "id": "DO-F02",
+      "issue": "Final guard readiness omitted nonce/deadline after timeout; guard not rechecked immediately before start.",
+      "fix": "Shared typed guard_ready at loop, final acceptance and prestart.",
+      "state": "FIXED"
+    }
+  ],
+  "independent_actual_checks": {
+    "image": "Read existing archive84e85f574ea706ee5a2f8dab31f3a7ef970a0f16244b6a47ceb86abf3112559d and bindingf2f8d7f5d4e9d77ff4dd42ccbcafedeb1c5a7658f84f17252422fdecdb25d876; exact tar manifest/config SHA links, Env and Linux/amd64 independently verified without Docker. Prior layer/diffID results reused.",
+    "deadline": "New independent pure check advanced persistence beyond per-call6s while absolute90s remained; Unknown raised before Popen, zero process launches. Covers call deadline as well as implementer absolute-deadline case.",
+    "source_hashes": "All six sources, three input bindings and fixture dependency match fixed plan.",
+    "host_python": "Actual host Get-FileHash read above; initial sandbox file-read denial was resolved by approved host read, not by bypassing an approval rejection.",
+    "tests": "Implementer13 tests are historical on old source; repaired3 targeted tests reported PASS. No old13/full-suite/CI rerun by reviewer; no Docker executed."
+  },
+  "limitations": [
+    "This permits one actual observation, not a successful isolation/STOP finding. Parent-crash watchdog effectiveness has not been experimentally demonstrated by this ordinary observation.",
+    "90-second software cutoff cannot guarantee physical termination if host/daemon fails; retain UNKNOWN/capacity and do not redispatch.",
+    "Local durable files and conservative engineering reservation are not formal remote sink, cryptographic authority, qualified Profile or runtime budget ledger.",
+    "Existing trusted coordinator/host boundary assumed; not proof against malicious same-UID host modification.",
+    "Drift/failure preserves the original attempt; no silent one-shot reset or weakened check."
+  ],
+  "formal_effect": {
+    "engineering_observation_execution_accepted": true,
+    "ga_issued": false,
+    "root_issued": false,
+    "controller_qualified": false,
+    "profile_accepted": false,
+    "pqual_pass": false,
+    "r11_or_entry_pass": false,
+    "slice_a_pass": false
+  },
+  "next": "Coordinator may invoke exactly once under these checks, then supply raw actual probe/STOP/UNKNOWN evidence for independent outcome review. Production and root activation remain untouched."
+}

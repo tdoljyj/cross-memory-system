@@ -643,7 +643,13 @@ function validateManifest(root, manifestPath) {
   for (const key of ['baseline_commit','baseline_tree','baseline_memory_tree','baseline_protocol_v1_tree']) {
     if (!/^[0-9a-f]{40}$/.test(generated && generated[key] || '')) throw new Error('manifest ' + key + ' invalid');
   }
-  if (!Array.isArray(manifest.entries) || manifest.entries.length !== 91) throw new Error('manifest entry set must contain exact 91 non-manifest artifacts');
+  const controlSuccessor = manifest.control_root_successor;
+  const limitedControlSuccessor = controlSuccessor?.revision_id === 'phase2-control-root-nonproduction-v1-20260908';
+  if (controlSuccessor && !limitedControlSuccessor) throw new Error('unknown control root successor');
+  if (!limitedControlSuccessor && manifest.control_uri_templates) throw new Error('control mapping without accepted successor identity');
+  if (limitedControlSuccessor && (!same(controlSuccessor, {"authority_effect":"NONE","predecessor_manifest_sha256":"05ca5bb70c642dba9c3f58c0b943020d6188636e60cc569b3802c90a9afd36b5","revision_id":"phase2-control-root-nonproduction-v1-20260908","root_set_id":"ctr_414bd3c724264a83894b0c55cf2ab878","schema_sha256":"87f094fa079034aa886d6c568730370a3264e106529b4bfd79bc3369f30b79e5","scope":"NEW_SCHEMA_AND_TYPED_URI_ONLY_NOT_ROOT_REGISTRATION","source_contract":"sha256:f967fdf3e63028d29ed191160698726b5d707aaae63bd951f6ba2e8584936fec"}) || !same(manifest.control_uri_templates, {"ControlTrustRootSet":{"adapter_kind":"PRIVATE_SQL_IN_EXISTING_NONPRODUCTION_CLUED","allowed_root_set_ids":["ctr_414bd3c724264a83894b0c55cf2ab878"],"authority_effect":"NONE","fragments":{"history":"events","revocations":"events filtered to ROOT_REVOKED or GENERATION_REVOKED"},"new_concretization_not_historical_template":true,"object_type":"ControlTrustRootSet","parameter":"root_set_id","project_ref":"uscrdifznmlvczcekqpw","public_rest_exposure":false,"query":"select clued_control.read_root($1) value","schema_path":"protocol/continuity/v1/schemas/core/control-trust-root-set.schema.json","schema_sha256":"87f094fa079034aa886d6c568730370a3264e106529b4bfd79bc3369f30b79e5","uri_template":"urn:clued:control-trust-root-set:uscrdifznmlvczcekqpw:{root_set_id}"}}))) throw new Error('control successor scope mismatch');
+  if (!Array.isArray(manifest.entries) || manifest.entries.length !== (limitedControlSuccessor ? 92 : 91)) throw new Error('exact manifest entry count mismatch');
+  if (limitedControlSuccessor && !manifest.entries.some(e => e.path === 'protocol/continuity/v1/schemas/core/control-trust-root-set.schema.json' && e.sha256 === 'sha256:' + controlSuccessor.schema_sha256)) throw new Error('control successor schema binding mismatch');
   const paths = new Set();
   for (const entry of manifest.entries) {
     if (paths.has(entry.path)) throw new Error('duplicate manifest path: ' + entry.path);
@@ -847,12 +853,13 @@ function validateModelSchemasV2(root) {
 
 function validateSchemas(root, paths) {
   const schemaPaths = [...paths].filter((path) => path.includes('/schemas/') && path.endsWith('.schema.json'));
-  if (schemaPaths.length !== 65) throw new Error('schema count must be 65, got ' + schemaPaths.length);
+  const hasControlRoot = paths.has('protocol/continuity/v1/schemas/core/control-trust-root-set.schema.json');
+  if (schemaPaths.length !== (hasControlRoot ? 66 : 65)) throw new Error('exact schema count mismatch');
   const modelPaths = new Set(Object.keys(MODEL_SCHEMA_V2));
   const ids = new Set();
   for (const path of schemaPaths) {
     const schema = JSON.parse(readFileSync(repoPath(root, path), 'utf8'));
-    const expectedDefinition = modelPaths.has(path) ? MODEL_SCHEMA_V2_DEFINITION : '1.0.0-local-rc-v15';
+    const expectedDefinition = path === 'protocol/continuity/v1/schemas/core/control-trust-root-set.schema.json' ? '1.0.0-phase2-control-root-nonproduction' : (modelPaths.has(path) ? MODEL_SCHEMA_V2_DEFINITION : '1.0.0-local-rc-v15');
     if (schema.$schema !== 'https://json-schema.org/draft/2020-12/schema' || typeof schema.$id !== 'string' || ids.has(schema.$id) || schema['x-clued-definition-version'] !== expectedDefinition || schema.additionalProperties !== false || !Array.isArray(schema.required) || !schema.required.includes('schema_version') || !schema.required.includes('object_type')) throw new Error('invalid generated schema: ' + path);
     ids.add(schema.$id);
   }

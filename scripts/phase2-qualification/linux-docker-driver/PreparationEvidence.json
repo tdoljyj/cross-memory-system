@@ -1,0 +1,67 @@
+{
+  "kind": "LINUX_DOCKER_WIRING_CANDIDATE_ENGINEERING_EVIDENCE",
+  "observed_at_utc": "2026-09-08T11:14:36.3390556Z",
+  "status": "PREPARED_NOT_EXECUTED",
+  "source_files": [
+    {
+      "path": "scripts/phase2-qualification/linux-docker-driver/candidate.py",
+      "sha256": "7eed6b480010c5aebba39e109356a9a499f8ecc96ced184d3ee926fa52346457"
+    },
+    {
+      "path": "scripts/phase2-qualification/linux-docker-driver/test_candidate.py",
+      "sha256": "b4b05c2922c3789ddea1f12019e3ffa3f815db70d58c1c17a98525151ba67aca"
+    },
+    {
+      "path": "scripts/phase2-qualification/linux-docker-driver/README.md",
+      "sha256": "ab12438753fad38284ef9c9151b3fe4faaef21c6e361e683cf9468371458d414"
+    },
+    {
+      "path": "scripts/phase2-qualification/linux-docker-driver/.gitignore",
+      "sha256": "7c0e3807a109f275f04fa607825e26c8d69f2e23f684cf4ca68e03df1173780a"
+    }
+  ],
+  "frozen_probe": {
+    "path": "scripts/phase2-qualification/docker-isolation/probe.py",
+    "sha256": "2168145b42166b4de1ea470b4fd232549d661542761ffe279955d0ace5580523",
+    "executed": false
+  },
+  "checks": {
+    "command": "python -I -S -B -X utf8 scripts/phase2-qualification/linux-docker-driver/test_candidate.py",
+    "actual_tests": 11,
+    "passed": 11,
+    "failed": 0,
+    "skipped": 0,
+    "duration_seconds": 0.018,
+    "scope": "Pure functions and temporary local evidence persistence; no Docker/probe/CI process",
+    "covered": [
+      "fixed executable/digest/limits/two mounts/ID allowlist",
+      "configuration command/env/mount/tag/path injection denial",
+      "mandatory model prestart inspection and no repeat start",
+      "security/container/mount/environment/healthcheck drift denial",
+      "sticky UNKNOWN across timeout/interruption/revocation/persistence failure",
+      "STOP Intent then exact-ID stop/wait and strict state/exit/time agreement",
+      "live typed matching start observation",
+      "same-key/changed-config/damaged Intent no overwrite",
+      "sink fsync failure retains reservation",
+      "formal/run blocked before config read or prepare",
+      "frozen probe digest and no execution imports"
+    ]
+  },
+  "actual_image_digest": null,
+  "actual_host_binding": null,
+  "executor_implemented": false,
+  "actual_os_isolation_verified": false,
+  "actual_process_tree_stop_verified": false,
+  "formal_ga": null,
+  "formal_profile": null,
+  "current_store_vector_verified": false,
+  "remote_sink_satisfied": false,
+  "billing_budget_verified": false,
+  "qualified": false,
+  "stage_pass_issued": false,
+  "paid_actions": 0,
+  "model_actions": 0,
+  "docker_invocations": 0,
+  "ci_dispatches": 0,
+  "source_boundary": "Model phases and synthetic Docker-shaped dictionaries are not trusted observations or authorization. Exact accepted executor and prerequisites remain absent."
+}

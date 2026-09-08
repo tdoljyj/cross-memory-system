@@ -1,0 +1,155 @@
+{
+  "state": "LOCAL_ENGINEERING_CANDIDATE_PENDING_INDEPENDENT_REVIEW_NOT_DEPLOYED",
+  "project_name": "clued-auth-test",
+  "project_ref": "uscrdifznmlvczcekqpw",
+  "root_set_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+  "authorization_source": {
+    "proposal_sha256": "f655e8a16f428bbccfca3687c28e31bc57aed0e7a9fd9ac0191648266afec533",
+    "owner_approval_commit": "4d7f93c17cf7d126e771cf8aca6299c868cba0a9",
+    "approval_record_sha256": "3d9c4c9e06217c7c2ef0d32dba77bb5aa66bd745a8f92f0ea255b19a95127aea",
+    "authority_effect_of_this_candidate": "NONE"
+  },
+  "independent_alignment": {
+    "verification_id": "b9de3243c9c9461593aeef38abcca31d",
+    "resolved_remote_head": "4d7f93c17cf7d126e771cf8aca6299c868cba0a9",
+    "local_head": "cecbe5f34ce43676f3d41a32cbd4f08d65a423c6",
+    "classification": "LOCAL_AHEAD_NO_DIVERGENCE",
+    "scope": "PROJECT"
+  },
+  "write_set": [
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/install.candidate.sql",
+      "sha256": "3cbbed94e1c9ef5fec4db281526ca69b9b30a24d2812b5a8bb5eb6bc728146fb"
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/client.mjs",
+      "sha256": "c42eb90f08ad3edb52d5bc5dcd71207802e620ea9a5a7303b5bc448017d303d8"
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/store.test.mjs",
+      "sha256": "f61d3c19d43f5dcfa5b9c9f97f56486675296cbf06a4fad97c68fd8602d76090"
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/ProtocolMapping.candidate.json",
+      "sha256": "285fa583ef3dc166d2bc5a9c64138b324992833ae9ac0fccf9beb8f902a5ca76"
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/README.md",
+      "sha256": "b6c4e8bcf6d97a8afe842d971a54cc93fd314a394ddd913305c13d4bc3c4e98e"
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/review-fixes.test.mjs",
+      "sha256": "bbf15f59dd256ebb8fd47d86bf3b1a03942abe9559d7ecd8e15ff79fae7ea456"
+    }
+  ],
+  "local_pg_execution": {
+    "command": "node --test store.test.mjs",
+    "actual_database": "DEDICATED_LOCAL_EMBEDDED_POSTGRES",
+    "remote_database_connections": 0,
+    "initial_result": {
+      "passed": 7,
+      "failed": 2,
+      "reason": "TRUNCATE foreign-key refusal preceded expected immutability trigger; assertion corrected to exercise trigger through local CASCADE"
+    },
+    "final_result": {
+      "passed": 10,
+      "failed": 0,
+      "skipped": 0,
+      "subtests": 9,
+      "parent_tests": 1,
+      "duration_ms": 7960.619
+    },
+    "meaningful_checks": [
+      "EMPTY_BINDING_DENIAL",
+      "PRIVILEGE_BOUNDARY",
+      "SAME_KEY_CONCURRENT_SINGLE_APPEND",
+      "CHANGED_REQUEST_CONFLICT_NO_STATE_CHANGE",
+      "DIFFERENT_KEY_SINGLE_CAS_WINNER",
+      "GENERATION_REUSE_ROLLBACK_DENIAL",
+      "IMMUTABLE_UPDATE_DELETE_TRUNCATE",
+      "PERMANENT_REVOCATION",
+      "OWNER_EXPIRY_AFTER_ACTUAL_ROW_LOCK_WAIT"
+    ],
+    "fixture_acceptance_metadata": "SYNTHETIC_LOCAL_ONLY_NOT_ACCEPTED",
+    "cleanup": "SERVER_STOPPED_AND_OWN_TEMP_DIRECTORY_REMOVED; NO_POSTGRES_PROCESS_OBSERVED_AT_FINAL_CHECK",
+    "source_binding": "HISTORICAL_PREVIOUS_WRITE_SET_ONLY_NOT_CURRENT_SQL_FULL_RETEST"
+  },
+  "deployment_delta": {
+    "new_private_schema": "clued_control",
+    "new_tables": [
+      "accepted_binding",
+      "events",
+      "current_head"
+    ],
+    "new_roles": [],
+    "existing_business_table_changes": [],
+    "public_rpc_exposure": false,
+    "service_role_grants": [
+      "USAGE_ON_PRIVATE_SCHEMA",
+      "EXECUTE_APPEND_EVENT_JSONB",
+      "EXECUTE_READ_ROOT_TEXT"
+    ],
+    "anon_authenticated_grants": [],
+    "initial_accepted_binding_rows": 0,
+    "initial_root_records": 0
+  },
+  "not_claimed": [
+    "SUPABASE_DEPLOYMENT",
+    "FORMAL_STORE_ACCEPTANCE",
+    "CORE_SCHEMA_OR_URI_FREEZE",
+    "ISSUER_OR_CRYPTOGRAPHIC_QUALIFICATION",
+    "ROOT_REGISTRATION",
+    "GA",
+    "R11",
+    "PQUAL",
+    "SLICE_A",
+    "BUSINESS_CANONICAL_WRITE"
+  ],
+  "required_next_actual_inputs": [
+    "INDEPENDENT_FIXED_SQL_CLIENT_MAPPING_ACCEPTANCE",
+    "ACTUAL_NONPRODUCTION_DEPLOYMENT_READBACK",
+    "ACCEPTED_CORE_SCHEMA_AND_EXACT_URI_MAPPING",
+    "ACTUAL_ISSUER_AUDIENCE_ALGORITHM_CONFIG_SIGNATURE_SOURCES",
+    "EXACT_ACCEPTED_SINGLE_BINDING_ACTIVATION"
+  ],
+  "parent_candidate_sha256": "57422a48e0a8136bb1bcf94661e718f1083ba6299109bb8bc6c6cfbf84b34935",
+  "previous_write_set": [
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/install.candidate.sql",
+      "sha256": "74427d947d08c9502dfe33afcacd921e1ebe4efa7eed21859868ab3f55900fdf"
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/client.mjs",
+      "sha256": "c42eb90f08ad3edb52d5bc5dcd71207802e620ea9a5a7303b5bc448017d303d8"
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/store.test.mjs",
+      "sha256": "9061f763bb4a8278ab9e1409e4737b67888ae7545c5af01e6d4d7a27e4033fcf"
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/ProtocolMapping.candidate.json",
+      "sha256": "285fa583ef3dc166d2bc5a9c64138b324992833ae9ac0fccf9beb8f902a5ca76"
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/README.md",
+      "sha256": "ddbc4e804a77b6eb07508ac3f26996b703fcf32d006a32e09a377719fd610779"
+    }
+  ],
+  "review_fix_execution": {
+    "command": "node --test review-fixes.test.mjs",
+    "scope": "LOCAL_ENGINEERING_ONLY",
+    "passed": 3,
+    "subtests": 2,
+    "parent_tests": 1,
+    "failed": 0,
+    "skipped": 0,
+    "duration_ms": 3859.5627,
+    "old_10_rerun": false,
+    "fixes": [
+      "UTC_STABLE_BINDING_DIGEST",
+      "JSON_STRING_IDEMPOTENCY_KEY_REQUIRED"
+    ]
+  },
+  "metadata_correction_parent_sha256": "b79cfd230d44a30ba521b9588eedc850f68aea83366cc771d78fe247760eac94",
+  "nonproduction_table_inventory_correction": "Root latest read-only metadata confirms 13 existing public business tables, not previous 14; no SQL change."
+}

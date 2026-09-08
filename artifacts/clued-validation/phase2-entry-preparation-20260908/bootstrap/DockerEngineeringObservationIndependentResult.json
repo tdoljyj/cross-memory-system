@@ -1,0 +1,195 @@
+{
+  "schema_version": 1,
+  "state": "ACCEPTED_ACTUAL_FIXED_ENGINEERING_OS_AND_STOP_OBSERVATION_ONLY",
+  "independent_assessor": "/root/project_list_auth_fix",
+  "observed_at_utc": "2026-09-08T12:09:45.893095+00:00",
+  "acceptance_ref": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/DockerEngineeringObservationIndependentAcceptance.json",
+  "plan_sha256": "029e9b25add78a6b7295bcc2735b87045f0dd5f2a93b4fd60d35b49ee6368e28",
+  "archive": {
+    "path": "artifacts\\clued-validation\\phase2-entry-preparation-20260908\\bootstrap\\docker-observation-20260908\\RawEngineeringObservation.zip",
+    "sha256": "54fab8137e0cfebe30ae506487ae3a8c1f768ff7eed3c528628204bd25c69b5f",
+    "bytes": 31625,
+    "entry_count": 56,
+    "index_sha256": "277c2662c0e0802f2a3357a7b2bd1943fb36a215ddfddde8bb5d1271a4aaa48f",
+    "every_archive_entry_matches_raw_and_index": true,
+    "raw_extra_files": false
+  },
+  "actual_container_id": "0769096bfca62bba4854625f112b38eb2c3692c37e2f5279e522dafa2aee4ab5",
+  "nonce": "9b7d442255ed489683148c9068b06b39",
+  "intent_started_at": "2026-09-08T12:05:19.619141+00:00",
+  "elapsed_seconds": 7.280999999959022,
+  "verified_requests": [
+    {
+      "kind": "host",
+      "tag": "main-host",
+      "started": 866208.234,
+      "ended": 866208.312
+    },
+    {
+      "kind": "store",
+      "tag": "main-store",
+      "started": 866208.312,
+      "ended": 866208.375
+    },
+    {
+      "kind": "image",
+      "tag": "main-image",
+      "started": 866208.375,
+      "ended": 866211.562
+    },
+    {
+      "kind": "create",
+      "tag": "main-create",
+      "started": 866211.656,
+      "ended": 866211.828
+    },
+    {
+      "kind": "inspect",
+      "tag": "main-before-start",
+      "started": 866211.859,
+      "ended": 866211.937
+    },
+    {
+      "kind": "start",
+      "tag": "main-start",
+      "started": 866211.953,
+      "ended": 866212.234
+    },
+    {
+      "kind": "inspect",
+      "tag": "main-running",
+      "started": 866212.812,
+      "ended": 866212.89
+    },
+    {
+      "kind": "inspect",
+      "tag": "main-before-stop",
+      "started": 866212.906,
+      "ended": 866212.984
+    },
+    {
+      "kind": "stop",
+      "tag": "main-stop",
+      "started": 866213.015,
+      "ended": 866215.156
+    },
+    {
+      "kind": "wait",
+      "tag": "main-wait",
+      "started": 866215.171,
+      "ended": 866215.25
+    },
+    {
+      "kind": "inspect",
+      "tag": "main-after-stop",
+      "started": 866215.265,
+      "ended": 866215.359
+    }
+  ],
+  "probe": {
+    "allowed_write": true,
+    "authorization_effect": "NONE",
+    "checks_observed": true,
+    "credential_canary_inherited": false,
+    "descendant_pid": 7,
+    "descendant_readiness": {
+      "authorization_effect": "NONE",
+      "pid": 7,
+      "ppid": 1,
+      "qualified": false,
+      "sigterm_ignored": true,
+      "status": {
+        "CapEff": "0000000000000000",
+        "CapPrm": "0000000000000000",
+        "NSpid": "7",
+        "NoNewPrivs": "1",
+        "Seccomp": "2"
+      },
+      "uid": 10001
+    },
+    "interfaces": [
+      "lo"
+    ],
+    "loopback_positive_control": true,
+    "network_denied": true,
+    "network_errno": 101,
+    "network_result": "OSError",
+    "pid": 1,
+    "private_canary_errno": 13,
+    "private_canary_read_denied": true,
+    "qualified": false,
+    "rootfs_write_denied": true,
+    "rootfs_write_errno": 30,
+    "status": {
+      "CapEff": "0000000000000000",
+      "CapPrm": "0000000000000000",
+      "NSpid": "1",
+      "NoNewPrivs": "1",
+      "Seccomp": "2"
+    },
+    "tree_active": true,
+    "uid": 10001
+  },
+  "actual_stop": {
+    "wait_exit_code": 137,
+    "recorded_state": {
+      "Status": "exited",
+      "Running": false,
+      "Paused": false,
+      "Restarting": false,
+      "OOMKilled": false,
+      "Dead": false,
+      "Pid": 0,
+      "ExitCode": 137,
+      "Error": "",
+      "StartedAt": "2026-09-08T12:05:23.465704319Z",
+      "FinishedAt": "2026-09-08T12:05:26.480545095Z"
+    },
+    "live_read_command": [
+      "C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.exe",
+      "--host=npipe:////./pipe/dockerDesktopLinuxEngine",
+      "--config=C:\\Users\\Windows\\Documents\\Codex\\2026-09-08\\ia\\work\\kernel-phase2-repo\\scripts\\phase2-qualification\\docker-engineering-observation\\work\\observation\\docker-config",
+      "container",
+      "inspect",
+      "0769096bfca62bba4854625f112b38eb2c3692c37e2f5279e522dafa2aee4ab5"
+    ],
+    "live_read_exit_code": 0,
+    "live_response_sha256": "2481ef1f263a714083f51cfa4f213bf43f0df0a071ce54bf7de5b3c56b781f82",
+    "live_state": {
+      "Status": "exited",
+      "Running": false,
+      "Paused": false,
+      "Restarting": false,
+      "OOMKilled": false,
+      "Dead": false,
+      "Pid": 0,
+      "ExitCode": 137,
+      "Error": "",
+      "StartedAt": "2026-09-08T12:05:23.465704319Z",
+      "FinishedAt": "2026-09-08T12:05:26.480545095Z"
+    },
+    "same_image_name_nonce_labels": true
+  },
+  "watchdog_observation": {
+    "nonce": "9b7d442255ed489683148c9068b06b39",
+    "status": "MAIN_STOP_OBSERVATION_PRESENT",
+    "utc": "2026-09-08T12:05:26.864626+00:00"
+  },
+  "capacity_decision": {
+    "release_this_one_engineering_active_slot": true,
+    "basis": "Original wait/inspect/raw identity and fresh independent live inspect agree: exact container exited, Running=false, Pid=0, nonzero valid FinishedAt and ExitCode137. Actual child was alive and SIGTERM-resistant before runtime stopped the container.",
+    "reserved_seconds_accounting": "Retain actual7.280999999959022 seconds and original90-second reservation as evidence; no automatic refund or reset of total Owner budget from this release.",
+    "container_and_evidence": "Retain stopped container, one-shot reservation, archive and raw evidence; this is not rm/prune approval or redispatch permission."
+  },
+  "formal_boundary": {
+    "qualified": false,
+    "ga_issued": false,
+    "pqual_pass": false,
+    "skill_loaded": false,
+    "entry_pass": false,
+    "parent_crash_tested": false,
+    "watchdog_takeover_tested": false,
+    "remote_formal_sink_satisfied": false
+  },
+  "conclusion": "Accept observed fixed-image nonroot/resource/mount/network/credential-canary/real-descendant and ordinary STOP engineering facts within this one exact run. No claim of host-crash guard success, complete controller qualification, formal GA/PQUAL or whole Phase2 completion."
+}

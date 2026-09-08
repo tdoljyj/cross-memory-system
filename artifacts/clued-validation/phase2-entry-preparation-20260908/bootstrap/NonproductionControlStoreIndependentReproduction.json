@@ -1,0 +1,18 @@
+{
+  "scope": "INDEPENDENT_LOCAL_SYNTHETIC_PG_REPRODUCTION_ONLY",
+  "sql_sha256": "74427d947d08c9502dfe33afcacd921e1ebe4efa7eed21859868ab3f55900fdf",
+  "observed_at_utc": "2026-09-08T11:51:55.786Z",
+  "timezone": {
+    "same_binding_digest_equal": false,
+    "utc_digest": "04172ffad47dd742e6ab947c268a9bfc1ee24c153e2a9ca75eb146326f224412",
+    "shanghai_digest": "0f0d3d1397ef9a7447e6366fc7c03aa17f43e3320ee11d885d4b91b00d029e15",
+    "cross_connection_append": "binding_mismatch"
+  },
+  "numeric_idempotency_key": {
+    "input_json_type": "number",
+    "append_status": "APPENDED",
+    "preserved_request_type": "number"
+  },
+  "remote_connections": 0,
+  "formal_binding_created": false
+}

@@ -1,0 +1,104 @@
+{
+  "schema_version": 1,
+  "state": "INDEPENDENT_LIVE_EMPTY_STORE_READBACK_VERIFIED_NO_ACTIVATION",
+  "independent_assessor": "/root/project_list_auth_fix",
+  "observed_at_utc": "2026-09-08 12:06:53 UTC",
+  "project_id": "uscrdifznmlvczcekqpw",
+  "method": "One Supabase execute_sql read-only metadata/count/read_root query; no business rows or credentials read, no configuration INSERT or mutation.",
+  "accepted_sql_sha256": "3cbbed94e1c9ef5fec4db281526ca69b9b30a24d2812b5a8bb5eb6bc728146fb",
+  "acceptance_path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/NonproductionControlStoreIndependentReview.json",
+  "observation": {
+    "roles": [
+      {
+        "role": "anon",
+        "head_update": false,
+        "read_execute": false,
+        "schema_usage": false,
+        "events_insert": false,
+        "schema_create": false,
+        "append_execute": false,
+        "binding_insert": false
+      },
+      {
+        "role": "authenticated",
+        "head_update": false,
+        "read_execute": false,
+        "schema_usage": false,
+        "events_insert": false,
+        "schema_create": false,
+        "append_execute": false,
+        "binding_insert": false
+      },
+      {
+        "role": "service_role",
+        "head_update": false,
+        "read_execute": true,
+        "schema_usage": true,
+        "events_insert": false,
+        "schema_create": false,
+        "append_execute": true,
+        "binding_insert": false
+      }
+    ],
+    "counts": {
+      "events": 0,
+      "current_head": 0,
+      "accepted_binding": 0
+    },
+    "functions": [
+      {
+        "acl": "{postgres=X/postgres,service_role=X/postgres}",
+        "name": "append_event",
+        "config": [
+          "search_path=\"\"",
+          "TimeZone=UTC"
+        ],
+        "security_definer": true,
+        "definition_sha256": "deab3678f32d8e89821cd04689d4957bcd4b5b220142b9024492ff786168d909"
+      },
+      {
+        "acl": "{postgres=X/postgres}",
+        "name": "deny_mutation",
+        "config": [
+          "search_path=\"\""
+        ],
+        "security_definer": false,
+        "definition_sha256": "c38b11d91bcc6e6ce0c25b3d2636158a9fbbccbe92093a08d74f72302d0ca92c"
+      },
+      {
+        "acl": "{postgres=X/postgres,service_role=X/postgres}",
+        "name": "read_root",
+        "config": [
+          "search_path=\"\"",
+          "TimeZone=UTC"
+        ],
+        "security_definer": true,
+        "definition_sha256": "e1f496ad7e43ba08eca97c4e2cfa13a162660ae90d6628aac16af9c2c26cc47c"
+      }
+    ],
+    "root_read": null,
+    "table_states": [
+      {
+        "acl": "{postgres=arwdDxtm/postgres}",
+        "rls": true,
+        "owner": "postgres",
+        "table": "accepted_binding"
+      },
+      {
+        "acl": "{postgres=arwdDxtm/postgres}",
+        "rls": true,
+        "owner": "postgres",
+        "table": "current_head"
+      },
+      {
+        "acl": "{postgres=arwdDxtm/postgres}",
+        "rls": true,
+        "owner": "postgres",
+        "table": "events"
+      }
+    ],
+    "public_base_tables": 13
+  },
+  "conclusion": "Three empty private RLS tables; public clients cannot access; service_role only schema usage and two RPC executes; exact deployed function hashes match coordinator. Root null, no accepted metadata or active root. Actual count is 13 public base tables.",
+  "limits": "No independent pre-deployment snapshot was taken by this reviewer; coordinator before/after public-table metadata digest is separate evidence. This read does not activate or formally accept a ControlTrustRootSet, Profile, GA or Entry."
+}

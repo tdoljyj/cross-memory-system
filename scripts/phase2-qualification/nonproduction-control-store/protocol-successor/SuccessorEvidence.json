@@ -1,0 +1,139 @@
+{
+  "state": "EXACT_PROTOCOL_SUCCESSOR_CANDIDATE_PENDING_INDEPENDENT_ACCEPTANCE_NOT_APPLIED",
+  "current_alignment": {
+    "remote_head": "2eec225cdfee5ebbdf5e10cae7eaa5c5b6c80faa",
+    "classification": "EQUAL",
+    "source_scope": "PROJECT"
+  },
+  "actual_store_deployment": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/NonproductionControlStoreDeploymentSuccessor.json",
+    "sha256": "58643a21e69cda0e06dbc70fc71724f75cd6bca930e17e6723287228e12daa99",
+    "status": "DEPLOYED_EMPTY_READBACK_PASS",
+    "project_ref": "uscrdifznmlvczcekqpw",
+    "root_registered": false
+  },
+  "files": [
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/protocol-successor/build-successor.py",
+      "sha256": "c6c28a79f362efb1a2d58373124973e36d2812bfe376e39ef8567accd652df82",
+      "bytes": 10537
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/protocol-successor/control-trust-root-set.schema.json",
+      "sha256": "87f094fa079034aa886d6c568730370a3264e106529b4bfd79bc3369f30b79e5",
+      "bytes": 6122
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/protocol-successor/ControlUriMapping.json",
+      "sha256": "abbc8e7eae03f2a183fd739fa49b16a97db6e1c0fb62a9353a30db81553db416",
+      "bytes": 740
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/protocol-successor/manifest.candidate.json",
+      "sha256": "d13b17d873004e97fe45400d715b5becef8fa6bb0a004011921344bd0c9441ec",
+      "bytes": 20290
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/protocol-successor/ProtocolSuccessor.patch",
+      "sha256": "4951a00f8ef4b56f5b8d530268285feaf1ee46794ffbb7ad059b672899413cab",
+      "bytes": 49849
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/protocol-successor/README.md",
+      "sha256": "404bc87353e819b2ffe152f362a209430bd7f63908652694ace454a84c5c044b",
+      "bytes": 6428
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/protocol-successor/store-candidate-before-documentation-erratum.json",
+      "sha256": "b79cfd230d44a30ba521b9588eedc850f68aea83366cc771d78fe247760eac94",
+      "bytes": 5744
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/protocol-successor/store-readme-before-table-count-erratum.md",
+      "sha256": "a2760b26e56f6be76c7df97828fbcea3437dc46a2d40ab2af94e56e21c5d3c21",
+      "bytes": 6127
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/protocol-successor/successor.test.mjs",
+      "sha256": "b1980f714be5cf547252462af7473b8f335baf7f46efc590b0f470e87579ed35",
+      "bytes": 9313
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/protocol-successor/SuccessorEvidence.before-applicability-fix.json",
+      "sha256": "e569efd30f198dfdd0e887b42a85f890e754ab0f475cb8ce935c82c0cfeeae8a",
+      "bytes": 5279
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/protocol-successor/validate-successor.mjs",
+      "sha256": "e2844900272bcd9f2aba18aae256567e33d0c598f0a114d7ed01a6fb2fdf1ca5",
+      "bytes": 4871
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/protocol-successor/verify-generated-artifacts.candidate.mjs",
+      "sha256": "6ccbf6a152f7f6b9c63c96b10758f2e295c28d32f59686223736b2da447491d5",
+      "bytes": 44862
+    }
+  ],
+  "unapplied_formal_write_set": [
+    "protocol/continuity/v1/schemas/core/control-trust-root-set.schema.json",
+    "protocol/continuity/v1/manifest.json",
+    "scripts/verify-generated-artifacts.mjs"
+  ],
+  "validation": {
+    "mode": "LOCAL_ENGINEERING_ONLY",
+    "final_full_current_small_suite": {
+      "command": "node --test successor.test.mjs",
+      "passed": 9,
+      "failed": 0,
+      "skipped": 0,
+      "duration_ms": 104.0257
+    },
+    "git_apply_check": "PASS_NOT_APPLIED",
+    "candidate_verifier_syntax": "PASS",
+    "full_generated_artifacts_or_bom_execution": "NOT_RUN",
+    "initial_failure": "One test source path wrong (5 PASS/1 FAIL); corrected then targeted PASS; final schema/reader change justified complete final 7 checks."
+  },
+  "boundary": {
+    "new_root_instances": 0,
+    "signature_bytes_fabricated": false,
+    "gold_read": false,
+    "formal_protocol_files_modified": false,
+    "production_access": false,
+    "ga_or_qualification_issued": false,
+    "algorithm_and_uri": "NEW_EXPLICIT_LIMITED_SUCCESSOR_CONCRETIZATION_NOT_HISTORICAL_CLAIM",
+    "issuer_signature_qualification": "ACTUAL_INSTANCE_BINDING_STILL_REQUIRED"
+  },
+  "documentation_erratum": {
+    "change": "Only existing public table count 14 to actual 13; not a new SQL acceptance",
+    "previous_exact_report_sha256": "b79cfd230d44a30ba521b9588eedc850f68aea83366cc771d78fe247760eac94",
+    "preserved_previous_report": "scripts/phase2-qualification/nonproduction-control-store/protocol-successor/store-candidate-before-documentation-erratum.json",
+    "current_report_sha256": "273cff473e6ce65323decf8c1600bbf2d534016cdc47881b2d06864b8cb2201f",
+    "previous_readme_sha256": "a2760b26e56f6be76c7df97828fbcea3437dc46a2d40ab2af94e56e21c5d3c21",
+    "current_readme_sha256": "b6c4e8bcf6d97a8afe842d971a54cc93fd314a394ddd913305c13d4bc3c4e98e",
+    "accepted_sql_unchanged": "3cbbed94e1c9ef5fec4db281526ca69b9b30a24d2812b5a8bb5eb6bc728146fb",
+    "current_erratum_not_claimed_same_accepted_document_bytes": true
+  },
+  "parent_evidence_sha256": "e569efd30f198dfdd0e887b42a85f890e754ab0f475cb8ce935c82c0cfeeae8a",
+  "superseded_parent_status": "UNACCEPTED_PROTOCOL_CANDIDATE; prior test results apply only to prior file digests",
+  "applicability_fix": {
+    "source_sha256": "f967fdf3e63028d29ed191160698726b5d707aaae63bd951f6ba2e8584936fec",
+    "source_lines": [
+      3008,
+      3010,
+      3012,
+      3885
+    ],
+    "independent_reviewer": "/root/project_list_auth_fix",
+    "rootset_vector_requirement": "REMOVED_EXTRA_CANDIDATE_CONSTRAINT_NO_NA_OR_EPOCH_INVENTED",
+    "profile_and_credential_vector": "UNCHANGED",
+    "history": "VERIFIED_COMPLETE_PRE_APPEND_PREFIX",
+    "review_subject_excludes": [
+      "independent_acceptance_ref",
+      "signature_binding"
+    ],
+    "signature_payload_excludes": [
+      "signature_binding"
+    ],
+    "successor_guard": "EXACT_ENTIRE_OBJECT_AND_MAPPING"
+  }
+}

@@ -1,0 +1,48 @@
+{
+  "status": "CANDIDATE_NOT_APPLIED_OR_ACCEPTED",
+  "source": {
+    "s06_sha256": "f967fdf3e63028d29ed191160698726b5d707aaae63bd951f6ba2e8584936fec",
+    "lines": [868, 925, 4334, 4336, 4346]
+  },
+  "schema_candidate_target": "protocol/continuity/v1/schemas/core/control-trust-root-set.schema.json",
+  "schema_target_exists_at_review": false,
+  "scope": {
+    "project_ref": "uscrdifznmlvczcekqpw",
+    "root_set_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+    "business_canonical_effect": "NONE",
+    "second_auth_or_business_receipt": false
+  },
+  "unapplied_manifest_mapping": {
+    "path": "protocol/continuity/v1/manifest.json#/control_uri_templates",
+    "observed_manifest_sha256": "05ca5bb70c642dba9c3f58c0b943020d6188636e60cc569b3802c90a9afd36b5",
+    "change_kind": "ADD_SINGLE_LIMITED_CONTROL_ROOT_MAPPING_AFTER_SUCCESSOR_ACCEPTANCE",
+    "object_type": "ControlTrustRootSet",
+    "logical_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+    "adapter_kind": "EXISTING_NONPRODUCTION_CLUED_PRIVATE_SQL",
+    "dereference": {
+      "project_ref": "uscrdifznmlvczcekqpw",
+      "query": "select clued_control.read_root($1) value",
+      "parameter": "root_set_id",
+      "identity_transport": "EXISTING_AUTHORIZED_SERVER_SIDE_SERVICE_ROLE_TRANSPORT",
+      "public_rest_exposure": false
+    },
+    "wire_uri_template": null,
+    "wire_uri_template_status": "EXACT_EXISTING_URI_TEMPLATE_NOT_LOCATED; FORMAL_SUCCESSOR_MUST_BIND_BEFORE_RUNTIME_USE",
+    "schema_sha256": null,
+    "schema_sha256_status": "ACTUAL_CORE_SCHEMA_NOT_YET_ACCEPTED",
+    "content_tree_and_downstream_digests": "REGENERATE_FOR_EXACT_ACCEPTED_SUCCESSOR; DO_NOT_REUSE_CURRENT_MANIFEST_DIGESTS"
+  },
+  "required_accepted_binding_fields": [
+    "root_id", "project_ref", "purpose", "environment", "subject_sha256",
+    "owner_approval_commit", "not_before", "expires_at", "issuer", "audience",
+    "algorithm_config", "schema_sha256", "registration_acceptance_sha256",
+    "store_acceptance_sha256", "protocol_mapping_sha256", "signature_evidence_sha256"
+  ],
+  "activation": {
+    "accepted_binding_rows_installed": 0,
+    "configuration_rpc": null,
+    "next_step": "INDEPENDENTLY_ACCEPT_EXACT_STORE_SCHEMA_MAPPING_AND_REAL_ISSUER_SIGNATURE_SOURCES_THEN_OWNER_PUBLISHES_EXACT_SINGLE_BINDING_INSERT",
+    "missing_values_must_not_be_filled_with_synthetic_fixture": true,
+    "existing_frozen_protocol_files_modified": false
+  }
+}

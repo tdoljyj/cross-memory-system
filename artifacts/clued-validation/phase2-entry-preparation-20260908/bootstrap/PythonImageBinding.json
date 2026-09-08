@@ -1,0 +1,173 @@
+{
+  "kind": "INDEPENDENT_READ_ONLY_PYTHON_IMAGE_HOST_BINDING_INPUT",
+  "observed_at_utc": "2026-09-08T11:37:06.046052+00:00",
+  "status": "OBSERVED_AND_DIGEST_DOMAINS_VERIFIED_PENDING_INDEPENDENT_ACCEPTANCE",
+  "requested_reference": "docker.io/library/python@sha256:285a71327884a4d50efbea30104473b0fa43ecefa499458899670ca30dae76e5",
+  "actual_image_inspect": {
+    "Id": "sha256:285a71327884a4d50efbea30104473b0fa43ecefa499458899670ca30dae76e5",
+    "RepoDigests": [
+      "python@sha256:285a71327884a4d50efbea30104473b0fa43ecefa499458899670ca30dae76e5"
+    ],
+    "Architecture": "amd64",
+    "Os": "linux",
+    "Size": 18029321,
+    "Descriptor": {
+      "mediaType": "application/vnd.oci.image.manifest.v1+json",
+      "digest": "sha256:285a71327884a4d50efbea30104473b0fa43ecefa499458899670ca30dae76e5",
+      "size": 1735
+    },
+    "Config": {
+      "Env": [
+        "PATH=/usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        "LANG=C.UTF-8",
+        "GPG_KEY=7169605F62C751356D054A26A821E680E5FA6305",
+        "PYTHON_VERSION=3.12.14",
+        "PYTHON_SHA256=5c8462af5790baf43a321a1559dbe0db06d1be4300fb85fb53c40060668e548a"
+      ],
+      "Cmd": [
+        "python3"
+      ],
+      "WorkingDir": "/"
+    },
+    "RootFS": {
+      "Type": "layers",
+      "Layers": [
+        "sha256:34884abbe92863fce933ed7c39c0e045631af0ed86d5cc0dfbdf9fdca426ce3c",
+        "sha256:e841883ead55c7764ef03835ed98a55882e84f57dd6f90ffbc7d31d5fc8974a6",
+        "sha256:2a35f153520985da7afa7a4e0ad937ffc12ab85368a318897a7b5bbf238de41c",
+        "sha256:1b3b53d060ded641f97028c035939c8f8ae188040ae683c2f5e019b948ed0356"
+      ]
+    }
+  },
+  "digest_domains": {
+    "manifest_digest": "sha256:285a71327884a4d50efbea30104473b0fa43ecefa499458899670ca30dae76e5",
+    "config_digest": "sha256:1148adc3b50891ee01e6add44be22d277dedeb8dcac2f7cc8b700dd710c75c4d",
+    "inspect_id_domain": "OCI_IMAGE_MANIFEST_DIGEST_ON_OBSERVED_CONTAINERD_IMAGE_STORE",
+    "previous_expected_image_id_domain": "OCI_IMAGE_CONFIG_DIGEST",
+    "manifest_refers_to_exact_config": true,
+    "both_exact_blob_hashes_verified": true,
+    "explanation": "The unequal values address different exact blobs. Exported manifest hash equals actual inspect Id/Descriptor/RepoDigest, and its config descriptor points to the verified expected config hash. This is not evidence of image corruption or a reason to repull."
+  },
+  "configuration_presence": {
+    "Entrypoint": {
+      "present": false,
+      "value": null
+    },
+    "Healthcheck": {
+      "present": false,
+      "value": null
+    },
+    "User": {
+      "present": false,
+      "value": null
+    },
+    "Volumes": {
+      "present": false,
+      "value": null
+    }
+  },
+  "public_environment_boundary": {
+    "source": "Exact exported official Python image config, matching independently observed Config.Env",
+    "contains_host_inherited_environment": false,
+    "GPG_KEY_meaning": "Public Python release signing key fingerprint, not a private key or account credential",
+    "accepted_for_execution": false,
+    "candidate_env_empty_rule_modified": false,
+    "note": "These are proposed exact public image defaults for independent review. No caller environment or host credentials may be appended."
+  },
+  "layers": [
+    {
+      "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+      "digest": "sha256:55afa1ecc21d2bb5e5045f32dafee56272ffd89860bac26f6c32123439af26a4",
+      "size": 3846391,
+      "uncompressed_diff_id": "sha256:34884abbe92863fce933ed7c39c0e045631af0ed86d5cc0dfbdf9fdca426ce3c",
+      "compressed_hash_and_size_verified": true,
+      "uncompressed_diff_id_verified": true
+    },
+    {
+      "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+      "digest": "sha256:0021712cb493a0e6a23e7793de77e942d10e7e3aba2c215389755dff3e1f08f0",
+      "size": 408091,
+      "uncompressed_diff_id": "sha256:e841883ead55c7764ef03835ed98a55882e84f57dd6f90ffbc7d31d5fc8974a6",
+      "compressed_hash_and_size_verified": true,
+      "uncompressed_diff_id_verified": true
+    },
+    {
+      "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+      "digest": "sha256:7eec6ed36766e2cb281c079d0a3987132533e88a558748d3f71e0efe80f8d7c5",
+      "size": 13767433,
+      "uncompressed_diff_id": "sha256:2a35f153520985da7afa7a4e0ad937ffc12ab85368a318897a7b5bbf238de41c",
+      "compressed_hash_and_size_verified": true,
+      "uncompressed_diff_id_verified": true
+    },
+    {
+      "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+      "digest": "sha256:5086b6265f8c1341de4871e36c183358e1f20dbacf78b4a507c48d6bd28e4ec1",
+      "size": 247,
+      "uncompressed_diff_id": "sha256:1b3b53d060ded641f97028c035939c8f8ae188040ae683c2f5e019b948ed0356",
+      "compressed_hash_and_size_verified": true,
+      "uncompressed_diff_id_verified": true
+    }
+  ],
+  "image_annotations": {
+    "com.docker.official-images.bashbrew.arch": "amd64",
+    "org.opencontainers.image.base.digest": "sha256:79ff19e9084a00eece421b2523fb93e22d730e2c0e525905de047e848e56d95f",
+    "org.opencontainers.image.base.name": "alpine:3.24",
+    "org.opencontainers.image.created": "2026-08-13T19:34:41Z",
+    "org.opencontainers.image.revision": "f2c5d1b8a6adecb5b00b3c9331d4f863beade6b3",
+    "org.opencontainers.image.source": "https://github.com/docker-library/python.git#f2c5d1b8a6adecb5b00b3c9331d4f863beade6b3:3.12/alpine3.24",
+    "org.opencontainers.image.url": "https://hub.docker.com/_/python",
+    "org.opencontainers.image.version": "3.12.14-alpine3.24"
+  },
+  "runtime_version_claims": {
+    "python_config_version": "3.12.14",
+    "manifest_base_name": "alpine:3.24",
+    "python_executable_run": false,
+    "alpine_patch_release_read_from_container": false
+  },
+  "host": {
+    "docker_cli_path": "C:/Program Files/Docker/Docker/resources/bin/docker.exe",
+    "docker_cli_sha256": "00ffff945b67c65aae98dd980621a80ee135ed4e0931b33ca03687caee019713",
+    "server_platform": "Docker Desktop 4.87.0 (236836)",
+    "engine_version": "29.7.2",
+    "engine_git_commit": "6a43e3d",
+    "api_version": "1.55",
+    "minimum_api_version": "1.40",
+    "os": "linux",
+    "arch": "amd64",
+    "kernel": "6.18.33.2-microsoft-standard-WSL2",
+    "go_version": "go1.26.5",
+    "containerd_version": "v2.2.5",
+    "runc_version": "1.3.6",
+    "docker_init_version": "0.19.0",
+    "driver_status": [
+      [
+        "driver-type",
+        "io.containerd.snapshotter.v1"
+      ]
+    ]
+  },
+  "evidence": {
+    "methods": [
+      "Docker image inspect exact already-local reference, exit 0",
+      "Docker version Server JSON, exit 0",
+      "Docker info DriverStatus",
+      "Docker image save exact reference, exit 0",
+      "Read tar members without filesystem extraction or execution; hash manifest/config/compressed layers and streamed uncompressed diff IDs"
+    ],
+    "archive_path": "C:/Users/Windows/Documents/Codex/2026-09-08/ia/work/python-image-binding/python-285a713-image.tar",
+    "archive_bytes": 18039296,
+    "archive_sha256": "84e85f574ea706ee5a2f8dab31f3a7ef970a0f16244b6a47ceb86abf3112559d",
+    "export_side_effect": "One reversible local tar export only; source image/containers/volumes unchanged",
+    "official_documentation": "https://docs.docker.com/engine/storage/containerd/",
+    "source_boundary": "Configuration and digest relationships are verified from actual local image bytes; no claim that a mutable web page proves this exact build."
+  },
+  "qualification_boundary": {
+    "probe_run": false,
+    "container_create_or_start": false,
+    "pull_by_this_independent_observer": false,
+    "formal_profile_accepted": false,
+    "controller_qualified": false,
+    "stage_pass_issued": false,
+    "next_step": "Independently accept exact image/environment/host as inputs, then bind fixed executor and actual authority/budget/stop/sink/vector prerequisites before any container run."
+  }
+}
