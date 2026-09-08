@@ -1,0 +1,20 @@
+{
+  "state": "ACTUAL_READ_ONLY_NONPRODUCTION_OBSERVATION",
+  "tool": "supabase.execute_sql",
+  "project_ref": "uscrdifznmlvczcekqpw",
+  "scope": "Control Store counts and relevant schema metadata only; no business rows or credentials",
+  "observation": {
+    "control_counts": {"events": 0, "current_head": 0, "accepted_binding": 0},
+    "observed_at_utc": "2026-09-08T12:12:14.380995+00:00",
+    "project_database": "postgres",
+    "four_layer_epoch_columns": [],
+    "legacy_revocation_epoch_columns": []
+  },
+  "semantic_mapping_source": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/IsolatedProfileSourceMapping.md",
+    "sha256": "08a7f20443cba0095fce298f8bc7d2b76913d7a4929cd539f018d4c508c97065",
+    "boundary": "Prior semantic review also shows timestamps/authorization versions/P5 greatest values cannot substitute for the required business Vector. Column absence alone is not the semantic argument."
+  },
+  "rootset_applicability": "Independent source review confirms S06 L3012 enumerated business credentials/Profile need Vector; ControlTrustRootSet is not in that list. No business Vector, NA or zero epoch is invented for this root.",
+  "freshness": "Point-in-time only; must re-read before actual registration. No database writes performed."
+}

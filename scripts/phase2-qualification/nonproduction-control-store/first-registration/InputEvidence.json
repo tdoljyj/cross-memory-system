@@ -1,0 +1,84 @@
+{
+  "state": "FIRST_ROOT_REVIEW_INPUTS_COMPLETE_PENDING_EXACT_ACCEPTANCE_AND_NEW_SIGNATURE",
+  "review_subject_sha256": "2222ca74e5ff340e8da2aa47e272cbdf0eba9b93cb09c95ac9572bfdb068f7d7",
+  "files": [
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/first-registration/accepted-binding.sql",
+      "sha256": "16ee1dbe3779e22a8199e265832c8dbf9ac49cd0231c51f4fe69d10816fc209d",
+      "bytes": 820
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/first-registration/AcceptedBindingInputs.json",
+      "sha256": "7c65d82cbfdb2e03fc6ad01e739d881497529ddd06c50fae95f3ae5b4c120e9f",
+      "bytes": 1856
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/first-registration/prepare.mjs",
+      "sha256": "e5bb27df4f6b7aab295ef4112e72bf54a1702cf60772fd4136f5c76ca8b58bd6",
+      "bytes": 7416
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/first-registration/README.md",
+      "sha256": "9cbb63901f91d6e8500353c510643347fa8d28e11092754e84e8290bd852f11e",
+      "bytes": 3828
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/first-registration/RootReviewSubject.json",
+      "sha256": "f80cf27970e1de4fd132888447464a8df9a18a5cf1bacae649785cdd955a0f32",
+      "bytes": 4633
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/first-registration/SourceBindings.json",
+      "sha256": "132be3f86999d316cd000f18a3f60b9ac65d9e6c31b14261792163e75a532350",
+      "bytes": 4999
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/first-registration/SourceReadback.json",
+      "sha256": "5a0a53f7f7772a5bf3a86dafbb09eb95642ebefc47e379580ba6f06d8e08ca7d",
+      "bytes": 1298
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/first-registration/subject.test.mjs",
+      "sha256": "4f977c58f5272f6926529ec30ec7b47418f321d02823e8c8389d8f19a35a108a",
+      "bytes": 1994
+    }
+  ],
+  "validation": {
+    "command": "node prepare.mjs; node --test subject.test.mjs",
+    "exact_sources_checked": 8,
+    "passed": 1,
+    "failed": 0,
+    "skipped": 0,
+    "duration_ms": 95.1716,
+    "scope": "LOCAL_PREPARATION_ONLY_NOT_PQUAL_OR_R11"
+  },
+  "actual_remote_read": {
+    "project_ref": "uscrdifznmlvczcekqpw",
+    "at": "2026-09-08T12:12:14.380995+00:00",
+    "control_counts": [
+      0,
+      0,
+      0
+    ],
+    "data_scope": "Control counts and targeted schema metadata; no business rows or credentials",
+    "database_writes": 0
+  },
+  "independent_source_applicability": {
+    "reviewer": "/root/project_list_auth_fix",
+    "vector_required_for_rootset": false,
+    "profile_and_credential_vector_unchanged": true,
+    "identity_source_alone_is_issuer_purpose_qualification": false
+  },
+  "next_required_actual_records": [
+    "Independent acceptance of exact review subject plus individual issuer purpose/Audience/algorithm bindings",
+    "New actual signature over payload containing that acceptance reference"
+  ],
+  "prohibited_substitutions": [
+    "PR25 signature for new Root payload",
+    "Synthetic epoch or blanket N/A",
+    "Ordinary service_role as issuer qualification",
+    "Old broad delegation as actual per-Gate authorization"
+  ],
+  "root_registered": false,
+  "ga_issued": false
+}

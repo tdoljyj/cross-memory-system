@@ -1,0 +1,95 @@
+{
+  "kind": "QUALIFICATION_RUNTIME_REMOTE_EVIDENCE_CANDIDATE",
+  "state": "PREPARED_PENDING_INDEPENDENT_REVIEW",
+  "source_files": [
+    {
+      "path": "scripts/phase2-qualification/qualification-runtime/remote_evidence.py",
+      "sha256": "a7373982ee405890fc7f260b96987d69d8133a0f5c318fc6e85c44d7fbb28969"
+    },
+    {
+      "path": "scripts/phase2-qualification/qualification-runtime/test_branch_successor.py",
+      "sha256": "64ea98a18828f6b0861cecead7f6ca9c3885f91e1b0453813cc179e8a41d9a4c"
+    },
+    {
+      "path": "scripts/phase2-qualification/qualification-runtime/test_attempt_scope_fix.py",
+      "sha256": "28c5fa71dc6ea08998e8f0dba8b08723d9b147bb9247aab19ba5024e2b8c16ec"
+    },
+    {
+      "path": "scripts/phase2-qualification/qualification-runtime/test_commit_identity_fix.py",
+      "sha256": "c797bf0e31a0bb6a0d50ca98c2e3ab69e41eed9266ee6eeade195e8bb5214033"
+    },
+    {
+      "path": "scripts/phase2-qualification/qualification-runtime/README.md",
+      "sha256": "efdb43cf0ab4948a3320abc412c888fa75abbe9ab2eb65de69ae25d792d30055"
+    },
+    {
+      "path": "scripts/phase2-qualification/qualification-runtime/.gitignore",
+      "sha256": "7c0e3807a109f275f04fa607825e26c8d69f2e23f684cf4ca68e03df1173780a"
+    }
+  ],
+  "reused_source": {
+    "path": "scripts/phase2-qualification/control-root-registration/verify.py",
+    "sha256": "040ef7b7a8536d6b210ada9a15a26af6749e58c5da10cd401b98c36155373093"
+  },
+  "delta": {
+    "path": "scripts/phase2-qualification/docker-engineering-observation/ImplementationDelta.json",
+    "sha256": "89bfff507112d3239423db6a80a3fd4003a575369cfac6e9fb0fb47efa0b25ae"
+  },
+  "tests": {
+    "command": "python -I -S -B -X utf8 scripts/phase2-qualification/qualification-runtime/test_branch_successor.py",
+    "passed": 8,
+    "failed": 0,
+    "skipped": 0,
+    "seconds": 0.117,
+    "scope": "Only new synthetic branch successor checks; no live API/Docker or old 11 rerun",
+    "tested_source_sha256": "15e50bd63701c727432c2dec4d6b06aef308176a31549671705af7a46729e178"
+  },
+  "live_remote_publications": 0,
+  "live_remote_readback_runs": 0,
+  "docker_runs": 0,
+  "pqual_runs": 0,
+  "model_calls": 0,
+  "paid_actions": 0,
+  "private_root_store_changed": false,
+  "formal_execution_enabled": false,
+  "qualified": false,
+  "independent_acceptance_ref": null,
+  "fixed_evidence_target": {
+    "repository": "tdoljyj/cross-memory-system",
+    "branch": "codex/phase2-qualification-evidence-20260908",
+    "automatic_branch_creation": false,
+    "main_mutation": false,
+    "ref_force": false,
+    "external_action_atomic_fencing_proven": false
+  },
+  "historical_main_target": {
+    "directory": "scripts/phase2-qualification/qualification-runtime/history/main-target-49084ace",
+    "evidence_sha256": "49084acecaa6c67de6bf0fd40be92c872ac9f9810be84508328429ed972fa45d",
+    "source_and_index_original_bytes_preserved": true,
+    "old_11_checks_not_rerun": true
+  },
+  "review_fix_check": {
+    "command": "python -I -S -B -X utf8 scripts/phase2-qualification/qualification-runtime/test_attempt_scope_fix.py",
+    "passed": 1,
+    "failed": 0,
+    "skipped": 0,
+    "seconds": 0.057,
+    "tested_source_sha256": "f8c213f4e7fcd63231c9be128c80876a739d9c586598d3ada601d03b066fe4df",
+    "scope": "New attempt cannot inherit previous publication object references; previous local evidence untouched; old 8 not rerun"
+  },
+  "identity_fix_check": {
+    "command": "python -I -S -B -X utf8 scripts/phase2-qualification/qualification-runtime/test_commit_identity_fix.py",
+    "passed": 1,
+    "failed": 0,
+    "skipped": 0,
+    "seconds": 0.021,
+    "tested_source_sha256": "a7373982ee405890fc7f260b96987d69d8133a0f5c318fc6e85c44d7fbb28969",
+    "scope": "Explicit author and committer fixed identity in payload and immutable readback; old suites not rerun"
+  },
+  "historical_branch_target": {
+    "directory": "scripts/phase2-qualification/qualification-runtime/history/branch-target-d8f125cc",
+    "evidence_sha256": "d8f125ccff4964baa20ffc5066dc81a3923caff33cd78f36370383e42ed3bb8a",
+    "source_sha256": "f8c213f4e7fcd63231c9be128c80876a739d9c586598d3ada601d03b066fe4df",
+    "source_byte_hash_reconstruction_verified": true
+  }
+}

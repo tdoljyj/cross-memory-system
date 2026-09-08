@@ -1,0 +1,24 @@
+{
+  "kind": "FIXED_ENGINEERING_OBSERVATION_CLOSEOUT",
+  "state": "OBSERVATION_ACCEPTED_ACTIVE_SLOT_RELEASED",
+  "container_id": "0769096bfca62bba4854625f112b38eb2c3692c37e2f5279e522dafa2aee4ab5",
+  "coordinator": "/root",
+  "basis": {
+    "independent_result_path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/DockerEngineeringObservationIndependentResult.json",
+    "sha256": "418b298c35521893b8a7fe0a37ca8a297df2e5fe353c170fd4c31b3d1df812ed",
+    "archive_sha256": "54fab8137e0cfebe30ae506487ae3a8c1f768ff7eed3c528628204bd25c69b5f"
+  },
+  "effect": {
+    "this_attempt_active_capacity_released": true,
+    "total_budget_refunded": false,
+    "conservative_cumulative_seconds_reserved": 1410,
+    "container_removed": false,
+    "evidence_deleted": false,
+    "redispatch_same_attempt_allowed": false,
+    "controller_qualified": false,
+    "ga_issued": false,
+    "pqual_pass": false,
+    "parent_crash_tested": false
+  },
+  "recorded_at_utc": "2026-09-08 12:11:09 UTC"
+}

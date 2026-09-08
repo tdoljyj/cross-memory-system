@@ -1,0 +1,3 @@
+# Preserve exact observed and independently reviewed archive/index bytes.
+* -text
+EvidenceIndex.json whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol

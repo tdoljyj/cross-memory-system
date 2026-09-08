@@ -1,0 +1,111 @@
+{
+  "state": "EXACT_PROTOCOL_SUCCESSOR_CANDIDATE_PENDING_INDEPENDENT_ACCEPTANCE_NOT_APPLIED",
+  "current_alignment": {
+    "remote_head": "2eec225cdfee5ebbdf5e10cae7eaa5c5b6c80faa",
+    "classification": "EQUAL",
+    "source_scope": "PROJECT"
+  },
+  "actual_store_deployment": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/NonproductionControlStoreDeploymentSuccessor.json",
+    "sha256": "58643a21e69cda0e06dbc70fc71724f75cd6bca930e17e6723287228e12daa99",
+    "status": "DEPLOYED_EMPTY_READBACK_PASS",
+    "project_ref": "uscrdifznmlvczcekqpw",
+    "root_registered": false
+  },
+  "files": [
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/protocol-successor/build-successor.py",
+      "sha256": "e86e825681ed54e8d2077545cd275309df0a47a5def904e482b23297b6b79f57",
+      "bytes": 10420
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/protocol-successor/control-trust-root-set.schema.json",
+      "sha256": "7e1a0c02d468b565ef33a0a66722031bc67dd4d2f3bb023ea56dd61af81b948a",
+      "bytes": 11232
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/protocol-successor/ControlUriMapping.json",
+      "sha256": "35ac46fba77d3c851eaf82a5f7311c60cfe661addd9725be0738fa45f20a5a57",
+      "bytes": 740
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/protocol-successor/manifest.candidate.json",
+      "sha256": "f4b15de18b0d291eb435c64eaf33c346a44a8c931b9ef6cb0861892a22cbf70a",
+      "bytes": 20291
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/protocol-successor/ProtocolSuccessor.patch",
+      "sha256": "838bc66dfc6bd4720879047256fe98edec81e91c6a1dd4be53fb2d9a9bfa8167",
+      "bytes": 54683
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/protocol-successor/README.md",
+      "sha256": "31738aa1256d71832807998c61b254880b65192b28243fabd14cdf81f56a29c4",
+      "bytes": 5469
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/protocol-successor/store-candidate-before-documentation-erratum.json",
+      "sha256": "b79cfd230d44a30ba521b9588eedc850f68aea83366cc771d78fe247760eac94",
+      "bytes": 5744
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/protocol-successor/store-readme-before-table-count-erratum.md",
+      "sha256": "a2760b26e56f6be76c7df97828fbcea3437dc46a2d40ab2af94e56e21c5d3c21",
+      "bytes": 6127
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/protocol-successor/successor.test.mjs",
+      "sha256": "bbfc481950bf470d6fa0c9c8981431de712f5760e89bebfc08ea895c00243e89",
+      "bytes": 7303
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/protocol-successor/validate-successor.mjs",
+      "sha256": "ddbf478461955c870c96e221146a0624fbf03af5d3084ca4c7e74c0b19a32740",
+      "bytes": 3676
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/protocol-successor/verify-generated-artifacts.candidate.mjs",
+      "sha256": "b8b6a756af4bcfb429d69caf2d54fa0b0bafeeafbcac89fb89fd14a673a4ed15",
+      "bytes": 44585
+    }
+  ],
+  "unapplied_formal_write_set": [
+    "protocol/continuity/v1/schemas/core/control-trust-root-set.schema.json",
+    "protocol/continuity/v1/manifest.json",
+    "scripts/verify-generated-artifacts.mjs"
+  ],
+  "validation": {
+    "mode": "LOCAL_ENGINEERING_ONLY",
+    "final_full_current_small_suite": {
+      "command": "node --test successor.test.mjs",
+      "passed": 7,
+      "failed": 0,
+      "skipped": 0,
+      "duration_ms": 103.0834
+    },
+    "git_apply_check": "PASS_NOT_APPLIED",
+    "candidate_verifier_syntax": "PASS",
+    "full_generated_artifacts_or_bom_execution": "NOT_RUN",
+    "initial_failure": "One test source path wrong (5 PASS/1 FAIL); corrected then targeted PASS; final schema/reader change justified complete final 7 checks."
+  },
+  "boundary": {
+    "new_root_instances": 0,
+    "signature_bytes_fabricated": false,
+    "gold_read": false,
+    "formal_protocol_files_modified": false,
+    "production_access": false,
+    "ga_or_qualification_issued": false,
+    "algorithm_and_uri": "NEW_EXPLICIT_LIMITED_SUCCESSOR_CONCRETIZATION_NOT_HISTORICAL_CLAIM",
+    "issuer_signature_qualification": "ACTUAL_INSTANCE_BINDING_STILL_REQUIRED"
+  },
+  "documentation_erratum": {
+    "change": "Only existing public table count 14 to actual 13; not a new SQL acceptance",
+    "previous_exact_report_sha256": "b79cfd230d44a30ba521b9588eedc850f68aea83366cc771d78fe247760eac94",
+    "preserved_previous_report": "scripts/phase2-qualification/nonproduction-control-store/protocol-successor/store-candidate-before-documentation-erratum.json",
+    "current_report_sha256": "273cff473e6ce65323decf8c1600bbf2d534016cdc47881b2d06864b8cb2201f",
+    "previous_readme_sha256": "a2760b26e56f6be76c7df97828fbcea3437dc46a2d40ab2af94e56e21c5d3c21",
+    "current_readme_sha256": "b6c4e8bcf6d97a8afe842d971a54cc93fd314a394ddd913305c13d4bc3c4e98e",
+    "accepted_sql_unchanged": "3cbbed94e1c9ef5fec4db281526ca69b9b30a24d2812b5a8bb5eb6bc728146fb",
+    "current_erratum_not_claimed_same_accepted_document_bytes": true
+  }
+}

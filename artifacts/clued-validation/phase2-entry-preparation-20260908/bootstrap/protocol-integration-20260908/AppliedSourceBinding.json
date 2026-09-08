@@ -1,0 +1,22 @@
+{
+  "state": "EXACT_ACCEPTED_THREE_FILE_PATCH_APPLIED",
+  "applied_at_utc": "2026-09-08T12:38:33.0869825+00:00",
+  "acceptance_sha256": "988cdf823eb63806dc3385aa1840e812c1cb1df5ed06e72ca2adf56244b88d20",
+  "patch_sha256": "4951a00f8ef4b56f5b8d530268285feaf1ee46794ffbb7ad059b672899413cab",
+  "files": [
+    {
+      "path": "protocol/continuity/v1/schemas/core/control-trust-root-set.schema.json",
+      "sha256": "87f094fa079034aa886d6c568730370a3264e106529b4bfd79bc3369f30b79e5"
+    },
+    {
+      "path": "protocol/continuity/v1/manifest.json",
+      "sha256": "d13b17d873004e97fe45400d715b5becef8fa6bb0a004011921344bd0c9441ec"
+    },
+    {
+      "path": "scripts/verify-generated-artifacts.mjs",
+      "sha256": "6ccbf6a152f7f6b9c63c96b10758f2e295c28d32f59686223736b2da447491d5"
+    }
+  ],
+  "full_g1_or_bom_claimed": false,
+  "root_registration_performed": false
+}

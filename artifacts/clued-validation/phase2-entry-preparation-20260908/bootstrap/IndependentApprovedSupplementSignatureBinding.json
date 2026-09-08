@@ -1,0 +1,134 @@
+{
+  "schema_version": 1,
+  "state": "APPROVED_SUPPLEMENT_SUBJECTS_AND_INDEPENDENT_ACCEPTANCES_SIGNATURE_BOUND",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "scope": "Exact signed publication binding only; no repeated substantive scope audit or tests.",
+  "merge": "2eec225cdfee5ebbdf5e10cae7eaa5c5b6c80faa",
+  "pr": 26,
+  "merged_by": "tdoljyj",
+  "merged_at": "2026-09-08T11:45:08Z",
+  "source_head": "cecbe5f34ce43676f3d41a32cbd4f08d65a423c6",
+  "parents": [
+    "4d7f93c17cf7d126e771cf8aca6299c868cba0a9",
+    "cecbe5f34ce43676f3d41a32cbd4f08d65a423c6"
+  ],
+  "tree": "cbc413e0e68f40468905b89a6ea0bb1a12d31d05",
+  "verification": {
+    "verified": true,
+    "reason": "valid",
+    "committer": "web-flow",
+    "method": "GitHub verified/valid with actual PGP carrier, signed tree/parents and Owner merged PR; not local OpenPGP"
+  },
+  "files": [
+    {
+      "path": "artifacts/clued-validation/kernel-stability-hardening-20260908/BaselineConflictSupplementDecision.json",
+      "sha256": "440b4590a28f2fdfa337073442c7f0306e19152802aafc1e12771e0d21a0a0b3",
+      "git_blob": "f17d7606bf14bfa54a991c3373309ec85dd277a7",
+      "bytes": 9844,
+      "local_exact": true
+    },
+    {
+      "path": "artifacts/clued-validation/kernel-stability-hardening-20260908/BaselineConflictSupplementDecision.md",
+      "sha256": "afbbce409728d00f6631cd36ad0e22a284181bc1f2d91927febede51816c1b07",
+      "git_blob": "b6a94a338ba973bc18e79a6186c5ba244eb4cfd0",
+      "bytes": 6205,
+      "local_exact": true
+    },
+    {
+      "path": "artifacts/clued-validation/kernel-stability-hardening-20260908/BaselineConflictSupplementIndependentReview.json",
+      "sha256": "9c8acc26a213694d2ddd1bf65a86d8defdab9ff77841b51e255e39363d97cbe2",
+      "git_blob": "39cd596d90c5e9b5fbe2742936e8ded607a1ac67",
+      "bytes": 5903,
+      "local_exact": true
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/agent-handoff-measurement/ScopeAmendment.json",
+      "sha256": "1ead1644bc98eb7898efe7dca13e96be208563b7a3bc32b2126befafb11c7dc2",
+      "git_blob": "65bce71fd5628bd6f571031eeb122a685f4bb399",
+      "bytes": 5610,
+      "local_exact": true
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/agent-handoff-measurement/ScopeAmendment.md",
+      "sha256": "876f65e9563fd7847eebf1f63dc18b5b3f124e6c1767b34a57f1eb498d0b73b7",
+      "git_blob": "2f890f603f823efc74cd7f3b2b0616e353ba61a0",
+      "bytes": 1808,
+      "local_exact": true
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/agent-handoff-measurement/MeasurementProtocol.md",
+      "sha256": "f6eaa15b5b373609bc57b780fdb4d005a278a497820ffe751de17f86f202d88e",
+      "git_blob": "0273c5392e46441369f9bccf713451f439501f83",
+      "bytes": 6725,
+      "local_exact": true
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/agent-handoff-measurement/IndependentProtocolAcceptance.json",
+      "sha256": "be859c0542e5b61b9454b8d315bab72d23e097b53d7700fd27cc361e31c929ea",
+      "git_blob": "e19d115cf32bf13cd58cafe1b39a2b48eb7ed4ed",
+      "bytes": 7173,
+      "local_exact": true
+    }
+  ],
+  "observations": [
+    {
+      "endpoint": "https://api.github.com/repos/tdoljyj/cross-memory-system/commits/2eec225cdfee5ebbdf5e10cae7eaa5c5b6c80faa",
+      "response_sha256": "81a1966bfb26574c38469e0bb7299a686d0ae04654297a2cd86549f5bf26091b",
+      "observed_at_utc": "2026-09-08T11:47:24.949171+00:00"
+    },
+    {
+      "endpoint": "https://api.github.com/repos/tdoljyj/cross-memory-system/pulls/26",
+      "response_sha256": "37581b5c3a17a0d6cb6939e40fdd274eee21a07e72177d53dcc65d9cd02fb40e",
+      "observed_at_utc": "2026-09-08T11:47:24.877373+00:00"
+    },
+    {
+      "endpoint": "https://api.github.com/repos/tdoljyj/cross-memory-system/contents/artifacts/clued-validation/kernel-stability-hardening-20260908/BaselineConflictSupplementDecision.json?ref=2eec225cdfee5ebbdf5e10cae7eaa5c5b6c80faa",
+      "response_sha256": "7529ccf0a7398f2d6ed03647ba9bbe7763ea6c58a6974525fad4a38cada2b239",
+      "observed_at_utc": "2026-09-08T11:47:26.069409+00:00"
+    },
+    {
+      "endpoint": "https://api.github.com/repos/tdoljyj/cross-memory-system/contents/artifacts/clued-validation/kernel-stability-hardening-20260908/BaselineConflictSupplementDecision.md?ref=2eec225cdfee5ebbdf5e10cae7eaa5c5b6c80faa",
+      "response_sha256": "b4c902ac3eb42b44f916932ca3dcdc0f1c9efdb2f955c6803e4d044c4c1094df",
+      "observed_at_utc": "2026-09-08T11:47:25.727015+00:00"
+    },
+    {
+      "endpoint": "https://api.github.com/repos/tdoljyj/cross-memory-system/contents/artifacts/clued-validation/kernel-stability-hardening-20260908/BaselineConflictSupplementIndependentReview.json?ref=2eec225cdfee5ebbdf5e10cae7eaa5c5b6c80faa",
+      "response_sha256": "83e3401aa3fb0775e496e85a00d5e51b50efbbffc8c866fe41e74891a4cb6070",
+      "observed_at_utc": "2026-09-08T11:47:25.674739+00:00"
+    },
+    {
+      "endpoint": "https://api.github.com/repos/tdoljyj/cross-memory-system/contents/artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/agent-handoff-measurement/ScopeAmendment.json?ref=2eec225cdfee5ebbdf5e10cae7eaa5c5b6c80faa",
+      "response_sha256": "2a2e0a5af71eb2872eb466ac3dd84b6e9e69de0437d800fe212bde61b9b659c7",
+      "observed_at_utc": "2026-09-08T11:47:25.760898+00:00"
+    },
+    {
+      "endpoint": "https://api.github.com/repos/tdoljyj/cross-memory-system/contents/artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/agent-handoff-measurement/ScopeAmendment.md?ref=2eec225cdfee5ebbdf5e10cae7eaa5c5b6c80faa",
+      "response_sha256": "3e44eb2027545e3f99bd0a93b08dd866b7536af6174ac100e0b569c709c60d6b",
+      "observed_at_utc": "2026-09-08T11:47:26.364466+00:00"
+    },
+    {
+      "endpoint": "https://api.github.com/repos/tdoljyj/cross-memory-system/contents/artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/agent-handoff-measurement/MeasurementProtocol.md?ref=2eec225cdfee5ebbdf5e10cae7eaa5c5b6c80faa",
+      "response_sha256": "47eef90306b2c8204bd883b8c9b6a4059195d3fc2f55e7a11f3ec25b645e370b",
+      "observed_at_utc": "2026-09-08T11:47:26.460197+00:00"
+    },
+    {
+      "endpoint": "https://api.github.com/repos/tdoljyj/cross-memory-system/contents/artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/agent-handoff-measurement/IndependentProtocolAcceptance.json?ref=2eec225cdfee5ebbdf5e10cae7eaa5c5b6c80faa",
+      "response_sha256": "e7b39df2af5be7e9e1d80c4cd8200f95f94a6c3a2418ce97775498fab002ea5f",
+      "observed_at_utc": "2026-09-08T11:47:26.416658+00:00"
+    }
+  ],
+  "effect": {
+    "baseline": "Exact RF01–RF03 approved supplement and independent acceptance are now bound to the real signed merge; original 21 steps and Gates remain unchanged.",
+    "A10": "Exact agent-population amendment and independent timing protocol acceptance are now signature-bound. Original human dependency is historical for amended A10; no new human participation approval needed.",
+    "not_issued": [
+      "Measured AgentHandoff results",
+      "A10 PASS",
+      "Human efficiency claim",
+      "Controller/Profile/GA qualification",
+      "Root registration",
+      "Formal Store acceptance",
+      "R11/Entry or whole Phase2 PASS"
+    ],
+    "owner_window_unchanged_until": "2026-09-09T09:28:59Z"
+  }
+}

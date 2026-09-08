@@ -1,0 +1,108 @@
+{
+  "state": "CANDIDATE_PENDING_INDEPENDENT_ACCEPTANCE_AND_SIGNED_REGISTRATION",
+  "candidate_encoding": "SORTED_JSON_UTF8_NO_FLOATS_LF_V1_CANDIDATE",
+  "subject": {
+    "object_type": "ControlTrustRootSet",
+    "record_state": "CANDIDATE_NOT_REGISTERED",
+    "root_set_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+    "generation_id": "ctrgen_352785779b64458a889d571360e2d2d5",
+    "generation_ordinal": 1,
+    "predecessor": null,
+    "generation_origin": "NEWLY_AUTHORIZED_FIRST_REGISTRATION_CANDIDATE_NOT_HISTORICAL",
+    "purpose": "SKILL_COEXISTENCE_QUALIFICATION",
+    "profile_id": "DP-PREENTRY-SKILL-QUALIFICATION",
+    "phase": "PRE_ENTRY_SKILL_QUALIFICATION",
+    "environment": "ISOLATED_TEST",
+    "repository": "tdoljyj/cross-memory-system",
+    "owner": "tdoljyj",
+    "signing_service": "web-flow",
+    "independent_reviewer": "/root/project_list_auth_fix",
+    "coordinator": "/root",
+    "approval": {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/ControlRootRegistrationOwnerApproval.json",
+      "sha256": "3d9c4c9e06217c7c2ef0d32dba77bb5aa66bd745a8f92f0ea255b19a95127aea",
+      "proposal_path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/ControlRootGenerationBindingProposal.md",
+      "proposal_sha256": "f655e8a16f428bbccfca3687c28e31bc57aed0e7a9fd9ac0191648266afec533"
+    },
+    "expires_at": "2026-09-09T09:28:59Z",
+    "limits": {
+      "model_budget": 0,
+      "paid_budget": 0,
+      "max_active_isolated_tests": 1,
+      "cumulative_controlled_execution_seconds": 7200,
+      "new_local_evidence_bytes": 1073741824,
+      "per_ga_max_seconds": 600
+    },
+    "storage_candidate": {
+      "evidence_namespace": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/runtime-evidence/control-root-registration/ctr_414bd3c724264a83894b0c55cf2ab878/",
+      "schema_responsibility": "protocol/continuity/v1/schemas/core/control-trust-root-set.schema.json",
+      "uri_template_responsibility": "protocol/continuity/v1/manifest.json#/control_uri_templates",
+      "currentness": "CURRENT_MAIN_TREE_COMPLETE_NAMESPACE_INDEX_AND_REVOCATION_SET; double read main; fail on drift or unknown",
+      "business_canonical_effect": "NONE"
+    },
+    "source_contract": {
+      "s06_sha256": "f967fdf3e63028d29ed191160698726b5d707aaae63bd951f6ba2e8584936fec",
+      "lines": [
+        200,
+        235,
+        237,
+        868,
+        925,
+        2384,
+        2388,
+        3885,
+        4334,
+        4336,
+        4346
+      ]
+    },
+    "no_ga_or_qualification_effect": true,
+    "old_pins_modified": false
+  },
+  "subject_sha256": "e4ab25ecb1fa6709435d0318ad431d14343482cbe84e232f638e55c3c4ba1e1f",
+  "bindings": {
+    "owner_approval_commit": "4d7f93c17cf7d126e771cf8aca6299c868cba0a9",
+    "owner_approval_pr": 25,
+    "registration_commit": null,
+    "registration_pr": null,
+    "independent_review_ref": null,
+    "formal_store_binding_ref": null,
+    "history_index_path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/runtime-evidence/control-root-registration/ctr_414bd3c724264a83894b0c55cf2ab878/index.json"
+  },
+  "binding_parent_candidate_sha256": "6dd09b233118cd53978a00e8bf2b2ab7428996363fbeaba411524045101acf18",
+  "owner_approval_readback": {
+    "state": "OWNER_APPROVAL_SOURCE_VERIFIED_ONLY_NOT_ROOT_REGISTRATION",
+    "verifier_sha256": "efece40e684111f92fdf12dbc38f172698ae595002dcf61165303c8c7e639323",
+    "signature_method": "GITHUB_API_VERIFIED_VALID_WEB_FLOW_PGP_CARRIER_TREE_AND_PARENTS_WITH_OWNER_MERGED_PR; NOT_LOCAL_OPENPGP",
+    "approval_content_sha256": "3d9c4c9e06217c7c2ef0d32dba77bb5aa66bd745a8f92f0ea255b19a95127aea",
+    "observations": [
+      {
+        "endpoint": "https://api.github.com/repos/tdoljyj/cross-memory-system/commits/4d7f93c17cf7d126e771cf8aca6299c868cba0a9",
+        "observed_at_utc": "2026-09-08T11:14:29.375374+00:00",
+        "response_sha256": "80af0856a6af16df46f0e0f8f4b742c6b15577a3bdf36e0baa1d65e5cedb09d1"
+      },
+      {
+        "endpoint": "https://api.github.com/repos/tdoljyj/cross-memory-system/pulls/25",
+        "observed_at_utc": "2026-09-08T11:14:30.293426+00:00",
+        "response_sha256": "e7cf907203601b7d34f19558529ade781670a944bee29357ff85e966d9031f5a"
+      },
+      {
+        "endpoint": "https://api.github.com/repos/tdoljyj/cross-memory-system/contents/artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/ControlRootRegistrationOwnerApproval.json?ref=4d7f93c17cf7d126e771cf8aca6299c868cba0a9",
+        "observed_at_utc": "2026-09-08T11:14:30.921894+00:00",
+        "response_sha256": "794230018973d7ef04b51e6b13c0a193e6b5bebb5f3c4a2c257606bd14806603"
+      }
+    ]
+  },
+  "implementation_revision": {
+    "parent_candidate_sha256": "2f619daaa9753f78d07db0e9e636af165f7385fe5170ccc84b4a5501b209b900",
+    "parent_verifier_sha256": "efece40e684111f92fdf12dbc38f172698ae595002dcf61165303c8c7e639323",
+    "verifier_sha256": "040ef7b7a8536d6b210ada9a15a26af6749e58c5da10cd401b98c36155373093",
+    "test_source_sha256": "43b88c77f36e471cec09ce6c1c80ef9655d70001369d9f8c214da8bffd4c99cc",
+    "check_scope": "LOCAL_ENGINEERING_ONLY_THREE_NEW_HISTORY_REJECTION_CHECKS",
+    "new_checks_passed": 3,
+    "old_checks_rerun": false,
+    "actual_full_remote_history_executed": false,
+    "independent_acceptance": "PENDING"
+  },
+  "boundary": "New IDs are actual candidate identities, not registered historical generations. Null bindings are missing real inputs; no root, GA or qualification is issued by this file."
+}

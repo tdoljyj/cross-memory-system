@@ -1,0 +1,48 @@
+{
+  "kind": "QUALIFICATION_RUNTIME_REMOTE_EVIDENCE_CANDIDATE",
+  "state": "PREPARED_PENDING_INDEPENDENT_REVIEW",
+  "source_files": [
+    {
+      "path": "scripts/phase2-qualification/qualification-runtime/remote_evidence.py",
+      "sha256": "b4597ee454366d20f6c861beba63919cd1b05d6f4e10e39a12b7f31ece62b089"
+    },
+    {
+      "path": "scripts/phase2-qualification/qualification-runtime/test_remote_evidence.py",
+      "sha256": "64e37a381b8911f017580899995977ef939feb614e89efd8bb8acc14294b5aec"
+    },
+    {
+      "path": "scripts/phase2-qualification/qualification-runtime/README.md",
+      "sha256": "0b21c8cf07a12cb1b16e5a594053c1057ec63f98aef272233a819d47aa16440d"
+    },
+    {
+      "path": "scripts/phase2-qualification/qualification-runtime/.gitignore",
+      "sha256": "7c0e3807a109f275f04fa607825e26c8d69f2e23f684cf4ca68e03df1173780a"
+    }
+  ],
+  "reused_source": {
+    "path": "scripts/phase2-qualification/control-root-registration/verify.py",
+    "sha256": "040ef7b7a8536d6b210ada9a15a26af6749e58c5da10cd401b98c36155373093"
+  },
+  "delta": {
+    "path": "scripts/phase2-qualification/docker-engineering-observation/ImplementationDelta.json",
+    "sha256": "89bfff507112d3239423db6a80a3fd4003a575369cfac6e9fb0fb47efa0b25ae"
+  },
+  "tests": {
+    "command": "python -I -S -B -X utf8 scripts/phase2-qualification/qualification-runtime/test_remote_evidence.py",
+    "passed": 11,
+    "failed": 0,
+    "skipped": 0,
+    "seconds": 0.042,
+    "scope": "Synthetic transport and temporary local ticket only; no live API/process/write"
+  },
+  "live_remote_publications": 0,
+  "live_remote_readback_runs": 0,
+  "docker_runs": 0,
+  "pqual_runs": 0,
+  "model_calls": 0,
+  "paid_actions": 0,
+  "private_root_store_changed": false,
+  "formal_execution_enabled": false,
+  "qualified": false,
+  "independent_acceptance_ref": null
+}

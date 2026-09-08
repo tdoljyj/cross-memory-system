@@ -1,0 +1,34 @@
+{
+  "kind": "FIXED_SYNTHETIC_SKILL_INPUT_PRIMITIVE_CANDIDATE",
+  "state": "PREPARED_PENDING_INDEPENDENT_REVIEW",
+  "files": [
+    {
+      "path": "scripts/phase2-qualification/qualification-runtime/fixed_skill_fixture.py",
+      "sha256": "98c4d0165144a4ebfbd4889a98da65a8c6d3a71fbf082af393c15b9d00a3c18a"
+    },
+    {
+      "path": "scripts/phase2-qualification/qualification-runtime/test_fixed_skill_fixture.py",
+      "sha256": "f948d6c37736a3f1a7216f0e481c921b0ab13fe36c5082a27a4957cfd299bd51"
+    },
+    {
+      "path": "scripts/phase2-qualification/qualification-runtime/FixedFixturePreparation.md",
+      "sha256": "218614a8069ea8188932fd0d9990d4fbfacc484dcd4e98c6df0a9bcb134b17f2"
+    }
+  ],
+  "subject_acceptance": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/R10IndependentProjectionAcceptance.json",
+  "tests": {
+    "passed": 4,
+    "failed": 0,
+    "skipped": 0,
+    "seconds": 0.001,
+    "scope": "Pure guards and exact source bytes; Windows rejected before subject read/write"
+  },
+  "qualification_runs": 0,
+  "skill_behavior_evaluated": false,
+  "docker_runs": 0,
+  "model_calls": 0,
+  "paid_actions": 0,
+  "na_accepted": false,
+  "formal_execution_enabled": false,
+  "controller_qualified": false
+}

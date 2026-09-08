@@ -1,0 +1,2 @@
+# A unified diff's empty context line is one literal space; retain accepted bytes.
+ProtocolSuccessor.patch -text whitespace=-blank-at-eol

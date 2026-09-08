@@ -1,0 +1,27 @@
+{
+  "kind": "INDEPENDENTLY_CLASSIFIED_PUBLIC_IMAGE_FINGERPRINT_FINDINGS",
+  "state": "TWO_KNOWN_FALSE_POSITIVES_EXACT_COMMIT_SCOPED_EXCEPTIONS_PENDING",
+  "rule": "generic-api-key",
+  "findings": [
+    {
+      "path": "scripts/phase2-qualification/docker-engineering-observation/validation.py",
+      "line": 22,
+      "source_sha256": "3ac10b11456ddc2de9155fb2b9f8f8c8c20ac0da51957e587d3081339767ac2e"
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/PythonImageBinding.json",
+      "line": 23,
+      "source_sha256": "f2f8d7f5d4e9d77ff4dd42ccbcafedeb1c5a7658f84f17252422fdecdb25d876"
+    }
+  ],
+  "classification": "Both values are the same public release-signing GPG fingerprint in the actual independently verified official Python image Config.Env; not private-key material, secret or authorization token.",
+  "independent_assessor": "/root/project_list_auth_fix",
+  "evidence_reused": "DockerEngineeringObservationIndependentAcceptance.json exact image/config and public Env verification; no repeated image validation.",
+  "allowed_exception": "Only subsequent immutable commit/path/rule/line fingerprints after committing these exact source bytes. No path-wide, rule-wide or future-value allowance.",
+  "initial_incremental_scan": {
+    "findings": 2,
+    "scanned_bytes_approx": 463523,
+    "exit_code": 1
+  },
+  "observed_at_utc": "2026-09-08 12:46:51 UTC"
+}

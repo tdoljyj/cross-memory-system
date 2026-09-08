@@ -191,3 +191,14 @@ artifacts/clued-validation/public-mcp/a03/c1ef7a3b-20260829T062104Z/production-r
 # Reviewed 2026-09-08 against controller.py consumers; no path/rule-wide exception.
 7d435110a3b2a05fa1773f2609932094550ab94e:scripts/phase2-qualification/example.local.json:generic-api-key:4
 7d435110a3b2a05fa1773f2609932094550ab94e:scripts/phase2-qualification/README.md:generic-api-key:27
+
+# EX-16: Two immutable occurrences of the official Python image's public GPG
+# release-signing fingerprint; independently classified 2026-09-08. Exact commit,
+# path, rule and line only; source bytes determine the public value, no future allowance.
+2d9a2158b785b0ba43e47522b087727f64870cc8:scripts/phase2-qualification/docker-engineering-observation/validation.py:generic-api-key:22
+2d9a2158b785b0ba43e47522b087727f64870cc8:artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/PythonImageBinding.json:generic-api-key:23
+
+# EX-17: Same independently verified public Python release GPG fingerprint
+# 7169605F62C751356D054A26A821E680E5FA6305 in the fixed child environment.
+# Exact immutable occurrence only; reviewed by project_list_auth_fix 2026-09-08.
+25ff8d29fce23533d8d656b3a2c2bef76c5a6e76:scripts/phase2-qualification/qualification-runtime/fixed_skill_fixture.py:generic-api-key:24

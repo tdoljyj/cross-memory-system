@@ -1,0 +1,194 @@
+{
+  "schema_version": 1,
+  "state": "ACCEPTED_EXACT_LIMITED_PROTOCOL_SUCCESSOR_FOR_APPLICATION_AND_AFFECTED_INTEGRITY_CHECKS",
+  "independent_assessor": "/root/project_list_auth_fix",
+  "reviewed_at_utc": "2026-09-08T12:37:03.674Z",
+  "subject": {
+    "path": "scripts/phase2-qualification/nonproduction-control-store/protocol-successor/SuccessorEvidence.json",
+    "sha256": "716bff094e8056c7641f530285c3a2edd5cb731117e9b817dddb71f231a2a8b2",
+    "files": [
+      {
+        "path": "scripts/phase2-qualification/nonproduction-control-store/protocol-successor/build-successor.py",
+        "sha256": "c6c28a79f362efb1a2d58373124973e36d2812bfe376e39ef8567accd652df82",
+        "bytes": 10537
+      },
+      {
+        "path": "scripts/phase2-qualification/nonproduction-control-store/protocol-successor/control-trust-root-set.schema.json",
+        "sha256": "87f094fa079034aa886d6c568730370a3264e106529b4bfd79bc3369f30b79e5",
+        "bytes": 6122
+      },
+      {
+        "path": "scripts/phase2-qualification/nonproduction-control-store/protocol-successor/ControlUriMapping.json",
+        "sha256": "abbc8e7eae03f2a183fd739fa49b16a97db6e1c0fb62a9353a30db81553db416",
+        "bytes": 740
+      },
+      {
+        "path": "scripts/phase2-qualification/nonproduction-control-store/protocol-successor/manifest.candidate.json",
+        "sha256": "d13b17d873004e97fe45400d715b5becef8fa6bb0a004011921344bd0c9441ec",
+        "bytes": 20290
+      },
+      {
+        "path": "scripts/phase2-qualification/nonproduction-control-store/protocol-successor/ProtocolSuccessor.patch",
+        "sha256": "4951a00f8ef4b56f5b8d530268285feaf1ee46794ffbb7ad059b672899413cab",
+        "bytes": 49849
+      },
+      {
+        "path": "scripts/phase2-qualification/nonproduction-control-store/protocol-successor/README.md",
+        "sha256": "404bc87353e819b2ffe152f362a209430bd7f63908652694ace454a84c5c044b",
+        "bytes": 6428
+      },
+      {
+        "path": "scripts/phase2-qualification/nonproduction-control-store/protocol-successor/store-candidate-before-documentation-erratum.json",
+        "sha256": "b79cfd230d44a30ba521b9588eedc850f68aea83366cc771d78fe247760eac94",
+        "bytes": 5744
+      },
+      {
+        "path": "scripts/phase2-qualification/nonproduction-control-store/protocol-successor/store-readme-before-table-count-erratum.md",
+        "sha256": "a2760b26e56f6be76c7df97828fbcea3437dc46a2d40ab2af94e56e21c5d3c21",
+        "bytes": 6127
+      },
+      {
+        "path": "scripts/phase2-qualification/nonproduction-control-store/protocol-successor/successor.test.mjs",
+        "sha256": "b1980f714be5cf547252462af7473b8f335baf7f46efc590b0f470e87579ed35",
+        "bytes": 9313
+      },
+      {
+        "path": "scripts/phase2-qualification/nonproduction-control-store/protocol-successor/SuccessorEvidence.before-applicability-fix.json",
+        "sha256": "e569efd30f198dfdd0e887b42a85f890e754ab0f475cb8ce935c82c0cfeeae8a",
+        "bytes": 5279
+      },
+      {
+        "path": "scripts/phase2-qualification/nonproduction-control-store/protocol-successor/validate-successor.mjs",
+        "sha256": "e2844900272bcd9f2aba18aae256567e33d0c598f0a114d7ed01a6fb2fdf1ca5",
+        "bytes": 4871
+      },
+      {
+        "path": "scripts/phase2-qualification/nonproduction-control-store/protocol-successor/verify-generated-artifacts.candidate.mjs",
+        "sha256": "6ccbf6a152f7f6b9c63c96b10758f2e295c28d32f59686223736b2da447491d5",
+        "bytes": 44862
+      }
+    ]
+  },
+  "formal_write_set": [
+    "protocol/continuity/v1/schemas/core/control-trust-root-set.schema.json",
+    "protocol/continuity/v1/manifest.json",
+    "scripts/verify-generated-artifacts.mjs"
+  ],
+  "decision": {
+    "accepted": true,
+    "scope": "New core ControlTrustRootSet schema, exact nonproduction typed private-store URI mapping, and exact 92/66 artifact/schema guard only.",
+    "patch_sha256": "4951a00f8ef4b56f5b8d530268285feaf1ee46794ffbb7ad059b672899413cab",
+    "root_instance_accepted": false,
+    "root_registered": false,
+    "controller_qualified": false,
+    "ga_or_grr_issued": false,
+    "full_g1_bom_pass": false,
+    "existing_pins_or_original_source_changed": false
+  },
+  "source_applicability": {
+    "source_member_sha256": "f967fdf3e63028d29ed191160698726b5d707aaae63bd951f6ba2e8584936fec",
+    "independent_raw_zip_member_sha_match": true,
+    "lines": [
+      868,
+      3008,
+      3010,
+      3012,
+      3885,
+      4334,
+      4336
+    ],
+    "determination": "L3012 enumerates credentials and capability objects requiring the full business RevocationEpochVector; ControlTrustRootSet is not in that list. L868/3885/4334/4336 bind its own core responsibility, generation, purpose, Audience, signature, expiry and revocation. Removing this extra candidate RootSet vector requirement neither permits a fake NA/zero nor weakens Profile or actual credential vector duties.",
+    "owner_exception_binding_ref": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/IndependentControlRootOwnerSignatureBinding.json",
+    "owner_window_ends_at": "2026-09-09T09:28:59Z",
+    "scope_extension": false
+  },
+  "resolved_findings": [
+    {
+      "id": "PS01",
+      "problem": "Candidate added mandatory business Vector to RootSet beyond applicable source and coupled initial registration to later Profile business state.",
+      "resolution": "Removed only from unaccepted RootSet schema. No NA or epoch invented. Credential/Profile original schemas unchanged."
+    },
+    {
+      "id": "PS02",
+      "problem": "History digest containing the current RootSet would require a self-containing hash.",
+      "resolution": "history.prefix_sequence/prefix_digest bind complete pre-append events. Reader checks actual event prefix length and canonical digest. Current full event history remains available from private store."
+    },
+    {
+      "id": "PS03",
+      "problem": "Independent-acceptance and signature references could make subject commitments circular.",
+      "resolution": "reviewSubjectDigest excludes independent_acceptance_ref and signature_binding. Final signaturePayloadDigest excludes only signature_binding and thus includes the actual acceptance ref. Shape reader checks signed_object_sha256 equals that payload digest; it does not verify a signature."
+    },
+    {
+      "id": "PS04",
+      "problem": "Partial successor guard did not check all provenance/scope fields.",
+      "resolution": "Exact whole control_root_successor object and exact whole mapping now compared; schema entry digest bound. Prior 91/65 path and all historical pins retained."
+    }
+  ],
+  "independent_validation": {
+    "candidate_binding_check": {
+      "files": 12,
+      "all_sha256_and_sizes_match": true,
+      "all_lf_no_cr": true
+    },
+    "predecessor_manifest_fields": {
+      "unchanged_except": [
+        "entries",
+        "content_tree_digest"
+      ],
+      "all_other_existing_fields_deep_equal": true
+    },
+    "targeted_execution": {
+      "command": "node --input-type=module (independent in-memory assertions importing the exact validate-successor.mjs; no test runner or full suite)",
+      "module_sha256": "e2844900272bcd9f2aba18aae256567e33d0c598f0a114d7ed01a6fb2fdf1ca5",
+      "result": "PASS",
+      "checks": [
+        "Second-generation root with nonempty complete event prefix reads with authority NONE.",
+        "Tampering a prior event rejects the otherwise fixed current generation prefix.",
+        "Changing acceptance ref preserves review subject digest but changes final signature payload; stale commitment rejects; recomputed commitment remains signature_verified false.",
+        "Fractions, unsafe integers, Infinity and NaN reject canonicalization."
+      ],
+      "network_calls": 0,
+      "persisted_root_instances": 0
+    },
+    "implementation_report_reused": {
+      "small_suite_passed": 9,
+      "failed": 0,
+      "skipped": 0,
+      "duration_ms": 104.0257,
+      "full_suite_rerun_by_assessor": false,
+      "git_apply_check": "REPORTED_PASS_NOT_APPLIED",
+      "syntax": "REPORTED_PASS"
+    }
+  },
+  "integration": {
+    "apply_only_exact_patch_after_digest_check": true,
+    "affected_existing_functions": [
+      "validateManifest(root, actual_manifest_path)",
+      "validateSchemas(root, validated.paths)"
+    ],
+    "minimal_readonly_adapter": "Read the accepted candidate/applied verifier with exact SHA; create a disposable local .mjs copy changing only the unique final main(); invocation to exports of validateManifest and validateSchemas. Import that copy and invoke these two existing functions against the actual applied repository. Record source SHA, adapter transformation, actual manifest SHA and returned counts. Keep the original verifier unchanged.",
+    "expected_counts": {
+      "artifacts": 92,
+      "schemas": 66
+    },
+    "do_not_call_for_this_scope": [
+      "historical main() current-HEAD/tree == baseline pins gate",
+      "readIntermediateSource/full historical rule reconstruction",
+      "validateBom with an old manifest digest"
+    ],
+    "claim": "Affected structure and integrity checks only. Inherited historical G1 status/pins in predecessor manifest do not create a new full G1/BOM PASS. Any full-manifest dependent BOM or acceptance needs its own applicable successor binding; do not rewrite old pins to force success."
+  },
+  "actual_storage_boundary": {
+    "project_ref": "uscrdifznmlvczcekqpw",
+    "adapter": "clued_control.read_root($1)",
+    "public_rest_exposure": false,
+    "business_tables_touched": false,
+    "empty_store_live_review_ref": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/NonproductionControlStoreIndependentLiveReadback.json",
+    "read_result_authority": "NONE; signature_verified false; currentness, accepted issuer/schema/config refs, generation chain, complete revocation and anti-rollback still require actual verification before an authorization"
+  },
+  "remaining_instance_actions": [
+    "Assemble exact initial RootReviewSubject using the actual empty private-store history and concrete accepted metadata; no fixture identity or fake signed object.",
+    "Independently accept exact identity/purpose/Audience/config/schema/expiry/currentness and revocation wiring, then bind real acceptance and signed publication before limited registration.",
+    "Root registration alone does not qualify controller, satisfy Profile credential Vector, issue GA/GRR, grant production or permit PQUAL-18/Slice A."
+  ]
+}

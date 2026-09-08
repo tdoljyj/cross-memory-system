@@ -1,0 +1,24 @@
+{
+  "state": "AFFECTED_PROTOCOL_STRUCTURE_AND_INTEGRITY_PASS",
+  "observed_at": "2026-09-08T12:37:52.132Z",
+  "verifier_sha256": "6ccbf6a152f7f6b9c63c96b10758f2e295c28d32f59686223736b2da447491d5",
+  "adapter_sha256": "4f8e4cafaa03bfe2f6bd6e37f3ae363d7e2104a5e9d9ea53a8e4369eec8b6548",
+  "adapter_rule": "Exact source except terminal main(); replaced with two named exports. No source/pin/BOM/main validation bypass claim.",
+  "manifest_sha256": "d13b17d873004e97fe45400d715b5becef8fa6bb0a004011921344bd0c9441ec",
+  "entries": 92,
+  "schemas": {
+    "count": 66,
+    "model_schema_v2": {
+      "version": "2.0.0-local-rc-v15-model",
+      "schemas": 5,
+      "ci_registered": 15,
+      "eia_registered": 10,
+      "execution_status": "NOT_RUN_DEFINITION_ONLY",
+      "coverage_kind": "SCHEMA_SUPPORT_ONLY_NOT_EXECUTION_EVIDENCE"
+    }
+  },
+  "elapsed_ms": 29.7907,
+  "full_g1_executed": false,
+  "bom_executed": false,
+  "formal_gate_issued": false
+}

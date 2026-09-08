@@ -1,0 +1,33 @@
+{
+  "scope": "INDEPENDENT_TARGETED_LOCAL_POSTGRES_REPAIR_VERIFICATION",
+  "sql_sha256": "3cbbed94e1c9ef5fec4db281526ca69b9b30a24d2812b5a8bb5eb6bc728146fb",
+  "observed_at_utc": "2026-09-08T11:57:09.900Z",
+  "result": "PASS",
+  "checks": [
+    "Fresh SQL installs zero accepted_binding rows",
+    "Same binding digest from Pacific/Auckland and America/New_York sessions with SQL DMY DateStyle",
+    "JSON number/boolean/null/object idempotency keys reject with no event",
+    "Valid cross-session append and reverse-session exact replay yield one immutable event",
+    "Both actual SQL functions pin UTC and empty search_path"
+  ],
+  "actual_function_configuration": [
+    {
+      "proname": "append_event",
+      "proconfig": [
+        "search_path=\"\"",
+        "TimeZone=UTC"
+      ]
+    },
+    {
+      "proname": "read_root",
+      "proconfig": [
+        "search_path=\"\"",
+        "TimeZone=UTC"
+      ]
+    }
+  ],
+  "remote_database_connections": 0,
+  "synthetic_fixture_not_accepted": true,
+  "formal_root_or_binding_issued": false,
+  "old_full_suite_repeated": false
+}

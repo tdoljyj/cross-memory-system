@@ -1,0 +1,203 @@
+{
+  "schema_version": 1,
+  "state": "ACCEPTED_EXACT_ENGINEERING_CANDIDATE_AND_READ_ONLY_VERIFIER_NOT_ROOT_REGISTRATION",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "reviewed_at_utc": "2026-09-08T11:37:18.354Z",
+  "scope": "Bounded source review of frozen candidate and read-only verifier, exact PR25 signature/approval readback, and one independent missing-binding rejection check. No root/controller implementation, database migration, history-wide remote execution, GA or qualification issuance.",
+  "source_alignment": {
+    "remote_and_local_head": "4d7f93c17cf7d126e771cf8aca6299c868cba0a9",
+    "method": "Independent host scripts/sync-memory.py align-and-verify PROJECT",
+    "result": "equal; doctor ALL PASS",
+    "verification_id": "817255b427b64e86bb94ba8f46199c3d",
+    "verified_at_utc": "2026-09-08T11:17:14.195107Z"
+  },
+  "subjects": [
+    {
+      "path": "scripts/phase2-qualification/control-root-registration/verify.py",
+      "sha256": "040ef7b7a8536d6b210ada9a15a26af6749e58c5da10cd401b98c36155373093",
+      "bytes": 21930,
+      "lf_only": true
+    },
+    {
+      "path": "scripts/phase2-qualification/control-root-registration/test_verify.py",
+      "sha256": "43b88c77f36e471cec09ce6c1c80ef9655d70001369d9f8c214da8bffd4c99cc",
+      "bytes": 10615,
+      "lf_only": true
+    },
+    {
+      "path": "scripts/phase2-qualification/control-root-registration/README.md",
+      "sha256": "9765f0401cf27c46b719e74429c84e29731bcd029be65d0fa24acb27b2a028a5",
+      "bytes": 9637,
+      "lf_only": true
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/ControlRootRegistrationCandidate.json",
+      "sha256": "01c29e99239752d7550867342b63d30863bb9edfa33981b443518c7973319f5b",
+      "bytes": 5545,
+      "lf_only": true
+    }
+  ],
+  "registration_subject": {
+    "sha256": "e4ab25ecb1fa6709435d0318ad431d14343482cbe84e232f638e55c3c4ba1e1f",
+    "root_set_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+    "generation_id": "ctrgen_352785779b64458a889d571360e2d2d5",
+    "status": "Actual newly generated candidate IDs only, not a historical or registered legal generation",
+    "source_contract_sha256": "f967fdf3e63028d29ed191160698726b5d707aaae63bd951f6ba2e8584936fec",
+    "source_contract_lines": [
+      200,
+      235,
+      237,
+      868,
+      925,
+      2384,
+      2388,
+      3885,
+      4334,
+      4336,
+      4346
+    ]
+  },
+  "owner_exception_binding": {
+    "independent_record": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/IndependentControlRootOwnerSignatureBinding.json",
+    "sha256": "78c1cea433053edb9233976615f4f22f43f318078eed0f505b48d641a5f6aae9",
+    "merge": "4d7f93c17cf7d126e771cf8aca6299c868cba0a9",
+    "pr": 25,
+    "merged_at": "2026-09-08T11:09:21Z",
+    "verified": true,
+    "reason": "valid",
+    "merged_by": "tdoljyj",
+    "signing_service": "web-flow",
+    "approved_record_sha256": "3d9c4c9e06217c7c2ef0d32dba77bb5aa66bd745a8f92f0ea255b19a95127aea",
+    "approved_proposal_sha256": "f655e8a16f428bbccfca3687c28e31bc57aed0e7a9fd9ac0191648266afec533",
+    "effect": "The limited registration exception is actually approved. Missing implementation bindings do not require approval of this same exception again."
+  },
+  "resolved_findings": [
+    {
+      "id": "CRR01",
+      "old_subject_verifier_sha256": "efece40e684111f92fdf12dbc38f172698ae595002dcf61165303c8c7e639323",
+      "finding": "Each generation publication was signed but not required to be in current main ancestry.",
+      "fix": "verify_publication_source now verifies merge, require_ancestor(publication, head), and exact published blob in that order; verify_remote invokes it for every generation.",
+      "state": "RESOLVED_IN_REVIEWED_READER",
+      "lines": [
+        282,
+        286,
+        342
+      ]
+    },
+    {
+      "id": "CRR02",
+      "finding": "An empty first-parent tree could hide a prior registration that was deleted.",
+      "fix": "verify_empty_domain_history traverses every reachable parent using exact commit/tree reads. Any historical DOMAIN entry rejects. Missing/truncated/unsupported objects and reader budget exhaustion fail closed.",
+      "state": "RESOLVED_WITH_BOUNDED_READER_NOT_ACTUAL_HISTORY_PROOF",
+      "lines": [
+        219,
+        250,
+        305
+      ]
+    },
+    {
+      "id": "CRR03",
+      "finding": "A current tree and index could agree after historical revocation deletion, even with a trusted minimum generation.",
+      "fix": "verify_immutable_history checks every parent-to-child edge to the proven empty ancestor boundary; each namespace object other than index.json must retain exact blob and mode. Intermediate deletion/rewrite and second-parent loss reject.",
+      "state": "RESOLVED_WITHIN_REVIEWED_GIT_EVIDENCE_MODEL",
+      "lines": [
+        264,
+        278,
+        338
+      ]
+    }
+  ],
+  "accepted_boundaries": [
+    {
+      "id": "RB01",
+      "conclusion": "Exact subject digest is externally required; no float/duplicate-key/path-traversal acceptance; new IDs are not merge SHA or test generation placeholders."
+    },
+    {
+      "id": "RB02",
+      "conclusion": "Scope/constants retain existing Owner/reviewer/coordinator, ISOLATED_TEST, PRE_ENTRY_SKILL_QUALIFICATION / SKILL_COEXISTENCE_QUALIFICATION and DP-PREENTRY-SKILL-QUALIFICATION. No old pins, production, models, new paid actions, or scope expansion."
+    },
+    {
+      "id": "RB03",
+      "conclusion": "Budget metadata remains one active test, cumulative 7200 seconds/1 GiB and per-GA <=600 seconds; fixed Owner expiry 2026-09-09T09:28:59Z. This reader does not create a GA or enforce actual runtime budget/600-second stop; those real controls remain separate prerequisites."
+    },
+    {
+      "id": "RB04",
+      "conclusion": "GitHub verified/valid web-flow signature carrier, signed tree/parents, Owner merged PR, exact blob and ancestry are required. This relies on GitHub verification, not a fabricated local OpenPGP proof."
+    },
+    {
+      "id": "RB05",
+      "conclusion": "Current head is read twice; complete current namespace/index equality, generation sequence/predecessors, externally supplied minimum generation, current expiry and applicable root/generation/Owner revocation required. Unknown/offline/drift denies. Historical validity never grants new actions."
+    },
+    {
+      "id": "RB06",
+      "conclusion": "Implementation uses GET through the existing GitHub CLI only; no remote writes, key creation, pin changes, isolation execution, GA/GRR issuance or qualification result. Caller executable/config identity must be fixed in a future accepted runtime; this command is not an OS sandbox."
+    },
+    {
+      "id": "RB07",
+      "conclusion": "S06 Schema responsibility remains protocol/continuity/v1/schemas/core/control-trust-root-set.schema.json and manifest control_uri_templates. The Git engineering namespace is not automatically a live Control Evidence Store or business Canon. Actual accepted schema/template/Store mapping and issuer metadata remain required."
+    }
+  ],
+  "validation": {
+    "implementer_reported": {
+      "original_seven": "7 synthetic logic checks on prior revision, historical only",
+      "later_ancestor_tree": "1 targeted check on later prior revision",
+      "current_three": "3 new targeted checks passed, 0.001 seconds reported; no rerun of prior eight; synthetic histories only"
+    },
+    "independent_actual": {
+      "command": "Host Python -B inline: import frozen verify.py; validate current candidate; call verify_remote with a NoNetwork sentinel and current explicit minimum generation; assert Blocked exactly Missing actual binding: registration_commit.",
+      "result": "PASS_EXPECTED_BLOCKED_BEFORE_ANY_NETWORK",
+      "owner_approval_binding_present": true,
+      "registration_not_created": true,
+      "full_suite_rerun": false
+    },
+    "execution_note": "First sandbox Python process launch was denied by host execution boundary; identical nonnetwork check then completed under approved host execution. No candidate test failed in that launch.",
+    "hashes": "All four frozen files matched reported SHA256 and contain zero CR bytes."
+  },
+  "remaining_actual_bindings": [
+    {
+      "item": "Formal control store and authoritative currentness",
+      "needed": "Accepted exact S06 Schema/URI responsibility and actual control-domain resolver, durable immutable generation/revocation records and complete current pointer/history; Git preparation alone is insufficient."
+    },
+    {
+      "item": "Root trust metadata",
+      "needed": "Separately bounded GA and GRR issuer purposes/Audiences, accepted formal Schema digests, canonicalization/algorithm/config, actual service identity and precise accepted verifier/config references. Subject purpose alone is not all metadata."
+    },
+    {
+      "item": "Actual first registration and subsequent bindings",
+      "needed": "Proven absence of legitimate earlier records in the exact authoritative control domain, precise independent registration acceptance, actual signed publication and complete history/index/current revocation refs. This engineering acceptance must not be put into the formal independent_review_ref slot whose state requires actual registration acceptance."
+    },
+    {
+      "item": "Bounded history cost and rollback caller",
+      "needed": "This Git reader caps complete commits at 256; longer histories are BLOCKED, not partially verified. Do not run a large remote walk to force it through. A later accepted local exact-object history adapter or genuine signed history anchor may replace repeated API reads without changing trust; persistent minimum-generation/revocation memory and side-effect freshness/fencing remain unimplemented."
+    },
+    {
+      "item": "Actual runtime qualification",
+      "needed": "R11 requires separate controller/Profile/four-layer state/Intent/UNKNOWN/budget/STOP/expiry/revocation proof; current point-in-time readback cannot stand in for those controls."
+    }
+  ],
+  "nonproduction_store_scope_judgment": {
+    "status": "COVERED_PREPARATION_WITH_EXACT_IMPLEMENTATION_ACCEPTANCE_REQUIRED",
+    "candidate_target": "Existing nonproduction Clued domain clued-auth-test / uscrdifznmlvczcekqpw, availability/table inventory reported by coordinator; not independently queried by this reviewer.",
+    "covered": "Implement an adapter for the original S06 ControlEvidenceStore responsibility inside the already authorized isolated Clued domain, only synthetic bounded control-root/currentness/revocation/Intent evidence as actually permitted. Existing bootstrap plus approved registration exception permits necessary design and precise adaptation without another generic permission request.",
+    "conditions": [
+      "Bind exact accepted Schema and typed-URI resolver to this one isolated target; preserve original control-vs-business responsibility.",
+      "Independently review exact migration/API, allowed roles and write-set, append-only semantics, currentness/concurrency, stop/revocation and recovery before deployment.",
+      "Existing database health or presence of fourteen old tables is not proof of accepted live control-store semantics.",
+      "Do not introduce a second Auth/Receipt/business Canon, new key/trust service, production authority, changed old pins, or expanded issuer purpose.",
+      "If implementation actually creates an independent new storage authority or changes unrelated business/prod scope, it exceeds the exception; report that precise difference rather than hiding it as an adapter."
+    ],
+    "not_done": "No SQL, database read/write, deployment or business-data access in this review."
+  },
+  "formal_effect": {
+    "engineering_candidate_accepted": true,
+    "owner_exception_source_verified": true,
+    "root_registered": false,
+    "formal_store_accepted": false,
+    "controller_qualified": false,
+    "profile_accepted": false,
+    "ga_issued": false,
+    "grr_issued": false,
+    "r11_or_entry_pass": false
+  },
+  "next": "Integrate this exact engineering review and Owner binding; continue the existing nonproduction original-ControlEvidenceStore adaptation with exact metadata and independent acceptance. Do not ask again for the already approved registration exception; do not substitute this review for formal registration."
+}

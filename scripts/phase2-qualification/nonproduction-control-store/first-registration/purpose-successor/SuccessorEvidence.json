@@ -1,0 +1,31 @@
+{
+  "state": "UNISSUED_SUCCESSOR_PREPARED",
+  "review_subject_sha256": "e8f60f842a5c0d6dd2eb161d1eda35deb3e60c68236d489c4f98b22356a5cf8d",
+  "only_subject_change": "Three qualification_ref values now point to actual limited issuer purpose decision",
+  "original_files_unchanged": true,
+  "validation": "Actual accepted purpose metadata, scope, algorithm, window, subject and signing service matched; each purpose uniquely accepted",
+  "files": [
+    {
+      "path": "prepare.mjs",
+      "sha256": "5ed20bfe02dda6215d9ce3f648afdc6db6c4b4d6885a28533f1ae6d23b5e4894",
+      "bytes": 3825
+    },
+    {
+      "path": "RootReviewSubject.json",
+      "sha256": "dd669911912ab74893e06531e9186d4fb31d373c0e8c086989026fe547ac5845",
+      "bytes": 4683
+    },
+    {
+      "path": "SourceBindings.json",
+      "sha256": "72db9fef1ad24e60138247316ed8dd3d4dcb93f75babad58296171485267a5cc",
+      "bytes": 5556
+    },
+    {
+      "path": "AcceptedBindingInputs.json",
+      "sha256": "bdb6744fe0b384976f870983caab1f8a64afa813fddebacd092fa8a04fd77f16",
+      "bytes": 1856
+    }
+  ],
+  "root_registered": false,
+  "db_writes": 0
+}

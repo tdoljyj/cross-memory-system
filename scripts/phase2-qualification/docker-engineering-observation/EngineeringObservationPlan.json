@@ -1,0 +1,150 @@
+{
+  "kind": "FIXED_PRE_GA_DOCKER_ENGINEERING_OBSERVATION_PLAN",
+  "status": "PREPARED_PENDING_INDEPENDENT_REVIEW_NOT_EXECUTED",
+  "source_files": [
+    {
+      "path": "scripts/phase2-qualification/docker-engineering-observation/observe.py",
+      "sha256": "cc3498e6dc5eed1f13fb0b84c4dd4df75f5ee76fb5d24d4167852cb92588ef5a"
+    },
+    {
+      "path": "scripts/phase2-qualification/docker-engineering-observation/validation.py",
+      "sha256": "3ac10b11456ddc2de9155fb2b9f8f8c8c20ac0da51957e587d3081339767ac2e"
+    },
+    {
+      "path": "scripts/phase2-qualification/docker-engineering-observation/test_observation.py",
+      "sha256": "215ecc18d54e50252fc865ed12486d2ce6acce2698ac10f98dede9929d41b9ad"
+    },
+    {
+      "path": "scripts/phase2-qualification/docker-engineering-observation/test_review_fixes.py",
+      "sha256": "8d04a3265130da14eb3ffd111530af16f459314aa74aa6f3bb1739f5359025fa"
+    },
+    {
+      "path": "scripts/phase2-qualification/docker-engineering-observation/README.md",
+      "sha256": "b3a0605d76684c46f93926f707c4a4c7dde8b499d2bda60d1da7974d66671e55"
+    },
+    {
+      "path": "scripts/phase2-qualification/docker-engineering-observation/.gitignore",
+      "sha256": "7c0e3807a109f275f04fa607825e26c8d69f2e23f684cf4ca68e03df1173780a"
+    }
+  ],
+  "input_bindings": [
+    {
+      "path": "scripts/phase2-qualification/docker-isolation/probe.py",
+      "sha256": "2168145b42166b4de1ea470b4fd232549d661542761ffe279955d0ace5580523"
+    },
+    {
+      "path": "scripts/phase2-qualification/linux-docker-driver/candidate.py",
+      "sha256": "7eed6b480010c5aebba39e109356a9a499f8ecc96ced184d3ee926fa52346457"
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/PythonImageBinding.json",
+      "sha256": "f2f8d7f5d4e9d77ff4dd42ccbcafedeb1c5a7658f84f17252422fdecdb25d876"
+    }
+  ],
+  "authority_boundary": "Existing approved Owner bootstrap permits actual prerequisite OS/STOP engineering facts before qualification authorization. This is not a formal GA, PQUAL, Skill, Slice A or production run. Named assessor must approve exact plan before coordinator invokes.",
+  "coordinator": "/root",
+  "independent_assessor": "/root/project_list_auth_fix",
+  "max_seconds": 90,
+  "watchdog_stop_start_seconds": 65,
+  "memory_bytes": 134217728,
+  "cpu": 0.5,
+  "pids": 16,
+  "mounts": 2,
+  "model_budget": 0,
+  "paid_budget": 0,
+  "budget": {
+    "prior_seconds_upper_bound": 1320,
+    "prior_seconds_kind": "Coordinator conservative full prior observation window reservation, not measured actual sum",
+    "this_seconds": 90,
+    "total_upper_bound_seconds": 1410,
+    "owner_limit_seconds": 7200,
+    "prior_fixed_scope_bytes": 19264968,
+    "new_evidence_reservation_bytes": 134217728,
+    "total_upper_bound_bytes": 153482696,
+    "owner_limit_bytes": 1073741824,
+    "source": "Coordinator metadata-only nofollow 179-file tally of three stated scopes; does not cover all historical disk usage",
+    "formal_budget_ledger": false
+  },
+  "tests": {
+    "command": "python -I -S -B -X utf8 scripts/phase2-qualification/docker-engineering-observation/test_observation.py",
+    "passed": 13,
+    "failed": 0,
+    "skipped": 0,
+    "duration_seconds": 0.021,
+    "process_launches_prohibited_by_tests": true,
+    "scope": "Pure validation and temporary evidence; all subprocess.Popen calls fail tests",
+    "original_source_files": [
+      {
+        "path": "scripts/phase2-qualification/docker-engineering-observation/observe.py",
+        "sha256": "5bcfdf9cd3f84b78d5ce5751e7ac5a47a16b869391d0a9c48a6dfafa7038fcc3"
+      },
+      {
+        "path": "scripts/phase2-qualification/docker-engineering-observation/validation.py",
+        "sha256": "3ac10b11456ddc2de9155fb2b9f8f8c8c20ac0da51957e587d3081339767ac2e"
+      },
+      {
+        "path": "scripts/phase2-qualification/docker-engineering-observation/test_observation.py",
+        "sha256": "215ecc18d54e50252fc865ed12486d2ce6acce2698ac10f98dede9929d41b9ad"
+      },
+      {
+        "path": "scripts/phase2-qualification/docker-engineering-observation/README.md",
+        "sha256": "706637b79edfb88b9b90054b87eab30e5d653b94db78af842eb5c803a45b504a"
+      },
+      {
+        "path": "scripts/phase2-qualification/docker-engineering-observation/.gitignore",
+        "sha256": "7c0e3807a109f275f04fa607825e26c8d69f2e23f684cf4ca68e03df1173780a"
+      }
+    ],
+    "rerun_after_review_fixes": false
+  },
+  "actual_docker_execution_by_harness": false,
+  "qualified": false,
+  "stage_pass_issued": false,
+  "independent_acceptance_ref": null,
+  "runtime_results": [],
+  "cleanup": "Only stop exact owned container and observe. Retain stopped container, reservation, evidence and image; no rm/prune. UNKNOWN never redispatches.",
+  "test_fixture_dependency": {
+    "path": "scripts/phase2-qualification/linux-docker-driver/test_candidate.py",
+    "sha256": "b4b05c2922c3789ddea1f12019e3ffa3f815db70d58c1c17a98525151ba67aca",
+    "scope": "Synthetic inspect_fixture only; no Docker or Gold"
+  },
+  "review_fix_checks": {
+    "command": "python -I -S -B -X utf8 scripts/phase2-qualification/docker-engineering-observation/test_review_fixes.py",
+    "passed": 3,
+    "failed": 0,
+    "skipped": 0,
+    "duration_seconds": 0.007,
+    "fixes": [
+      "Recheck absolute/per-call deadline after request persistence and output-file opens, immediately before Popen",
+      "Require exact typed guard pid, nonce, deadline and alive state at final readiness and again before start"
+    ],
+    "source_files": [
+      {
+        "path": "scripts/phase2-qualification/docker-engineering-observation/observe.py",
+        "sha256": "cc3498e6dc5eed1f13fb0b84c4dd4df75f5ee76fb5d24d4167852cb92588ef5a"
+      },
+      {
+        "path": "scripts/phase2-qualification/docker-engineering-observation/validation.py",
+        "sha256": "3ac10b11456ddc2de9155fb2b9f8f8c8c20ac0da51957e587d3081339767ac2e"
+      },
+      {
+        "path": "scripts/phase2-qualification/docker-engineering-observation/test_observation.py",
+        "sha256": "215ecc18d54e50252fc865ed12486d2ce6acce2698ac10f98dede9929d41b9ad"
+      },
+      {
+        "path": "scripts/phase2-qualification/docker-engineering-observation/test_review_fixes.py",
+        "sha256": "8d04a3265130da14eb3ffd111530af16f459314aa74aa6f3bb1739f5359025fa"
+      },
+      {
+        "path": "scripts/phase2-qualification/docker-engineering-observation/README.md",
+        "sha256": "b3a0605d76684c46f93926f707c4a4c7dde8b499d2bda60d1da7974d66671e55"
+      },
+      {
+        "path": "scripts/phase2-qualification/docker-engineering-observation/.gitignore",
+        "sha256": "7c0e3807a109f275f04fa607825e26c8d69f2e23f684cf4ca68e03df1173780a"
+      }
+    ],
+    "docker_calls": 0,
+    "old_13_rerun": false
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "state": "EXACT_KNOWN_VALUES_PENDING_TWO_ACTUAL_POST_REVIEW_BINDINGS",
+  "known_values": {
+    "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+    "project_ref": "uscrdifznmlvczcekqpw",
+    "purpose": "SKILL_COEXISTENCE_QUALIFICATION",
+    "environment": "ISOLATED_TEST",
+    "subject_sha256": "e4ab25ecb1fa6709435d0318ad431d14343482cbe84e232f638e55c3c4ba1e1f",
+    "owner_approval_commit": "4d7f93c17cf7d126e771cf8aca6299c868cba0a9",
+    "not_before": "2026-09-08T12:12:14.380995Z",
+    "expires_at": "2026-09-09T09:28:59Z",
+    "issuer": "tdoljyj",
+    "audience": "urn:clued:audience:skill-coexistence-qualification:uscrdifznmlvczcekqpw",
+    "algorithm_config": "SORTED_JSON_UTF8_NO_FLOATS_LF_V1_CANDIDATE;SHA-256;GITHUB_API_VERIFIED_OWNER_MERGE",
+    "schema_sha256": "87f094fa079034aa886d6c568730370a3264e106529b4bfd79bc3369f30b79e5",
+    "store_acceptance_sha256": "4c05a0ffcba4724aa36ea4a41003176e33dd140b73b370ee477fee4c5b5e4350",
+    "protocol_mapping_sha256": "abbc8e7eae03f2a183fd739fa49b16a97db6e1c0fb62a9353a30db81553db416"
+  },
+  "required_actual_future_values": [
+    "registration_acceptance_sha256",
+    "signature_evidence_sha256"
+  ],
+  "subject_digest_distinction": {
+    "accepted_binding_subject_sha256": "Original independently accepted limited registration subject e4ab... fixed by deployed SQL; unchanged",
+    "first_root_payload_review_subject_sha256": "e8f60f842a5c0d6dd2eb161d1eda35deb3e60c68236d489c4f98b22356a5cf8d"
+  },
+  "activation_preconditions": [
+    "Exact independent Root/purpose/Audience/config acceptance",
+    "Actual new GitHub Owner signature covers final signature payload; PR25 does not sign it",
+    "Fresh read confirms same empty prefix/current unrevoked Owner/window",
+    "Insert config and first generation event in one transaction; rollback if either fails"
+  ],
+  "authority_effect": "NONE"
+}

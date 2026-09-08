@@ -1,0 +1,13 @@
+{
+  "state": "UNSIGNED_PAYLOAD_READY_FOR_NEW_OWNER_PR",
+  "review_subject_sha256": "e8f60f842a5c0d6dd2eb161d1eda35deb3e60c68236d489c4f98b22356a5cf8d",
+  "payload_sha256": "8487344cdcf4e976d5f7db0514a25aea7b447875cbd74c4780d5ba6c9d5113be",
+  "file_sha256": "de24b30379045bdf5d141ca8cc5f1dc3eed947f4f553e2323a1df5296918919d",
+  "acceptance": {
+    "artifact_path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/FirstControlRootRegistrationIndependentAcceptance.v2.json",
+    "sha256": "b3d4422ba8d4150bd2988fc713217b3f310b7bf1c34c058e17a221f435afc49b"
+  },
+  "authority_effect": "NONE",
+  "signature_verified": false,
+  "root_registered": false
+}

@@ -1,0 +1,139 @@
+{
+  "schema_version": 1,
+  "state": "ACCEPTED_EXACT_EMPTY_NONPRODUCTION_SCHEMA_INSTALLATION_ONLY",
+  "independent_assessor": "/root/project_list_auth_fix",
+  "observed_at_utc": "2026-09-08T11:59:05.145Z",
+  "source_head": "2eec225cdfee5ebbdf5e10cae7eaa5c5b6c80faa",
+  "subject": {
+    "candidate_path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/NonproductionControlStoreCandidate.json",
+    "candidate_sha256": "b79cfd230d44a30ba521b9588eedc850f68aea83366cc771d78fe247760eac94",
+    "sql_path": "scripts/phase2-qualification/nonproduction-control-store/install.candidate.sql",
+    "sql_sha256": "3cbbed94e1c9ef5fec4db281526ca69b9b30a24d2812b5a8bb5eb6bc728146fb",
+    "files": [
+      {
+        "path": "scripts/phase2-qualification/nonproduction-control-store/install.candidate.sql",
+        "sha256": "3cbbed94e1c9ef5fec4db281526ca69b9b30a24d2812b5a8bb5eb6bc728146fb"
+      },
+      {
+        "path": "scripts/phase2-qualification/nonproduction-control-store/client.mjs",
+        "sha256": "c42eb90f08ad3edb52d5bc5dcd71207802e620ea9a5a7303b5bc448017d303d8"
+      },
+      {
+        "path": "scripts/phase2-qualification/nonproduction-control-store/store.test.mjs",
+        "sha256": "f61d3c19d43f5dcfa5b9c9f97f56486675296cbf06a4fad97c68fd8602d76090"
+      },
+      {
+        "path": "scripts/phase2-qualification/nonproduction-control-store/ProtocolMapping.candidate.json",
+        "sha256": "285fa583ef3dc166d2bc5a9c64138b324992833ae9ac0fccf9beb8f902a5ca76"
+      },
+      {
+        "path": "scripts/phase2-qualification/nonproduction-control-store/README.md",
+        "sha256": "a2760b26e56f6be76c7df97828fbcea3437dc46a2d40ab2af94e56e21c5d3c21"
+      },
+      {
+        "path": "scripts/phase2-qualification/nonproduction-control-store/review-fixes.test.mjs",
+        "sha256": "bbf15f59dd256ebb8fd47d86bf3b1a03942abe9559d7ecd8e15ff79fae7ea456"
+      }
+    ]
+  },
+  "approved_deployment": {
+    "target_name": "clued-auth-test",
+    "target_project_ref": "uscrdifznmlvczcekqpw",
+    "actor": "/root coordinator",
+    "allowed": "Deploy exactly the reviewed SQL as empty initialization of private clued_control and its three tables/functions/triggers/privileges. No row activation, root registration, external service identity or business data changes.",
+    "required_actual_target_binding": "Use the actual authorized deployment tool/project selector and inspect target identity before executing. GUC clued_control.target_project and client project argument are error guards, not authentication. Use one transaction for the exact installation; existing schema collision must stop for review, never drop/replace it.",
+    "post_deploy_readback": [
+      "Exact private schema/three tables/function definitions and privileges/RLS match reviewed installation",
+      "accepted_binding, events and current_head all initially empty",
+      "anon/authenticated lack access and service_role has only schema USAGE plus two private function EXECUTEs, no table DML",
+      "Existing 13 public base tables unchanged by the scoped migration (coordinator current actual readback; earlier 14-count shorthand superseded); no public-schema API, Auth or business Receipt changes"
+    ]
+  },
+  "source_authorization": {
+    "proposal_sha256": "f655e8a16f428bbccfca3687c28e31bc57aed0e7a9fd9ac0191648266afec533",
+    "owner_approval_commit": "4d7f93c17cf7d126e771cf8aca6299c868cba0a9",
+    "independent_owner_binding": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/IndependentControlRootOwnerSignatureBinding.json",
+    "effect": "Necessary adapter implementation under already approved nonproduction bootstrap/limited root-registration exception; no renewed generic permission required. Maintains original S06 ControlEvidenceStore responsibility, not a new storage authority."
+  },
+  "findings": [
+    {
+      "id": "CS01",
+      "state": "FIXED_AND_INDEPENDENTLY_VERIFIED",
+      "original": "to_jsonb(timestamptz binding) produced different metadata digests under UTC vs Asia/Shanghai, causing legitimate cross-session writes to fail.",
+      "fix": "Both privileged functions set timezone=UTC as well as empty search_path."
+    },
+    {
+      "id": "CS02",
+      "state": "FIXED_AND_INDEPENDENTLY_VERIFIED",
+      "original": "Numeric JSON idempotency_key was implicitly converted to text and appended.",
+      "fix": "Require jsonb_typeof(idempotency_key)=string before storage operation."
+    }
+  ],
+  "independent_verification": {
+    "original_reproduction": {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/NonproductionControlStoreIndependentReproduction.json",
+      "sha256": "c95c3b2b28f1dc930e060fc34bf7f65a3c991cdbdcd890d3104ed4cf435eb6b8",
+      "actual": "Dedicated real local PostgreSQL reproduced both defects; synthetic metadata only."
+    },
+    "fixed_verification": {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/NonproductionControlStoreIndependentVerification.json",
+      "sha256": "3fa18bec9fef0936753abf93316d010ed482eb725e6b82e7bbefb9d17fccc4a4",
+      "actual": "Dedicated real local PostgreSQL verified Pacific/Auckland vs America/New_York digest equality with SQL DMY DateStyle, valid cross-session append/replay, number/boolean/null/object key rejection with no state change, and actual UTC/empty-search-path function settings."
+    },
+    "minimal_diff": "Removing the two added UTC function settings and one JSON-string guard from exact new SQL reconstructs original SQL SHA74427d947d08c9502dfe33afcacd921e1ebe4efa7eed21859868ab3f55900fdf; no other SQL changes.",
+    "historical_checks": "Prior 10/10 local PG result is retained for its old source revision; implementer new two subtests plus parent 3/3 were separate. No full-suite rerun or new global CI claim.",
+    "environment": "No remote database connections; both independent temporary PG instances stopped and only their checked owned temp directories removed."
+  },
+  "reviewed_boundaries": [
+    {
+      "id": "SB01",
+      "conclusion": "Three new private tables only. Schema/table/function privileges explicitly revoked from PUBLIC, anon, authenticated, service_role; RLS on all three tables; service_role granted only constrained append_event/read_root. Existing trusted server transport is not a new Auth system or cryptographic issuer."
+    },
+    {
+      "id": "SB02",
+      "conclusion": "Empty accepted_binding and no configuration RPC cause registration attempts to fail. Fixed root/project/purpose/environment/subject/Owner-commit constraints do not instantiate a root or accept test metadata."
+    },
+    {
+      "id": "SB03",
+      "conclusion": "Per-root lock serializes head and event write in one transaction; exact replay returns original event with NONE authority, changed same-key request conflicts; different-key CAS has one winner. Time rechecked after lock waits; expiration denies even replay."
+    },
+    {
+      "id": "SB04",
+      "conclusion": "Accepted metadata and events reject update/delete/truncate; generation reuse and wrong predecessor reject. Current-generation revocation conservatively disables this whole limited root permanently. Exact historical replay does not reverse revocation or grant authority."
+    },
+    {
+      "id": "SB05",
+      "conclusion": "read_root provides complete ordered events in one SQL snapshot. It does not provide external side-effect fencing, a persistent cross-restore rollback oracle, cryptographic signature validation or canonical four-layer epoch state."
+    },
+    {
+      "id": "SB06",
+      "conclusion": "SHA256 over PostgreSQL JSONB text is an internal adapter metadata version, now UTC-stable; it is not claimed as S06 cross-language canonicalization or a formal Schema acceptance."
+    },
+    {
+      "id": "SB07",
+      "conclusion": "ProtocolMapping remains an unapplied engineering mapping under original core schema/manifest responsibility. Formal wire URI, exact accepted core schema, issuer/Audience/algorithm/config and root registration acceptance still require real binding before activation."
+    }
+  ],
+  "not_accepted": [
+    "accepted_binding INSERT or any synthetic test metadata activation",
+    "Formal ControlTrustRootSet registration",
+    "Schema/URI freeze or active formal ControlEvidenceStore acceptance",
+    "GA/GRR issuance, qualified controller/Profile, runtime PQUAL, Entry or Slice A",
+    "Production target changes, new credential scope, second Auth/Receipt/business Canon",
+    "DB owner tamper resistance or automatic recovery after database rollback"
+  ],
+  "formal_effect": {
+    "empty_schema_deployment_accepted": true,
+    "formal_store_activated": false,
+    "root_issued": false,
+    "ga_issued": false,
+    "stage_pass": false
+  },
+  "next": "Coordinator may deploy this exact empty SQL to the verified existing nonproduction target and save actual readback. Keep all activation rows empty; build and independently accept subsequent exact metadata/Schema/URI bindings within the existing approved scope.",
+  "existing_table_count_correction": {
+    "current": 13,
+    "source": "Coordinator current actual nonproduction metadata readback",
+    "previous_count": 14,
+    "effect": "Corrects inventory description only. Exact SQL has no reference to or mutation of any existing public business table; approved empty-install SQL digest is unchanged."
+  }
+}
