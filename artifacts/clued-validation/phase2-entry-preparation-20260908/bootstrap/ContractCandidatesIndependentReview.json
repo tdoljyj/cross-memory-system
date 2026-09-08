@@ -1,0 +1,92 @@
+{
+  "status": "ACCEPTED_FOR_CANDIDATE_FORMAT_PREPARATION_NOT_ACTIVATED",
+  "reviewer": "/root/project_list_auth_fix",
+  "implementer": "/root/qualification_cases",
+  "scope": "Independent review of three candidate JSON Schema expressions, their existing-Ajv in-memory validation and source/boundary documentation. This is an actual scoped engineering acceptance; it does not activate a Kernel wire, authorize an N/A layer, accept a runtime Profile instance, establish a control root or issue a GA.",
+  "subject_directory": "scripts/phase2-qualification/contract-candidates",
+  "exact_files": [
+    {"path": "revocation-epoch-vector.candidate.schema.json", "sha256": "c3c3c2ae05cd1f4f844f2f9898f1d29b2bfad2940975104847df41e1610831fe"},
+    {"path": "preentry-profile.candidate.schema.json", "sha256": "bad887a19c0c9f4f3ebcbc2ef38912869adc432ba7599bae63745b2ca48f4ee1"},
+    {"path": "gate-authorization.candidate.schema.json", "sha256": "f7f7e2a011f3f81a005e46f9cf7683edeb010dc7812eadfb4473f6ad5368a1ce"},
+    {"path": "validate-candidates.test.mjs", "sha256": "a5811d376adc6bec2d2f36ab8ab01d619270e26c1405d90ffe5253edf3ec0f0c"},
+    {"path": "README.md", "sha256": "a0fba049a81eb8d3fca8c7e5689d6677c429cede1dc47244ab89ed40c9a0b9b9"}
+  ],
+  "sources": [
+    {"path": "ControlContractConcretizationReview.md", "sha256": "09398c3f75c582bd769fbfb0ab3d5b135d4f063c59344166df3f3b920d07346a", "scope": "Exact source/member mapping and candidate versus actual authority boundary"},
+    {"source_id": "S06", "sha256": "f967fdf3e63028d29ed191160698726b5d707aaae63bd951f6ba2e8584936fec", "lines": [200, 3010, 3012, 3435, 3879, 3885], "scope": "Root string example, original Vector fields and N/A requirement, exact Profile gate refs, GA and dynamic control boundaries; original L200 and L3435 were independently reread for this task"},
+    {"source_id": "QualificationPhasePolicy", "sha256": "154a5ca0e3d6786877662b68a173176ecd54712744400805ef4b2a93f5946f22", "scope": "Exact PRE_ENTRY phase, required sets, 600-second limit and identity binding field names"}
+  ],
+  "format_assessment": [
+    {
+      "object": "RevocationEpochVector",
+      "decision": "ACCEPTED_AS_CANDIDATE_EXPRESSION",
+      "findings": [
+        "The original nine required fields preserve all four independent scope-ref/epoch pairs; foreign fields and substituted runner generations are rejected.",
+        "Each N/A layer requires paired explicit markers and that same layer's reason plus a reference/digest shaped as an accepted Schema reference. Numeric layers cannot carry that layer's N/A evidence. No defaults create N/A.",
+        "The marker/evidence layout, version-string type and nonnegative integer representation are explicitly candidate choices, not claims of an existing activated Schema.",
+        "All four numeric epochs now have the current JavaScript Number implementation's safe-integer ceiling. Out-of-range values fail closed; this does not amend the underlying S06 epoch domain or claim lossless support for arbitrary integers."
+      ]
+    },
+    {
+      "object": "PRE_ENTRY Profile",
+      "decision": "ACCEPTED_AS_CANDIDATE_EXPRESSION",
+      "findings": [
+        "Purpose, isolated environment, isolated subject and quarantined candidate state are fixed to the existing phase. Candidate/controller separation is required.",
+        "R05-R10 and the fifteen required-true/seven required-false conditions are enforced as exact unique sets, so omissions, additions and duplicate substitutions cannot pass; incidental ordering is not required.",
+        "Gate refs require exact ID, definition version and digest plus the definition-set digest; per-grant maximum is constrained to 1-600 seconds.",
+        "Optional per-layer N/A permission syntax needs a reason and accepted-Schema reference shape; the candidate does not decide whether that permission actually exists."
+      ]
+    },
+    {
+      "object": "GateAuthorization",
+      "decision": "ACCEPTED_AS_CANDIDATE_EXPRESSION",
+      "findings": [
+        "Required exact source/target/artifact/Profile/actor/subject/Binding/scope/issuer/Audience/schema/stop/rollback/budget/sink/controller/fixture/stage/generation/Vector/signature input fields are present. Existing policy digest names and dominant_role are preserved.",
+        "AUTHORIZED, PRE_ENTRY purpose and isolated environment are fixed; omitted bindings, malformed hashes and type substitutions fail shape validation. gate_authorization_ref is not invented as a self-reference.",
+        "The root-generation string is explicitly an unresolved candidate encoding supported by the S06 L200 example, not a real value or proof of an accepted root. Ref carriers and independent generation types remain stated representation choices.",
+        "Date-time format uses Ajv full calendar validation. Expiry/current time, ordering, <=600s interval, Owner remaining window, reference equality and signature/issuer/root/Vector truth remain mandatory external checks, not claimed to follow from syntax."
+      ]
+    }
+  ],
+  "resolved_findings": [
+    {
+      "id": "CC01",
+      "problem": "Native JSON Number parsing collapsed source integers 9007199254740992 and 9007199254740993, while the original four epoch schemas accepted both rounded values.",
+      "original_vector_sha256": "40cc625e225a8544042a7e1bfff68bf30f4874081db77920d2034884b8cfd166",
+      "repair": "All four Number epoch forms cap at 9007199254740991; README identifies this as candidate implementation capacity, not a new S06 rule.",
+      "status": "RESOLVED_AND_INDEPENDENTLY_RECHECKED"
+    },
+    {
+      "id": "CC02",
+      "problem": "The installed Ajv 6.15.0 default fast date-time check accepted nonexistent 2026-02-30T00:00:00Z.",
+      "original_test_sha256": "222102166dd854b07d65b564f84822d7350f13f98275210e3cace1b73491b719",
+      "repair": "Existing validator explicitly selects format full; added targeted calendar-negative and legitimate leap-date checks.",
+      "status": "RESOLVED_AND_INDEPENDENTLY_RECHECKED"
+    }
+  ],
+  "validation": {
+    "existing_dependency": "apps/clued-cloud Ajv 6.15.0; no installation",
+    "original_ten_tests": "Historical implementer 10/10 on original hashes, retained in README; not claimed rerun on the revised subject.",
+    "targeted_implementer_run": "node --test --test-name-pattern=\"review fix:\" validate-candidates.test.mjs; recorded 2/2 passed, 0 failed/skipped.",
+    "independent_recheck": "After the fix, a single in-memory Ajv check confirmed all four unsafe epoch inputs reject and their safe boundary accepts; impossible February date rejects and 2024 leap date accepts. Actual validator full-format configuration was checked. Exit 0; no full suite, PQUAL or external execution.",
+    "five_file_digest_and_lf_check": "All exact final file hashes matched; all LF."
+  },
+  "activation_boundary": {
+    "runtime_wiring_found_in_subject": false,
+    "saved_live_ga_or_profile_instance": false,
+    "samples": "Synthetic unresolved references, old dates and non-signature strings exist only as in-memory test objects. They intentionally demonstrate shape acceptance without authority.",
+    "not_an_na_permission": "This review accepts the candidate expression, not a particular layer's N/A use. A future actual accepted Schema/Profile reference, purpose and applicability must be independently resolved before any such use.",
+    "not_a_new_root": "No root generation, issuer credential, public key or trust pin is supplied or changed. Missing real control-root state cannot be remedied by choosing an arbitrary string."
+  },
+  "remaining_defects_within_candidate_preparation_scope": [],
+  "remaining_actual_dependencies": [
+    "Bind any subsequently accepted operational expression and its full referenced-schema/validator dependency set through the existing authorized acceptance process; no automatic core responsibility-domain activation follows from this review.",
+    "Provide real current root/issuer-purpose/Audience/Schema/signature and authority-expiry/revocation evidence; obtain a separate scope decision if a new control trust anchor would be required.",
+    "Resolve exact Profile/fixture/Skill/controller/host/stage references and their independent acceptance; establish actual four-layer current state or legally accepted per-layer N/A with reasons.",
+    "Enforce actual time relationships, <=600s GA, Owner budget/window, remote durable Intent, stopping and UNKNOWN behavior before any qualifying execution."
+  ],
+  "authority_effect": "NONE",
+  "operational_schema_or_profile_activated": false,
+  "gate_authorization_or_controller_qualification_issued": false,
+  "production_canonical_or_runtime_changes_by_reviewer": 0
+}

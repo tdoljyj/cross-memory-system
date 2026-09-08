@@ -1,0 +1,82 @@
+{
+  "kind": "PRODUCTION_RECEIPT_SUCCESSOR_INDEPENDENT_READBACK",
+  "status": "OBSERVED_DEPLOYED_SUCCESSOR_HASH_AND_UNIQUE_ORIGINAL_RECORDS",
+  "scope": "Independent SELECT and formal resume only. Coordinator owns actual duplicate-response/conflict calls; this report does not claim those were independently executed.",
+  "project_id": "ccxsikzwxlolxqlosril",
+  "approved_production_change": "Same checkpoint function, return the unique existing original receipt_id on exact replay.",
+  "deployment_context": {
+    "merge_commit_reported_by_coordinator": "78fb8a0edcd09a526ffeeece4aa19fb27c1790b6",
+    "pr": 24,
+    "ci": "Coordinator reports seven checks passed; not independently repeated here."
+  },
+  "migration": {
+    "path": "apps/clued-cloud/supabase/migrations/20260908102500_clued_checkpoint_replay_receipt.sql",
+    "sha256": "35ba727d2729a74417677ed7bc1da3addd7b8ff33d9b722f45a982346786151e",
+    "independently_recomputed_body_sha256": "6dbde4485561702009a569dbe8dadc18577fd87708d6ceda6477524b45fa00ef"
+  },
+  "function_signature": "public.clued_mcp_commit_checkpoint(text,jsonb)",
+  "api_sources": {
+    "sql_tool": "mcp__codex_apps__supabase_execute_sql",
+    "statement_class": "SELECT",
+    "formal_resume_tool": "mcp__codex_apps__clued_clued_session_resume",
+    "client_session_id": "phase2-independent-receipt-successor-readback-20260908"
+  },
+  "database_observation": {
+    "observed_at_utc": "2026-09-08 10:53:51.03768+00",
+    "body_sha256": "6dbde4485561702009a569dbe8dadc18577fd87708d6ceda6477524b45fa00ef",
+    "definition_sha256": "6a056d2cc5443018ec9aacbe0d27f4707d63cb93972727178acb9b36c82b2ca3",
+    "security_definer": true,
+    "function_config": [
+      "search_path=\"\""
+    ],
+    "grants": "{postgres=X/postgres,anon=X/postgres,authenticated=X/postgres}",
+    "checkpoint_count": 1,
+    "receipt_id_count": 1,
+    "original_bound_receipt_count": 1,
+    "same_key_checkpoint_count": 1,
+    "checkpoint_version": 10,
+    "checkpoint_context_key": "global",
+    "exact_original_receipt_binding_count": 1
+  },
+  "formal_resume_observation": {
+    "status": "restored",
+    "version": 10,
+    "context_key": "global",
+    "session_token_recorded": false,
+    "snapshot_recorded": false
+  },
+  "targets": {
+    "checkpoint_id": "2e667626-c5f0-4ff5-a421-240f7349894f",
+    "receipt_id": "9dd27c49-6874-476c-83c2-ddbac3f168a9",
+    "idempotency_key": "phase2-checkpoint-production-repair-20260908-v10"
+  },
+  "comparisons": {
+    "actual_body_matches_exact_migration": true,
+    "actual_definition_matches_expected_successor": true,
+    "security_definer_preserved": true,
+    "empty_search_path_preserved": true,
+    "grants_preserved": true,
+    "original_checkpoint_and_receipt_unique": true,
+    "same_key_checkpoint_unique": true,
+    "original_receipt_owner_binding_version_operation_base9_matches": true,
+    "formal_global_at_least_v10": true
+  },
+  "observation_limits": [
+    "Unique identity/cardinality/binding is observed; this SELECT does not compare full private snapshot/row bytes.",
+    "Successor function hash includes the receipt_id return; actual live duplicate response is verified separately by coordinator.",
+    "Earlier ProductionIndependentReadback.json remains unchanged evidence for predecessor behavior.",
+    "No new production checkpoint, SQL mutation, migration, local PG rerun, qualification or R11/Slice A acceptance."
+  ],
+  "operations": {
+    "sql_select_queries": 1,
+    "formal_resume_calls": 1,
+    "checkpoint_calls": 0,
+    "production_ddl": 0,
+    "direct_sql_business_mutations": 0,
+    "local_pg_tests": 0,
+    "note": "Resume may maintain ordinary service session/audit metadata; no claim of zero internal service writes."
+  },
+  "authority_effect": "NONE",
+  "anomalies": [],
+  "query": "select pg_catalog.clock_timestamp() as observed_at_utc,\npg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(p.prosrc,'UTF8')),'hex') as body_sha256,\npg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(pg_catalog.pg_get_functiondef(p.oid),'UTF8')),'hex') as definition_sha256,\np.prosecdef as security_definer,p.proconfig as function_config,p.proacl::text as grants,\n(select count(*) from public.clued_context_checkpoints where id='2e667626-c5f0-4ff5-a421-240f7349894f'::uuid) as checkpoint_count,\n(select count(*) from public.clued_audit_receipts where id='9dd27c49-6874-476c-83c2-ddbac3f168a9'::uuid) as receipt_id_count,\n(select count(*) from public.clued_audit_receipts r join public.clued_context_checkpoints c on r.object_id=c.id::text and r.user_id=c.user_id and r.binding_id=c.binding_id and r.version=c.version where c.id='2e667626-c5f0-4ff5-a421-240f7349894f'::uuid and r.operation='checkpoint') as original_bound_receipt_count,\n(select count(*) from public.clued_context_checkpoints where idempotency_key='phase2-checkpoint-production-repair-20260908-v10') as same_key_checkpoint_count,\n(select version from public.clued_context_checkpoints where id='2e667626-c5f0-4ff5-a421-240f7349894f'::uuid) as checkpoint_version,\n(select context_key from public.clued_context_checkpoints where id='2e667626-c5f0-4ff5-a421-240f7349894f'::uuid) as checkpoint_context_key,\n(select count(*) from public.clued_audit_receipts r join public.clued_context_checkpoints c on r.object_id=c.id::text and r.user_id=c.user_id and r.binding_id=c.binding_id and r.version=c.version where c.id='2e667626-c5f0-4ff5-a421-240f7349894f'::uuid and r.id='9dd27c49-6874-476c-83c2-ddbac3f168a9'::uuid and r.operation='checkpoint' and r.metadata->>'base_version'='9') as exact_original_receipt_binding_count\nfrom pg_catalog.pg_proc p where p.oid='public.clued_mcp_commit_checkpoint(text,jsonb)'::regprocedure;"
+}

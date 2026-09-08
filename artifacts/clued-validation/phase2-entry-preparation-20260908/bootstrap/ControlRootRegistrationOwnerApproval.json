@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "status": "USER_APPROVED_PENDING_GITHUB_SIGNATURE_BINDING",
+  "approval_source": "Explicit user reply in this task on 2026-09-08",
+  "verbatim": "批准提案限定的登记例外",
+  "proposal": {
+    "path": "ControlRootGenerationBindingProposal.md",
+    "sha256": "f655e8a16f428bbccfca3687c28e31bc57aed0e7a9fd9ac0191648266afec533"
+  },
+  "original_owner_delegation": {
+    "path": "OwnerDelegation_20260908.json",
+    "sha256": "e09ef634712ce1206600402552073bae91e7296f2b4e2d3f99855bd760c944bd",
+    "signed_merge": "4f722ea9d78488b749c15d27fe9145e9d9f9d2c2",
+    "expires_at": "2026-09-09T09:28:59Z"
+  },
+  "effect": "Approve only the proposal's independently reviewed nonproduction control-root generation registration exception. All other original delegation restrictions remain.",
+  "registration_requires": [
+    "Exact subject and actual evidence independently accepted",
+    "Existing GitHub tdoljyj owner and web-flow signature infrastructure only",
+    "No old pins, keys, production scope or model/paid budget change",
+    "Actual current root/history/revocation source; missing or unknown denies",
+    "No GA or runtime qualification inferred from this approval"
+  ],
+  "approval_is_not": {
+    "root_issued": true,
+    "profile_accepted": true,
+    "ga_issued": true,
+    "qualification_pass": true,
+    "entry_pass": true
+  },
+  "signature_binding": "Must be recorded separately after actual GitHub signed merge; this local record does not supply that signature."
+}

@@ -1,0 +1,89 @@
+{
+  "kind": "DOCKER_EXISTING_ENVIRONMENT_RECOVERY_OBSERVATION",
+  "status": "BLOCKED_EXISTING_WSL_PREREQUISITE",
+  "observed_utc": "2026-09-08T10:31:55.4619209Z",
+  "authority_effect": "NONE",
+  "qualification_issued": false,
+  "root": "C:/Users/Windows/AppData/Local/Docker",
+  "run_directory": {
+    "path": "C:/Users/Windows/AppData/Local/Docker/run",
+    "directory_attributes": 16,
+    "directory_is_reparse": false,
+    "created_utc": "2026-08-24T10:19:36.1789274Z",
+    "items": [
+      {
+        "name": "sailor-ingest.sock",
+        "bytes": 0,
+        "attributes": 1056,
+        "created_utc": "2026-08-24T10:19:36.1804653Z"
+      },
+      {
+        "name": "dockerInference",
+        "bytes": 0,
+        "attributes": 1056,
+        "created_utc": "2026-08-24T10:19:36.186619Z"
+      },
+      {
+        "name": "dockerEthernetVfkit",
+        "bytes": 0,
+        "attributes": 1056,
+        "created_utc": "2026-08-24T10:19:36.1886781Z"
+      }
+    ],
+    "socket_type_verified": false,
+    "reparse_queries": "All three exact fsutil reparsepoint query calls returned Windows error 1920: The file cannot be accessed by the system.",
+    "interpretation": "Names and Docker log indicate old IPC candidates; inaccessible reparse metadata prevents independent type verification. Original bytes/entries retained.",
+    "moved": false,
+    "deleted": false,
+    "quarantine_path": null
+  },
+  "backend_log": {
+    "path": "C:/Users/Windows/AppData/Local/Docker/log/host/com.docker.backend.exe.log",
+    "socket_crash_utc": "2026-09-08T10:24:14.3811638Z",
+    "socket_error": "starting services: initializing Ingest server: unable to remove run/sailor-ingest.sock; file cannot be accessed by system",
+    "separate_prerequisite_error_utc": "2026-09-08T10:24:14.0119929Z",
+    "separate_prerequisite_error": "DockerDesktop/Wsl/NotInstalled"
+  },
+  "wsl_readonly_check": {
+    "command": "wsl --list --verbose",
+    "exit_code": 1,
+    "message_interpretation": "WSL is not installed; command directs to wsl --install",
+    "installation_attempted": false
+  },
+  "process_cleanup": {
+    "exact_launch_window_utc": [
+      "2026-09-08T10:24:10Z",
+      "2026-09-08T10:24:16Z"
+    ],
+    "path_prefix": "C:/Program Files/Docker/Docker/",
+    "target_ids": [
+      18056,
+      57556,
+      3288,
+      30540,
+      41976,
+      46420,
+      52192
+    ],
+    "validation": "All targets matched both actual StartTime UTC and installed Docker binary path before any termination",
+    "initial_guard_failure": "First UTC comparison used local DateTime parsing; guard rejected before any process was stopped. Corrected to DateTimeOffset.UtcDateTime and revalidated all targets.",
+    "stop_requested": true,
+    "remaining_exact_target_processes": []
+  },
+  "engine": {
+    "restored": false,
+    "dockerd_or_containerd_process_observed": false,
+    "container_inventory": "UNAVAILABLE_WITHOUT_ENGINE",
+    "local_image_inventory": "UNAVAILABLE_WITHOUT_ENGINE",
+    "existing_images_volumes_modified": false,
+    "container_or_skill_execution_attempted": false
+  },
+  "actions_not_taken": [
+    "No quarantine/move because IPC type could not be independently verified and WSL prerequisite is absent",
+    "No restart after missing WSL was established",
+    "No factory reset, image/volume deletion, ACL/firewall/security changes",
+    "No install/update/Windows feature enable/reboot or paid terms acceptance",
+    "No production, Skill, qualification or Git publication"
+  ],
+  "next_minimum_requirement": "Resolve actual WSL/backend availability under a separately applicable host setup scope; retain and independently verify old IPC before any quarantine. A mere IPC rename cannot satisfy the missing engine prerequisite."
+}

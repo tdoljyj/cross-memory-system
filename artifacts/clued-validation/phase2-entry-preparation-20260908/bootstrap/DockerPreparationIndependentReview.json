@@ -1,0 +1,88 @@
+{
+  "status": "ACCEPTED_FOR_FIXED_CODE_PREPARATION_ONLY",
+  "reviewer": "/root/project_list_auth_fix",
+  "implementer": "/root/controller_candidate",
+  "scope": "Independent source, exact artifact and preparation-boundary review. No Docker/WSL invocation, image operation, probe execution, installation, runtime qualification or GA.",
+  "subject": {
+    "directory": "scripts/phase2-qualification/docker-isolation",
+    "evidence_file": "PreparationEvidence.json",
+    "evidence_sha256": "be8e84000e1f804db1d1926ad3fba5b21753d076e93095f25f4ef5461ef71341",
+    "declared_source_files_verified": 7,
+    "all_source_digests_lengths_and_lf_matched": true,
+    "prepare_sha256": "c5255a601c5f88893d8765654ab884d3c1fe93a81f393a8cd8ee630de16e9474",
+    "probe_sha256": "2168145b42166b4de1ea470b4fd232549d661542761ffe279955d0ace5580523",
+    "targeted_test_sha256": "b9dfdf5e45a817addbd533f9d43ed599e296aec129808ba115965f7b22125be2",
+    "readme_sha256": "b86d65a2fa05d0848be70ad2892b70ce4c28fb5848ac2e101e17edbfff81dec9"
+  },
+  "checks": [
+    {
+      "id": "EXECUTION_ENTRY",
+      "decision": "ACCEPTED_AS_CLOSED",
+      "source": "prepare.py:135",
+      "finding": "main rejects run and formal at line 141 before reading config or calling prepare. The preparation module has no subprocess, shell, socket or network API call; it only constructs argument data and performs bounded local file operations. Importing probe defines functions but does not execute main."
+    },
+    {
+      "id": "FIXED_CONFIG_AND_ARGV",
+      "decision": "ACCEPTED_AS_PREPARED_DATA",
+      "source": "prepare.py:49",
+      "finding": "Config permits exactly image and 32-hex run_key. Image must use the fixed python repository and sha256 form; no tag or implicit pull. Argv fixes pull=never, linux/amd64, uid/gid 10001, network=none, read-only rootfs, cap-drop ALL, no-new-privileges, CPU/memory/swap/PID/log/tmpfs limits, no restart, fixed Python entry and fixed driver args. No environment, arbitrary command, mount or resource override is exposed."
+    },
+    {
+      "id": "MOUNT_AND_SECRET_BOUNDARY",
+      "decision": "ACCEPTED_AS_PREPARED_SCOPE",
+      "source": "prepare.py:98",
+      "finding": "CLI prepare derives a new run directory under this package's work root. Existing run evidence returns UNKNOWN. Ancestor symlinks/junctions and mount delimiters are rejected. Only the exact probe source read-only mount and that run's synthetic allowed directory writable mount are planned; no host home or Docker socket mount and no host env forwarding. This is a static plan; future supervisor must re-inspect actual resolved mounts and configuration before start. Image-inherited environment is explicitly unverified."
+    },
+    {
+      "id": "FIXED_PROBE_OPERATIONS",
+      "decision": "ACCEPTED_AS_UNEXECUTED_PROBE",
+      "source": "probe.py:57",
+      "finding": "Before synthetic operations, main requires Linux uid 10001, no-new-privileges and zero effective/permitted capabilities; parent requires only loopback. It writes the allowed fixture, attempts a synthetic rootfs write and mode-zero canary read, runs a local TCP positive control, and tests a documentation-only TEST-NET destination. Timeout/refused connection cannot count as denial. The only process launch is the exact same Python driver descendant with empty env. These socket/process calls exist in the future probe, not in the preparer."
+    },
+    {
+      "id": "DESCENDANT_READY_AND_STOP",
+      "decision": "ACCEPTED_AFTER_TARGETED_FIXES",
+      "sources": ["probe.py:38", "probe.py:47", "probe.py:65", "prepare.py:68"],
+      "finding": "SIGTERM ignore is installed before the descendant publishes readiness. Parent waits within three seconds for complete JSON with exact typed PID/PPID/uid and true actual-handler marker, and still checks live child status; missing/partial/wrong-identity data cannot establish readiness. Future stopped predicate requires exact container ID, dict state, Running false, exact integer-zero PID, exited state and a valid nonzero timezone-bearing RFC3339 time. Neither helper is an actual Docker STOP observation."
+    },
+    {
+      "id": "EVIDENCE_AND_IMAGE_TRUTH",
+      "decision": "ACCEPTED_AS_PREPARATION_ONLY",
+      "finding": "Example image/run_key remain null; actual image digest, local inspection and isolation observations remain absent. Synthetic all-f digest is confined to parser tests. Local CreateNew/fsync/readback Intent remains explicitly distinct from remote durable Intent and formal idempotency. README accurately keeps inspect/create/start/live-child/STOP/wait/exact-ID inspection as future lifecycle work."
+    }
+  ],
+  "resolved_findings": [
+    {
+      "id": "DR01",
+      "original_subject_evidence_sha256": "e23800052b837ea185d9b6bbf0f10dbb120112c9f67a98a7a8808151efbab531",
+      "problem": "Descendant published readiness before installing SIGTERM ignore; parent relied on existence without a complete identity-bound record.",
+      "resolution": "Handler setup precedes ready publication; complete typed matching readiness is required in a bounded wait. Partial files are not success.",
+      "status": "RESOLVED_BY_SOURCE_REVIEW"
+    },
+    {
+      "id": "DR02",
+      "original_subject_evidence_sha256": "e23800052b837ea185d9b6bbf0f10dbb120112c9f67a98a7a8808151efbab531",
+      "problem": "STOP predicate accepted garbage/empty finish timestamps and bool-as-integer zero PID.",
+      "resolution": "Typed state/PID and strict parsed timezone-bearing nonzero timestamp checks reject those false positives.",
+      "status": "RESOLVED_BY_SOURCE_REVIEW"
+    }
+  ],
+  "validation_reuse": {
+    "original_nine_tests": "Historical implementer run retained with original exact source hashes; not claimed rerun on the changed subject.",
+    "targeted_fix_tests": "Implementer recorded 5/5 pure-function/AST checks for the changed predicates. Reviewer read those exact tests and fixes; did not rerun them or the original nine.",
+    "independent_runtime_tests": 0
+  },
+  "remaining_preparation_defects": [],
+  "qualification_not_established": [
+    "No actual approved locally available image/runtime or engine security inspection.",
+    "No OS network/file/credential enforcement or live parent/descendant/container STOP result.",
+    "No implemented lifecycle supervisor with trusted exact-ID observation, current authorization/revocation, remote durable sink or actual budget reservation.",
+    "Credential canary absence alone is not non-inheritance proof; the future approved host control and image environment must be inspected.",
+    "Prepared flags and local guards do not establish race-free mounts, isolated host qualification, a complete accepted allowlist or production rights."
+  ],
+  "authorization_effect": "NONE",
+  "execution_entries_remain_blocked": true,
+  "docker_wsl_image_or_container_actions_by_reviewer": 0,
+  "controller_or_skill_modified_by_reviewer": false,
+  "new_trust_root_or_generation_created": false
+}
