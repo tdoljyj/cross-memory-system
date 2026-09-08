@@ -1,0 +1,1020 @@
+{
+  "state": "INDEPENDENT_SCOPED_ENGINEERING_REVIEW_COMPLETED",
+  "reviewer": "/root/project_list_auth_fix",
+  "authority_effect": "ENGINEERING_INTERPRETATION_AND_REUSE_ACCEPTED_ONLY_NO_OPERATIONAL_GRANT",
+  "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+  "reviewed_at": "2026-09-08T10:01:40.704Z",
+  "scope": "R07/R08 current evidence applicability, R09/R10 exact acceptance gaps and bootstrap STOP observation/source consistency. No business implementation, new control root, qualification or GA.",
+  "prior_source_reuse": {
+    "count": 47,
+    "checks": [
+      {
+        "path": ".github/workflows/phase2-v027-validation.yml",
+        "sha256": "9a45acb955d1eee8e84491257043056eeefe8a088be6425f4b7cfa8cded0b520",
+        "current_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+        "prior_source_commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "current_git_bytes_match_prior": true
+      },
+      {
+        "path": ".github/workflows/public-mcp-gate-receipt.yml",
+        "sha256": "4e3784db5984933d859cd961f010c4fb2306eaf6b871cdd438eeb2cff9154ce8",
+        "current_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+        "prior_source_commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "current_git_bytes_match_prior": true
+      },
+      {
+        "path": "AGENTS.md",
+        "sha256": "0d209391925dfc3c490cecfdb1e48c9266f0fd9c3d2e26903e023002f2eaf354",
+        "current_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+        "prior_source_commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "current_git_bytes_match_prior": true
+      },
+      {
+        "path": "apps/clued-cloud/app/oauth/consent/page.tsx",
+        "sha256": "54ad239f01cbcbd1fb4bac04ff6b080bd55f1465163f34b557e237ccea83051f",
+        "current_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+        "prior_source_commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "current_git_bytes_match_prior": true
+      },
+      {
+        "path": "apps/clued-cloud/app/page.tsx",
+        "sha256": "4e5caa4015b4382a4cd9329b71ecf2079ff9a79e3c0f6d74f9bdc02345ffbc83",
+        "current_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+        "prior_source_commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "current_git_bytes_match_prior": true
+      },
+      {
+        "path": "apps/clued-cloud/evals/public-mcp/gate-receipt.mjs",
+        "sha256": "9d1574e361a8fdd550578763755933e4d250a8076d55b1223ca9dfc40c1ec0c0",
+        "current_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+        "prior_source_commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "current_git_bytes_match_prior": true
+      },
+      {
+        "path": "apps/clued-cloud/scripts/m2-snapshot-store.mjs",
+        "sha256": "d56e15f4821ff2b21de07a3c103aac4d9a963b3dac7ee2128543ea37036caf30",
+        "current_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+        "prior_source_commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "current_git_bytes_match_prior": true
+      },
+      {
+        "path": "apps/clued-cloud/scripts/two-level-snapshot.mjs",
+        "sha256": "1dfcc8de7b481bc8a29cd055f711bb142fa390fff07a61730320866a477f6b7e",
+        "current_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+        "prior_source_commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "current_git_bytes_match_prior": true
+      },
+      {
+        "path": "apps/clued-cloud/supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql",
+        "sha256": "f59e414ec0de016cbe89d3ba24ded2d90e85a9e17fb554021b2d4d611f4d26c2",
+        "current_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+        "prior_source_commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "current_git_bytes_match_prior": true
+      },
+      {
+        "path": "apps/clued-cloud/worker/continuity.ts",
+        "sha256": "53746991a483bf4bbac4402440ae86fb7cd296032a7a10359758bbaf77997dc5",
+        "current_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+        "prior_source_commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "current_git_bytes_match_prior": true
+      },
+      {
+        "path": "apps/clued-cloud/worker/p5.ts",
+        "sha256": "ce46bf7025f746579263b78c320f1df6e4d077e11bcbcc958865f20bfead418f",
+        "current_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+        "prior_source_commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "current_git_bytes_match_prior": true
+      },
+      {
+        "path": "apps/clued-cloud/worker/projects.ts",
+        "sha256": "8bb2d52643c4ffd62ee48de60294559161d750ea15d328b6585deb47aa2aa09f",
+        "current_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+        "prior_source_commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "current_git_bytes_match_prior": true
+      },
+      {
+        "path": "apps/clued-cloud/worker/records.ts",
+        "sha256": "43bfe74c4d6576476f3d4a08df82a6b0853da855c29124edf1e333c14d5bb35e",
+        "current_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+        "prior_source_commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "current_git_bytes_match_prior": true
+      },
+      {
+        "path": "artifacts/clued-validation/phase2-entry-readiness-20260908/EvidenceIndex.json",
+        "sha256": "3cb1d8fde1731a28078b363827651963f5cd1d20950844de14b043a1a4ff4522",
+        "current_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+        "prior_source_commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "current_git_bytes_match_prior": true
+      },
+      {
+        "path": "artifacts/clued-validation/project-list-auth-repair-20260908/README.md",
+        "sha256": "e890ca58019e9eb6511b903e46b4dc75f0abe828b3ae8b0c81b2f1c92d757af1",
+        "current_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+        "prior_source_commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "current_git_bytes_match_prior": true
+      },
+      {
+        "path": "artifacts/clued-validation/project-list-auth-repair-20260908/production-deployment.json",
+        "sha256": "9b18a55e6ae6780c0f163cd2dbe2cf36426f32e91e4ed7b74f7cece3a9dc84df",
+        "current_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+        "prior_source_commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "current_git_bytes_match_prior": true
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/AcceptanceAndInvalidation.md",
+        "sha256": "f2aed48ed74e688bfe280d3fa896243cc7907905fafcc467706a276367472f27",
+        "current_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+        "prior_source_commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "current_git_bytes_match_prior": true
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/ArchitectureConstitutionAcceptanceDecision_20260907.json",
+        "sha256": "f2ec1d6cf3afbd80d415c65c7bc0f71d86d606bda9031a174d92517e421ac246",
+        "current_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+        "prior_source_commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "current_git_bytes_match_prior": true
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/NamingIntegrityCloseoutDecision_20260907.json",
+        "sha256": "f077de340810bef827ebdd92e2c2bdda3eef2bc894f7e9975edbf54623133740",
+        "current_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+        "prior_source_commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "current_git_bytes_match_prior": true
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/Step06-ScopedAcceptance_20260907.json",
+        "sha256": "bd40c82a21e7b19c2c36e56d7b877078e45c6bfdf1593590fb56ab364f47889a",
+        "current_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+        "prior_source_commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "current_git_bytes_match_prior": true
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/Step13-ScopedAcceptance_20260907.json",
+        "sha256": "562046e42bcbbea73bb99412cdc8161945b8e50fc519f335402f6529ca638acd",
+        "current_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+        "prior_source_commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "current_git_bytes_match_prior": true
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/Step15-17-EvidenceRefreshDecision_20260907.json",
+        "sha256": "3bd87b5083f91a609fc85916cd0ea216120f3a46edaac64070327abbf03129d9",
+        "current_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+        "prior_source_commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "current_git_bytes_match_prior": true
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/Step17-ScopedAcceptance_20260907.json",
+        "sha256": "a4d652aef2b799ee7f6b9d6e99b65c7ece646462d44c37ef2fdd64bc28b8c63a",
+        "current_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+        "prior_source_commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "current_git_bytes_match_prior": true
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/Step20-SkillProjectionAcceptance_20260907.json",
+        "sha256": "2c7da02632520187aa3b95ebfac4e5f9ba4d9a55d32e25d7eb3bccacab7ffc42",
+        "current_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+        "prior_source_commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "current_git_bytes_match_prior": true
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/Step21-SkillProjectionAcceptance_20260907.json",
+        "sha256": "7e34dc5fdf3c95b5f964217f55bc5088cbb120eaea4fc778e8b657e43d6df08b",
+        "current_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+        "prior_source_commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "current_git_bytes_match_prior": true
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step05-identity-20260907/AliasRegistry.candidate.json",
+        "sha256": "29d0d21d2d0fcecefdc9daaf841a77f411a6695d256a38993976f74660f19a40",
+        "current_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+        "prior_source_commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "current_git_bytes_match_prior": true
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedAuthorizationRegistry.candidate.json",
+        "sha256": "359e7461ba3166bef63815f37ddd9c247aada317c14e4e62bdee3bc79cc3fcdd",
+        "current_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+        "prior_source_commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "current_git_bytes_match_prior": true
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedConsumerRegistry.candidate.json",
+        "sha256": "a8cb94b4aba8e5bc5b6b138fc713120127b36d120f962ba0c1d867fccdbe90a7",
+        "current_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+        "prior_source_commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "current_git_bytes_match_prior": true
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step06-bindings-20260907/TypedReceiptRegistry.candidate.json",
+        "sha256": "05d182805b31ba9d5e6c1c3fa32ae2081527a92faaa76263debded6ffca5efa4",
+        "current_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+        "prior_source_commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "current_git_bytes_match_prior": true
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step12-actual-migration-20260907/receipt.json",
+        "sha256": "7ba04bc7cf715a6b96f05f64db3d7f0281627e9c0919b15dd66aa3d26f9f6ca7",
+        "current_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+        "prior_source_commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "current_git_bytes_match_prior": true
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step13-14-actual-verification-20260907/TargetConsumerBindingManifest.json",
+        "sha256": "6c82bc7c53a1f26e0dd07419acfcd67e3e65b772f4a3ee69f2f06c617b4fcece",
+        "current_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+        "prior_source_commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "current_git_bytes_match_prior": true
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step15-enforcement-20260907/workflow-review/AllowedDifferences.json",
+        "sha256": "9f79ca2b833f2f91d6b90228d6a6719ba2ddcf479e09a143b12c0f10df4fa54b",
+        "current_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+        "prior_source_commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "current_git_bytes_match_prior": true
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step20-skill-20260907/clued-developer/SKILL.md",
+        "sha256": "a7daf4644401600609c9d6d1bab1b61e512012833b35d01498aaca44da398269",
+        "current_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+        "prior_source_commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "current_git_bytes_match_prior": true
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step21-skill-20260907/IndependentBehaviorReview.json",
+        "sha256": "f63879a2075c36ee52a3d82d9306b3189fa1be4cf58b36736e94832603ff8f98",
+        "current_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+        "prior_source_commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "current_git_bytes_match_prior": true
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step21-skill-20260907/clued-user/SKILL.md",
+        "sha256": "a86b2710f013600f52bcb062d2d48393b3bba8700a006c84a22b7e9f79807724",
+        "current_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+        "prior_source_commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "current_git_bytes_match_prior": true
+      },
+      {
+        "path": "docs/execution-plans/phase2-structure-governance/step21-skill-20260907/continuity-routing/SKILL.md",
+        "sha256": "7222bc35a6eb7490c620c35296553dddd7815c47d8c15ce0843789dc2b42824d",
+        "current_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+        "prior_source_commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "current_git_bytes_match_prior": true
+      },
+      {
+        "path": "scripts/clued-naming-inventory-consolidate.py",
+        "sha256": "69f2fcc2e8c0e2802d7fa08de842345b88d208bec947d3ef4e88ef4c41907026",
+        "current_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+        "prior_source_commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "current_git_bytes_match_prior": true
+      },
+      {
+        "path": "scripts/clued-naming-surface-inventory.py",
+        "sha256": "9ff7dc893b865a7736d6d9ffbe6f908c15f9c418e10a0602ae6fd33eedb8f81e",
+        "current_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+        "prior_source_commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "current_git_bytes_match_prior": true
+      },
+      {
+        "path": "scripts/phase2-v027-validate.py",
+        "sha256": "e16cc9fa5fd2a54dc3922029851722936551a400979dc94dce691faa83bd7f4e",
+        "current_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+        "prior_source_commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "current_git_bytes_match_prior": true
+      },
+      {
+        "path": "scripts/sync-memory.ps1",
+        "sha256": "1b0ec7934951a937c7b517841374817255bad9e430ae09adb72adf579fc7c6e8",
+        "current_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+        "prior_source_commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "current_git_bytes_match_prior": true
+      },
+      {
+        "path": "scripts/sync-memory.py",
+        "sha256": "93dc66d3c6e0a7aa2310afa5d3386dd0a835fa840e3ab049676906d66bc8f94d",
+        "current_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+        "prior_source_commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "current_git_bytes_match_prior": true
+      },
+      {
+        "path": "scripts/update_clued_skills.py",
+        "sha256": "ef976d161813c6d1ed1d60cbaf05a8e4a825c41db35fda6eb32b6fd40ab05e67",
+        "current_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+        "prior_source_commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "current_git_bytes_match_prior": true
+      },
+      {
+        "path": "scripts/verification_context.py",
+        "sha256": "6a2d83a65921df60252aad350f3cecacfbab991be582368903aa40203c96d5ab",
+        "current_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+        "prior_source_commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "current_git_bytes_match_prior": true
+      },
+      {
+        "path": "skills/README.md",
+        "sha256": "6930cfcd300010b287dc08f58ae8b441639033ee4a705f66f775a36603087c6c",
+        "current_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+        "prior_source_commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "current_git_bytes_match_prior": true
+      },
+      {
+        "path": "skills/clued/SKILL.md",
+        "sha256": "8a5e6d9548731874b94ebe3edc046f7393c96fd75531f22231228e055206096f",
+        "current_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+        "prior_source_commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "current_git_bytes_match_prior": true
+      },
+      {
+        "path": "skills/clued/references/engineering.md",
+        "sha256": "ffff299ea0a1793f9b0b4963fc5bf099762fabce96ed96086cfc5494acbb8d29",
+        "current_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+        "prior_source_commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "current_git_bytes_match_prior": true
+      },
+      {
+        "path": "skills/clued/references/memory-operations.md",
+        "sha256": "a05feabc8ad4ccac535bb059fbf35179f79884dfb1113abdd18b21281bfda538",
+        "current_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+        "prior_source_commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+        "current_git_bytes_match_prior": true
+      }
+    ],
+    "tests_rerun": 0,
+    "owner_signature_reverified": false
+  },
+  "r07": {
+    "historical_migration": {
+      "status": "MIGRATION_FILE_OPERATIONS_COMPLETED",
+      "changed_paths": 64,
+      "scope": "Exact local file operations only; not Step13-21 acceptance, Canonical semantic proof, enforcement or publication.",
+      "rollback_rule": "Persist all originals before mutation; rollback only if each affected path is still its original or recorded after-state. Preserve all transaction evidence."
+    },
+    "dimensions": [
+      {
+        "dimension": "Responsibility",
+        "conclusion": "ACCEPTED_FOR_CURRENT_ENGINEERING_MAPPING",
+        "evidence": [
+          "artifacts/clued-validation/phase2-entry-preparation-20260908/mapping/ConsumerMapping.json",
+          "artifacts/clued-validation/phase2-entry-preparation-20260908/mapping/ChangeApplicabilityReview.json"
+        ],
+        "accepted": "All18 historical consumers preserve their declared domain/owner/operations and exact27 authorization/18 receipt references. Current changed paths and their28 operations have explicit dispositions.",
+        "limit": "This does not mint current runtime issuer credentials or rewrite the frozen registry. New development endpoints below are separately identified rather than silently inheriting old consumer IDs."
+      },
+      {
+        "dimension": "Authority",
+        "conclusion": "ACCEPTED_FOR_SCOPED_SOURCE_BOUNDARY_REVIEW",
+        "evidence": [
+          "apps/clued-cloud/worker/continuity.ts",
+          "artifacts/clued-validation/phase2-entry-preparation-20260908/mapping/TargetedChecks.json",
+          "artifacts/clued-validation/project-list-auth-repair-20260908/README.md"
+        ],
+        "accepted": "Account JWT management, explicitly consented Binding calls and Owner engineering delegation remain distinct. PR19 maintains denial while correcting MCP/REST auth error classification; no permission is granted by this review.",
+        "limit": "Current Owner bootstrap delegation is not a production Binding, controller qualification or GA. Raw membership is not Canonical project grant; scoped real-PG evidence is reused."
+      },
+      {
+        "dimension": "Pointer",
+        "conclusion": "ACCEPTED_FOR_SCOPED_POINTER_RULE_CONTINUITY",
+        "evidence": [
+          "AGENTS.md",
+          "config/clued-endpoint-trust.json",
+          "artifacts/clued-two-level-snapshots/current.json",
+          "development/authority-index/phase2/Activation.json"
+        ],
+        "accepted": "Repository snapshot follows existing current.json and owner/scope trust policy; immutable published snapshot and read-only repository export remain the rule. Naming Activation remains derived old accepted references only.",
+        "limit": "No pointer changed here. Historical TM19 Activation cannot introduce a new controller or current mechanism authority."
+      },
+      {
+        "dimension": "Rollback",
+        "conclusion": "ACCEPTED_FOR_CONDITIONAL_ENGINEERING_RECOVERY_RULE_ONLY",
+        "evidence": [
+          "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/ExecutionInputs.candidate.json",
+          "scripts/update_clued_skills.py"
+        ],
+        "accepted": "Preserve originals; historical migration rollback only when affected paths match recorded original/after state. Skill updater stages/hashes, preserves backups and restores moved named entries on a caught error.",
+        "limit": "No rollback ran in this review. Updater exception recovery is not crash-atomic or a production deployment/database rollback. The old transaction cannot overwrite later unrelated changes."
+      },
+      {
+        "dimension": "Evidence_Gate_Compatibility",
+        "conclusion": "ACCEPTED_FOR_SCOPED_EVIDENCE_REUSE",
+        "evidence": [
+          "docs/execution-plans/phase2-structure-governance/Step13-ScopedAcceptance_20260907.json",
+          "docs/execution-plans/phase2-structure-governance/Step17-ScopedAcceptance_20260907.json",
+          "artifacts/clued-validation/phase2-entry-preparation-20260908/mapping/TargetedChecks.json"
+        ],
+        "accepted": "Reuse original migration wiring, exact Step17 workflow successor and the actual11 targeted checks; do not reset21-step history.",
+        "limit": "These observations do not issue a new readiness receipt, GA or CI result."
+      }
+    ],
+    "current_additional_edges": [
+      {
+        "entry": "clued_context / POST /v1/development",
+        "responsibility": "Exact feature-gated development RPC through explicitly consented Binding; context and Canonical project permissions remain separate.",
+        "source": "apps/clued-cloud/worker/continuity.ts",
+        "lines": [
+          895,
+          904,
+          1279,
+          1295
+        ]
+      },
+      {
+        "entry": "POST /v1/development/owner",
+        "responsibility": "Account JWT identity verification then separate owner RPC; Binding cannot enter owner management.",
+        "source": "apps/clued-cloud/worker/continuity.ts",
+        "lines": [
+          1284,
+          1292
+        ]
+      },
+      {
+        "entry": "Home handleCreateProject/updateProject",
+        "responsibility": "Current M1 request/receipt/CAS logic is included beyond historical C14 login-only symbols.",
+        "source": "apps/clued-cloud/app/page.tsx",
+        "lines": [
+          700,
+          819
+        ]
+      }
+    ],
+    "pointer_observation": {
+      "snapshot_pointer_source": {
+        "path": "artifacts/clued-two-level-snapshots/current.json",
+        "bytes": 333,
+        "sha256": "ef05f3e9d4e92e82598e416cc86d16b05cf18531438788fb1f297834a74d4a60",
+        "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+        "scope": "EXACT_COMMITTED_SOURCE"
+      },
+      "naming_activation_contract": "clued.phase2.activation-reference/v1",
+      "naming_authority_effect": "DERIVED_ACCEPTED_REFERENCES_ONLY",
+      "naming_attestation_commit": "f74a0691f1578123dae9764847631a8fcbf66c2a"
+    }
+  },
+  "r08": {
+    "limited_conclusion": "ACCEPTED_FOR_DOCUMENTED_INVARIANTS_AND_EXPLICIT_SUCCESSOR_DISPOSITIONS_NOT_GLOBAL_NO_CHANGE",
+    "comparisons": [
+      {
+        "kind": "PRESERVED_WITHIN_REVIEWED_SOURCE_SCOPE",
+        "invariant": "Canonical service remains sole business fact source; repository/Skill instructions grant no authority or business dual-write.",
+        "evidence": [
+          "AGENTS.md",
+          "skills/clued/SKILL.md",
+          "skills/clued/references/engineering.md",
+          "skills/clued/references/memory-operations.md"
+        ],
+        "limit": "No full production data comparison or new schema equivalence is claimed."
+      },
+      {
+        "kind": "PRESERVED_WITHIN_REVIEWED_SOURCE_SCOPE",
+        "invariant": "Legacy non-context dispatch and result sanitizer remain selected for old tool names; common resource denial remains denied.",
+        "evidence": [
+          "artifacts/clued-validation/phase2-entry-preparation-20260908/mapping/ChangeApplicabilityReview.json",
+          "artifacts/clued-validation/phase2-entry-preparation-20260908/mapping/TargetedChecks.json"
+        ],
+        "limit": "TheHTTP response status itself intentionally changed."
+      },
+      {
+        "kind": "PRESERVED_WITHIN_REVIEWED_SOURCE_SCOPE",
+        "invariant": "Project mutation UI uses committed M1 receipts, stable retry key and exact target/CAS; existing handler tests and scoped service readback are reusable.",
+        "evidence": [
+          "apps/clued-cloud/tests/home-project-create.test.mjs",
+          "artifacts/clued-validation/project-list-auth-repair-20260908/README.md"
+        ],
+        "limit": "This corrects previous UI behavior; real production browser navigation remains separate."
+      },
+      {
+        "kind": "INTENTIONAL_SUCCESSOR_CHANGE",
+        "change": "Bootstrap delegated OAuth issuer and per-authorization-instance Binding description; feature-gated independent clued_context entry and separate sanitation.",
+        "evidence": [
+          "artifacts/clued-validation/phase2-entry-preparation-20260908/mapping/ChangeApplicabilityReview.json",
+          "artifacts/clued-validation/phase2-entry-preparation-20260908/mapping/TargetedChecks.json"
+        ],
+        "disposition": "Accept documented engineering successor interpretation; never label old/new discovery bytes identical."
+      },
+      {
+        "kind": "INTENTIONAL_SUCCESSOR_CHANGE",
+        "change": "Project list enumerates readable explicitly consented Canonical projects instead of requiring system:projects; global/profile or development membership cannot imply Canonical grants.",
+        "evidence": [
+          "apps/clued-cloud/tests/project-list-authorization-db.test.mjs",
+          "artifacts/clued-validation/project-list-auth-repair-20260908/README.md"
+        ],
+        "disposition": "Reuse exact PR19 real-PG and formal deployment evidence; it is a scoped authorization correction, not a global no-change statement."
+      },
+      {
+        "kind": "INTENTIONAL_SUCCESSOR_CHANGE",
+        "change": "Shared browser session restoration, delegated consent routing, current M1 create/update and committed receipt handling.",
+        "evidence": [
+          "apps/clued-cloud/tests/supabase-browser.test.mjs",
+          "apps/clued-cloud/tests/home-project-create.test.mjs",
+          "artifacts/clued-validation/phase2-entry-preparation-20260908/mapping/TargetedChecks.json"
+        ],
+        "disposition": "Existing UI logic evidence plus CA03 applies; production browser observation remains required only where actually included in the acceptance subject."
+      }
+    ]
+  },
+  "r09_r10_and_remaining_stage_objects": [
+    {
+      "stage": "R07",
+      "object": "Current scope closure against the mapped source subject",
+      "owner_action": "Coordinator names the exact scope and includes new development dispatch and Home project actions as explicit current edges; do not fabricate frozen consumer IDs.",
+      "assessor_action": "Accept only the typed responsibility/authority/pointer/conditional-recovery mapping supported above; escalate uncovered claimed responsibility as a finding.",
+      "actual_gap": "No current aggregate responsibility/authority/rollback runtime acceptance is provided. Administrative mapping is now independently accepted, not a permission to operate every mapped role."
+    },
+    {
+      "stage": "R08",
+      "object": "Current Canonical semantic comparison subject and successor dispositions",
+      "owner_action": "Bind the R07 scope to the preserved invariants and intentional changes above, with the exact successor evidence; do not submit a claim that all post-migration behavior is unchanged.",
+      "assessor_action": "Engineering interpretation and reuse above are accepted. A whole CanonicalSemanticNoChangeReceipt needs its exact tested comparison subject and valid stage decision; none is issued by this report.",
+      "actual_gap": "Historical Step17 covers original migration. Current whole-core semantic-equivalence evidence is absent; intentional OAuth/project-list/UI changes must remain visible."
+    },
+    {
+      "stage": "R09",
+      "object": "Exact vendor-independent Development Mechanism subject and DevelopmentMechanismFreezeReceipt",
+      "owner_action": "Prepare one review subject binding current AGENTS, consumer/authority rules, evidence/current-pointer/rollback contracts and explicit execution-channel boundaries, including that the bootstrap executor remains unqualified. Retain root/pin boundaries.",
+      "assessor_action": "Review that immutable definition and its R08 prerequisite, then accept/freeze only its declared scope if complete.",
+      "actual_gap": "No exact current mechanism subject with its own accepted Freeze is present in the examined set. Naming Freeze does not substitute.",
+      "must_not_require": [
+        "R11 result",
+        "R13 activation/deprecation",
+        "R14 Entry",
+        "A qualified controller merely to define the vendor-independent mechanism"
+      ]
+    },
+    {
+      "stage": "R10",
+      "object": "Current unified Skill projection bound to the accepted R09 mechanism",
+      "owner_action": "After R09, bind the three exact installed Skill files, engineering/memory routes, consumer evidence and explicit old-entry successor mapping in the current projection subject.",
+      "assessor_action": "Accept the projection relationship after source/installation identity and rule conformance; installation bytes alone do not issue runtime qualification.",
+      "actual_gap": "Source and installation3/3 identity are verified, and old Step20/21 limited adapter acceptances exist; missing is the current accepted R09 parent and scoped unified projection acceptance.",
+      "must_not_require": [
+        "R11 Shadow evidence before projection",
+        "R13 clued-kernel-developer retirement proof as a new R10 prerequisite"
+      ],
+      "later_boundary": "Unresolved kernel-developer alias/deprecation remains an explicit R13 item, not inferred from missing directory."
+    }
+  ],
+  "skill_identity_reused": [
+    {
+      "source": {
+        "path": "skills/clued/SKILL.md",
+        "bytes": 3913,
+        "sha256": "8a5e6d9548731874b94ebe3edc046f7393c96fd75531f22231228e055206096f",
+        "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+        "scope": "EXACT_COMMITTED_SOURCE"
+      },
+      "installed_path": "C:\\Users\\Windows\\.codex\\skills\\clued\\SKILL.md",
+      "installed_sha256": "8a5e6d9548731874b94ebe3edc046f7393c96fd75531f22231228e055206096f",
+      "bytes_match": true
+    },
+    {
+      "source": {
+        "path": "skills/clued/references/engineering.md",
+        "bytes": 5780,
+        "sha256": "ffff299ea0a1793f9b0b4963fc5bf099762fabce96ed96086cfc5494acbb8d29",
+        "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+        "scope": "EXACT_COMMITTED_SOURCE"
+      },
+      "installed_path": "C:\\Users\\Windows\\.codex\\skills\\clued\\references\\engineering.md",
+      "installed_sha256": "ffff299ea0a1793f9b0b4963fc5bf099762fabce96ed96086cfc5494acbb8d29",
+      "bytes_match": true
+    },
+    {
+      "source": {
+        "path": "skills/clued/references/memory-operations.md",
+        "bytes": 5166,
+        "sha256": "a05feabc8ad4ccac535bb059fbf35179f79884dfb1113abdd18b21281bfda538",
+        "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+        "scope": "EXACT_COMMITTED_SOURCE"
+      },
+      "installed_path": "C:\\Users\\Windows\\.codex\\skills\\clued\\references\\memory-operations.md",
+      "installed_sha256": "a05feabc8ad4ccac535bb059fbf35179f79884dfb1113abdd18b21281bfda538",
+      "bytes_match": true
+    }
+  ],
+  "bootstrap_stop_review": {
+    "conclusion": "ACCEPTED_AS_CONSISTENT_SCOPED_ENGINEERING_OBSERVATION_NOT_CONTROLLER_QUALIFICATION",
+    "index": {
+      "path": "scripts/phase2-qualification/bootstrap-runtime/EvidenceIndex.json",
+      "bytes": 3163,
+      "sha256": "2fd4dc060e23a6c3140f232c288f288c42185d98dd28d7aa346ab7df4c096723",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "scope": "EXACT_COMMITTED_SOURCE"
+    },
+    "indexed_files_verified": 8,
+    "files": [
+      {
+        "path": "scripts/phase2-qualification/bootstrap-runtime/NativeHost.cs",
+        "bytes": 20140,
+        "sha256": "9cb4c0ba2499d516fcc7b06a69a9f8b7e6ef5471613f1553a87b19f89c5eaff1",
+        "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+        "scope": "EXACT_COMMITTED_SOURCE"
+      },
+      {
+        "path": "scripts/phase2-qualification/bootstrap-runtime/engineering_check.py",
+        "bytes": 13583,
+        "sha256": "b9f86aa5e4806e3ac1c75b43367033b4954759e8928cfa3e3f85d84723a27004",
+        "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+        "scope": "EXACT_COMMITTED_SOURCE"
+      },
+      {
+        "path": "scripts/phase2-qualification/bootstrap-runtime/README.md",
+        "bytes": 6901,
+        "sha256": "5ecd1b1418a3f042ee1962facf99bef189918f7626b01727320bb576f3309a48",
+        "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+        "scope": "EXACT_COMMITTED_SOURCE"
+      },
+      {
+        "path": "scripts/phase2-qualification/bootstrap-runtime/.gitignore",
+        "bytes": 19,
+        "sha256": "7c0e3807a109f275f04fa607825e26c8d69f2e23f684cf4ca68e03df1173780a",
+        "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+        "scope": "EXACT_COMMITTED_SOURCE"
+      },
+      {
+        "path": "scripts/phase2-qualification/bootstrap-runtime/evidence/JobTree01.json",
+        "bytes": 1788,
+        "sha256": "4c433d28f48725ed43b54a9792e7f184befa8598f4781953bac25142adcd8e77",
+        "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+        "scope": "EXACT_COMMITTED_SOURCE"
+      },
+      {
+        "path": "scripts/phase2-qualification/bootstrap-runtime/evidence/StopCrashAttempt01.json",
+        "bytes": 6892,
+        "sha256": "efa6568c6620e91aa0e0abfa48bf0691cf880ecdf30d37858421f4f0d5a886ed",
+        "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+        "scope": "EXACT_COMMITTED_SOURCE"
+      },
+      {
+        "path": "scripts/phase2-qualification/bootstrap-runtime/evidence/StopCrashAttempt01Cleanup.json",
+        "bytes": 222,
+        "sha256": "b2043765ae9ef1ce68d0232d2d5640532a4101e281cfd32f23bb777ef2eefbd7",
+        "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+        "scope": "EXACT_COMMITTED_SOURCE"
+      },
+      {
+        "path": "scripts/phase2-qualification/bootstrap-runtime/evidence/HostCrashAttempt02.json",
+        "bytes": 2484,
+        "sha256": "688e13742e72112e9bb820cc505fbe868a02857c0098b7db3fb298f01e53b502",
+        "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+        "scope": "EXACT_COMMITTED_SOURCE"
+      }
+    ],
+    "current_native_source_sha256": "9cb4c0ba2499d516fcc7b06a69a9f8b7e6ef5471613f1553a87b19f89c5eaff1",
+    "source_review": [
+      {
+        "path": "scripts/phase2-qualification/bootstrap-runtime/NativeHost.cs",
+        "lines": [
+          156,
+          163
+        ],
+        "finding": "Create suspended, assign to exact Job, check membership, then resume; two process limit/kill-on-close."
+      },
+      {
+        "path": "scripts/phase2-qualification/bootstrap-runtime/NativeHost.cs",
+        "lines": [
+          175,
+          190
+        ],
+        "finding": "Bind descendant to exact Job, observe STOP, terminate whole Job and observe child and descendant exits."
+      },
+      {
+        "path": "scripts/phase2-qualification/bootstrap-runtime/engineering_check.py",
+        "lines": [
+          137,
+          240
+        ],
+        "finding": "Retain real live process handles before fault, then wait those handles signalled; interrupted result remainsUNKNOWN and no redispatch."
+      }
+    ],
+    "stop": {
+      "evidence": "scripts/phase2-qualification/bootstrap-runtime/evidence/StopCrashAttempt01.json",
+      "pointer": "/checks/0",
+      "source_digest_matches": true,
+      "exe_digest_matches_native_observation": true,
+      "stop_reason": "STOP_REQUESTED",
+      "exact_tree_termination_observed": true,
+      "child_exit_observed": true,
+      "descendant_exit_observed": true
+    },
+    "crash": {
+      "evidence": "scripts/phase2-qualification/bootstrap-runtime/evidence/HostCrashAttempt02.json",
+      "pointer": "/checks/0",
+      "state": "UNKNOWN",
+      "reexecuted": false,
+      "exact_tree_termination_observed": true,
+      "cleanup": {
+        "profile_delete_hresult": 0,
+        "profile_folder_removed": true,
+        "synthetic_canary_acl_restore_api_success": true,
+        "synthetic_canary_acl_restored_readback": true,
+        "tree_termination_observed_before_cleanup": true
+      }
+    },
+    "actual_build_readback": [
+      {
+        "fault": "stop",
+        "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-08\\ia\\work\\kernel-phase2-repo\\scripts\\phase2-qualification\\bootstrap-runtime\\work\\build-6a55dde158f040869f1be8bd7e585d39\\BootstrapNativeHost.exe",
+        "sha256": "d6fccc052b75a6e405f6da7d48ffa27698f3afdd5b8fdc99e70feed65617e6ae",
+        "present": true,
+        "verified": true
+      },
+      {
+        "fault": "host_crash",
+        "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-08\\ia\\work\\kernel-phase2-repo\\scripts\\phase2-qualification\\bootstrap-runtime\\work\\build-6e35210f1cee454b8f48f2e3f47f4d46\\BootstrapNativeHost.exe",
+        "sha256": "4e91497c0703975add14ae3823c75fd3505272f76a96c8af51e07879226be49d",
+        "present": true,
+        "verified": true
+      }
+    ],
+    "retained_limitations": [
+      "Initial JobTree01 source bytes are not retained: not accepted as current-build evidence.",
+      "Native source hashes match the final-source STOP/crash records; differing compiler PE hashes are retained per actual build, not claimed deterministic.",
+      "Per-run original engineering_check.py bytes are not independently bound by each historical observation; current script review corroborates logic, not retrospective full harness identity.",
+      "Initial crash ACL recovery failed; its failure and separate cleanup remain retained.",
+      "No probes rerun and no fresh live process termination witnessed by this assessor.",
+      "Network timeout remains inconclusive; no complete executable/filesystem allowlist, durable remote sink, actual GA/revocation or aggregate budget qualification."
+    ]
+  },
+  "no_formal_issuance": {
+    "R07_readiness_receipt": true,
+    "R08_semantic_no_change_receipt": true,
+    "R09_freeze": true,
+    "R10_projection_acceptance": true,
+    "controller_qualification": true,
+    "gate_authorization": true,
+    "gate_result": true,
+    "entry": true
+  },
+  "sources": [
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/mapping/SourceBindings.json",
+      "bytes": 21249,
+      "sha256": "7cadb76b75c1852a45bc9a829df3b4877d1f9b8af60d2bd39867124da7cb651e",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "scope": "EXACT_COMMITTED_SOURCE"
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/mapping/ConsumerMapping.json",
+      "bytes": 126173,
+      "sha256": "1f12e1e4c4949eebc60b521e4b812fa1f575266785cb6745c1ebe9abe807a107",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "scope": "EXACT_COMMITTED_SOURCE"
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/mapping/ChangeApplicabilityReview.json",
+      "bytes": 49676,
+      "sha256": "08a9c39d710fc5e4b1cf825c5c96c62648323dc68747e8336a5940b2034080e1",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "scope": "EXACT_COMMITTED_SOURCE"
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/mapping/TargetedChecks.json",
+      "bytes": 5623,
+      "sha256": "beded2b7a710543e33362cbc12e05410ab20926164300521551aa42ccee9f50f",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "scope": "EXACT_COMMITTED_SOURCE"
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/mapping/SkillLineage.json",
+      "bytes": 10634,
+      "sha256": "70824780b810fd9e9c913facb6a513d9290f6f0b502b8f36287b42ca9f6b5a95",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "scope": "EXACT_COMMITTED_SOURCE"
+    },
+    {
+      "path": "apps/clued-cloud/scripts/test-phase2-change-applicability.mjs",
+      "bytes": 8875,
+      "sha256": "3d7a6ee950be00a9e8e26b3a15543faf0fdcaafa94d1979a9549347e7ab61c8a",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "scope": "EXACT_COMMITTED_SOURCE"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-actual-migration-20260907/receipt.json",
+      "bytes": 7741,
+      "sha256": "7ba04bc7cf715a6b96f05f64db3d7f0281627e9c0919b15dd66aa3d26f9f6ca7",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "scope": "EXACT_COMMITTED_SOURCE"
+    },
+    {
+      "path": "artifacts/clued-two-level-snapshots/current.json",
+      "bytes": 333,
+      "sha256": "ef05f3e9d4e92e82598e416cc86d16b05cf18531438788fb1f297834a74d4a60",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "scope": "EXACT_COMMITTED_SOURCE"
+    },
+    {
+      "path": "development/authority-index/phase2/Activation.json",
+      "bytes": 7080,
+      "sha256": "609eb3f9be936d1d34a5038a6d9eb9499ae8749e9f0dda1d36975e7d733e5a23",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "scope": "EXACT_COMMITTED_SOURCE"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step12-migration-20260907/ExecutionInputs.candidate.json",
+      "bytes": 32713,
+      "sha256": "37a6909deedae17dbfe97e844d8ec596c5de46e73c3cefafd4136008d3f3dcec",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "scope": "EXACT_COMMITTED_SOURCE"
+    },
+    {
+      "path": "AGENTS.md",
+      "bytes": 11994,
+      "sha256": "0d209391925dfc3c490cecfdb1e48c9266f0fd9c3d2e26903e023002f2eaf354",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "scope": "EXACT_COMMITTED_SOURCE"
+    },
+    {
+      "path": "config/clued-endpoint-trust.json",
+      "bytes": 209,
+      "sha256": "3c6c76087b468f13e7010a54db92b7c8db13146558c8288c8830eb22d6fb78f4",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "scope": "EXACT_COMMITTED_SOURCE"
+    },
+    {
+      "path": "scripts/update_clued_skills.py",
+      "bytes": 4737,
+      "sha256": "ef976d161813c6d1ed1d60cbaf05a8e4a825c41db35fda6eb32b6fd40ab05e67",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "scope": "EXACT_COMMITTED_SOURCE"
+    },
+    {
+      "path": "apps/clued-cloud/worker/continuity.ts",
+      "bytes": 50783,
+      "sha256": "53746991a483bf4bbac4402440ae86fb7cd296032a7a10359758bbaf77997dc5",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "scope": "EXACT_COMMITTED_SOURCE"
+    },
+    {
+      "path": "apps/clued-cloud/worker/contexts.ts",
+      "bytes": 2871,
+      "sha256": "5a036a37640ea8bd1f9de3cfd771d859167de4aca6189215369ad5566e040365",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "scope": "EXACT_COMMITTED_SOURCE"
+    },
+    {
+      "path": "artifacts/clued-validation/project-list-auth-repair-20260908/README.md",
+      "bytes": 2594,
+      "sha256": "5127c361406ae053bbe410d63a71cf204203bb29b4ec2f217bc5b9348a1c4862",
+      "source_commit": null,
+      "scope": "EXACT_LOCAL_REVIEW_INPUT"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/Step06-ScopedAcceptance_20260907.json",
+      "bytes": 5319,
+      "sha256": "bd40c82a21e7b19c2c36e56d7b877078e45c6bfdf1593590fb56ab364f47889a",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "scope": "EXACT_COMMITTED_SOURCE"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/Step13-ScopedAcceptance_20260907.json",
+      "bytes": 2421,
+      "sha256": "562046e42bcbbea73bb99412cdc8161945b8e50fc519f335402f6529ca638acd",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "scope": "EXACT_COMMITTED_SOURCE"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/Step17-ScopedAcceptance_20260907.json",
+      "bytes": 5582,
+      "sha256": "a4d652aef2b799ee7f6b9d6e99b65c7ece646462d44c37ef2fdd64bc28b8c63a",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "scope": "EXACT_COMMITTED_SOURCE"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/Step15-17-EvidenceRefreshDecision_20260907.json",
+      "bytes": 6014,
+      "sha256": "3bd87b5083f91a609fc85916cd0ea216120f3a46edaac64070327abbf03129d9",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "scope": "EXACT_COMMITTED_SOURCE"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/Step20-SkillProjectionAcceptance_20260907.json",
+      "bytes": 1285,
+      "sha256": "2c7da02632520187aa3b95ebfac4e5f9ba4d9a55d32e25d7eb3bccacab7ffc42",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "scope": "EXACT_COMMITTED_SOURCE"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/Step21-SkillProjectionAcceptance_20260907.json",
+      "bytes": 1271,
+      "sha256": "7e34dc5fdf3c95b5f964217f55bc5088cbb120eaea4fc778e8b657e43d6df08b",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "scope": "EXACT_COMMITTED_SOURCE"
+    },
+    {
+      "path": "skills/clued/SKILL.md",
+      "bytes": 3913,
+      "sha256": "8a5e6d9548731874b94ebe3edc046f7393c96fd75531f22231228e055206096f",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "scope": "EXACT_COMMITTED_SOURCE"
+    },
+    {
+      "path": "skills/clued/references/engineering.md",
+      "bytes": 5780,
+      "sha256": "ffff299ea0a1793f9b0b4963fc5bf099762fabce96ed96086cfc5494acbb8d29",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "scope": "EXACT_COMMITTED_SOURCE"
+    },
+    {
+      "path": "skills/clued/references/memory-operations.md",
+      "bytes": 5166,
+      "sha256": "a05feabc8ad4ccac535bb059fbf35179f79884dfb1113abdd18b21281bfda538",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "scope": "EXACT_COMMITTED_SOURCE"
+    },
+    {
+      "path": "scripts/phase2-qualification/bootstrap-runtime/EvidenceIndex.json",
+      "bytes": 3163,
+      "sha256": "2fd4dc060e23a6c3140f232c288f288c42185d98dd28d7aa346ab7df4c096723",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "scope": "EXACT_COMMITTED_SOURCE"
+    },
+    {
+      "path": "scripts/phase2-qualification/bootstrap-runtime/NativeHost.cs",
+      "bytes": 20140,
+      "sha256": "9cb4c0ba2499d516fcc7b06a69a9f8b7e6ef5471613f1553a87b19f89c5eaff1",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "scope": "EXACT_COMMITTED_SOURCE"
+    },
+    {
+      "path": "scripts/phase2-qualification/bootstrap-runtime/engineering_check.py",
+      "bytes": 13583,
+      "sha256": "b9f86aa5e4806e3ac1c75b43367033b4954759e8928cfa3e3f85d84723a27004",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "scope": "EXACT_COMMITTED_SOURCE"
+    },
+    {
+      "path": "scripts/phase2-qualification/bootstrap-runtime/README.md",
+      "bytes": 6901,
+      "sha256": "5ecd1b1418a3f042ee1962facf99bef189918f7626b01727320bb576f3309a48",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "scope": "EXACT_COMMITTED_SOURCE"
+    },
+    {
+      "path": "scripts/phase2-qualification/bootstrap-runtime/.gitignore",
+      "bytes": 19,
+      "sha256": "7c0e3807a109f275f04fa607825e26c8d69f2e23f684cf4ca68e03df1173780a",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "scope": "EXACT_COMMITTED_SOURCE"
+    },
+    {
+      "path": "scripts/phase2-qualification/bootstrap-runtime/evidence/JobTree01.json",
+      "bytes": 1788,
+      "sha256": "4c433d28f48725ed43b54a9792e7f184befa8598f4781953bac25142adcd8e77",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "scope": "EXACT_COMMITTED_SOURCE"
+    },
+    {
+      "path": "scripts/phase2-qualification/bootstrap-runtime/evidence/StopCrashAttempt01.json",
+      "bytes": 6892,
+      "sha256": "efa6568c6620e91aa0e0abfa48bf0691cf880ecdf30d37858421f4f0d5a886ed",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "scope": "EXACT_COMMITTED_SOURCE"
+    },
+    {
+      "path": "scripts/phase2-qualification/bootstrap-runtime/evidence/StopCrashAttempt01Cleanup.json",
+      "bytes": 222,
+      "sha256": "b2043765ae9ef1ce68d0232d2d5640532a4101e281cfd32f23bb777ef2eefbd7",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "scope": "EXACT_COMMITTED_SOURCE"
+    },
+    {
+      "path": "scripts/phase2-qualification/bootstrap-runtime/evidence/HostCrashAttempt02.json",
+      "bytes": 2484,
+      "sha256": "688e13742e72112e9bb820cc505fbe868a02857c0098b7db3fb298f01e53b502",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "scope": "EXACT_COMMITTED_SOURCE"
+    },
+    {
+      "path": "apps/clued-cloud/tests/home-project-create.test.mjs",
+      "bytes": 10851,
+      "sha256": "b03dfb1d3a9951fb5870180ca16d5d0984a3b14c54ad57aa895321f003a13565",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "scope": "EXACT_COMMITTED_SOURCE"
+    },
+    {
+      "path": "apps/clued-cloud/tests/project-list-authorization-db.test.mjs",
+      "bytes": 11216,
+      "sha256": "6669eed654d40dd777f0742d28c248878b7cd2f43c39bd0b25f5eda1c642241e",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "scope": "EXACT_COMMITTED_SOURCE"
+    },
+    {
+      "path": "apps/clued-cloud/tests/supabase-browser.test.mjs",
+      "bytes": 11585,
+      "sha256": "0aca416874c9fc5bbe49909f512e500e756b6691a276e5aff6c64c4aeeac8520",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "scope": "EXACT_COMMITTED_SOURCE"
+    }
+  ],
+  "reviewer_authority": {
+    "basis": "Existing verified Owner delegation reused within its approved nonproduction scope; no new Owner verification in this review.",
+    "references": [
+      {
+        "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/OwnerDelegation_20260908.json",
+        "sha256": "e09ef634712ce1206600402552073bae91e7296f2b4e2d3f99855bd760c944bd"
+      },
+      {
+        "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/IndependentOwnerBindingVerification.json",
+        "sha256": "68409c1fc1fb16dca11d5e8966c5291f2507b1b48f27551cd46bd509eed7f517"
+      }
+    ]
+  }
+}

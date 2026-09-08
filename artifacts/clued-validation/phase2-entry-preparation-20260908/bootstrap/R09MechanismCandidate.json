@@ -1,0 +1,827 @@
+{
+  "kind": "R09_MECHANISM_REVIEW_CANDIDATE",
+  "status": "PREPARED_CANDIDATE_ONLY",
+  "authority_effect": "NONE",
+  "freeze_issued": false,
+  "gate_authorization_issued": false,
+  "prepared_utc": "2026-09-08T10:04:52.449290+00:00",
+  "prepared_by": "/root/controller_candidate",
+  "independent_assessor": "/root/project_list_auth_fix",
+  "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+  "original_requirement": {
+    "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-08\\ia\\work\\slice-a-contracts\\ReadinessAndGateCandidate.json",
+    "sha256": "6d8adc8e29c3be0cd18e25925851559494f94384f79f8a2e530a68f3802d4ceb",
+    "pointer": "/source_record/stage_nodes/9",
+    "stage_id": "R09",
+    "name": "厂商无关 Clued Development Mechanism 冻结",
+    "source_state_preserved": "NOT_ISSUED",
+    "depends_on": [
+      "R08"
+    ],
+    "required_object_type": "DevelopmentMechanismFreezeReceipt",
+    "successor": "R10 DevelopmentSkillProjectionReceipt",
+    "interpretation": "The original candidate states are historical; this preparation does not issue or overwrite current stage decisions."
+  },
+  "scope": {
+    "subject": "Existing vendor-independent Clued engineering mechanism and its exact current unified Skill projection inputs",
+    "environment": "Current authorized repository checkout plus this host installed Skill byte inventory; no Skill/PQUAL execution",
+    "included": [
+      "Existing authority/storage boundary, request verification, typed consumer/authorization/receipt contracts, trusted publication interfaces, operation routing, installation identity and invalidation rules"
+    ],
+    "excluded": [
+      "Acceptance or migration of business Canon",
+      "New controller algorithms or trust roots/pins",
+      "Production deployment or permission mutation",
+      "R10 projection acceptance, R11 Shadow, R13 activation/deprecation, R14 Entry",
+      "Health/Surgical authorization",
+      "An OS sandbox or new permission claim from Skill instructions"
+    ]
+  },
+  "prerequisite_bindings": {
+    "R07_formal_receipt": null,
+    "R08_formal_receipt": null,
+    "R09_formal_freeze_receipt": null,
+    "current_engineering_applicability_review": {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/CurrentReadinessReview.json",
+      "sha256": "4c3b83f125dfe621a4f3a6d13012faaae5056d6f4fbea758eb190f0a1cd0b0dc",
+      "source_commit": null,
+      "status": "WORKTREE_ENGINEERING_REVIEW_NOT_FORMAL_STAGE_RECEIPT"
+    },
+    "boundary": "Independent engineering applicability acceptance is useful evidence; it is not a substitute in formal stage receipt fields."
+  },
+  "current_installed_projection": {
+    "active_entry": "clued",
+    "files": [
+      {
+        "source_path": "skills/clued/SKILL.md",
+        "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+        "source_last_change_commit": "3dbda2396f1a8fdc78336950a8caa0b6bd81c15d",
+        "source_sha256": "8a5e6d9548731874b94ebe3edc046f7393c96fd75531f22231228e055206096f",
+        "installed_path": "C:\\Users\\Windows\\.codex\\skills\\clued\\SKILL.md",
+        "installed_sha256": "8a5e6d9548731874b94ebe3edc046f7393c96fd75531f22231228e055206096f",
+        "installed_bytes": 3913,
+        "exact_source_match": true
+      },
+      {
+        "source_path": "skills/clued/references/engineering.md",
+        "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+        "source_last_change_commit": "3dbda2396f1a8fdc78336950a8caa0b6bd81c15d",
+        "source_sha256": "ffff299ea0a1793f9b0b4963fc5bf099762fabce96ed96086cfc5494acbb8d29",
+        "installed_path": "C:\\Users\\Windows\\.codex\\skills\\clued\\references\\engineering.md",
+        "installed_sha256": "ffff299ea0a1793f9b0b4963fc5bf099762fabce96ed96086cfc5494acbb8d29",
+        "installed_bytes": 5780,
+        "exact_source_match": true
+      },
+      {
+        "source_path": "skills/clued/references/memory-operations.md",
+        "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+        "source_last_change_commit": "a1c7e8607d5ed9a6ae78fae302e565ed748d4f66",
+        "source_sha256": "a05feabc8ad4ccac535bb059fbf35179f79884dfb1113abdd18b21281bfda538",
+        "installed_path": "C:\\Users\\Windows\\.codex\\skills\\clued\\references\\memory-operations.md",
+        "installed_sha256": "a05feabc8ad4ccac535bb059fbf35179f79884dfb1113abdd18b21281bfda538",
+        "installed_bytes": 5166,
+        "exact_source_match": true
+      }
+    ],
+    "observed_host_scope": "This Codex host at C:/Users/Windows/.codex/skills only",
+    "other_clients_or_hosts_observed": false,
+    "client_runtime_discovery_retested": false,
+    "installer_source": "scripts/update_clued_skills.py",
+    "installer_behavior": "Offline explicit whole-package hash/set comparison; backup outside discovery; process-local rollback; no crash-atomic claim",
+    "retired_entries": [
+      {
+        "name": "clued-developer",
+        "exact_install_path": "C:\\Users\\Windows\\.codex\\skills\\clued-developer",
+        "currently_present": false
+      },
+      {
+        "name": "clued-user",
+        "exact_install_path": "C:\\Users\\Windows\\.codex\\skills\\clued-user",
+        "currently_present": false
+      },
+      {
+        "name": "clued-continuity",
+        "exact_install_path": "C:\\Users\\Windows\\.codex\\skills\\clued-continuity",
+        "currently_present": false
+      }
+    ],
+    "unresolved_legacy_identity": "clued-kernel-developer",
+    "legacy_identity_boundary": "Absence of clued-kernel-developer on this host is not accepted retirement, alias or cryptographic N/A."
+  },
+  "mechanism_boundaries": [
+    {
+      "id": "B01",
+      "name": "Authority and storage",
+      "refs": [
+        "AGENTS.md",
+        "skills/clued/SKILL.md",
+        "skills/clued/references/memory-operations.md"
+      ],
+      "rule": "Authenticated Clued is business authority; repo memory is a read-only projection. A Skill/role/mode/tool discovery does not grant identity, Binding, scope or publishing authority."
+    },
+    {
+      "id": "B02",
+      "name": "Request-local engineering alignment",
+      "refs": [
+        "scripts/sync-memory.ps1",
+        "scripts/sync-memory.py",
+        "scripts/verification_context.py",
+        "skills/clued/references/engineering.md"
+      ],
+      "rule": "One unified alignment/doctor Context per independent request; exact boundary/source envelope and invalidation checks; NONE does no Git or memory read. No periodic freshness or duplicate doctor."
+    },
+    {
+      "id": "B03",
+      "name": "Typed service operations and receipts",
+      "refs": [
+        "apps/clued-cloud/worker/continuity.ts",
+        "apps/clued-cloud/worker/records.ts",
+        "artifacts/clued-validation/phase2-entry-preparation-20260908/mapping/ConsumerMapping.json"
+      ],
+      "rule": "Use actual advertised tool schema and authenticated server capability, exact IDs/Binding, supported CAS/idempotency. Business write transaction supplies Event/immutable Receipt; checkpoint cannot replace it. Scoped context with no session token does not support M1 checkpoint."
+    },
+    {
+      "id": "B04",
+      "name": "Governance publication boundary",
+      "refs": [
+        "skills/clued/references/engineering.md",
+        "development/authority-index/phase2/SourceIndex.json",
+        "development/contracts/phase2/SourceIndex.json",
+        "apps/clued-cloud/scripts/m2-snapshot-store.mjs"
+      ],
+      "rule": "Existing configured trusted reader/publisher and accepted exact source, live qualification, actual signed selectors and applicable four Gates remain required. A repository wrapper, local PASS or this candidate cannot supply those prerequisites."
+    },
+    {
+      "id": "B05",
+      "name": "Projection and installation separation",
+      "refs": [
+        "skills/README.md",
+        "scripts/update_clued_skills.py",
+        "skills/clued/SKILL.md"
+      ],
+      "rule": "The unified three-file package chooses engineering or memory operations by action; installed file equality does not accept the underlying mechanism or R10/R11 behavior. New client discovery has not been re-observed here."
+    },
+    {
+      "id": "B06",
+      "name": "Scoped change, stop and rollback",
+      "refs": [
+        "skills/clued/references/engineering.md",
+        "skills/clued/references/memory-operations.md",
+        "artifacts/clued-validation/phase2-entry-preparation-20260908/mapping/ConsumerMapping.json"
+      ],
+      "rule": "Keep actual permission, exact source, uncertainty, original evidence and operation identity. Reuse unaffected evidence; expired/revoked/changed authority denies affected actions. Recovery uses real prior/current state and never restores revoked permission. No general accepted process-tree/revocation supervisor is claimed."
+    }
+  ],
+  "consumer_contract_inventory": {
+    "source": "artifacts/clued-validation/phase2-entry-preparation-20260908/mapping/ConsumerMapping.json",
+    "historical_mapping_source_commit": "f3d0066197c06220d34f825dd59c74bcf968cdfd",
+    "boundary": "Pointers preserve original typed bindings. Current source files are rehashed below; no runtime authorization or SQL deployment is inferred from code availability.",
+    "consumers": [
+      {
+        "id": "C01",
+        "label": "公开 bootstrap / MCP discovery",
+        "operations": [
+          "initialize",
+          "tools/list",
+          "clued_agent_bootstrap"
+        ],
+        "mapping_pointer": "/consumers/0",
+        "current_sources": [
+          "apps/clued-cloud/worker/continuity.ts"
+        ]
+      },
+      {
+        "id": "C02",
+        "label": "账户JWT与Binding管理",
+        "operations": [
+          "listBindings",
+          "createBinding",
+          "revokeBinding"
+        ],
+        "mapping_pointer": "/consumers/1",
+        "current_sources": [
+          "apps/clued-cloud/worker/continuity.ts"
+        ]
+      },
+      {
+        "id": "C03",
+        "label": "连续性读取/审计",
+        "operations": [
+          "clued_session_resume",
+          "clued_search_context",
+          "clued_read_log",
+          "clued_audit_receipts"
+        ],
+        "mapping_pointer": "/consumers/2",
+        "current_sources": [
+          "apps/clued-cloud/worker/continuity.ts"
+        ]
+      },
+      {
+        "id": "C04",
+        "label": "连续性 append/checkpoint/import",
+        "operations": [
+          "clued_append_event",
+          "clued_session_checkpoint",
+          "clued_import_log"
+        ],
+        "mapping_pointer": "/consumers/3",
+        "current_sources": [
+          "apps/clued-cloud/worker/continuity.ts"
+        ]
+      },
+      {
+        "id": "C05",
+        "label": "Project REST/MCP",
+        "operations": [
+          "clued_project_list",
+          "clued_project_mutate"
+        ],
+        "mapping_pointer": "/consumers/4",
+        "current_sources": [
+          "apps/clued-cloud/worker/continuity.ts",
+          "apps/clued-cloud/worker/projects.ts"
+        ]
+      },
+      {
+        "id": "C06",
+        "label": "Record读取与视图",
+        "operations": [
+          "clued_record_list"
+        ],
+        "mapping_pointer": "/consumers/5",
+        "current_sources": [
+          "apps/clued-cloud/worker/continuity.ts",
+          "apps/clued-cloud/worker/records.ts"
+        ]
+      },
+      {
+        "id": "C07",
+        "label": "Record mutation / Decision supersede",
+        "operations": [
+          "clued_record_mutate",
+          "clued_decision_supersede"
+        ],
+        "mapping_pointer": "/consumers/6",
+        "current_sources": [
+          "apps/clued-cloud/worker/continuity.ts",
+          "apps/clued-cloud/worker/records.ts"
+        ]
+      },
+      {
+        "id": "C08",
+        "label": "Evidence ingest / extension Event",
+        "operations": [
+          "clued_evidence_ingest",
+          "clued_event_append"
+        ],
+        "mapping_pointer": "/consumers/7",
+        "current_sources": [
+          "apps/clued-cloud/worker/continuity.ts",
+          "apps/clued-cloud/worker/records.ts"
+        ]
+      },
+      {
+        "id": "C09",
+        "label": "Canonical Export",
+        "operations": [
+          "clued_canonical_export",
+          "clued_user_canonical_export"
+        ],
+        "mapping_pointer": "/consumers/8",
+        "current_sources": [
+          "apps/clued-cloud/supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql",
+          "apps/clued-cloud/worker/continuity.ts",
+          "apps/clued-cloud/worker/records.ts"
+        ]
+      },
+      {
+        "id": "C10",
+        "label": "P5 tenant Session/Attempt mutation",
+        "operations": [
+          "clued_p5_session_open",
+          "clued_p5_mutate",
+          "clued_p5_attempt_resolve"
+        ],
+        "mapping_pointer": "/consumers/9",
+        "current_sources": [
+          "apps/clued-cloud/worker/continuity.ts",
+          "apps/clued-cloud/worker/p5.ts"
+        ]
+      },
+      {
+        "id": "C11",
+        "label": "Snapshot build/validate",
+        "operations": [
+          "buildSnapshot",
+          "validateSnapshot"
+        ],
+        "mapping_pointer": "/consumers/10",
+        "current_sources": [
+          "apps/clued-cloud/scripts/two-level-snapshot.mjs"
+        ]
+      },
+      {
+        "id": "C12",
+        "label": "M2 snapshot publish/rollback",
+        "operations": [
+          "coordinatedPublishSnapshot",
+          "coordinatedRollbackSnapshot"
+        ],
+        "mapping_pointer": "/consumers/11",
+        "current_sources": [
+          "apps/clued-cloud/scripts/m2-snapshot-store.mjs",
+          "apps/clued-cloud/scripts/two-level-snapshot.mjs"
+        ]
+      },
+      {
+        "id": "C13",
+        "label": "Endpoint RequestVerificationContext",
+        "operations": [
+          "RequestVerificationContext"
+        ],
+        "mapping_pointer": "/consumers/12",
+        "current_sources": [
+          "scripts/verification_context.py"
+        ]
+      },
+      {
+        "id": "C14",
+        "label": "账户页面与OAuth consent",
+        "operations": [
+          "handleLogin",
+          "handleCreateAccount",
+          "loadAuthorization"
+        ],
+        "mapping_pointer": "/consumers/13",
+        "current_sources": [
+          "apps/clued-cloud/app/oauth/consent/page.tsx",
+          "apps/clued-cloud/app/page.tsx"
+        ]
+      },
+      {
+        "id": "C15",
+        "label": "Phase2四Gate validator / CI",
+        "operations": [
+          "candidate_identity",
+          "manifest_integrity",
+          "provenance",
+          "product_increment_input"
+        ],
+        "mapping_pointer": "/consumers/14",
+        "current_sources": [
+          ".github/workflows/phase2-v027-validation.yml",
+          "scripts/phase2-v027-validate.py"
+        ]
+      },
+      {
+        "id": "C16",
+        "label": "Naming scanner",
+        "operations": [
+          "scan_repository",
+          "scan_github"
+        ],
+        "mapping_pointer": "/consumers/15",
+        "current_sources": [
+          "scripts/clued-naming-surface-inventory.py"
+        ]
+      },
+      {
+        "id": "C17",
+        "label": "Naming external consolidator",
+        "operations": [
+          "verify_sources",
+          "consolidate"
+        ],
+        "mapping_pointer": "/consumers/16",
+        "current_sources": [
+          "scripts/clued-naming-inventory-consolidate.py"
+        ]
+      },
+      {
+        "id": "C18",
+        "label": "公开MCP required-check Receipt producer",
+        "operations": [
+          "evaluateCheckRuns",
+          "buildReceipt"
+        ],
+        "mapping_pointer": "/consumers/17",
+        "current_sources": [
+          ".github/workflows/public-mcp-gate-receipt.yml",
+          "apps/clued-cloud/evals/public-mcp/gate-receipt.mjs"
+        ]
+      }
+    ],
+    "authorization_contract_count": 27,
+    "receipt_contract_count": 18
+  },
+  "historical_acceptance_boundary": {
+    "step20": "ACCEPTED_FOR_THIN_INSTALLED_DEVELOPER_ADAPTER",
+    "step21": "ACCEPTED_FOR_THIN_INSTALLED_USER_ADAPTER",
+    "relation": "Historical exact clued-developer/clued-user bytes and thin adapter scope only. Their source commits and decisions are bound below; no semantic alias transfers their acceptance to current clued three-file package or to R09 mechanism freeze."
+  },
+  "invalidation_rules": [
+    {
+      "trigger": "Mechanism/Skill/installer/consumer/tool schema/contract or exact file-set changes",
+      "effect": "Affected candidate hash/semantic claim stale; bind exact successor and obtain affected independent review",
+      "sources": [
+        "skills/README.md",
+        "skills/clued/references/engineering.md",
+        "docs/execution-plans/phase2-structure-governance/AcceptanceAndInvalidation.md"
+      ]
+    },
+    {
+      "trigger": "Repository path/ACL/manifest/pointer/VERSION/tags/owner/scope/auth evidence/TTL/validator generation changes",
+      "effect": "RequestVerificationContext evidence invalidates or fails closed; successful old agent/request cannot be reused",
+      "sources": [
+        "AGENTS.md",
+        "scripts/verification_context.py"
+      ]
+    },
+    {
+      "trigger": "Publisher/host/policy/runtime/actual authority revocation or expiry; external deployment changes affecting dependency",
+      "effect": "Recheck affected qualification and current authority; no automatic successor authority or expiry-as-cleanup inference",
+      "sources": [
+        "skills/clued/references/engineering.md",
+        "docs/execution-plans/phase2-structure-governance/AcceptanceAndInvalidation.md"
+      ]
+    },
+    {
+      "trigger": "Missing/corrupt evidence or unavailable exact current state",
+      "effect": "Preserve historical observation and mark affected current applicability unknown; do not issue Freeze/GA from candidate",
+      "sources": [
+        "docs/execution-plans/phase2-structure-governance/AcceptanceAndInvalidation.md"
+      ]
+    }
+  ],
+  "minimal_remaining_gaps": [
+    {
+      "id": "G01",
+      "missing": "Formal exact current R07/R08 receipts, including R08 semantic scope and accepted intentional successors",
+      "next_action": "Coordinator binds real signed/accepted stage objects after independent engineering applicability review; keep null until issued."
+    },
+    {
+      "id": "G02",
+      "missing": "DevelopmentMechanismFreezeReceipt exact existing schema, authorized issuer purpose and current independent acceptance for this assembled mechanism subject",
+      "next_action": "Independent assessor checks source-required fields/issuer/scope; coordinator records only a real accepted successor. This candidate is not a replacement control type."
+    },
+    {
+      "id": "G03",
+      "missing": "Accepted closure of exact mechanism dependency/environment/authority/stop-revocation/evidence/rollback scope",
+      "next_action": "Use the typed inventory and source hashes below to select complete applicable bindings; actual trusted host/credentials/generations cannot be invented from source or local paths."
+    },
+    {
+      "id": "G04",
+      "missing": "Current unified Skill R10 projection acceptance against an accepted R09 freeze and exact test subject",
+      "next_action": "After R09 acceptance, independently review these exact three files and fixed installer/consumer scope; old Step20/21 receipt cannot be reused as current acceptance."
+    },
+    {
+      "id": "G05",
+      "missing": "Actual execution qualification for any later Skill/PQUAL task",
+      "next_action": "Separately satisfy Profile, OS allowlists/network denial, remote durable sink/budget/GA/current revocation and allowed tests. Do not make future R11 PASS a prerequisite that would self-qualify R09."
+    }
+  ],
+  "source_bindings": [
+    {
+      "path": ".github/workflows/phase2-v027-validation.yml",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "sha256": "9a45acb955d1eee8e84491257043056eeefe8a088be6425f4b7cfa8cded0b520",
+      "bytes": 15230,
+      "worktree_sha256": "9a45acb955d1eee8e84491257043056eeefe8a088be6425f4b7cfa8cded0b520",
+      "worktree_relation": "EXACT",
+      "last_change_commit": "722d3b20a1cee0c18f7203b4a786565b22e43c6e"
+    },
+    {
+      "path": ".github/workflows/public-mcp-gate-receipt.yml",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "sha256": "4e3784db5984933d859cd961f010c4fb2306eaf6b871cdd438eeb2cff9154ce8",
+      "bytes": 1500,
+      "worktree_sha256": "4e3784db5984933d859cd961f010c4fb2306eaf6b871cdd438eeb2cff9154ce8",
+      "worktree_relation": "EXACT",
+      "last_change_commit": "2dbf310c48281fe549a720bf821c1ec3109a8466"
+    },
+    {
+      "path": "AGENTS.md",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "sha256": "0d209391925dfc3c490cecfdb1e48c9266f0fd9c3d2e26903e023002f2eaf354",
+      "bytes": 11994,
+      "worktree_sha256": "0d209391925dfc3c490cecfdb1e48c9266f0fd9c3d2e26903e023002f2eaf354",
+      "worktree_relation": "EXACT",
+      "last_change_commit": "00ee8d1b796f27dbc3cac0c665ed4a69a87231b9"
+    },
+    {
+      "path": "VERSION",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "sha256": "aa07c9e145d2246eb962877d8f3b4dccc25cfafd84115206bce546582628d02a",
+      "bytes": 11,
+      "worktree_sha256": "aa07c9e145d2246eb962877d8f3b4dccc25cfafd84115206bce546582628d02a",
+      "worktree_relation": "EXACT",
+      "last_change_commit": "e130507f97dd94284e27dc16ca5a396d553a9d44"
+    },
+    {
+      "path": "apps/clued-cloud/app/oauth/consent/page.tsx",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "sha256": "54ad239f01cbcbd1fb4bac04ff6b080bd55f1465163f34b557e237ccea83051f",
+      "bytes": 7088,
+      "worktree_sha256": "54ad239f01cbcbd1fb4bac04ff6b080bd55f1465163f34b557e237ccea83051f",
+      "worktree_relation": "EXACT",
+      "last_change_commit": "299869b5426b6cc1235527bd130dc5fb074558da"
+    },
+    {
+      "path": "apps/clued-cloud/app/page.tsx",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "sha256": "4e5caa4015b4382a4cd9329b71ecf2079ff9a79e3c0f6d74f9bdc02345ffbc83",
+      "bytes": 57180,
+      "worktree_sha256": "4e5caa4015b4382a4cd9329b71ecf2079ff9a79e3c0f6d74f9bdc02345ffbc83",
+      "worktree_relation": "EXACT",
+      "last_change_commit": "777a4ccf65efebf1d5f042ab63fe357a257f04fc"
+    },
+    {
+      "path": "apps/clued-cloud/evals/public-mcp/gate-receipt.mjs",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "sha256": "9d1574e361a8fdd550578763755933e4d250a8076d55b1223ca9dfc40c1ec0c0",
+      "bytes": 5425,
+      "worktree_sha256": "9d1574e361a8fdd550578763755933e4d250a8076d55b1223ca9dfc40c1ec0c0",
+      "worktree_relation": "EXACT",
+      "last_change_commit": "00edac6f800b190c9820a8139510ed36cd3866b5"
+    },
+    {
+      "path": "apps/clued-cloud/scripts/m2-snapshot-store.mjs",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "sha256": "d56e15f4821ff2b21de07a3c103aac4d9a963b3dac7ee2128543ea37036caf30",
+      "bytes": 16753,
+      "worktree_sha256": "d56e15f4821ff2b21de07a3c103aac4d9a963b3dac7ee2128543ea37036caf30",
+      "worktree_relation": "EXACT",
+      "last_change_commit": "3fb8c05d806f69e0a3f165967ebfce4b41aa2630"
+    },
+    {
+      "path": "apps/clued-cloud/scripts/two-level-snapshot.mjs",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "sha256": "1dfcc8de7b481bc8a29cd055f711bb142fa390fff07a61730320866a477f6b7e",
+      "bytes": 58055,
+      "worktree_sha256": "1dfcc8de7b481bc8a29cd055f711bb142fa390fff07a61730320866a477f6b7e",
+      "worktree_relation": "EXACT",
+      "last_change_commit": "015d41f0f920a8ce29da17d9f4f841db4cc7b3eb"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "sha256": "f59e414ec0de016cbe89d3ba24ded2d90e85a9e17fb554021b2d4d611f4d26c2",
+      "bytes": 72625,
+      "worktree_sha256": "f59e414ec0de016cbe89d3ba24ded2d90e85a9e17fb554021b2d4d611f4d26c2",
+      "worktree_relation": "EXACT",
+      "last_change_commit": "53ce5eab2566cbc38891afe8c70d16e6302e2c49"
+    },
+    {
+      "path": "apps/clued-cloud/worker/continuity.ts",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "sha256": "53746991a483bf4bbac4402440ae86fb7cd296032a7a10359758bbaf77997dc5",
+      "bytes": 50783,
+      "worktree_sha256": "53746991a483bf4bbac4402440ae86fb7cd296032a7a10359758bbaf77997dc5",
+      "worktree_relation": "EXACT",
+      "last_change_commit": "ebacfd667d1cab72a9e97e2f425b4a910c317b12"
+    },
+    {
+      "path": "apps/clued-cloud/worker/p5.ts",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "sha256": "ce46bf7025f746579263b78c320f1df6e4d077e11bcbcc958865f20bfead418f",
+      "bytes": 4492,
+      "worktree_sha256": "ce46bf7025f746579263b78c320f1df6e4d077e11bcbcc958865f20bfead418f",
+      "worktree_relation": "EXACT",
+      "last_change_commit": "8fef81a32a761d89c196095c2fe758b33f9e4da6"
+    },
+    {
+      "path": "apps/clued-cloud/worker/projects.ts",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "sha256": "8bb2d52643c4ffd62ee48de60294559161d750ea15d328b6585deb47aa2aa09f",
+      "bytes": 2051,
+      "worktree_sha256": "8bb2d52643c4ffd62ee48de60294559161d750ea15d328b6585deb47aa2aa09f",
+      "worktree_relation": "EXACT",
+      "last_change_commit": "1fe202dc3f71f7451223950a4a1801ce81a96ad6"
+    },
+    {
+      "path": "apps/clued-cloud/worker/records.ts",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "sha256": "43bfe74c4d6576476f3d4a08df82a6b0853da855c29124edf1e333c14d5bb35e",
+      "bytes": 8108,
+      "worktree_sha256": "43bfe74c4d6576476f3d4a08df82a6b0853da855c29124edf1e333c14d5bb35e",
+      "worktree_relation": "EXACT",
+      "last_change_commit": "1fe202dc3f71f7451223950a4a1801ce81a96ad6"
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/mapping/ConsumerMapping.json",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "sha256": "1f12e1e4c4949eebc60b521e4b812fa1f575266785cb6745c1ebe9abe807a107",
+      "bytes": 126173,
+      "worktree_sha256": "1f12e1e4c4949eebc60b521e4b812fa1f575266785cb6745c1ebe9abe807a107",
+      "worktree_relation": "EXACT",
+      "last_change_commit": "7d435110a3b2a05fa1773f2609932094550ab94e"
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/mapping/ReadinessMapping.json",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "sha256": "061160074e9f0d95efd93b428fc339ff7d2b6a6058a03171e26e8dff24e2fb12",
+      "bytes": 16797,
+      "worktree_sha256": "061160074e9f0d95efd93b428fc339ff7d2b6a6058a03171e26e8dff24e2fb12",
+      "worktree_relation": "EXACT",
+      "last_change_commit": "7d435110a3b2a05fa1773f2609932094550ab94e"
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/mapping/SkillLineage.json",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "sha256": "70824780b810fd9e9c913facb6a513d9290f6f0b502b8f36287b42ca9f6b5a95",
+      "bytes": 10634,
+      "worktree_sha256": "70824780b810fd9e9c913facb6a513d9290f6f0b502b8f36287b42ca9f6b5a95",
+      "worktree_relation": "EXACT",
+      "last_change_commit": "7d435110a3b2a05fa1773f2609932094550ab94e"
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/mapping/SourceBindings.json",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "sha256": "7cadb76b75c1852a45bc9a829df3b4877d1f9b8af60d2bd39867124da7cb651e",
+      "bytes": 21249,
+      "worktree_sha256": "7cadb76b75c1852a45bc9a829df3b4877d1f9b8af60d2bd39867124da7cb651e",
+      "worktree_relation": "EXACT",
+      "last_change_commit": "7d435110a3b2a05fa1773f2609932094550ab94e"
+    },
+    {
+      "path": "development/authority-index/phase2/SourceIndex.json",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "sha256": "2dc9a544e13dc7f2fd53f54cd31230f33ae429823e741e6f79906624f8c5a73d",
+      "bytes": 1912,
+      "worktree_sha256": "2dc9a544e13dc7f2fd53f54cd31230f33ae429823e741e6f79906624f8c5a73d",
+      "worktree_relation": "EXACT",
+      "last_change_commit": "00ee8d1b796f27dbc3cac0c665ed4a69a87231b9"
+    },
+    {
+      "path": "development/contracts/phase2/SourceIndex.json",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "sha256": "af08da8b9a738a262624e07c1e5a9385590c47c085d12383b023b4b0b4c6a9e3",
+      "bytes": 8754,
+      "worktree_sha256": "af08da8b9a738a262624e07c1e5a9385590c47c085d12383b023b4b0b4c6a9e3",
+      "worktree_relation": "EXACT",
+      "last_change_commit": "00ee8d1b796f27dbc3cac0c665ed4a69a87231b9"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/AcceptanceAndInvalidation.md",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "sha256": "f2aed48ed74e688bfe280d3fa896243cc7907905fafcc467706a276367472f27",
+      "bytes": 20571,
+      "worktree_sha256": "f2aed48ed74e688bfe280d3fa896243cc7907905fafcc467706a276367472f27",
+      "worktree_relation": "EXACT",
+      "last_change_commit": "19b7f3c9bbc2314832c88a00eb6485bc6b7119c6"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/Step20-SkillProjectionAcceptance_20260907.json",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "sha256": "2c7da02632520187aa3b95ebfac4e5f9ba4d9a55d32e25d7eb3bccacab7ffc42",
+      "bytes": 1285,
+      "worktree_sha256": "2c7da02632520187aa3b95ebfac4e5f9ba4d9a55d32e25d7eb3bccacab7ffc42",
+      "worktree_relation": "EXACT",
+      "last_change_commit": "17bb267b8570bc8478ea7c230078cf0b3738017c"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/Step21-SkillProjectionAcceptance_20260907.json",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "sha256": "7e34dc5fdf3c95b5f964217f55bc5088cbb120eaea4fc778e8b657e43d6df08b",
+      "bytes": 1271,
+      "worktree_sha256": "7e34dc5fdf3c95b5f964217f55bc5088cbb120eaea4fc778e8b657e43d6df08b",
+      "worktree_relation": "EXACT",
+      "last_change_commit": "17bb267b8570bc8478ea7c230078cf0b3738017c"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step20-skill-20260907/clued-developer/SKILL.md",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "sha256": "a7daf4644401600609c9d6d1bab1b61e512012833b35d01498aaca44da398269",
+      "bytes": 5151,
+      "worktree_sha256": "a7daf4644401600609c9d6d1bab1b61e512012833b35d01498aaca44da398269",
+      "worktree_relation": "EXACT",
+      "last_change_commit": "17bb267b8570bc8478ea7c230078cf0b3738017c"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step21-skill-20260907/clued-user/SKILL.md",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "sha256": "a86b2710f013600f52bcb062d2d48393b3bba8700a006c84a22b7e9f79807724",
+      "bytes": 4816,
+      "worktree_sha256": "a86b2710f013600f52bcb062d2d48393b3bba8700a006c84a22b7e9f79807724",
+      "worktree_relation": "EXACT",
+      "last_change_commit": "17bb267b8570bc8478ea7c230078cf0b3738017c"
+    },
+    {
+      "path": "docs/execution-plans/phase2-structure-governance/step21-skill-20260907/continuity-routing/SKILL.md",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "sha256": "7222bc35a6eb7490c620c35296553dddd7815c47d8c15ce0843789dc2b42824d",
+      "bytes": 3294,
+      "worktree_sha256": "7222bc35a6eb7490c620c35296553dddd7815c47d8c15ce0843789dc2b42824d",
+      "worktree_relation": "EXACT",
+      "last_change_commit": "17bb267b8570bc8478ea7c230078cf0b3738017c"
+    },
+    {
+      "path": "scripts/clued-naming-inventory-consolidate.py",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "sha256": "69f2fcc2e8c0e2802d7fa08de842345b88d208bec947d3ef4e88ef4c41907026",
+      "bytes": 32673,
+      "worktree_sha256": "69f2fcc2e8c0e2802d7fa08de842345b88d208bec947d3ef4e88ef4c41907026",
+      "worktree_relation": "EXACT",
+      "last_change_commit": "5fad76df81c8a412e7768e08427841f0985a2588"
+    },
+    {
+      "path": "scripts/clued-naming-surface-inventory.py",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "sha256": "9ff7dc893b865a7736d6d9ffbe6f908c15f9c418e10a0602ae6fd33eedb8f81e",
+      "bytes": 73510,
+      "worktree_sha256": "9ff7dc893b865a7736d6d9ffbe6f908c15f9c418e10a0602ae6fd33eedb8f81e",
+      "worktree_relation": "EXACT",
+      "last_change_commit": "5fad76df81c8a412e7768e08427841f0985a2588"
+    },
+    {
+      "path": "scripts/phase2-v027-validate.py",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "sha256": "e16cc9fa5fd2a54dc3922029851722936551a400979dc94dce691faa83bd7f4e",
+      "bytes": 20343,
+      "worktree_sha256": "e16cc9fa5fd2a54dc3922029851722936551a400979dc94dce691faa83bd7f4e",
+      "worktree_relation": "EXACT",
+      "last_change_commit": "287f02f3c7bb952e42fb242b22691112be420198"
+    },
+    {
+      "path": "scripts/sync-memory.ps1",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "sha256": "1b0ec7934951a937c7b517841374817255bad9e430ae09adb72adf579fc7c6e8",
+      "bytes": 1088,
+      "worktree_sha256": "1b0ec7934951a937c7b517841374817255bad9e430ae09adb72adf579fc7c6e8",
+      "worktree_relation": "EXACT",
+      "last_change_commit": "00ee8d1b796f27dbc3cac0c665ed4a69a87231b9"
+    },
+    {
+      "path": "scripts/sync-memory.py",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "sha256": "93dc66d3c6e0a7aa2310afa5d3386dd0a835fa840e3ab049676906d66bc8f94d",
+      "bytes": 20890,
+      "worktree_sha256": "93dc66d3c6e0a7aa2310afa5d3386dd0a835fa840e3ab049676906d66bc8f94d",
+      "worktree_relation": "EXACT",
+      "last_change_commit": "00ee8d1b796f27dbc3cac0c665ed4a69a87231b9"
+    },
+    {
+      "path": "scripts/update_clued_skills.py",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "sha256": "ef976d161813c6d1ed1d60cbaf05a8e4a825c41db35fda6eb32b6fd40ab05e67",
+      "bytes": 4737,
+      "worktree_sha256": "ef976d161813c6d1ed1d60cbaf05a8e4a825c41db35fda6eb32b6fd40ab05e67",
+      "worktree_relation": "EXACT",
+      "last_change_commit": "3dbda2396f1a8fdc78336950a8caa0b6bd81c15d"
+    },
+    {
+      "path": "scripts/verification_context.py",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "sha256": "6a2d83a65921df60252aad350f3cecacfbab991be582368903aa40203c96d5ab",
+      "bytes": 32479,
+      "worktree_sha256": "6a2d83a65921df60252aad350f3cecacfbab991be582368903aa40203c96d5ab",
+      "worktree_relation": "EXACT",
+      "last_change_commit": "00ee8d1b796f27dbc3cac0c665ed4a69a87231b9"
+    },
+    {
+      "path": "skills/README.md",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "sha256": "6930cfcd300010b287dc08f58ae8b441639033ee4a705f66f775a36603087c6c",
+      "bytes": 2614,
+      "worktree_sha256": "6930cfcd300010b287dc08f58ae8b441639033ee4a705f66f775a36603087c6c",
+      "worktree_relation": "EXACT",
+      "last_change_commit": "3dbda2396f1a8fdc78336950a8caa0b6bd81c15d"
+    },
+    {
+      "path": "skills/clued/SKILL.md",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "sha256": "8a5e6d9548731874b94ebe3edc046f7393c96fd75531f22231228e055206096f",
+      "bytes": 3913,
+      "worktree_sha256": "8a5e6d9548731874b94ebe3edc046f7393c96fd75531f22231228e055206096f",
+      "worktree_relation": "EXACT",
+      "last_change_commit": "3dbda2396f1a8fdc78336950a8caa0b6bd81c15d"
+    },
+    {
+      "path": "skills/clued/references/engineering.md",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "sha256": "ffff299ea0a1793f9b0b4963fc5bf099762fabce96ed96086cfc5494acbb8d29",
+      "bytes": 5780,
+      "worktree_sha256": "ffff299ea0a1793f9b0b4963fc5bf099762fabce96ed96086cfc5494acbb8d29",
+      "worktree_relation": "EXACT",
+      "last_change_commit": "3dbda2396f1a8fdc78336950a8caa0b6bd81c15d"
+    },
+    {
+      "path": "skills/clued/references/memory-operations.md",
+      "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+      "sha256": "a05feabc8ad4ccac535bb059fbf35179f79884dfb1113abdd18b21281bfda538",
+      "bytes": 5166,
+      "worktree_sha256": "a05feabc8ad4ccac535bb059fbf35179f79884dfb1113abdd18b21281bfda538",
+      "worktree_relation": "EXACT",
+      "last_change_commit": "a1c7e8607d5ed9a6ae78fae302e565ed748d4f66"
+    }
+  ],
+  "checks": {
+    "installed_file_count": 3,
+    "all_installed_equal_source": true,
+    "binding_count": 37,
+    "nonexact_worktree_bindings": [],
+    "runtime_or_skill_tests_executed": 0,
+    "canon_or_install_writes": 0
+  }
+}

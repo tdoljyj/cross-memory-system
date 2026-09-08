@@ -1,0 +1,18 @@
+{
+  "pr": 21,
+  "url": "https://github.com/tdoljyj/cross-memory-system/pull/21",
+  "candidate": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+  "merge_commit": "750f957df20e5fc461ad3b392fc0577eec2fa653",
+  "merged_at": "2026-09-08T10:13:46Z",
+  "merge_method": "Normal merge with exact match-head-commit; no admin bypass",
+  "ci": [
+    {"name": "public-mcp-gate-receipt", "run": 34213257412, "result": "SUCCESS"},
+    {"name": "gitleaks", "run": 34213257406, "result": "SUCCESS"},
+    {"name": "public-mcp-behavior", "run": 34213257587, "result": "SUCCESS"},
+    {"name": "public-mcp-protocol", "run": 34213257435, "result": "SUCCESS"},
+    {"name": "trivy", "run": 34213257358, "result": "SUCCESS"}
+  ],
+  "actual_remote_head_after_merge": "750f957df20e5fc461ad3b392fc0577eec2fa653",
+  "candidate_is_remote_ancestor": true,
+  "boundaries": "Stability exact-byte adoption and preparation, limited bootstrap evidence and synthetic scanning exception. No runtime qualification, GA, R11 or production Surgical acceptance."
+}
