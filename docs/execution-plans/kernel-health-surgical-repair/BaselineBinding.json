@@ -1,0 +1,33 @@
+{
+  "baseline_id": "CLUED-KERNEL-HEALTH-SURGICAL-REPAIR-INTEGRATION-v0.1-20260908",
+  "baseline_state": "FIXED_EXECUTION_BASELINE_BY_EXPLICIT_USER_INSTRUCTION",
+  "source_filename": "Clued_Kernel_Health_Surgical_Repair_接入执行方案_v0.1_FIXED_20260908.md",
+  "source_path_observed": "C:/Users/Windows/Downloads/Clued_Kernel_Health_Surgical_Repair_接入执行方案_v0.1_FIXED_20260908.md",
+  "stored_file": "Clued_Kernel_Health_Surgical_Repair_接入执行方案_v0.1_FIXED_20260908.md",
+  "bytes": 26750,
+  "sha256": "44f59133c78e113710d5ee19e89c8a12a1393b15da27bb9290b521e8294a0b26",
+  "verification": "Independently recomputed SHA256 from the user-specified source before reading; exact copy rehashed and matched. Git normalization is disabled only for this fixed file.",
+  "adoption_authority": "Explicit user instruction in task 01a07f5e-510d-7db3-877d-f56e9bfa07ea on 2026-09-08; this binding is an engineering transcription, not a newly issued service credential or runtime Grant.",
+  "current_health_stage": "HS0_PREPARATION_ONLY",
+  "hs0_contract_ready": false,
+  "hs0_freeze_or_acceptance_issued": false,
+  "runtime_behavior_changed": false,
+  "surgical_authority_opened": false,
+  "production_surgical_grants_created": 0,
+  "new_p0_workstreams": 0,
+  "priority": "Current applicable R07-R10 / A01-A11 P0 closeout remains first. HS-0 preparation is non-blocking and does not replace the main line.",
+  "fixed_order": [
+    "R07-R10 / A01-A11 current applicable P0 closeout",
+    "HS-0 Contract and Hook Freeze",
+    "R11 Shadow",
+    "HS-1 Kernel Health Shadow",
+    "HS-2 non-production Surgical Drill",
+    "Slice A complete acceptance and HS-2.5 Repairability Gate",
+    "HS-3 Controlled Surgical Lane only after both PASS and all stated prerequisites",
+    "HS-4 Continuous Health"
+  ],
+  "sequence_interpretation_boundary": "Preserve section 4 and section 4.1 verbatim. Do not pull post-Entry implementation or final Slice A acceptance ahead of R11. Any requirement to change the sequence or resolve a substantive dependency conflict requires an explicit deviation report and successor proposal, not alteration of v0.1.",
+  "incident_principle": "平时治理要严，事故修复要短，第一 KPI 是 Time-to-Safe-State。",
+  "authorization_boundary": "Findings never enlarge authority. Before HS-3 no real SurgicalGrant, emergency superuser, hidden write route or automatic production repair is authorized by this baseline. The separately approved ordinary non-production qualification bootstrap retains its own limited authority and is not a Surgical Lane.",
+  "change_rule": "Preserve these exact v0.1 bytes. Changes to phase order, Authority boundaries, Surgical Minimum Controls, Repairability Gate or HS-3 entry conditions require an explicit successor revision. Ordinary implementation details cannot silently change the contract."
+}

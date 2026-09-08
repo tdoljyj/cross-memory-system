@@ -1,0 +1,921 @@
+{
+  "baseline": {
+    "id": "CLUED-KERNEL-HEALTH-SURGICAL-REPAIR-INTEGRATION-v0.1-20260908",
+    "source_path": "C:\\Users\\Windows\\Downloads\\Clued_Kernel_Health_Surgical_Repair_接入执行方案_v0.1_FIXED_20260908.md",
+    "sha256": "44f59133c78e113710d5ee19e89c8a12a1393b15da27bb9290b521e8294a0b26",
+    "bytes": 26750,
+    "source_unchanged": true
+  },
+  "state": "PREPARATION_ONLY",
+  "authority_effect": "NONE",
+  "health_executed": false,
+  "surgical_grant_created": false,
+  "runtime_changed": false,
+  "new_p0_created": false,
+  "source_commit": "f93e09c2d6c0826f3a8f6a1e9016bc5b5f293ae3",
+  "source_scope": "Current repository code and scoped historical local checks; not an assertion of deployed runtime state. No Gold answer was read.",
+  "fixed_sequence": [
+    "Current applicable R07–R10 P0 closure",
+    "HS-0 formal Freeze/Acceptance",
+    "R11 Shadow",
+    "HS-1 read-only Health Shadow",
+    "HS-2 non-production Surgical Drill",
+    "Slice A verification plus HS-2.5 RG-01–RG-10",
+    "Slice A and Repairability acceptance",
+    "HS-3 Controlled Surgical Lane",
+    "HS-4 controlled operational Health/incidents"
+  ],
+  "sequence_note": {
+    "section4_literal": "R07–R10 / A01–A11 P0 closure precedes HS-0",
+    "section4_1_qualifier": "HS-0 parallel preparation only; formal Freeze after current applicable R07–R10 P0 closure and before R11",
+    "possible_cycle": "If A01–A11 in §4 means every downstream R11/Slice A measurement and final acceptance, HS0-before-R11 and all-A-before-HS0 would form a dependency cycle. This reading is not silently adopted.",
+    "suggestion_only": "Use §4.1 current-applicable-P0 distinction for the existing gate applicability review; if a different order is required, submit an explicit successor baseline rather than altering fixed bytes. No gate is waived here."
+  },
+  "logical_objects": [
+    {
+      "name": "KernelHealthReport",
+      "semantics": "Bounded observation aggregate; cannot replace Canonical truth",
+      "hook_refs": [
+        "H09"
+      ],
+      "state": "PREPARATION_ONLY",
+      "runtime_contract": "NOT_IMPLEMENTED_IN_REVIEWED_SURFACES",
+      "new_wire_or_authority": false
+    },
+    {
+      "name": "HealthFinding",
+      "semantics": "Exact revision/environment/detector/evidence/severity/surface/confidence/action; no auto-repair",
+      "hook_refs": [
+        "H01",
+        "H04",
+        "H05",
+        "H06",
+        "H09",
+        "H10"
+      ],
+      "state": "PREPARATION_ONLY",
+      "runtime_contract": "NOT_IMPLEMENTED_IN_REVIEWED_SURFACES",
+      "new_wire_or_authority": false
+    },
+    {
+      "name": "FindingSeverity",
+      "semantics": "Risk/urgency F0–F4, independent from repair extent; no automatic privilege expansion",
+      "hook_refs": [
+        "H09"
+      ],
+      "state": "PREPARATION_ONLY",
+      "runtime_contract": "NOT_IMPLEMENTED_IN_REVIEWED_SURFACES",
+      "new_wire_or_authority": false
+    },
+    {
+      "name": "RepairClass",
+      "semantics": "R0–R4 modification depth/scope, independent from severity",
+      "hook_refs": [
+        "H04",
+        "H07",
+        "H11"
+      ],
+      "state": "PREPARATION_ONLY",
+      "runtime_contract": "NOT_IMPLEMENTED_IN_REVIEWED_SURFACES",
+      "new_wire_or_authority": false
+    },
+    {
+      "name": "ContainmentState",
+      "semantics": "Traceable pre-authorized narrowing only; deny/read-only/disable/pause/revoke/isolate",
+      "hook_refs": [
+        "H01",
+        "H11"
+      ],
+      "state": "PREPARATION_ONLY",
+      "runtime_contract": "NOT_IMPLEMENTED_IN_REVIEWED_SURFACES",
+      "new_wire_or_authority": false
+    },
+    {
+      "name": "SurgicalModeState",
+      "semantics": "Future controlled SURGICAL → POST_OP → safe restored state; not installed",
+      "hook_refs": [
+        "H05",
+        "H07"
+      ],
+      "state": "PREPARATION_ONLY",
+      "runtime_contract": "NOT_IMPLEMENTED_IN_REVIEWED_SURFACES",
+      "new_wire_or_authority": false
+    },
+    {
+      "name": "RepairBoundary",
+      "semantics": "Allowed Modules/Files/Objects/Actions/Schema/Consumers; exceed boundary stops patch expansion",
+      "hook_refs": [
+        "H01",
+        "H04",
+        "H05",
+        "H11"
+      ],
+      "state": "PREPARATION_ONLY",
+      "runtime_contract": "NOT_IMPLEMENTED_IN_REVIEWED_SURFACES",
+      "new_wire_or_authority": false
+    },
+    {
+      "name": "SurgicalRepairReceipt",
+      "semantics": "Future on-path immutable repair evidence via existing receipt authority, not a second receipt truth",
+      "hook_refs": [
+        "H06"
+      ],
+      "state": "PREPARATION_ONLY",
+      "runtime_contract": "NOT_IMPLEMENTED_IN_REVIEWED_SURFACES",
+      "new_wire_or_authority": false
+    },
+    {
+      "name": "CriticalPostOpVerification",
+      "semantics": "C1–C11 scoped immediate checks, with separate qualified verifier before high-risk full reopening for F4 or R4",
+      "hook_refs": [
+        "H01",
+        "H04",
+        "H05",
+        "H06",
+        "H07",
+        "H10"
+      ],
+      "state": "PREPARATION_ONLY",
+      "runtime_contract": "NOT_IMPLEMENTED_IN_REVIEWED_SURFACES",
+      "new_wire_or_authority": false
+    }
+  ],
+  "severity_repair_orthogonality": {
+    "severity": [
+      "F0 INFORMATIONAL",
+      "F1 MINOR",
+      "F2 MAJOR",
+      "F3 CRITICAL",
+      "F4 EMERGENCY"
+    ],
+    "repair_class": [
+      "R0 no code/data change",
+      "R1 runtime/cache/projection",
+      "R2 single module code/config",
+      "R3 cross module/schema migration",
+      "R4 Canonical/Authority repair"
+    ],
+    "examples": [
+      "F4 + R1",
+      "F2 + R3"
+    ],
+    "automatic_authority_expansion": false,
+    "state": "PREPARATION_ONLY"
+  },
+  "repair_boundary": {
+    "dimensions": [
+      "Allowed Modules",
+      "Allowed Files",
+      "Allowed Objects",
+      "Allowed Actions",
+      "Allowed Schema",
+      "Allowed Consumers"
+    ],
+    "scope_exceeded": "STOP patch expansion; reassess blast radius; move to CONTROLLED_REPAIR when scope no longer surgical; containment may remain",
+    "state": "PREPARATION_ONLY",
+    "enforced": false
+  },
+  "hooks": [
+    {
+      "id": "H01",
+      "kind": "Authorization decision",
+      "anchors": [
+        "AUTH",
+        "ACTION_AUTH",
+        "REVOKE"
+      ],
+      "observation_and_limit": "Existing binding/action scope and revocation decisions. Health observation is not wired; no Surgical authority.",
+      "state": "PREPARATION_ONLY"
+    },
+    {
+      "id": "H02",
+      "kind": "Entry / qualification",
+      "anchors": [
+        "CONTROLLER_ENTRY",
+        "MCP"
+      ],
+      "observation_and_limit": "Existing request dispatch and local candidate validation only; formal R11/controller qualification is NOT_IMPLEMENTED by these anchors.",
+      "state": "PREPARATION_ONLY"
+    },
+    {
+      "id": "H03",
+      "kind": "Shadow",
+      "anchors": [
+        "CONTROLLER_EXECUTION"
+      ],
+      "observation_and_limit": "Only fixed synthetic local candidate execution exists here; actual R11/HS1 Shadow observer is NOT_IMPLEMENTED.",
+      "state": "PREPARATION_ONLY"
+    },
+    {
+      "id": "H04",
+      "kind": "Canonical read / write boundary",
+      "anchors": [
+        "CANON_READ",
+        "CANON_WRITE",
+        "SUPERSEDE"
+      ],
+      "observation_and_limit": "Existing authorized search/M1 mutation boundaries; Health is observation only, no alternate Canon.",
+      "state": "PREPARATION_ONLY"
+    },
+    {
+      "id": "H05",
+      "kind": "State transition",
+      "anchors": [
+        "STATE",
+        "CHECKPOINT"
+      ],
+      "observation_and_limit": "Existing record lifecycle and checkpoint stream CAS; no Surgical/POST_OP state machine.",
+      "state": "PREPARATION_ONLY"
+    },
+    {
+      "id": "H06",
+      "kind": "Receipt emission",
+      "anchors": [
+        "RECEIPT",
+        "CHECKPOINT_RECEIPT"
+      ],
+      "observation_and_limit": "Existing M1 transaction receipt finalization and checkpoint receipt insert; no SurgicalRepairReceipt emitter.",
+      "state": "PREPARATION_ONLY"
+    },
+    {
+      "id": "H07",
+      "kind": "Recovery / rollback",
+      "anchors": [
+        "MIRROR_RECOVERY",
+        "MIRROR_RECONCILE",
+        "CONTROLLER_RECONCILE"
+      ],
+      "observation_and_limit": "Actual local read-only mirror LKG recovery and candidate read-only reconciliation; not a production runtime/DB rollback qualification.",
+      "state": "PREPARATION_ONLY"
+    },
+    {
+      "id": "H08",
+      "kind": "Projection / consumer",
+      "anchors": [
+        "PROJECTION_VERIFY",
+        "PROJECTION_SOURCE"
+      ],
+      "observation_and_limit": "Existing read-only snapshot source/hash validation; complete online Canonical-to-projection rebuild must be bound separately.",
+      "state": "PREPARATION_ONLY"
+    },
+    {
+      "id": "H09",
+      "kind": "Observability / error event",
+      "anchors": [
+        "ERROR",
+        "HTTP_ERROR",
+        "DUPLICATE_SIGNAL"
+      ],
+      "observation_and_limit": "Existing protocol/storage error output can feed future scoped signals; no Health cycle, latency aggregation or detector installed.",
+      "state": "PREPARATION_ONLY"
+    },
+    {
+      "id": "H10",
+      "kind": "checkpoint / retry / idempotency",
+      "anchors": [
+        "CHECKPOINT",
+        "FIX_REPLAY",
+        "FIX_CONCURRENT"
+      ],
+      "observation_and_limit": "Exact repaired SQL and real local PG checks; f93e09c source only, not deployed at this preparation point.",
+      "state": "PREPARATION_ONLY"
+    },
+    {
+      "id": "H11",
+      "kind": "configuration / capability disable point",
+      "anchors": [
+        "CAP_DISABLE",
+        "TOOL_SURFACE",
+        "REVOKE",
+        "CONTROLLER_STOP"
+      ],
+      "observation_and_limit": "Existing feature gates/revoke and local STOP are candidate containment integration points; no automatic or new grant-authorized containment added.",
+      "state": "PREPARATION_ONLY"
+    }
+  ],
+  "critical_post_op": [
+    {
+      "id": "C1",
+      "requirement": "Original Finding closed",
+      "anchors": [
+        "REPRO_PAYLOAD",
+        "REPRO_NULL",
+        "FIX_BOUNDARY"
+      ],
+      "state": "PREPARATION_ONLY",
+      "execution": "NOT_EXECUTED_AS_HEALTH_OR_POST_OP",
+      "gap": "Existing anchor is partial reuse only; no HS acceptance or Surgical control enforcement is established."
+    },
+    {
+      "id": "C2",
+      "requirement": "Unauthorized Allow = 0",
+      "anchors": [
+        "AUTH",
+        "FIX_BINDING",
+        "FIX_REVOKED"
+      ],
+      "state": "PREPARATION_ONLY",
+      "execution": "NOT_EXECUTED_AS_HEALTH_OR_POST_OP",
+      "gap": "Existing anchor is partial reuse only; no HS acceptance or Surgical control enforcement is established."
+    },
+    {
+      "id": "C3",
+      "requirement": "Privilege Expansion = 0",
+      "anchors": [
+        "ACTION_AUTH",
+        "FIX_BINDING"
+      ],
+      "state": "PREPARATION_ONLY",
+      "execution": "NOT_EXECUTED_AS_HEALTH_OR_POST_OP",
+      "gap": "Existing anchor is partial reuse only; no HS acceptance or Surgical control enforcement is established."
+    },
+    {
+      "id": "C4",
+      "requirement": "No new Canonical Critical Violation",
+      "anchors": [
+        "CANON_WRITE",
+        "STATE",
+        "PROJECTION_VERIFY"
+      ],
+      "state": "PREPARATION_ONLY",
+      "execution": "NOT_EXECUTED_AS_HEALTH_OR_POST_OP",
+      "gap": "Existing anchor is partial reuse only; no HS acceptance or Surgical control enforcement is established."
+    },
+    {
+      "id": "C5",
+      "requirement": "Affected State Transition legal",
+      "anchors": [
+        "STATE",
+        "CHECKPOINT"
+      ],
+      "state": "PREPARATION_ONLY",
+      "execution": "NOT_EXECUTED_AS_HEALTH_OR_POST_OP",
+      "gap": "Existing anchor is partial reuse only; no HS acceptance or Surgical control enforcement is established."
+    },
+    {
+      "id": "C6",
+      "requirement": "Receipt can be emitted and verified",
+      "anchors": [
+        "RECEIPT",
+        "CHECKPOINT_RECEIPT",
+        "FIX_IMMUTABLE"
+      ],
+      "state": "PREPARATION_ONLY",
+      "execution": "NOT_EXECUTED_AS_HEALTH_OR_POST_OP",
+      "gap": "Existing anchor is partial reuse only; no HS acceptance or Surgical control enforcement is established."
+    },
+    {
+      "id": "C7",
+      "requirement": "Affected read/write smoke",
+      "anchors": [
+        "CANON_READ",
+        "CANON_WRITE",
+        "FIX_REPLAY"
+      ],
+      "state": "PREPARATION_ONLY",
+      "execution": "NOT_EXECUTED_AS_HEALTH_OR_POST_OP",
+      "gap": "Existing anchor is partial reuse only; no HS acceptance or Surgical control enforcement is established."
+    },
+    {
+      "id": "C8",
+      "requirement": "Applicable deterministic replay",
+      "anchors": [
+        "FIX_REPLAY",
+        "CONTROLLER_RECONCILE"
+      ],
+      "state": "PREPARATION_ONLY",
+      "execution": "NOT_EXECUTED_AS_HEALTH_OR_POST_OP",
+      "gap": "Existing anchor is partial reuse only; no HS acceptance or Surgical control enforcement is established."
+    },
+    {
+      "id": "C9",
+      "requirement": "No new duplicate checkpoint/retry/idempotency effects",
+      "anchors": [
+        "FIX_CONCURRENT",
+        "FIX_BOUNDARY"
+      ],
+      "state": "PREPARATION_ONLY",
+      "execution": "NOT_EXECUTED_AS_HEALTH_OR_POST_OP",
+      "gap": "Existing anchor is partial reuse only; no HS acceptance or Surgical control enforcement is established."
+    },
+    {
+      "id": "C10",
+      "requirement": "Recovery/rollback remains usable",
+      "anchors": [
+        "MIRROR_RECOVERY",
+        "MIRROR_RECONCILE"
+      ],
+      "state": "PREPARATION_ONLY",
+      "execution": "NOT_EXECUTED_AS_HEALTH_OR_POST_OP",
+      "gap": "Existing anchor is partial reuse only; no HS acceptance or Surgical control enforcement is established."
+    },
+    {
+      "id": "C11",
+      "requirement": "F4 or R4: different qualified Post-op Verifier before full high-risk reopening",
+      "anchors": [
+        "CONTROLLER_ENTRY"
+      ],
+      "state": "PREPARATION_ONLY",
+      "execution": "NOT_EXECUTED_AS_HEALTH_OR_POST_OP",
+      "gap": "Existing anchor is partial reuse only; no HS acceptance or Surgical control enforcement is established."
+    }
+  ],
+  "surgical_minimum_controls": [
+    {
+      "id": "SM-01",
+      "requirement": "Exact target commit/build/artifact, environment/config/schema",
+      "anchors": [
+        "CHECKPOINT",
+        "MIGRATION_CHAIN"
+      ],
+      "state": "PREPARATION_ONLY",
+      "execution": "NOT_EXECUTED_AS_HEALTH_OR_POST_OP",
+      "gap": "Existing anchor is partial reuse only; no HS acceptance or Surgical control enforcement is established."
+    },
+    {
+      "id": "SM-02",
+      "requirement": "Exact Incident/Finding identity",
+      "anchors": [
+        "ERROR"
+      ],
+      "state": "PREPARATION_ONLY",
+      "execution": "NOT_EXECUTED_AS_HEALTH_OR_POST_OP",
+      "gap": "Existing anchor is partial reuse only; no HS acceptance or Surgical control enforcement is established."
+    },
+    {
+      "id": "SM-03",
+      "requirement": "Exact subsystem/environment/capability/object/consumer scope",
+      "anchors": [
+        "AUTH",
+        "CANON_WRITE"
+      ],
+      "state": "PREPARATION_ONLY",
+      "execution": "NOT_EXECUTED_AS_HEALTH_OR_POST_OP",
+      "gap": "Existing anchor is partial reuse only; no HS acceptance or Surgical control enforcement is established."
+    },
+    {
+      "id": "SM-04",
+      "requirement": "Qualified authorized Surgical Actor",
+      "anchors": [
+        "AUTH",
+        "CONTROLLER_ENTRY"
+      ],
+      "state": "PREPARATION_ONLY",
+      "execution": "NOT_EXECUTED_AS_HEALTH_OR_POST_OP",
+      "gap": "Existing anchor is partial reuse only; no HS acceptance or Surgical control enforcement is established."
+    },
+    {
+      "id": "SM-05",
+      "requirement": "Explicit recovery strategy",
+      "anchors": [
+        "MIRROR_RECOVERY",
+        "CONTROLLER_RECONCILE"
+      ],
+      "state": "PREPARATION_ONLY",
+      "execution": "NOT_EXECUTED_AS_HEALTH_OR_POST_OP",
+      "gap": "Existing anchor is partial reuse only; no HS acceptance or Surgical control enforcement is established."
+    },
+    {
+      "id": "SM-06",
+      "requirement": "RepairBoundary six allowed dimensions",
+      "anchors": [
+        "CANON_WRITE",
+        "CAP_DISABLE"
+      ],
+      "state": "PREPARATION_ONLY",
+      "execution": "NOT_EXECUTED_AS_HEALTH_OR_POST_OP",
+      "gap": "Existing anchor is partial reuse only; no HS acceptance or Surgical control enforcement is established."
+    },
+    {
+      "id": "SM-07",
+      "requirement": "Immediate critical post-op verification",
+      "anchors": [
+        "FIX_BOUNDARY",
+        "FIX_REVOKED"
+      ],
+      "state": "PREPARATION_ONLY",
+      "execution": "NOT_EXECUTED_AS_HEALTH_OR_POST_OP",
+      "gap": "Existing anchor is partial reuse only; no HS acceptance or Surgical control enforcement is established."
+    },
+    {
+      "id": "SM-08",
+      "requirement": "Durable Surgical Receipt",
+      "anchors": [
+        "RECEIPT",
+        "CHECKPOINT_RECEIPT"
+      ],
+      "state": "PREPARATION_ONLY",
+      "execution": "NOT_EXECUTED_AS_HEALTH_OR_POST_OP",
+      "gap": "Existing anchor is partial reuse only; no HS acceptance or Surgical control enforcement is established."
+    }
+  ],
+  "repairability_gate": [
+    {
+      "id": "RG-01",
+      "requirement": "Isolation",
+      "anchors": [
+        "CONTROLLER_STOP",
+        "AUTH"
+      ],
+      "state": "PREPARATION_ONLY",
+      "execution": "NOT_EXECUTED_AS_HEALTH_OR_POST_OP",
+      "gap": "Existing anchor is partial reuse only; no HS acceptance or Surgical control enforcement is established."
+    },
+    {
+      "id": "RG-02",
+      "requirement": "Read-only",
+      "anchors": [
+        "ACTION_AUTH",
+        "CAP_DISABLE"
+      ],
+      "state": "PREPARATION_ONLY",
+      "execution": "NOT_EXECUTED_AS_HEALTH_OR_POST_OP",
+      "gap": "Existing anchor is partial reuse only; no HS acceptance or Surgical control enforcement is established."
+    },
+    {
+      "id": "RG-03",
+      "requirement": "Capability Disable",
+      "anchors": [
+        "CAP_DISABLE",
+        "TOOL_SURFACE"
+      ],
+      "state": "PREPARATION_ONLY",
+      "execution": "NOT_EXECUTED_AS_HEALTH_OR_POST_OP",
+      "gap": "Existing anchor is partial reuse only; no HS acceptance or Surgical control enforcement is established."
+    },
+    {
+      "id": "RG-04",
+      "requirement": "Authorization Revoke",
+      "anchors": [
+        "REVOKE",
+        "FIX_REVOKED"
+      ],
+      "state": "PREPARATION_ONLY",
+      "execution": "NOT_EXECUTED_AS_HEALTH_OR_POST_OP",
+      "gap": "Existing anchor is partial reuse only; no HS acceptance or Surgical control enforcement is established."
+    },
+    {
+      "id": "RG-05",
+      "requirement": "Rollback",
+      "anchors": [
+        "MIRROR_RECOVERY"
+      ],
+      "state": "PREPARATION_ONLY",
+      "execution": "NOT_EXECUTED_AS_HEALTH_OR_POST_OP",
+      "gap": "Existing anchor is partial reuse only; no HS acceptance or Surgical control enforcement is established."
+    },
+    {
+      "id": "RG-06",
+      "requirement": "Projection Rebuild",
+      "anchors": [
+        "PROJECTION_SOURCE",
+        "PROJECTION_VERIFY"
+      ],
+      "state": "PREPARATION_ONLY",
+      "execution": "NOT_EXECUTED_AS_HEALTH_OR_POST_OP",
+      "gap": "Existing anchor is partial reuse only; no HS acceptance or Surgical control enforcement is established."
+    },
+    {
+      "id": "RG-07",
+      "requirement": "Replay",
+      "anchors": [
+        "FIX_REPLAY",
+        "CONTROLLER_RECONCILE"
+      ],
+      "state": "PREPARATION_ONLY",
+      "execution": "NOT_EXECUTED_AS_HEALTH_OR_POST_OP",
+      "gap": "Existing anchor is partial reuse only; no HS acceptance or Surgical control enforcement is established."
+    },
+    {
+      "id": "RG-08",
+      "requirement": "Blast Radius",
+      "anchors": [
+        "CANON_READ",
+        "STATE"
+      ],
+      "state": "PREPARATION_ONLY",
+      "execution": "NOT_EXECUTED_AS_HEALTH_OR_POST_OP",
+      "gap": "Existing anchor is partial reuse only; no HS acceptance or Surgical control enforcement is established."
+    },
+    {
+      "id": "RG-09",
+      "requirement": "Receipt",
+      "anchors": [
+        "RECEIPT",
+        "CHECKPOINT_RECEIPT"
+      ],
+      "state": "PREPARATION_ONLY",
+      "execution": "NOT_EXECUTED_AS_HEALTH_OR_POST_OP",
+      "gap": "Existing anchor is partial reuse only; no HS acceptance or Surgical control enforcement is established."
+    },
+    {
+      "id": "RG-10",
+      "requirement": "No Hidden Emergency Path",
+      "anchors": [
+        "AUTH",
+        "MCP",
+        "CAP_DISABLE"
+      ],
+      "state": "PREPARATION_ONLY",
+      "execution": "NOT_EXECUTED_AS_HEALTH_OR_POST_OP",
+      "gap": "Existing anchor is partial reuse only; no HS acceptance or Surgical control enforcement is established."
+    }
+  ],
+  "checkpoint_health_signal": {
+    "state": "PREPARATION_ONLY",
+    "observed_in": "Pre-fix real isolated PostgreSQL against repository production-shaped function; production function was read-only inspected by implementation lane, no production incident asserted here",
+    "observed": [
+      "Changed payload falsely returns old duplicate",
+      "Cross-context replay reports requested context for an old checkpoint from another context",
+      "JSON null base bypasses old CAS inequality"
+    ],
+    "anchors": [
+      "REPRO_PAYLOAD",
+      "REPRO_NULL",
+      "FIX_BOUNDARY",
+      "FIX_IMMUTABLE"
+    ],
+    "repair_source": "f93e09c2d6c0826f3a8f6a1e9016bc5b5f293ae3",
+    "existing_check_evidence": "12 independent local PG tests and 2 migration-chain checks; not rerun for HS0",
+    "production_deployed": false,
+    "not_observed": [
+      "Actual double checkpoint commit",
+      "Actual duplicate receipt",
+      "Actual duplicated production state mutation",
+      "Real production incident or user damage"
+    ],
+    "severity": null,
+    "repair_class": null
+  },
+  "duplicate_monitor_designs": [
+    {
+      "name": "Duplicate Commit",
+      "observation": "Count persisted checkpoint identities per owner/binding/idempotency_key; distinguish request attempts from committed effects.",
+      "state": "PREPARATION_ONLY",
+      "execution": "NOT_EXECUTED"
+    },
+    {
+      "name": "Duplicate Receipt",
+      "observation": "Compare checkpoint receipt identity/operation/object/version with expected one emitted receipt; replay should reuse rather than create another.",
+      "state": "PREPARATION_ONLY",
+      "execution": "NOT_EXECUTED"
+    },
+    {
+      "name": "Duplicate State Mutation",
+      "observation": "Correlate actual stream version/target transition and immutable receipt for the same accepted intent; do not infer mutation from an HTTP retry.",
+      "state": "PREPARATION_ONLY",
+      "execution": "NOT_EXECUTED"
+    },
+    {
+      "name": "Idempotency Violation",
+      "observation": "Detect same-key changed effective payload/context returning duplicate, or a false success/conflict mapping; bind original receipt base and exact request fields.",
+      "state": "PREPARATION_ONLY",
+      "execution": "NOT_EXECUTED"
+    }
+  ],
+  "monitor_state": "PREPARATION_ONLY",
+  "future_signal_quality": [
+    "true_positive",
+    "false_positive",
+    "false_negative when confirmed",
+    "signal_latency",
+    "diagnosis_latency"
+  ],
+  "naming_note": "§5.2 fixes logical SurgicalRepairReceipt while §22 suggests KernelSurgicalRepairReceipt. Preserve both source mentions; resolve to an existing accepted naming/receipt contract before implementation. No alias, new wire type or second authority is issued.",
+  "source_files": {
+    "apps/clued-cloud/supabase/migrations/20260907173031_clued_connection_authorization_v12.sql": {
+      "sha256": "6f1379187f1f36c836e99f6cf2083334e733fcb10cd59f789797b9e3c5225f8d",
+      "bytes": 42493,
+      "commit_blob_sha256": "6f1379187f1f36c836e99f6cf2083334e733fcb10cd59f789797b9e3c5225f8d",
+      "worktree_bytes_match_commit": true
+    },
+    "apps/clued-cloud/supabase/migrations/20260907131834_clued_search_canonical_records.sql": {
+      "sha256": "25fcf125a50400937cd9a0cca39336faf99fcf901d76d0539b8c68eae85df4d4",
+      "bytes": 3895,
+      "commit_blob_sha256": "25fcf125a50400937cd9a0cca39336faf99fcf901d76d0539b8c68eae85df4d4",
+      "worktree_bytes_match_commit": true
+    },
+    "apps/clued-cloud/supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql": {
+      "sha256": "f59e414ec0de016cbe89d3ba24ded2d90e85a9e17fb554021b2d4d611f4d26c2",
+      "bytes": 72625,
+      "commit_blob_sha256": "f59e414ec0de016cbe89d3ba24ded2d90e85a9e17fb554021b2d4d611f4d26c2",
+      "worktree_bytes_match_commit": true
+    },
+    "apps/clued-cloud/worker/continuity.ts": {
+      "sha256": "53746991a483bf4bbac4402440ae86fb7cd296032a7a10359758bbaf77997dc5",
+      "bytes": 50783,
+      "commit_blob_sha256": "53746991a483bf4bbac4402440ae86fb7cd296032a7a10359758bbaf77997dc5",
+      "worktree_bytes_match_commit": true
+    },
+    "apps/clued-cloud/supabase/migrations/20260908094000_clued_checkpoint_idempotency_binding.sql": {
+      "sha256": "0a4ec410e9475698b1dd2b2f670cbe2532441ed750c798a01d25333e3ebf03ea",
+      "bytes": 6546,
+      "commit_blob_sha256": "0a4ec410e9475698b1dd2b2f670cbe2532441ed750c798a01d25333e3ebf03ea",
+      "worktree_bytes_match_commit": true
+    },
+    "scripts/phase2-qualification/controller.py": {
+      "sha256": "ec72de3116c6e2af88a10c9a980414c11586dd17feffb82fa0ffba32823cc26f",
+      "bytes": 15601,
+      "commit_blob_sha256": "ec72de3116c6e2af88a10c9a980414c11586dd17feffb82fa0ffba32823cc26f",
+      "worktree_bytes_match_commit": true
+    },
+    "scripts/isolated_mirror.py": {
+      "sha256": "e228508a4df2b750cd3f304b8188fe5b10f0529ea1ccdbd2dc85a6cfbca82e31",
+      "bytes": 55260,
+      "commit_blob_sha256": "e228508a4df2b750cd3f304b8188fe5b10f0529ea1ccdbd2dc85a6cfbca82e31",
+      "worktree_bytes_match_commit": true
+    },
+    "scripts/memory.py": {
+      "sha256": "4f09d50797be8af183e79745d78a64fe5474d6ff5b7746c14a4f911894a43a10",
+      "bytes": 15660,
+      "commit_blob_sha256": "4f09d50797be8af183e79745d78a64fe5474d6ff5b7746c14a4f911894a43a10",
+      "worktree_bytes_match_commit": true
+    },
+    "scripts/sync-memory.py": {
+      "sha256": "93dc66d3c6e0a7aa2310afa5d3386dd0a835fa840e3ab049676906d66bc8f94d",
+      "bytes": 20890,
+      "commit_blob_sha256": "93dc66d3c6e0a7aa2310afa5d3386dd0a835fa840e3ab049676906d66bc8f94d",
+      "worktree_bytes_match_commit": true
+    },
+    "apps/clued-cloud/tests/checkpoint-idempotency-db.test.mjs": {
+      "sha256": "d100f98dee396d741c4e16eef4509dbfe85b34f89c185e91f50d6d775387e42c",
+      "bytes": 12522,
+      "commit_blob_sha256": "d100f98dee396d741c4e16eef4509dbfe85b34f89c185e91f50d6d775387e42c",
+      "worktree_bytes_match_commit": true
+    },
+    "apps/clued-cloud/tests/authorization-migration-chain.test.mjs": {
+      "sha256": "fcab1f63bd0c1df31bf68036d9d09af3ce700e1fbe6cdd6144c245ccca84bc30",
+      "bytes": 3582,
+      "commit_blob_sha256": "fcab1f63bd0c1df31bf68036d9d09af3ce700e1fbe6cdd6144c245ccca84bc30",
+      "worktree_bytes_match_commit": true
+    }
+  },
+  "anchors": {
+    "AUTH": {
+      "path": "apps/clued-cloud/supabase/migrations/20260907173031_clued_connection_authorization_v12.sql",
+      "line": 318,
+      "anchor": "create or replace function clued_private.resolve_binding("
+    },
+    "ACTION_AUTH": {
+      "path": "apps/clued-cloud/supabase/migrations/20260907173031_clued_connection_authorization_v12.sql",
+      "line": 601,
+      "anchor": "create function clued_private.resolve_binding_action_v12("
+    },
+    "REVOKE": {
+      "path": "apps/clued-cloud/supabase/migrations/20260907173031_clued_connection_authorization_v12.sql",
+      "line": 519,
+      "anchor": "create function public.clued_authorization_revoke_issuer_v12("
+    },
+    "CANON_READ": {
+      "path": "apps/clued-cloud/supabase/migrations/20260907131834_clued_search_canonical_records.sql",
+      "line": 2,
+      "anchor": "create or replace function public.clued_mcp_search_context("
+    },
+    "CANON_WRITE": {
+      "path": "apps/clued-cloud/supabase/migrations/20260907173031_clued_connection_authorization_v12.sql",
+      "line": 481,
+      "anchor": "create or replace function public.clued_record_mutate("
+    },
+    "SUPERSEDE": {
+      "path": "apps/clued-cloud/supabase/migrations/20260907173031_clued_connection_authorization_v12.sql",
+      "line": 577,
+      "anchor": "create or replace function public.clued_decision_supersede("
+    },
+    "STATE": {
+      "path": "apps/clued-cloud/supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql",
+      "line": 282,
+      "anchor": "create or replace function clued_private.record_mutation_core("
+    },
+    "RECEIPT": {
+      "path": "apps/clued-cloud/supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql",
+      "line": 471,
+      "anchor": "create or replace function clued_private.m1_finish_receipt("
+    },
+    "MCP": {
+      "path": "apps/clued-cloud/worker/continuity.ts",
+      "line": 883,
+      "anchor": "async function callRpc("
+    },
+    "CAP_DISABLE": {
+      "path": "apps/clued-cloud/worker/continuity.ts",
+      "line": 906,
+      "anchor": "if (!p5TenantWritesEnabled(env))"
+    },
+    "TOOL_SURFACE": {
+      "path": "apps/clued-cloud/worker/continuity.ts",
+      "line": 861,
+      "anchor": "export function publicMcpTools("
+    },
+    "ERROR": {
+      "path": "apps/clued-cloud/worker/continuity.ts",
+      "line": 973,
+      "anchor": "function rpcError("
+    },
+    "HTTP_ERROR": {
+      "path": "apps/clued-cloud/worker/continuity.ts",
+      "line": 327,
+      "anchor": "async function supabaseRequest("
+    },
+    "CHECKPOINT": {
+      "path": "apps/clued-cloud/supabase/migrations/20260908094000_clued_checkpoint_idempotency_binding.sql",
+      "line": 3,
+      "anchor": "create or replace function public.clued_mcp_commit_checkpoint("
+    },
+    "CHECKPOINT_RECEIPT": {
+      "path": "apps/clued-cloud/supabase/migrations/20260908094000_clued_checkpoint_idempotency_binding.sql",
+      "line": 104,
+      "anchor": "insert into public.clued_audit_receipts("
+    },
+    "DUPLICATE_SIGNAL": {
+      "path": "apps/clued-cloud/supabase/migrations/20260908094000_clued_checkpoint_idempotency_binding.sql",
+      "line": 69,
+      "anchor": "return jsonb_build_object('status','conflict','error','idempotency_key_conflict'"
+    },
+    "CONTROLLER_ENTRY": {
+      "path": "scripts/phase2-qualification/controller.py",
+      "line": 75,
+      "anchor": "def validate(config):"
+    },
+    "CONTROLLER_EXECUTION": {
+      "path": "scripts/phase2-qualification/controller.py",
+      "line": 183,
+      "anchor": "def run(config, evidence_dir):"
+    },
+    "CONTROLLER_STOP": {
+      "path": "scripts/phase2-qualification/controller.py",
+      "line": 106,
+      "anchor": "def control(root, generation):"
+    },
+    "CONTROLLER_RECONCILE": {
+      "path": "scripts/phase2-qualification/controller.py",
+      "line": 285,
+      "anchor": "def reconcile(evidence_dir, key):"
+    },
+    "MIRROR_RECOVERY": {
+      "path": "scripts/isolated_mirror.py",
+      "line": 565,
+      "anchor": "    def _restore_backup_lkg("
+    },
+    "MIRROR_RECONCILE": {
+      "path": "scripts/isolated_mirror.py",
+      "line": 778,
+      "anchor": "    def recover_interrupted_switch("
+    },
+    "PROJECTION_VERIFY": {
+      "path": "scripts/memory.py",
+      "line": 44,
+      "anchor": "def _validate_bundle_uncached("
+    },
+    "PROJECTION_SOURCE": {
+      "path": "scripts/sync-memory.py",
+      "line": 303,
+      "anchor": "def extract_snapshot_capsule("
+    },
+    "REPRO_PAYLOAD": {
+      "path": "apps/clued-cloud/tests/checkpoint-idempotency-db.test.mjs",
+      "line": 36,
+      "anchor": "pre-fix counterexample: changed payload and context falsely return duplicate"
+    },
+    "REPRO_NULL": {
+      "path": "apps/clued-cloud/tests/checkpoint-idempotency-db.test.mjs",
+      "line": 43,
+      "anchor": "pre-fix counterexample: null base version bypasses the CAS comparison"
+    },
+    "FIX_REPLAY": {
+      "path": "apps/clued-cloud/tests/checkpoint-idempotency-db.test.mjs",
+      "line": 51,
+      "anchor": "same effective payload replays a legacy checkpoint with a fresh session"
+    },
+    "FIX_BOUNDARY": {
+      "path": "apps/clued-cloud/tests/checkpoint-idempotency-db.test.mjs",
+      "line": 56,
+      "anchor": "changed snapshot, summary, next action, base version and context conflict without writes"
+    },
+    "FIX_BINDING": {
+      "path": "apps/clued-cloud/tests/checkpoint-idempotency-db.test.mjs",
+      "line": 77,
+      "anchor": "foreign binding session is denied; legitimate bindings retain separate key namespaces"
+    },
+    "FIX_CONCURRENT": {
+      "path": "apps/clued-cloud/tests/checkpoint-idempotency-db.test.mjs",
+      "line": 83,
+      "anchor": "concurrent same-key same-payload has one commit and one replay"
+    },
+    "FIX_REVOKED": {
+      "path": "apps/clued-cloud/tests/checkpoint-idempotency-db.test.mjs",
+      "line": 95,
+      "anchor": "revoked binding and ended or expired sessions cannot replay"
+    },
+    "FIX_IMMUTABLE": {
+      "path": "apps/clued-cloud/tests/checkpoint-idempotency-db.test.mjs",
+      "line": 101,
+      "anchor": "forward migration is repeatable and preserves legacy checkpoint, receipt and grants"
+    },
+    "MIGRATION_CHAIN": {
+      "path": "apps/clued-cloud/tests/authorization-migration-chain.test.mjs",
+      "line": 12,
+      "anchor": "for (const profile of ['complete-repository', 'production-installed-shape'])"
+    }
+  },
+  "completion_claim": "Preparation only; no CONTRACT_READY, Freeze, HS0 exit, Post-op or Repairability result is issued."
+}

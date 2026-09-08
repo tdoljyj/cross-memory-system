@@ -1,0 +1,119 @@
+{
+  "state": "VERIFIED_FOR_LIMITED_OWNER_DELEGATION_ONLY",
+  "authority_effect": "NO_NEW_AUTHORITY_ISSUED",
+  "independent_verifier": "/root/project_list_auth_fix",
+  "verified_at": "2026-09-08T09:33:32.833Z",
+  "scope": "Owner signature, exact approved content and delegation binding only; not controller/Profile/GateAuthorization/qualification acceptance.",
+  "repository": "tdoljyj/cross-memory-system",
+  "pr": {
+    "number": 20,
+    "url": "https://github.com/tdoljyj/cross-memory-system/pull/20",
+    "merged": true,
+    "merged_by": "tdoljyj",
+    "base_ref": "main",
+    "base_sha": "f93e09c2d6c0826f3a8f6a1e9016bc5b5f293ae3",
+    "head_sha": "f2c3f0907a7e388eda97ea420e428534c1caed4e",
+    "merge_sha": "4f722ea9d78488b749c15d27fe9145e9d9f9d2c2",
+    "merged_at": "2026-09-08T09:28:59Z"
+  },
+  "commit": {
+    "sha": "4f722ea9d78488b749c15d27fe9145e9d9f9d2c2",
+    "tree_sha": "ba4f659f090a1ec5f7170b8a168bac3f4dba9d86",
+    "parents": [
+      "f93e09c2d6c0826f3a8f6a1e9016bc5b5f293ae3",
+      "f2c3f0907a7e388eda97ea420e428534c1caed4e"
+    ],
+    "committer": "web-flow",
+    "github_verification": {
+      "verified": true,
+      "reason": "valid",
+      "verified_at": "2026-09-08T09:28:59Z",
+      "signature_sha256": "8ac808b9394ff5cd39f0a454ffd6a46d57e1e9dee3b1102b68a6114ef142b737",
+      "signed_payload_sha256": "d56018ccad5a601f7bff127342759989370fea47bfad0c3cd6c7e4348c0f6cc7",
+      "signed_tree_and_parents_match": true,
+      "verification_source": "Authenticated GitHub commit API",
+      "verified_locally_with_GPG": false
+    }
+  },
+  "blobs": [
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/AuthorityUnblockProposal.md",
+      "commit": "4f722ea9d78488b749c15d27fe9145e9d9f9d2c2",
+      "git_blob_sha": "784b5f0a8ea246cdc008fc3bdc7b658c06da8908",
+      "bytes": 8875,
+      "sha256": "2860a0884a2a33bfd57a03789f1d6eab02f7e0d4a8a3725f1d4b640737e0cc3d"
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/OwnerDelegation_20260908.json",
+      "commit": "4f722ea9d78488b749c15d27fe9145e9d9f9d2c2",
+      "git_blob_sha": "e7f738ae3c247e41733872ab95387440205c736a",
+      "bytes": 6698,
+      "sha256": "e09ef634712ce1206600402552073bae91e7296f2b4e2d3f99855bd760c944bd"
+    }
+  ],
+  "window": {
+    "starts_at": "2026-09-08T09:28:59Z",
+    "expires_at": "2026-09-09T09:28:59.000Z",
+    "within_window_at_verification": true,
+    "owner_window_seconds": 86400,
+    "per_gate_authorization_max_seconds": 600
+  },
+  "approved_limits": {
+    "owner_window_seconds_from_verified_merge": 86400,
+    "per_gate_authorization_max_seconds": 600,
+    "max_active_isolated_tests": 1,
+    "cumulative_controlled_execution_seconds": 7200,
+    "new_local_evidence_bytes": 1073741824,
+    "model_budget": 0,
+    "paid_budget": 0
+  },
+  "approved_roles": {
+    "implementer": "/root/controller_candidate",
+    "assessor": "/root/project_list_auth_fix",
+    "coordinator": "/root"
+  },
+  "authorization_boundary": {
+    "construction": "Named implementer may continue the approved fixed nonproduction driver construction; existing host permissions still apply.",
+    "qualification_execution": "Requires each real accepted Profile/controller/subject and applicable R05-R10, budget, stop/revocation, isolation and durable evidence prerequisites plus exact GA.",
+    "same_scope_successors": "Independent acceptance and fresh exact authorization required, without repeated Owner confirmation inside the approved window.",
+    "excluded": [
+      "All real model actions",
+      "PQUAL-18 post-Entry positive execution",
+      "Production credentials or business permission expansion",
+      "Arbitrary host commands",
+      "Public distribution or default Skill activation",
+      "Health/Surgical/Emergency Authority"
+    ],
+    "current_revocation": "No withdrawal/narrowing received in this reviewer conversation at verification. This point-in-time observation is not a durable revocation service or permission to reuse it before future side effects."
+  },
+  "ci_boundary": "No pending general CI check is represented as completed or as qualification.",
+  "not_issued": {
+    "controller_qualification": true,
+    "profile_acceptance": true,
+    "gate_authorization": true,
+    "gate_result": true,
+    "entry": true
+  },
+  "observations": [
+    {
+      "endpoint": "/repos/tdoljyj/cross-memory-system/contents/artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/OwnerDelegation_20260908.json?ref=4f722ea9d78488b749c15d27fe9145e9d9f9d2c2",
+      "raw_response_sha256": "fddc033bfd8beee031b77c2d8989088dff4463ed97fa5984ab3776f71c24094e",
+      "observed_at": "2026-09-08T09:33:32.565Z"
+    },
+    {
+      "endpoint": "/repos/tdoljyj/cross-memory-system/contents/artifacts/clued-validation/phase2-entry-preparation-20260908/AuthorityUnblockProposal.md?ref=4f722ea9d78488b749c15d27fe9145e9d9f9d2c2",
+      "raw_response_sha256": "a70ee5d40682e0c20c183ce8970d12b3a2d7c03ea48ea348e83e8c12ef06ef8e",
+      "observed_at": "2026-09-08T09:33:32.655Z"
+    },
+    {
+      "endpoint": "/repos/tdoljyj/cross-memory-system/commits/4f722ea9d78488b749c15d27fe9145e9d9f9d2c2",
+      "raw_response_sha256": "ca9bce5b299fec267918cae3ae420698f3712828d751ea3d642ec172c297f4f7",
+      "observed_at": "2026-09-08T09:33:32.688Z"
+    },
+    {
+      "endpoint": "/repos/tdoljyj/cross-memory-system/pulls/20",
+      "raw_response_sha256": "115043409602646b587b66da92d98403ecb4502372b08ee76daa4000476cc64c",
+      "observed_at": "2026-09-08T09:33:32.833Z"
+    }
+  ]
+}
