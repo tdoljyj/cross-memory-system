@@ -1,0 +1,107 @@
+{
+  "state": "EXACT_HOST_SCOPE_DATA_PREPARATION",
+  "authority_effect": "NONE",
+  "files": [
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-evidence-blob/ArtifactReferencesCandidate.json",
+      "bytes": 8752,
+      "sha256": "2d836cb8929ae6d3a04ebd6ab7d0761aa3ece0f10fd25b3d090a76ad74c7b852"
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-evidence-blob/AssembledHostScopeCandidate.json",
+      "bytes": 38863,
+      "sha256": "0cdc2a54a71edfb21d60fcce488724b8cd5232b3ad711db996b85f7e82accbc6"
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-evidence-blob/AuthorityReferenceObservation.json",
+      "bytes": 1103,
+      "sha256": "a290275abc10fd3f58d290673120105583e5b23765ca4e149049579b41f5a61c"
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-evidence-blob/ControlBindingDefinition.json",
+      "bytes": 2310,
+      "sha256": "c652c114a7a8422f52d84e29ef249485d2a346e1bbfb76cc6154fbf3e4db946d"
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-evidence-blob/EvidenceSinkDefinition.json",
+      "bytes": 5378,
+      "sha256": "d75abdbb6d7481ba99ba51cc8638b8a2dbf8db51386100008b8209b052d11732"
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-evidence-blob/ExecutionScopeDefinition.json",
+      "bytes": 18546,
+      "sha256": "95da22160234d3e5b2b65451d97803efd6b8f3b67d8182ff7b2fee4dc5f20ebb"
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-evidence-blob/HistoricalComponentBindingsCandidate.json",
+      "bytes": 11919,
+      "sha256": "9a3a8b21d882b98158e16749420cfacf8b9c74a81d8a45fbaea3670d15575f03"
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-evidence-blob/HostRuntimeConfig.json",
+      "bytes": 5989,
+      "sha256": "751c417326450d8cd39b1dad3920af290a49dd9d069bfb9ebb854b0cb2a90066"
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-evidence-blob/HostScopeBindingsCandidate.json",
+      "bytes": 13885,
+      "sha256": "227d63816cd53bb592e0c0a3dea5709a9f2b299b245f30ed9aa38238447d579e"
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-evidence-blob/HostScopePreparation.json",
+      "bytes": 4364,
+      "sha256": "3218cd09ce02a379f626b91380912a13fb057d8b6d855903b39ffa26828c7715"
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-evidence-blob/InputDefinitionSuccessor.json",
+      "bytes": 3079,
+      "sha256": "e7496fc5770fb780b9087b7eedc9ecddded2f29acc0aa4ac423579fea7bbb440"
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-evidence-blob/RecoveryBoundaryDefinition.json",
+      "bytes": 896,
+      "sha256": "cc67aeb4a35c998bb103c62be52dd00c6507bccba4c374af4bee6d27b412263a"
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-evidence-blob/RuntimeAcceptedSubjectCandidate.json",
+      "bytes": 28974,
+      "sha256": "ad5974cfdc1158b13ad1969fc117166215a74ef1144041b8653427583c4703df"
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-evidence-blob/ScopedRiskManifest.json",
+      "bytes": 2887,
+      "sha256": "2bbf6803c29aca4febf950cb3d7a2986abc56d227f0b676fb019149e0457921c"
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-evidence-blob/StopPolicyDefinition.json",
+      "bytes": 971,
+      "sha256": "5a96306bae4af3d27694abc5533510301ae968a81b9995d8283ba3b4204e1dd5"
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-evidence-blob/build.mjs",
+      "bytes": 31122,
+      "sha256": "4453bceefd531ee42b929b8580467cf96f5872a705dbb0a17cffd21baffc4f5a"
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-evidence-blob/prepare-late600.mjs",
+      "bytes": 1849,
+      "sha256": "3dbdede3b91f1dc1bcfdcfa33a470f71ac0123b09188731c025390bb7836d307"
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-evidence-blob/prepare600.mjs",
+      "bytes": 13229,
+      "sha256": "323c391753517f7e573cb3d615247680051af97ed9916b856c124df694328fdd"
+    }
+  ],
+  "checks": [
+    "Unchanged child/Profile/resources/mounts/environment/STOP/recovery/test-target rules",
+    "New exact controller/Gate/suite and two control schemas; only original three unresolved signing inputs"
+  ],
+  "production_or_ga_actions": 0,
+  "publication_verified": false,
+  "predecessor": {
+    "sha256": "57ef68926e8092b912950d9e5dbdfc4a933deaceee612b2b56a61dd1a04b8a07",
+    "directory": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-08\\ia\\work\\kernel-phase2-repo\\scripts\\phase2-qualification\\RuntimeMaterialPreparation\\host-scope-definitions-evidence-blob-history-57ef6892"
+  },
+  "correction": "Metadata call only: existing zero-argument GitHubEvidence() constructor; enforcing source unchanged."
+}

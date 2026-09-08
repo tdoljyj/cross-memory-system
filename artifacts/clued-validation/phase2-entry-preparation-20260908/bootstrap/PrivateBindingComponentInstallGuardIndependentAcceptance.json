@@ -1,0 +1,23 @@
+{
+  "state": "ACCEPTED_EXACT_GUARDED_PRIVATE_BINDING_COMPONENT_INSTALL",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "reviewed_at": "2026-09-08T22:36:20.971Z",
+  "component_acceptance_sha256": "29853915b44709cd7c5753f09e40a3a2d4fb5927eda163ed43e05ae691780dd7",
+  "sql_sha256": "6e300f60853ebe871f1b5a5056495692ec4c895aaa98cb4674d5846372d1104e",
+  "sql_bytes": 1162358,
+  "helper_sha256": "512529d9da28ba114da3b98f42ffd04449a021197e7326ad5bb5a99bdd457119",
+  "actual_preimage_sha256": "bff5a5c0f52960485019b936dc255d9afc85164e21006868d9374867f02cf2d2",
+  "actual_preimage_observed_at": "2026-09-08 22:33:17.215959+00",
+  "canonical_definition_metadata_sha256": "27f3e076aaa62a46aecb93341f2c79dfa858c871b6f557b8a89e303d0682ddf6",
+  "independent_validation": {
+    "complete_preimage_matches_independent_restoration_except_top_clock_and_redundant_transition_text": true,
+    "complete_sql_independently_reconstructed": true,
+    "accepted_bd94_patch_exactly_embedded": true,
+    "postimage_only_three_function_bodies_and_one_private_getter": true,
+    "all_8_tables_status_root_receipts_history_counters_security_preserved": true
+  },
+  "execution_scope": "One atomic nonproduction migration with both complete guards and existing Owner cutoff; only the accepted private getter plus three readers. No event, binding row, Status, budget or GA is inserted/updated. Abort on any before or after mismatch; unknown result requires actual reconciliation.",
+  "remaining": "Independent actual full postimage readback after root executes. New runtime and forward-binding registration remain separate and unaccepted here.",
+  "new_action_authorized": false,
+  "old_qualification_extended": false
+}

@@ -1,0 +1,45 @@
+{
+  "state": "ACCEPTED_SAME_SCOPE_EVIDENCE_REFERENCE_AND_BINDING_SUCCESSOR_PREPARATION_BOUNDARY",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "reviewed_at": "2026-09-08T22:17:03.017Z",
+  "owner_delegation_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/e7f738ae3c247e41733872ab95387440205c736a",
+    "sha256": "e09ef634712ce1206600402552073bae91e7296f2b4e2d3f99855bd760c944bd"
+  },
+  "sources": [
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/AuthorityUnblockProposal.md",
+      "sha256": "2860a0884a2a33bfd57a03789f1d6eab02f7e0d4a8a3725f1d4b640737e0cc3d"
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/ControlRootGenerationBindingProposal.md",
+      "sha256": "f655e8a16f428bbccfca3687c28e31bc57aed0e7a9fd9ac0191648266afec533"
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/profile-runtime600/ProfileDefinition.json",
+      "sha256": "d1c060b85f0b842a397a478105ea57a208e62eb0a5a2d4c2cd8f93f63eae88f5"
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/profile-runtime600/FixedInputScope.json",
+      "sha256": "a79afda0e8b0089b731d68d1ceae36c44c48933c5c15c802892ada9b848bf85f"
+    }
+  ],
+  "prior_actual_size_finding_sha256": "67774accba873dadfeef6be8c32489541dbc86d4d9fcb9c8142274976ea85d11",
+  "reason": "Complete actual retained history produces a 683291-byte original-input artifact and a 321382-byte DEFLATE level9 envelope. The old 131072-byte decoder cannot consume it. Compression alone does not leave reliable room for the full nineteen-case index and escaped transition.",
+  "accepted_preparation": {
+    "evidence": "Preserve complete original UTF-8 bytes, SHA256 and the existing 1048576-byte original-input cap. Publish only through the existing trusted root, same private repository/auxiliary evidence branch, fixed original-inputs-<ga>/result.json, create-only and actual immutable commit/tree/blob readback. No publishing ability is added to the isolated child.",
+    "consumer": "A new explicitly bound decoder and terminal/actual entry must retrieve the complete immutable blob and verify exact hash/size/encoding/current-GA/test/fault reconstruction. SQL/index 131072-byte caps stay unchanged. Legacy DEFLATE bytes and old controller remain preserved. Per-verification reuse of already verified immutable bytes does not replace fresh authority reads.",
+    "binding": "Preserve the immutable original execution_binding row and FK/trigger. A separately reviewed exact one-time forward acceptance event may be appended in the existing execution_events, with a private effective-binding projection consumed consistently by read_execution, reserve_execution_budget and reserve_gate. Lock execution_current before obtaining the effective binding in both reservation functions. No public binding mutation API or new table is needed.",
+    "registration": "Actual exact source/Gate/Scope/qualification/runtime and Status signing precede fixed guarded registration. Require same Root/Owner/window, complete old-state and sequence match, no active or pending run, retained terminal receipts/history, unchanged charged totals and independent generations. Candidate placeholders are not accepted registrations.",
+    "profile": "The original Profile600 fixed child/parent, resources, lifetime and prohibitions are unchanged. Its complete executor is separately bound in accepted inputs/Gate/TestManifest; preserve Profile d1c060 while precisely replacing those affected source bindings. No new Profile version is required solely for this evidence representation.",
+    "authority": "The existing approved same-purpose forward-change scope permits preparation, independent acceptance and exact reissuance. This finding adds no Owner/issuer purpose, Root generation, storage authority, model action, production operation or child privilege."
+  },
+  "not_accepted_yet": [
+    "Concrete new source closure, getter/SQL implementation and its actual concurrency checks",
+    "Exact signed forward binding event and live registration",
+    "New runtime qualification acceptance or any new GA"
+  ],
+  "old_qualification_extended": false,
+  "new_action_authorized": false,
+  "budget_refund": false
+}

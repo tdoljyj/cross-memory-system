@@ -1,0 +1,85 @@
+{
+  "state": "PREPARED_ONLY_NOT_DEPLOYED",
+  "original_controller_sha256": "edf31377656e1a9a473d0095df72231c058266007e4fd4046e0a9b8c2d6a60d9",
+  "read_model": "existing immutable base row plus one independently accepted and actually signed fixed forward event in original execution_events",
+  "alter_sha256": "bd94bd2c40a1f3d7703316ec58296e2e07faeb00b1d5055c3ca64000db59d847",
+  "functions": [
+    {
+      "name": "read_execution",
+      "previous": {
+        "acl": "{postgres=X/postgres,service_role=X/postgres}",
+        "name": "read_execution",
+        "owner": "postgres",
+        "config": [
+          "search_path=\"\"",
+          "TimeZone=UTC"
+        ],
+        "sha256": "6322ba2c573991f6d355eb0dbe2e81478bc6012f4fd05355508f20e36038879e",
+        "arguments": "",
+        "prosrc_sha256": "215de1aa18bc3d83b59810771343695cd856f9037bb970c22b135fab1b562084",
+        "security_definer": true
+      },
+      "new_prosrc_sha256": "bc6cd2c65deabc43328f4789bc41741247399988e8a3d080a99588ca1f08ec9a"
+    },
+    {
+      "name": "reserve_execution_budget",
+      "previous": {
+        "acl": "{postgres=X/postgres,service_role=X/postgres}",
+        "name": "reserve_execution_budget",
+        "owner": "postgres",
+        "config": [
+          "search_path=\"\"",
+          "TimeZone=UTC"
+        ],
+        "sha256": "902d457f964257defb4baffec91dfc672b34dca745e90ded4ff4d8beaef3b76d",
+        "arguments": "p_raw text, p_sha text",
+        "prosrc_sha256": "1c515e21bcf910c7ae5aea842d2fe40055f87c97df4141f3aacc299eef68e29d",
+        "security_definer": true
+      },
+      "new_prosrc_sha256": "81d259feedf387a0d2c60a55fc6370d5a0860047a6d2f9da224fe16b4b6516b6"
+    },
+    {
+      "name": "reserve_gate",
+      "previous": {
+        "acl": "{postgres=X/postgres,service_role=X/postgres}",
+        "name": "reserve_gate",
+        "owner": "postgres",
+        "config": [
+          "search_path=\"\"",
+          "TimeZone=UTC"
+        ],
+        "sha256": "684a55eefba5350b368c5f068d0687a5e41f242e00587cc52422b43178ac5de1",
+        "arguments": "p_raw text, p_sha text",
+        "prosrc_sha256": "6cc430f83e978a38d7307fdc9abd29e9ea6b345812ba6fdb0c26e2292e85db3b",
+        "security_definer": true
+      },
+      "new_prosrc_sha256": "4c1801c3d4256518f4961bdd1839f9d7a02bb0e30511f97b3bdeca867ec965de"
+    }
+  ],
+  "new_getter": {
+    "name": "effective_execution_binding",
+    "public_api": false,
+    "grant_service_role": false,
+    "security_definer": true,
+    "search_path": "",
+    "timezone": "UTC"
+  },
+  "data_mutated_by_install": false,
+  "unchanged": [
+    "Root and root generation",
+    "original execution_binding row / immutable trigger / FK",
+    "B record_effect_intent",
+    "execution_transition",
+    "gate_attempts and receipts",
+    "all past execution_events",
+    "budgets and control generations",
+    "control_objects and their full raw"
+  ],
+  "registration_pending": [
+    "exact new closed controller/Gate/Scope/qualification/runtime signed sources",
+    "actual same-window latest terminal snapshot",
+    "fixed one-shot registration DO with full old image/seq/capacity/Owner/root/safety guards",
+    "new actually signed Status appended through existing function"
+  ],
+  "concurrency": "reserve functions now take original current-row lock BEFORE reading effective binding; waiters cannot consume a pre-lock old binding"
+}

@@ -1,0 +1,320 @@
+{
+  "state": "EXACT_ARCHIVED_IDEMPOTENCY_MARKERS_CLASSIFIED_NOT_CREDENTIALS",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "reviewed_scan_sha256": "9ea8de92583fc2a4174e0009673c9fa8966fee574955d780b356962bf9114e44",
+  "archive_map_sha256": "675c8202d6d9b529f409dceb3d5ef7c16c3ce3dffb5aa8fbf87732ec024073f6",
+  "verified_archive_source_files": 37,
+  "findings": 42,
+  "unique_marker_hashes": [
+    "65304645b9b08ee8623a86bc0025b0177a884e665f24ae04f81f32c779afa3e4",
+    "5587093a813e9182925c3bac9fdd0faadafdd1b8c62de799940d627747ba9da6",
+    "8a16c136d2fd934018c94fbc8c756507b5f436c03415b7ca4712787de9adda63",
+    "850d43964aefffb5122712026c7356ed4b1fd3ee72a0b934c082b5282add2434",
+    "f4e837202e74da9da72779e2fb015be7907bb7a0e6d1de71fce03e4f4d4932d1",
+    "6af6cdd2a191809a87eddc1fd8f8e891ce8ec1eb126c4a6631435d4c791abb29",
+    "8635e3eadb300aadd18ebc8cba9bab170971f14faa242fd79ab3f514a8add42e"
+  ],
+  "classification": "All 42 exact scanner values contain JSON idempotency_key values present in the independently observed original Root/execution/GA event history. Their role is immutable request deduplication and comparison, not authentication. Only those exact occurrences are classified.",
+  "method": "Programmatically matched original local-only unredacted scan to the redacted locations and compared each value to the independently read original event-key set. No marker values or unredacted report are included here; scanner fragment column positions are not claimed as direct original-file byte offsets.",
+  "independent_actual_history_sha256": "2289f45e1bc0ed2b31932b07f4263f7971f24edb1e6b8b8813ad1941b323f18f",
+  "locations": [
+    {
+      "path": "work/binding-component-installed-readback.json",
+      "line": 1,
+      "scanner_start_column": 8448,
+      "scanner_end_column": 8499,
+      "value_sha256": "65304645b9b08ee8623a86bc0025b0177a884e665f24ae04f81f32c779afa3e4"
+    },
+    {
+      "path": "work/binding-component-installed-readback.json",
+      "line": 1,
+      "scanner_start_column": 8799,
+      "scanner_end_column": 8850,
+      "value_sha256": "65304645b9b08ee8623a86bc0025b0177a884e665f24ae04f81f32c779afa3e4"
+    },
+    {
+      "path": "work/binding-component-installed-readback.json",
+      "line": 1,
+      "scanner_start_column": 17511,
+      "scanner_end_column": 17562,
+      "value_sha256": "65304645b9b08ee8623a86bc0025b0177a884e665f24ae04f81f32c779afa3e4"
+    },
+    {
+      "path": "work/binding-component-installed-readback.json",
+      "line": 1,
+      "scanner_start_column": 17862,
+      "scanner_end_column": 17913,
+      "value_sha256": "65304645b9b08ee8623a86bc0025b0177a884e665f24ae04f81f32c779afa3e4"
+    },
+    {
+      "path": "work/binding-component-installed-readback.json",
+      "line": 1,
+      "scanner_start_column": 19241,
+      "scanner_end_column": 19301,
+      "value_sha256": "5587093a813e9182925c3bac9fdd0faadafdd1b8c62de799940d627747ba9da6"
+    },
+    {
+      "path": "work/binding-component-installed-readback.json",
+      "line": 1,
+      "scanner_start_column": 120205,
+      "scanner_end_column": 120265,
+      "value_sha256": "8a16c136d2fd934018c94fbc8c756507b5f436c03415b7ca4712787de9adda63"
+    },
+    {
+      "path": "work/binding-component-installed-readback.json",
+      "line": 1,
+      "scanner_start_column": 120665,
+      "scanner_end_column": 120754,
+      "value_sha256": "850d43964aefffb5122712026c7356ed4b1fd3ee72a0b934c082b5282add2434"
+    },
+    {
+      "path": "work/binding-component-installed-readback.json",
+      "line": 1,
+      "scanner_start_column": 120891,
+      "scanner_end_column": 120980,
+      "value_sha256": "850d43964aefffb5122712026c7356ed4b1fd3ee72a0b934c082b5282add2434"
+    },
+    {
+      "path": "work/binding-component-preimage.json",
+      "line": 1,
+      "scanner_start_column": 8448,
+      "scanner_end_column": 8499,
+      "value_sha256": "65304645b9b08ee8623a86bc0025b0177a884e665f24ae04f81f32c779afa3e4"
+    },
+    {
+      "path": "work/binding-component-preimage.json",
+      "line": 1,
+      "scanner_start_column": 8799,
+      "scanner_end_column": 8850,
+      "value_sha256": "65304645b9b08ee8623a86bc0025b0177a884e665f24ae04f81f32c779afa3e4"
+    },
+    {
+      "path": "work/binding-component-preimage.json",
+      "line": 1,
+      "scanner_start_column": 17511,
+      "scanner_end_column": 17562,
+      "value_sha256": "65304645b9b08ee8623a86bc0025b0177a884e665f24ae04f81f32c779afa3e4"
+    },
+    {
+      "path": "work/binding-component-preimage.json",
+      "line": 1,
+      "scanner_start_column": 17862,
+      "scanner_end_column": 17913,
+      "value_sha256": "65304645b9b08ee8623a86bc0025b0177a884e665f24ae04f81f32c779afa3e4"
+    },
+    {
+      "path": "work/binding-component-preimage.json",
+      "line": 1,
+      "scanner_start_column": 19241,
+      "scanner_end_column": 19301,
+      "value_sha256": "5587093a813e9182925c3bac9fdd0faadafdd1b8c62de799940d627747ba9da6"
+    },
+    {
+      "path": "work/binding-component-preimage.json",
+      "line": 1,
+      "scanner_start_column": 120205,
+      "scanner_end_column": 120265,
+      "value_sha256": "8a16c136d2fd934018c94fbc8c756507b5f436c03415b7ca4712787de9adda63"
+    },
+    {
+      "path": "work/binding-component-preimage.json",
+      "line": 1,
+      "scanner_start_column": 120665,
+      "scanner_end_column": 120754,
+      "value_sha256": "850d43964aefffb5122712026c7356ed4b1fd3ee72a0b934c082b5282add2434"
+    },
+    {
+      "path": "work/binding-component-preimage.json",
+      "line": 1,
+      "scanner_start_column": 120891,
+      "scanner_end_column": 120980,
+      "value_sha256": "850d43964aefffb5122712026c7356ed4b1fd3ee72a0b934c082b5282add2434"
+    },
+    {
+      "path": "work/binding-component-preimage.json",
+      "line": 1,
+      "scanner_start_column": 27228,
+      "scanner_end_column": 27305,
+      "value_sha256": "f4e837202e74da9da72779e2fb015be7907bb7a0e6d1de71fce03e4f4d4932d1"
+    },
+    {
+      "path": "work/binding-component-preimage.json",
+      "line": 1,
+      "scanner_start_column": 27442,
+      "scanner_end_column": 27519,
+      "value_sha256": "f4e837202e74da9da72779e2fb015be7907bb7a0e6d1de71fce03e4f4d4932d1"
+    },
+    {
+      "path": "work/binding-component-installed-readback.json",
+      "line": 1,
+      "scanner_start_column": 27228,
+      "scanner_end_column": 27305,
+      "value_sha256": "f4e837202e74da9da72779e2fb015be7907bb7a0e6d1de71fce03e4f4d4932d1"
+    },
+    {
+      "path": "work/binding-component-installed-readback.json",
+      "line": 1,
+      "scanner_start_column": 27442,
+      "scanner_end_column": 27519,
+      "value_sha256": "f4e837202e74da9da72779e2fb015be7907bb7a0e6d1de71fce03e4f4d4932d1"
+    },
+    {
+      "path": "work/binding-component-installed-readback.json",
+      "line": 1,
+      "scanner_start_column": 14397,
+      "scanner_end_column": 14467,
+      "value_sha256": "6af6cdd2a191809a87eddc1fd8f8e891ce8ec1eb126c4a6631435d4c791abb29"
+    },
+    {
+      "path": "work/binding-component-preimage.json",
+      "line": 1,
+      "scanner_start_column": 14397,
+      "scanner_end_column": 14467,
+      "value_sha256": "6af6cdd2a191809a87eddc1fd8f8e891ce8ec1eb126c4a6631435d4c791abb29"
+    },
+    {
+      "path": "work/binding-component-installed-readback.json",
+      "line": 1,
+      "scanner_start_column": 5906,
+      "scanner_end_column": 5976,
+      "value_sha256": "6af6cdd2a191809a87eddc1fd8f8e891ce8ec1eb126c4a6631435d4c791abb29"
+    },
+    {
+      "path": "work/binding-component-installed-readback.json",
+      "line": 1,
+      "scanner_start_column": 20364,
+      "scanner_end_column": 20434,
+      "value_sha256": "8635e3eadb300aadd18ebc8cba9bab170971f14faa242fd79ab3f514a8add42e"
+    },
+    {
+      "path": "work/binding-component-preimage.json",
+      "line": 1,
+      "scanner_start_column": 5906,
+      "scanner_end_column": 5976,
+      "value_sha256": "6af6cdd2a191809a87eddc1fd8f8e891ce8ec1eb126c4a6631435d4c791abb29"
+    },
+    {
+      "path": "work/binding-component-preimage.json",
+      "line": 1,
+      "scanner_start_column": 20364,
+      "scanner_end_column": 20434,
+      "value_sha256": "8635e3eadb300aadd18ebc8cba9bab170971f14faa242fd79ab3f514a8add42e"
+    },
+    {
+      "path": "work/binding-component-installed-readback.json",
+      "line": 1,
+      "scanner_start_column": 1836,
+      "scanner_end_column": 1906,
+      "value_sha256": "8635e3eadb300aadd18ebc8cba9bab170971f14faa242fd79ab3f514a8add42e"
+    },
+    {
+      "path": "work/binding-component-preimage.json",
+      "line": 1,
+      "scanner_start_column": 1836,
+      "scanner_end_column": 1906,
+      "value_sha256": "8635e3eadb300aadd18ebc8cba9bab170971f14faa242fd79ab3f514a8add42e"
+    },
+    {
+      "path": "work/binding-component-install-preparation.json",
+      "line": 222,
+      "scanner_start_column": 15,
+      "scanner_end_column": 67,
+      "value_sha256": "65304645b9b08ee8623a86bc0025b0177a884e665f24ae04f81f32c779afa3e4"
+    },
+    {
+      "path": "work/binding-component-install-preparation.json",
+      "line": 230,
+      "scanner_start_column": 13,
+      "scanner_end_column": 65,
+      "value_sha256": "65304645b9b08ee8623a86bc0025b0177a884e665f24ae04f81f32c779afa3e4"
+    },
+    {
+      "path": "work/binding-component-install-preparation.json",
+      "line": 454,
+      "scanner_start_column": 17,
+      "scanner_end_column": 69,
+      "value_sha256": "65304645b9b08ee8623a86bc0025b0177a884e665f24ae04f81f32c779afa3e4"
+    },
+    {
+      "path": "work/binding-component-install-preparation.json",
+      "line": 462,
+      "scanner_start_column": 15,
+      "scanner_end_column": 67,
+      "value_sha256": "65304645b9b08ee8623a86bc0025b0177a884e665f24ae04f81f32c779afa3e4"
+    },
+    {
+      "path": "work/binding-component-install-preparation.json",
+      "line": 483,
+      "scanner_start_column": 13,
+      "scanner_end_column": 74,
+      "value_sha256": "5587093a813e9182925c3bac9fdd0faadafdd1b8c62de799940d627747ba9da6"
+    },
+    {
+      "path": "work/binding-component-install-preparation.json",
+      "line": 559,
+      "scanner_start_column": 13,
+      "scanner_end_column": 74,
+      "value_sha256": "8a16c136d2fd934018c94fbc8c756507b5f436c03415b7ca4712787de9adda63"
+    },
+    {
+      "path": "work/binding-component-install-preparation.json",
+      "line": 571,
+      "scanner_start_column": 15,
+      "scanner_end_column": 105,
+      "value_sha256": "850d43964aefffb5122712026c7356ed4b1fd3ee72a0b934c082b5282add2434"
+    },
+    {
+      "path": "work/binding-component-install-preparation.json",
+      "line": 577,
+      "scanner_start_column": 13,
+      "scanner_end_column": 103,
+      "value_sha256": "850d43964aefffb5122712026c7356ed4b1fd3ee72a0b934c082b5282add2434"
+    },
+    {
+      "path": "work/binding-component-install-preparation.json",
+      "line": 629,
+      "scanner_start_column": 15,
+      "scanner_end_column": 93,
+      "value_sha256": "f4e837202e74da9da72779e2fb015be7907bb7a0e6d1de71fce03e4f4d4932d1"
+    },
+    {
+      "path": "work/binding-component-install-preparation.json",
+      "line": 635,
+      "scanner_start_column": 13,
+      "scanner_end_column": 91,
+      "value_sha256": "f4e837202e74da9da72779e2fb015be7907bb7a0e6d1de71fce03e4f4d4932d1"
+    },
+    {
+      "path": "work/binding-component-install-preparation.json",
+      "line": 962,
+      "scanner_start_column": 15,
+      "scanner_end_column": 86,
+      "value_sha256": "6af6cdd2a191809a87eddc1fd8f8e891ce8ec1eb126c4a6631435d4c791abb29"
+    },
+    {
+      "path": "work/binding-component-install-preparation.json",
+      "line": 1132,
+      "scanner_start_column": 13,
+      "scanner_end_column": 84,
+      "value_sha256": "6af6cdd2a191809a87eddc1fd8f8e891ce8ec1eb126c4a6631435d4c791abb29"
+    },
+    {
+      "path": "work/binding-component-install-preparation.json",
+      "line": 1432,
+      "scanner_start_column": 15,
+      "scanner_end_column": 86,
+      "value_sha256": "8635e3eadb300aadd18ebc8cba9bab170971f14faa242fd79ab3f514a8add42e"
+    },
+    {
+      "path": "work/binding-component-install-preparation.json",
+      "line": 1602,
+      "scanner_start_column": 13,
+      "scanner_end_column": 84,
+      "value_sha256": "8635e3eadb300aadd18ebc8cba9bab170971f14faa242fd79ab3f514a8add42e"
+    }
+  ],
+  "no_general_secret_absence_claim": true,
+  "global_ignore_added": false,
+  "archive_or_source_modified": false,
+  "authorization_effect": "No new authorization; classification supports the existing approved private-repository evidence publication."
+}

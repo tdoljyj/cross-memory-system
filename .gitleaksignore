@@ -230,3 +230,8 @@ d5e63a2dab088f63167b9b1085ae050d1a4731cc:scripts/phase2-qualification/recorded-i
 d5e63a2dab088f63167b9b1085ae050d1a4731cc:scripts/phase2-qualification/recorded-intent-nonpass-successor/build.mjs:generic-api-key:13
 d5e63a2dab088f63167b9b1085ae050d1a4731cc:scripts/phase2-qualification/recorded-intent-nonpass-successor/build.mjs:generic-api-key:37
 d5e63a2dab088f63167b9b1085ae050d1a4731cc:scripts/phase2-qualification/recorded-intent-nonpass-successor/not-started.mjs:generic-api-key:17
+
+# EX-22: One exact occurrence of the unchanged public Python image signing
+# fingerprint. Independently classified in PR32HostPublicFingerprintIndependentClassification.json.
+# No source modification or file/rule/value-wide suppression.
+61fc80d3f2b96752835e653e5ac4ad335a09b6d1:scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-evidence-blob/HostRuntimeConfig.json:generic-api-key:29

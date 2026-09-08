@@ -1,0 +1,21 @@
+{
+  "definition_state": "PREPARED_FOR_INDEPENDENT_SCOPE_ACCEPTANCE",
+  "authority_effect": "NONE",
+  "kind": "FIXED_NONPRODUCTION_STOP_POLICY",
+  "deadline_limit_seconds": 600,
+  "independent_guard_stop_reserve_seconds": 30,
+  "start_command_limit_seconds": 6,
+  "minimum_start_remaining_seconds": 36,
+  "target": "Exact created container ID for this attempt only",
+  "chain": [
+    "inspect exact ID",
+    "stop exact ID",
+    "wait exact ID",
+    "inspect same ID and require stopped/PID0"
+  ],
+  "parent_exit_behavior": "Independent guard reaches timed STOP without parent cleanup; immediate death detection is not claimed",
+  "unknown_result": "Preserve intent, raw evidence and capacity until exact safe reconciliation; never redispatch",
+  "budget_refund": false,
+  "source_path": "scripts/phase2-qualification/preentry-parent/runtime-successor/host-runtime600/fixed_host.py",
+  "source_sha256": "cb444459f207037976200505593f96a2dd0b2e796438c62fc94206349f995e42"
+}

@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "state": "ACCEPTED_EXACT_HOST_SCOPE_AND_INPUT_DEFINITIONS_SUCCESSOR",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "reviewer_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/e7f738ae3c247e41733872ab95387440205c736a",
+    "sha256": "e09ef634712ce1206600402552073bae91e7296f2b4e2d3f99855bd760c944bd"
+  },
+  "preparation": {
+    "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-evidence-blob/PreparationEvidence.json",
+    "sha256": "0950ffd25971437310ef56c7d6f6038578554daff925d261a082b710a264fae7",
+    "bytes": 5419
+  },
+  "host": {
+    "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-evidence-blob/HostRuntimeConfig.json",
+    "sha256": "751c417326450d8cd39b1dad3920af290a49dd9d069bfb9ebb854b0cb2a90066",
+    "bytes": 5989
+  },
+  "scope": {
+    "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-evidence-blob/ExecutionScopeDefinition.json",
+    "sha256": "95da22160234d3e5b2b65451d97803efd6b8f3b67d8182ff7b2fee4dc5f20ebb",
+    "bytes": 18546
+  },
+  "binding": {
+    "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-evidence-blob/ControlBindingDefinition.json",
+    "sha256": "c652c114a7a8422f52d84e29ef249485d2a346e1bbfb76cc6154fbf3e4db946d",
+    "bytes": 2310
+  },
+  "source_acceptance": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/EvidenceBlobControllerSourcesIndependentAcceptance.json",
+    "sha256": "13222a54a56c7cf1a8dde6e6a7377db925c2dace381299dd66381024dd8b7758",
+    "bytes": 4625
+  },
+  "previous_scope_digest": "07cd9c900eb6132e2affe3b7e6b129aba659ff3a49c963e141e92e11b65e8d6f",
+  "checks": {
+    "exact_preparation_files": 18,
+    "recursive_local_references_checked": 90,
+    "constructor_correction_only_with_derived_refs": true,
+    "old_child_profile_resources_mounts_environment_and_test_write_rules_preserved": true
+  },
+  "accepted_scope": [
+    "Exact new 218-source controller, v4 Gate/suite, existing 600-second Profile and original two schemas.",
+    "PENDING preserves full original verifier inputs locally; after STOPPED the trusted root publishes the bounded complete input only to the fixed existing private auxiliary Evidence branch/path. The new terminal actually resolves immutable bytes and independently reconstructs each original fault.",
+    "Root Evidence transmission and the fixed two-message byte pipe are explicitly bounded transport; they do not grant child publication, new tested effects, or expand actual test-write target classes.",
+    "Same Root, Owner purpose, three generations, budgets and original historical Evidence applicability; fixed forward binding requires separately accepted actual signed source metadata and complete guarded live registration."
+  ],
+  "limitations": [
+    "Prospective blob references are byte identities, not assertions of Owner signed publication.",
+    "This does not accept a final runtime instance, register binding/Status, issue GA/GRR, or assert any of the nineteen case outcomes."
+  ],
+  "authority_effect": "NO_NEW_AUTHORITY",
+  "ga_issued": false,
+  "pqual_pass_issued": false
+}

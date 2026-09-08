@@ -1,0 +1,89 @@
+{
+  "state": "ACCEPTED_EXACT_PRIVATE_FORWARD_BINDING_SQL_COMPONENT",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "reviewed_at": "2026-09-08T22:21:41.075Z",
+  "scope_finding_sha256": "2932dd9e0757b40918248b431f685e55e471af6b48cf9b992490944fab84a41e",
+  "component_evidence_sha256": "27d41e4ac6ef7753e4b02bb62d970c9c9902484cfc23f9564b65b763bf000084",
+  "alter_sha256": "bd94bd2c40a1f3d7703316ec58296e2e07faeb00b1d5055c3ca64000db59d847",
+  "getter_sha256": "d6014427a3bcef8b58ce24fe0d4878361c5d890735d7051a23591128c0cbccdc",
+  "prior_live_observed_at": "2026-09-08 21:50:45.88834+00",
+  "affected_functions": [
+    {
+      "name": "read_execution",
+      "previous": {
+        "acl": "{postgres=X/postgres,service_role=X/postgres}",
+        "name": "read_execution",
+        "owner": "postgres",
+        "config": [
+          "search_path=\"\"",
+          "TimeZone=UTC"
+        ],
+        "sha256": "6322ba2c573991f6d355eb0dbe2e81478bc6012f4fd05355508f20e36038879e",
+        "arguments": "",
+        "prosrc_sha256": "215de1aa18bc3d83b59810771343695cd856f9037bb970c22b135fab1b562084",
+        "security_definer": true
+      },
+      "new_prosrc_sha256": "bc6cd2c65deabc43328f4789bc41741247399988e8a3d080a99588ca1f08ec9a"
+    },
+    {
+      "name": "reserve_execution_budget",
+      "previous": {
+        "acl": "{postgres=X/postgres,service_role=X/postgres}",
+        "name": "reserve_execution_budget",
+        "owner": "postgres",
+        "config": [
+          "search_path=\"\"",
+          "TimeZone=UTC"
+        ],
+        "sha256": "902d457f964257defb4baffec91dfc672b34dca745e90ded4ff4d8beaef3b76d",
+        "arguments": "p_raw text, p_sha text",
+        "prosrc_sha256": "1c515e21bcf910c7ae5aea842d2fe40055f87c97df4141f3aacc299eef68e29d",
+        "security_definer": true
+      },
+      "new_prosrc_sha256": "81d259feedf387a0d2c60a55fc6370d5a0860047a6d2f9da224fe16b4b6516b6"
+    },
+    {
+      "name": "reserve_gate",
+      "previous": {
+        "acl": "{postgres=X/postgres,service_role=X/postgres}",
+        "name": "reserve_gate",
+        "owner": "postgres",
+        "config": [
+          "search_path=\"\"",
+          "TimeZone=UTC"
+        ],
+        "sha256": "684a55eefba5350b368c5f068d0687a5e41f242e00587cc52422b43178ac5de1",
+        "arguments": "p_raw text, p_sha text",
+        "prosrc_sha256": "6cc430f83e978a38d7307fdc9abd29e9ea6b345812ba6fdb0c26e2292e85db3b",
+        "security_definer": true
+      },
+      "new_prosrc_sha256": "4c1801c3d4256518f4961bdd1839f9d7a02bb0e30511f97b3bdeca867ec965de"
+    }
+  ],
+  "new_function": "clued_control.effective_execution_binding()",
+  "independent_checks": {
+    "six_frozen_files_verified": true,
+    "three_exact_body_differences_recomputed_from_actual_predecessor": true,
+    "actual_pg_raw_sha256": "5da6912a70e715ef409cd813e329c122825f6ece4d1a51c3af60ff445e79d089",
+    "actual_lock_wait_and_postlock_old_binding_refusal_verified": true,
+    "base_projection_and_once_only_charge_observations_verified": true,
+    "old_tests_rerun": false
+  },
+  "accepted_behavior": [
+    "Initial projection returns the immutable base row unchanged; exactly one fixed forward event selects the successor, and multiple such events reject.",
+    "Successor event preserves exact previous row, hashes, Root/Profile/Gate identity and original prior budget floors; replacement executor/scope/qualification/runtime/Gate digests are typed and bounded.",
+    "No direct service_role/anon/authenticated/public EXECUTE grant to the private getter; the existing definer readers keep their ACL/config and use it internally.",
+    "Both budget and GA reservation acquire the original current-row lock before reading the effective binding. All remaining original reservation behavior is byte-identical.",
+    "This installation creates one getter and replaces three readers, with no row insertion/update, public registration API, Root change, B change or execution_transition change."
+  ],
+  "required_installation_boundary": "A fixed actual-state transaction must guard the complete current Root, rows, terminal receipts, counters, Status and security metadata, then prove only the accepted function changes. No signed forward event or new GA is authorized by this component acceptance.",
+  "registration_pending": "Actual new source/Gate/Scope/qualification/runtime/Status signatures and a separately reviewed one-shot registration transaction binding exact previous/current state and sequence are still required. The generic source_acceptance_refs object is metadata carried by that exact reviewed transaction, not self-authenticating authority.",
+  "validation_limits": [
+    "Four local test counts include the parent test and three subtests. Temporary PG metadata and GA were explicitly synthetic and not signed qualifications.",
+    "The component fixture began with no attempts; it does not establish preservation of the two real receipts. Actual registration must guard their complete true prefix.",
+    "No remote SQL or new host effect was executed by this independent review."
+  ],
+  "new_action_authorized": false,
+  "old_qualification_extended": false,
+  "budget_refund": false
+}

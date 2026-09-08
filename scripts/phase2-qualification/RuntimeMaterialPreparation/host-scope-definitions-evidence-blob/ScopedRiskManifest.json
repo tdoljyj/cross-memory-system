@@ -1,0 +1,53 @@
+{
+  "definition_state": "PREPARED_FOR_INDEPENDENT_SCOPE_ACCEPTANCE",
+  "authority_effect": "NONE",
+  "kind": "PREENTRY_FIXED_SYNTHETIC_RUNTIME_RISK_MANIFEST",
+  "release_or_production_activation": false,
+  "subject_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/2b5a89d354aae493ed4cd3fd89ee270e81207dd3",
+    "sha256": "f359a4ecc92ffeec93f3fac36949cfe1669bf017dd7cf4760220a2c3f9e8da1f"
+  },
+  "risks": [
+    {
+      "finding": "Late or lost command response",
+      "control": "Durable committed Intent, once-only dispatch, UNKNOWN retains reservation and no automatic retry"
+    },
+    {
+      "finding": "Parent process exits while child remains",
+      "control": "Independently observed timed guard STOP with exact same-ID final inspect; no immediate crash detection claim"
+    },
+    {
+      "finding": "Stale authority or changed executable",
+      "control": "Live signed Root/current generations and exact source closure before admitted effect"
+    },
+    {
+      "finding": "Child escapes data/credential scope",
+      "control": "Fixed nonroot read-only Linux container, network none, exact two mounts, no child credentials, fixed synthetic fixture only"
+    },
+    {
+      "finding": "Receipt reports nonexistent coverage",
+      "control": "Actual raw per-test evidence and oracle resolution; complete coverage required, no PASS from planned test IDs"
+    },
+    {
+      "finding": "Complete control history exceeds the former inline evidence envelope or terminal input consumption exceeds freshness",
+      "control": "Complete original input remains capped at 1MiB and is preserved; exact immutable private Git blob readback replaces only inline storage. Fixed pipe input transmits original bytes with length/SHA and ordered notices. Actual 15-second currentness remains unchanged; failed transport retains UNKNOWN without dispatch or refund."
+    }
+  ],
+  "residuals": [
+    "Actual controller admission and signature/receipt wiring still require independent acceptance and execution",
+    "This manifest is an explicit proposed scoped encoding, not an existing production ReleaseRiskManifest instance"
+  ],
+  "recovery_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/43835f9dcc2e6b29236ba3fb5935cb7f182c4e11",
+    "sha256": "cc67aeb4a35c998bb103c62be52dd00c6507bccba4c374af4bee6d27b412263a"
+  },
+  "credential_scope_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/ba367aecfacebdb7cefcbafea979bade712f6fef",
+    "sha256": "905dbb512b2ed9605da90ee90ff78db190e1560204a2e8d84621ee621c9e834d"
+  },
+  "predecessor": {
+    "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-runtime600-final/ScopedRiskManifest.json",
+    "sha256": "2ef3b21b3e65084987308e5fa0b8286a67dfedb993cb96e977d1d0c52fe02b98",
+    "bytes": 2134
+  }
+}

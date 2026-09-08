@@ -1,0 +1,14 @@
+{
+  "state": "EXACT_PUBLIC_IMAGE_FINGERPRINT_FALSE_POSITIVE",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-evidence-blob/HostRuntimeConfig.json",
+  "line": 29,
+  "rule": "generic-api-key",
+  "source_sha256": "751c417326450d8cd39b1dad3920af290a49dd9d069bfb9ebb854b0cb2a90066",
+  "value_sha256": "6c3b7674b58d9f7266cd8b823ecf469b0a03d1bf2c8c24df1d0121d8e818f1fa",
+  "matched_original_image_binding_sha256": "f2f8d7f5d4e9d77ff4dd42ccbcafedeb1c5a7658f84f17252422fdecdb25d876",
+  "matched_prior_host_sha256": "967a842b4dcb2dc8fadd1a62ae05231ab313eda1b1d74f34025306568a706587",
+  "classification": "The exact unchanged public Python release-signing key fingerprint in official image Config.Env. It is neither a private key nor an account/API authentication secret.",
+  "permitted_exception": "Only the actual new commit:path:generic-api-key:29 fingerprint after its commit is known; do not ignore a whole file, path, rule or value globally.",
+  "frozen_source_changed": false
+}
