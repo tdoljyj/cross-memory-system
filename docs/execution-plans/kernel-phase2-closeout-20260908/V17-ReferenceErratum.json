@@ -1,0 +1,40 @@
+{
+  "schema_version": "clued.v17.reference-erratum/1",
+  "kind": "append_only_reference_correction",
+  "issued_by": "Codex@DESK-W-591",
+  "issued_on": "2026-09-08",
+  "authorization": "User explicitly requested completion of the remaining Kernel Phase 2 series, including the previously identified V17 evidence gap.",
+  "source_commit": "b647f1f512812c9ae543b9f4f562cb6dfaad7e36",
+  "accepted_candidate": "e4b3cd08face6c848cac941a6a00512a1ddf9ace",
+  "original_zip": {
+    "path": "artifacts/v17-audit-inputs-20260904/Clued-Kernel-Next-V17-Local-RC-20260903.zip",
+    "sha256": "66b71187e6e467a44aa1149bf5c757efa64bfb99620d37a43e0d5bf2678bb1b4",
+    "bytes": 848941
+  },
+  "original_receipt": {
+    "member": "06-v17/V17-INDEPENDENT-LOCAL-RC-REVIEW-v15.json",
+    "sha256": "24da22d93758b7a2a220eda0ca400ad62ba1190e8b53460805adced4f4b02a8a"
+  },
+  "correction": {
+    "json_pointer": "/acceptance_chain/final_rebind_index_sha256",
+    "original_value": "sha256:4a8ecad99eca37c1979bfa49b0ec000d8fce3a0d236d7b2f51e45786cca002c",
+    "corrected_value": "sha256:4a8ecad99eca37c1979bfa49b0ec000d8fce3a0d236d7b2f51e45786cca002c5",
+    "target_member": "04-v15/final-rebind-r2/V15-FINAL-CANDIDATE-REBIND-INDEX-v15.json",
+    "reason": "Original reference omits the final hexadecimal digit 5; the unchanged target is already bound by the archive SHA256SUMS.txt."
+  },
+  "human_projection": {
+    "member": "HANDOFF.md",
+    "affected_text": "The final rebind index SHA-256 repeats the same truncated digest.",
+    "interpretation": "Use the corrected value above when reading that reference together with this erratum."
+  },
+  "preservation": {
+    "original_zip_modified": false,
+    "original_receipt_modified": false,
+    "target_member_modified": false,
+    "historical_acceptance_reissued": false
+  },
+  "scope": "Reference integrity correction only. V00-V17 LOCAL_RC_ONLY implementation evidence is not completion of the subsequent Kernel Phase 2 information-flow and context-compiler scope.",
+  "production_effect": "NONE",
+  "business_authority_effect": "NONE",
+  "independent_review": "REQUIRED_BEFORE_CLOSEOUT"
+}
