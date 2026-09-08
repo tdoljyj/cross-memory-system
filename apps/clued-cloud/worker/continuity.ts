@@ -356,8 +356,14 @@ async function supabaseRequest(
         : typeof details?.error_description === "string"
           ? details.error_description
           : "Clued storage request failed.";
+    // Binding RPCs use the storage anon role after Clued authenticates the
+    // connection. PostgREST maps that role's insufficient_privilege to 401;
+    // forwarding it makes MCP clients restart OAuth for a resource denial.
+    // Preserve actual JWT/authentication errors as 401.
     const status =
-      response.status >= 500 &&
+      response.status === 401 && details?.code === "42501"
+        ? 403
+        : response.status >= 500 &&
       details?.code === "P0002" &&
       (message === "project_not_found" || message === "record_not_found")
         ? 404
