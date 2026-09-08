@@ -1,0 +1,37 @@
+{
+  "state": "FROZEN_ENGINEERING_SUCCESSOR_PENDING_INDEPENDENT_ACCEPTANCE",
+  "files": [
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/runtime600-successor/ChangeSet.json",
+      "sha256": "8d7e997688bae827035193e71eb8cd41de2bd6d78370f2529fd2752e5dd9e0c2",
+      "bytes": 1022
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/runtime600-successor/PriorInstalledFunctionSources.json",
+      "sha256": "361fe8daf193d1cd9053d882cad89bb44005f85da2c30d7bb67600c4f16a058c",
+      "bytes": 41268
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/runtime600-successor/README.md",
+      "sha256": "518b83fdbb60c9a1f9d1e1aaac9041c20f54e2aebda650ae997364e5160260bc",
+      "bytes": 1073
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/runtime600-successor/alter.candidate.sql",
+      "sha256": "0ab15bbbc2f80421cb619b50de8816095359d9ffab1e96e372960c063bc80c9b",
+      "bytes": 12444
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/runtime600-successor/build.mjs",
+      "sha256": "22ebcb5686be0203e8be1ddf9f087b6ce8b6f3c1ab8f165fdf5d366dbfa4089c",
+      "bytes": 4838
+    }
+  ],
+  "checks": {
+    "state": "Independent PostgreSQL check pending; no local deployment",
+    "changed_functions": 2
+  },
+  "authority_effect": "NONE",
+  "accepted": false,
+  "actual_qualification_run": false
+}

@@ -1,0 +1,56 @@
+{
+  "state": "PREPARED_NOT_ACTIVATED",
+  "predecessor_evidence_sha256": "7c3d760da1a6ea3e77f367d7a637b69b6f490cb676d8628b783b411a7872b96e",
+  "files": [
+    {
+      "path": "context.mjs",
+      "predecessor_sha256": "9997d34885b980c26075de442363dc412a0b9f1c9995a817ef08fb24770ed88c",
+      "successor_sha256": "fdb618b52c20661c98140798131020bb5ed446cacf83eb1930c4da13cee65343",
+      "changed": true
+    },
+    {
+      "path": "trusted-github.mjs",
+      "predecessor_sha256": "f1706b02de05810e9984736257afa14f76729c443316c7fdd0fed0ef3061798f",
+      "successor_sha256": "ea33a927db1cfe35a2c99dee7389e3b71a7080e5d11a483c4861fbc048c7c5a6",
+      "changed": true
+    },
+    {
+      "path": "grr.mjs",
+      "predecessor_sha256": "d5c8c273c378c61e339f5ef43e3afc3681ba112867cc340404fb12e9088aa74b",
+      "successor_sha256": "6d00c685747acadbdc0b38ddfd0907c398581cbae3116ecf6e60f29826a86e91",
+      "changed": true
+    },
+    {
+      "path": "cli.mjs",
+      "predecessor_sha256": "7674713a4afb73f9980b962a0c299f956273982d6dc59edb8a9bcd26d08f84e7",
+      "successor_sha256": "b537b3072939d3496db5309dada9319fe2794cbbdcada13b004d2be735253588",
+      "changed": true
+    },
+    {
+      "path": "tool-entry.functions.js",
+      "predecessor_sha256": "6b71c3f0809d08533de21662ba5e268190cfbc1614927b3bcf07f366e7e21156",
+      "successor_sha256": "3ae032b29a2e20c78d7897679255e373afeaad8861189623055496a5080c85e0",
+      "changed": true
+    },
+    {
+      "path": "status-manifest.candidate.schema.json",
+      "predecessor_sha256": "6ba12ed51b3fc0e457c13e83f47e1ad1aa6cc680d8f28c668f8c65d12742ecc2",
+      "successor_sha256": "6ba12ed51b3fc0e457c13e83f47e1ad1aa6cc680d8f28c668f8c65d12742ecc2",
+      "changed": false
+    },
+    {
+      "path": "gate-result-receipt.candidate.schema.json",
+      "predecessor_sha256": "2ea5fb9cc905ddbbf8769a438a1e1d5d9bdfe5d72363091033663112e9304c0b",
+      "successor_sha256": "2ea5fb9cc905ddbbf8769a438a1e1d5d9bdfe5d72363091033663112e9304c0b",
+      "changed": false
+    }
+  ],
+  "changes": [
+    "Exact independently accepted Profile180 definition plus its 180-second cap",
+    "Actual Profile signing payload is a separately accepted runtime input verified against actual Owner merge, not a future merge SHA embedded into code",
+    "Explicit preflight versus once-only committed-dispatch phases; same-process direct fixed Python bridge",
+    "Actual MCP JSON wrapper and unique paired line-boundary parser; old7c3 entry not accepted",
+    "PTY process watchdog180 and exact successor entry path; schemas and signing algorithms unchanged"
+  ],
+  "signature_or_qualification_created": false
+}

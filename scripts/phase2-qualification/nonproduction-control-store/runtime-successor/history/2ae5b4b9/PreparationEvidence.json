@@ -1,0 +1,17 @@
+{
+  "state": "CANDIDATE_FOR_INDEPENDENT_ENGINEERING_REVIEW",
+  "files": {
+    "client.mjs": "69edd25f2d0a0fdffb70dcc683ced28a9221803d147f1180d6150b0bd3889f78",
+    "README.md": "f16cbfedd43f126325c72a4ecaae37923b30a90b0e38e5ad739ea877bd26da39",
+    "store.test.mjs": "b51c80a5b001fcf6877ac5c2336b9a1b165dd7dd5c71b5cd0cfa7d6b8cccd333",
+    "install.candidate.sql": "71b6090a08d7ff1e6b13ddcaccb914534360a8e8be4bf11e7d0757ae4e36e6c8"
+  },
+  "tests": {
+    "passed": 10,
+    "duration_ms": 2854.2779,
+    "failed": 0
+  },
+  "remote_mutations": 0,
+  "qualification_result": null,
+  "authority_effect": "NONE"
+}

@@ -1,0 +1,21 @@
+{
+  "state": "PREPARED_EXACT_RUNTIME180_SUCCESSOR_NOT_ACTIVE",
+  "supersedes_evidence_sha256": "327f7d93b14e89a81d5b73353c35d971813f0c4c1d89db16184188cd35c0e59c",
+  "files": {
+    "README.md": "ad1fc169b47f81d8fcd434e3aeb82a50b6522f539303c06c800d52ddb2f825f4",
+    "supervisor.test.mjs": "c84e6d938560f685afe9a89e660a1909502ee1b4551e4eda03141a96e1397455",
+    "sql_effect.mjs": "f3c87164a45730576054286a5d099c1f77886e2b5721214032561cf6bc958457",
+    "supervisor.mjs": "4b769a0f34c67928c88e929ab88d6c3439ea265cf012f4fb96aa1fedead1c53e",
+    "event-key-fix.test.mjs": "6746fae60b997a0004dcb4c2b3a24d77f654a43b165ca521145a52445d6719f6",
+    "sql_effect.test.mjs": "46aed93096696d7c2cc76dea2e5b515210837753a24e2a3083142cbefca45494"
+  },
+  "tests": {
+    "new_passed": 2,
+    "failed": 0,
+    "duration_ms": 51.2543
+  },
+  "remote_mutations": 0,
+  "docker_calls": 0,
+  "authority_effect": "NONE",
+  "qualification_result": null
+}

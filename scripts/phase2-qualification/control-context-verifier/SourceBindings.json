@@ -1,0 +1,359 @@
+{
+  "state": "SOURCE_CATALOG_FOR_INDEPENDENT_CLOSED_RUNTIME_REVIEW_ONLY",
+  "original_source": {
+    "zip_path": "C:/Users/Windows/Documents/Codex/2026-09-07/ni-6/work/candidate-source/Clued_Phase2_三轨修订与补证_完整审查候选包_v0.2.7.1_Manifest修复_20260906.zip",
+    "member": "Clued_Phase2_三轨修订与补证_v0.2.7_20260906/sources/architecture_v024/sources/Clued_Kernel_Next_多厂商连续性与执行基础设施完整整合方案_v3.3.md",
+    "sha256": "f967fdf3e63028d29ed191160698726b5d707aaae63bd951f6ba2e8584936fec",
+    "bytes": 557313,
+    "lines": [
+      3435,
+      3437,
+      3439,
+      3441,
+      3878,
+      3879,
+      3880,
+      3885,
+      3891,
+      4308,
+      4309,
+      4310,
+      4320,
+      4346
+    ]
+  },
+  "files": [
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier/README.md",
+      "bytes": 10464,
+      "sha256": "51a78e1d7744784bb1352176b512e896217128da367f711df399aeefce96de21"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier/build-schemas.mjs",
+      "bytes": 3672,
+      "sha256": "3159d416ca16730458c9f3b4322d98ef3b712a2a19040d29eb6213a48410f224"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier/catalog.mjs",
+      "bytes": 3077,
+      "sha256": "ec88a1f625c4669c621cb44db6343aca6fb1b8b4568dc1c8e238445f29a1b52d"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier/cli.mjs",
+      "bytes": 1560,
+      "sha256": "7674713a4afb73f9980b962a0c299f956273982d6dc59edb8a9bcd26d08f84e7"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier/context.mjs",
+      "bytes": 17919,
+      "sha256": "9997d34885b980c26075de442363dc412a0b9f1c9995a817ef08fb24770ed88c"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier/gate-result-receipt.candidate.schema.json",
+      "bytes": 8302,
+      "sha256": "2ea5fb9cc905ddbbf8769a438a1e1d5d9bdfe5d72363091033663112e9304c0b"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier/grr.mjs",
+      "bytes": 4283,
+      "sha256": "d5c8c273c378c61e339f5ef43e3afc3681ba112867cc340404fb12e9088aa74b"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier/status-manifest.candidate.schema.json",
+      "bytes": 5562,
+      "sha256": "6ba12ed51b3fc0e457c13e83f47e1ad1aa6cc680d8f28c668f8c65d12742ecc2"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier/tool-entry.functions.js",
+      "bytes": 3642,
+      "sha256": "6b71c3f0809d08533de21662ba5e268190cfbc1614927b3bcf07f366e7e21156"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier/trusted-github.mjs",
+      "bytes": 5688,
+      "sha256": "f1706b02de05810e9984736257afa14f76729c443316c7fdd0fed0ef3061798f"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier/verify.test.mjs",
+      "bytes": 4942,
+      "sha256": "cac2525b3a32f4a842d277509bf97e579692b026dcea5184c82b0aa80433e191"
+    }
+  ],
+  "external_sources": [
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/profile-successor/ProfileDefinition.json",
+      "bytes": 3313,
+      "sha256": "45a7d602297f95c0ffd939da63534a6069de17ec197404bd657e160503c209f4"
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/profile-successor/revocation-epoch-vector.candidate.schema.json",
+      "bytes": 9724,
+      "sha256": "f57cceb29853c67f8702c1560017c3be7b96626d6358299b5215add63d01e916"
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/profile-successor/gate-authorization.candidate.schema.json",
+      "bytes": 15448,
+      "sha256": "f7f7e2a011f3f81a005e46f9cf7683edeb010dc7812eadfb4473f6ad5368a1ce"
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/profile-successor/signing/ProfileSigningPayload.json",
+      "bytes": 11224,
+      "sha256": "d9d8a4c18def2985e4152e7835c91b1c5d84820d4b7af7e40dccefe56d7ca6bb"
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/protocol-successor/validate-successor.mjs",
+      "bytes": 4871,
+      "sha256": "e2844900272bcd9f2aba18aae256567e33d0c598f0a114d7ed01a6fb2fdf1ca5"
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/protocol-successor/control-trust-root-set.schema.json",
+      "bytes": 6122,
+      "sha256": "87f094fa079034aa886d6c568730370a3264e106529b4bfd79bc3369f30b79e5"
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/commitment-signing/signing.mjs",
+      "bytes": 6636,
+      "sha256": "d425ee50e82f8cc983b5dc5983d8ab7cd4c42b18215ce592d5fa5004c29c438b"
+    }
+  ],
+  "actual_loaded_commonjs_and_resolution_metadata": [
+    {
+      "path": "../../../../../../.codex/projects/codex-memory-system/apps/clued-cloud/node_modules/ajv/lib/ajv.js",
+      "bytes": 15837,
+      "sha256": "cc30899a3c8232e1183d6f4d26a54396213f68f7476c3492f783d08e25401023"
+    },
+    {
+      "path": "../../../../../../.codex/projects/codex-memory-system/apps/clued-cloud/node_modules/ajv/lib/cache.js",
+      "bytes": 409,
+      "sha256": "e46dcc11c6e844f644ca331bf7d5caeb3ad1357ca540215da9668f6c58c6aa89"
+    },
+    {
+      "path": "../../../../../../.codex/projects/codex-memory-system/apps/clued-cloud/node_modules/ajv/lib/compile/async.js",
+      "bytes": 2644,
+      "sha256": "4bfa8664a637f31818f9a88b5151ed7e8fd986bc0664b674654b610d5e4c80d2"
+    },
+    {
+      "path": "../../../../../../.codex/projects/codex-memory-system/apps/clued-cloud/node_modules/ajv/lib/compile/error_classes.js",
+      "bytes": 828,
+      "sha256": "dd1dec6c510cd07e796c6ba1b746cf1efc4eed57c79ef790417d50497ee9af02"
+    },
+    {
+      "path": "../../../../../../.codex/projects/codex-memory-system/apps/clued-cloud/node_modules/ajv/lib/compile/formats.js",
+      "bytes": 12102,
+      "sha256": "73e0bc9794682f969be639ba5fceaafd9c12221f61ce773bbceff6c67c737588"
+    },
+    {
+      "path": "../../../../../../.codex/projects/codex-memory-system/apps/clued-cloud/node_modules/ajv/lib/compile/index.js",
+      "bytes": 10807,
+      "sha256": "ee3290acb345cc37b1412c45d53f7d200a824eb35ec060279a25c6e703513bcc"
+    },
+    {
+      "path": "../../../../../../.codex/projects/codex-memory-system/apps/clued-cloud/node_modules/ajv/lib/compile/resolve.js",
+      "bytes": 7847,
+      "sha256": "61735e559ac4ff73d3b5a85d0f7e7d248bf53eaa47f9fd80cb950f59a9aca80c"
+    },
+    {
+      "path": "../../../../../../.codex/projects/codex-memory-system/apps/clued-cloud/node_modules/ajv/lib/compile/rules.js",
+      "bytes": 2021,
+      "sha256": "ee1d720ece5b85634762672652cb1daf4074ab3535da2cc8b8c002eb4dd536ba"
+    },
+    {
+      "path": "../../../../../../.codex/projects/codex-memory-system/apps/clued-cloud/node_modules/ajv/lib/compile/schema_obj.js",
+      "bytes": 133,
+      "sha256": "42e3892ff6d470c9fb601dc7bbde42c6909fcf00c0d86fdbbab0deaf9c37b598"
+    },
+    {
+      "path": "../../../../../../.codex/projects/codex-memory-system/apps/clued-cloud/node_modules/ajv/lib/compile/ucs2length.js",
+      "bytes": 558,
+      "sha256": "b60efae2495d93ce8db6eb79c690448038269e720d89b846bae2fc1f7ae764cc"
+    },
+    {
+      "path": "../../../../../../.codex/projects/codex-memory-system/apps/clued-cloud/node_modules/ajv/lib/compile/util.js",
+      "bytes": 6974,
+      "sha256": "329aa7f0b435a37096f1a1c4dc8f06f56110d68d69189ad5d4809de86422f651"
+    },
+    {
+      "path": "../../../../../../.codex/projects/codex-memory-system/apps/clued-cloud/node_modules/ajv/lib/data.js",
+      "bytes": 1048,
+      "sha256": "c8540b06ec80ba7ab9078d38c4818b82097a282159981f377fa283186cc64492"
+    },
+    {
+      "path": "../../../../../../.codex/projects/codex-memory-system/apps/clued-cloud/node_modules/ajv/lib/definition_schema.js",
+      "bytes": 872,
+      "sha256": "d050d4982e55cbf963425bf8a42ab1b9d365e2a53e1cc03208a6d2b30bdfccdf"
+    },
+    {
+      "path": "../../../../../../.codex/projects/codex-memory-system/apps/clued-cloud/node_modules/ajv/lib/dotjs/_limit.js",
+      "bytes": 7395,
+      "sha256": "1cf617f09077f153168137651a53abc2088d80591d5d577e276d1b7023523ba1"
+    },
+    {
+      "path": "../../../../../../.codex/projects/codex-memory-system/apps/clued-cloud/node_modules/ajv/lib/dotjs/_limitItems.js",
+      "bytes": 2704,
+      "sha256": "a20128ce95a4267bc026f72da633d8f81f23d5d6d664a5503529279b1fe98574"
+    },
+    {
+      "path": "../../../../../../.codex/projects/codex-memory-system/apps/clued-cloud/node_modules/ajv/lib/dotjs/_limitLength.js",
+      "bytes": 2825,
+      "sha256": "abc90262f31f548f6593855e82cbea1a0a5d7199a511c43e766357af39af93cc"
+    },
+    {
+      "path": "../../../../../../.codex/projects/codex-memory-system/apps/clued-cloud/node_modules/ajv/lib/dotjs/_limitProperties.js",
+      "bytes": 2742,
+      "sha256": "36c8b6512cc53fe730990c9cdc0d9da2fbbfb10b9a60d96ac3b35d75ef66503b"
+    },
+    {
+      "path": "../../../../../../.codex/projects/codex-memory-system/apps/clued-cloud/node_modules/ajv/lib/dotjs/allOf.js",
+      "bytes": 1349,
+      "sha256": "8f73c7d4242793a3b485dce5e1a46861ccb6af1935f3b7565cd7f1c71c79f70d"
+    },
+    {
+      "path": "../../../../../../.codex/projects/codex-memory-system/apps/clued-cloud/node_modules/ajv/lib/dotjs/anyOf.js",
+      "bytes": 2925,
+      "sha256": "c6fd31c9e66cea3f16017c5cfbe6c8eb25ea8248b8520026e05ff4c5802cbe99"
+    },
+    {
+      "path": "../../../../../../.codex/projects/codex-memory-system/apps/clued-cloud/node_modules/ajv/lib/dotjs/comment.js",
+      "bytes": 573,
+      "sha256": "7f96f44c08b52e9b4658d40fd65382dc89cf4e73116479c6211582147c4b0048"
+    },
+    {
+      "path": "../../../../../../.codex/projects/codex-memory-system/apps/clued-cloud/node_modules/ajv/lib/dotjs/const.js",
+      "bytes": 2113,
+      "sha256": "1bcb376424595c3b2be687118bc7a2ace072cc87f31363b28892c6b28c3b160e"
+    },
+    {
+      "path": "../../../../../../.codex/projects/codex-memory-system/apps/clued-cloud/node_modules/ajv/lib/dotjs/contains.js",
+      "bytes": 3370,
+      "sha256": "cb182b4d4e1eb540f1ab0e216165b654fd11692ad21405fc6d1a13dd14143213"
+    },
+    {
+      "path": "../../../../../../.codex/projects/codex-memory-system/apps/clued-cloud/node_modules/ajv/lib/dotjs/custom.js",
+      "bytes": 9770,
+      "sha256": "3e42bc285568af0fa8977ce2fd14b592ff8b8716921868a46e18d4dc4e21a81b"
+    },
+    {
+      "path": "../../../../../../.codex/projects/codex-memory-system/apps/clued-cloud/node_modules/ajv/lib/dotjs/dependencies.js",
+      "bytes": 7720,
+      "sha256": "6ec373cb168e6bfe6dcf5b4e492ac67114e4a176aaaae643d12f804e86306523"
+    },
+    {
+      "path": "../../../../../../.codex/projects/codex-memory-system/apps/clued-cloud/node_modules/ajv/lib/dotjs/enum.js",
+      "bytes": 2586,
+      "sha256": "7ed0f983a5d98c2bf8980b04cc49d80a4a4c543b99eb4c0296e6fce84075ec9c"
+    },
+    {
+      "path": "../../../../../../.codex/projects/codex-memory-system/apps/clued-cloud/node_modules/ajv/lib/dotjs/format.js",
+      "bytes": 5565,
+      "sha256": "652a1fb810cb4cb7b19907e58da3433336197f7c8b28db458fce75b473cd51cb"
+    },
+    {
+      "path": "../../../../../../.codex/projects/codex-memory-system/apps/clued-cloud/node_modules/ajv/lib/dotjs/if.js",
+      "bytes": 4159,
+      "sha256": "2479d874860ae5857974d20c0d5908532c435327a70bdd982f2a747ac129eecc"
+    },
+    {
+      "path": "../../../../../../.codex/projects/codex-memory-system/apps/clued-cloud/node_modules/ajv/lib/dotjs/index.js",
+      "bytes": 1100,
+      "sha256": "5370d6a29859f9eca7e989aabb4a377bc030af34a77960aff373478a30c26c1e"
+    },
+    {
+      "path": "../../../../../../.codex/projects/codex-memory-system/apps/clued-cloud/node_modules/ajv/lib/dotjs/items.js",
+      "bytes": 6214,
+      "sha256": "5abe003d9fe397ac60140c8bda4890ac0ba6059e8d29876699fefc7e052dbd13"
+    },
+    {
+      "path": "../../../../../../.codex/projects/codex-memory-system/apps/clued-cloud/node_modules/ajv/lib/dotjs/multipleOf.js",
+      "bytes": 2807,
+      "sha256": "a7331e809a6c3f968f2b8aa507ad6a6cca91eeff693e141620b8b9170a83bf4f"
+    },
+    {
+      "path": "../../../../../../.codex/projects/codex-memory-system/apps/clued-cloud/node_modules/ajv/lib/dotjs/not.js",
+      "bytes": 3460,
+      "sha256": "6685973fcbc5a8c4271ab1c59a11a80a599c8cc919e78c3f3c899b74adcee63b"
+    },
+    {
+      "path": "../../../../../../.codex/projects/codex-memory-system/apps/clued-cloud/node_modules/ajv/lib/dotjs/oneOf.js",
+      "bytes": 3188,
+      "sha256": "ef2d63612fdf85e16eb8af8fe9eed5151bddf394d821d6219c98aed822b23c6d"
+    },
+    {
+      "path": "../../../../../../.codex/projects/codex-memory-system/apps/clued-cloud/node_modules/ajv/lib/dotjs/pattern.js",
+      "bytes": 3025,
+      "sha256": "6bc3e0fb7bd34cba177e1e63909314fba393e7c6c92b494ad083a64406693611"
+    },
+    {
+      "path": "../../../../../../.codex/projects/codex-memory-system/apps/clued-cloud/node_modules/ajv/lib/dotjs/properties.js",
+      "bytes": 15121,
+      "sha256": "deddeaac1178b03ed0ef4581f5e538e57be39acb4cacd3e297627e2ed724b8f3"
+    },
+    {
+      "path": "../../../../../../.codex/projects/codex-memory-system/apps/clued-cloud/node_modules/ajv/lib/dotjs/propertyNames.js",
+      "bytes": 3607,
+      "sha256": "55ff82517e1bf3823a43612541c75e6df74fb404beb934d8512708595f68813a"
+    },
+    {
+      "path": "../../../../../../.codex/projects/codex-memory-system/apps/clued-cloud/node_modules/ajv/lib/dotjs/ref.js",
+      "bytes": 4711,
+      "sha256": "efdf5f24dd240a9aa6cd9cd757b82e7b7cb3d2d9c21730734516223fcb416021"
+    },
+    {
+      "path": "../../../../../../.codex/projects/codex-memory-system/apps/clued-cloud/node_modules/ajv/lib/dotjs/required.js",
+      "bytes": 12395,
+      "sha256": "71411bc4c49c0a9bf1ee7e86758b400955015346801cbe3cec1d2e2ee0db94e0"
+    },
+    {
+      "path": "../../../../../../.codex/projects/codex-memory-system/apps/clued-cloud/node_modules/ajv/lib/dotjs/uniqueItems.js",
+      "bytes": 3694,
+      "sha256": "5c5a4de99d43a2afc530ef356f97d9d64420dad276c7c2302763a122df4a48bd"
+    },
+    {
+      "path": "../../../../../../.codex/projects/codex-memory-system/apps/clued-cloud/node_modules/ajv/lib/dotjs/validate.js",
+      "bytes": 20018,
+      "sha256": "f0f8768cf0d5707a35b1524259483d146aa5f8ab55c8f0e43b06dc96e218576d"
+    },
+    {
+      "path": "../../../../../../.codex/projects/codex-memory-system/apps/clued-cloud/node_modules/ajv/lib/keyword.js",
+      "bytes": 3911,
+      "sha256": "28b5706754b43356efd830465bb2b4b0f68e94cc56cb068020c7a96b2a432e3d"
+    },
+    {
+      "path": "../../../../../../.codex/projects/codex-memory-system/apps/clued-cloud/node_modules/ajv/lib/refs/json-schema-draft-07.json",
+      "bytes": 4879,
+      "sha256": "7f5fd717194bd954bbb04c833f6116f727d899c7bc977c26abcb2607aa51d66a"
+    },
+    {
+      "path": "../../../../../../.codex/projects/codex-memory-system/apps/clued-cloud/node_modules/fast-deep-equal/index.js",
+      "bytes": 1177,
+      "sha256": "eb469e206280321a3878f2335ec98aa2104a155079d8ed83a23029098dccd215"
+    },
+    {
+      "path": "../../../../../../.codex/projects/codex-memory-system/apps/clued-cloud/node_modules/fast-json-stable-stringify/index.js",
+      "bytes": 1845,
+      "sha256": "8bf5495e16a363606a21f4903f0213f175dbadfab73eb98382befc7a88f1395b"
+    },
+    {
+      "path": "../../../../../../.codex/projects/codex-memory-system/apps/clued-cloud/node_modules/json-schema-traverse/index.js",
+      "bytes": 2373,
+      "sha256": "8109c042923d3033ec2a7304cb5edefc3d36bb0d03e329b892fa1b1ba5488e2c"
+    },
+    {
+      "path": "../../../../../../.codex/projects/codex-memory-system/apps/clued-cloud/node_modules/uri-js/dist/es5/uri.all.js",
+      "bytes": 57304,
+      "sha256": "a0fcc6110f1154fd197a8ce056e2008dbc7d1750f8dd3ba77c3910af928ed3a1"
+    }
+  ],
+  "executables": [
+    {
+      "path": "C:/Program Files/nodejs/node.exe",
+      "bytes": 92825416,
+      "sha256": "3602f2bb1a10f2cbab4c36886218a33c1ab3db87290e73b033c46c77147d0237"
+    },
+    {
+      "path": "C:/Program Files/GitHub CLI/gh.exe",
+      "bytes": 41775416,
+      "sha256": "e2efa10a5d2ce93cac9bc4b676932b62947c0967c01c8f2c3a9cb4437ad358d3"
+    }
+  ],
+  "boundary": "Observed loaded source inventory, not an independently qualified source closure. Host owner must bind and check this with its own supervisor/host before launch. No actual authorization or signature instance."
+}

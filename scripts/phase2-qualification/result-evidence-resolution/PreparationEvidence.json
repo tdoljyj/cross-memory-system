@@ -1,0 +1,17 @@
+{
+  "state": "PREPARED_ORIGINAL_EVIDENCE_INDEX_RESOLVER_NOT_ADMISSION",
+  "files": [
+    {"path":"scripts/phase2-qualification/result-evidence-resolution/resolve.mjs","sha256":"9d7df85eea925f22f35fe81d1faef61288be43c1b20e7214205f662ffc2784cb","bytes":8191},
+    {"path":"scripts/phase2-qualification/result-evidence-resolution/resolve.test.mjs","sha256":"13ce819d5814f2617183198707ffb2461798e6024fc061f959c00e175e695be6","bytes":6182},
+    {"path":"scripts/phase2-qualification/result-evidence-resolution/README.md","sha256":"ad23c55073523ea7dc1de8515f611411b5f9d932d349adf3e074e97b4e8b8cb1","bytes":2144}
+  ],
+  "checks": {"command":"node --test scripts/phase2-qualification/result-evidence-resolution/resolve.test.mjs","passed":8,"failed":0,"skipped":0,"duration_ms":60.3082,"scope":"Synthetic component fixtures only: full coverage and tampered/missing/cross-GA/oracle/duplicate/self-review rejection. No actual PQUAL run or independent oracle acceptance."},
+  "new_store":false,
+  "new_receipt_family":false,
+  "original_grr_schema_sha256":"2ea5fb9cc905ddbbf8769a438a1e1d5d9bdfe5d72363091033663112e9304c0b",
+  "independent_acceptance_sha256":"6cf5e105969e557de3f3c4eb252255f97baf5a47ab914d39aca2e9357ed3c7b5",
+  "calendar_successor_checks":{"independent_new_negative_cases":3,"independent_new_leap_day_positive":1,"all_passed":true,"prior_eight_checks_reused":true,"source_changes":"Strict calendar guard only; original dc9e source and original evidence retained under history/dc9e7cae"},
+  "actual_assessment_signature_verification_required":true,
+  "current_state_and_terminal_cas_required":true,
+  "authority_effect":"NONE"
+}

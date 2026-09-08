@@ -1,0 +1,16 @@
+{
+  "state": "CANDIDATE_FOR_INDEPENDENT_ENGINEERING_REVIEW",
+  "files": {
+    "supervisor.mjs": "5ef71608bb868e58c2f060e52ca75a793f2dc59d3d063b851d28e5a6a56401f9",
+    "supervisor.test.mjs": "c84e6d938560f685afe9a89e660a1909502ee1b4551e4eda03141a96e1397455",
+    "README.md": "898f66a3b7e37b8e3798873a4311fb4c9b73259894f5b1f90ee54e2eaf0fb711"
+  },
+  "tests": {
+    "passed": 6,
+    "duration_ms": 57.2258,
+    "failed": 0
+  },
+  "remote_mutations": 0,
+  "qualification_result": null,
+  "authority_effect": "NONE"
+}

@@ -1,0 +1,2495 @@
+{
+  "schema_role": "STATIC_PREENTRY_SUCCESSOR_CANDIDATE",
+  "tests": {
+    "PQUAL-01": {
+      "object_type": "TestManifest",
+      "test_id": "PQUAL-01",
+      "typed_uri": "urn:clued:test:PQUAL-01",
+      "definition_version": "fixed-synthetic-20260908.v3-runtime600",
+      "requirement_refs": [
+        {
+          "requirement_id": "APPROVAL-LEASE-01",
+          "typed_uri": "urn:clued:requirement:APPROVAL-LEASE-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:883e64b347f11022e1ef54c11a1c1d3ee711c3dbebdef15c7853deaf25564cb9",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "BIND-GRANULARITY-01",
+          "typed_uri": "urn:clued:requirement:BIND-GRANULARITY-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:447e276e5476674c4d93fe6ba34f923ae0290aaee9d36635ca18dd6f7528052e",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "REV-MATRIX-01",
+          "typed_uri": "urn:clued:requirement:REV-MATRIX-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:c00e6169ab9f03f5a4f306400a7b2e9b423bdccdea948bb2a2a1cdde87145140",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "RCT-APPEND-01",
+          "typed_uri": "urn:clued:requirement:RCT-APPEND-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:76e26a8bc747200c97803ccaa20e738b8e3bd46024bdd24623997e39e5702e1e",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "RECONCILE-TASK-01",
+          "typed_uri": "urn:clued:requirement:RECONCILE-TASK-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:9a34a65c463fe79da886cf2cb5c6903f24c1b9c59119b639e4d61a0ef96586d8",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        }
+      ],
+      "source_case": {
+        "path": "../slice-a-contracts/QualificationRegressionSpecifications.json",
+        "sha256": "8d35a391a728703a527cfef3137867bb80c70a0a78bd869051fe47406192dafe",
+        "bytes": 6623,
+        "source_location": "PRESERVED_LOCAL_CONTRACT_INPUT",
+        "json_pointer": "/scenarios/0"
+      },
+      "setup_or_fault": "R05–R10有效、单独Owner/GA、合格controller、隔离主体/预算/证据齐全，R14未签",
+      "oracle": {
+        "expected": "仅允许指定资格测试；产生测试Evidence，不产生ACTIVE/Entry/SliceA实施权",
+        "source_oracle_sha256": "2d11889c220be1d8232ed48d151c59050b943682b4225f24b039a09c1ef4bd6b",
+        "evaluation": "Use actual observed effects/refusals and independent review; matching fixture strings or source text is not behavioral evidence."
+      },
+      "executor_artifact_ref": {
+        "path": "scripts/phase2-qualification/control-context-verifier-runtime600/ControllerSourceManifest.candidate.json",
+        "sha256": "5f640f67e3df7ec0b50453b9955fc4d964a962f05e515dd72c37ed39ab9c0b14",
+        "source_ref": {
+          "path": "scripts/phase2-qualification/control-context-verifier-runtime600/ControllerSourceManifest.candidate.json",
+          "sha256": "5f640f67e3df7ec0b50453b9955fc4d964a962f05e515dd72c37ed39ab9c0b14",
+          "bytes": 43898
+        },
+        "complete_controller_source_set": true,
+        "qualification_claimed": false
+      },
+      "fixture_artifact_ref": {
+        "path": "scripts/phase2-qualification/qualification-runtime/fixed_skill_fixture.py",
+        "sha256": "98c4d0165144a4ebfbd4889a98da65a8c6d3a71fbf082af393c15b9d00a3c18a",
+        "bytes": 5084,
+        "source_location": "REPOSITORY_FILE"
+      },
+      "subject_input_ref": {
+        "source_ref": {
+          "path": "scripts/phase2-qualification/preentry-parent/profile-runtime600/signing/ProfileSigningPayload.json",
+          "sha256": "8528d857f6cf20f7330e47e39bf05aa16eeccb4ebe5406c61ee0c84ffb692ece",
+          "bytes": 11284
+        },
+        "json_pointer": "/fixed_input_ref"
+      },
+      "data_classification": "FIXED_SYNTHETIC_ONLY",
+      "evidence_required": [
+        "exact case/fixture/executor/Skill/input digest index",
+        "actual pre-action admission/refusal observations",
+        "actual effects and independently verified STOP when child ran",
+        "raw immutable Evidence digests and independent oracle assessment"
+      ],
+      "retention_and_access_policy": "Private authorized append-only Evidence sink; no credentials or Gold; retain failure history; cleanup only as actually authorized",
+      "coverage_boundary": "Manifest fixes the expected behavior, not its implementation. The fixed child is one primitive; missing real case execution/evidence remains BLOCKED."
+    },
+    "PQUAL-02": {
+      "object_type": "TestManifest",
+      "test_id": "PQUAL-02",
+      "typed_uri": "urn:clued:test:PQUAL-02",
+      "definition_version": "fixed-synthetic-20260908.v3-runtime600",
+      "requirement_refs": [
+        {
+          "requirement_id": "APPROVAL-LEASE-01",
+          "typed_uri": "urn:clued:requirement:APPROVAL-LEASE-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:883e64b347f11022e1ef54c11a1c1d3ee711c3dbebdef15c7853deaf25564cb9",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "BIND-GRANULARITY-01",
+          "typed_uri": "urn:clued:requirement:BIND-GRANULARITY-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:447e276e5476674c4d93fe6ba34f923ae0290aaee9d36635ca18dd6f7528052e",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "REV-MATRIX-01",
+          "typed_uri": "urn:clued:requirement:REV-MATRIX-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:c00e6169ab9f03f5a4f306400a7b2e9b423bdccdea948bb2a2a1cdde87145140",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "RCT-APPEND-01",
+          "typed_uri": "urn:clued:requirement:RCT-APPEND-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:76e26a8bc747200c97803ccaa20e738b8e3bd46024bdd24623997e39e5702e1e",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "RECONCILE-TASK-01",
+          "typed_uri": "urn:clued:requirement:RECONCILE-TASK-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:9a34a65c463fe79da886cf2cb5c6903f24c1b9c59119b639e4d61a0ef96586d8",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        }
+      ],
+      "source_case": {
+        "path": "../slice-a-contracts/QualificationRegressionSpecifications.json",
+        "sha256": "8d35a391a728703a527cfef3137867bb80c70a0a78bd869051fe47406192dafe",
+        "bytes": 6623,
+        "source_location": "PRESERVED_LOCAL_CONTRACT_INPUT",
+        "json_pointer": "/scenarios/1"
+      },
+      "setup_or_fault": "缺合法Profile接受或前Entry GA",
+      "oracle": {
+        "expected": "拒绝任何测试副作用，不以继续下一步或Entry缺失替授权",
+        "source_oracle_sha256": "fea65fb4ff345d430e6f7c2d0cbe8ed8fe22561249eec0279a397d17bf02a08d",
+        "evaluation": "Use actual observed effects/refusals and independent review; matching fixture strings or source text is not behavioral evidence."
+      },
+      "executor_artifact_ref": {
+        "path": "scripts/phase2-qualification/control-context-verifier-runtime600/ControllerSourceManifest.candidate.json",
+        "sha256": "5f640f67e3df7ec0b50453b9955fc4d964a962f05e515dd72c37ed39ab9c0b14",
+        "source_ref": {
+          "path": "scripts/phase2-qualification/control-context-verifier-runtime600/ControllerSourceManifest.candidate.json",
+          "sha256": "5f640f67e3df7ec0b50453b9955fc4d964a962f05e515dd72c37ed39ab9c0b14",
+          "bytes": 43898
+        },
+        "complete_controller_source_set": true,
+        "qualification_claimed": false
+      },
+      "fixture_artifact_ref": {
+        "path": "scripts/phase2-qualification/qualification-runtime/fixed_skill_fixture.py",
+        "sha256": "98c4d0165144a4ebfbd4889a98da65a8c6d3a71fbf082af393c15b9d00a3c18a",
+        "bytes": 5084,
+        "source_location": "REPOSITORY_FILE"
+      },
+      "subject_input_ref": {
+        "source_ref": {
+          "path": "scripts/phase2-qualification/preentry-parent/profile-runtime600/signing/ProfileSigningPayload.json",
+          "sha256": "8528d857f6cf20f7330e47e39bf05aa16eeccb4ebe5406c61ee0c84ffb692ece",
+          "bytes": 11284
+        },
+        "json_pointer": "/fixed_input_ref"
+      },
+      "data_classification": "FIXED_SYNTHETIC_ONLY",
+      "evidence_required": [
+        "exact case/fixture/executor/Skill/input digest index",
+        "actual pre-action admission/refusal observations",
+        "actual effects and independently verified STOP when child ran",
+        "raw immutable Evidence digests and independent oracle assessment"
+      ],
+      "retention_and_access_policy": "Private authorized append-only Evidence sink; no credentials or Gold; retain failure history; cleanup only as actually authorized",
+      "coverage_boundary": "Manifest fixes the expected behavior, not its implementation. The fixed child is one primitive; missing real case execution/evidence remains BLOCKED."
+    },
+    "PQUAL-03": {
+      "object_type": "TestManifest",
+      "test_id": "PQUAL-03",
+      "typed_uri": "urn:clued:test:PQUAL-03",
+      "definition_version": "fixed-synthetic-20260908.v3-runtime600",
+      "requirement_refs": [
+        {
+          "requirement_id": "APPROVAL-LEASE-01",
+          "typed_uri": "urn:clued:requirement:APPROVAL-LEASE-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:883e64b347f11022e1ef54c11a1c1d3ee711c3dbebdef15c7853deaf25564cb9",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "BIND-GRANULARITY-01",
+          "typed_uri": "urn:clued:requirement:BIND-GRANULARITY-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:447e276e5476674c4d93fe6ba34f923ae0290aaee9d36635ca18dd6f7528052e",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "REV-MATRIX-01",
+          "typed_uri": "urn:clued:requirement:REV-MATRIX-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:c00e6169ab9f03f5a4f306400a7b2e9b423bdccdea948bb2a2a1cdde87145140",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "RCT-APPEND-01",
+          "typed_uri": "urn:clued:requirement:RCT-APPEND-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:76e26a8bc747200c97803ccaa20e738b8e3bd46024bdd24623997e39e5702e1e",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "RECONCILE-TASK-01",
+          "typed_uri": "urn:clued:requirement:RECONCILE-TASK-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:9a34a65c463fe79da886cf2cb5c6903f24c1b9c59119b639e4d61a0ef96586d8",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        }
+      ],
+      "source_case": {
+        "path": "../slice-a-contracts/QualificationRegressionSpecifications.json",
+        "sha256": "8d35a391a728703a527cfef3137867bb80c70a0a78bd869051fe47406192dafe",
+        "bytes": 6623,
+        "source_location": "PRESERVED_LOCAL_CONTRACT_INPUT",
+        "json_pointer": "/scenarios/2"
+      },
+      "setup_or_fault": "缺R06冻结或R07迁移或R08语义不变或R09/R10",
+      "oracle": {
+        "expected": "拒绝，不能先测试/迁移后补签",
+        "source_oracle_sha256": "c9b6c7c6defbf722bdc8dcf0c76760ea40f271d30a68cf8f7f28c799fd7aff2c",
+        "evaluation": "Use actual observed effects/refusals and independent review; matching fixture strings or source text is not behavioral evidence."
+      },
+      "executor_artifact_ref": {
+        "path": "scripts/phase2-qualification/control-context-verifier-runtime600/ControllerSourceManifest.candidate.json",
+        "sha256": "5f640f67e3df7ec0b50453b9955fc4d964a962f05e515dd72c37ed39ab9c0b14",
+        "source_ref": {
+          "path": "scripts/phase2-qualification/control-context-verifier-runtime600/ControllerSourceManifest.candidate.json",
+          "sha256": "5f640f67e3df7ec0b50453b9955fc4d964a962f05e515dd72c37ed39ab9c0b14",
+          "bytes": 43898
+        },
+        "complete_controller_source_set": true,
+        "qualification_claimed": false
+      },
+      "fixture_artifact_ref": {
+        "path": "scripts/phase2-qualification/qualification-runtime/fixed_skill_fixture.py",
+        "sha256": "98c4d0165144a4ebfbd4889a98da65a8c6d3a71fbf082af393c15b9d00a3c18a",
+        "bytes": 5084,
+        "source_location": "REPOSITORY_FILE"
+      },
+      "subject_input_ref": {
+        "source_ref": {
+          "path": "scripts/phase2-qualification/preentry-parent/profile-runtime600/signing/ProfileSigningPayload.json",
+          "sha256": "8528d857f6cf20f7330e47e39bf05aa16eeccb4ebe5406c61ee0c84ffb692ece",
+          "bytes": 11284
+        },
+        "json_pointer": "/fixed_input_ref"
+      },
+      "data_classification": "FIXED_SYNTHETIC_ONLY",
+      "evidence_required": [
+        "exact case/fixture/executor/Skill/input digest index",
+        "actual pre-action admission/refusal observations",
+        "actual effects and independently verified STOP when child ran",
+        "raw immutable Evidence digests and independent oracle assessment"
+      ],
+      "retention_and_access_policy": "Private authorized append-only Evidence sink; no credentials or Gold; retain failure history; cleanup only as actually authorized",
+      "coverage_boundary": "Manifest fixes the expected behavior, not its implementation. The fixed child is one primitive; missing real case execution/evidence remains BLOCKED."
+    },
+    "PQUAL-04": {
+      "object_type": "TestManifest",
+      "test_id": "PQUAL-04",
+      "typed_uri": "urn:clued:test:PQUAL-04",
+      "definition_version": "fixed-synthetic-20260908.v3-runtime600",
+      "requirement_refs": [
+        {
+          "requirement_id": "APPROVAL-LEASE-01",
+          "typed_uri": "urn:clued:requirement:APPROVAL-LEASE-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:883e64b347f11022e1ef54c11a1c1d3ee711c3dbebdef15c7853deaf25564cb9",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "BIND-GRANULARITY-01",
+          "typed_uri": "urn:clued:requirement:BIND-GRANULARITY-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:447e276e5476674c4d93fe6ba34f923ae0290aaee9d36635ca18dd6f7528052e",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "REV-MATRIX-01",
+          "typed_uri": "urn:clued:requirement:REV-MATRIX-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:c00e6169ab9f03f5a4f306400a7b2e9b423bdccdea948bb2a2a1cdde87145140",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "RCT-APPEND-01",
+          "typed_uri": "urn:clued:requirement:RCT-APPEND-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:76e26a8bc747200c97803ccaa20e738b8e3bd46024bdd24623997e39e5702e1e",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "RECONCILE-TASK-01",
+          "typed_uri": "urn:clued:requirement:RECONCILE-TASK-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:9a34a65c463fe79da886cf2cb5c6903f24c1b9c59119b639e4d61a0ef96586d8",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        }
+      ],
+      "source_case": {
+        "path": "../slice-a-contracts/QualificationRegressionSpecifications.json",
+        "sha256": "8d35a391a728703a527cfef3137867bb80c70a0a78bd869051fe47406192dafe",
+        "bytes": 6623,
+        "source_location": "PRESERVED_LOCAL_CONTRACT_INPUT",
+        "json_pointer": "/scenarios/3"
+      },
+      "setup_or_fault": "未知Owner、范围外委托或无权issuer",
+      "oracle": {
+        "expected": "拒绝，不伪造真人意愿",
+        "source_oracle_sha256": "1714c01a7ed592e3b0d6d65deff98107f013e52854f2b55cf0d27d3d7616b080",
+        "evaluation": "Use actual observed effects/refusals and independent review; matching fixture strings or source text is not behavioral evidence."
+      },
+      "executor_artifact_ref": {
+        "path": "scripts/phase2-qualification/control-context-verifier-runtime600/ControllerSourceManifest.candidate.json",
+        "sha256": "5f640f67e3df7ec0b50453b9955fc4d964a962f05e515dd72c37ed39ab9c0b14",
+        "source_ref": {
+          "path": "scripts/phase2-qualification/control-context-verifier-runtime600/ControllerSourceManifest.candidate.json",
+          "sha256": "5f640f67e3df7ec0b50453b9955fc4d964a962f05e515dd72c37ed39ab9c0b14",
+          "bytes": 43898
+        },
+        "complete_controller_source_set": true,
+        "qualification_claimed": false
+      },
+      "fixture_artifact_ref": {
+        "path": "scripts/phase2-qualification/qualification-runtime/fixed_skill_fixture.py",
+        "sha256": "98c4d0165144a4ebfbd4889a98da65a8c6d3a71fbf082af393c15b9d00a3c18a",
+        "bytes": 5084,
+        "source_location": "REPOSITORY_FILE"
+      },
+      "subject_input_ref": {
+        "source_ref": {
+          "path": "scripts/phase2-qualification/preentry-parent/profile-runtime600/signing/ProfileSigningPayload.json",
+          "sha256": "8528d857f6cf20f7330e47e39bf05aa16eeccb4ebe5406c61ee0c84ffb692ece",
+          "bytes": 11284
+        },
+        "json_pointer": "/fixed_input_ref"
+      },
+      "data_classification": "FIXED_SYNTHETIC_ONLY",
+      "evidence_required": [
+        "exact case/fixture/executor/Skill/input digest index",
+        "actual pre-action admission/refusal observations",
+        "actual effects and independently verified STOP when child ran",
+        "raw immutable Evidence digests and independent oracle assessment"
+      ],
+      "retention_and_access_policy": "Private authorized append-only Evidence sink; no credentials or Gold; retain failure history; cleanup only as actually authorized",
+      "coverage_boundary": "Manifest fixes the expected behavior, not its implementation. The fixed child is one primitive; missing real case execution/evidence remains BLOCKED."
+    },
+    "PQUAL-05": {
+      "object_type": "TestManifest",
+      "test_id": "PQUAL-05",
+      "typed_uri": "urn:clued:test:PQUAL-05",
+      "definition_version": "fixed-synthetic-20260908.v3-runtime600",
+      "requirement_refs": [
+        {
+          "requirement_id": "APPROVAL-LEASE-01",
+          "typed_uri": "urn:clued:requirement:APPROVAL-LEASE-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:883e64b347f11022e1ef54c11a1c1d3ee711c3dbebdef15c7853deaf25564cb9",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "BIND-GRANULARITY-01",
+          "typed_uri": "urn:clued:requirement:BIND-GRANULARITY-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:447e276e5476674c4d93fe6ba34f923ae0290aaee9d36635ca18dd6f7528052e",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "REV-MATRIX-01",
+          "typed_uri": "urn:clued:requirement:REV-MATRIX-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:c00e6169ab9f03f5a4f306400a7b2e9b423bdccdea948bb2a2a1cdde87145140",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "RCT-APPEND-01",
+          "typed_uri": "urn:clued:requirement:RCT-APPEND-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:76e26a8bc747200c97803ccaa20e738b8e3bd46024bdd24623997e39e5702e1e",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "RECONCILE-TASK-01",
+          "typed_uri": "urn:clued:requirement:RECONCILE-TASK-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:9a34a65c463fe79da886cf2cb5c6903f24c1b9c59119b639e4d61a0ef96586d8",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        }
+      ],
+      "source_case": {
+        "path": "../slice-a-contracts/QualificationRegressionSpecifications.json",
+        "sha256": "8d35a391a728703a527cfef3137867bb80c70a0a78bd869051fe47406192dafe",
+        "bytes": 6623,
+        "source_location": "PRESERVED_LOCAL_CONTRACT_INPUT",
+        "json_pointer": "/scenarios/4"
+      },
+      "setup_or_fault": "controller资格依赖被测新Skill、R11/R13/R14",
+      "oracle": {
+        "expected": "拒绝；改用独立合法来源的controller资格",
+        "source_oracle_sha256": "6c14e3c95fbf95f4041d387dae561885b03739b25b8b95f3c232c6fc1877e03d",
+        "evaluation": "Use actual observed effects/refusals and independent review; matching fixture strings or source text is not behavioral evidence."
+      },
+      "executor_artifact_ref": {
+        "path": "scripts/phase2-qualification/control-context-verifier-runtime600/ControllerSourceManifest.candidate.json",
+        "sha256": "5f640f67e3df7ec0b50453b9955fc4d964a962f05e515dd72c37ed39ab9c0b14",
+        "source_ref": {
+          "path": "scripts/phase2-qualification/control-context-verifier-runtime600/ControllerSourceManifest.candidate.json",
+          "sha256": "5f640f67e3df7ec0b50453b9955fc4d964a962f05e515dd72c37ed39ab9c0b14",
+          "bytes": 43898
+        },
+        "complete_controller_source_set": true,
+        "qualification_claimed": false
+      },
+      "fixture_artifact_ref": {
+        "path": "scripts/phase2-qualification/qualification-runtime/fixed_skill_fixture.py",
+        "sha256": "98c4d0165144a4ebfbd4889a98da65a8c6d3a71fbf082af393c15b9d00a3c18a",
+        "bytes": 5084,
+        "source_location": "REPOSITORY_FILE"
+      },
+      "subject_input_ref": {
+        "source_ref": {
+          "path": "scripts/phase2-qualification/preentry-parent/profile-runtime600/signing/ProfileSigningPayload.json",
+          "sha256": "8528d857f6cf20f7330e47e39bf05aa16eeccb4ebe5406c61ee0c84ffb692ece",
+          "bytes": 11284
+        },
+        "json_pointer": "/fixed_input_ref"
+      },
+      "data_classification": "FIXED_SYNTHETIC_ONLY",
+      "evidence_required": [
+        "exact case/fixture/executor/Skill/input digest index",
+        "actual pre-action admission/refusal observations",
+        "actual effects and independently verified STOP when child ran",
+        "raw immutable Evidence digests and independent oracle assessment"
+      ],
+      "retention_and_access_policy": "Private authorized append-only Evidence sink; no credentials or Gold; retain failure history; cleanup only as actually authorized",
+      "coverage_boundary": "Manifest fixes the expected behavior, not its implementation. The fixed child is one primitive; missing real case execution/evidence remains BLOCKED."
+    },
+    "PQUAL-06": {
+      "object_type": "TestManifest",
+      "test_id": "PQUAL-06",
+      "typed_uri": "urn:clued:test:PQUAL-06",
+      "definition_version": "fixed-synthetic-20260908.v3-runtime600",
+      "requirement_refs": [
+        {
+          "requirement_id": "APPROVAL-LEASE-01",
+          "typed_uri": "urn:clued:requirement:APPROVAL-LEASE-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:883e64b347f11022e1ef54c11a1c1d3ee711c3dbebdef15c7853deaf25564cb9",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "BIND-GRANULARITY-01",
+          "typed_uri": "urn:clued:requirement:BIND-GRANULARITY-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:447e276e5476674c4d93fe6ba34f923ae0290aaee9d36635ca18dd6f7528052e",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "REV-MATRIX-01",
+          "typed_uri": "urn:clued:requirement:REV-MATRIX-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:c00e6169ab9f03f5a4f306400a7b2e9b423bdccdea948bb2a2a1cdde87145140",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "RCT-APPEND-01",
+          "typed_uri": "urn:clued:requirement:RCT-APPEND-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:76e26a8bc747200c97803ccaa20e738b8e3bd46024bdd24623997e39e5702e1e",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "RECONCILE-TASK-01",
+          "typed_uri": "urn:clued:requirement:RECONCILE-TASK-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:9a34a65c463fe79da886cf2cb5c6903f24c1b9c59119b639e4d61a0ef96586d8",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        }
+      ],
+      "source_case": {
+        "path": "../slice-a-contracts/QualificationRegressionSpecifications.json",
+        "sha256": "8d35a391a728703a527cfef3137867bb80c70a0a78bd869051fe47406192dafe",
+        "bytes": 6623,
+        "source_location": "PRESERVED_LOCAL_CONTRACT_INPUT",
+        "json_pointer": "/scenarios/5"
+      },
+      "setup_or_fault": "测试中写ACTIVE/default或声明无需测试先active",
+      "oracle": {
+        "expected": "拒绝；候选仅隔离加载，原激活/弃用流程不变",
+        "source_oracle_sha256": "e807fd7329741aa388b8114824ab4db36cbdbc75ff8c095b0c5497f37a496402",
+        "evaluation": "Use actual observed effects/refusals and independent review; matching fixture strings or source text is not behavioral evidence."
+      },
+      "executor_artifact_ref": {
+        "path": "scripts/phase2-qualification/control-context-verifier-runtime600/ControllerSourceManifest.candidate.json",
+        "sha256": "5f640f67e3df7ec0b50453b9955fc4d964a962f05e515dd72c37ed39ab9c0b14",
+        "source_ref": {
+          "path": "scripts/phase2-qualification/control-context-verifier-runtime600/ControllerSourceManifest.candidate.json",
+          "sha256": "5f640f67e3df7ec0b50453b9955fc4d964a962f05e515dd72c37ed39ab9c0b14",
+          "bytes": 43898
+        },
+        "complete_controller_source_set": true,
+        "qualification_claimed": false
+      },
+      "fixture_artifact_ref": {
+        "path": "scripts/phase2-qualification/qualification-runtime/fixed_skill_fixture.py",
+        "sha256": "98c4d0165144a4ebfbd4889a98da65a8c6d3a71fbf082af393c15b9d00a3c18a",
+        "bytes": 5084,
+        "source_location": "REPOSITORY_FILE"
+      },
+      "subject_input_ref": {
+        "source_ref": {
+          "path": "scripts/phase2-qualification/preentry-parent/profile-runtime600/signing/ProfileSigningPayload.json",
+          "sha256": "8528d857f6cf20f7330e47e39bf05aa16eeccb4ebe5406c61ee0c84ffb692ece",
+          "bytes": 11284
+        },
+        "json_pointer": "/fixed_input_ref"
+      },
+      "data_classification": "FIXED_SYNTHETIC_ONLY",
+      "evidence_required": [
+        "exact case/fixture/executor/Skill/input digest index",
+        "actual pre-action admission/refusal observations",
+        "actual effects and independently verified STOP when child ran",
+        "raw immutable Evidence digests and independent oracle assessment"
+      ],
+      "retention_and_access_policy": "Private authorized append-only Evidence sink; no credentials or Gold; retain failure history; cleanup only as actually authorized",
+      "coverage_boundary": "Manifest fixes the expected behavior, not its implementation. The fixed child is one primitive; missing real case execution/evidence remains BLOCKED."
+    },
+    "PQUAL-07": {
+      "object_type": "TestManifest",
+      "test_id": "PQUAL-07",
+      "typed_uri": "urn:clued:test:PQUAL-07",
+      "definition_version": "fixed-synthetic-20260908.v3-runtime600",
+      "requirement_refs": [
+        {
+          "requirement_id": "APPROVAL-LEASE-01",
+          "typed_uri": "urn:clued:requirement:APPROVAL-LEASE-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:883e64b347f11022e1ef54c11a1c1d3ee711c3dbebdef15c7853deaf25564cb9",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "BIND-GRANULARITY-01",
+          "typed_uri": "urn:clued:requirement:BIND-GRANULARITY-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:447e276e5476674c4d93fe6ba34f923ae0290aaee9d36635ca18dd6f7528052e",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "REV-MATRIX-01",
+          "typed_uri": "urn:clued:requirement:REV-MATRIX-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:c00e6169ab9f03f5a4f306400a7b2e9b423bdccdea948bb2a2a1cdde87145140",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "RCT-APPEND-01",
+          "typed_uri": "urn:clued:requirement:RCT-APPEND-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:76e26a8bc747200c97803ccaa20e738b8e3bd46024bdd24623997e39e5702e1e",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "RECONCILE-TASK-01",
+          "typed_uri": "urn:clued:requirement:RECONCILE-TASK-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:9a34a65c463fe79da886cf2cb5c6903f24c1b9c59119b639e4d61a0ef96586d8",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        }
+      ],
+      "source_case": {
+        "path": "../slice-a-contracts/QualificationRegressionSpecifications.json",
+        "sha256": "8d35a391a728703a527cfef3137867bb80c70a0a78bd869051fe47406192dafe",
+        "bytes": 6623,
+        "source_location": "PRESERVED_LOCAL_CONTRACT_INPUT",
+        "json_pointer": "/scenarios/6"
+      },
+      "setup_or_fault": "将真实Slice A实施标成qualification",
+      "oracle": {
+        "expected": "用途/阶段/操作scope不符而拒绝",
+        "source_oracle_sha256": "dc7c8bfc4f13afe1fe99b0e0cce0615e304299198a2e084b9737b947b70fd10d",
+        "evaluation": "Use actual observed effects/refusals and independent review; matching fixture strings or source text is not behavioral evidence."
+      },
+      "executor_artifact_ref": {
+        "path": "scripts/phase2-qualification/control-context-verifier-runtime600/ControllerSourceManifest.candidate.json",
+        "sha256": "5f640f67e3df7ec0b50453b9955fc4d964a962f05e515dd72c37ed39ab9c0b14",
+        "source_ref": {
+          "path": "scripts/phase2-qualification/control-context-verifier-runtime600/ControllerSourceManifest.candidate.json",
+          "sha256": "5f640f67e3df7ec0b50453b9955fc4d964a962f05e515dd72c37ed39ab9c0b14",
+          "bytes": 43898
+        },
+        "complete_controller_source_set": true,
+        "qualification_claimed": false
+      },
+      "fixture_artifact_ref": {
+        "path": "scripts/phase2-qualification/qualification-runtime/fixed_skill_fixture.py",
+        "sha256": "98c4d0165144a4ebfbd4889a98da65a8c6d3a71fbf082af393c15b9d00a3c18a",
+        "bytes": 5084,
+        "source_location": "REPOSITORY_FILE"
+      },
+      "subject_input_ref": {
+        "source_ref": {
+          "path": "scripts/phase2-qualification/preentry-parent/profile-runtime600/signing/ProfileSigningPayload.json",
+          "sha256": "8528d857f6cf20f7330e47e39bf05aa16eeccb4ebe5406c61ee0c84ffb692ece",
+          "bytes": 11284
+        },
+        "json_pointer": "/fixed_input_ref"
+      },
+      "data_classification": "FIXED_SYNTHETIC_ONLY",
+      "evidence_required": [
+        "exact case/fixture/executor/Skill/input digest index",
+        "actual pre-action admission/refusal observations",
+        "actual effects and independently verified STOP when child ran",
+        "raw immutable Evidence digests and independent oracle assessment"
+      ],
+      "retention_and_access_policy": "Private authorized append-only Evidence sink; no credentials or Gold; retain failure history; cleanup only as actually authorized",
+      "coverage_boundary": "Manifest fixes the expected behavior, not its implementation. The fixed child is one primitive; missing real case execution/evidence remains BLOCKED."
+    },
+    "PQUAL-08": {
+      "object_type": "TestManifest",
+      "test_id": "PQUAL-08",
+      "typed_uri": "urn:clued:test:PQUAL-08",
+      "definition_version": "fixed-synthetic-20260908.v3-runtime600",
+      "requirement_refs": [
+        {
+          "requirement_id": "APPROVAL-LEASE-01",
+          "typed_uri": "urn:clued:requirement:APPROVAL-LEASE-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:883e64b347f11022e1ef54c11a1c1d3ee711c3dbebdef15c7853deaf25564cb9",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "BIND-GRANULARITY-01",
+          "typed_uri": "urn:clued:requirement:BIND-GRANULARITY-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:447e276e5476674c4d93fe6ba34f923ae0290aaee9d36635ca18dd6f7528052e",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "REV-MATRIX-01",
+          "typed_uri": "urn:clued:requirement:REV-MATRIX-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:c00e6169ab9f03f5a4f306400a7b2e9b423bdccdea948bb2a2a1cdde87145140",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "RCT-APPEND-01",
+          "typed_uri": "urn:clued:requirement:RCT-APPEND-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:76e26a8bc747200c97803ccaa20e738b8e3bd46024bdd24623997e39e5702e1e",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "RECONCILE-TASK-01",
+          "typed_uri": "urn:clued:requirement:RECONCILE-TASK-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:9a34a65c463fe79da886cf2cb5c6903f24c1b9c59119b639e4d61a0ef96586d8",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        }
+      ],
+      "source_case": {
+        "path": "../slice-a-contracts/QualificationRegressionSpecifications.json",
+        "sha256": "8d35a391a728703a527cfef3137867bb80c70a0a78bd869051fe47406192dafe",
+        "bytes": 6623,
+        "source_location": "PRESERVED_LOCAL_CONTRACT_INPUT",
+        "json_pointer": "/scenarios/7"
+      },
+      "setup_or_fault": "开发credential注入测试Public User或host无法隔离",
+      "oracle": {
+        "expected": "拒绝；不能用脱敏代替隔离",
+        "source_oracle_sha256": "2511e42dff57e1880056792b1d4c1478edc03e2f472ff46bb6907fe39f46c24c",
+        "evaluation": "Use actual observed effects/refusals and independent review; matching fixture strings or source text is not behavioral evidence."
+      },
+      "executor_artifact_ref": {
+        "path": "scripts/phase2-qualification/control-context-verifier-runtime600/ControllerSourceManifest.candidate.json",
+        "sha256": "5f640f67e3df7ec0b50453b9955fc4d964a962f05e515dd72c37ed39ab9c0b14",
+        "source_ref": {
+          "path": "scripts/phase2-qualification/control-context-verifier-runtime600/ControllerSourceManifest.candidate.json",
+          "sha256": "5f640f67e3df7ec0b50453b9955fc4d964a962f05e515dd72c37ed39ab9c0b14",
+          "bytes": 43898
+        },
+        "complete_controller_source_set": true,
+        "qualification_claimed": false
+      },
+      "fixture_artifact_ref": {
+        "path": "scripts/phase2-qualification/qualification-runtime/fixed_skill_fixture.py",
+        "sha256": "98c4d0165144a4ebfbd4889a98da65a8c6d3a71fbf082af393c15b9d00a3c18a",
+        "bytes": 5084,
+        "source_location": "REPOSITORY_FILE"
+      },
+      "subject_input_ref": {
+        "source_ref": {
+          "path": "scripts/phase2-qualification/preentry-parent/profile-runtime600/signing/ProfileSigningPayload.json",
+          "sha256": "8528d857f6cf20f7330e47e39bf05aa16eeccb4ebe5406c61ee0c84ffb692ece",
+          "bytes": 11284
+        },
+        "json_pointer": "/fixed_input_ref"
+      },
+      "data_classification": "FIXED_SYNTHETIC_ONLY",
+      "evidence_required": [
+        "exact case/fixture/executor/Skill/input digest index",
+        "actual pre-action admission/refusal observations",
+        "actual effects and independently verified STOP when child ran",
+        "raw immutable Evidence digests and independent oracle assessment"
+      ],
+      "retention_and_access_policy": "Private authorized append-only Evidence sink; no credentials or Gold; retain failure history; cleanup only as actually authorized",
+      "coverage_boundary": "Manifest fixes the expected behavior, not its implementation. The fixed child is one primitive; missing real case execution/evidence remains BLOCKED."
+    },
+    "PQUAL-09": {
+      "object_type": "TestManifest",
+      "test_id": "PQUAL-09",
+      "typed_uri": "urn:clued:test:PQUAL-09",
+      "definition_version": "fixed-synthetic-20260908.v3-runtime600",
+      "requirement_refs": [
+        {
+          "requirement_id": "APPROVAL-LEASE-01",
+          "typed_uri": "urn:clued:requirement:APPROVAL-LEASE-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:883e64b347f11022e1ef54c11a1c1d3ee711c3dbebdef15c7853deaf25564cb9",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "BIND-GRANULARITY-01",
+          "typed_uri": "urn:clued:requirement:BIND-GRANULARITY-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:447e276e5476674c4d93fe6ba34f923ae0290aaee9d36635ca18dd6f7528052e",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "REV-MATRIX-01",
+          "typed_uri": "urn:clued:requirement:REV-MATRIX-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:c00e6169ab9f03f5a4f306400a7b2e9b423bdccdea948bb2a2a1cdde87145140",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "RCT-APPEND-01",
+          "typed_uri": "urn:clued:requirement:RCT-APPEND-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:76e26a8bc747200c97803ccaa20e738b8e3bd46024bdd24623997e39e5702e1e",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "RECONCILE-TASK-01",
+          "typed_uri": "urn:clued:requirement:RECONCILE-TASK-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:9a34a65c463fe79da886cf2cb5c6903f24c1b9c59119b639e4d61a0ef96586d8",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        }
+      ],
+      "source_case": {
+        "path": "../slice-a-contracts/QualificationRegressionSpecifications.json",
+        "sha256": "8d35a391a728703a527cfef3137867bb80c70a0a78bd869051fe47406192dafe",
+        "bytes": 6623,
+        "source_location": "PRESERVED_LOCAL_CONTRACT_INPUT",
+        "json_pointer": "/scenarios/8"
+      },
+      "setup_or_fault": "真实用户载荷/生产credential/公开扩散/积分钱款",
+      "oracle": {
+        "expected": "拒绝；测试账本不产生经济权益",
+        "source_oracle_sha256": "6b8cbaf306e4b2bbe0764f808b09c8ebd6c64f2ccc307b58333062edd53ea564",
+        "evaluation": "Use actual observed effects/refusals and independent review; matching fixture strings or source text is not behavioral evidence."
+      },
+      "executor_artifact_ref": {
+        "path": "scripts/phase2-qualification/control-context-verifier-runtime600/ControllerSourceManifest.candidate.json",
+        "sha256": "5f640f67e3df7ec0b50453b9955fc4d964a962f05e515dd72c37ed39ab9c0b14",
+        "source_ref": {
+          "path": "scripts/phase2-qualification/control-context-verifier-runtime600/ControllerSourceManifest.candidate.json",
+          "sha256": "5f640f67e3df7ec0b50453b9955fc4d964a962f05e515dd72c37ed39ab9c0b14",
+          "bytes": 43898
+        },
+        "complete_controller_source_set": true,
+        "qualification_claimed": false
+      },
+      "fixture_artifact_ref": {
+        "path": "scripts/phase2-qualification/qualification-runtime/fixed_skill_fixture.py",
+        "sha256": "98c4d0165144a4ebfbd4889a98da65a8c6d3a71fbf082af393c15b9d00a3c18a",
+        "bytes": 5084,
+        "source_location": "REPOSITORY_FILE"
+      },
+      "subject_input_ref": {
+        "source_ref": {
+          "path": "scripts/phase2-qualification/preentry-parent/profile-runtime600/signing/ProfileSigningPayload.json",
+          "sha256": "8528d857f6cf20f7330e47e39bf05aa16eeccb4ebe5406c61ee0c84ffb692ece",
+          "bytes": 11284
+        },
+        "json_pointer": "/fixed_input_ref"
+      },
+      "data_classification": "FIXED_SYNTHETIC_ONLY",
+      "evidence_required": [
+        "exact case/fixture/executor/Skill/input digest index",
+        "actual pre-action admission/refusal observations",
+        "actual effects and independently verified STOP when child ran",
+        "raw immutable Evidence digests and independent oracle assessment"
+      ],
+      "retention_and_access_policy": "Private authorized append-only Evidence sink; no credentials or Gold; retain failure history; cleanup only as actually authorized",
+      "coverage_boundary": "Manifest fixes the expected behavior, not its implementation. The fixed child is one primitive; missing real case execution/evidence remains BLOCKED."
+    },
+    "PQUAL-10": {
+      "object_type": "TestManifest",
+      "test_id": "PQUAL-10",
+      "typed_uri": "urn:clued:test:PQUAL-10",
+      "definition_version": "fixed-synthetic-20260908.v3-runtime600",
+      "requirement_refs": [
+        {
+          "requirement_id": "APPROVAL-LEASE-01",
+          "typed_uri": "urn:clued:requirement:APPROVAL-LEASE-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:883e64b347f11022e1ef54c11a1c1d3ee711c3dbebdef15c7853deaf25564cb9",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "BIND-GRANULARITY-01",
+          "typed_uri": "urn:clued:requirement:BIND-GRANULARITY-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:447e276e5476674c4d93fe6ba34f923ae0290aaee9d36635ca18dd6f7528052e",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "REV-MATRIX-01",
+          "typed_uri": "urn:clued:requirement:REV-MATRIX-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:c00e6169ab9f03f5a4f306400a7b2e9b423bdccdea948bb2a2a1cdde87145140",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "RCT-APPEND-01",
+          "typed_uri": "urn:clued:requirement:RCT-APPEND-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:76e26a8bc747200c97803ccaa20e738b8e3bd46024bdd24623997e39e5702e1e",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "RECONCILE-TASK-01",
+          "typed_uri": "urn:clued:requirement:RECONCILE-TASK-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:9a34a65c463fe79da886cf2cb5c6903f24c1b9c59119b639e4d61a0ef96586d8",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        }
+      ],
+      "source_case": {
+        "path": "../slice-a-contracts/QualificationRegressionSpecifications.json",
+        "sha256": "8d35a391a728703a527cfef3137867bb80c70a0a78bd869051fe47406192dafe",
+        "bytes": 6623,
+        "source_location": "PRESERVED_LOCAL_CONTRACT_INPUT",
+        "json_pointer": "/scenarios/9"
+      },
+      "setup_or_fault": "以免费调用或模拟成功替模型专门授权",
+      "oracle": {
+        "expected": "拒绝越权模型动作；缺授权部分保持NOT_EXECUTED，回放不算实时模型",
+        "source_oracle_sha256": "c7e4b188cec92104a4e27a6e1c18897c45c94030a468e47c06ac43198c3f8e29",
+        "evaluation": "Use actual observed effects/refusals and independent review; matching fixture strings or source text is not behavioral evidence."
+      },
+      "executor_artifact_ref": {
+        "path": "scripts/phase2-qualification/control-context-verifier-runtime600/ControllerSourceManifest.candidate.json",
+        "sha256": "5f640f67e3df7ec0b50453b9955fc4d964a962f05e515dd72c37ed39ab9c0b14",
+        "source_ref": {
+          "path": "scripts/phase2-qualification/control-context-verifier-runtime600/ControllerSourceManifest.candidate.json",
+          "sha256": "5f640f67e3df7ec0b50453b9955fc4d964a962f05e515dd72c37ed39ab9c0b14",
+          "bytes": 43898
+        },
+        "complete_controller_source_set": true,
+        "qualification_claimed": false
+      },
+      "fixture_artifact_ref": {
+        "path": "scripts/phase2-qualification/qualification-runtime/fixed_skill_fixture.py",
+        "sha256": "98c4d0165144a4ebfbd4889a98da65a8c6d3a71fbf082af393c15b9d00a3c18a",
+        "bytes": 5084,
+        "source_location": "REPOSITORY_FILE"
+      },
+      "subject_input_ref": {
+        "source_ref": {
+          "path": "scripts/phase2-qualification/preentry-parent/profile-runtime600/signing/ProfileSigningPayload.json",
+          "sha256": "8528d857f6cf20f7330e47e39bf05aa16eeccb4ebe5406c61ee0c84ffb692ece",
+          "bytes": 11284
+        },
+        "json_pointer": "/fixed_input_ref"
+      },
+      "data_classification": "FIXED_SYNTHETIC_ONLY",
+      "evidence_required": [
+        "exact case/fixture/executor/Skill/input digest index",
+        "actual pre-action admission/refusal observations",
+        "actual effects and independently verified STOP when child ran",
+        "raw immutable Evidence digests and independent oracle assessment"
+      ],
+      "retention_and_access_policy": "Private authorized append-only Evidence sink; no credentials or Gold; retain failure history; cleanup only as actually authorized",
+      "coverage_boundary": "Manifest fixes the expected behavior, not its implementation. The fixed child is one primitive; missing real case execution/evidence remains BLOCKED."
+    },
+    "PQUAL-11": {
+      "object_type": "TestManifest",
+      "test_id": "PQUAL-11",
+      "typed_uri": "urn:clued:test:PQUAL-11",
+      "definition_version": "fixed-synthetic-20260908.v3-runtime600",
+      "requirement_refs": [
+        {
+          "requirement_id": "APPROVAL-LEASE-01",
+          "typed_uri": "urn:clued:requirement:APPROVAL-LEASE-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:883e64b347f11022e1ef54c11a1c1d3ee711c3dbebdef15c7853deaf25564cb9",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "BIND-GRANULARITY-01",
+          "typed_uri": "urn:clued:requirement:BIND-GRANULARITY-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:447e276e5476674c4d93fe6ba34f923ae0290aaee9d36635ca18dd6f7528052e",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "REV-MATRIX-01",
+          "typed_uri": "urn:clued:requirement:REV-MATRIX-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:c00e6169ab9f03f5a4f306400a7b2e9b423bdccdea948bb2a2a1cdde87145140",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "RCT-APPEND-01",
+          "typed_uri": "urn:clued:requirement:RCT-APPEND-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:76e26a8bc747200c97803ccaa20e738b8e3bd46024bdd24623997e39e5702e1e",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "RECONCILE-TASK-01",
+          "typed_uri": "urn:clued:requirement:RECONCILE-TASK-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:9a34a65c463fe79da886cf2cb5c6903f24c1b9c59119b639e4d61a0ef96586d8",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        }
+      ],
+      "source_case": {
+        "path": "../slice-a-contracts/QualificationRegressionSpecifications.json",
+        "sha256": "8d35a391a728703a527cfef3137867bb80c70a0a78bd869051fe47406192dafe",
+        "bytes": 6623,
+        "source_location": "PRESERVED_LOCAL_CONTRACT_INPUT",
+        "json_pointer": "/scenarios/10"
+      },
+      "setup_or_fault": "无budget reservation、超额或stop channel失效",
+      "oracle": {
+        "expected": "副作用前拒绝并保留证据，不默认为USD5批准",
+        "source_oracle_sha256": "858e88f946260640a6eae6f79e5eb278d7b1536e5574095cfb95069acfc16c45",
+        "evaluation": "Use actual observed effects/refusals and independent review; matching fixture strings or source text is not behavioral evidence."
+      },
+      "executor_artifact_ref": {
+        "path": "scripts/phase2-qualification/control-context-verifier-runtime600/ControllerSourceManifest.candidate.json",
+        "sha256": "5f640f67e3df7ec0b50453b9955fc4d964a962f05e515dd72c37ed39ab9c0b14",
+        "source_ref": {
+          "path": "scripts/phase2-qualification/control-context-verifier-runtime600/ControllerSourceManifest.candidate.json",
+          "sha256": "5f640f67e3df7ec0b50453b9955fc4d964a962f05e515dd72c37ed39ab9c0b14",
+          "bytes": 43898
+        },
+        "complete_controller_source_set": true,
+        "qualification_claimed": false
+      },
+      "fixture_artifact_ref": {
+        "path": "scripts/phase2-qualification/qualification-runtime/fixed_skill_fixture.py",
+        "sha256": "98c4d0165144a4ebfbd4889a98da65a8c6d3a71fbf082af393c15b9d00a3c18a",
+        "bytes": 5084,
+        "source_location": "REPOSITORY_FILE"
+      },
+      "subject_input_ref": {
+        "source_ref": {
+          "path": "scripts/phase2-qualification/preentry-parent/profile-runtime600/signing/ProfileSigningPayload.json",
+          "sha256": "8528d857f6cf20f7330e47e39bf05aa16eeccb4ebe5406c61ee0c84ffb692ece",
+          "bytes": 11284
+        },
+        "json_pointer": "/fixed_input_ref"
+      },
+      "data_classification": "FIXED_SYNTHETIC_ONLY",
+      "evidence_required": [
+        "exact case/fixture/executor/Skill/input digest index",
+        "actual pre-action admission/refusal observations",
+        "actual effects and independently verified STOP when child ran",
+        "raw immutable Evidence digests and independent oracle assessment"
+      ],
+      "retention_and_access_policy": "Private authorized append-only Evidence sink; no credentials or Gold; retain failure history; cleanup only as actually authorized",
+      "coverage_boundary": "Manifest fixes the expected behavior, not its implementation. The fixed child is one primitive; missing real case execution/evidence remains BLOCKED."
+    },
+    "PQUAL-12": {
+      "object_type": "TestManifest",
+      "test_id": "PQUAL-12",
+      "typed_uri": "urn:clued:test:PQUAL-12",
+      "definition_version": "fixed-synthetic-20260908.v3-runtime600",
+      "requirement_refs": [
+        {
+          "requirement_id": "APPROVAL-LEASE-01",
+          "typed_uri": "urn:clued:requirement:APPROVAL-LEASE-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:883e64b347f11022e1ef54c11a1c1d3ee711c3dbebdef15c7853deaf25564cb9",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "BIND-GRANULARITY-01",
+          "typed_uri": "urn:clued:requirement:BIND-GRANULARITY-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:447e276e5476674c4d93fe6ba34f923ae0290aaee9d36635ca18dd6f7528052e",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "REV-MATRIX-01",
+          "typed_uri": "urn:clued:requirement:REV-MATRIX-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:c00e6169ab9f03f5a4f306400a7b2e9b423bdccdea948bb2a2a1cdde87145140",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "RCT-APPEND-01",
+          "typed_uri": "urn:clued:requirement:RCT-APPEND-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:76e26a8bc747200c97803ccaa20e738b8e3bd46024bdd24623997e39e5702e1e",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "RECONCILE-TASK-01",
+          "typed_uri": "urn:clued:requirement:RECONCILE-TASK-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:9a34a65c463fe79da886cf2cb5c6903f24c1b9c59119b639e4d61a0ef96586d8",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        }
+      ],
+      "source_case": {
+        "path": "../slice-a-contracts/QualificationRegressionSpecifications.json",
+        "sha256": "8d35a391a728703a527cfef3137867bb80c70a0a78bd869051fe47406192dafe",
+        "bytes": 6623,
+        "source_location": "PRESERVED_LOCAL_CONTRACT_INPUT",
+        "json_pointer": "/scenarios/11"
+      },
+      "setup_or_fault": "plan/fixtures/候选/host/target摘要变化",
+      "oracle": {
+        "expected": "旧grant失效；重做精确授权与适用资格核验",
+        "source_oracle_sha256": "4be7c2f0ec7d4d6a9ca731c418f7e5209edd98de7e0624a14512fb45071d53a6",
+        "evaluation": "Use actual observed effects/refusals and independent review; matching fixture strings or source text is not behavioral evidence."
+      },
+      "executor_artifact_ref": {
+        "path": "scripts/phase2-qualification/control-context-verifier-runtime600/ControllerSourceManifest.candidate.json",
+        "sha256": "5f640f67e3df7ec0b50453b9955fc4d964a962f05e515dd72c37ed39ab9c0b14",
+        "source_ref": {
+          "path": "scripts/phase2-qualification/control-context-verifier-runtime600/ControllerSourceManifest.candidate.json",
+          "sha256": "5f640f67e3df7ec0b50453b9955fc4d964a962f05e515dd72c37ed39ab9c0b14",
+          "bytes": 43898
+        },
+        "complete_controller_source_set": true,
+        "qualification_claimed": false
+      },
+      "fixture_artifact_ref": {
+        "path": "scripts/phase2-qualification/qualification-runtime/fixed_skill_fixture.py",
+        "sha256": "98c4d0165144a4ebfbd4889a98da65a8c6d3a71fbf082af393c15b9d00a3c18a",
+        "bytes": 5084,
+        "source_location": "REPOSITORY_FILE"
+      },
+      "subject_input_ref": {
+        "source_ref": {
+          "path": "scripts/phase2-qualification/preentry-parent/profile-runtime600/signing/ProfileSigningPayload.json",
+          "sha256": "8528d857f6cf20f7330e47e39bf05aa16eeccb4ebe5406c61ee0c84ffb692ece",
+          "bytes": 11284
+        },
+        "json_pointer": "/fixed_input_ref"
+      },
+      "data_classification": "FIXED_SYNTHETIC_ONLY",
+      "evidence_required": [
+        "exact case/fixture/executor/Skill/input digest index",
+        "actual pre-action admission/refusal observations",
+        "actual effects and independently verified STOP when child ran",
+        "raw immutable Evidence digests and independent oracle assessment"
+      ],
+      "retention_and_access_policy": "Private authorized append-only Evidence sink; no credentials or Gold; retain failure history; cleanup only as actually authorized",
+      "coverage_boundary": "Manifest fixes the expected behavior, not its implementation. The fixed child is one primitive; missing real case execution/evidence remains BLOCKED."
+    },
+    "PQUAL-13": {
+      "object_type": "TestManifest",
+      "test_id": "PQUAL-13",
+      "typed_uri": "urn:clued:test:PQUAL-13",
+      "definition_version": "fixed-synthetic-20260908.v3-runtime600",
+      "requirement_refs": [
+        {
+          "requirement_id": "APPROVAL-LEASE-01",
+          "typed_uri": "urn:clued:requirement:APPROVAL-LEASE-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:883e64b347f11022e1ef54c11a1c1d3ee711c3dbebdef15c7853deaf25564cb9",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "BIND-GRANULARITY-01",
+          "typed_uri": "urn:clued:requirement:BIND-GRANULARITY-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:447e276e5476674c4d93fe6ba34f923ae0290aaee9d36635ca18dd6f7528052e",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "REV-MATRIX-01",
+          "typed_uri": "urn:clued:requirement:REV-MATRIX-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:c00e6169ab9f03f5a4f306400a7b2e9b423bdccdea948bb2a2a1cdde87145140",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "RCT-APPEND-01",
+          "typed_uri": "urn:clued:requirement:RCT-APPEND-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:76e26a8bc747200c97803ccaa20e738b8e3bd46024bdd24623997e39e5702e1e",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "RECONCILE-TASK-01",
+          "typed_uri": "urn:clued:requirement:RECONCILE-TASK-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:9a34a65c463fe79da886cf2cb5c6903f24c1b9c59119b639e4d61a0ef96586d8",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        }
+      ],
+      "source_case": {
+        "path": "../slice-a-contracts/QualificationRegressionSpecifications.json",
+        "sha256": "8d35a391a728703a527cfef3137867bb80c70a0a78bd869051fe47406192dafe",
+        "bytes": 6623,
+        "source_location": "PRESERVED_LOCAL_CONTRACT_INPUT",
+        "json_pointer": "/scenarios/12"
+      },
+      "setup_or_fault": "下一副作用前撤销向量/独立generation变化",
+      "oracle": {
+        "expected": "拒绝；不自动用更强credential重试",
+        "source_oracle_sha256": "d178f09582e10d5187fd2a2219bad6e12f92465422acc4b79d9e587c412a4566",
+        "evaluation": "Use actual observed effects/refusals and independent review; matching fixture strings or source text is not behavioral evidence."
+      },
+      "executor_artifact_ref": {
+        "path": "scripts/phase2-qualification/control-context-verifier-runtime600/ControllerSourceManifest.candidate.json",
+        "sha256": "5f640f67e3df7ec0b50453b9955fc4d964a962f05e515dd72c37ed39ab9c0b14",
+        "source_ref": {
+          "path": "scripts/phase2-qualification/control-context-verifier-runtime600/ControllerSourceManifest.candidate.json",
+          "sha256": "5f640f67e3df7ec0b50453b9955fc4d964a962f05e515dd72c37ed39ab9c0b14",
+          "bytes": 43898
+        },
+        "complete_controller_source_set": true,
+        "qualification_claimed": false
+      },
+      "fixture_artifact_ref": {
+        "path": "scripts/phase2-qualification/qualification-runtime/fixed_skill_fixture.py",
+        "sha256": "98c4d0165144a4ebfbd4889a98da65a8c6d3a71fbf082af393c15b9d00a3c18a",
+        "bytes": 5084,
+        "source_location": "REPOSITORY_FILE"
+      },
+      "subject_input_ref": {
+        "source_ref": {
+          "path": "scripts/phase2-qualification/preentry-parent/profile-runtime600/signing/ProfileSigningPayload.json",
+          "sha256": "8528d857f6cf20f7330e47e39bf05aa16eeccb4ebe5406c61ee0c84ffb692ece",
+          "bytes": 11284
+        },
+        "json_pointer": "/fixed_input_ref"
+      },
+      "data_classification": "FIXED_SYNTHETIC_ONLY",
+      "evidence_required": [
+        "exact case/fixture/executor/Skill/input digest index",
+        "actual pre-action admission/refusal observations",
+        "actual effects and independently verified STOP when child ran",
+        "raw immutable Evidence digests and independent oracle assessment"
+      ],
+      "retention_and_access_policy": "Private authorized append-only Evidence sink; no credentials or Gold; retain failure history; cleanup only as actually authorized",
+      "coverage_boundary": "Manifest fixes the expected behavior, not its implementation. The fixed child is one primitive; missing real case execution/evidence remains BLOCKED."
+    },
+    "PQUAL-14": {
+      "object_type": "TestManifest",
+      "test_id": "PQUAL-14",
+      "typed_uri": "urn:clued:test:PQUAL-14",
+      "definition_version": "fixed-synthetic-20260908.v3-runtime600",
+      "requirement_refs": [
+        {
+          "requirement_id": "APPROVAL-LEASE-01",
+          "typed_uri": "urn:clued:requirement:APPROVAL-LEASE-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:883e64b347f11022e1ef54c11a1c1d3ee711c3dbebdef15c7853deaf25564cb9",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "BIND-GRANULARITY-01",
+          "typed_uri": "urn:clued:requirement:BIND-GRANULARITY-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:447e276e5476674c4d93fe6ba34f923ae0290aaee9d36635ca18dd6f7528052e",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "REV-MATRIX-01",
+          "typed_uri": "urn:clued:requirement:REV-MATRIX-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:c00e6169ab9f03f5a4f306400a7b2e9b423bdccdea948bb2a2a1cdde87145140",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "RCT-APPEND-01",
+          "typed_uri": "urn:clued:requirement:RCT-APPEND-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:76e26a8bc747200c97803ccaa20e738b8e3bd46024bdd24623997e39e5702e1e",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "RECONCILE-TASK-01",
+          "typed_uri": "urn:clued:requirement:RECONCILE-TASK-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:9a34a65c463fe79da886cf2cb5c6903f24c1b9c59119b639e4d61a0ef96586d8",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        }
+      ],
+      "source_case": {
+        "path": "../slice-a-contracts/QualificationRegressionSpecifications.json",
+        "sha256": "8d35a391a728703a527cfef3137867bb80c70a0a78bd869051fe47406192dafe",
+        "bytes": 6623,
+        "source_location": "PRESERVED_LOCAL_CONTRACT_INPUT",
+        "json_pointer": "/scenarios/13"
+      },
+      "setup_or_fault": "已过期/超600秒或续期扩大scope/预算",
+      "oracle": {
+        "expected": "拒绝；合法续期仍需原scope与现有效授权",
+        "source_oracle_sha256": "2eea6ac128e69a176c04b45d12d813e02921286f13f8577d5a20fa2e244821ad",
+        "evaluation": "Use actual observed effects/refusals and independent review; matching fixture strings or source text is not behavioral evidence."
+      },
+      "executor_artifact_ref": {
+        "path": "scripts/phase2-qualification/control-context-verifier-runtime600/ControllerSourceManifest.candidate.json",
+        "sha256": "5f640f67e3df7ec0b50453b9955fc4d964a962f05e515dd72c37ed39ab9c0b14",
+        "source_ref": {
+          "path": "scripts/phase2-qualification/control-context-verifier-runtime600/ControllerSourceManifest.candidate.json",
+          "sha256": "5f640f67e3df7ec0b50453b9955fc4d964a962f05e515dd72c37ed39ab9c0b14",
+          "bytes": 43898
+        },
+        "complete_controller_source_set": true,
+        "qualification_claimed": false
+      },
+      "fixture_artifact_ref": {
+        "path": "scripts/phase2-qualification/qualification-runtime/fixed_skill_fixture.py",
+        "sha256": "98c4d0165144a4ebfbd4889a98da65a8c6d3a71fbf082af393c15b9d00a3c18a",
+        "bytes": 5084,
+        "source_location": "REPOSITORY_FILE"
+      },
+      "subject_input_ref": {
+        "source_ref": {
+          "path": "scripts/phase2-qualification/preentry-parent/profile-runtime600/signing/ProfileSigningPayload.json",
+          "sha256": "8528d857f6cf20f7330e47e39bf05aa16eeccb4ebe5406c61ee0c84ffb692ece",
+          "bytes": 11284
+        },
+        "json_pointer": "/fixed_input_ref"
+      },
+      "data_classification": "FIXED_SYNTHETIC_ONLY",
+      "evidence_required": [
+        "exact case/fixture/executor/Skill/input digest index",
+        "actual pre-action admission/refusal observations",
+        "actual effects and independently verified STOP when child ran",
+        "raw immutable Evidence digests and independent oracle assessment"
+      ],
+      "retention_and_access_policy": "Private authorized append-only Evidence sink; no credentials or Gold; retain failure history; cleanup only as actually authorized",
+      "coverage_boundary": "Manifest fixes the expected behavior, not its implementation. The fixed child is one primitive; missing real case execution/evidence remains BLOCKED."
+    },
+    "PQUAL-15": {
+      "object_type": "TestManifest",
+      "test_id": "PQUAL-15",
+      "typed_uri": "urn:clued:test:PQUAL-15",
+      "definition_version": "fixed-synthetic-20260908.v3-runtime600",
+      "requirement_refs": [
+        {
+          "requirement_id": "APPROVAL-LEASE-01",
+          "typed_uri": "urn:clued:requirement:APPROVAL-LEASE-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:883e64b347f11022e1ef54c11a1c1d3ee711c3dbebdef15c7853deaf25564cb9",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "BIND-GRANULARITY-01",
+          "typed_uri": "urn:clued:requirement:BIND-GRANULARITY-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:447e276e5476674c4d93fe6ba34f923ae0290aaee9d36635ca18dd6f7528052e",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "REV-MATRIX-01",
+          "typed_uri": "urn:clued:requirement:REV-MATRIX-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:c00e6169ab9f03f5a4f306400a7b2e9b423bdccdea948bb2a2a1cdde87145140",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "RCT-APPEND-01",
+          "typed_uri": "urn:clued:requirement:RCT-APPEND-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:76e26a8bc747200c97803ccaa20e738b8e3bd46024bdd24623997e39e5702e1e",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "RECONCILE-TASK-01",
+          "typed_uri": "urn:clued:requirement:RECONCILE-TASK-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:9a34a65c463fe79da886cf2cb5c6903f24c1b9c59119b639e4d61a0ef96586d8",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        }
+      ],
+      "source_case": {
+        "path": "../slice-a-contracts/QualificationRegressionSpecifications.json",
+        "sha256": "8d35a391a728703a527cfef3137867bb80c70a0a78bd869051fe47406192dafe",
+        "bytes": 6623,
+        "source_location": "PRESERVED_LOCAL_CONTRACT_INPUT",
+        "json_pointer": "/scenarios/14"
+      },
+      "setup_or_fault": "纯续期增加fencing或过期便释放未停进程资源",
+      "oracle": {
+        "expected": "拒绝错误模型；重获才新fence，未收敛保留隔离占用",
+        "source_oracle_sha256": "83beb11bacf15024f7c5db8cd736fac17088b07e0c7db994ed7a35e402456282",
+        "evaluation": "Use actual observed effects/refusals and independent review; matching fixture strings or source text is not behavioral evidence."
+      },
+      "executor_artifact_ref": {
+        "path": "scripts/phase2-qualification/control-context-verifier-runtime600/ControllerSourceManifest.candidate.json",
+        "sha256": "5f640f67e3df7ec0b50453b9955fc4d964a962f05e515dd72c37ed39ab9c0b14",
+        "source_ref": {
+          "path": "scripts/phase2-qualification/control-context-verifier-runtime600/ControllerSourceManifest.candidate.json",
+          "sha256": "5f640f67e3df7ec0b50453b9955fc4d964a962f05e515dd72c37ed39ab9c0b14",
+          "bytes": 43898
+        },
+        "complete_controller_source_set": true,
+        "qualification_claimed": false
+      },
+      "fixture_artifact_ref": {
+        "path": "scripts/phase2-qualification/qualification-runtime/fixed_skill_fixture.py",
+        "sha256": "98c4d0165144a4ebfbd4889a98da65a8c6d3a71fbf082af393c15b9d00a3c18a",
+        "bytes": 5084,
+        "source_location": "REPOSITORY_FILE"
+      },
+      "subject_input_ref": {
+        "source_ref": {
+          "path": "scripts/phase2-qualification/preentry-parent/profile-runtime600/signing/ProfileSigningPayload.json",
+          "sha256": "8528d857f6cf20f7330e47e39bf05aa16eeccb4ebe5406c61ee0c84ffb692ece",
+          "bytes": 11284
+        },
+        "json_pointer": "/fixed_input_ref"
+      },
+      "data_classification": "FIXED_SYNTHETIC_ONLY",
+      "evidence_required": [
+        "exact case/fixture/executor/Skill/input digest index",
+        "actual pre-action admission/refusal observations",
+        "actual effects and independently verified STOP when child ran",
+        "raw immutable Evidence digests and independent oracle assessment"
+      ],
+      "retention_and_access_policy": "Private authorized append-only Evidence sink; no credentials or Gold; retain failure history; cleanup only as actually authorized",
+      "coverage_boundary": "Manifest fixes the expected behavior, not its implementation. The fixed child is one primitive; missing real case execution/evidence remains BLOCKED."
+    },
+    "PQUAL-16": {
+      "object_type": "TestManifest",
+      "test_id": "PQUAL-16",
+      "typed_uri": "urn:clued:test:PQUAL-16",
+      "definition_version": "fixed-synthetic-20260908.v3-runtime600",
+      "requirement_refs": [
+        {
+          "requirement_id": "APPROVAL-LEASE-01",
+          "typed_uri": "urn:clued:requirement:APPROVAL-LEASE-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:883e64b347f11022e1ef54c11a1c1d3ee711c3dbebdef15c7853deaf25564cb9",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "BIND-GRANULARITY-01",
+          "typed_uri": "urn:clued:requirement:BIND-GRANULARITY-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:447e276e5476674c4d93fe6ba34f923ae0290aaee9d36635ca18dd6f7528052e",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "REV-MATRIX-01",
+          "typed_uri": "urn:clued:requirement:REV-MATRIX-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:c00e6169ab9f03f5a4f306400a7b2e9b423bdccdea948bb2a2a1cdde87145140",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "RCT-APPEND-01",
+          "typed_uri": "urn:clued:requirement:RCT-APPEND-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:76e26a8bc747200c97803ccaa20e738b8e3bd46024bdd24623997e39e5702e1e",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "RECONCILE-TASK-01",
+          "typed_uri": "urn:clued:requirement:RECONCILE-TASK-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:9a34a65c463fe79da886cf2cb5c6903f24c1b9c59119b639e4d61a0ef96586d8",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        }
+      ],
+      "source_case": {
+        "path": "../slice-a-contracts/QualificationRegressionSpecifications.json",
+        "sha256": "8d35a391a728703a527cfef3137867bb80c70a0a78bd869051fe47406192dafe",
+        "bytes": 6623,
+        "source_location": "PRESERVED_LOCAL_CONTRACT_INPUT",
+        "json_pointer": "/scenarios/15"
+      },
+      "setup_or_fault": "远端结果未知、部分成功或超时",
+      "oracle": {
+        "expected": "先持久Intent/目标核对，禁止盲重试/重复终态GRR/释放容量",
+        "source_oracle_sha256": "062c07c43045c52dd01fabcca8feb1c076419b743940369f43e76e54dc2a576b",
+        "evaluation": "Use actual observed effects/refusals and independent review; matching fixture strings or source text is not behavioral evidence."
+      },
+      "executor_artifact_ref": {
+        "path": "scripts/phase2-qualification/control-context-verifier-runtime600/ControllerSourceManifest.candidate.json",
+        "sha256": "5f640f67e3df7ec0b50453b9955fc4d964a962f05e515dd72c37ed39ab9c0b14",
+        "source_ref": {
+          "path": "scripts/phase2-qualification/control-context-verifier-runtime600/ControllerSourceManifest.candidate.json",
+          "sha256": "5f640f67e3df7ec0b50453b9955fc4d964a962f05e515dd72c37ed39ab9c0b14",
+          "bytes": 43898
+        },
+        "complete_controller_source_set": true,
+        "qualification_claimed": false
+      },
+      "fixture_artifact_ref": {
+        "path": "scripts/phase2-qualification/qualification-runtime/fixed_skill_fixture.py",
+        "sha256": "98c4d0165144a4ebfbd4889a98da65a8c6d3a71fbf082af393c15b9d00a3c18a",
+        "bytes": 5084,
+        "source_location": "REPOSITORY_FILE"
+      },
+      "subject_input_ref": {
+        "source_ref": {
+          "path": "scripts/phase2-qualification/preentry-parent/profile-runtime600/signing/ProfileSigningPayload.json",
+          "sha256": "8528d857f6cf20f7330e47e39bf05aa16eeccb4ebe5406c61ee0c84ffb692ece",
+          "bytes": 11284
+        },
+        "json_pointer": "/fixed_input_ref"
+      },
+      "data_classification": "FIXED_SYNTHETIC_ONLY",
+      "evidence_required": [
+        "exact case/fixture/executor/Skill/input digest index",
+        "actual pre-action admission/refusal observations",
+        "actual effects and independently verified STOP when child ran",
+        "raw immutable Evidence digests and independent oracle assessment"
+      ],
+      "retention_and_access_policy": "Private authorized append-only Evidence sink; no credentials or Gold; retain failure history; cleanup only as actually authorized",
+      "coverage_boundary": "Manifest fixes the expected behavior, not its implementation. The fixed child is one primitive; missing real case execution/evidence remains BLOCKED."
+    },
+    "PQUAL-17": {
+      "object_type": "TestManifest",
+      "test_id": "PQUAL-17",
+      "typed_uri": "urn:clued:test:PQUAL-17",
+      "definition_version": "fixed-synthetic-20260908.v3-runtime600",
+      "requirement_refs": [
+        {
+          "requirement_id": "APPROVAL-LEASE-01",
+          "typed_uri": "urn:clued:requirement:APPROVAL-LEASE-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:883e64b347f11022e1ef54c11a1c1d3ee711c3dbebdef15c7853deaf25564cb9",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "BIND-GRANULARITY-01",
+          "typed_uri": "urn:clued:requirement:BIND-GRANULARITY-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:447e276e5476674c4d93fe6ba34f923ae0290aaee9d36635ca18dd6f7528052e",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "REV-MATRIX-01",
+          "typed_uri": "urn:clued:requirement:REV-MATRIX-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:c00e6169ab9f03f5a4f306400a7b2e9b423bdccdea948bb2a2a1cdde87145140",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "RCT-APPEND-01",
+          "typed_uri": "urn:clued:requirement:RCT-APPEND-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:76e26a8bc747200c97803ccaa20e738b8e3bd46024bdd24623997e39e5702e1e",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "RECONCILE-TASK-01",
+          "typed_uri": "urn:clued:requirement:RECONCILE-TASK-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:9a34a65c463fe79da886cf2cb5c6903f24c1b9c59119b639e4d61a0ef96586d8",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        }
+      ],
+      "source_case": {
+        "path": "../slice-a-contracts/QualificationRegressionSpecifications.json",
+        "sha256": "8d35a391a728703a527cfef3137867bb80c70a0a78bd869051fe47406192dafe",
+        "bytes": 6623,
+        "source_location": "PRESERVED_LOCAL_CONTRACT_INPUT",
+        "json_pointer": "/scenarios/16"
+      },
+      "setup_or_fault": "sink不可写或清理无授权",
+      "oracle": {
+        "expected": "停止新副作用；仅已授权安全清理，不删除失败历史",
+        "source_oracle_sha256": "63563e42cb6b774c4f441e4664de9172d75d1116c7dff2912726bc39e92ab7f2",
+        "evaluation": "Use actual observed effects/refusals and independent review; matching fixture strings or source text is not behavioral evidence."
+      },
+      "executor_artifact_ref": {
+        "path": "scripts/phase2-qualification/control-context-verifier-runtime600/ControllerSourceManifest.candidate.json",
+        "sha256": "5f640f67e3df7ec0b50453b9955fc4d964a962f05e515dd72c37ed39ab9c0b14",
+        "source_ref": {
+          "path": "scripts/phase2-qualification/control-context-verifier-runtime600/ControllerSourceManifest.candidate.json",
+          "sha256": "5f640f67e3df7ec0b50453b9955fc4d964a962f05e515dd72c37ed39ab9c0b14",
+          "bytes": 43898
+        },
+        "complete_controller_source_set": true,
+        "qualification_claimed": false
+      },
+      "fixture_artifact_ref": {
+        "path": "scripts/phase2-qualification/qualification-runtime/fixed_skill_fixture.py",
+        "sha256": "98c4d0165144a4ebfbd4889a98da65a8c6d3a71fbf082af393c15b9d00a3c18a",
+        "bytes": 5084,
+        "source_location": "REPOSITORY_FILE"
+      },
+      "subject_input_ref": {
+        "source_ref": {
+          "path": "scripts/phase2-qualification/preentry-parent/profile-runtime600/signing/ProfileSigningPayload.json",
+          "sha256": "8528d857f6cf20f7330e47e39bf05aa16eeccb4ebe5406c61ee0c84ffb692ece",
+          "bytes": 11284
+        },
+        "json_pointer": "/fixed_input_ref"
+      },
+      "data_classification": "FIXED_SYNTHETIC_ONLY",
+      "evidence_required": [
+        "exact case/fixture/executor/Skill/input digest index",
+        "actual pre-action admission/refusal observations",
+        "actual effects and independently verified STOP when child ran",
+        "raw immutable Evidence digests and independent oracle assessment"
+      ],
+      "retention_and_access_policy": "Private authorized append-only Evidence sink; no credentials or Gold; retain failure history; cleanup only as actually authorized",
+      "coverage_boundary": "Manifest fixes the expected behavior, not its implementation. The fixed child is one primitive; missing real case execution/evidence remains BLOCKED."
+    },
+    "PQUAL-19": {
+      "object_type": "TestManifest",
+      "test_id": "PQUAL-19",
+      "typed_uri": "urn:clued:test:PQUAL-19",
+      "definition_version": "fixed-synthetic-20260908.v3-runtime600",
+      "requirement_refs": [
+        {
+          "requirement_id": "APPROVAL-LEASE-01",
+          "typed_uri": "urn:clued:requirement:APPROVAL-LEASE-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:883e64b347f11022e1ef54c11a1c1d3ee711c3dbebdef15c7853deaf25564cb9",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "BIND-GRANULARITY-01",
+          "typed_uri": "urn:clued:requirement:BIND-GRANULARITY-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:447e276e5476674c4d93fe6ba34f923ae0290aaee9d36635ca18dd6f7528052e",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "REV-MATRIX-01",
+          "typed_uri": "urn:clued:requirement:REV-MATRIX-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:c00e6169ab9f03f5a4f306400a7b2e9b423bdccdea948bb2a2a1cdde87145140",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "RCT-APPEND-01",
+          "typed_uri": "urn:clued:requirement:RCT-APPEND-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:76e26a8bc747200c97803ccaa20e738b8e3bd46024bdd24623997e39e5702e1e",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "RECONCILE-TASK-01",
+          "typed_uri": "urn:clued:requirement:RECONCILE-TASK-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:9a34a65c463fe79da886cf2cb5c6903f24c1b9c59119b639e4d61a0ef96586d8",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        }
+      ],
+      "source_case": {
+        "path": "../slice-a-contracts/QualificationRegressionSpecifications.json",
+        "sha256": "8d35a391a728703a527cfef3137867bb80c70a0a78bd869051fe47406192dafe",
+        "bytes": 6623,
+        "source_location": "PRESERVED_LOCAL_CONTRACT_INPUT",
+        "json_pointer": "/scenarios/18"
+      },
+      "setup_or_fault": "PRE_ENTRY路由误选DP-ISOLATED-E2E或加入R14 guard",
+      "oracle": {
+        "expected": "文档依赖验证拒绝该候选；不得将静态图无环当集成无环",
+        "source_oracle_sha256": "a4f04a214d308ba4676f9a6c29a3087a3c614e99010671242995d4bd98ce44e4",
+        "evaluation": "Use actual observed effects/refusals and independent review; matching fixture strings or source text is not behavioral evidence."
+      },
+      "executor_artifact_ref": {
+        "path": "scripts/phase2-qualification/control-context-verifier-runtime600/ControllerSourceManifest.candidate.json",
+        "sha256": "5f640f67e3df7ec0b50453b9955fc4d964a962f05e515dd72c37ed39ab9c0b14",
+        "source_ref": {
+          "path": "scripts/phase2-qualification/control-context-verifier-runtime600/ControllerSourceManifest.candidate.json",
+          "sha256": "5f640f67e3df7ec0b50453b9955fc4d964a962f05e515dd72c37ed39ab9c0b14",
+          "bytes": 43898
+        },
+        "complete_controller_source_set": true,
+        "qualification_claimed": false
+      },
+      "fixture_artifact_ref": {
+        "path": "scripts/phase2-qualification/qualification-runtime/fixed_skill_fixture.py",
+        "sha256": "98c4d0165144a4ebfbd4889a98da65a8c6d3a71fbf082af393c15b9d00a3c18a",
+        "bytes": 5084,
+        "source_location": "REPOSITORY_FILE"
+      },
+      "subject_input_ref": {
+        "source_ref": {
+          "path": "scripts/phase2-qualification/preentry-parent/profile-runtime600/signing/ProfileSigningPayload.json",
+          "sha256": "8528d857f6cf20f7330e47e39bf05aa16eeccb4ebe5406c61ee0c84ffb692ece",
+          "bytes": 11284
+        },
+        "json_pointer": "/fixed_input_ref"
+      },
+      "data_classification": "FIXED_SYNTHETIC_ONLY",
+      "evidence_required": [
+        "exact case/fixture/executor/Skill/input digest index",
+        "actual pre-action admission/refusal observations",
+        "actual effects and independently verified STOP when child ran",
+        "raw immutable Evidence digests and independent oracle assessment"
+      ],
+      "retention_and_access_policy": "Private authorized append-only Evidence sink; no credentials or Gold; retain failure history; cleanup only as actually authorized",
+      "coverage_boundary": "Manifest fixes the expected behavior, not its implementation. The fixed child is one primitive; missing real case execution/evidence remains BLOCKED."
+    },
+    "PQUAL-20": {
+      "object_type": "TestManifest",
+      "test_id": "PQUAL-20",
+      "typed_uri": "urn:clued:test:PQUAL-20",
+      "definition_version": "fixed-synthetic-20260908.v3-runtime600",
+      "requirement_refs": [
+        {
+          "requirement_id": "APPROVAL-LEASE-01",
+          "typed_uri": "urn:clued:requirement:APPROVAL-LEASE-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:883e64b347f11022e1ef54c11a1c1d3ee711c3dbebdef15c7853deaf25564cb9",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "BIND-GRANULARITY-01",
+          "typed_uri": "urn:clued:requirement:BIND-GRANULARITY-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:447e276e5476674c4d93fe6ba34f923ae0290aaee9d36635ca18dd6f7528052e",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "REV-MATRIX-01",
+          "typed_uri": "urn:clued:requirement:REV-MATRIX-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:c00e6169ab9f03f5a4f306400a7b2e9b423bdccdea948bb2a2a1cdde87145140",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "RCT-APPEND-01",
+          "typed_uri": "urn:clued:requirement:RCT-APPEND-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:76e26a8bc747200c97803ccaa20e738b8e3bd46024bdd24623997e39e5702e1e",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        },
+        {
+          "requirement_id": "RECONCILE-TASK-01",
+          "typed_uri": "urn:clued:requirement:RECONCILE-TASK-01",
+          "definition_version": "1.0.0-local-rc-v15",
+          "content_digest": "sha256:9a34a65c463fe79da886cf2cb5c6903f24c1b9c59119b639e4d61a0ef96586d8",
+          "registry_ref": {
+            "path": "protocol/continuity/v1/requirements.yaml",
+            "sha256": "b1ad0763ab257d16565dffbe5c829e7a22527b8be186e3e9b654642fe455c255",
+            "bytes": 19860,
+            "source_location": "REPOSITORY_FILE"
+          }
+        }
+      ],
+      "source_case": {
+        "path": "../slice-a-contracts/QualificationRegressionSpecifications.json",
+        "sha256": "8d35a391a728703a527cfef3137867bb80c70a0a78bd869051fe47406192dafe",
+        "bytes": 6623,
+        "source_location": "PRESERVED_LOCAL_CONTRACT_INPUT",
+        "json_pointer": "/scenarios/19"
+      },
+      "setup_or_fault": "资格Evidence/GRR、测试通过或清理完成",
+      "oracle": {
+        "expected": "不得自动签原11 Readiness、全架构/结构、模型或生产接受",
+        "source_oracle_sha256": "d001f45517231de862c86a6d1064f0ec3b0dad8fedaebf5d0c80e26e5a75d70a",
+        "evaluation": "Use actual observed effects/refusals and independent review; matching fixture strings or source text is not behavioral evidence."
+      },
+      "executor_artifact_ref": {
+        "path": "scripts/phase2-qualification/control-context-verifier-runtime600/ControllerSourceManifest.candidate.json",
+        "sha256": "5f640f67e3df7ec0b50453b9955fc4d964a962f05e515dd72c37ed39ab9c0b14",
+        "source_ref": {
+          "path": "scripts/phase2-qualification/control-context-verifier-runtime600/ControllerSourceManifest.candidate.json",
+          "sha256": "5f640f67e3df7ec0b50453b9955fc4d964a962f05e515dd72c37ed39ab9c0b14",
+          "bytes": 43898
+        },
+        "complete_controller_source_set": true,
+        "qualification_claimed": false
+      },
+      "fixture_artifact_ref": {
+        "path": "scripts/phase2-qualification/qualification-runtime/fixed_skill_fixture.py",
+        "sha256": "98c4d0165144a4ebfbd4889a98da65a8c6d3a71fbf082af393c15b9d00a3c18a",
+        "bytes": 5084,
+        "source_location": "REPOSITORY_FILE"
+      },
+      "subject_input_ref": {
+        "source_ref": {
+          "path": "scripts/phase2-qualification/preentry-parent/profile-runtime600/signing/ProfileSigningPayload.json",
+          "sha256": "8528d857f6cf20f7330e47e39bf05aa16eeccb4ebe5406c61ee0c84ffb692ece",
+          "bytes": 11284
+        },
+        "json_pointer": "/fixed_input_ref"
+      },
+      "data_classification": "FIXED_SYNTHETIC_ONLY",
+      "evidence_required": [
+        "exact case/fixture/executor/Skill/input digest index",
+        "actual pre-action admission/refusal observations",
+        "actual effects and independently verified STOP when child ran",
+        "raw immutable Evidence digests and independent oracle assessment"
+      ],
+      "retention_and_access_policy": "Private authorized append-only Evidence sink; no credentials or Gold; retain failure history; cleanup only as actually authorized",
+      "coverage_boundary": "Manifest fixes the expected behavior, not its implementation. The fixed child is one primitive; missing real case execution/evidence remains BLOCKED."
+    }
+  },
+  "gates": {
+    "G-PREENTRY-SKILL-QUALIFICATION": {
+      "object_type": "GateManifest",
+      "gate_id": "G-PREENTRY-SKILL-QUALIFICATION",
+      "definition_version": "fixed-synthetic-20260908.v3-runtime600",
+      "purpose": "SKILL_COEXISTENCE_QUALIFICATION",
+      "environment": "ISOLATED_TEST",
+      "profile_ref": {
+        "profile_id": "DP-PREENTRY-SKILL-QUALIFICATION",
+        "definition_version": "fixed-synthetic-skill-input-20260908.v3-runtime600",
+        "content_digest": "sha256:d1c060b85f0b842a397a478105ea57a208e62eb0a5a2d4c2cd8f93f63eae88f5",
+        "definition_ref": {
+          "path": "scripts/phase2-qualification/preentry-parent/profile-runtime600/ProfileDefinition.json",
+          "sha256": "d1c060b85f0b842a397a478105ea57a208e62eb0a5a2d4c2cd8f93f63eae88f5",
+          "bytes": 3325
+        },
+        "signed_payload_ref": {
+          "path": "scripts/phase2-qualification/preentry-parent/profile-runtime600/signing/ProfileSigningPayload.json",
+          "sha256": "8528d857f6cf20f7330e47e39bf05aa16eeccb4ebe5406c61ee0c84ffb692ece",
+          "bytes": 11284
+        },
+        "independent_acceptance_ref": {
+          "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/FixedSyntheticProfile600IndependentAcceptance.json",
+          "sha256": "266ae65aba7faec0af6b4c257a6c289d6bdf3cd3719a74bca145cae00ce99177",
+          "bytes": 7476
+        }
+      },
+      "source_alias": {
+        "value": "PRE_ENTRY_QUALIFICATION_GATE_AUTHORIZATION",
+        "source": {
+          "path": "../slice-a-contracts/QualificationPhasePolicy.json",
+          "sha256": "154a5ca0e3d6786877662b68a173176ecd54712744400805ef4b2a93f5946f22",
+          "bytes": 5731,
+          "source_location": "PRESERVED_LOCAL_CONTRACT_INPUT"
+        },
+        "was_registered_gate_id": false
+      },
+      "source_basis": {
+        "source_contract_uri": "urn:clued:contract:kernel-next:v3.3",
+        "sha256": "f967fdf3e63028d29ed191160698726b5d707aaae63bd951f6ba2e8584936fec",
+        "line_spans": [
+          [
+            3435,
+            3444
+          ],
+          [
+            3876,
+            3887
+          ],
+          [
+            4316,
+            4346
+          ]
+        ]
+      },
+      "prerequisites": {
+        "stage_receipts": [
+          "R05",
+          "R06",
+          "R07",
+          "R08",
+          "R09",
+          "R10"
+        ],
+        "excluded_circular_stage_dependencies": [
+          "R11",
+          "R12",
+          "R13",
+          "R14"
+        ],
+        "accepted_controller_independent_of_skill": true,
+        "accepted_exact_execution_profile": true,
+        "registered_atomic_gate": true,
+        "actual_owner_root_issuer_current": true,
+        "per_action_ga_required": true
+      },
+      "test_requirements": {
+        "source_ref": {
+          "path": "../slice-a-contracts/QualificationRegressionSpecifications.json",
+          "sha256": "8d35a391a728703a527cfef3137867bb80c70a0a78bd869051fe47406192dafe",
+          "bytes": 6623,
+          "source_location": "PRESERVED_LOCAL_CONTRACT_INPUT"
+        },
+        "case_ids": [
+          "PQUAL-01",
+          "PQUAL-02",
+          "PQUAL-03",
+          "PQUAL-04",
+          "PQUAL-05",
+          "PQUAL-06",
+          "PQUAL-07",
+          "PQUAL-08",
+          "PQUAL-09",
+          "PQUAL-10",
+          "PQUAL-11",
+          "PQUAL-12",
+          "PQUAL-13",
+          "PQUAL-14",
+          "PQUAL-15",
+          "PQUAL-16",
+          "PQUAL-17",
+          "PQUAL-19",
+          "PQUAL-20"
+        ],
+        "post_entry_positive": {
+          "id": "PQUAL-18",
+          "state": "OUTSIDE_THIS_GATE_SCOPE_NOT_EXECUTED_NOT_PASSED",
+          "reason": "Requires DP-ISOLATED-E2E and separate Entry/implementation authority; no pre-entry substitution"
+        },
+        "primitive_boundary": "fixed_skill_fixture.py is an action primitive; reading Skill bytes is not Skill behavior qualification or coverage of all cases"
+      },
+      "execution": {
+        "environment_class": "ISOLATED_TEST",
+        "maximum_seconds": 600,
+        "memory_bytes": 134217728,
+        "cpu_millicores": 500,
+        "pids": 16,
+        "network": "none",
+        "model_calls": 0,
+        "paid_calls": 0
+      },
+      "evidence_and_result": {
+        "before_each_effect": "fresh typed current checks and exact remote durable Intent readback; recheck after publication",
+        "unknown": "no redispatch or capacity release; exact target reconciliation then only authorized safe stop",
+        "decision": "PENDING -> RUNNING -> DECISION_RESERVED; reserve all immutable Test/Evidence digests once; controlled signing Outbox; fresh final authorization/revocation/expiry/drift recheck before terminal CAS; one GA has one signed GRR.",
+        "results": [
+          "PASS",
+          "FAIL",
+          "BLOCKED",
+          "STALE"
+        ],
+        "output_authority": "qualification test evidence only; no ACTIVE/Entry/model/production authority",
+        "success": "All 19 applicable tests require sufficient real evidence for the identical exact inputs and independent oracle review; a single fixture read/write is never 19-case PASS."
+      },
+      "invalidation": [
+        "any accepted definition/input byte or target revision changes",
+        "required stage/Profile/controller/issuer acceptance revoked or replaced",
+        "Root or applicable independent generation/vector changes",
+        "window or budget exhausted",
+        "durable sink/STOP/required verifier unavailable",
+        "unresolved partial operation or evidence ambiguity"
+      ],
+      "roles": {
+        "executor": "fixed accepted controller",
+        "reviewer": "independent accepted assessor",
+        "issuer": "actual Owner/delegate via accepted current purpose binding; not the candidate author"
+      },
+      "typed_uri": "urn:clued:gate:G-PREENTRY-SKILL-QUALIFICATION",
+      "test_refs": [
+        {
+          "test_id": "PQUAL-01",
+          "typed_uri": "urn:clued:test:PQUAL-01",
+          "definition_version": "fixed-synthetic-20260908.v3-runtime600",
+          "content_digest": "sha256:1cff90199dd52b769c5153e0f399fc3fc73c62f6cf37954a1c96482707df819d",
+          "definition_path": "evals/kernel-next/preentry-skill-qualification.json",
+          "canonical_pointer": "#/tests/PQUAL-01"
+        },
+        {
+          "test_id": "PQUAL-02",
+          "typed_uri": "urn:clued:test:PQUAL-02",
+          "definition_version": "fixed-synthetic-20260908.v3-runtime600",
+          "content_digest": "sha256:27458f7569e8867aad95a4ba2078d8a655eaa45e940fb48deac6d1dd27dbb63a",
+          "definition_path": "evals/kernel-next/preentry-skill-qualification.json",
+          "canonical_pointer": "#/tests/PQUAL-02"
+        },
+        {
+          "test_id": "PQUAL-03",
+          "typed_uri": "urn:clued:test:PQUAL-03",
+          "definition_version": "fixed-synthetic-20260908.v3-runtime600",
+          "content_digest": "sha256:1849bfccf9f51b065cba7b1705c781089e547a92d89b197b35c61bfd48924b63",
+          "definition_path": "evals/kernel-next/preentry-skill-qualification.json",
+          "canonical_pointer": "#/tests/PQUAL-03"
+        },
+        {
+          "test_id": "PQUAL-04",
+          "typed_uri": "urn:clued:test:PQUAL-04",
+          "definition_version": "fixed-synthetic-20260908.v3-runtime600",
+          "content_digest": "sha256:c3b0b20d973bca02e2b19479624912bc362142056f7ed3d221ffae636345dc89",
+          "definition_path": "evals/kernel-next/preentry-skill-qualification.json",
+          "canonical_pointer": "#/tests/PQUAL-04"
+        },
+        {
+          "test_id": "PQUAL-05",
+          "typed_uri": "urn:clued:test:PQUAL-05",
+          "definition_version": "fixed-synthetic-20260908.v3-runtime600",
+          "content_digest": "sha256:652df491715dd44354fdae8df4e33cad34d0fa108a6c46d551a76ad2dfb86e5b",
+          "definition_path": "evals/kernel-next/preentry-skill-qualification.json",
+          "canonical_pointer": "#/tests/PQUAL-05"
+        },
+        {
+          "test_id": "PQUAL-06",
+          "typed_uri": "urn:clued:test:PQUAL-06",
+          "definition_version": "fixed-synthetic-20260908.v3-runtime600",
+          "content_digest": "sha256:98f6e9567e957e2e5992c01dfa0558176ac87485b52def4af84ed0f1f25d22bb",
+          "definition_path": "evals/kernel-next/preentry-skill-qualification.json",
+          "canonical_pointer": "#/tests/PQUAL-06"
+        },
+        {
+          "test_id": "PQUAL-07",
+          "typed_uri": "urn:clued:test:PQUAL-07",
+          "definition_version": "fixed-synthetic-20260908.v3-runtime600",
+          "content_digest": "sha256:3e7525d6ea60794b2b26a518fb0ec4e1a825263529beecabc465b5c612c05ed4",
+          "definition_path": "evals/kernel-next/preentry-skill-qualification.json",
+          "canonical_pointer": "#/tests/PQUAL-07"
+        },
+        {
+          "test_id": "PQUAL-08",
+          "typed_uri": "urn:clued:test:PQUAL-08",
+          "definition_version": "fixed-synthetic-20260908.v3-runtime600",
+          "content_digest": "sha256:ccd5b297cd94cdd823c0c16fe93904d00423632439037dba67bb65cffe15d88c",
+          "definition_path": "evals/kernel-next/preentry-skill-qualification.json",
+          "canonical_pointer": "#/tests/PQUAL-08"
+        },
+        {
+          "test_id": "PQUAL-09",
+          "typed_uri": "urn:clued:test:PQUAL-09",
+          "definition_version": "fixed-synthetic-20260908.v3-runtime600",
+          "content_digest": "sha256:d149f365451ac402648299fa1f3c740cbbc94da8bcc4d54c9687b40edd5e315e",
+          "definition_path": "evals/kernel-next/preentry-skill-qualification.json",
+          "canonical_pointer": "#/tests/PQUAL-09"
+        },
+        {
+          "test_id": "PQUAL-10",
+          "typed_uri": "urn:clued:test:PQUAL-10",
+          "definition_version": "fixed-synthetic-20260908.v3-runtime600",
+          "content_digest": "sha256:c937dba2657069aa94cc5748c4160bd49f47776598044d91b4b1ecb397e36423",
+          "definition_path": "evals/kernel-next/preentry-skill-qualification.json",
+          "canonical_pointer": "#/tests/PQUAL-10"
+        },
+        {
+          "test_id": "PQUAL-11",
+          "typed_uri": "urn:clued:test:PQUAL-11",
+          "definition_version": "fixed-synthetic-20260908.v3-runtime600",
+          "content_digest": "sha256:014a4bd1f63b0dfac81d6a7b6f585fd5d97f190ad2d46314f3232c9050b0d5f2",
+          "definition_path": "evals/kernel-next/preentry-skill-qualification.json",
+          "canonical_pointer": "#/tests/PQUAL-11"
+        },
+        {
+          "test_id": "PQUAL-12",
+          "typed_uri": "urn:clued:test:PQUAL-12",
+          "definition_version": "fixed-synthetic-20260908.v3-runtime600",
+          "content_digest": "sha256:0ff89954584cf6738fc76592676b5a63fab50856a78170c04274bdacf81b64f4",
+          "definition_path": "evals/kernel-next/preentry-skill-qualification.json",
+          "canonical_pointer": "#/tests/PQUAL-12"
+        },
+        {
+          "test_id": "PQUAL-13",
+          "typed_uri": "urn:clued:test:PQUAL-13",
+          "definition_version": "fixed-synthetic-20260908.v3-runtime600",
+          "content_digest": "sha256:f70750458b38bb065f7a3974ff665c96ba1022b7888b1af5fa6d1bdd06e26098",
+          "definition_path": "evals/kernel-next/preentry-skill-qualification.json",
+          "canonical_pointer": "#/tests/PQUAL-13"
+        },
+        {
+          "test_id": "PQUAL-14",
+          "typed_uri": "urn:clued:test:PQUAL-14",
+          "definition_version": "fixed-synthetic-20260908.v3-runtime600",
+          "content_digest": "sha256:262ed73bcdbc6b73885829888fbdcad6bf3dcbcf30f82668dc4ee2f40452f471",
+          "definition_path": "evals/kernel-next/preentry-skill-qualification.json",
+          "canonical_pointer": "#/tests/PQUAL-14"
+        },
+        {
+          "test_id": "PQUAL-15",
+          "typed_uri": "urn:clued:test:PQUAL-15",
+          "definition_version": "fixed-synthetic-20260908.v3-runtime600",
+          "content_digest": "sha256:d68a0b8877e0a67176f0e1f4810a4a81959d7a9182c05c76d45a7cb12a317134",
+          "definition_path": "evals/kernel-next/preentry-skill-qualification.json",
+          "canonical_pointer": "#/tests/PQUAL-15"
+        },
+        {
+          "test_id": "PQUAL-16",
+          "typed_uri": "urn:clued:test:PQUAL-16",
+          "definition_version": "fixed-synthetic-20260908.v3-runtime600",
+          "content_digest": "sha256:0a3d43b884d310023b0892cd7efa8e06193b9097f9451ef059e7944e43f73f3f",
+          "definition_path": "evals/kernel-next/preentry-skill-qualification.json",
+          "canonical_pointer": "#/tests/PQUAL-16"
+        },
+        {
+          "test_id": "PQUAL-17",
+          "typed_uri": "urn:clued:test:PQUAL-17",
+          "definition_version": "fixed-synthetic-20260908.v3-runtime600",
+          "content_digest": "sha256:bbfba462edae7c495f998cf412b1315e5d259bdf17f9891af68e1278492c9e15",
+          "definition_path": "evals/kernel-next/preentry-skill-qualification.json",
+          "canonical_pointer": "#/tests/PQUAL-17"
+        },
+        {
+          "test_id": "PQUAL-19",
+          "typed_uri": "urn:clued:test:PQUAL-19",
+          "definition_version": "fixed-synthetic-20260908.v3-runtime600",
+          "content_digest": "sha256:68b289ce8520d80a68478f1c6ec51da917a5cf6abbcf1a36e9901d0183adeec6",
+          "definition_path": "evals/kernel-next/preentry-skill-qualification.json",
+          "canonical_pointer": "#/tests/PQUAL-19"
+        },
+        {
+          "test_id": "PQUAL-20",
+          "typed_uri": "urn:clued:test:PQUAL-20",
+          "definition_version": "fixed-synthetic-20260908.v3-runtime600",
+          "content_digest": "sha256:4350551d98f580ec6905b68285e3dca9a05348929142adac2ce2c10710ef6fca",
+          "definition_path": "evals/kernel-next/preentry-skill-qualification.json",
+          "canonical_pointer": "#/tests/PQUAL-20"
+        }
+      ],
+      "target_scope_class": "Fixed synthetic Skill coexistence inputs only under the signed PRE_ENTRY Profile; actual targets, input digests, allowed/forbidden writes, credentials, deadlines and stop/rollback bindings belong in each actual GA."
+    }
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "state": "PREPARED_NOT_APPLIED",
+  "prior_install_sha256": "8f732dd4013a18adde33a254631cdd5a04022f300d4c0a13d05dffbf36f97285",
+  "changed_functions": [
+    "reserve_execution_budget(text,text)",
+    "reserve_gate(text,text)"
+  ],
+  "changes": [
+    "reserve_execution_budget exact seconds180->600, cumulative ceiling arithmetic and once-only charge180->600",
+    "reserve_gate complete authorization window ceiling180->600"
+  ],
+  "unchanged": [
+    "All original tables/rows/triggers/RLS/owners/ACLs and other function definitions",
+    "Prior actual budget1500 seconds and287700424 bytes; 7200 total/1GiB/one active or pending allocation",
+    "Typed key, exact raw/hash, prior committed budget, independent generations, UNKNOWN retained and no refund",
+    "Owner absolute expiry2026-09-09T09:28:59Z"
+  ],
+  "requires": "Root transaction wraps fixed project setting, precise pre/post actual14-function/security/Root and empty-row checks; independent acceptance precedes application",
+  "authority_effect": "NONE"
+}

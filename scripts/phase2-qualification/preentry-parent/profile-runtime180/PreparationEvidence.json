@@ -1,0 +1,21 @@
+{
+  "state": "PREPARED_PROFILE180_NOT_ACCEPTED",
+  "files": {
+    "FixedInputScope.json": "fc7664891d19d27fd4bc174fd13b810f031af7c62ae095395daed4c398a49b6c",
+    "ProfileDefinition.json": "cce4d4966dddbdb9685c8fab9242ffde48ca6210c919bd2615cc9c0bfc011f51",
+    "README.md": "fb2ccdb74df8bc0f43ce4bbfb0e50e630973085bfbf29b4a1f9714cb0beb2d42",
+    "build.mjs": "89d24b334d9c5f4a4e5a17fa5e012117f44973d75f0dcea1a3028ebd46575321",
+    "preentry-profile.candidate.schema.json": "3b32320e627ae4771c5f8d0c80b71543de49101bd9c8015e1d96bee493d9870a",
+    "ChangeSet.json": "f3f5f3cfa38d273382c4b0a055fd8f6894563a38b8f171d8ea85224d85024398",
+    "ProfileReviewSubject.json": "95d18077ba7a6f3cc9af55e90cabc250c6917abead9dd47b728d878fbc9ee72c",
+    "validate.test.mjs": "88804836a1ad4cc84442d23be875dc805c1b196b919ec5e8d134acaf4c7e983d"
+  },
+  "review_subject_sha256": "f9df9dceec46a72c90db11dd38bae302c9c5ed86bb541534f180e4feab28b291",
+  "profile_sha256": "cce4d4966dddbdb9685c8fab9242ffde48ca6210c919bd2615cc9c0bfc011f51",
+  "tests": {
+    "failed": 0,
+    "passed": 2
+  },
+  "authority_effect": "NONE",
+  "signed": false
+}

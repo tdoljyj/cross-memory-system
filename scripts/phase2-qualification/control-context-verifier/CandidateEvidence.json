@@ -1,0 +1,66 @@
+{
+  "state": "CANDIDATE_NOT_ACTIVATED",
+  "mode": "LOCAL_ENGINEERING_ONLY",
+  "scope": "Fixed nonproduction PRE_ENTRY control verifier and original StatusManifest/GateResultReceipt schema successors",
+  "source_bindings": {
+    "path": "scripts/phase2-qualification/control-context-verifier/SourceBindings.json",
+    "sha256": "ee3e3661bc07e91df878d6f5d06bea427d1f9716a9d1b17607402aad1e937f11",
+    "package_files": 11,
+    "external_sources": 7,
+    "actual_loaded_commonjs_and_resolution_metadata": 45
+  },
+  "actual_checks": {
+    "command": "node --test scripts/phase2-qualification/control-context-verifier/verify.test.mjs",
+    "exit_code": 0,
+    "passed": 7,
+    "failed": 0,
+    "skipped": 0,
+    "duration_ms": 213.5718,
+    "coverage": [
+      "Exact compact JSON, duplicate keys, unsafe numbers and partial caller authority rejected",
+      "Original Status and GRR complete candidate shapes, fields, purpose, generation, calendar and result enum negatives",
+      "Numerical RFC3339 time ordering across optional fractions",
+      "Actual separate CLI process rejects missing real SQL and exits without signature or network calls",
+      "Actual fixed functions parser handles observed Windows PTY display controls without evaluating tool text"
+    ],
+    "actual_tool_bridge_observations": [
+      {
+        "transport": "non-PTY exec stdin",
+        "result": "CLOSED_BY_TOOL_HOST",
+        "exit_code": 1,
+        "reported_reason": "BOUNDED_STDIN_INPUT_REQUIRED"
+      },
+      {
+        "transport": "one live PTY session, Node raw mode",
+        "submitted": "Only synthetic authorized:true; no SQL, token or signature material",
+        "result": "BLOCKED",
+        "reported_reason": "ACTUAL_SQL_BINDING_MISSING",
+        "exit_code": 1,
+        "material_echo_observed": false,
+        "terminal_control_prefix_observed_and_regression_added": true
+      }
+    ]
+  },
+  "real_inputs_still_required": [
+    "Exact independently accepted controller qualification and runtime metadata; engineering review is not qualification",
+    "Host-composed complete source manifest checked before launching the fixed Node process",
+    "Current Root2 registration, exact runtime binding and signed accepted Gate prerequisites",
+    "Exact independently accepted Status/GRR schema publication and immutable signed Status read from private SQL",
+    "Explicit accepted Profile180 successor before replacing this revision's signed Profile90 binding",
+    "GRR exact raw evidence/index and test oracle resolution, independently adjudicated result and same-reservation terminal CAS"
+  ],
+  "not_executed": [
+    "Full valid SQL-to-GitHub-to-fresh-SQL admission",
+    "Valid dynamic GA or GRR historical signature on an actual issued payload",
+    "Skill/PQUAL/R11/SliceA execution",
+    "Any database write, deployment, signing, registration or production operation"
+  ],
+  "authority_effect": "NONE",
+  "gate_authorization_issued": false,
+  "gate_result_receipt_issued": false,
+  "controller_qualified": false,
+  "gold_read_or_exposed": false,
+  "runtime_model_calls": 0,
+  "paid_operations": 0,
+  "prior_actual_results": "Earlier 4-test and 6-test runs remain tool-history observations; this is the final 7-test run after necessary time/PTY/source guards. No old PG/PQUAL suite was rerun."
+}

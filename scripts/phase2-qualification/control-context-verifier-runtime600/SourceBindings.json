@@ -1,0 +1,192 @@
+{
+  "state": "FROZEN_EXACT_RUNTIME600_CANDIDATE_FOR_INDEPENDENT_REVIEW",
+  "files": [
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime600/ControllerSourceManifest.candidate.json",
+      "bytes": 44103,
+      "sha256": "edf31377656e1a9a473d0095df72231c058266007e4fd4046e0a9b8c2d6a60d9"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime600/GateDefinitionCandidate.json",
+      "bytes": 12803,
+      "sha256": "0b91f11a6f6c717483781f879ba66b58f18dd88be5bed17d6f24ca79e2ac2cba"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime600/README.md",
+      "bytes": 4504,
+      "sha256": "5338f22db2f81f6df2f11e243083d01a41c1a1ea7a2127ff45aac29f799cce3c"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime600/RegistrySuccessorCandidate.json",
+      "bytes": 2268,
+      "sha256": "55708c527f4e576086b9739b7af74a860481c9c3a25debc892575399652a7b83"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime600/RunOrder.md",
+      "bytes": 7350,
+      "sha256": "46d673f73e9ba13ae473517b2a6fc8419597f2e845fe98a962734b35b7b07b33"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime600/StaticInputChangeSet.json",
+      "bytes": 1994,
+      "sha256": "1f7e098da8222efbffe66ea019b31f04a1709c9316fd0b4674bfd83d6514fe65"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime600/assessment-source.test.mjs",
+      "bytes": 1457,
+      "sha256": "128447e67ddc4d0ac5fa60ee017b3afd0d16ab34db7a2f43be9d131fe3262222"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime600/budget-evidence.mjs",
+      "bytes": 2389,
+      "sha256": "fc63343b630668c88385603bf563404d7020cc0edb74422f8cd3d3e0f57f3075"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime600/build-controller-manifest.mjs",
+      "bytes": 7258,
+      "sha256": "4b8e5d3f85b3d18ceddbee429a368c116b81ca7c17af9ca7e12d0c60346a3456"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime600/build-static-inputs.mjs",
+      "bytes": 4623,
+      "sha256": "afa6055a43f05f671efbf1b9c4dd0894bc075882f538c50d42d1981cc2b3e84b"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime600/cli.mjs",
+      "bytes": 1732,
+      "sha256": "670a22a1f298fd52a2ff9f5b140df2aea6d031eed41777851b443fa2814f356f"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime600/context.mjs",
+      "bytes": 22111,
+      "sha256": "241ed6197e812ace223cfcd0eea44791e9d7c9eda8d8e8436930af6c575403dc"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime600/freeze-evidence.mjs",
+      "bytes": 6720,
+      "sha256": "8e8c8d8f734371d44bfcff116d3bd97329bcc487b799d9fc91e2bf23046d19cb"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime600/grr.mjs",
+      "bytes": 5552,
+      "sha256": "493146bb233ca14e0a166ba3b337ed90d3e5a5c1961cba6d56e925d29fd79a05"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime600/historical-component-observations.mjs",
+      "bytes": 6424,
+      "sha256": "3e375b5a41f649eb4100dc804dc54a39998697ffdcd293c77a9543d9ca9b83a5"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime600/host-effect.mjs",
+      "bytes": 2727,
+      "sha256": "8fbb292fe37bb94006f586bbbf995770a5b8c63a86d0167d292d522939dc409f"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime600/late-bound-policy.mjs",
+      "bytes": 1029,
+      "sha256": "38e4e69932bcfa36156086b2a4f7cba353f7199f5fd2ff58c8bdb8e89a5f64a9"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime600/packed-chain.test.mjs",
+      "bytes": 2115,
+      "sha256": "55412ae47df2cfc1feea1ca8d6108f4a091d11e71e9af9a6caadd8d8066d668a"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime600/positive-terminal-observations.mjs",
+      "bytes": 6996,
+      "sha256": "8d29763a0cd6818c0066de1a432a7d12eab161154286506c5699c4f6f72e3b30"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime600/preentry-skill-qualification.json",
+      "bytes": 123959,
+      "sha256": "1cda5e0fdad2d3afdf9760b983ca97c5012c8301dea661357e964106a00512fa"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime600/prepare600.mjs",
+      "bytes": 2241,
+      "sha256": "3173f8f7b0729083e026583179e5ad5fe3901fbaf068499607577bf9397d71a1"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime600/publication-observations.mjs",
+      "bytes": 1741,
+      "sha256": "1351960fdbb1a8c5ef0cf08153a3701cc0fcde97d8a360e0a3eca9c37cdc11a2"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime600/python-import-catalog.py",
+      "bytes": 1259,
+      "sha256": "f3b9ca4d0327f1df0b20d2f609cf84853ee08e5ef32a6984a37297cb971aa6a1"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime600/result-terminal.mjs",
+      "bytes": 7316,
+      "sha256": "a4994871e1eacc76850a8c5123f872d0040aa7b42273f3686cd64e2215325ccc"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime600/runtime600.test.mjs",
+      "bytes": 3981,
+      "sha256": "eb03eefa4fdc40269908f371c05a868fd8aaf08d41b10754b855ec5285dded0e"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime600/source-publication.mjs",
+      "bytes": 3088,
+      "sha256": "4a20accf7e3fe82501a3eb880bf4dd98054c42ec80b1c7e1db353d30db3a53e8"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime600/tool-entry.functions.js",
+      "bytes": 9919,
+      "sha256": "a9fe73cb6c0d2492eb0c96276f2b1d0b5a3e4c137b37e609575b08d404179cf7"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime600/tool-entry.template.js",
+      "bytes": 7759,
+      "sha256": "6a545e78ad5b4964f22297ce595771665191f50a6b200aafdb2459790c80e81f"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime600/trusted-github.mjs",
+      "bytes": 6083,
+      "sha256": "ea33a927db1cfe35a2c99dee7389e3b71a7080e5d11a483c4861fbc048c7c5a6"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime600/write-targets.mjs",
+      "bytes": 6144,
+      "sha256": "8df6c08197d386933c49252c740e7f55acc4c3fc2e4f927822c59cf9f6dd607d"
+    }
+  ],
+  "accepted_sources": [
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/FixedSyntheticProfile600IndependentAcceptance.json",
+      "bytes": 7476,
+      "sha256": "266ae65aba7faec0af6b4c257a6c289d6bdf3cd3719a74bca145cae00ce99177"
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/FixedHost600IndependentAcceptance.json",
+      "bytes": 4248,
+      "sha256": "a19c8deb3c6b28928776c8faec55e0944386c82010df31f42501dd9ff7346baa"
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/Runtime600TwoFunctionSuccessorIndependentAcceptance.json",
+      "bytes": 4484,
+      "sha256": "b71e7dd6ccfe6f03627725b1740b2a54f84a5ca6ab3735ba10e602dfb2cecab0"
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/Runtime600ComponentEvidenceIndependentApplicability.json",
+      "bytes": 5002,
+      "sha256": "33f0e105811b9b8f85919cbedee823c4d29baa2b52131da34dbab85717d14a93"
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/Runtime600ActualTwoFunctionApplication.json",
+      "bytes": 8520,
+      "sha256": "87f2fdc24ab01d621bdf3bcf4ddae9e6f0896b1fd38e9530ac2f1c5afc6d9db9"
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/ResultAssessmentPublicationApplicabilityFinding.json",
+      "bytes": 4945,
+      "sha256": "2ce044d44178ccc0466991fe242caf33aab397decc52ddbb5d1f07a6fcc5de2e"
+    }
+  ],
+  "controller_manifest": {
+    "path": "scripts/phase2-qualification/control-context-verifier-runtime600/ControllerSourceManifest.candidate.json",
+    "bytes": 44103,
+    "sha256": "edf31377656e1a9a473d0095df72231c058266007e4fd4046e0a9b8c2d6a60d9"
+  }
+}

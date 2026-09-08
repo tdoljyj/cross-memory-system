@@ -1,0 +1,49 @@
+{
+  "state": "PREPARED_COMPLETE_EMPTY_INSTALL_FOR_INDEPENDENT_REVIEW",
+  "authority_effect": "NONE",
+  "predecessor_sql_sha256": "b8063e0776f691a1b9a2fe990c377bfb82d13270206ecfc900d0f73c723f64d2",
+  "files": [
+    {
+      "path": "scripts\\phase2-qualification\\nonproduction-control-store\\runtime-successor\\control-objects-successor\\build.mjs",
+      "sha256": "5c9ec84ce8aa88db87138b770e4f8b2be70bfb85b430f4d3a34d512d8d28acc2",
+      "bytes": 7891
+    },
+    {
+      "path": "scripts\\phase2-qualification\\nonproduction-control-store\\runtime-successor\\control-objects-successor\\install.candidate.sql",
+      "sha256": "a242db8504f1cbd9c04ee8a22d8072e7b9ee0d6897433393e88c6e14a8e4ea27",
+      "bytes": 34444
+    },
+    {
+      "path": "scripts\\phase2-qualification\\nonproduction-control-store\\runtime-successor\\control-objects-successor\\client.mjs",
+      "sha256": "de049d0dafc16d225a9884ff2a8899976883f539e417f20d8a34eeab33b571ae",
+      "bytes": 767
+    },
+    {
+      "path": "scripts\\phase2-qualification\\nonproduction-control-store\\runtime-successor\\control-objects-successor\\create-test.mjs",
+      "sha256": "f8548ca1659b70400d475b13320879d811b8da31889f5daf9cfe9120b37bd2d7",
+      "bytes": 5525
+    },
+    {
+      "path": "scripts\\phase2-qualification\\nonproduction-control-store\\runtime-successor\\control-objects-successor\\control-objects.test.mjs",
+      "sha256": "0e9dd1c674cf7f917a5a91e43936cb8315181425418de5bea8e1a05a971bf9f4",
+      "bytes": 10211
+    },
+    {
+      "path": "scripts\\phase2-qualification\\nonproduction-control-store\\runtime-successor\\control-objects-successor\\README.md",
+      "sha256": "7cbe76dca78bd24a541fbe6ece26af73ef894c522594cff2e220ea73235b0ebc",
+      "bytes": 3791
+    }
+  ],
+  "tests": {
+    "command": "node --test scripts/phase2-qualification/nonproduction-control-store/runtime-successor/control-objects-successor/control-objects.test.mjs",
+    "passed": 5,
+    "failed": 0,
+    "skipped": 0,
+    "duration_ms": 2715.7451,
+    "scope": "new local disposable PG only"
+  },
+  "existing_remote_runtime_tables": 0,
+  "new_empty_runtime_tables": 5,
+  "deployed": false,
+  "qualified": false
+}

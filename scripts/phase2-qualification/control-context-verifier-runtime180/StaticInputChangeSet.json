@@ -1,0 +1,40 @@
+{
+  "state": "PREPARED_NOT_REGISTERED",
+  "source_refs": {
+    "oldSuite": {
+      "path": "scripts/phase2-qualification/preentry-parent/gate-successor/preentry-skill-qualification.json",
+      "sha256": "cf4a57d0d367ea9946d663ce177bbe228c8399d8398e33dced4e5a3bb099db28",
+      "bytes": 123377
+    },
+    "profileRef": {
+      "path": "scripts/phase2-qualification/preentry-parent/profile-runtime180/ProfileDefinition.json",
+      "sha256": "cce4d4966dddbdb9685c8fab9242ffde48ca6210c919bd2615cc9c0bfc011f51",
+      "bytes": 3325
+    },
+    "payloadRef": {
+      "path": "scripts/phase2-qualification/preentry-parent/profile-runtime180/signing/ProfileSigningPayload.json",
+      "sha256": "f0fb2615f47995841791a0b131c427c4727daacdfb211e2f99c551c1f61109af",
+      "bytes": 11285
+    },
+    "acceptanceRef": {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/FixedSyntheticProfile180IndependentAcceptance.json",
+      "sha256": "a1f6c3d41d761c92d45a8cc820b133bce26929bd192393675f05bd7cfdada10e",
+      "bytes": 6957
+    },
+    "manifestRef": {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime180/ControllerSourceManifest.candidate.json",
+      "sha256": "2dedbf340a171da8e91b6b60f55bade95ff6ac6b416a286b1cde637c80789c10",
+      "bytes": 42114
+    }
+  },
+  "changes": [
+    "Profile180 exact version/payload/independent acceptance reference; actual signature still required at runtime",
+    "Same Gate forward version and180 cap",
+    "Every original applicable Test binds the same full controller source manifest, not old parent-only digest",
+    "Only affected Test and Gate/Registry digests recomputed; all original case/expected-oracle/requirement/fixture fields preserved"
+  ],
+  "gate_sha256": "9129e5c506b3c12e7689a281bcd4852adeb15100936bef0c3313fd8eac698d14",
+  "suite_sha256": "e1ba591cb8cf56a88cdf01aa3ff027c048b4bf0f0e692a7b868cfd6d4fae6d2e",
+  "controller_qualified": false,
+  "actual_profile_signature_claimed": false
+}

@@ -1,0 +1,30 @@
+{
+  "state": "FIXED_HOST_PORT_PREPARED_NOT_EXECUTED",
+  "supersedes_evidence_sha256": "93f43cca4b5cde7c5c1a75b9eef5c5b612306c3367f7c000e209259a4703d717",
+  "files": {
+    "test_fixed_host.py": "b980f0574e33ff4052d38c15d7a7f9e6868ccfde1aafb83cc56d3146c5fc9a8b",
+    "test_stop_budget_fix.py": "0609bfe14035ed7bd246004e5102c47963379e9c8ead94f175b8b6a20814cb1f",
+    "README.md": "9c63c9b868bea5bcf5998b61586c72586aefa396c8cffcadc8784f852e554174",
+    "fixed_host.py": "f91301737a5793d3d897eeba0b452826cb2df02e05378ec26f64a71c06c55895"
+  },
+  "new_tests": {
+    "execution_groups": [
+      {
+        "passed": 3,
+        "duration_seconds": 0.003
+      },
+      {
+        "passed": 1,
+        "duration_seconds": 0.007
+      }
+    ],
+    "passed": 4,
+    "all_processes_mocked": true,
+    "failed": 0
+  },
+  "old_tests_not_rerun": true,
+  "docker_calls": 0,
+  "watchdog_processes": 0,
+  "authority_effect": "NONE",
+  "qualification_result": null
+}

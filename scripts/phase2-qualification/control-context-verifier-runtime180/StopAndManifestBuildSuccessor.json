@@ -1,0 +1,81 @@
+{
+  "state": "ACTUAL_MANIFEST_AND_STATIC_SUCCESSOR_BUILT_NOT_QUALIFIED",
+  "predecessor_candidate_sha256": "270551fad13e299727022d8894bd7bb8a316800a0979a571f0e9177f8507b595",
+  "successor_source_bindings_sha256": "a7e9ab37f03b62933afe7f02de99a6284dc644331a0f6a3de3eb0c279403a736",
+  "changes": [
+    {
+      "finding": "Mixed Windows path separators caused false outside-runtime rejection",
+      "correction": "Native resolved relative-path boundary, fixed roots unchanged",
+      "test": {
+        "pass": 1,
+        "fail": 0,
+        "duration_ms": 106.94
+      }
+    },
+    {
+      "finding": "Actual Python Lib/urllib/__init__.py is a legitimate zero-byte dependency",
+      "correction": "Retain dependency with size0 and exact SHA256 of empty bytes; implementation sources remain nonempty; double-read actual bytes still required",
+      "actual_path": "C:/Users/Windows/AppData/Local/Programs/Python/Python312/Lib/urllib/__init__.py",
+      "actual_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "test": {
+        "pass": 1,
+        "fail": 0,
+        "duration_ms": 110.7786
+      }
+    },
+    {
+      "finding": "GRR outer STOP wrapper did not bind complete inspect identity/exit",
+      "correction": "Require same full observation.Id, numeric integer Pid0, Runningfalse, Statusexited, nonzero valid calendar FinishedAt matching original fixed Docker STOP semantics",
+      "actual_positive_source": {
+        "path": "scripts/phase2-qualification/docker-engineering-observation/work/observation/main-after-stop.stdout",
+        "bytes": 9091,
+        "sha256": "2481ef1f263a714083f51cfa4f213bf43f0df0a071ce54bf7de5b3c56b781f82"
+      },
+      "test": {
+        "pass": 1,
+        "fail": 0,
+        "test_ms": 1.3022,
+        "wrong_id_pid_calendar_mutations_rejected": true
+      }
+    }
+  ],
+  "actual_build": {
+    "controller_manifest_files": 192,
+    "observed_python_files": 105,
+    "wx_manifest_write_succeeded": true,
+    "wx_static_objects_write_succeeded": true,
+    "objects": [
+      {
+        "path": "scripts/phase2-qualification/control-context-verifier-runtime180/ControllerSourceManifest.candidate.json",
+        "bytes": 42114,
+        "sha256": "2dedbf340a171da8e91b6b60f55bade95ff6ac6b416a286b1cde637c80789c10"
+      },
+      {
+        "path": "scripts/phase2-qualification/control-context-verifier-runtime180/GateDefinitionCandidate.json",
+        "bytes": 12803,
+        "sha256": "9129e5c506b3c12e7689a281bcd4852adeb15100936bef0c3313fd8eac698d14"
+      },
+      {
+        "path": "scripts/phase2-qualification/control-context-verifier-runtime180/preentry-skill-qualification.json",
+        "bytes": 123959,
+        "sha256": "e1ba591cb8cf56a88cdf01aa3ff027c048b4bf0f0e692a7b868cfd6d4fae6d2e"
+      },
+      {
+        "path": "scripts/phase2-qualification/control-context-verifier-runtime180/RegistrySuccessorCandidate.json",
+        "bytes": 2268,
+        "sha256": "1dd21691b8c8727d3ecc69a5b54cbfa87137bbd9a673e2d9030d0e13ef47528b"
+      },
+      {
+        "path": "scripts/phase2-qualification/control-context-verifier-runtime180/StaticInputChangeSet.json",
+        "bytes": 1994,
+        "sha256": "0e4d5439d9c35cf292094aac1035175f1431f643cc950018345067aa510f0ce0"
+      }
+    ]
+  },
+  "old_nine_tests_rerun": false,
+  "original_candidate_and_bindings_preserved": true,
+  "history_before_stop_correction_preserved": true,
+  "current_formal_pqual_run": false,
+  "controller_qualification_issued": false,
+  "authority_effect": "NONE"
+}

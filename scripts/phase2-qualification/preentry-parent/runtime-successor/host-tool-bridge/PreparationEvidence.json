@@ -1,0 +1,30 @@
+{
+  "state": "PREPARED_FIXED_INTERNAL_PORT_FOR_INDEPENDENT_REVIEW",
+  "authority_effect": "NONE",
+  "files": [
+    {
+      "path": "scripts\\phase2-qualification\\preentry-parent\\runtime-successor\\host-tool-bridge\\bridge.py",
+      "sha256": "11e64259e075481d3311ebd6db7378d2d52e9f8cf537775b39051b3478ad0a7c",
+      "bytes": 5145
+    },
+    {
+      "path": "scripts\\phase2-qualification\\preentry-parent\\runtime-successor\\host-tool-bridge\\test_bridge.py",
+      "sha256": "c802c14b0d7d9bd9e1e6c17e16d5bb421c5c8055310870dc2d58382b91c3c88a",
+      "bytes": 3068
+    },
+    {
+      "path": "scripts\\phase2-qualification\\preentry-parent\\runtime-successor\\host-tool-bridge\\README.md",
+      "sha256": "6d5bf69e0a50bfaa8fa916028e5a12cea14d2f3794d4ce21f75baa23069cbf92",
+      "bytes": 3231
+    }
+  ],
+  "host_sha256": "430445f80986ba99a6f9b149a5a73cffe88182b26b0574b9f83fcdcbf64e69b2",
+  "tests": {
+    "passed": 5,
+    "failed": 0,
+    "seconds": 0.001,
+    "kind": "pure/mock only; timestamps added after control-flow checks"
+  },
+  "executed": false,
+  "qualified": false
+}

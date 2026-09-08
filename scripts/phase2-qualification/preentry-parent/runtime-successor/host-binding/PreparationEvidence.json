@@ -1,0 +1,20 @@
+{
+  "state": "PREPARED_EXACT_RUNTIME180_SUCCESSOR_NOT_ACTIVE",
+  "supersedes_evidence_sha256": "417b8146f39926fefa311f838f4384c90ef0a1d8354f199f7b02b298b9e771c9",
+  "files": {
+    "test_start_window_fix.py": "8c9433c6391cbaeaf8d4cf4746ae9be212f44545ac222eb0242b092d038b1339",
+    "test_stop_budget_fix.py": "0609bfe14035ed7bd246004e5102c47963379e9c8ead94f175b8b6a20814cb1f",
+    "test_fixed_host.py": "b980f0574e33ff4052d38c15d7a7f9e6868ccfde1aafb83cc56d3146c5fc9a8b",
+    "fixed_host.py": "430445f80986ba99a6f9b149a5a73cffe88182b26b0574b9f83fcdcbf64e69b2",
+    "README.md": "bea32cc39a9b19de6640574a33a35d460b0e0a5676818ec53fcf3a7a3f4db939"
+  },
+  "tests": {
+    "prior_tests_preserved": true,
+    "new_execution": false,
+    "change": "MAX_GA_SECONDS only to180"
+  },
+  "remote_mutations": 0,
+  "docker_calls": 0,
+  "authority_effect": "NONE",
+  "qualification_result": null
+}

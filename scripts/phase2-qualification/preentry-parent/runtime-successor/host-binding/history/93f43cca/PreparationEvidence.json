@@ -1,0 +1,18 @@
+{
+  "state": "FIXED_HOST_PORT_PREPARED_NOT_EXECUTED",
+  "files": {
+    "test_fixed_host.py": "b980f0574e33ff4052d38c15d7a7f9e6868ccfde1aafb83cc56d3146c5fc9a8b",
+    "README.md": "1a6d2ee513632543a1a060653d55d56af2a8174bb0836e88e6bc4d011b2b1b77",
+    "fixed_host.py": "f4ad5fde5e2eadf8367c5318926ac52326dc2917b7eafb8f17f3349a34a7a871"
+  },
+  "tests": {
+    "all_processes_mocked": true,
+    "passed": 4,
+    "failed": 0,
+    "duration_seconds": 0.025
+  },
+  "docker_calls": 0,
+  "watchdog_processes": 0,
+  "authority_effect": "NONE",
+  "qualification_result": null
+}

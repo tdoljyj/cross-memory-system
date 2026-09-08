@@ -1,0 +1,55 @@
+{
+  "state": "FROZEN_ENGINEERING_SUCCESSOR_PENDING_INDEPENDENT_ACCEPTANCE",
+  "files": [
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/profile-runtime600/ChangeSet.json",
+      "sha256": "b7aae0d5c1b48562b98bad6b4f08ecbd0bcf359a1ee3cdc030cd00b3268c4b92",
+      "bytes": 1713
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/profile-runtime600/FixedInputScope.json",
+      "sha256": "a79afda0e8b0089b731d68d1ceae36c44c48933c5c15c802892ada9b848bf85f",
+      "bytes": 1793
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/profile-runtime600/ProfileDefinition.json",
+      "sha256": "d1c060b85f0b842a397a478105ea57a208e62eb0a5a2d4c2cd8f93f63eae88f5",
+      "bytes": 3325
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/profile-runtime600/ProfileReviewSubject.json",
+      "sha256": "e6013425f51671fa9fa301a7201254f56211963df1d3c3c6ce003528c48956dc",
+      "bytes": 11660
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/profile-runtime600/README.md",
+      "sha256": "da0c4a39c0a14525e8e9833dd21a3636da06c3481b078fb093964cef66557988",
+      "bytes": 943
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/profile-runtime600/build.mjs",
+      "sha256": "bc785080755fdbe783488049338d3ed194eb28ba4dbf9163692ae47f5dd40d2a",
+      "bytes": 4279
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/profile-runtime600/preentry-profile.candidate.schema.json",
+      "sha256": "467ffde7212f6ddb9a8dbf9121a26ef5138129b43f7bb3722392adf7f17f90ef",
+      "bytes": 8294
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/profile-runtime600/validate.test.mjs",
+      "sha256": "6ef14dc200b25c7d8a82c88b944482b512632b1368905c088be17e22d639d138",
+      "bytes": 1519
+    }
+  ],
+  "checks": {
+    "pass": 1,
+    "fail": 0,
+    "skip": 0,
+    "duration_ms": 86.0182,
+    "kind": "pure exact Profile successor check"
+  },
+  "authority_effect": "NONE",
+  "accepted": false,
+  "actual_qualification_run": false
+}

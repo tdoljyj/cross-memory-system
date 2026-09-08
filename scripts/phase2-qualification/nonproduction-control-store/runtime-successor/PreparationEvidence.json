@@ -1,0 +1,21 @@
+{
+  "state": "PREPARED_EXACT_RUNTIME180_SUCCESSOR_NOT_ACTIVE",
+  "supersedes_evidence_sha256": "2a6708fc388694d372eda15b7d2121fe3f9fce2edf8d50389668b026298136e0",
+  "files": {
+    "install.candidate.sql": "b8063e0776f691a1b9a2fe990c377bfb82d13270206ecfc900d0f73c723f64d2",
+    "store.test.mjs": "6358eda23c2be5b84306f176d649092ec838f05bb4b0fb1ab058b2c22ed41cff",
+    "README.md": "35e26708bad9b2eeed693d2de9e028b4cef9ad53e6ec97aa2f6a3105098be56d",
+    "evidence.test.mjs": "643afe6b68499c670bc43e550a7a8ae1aa2adfd1477ffd7a696383178f424678",
+    "client.mjs": "b8e0080118d94128a163ca9efd57d01706ec8ecc45060135f092a896f4583816"
+  },
+  "tests": {
+    "node_passed": 6,
+    "old_broad_checks_not_rerun": true,
+    "duration_ms": 2951.5857,
+    "node_failed": 0
+  },
+  "remote_mutations": 0,
+  "docker_calls": 0,
+  "authority_effect": "NONE",
+  "qualification_result": null
+}
