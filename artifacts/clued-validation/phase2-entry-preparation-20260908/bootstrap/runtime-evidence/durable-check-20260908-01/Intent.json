@@ -1,0 +1,21 @@
+{
+  "kind": "ENGINEERING_DURABILITY_CHECK_INTENT",
+  "attempt_id": "durable-check-20260908-01",
+  "idempotency_key": "phase2-bootstrap-durable-check-20260908-01",
+  "purpose": "Verify remote persistence and exact immutable blob read-back for one synthetic engineering record using the existing private repository.",
+  "owner_delegation_ref": "CLUED_PHASE2_PREENTRY_BOOTSTRAP_OWNER_DELEGATION_20260908",
+  "owner_signed_merge": "4f722ea9d78488b749c15d27fe9145e9d9f9d2c2",
+  "operation": "PERSIST_AND_READ_BACK_THIS_EXACT_SYNTHETIC_ENGINEERING_INTENT",
+  "repository": "tdoljyj/cross-memory-system",
+  "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/runtime-evidence/durable-check-20260908-01/Intent.json",
+  "payload": {"synthetic": true, "value": "fixed-durability-check"},
+  "recovery_rule": "After uncertain publication, query the same immutable commit/path and compare exact bytes; never dispatch an isolated action or invent a replacement successful result.",
+  "result_location": "Append a separate Observation.json after actual remote read-back; do not modify this Intent.",
+  "formal_gate_authorization": null,
+  "formal_qualification_execution": false,
+  "isolated_process_started": false,
+  "model_calls": 0,
+  "paid_actions": 0,
+  "production_business_writes": 0,
+  "authority_effect": "NONE. Engineering persistence is not a new Authorization, Receipt, Canonical Store, accepted sink or qualification result."
+}
