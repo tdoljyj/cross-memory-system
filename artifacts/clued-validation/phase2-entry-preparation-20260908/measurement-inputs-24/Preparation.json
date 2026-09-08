@@ -1,0 +1,110 @@
+{
+  "state": "A08_24_CASE_INDEPENDENT_GOLD_CANDIDATE_BYTES_FIXED_PENDING_ACCEPTANCE",
+  "custodian": "/root/qualification_cases",
+  "cases": 24,
+  "normal": 16,
+  "blocked": 8,
+  "unchanged_original_cases": 12,
+  "new_cases": 12,
+  "formal_slots_planned": 72,
+  "formal_slots_executed": 0,
+  "formal_gold_freeze_issued": false,
+  "private_directory": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-08\\ia\\private-evaluation\\slice-a-gold-24-20260908",
+  "private_files": [
+    {
+      "name": "Inputs.private.json",
+      "sha256": "afb0e99adcde7a22732a7d0bd7f887896a859ae143f93bbe834a7a6ba4d4c8d7",
+      "bytes": 52112
+    },
+    {
+      "name": "Gold.private.json",
+      "sha256": "5dee12fca9e424c1f58e346d373cca96b1b6caf29c61be02550210d0fa45f9cb",
+      "bytes": 19644
+    },
+    {
+      "name": "build-private.py",
+      "sha256": "b86591e4d7694d0dc274b81ba1782a83becec028d7a1ae10f877ff2e218cdd95",
+      "bytes": 24702
+    }
+  ],
+  "public_files": [
+    {
+      "path": "QuestionIndex.json",
+      "sha256": "d651b215e86d9bfac4fa324c176f6262e510e20bd06bf020f707e653f88ae4ee",
+      "bytes": 19580
+    },
+    {
+      "path": "RunPlan.json",
+      "sha256": "5a5ef2b51d6397ca9f2c42809ac1d5284b17bc9ca0352a12ed86da5a5766158e",
+      "bytes": 21431
+    }
+  ],
+  "source_bindings": [
+    {
+      "role": "catalog",
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-08\\ia\\work\\slice-a-contracts\\SliceACaseCatalog.json",
+      "sha256": "c07b1450cd3615ee66d56fffbca11966a0de1cc1bc75b8855fc81df42c58ed86",
+      "bytes": 10295
+    },
+    {
+      "role": "preregistration",
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-08\\ia\\work\\slice-a-contracts\\SliceAPreregistration.json",
+      "sha256": "289dd3f7091b41a319b6604d6246010d4acd60e8f44955b6ce8b67ec13f8a033",
+      "bytes": 3396
+    },
+    {
+      "role": "charter",
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-08\\ia\\work\\slice-a-contracts\\Charter.md",
+      "sha256": "bd8a96afad8d174e0333c92a01281d6f8613f5fff33b98365609f72f2c525b72",
+      "bytes": 17616
+    },
+    {
+      "role": "A10_protocol",
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-08\\ia\\work\\kernel-phase2-repo\\artifacts\\clued-validation\\phase2-entry-preparation-20260908\\bootstrap\\agent-handoff-measurement\\MeasurementProtocol.md",
+      "sha256": "f6eaa15b5b373609bc57b780fdb4d005a278a497820ffe751de17f86f202d88e",
+      "bytes": 6725
+    },
+    {
+      "role": "A10_independent_acceptance",
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-08\\ia\\work\\kernel-phase2-repo\\artifacts\\clued-validation\\phase2-entry-preparation-20260908\\bootstrap\\agent-handoff-measurement\\IndependentProtocolAcceptance.json",
+      "sha256": "be859c0542e5b61b9454b8d315bab72d23e097b53d7700fd27cc361e31c929ea",
+      "bytes": 7173
+    },
+    {
+      "role": "historical_12_gold",
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-08\\ia\\work\\kernel-phase2-repo\\artifacts\\clued-validation\\phase2-entry-preparation-20260908\\measurement-inputs\\GoldCandidate.private.json",
+      "sha256": "3c50a4b7c82788cb26d39b386057af0b056aedf90b092ff53aab7d793022d48f",
+      "bytes": 15378
+    }
+  ],
+  "custody": {
+    "answers_outside_repository": true,
+    "public_answer_text": false,
+    "shared_host_same_os_identity": "Procedural separation only; not OS-enforced secrecy between agents sharing an account",
+    "implementation_access": "No private directory reads or mounts; only public index and summaries",
+    "run_delivery": "Supply allowed input only to a new isolated execution session; Gold never mounted into executor",
+    "independent_review": "Custodian performs scoped rule checks and exposes only minimal requested evidence; no blanket answer disclosure"
+  },
+  "actual_preparation_checks": {
+    "case_id_set_exact": true,
+    "original_12_answers_and_inputs_semantically_unchanged": true,
+    "two_source_sessions_each": true,
+    "gold_for_all_24": true,
+    "all_not_executed": true,
+    "pair_order_sha256_rule": true,
+    "baseline_first_pairs": 8,
+    "clued_first_pairs": 8,
+    "slot_ids_unique": true,
+    "source_hashes_bound": true
+  },
+  "runtime_inputs_still_required": [
+    "Actual accepted evaluation custodian/rubric and formal dataset/Gold freeze",
+    "Exact logical-to-Canonical source/object/version/Receipt/grant/tenant/project mappings before executing; no synthetic IDs accepted as real",
+    "Real approved per-case setup/injection and service entry bindings; original Entry/Profile/GA/authority and budget unchanged",
+    "Accepted target tokenizer/version/digest and measured N15<=2048 plus B07 mandatory representation>2048",
+    "Accepted host/timer/cold-reset and authorized warm-up process; model/provider separately approved",
+    "Current permissions and restriction-preserving input dispatch; original 12 logical fixtures remain candidates",
+    "Actual result, provenance, timing, checkpoint and no-side-effect observations; no prefilled values"
+  ],
+  "A10": "Applies accepted agent handoff amendment, not human-efficiency claims; both arms same sources/task/allowed knowledge, fresh sessions, no Gold/other-arm feedback. 16 baseline runs are outside 72."
+}

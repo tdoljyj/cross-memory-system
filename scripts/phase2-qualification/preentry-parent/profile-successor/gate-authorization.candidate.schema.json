@@ -1,0 +1,603 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "GateAuthorization candidate",
+  "$comment": "CANDIDATE_NOT_ACTIVATED. NO_AUTHORITY_EFFECT. S06 L3879/L3885 and QualificationPhasePolicy L138-166. Names and reference encodings not fixed in source remain proposals; no new authority. Actual signature, root/purpose/Audience, reference resolution, current epochs, atomic gate applicability, time ordering, 600-second limit and Owner remaining budget are EXTERNAL_CHECKS_REQUIRED. Independent generation string types and signature carrier are unresolved candidate encodings. Preserve explicitly listed policy digest names. gate_authorization_ref is a consuming runtime binding to this GA, not a newly invented self-reference inside it.",
+  "type": "object",
+  "required": [
+    "gate_authorization_id",
+    "authorization_status",
+    "gate_id",
+    "profile_ref",
+    "purpose",
+    "environment",
+    "repository_ref",
+    "source_ref",
+    "artifact_refs",
+    "host_runtime_config_digest",
+    "upstream_gate_result_receipt_refs",
+    "status_manifest_ref",
+    "release_risk_manifest_digest",
+    "actor_ref",
+    "subject_ref",
+    "binding_ref",
+    "scope_ref",
+    "issuer_ref",
+    "authority_source_ref",
+    "audience",
+    "issuer_purpose",
+    "schema_digest",
+    "control_trust_root_generation",
+    "allowed_read_set",
+    "allowed_write_set",
+    "forbidden_actions",
+    "credential_scope",
+    "issued_at",
+    "expires_at",
+    "deadline",
+    "stop_policy_digest",
+    "rollback_point_ref",
+    "budget_reservation_ref",
+    "evidence_sink_ref",
+    "controller_digest",
+    "controller_qualification_ref",
+    "candidate_skill_digest",
+    "mechanism_digest",
+    "plan_digest",
+    "fixtures_digest",
+    "stage_receipt_refs",
+    "target_revision",
+    "runner_generation",
+    "credential_generation",
+    "session_generation",
+    "idempotency_key",
+    "revocation_epoch_vector",
+    "signature",
+    "scope_digest",
+    "profile_digest",
+    "dominant_role"
+  ],
+  "properties": {
+    "gate_authorization_id": {
+      "type": "string",
+      "pattern": "^ga_[A-Za-z0-9][A-Za-z0-9_.-]*$"
+    },
+    "authorization_status": {
+      "const": "AUTHORIZED"
+    },
+    "gate_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "profile_ref": {
+      "type": "object",
+      "required": [
+        "profile_id",
+        "definition_version",
+        "content_digest",
+        "accepted_ref"
+      ],
+      "properties": {
+        "profile_id": {
+          "const": "DP-PREENTRY-SKILL-QUALIFICATION"
+        },
+        "definition_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "content_digest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "accepted_ref": {
+          "type": "object",
+          "required": [
+            "uri",
+            "sha256"
+          ],
+          "properties": {
+            "uri": {
+              "type": "string",
+              "minLength": 1
+            },
+            "sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          },
+          "additionalProperties": false,
+          "$comment": "Candidate reference encoding; shape never proves resolution, acceptance, currentness or authority."
+        }
+      },
+      "additionalProperties": false
+    },
+    "purpose": {
+      "const": "SKILL_COEXISTENCE_QUALIFICATION"
+    },
+    "environment": {
+      "const": "ISOLATED_TEST"
+    },
+    "repository_ref": {
+      "type": "object",
+      "required": [
+        "uri",
+        "sha256"
+      ],
+      "properties": {
+        "uri": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "additionalProperties": false,
+      "$comment": "Candidate reference encoding; shape never proves resolution, acceptance, currentness or authority."
+    },
+    "source_ref": {
+      "type": "object",
+      "required": [
+        "commit",
+        "tree",
+        "blobs"
+      ],
+      "properties": {
+        "commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "tree": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "blobs": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": [
+              "uri",
+              "sha256"
+            ],
+            "properties": {
+              "uri": {
+                "type": "string",
+                "minLength": 1
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            },
+            "additionalProperties": false,
+            "$comment": "Candidate reference encoding; shape never proves resolution, acceptance, currentness or authority."
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "artifact_refs": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "uri",
+          "sha256"
+        ],
+        "properties": {
+          "uri": {
+            "type": "string",
+            "minLength": 1
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        },
+        "additionalProperties": false,
+        "$comment": "Candidate reference encoding; shape never proves resolution, acceptance, currentness or authority."
+      }
+    },
+    "upstream_gate_result_receipt_refs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "uri",
+          "sha256"
+        ],
+        "properties": {
+          "uri": {
+            "type": "string",
+            "minLength": 1
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        },
+        "additionalProperties": false,
+        "$comment": "Candidate reference encoding; shape never proves resolution, acceptance, currentness or authority."
+      }
+    },
+    "status_manifest_ref": {
+      "type": "object",
+      "required": [
+        "uri",
+        "sha256"
+      ],
+      "properties": {
+        "uri": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "additionalProperties": false,
+      "$comment": "Candidate reference encoding; shape never proves resolution, acceptance, currentness or authority."
+    },
+    "release_risk_manifest_digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "actor_ref": {
+      "type": "object",
+      "required": [
+        "uri",
+        "sha256"
+      ],
+      "properties": {
+        "uri": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "additionalProperties": false,
+      "$comment": "Candidate reference encoding; shape never proves resolution, acceptance, currentness or authority."
+    },
+    "subject_ref": {
+      "type": "object",
+      "required": [
+        "uri",
+        "sha256"
+      ],
+      "properties": {
+        "uri": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "additionalProperties": false,
+      "$comment": "Candidate reference encoding; shape never proves resolution, acceptance, currentness or authority."
+    },
+    "binding_ref": {
+      "type": "object",
+      "required": [
+        "uri",
+        "sha256"
+      ],
+      "properties": {
+        "uri": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "additionalProperties": false,
+      "$comment": "Candidate reference encoding; shape never proves resolution, acceptance, currentness or authority."
+    },
+    "scope_ref": {
+      "type": "object",
+      "required": [
+        "uri",
+        "sha256"
+      ],
+      "properties": {
+        "uri": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "additionalProperties": false,
+      "$comment": "Candidate reference encoding; shape never proves resolution, acceptance, currentness or authority."
+    },
+    "issuer_ref": {
+      "type": "object",
+      "required": [
+        "uri",
+        "sha256"
+      ],
+      "properties": {
+        "uri": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "additionalProperties": false,
+      "$comment": "Candidate reference encoding; shape never proves resolution, acceptance, currentness or authority."
+    },
+    "authority_source_ref": {
+      "type": "object",
+      "required": [
+        "uri",
+        "sha256"
+      ],
+      "properties": {
+        "uri": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "additionalProperties": false,
+      "$comment": "Candidate reference encoding; shape never proves resolution, acceptance, currentness or authority."
+    },
+    "audience": {
+      "type": "string",
+      "minLength": 1
+    },
+    "issuer_purpose": {
+      "type": "string",
+      "minLength": 1
+    },
+    "schema_digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "control_trust_root_generation": {
+      "type": "string",
+      "minLength": 1,
+      "$comment": "Candidate opaque nonempty string reference based on S06 L200 ctr_generation example. Source does not establish an integer type or valid current instance. No merge SHA, local 1 or sequence is supplied."
+    },
+    "allowed_read_set": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "allowed_write_set": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "forbidden_actions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "credential_scope": {
+      "type": "object",
+      "required": [
+        "uri",
+        "sha256"
+      ],
+      "properties": {
+        "uri": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "additionalProperties": false,
+      "$comment": "Candidate reference encoding; shape never proves resolution, acceptance, currentness or authority."
+    },
+    "issued_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "expires_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "deadline": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "rollback_point_ref": {
+      "type": "object",
+      "required": [
+        "uri",
+        "sha256"
+      ],
+      "properties": {
+        "uri": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "additionalProperties": false,
+      "$comment": "Candidate reference encoding; shape never proves resolution, acceptance, currentness or authority."
+    },
+    "budget_reservation_ref": {
+      "type": "object",
+      "required": [
+        "uri",
+        "sha256"
+      ],
+      "properties": {
+        "uri": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "additionalProperties": false,
+      "$comment": "Candidate reference encoding; shape never proves resolution, acceptance, currentness or authority."
+    },
+    "evidence_sink_ref": {
+      "type": "object",
+      "required": [
+        "uri",
+        "sha256"
+      ],
+      "properties": {
+        "uri": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "additionalProperties": false,
+      "$comment": "Candidate reference encoding; shape never proves resolution, acceptance, currentness or authority."
+    },
+    "controller_qualification_ref": {
+      "type": "object",
+      "required": [
+        "uri",
+        "sha256"
+      ],
+      "properties": {
+        "uri": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "additionalProperties": false,
+      "$comment": "Candidate reference encoding; shape never proves resolution, acceptance, currentness or authority."
+    },
+    "stage_receipt_refs": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "uri",
+          "sha256"
+        ],
+        "properties": {
+          "uri": {
+            "type": "string",
+            "minLength": 1
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        },
+        "additionalProperties": false,
+        "$comment": "Candidate reference encoding; shape never proves resolution, acceptance, currentness or authority."
+      }
+    },
+    "target_revision": {
+      "type": "string",
+      "minLength": 1
+    },
+    "runner_generation": {
+      "type": "string",
+      "minLength": 1
+    },
+    "credential_generation": {
+      "type": "string",
+      "minLength": 1
+    },
+    "session_generation": {
+      "type": "string",
+      "minLength": 1
+    },
+    "idempotency_key": {
+      "type": "string",
+      "minLength": 1
+    },
+    "revocation_epoch_vector": {
+      "$ref": "revocation-epoch-vector.candidate.schema.json"
+    },
+    "signature": {
+      "type": "string",
+      "minLength": 1
+    },
+    "host_runtime_config_digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "stop_policy_digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "controller_digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "candidate_skill_digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "mechanism_digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "plan_digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "fixtures_digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "scope_digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "profile_digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "dominant_role": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "additionalProperties": false
+}

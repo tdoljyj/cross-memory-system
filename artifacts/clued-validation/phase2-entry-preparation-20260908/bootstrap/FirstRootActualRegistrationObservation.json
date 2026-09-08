@@ -1,0 +1,34 @@
+{
+  "kind": "FIRST_ROOT_ACTUAL_REGISTRATION_TYPED_READBACK",
+  "state": "REGISTERED_AND_TYPED_READBACK_MATCHED_PENDING_INDEPENDENT_LIVE_REVIEW",
+  "registered_at": "2026-09-08T13:44:30.425601+00:00",
+  "observed_at": "2026-09-08T13:44:30.43643+00:00",
+  "project_ref": "uscrdifznmlvczcekqpw",
+  "root_set_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+  "generation_id": "ctrgen_352785779b64458a889d571360e2d2d5",
+  "sequence": 1,
+  "counts": {
+    "binding": 1,
+    "events": 1,
+    "head": 1
+  },
+  "canonical_root_sha256": "df0544694243768a473a7d45b50aa612937755aee9bf6b785ce8165363f2325a",
+  "metadata_binding_sha256": "793aa13a245153c36a2806eb78dc9c3f677ddb8ad678b3afe5fe2f63a0c2e4fb",
+  "signature_evidence_sha256": "e62e2da61b3d92f270c6f2294f950ba8c0e5c57866a9798968febcad65164f99",
+  "registration_acceptance_sha256": "b3d4422ba8d4150bd2988fc713217b3f310b7bf1c34c058e17a221f435afc49b",
+  "transaction_sha256": "f81aeabe00a16ebb2d78dd3afef72c77630f243486d802b5467825b625afade8",
+  "transaction_review_sha256": "699a0c07b65dab96a07f48b57c378b659bdbc0e39d13789494878dbd15755660",
+  "raw_live_body_location": "Private control store; ignored local execution evidence only",
+  "typed_uri_checks": [
+    "root exact equality",
+    "complete one-event history",
+    "empty current revocations",
+    "exact pre-append prefix",
+    "v2 acceptance and new signature payload match",
+    "all 16 binding fields match with timestamp semantic equivalence"
+  ],
+  "authority_effect": "NONE",
+  "ga_issued": false,
+  "controller_qualified": false,
+  "independent_live_review": "PENDING"
+}

@@ -1,0 +1,99 @@
+{
+  "kind": "ROOT_SIGNING_PAYLOAD_SIGNATURE_BINDING",
+  "status": "VERIFIED",
+  "observed_at": "2026-09-08T13:30:22.664413+00:00",
+  "repository": {
+    "full_name": "tdoljyj/cross-memory-system",
+    "private": true
+  },
+  "pr": {
+    "number": 27,
+    "url": "https://github.com/tdoljyj/cross-memory-system/pull/27",
+    "state": "MERGED",
+    "merged_by": "tdoljyj",
+    "merge_commit_sha": "f47fbae12738674ec780a9a79de72e94238b8f10"
+  },
+  "merge": {
+    "sha": "f47fbae12738674ec780a9a79de72e94238b8f10",
+    "verification": {
+      "verified": true,
+      "reason": "valid"
+    },
+    "committer_login": "web-flow",
+    "parents": [
+      "2eec225cdfee5ebbdf5e10cae7eaa5c5b6c80faa",
+      "468b19c0240708b0df66e45994b2aa5fce2d748a"
+    ],
+    "tree": "e75b91f8103a1e9a75c571e3d3b96fe85a6cd10f"
+  },
+  "payload": {
+    "artifact_path": "scripts/phase2-qualification/nonproduction-control-store/first-registration/signing-v2/RootSigningPayload.json",
+    "blob_sha": "9805cf9a33d903395f6681c03a4ad3c7605f0028",
+    "file_sha256": "de24b30379045bdf5d141ca8cc5f1dc3eed947f4f553e2323a1df5296918919d",
+    "payload_sha256": "8487344cdcf4e976d5f7db0514a25aea7b447875cbd74c4780d5ba6c9d5113be",
+    "review_subject_sha256": "e8f60f842a5c0d6dd2eb161d1eda35deb3e60c68236d489c4f98b22356a5cf8d"
+  },
+  "acceptance": {
+    "artifact_path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/FirstControlRootRegistrationIndependentAcceptance.v2.json",
+    "sha256": "b3d4422ba8d4150bd2988fc713217b3f310b7bf1c34c058e17a221f435afc49b"
+  },
+  "source_readback": [
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/first-registration/signing-v2/RootSigningPayload.json",
+      "sha256": "de24b30379045bdf5d141ca8cc5f1dc3eed947f4f553e2323a1df5296918919d",
+      "blob_sha": "9805cf9a33d903395f6681c03a4ad3c7605f0028"
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/FirstControlRootRegistrationIndependentAcceptance.v2.json",
+      "sha256": "b3d4422ba8d4150bd2988fc713217b3f310b7bf1c34c058e17a221f435afc49b",
+      "blob_sha": "e80590c19f8013d8df87d05ff7e866d12e002ebc"
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/ControlRootRegistrationOwnerApproval.json",
+      "sha256": "3d9c4c9e06217c7c2ef0d32dba77bb5aa66bd745a8f92f0ea255b19a95127aea",
+      "blob_sha": "9b288600bd9ddff6695e763c44e877ab34b828f6"
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/IndependentControlRootOwnerSignatureBinding.json",
+      "sha256": "78c1cea433053edb9233976615f4f22f43f318078eed0f505b48d641a5f6aae9",
+      "blob_sha": "017a9e182650f3f846090d24df07f4e1c457dd35"
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/ProtocolSuccessorIndependentReview.json",
+      "sha256": "988cdf823eb63806dc3385aa1840e812c1cb1df5ed06e72ca2adf56244b88d20",
+      "blob_sha": "b25abb05e00f72bb2ae910035ba9916a97c822dc"
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/NonproductionControlStoreIndependentReview.json",
+      "sha256": "4c05a0ffcba4724aa36ea4a41003176e33dd140b73b370ee477fee4c5b5e4350",
+      "blob_sha": "f439f6243cf82b5c183b70143e13bdaad962c800"
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/NonproductionControlStoreDeploymentSuccessor.json",
+      "sha256": "58643a21e69cda0e06dbc70fc71724f75cd6bca930e17e6723287228e12daa99",
+      "blob_sha": "45fe3dfe10ba0608dbddd029e3ab738d1e72e5d3"
+    },
+    {
+      "path": "protocol/continuity/v1/schemas/core/control-trust-root-set.schema.json",
+      "sha256": "87f094fa079034aa886d6c568730370a3264e106529b4bfd79bc3369f30b79e5",
+      "blob_sha": "e1d9877311c3416c020baacc470a68a91c71c04b"
+    },
+    {
+      "path": "protocol/continuity/v1/manifest.json",
+      "sha256": "d13b17d873004e97fe45400d715b5becef8fa6bb0a004011921344bd0c9441ec",
+      "blob_sha": "a43eeb2881c1b6cc46fd49c31a86dfee84ab231f"
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/protocol-successor/ControlUriMapping.json",
+      "sha256": "abbc8e7eae03f2a183fd739fa49b16a97db6e1c0fb62a9353a30db81553db416",
+      "blob_sha": "97e2f4d2a04c953b6944c43ce7402819b3afc1f8"
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/LimitedIssuerPurposeIndependentAcceptance.json",
+      "sha256": "e4c545c4e35031c1d5a1774bb2e2230e38ea5ac0b96d6a0633794032309b19cb",
+      "blob_sha": "02a8ec2b53057bdaa850b27e6bcf1246be5171f6"
+    }
+  ],
+  "authority_effect": "NONE",
+  "root_registered": false
+}

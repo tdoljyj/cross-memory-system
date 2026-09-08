@@ -1,0 +1,356 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "RevocationEpochVector candidate",
+  "$comment": "Proposed exact fixed-synthetic-input Vector specialization under S06 L3010-3012. No business account/installation/context/binding exists in this accepted-scope proposal. Not general ISOLATED_TEST permission. All independent control/runner/credential/session generations remain applicable. Requires actual independent Schema/Profile acceptance before use.",
+  "type": "object",
+  "required": [
+    "vector_schema_version",
+    "account_scope_ref",
+    "account_epoch",
+    "integration_installation_scope_ref",
+    "integration_installation_epoch",
+    "context_scope_ref",
+    "context_epoch",
+    "binding_scope_ref",
+    "binding_epoch"
+  ],
+  "properties": {
+    "vector_schema_version": {
+      "const": "clued.fixed-synthetic-skill-input/1"
+    },
+    "not_applicable_evidence": {
+      "type": "object",
+      "required": [],
+      "properties": {
+        "account": {
+          "type": "object",
+          "required": [
+            "reason",
+            "accepted_schema_ref"
+          ],
+          "properties": {
+            "reason": {
+              "const": "该固定child没有Clued业务account、业务用户令牌或账户API；只读取明确三Skill文本和固定合成fixture。GitHub Owner控制身份仍存在并单独核验，不与此Clued业务account层混同。"
+            },
+            "accepted_schema_ref": {
+              "type": "object",
+              "required": [
+                "uri",
+                "sha256"
+              ],
+              "properties": {
+                "uri": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                }
+              },
+              "additionalProperties": false,
+              "$comment": "Candidate reference encoding; shape never proves resolution, acceptance, currentness or authority."
+            }
+          },
+          "additionalProperties": false
+        },
+        "integration_installation": {
+          "type": "object",
+          "required": [
+            "reason",
+            "accepted_schema_ref"
+          ],
+          "properties": {
+            "reason": {
+              "const": "没有Clued集成安装实例、集成业务凭据或installation接口调用；宿主Docker安装及受信Git发布渠道不是本合成业务层installation，其控制/凭据代际继续独立核验。"
+            },
+            "accepted_schema_ref": {
+              "type": "object",
+              "required": [
+                "uri",
+                "sha256"
+              ],
+              "properties": {
+                "uri": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                }
+              },
+              "additionalProperties": false,
+              "$comment": "Candidate reference encoding; shape never proves resolution, acceptance, currentness or authority."
+            }
+          },
+          "additionalProperties": false
+        },
+        "context": {
+          "type": "object",
+          "required": [
+            "reason",
+            "accepted_schema_ref"
+          ],
+          "properties": {
+            "reason": {
+              "const": "不创建或读取ContextStream/context/session业务对象；/allowed/fixture.json不是ContextStream或Canon。父监督会话session_generation不因此消失。"
+            },
+            "accepted_schema_ref": {
+              "type": "object",
+              "required": [
+                "uri",
+                "sha256"
+              ],
+              "properties": {
+                "uri": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                }
+              },
+              "additionalProperties": false,
+              "$comment": "Candidate reference encoding; shape never proves resolution, acceptance, currentness or authority."
+            }
+          },
+          "additionalProperties": false
+        },
+        "binding": {
+          "type": "object",
+          "required": [
+            "reason",
+            "accepted_schema_ref"
+          ],
+          "properties": {
+            "reason": {
+              "const": "没有Clued Binding发行、选择、资源绑定或Binding token；纯固定文件挂载不是业务Binding。确切container/Skill/Scope/Root引用仍必须绑定且禁止改变。"
+            },
+            "accepted_schema_ref": {
+              "type": "object",
+              "required": [
+                "uri",
+                "sha256"
+              ],
+              "properties": {
+                "uri": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                }
+              },
+              "additionalProperties": false,
+              "$comment": "Candidate reference encoding; shape never proves resolution, acceptance, currentness or authority."
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "account_scope_ref": {
+      "const": "not_applicable"
+    },
+    "account_epoch": {
+      "const": "not_applicable"
+    },
+    "integration_installation_scope_ref": {
+      "const": "not_applicable"
+    },
+    "integration_installation_epoch": {
+      "const": "not_applicable"
+    },
+    "context_scope_ref": {
+      "const": "not_applicable"
+    },
+    "context_epoch": {
+      "const": "not_applicable"
+    },
+    "binding_scope_ref": {
+      "const": "not_applicable"
+    },
+    "binding_epoch": {
+      "const": "not_applicable"
+    }
+  },
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "account_epoch": {
+            "const": "not_applicable"
+          }
+        },
+        "required": [
+          "account_epoch"
+        ]
+      },
+      "then": {
+        "properties": {
+          "account_scope_ref": {
+            "const": "not_applicable"
+          },
+          "not_applicable_evidence": {
+            "required": [
+              "account"
+            ]
+          }
+        },
+        "required": [
+          "not_applicable_evidence"
+        ]
+      },
+      "else": {
+        "properties": {
+          "account_scope_ref": {
+            "not": {
+              "const": "not_applicable"
+            }
+          },
+          "not_applicable_evidence": {
+            "not": {
+              "required": [
+                "account"
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "integration_installation_epoch": {
+            "const": "not_applicable"
+          }
+        },
+        "required": [
+          "integration_installation_epoch"
+        ]
+      },
+      "then": {
+        "properties": {
+          "integration_installation_scope_ref": {
+            "const": "not_applicable"
+          },
+          "not_applicable_evidence": {
+            "required": [
+              "integration_installation"
+            ]
+          }
+        },
+        "required": [
+          "not_applicable_evidence"
+        ]
+      },
+      "else": {
+        "properties": {
+          "integration_installation_scope_ref": {
+            "not": {
+              "const": "not_applicable"
+            }
+          },
+          "not_applicable_evidence": {
+            "not": {
+              "required": [
+                "integration_installation"
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "context_epoch": {
+            "const": "not_applicable"
+          }
+        },
+        "required": [
+          "context_epoch"
+        ]
+      },
+      "then": {
+        "properties": {
+          "context_scope_ref": {
+            "const": "not_applicable"
+          },
+          "not_applicable_evidence": {
+            "required": [
+              "context"
+            ]
+          }
+        },
+        "required": [
+          "not_applicable_evidence"
+        ]
+      },
+      "else": {
+        "properties": {
+          "context_scope_ref": {
+            "not": {
+              "const": "not_applicable"
+            }
+          },
+          "not_applicable_evidence": {
+            "not": {
+              "required": [
+                "context"
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "binding_epoch": {
+            "const": "not_applicable"
+          }
+        },
+        "required": [
+          "binding_epoch"
+        ]
+      },
+      "then": {
+        "properties": {
+          "binding_scope_ref": {
+            "const": "not_applicable"
+          },
+          "not_applicable_evidence": {
+            "required": [
+              "binding"
+            ]
+          }
+        },
+        "required": [
+          "not_applicable_evidence"
+        ]
+      },
+      "else": {
+        "properties": {
+          "binding_scope_ref": {
+            "not": {
+              "const": "not_applicable"
+            }
+          },
+          "not_applicable_evidence": {
+            "not": {
+              "required": [
+                "binding"
+              ]
+            }
+          }
+        }
+      }
+    }
+  ]
+}

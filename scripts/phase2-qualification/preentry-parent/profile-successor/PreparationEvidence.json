@@ -1,0 +1,65 @@
+{
+  "state": "READY_FOR_REVIEW_NOT_SIGNED",
+  "review_subject_sha256": "e3e2b296c3fbe49fa2e0670a5e87be989a3bb0f10a65bc8e94c657db1d2ffbf7",
+  "predecessor": {
+    "path": "scripts/phase2-qualification/preentry-parent/ProfileApplicabilityCandidate.json",
+    "sha256": "215fc1d0c6327cef514879faa60dad9cf4e727ec207d867e4fe2eb8f3c7d7f89"
+  },
+  "reference_boundary": "Computed exact Git blob references bind prepared bytes; new blobs must be published/read back and independently accepted before accepted_schema_ref can be relied upon. No claim of current remote existence from local hashing.",
+  "signature_payload_rule": "Reuse existing canonicalDigest/reviewSubjectDigest: omit independent_acceptance_ref and signature_binding only from review digest; actual signing payload includes independent acceptance and excludes only signature_binding. No signature placeholder is emitted.",
+  "files": [
+    {
+      "path": "build.mjs",
+      "sha256": "affd9822c10f1ff99006148164f841e3928a278b49fd02074ebe209e89eeead0",
+      "bytes": 7341
+    },
+    {
+      "path": "ProfileDefinition.json",
+      "sha256": "45a7d602297f95c0ffd939da63534a6069de17ec197404bd657e160503c209f4",
+      "bytes": 3313
+    },
+    {
+      "path": "ProfileReviewSubject.json",
+      "sha256": "9d56ebb0311938d050aa652c86f2369c729a1fd8232e376f52fb12f489f52e98",
+      "bytes": 11618
+    },
+    {
+      "path": "preentry-profile.candidate.schema.json",
+      "sha256": "678942e70d6579df4f737472f606f61463c58c6307b1b810ef741ee667771338",
+      "bytes": 8282
+    },
+    {
+      "path": "revocation-epoch-vector.candidate.schema.json",
+      "sha256": "f57cceb29853c67f8702c1560017c3be7b96626d6358299b5215add63d01e916",
+      "bytes": 9724
+    },
+    {
+      "path": "gate-authorization.candidate.schema.json",
+      "sha256": "f7f7e2a011f3f81a005e46f9cf7683edeb010dc7812eadfb4473f6ad5368a1ce",
+      "bytes": 15448
+    },
+    {
+      "path": "validate.test.mjs",
+      "sha256": "4680f5529181b8513ae06d88fe15b475d29b69ac459821c9dcec808e35eab6c5",
+      "bytes": 3815
+    },
+    {
+      "path": "README.md",
+      "sha256": "f800875cbe9e43beb5caffdaa59e1c0369d78bf8b287d69bed42342364ac8074",
+      "bytes": 3263
+    }
+  ],
+  "review_function_source": "scripts/phase2-qualification/nonproduction-control-store/protocol-successor/validate-successor.mjs",
+  "review_function_source_sha256": "e2844900272bcd9f2aba18aae256567e33d0c598f0a114d7ed01a6fb2fdf1ca5",
+  "signature_created": false,
+  "profile_accepted": false,
+  "controller_qualified": false,
+  "live_actions": 0,
+  "validation": {
+    "passed": 4,
+    "failed": 0,
+    "skipped": 0,
+    "duration_ms": 105.5737,
+    "live_actions": 0
+  }
+}

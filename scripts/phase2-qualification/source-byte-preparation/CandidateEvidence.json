@@ -1,0 +1,51 @@
+{
+  "state": "LOCAL_ENGINEERING_CANDIDATE_NOT_ACTIVATED",
+  "scope": "A04 SOURCE_INGEST actual-byte verification and bounded UTF-8 chunks",
+  "remote_head": "2eec225cdfee5ebbdf5e10cae7eaa5c5b6c80faa",
+  "local_aligned_descendant": "d5fe0a1ed28899a4cc2036b66dc7e5f36f3a4500",
+  "alignment": "independent AlignAndVerify PROJECT, local-ahead, doctor ALL PASS",
+  "files": [
+    {
+      "path": "prepare-source.mjs",
+      "sha256": "e592a340c1b6b278dbb7d3d71cbe7e82bc845bd507aaf087a6b43cfcdde0f0d9",
+      "bytes": 2567
+    },
+    {
+      "path": "prepare-source.test.mjs",
+      "sha256": "34910f3c50694727b8560a7e78a02c70ace6815326f1c2c2f33595531856433b",
+      "bytes": 2881
+    },
+    {
+      "path": "README.md",
+      "sha256": "5f3082ab6af7496cd2c7d188d9cf672dda119ad01b773d7ffcde704092598ef8",
+      "bytes": 2543
+    }
+  ],
+  "sources": [
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/slice-a-capability-map/CapabilityMap.json",
+      "sha256": "76940ef98e4f0baf4011c5dc2909e6aeee5b0fd2f4ec8de1e0cc744144e21397"
+    },
+    {
+      "path": "apps/clued-cloud/worker/records.ts",
+      "sha256": "43bfe74c4d6576476f3d4a08df82a6b0853da855c29124edf1e333c14d5bb35e"
+    }
+  ],
+  "validation": {
+    "command": "node --test scripts/phase2-qualification/source-byte-preparation/prepare-source.test.mjs",
+    "passed": 3,
+    "failed": 0,
+    "skipped": 0,
+    "duration_ms": 60.8422,
+    "input": "synthetic in-memory bytes only"
+  },
+  "entry_issued": false,
+  "formal_slice_cases_executed": 0,
+  "formal_slots_executed": 0,
+  "source_ownership_verified": false,
+  "service_ingest_integrated": false,
+  "database_writes": 0,
+  "model_calls": 0,
+  "gold_read": false,
+  "authority_effect": "NONE"
+}

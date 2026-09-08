@@ -1,0 +1,57 @@
+{
+  "kind": "A05_AUTHORIZED_RECORD_LIST_INDEPENDENT_ENGINEERING_REVIEW",
+  "state": "ACCEPTED_EXACT_FORWARD_SQL_FOR_REVIEWED_INTEGRATION_NOT_DEPLOYED",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "observed_at": "2026-09-08T13:54:22.639Z",
+  "candidate_evidence_sha256": "0d27471141f289170211cac34bd65c9db2541adcdf6851a710413fcc89ad6426",
+  "sql_sha256": "dcf72c18e574bf07ddcfb11a5d419df4bec47136b23331358f7e77f51d19e4f8",
+  "source_bindings": [
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260829100000_clued_legacy_log_alias_bridge.sql",
+      "sha256": "625656c79824cc7f0f8d4bb96ff999566fba0a388a61ca381d2548cd0c988d8e"
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260907173031_clued_connection_authorization_v12.sql",
+      "sha256": "6f1379187f1f36c836e99f6cf2083334e733fcb10cd59f789797b9e3c5225f8d"
+    }
+  ],
+  "findings": [
+    "Core retains original selection/alias/lifecycle/order/projection; only source authorization predicates move before LIMIT in records and logs.",
+    "Current binding resolver remains first; canonical readable scope entries and owned project validation retain v12 meaning. Shared Context membership does not infer canonical project read access.",
+    "Delegated empty set denies every source; null unrestricted internal scope reserved for supported nondelegated/owner path. Client JSON cannot set internal argument.",
+    "New three-argument overload explicitly denies PUBLIC/anon/authenticated/service_role; original two-argument owner entry and public signature/config/grants preserved.",
+    "No Canonical writes, table/schema/role additions, alternate authority or Receipt; query may scan pages but returned row scope is filtered before limiting."
+  ],
+  "validation": {
+    "exact_files": 5,
+    "exact_sources": 2,
+    "existing_implementation_pg_tests_reused": 6,
+    "old_suite_rerun": false,
+    "independent_command": "node --test work/a05-independent-targeted.mjs",
+    "independent_script_sha256": "84f49308e9bb902ead703436977881d94fff0077fcb91314d3ff2f9393c18abc",
+    "independent_pg_results": {
+      "passed": 2,
+      "child_checks": 1,
+      "failed": 0,
+      "skipped": 0,
+      "duration_ms": 3250.8163
+    },
+    "independent_coverage": [
+      "Empty trusted scope array gives zero rows for global notes, merged-project notes and logs.",
+      "Null internal scope returns exact same owner result as two-argument wrapper for three paths.",
+      "Actual authorization expires_at in authorizations_v12 expires before same-token query; query rejects.",
+      "Full Canonical records/events/receipts unchanged."
+    ],
+    "initial_assessor_test_error": "First isolated run reached empty/null assertions, then failed because assessor addressed nonexistent binding expires_at. Corrected only harness to existing authorizations_v12.expires_at; final targeted run passed. No candidate SQL change."
+  },
+  "integration_conditions": [
+    "Create a forward migration preserving this exact SQL, inside one transaction so new private overload creation/revoke is atomic.",
+    "Before actual deployment verify intended target original functions/authorization migration match reviewed sources and preserve read-only rollback definitions.",
+    "After deployment verify exact function bodies/grants and appropriate authorized positive/negative readback; this review did not deploy."
+  ],
+  "limitations": [
+    "Engineering query correctness only: no formal A05/Slice A or Entry acceptance.",
+    "Not field minimization, token accounting, OS isolation, model execution or physical-page no-read proof.",
+    "No production or private Gold accessed."
+  ]
+}

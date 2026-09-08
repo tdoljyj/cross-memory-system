@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "state": "ACCEPTED_SOURCE_BYTE_ENGINEERING_PREPARATION_ONLY",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "reviewed_at_utc": "2026-09-08T13:21:46.557Z",
+  "subject": {
+    "path": "scripts/phase2-qualification/source-byte-preparation/CandidateEvidence.json",
+    "sha256": "aaa22877563118894e7b6984a9728cd9cc2320ffd562b1b74ff863d4b9bf59fe",
+    "files": [
+      {
+        "path": "prepare-source.mjs",
+        "sha256": "e592a340c1b6b278dbb7d3d71cbe7e82bc845bd507aaf087a6b43cfcdde0f0d9",
+        "bytes": 2567
+      },
+      {
+        "path": "prepare-source.test.mjs",
+        "sha256": "34910f3c50694727b8560a7e78a02c70ace6815326f1c2c2f33595531856433b",
+        "bytes": 2881
+      },
+      {
+        "path": "README.md",
+        "sha256": "5f3082ab6af7496cd2c7d188d9cf672dda119ad01b773d7ffcde704092598ef8",
+        "bytes": 2543
+      }
+    ],
+    "sources": [
+      {
+        "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/slice-a-capability-map/CapabilityMap.json",
+        "sha256": "76940ef98e4f0baf4011c5dc2909e6aeee5b0fd2f4ec8de1e0cc744144e21397"
+      },
+      {
+        "path": "apps/clued-cloud/worker/records.ts",
+        "sha256": "43bfe74c4d6576476f3d4a08df82a6b0853da855c29124edf1e333c14d5bb35e"
+      }
+    ]
+  },
+  "scope": "Pure bounded Buffer snapshot, actual SHA256/size verification and lossless UTF-8 byte-range chunk descriptors. No filesystem input, network, model, ingestion, extraction, approval, Canonical or Receipt operation.",
+  "source_semantics": "Reuses existing content_hash/size_bytes metadata names without introducing a service wire schema or verified source ownership. Expected bytes supplied by an untrusted caller are not authenticity evidence.",
+  "reviewed_properties": [
+    "Copies input once so returned text, source hash, chunk hashes and offsets use one stable snapshot.",
+    "Fatal UTF-8 decoding rejects malformed input; BOM, Unicode scalars, CRLF and normalization remain unchanged.",
+    "Chunks start/end on UTF-8 boundaries, advance monotonically, are contiguous and remain within declared byte/count bounds.",
+    "Repeated content retains caller source_ref provenance; no persistent dedup or authenticated provenance claim.",
+    "1MiB/65536-byte/4096-chunk limits are local engineering limits; token_count null does not assert any 2048-token Context Pack requirement."
+  ],
+  "independent_validation": {
+    "all_candidate_files_sha_sizes_and_lf_match": true,
+    "both_source_bindings_sha_match": true,
+    "targeted_command": "node --input-type=module; independent synthetic Unicode scalar edge cases with nonzero Buffer offset, chunk sizes 4 through 64.",
+    "chunk_sizes_checked": 61,
+    "result": "PASS",
+    "checks": [
+      "Exact reconstruction across UTF-8 1/2/3/4-byte scalar edges including BOM and embedded NUL.",
+      "Every byte offset contiguous and bounded; every returned chunk hash matches the exact original slice.",
+      "A subarray with nonzero backing-buffer offset produces only selected source bytes."
+    ],
+    "old_three_tests_rerun": false,
+    "implementation_three_checks_reused": true,
+    "real_model_calls": 0,
+    "formal_slice_cases": 0,
+    "formal_slots": 0,
+    "gold_read": false
+  },
+  "limitations": {
+    "a04_complete": false,
+    "entry_issued": false,
+    "source_ownership_verified": false,
+    "service_ingest_integrated": false,
+    "extraction_or_confirmation_executed": false,
+    "persisted": false,
+    "authority_effect": "NONE"
+  },
+  "next_step": "After original Entry/implementation prerequisites, bind an authorized source/storage reference and exact bytes into existing authenticated ingest transaction; test actual ownership, extraction, confirmation and durable evidence chain. This engineering acceptance alone cannot activate that path."
+}

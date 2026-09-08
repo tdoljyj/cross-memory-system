@@ -1,0 +1,67 @@
+{
+  "state": "A05_EXISTING_QUERY_FIX_LOCAL_PG_VERIFIED_NOT_DEPLOYED",
+  "scope": "Same current record_list source permissions move before existing query serialization and LIMIT",
+  "files": [
+    {
+      "path": "build-candidate.py",
+      "sha256": "86bc8522920fe0399857b38a16d7d7071f11be642463a092928c204f4c6edf37",
+      "bytes": 4314
+    },
+    {
+      "path": "authorized-record-list.candidate.sql",
+      "sha256": "dcf72c18e574bf07ddcfb11a5d419df4bec47136b23331358f7e77f51d19e4f8",
+      "bytes": 8965
+    },
+    {
+      "path": "SourceBindings.json",
+      "sha256": "d8b398d242fe9a36510349340267ddf6df7f17199a9ce4f4765bcdc4bc68765a",
+      "bytes": 931
+    },
+    {
+      "path": "record-list.test.mjs",
+      "sha256": "197feb0964bca01ca7f7f68843f01f65ad5b4637628777242d218d675d813fae",
+      "bytes": 10042
+    },
+    {
+      "path": "README.md",
+      "sha256": "f6e1e393d85f00d68fd20ce4c0dae95ef660c826b461ca584dd4835a9772d730",
+      "bytes": 3847
+    }
+  ],
+  "source_bindings": "SourceBindings.json",
+  "independent_alignment": {
+    "remote_head": "f47fbae12738674ec780a9a79de72e94238b8f10",
+    "doctor": "ALL PASS",
+    "request": "A05 current existing call-chain implementation"
+  },
+  "validation": {
+    "command": "node --test scripts/phase2-qualification/authorized-record-list-preparation/record-list.test.mjs",
+    "passed": 6,
+    "child_checks": 5,
+    "failed": 0,
+    "skipped": 0,
+    "duration_ms": 5139.7253,
+    "actual_old_behavior": "Three allowed record/event results disappear at limit=1 behind ungranted source rows",
+    "actual_new_behavior": "Correct permitted results through same existing RPC; unchanged owner result",
+    "authorization_negative_checks": [
+      "JSON scope injection ignored",
+      "private overload denies anon/authenticated/service_role",
+      "unselected exact project and bad credential rejected",
+      "same-token scope reduction and revocation enforced"
+    ],
+    "integrity": [
+      "Canonical records/events/receipts full rows unchanged",
+      "existing function grants/proconfig/prosecdef unchanged",
+      "new private overload no caller grants",
+      "repeatable SQL install"
+    ],
+    "pg_scope": "Dedicated synthetic local temporary cluster; stopped and cleaned"
+  },
+  "public_wire_changed": false,
+  "production_calls": 0,
+  "gold_read": false,
+  "runtime_deployed": false,
+  "formal_slice_slots_executed": 0,
+  "entry_issued": false,
+  "authority_effect": "NONE"
+}

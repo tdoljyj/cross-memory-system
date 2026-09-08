@@ -1,0 +1,45 @@
+{
+  "kind": "A07_PROJECTION_REBUILD_INDEPENDENT_ENGINEERING_REVIEW",
+  "state": "ACCEPTED_EXISTING_BUILDER_BOUNDED_OFFLINE_REBUILD_EVIDENCE",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "observed_at": "2026-09-08T13:54:22.641Z",
+  "evidence_sha256": "1cd259a0227b1b3ca80bdf677b1e6a6ff5292aa8c3d6d1893a6591db1a3f9857",
+  "runtime_source": {
+    "path": "apps/clued-cloud/scripts/two-level-snapshot.mjs",
+    "sha256": "1dfcc8de7b481bc8a29cd055f711bb142fa390fff07a61730320866a477f6b7e",
+    "build_entry_line": 460,
+    "validate_entry_line": 726
+  },
+  "observation_sha256": "c585dd787180a371fcf8e6b1d635c0592e37ff59b1830fe6d326b79f83a559a3",
+  "observed_run": {
+    "first_utc": "2026-09-08T13:44:27.022Z",
+    "last_utc": "2026-09-08T13:44:27.057Z",
+    "source_sha256": "47326365676d9e364eeb90a33ce39301520b27faa393b740b96f3a55dbf5c87a",
+    "files_compared": 11,
+    "events": 6,
+    "reported_test_results": {
+      "command": "node --test scripts/phase2-qualification/projection-rebuild-preparation/rebuild.test.mjs",
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "duration_ms": 92.6867,
+      "actual_files_compared": 11,
+      "observation_events": 6,
+      "temporary_scope_cleaned": true
+    }
+  },
+  "independent_checks": [
+    "Exact three file hashes/sizes/LF and unchanged runtime source hash.",
+    "Independently derived synthetic source bytes from fixed source() literal match observed SHA.",
+    "All six ordered UTC observations, snapshot/view digests, file count and declared offline/no-Receipt boundary consistent.",
+    "Test actually unlinks exact derived view, checks ENOENT and inventory rejection, retains only pre-deletion output hashes, rereads independent source and calls original builder into distinct new directory.",
+    "Full generated file-hash map equality includes objects/index/manifest/view; surviving source bytes and damaged directory state asserted unchanged.",
+    "Original builder refuses existing output directory; validator compares actual inventory then file checksums. Test makes no publisher/API/model calls; observed source is bundle_only, not live Canonical export."
+  ],
+  "assessment_method": "Independent source/evidence consistency review; reuse the actual reported 1/1 run, no duplicate rebuild run or replacement observation.",
+  "limitations": [
+    "Accept offline deterministic reconstruction capability only; no live authorized export, real rebuild Receipt, formal pointer activation, third-agent continuation, Entry or Slice A acceptance.",
+    "Original temporary outputs were cleaned; report relies on fixed test and preserved observation, not a claim of independently witnessing that past execution.",
+    "No runtime implementation changes needed for this bounded case."
+  ]
+}
