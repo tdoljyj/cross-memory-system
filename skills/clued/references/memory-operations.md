@@ -6,6 +6,8 @@ Use this workflow for personal and project context, including project records ma
 
 After the applicable prerequisites and `clued_session_resume`, read authorized Global priority/registry, then the selected confirmed canonical Project's State, Task and Decision. Use Archive/Log only when history is needed. Read profile facts only when identity or preference matters; generic tasks use no private memory.
 
+For `clued_session_resume`, `context_key` is `global` (also the default) or `project:<canonical_project_id>`. A development resource UUID is a `context_id`, not a session key. When only that resource ID is known, resume `global` to obtain the authorized development projection, then select the exact returned `context_id`; this does not request additional permissions.
+
 Resolve the project by its actual canonical ID. Do not create or confirm a project from a mention or an ambiguous name. A developer-only Binding may receive only its authorized Global projection; it must not read private personal Global data to satisfy the read order. Missing Global capability is a scoped limitation, not a reason to request unrestricted access.
 
 If the actual resume response is `scoped_context_ready` with `session_checkpoint_supported=false`, it is an authorized development-context projection, not a restored M1 checkpoint. Read only its returned authorized context IDs through the supported `clued_context` record-list operation in `development_history` mode, selecting relevant State/Task/Decision records. Do not infer access to personal Global records or another project from a shared name, and do not invent a session token. A missing or denied scope remains unavailable.
