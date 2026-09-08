@@ -1,0 +1,47 @@
+{
+  "decision_id": "CLUED_PHASE2_R07_R08_INDEPENDENT_ENGINEERING_ACCEPTANCE_20260908",
+  "status": "ACCEPTED_FOR_EXACT_ENGINEERING_SUBJECT_PENDING_SIGNATURE_BINDING",
+  "reviewer": "/root/project_list_auth_fix",
+  "independent_from": ["/root", "/root/controller_candidate"],
+  "subject": {
+    "path": "R07R08CurrentSubject.json",
+    "sha256": "fb864569613aa68589cbd24ae443927562aa7456ebafaf9718dcbf1c6f0b202c",
+    "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a"
+  },
+  "authority_basis": {
+    "owner_merge": "4f722ea9d78488b749c15d27fe9145e9d9f9d2c2",
+    "delegation_path": "OwnerDelegation_20260908.json",
+    "delegation_sha256": "e09ef634712ce1206600402552073bae91e7296f2b4e2d3f99855bd760c944bd",
+    "independent_owner_verification": "IndependentOwnerBindingVerification.json",
+    "scope": "Previously authorized independent nonproduction engineering assessment. No new operational authority or self-issued controller qualification."
+  },
+  "r07": {
+    "decision": "ACCEPTED",
+    "reason": "The fixed subject closes the exact responsibility scope requested by CurrentReadinessReview: all historical consumer/authority/receipt mappings plus actual development/owner dispatch and homepage project/M1 operations. JWT, Binding and Owner engineering authority remain distinct; current Pointer and conditional state-matched recovery rules are explicit.",
+    "remaining_subject_defects": []
+  },
+  "r08": {
+    "decision": "ACCEPTED",
+    "reason": "The fixed subject explicitly distinguishes preserved Canonical/service, authorization, receipt and pointer invariants from intentional OAuth, project authorization, UI and checkpoint successors. It requests no global semantic-equivalence declaration and preserves actual validation limits.",
+    "checkpoint_evidence": "IndependentReview.json records a distinct assessor's actual 12/12 isolated PostgreSQL run and reviewed migration/test digests; IntegrationCheck.json records 2/2 real migration-chain cases. Both exact migration and test bytes remain matched on this review.",
+    "remaining_subject_defects": []
+  },
+  "reused_evidence": [
+    {"path": "CurrentReadinessReview.json", "sha256": "4c3b83f125dfe621a4f3a6d13012faaae5056d6f4fbea758eb190f0a1cd0b0dc"},
+    {"path": "../mapping/ChangeApplicabilityReview.json", "scope": "Exact changed operations and historical successor comparison"},
+    {"path": "../mapping/TargetedChecks.json", "scope": "Actual CA01-03 11/11; not rerun"},
+    {"path": "../checkpoint-idempotency/IndependentReview.json", "scope": "Independent actual PostgreSQL and source review; not production qualification"},
+    {"path": "../checkpoint-idempotency/IntegrationCheck.json", "scope": "Actual migration-chain integration; not rerun"}
+  ],
+  "retained_limits": [
+    "CA04 live production browser navigation is unverified and explicitly outside this engineering acceptance; no browser outcome is inferred.",
+    "The checkpoint production state in the fixed subject is a point-in-time observation. A later deployment is a separate exact deployment record; it neither retroactively changes this subject nor authorizes itself through this acceptance.",
+    "Recovery acceptance concerns the specified guarded rule, not an executed production rollback or crash-atomic updater guarantee.",
+    "Historical source and test reuse remain limited to their bound objects; no whole Phase2, controller, runtime, model or human-efficiency result follows."
+  ],
+  "downstream_use": "This actual independent decision may be bound by the existing verified signature workflow and used as the engineering R07/R08 parent for the exact R09 mechanism definition. Missing signature attachment is a publication step, not a reason to repeat already completed assessment. No Kernel StageReceipt or GateAuthorization is fabricated here.",
+  "signature_binding": null,
+  "invalidation": "A change to the exact subject or relevant mapped source requires affected-scope independent review. Signatures must bind these exact decision and subject bytes; never reuse a historical signature for a successor.",
+  "operational_authorizations_issued": [],
+  "tests_reexecuted": false
+}

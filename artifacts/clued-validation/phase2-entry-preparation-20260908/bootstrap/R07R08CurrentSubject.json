@@ -1,0 +1,43 @@
+{
+  "kind": "CURRENT_ENGINEERING_READINESS_SUBJECT",
+  "subject_id": "CLUED_PHASE2_R07_R08_CURRENT_SUBJECT_20260908",
+  "status": "COORDINATOR_SCOPE_FIXED_FOR_INDEPENDENT_REVIEW",
+  "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+  "coordinator": "/root",
+  "scope": "Current Clued mechanism responsibility mapping and explicit semantic successor treatment; no new execution grant or formal stage receipt.",
+  "r07": {
+    "consumer_scope": "Existing 18-consumer, 27-authorization and 18-receipt mapping, plus actual development/owner context dispatch and homepage project create/update operations identified by ChangeApplicabilityReview.",
+    "responsibility": [
+      "Account JWT authorizes account REST/session operations through existing service contracts; it is not an agent Binding or an engineering qualification.",
+      "Agent Binding authorizes its actual advertised MCP scopes and canonical resources; choosing Skill/workflow/context mode does not add rights.",
+      "Development/owner context selection uses the authenticated service's current protected contract and real resource IDs; role names, repository ownership and a context UUID do not create permissions.",
+      "Homepage project create/update and M1 record/checkpoint paths retain their actual API mutation, CAS and Receipt boundaries; UI state never serves as authority.",
+      "The Owner delegation is limited engineering purpose evidence. It does not alter service Bindings, snapshot publisher pins, account scopes or production authority."
+    ],
+    "pointer": "Use existing immutable bundle/current pointer and typed expected-current publication contract. No pointer, alias, canonical ID or publisher trust change is proposed or performed by this subject.",
+    "recovery": "Reuse proven migration and Skill updater recovery only for matching original/target state. A recovery must not restore revoked access or a known unsafe write path. No arbitrary production rollback is claimed."
+  },
+  "r08": {
+    "preserved_invariants": [
+      "Authenticated Clued service remains the only online Canonical Store; repository memory remains read-only.",
+      "Consumer/workflow selection is not Authorization; normal supported mutations retain their Event and immutable Receipt contracts.",
+      "Non-context dispatch and P5/P6 stop boundaries remain unchanged within the reviewed exact source scope.",
+      "Bindings, canonical IDs, typed source provenance and publication pointer CAS are not broadened by administrative acceptance."
+    ],
+    "explicit_successors_not_global_no_change": [
+      "OAuth discovery/issuer and independent context dispatch are intentional successors, checked by CA01 and existing source tests.",
+      "Authorized project enumeration and correct 403/401 classification are intentional PR19 fixes, supported by its actual production/database checks and CA02.",
+      "ConsentRouter and homepage client wiring are intentional UI changes; CA03 is actual isolated routing evidence, while CA04 production browser navigation remains unverified.",
+      "The forward checkpoint replay/CAS migration in f93e09c intentionally rejects changed-key parameters and invalid base versions. Real PostgreSQL maintainer/independent checks passed; production still has the old function and this subject does not authorize deployment."
+    ],
+    "comparison_sources": [
+      "../mapping/ChangeApplicabilityReview.json",
+      "../mapping/TargetedChecks.json",
+      "CurrentReadinessReview.json",
+      "../checkpoint-idempotency/IndependentReview.json",
+      "../checkpoint-idempotency/IntegrationCheck.json"
+    ]
+  },
+  "acceptance_boundary": "Request independent acceptance of this exact engineering subject. R09 mechanism Freeze and R10 Skill projection acceptance remain separate actual obligations; no R11, controller qualification, GateAuthorization, Surgical Authority, global semantic no-change or whole Phase2 PASS follows.",
+  "source_invalidation": "Any relevant consumer/contract/Skill/policy/authority/pointer/runtime source change requires affected-scope review; unchanged historical evidence is reused rather than rerun."
+}

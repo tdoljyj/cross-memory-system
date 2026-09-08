@@ -1,0 +1,67 @@
+{
+  "decision_id": "CLUED_PHASE2_R09_INDEPENDENT_MECHANISM_DEFINITION_FREEZE_20260908",
+  "status": "ACCEPTED_AND_DEFINITION_FROZEN_PENDING_SIGNATURE_BINDING",
+  "reviewer": "/root/project_list_auth_fix",
+  "implementer": "/root/controller_candidate",
+  "coordinator": "/root",
+  "scope": "Independent acceptance and freezing of the exact existing vendor-independent engineering mechanism definition. This is an actual bounded assessment decision, not an executable grant, runtime qualification or synthetic Kernel receipt.",
+  "subject": {
+    "path": "R09MechanismCandidate.json",
+    "sha256": "ac7d4a13c069dddd7acd8fa5258052e61e28108844701e5988c0d5105470f70f",
+    "companion_path": "R09MechanismCandidate.md",
+    "companion_sha256": "86ef0ed1bc1280df8b5f7dc6492f2a41bdd828064412ca9c76756b1ffd7942f6",
+    "source_commit": "6ae6fa981df084aab24109897ff3be9afc8b8b9a",
+    "integrity_check": "All 37 declared current source digests matched; no tests repeated."
+  },
+  "actual_preceding_acceptance": {
+    "path": "R07R08IndependentAcceptance.json",
+    "sha256": "eb25e99392049c28f198472fbca69df0e6d75fc9fc9d033d3aa250f3272105ea",
+    "subject_path": "R07R08CurrentSubject.json",
+    "subject_sha256": "fb864569613aa68589cbd24ae443927562aa7456ebafaf9718dcbf1c6f0b202c",
+    "ordering": "This decision was made after the actual independent R07/R08 acceptance. Candidate null prerequisite fields are historical preparation state; this separate immutable decision supplies the actual parent without editing the candidate. Signature publication must preserve this order and these exact bindings."
+  },
+  "authority_basis": {
+    "owner_merge": "4f722ea9d78488b749c15d27fe9145e9d9f9d2c2",
+    "delegation_path": "OwnerDelegation_20260908.json",
+    "delegation_sha256": "e09ef634712ce1206600402552073bae91e7296f2b4e2d3f99855bd760c944bd",
+    "purpose": "Existing authorized independent nonproduction engineering assessment; no new production or controller authority."
+  },
+  "boundary_decisions": [
+    {"id": "B01", "decision": "ACCEPTED", "reason": "Existing authenticated Canonical authority, read-only repository projection and non-authorizing Skill selection are explicitly separated."},
+    {"id": "B02", "decision": "ACCEPTED", "reason": "Request-local alignment, exact source envelope, NONE behavior and invalidation preserve the existing mechanism; no periodic freshness or new verifier is introduced."},
+    {"id": "B03", "decision": "ACCEPTED", "reason": "Typed service, identity, Binding, CAS, idempotency and immutable business receipt contracts remain the actual boundaries. Parent R07/R08 explicitly includes additional development/owner and homepage M1 operations and distinguishes the checkpoint successor from historical and deployed states."},
+    {"id": "B04", "decision": "ACCEPTED", "reason": "Publication retains existing reader/publisher trust, exact source and applicable checks. A definition freeze cannot supply qualification, pins or a live publisher credential."},
+    {"id": "B05", "decision": "ACCEPTED", "reason": "Exact unified three-file source and installed identities are bounded to this host. R10 independent projection acceptance and R13 retirement remain distinct later obligations."},
+    {"id": "B06", "decision": "ACCEPTED", "reason": "Actual authority, uncertainty, preserved evidence and state-matched recovery define the mechanism. This definition deliberately grants no process execution or generalized stop/revocation enforcement capability; such capability is a later separately qualified dependency."}
+  ],
+  "candidate_gap_dispositions": [
+    {"id": "G01", "disposition": "ENGINEERING_PARENT_CLOSED_BY_ACTUAL_R07_R08_DECISION; exact signature binding remains a publication task, not reassessment."},
+    {"id": "G02", "disposition": "CURRENT_DEFINITION_ACCEPTANCE_COMPLETED_HERE; existing verified signature workflow may bind this exact source decision. Do not label it a schema-validated Kernel DevelopmentMechanismFreezeReceipt unless the applicable original schema and issuer-purpose validation are actually supplied."},
+    {"id": "G03", "disposition": "CLOSED_FOR_DECLARATIVE_EXISTING_MECHANISM_SCOPE; no executor, runtime credential or generation is accepted by this subject. That explicit limitation is part of the frozen definition, not a promise to accept an absent implementation."},
+    {"id": "G04", "disposition": "R10_SUCCESSOR_OBLIGATION; the exact accepted definition and three-file inventory now permit independent projection review in order. This decision does not perform that review."},
+    {"id": "G05", "disposition": "LATER_EXECUTION_OBLIGATION; Profile, isolation, allowlists, sink, budget, current revocation, GA and genuine PQUAL remain required before applicable execution."}
+  ],
+  "source_requirement_boundary": {
+    "path": "../slice-a-contracts/ReadinessAndGateCandidate.json",
+    "path_base": "Repository parent work directory, not this bootstrap directory",
+    "sha256": "6d8adc8e29c3be0cd18e25925851559494f94384f79f8a2e530a68f3802d4ceb",
+    "stage_pointer": "/source_record/stage_nodes/9",
+    "required_object_pointer": "/required_readiness_objects/3",
+    "observed": "R09 depends on R08 and names DevelopmentMechanismFreezeReceipt. The inspected object contains its type, historical NOT_ISSUED state and null artifact_ref; it does not itself provide a wire schema or an active issuer instance.",
+    "not_inferred": "No new schema, signing key, trust root, purpose or runtime authorization is invented to populate that formal field. This bounded engineering freeze is useful and completed regardless of that separate machine-consumption requirement."
+  },
+  "retained_limits": [
+    "Production browser CA04 and any unperformed client/host behavior are not claimed.",
+    "The companion document's aligned remote 260b085 and JSON source_commit 6ae6fa9 represent remote ancestry versus the explicit reviewed local subject; the 37 exact source bindings are the fixed subject truth, not a claim of a different deployed head.",
+    "Historical Step20/21 accepts only its original thin adapters; no acceptance is transferred by renaming.",
+    "The bootstrap STOP review remains engineering observation only; no controller qualification or execution capability is obtained through this freeze.",
+    "Current production checkpoints and future production changes require their own exact deployment and observation records; this definition does not authorize them."
+  ],
+  "signature_binding": null,
+  "next_action": "Coordinator binds the exact R07/R08 decision and this R09 definition freeze through the existing real verified signature workflow. Then independently accept the exact R10 projection against this parent. Do not reopen unchanged sources or ask Owner again for this already authorized assessment scope.",
+  "invalidation": "A relevant definition, source, contract, authority, pointer, environment or dependency change requires affected-scope successor assessment. Preserve the frozen original and bind the accepted successor explicitly.",
+  "operational_authorizations_issued": [],
+  "kernel_wire_receipt_issued": false,
+  "controller_qualification_issued": false,
+  "tests_reexecuted": false
+}

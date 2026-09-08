@@ -1,0 +1,27 @@
+{
+  "status": "APPROVED_EXACT_MIGRATION_DEPLOYED_AND_LIVE_IDEMPOTENCY_VERIFIED",
+  "user_authorization": "批准该 checkpoint 生产修复及回读验证",
+  "project_id": "ccxsikzwxlolxqlosril",
+  "migration_name": "clued_checkpoint_idempotency_binding",
+  "migration_file_sha256": "0a4ec410e9475698b1dd2b2f670cbe2532441ed750c798a01d25333e3ebf03ea",
+  "apply_migration_result": {"success": true},
+  "original_definition_sha256": "4108527277332f9c45741e064d1f5d29b48ee215ad2c394146910429d421b059",
+  "deployed_definition_sha256": "62cbe2d3a4e22ea3a23cbf8ec1d5605b921b5a12be17e72b06d6653c1b315062",
+  "expected_and_observed_body_sha256": "87dcad26f1145587679f5a8f711e6e246f46fa0423d1ed3526317f0d3d49bb7a",
+  "function_signature": "clued_mcp_commit_checkpoint(text,jsonb)",
+  "security_definer_unchanged": true,
+  "search_path_unchanged": true,
+  "grants_before_and_after": "{postgres=X/postgres,anon=X/postgres,authenticated=X/postgres}",
+  "live_channel": "Formal Clued plugin session_resume/session_checkpoint; no direct SQL business mutation",
+  "live_checks": {
+    "actual_progress_checkpoint": {"status": "committed", "version": 10, "checkpoint_id": "2e667626-c5f0-4ff5-a421-240f7349894f", "receipt_id": "9dd27c49-6874-476c-83c2-ddbac3f168a9"},
+    "fresh_session_same_parameters": {"status": "duplicate", "version": 10, "checkpoint_id": "2e667626-c5f0-4ff5-a421-240f7349894f"},
+    "same_key_changed_summary": {"status": "conflict", "error": "idempotency_key_conflict", "tool_is_error": true},
+    "post_conflict_resume": {"status": "restored", "version": 10, "summary_matches": true, "snapshot_semantically_matches": true},
+    "read_only_database_cardinality": {"checkpoint_count": 1, "original_receipt_count": 1, "same_key_checkpoint_count": 1}
+  },
+  "comparison_note": "JSON object key order changes through PostgreSQL jsonb. Comparison recursively sorted keys; semantic content matched exactly.",
+  "receipt_boundary": "The existing duplicate response exposes checkpoint_id/version but does not include receipt_id. The original unique immutable Receipt was independently located by read-only SQL; this is not a claim that replay response includes a Receipt reference.",
+  "scope": "Only the approved checkpoint binding/retry/CAS repair. No historical row cleanup, Grant change, Worker redeploy, Surgical authority, qualification, R11 or whole Phase2 acceptance.",
+  "source_tests": "Result.json, IndependentReview.json and IntegrationCheck.json retain exact local and independent PostgreSQL evidence; no unchanged tests repeated."
+}
