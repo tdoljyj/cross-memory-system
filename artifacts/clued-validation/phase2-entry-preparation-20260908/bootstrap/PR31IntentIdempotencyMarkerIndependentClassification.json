@@ -1,0 +1,37 @@
+{
+  "state": "ACCEPTED_EXACT_FOUR_COMMIT_SCOPED_FALSE_POSITIVE_CLASSIFICATIONS",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "reviewed_at": "2026-09-08T22:09:34.809Z",
+  "commit": "d5e63a2dab088f63167b9b1085ae050d1a4731cc",
+  "marker": "intent_c2c1616fda42c115f30e53bbb2e82deacdda65148e8625eb66a095289f0b8bc3",
+  "meaning": "Fixed historical CREATE Intent idempotency identifier compared to the actual persisted event; no authentication, bearer access, private key or credential use.",
+  "actual_event_sequence": 6,
+  "source_use": "SQL event equality and fixed reconciliation source comparison; value was already bound in the accepted recorded-Intent recovery source.",
+  "approved_exact_fingerprints": [
+    {
+      "fingerprint": "d5e63a2dab088f63167b9b1085ae050d1a4731cc:scripts/phase2-qualification/recorded-intent-nonpass-successor/alter.candidate.sql:generic-api-key:87",
+      "source_sha256": "acc8caf890671c50af13a45b9e6947086e47d7e3322539c6570465a463fea626",
+      "line_sha256": "60ea68cb01d2d2c12271a712c0d2f521f139c74ffa5ea8136270a2997aff9f9d",
+      "classification": "NON_SECRET_EVENT_IDEMPOTENCY_KEY"
+    },
+    {
+      "fingerprint": "d5e63a2dab088f63167b9b1085ae050d1a4731cc:scripts/phase2-qualification/recorded-intent-nonpass-successor/build.mjs:generic-api-key:13",
+      "source_sha256": "305095503e382a39c500ec0f7b70b84fee1920d69a293f1d321233750be09f8f",
+      "line_sha256": "e9130e93530b1671f56a6c05c43d8a661a1c6eaf187d213f9d297411dd772bb4",
+      "classification": "NON_SECRET_EVENT_IDEMPOTENCY_KEY"
+    },
+    {
+      "fingerprint": "d5e63a2dab088f63167b9b1085ae050d1a4731cc:scripts/phase2-qualification/recorded-intent-nonpass-successor/build.mjs:generic-api-key:37",
+      "source_sha256": "305095503e382a39c500ec0f7b70b84fee1920d69a293f1d321233750be09f8f",
+      "line_sha256": "60ea68cb01d2d2c12271a712c0d2f521f139c74ffa5ea8136270a2997aff9f9d",
+      "classification": "NON_SECRET_EVENT_IDEMPOTENCY_KEY"
+    },
+    {
+      "fingerprint": "d5e63a2dab088f63167b9b1085ae050d1a4731cc:scripts/phase2-qualification/recorded-intent-nonpass-successor/not-started.mjs:generic-api-key:17",
+      "source_sha256": "382e61ee8d4be35978bfd1b45ffb0312b934bf6c77fa205b731328894f51f355",
+      "line_sha256": "e9130e93530b1671f56a6c05c43d8a661a1c6eaf187d213f9d297411dd772bb4",
+      "classification": "NON_SECRET_EVENT_IDEMPOTENCY_KEY"
+    }
+  ],
+  "permitted_change": "Append only these four complete commit:path:rule:line fingerprints to .gitleaksignore. No rule-wide or path-wide exclusions; frozen source bytes remain unchanged."
+}
