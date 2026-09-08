@@ -1,0 +1,86 @@
+{
+  "schema_version": "1.0",
+  "object_type": "ControlTrustRootSet",
+  "root_set_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+  "control_trust_root_generation": "ctrgen_352785779b64458a889d571360e2d2d5",
+  "generation_ordinal": 1,
+  "predecessor": null,
+  "purpose": "SKILL_COEXISTENCE_QUALIFICATION",
+  "scope": {
+    "project_ref": "uscrdifznmlvczcekqpw",
+    "repository": "tdoljyj/cross-memory-system",
+    "profile_id": "DP-PREENTRY-SKILL-QUALIFICATION",
+    "environment": "ISOLATED_TEST",
+    "model_budget": 0,
+    "paid_budget": 0
+  },
+  "issuer_bindings": [
+    {
+      "subject_id": "tdoljyj",
+      "signing_service": "web-flow",
+      "purpose": "STATUS",
+      "audience": "urn:clued:audience:skill-coexistence-qualification:uscrdifznmlvczcekqpw",
+      "qualification_ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/02a8ec2b53057bdaa850b27e6bcf1246be5171f6",
+        "sha256": "e4c545c4e35031c1d5a1774bb2e2230e38ea5ac0b96d6a0633794032309b19cb"
+      }
+    },
+    {
+      "subject_id": "tdoljyj",
+      "signing_service": "web-flow",
+      "purpose": "GATE_AUTHORIZATION",
+      "audience": "urn:clued:audience:skill-coexistence-qualification:uscrdifznmlvczcekqpw",
+      "qualification_ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/02a8ec2b53057bdaa850b27e6bcf1246be5171f6",
+        "sha256": "e4c545c4e35031c1d5a1774bb2e2230e38ea5ac0b96d6a0633794032309b19cb"
+      }
+    },
+    {
+      "subject_id": "tdoljyj",
+      "signing_service": "web-flow",
+      "purpose": "GATE_RESULT",
+      "audience": "urn:clued:audience:skill-coexistence-qualification:uscrdifznmlvczcekqpw",
+      "qualification_ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/02a8ec2b53057bdaa850b27e6bcf1246be5171f6",
+        "sha256": "e4c545c4e35031c1d5a1774bb2e2230e38ea5ac0b96d6a0633794032309b19cb"
+      }
+    }
+  ],
+  "audience": "urn:clued:audience:skill-coexistence-qualification:uscrdifznmlvczcekqpw",
+  "schema_digest": "87f094fa079034aa886d6c568730370a3264e106529b4bfd79bc3369f30b79e5",
+  "algorithm_config": {
+    "canonicalization_id": "SORTED_JSON_UTF8_NO_FLOATS_LF_V1_CANDIDATE",
+    "digest_algorithm": "SHA-256",
+    "signed_payload_excluded_fields": [
+      "signature_binding"
+    ],
+    "signature_verification": "GITHUB_API_VERIFIED_OWNER_MERGE",
+    "accepted_config_ref": {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/b25abb05e00f72bb2ae910035ba9916a97c822dc",
+      "sha256": "988cdf823eb63806dc3385aa1840e812c1cb1df5ed06e72ca2adf56244b88d20"
+    }
+  },
+  "not_before": "2026-09-08T12:12:14.380995Z",
+  "expires_at": "2026-09-09T09:28:59Z",
+  "history": {
+    "index_uri": "urn:clued:control-trust-root-set:uscrdifznmlvczcekqpw:ctr_414bd3c724264a83894b0c55cf2ab878#history",
+    "prefix_digest": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570",
+    "prefix_sequence": 0,
+    "minimum_accepted_generation": "ctrgen_352785779b64458a889d571360e2d2d5"
+  },
+  "revocation": {
+    "events_uri": "urn:clued:control-trust-root-set:uscrdifznmlvczcekqpw:ctr_414bd3c724264a83894b0c55cf2ab878#revocations",
+    "event_set_digest": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570",
+    "as_of": "2026-09-08T12:12:14.380995Z",
+    "expires_at": "2026-09-09T09:28:59Z"
+  },
+  "owner_approval_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/9b288600bd9ddff6695e763c44e877ab34b828f6",
+    "sha256": "3d9c4c9e06217c7c2ef0d32dba77bb5aa66bd745a8f92f0ea255b19a95127aea"
+  },
+  "status": "REGISTERED",
+  "independent_acceptance_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/e80590c19f8013d8df87d05ff7e866d12e002ebc",
+    "sha256": "b3d4422ba8d4150bd2988fc713217b3f310b7bf1c34c058e17a221f435afc49b"
+  }
+}

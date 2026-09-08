@@ -1,0 +1,33 @@
+{
+  "kind": "POST_OS_STOP_QUALIFICATION_RUNTIME_IMPLEMENTATION_DELTA",
+  "status": "SAME_SCOPE_IMPLEMENTATION_INPUT_NOT_QUALIFICATION",
+  "source_commit": "2eec225cdfee5ebbdf5e10cae7eaa5c5b6c80faa",
+  "observed_engineering_basis": {
+    "independent_result": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/DockerEngineeringObservationIndependentResult.json",
+    "sha256": "418b298c35521893b8a7fe0a37ca8a297df2e5fe353c170fd4c31b3d1df812ed",
+    "closeout": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/docker-observation-20260908/Closeout.json",
+    "elapsed_seconds": 7.280999999959022,
+    "os_and_stop_engineering_observation_accepted": true,
+    "active_slot_released": true,
+    "parent_crash_tested": false,
+    "formal_sink_or_controller_qualification_proven": false
+  },
+  "direct_reuse": [
+    {"path": "scripts/phase2-qualification/docker-engineering-observation/observe.py", "functions": ["environment", "persist", "create_args", "guard_ready", "Session.command", "Session.invoke", "Session.inspect", "Session.stop", "watchdog"], "use": "Fixed no-credential Docker transport, exact owned container, deadline, local evidence and observed STOP. Frozen source remains unchanged; future integration is a separately reviewed successor."},
+    {"path": "scripts/phase2-qualification/docker-engineering-observation/validation.py", "functions": ["image_valid", "host_valid", "prestart", "own_container", "probe_valid"], "use": "Exact actual image/host/public environment and fixed probe validation; not a generic Skill/PQUAL dispatcher."},
+    {"path": "scripts/phase2-qualification/controller.py", "functions": ["verify_intent", "run", "reconcile"], "use": "Reuse parameter-bound idempotency and sticky UNKNOWN design; old local control generation and fsync are not formal authority/durable remote sink."},
+    {"path": "scripts/phase2-qualification/control-root-registration/verify.py", "functions": ["strict_json", "GitHub.get", "GitHub.bound_json", "verify_merge", "verify_chain", "verify_revocations"], "use": "Exact private Git byte/commit verification and existing signed-source verification primitives. Root registration's historical Git candidate is not substituted for newly deployed live privateStore current state."},
+    {"path": "scripts/phase2-qualification/nonproduction-control-store/client.mjs", "functions": ["createControlStore.read", "createControlStore.append"], "use": "Fixed private SQL RootSet/current history adapter only. append permits root generation and revocation events, not Intent/Result/GA. No event-type expansion here."}
+  ],
+  "small_next_increment": "New qualification-runtime directory: exact private Git runtime-evidence Intent/Result creation-only append and commit/blob read-back binding, with UNKNOWN on uncertain publication and no action dispatch. This is ordinary engineering Evidence persistence, separate from current RootSet/revocation authority.",
+  "remaining_actual_inputs_and_code": [
+    "RootSet/schema/URI/issuer first real accepted registration and current privateStore verifier adapter; owned by qualification_cases, no invented root/generation values here.",
+    "Independently accepted actual Profile and exact GA/GRR schema, issuer purpose/Audience/signature and complete subject/config/Skill/action binding; schema shape alone does not unlock execution.",
+    "Actual applicable current revocation sources and independent runner/credential/session generations; four-layer business Vector applicability remains the designated source adjudication, not inferred from Docker or renamed P5 scalar.",
+    "Exact durable Intent bytes and immutable remote commit/blob read-back before action; bind Result/reconciliation to that original Intent and preserve same-key uncertainty. Existing root-only SQL is not this sink.",
+    "Fresh current authority/stop/expiry/budget check at each side effect and during the controlled lifecycle, including actual revocation/late response/fencing/parent-crash failure observations; successful normal STOP does not prove these.",
+    "Accepted fixed Skill/PQUAL action driver and fixtures, no arbitrary command interface; current probe only performs synthetic OS/STOP observations.",
+    "Actual reserved/cumulative budget and single-active capacity persistence, one terminal GRR per GA and independently authorized UNKNOWN reconciliation; current local reservation is not the formal ledger."
+  ],
+  "boundary": "Do not repeat the accepted OS/normal STOP probe merely to prove it again. Do not start GA/PQUAL/Skill, read Gold, expand production/model/paid permission, change frozen source or create another Canon/authority. Missing actual inputs stay explicit and fail closed; no circular requirement for a GA before prerequisite engineering work."
+}

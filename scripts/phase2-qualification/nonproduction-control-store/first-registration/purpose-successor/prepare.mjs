@@ -1,0 +1,36 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import crypto from 'node:crypto';
+import {reviewSubjectDigest} from '../../protocol-successor/validate-successor.mjs';
+const repo=new URL('../../../../../',import.meta.url),here=new URL('./',import.meta.url);
+const sha=b=>crypto.createHash('sha256').update(b).digest('hex');
+const path='artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/LimitedIssuerPurposeIndependentAcceptance.json';
+const raw=fs.readFileSync(new URL(path,repo));
+assert.equal(sha(raw),'e4c545c4e35031c1d5a1774bb2e2230e38ea5ac0b96d6a0633794032309b19cb');
+const blob=crypto.createHash('sha1').update('blob '+raw.length+'\0').update(raw).digest('hex');
+assert.equal(blob,'02a8ec2b53057bdaa850b27e6bcf1246be5171f6');
+const decision=JSON.parse(raw),oldRaw=fs.readFileSync(new URL('../RootReviewSubject.json',here));
+assert.equal(sha(oldRaw),'f80cf27970e1de4fd132888447464a8df9a18a5cf1bacae649785cdd955a0f32');
+const old=JSON.parse(oldRaw),subject=structuredClone(old.subject);
+assert.equal(decision.state,'ACCEPTED_LIMITED_ISSUER_PURPOSE_METADATA');
+assert.equal(decision.root_set_id,subject.root_set_id);
+assert.deepEqual(decision.accepted_scope,subject.scope);
+assert.deepEqual(decision.accepted_algorithm_config,subject.algorithm_config);
+assert.equal(decision.not_before,subject.not_before);assert.equal(decision.expires_at,subject.expires_at);
+for(const issuer of subject.issuer_bindings){
+ const matches=decision.accepted_issuer_purposes.filter(x=>x.purpose===issuer.purpose&&x.audience===issuer.audience&&x.accepted===true);
+ assert.equal(matches.length,1);assert.equal(decision.subject_id,issuer.subject_id);assert.equal(decision.signing_service,issuer.signing_service);
+ issuer.qualification_ref={uri:'https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/'+blob,sha256:sha(raw)};
+}
+const digest=reviewSubjectDigest(subject);
+const write=(name,value)=>fs.writeFileSync(new URL(name,here),JSON.stringify(value,null,2)+'\n');
+write('RootReviewSubject.json',{state:old.state,intended_registration_status:old.intended_registration_status,review_subject_sha256:digest,subject,predecessor:{path:'../RootReviewSubject.json',file_sha256:sha(oldRaw),review_subject_sha256:old.review_subject_sha256,prior_acceptance_applies_to_successor:false},admission_boundary:{qualification_ref:'Actual independent limited issuer purpose metadata; identity source remains transitively referenced by that decision',root_acceptance:'Separate exact successor review acceptance is required before signing',root_registered:false,gate_issued:false}});
+const sources=JSON.parse(fs.readFileSync(new URL('../SourceBindings.json',here)));
+sources.sources.issuer_purpose_acceptance={path,sha256:sha(raw),git_blob:blob,ref:subject.issuer_bindings[0].qualification_ref};sources.review_subject_sha256=digest;
+write('SourceBindings.json',sources);
+const binding=JSON.parse(fs.readFileSync(new URL('../AcceptedBindingInputs.json',here)));
+binding.subject_digest_distinction.first_root_payload_review_subject_sha256=digest;
+write('AcceptedBindingInputs.json',binding);
+const files=['prepare.mjs','RootReviewSubject.json','SourceBindings.json','AcceptedBindingInputs.json'].map(path=>{const b=fs.readFileSync(new URL(path,here));assert.ok(!b.includes(13),'LF');return {path,sha256:sha(b),bytes:b.length};});
+write('SuccessorEvidence.json',{state:'UNISSUED_SUCCESSOR_PREPARED',review_subject_sha256:digest,only_subject_change:'Three qualification_ref values now point to actual limited issuer purpose decision',original_files_unchanged:true,validation:'Actual accepted purpose metadata, scope, algorithm, window, subject and signing service matched; each purpose uniquely accepted',files,root_registered:false,db_writes:0});
+console.log(JSON.stringify({review_subject_sha256:digest,files}));

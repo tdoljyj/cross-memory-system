@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "state": "ACCEPTED_FIXED_SYNTHETIC_PRIMITIVE_ENGINEERING_PREPARATION_ONLY",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "reviewed_at_utc": "2026-09-08T13:09:02.005Z",
+  "subject": {
+    "path": "scripts/phase2-qualification/qualification-runtime/FixedFixturePreparation.json",
+    "sha256": "a5154132fd89ae76f4eb6f425fdea6e473693d36a6ab381f1c4f376ca9ada5d2",
+    "files": [
+      {
+        "path": "scripts/phase2-qualification/qualification-runtime/fixed_skill_fixture.py",
+        "sha256": "98c4d0165144a4ebfbd4889a98da65a8c6d3a71fbf082af393c15b9d00a3c18a"
+      },
+      {
+        "path": "scripts/phase2-qualification/qualification-runtime/test_fixed_skill_fixture.py",
+        "sha256": "f948d6c37736a3f1a7216f0e481c921b0ab13fe36c5082a27a4957cfd299bd51"
+      },
+      {
+        "path": "scripts/phase2-qualification/qualification-runtime/FixedFixturePreparation.md",
+        "sha256": "218614a8069ea8188932fd0d9990d4fbfacc484dcd4e98c6df0a9bcb134b17f2"
+      }
+    ]
+  },
+  "scope": "A single fixed synthetic file-write library primitive plus immutable Skill input bytes, for later integration under an accepted supervisor. No direct child run is accepted by this preparation record.",
+  "source_review": [
+    "CLI unconditionally BLOCKED with exit 2 before reading Skill or writing fixture. No generic command, path, payload, network or credential interface.",
+    "Exact 3 Skill file hashes/sizes checked as data; never evaluated as code or interpreted as Skill instructions.",
+    "Linux uid10001/PID1/capabilities/NoNewPrivs/seccomp/lo and exact five public image environment values checked twice. These checks do not replace parent OS/mount/resource/authority validation.",
+    "Only fixed /allowed/fixture.json with exact existing synthetic-v1 bytes, O_EXCL/O_NOFOLLOW and fsync; error does not prove absence of effects. Parent must preserve failure/UNKNOWN and reconcile.",
+    "Future parent mount must verify the exact driver/source set and immutable mount identities. Do not interpret this local primitive as a complete filesystem isolation or process-stop proof."
+  ],
+  "pqual_boundary": {
+    "one_pqual01_action_primitive_only": true,
+    "pqual02_to09_and11_to17_and19_to20": "Parent authorization, expiry, revocation, stop, budget, idempotency and recovery responsibilities still need actual implementation and qualification checks.",
+    "pqual10": "Real model refusal only.",
+    "pqual18": "Post-Entry positive remains excluded.",
+    "skill_behavior_evaluated": false
+  },
+  "vector_applicability": {
+    "na_accepted": false,
+    "source": "S06 f967fdf3e63028d29ed191160698726b5d707aaae63bd951f6ba2e8584936fec L3010-L3012",
+    "permitted_next_step": "Propose exact accepted-schema N/A encodings with a separate reason for absent account/installation/context/binding in this fixed primitive Profile. Do not infer blanket N/A from ISOLATED_TEST, skip required negative cases, or remove actual Owner/root/runner/credential/session obligations.",
+    "future_business_or_model_scope": "Does not inherit this absence argument."
+  },
+  "validation": {
+    "three_source_file_digests_and_lf_match": true,
+    "static_call_graph_reviewed": true,
+    "implementation_four_pure_or_readonly_checks_reused": true,
+    "unchanged_tests_rerun": false,
+    "real_child_execution": 0,
+    "real_network": 0,
+    "database_writes": 0
+  },
+  "execution_enabled": false,
+  "controller_qualified": false,
+  "ga_issued": false
+}

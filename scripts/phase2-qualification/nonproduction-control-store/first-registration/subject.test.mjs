@@ -1,0 +1,24 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import {createRequire} from 'node:module';
+import test from 'node:test';
+import {sourceSchema,canonicalDigest,reviewSubjectDigest} from '../protocol-successor/validate-successor.mjs';
+const require=createRequire(new URL('../../../../apps/clued-cloud/package.json',import.meta.url));
+const Ajv=require('ajv');
+test('actual prepared review subject is complete before the two necessarily later bindings, without issuing a root',()=>{
+ const envelope=JSON.parse(fs.readFileSync(new URL('RootReviewSubject.json',import.meta.url),'utf8'));
+ const schema=structuredClone(sourceSchema);schema.$schema='http://json-schema.org/draft-07/schema#';
+ schema.required=schema.required.filter(x=>!['independent_acceptance_ref','signature_binding'].includes(x));
+ for(const k of Object.keys(schema))if(k.startsWith('x-clued-'))delete schema[k];
+ const check=new Ajv({format:'full',allErrors:true,strictKeywords:true}).compile(schema);
+ assert.equal(check(envelope.subject),true,JSON.stringify(check.errors));
+ assert.equal(envelope.subject.independent_acceptance_ref,undefined);assert.equal(envelope.subject.signature_binding,undefined);
+ assert.equal(reviewSubjectDigest(envelope.subject),envelope.review_subject_sha256);
+ assert.equal(envelope.subject.history.prefix_sequence,0);assert.equal(envelope.subject.history.prefix_digest,canonicalDigest([]));
+ assert.equal(envelope.subject.revocation.event_set_digest,canonicalDigest([]));
+ assert.equal(envelope.subject.revocation_epoch_vector,undefined);
+ assert.equal(envelope.state,'UNISSUED_FIRST_ROOT_REVIEW_SUBJECT');
+ const inputs=JSON.parse(fs.readFileSync(new URL('AcceptedBindingInputs.json',import.meta.url),'utf8'));
+ assert.equal(inputs.known_values.subject_sha256,'e4ab25ecb1fa6709435d0318ad431d14343482cbe84e232f638e55c3c4ba1e1f');
+ assert.equal(inputs.known_values.registration_acceptance_sha256,undefined);assert.equal(inputs.known_values.signature_evidence_sha256,undefined);
+});

@@ -1,0 +1,121 @@
+{
+  "schema_version": 1,
+  "state": "ACCEPTED_FIXED_PRIVATE_AUXILIARY_EVIDENCE_PUBLISHER_ONLY",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "reviewed_at_utc": "2026-09-08T12:58:46.750Z",
+  "subject": {
+    "path": "scripts/phase2-qualification/qualification-runtime/PreparationEvidence.json",
+    "sha256": "d8f125ccff4964baa20ffc5066dc81a3923caff33cd78f36370383e42ed3bb8a",
+    "source_files": [
+      {
+        "path": "scripts/phase2-qualification/qualification-runtime/remote_evidence.py",
+        "sha256": "f8c213f4e7fcd63231c9be128c80876a739d9c586598d3ada601d03b066fe4df"
+      },
+      {
+        "path": "scripts/phase2-qualification/qualification-runtime/test_branch_successor.py",
+        "sha256": "64ea98a18828f6b0861cecead7f6ca9c3885f91e1b0453813cc179e8a41d9a4c"
+      },
+      {
+        "path": "scripts/phase2-qualification/qualification-runtime/test_attempt_scope_fix.py",
+        "sha256": "28c5fa71dc6ea08998e8f0dba8b08723d9b147bb9247aab19ba5024e2b8c16ec"
+      },
+      {
+        "path": "scripts/phase2-qualification/qualification-runtime/README.md",
+        "sha256": "85c1ff889892ab24dd163fbd296dc95f17f247e86a31484634db67c03b50eaef"
+      },
+      {
+        "path": "scripts/phase2-qualification/qualification-runtime/.gitignore",
+        "sha256": "7c0e3807a109f275f04fa607825e26c8d69f2e23f684cf4ca68e03df1173780a"
+      }
+    ],
+    "reused_verifier": {
+      "path": "scripts/phase2-qualification/control-root-registration/verify.py",
+      "sha256": "040ef7b7a8536d6b210ada9a15a26af6749e58c5da10cd401b98c36155373093"
+    }
+  },
+  "accepted_scope": {
+    "repository": "tdoljyj/cross-memory-system",
+    "private_required": true,
+    "branch": "codex/phase2-qualification-evidence-20260908",
+    "prefix": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/runtime-evidence/",
+    "attempt_pattern": "[a-z0-9][a-z0-9_-]{0,63}",
+    "filenames": [
+      "intent.json",
+      "result.json",
+      "recovery.json"
+    ],
+    "max_exact_json_bytes": 65536,
+    "branch_creation": "Coordinator may create the exact already authorized engineering evidence branch from an explicitly verified repository commit; this library has no branch creation endpoint.",
+    "use": "Auxiliary synthetic engineering records and actual verification observations only. A signature-verification observation may be preserved here as evidence while owner_merge_commit continues to refer to the actual main merge that signed the payload.",
+    "authority": "NONE",
+    "formal_run": "Always BLOCKED; zero side effects, irrespective of caller acceptance booleans"
+  },
+  "source_boundary": {
+    "s06_sha256": "f967fdf3e63028d29ed191160698726b5d707aaae63bd951f6ba2e8584936fec",
+    "line": 868,
+    "interpretation": "The fixed private engineering branch is permitted for auxiliary immutable evidence. It is not a live RootSet, GA, GRR or Control Canonical Store and does not replace current authority or revocation reads. No new signing or production purpose follows.",
+    "normal_code_and_acceptance_process": "Main PR and required checks remain unchanged.",
+    "ci_observation": "Existing worktree push triggers cover main and named historical phase2/feat branches, not this new exact evidence branch. No workflow changed and no live CI/cost status is asserted."
+  },
+  "reviewed_controls": [
+    "Exact fixed repository full_name and private is True checked before publication and every Git mutation.",
+    "Exact existing branch/ref/commit head required; branch absence cannot create it.",
+    "Complete non-truncated parent tree; target must be absent; only one new ordinary 100644 blob path; new complete leaf set must equal old plus this path.",
+    "Blob, tree and single-parent commit created with fixed endpoint and message; fixed ref update uses force:false; exact pre/post head checks.",
+    "No overwrite or force update. A concurrent divergent branch advance fails; unknown outcome retains evidence and cannot dispatch actions. This is not atomic fencing of later external work.",
+    "CreateNew fsynced local ticket and per-object progress; original bytes bound by size/SHA256/Git blob, exact immutable commit/tree/blob GET readback.",
+    "Per-attempt transport object identities reset before local ticket creation; no previous attempt SHA misattribution after early failure.",
+    "Result binds original same-attempt Intent reference and exact bytes; top-level authorization/execution/currentness/qualification flags remain false. Auxiliary framing is not GRR."
+  ],
+  "resolved_findings": [
+    {
+      "id": "RE01",
+      "problem": "Fixed repository name alone did not ensure private visibility at write time.",
+      "resolution": "Strict full_name/private guard before all mutations; public/missing/non-boolean private denies."
+    },
+    {
+      "id": "RE02",
+      "problem": "Previous attempt immutable object references could leak into a later UNKNOWN before create_file reset.",
+      "resolution": "Reset publication_objects at new attempt start; old local tickets retained and no automatic retry."
+    }
+  ],
+  "independent_validation": {
+    "all_source_digests_match": true,
+    "all_source_lf": true,
+    "targeted_execution": {
+      "command": "Host Python -I -S -B -X utf8, independent in-memory assertions with subprocess/network and persistence mocked closed.",
+      "status": "PASS",
+      "checks": [
+        "Ticket persistence failure returns UNKNOWN with no stale object SHA and makes zero API calls.",
+        "Each of blob/tree/commit/ref stages rejects a public repository before any subprocess.",
+        "formal_run with forged qualified/accepted booleans still dispatches zero actions."
+      ],
+      "real_api_calls": 0,
+      "real_child_processes": 0,
+      "files_written": 0
+    },
+    "implementation_results_reused": {
+      "branch_successor_checks": 8,
+      "tested_source_sha256": "15e50bd63701c727432c2dec4d6b06aef308176a31549671705af7a46729e178",
+      "attempt_fix_checks": 1,
+      "tested_final_source_sha256": "f8c213f4e7fcd63231c9be128c80876a739d9c586598d3ada601d03b066fe4df",
+      "failed": 0,
+      "old_11_not_rerun": true,
+      "old_8_not_rerun_after_single_attempt_fix": true
+    }
+  },
+  "actual_use_conditions": [
+    "Bind the exact accepted source and trusted host CLI, current Owner window and fixed branch starting commit; verify all input bytes are authorized synthetic/control-engineering data without secrets or user payload.",
+    "Use publish_once, never bypass tickets or directly call private mutation helpers as a retry/alternative path. Serialize with other operations on this exact evidence branch.",
+    "When outcome is UNKNOWN, preserve known object identities and tickets; recover via exact immutable readback, not blind republish or resetting capacity.",
+    "Consumers must independently verify actual signatures/payload/source references; a stored verification report boolean is evidence, not authority.",
+    "A real engineering publication/readback observation may proceed under the existing scope. It does not prove formal S06 sink durability or qualify the controller; formal Root/Profile/GA/revocation/budget/STOP/action prerequisites remain separate."
+  ],
+  "live_observations": {
+    "new_remote_writes": 0,
+    "new_readbacks": 0,
+    "new_docker_runs": 0,
+    "pqual_runs": 0,
+    "qualified": false
+  }
+}

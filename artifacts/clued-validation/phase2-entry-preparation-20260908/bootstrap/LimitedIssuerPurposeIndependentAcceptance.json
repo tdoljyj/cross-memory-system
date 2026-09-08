@@ -1,0 +1,92 @@
+{
+  "schema_version": 1,
+  "state": "ACCEPTED_LIMITED_ISSUER_PURPOSE_METADATA",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "decided_at_utc": "2026-09-08T12:53:06.053Z",
+  "record_kind": "Independent administrative acceptance metadata; not a new S06 core object or issued GA/GRR",
+  "subject_id": "tdoljyj",
+  "signing_service": "web-flow",
+  "root_set_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+  "control_trust_root_generation": "ctrgen_352785779b64458a889d571360e2d2d5",
+  "accepted_audience": "urn:clued:audience:skill-coexistence-qualification:uscrdifznmlvczcekqpw",
+  "accepted_scope": {
+    "project_ref": "uscrdifznmlvczcekqpw",
+    "repository": "tdoljyj/cross-memory-system",
+    "profile_id": "DP-PREENTRY-SKILL-QUALIFICATION",
+    "environment": "ISOLATED_TEST",
+    "model_budget": 0,
+    "paid_budget": 0
+  },
+  "not_before": "2026-09-08T12:12:14.380995Z",
+  "expires_at": "2026-09-09T09:28:59Z",
+  "authority_basis": {
+    "approved_exception_proposal_sha256": "f655e8a16f428bbccfca3687c28e31bc57aed0e7a9fd9ac0191648266afec533",
+    "actual_owner_approval_sha256": "3d9c4c9e06217c7c2ef0d32dba77bb5aa66bd745a8f92f0ea255b19a95127aea",
+    "actual_verified_owner_merge": "4d7f93c17cf7d126e771cf8aca6299c868cba0a9",
+    "identity_binding_ref": {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/017a9e182650f3f846090d24df07f4e1c457dd35",
+      "sha256": "78c1cea433053edb9233976615f4f22f43f318078eed0f505b48d641a5f6aae9"
+    },
+    "identity_alone_is_purpose_qualification": false,
+    "purpose_qualification_effect": "This exact independent decision accepts the three distinct roles below for the approved limited root scope. No existing TM19 key/pins, subject or production purpose is changed."
+  },
+  "accepted_issuer_purposes": [
+    {
+      "purpose": "STATUS",
+      "audience": "urn:clued:audience:skill-coexistence-qualification:uscrdifznmlvczcekqpw",
+      "accepted": true,
+      "boundary": "Only qualification status statements under their own accepted schema; cannot substitute for GateStatusProjection, authorization, GRR or a PASS."
+    },
+    {
+      "purpose": "GATE_AUTHORIZATION",
+      "audience": "urn:clued:audience:skill-coexistence-qualification:uscrdifznmlvczcekqpw",
+      "accepted": true,
+      "boundary": "Only PRE_ENTRY qualification GA signing role; each GA requires its exact original prerequisites and current authorization, accepted controller/Profile/Skill/action, fresh revocation and budget checks, duration <=600 seconds. No GA issued here."
+    },
+    {
+      "purpose": "GATE_RESULT",
+      "audience": "urn:clued:audience:skill-coexistence-qualification:uscrdifznmlvczcekqpw",
+      "accepted": true,
+      "boundary": "Only qualification result-signing role, binding one exact GA and independently assessed actual evidence; one terminal GRR, preserve UNKNOWN/STOP. Authorization role is not result adjudication."
+    }
+  ],
+  "accepted_algorithm_config": {
+    "canonicalization_id": "SORTED_JSON_UTF8_NO_FLOATS_LF_V1_CANDIDATE",
+    "digest_algorithm": "SHA-256",
+    "signed_payload_excluded_fields": [
+      "signature_binding"
+    ],
+    "signature_verification": "GITHUB_API_VERIFIED_OWNER_MERGE",
+    "accepted_config_ref": {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/b25abb05e00f72bb2ae910035ba9916a97c822dc",
+      "sha256": "988cdf823eb63806dc3385aa1840e812c1cb1df5ed06e72ca2adf56244b88d20"
+    }
+  },
+  "signature_requirements": [
+    "GitHub verified=true reason=valid, actual committer web-flow and Owner tdoljyj merge in exact private tdoljyj/cross-memory-system repository.",
+    "Exact payload/tree/blob and independent acceptance evidence must be checked. Owner prior merge is not a signature of a new object.",
+    "Purpose must match the specific consumer and Audience must match exactly. Signing the record does not prove controller qualification or the truth of any claimed result."
+  ],
+  "forbidden_uses": [
+    "PROMOTION_AUTHORIZATION",
+    "PROMOTION_RESULT",
+    "production",
+    "real model/paid actions",
+    "Health/Surgical",
+    "PQUAL-18 post-Entry positive",
+    "Slice A"
+  ],
+  "no_circular_subject_reference": true,
+  "root_review_subject_sha256_included": false,
+  "activation_boundary": {
+    "requires_separate_exact_root_acceptance_and_actual_registration": true,
+    "not_a_root_instance": true,
+    "root_registered": false,
+    "controller_qualified": false,
+    "ga_issued": false,
+    "grr_issued": false,
+    "old_pins_changed": false,
+    "original_owner_window_extended": false
+  },
+  "consumption": "A RootSet qualification_ref may point to this exact immutable metadata blob. A consumer must select the matching purpose and exact Audience/subject/service/root scope and verify this actual acceptance plus the current registered RootSet and applicable object prerequisites. Missing/expired/revoked/unknown proof fails closed."
+}

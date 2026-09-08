@@ -1,0 +1,10 @@
+import assert from 'node:assert/strict';
+import {artifact,signingPayload,writeNew,sha} from './assembly-common.mjs';
+import {reviewSubjectDigest,signaturePayloadDigest} from '../protocol-successor/validate-successor.mjs';
+const [acceptancePath,acceptanceSha,out]=process.argv.slice(2);
+assert.ok(acceptancePath&&acceptanceSha&&out&&process.argv.length===5,'Usage: node prepare-signing.mjs <actual-acceptance-repo-path> <independently-verified-sha256> <new-output-directory>');
+const accepted=artifact(acceptancePath,acceptanceSha),payload=signingPayload(accepted);
+const raw=Buffer.from(JSON.stringify(payload,null,2)+'\n');
+const evidence={state:'UNSIGNED_PAYLOAD_READY_FOR_NEW_OWNER_PR',review_subject_sha256:reviewSubjectDigest(payload),payload_sha256:signaturePayloadDigest(payload),file_sha256:sha(raw),acceptance:{artifact_path:accepted.path,sha256:accepted.sha256},authority_effect:'NONE',signature_verified:false,root_registered:false};
+writeNew(out,{'RootSigningPayload.json':payload,'SigningPreparation.json':evidence});
+console.log(JSON.stringify(evidence));

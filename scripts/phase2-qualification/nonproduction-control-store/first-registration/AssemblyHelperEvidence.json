@@ -1,0 +1,52 @@
+{
+  "state": "LOCAL_ASSEMBLY_HELPERS_VERIFIED_NO_REGISTRATION",
+  "files": [
+    {
+      "path": "assembly-common.mjs",
+      "sha256": "bb0173d077ff73d34d2dfe0b8793130a3024fdf314165b549dfbfddaa842966e",
+      "bytes": 5742
+    },
+    {
+      "path": "prepare-signing.mjs",
+      "sha256": "5ceb42d8c647e77f4dead43490e1688ed014eddff9ed98954cb8c8a891539bff",
+      "bytes": 1070
+    },
+    {
+      "path": "assemble-signed-root.mjs",
+      "sha256": "98130119cf5ce04921d08eb2cb148b919e24ea7ec3ac64900b729ae6b0db75fc",
+      "bytes": 1366
+    },
+    {
+      "path": "assembly.test.mjs",
+      "sha256": "54ecdeb9ef4fb314ce0f06e7baeb01f66b5542877beb8b28fb50d4462fcbc3a0",
+      "bytes": 2059
+    },
+    {
+      "path": "ASSEMBLY.md",
+      "sha256": "ef4002960590bcbffe4ed61db2aa1344b3e7eae3140df32da4752cec499a6ae3",
+      "bytes": 3856
+    },
+    {
+      "path": "signing-v2/RootSigningPayload.json",
+      "sha256": "de24b30379045bdf5d141ca8cc5f1dc3eed947f4f553e2323a1df5296918919d",
+      "bytes": 3874
+    },
+    {
+      "path": "signing-v2/SigningPreparation.json",
+      "sha256": "5de05c74167b5d7a1d0bfcdfc15caeb239f17fd39681f10ef412cc86a97034af",
+      "bytes": 671
+    }
+  ],
+  "validation": {
+    "command": "node --test scripts/phase2-qualification/nonproduction-control-store/first-registration/assembly.test.mjs",
+    "passed": 3,
+    "failed": 0,
+    "skipped": 0,
+    "duration_ms": 101.9094,
+    "positive_actual_signature_assembly": "NOT_EXECUTED_PENDING_REAL_NEW_SIGNATURE_REPORT"
+  },
+  "actual_unsigned_payload": "signing-v2/RootSigningPayload.json",
+  "original_frozen_inputs_unchanged": true,
+  "db_writes": 0,
+  "authority_effect": "NONE"
+}

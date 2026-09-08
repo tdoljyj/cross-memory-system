@@ -1,0 +1,244 @@
+{
+  "schema_version": 1,
+  "state": "ACCEPTED_EXACT_FIRST_ROOT_REGISTRATION_SUBJECT_AND_PURPOSE_BINDINGS",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "decided_at_utc": "2026-09-08T12:51:09.120Z",
+  "root_set_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+  "control_trust_root_generation": "ctrgen_352785779b64458a889d571360e2d2d5",
+  "review_subject_sha256": "2222ca74e5ff340e8da2aa47e272cbdf0eba9b93cb09c95ac9572bfdb068f7d7",
+  "subject_file": {
+    "path": "scripts/phase2-qualification/nonproduction-control-store/first-registration/RootReviewSubject.json",
+    "sha256": "f80cf27970e1de4fd132888447464a8df9a18a5cf1bacae649785cdd955a0f32"
+  },
+  "input_evidence": {
+    "path": "scripts/phase2-qualification/nonproduction-control-store/first-registration/InputEvidence.json",
+    "sha256": "452048b7770a16e7f81dfcefb9fc0a53f49623b514719e68ba99b05feacad860",
+    "files": [
+      {
+        "path": "scripts/phase2-qualification/nonproduction-control-store/first-registration/accepted-binding.sql",
+        "sha256": "16ee1dbe3779e22a8199e265832c8dbf9ac49cd0231c51f4fe69d10816fc209d",
+        "bytes": 820
+      },
+      {
+        "path": "scripts/phase2-qualification/nonproduction-control-store/first-registration/AcceptedBindingInputs.json",
+        "sha256": "7c65d82cbfdb2e03fc6ad01e739d881497529ddd06c50fae95f3ae5b4c120e9f",
+        "bytes": 1856
+      },
+      {
+        "path": "scripts/phase2-qualification/nonproduction-control-store/first-registration/prepare.mjs",
+        "sha256": "e5bb27df4f6b7aab295ef4112e72bf54a1702cf60772fd4136f5c76ca8b58bd6",
+        "bytes": 7416
+      },
+      {
+        "path": "scripts/phase2-qualification/nonproduction-control-store/first-registration/README.md",
+        "sha256": "9cbb63901f91d6e8500353c510643347fa8d28e11092754e84e8290bd852f11e",
+        "bytes": 3828
+      },
+      {
+        "path": "scripts/phase2-qualification/nonproduction-control-store/first-registration/RootReviewSubject.json",
+        "sha256": "f80cf27970e1de4fd132888447464a8df9a18a5cf1bacae649785cdd955a0f32",
+        "bytes": 4633
+      },
+      {
+        "path": "scripts/phase2-qualification/nonproduction-control-store/first-registration/SourceBindings.json",
+        "sha256": "132be3f86999d316cd000f18a3f60b9ac65d9e6c31b14261792163e75a532350",
+        "bytes": 4999
+      },
+      {
+        "path": "scripts/phase2-qualification/nonproduction-control-store/first-registration/SourceReadback.json",
+        "sha256": "5a0a53f7f7772a5bf3a86dafbb09eb95642ebefc47e379580ba6f06d8e08ca7d",
+        "bytes": 1298
+      },
+      {
+        "path": "scripts/phase2-qualification/nonproduction-control-store/first-registration/subject.test.mjs",
+        "sha256": "4f977c58f5272f6926529ec30ec7b47418f321d02823e8c8389d8f19a35a108a",
+        "bytes": 1994
+      }
+    ]
+  },
+  "decision": {
+    "accepted": true,
+    "registration_scope": "The exact first-generation nonproduction trust metadata subject; complete it only with this actual acceptance reference and a subsequently verified new signature binding, then register exact configuration and generation event together.",
+    "subject_change_requires_successor_review": true,
+    "permitted_completion_fields": [
+      "independent_acceptance_ref",
+      "signature_binding"
+    ],
+    "identity_basis_alone_is_purpose_qualification": false,
+    "root_currently_registered": false,
+    "controller_qualified": false,
+    "ga_issued": false,
+    "grr_issued": false,
+    "formal_action_enabled": false,
+    "production_authority": false
+  },
+  "authority_sources": {
+    "owner_exception_proposal_sha256": "f655e8a16f428bbccfca3687c28e31bc57aed0e7a9fd9ac0191648266afec533",
+    "owner_approval_sha256": "3d9c4c9e06217c7c2ef0d32dba77bb5aa66bd745a8f92f0ea255b19a95127aea",
+    "verified_owner_merge": "4d7f93c17cf7d126e771cf8aca6299c868cba0a9",
+    "independent_owner_binding_sha256": "78c1cea433053edb9233976615f4f22f43f318078eed0f505b48d641a5f6aae9",
+    "original_owner_window_ends_at": "2026-09-09T09:28:59Z",
+    "s06_source_sha256": "f967fdf3e63028d29ed191160698726b5d707aaae63bd951f6ba2e8584936fec",
+    "applicable_source_lines": [
+      868,
+      3012,
+      3885,
+      4334,
+      4336
+    ],
+    "interpretation": "The approved exception permits the existing Owner/web-flow service and this independent assessor to establish precise limited purpose metadata. This decision accepts the following three separate uses, not a new subject, service, key, general signing authority or controller qualification."
+  },
+  "accepted_issuer_purposes": [
+    {
+      "purpose": "STATUS",
+      "audience": "urn:clued:audience:skill-coexistence-qualification:uscrdifznmlvczcekqpw",
+      "subject_id": "tdoljyj",
+      "signing_service": "web-flow",
+      "identity_source": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/017a9e182650f3f846090d24df07f4e1c457dd35",
+        "sha256": "78c1cea433053edb9233976615f4f22f43f318078eed0f505b48d641a5f6aae9"
+      },
+      "accepted": true,
+      "authority_extent": "Limited qualification status statements only, under their own accepted schema. Status must never substitute for a GateStatusProjection, GA, GRR or PASS."
+    },
+    {
+      "purpose": "GATE_AUTHORIZATION",
+      "audience": "urn:clued:audience:skill-coexistence-qualification:uscrdifznmlvczcekqpw",
+      "subject_id": "tdoljyj",
+      "signing_service": "web-flow",
+      "identity_source": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/017a9e182650f3f846090d24df07f4e1c457dd35",
+        "sha256": "78c1cea433053edb9233976615f4f22f43f318078eed0f505b48d641a5f6aae9"
+      },
+      "accepted": true,
+      "authority_extent": "Limited PRE_ENTRY qualification GA signing role only. Every actual GA still requires the original real prerequisites, exact accepted controller/Profile/Skill/action, fresh authority and revocation checks, remaining budget and duration at most 600 seconds. This record issues none."
+    },
+    {
+      "purpose": "GATE_RESULT",
+      "audience": "urn:clued:audience:skill-coexistence-qualification:uscrdifznmlvczcekqpw",
+      "subject_id": "tdoljyj",
+      "signing_service": "web-flow",
+      "identity_source": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/017a9e182650f3f846090d24df07f4e1c457dd35",
+        "sha256": "78c1cea433053edb9233976615f4f22f43f318078eed0f505b48d641a5f6aae9"
+      },
+      "accepted": true,
+      "authority_extent": "Limited qualification GateResult signing role only. Every actual result must bind its exact GA and actual independently assessed outcome/evidence, enforce one terminal GRR, and preserve UNKNOWN/STOP rules. Authorization use cannot serve as result adjudication."
+    }
+  ],
+  "accepted_audience": "urn:clued:audience:skill-coexistence-qualification:uscrdifznmlvczcekqpw",
+  "accepted_scope": {
+    "project_ref": "uscrdifznmlvczcekqpw",
+    "repository": "tdoljyj/cross-memory-system",
+    "profile_id": "DP-PREENTRY-SKILL-QUALIFICATION",
+    "environment": "ISOLATED_TEST",
+    "model_budget": 0,
+    "paid_budget": 0
+  },
+  "excluded_purposes": [
+    "PROMOTION_AUTHORIZATION",
+    "PROMOTION_RESULT",
+    "PRODUCTION",
+    "HEALTH_SURGICAL",
+    "REAL_MODEL_OR_PAID_ACTION",
+    "PQUAL_18_POST_ENTRY_POSITIVE",
+    "SLICE_A"
+  ],
+  "accepted_algorithm_config": {
+    "canonicalization_id": "SORTED_JSON_UTF8_NO_FLOATS_LF_V1_CANDIDATE",
+    "digest_algorithm": "SHA-256",
+    "signed_payload_excluded_fields": [
+      "signature_binding"
+    ],
+    "signature_verification": "GITHUB_API_VERIFIED_OWNER_MERGE",
+    "accepted_config_ref": {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/b25abb05e00f72bb2ae910035ba9916a97c822dc",
+      "sha256": "988cdf823eb63806dc3385aa1840e812c1cb1df5ed06e72ca2adf56244b88d20"
+    }
+  },
+  "algorithm_acceptance": {
+    "canonical_bytes": "UTF-8 sorted JSON object keys, recursive array order retained, no floating or unsafe numeric values, one trailing LF; SHA-256. Accepted exact implementation canonicalDigest in protocol-successor/validate-successor.mjs.",
+    "implementation_sha256": "e2844900272bcd9f2aba18aae256567e33d0c598f0a114d7ed01a6fb2fdf1ca5",
+    "review_subject_excludes": [
+      "independent_acceptance_ref",
+      "signature_binding"
+    ],
+    "final_signature_payload_excludes": [
+      "signature_binding"
+    ],
+    "new_signature_requirements": [
+      "Actual private-repository Owner tdoljyj PR merge; committer web-flow; GitHub verified true and reason valid.",
+      "Read exact merge parents/tree and immutable payload blob; recompute complete payload and accepted review-subject digests.",
+      "The signed payload must include the actual independent acceptance reference. No reuse of PR25 as a signature of this new Root payload.",
+      "Verify referenced bytes and their applicable acceptance; Git blob identity alone does not assert publication or qualification."
+    ],
+    "new_signature_now_verified": false
+  },
+  "schema_sha256": "87f094fa079034aa886d6c568730370a3264e106529b4bfd79bc3369f30b79e5",
+  "accepted_protocol_mapping_sha256": "abbc8e7eae03f2a183fd739fa49b16a97db6e1c0fb62a9353a30db81553db416",
+  "first_prefix_acceptance": {
+    "prefix_sequence": 0,
+    "prefix_digest": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570",
+    "revocation_set_digest": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570",
+    "independent_live_readback": {
+      "tool": "supabase_execute_sql",
+      "explicit_project_id": "uscrdifznmlvczcekqpw",
+      "observed_at_utc": "2026-09-08T12:49:45.162554Z",
+      "accepted_binding_count": 0,
+      "event_count": 0,
+      "current_head_count": 0,
+      "root_read": null,
+      "database_writes": 0
+    },
+    "basis": "The explicitly new deployed private clued_control namespace started empty with no accepted binding; append-only events remain empty. This supports the first registration in this precise controlled namespace. It does not assert global absence in arbitrary stores or turn old Git candidates into registered roots.",
+    "currentness": "Point-in-time observation only. The 12:12 signed snapshot and its expiry never authorize caching empty revocations until expiry. Immediately before registration verify the same empty prefix and current Owner/window; before every later side effect read current accepted private-store generation and complete revocation state, fail closed for offline/unknown/rollback."
+  },
+  "accepted_binding": {
+    "known_values": {
+      "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+      "project_ref": "uscrdifznmlvczcekqpw",
+      "purpose": "SKILL_COEXISTENCE_QUALIFICATION",
+      "environment": "ISOLATED_TEST",
+      "subject_sha256": "e4ab25ecb1fa6709435d0318ad431d14343482cbe84e232f638e55c3c4ba1e1f",
+      "owner_approval_commit": "4d7f93c17cf7d126e771cf8aca6299c868cba0a9",
+      "not_before": "2026-09-08T12:12:14.380995Z",
+      "expires_at": "2026-09-09T09:28:59Z",
+      "issuer": "tdoljyj",
+      "audience": "urn:clued:audience:skill-coexistence-qualification:uscrdifznmlvczcekqpw",
+      "algorithm_config": "SORTED_JSON_UTF8_NO_FLOATS_LF_V1_CANDIDATE;SHA-256;GITHUB_API_VERIFIED_OWNER_MERGE",
+      "schema_sha256": "87f094fa079034aa886d6c568730370a3264e106529b4bfd79bc3369f30b79e5",
+      "store_acceptance_sha256": "4c05a0ffcba4724aa36ea4a41003176e33dd140b73b370ee477fee4c5b5e4350",
+      "protocol_mapping_sha256": "abbc8e7eae03f2a183fd739fa49b16a97db6e1c0fb62a9353a30db81553db416"
+    },
+    "known_field_count": 14,
+    "required_actual_future_values": [
+      "registration_acceptance_sha256",
+      "signature_evidence_sha256"
+    ],
+    "total_sql_fields": 16,
+    "sql_path": "scripts/phase2-qualification/nonproduction-control-store/first-registration/accepted-binding.sql",
+    "sql_sha256": "16ee1dbe3779e22a8199e265832c8dbf9ac49cd0231c51f4fe69d10816fc209d",
+    "completion_rule": "registration_acceptance_sha256 binds this actual decision; signature_evidence_sha256 binds the actual newly verified payload signature evidence. Neither can be a placeholder. Existing e4ab subject hash remains the deployed limited-registration policy subject; it is not the new Root review subject digest.",
+    "transaction_rule": "After actual signature and source verification, insert one exact accepted configuration and the first GENERATION_REGISTERED event in one transaction; append_event uses the actual metadata digest and expected_sequence 0, no overwrite/ON CONFLICT. Any failure rolls back both. Root must not become readable through a partial configuration commit."
+  },
+  "independent_validation": {
+    "eight_input_file_hashes_sizes_lf_match": true,
+    "eight_source_sha256_and_git_blob_identities_match": true,
+    "independent_canonical_review_subject_and_empty_prefix_digests_match": true,
+    "root_subject_projection_shape": "PASS for all current fields with only the two deliberately absent post-review fields removed from required list; no fake values inserted and no claim of a complete signed Root.",
+    "implementation_report_reused": {
+      "tests_passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "duration_ms": 95.1716
+    },
+    "old_protocol_store_docker_tests_repeated": false,
+    "new_root_or_sql_writes": 0
+  },
+  "remaining_execution_preconditions": [
+    "Publish actual references and this accepted subject/decision through the normal main PR and required checks.",
+    "Bind and independently verify the new actual Owner signature over the complete payload before root registration.",
+    "Verify current Owner, exact empty prefix and window immediately before the single registration transaction, then read back actual metadata/event/root and immutable proof.",
+    "Controller/Profile/GA/current four-layer credential Vector, budgeting, stop/revocation/action fencing and remote evidence qualification remain separately required for formal execution; no new approval is required merely to complete these already authorized same-scope engineering steps."
+  ]
+}
