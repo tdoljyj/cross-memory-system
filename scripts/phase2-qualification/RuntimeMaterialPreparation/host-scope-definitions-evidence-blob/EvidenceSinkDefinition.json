@@ -1,0 +1,84 @@
+{
+  "definition_state": "PREPARED_FOR_EXACT_INDEPENDENT_SCOPE_ACCEPTANCE",
+  "authority_effect": "NONE",
+  "controller_manifest_bound": true,
+  "controller_qualified": false,
+  "ga_issued": false,
+  "kind": "EXISTING_PRIVATE_CONTROL_EVIDENCE_SINK_BINDING",
+  "project_ref": "uscrdifznmlvczcekqpw",
+  "schema": "clued_control",
+  "installed_sql": {
+    "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/budget-reservation-successor/install.candidate.sql",
+    "sha256": "8f732dd4013a18adde33a254631cdd5a04022f300d4c0a13d05dffbf36f97285",
+    "bytes": 40646
+  },
+  "installed_successor_sql": {
+    "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/runtime600-successor/alter.candidate.sql",
+    "sha256": "0ab15bbbc2f80421cb619b50de8816095359d9ffab1e96e372960c063bc80c9b",
+    "bytes": 12444
+  },
+  "table_roles": {
+    "execution_events": "immutable full raw Intent/Result/budget evidence, exact SHA and sequence",
+    "gate_attempts": "complete live GA/one unique terminal GRR and immutable decision/index",
+    "control_objects": "complete original immutable StatusManifest; unique original typed URI",
+    "execution_current": "current sequence, independent generations, pending/active reservation and conservative counters"
+  },
+  "durability": "Existing PostgreSQL transaction commit followed by fresh actual typed readback; pre-dispatch prior transaction required",
+  "authority_boundary": "Existing same-domain evidence storage is not a new Canon/issuer. Root currentness comes only from the existing Root control tables.",
+  "unknown": "Retain original event, pending/active capacity and budget; no automatic redispatch/refund/deletion",
+  "ga_grr_signatures": "Full live payload remains private SQL; accepted fixed GitHub commitment signature channel binds complete payload digest",
+  "status_signature": "Original STATUS Owner-merge algorithm; complete live Status raw stays private SQL",
+  "intent_response_compatibility_sql": {
+    "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/intent-response-successor/alter.candidate.sql",
+    "sha256": "17baedbb1ec279e8cc6c349697ea4f14ddcad9d92bcf70dd2a800c94ad2e23cc",
+    "bytes": 1957
+  },
+  "binding_projection_successor_sql": {
+    "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/binding-evidence-successor/alter.candidate.sql",
+    "sha256": "bd94bd2c40a1f3d7703316ec58296e2e07faeb00b1d5055c3ca64000db59d847",
+    "bytes": 15880
+  },
+  "original_input_transport": {
+    "publisher": {
+      "path": "scripts/phase2-qualification/control-context-verifier-evidence-blob-successor/original_input_publisher.py",
+      "sha256": "fdc71e98bb88988fceddd498de9b1489df3de1df83a198a089d42fa22143c449",
+      "bytes": 16152
+    },
+    "decoder": {
+      "path": "scripts/phase2-qualification/control-context-verifier-evidence-blob-successor/original-inputs-blob.mjs",
+      "sha256": "4b81b7a0207b0f8c9a5d3461542dd1abb6393b3eab5b616180484585f6bf9ade",
+      "bytes": 7453
+    },
+    "repository": "tdoljyj/cross-memory-system",
+    "private_required": true,
+    "branch": "codex/phase2-qualification-evidence-20260908",
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/runtime-evidence/original-inputs-<actual-ga-id-without-ga_>/result.json",
+    "maximum_original_bytes": 1048576,
+    "maximum_blob_envelope_bytes": 4096,
+    "python_invocation": {
+      "executable": "C:/Users/Windows/AppData/Local/Programs/Python/Python312/python.exe",
+      "flags": [
+        "-I",
+        "-S",
+        "-B",
+        "-X",
+        "utf8"
+      ],
+      "source_check": "Exact Python, publisher, verifier, GitHub CLI and all loaded dependencies from ControllerSourceManifest checked before import; no site or pyc write",
+      "github_executable": "C:/Program Files/GitHub CLI/gh.exe",
+      "environment": "Existing trusted host GitHub credential context; never inherited by Docker child; no new credential export",
+      "call": "GitHubEvidence(); publish_once(api, original-inputs-actual_ga_suffix, result, complete_original_raw_bytes, actual_fixed_branch_head)",
+      "ticket_directory": "scripts/phase2-qualification/control-context-verifier-evidence-blob-successor/work/original-inputs-<actual-ga-suffix>",
+      "ticket_files": [
+        "result-publication.json",
+        "result-blob.json",
+        "result-tree.json",
+        "result-commit.json"
+      ]
+    },
+    "sequence": "During PENDING preserve the complete actual original input locally; after actual STOPPED the trusted root publishes once with exact head/CAS, then reads back complete immutable commit/tree/blob bytes before producing the envelope.",
+    "authority": "Historical Evidence only; never live Root/current/Status/GA/GRR storage, never child credential or publication permission",
+    "completeness": "Original raw and 28 fault observations remain intact. The signed result chain covers original ref, blob publication observation, per-fault reconstruction and actual immutable byte verification. Original 128KiB SQL/index limits and 1MiB original-input bound remain unchanged.",
+    "actual_write_set_boundary": "Post-STOP Evidence transmission is distinct from completed test effects; no future GRR or blob publication target is falsely reported as a prior child/test write."
+  }
+}

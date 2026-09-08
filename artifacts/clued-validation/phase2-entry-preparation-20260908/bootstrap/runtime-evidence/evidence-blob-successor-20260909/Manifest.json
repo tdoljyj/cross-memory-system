@@ -1,0 +1,254 @@
+{
+  "kind": "EXACT_ORIGINAL_EVIDENCE_ARCHIVE",
+  "state": "ACTUAL_COMPONENT_INSTALL_EVIDENCE_PRESERVED_FORWARD_REGISTRATION_AND_QUALIFICATION_NOT_EXECUTED",
+  "created_at": "2026-09-08T22:57:07.6321607Z",
+  "archive": {
+    "file": "Evidence.zip",
+    "bytes": 1207942,
+    "sha256": "0144d86aebeebe25c55085ac7e45f17603ed6124374c6dafd2fb9edd74de71b6"
+  },
+  "original_total_bytes": 3400991,
+  "entry_count": 37,
+  "entries": [
+    {
+      "original_path": "work/binding-component-install-actual.json",
+      "archive_path": "work/binding-component-install-actual.json",
+      "bytes": 685,
+      "sha256": "fd053b617000067c50bcc5f7e1282afe15a4daf2d6d0a1be440715f6a17c076e"
+    },
+    {
+      "original_path": "work/binding-component-install-preparation.json",
+      "archive_path": "work/binding-component-install-preparation.json",
+      "bytes": 1882076,
+      "sha256": "d5bcf078429b98fa567e664575bc2f3a2bb0ef7bd937590e48890cedd0a6f4a5"
+    },
+    {
+      "original_path": "work/binding-component-installed-readback.json",
+      "archive_path": "work/binding-component-installed-readback.json",
+      "bytes": 579889,
+      "sha256": "83cd7c7fcc8891202d0bfa08505df136de4e5ed8ed1c3b4e3cffd90a7ba586fa"
+    },
+    {
+      "original_path": "work/binding-component-preimage.json",
+      "archive_path": "work/binding-component-preimage.json",
+      "bytes": 579558,
+      "sha256": "bff5a5c0f52960485019b936dc255d9afc85164e21006868d9374867f02cf2d2"
+    },
+    {
+      "original_path": "work/binding-evidence-tests/build-metadata-only.mjs",
+      "archive_path": "work/binding-evidence-tests/build-metadata-only.mjs",
+      "bytes": 976,
+      "sha256": "4caf4790c61773795b1fcb51c66d261b67761844b4de7009071b8580c4c62851"
+    },
+    {
+      "original_path": "work/binding-evidence-tests/cases.txt",
+      "archive_path": "work/binding-evidence-tests/cases.txt",
+      "bytes": 6073,
+      "sha256": "0e54f9de15c9802b450e7691fa540cdcba23ea2c25f414726a1c02b31a965857"
+    },
+    {
+      "original_path": "work/binding-evidence-tests/ComponentEvidence.json",
+      "archive_path": "work/binding-evidence-tests/ComponentEvidence.json",
+      "bytes": 2029,
+      "sha256": "27d41e4ac6ef7753e4b02bb62d970c9c9902484cfc23f9564b65b763bf000084"
+    },
+    {
+      "original_path": "work/binding-evidence-tests/FunctionDefinitions.json",
+      "archive_path": "work/binding-evidence-tests/FunctionDefinitions.json",
+      "bytes": 29579,
+      "sha256": "27f3e076aaa62a46aecb93341f2c79dfa858c871b6f557b8a89e303d0682ddf6"
+    },
+    {
+      "original_path": "work/binding-evidence-tests/integration.history-fixture-syntax.mjs",
+      "archive_path": "work/binding-evidence-tests/integration.history-fixture-syntax.mjs",
+      "bytes": 13331,
+      "sha256": "55e0dd87fff25284c10e283fa37314b9cf095d2c791c7d46ec8c4f2aa6b55d51"
+    },
+    {
+      "original_path": "work/binding-evidence-tests/integration.test.mjs",
+      "archive_path": "work/binding-evidence-tests/integration.test.mjs",
+      "bytes": 13333,
+      "sha256": "d4a8a34f21745fa95a434c966ce188a8d4fe49c300338667dd4d12d640342364"
+    },
+    {
+      "original_path": "work/binding-evidence-tests/metadata-only.mjs",
+      "archive_path": "work/binding-evidence-tests/metadata-only.mjs",
+      "bytes": 9118,
+      "sha256": "4a45348a523bd5e28102b5aef79e2e0da010500044262c35e09ac916b867f845"
+    },
+    {
+      "original_path": "work/binding-evidence-tests/PgIntegrationRaw.history-fixture-syntax.json",
+      "archive_path": "work/binding-evidence-tests/PgIntegrationRaw.history-fixture-syntax.json",
+      "bytes": 88130,
+      "sha256": "0c60d73cd2334dfed9a24de830fb9d25a19686f871934f4587b21acea56ac738"
+    },
+    {
+      "original_path": "work/binding-evidence-tests/PgIntegrationRaw.v2.json",
+      "archive_path": "work/binding-evidence-tests/PgIntegrationRaw.v2.json",
+      "bytes": 107878,
+      "sha256": "5da6912a70e715ef409cd813e329c122825f6ece4d1a51c3af60ff445e79d089"
+    },
+    {
+      "original_path": "work/build-binding-evidence-successor.mjs",
+      "archive_path": "work/build-binding-evidence-successor.mjs",
+      "bytes": 4150,
+      "sha256": "def1ee358c4a4f068e015440e4ce16ff98afaf734e13f91d13b22c4aa4f81ce3"
+    },
+    {
+      "original_path": "work/kernel-phase2-repo/artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/DedicatedIntentResponseDatabaseCompatibilityIndependentAcceptance.json",
+      "archive_path": "work/kernel-phase2-repo/artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/DedicatedIntentResponseDatabaseCompatibilityIndependentAcceptance.json",
+      "bytes": 4051,
+      "sha256": "e433f421b768c548d992cb490a5b5f266c133006b2aecaa9386899d6d1b9f0d6"
+    },
+    {
+      "original_path": "work/kernel-phase2-repo/artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/DedicatedIntentResponseIndependentLiveVerification.json",
+      "archive_path": "work/kernel-phase2-repo/artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/DedicatedIntentResponseIndependentLiveVerification.json",
+      "bytes": 796,
+      "sha256": "400d614e804b899ea8617b7309933ced517db08f457d55653259f31e0329bfae"
+    },
+    {
+      "original_path": "work/kernel-phase2-repo/artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/OrdinaryBCompatibilityEvidenceAssemblyIndependentAcceptance.json",
+      "archive_path": "work/kernel-phase2-repo/artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/OrdinaryBCompatibilityEvidenceAssemblyIndependentAcceptance.json",
+      "bytes": 2126,
+      "sha256": "f400cd191778e13a5324f63499d14a24e404b9639b0a75111bf08458e804e6c2"
+    },
+    {
+      "original_path": "work/kernel-phase2-repo/artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/PrivateBindingComponentIndependentActualVerification.json",
+      "archive_path": "work/kernel-phase2-repo/artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/PrivateBindingComponentIndependentActualVerification.json",
+      "bytes": 3453,
+      "sha256": "bbd30bd4da8c2a6a0afbbae3a225619786373880c9086ab6e8ded13991c4f694"
+    },
+    {
+      "original_path": "work/kernel-phase2-repo/artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/PrivateBindingComponentInstallGuardIndependentAcceptance.json",
+      "archive_path": "work/kernel-phase2-repo/artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/PrivateBindingComponentInstallGuardIndependentAcceptance.json",
+      "bytes": 1701,
+      "sha256": "dd86ffc79215c73a681cebf9f2a3cd5cca4b3392344f798a86b255383b2aaa2e"
+    },
+    {
+      "original_path": "work/kernel-phase2-repo/artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/PrivateForwardBindingSqlIndependentAcceptance.json",
+      "archive_path": "work/kernel-phase2-repo/artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/PrivateForwardBindingSqlIndependentAcceptance.json",
+      "bytes": 5143,
+      "sha256": "29853915b44709cd7c5753f09e40a3a2d4fb5927eda163ed43e05ae691780dd7"
+    },
+    {
+      "original_path": "work/kernel-phase2-repo/artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/RestoredRuntimeWithIntentResponseCompatibilityIndependentVerification.json",
+      "archive_path": "work/kernel-phase2-repo/artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/RestoredRuntimeWithIntentResponseCompatibilityIndependentVerification.json",
+      "bytes": 3425,
+      "sha256": "0e6ff1f1ca9ed8a5801479ed99e3ff5a1f3902bf1197d7b053cb8336d3d56a81"
+    },
+    {
+      "original_path": "work/normal600-pipe-evidence-blob/deliver.mjs",
+      "archive_path": "work/normal600-pipe-evidence-blob/deliver.mjs",
+      "bytes": 749,
+      "sha256": "922db68d03fd66ca6f637a92b45874d2f37c59c56e576ec74282a4431da5d5d4"
+    },
+    {
+      "original_path": "work/normal600-pipe-evidence-blob/launcher.mjs",
+      "archive_path": "work/normal600-pipe-evidence-blob/launcher.mjs",
+      "bytes": 2018,
+      "sha256": "4553ea089d860f93138f9dd01475d6436fbab9d1f43f143c72e8d949b372a858"
+    },
+    {
+      "original_path": "work/normal600-pipe-evidence-blob/message.mjs",
+      "archive_path": "work/normal600-pipe-evidence-blob/message.mjs",
+      "bytes": 882,
+      "sha256": "d2549189e650a4e15d761ebc337f6836861e4a44379ffa36d7de9c70944fd2f9"
+    },
+    {
+      "original_path": "work/normal600-pipe-evidence-blob/PreparationEvidence.json",
+      "archive_path": "work/normal600-pipe-evidence-blob/PreparationEvidence.json",
+      "bytes": 1864,
+      "sha256": "ad099007d980072e0e6bc38bc4ebf4b952f5f1a8f62fbc39e0a2c9e75244d0dc"
+    },
+    {
+      "original_path": "work/normal600-pipe-evidence-blob/read-output.mjs",
+      "archive_path": "work/normal600-pipe-evidence-blob/read-output.mjs",
+      "bytes": 1039,
+      "sha256": "a2d5cd40f67d8f373e0a9e4147fda090d150d4d3035c33473dedc60287c9879e"
+    },
+    {
+      "original_path": "work/normal600-pipe-evidence-blob/ready-loader.mjs",
+      "archive_path": "work/normal600-pipe-evidence-blob/ready-loader.mjs",
+      "bytes": 297,
+      "sha256": "75359bc0d4a85d5ada567207e099de5fa59e0866913d0f71acd7aa224b5d9cc0"
+    },
+    {
+      "original_path": "work/normal600-pipe-evidence-blob/sha256.mjs",
+      "archive_path": "work/normal600-pipe-evidence-blob/sha256.mjs",
+      "bytes": 2156,
+      "sha256": "14fd1d0b3378d57bf75688a3e9a558e5c5e52e8514d345440437d5768631fdf9"
+    },
+    {
+      "original_path": "work/normal600-pipe-evidence-blob/tool-entry.functions.js",
+      "archive_path": "work/normal600-pipe-evidence-blob/tool-entry.functions.js",
+      "bytes": 14351,
+      "sha256": "38ed24e697568e48856c6bb18dd11d41d1c7805f05519ddc47c3788f54561b08"
+    },
+    {
+      "original_path": "work/prepare-binding-component-install.mjs",
+      "archive_path": "work/prepare-binding-component-install.mjs",
+      "bytes": 4480,
+      "sha256": "512529d9da28ba114da3b98f42ffd04449a021197e7326ad5bb5a99bdd457119"
+    },
+    {
+      "original_path": "work/qualification-live-preparation/b-evidence-successor/assemble-with-b.mjs",
+      "archive_path": "work/qualification-live-preparation/b-evidence-successor/assemble-with-b.mjs",
+      "bytes": 7363,
+      "sha256": "f22322f2314498c7d4350aab7b2639995229b910d3905ba9903e0852e326096b"
+    },
+    {
+      "original_path": "work/qualification-live-preparation/b-evidence-successor/assemble-with-b.test.mjs",
+      "archive_path": "work/qualification-live-preparation/b-evidence-successor/assemble-with-b.test.mjs",
+      "bytes": 6026,
+      "sha256": "934f0196a0b982f0e8df12063acda72feaa21c85833ec021eb5f119dbb1bf55c"
+    },
+    {
+      "original_path": "work/qualification-live-preparation/b-evidence-successor/BCompatibilityEvidenceInput.json",
+      "archive_path": "work/qualification-live-preparation/b-evidence-successor/BCompatibilityEvidenceInput.json",
+      "bytes": 9023,
+      "sha256": "61826fa7f77d78840cb2edc512257fd7815a0c56dfb77804c8bfad5eef0f894b"
+    },
+    {
+      "original_path": "work/qualification-live-preparation/b-evidence-successor/ExactSources.json",
+      "archive_path": "work/qualification-live-preparation/b-evidence-successor/ExactSources.json",
+      "bytes": 980,
+      "sha256": "dcd90184ce39b493002bb19b020db290eb82dadbc4699243c576a5d7f18bcccf"
+    },
+    {
+      "original_path": "work/qualification-live-preparation/b-evidence-successor/history/initial-seven-checks.test.mjs",
+      "archive_path": "work/qualification-live-preparation/b-evidence-successor/history/initial-seven-checks.test.mjs",
+      "bytes": 5693,
+      "sha256": "8d45a1d55efe628c1ed177758b05b0b816a9beb90c96486632ad6b52da209f26"
+    },
+    {
+      "original_path": "work/qualification-live-preparation/b-evidence-successor/PreparationEvidence.json",
+      "archive_path": "work/qualification-live-preparation/b-evidence-successor/PreparationEvidence.json",
+      "bytes": 4189,
+      "sha256": "93cdd34ecf2cbfe823ad0023046c4ec5e6ea4220c8d0e59bba5d1881e3eec41e"
+    },
+    {
+      "original_path": "work/qualification-live-preparation/b-evidence-successor/README.md",
+      "archive_path": "work/qualification-live-preparation/b-evidence-successor/README.md",
+      "bytes": 2381,
+      "sha256": "2e902de1d92c94372f15ac384c8ff1569c21afe5f1d6789fa4e29ffdf80a2595"
+    }
+  ],
+  "omitted_exact_duplicate": {
+    "original_path": "work/binding-evidence-tests/PgIntegrationRaw.json",
+    "same_bytes_as_archive_path": "work/binding-evidence-tests/PgIntegrationRaw.history-fixture-syntax.json",
+    "sha256": "0c60d73cd2334dfed9a24de830fb9d25a19686f871934f4587b21acea56ac738",
+    "bytes": 88130
+  },
+  "validation": {
+    "archive_reopen_passes": 1,
+    "all_entries_roundtrip_verified": 37,
+    "credential_pattern_matches": 0,
+    "credential_scan_scope": "Selected original source bytes; listed token prefixes, private-key headers and long Bearer values. Not a universal secret-free proof."
+  },
+  "boundaries": [
+    "No Gold, model call, monotonic timing candidate or large old GA transport included.",
+    "ComponentEvidence and transport/B preparation records preserve their original historical state; actual component installation is separately bound by install-actual and independent actual verification.",
+    "B assembly is the accepted old-controller engineering helper, not acceptance of a future controller or evidence of a new qualification run.",
+    "No source was edited; no SQL, signing, Git or host action was executed by this archival operation."
+  ]
+}

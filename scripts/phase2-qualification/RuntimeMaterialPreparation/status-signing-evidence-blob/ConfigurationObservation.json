@@ -1,0 +1,28 @@
+{
+  "kind": "ACTUAL_ACCEPTED_CONFIGURATION_SOURCE_OBSERVATION",
+  "observed_at": "2026-09-08T22:53:06.476Z",
+  "scope": "Exact independently accepted configuration definitions read on this host; not a claim that execution_binding/current or a GA already exists.",
+  "configuration_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/66fac8a5cc10f12eb7fcf852592aed53cd8f8fd5",
+    "sha256": "bac3ff3db114ccce5ac85890697c2387b4efac37083a54c853535fae8013182a"
+  },
+  "independent_acceptance_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/a22209cf81960b3ef23426f15687dc1948a4be75",
+    "sha256": "bf3dcbcf780ba7c3251e0ba890acc27c8637375d22e980f717e5e6920e849b98"
+  },
+  "registration_boundary": "Actual independent runtime acceptance and verified Owner signature must precede the same-scope forward binding; every GA effect requires fresh original SQL equality.",
+  "controller_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/5f7b67b2841e84d35b4d57a059cfddb204beef03",
+    "sha256": "0ff3e4bed5587805b69e5c9e1787d60b789d46c32a9c02ae20c8dfb899af98b2"
+  },
+  "scope_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/113b06f47a47620c182dc4418d6d39f21374184b",
+    "sha256": "95da22160234d3e5b2b65451d97803efd6b8f3b67d8182ff7b2fee4dc5f20ebb"
+  },
+  "controller_qualification_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/5404b09918a6b76dc8528739329475a61f338de3",
+    "sha256": "b0e09a94a19ac53807d1024d2a1bf9c5e0b9c9ea8c16f5d0d2c00fd43f8060d4"
+  },
+  "authority_effect": "NONE",
+  "live_runtime_registration_claimed": false
+}

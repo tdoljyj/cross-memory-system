@@ -1,0 +1,260 @@
+{
+  "state": "EXACT_LOCAL_CLOSURE_BOUND_PENDING_INDEPENDENT_REVIEW",
+  "bindings": {
+    "host_runtime_config_digest": {
+      "value": "751c417326450d8cd39b1dad3920af290a49dd9d069bfb9ebb854b0cb2a90066",
+      "provenance": {
+        "source": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-evidence-blob/HostRuntimeConfig.json",
+        "sha256": "751c417326450d8cd39b1dad3920af290a49dd9d069bfb9ebb854b0cb2a90066"
+      }
+    },
+    "allowed_read_set": {
+      "value": [
+        "/driver/SKILL.md",
+        "/driver/references/engineering.md",
+        "/driver/references/memory-operations.md",
+        "/driver/fixed_skill_fixture.py",
+        "/proc/self/status",
+        "/sys/class/net",
+        "host:exact ControllerSourceManifest files and accepted immutable input/ref bytes",
+        "host:exact accepted historical component raw evidence and original source/time; read-only revalidation without restarting PostgreSQL",
+        "host:existing fixed authenticated GitHub source/signature read interface for tdoljyj/cross-memory-system",
+        "host:existing trusted Supabase fixed clued_control current/read_execution/read_execution_event interfaces for uscrdifznmlvczcekqpw",
+        "host:exact Docker image and this attempt container inspection",
+        "host:preentry-parent/work/<nonce>/ exact retained local evidence and fixed empty Docker config"
+      ],
+      "provenance": {
+        "source": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-evidence-blob/ExecutionScopeDefinition.json",
+        "sha256": "95da22160234d3e5b2b65451d97803efd6b8f3b67d8182ff7b2fee4dc5f20ebb"
+      }
+    },
+    "allowed_write_set": {
+      "value": [
+        "/allowed/fixture.json",
+        "host:preentry-parent/work/<nonce>/ fixed source staging and CreateNew local Intent/output/STOP evidence",
+        "host:Docker create/start/stop/wait for the one fixed synthetic container; mutation always uses exact observed ID after create",
+        "host:clued_control immutable execution_events and exact current/gate_attempts transitions through accepted fixed functions only",
+        "host:fixed private auxiliary signature commitment path for this exact GA/GRR through accepted Owner channel"
+      ],
+      "provenance": {
+        "source": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-evidence-blob/ExecutionScopeDefinition.json",
+        "sha256": "95da22160234d3e5b2b65451d97803efd6b8f3b67d8182ff7b2fee4dc5f20ebb"
+      }
+    },
+    "forbidden_actions": {
+      "value": [
+        "production or business Canon mutation",
+        "business credential/token issuance or export",
+        "real user payload or private Gold read",
+        "real model or paid action",
+        "arbitrary command, executable, environment, mount or target",
+        "candidate Skill self-qualification or authority assertion",
+        "PQUAL-18 post-Entry positive or any Entry/RC/production grant",
+        "Root/Owner/issuer purpose expansion or old pins rewrite",
+        "automatic UNKNOWN redispatch, capacity release or budget refund",
+        "container/image/volume removal or evidence deletion"
+      ],
+      "provenance": {
+        "source": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-evidence-blob/ExecutionScopeDefinition.json",
+        "sha256": "95da22160234d3e5b2b65451d97803efd6b8f3b67d8182ff7b2fee4dc5f20ebb"
+      }
+    },
+    "scope_digest": {
+      "value": "95da22160234d3e5b2b65451d97803efd6b8f3b67d8182ff7b2fee4dc5f20ebb",
+      "provenance": {
+        "source": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-evidence-blob/ExecutionScopeDefinition.json",
+        "sha256": "95da22160234d3e5b2b65451d97803efd6b8f3b67d8182ff7b2fee4dc5f20ebb"
+      }
+    },
+    "dominant_role": {
+      "value": "TEST_CONTROLLER",
+      "provenance": {
+        "source": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-evidence-blob/ExecutionScopeDefinition.json",
+        "sha256": "95da22160234d3e5b2b65451d97803efd6b8f3b67d8182ff7b2fee4dc5f20ebb"
+      }
+    },
+    "upstream_gate_result_receipt_refs": {
+      "value": [],
+      "provenance": {
+        "source": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-evidence-blob/ExecutionScopeDefinition.json",
+        "sha256": "95da22160234d3e5b2b65451d97803efd6b8f3b67d8182ff7b2fee4dc5f20ebb"
+      }
+    },
+    "authority_source_ref": {
+      "value": {
+        "uri": "urn:clued:control-trust-root-set:uscrdifznmlvczcekqpw:ctr_414bd3c724264a83894b0c55cf2ab878",
+        "sha256": "fa58df2b1a7572848c288dc862767a4a9983d42696d50dbc4064af7275cec328"
+      },
+      "provenance": {
+        "source": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-evidence-blob/AuthorityReferenceObservation.json",
+        "sha256": "a290275abc10fd3f58d290673120105583e5b23765ca4e149049579b41f5a61c"
+      }
+    },
+    "controller_digest": {
+      "value": "0ff3e4bed5587805b69e5c9e1787d60b789d46c32a9c02ae20c8dfb899af98b2",
+      "provenance": {
+        "source": "scripts/phase2-qualification/control-context-verifier-evidence-blob-successor/ControllerSourceManifest.candidate.json",
+        "sha256": "0ff3e4bed5587805b69e5c9e1787d60b789d46c32a9c02ae20c8dfb899af98b2"
+      }
+    },
+    "plan_digest": {
+      "value": "006403a5c790fc088f24681b142467c18d97528b97f41b2c3071d3381671769a",
+      "provenance": {
+        "source": "scripts/phase2-qualification/control-context-verifier-evidence-blob-successor/preentry-skill-qualification.json",
+        "sha256": "006403a5c790fc088f24681b142467c18d97528b97f41b2c3071d3381671769a"
+      }
+    },
+    "fixtures_digest": {
+      "value": "98c4d0165144a4ebfbd4889a98da65a8c6d3a71fbf082af393c15b9d00a3c18a",
+      "provenance": {
+        "source": "scripts/phase2-qualification/qualification-runtime/fixed_skill_fixture.py",
+        "sha256": "98c4d0165144a4ebfbd4889a98da65a8c6d3a71fbf082af393c15b9d00a3c18a"
+      }
+    },
+    "scope_ref": {
+      "value": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/113b06f47a47620c182dc4418d6d39f21374184b",
+        "sha256": "95da22160234d3e5b2b65451d97803efd6b8f3b67d8182ff7b2fee4dc5f20ebb"
+      },
+      "provenance": {
+        "source": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-evidence-blob/ExecutionScopeDefinition.json",
+        "sha256": "95da22160234d3e5b2b65451d97803efd6b8f3b67d8182ff7b2fee4dc5f20ebb"
+      }
+    },
+    "binding_ref": {
+      "value": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/52d2b1f3633851d685519e3cafacc80d8eabbbaf",
+        "sha256": "c652c114a7a8422f52d84e29ef249485d2a346e1bbfb76cc6154fbf3e4db946d"
+      },
+      "provenance": {
+        "source": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-evidence-blob/ControlBindingDefinition.json",
+        "sha256": "c652c114a7a8422f52d84e29ef249485d2a346e1bbfb76cc6154fbf3e4db946d"
+      }
+    },
+    "evidence_sink_ref": {
+      "value": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/69af3dd6cd94e28d67cdbf74cf3d9ffb01e540e5",
+        "sha256": "d75abdbb6d7481ba99ba51cc8638b8a2dbf8db51386100008b8209b052d11732"
+      },
+      "provenance": {
+        "source": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-evidence-blob/EvidenceSinkDefinition.json",
+        "sha256": "d75abdbb6d7481ba99ba51cc8638b8a2dbf8db51386100008b8209b052d11732"
+      }
+    },
+    "artifact_refs": {
+      "value": [
+        {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/2b5a89d354aae493ed4cd3fd89ee270e81207dd3",
+          "sha256": "f359a4ecc92ffeec93f3fac36949cfe1669bf017dd7cf4760220a2c3f9e8da1f"
+        },
+        {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/b3575b5e70084e16622b999c88e0bb5c23083018",
+          "sha256": "98c4d0165144a4ebfbd4889a98da65a8c6d3a71fbf082af393c15b9d00a3c18a"
+        },
+        {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/79d400be9e7c2462fbc38106c91777ded0885487",
+          "sha256": "751c417326450d8cd39b1dad3920af290a49dd9d069bfb9ebb854b0cb2a90066"
+        },
+        {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/113b06f47a47620c182dc4418d6d39f21374184b",
+          "sha256": "95da22160234d3e5b2b65451d97803efd6b8f3b67d8182ff7b2fee4dc5f20ebb"
+        },
+        {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/69af3dd6cd94e28d67cdbf74cf3d9ffb01e540e5",
+          "sha256": "d75abdbb6d7481ba99ba51cc8638b8a2dbf8db51386100008b8209b052d11732"
+        },
+        {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/52d2b1f3633851d685519e3cafacc80d8eabbbaf",
+          "sha256": "c652c114a7a8422f52d84e29ef249485d2a346e1bbfb76cc6154fbf3e4db946d"
+        },
+        {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/ec01ed9d00f591e9ba73ed9ba270333fb3520c05",
+          "sha256": "5a96306bae4af3d27694abc5533510301ae968a81b9995d8283ba3b4204e1dd5"
+        },
+        {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/43835f9dcc2e6b29236ba3fb5935cb7f182c4e11",
+          "sha256": "cc67aeb4a35c998bb103c62be52dd00c6507bccba4c374af4bee6d27b412263a"
+        },
+        {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/f0e7b9a1525b45b113bc74c0956a806161eefdfd",
+          "sha256": "2bbf6803c29aca4febf950cb3d7a2986abc56d227f0b676fb019149e0457921c"
+        },
+        {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/5f7b67b2841e84d35b4d57a059cfddb204beef03",
+          "sha256": "0ff3e4bed5587805b69e5c9e1787d60b789d46c32a9c02ae20c8dfb899af98b2"
+        },
+        {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/2448b5284c7bd5959389130e6f4bcb055a8108fa",
+          "sha256": "006403a5c790fc088f24681b142467c18d97528b97f41b2c3071d3381671769a"
+        },
+        {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/b1a2735c988df0d2ea56838f78b271354754c2ac",
+          "sha256": "71130c92be95a3b16d44d3ebe7fb439dfe8fc8b44354b5adfd79652425346958"
+        }
+      ],
+      "provenance": {
+        "source": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-evidence-blob/ArtifactReferencesCandidate.json",
+        "sha256": "2d836cb8929ae6d3a04ebd6ab7d0761aa3ece0f10fd25b3d090a76ad74c7b852"
+      }
+    }
+  },
+  "runtime_subject_additional_inputs": {
+    "result_reviewer_ref": {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/e7f738ae3c247e41733872ab95387440205c736a",
+      "sha256": "e09ef634712ce1206600402552073bae91e7296f2b4e2d3f99855bd760c944bd"
+    },
+    "result_reviewer_semantics": {
+      "role_pointer": "/scope/independent_assessor",
+      "expected": "/root/project_list_auth_fix",
+      "independence_pointer": "/independence",
+      "source": "Actual Owner delegation exact original bytes, not a new identity Registry"
+    },
+    "gate_suite_ref": {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/2448b5284c7bd5959389130e6f4bcb055a8108fa",
+      "sha256": "006403a5c790fc088f24681b142467c18d97528b97f41b2c3071d3381671769a"
+    },
+    "control_schema_sources": {
+      "StatusManifest": {
+        "source": {
+          "path": "scripts/phase2-qualification/control-context-verifier-runtime180/status-manifest.candidate.schema.json",
+          "sha256": "6ba12ed51b3fc0e457c13e83f47e1ad1aa6cc680d8f28c668f8c65d12742ecc2",
+          "bytes": 5562
+        },
+        "prospective_ref": {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/0254cf080eabea2d2849f63642dc05c5dabd966f",
+          "sha256": "6ba12ed51b3fc0e457c13e83f47e1ad1aa6cc680d8f28c668f8c65d12742ecc2"
+        }
+      },
+      "GateResultReceipt": {
+        "source": {
+          "path": "scripts/phase2-qualification/control-context-verifier-runtime180/gate-result-receipt.candidate.schema.json",
+          "sha256": "2ea5fb9cc905ddbbf8769a438a1e1d5d9bdfe5d72363091033663112e9304c0b",
+          "bytes": 8302
+        },
+        "prospective_ref": {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/341bdcb9fd8ceb83abfbf764b4ca5d6fd017c01d",
+          "sha256": "2ea5fb9cc905ddbbf8769a438a1e1d5d9bdfe5d72363091033663112e9304c0b"
+        }
+      }
+    },
+    "control_schema_refs": {
+      "StatusManifest": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/0254cf080eabea2d2849f63642dc05c5dabd966f",
+        "sha256": "6ba12ed51b3fc0e457c13e83f47e1ad1aa6cc680d8f28c668f8c65d12742ecc2"
+      },
+      "GateResultReceipt": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/341bdcb9fd8ceb83abfbf764b4ca5d6fd017c01d",
+        "sha256": "2ea5fb9cc905ddbbf8769a438a1e1d5d9bdfe5d72363091033663112e9304c0b"
+      }
+    }
+  },
+  "publication_boundary": "Prospective Git blob identifiers are computed from exact local bytes only. They MUST be published through the existing reviewed source workflow and independently read back before actual use. This file proves neither publication nor acceptance.",
+  "remaining_inputs": [
+    "source_ref actual immutable source commit/tree/blob readback",
+    "artifact_refs final exact Gate/Test/controller/subject/fixture published objects",
+    "controller_qualification_ref actual independent qualification"
+  ],
+  "authority_effect": "NONE",
+  "accepted": false,
+  "executable": false
+}
