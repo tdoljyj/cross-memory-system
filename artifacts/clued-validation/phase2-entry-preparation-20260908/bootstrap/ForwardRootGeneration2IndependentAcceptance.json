@@ -1,0 +1,134 @@
+{
+  "schema_version": 1,
+  "state": "ACCEPTED_EXACT_FORWARD_ROOT_GENERATION_SUBJECT",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "decided_at_utc": "2026-09-08T14:45:18.225Z",
+  "subject_file": {
+    "path": "scripts/phase2-qualification/nonproduction-control-store/generation2/RootReviewSubject.json",
+    "sha256": "13ed3095061fb97a80bc0b992e89ce4bb0a3963e867c2738d350d42db6e3dd30"
+  },
+  "review_subject_sha256": "9dd122f398c7e281f9b6fdf0c772d0ee972569acfcb97119fc04867a5ce00c12",
+  "root_set_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+  "control_trust_root_generation": "ctrgen_dd30fbc7e0ba43fa8ba9f734867bcf12",
+  "generation_ordinal": 2,
+  "accepted_scope": {
+    "profile_id": "DP-PREENTRY-SKILL-QUALIFICATION",
+    "repository": "tdoljyj/cross-memory-system",
+    "environment": "ISOLATED_TEST",
+    "paid_budget": 0,
+    "project_ref": "uscrdifznmlvczcekqpw",
+    "model_budget": 0
+  },
+  "accepted_audience": "urn:clued:audience:skill-coexistence-qualification:uscrdifznmlvczcekqpw",
+  "schema_sha256": "87f094fa079034aa886d6c568730370a3264e106529b4bfd79bc3369f30b79e5",
+  "accepted_algorithm_config": {
+    "digest_algorithm": "SHA-256",
+    "accepted_config_ref": {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/b25abb05e00f72bb2ae910035ba9916a97c822dc",
+      "sha256": "988cdf823eb63806dc3385aa1840e812c1cb1df5ed06e72ca2adf56244b88d20"
+    },
+    "canonicalization_id": "SORTED_JSON_UTF8_NO_FLOATS_LF_V1_CANDIDATE",
+    "signature_verification": "GITHUB_API_VERIFIED_OWNER_MERGE",
+    "signed_payload_excluded_fields": [
+      "signature_binding"
+    ]
+  },
+  "metadata_binding_sha256": "793aa13a245153c36a2806eb78dc9c3f677ddb8ad678b3afe5fe2f63a0c2e4fb",
+  "accepted_binding_changed": false,
+  "accepted_predecessor": {
+    "generation_id": "ctrgen_352785779b64458a889d571360e2d2d5",
+    "sha256": "df0544694243768a473a7d45b50aa612937755aee9bf6b785ce8165363f2325a"
+  },
+  "accepted_history_prefix_sha256": "6fdce11ff8f9a0e31430771acc322e911994e66a39855ad05b3b4734db2a9493",
+  "accepted_history_prefix_sequence": 1,
+  "accepted_issuer_purposes": [
+    {
+      "purpose": "STATUS",
+      "audience": "urn:clued:audience:skill-coexistence-qualification:uscrdifznmlvczcekqpw",
+      "subject_id": "tdoljyj",
+      "signing_service": "web-flow",
+      "qualification_ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/c700d5b9fc6b9156ecd3cc77615856b9e0aedea9",
+        "sha256": "23ca2fe807dd454d8037168531a1d05890be6fbb5575cd18e8e6482f2ef47b80"
+      }
+    },
+    {
+      "purpose": "GATE_AUTHORIZATION",
+      "audience": "urn:clued:audience:skill-coexistence-qualification:uscrdifznmlvczcekqpw",
+      "subject_id": "tdoljyj",
+      "signing_service": "web-flow",
+      "qualification_ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/c1f800d405010066371dfa401cee2544db22e25e",
+        "sha256": "9f475e2c2eedc02e50a5438c80d89f625ed5aa0ef2465a0581e349a1e8caa16d"
+      }
+    },
+    {
+      "purpose": "GATE_RESULT",
+      "audience": "urn:clued:audience:skill-coexistence-qualification:uscrdifznmlvczcekqpw",
+      "subject_id": "tdoljyj",
+      "signing_service": "web-flow",
+      "qualification_ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/c1f800d405010066371dfa401cee2544db22e25e",
+        "sha256": "9f475e2c2eedc02e50a5438c80d89f625ed5aa0ef2465a0581e349a1e8caa16d"
+      }
+    }
+  ],
+  "not_before": "2026-09-08T14:40:13.950Z",
+  "expires_at": "2026-09-09T09:28:59Z",
+  "source_observation": {
+    "observed_at_utc": "2026-09-08 14:30:26.302161+00",
+    "current_sequence": 1,
+    "current_generation": "ctrgen_352785779b64458a889d571360e2d2d5",
+    "current_root_canonical_sha256": "df0544694243768a473a7d45b50aa612937755aee9bf6b785ce8165363f2325a",
+    "history_prefix_canonical_sha256": "6fdce11ff8f9a0e31430771acc322e911994e66a39855ad05b3b4734db2a9493",
+    "metadata_binding_sha256": "793aa13a245153c36a2806eb78dc9c3f677ddb8ad678b3afe5fe2f63a0c2e4fb",
+    "source_readback_file_sha256": "8235ccd893f79f87812dffd8e62a20221f4e0d3ffa27edf0d8c933ba58e73f5d",
+    "observation_origin": "Parent actual read-only SQL response, bytes independently matched and parsed; this review does not claim a new independent live SQL call."
+  },
+  "independent_checks": {
+    "preparation_evidence_sha256": "c90008bea3d34ba105f813ab2900ed4b50657d0a01df27c15a5c7801221a39d4",
+    "five_files_exact_and_lf": true,
+    "exact_reconstruction": true,
+    "unaffected_old_root_fields_deep_equal": true,
+    "metadata_hash_git_blob_purpose_generation_matches": 3,
+    "actual_history_prefix_recomputed": true,
+    "old_binding_preserved": true,
+    "new_pure_refusal_checks": [
+      "sequence drift refuses",
+      "predecessor generation drift refuses",
+      "binding digest drift refuses"
+    ]
+  },
+  "reused_implementation_tests": {
+    "tests": 3,
+    "passed": 3,
+    "failed": 0,
+    "skipped": 0,
+    "duration_ms": 91.1189,
+    "scope": "Actual observed predecessor input; reject changed/incomplete history and crossed/changed accepted purpose bytes",
+    "network_mutations": 0,
+    "source_not_committed": true
+  },
+  "decision": "Accept this exact forward RootSet subject and three distinct issuer-purpose bindings for actual Owner PR signature preparation and subsequently independently verified append. Root self-signature remains the original two-parent Owner merge algorithm. Generation 1 and accepted_binding remain immutable. STATUS explicitly rebinds the unchanged algorithm to gen2; only GA/GRR use the separate historical commitment algorithm.",
+  "registration_conditions": [
+    "Actual normal Owner PR merge must sign the exact payload containing this real acceptance reference. No previous signature reused.",
+    "Independently fetch exact signed payload/acceptance/purpose/code sources and verified Owner merge identity, parents, tree and immutable blobs. Local content refs are prospective until publication and readback.",
+    "Before append, fresh live Root/history/binding and Owner window must match sequence 1 and the accepted predecessor/history; exact transactional CAS, no overwrite of changed history.",
+    "Use original store append and unchanged metadata binding. Live Root object remains in nonproduction ControlEvidenceStore.",
+    "Dynamic signing still requires actual verified proof, accepted proof URI mapping and full GA/GRR schema, currentness, controller/Gate/host/budget/fencing prerequisites. Root registration alone provides no qualification."
+  ],
+  "helper_boundary": "Pure preparation/assembly only. Signing assembly consumes a genuinely independently obtained and durably verified report supplied by the trusted host; shape assertions do not authenticate that report. No network, SQL or keys in helpers.",
+  "review_attempts": [
+    {
+      "outcome": "NO_ARTIFACT_WRITTEN",
+      "cause": "Assessor first resolved work source relative to repo rather than outer task directory; corrected exact existing path. Candidate unchanged."
+    }
+  ],
+  "authority_effect": "NONE",
+  "root_registered": false,
+  "ga_issued": false,
+  "grr_issued": false,
+  "controller_qualified": false,
+  "old_pins_changed": false,
+  "owner_window_extended": false
+}

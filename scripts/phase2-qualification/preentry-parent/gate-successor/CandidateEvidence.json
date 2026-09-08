@@ -1,0 +1,132 @@
+{
+  "state": "STATIC_GATE_REGISTRY_SUCCESSOR_PREPARATION_ONLY",
+  "gate_id": "G-PREENTRY-SKILL-QUALIFICATION",
+  "definition_version": "fixed-synthetic-20260908.v1",
+  "aligned_remote_head": "2a2c902fff6d1e68c40faf4f3695849c1b88ca6d",
+  "files": [
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/gate-successor/build.initial.txt",
+      "sha256": "e7ec5dbaa6fdce27647cbb52f088454f42632c7f5cdc295f094d38c7e99b1b5f",
+      "bytes": 6603,
+      "lf_only": true
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/gate-successor/build.mjs",
+      "sha256": "3ad2c492eeef11cb791c07ede743b37ebb763050af24cd12427c35f6b23ab4ca",
+      "bytes": 13624,
+      "lf_only": true
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/gate-successor/GateDefinition.initial.json",
+      "sha256": "2ba55f8960f24feea0be413a380f7f481264df20c7172dd694c6555e8b7de9ef",
+      "bytes": 9092,
+      "lf_only": true
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/gate-successor/GateDefinitionCandidate.json",
+      "sha256": "49454446777854266fa2fcfdbe58128cf12800750c82ecdf66849a2128d82dbd",
+      "bytes": 12703,
+      "lf_only": true
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/gate-successor/preentry-skill-qualification.json",
+      "sha256": "cf4a57d0d367ea9946d663ce177bbe228c8399d8398e33dced4e5a3bb099db28",
+      "bytes": 123377,
+      "lf_only": true
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/gate-successor/README.md",
+      "sha256": "0ef14c9576b6b0b856fa8a410d2cb53103579c6c72836f8d9eb6e4e37a87706b",
+      "bytes": 4647,
+      "lf_only": true
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/gate-successor/RegistrySuccessor.initial.json",
+      "sha256": "f9b83be35f4f7faf87dd22f304a4b9ac8cd64f9639b4e8908cff4d073b9e6085",
+      "bytes": 901,
+      "lf_only": true
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/gate-successor/RegistrySuccessorCandidate.json",
+      "sha256": "7a6571e4c23d6ffa84df98e29bb757f7d0531b289e07b7882993e4172e4c6b89",
+      "bytes": 2071,
+      "lf_only": true
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/gate-successor/SourceBindings.json",
+      "sha256": "d95dfe23602842122cb7cac1fe67474e30ca3446f5746344125a9238e8600c5b",
+      "bytes": 3962,
+      "lf_only": true
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/gate-successor/verify.mjs",
+      "sha256": "8b40eac9976ad70c1963a269d679e08543cf1124392445f54414cd9f5da7fb15",
+      "bytes": 4255,
+      "lf_only": true
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/gate-successor/verify.test.mjs",
+      "sha256": "f0c3541a5848cc872554f1355b6d6fb6dc6bf5e6da3f9fd6bf24d4ae33e5f960",
+      "bytes": 1604,
+      "lf_only": true
+    }
+  ],
+  "gate_definition_sha256": "49454446777854266fa2fcfdbe58128cf12800750c82ecdf66849a2128d82dbd",
+  "definition_set_digest": "sha256:364651a681eefbdcb4796c0e07501e401c1f1e6af88340ad21641e528af5adc2",
+  "acceptance_target": "Exact single PRE_ENTRY static Gate/Test/typed Registry successor; same purpose as signed fixed synthetic Profile; not registration or GA. Independent acceptance must cover exact static format, scope and forward Registry composition.",
+  "static_targets": [
+    "evals/kernel-next/preentry-skill-qualification.json",
+    "evals/kernel-next/preentry-skill-qualification.registry.json"
+  ],
+  "source_review": {
+    "S06_sha256": "f967fdf3e63028d29ed191160698726b5d707aaae63bd951f6ba2e8584936fec",
+    "S06_bytes": 557313,
+    "original_member_rehashed": true,
+    "line_spans": [
+      [
+        3435,
+        3444
+      ],
+      [
+        3876,
+        3887
+      ],
+      [
+        4316,
+        4346
+      ]
+    ],
+    "profile_signature_merge": "2a2c902fff6d1e68c40faf4f3695849c1b88ca6d",
+    "fixed_parent_current_bytes_observed_sha256": "a4bff96f76d6ed5598833cbd6f73efec547eaaf9cd039f47f8eef6e925efe79e"
+  },
+  "actual_validation": {
+    "command": "node --test verify.test.mjs",
+    "pass": 2,
+    "fail": 0,
+    "skip": 0,
+    "duration_ms": 145.5248,
+    "scope": "two actual independent build processes compare four exact file bytes; typed/source/version/digest validation; eight in-memory mutation refusals",
+    "qualification_tests_executed": 0
+  },
+  "history": {
+    "initial_gate_definition_sha256": "2ba55f8960f24feea0be413a380f7f481264df20c7172dd694c6555e8b7de9ef",
+    "initial_three_files_preserved": true,
+    "previous_2_static_checks_ms": 141.8014,
+    "previous_compare": "parsed objects compared; final comparison explicitly uses raw file bytes"
+  },
+  "runtime_effect": {
+    "registered": false,
+    "ga_issued": false,
+    "grr_issued": false,
+    "gate_pass": false,
+    "frozen_registry_changed": false,
+    "core_schema_changed": false,
+    "production_or_model_action": false
+  },
+  "remaining_actual_inputs": [
+    "Exact independent acceptance and signed static publication/readback",
+    "Current Registry composition/runtime allowlist bound to accepted successor",
+    "Current qualified controller and actual per-case fault/observation executor support",
+    "Fresh signed GA, reservation, current Root purpose, prerequisite observations and complete evidence"
+  ]
+}

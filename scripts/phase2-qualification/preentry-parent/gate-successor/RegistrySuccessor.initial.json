@@ -1,0 +1,23 @@
+{
+  "state": "PROPOSED_NOT_APPLIED",
+  "authority_effect": "NONE",
+  "registry_source": "S06 frozen atomic Gate enumeration, extended only by accepted signed forward source; no second registry",
+  "operation": "ADD_EXACT_ATOMIC_GATE",
+  "addition": {
+    "gate_id": "G-PREENTRY-SKILL-QUALIFICATION",
+    "definition_version": "fixed-synthetic-20260908.v1",
+    "definition_path": "GateDefinitionCandidate.json",
+    "definition_sha256": "2ba55f8960f24feea0be413a380f7f481264df20c7172dd694c6555e8b7de9ef"
+  },
+  "existing_gate_ids_and_definitions_unchanged": true,
+  "original_frozen_registry_and_pins_unchanged": true,
+  "not_a_redefinition_of": [
+    "G0a",
+    "G0b",
+    "G1",
+    "G7A",
+    "B01",
+    "PQUAL-01"
+  ],
+  "runtime_enumeration_update": "Only after acceptance, append this exact ID in the same control-domain binding constraint; current SQL candidate deliberately still rejects it"
+}

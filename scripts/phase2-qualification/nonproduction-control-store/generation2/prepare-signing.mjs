@@ -1,0 +1,13 @@
+import fs from 'node:fs';
+import assert from 'node:assert/strict';
+import {signingPayload,sha,contentRef} from './signing.mjs';
+import {canonicalDigest} from '../protocol-successor/validate-successor.mjs';
+const source=fs.readFileSync(new URL('RootReviewSubject.json',import.meta.url));
+const acceptance=fs.readFileSync(new URL('../../../../artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/ForwardRootGeneration2IndependentAcceptance.json',import.meta.url));
+assert.equal(sha(source),'13ed3095061fb97a80bc0b992e89ce4bb0a3963e867c2738d350d42db6e3dd30');
+assert.equal(sha(acceptance),'a5e292ca64cdd4d39e176ef28a2dff3a3aeb8353ebe49a5fe5251ceab75d814a');
+const payload=signingPayload(source,acceptance),raw=Buffer.from(JSON.stringify(payload,null,2)+'\n');
+fs.writeFileSync(new URL('RootSigningPayload.json',import.meta.url),raw,{flag:'wx'});
+const summary={state:'ACCEPTED_FORWARD_SUBJECT_PREPARED_FOR_ACTUAL_OWNER_PR_SIGNATURE',payload_file_sha256:sha(raw),payload_canonical_sha256:canonicalDigest(payload),payload_content_ref:contentRef(raw),acceptance_ref:contentRef(acceptance),preparation_source_sha256:sha(fs.readFileSync(new URL(import.meta.url))),signature_observed:false,generation_registered:false,authority_effect:'NONE'};
+fs.writeFileSync(new URL('SigningPreparation.json',import.meta.url),JSON.stringify(summary,null,2)+'\n',{flag:'wx'});
+console.log(JSON.stringify(summary));

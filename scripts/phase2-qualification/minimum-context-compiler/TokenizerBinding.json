@@ -1,0 +1,52 @@
+{
+  "state": "ACTUAL_ENCODER_PACKAGE_AND_RANKS_VERIFIED_HOST_ACCEPTANCE_PENDING",
+  "package": "js-tiktoken",
+  "version": "1.0.21",
+  "encoding": "o200k_base",
+  "actual_library_model_mapping": "gpt-4.1-2025-04-14",
+  "dependency_files": [
+    {
+      "path": "node_modules/js-tiktoken/package.json",
+      "sha256": "5040ae37366971233fd53ef33360bc8d94159fa55c0c541f5663980b53b6b3b3",
+      "bytes": 2407
+    },
+    {
+      "path": "node_modules/js-tiktoken/dist/lite.js",
+      "sha256": "e7f8d0900a29c70a1155838cff633f5a66eef660bd3c4fb452882ec7cc4a316c",
+      "bytes": 73
+    },
+    {
+      "path": "node_modules/js-tiktoken/dist/chunk-VL2OQCWN.js",
+      "sha256": "4095335817189ee393ce99588744e53d04f1dd32b6c9a7d4a9f365d5e4569035",
+      "bytes": 8818
+    },
+    {
+      "path": "node_modules/js-tiktoken/dist/ranks/o200k_base.js",
+      "sha256": "a9e8a0c1f332c58f1a9cef2f8d7be59b31bb4b42531a3a0a64d9ad3b3d19033b",
+      "bytes": 2325563
+    },
+    {
+      "path": "node_modules/base64-js/index.js",
+      "sha256": "829eadd8a1a441d25be0cb93b00e16a0d0c20fd294db95d8f2ed87e6954b7182",
+      "bytes": 3932
+    },
+    {
+      "path": "package.json",
+      "sha256": "d60d15cf87cc73478ad22a4e2a870590c45dc801ebe3781791cf656870b1b5b2",
+      "bytes": 171
+    },
+    {
+      "path": "node_modules/base64-js/package.json",
+      "sha256": "9758f3ab8c45e07bb9a368e32f9a8b3729623bbf47cbbb205b32d674ab2a91f0",
+      "bytes": 1115
+    }
+  ],
+  "source_package_lock": "apps/clued-cloud/package-lock.json",
+  "source_integrity": "sha512-biOj/6M5qdgx5TKjDnFT1ymSpM5tbd3ylwDtrQvFQSu0Z7bBYko2dF+W/aUkXUPuk6IVpRxk/3Q2sHOzGlS36g==",
+  "upstream_mapping": "https://raw.githubusercontent.com/openai/tiktoken/main/tiktoken/model.py",
+  "upstream_mapping_observed_date": "2026-09-08",
+  "current_codex_tokenizer_claim": false,
+  "target_host_acceptance": null,
+  "scope": "Standalone exact Context Pack text, not chat overhead/billing",
+  "model_calls": 0
+}

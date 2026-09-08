@@ -1,0 +1,118 @@
+{
+  "state": "A05_MINIMUM_COMPILER_REAL_TOKENIZER_AND_LOCAL_PG_VERIFIED_CANDIDATE",
+  "files": [
+    {
+      "path": "package.json",
+      "sha256": "d60d15cf87cc73478ad22a4e2a870590c45dc801ebe3781791cf656870b1b5b2",
+      "bytes": 171
+    },
+    {
+      "path": "package-lock.json",
+      "sha256": "42638cb4443bf7a906ba4f8c4652a1bd314fd385dd06481e762d933855501a3c",
+      "bytes": 1280
+    },
+    {
+      "path": "tokenizer.mjs",
+      "sha256": "3dd935d31711582d2aaa2e945c0188141e78fc8feec9fed03feeec2bd59019be",
+      "bytes": 2553
+    },
+    {
+      "path": "compiler.mjs",
+      "sha256": "4ca26d2f274080c376b0d4ed0709f1c795f83a35ce81c17f3b50c98cba420e1f",
+      "bytes": 5231
+    },
+    {
+      "path": "compiler.test.mjs",
+      "sha256": "7e9f4fac27a45ce8d73b3b282e3ed15f96a22f0072d7c0c02f98830948dbca24",
+      "bytes": 3385
+    },
+    {
+      "path": "compiler-db.test.mjs",
+      "sha256": "5dbdafc9ff6c9c464e8437edd29ddd30a6045b81b9ddf81345e54d2dae72aab9",
+      "bytes": 6077
+    },
+    {
+      "path": "README.md",
+      "sha256": "11e0e7fbb29c070d6f83aa5387f518681c2d46a01b97169ba69b1408078a39c8",
+      "bytes": 6687
+    },
+    {
+      "path": "TokenizerBinding.json",
+      "sha256": "b7350be2f38f9d28aa6377670f0e72636c9ea9675cff4f0b1a60cec7f6c2fefd",
+      "bytes": 1943
+    },
+    {
+      "path": ".gitignore",
+      "sha256": "4d56952b0fb13bf8f9b6c13a6d4c34a075bac3af447636a1df4335d7576e2f97",
+      "bytes": 14
+    },
+    {
+      "path": "metadata-drift.test.mjs",
+      "sha256": "bc46a1069f9b042460151822a56718dfd1158802eb0618945d727a87bc3aaa6d",
+      "bytes": 2150
+    }
+  ],
+  "existing_rpc_source": {
+    "path": "apps/clued-cloud/supabase/migrations/20260907131834_clued_search_canonical_records.sql",
+    "sha256": "25fcf125a50400937cd9a0cca39336faf99fcf901d76d0539b8c68eae85df4d4"
+  },
+  "alignment_remote": "f47fbae12738674ec780a9a79de72e94238b8f10",
+  "validation_history": [
+    {
+      "run": "Initial combined",
+      "command": "node --test compiler.test.mjs compiler-db.test.mjs",
+      "engineering_passed": 4,
+      "database_setup_failed": 1,
+      "failure": "Synthetic fixture missing M1 required fields; database constraint preserved",
+      "duration_ms": 3087.1436
+    },
+    {
+      "run": "Affected database-only rerun after fixture correction",
+      "command": "node --test compiler-db.test.mjs",
+      "passed": 4,
+      "children": 3,
+      "failed": 0,
+      "skipped": 0,
+      "duration_ms": 3463.7924
+    },
+    {
+      "run": "Independent package metadata fix only",
+      "command": "node --test metadata-drift.test.mjs",
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "duration_ms": 68.8496,
+      "scenarios": [
+        "base64-js package main redirection rejected before import",
+        "root package name/exports self-reference rejected before import"
+      ],
+      "original_dependencies_changed": false,
+      "old_pure_or_pg_tests_rerun": false
+    }
+  ],
+  "actual_token_observation": {
+    "encoding": "o200k_base",
+    "tokens": 154,
+    "pack_sha256": "1e5d3e1fb533cc59d2c3ecd5cf3a584391db07a42182eb5f260c01a7a7d4ce95",
+    "token_budget": 2048,
+    "model_calls": 0
+  },
+  "actual_authorized_read": "Existing real local PostgreSQL clued_mcp_search_context plus actual session/binding resolver",
+  "runtime_deployed": false,
+  "production_calls": 0,
+  "private_gold_read": false,
+  "formal_slice_slots_executed": 0,
+  "target_host_accepted": false,
+  "authority_effect": "NONE",
+  "predecessor": {
+    "evidence_path": "history/before-package-metadata-fix/CandidateEvidence.json",
+    "evidence_sha256": "47b0f25eef3507ae948b59f47e25268c5a706cca64296695024076d11061bac8",
+    "preserved_files": [
+      "CandidateEvidence.json",
+      "tokenizer.mjs",
+      "TokenizerBinding.json",
+      "README.md"
+    ],
+    "scope": "Only pre-import metadata verification expanded; compiler/query/encoder data unchanged"
+  }
+}

@@ -1,0 +1,180 @@
+{
+  "schema_version": 1,
+  "state": "ACCEPTED_EXACT_LOCAL_SOURCE_BINDING_ENGINEERING_CANDIDATE",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "decided_at_utc": "2026-09-08T14:42:12.469Z",
+  "candidate": {
+    "path": "scripts/phase2-qualification/evidence-context-binding/CandidateEvidence.json",
+    "sha256": "8f360c4b73ac150bf9fd7fa7b4bb32e50519672f90f6d60cd9a568c30b42ac4f"
+  },
+  "accepted_files": [
+    {
+      "path": "scripts/phase2-qualification/evidence-context-binding/call-boundary.test.mjs",
+      "sha256": "5981bce85e89ebac274ec408a7fdf4d738866cea15173d37d65898eb62a4d75d",
+      "bytes": 508,
+      "lf_only": true
+    },
+    {
+      "path": "scripts/phase2-qualification/evidence-context-binding/compiler-with-sources.mjs",
+      "sha256": "3e432d902d96050246a5093a740a2c6b70bef6e7661bc2980cd802be0c9a1a42",
+      "bytes": 3319,
+      "lf_only": true
+    },
+    {
+      "path": "scripts/phase2-qualification/evidence-context-binding/read-sources.candidate.sql",
+      "sha256": "0ea420a7369a370da35c9bc906a79535a353e4053e88f2483a7e99b42ae055f9",
+      "bytes": 3587,
+      "lf_only": true
+    },
+    {
+      "path": "scripts/phase2-qualification/evidence-context-binding/README.md",
+      "sha256": "dbbd5070fe06acf0bbaaaae6a523fdc3d8e555f56be1889887b3f43b6d9c5b88",
+      "bytes": 4456,
+      "lf_only": true
+    },
+    {
+      "path": "scripts/phase2-qualification/evidence-context-binding/source-binding-db.test.mjs",
+      "sha256": "0428f57dc9582296ae5970f4b4c447c5f2dc76376cf659fe63bf718e05830f09",
+      "bytes": 9428,
+      "lf_only": true
+    }
+  ],
+  "source_bindings": [
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql",
+      "sha256": "f59e414ec0de016cbe89d3ba24ded2d90e85a9e17fb554021b2d4d611f4d26c2",
+      "bytes": 72625,
+      "lf_only": true,
+      "reviewed_line_spans": [
+        [
+          75,
+          105
+        ],
+        [
+          285,
+          454
+        ],
+        [
+          679,
+          685
+        ],
+        [
+          896,
+          931
+        ]
+      ]
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260907131834_clued_search_canonical_records.sql",
+      "sha256": "25fcf125a50400937cd9a0cca39336faf99fcf901d76d0539b8c68eae85df4d4",
+      "bytes": 3895,
+      "lf_only": true,
+      "reviewed_line_spans": [
+        [
+          1,
+          58
+        ]
+      ]
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260907173031_clued_connection_authorization_v12.sql",
+      "sha256": "6f1379187f1f36c836e99f6cf2083334e733fcb10cd59f789797b9e3c5225f8d",
+      "bytes": 42493,
+      "lf_only": true,
+      "reviewed_line_spans": [
+        [
+          478,
+          499
+        ]
+      ]
+    },
+    {
+      "path": "scripts/phase2-qualification/minimum-context-compiler/compiler.mjs",
+      "sha256": "4ca26d2f274080c376b0d4ed0709f1c795f83a35ce81c17f3b50c98cba420e1f",
+      "bytes": 5231,
+      "lf_only": true,
+      "reviewed_line_spans": [
+        [
+          18,
+          54
+        ]
+      ]
+    },
+    {
+      "path": "scripts/phase2-qualification/minimum-context-compiler/tokenizer.mjs",
+      "sha256": "3dd935d31711582d2aaa2e945c0188141e78fc8feec9fed03feeec2bd59019be",
+      "bytes": 2553,
+      "lf_only": true,
+      "reviewed_line_spans": []
+    },
+    {
+      "path": "scripts/phase2-qualification/minimum-context-compiler/TokenizerBinding.json",
+      "sha256": "b7350be2f38f9d28aa6377670f0e72636c9ea9675cff4f0b1a60cec7f6c2fefd",
+      "bytes": 1943,
+      "lf_only": true,
+      "reviewed_line_spans": []
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/MinimumContextCompilerIndependentReview.json",
+      "sha256": "473d43288762da54fbef60c7cf985c62e36857fcff17cb061b2ff5269a1bc14d",
+      "bytes": 4818,
+      "lf_only": true,
+      "reviewed_line_spans": []
+    }
+  ],
+  "scope": {
+    "source_evidence": "Current same-owner Evidence metadata linked from current authorized records; no raw URI or raw-source entitlement returned.",
+    "database_change": "One table-free clued_source_reader schema and one SECURITY DEFINER empty-search_path internal function; only service_role usage/execute. No old private namespace grants or Canon table changes.",
+    "compiler": "Existing exact search/session resolver plus record locks/current version/scope/content/lifecycle comparison. Distinct Evidence IDs remain distinct; caller Buffers must match every original stored hash and size. Complete source bindings included in final real-tokenizer text budget.",
+    "original_raw_provenance": "Stored hash originates in caller assertion at ingest. This acceptance proves exact byte matching, not independent source acquisition, semantics or durable external retention."
+  },
+  "independent_checks": {
+    "exact_current_candidate_files": 5,
+    "exact_reused_source_files": 7,
+    "lf_only": true,
+    "new_pure_checks_passed": 8,
+    "checks": [
+      "Exact parameterized session/scope/search selection and full source-bound text digest/token count.",
+      "duplicate Evidence ID rejects.",
+      "unsafe source byte size rejects.",
+      "ambiguous source record binding rejects.",
+      "cross-scope source binding rejects.",
+      "Uint8Array cannot masquerade as required original Buffer.",
+      "Budget counts provenance wrapper; no post-compile overflow acceptance.",
+      "Scope-policy mismatch refuses before SQL."
+    ],
+    "actual_tokenizer_target": {
+      "package": "js-tiktoken",
+      "version": "1.0.21",
+      "encoding": "o200k_base",
+      "model_mapping": "gpt-4.1-2025-04-14",
+      "measurement": "Exact standalone UTF-8 Context Pack text; not chat-envelope or provider billing tokens",
+      "host_acceptance": "NOT_BOUND_BY_THIS_ENGINEERING_MODULE"
+    },
+    "actual_synthetic_full_pack_token_count": 248,
+    "no_network_or_database_calls": true
+  },
+  "reused_implementation_validation": {
+    "command": "node --test call-boundary.test.mjs source-binding-db.test.mjs",
+    "pass": 7,
+    "fail": 0,
+    "skip": 0,
+    "duration_ms": 3245.8342,
+    "composition": "1 pure + 5 actual local PG child cases + parent",
+    "temporary_pg_stopped_and_scoped_directory_cleaned": true,
+    "production_connections": 0,
+    "model_calls": 0,
+    "gold_access": false
+  },
+  "reused_validation_limit": "Read source/test assertions and exact report; did not repeat the already-passed real local PostgreSQL chain or claim independent live witness.",
+  "remaining": [
+    "No production or nonproduction deployment performed or approved by this report; concrete target-specific forward migration/deployment still separately scoped by the parent.",
+    "Raw Buffers must originate from independently authorized acquisition; this API cannot fetch private storage bytes or infer source access.",
+    "No Worker/public MCP route integration, accepted host-tokenizer/task-policy binding or full operational currentness guarantee added. Existing search last_seen writes remain; Canon rows are read only.",
+    "No formal A04/A05 completion, Entry, Slice A, model invocation or Gold evaluation."
+  ],
+  "authority_effect": "NONE",
+  "controller_qualified": false,
+  "A04_complete": false,
+  "A05_complete": false
+}

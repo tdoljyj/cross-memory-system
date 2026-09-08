@@ -1,0 +1,216 @@
+{
+  "schema_version": 1,
+  "state": "ACCEPTED_EXACT_PREENTRY_STATIC_GATE_AND_TYPED_REGISTRY_SUCCESSOR_FOR_PUBLICATION",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "decided_at_utc": "2026-09-08T14:47:25.303Z",
+  "candidate_evidence": {
+    "path": "scripts/phase2-qualification/preentry-parent/gate-successor/CandidateEvidence.json",
+    "sha256": "6ff7fe1f8463e53d5d22097352844116b60ddd8f63bfd6fe2b7f2ea92b7020c9"
+  },
+  "gate_id": "G-PREENTRY-SKILL-QUALIFICATION",
+  "typed_uri": "urn:clued:gate:G-PREENTRY-SKILL-QUALIFICATION",
+  "definition_version": "fixed-synthetic-20260908.v1",
+  "gate_definition_sha256": "49454446777854266fa2fcfdbe58128cf12800750c82ecdf66849a2128d82dbd",
+  "definition_set_digest": "sha256:364651a681eefbdcb4796c0e07501e401c1f1e6af88340ad21641e528af5adc2",
+  "accepted_static_targets": [
+    {
+      "path": "evals/kernel-next/preentry-skill-qualification.json",
+      "sha256": "cf4a57d0d367ea9946d663ce177bbe228c8399d8398e33dced4e5a3bb099db28",
+      "source": "scripts/phase2-qualification/preentry-parent/gate-successor/preentry-skill-qualification.json"
+    },
+    {
+      "path": "evals/kernel-next/preentry-skill-qualification.registry.json",
+      "sha256": "7a6571e4c23d6ffa84df98e29bb757f7d0531b289e07b7882993e4172e4c6b89",
+      "source": "scripts/phase2-qualification/preentry-parent/gate-successor/RegistrySuccessorCandidate.json"
+    }
+  ],
+  "accepted_files": [
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/gate-successor/build.initial.txt",
+      "sha256": "e7ec5dbaa6fdce27647cbb52f088454f42632c7f5cdc295f094d38c7e99b1b5f",
+      "bytes": 6603,
+      "lf_only": true
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/gate-successor/build.mjs",
+      "sha256": "3ad2c492eeef11cb791c07ede743b37ebb763050af24cd12427c35f6b23ab4ca",
+      "bytes": 13624,
+      "lf_only": true
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/gate-successor/GateDefinition.initial.json",
+      "sha256": "2ba55f8960f24feea0be413a380f7f481264df20c7172dd694c6555e8b7de9ef",
+      "bytes": 9092,
+      "lf_only": true
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/gate-successor/GateDefinitionCandidate.json",
+      "sha256": "49454446777854266fa2fcfdbe58128cf12800750c82ecdf66849a2128d82dbd",
+      "bytes": 12703,
+      "lf_only": true
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/gate-successor/preentry-skill-qualification.json",
+      "sha256": "cf4a57d0d367ea9946d663ce177bbe228c8399d8398e33dced4e5a3bb099db28",
+      "bytes": 123377,
+      "lf_only": true
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/gate-successor/README.md",
+      "sha256": "0ef14c9576b6b0b856fa8a410d2cb53103579c6c72836f8d9eb6e4e37a87706b",
+      "bytes": 4647,
+      "lf_only": true
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/gate-successor/RegistrySuccessor.initial.json",
+      "sha256": "f9b83be35f4f7faf87dd22f304a4b9ac8cd64f9639b4e8908cff4d073b9e6085",
+      "bytes": 901,
+      "lf_only": true
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/gate-successor/RegistrySuccessorCandidate.json",
+      "sha256": "7a6571e4c23d6ffa84df98e29bb757f7d0531b289e07b7882993e4172e4c6b89",
+      "bytes": 2071,
+      "lf_only": true
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/gate-successor/SourceBindings.json",
+      "sha256": "d95dfe23602842122cb7cac1fe67474e30ca3446f5746344125a9238e8600c5b",
+      "bytes": 3962,
+      "lf_only": true
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/gate-successor/verify.mjs",
+      "sha256": "8b40eac9976ad70c1963a269d679e08543cf1124392445f54414cd9f5da7fb15",
+      "bytes": 4255,
+      "lf_only": true
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/gate-successor/verify.test.mjs",
+      "sha256": "f0c3541a5848cc872554f1355b6d6fb6dc6bf5e6da3f9fd6bf24d4ae33e5f960",
+      "bytes": 1604,
+      "lf_only": true
+    }
+  ],
+  "accepted_scope": {
+    "purpose": "SKILL_COEXISTENCE_QUALIFICATION",
+    "environment": "ISOLATED_TEST",
+    "profile_ref": {
+      "profile_id": "DP-PREENTRY-SKILL-QUALIFICATION",
+      "definition_version": "fixed-synthetic-skill-input-20260908.v1",
+      "content_digest": "sha256:45a7d602297f95c0ffd939da63534a6069de17ec197404bd657e160503c209f4",
+      "definition_ref": {
+        "path": "scripts/phase2-qualification/preentry-parent/profile-successor/ProfileDefinition.json",
+        "sha256": "45a7d602297f95c0ffd939da63534a6069de17ec197404bd657e160503c209f4",
+        "bytes": 3313,
+        "source_location": "REPOSITORY_FILE"
+      },
+      "signed_payload_ref": {
+        "path": "scripts/phase2-qualification/preentry-parent/profile-successor/signing/ProfileSigningPayload.json",
+        "sha256": "d9d8a4c18def2985e4152e7835c91b1c5d84820d4b7af7e40dccefe56d7ca6bb",
+        "bytes": 11224,
+        "source_location": "REPOSITORY_FILE"
+      },
+      "signature_observation_ref": {
+        "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/IndependentFixedSyntheticProfileSignatureBinding.json",
+        "sha256": "5a90c5eb3421d8b412e0a81310700b3de2b7805145909bd24e9ce1f5bbfcd63a",
+        "bytes": 5814,
+        "source_location": "REPOSITORY_FILE"
+      }
+    },
+    "applicable_case_ids": [
+      "PQUAL-01",
+      "PQUAL-02",
+      "PQUAL-03",
+      "PQUAL-04",
+      "PQUAL-05",
+      "PQUAL-06",
+      "PQUAL-07",
+      "PQUAL-08",
+      "PQUAL-09",
+      "PQUAL-10",
+      "PQUAL-11",
+      "PQUAL-12",
+      "PQUAL-13",
+      "PQUAL-14",
+      "PQUAL-15",
+      "PQUAL-16",
+      "PQUAL-17",
+      "PQUAL-19",
+      "PQUAL-20"
+    ],
+    "excluded_case": "PQUAL-18",
+    "execution": {
+      "environment_class": "ISOLATED_TEST",
+      "maximum_seconds": 90,
+      "memory_bytes": 134217728,
+      "cpu_millicores": 500,
+      "pids": 16,
+      "network": "none",
+      "model_calls": 0,
+      "paid_calls": 0
+    }
+  },
+  "source_basis": {
+    "source_contract_uri": "urn:clued:contract:kernel-next:v3.3",
+    "sha256": "f967fdf3e63028d29ed191160698726b5d707aaae63bd951f6ba2e8584936fec",
+    "line_spans": [
+      [
+        3435,
+        3444
+      ],
+      [
+        3876,
+        3887
+      ],
+      [
+        4316,
+        4346
+      ]
+    ]
+  },
+  "decision": "Accept the exact static PRE_ENTRY Test/Gate format and single typed Registry addition as a bounded forward definition within the existing approved qualification purpose. This does not redefine RC Gates, change old frozen schema/pins, register a second authority domain or issue a GA. Original Release Profile-specific local-RC schema is not asserted to validate this different accepted execution Profile.",
+  "independent_checks": {
+    "exact_candidate_files": 11,
+    "exact_source_files": 12,
+    "lf_only": true,
+    "existing_static_validator_observation": {
+      "state": "LOCAL_STATIC_CANDIDATE_CHECKED",
+      "gate_registered": false,
+      "ga_issued": false,
+      "tests_executed": 0,
+      "applicable_test_definitions": 19
+    },
+    "additional_case_source_pointer_oracle_checks": 19,
+    "additional_existing_requirement_reference_checks": 95,
+    "executor_source_exact": true,
+    "all_19_definitions_no_execution": true
+  },
+  "reused_implementation_validation": {
+    "command": "node --test verify.test.mjs",
+    "pass": 2,
+    "fail": 0,
+    "skip": 0,
+    "duration_ms": 145.5248,
+    "scope": "two actual independent build processes compare four exact file bytes; typed/source/version/digest validation; eight in-memory mutation refusals",
+    "qualification_tests_executed": 0
+  },
+  "activation_conditions": [
+    "Publish the exact two target files and this acceptance through normal signed main PR, then independently verify actual immutable bytes and Owner signature. Candidate state strings remain historical and do not independently confer registration.",
+    "Compose this exact single addition with original registered definitions in the same controlled Registry; retain old IDs, definitions and frozen pins. Update runtime allowlist only to this accepted ID/version/digest.",
+    "Real GA must bind actual exact targets/input digests, write sets, credential scope, deadline and current prerequisites; they are intentionally absent as live values from static definitions.",
+    "Each actual applicable case needs independently accepted real executor/fault path and actual sufficient observations. Static manifests and fixture text do not establish coverage or results.",
+    "The 19 TestManifests currently bind old signed parent a4bff96f76d6ed5598833cbd6f73efec547eaaf9cd039f47f8eef6e925efe79e. New supervisor/host bytes require the corresponding exact accepted input/controller/static-reference successor wherever affected; they may not masquerade as that existing executor.",
+    "The identical exact inputs rule denotes one fixed qualification input bundle with its predeclared per-case fault variants, not an instruction to remove the required differing fault setups. Keep all original oracles unchanged.",
+    "PASS requires all 19 applicable actual cases within accepted input versions; PQUAL-18 is excluded rather than passed. One successful primitive, CI or this review cannot stand in for qualification."
+  ],
+  "authority_effect": "NONE",
+  "registry_current_composition_completed": false,
+  "gate_registered": false,
+  "ga_issued": false,
+  "grr_issued": false,
+  "gate_pass": false,
+  "controller_qualified": false,
+  "owner_permission_scope_expanded": false,
+  "old_frozen_registry_changed": false
+}

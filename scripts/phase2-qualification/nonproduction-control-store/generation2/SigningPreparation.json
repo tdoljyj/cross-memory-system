@@ -1,0 +1,17 @@
+{
+  "state": "ACCEPTED_FORWARD_SUBJECT_PREPARED_FOR_ACTUAL_OWNER_PR_SIGNATURE",
+  "payload_file_sha256": "cbe469eab09d83596df3bdfffb5e7fac9252c8588806c2a843eb8bd8025ac9b0",
+  "payload_canonical_sha256": "6eb1a53c903c6f5843416455ab19150d11906dc4779fd0601f33c4d99c50820c",
+  "payload_content_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/e56090d1fd1474fb0aa55071d7adc837eb90e6c1",
+    "sha256": "cbe469eab09d83596df3bdfffb5e7fac9252c8588806c2a843eb8bd8025ac9b0"
+  },
+  "acceptance_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/ebb43ee4e2f31581f832c9eee0d8d0e020f92ee2",
+    "sha256": "a5e292ca64cdd4d39e176ef28a2dff3a3aeb8353ebe49a5fe5251ceab75d814a"
+  },
+  "preparation_source_sha256": "d7d6667ec45ce97180c4c15fa7bf768dd4a297e4f87712616a790f392d93de38",
+  "signature_observed": false,
+  "generation_registered": false,
+  "authority_effect": "NONE"
+}

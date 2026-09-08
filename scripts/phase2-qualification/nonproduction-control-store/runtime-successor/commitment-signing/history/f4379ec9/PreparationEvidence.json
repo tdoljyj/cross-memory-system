@@ -1,0 +1,24 @@
+{
+  "state": "PREPARED_FOR_INDEPENDENT_REVIEW",
+  "supersedes_evidence_sha256": "4fcd5b6a3337be3c2fe645adcd25d6b950fb023428ce7cab4d1ce7abd7b67c64",
+  "files": {
+    "signing.test.mjs": "d6b373e9d22da3d1feaa7a72dfa569caa1eea76f8d670414cd45841b9550c98a",
+    "signing.mjs": "ff453db685e883abfb6dc54affc174621085b51761d196a7ac9ac48deaea431d",
+    "binding-fix.test.mjs": "170e4576184c7c15184c27049e490574c082bde3319301a8256049fdfff53b18",
+    "README.md": "d4b2dde19f8681a552ce6697fdf8f0097d04718382da1f95c76726f9d8664aa1"
+  },
+  "new_local_tests": {
+    "duration_ms": 53.537,
+    "synthetic_only": true,
+    "failed": 0,
+    "passed": 2
+  },
+  "historical_tests": {
+    "source": "history/4fcd5b6a",
+    "rerun": false,
+    "passed": 4
+  },
+  "network_mutations": 0,
+  "signature_observed": false,
+  "authority_effect": "NONE"
+}

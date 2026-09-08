@@ -1,0 +1,33 @@
+# A05 minimum Context Compiler candidate
+
+This implements an offline engineering candidate directly around the existing `public.clued_mcp_search_context` SQL entry. `readAndCompile` passes the existing binding token hash and session token as SQL parameters, requests one exact context with `include_history=false`, and consumes that authorized result. It does not use whole-account export, snapshots, a second permission engine or a cached context. It never writes Canonical records or calls a model. The existing search RPC may update its session last-seen timestamp as before.
+
+The caller must supply an independently accepted task/field/constraint policy before formal use. Required Canonical record IDs and versions are explicit; all selected source records must be current schema-v1 records in the exact context. Historical events/checkpoints do not substitute for current facts. Each field and critical constraint is retained verbatim from the required source, with exact Canonical ID/version/scope/type provenance. Extra fields such as `type_fields` are not emitted. Unknown or missing sources, versions, states, field permissions or constraint grounding fail closed. This deterministic first implementation projects complete required string fields; it does not infer facts, resolve conflicts, semantically summarize large prose or invent Evidence refs not supplied by the current RPC.
+
+The whole serialized Context Pack, including task, source references and critical constraints, is counted by actual BPE encoding. If it exceeds the bound budget (maximum 2,048 tokens), compilation refuses rather than dropping a required constraint. The returned text SHA binds exactly the counted bytes. Token count and observation metadata are outside that text; any later consumer-added wrapper must be counted separately before claiming a larger complete message fits. No source credential or session token is copied to the result.
+
+## Actual tokenizer binding
+
+The repository already locks `js-tiktoken` 1.0.21 as a dependency. This candidate has its own exact package/lockfile, installed with `--ignore-scripts --no-audit --no-fund`, leaving production dependencies unchanged. It uses the real `o200k_base` ranks and validates the package, encoder code and ranks hashes before dynamically importing them. Only locally constructed verified tokenizer instances are accepted; a caller-provided lookalike counter is rejected.
+
+The independent metadata review found that checking `base64-js/index.js` alone did not bind the `package.json` entry-point selection. Its metadata SHA/size is now verified before imports. The candidate root package metadata is also pinned: its `name`/`exports` could otherwise redirect a bare `js-tiktoken` import through Node package self-reference. One new isolated-copy check covers both redirections, observes the precise metadata-drift rejection and confirms the redirected module never executed. Original package files were not edited. Prior source/report bytes are preserved in `history/before-package-metadata-fix/`; the old four engineering and PostgreSQL results remain historical and were not rerun or represented as a new full-suite result.
+
+The upstream author describes js-tiktoken as a pure JavaScript port of tiktoken and documents importing the specific rank set. [Author documentation](https://github.com/dqbd/tiktoken/tree/main/js#readme). OpenAI's mapping lists `gpt-4.1` and the `gpt-4.1-` snapshot prefix under `o200k_base`. [Official model-to-encoding source](https://raw.githubusercontent.com/openai/tiktoken/main/tiktoken/model.py). The installed library actually resolves the selected `gpt-4.1-2025-04-14` target to that encoding. These are tokenizer compatibility facts, not evidence of provider access or permission to run that model.
+
+The selected target is an explicit offline counting target awaiting actual evaluation-host acceptance. It is not silently mapped to the current Codex/GPT-6 host. Unknown models/encodings are rejected. Counts cover standalone pack text, not chat protocol overhead, system prompts, tool schemas, billing, or any provider response. No paid, API or Codex model calls occur in these checks. NPM download was package installation only.
+
+## Actual checks and remaining boundaries
+
+Four focused engineering checks passed using the real tokenizer: one synthetic complete pack measured 154 tokens; Unicode/special-marker text round-tripped as ordinary data; oversized context and fake counters were rejected; source/version/scope/history/constraint faults were rejected; unknown model mapping was refused. These inputs are unrelated to private Gold.
+
+The first combined run's database test failed during fixture setup because the test record omitted existing mandatory M1 fields. The constraint was preserved; only the synthetic insert was corrected. The affected PostgreSQL test was rerun: three children plus parent, 4/4 PASS, zero skips. It invoked the real current search RPC and actual session resolver, compiled the exact authorized record with real tokenizer, checked record bytes unchanged, denied cross-scope/invalid-session requests, and denied later reads after actual local record and binding revocation. The old four engineering checks were not redundantly rerun after this fixture-only correction. Dedicated local PostgreSQL instances were stopped and their verified temporary paths cleaned.
+
+No formal Entry, Profile, GA, Gold, A05/Slice A acceptance or 72-slot outcome is issued here. Error labels in these local functions are engineering rejection reasons, not additions to the accepted core ErrorCode Registry. Real runtime task-policy acceptance, target host/tokenizer acceptance, scope/currentness binding and execution authorization remain separate. The existing RPC lacks original Evidence IDs/content hashes in its output: this pack binds the exact returned Canonical record references and selected bytes, and does not claim independent raw-source retrieval/integrity proof. A selected whole content field may contain more than an ideal semantic summary; insufficiency remains an explicit failure until a separately accepted richer compiler exists.
+
+```powershell
+cd scripts/phase2-qualification/minimum-context-compiler
+npm ci --ignore-scripts --no-audit --no-fund
+node --test compiler.test.mjs compiler-db.test.mjs
+```
+
+Dependency installation and these tests are engineering preparation. Normal runtime use calls `createTokenizer()` once after identity verification and `readAndCompile` for each fresh authorized request. Callers must not label direct `compileSearchResult` fixture input as a real authorized retrieval; both APIs explicitly return local candidate/no-authority status.

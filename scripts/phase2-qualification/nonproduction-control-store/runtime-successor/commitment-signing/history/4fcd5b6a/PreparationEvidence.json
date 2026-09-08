@@ -1,0 +1,17 @@
+{
+  "state": "PREPARED_FOR_INDEPENDENT_REVIEW",
+  "files": {
+    "README.md": "26b5e62f5ae098c5b461ccf23c6fc958534d66ac9841f8bbbc72eb083d2f1f21",
+    "signing.mjs": "795eaa4ae46b52a8170d04fe796c263d5530de279a207d44a2f929faac125599",
+    "signing.test.mjs": "3af6dfeba9b63748cc87b87f0dd45dd37dc439e560ce8fa89b4591443b355ce7"
+  },
+  "local_tests": {
+    "synthetic_only": true,
+    "combined_with_supervisor_duration_ms": 57.2258,
+    "failed": 0,
+    "passed": 4
+  },
+  "network_mutations": 0,
+  "signature_observed": false,
+  "authority_effect": "NONE"
+}

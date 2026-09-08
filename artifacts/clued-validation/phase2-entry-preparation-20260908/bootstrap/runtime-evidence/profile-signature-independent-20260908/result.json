@@ -1,0 +1,123 @@
+{
+  "kind": "FIXED_SYNTHETIC_PROFILE_SIGNATURE_BINDING",
+  "status": "VERIFIED",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "observed_at": "2026-09-08T14:09:53.289178+00:00",
+  "repository": {
+    "full_name": "tdoljyj/cross-memory-system",
+    "private": true
+  },
+  "pr": {
+    "number": 28,
+    "url": "https://github.com/tdoljyj/cross-memory-system/pull/28",
+    "state": "MERGED",
+    "merged_by": "tdoljyj",
+    "merged_at": "2026-09-08T14:06:40Z",
+    "merge_commit_sha": "2a2c902fff6d1e68c40faf4f3695849c1b88ca6d",
+    "head_sha": "c6c7fd3f8c0f3e8d57f5b9eb727ca8ebce98b0fe"
+  },
+  "merge": {
+    "sha": "2a2c902fff6d1e68c40faf4f3695849c1b88ca6d",
+    "parents": [
+      "f47fbae12738674ec780a9a79de72e94238b8f10",
+      "c6c7fd3f8c0f3e8d57f5b9eb727ca8ebce98b0fe"
+    ],
+    "tree": "ddc9f617bb1ca78738ac0cd6730afa44e31837b3",
+    "committer_login": "web-flow",
+    "verification": {
+      "verified": true,
+      "reason": "valid"
+    },
+    "committed_at": "2026-09-08T14:06:39Z"
+  },
+  "payload": {
+    "artifact_path": "scripts/phase2-qualification/preentry-parent/profile-successor/signing/ProfileSigningPayload.json",
+    "blob_sha": "d661bbff13cbff0725cab84863eb5692609599c2",
+    "file_sha256": "d9d8a4c18def2985e4152e7835c91b1c5d84820d4b7af7e40dccefe56d7ca6bb",
+    "payload_sha256": "ed0557c4ca7b3a3b90916c1f5be940189eb062146138f193bf8a282852d5fe3c",
+    "review_subject_sha256": "e3e2b296c3fbe49fa2e0670a5e87be989a3bb0f10a65bc8e94c657db1d2ffbf7"
+  },
+  "acceptance": {
+    "artifact_path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/FixedSyntheticProfileSchemaIndependentAcceptance.json",
+    "sha256": "bc25963e3236a483b829bde92854f814aa71998b7d9ab5450d9707bfd3e98c6e",
+    "blob_sha": "952aa967354c326b74f30a327b434b78dd2701bf"
+  },
+  "verified_blobs": [
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/profile-successor/build.mjs",
+      "blob_sha": "a0cb23853a34285dfc6aa4ce9fe8932ecc62aa38",
+      "sha256": "affd9822c10f1ff99006148164f841e3928a278b49fd02074ebe209e89eeead0",
+      "bytes": 7341
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/profile-successor/ProfileDefinition.json",
+      "blob_sha": "327bb52b62ad568592ea3fa746242e71bbc3fd3e",
+      "sha256": "45a7d602297f95c0ffd939da63534a6069de17ec197404bd657e160503c209f4",
+      "bytes": 3313
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/profile-successor/ProfileReviewSubject.json",
+      "blob_sha": "7846d3c68f2c40514eab29750819fbed3bd01ca7",
+      "sha256": "9d56ebb0311938d050aa652c86f2369c729a1fd8232e376f52fb12f489f52e98",
+      "bytes": 11618
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/profile-successor/preentry-profile.candidate.schema.json",
+      "blob_sha": "c3d0fd5c475fcc2f0da618453a9f015b4e50e90d",
+      "sha256": "678942e70d6579df4f737472f606f61463c58c6307b1b810ef741ee667771338",
+      "bytes": 8282
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/profile-successor/revocation-epoch-vector.candidate.schema.json",
+      "blob_sha": "1622355e303cd0f22e2b0d0b4b0beb943559c78d",
+      "sha256": "f57cceb29853c67f8702c1560017c3be7b96626d6358299b5215add63d01e916",
+      "bytes": 9724
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/profile-successor/gate-authorization.candidate.schema.json",
+      "blob_sha": "90be47cb00542eafe33d07d0d2678718b3efc845",
+      "sha256": "f7f7e2a011f3f81a005e46f9cf7683edeb010dc7812eadfb4473f6ad5368a1ce",
+      "bytes": 15448
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/profile-successor/validate.test.mjs",
+      "blob_sha": "670a08a53d1d586974397089ddcba101b66e9ded",
+      "sha256": "4680f5529181b8513ae06d88fe15b475d29b69ac459821c9dcec808e35eab6c5",
+      "bytes": 3815
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/profile-successor/README.md",
+      "blob_sha": "6740247646d1d1b77a944b481fe8cb856c58d11d",
+      "sha256": "f800875cbe9e43beb5caffdaa59e1c0369d78bf8b287d69bed42342364ac8074",
+      "bytes": 3263
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/profile-successor/PreparationEvidence.json",
+      "blob_sha": "5457b83e6c31e12afa2969e6c7d7a9df211bf12f",
+      "sha256": "127eec25f7d47b8b9a8a13155487b69df7698bf76773f54fbc3808acc4a31073",
+      "bytes": 2659
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/profile-successor/signing/ProfileSigningPayload.json",
+      "blob_sha": "d661bbff13cbff0725cab84863eb5692609599c2",
+      "sha256": "d9d8a4c18def2985e4152e7835c91b1c5d84820d4b7af7e40dccefe56d7ca6bb",
+      "bytes": 11224
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/FixedSyntheticProfileSchemaIndependentAcceptance.json",
+      "blob_sha": "952aa967354c326b74f30a327b434b78dd2701bf",
+      "sha256": "bc25963e3236a483b829bde92854f814aa71998b7d9ab5450d9707bfd3e98c6e",
+      "bytes": 10308
+    }
+  ],
+  "complete_tree": true,
+  "definition_and_exact_acceptance_binding": true,
+  "owner_expires_at": "2026-09-09T09:28:59Z",
+  "limitations": [
+    "Real Profile/Schema signature provenance only; no active GA or controller qualification/PQUAL PASS.",
+    "Exact fixed synthetic-input scope and N/A applicability only; real business, model, paid and post-Entry scopes excluded.",
+    "This report itself is local until separately durably published/read back; listed payload/schema blobs are actually remote.",
+    "Each runtime use still checks current Root/Owner/GA, expiry/revocation and independent generations, exact inputs and budget; historical signature is not currentness.",
+    "Existing required CI results were reported by coordinator; no CI reexecution or old Root revalidation claimed."
+  ]
+}

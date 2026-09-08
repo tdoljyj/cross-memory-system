@@ -1,0 +1,176 @@
+{
+  "state": "LOCAL_ENGINEERING_ONLY_CANDIDATE_NOT_DEPLOYED",
+  "aligned_remote_head": "2a2c902fff6d1e68c40faf4f3695849c1b88ca6d",
+  "files": [
+    {
+      "path": "scripts/phase2-qualification/evidence-context-binding/call-boundary.test.mjs",
+      "sha256": "5981bce85e89ebac274ec408a7fdf4d738866cea15173d37d65898eb62a4d75d",
+      "bytes": 508,
+      "lf_only": true
+    },
+    {
+      "path": "scripts/phase2-qualification/evidence-context-binding/compiler-with-sources.mjs",
+      "sha256": "3e432d902d96050246a5093a740a2c6b70bef6e7661bc2980cd802be0c9a1a42",
+      "bytes": 3319,
+      "lf_only": true
+    },
+    {
+      "path": "scripts/phase2-qualification/evidence-context-binding/read-sources.candidate.sql",
+      "sha256": "0ea420a7369a370da35c9bc906a79535a353e4053e88f2483a7e99b42ae055f9",
+      "bytes": 3587,
+      "lf_only": true
+    },
+    {
+      "path": "scripts/phase2-qualification/evidence-context-binding/README.md",
+      "sha256": "dbbd5070fe06acf0bbaaaae6a523fdc3d8e555f56be1889887b3f43b6d9c5b88",
+      "bytes": 4456,
+      "lf_only": true
+    },
+    {
+      "path": "scripts/phase2-qualification/evidence-context-binding/source-binding-db.test.mjs",
+      "sha256": "0428f57dc9582296ae5970f4b4c447c5f2dc76376cf659fe63bf718e05830f09",
+      "bytes": 9428,
+      "lf_only": true
+    }
+  ],
+  "source_bindings": [
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260825171129_clued_m1_runtime_contracts.sql",
+      "sha256": "f59e414ec0de016cbe89d3ba24ded2d90e85a9e17fb554021b2d4d611f4d26c2",
+      "bytes": 72625,
+      "lf_only": true,
+      "reviewed_line_spans": [
+        [
+          75,
+          105
+        ],
+        [
+          285,
+          454
+        ],
+        [
+          679,
+          685
+        ],
+        [
+          896,
+          931
+        ]
+      ]
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260907131834_clued_search_canonical_records.sql",
+      "sha256": "25fcf125a50400937cd9a0cca39336faf99fcf901d76d0539b8c68eae85df4d4",
+      "bytes": 3895,
+      "lf_only": true,
+      "reviewed_line_spans": [
+        [
+          1,
+          58
+        ]
+      ]
+    },
+    {
+      "path": "apps/clued-cloud/supabase/migrations/20260907173031_clued_connection_authorization_v12.sql",
+      "sha256": "6f1379187f1f36c836e99f6cf2083334e733fcb10cd59f789797b9e3c5225f8d",
+      "bytes": 42493,
+      "lf_only": true,
+      "reviewed_line_spans": [
+        [
+          478,
+          499
+        ]
+      ]
+    },
+    {
+      "path": "scripts/phase2-qualification/minimum-context-compiler/compiler.mjs",
+      "sha256": "4ca26d2f274080c376b0d4ed0709f1c795f83a35ce81c17f3b50c98cba420e1f",
+      "bytes": 5231,
+      "lf_only": true,
+      "reviewed_line_spans": [
+        [
+          18,
+          54
+        ]
+      ]
+    },
+    {
+      "path": "scripts/phase2-qualification/minimum-context-compiler/tokenizer.mjs",
+      "sha256": "3dd935d31711582d2aaa2e945c0188141e78fc8feec9fed03feeec2bd59019be",
+      "bytes": 2553,
+      "lf_only": true,
+      "reviewed_line_spans": []
+    },
+    {
+      "path": "scripts/phase2-qualification/minimum-context-compiler/TokenizerBinding.json",
+      "sha256": "b7350be2f38f9d28aa6377670f0e72636c9ea9675cff4f0b1a60cec7f6c2fefd",
+      "bytes": 1943,
+      "lf_only": true,
+      "reviewed_line_spans": []
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/MinimumContextCompilerIndependentReview.json",
+      "sha256": "473d43288762da54fbef60c7cf985c62e36857fcff17cb061b2ff5269a1bc14d",
+      "bytes": 4818,
+      "lf_only": true,
+      "reviewed_line_spans": []
+    }
+  ],
+  "actual_validation": {
+    "command": "node --test call-boundary.test.mjs source-binding-db.test.mjs",
+    "pass": 7,
+    "fail": 0,
+    "skip": 0,
+    "duration_ms": 3245.8342,
+    "composition": "1 pure + 5 actual local PG child cases + parent",
+    "temporary_pg_stopped_and_scoped_directory_cleaned": true,
+    "production_connections": 0,
+    "model_calls": 0,
+    "gold_access": false
+  },
+  "attempt_history": [
+    {
+      "pass": 0,
+      "fail": 1,
+      "duration_ms": 2720.7806,
+      "finding": "service_role cannot invoke existing public Evidence ingest; fixture corrected to existing anon role, no existing grants changed"
+    },
+    {
+      "pass": 1,
+      "fail": 5,
+      "duration_ms": 3131.2068,
+      "finding": "clued_private has no service_role USAGE; use one isolated table-free private schema, do not open old private namespace"
+    },
+    {
+      "pass": 6,
+      "fail": 0,
+      "duration_ms": 3166.529,
+      "scope": "PG chain before extra early tokenizer guard"
+    },
+    {
+      "pass": 7,
+      "fail": 0,
+      "duration_ms": 3245.8342,
+      "scope": "final current candidate, pure guard and real PG chain"
+    }
+  ],
+  "formal_claims": {
+    "A04_complete": false,
+    "A05_complete": false,
+    "Entry": false,
+    "SliceA_results": 0,
+    "authority_effect": "NONE"
+  },
+  "deployment_objects": [
+    "new table-free clued_source_reader schema: service_role USAGE only",
+    "one read_compiler_sources(text,jsonb,jsonb) SECURITY DEFINER/search_path empty, service_role EXECUTE only"
+  ],
+  "limits": [
+    "No raw source access permission inferred from record read; caller must independently acquire authorized Buffers",
+    "Stored content_hash is caller assertion at ingest; byte comparison proves matching bytes only",
+    "No external immutable source/durable blob or semantic entailment proof",
+    "Existing search session last_seen_at is updated; no Canonical/Event/Receipt changes during read",
+    "No Worker route/public MCP wire integrated or deployed",
+    "Existing real tokenizer target GPT-4.1-2025-04-14/o200k_base remains local compatibility target, not accepted current host"
+  ]
+}
