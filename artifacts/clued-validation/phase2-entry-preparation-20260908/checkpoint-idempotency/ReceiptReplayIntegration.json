@@ -1,0 +1,16 @@
+{
+  "scope": "EXISTING_CHECKPOINT_REPLAY_RECEIPT_RESPONSE_REPAIR",
+  "authorization_basis": "User approval of checkpoint production repair and live read-back; successor stays in the same function and existing original-Receipt contract, with no Authority, data, Grant, Binding or Worker scope expansion.",
+  "original_approved_migration_preserved": true,
+  "successor_migration_sha256": "35ba727d2729a74417677ed7bc1da3addd7b8ff33d9b722f45a982346786151e",
+  "ci_entry": "apps/clued-cloud/package.json scripts.test:authorization:database",
+  "new_test": "tests/checkpoint-replay-receipt-db.test.mjs",
+  "actual_checks": {
+    "maintainer_postgresql": {"pass": 7, "fail": 0, "skip": 0},
+    "independent_postgresql": {"pass": 7, "fail": 0, "skip": 0},
+    "integration_migration_chain": {"pass": 2, "fail": 0, "skip": 0, "cases": ["complete-repository", "production-installed-shape"]}
+  },
+  "change_applicability": "Add only the already verified unique original Receipt ID to duplicate response and include its regression in existing CI. Existing R07-R10 declarative authority, projection and publication boundaries remain unchanged; exact runtime candidates must bind this successor when actually executed. No historical acceptance or migration bytes are rewritten.",
+  "production_state_at_preparation": "PREDECESSOR_DEPLOYED_SUCCESSOR_NOT_YET_APPLIED",
+  "remaining_live_check": "After verified target and exact-source application, replay the existing real v10 operation through a fresh authorized session: expect same checkpoint/version and original Receipt ID, then changed parameters conflict and no new checkpoint/Receipt."
+}
