@@ -1,0 +1,161 @@
+{
+  "state": "BYTE_PRESERVED_B_EVIDENCE_ARCHIVE_VERIFIED",
+  "selected_option": "B",
+  "option_a": "Not selected; not published as the fix",
+  "original_workspace_root": "C:/Users/Windows/Documents/Codex/2026-09-08/ia",
+  "files": [
+    {
+      "original_workspace_path": "work/normal600-intent-phase-successor/record-effect-intent-response.candidate.sql",
+      "archive_entry": "work/normal600-intent-phase-successor/record-effect-intent-response.candidate.sql",
+      "sha256": "17baedbb1ec279e8cc6c349697ea4f14ddcad9d92bcf70dd2a800c94ad2e23cc",
+      "bytes": 1957
+    },
+    {
+      "original_workspace_path": "work/normal600-intent-phase-successor/build-pg-test.mjs",
+      "archive_entry": "work/normal600-intent-phase-successor/build-pg-test.mjs",
+      "sha256": "bc4fe6b76b97698066482b64bbcc930477868fe1a02e19f6b94ff2125976b908",
+      "bytes": 2590
+    },
+    {
+      "original_workspace_path": "work/normal600-intent-phase-successor/pg-cases.txt",
+      "archive_entry": "work/normal600-intent-phase-successor/pg-cases.txt",
+      "sha256": "4d6a535c7f00abdefa6771da141809f488c52bab29f0aef045986da7f4986970",
+      "bytes": 8364
+    },
+    {
+      "original_workspace_path": "work/normal600-intent-phase-successor/pg-integration.test.mjs",
+      "archive_entry": "work/normal600-intent-phase-successor/pg-integration.test.mjs",
+      "sha256": "0ecc3e6bcc3345236bb70c5ee085b64b1921be97a1d536c333f5a0baf76db964",
+      "bytes": 15607
+    },
+    {
+      "original_workspace_path": "work/normal600-intent-phase-successor/PgIntegrationRaw.json",
+      "archive_entry": "work/normal600-intent-phase-successor/PgIntegrationRaw.json",
+      "sha256": "cf340d2ee5a98301ebf255e3ae1ca29baaeae35d3abd57e14f01e800975e13ab",
+      "bytes": 476220
+    },
+    {
+      "original_workspace_path": "work/normal600-intent-phase-successor/ResponseContractCompatibility.md",
+      "archive_entry": "work/normal600-intent-phase-successor/ResponseContractCompatibility.md",
+      "sha256": "3f9ee2a9da7e586f5e1c7a2b73e7f1c43f79edce142452d33e6d524b2bf75b4e",
+      "bytes": 4373
+    },
+    {
+      "original_workspace_path": "work/kernel-phase2-repo/scripts/phase2-qualification/nonproduction-control-store/install.candidate.sql",
+      "archive_entry": "work/kernel-phase2-repo/scripts/phase2-qualification/nonproduction-control-store/install.candidate.sql",
+      "sha256": "3cbbed94e1c9ef5fec4db281526ca69b9b30a24d2812b5a8bb5eb6bc728146fb",
+      "bytes": 8741
+    },
+    {
+      "original_workspace_path": "work/kernel-phase2-repo/scripts/phase2-qualification/nonproduction-control-store/runtime-successor/budget-reservation-successor/install.candidate.sql",
+      "archive_entry": "work/kernel-phase2-repo/scripts/phase2-qualification/nonproduction-control-store/runtime-successor/budget-reservation-successor/install.candidate.sql",
+      "sha256": "8f732dd4013a18adde33a254631cdd5a04022f300d4c0a13d05dffbf36f97285",
+      "bytes": 40646
+    },
+    {
+      "original_workspace_path": "work/kernel-phase2-repo/scripts/phase2-qualification/nonproduction-control-store/runtime-successor/budget-reservation-successor/client.mjs",
+      "archive_entry": "work/kernel-phase2-repo/scripts/phase2-qualification/nonproduction-control-store/runtime-successor/budget-reservation-successor/client.mjs",
+      "sha256": "5eb8b6ad2d8b68f98dcffc5cc11fcd032ea176572c248d615a5d977ee9a4bd1c",
+      "bytes": 726
+    },
+    {
+      "original_workspace_path": "work/kernel-phase2-repo/scripts/phase2-qualification/nonproduction-control-store/runtime-successor/control-objects-successor/client.mjs",
+      "archive_entry": "work/kernel-phase2-repo/scripts/phase2-qualification/nonproduction-control-store/runtime-successor/control-objects-successor/client.mjs",
+      "sha256": "de049d0dafc16d225a9884ff2a8899976883f539e417f20d8a34eeab33b571ae",
+      "bytes": 767
+    },
+    {
+      "original_workspace_path": "work/kernel-phase2-repo/scripts/phase2-qualification/nonproduction-control-store/runtime-successor/client.mjs",
+      "archive_entry": "work/kernel-phase2-repo/scripts/phase2-qualification/nonproduction-control-store/runtime-successor/client.mjs",
+      "sha256": "b8e0080118d94128a163ca9efd57d01706ec8ecc45060135f092a896f4583816",
+      "bytes": 2129
+    },
+    {
+      "original_workspace_path": "work/kernel-phase2-repo/scripts/phase2-qualification/control-context-verifier-runtime180/dispatch-evidence.mjs",
+      "archive_entry": "work/kernel-phase2-repo/scripts/phase2-qualification/control-context-verifier-runtime180/dispatch-evidence.mjs",
+      "sha256": "b99e260dae4274f5040870bc927e2388e3a6ca7e10fc4a0f5ac9e3280a30c30f",
+      "bytes": 1915
+    },
+    {
+      "original_workspace_path": "work/kernel-phase2-repo/scripts/phase2-qualification/control-context-verifier-runtime180/transport.mjs",
+      "archive_entry": "work/kernel-phase2-repo/scripts/phase2-qualification/control-context-verifier-runtime180/transport.mjs",
+      "sha256": "e2391023805c858c2c8f5499069a4060f7c773a3cc29732bea37f9d281698d0e",
+      "bytes": 2209
+    },
+    {
+      "original_workspace_path": "work/kernel-phase2-repo/scripts/phase2-qualification/control-context-verifier-runtime600/tool-entry.functions.js",
+      "archive_entry": "work/kernel-phase2-repo/scripts/phase2-qualification/control-context-verifier-runtime600/tool-entry.functions.js",
+      "sha256": "a9fe73cb6c0d2492eb0c96276f2b1d0b5a3e4c137b37e609575b08d404179cf7",
+      "bytes": 9919
+    },
+    {
+      "original_workspace_path": "work/qualification-live/next-normal600/after-revoke-metadata.json",
+      "archive_entry": "work/qualification-live/next-normal600/after-revoke-metadata.json",
+      "sha256": "33958d12adde359eb603513c8139a17e77aa1f3a3cf6e81b7e50ac6e6ecbbec3",
+      "bytes": 347324
+    },
+    {
+      "original_workspace_path": "work/normal600-intent-phase-successor/BIntegrationEvidence.json",
+      "archive_entry": "work/normal600-intent-phase-successor/BIntegrationEvidence.json",
+      "sha256": "fb4c556e1f4e94517c7a10826b8ffdc5a4d64e00d844ec6ee2c42edbef75a68b",
+      "bytes": 5000
+    },
+    {
+      "original_workspace_path": "work/normal600-intent-phase-successor/install-B.guarded.sql",
+      "archive_entry": "work/normal600-intent-phase-successor/install-B.guarded.sql",
+      "sha256": "92187cd5615c9d3770d070ecf00c8fb61533bf23ae074d914bf9cb859a880b80",
+      "bytes": 349022
+    },
+    {
+      "original_workspace_path": "work/normal600-intent-phase-successor/B-actual-readback.json",
+      "archive_entry": "work/normal600-intent-phase-successor/B-actual-readback.json",
+      "sha256": "23562558c87c5c1dde379c8cf0d4453c2225eda3c3262637b0980009318b804d",
+      "bytes": 347324
+    },
+    {
+      "original_workspace_path": "work/normal600-intent-phase-successor/B-actual-install-verification.json",
+      "archive_entry": "work/normal600-intent-phase-successor/B-actual-install-verification.json",
+      "sha256": "ea081aee1f933079be3ce9efdacda24ebda841bb4a6f94230e05e891f091aa5b",
+      "bytes": 637
+    },
+    {
+      "original_workspace_path": "work/intent-response-b-independent-live.json",
+      "archive_entry": "work/intent-response-b-independent-live.json",
+      "sha256": "1d251f90f847fa7d07435e1a2698ba897de687207d1651072f7ac73af8b47179",
+      "bytes": 347324
+    },
+    {
+      "original_workspace_path": "work/kernel-phase2-repo/artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/DedicatedIntentResponseDatabaseCompatibilityIndependentAcceptance.json",
+      "archive_entry": "work/kernel-phase2-repo/artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/DedicatedIntentResponseDatabaseCompatibilityIndependentAcceptance.json",
+      "sha256": "e433f421b768c548d992cb490a5b5f266c133006b2aecaa9386899d6d1b9f0d6",
+      "bytes": 4051
+    },
+    {
+      "original_workspace_path": "work/kernel-phase2-repo/artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/DedicatedIntentResponseGuardedInstallIndependentReview.json",
+      "archive_entry": "work/kernel-phase2-repo/artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/DedicatedIntentResponseGuardedInstallIndependentReview.json",
+      "sha256": "c211eba9e83027980922db0d033f459caccb8661388659f24e1467fd40653a97",
+      "bytes": 793
+    },
+    {
+      "original_workspace_path": "work/kernel-phase2-repo/artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/DedicatedIntentResponseIndependentLiveVerification.json",
+      "archive_entry": "work/kernel-phase2-repo/artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/DedicatedIntentResponseIndependentLiveVerification.json",
+      "sha256": "400d614e804b899ea8617b7309933ced517db08f457d55653259f31e0329bfae",
+      "bytes": 796
+    }
+  ],
+  "archive": {
+    "path": "OriginalEvidence.zip",
+    "sha256": "0feb5288440d7ae6cc3f15e0e2a5192da3f494fb900eb02bd58a1d1705a38ba9",
+    "bytes": 317198
+  },
+  "verification": {
+    "each_entry_read_back_equal_to_original_bytes": true,
+    "entry_sha256_and_size_verified": true,
+    "credential_pattern_scan_matches": 0,
+    "old_pg_tests_rerun": false,
+    "git_commit_or_push": false,
+    "sql_applied_by_packaging": false
+  },
+  "historical_status": "Original pending/candidate fields are retained byte-for-byte; later independent acceptance and actual installation/readback reports establish the successor state.",
+  "historical_execution_paths": "Scripts are exact historical execution sources; relocation does not make them directly runnable."
+}

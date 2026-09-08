@@ -1,0 +1,10 @@
+{
+  "state": "LOCAL_ENGINEERING_ONLY_TEMPORARY_PG",
+  "started_at": "2026-09-08T19:16:19.235Z",
+  "folder": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-08\\ia\\work\\kernel-phase2-repo\\scripts\\phase2-qualification\\predispatch-nonpass-successor\\tests\\pg-run-N1VF6y",
+  "checks": [],
+  "production": false,
+  "authority_effect": "NONE",
+  "ended_at": "2026-09-08T19:16:22.448Z",
+  "server_stopped": true
+}

@@ -1,0 +1,21 @@
+{
+  "state": "EXACT_PARENT_BYTES_PRESERVED_NOT_DEPLOYED",
+  "sources": [
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/budget-reservation-successor/install.candidate.sql",
+      "sha256": "8f732dd4013a18adde33a254631cdd5a04022f300d4c0a13d05dffbf36f97285"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime600/grr.mjs",
+      "sha256": "493146bb233ca14e0a166ba3b337ed90d3e5a5c1961cba6d56e925d29fd79a05"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime600/result-terminal.mjs",
+      "sha256": "a4994871e1eacc76850a8c5123f872d0040aa7b42273f3686cd64e2215325ccc"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime600/write-targets.mjs",
+      "sha256": "8df6c08197d386933c49252c740e7f55acc4c3fc2e4f927822c59cf9f6dd607d"
+    }
+  ]
+}

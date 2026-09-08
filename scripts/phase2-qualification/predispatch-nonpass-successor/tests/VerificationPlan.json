@@ -1,0 +1,30 @@
+{
+  "state": "LOCAL_ENGINEERING_VERIFICATION_PLANNED_NOT_EXECUTED",
+  "implementation_owner": "/root/controller_candidate",
+  "test_owner": "/root/qualification_cases",
+  "scope": "Original not-started nonPASS reconciliation only; not a STOP or test PASS",
+  "actual_host_source": "ia/work/qualification-live/no-dispatch-host-observation.json",
+  "observed_boundary": "Exact fixed Docker endpoint/name query returned empty stdout with exit0; fixed nonce directory absent. This does not prove STOP and does not erase original budget or event history.",
+  "cases": [
+    {"id":"N01","check":"Reject PASS even when all not-started evidence matches"},
+    {"id":"N02","check":"Reject any original INTENT_RECORDED history, including when current attempt still has null container"},
+    {"id":"N03","check":"Reject CREATE_SENT/START_SENT, CREATED/RUNNING, STOP or reconciliation-of-container history"},
+    {"id":"N04","check":"Reject nonnull container and wrong/nonunique GA attempt"},
+    {"id":"N05","check":"Reject GA raw/hash drift, wrong root, old root generation or stale current source"},
+    {"id":"N06","check":"Reject mismatched evidence raw hash, truncated original failure/source, or invalid named independent assessment binding"},
+    {"id":"N07","check":"Reject wrong Docker CLI digest/endpoint/nonce/name or nonexact name filter"},
+    {"id":"N08","check":"Reject nonzero exit, nonempty stdout, error/signal, existing nonce directory or host mutation"},
+    {"id":"N09","check":"Reject host observation earlier than this GA or inconsistent actual recorded time window"},
+    {"id":"N10","check":"Reject refund/automatic successor/claimed Skill PASS/claimed STOP in not-started evidence"},
+    {"id":"N11","check":"Original nonPASS index with zero tests retains full actual failure and reconciliation Evidence; no empty evidence shortcut"},
+    {"id":"N12","check":"Actual historical complete STOP inspect remains valid in original branch; not-started inventory cannot substitute for it"},
+    {"id":"DB01","check":"If candidate SQL requires new behavior, run one scoped temporary-PG transaction sequence: guarded not-started reconcile/decision/signing/nonPASS succeeds, charged counters never decrease, terminal GRR unique"},
+    {"id":"DB02","check":"Same PG fixture: historical Intent/dispatch/container/PASS/duplicate terminal and stale CAS refuse with rows, events and counters preserved"},
+    {"id":"DB03","check":"Preserve original real-STOP terminal branch regression; no unrelated old PG suite rerun"}
+  ],
+  "execution_conditions": "Wait for exact implementation interface/hash freeze before testing; no PG currently started. Reuse existing local fixture tooling only if necessary and coordinate process ownership.",
+  "formal_case_result_created": false,
+  "frozen_201_sources_changed": false,
+  "production_or_remote_db_actions": false,
+  "authority_effect": "NONE"
+}

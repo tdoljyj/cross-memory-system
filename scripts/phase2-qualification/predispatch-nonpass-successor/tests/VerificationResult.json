@@ -1,0 +1,123 @@
+{
+  "state": "LOCAL_ENGINEERING_VERIFICATION_COMPLETE_NOT_FORMAL_QUALIFICATION",
+  "recorded_at": "2026-09-08T19:19:48.623Z",
+  "implementation_owner": "/root/controller_candidate",
+  "test_owner": "/root/qualification_cases",
+  "authority_effect": "NONE",
+  "sources": [
+    {
+      "path": "scripts/phase2-qualification/predispatch-nonpass-successor/tests/../not-started.mjs",
+      "sha256": "fee318f9ed0b10eff1fad7217f5756abf5fd7226947cddc8404b060557b7e9b7",
+      "bytes": 7900
+    },
+    {
+      "path": "scripts/phase2-qualification/predispatch-nonpass-successor/tests/../alter.candidate.sql",
+      "sha256": "ea114e8f65f08d223fa7dd2fc64ce3c4fd66a6de822311c706a3e6f6c8c78f31",
+      "bytes": 12389
+    }
+  ],
+  "tests": [
+    {
+      "path": "scripts/phase2-qualification/predispatch-nonpass-successor/tests/fixture.mjs",
+      "sha256": "b85faa73db1ef5157496c27c68038661920c33af0f751240b26815b0aeeeab4e",
+      "bytes": 5473
+    },
+    {
+      "path": "scripts/phase2-qualification/predispatch-nonpass-successor/tests/not-started.test.mjs",
+      "sha256": "648611e7ea496a62fdb45ab0d735817ac4d8a90b9a4fd4716dd73aab8da0a782",
+      "bytes": 3878
+    },
+    {
+      "path": "scripts/phase2-qualification/predispatch-nonpass-successor/tests/storage.test.mjs",
+      "sha256": "db496414a901b235b9216ff061c3ab15ba11fe71aec47a5a3354209312771ea3",
+      "bytes": 12993
+    }
+  ],
+  "runs": [
+    {
+      "scope": "initial pure matrix on prior a541 source",
+      "tests": 44,
+      "pass": 41,
+      "fail": 3,
+      "duration_ms": 130.8453,
+      "findings": [
+        "Real old snapshot root-generation mismatch accepted",
+        "Real old snapshot binding-controller mismatch accepted",
+        "Test assertion mistake: original STOP checker correctly returns authority_effect NONE; corrected test expectation"
+      ],
+      "current_source_full_rerun": false
+    },
+    {
+      "scope": "fixed snapshot root/binding and corrected actual original STOP regression on 76a229 source",
+      "tests": 3,
+      "pass": 3,
+      "fail": 0,
+      "duration_ms": 115.08,
+      "full_previous_matrix_rerun": false
+    },
+    {
+      "scope": "final fee318 failure capture origin change only: baseline plus required/missing/false origin and process capture alternative",
+      "tests": 2,
+      "pass": 2,
+      "fail": 0,
+      "duration_ms": 113.6972,
+      "full_previous_matrix_rerun": false
+    },
+    {
+      "scope": "actual temporary PostgreSQL on exact ea114 candidate with synthetic test metadata",
+      "tests": 11,
+      "child_checks": 10,
+      "pass": 11,
+      "fail": 0,
+      "skip": 0,
+      "duration_ms": 3179.5439,
+      "raw_result": {
+        "path": "scripts/phase2-qualification/predispatch-nonpass-successor/tests/pg-run-569FXG/Result.json",
+        "sha256": "03677403a8d459b550b9d9b2c81cf076c288d4dc7f49b6606294e1ee0354c4ee",
+        "bytes": 796
+      },
+      "cases": [
+        "guarded no-start nonPASS decision/signing/result commits once, cross-connection bytes and budgets preserved",
+        "PASS rejected without mutation",
+        "wrong GA rejected without mutation",
+        "wrong original event history rejected without mutation",
+        "nonempty index tests rejected without mutation",
+        "nonempty decision tests rejected without mutation",
+        "stored INTENT_RECORDED rejected without mutation",
+        "stored CREATE_SENT rejected without mutation",
+        "stored START_SENT rejected without mutation",
+        "original STOPPED decision/signing/GRR storage branch remains functional"
+      ],
+      "security": "All clued_control function proacl/prosecdef/proconfig unchanged before/after; original public sentinel unchanged",
+      "server_stopped": true
+    }
+  ],
+  "test_fixture_failures_preserved": [
+    {
+      "result": {
+        "path": "scripts/phase2-qualification/predispatch-nonpass-successor/tests/pg-run-N1VF6y/Result.json",
+        "sha256": "1715eed649e6b718c42d3af8fd748b8a6bf1630fb4316fa28ec7c01c8116421d",
+        "bytes": 412
+      },
+      "reason": "Test installed 600 successor before synthetic root seed; original deployment guard correctly refused. No candidate defect."
+    },
+    {
+      "result": {
+        "path": "scripts/phase2-qualification/predispatch-nonpass-successor/tests/pg-run-K9Fkby/Result.json",
+        "sha256": "fa9d1e43a5e8215394f5057406817b9acc866b3cbca1a1ef19e62980b4f1437e",
+        "bytes": 667
+      },
+      "reason": "Test placed budget reserve and GA reserve in same transaction; original prior-committed-budget guard correctly refused eight setups. Original STOP SQL receipt test also omitted required envelope fields. completed:true in this old report only means fixture body reached end, NOT a test-pass claim; actual TAP had 1 pass/10 fail. Final fixture corrects label to fixture_finished."
+    }
+  ],
+  "boundaries": [
+    "All new metadata/GA/GRR values are explicitly synthetic local SQL fixture inputs, not signatures or accepted control authority.",
+    "Non-null container, wrong Root/GA, changed counters, pending new budget, and eight effect-history operations are covered in pure semantic negatives; not each duplicated in PG.",
+    "No separate new stale-CAS PG test was run; original SQL CAS is unchanged and not re-labelled as new coverage.",
+    "Original real STOP inspector bytes sha2481ef are reused for exact ID/Pid/time regression; separate PG STOPPED row is synthetic administrator seeding, not a Docker STOP.",
+    "Unknown extra Evidence fields do not grant refund or automatic successor; tested rejection is actual changed counters/pending budget/current identity.",
+    "No runtime recovery endpoint admission, live SQL write, actual GRR issuance, PQUAL PASS, formal qualification or Gold access."
+  ],
+  "frozen_201_sources_changed": false,
+  "production_or_remote_db_actions": false
+}
