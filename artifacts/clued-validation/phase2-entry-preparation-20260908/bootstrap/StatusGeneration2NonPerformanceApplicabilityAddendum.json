@@ -1,0 +1,14 @@
+{
+  "state": "ACCEPTED_STATUS_GENERATION2_METADATA_ONLY_NONPERFORMANCE_APPLICABILITY",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "runtime_acceptance_sha256": "14b17464205a8ed2fbd9de7b8380f26beecf3d7b3bc6395d34b678dc685637d9",
+  "prior_applicability_sha256": "5ed0f7fd18cd156d51d2d96242d0bb7f3aab6882c5515005db77c3af9903d4c3",
+  "controller_digest": "0ff3e4bed5587805b69e5c9e1787d60b789d46c32a9c02ae20c8dfb899af98b2",
+  "scope_digest": "95da22160234d3e5b2b65451d97803efd6b8f3b67d8182ff7b2fee4dc5f20ebb",
+  "performance_slo_revision": "NOT_APPLICABLE_PREENTRY_NO_PERFORMANCE_QUALIFICATION",
+  "finding": "The accepted runtime successor changes only the exact Status signing-payload canonical digest. The actual 38 fixed GA fields, controller, scope, 600-second allocation and all original qualification oracle semantics are unchanged. The prior exact nonperformance applicability remains valid for this metadata successor; its original runtime reference is retained as historical provenance, not rewritten as a current binding.",
+  "evidence_rule": "Retain the complete original 98a applicability and 5ed0 successor bytes and bind this addendum as ordinary Evidence in the same final index/GRR chain. No new SLO object, authority purpose or measurement threshold is created.",
+  "entry_or_performance_qualification_granted": false,
+  "case_verdicts_created": false,
+  "authority_effect": "NONE"
+}

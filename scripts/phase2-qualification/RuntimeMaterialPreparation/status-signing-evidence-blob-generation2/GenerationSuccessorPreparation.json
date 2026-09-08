@@ -1,0 +1,60 @@
+{
+  "state": "UNSIGNED_STATUS_GENERATION2_METADATA_SUCCESSOR",
+  "authority_effect": "NONE",
+  "created_at": "2026-09-08T23:35:44.890Z",
+  "original_payload": {
+    "path": "work/kernel-phase2-repo/scripts/phase2-qualification/RuntimeMaterialPreparation/status-signing-evidence-blob/StatusSigningPayload.json",
+    "sha256": "d034f7a0c736d0b8ac3b4af17c79c812d76c1e4f180f4f6f9ac5347e1e4c7bf7",
+    "canonical_sha256": "915e11c7d4033b22e6b16450c12a9a2f989b341bc7d3535582ac486ed15b2ee2"
+  },
+  "successor": {
+    "status_manifest_id": "sm_602e5efb56f14cc68e8ad82651c01b77",
+    "generation": 2,
+    "canonical_payload_sha256": "28fd87bc2f08c40fcc828ff15f250f91b4246abc9fbd0a3e97663a699da8a360",
+    "files": [
+      {
+        "path": "work/kernel-phase2-repo/scripts/phase2-qualification/RuntimeMaterialPreparation/status-signing-evidence-blob-generation2/StatusSigningPayload.json",
+        "sha256": "f1a32e3714c3c338df81d77ad062dc3e271ff904b8dbf23974ed3be55beec853",
+        "bytes": 6982
+      },
+      {
+        "path": "work/kernel-phase2-repo/scripts/phase2-qualification/RuntimeMaterialPreparation/status-signing-evidence-blob-generation2/SigningPreparation.json",
+        "sha256": "db2e08c6ef88b2c9ddcb627b2f94200ac85eaa285b32698a2fc7e3e8a82a4fcd",
+        "bytes": 762
+      }
+    ]
+  },
+  "payload_changed_fields": [
+    "status_manifest_id",
+    "generation"
+  ],
+  "configuration_observation": {
+    "path": "work/kernel-phase2-repo/scripts/phase2-qualification/RuntimeMaterialPreparation/status-signing-evidence-blob/ConfigurationObservation.json",
+    "sha256": "9a88b7cfb5c87af68a669ad5dddf3e57c0a8e9aabae76110a0603bf1d0ebd51a",
+    "copied": false,
+    "unchanged": true
+  },
+  "actual_generation1_evidence": {
+    "path": "work/pr32-forward-failed-readback.json",
+    "sha256": "681cb2641d36b6cce09b1ad33dc2862bd3cad8e902f764942ccba94d18e10706",
+    "observed_at": "2026-09-08 23:33:12.828718+00",
+    "stored_uri": "control://status-manifests/sm_35f497a51306436e80d13ce8341f4987",
+    "stored_sha256": "54eb2b0614222644bf184e40fa9b68f075c26272d925dad02070cc0b5dd19c07",
+    "stored_generation": 1,
+    "current_sequence": 9,
+    "charged_seconds": 2706,
+    "charged_evidence_bytes": 590982067
+  },
+  "checks": {
+    "exact_original_payload": true,
+    "only_two_payload_fields_changed": true,
+    "canonical_matches_original_algorithm": true,
+    "root_generation_unchanged": true,
+    "all_other_payload_fields_unchanged": true,
+    "write_readback_exact": true
+  },
+  "publication_claimed": false,
+  "signature_created": false,
+  "sql_executed": false,
+  "ga_created": false
+}

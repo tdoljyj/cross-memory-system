@@ -1,0 +1,44 @@
+{
+  "state": "PR32_STATUS_GENERATION_COLLISION_REVIEW_FINDING_PRIOR_TRANSACTION_ACCEPTANCE_WITHDRAWN",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "observed_at": "2026-09-08 23:34:32.915337+00",
+  "withdrawn_transaction_sha256": "80011d856f01d2186301306502473fa27601650df8de8fa3fb841bff7878c21d",
+  "superseded_acceptance_sha256": "37758c9ee67a66c3465a5b71a1319e9caada937a7f8ceebd3c5474ddc12963c5",
+  "root_cause": "The new Status object reused generation 1. The actual table uniquely constrains (root_id, object_type, generation), independently of its unique URI. The review checked a new URI but missed this second uniqueness condition.",
+  "reviewer_error_acknowledged": true,
+  "actual_constraint": {
+    "conname": "control_objects_root_id_object_type_generation_key",
+    "definition": "UNIQUE (root_id, object_type, generation)"
+  },
+  "independent_readback": {
+    "path": "work/pr32-forward-failed-independent-readback.json",
+    "sha256": "98fe5540a8e005fa3c3ee2566fab2e6f5ba8dad1ff93465b7aba40818c0ff50b",
+    "all_original_fields_equal_except_observation_clock": true,
+    "root_preserved": true,
+    "sequence": 9,
+    "events": 9,
+    "stored_status": 1,
+    "functions": 15,
+    "tables": 8,
+    "two_blocked_receipts_preserved": true,
+    "active_ga_id": null,
+    "pending_budget_sequence": null,
+    "charged_seconds": 2706,
+    "charged_evidence_bytes": 590982067
+  },
+  "accepted_correction_boundary": {
+    "status_object_generation": 2,
+    "new_status_id_and_actual_signing_payload_required": true,
+    "runtime_acceptance_explicit_successor_required": true,
+    "runtime_change": "Bind the new exact Status signing-payload canonical digest under the same existing status_manifest_ref field policy; preserve every unrelated accepted field.",
+    "root_generation_unchanged": true,
+    "controller_218_source_unchanged": true,
+    "scope_qualification_profile_and_three_control_generations_unchanged": true,
+    "late_bound_field_set_unchanged": true,
+    "no_new_authority_or_ga_or_budget": true,
+    "final_new_payload_runtime_signature_and_transaction_require_exact_review": true,
+    "new_transaction_guard": "Before mutation, check both Status URI absence and absence of the exact root_id/object_type/generation tuple, in addition to the complete locked preimage."
+  },
+  "history_discipline": "Preserve the old signed Status, runtime 32512, canonical 915e, failed transaction and original review bytes. Do not retry transaction 80011. No claimed forward registration or new Status row exists.",
+  "authority_effect": "EXACT_CORRECTION_PREPARATION_ONLY"
+}
