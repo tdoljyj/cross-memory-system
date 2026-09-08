@@ -1,0 +1,81 @@
+{
+  "state": "EXACT_LOCAL_CLOSURE_BOUND_PENDING_INDEPENDENT_REVIEW",
+  "definitions": {
+    "host_runtime_config": {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions/HostRuntimeConfig.json",
+      "sha256": "63851834dccf34cf33dfeee09fb9b3b06077bcb68aad04e6a3d4114842342f9a",
+      "bytes": 4613
+    },
+    "evidence_sink": {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions/EvidenceSinkDefinition.json",
+      "sha256": "2d633acc1665ae406a322d6edd9c0f546206fbfe6c250a71765f841227bc7394",
+      "bytes": 1699
+    },
+    "scope": {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions/ExecutionScopeDefinition.json",
+      "sha256": "bf80e4464b1c299344a4a569d3598d7f8c6c37e5de7c957d4f27901d3193048f",
+      "bytes": 7039
+    },
+    "binding": {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions/ControlBindingDefinition.json",
+      "sha256": "75a01e49d64363bc4f09f65130e43a861b82a9ffd32066942fe80e2c2ba38e63",
+      "bytes": 2268
+    }
+  },
+  "field_values": {
+    "host_runtime_config_digest": "63851834dccf34cf33dfeee09fb9b3b06077bcb68aad04e6a3d4114842342f9a",
+    "allowed_read_set": [
+      "/driver/SKILL.md",
+      "/driver/references/engineering.md",
+      "/driver/references/memory-operations.md",
+      "/driver/fixed_skill_fixture.py",
+      "/proc/self/status",
+      "/sys/class/net",
+      "host:exact ControllerSourceManifest files and accepted immutable input/ref bytes",
+      "host:existing fixed authenticated GitHub source/signature read interface for tdoljyj/cross-memory-system",
+      "host:existing trusted Supabase fixed clued_control current/read_execution/read_execution_event interfaces for uscrdifznmlvczcekqpw",
+      "host:exact Docker image and this attempt container inspection",
+      "host:preentry-parent/work/<nonce>/ exact retained local evidence and fixed empty Docker config"
+    ],
+    "allowed_write_set": [
+      "/allowed/fixture.json",
+      "host:preentry-parent/work/<nonce>/ fixed source staging and CreateNew local Intent/output/STOP evidence",
+      "host:Docker create/start/stop/wait for the one fixed synthetic container; mutation always uses exact observed ID after create",
+      "host:clued_control immutable execution_events and exact current/gate_attempts transitions through accepted fixed functions only",
+      "host:fixed private auxiliary signature commitment path for this exact GA/GRR through accepted Owner channel"
+    ],
+    "forbidden_actions": [
+      "production or business Canon mutation",
+      "business credential/token issuance or export",
+      "real user payload or private Gold read",
+      "real model or paid action",
+      "arbitrary command, executable, environment, mount or target",
+      "candidate Skill self-qualification or authority assertion",
+      "PQUAL-18 post-Entry positive or any Entry/RC/production grant",
+      "Root/Owner/issuer purpose expansion or old pins rewrite",
+      "automatic UNKNOWN redispatch, capacity release or budget refund",
+      "container/image/volume removal or evidence deletion"
+    ],
+    "scope_digest": "bf80e4464b1c299344a4a569d3598d7f8c6c37e5de7c957d4f27901d3193048f",
+    "dominant_role": "TEST_CONTROLLER",
+    "upstream_gate_result_receipt_refs": [],
+    "authority_source_ref": {
+      "uri": "urn:clued:control-trust-root-set:uscrdifznmlvczcekqpw:ctr_414bd3c724264a83894b0c55cf2ab878",
+      "sha256": "fa58df2b1a7572848c288dc862767a4a9983d42696d50dbc4064af7275cec328"
+    }
+  },
+  "authority_reference_observation": {
+    "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions/AuthorityReferenceObservation.json",
+    "sha256": "a290275abc10fd3f58d290673120105583e5b23765ca4e149049579b41f5a61c",
+    "bytes": 1103
+  },
+  "fixed_controller_digest": "2dedbf340a171da8e91b6b60f55bade95ff6ac6b416a286b1cde637c80789c10",
+  "reference_fields_require_actual_publication": [
+    "scope_ref",
+    "binding_ref",
+    "evidence_sink_ref"
+  ],
+  "authority_effect": "NONE",
+  "accepted": false,
+  "executable": false
+}

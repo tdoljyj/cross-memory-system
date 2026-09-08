@@ -1,0 +1,100 @@
+{
+  "schema_version": 1,
+  "state": "ACCEPTED_EXACT_HOST_SCOPE_AND_INPUT_DEFINITIONS",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "preparation_evidence": {
+    "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-runtime600-final/PreparationEvidence.json",
+    "sha256": "8f4dd4daa643ce684ac5c178f9c3fa710689d85eba3ce06276ab7fab4ade772b",
+    "bytes": 7081
+  },
+  "controller_digest": "edf31377656e1a9a473d0095df72231c058266007e4fd4046e0a9b8c2d6a60d9",
+  "controller_source_review": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/Controller600SourceClosureIndependentReview.json",
+    "sha256": "16457eed5003a940c7750f1f2514c69784faa33e5a3266d41928e15db2af1b63",
+    "bytes": 4465
+  },
+  "accepted_objects": [
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-runtime600-final/HostRuntimeConfig.json",
+      "sha256": "967a842b4dcb2dc8fadd1a62ae05231ab313eda1b1d74f34025306568a706587",
+      "bytes": 4635
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-runtime600-final/EvidenceSinkDefinition.json",
+      "sha256": "c96c25a932b3fc93bb0ee6310ab3f8d58915ed7387bd9189ff08bf5a196abedd",
+      "bytes": 1967
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-runtime600-final/ExecutionScopeDefinition.json",
+      "sha256": "07cd9c900eb6132e2affe3b7e6b129aba659ff3a49c963e141e92e11b65e8d6f",
+      "bytes": 13280
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-runtime600-final/ControlBindingDefinition.json",
+      "sha256": "7bf4b5925793cfc1b3de438d24b7632292ecc92d74ff1e1358e140ac533c751a",
+      "bytes": 2303
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-runtime600-final/StopPolicyDefinition.json",
+      "sha256": "5a96306bae4af3d27694abc5533510301ae968a81b9995d8283ba3b4204e1dd5",
+      "bytes": 971
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-runtime600-final/RecoveryBoundaryDefinition.json",
+      "sha256": "cc67aeb4a35c998bb103c62be52dd00c6507bccba4c374af4bee6d27b412263a",
+      "bytes": 896
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-runtime600-final/ScopedRiskManifest.json",
+      "sha256": "2ef3b21b3e65084987308e5fa0b8286a67dfedb993cb96e977d1d0c52fe02b98",
+      "bytes": 2134
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-runtime600-final/HistoricalComponentBindingsCandidate.json",
+      "sha256": "9a3a8b21d882b98158e16749420cfacf8b9c74a81d8a45fbaea3670d15575f03",
+      "bytes": 11919
+    }
+  ],
+  "scope_digest": "07cd9c900eb6132e2affe3b7e6b129aba659ff3a49c963e141e92e11b65e8d6f",
+  "input_successor_actual_changed_paths": {
+    "stop": [
+      "/deadline_limit_seconds",
+      "/source_path",
+      "/source_sha256"
+    ],
+    "recovery": [
+      "/stop_policy_ref/uri",
+      "/stop_policy_ref/sha256"
+    ],
+    "risk": [
+      "/recovery_ref/uri",
+      "/recovery_ref/sha256"
+    ]
+  },
+  "accepted_scope": {
+    "purpose": "SKILL_COEXISTENCE_QUALIFICATION",
+    "environment": "ISOLATED_TEST",
+    "dominant_role": "TEST_CONTROLLER",
+    "per_allocation_seconds": 600,
+    "aggregate_seconds_max": 7200,
+    "aggregate_evidence_bytes_max": 1073741824,
+    "active_slots": 1,
+    "paid_actions": 0,
+    "model_actions": 0,
+    "production_actions": 0,
+    "formal_pg_execution": false
+  },
+  "checks": {
+    "all_20_source_hashes_and_sizes_matched": true,
+    "exact_controller_host_scope_binding_direction": true,
+    "write_rules_equal_actual_enforcing_module": true,
+    "original_five_unchanged_input_refs_reused": true,
+    "historical_evidence_ref_does_not_authorize_reexecution": true,
+    "prior_accounting_is_explicit_conservative_input_not_live_claim": true
+  },
+  "limits": [
+    "This accepts concrete definitions, not the unresolved source_ref, a Status instance, runtime acceptance or GA.",
+    "Actual source publication, scoped controller qualification and the original Status signing payload must be truthfully bound before final runtime activation."
+  ],
+  "authority_effect": "NONE"
+}

@@ -1,0 +1,168 @@
+{
+  "kind": "ACTUAL_PRIVATE_RUNTIME_EMPTY_INSTALL_OBSERVATION",
+  "state": "INSTALLED_EMPTY_STORAGE_ONLY_NOT_RUNTIME_QUALIFIED",
+  "project_ref": "uscrdifznmlvczcekqpw",
+  "migration_name": "phase2_private_runtime_committed_budget_20260908",
+  "exact_installer_sha256": "8f732dd4013a18adde33a254631cdd5a04022f300d4c0a13d05dffbf36f97285",
+  "independent_install_acceptance_sha256": "d4bc8eefa274efdf3c996df9dd5d06e57f4458442412089776b91fc025c733b7",
+  "actual_migration_response": {
+    "success": true
+  },
+  "preflight_at": "2026-09-08 15:50:18.933481+00",
+  "readback_at": "2026-09-08 16:08:51.746902+00",
+  "transaction_guards": [
+    "Exact existing full Root jsonb before and after while current_head is locked",
+    "Five new tables absent before CREATE",
+    "Five new tables empty and RLS before commit"
+  ],
+  "counts": {
+    "gate_attempts": 0,
+    "control_objects": 0,
+    "execution_events": 0,
+    "execution_binding": 0,
+    "execution_current": 0
+  },
+  "read_execution": null,
+  "root_generation": "ctrgen_dd30fbc7e0ba43fa8ba9f734867bcf12",
+  "root_sequence": 2,
+  "complete_root_unchanged": true,
+  "old_tables_functions_and_acl_unchanged": true,
+  "table_metadata": [
+    {
+      "acl": "{postgres=arwdDxtm/postgres}",
+      "rls": true,
+      "name": "accepted_binding"
+    },
+    {
+      "acl": "{postgres=arwdDxtm/postgres}",
+      "rls": true,
+      "name": "control_objects"
+    },
+    {
+      "acl": "{postgres=arwdDxtm/postgres}",
+      "rls": true,
+      "name": "current_head"
+    },
+    {
+      "acl": "{postgres=arwdDxtm/postgres}",
+      "rls": true,
+      "name": "events"
+    },
+    {
+      "acl": "{postgres=arwdDxtm/postgres}",
+      "rls": true,
+      "name": "execution_binding"
+    },
+    {
+      "acl": "{postgres=arwdDxtm/postgres}",
+      "rls": true,
+      "name": "execution_current"
+    },
+    {
+      "acl": "{postgres=arwdDxtm/postgres}",
+      "rls": true,
+      "name": "execution_events"
+    },
+    {
+      "acl": "{postgres=arwdDxtm/postgres}",
+      "rls": true,
+      "name": "gate_attempts"
+    }
+  ],
+  "function_metadata": [
+    {
+      "acl": "{postgres=X/postgres,service_role=X/postgres}",
+      "name": "append_event",
+      "sha256": "deab3678f32d8e89821cd04689d4957bcd4b5b220142b9024492ff786168d909",
+      "arguments": "p jsonb"
+    },
+    {
+      "acl": "{postgres=X/postgres,service_role=X/postgres}",
+      "name": "append_status_manifest",
+      "sha256": "e57105e5ae0098852941923b2d3e129fbf3dc0e24828998588e645467a13f6fc",
+      "arguments": "p_raw text, p_sha text"
+    },
+    {
+      "acl": "{postgres=X/postgres,service_role=X/postgres}",
+      "name": "commit_gate_result",
+      "sha256": "705915e4c9b930a5d03bfc37fd1b4e690b9f7817f9f6c8dbaeb856742d9067e3",
+      "arguments": "p_raw text, p_sha text, p_decision_sha text"
+    },
+    {
+      "acl": "{postgres=X/postgres}",
+      "name": "deny_mutation",
+      "sha256": "c38b11d91bcc6e6ce0c25b3d2636158a9fbbccbe92093a08d74f72302d0ca92c",
+      "arguments": ""
+    },
+    {
+      "acl": "{postgres=X/postgres,service_role=X/postgres}",
+      "name": "dispatch_recorded_intent",
+      "sha256": "843d423dde2b6cd469f05f89b6197eb338e966a8ec0c7d3fd3c3269b7343a681",
+      "arguments": "p_ga text, p_operation text, p_key text, p_intent_sequence bigint, p_sha text"
+    },
+    {
+      "acl": "{postgres=X/postgres,service_role=X/postgres}",
+      "name": "execution_transition",
+      "sha256": "e75e18bbe3c7ed3125aba7b7b2c5db95e23b8022cd05b5bf0e818440becbca88",
+      "arguments": "p jsonb"
+    },
+    {
+      "acl": "{postgres=X/postgres}",
+      "name": "guard_gate_bytes",
+      "sha256": "e6644adad3ea6233cb6705e650058b7007e5502b8e037fbf5f973957de620ba9",
+      "arguments": ""
+    },
+    {
+      "acl": "{postgres=X/postgres,service_role=X/postgres}",
+      "name": "read_execution",
+      "sha256": "6322ba2c573991f6d355eb0dbe2e81478bc6012f4fd05355508f20e36038879e",
+      "arguments": ""
+    },
+    {
+      "acl": "{postgres=X/postgres,service_role=X/postgres}",
+      "name": "read_execution_event",
+      "sha256": "c32313e1025916b90d2c10f2bc7c7fe8fdd059822231b3bcef54082f83a22ac6",
+      "arguments": "p_sequence bigint"
+    },
+    {
+      "acl": "{postgres=X/postgres,service_role=X/postgres}",
+      "name": "read_root",
+      "sha256": "e1f496ad7e43ba08eca97c4e2cfa13a162660ae90d6628aac16af9c2c26cc47c",
+      "arguments": "p_root_id text"
+    },
+    {
+      "acl": "{postgres=X/postgres,service_role=X/postgres}",
+      "name": "record_effect_intent",
+      "sha256": "8b23ccd60b861f38e48d740b87ae3bb288bc9ac69619fbbb7ccc5610d5fb5bf1",
+      "arguments": "p_ga text, p_key text, p_body jsonb"
+    },
+    {
+      "acl": "{postgres=X/postgres,service_role=X/postgres}",
+      "name": "reserve_execution_budget",
+      "sha256": "303ccfe7d2f3aac38a406392deb002a8caa454d1011a36161963e99ce8c501ce",
+      "arguments": "p_raw text, p_sha text"
+    },
+    {
+      "acl": "{postgres=X/postgres,service_role=X/postgres}",
+      "name": "reserve_gate",
+      "sha256": "f7720f72c9ba21eb5c25f39201ec93198c78eb362c8f39f3f4fed37580b505be",
+      "arguments": "p_raw text, p_sha text"
+    },
+    {
+      "acl": "{postgres=X/postgres,service_role=X/postgres}",
+      "name": "rotate_execution_generation",
+      "sha256": "aa77059377a0bc83042dbf75d82f36c29cd736178fb34a3b573da7819fa050d4",
+      "arguments": "p jsonb"
+    }
+  ],
+  "private_raw_before_sha256": "0696ee22cbeb6a69c503a02839288216020b6c7f0c3fb5b2351e89e8492df57b",
+  "private_raw_after_sha256": "cd49bd824e308574eddabde496d96d238e516184680fcd7e2df960f606e50636",
+  "independent_live_verification": "PENDING_SEPARATE_RESULT",
+  "execution_binding_seeded": false,
+  "budget_reserved": false,
+  "status_issued": false,
+  "ga_issued": false,
+  "controller_qualified": false,
+  "production_touched": false,
+  "authority_effect": "NONE"
+}

@@ -1,2 +1,9 @@
 * text eol=lf
 *.png binary
+
+# Preserve the exact independently reviewed bytes of these frozen evidence files.
+artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/ExistingR05R06SourceMapping.json -text
+artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/PrivateRuntimeActualEmptyInstallation.json -text
+artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/parent-exit-observation-20260908/Closeout.json -text
+artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/parent-exit-observation-20260908/RawScanClassification.json -text
+scripts/phase2-qualification/RuntimeMaterialPreparation/PreparedRuntimeGenerations.json -text

@@ -1,0 +1,42 @@
+{
+  "definition_state": "PREPARED_FOR_EXACT_INDEPENDENT_SCOPE_ACCEPTANCE",
+  "authority_effect": "NONE",
+  "controller_manifest_bound": true,
+  "controller_qualified": false,
+  "ga_issued": false,
+  "kind": "FIXED_CONTROL_BINDING_DEFINITION_NOT_BUSINESS_BINDING_RECEIPT",
+  "root_set_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+  "control_root_generation": "ctrgen_dd30fbc7e0ba43fa8ba9f734867bcf12",
+  "delegation_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/e7f738ae3c247e41733872ab95387440205c736a",
+    "sha256": "e09ef634712ce1206600402552073bae91e7296f2b4e2d3f99855bd760c944bd"
+  },
+  "actor": {
+    "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/input-definitions/ControlActorDefinition.json",
+    "sha256": "276df786fd7e5e9af9724fdcea6f03bb8661a005aeffeb40a0d6905ba8b4c807",
+    "bytes": 655
+  },
+  "subject": {
+    "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/input-definitions/SkillSubjectManifest.json",
+    "sha256": "f359a4ecc92ffeec93f3fac36949cfe1669bf017dd7cf4760220a2c3f9e8da1f",
+    "bytes": 1076
+  },
+  "controller_source_manifest": {
+    "path": "scripts/phase2-qualification/control-context-verifier-runtime180/ControllerSourceManifest.candidate.json",
+    "sha256": "2dedbf340a171da8e91b6b60f55bade95ff6ac6b416a286b1cde637c80789c10",
+    "bytes": 42114
+  },
+  "host_runtime_config": {
+    "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions/HostRuntimeConfig.json",
+    "sha256": "63851834dccf34cf33dfeee09fb9b3b06077bcb68aad04e6a3d4114842342f9a",
+    "bytes": 4613
+  },
+  "execution_scope": {
+    "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions/ExecutionScopeDefinition.json",
+    "sha256": "bf80e4464b1c299344a4a569d3598d7f8c6c37e5de7c957d4f27901d3193048f",
+    "bytes": 7039
+  },
+  "control_generation_rules": "Actual independently issued runner/credential/session values are freshly read and compared; no business Binding or epoch is created here",
+  "business_binding_layer": "NOT_APPLICABLE_ONLY_UNDER_ACCEPTED_FIXED_PROFILE",
+  "immutable_direction": "controller -> host config -> execution scope -> this control binding; no future qualification/Status/runtime hash is referenced"
+}

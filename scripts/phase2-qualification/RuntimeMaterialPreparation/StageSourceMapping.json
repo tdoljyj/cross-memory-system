@@ -1,0 +1,17 @@
+{
+  "state": "EXACT_EXISTING_PREREQUISITE_SOURCES_FOR_RUNTIME_MAPPING_REVIEW",
+  "authority_effect": "NONE",
+  "new_stage_receipts_issued": false,
+  "source_basis": "ReadinessAndGateCandidate R05/R06 mean Architecture Acceptance and Structure Freeze, not numbered old Step05/Step06. Existing R07-R10 decisions retain their original engineering scope/type.",
+  "publication_commit": "21bf9c073200d264feda31ee1f555db589ace8ed",
+  "publication_source": "Coordinator actual GitHub contents read at independently verified PR29 merge; R07-R10 additionally have their earlier exact independent signature reports.",
+  "stages": [
+    {"stage":"R05","original_object":"ArchitectureConstitutionAcceptanceDecision","path":"docs/execution-plans/phase2-structure-governance/ArchitectureConstitutionAcceptanceDecision_20260907.json","blob":"d911dbdfeec1bf0000c77da86597f6c6bd0969d5","sha256":"f2ec1d6cf3afbd80d415c65c7bc0f71d86d606bda9031a174d92517e421ac246"},
+    {"stage":"R06","original_object":"Phase2StructureFreezeDecision","path":"docs/execution-plans/phase2-structure-governance/Phase2StructureFreezeDecision_20260907.json","blob":"2c81fac919b2fe03b919609762af701a9d8bd62a","sha256":"f40c8af253f811f820e4b3eccc144d63ca3548663810aba10bebb22331661b36"},
+    {"stage":"R07","original_object":"R07R08IndependentAcceptance","path":"artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/R07R08IndependentAcceptance.json","blob":"31c4574a6a34e951f4d70cc8525ac3ff6cb59136","sha256":"eb25e99392049c28f198472fbca69df0e6d75fc9fc9d033d3aa250f3272105ea"},
+    {"stage":"R08","original_object":"R07R08IndependentAcceptance","path":"artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/R07R08IndependentAcceptance.json","blob":"31c4574a6a34e951f4d70cc8525ac3ff6cb59136","sha256":"eb25e99392049c28f198472fbca69df0e6d75fc9fc9d033d3aa250f3272105ea"},
+    {"stage":"R09","original_object":"R09IndependentFreezeDecision","path":"artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/R09IndependentFreezeDecision.json","blob":"040c393cda6090c9ac3c9f33b3e8568a40595837","sha256":"83814ca7d19173034d107da31bcd1456d34125bdafae6048fce00fa6f0907e25"},
+    {"stage":"R10","original_object":"R10IndependentProjectionAcceptance","path":"artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/R10IndependentProjectionAcceptance.json","blob":"6f13b5c4a8efcdee00072035bbbc32407e570f80","sha256":"e19261b718cad252c1881cd5559e2e65b115d475952f5dbcd8d9ebe0dc7250be"}
+  ],
+  "mapping_boundary": "R07 and R08 intentionally refer to the same actual combined decision; deduplicate fetched prerequisite materials by URI+SHA while retaining six ordered stage references. Final independent runtime applicability acceptance is separate from this source catalog."
+}

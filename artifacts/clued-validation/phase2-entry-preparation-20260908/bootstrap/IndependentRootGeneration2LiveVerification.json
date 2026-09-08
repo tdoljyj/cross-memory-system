@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "state": "INDEPENDENT_LIVE_FORWARD_ROOT_REGISTRATION_VERIFIED_NO_GATE_AUTHORITY",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "observed_at_utc": "2026-09-08T15:14:49.96888+00:00",
+  "target_project": "uscrdifznmlvczcekqpw",
+  "root_set_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+  "current_generation": "ctrgen_dd30fbc7e0ba43fa8ba9f734867bcf12",
+  "sequence": 2,
+  "table_counts": [
+    1,
+    2,
+    1
+  ],
+  "root_canonical_sha256": "fa58df2b1a7572848c288dc862767a4a9983d42696d50dbc4064af7275cec328",
+  "metadata_binding_sha256": "793aa13a245153c36a2806eb78dc9c3f677ddb8ad678b3afe5fe2f63a0c2e4fb",
+  "registration_recorded_at": "2026-09-08T15:13:14.185495+00:00",
+  "retained_previous_event_sha256": "67cc1c20d74563704c0812c17780fe6e277b7ef862fb82aaa46e4c495cbaaf9d",
+  "original_prior_event_exactly_retained": true,
+  "accepted_binding_all_16_fields_unchanged": true,
+  "current_root_exactly_matches_independently_accepted_signed_assembly": true,
+  "signature_evidence_sha256": "442051339642831694f2dd344ce77aad84a82b34dda5d711870de5dbe528c215",
+  "owner_merge_commit": "21bf9c073200d264feda31ee1f555db589ace8ed",
+  "original_table_security": [
+    {
+      "acl": "{postgres=arwdDxtm/postgres}",
+      "rls": true,
+      "table": "accepted_binding"
+    },
+    {
+      "acl": "{postgres=arwdDxtm/postgres}",
+      "rls": true,
+      "table": "current_head"
+    },
+    {
+      "acl": "{postgres=arwdDxtm/postgres}",
+      "rls": true,
+      "table": "events"
+    }
+  ],
+  "original_function_security": [
+    {
+      "acl": "{postgres=X/postgres,service_role=X/postgres}",
+      "name": "append_event",
+      "config": [
+        "search_path=\"\"",
+        "TimeZone=UTC"
+      ],
+      "definition_sha256": "deab3678f32d8e89821cd04689d4957bcd4b5b220142b9024492ff786168d909"
+    },
+    {
+      "acl": "{postgres=X/postgres,service_role=X/postgres}",
+      "name": "read_root",
+      "config": [
+        "search_path=\"\"",
+        "TimeZone=UTC"
+      ],
+      "definition_sha256": "e1f496ad7e43ba08eca97c4e2cfa13a162660ae90d6628aac16af9c2c26cc47c"
+    }
+  ],
+  "raw_observation_sha256": "0ef74942f31b44ff5b6dfd0403d44824c91c947396fe307d3c374a07546c15c8",
+  "raw_observation_location": "Task-local work/root2-registration/IndependentLiveReadback.json; live object body excluded from repository report.",
+  "verification_method": "One independent read-only Supabase SQL snapshot, typed Root reader, deep equality of full new Root/append request and retained old event, unchanged16 binding fields and original function hashes/ACL/RLS. No SQL writes or old tests executed.",
+  "authority_effect": "NONE",
+  "ga_issued_by_review": false,
+  "grr_issued_by_review": false,
+  "controller_qualified": false,
+  "registration_implies_gate_pass": false
+}

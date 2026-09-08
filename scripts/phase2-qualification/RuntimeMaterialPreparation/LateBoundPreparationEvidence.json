@@ -1,0 +1,40 @@
+{
+  "state": "NON_ISSUING_THREE_RESOLVER_PREPARATION",
+  "predecessor_evidence_sha256": "c2fd5ac580e75ed3471b27348313f0769339a7a4ace7e233241eb34242eaec88",
+  "coordinator_input_sha256": "ac23a301cbd09e378476b14612274bad9d49c86f09112b14f4d57d84f8030caa",
+  "files": [
+    {
+      "path": "scripts\\phase2-qualification\\RuntimeMaterialPreparation\\prepare-late-bound.mjs",
+      "sha256": "b2189b9e8ac513cfdc21fd6aa6ad5796f54d7e2172ef0762bff0e26f7cc2a3a7",
+      "bytes": 3592
+    },
+    {
+      "path": "scripts\\phase2-qualification\\RuntimeMaterialPreparation\\late-bound.test.mjs",
+      "sha256": "9e6a9c5b8ebe99356bf2bbabec5d3a4a79549a1d377bec8c1f13db29fac618d6",
+      "bytes": 1140
+    },
+    {
+      "path": "scripts\\phase2-qualification\\RuntimeMaterialPreparation\\PreparedLateBoundRuntime.json",
+      "sha256": "82444fd5109cb42f4f8f41a4b97b10dd9aad86f2b36639b2e2f59e99ca97f3aa",
+      "bytes": 27211
+    },
+    {
+      "path": "scripts\\phase2-qualification\\RuntimeMaterialPreparation\\LateBoundPreparation.md",
+      "sha256": "2383c16f242d8c5fd577231b48a7de34ccd7988ae59ccf55210bf97b0141c387",
+      "bytes": 2771
+    }
+  ],
+  "fixed_fields": 38,
+  "known_or_proposed_values": 21,
+  "unresolved_fixed_fields": 17,
+  "unresolved_status_policy_digest": true,
+  "tests": {
+    "passed": 2,
+    "failed": 0,
+    "duration_ms": 94.0147,
+    "scope": "new pure tests only"
+  },
+  "authority_effect": "NONE",
+  "accepted": false,
+  "executable": false
+}

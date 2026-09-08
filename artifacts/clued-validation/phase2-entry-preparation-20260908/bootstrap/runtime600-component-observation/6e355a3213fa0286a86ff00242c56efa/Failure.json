@@ -1,0 +1,10 @@
+{
+  "at": "2026-09-08T17:15:22.600Z",
+  "error": {
+    "message": "Expected values to be strictly equal:\n\n1 !== 0\n",
+    "stack": "AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n\n1 !== 0\n\n    at file:///C:/Users/Windows/Documents/Codex/2026-09-08/ia/work/kernel-phase2-repo/scripts/phase2-qualification/nonproduction-control-store/runtime-successor/runtime600-successor/targeted-component-evidence.mjs:46:37\n    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)"
+  },
+  "queries": [],
+  "completed": [],
+  "authority_effect": "NONE"
+}

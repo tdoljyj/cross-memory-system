@@ -1,0 +1,134 @@
+{
+  "kind": "ACTUAL_COMPONENT_ENGINEERING_OBSERVATION_INDEX",
+  "authority_effect": "NONE",
+  "outer_ga": null,
+  "pqual_pass_issued": false,
+  "original_started_at": "2026-09-08T17:20:43.629Z",
+  "original_ended_at": "2026-09-08T17:20:49.292Z",
+  "elapsed_ms": 5663,
+  "completed_cases": [
+    "PQUAL-11",
+    "PQUAL-17",
+    "PQUAL-16",
+    "PQUAL-13",
+    "PQUAL-15"
+  ],
+  "stopped": true,
+  "exact_sources": [
+    {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-08\\ia\\work\\kernel-phase2-repo\\scripts\\phase2-qualification\\nonproduction-control-store\\install.candidate.sql",
+      "sha256": "3cbbed94e1c9ef5fec4db281526ca69b9b30a24d2812b5a8bb5eb6bc728146fb",
+      "bytes": 8741
+    },
+    {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-08\\ia\\work\\kernel-phase2-repo\\scripts\\phase2-qualification\\nonproduction-control-store\\runtime-successor\\budget-reservation-successor\\install.candidate.sql",
+      "sha256": "8f732dd4013a18adde33a254631cdd5a04022f300d4c0a13d05dffbf36f97285",
+      "bytes": 40646
+    },
+    {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-08\\ia\\work\\kernel-phase2-repo\\scripts\\phase2-qualification\\nonproduction-control-store\\runtime-successor\\runtime600-successor\\alter.candidate.sql",
+      "sha256": "0ab15bbbc2f80421cb619b50de8816095359d9ffab1e96e372960c063bc80c9b",
+      "bytes": 12444
+    },
+    {
+      "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-08\\ia\\work\\kernel-phase2-repo\\scripts\\phase2-qualification\\nonproduction-control-store\\runtime-successor\\runtime600-successor\\targeted-component-evidence.mjs",
+      "sha256": "a835ad33baf5e0f40364732db7b0320c4371ed6f23c1d9d77d95a7ab96eb3e5a",
+      "bytes": 15420
+    }
+  ],
+  "raw_files": [
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/runtime600-component-observation/e666ffb671853b8cf0d61b6dcdf10b66/Intent.json",
+      "sha256": "dc9005419f0d91f1e37846f9570a6c2c4fdb9da64a2b4e4c23d73c067f90a17a",
+      "bytes": 2498,
+      "original_path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/runtime600-successor/work/e666ffb671853b8cf0d61b6dcdf10b66/Intent.json"
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/runtime600-component-observation/e666ffb671853b8cf0d61b6dcdf10b66/Initdb.json",
+      "sha256": "4d9d652a5687798bd43ea4e72620d85c8adc80e9c431885fb8c86b28189f4846",
+      "bytes": 1570,
+      "original_path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/runtime600-successor/work/e666ffb671853b8cf0d61b6dcdf10b66/Initdb.json"
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/runtime600-component-observation/e666ffb671853b8cf0d61b6dcdf10b66/PostgresStarted.json",
+      "sha256": "ddad9386f611cba9cd11ec7f84731d2420642dc21595af6cddf227a41e95578c",
+      "bytes": 1810,
+      "original_path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/runtime600-successor/work/e666ffb671853b8cf0d61b6dcdf10b66/PostgresStarted.json"
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/runtime600-component-observation/e666ffb671853b8cf0d61b6dcdf10b66/PQUAL-11.json",
+      "sha256": "7e97ba6cef1e9fedc9f23ca04106703df138b2ddf0b052bd5aaaeaa499406844",
+      "bytes": 21797,
+      "original_path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/runtime600-successor/work/e666ffb671853b8cf0d61b6dcdf10b66/PQUAL-11.json"
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/runtime600-component-observation/e666ffb671853b8cf0d61b6dcdf10b66/PQUAL-13.json",
+      "sha256": "b225070cae18287f6b50ffb7d6d647f98683f3e2a897f4d87f66795ad9eedaa5",
+      "bytes": 75430,
+      "original_path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/runtime600-successor/work/e666ffb671853b8cf0d61b6dcdf10b66/PQUAL-13.json"
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/runtime600-component-observation/e666ffb671853b8cf0d61b6dcdf10b66/PQUAL-15.json",
+      "sha256": "197b46a17dd3f16cb6d85df192f0a97bd3e4a6d81f5c7a3cbad4e8d933779e00",
+      "bytes": 65169,
+      "original_path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/runtime600-successor/work/e666ffb671853b8cf0d61b6dcdf10b66/PQUAL-15.json"
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/runtime600-component-observation/e666ffb671853b8cf0d61b6dcdf10b66/PQUAL-16.json",
+      "sha256": "539c6261cc1e7fbc58557c87cb7e997792c095c6170ed1673534179713f055ce",
+      "bytes": 108825,
+      "original_path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/runtime600-successor/work/e666ffb671853b8cf0d61b6dcdf10b66/PQUAL-16.json"
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/runtime600-component-observation/e666ffb671853b8cf0d61b6dcdf10b66/PQUAL-17.json",
+      "sha256": "da99f64dcf8e238bb8cd85cdc6ae13ee6c0d15d8508dbb53c92af63fa94486b5",
+      "bytes": 57906,
+      "original_path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/runtime600-successor/work/e666ffb671853b8cf0d61b6dcdf10b66/PQUAL-17.json"
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/runtime600-component-observation/e666ffb671853b8cf0d61b6dcdf10b66/Stop.json",
+      "sha256": "f6ec0352b5e18e6e93eaf886c8d6a56ec82f8b31c0c51457e32e37486f415af8",
+      "bytes": 131,
+      "original_path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/runtime600-successor/work/e666ffb671853b8cf0d61b6dcdf10b66/Stop.json"
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/runtime600-component-observation/e666ffb671853b8cf0d61b6dcdf10b66/Result.json",
+      "sha256": "48996888986b681abd65017907affdb09e4e32abe5ae60fbda9d0b4f59783273",
+      "bytes": 3836,
+      "original_path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/runtime600-successor/work/e666ffb671853b8cf0d61b6dcdf10b66/Result.json"
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/runtime600-component-observation/6e355a3213fa0286a86ff00242c56efa/Intent.json",
+      "sha256": "ae4264e2d6a96bc99b47a2cde8275da46e851ab17d6d20bfa5b532c87d1cf3ef",
+      "bytes": 2498,
+      "original_path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/runtime600-successor/work/6e355a3213fa0286a86ff00242c56efa/Intent.json"
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/runtime600-component-observation/6e355a3213fa0286a86ff00242c56efa/Initdb.json",
+      "sha256": "089a7bbf0e631c9c8cd2fe65662d6b1a3673d3cf12a5ba0483ee9498913dca39",
+      "bytes": 614,
+      "original_path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/runtime600-successor/work/6e355a3213fa0286a86ff00242c56efa/Initdb.json"
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/runtime600-component-observation/6e355a3213fa0286a86ff00242c56efa/Failure.json",
+      "sha256": "68d20a8f2abdcec062a92540f99a76160179238c8f4afa6df1f1f4107a6db383",
+      "bytes": 595,
+      "original_path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/runtime600-successor/work/6e355a3213fa0286a86ff00242c56efa/Failure.json"
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/runtime600-component-observation/6e355a3213fa0286a86ff00242c56efa/Result.json",
+      "sha256": "fb698d21fae8f42921ec04b6a6e314d2f546a14b99903586601005f097cc8924",
+      "bytes": 1708,
+      "original_path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/runtime600-successor/work/6e355a3213fa0286a86ff00242c56efa/Result.json"
+    }
+  ],
+  "limitations": [
+    "Actual synthetic database control-state effects and two independent client connections; no real Root, token, Skill or Docker action.",
+    "Response-loss in PQUAL-16 is an explicit synthetic transport fault following actual committed CREATE_SENT; it is not a real network interruption.",
+    "PQUAL-17 uses an actual PostgreSQL read-only transaction failure and actual role DELETE denial; it is not host disk exhaustion.",
+    "PQUAL-15 preserves the original expired UNKNOWN reservation and rejects unsupported renewal; it does not implement a renewal authority.",
+    "The engineering process has bounded commands and exact normal cleanup; independent PostgreSQL parent-death cleanup is not claimed and no formal PG write entry is added.",
+    "The first initdb attempt failed before a server started. Only public Windows path spelling/drive environment was corrected; original failed evidence remains intact.",
+    "Future reuse must bind these original times, exact source bytes and raw observations as HISTORICAL_ACTUAL_COMPONENT_EVIDENCE_REVALIDATED, never as a new GA execution."
+  ]
+}

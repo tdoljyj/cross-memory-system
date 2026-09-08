@@ -1,0 +1,139 @@
+{
+  "kind": "EXACT_HOST_SCOPE600_PREPARATION",
+  "state": "PREPARED_FOR_INDEPENDENT_ACCEPTANCE",
+  "previous_preparation_sha256": "60877c1534716d575f49c8491ee2f964a5428d46abd4fc5e9b09be67ec1ec3c8",
+  "previous_two_checks_reused_not_rerun": true,
+  "authority_effect": "NONE",
+  "sources": [
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-runtime600-final/ArtifactReferencesCandidate.json",
+      "sha256": "05908282c47c0b51c529ef476ae6aacf29f3b887ead9b69b7d1da34c28f35a45",
+      "bytes": 8734
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-runtime600-final/AssembledHostScopeCandidate.json",
+      "sha256": "d48c75774a5de98ff49e313f38fb4abe0e0d2ab7edf94df3197a9ba7132f2361",
+      "bytes": 37260
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-runtime600-final/AuthorityReferenceObservation.json",
+      "sha256": "a290275abc10fd3f58d290673120105583e5b23765ca4e149049579b41f5a61c",
+      "bytes": 1103
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-runtime600-final/ControlBindingDefinition.json",
+      "sha256": "7bf4b5925793cfc1b3de438d24b7632292ecc92d74ff1e1358e140ac533c751a",
+      "bytes": 2303
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-runtime600-final/EvidenceSinkDefinition.json",
+      "sha256": "c96c25a932b3fc93bb0ee6310ab3f8d58915ed7387bd9189ff08bf5a196abedd",
+      "bytes": 1967
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-runtime600-final/ExecutionScopeDefinition.json",
+      "sha256": "07cd9c900eb6132e2affe3b7e6b129aba659ff3a49c963e141e92e11b65e8d6f",
+      "bytes": 13280
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-runtime600-final/HistoricalComponentBindingsCandidate.json",
+      "sha256": "9a3a8b21d882b98158e16749420cfacf8b9c74a81d8a45fbaea3670d15575f03",
+      "bytes": 11919
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-runtime600-final/HostRuntimeConfig.json",
+      "sha256": "967a842b4dcb2dc8fadd1a62ae05231ab313eda1b1d74f34025306568a706587",
+      "bytes": 4635
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-runtime600-final/HostScopeBindingsCandidate.json",
+      "sha256": "10fd0490cf9c1e3f1a2d5ef79f2dbe5a436be225d50b63e336c3e2aea3617ba5",
+      "bytes": 12273
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-runtime600-final/HostScopePreparation.json",
+      "sha256": "7552a3302671bb61d71ec001d2bc0e62f966c006992d2d022ab0f447e3d137f9",
+      "bytes": 4379
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-runtime600-final/InputDefinitionSuccessor.json",
+      "sha256": "0885411b753f8463bc211885e5967dd0f5a6bbc183bc12050750b1f1b08d85a9",
+      "bytes": 2998
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-runtime600-final/README.md",
+      "sha256": "c0a29428b565c29920df7f322aed6ccb9a8f4bc946a490e25145fbe75cac3076",
+      "bytes": 763
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-runtime600-final/RecoveryBoundaryDefinition.json",
+      "sha256": "cc67aeb4a35c998bb103c62be52dd00c6507bccba4c374af4bee6d27b412263a",
+      "bytes": 896
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-runtime600-final/RuntimeAcceptedSubjectCandidate.json",
+      "sha256": "9583507e741f891aa0db78689e542480cdb1818b058a27d9758bcaeb16d80a35",
+      "bytes": 28472
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-runtime600-final/ScopedRiskManifest.json",
+      "sha256": "2ef3b21b3e65084987308e5fa0b8286a67dfedb993cb96e977d1d0c52fe02b98",
+      "bytes": 2134
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-runtime600-final/StopPolicyDefinition.json",
+      "sha256": "5a96306bae4af3d27694abc5533510301ae968a81b9995d8283ba3b4204e1dd5",
+      "bytes": 971
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-runtime600-final/build.mjs",
+      "sha256": "7d1f0a1ace5b25fea1bb263e24cdceb8fef81a29e8641050392800ac88f12ed2",
+      "bytes": 25934
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-runtime600-final/definitions.test.mjs",
+      "sha256": "169f7102520941504674ddba31773eabd17bb135bb11324706ef2f0fcffe971b",
+      "bytes": 5612
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-runtime600-final/prepare-late600.mjs",
+      "sha256": "3dbdede3b91f1dc1bcfdcfa33a470f71ac0123b09188731c025390bb7836d307",
+      "bytes": 1849
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-runtime600-final/prepare600.mjs",
+      "sha256": "323c391753517f7e573cb3d615247680051af97ed9916b856c124df694328fdd",
+      "bytes": 13229
+    }
+  ],
+  "tests": {
+    "command": "node --test --test-name-pattern=\"final wrapper\" scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-runtime600-final/definitions.test.mjs",
+    "actual_passed": 1,
+    "failed": 0,
+    "skipped": 0,
+    "duration_ms": 56.637,
+    "mode": "PURE_METADATA_NO_NETWORK_PROCESS_OR_DATABASE"
+  },
+  "exact_controller_digest": "edf31377656e1a9a473d0095df72231c058266007e4fd4046e0a9b8c2d6a60d9",
+  "exact_gate_digest": "0b91f11a6f6c717483781f879ba66b58f18dd88be5bed17d6f24ca79e2ac2cba",
+  "exact_suite_digest": "1cda5e0fdad2d3afdf9760b983ca97c5012c8301dea661357e964106a00512fa",
+  "unresolved_fixed_fields": [
+    "source_ref",
+    "controller_qualification_ref"
+  ],
+  "pending_policy_input": "Actual root-created original Status signing payload SHA",
+  "changes": [
+    "Accepted Profile600 and closed 600-second runtime source set; no change to total 7200 seconds/1GiB/oneactive/Owner expiry.",
+    "STOP600 definition and source; Recovery changes only stop_ref; Risk changes only recovery_ref. The five unchanged coordinator definitions retain their original exact references.",
+    "Exact fixedWriteTargetRules imported from frozen verifier; completed test effects through STOPPED only, avoiding final GRR self-reference.",
+    "Historical actual component source/time/raw are read-only inputs; no PostgreSQL run phase, credential or write permission is introduced."
+  ],
+  "not_claimed": [
+    "Actual source publication",
+    "Independent controller qualification",
+    "Status issuance",
+    "Runtime acceptance",
+    "GA or PQUAL execution"
+  ],
+  "original_180_bytes_preserved": true
+}

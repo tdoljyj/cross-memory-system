@@ -1,0 +1,98 @@
+{
+  "schema_version": 1,
+  "state": "ACCEPTED_EXACT_ONCE_NONPRODUCTION_PARENT_EXIT_ENGINEERING_OBSERVATION",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "decided_at_utc": "2026-09-08T15:31:54.021Z",
+  "preparation_evidence": {
+    "path": "scripts/phase2-qualification/parent-loss-engineering-observation/PreparationEvidence.json",
+    "sha256": "74627aa3c637d322b6850c95ff9238229f8f3c04ed3be9ae354fb65d1036b828"
+  },
+  "accepted_files": [
+    {
+      "path": "scripts\\phase2-qualification\\parent-loss-engineering-observation\\observe.py",
+      "sha256": "8b3a405e6736d6334b02d93a7e10976c40d6b7804c93a446ecdb4d7c785638f5",
+      "bytes": 11126
+    },
+    {
+      "path": "scripts\\phase2-qualification\\parent-loss-engineering-observation\\test_observe.py",
+      "sha256": "54fa2d006f3efc010120784f2b507cf9356b9d9b2afa03f7a7728fe8df4259ae",
+      "bytes": 4126
+    },
+    {
+      "path": "scripts\\phase2-qualification\\parent-loss-engineering-observation\\README.md",
+      "sha256": "c4eb8df5b354621d00e0afba432b15a236c840139e022c30bad0ae92c4f05cb0",
+      "bytes": 4030
+    }
+  ],
+  "nonce": "bce1e6dc03104d59b068854a8c12d540",
+  "accepted_command": "C:/Users/Windows/AppData/Local/Programs/Python/Python312/python.exe -I -S -B -X utf8 scripts/phase2-qualification/parent-loss-engineering-observation/observe.py observe",
+  "scope": {
+    "purpose": "One prerequisite engineering observation of real parent exit and independent guard normal deadline STOP; not formal qualification execution.",
+    "request_type": "EngineeringObservationRequest",
+    "internal_ga_raw_field_is_not_authorization": true,
+    "probe_sha256": "2168145b42166b4de1ea470b4fd232549d661542761ffe279955d0ace5580523",
+    "host_source_sha256": "430445f80986ba99a6f9b149a5a73cffe88182b26b0574b9f83fcdcbf64e69b2",
+    "image_manifest_sha256": "285a71327884a4d50efbea30104473b0fa43ecefa499458899670ca30dae76e5",
+    "seconds": 90,
+    "stop_reserve_seconds": 30,
+    "start_command_seconds": 6,
+    "memory_bytes": 134217728,
+    "cpu": 0.5,
+    "pids": 16,
+    "mounts": [
+      "exact original probe file read-only",
+      "dedicated synthetic allowed directory read-write"
+    ],
+    "network": "none",
+    "user": "10001:10001",
+    "readonly_rootfs": true,
+    "model_actions": 0,
+    "paid_actions": 0,
+    "skill_trilogy_loaded": false,
+    "controlled_budget_after_reservation_upper_bound_seconds": 1500,
+    "evidence_maximum_new_bytes": 134217728,
+    "owner_expires_at": "2026-09-09T09:28:59Z"
+  },
+  "independent_checks": {
+    "three_files_sha_size_lf_match": true,
+    "nine_transitive_sources_verified_through_fixed_loader": true,
+    "new_readonly_checks": 5,
+    "all_Popen_forbidden_during_check": true,
+    "fixed_nonce_32hex": true,
+    "fixed_folder_absent_at_review": true,
+    "actual_derived_two_mount_argv_checked": true,
+    "actual_Owner_before_start_and_too_late_request_refusals": 2,
+    "no_docker_or_parent_or_guard_launched": true
+  },
+  "reused_implementation_checks": [
+    {
+      "command": "python -I -S -B test_observe.py",
+      "passed": 5,
+      "failed": 0,
+      "elapsed_seconds": 0.018,
+      "scope": "pure/mock only before added fixed Owner-window guard"
+    },
+    {
+      "command": "python -I -S -B test_observe.py ParentLossChecks.test_request_has_no_ga_or_signature_and_reserves_nonzero_history",
+      "passed": 1,
+      "failed": 0,
+      "elapsed_seconds": 0,
+      "scope": "changed request construction only after fixed Owner-window guard"
+    }
+  ],
+  "execution_requirements": [
+    "Root coordinator fresh-checks current cumulative reservations/bytes, no other active controlled execution and remaining actual Owner window before this exact once-only command. This report does not assert a fresh global active-container inventory.",
+    "Do not reuse or delete an existing reserved nonce folder. Any partial/unknown attempt retains its identity/evidence and cannot be automatically dispatched again.",
+    "Accept observation only when real parent Popen handle exited77 matching the persisted intent, live probe and guard were observed before exit, exact guard STOP raw record matches, and observer independently inspects the same container as stopped.",
+    "No normal parent STOP path may stand in for independent guard STOP. Guard is timed at deadline-30; this is not proof of immediate crash detection.",
+    "Preserve original evidence, stopped container and UNKNOWN for parent execution result. Observation success alone does not release capacity, issue GA/GRR or establish PQUAL/controller qualification.",
+    "Missing probe/guard/exit/STOP/final inspection or expired budget remains UNKNOWN, no automatic retry/removal. Root performs any subsequent exact safe reconciliation separately."
+  ],
+  "authorization_basis": "Existing explicitly approved nonproduction prerequisite engineering/bootstrap construction scope; no circular requirement to already qualify the controller in order to observe its safety guard. No new user permission or production authority inferred.",
+  "executed_by_assessor": false,
+  "controller_qualified": false,
+  "gate_pass": false,
+  "ga_issued": false,
+  "capacity_released": false,
+  "authority_effect": "NONE"
+}

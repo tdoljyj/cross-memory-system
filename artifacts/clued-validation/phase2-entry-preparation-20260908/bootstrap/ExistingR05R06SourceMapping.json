@@ -1,0 +1,29 @@
+{
+  "kind": "EXISTING_R05_R06_ENGINEERING_SOURCE_MAPPING",
+  "observed_at": "2026-09-08T15:49:16.624525+00:00",
+  "sources": [
+    {
+      "stage": "R05",
+      "path": "docs/execution-plans/phase2-structure-governance/ArchitectureConstitutionAcceptanceDecision_20260907.json",
+      "sha256": "f2ec1d6cf3afbd80d415c65c7bc0f71d86d606bda9031a174d92517e421ac246",
+      "git_blob_sha": "d911dbdfeec1bf0000c77da86597f6c6bd0969d5",
+      "bytes": 26611,
+      "publication_commit": "21bf9c073200d264feda31ee1f555db589ace8ed",
+      "actual_github_contents_metadata_observed": true,
+      "local_and_signed_commit_bytes_match": true,
+      "runtime_fresh_verification_required": true
+    },
+    {
+      "stage": "R06",
+      "path": "docs/execution-plans/phase2-structure-governance/Phase2StructureFreezeDecision_20260907.json",
+      "sha256": "f40c8af253f811f820e4b3eccc144d63ca3548663810aba10bebb22331661b36",
+      "git_blob_sha": "2c81fac919b2fe03b919609762af701a9d8bd62a",
+      "bytes": 8500,
+      "publication_commit": "21bf9c073200d264feda31ee1f555db589ace8ed",
+      "actual_github_contents_metadata_observed": true,
+      "local_and_signed_commit_bytes_match": true,
+      "runtime_fresh_verification_required": true
+    }
+  ],
+  "boundary": "Existing architecture acceptance and structure freeze source artifacts; not newly issued Kernel StageReceipts. Actual Owner PR29 signature already independently verified; source metadata located read-only at that exact tree. No stage re-review, new acceptance, authority or gate result."
+}

@@ -1,0 +1,50 @@
+{
+  "state": "CONFIRMED_CANDIDATE_OVERCONSTRAINT_WITH_SCOPED_CORRECTION",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "authority_effect": "NONE",
+  "candidate": {
+    "path": "scripts/phase2-qualification/control-context-verifier-runtime180/result-terminal.mjs",
+    "sha256": "47530bcdd1a75fe9c83a7974b427da4cb09a09076a1873dee0a3d84b7090e9f1",
+    "finding": "Every actual oracle assessment is required to pass verifyOwnerMergeArtifact after measurement, while PASS still requires the original 180-second GA to remain live."
+  },
+  "actual_read_only_github_observation": {
+    "repository": "tdoljyj/cross-memory-system",
+    "head": "9e1b333b890d8e88dde65ff3ac9c7ef9d4949fb8",
+    "endpoint": "repos/tdoljyj/cross-memory-system/commits/9e1b333b890d8e88dde65ff3ac9c7ef9d4949fb8/check-runs",
+    "checks": [
+      {"name":"public-mcp-gate-receipt","started_at":"2026-09-08T14:56:18Z","completed_at":"2026-09-08T15:02:05Z","duration_seconds":347,"conclusion":"success","job_url":"https://github.com/tdoljyj/cross-memory-system/actions/runs/34241497698/job/102112524422"},
+      {"name":"public-mcp-behavior","started_at":"2026-09-08T14:56:17Z","completed_at":"2026-09-08T15:01:52Z","duration_seconds":335,"conclusion":"success","job_url":"https://github.com/tdoljyj/cross-memory-system/actions/runs/34241497690/job/102112523382"},
+      {"name":"public-mcp-protocol","started_at":"2026-09-08T14:56:18Z","completed_at":"2026-09-08T14:58:12Z","duration_seconds":114,"conclusion":"success"},
+      {"name":"gitleaks","started_at":"2026-09-08T14:56:17Z","completed_at":"2026-09-08T14:57:06Z","duration_seconds":49,"conclusion":"success"},
+      {"name":"trivy","started_at":"2026-09-08T14:56:17Z","completed_at":"2026-09-08T14:56:54Z","duration_seconds":37,"conclusion":"success"}
+    ],
+    "conclusion": "The observed required-CI critical path alone exceeds 180 seconds. Batching all assessments into one PR does not remove this path. Future CI duration is not guaranteed; this is evidence against the proposed execution schedule, not a universal network timing theorem."
+  },
+  "exact_original_source": {
+    "member": "Clued_Kernel_Next_多厂商连续性与执行基础设施完整整合方案_v3.3.md",
+    "sha256": "f967fdf3e63028d29ed191160698726b5d707aaae63bd951f6ba2e8584936fec",
+    "independently_rehashed": true,
+    "lines": [3880,3885],
+    "rule": "GRR is appended after Gate verification stops, binds the unique GA, original Evidence Digest, actual writes, times, responsible person and independent reviewer. The dynamic GRR itself requires the accepted issuer purpose/signature/schema/audience/root generation/expiry/revocation. These clauses do not impose a separate Owner main PR signature on each raw oracle assessment."
+  },
+  "accepted_minimum_correction_scope": {
+    "raw_assessor": "/root/project_list_auth_fix",
+    "reviewer_delegation_ref": {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/e7f738ae3c247e41733872ab95387440205c736a",
+      "sha256": "e09ef634712ce1206600402552073bae91e7296f2b4e2d3f99855bd760c944bd"
+    },
+    "rule": "Retain real independent assessments made after observing the exact run. Bind their complete original bytes, original GA/test/oracle/result/observation references and reviewer identity in the existing immutable evidence index and reserved decision. The actual existing GATE_RESULT-purpose signature over the exact GRR binds that index/assessment digest chain and constitutes the issuer's adoption of those actual results. Raw assessments are evidence, not newly issued control objects or an additional signing purpose.",
+    "required_checks": [
+      "The trusted coordinator obtains the exact assessment from the designated independent assessor; candidate-generated text or a reviewer-name string alone is not an assessment.",
+      "All actual raw/hash/ref/index and independent-reviewer consistency checks remain; the existing Owner delegation is still independently verified.",
+      "The GRR itself still requires the actual accepted GATE_RESULT signature and fresh terminal admission, including exact stopped-container evidence and one reserved decision/CAS/readback.",
+      "Expired/revoked GA cannot produce PASS, and no hypothetical or pre-signed measurement is accepted.",
+      "Static code, schemas, controller qualification and runtime acceptance keep the normal signed Owner PR path."
+    ],
+    "new_issuer_or_root_or_store": false,
+    "new_user_permission_required": false,
+    "exact_implementation_acceptance_pending": true,
+    "runtime_completion_or_pqual_pass_claimed": false
+  },
+  "remaining_timing_boundary": "Removing the extra assessment PR eliminates the observed unavoidable CI delay for this schedule; it does not guarantee execution fits 180 seconds. Actual fixed API/SQL/host/review/signature elapsed time must still be measured, with expiry refusing PASS and UNKNOWN preserving unresolved effects."
+}

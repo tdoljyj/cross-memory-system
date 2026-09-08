@@ -1,0 +1,23 @@
+{
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "reviewed_at": "2026-09-08T15:46:43.291Z",
+  "state": "ACCEPTED_EXACT_RESTRICTED_HOST_PORT_FOR_CLOSED_TRUSTED_ENTRY_INTEGRATION",
+  "authority_effect": "NONE",
+  "controller_qualified": false,
+  "preparation_evidence_sha256": "73fe536f10a940f1a8d72458dd8cd67b4d7a8e07c53a6a2e8b140fdb2f18245a",
+  "source_sha256": "11e64259e075481d3311ebd6db7378d2d52e9f8cf537775b39051b3478ad0a7c",
+  "accepted_dependency_sha256": "430445f80986ba99a6f9b149a5a73cffe88182b26b0574b9f83fcdcbf64e69b2",
+  "review": [
+    "Bounded stdin exact field set and duplicate-key refusal; only CREATE/START/STOP/INSPECT, exact nonce/raw GA hash/container identity, no arbitrary command/path/environment input.",
+    "Exact accepted host hash verified before import. CREATE uses exclusive preparation; operation dispatch/result files are CreateNew. START arms independent guard before fixed start and inspects actual running state.",
+    "Returns actual observation plus times/guard identity only; local result remains non-authoritative, remote result not yet persisted, no capacity release or automatic retry.",
+    "This port intentionally does not verify GA authorization itself. Actual qualified trusted same-process entry must verify exact source closure and current signed authorization/committed Intent before invoking it."
+  ],
+  "reuse": {
+    "implementation_pure_mock_passed": 5,
+    "seconds": 0.001,
+    "not_rerun": true,
+    "real_host_guard_observation": "ParentExitEngineeringObservationIndependentResult.json"
+  },
+  "remaining": "Final trusted Node entry/source closure and actual runtime acceptance still required; this engineering acceptance cannot be used alone to dispatch."
+}

@@ -1,0 +1,83 @@
+{
+  "state": "ACCEPTED_EXACT_FIXED_HOST600_COMPONENT_SUCCESSOR",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "preparation_evidence": {
+    "path": "scripts/phase2-qualification/preentry-parent/runtime-successor/host-runtime600/PreparationEvidence.json",
+    "sha256": "ee875b4e61bc902e3ec560605bc002e013b69874b71a1820e22e2edf55e5a998"
+  },
+  "exact_files": [
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/runtime-successor/host-runtime600/README.md",
+      "sha256": "6f46f9c9a1ae127b092a65a64e97ae9666abd90735689367be6eecb416ad48c4",
+      "bytes": 818
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/runtime-successor/host-runtime600/build.mjs",
+      "sha256": "4cd30ae2e61236605a99b090286b27b6a805eb6b0f011508517c314343ca2c74",
+      "bytes": 2259
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/runtime-successor/host-runtime600/fixed_host.py",
+      "sha256": "cb444459f207037976200505593f96a2dd0b2e796438c62fc94206349f995e42",
+      "bytes": 14412
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/runtime-successor/host-runtime600/parent600.py",
+      "sha256": "065d64eb2c7b2f3471967f72fdd5b494a413a69d932bb351e705d43f3e6d85d6",
+      "bytes": 9429
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/runtime-successor/host-runtime600/test_window600.py",
+      "sha256": "2d951604fb9aaecb3e40eab45570712fb82a5e8dbdf1c7fe777564e15e2c56e6",
+      "bytes": 2464
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/runtime-successor/host-tool-bridge600/bridge.py",
+      "sha256": "0a8c5bc181efb0eab12b23cfd35f9e95064bb5f3fe40e0b07f8d8d4ba3fb2220",
+      "bytes": 5148
+    }
+  ],
+  "accepted_changes": [
+    "MAX_GA_SECONDS180->600 under already accepted Owner ceiling.",
+    "Exact parent600 dependency uses the same fixture primitive and fixed isolated argv, adds stdout flush, installs a SIGTERM normal-exit handler and bounded600-second wait so Running/STOP can be observed.",
+    "parent600 adjusts its own repository-relative base for the new fixed location.",
+    "Bridge600 changes only its fixed host directory and expected source hash."
+  ],
+  "actual_review": {
+    "six_sha_size_lf": true,
+    "full_host_and_parent_diffs_read": true,
+    "bridge_exact_two_substitutions_verified": true,
+    "reported_new_checks": {
+      "pass": 3,
+      "fail": 0,
+      "skip": 0,
+      "duration_seconds": 0.001,
+      "kind": "pure mocked host/window/literal program checks"
+    },
+    "old_tests_rerun": false,
+    "actual_docker_or_skill_run_by_this_review": false
+  },
+  "reused_actual_evidence": [
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/ParentExitEngineeringObservationIndependentResult.json",
+      "sha256": "014bfb0f435e645101d9cfd0626de3984953409a9476c94a2b65745ca21b57bc",
+      "applicability": "Actual original isolation and independent deadline STOP behavior, unchanged guard algorithm. Not a claim that new600 fixture behavior has already run."
+    }
+  ],
+  "preserved": [
+    "STOP reserve30seconds and START full6second margin checked before effects",
+    "Fixed Docker executable/local endpoint/image/nonroot/networknone/readonly/two mounts/resources",
+    "Exclusive local staging/Intent, exact container identity and retained UNKNOWN without retry or refund",
+    "Original Skill and fixture bytes; no model or credential crossing",
+    "Only exact trusted fresh admission may invoke the bridge"
+  ],
+  "conditions": [
+    "Final controller source closure must bind every actual imported dependency and this exact host/parent/bridge; this component does not authenticate caller JSON.",
+    "Actual independent Profile600 acceptance and real signed runtime/GA/current/budget prerequisites precede any Skill effect.",
+    "PQUAL01 must observe the actual new fixed fixture report/Running/STOP; pure mocked tests and prior90/180 observations do not constitute that result.",
+    "The wait is a maximum controlled scaffolding delay; coordinator may stop earlier and independent host deadline remains authoritative."
+  ],
+  "controller_qualification_issued": false,
+  "ga_or_grr_issued": false,
+  "authority_effect": "NONE"
+}

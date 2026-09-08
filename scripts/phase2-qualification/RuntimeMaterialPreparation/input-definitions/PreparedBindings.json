@@ -1,0 +1,76 @@
+{
+  "state": "PREPARED_PROPOSED_ENCODING_NOT_ACCEPTED",
+  "bindings": {
+    "repository_ref": {
+      "value": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/7298987da2b0b87987325daa9efff2e439ff14ec",
+        "sha256": "3033331775dc211f8ce7b1d11b6e7876c6ce3f84cf27cf37b1c8261fd4043a1f"
+      },
+      "provenance": {
+        "source": "scripts/phase2-qualification/RuntimeMaterialPreparation/input-definitions/RepositoryIdentity.json",
+        "sha256": "3033331775dc211f8ce7b1d11b6e7876c6ce3f84cf27cf37b1c8261fd4043a1f"
+      }
+    },
+    "actor_ref": {
+      "value": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/5e07bbc54b334bf195fe36aadb8cb497d1f11699",
+        "sha256": "276df786fd7e5e9af9724fdcea6f03bb8661a005aeffeb40a0d6905ba8b4c807"
+      },
+      "provenance": {
+        "source": "scripts/phase2-qualification/RuntimeMaterialPreparation/input-definitions/ControlActorDefinition.json",
+        "sha256": "276df786fd7e5e9af9724fdcea6f03bb8661a005aeffeb40a0d6905ba8b4c807"
+      }
+    },
+    "subject_ref": {
+      "value": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/2b5a89d354aae493ed4cd3fd89ee270e81207dd3",
+        "sha256": "f359a4ecc92ffeec93f3fac36949cfe1669bf017dd7cf4760220a2c3f9e8da1f"
+      },
+      "provenance": {
+        "source": "scripts/phase2-qualification/RuntimeMaterialPreparation/input-definitions/SkillSubjectManifest.json",
+        "sha256": "f359a4ecc92ffeec93f3fac36949cfe1669bf017dd7cf4760220a2c3f9e8da1f"
+      }
+    },
+    "candidate_skill_digest": {
+      "value": "f359a4ecc92ffeec93f3fac36949cfe1669bf017dd7cf4760220a2c3f9e8da1f",
+      "provenance": {
+        "source": "scripts/phase2-qualification/RuntimeMaterialPreparation/input-definitions/SkillSubjectManifest.json",
+        "sha256": "f359a4ecc92ffeec93f3fac36949cfe1669bf017dd7cf4760220a2c3f9e8da1f"
+      }
+    },
+    "credential_scope": {
+      "value": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/ba367aecfacebdb7cefcbafea979bade712f6fef",
+        "sha256": "905dbb512b2ed9605da90ee90ff78db190e1560204a2e8d84621ee621c9e834d"
+      },
+      "provenance": {
+        "source": "scripts/phase2-qualification/RuntimeMaterialPreparation/input-definitions/CredentialScopeDefinition.json",
+        "sha256": "905dbb512b2ed9605da90ee90ff78db190e1560204a2e8d84621ee621c9e834d"
+      }
+    },
+    "stop_policy_digest": {
+      "value": "ff69f6518567651db3a99057eee1ec2a572171d9e59a0397f93d5fcaa4c2d016",
+      "provenance": {
+        "source": "scripts/phase2-qualification/RuntimeMaterialPreparation/input-definitions/StopPolicyDefinition.json",
+        "sha256": "ff69f6518567651db3a99057eee1ec2a572171d9e59a0397f93d5fcaa4c2d016"
+      }
+    },
+    "rollback_point_ref": {
+      "value": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/f2d009828eed5b13aaac8f5764669fdadff28f7d",
+        "sha256": "aff99a0c74a7f8210fc7bf04164e1ad2b9723bec79b56acfdabb45f8437f3add"
+      },
+      "provenance": {
+        "source": "scripts/phase2-qualification/RuntimeMaterialPreparation/input-definitions/RecoveryBoundaryDefinition.json",
+        "sha256": "aff99a0c74a7f8210fc7bf04164e1ad2b9723bec79b56acfdabb45f8437f3add"
+      }
+    },
+    "release_risk_manifest_digest": {
+      "value": "fd26cba8a3969629769b16fb9aa8f491c0faf34220bc450d2e1c1d8ce1a31480",
+      "provenance": {
+        "source": "scripts/phase2-qualification/RuntimeMaterialPreparation/input-definitions/ScopedRiskManifest.json",
+        "sha256": "fd26cba8a3969629769b16fb9aa8f491c0faf34220bc450d2e1c1d8ce1a31480"
+      }
+    }
+  }
+}

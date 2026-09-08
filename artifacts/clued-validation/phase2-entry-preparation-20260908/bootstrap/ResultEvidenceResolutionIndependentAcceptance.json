@@ -1,0 +1,39 @@
+{
+  "state": "ACCEPTED_EXACT_ORIGINAL_EVIDENCE_INDEX_ENCODING_AND_INTEGRITY_RESOLVER",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "authority_effect": "NONE",
+  "controller_qualified": false,
+  "source": {
+    "path": "scripts/phase2-qualification/result-evidence-resolution/resolve.mjs",
+    "sha256": "9d7df85eea925f22f35fe81d1faef61288be43c1b20e7214205f662ffc2784cb",
+    "bytes": 8191
+  },
+  "preserved_predecessor_sha256": "dc9e7caec124af48aa12f45bddbe9d7d08c78fb8ca08d1844510e308925bad67",
+  "accepted_index_encoding": "EXACT_ORIGINAL_EVIDENCE_INDEX_V1",
+  "accepted_content_address_mapping": "urn:clued:execution-evidence:<root_id>:<sha256> resolves only exact reserved index bytes; not a new Store, Receipt family or historical wire literal.",
+  "scope": [
+    "Bind exact original GA raw, reserved decision/index raw SHA, actual test/fixture/executor/input revision identities and content addresses.",
+    "Resolve every original artifact raw, reject duplicate/conflicting/omitted artifacts and tests, cross-GA/test observations and changed original oracle hashes.",
+    "PASS integrity requires complete19 applicable test definitions, all test results PASS and no PQUAL18. This verifies bindings, not actual behavior.",
+    "Independent per-test assessments must cover exact observations/oracle/results and the delegated reviewer. Returned required_signed_assessments must be authenticated by the actual trusted signature path before final admission.",
+    "Actual source authenticity and behavior judgment remain the responsibility of independent assessment; a wrapper source hash is not proof that its claimed observation occurred."
+  ],
+  "actual_independent_check": {
+    "command": "node C:/Users/Windows/Documents/Codex/2026-09-08/ia/work/review-result-resolver-calendar.mjs",
+    "before": "Old dc9e accepted impossible February30 in an otherwise freshly rehashed complete synthetic index; this was an integrity-format gap, not a signed PASS.",
+    "after": "New9d7 rejects February30/non-leap February29/April31 and accepts2024 leap day; returned diagnostics remain not_final_receipt_admission.",
+    "old_eight_tests_not_rerun": true,
+    "network_or_effects": 0
+  },
+  "reused_implementation_tests": {
+    "passed": 8,
+    "duration_ms": 60.3082,
+    "source_sha256": "dc9e7caec124af48aa12f45bddbe9d7d08c78fb8ca08d1844510e308925bad67"
+  },
+  "remaining_final_checks": [
+    "Accepted complete GRR Schema and original Status/GA/root currentness, signature, expiry/revocation.",
+    "Actual delegated independent assessor identity and signed exact assessment bytes, not merely a different reference string.",
+    "Live unchanged decision reservation, real STOP when a child ran, then one terminal SQL CAS.",
+    "Exact accepted source-suite/controller/fixture closure; fixture or executor names alone are not source identity."
+  ]
+}

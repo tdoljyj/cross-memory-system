@@ -1,0 +1,16 @@
+{
+  "definition_state": "PREPARED_FOR_INDEPENDENT_SCOPE_ACCEPTANCE",
+  "authority_effect": "NONE",
+  "kind": "SCOPED_CONTROL_ACTOR_DEFINITION",
+  "coordinator": "/root",
+  "endpoint_identity": "Codex@DESK-W-591",
+  "delegating_owner_github_login": "tdoljyj",
+  "signing_service": "web-flow",
+  "delegation_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/e7f738ae3c247e41733872ab95387440205c736a",
+    "sha256": "e09ef634712ce1206600402552073bae91e7296f2b4e2d3f99855bd760c944bd"
+  },
+  "independent_assessor": "/root/project_list_auth_fix",
+  "is_service_credential": false,
+  "is_new_identity_registration": false
+}

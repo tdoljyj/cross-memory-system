@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "state": "ACCEPTED_EXACT_FIXED_OWNER_SIGNATURE_TRANSPORT_COMPONENT",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "source": {
+    "path": "scripts/phase2-qualification/scenario-observations/sign-exact-live-object.mjs",
+    "sha256": "6098d4f9c6f51edb9bd030537fbf54b08501f5ca8bbeb40169ff2fa767d5662e"
+  },
+  "review": [
+    "Fixed existing repository/private branch/two issuer purposes; exact accepted commitment and actual immutable commit/tree/blob verification are reused.",
+    "CreateNew fsynced reservation precedes a single expectedHead mutation. All acquired mutation response bytes and any valid observed commit are retained before errors are classified UNKNOWN.",
+    "Nonzero process exit and timeout cannot silently erase stdout containing a known commit; no retry or overwrite path is introduced.",
+    "This is the root-operated transport only. Actual current budget/decision and issuer admission are separate mandatory checks before use and at effect/result admission."
+  ],
+  "targeted_verification": {
+    "type": "isolated VM of actual source with injected filesystem/CLI ports",
+    "actual_github_calls": 0,
+    "actual_signatures": 0,
+    "cases": [
+      {
+        "mode": "graphql_error_with_commit",
+        "result": "PASS",
+        "only_one_mutation_attempt": true,
+        "raw_response_saved_before_unknown": true,
+        "known_commit_retained": true
+      },
+      {
+        "mode": "nonzero_stdout_with_commit",
+        "result": "PASS",
+        "only_one_mutation_attempt": true,
+        "raw_response_saved_before_unknown": true,
+        "known_commit_retained": true
+      },
+      {
+        "mode": "timeout_partial_stdout",
+        "result": "PASS",
+        "only_one_mutation_attempt": true,
+        "raw_response_saved_before_unknown": true,
+        "known_commit_retained": false
+      }
+    ]
+  },
+  "limitations": [
+    "No actual GraphQL mutation or valid signature result was produced by these synthetic transport checks.",
+    "Does not issue GA/GRR, register a root, accept the full controller, or establish live current authority."
+  ]
+}

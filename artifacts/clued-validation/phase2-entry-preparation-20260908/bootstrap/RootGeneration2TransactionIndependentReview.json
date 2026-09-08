@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "state": "ACCEPTED_EXACT_FORWARD_ROOT_APPEND_TRANSACTION_AFTER_INDEPENDENT_REMOTE_PROOF_READBACK",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "observed_at_utc": "2026-09-08T15:12:12.530Z",
+  "target_project": "uscrdifznmlvczcekqpw",
+  "accepted_sql": {
+    "path": "../root2-registration/AppendGeneration2.sql",
+    "sha256": "4f4bcb4e4e7426c6b1a0f3866e9dec5958ca263fd6823561dbd7f1a967bae922"
+  },
+  "proof_readback": {
+    "commit_sha": "353979472e620066264e1c381413ae38b6110613",
+    "tree_sha": "2de5fce23894f18a929910300a9682dd50b38591",
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/runtime-evidence/root-generation2-independent-20260908/result.json",
+    "blob_sha": "4e73936763064b405bd996f3521821b0446d9cdd",
+    "sha256": "442051339642831694f2dd344ce77aad84a82b34dda5d711870de5dbe528c215",
+    "bytes": 7045,
+    "complete_tree": true,
+    "independent_immutable_readback": true
+  },
+  "assembly": {
+    "accepted_helper_sha256": "f52f756a474f907ebb5adf01311be1670b63c8e9dbb6901ea92d7316d4623c93",
+    "exact_root_and_append_request_match": true,
+    "assembled_file_sha256": "ed0fc5de86f5f97c3b69e62fc4b98306fc3ff92c5017df56df8bb556ca518186"
+  },
+  "checks": [
+    "Exact SQL entire skeleton compared after independently parsing only the two JSON literals; no extra statements or binding/schema writes.",
+    "Lock the actual original current_head row before reading, require complete prior read_root JSON equality including history/current generation/metadata, then original append_event with sequence1/gen1 predecessor and unchanged metadata binding.",
+    "Original append_event retains its current Owner time/revocation and CAS checks; only new-generation append plus current head advance allowed.",
+    "Require newly APPENDED sequence2 before COMMIT; duplicate, changed history or any error aborts the transaction.",
+    "Fresh final readback after COMMIT does not mean replay permission if transport acknowledgment is lost. Unknown outcomes require read-only exact reconciliation, never automatic retry."
+  ],
+  "source_sha256": "8235ccd893f79f87812dffd8e62a20221f4e0d3ffa27edf0d8c933ba58e73f5d",
+  "permission_scope": "Existing specifically approved nonproduction forward root registration; no production, old binding, old generation mutation, new SQL schema, GA or GRR.",
+  "authority_effect": "NONE",
+  "root_registered_by_this_review": false,
+  "executed_sql": false
+}

@@ -1,0 +1,95 @@
+{
+  "kind": "ROOT_SIGNING_PAYLOAD_SIGNATURE_BINDING",
+  "status": "VERIFIED",
+  "observed_at": "2026-09-08T15:04:49.766692+00:00",
+  "repository": {
+    "full_name": "tdoljyj/cross-memory-system",
+    "private": true
+  },
+  "pr": {
+    "number": 29,
+    "url": "https://github.com/tdoljyj/cross-memory-system/pull/29",
+    "state": "MERGED",
+    "merged_by": "tdoljyj",
+    "merge_commit_sha": "21bf9c073200d264feda31ee1f555db589ace8ed"
+  },
+  "merge": {
+    "sha": "21bf9c073200d264feda31ee1f555db589ace8ed",
+    "verification": {
+      "verified": true,
+      "reason": "valid"
+    },
+    "committer_login": "web-flow",
+    "parents": [
+      "2a2c902fff6d1e68c40faf4f3695849c1b88ca6d",
+      "9e1b333b890d8e88dde65ff3ac9c7ef9d4949fb8"
+    ],
+    "tree": "22bc0f922130aaf9740adbceaa3d736894f51a25"
+  },
+  "payload": {
+    "artifact_path": "scripts/phase2-qualification/nonproduction-control-store/generation2/RootSigningPayload.json",
+    "blob_sha": "e56090d1fd1474fb0aa55071d7adc837eb90e6c1",
+    "file_sha256": "cbe469eab09d83596df3bdfffb5e7fac9252c8588806c2a843eb8bd8025ac9b0",
+    "payload_sha256": "6eb1a53c903c6f5843416455ab19150d11906dc4779fd0601f33c4d99c50820c",
+    "review_subject_sha256": "9dd122f398c7e281f9b6fdf0c772d0ee972569acfcb97119fc04867a5ce00c12"
+  },
+  "acceptance": {
+    "artifact_path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/ForwardRootGeneration2IndependentAcceptance.json",
+    "sha256": "a5e292ca64cdd4d39e176ef28a2dff3a3aeb8353ebe49a5fe5251ceab75d814a"
+  },
+  "source_readback": [
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/generation2/RootSigningPayload.json",
+      "sha256": "cbe469eab09d83596df3bdfffb5e7fac9252c8588806c2a843eb8bd8025ac9b0",
+      "blob_sha": "e56090d1fd1474fb0aa55071d7adc837eb90e6c1"
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/ForwardRootGeneration2IndependentAcceptance.json",
+      "sha256": "a5e292ca64cdd4d39e176ef28a2dff3a3aeb8353ebe49a5fe5251ceab75d814a",
+      "blob_sha": "ebb43ee4e2f31581f832c9eee0d8d0e020f92ee2"
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/Generation2DynamicIssuerPurposeIndependentAcceptance.json",
+      "sha256": "9f475e2c2eedc02e50a5438c80d89f625ed5aa0ef2465a0581e349a1e8caa16d",
+      "blob_sha": "c1f800d405010066371dfa401cee2544db22e25e"
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/Generation2StatusIssuerPurposeIndependentAcceptance.json",
+      "sha256": "23ca2fe807dd454d8037168531a1d05890be6fbb5575cd18e8e6482f2ef47b80",
+      "blob_sha": "c700d5b9fc6b9156ecd3cc77615856b9e0aedea9"
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/PreentryStaticGateRegistryIndependentAcceptance.json",
+      "sha256": "8835d8337b85b353853c9a67e1b6b8e40f250a7e664c296058d052c2340f56d8",
+      "blob_sha": "562d4f7e09f1bfcfd838bcfb6613f855db8a7c2e"
+    },
+    {
+      "path": "evals/kernel-next/preentry-skill-qualification.json",
+      "sha256": "cf4a57d0d367ea9946d663ce177bbe228c8399d8398e33dced4e5a3bb099db28",
+      "blob_sha": "37927d376ea4568be8c15fa0dde9464b7c59d781"
+    },
+    {
+      "path": "evals/kernel-next/preentry-skill-qualification.registry.json",
+      "sha256": "7a6571e4c23d6ffa84df98e29bb757f7d0531b289e07b7882993e4172e4c6b89",
+      "blob_sha": "a204f54d4074b2135150cf7629b8fc76ba077fdb"
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/generation2/RootReviewSubject.json",
+      "sha256": "13ed3095061fb97a80bc0b992e89ce4bb0a3963e867c2738d350d42db6e3dd30",
+      "blob_sha": "39744fe954d556bd163ed92c42f9340ab2030d1a"
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/commitment-signing/signing.mjs",
+      "sha256": "d425ee50e82f8cc983b5dc5983d8ab7cd4c42b18215ce592d5fa5004c29c438b",
+      "blob_sha": "f491f921c3b17c0d4a122d9e00fa5772e4dff82b"
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/commitment-signing/PreparationEvidence.json",
+      "sha256": "324c1685de5a8efebb98ef6ee8b4e45db7b35e5404b0d065a49f98ff4f6f54c7",
+      "blob_sha": "f03fde004c772c53f6c98a563855ed98dc676aa6"
+    }
+  ],
+  "authority_effect": "NONE",
+  "root_registered": false,
+  "static_gate_published_but_current_runtime_not_qualified": true
+}

@@ -1,0 +1,55 @@
+{
+  "state": "ACCEPTED_EXACT_EMPTY_RUNTIME_TWO_FUNCTION_SUCCESSOR",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "subject": {
+    "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/runtime600-successor/alter.candidate.sql",
+    "sha256": "0ab15bbbc2f80421cb619b50de8816095359d9ffab1e96e372960c063bc80c9b",
+    "prior_actual_install_sha256": "8f732dd4013a18adde33a254631cdd5a04022f300d4c0a13d05dffbf36f97285",
+    "change_set_sha256": "8d7e997688bae827035193e71eb8cd41de2bd6d78370f2529fd2752e5dd9e0c2"
+  },
+  "authority_basis": {
+    "owner_delegation_sha256": "e09ef634712ce1206600402552073bae91e7296f2b4e2d3f99855bd760c944bd",
+    "window_applicability_decision_sha256": "0db24386c7fc771317e46c2c239c468fc7eb91b48cfbd2740b8eb0906a7536ef",
+    "project_ref": "uscrdifznmlvczcekqpw",
+    "scope": "Same nonproduction control store; no business/production permissions or new root/issuer purpose"
+  },
+  "accepted_delta": [
+    "reserve_execution_budget: exact600-second allocation and corresponding once-only charge/cumulative ceiling arithmetic, preserving128MiB evidence reservation.",
+    "reserve_gate: maximum complete authorization lifetime600 seconds instead of180."
+  ],
+  "actual_independent_postgresql_check": {
+    "command": "node --test work/runtime600-independent-targeted.mjs",
+    "test_path": "C:/Users/Windows/Documents/Codex/2026-09-08/ia/work/runtime600-independent-targeted.mjs",
+    "test_sha256": "9e7b976f837ef6e252393343fbe649651ee178c4867d3c0b0c9fa935cca8ff54",
+    "environment": "New disposable local PostgreSQL with explicit synthetic metadata; not live Root/GA issuance",
+    "pass": 2,
+    "fail": 0,
+    "skip": 0,
+    "duration_ms": 2954.3168,
+    "observed": [
+      "Applied exact prior8f schema, then exact0ab successor in one transaction with empty runtime and synthetic Root2/sequence2 precondition.",
+      "Exactly the two declared function bodies changed among all14; function ACL/security-definer/config metadata remained identical.",
+      "Complete synthetic Root readback remained identical.",
+      "601-second allocation rejects; actual600-second allocation commits and the second connection's identical replay is DUPLICATE.",
+      "601-second GA rejects with ga_window_invalid and preserves the real pending allocation.",
+      "Exact600-second GA commits, binds/consumes the prior committed budget event once; second connection's duplicate does not charge again.",
+      "Charged seconds remain1410+600=2010 in this historical-floor synthetic fixture; actual deployment must retain coordinator's real1500-second historical charge and actual evidence-byte charge.",
+      "Original allocation raw reads back unchanged; pending becomes null only after exact GA consume."
+    ],
+    "honest_failed_predecessor_check": "The first independent test expected the wrong error label authorization_window_invalid; SQL correctly returned ga_window_invalid. Only the test expectation was corrected before the successful targeted run. Candidate SQL was unchanged.",
+    "old_broad_tests_rerun": false
+  },
+  "actual_application_conditions": [
+    "Coordinator executes only this exact SQL in one transaction with explicit fixed project setting.",
+    "Fresh actual Root2/sequence2, Owner window and five empty runtime tables must satisfy the built-in locked preconditions; any mismatch requires review, not guard removal.",
+    "Fresh original14-function/security/Root metadata must match the already independently verified installation. The candidate checks the exact prior prosrc hashes for both replaced functions.",
+    "After application, independently read actual function definitions/security and exact original Root/rows; only the two intended bodies may differ.",
+    "Do not seed binding/current/Status, reserve budget or issue GA under this schema acceptance. Those require the completed exact Profile/controller/runtime sources and real signed publication."
+  ],
+  "unchanged": ["All eight tables and rows", "Original Root history/currentness", "RLS and ACLs", "7200-second and1GiB aggregate", "Single active/pending allocation", "Unique committed budget consumption", "Unknown retention/no refund", "Owner expiry2026-09-09T09:28:59Z"],
+  "additional_evidence_size_or_other_function_change_accepted": false,
+  "remote_application_performed_by_this_review": false,
+  "controller_qualification_or_runtime_acceptance_issued": false,
+  "ga_or_grr_issued": false,
+  "authority_effect": "NONE"
+}

@@ -1,0 +1,16 @@
+{
+  "kind": "PROPOSED_SCOPED_RUNTIME_GENERATION_CONFIGURATION",
+  "state": "PREPARED_NOT_REGISTERED_OR_ACTIVE",
+  "prepared_at": "2026-09-08T16:22:50.432483+00:00",
+  "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+  "root_generation": "ctrgen_dd30fbc7e0ba43fa8ba9f734867bcf12",
+  "project_ref": "uscrdifznmlvczcekqpw",
+  "runner_generation": "runnergen_a256855fec9441839105c69b746c5244",
+  "credential_generation": "credgen_bac92a11e7144a3fb9e67f40a6a07d11",
+  "session_generation": "sessiongen_ffb02a907d334b0da0b37bf457a758c2",
+  "credential_generation_meaning": "Independent control-domain generation for the existing accepted host transport scope; no secret rotation, new credential or broader access is claimed.",
+  "registration_boundary": "Only after actual independent runtime acceptance and verified Owner signature may existing execution_current be initialized to these exact configuration values. Before any GA effect the actual current values must be read and matched.",
+  "expires_at": "2026-09-09T09:28:59Z",
+  "authority_effect": "NONE",
+  "registered": false
+}

@@ -1,0 +1,78 @@
+{
+  "schema_version": 1,
+  "state": "ACCEPTED_HISTORICAL_ACTUAL_COMPONENT_EVIDENCE_APPLICABILITY",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "evidence_index": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/runtime600-component-observation/EvidenceIndex.json",
+    "sha256": "7d9c86708911800464cd68c11926de01aa83496e9e2326857938f4f2fc56f7c4"
+  },
+  "original_started_at": "2026-09-08T17:20:43.629Z",
+  "original_ended_at": "2026-09-08T17:20:49.292Z",
+  "exact_sources": [
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/install.candidate.sql",
+      "sha256": "3cbbed94e1c9ef5fec4db281526ca69b9b30a24d2812b5a8bb5eb6bc728146fb",
+      "bytes": 8741
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/budget-reservation-successor/install.candidate.sql",
+      "sha256": "8f732dd4013a18adde33a254631cdd5a04022f300d4c0a13d05dffbf36f97285",
+      "bytes": 40646
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/runtime600-successor/alter.candidate.sql",
+      "sha256": "0ab15bbbc2f80421cb619b50de8816095359d9ffab1e96e372960c063bc80c9b",
+      "bytes": 12444
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/runtime600-successor/targeted-component-evidence.mjs",
+      "sha256": "a835ad33baf5e0f40364732db7b0320c4371ed6f23c1d9d77d95a7ab96eb3e5a",
+      "bytes": 15420
+    }
+  ],
+  "checks": {
+    "source_hashes_and_lengths_matched": 4,
+    "raw_hashes_and_original_byte_comparisons_matched": 14,
+    "actual_query_inputs_results_errors_and_before_after_checked": true,
+    "actual_writer_and_second_reader_connections_present": true,
+    "normal_pg_stop_and_status_confirmed": true,
+    "initial_failed_initdb_retained": true,
+    "new_database_runs": 0
+  },
+  "case_applicability": [
+    {
+      "case_id": "PQUAL-11",
+      "accepted_observation": "Actual missing-reservation and 601-second request rejection; exact 600-second/128MiB allocation and second-connection duplicate cause one charge only.",
+      "not_proven": "Full STOP configuration and runtime interruption are separate host/source evidence; this raw is the budget component."
+    },
+    {
+      "case_id": "PQUAL-13",
+      "accepted_observation": "Second connection actually changes the synthetic credential generation; next SQL effect rejects the stale generation and rollback request rejects.",
+      "not_proven": "No real Root, Owner or production credential was revoked. This does not measure a race inside an already-running Docker syscall. Later administrative fixture restoration is explicit setup, not a legal runtime rollback."
+    },
+    {
+      "case_id": "PQUAL-15",
+      "accepted_observation": "Unsupported renewal operation rejects; actual clock passes the synthetic GA deadline while UNKNOWN active slot and charged budget remain unchanged.",
+      "not_proven": "No renewal capability is implemented; the unsupported-operation error is not evidence for every hypothetical alternate fencing implementation."
+    },
+    {
+      "case_id": "PQUAL-16",
+      "accepted_observation": "Intent is committed and read by a second connection, CREATE_SENT actually commits, explicit response-loss simulation leads to UNKNOWN, blind second dispatch rejects and the active slot remains.",
+      "not_proven": "Response loss is deliberately injected after a real transaction, not a measured network outage; no Docker side effect occurred in this fixture. Actual outer supervision/no-repeat and GRR uniqueness require their own exact-source/observation evidence."
+    },
+    {
+      "case_id": "PQUAL-17",
+      "accepted_observation": "Actual read-only SQL transaction rejects Intent, no event or phase change occurs, and service_role DELETE rejects with permission denied.",
+      "not_proven": "No host disk exhaustion was measured. No host dispatch occurs in this script, which alone does not prove every outer entry is fail-closed on sink failure."
+    }
+  ],
+  "reuse_conditions": [
+    "Use HISTORICAL_ACTUAL_COMPONENT_EVIDENCE_REVALIDATED with these original execution times and synthetic context, not an assertion that the SQL fixture reran inside a future GA.",
+    "Future executor must actually fetch every immutable raw blob, verify exact bytes/hash/length and original source applicability, then independently assess the applicable oracle subconditions. A wrapper may reference raw blobs instead of embedding duplicate original bytes.",
+    "Any unmet full-case oracle subcondition remains explicit until complementary real source/host/entry evidence satisfies it; this report does not issue five complete PQUAL PASS results.",
+    "No formal PG host execution capability or new SQL_FIXTURE state machine is added by accepting this historical component evidence."
+  ],
+  "authority_effect": "NONE",
+  "controller_qualification_issued": false,
+  "pqual_pass_issued": false
+}

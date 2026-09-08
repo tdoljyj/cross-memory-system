@@ -1,0 +1,94 @@
+{
+  "schema_version": 1,
+  "state": "ACCEPTED_EXACT_FIXED_HOST_PORT_ENGINEERING_PREPARATION_NOT_QUALIFICATION",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "decided_at_utc": "2026-09-08T14:59:14.855Z",
+  "candidate_evidence": {
+    "path": "scripts/phase2-qualification/preentry-parent/runtime-successor/host-binding/PreparationEvidence.json",
+    "sha256": "417b8146f39926fefa311f838f4384c90ef0a1d8354f199f7b02b298b9e771c9"
+  },
+  "accepted_files": {
+    "fixed_host.py": "ec3afb21ecf0b8a692b36c4e76e385b0cf6cd4d38db79aa69b38a206ee756950",
+    "test_start_window_fix.py": "8c9433c6391cbaeaf8d4cf4746ae9be212f44545ac222eb0242b092d038b1339",
+    "test_stop_budget_fix.py": "0609bfe14035ed7bd246004e5102c47963379e9c8ead94f175b8b6a20814cb1f",
+    "test_fixed_host.py": "b980f0574e33ff4052d38c15d7a7f9e6868ccfde1aafb83cc56d3146c5fc9a8b",
+    "README.md": "722b2bcc7797103af1ea9c93fb598759c657a75256fa21ecbebdc11b845fc88b"
+  },
+  "dependencies_verified": [
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/parent.py",
+      "sha256": "a4bff96f76d6ed5598833cbd6f73efec547eaaf9cd039f47f8eef6e925efe79e"
+    },
+    {
+      "path": "scripts/phase2-qualification/docker-engineering-observation/observe.py",
+      "sha256": "cc3498e6dc5eed1f13fb0b84c4dd4df75f5ee76fb5d24d4167852cb92588ef5a"
+    },
+    {
+      "path": "C:/Users/Windows/AppData/Local/Programs/Python/Python312/python.exe",
+      "sha256": "4d6f5f81a4bca11191c4c7c6b43632694d0a4ce74e068619d8fdc161d469859a"
+    }
+  ],
+  "review_scope": {
+    "normal_entry": "Trusted supervisor-only FixedHost port; only CLI is the exact fixed safety watchdog. No SQL credential or arbitrary shell command interface.",
+    "inputs": "Exact installed Skill trilogy and primitive hashes; inert data, dedicated nonce directory and two fixed mounts. Prepared local record is not authority.",
+    "effects": "Fixed Windows Docker executable/local endpoint/empty config and create/start/inspect/stop/wait argv. Exact image/name/container identity and full prestart checks; no rm/prune or host environment inheritance.",
+    "evidence": "Exclusive local request/output/response with caps and GA/nonce/source commitments; no retry of ambiguous CLI result. Remote evidence and fresh authorization are still separate required integrations.",
+    "stop": "Independent watchdog bound to exact Python/source/nonce/GA/container; actual stop/wait/inspect required. Reserve30 covers inspect6+stop7+wait5+inspect6 plus6 margin; START entire6 must fit before safety window."
+  },
+  "findings_fixed": [
+    {
+      "finding": "Original STOP reserve20 < maximum sequential STOP chain24.",
+      "resolution": "Reserve30 and START safety cutoff."
+    },
+    {
+      "finding": "JSON NaN passed old type check and made deadline comparisons false.",
+      "independent_reproduction": "Actual isolated Python json/math expressions reproduced this without importing host code or launching Docker.",
+      "resolution": "Reject nonfinite local deadlines as corrupt evidence."
+    },
+    {
+      "finding": "START at remaining31 could run6 seconds across watchdog STOP cutoff30.",
+      "resolution": "Require remaining>36 before and after guard read; cap START expires to both monotonic/UTC deadline minus30."
+    }
+  ],
+  "validation": {
+    "five_files_exact_sha_and_lf": true,
+    "three_dependency_hashes_match": true,
+    "five_additional_static_assertions": true,
+    "reused_initial_mock_tests": {
+      "passed": 4,
+      "seconds": 0.025
+    },
+    "reused_first_fix_mock_tests": [
+      {
+        "passed": 3,
+        "seconds": 0.003
+      },
+      {
+        "passed": 1,
+        "seconds": 0.007
+      }
+    ],
+    "reused_final_fix_mock_tests": {
+      "passed": 1,
+      "all_processes_mocked": true,
+      "duration_seconds": 0.011,
+      "failed": 0
+    },
+    "old_tests_not_rerun": true,
+    "actual_docker_calls": 0,
+    "actual_watchdog_launches": 0,
+    "permission_note": "First sandbox read of Python executable denied before report write; same exact read/hash check completed under approved host execution."
+  },
+  "remaining_conditions": [
+    "Exact integration with real current verifier, SQL evidence/supervisor and accepted controller inputs must be accepted before qualification dispatch. This report is not a GA.",
+    "Trusted tool orchestration must supply current Root/Profile/Gate/independent generations, fresh checks, durable remote Intent/readback, conservative budget and exact-container recovery. Local intent cannot substitute.",
+    "New host/watchdog normal and parent-crash behavior has not been measured; earlier OS/STOP evidence covers its own old subject only. No PQUAL behavior asserted.",
+    "Timing guards bound normal CLI scheduling, not atomic fencing of an external request with lost response. Such ambiguity remains UNKNOWN with capacity retained until genuine exact reconciliation.",
+    "Affected fixed executor/Test/Profile references need an accepted exact successor before these host bytes can be treated as the qualified input."
+  ],
+  "authority_effect": "NONE",
+  "controller_qualified": false,
+  "ga_issued": false,
+  "gate_pass": false,
+  "capacity_released": false
+}
