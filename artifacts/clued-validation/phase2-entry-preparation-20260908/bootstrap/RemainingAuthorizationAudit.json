@@ -1,0 +1,252 @@
+{
+  "schema_version": 1,
+  "status": "BOUNDED_AUTHORIZATION_AUDIT_NOT_GATE_PASS",
+  "as_of_utc": "2026-09-08T11:16:13.420Z",
+  "assessor": "/root/project_list_auth_fix",
+  "method": "Reuse previously verified sources, A01–A11 and current explicit approvals; bounded document reads only. No tests, new source audit, authority issuance or activation. Current parent-reported installation/merge events are labeled and not independently reverified here.",
+  "sources": [
+    {
+      "label": "A01–A11及S01–S11",
+      "path": "outputs/Clued_Phase2_执行与续接.md",
+      "sha256": "6b084b6a146b707c975fa349e9c5809e79a98b7f8cef982c7c4e8de5a5be35eb"
+    },
+    {
+      "label": "既有授权清单",
+      "path": "outputs/Clued_Phase2_并行执行与授权清单.md",
+      "sha256": "d517d54738b5630616ea5bc1deefe4e6b151c0bea0f21181a78cfa27a143a27f"
+    },
+    {
+      "label": "Owner原委托",
+      "path": "work/kernel-phase2-repo/artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/OwnerDelegation_20260908.json",
+      "sha256": "e09ef634712ce1206600402552073bae91e7296f2b4e2d3f99855bd760c944bd"
+    },
+    {
+      "label": "独立Owner签名核验",
+      "path": "work/kernel-phase2-repo/artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/IndependentOwnerBindingVerification.json",
+      "sha256": "68409c1fc1fb16dca11d5e8966c5291f2507b1b48f27551cd46bd509eed7f517"
+    },
+    {
+      "label": "根登记已批准例外",
+      "path": "work/kernel-phase2-repo/artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/ControlRootRegistrationOwnerApproval.json",
+      "sha256": "3d9c4c9e06217c7c2ef0d32dba77bb5aa66bd745a8f92f0ea255b19a95127aea"
+    },
+    {
+      "label": "基线补充独评",
+      "path": "work/kernel-phase2-repo/artifacts/clued-validation/kernel-stability-hardening-20260908/BaselineConflictSupplementIndependentReview.json",
+      "sha256": "9c8acc26a213694d2ddd1bf65a86d8defdab9ff77841b51e255e39363d97cbe2"
+    },
+    {
+      "label": "实际四层源映射",
+      "path": "work/kernel-phase2-repo/artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/IsolatedProfileSourceMapping.md",
+      "sha256": "08a7f20443cba0095fce298f8bc7d2b76913d7a4929cd539f018d4c508c97065"
+    },
+    {
+      "label": "Slice A测量原合同映射",
+      "path": "work/kernel-phase2-repo/artifacts/clued-validation/phase2-entry-preparation-20260908/measurement-inputs/InputReadiness.json",
+      "sha256": "c249b1e060f05d0c07fc2eabbaac69ee468cf50755e93f2269d5be3af09e79ff"
+    },
+    {
+      "label": "当前测量候选边界",
+      "path": "work/kernel-phase2-repo/artifacts/clued-validation/phase2-entry-preparation-20260908/measurement-inputs/README.md",
+      "sha256": "381de03116334f36172021483629b044ebabd543ebd2443d6541129ed3c16360"
+    }
+  ],
+  "scope": "Entire current Kernel Phase2 A01–A11, approved nonproduction qualification bootstrap, and separately requested stability/Health preparation.",
+  "resolved_authorizations": [
+    {
+      "id": "RA01",
+      "scope": "A01–A11 ordinary engineering, narrow fixes, synthetic preparation, normal commits/push and independent AI review",
+      "basis": "User instructed completion of all remaining Phase2 tasks, continuation while away and necessary parallel work; existing delegation remains effective.",
+      "effect": "Continue ordinary reversible in-scope work without another blanket permission question. Actual required Gates remain evidence conditions."
+    },
+    {
+      "id": "RA02",
+      "scope": "Specified production Worker/project-list/HTTP authorization and checkpoint repair",
+      "basis": "Previously explicit approvals and recorded production verification; current parent status says PR24 successor remains same Receipt repair scope and was deployed/read back.",
+      "effect": "Reuse exact accepted results; do not treat these approvals as authorization for unrelated production changes."
+    },
+    {
+      "id": "RA03",
+      "scope": "PRE_ENTRY_SKILL_QUALIFICATION bootstrap",
+      "basis": "Verified PR20 merge 4f722ea9d78488b749c15d27fe9145e9d9f9d2c2, original exact OwnerDelegation.",
+      "valid_from": "2026-09-08T09:28:59Z",
+      "valid_until": "2026-09-09T09:28:59Z",
+      "limits": {
+        "one_active_run": true,
+        "each_ga_max_seconds": 600,
+        "cumulative_seconds": 7200,
+        "cumulative_storage_bytes": 1073741824,
+        "actual_model_actions": 0,
+        "new_paid_actions": 0
+      },
+      "effect": "Approved construction, exact-subject independent acceptance and subsequent same-scope forward fixes. Approval itself is not qualified controller/Profile/GA."
+    },
+    {
+      "id": "RA04",
+      "scope": "Minimal WSL installation",
+      "basis": "Current parent reports explicit user approval, UAC launch PID 47464; no automatic reboot.",
+      "effect": "Installation no longer awaits permission. Observe actual completion/failure; do not reinstall or restart speculatively."
+    },
+    {
+      "id": "RA05",
+      "scope": "Baseline conflict RF01–RF03 separate supplement",
+      "basis": "Explicit user approval of ReviewFindings; independent exact supplement acceptance recorded. Parent reports PR25 normal merge 4d7f93c17cf7d126e771cf8aca6299c868cba0a9 at 2026-09-08T11:09:21Z; independent signature verification is the next bounded task.",
+      "effect": "No renewed approval needed. Preserve original 21 steps and every Gate. Does not grant Surgical/production authority."
+    },
+    {
+      "id": "RA06",
+      "scope": "Proposal-limited control-root generation registration exception",
+      "basis": "Explicit user reply 批准提案限定的登记例外, proposal SHA f655e8a16f428bbccfca3687c28e31bc57aed0e7a9fd9ac0191648266afec533 and ControlRootRegistrationOwnerApproval.json.",
+      "effect": "Registration exception is approved; exact candidate, formal Store mapping, independent acceptance and real signed/current history/revocation evidence remain to establish. No second permission request for this same exception; original bootstrap window/limits unchanged."
+    }
+  ],
+  "evidence_work_without_new_user_approval": [
+    {
+      "id": "EW01",
+      "affects": [
+        "A01"
+      ],
+      "status": "Closed within verified original scope",
+      "next": "Reuse PR17/source-reference evidence; no repeat tests without changed subject.",
+      "blocks_other_work": false
+    },
+    {
+      "id": "EW02",
+      "affects": [
+        "A02",
+        "R07",
+        "R08",
+        "R09",
+        "R10"
+      ],
+      "status": "Exact engineering acceptance and signed bindings completed; not runtime qualification",
+      "next": "Reuse exact R07–R10 decisions. Finish remaining R11/runtime/Shadow/Entry conditions against actual current subjects.",
+      "blocks_other_work": "Only dependent formal runtime/Entry; preparation continues."
+    },
+    {
+      "id": "EW03",
+      "affects": [
+        "A02",
+        "R11"
+      ],
+      "status": "Concrete root/Profile/controller/current-state/Intent/budget/STOP evidence still incomplete",
+      "next": "Independently review frozen root candidate and PR25 binding; establish accepted formal Store location (Git templates are not automatically Canonical Store), actual four-layer current source, durable Intent/UNKNOWN reconciliation and revocation/budget wiring; then execute only permitted isolated checks after all conditions hold.",
+      "blocks_other_work": "Blocks affected formal qualification, not implementation or independent review."
+    },
+    {
+      "id": "EW04",
+      "affects": [
+        "A03",
+        "A04",
+        "A05",
+        "A06",
+        "A07"
+      ],
+      "status": "Accepted source package exists; actual IF-MVP0 implementation/authorized execution and downstream cases remain",
+      "next": "Use actual accepted contract/write-set and existing total-task authorization for in-scope work. Run third-session/receipt/lifecycle cases only with correct live execution purpose and prerequisites; zero-model paths can proceed where original contract permits.",
+      "blocks_other_work": "Gate dependencies block only dependent execution. Entry success itself does not trigger a new blanket user-permission requirement."
+    },
+    {
+      "id": "EW05",
+      "affects": [
+        "A08"
+      ],
+      "status": "12-case independent Gold candidate exists, not accepted/frozen; remaining case bindings and full measurement input still needed",
+      "next": "Fix synthetic fixtures, all 24-case rubric/Gold digests, independent custodian and blindness, tokenizer, host/timer, seed/cold-warm/reset protocol and 72 slots. Use independent evaluator under existing review delegation; do not demand human Gold authorship unless an applicable source actually requires it.",
+      "blocks_other_work": "Blocks counting formal measurements; unrelated engineering continues."
+    },
+    {
+      "id": "EW06",
+      "affects": [
+        "A09",
+        "A11"
+      ],
+      "status": "72 actual slots and final independent purpose acceptance not executed",
+      "next": "Execute only after applicable Entry/slice authorization and fixed inputs; preserve thresholds, real receipts and failures. Root coordinator can prepare/issue correct-scope records only through actual accepted authority, not by relabeling bootstrap GA.",
+      "blocks_other_work": "Blocks final full-completion claim, not other available work."
+    },
+    {
+      "id": "EW07",
+      "affects": [
+        "HS0",
+        "HS1",
+        "current P0"
+      ],
+      "status": "Requested preparation and baseline supplement authorized; original Gates retained",
+      "next": "Complete in-scope nonproduction preparation and evidence integration; actual fault injection or surgical operation follows its own concrete scope/authority.",
+      "blocks_other_work": false
+    }
+  ],
+  "actual_external_or_additional_decisions": [
+    {
+      "id": "EX01",
+      "affects": [
+        "A10",
+        "A11"
+      ],
+      "trigger": "Original acceptance criterion is retained and no actual human event pairs are available.",
+      "required": "Actual human participant/authorized human operator performs timed handoffs: 16 normal baselines paired with Clued median-of-three; at least 12 valid nonzero pairs. AI timing cannot satisfy this criterion.",
+      "lowest_cost_next": "Prepare sessions, fixed order and event capture automatically; collect only active human operations and separately exclude waiting. Alternatively the Owner may explicitly approve a separate versioned acceptance-standard change, which changes the claim and never retrospectively makes AI timing pass the original standard.",
+      "permission_state": "AI assistance already authorized; human evidence is missing, not general permission.",
+      "blocks_other_work": "Only human-efficiency/full-original-acceptance claim; all other available work continues."
+    },
+    {
+      "id": "EX02",
+      "affects": [
+        "A06",
+        "A09",
+        "later model-dependent operations"
+      ],
+      "trigger": "A concrete required case actually needs an external model or new paid service; not presumed for offline/no-model cases.",
+      "required": "Specific provider/model, allowed data/credential route and expense/usage ceiling, with suitable execution authority. Current bootstrap permits zero real-model/new-paid actions.",
+      "lowest_cost_next": "Finish zero-model and negative refusal cases now; bundle any genuinely necessary model usage into one concrete costed approval. Existing Codex token-use instruction is not external-provider purchase authorization.",
+      "permission_state": "Conditional additional scoped decision, not current universal blocker.",
+      "blocks_other_work": "Only the actual model/paid path."
+    },
+    {
+      "id": "EX03",
+      "affects": [
+        "WSL-dependent real isolation check"
+      ],
+      "trigger": "The real installer or Windows reports reboot required, or an actual consent prompt remains.",
+      "required": "User action for that actual prompt; explicit disruptive restart permission if a restart is truly necessary.",
+      "lowest_cost_next": "Read actual installer outcome first. No automatic restart, no speculative repeated installation.",
+      "permission_state": "Install already approved; no evidence here that reboot is required.",
+      "blocks_other_work": "Only WSL-dependent runtime checks; source review and other engineering continue."
+    },
+    {
+      "id": "EX04",
+      "affects": [
+        "New production target changes",
+        "HS2 fault injection",
+        "HS3 Surgical",
+        "post-Entry formal execution"
+      ],
+      "trigger": "A ready operation goes beyond existing explicitly approved production fixes or current bootstrap purpose.",
+      "required": "Exact operation-specific accepted authority/GA with target, allowed actions, stop/rollback, window and budget. Ask user only for scope not already authorized by the total task or a prior specific approval; bootstrap authority alone does not cover it.",
+      "lowest_cost_next": "Prepare concrete plans and applicable authority records now. Normal in-scope post-Entry engineering may proceed on existing total-task authorization; do not ask merely because Entry has passed. Request one bundled decision only for a real additional production/Surgical/paid/disruptive scope.",
+      "permission_state": "Depends on the concrete operation; missing GA fields are evidence/implementation gaps, not automatic evidence of missing user consent.",
+      "blocks_other_work": "Only the out-of-scope operation."
+    },
+    {
+      "id": "EX05",
+      "affects": [
+        "Bootstrap formal controls after expiry or exhausted budget"
+      ],
+      "trigger": "Owner fixed window expires at 2026-09-09T09:28:59Z, or actual cumulative limits are exhausted before the remaining formal actions finish.",
+      "required": "Explicit limited renewal/extension specifying remaining purpose, duration and limits if further formal control actions are still necessary.",
+      "lowest_cost_next": "Continue within real current window and maintain actual budget ledger. Do not reset expiry from PR25 or registration time; at expiry refuse new formal actions and preserve evidence/cleanup per accepted rules.",
+      "permission_state": "Conditional future decision, not currently expired; no invented automatic extension.",
+      "blocks_other_work": "Only formal actions requiring this expired/exhausted delegation; safe non-executing preparation remains possible."
+    }
+  ],
+  "conclusion": "No unresolved blanket permission prevents current approved engineering from continuing. Missing runtime/measurement facts must be built and observed. Human evidence remains an external dependency for the unchanged A10 criterion. New paid/model, genuinely disruptive restart, unrelated production/Surgical scope or expired Owner window are conditional concrete decisions, not reasons to stop all work.",
+  "not_claimed": [
+    "All Phase2 complete",
+    "Controller/Profile/GA qualification",
+    "Current root registered",
+    "Formal Entry/Shadow or Slice A PASS",
+    "Actual human measurement",
+    "Actual reboot requirement"
+  ]
+}

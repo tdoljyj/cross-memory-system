@@ -1,0 +1,57 @@
+{
+  "state": "OWNER_APPROVAL_EXCEPTION_SIGNATURE_AND_EXACT_BLOBS_VERIFIED_ONLY",
+  "merge": "4d7f93c17cf7d126e771cf8aca6299c868cba0a9",
+  "pr": 25,
+  "merged_by": "tdoljyj",
+  "merged_at": "2026-09-08T11:09:21Z",
+  "parents": [
+    "78fb8a0edcd09a526ffeeece4aa19fb27c1790b6",
+    "8b7ab53febf18c0be8084505d753190a7196fa28"
+  ],
+  "tree": "8c4dbccd2dedfa113b90c99b1e9df550cf8f236f",
+  "verification": {
+    "verified": true,
+    "reason": "valid",
+    "committer": "web-flow",
+    "method": "GitHub verified valid with PGP carrier/signed tree/parents and Owner PR; not local OpenPGP"
+  },
+  "files": [
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/ControlRootRegistrationOwnerApproval.json",
+      "sha256": "3d9c4c9e06217c7c2ef0d32dba77bb5aa66bd745a8f92f0ea255b19a95127aea",
+      "git_blob": "9b288600bd9ddff6695e763c44e877ab34b828f6",
+      "bytes": 1509,
+      "local_exact": true
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/ControlRootGenerationBindingProposal.md",
+      "sha256": "f655e8a16f428bbccfca3687c28e31bc57aed0e7a9fd9ac0191648266afec533",
+      "git_blob": "b16c6672c2189ed77c717d9b9b5d90a0fc350eb1",
+      "bytes": 8420,
+      "local_exact": true
+    }
+  ],
+  "observations": [
+    {
+      "endpoint": "https://api.github.com/repos/tdoljyj/cross-memory-system/commits/4d7f93c17cf7d126e771cf8aca6299c868cba0a9",
+      "response_sha256": "80af0856a6af16df46f0e0f8f4b742c6b15577a3bdf36e0baa1d65e5cedb09d1",
+      "observed_at_utc": "2026-09-08T11:18:44.428534+00:00"
+    },
+    {
+      "endpoint": "https://api.github.com/repos/tdoljyj/cross-memory-system/pulls/25",
+      "response_sha256": "e7cf907203601b7d34f19558529ade781670a944bee29357ff85e966d9031f5a",
+      "observed_at_utc": "2026-09-08T11:18:45.312575+00:00"
+    },
+    {
+      "endpoint": "https://api.github.com/repos/tdoljyj/cross-memory-system/contents/artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/ControlRootRegistrationOwnerApproval.json?ref=4d7f93c17cf7d126e771cf8aca6299c868cba0a9",
+      "response_sha256": "e7eba290b53719d430cbbec5a4d04f1d11372aac60e2137beb0d60a7854c03e4",
+      "observed_at_utc": "2026-09-08T11:18:46.389306+00:00"
+    },
+    {
+      "endpoint": "https://api.github.com/repos/tdoljyj/cross-memory-system/contents/artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/ControlRootGenerationBindingProposal.md?ref=4d7f93c17cf7d126e771cf8aca6299c868cba0a9",
+      "response_sha256": "fc1a35d2855f45e847c5383a3fc9adfa7709ebc7f0ed49930345ae8b29d0fbf7",
+      "observed_at_utc": "2026-09-08T11:18:47.074917+00:00"
+    }
+  ],
+  "effect": "Only approved bounded registration exception; no root registration/controller/Profile/GA/Entry qualification inferred."
+}

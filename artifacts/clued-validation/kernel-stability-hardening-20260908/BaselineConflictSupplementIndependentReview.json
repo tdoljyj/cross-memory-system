@@ -1,0 +1,63 @@
+{
+  "status": "ACCEPTED_FOR_EXACT_APPROVED_SUPPLEMENT_SIGNATURE_PUBLICATION_PENDING",
+  "reviewer": "/root/project_list_auth_fix",
+  "implementer": "/root/controller_candidate",
+  "scope": "Independent bounded transcription and dependency review of the user-approved RF-01 through RF-03 supplement; no complete source audit repeated, no runtime action or Gate issuance.",
+  "subject": {
+    "decision_path": "BaselineConflictSupplementDecision.json",
+    "decision_sha256": "440b4590a28f2fdfa337073442c7f0306e19152802aafc1e12771e0d21a0a0b3",
+    "companion_path": "BaselineConflictSupplementDecision.md",
+    "companion_sha256": "afbbce409728d00f6631cd36ad0e22a284181bc1f2d91927febede51816c1b07",
+    "source_commit": "78fb8a0edcd09a526ffeeece4aa19fb27c1790b6"
+  },
+  "approved_input": {
+    "path": "ReviewFindings.md",
+    "sha256": "54301bbfabc7de5ca6d85a2611f3d80f4a3cc6ca5eb442684552d5d7aac24ecb",
+    "user_approval": "批准这份已独立核对的基线冲突处置建议作为单独补充决定",
+    "provenance": "The coordinator supplied the actual received user approval and exact linked document. This reviewer checks fidelity to that approved document; no additional user approval was requested and no independent message-service attestation is claimed."
+  },
+  "preservation_checks": {
+    "three_baseline_files": "Each original file at the subject's exact_sources path was read only for hash preservation and selected applicable passages; all three matched their recorded SHA256.",
+    "original_21_step_sha256": "f465bcb77aced171b4f241da7a23c1e02133716700227caaabb7954be39899ad",
+    "stability_sha256": "936cb966a75765ca156f5706237467b940ea32891bbc98c2c21ec9a8b8ec06a0",
+    "health_sha256": "44f59133c78e113710d5ee19e89c8a12a1393b15da27bb9290b521e8294a0b26",
+    "approved_review_unchanged": true,
+    "original_step16_to21_meanings_retained": true,
+    "no_historical_gate_or_source_rewritten": true,
+    "no_automatic_reexecution_of_all_21_steps": true
+  },
+  "finding_dispositions": [
+    {
+      "id": "RF-01",
+      "decision": "ACCEPTED",
+      "finding": "All six original Step16-21 meanings are retained: four-Gate rerun, Canonical semantic no-change, non-bypass proof, Naming closeout, Developer Skill and User Skill. New activities are explicitly unnumbered transverse Hooks, not replacement steps.",
+      "targeted_source_confirmation": "Stability lines 874-903 and 1435-1458 retain the corresponding tooling, evidence, HS2, Slice A/Repairability, governance, product-input and architecture/release sequence. The supplement reproduces that dependency chain without reusing the original numbered labels.",
+      "authorization_boundary": "Named approval remains required before each applicable action, rather than being postponed until the later evidence-collection Hook."
+    },
+    {
+      "id": "RF-02",
+      "decision": "ACCEPTED",
+      "finding": "Historical accepted subjects and newly affected Stability/Health subjects are separated by exact object/version/scope/invalidation applicability. The new Freeze and HS0 constraints remain actual obligations; old Freeze is not retrospectively expanded and current work does not trigger blanket repetition of historical steps.",
+      "dependency_boundary": "Current applicable R07-R10 P0 closure remains before HS0 and R11. Future conditional A01-A11 items retain their own stage mapping; they are neither silently removed nor made an undifferentiated cyclic predecessor. Existing structure/architecture Gates remain when actually applicable.",
+      "not_issued": "No HS0 Freeze, new Stability acceptance or current P0 completion is established by this supplement."
+    },
+    {
+      "id": "RF-03",
+      "decision": "ACCEPTED",
+      "finding": "R11 still depends on actual runtime alignment and eligible qualified execution with exact Profile/subject/config, scoped authority, current stop/revocation, budget and durable evidence. Local Warning or historical Step16/21 acceptance cannot substitute.",
+      "targeted_source_confirmation": "Health lines 601-611 require applicable A01-A11 P0, R11, HS1, HS2, full Slice A and Repairability together; all are preserved. Stability lines 1445-1458 place HS2 and Slice A/Repairability before later Hooks and conditional HS3, followed by HS4.",
+      "release_boundary": "HS3 also retains actual applicable release authorization. This supplement grants neither Surgical authority nor fault injection or release permission."
+    }
+  ],
+  "authority_assessment": {
+    "accepted_effect": "Faithful documentary implementation of the already approved separate applicability disposition.",
+    "existing_authorizations": "The explicit clause preserving separately authorized work prevents this record from cancelling the later-approved limited control-root registration exception or any other existing scoped authorization. It also cannot enlarge them.",
+    "signature": "signature_evidence remains null; coordinator must bind the exact approved records through a real signature/publication record. No future commit, signature or acceptance receipt is predeclared.",
+    "not_granted": ["Production SQL or Worker changes", "New Gate pass", "Fault injection or SurgicalGrant", "Controller/Profile qualification or GA", "Entry or Slice A execution", "Control-root registration or old pin changes through this supplement"]
+  },
+  "remaining_defects_within_reviewed_scope": [],
+  "next_action": "Coordinator may integrate and bind this exact independent acceptance and approved supplement using the existing real signature workflow. Preserve all original bytes and apply the recorded dependencies to each actual affected subject; do not repeat the completed RF assessment merely because publication was pending.",
+  "tests_or_runtime_actions_performed": 0,
+  "baseline_skill_controller_or_production_changes_by_reviewer": 0,
+  "gate_or_operational_authorization_issued": false
+}

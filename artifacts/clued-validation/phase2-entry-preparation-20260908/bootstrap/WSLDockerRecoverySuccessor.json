@@ -1,0 +1,56 @@
+{
+  "status": "WSL_INSTALLED_DOCKER_ENGINE_RECOVERED_NOT_QUALIFICATION",
+  "observed_date": "2026-09-08",
+  "approval": "User explicitly approved local WSL installation; plan excluded automatic reboot and data reset",
+  "installation": {
+    "started_at_utc": "2026-09-08T11:07:37.2079080Z",
+    "finished_at_utc": "2026-09-08T11:10:12.1710699Z",
+    "exit_code": 0,
+    "wsl_version": "2.7.13.0",
+    "default_version": 2,
+    "kernel_version": "6.18.33.2-2",
+    "automatic_reboot": false,
+    "installer_sha256": "ea7026275aabe4da222f0bcf879b93dd17bef9e4fb233c6feb197a61224625ac"
+  },
+  "recovery": {
+    "initial_failure": "Existing and newly orphaned AF_UNIX socket entries caused Windows ERROR_CANT_ACCESS_FILE (1920)",
+    "failed_attempts_preserved": [
+      "run.pre-wsl-20260908-1113",
+      "docker-secrets-engine.pre-wsl-20260908-1115"
+    ],
+    "successful_changed_variable": "Both verified socket-only parent directories preserved together after stopping exact processes from the failed launch",
+    "preserved_paths": [
+      "C:/Users/Windows/AppData/Local/Docker/run.pre-wsl-20260908-1120",
+      "C:/Users/Windows/AppData/Local/docker-secrets-engine.pre-wsl-20260908-1120"
+    ],
+    "final_started_at_utc": "2026-09-08T11:19:12.5931109Z",
+    "final_launcher_pid": 6140,
+    "data_reset": false,
+    "settings_changed": false,
+    "credentials_read": false,
+    "afunix_driver": "RUNNING"
+  },
+  "actual_readback": {
+    "docker_version_exit_code": 0,
+    "client_version": "29.7.2",
+    "server_version": "29.7.2",
+    "server_platform": "Docker Desktop 4.87.0 (236836)",
+    "os": "linux",
+    "architecture": "amd64",
+    "kernel": "6.18.33.2-microsoft-standard-WSL2",
+    "api_version": "1.55",
+    "containerd": "v2.2.5",
+    "runc": "1.3.6"
+  },
+  "evidence": {
+    "installation_result_sha256": "abb9d501399f6739cebf42aeeb90e685843006e61b84cd7cbd217dfc597f3fde",
+    "installation_log_sha256": "edaa368ece3d1f427cb32c34a12f606905fd8ea1ef8cc1d1a14f0c777496a791",
+    "joint_recovery_record_sha256": "b31b7322bb9ff0299f570c6fd09fc7f5a38135e80b6521b0fd3ec58123dcaa17",
+    "note": "Windows PowerShell 5 decoded UTF-8 script Chinese log filenames incorrectly; original files preserved and copied to readable filenames. Installation exit and new-process WSL/Docker commands establish actual outcome; garbled log text is not used alone as proof."
+  },
+  "limits": [
+    "No candidate/Skill/container execution observed by this report.",
+    "No image or volume reset, system restart or Docker settings change.",
+    "Successful engine recovery does not establish Profile, GA, isolation, runtime eligibility or Phase2 PASS."
+  ]
+}
