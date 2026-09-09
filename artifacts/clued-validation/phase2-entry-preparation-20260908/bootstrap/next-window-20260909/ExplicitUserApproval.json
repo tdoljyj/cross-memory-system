@@ -1,0 +1,43 @@
+{
+  "kind": "EXPLICIT_USER_APPROVAL_NONPRODUCTION_NEXT_WINDOW_SINGLE_GA",
+  "state": "APPROVED_SCOPE_NOT_IMPLEMENTED_OR_ACCEPTED",
+  "user_reply": "批准整份非生产合并提案",
+  "question_item_id": "[\"request_user_input_async\",\"call_chJsOaPMThNbYeG5FWPqy7cP\",0]",
+  "proposal_path": "C:/Users/Windows/Documents/Codex/2026-09-08/ia/work/Phase2NextWindowExecutionApprovalProposal20260909.md",
+  "proposal_sha256": "d5cad2301897abcaaecad0d2d1b5b9f4a241e09930b9bd8ce352f6f221ef2cf7",
+  "proposal_bytes": 12610,
+  "independent_addendum_sha256": "f37f5076ce0758a9c127751df156be6b6abe7fada05ad230ecdd2b688a9b816e",
+  "recorded_at_utc": "2026-09-09T10:13:16Z",
+  "window_not_before": "2026-09-09T10:13:16Z",
+  "window_expires_at": "2026-09-10T10:13:16Z",
+  "time_basis": "First trusted UTC clock observation immediately after this task received the explicit approval; no backdating or rolling renewal.",
+  "scope": {
+    "project_id": "uscrdifznmlvczcekqpw",
+    "schema": "clued_control",
+    "root_set_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+    "same_root_single_binding_maintenance_exception": "NW-01",
+    "new_ga_count_max": 1,
+    "per_ga_seconds": 600,
+    "per_ga_evidence_bytes": 134217728,
+    "cumulative_seconds_limit": 7200,
+    "cumulative_evidence_limit_before": 1073741824,
+    "cumulative_evidence_limit_after": 1127852979,
+    "added_evidence_bytes": 54111155,
+    "refund": false,
+    "production": false,
+    "paid_models": false,
+    "automatic_retry": false,
+    "publication_repository": "tdoljyj/cross-memory-system",
+    "publication_branch": "codex/phase2-qualification-evidence-20260908",
+    "publication_exact_scope": "Only frozen d5cad230 proposal named source/governance PRs and four runtime evidence classes; complete previous five control histories embedded in the unique stopped-run original inputs as expressly disclosed."
+  },
+  "actual_effects": {
+    "new_owner_signed": false,
+    "binding_maintenance_executed": false,
+    "budget_sql_executed": false,
+    "new_root_generation_registered": false,
+    "new_ga_created": false,
+    "formal_qualification_pass": false
+  },
+  "separate_record_list_production_approval": "NOT_RECEIVED"
+}

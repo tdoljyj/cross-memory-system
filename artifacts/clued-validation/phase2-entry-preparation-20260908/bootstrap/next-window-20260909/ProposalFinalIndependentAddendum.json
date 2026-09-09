@@ -1,0 +1,50 @@
+{
+  "state": "FINAL_PROPOSAL_READY_FOR_EXPLICIT_USER_APPROVAL_NOT_AUTHORIZED",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "reviewed_at": "2026-09-09T10:03:41.255Z",
+  "proposal": {
+    "path": "work/Phase2NextWindowExecutionApprovalProposal20260909.md",
+    "sha256": "d5cad2301897abcaaecad0d2d1b5b9f4a241e09930b9bd8ce352f6f221ef2cf7",
+    "bytes": 12610
+  },
+  "predecessor_review": {
+    "path": "work/Phase2NextWindowProposalIndependentReview.json",
+    "sha256": "5976187e9f8af82c24c189df6390f7715c7c579ee7e4398cfb520807f2ec439d"
+  },
+  "mandatory_findings_remaining": [],
+  "review_delta": [
+    "Updated13routing and11actualPG independent evidence references match completed reviews.",
+    "Fresh actualtool payload parses exactly to saved rows and confirms enabledO accepted_binding_immutable statementBEFORE UPDATE/DELETE/TRUNCATE invoking deny_mutation. Other immutable trigger remains outside NW-01 maintenance scope.",
+    "Actual current_head rootsequence2 and executionsequence39/empty active+pending/4506seconds/993635251bytes confirm the final proposal fact paragraph.",
+    "Previously corrected publication/NW-01/time/budget/single-run scope remains unchanged in substance; this is a proposed exception, not existing renewal permission."
+  ],
+  "actual_trigger": {
+    "name": "accepted_binding_immutable",
+    "enabled": "O",
+    "function": "clued_control.deny_mutation()",
+    "internal": false,
+    "type_bits": 58,
+    "definition": "CREATE TRIGGER accepted_binding_immutable BEFORE DELETE OR UPDATE OR TRUNCATE ON clued_control.accepted_binding FOR EACH STATEMENT EXECUTE FUNCTION clued_control.deny_mutation()",
+    "table_name": "accepted_binding",
+    "constraint_oid": "0"
+  },
+  "actual_observed_at": "2026-09-09T10:01:19.084071+00:00",
+  "sources": [
+    {
+      "path": "work/next-window-binding-readonly-20260909/ActualToolResult.json",
+      "sha256": "565a672538ae3f7e5194c8d31acf06d5a70a4f83c5212b4a670f8a4f0fa5a101",
+      "bytes": 39207
+    },
+    {
+      "path": "work/next-window-binding-readonly-20260909/ActualRows.json",
+      "sha256": "4018b124a8a0915f1a2950159c15583a27a9d5b0323acf560c794fdcf49bd90a",
+      "bytes": 42254
+    }
+  ],
+  "execution_limits": [
+    "New exact user approval, actualUTC window and signed materials still required.",
+    "Fresh complete guarded administrative transaction must be constructed and independently tested/reviewed before any mutation.",
+    "No newGA, publication, SQLwrite, signing, rollingrenewal or expanded permission granted by review."
+  ],
+  "authority_effect": "NONE"
+}

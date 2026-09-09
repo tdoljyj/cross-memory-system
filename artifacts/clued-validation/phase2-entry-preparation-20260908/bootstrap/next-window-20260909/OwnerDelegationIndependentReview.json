@@ -1,0 +1,51 @@
+{
+  "kind": "INDEPENDENT_OWNER_DELEGATION_SCOPE_REVIEW",
+  "state": "ACCEPTED_EXACT_DOCUMENT_FOR_OWNER_PUBLICATION_NOT_SIGNATURE_OR_LIVE_REGISTRATION",
+  "reviewer": "/root/project_list_auth_fix",
+  "reviewed_at": "2026-09-09T10:20:13.688Z",
+  "owner": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-20260909/OwnerDelegation_20260909.json",
+    "bytes": 8917,
+    "sha256": "9ca45136f864beee04f9074a752070e95ff45f827e7b7a3489df4d0cdc6ec99d"
+  },
+  "preparation_sha256": "a59e6206b44b21f9d9c7b70a27024e4ab3dd88d464549d762c26478dfe0ec6a9",
+  "actual_approval_sha256": "9a661737b2aabd32141f1f01ebde088b7d04c6c8a153eebdfe23c23de6291d78",
+  "proposal_sha256": "d5cad2301897abcaaecad0d2d1b5b9f4a241e09930b9bd8ce352f6f221ef2cf7",
+  "verified_files": [
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-20260909/ApprovedProposal.md",
+      "bytes": 12610,
+      "sha256": "d5cad2301897abcaaecad0d2d1b5b9f4a241e09930b9bd8ce352f6f221ef2cf7"
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-20260909/ExplicitUserApproval.json",
+      "bytes": 2184,
+      "sha256": "9a661737b2aabd32141f1f01ebde088b7d04c6c8a153eebdfe23c23de6291d78"
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-20260909/ProposalIndependentReview.json",
+      "bytes": 3942,
+      "sha256": "5976187e9f8af82c24c189df6390f7715c7c579ee7e4398cfb520807f2ec439d"
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-20260909/ProposalFinalIndependentAddendum.json",
+      "bytes": 2577,
+      "sha256": "f37f5076ce0758a9c127751df156be6b6abe7fada05ad230ecdd2b688a9b816e"
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-20260909/OwnerDelegation_20260909.json",
+      "bytes": 8917,
+      "sha256": "9ca45136f864beee04f9074a752070e95ff45f827e7b7a3489df4d0cdc6ec99d"
+    }
+  ],
+  "findings": [],
+  "conclusions": [
+    "Existing schema, purpose, named roles, PQUAL exclusions, prerequisites, independence and revocation wording preserved exactly against original e09ef bytes.",
+    "Fixed actual approval window T to T+24h; no rolling merge extension. One 600-second/128-MiB GA, cumulative 7200 seconds, precise additional 54111155 bytes, no refund/retry/model/paid/production authority.",
+    "NW-01 expressly identifies same-root single accepted_binding maintenance, three necessary CHECK values and one immutable trigger disabled/restored in the same atomic transaction; history, other triggers and permissions retained.",
+    "Publication scope is bounded by the exact approved proposal and four expressly disclosed runtime classes; copied approval and two prior independent reports match their exact bytes.",
+    "Future signature, live binding/Root, qualification and GA remain explicitly uncreated; publication acceptance does not prove those later effects."
+  ],
+  "mandatory_corrections": [],
+  "method": "Local exact artifact and schema/field comparison only; no network, signing, Git mutation, SQL or test rerun."
+}
