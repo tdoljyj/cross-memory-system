@@ -1,0 +1,254 @@
+{
+  "state": "EXPLICIT_AGGREGATE_CLI_FRAME_LIMIT_SOURCE_CANDIDATE",
+  "prior_controller_sha256": "aa6514441aaaa1cc768c67bd9a5bca7b5a3118f8a58b499da81901d6eab99199",
+  "files": [
+    {
+      "path": "work/kernel-phase2-repo/scripts/phase2-qualification/control-context-verifier-parallel-frame-limit-successor/cli.mjs",
+      "sha256": "23e5c73b8af535cf2c39c9841ea8080f818c93aad22d11f3d2a6cd80326bad74",
+      "bytes": 1732,
+      "original": {
+        "path": "work/kernel-phase2-repo/scripts/phase2-qualification/control-context-verifier-parallel-evidence-limit-successor/cli.mjs",
+        "sha256": "670a22a1f298fd52a2ff9f5b140df2aea6d031eed41777851b443fa2814f356f",
+        "bytes": 1732
+      },
+      "edits": [
+        [
+          "Buffer.byteLength(x.value)>2*1024*1024",
+          "Buffer.byteLength(x.value)>4*1024*1024"
+        ]
+      ]
+    },
+    {
+      "path": "work/kernel-phase2-repo/scripts/phase2-qualification/control-context-verifier-parallel-frame-limit-successor/context.mjs",
+      "sha256": "e90696c856aeb5d557d0dcf5aa280acd67c6527321bb3428f0ae9f44b958d8ed",
+      "bytes": 22356,
+      "original": {
+        "path": "work/kernel-phase2-repo/scripts/phase2-qualification/control-context-verifier-parallel-evidence-limit-successor/context.mjs",
+        "sha256": "742ebe382d1db757c0be72403b8ba27ee051476e97a8e6aec183827937756a8c",
+        "bytes": 22296
+      },
+      "edits": [
+        [
+          "from './result-terminal.mjs'",
+          "from '../control-context-verifier-parallel-evidence-limit-successor/result-terminal.mjs'"
+        ]
+      ]
+    },
+    {
+      "path": "work/kernel-phase2-repo/scripts/phase2-qualification/control-context-verifier-parallel-frame-limit-successor/source-publication.mjs",
+      "sha256": "76caadad497bd7432fef47e11c897d1233b3a27402589e2523b4b1abd1e8030c",
+      "bytes": 3578,
+      "original": {
+        "path": "work/kernel-phase2-repo/scripts/phase2-qualification/control-context-verifier-parallel-evidence-limit-successor/source-publication.mjs",
+        "sha256": "355b88e052a50d72b6b85327c01eda85a5d8a78d44e944879b1502ae16b0db69",
+        "bytes": 3581
+      },
+      "edits": [
+        [
+          "control-context-verifier-parallel-evidence-limit-successor/ControllerSourceManifest",
+          "control-context-verifier-parallel-frame-limit-successor/ControllerSourceManifest"
+        ]
+      ]
+    },
+    {
+      "path": "work/kernel-phase2-repo/scripts/phase2-qualification/control-context-verifier-parallel-frame-limit-successor/tool-entry.functions.js",
+      "sha256": "d3a4b678c9644fba01b9a1f227b90876f662c85c5658da94ad4a60dbaa304e51",
+      "bytes": 10049,
+      "original": {
+        "path": "work/kernel-phase2-repo/scripts/phase2-qualification/control-context-verifier-parallel-evidence-limit-successor/tool-entry.functions.js",
+        "sha256": "cfd1b1915bed16fc1b1d75532e2d29546a1d69118d87e3e6889fa1d81f00a2b4",
+        "bytes": 10073
+      },
+      "edits": [
+        [
+          "control-context-verifier-parallel-evidence-limit-successor/ControllerSourceManifest",
+          "control-context-verifier-parallel-frame-limit-successor/ControllerSourceManifest"
+        ],
+        [
+          "control-context-verifier-parallel-evidence-limit-successor/cli.mjs",
+          "control-context-verifier-parallel-frame-limit-successor/cli.mjs"
+        ],
+        [
+          "clued_verifier_parallel_evidence600_session",
+          "clued_verifier_parallel_frame600_session"
+        ]
+      ]
+    },
+    {
+      "path": "work/normal600-pipe-parallel-frame-limit/ready-loader.mjs",
+      "sha256": "a2d6fbbce72fada75bfdc969cd46b033fb2db5520b1f2862a7581c05a35a6a9b",
+      "bytes": 311,
+      "original": {
+        "path": "work/normal600-pipe-parallel-evidence-limit/ready-loader.mjs",
+        "sha256": "8fa1f9b3491ffd2068657c0f4c8006590f82912413eeeac21c0b2491c6b6af10",
+        "bytes": 317
+      },
+      "edits": [
+        [
+          "control-context-verifier-parallel-evidence-limit-successor/",
+          "control-context-verifier-parallel-frame-limit-successor/"
+        ]
+      ]
+    },
+    {
+      "path": "work/normal600-pipe-parallel-frame-limit/launcher.mjs",
+      "sha256": "4d4e7bffc557c8ecb986159a7570beab0bfc2c5cbef26ace02ae602cf5e8584b",
+      "bytes": 2028,
+      "original": {
+        "path": "work/normal600-pipe-parallel-evidence-limit/launcher.mjs",
+        "sha256": "a8cbfaec0c09d54a7bea46fb307ae5a13513b3cf6f94f7ec63f7c189fe24f484",
+        "bytes": 2031
+      },
+      "edits": [
+        [
+          ".parallel-evidence-pipe600",
+          ".parallel-frame-pipe600"
+        ]
+      ]
+    },
+    {
+      "path": "work/normal600-pipe-parallel-frame-limit/read-output.mjs",
+      "sha256": "dd86a47324765b2b012e9c039ad67f9f29071bb0a947f587668ddff4d047c07e",
+      "bytes": 1049,
+      "original": {
+        "path": "work/normal600-pipe-parallel-evidence-limit/read-output.mjs",
+        "sha256": "c78e0ff8531476112187895985de5211bcf8b42a53ecb2c031fa155e684466a2",
+        "bytes": 1052
+      },
+      "edits": [
+        [
+          ".parallel-evidence-pipe600",
+          ".parallel-frame-pipe600"
+        ]
+      ]
+    },
+    {
+      "path": "work/normal600-pipe-parallel-frame-limit/message.mjs",
+      "sha256": "178bd429a4b4a5bf2c9eba33b0773123437cd0a4b268324920c93072ca5b07cb",
+      "bytes": 882,
+      "original": {
+        "path": "work/normal600-pipe-parallel-evidence-limit/message.mjs",
+        "sha256": "178bd429a4b4a5bf2c9eba33b0773123437cd0a4b268324920c93072ca5b07cb",
+        "bytes": 882
+      },
+      "edits": []
+    },
+    {
+      "path": "work/normal600-pipe-parallel-frame-limit/deliver.mjs",
+      "sha256": "f04351149f3f5cd43ad4b6a89620c1af045c1f46ef32f0586f132f6bd85f8a27",
+      "bytes": 749,
+      "original": {
+        "path": "work/normal600-pipe-parallel-evidence-limit/deliver.mjs",
+        "sha256": "f04351149f3f5cd43ad4b6a89620c1af045c1f46ef32f0586f132f6bd85f8a27",
+        "bytes": 749
+      },
+      "edits": []
+    },
+    {
+      "path": "work/normal600-pipe-parallel-frame-limit/sha256.mjs",
+      "sha256": "14fd1d0b3378d57bf75688a3e9a558e5c5e52e8514d345440437d5768631fdf9",
+      "bytes": 2156,
+      "original": {
+        "path": "work/normal600-pipe-parallel-evidence-limit/sha256.mjs",
+        "sha256": "14fd1d0b3378d57bf75688a3e9a558e5c5e52e8514d345440437d5768631fdf9",
+        "bytes": 2156
+      },
+      "edits": []
+    },
+    {
+      "path": "work/normal600-pipe-parallel-frame-limit/tool-entry.functions.js",
+      "sha256": "dfb251ac0dab9e09a3cdab15896b3ae5e6d64245ed0890a6ca9d58571b523377",
+      "bytes": 14434,
+      "original": {
+        "path": "work/normal600-pipe-parallel-evidence-limit/tool-entry.functions.js",
+        "sha256": "aa81fee16ac8004b84adae141b00f200898a4c9d2d6022ed0141d11ebddc2fe1",
+        "bytes": 14467
+      },
+      "edits": [
+        [
+          "normal600-pipe-parallel-evidence-limit",
+          "normal600-pipe-parallel-frame-limit"
+        ],
+        [
+          "clued_normal600_parallel_evidence_pipe_transport_",
+          "clued_normal600_parallel_frame_pipe_transport_"
+        ],
+        [
+          "control-context-verifier-parallel-evidence-limit-successor/cli.mjs",
+          "control-context-verifier-parallel-frame-limit-successor/cli.mjs"
+        ],
+        [
+          "cfd1b1915bed16fc1b1d75532e2d29546a1d69118d87e3e6889fa1d81f00a2b4",
+          "d3a4b678c9644fba01b9a1f227b90876f662c85c5658da94ad4a60dbaa304e51"
+        ],
+        [
+          ".parallel-evidence-pipe600",
+          ".parallel-frame-pipe600"
+        ],
+        [
+          "8fa1f9b3491ffd2068657c0f4c8006590f82912413eeeac21c0b2491c6b6af10",
+          "a2d6fbbce72fada75bfdc969cd46b033fb2db5520b1f2862a7581c05a35a6a9b"
+        ],
+        [
+          "a8cbfaec0c09d54a7bea46fb307ae5a13513b3cf6f94f7ec63f7c189fe24f484",
+          "4d4e7bffc557c8ecb986159a7570beab0bfc2c5cbef26ace02ae602cf5e8584b"
+        ],
+        [
+          "c78e0ff8531476112187895985de5211bcf8b42a53ecb2c031fa155e684466a2",
+          "dd86a47324765b2b012e9c039ad67f9f29071bb0a947f587668ddff4d047c07e"
+        ]
+      ]
+    },
+    {
+      "path": "work/kernel-phase2-repo/scripts/phase2-qualification/control-context-verifier-parallel-frame-limit-successor/python-import-catalog.py",
+      "sha256": "e6fce292f97fb36370a45f0fe4f5c644b41610def6fa7ddf9001559f38572c34",
+      "bytes": 1811,
+      "original": {
+        "path": "work/kernel-phase2-repo/scripts/phase2-qualification/control-context-verifier-parallel-evidence-limit-successor/python-import-catalog.py",
+        "sha256": "e6fce292f97fb36370a45f0fe4f5c644b41610def6fa7ddf9001559f38572c34",
+        "bytes": 1811
+      },
+      "edits": []
+    },
+    {
+      "path": "work/kernel-phase2-repo/scripts/phase2-qualification/control-context-verifier-parallel-frame-limit-successor/build-controller-manifest.mjs",
+      "sha256": "bbadab9e87b1e3c5ca007c127c91ae0e8e64a75a4f92d95f707c4a13385f4d12",
+      "bytes": 10461,
+      "original": {
+        "path": "work/kernel-phase2-repo/scripts/phase2-qualification/control-context-verifier-parallel-evidence-limit-successor/build-controller-manifest.mjs",
+        "sha256": "95318c357c5efb53d84ecc3b7563fac6a572007a6cf967f7fb42c3048f365682",
+        "bytes": 9990
+      },
+      "edits": [
+        [
+          "export const fixedSeeds=[",
+          "export const fixedSeeds=[\n ...['cli.mjs','context.mjs','source-publication.mjs','tool-entry.functions.js'].map(x=>'control-context-verifier-parallel-frame-limit-successor/'+x),\n 'nonproduction-control-store/runtime-successor/binding-frame-limit-successor/effective-binding.sql',"
+        ],
+        [
+          " for(const p of binaries)paths.add(path.resolve(p));",
+          " for(const file of ['ready-loader.mjs','launcher.mjs','read-output.mjs','message.mjs','deliver.mjs','sha256.mjs','tool-entry.functions.js'])paths.add(path.resolve(repo,'../normal600-pipe-parallel-frame-limit/',file));\n for(const p of binaries)paths.add(path.resolve(p));"
+        ]
+      ]
+    }
+  ],
+  "frame": {
+    "old_payload_bytes": 2097152,
+    "new_payload_bytes": 4194304,
+    "pipe_bytes_including_single_lf": 4194305,
+    "applies_to": "Both readline-returned JSON lines; readline removes LF before Buffer.byteLength"
+  },
+  "unchanged": {
+    "logical_original_input": 2097152,
+    "root_json": 2097152,
+    "sql_request": 131072,
+    "per_object_constraints": true,
+    "challenge_and_message_count": true,
+    "time_and_budget": true,
+    "original_254_bytes": true
+  },
+  "new_manifest_pending": true,
+  "new_binding_pending": true,
+  "entry_sha256": "d3a4b678c9644fba01b9a1f227b90876f662c85c5658da94ad4a60dbaa304e51",
+  "outer_sha256": "dfb251ac0dab9e09a3cdab15896b3ae5e6d64245ed0890a6ca9d58571b523377",
+  "source_changes_only_no_ga_sql_network_or_host": true
+}

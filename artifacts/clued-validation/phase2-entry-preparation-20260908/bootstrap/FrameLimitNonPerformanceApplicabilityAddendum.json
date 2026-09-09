@@ -1,0 +1,42 @@
+{
+  "state": "ACCEPTED_PARALLEL_SOURCE_NONPERFORMANCE_APPLICABILITY",
+  "issued_at": "2026-09-09T05:46:41.783Z",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "controller_digest": "93dfea25adf03ffac92bb985db74ae7edaaf111fa27bef25cd6b090ec1e6ee14",
+  "scope_digest": "0ceca9c3ccad369ab3a39e29ec7b8bf837a1fa85c3abbae1665ce12e7e32b5d6",
+  "runtime_acceptance_sha256": "77a79451eb9363b660ba183f648b572535d6409314f1ee29c0b5e16850117f37",
+  "runtime_acceptance": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/ExactPreentryFrameLimitControllerRuntimeAcceptance.json",
+    "sha256": "77a79451eb9363b660ba183f648b572535d6409314f1ee29c0b5e16850117f37",
+    "bytes": 56552
+  },
+  "performance_slo_revision": "NOT_APPLICABLE_PREENTRY_NO_PERFORMANCE_QUALIFICATION",
+  "field_location": "Original DECISION Evidence metadata.performance_slo_revision; not an additional field in the unchanged 38-field expected_ga.",
+  "original_applicability_sources": [
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/PreentryPerformanceSLOApplicabilityDecision.json",
+      "sha256": "98a502fdf43a1f0f9e4d01956c829826006c8cd1e8d2146fbc0540c10dc3e4b8",
+      "bytes": 2679
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/EvidenceBlobPerformanceSLOApplicabilityDecision.json",
+      "sha256": "5ed0f7fd18cd156d51d2d96242d0bb7f3aab6882c5515005db77c3af9903d4c3",
+      "bytes": 2238
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/StatusGeneration2NonPerformanceApplicabilityAddendum.json",
+      "sha256": "470db88dfe46e23a5f5ae183b590d191bfc8158b120a4c9194492c5c810faa87",
+      "bytes": 1412
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/ParallelEvidenceLimitNonPerformanceApplicabilityAddendum.json",
+      "sha256": "3de507c22d88914e208b75d8a735364508c6db317f6e1063214701c179a7421c",
+      "bytes": 2516
+    }
+  ],
+  "finding": "Exact v6 CLI aggregate frame-limit and third forward-binding changes preserve the original isolated synthetic purpose, Profile and nineteen oracles. No performance qualification, model, business or Entry authority is granted.",
+  "evidence_rule": "Preserve the complete original 98a/5ed0/470d/3de bytes as historical ordinary Evidence and append this exact addendum raw/hash. No alternative NA value, SLO threshold, issuer or Authority is created.",
+  "entry_or_performance_qualification_granted": false,
+  "case_verdicts_created": false,
+  "authority_effect": "NONE"
+}
