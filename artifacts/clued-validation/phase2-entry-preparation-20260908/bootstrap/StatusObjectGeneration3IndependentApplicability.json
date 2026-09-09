@@ -1,0 +1,60 @@
+{
+  "state": "ACCEPTED_STATUS_OBJECT_GENERATION3_APPLICABILITY",
+  "issued_at": "2026-09-09T04:13:26.558Z",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "controller_digest": "aa6514441aaaa1cc768c67bd9a5bca7b5a3118f8a58b499da81901d6eab99199",
+  "scope_digest": "04d381ff6919ec35ee3cb0e17a23c8579ed7a2f5a87835a1560db6c18f23f536",
+  "authority_effect": "NONE",
+  "sql_called": false,
+  "host_called": false,
+  "qualification_issued": false,
+  "root_set_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+  "control_trust_root_generation": "ctrgen_dd30fbc7e0ba43fa8ba9f734867bcf12",
+  "status_object_generation": 3,
+  "original_status_issuer_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/c700d5b9fc6b9156ecd3cc77615856b9e0aedea9",
+    "sha256": "23ca2fe807dd454d8037168531a1d05890be6fbb5575cd18e8e6482f2ef47b80"
+  },
+  "issuer_metadata_sha256": "23ca2fe807dd454d8037168531a1d05890be6fbb5575cd18e8e6482f2ef47b80",
+  "accepted_algorithm_config": {
+    "canonicalization_id": "SORTED_JSON_UTF8_NO_FLOATS_LF_V1_CANDIDATE",
+    "digest_algorithm": "SHA-256",
+    "signed_payload_excluded_fields": [
+      "signature_binding"
+    ],
+    "signature_verification": "GITHUB_API_VERIFIED_OWNER_MERGE",
+    "accepted_config_ref": {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/b25abb05e00f72bb2ae910035ba9916a97c822dc",
+      "sha256": "988cdf823eb63806dc3385aa1840e812c1cb1df5ed06e72ca2adf56244b88d20"
+    }
+  },
+  "expires_at": "2026-09-09T09:28:59Z",
+  "request_sha256": "9582e201be7611c9ed360ff8ea31e20d0e7160f54f2d122a42557a81a14b98cc",
+  "status_constructor": {
+    "path": "work/qualification-live-preparation/parallel-source-limit-successor/prepare-status-generation3.mjs",
+    "sha256": "484b9266246d5b89a76b3510413a376ff7e124bb2a372ec4c8f301a296efed7b"
+  },
+  "host_scope_acceptance": {
+    "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-08\\ia\\work\\kernel-phase2-repo\\artifacts\\clued-validation\\phase2-entry-preparation-20260908\\bootstrap\\ParallelEvidenceLimitHostScopeIndependentAcceptance.json",
+    "sha256": "cf65eb9e047aaefbc085d7759d09e4c1e5f7d5ed4ad20c50ba5fc84da87a61e0"
+  },
+  "conclusion": "The ordinal2 in existing STATUS issuer metadata is the original registered Root generation applicability, not a maximum StatusManifest object generation. A new unique Status object at generation3 may describe this independently accepted same-purpose configuration while retaining the exact existing Root2, issuer23ca, audience, algorithm and Owner deadline.",
+  "required": [
+    "Keep Status.issuer_ref exactly the original Root STATUS binding; this ordinary applicability report must never replace issuer_ref or create another issuer qualification.",
+    "Use an actual unused new Status ID and actual construction observation time; preserve existing generation1/2 objects. This snapshot only establishes absence at its recorded time.",
+    "Bind actual new scoped qualification and published source; full Status payload then receives the original real Owner signature and is checked against exact runtime canonical payload.",
+    "The registration transaction must recheck Root/currentness, actual signature evidence, URI and(root,StatusManifest,generation3) uniqueness under locks.",
+    "No new Root generation, issuer purpose, Authority role, model/production permission, budget or Gate result follows."
+  ],
+  "observed_root_snapshot": {
+    "path": "work/qualification-live/generation2-next-normal600/restored-actual-full-metadata.json",
+    "sha256": "b4fa6a5728a23df7b17137a0c016eb7448dca895d838ef308469dacd5688b2c6",
+    "bytes": 1121851,
+    "observed_at": "2026-09-09 03:37:27.542489+00"
+  },
+  "new_status_id": null,
+  "new_status_as_of": null,
+  "signature_issued": false,
+  "old_status_entry_superseded_for_generation3": true,
+  "nonperformance_addendum": "Pending exact final runtime acceptance bytes; preserve98a/5ed0/470d historical evidence, then bind the new runtime explicitly."
+}

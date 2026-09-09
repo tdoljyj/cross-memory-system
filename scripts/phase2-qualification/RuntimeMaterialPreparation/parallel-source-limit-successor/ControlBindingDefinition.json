@@ -1,0 +1,42 @@
+{
+  "definition_state": "PREPARED_FOR_EXACT_INDEPENDENT_SCOPE_ACCEPTANCE",
+  "authority_effect": "NONE",
+  "controller_manifest_bound": true,
+  "controller_qualified": false,
+  "ga_issued": false,
+  "kind": "FIXED_CONTROL_BINDING_DEFINITION_NOT_BUSINESS_BINDING_RECEIPT",
+  "root_set_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+  "control_root_generation": "ctrgen_dd30fbc7e0ba43fa8ba9f734867bcf12",
+  "delegation_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/e7f738ae3c247e41733872ab95387440205c736a",
+    "sha256": "e09ef634712ce1206600402552073bae91e7296f2b4e2d3f99855bd760c944bd"
+  },
+  "actor": {
+    "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/input-definitions/ControlActorDefinition.json",
+    "sha256": "276df786fd7e5e9af9724fdcea6f03bb8661a005aeffeb40a0d6905ba8b4c807",
+    "bytes": 655
+  },
+  "subject": {
+    "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/input-definitions/SkillSubjectManifest.json",
+    "sha256": "f359a4ecc92ffeec93f3fac36949cfe1669bf017dd7cf4760220a2c3f9e8da1f",
+    "bytes": 1076
+  },
+  "controller_source_manifest": {
+    "path": "scripts/phase2-qualification/control-context-verifier-parallel-evidence-limit-successor/ControllerSourceManifest.candidate.json",
+    "sha256": "aa6514441aaaa1cc768c67bd9a5bca7b5a3118f8a58b499da81901d6eab99199",
+    "bytes": 56117
+  },
+  "host_runtime_config": {
+    "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/parallel-source-limit-successor/HostRuntimeConfig.json",
+    "sha256": "2d4bbc11753b9aa29ed8a5ce8544ee47d0e2055553457d6ab96ea82185fca267",
+    "bytes": 12416
+  },
+  "execution_scope": {
+    "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/parallel-source-limit-successor/ExecutionScopeDefinition.json",
+    "sha256": "04d381ff6919ec35ee3cb0e17a23c8579ed7a2f5a87835a1560db6c18f23f536",
+    "bytes": 28688
+  },
+  "control_generation_rules": "Actual independently issued runner/credential/session values are freshly read and compared; no business Binding or epoch is created here",
+  "business_binding_layer": "NOT_APPLICABLE_ONLY_UNDER_ACCEPTED_FIXED_PROFILE",
+  "immutable_direction": "controller -> host config -> execution scope -> this control binding; no future qualification/Status/runtime hash is referenced"
+}

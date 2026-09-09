@@ -1,0 +1,303 @@
+{
+  "object_type": "GateManifest",
+  "gate_id": "G-PREENTRY-SKILL-QUALIFICATION",
+  "definition_version": "fixed-synthetic-20260909.v5-parallel-source",
+  "purpose": "SKILL_COEXISTENCE_QUALIFICATION",
+  "environment": "ISOLATED_TEST",
+  "profile_ref": {
+    "profile_id": "DP-PREENTRY-SKILL-QUALIFICATION",
+    "definition_version": "fixed-synthetic-skill-input-20260908.v3-runtime600",
+    "content_digest": "sha256:d1c060b85f0b842a397a478105ea57a208e62eb0a5a2d4c2cd8f93f63eae88f5",
+    "definition_ref": {
+      "path": "scripts/phase2-qualification/preentry-parent/profile-runtime600/ProfileDefinition.json",
+      "sha256": "d1c060b85f0b842a397a478105ea57a208e62eb0a5a2d4c2cd8f93f63eae88f5",
+      "bytes": 3325
+    },
+    "signed_payload_ref": {
+      "path": "scripts/phase2-qualification/preentry-parent/profile-runtime600/signing/ProfileSigningPayload.json",
+      "sha256": "8528d857f6cf20f7330e47e39bf05aa16eeccb4ebe5406c61ee0c84ffb692ece",
+      "bytes": 11284
+    },
+    "independent_acceptance_ref": {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/FixedSyntheticProfile600IndependentAcceptance.json",
+      "sha256": "266ae65aba7faec0af6b4c257a6c289d6bdf3cd3719a74bca145cae00ce99177",
+      "bytes": 7476
+    }
+  },
+  "source_alias": {
+    "value": "PRE_ENTRY_QUALIFICATION_GATE_AUTHORIZATION",
+    "source": {
+      "path": "../slice-a-contracts/QualificationPhasePolicy.json",
+      "sha256": "154a5ca0e3d6786877662b68a173176ecd54712744400805ef4b2a93f5946f22",
+      "bytes": 5731,
+      "source_location": "PRESERVED_LOCAL_CONTRACT_INPUT"
+    },
+    "was_registered_gate_id": false
+  },
+  "source_basis": {
+    "source_contract_uri": "urn:clued:contract:kernel-next:v3.3",
+    "sha256": "f967fdf3e63028d29ed191160698726b5d707aaae63bd951f6ba2e8584936fec",
+    "line_spans": [
+      [
+        3435,
+        3444
+      ],
+      [
+        3876,
+        3887
+      ],
+      [
+        4316,
+        4346
+      ]
+    ]
+  },
+  "prerequisites": {
+    "stage_receipts": [
+      "R05",
+      "R06",
+      "R07",
+      "R08",
+      "R09",
+      "R10"
+    ],
+    "excluded_circular_stage_dependencies": [
+      "R11",
+      "R12",
+      "R13",
+      "R14"
+    ],
+    "accepted_controller_independent_of_skill": true,
+    "accepted_exact_execution_profile": true,
+    "registered_atomic_gate": true,
+    "actual_owner_root_issuer_current": true,
+    "per_action_ga_required": true
+  },
+  "test_requirements": {
+    "source_ref": {
+      "path": "../slice-a-contracts/QualificationRegressionSpecifications.json",
+      "sha256": "8d35a391a728703a527cfef3137867bb80c70a0a78bd869051fe47406192dafe",
+      "bytes": 6623,
+      "source_location": "PRESERVED_LOCAL_CONTRACT_INPUT"
+    },
+    "case_ids": [
+      "PQUAL-01",
+      "PQUAL-02",
+      "PQUAL-03",
+      "PQUAL-04",
+      "PQUAL-05",
+      "PQUAL-06",
+      "PQUAL-07",
+      "PQUAL-08",
+      "PQUAL-09",
+      "PQUAL-10",
+      "PQUAL-11",
+      "PQUAL-12",
+      "PQUAL-13",
+      "PQUAL-14",
+      "PQUAL-15",
+      "PQUAL-16",
+      "PQUAL-17",
+      "PQUAL-19",
+      "PQUAL-20"
+    ],
+    "post_entry_positive": {
+      "id": "PQUAL-18",
+      "state": "OUTSIDE_THIS_GATE_SCOPE_NOT_EXECUTED_NOT_PASSED",
+      "reason": "Requires DP-ISOLATED-E2E and separate Entry/implementation authority; no pre-entry substitution"
+    },
+    "primitive_boundary": "fixed_skill_fixture.py is an action primitive; reading Skill bytes is not Skill behavior qualification or coverage of all cases"
+  },
+  "execution": {
+    "environment_class": "ISOLATED_TEST",
+    "maximum_seconds": 600,
+    "memory_bytes": 134217728,
+    "cpu_millicores": 500,
+    "pids": 16,
+    "network": "none",
+    "model_calls": 0,
+    "paid_calls": 0
+  },
+  "evidence_and_result": {
+    "before_each_effect": "fresh typed current checks and exact remote durable Intent readback; recheck after publication",
+    "unknown": "no redispatch or capacity release; exact target reconciliation then only authorized safe stop",
+    "decision": "PENDING -> RUNNING -> DECISION_RESERVED; reserve all immutable Test/Evidence digests once; controlled signing Outbox; fresh final authorization/revocation/expiry/drift recheck before terminal CAS; one GA has one signed GRR.",
+    "results": [
+      "PASS",
+      "FAIL",
+      "BLOCKED",
+      "STALE"
+    ],
+    "output_authority": "qualification test evidence only; no ACTIVE/Entry/model/production authority",
+    "success": "All 19 applicable tests require sufficient real evidence for the identical exact inputs and independent oracle review; a single fixture read/write is never 19-case PASS."
+  },
+  "invalidation": [
+    "any accepted definition/input byte or target revision changes",
+    "required stage/Profile/controller/issuer acceptance revoked or replaced",
+    "Root or applicable independent generation/vector changes",
+    "window or budget exhausted",
+    "durable sink/STOP/required verifier unavailable",
+    "unresolved partial operation or evidence ambiguity"
+  ],
+  "roles": {
+    "executor": "fixed accepted controller",
+    "reviewer": "independent accepted assessor",
+    "issuer": "actual Owner/delegate via accepted current purpose binding; not the candidate author"
+  },
+  "typed_uri": "urn:clued:gate:G-PREENTRY-SKILL-QUALIFICATION",
+  "test_refs": [
+    {
+      "test_id": "PQUAL-01",
+      "typed_uri": "urn:clued:test:PQUAL-01",
+      "definition_version": "fixed-synthetic-20260909.v5-parallel-source",
+      "content_digest": "sha256:3698fc5d0afe3cda206da542295d38ca0c1227c50d0016a6b509329de9ac4e6b",
+      "definition_path": "evals/kernel-next/preentry-skill-qualification.json",
+      "canonical_pointer": "#/tests/PQUAL-01"
+    },
+    {
+      "test_id": "PQUAL-02",
+      "typed_uri": "urn:clued:test:PQUAL-02",
+      "definition_version": "fixed-synthetic-20260909.v5-parallel-source",
+      "content_digest": "sha256:93ece119c81a5f21aff28a563d8718f1e28d57f2cd0ab11813598da3fb615789",
+      "definition_path": "evals/kernel-next/preentry-skill-qualification.json",
+      "canonical_pointer": "#/tests/PQUAL-02"
+    },
+    {
+      "test_id": "PQUAL-03",
+      "typed_uri": "urn:clued:test:PQUAL-03",
+      "definition_version": "fixed-synthetic-20260909.v5-parallel-source",
+      "content_digest": "sha256:e97255def8965980e746fb34450657dcd331a0a14277f0837f94682fb520b3a3",
+      "definition_path": "evals/kernel-next/preentry-skill-qualification.json",
+      "canonical_pointer": "#/tests/PQUAL-03"
+    },
+    {
+      "test_id": "PQUAL-04",
+      "typed_uri": "urn:clued:test:PQUAL-04",
+      "definition_version": "fixed-synthetic-20260909.v5-parallel-source",
+      "content_digest": "sha256:0558fe730f23d3c4bc8e7249009a46a54d83fe27e0bb72635828e5eeab2424c3",
+      "definition_path": "evals/kernel-next/preentry-skill-qualification.json",
+      "canonical_pointer": "#/tests/PQUAL-04"
+    },
+    {
+      "test_id": "PQUAL-05",
+      "typed_uri": "urn:clued:test:PQUAL-05",
+      "definition_version": "fixed-synthetic-20260909.v5-parallel-source",
+      "content_digest": "sha256:c90bda1e5893eab7520ae7983527e08ac1cf00e96871bee37ca3cc1f78e1b293",
+      "definition_path": "evals/kernel-next/preentry-skill-qualification.json",
+      "canonical_pointer": "#/tests/PQUAL-05"
+    },
+    {
+      "test_id": "PQUAL-06",
+      "typed_uri": "urn:clued:test:PQUAL-06",
+      "definition_version": "fixed-synthetic-20260909.v5-parallel-source",
+      "content_digest": "sha256:45ab4b8aeba66d766635bf1054e577f81592284172ddff91c6c597235c743077",
+      "definition_path": "evals/kernel-next/preentry-skill-qualification.json",
+      "canonical_pointer": "#/tests/PQUAL-06"
+    },
+    {
+      "test_id": "PQUAL-07",
+      "typed_uri": "urn:clued:test:PQUAL-07",
+      "definition_version": "fixed-synthetic-20260909.v5-parallel-source",
+      "content_digest": "sha256:895fac5034aa87975ae74f87c1f8874e5e7e3e877798290ead65c2b5a8727379",
+      "definition_path": "evals/kernel-next/preentry-skill-qualification.json",
+      "canonical_pointer": "#/tests/PQUAL-07"
+    },
+    {
+      "test_id": "PQUAL-08",
+      "typed_uri": "urn:clued:test:PQUAL-08",
+      "definition_version": "fixed-synthetic-20260909.v5-parallel-source",
+      "content_digest": "sha256:31fe30d42e6f87df04013854b82bdfb50b48a7f6671d167d44c0820f6edded09",
+      "definition_path": "evals/kernel-next/preentry-skill-qualification.json",
+      "canonical_pointer": "#/tests/PQUAL-08"
+    },
+    {
+      "test_id": "PQUAL-09",
+      "typed_uri": "urn:clued:test:PQUAL-09",
+      "definition_version": "fixed-synthetic-20260909.v5-parallel-source",
+      "content_digest": "sha256:8f317f94648914145c46ee9094e70758aebc9235ffd50768027a1ce90b026a9f",
+      "definition_path": "evals/kernel-next/preentry-skill-qualification.json",
+      "canonical_pointer": "#/tests/PQUAL-09"
+    },
+    {
+      "test_id": "PQUAL-10",
+      "typed_uri": "urn:clued:test:PQUAL-10",
+      "definition_version": "fixed-synthetic-20260909.v5-parallel-source",
+      "content_digest": "sha256:fcd6ba6ce3c3e1b350876fb80d1e654111ca63d57c6ceea4bf7c47de770d3059",
+      "definition_path": "evals/kernel-next/preentry-skill-qualification.json",
+      "canonical_pointer": "#/tests/PQUAL-10"
+    },
+    {
+      "test_id": "PQUAL-11",
+      "typed_uri": "urn:clued:test:PQUAL-11",
+      "definition_version": "fixed-synthetic-20260909.v5-parallel-source",
+      "content_digest": "sha256:c26c10c3a956faec44512e5c53a7d4622d3e705d056106c35ae97aa43a6baf4c",
+      "definition_path": "evals/kernel-next/preentry-skill-qualification.json",
+      "canonical_pointer": "#/tests/PQUAL-11"
+    },
+    {
+      "test_id": "PQUAL-12",
+      "typed_uri": "urn:clued:test:PQUAL-12",
+      "definition_version": "fixed-synthetic-20260909.v5-parallel-source",
+      "content_digest": "sha256:1639fe7b3e062627720e31c260128081ab15f244b55b26a153860a0556cacabd",
+      "definition_path": "evals/kernel-next/preentry-skill-qualification.json",
+      "canonical_pointer": "#/tests/PQUAL-12"
+    },
+    {
+      "test_id": "PQUAL-13",
+      "typed_uri": "urn:clued:test:PQUAL-13",
+      "definition_version": "fixed-synthetic-20260909.v5-parallel-source",
+      "content_digest": "sha256:9cac6d6cf69d62b9e6fe720744aab172bd3a793ca477019557b383967a8d59ca",
+      "definition_path": "evals/kernel-next/preentry-skill-qualification.json",
+      "canonical_pointer": "#/tests/PQUAL-13"
+    },
+    {
+      "test_id": "PQUAL-14",
+      "typed_uri": "urn:clued:test:PQUAL-14",
+      "definition_version": "fixed-synthetic-20260909.v5-parallel-source",
+      "content_digest": "sha256:2ac20e72fcea048bcded4550e54abec10bf9ceec19673bb10e21c8bdff0b417c",
+      "definition_path": "evals/kernel-next/preentry-skill-qualification.json",
+      "canonical_pointer": "#/tests/PQUAL-14"
+    },
+    {
+      "test_id": "PQUAL-15",
+      "typed_uri": "urn:clued:test:PQUAL-15",
+      "definition_version": "fixed-synthetic-20260909.v5-parallel-source",
+      "content_digest": "sha256:1025c32bcdac62e38b3bfc9c53c15a46e9e5846306f970bab6a468e0314c40e9",
+      "definition_path": "evals/kernel-next/preentry-skill-qualification.json",
+      "canonical_pointer": "#/tests/PQUAL-15"
+    },
+    {
+      "test_id": "PQUAL-16",
+      "typed_uri": "urn:clued:test:PQUAL-16",
+      "definition_version": "fixed-synthetic-20260909.v5-parallel-source",
+      "content_digest": "sha256:0b624a0630ff33c98fb7636a791602416779ce36da76079d33c0990d2317da75",
+      "definition_path": "evals/kernel-next/preentry-skill-qualification.json",
+      "canonical_pointer": "#/tests/PQUAL-16"
+    },
+    {
+      "test_id": "PQUAL-17",
+      "typed_uri": "urn:clued:test:PQUAL-17",
+      "definition_version": "fixed-synthetic-20260909.v5-parallel-source",
+      "content_digest": "sha256:fd7ff0b6f10e60f27bf286bf196db3badd02ad65c959e50e90c7b35de02cbaea",
+      "definition_path": "evals/kernel-next/preentry-skill-qualification.json",
+      "canonical_pointer": "#/tests/PQUAL-17"
+    },
+    {
+      "test_id": "PQUAL-19",
+      "typed_uri": "urn:clued:test:PQUAL-19",
+      "definition_version": "fixed-synthetic-20260909.v5-parallel-source",
+      "content_digest": "sha256:7e629a5395aa9b90bdc4ccc953fe54ebb0221ed15a02697f2ccf6e3bd16995d3",
+      "definition_path": "evals/kernel-next/preentry-skill-qualification.json",
+      "canonical_pointer": "#/tests/PQUAL-19"
+    },
+    {
+      "test_id": "PQUAL-20",
+      "typed_uri": "urn:clued:test:PQUAL-20",
+      "definition_version": "fixed-synthetic-20260909.v5-parallel-source",
+      "content_digest": "sha256:e4b2708073e2fa367b79ecab09c6dbf604da8c3a7bf4367116a14cb318ca9834",
+      "definition_path": "evals/kernel-next/preentry-skill-qualification.json",
+      "canonical_pointer": "#/tests/PQUAL-20"
+    }
+  ],
+  "target_scope_class": "Fixed synthetic Skill coexistence inputs only under the signed PRE_ENTRY Profile; actual targets, input digests, allowed/forbidden writes, credentials, deadlines and stop/rollback bindings belong in each actual GA."
+}

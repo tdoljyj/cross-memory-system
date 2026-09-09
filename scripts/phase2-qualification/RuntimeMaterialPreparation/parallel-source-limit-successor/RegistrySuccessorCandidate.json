@@ -1,0 +1,52 @@
+{
+  "state": "PROPOSED_NOT_APPLIED",
+  "authority_effect": "NONE",
+  "registry_source": "S06 frozen atomic Gate enumeration, extended only by accepted signed forward source; no second registry",
+  "operation": "FORWARD_EXACT_ATOMIC_GATE_VERSION",
+  "addition": {
+    "object_type": "GateManifest",
+    "gate_id": "G-PREENTRY-SKILL-QUALIFICATION",
+    "typed_uri": "urn:clued:gate:G-PREENTRY-SKILL-QUALIFICATION",
+    "definition_version": "fixed-synthetic-20260909.v5-parallel-source",
+    "content_digest": "sha256:f1c53254ac5365ff653bee9e2bcd1c3b95e7d1ac209c9f31c1b1dcfac011bbf1",
+    "definition_source": {
+      "path": "evals/kernel-next/preentry-skill-qualification.json",
+      "sha256": "2e0a962c4eaf94ed70b8b3452daf52faf8919035497c0e67e90d7c9d5d60a87a",
+      "canonical_pointer": "#/gates/G-PREENTRY-SKILL-QUALIFICATION"
+    }
+  },
+  "existing_gate_ids_and_definitions_unchanged": false,
+  "original_frozen_registry_and_pins_unchanged": true,
+  "not_a_redefinition_of": [
+    "G0a",
+    "G0b",
+    "G1",
+    "G7A",
+    "B01",
+    "PQUAL-01"
+  ],
+  "runtime_enumeration_update": "Only after acceptance, append this exact ID in the same control-domain binding constraint; current SQL candidate deliberately still rejects it",
+  "object_type": "TypedGateRegistrySuccessorCandidate",
+  "predecessor_source": {
+    "source_contract_uri": "urn:clued:contract:kernel-next:v3.3",
+    "sha256": "f967fdf3e63028d29ed191160698726b5d707aaae63bd951f6ba2e8584936fec",
+    "line_spans": [
+      [
+        3435,
+        3444
+      ],
+      [
+        3876,
+        3887
+      ],
+      [
+        4316,
+        4346
+      ]
+    ]
+  },
+  "canonical_target": "evals/kernel-next/preentry-skill-qualification.registry.json",
+  "typed_namespace_rule": "PQUAL IDs are TestManifest, B01-B06 are mechanism boundaries, and this one Gate is neither a stage alias nor a Promotion/RC Gate.",
+  "activation_rule": "Exact independent acceptance, signed immutable static publication/readback, then current Registry composition and runtime allowlist binding; candidate bytes alone never register a Gate or authorize a GA.",
+  "forward_version_boundary": "Earlier version retained as immutable history; only this exact Gate forward version is proposed. Other Gate IDs and meanings are unchanged."
+}

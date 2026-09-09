@@ -1,0 +1,32 @@
+{
+  "state": "ACCEPTED_EXACT_PARALLEL_EVIDENCE_LIMIT_HOST_SCOPE",
+  "issued_at": "2026-09-09T04:13:26.558Z",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "controller_digest": "aa6514441aaaa1cc768c67bd9a5bca7b5a3118f8a58b499da81901d6eab99199",
+  "scope_digest": "04d381ff6919ec35ee3cb0e17a23c8579ed7a2f5a87835a1560db6c18f23f536",
+  "authority_effect": "NONE",
+  "sql_called": false,
+  "host_called": false,
+  "qualification_issued": false,
+  "preparation_sha256": "026cf7b70113b81e08875dddbbf237b3cbde949373816f643b60fbc22f33f8e1",
+  "source_acceptance_sha256": "167fe305ea1bf0f653d5afa0aebda9fec8b3648ec3f17f8478388a29b09c7487",
+  "host_runtime_config_digest": "2d4bbc11753b9aa29ed8a5ce8544ee47d0e2055553457d6ab96ea82185fca267",
+  "gate_digest": "f1c53254ac5365ff653bee9e2bcd1c3b95e7d1ac209c9f31c1b1dcfac011bbf1",
+  "gate_suite_digest": "2e0a962c4eaf94ed70b8b3452daf52faf8919035497c0e67e90d7c9d5d60a87a",
+  "checks": {
+    "fixed_refs_verified": 48,
+    "three_pure_stage_outputs_reconstructed_exact": true,
+    "all19_oracles_setup_and_fixtures_unchanged": true,
+    "original_scope_permissions_budget_and_child_resources_unchanged": true,
+    "explicit_new_logical2MiB_pipe4MiB_limits": true,
+    "old_root2MiB_and_V1_DEFLATE1MiB_unchanged": true,
+    "reused_metadata_boundary_checks": 6,
+    "new_tests_run": 0
+  },
+  "limits": [
+    "Accept exact static/Host/Scope/Sink/Binding/Risk objects and static/definitions/subject construction only.",
+    "Original prepare.mjs status command is explicitly excluded: it confuses Status object generation with Root issuer generation. Use only separately reviewed prepare-status-generation3.mjs.",
+    "Runtime/qualification subject templates are not accepted runtime or qualification. Final actual source publication, qualification, signed Status and final runtime remain necessary.",
+    "Prior aa651 source and b33e numeric-boundary limitations remain, including actual pre-budget full input/message encoding checks and unchanged total quota."
+  ]
+}
