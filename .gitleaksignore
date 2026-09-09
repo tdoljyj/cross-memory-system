@@ -235,3 +235,6 @@ d5e63a2dab088f63167b9b1085ae050d1a4731cc:scripts/phase2-qualification/recorded-i
 # fingerprint. Independently classified in PR32HostPublicFingerprintIndependentClassification.json.
 # No source modification or file/rule/value-wide suppression.
 61fc80d3f2b96752835e653e5ac4ad335a09b6d1:scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-evidence-blob/HostRuntimeConfig.json:generic-api-key:29
+# PR34: independently classified public GPG fingerprint and historical deduplication identifiers.
+baa155aff396d534198c4c67c696cc20a91ca1d5:scripts/phase2-qualification/RuntimeMaterialPreparation/parallel-source-limit-successor/HostRuntimeConfig.json:generic-api-key:29
+f27c0112719adf911faa0153f8d87251bcc3394d:artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/runtime-evidence/created-recovery-sql-6de636122e9c4fb782c0dc12fd223a9b/result.json:generic-api-key:1

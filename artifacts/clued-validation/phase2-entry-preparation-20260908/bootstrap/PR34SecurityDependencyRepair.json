@@ -1,0 +1,125 @@
+{
+  "state": "ISOLATED_PR34_MINIMAL_SECURITY_PATCH_PREPARED",
+  "baseline": {
+    "state": "ISOLATED_PR34_SECURITY_PATCH_BASELINE",
+    "source_clone_head": "baa155aff396d534198c4c67c696cc20a91ca1d5",
+    "pins": [
+      {
+        "path": "apps/clued-cloud/package.json",
+        "sha256": "f502cdccb8786a90778559164f390285e35fc5fa3532098bd8173bc21987eef8",
+        "bytes": 6208
+      },
+      {
+        "path": "apps/clued-cloud/package-lock.json",
+        "sha256": "1b14aaf931e19146768d6309ca0088a8f8681913471f2eae20d400bdaa4cf5af",
+        "bytes": 875081
+      }
+    ],
+    "controller_manifest_sha256": "aa6514441aaaa1cc768c67bd9a5bca7b5a3118f8a58b499da81901d6eab99199",
+    "closure_intersection": [],
+    "baseline_versions": {
+      "next": "16.3.2",
+      "sharp": "0.35.2"
+    },
+    "old_node_modules_mutated": false
+  },
+  "patch_files": [
+    {
+      "source_path": "work/pr34-security-dependency-patch/package.json",
+      "target_path": "apps/clued-cloud/package.json",
+      "bytes": 6208,
+      "sha256": "3b48f7969dc13501387899b56f900489bfdf63ff696379173a3da3302b5ab938",
+      "original_sha256": "f502cdccb8786a90778559164f390285e35fc5fa3532098bd8173bc21987eef8"
+    },
+    {
+      "source_path": "work/pr34-security-dependency-patch/package-lock.json",
+      "target_path": "apps/clued-cloud/package-lock.json",
+      "bytes": 873146,
+      "sha256": "12c6cc9bf47acb9153cb19c11bf588930032865014eb10510806220d9a10f9ef",
+      "original_sha256": "1b14aaf931e19146768d6309ca0088a8f8681913471f2eae20d400bdaa4cf5af"
+    }
+  ],
+  "manifest_unchanged_sha256": "aa6514441aaaa1cc768c67bd9a5bca7b5a3118f8a58b499da81901d6eab99199",
+  "frozen_manifest_intersection": [],
+  "package_json_only_change": "dependencies.next 16.3.2 -> 16.3.3",
+  "lock_entries_changed": [
+    "",
+    "node_modules/@img/sharp-freebsd-wasm32",
+    "node_modules/@img/sharp-freebsd-wasm32/node_modules/@img/sharp-wasm32",
+    "node_modules/@img/sharp-webcontainers-wasm32",
+    "node_modules/@img/sharp-webcontainers-wasm32/node_modules/@img/sharp-wasm32",
+    "node_modules/@next/env",
+    "node_modules/@next/swc-darwin-arm64",
+    "node_modules/@next/swc-darwin-x64",
+    "node_modules/@next/swc-linux-arm64-gnu",
+    "node_modules/@next/swc-linux-arm64-musl",
+    "node_modules/@next/swc-linux-x64-gnu",
+    "node_modules/@next/swc-linux-x64-musl",
+    "node_modules/@next/swc-win32-arm64-msvc",
+    "node_modules/@next/swc-win32-x64-msvc",
+    "node_modules/next",
+    "node_modules/next/node_modules/@img/sharp-darwin-arm64",
+    "node_modules/next/node_modules/@img/sharp-darwin-x64",
+    "node_modules/next/node_modules/@img/sharp-libvips-darwin-arm64",
+    "node_modules/next/node_modules/@img/sharp-libvips-darwin-x64",
+    "node_modules/next/node_modules/@img/sharp-libvips-linux-arm",
+    "node_modules/next/node_modules/@img/sharp-libvips-linux-arm64",
+    "node_modules/next/node_modules/@img/sharp-libvips-linux-ppc64",
+    "node_modules/next/node_modules/@img/sharp-libvips-linux-riscv64",
+    "node_modules/next/node_modules/@img/sharp-libvips-linux-s390x",
+    "node_modules/next/node_modules/@img/sharp-libvips-linux-x64",
+    "node_modules/next/node_modules/@img/sharp-libvips-linuxmusl-arm64",
+    "node_modules/next/node_modules/@img/sharp-libvips-linuxmusl-x64",
+    "node_modules/next/node_modules/@img/sharp-linux-arm",
+    "node_modules/next/node_modules/@img/sharp-linux-arm64",
+    "node_modules/next/node_modules/@img/sharp-linux-ppc64",
+    "node_modules/next/node_modules/@img/sharp-linux-riscv64",
+    "node_modules/next/node_modules/@img/sharp-linux-s390x",
+    "node_modules/next/node_modules/@img/sharp-linux-x64",
+    "node_modules/next/node_modules/@img/sharp-linuxmusl-arm64",
+    "node_modules/next/node_modules/@img/sharp-linuxmusl-x64",
+    "node_modules/next/node_modules/@img/sharp-win32-arm64",
+    "node_modules/next/node_modules/@img/sharp-win32-ia32",
+    "node_modules/next/node_modules/@img/sharp-win32-x64",
+    "node_modules/next/node_modules/sharp",
+    "node_modules/promptfoo/node_modules/@img/sharp-freebsd-wasm32",
+    "node_modules/promptfoo/node_modules/@img/sharp-wasm32",
+    "node_modules/promptfoo/node_modules/@img/sharp-webcontainers-wasm32"
+  ],
+  "all_other_lock_entries_exactly_unchanged": true,
+  "checks": {
+    "npm_ci_dry_run_exit_code": 0,
+    "lifecycle_scripts_disabled": true,
+    "node_modules_installed": false,
+    "production_audit_raw_sha256": "a85578ae04ba1593a1a47757da6cd6e83a72c01acb1cb33bca7fbca97c03ddf7",
+    "production_audit": {
+      "info": 0,
+      "low": 0,
+      "moderate": 1,
+      "high": 0,
+      "critical": 0,
+      "total": 1
+    },
+    "production_audit_exit_code": 1,
+    "remaining_moderate": "baseline-browser-mapping GHSA-w5vr-8v7q-w6rv, unchanged by this bounded patch",
+    "actual_trivy_rerun": false,
+    "application_build_not_run": true
+  },
+  "official_sources": [
+    {
+      "url": "https://github.com/vercel/next.js/security/advisories/GHSA-p293-qw3h-jr36",
+      "fixed": "next 16.3.3",
+      "identifier": "CVE-2026-75604"
+    },
+    {
+      "url": "https://github.com/vercel/next.js/security/advisories/GHSA-2xp9-vwfh-vxw4",
+      "fixed": "next 16.3.3"
+    },
+    {
+      "url": "https://github.com/lovell/sharp/security/advisories/GHSA-rgj7-g3m4-5g8c",
+      "fixed": "sharp 0.35.4"
+    }
+  ],
+  "full_preparation_sha256": "fa948578222a649017235236ef464618b828660ebc2ebbdbc861f701adec3850",
+  "deployed": false
+}
