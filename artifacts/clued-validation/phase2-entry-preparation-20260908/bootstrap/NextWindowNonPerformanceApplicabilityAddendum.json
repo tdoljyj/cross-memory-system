@@ -1,0 +1,49 @@
+{
+  "state": "ACCEPTED_PARALLEL_SOURCE_NONPERFORMANCE_APPLICABILITY",
+  "issued_at": "2026-09-09T14:15:54.529Z",
+  "expires_at": "2026-09-10T10:13:16Z",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "controller_digest": "c1e539441bb6fc5d05cdcfdb722f703abb50187d456d05cf49caacc44f5086e5",
+  "scope_digest": "f840eba3bc2ddcff60741c2eff41702412bd0bca7b19f2227cf63ebd7661e94a",
+  "root_generation": "ctrgen_2e778ca66244459f974b081edca8c04e",
+  "runtime_acceptance_sha256": "1b0ba30730c7b3e045103a53eb0f20dee1e3f9908c7875dc7643bb83536e2b36",
+  "runtime_acceptance": {
+    "path": "work/next-window-runtime-materials-20260909/ExactPreentryNextWindowControllerRuntimeAcceptance.json",
+    "sha256": "1b0ba30730c7b3e045103a53eb0f20dee1e3f9908c7875dc7643bb83536e2b36",
+    "bytes": 60963
+  },
+  "performance_slo_revision": "NOT_APPLICABLE_PREENTRY_NO_PERFORMANCE_QUALIFICATION",
+  "field_location": "Original DECISION Evidence metadata.performance_slo_revision; not an additional field in the unchanged 38-field expected_ga.",
+  "original_applicability_sources": [
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/PreentryPerformanceSLOApplicabilityDecision.json",
+      "sha256": "98a502fdf43a1f0f9e4d01956c829826006c8cd1e8d2146fbc0540c10dc3e4b8",
+      "bytes": 2679
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/EvidenceBlobPerformanceSLOApplicabilityDecision.json",
+      "sha256": "5ed0f7fd18cd156d51d2d96242d0bb7f3aab6882c5515005db77c3af9903d4c3",
+      "bytes": 2238
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/StatusGeneration2NonPerformanceApplicabilityAddendum.json",
+      "sha256": "470db88dfe46e23a5f5ae183b590d191bfc8158b120a4c9194492c5c810faa87",
+      "bytes": 1412
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/ParallelEvidenceLimitNonPerformanceApplicabilityAddendum.json",
+      "sha256": "3de507c22d88914e208b75d8a735364508c6db317f6e1063214701c179a7421c",
+      "bytes": 2516
+    },
+    {
+      "path": "work/kernel-phase2-repo/artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/FrameLimitNonPerformanceApplicabilityAddendum.json",
+      "sha256": "634601592a2849cf8af6e6a128dcee9ce9d807f5b322be1ec98ce57cfff4bd3b",
+      "bytes": 2622
+    }
+  ],
+  "finding": "The exact approved next-window successor retains the isolated synthetic purpose, fixed 600 second Profile, nineteen unchanged oracles and original nonperformance value. Root3/window, explicit aggregate-budget successor and environment-driver source changes do not grant performance, Entry, business or production qualification.",
+  "evidence_rule": "Preserve original 98a/5ed0/470d/3de/634 raw evidence and append this exact ordinary addendum. No new expected_ga field, SLO threshold or authority is introduced.",
+  "entry_or_performance_qualification_granted": false,
+  "case_verdicts_created": false,
+  "authority_effect": "NONE"
+}

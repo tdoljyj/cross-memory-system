@@ -1,0 +1,29 @@
+{
+  "kind": "INDEPENDENT_QUALIFICATION_GATE_FILE_DIGEST_LITERAL_CORRECTION",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "corrected_at": "2026-09-09T13:56:10.962Z",
+  "state": "ACCEPTED_SINGLE_FIELD_EXACT_FILE_DIGEST_CORRECTION",
+  "predecessor": {
+    "path": "work/next-window-runtime-materials-20260909/ScopedControllerNextWindowQualification.json",
+    "sha256": "4beef76466d9d628077773e8533c4db370faea23693cf628ad2e9c73aff30de2",
+    "bytes": 33581
+  },
+  "successor": {
+    "path": "work/next-window-runtime-materials-20260909/ScopedControllerNextWindowQualification.v2.json",
+    "sha256": "a3c75d5e8dd64119c0ba356afbd52714c5595b93ef985ec0e919adfcec1a1fab",
+    "bytes": 33581
+  },
+  "actual_gate_file": {
+    "path": "work/next-window-runtime-materials-20260909/definitions-actual/GateDefinitionCandidate.json",
+    "sha256": "e7b6b7220d7d9d5a887b035db80396b72f14e99ffcd079122303d7251885f0c0",
+    "bytes": 12823
+  },
+  "JSON_pointer": "/accepted_gate/content_digest",
+  "old_value": "86920d63e29617d04e7a20806d199419ab089d8f0b2ecd01a5d108fe6abb79a6",
+  "new_value": "e7b6b7220d7d9d5a887b035db80396b72f14e99ffcd079122303d7251885f0c0",
+  "reason": "The initial review mistakenly used compact JSON encoding. The frozen Gate artifact and original runtime contract use the complete actual pretty JSON plus LF file bytes. This descriptor now matches the actual published artifact.",
+  "reverse_full_original_bytes_equal": true,
+  "all_other_fields_and_original_acceptance_time_unchanged": true,
+  "new_permission_or_case_PASS": false,
+  "required_route": "Only successor qualification typedref in unsigned Status/runtime preparation; retain old outputs, same unused Status ID/as_of allowed. No source/SQL/Owner/limits changes or test rerun."
+}
