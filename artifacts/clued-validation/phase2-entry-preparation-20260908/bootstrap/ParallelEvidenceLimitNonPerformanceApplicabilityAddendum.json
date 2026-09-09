@@ -1,0 +1,37 @@
+{
+  "state": "ACCEPTED_PARALLEL_SOURCE_NONPERFORMANCE_APPLICABILITY",
+  "issued_at": "2026-09-09T04:25:47.284Z",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "controller_digest": "aa6514441aaaa1cc768c67bd9a5bca7b5a3118f8a58b499da81901d6eab99199",
+  "scope_digest": "04d381ff6919ec35ee3cb0e17a23c8579ed7a2f5a87835a1560db6c18f23f536",
+  "runtime_acceptance_sha256": "8d1ffbb2acc6593d9f3618fb21fdcedee51ec24f8e7d2411b1203aa0281805ed",
+  "runtime_acceptance": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/ExactPreentryParallelEvidenceLimitControllerRuntimeAcceptance.json",
+    "sha256": "8d1ffbb2acc6593d9f3618fb21fdcedee51ec24f8e7d2411b1203aa0281805ed",
+    "bytes": 55154
+  },
+  "performance_slo_revision": "NOT_APPLICABLE_PREENTRY_NO_PERFORMANCE_QUALIFICATION",
+  "field_location": "Original DECISION Evidence metadata.performance_slo_revision; not an additional field in the unchanged 38-field expected_ga.",
+  "original_applicability_sources": [
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/PreentryPerformanceSLOApplicabilityDecision.json",
+      "sha256": "98a502fdf43a1f0f9e4d01956c829826006c8cd1e8d2146fbc0540c10dc3e4b8",
+      "bytes": 2679
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/EvidenceBlobPerformanceSLOApplicabilityDecision.json",
+      "sha256": "5ed0f7fd18cd156d51d2d96242d0bb7f3aab6882c5515005db77c3af9903d4c3",
+      "bytes": 2238
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/StatusGeneration2NonPerformanceApplicabilityAddendum.json",
+      "sha256": "470db88dfe46e23a5f5ae183b590d191bfc8158b120a4c9194492c5c810faa87",
+      "bytes": 1412
+    }
+  ],
+  "finding": "Exact v5 parallel-source and explicit V2 Evidence-limit changes retain the same isolated fixed synthetic pre-entry purpose, unchanged nineteen test oracles and Profile, and exclude model, business, Entry and performance qualification. Source retrieval timing observations do not grant performance SLO completion or an exemption for other purposes.",
+  "evidence_rule": "Retain complete original 98a/5ed0/470d bytes as historical ordinary Evidence and append this exact addendum raw/hash. No UNKNOWN or alternative NA value is accepted; no new SLO object, threshold, issuer or Authority is created.",
+  "entry_or_performance_qualification_granted": false,
+  "case_verdicts_created": false,
+  "authority_effect": "NONE"
+}

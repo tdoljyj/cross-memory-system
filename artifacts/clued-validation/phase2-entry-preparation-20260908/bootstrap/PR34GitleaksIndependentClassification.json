@@ -1,0 +1,406 @@
+{
+  "state": "ALL_TWENTY_TWO_CI_FINDINGS_EXACTLY_CLASSIFIED_NOT_AUTHENTICATION_SECRETS",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "head": "baa155aff396d534198c4c67c696cc20a91ca1d5",
+  "scanner": "Gitleaks 8.30.1, exact unchanged .gitleaks.toml",
+  "actual_reproduction": {
+    "commits_scanned": 575,
+    "bytes_scanned": 44056622,
+    "findings": 22,
+    "report": "work/pr34-synced-history-scan.redacted.json",
+    "report_sha256": "91a5063042aba0213efa7af62f83cbbbea2f5ad51c99813a94906a524a41c1a4"
+  },
+  "public_key_finding": {
+    "count": 1,
+    "classification_source": "work/PR34PublicGpgFingerprintIndependentClassification.json",
+    "classification_sha256": "61f756bdfad3e90661ddae20ce7a3c4ff26d7c5a7f0403287b41ea63a65005b0",
+    "finding": "baa155aff396d534198c4c67c696cc20a91ca1d5:scripts/phase2-qualification/RuntimeMaterialPreparation/parallel-source-limit-successor/HostRuntimeConfig.json:generic-api-key:29"
+  },
+  "historical_snapshot": {
+    "count": 21,
+    "published_source": {
+      "repository": "tdoljyj/cross-memory-system",
+      "commit": "f27c0112719adf911faa0153f8d87251bcc3394d",
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/runtime-evidence/created-recovery-sql-6de636122e9c4fb782c0dc12fd223a9b/result.json",
+      "sha256": "ddebb5f5461210a6de3a669820c4a337ff5dcb4b0a66ff1e4d0781e3a566e3a7",
+      "git_blob_sha": "9681baf883c53482a76e4ca347d2ca18d9aaa6b0",
+      "size": 619117
+    },
+    "actual_git_blob_bytes_equal_approved_original": true,
+    "classification": "Literal idempotency_key JSON fields in retained canonical control/execution history. These are deduplication identifiers compared against durable events, not credentials granting authentication. Full source is unchanged and was previously explicitly authorized for this exact private Evidence publication.",
+    "mapped_fields": [
+      {
+        "line": 1,
+        "start_column": 8464,
+        "end_column": 8515,
+        "value_sha256": "65304645b9b08ee8623a86bc0025b0177a884e665f24ae04f81f32c779afa3e4",
+        "matching_json_locations": [
+          {
+            "pointer": "/execution/root/events/1/request/idempotency_key",
+            "sha256": "65304645b9b08ee8623a86bc0025b0177a884e665f24ae04f81f32c779afa3e4",
+            "event_type": null
+          },
+          {
+            "pointer": "/execution/root/events/1/idempotency_key",
+            "sha256": "65304645b9b08ee8623a86bc0025b0177a884e665f24ae04f81f32c779afa3e4",
+            "event_type": null
+          }
+        ]
+      },
+      {
+        "line": 1,
+        "start_column": 8815,
+        "end_column": 8866,
+        "value_sha256": "65304645b9b08ee8623a86bc0025b0177a884e665f24ae04f81f32c779afa3e4",
+        "matching_json_locations": [
+          {
+            "pointer": "/execution/root/events/1/request/idempotency_key",
+            "sha256": "65304645b9b08ee8623a86bc0025b0177a884e665f24ae04f81f32c779afa3e4",
+            "event_type": null
+          },
+          {
+            "pointer": "/execution/root/events/1/idempotency_key",
+            "sha256": "65304645b9b08ee8623a86bc0025b0177a884e665f24ae04f81f32c779afa3e4",
+            "event_type": null
+          }
+        ]
+      },
+      {
+        "line": 1,
+        "start_column": 10194,
+        "end_column": 10254,
+        "value_sha256": "5587093a813e9182925c3bac9fdd0faadafdd1b8c62de799940d627747ba9da6",
+        "matching_json_locations": [
+          {
+            "pointer": "/execution/events/0/idempotency_key",
+            "sha256": "5587093a813e9182925c3bac9fdd0faadafdd1b8c62de799940d627747ba9da6",
+            "event_type": null
+          }
+        ]
+      },
+      {
+        "line": 1,
+        "start_column": 111158,
+        "end_column": 111218,
+        "value_sha256": "8a16c136d2fd934018c94fbc8c756507b5f436c03415b7ca4712787de9adda63",
+        "matching_json_locations": [
+          {
+            "pointer": "/execution/events/4/idempotency_key",
+            "sha256": "8a16c136d2fd934018c94fbc8c756507b5f436c03415b7ca4712787de9adda63",
+            "event_type": null
+          }
+        ]
+      },
+      {
+        "line": 1,
+        "start_column": 111618,
+        "end_column": 111707,
+        "value_sha256": "850d43964aefffb5122712026c7356ed4b1fd3ee72a0b934c082b5282add2434",
+        "matching_json_locations": [
+          {
+            "pointer": "/execution/events/5/request/idempotency_key",
+            "sha256": "850d43964aefffb5122712026c7356ed4b1fd3ee72a0b934c082b5282add2434",
+            "event_type": null
+          },
+          {
+            "pointer": "/execution/events/5/idempotency_key",
+            "sha256": "850d43964aefffb5122712026c7356ed4b1fd3ee72a0b934c082b5282add2434",
+            "event_type": null
+          }
+        ]
+      },
+      {
+        "line": 1,
+        "start_column": 111844,
+        "end_column": 111933,
+        "value_sha256": "850d43964aefffb5122712026c7356ed4b1fd3ee72a0b934c082b5282add2434",
+        "matching_json_locations": [
+          {
+            "pointer": "/execution/events/5/request/idempotency_key",
+            "sha256": "850d43964aefffb5122712026c7356ed4b1fd3ee72a0b934c082b5282add2434",
+            "event_type": null
+          },
+          {
+            "pointer": "/execution/events/5/idempotency_key",
+            "sha256": "850d43964aefffb5122712026c7356ed4b1fd3ee72a0b934c082b5282add2434",
+            "event_type": null
+          }
+        ]
+      },
+      {
+        "line": 1,
+        "start_column": 229197,
+        "end_column": 229274,
+        "value_sha256": "f4e837202e74da9da72779e2fb015be7907bb7a0e6d1de71fce03e4f4d4932d1",
+        "matching_json_locations": [
+          {
+            "pointer": "/execution/events/8/request/idempotency_key",
+            "sha256": "f4e837202e74da9da72779e2fb015be7907bb7a0e6d1de71fce03e4f4d4932d1",
+            "event_type": null
+          },
+          {
+            "pointer": "/execution/events/8/idempotency_key",
+            "sha256": "f4e837202e74da9da72779e2fb015be7907bb7a0e6d1de71fce03e4f4d4932d1",
+            "event_type": null
+          }
+        ]
+      },
+      {
+        "line": 1,
+        "start_column": 229411,
+        "end_column": 229488,
+        "value_sha256": "f4e837202e74da9da72779e2fb015be7907bb7a0e6d1de71fce03e4f4d4932d1",
+        "matching_json_locations": [
+          {
+            "pointer": "/execution/events/8/request/idempotency_key",
+            "sha256": "f4e837202e74da9da72779e2fb015be7907bb7a0e6d1de71fce03e4f4d4932d1",
+            "event_type": null
+          },
+          {
+            "pointer": "/execution/events/8/idempotency_key",
+            "sha256": "f4e837202e74da9da72779e2fb015be7907bb7a0e6d1de71fce03e4f4d4932d1",
+            "event_type": null
+          }
+        ]
+      },
+      {
+        "line": 1,
+        "start_column": 235147,
+        "end_column": 235207,
+        "value_sha256": "eba640c44735ca9f2f54cd3d12c9a52386e61a45cbc4e77c19fd722367396a0c",
+        "matching_json_locations": [
+          {
+            "pointer": "/execution/events/10/idempotency_key",
+            "sha256": "eba640c44735ca9f2f54cd3d12c9a52386e61a45cbc4e77c19fd722367396a0c",
+            "event_type": null
+          }
+        ]
+      },
+      {
+        "line": 1,
+        "start_column": 235607,
+        "end_column": 235696,
+        "value_sha256": "f8abd05547f1ca743a2784ddf64111f4c87242b31b0c405538a520565e4df037",
+        "matching_json_locations": [
+          {
+            "pointer": "/execution/events/11/request/idempotency_key",
+            "sha256": "f8abd05547f1ca743a2784ddf64111f4c87242b31b0c405538a520565e4df037",
+            "event_type": null
+          },
+          {
+            "pointer": "/execution/events/11/idempotency_key",
+            "sha256": "f8abd05547f1ca743a2784ddf64111f4c87242b31b0c405538a520565e4df037",
+            "event_type": null
+          }
+        ]
+      },
+      {
+        "line": 1,
+        "start_column": 235834,
+        "end_column": 235923,
+        "value_sha256": "f8abd05547f1ca743a2784ddf64111f4c87242b31b0c405538a520565e4df037",
+        "matching_json_locations": [
+          {
+            "pointer": "/execution/events/11/request/idempotency_key",
+            "sha256": "f8abd05547f1ca743a2784ddf64111f4c87242b31b0c405538a520565e4df037",
+            "event_type": null
+          },
+          {
+            "pointer": "/execution/events/11/idempotency_key",
+            "sha256": "f8abd05547f1ca743a2784ddf64111f4c87242b31b0c405538a520565e4df037",
+            "event_type": null
+          }
+        ]
+      },
+      {
+        "line": 1,
+        "start_column": 236158,
+        "end_column": 236246,
+        "value_sha256": "d91e723786ca3774ecd72ec5a1be27256df87aab210dc60564ccda2784deed70",
+        "matching_json_locations": [
+          {
+            "pointer": "/execution/events/12/request/idempotency_key",
+            "sha256": "d91e723786ca3774ecd72ec5a1be27256df87aab210dc60564ccda2784deed70",
+            "event_type": null
+          },
+          {
+            "pointer": "/execution/events/12/idempotency_key",
+            "sha256": "d91e723786ca3774ecd72ec5a1be27256df87aab210dc60564ccda2784deed70",
+            "event_type": null
+          }
+        ]
+      },
+      {
+        "line": 1,
+        "start_column": 236384,
+        "end_column": 236472,
+        "value_sha256": "d91e723786ca3774ecd72ec5a1be27256df87aab210dc60564ccda2784deed70",
+        "matching_json_locations": [
+          {
+            "pointer": "/execution/events/12/request/idempotency_key",
+            "sha256": "d91e723786ca3774ecd72ec5a1be27256df87aab210dc60564ccda2784deed70",
+            "event_type": null
+          },
+          {
+            "pointer": "/execution/events/12/idempotency_key",
+            "sha256": "d91e723786ca3774ecd72ec5a1be27256df87aab210dc60564ccda2784deed70",
+            "event_type": null
+          }
+        ]
+      },
+      {
+        "line": 1,
+        "start_column": 242930,
+        "end_column": 243018,
+        "value_sha256": "8a7e169b04782ca36a06662fa3eec20492aae28b5426ca8f9d7307d23ea48aeb",
+        "matching_json_locations": [
+          {
+            "pointer": "/execution/events/13/request/idempotency_key",
+            "sha256": "8a7e169b04782ca36a06662fa3eec20492aae28b5426ca8f9d7307d23ea48aeb",
+            "event_type": null
+          },
+          {
+            "pointer": "/execution/events/13/idempotency_key",
+            "sha256": "8a7e169b04782ca36a06662fa3eec20492aae28b5426ca8f9d7307d23ea48aeb",
+            "event_type": null
+          }
+        ]
+      },
+      {
+        "line": 1,
+        "start_column": 243157,
+        "end_column": 243245,
+        "value_sha256": "8a7e169b04782ca36a06662fa3eec20492aae28b5426ca8f9d7307d23ea48aeb",
+        "matching_json_locations": [
+          {
+            "pointer": "/execution/events/13/request/idempotency_key",
+            "sha256": "8a7e169b04782ca36a06662fa3eec20492aae28b5426ca8f9d7307d23ea48aeb",
+            "event_type": null
+          },
+          {
+            "pointer": "/execution/events/13/idempotency_key",
+            "sha256": "8a7e169b04782ca36a06662fa3eec20492aae28b5426ca8f9d7307d23ea48aeb",
+            "event_type": null
+          }
+        ]
+      },
+      {
+        "line": 1,
+        "start_column": 259317,
+        "end_column": 259387,
+        "value_sha256": "6af6cdd2a191809a87eddc1fd8f8e891ce8ec1eb126c4a6631435d4c791abb29",
+        "matching_json_locations": [
+          {
+            "pointer": "/execution/attempts/0/ga/idempotency_key",
+            "sha256": "6af6cdd2a191809a87eddc1fd8f8e891ce8ec1eb126c4a6631435d4c791abb29",
+            "event_type": null
+          },
+          {
+            "pointer": "/execution/attempts/0/idempotency_key",
+            "sha256": "6af6cdd2a191809a87eddc1fd8f8e891ce8ec1eb126c4a6631435d4c791abb29",
+            "event_type": null
+          }
+        ]
+      },
+      {
+        "line": 1,
+        "start_column": 394186,
+        "end_column": 394256,
+        "value_sha256": "6af6cdd2a191809a87eddc1fd8f8e891ce8ec1eb126c4a6631435d4c791abb29",
+        "matching_json_locations": [
+          {
+            "pointer": "/execution/attempts/0/ga/idempotency_key",
+            "sha256": "6af6cdd2a191809a87eddc1fd8f8e891ce8ec1eb126c4a6631435d4c791abb29",
+            "event_type": null
+          },
+          {
+            "pointer": "/execution/attempts/0/idempotency_key",
+            "sha256": "6af6cdd2a191809a87eddc1fd8f8e891ce8ec1eb126c4a6631435d4c791abb29",
+            "event_type": null
+          }
+        ]
+      },
+      {
+        "line": 1,
+        "start_column": 410584,
+        "end_column": 410654,
+        "value_sha256": "da8250db5b7f2ac6889b52f6e961abb0af42def91e0780e5c89191240253da40",
+        "matching_json_locations": [
+          {
+            "pointer": "/execution/attempts/1/ga/idempotency_key",
+            "sha256": "da8250db5b7f2ac6889b52f6e961abb0af42def91e0780e5c89191240253da40",
+            "event_type": null
+          },
+          {
+            "pointer": "/execution/attempts/1/idempotency_key",
+            "sha256": "da8250db5b7f2ac6889b52f6e961abb0af42def91e0780e5c89191240253da40",
+            "event_type": null
+          }
+        ]
+      },
+      {
+        "line": 1,
+        "start_column": 443902,
+        "end_column": 443972,
+        "value_sha256": "da8250db5b7f2ac6889b52f6e961abb0af42def91e0780e5c89191240253da40",
+        "matching_json_locations": [
+          {
+            "pointer": "/execution/attempts/1/ga/idempotency_key",
+            "sha256": "da8250db5b7f2ac6889b52f6e961abb0af42def91e0780e5c89191240253da40",
+            "event_type": null
+          },
+          {
+            "pointer": "/execution/attempts/1/idempotency_key",
+            "sha256": "da8250db5b7f2ac6889b52f6e961abb0af42def91e0780e5c89191240253da40",
+            "event_type": null
+          }
+        ]
+      },
+      {
+        "line": 1,
+        "start_column": 458360,
+        "end_column": 458430,
+        "value_sha256": "8635e3eadb300aadd18ebc8cba9bab170971f14faa242fd79ab3f514a8add42e",
+        "matching_json_locations": [
+          {
+            "pointer": "/execution/attempts/2/ga/idempotency_key",
+            "sha256": "8635e3eadb300aadd18ebc8cba9bab170971f14faa242fd79ab3f514a8add42e",
+            "event_type": null
+          },
+          {
+            "pointer": "/execution/attempts/2/idempotency_key",
+            "sha256": "8635e3eadb300aadd18ebc8cba9bab170971f14faa242fd79ab3f514a8add42e",
+            "event_type": null
+          }
+        ]
+      },
+      {
+        "line": 1,
+        "start_column": 611864,
+        "end_column": 611934,
+        "value_sha256": "8635e3eadb300aadd18ebc8cba9bab170971f14faa242fd79ab3f514a8add42e",
+        "matching_json_locations": [
+          {
+            "pointer": "/execution/attempts/2/ga/idempotency_key",
+            "sha256": "8635e3eadb300aadd18ebc8cba9bab170971f14faa242fd79ab3f514a8add42e",
+            "event_type": null
+          },
+          {
+            "pointer": "/execution/attempts/2/idempotency_key",
+            "sha256": "8635e3eadb300aadd18ebc8cba9bab170971f14faa242fd79ab3f514a8add42e",
+            "event_type": null
+          }
+        ]
+      }
+    ]
+  },
+  "narrow_candidate_fingerprints": [
+    "baa155aff396d534198c4c67c696cc20a91ca1d5:scripts/phase2-qualification/RuntimeMaterialPreparation/parallel-source-limit-successor/HostRuntimeConfig.json:generic-api-key:29",
+    "f27c0112719adf911faa0153f8d87251bcc3394d:artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/runtime-evidence/created-recovery-sql-6de636122e9c4fb782c0dc12fd223a9b/result.json:generic-api-key:1"
+  ],
+  "repair_boundary": "Append only these two exact commit/file/rule/line fingerprints to the existing .gitleaksignore mechanism. The 21 one-line JSON findings share one fingerprint. No source rewrite, history rewrite, broad path/rule exclusion, scanner downgrade or workflow change.",
+  "ignore_modified": false,
+  "workflow_modified": false,
+  "raw_secret_or_key_values_emitted": false,
+  "previous_partial_report_retained": true
+}
