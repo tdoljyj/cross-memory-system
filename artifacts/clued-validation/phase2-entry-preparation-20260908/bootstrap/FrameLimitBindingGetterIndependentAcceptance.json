@@ -1,0 +1,81 @@
+{
+  "state": "ACCEPTED_EXACT_THIRD_FORWARD_PRIVATE_GETTER_SOURCE_NOT_REGISTERED",
+  "reviewed_at": "2026-09-09T05:39:04.549Z",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "source": {
+    "path": "work/kernel-phase2-repo/scripts/phase2-qualification/nonproduction-control-store/runtime-successor/binding-frame-limit-successor/effective-binding.sql",
+    "sha256": "affe4ee753890634ebab486bce3b68f9265b5f000dfc095cb0e4d1bc62812911",
+    "bytes": 16844
+  },
+  "original_first_event_postgres_sha256": "23f1ed9bc4447d6981dfadb2fdcba11d0a5458a85929166f1f09eeef7dac80d4",
+  "original_second_event": {
+    "sequence": 25,
+    "exact_full_row_equals_actual_independent_read": true
+  },
+  "third_event": {
+    "sequence": 26,
+    "key": "ordinary-frame-limit-binding-20260909",
+    "gate_version": "fixed-synthetic-20260909.v6-frame-limit",
+    "maximum_forward_events": 3,
+    "original_binding_profile_gate_floor_unchanged": true,
+    "six_original_typed_refs_and_four_target_digests": true
+  },
+  "local_pg": {
+    "path": "work/frame-getter-local-pg-kLiqCs/Result.json",
+    "sha256": "cbac60f33178d52144f756d3f93329b4e6e2876f33452d925fa415ded7e20b3b",
+    "checks": [
+      {
+        "name": "Only newgetter changes; actual25event/full4attempt/budget/status3 state and all function security preserved",
+        "result": "PASS"
+      },
+      {
+        "name": "Original immutable trigger refuses second-event timestamp mutation before getter; no trigger bypass",
+        "result": "PASS",
+        "rejected": {
+          "message": "immutable_control_evidence",
+          "code": "P0001"
+        }
+      },
+      {
+        "name": "Third event wrong predecessor with valid ownSHA refused",
+        "result": "PASS",
+        "rejected": {
+          "message": "exact_third_fixed_binding_event_required",
+          "code": "P0001"
+        }
+      },
+      {
+        "name": "One exact-shaped synthetic third event accepted; full original25history and budgets preserved",
+        "result": "PASS"
+      },
+      {
+        "name": "Fourth event rejected",
+        "result": "PASS",
+        "rejected": {
+          "message": "at_most_three_exact_binding_successors_required",
+          "code": "P0001"
+        }
+      }
+    ],
+    "elapsed_ms": 3061.0327,
+    "server_stopped": true,
+    "production_writes": 0,
+    "synthetic_third_explicit": true,
+    "first_failure": {
+      "path": "work/frame-getter-local-pg-IuERTn/Result.json",
+      "sha256": "50b0d6865bd7fc8f7766a31c385a0bbe54e7f60998077793da53b582e57b8754",
+      "explanation": "Test expected getter rejection but original immutable trigger correctly rejected mutation first. Corrected only test expectation; no source/trigger bypass."
+    }
+  },
+  "installed_shape_observed_in_local_fixture": {
+    "definition_sha256": "2884dfcb352d762b326bacf8327ba25fa84c4a3661cc2010e7bf52a872560456",
+    "prosrc_sha256": "ecba7b2411c0b661d2e027c6805f75e0197421f6501707dbe3b8d3ecf1118611"
+  },
+  "limitations": [
+    "Only exact private read projection accepted. Actual signed third binding values require one separately reviewed guarded transaction preserving full live metadata.",
+    "Original event10/event25 are immutable, no generic rotation, new grant, Root/issuer/permission/budget change.",
+    "Original fa4c source rejected for nonexistent prior_thirds and retained; this acceptance only covers corrected affe source."
+  ],
+  "new_authority": false,
+  "sql_installed": false
+}

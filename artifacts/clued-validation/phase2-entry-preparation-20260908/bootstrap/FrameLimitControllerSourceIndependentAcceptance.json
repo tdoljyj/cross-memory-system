@@ -1,0 +1,760 @@
+{
+  "state": "ACCEPTED_EXACT_FRAME_LIMIT_CONTROLLER_SOURCES_NOT_QUALIFIED",
+  "reviewed_at": "2026-09-09T05:39:04.556Z",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "controller_digest": "93dfea25adf03ffac92bb985db74ae7edaaf111fa27bef25cd6b090ec1e6ee14",
+  "predecessor_controller_digest": "aa6514441aaaa1cc768c67bd9a5bca7b5a3118f8a58b499da81901d6eab99199",
+  "source_counts": {
+    "files": 266,
+    "repository": 79,
+    "runtime": 187
+  },
+  "reviewed_refs": [
+    {
+      "path": "work/frame-getter-local-pg-kLiqCs/Result.json",
+      "sha256": "cbac60f33178d52144f756d3f93329b4e6e2876f33452d925fa415ded7e20b3b",
+      "bytes": 3252443
+    },
+    {
+      "path": "work/kernel-phase2-repo/scripts/phase2-qualification/nonproduction-control-store/runtime-successor/binding-frame-limit-successor/effective-binding.sql",
+      "sha256": "affe4ee753890634ebab486bce3b68f9265b5f000dfc095cb0e4d1bc62812911",
+      "bytes": 16844
+    },
+    {
+      "path": "work/parallel-forward-status-independent-full-observation.json",
+      "sha256": "2d95daa398f4cd00111dc0b0c3e177871ded3aff7ade84b8ba2b8fbf3971a3e9",
+      "bytes": 2656909
+    },
+    {
+      "path": "work/kernel-phase2-repo/scripts/phase2-qualification/nonproduction-control-store/runtime-successor/binding-parallel-source-successor/effective-binding.sql",
+      "sha256": "fef8f3f134e5660de5b44d3b6b02448d5a579efc42dfbd1a45b00bdadab9bf2c",
+      "bytes": 7683
+    },
+    {
+      "path": "work/kernel-phase2-repo/scripts/phase2-qualification/control-context-verifier-parallel-frame-limit-successor/ControllerSourceManifest.candidate.json",
+      "sha256": "93dfea25adf03ffac92bb985db74ae7edaaf111fa27bef25cd6b090ec1e6ee14",
+      "bytes": 58904
+    },
+    {
+      "path": "work/kernel-phase2-repo/scripts/phase2-qualification/control-context-verifier-parallel-evidence-limit-successor/ControllerSourceManifest.candidate.json",
+      "sha256": "aa6514441aaaa1cc768c67bd9a5bca7b5a3118f8a58b499da81901d6eab99199",
+      "bytes": 56117
+    },
+    {
+      "path": "C:/Users/Windows/Documents/Codex/2026-09-08/ia/work/normal600-pipe-parallel-frame-limit/deliver.mjs",
+      "sha256": "f04351149f3f5cd43ad4b6a89620c1af045c1f46ef32f0586f132f6bd85f8a27",
+      "bytes": 749
+    },
+    {
+      "path": "C:/Users/Windows/Documents/Codex/2026-09-08/ia/work/normal600-pipe-parallel-frame-limit/launcher.mjs",
+      "sha256": "4d4e7bffc557c8ecb986159a7570beab0bfc2c5cbef26ace02ae602cf5e8584b",
+      "bytes": 2028
+    },
+    {
+      "path": "C:/Users/Windows/Documents/Codex/2026-09-08/ia/work/normal600-pipe-parallel-frame-limit/message.mjs",
+      "sha256": "178bd429a4b4a5bf2c9eba33b0773123437cd0a4b268324920c93072ca5b07cb",
+      "bytes": 882
+    },
+    {
+      "path": "C:/Users/Windows/Documents/Codex/2026-09-08/ia/work/normal600-pipe-parallel-frame-limit/read-output.mjs",
+      "sha256": "dd86a47324765b2b012e9c039ad67f9f29071bb0a947f587668ddff4d047c07e",
+      "bytes": 1049
+    },
+    {
+      "path": "C:/Users/Windows/Documents/Codex/2026-09-08/ia/work/normal600-pipe-parallel-frame-limit/ready-loader.mjs",
+      "sha256": "a2d6fbbce72fada75bfdc969cd46b033fb2db5520b1f2862a7581c05a35a6a9b",
+      "bytes": 311
+    },
+    {
+      "path": "C:/Users/Windows/Documents/Codex/2026-09-08/ia/work/normal600-pipe-parallel-frame-limit/sha256.mjs",
+      "sha256": "14fd1d0b3378d57bf75688a3e9a558e5c5e52e8514d345440437d5768631fdf9",
+      "bytes": 2156
+    },
+    {
+      "path": "C:/Users/Windows/Documents/Codex/2026-09-08/ia/work/normal600-pipe-parallel-frame-limit/tool-entry.functions.js",
+      "sha256": "dfb251ac0dab9e09a3cdab15896b3ae5e6d64245ed0890a6ca9d58571b523377",
+      "bytes": 14434
+    },
+    {
+      "path": "work\\kernel-phase2-repo\\scripts\\phase2-qualification\\control-context-verifier-parallel-frame-limit-successor\\cli.mjs",
+      "sha256": "23e5c73b8af535cf2c39c9841ea8080f818c93aad22d11f3d2a6cd80326bad74",
+      "bytes": 1732
+    },
+    {
+      "path": "work\\kernel-phase2-repo\\scripts\\phase2-qualification\\control-context-verifier-parallel-frame-limit-successor\\context.mjs",
+      "sha256": "e90696c856aeb5d557d0dcf5aa280acd67c6527321bb3428f0ae9f44b958d8ed",
+      "bytes": 22356
+    },
+    {
+      "path": "work\\kernel-phase2-repo\\scripts\\phase2-qualification\\control-context-verifier-parallel-frame-limit-successor\\source-publication.mjs",
+      "sha256": "76caadad497bd7432fef47e11c897d1233b3a27402589e2523b4b1abd1e8030c",
+      "bytes": 3578
+    },
+    {
+      "path": "work\\kernel-phase2-repo\\scripts\\phase2-qualification\\control-context-verifier-parallel-frame-limit-successor\\tool-entry.functions.js",
+      "sha256": "d3a4b678c9644fba01b9a1f227b90876f662c85c5658da94ad4a60dbaa304e51",
+      "bytes": 10049
+    },
+    {
+      "path": "work\\kernel-phase2-repo\\scripts\\phase2-qualification\\nonproduction-control-store\\runtime-successor\\binding-frame-limit-successor\\effective-binding.sql",
+      "sha256": "affe4ee753890634ebab486bce3b68f9265b5f000dfc095cb0e4d1bc62812911",
+      "bytes": 16844
+    },
+    {
+      "path": "work/kernel-phase2-repo/scripts/phase2-qualification/control-context-verifier-parallel-frame-limit-successor/FrameSourcePreparation.json",
+      "sha256": "66a61d43c7a622823d8a7a8ea9e568780dbc95750fc8c644487112e25b59ec49",
+      "bytes": 10747
+    },
+    {
+      "path": "work/kernel-phase2-repo/scripts/phase2-qualification/control-context-verifier-parallel-frame-limit-successor/cli.mjs",
+      "sha256": "23e5c73b8af535cf2c39c9841ea8080f818c93aad22d11f3d2a6cd80326bad74",
+      "bytes": 1732
+    },
+    {
+      "path": "work/kernel-phase2-repo/scripts/phase2-qualification/control-context-verifier-parallel-evidence-limit-successor/cli.mjs",
+      "sha256": "670a22a1f298fd52a2ff9f5b140df2aea6d031eed41777851b443fa2814f356f",
+      "bytes": 1732
+    },
+    {
+      "path": "work/kernel-phase2-repo/scripts/phase2-qualification/control-context-verifier-parallel-frame-limit-successor/context.mjs",
+      "sha256": "e90696c856aeb5d557d0dcf5aa280acd67c6527321bb3428f0ae9f44b958d8ed",
+      "bytes": 22356
+    },
+    {
+      "path": "work/kernel-phase2-repo/scripts/phase2-qualification/control-context-verifier-parallel-evidence-limit-successor/context.mjs",
+      "sha256": "742ebe382d1db757c0be72403b8ba27ee051476e97a8e6aec183827937756a8c",
+      "bytes": 22296
+    },
+    {
+      "path": "work/kernel-phase2-repo/scripts/phase2-qualification/control-context-verifier-parallel-frame-limit-successor/source-publication.mjs",
+      "sha256": "76caadad497bd7432fef47e11c897d1233b3a27402589e2523b4b1abd1e8030c",
+      "bytes": 3578
+    },
+    {
+      "path": "work/kernel-phase2-repo/scripts/phase2-qualification/control-context-verifier-parallel-evidence-limit-successor/source-publication.mjs",
+      "sha256": "355b88e052a50d72b6b85327c01eda85a5d8a78d44e944879b1502ae16b0db69",
+      "bytes": 3581
+    },
+    {
+      "path": "work/kernel-phase2-repo/scripts/phase2-qualification/control-context-verifier-parallel-frame-limit-successor/tool-entry.functions.js",
+      "sha256": "d3a4b678c9644fba01b9a1f227b90876f662c85c5658da94ad4a60dbaa304e51",
+      "bytes": 10049
+    },
+    {
+      "path": "work/kernel-phase2-repo/scripts/phase2-qualification/control-context-verifier-parallel-evidence-limit-successor/tool-entry.functions.js",
+      "sha256": "cfd1b1915bed16fc1b1d75532e2d29546a1d69118d87e3e6889fa1d81f00a2b4",
+      "bytes": 10073
+    },
+    {
+      "path": "work/normal600-pipe-parallel-frame-limit/ready-loader.mjs",
+      "sha256": "a2d6fbbce72fada75bfdc969cd46b033fb2db5520b1f2862a7581c05a35a6a9b",
+      "bytes": 311
+    },
+    {
+      "path": "work/normal600-pipe-parallel-evidence-limit/ready-loader.mjs",
+      "sha256": "8fa1f9b3491ffd2068657c0f4c8006590f82912413eeeac21c0b2491c6b6af10",
+      "bytes": 317
+    },
+    {
+      "path": "work/normal600-pipe-parallel-frame-limit/launcher.mjs",
+      "sha256": "4d4e7bffc557c8ecb986159a7570beab0bfc2c5cbef26ace02ae602cf5e8584b",
+      "bytes": 2028
+    },
+    {
+      "path": "work/normal600-pipe-parallel-evidence-limit/launcher.mjs",
+      "sha256": "a8cbfaec0c09d54a7bea46fb307ae5a13513b3cf6f94f7ec63f7c189fe24f484",
+      "bytes": 2031
+    },
+    {
+      "path": "work/normal600-pipe-parallel-frame-limit/read-output.mjs",
+      "sha256": "dd86a47324765b2b012e9c039ad67f9f29071bb0a947f587668ddff4d047c07e",
+      "bytes": 1049
+    },
+    {
+      "path": "work/normal600-pipe-parallel-evidence-limit/read-output.mjs",
+      "sha256": "c78e0ff8531476112187895985de5211bcf8b42a53ecb2c031fa155e684466a2",
+      "bytes": 1052
+    },
+    {
+      "path": "work/normal600-pipe-parallel-frame-limit/message.mjs",
+      "sha256": "178bd429a4b4a5bf2c9eba33b0773123437cd0a4b268324920c93072ca5b07cb",
+      "bytes": 882
+    },
+    {
+      "path": "work/normal600-pipe-parallel-evidence-limit/message.mjs",
+      "sha256": "178bd429a4b4a5bf2c9eba33b0773123437cd0a4b268324920c93072ca5b07cb",
+      "bytes": 882
+    },
+    {
+      "path": "work/normal600-pipe-parallel-frame-limit/deliver.mjs",
+      "sha256": "f04351149f3f5cd43ad4b6a89620c1af045c1f46ef32f0586f132f6bd85f8a27",
+      "bytes": 749
+    },
+    {
+      "path": "work/normal600-pipe-parallel-evidence-limit/deliver.mjs",
+      "sha256": "f04351149f3f5cd43ad4b6a89620c1af045c1f46ef32f0586f132f6bd85f8a27",
+      "bytes": 749
+    },
+    {
+      "path": "work/normal600-pipe-parallel-frame-limit/sha256.mjs",
+      "sha256": "14fd1d0b3378d57bf75688a3e9a558e5c5e52e8514d345440437d5768631fdf9",
+      "bytes": 2156
+    },
+    {
+      "path": "work/normal600-pipe-parallel-evidence-limit/sha256.mjs",
+      "sha256": "14fd1d0b3378d57bf75688a3e9a558e5c5e52e8514d345440437d5768631fdf9",
+      "bytes": 2156
+    },
+    {
+      "path": "work/normal600-pipe-parallel-frame-limit/tool-entry.functions.js",
+      "sha256": "dfb251ac0dab9e09a3cdab15896b3ae5e6d64245ed0890a6ca9d58571b523377",
+      "bytes": 14434
+    },
+    {
+      "path": "work/normal600-pipe-parallel-evidence-limit/tool-entry.functions.js",
+      "sha256": "aa81fee16ac8004b84adae141b00f200898a4c9d2d6022ed0141d11ebddc2fe1",
+      "bytes": 14467
+    },
+    {
+      "path": "work/kernel-phase2-repo/scripts/phase2-qualification/control-context-verifier-parallel-frame-limit-successor/python-import-catalog.py",
+      "sha256": "e6fce292f97fb36370a45f0fe4f5c644b41610def6fa7ddf9001559f38572c34",
+      "bytes": 1811
+    },
+    {
+      "path": "work/kernel-phase2-repo/scripts/phase2-qualification/control-context-verifier-parallel-evidence-limit-successor/python-import-catalog.py",
+      "sha256": "e6fce292f97fb36370a45f0fe4f5c644b41610def6fa7ddf9001559f38572c34",
+      "bytes": 1811
+    },
+    {
+      "path": "work/kernel-phase2-repo/scripts/phase2-qualification/control-context-verifier-parallel-frame-limit-successor/build-controller-manifest.mjs",
+      "sha256": "bbadab9e87b1e3c5ca007c127c91ae0e8e64a75a4f92d95f707c4a13385f4d12",
+      "bytes": 10461
+    },
+    {
+      "path": "work/kernel-phase2-repo/scripts/phase2-qualification/control-context-verifier-parallel-evidence-limit-successor/build-controller-manifest.mjs",
+      "sha256": "95318c357c5efb53d84ecc3b7563fac6a572007a6cf967f7fb42c3048f365682",
+      "bytes": 9990
+    },
+    {
+      "path": "work/kernel-phase2-repo/scripts/phase2-qualification/control-context-verifier-parallel-frame-limit-successor/FrameSourceChecks.json",
+      "sha256": "d8ae67a3b4c85a08824eb651f64a81f045f5154d27528c170655f376b784d4bb",
+      "bytes": 5090
+    },
+    {
+      "path": "work/FrameCLIComponentIndependentAcceptance.json",
+      "sha256": "bc159d60638233e942d334f1a4e3d87f98512deebc2b638d392ee17d0c890a6f",
+      "bytes": 4306
+    }
+  ],
+  "exact_added_sources": [
+    {
+      "path": "C:/Users/Windows/Documents/Codex/2026-09-08/ia/work/normal600-pipe-parallel-frame-limit/deliver.mjs",
+      "role": "RUNTIME_DEPENDENCY",
+      "bytes": 749,
+      "sha256": "f04351149f3f5cd43ad4b6a89620c1af045c1f46ef32f0586f132f6bd85f8a27"
+    },
+    {
+      "path": "C:/Users/Windows/Documents/Codex/2026-09-08/ia/work/normal600-pipe-parallel-frame-limit/launcher.mjs",
+      "role": "RUNTIME_DEPENDENCY",
+      "bytes": 2028,
+      "sha256": "4d4e7bffc557c8ecb986159a7570beab0bfc2c5cbef26ace02ae602cf5e8584b"
+    },
+    {
+      "path": "C:/Users/Windows/Documents/Codex/2026-09-08/ia/work/normal600-pipe-parallel-frame-limit/message.mjs",
+      "role": "RUNTIME_DEPENDENCY",
+      "bytes": 882,
+      "sha256": "178bd429a4b4a5bf2c9eba33b0773123437cd0a4b268324920c93072ca5b07cb"
+    },
+    {
+      "path": "C:/Users/Windows/Documents/Codex/2026-09-08/ia/work/normal600-pipe-parallel-frame-limit/read-output.mjs",
+      "role": "RUNTIME_DEPENDENCY",
+      "bytes": 1049,
+      "sha256": "dd86a47324765b2b012e9c039ad67f9f29071bb0a947f587668ddff4d047c07e"
+    },
+    {
+      "path": "C:/Users/Windows/Documents/Codex/2026-09-08/ia/work/normal600-pipe-parallel-frame-limit/ready-loader.mjs",
+      "role": "RUNTIME_DEPENDENCY",
+      "bytes": 311,
+      "sha256": "a2d6fbbce72fada75bfdc969cd46b033fb2db5520b1f2862a7581c05a35a6a9b"
+    },
+    {
+      "path": "C:/Users/Windows/Documents/Codex/2026-09-08/ia/work/normal600-pipe-parallel-frame-limit/sha256.mjs",
+      "role": "RUNTIME_DEPENDENCY",
+      "bytes": 2156,
+      "sha256": "14fd1d0b3378d57bf75688a3e9a558e5c5e52e8514d345440437d5768631fdf9"
+    },
+    {
+      "path": "C:/Users/Windows/Documents/Codex/2026-09-08/ia/work/normal600-pipe-parallel-frame-limit/tool-entry.functions.js",
+      "role": "RUNTIME_DEPENDENCY",
+      "bytes": 14434,
+      "sha256": "dfb251ac0dab9e09a3cdab15896b3ae5e6d64245ed0890a6ca9d58571b523377"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-parallel-frame-limit-successor/cli.mjs",
+      "role": "REPOSITORY_SOURCE",
+      "bytes": 1732,
+      "sha256": "23e5c73b8af535cf2c39c9841ea8080f818c93aad22d11f3d2a6cd80326bad74"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-parallel-frame-limit-successor/context.mjs",
+      "role": "REPOSITORY_SOURCE",
+      "bytes": 22356,
+      "sha256": "e90696c856aeb5d557d0dcf5aa280acd67c6527321bb3428f0ae9f44b958d8ed"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-parallel-frame-limit-successor/source-publication.mjs",
+      "role": "REPOSITORY_SOURCE",
+      "bytes": 3578,
+      "sha256": "76caadad497bd7432fef47e11c897d1233b3a27402589e2523b4b1abd1e8030c"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-parallel-frame-limit-successor/tool-entry.functions.js",
+      "role": "REPOSITORY_SOURCE",
+      "bytes": 10049,
+      "sha256": "d3a4b678c9644fba01b9a1f227b90876f662c85c5658da94ad4a60dbaa304e51"
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/binding-frame-limit-successor/effective-binding.sql",
+      "role": "REPOSITORY_SOURCE",
+      "bytes": 16844,
+      "sha256": "affe4ee753890634ebab486bce3b68f9265b5f000dfc095cb0e4d1bc62812911"
+    }
+  ],
+  "publishable_source_files": [
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-parallel-frame-limit-successor/ControllerSourceManifest.candidate.json",
+      "sha256": "93dfea25adf03ffac92bb985db74ae7edaaf111fa27bef25cd6b090ec1e6ee14",
+      "bytes": 58904
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-evidence-blob-successor/cli.mjs",
+      "sha256": "670a22a1f298fd52a2ff9f5b140df2aea6d031eed41777851b443fa2814f356f",
+      "bytes": 1732
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-evidence-blob-successor/context.mjs",
+      "sha256": "742ebe382d1db757c0be72403b8ba27ee051476e97a8e6aec183827937756a8c",
+      "bytes": 22296
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-evidence-blob-successor/original_input_publisher.py",
+      "sha256": "fdc71e98bb88988fceddd498de9b1489df3de1df83a198a089d42fa22143c449",
+      "bytes": 16152
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-evidence-blob-successor/original-inputs-blob.mjs",
+      "sha256": "4b81b7a0207b0f8c9a5d3461542dd1abb6393b3eab5b616180484585f6bf9ade",
+      "bytes": 7453
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-evidence-blob-successor/result-terminal.mjs",
+      "sha256": "f1dc26baf79a95849b5ea176293b7cee86194b84623b7bc4cb6075347632f06a",
+      "bytes": 7602
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-evidence-blob-successor/source-publication.mjs",
+      "sha256": "8e0201880b396ea6d5c9ef881cbfcebec7066ec5e8ca95209699c0fe25eaef36",
+      "bytes": 3138
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-evidence-blob-successor/tool-entry.functions.js",
+      "sha256": "10ed077cf5fb3003374fa1ced12bb83ed93fcd51e4abeb9bd0b05955c976314e",
+      "bytes": 9975
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-parallel-evidence-limit-successor/cli.mjs",
+      "sha256": "670a22a1f298fd52a2ff9f5b140df2aea6d031eed41777851b443fa2814f356f",
+      "bytes": 1732
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-parallel-evidence-limit-successor/context.mjs",
+      "sha256": "742ebe382d1db757c0be72403b8ba27ee051476e97a8e6aec183827937756a8c",
+      "bytes": 22296
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-parallel-evidence-limit-successor/original_input_publisher.py",
+      "sha256": "c505d8ba37613d2209305bc485b7048250d7c59d68d404527ed417f9c5fa4b0a",
+      "bytes": 20663
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-parallel-evidence-limit-successor/original-inputs-blob.mjs",
+      "sha256": "e79a6601b75872bffe3a0124d9da42d0cf1385d05aae450bbf5bc88a00c0f255",
+      "bytes": 7775
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-parallel-evidence-limit-successor/result-terminal.mjs",
+      "sha256": "0ad684f41fd3dbe9cd2d9d55c2d49b11c6440ad704fb86efd77e4b078053feff",
+      "bytes": 7648
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-parallel-evidence-limit-successor/source-publication.mjs",
+      "sha256": "355b88e052a50d72b6b85327c01eda85a5d8a78d44e944879b1502ae16b0db69",
+      "bytes": 3581
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-parallel-evidence-limit-successor/tool-entry.functions.js",
+      "sha256": "cfd1b1915bed16fc1b1d75532e2d29546a1d69118d87e3e6889fa1d81f00a2b4",
+      "bytes": 10073
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-parallel-frame-limit-successor/cli.mjs",
+      "sha256": "23e5c73b8af535cf2c39c9841ea8080f818c93aad22d11f3d2a6cd80326bad74",
+      "bytes": 1732
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-parallel-frame-limit-successor/context.mjs",
+      "sha256": "e90696c856aeb5d557d0dcf5aa280acd67c6527321bb3428f0ae9f44b958d8ed",
+      "bytes": 22356
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-parallel-frame-limit-successor/source-publication.mjs",
+      "sha256": "76caadad497bd7432fef47e11c897d1233b3a27402589e2523b4b1abd1e8030c",
+      "bytes": 3578
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-parallel-frame-limit-successor/tool-entry.functions.js",
+      "sha256": "d3a4b678c9644fba01b9a1f227b90876f662c85c5658da94ad4a60dbaa304e51",
+      "bytes": 10049
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-parallel-source-successor/blob-worker.mjs",
+      "sha256": "ef6286059294d7c6f256e7a2386395fc848f02b175ef08c465c72e731828a9a1",
+      "bytes": 4442
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-parallel-source-successor/cli.mjs",
+      "sha256": "670a22a1f298fd52a2ff9f5b140df2aea6d031eed41777851b443fa2814f356f",
+      "bytes": 1732
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-parallel-source-successor/context.mjs",
+      "sha256": "13bebf02be37ae2e6e868d3a13268bee2b1664a99ed3c30dee253f5c82164130",
+      "bytes": 22346
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-parallel-source-successor/FixedJobLauncher.cs",
+      "sha256": "feef01a62576d2159e697c290be1a9b1e45f1432a65a1e17b8142afc80a1031c",
+      "bytes": 7954
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-parallel-source-successor/job-launcher.ps1",
+      "sha256": "818265116e9ab76a93cd7b343398f133d2a236c535126cef809ed944533b62d6",
+      "bytes": 1645
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-parallel-source-successor/read-source-blobs.mjs",
+      "sha256": "e98f420b0b07b657ba7e493d1b26acf75a1e4394d504d1ccee5c57184e85d6bd",
+      "bytes": 3007
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-parallel-source-successor/ref-plan.mjs",
+      "sha256": "8f1d4f0f3033632d5a93e449495ebcda2774125ec2440abb1dd148da5d58ad63",
+      "bytes": 1943
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-parallel-source-successor/source-publication.mjs",
+      "sha256": "87477911add147109af9a469d7c9feb18faaddd94ee95405544f5714b3c353c7",
+      "bytes": 3521
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-parallel-source-successor/tool-entry.functions.js",
+      "sha256": "f6915707dbd5acb284944939641296cdfd354eca2ec329bfbd327ba581e1c710",
+      "bytes": 10003
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime180/dispatch-evidence.mjs",
+      "sha256": "b99e260dae4274f5040870bc927e2388e3a6ca7e10fc4a0f5ac9e3280a30c30f",
+      "bytes": 1915
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime180/gate-result-receipt.candidate.schema.json",
+      "sha256": "2ea5fb9cc905ddbbf8769a438a1e1d5d9bdfe5d72363091033663112e9304c0b",
+      "bytes": 8302
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime180/status-manifest.candidate.schema.json",
+      "sha256": "6ba12ed51b3fc0e457c13e83f47e1ad1aa6cc680d8f28c668f8c65d12742ecc2",
+      "bytes": 5562
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime180/transport.mjs",
+      "sha256": "e2391023805c858c2c8f5499069a4060f7c773a3cc29732bea37f9d281698d0e",
+      "bytes": 2209
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime600/budget-evidence.mjs",
+      "sha256": "fc63343b630668c88385603bf563404d7020cc0edb74422f8cd3d3e0f57f3075",
+      "bytes": 2389
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime600/cli.mjs",
+      "sha256": "670a22a1f298fd52a2ff9f5b140df2aea6d031eed41777851b443fa2814f356f",
+      "bytes": 1732
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime600/context.mjs",
+      "sha256": "241ed6197e812ace223cfcd0eea44791e9d7c9eda8d8e8436930af6c575403dc",
+      "bytes": 22111
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime600/grr.mjs",
+      "sha256": "493146bb233ca14e0a166ba3b337ed90d3e5a5c1961cba6d56e925d29fd79a05",
+      "bytes": 5552
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime600/historical-component-observations.mjs",
+      "sha256": "3e375b5a41f649eb4100dc804dc54a39998697ffdcd293c77a9543d9ca9b83a5",
+      "bytes": 6424
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime600/host-effect.mjs",
+      "sha256": "8fbb292fe37bb94006f586bbbf995770a5b8c63a86d0167d292d522939dc409f",
+      "bytes": 2727
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime600/late-bound-policy.mjs",
+      "sha256": "38e4e69932bcfa36156086b2a4f7cba353f7199f5fd2ff58c8bdb8e89a5f64a9",
+      "bytes": 1029
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime600/positive-terminal-observations.mjs",
+      "sha256": "8d29763a0cd6818c0066de1a432a7d12eab161154286506c5699c4f6f72e3b30",
+      "bytes": 6996
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime600/publication-observations.mjs",
+      "sha256": "1351960fdbb1a8c5ef0cf08153a3701cc0fcde97d8a360e0a3eca9c37cdc11a2",
+      "bytes": 1741
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime600/result-terminal.mjs",
+      "sha256": "a4994871e1eacc76850a8c5123f872d0040aa7b42273f3686cd64e2215325ccc",
+      "bytes": 7316
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime600/source-publication.mjs",
+      "sha256": "4a20accf7e3fe82501a3eb880bf4dd98054c42ec80b1c7e1db353d30db3a53e8",
+      "bytes": 3088
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime600/tool-entry.functions.js",
+      "sha256": "a9fe73cb6c0d2492eb0c96276f2b1d0b5a3e4c137b37e609575b08d404179cf7",
+      "bytes": 9919
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime600/trusted-github.mjs",
+      "sha256": "ea33a927db1cfe35a2c99dee7389e3b71a7080e5d11a483c4861fbc048c7c5a6",
+      "bytes": 6083
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-runtime600/write-targets.mjs",
+      "sha256": "8df6c08197d386933c49252c740e7f55acc4c3fc2e4f927822c59cf9f6dd607d",
+      "bytes": 6144
+    },
+    {
+      "path": "scripts/phase2-qualification/control-root-registration/verify.py",
+      "sha256": "040ef7b7a8536d6b210ada9a15a26af6749e58c5da10cd401b98c36155373093",
+      "bytes": 21930
+    },
+    {
+      "path": "scripts/phase2-qualification/docker-engineering-observation/observe.py",
+      "sha256": "cc3498e6dc5eed1f13fb0b84c4dd4df75f5ee76fb5d24d4167852cb92588ef5a",
+      "bytes": 18679
+    },
+    {
+      "path": "scripts/phase2-qualification/docker-engineering-observation/validation.py",
+      "sha256": "3ac10b11456ddc2de9155fb2b9f8f8c8c20ac0da51957e587d3081339767ac2e",
+      "bytes": 5777
+    },
+    {
+      "path": "scripts/phase2-qualification/docker-isolation/prepare.py",
+      "sha256": "c5255a601c5f88893d8765654ab884d3c1fe93a81f393a8cd8ee630de16e9474",
+      "bytes": 7349
+    },
+    {
+      "path": "scripts/phase2-qualification/docker-isolation/probe.py",
+      "sha256": "2168145b42166b4de1ea470b4fd232549d661542761ffe279955d0ace5580523",
+      "bytes": 6109
+    },
+    {
+      "path": "scripts/phase2-qualification/linux-docker-driver/candidate.py",
+      "sha256": "7eed6b480010c5aebba39e109356a9a499f8ecc96ced184d3ee926fa52346457",
+      "bytes": 14097
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/install.candidate.sql",
+      "sha256": "3cbbed94e1c9ef5fec4db281526ca69b9b30a24d2812b5a8bb5eb6bc728146fb",
+      "bytes": 8741
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/protocol-successor/control-trust-root-set.schema.json",
+      "sha256": "87f094fa079034aa886d6c568730370a3264e106529b4bfd79bc3369f30b79e5",
+      "bytes": 6122
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/protocol-successor/validate-successor.mjs",
+      "sha256": "e2844900272bcd9f2aba18aae256567e33d0c598f0a114d7ed01a6fb2fdf1ca5",
+      "bytes": 4871
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/binding-evidence-successor/alter.candidate.sql",
+      "sha256": "bd94bd2c40a1f3d7703316ec58296e2e07faeb00b1d5055c3ca64000db59d847",
+      "bytes": 15880
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/binding-evidence-successor/effective-binding.sql",
+      "sha256": "d6014427a3bcef8b58ce24fe0d4878361c5d890735d7051a23591128c0cbccdc",
+      "bytes": 2927
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/binding-frame-limit-successor/effective-binding.sql",
+      "sha256": "affe4ee753890634ebab486bce3b68f9265b5f000dfc095cb0e4d1bc62812911",
+      "bytes": 16844
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/binding-parallel-source-successor/effective-binding.sql",
+      "sha256": "fef8f3f134e5660de5b44d3b6b02448d5a579efc42dfbd1a45b00bdadab9bf2c",
+      "bytes": 7683
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/budget-reservation-successor/client.mjs",
+      "sha256": "5eb8b6ad2d8b68f98dcffc5cc11fcd032ea176572c248d615a5d977ee9a4bd1c",
+      "bytes": 726
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/budget-reservation-successor/install.candidate.sql",
+      "sha256": "8f732dd4013a18adde33a254631cdd5a04022f300d4c0a13d05dffbf36f97285",
+      "bytes": 40646
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/client.mjs",
+      "sha256": "b8e0080118d94128a163ca9efd57d01706ec8ecc45060135f092a896f4583816",
+      "bytes": 2129
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/commitment-signing/signing.mjs",
+      "sha256": "d425ee50e82f8cc983b5dc5983d8ab7cd4c42b18215ce592d5fa5004c29c438b",
+      "bytes": 6636
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/control-objects-successor/client.mjs",
+      "sha256": "de049d0dafc16d225a9884ff2a8899976883f539e417f20d8a34eeab33b571ae",
+      "bytes": 767
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/intent-response-successor/alter.candidate.sql",
+      "sha256": "17baedbb1ec279e8cc6c349697ea4f14ddcad9d92bcf70dd2a800c94ad2e23cc",
+      "bytes": 1957
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/runtime600-successor/alter.candidate.sql",
+      "sha256": "0ab15bbbc2f80421cb619b50de8816095359d9ffab1e96e372960c063bc80c9b",
+      "bytes": 12444
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/profile-runtime600/ProfileDefinition.json",
+      "sha256": "d1c060b85f0b842a397a478105ea57a208e62eb0a5a2d4c2cd8f93f63eae88f5",
+      "bytes": 3325
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/profile-successor/gate-authorization.candidate.schema.json",
+      "sha256": "f7f7e2a011f3f81a005e46f9cf7683edeb010dc7812eadfb4473f6ad5368a1ce",
+      "bytes": 15448
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/profile-successor/revocation-epoch-vector.candidate.schema.json",
+      "sha256": "f57cceb29853c67f8702c1560017c3be7b96626d6358299b5215add63d01e916",
+      "bytes": 9724
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/runtime-successor/host-runtime600/fixed_host.py",
+      "sha256": "cb444459f207037976200505593f96a2dd0b2e796438c62fc94206349f995e42",
+      "bytes": 14412
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/runtime-successor/host-runtime600/parent600.py",
+      "sha256": "065d64eb2c7b2f3471967f72fdd5b494a413a69d932bb351e705d43f3e6d85d6",
+      "bytes": 9429
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/runtime-successor/host-tool-bridge600/bridge.py",
+      "sha256": "0a8c5bc181efb0eab12b23cfd35f9e95064bb5f3fe40e0b07f8d8d4ba3fb2220",
+      "bytes": 5148
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/runtime-successor/sql_effect.mjs",
+      "sha256": "f3c87164a45730576054286a5d099c1f77886e2b5721214032561cf6bc958457",
+      "bytes": 3495
+    },
+    {
+      "path": "scripts/phase2-qualification/preentry-parent/runtime-successor/supervisor.mjs",
+      "sha256": "4b769a0f34c67928c88e929ab88d6c3439ea265cf012f4fb96aa1fedead1c53e",
+      "bytes": 5384
+    },
+    {
+      "path": "scripts/phase2-qualification/qualification-runtime/fixed_skill_fixture.py",
+      "sha256": "98c4d0165144a4ebfbd4889a98da65a8c6d3a71fbf082af393c15b9d00a3c18a",
+      "bytes": 5084
+    },
+    {
+      "path": "scripts/phase2-qualification/qualification-runtime/remote_evidence.py",
+      "sha256": "a7373982ee405890fc7f260b96987d69d8133a0f5c318fc6e85c44d7fbb28969",
+      "bytes": 15623
+    },
+    {
+      "path": "scripts/phase2-qualification/result-evidence-resolution/resolve.mjs",
+      "sha256": "9d7df85eea925f22f35fe81d1faef61288be43c1b20e7214205f662ffc2784cb",
+      "bytes": 8191
+    },
+    {
+      "path": "scripts/phase2-qualification/scenario-observations/request-denials-packed.mjs",
+      "sha256": "1abd2123f5c1d9b68fe9fe09e12c52c0c709221959eeedcbc6413d987fa95753",
+      "bytes": 6044
+    },
+    {
+      "path": "scripts/phase2-qualification/scenario-observations/request-denials.mjs",
+      "sha256": "b39e92969a2410374b9ec3f930af74e07d6062cfba0fdaf98e3036fa06f537e6",
+      "bytes": 7943
+    },
+    {
+      "path": "scripts/phase2-qualification/scenario-observations/sign-exact-live-object.mjs",
+      "sha256": "6098d4f9c6f51edb9bd030537fbf54b08501f5ca8bbeb40169ff2fa767d5662e",
+      "bytes": 6783
+    }
+  ],
+  "checks": {
+    "original254_manifest_rows_exact": true,
+    "original_unmodified_byte_checks_reused": true,
+    "new12_sources_actual_bytes_verified": true,
+    "original13_differences_reconstructed_exact": true,
+    "real_full_cli_two_next_boundary_results_reused": 6,
+    "new_tests_run": 0,
+    "tool_and_outer_syntax_valid": true
+  },
+  "private_getter_acceptance": {
+    "path": "work/kernel-phase2-repo/artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/FrameLimitBindingGetterIndependentAcceptance.json",
+    "sha256": "dc07a4d40fa10e5faac18a421999d7bcc2caa15d159e408435206a2b8f648a5e"
+  },
+  "scope": "Explicit aggregate CLI line-cap successor4MiB aligning with already4MiB pipe. No individual-object/source verification, complete history, child action, signature/SQL/currentness or permission expansion. New exact third privatebinding only under separately guarded registration.",
+  "unchanged": {
+    "original_input_logical_bytes": 2097152,
+    "root_json_bytes": 2097152,
+    "legacy_deflate_bytes": 1048576,
+    "sql_index_bytes": 131072,
+    "pipe_payload_bytes": 4194304,
+    "pipe_with_lf_bytes": 4194305,
+    "source_concurrency": 4,
+    "original_watchdog_freshness_cas": true,
+    "budget_and_owner_window": true,
+    "original_decoder_terminal_publisher_paths_preserved": true
+  },
+  "limitations": [
+    "Whole live CREATE/START/GRR not executed;6CLI checks use complete actual CLI but isolated synthetic context, never Host/SQL admission PASS.",
+    "Exact Owner source publication, new scopedqualification/runtime/Status4/NA/data/19review routes and real thirdforward still required before newGA.",
+    "Old316887 included rejectedfa4c getter, remains historical not accepted; only93dfea+affe accepted.",
+    "No71-source remote batch, oldJob/concurrency/fullmatrix rerun, SQLwrite, signing, publishing orGA in this source review.",
+    "Publisher authorization remains separately subject to actual approved payload scope and effective tool review."
+  ],
+  "authority_effect": "NONE",
+  "qualification_gate_passed": false
+}
