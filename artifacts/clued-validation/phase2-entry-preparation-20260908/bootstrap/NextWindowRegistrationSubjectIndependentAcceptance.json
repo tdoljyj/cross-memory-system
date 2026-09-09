@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "decided_at_utc": "2026-09-09T12:22:20.598Z",
+  "registration_subject": {
+    "path": "work/next-window-registration-materials/RegistrationSubject.canonical.json",
+    "sha256": "563020d76569bd000b4ee619461c946b24b9e99bdbcb6eb456cf651e7b23bf2f",
+    "bytes": 3380
+  },
+  "root_set_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+  "generation_id": "ctrgen_2e778ca66244459f974b081edca8c04e",
+  "owner_merge": "51eae8099090a841a506063b5f63933e29dd8418",
+  "approval_sha256": "9a661737b2aabd32141f1f01ebde088b7d04c6c8a153eebdfe23c23de6291d78",
+  "proposal_sha256": "d5cad2301897abcaaecad0d2d1b5b9f4a241e09930b9bd8ce352f6f221ef2cf7",
+  "window": {
+    "not_before": "2026-09-09T10:13:16Z",
+    "expires_at": "2026-09-10T10:13:16Z"
+  },
+  "history_source": {
+    "path": "work/next-window-complete-before-20260909/ActualRows.json",
+    "sha256": "ca238f24a8b8752a04368142ebf7d36871cb91a8ad93dca523b9a1960d9419df",
+    "bytes": 1774756
+  },
+  "authority_effect": "NONE",
+  "remotely_executed": false,
+  "state": "ACCEPTED_EXACT_NW01_REGISTRATION_SUBJECT_FOR_SIGNED_MATERIAL_PREPARATION",
+  "predecessor_subject_sha256": "e4ab25ecb1fa6709435d0318ad431d14343482cbe84e232f638e55c3c4ba1e1f",
+  "changed_subject_fields": [
+    "generation_id",
+    "generation_ordinal",
+    "predecessor",
+    "generation_origin",
+    "approval",
+    "expires_at",
+    "limits",
+    "storage_candidate",
+    "not_before",
+    "window_maintenance"
+  ],
+  "findings": [],
+  "decision": "Accept the explicit approved same-root registration-subject successor, distinct from RootReviewSubject. Its canonical bytes represent the new binding subject. Same identity, business scope and S06 responsibility remain; generation/window/budget and one-row maintenance exception are explicit.",
+  "requires_actual_signature": true,
+  "requires_final_complete_NW01_SQL_review": true,
+  "not_root_payload_acceptance": true
+}

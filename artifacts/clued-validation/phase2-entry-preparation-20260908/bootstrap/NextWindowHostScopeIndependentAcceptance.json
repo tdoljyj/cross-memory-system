@@ -1,0 +1,87 @@
+{
+  "schema_version": 1,
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "decided_at_utc": "2026-09-09T12:36:52.553Z",
+  "authority_effect": "NONE",
+  "approved_window": {
+    "approval": {
+      "path": "work/Phase2NextWindowExplicitUserApproval20260909.json",
+      "sha256": "9a661737b2aabd32141f1f01ebde088b7d04c6c8a153eebdfe23c23de6291d78",
+      "bytes": 2184
+    },
+    "not_before": "2026-09-09T10:13:16Z",
+    "expires_at": "2026-09-10T10:13:16Z",
+    "new_gate_authorizations_max": 1,
+    "aggregate_seconds_max": 7200,
+    "aggregate_evidence_bytes_max": 1127852979,
+    "per_allocation_seconds": 600,
+    "per_allocation_evidence_bytes": 134217728,
+    "paid_budget": 0,
+    "model_budget": 0,
+    "no_refund": true,
+    "no_automatic_retry": true,
+    "requires_actual_NW01_Root3_and_exact_fourth_binding": true,
+    "old_root2_and_previous_issuer_acceptances_are_historical": true
+  },
+  "controller_manifest": {
+    "path": "scripts/phase2-qualification/control-context-verifier-next-window-successor/ControllerSourceManifest.candidate.json",
+    "sha256": "c1e539441bb6fc5d05cdcfdb722f703abb50187d456d05cf49caacc44f5086e5",
+    "bytes": 66042
+  },
+  "definitions": {
+    "risk": {
+      "path": "work/next-window-runtime-materials-20260909/definitions-actual/ScopedRiskManifest.json",
+      "sha256": "c99c3928b64907d0f5b0db803827b1b5d9be57b4edecfaa55f17733438bcf845",
+      "bytes": 8329
+    },
+    "host": {
+      "path": "work/next-window-runtime-materials-20260909/definitions-actual/HostRuntimeConfig.json",
+      "sha256": "08c1d213f53440ea7c8c4dba1481d09163be0f0b202eef29a999d590efbe403f",
+      "bytes": 15304
+    },
+    "sink": {
+      "path": "work/next-window-runtime-materials-20260909/definitions-actual/EvidenceSinkDefinition.json",
+      "sha256": "db10de08346ebd82d142a170aab434a709a7435d2698cb80b9e013fa9b63e631",
+      "bytes": 8136
+    },
+    "scope": {
+      "path": "work/next-window-runtime-materials-20260909/definitions-actual/ExecutionScopeDefinition.json",
+      "sha256": "f840eba3bc2ddcff60741c2eff41702412bd0bca7b19f2227cf63ebd7661e94a",
+      "bytes": 29904
+    },
+    "binding": {
+      "path": "work/next-window-runtime-materials-20260909/definitions-actual/ControlBindingDefinition.json",
+      "sha256": "d9681f0f40ebb18e310a2fb8f532421a4d6d809053f41bafb92cbca5398c87b2",
+      "bytes": 2279
+    }
+  },
+  "profile_sha256": "d1c060b85f0b842a397a478105ea57a208e62eb0a5a2d4c2cd8f93f63eae88f5",
+  "root_generation": "ctrgen_2e778ca66244459f974b081edca8c04e",
+  "source_acceptance_sha256": "2d527d06726eb3c9f2586e83cfae2b21c5e16413f493327153950e4beea95c92",
+  "findings": [],
+  "root_registered": false,
+  "NW01_executed": false,
+  "GA_issued": false,
+  "kind": "INDEPENDENT_NEXT_WINDOW_HOST_SCOPE_ACCEPTANCE",
+  "state": "ACCEPTED_EXACT_HOST_SCOPE_DEFINITIONS_FOR_PUBLICATION_NOT_RUNTIME_ADMISSION",
+  "preparation_evidence_sha256": "f960724b1c31e0865e3e77aec26e560116f8a94d8a49f4e1c4c4955ea98208eb",
+  "five_definition_copy_selection_sha256": "96892b36241d0b0ab5451ab2db2815cc4b7972dcca0a1034c83db12348a3202f",
+  "checks": [
+    "Nineteen manifest files and exact baseline descriptors checked; five object allowlisted differences independently reversed to original objects. Six existing pure checks reused without rerunning controller/host/PG.",
+    "Five added publication files match exact source and target bytes; original 33 selection entries unchanged.",
+    "Host/source/pipe/STOP/Scope/Sink/risk/control-binding cross references match. Approved T/E, one GA, cumulative byte increment explicit; 600s/128MiB/7200s and transport/SQL limits preserved.",
+    "Public image five variables preserved; exact child driver 0217 requires seven public variables. Scope/TestManifest fixture98c4 is the unchanged test-definition primitive, not an assertion that executed driver bytes are identical.",
+    "Fixed publisher465d retains the accepted Python implementation and private/once/head/readback rules; exact two source edits reconstructed and existing four time cases checked."
+  ],
+  "publisher": {
+    "path": "work/next-window-integration-fixes/publish-original-inputs.py",
+    "sha256": "465d0552219a86c0c7e4405bdf5037ff105703c51799c1f7b70523d20dbad5f8",
+    "bytes": 3217,
+    "state": "ACCEPTED_EXACT_FIXED_WINDOW_ENTRY_PREPARATION_NOT_EXECUTED"
+  },
+  "boundaries": [
+    "These definitions preserve original required stages, allowed sets, B/NA, actor, subject and credential boundaries; no new business authority.",
+    "New 7-variable container execution is not proven by local preparation. Actual signed source/Root, NW01/budget, current Status/runtime, fourth binding, full final collector/data and fresh admission checks remain mandatory.",
+    "Legacy historical SQL/source descriptors are retained with explicit successor fields; historical references do not restore expired authority."
+  ]
+}

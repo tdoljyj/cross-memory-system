@@ -1,0 +1,127 @@
+{
+  "schema_version": 1,
+  "state": "ACCEPTED_LIMITED_ISSUER_PURPOSE_METADATA",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "decided_at_utc": "2026-09-09T10:37:21.567Z",
+  "record_kind": "Independent administrative acceptance metadata; not a new S06 core object or issued GA/GRR",
+  "subject_id": "tdoljyj",
+  "signing_service": "web-flow",
+  "root_set_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+  "control_trust_root_generation": "ctrgen_2e778ca66244459f974b081edca8c04e",
+  "accepted_audience": "urn:clued:audience:skill-coexistence-qualification:uscrdifznmlvczcekqpw",
+  "accepted_scope": {
+    "project_ref": "uscrdifznmlvczcekqpw",
+    "repository": "tdoljyj/cross-memory-system",
+    "profile_id": "DP-PREENTRY-SKILL-QUALIFICATION",
+    "environment": "ISOLATED_TEST",
+    "model_budget": 0,
+    "paid_budget": 0,
+    "new_gate_authorizations_max": 1,
+    "per_ga_maximum_seconds": 600,
+    "per_ga_reserved_evidence_bytes": 134217728,
+    "cumulative_controlled_execution_seconds": 7200,
+    "cumulative_evidence_bytes": 1127852979,
+    "no_refund": true,
+    "no_automatic_retry": true
+  },
+  "not_before": "2026-09-09T10:37:21.567Z",
+  "expires_at": "2026-09-10T10:13:16Z",
+  "authority_basis": {
+    "approved_exception_proposal_sha256": "d5cad2301897abcaaecad0d2d1b5b9f4a241e09930b9bd8ce352f6f221ef2cf7",
+    "actual_owner_approval_sha256": "9a661737b2aabd32141f1f01ebde088b7d04c6c8a153eebdfe23c23de6291d78",
+    "actual_verified_owner_merge": "51eae8099090a841a506063b5f63933e29dd8418",
+    "identity_binding_ref": {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/017a9e182650f3f846090d24df07f4e1c457dd35",
+      "sha256": "78c1cea433053edb9233976615f4f22f43f318078eed0f505b48d641a5f6aae9"
+    },
+    "identity_alone_is_purpose_qualification": false,
+    "purpose_qualification_effect": "This new exact administrative decision accepts only the distinct GA and GRR signing roles under the unchanged single-parent commitment algorithm, with the exact root-generation-only signing source successor, in the newly approved fixed window. Authorization and result adjudication remain distinct.",
+    "new_owner_delegation_ref": {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/1b0f0c21cba8c8b7e887e739f502ce7410727c5b",
+      "sha256": "9ca45136f864beee04f9074a752070e95ff45f827e7b7a3489df4d0cdc6ec99d"
+    },
+    "actual_owner_readback": {
+      "path": "work/NextWindowOwnerIndependentPublicationReadback.json",
+      "sha256": "3513f72e7d1995b8854bfb916965664d1a3c52d7749690a7edbd6f7d7356a3d3",
+      "observed_at": "2026-09-09T10:37:07.802Z"
+    }
+  },
+  "accepted_issuer_purposes": [
+    {
+      "purpose": "GATE_AUTHORIZATION",
+      "audience": "urn:clued:audience:skill-coexistence-qualification:uscrdifznmlvczcekqpw",
+      "accepted": true,
+      "boundary": "Only PRE_ENTRY qualification GA signing role; each GA requires its exact original prerequisites and current authorization, accepted controller/Profile/Skill/action, fresh revocation and budget checks, duration <=600 seconds. No GA issued here."
+    },
+    {
+      "purpose": "GATE_RESULT",
+      "audience": "urn:clued:audience:skill-coexistence-qualification:uscrdifznmlvczcekqpw",
+      "accepted": true,
+      "boundary": "Only qualification result-signing role, binding one exact GA and independently assessed actual evidence; one terminal GRR, preserve UNKNOWN/STOP. Authorization role is not result adjudication."
+    }
+  ],
+  "accepted_algorithm_config": {
+    "canonicalization_id": "EXACT_JSON_STRINGIFY_UTF8_LF_ROUNDTRIP_V1",
+    "digest_algorithm": "SHA-256",
+    "signed_payload_excluded_fields": [],
+    "signature_verification": "GITHUB_API_VERIFIED_OWNER_SINGLE_PARENT_COMMITMENT_V1_CANDIDATE",
+    "payload_commitment": "SHA256 of the complete exact live payload bytes, including the fixed detached proof URI. This carrier does not replace the accepted object schema, integer validation, currentness or effect fencing.",
+    "repository": "tdoljyj/cross-memory-system",
+    "branch": "codex/phase2-qualification-evidence-20260908",
+    "prefix": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/runtime-evidence/dynamic-signature-commitments/",
+    "signing_module_sha256": "9c4341f8764963f6fc4b1e73ece7c71c6cc62671129a8f64dca1f868de438de4",
+    "preparation_evidence_sha256": "f45895488e6b281cf2965fc1ae9e0303b9a28996fe05dd27c97d7687c84ccb4d",
+    "prior_independent_boundary_review_sha256": "875fbb180d85ce30f25e9442fe287420da74565032fd4f2531faccb67a7d6fe4",
+    "exact_generation_successor_diff_verified": true,
+    "prior_generation_signing_module_sha256": "d425ee50e82f8cc983b5dc5983d8ab7cd4c42b18215ce592d5fa5004c29c438b"
+  },
+  "signature_requirements": [
+    "Fixed private repository, existing exact evidence branch, fresh expectedHeadOid CAS, one absent fixed-prefix path and no unrelated changes. No branch creation or overwrite by the signing module.",
+    "Actual authenticated author tdoljyj and committer web-flow; verified=true/reason=valid and nonempty raw verification material. Conditional GitHub signing support must be actually observed; a constructed mutation is not a signature.",
+    "Exactly one expected parent; actual commit tree, complete non-truncated tree, ordinary 100644 blob, recomputed Git blob SHA, raw-byte commitment and comparison must all match.",
+    "Persist one attempt before submission; lost/ambiguous response stays UNKNOWN and preserves known immutable references. No automatic re-sign, retry or capacity release.",
+    "Full GA/GRR payloads, current state, root revocation, independent generations, budget, one-GA/one-GRR reservation and terminal truth remain in the accepted nonproduction SQL domain. Git carries only historical commitments and proof, never live authority or currentness.",
+    "The fixed same-domain payload URI plus #signature must have an independently accepted actual proof mapping before use; the current pure module does not provide that store or a network submitter.",
+    "Each use requires exact current Root3 registration, separately accepted new-window Gate/Profile/controller/Skill/host and full schema, fresh checks and truthful independent result evidence. Per-GA maximum is 600 seconds and 128 MiB, bounded by the exact accepted Profile and fixed Owner expiry; at most one new GA under this delegation. The historical 90-second wording described its old Profile and is not revived.",
+    "Ordinary repository code/document authors remain Codex@DESK-W-591. This narrowly accepted dynamic signature proof uses actual Owner authorship; commitment separately records Codex executor provenance."
+  ],
+  "forbidden_uses": [
+    "PROMOTION_AUTHORIZATION",
+    "PROMOTION_RESULT",
+    "production",
+    "real model/paid actions",
+    "Health/Surgical",
+    "PQUAL-18 post-Entry positive",
+    "Slice A"
+  ],
+  "no_circular_subject_reference": true,
+  "root_review_subject_sha256_included": false,
+  "activation_boundary": {
+    "requires_separate_exact_root_acceptance_and_actual_registration": true,
+    "not_a_root_instance": true,
+    "root_registered": false,
+    "controller_qualified": false,
+    "ga_issued": false,
+    "grr_issued": false,
+    "old_pins_changed": false,
+    "original_owner_window_extended": false,
+    "new_explicit_owner_window": true,
+    "existing_same_root_id_preserved": true,
+    "requires_exact_NW01_and_new_root_registration": true
+  },
+  "consumption": "A RootSet GA or GRR qualification_ref may select this exact metadata only for its purpose, generation, Audience, issuer and nonproduction scope. RootSet own algorithm remains GITHUB_API_VERIFIED_OWNER_MERGE; NW-01 and the separately accepted new Root must actually be registered; old generation evidence remains historical. Metadata acceptance issues no GA/GRR and proves no controller/PQUAL PASS.",
+  "predecessor_purpose_metadata_sha256": "9f475e2c2eedc02e50a5438c80d89f625ed5aa0ef2465a0581e349a1e8caa16d",
+  "generation_applicability": "Exact Root generation 3 only; not a Status object generation constraint, automatic inheritance or acceptance of old generation under new dates.",
+  "profile_lifetime_boundary": {
+    "historical_clarification_sha256": "3d962ea97cb5417de51342d93fde1551b3ca2cbd99a311866d626ba35518fd6c",
+    "new_profile_accepted_by_this_decision": false,
+    "maximum_seconds": 600,
+    "unchanged_profile_definition_must_be_rebound_to_actual_new_window_materials": true
+  },
+  "window_basis": {
+    "actual_user_approval_not_before": "2026-09-09T10:13:16Z",
+    "actual_acceptance_not_before": "2026-09-09T10:37:21.567Z",
+    "expires_at": "2026-09-10T10:13:16Z",
+    "no_rolling_extension": true
+  }
+}

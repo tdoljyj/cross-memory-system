@@ -1,0 +1,116 @@
+{
+  "schema_version": 1,
+  "state": "ACCEPTED_EXACT_FORWARD_ROOT_GENERATION_SUBJECT",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "decided_at_utc": "2026-09-09T12:22:20.598Z",
+  "subject_file": {
+    "path": "work/next-window-runtime-materials-20260909/root3-review-actual/RootReviewSubject.json",
+    "sha256": "73b23bee5093920a32e0875b481de5bcddc1e4ee8790612d3d33167465a1b94b"
+  },
+  "review_subject_sha256": "0c2e983c3f8ee9bb93846392b48cf0f56fb53231f5cff9347469d38469b40f98",
+  "root_set_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+  "control_trust_root_generation": "ctrgen_2e778ca66244459f974b081edca8c04e",
+  "generation_ordinal": 3,
+  "accepted_scope": {
+    "profile_id": "DP-PREENTRY-SKILL-QUALIFICATION",
+    "repository": "tdoljyj/cross-memory-system",
+    "environment": "ISOLATED_TEST",
+    "paid_budget": 0,
+    "project_ref": "uscrdifznmlvczcekqpw",
+    "model_budget": 0
+  },
+  "accepted_audience": "urn:clued:audience:skill-coexistence-qualification:uscrdifznmlvczcekqpw",
+  "schema_sha256": "87f094fa079034aa886d6c568730370a3264e106529b4bfd79bc3369f30b79e5",
+  "accepted_algorithm_config": {
+    "digest_algorithm": "SHA-256",
+    "accepted_config_ref": {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/b25abb05e00f72bb2ae910035ba9916a97c822dc",
+      "sha256": "988cdf823eb63806dc3385aa1840e812c1cb1df5ed06e72ca2adf56244b88d20"
+    },
+    "canonicalization_id": "SORTED_JSON_UTF8_NO_FLOATS_LF_V1_CANDIDATE",
+    "signature_verification": "GITHUB_API_VERIFIED_OWNER_MERGE",
+    "signed_payload_excluded_fields": [
+      "signature_binding"
+    ]
+  },
+  "accepted_predecessor": {
+    "generation_id": "ctrgen_dd30fbc7e0ba43fa8ba9f734867bcf12",
+    "sha256": "fa58df2b1a7572848c288dc862767a4a9983d42696d50dbc4064af7275cec328"
+  },
+  "accepted_history_prefix_sha256": "3fc6f3c8f2e3d47ba707848512b1aaad239054ec9b2fbfb08e3a9e76a252e558",
+  "accepted_history_prefix_sequence": 2,
+  "accepted_issuer_purposes": [
+    {
+      "purpose": "STATUS",
+      "audience": "urn:clued:audience:skill-coexistence-qualification:uscrdifznmlvczcekqpw",
+      "subject_id": "tdoljyj",
+      "signing_service": "web-flow",
+      "qualification_ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/9d8b259d643162403060d772afb51c6a430773c2",
+        "sha256": "acaf2073c654be95a3beab820f1460de1e6e68caa267e9c75bdd3c891bd894b3"
+      }
+    },
+    {
+      "purpose": "GATE_AUTHORIZATION",
+      "audience": "urn:clued:audience:skill-coexistence-qualification:uscrdifznmlvczcekqpw",
+      "subject_id": "tdoljyj",
+      "signing_service": "web-flow",
+      "qualification_ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/28e04e0e7166458682508209fefa617277ecffe6",
+        "sha256": "b6d4782fcf79cf599f3ccc7e2c7b7434e41a26c6d4a28c6711eac0c9f469e146"
+      }
+    },
+    {
+      "purpose": "GATE_RESULT",
+      "audience": "urn:clued:audience:skill-coexistence-qualification:uscrdifznmlvczcekqpw",
+      "subject_id": "tdoljyj",
+      "signing_service": "web-flow",
+      "qualification_ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/28e04e0e7166458682508209fefa617277ecffe6",
+        "sha256": "b6d4782fcf79cf599f3ccc7e2c7b7434e41a26c6d4a28c6711eac0c9f469e146"
+      }
+    }
+  ],
+  "not_before": "2026-09-09T10:42:01.414Z",
+  "expires_at": "2026-09-10T10:13:16Z",
+  "source_observation": {
+    "observed_at_utc": "2026-09-09 10:40:04.356838+00",
+    "construction_time_utc": "2026-09-09T10:42:01.414Z",
+    "construction_time_origin": "ACTUAL_LOCAL_UTC_AT_CONSTRUCTION",
+    "current_sequence": 2,
+    "current_generation": "ctrgen_dd30fbc7e0ba43fa8ba9f734867bcf12",
+    "current_root_canonical_sha256": "fa58df2b1a7572848c288dc862767a4a9983d42696d50dbc4064af7275cec328",
+    "history_prefix_canonical_sha256": "3fc6f3c8f2e3d47ba707848512b1aaad239054ec9b2fbfb08e3a9e76a252e558",
+    "metadata_binding_sha256": "793aa13a245153c36a2806eb78dc9c3f677ddb8ad678b3afe5fe2f63a0c2e4fb",
+    "metadata_binding_meaning": "Actual source read_root digest only; never projected as the future NW01 binding digest and never rewritten into old events",
+    "source_readback_file_sha256": "00eab794a45146a000debdb72c73dabf7c753c7f026bdc81a0f30853ed9b1d09",
+    "complete_rows": {
+      "path": "work/next-window-complete-before-20260909/ActualRows.json",
+      "sha256": "ca238f24a8b8752a04368142ebf7d36871cb91a8ad93dca523b9a1960d9419df",
+      "bytes": 1774756
+    },
+    "actual_root_read_state": "EXPIRED_OR_NOT_YET_VALID",
+    "historical_root2_shape_not_current_admission": true
+  },
+  "source_metadata_binding_is_historical_only": true,
+  "future_NW01_metadata_binding_sha256_included": false,
+  "owner_merge": "51eae8099090a841a506063b5f63933e29dd8418",
+  "checks": [
+    "Full subject reconstructed independently from exact actual two-event history and actual issuer/approval bytes.",
+    "Only generation, predecessor, approved times, actual purpose references, prefix and empty revocation digest changed; scope/algorithm/issuer identities unchanged.",
+    "Original schema structure evidence reused for unsigned stage; acceptance/signature fields remain required at assembly.",
+    "Root source old metadata digest remains historical provenance; it is not a future live append argument."
+  ],
+  "registration_conditions": [
+    "Actual Owner merge must sign exact payload containing this acceptance ref; old signature cannot sign new payload.",
+    "Independently read exact complete signed payload, acceptance and purpose blobs, Owner merge identity, parents and tree.",
+    "NW-01 must have completed with actual signed registration subject and exact pre/post; append uses its real current binding digest and new idempotency key, while preserving all prior Root events.",
+    "Fresh complete root/history/binding CAS must still match prior Root2/sequence2; execute sequence39 budget update before advancing execution forward.",
+    "Root acceptance/registration alone gives no controller qualification or GA."
+  ],
+  "authority_effect": "NONE",
+  "root_registered": false,
+  "ga_issued": false,
+  "grr_issued": false,
+  "controller_qualified": false
+}
