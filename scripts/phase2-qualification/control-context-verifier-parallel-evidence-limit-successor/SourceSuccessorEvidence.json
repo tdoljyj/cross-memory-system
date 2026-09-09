@@ -1,0 +1,37 @@
+{
+  "state": "ACTUAL_LIMIT_SUCCESSOR_CLOSURE_CHECKED_NOT_QUALIFIED",
+  "controller_sha256": "aa6514441aaaa1cc768c67bd9a5bca7b5a3118f8a58b499da81901d6eab99199",
+  "files": 254,
+  "repository_sources": 74,
+  "prior_240_including_218_unchanged": true,
+  "checked_relative_import_modules": 48,
+  "checked_relative_import_edges": 104,
+  "preparation_sha256": "2902fd9f60ebca20d2d3505667f7493490e305b40464804c12b4913fc9a53aa7",
+  "local_checks": [
+    {
+      "path": "work/LargeEvidencePublisherChecks.json",
+      "sha256": "7a1d87b0752a970fe6fcf6393f5f4e9eb5602665acbdf1b10b62b473878dac0b"
+    },
+    {
+      "path": "work/LargeInputAndPipeChecks.json",
+      "sha256": "14baf736412c83f3e19e45a1436dc80c702ff9516ae47db910846bc6bd1dab82"
+    }
+  ],
+  "limits": {
+    "new_blob_logical_bytes": 2097152,
+    "legacy_blob_and_deflate_bytes": 1048576,
+    "pipe_payload_bytes": 4194304,
+    "pipe_with_lf_bytes": 4194305,
+    "publisher_request_and_response_bytes": 4194304,
+    "root_json_bytes": 2097152
+  },
+  "actual_sql_calls": 0,
+  "github_calls": 0,
+  "ga_created": false,
+  "qualification_claim": false,
+  "limitations": [
+    "Final actual metadata and message sizes require a pre-budget check",
+    "No actual GitHub large-blob publication or normal qualification run performed",
+    "Existing Job owner/upstream Node cancellation limitation remains unchanged"
+  ]
+}

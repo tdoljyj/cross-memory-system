@@ -1,0 +1,93 @@
+{
+  "state": "ACCEPTED_EXACT_TWO_FORWARD_PRIVATE_BINDING_GETTER_SOURCE_NOT_INSTALLED",
+  "reviewed_at": "2026-09-09T03:43:32.116Z",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "source": {
+    "path": "work/kernel-phase2-repo/scripts/phase2-qualification/nonproduction-control-store/runtime-successor/binding-parallel-source-successor/effective-binding.sql",
+    "sha256": "fef8f3f134e5660de5b44d3b6b02448d5a579efc42dfbd1a45b00bdadab9bf2c",
+    "bytes": 7683
+  },
+  "actual_old_first_event": {
+    "sequence": 10,
+    "idempotency_key": "ordinary-evidence-blob-binding-20260909",
+    "postgres_jsonb_sha256": "23f1ed9bc4447d6981dfadb2fdcba11d0a5458a85929166f1f09eeef7dac80d4",
+    "source_path": "work/parallel-first-event-digest-actual.json"
+  },
+  "second_event": {
+    "sequence": 25,
+    "idempotency_key": "ordinary-parallel-source-binding-20260909",
+    "gate_version": "fixed-synthetic-20260909.v5-parallel-source",
+    "maximum_forward_events": 2,
+    "exact_previous_binding_and_sha_chain": true,
+    "exact_binding_shape": true,
+    "exact_six_source_ref_shapes": true,
+    "four_direct_source_digest_correlations": true
+  },
+  "scope": "Private readonly getter extension from one exact accepted event to two exact ordered events, under original Root/profile/Gate ID/prior budget floor. No event writer, authority issuer, general rotation API or public getter permission.",
+  "local_pg": {
+    "path": "work/parallel-binding-local-pg-Do34Fm/Result.json",
+    "sha256": "7a0de760c2a8fb652779c7488f8c256cb77bd5579007466a5eb79f28584a713f",
+    "checks": [
+      {
+        "name": "New getter preserves exact original full event10 binding and all current data; only getter body changes, ACL/security and other14 functions identical",
+        "result": "PASS"
+      },
+      {
+        "name": "Wrong previous binding with self-consistent SHA rejected",
+        "result": "PASS",
+        "rejected": {
+          "message": "exact_second_fixed_binding_event_required",
+          "code": "P0001"
+        }
+      },
+      {
+        "name": "Source ref digest differing from target controller rejected",
+        "result": "PASS",
+        "rejected": {
+          "message": "second_binding_source_digest_mismatch",
+          "code": "P0001"
+        }
+      },
+      {
+        "name": "Wrong second event sequence rejected",
+        "result": "PASS",
+        "rejected": {
+          "message": "exact_second_fixed_binding_event_required",
+          "code": "P0001"
+        }
+      },
+      {
+        "name": "Exact second forward visible across service connection; original base and24events/four receipts/budget retained",
+        "result": "PASS"
+      },
+      {
+        "name": "Third forward rejected without silent latest-event authority",
+        "result": "PASS",
+        "rejected": {
+          "message": "at_most_two_exact_binding_successors_required",
+          "code": "P0001"
+        }
+      }
+    ],
+    "elapsed_ms": 3374.9004,
+    "server_stopped": true,
+    "actual_old_first_event_bytes_preserved": true,
+    "second_event_explicit_local_fixture_only": true,
+    "old_lock_concurrency_matrix_rerun": false
+  },
+  "installed_shape_observed_in_local_fixture": {
+    "definition_sha256": "c900e2493a97974e31f8836f25346399b4d2028d06e9cfaf05037502db261710",
+    "prosrc_sha256": "13236bcb6d96e5430f8dc1e8c347192083c78253753eff7c2da3a3b10d7bc445"
+  },
+  "requirements_before_actual_forward": [
+    "Actual new controller/Scope/Gate/qualification/runtime/Status material and signatures must be independently accepted.",
+    "One exact reviewed transaction must pin complete second-event bytes, all source refs and Gate versus Gate-suite correspondence, expected sequence, quiescent current state, and complete before/post metadata.",
+    "Actual install must preserve all existing rows, other14 functions and getter security/ACL; service_role/anon/authenticated retain no direct EXECUTE on this private getter.",
+    "Future read/reserve functions continue using existing effective getter and original current-row lock order; no old reservation/GA bypass."
+  ],
+  "limits": [
+    "This source acceptance does not create or approve arbitrary values matching six SHA/URI shapes. Actual values are fixed by the forthcoming one-shot source-bound transaction.",
+    "No actual DB installation, second forward event, new budget, GA or qualification PASS occurred in this review."
+  ],
+  "new_authority": false
+}

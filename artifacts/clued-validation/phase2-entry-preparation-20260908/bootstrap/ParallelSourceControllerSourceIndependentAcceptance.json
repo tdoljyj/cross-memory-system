@@ -1,0 +1,50 @@
+{
+  "state": "ACCEPTED_EXACT_PARALLEL_SOURCE_CONTROLLER_SOURCE_SUCCESSOR",
+  "issued_at": "2026-09-09T03:47:43.002Z",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "controller_digest": "e1224cad617427c30f3db5cdccdaba4de88726e5f71346d5162716fef72478ec",
+  "predecessor_controller_digest": "0ff3e4bed5587805b69e5c9e1787d60b789d46c32a9c02ae20c8dfb899af98b2",
+  "source_evidence": {
+    "path": "work/kernel-phase2-repo/scripts/phase2-qualification/control-context-verifier-parallel-source-successor/SourceSuccessorEvidence.json",
+    "sha256": "45328a2441868b27b21fac2802e5c257b03e0f8825ebc75608db2281ca6aaf57"
+  },
+  "checks": {
+    "actual_files": 240,
+    "repository_sources": 67,
+    "prior_218_rows_and_bytes_unchanged": true,
+    "controller_relocation_exact_files": 10,
+    "pipe_relocation_exact_files": 7,
+    "relative_import_modules": 33,
+    "relative_import_edges": 85,
+    "builder_hash_verified": true
+  },
+  "reused_acceptances": {
+    "job_source": "d3726fea1094d84c5d449003262da931bc507ad112985da3aee1f415189b551c",
+    "getter": "a6bd896516084bd81c5b7c74cda30c62cebd2c51c4ff8776cddb4cb642df7849"
+  },
+  "conclusions": [
+    "Parallel reader retains complete ordered refs, SHA256 and Git blob SHA1, signed source/Owner merge tree checks, fixed private repository and bounded four-child execution.",
+    "Only exact declared path/pin relocation changes controller and normal pipe integration; original context checks, CLI behavior, complete input bytes, once tickets, SQL parameters and 15-second CAS freshness remain.",
+    "New getter is an independently checked source dependency; its installation and exact second forward registration require separate actual guards and readback.",
+    "Original immutable-input blob decoder and result terminal are reused by explicit path, without pretending old controller identity covers new source."
+  ],
+  "limits": [
+    "Source engineering acceptance only; not ScopedControllerQualification, runtime activation, new binding registration, GA issuance or a test result.",
+    "Job containment covers Job owner termination and existing timeout path; arbitrary upstream Node death alone does not guarantee immediate cancellation.",
+    "135-second timeout is static configuration; short timer termination was tested, not a full 135-second elapsed measurement.",
+    "Direct executable/compiler/reference bytes are pinned. Existing Windows kernel32 and .NET host platform are explicitly the platform boundary, not a claim of complete operating-system DLL closure.",
+    "No live GitHub speedup, host run or formal 19-case qualification is inferred from existing local tests."
+  ],
+  "new_execution": {
+    "sql": false,
+    "github": false,
+    "host": false,
+    "tests": false
+  },
+  "next_required": [
+    "Exact new Host/Scope and scoped qualification metadata",
+    "Real source publication and signatures plus final runtime acceptance",
+    "Guarded exact getter installation and second binding/Status registration",
+    "Actual new GA and complete observations before independent 19-case results"
+  ]
+}
