@@ -1,0 +1,143 @@
+{
+  "state": "ACCEPTED_EXACT_FRAME_LIMIT_HOST_SCOPE_AND_METADATA_CONSTRUCTION",
+  "issued_at": "2026-09-09T05:41:07.173Z",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "controller_digest": "93dfea25adf03ffac92bb985db74ae7edaaf111fa27bef25cd6b090ec1e6ee14",
+  "scope_digest": "0ceca9c3ccad369ab3a39e29ec7b8bf837a1fa85c3abbae1665ce12e7e32b5d6",
+  "host_runtime_config_digest": "028205b0f20e085fb7eb4e14df5055d824ee0870d9f6929518c361d8c7478133",
+  "gate_digest": "e5a077b06d0b0765169823a0fd6163e7611cb85c772d2f7ada7a1831e1ad3a48",
+  "gate_suite_digest": "cfe5f52bd8f0bf732401665adfc332c6d1dd833cbd4873af530f6da5e25b783d",
+  "preparation_sha256": "1ca84d949abede949ae97c35c4ef5706ac30d03d91eec43ef64cd9e11b1c79cd",
+  "source_acceptance_sha256": "61d8fbde65266dc647d894b4bca5f01394cd739d0c86daedcf1c933c2476ec82",
+  "getter_acceptance_sha256": "dc07a4d40fa10e5faac18a421999d7bcc2caa15d159e408435206a2b8f648a5e",
+  "sources": [
+    {
+      "path": "work/qualification-live-preparation/frame-limit-successor/PreparationEvidence.json",
+      "sha256": "1ca84d949abede949ae97c35c4ef5706ac30d03d91eec43ef64cd9e11b1c79cd",
+      "bytes": 3811
+    },
+    {
+      "path": "work/qualification-live-preparation/frame-limit-successor/prepare.mjs",
+      "sha256": "c79318432fd77b0cdc9a2a083d17a678ad1fdcb2a7e0335ad5cca9768fd3982f",
+      "bytes": 22923
+    },
+    {
+      "path": "work/qualification-live-preparation/frame-limit-successor/prepare-status-generation4.mjs",
+      "sha256": "7ea27dd0dd62faae3b9e37fe26c1f6715c34f783d6c6f7789bd9c6043e5a1e62",
+      "bytes": 6044
+    },
+    {
+      "path": "work/qualification-live-preparation/frame-limit-successor/assemble-material.mjs",
+      "sha256": "f6df91f553116dd78d5cf206af3bc0bccc8591eaf2addde0a7319b11492d5327",
+      "bytes": 6755
+    },
+    {
+      "path": "work/qualification-live-preparation/frame-limit-successor/build-stages.mjs",
+      "sha256": "295d911a0b259f7e45718dfa08ee28fb4ffba24b4c584047978e6efe14449440",
+      "bytes": 1500
+    },
+    {
+      "path": "work/qualification-live-preparation/frame-limit-successor/BaselinePins.json",
+      "sha256": "3b4075a11cdc4fb25aaaffdae00a0fe148c4c4843b88a229282b140be0fbd040",
+      "bytes": 3549
+    },
+    {
+      "path": "work/qualification-live-preparation/frame-limit-successor/README.md",
+      "sha256": "a1d22132d82e103f934d5694d699e72b74d6666723b4660982bb45e576888821",
+      "bytes": 3982
+    },
+    {
+      "path": "work/qualification-live-preparation/frame-limit-successor/GetterFieldCorrection.json",
+      "sha256": "0ae49bdf51d9af04e004c7a39bb2b134d4735cb2ae99554644e874e7ac7cbba5",
+      "bytes": 1186
+    },
+    {
+      "path": "work/qualification-live-preparation/frame-limit-successor/CandidateShapeChecks.json",
+      "sha256": "3a99a08152a074a022c3f0375c9d19f95b732a4c3259692e242c6280af37f0ad",
+      "bytes": 1980
+    },
+    {
+      "path": "work/qualification-live-preparation/frame-limit-successor/static-final/Preparation.json",
+      "sha256": "bf6a2088b33efef3edcd21910de364d3c5cf2993b94babcb0f3b9bffabb8ff26",
+      "bytes": 152269
+    },
+    {
+      "path": "work/qualification-live-preparation/frame-limit-successor/definitions-final/Preparation.json",
+      "sha256": "790b3d9d647e35eca5a28384541606d8f9d23a222021cd73ed1124d9559ed9cb",
+      "bytes": 217944
+    },
+    {
+      "path": "work/qualification-live-preparation/frame-limit-successor/subject-final/Preparation.json",
+      "sha256": "fc09edaba0cef4cf964cb531f3ed0239d445f412bac27d63cd10577906fa6685",
+      "bytes": 32749
+    },
+    {
+      "path": "work/qualification-live-preparation/frame-limit-successor/ConstructionResult.json",
+      "sha256": "76951bec20bb49dc0f2a85465203ad9008ae0d50473a211252193b2fd2321a9f",
+      "bytes": 1405
+    },
+    {
+      "path": "work/qualification-live-preparation/frame-limit-successor/static-final/Preparation.json",
+      "sha256": "bf6a2088b33efef3edcd21910de364d3c5cf2993b94babcb0f3b9bffabb8ff26",
+      "bytes": 152269
+    },
+    {
+      "path": "work/qualification-live-preparation/frame-limit-successor/definitions-final/Preparation.json",
+      "sha256": "790b3d9d647e35eca5a28384541606d8f9d23a222021cd73ed1124d9559ed9cb",
+      "bytes": 217944
+    },
+    {
+      "path": "work/qualification-live-preparation/frame-limit-successor/subject-final/Preparation.json",
+      "sha256": "fc09edaba0cef4cf964cb531f3ed0239d445f412bac27d63cd10577906fa6685",
+      "bytes": 32749
+    },
+    {
+      "path": "work/qualification-live-preparation/frame-limit-successor/BaselinePins.json",
+      "sha256": "3b4075a11cdc4fb25aaaffdae00a0fe148c4c4843b88a229282b140be0fbd040",
+      "bytes": 3549
+    },
+    {
+      "path": "work/qualification-live-preparation/parallel-source-limit-successor/definitions-final/ExecutionScopeDefinition.json",
+      "sha256": "04d381ff6919ec35ee3cb0e17a23c8579ed7a2f5a87835a1560db6c18f23f536",
+      "bytes": 28688
+    },
+    {
+      "path": "work/qualification-live-preparation/parallel-source-limit-successor/static-final/preentry-skill-qualification.json",
+      "sha256": "2e0a962c4eaf94ed70b8b3452daf52faf8919035497c0e67e90d7c9d5d60a87a",
+      "bytes": 125028
+    },
+    {
+      "path": "work/kernel-phase2-repo/artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/FrameLimitControllerSourceIndependentAcceptance.json",
+      "sha256": "61d8fbde65266dc647d894b4bca5f01394cd739d0c86daedcf1c933c2476ec82",
+      "bytes": 35329
+    },
+    {
+      "path": "work/kernel-phase2-repo/artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/FrameLimitBindingGetterIndependentAcceptance.json",
+      "sha256": "dc07a4d40fa10e5faac18a421999d7bcc2caa15d159e408435206a2b8f648a5e",
+      "bytes": 3446
+    }
+  ],
+  "checks": {
+    "three_actual_pure_stage_outputs_reconstructed_exact": true,
+    "every_emitted_object_matches_actual_bytes": true,
+    "all19oracles_setup_fixture_unchanged": true,
+    "original_allowed_sets_budgets_actions_generations_preserved": true,
+    "only_aggregate_cli_consumer_bound_increased_to_declared_pipe4MiB": true,
+    "existing_V2_decoder_publisher_and_caps_unchanged": true,
+    "original_threelate_and38fixed_meanings_preserved": true,
+    "only36known_fixed_in_template_no_future_refs_invented": true,
+    "old_wrong_status_issuer_generation_branch_removed": true,
+    "separate_status4_constructor_exact_narrow_generation_successor": true
+  },
+  "limits": [
+    "Static/Host/Scope/Sink/Binding/Risk and pure static/definitions/subject construction accepted only; not actual runtime/qualification/signature or source publication.",
+    "New Status object4 remains under Root2 and originalSTATUSissuer23ca. No Root/issuer generation change. Actual unused ID/tuple, real source and qualification, original Ownerwindow and actual signature still required.",
+    "Third immutable exact forward26 must be separately reviewed and registered; full oldStatus1/2/3, events1..25 and fourBLOCKED/charges preserved.",
+    "Actual final data/19review/coordinator/STOP routes remain separately pinned and read-tested before allocation; no complete new19case result is supplied here.",
+    "Upload permission is not granted by this technical acceptance and remains subject to specific user scope and effective tool review."
+  ],
+  "authority_effect": "NONE",
+  "sql_called": false,
+  "host_called": false,
+  "qualification_issued": false
+}

@@ -1,0 +1,28 @@
+{
+  "state": "ACCEPTED_STATUS_OBJECT_GENERATION4_APPLICABILITY_NOT_ISSUANCE",
+  "issued_at": "2026-09-09T05:41:07.174Z",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "controller_digest": "93dfea25adf03ffac92bb985db74ae7edaaf111fa27bef25cd6b090ec1e6ee14",
+  "scope_digest": "0ceca9c3ccad369ab3a39e29ec7b8bf837a1fa85c3abbae1665ce12e7e32b5d6",
+  "status_constructor": {
+    "path": "work/qualification-live-preparation/frame-limit-successor/prepare-status-generation4.mjs",
+    "sha256": "7ea27dd0dd62faae3b9e37fe26c1f6715c34f783d6c6f7789bd9c6043e5a1e62",
+    "bytes": 6044
+  },
+  "host_scope_acceptance_sha256": "1a2b2531aa0be42f6280711c047d8a45bda7dc24ed14f3b81769cdfc8f4221d0",
+  "root_generation": "ctrgen_dd30fbc7e0ba43fa8ba9f734867bcf12",
+  "root_ordinal": 2,
+  "original_status_issuer_sha256": "23ca2fe807dd454d8037168531a1d05890be6fbb5575cd18e8e6482f2ef47b80",
+  "object_generation": 4,
+  "meaning": "Generation4 selects an unused immutable StatusManifest slot only; it does not inherit or replace Root/issuer generation. ExistingRoot2STATUS purpose applies under original audience/algorithm/expires_at, with exact new acceptedconfiguration/source/qualification.",
+  "required": [
+    "Actual full currentStatus rows prove new ID and root/type/generation4 tuple unused",
+    "Actual accepted newqualification and immutable complete source_ref, accepted Host/Scope, exact original issuer bytes and registeredRoot2 match",
+    "Real as_of within original Ownerwindow, exact canonical payload excludes only signature_binding, realOwnermerge signature before registration"
+  ],
+  "no_new_root_or_issuer": true,
+  "status_id_issued": false,
+  "payload_created": false,
+  "signature_created": false,
+  "authority_effect": "NONE"
+}

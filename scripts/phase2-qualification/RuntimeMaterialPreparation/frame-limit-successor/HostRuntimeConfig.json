@@ -1,0 +1,266 @@
+{
+  "definition_state": "PREPARED_FOR_EXACT_INDEPENDENT_SCOPE_ACCEPTANCE",
+  "authority_effect": "NONE",
+  "controller_manifest_bound": true,
+  "controller_qualified": false,
+  "ga_issued": false,
+  "kind": "FIXED_HOST_RUNTIME_CONFIG",
+  "controller_source_manifest": {
+    "path": "scripts/phase2-qualification/control-context-verifier-parallel-frame-limit-successor/ControllerSourceManifest.candidate.json",
+    "sha256": "93dfea25adf03ffac92bb985db74ae7edaaf111fa27bef25cd6b090ec1e6ee14",
+    "bytes": 58904
+  },
+  "endpoint": "Codex@DESK-W-591",
+  "host_platform": "Windows",
+  "docker_endpoint": "npipe:////./pipe/dockerDesktopLinuxEngine",
+  "runtime_binaries": "Exact Node/Python/GitHub CLI/Docker executable and loaded dependencies are in controller_source_manifest; recheck every byte before launch",
+  "docker_engine": {
+    "version": "29.7.2",
+    "os": "linux",
+    "architecture": "amd64"
+  },
+  "image": {
+    "reference": "docker.io/library/python@sha256:285a71327884a4d50efbea30104473b0fa43ecefa499458899670ca30dae76e5",
+    "manifest_digest": "sha256:285a71327884a4d50efbea30104473b0fa43ecefa499458899670ca30dae76e5",
+    "config_digest": "sha256:1148adc3b50891ee01e6add44be22d277dedeb8dcac2f7cc8b700dd710c75c4d",
+    "public_environment": [
+      "PATH=/usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+      "LANG=C.UTF-8",
+      "GPG_KEY=7169605F62C751356D054A26A821E680E5FA6305",
+      "PYTHON_VERSION=3.12.14",
+      "PYTHON_SHA256=5c8462af5790baf43a321a1559dbe0db06d1be4300fb85fb53c40060668e548a"
+    ]
+  },
+  "profile": {
+    "profile_id": "DP-PREENTRY-SKILL-QUALIFICATION",
+    "definition_version": "fixed-synthetic-skill-input-20260908.v3-runtime600",
+    "sha256": "d1c060b85f0b842a397a478105ea57a208e62eb0a5a2d4c2cd8f93f63eae88f5"
+  },
+  "resources": {
+    "max_execution_seconds": 600,
+    "cpu_millicores": 500,
+    "memory_bytes": 134217728,
+    "pids_limit": 16,
+    "nonroot_uid": 10001,
+    "network": "none",
+    "read_only_rootfs": true,
+    "cap_drop": [
+      "ALL"
+    ],
+    "no_new_privileges": true
+  },
+  "mounts": [
+    {
+      "destination": "/driver",
+      "access": "READ_ONLY",
+      "content": "Exactly accepted three Skill files and fixed_skill_fixture.py"
+    },
+    {
+      "destination": "/allowed",
+      "access": "READ_WRITE",
+      "content": "One attempt-specific synthetic directory"
+    }
+  ],
+  "child_program": "Exact literal parent.CMD in the closed source manifest; Skill text is input data, never code",
+  "trusted_python_bridge_environment": {
+    "SystemRoot": "C:/Windows",
+    "WINDIR": "C:/Windows",
+    "TEMP": "C:/Users/Windows/AppData/Local/Temp",
+    "TMP": "C:/Users/Windows/AppData/Local/Temp",
+    "HOMEDRIVE": "",
+    "HOMEPATH": "",
+    "LOGONSERVER": "",
+    "PATH": "",
+    "SYSTEMDRIVE": "",
+    "USERDOMAIN": "",
+    "USERNAME": "",
+    "USERPROFILE": ""
+  },
+  "trusted_python_bridge_environment_rule": "Exactly four fixed nonempty public infrastructure values and eight explicitly empty Windows variables prevent Node/libuv automatic inheritance; no caller process.env values are copied. The final source manifest must bind the enforcing launcher.",
+  "process_environment_boundary": "Docker/watchdog use the exact source-level public allowlist. The trusted bridge launcher must be separately checked in the final closed entry; no inherited credentials are permitted into the isolated child.",
+  "host_control_transports": [
+    "existing authenticated GitHub CLI for fixed private repository",
+    "existing Supabase MCP for uscrdifznmlvczcekqpw",
+    "existing fixed local Docker CLI"
+  ],
+  "credential_scope": {
+    "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/input-definitions/CredentialScopeDefinition.json",
+    "sha256": "905dbb512b2ed9605da90ee90ff78db190e1560204a2e8d84621ee621c9e834d",
+    "bytes": 809
+  },
+  "stop_policy": {
+    "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-evidence-blob/StopPolicyDefinition.json",
+    "sha256": "5a96306bae4af3d27694abc5533510301ae968a81b9995d8283ba3b4204e1dd5",
+    "bytes": 971
+  },
+  "image_observation": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/PythonImageBinding.json",
+    "sha256": "f2f8d7f5d4e9d77ff4dd42ccbcafedeb1c5a7658f84f17252422fdecdb25d876",
+    "bytes": 7856
+  },
+  "independent_control_generations": [
+    "runner_generation",
+    "credential_generation",
+    "session_generation"
+  ],
+  "source_freshness": "Actual current Root and execution state through the fixed trusted Supabase tool, then same-process fixed-source verifier; no local snapshot authority",
+  "byte_transport": {
+    "source": {
+      "path": "scripts/phase2-qualification/control-context-verifier-parallel-frame-limit-successor/tool-entry.functions.js",
+      "sha256": "d3a4b678c9644fba01b9a1f227b90876f662c85c5658da94ad4a60dbaa304e51",
+      "bytes": 10049
+    },
+    "controller_manifest": {
+      "path": "scripts/phase2-qualification/control-context-verifier-parallel-frame-limit-successor/ControllerSourceManifest.candidate.json",
+      "sha256": "93dfea25adf03ffac92bb985db74ae7edaaf111fa27bef25cd6b090ec1e6ee14",
+      "bytes": 58904
+    },
+    "external_transport_manifest_requirement": "All seven exact normal600-pipe-parallel-frame-limit execution sources are entries of this new manifest; the old pipe is historical retained source, not this launch route.",
+    "directory": "C:/Users/Windows/Documents/Codex/2026-09-08/ia/work/qualification-live/<actual-ga-id>.<CREATE|START|GRR>.parallel-frame-pipe600",
+    "message_sequences": [
+      1,
+      2
+    ],
+    "maximum_json_bytes_including_lf": 4194305,
+    "maximum_notice_characters": 160,
+    "rules": "CreateNew exclusive attempt directory and raw archives; one exact compact JSON+LF message per sequence, exact SHA/UTF8/length; no arbitrary command/path/environment or timestamp substitution; startup READY precedes actual fresh SQL; CREATE/START record/dispatch carry actual timestamps unchanged; original final CAS remains bounded by 15 seconds.",
+    "maximum_json_payload_bytes": 4194304,
+    "external_transport_sources": [
+      {
+        "path": "C:/Users/Windows/Documents/Codex/2026-09-08/ia/work/normal600-pipe-parallel-frame-limit/deliver.mjs",
+        "role": "RUNTIME_DEPENDENCY",
+        "bytes": 749,
+        "sha256": "f04351149f3f5cd43ad4b6a89620c1af045c1f46ef32f0586f132f6bd85f8a27"
+      },
+      {
+        "path": "C:/Users/Windows/Documents/Codex/2026-09-08/ia/work/normal600-pipe-parallel-frame-limit/launcher.mjs",
+        "role": "RUNTIME_DEPENDENCY",
+        "bytes": 2028,
+        "sha256": "4d4e7bffc557c8ecb986159a7570beab0bfc2c5cbef26ace02ae602cf5e8584b"
+      },
+      {
+        "path": "C:/Users/Windows/Documents/Codex/2026-09-08/ia/work/normal600-pipe-parallel-frame-limit/message.mjs",
+        "role": "RUNTIME_DEPENDENCY",
+        "bytes": 882,
+        "sha256": "178bd429a4b4a5bf2c9eba33b0773123437cd0a4b268324920c93072ca5b07cb"
+      },
+      {
+        "path": "C:/Users/Windows/Documents/Codex/2026-09-08/ia/work/normal600-pipe-parallel-frame-limit/read-output.mjs",
+        "role": "RUNTIME_DEPENDENCY",
+        "bytes": 1049,
+        "sha256": "dd86a47324765b2b012e9c039ad67f9f29071bb0a947f587668ddff4d047c07e"
+      },
+      {
+        "path": "C:/Users/Windows/Documents/Codex/2026-09-08/ia/work/normal600-pipe-parallel-frame-limit/ready-loader.mjs",
+        "role": "RUNTIME_DEPENDENCY",
+        "bytes": 311,
+        "sha256": "a2d6fbbce72fada75bfdc969cd46b033fb2db5520b1f2862a7581c05a35a6a9b"
+      },
+      {
+        "path": "C:/Users/Windows/Documents/Codex/2026-09-08/ia/work/normal600-pipe-parallel-frame-limit/sha256.mjs",
+        "role": "RUNTIME_DEPENDENCY",
+        "bytes": 2156,
+        "sha256": "14fd1d0b3378d57bf75688a3e9a558e5c5e52e8514d345440437d5768631fdf9"
+      },
+      {
+        "path": "C:/Users/Windows/Documents/Codex/2026-09-08/ia/work/normal600-pipe-parallel-frame-limit/tool-entry.functions.js",
+        "role": "RUNTIME_DEPENDENCY",
+        "bytes": 14434,
+        "sha256": "dfb251ac0dab9e09a3cdab15896b3ae5e6d64245ed0890a6ca9d58571b523377"
+      }
+    ],
+    "maximum_consumer_line_bytes": 4194304,
+    "consumer_line_limit_successor": {
+      "previous": 2097152,
+      "current": 4194304,
+      "nested_payload_unchanged": 2097152
+    }
+  },
+  "parallel_source_reads": {
+    "maximum_concurrent_reads": 4,
+    "request_bytes_max": 65536,
+    "wrapper_timeout_ms": 135000,
+    "stdout_bytes_max": 34603008,
+    "immutable_only": true,
+    "current_or_revocation_cache": false,
+    "production_sources": [
+      {
+        "path": "scripts/phase2-qualification/control-context-verifier-parallel-frame-limit-successor/source-publication.mjs",
+        "sha256": "76caadad497bd7432fef47e11c897d1233b3a27402589e2523b4b1abd1e8030c",
+        "bytes": 3578
+      },
+      {
+        "path": "scripts/phase2-qualification/control-context-verifier-parallel-source-successor/read-source-blobs.mjs",
+        "sha256": "e98f420b0b07b657ba7e493d1b26acf75a1e4394d504d1ccee5c57184e85d6bd",
+        "bytes": 3007
+      },
+      {
+        "path": "scripts/phase2-qualification/control-context-verifier-parallel-source-successor/blob-worker.mjs",
+        "sha256": "ef6286059294d7c6f256e7a2386395fc848f02b175ef08c465c72e731828a9a1",
+        "bytes": 4442
+      },
+      {
+        "path": "scripts/phase2-qualification/control-context-verifier-parallel-source-successor/ref-plan.mjs",
+        "sha256": "8f1d4f0f3033632d5a93e449495ebcda2774125ec2440abb1dd148da5d58ad63",
+        "bytes": 1943
+      },
+      {
+        "path": "scripts/phase2-qualification/control-context-verifier-parallel-source-successor/FixedJobLauncher.cs",
+        "sha256": "feef01a62576d2159e697c290be1a9b1e45f1432a65a1e17b8142afc80a1031c",
+        "bytes": 7954
+      },
+      {
+        "path": "scripts/phase2-qualification/control-context-verifier-parallel-source-successor/job-launcher.ps1",
+        "sha256": "818265116e9ab76a93cd7b343398f133d2a236c535126cef809ed944533b62d6",
+        "bytes": 1645
+      }
+    ],
+    "runtime_dependencies": [
+      {
+        "path": "C:/Program Files/nodejs/node.exe",
+        "role": "RUNTIME_DEPENDENCY",
+        "bytes": 92825416,
+        "sha256": "3602f2bb1a10f2cbab4c36886218a33c1ab3db87290e73b033c46c77147d0237"
+      },
+      {
+        "path": "C:/WINDOWS/Microsoft.Net/assembly/GAC_MSIL/System/v4.0_4.0.0.0__b77a5c561934e089/System.dll",
+        "role": "RUNTIME_DEPENDENCY",
+        "bytes": 3545264,
+        "sha256": "2b3c17c6208a0b4b6beb94e1a066f99ba06cdb2ea919479e99d47e8c6d96dc71"
+      },
+      {
+        "path": "C:/Windows/Microsoft.NET/Framework64/v4.0.30319/csc.exe",
+        "role": "RUNTIME_DEPENDENCY",
+        "bytes": 2569832,
+        "sha256": "46809206887326d2d24db1eff1f3064de972c3451abe766b49111450a5e08e00"
+      },
+      {
+        "path": "C:/Windows/Microsoft.NET/Framework64/v4.0.30319/csc.exe.config",
+        "role": "RUNTIME_DEPENDENCY",
+        "bytes": 182,
+        "sha256": "2d4610ade011e530d817dd3ba4fc787e5dc0c2297cc520c30a643b8fb13f9093"
+      },
+      {
+        "path": "C:/Windows/Microsoft.NET/Framework64/v4.0.30319/mscorlib.dll",
+        "role": "RUNTIME_DEPENDENCY",
+        "bytes": 5445432,
+        "sha256": "a8cae3d326f7d973ca79cba849939d4837ad18d507ef6d5f6ebab802b7fb157a"
+      },
+      {
+        "path": "C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe",
+        "role": "RUNTIME_DEPENDENCY",
+        "bytes": 454656,
+        "sha256": "7600ffe12da441fe89d035b13801e8e91d064bc544a27b19a5cf49f6ab8b18f5"
+      }
+    ],
+    "process_environment": "Existing trusted host context with NODE_OPTIONS and NODE_PATH empty, as enforced by the fixed reader; not a credential export to the Docker child.",
+    "job_owner_boundary": "PowerShell owns the unnamed non-inheritable kill-on-close Job. Suspended worker is born in that Job, membership checked before resume; only duplicated standard handles inherited. Owner exit and wrapper timeout close Job; normal/error exits terminate residual descendants and check zero active processes.",
+    "limitation": "The upstream verifier Node is outside this Job. Its death alone does not prove immediate PowerShell-owner cancellation. Existing bounded worker/read deadlines remain.",
+    "original_review": {
+      "path": "work/source-publication-parallel-candidate-v3/JobIndependentSourceAcceptance.json",
+      "sha256": "d3726fea1094d84c5d449003262da931bc507ad112985da3aee1f415189b551c",
+      "bytes": 14250
+    },
+    "relocation_acceptance_required": true
+  }
+}
