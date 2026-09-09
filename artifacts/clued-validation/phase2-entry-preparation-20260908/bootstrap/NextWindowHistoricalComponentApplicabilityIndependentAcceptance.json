@@ -1,0 +1,427 @@
+{
+  "schema_version": 1,
+  "kind": "INDEPENDENT_NEXT_WINDOW_HISTORICAL_COMPONENT_APPLICABILITY",
+  "state": "ACCEPTED_EXACT_HISTORICAL_COMPONENT_SCOPE_NOT_ACTUAL_INSTALLATION",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "decided_at_utc": "2026-09-09T12:52:15.500Z",
+  "not_before": "2026-09-09T12:52:15.501Z",
+  "expires_at": "2026-09-10T10:13:16Z",
+  "controller_digest": "c1e539441bb6fc5d05cdcfdb722f703abb50187d456d05cf49caacc44f5086e5",
+  "scope_digest": "f840eba3bc2ddcff60741c2eff41702412bd0bca7b19f2227cf63ebd7661e94a",
+  "root_generation": "ctrgen_2e778ca66244459f974b081edca8c04e",
+  "original_runtime": {
+    "path": "work/kernel-phase2-repo/artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/ExactPreentryFrameLimitControllerRuntimeAcceptance.json",
+    "sha256": "77a79451eb9363b660ba183f648b572535d6409314f1ee29c0b5e16850117f37",
+    "bytes": 56552
+  },
+  "original_component_applicability": {
+    "path": "work/kernel-phase2-repo/artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/Runtime600ComponentEvidenceIndependentApplicability.json",
+    "sha256": "33f0e105811b9b8f85919cbedee823c4d29baa2b52131da34dbab85717d14a93",
+    "bytes": 5002
+  },
+  "preserved_original_evidence_refs": [
+    {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/cc66d9d9510bf50fc94f2d5402d0003e41fa67e4",
+      "sha256": "7e97ba6cef1e9fedc9f23ca04106703df138b2ddf0b052bd5aaaeaa499406844"
+    },
+    {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/b96fb1729caf09a5b52fa7c2e924d93ba61e33ce",
+      "sha256": "3cbbed94e1c9ef5fec4db281526ca69b9b30a24d2812b5a8bb5eb6bc728146fb"
+    },
+    {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/6081a237f2a36b63013b48fffe1fccb40f06083f",
+      "sha256": "8f732dd4013a18adde33a254631cdd5a04022f300d4c0a13d05dffbf36f97285"
+    },
+    {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/a95d781faceb5ba3a2ff4d36a019940fbd1eb8c6",
+      "sha256": "0ab15bbbc2f80421cb619b50de8816095359d9ffab1e96e372960c063bc80c9b"
+    },
+    {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/40393d853c4bc3871b80f36f7df53454871e7c90",
+      "sha256": "a835ad33baf5e0f40364732db7b0320c4371ed6f23c1d9d77d95a7ab96eb3e5a"
+    },
+    {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/4912dc7a3097429d391c75aef9f0b5d40e47a116",
+      "sha256": "33f0e105811b9b8f85919cbedee823c4d29baa2b52131da34dbab85717d14a93"
+    },
+    {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/0912016f356f0bb5360aca8d2270e813aaac025a",
+      "sha256": "b225070cae18287f6b50ffb7d6d647f98683f3e2a897f4d87f66795ad9eedaa5"
+    },
+    {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/bcad540ab7768847e76c4dd4abf5879c2a93fbed",
+      "sha256": "197b46a17dd3f16cb6d85df192f0a97bd3e4a6d81f5c7a3cbad4e8d933779e00"
+    },
+    {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/f74c074ac36a6b6b86368d5ee887f13c189b583c",
+      "sha256": "539c6261cc1e7fbc58557c87cb7e997792c095c6170ed1673534179713f055ce"
+    },
+    {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/5d6c0fadc982a25c7f777159185d524e09668722",
+      "sha256": "da99f64dcf8e238bb8cd85cdc6ae13ee6c0d15d8508dbb53c92af63fa94486b5"
+    }
+  ],
+  "preserved_historical_component_bindings": [
+    {
+      "test_id": "PQUAL-11",
+      "original_observed_at": "2026-09-08T17:20:46.903Z",
+      "original_ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/cc66d9d9510bf50fc94f2d5402d0003e41fa67e4",
+        "sha256": "7e97ba6cef1e9fedc9f23ca04106703df138b2ddf0b052bd5aaaeaa499406844"
+      },
+      "original_subject_refs": [
+        {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/b96fb1729caf09a5b52fa7c2e924d93ba61e33ce",
+          "sha256": "3cbbed94e1c9ef5fec4db281526ca69b9b30a24d2812b5a8bb5eb6bc728146fb"
+        },
+        {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/6081a237f2a36b63013b48fffe1fccb40f06083f",
+          "sha256": "8f732dd4013a18adde33a254631cdd5a04022f300d4c0a13d05dffbf36f97285"
+        },
+        {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/a95d781faceb5ba3a2ff4d36a019940fbd1eb8c6",
+          "sha256": "0ab15bbbc2f80421cb619b50de8816095359d9ffab1e96e372960c063bc80c9b"
+        },
+        {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/40393d853c4bc3871b80f36f7df53454871e7c90",
+          "sha256": "a835ad33baf5e0f40364732db7b0320c4371ed6f23c1d9d77d95a7ab96eb3e5a"
+        }
+      ],
+      "current_source_refs": [
+        {
+          "path": "scripts/phase2-qualification/nonproduction-control-store/install.candidate.sql",
+          "sha256": "3cbbed94e1c9ef5fec4db281526ca69b9b30a24d2812b5a8bb5eb6bc728146fb"
+        },
+        {
+          "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/budget-reservation-successor/install.candidate.sql",
+          "sha256": "8f732dd4013a18adde33a254631cdd5a04022f300d4c0a13d05dffbf36f97285"
+        },
+        {
+          "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/runtime600-successor/alter.candidate.sql",
+          "sha256": "0ab15bbbc2f80421cb619b50de8816095359d9ffab1e96e372960c063bc80c9b"
+        }
+      ],
+      "applicability_ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/4912dc7a3097429d391c75aef9f0b5d40e47a116",
+        "sha256": "33f0e105811b9b8f85919cbedee823c4d29baa2b52131da34dbab85717d14a93"
+      }
+    },
+    {
+      "test_id": "PQUAL-13",
+      "original_observed_at": "2026-09-08T17:20:46.933Z",
+      "original_ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/0912016f356f0bb5360aca8d2270e813aaac025a",
+        "sha256": "b225070cae18287f6b50ffb7d6d647f98683f3e2a897f4d87f66795ad9eedaa5"
+      },
+      "original_subject_refs": [
+        {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/b96fb1729caf09a5b52fa7c2e924d93ba61e33ce",
+          "sha256": "3cbbed94e1c9ef5fec4db281526ca69b9b30a24d2812b5a8bb5eb6bc728146fb"
+        },
+        {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/6081a237f2a36b63013b48fffe1fccb40f06083f",
+          "sha256": "8f732dd4013a18adde33a254631cdd5a04022f300d4c0a13d05dffbf36f97285"
+        },
+        {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/a95d781faceb5ba3a2ff4d36a019940fbd1eb8c6",
+          "sha256": "0ab15bbbc2f80421cb619b50de8816095359d9ffab1e96e372960c063bc80c9b"
+        },
+        {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/40393d853c4bc3871b80f36f7df53454871e7c90",
+          "sha256": "a835ad33baf5e0f40364732db7b0320c4371ed6f23c1d9d77d95a7ab96eb3e5a"
+        }
+      ],
+      "current_source_refs": [
+        {
+          "path": "scripts/phase2-qualification/nonproduction-control-store/install.candidate.sql",
+          "sha256": "3cbbed94e1c9ef5fec4db281526ca69b9b30a24d2812b5a8bb5eb6bc728146fb"
+        },
+        {
+          "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/budget-reservation-successor/install.candidate.sql",
+          "sha256": "8f732dd4013a18adde33a254631cdd5a04022f300d4c0a13d05dffbf36f97285"
+        },
+        {
+          "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/runtime600-successor/alter.candidate.sql",
+          "sha256": "0ab15bbbc2f80421cb619b50de8816095359d9ffab1e96e372960c063bc80c9b"
+        }
+      ],
+      "applicability_ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/4912dc7a3097429d391c75aef9f0b5d40e47a116",
+        "sha256": "33f0e105811b9b8f85919cbedee823c4d29baa2b52131da34dbab85717d14a93"
+      }
+    },
+    {
+      "test_id": "PQUAL-15",
+      "original_observed_at": "2026-09-08T17:20:46.940Z",
+      "original_ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/bcad540ab7768847e76c4dd4abf5879c2a93fbed",
+        "sha256": "197b46a17dd3f16cb6d85df192f0a97bd3e4a6d81f5c7a3cbad4e8d933779e00"
+      },
+      "original_subject_refs": [
+        {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/b96fb1729caf09a5b52fa7c2e924d93ba61e33ce",
+          "sha256": "3cbbed94e1c9ef5fec4db281526ca69b9b30a24d2812b5a8bb5eb6bc728146fb"
+        },
+        {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/6081a237f2a36b63013b48fffe1fccb40f06083f",
+          "sha256": "8f732dd4013a18adde33a254631cdd5a04022f300d4c0a13d05dffbf36f97285"
+        },
+        {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/a95d781faceb5ba3a2ff4d36a019940fbd1eb8c6",
+          "sha256": "0ab15bbbc2f80421cb619b50de8816095359d9ffab1e96e372960c063bc80c9b"
+        },
+        {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/40393d853c4bc3871b80f36f7df53454871e7c90",
+          "sha256": "a835ad33baf5e0f40364732db7b0320c4371ed6f23c1d9d77d95a7ab96eb3e5a"
+        }
+      ],
+      "current_source_refs": [
+        {
+          "path": "scripts/phase2-qualification/nonproduction-control-store/install.candidate.sql",
+          "sha256": "3cbbed94e1c9ef5fec4db281526ca69b9b30a24d2812b5a8bb5eb6bc728146fb"
+        },
+        {
+          "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/budget-reservation-successor/install.candidate.sql",
+          "sha256": "8f732dd4013a18adde33a254631cdd5a04022f300d4c0a13d05dffbf36f97285"
+        },
+        {
+          "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/runtime600-successor/alter.candidate.sql",
+          "sha256": "0ab15bbbc2f80421cb619b50de8816095359d9ffab1e96e372960c063bc80c9b"
+        }
+      ],
+      "applicability_ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/4912dc7a3097429d391c75aef9f0b5d40e47a116",
+        "sha256": "33f0e105811b9b8f85919cbedee823c4d29baa2b52131da34dbab85717d14a93"
+      }
+    },
+    {
+      "test_id": "PQUAL-16",
+      "original_observed_at": "2026-09-08T17:20:46.922Z",
+      "original_ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/f74c074ac36a6b6b86368d5ee887f13c189b583c",
+        "sha256": "539c6261cc1e7fbc58557c87cb7e997792c095c6170ed1673534179713f055ce"
+      },
+      "original_subject_refs": [
+        {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/b96fb1729caf09a5b52fa7c2e924d93ba61e33ce",
+          "sha256": "3cbbed94e1c9ef5fec4db281526ca69b9b30a24d2812b5a8bb5eb6bc728146fb"
+        },
+        {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/6081a237f2a36b63013b48fffe1fccb40f06083f",
+          "sha256": "8f732dd4013a18adde33a254631cdd5a04022f300d4c0a13d05dffbf36f97285"
+        },
+        {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/a95d781faceb5ba3a2ff4d36a019940fbd1eb8c6",
+          "sha256": "0ab15bbbc2f80421cb619b50de8816095359d9ffab1e96e372960c063bc80c9b"
+        },
+        {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/40393d853c4bc3871b80f36f7df53454871e7c90",
+          "sha256": "a835ad33baf5e0f40364732db7b0320c4371ed6f23c1d9d77d95a7ab96eb3e5a"
+        }
+      ],
+      "current_source_refs": [
+        {
+          "path": "scripts/phase2-qualification/nonproduction-control-store/install.candidate.sql",
+          "sha256": "3cbbed94e1c9ef5fec4db281526ca69b9b30a24d2812b5a8bb5eb6bc728146fb"
+        },
+        {
+          "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/budget-reservation-successor/install.candidate.sql",
+          "sha256": "8f732dd4013a18adde33a254631cdd5a04022f300d4c0a13d05dffbf36f97285"
+        },
+        {
+          "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/runtime600-successor/alter.candidate.sql",
+          "sha256": "0ab15bbbc2f80421cb619b50de8816095359d9ffab1e96e372960c063bc80c9b"
+        }
+      ],
+      "applicability_ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/4912dc7a3097429d391c75aef9f0b5d40e47a116",
+        "sha256": "33f0e105811b9b8f85919cbedee823c4d29baa2b52131da34dbab85717d14a93"
+      }
+    },
+    {
+      "test_id": "PQUAL-17",
+      "original_observed_at": "2026-09-08T17:20:46.917Z",
+      "original_ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/5d6c0fadc982a25c7f777159185d524e09668722",
+        "sha256": "da99f64dcf8e238bb8cd85cdc6ae13ee6c0d15d8508dbb53c92af63fa94486b5"
+      },
+      "original_subject_refs": [
+        {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/b96fb1729caf09a5b52fa7c2e924d93ba61e33ce",
+          "sha256": "3cbbed94e1c9ef5fec4db281526ca69b9b30a24d2812b5a8bb5eb6bc728146fb"
+        },
+        {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/6081a237f2a36b63013b48fffe1fccb40f06083f",
+          "sha256": "8f732dd4013a18adde33a254631cdd5a04022f300d4c0a13d05dffbf36f97285"
+        },
+        {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/a95d781faceb5ba3a2ff4d36a019940fbd1eb8c6",
+          "sha256": "0ab15bbbc2f80421cb619b50de8816095359d9ffab1e96e372960c063bc80c9b"
+        },
+        {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/40393d853c4bc3871b80f36f7df53454871e7c90",
+          "sha256": "a835ad33baf5e0f40364732db7b0320c4371ed6f23c1d9d77d95a7ab96eb3e5a"
+        }
+      ],
+      "current_source_refs": [
+        {
+          "path": "scripts/phase2-qualification/nonproduction-control-store/install.candidate.sql",
+          "sha256": "3cbbed94e1c9ef5fec4db281526ca69b9b30a24d2812b5a8bb5eb6bc728146fb"
+        },
+        {
+          "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/budget-reservation-successor/install.candidate.sql",
+          "sha256": "8f732dd4013a18adde33a254631cdd5a04022f300d4c0a13d05dffbf36f97285"
+        },
+        {
+          "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/runtime600-successor/alter.candidate.sql",
+          "sha256": "0ab15bbbc2f80421cb619b50de8816095359d9ffab1e96e372960c063bc80c9b"
+        }
+      ],
+      "applicability_ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/4912dc7a3097429d391c75aef9f0b5d40e47a116",
+        "sha256": "33f0e105811b9b8f85919cbedee823c4d29baa2b52131da34dbab85717d14a93"
+      }
+    }
+  ],
+  "preserved_stage_receipt_refs": [
+    {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/d911dbdfeec1bf0000c77da86597f6c6bd0969d5",
+      "sha256": "f2ec1d6cf3afbd80d415c65c7bc0f71d86d606bda9031a174d92517e421ac246"
+    },
+    {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/2c81fac919b2fe03b919609762af701a9d8bd62a",
+      "sha256": "f40c8af253f811f820e4b3eccc144d63ca3548663810aba10bebb22331661b36"
+    },
+    {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/31c4574a6a34e951f4d70cc8525ac3ff6cb59136",
+      "sha256": "eb25e99392049c28f198472fbca69df0e6d75fc9fc9d033d3aa250f3272105ea"
+    },
+    {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/31c4574a6a34e951f4d70cc8525ac3ff6cb59136",
+      "sha256": "eb25e99392049c28f198472fbca69df0e6d75fc9fc9d033d3aa250f3272105ea"
+    },
+    {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/040c393cda6090c9ac3c9f33b3e8568a40595837",
+      "sha256": "83814ca7d19173034d107da31bcd1456d34125bdafae6048fce00fa6f0907e25"
+    },
+    {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/6f13b5c4a8efcdee00072035bbbc32407e570f80",
+      "sha256": "e19261b718cad252c1881cd5559e2e65b115d475952f5dbcd8d9ebe0dc7250be"
+    }
+  ],
+  "explicit_successors": {
+    "NW01": {
+      "generator": {
+        "path": "work/next-window-binding-maintenance-candidate/generate.mjs",
+        "sha256": "2c6f870077b9b10a705d9ce55725238c10958168afc62eae732b574a183ee22a",
+        "bytes": 15168
+      },
+      "independent_local_review": {
+        "path": "work/next-window-binding-maintenance-candidate/IndependentPreparationReview.json",
+        "sha256": "9f708879152ec8e48d86c5429e5a3e93019ca287ea4844049b9c4281e0217f27",
+        "bytes": 3481
+      },
+      "registration_subject": {
+        "path": "work/next-window-registration-materials/RegistrationSubject.canonical.json",
+        "sha256": "563020d76569bd000b4ee619461c946b24b9e99bdbcb6eb456cf651e7b23bf2f",
+        "bytes": 3380
+      },
+      "registration_acceptance": {
+        "path": "work/next-window-registration-materials/NextWindowRegistrationSubjectIndependentAcceptance.json",
+        "sha256": "ca5004cc1bd778faaa4010bfdfb8af9fd5f1397a75ac26d3a9ad400e8799cfdb",
+        "bytes": 1961
+      },
+      "store_acceptance": {
+        "path": "work/next-window-registration-materials/NextWindowControlStoreApplicabilityIndependentAcceptance.json",
+        "sha256": "dd661bd252f273ed36250080e6b4b9eff7e2c693b5540af5a1262a11a8d46920",
+        "bytes": 3323
+      },
+      "change": "Exactly seven fields of the one accepted_binding row and three named CHECKs; one immutable trigger restored in the same transaction. No general renewal endpoint or changed old events."
+    },
+    "budget": {
+      "install": {
+        "path": "work/next-single-ga-budget-candidate/install.candidate.sql",
+        "sha256": "6dcd95cfe0d76dabaad91fe64f991a47998bdb59b635a429da6673f91fada5c7",
+        "bytes": 7063
+      },
+      "independent_actual_local_PG_review": {
+        "path": "work/next-single-ga-budget-local-pg-mA9JAl/IndependentActualPGReview.json",
+        "sha256": "0440f4bdc3bcca0656bc2390ee6c63ae535238c144beb6eab7588f03b84a0dfc",
+        "bytes": 8232
+      },
+      "expected_function_prosrc_sha256": "be73521f3d36df1d797c089c975de04b862867bf2863492b3033bcb70947f464",
+      "expected_constraint": "CHECK (charged_evidence_bytes >= 19264968 AND charged_evidence_bytes <= 1127852979)",
+      "change": "Only reserve_execution_budget aggregate byte ceiling and execution_current charged CHECK ceiling. Old1073741824 becomes1127852979; every charge and all other parameters preserved."
+    },
+    "fourth_binding": {
+      "sql": {
+        "path": "work/next-window-fourth-binding-candidate/effective-binding.candidate.sql",
+        "sha256": "0e940600ef062cde655117e72c95f093b2aff7dbb4953a9a24b21380afbb2c27",
+        "bytes": 26159
+      },
+      "independent_acceptance": {
+        "path": "work/next-window-fourth-binding-candidate/IndependentAcceptance.json",
+        "sha256": "6e455d4b5d0e500fb9acae009dff435e6ca2755871a8eb48e75028bd89ecd9fe",
+        "bytes": 2982
+      },
+      "expected_definition_sha256": "548cf5da8842aa27a57f5d09f7deab9261b9d15d844eb60d483d27ae81a1b3fc",
+      "expected_prosrc_sha256": "633164e919ed6b93f0aba6ba27e0d468568b8b528320f7b244ff1999ad999b7a",
+      "planned_execution_event": 40,
+      "key": "ordinary-next-window-binding-20260909",
+      "change": "Preserve exact prior three forwards; add only exact fourth binding with original six typed refs and accepted actual final materials."
+    },
+    "Root3": {
+      "acceptance": {
+        "path": "work/next-window-registration-materials/ForwardRootGeneration3IndependentAcceptance.json",
+        "sha256": "ad446626711691b90b0aab2b05d337d975aac208432a53251134cb9553259b0a",
+        "bytes": 6208
+      },
+      "status_purpose": {
+        "path": "work/next-window-purpose-acceptances/Generation3StatusIssuerPurposeIndependentAcceptance.json",
+        "sha256": "acaf2073c654be95a3beab820f1460de1e6e68caa267e9c75bdd3c891bd894b3",
+        "bytes": 5810
+      },
+      "dynamic_purpose": {
+        "path": "work/next-window-purpose-acceptances/Generation3DynamicIssuerPurposeIndependentAcceptance.json",
+        "sha256": "b6d4782fcf79cf599f3ccc7e2c7b7434e41a26c6d4a28c6711eac0c9f469e146",
+        "bytes": 8687
+      },
+      "change": "New exact generation and purpose acceptances under the approved window; same identity and signature algorithm. OldRoot2 events/receipts remain immutable historical evidence."
+    },
+    "profile_and_host": {
+      "profile": {
+        "path": "work/next-window-runtime-materials-20260909/Fixed600ProfileNextWindowApplicabilityIndependentAcceptance.json",
+        "sha256": "c57afadaed6123e49d0e2d8e43dc97e5e6932fcb4df8564c1dfa6df0eab6c844",
+        "bytes": 6660
+      },
+      "host_scope": {
+        "path": "work/next-window-runtime-materials-20260909/NextWindowHostScopeIndependentAcceptance.json",
+        "sha256": "6a64ad3a238e0d81eb7b25adc9e8e6316a3bf8ed2478e1c210123e6ac18008e8",
+        "bytes": 4863
+      }
+    }
+  },
+  "decision": "Retain these five historical component observations and original600 applicability at their original times and immutable references. They remain evidence for exactly the original observed subconditions, not a new run or a statement that every live function/binding is unchanged. This appendix explicitly identifies the approved NW, budget, getter and Root successors; old SQL files in297 are preserved source history, not instructions to reinstall an expired binding.",
+  "applicable_subconditions": [
+    "PQUAL11: original missing reservation,601s refusal,600s/128MiB and duplicate one-charge behavior remain component evidence; new aggregate ceiling must instead be justified by exact6dcd source/local11PG and actual installation. No current1073741824 claim.",
+    "PQUAL13/15/16/17: preserve original credential-staleness, unsupported renewal/deadline, intent/UNKNOWN/no-repeat, read-only/ACL refusal observations at their actual synthetic times. Source transitions not named as successors remain subject to full actual metadata comparison.",
+    "NW01 administrative immutable-row exception is explicit, once-only and separately approved; it is not a runtime reversal/refund/renewal capability and cannot turn historical response-loss or expiry evidence into new behavior.",
+    "Original historical revalidation returns complete_case_pass=false. Missing full-oracle conditions still require actual complementary source, host and entry evidence plus independent assessment. No19-test PASS inferred here."
+  ],
+  "required_actual_installation_checks": [
+    "Verify actual signed PR subject/Root/acceptance material and exact fresh full preimage before any NW01 transaction. Preserve all previous Root/Status/GA/GRR/event/history data.",
+    "After NW01 require exact allowed one-row/seven-field/three-CHECK delta, original immutable trigger enabled and all other functions/ACL/catalog/data unchanged. Newmetadata digest is used only for new append requests, never rewritten into oldevents.",
+    "Install budget6dcd at execution39 with4506s/993635251B retained; actual newfunction prosrc andCHECK above must match; no allocation/refund implied by installation.",
+    "Actual signed Root3/unusedStatus and fourth event40 must use independently accepted exactsix materials. Read back full Root2prefix/39executionprefix/fiveterminals and originalcharges.",
+    "Before actual GA, final runtime/data/collector must bind these explicit successors and actual installed metadata; never assert old blanket all-functions-unchanged applicability across them. Verify every original component blob through unchanged accepted readback and assess full oracle independently."
+  ],
+  "authority_effect": "NONE",
+  "actual_NW01_installation": false,
+  "actual_budget_installation": false,
+  "actual_fourth_binding": false,
+  "stage_receipts_reissued": false,
+  "PG_reexecuted": false,
+  "network": false,
+  "GA_issued": false,
+  "formal_case_PASS_issued": false
+}

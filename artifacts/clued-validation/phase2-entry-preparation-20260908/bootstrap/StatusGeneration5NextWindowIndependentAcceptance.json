@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "state": "ACCEPTED_EXACT_UNSIGNED_STATUS_PAYLOAD_FOR_OWNER_SIGNATURE",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "not_before": "2026-09-09T14:15:54.529Z",
+  "expires_at": "2026-09-10T10:13:16Z",
+  "status_payload": {
+    "path": "work/next-window-runtime-materials-20260909/status-actual-v2/StatusSigningPayload.json",
+    "sha256": "4dd90db7e73ca6a270bba1857350823ebb7205e4b4573c8eb8d27d4ec3d6ac41",
+    "bytes": 7858
+  },
+  "status_manifest_id": "sm_06fc497d0eb542b791763b3d0ef5e0ab",
+  "status_generation": 5,
+  "root_generation": "ctrgen_2e778ca66244459f974b081edca8c04e",
+  "canonical_payload_sha256": "739cd4b3d4b1ebf523333695e4f661483d4fc267cfb3620872c0ee660f036248",
+  "qualified_controller": {
+    "path": "work/next-window-runtime-materials-20260909/ScopedControllerNextWindowQualification.v2.json",
+    "sha256": "a3c75d5e8dd64119c0ba356afbd52714c5595b93ef985ec0e919adfcec1a1fab",
+    "bytes": 33581
+  },
+  "actual_root_registration_acceptance": {
+    "path": "work/root3-after-nw-actual/IndependentActualRegistrationAcceptance.json",
+    "sha256": "e6d48244ebb09d58cc248c73b30cf8ea94b23b84327b455f2a6bfc7140eba925",
+    "bytes": 3548
+  },
+  "finding": "Exact three qualification-reference substitutions only. Original Status ID/as_of, Root3 STATUS purpose, actual joined snapshot and four prior stored Status objects remain as previously reviewed. This accepts the prepared unsigned payload; it does not claim Status signature, storage, currentness at a future GA, or test PASS.",
+  "status_signed": false,
+  "status_registered": false,
+  "new_ga_issued": false
+}

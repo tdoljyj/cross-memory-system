@@ -1,0 +1,34 @@
+{
+  "kind": "INDEPENDENT_PURE_STATUS_RUNTIME_REVIEW_ORDER_SUCCESSOR",
+  "state": "ACCEPTED_EXACT_FOUR_EDITS_FOR_REVIEW_PREPARATION_NOT_RUNTIME_ADMISSION",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "reviewed_at": "2026-09-09T13:20:34.556Z",
+  "source": {
+    "path": "work/next-window-runtime-materials-20260909/prepare-chain.mjs",
+    "sha256": "e66a9e8a5c338921a66499885484add0cf46d53062d0aaa0c2d663d99811f0eb",
+    "bytes": 16845
+  },
+  "difference": {
+    "path": "work/next-window-runtime-materials-20260909/ChainReviewOrderDifference.json",
+    "sha256": "b0cad2376e5897fc99d165a0672c5947079f20d56d4ed0273b560a0e51caef03",
+    "bytes": 2378
+  },
+  "recorded_checks": {
+    "path": "work/next-window-runtime-materials-20260909/ChainReviewOrderChecks.json",
+    "sha256": "48be0b6fa335a7a8c1081419f46552a079a0423e4500fbc9fb35d2813bb2c48c",
+    "bytes": 846
+  },
+  "prior_source_sha256": "726bf01cd706bfa1cc6528418d9f03a351a6cbfe8a4c87ddf0da904e02363f46",
+  "independent_checks": {
+    "all_four_reverse_substitutions_restore_exact_prior_bytes": true,
+    "registered_signed_Root3_and_complete_original39_event_five_attempt_guard_byte_identical": true,
+    "actual_unsigned_Status_canonical_hash_Root_issuer_Scope_controller_checks_present": true,
+    "final_material_or_frozen_controller_not_modified": true,
+    "four_recorded_local_checks_reused": true
+  },
+  "review_order": "Real registered signed Root3 and complete actual39 observation → actual unsigned Status5 payload → independent runtime subject review → actual Status/runtime signature publication → complete final material signature and currentness validation.",
+  "boundary": "This constructor verifies consistency of supplied exact files. It is not an independent signature, source-publication or database-observation verifier. No actual future Status, runtime acceptance, fourth forward, GA or signature is supplied by these pure checks.",
+  "source_publication_requirement": "A complete real source_ref with ordered manifest plus110 repository refs remains mandatory; PR37 material-only signature projection has no source_ref and cannot satisfy it.",
+  "formal_runtime_acceptance": false,
+  "new_tests_or_network_calls": 0
+}
