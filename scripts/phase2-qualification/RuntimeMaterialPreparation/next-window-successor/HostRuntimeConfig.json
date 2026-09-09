@@ -1,0 +1,335 @@
+{
+  "definition_state": "PREPARED_FOR_EXACT_INDEPENDENT_SCOPE_ACCEPTANCE",
+  "authority_effect": "NONE",
+  "controller_manifest_bound": true,
+  "controller_qualified": false,
+  "ga_issued": false,
+  "kind": "FIXED_HOST_RUNTIME_CONFIG",
+  "controller_source_manifest": {
+    "path": "scripts/phase2-qualification/control-context-verifier-next-window-successor/ControllerSourceManifest.candidate.json",
+    "sha256": "c1e539441bb6fc5d05cdcfdb722f703abb50187d456d05cf49caacc44f5086e5",
+    "bytes": 66042
+  },
+  "endpoint": "Codex@DESK-W-591",
+  "host_platform": "Windows",
+  "docker_endpoint": "npipe:////./pipe/dockerDesktopLinuxEngine",
+  "runtime_binaries": "Exact Node/Python/GitHub CLI/Docker executable and loaded dependencies are in controller_source_manifest; recheck every byte before launch",
+  "docker_engine": {
+    "version": "29.7.2",
+    "os": "linux",
+    "architecture": "amd64"
+  },
+  "image": {
+    "reference": "docker.io/library/python@sha256:285a71327884a4d50efbea30104473b0fa43ecefa499458899670ca30dae76e5",
+    "manifest_digest": "sha256:285a71327884a4d50efbea30104473b0fa43ecefa499458899670ca30dae76e5",
+    "config_digest": "sha256:1148adc3b50891ee01e6add44be22d277dedeb8dcac2f7cc8b700dd710c75c4d",
+    "public_environment": [
+      "PATH=/usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+      "LANG=C.UTF-8",
+      "GPG_KEY=7169605F62C751356D054A26A821E680E5FA6305",
+      "PYTHON_VERSION=3.12.14",
+      "PYTHON_SHA256=5c8462af5790baf43a321a1559dbe0db06d1be4300fb85fb53c40060668e548a"
+    ]
+  },
+  "profile": {
+    "profile_id": "DP-PREENTRY-SKILL-QUALIFICATION",
+    "definition_version": "fixed-synthetic-skill-input-20260908.v3-runtime600",
+    "sha256": "d1c060b85f0b842a397a478105ea57a208e62eb0a5a2d4c2cd8f93f63eae88f5"
+  },
+  "resources": {
+    "max_execution_seconds": 600,
+    "cpu_millicores": 500,
+    "memory_bytes": 134217728,
+    "pids_limit": 16,
+    "nonroot_uid": 10001,
+    "network": "none",
+    "read_only_rootfs": true,
+    "cap_drop": [
+      "ALL"
+    ],
+    "no_new_privileges": true
+  },
+  "mounts": [
+    {
+      "destination": "/driver",
+      "access": "READ_ONLY",
+      "content": "Exactly accepted three Skill files and fixed_skill_fixture.py"
+    },
+    {
+      "destination": "/allowed",
+      "access": "READ_WRITE",
+      "content": "One attempt-specific synthetic directory"
+    }
+  ],
+  "child_program": "Exact literal parent.CMD in the closed source manifest; Skill text is input data, never code",
+  "trusted_python_bridge_environment": {
+    "SystemRoot": "C:/Windows",
+    "WINDIR": "C:/Windows",
+    "TEMP": "C:/Users/Windows/AppData/Local/Temp",
+    "TMP": "C:/Users/Windows/AppData/Local/Temp",
+    "HOMEDRIVE": "",
+    "HOMEPATH": "",
+    "LOGONSERVER": "",
+    "PATH": "",
+    "SYSTEMDRIVE": "",
+    "USERDOMAIN": "",
+    "USERNAME": "",
+    "USERPROFILE": ""
+  },
+  "trusted_python_bridge_environment_rule": "Exactly four fixed nonempty public infrastructure values and eight explicitly empty Windows variables prevent Node/libuv automatic inheritance; no caller process.env values are copied. The final source manifest must bind the enforcing launcher.",
+  "process_environment_boundary": "Docker/watchdog use the exact source-level public allowlist. The trusted bridge launcher must be separately checked in the final closed entry; no inherited credentials are permitted into the isolated child.",
+  "host_control_transports": [
+    "existing authenticated GitHub CLI for fixed private repository",
+    "existing Supabase MCP for uscrdifznmlvczcekqpw",
+    "existing fixed local Docker CLI"
+  ],
+  "credential_scope": {
+    "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/input-definitions/CredentialScopeDefinition.json",
+    "sha256": "905dbb512b2ed9605da90ee90ff78db190e1560204a2e8d84621ee621c9e834d",
+    "bytes": 809
+  },
+  "stop_policy": {
+    "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/host-scope-definitions-evidence-blob/StopPolicyDefinition.json",
+    "sha256": "5a96306bae4af3d27694abc5533510301ae968a81b9995d8283ba3b4204e1dd5",
+    "bytes": 971
+  },
+  "image_observation": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/PythonImageBinding.json",
+    "sha256": "f2f8d7f5d4e9d77ff4dd42ccbcafedeb1c5a7658f84f17252422fdecdb25d876",
+    "bytes": 7856
+  },
+  "independent_control_generations": [
+    "runner_generation",
+    "credential_generation",
+    "session_generation"
+  ],
+  "source_freshness": "Actual current Root and execution state through the fixed trusted Supabase tool, then same-process fixed-source verifier; no local snapshot authority",
+  "byte_transport": {
+    "source": {
+      "path": "scripts/phase2-qualification/control-context-verifier-next-window-successor/tool-entry.functions.js",
+      "sha256": "23cc30d3c5723e1e25ff0ffa119740de4b6a9d5324757de587c5f4e7bff21add",
+      "bytes": 10013
+    },
+    "controller_manifest": {
+      "path": "scripts/phase2-qualification/control-context-verifier-next-window-successor/ControllerSourceManifest.candidate.json",
+      "sha256": "c1e539441bb6fc5d05cdcfdb722f703abb50187d456d05cf49caacc44f5086e5",
+      "bytes": 66042
+    },
+    "external_transport_manifest_requirement": "The seven exact external sources are pinned here and in the separately reviewed outer bundle. They are not claimed as new entries in the immutable 297-source controller; preserved old pipe entries are historical. Final collector/data receive separate exact acceptance before use.",
+    "directory": "C:/Users/Windows/Documents/Codex/2026-09-08/ia/work/qualification-live/<actual-ga-id>.<CREATE|START|GRR>.next-window-runtime-pipe600",
+    "message_sequences": [
+      1,
+      2
+    ],
+    "maximum_json_bytes_including_lf": 4194305,
+    "maximum_notice_characters": 160,
+    "rules": "CreateNew exclusive attempt directory and raw archives; one exact compact JSON+LF message per sequence, exact SHA/UTF8/length; no arbitrary command/path/environment or timestamp substitution; startup READY precedes actual fresh SQL; CREATE/START record/dispatch carry actual timestamps unchanged; original final CAS remains bounded by 15 seconds.",
+    "maximum_json_payload_bytes": 4194304,
+    "external_transport_sources": [
+      {
+        "path": "work/next-window-outer-routing/pipe/message.mjs",
+        "sha256": "178bd429a4b4a5bf2c9eba33b0773123437cd0a4b268324920c93072ca5b07cb",
+        "bytes": 882
+      },
+      {
+        "path": "work/next-window-outer-routing/pipe/deliver.mjs",
+        "sha256": "f04351149f3f5cd43ad4b6a89620c1af045c1f46ef32f0586f132f6bd85f8a27",
+        "bytes": 749
+      },
+      {
+        "path": "work/next-window-outer-routing/pipe/sha256.mjs",
+        "sha256": "14fd1d0b3378d57bf75688a3e9a558e5c5e52e8514d345440437d5768631fdf9",
+        "bytes": 2156
+      },
+      {
+        "path": "work/next-window-outer-routing/pipe/ready-loader.mjs",
+        "sha256": "817615eebdd19f96c910a85210f12f0470784f723728ac3c608301287975e997",
+        "bytes": 299
+      },
+      {
+        "path": "work/next-window-outer-routing/pipe/launcher.mjs",
+        "sha256": "3d1242c8a5260c5d0920ebc6e40871bb8e3009f24b4d94ae7b857140908788f0",
+        "bytes": 2036
+      },
+      {
+        "path": "work/next-window-outer-routing/pipe/read-output.mjs",
+        "sha256": "44c85f80f5a17c9c27f42c3778851f44300ae0edd5c1b5beff59e5948ffb54a4",
+        "bytes": 1057
+      },
+      {
+        "path": "work/next-window-outer-routing/pipe/tool-entry.functions.js",
+        "sha256": "ea0180e08eb1cb73188da2ac87ebe911cb900c05a1e845e4379d1787983420d3",
+        "bytes": 14387
+      }
+    ],
+    "maximum_consumer_line_bytes": 4194304,
+    "consumer_line_limit_successor": {
+      "previous": 2097152,
+      "current": 4194304,
+      "nested_payload_unchanged": 2097152
+    }
+  },
+  "parallel_source_reads": {
+    "maximum_concurrent_reads": 4,
+    "request_bytes_max": 65536,
+    "wrapper_timeout_ms": 135000,
+    "stdout_bytes_max": 34603008,
+    "immutable_only": true,
+    "current_or_revocation_cache": false,
+    "production_sources": [
+      {
+        "path": "scripts/phase2-qualification/control-context-verifier-next-window-successor/source-publication.mjs",
+        "sha256": "9d123a774b133d2dccece9935f3242f8f2b1e78a71661ef8bf09ec1d06ce81bd",
+        "bytes": 3542
+      },
+      {
+        "path": "scripts/phase2-qualification/control-context-verifier-host-runtime-authenticity-successor/read-source-blobs.mjs",
+        "sha256": "c54ce6a0569b39126a86fdce5081207df5e4cc50e18d1884323b3b8006a68df7",
+        "bytes": 3267
+      },
+      {
+        "path": "scripts/phase2-qualification/control-context-verifier-parallel-source-successor/blob-worker.mjs",
+        "sha256": "ef6286059294d7c6f256e7a2386395fc848f02b175ef08c465c72e731828a9a1",
+        "bytes": 4442
+      },
+      {
+        "path": "scripts/phase2-qualification/control-context-verifier-parallel-source-successor/ref-plan.mjs",
+        "sha256": "8f1d4f0f3033632d5a93e449495ebcda2774125ec2440abb1dd148da5d58ad63",
+        "bytes": 1943
+      },
+      {
+        "path": "scripts/phase2-qualification/control-context-verifier-parallel-source-successor/FixedJobLauncher.cs",
+        "sha256": "feef01a62576d2159e697c290be1a9b1e45f1432a65a1e17b8142afc80a1031c",
+        "bytes": 7954
+      },
+      {
+        "path": "scripts/phase2-qualification/control-context-verifier-parallel-source-successor/job-launcher.ps1",
+        "sha256": "818265116e9ab76a93cd7b343398f133d2a236c535126cef809ed944533b62d6",
+        "bytes": 1645
+      }
+    ],
+    "runtime_dependencies": [
+      {
+        "path": "C:/Program Files/nodejs/node.exe",
+        "role": "RUNTIME_DEPENDENCY",
+        "bytes": 92825416,
+        "sha256": "3602f2bb1a10f2cbab4c36886218a33c1ab3db87290e73b033c46c77147d0237"
+      },
+      {
+        "path": "C:/WINDOWS/Microsoft.Net/assembly/GAC_MSIL/System/v4.0_4.0.0.0__b77a5c561934e089/System.dll",
+        "role": "RUNTIME_DEPENDENCY",
+        "bytes": 3545264,
+        "sha256": "2b3c17c6208a0b4b6beb94e1a066f99ba06cdb2ea919479e99d47e8c6d96dc71"
+      },
+      {
+        "path": "C:/Windows/Microsoft.NET/Framework64/v4.0.30319/csc.exe",
+        "role": "RUNTIME_DEPENDENCY",
+        "bytes": 2569832,
+        "sha256": "46809206887326d2d24db1eff1f3064de972c3451abe766b49111450a5e08e00"
+      },
+      {
+        "path": "C:/Windows/Microsoft.NET/Framework64/v4.0.30319/csc.exe.config",
+        "role": "RUNTIME_DEPENDENCY",
+        "bytes": 182,
+        "sha256": "2d4610ade011e530d817dd3ba4fc787e5dc0c2297cc520c30a643b8fb13f9093"
+      },
+      {
+        "path": "C:/Windows/Microsoft.NET/Framework64/v4.0.30319/mscorlib.dll",
+        "role": "RUNTIME_DEPENDENCY",
+        "bytes": 5445432,
+        "sha256": "5bffb20e1217bad314143d7e5c4c809bf9f522e8a0a063c8e7e9b25113de26eb"
+      },
+      {
+        "path": "C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe",
+        "role": "RUNTIME_DEPENDENCY",
+        "bytes": 495616,
+        "sha256": "8bb6fa8c283b4d92120b1ef249a9b311b0f804d4cabbe9981159976c8be76a5e"
+      }
+    ],
+    "process_environment": "Existing trusted host context with NODE_OPTIONS and NODE_PATH empty, as enforced by the fixed reader; not a credential export to the Docker child.",
+    "job_owner_boundary": "PowerShell owns the unnamed non-inheritable kill-on-close Job. Suspended worker is born in that Job, membership checked before resume; only duplicated standard handles inherited. Owner exit and wrapper timeout close Job; normal/error exits terminate residual descendants and check zero active processes.",
+    "limitation": "The upstream verifier Node is outside this Job. Its death alone does not prove immediate PowerShell-owner cancellation. Existing bounded worker/read deadlines remain.",
+    "original_review": {
+      "path": "work/source-publication-parallel-candidate-v3/JobIndependentSourceAcceptance.json",
+      "sha256": "d3726fea1094d84c5d449003262da931bc507ad112985da3aee1f415189b551c",
+      "bytes": 14250
+    },
+    "relocation_acceptance_required": true
+  },
+  "stop_preload": {
+    "sources": [
+      {
+        "path": "work/next-window-outer-routing/coordinate-stop.mjs",
+        "sha256": "317968e9cd8ac74ea51ba99afa4338c6f506e7b3f492256752be31fff23878e3",
+        "bytes": 9313
+      },
+      {
+        "path": "work/next-window-outer-routing/stop-ready-launcher.mjs",
+        "sha256": "695186acec54b5f582c5d394affcc668a4b7137437051cab1917a2322e774f36",
+        "bytes": 4204
+      }
+    ],
+    "ordering": "Preload before actual START; READY before fresh STOP_SENT observation. Exactly one fixed notice; original 30-second check and actual dispatch semantics unchanged.",
+    "changes_stop_policy": false
+  },
+  "public_runtime_environment": {
+    "values": [
+      "PATH=/usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+      "LANG=C.UTF-8",
+      "GPG_KEY=7169605F62C751356D054A26A821E680E5FA6305",
+      "PYTHON_VERSION=3.12.14",
+      "PYTHON_SHA256=5c8462af5790baf43a321a1559dbe0db06d1be4300fb85fb53c40060668e548a",
+      "HOME=/tmp",
+      "HOSTNAME=clued-synthetic-runtime"
+    ],
+    "docker_hostname": "clued-synthetic-runtime",
+    "fixture": {
+      "path": "scripts/phase2-qualification/control-context-verifier-public-runtime-env-diagnostic-successor/fixed_skill_fixture.py",
+      "sha256": "0217a6370c3d3756db3ac269da36d1e6f5d8dff2cf8d580c92e88ed0ef9708cb",
+      "bytes": 5907
+    },
+    "enforcing_sources": [
+      {
+        "path": "scripts/phase2-qualification/control-context-verifier-next-window-successor/parent600.py",
+        "sha256": "445fb8e21721126ed4eec79cd321b9e597e930e5a395d3d16ebb4f68aa00ded1",
+        "bytes": 10476
+      },
+      {
+        "path": "scripts/phase2-qualification/control-context-verifier-next-window-successor/fixed_host.py",
+        "sha256": "0fd8c9b7c49daa4ef0f095fd7124da70b90869608a9b9bd237a68e7bfef3c503",
+        "bytes": 14325
+      },
+      {
+        "path": "scripts/phase2-qualification/control-context-verifier-next-window-successor/bridge.py",
+        "sha256": "fbc98431b3adb141a36d59f5ebd6cff78538f775c5b922418fee729ee159c856",
+        "bytes": 5121
+      },
+      {
+        "path": "scripts/phase2-qualification/control-context-verifier-next-window-successor/host-effect.mjs",
+        "sha256": "9c7545365611bd2c3d9e05982a0b9a859b566064d2f5773ce0c37c6d7ad9bdd5",
+        "bytes": 2672
+      }
+    ],
+    "meaning": "Image Config.Env five values remain historical image facts; actual fixed child process requires all seven values. This metadata is not a successful container observation."
+  },
+  "next_window": {
+    "approval": {
+      "path": "work/Phase2NextWindowExplicitUserApproval20260909.json",
+      "sha256": "9a661737b2aabd32141f1f01ebde088b7d04c6c8a153eebdfe23c23de6291d78",
+      "bytes": 2184
+    },
+    "not_before": "2026-09-09T10:13:16Z",
+    "expires_at": "2026-09-10T10:13:16Z",
+    "new_gate_authorizations_max": 1,
+    "aggregate_seconds_max": 7200,
+    "aggregate_evidence_bytes_max": 1127852979,
+    "per_allocation_seconds": 600,
+    "per_allocation_evidence_bytes": 134217728,
+    "paid_budget": 0,
+    "model_budget": 0,
+    "no_refund": true,
+    "no_automatic_retry": true,
+    "requires_actual_NW01_Root3_and_exact_fourth_binding": true,
+    "old_root2_and_previous_issuer_acceptances_are_historical": true
+  }
+}

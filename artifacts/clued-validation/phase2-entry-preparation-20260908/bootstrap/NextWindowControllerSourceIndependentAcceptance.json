@@ -1,0 +1,376 @@
+{
+  "kind": "INDEPENDENT_NEXT_WINDOW_CONTROLLER_SOURCE_ACCEPTANCE",
+  "state": "ACCEPTED_EXACT_SOURCE_SUCCESSOR_FOR_PUBLICATION_NOT_RUNTIME_QUALIFICATION",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "decided_at_utc": "2026-09-09T12:24:36.801Z",
+  "manifest": {
+    "path": "scripts/phase2-qualification/control-context-verifier-next-window-successor/ControllerSourceManifest.candidate.json",
+    "sha256": "c1e539441bb6fc5d05cdcfdb722f703abb50187d456d05cf49caacc44f5086e5",
+    "bytes": 66042
+  },
+  "counts": {
+    "all": 297,
+    "repository": 110,
+    "runtime": 187
+  },
+  "predecessor_manifest_sha256": "82fbf9a1d2cb0bac1f4fa9b98e34983e312629946dbd18e3fa609a6761c33a1c",
+  "source_preparation_sha256": "8a0aa3a4624b8fdbfbf1f4edeed98fc8133983a12f6e378dba48aa545710efcd",
+  "source_checks_sha256": "b076b3f6622d090f78aaec9063962d3432f312fa6d3fbf890ecd27e3fab149c3",
+  "actual_local_files_verified": 297,
+  "findings": [],
+  "accepted_changes": [
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-next-window-successor/parent600.py",
+      "sha256": "445fb8e21721126ed4eec79cd321b9e597e930e5a395d3d16ebb4f68aa00ded1",
+      "edits": [
+        [
+          "Path(__file__).resolve().parent / 'fixed_skill_fixture.py'",
+          "Path(__file__).resolve().parent.parent / 'control-context-verifier-public-runtime-env-diagnostic-successor' / 'fixed_skill_fixture.py'"
+        ],
+        [
+          "require(expires <= datetime(2026, 9, 9, 9, 28, 59, tzinfo=timezone.utc), 'owner_window_exceeded')",
+          "require(datetime(2026, 9, 9, 10, 13, 16, tzinfo=timezone.utc) <= issued and expires <= datetime(2026, 9, 10, 10, 13, 16, tzinfo=timezone.utc), 'owner_window_exceeded')"
+        ]
+      ]
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-next-window-successor/fixed_host.py",
+      "sha256": "0fd8c9b7c49daa4ef0f095fd7124da70b90869608a9b9bd237a68e7bfef3c503",
+      "edits": [
+        [
+          "db971f486d42243883f851be6a333ec72443093b2e2b017fbdc9fa6589a48fcb",
+          "445fb8e21721126ed4eec79cd321b9e597e930e5a395d3d16ebb4f68aa00ded1"
+        ]
+      ]
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-next-window-successor/bridge.py",
+      "sha256": "fbc98431b3adb141a36d59f5ebd6cff78538f775c5b922418fee729ee159c856",
+      "edits": [
+        [
+          "5cc20516740ec5899beb8ee5e2701c7a6cd573db42b19abcf8dda8d3ad9d13ab",
+          "0fd8c9b7c49daa4ef0f095fd7124da70b90869608a9b9bd237a68e7bfef3c503"
+        ]
+      ]
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-next-window-successor/host-effect.mjs",
+      "sha256": "9c7545365611bd2c3d9e05982a0b9a859b566064d2f5773ce0c37c6d7ad9bdd5",
+      "edits": [
+        [
+          "0487a5f47955d81730141987ea16c8b268b7650534f9349db6a6132d11fc4a51",
+          "fbc98431b3adb141a36d59f5ebd6cff78538f775c5b922418fee729ee159c856"
+        ]
+      ]
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-next-window-successor/root-window-validation.mjs",
+      "sha256": "93a18af9b5cfe9aff335464dfdc8a3f6146600b2d1e619313e761d95a9819c97",
+      "edits": [
+        [
+          "'../../../../apps/clued-cloud/package.json'",
+          "'../../../apps/clued-cloud/package.json'"
+        ],
+        [
+          "'control-trust-root-set.schema.json',import.meta.url",
+          "'../nonproduction-control-store/protocol-successor/control-trust-root-set.schema.json',import.meta.url"
+        ],
+        [
+          "start<end&&end<=Date.parse('2026-09-09T09:28:59Z')",
+          "start>=Date.parse('2026-09-09T10:13:16Z')&&start<end&&end<=Date.parse('2026-09-10T10:13:16Z')"
+        ]
+      ]
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-next-window-successor/trusted-github.mjs",
+      "sha256": "523a1a958c167a97e451369744026bfb3ddbb6f16e8a7e6ec6c0dcbffdeb15fd",
+      "edits": [
+        [
+          "/commitment-signing/signing.mjs'",
+          "/commitment-signing-next-window/signing.mjs'"
+        ]
+      ]
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-next-window-successor/grr.mjs",
+      "sha256": "493146bb233ca14e0a166ba3b337ed90d3e5a5c1961cba6d56e925d29fd79a05",
+      "edits": []
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-next-window-successor/historical-component-observations.mjs",
+      "sha256": "3e375b5a41f649eb4100dc804dc54a39998697ffdcd293c77a9543d9ca9b83a5",
+      "edits": []
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-next-window-successor/original-inputs-blob.mjs",
+      "sha256": "5bbbe40982b1806617de7378cd5417e7356614a849cc5b05f20800a12bb0d041",
+      "edits": [
+        [
+          "'../control-context-verifier-runtime600/trusted-github.mjs'",
+          "'./trusted-github.mjs'"
+        ],
+        [
+          "control-context-verifier-runtime600/context.mjs#checkCurrentSemantics",
+          "control-context-verifier-next-window-successor/context.mjs#checkCurrentSemantics"
+        ]
+      ]
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-next-window-successor/result-terminal.mjs",
+      "sha256": "f830d31a60771bf4506a7b079318669c0c9a315da9d4e9600e1067cf9a5a4d20",
+      "edits": [
+        [
+          "'../control-context-verifier-runtime600/grr.mjs'",
+          "'./grr.mjs'"
+        ],
+        [
+          "'../control-context-verifier-runtime600/trusted-github.mjs'",
+          "'./trusted-github.mjs'"
+        ],
+        [
+          "'../control-context-verifier-runtime600/historical-component-observations.mjs'",
+          "'./historical-component-observations.mjs'"
+        ]
+      ]
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-next-window-successor/context.mjs",
+      "sha256": "d0bad7003a3e8313c7fffb08e7ea14858ec6dfe98957cfb5249a8167580a532e",
+      "edits": [
+        [
+          "'../control-context-verifier-public-runtime-env-diagnostic-successor/host-effect.mjs'",
+          "'./host-effect.mjs'"
+        ],
+        [
+          "'../control-context-verifier-parallel-evidence-limit-successor/result-terminal.mjs'",
+          "'./result-terminal.mjs'"
+        ],
+        [
+          "'../control-context-verifier-runtime600/grr.mjs'",
+          "'./grr.mjs'"
+        ],
+        [
+          "'../control-context-verifier-runtime600/trusted-github.mjs'",
+          "'./trusted-github.mjs'"
+        ],
+        [
+          "'../nonproduction-control-store/protocol-successor/validate-successor.mjs'",
+          "'./root-window-validation.mjs'"
+        ],
+        [
+          "ctrgen_dd30fbc7e0ba43fa8ba9f734867bcf12",
+          "ctrgen_2e778ca66244459f974b081edca8c04e"
+        ],
+        [
+          "current.charged_evidence_bytes<=1073741824",
+          "current.charged_evidence_bytes<=1127852979"
+        ],
+        [
+          "23ca2fe807dd454d8037168531a1d05890be6fbb5575cd18e8e6482f2ef47b80",
+          "acaf2073c654be95a3beab820f1460de1e6e68caa267e9c75bdd3c891bd894b3"
+        ],
+        [
+          "9f475e2c2eedc02e50a5438c80d89f625ed5aa0ef2465a0581e349a1e8caa16d",
+          "b6d4782fcf79cf599f3ccc7e2c7b7434e41a26c6d4a28c6711eac0c9f469e146"
+        ]
+      ]
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-next-window-successor/source-publication.mjs",
+      "sha256": "9d123a774b133d2dccece9935f3242f8f2b1e78a71661ef8bf09ec1d06ce81bd",
+      "edits": [
+        [
+          "'./read-source-blobs.mjs'",
+          "'../control-context-verifier-host-runtime-authenticity-successor/read-source-blobs.mjs'"
+        ],
+        [
+          "'../control-context-verifier-runtime600/trusted-github.mjs'",
+          "'./trusted-github.mjs'"
+        ],
+        [
+          "control-context-verifier-host-runtime-authenticity-successor/ControllerSourceManifest",
+          "control-context-verifier-next-window-successor/ControllerSourceManifest"
+        ]
+      ]
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-next-window-successor/cli.mjs",
+      "sha256": "23e5c73b8af535cf2c39c9841ea8080f818c93aad22d11f3d2a6cd80326bad74",
+      "edits": []
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-next-window-successor/tool-entry.functions.js",
+      "sha256": "23cc30d3c5723e1e25ff0ffa119740de4b6a9d5324757de587c5f4e7bff21add",
+      "edits": [
+        [
+          "control-context-verifier-host-runtime-authenticity-successor/ControllerSourceManifest",
+          "control-context-verifier-next-window-successor/ControllerSourceManifest"
+        ],
+        [
+          "control-context-verifier-host-runtime-authenticity-successor/cli.mjs",
+          "control-context-verifier-next-window-successor/cli.mjs"
+        ],
+        [
+          "clued_verifier_host_runtime_authenticity600_session",
+          "clued_verifier_next_window600_session"
+        ]
+      ]
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-next-window-successor/request-denials.mjs",
+      "sha256": "b6fb07a9ec4bc7feb3494a74dbbef5ec787ea7cd27e648027e4a14a6be675e41",
+      "edits": [
+        [
+          "'../control-context-verifier-runtime600/context.mjs'",
+          "'./context.mjs'"
+        ],
+        [
+          "control-context-verifier-runtime600/context.mjs#checkCurrentSemantics",
+          "control-context-verifier-next-window-successor/context.mjs#checkCurrentSemantics"
+        ]
+      ]
+    }
+  ],
+  "added_sources": [
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/binding-next-window-successor/effective-binding.sql",
+      "role": "REPOSITORY_SOURCE",
+      "sha256": "0e940600ef062cde655117e72c95f093b2aff7dbb4953a9a24b21380afbb2c27",
+      "bytes": 26159
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/commitment-signing-next-window/signing.mjs",
+      "role": "REPOSITORY_SOURCE",
+      "sha256": "9c4341f8764963f6fc4b1e73ece7c71c6cc62671129a8f64dca1f868de438de4",
+      "bytes": 6636
+    }
+  ],
+  "conclusions": [
+    "All 297 declared files match exact current bytes in this single local host read; all 280 predecessor rows are retained unchanged. This does not claim the operating system has no additional platform dependencies.",
+    "Fifteen explicit transformations reconstruct exactly. New window and cumulative byte ceiling are explicit approved successors; original caps 600 seconds/128MiB per GA, 7200 seconds, 2MiB logical input, 4MiB frames, 128KiB SQL and freshness checks retained.",
+    "Root3/status/dynamic issuer fixed hashes are actual new accepted metadata. Root-window validator keeps the original schema/canonical/signature/history assertions with only approved time interval and import paths changed.",
+    "Dynamic signature chain routes the separately accepted root-only 9c434 source. New result and historical observers resolve new sibling context/trusted reader; source readback preserves the accepted four-worker Job reader and Microsoft runtime pins.",
+    "Request-denials calls and labels the actual new context. Its V2 decoder checks the same new entry; original fault changes, full five-field input, full byte integrity and oracle semantics remain unchanged.",
+    "New parent keeps accepted seven-public-variable fixture and host restrictions, changes approved time boundary and exact sibling fixture path only. Existing local environment/Job tests are reused at their actual scope; no new live container evidence asserted.",
+    "Fourth getter is exact independently reviewed 0e940 source, limited event40 and six typed refs; original three events/history/floors retained."
+  ],
+  "publication_files": [
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-next-window-successor/parent600.py",
+      "role": "REPOSITORY_SOURCE",
+      "sha256": "445fb8e21721126ed4eec79cd321b9e597e930e5a395d3d16ebb4f68aa00ded1",
+      "bytes": 10476
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-next-window-successor/fixed_host.py",
+      "role": "REPOSITORY_SOURCE",
+      "sha256": "0fd8c9b7c49daa4ef0f095fd7124da70b90869608a9b9bd237a68e7bfef3c503",
+      "bytes": 14325
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-next-window-successor/bridge.py",
+      "role": "REPOSITORY_SOURCE",
+      "sha256": "fbc98431b3adb141a36d59f5ebd6cff78538f775c5b922418fee729ee159c856",
+      "bytes": 5121
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-next-window-successor/host-effect.mjs",
+      "role": "REPOSITORY_SOURCE",
+      "sha256": "9c7545365611bd2c3d9e05982a0b9a859b566064d2f5773ce0c37c6d7ad9bdd5",
+      "bytes": 2672
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-next-window-successor/root-window-validation.mjs",
+      "role": "REPOSITORY_SOURCE",
+      "sha256": "93a18af9b5cfe9aff335464dfdc8a3f6146600b2d1e619313e761d95a9819c97",
+      "bytes": 5011
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-next-window-successor/trusted-github.mjs",
+      "role": "REPOSITORY_SOURCE",
+      "sha256": "523a1a958c167a97e451369744026bfb3ddbb6f16e8a7e6ec6c0dcbffdeb15fd",
+      "bytes": 6095
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-next-window-successor/grr.mjs",
+      "role": "REPOSITORY_SOURCE",
+      "sha256": "493146bb233ca14e0a166ba3b337ed90d3e5a5c1961cba6d56e925d29fd79a05",
+      "bytes": 5552
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-next-window-successor/historical-component-observations.mjs",
+      "role": "REPOSITORY_SOURCE",
+      "sha256": "3e375b5a41f649eb4100dc804dc54a39998697ffdcd293c77a9543d9ca9b83a5",
+      "bytes": 6424
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-next-window-successor/original-inputs-blob.mjs",
+      "role": "REPOSITORY_SOURCE",
+      "sha256": "5bbbe40982b1806617de7378cd5417e7356614a849cc5b05f20800a12bb0d041",
+      "bytes": 7749
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-next-window-successor/result-terminal.mjs",
+      "role": "REPOSITORY_SOURCE",
+      "sha256": "f830d31a60771bf4506a7b079318669c0c9a315da9d4e9600e1067cf9a5a4d20",
+      "bytes": 7537
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-next-window-successor/context.mjs",
+      "role": "REPOSITORY_SOURCE",
+      "sha256": "d0bad7003a3e8313c7fffb08e7ea14858ec6dfe98957cfb5249a8167580a532e",
+      "bytes": 22141
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-next-window-successor/source-publication.mjs",
+      "role": "REPOSITORY_SOURCE",
+      "sha256": "9d123a774b133d2dccece9935f3242f8f2b1e78a71661ef8bf09ec1d06ce81bd",
+      "bytes": 3542
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-next-window-successor/cli.mjs",
+      "role": "REPOSITORY_SOURCE",
+      "sha256": "23e5c73b8af535cf2c39c9841ea8080f818c93aad22d11f3d2a6cd80326bad74",
+      "bytes": 1732
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-next-window-successor/tool-entry.functions.js",
+      "role": "REPOSITORY_SOURCE",
+      "sha256": "23cc30d3c5723e1e25ff0ffa119740de4b6a9d5324757de587c5f4e7bff21add",
+      "bytes": 10013
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-next-window-successor/request-denials.mjs",
+      "role": "REPOSITORY_SOURCE",
+      "sha256": "b6fb07a9ec4bc7feb3494a74dbbef5ec787ea7cd27e648027e4a14a6be675e41",
+      "bytes": 7917
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/binding-next-window-successor/effective-binding.sql",
+      "role": "REPOSITORY_SOURCE",
+      "sha256": "0e940600ef062cde655117e72c95f093b2aff7dbb4953a9a24b21380afbb2c27",
+      "bytes": 26159
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/commitment-signing-next-window/signing.mjs",
+      "role": "REPOSITORY_SOURCE",
+      "sha256": "9c4341f8764963f6fc4b1e73ece7c71c6cc62671129a8f64dca1f868de438de4",
+      "bytes": 6636
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-next-window-successor/ControllerSourceManifest.candidate.json",
+      "sha256": "c1e539441bb6fc5d05cdcfdb722f703abb50187d456d05cf49caacc44f5086e5",
+      "bytes": 66042
+    }
+  ],
+  "remaining": [
+    "Actual immutable source publication and independent source refs.",
+    "Exact new-window Profile applicability, Host/Scope, qualification, Status/runtime/data and complete integration sizes.",
+    "Actual signed NW-01 then budget then Root3/Status/fourth forward and one authorized GA; no readiness claim from source acceptance.",
+    "Outer publisher window defect and final collector routing remain separate explicitly tracked successor work."
+  ],
+  "root_registered": false,
+  "controller_runtime_qualified": false,
+  "ga_issued": false,
+  "method": "Read-only exact dependency/difference review; six existing pure check classes reused; no Job, PostgreSQL, network, Docker or GA execution."
+}

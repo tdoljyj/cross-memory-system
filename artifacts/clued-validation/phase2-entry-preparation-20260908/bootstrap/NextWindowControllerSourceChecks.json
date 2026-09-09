@@ -1,0 +1,29 @@
+{
+  "state": "LOCAL_NEXT_WINDOW_SOURCE_DIFFERENCES_AND_WINDOW_CHECKS_PASSED",
+  "manifest": {
+    "path": "scripts/phase2-qualification/control-context-verifier-next-window-successor/ControllerSourceManifest.candidate.json",
+    "sha256": "c1e539441bb6fc5d05cdcfdb722f703abb50187d456d05cf49caacc44f5086e5",
+    "bytes": 66042
+  },
+  "counts": {
+    "all": 297,
+    "repository": 110,
+    "runtime": 187
+  },
+  "checks": [
+    "Actual one-pass 297 file hash and byte check",
+    "All 280 predecessor rows retained exactly",
+    "All 15 exact source transformations reconstructed byte-for-byte",
+    "Every new relative static import exists in exact closure",
+    "Actual context module loads locally with Root3 constant without network",
+    "LOCAL_TEST_FIXTURE Root shape permits fixed window and rejects both external bounds; no signature/admission claim"
+  ],
+  "static_import_count": 29,
+  "source_raw_fixture_written": false,
+  "full_qualification": false,
+  "Docker": false,
+  "network": false,
+  "SQL": false,
+  "GA": false,
+  "signing": false
+}

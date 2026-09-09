@@ -1,0 +1,36 @@
+{
+  "kind": "INDEPENDENT_FOURTH_BINDING_GETTER_SOURCE_AND_LOCAL_PG_REVIEW",
+  "state": "ACCEPTED_EXACT_SOURCE_FOR_SUCCESSOR_CLOSURE_NOT_LIVE_REGISTRATION",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "decided_at_utc": "2026-09-09T10:39:49.574Z",
+  "source": {
+    "path": "work/next-window-fourth-binding-candidate/effective-binding.candidate.sql",
+    "sha256": "0e940600ef062cde655117e72c95f093b2aff7dbb4953a9a24b21380afbb2c27",
+    "bytes": 26159
+  },
+  "preparation_sha256": "a35bba901fb7c39321b139c0af2afd857ae334946c52715dd95830500cfc7850",
+  "actual_local_result": {
+    "path": "work/next-window-fourth-binding-candidate/local-pg-x7WeO8/Result.json",
+    "sha256": "5bb0d6c154b9ebb91677039a247b97bc0ad6e842e2eeaabb407a4adcfcc2b611",
+    "checks": 10
+  },
+  "getter": {
+    "definition_sha256": "548cf5da8842aa27a57f5d09f7deab9261b9d15d844eb60d483d27ae81a1b3fc",
+    "prosrc_sha256": "633164e919ed6b93f0aba6ba27e0d468568b8b528320f7b244ff1999ad999b7a"
+  },
+  "findings": [],
+  "conclusions": [
+    "Removing only fourth-event extension and new complete third-event pin exactly restores accepted affe source bytes. Prior one/two/three paths retain original behavior except explicit detection of any drift in actual event26.",
+    "Fourth is limited to sequence40, ordinary-next-window-binding-20260909 and v7-next-window. Previous full binding/hash, new complete binding/hash, original exact six typed references, same root/profile/gate identity and prior accounting floors remain required. Fifth forward rejects.",
+    "Actual PostgreSQL ten-case evidence covers only-getter installation, full binding projection, wrong sequence/key/predecessor/source digest/floor, fifth event and old second/third complete event drift. Synthetic fourth is rolled back; PostgreSQL stopped and disposable data removed.",
+    "Independent saved installed snapshot matches all actual39 execution events, all five terminal attempts/current, two Root events and four stored Status rows. Actual PG definition/prosrc hashes are derived from full saved source, not inferred from a filename.",
+    "Root3/window/one-GA/new cap are not duplicated as a new authority object in the getter; the actual new runtime and exact registration transaction must bind these alongside the six real published references."
+  ],
+  "limitations": [
+    "The preserved harness compares complete before/installed catalogs and ACLs in process; only Installed snapshot is saved, so this review does not claim a second independent full before/after catalog comparison.",
+    "This function is a projection, not a signed-material validator or standalone registration permission. Final actual getter installation and event40 append require exact complete preimage and signed new runtime/material review.",
+    "No new live event40, source publication, Scope acceptance, Root registration, GA or SQL mutation was performed here."
+  ],
+  "formal_registration_accepted": false,
+  "actual_execution_sequence": 39
+}
