@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "state": "ACCEPTED_EXACT_ROOT5_WINDOW5_CAPACITY_REPAIR_APPLIED",
+  "review_basis": "ATOMIC_TWO_FUNCTION_EXACT_PREIMAGE_POSTIMAGE_GUARDS_AND_CONSTRAINT_REPLACEMENT_WITH_ZERO_ROW_MUTATION",
+  "source": {
+    "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/root5-window5/Root5Window5CapacityRepair.sql",
+    "sha256": "36be2ef08bec5b852538b02faaf60d4e27b441dc4c6e2b844c1e231ef80599a5",
+    "bytes": 5377,
+    "blob_sha": "769da452d3b50a33ad2169c112551cd9f05d3fa5"
+  },
+  "changes": {
+    "reserve_execution_budget": [
+      "accept at most five post-baseline allocations",
+      "accept at most ten post-baseline binding forwards",
+      "raise exact cumulative caps to 8106 seconds and 1798941619 bytes"
+    ],
+    "reserve_gate": [
+      "accept at most five post-baseline allocations",
+      "accept at most ten post-baseline binding forwards",
+      "raise exact cumulative caps to 8106 seconds and 1798941619 bytes"
+    ]
+  },
+  "installed_prosrc_sha256": {
+    "append_status_manifest": "94a444b9174251e8f655ea3a04e160898464caf1f94977cbce1590aff726c615",
+    "reserve_execution_budget": "302f3e0f0bdd75f6f1d21843b0c27e11e59d9d469bdf4fe3bc4e39b2ceb848bd",
+    "reserve_gate": "c1c50e656d6b568da6a54d61444f5c6cdbc8b352ecda7173d47def9e361b3acc"
+  },
+  "preserved_state": {
+    "execution_sequence": 70,
+    "charged_seconds": 7506,
+    "charged_evidence_bytes": 1664723891,
+    "active_execution_id": null,
+    "pending_gate_attempt_id": null,
+    "gate_attempts": 10,
+    "execution_events": 70
+  },
+  "applied_acceptance": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-window5-applied/Root5Window5CapacityRepairAppliedAcceptance.json",
+    "sha256": "1e10432a3e22bb07fb72dce0f47e0820261dd0397666a97b0cbe10c478744b02",
+    "bytes": 1499,
+    "blob_sha": "e10936180ae39d303a8bf6d9f7cdbe8efe83549c"
+  },
+  "expired_ga_recovery": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-window5-applied/ExpiredFinalGARRDatabaseCommitAcceptance.json",
+    "sha256": "d8f54af24f96385a89bfb44e5c72c2a33c2c2309c6f2ffe0bd070ac6e339aaad",
+    "bytes": 1100,
+    "blob_sha": "e670ef30cd6ec9d6d22be61cbd52100b11d5ac36"
+  },
+  "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+  "root_generation": "ctrgen_e5df432221344996afc04b5638121d96",
+  "expires_at": "2026-09-11T10:21:05Z",
+  "pre_and_post_definition_guards": true,
+  "transactional": true,
+  "applied": true,
+  "authority_effect": "ROOT5_RUNTIME_VALIDATION_AND_FIXED_CAPACITY_ONLY_NO_BUDGET_NO_GA_NO_ENTRY_NO_PRODUCTION"
+}

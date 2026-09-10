@@ -1,0 +1,13 @@
+{
+  "object_type": "ExpiredGRRSchemaCompatibilityEvidence",
+  "schema_version": "1.0",
+  "state": "ROOT5_SCHEMA_VALID",
+  "receipt_sha256": "0bd435f4fd4bb9c4174a1d96b132908f128ceadcfa51021ba1871757ed16df77",
+  "accepted_schema_sha256": "831b2f415d72a82adc1d8c3b5f5b4e286527712d5cb3293085249499193d20a1",
+  "errors": [],
+  "receipt_generation": "ctrgen_e5df432221344996afc04b5638121d96",
+  "schema_generation": "ctrgen_e5df432221344996afc04b5638121d96",
+  "legacy_schema_sha256": "d41dd93d8318f074e190724dc128f0239b55a1ed0dc86f08c2d63c0726d18195",
+  "recovery_acceptance_sha256": "faaab95e60cbd93ef9fee48bb333113ac357adc02a6eac04079bd5d1f7ee96af",
+  "authority_effect": "NONE"
+}
