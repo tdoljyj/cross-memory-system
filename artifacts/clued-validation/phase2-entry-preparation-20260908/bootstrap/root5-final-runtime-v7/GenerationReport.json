@@ -1,0 +1,55 @@
+{
+  "source_refs": 128,
+  "repository_source_files": 141,
+  "qualification": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v7/ScopedRoot5FinalControllerQualification.json",
+    "sha256": "65bbbab16c0ae889c35c8dfe24aa3df41e26378e459ffd926ee0b10dcf50340f",
+    "bytes": 41086,
+    "blob_sha": "c3520ed4c15db76878c46a1805c894295be1ec32"
+  },
+  "runtime_function_acceptance": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v7/RuntimeFunctionsRoot5Acceptance.json",
+    "sha256": "e4b70c45e69d2a252a408bf0368200aec8e0837e70bdd39e32bce534ba115099",
+    "bytes": 1765,
+    "blob_sha": "ff9e6972a2710b476ed7a7dc09528b80e8a1850e"
+  },
+  "status_review": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v7/Status14ReviewSubject.json",
+    "sha256": "7ce6d6996462ad653b5daee6727b9e30cd9db70cd150c0ff118d02673242b8f2",
+    "bytes": 9194,
+    "blob_sha": "7f53c4095c866d3377d7c063ea9202caf546a144"
+  },
+  "status_acceptance": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v7/Status14Acceptance.json",
+    "sha256": "30582f8b871064776f61fcd0209e0795eeaba6811a4317ca77f630b3801e63c0",
+    "bytes": 1750,
+    "blob_sha": "7b6406368057635daef82a6c1d2d2170a1898714"
+  },
+  "status_signing_payload": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v7/Status14SigningPayload.json",
+    "sha256": "2f239f13d0b1ea63162921b56f250caedda2914af93fa99ea73d6cfe590e380a",
+    "bytes": 8443,
+    "blob_sha": "f8c71661521d73b1c1131d6aa1ea1ada6258270f"
+  },
+  "status_signed_payload_canonical_sha256": "df173222f1ee9c4703cb7d3bf3ed285c473cb80706a30f47be867b7b2f17afd7",
+  "runtime_review": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v7/Root5FinalRuntimeAcceptanceReviewSubject.json",
+    "sha256": "fce51c8b32f12190aa14185fdbfaa4241d227e6c45155b371484ef62a7c3ac43",
+    "bytes": 80335,
+    "blob_sha": "43384dbfe772090c514bc84c4287f684695522dd"
+  },
+  "runtime_acceptance": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v7/ExactRoot5FinalPreentryControllerRuntimeAcceptance.json",
+    "sha256": "e29a6178149f39b2d342666595b1e3844d971676274814836306823ddca9141f",
+    "bytes": 72487,
+    "blob_sha": "c4fa257f32ed1019a07a52802badcfc1dd374523"
+  },
+  "controller": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/d762cd4e3ffb6d3dea0975d72e56e8bf3bbbdd71",
+    "sha256": "afaef81e99c07e72bc645321a5406541c8a5512a0163efae7d1b5cfd687c6a26"
+  },
+  "runtime_sql": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/f22f1eeda41b12aa8ab55b9c9d34be6c9aaa976d",
+    "sha256": "bc4e0117a822a5581a2c50ee25961670dccaba698ad72f3a11b920a28fc741ee"
+  }
+}
