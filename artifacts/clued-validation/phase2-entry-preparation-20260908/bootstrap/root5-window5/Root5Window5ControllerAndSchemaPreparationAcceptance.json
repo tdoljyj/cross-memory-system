@@ -1,0 +1,41 @@
+{
+  "object_type": "Root5Window5ControllerAndSchemaPreparationAcceptance",
+  "schema_version": "1.0",
+  "state": "ACCEPTED_FOR_OWNER_PUBLICATION_NOT_RUNTIME_BINDING",
+  "reviewer": "Codex@Windows",
+  "user_delegated_approval": true,
+  "accepted_at": "2026-09-10T20:47:00.000Z",
+  "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+  "root_generation": "ctrgen_e5df432221344996afc04b5638121d96",
+  "controller_source_manifest_sha256": "7260a9cc291b5a602bf2555e9b323a3a3671ff754da9d7dddba068d931e3bb31",
+  "legacy_grr_schema_sha256": "d41dd93d8318f074e190724dc128f0239b55a1ed0dc86f08c2d63c0726d18195",
+  "root5_grr_schema_sha256": "831b2f415d72a82adc1d8c3b5f5b4e286527712d5cb3293085249499193d20a1",
+  "continuation_approval_sha256": "c570460f01ae89888e601d0f9ce510b9cd4d4e3cd2d49d0395bcf21fa1dcb861",
+  "expired_ga_recovery_acceptance_sha256": "faaab95e60cbd93ef9fee48bb333113ac357adc02a6eac04079bd5d1f7ee96af",
+  "accepted_changes": {
+    "allocations_max": [4, 5],
+    "gate_authorizations_max": [4, 5],
+    "series_seconds_cap": [7506, 8106],
+    "series_evidence_bytes_cap": [1664723891, 1798941619],
+    "grr_schema_generation": ["ctrgen_2e778ca66244459f974b081edca8c04e", "ctrgen_e5df432221344996afc04b5638121d96"],
+    "grr_schema_other_constraints_changed": false,
+    "binding_forwards_max": [9, 10]
+  },
+  "preserved_invariants": {
+    "additional_allocations_max": 1,
+    "per_allocation_seconds": 600,
+    "per_allocation_evidence_bytes": 134217728,
+    "budget_refund": false,
+    "budget_reuse": false,
+    "automatic_retry_after_window": false,
+    "new_trust_root": false,
+    "new_signing_identity": false,
+    "environment": "ISOLATED_TEST",
+    "paid_budget": 0,
+    "model_budget": 0,
+    "production": false
+  },
+  "necessity": "The accepted legacy GateResultReceipt schema hard-coded the Root3 generation and cannot validate a Root5 receipt. The current bounded series also has no remaining allocation after the expired, never-dispatched authorization. A Root5-bound schema correction and exactly one additional existing-size allocation are the minimum path to a truthful final qualification.",
+  "cost_effect": "One additional 600-second and 134217728-byte nonproduction allocation only; source/schema publication and validation add no paid or model budget.",
+  "authority_effect": "NONE_UNTIL_OWNER_PUBLICATION_STATUS_AND_BINDING"
+}
