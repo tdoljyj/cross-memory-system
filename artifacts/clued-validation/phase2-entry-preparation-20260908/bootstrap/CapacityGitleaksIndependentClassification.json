@@ -1,0 +1,25 @@
+{
+  "state": "ACCEPTED_TWO_EXACT_PUBLIC_GPG_FINGERPRINT_EXCEPTIONS",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "reviewed_at": "2026-09-10T03:50:26.336Z",
+  "source_commit": "58ebb4db8140d8a8a40bd8531fc1345190042b20",
+  "source_path": "scripts/phase2-qualification/RuntimeMaterialPreparation/original-input-capacity-successor/HostRuntimeConfig.json",
+  "source_sha256": "e5990666c020373b2decc487b0f918982fd554e34e6fb6321cbd0b7e738f5a08",
+  "scanner_report_sha256": "c95663419c50807698ce444c818147d291470160554733eaed7b137bb1c52d87",
+  "reused_independent_classification_sha256": "5e31edceb11dcf95e700e8e2dff1af90fc8bd1e4617b04510988b4e30340f98e",
+  "value_sha256": "6c3b7674b58d9f7266cd8b823ecf469b0a03d1bf2c8c24df1d0121d8e818f1fa",
+  "value_length": 40,
+  "immutable_image_manifest": "sha256:285a71327884a4d50efbea30104473b0fa43ecefa499458899670ca30dae76e5",
+  "actual_new_and_prior_git_blob_values_identical": true,
+  "public_image_classification_reused": true,
+  "image_inspection_repeated": false,
+  "allowed_exceptions": [
+    "58ebb4db8140d8a8a40bd8531fc1345190042b20:scripts/phase2-qualification/RuntimeMaterialPreparation/original-input-capacity-successor/HostRuntimeConfig.json:generic-api-key:29",
+    "58ebb4db8140d8a8a40bd8531fc1345190042b20:scripts/phase2-qualification/RuntimeMaterialPreparation/original-input-capacity-successor/HostRuntimeConfig.json:generic-api-key:288"
+  ],
+  "classification": "Exactly the same public fixed Python image OpenPGP fingerprint as independently inspected for PR41. Not a secret or private key.",
+  "scope": "Only these two exact commit:path:rule:line fingerprints. No Host/history/source change, directory or rule suppression, workflow change or manual Gate bypass.",
+  "scanner_rerun": false,
+  "raw_value_emitted": false,
+  "git_modified": false
+}

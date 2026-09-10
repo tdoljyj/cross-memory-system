@@ -1,0 +1,80 @@
+{
+  "state": "FORMAT_ONLY_NOT_ISSUED_APPLICABILITY",
+  "reviewer": "/root/project_list_auth_fix",
+  "actual_acceptance_state": "ACCEPTED_PARALLEL_SOURCE_NONPERFORMANCE_APPLICABILITY",
+  "required_keys": [
+    "state",
+    "independent_reviewer",
+    "issued_at",
+    "expires_at",
+    "controller_digest",
+    "scope_digest",
+    "root_generation",
+    "runtime_acceptance_sha256",
+    "runtime_acceptance",
+    "gate_suite_sha256",
+    "profile_applicability_sha256",
+    "historical_component_applicability_sha256",
+    "performance_slo_revision",
+    "original_applicability_sources",
+    "finding",
+    "evidence_rule",
+    "entry_or_performance_qualification_granted",
+    "case_verdicts_created",
+    "authority_effect"
+  ],
+  "original_applicability_sources": [
+    {
+      "path": "work/kernel-phase2-repo/artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/PreentryPerformanceSLOApplicabilityDecision.json",
+      "sha256": "98a502fdf43a1f0f9e4d01956c829826006c8cd1e8d2146fbc0540c10dc3e4b8",
+      "bytes": 2679
+    },
+    {
+      "path": "work/kernel-phase2-repo/artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/EvidenceBlobPerformanceSLOApplicabilityDecision.json",
+      "sha256": "5ed0f7fd18cd156d51d2d96242d0bb7f3aab6882c5515005db77c3af9903d4c3",
+      "bytes": 2238
+    },
+    {
+      "path": "work/kernel-phase2-repo/artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/StatusGeneration2NonPerformanceApplicabilityAddendum.json",
+      "sha256": "470db88dfe46e23a5f5ae183b590d191bfc8158b120a4c9194492c5c810faa87",
+      "bytes": 1412
+    },
+    {
+      "path": "work/kernel-phase2-repo/artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/ParallelEvidenceLimitNonPerformanceApplicabilityAddendum.json",
+      "sha256": "3de507c22d88914e208b75d8a735364508c6db317f6e1063214701c179a7421c",
+      "bytes": 2516
+    },
+    {
+      "path": "work/kernel-phase2-repo/artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/FrameLimitNonPerformanceApplicabilityAddendum.json",
+      "sha256": "634601592a2849cf8af6e6a128dcee9ce9d807f5b322be1ec98ce57cfff4bd3b",
+      "bytes": 2622
+    },
+    {
+      "path": "work/next-window-runtime-materials-20260909/NextWindowNonPerformanceApplicabilityAddendum.json",
+      "sha256": "05f65c452153b201a57c0195bb27efe418dbb2f8f9a9c824cfec5985ae46e27d",
+      "bytes": 3043
+    },
+    {
+      "path": "work/next-window-runtime-materials-20260909/NextWindowHistoricalComponentApplicabilityIndependentAcceptance.json",
+      "sha256": "c75f25044be55ebf8530b312b5d229b20ecb4b31e64ccb8516f445b360aaf523",
+      "bytes": 24334
+    },
+    {
+      "path": "work/next-window-runtime-materials-20260909/Fixed600ProfileNextWindowApplicabilityIndependentAcceptance.json",
+      "sha256": "c57afadaed6123e49d0e2d8e43dc97e5e6932fcb4df8564c1dfa6df0eab6c844",
+      "bytes": 6660
+    }
+  ],
+  "final_scope": null,
+  "final_runtime": null,
+  "validation_rules": [
+    "Exact accepted final runtime raw hash equals runtime_acceptance_sha256 and descriptor; independent reviewer matches current authority mapping.",
+    "Controller/scope/root/purpose/environment and suite/Profile/History digests match final runtime accepted_subject; unchanged19suite test bodies and originalProfile/nonperformance purpose independently reviewed.",
+    "issued_at actual decision time after final runtime acceptance, within unchanged E2026-09-10T10:13:16Z. Expiry does not renew historical evidence.",
+    "Original8raw evidence objects must hash to exact ordered list; add ninth current independent appendix as ordinary original Evidence and to final metadata input_artifact_digests.",
+    "Only NOT_APPLICABLE_PREENTRY_NO_PERFORMANCE_QUALIFICATION; optional old performance_slo_applicability remains exact first raw. Reject UNKNOWN,missing or alternate SLO marker.",
+    "No expected_ga fields,new SLO threshold,PERF-S/PERF-Q,Entry,production,holdout/Gold or PASS.600second/resource/STOP constraints remain binding.",
+    "Bind actual appendix via real material/ref/publication and original independent result Evidence/index/GRR chain; no future runtimehash constant in Host-pinned helper source, no caller boolean proves acceptance."
+  ],
+  "not_issued": true
+}

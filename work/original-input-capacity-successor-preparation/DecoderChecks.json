@@ -1,0 +1,38 @@
+{
+  "state": "OFFLINE_DECODER_DIFFERENTIAL_CHECKS_NOT_ADMISSION",
+  "source_sha256": "8a3508a0146e5fd37fb890857e9d46abe780ea1c6ae96ea5222afe7778a887e8",
+  "checks": [
+    {
+      "name": "V3 exact 3,000,000-byte restoration and bounded envelope",
+      "result": "PASS"
+    },
+    {
+      "name": "V3 3,000,001 rejected",
+      "result": "PASS"
+    },
+    {
+      "name": "Old V2 at/below/above 2MiB identical to original module",
+      "result": "PASS"
+    },
+    {
+      "name": "Legacy V1 routes to unchanged original imports",
+      "result": "PASS"
+    },
+    {
+      "name": "Foreign verification session rejected before network",
+      "result": "PASS"
+    },
+    {
+      "name": "Envelope duplicate/noncompact/floating/nonfinite rejected",
+      "result": "PASS"
+    },
+    {
+      "name": "Original five-field duplicate/nonstring/invalid UTF8 scalar rejected",
+      "result": "PASS"
+    }
+  ],
+  "maximum_fixture_envelope_bytes": 861,
+  "actual_network_calls": 0,
+  "original_raw_written": false,
+  "new_GA_created": false
+}

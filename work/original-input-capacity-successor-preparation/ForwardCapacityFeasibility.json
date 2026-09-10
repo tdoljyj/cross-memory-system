@@ -1,0 +1,93 @@
+{
+  "state": "BASELINE_STATIC_PLUS_EXACT_PLANNED_FORWARD_NUMERIC_FEASIBILITY_ONLY",
+  "static_material_status": "Actual existing accepted static bytes, not new capacity successor static bytes",
+  "planned_publication_paths": {
+    "controller_manifest": "scripts/phase2-qualification/control-context-verifier-original-input-capacity-successor/ControllerSourceManifest.candidate.json",
+    "gate_suite": "scripts/phase2-qualification/RuntimeMaterialPreparation/original-input-capacity-successor/preentry-skill-qualification.json",
+    "scope": "scripts/phase2-qualification/RuntimeMaterialPreparation/original-input-capacity-successor/ExecutionScopeDefinition.json",
+    "independent_acceptance": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/CapacitySourceIndependentAcceptance20260910.json",
+    "qualification": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/ScopedCapacityControllerQualification20260910.json",
+    "runtime_acceptance": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/ExactPreentryCapacityControllerRuntimeAcceptance20260910.json"
+  },
+  "planned_paths_are_not_publications": true,
+  "bound": {
+    "byte_profiles": {
+      "original": [
+        2344291,
+        2948568,
+        4157121,
+        6574227
+      ],
+      "ga_raw": [
+        37640,
+        39261,
+        42502,
+        48984
+      ]
+    },
+    "state": "OFFLINE_CANDIDATE_BOUND_FITS_NOT_ADMISSION",
+    "horizon": "One exact typed numerical forward, then one budget/PENDING/first CREATE record-dispatch. No START/STOP/host-result/terminal or later-attempt guarantee.",
+    "history_sequence": 49,
+    "profiled_forward_events": 1,
+    "retained_attempts": 7,
+    "upper_bytes": {
+      "ga_raw": 37640,
+      "original_input": 2344291,
+      "first_frame_payload": 2327527,
+      "second_frame_payload": 3794865,
+      "control_request_jsonb": 1892
+    },
+    "limits": {
+      "ga_raw": 65536,
+      "original_input": 3000000,
+      "first_frame_payload": 4194304,
+      "second_frame_payload": 4194304,
+      "control_request_jsonb": 131072
+    },
+    "first_frame_with_LF": 2327528,
+    "second_frame_with_LF": 3794866,
+    "failures": [],
+    "source_ref_count": 128,
+    "actual_ga_generated": false,
+    "signature_generated": false,
+    "authority_effect": "NONE",
+    "remaining_attempts_before_profile": 2,
+    "attempts_covered_by_this_numeric_bound": 1,
+    "forward_event_upper_bytes": 4757,
+    "forward_event_profile": [
+      4757,
+      5009,
+      5513,
+      6521,
+      8537,
+      12569,
+      null
+    ],
+    "forward_request_upper_bytes": 4434,
+    "publication_request_upper_bytes": 2988149,
+    "full_original_base64_bytes": 4000000,
+    "full_blob_POST_bytes": 4000037,
+    "publisher_transport_limit": 4194304,
+    "remaining_base64_envelope_bytes": 194304,
+    "additional_requirements": [
+      "Actual exact candidate runtime/Q/Status/Scope/Host complete bytes must replace any baseline static input",
+      "Publisher GET response whitespace/metadata envelope needs actual bounded proof; base64 expansion alone is not complete response",
+      "START/STOP/final result require original actual transition checks",
+      "A second remaining attempt requires a fresh complete terminal history, a new invocation, and independent size acceptance; not covered by one-attempt first-CREATE horizon"
+    ],
+    "ga_generated": false,
+    "sql": false
+  },
+  "checks": {
+    "actual_last_forward_profile_dominated": true,
+    "invalid_publication_path_rejected": true,
+    "original_history_unchanged": true,
+    "no_future_objects_serialized": true
+  },
+  "missing_for_complete_candidate": [
+    "Actual complete new static material with same-Owner Status descriptors",
+    "Exact new publisher create/read envelope profile",
+    "Complete first-attempt terminal history before testing second remaining attempt"
+  ],
+  "authority_effect": "NONE"
+}

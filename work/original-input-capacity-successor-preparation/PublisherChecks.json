@@ -1,0 +1,71 @@
+{
+  "state": "OFFLINE_CANDIDATE_PARSER_BOUND_CHECKS_NOT_AUTHORITY",
+  "checks": [
+    {
+      "name": "Exact 3,000,000-byte five-field candidate accepted",
+      "result": "PASS"
+    },
+    {
+      "name": "3,000,001 original bytes rejected",
+      "result": "PASS"
+    },
+    {
+      "name": "Unchanged Root reader still rejects over 2MiB",
+      "result": "PASS"
+    },
+    {
+      "name": "Evidence parser rejects duplicate",
+      "result": "PASS"
+    },
+    {
+      "name": "Evidence parser rejects float",
+      "result": "PASS"
+    },
+    {
+      "name": "Evidence parser rejects NaN",
+      "result": "PASS"
+    },
+    {
+      "name": "Evidence parser rejects Infinity",
+      "result": "PASS"
+    },
+    {
+      "name": "Evidence parser rejects UTF8",
+      "result": "PASS"
+    },
+    {
+      "name": "Exact five-field shape retained",
+      "result": "PASS"
+    },
+    {
+      "name": "Complete max-N Git blob POST and LF-wrapped GET fixture fit unchanged 4MiB and restore exact bytes",
+      "result": "PASS"
+    },
+    {
+      "name": "Full transport still rejects above 4MiB",
+      "result": "PASS"
+    },
+    {
+      "name": "Escape-heavy allowed raw still refuses oversized publisher request instead of expanding cap",
+      "result": "PASS"
+    }
+  ],
+  "candidate_raw_limit": 3000000,
+  "Root_limit": 2097152,
+  "transport_limit": 4194304,
+  "max_blob_POST_bytes": 4000037,
+  "GET_fixture_bytes": 4133842,
+  "GET_fixture_remaining_bytes": 60462,
+  "GET_fixture_assumptions": {
+    "content_LF_wrap": 60,
+    "node_id_bytes": 256,
+    "URL_fixed_repository_blob": true,
+    "indent": 2
+  },
+  "GET_arbitrary_server_whitespace_not_guaranteed": true,
+  "actual_complete_response_guard_retained": true,
+  "raw_N_does_not_imply_publisher_request_fit": true,
+  "network": false,
+  "GA_created": false,
+  "original_raw_written": false
+}

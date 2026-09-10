@@ -1,0 +1,42 @@
+{
+  "state": "OFFLINE_CAPACITY_ADMINISTRATION_CANDIDATE_REQUIRES_INDEPENDENT_REVIEW",
+  "files": [
+    {
+      "path": "capacity-core.candidate.mjs",
+      "sha256": "bd55fa337081341312713c869addc2af54ba9c81837970873e6b5ce9c25b4eb4",
+      "bytes": 7400
+    },
+    {
+      "path": "series-core.successor.candidate.mjs",
+      "sha256": "d6eebec356f52dae0496ac864649b8f4e40fb6d4a9551d41f8e4f3a80fd417fd",
+      "bytes": 10630
+    },
+    {
+      "path": "context-capacity-loader.candidate.mjs",
+      "sha256": "85cf651fed4c369ed4b200431904fb4059c683b54673a7ae58ffa601af017b22",
+      "bytes": 2215
+    },
+    {
+      "path": "check-capacity.mjs",
+      "sha256": "201308b840760429e3ebae7ef20338d995281debbe924d56620a5d32ec750b29",
+      "bytes": 10124
+    },
+    {
+      "path": "Checks.json",
+      "sha256": "54711cbfdc7fcfcc98bef2b55acb39b7774109963dcc1306098ead16e70caa9b",
+      "bytes": 2704
+    },
+    {
+      "path": "Interface.md",
+      "sha256": "82965f250f25fa09f62a63a334ddcdf42d062bf0b5bf3de11106c18bc708d51a",
+      "bytes": 6968
+    }
+  ],
+  "original_series_sha256": "7d5e8975c388987540fd856831f096ec1908916c8c10d8589567e6e295d0d784",
+  "inverse_transform_original_bytes_exact": true,
+  "pure_checks": 25,
+  "real_approval_created": false,
+  "real_acceptance_created": false,
+  "network_calls": 0,
+  "sql_calls": 0
+}
