@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "state": "ACCEPTED_EXACT_ROOT4_RUNTIME_FUNCTION_SUCCESSOR_NOT_APPLIED",
+  "review_basis": "THREE_CURRENT_FUNCTION_PREIMAGES_EXACT_AND_ONLY_CURRENT_ROOT_WINDOW_ADMISSION_ADVANCED",
+  "source": {
+    "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/root4-final/RuntimeFunctionsRoot4.sql",
+    "sha256": "54ad9b3a67d5a51f7519389463968122454ddc1775269006c956040052924dc0",
+    "bytes": 90831,
+    "blob_sha": "5a7c2ce4f945f4b4b2d43ce36a8993dcaab48ae3"
+  },
+  "changes": {
+    "append_status_manifest": [
+      "current root generation",
+      "current expiry",
+      "comment label"
+    ],
+    "reserve_execution_budget": [
+      "current root generation",
+      "current binding expiry",
+      "current read_root digest",
+      "new-budget time-cap expiry",
+      "new budget exact expiry"
+    ],
+    "reserve_gate": [
+      "current root generation",
+      "current binding expiry",
+      "current read_root digest",
+      "new-gate time-cap expiry"
+    ]
+  },
+  "historical_constants_preserved": {
+    "root3_generation": "ctrgen_2e778ca66244459f974b081edca8c04e",
+    "root3_expiry": "2026-09-10T10:13:16Z",
+    "original_44_events_digest": "7f28f748c5ca671b9813232aebcd131c0ba1713469d530f1548c423505951bc2",
+    "six_attempts_digest": "b5ed3460a9447b8240155129c8901a1a3ec78c6ac980ed8c4fa3e4eb0997116c"
+  },
+  "pre_and_post_definition_guards": true,
+  "transactional": true,
+  "authority_effect": "NONE_UNTIL_APPLIED"
+}
