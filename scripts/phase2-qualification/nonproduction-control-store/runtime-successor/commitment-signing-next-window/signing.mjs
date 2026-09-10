@@ -7,6 +7,7 @@ export const prefix='artifacts/clued-validation/phase2-entry-preparation-2026090
 export const algorithm='GITHUB_API_VERIFIED_OWNER_SINGLE_PARENT_COMMITMENT_V1_CANDIDATE';
 export const project='uscrdifznmlvczcekqpw';
 export const rootGeneration='ctrgen_2e778ca66244459f974b081edca8c04e';
+export const root5Generation='ctrgen_e5df432221344996afc04b5638121d96';
 export const audience='urn:clued:audience:skill-coexistence-qualification:'+project;
 const sha=s=>crypto.createHash('sha256').update(s,'utf8').digest('hex');
 const need=(ok,why)=>{if(!ok)throw Error(why);};
@@ -25,13 +26,14 @@ export function makeCommitment(raw,type){
  need(typeof id==='string'&&new RegExp('^'+(ga?'ga':'grr')+'_[A-Za-z0-9_-]{1,128}$').test(id),'fixed_typed_id_required');
  const purpose=ga?'GATE_AUTHORIZATION':'GATE_RESULT';
  const uri='urn:clued:'+(ga?'gate-authorization:':'gate-result-receipt:')+project+':'+id;
- need(payload.issuer_purpose===purpose&&payload.audience===audience&&payload.control_trust_root_generation===rootGeneration,'purpose_audience_generation_mismatch');
+ const boundRootGeneration=payload.control_trust_root_generation;
+ need(payload.issuer_purpose===purpose&&payload.audience===audience&&[rootGeneration,root5Generation].includes(boundRootGeneration),'purpose_audience_generation_mismatch');
  need(hex(payload.schema_digest,64),'exact_schema_digest_required');
  // A stable same-domain proof URI breaks no hash by exclusion: it is itself
  // inside the complete signed payload. Actual proof storage/mapping is pending.
  need(payload.signature===uri+'#signature','fixed_detached_proof_uri_required');
  const result=Object.freeze({kind:'HISTORICAL_SIGNATURE_COMMITMENT',algorithm,repository,branch,object_type:type,object_id:id,
-  store_uri:uri,payload_sha256:sha(raw),schema_digest:payload.schema_digest,audience,root_generation:rootGeneration,
+  store_uri:uri,payload_sha256:sha(raw),schema_digest:payload.schema_digest,audience,root_generation:boundRootGeneration,
   issuer_purpose:purpose,issuer:'tdoljyj',executor_provenance:'Codex@DESK-W-591',authority_effect:'NONE'});
  constructed.add(result);return result;
 }
