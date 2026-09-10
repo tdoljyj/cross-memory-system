@@ -1,0 +1,85 @@
+{
+  "schema_version": 1,
+  "state": "ACCEPTED_EXACT_FORWARD_ROOT_GENERATION_SUBJECT",
+  "review_basis": "PREVIOUSLY_ACCEPTED_FORWARD_ROOT_VALIDATOR_PLUS_EXACT_CURRENT_HISTORY_AND_OWNER_SCOPE",
+  "decided_at_utc": "2026-09-10T10:52:14.921Z",
+  "subject_file": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/Root4ReviewSubject.json",
+    "sha256": "fb8338b1e9c00a4f6cd60a70be7522724879fa9fe2cdf9a8610fac28baff328e",
+    "bytes": 4853
+  },
+  "review_subject_sha256": "c3ce2bc92ce040a8b9b20eba17d75df54d5787e93cdcdd8ee76695fc7a766279",
+  "root_set_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+  "control_trust_root_generation": "ctrgen_9cf53fa5cd0a4a38bd68613493f95b06",
+  "generation_ordinal": 4,
+  "accepted_scope": {
+    "profile_id": "DP-PREENTRY-SKILL-QUALIFICATION",
+    "repository": "tdoljyj/cross-memory-system",
+    "environment": "ISOLATED_TEST",
+    "paid_budget": 0,
+    "project_ref": "uscrdifznmlvczcekqpw",
+    "model_budget": 0
+  },
+  "accepted_audience": "urn:clued:audience:skill-coexistence-qualification:uscrdifznmlvczcekqpw",
+  "schema_sha256": "87f094fa079034aa886d6c568730370a3264e106529b4bfd79bc3369f30b79e5",
+  "accepted_algorithm_config": {
+    "digest_algorithm": "SHA-256",
+    "accepted_config_ref": {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/b25abb05e00f72bb2ae910035ba9916a97c822dc",
+      "sha256": "988cdf823eb63806dc3385aa1840e812c1cb1df5ed06e72ca2adf56244b88d20"
+    },
+    "canonicalization_id": "SORTED_JSON_UTF8_NO_FLOATS_LF_V1_CANDIDATE",
+    "signature_verification": "GITHUB_API_VERIFIED_OWNER_MERGE",
+    "signed_payload_excluded_fields": [
+      "signature_binding"
+    ]
+  },
+  "accepted_predecessor": {
+    "generation_id": "ctrgen_2e778ca66244459f974b081edca8c04e",
+    "sha256": "a6b3e3af4aa8ba3abe2b57ac6fabc0b014bffafbf4d0d9565e6e6b67da609298"
+  },
+  "accepted_history_prefix_sha256": "da271b6f65da13e06fccda21a909e8a3f53ef3abf746d8eabef9353bd767610c",
+  "accepted_history_prefix_sequence": 3,
+  "accepted_issuer_purposes": [
+    {
+      "purpose": "STATUS",
+      "audience": "urn:clued:audience:skill-coexistence-qualification:uscrdifznmlvczcekqpw",
+      "subject_id": "tdoljyj",
+      "signing_service": "web-flow",
+      "qualification_ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/09adddb544cc1bb02d1cf9ca112a185d444cd97e",
+        "sha256": "d6ef68aee22956ce4d36d5ee86e246beeb88d7251956818624a655e571bfb6c8"
+      }
+    },
+    {
+      "purpose": "GATE_AUTHORIZATION",
+      "audience": "urn:clued:audience:skill-coexistence-qualification:uscrdifznmlvczcekqpw",
+      "subject_id": "tdoljyj",
+      "signing_service": "web-flow",
+      "qualification_ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/d7c373851a86f51de03464d294f5e40e572c9ce7",
+        "sha256": "25c369ea48d78d67eb02138c2ee702cc6e542bc0cc821cf0ee331a4ffa1d131c"
+      }
+    },
+    {
+      "purpose": "GATE_RESULT",
+      "audience": "urn:clued:audience:skill-coexistence-qualification:uscrdifznmlvczcekqpw",
+      "subject_id": "tdoljyj",
+      "signing_service": "web-flow",
+      "qualification_ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/d7c373851a86f51de03464d294f5e40e572c9ce7",
+        "sha256": "25c369ea48d78d67eb02138c2ee702cc6e542bc0cc821cf0ee331a4ffa1d131c"
+      }
+    }
+  ],
+  "not_before": "2026-09-10T10:52:14.921Z",
+  "expires_at": "2026-09-11T10:21:05Z",
+  "owner_approval_merge": "e0791841a95dfc415a8acac89d07be0f1caa8a89",
+  "checks": [
+    "Exact three-event predecessor history retained",
+    "Only forward generation/window/approval/purpose refs/history prefix changed",
+    "No Root, Status or GA effect before signed append"
+  ],
+  "authority_effect": "NONE",
+  "root_registered": false
+}
