@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "state": "ACCEPTED_EXACT_ROOT5_CONTROLLER_ISSUER_AND_WINDOW_BINDING_REPAIR",
+  "independent_reviewer": "/root",
+  "decided_at_utc": "2026-09-10T13:46:30Z",
+  "failed_source_manifest_sha256": "c0bf3dbfebd8fb4dbae439bd1f04f8047d3c9ca2594f9a0218e03416dd27edec",
+  "corrected_source_manifest_sha256": "78c6c9145add47cd9b0e5f28f17021515a4440afa1bbe2def395a7127deccd89",
+  "identified_errors": [
+    {
+      "code": "ROOT5_USED_ROOT3_ISSUER_DIGESTS",
+      "repair": "Bind current Root5 issuer metadata to the exact Generation5 STATUS and dynamic acceptance hashes."
+    },
+    {
+      "code": "ROOT5_USED_EXPIRED_ROOT3_WINDOW_VALIDATOR",
+      "repair": "Use a local unchanged-shape root validator with the exact already-approved Root5 window."
+    },
+    {
+      "code": "ROOT_SIGNATURE_EVIDENCE_PATH_KEY_MISMATCH",
+      "repair": "Accept the existing evidence payload path field while retaining exact Owner merge and blob verification."
+    }
+  ],
+  "invariants": {
+    "root_set_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+    "root_generation": "ctrgen_e5df432221344996afc04b5638121d96",
+    "expires_at": "2026-09-11T10:21:05Z",
+    "checks": 19,
+    "scope_unchanged": true,
+    "budget_unchanged": true,
+    "new_action_authorized": false,
+    "production": false,
+    "paid_models": false
+  },
+  "authority_effect": "NONE_UNTIL_OWNER_PUBLISHED_AND_SEPARATE_BINDING_FORWARD"
+}
