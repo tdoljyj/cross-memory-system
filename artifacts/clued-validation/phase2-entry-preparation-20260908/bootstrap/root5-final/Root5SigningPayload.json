@@ -1,0 +1,89 @@
+{
+  "scope": {
+    "profile_id": "DP-PREENTRY-SKILL-QUALIFICATION",
+    "repository": "tdoljyj/cross-memory-system",
+    "environment": "ISOLATED_TEST",
+    "paid_budget": 0,
+    "project_ref": "uscrdifznmlvczcekqpw",
+    "model_budget": 0
+  },
+  "status": "REGISTERED",
+  "history": {
+    "index_uri": "urn:clued:control-trust-root-set:uscrdifznmlvczcekqpw:ctr_414bd3c724264a83894b0c55cf2ab878#history",
+    "prefix_digest": "886be4f1b59ae700a0f66e0ab6a59de6f269282779e130a91b0be1bb84becc8b",
+    "prefix_sequence": 4,
+    "minimum_accepted_generation": "ctrgen_e5df432221344996afc04b5638121d96"
+  },
+  "purpose": "SKILL_COEXISTENCE_QUALIFICATION",
+  "audience": "urn:clued:audience:skill-coexistence-qualification:uscrdifznmlvczcekqpw",
+  "expires_at": "2026-09-11T10:21:05Z",
+  "not_before": "2026-09-10T13:18:47Z",
+  "revocation": {
+    "as_of": "2026-09-10T13:18:47Z",
+    "events_uri": "urn:clued:control-trust-root-set:uscrdifznmlvczcekqpw:ctr_414bd3c724264a83894b0c55cf2ab878#revocations",
+    "expires_at": "2026-09-11T10:21:05Z",
+    "event_set_digest": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570"
+  },
+  "object_type": "ControlTrustRootSet",
+  "predecessor": {
+    "generation_id": "ctrgen_9cf53fa5cd0a4a38bd68613493f95b06",
+    "sha256": "9113a9f46852f925893c2f9cb8fd4b815ffcc2b358e3df96836099b701dd5a8c"
+  },
+  "root_set_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+  "schema_digest": "87f094fa079034aa886d6c568730370a3264e106529b4bfd79bc3369f30b79e5",
+  "schema_version": "1.0",
+  "issuer_bindings": [
+    {
+      "purpose": "STATUS",
+      "audience": "urn:clued:audience:skill-coexistence-qualification:uscrdifznmlvczcekqpw",
+      "subject_id": "tdoljyj",
+      "signing_service": "web-flow",
+      "qualification_ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/c1749399c047a5b88461ef8df54ea80b1b59938a",
+        "sha256": "1640995831b0c1f8ae616810e12eb7b97ee191e9f20b5c38eee32eb8bfac9d23"
+      }
+    },
+    {
+      "purpose": "GATE_AUTHORIZATION",
+      "audience": "urn:clued:audience:skill-coexistence-qualification:uscrdifznmlvczcekqpw",
+      "subject_id": "tdoljyj",
+      "signing_service": "web-flow",
+      "qualification_ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/3ae8bd4196f80266e2c2fda04a323a7b9d084840",
+        "sha256": "80cf8f471248ae76e5a637b5f94f20f4863a243c7011e5728de86cb5fc7cf5d2"
+      }
+    },
+    {
+      "purpose": "GATE_RESULT",
+      "audience": "urn:clued:audience:skill-coexistence-qualification:uscrdifznmlvczcekqpw",
+      "subject_id": "tdoljyj",
+      "signing_service": "web-flow",
+      "qualification_ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/3ae8bd4196f80266e2c2fda04a323a7b9d084840",
+        "sha256": "80cf8f471248ae76e5a637b5f94f20f4863a243c7011e5728de86cb5fc7cf5d2"
+      }
+    }
+  ],
+  "algorithm_config": {
+    "digest_algorithm": "SHA-256",
+    "accepted_config_ref": {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/b25abb05e00f72bb2ae910035ba9916a97c822dc",
+      "sha256": "988cdf823eb63806dc3385aa1840e812c1cb1df5ed06e72ca2adf56244b88d20"
+    },
+    "canonicalization_id": "SORTED_JSON_UTF8_NO_FLOATS_LF_V1_CANDIDATE",
+    "signature_verification": "GITHUB_API_VERIFIED_OWNER_MERGE",
+    "signed_payload_excluded_fields": [
+      "signature_binding"
+    ]
+  },
+  "generation_ordinal": 5,
+  "owner_approval_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/80660c2a57dd88a001636f701f22cec9a8c12675",
+    "sha256": "2583e78b8aa5bcdc28f8c545eb9cd98639e20ce28f5c3b10a485e7647c9b4403"
+  },
+  "control_trust_root_generation": "ctrgen_e5df432221344996afc04b5638121d96",
+  "independent_acceptance_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/67a9335630b251f90b0bcdb97ab6cc2f6a335d49",
+    "sha256": "b8b1316927f08bec74ef73bbadf3d43a7d411fa0d37fd5721a499b42cc90baf4"
+  }
+}
