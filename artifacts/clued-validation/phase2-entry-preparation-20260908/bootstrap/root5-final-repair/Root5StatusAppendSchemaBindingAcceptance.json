@@ -12,10 +12,16 @@
   },
   "migration": {
     "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/root5-final/Root5StatusAppendSchemaBinding.sql",
-    "sha256": "327256393631694a133088ba52b05768577d3bf4af1d7aa2383ee28ec3fc18bd",
-    "blob_sha": "76edee255a03bf11c63827ad6c579601eabc6cf9",
+    "sha256": "e3b9c32c1ac674e1617c07cf311535bf291a6b8b4183120c05455ffc3f3be519",
+    "blob_sha": "bb18dcacc58e20a877d1352b7d79c40e97b89ba5",
     "bytes": 6349,
-    "expected_installed_prosrc_sha256": "05c5023f69d5c8f932df51230910cf45a9f68dce85768beb85515f8671c8a441"
+    "expected_installed_prosrc_sha256": "94a444b9174251e8f655ea3a04e160898464caf1f94977cbce1590aff726c615"
+  },
+  "first_application": {
+    "state": "ROLLED_BACK_AT_POSTCONDITION",
+    "cause": "The migration transport normalized function-body line endings, so the locally predicted prosrc digest did not match the database-observed digest.",
+    "database_observed_prosrc_sha256": "94a444b9174251e8f655ea3a04e160898464caf1f94977cbce1590aff726c615",
+    "database_state_changed": false
   },
   "schema": {
     "path": "scripts/phase2-qualification/control-context-verifier-root5-final-successor/status-manifest.root5.schema.json",
