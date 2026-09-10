@@ -1,0 +1,33 @@
+{
+  "kind": "EXPLICIT_USER_DELEGATED_APPROVAL_ROOT5_FINAL_REPAIR",
+  "state": "APPROVED_PENDING_OWNER_PUBLICATION_AND_GUARDED_EFFECTS",
+  "recorded_at_utc": "2026-09-10T13:09:54.862Z",
+  "user_authority": [
+    "不要一直问我了，我授权你替我批准，直到完成此任务",
+    "允许合并 PR #63 到 main，忽略此次因账单问题未启动的 CI"
+  ],
+  "reason": "Predispatch verification proved that immutable Root4 has consumed its single GA allowance and the bound controller is Root3-only. A successor generation and corrective same-scope forward are necessary to complete the already authorized final run without falsifying authority or wasting the last allocation.",
+  "scope": {
+    "project_id": "uscrdifznmlvczcekqpw",
+    "schema": "clued_control",
+    "root_set_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+    "successor_generation_id": "ctrgen_e5df432221344996afc04b5638121d96",
+    "window_expires_at": "2026-09-11T10:21:05Z",
+    "root_successors_max": 1,
+    "status_successors_max": 1,
+    "corrective_binding_forwards_max": 1,
+    "new_gate_authorizations_max": 1,
+    "per_ga_seconds": 600,
+    "per_ga_evidence_bytes": 134217728,
+    "final_cumulative_seconds_limit": 7506,
+    "final_cumulative_evidence_bytes_limit": 1664723891,
+    "checks": 19,
+    "environment": "ISOLATED_TEST",
+    "production": false,
+    "paid_models": false,
+    "refund": false,
+    "automatic_retry": false
+  },
+  "approval_boundary": "Only the exact Root5/controller/status/binding repair and one final run needed to complete this task; no unrelated changes or broader authority.",
+  "authority_effect": "NONE_UNTIL_OWNER_PUBLISHED_AND_EACH_GUARDED_EFFECT_COMMITS"
+}

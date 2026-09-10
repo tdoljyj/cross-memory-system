@@ -1,0 +1,30 @@
+{
+  "state": "ACCEPTED_EXACT_SAME_SCOPE_QUALIFICATION_REPAIR",
+  "independent_reviewer": "/root",
+  "review_method": "OWNER_DELEGATED_DETERMINISTIC_SOURCE_AND_DURABLE_STATE_REVIEW",
+  "failed_ga_id": "ga_1d52f4778d494399b12aea54fe4a189e",
+  "failed_receipt_sha256": "3a311d678ed563d5dd1492ef53675fcba8e985dccf3880d032ca2029168fedf9",
+  "identified_error_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/258f4294ca178ee0a0ba1037a7c7afa0231388b1",
+    "sha256": "8d51fb773be52181a0b64c2e6f062879cfb9483ac47631c090918ea6865b7916"
+  },
+  "changed_source_refs": [
+    {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/bb65bb840eca569e44903990c878f050f936a808",
+      "sha256": "c0bf3dbfebd8fb4dbae439bd1f04f8047d3c9ca2594f9a0218e03416dd27edec"
+    }
+  ],
+  "scope_unchanged": true,
+  "new_action_authorized": false,
+  "controller_digest": "c0bf3dbfebd8fb4dbae439bd1f04f8047d3c9ca2594f9a0218e03416dd27edec",
+  "scope_digest": "115408c69dcb2fa606fb0de34ec86c5239487d0cfa9a73abb267664a2482abe5",
+  "accepted_at": "2026-09-10T13:09:54.862Z",
+  "identified_error": "The Root4 GA expired without dispatch, while the bound controller retained Root3-only generation, cutoff, count and charge checks. It would deterministically reject a fresh Root4 or successor observation before host effect.",
+  "repair": "Preserve the original six attempts and all later events; validate each attempt by its own budget generation, bind Root5 as current, admit only the separately approved fourth series allocation and fourth forward, and keep the same 19 checks and isolated scope.",
+  "terminal_receipt_ref": {
+    "uri": "urn:clued:gate-result-receipts:grr_1d52_undispatched_expired_20260910",
+    "sha256": "3a311d678ed563d5dd1492ef53675fcba8e985dccf3880d032ca2029168fedf9"
+  },
+  "authority_effect": "NONE",
+  "qualification_pass": false
+}
