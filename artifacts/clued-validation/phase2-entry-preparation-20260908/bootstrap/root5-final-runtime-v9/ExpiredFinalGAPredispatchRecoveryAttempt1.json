@@ -1,0 +1,15 @@
+{
+  "object_type": "ExpiredPredispatchRecoveryAttemptObservation",
+  "schema_version": "1.0",
+  "attempt": 1,
+  "migration_name": "root5_v9_expired_predispatch_recovery_sequence68",
+  "state": "FAILED_TRANSACTIONALLY_BEFORE_MUTATION",
+  "observed_error_code": "42702",
+  "observed_error": "column reference ga is ambiguous",
+  "failure_location": "initial gate_attempts SELECT FOR UPDATE",
+  "cause": "PL/pgSQL variable ga collided with gate_attempts.ga column name",
+  "repair": "Rename the local constant to ga_key; preserve all preconditions, requests and postconditions.",
+  "database_mutation_claimed": false,
+  "automatic_retry": false,
+  "authority_effect": "NONE"
+}
