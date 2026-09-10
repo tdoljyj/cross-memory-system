@@ -1,0 +1,80 @@
+{
+  "object_type": "Root5FinalWindowExpirationObservation",
+  "schema_version": "1.0",
+  "state": "BLOCKED_NOT_STARTED",
+  "authority_effect": "NONE",
+  "automatic_retry": false,
+  "refund": false,
+  "production_effect": false,
+  "observed_at": "2026-09-10T20:04:35.370546Z",
+  "project_ref": "uscrdifznmlvczcekqpw",
+  "repository": "tdoljyj/cross-memory-system",
+  "remote_main": {
+    "commit_sha": "713a85dccf24f777eda3c9ddfc918779cf673fbf",
+    "verified_via": "GitHub REST ref and content endpoints"
+  },
+  "published_internal_repairs": [
+    {
+      "pull_request": 104,
+      "merge_commit": "79ac4595583505aca17f930e6524b881b575c9cf",
+      "purpose": "Root5 v9 locked-install guard evidence repair"
+    },
+    {
+      "pull_request": 105,
+      "merge_commit": "87e0a5a6f8968ea8aaadafe3af8234acf42090c3",
+      "purpose": "Status16 evidence-byte capacity constraint alignment"
+    },
+    {
+      "pull_request": 106,
+      "merge_commit": "713a85dccf24f777eda3c9ddfc918779cf673fbf",
+      "purpose": "Status16 seconds capacity constraint alignment"
+    }
+  ],
+  "budget": {
+    "reservation_id": "budget600_5acd7e35563640d38f9a74df088a7ad1",
+    "reservation_sha256": "5dcf9898c76f5a6161656a9b670711dbe9a793edd44198bfab483fa56bc2fbfe",
+    "sequence": 68,
+    "seconds": 600,
+    "evidence_bytes": 134217728,
+    "series_charged_seconds": 7506,
+    "series_charged_evidence_bytes": 1664723891,
+    "series_seconds_cap": 7506,
+    "series_evidence_bytes_cap": 1664723891,
+    "cap_reached_exactly": true
+  },
+  "gate_authorization": {
+    "gate_authorization_id": "ga_6abb193a56304029a788f7cb624a0d35",
+    "sha256": "93422f9311b01c029e595c91d09e1e627c5b202efe1561f7b662a6a7932daee2",
+    "signature_commit": "5f7a7c989970c00cf62b5b6285c650750cb4e2b5",
+    "signature_commitment_sha256": "6d58c5edd8de50a37d25601f9320f04b760d6876f0a2c080f875dc8c5cd78c76",
+    "issued_at": "2026-09-10T19:50:08.031Z",
+    "deadline": "2026-09-10T20:00:08.031Z",
+    "expires_at": "2026-09-10T20:00:08.031Z",
+    "database_phase": "PENDING",
+    "container_id": null,
+    "receipt_id": null,
+    "revoked": false
+  },
+  "control_snapshot": {
+    "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+    "root_generation": "ctrgen_e5df432221344996afc04b5638121d96",
+    "sequence": 68,
+    "active_ga_id": "ga_6abb193a56304029a788f7cb624a0d35",
+    "pending_budget_sequence": null,
+    "charged_seconds": 7506,
+    "charged_evidence_bytes": 1664723891
+  },
+  "conclusions": {
+    "deadline_elapsed_before_create_dispatch": true,
+    "durable_effect_intent_recorded": false,
+    "host_create_dispatched": false,
+    "host_side_effect_observed": false,
+    "qualification_result_claimed": false,
+    "signed_gate_result_receipt_claimed": false,
+    "budget_reuse_permitted": false,
+    "additional_attempt_within_approved_caps_possible": false,
+    "database_terminalized": false,
+    "expired_active_attempt_retained_for_audit": true
+  },
+  "disposition": "Preserve the exact expired PENDING attempt and all original bytes. Do not retry, refund, reuse, delete, reset, or claim qualification success."
+}
