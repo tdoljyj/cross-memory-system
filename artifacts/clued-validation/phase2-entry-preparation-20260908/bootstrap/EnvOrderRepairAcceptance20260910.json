@@ -1,0 +1,62 @@
+{
+  "state": "ACCEPTED_EXACT_SAME_SCOPE_QUALIFICATION_REPAIR",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "failed_ga_id": "ga_4e7ce4ad385e4f5aa633bcea2ddb71ce",
+  "failed_receipt_sha256": "2fd3b68be76b3f4efcf10050d6c908bcb79c8d5a3e22290e18f582d780b53b7e",
+  "identified_error_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/d33e9d7ef6fa3ee745a7b764de2f6b748a027ead",
+    "sha256": "f2c74de95eb1ed3bd2b00b395529adcbf2659f39e07b852e03da3edd067dc12b"
+  },
+  "changed_source_refs": [
+    {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/c2a96455ddb3182315f2b10b566b772a86c885ca",
+      "sha256": "9fafe3d0da7484426287a3c30906866cf0afb8a1d9ad08c03b06b5f4e7343dae"
+    },
+    {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/83f87805e1e5ecfa619cbb69db061f03999eb31f",
+      "sha256": "a7a70ddbe089d46609d2f8c877aa69792ad3b5aef7c5487a10d6b8951dee7c2c"
+    },
+    {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/2afc439d56475fe58ca4168680e3cb2801d817b6",
+      "sha256": "3487d9fc6ccee5478569021961eac93bf5ef6bd4bc2428559b20a44abb9c155a"
+    },
+    {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/d75e36030b061a778a8a73f4d65f71573df02ec2",
+      "sha256": "d99d64881e07486272722eef6937389884ddb2430156a7da45683b40be97fc10"
+    },
+    {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/1a7b0ad8224a5bbd35253ca80930f89dc07b3e3b",
+      "sha256": "1be61fadd55735095e19d93a6adefd9436eff3a4c07795bf09d758d470e7ca2e"
+    },
+    {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/efe3aacdc845ef1a12b7182e39460a79f8043e09",
+      "sha256": "9e5edb9109b311b1d9c070f674d29aa8237ad5ed93d39cef83387fdc75cd739e"
+    },
+    {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/30a8fd5a0e2b1c8882995086c7ea6203a49c8b28",
+      "sha256": "f8c2e3c0c9e05c11e1ed12cd751799b63497618336003e61e8ed6b0c6383eb57"
+    },
+    {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/f55f48f76e3b1b4a99e85ba01f64d1555d7f1e24",
+      "sha256": "115408c69dcb2fa606fb0de34ec86c5239487d0cfa9a73abb267664a2482abe5"
+    },
+    {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/cda9bf9c65371193a0cb4eed3da2a41f4506f1d7",
+      "sha256": "2c2cfe62095a70709c9c9db64701a689b5a5432fe5b3fbe3c9f71d63cff21390"
+    }
+  ],
+  "scope_unchanged": true,
+  "new_action_authorized": false,
+  "controller_digest": "27ede0fc0ff6afc4d5abf2f5c9f256fe22776165746dddc19aa2693c47bbc97c",
+  "scope_digest": "115408c69dcb2fa606fb0de34ec86c5239487d0cfa9a73abb267664a2482abe5",
+  "accepted_at": "2026-09-10T09:26:52.628Z",
+  "identified_error": "The actual created container contained exactly the approved seven key=value environment entries, while Docker returned a different array order. The predecessor compared array order and rejected after CREATE.",
+  "repair": "Compare the seven environment entries as an exact set while rejecting duplicates, missing keys, extra keys, and changed values. No runtime scope or authority is broadened.",
+  "terminal_receipt_ref": {
+    "uri": "urn:clued:gate-result-receipts:grr_4e7_created_never_started_20260910",
+    "sha256": "2fd3b68be76b3f4efcf10050d6c908bcb79c8d5a3e22290e18f582d780b53b7e"
+  },
+  "owner_publication_merge": "ebf7e0dcb3483ed7ded0f9d950416361d84fc9fb",
+  "authority_effect": "NONE",
+  "qualification_pass": false
+}

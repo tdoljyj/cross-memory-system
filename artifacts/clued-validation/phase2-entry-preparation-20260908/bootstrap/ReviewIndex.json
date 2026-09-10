@@ -1,0 +1,48 @@
+{
+  "state": "INDEPENDENT_ENV_ORDER_REVIEW_CHAIN_ACCEPTED_FOR_OWNER_PUBLICATION_NOT_RUNTIME_ADMISSION",
+  "accepted_at": "2026-09-10T09:26:52.628Z",
+  "terminal_basis_sha256": "a463b3c14d0a89f6fd37d943176fac076e678abc3749aa6bf824bf5ae24f12d5",
+  "files": {
+    "host": {
+      "path": "work/env-order-repair-approved-execution/accepted-reviews/EnvHostScopeIndependentAcceptance.json",
+      "sha256": "6edb6dc3d49f620aa0f9f4d67d448e7074107cfe41e111b0fa295017bf515df1",
+      "bytes": 7830
+    },
+    "profile": {
+      "path": "work/env-order-repair-approved-execution/accepted-reviews/EnvProfileStageApplicability.json",
+      "sha256": "6a6c99a7a2107d057d274b730fa8555a0ae47b308b28111a5deb65213404f97e",
+      "bytes": 8631
+    },
+    "history": {
+      "path": "work/env-order-repair-approved-execution/accepted-reviews/EnvHistoricalComponentApplicability.json",
+      "sha256": "51f04a4cae70e3302689874f016374e2a524dc35b12372412d10b1fc4c7a24c2",
+      "bytes": 26858
+    },
+    "qualification": {
+      "path": "work/env-order-repair-approved-execution/accepted-reviews/ScopedEnvOrderControllerQualification.json",
+      "sha256": "0ca6ef08dc0cc998c0007782f3c47e43dc92d3a1d7d82a56f5171d223b88dc66",
+      "bytes": 40295
+    },
+    "repair": {
+      "path": "work/env-order-repair-approved-execution/accepted-reviews/EnvOrderRepairAcceptance20260910.json",
+      "sha256": "da9a2b697b61498ca138b44f2d932cf2abc44921bf8da84675be4fa8354aecda",
+      "bytes": 3555
+    },
+    "source": {
+      "path": "work/env-order-repair-approved-execution/accepted-reviews/IndependentEnvOrderSourcePublicationAcceptance.json",
+      "sha256": "2e25e53e3ac27ad03dd7ed4b72c1c8dfba96e3bfa9cb96408b6ec1d6be6be31c",
+      "bytes": 36253
+    }
+  },
+  "checks": {
+    "terminal_blocked": true,
+    "active_ga_null": true,
+    "pending_budget_null": true,
+    "source_paths": 140,
+    "unique_source_refs": 127,
+    "owner_publication_verified": true
+  },
+  "authority_effect": "NONE",
+  "SQL": false,
+  "GA": false
+}
