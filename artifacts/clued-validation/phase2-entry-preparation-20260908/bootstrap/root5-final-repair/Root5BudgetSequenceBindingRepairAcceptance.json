@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "state": "ACCEPTED_EXACT_ROOT5_BUDGET_SEQUENCE_BINDING_REPAIR",
+  "independent_reviewer": "/root",
+  "decided_at_utc": "2026-09-10T16:19:55Z",
+  "failed_controller_manifest_sha256": "2b20af836c575dd451a2c2fe96094a2a9d9ca90664970d4f1384455fdba965ad",
+  "corrected_controller_manifest_sha256": "d789d3f819bbca91325ee9c3b4f1d45b538356802152ee085650c0d7b4207e76",
+  "identified_error": {
+    "code": "ROOT5_FINAL_BUDGET_SEQUENCE_PRECEDED_REQUIRED_BINDING_FORWARD",
+    "observed_current_sequence": 62,
+    "required_binding_forward_sequence": 63,
+    "required_final_budget_sequence": 64,
+    "repair": "Advance the Root5 final budget boundary from sequence 63 to 64 so the required controller binding forward occupies 63 and the single final budget reservation remains the next event."
+  },
+  "changed_files": [
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-root5-final-successor/context.mjs",
+      "sha256": "22cd88ead10fa27d140b772b24b7f6cdda5435af7ad99ab94dd02c21ca4bdbe3",
+      "blob_sha": "8a9dda394ae35db7737619d2c7a9787d8a6b5a30",
+      "bytes": 46612
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-root5-final-successor/ControllerSourceManifest.candidate.json",
+      "sha256": "d789d3f819bbca91325ee9c3b4f1d45b538356802152ee085650c0d7b4207e76",
+      "blob_sha": "3edebc33720f85e460d87f733062486dd87e0c68",
+      "bytes": 73187
+    }
+  ],
+  "verification": {
+    "root5_generation": "ctrgen_e5df432221344996afc04b5638121d96",
+    "pre_forward_sequence": 62,
+    "post_forward_sequence": 63,
+    "budget_sequence": 64,
+    "generation_for_budget_at_64": "ctrgen_e5df432221344996afc04b5638121d96",
+    "source_manifest_entries": 328
+  },
+  "invariants": {
+    "root_set_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+    "root_generation": "ctrgen_e5df432221344996afc04b5638121d96",
+    "expires_at": "2026-09-11T10:21:05Z",
+    "scope_unchanged": true,
+    "budget_amount_unchanged": true,
+    "new_action_authorized": false,
+    "production": false,
+    "paid_models": false,
+    "refund": false,
+    "automatic_retry": false
+  },
+  "authority_effect": "NONE_UNTIL_OWNER_PUBLISHED_AND_SEPARATE_QUALIFICATION_STATUS_AND_BINDING"
+}

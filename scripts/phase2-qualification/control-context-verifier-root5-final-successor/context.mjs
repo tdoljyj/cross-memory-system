@@ -135,7 +135,7 @@ const sha=b=>crypto.createHash('sha256').update(b).digest('hex'),need=(v,m)=>{if
 const proposalSHA='ea96914e218460339508bc51eff0d10de41e1a94cfa3a0a544a85a132219791b';
 const baselineSHA='022c01e16cb0a20e410e4c6d09fc41285c9713fa6524a820360941507c686829';
 const scope=Object.freeze({root_id:'ctr_414bd3c724264a83894b0c55cf2ab878',root_generation:'ctrgen_2e778ca66244459f974b081edca8c04e',project:'uscrdifznmlvczcekqpw',expires_at:'2026-09-10T10:13:16Z',maximum_new_ga:3,maximum_new_forward:3,per_ga_seconds:600,per_ga_evidence_bytes:134217728,maximum_series_charged_seconds:6906,root_seconds_cap:7200,evidence_cap:1530506163,first_pass_stops:true,refund:false,automatic_retry:false,production:false,model_budget:0,paid_budget:0});
-const root4Generation='ctrgen_9cf53fa5cd0a4a38bd68613493f95b06',root5Generation='ctrgen_e5df432221344996afc04b5638121d96',root4Expiry='2026-09-11T10:21:05Z',root5BudgetSequence=63;
+const root4Generation='ctrgen_9cf53fa5cd0a4a38bd68613493f95b06',root5Generation='ctrgen_e5df432221344996afc04b5638121d96',root4Expiry='2026-09-11T10:21:05Z',root5BudgetSequence=64;
 const inherited={STATUS:'acaf2073c654be95a3beab820f1460de1e6e68caa267e9c75bdd3c891bd894b3',GATE_AUTHORIZATION:'b6d4782fcf79cf599f3ccc7e2c7b7434e41a26c6d4a28c6711eac0c9f469e146',GATE_RESULT:'b6d4782fcf79cf599f3ccc7e2c7b7434e41a26c6d4a28c6711eac0c9f469e146'};
 function material(x,ref,label){need(ref&&hex(ref.sha256)&&typeof ref.uri==='string'&&x&&same(x.ref,ref)&&typeof x.raw==='string'&&sha(x.raw)===ref.sha256,'EXACT_PINNED_'+label);return JSON.parse(x.raw);}
 const generationForBudget=sequence=>sequence>=root5BudgetSequence?root5Generation:sequence>=59?root4Generation:scope.root_generation;
