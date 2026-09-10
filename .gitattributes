@@ -7,3 +7,37 @@ artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/PrivateRu
 artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/parent-exit-observation-20260908/Closeout.json -text
 artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/parent-exit-observation-20260908/RawScanClassification.json -text
 scripts/phase2-qualification/RuntimeMaterialPreparation/PreparedRuntimeGenerations.json -text
+
+# Preserve exact reviewed Env source/definition bytes; retained CRLF blobs are not rewritten.
+scripts/naming-governance/render-fixture.mjs -text
+tests/test_naming_governance_validator.py -text
+work/original-input-capacity-successor-preparation/PublisherChecks.json -text
+work/env-order-repair-external-preparation/original_input_publisher.candidate.py -text
+work/env-order-repair-external-preparation/publish-original-inputs.candidate.py -text
+work/env-order-repair-pipe/message.mjs -text
+work/env-order-repair-pipe/deliver.mjs -text
+work/env-order-repair-pipe/sha256.mjs -text
+work/env-order-repair-pipe/stderr-archive.mjs -text
+work/env-order-repair-pipe/read-output.mjs -text
+work/env-order-repair-pipe/ready-loader.mjs -text
+work/env-order-repair-pipe/launcher.mjs -text
+work/env-order-repair-pipe/tool-entry.functions.js -text
+work/env-order-repair-external-preparation/coordinate-measurements.mjs -text
+work/env-order-repair-external-preparation/wrap-observations.mjs -text
+work/env-order-repair-external-preparation/publication-observations.mjs -text
+work/env-order-repair-external-preparation/component-readback.mjs -text
+work/env-order-repair-external-preparation/result-materials.mjs -text
+work/env-order-repair-external-preparation/assemble-results.mjs -text
+work/env-order-repair-external-preparation/prepare-reservation.mjs -text
+work/env-order-repair-external-preparation/prepare-grr.mjs -text
+work/env-order-repair-external-preparation/dependencies.mjs -text
+work/env-order-repair-stop/coordinate-stop.mjs -text
+work/env-order-repair-stop/stop-ready-launcher.mjs -text
+scripts/phase2-qualification/RuntimeMaterialPreparation/env-order-repair-successor/preentry-skill-qualification.json -text
+scripts/phase2-qualification/RuntimeMaterialPreparation/env-order-repair-successor/GateDefinitionCandidate.json -text
+scripts/phase2-qualification/RuntimeMaterialPreparation/env-order-repair-successor/RegistrySuccessorCandidate.json -text
+scripts/phase2-qualification/RuntimeMaterialPreparation/env-order-repair-successor/ScopedRiskManifest.json -text
+scripts/phase2-qualification/RuntimeMaterialPreparation/env-order-repair-successor/HostRuntimeConfig.json -text
+scripts/phase2-qualification/RuntimeMaterialPreparation/env-order-repair-successor/EvidenceSinkDefinition.json -text
+scripts/phase2-qualification/RuntimeMaterialPreparation/env-order-repair-successor/ExecutionScopeDefinition.json -text
+scripts/phase2-qualification/RuntimeMaterialPreparation/env-order-repair-successor/ControlBindingDefinition.json -text
