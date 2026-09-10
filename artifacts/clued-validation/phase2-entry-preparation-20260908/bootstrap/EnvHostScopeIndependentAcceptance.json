@@ -140,12 +140,12 @@
     "sha256": "487091d9399e9fdd646fc57066cd6db1a6893201d66b17af52ee14d5fa171960",
     "bytes": 7797
   },
-  "accepted_at": "2026-09-10T09:35:04.564Z",
-  "reviewed_at": "2026-09-10T09:35:04.564Z",
+  "accepted_at": "2026-09-10T09:40:45.946Z",
+  "reviewed_at": "2026-09-10T09:40:45.946Z",
   "terminal_basis": {
-    "path": "work/env-order-repair-approved-execution/runtime-preparation/ActualTerminalBasis.20260910.correct.json",
-    "sha256": "8558e56da6984d9119936a86b353b86d235765ed8bfc0da55526f6cd0bee27fe",
-    "bytes": 2174654
+    "path": "work/env-order-repair-approved-execution/runtime-preparation/ActualTerminalBasis.20260910.exact.json",
+    "sha256": "74a29bfa2030f44f6467023f25c7516b9a6a21909c15dad35de6ba73d76bc8d8",
+    "bytes": 2174659
   },
   "source_owner_merge": "ebf7e0dcb3483ed7ded0f9d950416361d84fc9fb"
 }

@@ -89,9 +89,9 @@
     "original_input_limit_bytes": 3000000
   },
   "host_scope_acceptance": {
-    "path": "work/env-order-repair-approved-execution/accepted-reviews-corrected/EnvHostScopeIndependentAcceptance.json",
-    "sha256": "96aac502106c74bf64bcc441f89fed7f3e913c7bb0b940d7e200e1c4255e8066",
-    "bytes": 7838
+    "path": "work/env-order-repair-approved-execution/accepted-reviews-exact/EnvHostScopeIndependentAcceptance.json",
+    "sha256": "512aae741692a87c5a6ed43f007290201f16aea46454a5523874ad4dc034cd81",
+    "bytes": 7836
   },
   "authority_effect": "NONE",
   "state": "ACCEPTED_EXACT_PROFILE_AND_STAGE_APPLICABILITY_NOT_RUNTIME_OR_STAGE_REISSUANCE",
@@ -162,6 +162,6 @@
     "sha256": "269a0ad994d7d367d037ad67289838446e8ffe4b91f527459e0869583c6a980e",
     "bytes": 7848
   },
-  "accepted_at": "2026-09-10T09:35:04.564Z",
-  "reviewed_at": "2026-09-10T09:35:04.564Z"
+  "accepted_at": "2026-09-10T09:40:45.946Z",
+  "reviewed_at": "2026-09-10T09:40:45.946Z"
 }
