@@ -1,0 +1,102 @@
+{
+  "schema_version": 1,
+  "state": "ACCEPTED_EXACT_ROOT5_V6_TENTH_BINDING_FORWARD_NOT_APPLIED",
+  "independent_reviewer": "/root",
+  "decided_at_utc": "2026-09-10T17:32:00Z",
+  "root_set_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+  "root_generation": "ctrgen_e5df432221344996afc04b5638121d96",
+  "preimage": {
+    "observed_at_utc": "2026-09-10 17:31:20.643991+00",
+    "sequence": 63,
+    "existing_forwards": 9,
+    "active_ga_id": null,
+    "pending_budget_sequence": null,
+    "charged_seconds": 6906,
+    "charged_evidence_bytes": 1530506163,
+    "rows_sha256": "ff76a15988bde017d3646800a0572dd2205b96e4a1978d49534388327b6cc602",
+    "catalog_sha256": "512ea958bf562b7b040a986367585cdcb0ebea5436baf0c50f369bf67ca0d42c",
+    "getter_definition_sha256": "8d6901ece54b1890243b438826d713ac57584c917ff4e3a0ca22ad73e6d52ccb",
+    "getter_prosrc_sha256": "8f0abe13f48336c0249859b81c3d93bb4b2b3cb351381b6a4a9a884b8b2a9012"
+  },
+  "required_status": {
+    "status_manifest_id": "sm_ddb21fc967fd41ddade5491bd6687e91",
+    "generation": 13,
+    "signed_status_sha256": "63ca52f5d21c2562dec829ba479af3cc51d7bcbf8462c81e3fd1923a04399fc7",
+    "publication_merge": "34799a31570cd1ced9e9ed0a398e80c6d5f47ac4",
+    "must_be_stored_before_application": true,
+    "stored_at_review_time": true
+  },
+  "successor": {
+    "sequence": 64,
+    "idempotency_key": "root5-v6-binding-20260911",
+    "transaction_sha256": "6bdcf74c0c94642d363e86cfc111ecd578e235232b58bd5befe6cce2ff8aef93",
+    "getter_sql_sha256": "007ec108e048e2ada7c64e1f416de060f05fd40c43e9362a9f59df1d25091bc1",
+    "binding": {
+      "gate_id": "G-PREENTRY-SKILL-QUALIFICATION",
+      "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+      "gate_sha256": "3487d9fc6ccee5478569021961eac93bf5ef6bd4bc2428559b20a44abb9c155a",
+      "gate_version": "fixed-synthetic-20260910.v10-env-order-repair",
+      "scope_sha256": "115408c69dcb2fa606fb0de34ec86c5239487d0cfa9a73abb267664a2482abe5",
+      "prior_seconds": 1506,
+      "profile_sha256": "d1c060b85f0b842a397a478105ea57a208e62eb0a5a2d4c2cd8f93f63eae88f5",
+      "controller_sha256": "f5a2774a3cfced22cb2fd2f80d422b3ad57d5ad660344e01fa5d5c15f39c74cc",
+      "prior_evidence_bytes": 322546611,
+      "qualification_sha256": "d305d438a400da1b1ce26bd64cd0d180813a3ae3d8470b7327cacd5f5af00ff4",
+      "runtime_acceptance_sha256": "396c81dd3157b3868b4759760f42ead01173aa390bc5203255f6dd94fd76c6b2"
+    }
+  },
+  "reviewed_files": {
+    "transaction": {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/root5-v6-binding/ActualTenthForward.sql",
+      "sha256": "6bdcf74c0c94642d363e86cfc111ecd578e235232b58bd5befe6cce2ff8aef93",
+      "blob_sha": "d65e32d3d93a2145891ee3f2f7b4aecb5907c8e7",
+      "bytes": 75147
+    },
+    "input": {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-v6-binding/ActualTenthForwardInput.json",
+      "sha256": "91ba45b4e25162df9a1585b577e524e694b46e09147c803a89829c3a3381a903",
+      "blob_sha": "96422325a1a6c58e8f987fa4a15a79b110c833f0",
+      "bytes": 445700
+    },
+    "observation": {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-v6-binding/ActualTenthForwardObservation.json",
+      "sha256": "e2f5fa0b0cdfeeb358a2e6acbe80c54ca9fc60edf2e084abbcf7d2b5ba03d709",
+      "blob_sha": "01970a68b3a4afe94a22021fc37bc13754aef703",
+      "bytes": 5672
+    },
+    "preparation": {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-v6-binding/ActualTenthForwardPreparation.json",
+      "sha256": "ceb751d874e6d80772bb51ccd537568162e650ceb86d02e7fa4ddb7c7ed7a5d4",
+      "blob_sha": "f2556c6e09f854dee7f3f7dd4142ad9f32a8c72e",
+      "bytes": 5063
+    },
+    "generator": {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/root5-v6-binding/tenth-forward.candidate.mjs",
+      "sha256": "0a011ff4abc6579ea593658f095ef5329a83b9840d1e6a48fab088fe31299de5",
+      "blob_sha": "da9c70ad4333ec60901e88a4ce236b3496066f3d",
+      "bytes": 20556
+    },
+    "getter_generator": {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/root5-v6-binding/exact-getter-root5-final.candidate.mjs",
+      "sha256": "8a56c95e14c5c18ee986563780fced343f4d5489eeb1d0c542bf24aea1571fcf",
+      "blob_sha": "9bfa77ada9168e2cca4b7e440b2c98e7b95aee58",
+      "bytes": 5295
+    }
+  },
+  "invariants": {
+    "exact_preimage_and_catalog_guarded": true,
+    "single_new_execution_event": true,
+    "single_sequence_cas": true,
+    "only_getter_function_replaced": true,
+    "all_other_rows_and_catalog_unchanged": true,
+    "budget_unchanged": true,
+    "ga_created": false,
+    "entry_created": false,
+    "production": false,
+    "paid_models": false,
+    "refund_or_reuse": false,
+    "automatic_retry": false
+  },
+  "application": null,
+  "authority_effect": "BINDING_POINTER_FORWARD_CANDIDATE_ONLY_NO_BUDGET_NO_GA_NO_ENTRY_NO_PRODUCTION"
+}
