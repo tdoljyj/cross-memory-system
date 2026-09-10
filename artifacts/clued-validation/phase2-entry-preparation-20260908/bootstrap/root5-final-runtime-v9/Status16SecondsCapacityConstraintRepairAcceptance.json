@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "state": "ACCEPTED_EXACT_STATUS16_SECONDS_CAPACITY_CONSTRAINT_REPAIR_NOT_APPLIED",
+  "independent_reviewer": "/root",
+  "decided_at_utc": "2026-09-10T19:44:00Z",
+  "project_ref": "uscrdifznmlvczcekqpw",
+  "root_set_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+  "root_generation": "ctrgen_e5df432221344996afc04b5638121d96",
+  "cause": {
+    "status16_budget_limit_seconds": 7506,
+    "installed_column_limit_seconds": 7200,
+    "rejected_budget_sha256": "55e17eaf5ad7eb75eff551b5f85e49eb71a341c42886ef88f11f4e8bf3bacb56",
+    "rejected_budget_idempotency_key": "budget600_c2c3beafc1af45f09b67c937fe69ac39",
+    "rejected_target_seconds": 7506,
+    "rejected_target_evidence_bytes": 1664723891,
+    "result": "CHECK_CONSTRAINT_REJECTION_AND_COMPLETE_TRANSACTION_ROLLBACK"
+  },
+  "preimage": {
+    "sequence": 67,
+    "charged_seconds": 6906,
+    "charged_evidence_bytes": 1530506163,
+    "active_ga_id": null,
+    "pending_budget_sequence": null,
+    "execution_event_count": 67,
+    "control_object_count": 16,
+    "gate_attempt_count": 9,
+    "seconds_constraint_definition": "CHECK (charged_seconds >= 1410 AND charged_seconds <= 7200)",
+    "evidence_bytes_constraint_definition": "CHECK (charged_evidence_bytes >= 19264968 AND charged_evidence_bytes <= 1664723891)",
+    "reserve_execution_budget_prosrc_sha256": "0a05aae01612b51f74b619ca9e1885f8a92be8f6f5f38f08543dea520cffc7d1",
+    "reserve_gate_prosrc_sha256": "27b474b24da7ed203142d7bbed093d72a7ef8a47a47d3b1e1bdf6ad2b5093c54"
+  },
+  "repair": {
+    "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/root5-final/Status16Sequence67SecondsCapacityConstraintRepair.sql",
+    "sha256": "75bc5c79e4a88af7bc8bb45b892179ca58796b5ffe880a92c2843bf775e0caf5",
+    "blob_sha": "7c365175410c9df85ff4fc3fc854b9fd88295c71",
+    "bytes": 3622,
+    "old_constraint_definition": "CHECK (charged_seconds >= 1410 AND charged_seconds <= 7200)",
+    "new_constraint_definition": "CHECK (charged_seconds >= 1410 AND charged_seconds <= 7506)"
+  },
+  "invariants": {
+    "all_execution_current_constraints_enumerated_before_repair": true,
+    "exact_project_and_root_guarded": true,
+    "exact_sequence_and_charge_preimage_guarded": true,
+    "exact_status16_function_hashes_guarded": true,
+    "repaired_evidence_bytes_constraint_guarded": true,
+    "only_existing_seconds_constraint_upper_bound_changes": true,
+    "row_values_unchanged": true,
+    "event_count_unchanged": true,
+    "control_object_count_unchanged": true,
+    "gate_attempt_count_unchanged": true,
+    "budget_reserved": false,
+    "ga_created": false,
+    "entry_created": false,
+    "production": false,
+    "paid_models": false,
+    "refund_or_reuse": false,
+    "automatic_retry": false
+  },
+  "application": null,
+  "authority_effect": "CONSTRAINT_ALIGNMENT_CANDIDATE_ONLY_NO_BUDGET_NO_GA_NO_ENTRY_NO_PRODUCTION"
+}
