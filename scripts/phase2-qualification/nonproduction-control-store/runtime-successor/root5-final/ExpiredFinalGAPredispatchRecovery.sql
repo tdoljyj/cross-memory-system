@@ -2,7 +2,7 @@ begin;
 do $exact$
 declare
  root constant text := 'ctr_414bd3c724264a83894b0c55cf2ab878';
- ga constant text := 'ga_6abb193a56304029a788f7cb624a0d35';
+ ga_key constant text := 'ga_6abb193a56304029a788f7cb624a0d35';
  expected_ga_sha constant text := '93422f9311b01c029e595c91d09e1e627c5b202efe1561f7b662a6a7932daee2';
  c clued_control.execution_current;
  a clued_control.gate_attempts;
@@ -12,15 +12,15 @@ declare
 begin
  perform 1 from clued_control.current_head where root_id=root for share;
  select * into c from clued_control.execution_current where root_id=root for update;
- select * into a from clued_control.gate_attempts where root_id=root and ga_id=ga for update;
- if c.sequence<>68 or c.active_ga_id is distinct from ga or c.pending_budget_sequence is not null
+ select * into a from clued_control.gate_attempts where root_id=root and ga_id=ga_key for update;
+ if c.sequence<>68 or c.active_ga_id is distinct from ga_key or c.pending_budget_sequence is not null
  or c.charged_seconds<>7506 or c.charged_evidence_bytes<>1664723891 then raise exception 'exact_expired_current_preimage_required'; end if;
  if a.ga_id is null or a.phase<>'PENDING' or a.sequence<>0 or a.container_id is not null or a.decision is not null
  or a.receipt_raw is not null or a.revoked or clock_timestamp()<a.expires_at
  or a.expires_at is distinct from '2026-09-10T20:00:08.031Z'::timestamptz
  or a.ga_raw is null or encode(sha256(convert_to(a.ga_raw,'UTF8')),'hex')<>expected_ga_sha
  then raise exception 'exact_expired_pending_attempt_required'; end if;
- if exists(select 1 from clued_control.execution_events e where e.root_id=root and e.request->>'ga_id'=ga)
+ if exists(select 1 from clued_control.execution_events e where e.root_id=root and e.request->>'ga_id'=ga_key)
  then raise exception 'effect_or_recovery_event_already_exists'; end if;
  if decision_request->>'expected_sequence'<>'68' or decision_request->>'operation'<>'DECISION_RESERVED'
  or decision_request->'body'->>'result'<>'BLOCKED'
@@ -32,17 +32,17 @@ begin
  insert into clued_control.execution_events(root_id,sequence,idempotency_key,request)
  values(root,69,decision_request->>'idempotency_key',decision_request);
  update clued_control.execution_current set sequence=69 where root_id=root;
- update clued_control.gate_attempts set phase='DECISION_RESERVED',sequence=1,decision=decision_request->'body' where root_id=root and ga_id=ga;
+ update clued_control.gate_attempts set phase='DECISION_RESERVED',sequence=1,decision=decision_request->'body' where root_id=root and ga_id=ga_key;
  if signing_request->>'expected_sequence'<>'69' or signing_request->>'operation'<>'SIGNING'
  or signing_request->'body'->>'decision_sha256' is distinct from decision_request->'body'->>'decision_sha256'
  then raise exception 'exact_signing_transition_required'; end if;
  insert into clued_control.execution_events(root_id,sequence,idempotency_key,request)
  values(root,70,signing_request->>'idempotency_key',signing_request);
  update clued_control.execution_current set sequence=70 where root_id=root;
- update clued_control.gate_attempts set phase='SIGNING',sequence=2 where root_id=root and ga_id=ga;
+ update clued_control.gate_attempts set phase='SIGNING',sequence=2 where root_id=root and ga_id=ga_key;
  select * into c from clued_control.execution_current where root_id=root;
- select * into a from clued_control.gate_attempts where root_id=root and ga_id=ga;
- if c.sequence<>70 or c.active_ga_id is distinct from ga or a.phase<>'SIGNING' or a.sequence<>2
+ select * into a from clued_control.gate_attempts where root_id=root and ga_id=ga_key;
+ if c.sequence<>70 or c.active_ga_id is distinct from ga_key or a.phase<>'SIGNING' or a.sequence<>2
  or a.decision is distinct from decision_request->'body' then raise exception 'exact_recovery_postimage_required'; end if;
 end
 $exact$;
