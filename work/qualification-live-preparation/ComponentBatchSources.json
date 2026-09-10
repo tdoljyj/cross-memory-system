@@ -1,0 +1,71 @@
+{
+  "entries": [
+    {
+      "test_id": "PQUAL-11",
+      "primary": {
+        "ref": {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/2b30a748bd3bc4515b5ad589dbc741005998a9dd",
+          "sha256": "faa4de43485be886804fa8a0b9d1619c7efcd7988b125a7f4446bccc28937892"
+        },
+        "publication": {
+          "commitSha": "b217ce92c6077d0a03b7b951258d68eda4072045",
+          "artifactPath": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/FixedHostPortIndependentReview.json"
+        }
+      },
+      "supplementary": [
+        {
+          "ref": {
+            "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/3ae5d22e3ca382bdd7b64d9014cdba97516a5942",
+            "sha256": "93f43cca4b5cde7c5c1a75b9eef5c5b612306c3367f7c000e209259a4703d717"
+          },
+          "publication": {
+            "commitSha": "b217ce92c6077d0a03b7b951258d68eda4072045",
+            "artifactPath": "scripts/phase2-qualification/preentry-parent/runtime-successor/host-binding/history/93f43cca/PreparationEvidence.json"
+          }
+        },
+        {
+          "ref": {
+            "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/1da1759dd8c86ce32f95a13cd8e9aee72397d754",
+            "sha256": "b980f0574e33ff4052d38c15d7a7f9e6868ccfde1aafb83cc56d3146c5fc9a8b"
+          },
+          "publication": {
+            "commitSha": "b217ce92c6077d0a03b7b951258d68eda4072045",
+            "artifactPath": "scripts/phase2-qualification/preentry-parent/runtime-successor/host-binding/history/93f43cca/test_fixed_host.py"
+          }
+        }
+      ]
+    },
+    {
+      "test_id": "PQUAL-16",
+      "primary": {
+        "ref": {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/e74169cb3459c485be42023764008aa10aaf4bc7",
+          "sha256": "62e09c32a24da5d855408e59ac4b9e6362d7dbbf68e70c70745cd465480019cd"
+        },
+        "publication": {
+          "commitSha": "b217ce92c6077d0a03b7b951258d68eda4072045",
+          "artifactPath": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/QualificationRuntimeSuccessorIndependentReview.json"
+        }
+      },
+      "supplementary": []
+    },
+    {
+      "test_id": "PQUAL-17",
+      "primary": {
+        "ref": {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/bc1d8efd2b417a86199a7caeca22bc2ff4975c3b",
+          "sha256": "f178b211420f48d5704c9e0d70996a35abdc89d0585df6ddc446c30f84a051ca"
+        },
+        "publication": {
+          "commitSha": "b217ce92c6077d0a03b7b951258d68eda4072045",
+          "artifactPath": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/FixedToolSinkFailureIndependentObservation.json"
+        }
+      },
+      "supplementary": []
+    }
+  ],
+  "applicability": {
+    "read_origin": "LOCAL_FILESYSTEM_NAMED_INDEPENDENT_EVIDENCE",
+    "sha256": "433913315714fb00deb3ebdefda5c9b52588d7bc2fb4318780ed6e01cfb795a1"
+  }
+}

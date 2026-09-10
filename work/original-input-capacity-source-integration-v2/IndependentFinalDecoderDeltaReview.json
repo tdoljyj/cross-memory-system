@@ -1,0 +1,67 @@
+{
+  "state": "INDEPENDENTLY_REVIEWED_FINAL_STAGED_DECODER_DELTA_NOT_ADMISSION",
+  "reviewer": "/root/a03_a11_readiness",
+  "supersedes": {
+    "review_sha256": "b84b0cb422fcd64a606131d5ce9056e4c41a446e97a683a33f4f01cbb1476d2e",
+    "scope": "Corrects omitted staged-decoder semantic check: prior global directory substitution incorrectly changed legacy V2 actual_entry. The prior reused author tests did not exercise that transformed staged decoder."
+  },
+  "manifest_sha256": "07e0be02895363bac5ced923924f27b8de1f7951d8eea2c829831afef9bb27aa",
+  "facts": {
+    "manifest_sha256": "07e0be02895363bac5ced923924f27b8de1f7951d8eea2c829831afef9bb27aa",
+    "decoder_sha256": "8a3508a0146e5fd37fb890857e9d46abe780ea1c6ae96ea5222afe7778a887e8",
+    "author_bytes_equal": true,
+    "other_sixteen_staged_bytes_unchanged": true,
+    "actual_entry_lines": [
+      " need(raw(digests)===raw(source.called_input_digests)&&source.actual_entry==='control-context-verifier-ordinary-bounded-acyclic-successor/context.mjs#checkCurrentSemantics','EXACT_ACTUALLY_CALLED_INPUTS');",
+      " need(raw(digests)===raw(source.called_input_digests)&&source.actual_entry==='control-context-verifier-original-input-capacity-successor/context.mjs#checkCurrentSemantics','EXACT_ACTUALLY_CALLED_INPUTS');"
+    ],
+    "original_test": {
+      "path": "C:/Users/Windows/Documents/Codex/2026-09-08/ia/work/original-input-capacity-successor-preparation/check-decoder.mjs",
+      "sha256": "9cc940d7500555956d9285bea001bdea3ce0956c9ce669693367c6b20f7484f1"
+    }
+  },
+  "decoder_checks": {
+    "state": "OFFLINE_DECODER_DIFFERENTIAL_CHECKS_NOT_ADMISSION",
+    "source_sha256": "8a3508a0146e5fd37fb890857e9d46abe780ea1c6ae96ea5222afe7778a887e8",
+    "checks": [
+      {
+        "name": "V3 exact 3,000,000-byte restoration and bounded envelope",
+        "result": "PASS"
+      },
+      {
+        "name": "V3 3,000,001 rejected",
+        "result": "PASS"
+      },
+      {
+        "name": "Old V2 at/below/above 2MiB identical to original module",
+        "result": "PASS"
+      },
+      {
+        "name": "Legacy V1 routes to unchanged original imports",
+        "result": "PASS"
+      },
+      {
+        "name": "Foreign verification session rejected before network",
+        "result": "PASS"
+      },
+      {
+        "name": "Envelope duplicate/noncompact/floating/nonfinite rejected",
+        "result": "PASS"
+      },
+      {
+        "name": "Original five-field duplicate/nonstring/invalid UTF8 scalar rejected",
+        "result": "PASS"
+      }
+    ],
+    "maximum_fixture_envelope_bytes": 861,
+    "actual_network_calls": 0,
+    "original_raw_written": false,
+    "new_GA_created": false
+  },
+  "test_reuse": "Original seven-check decoder script; only source read paths and output report destination changed to evaluate final staged bytes. Existing fixture and assertions unchanged.",
+  "conclusion": "PASS for affected decoder delta; author exact bytes and legacy V2 actual_entry restored, other16 staged files unchanged.",
+  "actual_approval": false,
+  "execution": false,
+  "network": false,
+  "ga": false
+}

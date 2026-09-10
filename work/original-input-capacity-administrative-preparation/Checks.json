@@ -1,0 +1,110 @@
+{
+  "state": "LOCAL_TEST_FIXTURE_CHECKS_ONLY",
+  "checks": [
+    {
+      "name": "LOCAL_TEST_FIXTURE full series accepts exact approved capacity repair and reports two remaining",
+      "result": "PASS"
+    },
+    {
+      "name": "unapproved capacity missing raw rejected",
+      "result": "PASS"
+    },
+    {
+      "name": "decimal 3000000 is not binary 3MiB",
+      "result": "PASS"
+    },
+    {
+      "name": "unchanged cap first_frame_bytes",
+      "result": "PASS"
+    },
+    {
+      "name": "unchanged cap control_request_and_grr_bytes",
+      "result": "PASS"
+    },
+    {
+      "name": "unchanged cap source_refs_maximum",
+      "result": "PASS"
+    },
+    {
+      "name": "unchanged cap root_strict_json_bytes",
+      "result": "PASS"
+    },
+    {
+      "name": "base proposal substitution rejected",
+      "result": "PASS"
+    },
+    {
+      "name": "expiry extension rejected",
+      "result": "PASS"
+    },
+    {
+      "name": "new extra allocation rejected",
+      "result": "PASS"
+    },
+    {
+      "name": "wrong current scope rejected",
+      "result": "PASS"
+    },
+    {
+      "name": "rewritten 043 receipt rejected",
+      "result": "PASS"
+    },
+    {
+      "name": "capacity repair may not claim old scope unchanged",
+      "result": "PASS"
+    },
+    {
+      "name": "capacity 043 may not pass legacy repair branch",
+      "result": "PASS"
+    },
+    {
+      "name": "legacy path retains original same scope semantics without capacity fields",
+      "result": "PASS"
+    },
+    {
+      "name": "Owner loader verifies both exact original pretty raw documents",
+      "result": "PASS"
+    },
+    {
+      "name": "Owner rejection propagates before capacity material accepted",
+      "result": "PASS"
+    },
+    {
+      "name": "Owner loader cannot accept caller-added descriptor field",
+      "result": "PASS"
+    },
+    {
+      "name": "pure checker does not grant execution admission",
+      "result": "PASS"
+    },
+    {
+      "name": "new capacity consumer cannot use old runtime without supplement",
+      "result": "PASS"
+    },
+    {
+      "name": "artifact list membership cannot replace Evidence role binding",
+      "result": "PASS"
+    },
+    {
+      "name": "real authenticated pretty administrative bytes parse unchanged",
+      "result": "PASS"
+    },
+    {
+      "name": "duplicate administrative key rejected",
+      "result": "PASS"
+    },
+    {
+      "name": "quoted whitespace and escaped quotes are preserved",
+      "result": "PASS"
+    },
+    {
+      "name": "unsafe numeric normalization rejected",
+      "result": "PASS"
+    }
+  ],
+  "passed": 25,
+  "network_calls": 0,
+  "sql_calls": 0,
+  "real_approval_created": false,
+  "real_acceptance_created": false
+}

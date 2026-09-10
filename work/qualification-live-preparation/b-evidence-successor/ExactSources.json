@@ -1,0 +1,17 @@
+{
+  "state": "ACTUAL_RESTORATION_REPORT_RECEIVED_EXACT_BYTES_BOUND",
+  "compatibility": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/DedicatedIntentResponseDatabaseCompatibilityIndependentAcceptance.json",
+    "sha256": "e433f421b768c548d992cb490a5b5f266c133006b2aecaa9386899d6d1b9f0d6"
+  },
+  "installation": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/DedicatedIntentResponseIndependentLiveVerification.json",
+    "sha256": "400d614e804b899ea8617b7309933ced517db08f457d55653259f31e0329bfae"
+  },
+  "restoration": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/RestoredRuntimeWithIntentResponseCompatibilityIndependentVerification.json",
+    "sha256": "0e6ff1f1ca9ed8a5801479ed99e3ff5a1f3902bf1197d7b053cb8336d3d56a81",
+    "expected_state": "ACCEPTED_EXACT_RESTORED_RUNTIME_WITH_DEDICATED_INTENT_RESPONSE_COMPATIBILITY"
+  },
+  "authority_effect": "NONE"
+}

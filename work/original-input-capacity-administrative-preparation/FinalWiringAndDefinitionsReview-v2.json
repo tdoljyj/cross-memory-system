@@ -1,0 +1,121 @@
+{
+  "state": "ACCEPTED_FOR_EXACT_USER_CAPACITY_PROPOSAL_REVIEW_NOT_RUNTIME_ADMISSION",
+  "reviewer": "/root/project_list_auth_fix",
+  "supersedes": {
+    "ref": {
+      "path": "original-input-capacity-administrative-preparation/FinalWiringAndDefinitionsReview.json",
+      "sha256": "771ae9634e90eb15850f41c7302f9a661246936642740ad7c88afa7137be236a",
+      "bytes": 5967
+    },
+    "reason": "Previous review missed component-readback old controller pin and the transformed staged decoder legacy V2 actual_entry. Its final acceptance must not be reused. Both are corrected in this exact final source/definitions set."
+  },
+  "controller_manifest_sha256": "07e0be02895363bac5ced923924f27b8de1f7951d8eea2c829831afef9bb27aa",
+  "source_preparation": {
+    "path": "original-input-capacity-source-integration-v2/SourcePreparation.json",
+    "sha256": "53960a61cb797f6dff9b695d73b1d0cc106b586789a02b3eb3716f6efdc726d0",
+    "bytes": 18080
+  },
+  "source_review_reuse": {
+    "original_closure": {
+      "path": "original-input-capacity-source-integration/IndependentControllerIntegrationReview.json",
+      "sha256": "b84b0cb422fcd64a606131d5ce9056e4c41a446e97a683a33f4f01cbb1476d2e",
+      "bytes": 3351
+    },
+    "boundary": "Only original 314/127/187/128 closure and17role/297history proof reused; omitted decoder semantic conclusion is superseded by final staged review.",
+    "final_staged_decoder_review": {
+      "path": "original-input-capacity-source-integration-v2/IndependentFinalDecoderDeltaReview.json",
+      "sha256": "0ba9f599b5a30c6fe6cdfd9b2dc972960cdebcc48ae123b3258bb1426046de7c",
+      "bytes": 3082
+    }
+  },
+  "external_bindings": {
+    "path": "original-input-capacity-successor-preparation/ExternalSourceBindings.json",
+    "sha256": "549488b7b4054bf4be473e7dd933235c0655ea8333ff319cc46f4c0d8d4609bf",
+    "bytes": 7206
+  },
+  "actual_inputs": {
+    "path": "original-input-capacity-definition-preparation/ActualSourceInputs-v2.json",
+    "sha256": "3865391703c73cf934cbdf8e7b364189620fee257dbc9e3dc3e96269510eaa4b",
+    "bytes": 6870
+  },
+  "definition_preparation": {
+    "path": "original-input-capacity-definition-preparation/definitions-candidate-v2/Preparation.json",
+    "sha256": "f12ec43da2e5ea29c3637cfeabd394a50edefdf9f322961ee4a2076fa6e31853",
+    "bytes": 247811
+  },
+  "definition_generator": {
+    "path": "original-input-capacity-definition-preparation/prepare-capacity-definitions.mjs",
+    "sha256": "51d68c01b931cb2cba9414e323575f0811e040a80c587926931a1586f979e881",
+    "bytes": 16093
+  },
+  "final_actual_files": [
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/original-input-capacity-successor/preentry-skill-qualification.json",
+      "sha256": "3587c4c13a345844eaaf1d595c52ebdd35d8642c42931f4364e2eafc2136699e",
+      "bytes": 125340
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/original-input-capacity-successor/GateDefinitionCandidate.json",
+      "sha256": "29c7ddab827be6dd3491bb06e1b08c49321c04b749698bea985f161d9b056a6f",
+      "bytes": 13063
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/original-input-capacity-successor/RegistrySuccessorCandidate.json",
+      "sha256": "76e61082363c5aba65ae925218871ad83de855f486219e7062bd8a7719e6ea85",
+      "bytes": 2281
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/original-input-capacity-successor/ScopedRiskManifest.json",
+      "sha256": "1be61fadd55735095e19d93a6adefd9436eff3a4c07795bf09d758d470e7ca2e",
+      "bytes": 9252
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/original-input-capacity-successor/HostRuntimeConfig.json",
+      "sha256": "e5990666c020373b2decc487b0f918982fd554e34e6fb6321cbd0b7e738f5a08",
+      "bytes": 19429
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/original-input-capacity-successor/EvidenceSinkDefinition.json",
+      "sha256": "1fbb78b64f10d9756ddc07c365f87e9f4255a09e53846ef1d7dc643f9f1e9f7b",
+      "bytes": 9418
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/original-input-capacity-successor/ExecutionScopeDefinition.json",
+      "sha256": "728218c85553b1abaac2b6884d9cb675bea6f4dec3b20196de121a762f9f742b",
+      "bytes": 32727
+    },
+    {
+      "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/original-input-capacity-successor/ControlBindingDefinition.json",
+      "sha256": "105f7a29cead50e41120731bb7c5f512c84e2ee3225f36ff0f7eead6125b443b",
+      "bytes": 2315
+    }
+  ],
+  "checks": [
+    "26 current external source hashes and byte lengths match actual files",
+    "17 actual staged successor source hashes and bytes match exact07e0manifest; old187dependencies not re-executed",
+    "Eight actual final definition files match serialized Preparation.objects and SHA/length descriptors",
+    "19tests restore only version/executor-source references and deep-equal original test bodies/setup",
+    "Scope read/write/actor/credential/stages/business/history/budgets/next_window unchanged; Host resources/image/mount/environment/stop policy unchanged",
+    "Host outer8/measurement14/STOP2 deep-equal final549488 binding sets; Scope and ControlBinding typed refs deep-equal actual final Host/Scope/Evidence descriptors",
+    "Coordinator and component-readback both reference exact07e0controller with no old6c9 predicate; dependencies pin corrected source bytes",
+    "Final staged decoder legacy V2 actual_entry and new V3 actual_entry are distinct; a03 original seven decoder checks executed against final staged bytes PASS",
+    "Evidence exactN3000000/newkind, genuine capacity approval/applicability required; Root2097152/frame4194304/controls-index131072/ref128 caps preserved",
+    "Prewarm immutable Owner/blob cache does not substitute actual core runtime/signature/15-second SQL checks"
+  ],
+  "blocking_findings": [],
+  "review_scope": "Concentrated new wiring and definition delta only. No claim all future runtime/Q/Status/admin/publication bytes exist. No actual execution or full future transport fit is inferred from numerical baseline.",
+  "proposal_scope": "User may review an exact N=3000000 exception and controlled successor preparation/publication/ordinary independent review/real chain closure. Root3, original expiry, total3/remaining2, fee caps, firstPASS stop and all other original boundaries remain. Genuine supplemental approval is still required.",
+  "remaining_execution_gates": [
+    "Actual supplemental user approval and independent Owner administrative applicability",
+    "Actual source and full static qualification/runtime/Status signatures and publication",
+    "Exact forward full rows/catalog CAS acceptance and real readback",
+    "Full exact final static/history/publisher/frame size proof before budget; repeat after each real terminal history"
+  ],
+  "actual_capacity_approval_created": false,
+  "future_Q_or_runtime_claimed": false,
+  "immediate_budget_authority": false,
+  "network": false,
+  "SQL": false,
+  "GA": false,
+  "authority_effect": "NONE"
+}
