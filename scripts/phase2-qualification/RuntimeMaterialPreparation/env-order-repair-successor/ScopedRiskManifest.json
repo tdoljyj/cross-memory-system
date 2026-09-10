@@ -1,0 +1,171 @@
+{
+  "definition_state": "PREPARED_FOR_INDEPENDENT_SCOPE_ACCEPTANCE",
+  "authority_effect": "NONE",
+  "kind": "PREENTRY_FIXED_SYNTHETIC_RUNTIME_RISK_MANIFEST",
+  "release_or_production_activation": false,
+  "subject_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/2b5a89d354aae493ed4cd3fd89ee270e81207dd3",
+    "sha256": "f359a4ecc92ffeec93f3fac36949cfe1669bf017dd7cf4760220a2c3f9e8da1f"
+  },
+  "risks": [
+    {
+      "finding": "Late or lost command response",
+      "control": "Durable committed Intent, once-only dispatch, UNKNOWN retains reservation and no automatic retry"
+    },
+    {
+      "finding": "Parent process exits while child remains",
+      "control": "Independently observed timed guard STOP with exact same-ID final inspect; no immediate crash detection claim"
+    },
+    {
+      "finding": "Stale authority or changed executable",
+      "control": "Live signed Root/current generations and exact source closure before admitted effect"
+    },
+    {
+      "finding": "Child escapes data/credential scope",
+      "control": "Fixed nonroot read-only Linux container, network none, exact two mounts, no child credentials, fixed synthetic fixture only"
+    },
+    {
+      "finding": "Receipt reports nonexistent coverage",
+      "control": "Actual raw per-test evidence and oracle resolution; complete coverage required, no PASS from planned test IDs"
+    },
+    {
+      "finding": "Complete control history exceeds the former inline evidence envelope or terminal input consumption exceeds freshness",
+      "control": "Explicit successor: the complete uncompressed five-field original input is capped at 2097152 bytes for BLOB_V2_2MIB. Legacy BLOB_V1 and DEFLATE remain capped at 1048576 bytes. Single private immutable Git blob preserves all original bytes and history. Pipe JSON payload is bounded by 4194304 bytes plus one LF; publisher full JSON request and response including LF are each bounded by 4194304 bytes. Root verifier strict JSON remains 2097152 bytes. Fixed pipe input transmits original bytes with length/SHA and ordered notices. Actual 15-second currentness remains unchanged; failed transport retains UNKNOWN without dispatch or refund."
+    },
+    {
+      "finding": "Parallel immutable-source worker lifecycle is supervised by the Windows Job owner, not the upstream verifier Node process",
+      "control": "At most four readonly GitHub blob reads; original byte and deadline bounds; unnamed non-inheritable kill-on-close Job assigned at suspended process creation and checked before resume. Owner exit/timeout kills worker subtree. Upstream Node death alone does not promise immediate owner termination; existing bounded worker/read deadlines remain."
+    }
+  ],
+  "residuals": [
+    "Actual controller admission and signature/receipt wiring still require independent acceptance and execution",
+    "This manifest is an explicit proposed scoped encoding, not an existing production ReleaseRiskManifest instance"
+  ],
+  "recovery_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/43835f9dcc2e6b29236ba3fb5935cb7f182c4e11",
+    "sha256": "cc67aeb4a35c998bb103c62be52dd00c6507bccba4c374af4bee6d27b412263a"
+  },
+  "credential_scope_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/ba367aecfacebdb7cefcbafea979bade712f6fef",
+    "sha256": "905dbb512b2ed9605da90ee90ff78db190e1560204a2e8d84621ee621c9e834d"
+  },
+  "predecessor": {
+    "path": "work/qualification-live-preparation/frame-limit-successor/definitions-final/ScopedRiskManifest.json",
+    "sha256": "cd59a99075a19c84920b7418c001042fe3e22e8a2c2d07dbc6f3c2671fbd4f4e",
+    "bytes": 6881
+  },
+  "evidence_limit_successor": {
+    "blob_kind": "EXACT_ORIGINAL_VERIFIER_INPUTS_BLOB_V2_2MIB",
+    "maximum_original_bytes": 2097152,
+    "legacy_maximum_original_bytes": 1048576,
+    "maximum_pipe_json_bytes": 4194304,
+    "maximum_pipe_json_bytes_including_lf": 4194305,
+    "maximum_publisher_request_json_bytes_including_lf": 4194304,
+    "maximum_publisher_response_json_bytes_including_lf": 4194304,
+    "unchanged_root_strict_json_bytes": 2097152,
+    "maximum_sql_transition_bytes": 131072,
+    "maximum_blob_envelope_bytes": 4096,
+    "basis": {
+      "path": "work/TwoFourMiBEvidenceSuccessorNumericBoundary.json",
+      "sha256": "b33e1dd37885c43cd82f158d1e24042dee9dd376450489c30aa13948e452f44c",
+      "bytes": 3915
+    },
+    "predecessors": [
+      {
+        "path": "work/qualification-live-preparation/parallel-source-successor/PreparationEvidence.json",
+        "sha256": "a49e95a32ca77261a4d55233994f140d75a6995b26ac8e909d46f8258423068f",
+        "bytes": 7266
+      },
+      {
+        "path": "work/qualification-live-preparation/parallel-source-successor/definitions-e1224cad-v2/HostRuntimeConfig.json",
+        "sha256": "b217cac353c1e5a44ec3e0cc14a3eb096750fcb46e46abedcfbcac8746761455",
+        "bytes": 12268
+      },
+      {
+        "path": "work/qualification-live-preparation/parallel-source-successor/definitions-e1224cad-v2/ExecutionScopeDefinition.json",
+        "sha256": "a59e0fc9ff3f26585053297d7418bfa2cc0d4547cee2e1a69aef293d8f5dda0b",
+        "bytes": 24929
+      },
+      {
+        "path": "work/qualification-live-preparation/parallel-source-successor/definitions-e1224cad-v2/EvidenceSinkDefinition.json",
+        "sha256": "35d423dfe03afa2b442d53e8c881439705783110504f680adf740a1a8f37da83",
+        "bytes": 5599
+      },
+      {
+        "path": "work/qualification-live-preparation/parallel-source-successor/definitions-e1224cad-v2/ScopedRiskManifest.json",
+        "sha256": "ded98ee5d425a80d0e295b18b4165c45a8cf51a34ebbaafc4812aaa28f8b0e86",
+        "bytes": 3426
+      }
+    ],
+    "supersedes": "Only the original-input BLOB logical 1MiB and pipe payload 2MiB implementation bounds; no claim these limits are unchanged.",
+    "actual_input_requirement": "Before any actual new budget allocation, encode the final actual metadata, retained complete history and both pipe messages; reject any cap overflow. Preparation projections are not a bound on arbitrary future history.",
+    "aggregate_seconds_max": 7200,
+    "aggregate_evidence_bytes_max": 1073741824,
+    "per_allocation_seconds": 600,
+    "per_allocation_evidence_bytes": 134217728
+  },
+  "frame_limit_successor": {
+    "previous_consumer_line_bytes": 2097152,
+    "maximum_consumer_line_bytes": 4194304,
+    "maximum_pipe_json_bytes_including_lf": 4194305,
+    "unchanged_payload_bytes": 2097152,
+    "unchanged_sql_bytes": 131072,
+    "basis": {
+      "path": "work/NextParallelSeq25SizeConsumerLimitCorrection.md",
+      "sha256": "8e418643ccded10bbd6ce401b0d5c426a48a262ea99f9d28a163c122dfa63d91",
+      "bytes": 1169
+    },
+    "meaning": "Only next() transport-line bound changes; parsed nested payload validators remain unchanged. Not a formal run result."
+  },
+  "next_window_successor": {
+    "approval": {
+      "path": "work/ordinary-bounded-approved-execution/ExplicitUserApproval.json",
+      "bytes": 1432,
+      "sha256": "fe114f0860dc69a52cd448ae697e8d8692fe39e51d84ab8bb60edfe01ace97fe"
+    },
+    "not_before": "2026-09-09T23:44:11Z",
+    "expires_at": "2026-09-10T10:13:16Z",
+    "new_gate_authorizations_max": 3,
+    "aggregate_seconds_max": 7200,
+    "aggregate_evidence_bytes_max": 1530506163,
+    "per_allocation_seconds": 600,
+    "per_allocation_evidence_bytes": 134217728,
+    "paid_budget": 0,
+    "model_budget": 0,
+    "no_refund": true,
+    "no_automatic_retry": true,
+    "old_root2_and_previous_issuer_acceptances_are_historical": true,
+    "requires_actual_existing_Root3_and_exact_bounded_forward": true,
+    "previous_aggregate_evidence_bytes_max": 1127852979,
+    "additional_evidence_bytes": 402653184,
+    "meaning": "Actual ea969 bounded continuation: at most three 600-second/128MiB attempts; first PASS stops; no expiry extension, new Root, refund, automatic retry, model or production action."
+  },
+  "public_runtime_environment_successor": {
+    "fixture": {
+      "path": "scripts/phase2-qualification/control-context-verifier-public-runtime-env-diagnostic-successor/fixed_skill_fixture.py",
+      "sha256": "0217a6370c3d3756db3ac269da36d1e6f5d8dff2cf8d580c92e88ed0ef9708cb",
+      "bytes": 5907
+    },
+    "scope": "Exactly seven fixed public values and fixed hostname; no inherited secret, model or production data.",
+    "runtime_execution_evidence": false
+  },
+  "original_input_capacity_successor": {
+    "state": "OFFLINE_CANDIDATE_REQUIRES_NEW_CAPACITY_APPROVAL_AND_INDEPENDENT_APPLICABILITY",
+    "kind": "EXACT_ORIGINAL_VERIFIER_INPUTS_BLOB_V3_3000000",
+    "maximum_original_bytes": 3000000,
+    "legacy_transports": {
+      "EXACT_ORIGINAL_VERIFIER_INPUTS_DEFLATE_V1": 1048576,
+      "EXACT_ORIGINAL_VERIFIER_INPUTS_BLOB_V1": 1048576,
+      "EXACT_ORIGINAL_VERIFIER_INPUTS_BLOB_V2_2MIB": 2097152
+    },
+    "root_strict_json_bytes_unchanged": 2097152,
+    "pipe_json_bytes_unchanged": 4194304,
+    "publisher_json_bytes_unchanged": 4194304,
+    "sql_index_transition_bytes_unchanged": 131072,
+    "source_refs_max_unchanged": 128,
+    "requires_actual_capacity_approval": true,
+    "requires_actual_capacity_applicability": true,
+    "new_authority": false,
+    "history_truncation": false
+  }
+}
