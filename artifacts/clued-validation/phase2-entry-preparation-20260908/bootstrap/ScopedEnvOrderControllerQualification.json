@@ -8,7 +8,7 @@
   "environment": "ISOLATED_TEST",
   "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
   "root_generation": "ctrgen_2e778ca66244459f974b081edca8c04e",
-  "not_before": "2026-09-10T09:26:52.628Z",
+  "not_before": "2026-09-10T09:35:04.564Z",
   "expires_at": "2026-09-10T10:13:16Z",
   "independent_of_tested_skill": true,
   "forbidden_stage_dependencies_excluded": true,
@@ -590,17 +590,17 @@
     "content_digest": "3487d9fc6ccee5478569021961eac93bf5ef6bd4bc2428559b20a44abb9c155a"
   },
   "accepted_host_scope": {
-    "path": "work/env-order-repair-approved-execution/accepted-reviews/EnvHostScopeIndependentAcceptance.json",
-    "sha256": "6edb6dc3d49f620aa0f9f4d67d448e7074107cfe41e111b0fa295017bf515df1",
-    "bytes": 7830
+    "path": "work/env-order-repair-approved-execution/accepted-reviews-corrected/EnvHostScopeIndependentAcceptance.json",
+    "sha256": "96aac502106c74bf64bcc441f89fed7f3e913c7bb0b940d7e200e1c4255e8066",
+    "bytes": 7838
   },
   "profile_ref": {
     "profile_id": "DP-PREENTRY-SKILL-QUALIFICATION",
     "definition_version": "fixed-synthetic-skill-input-20260908.v3-runtime600",
     "content_digest": "d1c060b85f0b842a397a478105ea57a208e62eb0a5a2d4c2cd8f93f63eae88f5",
     "accepted_ref": {
-      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/bb191145cf2a1294903a7393709b42c84cc9711d",
-      "sha256": "6a6c99a7a2107d057d274b730fa8555a0ae47b308b28111a5deb65213404f97e"
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/ce9d8147d674615d44d3043bc1011f1f37b25e6f",
+      "sha256": "1fb351efd4db6925ddbd78599785c3e1034675fadc422358755a5cefb93926fa"
     }
   },
   "required_stages": [
@@ -715,11 +715,11 @@
     "bytes": 38546
   },
   "successor_delta": "Exact Env-order set-comparison repair; no profile, stage, purpose, environment, root generation, or execution-window expansion.",
-  "accepted_at": "2026-09-10T09:26:52.628Z",
+  "accepted_at": "2026-09-10T09:35:04.564Z",
   "historical_component_applicability": {
-    "path": "work/env-order-repair-approved-execution/accepted-reviews/EnvHistoricalComponentApplicability.json",
-    "sha256": "51f04a4cae70e3302689874f016374e2a524dc35b12372412d10b1fc4c7a24c2",
-    "bytes": 26858
+    "path": "work/env-order-repair-approved-execution/accepted-reviews-corrected/EnvHistoricalComponentApplicability.json",
+    "sha256": "02b231f0aa7fb4360261dd32c0e97da0460ccb3e87e7d618b8e207c13db07dcb",
+    "bytes": 26866
   },
   "authority_effect": "NONE"
 }

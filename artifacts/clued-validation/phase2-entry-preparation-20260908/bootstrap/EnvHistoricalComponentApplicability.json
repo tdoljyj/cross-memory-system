@@ -487,12 +487,12 @@
     "Fresh final runtime/Status/collector and independent complete oracle assessment before any PASS.",
     "Actual capacity approval/repair Owner bytes, role-bound Evidence V3 N3000000, same Root/expiry/remaining2; exact sixth forward and complete real prebudget input/frame/publication sizes before allocation."
   ],
-  "accepted_at": "2026-09-10T09:26:52.628Z",
-  "reviewed_at": "2026-09-10T09:26:52.628Z",
+  "accepted_at": "2026-09-10T09:35:04.564Z",
+  "reviewed_at": "2026-09-10T09:35:04.564Z",
   "actual_terminal_basis": {
-    "path": "work/env-order-repair-approved-execution/runtime-preparation/ActualTerminalBasis.20260910.json",
-    "sha256": "a463b3c14d0a89f6fd37d943176fac076e678abc3749aa6bf824bf5ae24f12d5",
-    "bytes": 2160328
+    "path": "work/env-order-repair-approved-execution/runtime-preparation/ActualTerminalBasis.20260910.correct.json",
+    "sha256": "8558e56da6984d9119936a86b353b86d235765ed8bfc0da55526f6cd0bee27fe",
+    "bytes": 2174654
   },
   "terminal_sequence": 57,
   "terminal_attempts": 8

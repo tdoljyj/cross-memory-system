@@ -1,7 +1,7 @@
 {
   "state": "ACCEPTED_EXACT_SOURCE_SUCCESSOR_FOR_PUBLICATION_NOT_RUNTIME_QUALIFICATION",
   "independent_reviewer": "/root/project_list_auth_fix",
-  "reviewed_at": "2026-09-10T09:26:52.628Z",
+  "reviewed_at": "2026-09-10T09:35:04.564Z",
   "manifest": {
     "path": "scripts/phase2-qualification/control-context-verifier-actual-env-order-repair-successor/ControllerSourceManifest.candidate.json",
     "sha256": "27ede0fc0ff6afc4d5abf2f5c9f256fe22776165746dddc19aa2693c47bbc97c",
