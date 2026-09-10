@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "state": "ACCEPTED_EXACT_ROOT5_STATUS_APPEND_SCHEMA_SUCCESSOR_APPLIED",
+  "review_basis": "ATOMIC_SINGLE_FUNCTION_PREIMAGE_POSTIMAGE_GUARDS_AND_EXACT_ROOT5_RUNTIME_READBACK",
+  "source": {
+    "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/root5-final/Root5StatusAppendSchemaBinding.sql",
+    "sha256": "e3b9c32c1ac674e1617c07cf311535bf291a6b8b4183120c05455ffc3f3be519",
+    "bytes": 6349,
+    "blob_sha": "bb18dcacc58e20a877d1352b7d79c40e97b89ba5"
+  },
+  "changes": {
+    "append_status_manifest": [
+      "new-object schema digest advanced to the published Root5 Status schema",
+      "immutable historical duplicate schema digests retained"
+    ]
+  },
+  "installed_prosrc_sha256": {
+    "append_status_manifest": "94a444b9174251e8f655ea3a04e160898464caf1f94977cbce1590aff726c615",
+    "reserve_execution_budget": "3e6fafdab3f7765d3e1c3d98573096c7bdf900e09e34b20eb603bbf354518476",
+    "reserve_gate": "cd9b1e3753c59b2c8dadefecd17beb5e6ebc56ddf604f1eab42052f55607f5d7"
+  },
+  "preserved_state": {
+    "execution_sequence": 61,
+    "charged_seconds": 6906,
+    "charged_evidence_bytes": 1530506163,
+    "active_execution_id": null,
+    "pending_gate_attempt_id": null,
+    "gate_attempts": 9,
+    "execution_events": 61
+  },
+  "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+  "root_generation": "ctrgen_e5df432221344996afc04b5638121d96",
+  "expires_at": "2026-09-11T10:21:05Z",
+  "pre_and_post_definition_guards": true,
+  "transactional": true,
+  "applied": true,
+  "authority_effect": "ROOT5_RUNTIME_VALIDATION_ONLY_NO_BUDGET_NO_GA_NO_ENTRY_NO_PRODUCTION"
+}
