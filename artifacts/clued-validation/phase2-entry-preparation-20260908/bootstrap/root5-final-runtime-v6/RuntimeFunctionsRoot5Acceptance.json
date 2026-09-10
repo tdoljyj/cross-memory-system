@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "state": "ACCEPTED_EXACT_STATUS12_SEQUENCE64_RUNTIME_REPAIR_NOT_YET_APPLIED",
+  "review_basis": "ATOMIC_TWO_FUNCTION_PREIMAGE_POSTIMAGE_GUARDS_WITH_ZERO_ROW_MUTATION",
+  "source": {
+    "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/root5-final/Status12Sequence64RuntimeRepair.sql",
+    "sha256": "d47fe2fcfcfa42736cbfb97f3baddddacc6019ee23dd89debcd97143266208e4",
+    "bytes": 33310,
+    "blob_sha": "918ce509ebe650cae0c1d384b026f356bc2cbc2d"
+  },
+  "changes": {
+    "reserve_execution_budget": [
+      "accept exactly five post-baseline binding forwards",
+      "classify Root5 budget sequences from 64"
+    ],
+    "reserve_gate": [
+      "accept exactly five post-baseline binding forwards",
+      "classify Root5 budget and receipt sequences from 64"
+    ]
+  },
+  "installed_prosrc_sha256": {
+    "append_status_manifest": "94a444b9174251e8f655ea3a04e160898464caf1f94977cbce1590aff726c615",
+    "reserve_execution_budget": "019eb5532139282e5996533badbc4672f0b4db2b8e7d7cf51d96e4d758b45dce",
+    "reserve_gate": "4034098921310bc47ece30bda459ab5612b26f40f4f8457598d78b0ed14e8fdb"
+  },
+  "preserved_state": {
+    "execution_sequence": 63,
+    "charged_seconds": 6906,
+    "charged_evidence_bytes": 1530506163,
+    "active_execution_id": null,
+    "pending_gate_attempt_id": null,
+    "gate_attempts": 9,
+    "execution_events": 63,
+    "control_objects": 12
+  },
+  "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+  "root_generation": "ctrgen_e5df432221344996afc04b5638121d96",
+  "expires_at": "2026-09-11T10:21:05Z",
+  "pre_and_post_definition_guards": true,
+  "transactional": true,
+  "applied": false,
+  "authority_effect": "ROOT5_RUNTIME_VALIDATION_ONLY_NO_BUDGET_NO_GA_NO_ENTRY_NO_PRODUCTION"
+}
