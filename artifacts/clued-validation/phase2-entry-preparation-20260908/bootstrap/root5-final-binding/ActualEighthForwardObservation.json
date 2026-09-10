@@ -1,0 +1,42 @@
+{
+  "query": "with r as materialized (select jsonb_build_object('accepted_binding',(select coalesce(jsonb_agg(to_jsonb(x) order by to_jsonb(x)::text),'[]'::jsonb) from clued_control.accepted_binding x),'control_objects',(select coalesce(jsonb_agg(to_jsonb(x) order by to_jsonb(x)::text),'[]'::jsonb) from clued_control.control_objects x),'current_head',(select coalesce(jsonb_agg(to_jsonb(x) order by to_jsonb(x)::text),'[]'::jsonb) from clued_control.current_head x),'events',(select coalesce(jsonb_agg(to_jsonb(x) order by to_jsonb(x)::text),'[]'::jsonb) from clued_control.events x),'execution_binding',(select coalesce(jsonb_agg(to_jsonb(x) order by to_jsonb(x)::text),'[]'::jsonb) from clued_control.execution_binding x),'execution_current',(select coalesce(jsonb_agg(to_jsonb(x) order by to_jsonb(x)::text),'[]'::jsonb) from clued_control.execution_current x),'execution_events',(select coalesce(jsonb_agg(to_jsonb(x) order by to_jsonb(x)::text),'[]'::jsonb) from clued_control.execution_events x),'gate_attempts',(select coalesce(jsonb_agg(to_jsonb(x) order by to_jsonb(x)::text),'[]'::jsonb) from clued_control.gate_attempts x)) as rows_now), k as materialized (select jsonb_build_object(\n 'functions',(select jsonb_agg(case when p.oid=any(array['clued_control.effective_execution_binding()'::regprocedure]) then to_jsonb(p)-'prosrc' else to_jsonb(p) end order by p.oid) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='clued_control'),\n 'constraints',(select jsonb_agg(to_jsonb(c) order by c.oid) from pg_constraint c join pg_namespace n on n.oid=c.connamespace where n.nspname='clued_control'),\n 'tables_indexes',(select jsonb_agg(to_jsonb(c) order by c.oid) from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='clued_control'),\n 'columns',(select jsonb_agg(to_jsonb(a) order by a.attrelid,a.attnum) from pg_attribute a join pg_class c on c.oid=a.attrelid join pg_namespace n on n.oid=c.relnamespace where n.nspname='clued_control'),\n 'triggers',(select jsonb_agg(to_jsonb(tg) order by tg.oid) from pg_trigger tg join pg_class c on c.oid=tg.tgrelid join pg_namespace n on n.oid=c.relnamespace where n.nspname='clued_control')\n ) as catalog_now)\nselect statement_timestamp() as observed_at,current_setting('TimeZone') as server_timezone,current_database() as database_name,(select project_ref from clued_control.accepted_binding where root_id=c.root_id) as accepted_project_ref,\n encode(sha256(convert_to(r.rows_now::text,'UTF8')),'hex') as rows_sha256,encode(sha256(convert_to(k.catalog_now::text,'UTF8')),'hex') as catalog_sha256,\n to_jsonb(c) as execution_current,(select to_jsonb(b) from clued_control.effective_execution_binding() b) as previous_binding,\n encode(sha256(convert_to(pg_get_functiondef('clued_control.effective_execution_binding()'::regprocedure),'UTF8')),'hex') as previous_getter_definition_sha256,\n encode(sha256(convert_to(p.prosrc,'UTF8')),'hex') as previous_getter_prosrc_sha256,\n (select count(*) from clued_control.execution_events e where e.root_id=c.root_id and e.request->>'operation'='EXECUTION_BINDING_FORWARD_ACCEPTED') as existing_forwards\nfrom r cross join k cross join clued_control.execution_current c cross join pg_proc p\nwhere c.root_id='ctr_414bd3c724264a83894b0c55cf2ab878' and p.oid='clued_control.effective_execution_binding()'::regprocedure\nand current_setting('transaction_read_only')='on' and current_setting('transaction_isolation') in ('repeatable read','serializable');\n",
+  "observation_ref": {
+    "path": "work/env-order-repair-approved-execution/eighth-forward-20260910/ActualEighthForwardObservation.json",
+    "sha256": "3b1ce8d472b2b9837242e627369cd594f70e34665888b329edb11a038bf9d96e"
+  },
+  "row": {
+    "observed_at": "2026-09-10 15:10:51.258457+00",
+    "server_timezone": "UTC",
+    "database_name": "postgres",
+    "accepted_project_ref": "uscrdifznmlvczcekqpw",
+    "rows_sha256": "274be6dbcf0c7da2d1495523de4274c4183c120c7904f6e82af5a8a4fe2a4f9e",
+    "catalog_sha256": "512ea958bf562b7b040a986367585cdcb0ebea5436baf0c50f369bf67ca0d42c",
+    "execution_current": {
+      "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+      "sequence": 61,
+      "active_ga_id": null,
+      "charged_seconds": 6906,
+      "runner_generation": "runnergen_a256855fec9441839105c69b746c5244",
+      "session_generation": "sessiongen_ffb02a907d334b0da0b37bf457a758c2",
+      "credential_generation": "credgen_bac92a11e7144a3fb9e67f40a6a07d11",
+      "charged_evidence_bytes": 1530506163,
+      "pending_budget_sequence": null
+    },
+    "previous_binding": {
+      "gate_id": "G-PREENTRY-SKILL-QUALIFICATION",
+      "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+      "gate_sha256": "3487d9fc6ccee5478569021961eac93bf5ef6bd4bc2428559b20a44abb9c155a",
+      "gate_version": "fixed-synthetic-20260910.v10-env-order-repair",
+      "scope_sha256": "115408c69dcb2fa606fb0de34ec86c5239487d0cfa9a73abb267664a2482abe5",
+      "prior_seconds": 1506,
+      "profile_sha256": "d1c060b85f0b842a397a478105ea57a208e62eb0a5a2d4c2cd8f93f63eae88f5",
+      "controller_sha256": "27ede0fc0ff6afc4d5abf2f5c9f256fe22776165746dddc19aa2693c47bbc97c",
+      "prior_evidence_bytes": 322546611,
+      "qualification_sha256": "820e4ccc3dd05c741a27e4da0c6adf2c825c05efe03735aabd1b18139b0d36c0",
+      "runtime_acceptance_sha256": "11405b6d2f1bced9cf1094f64b01186e4ce0ca106d019e46ab05b78df0602ad6"
+    },
+    "previous_getter_definition_sha256": "8c0f3df06aa96233998c5e83501591ce9c2a1d41d6fccb38b5b29057b51ccdc6",
+    "previous_getter_prosrc_sha256": "33103f86a19fd92956ca67670efbe7b277fcbef97416e2a6ec77f16a773efa20",
+    "existing_forwards": 7
+  }
+}

@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "state": "ACCEPTED_EXACT_ROOT5_FINAL_EIGHTH_BINDING_FORWARD_NOT_APPLIED",
+  "independent_reviewer": "/root",
+  "decided_at_utc": "2026-09-10T15:13:10Z",
+  "root_set_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+  "root_generation": "ctrgen_e5df432221344996afc04b5638121d96",
+  "preimage": {
+    "sequence": 61,
+    "existing_forwards": 7,
+    "active_ga_id": null,
+    "pending_budget_sequence": null,
+    "charged_seconds": 6906,
+    "charged_evidence_bytes": 1530506163,
+    "rows_sha256": "274be6dbcf0c7da2d1495523de4274c4183c120c7904f6e82af5a8a4fe2a4f9e",
+    "catalog_sha256": "512ea958bf562b7b040a986367585cdcb0ebea5436baf0c50f369bf67ca0d42c",
+    "getter_prosrc_sha256": "33103f86a19fd92956ca67670efbe7b277fcbef97416e2a6ec77f16a773efa20"
+  },
+  "latest_status": {
+    "status_manifest_id": "sm_2b0eb18da8e44347aa3b56a83b96e84a",
+    "generation": 10,
+    "stored_sha256": "7d3c280069b2755d0e736dffca098558798cd1445fb797ac753b728fccb3613c",
+    "exact_bytes": 8884
+  },
+  "successor": {
+    "sequence": 62,
+    "idempotency_key": "root5-final-binding-20260910",
+    "getter_prosrc_sha256": "371f4fda14b81c993c494a5357c53363f0781653ea818199fd0ba56ffadc4560",
+    "binding": {
+      "controller_sha256": "3cd7d2958e23787fcd1dc3f627f0888a74f532c6c8e63add423803373499baf3",
+      "scope_sha256": "115408c69dcb2fa606fb0de34ec86c5239487d0cfa9a73abb267664a2482abe5",
+      "qualification_sha256": "5c4e05b03a62a2425b3e3ad4fc6872e6a6ccd06083a937863f81636f725f81b5",
+      "runtime_acceptance_sha256": "fea5b633591f2f7c8879fd09d71ea39a53b95473e0b33f18effedda365130863",
+      "gate_sha256": "3487d9fc6ccee5478569021961eac93bf5ef6bd4bc2428559b20a44abb9c155a",
+      "gate_version": "fixed-synthetic-20260910.v10-env-order-repair"
+    }
+  },
+  "reviewed_files": {
+    "transaction": {"path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/root5-final-binding/ActualEighthForward.sql", "sha256": "66a47fea8e56ad7d1c65dae98c090e44969f8a025dd60410dd5e21ac00df9236", "blob_sha": "e414df1a886841232a68f0728864e022a19e7926", "bytes": 64010},
+    "input": {"path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-binding/ActualEighthForwardInput.json", "sha256": "5e8c6b430ec9afb4bdb5efd0d1fd8e79227808c0b9fe5ed332367934de4379c5", "blob_sha": "98b745072626d9aa144ad1074c5f20418323fba4", "bytes": 434188},
+    "observation": {"path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-binding/ActualEighthForwardObservation.json", "sha256": "0a8c2178139c13e3b5773bc4f8c9a3127b0fa8aef71bb34f3f6f6afb6fbe7a8e", "blob_sha": "c5f332cdfd8392f92d3dd7c383decc065830c161", "bytes": 5650},
+    "preparation": {"path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-binding/ActualEighthForwardPreparation.json", "sha256": "95f3ecde922a21d6de901ec21213e50c1c167f263539dd9702b1ec6b230bb9d8", "blob_sha": "15ba629452691aeb45265d2a7b5d67b0873d1c58", "bytes": 5034},
+    "generator": {"path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/root5-final-binding/eighth-forward.candidate.mjs", "sha256": "4a37880da69156673157f05be37c0dfe238c2b9dc52e6b153092cb435746967b", "blob_sha": "fc928e6522cd7a511199b11e797ea9054698dc48", "bytes": 18239},
+    "getter_generator": {"path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/root5-final-binding/exact-getter-root5-final.candidate.mjs", "sha256": "2a7fb8f7607de1beb445fc29e1d10849598e668a9f51205af6abe5a42fce1a0d", "blob_sha": "6aaed3730e26b4381eecb5efdd371e662bd3c29f", "bytes": 5294}
+  },
+  "invariants": {
+    "exact_preimage_and_catalog_guarded": true,
+    "single_new_execution_event": true,
+    "single_sequence_cas": true,
+    "only_getter_function_replaced": true,
+    "all_other_rows_and_catalog_unchanged": true,
+    "status_already_stored": true,
+    "budget_unchanged": true,
+    "ga_created": false,
+    "entry_created": false,
+    "production": false,
+    "paid_models": false,
+    "refund_or_reuse": false,
+    "automatic_retry": false
+  },
+  "authority_effect": "BINDING_POINTER_FORWARD_ONLY_NO_BUDGET_NO_GA_NO_ENTRY_NO_PRODUCTION"
+}
