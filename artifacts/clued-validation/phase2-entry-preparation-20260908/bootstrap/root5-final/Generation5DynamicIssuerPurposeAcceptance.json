@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "state": "ACCEPTED_LIMITED_ISSUER_PURPOSE_METADATA",
+  "review_basis": "UNCHANGED_PREVIOUSLY_ACCEPTED_ISSUER_CONTRACT_PLUS_CURRENT_OWNER_SIGNED_WINDOW",
+  "root_set_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+  "control_trust_root_generation": "ctrgen_e5df432221344996afc04b5638121d96",
+  "subject_id": "tdoljyj",
+  "signing_service": "web-flow",
+  "accepted_audience": "urn:clued:audience:skill-coexistence-qualification:uscrdifznmlvczcekqpw",
+  "accepted_scope": {
+    "profile_id": "DP-PREENTRY-SKILL-QUALIFICATION",
+    "repository": "tdoljyj/cross-memory-system",
+    "environment": "ISOLATED_TEST",
+    "paid_budget": 0,
+    "project_ref": "uscrdifznmlvczcekqpw",
+    "model_budget": 0,
+    "new_gate_authorizations_max": 1,
+    "per_ga_maximum_seconds": 600,
+    "per_ga_reserved_evidence_bytes": 134217728,
+    "cumulative_controlled_execution_seconds": 7506,
+    "cumulative_evidence_bytes": 1664723891,
+    "no_refund": true,
+    "no_automatic_retry": true
+  },
+  "accepted_algorithm_config": {
+    "digest_algorithm": "SHA-256",
+    "accepted_config_ref": {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/b25abb05e00f72bb2ae910035ba9916a97c822dc",
+      "sha256": "988cdf823eb63806dc3385aa1840e812c1cb1df5ed06e72ca2adf56244b88d20"
+    },
+    "canonicalization_id": "SORTED_JSON_UTF8_NO_FLOATS_LF_V1_CANDIDATE",
+    "signature_verification": "GITHUB_API_VERIFIED_OWNER_MERGE",
+    "signed_payload_excluded_fields": [
+      "signature_binding"
+    ]
+  },
+  "authority_basis": {
+    "actual_owner_approval_sha256": "2583e78b8aa5bcdc28f8c545eb9cd98639e20ce28f5c3b10a485e7647c9b4403",
+    "actual_verified_owner_merge": "fff74543b2c4e87de49ee04634a8934b1b49b8e2"
+  },
+  "not_before": "2026-09-10T13:18:47Z",
+  "expires_at": "2026-09-11T10:21:05Z",
+  "root_review_subject_sha256_included": false,
+  "authority_effect": "NONE",
+  "accepted_issuer_purposes": [
+    {
+      "purpose": "GATE_AUTHORIZATION",
+      "audience": "urn:clued:audience:skill-coexistence-qualification:uscrdifznmlvczcekqpw",
+      "accepted": true
+    },
+    {
+      "purpose": "GATE_RESULT",
+      "audience": "urn:clued:audience:skill-coexistence-qualification:uscrdifznmlvczcekqpw",
+      "accepted": true
+    }
+  ]
+}
