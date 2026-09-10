@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "state": "ACCEPTED_EXACT_STATUS16_EVIDENCE_CAPACITY_CONSTRAINT_REPAIR_NOT_APPLIED",
+  "independent_reviewer": "/root",
+  "decided_at_utc": "2026-09-10T19:38:00Z",
+  "project_ref": "uscrdifznmlvczcekqpw",
+  "root_set_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+  "root_generation": "ctrgen_e5df432221344996afc04b5638121d96",
+  "cause": {
+    "status16_budget_limit_seconds": 7506,
+    "status16_budget_limit_evidence_bytes": 1664723891,
+    "installed_column_limit_evidence_bytes": 1530506163,
+    "rejected_budget_sha256": "ca65443b572f2c0fde2cb14e94b9aa9128207cf233c496510014fabdfab76fad",
+    "rejected_budget_idempotency_key": "budget600_0c03fae7d7e246c187bc33b4ddc7a97c",
+    "rejected_target_seconds": 7506,
+    "rejected_target_evidence_bytes": 1664723891,
+    "result": "CHECK_CONSTRAINT_REJECTION_AND_COMPLETE_TRANSACTION_ROLLBACK"
+  },
+  "preimage": {
+    "sequence": 67,
+    "charged_seconds": 6906,
+    "charged_evidence_bytes": 1530506163,
+    "active_ga_id": null,
+    "pending_budget_sequence": null,
+    "execution_event_count": 67,
+    "control_object_count": 16,
+    "gate_attempt_count": 9,
+    "constraint_definition": "CHECK (charged_evidence_bytes >= 19264968 AND charged_evidence_bytes <= 1530506163)",
+    "reserve_execution_budget_prosrc_sha256": "0a05aae01612b51f74b619ca9e1885f8a92be8f6f5f38f08543dea520cffc7d1",
+    "reserve_gate_prosrc_sha256": "27b474b24da7ed203142d7bbed093d72a7ef8a47a47d3b1e1bdf6ad2b5093c54"
+  },
+  "repair": {
+    "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/root5-final/Status16Sequence67EvidenceCapacityConstraintRepair.sql",
+    "sha256": "2a59cb19c1eaf6b1c0d1e063f61cd945ad406f10fd61937ee1faff4b12550984",
+    "blob_sha": "00f785d97c150fd3c7a38ed44f689b8b23ad5bfe",
+    "bytes": 3413,
+    "old_constraint_definition": "CHECK (charged_evidence_bytes >= 19264968 AND charged_evidence_bytes <= 1530506163)",
+    "new_constraint_definition": "CHECK (charged_evidence_bytes >= 19264968 AND charged_evidence_bytes <= 1664723891)"
+  },
+  "invariants": {
+    "exact_project_and_root_guarded": true,
+    "exact_sequence_and_charge_preimage_guarded": true,
+    "exact_status16_function_hashes_guarded": true,
+    "only_existing_constraint_upper_bound_changes": true,
+    "row_values_unchanged": true,
+    "event_count_unchanged": true,
+    "control_object_count_unchanged": true,
+    "gate_attempt_count_unchanged": true,
+    "budget_reserved": false,
+    "ga_created": false,
+    "entry_created": false,
+    "production": false,
+    "paid_models": false,
+    "refund_or_reuse": false,
+    "automatic_retry": false
+  },
+  "application": null,
+  "authority_effect": "CONSTRAINT_ALIGNMENT_CANDIDATE_ONLY_NO_BUDGET_NO_GA_NO_ENTRY_NO_PRODUCTION"
+}
