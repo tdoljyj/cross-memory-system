@@ -15,6 +15,7 @@ const line=await new Promise((resolve,reject)=>{
   const rl=readline.createInterface({input:process.stdin,crlfDelay:Infinity});
   rl.once('line',resolve);rl.once('error',reject);
 });
+const writeOptions=process.argv.includes('--replace')?undefined:{flag:'wx'};
 const envelope=process.argv.includes('--json')?JSON.parse(line):JSON.parse(Buffer.from(line,'base64').toString('utf8'));
 if(!envelope.row||typeof envelope.getter_definition_base64!=='string')throw Error('capture envelope required');
 const getterRaw=Buffer.from(envelope.getter_definition_base64.replace(/\s/g,''),'base64').toString('utf8');
@@ -35,9 +36,9 @@ const sourceMaterials={
 };
 const input={actual_preimage:observation,gate_definition_raw:eighth.gate_definition_raw,idempotency_key:'root5-v5-binding-20260911',previous_getter_definition_raw:getterRaw,source_materials:sourceMaterials};
 const candidate=buildForward(input);
-fs.writeFileSync(path.join(here,'ActualNinthForwardObservation.json'),encode(observation),{flag:'wx'});
-fs.writeFileSync(path.join(here,'ActualNinthForwardInput.json'),encode(input),{flag:'wx'});
-fs.writeFileSync(path.join(here,'ActualNinthForward.sql'),candidate.sql,{flag:'wx'});
+fs.writeFileSync(path.join(here,'ActualNinthForwardObservation.json'),encode(observation),writeOptions);
+fs.writeFileSync(path.join(here,'ActualNinthForwardInput.json'),encode(input),writeOptions);
+fs.writeFileSync(path.join(here,'ActualNinthForward.sql'),candidate.sql,writeOptions);
 const preparation={...candidate,sql:undefined,sql_path:'work/env-order-repair-approved-execution/ninth-forward-20260911/ActualNinthForward.sql',candidate_source_sha256:sha(fs.readFileSync(path.join(here,'ninth-forward.candidate.mjs'))),getter_source_sha256:sha(fs.readFileSync(path.join(here,'exact-getter-root5-final.candidate.mjs'))),input_sha256:sha(encode(input))};
-fs.writeFileSync(path.join(here,'ActualNinthForwardPreparation.json'),encode(preparation),{flag:'wx'});
+fs.writeFileSync(path.join(here,'ActualNinthForwardPreparation.json'),encode(preparation),writeOptions);
 console.log(JSON.stringify(preparation,null,2));

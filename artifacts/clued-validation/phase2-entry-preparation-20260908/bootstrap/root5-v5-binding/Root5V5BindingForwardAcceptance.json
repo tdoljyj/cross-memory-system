@@ -2,18 +2,18 @@
   "schema_version": 1,
   "state": "ACCEPTED_EXACT_ROOT5_V5_NINTH_BINDING_FORWARD_NOT_APPLIED",
   "independent_reviewer": "/root",
-  "decided_at_utc": "2026-09-10T16:44:35Z",
+  "decided_at_utc": "2026-09-10T16:55:30Z",
   "root_set_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
   "root_generation": "ctrgen_e5df432221344996afc04b5638121d96",
   "preimage": {
-    "observed_at_utc": "2026-09-10T16:43:10.404717Z",
+    "observed_at_utc": "2026-09-10T16:54:24.147752Z",
     "sequence": 62,
     "existing_forwards": 8,
     "active_ga_id": null,
     "pending_budget_sequence": null,
     "charged_seconds": 6906,
     "charged_evidence_bytes": 1530506163,
-    "rows_sha256": "9e4c138b97b1e2d8c9f91de63a8db676652b904a909b48ea155292d21853dbba",
+    "rows_sha256": "19ede51c9bfb0daa19d0d4966ae1bbac6fc3e58e2aba49fa00cf5dafcc47628f",
     "catalog_sha256": "512ea958bf562b7b040a986367585cdcb0ebea5436baf0c50f369bf67ca0d42c",
     "getter_definition_sha256": "ddacb7e337c1020dd46f75faa9d9207878692622bde9997afab04302c1ab93b8",
     "getter_prosrc_sha256": "a894d7a4bb55de81030155275dc6d93e299911e7426d1c0f3a6c85db655d8e6a"
@@ -24,12 +24,12 @@
     "signed_status_sha256": "cf3d6f2d240b6526d3a6ea482079c5b5d0e8ce2b6cfe6c2b6dbeb5686cdf73bb",
     "publication_merge": "3f4a69ef517479b8233818072f85cd2496b0f3b5",
     "must_be_stored_before_application": true,
-    "stored_at_review_time": false
+    "stored_at_review_time": true
   },
   "successor": {
     "sequence": 63,
     "idempotency_key": "root5-v5-binding-20260911",
-    "transaction_sha256": "3b4c48177918c8a5eb0d9f26d82ff3a29c368de116ae39eae3f77e1fbbbf4423",
+    "transaction_sha256": "b037507c71ee70eba32680cbc60fe467e20ed8d30e5108ac69fc49932b5a307b",
     "getter_sql_sha256": "b1dde17017c53bac59a1ed85e2e33d1a202abe2dd5d844af5abb1f53961991f64",
     "binding": {
       "controller_sha256": "d789d3f819bbca91325ee9c3b4f1d45b538356802152ee085650c0d7b4207e76",
@@ -41,10 +41,10 @@
     }
   },
   "reviewed_files": {
-    "transaction": {"path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/root5-v5-binding/ActualNinthForward.sql", "sha256": "3b4c48177918c8a5eb0d9f26d82ff3a29c368de116ae39eae3f77e1fbbbf4423", "blob_sha": "6c339be4acc3bfc3bfc2af7f7113594ccf9f02ba", "bytes": 69594},
-    "input": {"path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-v5-binding/ActualNinthForwardInput.json", "sha256": "9b09db47c49f7c0088fe5f70282766a2659563f8528376d4a0844863bb660ba4", "blob_sha": "e9bf5828ec24be514f296d7717742da4053a6937", "bytes": 439967},
-    "observation": {"path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-v5-binding/ActualNinthForwardObservation.json", "sha256": "dfed9b6bea81f13115cd74cde99b469c537a8ea0152a9cc6d88b978de6e0681a", "blob_sha": "cecc72452610644827ed3e571b8e0abec22cbae2", "bytes": 5648},
-    "preparation": {"path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-v5-binding/ActualNinthForwardPreparation.json", "sha256": "b0ca3d57257a4f09a4200003503acd64d44ff4f6cec158ce4daf7f94cadb3626", "blob_sha": "64d98c6e83176ac64382a1e4bd263e82e5c0ca55", "bytes": 5031},
+    "transaction": {"path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/root5-v5-binding/ActualNinthForward.sql", "sha256": "b037507c71ee70eba32680cbc60fe467e20ed8d30e5108ac69fc49932b5a307b", "blob_sha": "c88534abc72599a998ec697cdeaec3ee11498dda", "bytes": 69594},
+    "input": {"path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-v5-binding/ActualNinthForwardInput.json", "sha256": "8276c1940933df7184229c61e74f974011d91a6b711075c42a9af5f9c501d776", "blob_sha": "99de79a5ee834d8745d5d3f591b11a97196f4b02", "bytes": 439967},
+    "observation": {"path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-v5-binding/ActualNinthForwardObservation.json", "sha256": "42071381d2b5c902b040a813f47e92a9a04313c6d1f2fe756f3e909d4b7b9232", "blob_sha": "66635cfe907f69440838c8ba79e5b868d0381522", "bytes": 5648},
+    "preparation": {"path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-v5-binding/ActualNinthForwardPreparation.json", "sha256": "9a369d28bd02672c6e30b084ba5c665b5c957a175b3d94ec5d6c0130a130d1f5", "blob_sha": "7d499301dc77ef08968054524aac5e51d82e8ef5", "bytes": 5031},
     "generator": {"path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/root5-v5-binding/ninth-forward.candidate.mjs", "sha256": "10f4eec561ce2f47108a43b9e0ead91e5ce2a22ce8ba18ce93da6ec1400787f8", "blob_sha": "432e973c1b70cc23352992aec3ba756bc5b59fd4", "bytes": 19349},
     "getter_generator": {"path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/root5-v5-binding/exact-getter-root5-final.candidate.mjs", "sha256": "d5d05fdd052a7d15a599a13f0e8794b1b787e14fabf26d6358aff8db61a417d9", "blob_sha": "ccdd460fd36e73f28cece92b342e88ea7a7cacb4", "bytes": 5294}
   },
