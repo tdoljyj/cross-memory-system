@@ -247,3 +247,7 @@ c7824b34b77afda9349822528f9e6e1b10e5db9d:scripts/phase2-qualification/RuntimeMat
 07d246a82e87733d4d8fa939a3a5fa3d63722978:scripts/phase2-qualification/RuntimeMaterialPreparation/ordinary-bounded-successor/HostRuntimeConfig.json:generic-api-key:284
 58ebb4db8140d8a8a40bd8531fc1345190042b20:scripts/phase2-qualification/RuntimeMaterialPreparation/original-input-capacity-successor/HostRuntimeConfig.json:generic-api-key:29
 58ebb4db8140d8a8a40bd8531fc1345190042b20:scripts/phase2-qualification/RuntimeMaterialPreparation/original-input-capacity-successor/HostRuntimeConfig.json:generic-api-key:288
+
+# PR45: same public Python-image GPG fingerprint; exact finding locations only.
+818145420ddcd47ffcae03128ebd85c72a5b5fd7:scripts/phase2-qualification/RuntimeMaterialPreparation/env-order-repair-successor/HostRuntimeConfig.json:generic-api-key:29
+818145420ddcd47ffcae03128ebd85c72a5b5fd7:scripts/phase2-qualification/RuntimeMaterialPreparation/env-order-repair-successor/HostRuntimeConfig.json:generic-api-key:288
