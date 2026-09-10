@@ -1,0 +1,45 @@
+{
+  "kind": "ROOT4_SIGNING_PAYLOAD_SIGNATURE_EVIDENCE",
+  "status": "VERIFIED",
+  "observed_at_utc": "2026-09-10T10:55:45Z",
+  "repository": {
+    "full_name": "tdoljyj/cross-memory-system",
+    "private": true
+  },
+  "pr": {
+    "number": 53,
+    "url": "https://github.com/tdoljyj/cross-memory-system/pull/53",
+    "state": "MERGED",
+    "merged_by": "tdoljyj",
+    "merged_at": "2026-09-10T10:55:23Z",
+    "merge_commit_sha": "eabf65005226067ad20ea1173442445be31b0e43",
+    "head_sha": "0b46ecd2149a9ae0665277d3c25755b4e4e31e1d"
+  },
+  "merge": {
+    "sha": "eabf65005226067ad20ea1173442445be31b0e43",
+    "parents": [
+      "d81b5a19ebf116a00a1bc8d7641b587ffeede14a",
+      "0b46ecd2149a9ae0665277d3c25755b4e4e31e1d"
+    ],
+    "tree": "0349fb1c1f1151ac258bb8bf4fba3f7ecfb385af",
+    "author_login": "tdoljyj",
+    "committer_login": "web-flow",
+    "verification": {
+      "verified": true,
+      "reason": "valid",
+      "verified_at": "2026-09-10T10:55:23Z"
+    }
+  },
+  "payload": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/Root4SigningPayload.json",
+    "blob_sha": "f5444a9da16869bce5a1324328ec488a4a617ab8",
+    "file_sha256": "a21838c48a60a5674a4d6fb8151193e4c15e28bdd067ac26893375ed06c9afed",
+    "signed_object_sha256": "bf1fc66c1f84139643099ade4e0424502e4e1e864e21b8dda2603f75719f15ee"
+  },
+  "acceptance": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/Root4Acceptance.json",
+    "blob_sha": "f33fae2888d9adea8aeb3f82e280d5b292e13249",
+    "sha256": "52c47fdea8cd1dfa019c8b7d69a4075a9eb10ca2f99634e08a88281675c6ea6a"
+  },
+  "authority_effect": "NONE_UNTIL_EXACT_APPEND"
+}
