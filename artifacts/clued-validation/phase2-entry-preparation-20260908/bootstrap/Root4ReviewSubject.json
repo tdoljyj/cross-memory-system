@@ -1,0 +1,104 @@
+{
+  "state": "PREPARED_NOT_REGISTERED_FORWARD_ROOT_REVIEW_SUBJECT",
+  "review_subject_sha256": "c3ce2bc92ce040a8b9b20eba17d75df54d5787e93cdcdd8ee76695fc7a766279",
+  "subject": {
+    "scope": {
+      "profile_id": "DP-PREENTRY-SKILL-QUALIFICATION",
+      "repository": "tdoljyj/cross-memory-system",
+      "environment": "ISOLATED_TEST",
+      "paid_budget": 0,
+      "project_ref": "uscrdifznmlvczcekqpw",
+      "model_budget": 0
+    },
+    "status": "REGISTERED",
+    "history": {
+      "index_uri": "urn:clued:control-trust-root-set:uscrdifznmlvczcekqpw:ctr_414bd3c724264a83894b0c55cf2ab878#history",
+      "prefix_digest": "da271b6f65da13e06fccda21a909e8a3f53ef3abf746d8eabef9353bd767610c",
+      "prefix_sequence": 3,
+      "minimum_accepted_generation": "ctrgen_9cf53fa5cd0a4a38bd68613493f95b06"
+    },
+    "purpose": "SKILL_COEXISTENCE_QUALIFICATION",
+    "audience": "urn:clued:audience:skill-coexistence-qualification:uscrdifznmlvczcekqpw",
+    "expires_at": "2026-09-11T10:21:05Z",
+    "not_before": "2026-09-10T10:52:14.921Z",
+    "revocation": {
+      "as_of": "2026-09-10T10:52:14.921Z",
+      "events_uri": "urn:clued:control-trust-root-set:uscrdifznmlvczcekqpw:ctr_414bd3c724264a83894b0c55cf2ab878#revocations",
+      "expires_at": "2026-09-11T10:21:05Z",
+      "event_set_digest": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570"
+    },
+    "object_type": "ControlTrustRootSet",
+    "predecessor": {
+      "generation_id": "ctrgen_2e778ca66244459f974b081edca8c04e",
+      "sha256": "a6b3e3af4aa8ba3abe2b57ac6fabc0b014bffafbf4d0d9565e6e6b67da609298"
+    },
+    "root_set_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+    "schema_digest": "87f094fa079034aa886d6c568730370a3264e106529b4bfd79bc3369f30b79e5",
+    "schema_version": "1.0",
+    "issuer_bindings": [
+      {
+        "purpose": "STATUS",
+        "audience": "urn:clued:audience:skill-coexistence-qualification:uscrdifznmlvczcekqpw",
+        "subject_id": "tdoljyj",
+        "signing_service": "web-flow",
+        "qualification_ref": {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/09adddb544cc1bb02d1cf9ca112a185d444cd97e",
+          "sha256": "d6ef68aee22956ce4d36d5ee86e246beeb88d7251956818624a655e571bfb6c8"
+        }
+      },
+      {
+        "purpose": "GATE_AUTHORIZATION",
+        "audience": "urn:clued:audience:skill-coexistence-qualification:uscrdifznmlvczcekqpw",
+        "subject_id": "tdoljyj",
+        "signing_service": "web-flow",
+        "qualification_ref": {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/d7c373851a86f51de03464d294f5e40e572c9ce7",
+          "sha256": "25c369ea48d78d67eb02138c2ee702cc6e542bc0cc821cf0ee331a4ffa1d131c"
+        }
+      },
+      {
+        "purpose": "GATE_RESULT",
+        "audience": "urn:clued:audience:skill-coexistence-qualification:uscrdifznmlvczcekqpw",
+        "subject_id": "tdoljyj",
+        "signing_service": "web-flow",
+        "qualification_ref": {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/d7c373851a86f51de03464d294f5e40e572c9ce7",
+          "sha256": "25c369ea48d78d67eb02138c2ee702cc6e542bc0cc821cf0ee331a4ffa1d131c"
+        }
+      }
+    ],
+    "algorithm_config": {
+      "digest_algorithm": "SHA-256",
+      "accepted_config_ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/b25abb05e00f72bb2ae910035ba9916a97c822dc",
+        "sha256": "988cdf823eb63806dc3385aa1840e812c1cb1df5ed06e72ca2adf56244b88d20"
+      },
+      "canonicalization_id": "SORTED_JSON_UTF8_NO_FLOATS_LF_V1_CANDIDATE",
+      "signature_verification": "GITHUB_API_VERIFIED_OWNER_MERGE",
+      "signed_payload_excluded_fields": [
+        "signature_binding"
+      ]
+    },
+    "generation_ordinal": 4,
+    "owner_approval_ref": {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/d096ffefbaa366072adac7870fe06f0f4f7db152",
+      "sha256": "43e443be8dbd7b29ce9a097cd0ad58f0d88d0984b039c19a2590e3157eabcd6e"
+    },
+    "control_trust_root_generation": "ctrgen_9cf53fa5cd0a4a38bd68613493f95b06"
+  },
+  "source": {
+    "current_sequence": 3,
+    "current_generation": "ctrgen_2e778ca66244459f974b081edca8c04e",
+    "current_root_canonical_sha256": "a6b3e3af4aa8ba3abe2b57ac6fabc0b014bffafbf4d0d9565e6e6b67da609298",
+    "history_prefix_canonical_sha256": "da271b6f65da13e06fccda21a909e8a3f53ef3abf746d8eabef9353bd767610c",
+    "complete_preimage_sha256": "65d5431b4e69cb96d67af0f59e6b2f5082eb491cfa2f52ddd046032aaf65773b",
+    "binding_subject_sha256": "164e61bca21ebe80caa6c0db874e521a1af90cad495d820f5456827144719c0e"
+  },
+  "admission_boundary": {
+    "actual_owner_pr_signature_required": true,
+    "actual_append_cas_required": true,
+    "old_root_events_unchanged": true,
+    "ga_issued": false,
+    "root_registered": false
+  }
+}
