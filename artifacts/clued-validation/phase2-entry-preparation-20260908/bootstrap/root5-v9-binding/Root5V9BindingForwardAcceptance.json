@@ -2,7 +2,7 @@
   "schema_version": 1,
   "state": "ACCEPTED_EXACT_ROOT5_V9_THIRTEENTH_BINDING_FORWARD_NOT_APPLIED",
   "independent_reviewer": "/root",
-  "decided_at_utc": "2026-09-10T18:54:00Z",
+  "decided_at_utc": "2026-09-10T19:29:47Z",
   "root_set_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
   "root_generation": "ctrgen_e5df432221344996afc04b5638121d96",
   "preimage": {
@@ -29,7 +29,7 @@
   "successor": {
     "sequence": 67,
     "idempotency_key": "root5-v9-binding-20260911",
-    "transaction_sha256": "1ed008e50432ca22b31e6ee7b6faf9401846e89a39db48cc616ea47b70615b69",
+    "transaction_sha256": "d2064e154502a346f0016b90bcc470013544742f3b6173d6502630ec05714c4d",
     "getter_sql_sha256": "50342f9f42baa58504105816cce5b5043b46dc0f50ce1ae1bf842f81d9c6221c",
     "binding": {
       "gate_id": "G-PREENTRY-SKILL-QUALIFICATION",
@@ -48,8 +48,8 @@
   "reviewed_files": {
     "transaction": {
       "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/root5-v9-binding/ActualThirteenthForward.sql",
-      "sha256": "1ed008e50432ca22b31e6ee7b6faf9401846e89a39db48cc616ea47b70615b69",
-      "blob_sha": "52a767a55cee15f8dc742b3b6054071bbd9ccc55",
+      "sha256": "d2064e154502a346f0016b90bcc470013544742f3b6173d6502630ec05714c4d",
+      "blob_sha": "99b73b25b77633477e24afc5f8bd2cffa3b3128c",
       "bytes": 91887
     },
     "input": {
@@ -72,8 +72,8 @@
     },
     "generator": {
       "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/root5-v9-binding/thirteenth-forward.candidate.mjs",
-      "sha256": "410855c0514ea9b7b19073a09e30fd0dd9a1f8283853975d99806f8a05bac29e",
-      "blob_sha": "20b964241571fd2b5cab1a78cc71277ecf2bd9b1",
+      "sha256": "02da26c9dc04eec4634e1a0b14e2c9ceb7aedbd2551d4185b121422c5a6d6bd8",
+      "blob_sha": "0711f696fbbc9d1b58f836844f0724756e546165",
       "bytes": 24276
     },
     "getter_generator": {
@@ -96,6 +96,13 @@
     "paid_models": false,
     "refund_or_reuse": false,
     "automatic_retry": false
+  },
+  "prior_application_attempt": {
+    "attempted_at_utc": "2026-09-10T19:27:00Z",
+    "result": "REJECTED_AND_ROLLED_BACK_BEFORE_ANY_MUTATION",
+    "error": "accepted_locked_install_v3_required",
+    "cause": "the candidate used the predecessor locked-install function hashes although the exact captured catalog already contained the accepted Status15 runtime functions",
+    "repair": "the two redundant explicit predecessor hashes now match the exact Status15 functions already covered by the complete catalog preimage; no scope, binding, getter, row, budget, GA, entry, production, fee, refund, reuse, or retry semantics changed"
   },
   "application": null,
   "authority_effect": "BINDING_POINTER_FORWARD_CANDIDATE_ONLY_NO_BUDGET_NO_GA_NO_ENTRY_NO_PRODUCTION"
