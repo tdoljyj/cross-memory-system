@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "state": "ACCEPTED_EXACT_UNSIGNED_STATUS_PAYLOAD_FOR_OWNER_SIGNATURE_NOT_REGISTERED",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "accepted_at": "2026-09-10T04:24:03.699Z",
+  "payload": {
+    "path": "work/original-input-capacity-approved-execution/runtime-preparation/actual-status7/StatusSigningPayload.json",
+    "sha256": "a2ad514ce3761f146717e762799346e56f6f762b62ff7801905b58c68024aa32",
+    "bytes": 7858
+  },
+  "canonical_payload_sha256": "c0d65ecd5f9534cd5d1ab20996df26d305917608be264bc09cac113468e87a4e",
+  "status_manifest_id": "sm_8081508db8224d3080f2d536cc08fc46",
+  "generation": 7,
+  "as_of": "2026-09-10T04:18:46.741Z",
+  "expires_at": "2026-09-10T10:13:16Z",
+  "controller_digest": "07e0be02895363bac5ced923924f27b8de1f7951d8eea2c829831afef9bb27aa",
+  "scope_digest": "728218c85553b1abaac2b6884d9cb675bea6f4dec3b20196de121a762f9f742b",
+  "actual_snapshot": {
+    "path": "work/original-input-capacity-approved-execution/runtime-preparation/actual-status7-snapshot.json",
+    "sha256": "e49803caaf43ea46ed76a12f3a9174c6004651d196c98051e47a8dbc2564588c",
+    "bytes": 1952555
+  },
+  "provider_receipt": {
+    "path": "work/original-input-capacity-approved-execution/ActualStatus7FreshTool.json",
+    "sha256": "72bff44acf910a368c0d586f80ed79038d5583813c6a388bce506b46b2b4e65f",
+    "bytes": 2848383
+  },
+  "actual_invocation_parameters": {
+    "path": "work/original-input-capacity-approved-execution/ActualStatus7FreshRequest.json",
+    "sha256": "a08dae814d270c2711a6a4f3ac85a3a1342395363ed1acf1d0dd2a970587879f",
+    "bytes": 4021
+  },
+  "actual_rows": {
+    "path": "work/original-input-capacity-approved-execution/ActualStatus7FreshRows.json",
+    "sha256": "61c057a6b1dab487f2ab66217ed4fcc42f0a90519b2ddeab427ae38dcdd680f2",
+    "bytes": 1952657
+  },
+  "checks": [
+    "Single original provider result data block equals saved rows; exact reviewed RR read-only query/project parameters separately preserved by root.",
+    "Same-row4 raw definition hashes verified; exact projection matches actual constructor input.",
+    "Actual49events/7terminals/6storedStatus/Root3/idle/5706seconds1262070707bytes preserved.",
+    "Unsigned generation7 unused in actual snapshot; original issuer purpose/Root3/stage requirements and original expiry retained.",
+    "Entire Status payload exactly reconstructed from actual input at recorded construction clock; observation-to-as_of4.293seconds."
+  ],
+  "freshness_boundary": "Historical verification of the actual construction time. This review is not a new fresh SQL observation or current admission; signatures, actual registration, fresh admission remain downstream.",
+  "signature_created": false,
+  "registration_performed": false,
+  "SQL_executed": false,
+  "GA_created": false
+}
