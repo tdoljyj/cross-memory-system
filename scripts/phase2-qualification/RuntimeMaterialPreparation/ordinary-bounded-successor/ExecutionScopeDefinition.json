@@ -16,8 +16,8 @@
   },
   "host_runtime_config": {
     "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/ordinary-bounded-successor/HostRuntimeConfig.json",
-    "sha256": "d45ab326948baecf6ea84f6ba22d9a2c39bee4f1741250038d81946a236c1c83",
-    "bytes": 15479
+    "sha256": "bcb39eae740677254ace5d47d17ea9124769a4c869037fbdbd550a72c44cda6f",
+    "bytes": 18552
   },
   "evidence_sink": {
     "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/ordinary-bounded-successor/EvidenceSinkDefinition.json",
@@ -294,7 +294,7 @@
         "bytes": 70092
       },
       "external_transport_manifest_requirement": "Eight exact external ordinary-bounded pipe sources; separately bound to Host/Scope. No claim that this external transport changes the 314-file controller manifest.",
-      "directory": "C:/Users/Windows/Documents/Codex/2026-09-08/ia/work/qualification-live/<actual-ga-id>.<CREATE|START|GRR>.ordinary-bounded-runtime-pipe600",
+      "directory": "C:/Users/Windows/Documents/Codex/2026-09-08/ia/work/qualification-live/<actual-ga-id>.<CREATE|START|GRR>.ordinary-diagnostic-pipe600",
       "message_sequences": [
         1,
         2

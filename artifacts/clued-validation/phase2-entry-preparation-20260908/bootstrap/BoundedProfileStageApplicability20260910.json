@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "independent_reviewer": "/root/project_list_auth_fix",
-  "decided_at_utc": "2026-09-09T23:57:50.804Z",
-  "not_before": "2026-09-09T23:57:50.804Z",
+  "decided_at_utc": "2026-09-10T01:00:04.521Z",
+  "not_before": "2026-09-10T01:00:04.521Z",
   "expires_at": "2026-09-10T10:13:16Z",
   "root_generation": "ctrgen_2e778ca66244459f974b081edca8c04e",
   "controller_manifest": {
@@ -11,47 +11,47 @@
     "bytes": 70092
   },
   "controller_digest": "6c9caf4e401409dbd9753debbd8d5ce86c495935939328c10d390e9f7bbb17fa",
-  "scope_digest": "995827e5a8a0f3be83129749abfa1130fb0b3c5339e9ee8b2968940b56838f01",
+  "scope_digest": "ce9cf618f5f06eb026c4cacd371f1857547247b33956e895f50cd270d858d5b3",
   "definitions": {
     "risk": {
-      "path": "work/ordinary-bounded-approved-execution/runtime-preparation/definitions-unsigned/ScopedRiskManifest.json",
-      "bytes": 8411,
-      "sha256": "66d041ca92a976e955fa129513e79c6ff0ac77635b7ba2aa968a9d1d8eda87f5"
+      "path": "work/ordinary-bounded-approved-execution/runtime-preparation/definitions-unsigned-v3/ScopedRiskManifest.json",
+      "sha256": "66d041ca92a976e955fa129513e79c6ff0ac77635b7ba2aa968a9d1d8eda87f5",
+      "bytes": 8411
     },
     "host": {
-      "path": "work/ordinary-bounded-approved-execution/runtime-preparation/definitions-unsigned/HostRuntimeConfig.json",
-      "bytes": 15479,
-      "sha256": "d45ab326948baecf6ea84f6ba22d9a2c39bee4f1741250038d81946a236c1c83"
+      "path": "work/ordinary-bounded-approved-execution/runtime-preparation/definitions-unsigned-v3/HostRuntimeConfig.json",
+      "sha256": "bcb39eae740677254ace5d47d17ea9124769a4c869037fbdbd550a72c44cda6f",
+      "bytes": 18552
     },
     "sink": {
-      "path": "work/ordinary-bounded-approved-execution/runtime-preparation/definitions-unsigned/EvidenceSinkDefinition.json",
-      "bytes": 8372,
-      "sha256": "33feb26ab01ec1cb45834c4b97d5d94f620507452f67146ce1ab7748a8500d96"
+      "path": "work/ordinary-bounded-approved-execution/runtime-preparation/definitions-unsigned-v3/EvidenceSinkDefinition.json",
+      "sha256": "33feb26ab01ec1cb45834c4b97d5d94f620507452f67146ce1ab7748a8500d96",
+      "bytes": 8372
     },
     "scope": {
-      "path": "work/ordinary-bounded-approved-execution/runtime-preparation/definitions-unsigned/ExecutionScopeDefinition.json",
-      "bytes": 30256,
-      "sha256": "995827e5a8a0f3be83129749abfa1130fb0b3c5339e9ee8b2968940b56838f01"
+      "path": "work/ordinary-bounded-approved-execution/runtime-preparation/definitions-unsigned-v3/ExecutionScopeDefinition.json",
+      "sha256": "ce9cf618f5f06eb026c4cacd371f1857547247b33956e895f50cd270d858d5b3",
+      "bytes": 30251
     },
     "binding": {
-      "path": "work/ordinary-bounded-approved-execution/runtime-preparation/definitions-unsigned/ControlBindingDefinition.json",
-      "bytes": 2302,
-      "sha256": "7469fcfa00f2c8c4b644a120063065d082573ea1e5dd30d5298ebe2138f9b186"
+      "path": "work/ordinary-bounded-approved-execution/runtime-preparation/definitions-unsigned-v3/ControlBindingDefinition.json",
+      "sha256": "c8e344e844e435ce83df9b0fb864f0a77c9d84cdaddbbcbfe22f3651efad5468",
+      "bytes": 2302
     },
     "suite": {
-      "path": "work/ordinary-bounded-approved-execution/runtime-preparation/definitions-unsigned/preentry-skill-qualification.json",
-      "bytes": 125105,
-      "sha256": "baeedc4e4e029416a8bb9dd567bdf31c216b0516c2965b4f83d8ba3f01f6d548"
+      "path": "work/ordinary-bounded-approved-execution/runtime-preparation/definitions-unsigned-v3/preentry-skill-qualification.json",
+      "sha256": "baeedc4e4e029416a8bb9dd567bdf31c216b0516c2965b4f83d8ba3f01f6d548",
+      "bytes": 125105
     },
     "gate": {
-      "path": "work/ordinary-bounded-approved-execution/runtime-preparation/definitions-unsigned/GateDefinitionCandidate.json",
-      "bytes": 12923,
-      "sha256": "9297bcc4c33550f67dcc25ff0cb11b700a3da92855d89cbbab6ce884cd206892"
+      "path": "work/ordinary-bounded-approved-execution/runtime-preparation/definitions-unsigned-v3/GateDefinitionCandidate.json",
+      "sha256": "9297bcc4c33550f67dcc25ff0cb11b700a3da92855d89cbbab6ce884cd206892",
+      "bytes": 12923
     },
     "registry": {
-      "path": "work/ordinary-bounded-approved-execution/runtime-preparation/definitions-unsigned/RegistrySuccessorCandidate.json",
-      "bytes": 2274,
-      "sha256": "6a2a30a7ec297e80940f90fdb0f3bcbf73166c956721067c19c1694e6b09c41a"
+      "path": "work/ordinary-bounded-approved-execution/runtime-preparation/definitions-unsigned-v3/RegistrySuccessorCandidate.json",
+      "sha256": "6a2a30a7ec297e80940f90fdb0f3bcbf73166c956721067c19c1694e6b09c41a",
+      "bytes": 2274
     }
   },
   "approved_window": {
@@ -75,9 +75,9 @@
     "requires_actual_existing_Root3_and_exact_bounded_forward": true
   },
   "host_scope_acceptance": {
-    "path": "work/ordinary-bounded-approved-execution/admin-review/BoundedHostScopeIndependentAcceptance.json",
-    "bytes": 5862,
-    "sha256": "69b83920fd610f1c44907c371f42fefb64d3e4a342dc524c36d026a5dbcca969"
+    "path": "work/ordinary-bounded-approved-execution/admin-review/BoundedHostScopeIndependentAcceptance.v3.json",
+    "sha256": "487091d9399e9fdd646fc57066cd6db1a6893201d66b17af52ee14d5fa171960",
+    "bytes": 7797
   },
   "authority_effect": "NONE",
   "state": "ACCEPTED_EXACT_PROFILE_AND_STAGE_APPLICABILITY_NOT_RUNTIME_OR_STAGE_REISSUANCE",
@@ -142,5 +142,10 @@
   "stage_receipts_reissued": false,
   "profile_definition_changed": false,
   "qualification_test_results_preaccepted": false,
-  "formal_measurements": 0
+  "formal_measurements": 0,
+  "supersedes": {
+    "path": "work/ordinary-bounded-approved-execution/admin-review/BoundedProfileStageApplicability.v2.json",
+    "sha256": "b6aabb9286b52d9382c7eb75daa14c39dd5ba2ab420ae0d395011f8f1386b7c1",
+    "bytes": 7845
+  }
 }

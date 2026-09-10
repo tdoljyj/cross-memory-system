@@ -1,0 +1,66 @@
+{
+  "state": "ACCEPTED_PARALLEL_SOURCE_NONPERFORMANCE_APPLICABILITY",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "issued_at": "2026-09-10T01:04:37.142Z",
+  "expires_at": "2026-09-10T10:13:16Z",
+  "controller_digest": "6c9caf4e401409dbd9753debbd8d5ce86c495935939328c10d390e9f7bbb17fa",
+  "scope_digest": "ce9cf618f5f06eb026c4cacd371f1857547247b33956e895f50cd270d858d5b3",
+  "root_generation": "ctrgen_2e778ca66244459f974b081edca8c04e",
+  "runtime_acceptance_sha256": "ec770d1c5961ae17d198f6b9925c4fe1c6c98ee55ecd4ef67082fa2273b1c5c7",
+  "runtime_acceptance": {
+    "path": "work/ordinary-bounded-approved-execution/admin-review/ExactBoundedPreentryControllerRuntimeAcceptance.final-v2.json",
+    "sha256": "ec770d1c5961ae17d198f6b9925c4fe1c6c98ee55ecd4ef67082fa2273b1c5c7",
+    "bytes": 69359
+  },
+  "gate_suite_sha256": "baeedc4e4e029416a8bb9dd567bdf31c216b0516c2965b4f83d8ba3f01f6d548",
+  "profile_applicability_sha256": "269a0ad994d7d367d037ad67289838446e8ffe4b91f527459e0869583c6a980e",
+  "historical_component_applicability_sha256": "9fa55c2cd122cbe5463bf6c0491a419c1616a183822a8579b2bfb76867dc554a",
+  "performance_slo_revision": "NOT_APPLICABLE_PREENTRY_NO_PERFORMANCE_QUALIFICATION",
+  "original_applicability_sources": [
+    {
+      "path": "work/kernel-phase2-repo/artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/PreentryPerformanceSLOApplicabilityDecision.json",
+      "sha256": "98a502fdf43a1f0f9e4d01956c829826006c8cd1e8d2146fbc0540c10dc3e4b8",
+      "bytes": 2679
+    },
+    {
+      "path": "work/kernel-phase2-repo/artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/EvidenceBlobPerformanceSLOApplicabilityDecision.json",
+      "sha256": "5ed0f7fd18cd156d51d2d96242d0bb7f3aab6882c5515005db77c3af9903d4c3",
+      "bytes": 2238
+    },
+    {
+      "path": "work/kernel-phase2-repo/artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/StatusGeneration2NonPerformanceApplicabilityAddendum.json",
+      "sha256": "470db88dfe46e23a5f5ae183b590d191bfc8158b120a4c9194492c5c810faa87",
+      "bytes": 1412
+    },
+    {
+      "path": "work/kernel-phase2-repo/artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/ParallelEvidenceLimitNonPerformanceApplicabilityAddendum.json",
+      "sha256": "3de507c22d88914e208b75d8a735364508c6db317f6e1063214701c179a7421c",
+      "bytes": 2516
+    },
+    {
+      "path": "work/kernel-phase2-repo/artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/FrameLimitNonPerformanceApplicabilityAddendum.json",
+      "sha256": "634601592a2849cf8af6e6a128dcee9ce9d807f5b322be1ec98ce57cfff4bd3b",
+      "bytes": 2622
+    },
+    {
+      "path": "work/next-window-runtime-materials-20260909/NextWindowNonPerformanceApplicabilityAddendum.json",
+      "sha256": "05f65c452153b201a57c0195bb27efe418dbb2f8f9a9c824cfec5985ae46e27d",
+      "bytes": 3043
+    },
+    {
+      "path": "work/next-window-runtime-materials-20260909/NextWindowHistoricalComponentApplicabilityIndependentAcceptance.json",
+      "sha256": "c75f25044be55ebf8530b312b5d229b20ecb4b31e64ccb8516f445b360aaf523",
+      "bytes": 24334
+    },
+    {
+      "path": "work/next-window-runtime-materials-20260909/Fixed600ProfileNextWindowApplicabilityIndependentAcceptance.json",
+      "sha256": "c57afadaed6123e49d0e2d8e43dc97e5e6932fcb4df8564c1dfa6df0eab6c844",
+      "bytes": 6660
+    }
+  ],
+  "finding": "The exact final bounded pre-entry runtime,Scope,Profile and unchanged19synthetic oracle contracts exclude PERF-B/PERF-S/PERF-Q,performance holdout and production/Entry qualification. The eight prior decisions remain historical original bytes under their own scopes; they are not current authorization for this newScope. This ninth appendix establishes only the exact current nonperformance field applicability. The600-second allocation,resource caps and timedSTOP remain mandatory controls,not a productPerformanceSLO.",
+  "evidence_rule": "Accept only the original exact NOT_APPLICABLE_PREENTRY_NO_PERFORMANCE_QUALIFICATION string. Preserve all8 originalraws in order and append this exact ninthraw as ordinary Evidence plus its digest in originalmetadata/input/index/GRR chain. No new expected_ga field,SLO revision/threshold,stage exemption or current executionPASS. Final original oracle assessments and current publication/signature/runtime checks remain mandatory.",
+  "entry_or_performance_qualification_granted": false,
+  "case_verdicts_created": false,
+  "authority_effect": "NONE"
+}

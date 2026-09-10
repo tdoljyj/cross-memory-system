@@ -3,12 +3,12 @@
   "state": "ACCEPTED_SCOPED_CONTROLLER_QUALIFICATION",
   "independent_reviewer": "/root/project_list_auth_fix",
   "controller_digest": "6c9caf4e401409dbd9753debbd8d5ce86c495935939328c10d390e9f7bbb17fa",
-  "scope_digest": "995827e5a8a0f3be83129749abfa1130fb0b3c5339e9ee8b2968940b56838f01",
+  "scope_digest": "ce9cf618f5f06eb026c4cacd371f1857547247b33956e895f50cd270d858d5b3",
   "purpose": "SKILL_COEXISTENCE_QUALIFICATION",
   "environment": "ISOLATED_TEST",
   "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
   "root_generation": "ctrgen_2e778ca66244459f974b081edca8c04e",
-  "not_before": "2026-09-10T00:12:52.621Z",
+  "not_before": "2026-09-10T01:00:04.521Z",
   "expires_at": "2026-09-10T10:13:16Z",
   "independent_of_tested_skill": true,
   "forbidden_stage_dependencies_excluded": true,
@@ -543,29 +543,39 @@
   },
   "qualification_basis": [
     {
-      "path": "work/ordinary-bounded-approved-execution/admin-review/PublishedSourceIndependentAcceptance.json",
-      "sha256": "1b93851b3a264529619a5aa027ee0bb16de8abcf170b72362b6e895d0a6d4473",
-      "bytes": 30805
+      "path": "work/ordinary-bounded-approved-execution/admin-review/PublishedSourceIndependentAcceptance.v2.json",
+      "sha256": "495eed57bf9f7b530a17ad73bd93712fda1879f0afe56020a2b71cdcb21b19a7",
+      "bytes": 31545
     },
     {
-      "path": "work/ordinary-bounded-approved-execution/admin-review/BoundedHostScopeIndependentAcceptance.json",
-      "sha256": "69b83920fd610f1c44907c371f42fefb64d3e4a342dc524c36d026a5dbcca969",
-      "bytes": 5862
+      "path": "work/ordinary-bounded-approved-execution/admin-review/BoundedHostScopeIndependentAcceptance.v3.json",
+      "sha256": "487091d9399e9fdd646fc57066cd6db1a6893201d66b17af52ee14d5fa171960",
+      "bytes": 7797
     },
     {
-      "path": "work/ordinary-bounded-approved-execution/admin-review/BoundedProfileStageApplicability.json",
-      "sha256": "78ec7949994c83a8e717fc2d6be194e1720d628867b195812a9326015bb6d693",
-      "bytes": 7588
+      "path": "work/ordinary-bounded-approved-execution/admin-review/BoundedProfileStageApplicability.v3.json",
+      "sha256": "269a0ad994d7d367d037ad67289838446e8ffe4b91f527459e0869583c6a980e",
+      "bytes": 7848
     },
     {
-      "path": "work/ordinary-bounded-approved-execution/admin-review/BoundedHistoricalComponentApplicability.json",
-      "sha256": "33f29b1010282a1e924a23828a42477cb3fb4a46f17fc230012be0b9c7935041",
-      "bytes": 22721
+      "path": "work/ordinary-bounded-approved-execution/admin-review/BoundedHistoricalComponentApplicability.v3.json",
+      "sha256": "9fa55c2cd122cbe5463bf6c0491a419c1616a183822a8579b2bfb76867dc554a",
+      "bytes": 23491
     },
     {
       "path": "work/ordinary-bounded-approved-execution/admin-review/BoundedSeriesApplicability.json",
       "sha256": "f8ed552ebe18010321d57a4565484f4aef25daedc43d7aff9f5a239be1ec61b2",
       "bytes": 2615
+    },
+    {
+      "path": "work/ordinary-bounded-approved-execution/admin-review/IndependentStopOuterSuccessorReview.json",
+      "sha256": "57f080a6c5083710f1f175cc064485fb99666bbe13510f052b0d115c16337779",
+      "bytes": 2577
+    },
+    {
+      "path": "work/ordinary-bounded-approved-execution/admin-review/IndependentMeasurementOuterReview.v2.json",
+      "sha256": "77ff44fa6fe54fa4973c9181562bd9de286fff93ed52e3d91164f03187ae9280",
+      "bytes": 4949
     }
   ],
   "accepted_gate": {
@@ -574,17 +584,17 @@
     "content_digest": "9297bcc4c33550f67dcc25ff0cb11b700a3da92855d89cbbab6ce884cd206892"
   },
   "accepted_host_scope": {
-    "path": "work/ordinary-bounded-approved-execution/admin-review/BoundedHostScopeIndependentAcceptance.json",
-    "sha256": "69b83920fd610f1c44907c371f42fefb64d3e4a342dc524c36d026a5dbcca969",
-    "bytes": 5862
+    "path": "work/ordinary-bounded-approved-execution/admin-review/BoundedHostScopeIndependentAcceptance.v3.json",
+    "sha256": "487091d9399e9fdd646fc57066cd6db1a6893201d66b17af52ee14d5fa171960",
+    "bytes": 7797
   },
   "profile_ref": {
     "profile_id": "DP-PREENTRY-SKILL-QUALIFICATION",
     "definition_version": "fixed-synthetic-skill-input-20260908.v3-runtime600",
     "content_digest": "d1c060b85f0b842a397a478105ea57a208e62eb0a5a2d4c2cd8f93f63eae88f5",
     "accepted_ref": {
-      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/46e6c36a5ad4e700b8e787b90c3c5a5796d7b0d0",
-      "sha256": "78ec7949994c83a8e717fc2d6be194e1720d628867b195812a9326015bb6d693"
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/b083b71bdca15ba43e75fbd60f57b354fab24e40",
+      "sha256": "269a0ad994d7d367d037ad67289838446e8ffe4b91f527459e0869583c6a980e"
     }
   },
   "required_stages": [
@@ -645,7 +655,8 @@
     "Actual locked v3 three SQL bodies/CHECK install and exact getter/event must be independently accepted/read back; this source qualification performs no installation.",
     "Maximum3 serial newGA/forwards,600seconds128MiB each,firstformalPASSstops,6906series/7200rootseconds,1530506163bytes; no refund/automaticretry or expiry extension.",
     "UNKNOWN effect requires reconciliation, not blind resend. Each further attempt needs original approved exact error/fix/independent acceptance and terminal closure.",
-    "All actual19 outcomes remain independently assessed; no stage,Entry,production,Gold,model or paid action authority."
+    "All actual19 outcomes remain independently assessed; no stage,Entry,production,Gold,model or paid action authority.",
+    "Final result factory requires ninth exact current nonperformance applicability bound to this finalruntime/scope, preserving original8historicalraw and original Evidence/index/GRR semantics."
   ],
   "invalidation": [
     "Changed source manifest, Scope, executable/dependency bytes, issuer/Owner purpose, signed material or current generation requires exact forward review.",
@@ -672,5 +683,11 @@
   "gate_result_issued": false,
   "entry_accepted": false,
   "production_authority": false,
-  "actual_case_run_completed": false
+  "actual_case_run_completed": false,
+  "supersedes": {
+    "path": "work/ordinary-bounded-approved-execution/admin-review/ScopedBoundedControllerQualification.v2.json",
+    "sha256": "c65d6301bd350daf911c0cfb242da7bd535c0c18e16094f6e73b1265a4320375",
+    "bytes": 37802
+  },
+  "successor_delta": "Finalv3 binds exact2STOP and14measurement sources in Host with dependentScope/Binding refs. Controller6c9/128real immutable refs,gate/suite19oracles,Root3,expiry and3attempt limits remain unchanged. Source acceptancev2 retains producer manifest descriptor. New source/dependency local verification is source integrity, not an executed qualification case."
 }

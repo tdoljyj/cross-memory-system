@@ -2,7 +2,7 @@
   "schema_version": 1,
   "state": "ACCEPTED_EXACT_SOURCE_SUCCESSOR_FOR_PUBLICATION_NOT_RUNTIME_QUALIFICATION",
   "independent_reviewer": "/root/project_list_auth_fix",
-  "reviewed_at": "2026-09-10T00:12:52.621Z",
+  "reviewed_at": "2026-09-10T00:24:58.002Z",
   "controller_digest": "6c9caf4e401409dbd9753debbd8d5ce86c495935939328c10d390e9f7bbb17fa",
   "source_ref": {
     "commit": "55310a5a1424fe4d666ceead5a007f85b9f0e902",
@@ -540,5 +540,16 @@
   "decision": "Independent real GitHub reads verified private repository, valid signed web-flow two-parent merge, exact merged main PR and Owner tdoljyj, complete nontruncated immutable tree, and all131 exact raw blobs. Manifest-first then127 source refs match original manifest order. Reuse prior bounded independent source reconstruction and semantics review.",
   "runtime_accepted": false,
   "GA_issued": false,
-  "SQL_executed": false
+  "SQL_executed": false,
+  "manifest": {
+    "path": "scripts/phase2-qualification/control-context-verifier-ordinary-bounded-acyclic-successor/ControllerSourceManifest.candidate.json",
+    "sha256": "6c9caf4e401409dbd9753debbd8d5ce86c495935939328c10d390e9f7bbb17fa",
+    "bytes": 70092
+  },
+  "supersedes": {
+    "path": "work/ordinary-bounded-approved-execution/admin-review/PublishedSourceIndependentAcceptance.json",
+    "sha256": "1b93851b3a264529619a5aa027ee0bb16de8abcf170b72362b6e895d0a6d4473",
+    "bytes": 30805
+  },
+  "successor_delta": "Adds exact already independently read published manifest descriptor required by existing producer validateSources.128 source refs and underlying Owner publication/observations unchanged; no new blob reads required."
 }
