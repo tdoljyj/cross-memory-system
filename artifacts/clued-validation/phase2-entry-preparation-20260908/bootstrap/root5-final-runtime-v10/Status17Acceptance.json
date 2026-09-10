@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "state": "ACCEPTED_EXACT_STATUS17_SIGNING_SUBJECT_NOT_STORED",
+  "review_basis": "UNCHANGED_STATUS16_SCHEMA_AND_RUNTIME_OBSERVATIONS_PLUS_EXPIRED_GA_TERMINALIZATION_AND_EXACT_WINDOW5_CAPACITY_REPAIR",
+  "subject_file": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v10/Status17ReviewSubject.json",
+    "sha256": "3604b39d4be8b6b6b9a863584bb70d11845b7827a252350648bb3c086891aa55",
+    "bytes": 9329,
+    "blob_sha": "afbcc88afbf6035138b63ff9a4b39cb6da026b41"
+  },
+  "status_manifest_id": "sm_0530689ea9f64d3884436f4f5dc0e44b",
+  "generation": 17,
+  "root_generation": "ctrgen_e5df432221344996afc04b5638121d96",
+  "issuer_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/c1749399c047a5b88461ef8df54ea80b1b59938a",
+    "sha256": "1640995831b0c1f8ae616810e12eb7b97ee191e9f20b5c38eee32eb8bfac9d23"
+  },
+  "as_of": "2026-09-10T21:15:12.853Z",
+  "expires_at": "2026-09-11T10:21:05Z",
+  "runtime_function_source": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/769da452d3b50a33ad2169c112551cd9f05d3fa5",
+    "sha256": "36be2ef08bec5b852538b02faaf60d4e27b441dc4c6e2b844c1e231ef80599a5"
+  },
+  "runtime_function_acceptance": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/4b247263f3cacde18c07a343dddc92512c0d1b83",
+    "sha256": "89bc40289f52508f90c89baf44061947fcf5b8e473132cc6b6d280dd392e1f21"
+  },
+  "controller_qualification": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/d0178bac81b4cdf62345a3a3047057efec1cbd30",
+    "sha256": "98fe9c8f80558da3a8004152fa7901f479b2fff1ceed8279a9655e4448020ba2"
+  },
+  "expired_ga_recovery": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-window5-applied/ExpiredFinalGARRDatabaseCommitAcceptance.json",
+    "sha256": "d8f54af24f96385a89bfb44e5c72c2a33c2c2309c6f2ffe0bd070ac6e339aaad",
+    "bytes": 1100,
+    "blob_sha": "e670ef30cd6ec9d6d22be61cbd52100b11d5ac36"
+  },
+  "authority_effect": "NONE",
+  "stored": false
+}

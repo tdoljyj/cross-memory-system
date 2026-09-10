@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "state": "ACCEPTED_ROOT5_WINDOW5_CAPACITY_REPAIR_APPLIED",
+  "project": "uscrdifznmlvczcekqpw",
+  "migration": "root5_window5_capacity_repair_20260911",
+  "source": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/root5-window5/Root5Window5CapacityRepair.sql",
+  "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+  "function_prosrc_sha256": {
+    "reserve_execution_budget": "302f3e0f0bdd75f6f1d21843b0c27e11e59d9d469bdf4fe3bc4e39b2ceb848bd",
+    "reserve_gate": "c1c50e656d6b568da6a54d61444f5c6cdbc8b352ecda7173d47def9e361b3acc"
+  },
+  "constraints": {
+    "charged_seconds": "CHECK (charged_seconds >= 1410 AND charged_seconds <= 8106)",
+    "charged_evidence_bytes": "CHECK (charged_evidence_bytes >= 19264968 AND charged_evidence_bytes <= 1798941619)"
+  },
+  "preserved_rows": {
+    "sequence": 70,
+    "active_ga_id": null,
+    "pending_budget_sequence": null,
+    "charged_seconds": 7506,
+    "charged_evidence_bytes": 1664723891,
+    "execution_event_count": 70,
+    "gate_attempt_count": 10
+  },
+  "new_capacity": {
+    "maximum_total_allocations": 5,
+    "maximum_total_gate_attempts_after_baseline": 5,
+    "maximum_postbaseline_binding_forwards": 10,
+    "per_allocation_seconds": 600,
+    "per_allocation_evidence_bytes": 134217728,
+    "maximum_charged_seconds": 8106,
+    "maximum_charged_evidence_bytes": 1798941619
+  },
+  "authority_effect": "RUNTIME_VALIDATION_AND_FIXED_CAPACITY_ONLY_NO_BUDGET_NO_GA_NO_ENTRY_NO_PRODUCTION"
+}

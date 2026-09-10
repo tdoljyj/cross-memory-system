@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "state": "ACCEPTED_EXPIRED_FINAL_GA_GRR_COMMITTED",
+  "project": "uscrdifznmlvczcekqpw",
+  "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+  "gate_authorization_id": "ga_6abb193a56304029a788f7cb624a0d35",
+  "preimage": {
+    "sequence": 70,
+    "phase": "SIGNING",
+    "active_ga_id": "ga_6abb193a56304029a788f7cb624a0d35",
+    "charged_seconds": 7506,
+    "charged_evidence_bytes": 1664723891,
+    "receipt_id": null
+  },
+  "committed_receipt": {
+    "receipt_id": "grr_root5_v9_expired_not_started_20260911",
+    "receipt_sha256": "0bd435f4fd4bb9c4174a1d96b132908f128ceadcfa51021ba1871757ed16df77",
+    "result": "BLOCKED",
+    "signature_commit": "0c0d316a16c6b57efeb5cf105e3273dc755ad830",
+    "github_signature_verified": true
+  },
+  "postimage": {
+    "sequence": 70,
+    "phase": "BLOCKED",
+    "active_ga_id": null,
+    "pending_budget_sequence": null,
+    "charged_seconds": 7506,
+    "charged_evidence_bytes": 1664723891,
+    "receipt_raw_present": true
+  },
+  "authority_effect": "NONE",
+  "automatic_retry": false,
+  "refund": false,
+  "production": false
+}
