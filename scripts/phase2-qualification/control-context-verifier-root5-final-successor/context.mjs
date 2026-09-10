@@ -11,7 +11,7 @@ import fs from 'node:fs';
 import boundedCrypto from 'node:crypto';import {isDeepStrictEqual as boundedSame} from 'node:util';
 import {createRequire} from 'node:module';
 import {sha,readBlobRef,verifyOwnerMergeArtifact,verifyDynamicPayload} from '../control-context-verifier-next-window-successor/trusted-github.mjs';
-import {validateRootShape,canonicalDigest,signaturePayloadDigest} from '../control-context-verifier-next-window-successor/root-window-validation.mjs';
+import {validateRootShape,canonicalDigest,signaturePayloadDigest} from './root-window-validation.mjs';
 export const project='uscrdifznmlvczcekqpw',rootID='ctr_414bd3c724264a83894b0c55cf2ab878',generation='ctrgen_e5df432221344996afc04b5638121d96';
 export const gateID='G-PREENTRY-SKILL-QUALIFICATION',audience='urn:clued:audience:skill-coexistence-qualification:'+project;
 export const sql="select clock_timestamp() as observed_at, clued_control.read_execution() as execution";
@@ -258,10 +258,10 @@ export async function prepareTrustedToolMaterial(material){
  const root=result.root,rootProof=JSON.parse(readBlobRef(root.signature_binding.signature_evidence_ref));
  const rootPayloadRaw=readBlobRef({uri:'https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/'+rootProof.payload.blob_sha,sha256:rootProof.payload.file_sha256});
  check(rootProof.merge.sha===root.signature_binding.owner_merge_commit&&signaturePayloadDigest(root)===canonicalDigest(JSON.parse(rootPayloadRaw))&&root.signature_binding.signed_object_sha256===signaturePayloadDigest(root),'EXACT_ROOT_SIGNING_PAYLOAD');
- verifyOwnerMergeArtifact({commitSha:rootProof.merge.sha,artifactPath:rootProof.payload.artifact_path,raw:rootPayloadRaw});
+ verifyOwnerMergeArtifact({commitSha:rootProof.merge.sha,artifactPath:rootProof.payload.artifact_path??rootProof.payload.path,raw:rootPayloadRaw});
  for(const purpose of ['STATUS','GATE_AUTHORIZATION','GATE_RESULT']){
   const issuers=root.issuer_bindings.filter(i=>i.purpose===purpose);check(issuers.length===1&&issuers[0].subject_id==='tdoljyj'&&issuers[0].signing_service==='web-flow'&&issuers[0].audience===audience,'SEPARATE_ROOT_ISSUER_PURPOSE');
-  check(issuers[0].qualification_ref.sha256===(purpose==='STATUS'?'acaf2073c654be95a3beab820f1460de1e6e68caa267e9c75bdd3c891bd894b3':'b6d4782fcf79cf599f3ccc7e2c7b7434e41a26c6d4a28c6711eac0c9f469e146'),'EXACT_ACCEPTED_PURPOSE_ALGORITHM_METADATA');
+  check(issuers[0].qualification_ref.sha256===(purpose==='STATUS'?'1640995831b0c1f8ae616810e12eb7b97ee191e9f20b5c38eee32eb8bfac9d23':'80cf8f471248ae76e5a637b5f94f20f4863a243c7011e5728de86cb5fc7cf5d2'),'EXACT_ACCEPTED_PURPOSE_ALGORITHM_METADATA');
   const metadata=JSON.parse(readBlobRef(issuers[0].qualification_ref));
   check(metadata.control_trust_root_generation===generation&&metadata.root_set_id===rootID&&metadata.accepted_audience===audience&&metadata.accepted_issuer_purposes?.some(p=>p.purpose===purpose&&p.accepted===true&&p.audience===audience),'EXACT_PURPOSE_QUALIFICATION');currentWindow(metadata.not_before,metadata.expires_at,Date.now());
   if(purpose==='GATE_AUTHORIZATION')check(same(result.ga.issuer_ref,issuers[0].qualification_ref),'ACTUAL_GA_ISSUER_QUALIFICATION_REF');
