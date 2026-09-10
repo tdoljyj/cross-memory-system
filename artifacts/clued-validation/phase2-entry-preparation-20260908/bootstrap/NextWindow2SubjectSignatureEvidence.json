@@ -1,0 +1,56 @@
+{
+  "kind": "EXACT_NW01_CONTINUATION_SUBJECT_SIGNATURE_EVIDENCE",
+  "status": "VERIFIED",
+  "observed_at_utc": "2026-09-10T10:43:44.6095948Z",
+  "repository": {
+    "full_name": "tdoljyj/cross-memory-system",
+    "private": true
+  },
+  "pr": {
+    "number": 51,
+    "url": "https://github.com/tdoljyj/cross-memory-system/pull/51",
+    "state": "MERGED",
+    "merged_by": "tdoljyj",
+    "merged_at": "2026-09-10T10:43:01Z",
+    "merge_commit_sha": "94b03cc227c544ed17e05e3b19dae6164ba00f74",
+    "head_sha": "2b1f4fe2b364453d7960ea144a8934ccf3c5eec4"
+  },
+  "merge": {
+    "sha": "94b03cc227c544ed17e05e3b19dae6164ba00f74",
+    "parents": [
+      "e0791841a95dfc415a8acac89d07be0f1caa8a89",
+      "2b1f4fe2b364453d7960ea144a8934ccf3c5eec4"
+    ],
+    "tree": "0ca4ac4f6dbb7748ea7220b8732ee4bf9e8dbee1",
+    "author_login": "tdoljyj",
+    "committer_login": "web-flow",
+    "verification": {
+      "verified": true,
+      "reason": "valid",
+      "verified_at": "2026-09-10T10:43:01Z"
+    }
+  },
+  "registration_subject": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/NextWindow2RegistrationSubject.canonical.json",
+    "blob_sha": "5a903b12446fa3c98349f7d0304bc75dc74d7a79",
+    "sha256": "164e61bca21ebe80caa6c0db874e521a1af90cad495d820f5456827144719c0e",
+    "bytes": 3421
+  },
+  "registration_acceptance": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/NextWindow2RegistrationSubjectAcceptance.json",
+    "blob_sha": "57658c7cfde83cc86f6684a7aa76ae3fd06c31f0",
+    "sha256": "de36aa0cd58d79fa6d15dfe8d76f5536797d4061812176d5dbce9e915b3ce51a",
+    "bytes": 1804
+  },
+  "store_acceptance": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/NextWindow2ControlStoreAcceptance.json",
+    "blob_sha": "4092b3ffcf75be13dd484fbf75f45608d01572ef",
+    "sha256": "33f5dcdcf1197e643c43d943b738fbaf53b33ec6ea2f3f036be5cf714f5d60ff",
+    "bytes": 2593
+  },
+  "authority_effect": "NONE_UNTIL_EXACT_NW01_TRANSACTION",
+  "root_registered": false,
+  "status_registered": false,
+  "ga_created": false
+}
+
