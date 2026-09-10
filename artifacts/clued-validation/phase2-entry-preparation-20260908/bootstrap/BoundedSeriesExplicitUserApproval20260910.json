@@ -1,0 +1,35 @@
+{
+  "state": "APPROVED_EXACT_BOUNDED_QUALIFICATION_SERIES",
+  "proposal_sha256": "ea96914e218460339508bc51eff0d10de41e1a94cfa3a0a544a85a132219791b",
+  "scope": {
+    "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+    "root_generation": "ctrgen_2e778ca66244459f974b081edca8c04e",
+    "project": "uscrdifznmlvczcekqpw",
+    "expires_at": "2026-09-10T10:13:16Z",
+    "maximum_new_ga": 3,
+    "maximum_new_forward": 3,
+    "per_ga_seconds": 600,
+    "per_ga_evidence_bytes": 134217728,
+    "maximum_series_charged_seconds": 6906,
+    "root_seconds_cap": 7200,
+    "evidence_cap": 1530506163,
+    "first_pass_stops": true,
+    "refund": false,
+    "automatic_retry": false,
+    "production": false,
+    "model_budget": 0,
+    "paid_budget": 0
+  },
+  "approved_at": "2026-09-09T23:44:11Z",
+  "authority": "user_explicit",
+  "approval_text": "批准有限续跑提案",
+  "source": {
+    "kind": "CURRENT_CONVERSATION_USER_MESSAGE",
+    "message": "批准有限续跑提案",
+    "context": "Explicit answer to the assistant question linking the exact finite continuation proposal",
+    "timestamp_semantics": "approved_at is the first tool-clock receipt observation after this user message; client message timestamp is not exposed; no earlier time is claimed"
+  },
+  "limitations": [
+    "Approval scope is exactly the linked proposal; no production/Canonical checkpoint/A03-A11 formal business measurement authority is added."
+  ]
+}

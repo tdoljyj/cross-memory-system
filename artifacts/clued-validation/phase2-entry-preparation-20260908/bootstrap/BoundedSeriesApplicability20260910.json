@@ -1,0 +1,47 @@
+{
+  "state": "ACCEPTED_EXACT_ROOT3_BOUNDED_QUALIFICATION_SERIES_APPLICABILITY",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "proposal_sha256": "ea96914e218460339508bc51eff0d10de41e1a94cfa3a0a544a85a132219791b",
+  "approval_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/86636aa78807ca1ce1facbdd910f7c3d27a75177",
+    "sha256": "fe114f0860dc69a52cd448ae697e8d8692fe39e51d84ab8bb60edfe01ace97fe"
+  },
+  "scope": {
+    "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+    "root_generation": "ctrgen_2e778ca66244459f974b081edca8c04e",
+    "project": "uscrdifznmlvczcekqpw",
+    "expires_at": "2026-09-10T10:13:16Z",
+    "maximum_new_ga": 3,
+    "maximum_new_forward": 3,
+    "per_ga_seconds": 600,
+    "per_ga_evidence_bytes": 134217728,
+    "maximum_series_charged_seconds": 6906,
+    "root_seconds_cap": 7200,
+    "evidence_cap": 1530506163,
+    "first_pass_stops": true,
+    "refund": false,
+    "automatic_retry": false,
+    "production": false,
+    "model_budget": 0,
+    "paid_budget": 0
+  },
+  "inherited_issuer_purpose_sha256": {
+    "STATUS": "acaf2073c654be95a3beab820f1460de1e6e68caa267e9c75bdd3c891bd894b3",
+    "GATE_AUTHORIZATION": "b6d4782fcf79cf599f3ccc7e2c7b7434e41a26c6d4a28c6711eac0c9f469e146",
+    "GATE_RESULT": "b6d4782fcf79cf599f3ccc7e2c7b7434e41a26c6d4a28c6711eac0c9f469e146"
+  },
+  "not_before": "2026-09-09T23:50:37.575Z",
+  "new_root_generation": false,
+  "new_signing_identity": false,
+  "old_signed_objects_rewritten": false,
+  "acceptance_basis": "Actual current-conversation user approval, exact proposal clause 3 supplemental administrative applicability, and independent review of unchanged inherited issuer purpose metadata.",
+  "delegation_effect": "Supplement the consumed historical one-GA numerical limit solely with this exact newly approved maximum-three serial series. Do not reuse c504 or reinterpret its historical approval as unconsumed.",
+  "preserved": [
+    "Existing Root3 signed bytes, issuer identities, purposes, signature algorithms and original historical receipts remain unchanged.",
+    "Each actual new Status, GA, result and runtime must independently satisfy original verification and exact new appendix binding."
+  ],
+  "excluded": [
+    "Production, paid/model budget, Gold, A03-A11 formal business measurement, new root or identity, cap extension, automatic retry, refund."
+  ],
+  "publication_requirement": "This is the actual independent administrative decision. Its local blob URI is content-addressed, not proof of publication; downstream must verify real Owner publication before consumption."
+}
