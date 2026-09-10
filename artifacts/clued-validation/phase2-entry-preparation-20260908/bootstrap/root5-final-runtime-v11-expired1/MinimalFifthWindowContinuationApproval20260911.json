@@ -1,0 +1,25 @@
+{
+  "object_type": "MinimalContinuationApprovalEvidence",
+  "schema_version": "1.0",
+  "user_message": "没完成就继续",
+  "recorded_at": "2026-09-10T22:42:00.000Z",
+  "prior_blocker_disclosed": true,
+  "approved_interpretation": {
+    "purpose": "Complete the unfinished Clued Kernel Phase 2 nonproduction qualification",
+    "additional_allocations_max": 1,
+    "per_allocation_seconds": 600,
+    "per_allocation_evidence_bytes": 134217728,
+    "new_series_seconds_cap": 8706,
+    "new_series_evidence_bytes_cap": 1933159347,
+    "paid_budget": 0,
+    "model_budget": 0,
+    "production": false,
+    "refund": false,
+    "automatic_retry_after_this_window": false,
+    "new_trust_root": false,
+    "new_signing_identity": false
+  },
+  "necessity": "The final added allocation was consumed by a signed GA that expired in PENDING while dependency and freshness integration defects were corrected; the exact caps leave no legal path to completion.",
+  "cost_effect": "Exactly one further 600-second and 134217728-byte nonproduction allocation; no paid or model budget.",
+  "authority_effect": "BOUNDED_CONTINUATION_ONLY"
+}
