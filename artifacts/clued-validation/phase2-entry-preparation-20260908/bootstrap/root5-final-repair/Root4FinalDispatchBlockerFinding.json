@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "state": "CONFIRMED_PREDISPATCH_CONTROLLER_ROOT_WINDOW_MISMATCH",
+  "observed_at_utc": "2026-09-10T13:09:54.862Z",
+  "root_set_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+  "current_root_generation": "ctrgen_9cf53fa5cd0a4a38bd68613493f95b06",
+  "current_controller_sha256": "27ede0fc0ff6afc4d5abf2f5c9f256fe22776165746dddc19aa2693c47bbc97c",
+  "failed_ga_id": "ga_1d52f4778d494399b12aea54fe4a189e",
+  "failed_receipt_sha256": "3a311d678ed563d5dd1492ef53675fcba8e985dccf3880d032ca2029168fedf9",
+  "finding": "The final controller still requires the Root3 generation and the expired Root3 cutoff inside its bounded-series guard. A fresh Root4 observation therefore fails before any host effect. The expired GA was never dispatched and is durably closed STALE.",
+  "reproduction": {
+    "entry_sha256": "f2a79d015764685b724727e3aa2a7ba17e8e604535386ed3fc43a9b5b3187667",
+    "local_material_check": "FIXED_OWNER_CUTOFF_NO_DISPATCH",
+    "active_ga_id": null,
+    "pending_budget_sequence": null,
+    "charged_seconds": 6906,
+    "charged_evidence_bytes": 1530506163,
+    "last_execution_sequence": 61
+  },
+  "required_repair": "Advance the immutable root generation once, bind one minimally patched controller and status successor, then consume the one explicitly authorized nonproduction final allocation. Preserve all history and charges.",
+  "host_effect": "NONE",
+  "budget_effect": "NONE"
+}

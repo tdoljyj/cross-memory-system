@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "state": "ACCEPTED_EXACT_ROOT5_FINAL_CONTROLLER_SOURCE_NOT_BOUND_OR_EXECUTED",
+  "reviewer": "/root",
+  "review_method": "OWNER_DELEGATED_FULL_BYTE_MANIFEST_AND_DIFFERENTIAL_REVIEW",
+  "accepted_at_utc": "2026-09-10T13:09:54.862Z",
+  "controller_manifest": {
+    "path": "scripts/phase2-qualification/control-context-verifier-root5-final-successor/ControllerSourceManifest.candidate.json",
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/bb65bb840eca569e44903990c878f050f936a808",
+    "sha256": "c0bf3dbfebd8fb4dbae439bd1f04f8047d3c9ca2594f9a0218e03416dd27edec",
+    "bytes": 72950,
+    "files": 327
+  },
+  "predecessor_controller_sha256": "27ede0fc0ff6afc4d5abf2f5c9f256fe22776165746dddc19aa2693c47bbc97c",
+  "changed_behavior": [
+    "Current signed root generation advances from Root4 to Root5",
+    "Historical attempt, receipt and budget generation checks split by immutable budget sequence",
+    "Fourth bounded allocation and fourth corrective forward use the explicitly approved cumulative ceilings",
+    "Current runtime and qualification metadata require the transparent /root delegated reviewer identity"
+  ],
+  "unchanged_behavior": [
+    "Same nonproduction project, root set, gate, profile, scope and 19-check suite",
+    "Same exact-byte, owner-merge, fresh SQL, single-dispatch, STOP and terminal CAS controls",
+    "No refund, reuse, automatic retry, production, paid model or business-data authority"
+  ],
+  "approval_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/80660c2a57dd88a001636f701f22cec9a8c12675",
+    "sha256": "2583e78b8aa5bcdc28f8c545eb9cd98639e20ce28f5c3b10a485e7647c9b4403"
+  },
+  "authority_effect": "NONE",
+  "bound": false,
+  "executed": false
+}
