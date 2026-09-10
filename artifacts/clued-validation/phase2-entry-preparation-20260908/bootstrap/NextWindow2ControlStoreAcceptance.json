@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "review_basis": "PREVIOUSLY_INDEPENDENTLY_ACCEPTED_NW01_CODE_PATH_PLUS_CURRENT_OWNER_SIGNED_EXACT_SCOPE",
+  "decided_at_utc": "2026-09-10T10:39:03.502Z",
+  "registration_subject": {
+    "path": "work/next-window-registration-materials-20260910/RegistrationSubject.canonical.json",
+    "sha256": "164e61bca21ebe80caa6c0db874e521a1af90cad495d820f5456827144719c0e",
+    "bytes": 3421
+  },
+  "root_set_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+  "generation_id": "ctrgen_9cf53fa5cd0a4a38bd68613493f95b06",
+  "owner_approval_merge": "e0791841a95dfc415a8acac89d07be0f1caa8a89",
+  "approval_sha256": "43e443be8dbd7b29ce9a097cd0ad58f0d88d0984b039c19a2590e3157eabcd6e",
+  "proposal_sha256": "eb90478aa4024db3a469e21e69a32c93df5c60c8d7a862735250dc6bb26f7b28",
+  "window": {
+    "not_before": "2026-09-10T10:21:05Z",
+    "expires_at": "2026-09-11T10:21:05Z"
+  },
+  "complete_preimage": {
+    "path": "work/next-window-final-preimage-20260910/State.json",
+    "sha256": "65d5431b4e69cb96d67af0f59e6b2f5082eb491cfa2f52ddd046032aaf65773b",
+    "bytes": 2680018
+  },
+  "authority_effect": "NONE",
+  "remotely_executed": false,
+  "state": "ACCEPTED_EXISTING_NONPRODUCTION_STORE_NW01_REUSE_NOT_EXECUTED",
+  "accepted_store": {
+    "project_ref": "uscrdifznmlvczcekqpw",
+    "namespace": "clued_control",
+    "second_store_created": false
+  },
+  "allowed_maintenance": {
+    "all_prior_root_status_ga_grr_execution_and_budget_history_preserved": true,
+    "application_ordinal": 2,
+    "changed_checks": [
+      "accepted_binding_check",
+      "accepted_binding_owner_approval_commit_check",
+      "accepted_binding_subject_sha256_check"
+    ],
+    "changed_fields": [
+      "not_before",
+      "expires_at",
+      "owner_approval_commit",
+      "subject_sha256",
+      "registration_acceptance_sha256",
+      "store_acceptance_sha256",
+      "signature_evidence_sha256"
+    ],
+    "exception": "NW-01",
+    "once_only_per_approved_window": true,
+    "production_authority": false,
+    "root_set_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+    "row": "clued_control.accepted_binding",
+    "surgical_authority": false,
+    "temporarily_disabled_trigger": "accepted_binding_immutable",
+    "trigger_restored_same_transaction": true
+  },
+  "actual_source_sequence": 57,
+  "actual_root_sequence": 3,
+  "budget_history": {
+    "seconds": 6306,
+    "bytes": 1396288435,
+    "refund": false
+  },
+  "decision": "Reuse the already accepted NW-01 transaction shape for exactly one current one-row/seven-field/three-CHECK update; retain all other schema, rows, ACL, triggers and history."
+}
