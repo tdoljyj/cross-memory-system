@@ -1,0 +1,96 @@
+{
+  "state": "FIFTEENTH_FORWARD_TRANSACTION_CANDIDATE_NOT_REVIEWED_NOT_EXECUTED",
+  "sha256": "aa2c20709039039f629ce165bbcc1e670ea8a80a29c8a8bf90aabbbbef5f9e6b",
+  "bytes": 103385,
+  "getter_sha256": "d21d07da5fb2cfd7713cd84306de8b9521be2daed31165f869e431b3f0f8a880",
+  "previous_sequence": 71,
+  "next_sequence": 72,
+  "new_binding": {
+    "gate_id": "G-PREENTRY-SKILL-QUALIFICATION",
+    "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+    "gate_sha256": "3487d9fc6ccee5478569021961eac93bf5ef6bd4bc2428559b20a44abb9c155a",
+    "gate_version": "fixed-synthetic-20260910.v10-env-order-repair",
+    "scope_sha256": "115408c69dcb2fa606fb0de34ec86c5239487d0cfa9a73abb267664a2482abe5",
+    "prior_seconds": 1506,
+    "profile_sha256": "d1c060b85f0b842a397a478105ea57a208e62eb0a5a2d4c2cd8f93f63eae88f5",
+    "controller_sha256": "860302ed2c9a598455f4c1ad66bd7e89cc680527df141288c30007cd0858e37f",
+    "prior_evidence_bytes": 322546611,
+    "qualification_sha256": "49f916e34bd0ff84c58d3b4775875a597f314b80945676426b5bc0ede60820eb",
+    "runtime_acceptance_sha256": "ec3b47138acb60cb45008a1f18b5ecefe3b83fd4b99372d8adb5061b9be396cf"
+  },
+  "source_acceptance_refs": {
+    "controller_manifest": {
+      "ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/e1330ff8dcda31cbdf6f2c30145c7b6c6d8518c9",
+        "sha256": "860302ed2c9a598455f4c1ad66bd7e89cc680527df141288c30007cd0858e37f"
+      },
+      "publication": {
+        "commitSha": "db376e746538439ef12612691d02dc28b39718f8",
+        "artifactPath": "scripts/phase2-qualification/control-context-verifier-root5-window5-forward11-successor/ControllerSourceManifest.candidate.json"
+      }
+    },
+    "gate_suite": {
+      "ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/83f87805e1e5ecfa619cbb69db061f03999eb31f",
+        "sha256": "a7a70ddbe089d46609d2f8c877aa69792ad3b5aef7c5487a10d6b8951dee7c2c"
+      },
+      "publication": {
+        "commitSha": "dae4bf76b2e6e9bd25aa8aa5c60a363ef24c53d7",
+        "artifactPath": "scripts/phase2-qualification/RuntimeMaterialPreparation/env-order-repair-successor/preentry-skill-qualification.json"
+      }
+    },
+    "independent_acceptance": {
+      "ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/d152c0b137d3808086b690f7c884c9cb84d6e28c",
+        "sha256": "b8eabc631553ecdbd92be8e1368d4a773d33013a472875ebbc0abd431d7337d7"
+      },
+      "publication": {
+        "commitSha": "cbede36c6195716f7e4636f166e2d88873b8120d",
+        "artifactPath": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v11/Status18Acceptance.json"
+      }
+    },
+    "qualification": {
+      "ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/d56359f40dabb66970890546d0b4ce7bece4cdae",
+        "sha256": "49f916e34bd0ff84c58d3b4775875a597f314b80945676426b5bc0ede60820eb"
+      },
+      "publication": {
+        "commitSha": "cbede36c6195716f7e4636f166e2d88873b8120d",
+        "artifactPath": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v11/ScopedRoot5FinalControllerQualification.json"
+      }
+    },
+    "runtime_acceptance": {
+      "ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/79d084a142c2526278d2c7dd5d1fec913a4e29b8",
+        "sha256": "ec3b47138acb60cb45008a1f18b5ecefe3b83fd4b99372d8adb5061b9be396cf"
+      },
+      "publication": {
+        "commitSha": "cbede36c6195716f7e4636f166e2d88873b8120d",
+        "artifactPath": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v11/ExactRoot5FinalPreentryControllerRuntimeAcceptance.json"
+      }
+    },
+    "scope": {
+      "ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/f55f48f76e3b1b4a99e85ba01f64d1555d7f1e24",
+        "sha256": "115408c69dcb2fa606fb0de34ec86c5239487d0cfa9a73abb267664a2482abe5"
+      },
+      "publication": {
+        "commitSha": "dae4bf76b2e6e9bd25aa8aa5c60a363ef24c53d7",
+        "artifactPath": "scripts/phase2-qualification/RuntimeMaterialPreparation/env-order-repair-successor/ExecutionScopeDefinition.json"
+      }
+    }
+  },
+  "actual_preimage_ref": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-window5-corrected-binding/ActualFifteenthForwardObservation.json",
+    "sha256": "c0e2d2bb6b4270811caa242dfdd4dde5aa4b4ffb0d15008a224bc617bb718a97"
+  },
+  "actual_event_created": false,
+  "root_or_fees_changed": false,
+  "status_inserted": false,
+  "budget_reserved": false,
+  "signatures_verified": false,
+  "sql_path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/root5-window5-corrected-binding/ActualFifteenthForward.sql",
+  "candidate_source_sha256": "3184911f70a601eed7828043dbaf7d5d16c88affb8727144480b5a418acf42a4",
+  "getter_source_sha256": "1c3329253a9df58f25bf44ce5bb5c2b6e9c4fd193b2d082c0d7e8de5d5b7ea1a",
+  "input_sha256": "7653badacf48702c183c237abd83bff6c77b9651c68dfbcc97aaa85da33dc282"
+}
