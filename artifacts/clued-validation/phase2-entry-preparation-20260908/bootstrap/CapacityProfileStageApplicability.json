@@ -1,0 +1,168 @@
+{
+  "schema_version": 1,
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "decided_at_utc": "2026-09-10T04:15:11.803Z",
+  "not_before": "2026-09-10T04:15:11.803Z",
+  "expires_at": "2026-09-10T10:13:16Z",
+  "root_generation": "ctrgen_2e778ca66244459f974b081edca8c04e",
+  "controller_manifest": {
+    "path": "scripts/phase2-qualification/control-context-verifier-original-input-capacity-successor/ControllerSourceManifest.candidate.json",
+    "sha256": "07e0be02895363bac5ced923924f27b8de1f7951d8eea2c829831afef9bb27aa",
+    "bytes": 70076
+  },
+  "controller_digest": "07e0be02895363bac5ced923924f27b8de1f7951d8eea2c829831afef9bb27aa",
+  "scope_digest": "728218c85553b1abaac2b6884d9cb675bea6f4dec3b20196de121a762f9f742b",
+  "definitions": {
+    "risk": {
+      "path": "work/original-input-capacity-definition-preparation/definitions-candidate-v2/ScopedRiskManifest.json",
+      "sha256": "1be61fadd55735095e19d93a6adefd9436eff3a4c07795bf09d758d470e7ca2e",
+      "bytes": 9252
+    },
+    "host": {
+      "path": "work/original-input-capacity-definition-preparation/definitions-candidate-v2/HostRuntimeConfig.json",
+      "sha256": "e5990666c020373b2decc487b0f918982fd554e34e6fb6321cbd0b7e738f5a08",
+      "bytes": 19429
+    },
+    "sink": {
+      "path": "work/original-input-capacity-definition-preparation/definitions-candidate-v2/EvidenceSinkDefinition.json",
+      "sha256": "1fbb78b64f10d9756ddc07c365f87e9f4255a09e53846ef1d7dc643f9f1e9f7b",
+      "bytes": 9418
+    },
+    "scope": {
+      "path": "work/original-input-capacity-definition-preparation/definitions-candidate-v2/ExecutionScopeDefinition.json",
+      "sha256": "728218c85553b1abaac2b6884d9cb675bea6f4dec3b20196de121a762f9f742b",
+      "bytes": 32727
+    },
+    "binding": {
+      "path": "work/original-input-capacity-definition-preparation/definitions-candidate-v2/ControlBindingDefinition.json",
+      "sha256": "105f7a29cead50e41120731bb7c5f512c84e2ee3225f36ff0f7eead6125b443b",
+      "bytes": 2315
+    },
+    "suite": {
+      "path": "work/original-input-capacity-definition-preparation/definitions-candidate-v2/preentry-skill-qualification.json",
+      "sha256": "3587c4c13a345844eaaf1d595c52ebdd35d8642c42931f4364e2eafc2136699e",
+      "bytes": 125340
+    },
+    "gate": {
+      "path": "work/original-input-capacity-definition-preparation/definitions-candidate-v2/GateDefinitionCandidate.json",
+      "sha256": "29c7ddab827be6dd3491bb06e1b08c49321c04b749698bea985f161d9b056a6f",
+      "bytes": 13063
+    },
+    "registry": {
+      "path": "work/original-input-capacity-definition-preparation/definitions-candidate-v2/RegistrySuccessorCandidate.json",
+      "sha256": "76e61082363c5aba65ae925218871ad83de855f486219e7062bd8a7719e6ea85",
+      "bytes": 2281
+    }
+  },
+  "approved_window": {
+    "approval": {
+      "path": "work/ordinary-bounded-approved-execution/ExplicitUserApproval.json",
+      "bytes": 1432,
+      "sha256": "fe114f0860dc69a52cd448ae697e8d8692fe39e51d84ab8bb60edfe01ace97fe"
+    },
+    "not_before": "2026-09-09T23:44:11Z",
+    "expires_at": "2026-09-10T10:13:16Z",
+    "new_gate_authorizations_max": 3,
+    "aggregate_seconds_max": 7200,
+    "aggregate_evidence_bytes_max": 1530506163,
+    "per_allocation_seconds": 600,
+    "per_allocation_evidence_bytes": 134217728,
+    "paid_budget": 0,
+    "model_budget": 0,
+    "no_refund": true,
+    "no_automatic_retry": true,
+    "old_root2_and_previous_issuer_acceptances_are_historical": true,
+    "requires_actual_existing_Root3_and_exact_bounded_forward": true,
+    "capacity_approval": {
+      "path": "work/original-input-capacity-approved-execution/ExplicitCapacityApproval.json",
+      "sha256": "c07744ceb514631f12435360c1ea5f5bffeb2f963118c957c963725ad3a53295",
+      "bytes": 3207
+    },
+    "capacity_applicability": {
+      "path": "work/original-input-capacity-approved-execution/admin-review/OriginalInputCapacityApplicability20260910.json",
+      "sha256": "1fe0725539f6eb01b784dc9ca5fb42f0a1cf176a7e47ae38fb996f0f8f2017a0",
+      "bytes": 18063
+    },
+    "capacity_repair": {
+      "path": "work/original-input-capacity-approved-execution/admin-review/Original043CapacityRepairAcceptance20260910.json",
+      "sha256": "e21ace3f2f3e460d542d8fa889e54918cfad5acd1b98d68175c723e38ac7258f",
+      "bytes": 15606
+    },
+    "remaining_allocations_max": 2,
+    "original_input_limit_bytes": 3000000
+  },
+  "host_scope_acceptance": {
+    "path": "work/original-input-capacity-approved-execution/admin-review/CapacityHostScopeIndependentAcceptance.json",
+    "sha256": "4de0c7e07d9d6395acb5eabd6982a5b65addfe5b85702583a2f715603125b909",
+    "bytes": 7490
+  },
+  "authority_effect": "NONE",
+  "state": "ACCEPTED_EXACT_PROFILE_AND_STAGE_APPLICABILITY_NOT_RUNTIME_OR_STAGE_REISSUANCE",
+  "profile_sha256": "d1c060b85f0b842a397a478105ea57a208e62eb0a5a2d4c2cd8f93f63eae88f5",
+  "profile": {
+    "path": "work/kernel-phase2-repo/scripts/phase2-qualification/preentry-parent/profile-runtime600/ProfileDefinition.json",
+    "sha256": "d1c060b85f0b842a397a478105ea57a208e62eb0a5a2d4c2cd8f93f63eae88f5",
+    "bytes": 3325
+  },
+  "profile_content_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/c39f2d566c5ca41149b053868444c67b4f1150a9",
+    "sha256": "d1c060b85f0b842a397a478105ea57a208e62eb0a5a2d4c2cd8f93f63eae88f5"
+  },
+  "previous_profile_accepted_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/b083b71bdca15ba43e75fbd60f57b354fab24e40",
+    "sha256": "269a0ad994d7d367d037ad67289838446e8ffe4b91f527459e0869583c6a980e"
+  },
+  "required_stages": [
+    "R05",
+    "R06",
+    "R07",
+    "R08",
+    "R09",
+    "R10"
+  ],
+  "not_applicable_layer_permissions": {
+    "account": {
+      "reason": "该固定child没有Clued业务account、业务用户令牌或账户API；只读取明确三Skill文本和固定合成fixture。GitHub Owner控制身份仍存在并单独核验，不与此Clued业务account层混同。",
+      "accepted_schema_ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/1622355e303cd0f22e2b0d0b4b0beb943559c78d",
+        "sha256": "f57cceb29853c67f8702c1560017c3be7b96626d6358299b5215add63d01e916"
+      }
+    },
+    "integration_installation": {
+      "reason": "没有Clued集成安装实例、集成业务凭据或installation接口调用；宿主Docker安装及受信Git发布渠道不是本合成业务层installation，其控制/凭据代际继续独立核验。",
+      "accepted_schema_ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/1622355e303cd0f22e2b0d0b4b0beb943559c78d",
+        "sha256": "f57cceb29853c67f8702c1560017c3be7b96626d6358299b5215add63d01e916"
+      }
+    },
+    "context": {
+      "reason": "不创建或读取ContextStream/context/session业务对象；/allowed/fixture.json不是ContextStream或Canon。父监督会话session_generation不因此消失。",
+      "accepted_schema_ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/1622355e303cd0f22e2b0d0b4b0beb943559c78d",
+        "sha256": "f57cceb29853c67f8702c1560017c3be7b96626d6358299b5215add63d01e916"
+      }
+    },
+    "binding": {
+      "reason": "没有Clued Binding发行、选择、资源绑定或Binding token；纯固定文件挂载不是业务Binding。确切container/Skill/Scope/Root引用仍必须绑定且禁止改变。",
+      "accepted_schema_ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/1622355e303cd0f22e2b0d0b4b0beb943559c78d",
+        "sha256": "f57cceb29853c67f8702c1560017c3be7b96626d6358299b5215add63d01e916"
+      }
+    }
+  },
+  "prior_applicability": {
+    "path": "work/ordinary-bounded-approved-execution/admin-review/BoundedProfileStageApplicability.v3.json",
+    "sha256": "269a0ad994d7d367d037ad67289838446e8ffe4b91f527459e0869583c6a980e",
+    "bytes": 7848
+  },
+  "decision": "Unchanged fixed600 Profile and R05-R10 requirements apply to these exact approved capacity definitions. Original layer NA, identity and credential restrictions preserved. Only original-input N changes to3000000; actual capacity approval required; no stage reissuance, expiry extension or runtime admission.",
+  "stage_receipts_reissued": false,
+  "profile_definition_changed": false,
+  "qualification_test_results_preaccepted": false,
+  "formal_measurements": 0,
+  "supersedes": {
+    "path": "work/ordinary-bounded-approved-execution/admin-review/BoundedProfileStageApplicability.v3.json",
+    "sha256": "269a0ad994d7d367d037ad67289838446e8ffe4b91f527459e0869583c6a980e",
+    "bytes": 7848
+  }
+}

@@ -1,0 +1,146 @@
+{
+  "schema_version": 1,
+  "state": "ACCEPTED_EXACT_HOST_SCOPE_DEFINITIONS_FOR_PUBLICATION_NOT_RUNTIME_ADMISSION",
+  "kind": "INDEPENDENT_APPROVED_CAPACITY_HOST_SCOPE_ACCEPTANCE",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "decided_at_utc": "2026-09-10T04:15:11.803Z",
+  "authority_effect": "NONE",
+  "approved_window": {
+    "approval": {
+      "path": "work/ordinary-bounded-approved-execution/ExplicitUserApproval.json",
+      "bytes": 1432,
+      "sha256": "fe114f0860dc69a52cd448ae697e8d8692fe39e51d84ab8bb60edfe01ace97fe"
+    },
+    "not_before": "2026-09-09T23:44:11Z",
+    "expires_at": "2026-09-10T10:13:16Z",
+    "new_gate_authorizations_max": 3,
+    "aggregate_seconds_max": 7200,
+    "aggregate_evidence_bytes_max": 1530506163,
+    "per_allocation_seconds": 600,
+    "per_allocation_evidence_bytes": 134217728,
+    "paid_budget": 0,
+    "model_budget": 0,
+    "no_refund": true,
+    "no_automatic_retry": true,
+    "old_root2_and_previous_issuer_acceptances_are_historical": true,
+    "requires_actual_existing_Root3_and_exact_bounded_forward": true,
+    "capacity_approval": {
+      "path": "work/original-input-capacity-approved-execution/ExplicitCapacityApproval.json",
+      "sha256": "c07744ceb514631f12435360c1ea5f5bffeb2f963118c957c963725ad3a53295",
+      "bytes": 3207
+    },
+    "capacity_applicability": {
+      "path": "work/original-input-capacity-approved-execution/admin-review/OriginalInputCapacityApplicability20260910.json",
+      "sha256": "1fe0725539f6eb01b784dc9ca5fb42f0a1cf176a7e47ae38fb996f0f8f2017a0",
+      "bytes": 18063
+    },
+    "capacity_repair": {
+      "path": "work/original-input-capacity-approved-execution/admin-review/Original043CapacityRepairAcceptance20260910.json",
+      "sha256": "e21ace3f2f3e460d542d8fa889e54918cfad5acd1b98d68175c723e38ac7258f",
+      "bytes": 15606
+    },
+    "remaining_allocations_max": 2,
+    "original_input_limit_bytes": 3000000
+  },
+  "controller_manifest": {
+    "path": "scripts/phase2-qualification/control-context-verifier-original-input-capacity-successor/ControllerSourceManifest.candidate.json",
+    "sha256": "07e0be02895363bac5ced923924f27b8de1f7951d8eea2c829831afef9bb27aa",
+    "bytes": 70076
+  },
+  "definitions": {
+    "risk": {
+      "path": "work/original-input-capacity-definition-preparation/definitions-candidate-v2/ScopedRiskManifest.json",
+      "sha256": "1be61fadd55735095e19d93a6adefd9436eff3a4c07795bf09d758d470e7ca2e",
+      "bytes": 9252
+    },
+    "host": {
+      "path": "work/original-input-capacity-definition-preparation/definitions-candidate-v2/HostRuntimeConfig.json",
+      "sha256": "e5990666c020373b2decc487b0f918982fd554e34e6fb6321cbd0b7e738f5a08",
+      "bytes": 19429
+    },
+    "sink": {
+      "path": "work/original-input-capacity-definition-preparation/definitions-candidate-v2/EvidenceSinkDefinition.json",
+      "sha256": "1fbb78b64f10d9756ddc07c365f87e9f4255a09e53846ef1d7dc643f9f1e9f7b",
+      "bytes": 9418
+    },
+    "scope": {
+      "path": "work/original-input-capacity-definition-preparation/definitions-candidate-v2/ExecutionScopeDefinition.json",
+      "sha256": "728218c85553b1abaac2b6884d9cb675bea6f4dec3b20196de121a762f9f742b",
+      "bytes": 32727
+    },
+    "binding": {
+      "path": "work/original-input-capacity-definition-preparation/definitions-candidate-v2/ControlBindingDefinition.json",
+      "sha256": "105f7a29cead50e41120731bb7c5f512c84e2ee3225f36ff0f7eead6125b443b",
+      "bytes": 2315
+    },
+    "suite": {
+      "path": "work/original-input-capacity-definition-preparation/definitions-candidate-v2/preentry-skill-qualification.json",
+      "sha256": "3587c4c13a345844eaaf1d595c52ebdd35d8642c42931f4364e2eafc2136699e",
+      "bytes": 125340
+    },
+    "gate": {
+      "path": "work/original-input-capacity-definition-preparation/definitions-candidate-v2/GateDefinitionCandidate.json",
+      "sha256": "29c7ddab827be6dd3491bb06e1b08c49321c04b749698bea985f161d9b056a6f",
+      "bytes": 13063
+    },
+    "registry": {
+      "path": "work/original-input-capacity-definition-preparation/definitions-candidate-v2/RegistrySuccessorCandidate.json",
+      "sha256": "76e61082363c5aba65ae925218871ad83de855f486219e7062bd8a7719e6ea85",
+      "bytes": 2281
+    }
+  },
+  "profile_sha256": "d1c060b85f0b842a397a478105ea57a208e62eb0a5a2d4c2cd8f93f63eae88f5",
+  "root_generation": "ctrgen_2e778ca66244459f974b081edca8c04e",
+  "source_acceptance_sha256": "3f9676889312899d3357662c0d10d185ca875751eb6b9d8d732495f744790f6c",
+  "preparation": {
+    "path": "work/original-input-capacity-definition-preparation/definitions-candidate-v2/Preparation.json",
+    "sha256": "f12ec43da2e5ea29c3637cfeabd394a50edefdf9f322961ee4a2076fa6e31853",
+    "bytes": 247811
+  },
+  "source_binding_independent_review": {
+    "path": "work/original-input-capacity-administrative-preparation/FinalWiringAndDefinitionsReview-v2.json",
+    "sha256": "28120e792dfa317f56383f435b399a03dca50f44940184d5410014cbaf0bdb59",
+    "bytes": 7115
+  },
+  "decoder_delta_review": {
+    "path": "work/original-input-capacity-source-integration-v2/IndependentFinalDecoderDeltaReview.json",
+    "sha256": "0ba9f599b5a30c6fe6cdfd9b2dc972960cdebcc48ae123b3258bb1426046de7c",
+    "bytes": 3082
+  },
+  "external_source_bindings": {
+    "path": "work/original-input-capacity-successor-preparation/ExternalSourceBindings.json",
+    "sha256": "549488b7b4054bf4be473e7dd933235c0655ea8333ff319cc46f4c0d8d4609bf",
+    "bytes": 7206
+  },
+  "actual_source_observation": {
+    "path": "work/original-input-capacity-approved-execution/ActualSourcePublicationReadback.json",
+    "sha256": "1b0edff554967024ef86ed77973be72230bb91c24c3701b46605b32af69cbd0f",
+    "bytes": 121105
+  },
+  "actual_host_source_observation": {
+    "path": "work/original-input-capacity-approved-execution/ActualControllerHostReadback.json",
+    "sha256": "86b704346fa342f2679c7f4f847dbb7010e63b7dd78aeceddc8a5328344bd2b4",
+    "bytes": 79378
+  },
+  "checks": [
+    "All8 exact definitions match actual PR42 Owner publication and approved final package.",
+    "Original19 oracle bodies, permissions, Root3, identities, R05-R10,600seconds/128MiB and original expiry preserved under prior exact delta review.",
+    "Exact final07e0 controller,26 external source bindings and complete314 host source/dependency readback bound.",
+    "V3 original input limit is exactly3000000; Root2MiB/legacyV1/DEFLATE1MiB,frame4MiB/control128KiB/128refs unchanged.",
+    "New controller requires actual authenticated capacity approval and independent applicability, role-exact sink and retained043 terminal; no old scope_unchanged assertion.",
+    "Prewarm proves immutable Owner bytes only; fresh SQL<=15s and all original signatures/admission checks remain required."
+  ],
+  "findings": [],
+  "boundaries": [
+    "Exact definition and source applicability acceptance; no runtime admission, signature, sixth forward or new allocation performed.",
+    "Fresh Status7/exact runtime/Owner publication/static signature/full CAS forward/readback and actual size checks remain mandatory.",
+    "Only2 remaining allocations within original3; preserve043 BLOCKED receipt and full charged history; no refund, blind retry, expiry extension or formal PASS."
+  ],
+  "GA_issued": false,
+  "SQL_executed": false,
+  "supersedes": {
+    "path": "work/ordinary-bounded-approved-execution/admin-review/BoundedHostScopeIndependentAcceptance.v3.json",
+    "sha256": "487091d9399e9fdd646fc57066cd6db1a6893201d66b17af52ee14d5fa171960",
+    "bytes": 7797
+  }
+}
