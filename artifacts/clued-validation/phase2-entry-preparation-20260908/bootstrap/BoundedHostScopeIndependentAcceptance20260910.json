@@ -1,0 +1,113 @@
+{
+  "schema_version": 1,
+  "state": "ACCEPTED_EXACT_HOST_SCOPE_DEFINITIONS_FOR_PUBLICATION_NOT_RUNTIME_ADMISSION",
+  "kind": "INDEPENDENT_ORDINARY_BOUNDED_HOST_SCOPE_ACCEPTANCE",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "decided_at_utc": "2026-09-09T23:56:43.031Z",
+  "authority_effect": "NONE",
+  "approved_window": {
+    "approval": {
+      "path": "work/ordinary-bounded-approved-execution/ExplicitUserApproval.json",
+      "bytes": 1432,
+      "sha256": "fe114f0860dc69a52cd448ae697e8d8692fe39e51d84ab8bb60edfe01ace97fe"
+    },
+    "not_before": "2026-09-09T23:44:11Z",
+    "expires_at": "2026-09-10T10:13:16Z",
+    "new_gate_authorizations_max": 3,
+    "aggregate_seconds_max": 7200,
+    "aggregate_evidence_bytes_max": 1530506163,
+    "per_allocation_seconds": 600,
+    "per_allocation_evidence_bytes": 134217728,
+    "paid_budget": 0,
+    "model_budget": 0,
+    "no_refund": true,
+    "no_automatic_retry": true,
+    "old_root2_and_previous_issuer_acceptances_are_historical": true,
+    "requires_actual_existing_Root3_and_exact_bounded_forward": true
+  },
+  "controller_manifest": {
+    "path": "scripts/phase2-qualification/control-context-verifier-ordinary-bounded-acyclic-successor/ControllerSourceManifest.candidate.json",
+    "sha256": "6c9caf4e401409dbd9753debbd8d5ce86c495935939328c10d390e9f7bbb17fa",
+    "bytes": 70092
+  },
+  "definitions": {
+    "risk": {
+      "path": "work/ordinary-bounded-approved-execution/runtime-preparation/definitions-unsigned/ScopedRiskManifest.json",
+      "bytes": 8411,
+      "sha256": "66d041ca92a976e955fa129513e79c6ff0ac77635b7ba2aa968a9d1d8eda87f5"
+    },
+    "host": {
+      "path": "work/ordinary-bounded-approved-execution/runtime-preparation/definitions-unsigned/HostRuntimeConfig.json",
+      "bytes": 15479,
+      "sha256": "d45ab326948baecf6ea84f6ba22d9a2c39bee4f1741250038d81946a236c1c83"
+    },
+    "sink": {
+      "path": "work/ordinary-bounded-approved-execution/runtime-preparation/definitions-unsigned/EvidenceSinkDefinition.json",
+      "bytes": 8372,
+      "sha256": "33feb26ab01ec1cb45834c4b97d5d94f620507452f67146ce1ab7748a8500d96"
+    },
+    "scope": {
+      "path": "work/ordinary-bounded-approved-execution/runtime-preparation/definitions-unsigned/ExecutionScopeDefinition.json",
+      "bytes": 30256,
+      "sha256": "995827e5a8a0f3be83129749abfa1130fb0b3c5339e9ee8b2968940b56838f01"
+    },
+    "binding": {
+      "path": "work/ordinary-bounded-approved-execution/runtime-preparation/definitions-unsigned/ControlBindingDefinition.json",
+      "bytes": 2302,
+      "sha256": "7469fcfa00f2c8c4b644a120063065d082573ea1e5dd30d5298ebe2138f9b186"
+    },
+    "suite": {
+      "path": "work/ordinary-bounded-approved-execution/runtime-preparation/definitions-unsigned/preentry-skill-qualification.json",
+      "bytes": 125105,
+      "sha256": "baeedc4e4e029416a8bb9dd567bdf31c216b0516c2965b4f83d8ba3f01f6d548"
+    },
+    "gate": {
+      "path": "work/ordinary-bounded-approved-execution/runtime-preparation/definitions-unsigned/GateDefinitionCandidate.json",
+      "bytes": 12923,
+      "sha256": "9297bcc4c33550f67dcc25ff0cb11b700a3da92855d89cbbab6ce884cd206892"
+    },
+    "registry": {
+      "path": "work/ordinary-bounded-approved-execution/runtime-preparation/definitions-unsigned/RegistrySuccessorCandidate.json",
+      "bytes": 2274,
+      "sha256": "6a2a30a7ec297e80940f90fdb0f3bcbf73166c956721067c19c1694e6b09c41a"
+    }
+  },
+  "profile_sha256": "d1c060b85f0b842a397a478105ea57a208e62eb0a5a2d4c2cd8f93f63eae88f5",
+  "root_generation": "ctrgen_2e778ca66244459f974b081edca8c04e",
+  "source_acceptance_sha256": "6e5b8965fbf0d4af3cf581cb875f426d8dbd7ee7839caeaac4d3d8d6f0599b67",
+  "preparation": {
+    "path": "work/ordinary-bounded-approved-execution/runtime-preparation/definitions-unsigned/Preparation.json",
+    "bytes": 227776,
+    "sha256": "7ba1d241fd5c8669024e6e9a6a09f0cdf0fa75cd5f85882e26764e5c29a5f9f7"
+  },
+  "generator": {
+    "path": "work/ordinary-bounded-approved-execution/runtime-preparation/prepare-definitions.mjs",
+    "bytes": 10888,
+    "sha256": "85d90e66819e7e82cc52237b55591dba9c10ed8b657880bccebb0ac8ca89f6ef"
+  },
+  "publisher": {
+    "path": "work/ordinary-bounded-approved-execution/publisher/publish-original-inputs.py",
+    "sha256": "10f33782d92dec0eb29eee69f91e1c9a892c1ce32f0c9ccbfe7162495b617de9",
+    "bytes": 3217
+  },
+  "publisher_independent_review": {
+    "path": "work/ordinary-bounded-approved-execution/publisher/IndependentPublisherReview.json",
+    "bytes": 2597,
+    "sha256": "3195bfe797c2f9e2f346cfc0049642702cd55da33a9be1874dbd88c4fe0a226d"
+  },
+  "checks": [
+    "All eight saved definitions exactly reproduce from actual inputs without writing outputs.",
+    "All top-level non-allowlisted fields equal prior accepted definitions; nested transport limits, publisher restrictions, host safety and Scope permissions preserved.",
+    "All nineteen test bodies/oracles/setup preserved after removing only version and executor descriptors.",
+    "314 controller manifest, eight actual external pipe file hashes, exact publisher10f337 and definition cross references bound.",
+    "Original fixed expiry, 600 second/128MiB per allocation,7200 total seconds, purpose/stage/actor/subject/credentials and forbidden actions preserved; only exact approved evidence/attempt numerical supplement."
+  ],
+  "findings": [],
+  "boundaries": [
+    "Local exact definition acceptance for publication, not runtime admission, source Owner publication or signature verification.",
+    "Actual source qualification and separately accepted runtime/Status/SQL install/forward/readback/fresh admission remain required before allocation or dispatch.",
+    "Historical Root and issuer objects are not reissued; historical component and stage scope require their explicit successor applicability."
+  ],
+  "GA_issued": false,
+  "SQL_executed": false
+}

@@ -1,0 +1,146 @@
+{
+  "schema_version": 1,
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "decided_at_utc": "2026-09-09T23:57:50.804Z",
+  "not_before": "2026-09-09T23:57:50.804Z",
+  "expires_at": "2026-09-10T10:13:16Z",
+  "root_generation": "ctrgen_2e778ca66244459f974b081edca8c04e",
+  "controller_manifest": {
+    "path": "scripts/phase2-qualification/control-context-verifier-ordinary-bounded-acyclic-successor/ControllerSourceManifest.candidate.json",
+    "sha256": "6c9caf4e401409dbd9753debbd8d5ce86c495935939328c10d390e9f7bbb17fa",
+    "bytes": 70092
+  },
+  "controller_digest": "6c9caf4e401409dbd9753debbd8d5ce86c495935939328c10d390e9f7bbb17fa",
+  "scope_digest": "995827e5a8a0f3be83129749abfa1130fb0b3c5339e9ee8b2968940b56838f01",
+  "definitions": {
+    "risk": {
+      "path": "work/ordinary-bounded-approved-execution/runtime-preparation/definitions-unsigned/ScopedRiskManifest.json",
+      "bytes": 8411,
+      "sha256": "66d041ca92a976e955fa129513e79c6ff0ac77635b7ba2aa968a9d1d8eda87f5"
+    },
+    "host": {
+      "path": "work/ordinary-bounded-approved-execution/runtime-preparation/definitions-unsigned/HostRuntimeConfig.json",
+      "bytes": 15479,
+      "sha256": "d45ab326948baecf6ea84f6ba22d9a2c39bee4f1741250038d81946a236c1c83"
+    },
+    "sink": {
+      "path": "work/ordinary-bounded-approved-execution/runtime-preparation/definitions-unsigned/EvidenceSinkDefinition.json",
+      "bytes": 8372,
+      "sha256": "33feb26ab01ec1cb45834c4b97d5d94f620507452f67146ce1ab7748a8500d96"
+    },
+    "scope": {
+      "path": "work/ordinary-bounded-approved-execution/runtime-preparation/definitions-unsigned/ExecutionScopeDefinition.json",
+      "bytes": 30256,
+      "sha256": "995827e5a8a0f3be83129749abfa1130fb0b3c5339e9ee8b2968940b56838f01"
+    },
+    "binding": {
+      "path": "work/ordinary-bounded-approved-execution/runtime-preparation/definitions-unsigned/ControlBindingDefinition.json",
+      "bytes": 2302,
+      "sha256": "7469fcfa00f2c8c4b644a120063065d082573ea1e5dd30d5298ebe2138f9b186"
+    },
+    "suite": {
+      "path": "work/ordinary-bounded-approved-execution/runtime-preparation/definitions-unsigned/preentry-skill-qualification.json",
+      "bytes": 125105,
+      "sha256": "baeedc4e4e029416a8bb9dd567bdf31c216b0516c2965b4f83d8ba3f01f6d548"
+    },
+    "gate": {
+      "path": "work/ordinary-bounded-approved-execution/runtime-preparation/definitions-unsigned/GateDefinitionCandidate.json",
+      "bytes": 12923,
+      "sha256": "9297bcc4c33550f67dcc25ff0cb11b700a3da92855d89cbbab6ce884cd206892"
+    },
+    "registry": {
+      "path": "work/ordinary-bounded-approved-execution/runtime-preparation/definitions-unsigned/RegistrySuccessorCandidate.json",
+      "bytes": 2274,
+      "sha256": "6a2a30a7ec297e80940f90fdb0f3bcbf73166c956721067c19c1694e6b09c41a"
+    }
+  },
+  "approved_window": {
+    "approval": {
+      "path": "work/ordinary-bounded-approved-execution/ExplicitUserApproval.json",
+      "bytes": 1432,
+      "sha256": "fe114f0860dc69a52cd448ae697e8d8692fe39e51d84ab8bb60edfe01ace97fe"
+    },
+    "not_before": "2026-09-09T23:44:11Z",
+    "expires_at": "2026-09-10T10:13:16Z",
+    "new_gate_authorizations_max": 3,
+    "aggregate_seconds_max": 7200,
+    "aggregate_evidence_bytes_max": 1530506163,
+    "per_allocation_seconds": 600,
+    "per_allocation_evidence_bytes": 134217728,
+    "paid_budget": 0,
+    "model_budget": 0,
+    "no_refund": true,
+    "no_automatic_retry": true,
+    "old_root2_and_previous_issuer_acceptances_are_historical": true,
+    "requires_actual_existing_Root3_and_exact_bounded_forward": true
+  },
+  "host_scope_acceptance": {
+    "path": "work/ordinary-bounded-approved-execution/admin-review/BoundedHostScopeIndependentAcceptance.json",
+    "bytes": 5862,
+    "sha256": "69b83920fd610f1c44907c371f42fefb64d3e4a342dc524c36d026a5dbcca969"
+  },
+  "authority_effect": "NONE",
+  "state": "ACCEPTED_EXACT_PROFILE_AND_STAGE_APPLICABILITY_NOT_RUNTIME_OR_STAGE_REISSUANCE",
+  "profile_sha256": "d1c060b85f0b842a397a478105ea57a208e62eb0a5a2d4c2cd8f93f63eae88f5",
+  "profile": {
+    "path": "work/kernel-phase2-repo/scripts/phase2-qualification/preentry-parent/profile-runtime600/ProfileDefinition.json",
+    "sha256": "d1c060b85f0b842a397a478105ea57a208e62eb0a5a2d4c2cd8f93f63eae88f5",
+    "bytes": 3325
+  },
+  "profile_content_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/c39f2d566c5ca41149b053868444c67b4f1150a9",
+    "sha256": "d1c060b85f0b842a397a478105ea57a208e62eb0a5a2d4c2cd8f93f63eae88f5"
+  },
+  "previous_profile_accepted_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/e80107408c3f259f01ac7e871ac485b44a1768b1",
+    "sha256": "266ae65aba7faec0af6b4c257a6c289d6bdf3cd3719a74bca145cae00ce99177"
+  },
+  "required_stages": [
+    "R05",
+    "R06",
+    "R07",
+    "R08",
+    "R09",
+    "R10"
+  ],
+  "not_applicable_layer_permissions": {
+    "account": {
+      "reason": "该固定child没有Clued业务account、业务用户令牌或账户API；只读取明确三Skill文本和固定合成fixture。GitHub Owner控制身份仍存在并单独核验，不与此Clued业务account层混同。",
+      "accepted_schema_ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/1622355e303cd0f22e2b0d0b4b0beb943559c78d",
+        "sha256": "f57cceb29853c67f8702c1560017c3be7b96626d6358299b5215add63d01e916"
+      }
+    },
+    "integration_installation": {
+      "reason": "没有Clued集成安装实例、集成业务凭据或installation接口调用；宿主Docker安装及受信Git发布渠道不是本合成业务层installation，其控制/凭据代际继续独立核验。",
+      "accepted_schema_ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/1622355e303cd0f22e2b0d0b4b0beb943559c78d",
+        "sha256": "f57cceb29853c67f8702c1560017c3be7b96626d6358299b5215add63d01e916"
+      }
+    },
+    "context": {
+      "reason": "不创建或读取ContextStream/context/session业务对象；/allowed/fixture.json不是ContextStream或Canon。父监督会话session_generation不因此消失。",
+      "accepted_schema_ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/1622355e303cd0f22e2b0d0b4b0beb943559c78d",
+        "sha256": "f57cceb29853c67f8702c1560017c3be7b96626d6358299b5215add63d01e916"
+      }
+    },
+    "binding": {
+      "reason": "没有Clued Binding发行、选择、资源绑定或Binding token；纯固定文件挂载不是业务Binding。确切container/Skill/Scope/Root引用仍必须绑定且禁止改变。",
+      "accepted_schema_ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/1622355e303cd0f22e2b0d0b4b0beb943559c78d",
+        "sha256": "f57cceb29853c67f8702c1560017c3be7b96626d6358299b5215add63d01e916"
+      }
+    }
+  },
+  "prior_applicability": {
+    "path": "work/next-window-runtime-materials-20260909/Fixed600ProfileNextWindowApplicabilityIndependentAcceptance.json",
+    "bytes": 6660,
+    "sha256": "c57afadaed6123e49d0e2d8e43dc97e5e6932fcb4df8564c1dfa6df0eab6c844"
+  },
+  "decision": "The unchanged fixed600 Profile and R05-R10 stage requirements apply only to these exact bounded Host/Scope definitions and newly approved series. Preserve business NA meanings and original identity/credential restrictions. This appendix does not reissue stage receipts, extend expiry, preaccept tests, or admit runtime.",
+  "stage_receipts_reissued": false,
+  "profile_definition_changed": false,
+  "qualification_test_results_preaccepted": false,
+  "formal_measurements": 0
+}
