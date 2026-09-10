@@ -1,0 +1,60 @@
+{
+  "kind": "STATUS16_V9_SIGNING_PAYLOAD_SIGNATURE_EVIDENCE",
+  "status": "VERIFIED",
+  "observed_at_utc": "2026-09-10T18:48:00Z",
+  "repository": {
+    "full_name": "tdoljyj/cross-memory-system",
+    "private": true
+  },
+  "pr": {
+    "number": 101,
+    "url": "https://github.com/tdoljyj/cross-memory-system/pull/101",
+    "state": "MERGED",
+    "merged_by": "tdoljyj",
+    "merged_at": "2026-09-10T18:47:16Z",
+    "merge_commit_sha": "2d3c2800e52fdbfb0b45ab1ab0f19bba81e229ce",
+    "head_sha": "23e6902e67a5f93b894ef551f412f692740a1dc1"
+  },
+  "merge": {
+    "sha": "2d3c2800e52fdbfb0b45ab1ab0f19bba81e229ce",
+    "parents": [
+      "882bb661d646d20389cdd20b82f69e9dbfb51039",
+      "23e6902e67a5f93b894ef551f412f692740a1dc1"
+    ],
+    "tree": "2c74ce8167bfbedaa1bbf9ea0d0c1def6dc50035",
+    "author_login": "tdoljyj",
+    "committer_login": "web-flow",
+    "verification": {
+      "verified": true,
+      "reason": "valid",
+      "verified_at": "2026-09-10T18:47:16Z"
+    }
+  },
+  "payload": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v9/Status16SigningPayload.json",
+    "blob_sha": "c1feb10a16a44a314144c6f5df2d421218c661ad",
+    "file_sha256": "9b056bebce3f9d1f5c42b072173aaa81715078b98772455c84082f097e8f1347",
+    "signed_object_sha256": "5b412247d2ee62b0e30d2828d57ab5686c28914bc4f330f1aabc388e672080e4"
+  },
+  "acceptance": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v9/Status16Acceptance.json",
+    "blob_sha": "a6b9d61e5061f3de03ab4de00637929c19961e1f",
+    "sha256": "edce56d702c8df15cd8621f70cd59f058078c0560f2d358291d22a26faf4ade9"
+  },
+  "runtime_source": {
+    "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/root5-final/Status16Sequence67RuntimeRepair.sql",
+    "blob_sha": "34be2f9c90c73e120df86e800cd791ced7387b74",
+    "sha256": "e42f79d24af6c56f55c514e077aa07bb8b665ae7e02e63ba9278c2e645ef6129"
+  },
+  "controller_qualification": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v9/ScopedRoot5FinalControllerQualification.json",
+    "blob_sha": "fac6cb35204f8bb3d38ac001b962ceb3ad7f1680",
+    "sha256": "bf3042cbd69718c2d2b37e0fa9a9896612f3a2a9fbd18b3384d7ba4423808ffe"
+  },
+  "runtime_acceptance": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v9/ExactRoot5FinalPreentryControllerRuntimeAcceptance.json",
+    "blob_sha": "6dcaecf5a7977b0f78345c4de3dbd9fa4ec7970c",
+    "sha256": "dcb4d8d8f76479a1d350e3a87ed43cf2701e4e3ec55ca7501b7894877f90d6bd"
+  },
+  "authority_effect": "NONE_UNTIL_EXACT_STATUS_APPEND"
+}
