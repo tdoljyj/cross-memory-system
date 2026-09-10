@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "state": "ACCEPTED_EXACT_ROOT5_STATUS_APPEND_SCHEMA_BINDING_REPAIR",
+  "independent_reviewer": "/root",
+  "decided_at_utc": "2026-09-10T14:41:35Z",
+  "root_set_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+  "root_generation": "ctrgen_e5df432221344996afc04b5638121d96",
+  "identified_error": {
+    "code": "ROOT5_STATUS_APPEND_RETAINED_PREDECESSOR_SCHEMA_DIGEST",
+    "observed_installed_prosrc_sha256": "c0bd3ec817716faf6475aa5ae78262a0b6063bf0e3ae7b5bd54054341a8dd430",
+    "repair": "Change only append_status_manifest so new Status objects require the published Root5 schema digest while immutable historical duplicates remain admissible."
+  },
+  "migration": {
+    "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/root5-final/Root5StatusAppendSchemaBinding.sql",
+    "sha256": "327256393631694a133088ba52b05768577d3bf4af1d7aa2383ee28ec3fc18bd",
+    "blob_sha": "76edee255a03bf11c63827ad6c579601eabc6cf9",
+    "bytes": 6349,
+    "expected_installed_prosrc_sha256": "05c5023f69d5c8f932df51230910cf45a9f68dce85768beb85515f8671c8a441"
+  },
+  "schema": {
+    "path": "scripts/phase2-qualification/control-context-verifier-root5-final-successor/status-manifest.root5.schema.json",
+    "sha256": "76bb79f7278905122474f86fe195cb803e3cb5185a4a50899403fa5567726ae0",
+    "blob_sha": "3dd72dbd45d7d66691f5c391889cd0a90acc5c69"
+  },
+  "invariants": {
+    "single_function_replaced": "clued_control.append_status_manifest(text,text)",
+    "execution_current_unchanged": true,
+    "execution_events_unchanged": true,
+    "gate_attempts_unchanged": true,
+    "control_objects_unchanged": true,
+    "historical_duplicate_semantics_preserved": true,
+    "budget_unchanged": true,
+    "new_action_authorized": false,
+    "production": false,
+    "paid_models": false
+  },
+  "authority_effect": "NONE_UNTIL_MERGED_APPLIED_AND_SUBSEQUENT_STATUS_AND_BINDING_STEPS_COMPLETE"
+}
