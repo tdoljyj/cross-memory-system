@@ -84,7 +84,7 @@ begin
  select encode(sha256(convert_to(p.prosrc,'UTF8')),'hex') into observed
  from pg_proc p join pg_namespace ns on ns.oid=p.pronamespace
  where ns.nspname='clued_control' and p.proname='append_status_manifest';
- if observed is distinct from '05c5023f69d5c8f932df51230910cf45a9f68dce85768beb85515f8671c8a441'
+ if observed is distinct from '94a444b9174251e8f655ea3a04e160898464caf1f94977cbce1590aff726c615'
  then raise exception 'ROOT5_STATUS_APPEND_NEW_MISMATCH:%',observed; end if;
  select to_jsonb(ec) into now_row from clued_control.execution_current ec
  where ec.root_id='ctr_414bd3c724264a83894b0c55cf2ab878';
