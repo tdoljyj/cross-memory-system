@@ -1,0 +1,49 @@
+{
+  "kind": "EXPLICIT_USER_APPROVAL_NONPRODUCTION_CONTINUATION_WINDOW_FINAL_SINGLE_GA",
+  "state": "APPROVED_SCOPE_PENDING_OWNER_PUBLICATION_AND_GUARDED_EFFECTS",
+  "user_replies": [
+    "同意授权",
+    "继续执行吧",
+    "还是别简化了，按照之前的执行"
+  ],
+  "recorded_at_utc": "2026-09-10T10:21:05Z",
+  "window_not_before": "2026-09-10T10:21:05Z",
+  "window_expires_at": "2026-09-11T10:21:05Z",
+  "time_basis": "First trusted UTC clock observation retained after the explicit continuation authorization; no backdating, rolling renewal or automatic extension.",
+  "scope": {
+    "project_id": "uscrdifznmlvczcekqpw",
+    "schema": "clued_control",
+    "root_set_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+    "same_root_binding_maintenance_exception": "NW-01",
+    "environment": "ISOLATED_TEST",
+    "successor_root_generations_max": 1,
+    "status_successors_max": 1,
+    "ordinary_forwards_max": 1,
+    "new_gate_authorizations_max": 1,
+    "per_ga_seconds": 600,
+    "per_ga_evidence_bytes": 134217728,
+    "previously_charged_seconds": 6306,
+    "previously_charged_evidence_bytes": 1396288435,
+    "final_cumulative_seconds_limit": 6906,
+    "final_cumulative_evidence_bytes_limit": 1530506163,
+    "refund": false,
+    "production": false,
+    "paid_models": false,
+    "automatic_retry": false,
+    "checks": 19,
+    "first_terminal_result_stops": true,
+    "publication_repository": "tdoljyj/cross-memory-system"
+  },
+  "authorization_boundary": "Full prior exact execution discipline retained; no simplification, production authority, second root set, history deletion, refund, retry or unrelated change.",
+  "actual_effects": {
+    "owner_published": false,
+    "binding_maintenance_executed": false,
+    "successor_root_registered": false,
+    "status_registered": false,
+    "budget_allocated": false,
+    "new_ga_created": false,
+    "run_started": false,
+    "formal_qualification_pass": false
+  }
+}
+
