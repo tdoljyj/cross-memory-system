@@ -1,0 +1,53 @@
+{
+  "state": "ACCEPTED_EXACT_PR41_CI_TERMINAL_WAIT_AND_TWO_FINGERPRINT_EXCEPTIONS",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "reviewed_at": "2026-09-10T01:17:13.981Z",
+  "files": [
+    {
+      "path": "apps/clued-cloud/evals/public-mcp/gate-receipt.mjs",
+      "sha256": "c059d6d06f28d32cbc2c354af1ba18bd23aaa0d22c211ffcf0fbdd8228811f47",
+      "bytes": 5963
+    },
+    {
+      "path": "apps/clued-cloud/evals/public-mcp/gate-receipt.test.mjs",
+      "sha256": "dbed7c0c2cfddbdf0f356bc7fd40a5d0cd90cc762f150678c29545e6f781054d",
+      "bytes": 4148
+    },
+    {
+      "path": ".github/workflows/public-mcp-protocol.yml",
+      "sha256": "09ff639c123a5005fa8c3488a79d7a0d794cc864ec48808f60f8dc55c9c3f3ad",
+      "bytes": 2046
+    },
+    {
+      "path": ".github/workflows/public-mcp-gate-receipt.yml",
+      "sha256": "4e3784db5984933d859cd961f010c4fb2306eaf6b871cdd438eeb2cff9154ce8",
+      "bytes": 1500
+    },
+    {
+      "path": ".gitleaksignore",
+      "sha256": "a273eb9fd2e78fcf6c02198735589c94c9d6477c37a7135460d76c22b6603b63",
+      "bytes": 37021
+    }
+  ],
+  "independent_tests": {
+    "command": "npm run mcp:gate-receipt:test",
+    "passed": 7,
+    "failed": 0
+  },
+  "findings": [],
+  "verified": [
+    "Known completed failure remains recorded while any required check is missing/queued/pending/in_progress/waiting; no receipt before terminal.",
+    "All four terminal checks produce FAIL unless all success; missing required checks explicitly timeout with GATE_CHECKS_TIMEOUT.",
+    "900-second default total polling timeout,30-second request timeout,required four names/exactcandidateSHA/readonly permissions preserved. Sleep clipped to remainingpoll window.",
+    "Protocol workflow runs builtin-node gate regression suite before npmci; original trusted pull_request_target checkout remains base.sha and persist-credentialsfalse.",
+    "Exactly two previously independently classified commit:path:generic-api-key:line values appended; no rule/workflow scanning disable or broad path exception.",
+    "All17 final runtime publication files remain byte-identical to accepted list."
+  ],
+  "trusted_execution_boundary": "Candidate tests prove local implementation behavior. Current PR41 pull_request_target runs trusted base revision55310, not this candidate implementation. New behavior applies after merge; current candidate still requires actual four green checks and Owner merge, no bypass.",
+  "scope_exclusions": [
+    "Existing unrelated naming fixture/test line-ending differences in working tree are not reviewed or accepted by this scoped report; stage only explicitCI files."
+  ],
+  "runtime_installation": false,
+  "GA_issued": false,
+  "review_allows_no_gate_bypass": true
+}

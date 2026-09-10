@@ -1,0 +1,140 @@
+{
+  "schema_version": 1,
+  "state": "ACCEPTED_EXACT_HOST_SCOPE_DEFINITIONS_FOR_PUBLICATION_NOT_RUNTIME_ADMISSION",
+  "kind": "INDEPENDENT_ORDINARY_BOUNDED_HOST_SCOPE_ACCEPTANCE",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "decided_at_utc": "2026-09-10T01:00:04.521Z",
+  "authority_effect": "NONE",
+  "approved_window": {
+    "approval": {
+      "path": "work/ordinary-bounded-approved-execution/ExplicitUserApproval.json",
+      "bytes": 1432,
+      "sha256": "fe114f0860dc69a52cd448ae697e8d8692fe39e51d84ab8bb60edfe01ace97fe"
+    },
+    "not_before": "2026-09-09T23:44:11Z",
+    "expires_at": "2026-09-10T10:13:16Z",
+    "new_gate_authorizations_max": 3,
+    "aggregate_seconds_max": 7200,
+    "aggregate_evidence_bytes_max": 1530506163,
+    "per_allocation_seconds": 600,
+    "per_allocation_evidence_bytes": 134217728,
+    "paid_budget": 0,
+    "model_budget": 0,
+    "no_refund": true,
+    "no_automatic_retry": true,
+    "old_root2_and_previous_issuer_acceptances_are_historical": true,
+    "requires_actual_existing_Root3_and_exact_bounded_forward": true
+  },
+  "controller_manifest": {
+    "path": "scripts/phase2-qualification/control-context-verifier-ordinary-bounded-acyclic-successor/ControllerSourceManifest.candidate.json",
+    "sha256": "6c9caf4e401409dbd9753debbd8d5ce86c495935939328c10d390e9f7bbb17fa",
+    "bytes": 70092
+  },
+  "definitions": {
+    "risk": {
+      "path": "work/ordinary-bounded-approved-execution/runtime-preparation/definitions-unsigned-v3/ScopedRiskManifest.json",
+      "sha256": "66d041ca92a976e955fa129513e79c6ff0ac77635b7ba2aa968a9d1d8eda87f5",
+      "bytes": 8411
+    },
+    "host": {
+      "path": "work/ordinary-bounded-approved-execution/runtime-preparation/definitions-unsigned-v3/HostRuntimeConfig.json",
+      "sha256": "bcb39eae740677254ace5d47d17ea9124769a4c869037fbdbd550a72c44cda6f",
+      "bytes": 18552
+    },
+    "sink": {
+      "path": "work/ordinary-bounded-approved-execution/runtime-preparation/definitions-unsigned-v3/EvidenceSinkDefinition.json",
+      "sha256": "33feb26ab01ec1cb45834c4b97d5d94f620507452f67146ce1ab7748a8500d96",
+      "bytes": 8372
+    },
+    "scope": {
+      "path": "work/ordinary-bounded-approved-execution/runtime-preparation/definitions-unsigned-v3/ExecutionScopeDefinition.json",
+      "sha256": "ce9cf618f5f06eb026c4cacd371f1857547247b33956e895f50cd270d858d5b3",
+      "bytes": 30251
+    },
+    "binding": {
+      "path": "work/ordinary-bounded-approved-execution/runtime-preparation/definitions-unsigned-v3/ControlBindingDefinition.json",
+      "sha256": "c8e344e844e435ce83df9b0fb864f0a77c9d84cdaddbbcbfe22f3651efad5468",
+      "bytes": 2302
+    },
+    "suite": {
+      "path": "work/ordinary-bounded-approved-execution/runtime-preparation/definitions-unsigned-v3/preentry-skill-qualification.json",
+      "sha256": "baeedc4e4e029416a8bb9dd567bdf31c216b0516c2965b4f83d8ba3f01f6d548",
+      "bytes": 125105
+    },
+    "gate": {
+      "path": "work/ordinary-bounded-approved-execution/runtime-preparation/definitions-unsigned-v3/GateDefinitionCandidate.json",
+      "sha256": "9297bcc4c33550f67dcc25ff0cb11b700a3da92855d89cbbab6ce884cd206892",
+      "bytes": 12923
+    },
+    "registry": {
+      "path": "work/ordinary-bounded-approved-execution/runtime-preparation/definitions-unsigned-v3/RegistrySuccessorCandidate.json",
+      "sha256": "6a2a30a7ec297e80940f90fdb0f3bcbf73166c956721067c19c1694e6b09c41a",
+      "bytes": 2274
+    }
+  },
+  "profile_sha256": "d1c060b85f0b842a397a478105ea57a208e62eb0a5a2d4c2cd8f93f63eae88f5",
+  "root_generation": "ctrgen_2e778ca66244459f974b081edca8c04e",
+  "source_acceptance_sha256": "495eed57bf9f7b530a17ad73bd93712fda1879f0afe56020a2b71cdcb21b19a7",
+  "preparation": {
+    "path": "work/ordinary-bounded-approved-execution/runtime-preparation/definitions-unsigned-v3/Preparation.json",
+    "sha256": "38dfaef689dafc617d0bf89041f54523e8c98979d8c1cfc1f8e005f8711d144e",
+    "bytes": 231589
+  },
+  "generator": {
+    "path": "work/ordinary-bounded-approved-execution/runtime-preparation/prepare-definitions.mjs",
+    "sha256": "0d8ecedaf171aee69916182163458820a8bf200f470d62c2483135b679c60941",
+    "bytes": 12180
+  },
+  "publisher": {
+    "path": "work/ordinary-bounded-approved-execution/publisher/publish-original-inputs.py",
+    "sha256": "10f33782d92dec0eb29eee69f91e1c9a892c1ce32f0c9ccbfe7162495b617de9",
+    "bytes": 3217
+  },
+  "publisher_independent_review": {
+    "path": "work/ordinary-bounded-approved-execution/publisher/IndependentPublisherReview.json",
+    "bytes": 2597,
+    "sha256": "3195bfe797c2f9e2f346cfc0049642702cd55da33a9be1874dbd88c4fe0a226d"
+  },
+  "checks": [
+    "All eight saved definitions exactly reproduce from actual inputs without writing outputs.",
+    "All top-level non-allowlisted fields equal prior accepted definitions; nested transport limits, publisher restrictions, host safety and Scope permissions preserved.",
+    "All nineteen test bodies/oracles/setup preserved after removing only version and executor descriptors.",
+    "314 controller manifest, eight actual external pipe file hashes, exact publisher10f337 and definition cross references bound.",
+    "Original fixed expiry, 600 second/128MiB per allocation,7200 total seconds, purpose/stage/actor/subject/credentials and forbidden actions preserved; only exact approved evidence/attempt numerical supplement.",
+    "Successor independently reverses exactly one Host directory suffix and dependent Scope/Binding refs; other5objects byte-identical.9 real launcher/reader/tool-entry operation path substitutions match.",
+    "Finalv3 exact STOP2 and measurement14 source bindings accepted; originalbridge/8pipe/19oracles unchanged.104declaredrefs independently rehashed:100actual and4exactstageddefinitions awaitingpublication."
+  ],
+  "findings": [],
+  "boundaries": [
+    "Local exact definition acceptance for publication, not runtime admission, source Owner publication or signature verification.",
+    "Actual source qualification and separately accepted runtime/Status/SQL install/forward/readback/fresh admission remain required before allocation or dispatch.",
+    "Historical Root and issuer objects are not reissued; historical component and stage scope require their explicit successor applicability.",
+    "Measurement helper requires actual ninth independently issued nonperformance appendix after final runtime acceptance; no final results or nonperformance acceptance is fabricated here."
+  ],
+  "GA_issued": false,
+  "SQL_executed": false,
+  "supersedes": {
+    "path": "work/ordinary-bounded-approved-execution/admin-review/BoundedHostScopeIndependentAcceptance.v2.json",
+    "sha256": "a3e8cad93b48b242dd8d7093dcbdd12ab869b9bf64dad42d6cfbc1c64f17a3c1",
+    "bytes": 6518
+  },
+  "resolved_findings": [
+    "HOST-DIRECTORY-01: previous declaration differed from actual8filepipe suffix. Old acceptance retained as historical; this exact successor corrects it.",
+    "HOST-STOP-ROUTING-02: oldc1e outerSTOP references replaced with exact4c6c/4180 and explicit perGA directory."
+  ],
+  "external_stop_acceptance": {
+    "path": "work/ordinary-bounded-approved-execution/admin-review/IndependentStopOuterSuccessorReview.json",
+    "sha256": "57f080a6c5083710f1f175cc064485fb99666bbe13510f052b0d115c16337779",
+    "bytes": 2577
+  },
+  "external_measurement_acceptance": {
+    "path": "work/ordinary-bounded-approved-execution/admin-review/IndependentMeasurementOuterReview.v2.json",
+    "sha256": "77ff44fa6fe54fa4973c9181562bd9de286fff93ed52e3d91164f03187ae9280",
+    "bytes": 4949
+  },
+  "source_binding_independent_review": {
+    "path": "work/ordinary-bounded-approved-execution/admin-review/IndependentDefinitionsV3PendingReview.json",
+    "sha256": "1884f0fe0679c4af62bbd4b28a5824374e76897072302aa36229ca72e4cfb38d",
+    "bytes": 2057
+  }
+}

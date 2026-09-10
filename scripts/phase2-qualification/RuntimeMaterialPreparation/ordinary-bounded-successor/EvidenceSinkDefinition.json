@@ -1,0 +1,129 @@
+{
+  "definition_state": "PREPARED_FOR_EXACT_INDEPENDENT_SCOPE_ACCEPTANCE",
+  "authority_effect": "NONE",
+  "controller_manifest_bound": true,
+  "controller_qualified": false,
+  "ga_issued": false,
+  "kind": "EXISTING_PRIVATE_CONTROL_EVIDENCE_SINK_BINDING",
+  "project_ref": "uscrdifznmlvczcekqpw",
+  "schema": "clued_control",
+  "installed_sql": {
+    "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/budget-reservation-successor/install.candidate.sql",
+    "sha256": "8f732dd4013a18adde33a254631cdd5a04022f300d4c0a13d05dffbf36f97285",
+    "bytes": 40646
+  },
+  "installed_successor_sql": {
+    "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/runtime600-successor/alter.candidate.sql",
+    "sha256": "0ab15bbbc2f80421cb619b50de8816095359d9ffab1e96e372960c063bc80c9b",
+    "bytes": 12444
+  },
+  "table_roles": {
+    "execution_events": "immutable full raw Intent/Result/budget evidence, exact SHA and sequence",
+    "gate_attempts": "complete live GA/one unique terminal GRR and immutable decision/index",
+    "control_objects": "complete original immutable StatusManifest; unique original typed URI",
+    "execution_current": "current sequence, independent generations, pending/active reservation and conservative counters"
+  },
+  "durability": "Existing PostgreSQL transaction commit followed by fresh actual typed readback; pre-dispatch prior transaction required",
+  "authority_boundary": "Existing same-domain evidence storage is not a new Canon/issuer. Root currentness comes only from the existing Root control tables.",
+  "unknown": "Retain original event, pending/active capacity and budget; no automatic redispatch/refund/deletion",
+  "ga_grr_signatures": "Full live payload remains private SQL; accepted fixed GitHub commitment signature channel binds complete payload digest",
+  "status_signature": "Original STATUS Owner-merge algorithm; complete live Status raw stays private SQL",
+  "intent_response_compatibility_sql": {
+    "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/intent-response-successor/alter.candidate.sql",
+    "sha256": "17baedbb1ec279e8cc6c349697ea4f14ddcad9d92bcf70dd2a800c94ad2e23cc",
+    "bytes": 1957
+  },
+  "binding_projection_successor_sql": {
+    "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/binding-next-window-successor/effective-binding.sql",
+    "sha256": "0e940600ef062cde655117e72c95f093b2aff7dbb4953a9a24b21380afbb2c27",
+    "bytes": 26159
+  },
+  "original_input_transport": {
+    "publisher": {
+      "path": "scripts/phase2-qualification/control-context-verifier-parallel-evidence-limit-successor/original_input_publisher.py",
+      "sha256": "c505d8ba37613d2209305bc485b7048250d7c59d68d404527ed417f9c5fa4b0a",
+      "bytes": 20663
+    },
+    "decoder": {
+      "path": "scripts/phase2-qualification/control-context-verifier-ordinary-bounded-acyclic-successor/original-inputs-blob.mjs",
+      "sha256": "9e8c8f6812751f83b693e67c53fde06f5d072241f2c878d9e14c03e924dead34",
+      "bytes": 7810
+    },
+    "repository": "tdoljyj/cross-memory-system",
+    "private_required": true,
+    "branch": "codex/phase2-qualification-evidence-20260908",
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/runtime-evidence/original-inputs-<actual-ga-id-without-ga_>/result.json",
+    "maximum_original_bytes": 2097152,
+    "maximum_blob_envelope_bytes": 4096,
+    "python_invocation": {
+      "executable": "C:/Users/Windows/AppData/Local/Programs/Python/Python312/python.exe",
+      "flags": [
+        "-I",
+        "-S",
+        "-B",
+        "-X",
+        "utf8"
+      ],
+      "source_check": "Exact Python, publisher, verifier, GitHub CLI and all loaded dependencies from ControllerSourceManifest checked before import; no site or pyc write",
+      "github_executable": "C:/Program Files/GitHub CLI/gh.exe",
+      "environment": "Existing trusted host GitHub credential context; never inherited by Docker child; no new credential export",
+      "call": "GitHubEvidence(); publish_once(api, original-inputs-actual_ga_suffix, result, complete_original_raw_bytes, actual_fixed_branch_head)",
+      "ticket_directory": "scripts/phase2-qualification/control-context-verifier-parallel-evidence-limit-successor/work/original-inputs-<actual-ga-suffix>",
+      "ticket_files": [
+        "result-publication.json",
+        "result-blob.json",
+        "result-tree.json",
+        "result-commit.json"
+      ]
+    },
+    "sequence": "During PENDING preserve the complete actual original input locally; after actual STOPPED the trusted root publishes once with exact head/CAS, then reads back complete immutable commit/tree/blob bytes before producing the envelope.",
+    "authority": "Historical Evidence only; never live Root/current/Status/GA/GRR storage, never child credential or publication permission",
+    "completeness": "Explicit BLOB_V2_2MIB successor: complete uncompressed original five-field JSON, all original raw strings, complete history and every fault observation remain intact; maximum 2097152 bytes. Old BLOB_V1 and DEFLATE still use their original 1048576-byte decoder. Original 131072-byte SQL/index/transition limits remain unchanged. This is a declared implementation-limit change, not compression or omission of history.",
+    "actual_write_set_boundary": "Post-STOP Evidence transmission is distinct from completed test effects; no future GRR or blob publication target is falsely reported as a prior child/test write.",
+    "kind": "EXACT_ORIGINAL_VERIFIER_INPUTS_BLOB_V2_2MIB",
+    "legacy_transports": {
+      "EXACT_ORIGINAL_VERIFIER_INPUTS_BLOB_V1": 1048576,
+      "EXACT_ORIGINAL_VERIFIER_INPUTS_DEFLATE_V1": 1048576
+    },
+    "maximum_publisher_request_json_bytes_including_lf": 4194304,
+    "maximum_publisher_response_json_bytes_including_lf": 4194304,
+    "root_verifier_strict_json_bytes_unchanged": 2097152,
+    "numeric_boundary_acceptance": {
+      "path": "work/TwoFourMiBEvidenceSuccessorNumericBoundary.json",
+      "sha256": "b33e1dd37885c43cd82f158d1e24042dee9dd376450489c30aa13948e452f44c",
+      "bytes": 3915
+    },
+    "readback": "Fixed private Git commit/tree/blob API, full bytes/hash/length verified; no Contents API assumption for blobs above 1MB. No current/expiry/revocation cache.",
+    "publisher_entry": {
+      "path": "work/ordinary-bounded-approved-execution/publisher/publish-original-inputs.py",
+      "sha256": "10f33782d92dec0eb29eee69f91e1c9a892c1ce32f0c9ccbfe7162495b617de9",
+      "bytes": 3217
+    },
+    "publisher_entry_requires_independent_acceptance": true
+  },
+  "binding_projection_successor_boundary": "Original fourth getter is retained as historical base. Only the separately independently reviewed fixed exact-getter generator eab22494713604a7840d8b71b002a214a5b9beb1c3a77e90c713a9a21b5ca907 may extend one actual full typed forward at a time, maximum three ordinary forwards. Installed full function definition/prosrc and unchanged security metadata must match exact acyclic reconstruction. No future runtime/getter hash cycle or generic rotation.",
+  "next_window_budget_successor": {
+    "window": {
+      "approval": {
+        "path": "work/ordinary-bounded-approved-execution/ExplicitUserApproval.json",
+        "bytes": 1432,
+        "sha256": "fe114f0860dc69a52cd448ae697e8d8692fe39e51d84ab8bb60edfe01ace97fe"
+      },
+      "not_before": "2026-09-09T23:44:11Z",
+      "expires_at": "2026-09-10T10:13:16Z",
+      "new_gate_authorizations_max": 3,
+      "aggregate_seconds_max": 7200,
+      "aggregate_evidence_bytes_max": 1530506163,
+      "per_allocation_seconds": 600,
+      "per_allocation_evidence_bytes": 134217728,
+      "paid_budget": 0,
+      "model_budget": 0,
+      "no_refund": true,
+      "no_automatic_retry": true,
+      "old_root2_and_previous_issuer_acceptances_are_historical": true,
+      "requires_actual_existing_Root3_and_exact_bounded_forward": true
+    },
+    "required_exact_budget_installation_acceptance": true,
+    "meaning": "Historical installed SQL refs above are not claimed as the new installation. Exact locked v3 reserve_execution_budget, v2 reserve_gate, ordinary Status function and single evidence cap 1530506163 change require actual accepted install/readback. Three bounded allocations, first PASS stops, no refund or automatic retry."
+  }
+}

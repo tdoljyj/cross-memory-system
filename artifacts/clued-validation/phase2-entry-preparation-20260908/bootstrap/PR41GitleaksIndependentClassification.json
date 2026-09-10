@@ -1,0 +1,25 @@
+{
+  "state": "ACCEPTED_TWO_EXACT_PUBLIC_GPG_FINGERPRINT_EXCEPTIONS",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "reviewed_at": "2026-09-10T01:10:25.878Z",
+  "source_commit": "07d246a82e87733d4d8fa939a3a5fa3d63722978",
+  "source_path": "scripts/phase2-qualification/RuntimeMaterialPreparation/ordinary-bounded-successor/HostRuntimeConfig.json",
+  "source_sha256": "d45ab326948baecf6ea84f6ba22d9a2c39bee4f1741250038d81946a236c1c83",
+  "report_sha256": "abe79ad0628a00c41bbff03c833a932217a6a17915604bd2d47db81a9553ae9c",
+  "prior_classification_sha256": "39d3331ae090e118916ac6de2b0993669cecdf5df6d49daf7769308456e372b5",
+  "value_sha256": "6c3b7674b58d9f7266cd8b823ecf469b0a03d1bf2c8c24df1d0121d8e818f1fa",
+  "value_length": 40,
+  "actual_fixed_image_manifest": "sha256:285a71327884a4d50efbea30104473b0fa43ecefa499458899670ca30dae76e5",
+  "actual_image_inspect_id": "sha256:285a71327884a4d50efbea30104473b0fa43ecefa499458899670ca30dae76e5",
+  "actual_image_env_value_matches": true,
+  "allowed_exceptions": [
+    "07d246a82e87733d4d8fa939a3a5fa3d63722978:scripts/phase2-qualification/RuntimeMaterialPreparation/ordinary-bounded-successor/HostRuntimeConfig.json:generic-api-key:29",
+    "07d246a82e87733d4d8fa939a3a5fa3d63722978:scripts/phase2-qualification/RuntimeMaterialPreparation/ordinary-bounded-successor/HostRuntimeConfig.json:generic-api-key:284"
+  ],
+  "classification": "Two appearances of exact unchanged public Python image OpenPGP fingerprint; not private key or authentication secret.",
+  "scope": "Only these two exact commit:path:rule:line fingerprints. Do not alter Host, history, rule, workflow or directory allowlists.",
+  "scanner_result_basis": "Root host scanner found2hits; earlier sandbox dubiousownership/zero-commit run is notPASS. This independent classification did not rerun scanner.",
+  "git_show_and_image_inspect_performed": true,
+  "raw_value_emitted": false,
+  "source_modified": false
+}

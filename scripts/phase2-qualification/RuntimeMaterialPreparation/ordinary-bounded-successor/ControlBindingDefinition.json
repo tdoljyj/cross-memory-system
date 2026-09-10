@@ -1,0 +1,42 @@
+{
+  "definition_state": "PREPARED_FOR_EXACT_INDEPENDENT_SCOPE_ACCEPTANCE",
+  "authority_effect": "NONE",
+  "controller_manifest_bound": true,
+  "controller_qualified": false,
+  "ga_issued": false,
+  "kind": "FIXED_CONTROL_BINDING_DEFINITION_NOT_BUSINESS_BINDING_RECEIPT",
+  "root_set_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+  "control_root_generation": "ctrgen_2e778ca66244459f974b081edca8c04e",
+  "delegation_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/1b0f0c21cba8c8b7e887e739f502ce7410727c5b",
+    "sha256": "9ca45136f864beee04f9074a752070e95ff45f827e7b7a3489df4d0cdc6ec99d"
+  },
+  "actor": {
+    "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/input-definitions/ControlActorDefinition.json",
+    "sha256": "276df786fd7e5e9af9724fdcea6f03bb8661a005aeffeb40a0d6905ba8b4c807",
+    "bytes": 655
+  },
+  "subject": {
+    "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/input-definitions/SkillSubjectManifest.json",
+    "sha256": "f359a4ecc92ffeec93f3fac36949cfe1669bf017dd7cf4760220a2c3f9e8da1f",
+    "bytes": 1076
+  },
+  "controller_source_manifest": {
+    "path": "scripts/phase2-qualification/control-context-verifier-ordinary-bounded-acyclic-successor/ControllerSourceManifest.candidate.json",
+    "sha256": "6c9caf4e401409dbd9753debbd8d5ce86c495935939328c10d390e9f7bbb17fa",
+    "bytes": 70092
+  },
+  "host_runtime_config": {
+    "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/ordinary-bounded-successor/HostRuntimeConfig.json",
+    "sha256": "bcb39eae740677254ace5d47d17ea9124769a4c869037fbdbd550a72c44cda6f",
+    "bytes": 18552
+  },
+  "execution_scope": {
+    "path": "scripts/phase2-qualification/RuntimeMaterialPreparation/ordinary-bounded-successor/ExecutionScopeDefinition.json",
+    "sha256": "ce9cf618f5f06eb026c4cacd371f1857547247b33956e895f50cd270d858d5b3",
+    "bytes": 30251
+  },
+  "control_generation_rules": "Actual independently issued runner/credential/session values are freshly read and compared; no business Binding or epoch is created here",
+  "business_binding_layer": "NOT_APPLICABLE_ONLY_UNDER_ACCEPTED_FIXED_PROFILE",
+  "immutable_direction": "controller -> host config -> execution scope -> this control binding; no future qualification/Status/runtime hash is referenced"
+}

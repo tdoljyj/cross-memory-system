@@ -1,0 +1,30 @@
+{
+  "state": "ACCEPTED_EXACT_UNSIGNED_STATUS6_PAYLOAD_NOT_REGISTERED",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "reviewed_at": "2026-09-10T01:02:07.487Z",
+  "status_manifest_id": "sm_f46fce44591e43cc8cd2a0aa84d6425a",
+  "generation": 6,
+  "as_of": "2026-09-10T01:00:50.215Z",
+  "unsigned_payload": {
+    "path": "work/ordinary-bounded-approved-execution/runtime-preparation/status-unsigned-final-actual/StatusSigningPayload.json",
+    "sha256": "85c4e607098908261c54950852ea3d5d835ae1029f6b97c2b377975c60ae4ec6",
+    "bytes": 7858
+  },
+  "canonical_payload_sha256": "037a5081fdf59a246327b86b10e93d7bde7d61e33e6c41e461a043d026edd9f4",
+  "actual_observation": {
+    "path": "work/ordinary-bounded-approved-execution/StatusPreparationFinalActualToolReceipt.json",
+    "sha256": "a85f6d8199695a7a6dc3050cf743cedeac823e24b7cf3515b80f0a6efa2abed7",
+    "bytes": 2495469
+  },
+  "actual_rows": {
+    "path": "work/ordinary-bounded-approved-execution/StatusPreparationFinalActualRows.json",
+    "sha256": "551098c6196a6dae2f51c2daf0a2fc3c86b1f5b94523566ca1561e3a53171b9d",
+    "bytes": 1796561
+  },
+  "observed_at": "2026-09-10T01:00:45.504165+00:00",
+  "verification": "Original saved Supabase tool result matches complete rows and same-row4definition adapter projection. Query/project parameters are reported by root for the actual invocation; this bare tool result does not itself contain the parameters. This review did not remotely re-query. Complete44events/6terminals/5Status history preserved by reconstruction.",
+  "allowed_delta": "Only newID/generation/as_of/schema, three observation digests and six dependent refs; all other original unsigned Status fields preserved.",
+  "freshness_boundary": "Fresh at recorded construction. This review never treats the now-aged preparation snapshot as a fresh installation or admission pin.",
+  "signature_created": false,
+  "registered": false
+}
