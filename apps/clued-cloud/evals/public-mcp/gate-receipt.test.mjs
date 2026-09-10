@@ -5,6 +5,7 @@ import {
   buildReceipt,
   evaluateCheckRuns,
   validateCandidate,
+  waitForRequiredChecks,
 } from "./gate-receipt.mjs";
 
 const SHA = "a".repeat(40);
@@ -57,4 +58,51 @@ test("failure, skipped, and neutral conclusions all fail closed", () => {
 test("invalid repository or candidate SHA is rejected", () => {
   assert.throws(() => validateCandidate({ repository: "missing-owner", sha: SHA }), /GATE_INVALID_REPOSITORY/);
   assert.throws(() => validateCandidate({ repository: "tdoljyj/cross-memory-system", sha: "main" }), /GATE_INVALID_CANDIDATE_SHA/);
+});
+
+test("a known failure waits for every required check to become terminal", async () => {
+  for (const status of ["queued", "pending", "in_progress", "waiting"]) {
+    const active = runs();
+    active[0] = { ...active[0], status, conclusion: null };
+    active[2] = { ...active[2], conclusion: "failure" };
+    const pending = evaluateCheckRuns(active);
+    assert.equal(pending.state, "PENDING");
+    assert.equal(pending.failed[0].name, "gitleaks");
+    assert.throws(() => buildReceipt({ repository: "tdoljyj/cross-memory-system", sha: SHA, evaluation: pending }), /GATE_RECEIPT_PENDING/);
+    let reads = 0;
+    let time = 0;
+    const terminal = active.map((run) => run.name === "public-mcp-protocol" ? { ...run, status: "completed", conclusion: "success" } : run);
+    const result = await waitForRequiredChecks({
+      readChecks: async () => ++reads === 1 ? active : terminal,
+      timeoutSeconds: 10, pollSeconds: 1, now: () => time,
+      sleep: async (ms) => { time += ms; },
+    });
+    assert.equal(reads, 2);
+    assert.equal(result.state, "FAIL");
+    assert(result.checks.every((check) => check.status === "completed"));
+  }
+});
+
+test("pending required checks time out even when another check already failed", async () => {
+  const active = runs().slice(1);
+  active.find((run) => run.name === "gitleaks").conclusion = "failure";
+  let time = 0;
+  let reads = 0;
+  await assert.rejects(waitForRequiredChecks({
+    readChecks: async () => { reads++; return active; },
+    timeoutSeconds: 2, pollSeconds: 10, now: () => time,
+    sleep: async (ms) => { time += ms; },
+  }), /GATE_CHECKS_TIMEOUT/);
+  assert.equal(time, 2000);
+  assert.equal(reads, 2);
+});
+
+test("a pending snapshot can become four green without changing the candidate", async () => {
+  let reads = 0;
+  const result = await waitForRequiredChecks({
+    readChecks: async () => ++reads === 1 ? [] : runs(),
+    timeoutSeconds: 2, pollSeconds: 1, now: () => 0, sleep: async () => {},
+  });
+  assert.equal(reads, 2);
+  assert.equal(result.state, "PASS");
 });

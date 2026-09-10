@@ -45,6 +45,11 @@ export function evaluateCheckRuns(checkRuns) {
   const failed = checks.filter((check) =>
     check.present && check.status === "completed" && check.conclusion !== "success"
   );
+  // A known failure does not make the other required checks terminal.
+  // Preserve it while polling, then issue one complete verdict or time out.
+  if (checks.some((check) => !check.present || check.status !== "completed")) {
+    return { state: "PENDING", checks, failed };
+  }
   if (failed.length > 0) return { state: "FAIL", checks, failed };
 
   const ready = checks.every((check) =>
@@ -100,6 +105,22 @@ async function writeReceipt(output, receipt) {
   await fs.writeFile(output, `${JSON.stringify(receipt, null, 2)}\n`, { encoding: "utf8", flag: "wx" });
 }
 
+export async function waitForRequiredChecks({
+  readChecks,
+  timeoutSeconds,
+  pollSeconds,
+  now = Date.now,
+  sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+}) {
+  const deadline = now() + timeoutSeconds * 1000;
+  while (true) {
+    const evaluation = evaluateCheckRuns(await readChecks());
+    if (evaluation.state !== "PENDING") return evaluation;
+    if (now() >= deadline) throw new Error("GATE_CHECKS_TIMEOUT");
+    await sleep(Math.min(pollSeconds * 1000, deadline - now()));
+  }
+}
+
 async function main() {
   const repository = process.env.GATE_REPOSITORY ?? process.env.GITHUB_REPOSITORY ?? "";
   const sha = (process.env.CANDIDATE_SHA ?? "").toLowerCase();
@@ -114,35 +135,31 @@ async function main() {
   validateCandidate({ repository, sha });
   if (!token) throw new Error("GATE_GITHUB_TOKEN_REQUIRED");
 
-  const deadline = Date.now() + timeoutSeconds * 1000;
-  while (true) {
-    const evaluation = evaluateCheckRuns(await fetchCheckRuns({
+  const evaluation = await waitForRequiredChecks({
+    readChecks: () => fetchCheckRuns({
       apiUrl,
       repository,
       sha,
       token,
       requestTimeoutSeconds,
-    }));
-    if (evaluation.state !== "PENDING") {
-      const receipt = buildReceipt({
-        repository,
-        sha,
-        pullRequest,
-        evaluation,
-        checkedAt: new Date().toISOString(),
-      });
-      await writeReceipt(output, receipt);
-      console.log(JSON.stringify({
-        verdict: receipt.verdict,
-        candidate_sha: receipt.candidate_sha,
-        checks: receipt.required_checks.map(({ name, conclusion }) => ({ name, conclusion })),
-      }));
-      if (receipt.verdict !== "PASS") process.exitCode = 1;
-      return;
-    }
-    if (Date.now() >= deadline) throw new Error("GATE_CHECKS_TIMEOUT");
-    await new Promise((resolve) => setTimeout(resolve, pollSeconds * 1000));
-  }
+    }),
+    timeoutSeconds,
+    pollSeconds,
+  });
+  const receipt = buildReceipt({
+    repository,
+    sha,
+    pullRequest,
+    evaluation,
+    checkedAt: new Date().toISOString(),
+  });
+  await writeReceipt(output, receipt);
+  console.log(JSON.stringify({
+    verdict: receipt.verdict,
+    candidate_sha: receipt.candidate_sha,
+    checks: receipt.required_checks.map(({ name, conclusion }) => ({ name, conclusion })),
+  }));
+  if (receipt.verdict !== "PASS") process.exitCode = 1;
 }
 
 if (!process.env.NODE_TEST_CONTEXT) {
