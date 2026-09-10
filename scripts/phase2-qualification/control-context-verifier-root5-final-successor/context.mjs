@@ -290,7 +290,7 @@ export async function prepareTrustedToolMaterial(material){
  const storedStatus=material.observation.row.execution.control_objects?.filter(x=>x.object_type==='StatusManifest'&&x.uri===result.ga.status_manifest_ref.uri);
  check(storedStatus?.length===1&&storedStatus[0].raw===statusInput.raw&&storedStatus[0].sha256===sha(statusInput.raw),'ACTUAL_STORED_STATUS_READ_REQUIRED');
  const statusSchemaRaw=readBlobRef(acceptedStatus);
- check(sha(statusSchemaRaw)===sha(fs.readFileSync(new URL('../control-context-verifier-original-input-capacity-successor/status-manifest.candidate.schema.json',import.meta.url))),'EXACT_LOCAL_STATUS_SCHEMA_SUCCESSOR');
+ check(sha(statusSchemaRaw)===sha(fs.readFileSync(new URL('./status-manifest.root5.schema.json',import.meta.url))),'EXACT_LOCAL_ROOT5_STATUS_SCHEMA_SUCCESSOR');
  const statusCheck=new Ajv({allErrors:true,strictKeywords:true,format:'full'}).compile(JSON.parse(statusSchemaRaw));
  check(statusCheck(sm)&&sm.schema_digest===acceptedStatus.sha256&&sm.issuer_purpose==='STATUS'&&sm.audience===audience&&sm.control_trust_root_generation===generation,'EXACT_SIGNED_STATUS_SCHEMA_PURPOSE');
  check(time(sm.as_of)<=Date.now()&&(nonPass||Date.now()<time(sm.expires_at))&&Array.isArray(sm.source_digests)&&sm.source_digests.length>0,'STATUS_CURRENT_INPUTS');
