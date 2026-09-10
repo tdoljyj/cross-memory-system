@@ -1,37 +1,37 @@
 {
   "state": "INDEPENDENT_ENV_ORDER_REVIEW_CHAIN_ACCEPTED_FOR_OWNER_PUBLICATION_NOT_RUNTIME_ADMISSION",
-  "accepted_at": "2026-09-10T09:35:04.564Z",
-  "terminal_basis_sha256": "8558e56da6984d9119936a86b353b86d235765ed8bfc0da55526f6cd0bee27fe",
-  "supersedes_owner_merge": "e3b60c5f9de17d82ab3f736413d70b377fc91524",
+  "accepted_at": "2026-09-10T09:40:45.946Z",
+  "terminal_basis_sha256": "74a29bfa2030f44f6467023f25c7516b9a6a21909c15dad35de6ba73d76bc8d8",
+  "supersedes_owner_merge": "06db585e88298edcc51a2a0143ee01162e90ddf9",
   "files": {
     "host": {
-      "path": "work/env-order-repair-approved-execution/accepted-reviews-corrected/EnvHostScopeIndependentAcceptance.json",
-      "sha256": "96aac502106c74bf64bcc441f89fed7f3e913c7bb0b940d7e200e1c4255e8066",
-      "bytes": 7838
+      "path": "work/env-order-repair-approved-execution/accepted-reviews-exact/EnvHostScopeIndependentAcceptance.json",
+      "sha256": "512aae741692a87c5a6ed43f007290201f16aea46454a5523874ad4dc034cd81",
+      "bytes": 7836
     },
     "profile": {
-      "path": "work/env-order-repair-approved-execution/accepted-reviews-corrected/EnvProfileStageApplicability.json",
-      "sha256": "1fb351efd4db6925ddbd78599785c3e1034675fadc422358755a5cefb93926fa",
-      "bytes": 8641
+      "path": "work/env-order-repair-approved-execution/accepted-reviews-exact/EnvProfileStageApplicability.json",
+      "sha256": "d5b261ce6a2ad39da69cd14f4b7537ab8e3d8e2b12ce796b77a550df9aec196a",
+      "bytes": 8637
     },
     "history": {
-      "path": "work/env-order-repair-approved-execution/accepted-reviews-corrected/EnvHistoricalComponentApplicability.json",
-      "sha256": "02b231f0aa7fb4360261dd32c0e97da0460ccb3e87e7d618b8e207c13db07dcb",
-      "bytes": 26866
+      "path": "work/env-order-repair-approved-execution/accepted-reviews-exact/EnvHistoricalComponentApplicability.json",
+      "sha256": "ce147276bfc766f2381b31fae9a8fb421e077082d899bc05eb6960e4f7cbd060",
+      "bytes": 26864
     },
     "qualification": {
-      "path": "work/env-order-repair-approved-execution/accepted-reviews-corrected/ScopedEnvOrderControllerQualification.json",
-      "sha256": "d68e4a74b490f84aabd525bb916eaed1bb2a542736d840afd2ebd1b5bf256409",
-      "bytes": 40315
+      "path": "work/env-order-repair-approved-execution/accepted-reviews-exact/ScopedEnvOrderControllerQualification.json",
+      "sha256": "820e4ccc3dd05c741a27e4da0c6adf2c825c05efe03735aabd1b18139b0d36c0",
+      "bytes": 40307
     },
     "repair": {
-      "path": "work/env-order-repair-approved-execution/accepted-reviews-corrected/EnvOrderRepairAcceptance20260910.json",
-      "sha256": "3c40011ff5fb6588ab326ee40089dafc7ef6b44941f452631aaa0acc21270e3f",
+      "path": "work/env-order-repair-approved-execution/accepted-reviews-exact/EnvOrderRepairAcceptance20260910.json",
+      "sha256": "bf49bafa0636f1a89bfaf496598d7f27b162bc1dfd2f4ba22d2218ccbef43b88",
       "bytes": 3555
     },
     "source": {
-      "path": "work/env-order-repair-approved-execution/accepted-reviews-corrected/IndependentEnvOrderSourcePublicationAcceptance.json",
-      "sha256": "cce5502cada10ff93189a422c792b9ffc3c12084d3a3e01b3f1fd014b34d0b16",
+      "path": "work/env-order-repair-approved-execution/accepted-reviews-exact/IndependentEnvOrderSourcePublicationAcceptance.json",
+      "sha256": "28959a761f6044014f545103a0c641a9c9a4e8c4a05e5bbeb8f02b53c1353ef0",
       "bytes": 36253
     }
   },
