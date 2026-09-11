@@ -1,0 +1,78 @@
+{
+  "schema_version": 1,
+  "state": "PREPARED_EXACT_ROOT5_WINDOW8_FORWARD14_INPUT_CAPACITY_REPAIR",
+  "reviewer": "Codex@DESK-W-591",
+  "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+  "root_generation": "ctrgen_e5df432221344996afc04b5638121d96",
+  "expires_at": "2026-09-11T10:21:05Z",
+  "observed_preimage": {
+    "sequence": 83,
+    "active_ga_id": null,
+    "pending_budget_sequence": null,
+    "charged_seconds": 9306,
+    "charged_evidence_bytes": 2067377075
+  },
+  "controller": {
+    "path": "scripts/phase2-qualification/control-context-verifier-root5-window5-forward11-successor/ControllerSourceManifest.candidate.json",
+    "bytes": 73621,
+    "sha256": "f874c862c6f24d67ba8ffe9ae3a238488d5b72443d2a064b45b6395ef52dbbd4",
+    "blob_sha": "776a4d32064a9bab800ede912f3710cbfa47defc"
+  },
+  "proposal": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v15-preparation/Root5OriginalInput3300000CapacityProposal20260911.json",
+    "bytes": 768,
+    "sha256": "ddb2e1b45de2aab89e971c51bde5ac78230caa342ebd39e3cfe1d063af12ad2a",
+    "blob_sha": "12479c56d18102a6c69331dc7253c5829514fe34"
+  },
+  "approval": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v15-preparation/Root5OriginalInput3300000CapacityApproval20260911.json",
+    "bytes": 3320,
+    "sha256": "9186ab8063e27ebc3cb6cf0b8609ccabdb05b53a700e3d6167d1621dd5187f6c",
+    "blob_sha": "5ac1f0a94e665b81f9025417679d36e65e2dc6a9"
+  },
+  "applicability": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v15-preparation/Root5CurrentController3300000CapacityApplicability20260911.json",
+    "bytes": 8648,
+    "sha256": "8cf2556da0772526564c8c24b400c91395cab9520ae5dff53265181b2595f9fe",
+    "blob_sha": "7da2a38b92112833f4066a7d3bbe446fdc96f2a2"
+  },
+  "prior_attempt_repair": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v15-preparation/ExpiredV14InputCapacityRepairAcceptance20260911.json",
+    "bytes": 2569,
+    "sha256": "458ff0e2f8c96e085954f01d384251387e60bfc22f0ff210ac0b23bc5b7f88d9",
+    "blob_sha": "e4b672e0dddd81e59f962b00a7991c57dae7d685"
+  },
+  "blocked_receipt": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v15-preparation/ExpiredV14BlockedReceipt.json",
+    "bytes": 5591,
+    "sha256": "74afd52096ce817ad2da9e5af8ce63e7f95705a13702ad7f12edce8fa4d4a4f5",
+    "blob_sha": "fe13e07144de0cdd3c5d34eb952594673713be6e"
+  },
+  "signature_verification": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v15-preparation/ExpiredV14BlockedReceiptSignatureVerification.json",
+    "bytes": 315,
+    "sha256": "f0a214ed1438371cdb58e6272b53b3ab55a2c8050672e1f11db95a6b0674c0b3",
+    "blob_sha": "6c05886029bb2934edd33fe3d4144c6b5ec5d395"
+  },
+  "runtime_repair": {
+    "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/root5-window8-forward14/Root5Window8Forward14CapacityRepair.sql",
+    "bytes": 4141,
+    "sha256": "67ae49e470521f67a620ac8e7b8623f7cd67129916aeb86440967445bda18539",
+    "blob_sha": "9034914612b3241a3b7b88696f43610d994e21d1"
+  },
+  "postimage_caps": {
+    "maximum_new_ga": 8,
+    "maximum_new_forward": 14,
+    "maximum_series_charged_seconds": 9906,
+    "evidence_cap": 2201594803,
+    "original_input_bytes": 3300000
+  },
+  "necessary_delta": "15,462-byte measured shortfall plus one final nonrefundable allocation",
+  "production": false,
+  "paid_budget": 0,
+  "model_budget": 0,
+  "refund": false,
+  "new_trust_root": false,
+  "new_signing_identity": false,
+  "authority_effect": "PREPARATION_ONLY_NO_BUDGET_NO_GA_NO_ENTRY_NO_PRODUCTION"
+}
