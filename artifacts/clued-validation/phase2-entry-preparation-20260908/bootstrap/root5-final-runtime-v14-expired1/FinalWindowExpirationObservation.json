@@ -1,0 +1,63 @@
+{
+  "object_type": "Root5FinalWindowExpirationObservation",
+  "schema_version": "1.0",
+  "state": "BLOCKED_NOT_STARTED",
+  "authority_effect": "NONE",
+  "automatic_retry": false,
+  "refund": false,
+  "production_effect": false,
+  "observed_at": "2026-09-11T03:14:20.572Z",
+  "project_ref": "uscrdifznmlvczcekqpw",
+  "repository": "tdoljyj/cross-memory-system",
+  "remote_main": {
+    "commit_sha": "d5b4b6d02a9bd8c5b4e31b6b22fee51a9e5359a7",
+    "verified_via": "GitHub REST ref and content endpoints"
+  },
+  "budget": {
+    "reservation_sha256": "44b7edec4439f54cd1900b39824845f32fce0ffa0ce50ccfb837e509f97c312f",
+    "sequence": 81,
+    "seconds": 600,
+    "evidence_bytes": 134217728,
+    "series_charged_seconds": 9306,
+    "series_charged_evidence_bytes": 2067377075,
+    "cap_reached_exactly": true
+  },
+  "gate_authorization": {
+    "gate_authorization_id": "ga_e56ca0eb07304f2fbcf60eb8f29f3889",
+    "sha256": "94749870009d1ee2b55cd53a84d59397981fc3e57e040414002325c8bd3088ee",
+    "signature_commit": "33330d77c1ae3f72c619059c5520f5d9361d3878",
+    "issued_at": "2026-09-11T03:01:56.354Z",
+    "deadline": "2026-09-11T03:11:56.354Z",
+    "database_phase": "PENDING",
+    "container_id": null,
+    "receipt_id": null,
+    "revoked": false
+  },
+  "failure": {
+    "code": "EXPLICIT_ORIGINAL_INPUT_V4_3200000_CANDIDATE_LIMIT",
+    "accepted_maximum_bytes": 3200000,
+    "observed_original_input_bytes": 3215462,
+    "excess_bytes": 15462
+  },
+  "control_snapshot": {
+    "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+    "root_generation": "ctrgen_e5df432221344996afc04b5638121d96",
+    "sequence": 81,
+    "active_ga_id": "ga_e56ca0eb07304f2fbcf60eb8f29f3889",
+    "pending_budget_sequence": null,
+    "charged_seconds": 9306,
+    "charged_evidence_bytes": 2067377075
+  },
+  "conclusions": {
+    "deadline_elapsed_before_create_dispatch": true,
+    "durable_effect_intent_recorded": false,
+    "host_create_dispatched": false,
+    "host_side_effect_observed": false,
+    "qualification_result_claimed": false,
+    "signed_gate_result_receipt_claimed": false,
+    "budget_reuse_permitted": false,
+    "database_terminalized": false,
+    "expired_active_attempt_retained_for_audit": true
+  },
+  "disposition": "Preserve the exact expired PENDING attempt and all original bytes. Do not retry, refund, reuse, delete, reset, or claim qualification success."
+}
