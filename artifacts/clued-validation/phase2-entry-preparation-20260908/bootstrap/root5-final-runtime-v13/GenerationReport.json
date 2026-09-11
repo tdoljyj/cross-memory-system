@@ -1,0 +1,45 @@
+{
+  "constraint_sql": {
+    "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/root5-window6-forward12/Root5Window6ConstraintRepair.sql",
+    "sha256": "088c02be61581907e8bd5cde451af2c4ffdbbd5ccdd30d3305184c8f765ea58d",
+    "bytes": 3870,
+    "blob_sha": "f663a1e8dc5574462b87cf45a04fcd425dbc27f8"
+  },
+  "constraint_applied": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v13/Root5Window6ConstraintAppliedAcceptance.json",
+    "sha256": "d14eb5c3776440414f71fe5aaf8ef6d696a4bc50bc105628ef137e418d570a61",
+    "bytes": 1408,
+    "blob_sha": "7b5e0714ffd789626bb88c9f97b36b6cf24fd806"
+  },
+  "status_review": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v13/Status20ReviewSubject.json",
+    "sha256": "ba0c6947cc426e4a0f607c933dc74658bc60718d19c29b10a1323efd2e130674",
+    "bytes": 9174,
+    "blob_sha": "5993557f2ef1c0633a2f91f5b18ae4cddcc3e41b"
+  },
+  "status_acceptance": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v13/Status20Acceptance.json",
+    "sha256": "499985b515ebc51f85add7559529b985c35aaba5dff13818e6c22d93a008c067",
+    "bytes": 1491,
+    "blob_sha": "9ce290db7bf77048e6809a894799858308d5d39d"
+  },
+  "status_signing_payload": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v13/Status20SigningPayload.json",
+    "sha256": "774a7162c88d3f433e5aa57781ff96864599c360b0d9acafb980ae4b45d77a7e",
+    "bytes": 8443,
+    "blob_sha": "01320969ac1e84876a7c65b63cfaf91e4d373123"
+  },
+  "status_signed_payload_canonical_sha256": "1500de1147dec635e1646c454271f13ba23a76492c7534d14e1aeefc549a5789",
+  "runtime_review": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v13/Root5FinalRuntimeAcceptanceReviewSubject.json",
+    "sha256": "5b25d810b8802950259d8e2a6216cbe463c1d66dc7cca802dc6e359b61103fae",
+    "bytes": 51142,
+    "blob_sha": "62b3581b27c6b028b03803e08aac705e44056001"
+  },
+  "runtime_acceptance": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v13/ExactRoot5FinalPreentryControllerRuntimeAcceptance.json",
+    "sha256": "2f986b57e86eb28f966d51e84411514bd02d8e595bf6e4579b66f5a6455049d3",
+    "bytes": 77266,
+    "blob_sha": "7441db8ebc0ef1eb99a9dfde4c29dfe1c6a610d8"
+  }
+}
