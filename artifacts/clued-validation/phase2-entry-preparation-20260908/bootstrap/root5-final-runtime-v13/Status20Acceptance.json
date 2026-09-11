@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "state": "ACCEPTED_EXACT_STATUS20_SIGNING_SUBJECT_NOT_STORED",
+  "review_basis": "UNCHANGED_STATUS19_RUNTIME_OBSERVATIONS_PLUS_EXACT_WINDOW6_TABLE_CONSTRAINT_POSTIMAGE",
+  "subject_file": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v13/Status20ReviewSubject.json",
+    "sha256": "ba0c6947cc426e4a0f607c933dc74658bc60718d19c29b10a1323efd2e130674",
+    "bytes": 9174,
+    "blob_sha": "5993557f2ef1c0633a2f91f5b18ae4cddcc3e41b"
+  },
+  "status_manifest_id": "sm_a2b1ca4f002e44b1ab8f5970bfa2cc47",
+  "generation": 20,
+  "root_generation": "ctrgen_e5df432221344996afc04b5638121d96",
+  "issuer_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/c1749399c047a5b88461ef8df54ea80b1b59938a",
+    "sha256": "1640995831b0c1f8ae616810e12eb7b97ee191e9f20b5c38eee32eb8bfac9d23"
+  },
+  "as_of": "2026-09-11T01:22:00.000Z",
+  "expires_at": "2026-09-11T10:21:05Z",
+  "constraint_source": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/f663a1e8dc5574462b87cf45a04fcd425dbc27f8",
+    "sha256": "088c02be61581907e8bd5cde451af2c4ffdbbd5ccdd30d3305184c8f765ea58d"
+  },
+  "constraint_acceptance": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/7b5e0714ffd789626bb88c9f97b36b6cf24fd806",
+    "sha256": "d14eb5c3776440414f71fe5aaf8ef6d696a4bc50bc105628ef137e418d570a61"
+  },
+  "authority_effect": "NONE",
+  "stored": false
+}

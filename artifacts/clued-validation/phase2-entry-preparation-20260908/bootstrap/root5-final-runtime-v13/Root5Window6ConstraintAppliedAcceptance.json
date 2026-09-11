@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "state": "APPLIED_EXACT_ROOT5_WINDOW6_EXECUTION_CURRENT_CONSTRAINT_REPAIR",
+  "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+  "root_generation": "ctrgen_e5df432221344996afc04b5638121d96",
+  "applied_at": "2026-09-11T01:21:00Z",
+  "source": {
+    "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/root5-window6-forward12/Root5Window6ConstraintRepair.sql",
+    "sha256": "088c02be61581907e8bd5cde451af2c4ffdbbd5ccdd30d3305184c8f765ea58d",
+    "bytes": 3870,
+    "blob_sha": "f663a1e8dc5574462b87cf45a04fcd425dbc27f8"
+  },
+  "publication": {
+    "commitSha": "fb3e579c8e76ec473ab1f903d1d543bd308428ed",
+    "artifactPath": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/root5-window6-forward12/Root5Window6ConstraintRepair.sql"
+  },
+  "preimage": {
+    "sequence": 75,
+    "charged_seconds": 8106,
+    "charged_evidence_bytes": 1798941619
+  },
+  "postimage": {
+    "sequence": 75,
+    "charged_seconds": 8106,
+    "charged_evidence_bytes": 1798941619
+  },
+  "constraint_postimage": {
+    "charged_seconds": "CHECK (charged_seconds >= 1410 AND charged_seconds <= 8706)",
+    "charged_evidence_bytes": "CHECK (charged_evidence_bytes >= 19264968 AND charged_evidence_bytes <= 1933159347)"
+  },
+  "rows_changed": false,
+  "authority_effect": "ROOT5_ONE_ALLOCATION_CAPACITY_ONLY_NO_BUDGET_NO_GA_NO_ENTRY_NO_PRODUCTION"
+}
