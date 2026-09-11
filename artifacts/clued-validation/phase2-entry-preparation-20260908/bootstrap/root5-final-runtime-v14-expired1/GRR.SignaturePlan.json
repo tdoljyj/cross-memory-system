@@ -1,0 +1,29 @@
+{
+  "query": "mutation($input:CreateCommitOnBranchInput!){createCommitOnBranch(input:$input){commit{oid}}}",
+  "variables": {
+    "input": {
+      "branch": {
+        "repositoryNameWithOwner": "tdoljyj/cross-memory-system",
+        "refName": "codex/phase2-qualification-evidence-20260908"
+      },
+      "expectedHeadOid": "33330d77c1ae3f72c619059c5520f5d9361d3878",
+      "message": {
+        "headline": "Record isolated qualification signature commitment grr_root5_v14_expired1_not_started_20260911"
+      },
+      "fileChanges": {
+        "additions": [
+          {
+            "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/runtime-evidence/dynamic-signature-commitments/GateResultReceipt/grr_root5_v14_expired1_not_started_20260911.json",
+            "contents": "eyJraW5kIjoiSElTVE9SSUNBTF9TSUdOQVRVUkVfQ09NTUlUTUVOVCIsImFsZ29yaXRobSI6IkdJVEhVQl9BUElfVkVSSUZJRURfT1dORVJfU0lOR0xFX1BBUkVOVF9DT01NSVRNRU5UX1YxX0NBTkRJREFURSIsInJlcG9zaXRvcnkiOiJ0ZG9sanlqL2Nyb3NzLW1lbW9yeS1zeXN0ZW0iLCJicmFuY2giOiJjb2RleC9waGFzZTItcXVhbGlmaWNhdGlvbi1ldmlkZW5jZS0yMDI2MDkwOCIsIm9iamVjdF90eXBlIjoiR2F0ZVJlc3VsdFJlY2VpcHQiLCJvYmplY3RfaWQiOiJncnJfcm9vdDVfdjE0X2V4cGlyZWQxX25vdF9zdGFydGVkXzIwMjYwOTExIiwic3RvcmVfdXJpIjoidXJuOmNsdWVkOmdhdGUtcmVzdWx0LXJlY2VpcHQ6dXNjcmRpZnpubWx2Y3pjZWtxcHc6Z3JyX3Jvb3Q1X3YxNF9leHBpcmVkMV9ub3Rfc3RhcnRlZF8yMDI2MDkxMSIsInBheWxvYWRfc2hhMjU2IjoiNzRhZmQ1MjA5NmNlODE3YWQyZGE5ZTVhZjhjZTYzZTdmOTU3MDVhMTM3MDJhZDdmMTJlZGNlOGZhNGQ0YTRmNSIsInNjaGVtYV9kaWdlc3QiOiI4MzFiMmY0MTVkNzJhODJhZGMxZDhjM2I1ZjViNGUyODY1Mjc3MTJkNWNiMzI5MzA4NTI0OTQ5OTE5M2QyMGExIiwiYXVkaWVuY2UiOiJ1cm46Y2x1ZWQ6YXVkaWVuY2U6c2tpbGwtY29leGlzdGVuY2UtcXVhbGlmaWNhdGlvbjp1c2NyZGlmem5tbHZjemNla3FwdyIsInJvb3RfZ2VuZXJhdGlvbiI6ImN0cmdlbl9lNWRmNDMyMjIxMzQ0OTk2YWZjMDRiNTYzODEyMWQ5NiIsImlzc3Vlcl9wdXJwb3NlIjoiR0FURV9SRVNVTFQiLCJpc3N1ZXIiOiJ0ZG9sanlqIiwiZXhlY3V0b3JfcHJvdmVuYW5jZSI6IkNvZGV4QERFU0stVy01OTEiLCJhdXRob3JpdHlfZWZmZWN0IjoiTk9ORSJ9Cg=="
+          }
+        ]
+      }
+    }
+  },
+  "expectation": {
+    "parent": "33330d77c1ae3f72c619059c5520f5d9361d3878",
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/runtime-evidence/dynamic-signature-commitments/GateResultReceipt/grr_root5_v14_expired1_not_started_20260911.json",
+    "raw": "{\"kind\":\"HISTORICAL_SIGNATURE_COMMITMENT\",\"algorithm\":\"GITHUB_API_VERIFIED_OWNER_SINGLE_PARENT_COMMITMENT_V1_CANDIDATE\",\"repository\":\"tdoljyj/cross-memory-system\",\"branch\":\"codex/phase2-qualification-evidence-20260908\",\"object_type\":\"GateResultReceipt\",\"object_id\":\"grr_root5_v14_expired1_not_started_20260911\",\"store_uri\":\"urn:clued:gate-result-receipt:uscrdifznmlvczcekqpw:grr_root5_v14_expired1_not_started_20260911\",\"payload_sha256\":\"74afd52096ce817ad2da9e5af8ce63e7f95705a13702ad7f12edce8fa4d4a4f5\",\"schema_digest\":\"831b2f415d72a82adc1d8c3b5f5b4e286527712d5cb3293085249499193d20a1\",\"audience\":\"urn:clued:audience:skill-coexistence-qualification:uscrdifznmlvczcekqpw\",\"root_generation\":\"ctrgen_e5df432221344996afc04b5638121d96\",\"issuer_purpose\":\"GATE_RESULT\",\"issuer\":\"tdoljyj\",\"executor_provenance\":\"Codex@DESK-W-591\",\"authority_effect\":\"NONE\"}\n",
+    "commitment_sha256": "5348929f9b57ab622cfa521e12a5aa689987369f489e254f0f666c2120fb9ef7"
+  }
+}
