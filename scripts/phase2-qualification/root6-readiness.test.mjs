@@ -22,11 +22,12 @@ const DST_REL = 'scripts/phase2-qualification/control-context-verifier-root6-win
 const SRC_REL = 'scripts/phase2-qualification/control-context-verifier-root5-window5-forward11-successor';
 const SIGN_DST_REL = 'scripts/phase2-qualification/nonproduction-control-store/runtime-successor/commitment-signing-root6-window';
 
-const ROOT6_GENERATION = 'ctrgen_e8b3f4154c3875d3c2214aa0464bc810';
+const ROOT6_GENERATION = 'ctrgen_5e0440a95ac8ee257b9e4236cabd275b';
 const ROOT5_GENERATION = 'ctrgen_e5df432221344996afc04b5638121d96';
 const ROOT4_GENERATION = 'ctrgen_9cf53fa5cd0a4a38bd68613493f95b06';
 const ROOT6_NOT_BEFORE = '2026-09-12T00:00:00Z';
-const ROOT6_EXPIRY = '2026-09-13T00:00:00Z';
+const ROOT6_EXPIRY = '2026-09-19T00:00:00Z';
+const OWNER_WINDOW_LOWER = '2026-09-10T13:18:47Z';
 const OLD_CUTOFF = '2026-09-11T10:21:05Z';
 const PREDECESSOR_DIGEST = 'ac7bdd53b7fe5705ee70f4fbb08ce6a5889ccf6d6574a3575e51f16bb09c2daa';
 
@@ -102,14 +103,25 @@ test('the reason string no longer asserts a bound it does not enforce', () => {
   assert.ok(c.includes("'NINE_ALLOCATIONS_AND_GAS_SIXTEEN_FORWARDS_MAXIMUM'"));
 });
 
-// ---- the Owner window, enforced at both ends ----
+// ---- the Owner window and the ordered source reference caps ----
 
-test('the Owner window is pinned at both ends, not just raised', () => {
+// Only the ceiling moves. Pinning the lower bound forward to the window start makes
+// CAPACITY_APPROVAL_CURRENT_ROOT5_TIME unsatisfiable, because context.mjs:44 requires the
+// registered not_before to be <= the capacity approval's approved_at, which predates the window.
+test('the Owner window ceiling moved and the lower bound did not', () => {
   const v = read(DST_REL + '/root-window-validation.mjs');
-  assert.ok(v.includes("start>=Date.parse('" + ROOT6_NOT_BEFORE + "')&&start<end&&end<=Date.parse('" + ROOT6_EXPIRY + "')"),
-    'Owner window bounds are not the approved window at both ends');
+  assert.ok(v.includes("start>=Date.parse('" + OWNER_WINDOW_LOWER + "')&&start<end&&end<=Date.parse('" + ROOT6_EXPIRY + "')"),
+    'Owner window bounds are not the predecessor lower bound plus the root6 ceiling');
   assert.equal(count(v, OLD_CUTOFF), 0, 'superseded cutoff still present');
-  assert.equal(count(v, '2026-09-10T13:18:47Z'), 0, 'old lower bound still present, so the window start is unenforced');
+});
+
+test('all three ordered source reference caps moved together', () => {
+  assert.ok(read(DST_REL + '/source-publication.mjs').includes('refs.length<=133'),
+    'COMPLETE_BOUNDED_SOURCE_SET still caps at 131');
+  const c = ctx();
+  assert.ok(c.includes('blobs.length<=133'), 'CLOSED_SOURCE_REF_MAXIMUM still caps at 131');
+  assert.ok(c.includes('source_refs_maximum:133'), 'frozen capacityDelta still declares 131');
+  assert.equal(count(c, 'source_refs_maximum:131'), 0);
 });
 
 // ---- the two schemas that are compiled and executed ----

@@ -23,13 +23,13 @@ const blobSha = b => crypto.createHash('sha1').update('blob ' + b.length + '\0')
 const blobUri = id => 'https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/' + id;
 
 // ---- fixed inputs, all independently verified before this script was written ----
-const ROOT6_GENERATION = 'ctrgen_e8b3f4154c3875d3c2214aa0464bc810';
+const ROOT6_GENERATION = 'ctrgen_5e0440a95ac8ee257b9e4236cabd275b';
 const ROOT5_GENERATION = 'ctrgen_e5df432221344996afc04b5638121d96';
 const NOT_BEFORE = '2026-09-12T00:00:00Z';
-const EXPIRES_AT = '2026-09-13T00:00:00Z';
+const EXPIRES_AT = '2026-09-19T00:00:00Z';
 const OLD_WINDOW = '2026-09-11T10:21:05Z';
 const OLD_DIGEST = 'ac7bdd53b7fe5705ee70f4fbb08ce6a5889ccf6d6574a3575e51f16bb09c2daa';
-const NEW_DIGEST = '872b9c92f324b5f040f039cb4e801b6e2b8a3b93a7ac1967395702cc8c14aaaf';
+const NEW_DIGEST = '72d9eb92cf287ee6fda1fdbb97d90d02ed7f0e368398cba4ddb517233413d145';
 // source_commit must contain the root6 directory, because verifySourcePublication requires every
 // declared source to be present in BOTH source_ref.tree and the owner merge tree. 4d33717 is the
 // second parent of the owner merge, so the required ancestor relation holds.
@@ -97,6 +97,38 @@ function buildSourceRef() {
 }
 
 const { ref: sourceRef, repository_source_count } = buildSourceRef();
+
+// Real guard, not a tautology. verifySourcePublication requires every declared source to be a blob
+// in SOURCE_TREE, so a source tree that predates the current controller silently produces documents
+// pinning a tree that cannot satisfy the check. Verify against the actual git object store before
+// writing anything, and name the fix rather than emitting a broken document.
+{
+  const {execFileSync} = await import('node:child_process');
+  const listed = execFileSync('git', ['ls-tree', '-r', SOURCE_TREE], { cwd: REPO, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  const inTree = new Map();
+  for (const line of listed.split('\n')) {
+    if (!line) continue;
+    const [meta, p] = line.split('\t');
+    const [mode, type, id] = meta.split(/\s+/);
+    inTree.set(p, { mode, type, id });
+  }
+  const manifestRel = CONTROLLER_REL + '/ControllerSourceManifest.candidate.json';
+  const manifestBytes = fs.readFileSync(path.join(REPO, manifestRel));
+  const entry = inTree.get(manifestRel);
+  if (!entry || entry.id !== blobSha(manifestBytes))
+    throw Error('SOURCE_TREE_DOES_NOT_CONTAIN_THIS_CONTROLLER:' + SOURCE_TREE +
+      ' — the controller was rebuilt after that tree. Commit and Owner-merge the controller, then set ' +
+      'SOURCE_COMMIT/SOURCE_TREE/OWNER_MERGE to the new merge before reissuing.');
+  const missing = [];
+  for (const f of JSON.parse(manifestBytes.toString('utf8')).files) {
+    if (f.role !== 'REPOSITORY_SOURCE') continue;
+    const e = inTree.get(f.path);
+    if (!e || e.type !== 'blob' || e.mode !== '100644' ||
+        e.id !== blobSha(fs.readFileSync(path.join(REPO, f.path)))) missing.push(f.path);
+  }
+  if (missing.length)
+    throw Error('SOURCES_ABSENT_OR_DIVERGENT_IN_SOURCE_TREE:' + missing.length + ':' + missing.slice(0, 3).join(','));
+}
 
 // Provenance pointer to the predecessor, used to extend the chain rather than replace it.
 function predecessorRef(rel) {
