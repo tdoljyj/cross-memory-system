@@ -1,0 +1,28 @@
+{
+  "object_type": "MinimalContinuationApprovalEvidence",
+  "schema_version": "1.0",
+  "user_messages": [
+    "不要一直问我了，我授权你替我批准，直到完成此任务",
+    "看看怎么回事 迅速完成"
+  ],
+  "recorded_at": "2026-09-11T03:59:52.066Z",
+  "prior_blocker_disclosed": true,
+  "approved_interpretation": {
+    "purpose": "Complete the unfinished Clued Kernel Phase 2 nonproduction qualification",
+    "additional_allocations_max": 1,
+    "per_allocation_seconds": 600,
+    "per_allocation_evidence_bytes": 134217728,
+    "new_series_seconds_cap": 9906,
+    "new_series_evidence_bytes_cap": 2201594803,
+    "original_input_bytes_cap": 3300000,
+    "paid_budget": 0,
+    "model_budget": 0,
+    "production": false,
+    "refund": false,
+    "new_trust_root": false,
+    "new_signing_identity": false
+  },
+  "necessity": "The eighth and final authorized allocation reached PENDING, but the coordinator received the observation file where its material-and-observation index was required; no CREATE intent or host dispatch occurred. Exact terminal recovery is the only remaining in-scope action.",
+  "cost_effect": "The final 600-second and 134217728-byte nonproduction allocation is already charged; no refund, reuse, paid budget, model budget, or further allocation.",
+  "authority_effect": "BOUNDED_CONTINUATION_ONLY"
+}
