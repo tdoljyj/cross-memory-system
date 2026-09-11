@@ -6,7 +6,7 @@ import crypto from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import {api,sha,readBlobRef,verifyOwnerMergeArtifact} from '../control-context-verifier-next-window-successor/trusted-github.mjs';
 const repo=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../../..'),repository='tdoljyj/cross-memory-system';
-const manifestPath='scripts/phase2-qualification/control-context-verifier-root5-final-successor/ControllerSourceManifest.candidate.json';
+const manifestPath='scripts/phase2-qualification/control-context-verifier-root5-window5-forward11-successor/ControllerSourceManifest.candidate.json';
 const need=(ok,why)=>{if(!ok)throw Error(why);};
 export function verifySourcePublication({sourceRef,ownerMerge,controllerDigest}){
  const raw=fs.readFileSync(path.join(repo,manifestPath),'utf8');need(sha(raw)===controllerDigest,'ACTUAL_CONTROLLER_MANIFEST_BYTES');
