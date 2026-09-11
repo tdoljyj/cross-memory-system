@@ -1,0 +1,42 @@
+{
+  "authority_effect": "NONE",
+  "current_root_generation": "ctrgen_e5df432221344996afc04b5638121d96",
+  "current_root_sequence": 5,
+  "database_effect": "NONE",
+  "decision": "The exact subject is suitable for the second Owner/web-flow signature. It does not itself renew accepted_binding, append Root/Status, reserve budget, create a GA, or authorize execution.",
+  "execution_baseline": {
+    "active_ga_id": null,
+    "charged_evidence_bytes": 2201594803,
+    "charged_seconds": 9906,
+    "pending_budget_sequence": null,
+    "sequence": 87
+  },
+  "kind": "CONTINUATION_REGISTRATION_SUBJECT_ACCEPTANCE",
+  "new_budget_capacity": false,
+  "new_root_generation": false,
+  "owner_approval": {
+    "merge_commit": "4498102661f626c8e0c489c7d27551acbc8436ea",
+    "verification_ref": {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-20260911/OwnerApprovalVerification.json",
+      "sha256": "93fec9cc9725e416d998d050ffe96ba7d664c716d90aeec1e4447aacfb754222"
+    }
+  },
+  "registration_subject": {
+    "bytes": 3320,
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-20260911/ContinuationRegistrationSubject.canonical.json",
+    "sha256": "46867dca9fcdda12580fafe429e07f2e1c71d5ae9d8338a03c1f57221debe1b8"
+  },
+  "requires_actual_owner_signature": true,
+  "requires_fresh_independent_review_before_NW01": true,
+  "requires_fresh_preimage_CAS_before_NW01": true,
+  "requires_signature_evidence_readback": true,
+  "review_basis": "PREVIOUSLY_INDEPENDENTLY_ACCEPTED_NW01_MECHANISM_PLUS_CURRENT_VERIFIED_OWNER_SCOPE_AND_LIVE_READBACK",
+  "review_independence": "NO_NEW_INDEPENDENT_RUNTIME_REVIEW_CLAIMED_AT_THIS_STAGE",
+  "root_set_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+  "schema_version": 1,
+  "state": "ACCEPTED_EXACT_SUBJECT_FOR_OWNER_SIGNATURE_ONLY",
+  "window": {
+    "expires_at": "2026-09-12T13:14:51Z",
+    "not_before": "2026-09-11T13:14:51Z"
+  }
+}
