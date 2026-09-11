@@ -1,0 +1,65 @@
+{
+  "kind": "STATUS23_ROOT5_V16_ACCEPTED_RUNTIME_SIGNING_PAYLOAD_SIGNATURE_EVIDENCE",
+  "status": "VERIFIED",
+  "observed_at_utc": "2026-09-11T08:23:04Z",
+  "repository": {
+    "full_name": "tdoljyj/cross-memory-system",
+    "private": true
+  },
+  "pr": {
+    "number": 147,
+    "url": "https://github.com/tdoljyj/cross-memory-system/pull/147",
+    "state": "MERGED",
+    "merged_by": "tdoljyj",
+    "merged_at": "2026-09-11T05:42:44Z",
+    "merge_commit_sha": "7bf52cbf4500cbcb9c6c14995387f02601082f5b",
+    "head_sha": "47fbad8e6e7371aff73277ec131300510b58f16c"
+  },
+  "merge": {
+    "sha": "7bf52cbf4500cbcb9c6c14995387f02601082f5b",
+    "parents": [
+      "46e1b0e412b0b8e016f67f27ebf2c6235822b1f3",
+      "47fbad8e6e7371aff73277ec131300510b58f16c"
+    ],
+    "tree": "82304d368ab4d9074687b01cc8e2d42ea2139f90",
+    "author_login": "tdoljyj",
+    "committer_login": "web-flow",
+    "verification": {
+      "verified": true,
+      "reason": "valid",
+      "verified_at": "2026-09-11T05:42:44Z"
+    }
+  },
+  "payload": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v16/Status23SigningPayload.json",
+    "blob_sha": "3839ea285f0784e2455099d8656c6899ccb68d7e",
+    "file_sha256": "3e4502c24fda11cf717a716de5b74af378d000449ac95e256f82db91b4dc4854",
+    "signed_object_sha256": "f4002ae44595739b4ae230eb97ab50e54a3774fd68b7943fef26e5c1d6b43cd8"
+  },
+  "acceptance": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v16/Status23Acceptance.json",
+    "blob_sha": "e3f3d60820073ed8cc2d804d87a7ae8faca6f978",
+    "sha256": "0dc818afd10113f95963ed7964413d758c05263aeaa816557b500526cd14bf4f"
+  },
+  "controller_qualification": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v16/ScopedRoot5FinalControllerQualification.json",
+    "blob_sha": "11543a4296ebff3569c1ab7aeb18db9f759b2f0f",
+    "sha256": "dfe6299d2102b051abe87fe6eb502f62c4d4f40559fe6e16074a49ee467203a2"
+  },
+  "runtime_function_acceptance": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v16/RuntimeFunctionsRoot5Window9Acceptance.json",
+    "blob_sha": "40c0cdd0cd943a228536dc0d4cdea79269ca4d22",
+    "sha256": "e34850ab8629d6aaf00b6b2ce773d010dc308957b53b35003816ac0d36417b32"
+  },
+  "capacity_approval": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v16-source-completeness/Root5OriginalInput4000000CapacityApproval20260911.json",
+    "blob_sha": "1d7fab869ea580f852a0c69a6b9316e9b9b71742",
+    "sha256": "f3afb108e1f5080c0dc47902c90a3291acebd2171a78095fd95ae8cd30a6ff8f"
+  },
+  "canonicalization": {
+    "algorithm": "CLUED_ROOT_WINDOW_CANONICAL_DIGEST_V1",
+    "source": "scripts/phase2-qualification/control-context-verifier-next-window-successor/root-window-validation.mjs#canonicalDigest",
+    "description": "sha256(canonical(value)+\"\\n\") where canonical() recursively sorts object keys and JSON.stringifies primitives; identical to the function used to verify signature_binding.signed_object_sha256 on the control-trust-root-set object and on prior signed StatusManifest generations (Status22 and earlier)."
+  },
+  "authority_effect": "NONE_UNTIL_EXACT_STATUS_APPEND"
+}
