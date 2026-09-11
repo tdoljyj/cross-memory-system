@@ -1,0 +1,111 @@
+{
+  "schema_version": 1,
+  "kind": "ROOT5_V16_FINAL_RUN_ZERO_COST_PREFLIGHT_REPORT",
+  "state": "PREFLIGHT_FAILED_BLOCKING_ITEMS_PRESENT",
+  "verdict": "THE FINAL 600-SECOND BUDGET MUST NOT BE RESERVED. Every v16 acceptance document is bound to the superseded window 2026-09-11T10:21:05Z and the controller refuses such material at execution time.",
+  "observed_at_utc": "2026-09-11T17:49:57Z",
+  "project_ref": "uscrdifznmlvczcekqpw",
+  "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+  "budget_touched": false,
+  "ga_created": false,
+  "database_write_performed": false,
+  "passed": {
+    "controller_dependency_count": {
+      "expected": 329,
+      "actual": 329,
+      "manifest_sha256": "ac7bdd53b7fe5705ee70f4fbb08ce6a5889ccf6d6574a3575e51f16bb09c2daa",
+      "composition": { "RUNTIME_DEPENDENCY": 187, "REPOSITORY_SOURCE": 142 },
+      "total_fingerprinted_bytes": 201264978
+    },
+    "repository_sources_rehashed": {
+      "checked": 142,
+      "verified_ok": 142,
+      "missing": 0,
+      "sha256_mismatch": 0,
+      "byte_mismatch": 0,
+      "note": "Every REPOSITORY_SOURCE entry re-read from this checkout and re-hashed."
+    },
+    "ordered_source_ref_count": {
+      "expected": 131,
+      "actual": 131,
+      "source_commit": "46e1b0e412b0b8e016f67f27ebf2c6235822b1f3",
+      "source_tree": "375b5726d574c69cc008e91b85be31825e61256c"
+    },
+    "original_input_capacity": {
+      "bytes": 4000000,
+      "kind": "EXACT_ORIGINAL_VERIFIER_INPUTS_BLOB_V6_4000000",
+      "publisher_request_bytes": 8388608,
+      "publisher_response_bytes": 8388608,
+      "source_refs_maximum": 131
+    },
+    "accepted_container_image_manifest": {
+      "reference": "docker.io/library/python@sha256:285a71327884a4d50efbea30104473b0fa43ecefa499458899670ca30dae76e5",
+      "registry_manifest_reachable": true,
+      "config_digest": "sha256:1148adc3b50891ee01e6add44be22d277dedeb8dcac2f7cc8b700dd710c75c4d",
+      "layers": 4,
+      "image_version_annotation": "3.12.14-alpine3.24"
+    },
+    "nineteenth_forward_live": {
+      "sequence": 88,
+      "total_forwards": 19,
+      "effective_controller_sha256": "ac7bdd53b7fe5705ee70f4fbb08ce6a5889ccf6d6574a3575e51f16bb09c2daa"
+    },
+    "signing_branch_head_reread": {
+      "branch": "codex/phase2-qualification-evidence-20260908",
+      "head": "99f69284d66fdecca7d370e5057f739068a83393"
+    },
+    "main_head_reread": "95cacd9be30ed1ccc246bb25f1157f0b9e40f29a"
+  },
+  "blocking": [
+    {
+      "id": "ALL_V16_ACCEPTANCE_MATERIAL_EXPIRED",
+      "severity": "BLOCKING",
+      "detail": "Every time-bound v16 document carries expires_at 2026-09-11T10:21:05Z, which passed 7.5 hours before this preflight.",
+      "documents": [
+        "ScopedRoot5FinalControllerQualification.json",
+        "ExactRoot5FinalPreentryControllerRuntimeAcceptance.json",
+        "CurrentNonPerformanceApplicability.json",
+        "Root5StopCurrentSourceApplicability.json",
+        "SignedStatus23.json",
+        "Status23Acceptance.json",
+        "Status23SigningPayload.json",
+        "Root5OriginalInput4000000CapacityProposal20260911.json"
+      ],
+      "enforced_by": [
+        "context.mjs currentWindow(runtimeAcceptance.not_before, runtimeAcceptance.expires_at, now)",
+        "context.mjs currentWindow(qualification.not_before, qualification.expires_at, now)",
+        "context.mjs GA_WINDOW: expires <= runtimeAcceptance.expires_at and expires <= qualification.expires_at",
+        "context.mjs STATUS_CURRENT_INPUTS: now < status_manifest.expires_at"
+      ],
+      "consequence": "No GateAuthorization can be issued. Its expiry would have to be at or before a moment already in the past, so reserve_gate and every downstream CREATE/START/STOP/GRR step is unreachable with this material."
+    },
+    {
+      "id": "STATUS23_ALREADY_STORED_BUT_EXPIRED",
+      "severity": "BLOCKING",
+      "detail": "Status23 (generation 23, sm_78056a94b00d4eaeadce829f07a71956) was appended successfully at 2026-09-11T08:59:50Z but its own expires_at is 2026-09-11T10:21:05Z.",
+      "consequence": "A successor StatusManifest (generation 24) bound to the current window must be prepared, owner-signed and appended. append_status_manifest refuses any manifest whose expires_at is at or before clock_timestamp(), so Status23 cannot be reused or amended - it is immutable once stored."
+    },
+    {
+      "id": "REISSUED_MATERIAL_WILL_REQUIRE_A_TWENTIETH_FORWARD",
+      "severity": "BLOCKING",
+      "detail": "effective_execution_binding() now pins qualification_sha256 dfe6299d... and runtime_acceptance_sha256 bc509203..., which are the expired documents. Re-issuing them against the new window changes their bytes and therefore their hashes.",
+      "consequence": "After the new qualification and runtime acceptance are produced and independently reviewed, a twentieth binding forward is required to repoint the binding at them. The nineteenth forward applied today remains valid and is not wasted, but it is not the last one."
+    },
+    {
+      "id": "EXECUTION_HOST_IS_NOT_THIS_ENVIRONMENT",
+      "severity": "BLOCKING_FOR_THIS_ENVIRONMENT",
+      "detail": "187 of the 329 controller dependencies are Windows absolute paths fingerprinted on the original execution host: C:/Users/Windows/AppData (106), C:/Users/Windows/.codex (45), C:/Users/Windows/Documents (28), plus docker.exe, gh.exe, node.exe, .NET Framework and PowerShell.",
+      "consequence": "The qualification run itself must execute on that Windows host. This Linux session can prepare, verify and publish material and can drive the database, but it cannot satisfy the controller's own dependency check.",
+      "secondary": "This session also has no running Docker daemon, and image layer blobs are blocked by the egress proxy even though the registry manifest is reachable."
+    }
+  ],
+  "required_before_any_budget_reservation": [
+    "Re-issue ScopedRoot5FinalControllerQualification and ExactRoot5FinalPreentryControllerRuntimeAcceptance against the window 2026-09-11T13:14:51Z .. 2026-09-12T13:14:51Z, with the independent reviewer /root/project_list_auth_fix.",
+    "Re-issue CurrentNonPerformanceApplicability and Root5StopCurrentSourceApplicability against the same window.",
+    "Prepare, owner-sign and append StatusManifest generation 24 bound to the current window.",
+    "Apply a twentieth binding forward repointing effective_execution_binding() at the re-issued qualification and runtime acceptance hashes.",
+    "Re-run this preflight and confirm every window is live at that moment.",
+    "Only then reserve the final 600 seconds, on the Windows execution host."
+  ],
+  "authority_effect": "NONE"
+}
