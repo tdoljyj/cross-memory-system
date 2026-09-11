@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "kind": "NW01_CONTINUATION_FINAL_CANDIDATE_MANIFEST",
+  "state": "READY_FOR_FRESH_INDEPENDENT_REVIEW_NOT_EXECUTED",
+  "authority_effect": "NONE",
+  "owner_approval_commit": "4498102661f626c8e0c489c7d27551acbc8436ea",
+  "subject_signature_merge": "60c5ebfe9ac21d014c8e0b6640fc32d0f93d13a5",
+  "window": {
+    "not_before": "2026-09-11T13:14:51Z",
+    "expires_at": "2026-09-12T13:14:51Z"
+  },
+  "inputs": {
+    "subject_sha256": "46867dca9fcdda12580fafe429e07f2e1c71d5ae9d8338a03c1f57221debe1b8",
+    "registration_acceptance_sha256": "40508697dd071ea39528aabef36a440d73a7ee3a78c32efaafab3cf51a87e3b7",
+    "store_acceptance_sha256": "66f6d8082e0a0a15a02e473ba870689a9912291c03f6eebcf7f666aaf5294d52",
+    "signature_evidence_sha256": "ae269c08d02d941f91450594c31ce134b999cdfd61b5acd762b5f616a5965376",
+    "fresh_preimage_summary_sha256": "02dabdfd8c691a274dc1ca46b960831466983b6abf009677f56a843bb7d42f0b"
+  },
+  "candidate": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-20260911/NW01ApplyCandidate.sql",
+    "sha256": "516596a4aeb75a2a7320e9fb864c06914b05a45205c69556aa480b6207093272",
+    "bytes": 13011,
+    "single_transaction": true,
+    "fail_closed": true,
+    "row_changes": 7,
+    "check_replacements": 3,
+    "trigger_restored_same_transaction": true
+  },
+  "fresh_preimage": {
+    "rows_sha256": "c3faab99e3947fd6135ac2a0cbdb06b4602cd39311acfc054f8690a4d9cf4b9d",
+    "catalog_sha256": "640983338ecd8e26758fc409e1f003bd100d3b1cb06494214b80b6d869ccce21",
+    "execution_sequence": 87,
+    "active_ga_id": null,
+    "pending_budget_sequence": null,
+    "charged_seconds": 9906,
+    "charged_evidence_bytes": 2201594803
+  },
+  "required_gate": "FRESH_CONTEXT_INDEPENDENT_READ_ONLY_REVIEW_PASS",
+  "database_write_performed": false,
+  "reserve_execution_budget_called": false,
+  "ga_or_gate_reserved": false
+}
