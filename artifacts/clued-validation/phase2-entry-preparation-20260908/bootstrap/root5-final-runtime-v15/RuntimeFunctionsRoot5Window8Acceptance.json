@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "state": "ACCEPTED_EXACT_ROOT5_WINDOW8_FORWARD14_CAPACITY_REPAIR_APPLIED",
+  "review_basis": "OWNER_PUBLISHED_EXACT_SOURCE_PLUS_ATOMIC_FUNCTION_AND_CONSTRAINT_POSTIMAGE_WITH_ZERO_ROW_MUTATION",
+  "source": {
+    "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/root5-window8-forward14/Root5Window8Forward14CapacityRepair.sql",
+    "sha256": "67ae49e470521f67a620ac8e7b8623f7cd67129916aeb86440967445bda18539",
+    "bytes": 4141,
+    "blob_sha": "9034914612b3241a3b7b88696f43610d994e21d1"
+  },
+  "publication": {
+    "commitSha": "58aff4daa91b4d23ae8546ec051080746f16c44c",
+    "artifactPath": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/root5-window8-forward14/Root5Window8Forward14CapacityRepair.sql"
+  },
+  "changes": {
+    "original_input_bytes": [
+      3200000,
+      3300000
+    ],
+    "maximum_new_ga": [
+      7,
+      8
+    ],
+    "maximum_new_forward": [
+      13,
+      14
+    ],
+    "maximum_series_charged_seconds": [
+      9306,
+      9906
+    ],
+    "evidence_cap": [
+      2067377075,
+      2201594803
+    ]
+  },
+  "installed_prosrc_sha256": {
+    "append_status_manifest": "94a444b9174251e8f655ea3a04e160898464caf1f94977cbce1590aff726c615",
+    "reserve_execution_budget": "1b8a9066498c84041fe4b34a2db1670fc8899541595b5ca6066204af0bd7dd19",
+    "reserve_gate": "dfba3af239cd60c915db58237aefb4d328b0cbbeac8b37befd2a143a6ef30d61"
+  },
+  "constraint_postimage": {
+    "charged_seconds": "CHECK (((charged_seconds >= 1410) AND (charged_seconds <= 9906)))",
+    "charged_evidence_bytes": "CHECK (((charged_evidence_bytes >= 19264968) AND (charged_evidence_bytes <= 2201594803)))"
+  },
+  "preserved_state": {
+    "execution_sequence": 83,
+    "charged_seconds": 9306,
+    "charged_evidence_bytes": 2067377075,
+    "active_ga_id": null,
+    "pending_budget_sequence": null
+  },
+  "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+  "root_generation": "ctrgen_e5df432221344996afc04b5638121d96",
+  "expires_at": "2026-09-11T10:21:05Z",
+  "transactional": true,
+  "rows_changed": false,
+  "applied": true,
+  "production": false,
+  "paid_budget": 0,
+  "model_budget": 0,
+  "authority_effect": "ROOT5_ONE_LAST_ALLOCATION_CAPACITY_ONLY_NO_BUDGET_NO_GA_NO_ENTRY_NO_PRODUCTION"
+}
