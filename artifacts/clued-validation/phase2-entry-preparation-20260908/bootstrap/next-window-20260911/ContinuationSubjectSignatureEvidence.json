@@ -1,0 +1,61 @@
+{
+  "kind": "EXACT_NW01_CONTINUATION_SUBJECT_SIGNATURE_EVIDENCE",
+  "status": "VERIFIED",
+  "observed_at_utc": "2026-09-11T14:07:26Z",
+  "repository": {
+    "full_name": "tdoljyj/cross-memory-system",
+    "private": true
+  },
+  "pr": {
+    "number": 150,
+    "url": "https://github.com/tdoljyj/cross-memory-system/pull/150",
+    "state": "MERGED",
+    "merged_by": "tdoljyj",
+    "merged_at": "2026-09-11T13:56:15Z",
+    "merge_commit_sha": "60c5ebfe9ac21d014c8e0b6640fc32d0f93d13a5",
+    "head_sha": "39c887ef3f9802372da249cae58b304286806b92"
+  },
+  "merge": {
+    "sha": "60c5ebfe9ac21d014c8e0b6640fc32d0f93d13a5",
+    "parents": [
+      "4498102661f626c8e0c489c7d27551acbc8436ea",
+      "39c887ef3f9802372da249cae58b304286806b92"
+    ],
+    "tree": "84e91e8b7085a7aaebd5c7192d0b7ba0fe405a2c",
+    "author_login": "tdoljyj",
+    "committer_login": "web-flow",
+    "verification": {
+      "verified": true,
+      "reason": "valid",
+      "verified_at": "2026-09-11T13:56:15Z"
+    }
+  },
+  "registration_subject": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-20260911/ContinuationRegistrationSubject.canonical.json",
+    "blob_sha": "c9d307ecba4883754086d2979ba8d2b02a0aae53",
+    "sha256": "46867dca9fcdda12580fafe429e07f2e1c71d5ae9d8338a03c1f57221debe1b8",
+    "bytes": 3320
+  },
+  "registration_acceptance": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-20260911/ContinuationRegistrationSubjectAcceptance.json",
+    "blob_sha": "d70b3961dd17b39af2cb6250a43469787378f9de",
+    "sha256": "40508697dd071ea39528aabef36a440d73a7ee3a78c32efaafab3cf51a87e3b7",
+    "bytes": 1956
+  },
+  "store_acceptance": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-20260911/ContinuationControlStoreAcceptance.json",
+    "blob_sha": "631e72c5226c2b14a26f0383da02a93589b89b5e",
+    "sha256": "66f6d8082e0a0a15a02e473ba870689a9912291c03f6eebcf7f666aaf5294d52",
+    "bytes": 2791
+  },
+  "approved_window": {
+    "not_before": "2026-09-11T13:14:51Z",
+    "expires_at": "2026-09-12T13:14:51Z"
+  },
+  "owner_approval_commit": "4498102661f626c8e0c489c7d27551acbc8436ea",
+  "authority_effect": "NONE_UNTIL_EXACT_NW01_TRANSACTION",
+  "root_registered": false,
+  "status_registered": false,
+  "accepted_binding_updated": false,
+  "ga_created": false
+}
