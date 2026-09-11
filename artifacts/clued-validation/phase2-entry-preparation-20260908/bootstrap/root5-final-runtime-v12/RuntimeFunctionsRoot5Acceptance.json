@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "state": "ACCEPTED_EXACT_ROOT5_WINDOW6_FORWARD12_CAPACITY_REPAIR_APPLIED",
+  "review_basis": "ATOMIC_TWO_FUNCTION_EXACT_PREIMAGE_POSTIMAGE_GUARDS_AND_SINGLE_FORWARD_PLUS_ALLOCATION_LIMIT_REPLACEMENT_WITH_ZERO_ROW_MUTATION",
+  "source": {
+    "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/root5-window6-forward12/Root5Window6ForwardCapacityRepair.sql",
+    "sha256": "064752cb33b7868b1509be0e6119a0d321ca12a2d98c499ff389d90198527d79",
+    "bytes": 3740,
+    "blob_sha": "dcbc691d75f887225d5cd29d37e1964891e09621"
+  },
+  "changes": {
+    "reserve_execution_budget": [
+      "increase only the post-baseline allocation maximum from five to six",
+      "increase only the post-baseline binding-forward maximum from eleven to twelve",
+      "increase only the exact nonrefunding caps to 8706 seconds and 1933159347 bytes"
+    ],
+    "reserve_gate": [
+      "increase only the post-baseline allocation validation maximum from five to six",
+      "increase only the post-baseline binding-forward maximum from eleven to twelve",
+      "increase only the exact nonrefunding caps to 8706 seconds and 1933159347 bytes"
+    ]
+  },
+  "installed_prosrc_sha256": {
+    "append_status_manifest": "94a444b9174251e8f655ea3a04e160898464caf1f94977cbce1590aff726c615",
+    "reserve_execution_budget": "4e83ad5f263d707c958dc289db2e5c191694790580446799c7b28d34b6646d9e",
+    "reserve_gate": "47d1196ff8cea56fabfe87c8d5a83f48282ab20ddecc526bbf269d4bb931a603"
+  },
+  "preserved_state": {
+    "execution_sequence": 75,
+    "charged_seconds": 8106,
+    "charged_evidence_bytes": 1798941619,
+    "active_execution_id": null,
+    "pending_gate_attempt_id": null,
+    "gate_attempts": 11,
+    "execution_events": 75,
+    "control_objects": 18
+  },
+  "applied_acceptance": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v12/Root5Window6Forward12AppliedAcceptance.json",
+    "sha256": "7b469f7fc56005f40edc53244421bb7cc1bdf79a15a65eccfa914ef4c60e9657",
+    "bytes": 1301,
+    "blob_sha": "8a553ebcedd6beb275e0db22a4cb7141c262f63a"
+  },
+  "expired_ga_recovery": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v11-expired1/ExpiredFinalGAPredispatchRecoveryAcceptance.json",
+    "sha256": "35f5c0a30e6eb997a21e97354ca320de4c592498314bccb7eb3b9ceb4e4890e3",
+    "bytes": 1417,
+    "blob_sha": "1f805d4cacfdc728d0f964989ff0c45be55169d2"
+  },
+  "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+  "root_generation": "ctrgen_e5df432221344996afc04b5638121d96",
+  "expires_at": "2026-09-11T10:21:05Z",
+  "pre_and_post_definition_guards": true,
+  "transactional": true,
+  "applied": true,
+  "authority_effect": "ROOT5_METADATA_FORWARD_VALIDATION_ONLY_NO_BUDGET_NO_GA_NO_ENTRY_NO_PRODUCTION"
+}

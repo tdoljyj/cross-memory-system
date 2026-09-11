@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "state": "APPLIED_EXACT_ROOT5_WINDOW6_FORWARD12_CAPACITY_REPAIR",
+  "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+  "root_generation": "ctrgen_e5df432221344996afc04b5638121d96",
+  "applied_at": "2026-09-11T01:00:00Z",
+  "source": {
+    "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/root5-window6-forward12/Root5Window6ForwardCapacityRepair.sql",
+    "sha256": "064752cb33b7868b1509be0e6119a0d321ca12a2d98c499ff389d90198527d79",
+    "bytes": 3740,
+    "blob_sha": "dcbc691d75f887225d5cd29d37e1964891e09621"
+  },
+  "preimage": {
+    "sequence": 75,
+    "charged_seconds": 8106,
+    "charged_evidence_bytes": 1798941619,
+    "active_ga_id": null,
+    "pending_budget_sequence": null
+  },
+  "postimage": {
+    "sequence": 75,
+    "charged_seconds": 8106,
+    "charged_evidence_bytes": 1798941619,
+    "active_ga_id": null,
+    "pending_budget_sequence": null
+  },
+  "installed_prosrc_sha256": {
+    "reserve_execution_budget": "4e83ad5f263d707c958dc289db2e5c191694790580446799c7b28d34b6646d9e",
+    "reserve_gate": "47d1196ff8cea56fabfe87c8d5a83f48282ab20ddecc526bbf269d4bb931a603"
+  },
+  "rows_changed": false,
+  "authority_effect": "ROOT5_METADATA_FORWARD_AND_ONE_ALLOCATION_VALIDATION_ONLY_NO_BUDGET_NO_GA_NO_ENTRY_NO_PRODUCTION"
+}
