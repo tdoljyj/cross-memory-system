@@ -8,7 +8,7 @@ export const algorithm='GITHUB_API_VERIFIED_OWNER_SINGLE_PARENT_COMMITMENT_V1_CA
 export const project='uscrdifznmlvczcekqpw';
 export const rootGeneration='ctrgen_2e778ca66244459f974b081edca8c04e';
 export const root5Generation='ctrgen_e5df432221344996afc04b5638121d96';
-export const root6Generation='ctrgen_e8b3f4154c3875d3c2214aa0464bc810';
+export const root6Generation='ctrgen_5e0440a95ac8ee257b9e4236cabd275b';
 export const audience='urn:clued:audience:skill-coexistence-qualification:'+project;
 const sha=s=>crypto.createHash('sha256').update(s,'utf8').digest('hex');
 const need=(ok,why)=>{if(!ok)throw Error(why);};

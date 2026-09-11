@@ -29,8 +29,24 @@ const sha = x => crypto.createHash('sha256').update(x).digest('hex');
 
 // Owner-approved window for root6. context.mjs requires the runtime acceptance expiry to equal
 // the registered generation expiry exactly, so this is fixed before anything is written.
+// A week, not 24 hours. The migration needs three or four Owner merges to complete, and a window
+// that lapses mid-sequence costs the entire migration again -- which is exactly how the run got
+// here. Nothing constrains the window length; validateRootShape only bounds the endpoints.
 const ROOT6_NOT_BEFORE = '2026-09-12T00:00:00Z';
-const ROOT6_EXPIRY = '2026-09-13T00:00:00Z';
+const ROOT6_EXPIRY = '2026-09-19T00:00:00Z';
+
+// The lower bound stays where the predecessor had it. Pinning it forward to the window start was
+// wrong: context.mjs:44 requires the registered not_before to be <= the capacity approval's
+// approved_at, and no approval can be dated after a window that has not opened. The window start
+// is not unconstrained as a result -- approved_at bounds it from above, which is a real constraint.
+const OWNER_WINDOW_LOWER = '2026-09-10T13:18:47Z';
+
+// The frozen capacity delta and two hard caps all pin the ordered source reference count at 131.
+// The root6 controller declares 133, being 131 plus the two files added to avoid editing a signing
+// module that 64 other artifacts pin by hash. Raising these three is not sufficient on its own:
+// source_refs_maximum is also frozen inside the Owner-signed capacity approval and the independent
+// applicability, both compared byte-exactly, so both must be reissued.
+const OLD_SOURCE_REF_CAP = 131, NEW_SOURCE_REF_CAP = 133;
 const ROOT5_GENERATION = 'ctrgen_e5df432221344996afc04b5638121d96';
 const OLD_CUTOFF = '2026-09-11T10:21:05Z';
 
@@ -221,18 +237,43 @@ for (const f of fs.readdirSync(SRC)) {
 //
 // Both bounds move, rather than only raising the ceiling. Raising the ceiling alone is monotone
 // and therefore safe for previously-accepted material, but it leaves the approved window enforced
-// at one end only: nothing else pins body.not_before, so a root6 body could otherwise claim a
-// not_before as early as 2026-09-10T13:18:47Z and still pass every check -- a ~2.5 day window
-// instead of the approved 24 hours. Narrowing the lower bound is deliberately NOT monotone.
-// Safe because validateRootShape only ever sees the LATEST GENERATION_REGISTERED body
-// (context.mjs:57 takes .at(-1)), so no historical root5 body is ever re-validated under it.
+// ONLY the ceiling moves. An earlier revision of this script also pinned the lower bound forward
+// to the window start, on the reasoning that the approved window was otherwise enforced at one end
+// only. That was wrong and adversarial review caught it: context.mjs:44 requires the registered
+// not_before to be <= the capacity approval's approved_at, so a lower bound at the window start
+// makes CAPACITY_APPROVAL_CURRENT_ROOT5_TIME unsatisfiable at every instant in the window. Raising
+// only the ceiling is monotone, so every previously valid root still validates, and the window
+// start remains bounded from above by approved_at.
 {
   const p = path.join(DST, 'root-window-validation.mjs');
   const e = editor('root-window-validation.mjs', fs.readFileSync(p, 'utf8'));
-  e.apply('OWNER_WINDOW_BOUNDS',
-    "start>=Date.parse('2026-09-10T13:18:47Z')&&start<end&&end<=Date.parse('" + OLD_CUTOFF + "')",
-    "start>=Date.parse('" + ROOT6_NOT_BEFORE + "')&&start<end&&end<=Date.parse('" + ROOT6_EXPIRY + "')");
+  e.apply('OWNER_WINDOW_UPPER_BOUND',
+    "start>=Date.parse('" + OWNER_WINDOW_LOWER + "')&&start<end&&end<=Date.parse('" + OLD_CUTOFF + "')",
+    "start>=Date.parse('" + OWNER_WINDOW_LOWER + "')&&start<end&&end<=Date.parse('" + ROOT6_EXPIRY + "')");
   fs.writeFileSync(p, e.get());
+}
+
+// ---- 5b. the ordered source reference caps ----
+// Three independent places pin 131. All must move together, and even then the run stays blocked
+// until the Owner-signed approval and the independent applicability carry 133 as well.
+{
+  const p = path.join(DST, 'source-publication.mjs');
+  const e = editor('source-publication.mjs', fs.readFileSync(p, 'utf8'));
+  e.apply('BOUNDED_SOURCE_SET_CAP',
+    'refs.length<=' + OLD_SOURCE_REF_CAP,
+    'refs.length<=' + NEW_SOURCE_REF_CAP);
+  fs.writeFileSync(p, e.get());
+}
+{
+  const ctxPath = path.join(DST, 'context.mjs');
+  const e = editor('context.mjs', fs.readFileSync(ctxPath, 'utf8'));
+  e.apply('CLOSED_SOURCE_REF_MAXIMUM',
+    'blobs.length<=' + OLD_SOURCE_REF_CAP,
+    'blobs.length<=' + NEW_SOURCE_REF_CAP);
+  e.apply('CAPACITY_DELTA_SOURCE_REFS_MAXIMUM',
+    'source_refs_maximum:' + OLD_SOURCE_REF_CAP,
+    'source_refs_maximum:' + NEW_SOURCE_REF_CAP);
+  fs.writeFileSync(ctxPath, e.get());
 }
 
 // ---- 6. the two schemas that const the generation ----

@@ -10,7 +10,7 @@ const repo=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../../..')
 const manifestPath='scripts/phase2-qualification/control-context-verifier-root6-window10-successor/ControllerSourceManifest.candidate.json';
 const need=(ok,why)=>{if(!ok)throw Error(why);};
 export function planSourceBatches(refs,sizes){
- need(Array.isArray(refs)&&refs.length>0&&refs.length<=131&&Array.isArray(sizes)&&sizes.length===refs.length,'COMPLETE_BOUNDED_SOURCE_SET');
+ need(Array.isArray(refs)&&refs.length>0&&refs.length<=133&&Array.isArray(sizes)&&sizes.length===refs.length,'COMPLETE_BOUNDED_SOURCE_SET');
  const batches=[],seen=new Map();let plannedEncodedBytes=0;
  for(let i=0;i<refs.length;i+=128){
   const batch={refs:refs.slice(i,i+128),sizes:sizes.slice(i,i+128)};planRefs(batch.refs,batch.sizes);batches.push(batch);

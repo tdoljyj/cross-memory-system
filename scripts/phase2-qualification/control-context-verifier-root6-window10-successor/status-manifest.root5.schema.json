@@ -36,7 +36,7 @@
       "const": "urn:clued:audience:skill-coexistence-qualification:uscrdifznmlvczcekqpw"
     },
     "control_trust_root_generation": {
-      "const": "ctrgen_e8b3f4154c3875d3c2214aa0464bc810"
+      "const": "ctrgen_5e0440a95ac8ee257b9e4236cabd275b"
     },
     "issuer_ref": {
       "type": "object",
@@ -127,7 +127,7 @@
           "const": "ctr_414bd3c724264a83894b0c55cf2ab878"
         },
         "root_generation": {
-          "const": "ctrgen_e8b3f4154c3875d3c2214aa0464bc810"
+          "const": "ctrgen_5e0440a95ac8ee257b9e4236cabd275b"
         },
         "profile_digest": {
           "type": "string",
