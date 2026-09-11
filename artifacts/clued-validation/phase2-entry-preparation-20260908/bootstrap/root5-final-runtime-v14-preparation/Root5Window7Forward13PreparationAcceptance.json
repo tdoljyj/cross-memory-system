@@ -15,8 +15,8 @@
   "controller": {
     "path": "scripts/phase2-qualification/control-context-verifier-root5-window5-forward11-successor/ControllerSourceManifest.candidate.json",
     "bytes": 73621,
-    "sha256": "02ef0f82c765f8853eae0b7980f47c5e4901e7ebb33c4cf9b92ef74e98d4812e",
-    "blob_sha": "766c6563de274ace5c6cb44b6e1dccc96e40d973"
+    "sha256": "36a025ad0265f2229d5e149290cb5ce7663ff434847820503a8f42c01b390faf",
+    "blob_sha": "a61ea242a00a3363154eadbaacbe8c62e7bc03e6"
   },
   "proposal": {
     "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v14-preparation/Root5OriginalInput3200000CapacityProposal20260911.json",
@@ -27,20 +27,20 @@
   "approval": {
     "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v14-preparation/Root5OriginalInput3200000CapacityApproval20260911.json",
     "bytes": 3320,
-    "sha256": "70d94c6bb0e767a9d3855755cec3d0efe43a48511d759342327811c1bd125aad",
-    "blob_sha": "4374b22b8b319c70a2411df2f62f17c6b017cc9d"
+    "sha256": "a2cf1e2d03e8a3b165f2928aa36472ea343736652e65a59ba3572696ffaff78a",
+    "blob_sha": "7026f8febf62a1bf4f77ab2c300e333c2b2adb3f"
   },
   "applicability": {
     "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v14-preparation/Root5CurrentController3200000CapacityApplicability20260911.json",
     "bytes": 8648,
-    "sha256": "1007962a17fde9159d95a6f13e2d2dea06249a531592b4488f3544605b030593",
-    "blob_sha": "2bb155720842ec57b85db6f31882c350d03dbc4b"
+    "sha256": "b01a651a55ae8f14dc373c5bd4fc69a5c814511af2258bc2ba9b02c266a07ad5",
+    "blob_sha": "7abeb0ea41776b8e0957edaf7fc0b78e8358350d"
   },
   "prior_attempt_repair": {
     "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v14-preparation/ExpiredV13InputCapacityRepairAcceptance20260911.json",
     "bytes": 2568,
-    "sha256": "770d06ede48424fb4edebd8775ebe8210261e130d4eb993b1dcd7410d250cd8c",
-    "blob_sha": "3b72db5bf7833c674b090ae8b9ad45c5da210f78"
+    "sha256": "73494ab546e4cda9815d13a3d00aa0c2ff8928c40e9818eb1d41575d351230cd",
+    "blob_sha": "4c26479e997334fcfe8af5dd3d3af1f1b6a8b4ee"
   },
   "blocked_receipt": {
     "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v14-preparation/ExpiredV13BlockedReceipt.json",
