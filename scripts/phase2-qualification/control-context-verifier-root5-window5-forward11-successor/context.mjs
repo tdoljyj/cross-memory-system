@@ -220,7 +220,7 @@ function loadAuthenticatedBoundedSeries(runtime){
   verifyOwnerMergeArtifact({...descriptor.publication,raw});
   return Object.freeze({raw,ref:Object.freeze({...descriptor.ref})});
  };
- check(Array.isArray(d.repairs)&&d.repairs.length<=3,'BOUNDED_SIGNED_RUNTIME_ACCEPTANCE_LISTS');
+ check(Array.isArray(d.repairs)&&d.repairs.length<=4,'BOUNDED_SIGNED_RUNTIME_ACCEPTANCE_LISTS');
  const applicability=actual(d.applicability),appendix=capacityRuntime.parseAuthenticatedAdministrativeJSON(applicability.raw);
  check(same(d.applicability.ref,subject.bounded_series_applicability_ref)&&same(d.approval.ref,appendix.approval_ref),'RUNTIME_AND_APPENDIX_ACTUALLY_BIND_APPROVAL');
  const approval=actual(d.approval),repairs=d.repairs.map(actual);

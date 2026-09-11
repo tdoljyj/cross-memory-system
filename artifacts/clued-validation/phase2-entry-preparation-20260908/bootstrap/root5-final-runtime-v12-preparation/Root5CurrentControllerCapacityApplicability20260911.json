@@ -68,7 +68,7 @@
   "scope_unchanged_except_original_input_limit": true,
   "new_action_authorized": false,
   "accepted_at": "2026-09-11T00:52:00.000Z",
-  "controller_digest": "cbcdf71d89ae0b32c73ef3b943601f6ab1087f9cb35bbe2d24e19d379226fa9e",
+  "controller_digest": "8ab896ecc7f52083fc51d7574260a75c7744ad83bb84691ba60217ec7e6e6a0f",
   "scope_digest": "115408c69dcb2fa606fb0de34ec86c5239487d0cfa9a73abb267664a2482abe5",
   "previous_evidence_sink_ref": {
     "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/a1a5f39b43f2b77bc39a13bee3d42a9a55483d1d",

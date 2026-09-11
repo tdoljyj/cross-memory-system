@@ -14,15 +14,21 @@
   },
   "controller": {
     "path": "scripts/phase2-qualification/control-context-verifier-root5-window5-forward11-successor/ControllerSourceManifest.candidate.json",
-    "sha256": "cbcdf71d89ae0b32c73ef3b943601f6ab1087f9cb35bbe2d24e19d379226fa9e",
-    "blob_sha": "c24ac37c5ccca777b842f9bfbdaed5a094868ba4",
+    "sha256": "8ab896ecc7f52083fc51d7574260a75c7744ad83bb84691ba60217ec7e6e6a0f",
+    "blob_sha": "26dd80c72e7d5a0dd71c94ebfb70b54a2f567bb6",
     "bytes": 73621
   },
   "capacity_applicability": {
     "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v12-preparation/Root5CurrentControllerCapacityApplicability20260911.json",
-    "sha256": "c637bd6209146d0f5bd2b6ba1b6473309bf6d46b3ef58a5f890744c06a530a24",
-    "blob_sha": "654261c50e9cb472242554eaacdf761a74a70328",
+    "sha256": "faca391b43db33fa4c4536e248ac95487c49d75788bbcf71996b217e089aa686",
+    "blob_sha": "5e0c1ecd4f29d65b9d156016542565cc5374671f",
     "bytes": 8587
+  },
+  "prior_attempt_repair": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v12-preparation/ExpiredV11CurrentControllerRepairAcceptance20260911.json",
+    "sha256": "39155ddc1ebfee0cc6921f6e71cab68ae644141aa2f52a5a42fd66ad91b09280",
+    "blob_sha": "4786f9bb4780222cc65ed03a8195daab55c5b831",
+    "bytes": 1361
   },
   "runtime_function_repair": {
     "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/root5-window6-forward12/Root5Window6ForwardCapacityRepair.sql",
