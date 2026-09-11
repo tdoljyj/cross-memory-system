@@ -1,0 +1,53 @@
+{
+  "source_refs": 130,
+  "repository_source_files": 142,
+  "controller": {
+    "path": "scripts/phase2-qualification/control-context-verifier-root5-window5-forward11-successor/ControllerSourceManifest.candidate.json",
+    "sha256": "36a025ad0265f2229d5e149290cb5ce7663ff434847820503a8f42c01b390faf",
+    "blob_sha": "a61ea242a00a3363154eadbaacbe8c62e7bc03e6",
+    "bytes": 73621
+  },
+  "qualification": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v14/ScopedRoot5FinalControllerQualification.json",
+    "sha256": "1e65411ec2c36a7006f9685827be233912433d307afd33f9dcf65875f255e514",
+    "bytes": 44426,
+    "blob_sha": "dd77f320a4f5bf3c9a15d9ce384f7c0b55077328"
+  },
+  "runtime_function_acceptance": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v14/RuntimeFunctionsRoot5Window7Acceptance.json",
+    "sha256": "0d8d125df4492e71f73de46db2a1ddf39a577a8e49b58cfb7257fa817e9b2173",
+    "bytes": 2277,
+    "blob_sha": "f6c9fb7d1763883bcbe49593d8f5097b915bf6ff"
+  },
+  "status_review": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v14/Status21ReviewSubject.json",
+    "sha256": "4014d5ef00b50569fcc2ed84f7e350a69cd58913ffb1e55fd7871d6df41e45b3",
+    "bytes": 9276,
+    "blob_sha": "7535d833588279f43f59371b1e9f938652cf15f6"
+  },
+  "status_acceptance": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v14/Status21Acceptance.json",
+    "sha256": "cef0c89d36d234eaa97b223848aad4a6d2e29309c9d3feb02ac6c4e6a093f491",
+    "bytes": 1952,
+    "blob_sha": "c7ed57f9508a0d9c20d1cb157e6031e2746b1a23"
+  },
+  "status_signing_payload": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v14/Status21SigningPayload.json",
+    "sha256": "7ba98ea48f5fee9f729026a150bb5c0f87089321b62d16afcce4f09855df0747",
+    "bytes": 8443,
+    "blob_sha": "4ceb55377a38a1de87425ecd4c6b54d4b5876d2e"
+  },
+  "status_signed_payload_canonical_sha256": "0575639252482ba85ba5ba8a320cc28b20721d1486773c86a3584a7de69b1d1e",
+  "runtime_review": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v14/Root5FinalRuntimeAcceptanceReviewSubject.json",
+    "sha256": "c42ab6c51ddf5d3c23c721c46585e2b606129020385f77e1acf99473a74d173d",
+    "bytes": 86076,
+    "blob_sha": "063474f74347c3aaf9346eb0805aacfed74bca04"
+  },
+  "runtime_acceptance": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v14/ExactRoot5FinalPreentryControllerRuntimeAcceptance.json",
+    "sha256": "61b04c816112c90273ef403f8c9b17d62200fa781a5dc0245e8f2b2b36be60f1",
+    "bytes": 80953,
+    "blob_sha": "ea5adc7c628eb7a28875bf23f387133cf289f781"
+  }
+}
