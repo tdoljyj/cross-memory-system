@@ -2,8 +2,8 @@
   "state": "ACCEPTED_EXACT_ROOT3_ORIGINAL_INPUT_CAPACITY_SUPPLEMENT",
   "independent_reviewer": "/root/project_list_auth_fix",
   "approval_ref": {
-    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/4374b22b8b319c70a2411df2f62f17c6b017cc9d",
-    "sha256": "70d94c6bb0e767a9d3855755cec3d0efe43a48511d759342327811c1bd125aad"
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/7026f8febf62a1bf4f77ab2c300e333c2b2adb3f",
+    "sha256": "a2cf1e2d03e8a3b165f2928aa36472ea343736652e65a59ba3572696ffaff78a"
   },
   "base_approval_ref": {
     "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/86636aa78807ca1ce1facbdd910f7c3d27a75177",
@@ -46,7 +46,7 @@
     "publisher_request_bytes": 4194304,
     "publisher_response_bytes": 4194304,
     "source_batch_response_bytes": 33554432,
-    "source_refs_maximum": 129,
+    "source_refs_maximum": 130,
     "root_strict_json_bytes": 2097152,
     "original_field_count": 5,
     "original_nineteen_oracles_unchanged": true,
@@ -68,7 +68,7 @@
   "scope_unchanged_except_original_input_limit": true,
   "new_action_authorized": false,
   "accepted_at": "2026-09-11T02:16:00.000Z",
-  "controller_digest": "02ef0f82c765f8853eae0b7980f47c5e4901e7ebb33c4cf9b92ef74e98d4812e",
+  "controller_digest": "36a025ad0265f2229d5e149290cb5ce7663ff434847820503a8f42c01b390faf",
   "scope_digest": "115408c69dcb2fa606fb0de34ec86c5239487d0cfa9a73abb267664a2482abe5",
   "previous_evidence_sink_ref": {
     "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/a1a5f39b43f2b77bc39a13bee3d42a9a55483d1d",
