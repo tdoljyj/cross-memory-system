@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "kind": "NINETEENTH_FORWARD_EXECUTION_RECEIPT",
+  "state": "APPLIED_AND_READ_BACK",
+  "project_ref": "uscrdifznmlvczcekqpw",
+  "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+  "applied_at_utc": "2026-09-11T17:35:39.320229Z",
+  "preimage": {
+    "observed_at": "2026-09-11 17:14:05.466771+00",
+    "rows_sha256": "4ec5dc246a4cb96bc687914b3328131599ba71caf3ca1f9a3c080485d7e7ba6f",
+    "catalog_sha256": "73c6f301fbf0e239f9750519e51970a576d98ec54698f9caa49022861cd23f1e",
+    "previous_sequence": 87,
+    "existing_forwards": 18,
+    "previous_getter_definition_sha256": "3d3c9624204fb10e5d0147bb06c7f265043014f612a2e30abbfb0311a0ca092d",
+    "previous_getter_prosrc_sha256": "2cddb4593c0facd4308dcefbbb8dbf05819df7e7abff70e30e3114e543e67646"
+  },
+  "postimage_readback": {
+    "sequence": 88,
+    "total_forwards": 19,
+    "event_88_idempotency_key": "root5-window9-corrected-binding-20260911",
+    "event_88_operation": "EXECUTION_BINDING_FORWARD_ACCEPTED",
+    "getter_prosrc_sha256": "c721b056a771a3a019d1f0cee862408ba56afcbd4d683f45802e8f51c0580d16",
+    "effective_binding": {
+      "controller_sha256": "ac7bdd53b7fe5705ee70f4fbb08ce6a5889ccf6d6574a3575e51f16bb09c2daa",
+      "qualification_sha256": "dfe6299d2102b051abe87fe6eb502f62c4d4f40559fe6e16074a49ee467203a2",
+      "runtime_acceptance_sha256": "bc50920319499794b9ad805258a33107dbe2d4c4c8b76eeda7fb8a526e459c37",
+      "gate_sha256": "3487d9fc6ccee5478569021961eac93bf5ef6bd4bc2428559b20a44abb9c155a",
+      "scope_sha256": "115408c69dcb2fa606fb0de34ec86c5239487d0cfa9a73abb267664a2482abe5",
+      "profile_sha256": "d1c060b85f0b842a397a478105ea57a208e62eb0a5a2d4c2cd8f93f63eae88f5",
+      "prior_seconds": 1506,
+      "prior_evidence_bytes": 322546611
+    },
+    "charged_seconds": 9906,
+    "charged_evidence_bytes": 2201594803,
+    "active_ga_id": null,
+    "pending_budget_sequence": null
+  },
+  "artifacts": {
+    "full_candidate_sql": {
+      "path": "ActualNineteenthForward.sql",
+      "sha256": "115ced2dc39eec1902739fc86d251ee6ef2e26f6afee26fe6b102b2af59b6cf9",
+      "bytes": 126164,
+      "note": "Output of the unmodified buildExactGetter plus the buildForward template. Not the text sent to the database; see executed_sql."
+    },
+    "executed_sql": {
+      "path": "ActualNineteenthForward.executed-compact.sql",
+      "sha256": "23cab1118cc5c707718a92924d5e29f7a7c2c0abcd3afee2f95c89174cc115b6",
+      "bytes": 23083
+    },
+    "successor_getter": {
+      "sql_sha256": "f97d85852a722697cd66b3e73ae79e40144c907a51b85fe5d7a3631aa9eda354",
+      "prosrc_sha256": "c721b056a771a3a019d1f0cee862408ba56afcbd4d683f45802e8f51c0580d16"
+    }
+  },
+  "deviations_from_original_pipeline": [
+    {
+      "id": "WINDOW_LITERAL_UPDATED",
+      "what": "nineteenth-forward.candidate.mjs hardcoded the superseded window expiry 2026-09-11T10:21:05Z in the generated transaction guard; updated to the live accepted_binding window 2026-09-12T13:14:51Z.",
+      "why": "The original window expired and was replaced by the owner-approved continuation recorded in PR #149/#150. Without this the generated transaction could never pass its own guard.",
+      "effect_on_controls": "None. The guard still requires the live accepted_binding window to match exactly and refuses to run past it."
+    },
+    {
+      "id": "CAPTURE_FRAGMENT_REAUTHORED",
+      "what": "The rows_now/catalog_now drift-detection fragment was written fresh as plain SELECT ... INTO statements instead of being sliced out of LockedInstall.v3.template.sql.",
+      "why": "That template file exists nowhere in this repository or environment and could not be recovered. The replacement computes the identical jsonb_build_object expressions, validated live by a standalone read-only run before use.",
+      "effect_on_controls": "None. The fragment only produces the values compared against the captured preimage hashes; any divergence fails the comparison and rolls back."
+    },
+    {
+      "id": "CONTROL_FUNCTION_HASHES_REBASELINED",
+      "what": "The expected prosrc hashes for reserve_execution_budget and reserve_gate were updated from 431bf26e.../56eefb41... to the live df6087f9.../a0112924... after the first attempt aborted on this exact guard.",
+      "why": "Both functions were rewritten outside this repository between 08:59 and 17:02 UTC on 2026-09-11 as part of the same owner-driven window migration that moved accepted_binding. The guard fired correctly; the change was then inspected before the expectation was moved.",
+      "inspection_result": "The diff is a window migration only. Both functions still hard-fix seconds=600 and evidence_bytes=134217728, still cap at series_n<=9 reservations, still enforce charged_seconds+600<=10506 and charged_evidence_bytes+134217728<=2335812531, still refuse a new budget while active_ga_id or pending_budget_sequence is set, and still stop on the first PASS. No limit was loosened, no refund path added, no DROP present.",
+      "caveat": "This rewrite has no corresponding pull request or published evidence in this repository. It is recorded here because the executed transaction depends on it."
+    }
+  ],
+  "budget_reserved": false,
+  "ga_created": false,
+  "status_appended": false,
+  "root_or_fees_changed": false,
+  "authority_effect": "NONE"
+}
