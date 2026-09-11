@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "kind": "EXPLICIT_OWNER_CONTINUATION_APPROVAL_CANDIDATE",
+  "state": "PENDING_VERIFIED_OWNER_MERGE",
+  "authority_effect": "NONE_UNTIL_VERIFIED_OWNER_MERGE",
+  "repository": "tdoljyj/cross-memory-system",
+  "owner": "tdoljyj",
+  "approval_action": "OWNER_MERGES_CONTAINING_PULL_REQUEST_VIA_GITHUB_WEB_FLOW",
+  "required_merge_verification": {
+    "merged_by": "tdoljyj",
+    "committer": "web-flow",
+    "verified": true,
+    "verification_reason": "valid"
+  },
+  "window_rule": {
+    "not_before_source": "VERIFIED_OWNER_MERGE_COMMIT_COMMITTED_AT",
+    "duration_seconds": 86400,
+    "expires_at_rule": "not_before + 86400 seconds",
+    "rolling": false,
+    "auto_renew": false,
+    "backdate": false,
+    "materialize_exact_timestamps_after_verified_merge": true
+  },
+  "scope": {
+    "project_ref": "uscrdifznmlvczcekqpw",
+    "control_schema": "clued_control",
+    "root_set_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+    "purpose": "SKILL_COEXISTENCE_QUALIFICATION",
+    "environment": "ISOLATED_TEST",
+    "issuer": "tdoljyj",
+    "audience": "urn:clued:audience:skill-coexistence-qualification:uscrdifznmlvczcekqpw",
+    "production_authority": false,
+    "paid_model_authority": false,
+    "new_trust_root": false,
+    "scope_expansion": false
+  },
+  "budget_effect": {
+    "new_capacity": false,
+    "refund": false,
+    "reset": false,
+    "automatic_retry": false,
+    "preserve_existing_charges_and_limits": true
+  },
+  "nw01": {
+    "reuse_existing_reviewed_mechanism": true,
+    "row": "clued_control.accepted_binding",
+    "allowed_changed_fields": [
+      "not_before",
+      "expires_at",
+      "owner_approval_commit",
+      "subject_sha256",
+      "registration_acceptance_sha256",
+      "store_acceptance_sha256",
+      "signature_evidence_sha256"
+    ],
+    "allowed_replaced_checks": [
+      "accepted_binding_check",
+      "accepted_binding_owner_approval_commit_check",
+      "accepted_binding_subject_sha256_check"
+    ],
+    "temporarily_disabled_trigger": "accepted_binding_immutable",
+    "trigger_must_be_restored_same_transaction": true,
+    "fail_closed_on_mismatch": true
+  },
+  "execution_boundary": {
+    "reserve_execution_budget_before_final_pass": false,
+    "reserve_ga_or_gate_before_final_pass": false,
+    "reuse_expired_window_preimage": false,
+    "reuse_expired_window_candidate": false,
+    "fresh_lifecycle_required": true
+  },
+  "preparation_requested_by_owner_in_current_conversation": true,
+  "final_approval_requires_owner_merge": true
+}
