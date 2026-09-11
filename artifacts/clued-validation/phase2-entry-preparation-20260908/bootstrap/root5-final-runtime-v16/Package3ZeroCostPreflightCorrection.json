@@ -1,0 +1,92 @@
+{
+  "schema_version": 1,
+  "kind": "ROOT5_V16_PREFLIGHT_CORRECTION",
+  "state": "CORRECTS_A_PUBLISHED_REPORT_THAT_WAS_INCOMPLETE_AND_PRESCRIBED_AN_UNWORKABLE_PATH",
+  "corrects": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v16/Package3ZeroCostPreflightReport.json",
+    "commit": "133da69",
+    "note": "The corrected report is left byte-for-byte intact. Nothing in it is rewritten or withdrawn; this file records what it got wrong."
+  },
+  "issued_at_utc": "2026-09-11T18:20:00Z",
+  "found_by": "Adversarial read-only review performed by a subagent spawned by the preparing session. The subagent was given a neutral brief and asked to find problems; it found the two omissions below plus five defects in the preparer's own output. Its findings were then verified directly against the bound verifier source and the live database before being recorded here.",
+  "independence_caveat": "That subagent shares the preparing session's model and was briefed by the preparer. It is NOT the designated independent assessor and this correction is NOT an independent acceptance of anything.",
+  "what_the_original_report_got_wrong": [
+    {
+      "id": "MISSED_REGISTERED_GENERATION_WINDOW",
+      "severity": "MAJOR",
+      "detail": "The report checked accepted_binding but never read the GENERATION_REGISTERED event body. The live registration at sequence 5 (ctrgen_e5df432221344996afc04b5638121d96) carries body.expires_at = 2026-09-11T10:21:05Z and body.revocation.expires_at = 2026-09-11T10:21:05Z.",
+      "why_it_matters": "context.mjs calls currentWindow(body.not_before, body.expires_at, now) against that event, so the root registration itself is expired independently of any acceptance document. Extending accepted_binding in the database does not touch it."
+    },
+    {
+      "id": "MISSED_HARDCODED_OWNER_CUTOFF_IN_VERIFIER",
+      "severity": "MAJOR",
+      "detail": "The bound verifier scripts/phase2-qualification/control-context-verifier-root5-window5-forward11-successor/context.mjs hardcodes the superseded cutoff in source: line 152 root4Expiry='2026-09-11T10:21:05Z'; line 169 need(Date.parse(now)<Date.parse(root4Expiry),'FIXED_OWNER_CUTOFF_NO_DISPATCH') for every operation except RESULT_RECONCILIATION; line 188 need(now+600000<root4Expiry,'FULL_600_SECOND_WINDOW_REQUIRED') for NEXT_ALLOCATION; line 43 check(runtime.expires_at===registered.expires_at && time(runtime.expires_at)<=time('2026-09-11T10:21:05Z'),'CAPACITY_CURRENT_ROOT5_EXPIRY').",
+      "why_it_matters": "No document reissue and no database write can satisfy these. The cutoff lives in reviewed controller source, and moving it changes the controller digest, which invalidates the qualification, the runtime acceptance and the current binding."
+    },
+    {
+      "id": "PRESCRIBED_PATH_WOULD_NOT_HAVE_WORKED",
+      "severity": "MAJOR",
+      "detail": "The original report's required_before_any_budget_reservation list stops at reissuing four documents, a generation 24 status manifest and a twentieth forward. Completing that list exactly as written would still fail at FIXED_OWNER_CUTOFF_NO_DISPATCH and CAPACITY_CURRENT_ROOT5_EXPIRY.",
+      "why_it_matters": "The list was published as the route to a qualification run. It is not one."
+    },
+    {
+      "id": "WRONG_REVIEWER_IDENTITY_ATTRIBUTED",
+      "severity": "MINOR",
+      "detail": "Follow-up work asserted that the documents needing reissue require the vanished assessor /root/project_list_auth_fix. The bound verifier requires independent_reviewer==='/root' for both the controller qualification (line 76) and the runtime acceptance (line 71). /root/project_list_auth_fix is required only for the capacity applicability (line 129) and the bounded series applicability (line 164), neither of which the cascade reissues.",
+      "open_governance_question": "Per the governance proposals /root is the coordinator, that is the implementing side, while those same proposals state the implementer must not self-certify. The verifier checks only the string. Whether the coordinator may sign these is an Owner question, not an engineering one, and is not resolved here."
+    },
+    {
+      "id": "TWO_PREPARED_SUBJECTS_ARE_NOT_CONSUMED",
+      "severity": "MINOR",
+      "detail": "The bound verifier contains no reference to CurrentNonPerformanceApplicability or Root5StopCurrentSourceApplicability. Two of the four window-successor subjects prepared afterwards are therefore not read by this controller.",
+      "why_it_matters": "Effort was spent reissuing documents this controller never reads."
+    }
+  ],
+  "defects_in_the_preparers_own_window_successor_subjects": [
+    {
+      "id": "ACCEPTED_AT_PRESTAMPED",
+      "severity": "MAJOR",
+      "detail": "Each proposed successor carries accepted_at or issued_at set to the preparation moment 2026-09-11T17:57:39.000Z while its own envelope states acceptance_issued: false. The documents therefore timestamp a review that has not happened.",
+      "status": "NOT_YET_FIXED"
+    },
+    {
+      "id": "SUPERSEDES_OVERWRITTEN_DROPPING_PROVENANCE",
+      "severity": "MAJOR",
+      "detail": "supersedes was replaced wholesale rather than extended. CurrentNonPerformanceApplicability previously pointed at work/original-input-capacity-approved-execution/admin-review/CapacityNonPerformanceApplicability20260910.json (8b8746ec2665...); that hash appears nowhere in the successor, breaking the chain.",
+      "status": "NOT_YET_FIXED"
+    },
+    {
+      "id": "SUCCESSOR_DELTA_OVERWRITTEN",
+      "severity": "MAJOR",
+      "detail": "The qualification's successor_delta was replaced, erasing the recorded v15 to v16 substantive change (4,000,000-byte inputs, 8 MiB publication transport).",
+      "status": "NOT_YET_FIXED"
+    },
+    {
+      "id": "UNCHANGED_FIELD_COUNT_WRONG",
+      "severity": "MINOR",
+      "detail": "Qualification envelope claims 41 unchanged fields, actual 40 of 45. STOP envelope claims 11, actual 12 of 14. The arithmetic in the generator was wrong.",
+      "status": "NOT_YET_FIXED"
+    },
+    {
+      "id": "SUCCESSOR_DELTA_PROSE_SELF_CONTRADICTS",
+      "severity": "MINOR",
+      "detail": "The delta note asserts no source reference is changed while supersedes was repointed in all four documents.",
+      "status": "NOT_YET_FIXED"
+    }
+  ],
+  "what_is_still_true_from_the_original_report": [
+    "329 controller dependencies present, composed of 187 Windows-host runtime paths and 142 repository sources.",
+    "All 142 repository sources re-read and re-hashed clean against the manifest.",
+    "131 ordered source refs against tree 375b5726d574c69cc008e91b85be31825e61256c.",
+    "4,000,000-byte original input and 8,388,608-byte publisher transport parameters.",
+    "The accepted image manifest docker.io/library/python@sha256:285a7132... remains reachable.",
+    "The nineteenth forward is live at sequence 88 with 19 total forwards.",
+    "The run itself must execute on the Windows host that the 187 runtime dependencies fingerprint.",
+    "The budget remains untouched at charged_seconds 9906 and charged_evidence_bytes 2201594803."
+  ],
+  "budget_headroom_note": "charged_seconds is 9906 against the 10506 ceiling and each reservation is fixed at 600 seconds, so 9906+600 exactly reaches the ceiling. reserve_execution_budget additionally refuses a tenth reservation via series_n>=9. By construction exactly one allocation remains and there is no retry.",
+  "budget_touched": false,
+  "ga_created": false,
+  "database_write_performed": false,
+  "authority_effect": "NONE"
+}
