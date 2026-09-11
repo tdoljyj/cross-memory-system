@@ -1,0 +1,12 @@
+{
+  "kind": "CREATE_NEW_GITHUB_SIGNATURE_ATTEMPT",
+  "object_type": "GateResultReceipt",
+  "object_id": "grr_root5_v15_expired1_not_started_20260911",
+  "payload_sha256": "ee250a365f879f99aa41bf45274296cadc6f11d26567dc15c6be3c8778e4b533",
+  "expected_parent": "8acee1c52287b88c0023570b62ba63b8e10c4d74",
+  "target_path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/runtime-evidence/dynamic-signature-commitments/GateResultReceipt/grr_root5_v15_expired1_not_started_20260911.json",
+  "commitment_sha256": "90f1c1fb00e98944e3de8c2942a33eb50e45add0338ca7204a5b9c855d8d038f",
+  "state": "MUTATION_NOT_SENT",
+  "created_at": "2026-09-11T04:03:15.125Z",
+  "automatic_retry": false
+}
