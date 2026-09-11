@@ -10,10 +10,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import {fileURLToPath} from 'node:url';
 
 // Repo root derived from this file's location (work/root6-window10-migration/), so the build is
 // reproducible from any checkout rather than only the machine it was written on.
-const REPO = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..');
+// fileURLToPath, not URL.pathname: on Windows the latter yields '/C:/Users/...' with a leading
+// slash and path.resolve then computes the wrong repository root.
+const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const SRC_REL = 'scripts/phase2-qualification/control-context-verifier-root5-window5-forward11-successor';
 const DST_REL = 'scripts/phase2-qualification/control-context-verifier-root6-window10-successor';
 const SIGN_SRC_REL = 'scripts/phase2-qualification/nonproduction-control-store/runtime-successor/commitment-signing-next-window';

@@ -12,8 +12,11 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import {fileURLToPath} from 'node:url';
 
-const here = path.dirname(new URL(import.meta.url).pathname);
+// fileURLToPath, not URL.pathname: on Windows the latter yields '/C:/Users/...' with a leading
+// slash and path.resolve then computes the wrong repository root.
+const here = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.resolve(here, '../..');
 const DST_REL = 'scripts/phase2-qualification/control-context-verifier-root6-window10-successor';
 const SRC_REL = 'scripts/phase2-qualification/control-context-verifier-root5-window5-forward11-successor';
