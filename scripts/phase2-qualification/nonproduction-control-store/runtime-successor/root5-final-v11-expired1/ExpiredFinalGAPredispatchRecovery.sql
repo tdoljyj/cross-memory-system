@@ -22,7 +22,7 @@ begin
  then raise exception 'exact_expired_pending_attempt_required'; end if;
  if exists(select 1 from clued_control.execution_events e where e.root_id=root and e.request->>'ga_id'=ga_key)
  then raise exception 'effect_or_recovery_event_already_exists'; end if;
- if decision_request->>'expected_sequence'<>'68' or decision_request->>'operation'<>'DECISION_RESERVED'
+ if decision_request->>'expected_sequence'<>'73' or decision_request->>'operation'<>'DECISION_RESERVED'
  or decision_request->'body'->>'result'<>'BLOCKED'
  or decision_request->'body'->>'decision_sha256'<>encode(sha256(convert_to(decision_request->'body'->>'decision_raw','UTF8')),'hex')
  or decision_request->'body'->>'evidence_index_sha256'<>encode(sha256(convert_to(decision_request->'body'->>'evidence_index_raw','UTF8')),'hex')
