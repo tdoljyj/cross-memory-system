@@ -1,0 +1,377 @@
+{
+  "object_type": "IndependentRoot5V16RepairReview",
+  "schema_version": "1.0",
+  "state": "ACCEPTED_EXACT_REPAIR_APPLICABILITY_NOT_LIVE_QUALIFICATION",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "reviewed_at": "2026-09-11T05:13:18.088Z",
+  "independent_from_implementation_agent": true,
+  "implementation_files_modified_by_reviewer": [],
+  "source_subject": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v16-preparation/ReadinessReviewSubject.json",
+    "sha256": "03d6a632edfe364531658f912d3f7b2cd9b4f6e8e00366f8a5969506c83ebd06",
+    "semantics": "Exact prepared subject before independent acceptance fields were populated"
+  },
+  "controller": {
+    "path": "scripts/phase2-qualification/control-context-verifier-root5-window5-forward11-successor/ControllerSourceManifest.candidate.json",
+    "bytes": 73621,
+    "sha256": "71e90c1d47cfa6a46b8a9e02a872abcbeefda93e5e74fc8c7a7ffc9f3dbd041d",
+    "blob_sha": "4f22d99e57688f6877914f0492f2c6666fbbb9d4"
+  },
+  "reviewed_sources": [
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-root5-window5-forward11-successor/ControllerSourceManifest.candidate.json",
+      "bytes": 73621,
+      "sha256": "71e90c1d47cfa6a46b8a9e02a872abcbeefda93e5e74fc8c7a7ffc9f3dbd041d",
+      "blob_sha": "4f22d99e57688f6877914f0492f2c6666fbbb9d4"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-root5-window5-forward11-successor/context.mjs",
+      "bytes": 48376,
+      "sha256": "125aea27eb8cf1908f15d3a165dbbfa0cb38a3844b0b8f777126be6d66577289",
+      "blob_sha": "d759c160e71fd600f768c6de8e0888ba59beaef1"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-root5-window5-forward11-successor/original-inputs-blob.mjs",
+      "bytes": 17127,
+      "sha256": "ed17fd6363fbdaadb0c5f1df588058aeef769f4fbe4a522b091811cf6f254347",
+      "blob_sha": "f0f48b489cebad6382c1832473946d7bbcbaea26"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-root5-window5-forward11-successor/result-terminal.mjs",
+      "bytes": 7732,
+      "sha256": "238a87833a78792c991b19c0da1df94eb18c5f1fd233b25474c55e4b1c94c689",
+      "blob_sha": "b9dd8c3fb65c13d7ba83a84c4268f1db8fc04a0b"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-root5-window5-forward11-successor/parent600.py",
+      "bytes": 10857,
+      "sha256": "34b85e23293fe23567e00bd737cdc5bbb59fd4d9fd1875e3ce8f391471b58fb9",
+      "blob_sha": "7d3a895adb8c4aa09f1583744d9e7eb4e77805ae"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-root5-window5-forward11-successor/fixed_host.py",
+      "bytes": 14325,
+      "sha256": "95a69b860e7613fb59f4af8abb2f3c82c847044b78b0cbe445d22a471a7080da",
+      "blob_sha": "a3e6adf0f75e2158b3b0b5f90827387c0684fe0d"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-root5-window5-forward11-successor/bridge.py",
+      "bytes": 5121,
+      "sha256": "60e4cfac015c15fd53921a61a6566f740e7414f218120b0bdbc17bf17be64fd7",
+      "blob_sha": "ef368dbacb4ef9d0495330293becfc9ce87f54b6"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-root5-window5-forward11-successor/host-effect.mjs",
+      "bytes": 2672,
+      "sha256": "1fe9d23cb08e30df3634310daa17cbf7ff34b1433ef6ede007e874a4a9d7e8ba",
+      "blob_sha": "2e944a2fe64d057deaf8470fb2a45043821aada0"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-root5-window5-forward11-successor/historical-component-observations.mjs",
+      "bytes": 6450,
+      "sha256": "f8f6600ee2d1ed77f606dbe3a0def738c021efcbafb3f240a7fae5de196e5c3c",
+      "blob_sha": "09bf4f630883801a91fb2e4b009cbdc93ab4085d"
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v16-preparation/external/dependencies.mjs",
+      "bytes": 3801,
+      "sha256": "43cfce87b3b12629367911b560d3cb07813f96130416fe5b5899b0868cb841c1",
+      "blob_sha": "e96e00104d51fcd44f8e571ad5c2425126a8384f"
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v16-preparation/external/coordinate-measurements.mjs",
+      "bytes": 10412,
+      "sha256": "8a049bbe7ea50e0ee43f803d8060caa53bc39fe6b5dd6a125faf89da1dd0bfcf",
+      "blob_sha": "e11d0433407363382c8e7a04e22fc0bfd3f0ffb1"
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v16-preparation/external/result-materials.mjs",
+      "bytes": 7201,
+      "sha256": "c9a875a1274368b9d8501f659fb2980e47beb0b8e901257a8efc7f206774a0b3",
+      "blob_sha": "5ef085277b2b9dee05c9669504bff61fe7bde829"
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v16-preparation/external/component-readback.mjs",
+      "bytes": 9623,
+      "sha256": "4ab56d7f40f8b5e727196fed8449e891eda260e43407830a057fd3b51d4cf69f",
+      "blob_sha": "a758f2be732425045b2c44070dcaa0b34c2e7298"
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v16-preparation/external/original_input_publisher.candidate.py",
+      "bytes": 20845,
+      "sha256": "8cd2e753d35672edf25ab0279a4ed4b66d3ab700ad99e4bef8d5243c56fc006e",
+      "blob_sha": "dd1608955e1a8da9b0a704e5128fe01a7e07b6aa"
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v16-preparation/external/publish-original-inputs.candidate.py",
+      "bytes": 3167,
+      "sha256": "39523f30200b645dde25697d8a5c248b0df1ebab4aac1f058ff25e6729af31a1",
+      "blob_sha": "b957898f6cc4519053e4d279f797c8f25beaf698"
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v16-preparation/external/readiness.test.mjs",
+      "bytes": 1914,
+      "sha256": "38a1cd3ed8d783a83b000882ac98f0647b573413694054321827534d75eebf73",
+      "blob_sha": "2eb4e455834cedf92dd0209baf57bc669fa5cb0e"
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v16-preparation/external/test_publisher_readiness.py",
+      "bytes": 1771,
+      "sha256": "9d5bca8f78919469c7d726a7599478ddf15598f5e53419856e922c9817c10966",
+      "blob_sha": "f618e64dc7f665db6953dd395447a709fb9796df"
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v16-preparation/external/prepare-root5-run.mjs",
+      "bytes": 6625,
+      "sha256": "210f3ead2de26232690cf09a7097ba4066dac285b77784e87e7b0db81f8216c8",
+      "blob_sha": "2294f1913f2e3373e484468bfcad1f8c6ca30738"
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v16-preparation/external/run-final-controller-stage.mjs",
+      "bytes": 4354,
+      "sha256": "805d6cd11e7d673d37da1ac13d759eefd56de8dfc5e97ccf7a58e9301e232d73",
+      "blob_sha": "b3602852c52889e16017bc3f9b2015fb79e77a93"
+    }
+  ],
+  "repository_alignment": {
+    "remote_main": "5dc7bff87f2cb8c687c77c79ac921cd9e30f7ed7",
+    "checkout_head": "5dc7bff87f2cb8c687c77c79ac921cd9e30f7ed7",
+    "independently_checked": true,
+    "mirror_alignment": "FAILED_NOOP_IDENTITY_ACL_VOLUME_OR_READONLY_CHANGED",
+    "memory_snapshot_used": false
+  },
+  "tests": {
+    "controller_node": 12,
+    "result_node": 4,
+    "parent_python": 3,
+    "publisher_python": 3,
+    "total": 22,
+    "passed": 22,
+    "failed": 0,
+    "reviewer_reran_all": true,
+    "controller_manifest_dependencies": 329,
+    "dependency_hashes_verified": true,
+    "live_pqual_results": false
+  },
+  "fixed_findings": [
+    {
+      "id": "R1",
+      "finding": "Controller cumulative allocation/forward/budget bounds lagged accepted runtime; fixed to nine/fifteen/10506/2335812531 while preserving exact counted nonrefunding history."
+    },
+    {
+      "id": "R2",
+      "finding": "Stored signed pretty Status was rejected by compact-only parsing; authenticated whitespace parser preserves full raw/hash binding and rejects duplicates/noncanonical values/unsafe numbers."
+    },
+    {
+      "id": "R3",
+      "finding": "Full original evidence and JSON-escaped publication exceeded previous limits; original fields preserved at 4000000 and publisher transport at 8388608; 4MiB two-frame and Root/schema limits unchanged."
+    },
+    {
+      "id": "R4",
+      "finding": "Parent and supplementary approval used obsolete Root3 cutoff; current approval now binds actual Root5 registration and unchanged 2026-09-11T10:21:05Z cutoff; 600-second lifetime and second live dispatch freshness remain enforced."
+    },
+    {
+      "id": "R5",
+      "finding": "Result preparation, historical readback and supplementary component reader had stale reviewer/controller/late-bound target assumptions; real Root5 source identity now used without altering original owner publications."
+    },
+    {
+      "id": "R6",
+      "finding": "Preparation index and multi-megabyte terminal transport failures addressed by precreated material/observation index and bounded file notices; first-frame BLOCKED is preserved and exits without waiting for second frame."
+    },
+    {
+      "id": "R7",
+      "finding": "Six inherited repair descriptors omitted ga6abb and ga8eb and used old ga043 capacity applicability. Nine exact descriptors with three current reviewed supplements pass the unchanged full historical series predicate."
+    }
+  ],
+  "capacity_review": {
+    "proposal_ref": {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/d8960142e359b4a8a0d284888614ee36b713b818",
+      "sha256": "51f9c784d0cbb12cc7e09caddcc1c29f0e78ad13c908c782f65b7c6af2b6cdc9"
+    },
+    "approval_ref": {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/ad884f2ba0b13a033b796b37c945750f1317b259",
+      "sha256": "1902d82f558f52528b3686f99640ff7c190382dbd5e92247b3903f921c2e7fb9"
+    },
+    "delta": {
+      "original_input_bytes_before": 3300000,
+      "original_input_bytes_after": 4000000,
+      "original_input_kind_before": "EXACT_ORIGINAL_VERIFIER_INPUTS_BLOB_V5_3300000",
+      "original_input_kind_after": "EXACT_ORIGINAL_VERIFIER_INPUTS_BLOB_V6_4000000",
+      "ga_raw_bytes": 65536,
+      "control_request_and_grr_bytes": 131072,
+      "evidence_index_bytes": 131072,
+      "first_frame_bytes": 4194304,
+      "second_frame_bytes": 4194304,
+      "publisher_request_bytes": 8388608,
+      "publisher_response_bytes": 8388608,
+      "source_batch_response_bytes": 33554432,
+      "source_refs_maximum": 130,
+      "root_strict_json_bytes": 2097152,
+      "original_field_count": 5,
+      "original_nineteen_oracles_unchanged": true,
+      "old_signed_objects_rewritten": false,
+      "new_root": false,
+      "new_signing_identity": false,
+      "refund": false
+    },
+    "necessity": "Observed historical full input 3366100 bytes and escaped publication request 4218815 bytes exceed old limits. Bounded new capacity preserves all history instead of trimming evidence. One additional nonrefunding 600-second/134217728-byte allocation is within current user-delegated task scope.",
+    "new_trust_root": false,
+    "new_signing_identity": false,
+    "paid_budget": 0,
+    "model_budget": 0,
+    "production": false,
+    "full_final_v16_input_must_be_measured_before_allocation": true
+  },
+  "sql_review": {
+    "source": {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/root5-window9-minimal-retry/Root5Window9MinimalRetryCapacityRepair.sql",
+      "bytes": 3880,
+      "sha256": "1a89e43f29ecd3c6c4524434e2da6b29ddc1c6fa4b343f1bde28d296fdde1f6d",
+      "blob_sha": "58cef8ba6f037049e275f395a3eccd8d257ca708"
+    },
+    "reviewed_without_applying": true,
+    "independent_live_metadata_read_at": "2026-09-11T05:05:04.381959Z",
+    "budget_before": "1b8a9066498c84041fe4b34a2db1670fc8899541595b5ca6066204af0bd7dd19",
+    "budget_after": "431bf26e4ab8ab779271a0a324a489c21b7f2024205266d68ac8452f41b63abc",
+    "gate_before": "dfba3af239cd60c915db58237aefb4d328b0cbbeac8b37befd2a143a6ef30d61",
+    "gate_after": "56eefb41c2798516e9c7c8fbd4ba8d6a20fdb9085db6e87eb8293f0a3e267eb0",
+    "acl": "postgres and service_role EXECUTE only",
+    "search_path": "empty",
+    "privileges_widened": false,
+    "existing_function_security_mode_preserved": true,
+    "control_rows_preserved_by_atomic_prepost_check": true,
+    "new_tables_or_control_objects": false,
+    "docs_checked": [
+      "https://supabase.com/changelog",
+      "https://supabase.com/docs/guides/database/functions"
+    ]
+  },
+  "nineteen_oracles": {
+    "accepted_suite_sha256": "a7a70ddbe089d46609d2f8c877aa69792ad3b5aef7c5487a10d6b8951dee7c2c",
+    "all_nineteen_original_oracles_unchanged": true,
+    "assessment_status": "AWAITING_ACTUAL_V16_OBSERVATIONS",
+    "tests": [
+      {
+        "test_id": "PQUAL-01",
+        "assessment": "NOT_RUN_NOT_ASSESSED"
+      },
+      {
+        "test_id": "PQUAL-02",
+        "assessment": "NOT_RUN_NOT_ASSESSED"
+      },
+      {
+        "test_id": "PQUAL-03",
+        "assessment": "NOT_RUN_NOT_ASSESSED"
+      },
+      {
+        "test_id": "PQUAL-04",
+        "assessment": "NOT_RUN_NOT_ASSESSED"
+      },
+      {
+        "test_id": "PQUAL-05",
+        "assessment": "NOT_RUN_NOT_ASSESSED"
+      },
+      {
+        "test_id": "PQUAL-06",
+        "assessment": "NOT_RUN_NOT_ASSESSED"
+      },
+      {
+        "test_id": "PQUAL-07",
+        "assessment": "NOT_RUN_NOT_ASSESSED"
+      },
+      {
+        "test_id": "PQUAL-08",
+        "assessment": "NOT_RUN_NOT_ASSESSED"
+      },
+      {
+        "test_id": "PQUAL-09",
+        "assessment": "NOT_RUN_NOT_ASSESSED"
+      },
+      {
+        "test_id": "PQUAL-10",
+        "assessment": "NOT_RUN_NOT_ASSESSED"
+      },
+      {
+        "test_id": "PQUAL-11",
+        "assessment": "NOT_RUN_NOT_ASSESSED"
+      },
+      {
+        "test_id": "PQUAL-12",
+        "assessment": "NOT_RUN_NOT_ASSESSED"
+      },
+      {
+        "test_id": "PQUAL-13",
+        "assessment": "NOT_RUN_NOT_ASSESSED"
+      },
+      {
+        "test_id": "PQUAL-14",
+        "assessment": "NOT_RUN_NOT_ASSESSED"
+      },
+      {
+        "test_id": "PQUAL-15",
+        "assessment": "NOT_RUN_NOT_ASSESSED"
+      },
+      {
+        "test_id": "PQUAL-16",
+        "assessment": "NOT_RUN_NOT_ASSESSED"
+      },
+      {
+        "test_id": "PQUAL-17",
+        "assessment": "NOT_RUN_NOT_ASSESSED"
+      },
+      {
+        "test_id": "PQUAL-19",
+        "assessment": "NOT_RUN_NOT_ASSESSED"
+      },
+      {
+        "test_id": "PQUAL-20",
+        "assessment": "NOT_RUN_NOT_ASSESSED"
+      }
+    ],
+    "pass_claimed": false
+  },
+  "remaining_before_execution": [
+    "Publish reviewed source and independent applicability through the existing actual owner-signed route.",
+    "Apply exact SQL repair, publish exact runtime/qualification and sign/register current Status, then install corrected binding.",
+    "Measure complete final inputs, first/second frames and publisher transport before reserving the final budget."
+  ],
+  "remaining_before_qualification_complete": [
+    "Run the actual scoped synthetic CREATE/START/STOP and original 19-case observation chain.",
+    "Obtain this independent agent actual per-case oracle assessment bound to exact new GA and observation bytes.",
+    "Sign, commit and read back final GRR."
+  ],
+  "authority_effect": "NONE",
+  "entry_or_production_accepted": false,
+  "administrative_diagnostic": {
+    "state": "LOCAL_CANDIDATE_SERIES_CONSISTENCY_CHECKED_NOT_ADMISSION",
+    "actual_historical_sequence": 87,
+    "repair_descriptors": 9,
+    "inherited_descriptors_preserved": 6,
+    "current_supplements": 3,
+    "forward": {
+      "state": "LOCAL_SERIES_CONSISTENCY_CHECKED_NOT_ADMISSION",
+      "allocations": 8,
+      "new_attempts": 8,
+      "forwards": 14,
+      "remaining_allocations": 1,
+      "authority_effect": "NONE",
+      "signature_verified": false,
+      "actual_currentness_verified": false,
+      "reservation_performed": false
+    },
+    "allocation": {
+      "state": "LOCAL_SERIES_CONSISTENCY_CHECKED_NOT_ADMISSION",
+      "allocations": 8,
+      "new_attempts": 8,
+      "forwards": 14,
+      "remaining_allocations": 1,
+      "authority_effect": "NONE",
+      "signature_verified": false,
+      "actual_currentness_verified": false,
+      "reservation_performed": false
+    },
+    "signature_verified": false,
+    "live_currentness_verified": false,
+    "reservation_performed": false
+  }
+}

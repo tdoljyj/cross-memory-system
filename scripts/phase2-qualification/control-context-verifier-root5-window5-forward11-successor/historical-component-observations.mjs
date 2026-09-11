@@ -12,7 +12,7 @@ export function revalidateHistoricalComponents({gaRaw,state,runtimeAcceptance}){
  need(typeof runtimeAcceptance?.raw==='string'&&sha(runtimeAcceptance.raw)===state.binding.runtime_acceptance_sha256,'EXACT_CURRENT_ACCEPTED_RUNTIME_SOURCE');
  verifyOwnerMergeArtifact({...runtimeAcceptance.publication,raw:runtimeAcceptance.raw});
  const accepted=JSON.parse(runtimeAcceptance.raw);
- need(accepted.state==='ACCEPTED_EXACT_PREENTRY_CONTROLLER_RUNTIME'&&accepted.independent_reviewer==='/root/project_list_auth_fix','ACTUAL_INDEPENDENT_RUNTIME_ACCEPTANCE');
+ need(accepted.state==='ACCEPTED_EXACT_PREENTRY_CONTROLLER_RUNTIME'&&accepted.independent_reviewer==='/root','ACTUAL_INDEPENDENT_RUNTIME_ACCEPTANCE');
  const entries=accepted.accepted_subject.historical_component_evidence;
  need(Array.isArray(entries)&&entries.length===cases.length&&new Set(entries.map(e=>e.test_id)).size===cases.length&&cases.every(id=>entries.some(e=>e.test_id===id)),'EXACT_FIVE_COMPONENT_CASE_BINDINGS');
  const manifestRaw=fs.readFileSync(new URL('ControllerSourceManifest.candidate.json',import.meta.url),'utf8');need(sha(manifestRaw)===ga.controller_digest,'CURRENT_EXACT_CONTROLLER_SOURCE');

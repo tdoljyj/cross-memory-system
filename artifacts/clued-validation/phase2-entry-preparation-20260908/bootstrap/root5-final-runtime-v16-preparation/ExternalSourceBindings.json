@@ -1,0 +1,82 @@
+{
+  "state": "CANDIDATE_EXACT_EXTERNAL_SOURCE_ARCHIVE_NOT_ACCEPTED",
+  "controller": {
+    "path": "scripts/phase2-qualification/control-context-verifier-root5-window5-forward11-successor/ControllerSourceManifest.candidate.json",
+    "bytes": 73621,
+    "sha256": "71e90c1d47cfa6a46b8a9e02a872abcbeefda93e5e74fc8c7a7ffc9f3dbd041d",
+    "blob_sha": "4f22d99e57688f6877914f0492f2c6666fbbb9d4"
+  },
+  "files": [
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v16-preparation/external/dependencies.mjs",
+      "bytes": 3801,
+      "sha256": "43cfce87b3b12629367911b560d3cb07813f96130416fe5b5899b0868cb841c1",
+      "blob_sha": "e96e00104d51fcd44f8e571ad5c2425126a8384f",
+      "execution_path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-08\\ia\\work\\root5-measurement-preparation\\dependencies.mjs"
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v16-preparation/external/coordinate-measurements.mjs",
+      "bytes": 10412,
+      "sha256": "8a049bbe7ea50e0ee43f803d8060caa53bc39fe6b5dd6a125faf89da1dd0bfcf",
+      "blob_sha": "e11d0433407363382c8e7a04e22fc0bfd3f0ffb1",
+      "execution_path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-08\\ia\\work\\root5-measurement-preparation\\coordinate-measurements.mjs"
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v16-preparation/external/result-materials.mjs",
+      "bytes": 7201,
+      "sha256": "c9a875a1274368b9d8501f659fb2980e47beb0b8e901257a8efc7f206774a0b3",
+      "blob_sha": "5ef085277b2b9dee05c9669504bff61fe7bde829",
+      "execution_path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-08\\ia\\work\\root5-measurement-preparation\\result-materials.mjs"
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v16-preparation/external/component-readback.mjs",
+      "bytes": 9623,
+      "sha256": "4ab56d7f40f8b5e727196fed8449e891eda260e43407830a057fd3b51d4cf69f",
+      "blob_sha": "a758f2be732425045b2c44070dcaa0b34c2e7298",
+      "execution_path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-08\\ia\\work\\root5-measurement-preparation\\component-readback.mjs"
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v16-preparation/external/original_input_publisher.candidate.py",
+      "bytes": 20845,
+      "sha256": "8cd2e753d35672edf25ab0279a4ed4b66d3ab700ad99e4bef8d5243c56fc006e",
+      "blob_sha": "dd1608955e1a8da9b0a704e5128fe01a7e07b6aa",
+      "execution_path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-08\\ia\\work\\root5-measurement-preparation\\original_input_publisher.candidate.py"
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v16-preparation/external/publish-original-inputs.candidate.py",
+      "bytes": 3167,
+      "sha256": "39523f30200b645dde25697d8a5c248b0df1ebab4aac1f058ff25e6729af31a1",
+      "blob_sha": "b957898f6cc4519053e4d279f797c8f25beaf698",
+      "execution_path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-08\\ia\\work\\root5-measurement-preparation\\publish-original-inputs.candidate.py"
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v16-preparation/external/readiness.test.mjs",
+      "bytes": 1914,
+      "sha256": "38a1cd3ed8d783a83b000882ac98f0647b573413694054321827534d75eebf73",
+      "blob_sha": "2eb4e455834cedf92dd0209baf57bc669fa5cb0e",
+      "execution_path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-08\\ia\\work\\root5-measurement-preparation\\readiness.test.mjs"
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v16-preparation/external/test_publisher_readiness.py",
+      "bytes": 1771,
+      "sha256": "9d5bca8f78919469c7d726a7599478ddf15598f5e53419856e922c9817c10966",
+      "blob_sha": "f618e64dc7f665db6953dd395447a709fb9796df",
+      "execution_path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-08\\ia\\work\\root5-measurement-preparation\\test_publisher_readiness.py"
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v16-preparation/external/prepare-root5-run.mjs",
+      "bytes": 6625,
+      "sha256": "210f3ead2de26232690cf09a7097ba4066dac285b77784e87e7b0db81f8216c8",
+      "blob_sha": "2294f1913f2e3373e484468bfcad1f8c6ca30738",
+      "execution_path": "/C:/Users/Windows/Documents/Codex/2026-09-10/new-chat/prepare-root5-run.mjs"
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v16-preparation/external/run-final-controller-stage.mjs",
+      "bytes": 4354,
+      "sha256": "805d6cd11e7d673d37da1ac13d759eefd56de8dfc5e97ccf7a58e9301e232d73",
+      "blob_sha": "b3602852c52889e16017bc3f9b2015fb79e77a93",
+      "execution_path": "/C:/Users/Windows/Documents/Codex/2026-09-10/new-chat/run-final-controller-stage.mjs"
+    }
+  ],
+  "authority_effect": "NONE"
+}

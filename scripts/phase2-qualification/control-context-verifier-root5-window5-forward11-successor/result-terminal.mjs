@@ -68,7 +68,7 @@ export function resultCommitRequest(raw,receipt){
 }
 
 export function checkPackedObservationChains(index,gaSha){
- const packed=index.artifacts.map(a=>({raw:a.raw,value:JSON.parse(a.raw)})).filter(a=>['EXACT_ORIGINAL_VERIFIER_INPUTS_DEFLATE_V1','EXACT_ORIGINAL_VERIFIER_INPUTS_BLOB_V1','EXACT_ORIGINAL_VERIFIER_INPUTS_BLOB_V2_2MIB','EXACT_ORIGINAL_VERIFIER_INPUTS_BLOB_V3_3000000','EXACT_ORIGINAL_VERIFIER_INPUTS_BLOB_V4_3200000','EXACT_ORIGINAL_VERIFIER_INPUTS_BLOB_V5_3300000'].includes(a.value.kind));
+ const packed=index.artifacts.map(a=>({raw:a.raw,value:JSON.parse(a.raw)})).filter(a=>['EXACT_ORIGINAL_VERIFIER_INPUTS_DEFLATE_V1','EXACT_ORIGINAL_VERIFIER_INPUTS_BLOB_V1','EXACT_ORIGINAL_VERIFIER_INPUTS_BLOB_V2_2MIB','EXACT_ORIGINAL_VERIFIER_INPUTS_BLOB_V3_3000000','EXACT_ORIGINAL_VERIFIER_INPUTS_BLOB_V4_3200000','EXACT_ORIGINAL_VERIFIER_INPUTS_BLOB_V6_4000000'].includes(a.value.kind));
  const verificationSession=beginOriginalInputVerification();
  let checked=0;
  for(const test of index.tests)for(const ref of test.observation_refs){
