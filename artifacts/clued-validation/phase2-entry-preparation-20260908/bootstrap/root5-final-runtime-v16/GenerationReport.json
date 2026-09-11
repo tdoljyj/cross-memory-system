@@ -1,0 +1,31 @@
+{
+  "source_commit": "46e1b0e412b0b8e016f67f27ebf2c6235822b1f3",
+  "source_tree": "375b5726d574c69cc008e91b85be31825e61256c",
+  "controller": {
+    "path": "scripts/phase2-qualification/control-context-verifier-root5-window5-forward11-successor/ControllerSourceManifest.candidate.json",
+    "sha256": "ac7bdd53b7fe5705ee70f4fbb08ce6a5889ccf6d6574a3575e51f16bb09c2daa",
+    "bytes": 73621,
+    "blob_sha": "189046ea6b5b09eb8b766d14eac7cc65481df094"
+  },
+  "qualification": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v16/ScopedRoot5FinalControllerQualification.json",
+    "sha256": "dfe6299d2102b051abe87fe6eb502f62c4d4f40559fe6e16074a49ee467203a2",
+    "bytes": 45465,
+    "blob_sha": "11543a4296ebff3569c1ab7aeb18db9f759b2f0f"
+  },
+  "runtime_acceptance": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v16/ExactRoot5FinalPreentryControllerRuntimeAcceptance.json",
+    "sha256": "bc50920319499794b9ad805258a33107dbe2d4c4c8b76eeda7fb8a526e459c37",
+    "bytes": 89203,
+    "blob_sha": "4fdb2006c52fd0035978dcd797ae9fc78e1fd2a4"
+  },
+  "status_payload": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v16/Status23SigningPayload.json",
+    "sha256": "3e4502c24fda11cf717a716de5b74af378d000449ac95e256f82db91b4dc4854",
+    "bytes": 8443,
+    "blob_sha": "3839ea285f0784e2455099d8656c6899ccb68d7e"
+  },
+  "status_signed_payload_canonical_sha256": "f4002ae44595739b4ae230eb97ab50e54a3774fd68b7943fef26e5c1d6b43cd8",
+  "source_refs": 131,
+  "authority_effect": "METADATA_ONLY_NOT_REGISTERED_NOT_RUN"
+}

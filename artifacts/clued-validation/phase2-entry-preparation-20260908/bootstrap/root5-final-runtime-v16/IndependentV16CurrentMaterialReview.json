@@ -1,0 +1,101 @@
+{
+  "state": "ACCEPTED_EXACT_V16_NONPERFORMANCE_AND_CURRENT_STOP_SOURCE_NOT_LIVE_QUALIFICATION",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "reviewed_at": "2026-09-11T05:41:05.781Z",
+  "source_commit": "46e1b0e412b0b8e016f67f27ebf2c6235822b1f3",
+  "runtime": {
+    "sha256": "bc50920319499794b9ad805258a33107dbe2d4c4c8b76eeda7fb8a526e459c37",
+    "bytes": 89203
+  },
+  "qualification": {
+    "sha256": "dfe6299d2102b051abe87fe6eb502f62c4d4f40559fe6e16074a49ee467203a2",
+    "bytes": 45465
+  },
+  "status23_payload_canonical_sha256": "f4002ae44595739b4ae230eb97ab50e54a3774fd68b7943fef26e5c1d6b43cd8",
+  "controller_digest": "ac7bdd53b7fe5705ee70f4fbb08ce6a5889ccf6d6574a3575e51f16bb09c2daa",
+  "source_refs_checked": 131,
+  "original_nineteen_oracles_unchanged": true,
+  "original_six_repair_refs_preserved": true,
+  "repair_count": 9,
+  "administrative_diagnostic": {
+    "forward": {
+      "state": "LOCAL_SERIES_CONSISTENCY_CHECKED_NOT_ADMISSION",
+      "allocations": 8,
+      "new_attempts": 8,
+      "forwards": 14,
+      "remaining_allocations": 1,
+      "authority_effect": "NONE",
+      "signature_verified": false,
+      "actual_currentness_verified": false,
+      "reservation_performed": false
+    },
+    "allocation": {
+      "state": "LOCAL_SERIES_CONSISTENCY_CHECKED_NOT_ADMISSION",
+      "allocations": 8,
+      "new_attempts": 8,
+      "forwards": 14,
+      "remaining_allocations": 1,
+      "authority_effect": "NONE",
+      "signature_verified": false,
+      "actual_currentness_verified": false,
+      "reservation_performed": false
+    },
+    "basis": "EXACT_V16_BYTES_AND_HISTORICAL_SEQUENCE87_PURE_CONSISTENCY_NOT_ADMISSION",
+    "signature_verified": false,
+    "reservation_performed": false
+  },
+  "result_builder_static_contract_passed": true,
+  "nonperformance_applicability_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/85f107f8583532ad468e3ef46508ac116a55e7a7",
+    "sha256": "dcb35bef5129cc6eb3992200659b96f5fc9054edfef0cc678edec91ee9bf5b8c"
+  },
+  "stop_review_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/f42a2b7d79e672722d7a49b5e73b1f7bee5c68b3",
+    "sha256": "9913e3fd236cda585c790f23e2c66622475325c8bac71ad306ef8a3b966427f7"
+  },
+  "independently_observed_SQL9": {
+    "observed_at": "2026-09-11T05:32:31.437806Z",
+    "reserve_execution_budget": "431bf26e4ab8ab779271a0a324a489c21b7f2024205266d68ac8452f41b63abc",
+    "reserve_gate": "56eefb41c2798516e9c7c8fbd4ba8d6a20fdb9085db6e87eb8293f0a3e267eb0",
+    "append_status_manifest": "94a444b9174251e8f655ea3a04e160898464caf1f94977cbce1590aff726c615",
+    "maximum_seconds": 10506,
+    "maximum_evidence_bytes": 2335812531,
+    "sequence": 87,
+    "active_ga_id": null,
+    "pending_budget_sequence": null,
+    "charged_seconds": 9906,
+    "charged_evidence_bytes": 2201594803,
+    "ACL_expanded": false
+  },
+  "nineteenth_forward_review": {
+    "status": "SOURCE_TRANSACTION_SAFEGUARDS_REVIEWED_ACTUAL_CAPTURE_AND_INSTALLATION_NOT_YET_REVIEWED",
+    "findings": "Exact six typed source refs, 18-forward/sequence87 preimage, three SQL9 bodies/CHECKs, all eight tables/catalog CAS, original Root5 deadline and fee/history preservation checked. The observation pointer mismatch was corrected to a separate complete ActualNineteenthForwardRow.json with its actual raw SHA256. Actual capture/SQL and full committed readback remain required before claiming an installed binding.",
+    "sources": [
+      {
+        "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/root5-window9-corrected-binding/exact-getter-root5-window9.candidate.mjs",
+        "sha256": "b2c58a272971cf73bde3a6bf8f4dfa73837092c309449de435b787718684155b",
+        "bytes": 5295
+      },
+      {
+        "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/root5-window9-corrected-binding/nineteenth-forward.candidate.mjs",
+        "sha256": "3ae9fbcd7bc1be3384472fd8cbf66b901da2063bd35558c2abbc1b3e931765fd",
+        "bytes": 28594
+      },
+      {
+        "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/root5-window9-corrected-binding/build-nineteenth-forward.mjs",
+        "sha256": "2f668cb8315371f72c65bb247c7fb6a8d1aac8f5f4689b7940532eb290c0f2ce",
+        "bytes": 3230
+      }
+    ]
+  },
+  "actual_nineteen_results": "NOT_RUN_NOT_ASSESSED",
+  "PASS_claimed": false,
+  "entry_or_production_granted": false,
+  "authority_effect": "NONE",
+  "result_preparer": {
+    "path": "C:/Users/Windows/Documents/Codex/2026-09-10/new-chat/prepare-root5-result.mjs",
+    "sha256": "82ba09b734f8ab87492f026de63653c5547f16405db3d67a1ecbb01196e39a8b",
+    "bytes": 3406,
+    "finding": "Pure wrapper of previously reviewed original assembler, decision/signing preparation and GRR preparation. Full supplied independent assessments remain required by the original assembler before a requested PASS. The final result_materials deliberately omits its historical observation key so that it cannot override the separately supplied actual current observation in GRR preflight. No SQL, signature, result acceptance or currentness is issued by this wrapper."
+  }
+}

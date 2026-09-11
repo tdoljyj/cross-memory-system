@@ -1,0 +1,23 @@
+{
+  "state": "ACCEPTED_EXACT_ROOT5_STOP_COORDINATOR_SOURCE_APPLICABILITY_NOT_EXECUTION",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "accepted_at": "2026-09-11T05:41:05.781Z",
+  "expires_at": "2026-09-11T10:21:05Z",
+  "controller_digest": "ac7bdd53b7fe5705ee70f4fbb08ce6a5889ccf6d6574a3575e51f16bb09c2daa",
+  "root_generation": "ctrgen_e5df432221344996afc04b5638121d96",
+  "source": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v16/external/coordinate-root5-stop.mjs",
+    "sha256": "f47155397f5ecf3c8c99f7a523a1fbc6ab1dff7eaf5871656413dee6119a997d",
+    "bytes": 9665
+  },
+  "predecessor": {
+    "path": "work/env-order-repair-stop/coordinate-stop.mjs",
+    "sha256": "62d558a03de14fef4ea5751a58a49e3ece28818dbf3b61579cce8654fb23c990"
+  },
+  "changes": "Exact local archive/repository path, current controller/329-entry manifest, Root5 generation and current accepted bridge digest only; all other source bytes equal the predecessor after those explicit literal substitutions.",
+  "review": "The three fixed modes preserve actual original GA/container identity, fresh 30-second root observation, exact newly committed STOP_SENT event and request, durable create-new dispatch record, fixed Python and 329 complete dependencies, clean environment, deadline-bounded fixed STOP bridge, real exited/nonrunning PID0 container check, retained UNKNOWN with no automatic retry, and exact original STOPPED evidence request. The source has no SQL, signing or network entry and does not itself release capacity. These are source safeguards, not a claim that caller-supplied JSON independently authenticates the database.",
+  "verified_dependencies": 329,
+  "stop_executed": false,
+  "case_verdicts_created": false,
+  "authority_effect": "NONE"
+}

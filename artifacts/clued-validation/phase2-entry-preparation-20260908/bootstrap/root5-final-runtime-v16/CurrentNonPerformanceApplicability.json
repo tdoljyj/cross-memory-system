@@ -1,0 +1,78 @@
+{
+  "state": "ACCEPTED_PARALLEL_SOURCE_NONPERFORMANCE_APPLICABILITY",
+  "independent_reviewer": "/root/project_list_auth_fix",
+  "issued_at": "2026-09-11T05:41:05.781Z",
+  "expires_at": "2026-09-11T10:21:05Z",
+  "controller_digest": "ac7bdd53b7fe5705ee70f4fbb08ce6a5889ccf6d6574a3575e51f16bb09c2daa",
+  "scope_digest": "115408c69dcb2fa606fb0de34ec86c5239487d0cfa9a73abb267664a2482abe5",
+  "root_generation": "ctrgen_e5df432221344996afc04b5638121d96",
+  "runtime_acceptance_sha256": "bc50920319499794b9ad805258a33107dbe2d4c4c8b76eeda7fb8a526e459c37",
+  "runtime_acceptance": {
+    "sha256": "bc50920319499794b9ad805258a33107dbe2d4c4c8b76eeda7fb8a526e459c37",
+    "bytes": 89203
+  },
+  "gate_suite_sha256": "a7a70ddbe089d46609d2f8c877aa69792ad3b5aef7c5487a10d6b8951dee7c2c",
+  "profile_applicability_sha256": "d5b261ce6a2ad39da69cd14f4b7537ab8e3d8e2b12ce796b77a550df9aec196a",
+  "historical_component_applicability_sha256": "ce147276bfc766f2381b31fae9a8fb421e077082d899bc05eb6960e4f7cbd060",
+  "performance_slo_revision": "NOT_APPLICABLE_PREENTRY_NO_PERFORMANCE_QUALIFICATION",
+  "original_applicability_sources": [
+    {
+      "path": "work/kernel-phase2-repo/artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/PreentryPerformanceSLOApplicabilityDecision.json",
+      "sha256": "98a502fdf43a1f0f9e4d01956c829826006c8cd1e8d2146fbc0540c10dc3e4b8",
+      "bytes": 2679
+    },
+    {
+      "path": "work/kernel-phase2-repo/artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/EvidenceBlobPerformanceSLOApplicabilityDecision.json",
+      "sha256": "5ed0f7fd18cd156d51d2d96242d0bb7f3aab6882c5515005db77c3af9903d4c3",
+      "bytes": 2238
+    },
+    {
+      "path": "work/kernel-phase2-repo/artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/StatusGeneration2NonPerformanceApplicabilityAddendum.json",
+      "sha256": "470db88dfe46e23a5f5ae183b590d191bfc8158b120a4c9194492c5c810faa87",
+      "bytes": 1412
+    },
+    {
+      "path": "work/kernel-phase2-repo/artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/ParallelEvidenceLimitNonPerformanceApplicabilityAddendum.json",
+      "sha256": "3de507c22d88914e208b75d8a735364508c6db317f6e1063214701c179a7421c",
+      "bytes": 2516
+    },
+    {
+      "path": "work/kernel-phase2-repo/artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/FrameLimitNonPerformanceApplicabilityAddendum.json",
+      "sha256": "634601592a2849cf8af6e6a128dcee9ce9d807f5b322be1ec98ce57cfff4bd3b",
+      "bytes": 2622
+    },
+    {
+      "path": "work/next-window-runtime-materials-20260909/NextWindowNonPerformanceApplicabilityAddendum.json",
+      "sha256": "05f65c452153b201a57c0195bb27efe418dbb2f8f9a9c824cfec5985ae46e27d",
+      "bytes": 3043
+    },
+    {
+      "path": "work/next-window-runtime-materials-20260909/NextWindowHistoricalComponentApplicabilityIndependentAcceptance.json",
+      "sha256": "c75f25044be55ebf8530b312b5d229b20ecb4b31e64ccb8516f445b360aaf523",
+      "bytes": 24334
+    },
+    {
+      "path": "work/next-window-runtime-materials-20260909/Fixed600ProfileNextWindowApplicabilityIndependentAcceptance.json",
+      "sha256": "c57afadaed6123e49d0e2d8e43dc97e5e6932fcb4df8564c1dfa6df0eab6c844",
+      "bytes": 6660
+    }
+  ],
+  "finding": "Independently reviewed this exact Root5 v16 runtime, complete 131-source controller and its current separately approved 4000000-byte input/8388608-byte publisher capacity. It retains the original isolated synthetic pre-entry purpose, fixed600 Profile, nineteen unchanged oracle bodies and no model, business, holdout/Gold, Entry or performance qualification. The eight original records remain evidence at their original times, not renewed Root3 authority. Current Root5 deadline and explicit SQL9/capacity successors control this subject; the historical formatter contract Root3 cutoff is not used as a new expiry. The nonperformance field reasoning remains applicable only to this exact current runtime; source retrieval or execution timing does not imply an SLO result.",
+  "evidence_rule": "Preserve all eight complete original raw records and their exact ordered hashes, and bind this ninth current addendum through its actual owner publication, original Evidence/index and final GRR. Historical component subconditions remain incomplete_case evidence; current host/STOP/live control/original full-oracle requirements and 600-second resource limits remain binding. No case PASS is created by this applicability.",
+  "entry_or_performance_qualification_granted": false,
+  "case_verdicts_created": false,
+  "authority_effect": "NONE",
+  "supersedes": {
+    "path": "work/original-input-capacity-approved-execution/admin-review/CapacityNonPerformanceApplicability20260910.json",
+    "sha256": "8b8746ec26655a259e8de42746f66176459930f22f349acb5c0334c22d77ef6e",
+    "bytes": 5235
+  },
+  "capacity_approval_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/1d7fab869ea580f852a0c69a6b9316e9b9b71742",
+    "sha256": "f3afb108e1f5080c0dc47902c90a3291acebd2171a78095fd95ae8cd30a6ff8f"
+  },
+  "capacity_applicability_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/cfaafa310102c61b3f1fed5273a2216c90572f8b",
+    "sha256": "cc3db45bb0931ebe0a539be48e58d25e20e84836809b2995ecb9a0b4fb109537"
+  }
+}
