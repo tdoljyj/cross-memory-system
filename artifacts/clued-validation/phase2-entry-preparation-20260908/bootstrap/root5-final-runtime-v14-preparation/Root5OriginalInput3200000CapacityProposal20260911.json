@@ -1,0 +1,23 @@
+{
+  "object_type": "ExactOriginalInputCapacityProposal",
+  "schema_version": "1.0",
+  "state": "PROPOSED_EXACT_MINIMAL_INPUT_CAPACITY_REPAIR",
+  "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+  "root_generation": "ctrgen_e5df432221344996afc04b5638121d96",
+  "observed_original_input_bytes": 3086451,
+  "previous_limit": 3000000,
+  "proposed_limit": 3200000,
+  "shortfall_bytes": 86451,
+  "additional_allocations_max": 1,
+  "per_allocation_seconds": 600,
+  "per_allocation_evidence_bytes": 134217728,
+  "new_series_seconds_cap": 9306,
+  "new_series_evidence_bytes_cap": 2067377075,
+  "production": false,
+  "paid_budget": 0,
+  "model_budget": 0,
+  "refund": false,
+  "new_trust_root": false,
+  "new_signing_identity": false,
+  "authority_effect": "PROPOSAL_ONLY"
+}
