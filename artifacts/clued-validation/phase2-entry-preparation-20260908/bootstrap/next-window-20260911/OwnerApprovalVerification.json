@@ -1,0 +1,65 @@
+{
+  "approval_artifacts": {
+    "approval": {
+      "blob_sha": "28872fdde84a709b04b55be8411926caceb6b0e7",
+      "bytes": 2518,
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-20260911/ExplicitOwnerApproval.candidate.json",
+      "sha256": "d54fcce9dc077036deb4dc46db12b909fbbf183f400f8e707222ba746765fc65"
+    },
+    "proposal": {
+      "blob_sha": "35b43d96acb967d8672013b31d15ad2f267a2675",
+      "bytes": 4216,
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-20260911/OwnerApprovalProposal.md",
+      "sha256": "6b89c048282c5a5f4a35c96d430db67d36caf38f0d53aa300be37cd87aff5102"
+    }
+  },
+  "authority_effect": "FIXED_WINDOW_SCOPE_APPROVED_ONLY; NO_DATABASE_EFFECT",
+  "fixed_window": {
+    "auto_renew": false,
+    "backdate": false,
+    "duration_seconds": 86400,
+    "expires_at": "2026-09-12T13:14:51Z",
+    "not_before": "2026-09-11T13:14:51Z",
+    "rolling": false
+  },
+  "kind": "VERIFIED_OWNER_CONTINUATION_APPROVAL",
+  "merge": {
+    "committer_login": "web-flow",
+    "parents": [
+      "5288a2d9cca8536ca03e8cdc26f530c925566e82",
+      "f37e472200da13c4451ed60dfd7f39c789f5935e"
+    ],
+    "sha": "4498102661f626c8e0c489c7d27551acbc8436ea",
+    "tree": "e4551e4d9b501f06507f1e307f5203d709f9872b",
+    "verification": {
+      "reason": "valid",
+      "verified": true,
+      "verified_at": "2026-09-11T13:14:52Z"
+    }
+  },
+  "pr": {
+    "base_sha": "5288a2d9cca8536ca03e8cdc26f530c925566e82",
+    "head_sha": "f37e472200da13c4451ed60dfd7f39c789f5935e",
+    "merge_commit_sha": "4498102661f626c8e0c489c7d27551acbc8436ea",
+    "merged_at": "2026-09-11T13:14:51Z",
+    "merged_by": "tdoljyj",
+    "number": 149
+  },
+  "repository": {
+    "full_name": "tdoljyj/cross-memory-system",
+    "private": true
+  },
+  "schema_version": 1,
+  "scope": {
+    "environment": "ISOLATED_TEST",
+    "namespace": "clued_control",
+    "new_trust_root": false,
+    "paid_model_authority": false,
+    "production_authority": false,
+    "project_ref": "uscrdifznmlvczcekqpw",
+    "purpose": "SKILL_COEXISTENCE_QUALIFICATION",
+    "root_set_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+    "scope_expansion": false
+  },
+  "status": "VERIFIED"
+}
