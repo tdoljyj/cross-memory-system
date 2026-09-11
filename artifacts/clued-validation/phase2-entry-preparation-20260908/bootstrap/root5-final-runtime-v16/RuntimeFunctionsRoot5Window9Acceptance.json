@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "state": "ACCEPTED_EXACT_ROOT5_WINDOW9_CAPACITY_REPAIR_APPLIED",
+  "source": {
+    "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/root5-window9-minimal-retry/Root5Window9MinimalRetryCapacityRepair.sql",
+    "sha256": "1a89e43f29ecd3c6c4524434e2da6b29ddc1c6fa4b343f1bde28d296fdde1f6d",
+    "bytes": 3880,
+    "blob_sha": "58cef8ba6f037049e275f395a3eccd8d257ca708"
+  },
+  "publication": {
+    "commitSha": "46e1b0e412b0b8e016f67f27ebf2c6235822b1f3",
+    "artifactPath": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/root5-window9-minimal-retry/Root5Window9MinimalRetryCapacityRepair.sql"
+  },
+  "observed_postimage": {
+    "state": "ACTUAL_ROOT5_WINDOW9_POSTIMAGE_VERIFIED",
+    "project": "uscrdifznmlvczcekqpw",
+    "query": "select clock_timestamp() as observed_at,(select to_jsonb(c) from clued_control.execution_current c where root_id='ctr_414bd3c724264a83894b0c55cf2ab878') as current,(select jsonb_object_agg(p.proname,encode(sha256(convert_to(p.prosrc,'UTF8')),'hex')) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='clued_control' and p.proname in ('reserve_execution_budget','reserve_gate','append_status_manifest')) as function_hashes,(select jsonb_object_agg(conname,pg_get_constraintdef(oid,true)) from pg_constraint where conrelid='clued_control.execution_current'::regclass and conname in ('execution_current_charged_seconds_check','execution_current_charged_evidence_bytes_check')) as constraints",
+    "observed_at": "2026-09-11 05:16:28.701795+00",
+    "current": {
+      "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+      "sequence": 87,
+      "active_ga_id": null,
+      "charged_seconds": 9906,
+      "runner_generation": "runnergen_a256855fec9441839105c69b746c5244",
+      "session_generation": "sessiongen_ffb02a907d334b0da0b37bf457a758c2",
+      "credential_generation": "credgen_bac92a11e7144a3fb9e67f40a6a07d11",
+      "charged_evidence_bytes": 2201594803,
+      "pending_budget_sequence": null
+    },
+    "function_hashes": {
+      "reserve_gate": "56eefb41c2798516e9c7c8fbd4ba8d6a20fdb9085db6e87eb8293f0a3e267eb0",
+      "append_status_manifest": "94a444b9174251e8f655ea3a04e160898464caf1f94977cbce1590aff726c615",
+      "reserve_execution_budget": "431bf26e4ab8ab779271a0a324a489c21b7f2024205266d68ac8452f41b63abc"
+    },
+    "constraints": {
+      "execution_current_charged_seconds_check": "CHECK (charged_seconds >= 1410 AND charged_seconds <= 10506)",
+      "execution_current_charged_evidence_bytes_check": "CHECK (charged_evidence_bytes >= 19264968 AND charged_evidence_bytes <= '2335812531'::bigint)"
+    },
+    "migration": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"success\":true}"
+        }
+      ],
+      "isError": false
+    },
+    "authority_effect": "CAPACITY_ONLY_NO_NEW_BUDGET_NO_GA"
+  },
+  "installed_prosrc_sha256": {
+    "reserve_gate": "56eefb41c2798516e9c7c8fbd4ba8d6a20fdb9085db6e87eb8293f0a3e267eb0",
+    "append_status_manifest": "94a444b9174251e8f655ea3a04e160898464caf1f94977cbce1590aff726c615",
+    "reserve_execution_budget": "431bf26e4ab8ab779271a0a324a489c21b7f2024205266d68ac8452f41b63abc"
+  },
+  "rows_changed": false,
+  "applied": true,
+  "production": false,
+  "paid_budget": 0,
+  "model_budget": 0,
+  "authority_effect": "CAPACITY_ONLY_NO_BUDGET_NO_GA_NO_ENTRY"
+}
