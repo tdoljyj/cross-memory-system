@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "state": "PREPARED_STOP_SOURCE_APPLICABILITY_WINDOW_SUCCESSOR_SUBJECT_NOT_ACCEPTED",
+  "prepared_by": "Claude Code session session_012ki2dPxTiJbPmgZu7AD3Nz",
+  "prepared_at": "2026-09-11T17:57:39.000Z",
+  "review_required_from": "/root/project_list_auth_fix",
+  "acceptance_issued": false,
+  "authority_effect": "NONE",
+  "predecessor": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v16/Root5StopCurrentSourceApplicability.json",
+    "sha256": "9913e3fd236cda585c790f23e2c66622475325c8bac71ad306ef8a3b966427f7",
+    "bytes": 1811,
+    "blob_sha": "f42a2b7d79e672722d7a49b5e73b1f7bee5c68b3",
+    "state": "ACCEPTED_EXACT_ROOT5_STOP_COORDINATOR_SOURCE_APPLICABILITY_NOT_EXECUTION",
+    "expires_at": "2026-09-11T10:21:05Z",
+    "expired": true
+  },
+  "changed_fields": [
+    {
+      "field": "accepted_at",
+      "from": "2026-09-11T05:41:05.781Z",
+      "to": "2026-09-11T17:57:39.000Z"
+    },
+    {
+      "field": "expires_at",
+      "from": "2026-09-11T10:21:05Z",
+      "to": "2026-09-12T13:14:51Z"
+    }
+  ],
+  "unchanged_field_count": 11,
+  "review_basis": "The predecessor document is unusable solely because its validity window lapsed at 2026-09-11T10:21:05Z. This subject proposes the identical document under the owner-approved continuation window. It is NOT an acceptance: the ACCEPTED_* record may only be issued by /root/project_list_auth_fix after independent review. No GA, budget, gate result or entry approval is created or implied.",
+  "subject": {
+    "state": "ACCEPTED_EXACT_ROOT5_STOP_COORDINATOR_SOURCE_APPLICABILITY_NOT_EXECUTION",
+    "independent_reviewer": "/root/project_list_auth_fix",
+    "accepted_at": "2026-09-11T17:57:39.000Z",
+    "expires_at": "2026-09-12T13:14:51Z",
+    "controller_digest": "ac7bdd53b7fe5705ee70f4fbb08ce6a5889ccf6d6574a3575e51f16bb09c2daa",
+    "root_generation": "ctrgen_e5df432221344996afc04b5638121d96",
+    "source": {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v16/external/coordinate-root5-stop.mjs",
+      "sha256": "f47155397f5ecf3c8c99f7a523a1fbc6ab1dff7eaf5871656413dee6119a997d",
+      "bytes": 9665
+    },
+    "predecessor": {
+      "path": "work/env-order-repair-stop/coordinate-stop.mjs",
+      "sha256": "62d558a03de14fef4ea5751a58a49e3ece28818dbf3b61579cce8654fb23c990"
+    },
+    "changes": "Exact local archive/repository path, current controller/329-entry manifest, Root5 generation and current accepted bridge digest only; all other source bytes equal the predecessor after those explicit literal substitutions.",
+    "review": "The three fixed modes preserve actual original GA/container identity, fresh 30-second root observation, exact newly committed STOP_SENT event and request, durable create-new dispatch record, fixed Python and 329 complete dependencies, clean environment, deadline-bounded fixed STOP bridge, real exited/nonrunning PID0 container check, retained UNKNOWN with no automatic retry, and exact original STOPPED evidence request. The source has no SQL, signing or network entry and does not itself release capacity. These are source safeguards, not a claim that caller-supplied JSON independently authenticates the database.",
+    "verified_dependencies": 329,
+    "stop_executed": false,
+    "case_verdicts_created": false,
+    "authority_effect": "NONE",
+    "supersedes": {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v16/Root5StopCurrentSourceApplicability.json",
+      "sha256": "9913e3fd236cda585c790f23e2c66622475325c8bac71ad306ef8a3b966427f7",
+      "bytes": 1811,
+      "blob_sha": "f42a2b7d79e672722d7a49b5e73b1f7bee5c68b3"
+    },
+    "successor_delta": "Validity window only. The predecessor was bound to the superseded window ending 2026-09-11T10:21:05Z, which lapsed before it could be used. This successor carries the owner-approved continuation window 2026-09-11T13:14:51Z .. 2026-09-12T13:14:51Z recorded in clued_control.accepted_binding under owner approval commit 4498102661f626c8e0c489c7d27551acbc8436ea. Every other field, digest and reference is carried over byte for byte from the predecessor; no scope, oracle, limit, capacity, reviewer identity or source reference is changed."
+  }
+}
