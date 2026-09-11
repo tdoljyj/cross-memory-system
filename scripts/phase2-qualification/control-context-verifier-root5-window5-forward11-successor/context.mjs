@@ -15,6 +15,7 @@ import {validateRootShape,canonicalDigest,signaturePayloadDigest} from './root-w
 export const project='uscrdifznmlvczcekqpw',rootID='ctr_414bd3c724264a83894b0c55cf2ab878',generation='ctrgen_e5df432221344996afc04b5638121d96';
 export const gateID='G-PREENTRY-SKILL-QUALIFICATION',audience='urn:clued:audience:skill-coexistence-qualification:'+project;
 export const sql="select clock_timestamp() as observed_at, clued_control.read_execution() as execution";
+export const qualificationLimits=Object.freeze({allocations:9,forwards:15,seconds:10506,evidenceBytes:2335812531,originalInputBytes:4000000,publicationBytes:8388608});
 const require=createRequire(new URL('../../../apps/clued-cloud/package.json',import.meta.url)),Ajv=require('ajv');
 const ajv=new Ajv({allErrors:true,strictKeywords:true,format:'full'});
 const profileBase=new URL('../preentry-parent/profile-successor/',import.meta.url);
@@ -25,10 +26,23 @@ ajv.addSchema(vectorSchema,'revocation-epoch-vector.candidate.schema.json');
 const gaSchemaBytes=bytes('gate-authorization.candidate.schema.json');
 const gaCheck=ajv.compile(JSON.parse(gaSchemaBytes));
 const check=(ok,msg)=>{if(!ok)throw Error(msg);};
+export function checkCumulativeBudget(current,binding){check(current.charged_seconds>=binding.prior_seconds&&current.charged_seconds<=qualificationLimits.seconds&&current.charged_evidence_bytes>=binding.prior_evidence_bytes&&current.charged_evidence_bytes<=qualificationLimits.evidenceBytes,'ACTUAL_CUMULATIVE_BUDGET');}
 const same=(a,b)=>canonicalDigest(a)===canonicalDigest(b);
 function safe(value){if(typeof value==='number')check(Number.isSafeInteger(value),'UNSAFE_NUMBER');else if(value&&typeof value==='object')for(const v of Object.values(value))safe(v);}
 export function parseExact(raw){check(typeof raw==='string'&&Buffer.byteLength(raw)<=131072,'BOUNDED_RAW_JSON');const p=JSON.parse(raw);safe(p);check(JSON.stringify(p)+'\n'===raw,'EXACT_UNIQUE_COMPACT_JSON');return p;}
 export function checkGAShape(raw){const ga=parseExact(raw);check(gaCheck(ga),'COMPLETE_GA_SCHEMA_REJECTED');check(ga.schema_digest===sha(gaSchemaBytes),'EXACT_ACCEPTED_GA_SCHEMA');return ga;}
+export function checkFixedGAFields(ga,subject){
+ checkLateBoundPolicy(subject.late_bound_fields);
+ const varying=new Set(['budget_reservation_ref','status_manifest_ref','target_revision','gate_authorization_id','authorization_status','issued_at','expires_at','deadline','idempotency_key','signature','runner_generation','credential_generation','session_generation']);
+ for(const field of JSON.parse(gaSchemaBytes).required)if(!varying.has(field))check(subject.expected_ga&&Object.hasOwn(subject.expected_ga,field)&&same(ga[field],subject.expected_ga[field]),'EXACT_ACCEPTED_GA_FIELD:'+field);
+}
+export function parseStoredStatus(raw){check(typeof raw==='string'&&Buffer.byteLength(raw)<=131072,'BOUNDED_STATUS_JSON');const value=capacityAdministration.parseAuthenticatedAdministrativeJSON(raw);safe(value);return value;}
+export function checkCapacityApprovalTime(approvedAt,runtime,execution,now){
+ const registered=execution?.root?.events?.filter(e=>e.request?.kind==='GENERATION_REGISTERED'&&e.request.generation_id===generation).at(-1)?.request.body;
+ check(execution?.root?.generation_id===generation&&runtime?.accepted_subject?.expected_ga?.control_trust_root_generation===generation&&registered?.control_trust_root_generation===generation,'CAPACITY_CURRENT_ROOT5_BINDING');
+ check(runtime.expires_at===registered.expires_at&&time(runtime.expires_at)<=time('2026-09-11T10:21:05Z'),'CAPACITY_CURRENT_ROOT5_EXPIRY');
+ check(time(registered.not_before)<=time(approvedAt)&&time(approvedAt)<=time(now)&&time(approvedAt)<time(runtime.expires_at),'CAPACITY_APPROVAL_CURRENT_ROOT5_TIME');
+}
 export function time(s){check(typeof s==='string'&&/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,3})?Z$/.test(s),'UTC_TIME_REQUIRED');const v=Date.parse(s);check(Number.isFinite(v)&&new Date(v).toISOString().slice(0,19)===s.slice(0,19),'INVALID_CALENDAR_TIME');return v;}
 function currentWindow(start,end,now){check(time(start)<=now&&now<time(end),'EXPIRED_OR_NOT_YET_VALID');}
 export function checkCurrentSemantics({gaRaw,operation,observation,runtimeAcceptance,qualification,now=Date.now(),admissionPhase='PREFLIGHT',expectedQuerySha256=sha(sql),terminalResult=null}){
@@ -62,11 +76,8 @@ export function checkCurrentSemantics({gaRaw,operation,observation,runtimeAccept
  check(qualification?.state==='ACCEPTED_SCOPED_CONTROLLER_QUALIFICATION'&&qualification.independent_reviewer==='/root'&&qualification.controller_digest===binding.controller_sha256&&qualification.scope_digest===binding.scope_sha256&&qualification.environment==='ISOLATED_TEST'&&qualification.purpose===ga.purpose,'EXACT_CONTROLLER_QUALIFICATION');
  currentWindow(qualification.not_before,qualification.expires_at,now);
  check(qualification.independent_of_tested_skill===true&&qualification.forbidden_stage_dependencies_excluded===true,'CONTROLLER_SELF_QUALIFICATION_FORBIDDEN');
- checkLateBoundPolicy(subject.late_bound_fields);
- const varying=new Set(['budget_reservation_ref','status_manifest_ref','target_revision','gate_authorization_id','authorization_status','issued_at','expires_at','deadline','idempotency_key','signature','runner_generation','credential_generation','session_generation']);
- // An accepted full subject fixes every remaining GA field, not only a scope hash.
- const expected=subject.expected_ga;
- for(const field of gaSchemaBytes.length?JSON.parse(gaSchemaBytes).required:[])if(!varying.has(field))check(expected&&Object.hasOwn(expected,field)&&same(ga[field],expected[field]),'EXACT_ACCEPTED_GA_FIELD:'+field);
+ // Reuse the same fixed/late-bound contract in execution and result preparation.
+ checkFixedGAFields(ga,subject);
  check(ga.stage_receipt_refs.length===6&&subject.required_stages?.join(',')==='R05,R06,R07,R08,R09,R10','EXACT_STAGE_INPUTS');
  const issued=time(ga.issued_at),expires=time(ga.expires_at),deadline=time(ga.deadline);
  checkAuthorizationLifetime({operation,result:terminalResult,issued,deadline,expires,now});
@@ -79,7 +90,7 @@ export function checkCurrentSemantics({gaRaw,operation,observation,runtimeAccept
  check(['PREFLIGHT','DISPATCHED_ONCE'].includes(admissionPhase),'FIXED_ADMISSION_PHASE');
  check(attempt.phase===(admissionPhase==='DISPATCHED_ONCE'?operation+'_SENT':({CREATE:'PENDING',START:'CREATED',GRR:'SIGNING'}[operation])),'NO_REDISPATCH_OR_UNKNOWN');
  check(Date.parse(attempt.expires_at)===deadline,'RESERVATION_DEADLINE');
- check(current.charged_seconds>=binding.prior_seconds&&current.charged_seconds<=9306&&current.charged_evidence_bytes>=binding.prior_evidence_bytes&&current.charged_evidence_bytes<=2067377075,'ACTUAL_CUMULATIVE_BUDGET');
+ checkCumulativeBudget(current,binding);
  return {state:'SEMANTICS_ONLY_NOT_ADMISSION',ga,root:body,attempt,accepted_subject:subject,sequence:current.sequence};
 }
 function signedMetadata(item,expectedSha){check(typeof item?.raw==='string'&&sha(item.raw)===expectedSha,'ACCEPTANCE_BYTES_MISSING_OR_DRIFT');verifyOwnerMergeArtifact({...item.publication,raw:item.raw});return JSON.parse(item.raw);}
@@ -99,7 +110,7 @@ function parseAuthenticatedAdministrativeJSON(raw){
  for(const ch of raw){if(quoted){compact+=ch;if(escaped)escaped=false;else if(ch==='\\')escaped=true;else if(ch==='"')quoted=false;}else if(ch==='"'){quoted=true;compact+=ch;}else if(!' \t\r\n'.includes(ch))compact+=ch;}
  need(compact===JSON.stringify(value),'ADMIN_JSON_UNIQUE_CANONICAL_VALUES');return value;
 }
-const capacityDelta=Object.freeze({original_input_bytes_before:3200000,original_input_bytes_after:3300000,original_input_kind_before:'EXACT_ORIGINAL_VERIFIER_INPUTS_BLOB_V4_3200000',original_input_kind_after:'EXACT_ORIGINAL_VERIFIER_INPUTS_BLOB_V5_3300000',ga_raw_bytes:65536,control_request_and_grr_bytes:131072,evidence_index_bytes:131072,first_frame_bytes:4194304,second_frame_bytes:4194304,publisher_request_bytes:4194304,publisher_response_bytes:4194304,source_batch_response_bytes:33554432,source_refs_maximum:130,root_strict_json_bytes:2097152,original_field_count:5,original_nineteen_oracles_unchanged:true,old_signed_objects_rewritten:false,new_root:false,new_signing_identity:false,refund:false});
+const capacityDelta=Object.freeze({original_input_bytes_before:3300000,original_input_bytes_after:4000000,original_input_kind_before:'EXACT_ORIGINAL_VERIFIER_INPUTS_BLOB_V5_3300000',original_input_kind_after:'EXACT_ORIGINAL_VERIFIER_INPUTS_BLOB_V6_4000000',ga_raw_bytes:65536,control_request_and_grr_bytes:131072,evidence_index_bytes:131072,first_frame_bytes:4194304,second_frame_bytes:4194304,publisher_request_bytes:8388608,publisher_response_bytes:8388608,source_batch_response_bytes:33554432,source_refs_maximum:130,root_strict_json_bytes:2097152,original_field_count:5,original_nineteen_oracles_unchanged:true,old_signed_objects_rewritten:false,new_root:false,new_signing_identity:false,refund:false});
 const capacityBaseline=Object.freeze({failed_ga_id:'ga_04377008dc04437d9ee9d28a3c79ff3a',failed_receipt_sha256:'b27286d6fcb54e34a62d8738f49c1ecafe3210c9a321a703c3828e38497e434c',terminal_phase:'BLOCKED',sequence:49,charged_seconds:5706,charged_evidence_bytes:1262070707,used_series_allocations:1,maximum_remaining_allocations:2});
 const capacityRepairState='ACCEPTED_EXACT_QUALIFICATION_REPAIR_WITH_APPROVED_CAPACITY_DELTA';
 function ref(x){return exact(x,['uri','sha256'])&&typeof x.uri==='string'&&/^https:\/\/api\.github\.com\/repos\/tdoljyj\/cross-memory-system\/git\/blobs\/[a-f0-9]{40}$/.test(x.uri)&&hex(x.sha256);}
@@ -111,7 +122,10 @@ function checkCapacityAdministration({runtime,pins,scope,proposalSHA,execution,n
  need(same(s.capacity_delta,capacityDelta)&&exact(s.capacity_materials,['approval','applicability'])&&exact(capacity_materials,['approval','applicability']),'EXACT_CAPACITY_SUBJECT_AND_LOADED_SET');
  const a=material(capacity_materials.approval,s.capacity_materials.approval,'APPROVAL'),d=material(capacity_materials.applicability,s.capacity_materials.applicability,'APPLICABILITY');
  need(a.state==='APPROVED_EXACT_ORIGINAL_INPUT_CAPACITY_SUPPLEMENT'&&a.base_proposal_sha256===proposalSHA&&same(a.base_approval_ref,pins.approval_ref)&&same(a.bounded_series_constraints,scope)&&same(a.capacity_delta,capacityDelta)&&same(a.baseline,capacityBaseline),'REAL_EXACT_CAPACITY_APPROVAL_REQUIRED');
- need(ref(a.capacity_proposal_ref)&&utc(a.approved_at)&&utc(now)&&Date.parse(a.approved_at)<=Date.parse(now)&&Date.parse(a.approved_at)<Date.parse(scope.expires_at),'CAPACITY_APPROVAL_REFERENCE_AND_TIME');
+ need(ref(a.capacity_proposal_ref)&&utc(a.approved_at)&&utc(now),'CAPACITY_APPROVAL_REFERENCE_AND_TIME');
+ // The Root3 scope is immutable history. Current supplemental approval belongs
+ // to the authenticated Root5 registration, not the expired historical window.
+ checkCapacityApprovalTime(a.approved_at,runtime,execution,now);
  need(d.state==='ACCEPTED_EXACT_ROOT3_ORIGINAL_INPUT_CAPACITY_SUPPLEMENT'&&d.independent_reviewer==='/root/project_list_auth_fix'&&same(d.approval_ref,s.capacity_materials.approval.ref)&&same(d.base_approval_ref,pins.approval_ref)&&d.base_proposal_sha256===proposalSHA&&same(d.capacity_proposal_ref,a.capacity_proposal_ref),'EXACT_INDEPENDENT_CAPACITY_APPLICABILITY');
  need(same(d.bounded_series_constraints,scope)&&same(d.capacity_delta,capacityDelta)&&same(d.baseline,capacityBaseline)&&d.scope_unchanged_except_original_input_limit===true&&!Object.hasOwn(d,'scope_unchanged')&&d.new_action_authorized===false,'CAPACITY_ONLY_EXPLICIT_DELTA');
  need(utc(d.accepted_at)&&Date.parse(d.accepted_at)>=Date.parse(a.approved_at)&&Date.parse(d.accepted_at)<=Date.parse(now),'CAPACITY_ACCEPTANCE_TIME');
@@ -159,23 +173,23 @@ function checkBoundedSeries({pins,proposal_raw,baseline_raw,approval,applicabili
  const extra=x.events.slice(base.events.length),newAttempts=x.attempts.filter(a=>!base.attempts.some(p=>p.ga_id===a.ga_id));need(new Set(x.attempts.map(a=>a.ga_id)).size===x.attempts.length,'UNIQUE_GA_IDENTITIES');
  need(extra.every((e,i)=>e.root_id===scope.root_id&&e.sequence===45+i)&&x.current.sequence===44+extra.length,'CONTIGUOUS_REAL_EVENT_HISTORY');
  const budgets=extra.filter(e=>e.request?.operation==='BUDGET_RESERVED'),forwards=extra.filter(e=>e.request?.operation==='EXECUTION_BINDING_FORWARD_ACCEPTED');
- need(budgets.length<=7&&newAttempts.length<=7&&forwards.length<=13,'SEVEN_ALLOCATIONS_AND_GAS_THIRTEEN_FORWARDS_MAXIMUM');
- need(x.current.charged_seconds===5106+600*budgets.length&&x.current.charged_evidence_bytes===1127852979+134217728*budgets.length&&x.current.charged_seconds<=9306&&x.current.charged_evidence_bytes<=2067377075,'EXACT_NONREFUNDING_COUNTED_CHARGES_AND_CAPS');
+ need(budgets.length<=qualificationLimits.allocations&&newAttempts.length<=qualificationLimits.allocations&&forwards.length<=qualificationLimits.forwards,'NINE_ALLOCATIONS_AND_GAS_FIFTEEN_FORWARDS_MAXIMUM');
+ need(x.current.charged_seconds===5106+600*budgets.length&&x.current.charged_evidence_bytes===1127852979+134217728*budgets.length&&x.current.charged_seconds<=qualificationLimits.seconds&&x.current.charged_evidence_bytes<=qualificationLimits.evidenceBytes,'EXACT_NONREFUNDING_COUNTED_CHARGES_AND_CAPS');
  const capacity=checkCapacityAdministration({runtime,pins,scope,proposalSHA,execution,now,capacity_materials});
  const used=new Set();for(const e of budgets){const b=e.request.body;need(typeof b?.raw==='string'&&sha(b.raw)===b.sha256,'FULL_ORIGINAL_BUDGET_BYTES');const v=JSON.parse(b.raw);need(v.seconds===600&&v.evidence_bytes===134217728&&v.root_generation===generationForBudget(e.sequence)&&v.expires_at===expiryForBudget(e.sequence)&&v.environment==='ISOLATED_TEST'&&v.purpose==='SKILL_COEXISTENCE_QUALIFICATION','FIXED_PER_ATTEMPT_BUDGET_SCOPE');}
  for(const a of newAttempts){need(a.root_id===scope.root_id&&typeof a.ga_raw==='string'&&sha(a.ga_raw)===a.ga_sha256&&same(JSON.parse(a.ga_raw),a.ga)&&a.ga.gate_authorization_id===a.ga_id&&a.ga.control_trust_root_generation===generationForBudget(a.budget_sequence),'EXACT_NEW_GA_ORIGINAL_BYTES_ROOT');need(utc(a.ga.issued_at)&&utc(a.ga.deadline)&&Date.parse(a.ga.deadline)<=Date.parse(expiryForBudget(a.budget_sequence))&&Date.parse(a.ga.deadline)-Date.parse(a.ga.issued_at)<=600000,'FIXED_GA_DURATION_AND_CUTOFF');need(budgets.some(b=>b.sequence===a.budget_sequence)&&!used.has(a.budget_sequence),'ONE_GA_PER_ACTUAL_BUDGET');used.add(a.budget_sequence);}
  const ordered=[...newAttempts].sort((a,b)=>a.budget_sequence-b.budget_sequence),current=ordered.find(a=>a.ga_id===ga_id),prior=ordered.filter(a=>a.ga_id!==ga_id);
  need(!prior.some(a=>a.phase==='PASS'),'FIRST_FORMAL_PASS_CANCELS_REMAINING');need(prior.every(terminal),'PREVIOUS_UNKNOWN_OR_UNCLOSED_ATTEMPT');
  need(Array.isArray(pins.repair_refs)&&repair_acceptances.length===pins.repair_refs.length,'EXACT_REPAIR_ACCEPTANCE_SET');const repairs=repair_acceptances.map((r,i)=>material(r,pins.repair_refs[i],'REPAIR_ACCEPTANCE'));
- const repairAccepted=(r,a,strictArray)=>{if(capacity&&a.ga_id===capacityBaseline.failed_ga_id)return isApprovedCapacityRepair(r,a,capacity);const reviewer=r.independent_reviewer==='/root/project_list_auth_fix'||(a.ga_id==='ga_1d52f4778d494399b12aea54fe4a189e'&&r.independent_reviewer==='/root');return strictArray?(r.state==='ACCEPTED_EXACT_SAME_SCOPE_QUALIFICATION_REPAIR'&&reviewer&&r.failed_ga_id===a.ga_id&&r.failed_receipt_sha256===a.receipt_sha256&&r.identified_error_ref?.sha256&&Array.isArray(r.changed_source_refs)&&r.changed_source_refs.length>0&&r.scope_unchanged===true&&r.new_action_authorized===false):(r.failed_ga_id===a.ga_id&&r.failed_receipt_sha256===a.receipt_sha256&&r.state==='ACCEPTED_EXACT_SAME_SCOPE_QUALIFICATION_REPAIR'&&reviewer&&r.identified_error_ref?.sha256&&r.changed_source_refs?.length>0&&r.scope_unchanged===true&&r.new_action_authorized===false);};
+ const repairAccepted=(r,a,strictArray)=>{if(capacity&&a.ga_id===capacityBaseline.failed_ga_id)return isApprovedCapacityRepair(r,a,capacity);const reviewer=r.independent_reviewer==='/root/project_list_auth_fix'||r.independent_reviewer==='/root';return strictArray?(r.state==='ACCEPTED_EXACT_SAME_SCOPE_QUALIFICATION_REPAIR'&&reviewer&&r.failed_ga_id===a.ga_id&&r.failed_receipt_sha256===a.receipt_sha256&&r.identified_error_ref?.sha256&&Array.isArray(r.changed_source_refs)&&r.changed_source_refs.length>0&&r.scope_unchanged===true&&r.new_action_authorized===false):(r.failed_ga_id===a.ga_id&&r.failed_receipt_sha256===a.receipt_sha256&&r.state==='ACCEPTED_EXACT_SAME_SCOPE_QUALIFICATION_REPAIR'&&reviewer&&r.identified_error_ref?.sha256&&r.changed_source_refs?.length>0&&r.scope_unchanged===true&&r.new_action_authorized===false);};
  for(const a of ordered.slice(0,-1))need(repairs.some(r=>repairAccepted(r,a,true)),'INDEPENDENT_IDENTIFIED_ERROR_AND_FIX_BEFORE_NEXT_ATTEMPT');
  // Forward admission remains enforced by the original exact getter and independently reviewed registration transaction; no future-event back-reference.
  const unspent=budgets.filter(e=>!used.has(e.sequence));
- if(['NEXT_ALLOCATION','NEXT_FORWARD'].includes(operation)){need(x.current.active_ga_id===null&&x.current.pending_budget_sequence===null&&unspent.length===0&&newAttempts.every(terminal),'NO_UNKNOWN_ACTIVE_OR_PENDING_BEFORE_NEXT');need(!newAttempts.some(a=>a.phase==='PASS'),'FIRST_FORMAL_PASS_CANCELS_REMAINING');need(operation==='NEXT_ALLOCATION'?budgets.length<7:forwards.length<13,'ALLOCATION_OR_FORWARD_LIMIT_REACHED');for(const a of ordered)need(repairs.some(r=>repairAccepted(r,a,false)),'FIX_REQUIRED_BEFORE_ANOTHER_ALLOCATION_OR_FORWARD');if(operation==='NEXT_ALLOCATION')need(Date.parse(now)+600000<Date.parse(root4Expiry),'FULL_600_SECOND_WINDOW_REQUIRED');}
+ if(['NEXT_ALLOCATION','NEXT_FORWARD'].includes(operation)){need(x.current.active_ga_id===null&&x.current.pending_budget_sequence===null&&unspent.length===0&&newAttempts.every(terminal),'NO_UNKNOWN_ACTIVE_OR_PENDING_BEFORE_NEXT');need(!newAttempts.some(a=>a.phase==='PASS'),'FIRST_FORMAL_PASS_CANCELS_REMAINING');need(operation==='NEXT_ALLOCATION'?budgets.length<qualificationLimits.allocations:forwards.length<qualificationLimits.forwards,'ALLOCATION_OR_FORWARD_LIMIT_REACHED');for(const a of ordered)need(repairs.some(r=>repairAccepted(r,a,false)),'FIX_REQUIRED_BEFORE_ANOTHER_ALLOCATION_OR_FORWARD');if(operation==='NEXT_ALLOCATION')need(Date.parse(now)+600000<Date.parse(root4Expiry),'FULL_600_SECOND_WINDOW_REQUIRED');}
  else if(operation==='CONSUME_RESERVED_BUDGET'){need(x.current.active_ga_id===null&&unspent.length===1&&x.current.pending_budget_sequence===unspent[0].sequence&&newAttempts.every(terminal),'ONE_REAL_PENDING_BUDGET_ONLY');for(const a of ordered)need(repairs.some(r=>repairAccepted(r,a,false)),'FIX_REQUIRED_BEFORE_CONSUMING_NEXT_BUDGET');}
  else{need(current&&current===ordered.at(-1)&&x.current.active_ga_id===ga_id&&x.current.pending_budget_sequence===null&&unspent.length===0,'EXACT_SOLE_LATEST_CURRENT_ATTEMPT');if(operation==='CURRENT_DISPATCH')need(current.revoked===false&&!terminal(current)&&current.phase!=='UNKNOWN','NO_DISPATCH_AFTER_REVOKE_UNKNOWN_OR_TERMINAL');}
  // Static bytes are checked by the fixed preparer, without creating a new receipt or approval type.
- return {state:'LOCAL_SERIES_CONSISTENCY_CHECKED_NOT_ADMISSION',allocations:budgets.length,new_attempts:newAttempts.length,forwards:forwards.length,remaining_allocations:7-budgets.length,authority_effect:'NONE',signature_verified:false,actual_currentness_verified:false,reservation_performed:false};
+ return {state:'LOCAL_SERIES_CONSISTENCY_CHECKED_NOT_ADMISSION',allocations:budgets.length,new_attempts:newAttempts.length,forwards:forwards.length,remaining_allocations:qualificationLimits.allocations-budgets.length,authority_effect:'NONE',signature_verified:false,actual_currentness_verified:false,reservation_performed:false};
 }
 
 return Object.freeze({checkBoundedSeries,scope,proposalSHA,baselineSHA});
@@ -220,7 +234,7 @@ function loadAuthenticatedBoundedSeries(runtime){
   verifyOwnerMergeArtifact({...descriptor.publication,raw});
   return Object.freeze({raw,ref:Object.freeze({...descriptor.ref})});
  };
- check(Array.isArray(d.repairs)&&d.repairs.length<=4,'BOUNDED_SIGNED_RUNTIME_ACCEPTANCE_LISTS');
+ check(Array.isArray(d.repairs)&&d.repairs.length<=qualificationLimits.allocations,'BOUNDED_SIGNED_RUNTIME_ACCEPTANCE_LISTS');
  const applicability=actual(d.applicability),appendix=capacityRuntime.parseAuthenticatedAdministrativeJSON(applicability.raw);
  check(same(d.applicability.ref,subject.bounded_series_applicability_ref)&&same(d.approval.ref,appendix.approval_ref),'RUNTIME_AND_APPENDIX_ACTUALLY_BIND_APPROVAL');
  const approval=actual(d.approval),repairs=d.repairs.map(actual);
@@ -244,14 +258,15 @@ export async function prepareTrustedToolMaterial(material){
  const runtime=JSON.parse(material.runtime_acceptance.raw),qualification=JSON.parse(material.controller_qualification.raw);
  const terminal=material.operation==='GRR'?parseExact(material.grr_raw):null;
  const nonPass=terminal&&['FAIL','BLOCKED','STALE'].includes(terminal.result);
+ // Consume the initial snapshot freshness before GitHub I/O. This grants no
+ // authority; the committed-dispatch challenge below rechecks fresh SQL state.
+ const result=checkCurrentSemantics({gaRaw:material.ga_raw,operation:material.operation,observation:material.observation,runtimeAcceptance:runtime,qualification,terminalResult:terminal?.result});
  signedMetadata(material.runtime_acceptance,binding.runtime_acceptance_sha256);
  const series=loadAuthenticatedBoundedSeries(runtime);
  const seriesOperation=nonPass?'RESULT_RECONCILIATION':'CURRENT_DISPATCH';
  const seriesCheck=execution=>series.check(execution,seriesOperation,parseExact(material.ga_raw).gate_authorization_id,terminal?.result);
  seriesCheck(material.observation.row.execution);
- const result=checkCurrentSemantics({gaRaw:material.ga_raw,operation:material.operation,observation:material.observation,runtimeAcceptance:runtime,qualification,terminalResult:terminal?.result});
  // No effects or admission exist while these initially untrusted metadata bytes are checked.
- signedMetadata(material.runtime_acceptance,binding.runtime_acceptance_sha256);
  signedMetadata(material.controller_qualification,binding.qualification_sha256);
  check(result.ga.target_revision===material.runtime_acceptance.publication.commitSha,'ACTUAL_RUNTIME_PUBLICATION_TARGET');
  verifySourcePublication({sourceRef:result.ga.source_ref,ownerMerge:material.runtime_acceptance.publication.commitSha,controllerDigest:binding.controller_sha256});
@@ -284,7 +299,7 @@ export async function prepareTrustedToolMaterial(material){
  // the complete immutable bytes from the current control source and the accepted schema/ref mapping.
  const statusInput=material.status_manifest,acceptedStatus=result.accepted_subject.control_schema_refs?.StatusManifest;
  check(statusInput?.raw&&acceptedStatus,'ACTUAL_STATUS_AND_ACCEPTED_SCHEMA_REQUIRED');
- const sm=parseExact(statusInput.raw);check(sha(statusInput.raw)===result.ga.status_manifest_ref.sha256,'EXACT_STATUS_BYTES');
+ const sm=parseStoredStatus(statusInput.raw);check(sha(statusInput.raw)===result.ga.status_manifest_ref.sha256,'EXACT_STATUS_BYTES');
  check(same(sm.issuer_ref,root.issuer_bindings.find(i=>i.purpose==='STATUS').qualification_ref),'EXACT_STATUS_ISSUER_REF');
  check(result.ga.status_manifest_ref.uri==='control://status-manifests/'+sm.status_manifest_id,'ORIGINAL_TYPED_STATUS_URI');
  const storedStatus=material.observation.row.execution.control_objects?.filter(x=>x.object_type==='StatusManifest'&&x.uri===result.ga.status_manifest_ref.uri);

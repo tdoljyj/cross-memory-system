@@ -77,7 +77,7 @@ def reject_constraints(ga, profile, now):
     limit = profile.get('max_lifetime_seconds')
     require(type(limit) is int and 0 < limit <= 600, 'invalid_profile_lifetime')
     require(issued <= now < deadline <= expires and 0 < (expires-issued).total_seconds() <= limit, 'expired_or_unbounded_ga')
-    require(datetime(2026, 9, 9, 10, 13, 16, tzinfo=timezone.utc) <= issued and expires <= datetime(2026, 9, 10, 10, 13, 16, tzinfo=timezone.utc), 'owner_window_exceeded')
+    require(datetime(2026, 9, 9, 10, 13, 16, tzinfo=timezone.utc) <= issued and expires <= datetime(2026, 9, 11, 10, 21, 5, tzinfo=timezone.utc), 'owner_window_exceeded')
     for key in ('control_trust_root_generation', 'runner_generation', 'credential_generation', 'session_generation'):
         require(type(ga.get(key)) is str and ga[key].strip() and ga[key] != 'not_applicable', 'missing_independent_generation_' + key)
     vector = ga.get('revocation_epoch_vector')

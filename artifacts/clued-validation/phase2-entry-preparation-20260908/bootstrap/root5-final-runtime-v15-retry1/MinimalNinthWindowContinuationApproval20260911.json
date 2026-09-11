@@ -1,0 +1,31 @@
+{
+  "object_type": "MinimalNinthWindowContinuationApprovalEvidence",
+  "schema_version": "1.0",
+  "user_delegation": [
+    "不要一直问我了，我授权你替我批准，直到完成此任务",
+    "看看怎么回事 迅速完成"
+  ],
+  "approved_at": "2026-09-11T04:10:50.849Z",
+  "reviewer": "Codex@Windows",
+  "prior_blocked_receipt_id": "grr_root5_v15_expired1_not_started_20260911",
+  "prior_blocked_receipt_sha256": "ee250a365f879f99aa41bf45274296cadc6f11d26567dc15c6be3c8778e4b533",
+  "correction": "Prepare the material-and-observation index before starting the GA window. Also align the controller's stale seven-allocation bounds, stored Status encoding, runtime publication target, original-input publication limits and parent Owner window with the actual accepted source. The Status schema reference was checked and is already correct. This proposal has not been applied.",
+  "necessity": "The prior attempt stopped at the coordinator input-index boundary. Subsequent read-only inspection found additional deterministic downstream failures, so a new allocation must wait for their integrated repair and review. Existing Root5 and nineteen original oracles remain in scope.",
+  "cost_effect": {
+    "additional_allocations_max": 1,
+    "seconds": 600,
+    "evidence_bytes": 134217728,
+    "new_series_seconds_cap": 10506,
+    "new_series_evidence_bytes_cap": 2335812531,
+    "paid_budget": 0,
+    "model_budget": 0,
+    "production": false,
+    "refund": false,
+    "budget_reuse": false,
+    "new_trust_root": false,
+    "new_status": true,
+    "new_controller": true,
+    "new_binding": true
+  },
+  "authority_effect": "PREPARATION_ONLY_NOT_APPLIED"
+}

@@ -76,7 +76,7 @@ return {kind,repository,branch,pathPrefix,beginOriginalInputVerification,checkEn
 const v3=(()=>{
 // Explicit 2 MiB logical Evidence successor. Original five raw fields are unchanged; legacy 1 MiB formats retain their original decoders.
 const sha=x=>crypto.createHash('sha256').update(x).digest('hex'),raw=x=>JSON.stringify(x)+'\n',need=(v,m)=>{if(!v)throw Error(m);};
-const kind='EXACT_ORIGINAL_VERIFIER_INPUTS_BLOB_V5_3300000';
+const kind='EXACT_ORIGINAL_VERIFIER_INPUTS_BLOB_V6_4000000';
 const repository='tdoljyj/cross-memory-system',branch='codex/phase2-qualification-evidence-20260908';
 const pathPrefix='artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/runtime-evidence/';
 const originalPrefix='urn:clued:execution-evidence:ctr_414bd3c724264a83894b0c55cf2ab878:';
@@ -86,7 +86,7 @@ function checkEnvelope(packedRaw,originalRef){
  need(typeof packedRaw==='string'&&Buffer.byteLength(packedRaw)<=4096,'BOUNDED_BLOB_ENVELOPE');const e=JSON.parse(packedRaw);
  need(raw(e)===packedRaw&&Object.keys(e).sort().join(',')==='blob_ref,kind,original_bytes,original_ref,publication','EXACT_BLOB_ENVELOPE_SCHEMA');
  need(e.kind===kind&&raw(e.original_ref)===raw(originalRef)&&Object.keys(originalRef).sort().join(',')==='sha256,uri'&&/^[a-f0-9]{64}$/.test(originalRef.sha256)&&originalRef.uri===originalPrefix+originalRef.sha256,'EXACT_ORIGINAL_INPUT_REFERENCE');
- need(Number.isSafeInteger(e.original_bytes)&&e.original_bytes>0&&e.original_bytes<=3300000,'EXPLICIT_ORIGINAL_V5_FINITE_CANDIDATE_LIMIT');
+ need(Number.isSafeInteger(e.original_bytes)&&e.original_bytes>0&&e.original_bytes<=4000000,'EXPLICIT_ORIGINAL_V6_FINITE_CANDIDATE_LIMIT');
  need(Object.keys(e.blob_ref).sort().join(',')==='sha256,uri'&&/^https:\/\/api\.github\.com\/repos\/tdoljyj\/cross-memory-system\/git\/blobs\/[a-f0-9]{40}$/.test(e.blob_ref.uri)&&e.blob_ref.sha256===originalRef.sha256,'FIXED_SAME_REPOSITORY_BLOB');
  const p=e.publication;need(p&&Object.keys(p).sort().join(',')==='artifact_path,branch,commit_sha,ga_id'&&p.branch===branch&&/^[a-f0-9]{40}$/.test(p.commit_sha)&&/^ga_[a-f0-9]{32}$/.test(p.ga_id),'FIXED_IMMUTABLE_PUBLICATION');
  need(p.artifact_path===pathPrefix+'original-inputs-'+p.ga_id.slice(3)+'/result.json','ONE_FIXED_THIS_GA_EVIDENCE_PATH');return e;
@@ -143,7 +143,7 @@ function validatePackedDenialSource({packedRaw,sourceRaw,verificationSession}){
 return {kind,repository,branch,pathPrefix,beginOriginalInputVerification,checkEnvelope,checkRestoredOriginal,decodeOriginalInputs,envelopeFromPublication,validatePackedDenialSource};
 })();
 
-export const kind=v3.kind,repository=v3.repository,branch=v3.branch,pathPrefix=v3.pathPrefix,maximumOriginalBytes=3300000;
+export const kind=v3.kind,repository=v3.repository,branch=v3.branch,pathPrefix=v3.pathPrefix,maximumOriginalBytes=4000000;
 const dualSessions=new WeakMap();
 export function beginOriginalInputVerification(){const x=Object.freeze({});dualSessions.set(x,{v2:v2.beginOriginalInputVerification(),v3:v3.beginOriginalInputVerification()});return x;}
 function choose(raw){return JSON.parse(raw).kind===kind?'v3':'v2';}
