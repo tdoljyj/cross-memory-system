@@ -1,0 +1,97 @@
+{
+  "all_clean": true,
+  "report": [
+    {
+      "predecessor": "ScopedRoot5FinalControllerQualification.json",
+      "subject": "ScopedRoot5FinalControllerQualification.WindowSuccessorSubject.json",
+      "total_differences": 8,
+      "differences_by_top_level_key": [
+        "accepted_at",
+        "expires_at",
+        "not_before",
+        "successor_delta",
+        "supersedes"
+      ],
+      "declared_changes": [
+        ".accepted_at",
+        ".expires_at",
+        ".not_before",
+        ".successor_delta",
+        ".supersedes"
+      ],
+      "unexpected_differences": [],
+      "wrapper_state": "PREPARED_SCOPED_CONTROLLER_QUALIFICATION_WINDOW_SUCCESSOR_SUBJECT_NOT_ACCEPTED",
+      "wrapper_acceptance_issued": false,
+      "proposed_state_equals_predecessor_state": true,
+      "proposed_reviewer_equals_predecessor_reviewer": true
+    },
+    {
+      "predecessor": "ExactRoot5FinalPreentryControllerRuntimeAcceptance.json",
+      "subject": "ExactRoot5FinalPreentryControllerRuntimeAcceptance.WindowSuccessorSubject.json",
+      "total_differences": 8,
+      "differences_by_top_level_key": [
+        "accepted_at",
+        "expires_at",
+        "not_before",
+        "successor_delta",
+        "supersedes"
+      ],
+      "declared_changes": [
+        ".accepted_at",
+        ".expires_at",
+        ".not_before",
+        ".successor_delta",
+        ".supersedes"
+      ],
+      "unexpected_differences": [],
+      "wrapper_state": "PREPARED_PREENTRY_CONTROLLER_RUNTIME_WINDOW_SUCCESSOR_SUBJECT_NOT_ACCEPTED",
+      "wrapper_acceptance_issued": false,
+      "proposed_state_equals_predecessor_state": true,
+      "proposed_reviewer_equals_predecessor_reviewer": true
+    },
+    {
+      "predecessor": "CurrentNonPerformanceApplicability.json",
+      "subject": "CurrentNonPerformanceApplicability.WindowSuccessorSubject.json",
+      "total_differences": 7,
+      "differences_by_top_level_key": [
+        "expires_at",
+        "issued_at",
+        "successor_delta",
+        "supersedes"
+      ],
+      "declared_changes": [
+        ".expires_at",
+        ".issued_at",
+        ".successor_delta",
+        ".supersedes"
+      ],
+      "unexpected_differences": [],
+      "wrapper_state": "PREPARED_NONPERFORMANCE_APPLICABILITY_WINDOW_SUCCESSOR_SUBJECT_NOT_ACCEPTED",
+      "wrapper_acceptance_issued": false,
+      "proposed_state_equals_predecessor_state": true,
+      "proposed_reviewer_equals_predecessor_reviewer": true
+    },
+    {
+      "predecessor": "Root5StopCurrentSourceApplicability.json",
+      "subject": "Root5StopCurrentSourceApplicability.WindowSuccessorSubject.json",
+      "total_differences": 4,
+      "differences_by_top_level_key": [
+        "accepted_at",
+        "expires_at",
+        "successor_delta",
+        "supersedes"
+      ],
+      "declared_changes": [
+        ".accepted_at",
+        ".expires_at",
+        ".successor_delta",
+        ".supersedes"
+      ],
+      "unexpected_differences": [],
+      "wrapper_state": "PREPARED_STOP_SOURCE_APPLICABILITY_WINDOW_SUCCESSOR_SUBJECT_NOT_ACCEPTED",
+      "wrapper_acceptance_issued": false,
+      "proposed_state_equals_predecessor_state": true,
+      "proposed_reviewer_equals_predecessor_reviewer": true
+    }
+  ]
+}

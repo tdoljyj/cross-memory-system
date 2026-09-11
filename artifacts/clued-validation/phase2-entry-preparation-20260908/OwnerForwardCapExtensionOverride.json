@@ -1,0 +1,96 @@
+{
+  "schema_version": 1,
+  "kind": "OWNER_FORWARD_CAP_EXTENSION_OVERRIDE",
+  "state": "RECORDED_OWNER_DECISION_CONFLICTING_WITH_A_GOVERNING_EXCLUSION",
+  "issued_at_utc": "2026-09-11T19:05:00Z",
+  "recorded_by": "Claude Code session session_012ki2dPxTiJbPmgZu7AD3Nz (the implementing side)",
+
+  "what_this_is": "A record that the Owner authorized raising the controller's forward cap from 15 to 16 despite that being an act the governing applicability document explicitly excludes. It is written so the conflict is visible in the evidence rather than absorbed silently into a source edit.",
+
+  "what_this_is_not": [
+    "Not an independent acceptance. No independent reviewer has seen it.",
+    "Not a supplemental applicability document. It does not supersede, amend or reinterpret BoundedSeriesApplicability20260910.",
+    "Not a qualification, GA, GRR, entry approval or gate result.",
+    "Not authority to extend any other cap."
+  ],
+
+  "the_exclusion_being_overridden": {
+    "document": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/BoundedSeriesApplicability20260910.json",
+    "sha256": "f8ed552ebe18010321d57a4565484f4aef25daedc43d7aff9f5a239be1ec61b2",
+    "bytes": 2615,
+    "blob_sha": "c9d4dcd95cec4aff6c5c02317414217ce31de96f",
+    "field": "excluded",
+    "verbatim": "Production, paid/model budget, Gold, A03-A11 formal business measurement, new root or identity, cap extension, automatic retry, refund.",
+    "clause_in_conflict": "cap extension",
+    "document_left_intact": true,
+    "note": "The governing document is not modified, withdrawn or reinterpreted. It still says what it says."
+  },
+
+  "why_the_extension_is_needed": {
+    "summary": "The forward cap is exactly exhausted, and the root6 window migration cannot avoid one more forward.",
+    "mechanism": "context.mjs counts forwards only over execution events after the frozen 44-event baseline, i.e. sequence >= 45. qualificationLimits.forwards is 15. context.mjs:188 requires forwards.length < 15 for NEXT_FORWARD, so the twentieth forward is refused with ALLOCATION_OR_FORWARD_LIMIT_REACHED.",
+    "why_a_twentieth_forward_is_unavoidable": "root6 produces a new controller_sha256 and new qualification and runtime-acceptance digests. The execution binding must be forwarded to them, and a binding forward is what appends EXECUTION_BINDING_FORWARD_ACCEPTED.",
+    "failure_mode_if_applied_without_raising_the_cap": "Every previous forward was applied by raw SQL rather than through NEXT_FORWARD. Doing that again takes forwards.length to 16 and fails context.mjs:176 on EVERY operation, including RESULT_RECONCILIATION, which would strand the single remaining reserved budget with no way to close the attempt."
+  },
+
+  "live_database_verification": {
+    "performed_at_utc": "2026-09-11T19:02:00Z",
+    "method": "Read-only query against clued_control.execution_events ordered by sequence. No write performed.",
+    "reason_for_verifying": "The exhaustion finding originally came from an adversarial review that reconstructed the sequences from repository SQL artifacts and explicitly stated it had not queried the database. It was checked against live state before being acted on, because if even one forward had fallen below sequence 45 the cap would not have been exhausted and no override would have been needed.",
+    "forward_sequences_at_or_above_45": [45, 50, 58, 62, 63, 64, 65, 66, 67, 71, 72, 76, 80, 84, 88],
+    "forward_count_at_or_above_45": 15,
+    "forward_sequences_below_45": [10, 25, 26, 40],
+    "total_forwards": 19,
+    "cap": 15,
+    "exhausted": true,
+    "budget_sequences_at_or_above_45": [46, 51, 59, 68, 73, 77, 81, 85],
+    "budget_count_at_or_above_45": 8,
+    "allocation_cap": 9,
+    "allocations_remaining": 1,
+    "charged_seconds_arithmetic": "5106 + 600*8 = 9906 against a 10506 ceiling, consistent with one remaining 600-second allocation and no retry."
+  },
+
+  "the_change_authorized": {
+    "file": "control-context-verifier-root6-window10-successor/context.mjs",
+    "constant": "qualificationLimits.forwards",
+    "from": 15,
+    "to": 16,
+    "also_changed": "The reason string NINE_ALLOCATIONS_AND_GAS_FIFTEEN_FORWARDS_MAXIMUM is renamed to ..._SIXTEEN_... so it does not assert a false bound into a receipt. It is referenced nowhere else in the repository.",
+    "explicitly_unchanged": {
+      "allocations": 9,
+      "seconds": 10506,
+      "evidenceBytes": 2335812531,
+      "originalInputBytes": 4000000,
+      "publicationBytes": 8388608,
+      "scope": "appendix.scope is not touched; same(appendix.scope,scope) and same(s.capacity_delta,capacityDelta) still hold byte-exactly. scope.maximum_new_forward remains 3 and is a different quantity from qualificationLimits.forwards."
+    }
+  },
+
+  "the_path_not_taken": {
+    "option": "Issue a supplemental applicability document raising the forward cap, Owner-approved and independently reviewed, rather than overriding the exclusion.",
+    "precedent": "That is exactly how the governing document itself came to exist. Its delegation_effect reads: 'Supplement the consumed historical one-GA numerical limit solely with this exact newly approved maximum-three serial series.' A consumed numerical limit was previously extended by issuing a new approved applicability, not by overriding an exclusion.",
+    "why_not_taken": "context.mjs:164 requires appendix.independent_reviewer === '/root/project_list_auth_fix'. That identity is a task/session working directory that no longer exists, and the original bootstrap authority forbids the implementing side from replacing the assigned reviewer. A supplemental applicability therefore cannot be issued until the Owner decides the reviewer succession (see IndependentReviewerSuccessionProposal.md, whose SUCCESSOR_IDENTITY is still unfilled).",
+    "owner_rationale_recorded": "The Owner elected the override on the basis that this is a non-production ISOLATED_TEST qualification run already in remediation for an expired window, and that standing up a full replacement review identity is disproportionate to a test qualification. That is a judgement, not a finding.",
+    "consequence_to_state_plainly": "This run's compliance narrative now contains a known gap: a declared cap was extended by Owner fiat against an explicit exclusion, without independent review. Any downstream consumer treating this run as a formal credential must weigh that."
+  },
+
+  "authority_basis": {
+    "form": "Owner instruction given in the implementing session's conversation.",
+    "weaker_than": "The owner-merge signature chain this system uses elsewhere (GitHub owner merge, committer web-flow, verification.verified true, merged_by tdoljyj).",
+    "how_to_strengthen": "This record becomes Owner-attested rather than implementer-asserted when the Owner merges the commit carrying it through that same owner-merge path. Until then it is the implementing side's account of an instruction, and should be read as such.",
+    "independent_review": "NONE"
+  },
+
+  "boundaries_unchanged": [
+    "Do not reapply SQL9. Do not add capacity. Do not refund. Do not reuse old budgets.",
+    "Do not create a new trust root, signing identity, paid budget, model budget or production authority.",
+    "Do not record billing-blocked CI as passing.",
+    "Do not substitute preparation review for the 19 real observations.",
+    "Do not start the final 600 seconds before Status24 registration, the twentieth forward and the final material preflight are all genuinely complete."
+  ],
+
+  "budget_touched": false,
+  "ga_created": false,
+  "database_write_performed": false,
+  "authority_effect": "NONE"
+}
