@@ -1,0 +1,7 @@
+{
+  "state": "HISTORICAL_SIGNATURE_OBSERVED_ONLY",
+  "algorithm": "GITHUB_API_VERIFIED_OWNER_SINGLE_PARENT_COMMITMENT_V1_CANDIDATE",
+  "commit_sha": "af27bae8232a8b0d36a1a77334c6f9dc7f7955da",
+  "commitment_sha256": "0992aee783ef66f1fb8b76f31364fa50704b2629e5b81bb27df92b37e55ccb44",
+  "authority_effect": "NONE"
+}
