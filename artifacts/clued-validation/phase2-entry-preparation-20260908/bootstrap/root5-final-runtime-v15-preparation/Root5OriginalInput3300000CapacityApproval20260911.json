@@ -1,0 +1,79 @@
+{
+  "state": "APPROVED_EXACT_ORIGINAL_INPUT_CAPACITY_SUPPLEMENT",
+  "base_proposal_sha256": "ea96914e218460339508bc51eff0d10de41e1a94cfa3a0a544a85a132219791b",
+  "base_approval_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/86636aa78807ca1ce1facbdd910f7c3d27a75177",
+    "sha256": "fe114f0860dc69a52cd448ae697e8d8692fe39e51d84ab8bb60edfe01ace97fe"
+  },
+  "bounded_series_constraints": {
+    "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+    "root_generation": "ctrgen_2e778ca66244459f974b081edca8c04e",
+    "project": "uscrdifznmlvczcekqpw",
+    "expires_at": "2026-09-10T10:13:16Z",
+    "maximum_new_ga": 3,
+    "maximum_new_forward": 3,
+    "per_ga_seconds": 600,
+    "per_ga_evidence_bytes": 134217728,
+    "maximum_series_charged_seconds": 6906,
+    "root_seconds_cap": 7200,
+    "evidence_cap": 1530506163,
+    "first_pass_stops": true,
+    "refund": false,
+    "automatic_retry": false,
+    "production": false,
+    "model_budget": 0,
+    "paid_budget": 0
+  },
+  "capacity_delta": {
+    "original_input_bytes_before": 3200000,
+    "original_input_bytes_after": 3300000,
+    "original_input_kind_before": "EXACT_ORIGINAL_VERIFIER_INPUTS_BLOB_V4_3200000",
+    "original_input_kind_after": "EXACT_ORIGINAL_VERIFIER_INPUTS_BLOB_V5_3300000",
+    "ga_raw_bytes": 65536,
+    "control_request_and_grr_bytes": 131072,
+    "evidence_index_bytes": 131072,
+    "first_frame_bytes": 4194304,
+    "second_frame_bytes": 4194304,
+    "publisher_request_bytes": 4194304,
+    "publisher_response_bytes": 4194304,
+    "source_batch_response_bytes": 33554432,
+    "source_refs_maximum": 130,
+    "root_strict_json_bytes": 2097152,
+    "original_field_count": 5,
+    "original_nineteen_oracles_unchanged": true,
+    "old_signed_objects_rewritten": false,
+    "new_root": false,
+    "new_signing_identity": false,
+    "refund": false
+  },
+  "baseline": {
+    "failed_ga_id": "ga_04377008dc04437d9ee9d28a3c79ff3a",
+    "failed_receipt_sha256": "b27286d6fcb54e34a62d8738f49c1ecafe3210c9a321a703c3828e38497e434c",
+    "terminal_phase": "BLOCKED",
+    "sequence": 49,
+    "charged_seconds": 5706,
+    "charged_evidence_bytes": 1262070707,
+    "used_series_allocations": 1,
+    "maximum_remaining_allocations": 2
+  },
+  "capacity_proposal_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/12479c56d18102a6c69331dc7253c5829514fe34",
+    "sha256": "ddb2e1b45de2aab89e971c51bde5ac78230caa342ebd39e3cfe1d063af12ad2a"
+  },
+  "approved_change_index_sha256": "ddb2e1b45de2aab89e971c51bde5ac78230caa342ebd39e3cfe1d063af12ad2a",
+  "approved_at": "2026-09-11T03:14:20.572Z",
+  "authority": "user_explicit",
+  "approval_text": "不要一直问我了，我授权你替我批准，直到完成此任务；看看怎么回事 迅速完成",
+  "source": {
+    "kind": "CURRENT_CONVERSATION_USER_MESSAGES",
+    "messages": [
+      "不要一直问我了，我授权你替我批准，直到完成此任务",
+      "看看怎么回事 迅速完成"
+    ],
+    "timestamp_semantics": "approved_at is the preserved recovery observation time"
+  },
+  "limitations": [
+    "Only the exact 3,300,000-byte original-input cap and one final nonproduction allocation are added.",
+    "No production, paid/model budget, refund, new trust root, signing identity, or automatic retry."
+  ]
+}

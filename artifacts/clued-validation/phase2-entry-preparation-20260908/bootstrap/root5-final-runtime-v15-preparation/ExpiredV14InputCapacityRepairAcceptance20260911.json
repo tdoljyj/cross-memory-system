@@ -1,0 +1,51 @@
+{
+  "state": "ACCEPTED_EXACT_SAME_SCOPE_QUALIFICATION_REPAIR",
+  "independent_reviewer": "/root",
+  "failed_ga_id": "ga_e56ca0eb07304f2fbcf60eb8f29f3889",
+  "failed_receipt_sha256": "74afd52096ce817ad2da9e5af8ce63e7f95705a13702ad7f12edce8fa4d4a4f5",
+  "identified_error_ref": {
+    "uri": "urn:clued:execution-evidence:ctr_414bd3c724264a83894b0c55cf2ab878:889367cf8cf55e636364beb51a1200ff115566de09477d4f782fb85656a6f08f",
+    "sha256": "889367cf8cf55e636364beb51a1200ff115566de09477d4f782fb85656a6f08f"
+  },
+  "changed_source_refs": [
+    {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/776a4d32064a9bab800ede912f3710cbfa47defc",
+      "sha256": "f874c862c6f24d67ba8ffe9ae3a238488d5b72443d2a064b45b6395ef52dbbd4"
+    },
+    {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/ccd83cb5d3e5ff68dd6147dad39fba00d8cccb84",
+      "sha256": "b92a62e481decfba0168995ee5272fe6decba1c84bfd6febe7089f6182a8ed9f"
+    },
+    {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/d87a0fd5fb6ee2023fd21fb77a474f416c6fcc93",
+      "sha256": "914cb88ba0319d033146253c207d755284ffc864db446285275dbe2b3c97e1fb"
+    },
+    {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/45c297c588f5633f8b423c3776207abe0f70743d",
+      "sha256": "7dc8f5cb606ab935939575c77425f81b224bc1f44540036a18730ae42bbe99c5"
+    },
+    {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/12479c56d18102a6c69331dc7253c5829514fe34",
+      "sha256": "ddb2e1b45de2aab89e971c51bde5ac78230caa342ebd39e3cfe1d063af12ad2a"
+    },
+    {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/5ac1f0a94e665b81f9025417679d36e65e2dc6a9",
+      "sha256": "9186ab8063e27ebc3cb6cf0b8609ccabdb05b53a700e3d6167d1621dd5187f6c"
+    },
+    {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/7da2a38b92112833f4066a7d3bbe446fdc96f2a2",
+      "sha256": "8cf2556da0772526564c8c24b400c91395cab9520ae5dff53265181b2595f9fe"
+    }
+  ],
+  "scope_unchanged": true,
+  "new_action_authorized": false,
+  "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+  "root_generation": "ctrgen_e5df432221344996afc04b5638121d96",
+  "terminal_mode": "EXPIRED_PREDISPATCH_NONPASS_NOT_STARTED",
+  "controller_error": "EXPLICIT_ORIGINAL_INPUT_V4_3200000_CANDIDATE_LIMIT",
+  "observed_original_input_bytes": 3215462,
+  "previous_limit": 3200000,
+  "new_limit": 3300000,
+  "accepted_at": "2026-09-11T03:25:01.000Z",
+  "authority_effect": "NONE"
+}
