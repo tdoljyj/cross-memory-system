@@ -51,11 +51,31 @@ manifest 使用**规范编码**：紧凑单行、固定键序、按 `localeCompa
 - **`ROOT6_BUDGET_SEQUENCE = 89` 的理由错误。** 先前注释称"当前序列 88，故下一个事件为 89"，将"下一个事件"与"第一个 root6 预算"混为一谈。序列 89 将是**第二十次前推**，首个 root6 预算落在 90 或之后。该值仍然正确，仅因比较是 `>=` 而非 `===`。
 - 先前称阻塞点为"5 处、跨 5 个文件"，实际为 **8 处、跨 7 个文件**。
 
+## 治理事项：两项已判定
+
+**1. `new_root_generation === false` 不构成障碍——已判定，依据证据而非裁量。**
+
+`context.mjs:165` 强制 appendix 的三个布尔值为 false，而注册 root6 是新代际。经查证该字段不禁止代际推进：
+
+- 该 appendix（`BoundedSeriesApplicability20260910.json`）是 **root3 期**文档，其 `scope.root_generation` 为 `ctrgen_2e778ca6…`。其 `excluded` 写的是 "**new root or identity**"，与 production、paid budget、Gold 并列，指新**信任根**或新**签名身份**（`ctr_…` 层），非同一根下的代际推进（`ctrgen_…`）。`preserved` 亦仅承诺 root3 已签字节、身份、算法与历史回执不变——注册 root6 不触动其中任何一项。
+- 第 165 行读取的是该文档的静态字段，检的是"文档声明了这三项为 false"，而非"当前世界中不存在新代际"。root6 注册不改动该文档任何字节。
+- **决定性依据**：该控制器自身经评审的源码即预期新代际——`generationForBudget` 显式含 root4 与 root5 两个代际分支，而它同时携带第 165 行与这份 root3 appendix。若注册新代际违反第 165 行，root4 与 root5 不可能存在。
+
+**2. 前推额度 15 → 16：与治理文档的明示排除冲突，经 Owner 明示批准后 override。**
+
+同一份 appendix 的 `excluded` 字段逐字包含 "**cap extension**"。抬升前推额度即属此项。该冲突**不因代码不拦而消失**——第 165 行只执行那三个布尔值，`excluded` 是散文，未被任何 `need()` 执行。
+
+已按 Owner 决定走 override，并如实记录于
+[`OwnerForwardCapExtensionOverride.json`](../../artifacts/clued-validation/phase2-entry-preparation-20260908/OwnerForwardCapExtensionOverride.json)，其中载明：被推翻的确切条款与文档字节哈希、实时数据库核验、未采取的正路及其受阻原因、以及该批准的权威形式弱于本系统他处使用的 owner-merge 签名链。
+
+**未采取的正路**：该 appendix 自身的 `delegation_effect` 表明，当年 one-GA 数量上限耗尽时，走的是**新签一份补充批准**而非推翻旧条款。同一机制本可用于此处，但 `context.mjs:164` 硬校验 `appendix.independent_reviewer === '/root/project_list_auth_fix'`，而该评估主体已不存在，且原始 bootstrap 授权禁止实施方自行更换评估者。故补充批准在 Owner 决定评审者继任之前无法签发（见 `IndependentReviewerSuccessionProposal.md`，其 `<SUCCESSOR_IDENTITY>` 仍空）。
+
+**须明说的后果**：本轮的合规叙事因此存在一处已知缺口——一项声明的上限经 Owner 单方决定、在明示排除条款之上被扩展，未经独立评审。任何将本轮结果作为正式凭据使用的下游消费者，必须一并权衡此点。
+
 ## 仍未解决
 
-- **治理（Owner 决定，非工程问题）**：冻结的 bounded-series appendix 断言 `new_root_generation===false`，而 `context.mjs:165` 逐字节强制 `NO_NEW_ROOT_OR_REWRITTEN_SIGNATURE_AUTHORITY`；`context.mjs:113` 的 `capacityDelta` 亦含 `new_root:false` 并在 `:122` 要求精确相等。**注册 root6 就是新代际。** root5 注册时存在同样的张力，故有"该批准本身并不授权新代际"的先例读法，但此项未经解决。
 - **无 root6 测试**。`scripts/phase2-qualification/` 下两个测试文件均导入 root5 控制器，无一覆盖 root6。尤其 `root5-readiness.test.mjs:12` 编码的正是被本次放宽的那条不变量（later-than-cutoff 的 expiry 必须被拒），它仍然通过只因钉在未改动的 root5 模块上。
-- **前推额度抬升已获 Owner 授权**（15→16）。需注意这与交接文档中"不新增容量"的边界相邻，其区别在于：抬升的是前推计数上限，而非分配数（仍为 9）、秒数（仍为 10506）或证据字节上限。
+- **评审者继任**仍未决定。它不阻塞本次 override，但阻塞任何需要补充适用性文档的后续动作。
 
 ## 执行之后仍未完成的事
 
