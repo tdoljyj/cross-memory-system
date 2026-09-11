@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "state": "ACCEPTED_EXACT_STATUS19_SIGNING_SUBJECT_NOT_STORED",
+  "review_basis": "UNCHANGED_STATUS18_SCHEMA_AND_RUNTIME_OBSERVATIONS_PLUS_EXACT_SIGNED_BASELINE_FIELD_PRESERVATION_AND_FORWARD11_REPAIR",
+  "subject_file": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v12/Status19ReviewSubject.json",
+    "sha256": "f937819656d25f57123e546991eb1c9a2b1c1e9f118465ab2e745a0de249e6e2",
+    "bytes": 9331,
+    "blob_sha": "821a9c5f137922c0f97fe6297b451b3db9a64b0c"
+  },
+  "status_manifest_id": "sm_ab83505bc4114470a5f1821f7a43f92f",
+  "generation": 19,
+  "root_generation": "ctrgen_e5df432221344996afc04b5638121d96",
+  "issuer_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/c1749399c047a5b88461ef8df54ea80b1b59938a",
+    "sha256": "1640995831b0c1f8ae616810e12eb7b97ee191e9f20b5c38eee32eb8bfac9d23"
+  },
+  "as_of": "2026-09-11T01:02:00.000Z",
+  "expires_at": "2026-09-11T10:21:05Z",
+  "runtime_function_source": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/dcbc691d75f887225d5cd29d37e1964891e09621",
+    "sha256": "064752cb33b7868b1509be0e6119a0d321ca12a2d98c499ff389d90198527d79"
+  },
+  "runtime_function_acceptance": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/d4d9cbaab31925165a5237ef194f51eaf2bc7033",
+    "sha256": "42e4229651624fb89ad292f3045f4fe5209f29217327c6a6384da70083e62815"
+  },
+  "controller_qualification": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/e27b878e64e9c8ef0af09f539f094226d40f4248",
+    "sha256": "c97f758f44324d90565d68ed9673590879897a182d38437d5b45f79be8d84546"
+  },
+  "expired_ga_recovery": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v11-expired1/ExpiredFinalGAPredispatchRecoveryAcceptance.json",
+    "sha256": "35f5c0a30e6eb997a21e97354ca320de4c592498314bccb7eb3b9ceb4e4890e3",
+    "bytes": 1417,
+    "blob_sha": "1f805d4cacfdc728d0f964989ff0c45be55169d2"
+  },
+  "authority_effect": "NONE",
+  "stored": false
+}
