@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "state": "PREPARED_EXACT_ROOT5_WINDOW6_FORWARD12_CURRENT_CONTROLLER_REPAIR",
+  "reviewer": "Codex@Windows",
+  "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+  "root_generation": "ctrgen_e5df432221344996afc04b5638121d96",
+  "expires_at": "2026-09-11T10:21:05Z",
+  "observed_preimage": {
+    "sequence": 75,
+    "active_ga_id": null,
+    "pending_budget_sequence": null,
+    "charged_seconds": 8106,
+    "charged_evidence_bytes": 1798941619
+  },
+  "controller": {
+    "path": "scripts/phase2-qualification/control-context-verifier-root5-window5-forward11-successor/ControllerSourceManifest.candidate.json",
+    "sha256": "cbcdf71d89ae0b32c73ef3b943601f6ab1087f9cb35bbe2d24e19d379226fa9e",
+    "blob_sha": "c24ac37c5ccca777b842f9bfbdaed5a094868ba4",
+    "bytes": 73621
+  },
+  "capacity_applicability": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v12-preparation/Root5CurrentControllerCapacityApplicability20260911.json",
+    "sha256": "c637bd6209146d0f5bd2b6ba1b6473309bf6d46b3ef58a5f890744c06a530a24",
+    "blob_sha": "654261c50e9cb472242554eaacdf761a74a70328",
+    "bytes": 8587
+  },
+  "runtime_function_repair": {
+    "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/root5-window6-forward12/Root5Window6ForwardCapacityRepair.sql",
+    "sha256": "064752cb33b7868b1509be0e6119a0d321ca12a2d98c499ff389d90198527d79",
+    "blob_sha": "dcbc691d75f887225d5cd29d37e1964891e09621",
+    "bytes": 3740,
+    "old_prosrc_sha256": {
+      "reserve_execution_budget": "5fdd415c8883f83aedc73c05384b96355c02bc5c6f5c2c0fdc97d8d4bb6e0695",
+      "reserve_gate": "b661e37eb22e8f54f1d28d83fb6dcf1e487bfc9c7cba1e767eae4d467282f1fa"
+    },
+    "new_prosrc_sha256": {
+      "reserve_execution_budget": "4e83ad5f263d707c958dc289db2e5c191694790580446799c7b28d34b6646d9e",
+      "reserve_gate": "47d1196ff8cea56fabfe87c8d5a83f48282ab20ddecc526bbf269d4bb931a603"
+    }
+  },
+  "continuation_constraints": {
+    "maximum_new_ga": 6,
+    "maximum_new_forward": 12,
+    "per_ga_seconds": 600,
+    "per_ga_evidence_bytes": 134217728,
+    "maximum_series_charged_seconds": 8706,
+    "evidence_cap": 1933159347,
+    "remaining_new_ga_max": 1,
+    "remaining_new_forward_max": 1,
+    "refund": false,
+    "automatic_retry": false,
+    "production": false,
+    "model_budget": 0,
+    "paid_budget": 0
+  },
+  "necessary_delta": [
+    "bind the approved original-input capacity supplement to the exact current controller",
+    "repair the controller source-publication manifest path",
+    "permit exactly one final nonrefundable allocation and one metadata binding forward"
+  ],
+  "authority_effect": "PREPARATION_ONLY_NO_BUDGET_NO_GA_NO_ENTRY_NO_PRODUCTION",
+  "SQL_executed": false
+}
