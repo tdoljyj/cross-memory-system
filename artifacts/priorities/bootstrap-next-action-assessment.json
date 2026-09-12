@@ -1,0 +1,30 @@
+{
+  "schema": "clued.multitrack-bootstrap-next-action-assessment/0.1",
+  "status": "INDETERMINATE_FAIL_CLOSED",
+  "authority_effect": "NONE",
+  "principal": "NOT_RESOLVED",
+  "binding": "NOT_RESOLVED",
+  "development_grant_scope": "NOT_RESOLVED",
+  "currentness": "UNKNOWN",
+  "priority_frontier": {
+    "engineering": ["E-001", "E-008"],
+    "product": ["P-006", "P-004"],
+    "research": ["R-002", "R-004", "R-005", "R-006"],
+    "business": ["B-002", "B-003"]
+  },
+  "eligible_side_effect_actions": [],
+  "safe_non_side_effect_actions": [
+    "READ_REPOSITORY_PROJECTION_WITHIN_EXISTING_GITHUB_ACCESS",
+    "PERFORM_READ_ONLY_ANALYSIS",
+    "REPORT_AUTHORITY_AND_CURRENTNESS_AS_UNRESOLVED"
+  ],
+  "reason_codes": [
+    "PRINCIPAL_NOT_RESOLVED",
+    "BINDING_NOT_RESOLVED",
+    "DEVELOPMENT_GRANT_NOT_RESOLVED",
+    "CURRENTNESS_UNKNOWN"
+  ],
+  "resolution_formula": "priority_frontier ∩ legal_item_state ∩ dependencies_satisfied ∩ resource_available ∩ development_grant_scope ∩ effective_resource_actions ∩ environment_match ∩ currentness_CURRENT",
+  "runtime_transition": "After an authorized test identity is automatically provisioned/connected, resolve Binding + Membership + Development Grant + effective Resource×Action + Currentness and recompute. Do not ask the user to manually infer or copy permission evidence.",
+  "interpretation": "A fresh Repository-only Agent can truthfully answer ZM25: no side-effect next action is legally established yet. The safe next action is read-only analysis or automatic runtime authority/currentness resolution when a test identity is available."
+}
