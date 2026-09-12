@@ -25,6 +25,11 @@ const NEW_DIR = 'scripts/phase2-qualification/control-context-verifier-root6-lin
 const sha = b => crypto.createHash('sha256').update(b).digest('hex');
 const NM_WIN = 'C:/Users/Windows/.codex/projects/codex-memory-system/apps/clued-cloud/node_modules/';
 
+// Gate: the controller's own internal digest pins must hold before its bytes are described.
+// A manifest over a controller that contradicts itself is worse than no manifest -- round 14 had
+// exactly that, the manifest listing one python digest while the code demanded another.
+execFileSync(process.execPath, [path.join(HERE, 'check-sibling-pins.mjs')], {stdio: 'inherit'});
+
 const prev = JSON.parse(fs.readFileSync(path.join(REPO, OLD_DIR, 'ControllerSourceManifest.candidate.json'), 'utf8'));
 const entry = (p, role) => {
   const abs = path.isAbsolute(p) ? p : path.join(REPO, p);
@@ -39,8 +44,18 @@ for (const f of prev.files.filter(f => f.role === 'REPOSITORY_SOURCE')) {
   if (p.endsWith('ControllerSourceManifest.candidate.json')) continue;
   repoSrc.push(entry(p, 'REPOSITORY_SOURCE'));
 }
-// The generator itself is a repository source of this controller.
-repoSrc.push(entry(NEW_DIR + '/build-linux-manifest.mjs', 'REPOSITORY_SOURCE'));
+// Every file in the controller directory is a repository source of this controller, enumerated
+// rather than carried over from the predecessor's list plus hand-added extras. That is how
+// check-sibling-pins.mjs -- a file the build gate itself depends on -- was missing from the first
+// 301-entry manifest: anything NEW in this directory fell outside a list built by remapping.
+const listed = new Set(repoSrc.map(f => f.path));
+for (const f of fs.readdirSync(path.join(REPO, NEW_DIR)).sort()) {
+  const p = NEW_DIR + '/' + f;
+  if (listed.has(p)) continue;
+  if (f === 'ControllerSourceManifest.candidate.json') continue;   // never lists itself
+  if (!fs.statSync(path.join(REPO, p)).isFile()) continue;
+  repoSrc.push(entry(p, 'REPOSITORY_SOURCE'));
+}
 
 // 2. Host binaries. Symlinks are resolved: what is pinned must be the bytes that execute.
 const bins = ['/opt/node22/bin/node', '/usr/bin/docker', '/usr/local/bin/gh', '/usr/bin/python3.11']
