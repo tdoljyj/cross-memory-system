@@ -28,7 +28,7 @@ const NM_WIN = 'C:/Users/Windows/.codex/projects/codex-memory-system/apps/clued-
 // Gate: the controller's own internal digest pins must hold before its bytes are described.
 // A manifest over a controller that contradicts itself is worse than no manifest -- round 14 had
 // exactly that, the manifest listing one python digest while the code demanded another.
-execFileSync(process.execPath, [path.join(HERE, 'check-sibling-pins.mjs')], {stdio: 'inherit'});
+execFileSync(process.execPath, [path.join(HERE, 'check-digest-pins.mjs')], {stdio: 'inherit'});
 
 const prev = JSON.parse(fs.readFileSync(path.join(REPO, OLD_DIR, 'ControllerSourceManifest.candidate.json'), 'utf8'));
 const entry = (p, role) => {
