@@ -29,12 +29,14 @@ Clued 当前采用四条长期治理轨道：
 - `docs/governance/priorities/currentness.md`：Currentness / Authority 对账；
 - `docs/governance/priorities/authority-currentness-contract.md`：Principal / Binding / Membership / Development Grant / Resource×Action / Currentness 的运行解析合同；
 - `docs/governance/priorities/runtime-capability-status.md`：Multi-Track Runtime 当前真实实现/缺失状态；
+- `docs/governance/priorities/runtime-test-identity-discovery.md`：最终 Runtime Gate 自动测试身份 Discovery；
 - `docs/governance/priorities/fresh-agent-recovery-contract.md`：fresh Agent 恢复合同；
 - `docs/governance/priorities/zero-memory-preflight.md`：fresh-context / zero-memory 结构预演；
 - `artifacts/priorities/current.json`：机器可读 Bootstrap Priority Snapshot；
 - `artifacts/priorities/source-registry.json`：机器可读 exact source registry；
 - `artifacts/priorities/bootstrap-context.json`：Track Goal、typed impact、并行/资源冲突与 Bootstrap 边界；
 - `artifacts/priorities/runtime-capability-status.json`：Reconciliation / Replan Runtime discovery state；
+- `artifacts/priorities/runtime-test-identity-discovery.json`：聚合只读的自动测试身份 Discovery；
 - `artifacts/priorities/authority-currentness-contract.json`：机器可读 Authority / Currentness resolver contract；
 - `artifacts/priorities/projection-watermark.json`：Repository Projection 自身 drift watermark；
 - `artifacts/priorities/bootstrap-currentness-assessment.json`：Priority Snapshot 的 fail-closed currentness assessment；
@@ -44,10 +46,12 @@ Clued 当前采用四条长期治理轨道：
 
 ```text
 ZERO_MEMORY_STRUCTURAL_SAFE_ANSWER_COVERAGE = 25 / 25 PASS
-ZERO_MEMORY_MULTI_AGENT_RUNTIME_GATE = NOT RUN / NOT ELIGIBLE TO CLAIM PASS
+ZERO_MEMORY_MULTI_AGENT_RUNTIME_GATE = BLOCKED_BY_AUTOMATED_TEST_IDENTITY_NOT_AVAILABLE
 ```
 
 这里的 `25/25` 只表示：标准恢复问题都有机器可读、不会越权的真实回答路径，包括 `UNKNOWN / NOT_IMPLEMENTED / FAIL_CLOSED`。它**不表示** Multi-Track Runtime、PriorityReconciliation Runtime、CurrentnessReceipt 或最终 ≥3 Agent Runtime Gate 已经通过。
+
+当前只读 Discovery 已确认：系统里存在 legacy Agent Binding / Authorization 数据，但没有可直接复用的完整 `test/non-production` 运行身份链。当前聚合事实为：`public.bindings=0`、`project_memberships_v13=0`、`development_spaces_v14=0`、`development_grants_v14=0`；现存 11 个 active Authorization 全部绑定 legacy `clued_agent_bindings`，Authorization Entry 聚合环境为 `canonical`。因此不能把旧 canonical 授权复用成最终 Multi-Agent Gate 的测试身份，也不会要求用户手工创建测试账号/Grant。
 
 `✅ COMPLETED` 表示**该 Priority Item 自身的完成合同成立**，不代表相关 Runtime、产品或生产能力已经全部实现。完成项不会从治理历史中消失。
 
