@@ -33,10 +33,39 @@ const NEW_DIGEST = '72d9eb92cf287ee6fda1fdbb97d90d02ed7f0e368398cba4ddb517233413
 // source_commit must contain the root6 directory, because verifySourcePublication requires every
 // declared source to be present in BOTH source_ref.tree and the owner merge tree. 4d33717 is the
 // second parent of the owner merge, so the required ancestor relation holds.
-const SOURCE_COMMIT = '4d33717914868051b119095004246343f9cc9164';
-const SOURCE_TREE = '16fa4d165d1285b02cbe9444e49dd826827dccbb';
-const OWNER_MERGE = '7ac27f343fb3a39e4fea07dcbd000b3e0d30e2fb';
+const SOURCE_COMMIT = '006283296d163a061fae9121f91243803cfcfc5b';
+const SOURCE_TREE = '9bbbdc9125dd213d0a74c45a1622324caa4eb521';
+const OWNER_MERGE = 'a573ca93e094bc9a4a8dccc23c1e165b6b368ff4';
 const FORWARD_CAP_FROM = 15, FORWARD_CAP_TO = 16;
+
+
+// Real predecessor values, transcribed from the v16 documents. Successor review found that 11 of
+// 19 setPath guards passed doc.<same path> as the expected value -- a tautology that can never
+// fire -- and that the three constants which actually went stale (source_commit, source_tree,
+// source_owner_merge) were all on the tautological side. These make the guard mean something.
+const PREDECESSOR_NOT_BEFORE = '2026-09-11T05:40:27.015Z';
+const PREDECESSOR_SOURCE_COMMIT = '46e1b0e412b0b8e016f67f27ebf2c6235822b1f3';
+const PREDECESSOR_SOURCE_TREE = '375b5726d574c69cc008e91b85be31825e61256c';
+const PREDECESSOR_SOURCE_FILES = 142;
+const PREDECESSOR_REF_COUNT = 131;
+const V16_REF_COUNT = 131;
+const PREDECESSOR_STATUS_SCHEMA = { uri: blobUri('3dd72dbd45d7d66691f5c391889cd0a90acc5c69'), sha256: '76bb79f7278905122474f86fe195cb803e3cb5185a4a50899403fa5567726ae0' };
+const PREDECESSOR_GRR_SCHEMA = { uri: blobUri('d3dcba7d9950d6f5f029512a162fbdb9f665884d'), sha256: '831b2f415d72a82adc1d8c3b5f5b4e286527712d5cb3293085249499193d20a1' };
+
+// source_ref is a 131-entry structure; comparing it whole would mean transcribing all of it.
+// Assert its identifying shape instead, which is what actually goes stale.
+function setPathShape(doc, label, dotted, expectedShape, next) {
+  const parts = dotted.split('.');
+  let node = doc;
+  for (const p of parts.slice(0, -1)) node = node?.[p];
+  const cur = node?.[parts.at(-1)];
+  if (cur?.commit !== expectedShape.commit || cur?.tree !== expectedShape.tree ||
+      cur?.blobs?.length !== expectedShape.refs)
+    throw Error('UNEXPECTED_PREDECESSOR_SOURCE_REF:' + label + ':' + dotted +
+      ':found commit=' + cur?.commit + ' tree=' + cur?.tree + ' refs=' + cur?.blobs?.length);
+  node[parts.at(-1)] = next;
+  changes.push({ document: label, path: dotted, from: expectedShape, to: { commit: next.commit, tree: next.tree, refs: next.blobs.length } });
+}
 
 const readJson = rel => JSON.parse(fs.readFileSync(path.join(REPO, rel), 'utf8'));
 const changes = [];
@@ -112,6 +141,20 @@ const { ref: sourceRef, repository_source_count } = buildSourceRef();
     const [mode, type, id] = meta.split(/\s+/);
     inTree.set(p, { mode, type, id });
   }
+  // SOURCE_COMMIT and OWNER_MERGE are checked too, not just SOURCE_TREE. Successor review found
+  // that guarding the tree alone lets a partial update through: bump SOURCE_TREE without
+  // SOURCE_COMMIT and the guard passes, then verifySourcePublication dies at
+  // ACTUAL_SOURCE_COMMIT_TREE inside the billed 600-second window.
+  const commitTree = execFileSync('git', ['rev-parse', SOURCE_COMMIT + '^{tree}'], { cwd: REPO, encoding: 'utf8' }).trim();
+  if (commitTree !== SOURCE_TREE)
+    throw Error('SOURCE_COMMIT_TREE_MISMATCH:' + SOURCE_COMMIT + ' has tree ' + commitTree + ', not ' + SOURCE_TREE);
+  const mergeParents = execFileSync('git', ['rev-list', '--parents', '-n', '1', OWNER_MERGE], { cwd: REPO, encoding: 'utf8' })
+    .trim().split(/\s+/).slice(1);
+  if (mergeParents.length !== 2)
+    throw Error('OWNER_MERGE_NOT_A_MERGE_COMMIT:' + OWNER_MERGE + ' has ' + mergeParents.length + ' parents');
+  if (!mergeParents.includes(SOURCE_COMMIT))
+    throw Error('SOURCE_COMMIT_NOT_A_PARENT_OF_OWNER_MERGE:' + SOURCE_COMMIT + ' vs ' + mergeParents.join(','));
+
   const manifestRel = CONTROLLER_REL + '/ControllerSourceManifest.candidate.json';
   const manifestBytes = fs.readFileSync(path.join(REPO, manifestRel));
   const entry = inTree.get(manifestRel);
@@ -157,14 +200,14 @@ const DELTA =
   setPath(doc, L, 'controller_digest', OLD_DIGEST, NEW_DIGEST);
   setPath(doc, L, 'root_generation', ROOT5_GENERATION, ROOT6_GENERATION);
   setPath(doc, L, 'authority_basis.root_generation', ROOT5_GENERATION, ROOT6_GENERATION);
-  setPath(doc, L, 'not_before', doc.not_before, NOT_BEFORE);
+  setPath(doc, L, 'not_before', PREDECESSOR_NOT_BEFORE, NOT_BEFORE);
   setPath(doc, L, 'expires_at', OLD_WINDOW, EXPIRES_AT);
-  setPath(doc, L, 'source_ref', doc.source_ref, sourceRef);
-  setPath(doc, L, 'source_commit', doc.source_commit, SOURCE_COMMIT);
-  setPath(doc, L, 'source_tree', doc.source_tree, SOURCE_TREE);
-  setPath(doc, L, 'source_owner_merge', doc.source_owner_merge, OWNER_MERGE);
-  setPath(doc, L, 'actual_repository_source_files', doc.actual_repository_source_files, repository_source_count);
-  setPath(doc, L, 'ordered_source_ref_count', doc.ordered_source_ref_count, sourceRef.blobs.length);
+  setPathShape(doc, L, 'source_ref', {commit: PREDECESSOR_SOURCE_COMMIT, tree: PREDECESSOR_SOURCE_TREE, refs: V16_REF_COUNT}, sourceRef);
+  setPath(doc, L, 'source_commit', PREDECESSOR_SOURCE_COMMIT, SOURCE_COMMIT);
+  setPath(doc, L, 'source_tree', PREDECESSOR_SOURCE_TREE, SOURCE_TREE);
+  setPath(doc, L, 'source_owner_merge', PREDECESSOR_SOURCE_COMMIT, OWNER_MERGE);
+  setPath(doc, L, 'actual_repository_source_files', PREDECESSOR_SOURCE_FILES, repository_source_count);
+  setPath(doc, L, 'ordered_source_ref_count', PREDECESSOR_REF_COUNT, sourceRef.blobs.length);
 
   // window5_continuation_constraints is left exactly as it is: it records what window 5 was.
   // Root6 is recorded beside it.
@@ -214,18 +257,18 @@ const DELTA =
   };
 
   setPath(doc, L, 'controller_digest', OLD_DIGEST, NEW_DIGEST);
-  setPath(doc, L, 'not_before', doc.not_before, NOT_BEFORE);
+  setPath(doc, L, 'not_before', PREDECESSOR_NOT_BEFORE, NOT_BEFORE);
   setPath(doc, L, 'expires_at', OLD_WINDOW, EXPIRES_AT);
   setPath(doc, L, 'accepted_subject.expected_ga.control_trust_root_generation', ROOT5_GENERATION, ROOT6_GENERATION);
   setPath(doc, L, 'accepted_subject.expected_ga.controller_digest', OLD_DIGEST, NEW_DIGEST);
-  setPath(doc, L, 'accepted_subject.expected_ga.source_ref', doc.accepted_subject.expected_ga.source_ref, sourceRef);
+  setPathShape(doc, L, 'accepted_subject.expected_ga.source_ref', {commit: PREDECESSOR_SOURCE_COMMIT, tree: PREDECESSOR_SOURCE_TREE, refs: V16_REF_COUNT}, sourceRef);
 
   // Both schemas are compiled and executed by the controller, and both now const the root6
   // generation, so the accepted refs must point at the merged root6 blobs.
   setPath(doc, L, 'accepted_subject.control_schema_refs.StatusManifest',
-    doc.accepted_subject.control_schema_refs.StatusManifest, controller('status-manifest.root5.schema.json'));
+    PREDECESSOR_STATUS_SCHEMA, controller('status-manifest.root5.schema.json'));
   setPath(doc, L, 'accepted_subject.control_schema_refs.GateResultReceipt',
-    doc.accepted_subject.control_schema_refs.GateResultReceipt, controller('gate-result-receipt.root5.schema.json'));
+    PREDECESSOR_GRR_SCHEMA, controller('gate-result-receipt.root5.schema.json'));
 
   // window5/7/8/9 continuation evidence is historical and untouched. Root6 is added beside it.
   doc.window10_continuation_evidence = {
