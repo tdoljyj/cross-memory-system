@@ -112,6 +112,20 @@ const { ref: sourceRef, repository_source_count } = buildSourceRef();
     const [mode, type, id] = meta.split(/\s+/);
     inTree.set(p, { mode, type, id });
   }
+  // SOURCE_COMMIT and OWNER_MERGE are checked too, not just SOURCE_TREE. Successor review found
+  // that guarding the tree alone lets a partial update through: bump SOURCE_TREE without
+  // SOURCE_COMMIT and the guard passes, then verifySourcePublication dies at
+  // ACTUAL_SOURCE_COMMIT_TREE inside the billed 600-second window.
+  const commitTree = execFileSync('git', ['rev-parse', SOURCE_COMMIT + '^{tree}'], { cwd: REPO, encoding: 'utf8' }).trim();
+  if (commitTree !== SOURCE_TREE)
+    throw Error('SOURCE_COMMIT_TREE_MISMATCH:' + SOURCE_COMMIT + ' has tree ' + commitTree + ', not ' + SOURCE_TREE);
+  const mergeParents = execFileSync('git', ['rev-list', '--parents', '-n', '1', OWNER_MERGE], { cwd: REPO, encoding: 'utf8' })
+    .trim().split(/\s+/).slice(1);
+  if (mergeParents.length !== 2)
+    throw Error('OWNER_MERGE_NOT_A_MERGE_COMMIT:' + OWNER_MERGE + ' has ' + mergeParents.length + ' parents');
+  if (!mergeParents.includes(SOURCE_COMMIT))
+    throw Error('SOURCE_COMMIT_NOT_A_PARENT_OF_OWNER_MERGE:' + SOURCE_COMMIT + ' vs ' + mergeParents.join(','));
+
   const manifestRel = CONTROLLER_REL + '/ControllerSourceManifest.candidate.json';
   const manifestBytes = fs.readFileSync(path.join(REPO, manifestRel));
   const entry = inTree.get(manifestRel);
