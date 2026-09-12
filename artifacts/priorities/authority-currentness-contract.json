@@ -1,0 +1,96 @@
+{
+  "schema": "clued.multitrack-authority-currentness-contract/0.1",
+  "status": "BOOTSTRAP_CONTRACT_CANDIDATE_NOT_AUTHORITY",
+  "authority_effect": "NONE",
+  "repository_grants_authority": false,
+  "runtime_resolvers": {
+    "binding": {
+      "function": "public.clued_resolve_binding",
+      "args": ["p_token_hash:text", "p_required_scope:text"],
+      "result": ["binding_id:uuid", "user_id:uuid", "scopes:text[]"]
+    },
+    "authorization_status": {
+      "function": "public.clued_authorization_status_v12",
+      "args": ["p_token_hash:text"],
+      "result": "jsonb"
+    },
+    "project_access": {
+      "function": "public.clued_project_access_v13",
+      "args": ["p_input:jsonb"],
+      "result": "jsonb"
+    },
+    "effective_actions": {
+      "function": "clued_private.authorization_effective_actions_v13",
+      "args": ["p_binding:uuid", "p_kind:text", "p_id:text", "p_environment:text"],
+      "result": "text[]"
+    },
+    "membership": {
+      "table": "clued_private.project_memberships_v13",
+      "key_fields": ["project_id", "subject_id", "environment"],
+      "state_fields": ["actions", "expires_at", "revoked_at", "version"]
+    }
+  },
+  "resolution_order": [
+    "AUTHENTICATE_RUNTIME_PRINCIPAL",
+    "RESOLVE_BINDING",
+    "RESOLVE_AUTHORIZATION_STATUS",
+    "RESOLVE_PROJECT_MEMBERSHIP_ACCESS",
+    "RESOLVE_EFFECTIVE_RESOURCE_ACTIONS",
+    "FILTER_TRACK_VISIBILITY",
+    "VERIFY_SCOPE_SPECIFIC_CURRENTNESS",
+    "COMPUTE_ELIGIBLE_NEXT_ACTION"
+  ],
+  "execution_authority_equation": "requested_actions ∩ binding_scopes ∩ membership/group_permission ∩ effective_authorization_entries ∩ environment ∩ policy/gate ∩ currentness",
+  "repository_only_default": {
+    "principal": "NOT_RESOLVED",
+    "runtime_authority": "NOT_ESTABLISHED",
+    "side_effect_authority_inferable_from_repository": false,
+    "eligible_side_effect_actions": []
+  },
+  "currentness": {
+    "model": "DEPENDENCY_MANIFEST_PLUS_SCOPE_SPECIFIC_WATERMARKS",
+    "single_global_counter_forbidden": true,
+    "known_watermark_domains": [
+      "canonical_audit_receipt.canonical_version",
+      "context_head.version",
+      "repository_memory_snapshot.canonical_version",
+      "priority_snapshot.identity"
+    ],
+    "unknown_policy": "FAIL_CLOSED_FOR_HIGH_RISK_ACTIONS"
+  },
+  "observed_readonly_schema_validation": {
+    "project": "clued-prod",
+    "development_events_v14_has_rows": false,
+    "development_receipts_v14_has_rows": false,
+    "clued_audit_receipts_max_canonical_version_observed": 356,
+    "clued_context_heads_max_version_observed": 101,
+    "interpretation": "Observations validate that multiple version domains exist. They are not a CurrentnessReceipt and must be refreshed at runtime."
+  },
+  "eligible_next_action_requires": [
+    "priority_frontier",
+    "legal_item_state",
+    "dependencies_satisfied",
+    "resource_available",
+    "assignment_scope",
+    "effective_resource_actions",
+    "environment_match",
+    "currentness_CURRENT"
+  ],
+  "fail_closed_reason_codes": [
+    "PRINCIPAL_NOT_RESOLVED",
+    "BINDING_INVALID_OR_UNKNOWN",
+    "AUTHORIZATION_UNKNOWN_OR_REVOKED",
+    "MEMBERSHIP_INVALID_OR_UNKNOWN",
+    "ACTION_NOT_GRANTED",
+    "ENVIRONMENT_MISMATCH",
+    "CURRENTNESS_UNKNOWN",
+    "SNAPSHOT_STALE",
+    "DEPENDENCY_UNSATISFIED",
+    "RESOURCE_CONFLICT"
+  ],
+  "secret_hygiene": {
+    "store_token_hash_in_repository": false,
+    "store_runtime_credential_in_repository": false,
+    "store_secret_in_repository": false
+  }
+}
