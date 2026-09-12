@@ -90,8 +90,52 @@ compact 在库内重建同一字符串并以该摘要为准入条件。107 KB �
 
 ---
 
+## 五、生成器已编写，并以第 19 次为锚通过回放（第四节的更新）
+
+`work/twentieth-forward/twentieth-forward-compact.mjs` 以**实际执行过的** compact 为模板，
+只替换 23 处第 19 次专属字面量，每处钉住出现次数；未列出的每一个子句与执行过的那份逐字节相同。
+
+**回放自检**：喂入第 19 次自己的记录入参，产出必须与
+`ActualNineteenthForward.executed-compact.sql` **逐字节相同**——已通过，
+sha256 `23cab1118cc5c707…`，23,083 字节。回放把每处替换都变成恒等替换，
+任何一处导出方式有偏差都会以字节不等暴露出来。它确实暴露了两处：
+
+- 第 69 行那 729 字节的 `new_binding` JSON 同时是第 51 行 `request_body` 的子串，
+  裸匹配在回放里计数为 2。改为带上下文锚定。
+- `String.replaceAll` 以字符串作替换值时把 `$$` 解释为字面 `$`，`end $$;` 变成了 `end $;`
+  ——**一个字节**，只有回放抓得到。原 `buildForward` 与 `buildExactGetter` 都用函数替换器
+  `() => value` 防的正是这个，我漏了。已改。
+
+写生成器之前先验证了三件事，都成立：compact 的 `v_norm` 摘要可由记录的
+`pg_get_functiondef` 捕获推出；**归一化可往返**（第 18 次的离线 getter 摘要等于活库归一化值，
+故第 20 次的 `v_norm` 摘要可预知为 `f97d8585…`）；compact 里手写的片段与
+`sqlEscape(buildExactGetter 片段)` 逐字节相同（5572 → 5630 字节，差的 58 个是转义引号）。
+
+**`--dry-run`**：整个事务是 `begin;` 与 `commit;` 之间的一个 `do` 块，把结尾的 `commit;`
+换成 `rollback;` 即得到一次**完整**排练——所有守卫、库内重建、摘要准入、`execute`、
+事件插入、序列 CAS、全表回读全部执行，然后一个都不留。
+Postgres 的 `CREATE OR REPLACE FUNCTION` 是事务性的，该事务也不消耗任何 sequence。
+这比第四节要求的「仅含守卫的空跑」更强。
+
+## 六、第六份材料缺件：Status24 的签署主体受理
+
+第 19 次前推的六份 `source_materials` 里，`independent_acceptance` 是
+`bootstrap/root5-final-runtime-v16/Status23Acceptance.json`，
+state `ACCEPTED_EXACT_STATUS23_SIGNING_SUBJECT_NOT_STORED`，钉住
+`status_manifest_id sm_78056a94…`——**评估者对 Status23 签署主体的受理，在 Status23 入库之前签发**。
+
+第 20 次前推对应地需要 **Status24 签署主体受理**。它不存在。
+`bootstrap/root6-runtime-v17/` 只有资格与运行时受理两份。
+
+它必须：由继任评估者签发；引用重签后的运行时受理；有一次 Owner 合并（前推的
+`source_acceptance_refs.independent_acceptance.publication.commitSha` 要指向它）。
+它不依赖 NW-01，所以**可以并入第三次 Owner 合并**（补遗 B 第 12 步，与注册体同批），
+不需要第四次合并——但它**尚未编写**，且不能由实施方编写。
+
+生成器对这份材料不做任何假设：给什么就钉什么。**缺它，第 20 次前推的入参就凑不齐。**
+
 ## 边界
 
 未写库、未注册代际、未消耗那唯一一次分配、控制器自 `a573ca9` 起零改动。
 本文件更正补遗 B 的一步，不接受任何对象、不签发任何资格、不构成授权。
-第四节所述的生成器**尚未编写**。
+第五节的生成器已编写并通过回放；第六节的材料**尚缺**。
