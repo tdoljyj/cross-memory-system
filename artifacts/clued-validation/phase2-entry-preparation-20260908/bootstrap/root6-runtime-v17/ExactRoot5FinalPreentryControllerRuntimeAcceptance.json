@@ -1143,16 +1143,6 @@
       "repairs": [
         {
           "ref": {
-            "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/36dd6b8fe0acf7963a6dd4d58d7d0d5773b3257c",
-            "sha256": "54f91f1964e3d3ad250365f9ba9479444638e4b890ce577ed6e4e06532e8ac17"
-          },
-          "publication": {
-            "commitSha": "274de5f56fa7bd0c4bcf178df1c49c3ff9b7b8e6",
-            "artifactPath": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/EnvOriginal043CapacityRepairAcceptance20260910.json"
-          }
-        },
-        {
-          "ref": {
             "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/6cc3fd7bf7c1a05a2c853cd325a248a132b90200",
             "sha256": "bf49bafa0636f1a89bfaf496598d7f27b162bc1dfd2f4ba22d2218ccbef43b88"
           },
@@ -1197,18 +1187,8 @@
             "sha256": "458ff0e2f8c96e085954f01d384251387e60bfc22f0ff210ac0b23bc5b7f88d9"
           },
           "publication": {
-            "commitSha": "58aff4daa91b4d23ae8546ec051080746f16c44c",
+            "commitSha": "ad3d589c03ded47110eaecbb47c48ff90600acdc",
             "artifactPath": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v15-preparation/ExpiredV14InputCapacityRepairAcceptance20260911.json"
-          }
-        },
-        {
-          "ref": {
-            "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/03567e101cc83598ea02f014461c633f24ebe9b7",
-            "sha256": "5911567d4e4aeb74b76664614746a856704ab588c9dcc98f0655d7b85eb79153"
-          },
-          "publication": {
-            "commitSha": "46e1b0e412b0b8e016f67f27ebf2c6235822b1f3",
-            "artifactPath": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v16-source-completeness/Current043CapacityRepairApplicability20260911.json"
           }
         },
         {

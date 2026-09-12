@@ -316,12 +316,55 @@ const DELTA =
   setPath(doc, L, 'accepted_subject.capacity_materials.applicability',
     doc.accepted_subject.capacity_materials.applicability, descriptor(APPLICABILITY));
 
-  // The 043 repair is appended, not substituted. repairAccepted uses .some(), so the predecessor
-  // entry simply stops matching while remaining in the record.
+  // ---- repairs: drop two dead 043 entries, append the live one, repair one publication ----
+  // context.mjs:237 caps this list at qualificationLimits.allocations, which is 9. An earlier draft
+  // here appended without checking that cap and produced 10, which fails on the FIRST step of every
+  // operation including the RESULT_RECONCILIATION used to close a reserved budget. Found by the
+  // successor reviewer (R4-F1); introduced by this session.
   const repairs = doc.accepted_subject.bounded_series_materials.repairs;
   const before = repairs.length;
+
+  // Three entries claim ga_04377008. Only one can satisfy isApprovedCapacityRepair under the root6
+  // capacity binding -- the two older ones pin superseded approval/applicability refs and can never
+  // match again. They are dead weight, not backups. Removed by sha256, never by index: the removal
+  // itself shifts every later index, which is exactly how the publication fix below would be
+  // applied to the wrong entry.
+  const dead043Paths = [
+    'EnvOriginal043CapacityRepairAcceptance20260910.json',
+    'Current043CapacityRepairApplicability20260911.json',
+  ];
+  const removed = [];
+  for (let i = repairs.length - 1; i >= 0; i--) {
+    if (dead043Paths.some(n => repairs[i].publication?.artifactPath?.endsWith(n))) {
+      removed.push(repairs[i].publication.artifactPath);
+      repairs.splice(i, 1);
+    }
+  }
+  if (removed.length !== 2) throw Error('EXPECTED_TWO_DEAD_043_ENTRIES:found=' + removed.length);
+
   repairs.push(descriptor(REPAIR_043));
-  changes.push({ document: L, path: 'bounded_series_materials.repairs', appended: REPAIR_043.path, from_count: before, to_count: repairs.length });
+  if (repairs.length > 9) throw Error('REPAIRS_EXCEED_ALLOCATIONS_CAP:' + repairs.length);
+
+  // repairs[5] in the predecessor carried publication 58aff4da, a SINGLE-PARENT commit authored and
+  // committed by Codex@Windows. verifyOwnerMergeArtifact requires two parents, a web-flow committer
+  // and a valid signature, so it could never have passed. Inherited from v16 and carried here by
+  // wholesale copy, never triggered because nothing reached that check. The ref is correct and is
+  // not touched; only the pointer moves, to an Owner merge that already contains the same blob at
+  // the same path. Located by sha256 because the removals above renumber the list.
+  const BAD_PUBLICATION_COMMIT = '58aff4daa91b4d23ae8546ec051080746f16c44c';
+  const REPLACEMENT_MERGE = 'ad3d589c03ded47110eaecbb47c48ff90600acdc';
+  const repointed = [];
+  for (const e of repairs) {
+    if (e.publication?.commitSha === BAD_PUBLICATION_COMMIT) {
+      e.publication = { commitSha: REPLACEMENT_MERGE, artifactPath: e.publication.artifactPath };
+      repointed.push(e.publication.artifactPath);
+    }
+  }
+  if (repointed.length !== 1) throw Error('EXPECTED_ONE_SINGLE_PARENT_PUBLICATION:found=' + repointed.length);
+
+  changes.push({ document: L, path: 'bounded_series_materials.repairs',
+    removed_dead_043: removed, appended: REPAIR_043.path, repointed_publication: repointed,
+    from_count: before, to_count: repairs.length });
 
   // Stated so no downstream reader mistakes the forward cap for independently reviewed.
   doc.forward_cap_not_covered_by_independent_review = {
