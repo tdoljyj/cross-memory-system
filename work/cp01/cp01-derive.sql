@@ -13,8 +13,15 @@
 --   post_prosrc_sha     the value to pin into cp01-apply.candidate.sql
 --   pre/post_prosrc_len length delta is a second, independent witness
 --
--- The broken root digest guard (reserve_gate:35, reserve_execution_budget:40) is NOT touched.
--- See work/cp01/cp01-substitutions.json -> deliberately_not_edited, slot R10_PENDING.
+-- The already-broken root digest guard (reserve_gate:35, reserve_execution_budget:40) IS in this
+-- table, as edits G8/B9, in the shape Round 10 adjudicated (option (e)).
+--
+-- CAUTION: the substitution table still carries unresolved placeholders
+--   G8: __PROJECTED_ROOT6_ROOT_DIGEST_PENDING__
+--   B9: __PROJECTED_ROOT6_ROOT_DIGEST_PENDING__
+-- so the post_prosrc_sha this query returns describes text that still contains them.
+-- It is NOT the value to pin. Resolve the placeholders first
+-- (work/cp01/derive-projected-root-digest.sql, after NW-01), then re-run this.
 
 with recursive f0_subs(i, id, want, f, t) as (values
     (1, 'G1', 1, $cp01lit$series_view->'root'->>'generation_id' is distinct from 'ctrgen_e5df432221344996afc04b5638121d96'$cp01lit$,
@@ -48,7 +55,15 @@ with recursive f0_subs(i, id, want, f, t) as (values
   or ((series_a->>'budget_sequence')::bigint >= 64 and (series_a->>'budget_sequence')::bigint < 89 and
       series_receipt->>'control_trust_root_generation' is distinct from 'ctrgen_e5df432221344996afc04b5638121d96')$cp01lit$),
     (7, 'G7', 1, $cp01lit$  or clock_timestamp()+interval '600 seconds'>='2026-09-12T13:14:51Z'::timestamptz$cp01lit$,
-        $cp01lit$  or clock_timestamp()+interval '600 seconds'>='2026-09-19T00:00:00Z'::timestamptz$cp01lit$)
+        $cp01lit$  or clock_timestamp()+interval '600 seconds'>='2026-09-19T00:00:00Z'::timestamptz$cp01lit$),
+    (8, 'G8', 1, $cp01lit$ if encode(sha256(convert_to((series_view->'root')::text,'UTF8')),'hex') is distinct from '4ddd23b52ba396909640c7bdbc60217b0f34a840d5e950901b20e4b3c17502a0'
+ then raise exception 'series_full_original_root_changed'; end if;$cp01lit$,
+        $cp01lit$ if encode(sha256(convert_to((select jsonb_agg(e order by (e->>'sequence')::bigint) from jsonb_array_elements(series_view->'root'->'events') e where (e->>'sequence')::bigint<=5)::text,'UTF8')),'hex') is distinct from '45c6a2cbaf33bb27f6b4c136440d71d767943acfa9772867e219627759ca5bbc'
+ then raise exception 'series_full_original_root_changed'; end if;
+ if jsonb_array_length(series_view->'root'->'events') is distinct from 6
+ then raise exception 'series_full_original_root_changed'; end if;
+ if encode(sha256(convert_to(((series_view->'root' - 'events') || jsonb_build_object('registration_event',(select e - 'recorded_at' from jsonb_array_elements(series_view->'root'->'events') e where (e->>'sequence')::bigint=6)))::text,'UTF8')),'hex') is distinct from '__PROJECTED_ROOT6_ROOT_DIGEST_PENDING__'
+ then raise exception 'series_full_original_root_changed'; end if;$cp01lit$)
 ),
 f0_base as (
   select p.prosrc as s, pg_get_functiondef(p.oid) as d
@@ -99,7 +114,15 @@ f1_subs(i, id, want, f, t) as (values
     (7, 'B7', 1, $cp01lit$  or clock_timestamp()+interval '600 seconds'>='2026-09-12T13:14:51Z'::timestamptz$cp01lit$,
         $cp01lit$  or clock_timestamp()+interval '600 seconds'>='2026-09-19T00:00:00Z'::timestamptz$cp01lit$),
     (8, 'B8', 1, $cp01lit$if v->>'expires_at' is distinct from '2026-09-12T13:14:51Z' then raise exception 'series_exact_new_budget_expiry_required'; end if;$cp01lit$,
-        $cp01lit$if v->>'expires_at' is distinct from '2026-09-19T00:00:00Z' then raise exception 'series_exact_new_budget_expiry_required'; end if;$cp01lit$)
+        $cp01lit$if v->>'expires_at' is distinct from '2026-09-19T00:00:00Z' then raise exception 'series_exact_new_budget_expiry_required'; end if;$cp01lit$),
+    (9, 'B9', 1, $cp01lit$ if encode(sha256(convert_to((series_view->'root')::text,'UTF8')),'hex') is distinct from '4ddd23b52ba396909640c7bdbc60217b0f34a840d5e950901b20e4b3c17502a0'
+ then raise exception 'series_full_original_root_changed'; end if;$cp01lit$,
+        $cp01lit$ if encode(sha256(convert_to((select jsonb_agg(e order by (e->>'sequence')::bigint) from jsonb_array_elements(series_view->'root'->'events') e where (e->>'sequence')::bigint<=5)::text,'UTF8')),'hex') is distinct from '45c6a2cbaf33bb27f6b4c136440d71d767943acfa9772867e219627759ca5bbc'
+ then raise exception 'series_full_original_root_changed'; end if;
+ if jsonb_array_length(series_view->'root'->'events') is distinct from 6
+ then raise exception 'series_full_original_root_changed'; end if;
+ if encode(sha256(convert_to(((series_view->'root' - 'events') || jsonb_build_object('registration_event',(select e - 'recorded_at' from jsonb_array_elements(series_view->'root'->'events') e where (e->>'sequence')::bigint=6)))::text,'UTF8')),'hex') is distinct from '__PROJECTED_ROOT6_ROOT_DIGEST_PENDING__'
+ then raise exception 'series_full_original_root_changed'; end if;$cp01lit$)
 ),
 f1_base as (
   select p.prosrc as s, pg_get_functiondef(p.oid) as d
@@ -146,28 +169,28 @@ select
   'clued_control.reserve_gate(text,text)' as function,
   (select encode(sha256(convert_to(s, 'UTF8')), 'hex') from f0_base) = 'a011292416693ef7e44221868669937261c33848a3ff10882d0f4abd97c9ef2e' as pre_matches,
   (select bool_and(cnt = want and cnt = dcnt) from f0_fold where i > 0) as all_counts_ok,
-  (select count(*) from f0_fold where i > 0) = 7 as all_steps_ran,
+  (select count(*) from f0_fold where i > 0) = 8 as all_steps_ran,
   (select jsonb_agg(jsonb_build_object('id', id, 'found', cnt, 'expected', want,
                                        'def_agrees', cnt = dcnt) order by i)
      from f0_fold where i > 0) as steps,
   (select length(s) from f0_base) as pre_len,
   length(s) as post_len,
   encode(sha256(convert_to(s, 'UTF8')), 'hex') as post_prosrc_sha
-from f0_fold where i = 7
+from f0_fold where i = 8
 union all
 select
   2 as ord,
   'clued_control.reserve_execution_budget(text,text)' as function,
   (select encode(sha256(convert_to(s, 'UTF8')), 'hex') from f1_base) = 'df6087f9d19d99f023a9c789f0c9b34140e92bb82fc00a5dde1d69d9b1aa7d41' as pre_matches,
   (select bool_and(cnt = want and cnt = dcnt) from f1_fold where i > 0) as all_counts_ok,
-  (select count(*) from f1_fold where i > 0) = 8 as all_steps_ran,
+  (select count(*) from f1_fold where i > 0) = 9 as all_steps_ran,
   (select jsonb_agg(jsonb_build_object('id', id, 'found', cnt, 'expected', want,
                                        'def_agrees', cnt = dcnt) order by i)
      from f1_fold where i > 0) as steps,
   (select length(s) from f1_base) as pre_len,
   length(s) as post_len,
   encode(sha256(convert_to(s, 'UTF8')), 'hex') as post_prosrc_sha
-from f1_fold where i = 8
+from f1_fold where i = 9
 union all
 select
   3 as ord,

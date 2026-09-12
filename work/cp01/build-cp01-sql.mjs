@@ -33,6 +33,15 @@ const PERMITTED = [
   'SUPERSEDED_WINDOW_LITERALS_TO_THIS_WINDOW_MATERIALIZED_TIMESTAMPS',
   'STATUS_MANIFEST_SCHEMA_DIGEST_TO_DIGEST_CARRIED_BY_THIS_RUN_CONTROLLER_INCLUDING_ALLOW_LIST',
   'BINDING_FORWARD_CAP_SERIES_F_15_TO_16',
+  // Added by the Round 10 adjudication (SuccessorReviewerRound10.md section 8, option (e)).
+  // This one is NOT yet in the Owner approval candidate's cp01.permitted_edit_classes: the
+  // reviewer's R10-C9 supplies the wording and the Owner has to grant it, including an explicit
+  // carve-out from cp01.prohibited -> REMOVING_ORIGINAL_BYTES_CHECKS. Until that lands, this
+  // generator emits a DRAFT.
+  'FULL_ROOT_OBJECT_DIGEST_REPINNED_TO_THIS_WINDOW_WITH_REGISTRATION_EVENT_RECORDED_AT_EXCLUDED',
+];
+const NOT_YET_AUTHORISED = [
+  'FULL_ROOT_OBJECT_DIGEST_REPINNED_TO_THIS_WINDOW_WITH_REGISTRATION_EVENT_RECORDED_AT_EXCLUDED',
 ];
 
 const TABLES = ['accepted_binding','control_objects','current_head','events',
@@ -63,9 +72,17 @@ for (const fn of table.functions) {
 }
 if (total !== table.totals.edits_in_this_table)
   fail(`table declares ${table.totals.edits_in_this_table} edits, found ${total}`);
-if (total !== 19)
-  fail(`expected 19 edits (ControlPlaneChangeScope.md section 7); found ${total}. If round 10 put the ` +
-       `broken root digest guard inside CP-01, update this number deliberately, not incidentally.`);
+if (total !== 21)
+  fail(`expected 21 edits (19 from ControlPlaneChangeScope.md section 7, plus G8/B9 from the ` +
+       `Round 10 adjudication); found ${total}. Change this number deliberately, not incidentally.`);
+
+// Anything still carrying a __PLACEHOLDER__ makes the transaction a draft, not a runnable file.
+const placeholders = [];
+const unauthorised = [];
+for (const fn of table.functions) for (const e of fn.edits) {
+  for (const m of e.to.match(/__[A-Z0-9_]+__/g) || []) placeholders.push(`${e.id}: ${m}`);
+  if (NOT_YET_AUTHORISED.includes(e.edit_class)) unauthorised.push(`${e.id}: ${e.edit_class}`);
+}
 
 // Dollar-quote a literal. Every substitution in this file uses a function replacer, because a
 // string replacement reads `$$` and `$&` in the replacement as backreferences.
@@ -99,8 +116,16 @@ let derive = banner('CP-01 read-only derivation. Performs no write of any kind.'
 --   post_prosrc_sha     the value to pin into cp01-apply.candidate.sql
 --   pre/post_prosrc_len length delta is a second, independent witness
 --
--- The broken root digest guard (reserve_gate:35, reserve_execution_budget:40) is NOT touched.
--- See work/cp01/cp01-substitutions.json -> deliberately_not_edited, slot R10_PENDING.
+-- The already-broken root digest guard (reserve_gate:35, reserve_execution_budget:40) IS in this
+-- table, as edits G8/B9, in the shape Round 10 adjudicated (option (e)).
+`;
+
+if (placeholders.length) derive += `--
+-- CAUTION: the substitution table still carries unresolved placeholders
+${placeholders.map(x => `--   ${x}`).join('\n')}
+-- so the post_prosrc_sha this query returns describes text that still contains them.
+-- It is NOT the value to pin. Resolve the placeholders first
+-- (work/cp01/derive-projected-root-digest.sql, after NW-01), then re-run this.
 `;
 
 // One statement, three functions. A single WITH RECURSIVE clause may hold several CTEs, so the
@@ -155,8 +180,20 @@ order by ord;
 
 const pinned = table.postimage_prosrc_sha256 || {};
 const missing = table.functions.filter(f => !/^[0-9a-f]{64}$/.test(pinned[f.function] || ''));
+const draft = placeholders.length > 0 || unauthorised.length > 0 || missing.length > 0;
 
-let apply = banner('CP-01 candidate transaction. NOT YET AUTHORISED TO RUN.') +
+let apply = banner(draft
+  ? 'CP-01 DRAFT transaction. MUST NOT BE RUN. See the blocking list immediately below.'
+  : 'CP-01 candidate transaction. NOT YET AUTHORISED TO RUN.') +
+(draft ? `--
+-- ${'!'.repeat(84)}
+-- THIS FILE IS A DRAFT AND MUST NOT BE EXECUTED. Blocking:
+${placeholders.map(x => `--   unresolved placeholder   ${x}`).join('\n') || '--   (no unresolved placeholders)'}
+${unauthorised.map(x => `--   edit class not yet granted by the Owner   ${x}`).join('\n') || '--   (all edit classes granted)'}
+${missing.map(f => `--   post-image digest unpinned   ${f.function}`).join('\n') || '--   (all post-image digests pinned)'}
+-- ${'!'.repeat(84)}
+--
+` : '') +
 `--
 -- Preconditions, none of which this file can check for you:
 --   1. Owner has merged ExplicitOwnerApproval, including the cp01 clause, on main.
@@ -299,13 +336,16 @@ if (derive.includes('$' + DOTAG + '$')) fail(`the read-only derivation must not 
 fs.writeFileSync(path.join(HERE, 'cp01-derive.sql'), derive);
 fs.writeFileSync(path.join(HERE, 'cp01-apply.candidate.sql'), apply);
 
-console.log(`19 edits validated across ${table.functions.length} functions:`);
+console.log(`${total} edits validated across ${table.functions.length} functions:`);
 for (const fn of table.functions) console.log(`  ${fn.function.padEnd(52)} ${fn.edits.length}`);
 console.log(`\nwrote cp01-derive.sql            ${fs.statSync(path.join(HERE, 'cp01-derive.sql')).size} bytes`);
 console.log(`wrote cp01-apply.candidate.sql   ${fs.statSync(path.join(HERE, 'cp01-apply.candidate.sql')).size} bytes`);
-if (missing.length) {
-  console.log(`\nNOT RUNNABLE YET. Post-image digests are unpinned for:`);
-  for (const f of missing) console.log(`  ${f.function}`);
-  console.log(`Run cp01-derive.sql read-only, put its post_prosrc_sha values into`);
-  console.log(`cp01-substitutions.json -> postimage_prosrc_sha256, and regenerate.`);
+if (draft) {
+  console.log(`\nEMITTED AS A DRAFT. Blocking:`);
+  for (const x of placeholders) console.log(`  unresolved placeholder                    ${x}`);
+  for (const x of unauthorised) console.log(`  edit class not yet granted by the Owner   ${x}`);
+  for (const f of missing)     console.log(`  post-image digest unpinned                ${f.function}`);
+  console.log(`\nOrder: Owner grants the edit class -> NW-01 runs (step 8) ->`);
+  console.log(`derive-projected-root-digest.sql resolves the placeholder ->`);
+  console.log(`cp01-derive.sql pins the post-image digests -> regenerate -> independent review.`);
 }

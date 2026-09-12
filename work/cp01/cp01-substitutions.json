@@ -16,32 +16,16 @@
     "clued_control.reserve_execution_budget(text,text)": "df6087f9d19d99f023a9c789f0c9b34140e92bb82fc00a5dde1d69d9b1aa7d41",
     "clued_control.reserve_gate(text,text)": "a011292416693ef7e44221868669937261c33848a3ff10882d0f4abd97c9ef2e"
   },
-  "postimage_prosrc_sha256": {
-    "clued_control.reserve_gate(text,text)": "001dd6a6f29c42e96c7d3762699599cc0239dae2e57452076eafdfc555f032cd",
-    "clued_control.reserve_execution_budget(text,text)": "8ca141de9d006a353d176d739b8bbb21c7f7a4249f7f59af90a77888bc1b11c6",
-    "clued_control.append_status_manifest(text,text)": "84dee7d4c7470d7a077c6b360289a71702b9ef24473107eeeec2bfddc31321c4"
-  },
+  "postimage_prosrc_sha256": null,
   "postimage_derivation": {
-    "how": "Computed in-database by work/cp01/cp01-derive.sql, which performs only SELECT.",
-    "derived_at": "2026-09-12T06:2xZ",
-    "every_substitution_found_exactly_once": true,
-    "counts_agree_between_prosrc_and_full_create_statement": true,
-    "prosrc_len": {
-      "clued_control.reserve_gate(text,text)": [
-        14966,
-        15757
-      ],
-      "clued_control.reserve_execution_budget(text,text)": [
-        13404,
-        14195
-      ],
-      "clued_control.append_status_manifest(text,text)": [
-        3370,
-        3437
-      ]
+    "state": "VOID_PENDING_PLACEHOLDER_RESOLUTION",
+    "why": "The digests recorded at 06:2xZ were for the 19-edit table. Round 10 added the two guard edits (G8/B9), so they no longer describe the post-image. They cannot be recomputed until the (ii) placeholder is resolved, which needs NW-01 to have run.",
+    "void_digests_for_the_record": {
+      "clued_control.reserve_gate(text,text)": "001dd6a6f29c42e96c7d3762699599cc0239dae2e57452076eafdfc555f032cd",
+      "clued_control.reserve_execution_budget(text,text)": "8ca141de9d006a353d176d739b8bbb21c7f7a4249f7f59af90a77888bc1b11c6",
+      "clued_control.append_status_manifest(text,text)": "84dee7d4c7470d7a077c6b360289a71702b9ef24473107eeeec2bfddc31321c4"
     },
-    "offline_cross_check": "The length delta implied by this substitution table alone reproduces every live delta exactly: +791, +791, +67. The two reserve_* deltas are identical because G1..G7 and B1..B7 are the same text and B8 is length-neutral.",
-    "boundary": "These three digests were produced by transcribing cp01-derive.sql into a SQL client by hand. A transcription error cannot pass silently: cp01-apply.candidate.sql is generated from this JSON, not from what was transcribed, so it would recompute a different post-image and abort at CP01_POSTIMAGE_DRIFT before issuing any CREATE OR REPLACE. The independent reviewer should still re-run cp01-derive.sql read-only and reproduce these three values."
+    "append_status_manifest_note": "Its four edits are untouched by round 10, so 84dee7d4... will reappear unchanged when the table is re-derived. Recorded here as a prediction to be checked, not carried forward as a pin."
   },
   "constants": {
     "root3_generation": "ctrgen_2e778ca66244459f974b081edca8c04e",
@@ -63,11 +47,15 @@
     "root6_status_schema_digest": "ControllerSourceManifest.candidate.json accepted_subject.control_schema_refs.StatusManifest.sha256"
   },
   "live_measurements_2026_09_12": {
+    "two_distinct_event_tables": "clued_control.execution_events is what read_execution()->'events' returns and what the series_e / budget_sequence segments range over: 88 rows, max sequence 88. clued_control.events is the ROOT event table that read_root()->'events' returns: 5 rows. The root6 GENERATION_REGISTERED event goes into the latter, becoming root event 6 -- it never touches execution_events. An earlier draft of this note said sequence 89 would be the registration event; that was wrong about which table, and is corrected here.",
     "execution_events_count": 88,
-    "max_event_sequence": 88,
+    "max_execution_event_sequence": 88,
     "max_BUDGET_RESERVED_sequence": 85,
+    "root_events_count": 5,
     "series_f_now": 15,
-    "note": "root6_budget_sequence 89 is above every existing event, and the narrowed segment >=64 and <89 still covers every existing root5-era budget (max 85). The loops that read these segments iterate only BUDGET_RESERVED events (reserve_gate:52) and attempts (reserve_gate:70), so the root6 GENERATION_REGISTERED event that will occupy sequence 89 is never matched by them."
+    "what_will_occupy_execution_event_89": "the twentieth binding forward (runbook step 14), operation EXECUTION_BINDING_FORWARD_ACCEPTED. The new budget lands at 90, following the 84-forward/85-budget pattern of the previous cycle.",
+    "why_the_89_boundary_is_safe": "Both 89 and 90 are >= 89, so the new root6 segment catches the budget wherever it lands. The forward event at 89 is never examined by these segments at all: reserve_gate:52 iterates only events whose operation is BUDGET_RESERVED, and reserve_gate:70 iterates attempts. The narrowed segment >=64 and <89 still covers every existing root5-era budget, the highest being 85.",
+    "controller_agreement": "context.mjs:152 sets root6BudgetSequence=89 and generationForBudget(s)= s>=89 ? root6, so a budget at 90 resolves to root6 on both sides."
   },
   "functions": [
     {
@@ -133,6 +121,22 @@
           "unreachable_reason": "reserve_gate:110 reads `if 'GATE'='BUDGET' then` — a constant-false test in the GATE instantiation of this shared template, so lines 111-113 never execute here. The identical line is live in reserve_execution_budget (B7), where :115 reads `if 'BUDGET'='BUDGET' then`. This edit is made to keep the two instantiations byte-comparable, NOT because it has any runtime effect in reserve_gate. ControlPlaneChangeScope.md section 7 listed reserve_gate #7 and reserve_execution_budget #7 as equivalent substantive edits; that was wrong and is corrected here.",
           "from": "  or clock_timestamp()+interval '600 seconds'>='2026-09-12T13:14:51Z'::timestamptz",
           "to": "  or clock_timestamp()+interval '600 seconds'>='2026-09-19T00:00:00Z'::timestamptz"
+        },
+        {
+          "id": "G8",
+          "line": 35,
+          "edit_class": "FULL_ROOT_OBJECT_DIGEST_REPINNED_TO_THIS_WINDOW_WITH_REGISTRATION_EVENT_RECORDED_AT_EXCLUDED",
+          "expected_count": 1,
+          "adjudication": "SuccessorReviewerRound10.md section 8 rules (e). The implementer had preferred (c); the reviewer rejected it because (c)'s second SECURITY DEFINER replacement lands inside the runbook's irreversible zone and because its expected value would be self-read by the reviewed party after its own write instead of being auditable in advance. The implementer accepts both reasons.",
+          "what": "Replaces the one already-failing whole-root digest guard with three assertions, all computable before any write: (i) the five frozen historical events byte-for-byte including recorded_at, (ii) every other root key plus the registration event with only recorded_at removed, (iii) the event count is exactly 6 so nothing can be appended outside the digest domain. The exception name is unchanged and no raise is removed.",
+          "only_field_leaving_the_digest_domain": "recorded_at of root.events[sequence=6]",
+          "why_that_costs_no_strength": "It is written by clock_timestamp(), so no caller can set it; append_event already pins clock_timestamp() inside [not_before, expires_at); and events_immutable forbids UPDATE/DELETE/TRUNCATE afterwards.",
+          "frozen_prefix_digest": "45c6a2cbaf33bb27f6b4c136440d71d767943acfa9772867e219627759ca5bbc",
+          "frozen_prefix_digest_independently_measured_by_implementer": true,
+          "unresolved_placeholder": "__PROJECTED_ROOT6_ROOT_DIGEST_PENDING__",
+          "placeholder_resolution": "Computed by work/cp01/derive-projected-root-digest.sql AFTER NW-01 (runbook step 8) and BEFORE CP-01 (step 9), with a read-only SQL that builds the projection in-database. Never with JS-side serialisation: jsonb key order is Postgres's, not insertion order and not lexicographic (R9-F1).",
+          "from": " if encode(sha256(convert_to((series_view->'root')::text,'UTF8')),'hex') is distinct from '4ddd23b52ba396909640c7bdbc60217b0f34a840d5e950901b20e4b3c17502a0'\n then raise exception 'series_full_original_root_changed'; end if;",
+          "to": " if encode(sha256(convert_to((select jsonb_agg(e order by (e->>'sequence')::bigint) from jsonb_array_elements(series_view->'root'->'events') e where (e->>'sequence')::bigint<=5)::text,'UTF8')),'hex') is distinct from '45c6a2cbaf33bb27f6b4c136440d71d767943acfa9772867e219627759ca5bbc'\n then raise exception 'series_full_original_root_changed'; end if;\n if jsonb_array_length(series_view->'root'->'events') is distinct from 6\n then raise exception 'series_full_original_root_changed'; end if;\n if encode(sha256(convert_to(((series_view->'root' - 'events') || jsonb_build_object('registration_event',(select e - 'recorded_at' from jsonb_array_elements(series_view->'root'->'events') e where (e->>'sequence')::bigint=6)))::text,'UTF8')),'hex') is distinct from '__PROJECTED_ROOT6_ROOT_DIGEST_PENDING__'\n then raise exception 'series_full_original_root_changed'; end if;"
         }
       ]
     },
@@ -207,6 +211,22 @@
           "expected_count": 1,
           "from": "if v->>'expires_at' is distinct from '2026-09-12T13:14:51Z' then raise exception 'series_exact_new_budget_expiry_required'; end if;",
           "to": "if v->>'expires_at' is distinct from '2026-09-19T00:00:00Z' then raise exception 'series_exact_new_budget_expiry_required'; end if;"
+        },
+        {
+          "id": "B9",
+          "line": 40,
+          "edit_class": "FULL_ROOT_OBJECT_DIGEST_REPINNED_TO_THIS_WINDOW_WITH_REGISTRATION_EVENT_RECORDED_AT_EXCLUDED",
+          "expected_count": 1,
+          "adjudication": "SuccessorReviewerRound10.md section 8 rules (e). The implementer had preferred (c); the reviewer rejected it because (c)'s second SECURITY DEFINER replacement lands inside the runbook's irreversible zone and because its expected value would be self-read by the reviewed party after its own write instead of being auditable in advance. The implementer accepts both reasons.",
+          "what": "Replaces the one already-failing whole-root digest guard with three assertions, all computable before any write: (i) the five frozen historical events byte-for-byte including recorded_at, (ii) every other root key plus the registration event with only recorded_at removed, (iii) the event count is exactly 6 so nothing can be appended outside the digest domain. The exception name is unchanged and no raise is removed.",
+          "only_field_leaving_the_digest_domain": "recorded_at of root.events[sequence=6]",
+          "why_that_costs_no_strength": "It is written by clock_timestamp(), so no caller can set it; append_event already pins clock_timestamp() inside [not_before, expires_at); and events_immutable forbids UPDATE/DELETE/TRUNCATE afterwards.",
+          "frozen_prefix_digest": "45c6a2cbaf33bb27f6b4c136440d71d767943acfa9772867e219627759ca5bbc",
+          "frozen_prefix_digest_independently_measured_by_implementer": true,
+          "unresolved_placeholder": "__PROJECTED_ROOT6_ROOT_DIGEST_PENDING__",
+          "placeholder_resolution": "Computed by work/cp01/derive-projected-root-digest.sql AFTER NW-01 (runbook step 8) and BEFORE CP-01 (step 9), with a read-only SQL that builds the projection in-database. Never with JS-side serialisation: jsonb key order is Postgres's, not insertion order and not lexicographic (R9-F1).",
+          "from": " if encode(sha256(convert_to((series_view->'root')::text,'UTF8')),'hex') is distinct from '4ddd23b52ba396909640c7bdbc60217b0f34a840d5e950901b20e4b3c17502a0'\n then raise exception 'series_full_original_root_changed'; end if;",
+          "to": " if encode(sha256(convert_to((select jsonb_agg(e order by (e->>'sequence')::bigint) from jsonb_array_elements(series_view->'root'->'events') e where (e->>'sequence')::bigint<=5)::text,'UTF8')),'hex') is distinct from '45c6a2cbaf33bb27f6b4c136440d71d767943acfa9772867e219627759ca5bbc'\n then raise exception 'series_full_original_root_changed'; end if;\n if jsonb_array_length(series_view->'root'->'events') is distinct from 6\n then raise exception 'series_full_original_root_changed'; end if;\n if encode(sha256(convert_to(((series_view->'root' - 'events') || jsonb_build_object('registration_event',(select e - 'recorded_at' from jsonb_array_elements(series_view->'root'->'events') e where (e->>'sequence')::bigint=6)))::text,'UTF8')),'hex') is distinct from '__PROJECTED_ROOT6_ROOT_DIGEST_PENDING__'\n then raise exception 'series_full_original_root_changed'; end if;"
         }
       ]
     },
@@ -268,16 +288,15 @@
     },
     {
       "where": "reserve_gate:35 and reserve_execution_budget:40",
-      "text": "sha256(series_view->'root') is distinct from '4ddd23b52ba396909640c7bdbc60217b0f34a840d5e950901b20e4b3c17502a0'",
-      "why": "SEE RootDigestGuardAlreadyBrokenFinding.md. This guard is ALREADY FAILING today (actual value e7624fda1441e309bfa3bdd2afb8a00f8636199ab201b3e5ecfadf46214bc109). It maps to none of cp01.permitted_edit_classes, its correct new value cannot be precomputed, and four remediation options are before the Owner and the independent reviewer in round 10. NOTHING is done to it here. If the adjudication puts it inside CP-01, it enters this table as a twentieth edit and every digest below is recomputed.",
-      "slot": "R10_PENDING"
+      "resolved": "No longer a pending slot. Round 10 ruled (e); the guard is now edits G8 and B9 in this same CP-01 transaction, per SuccessorReviewerRound10.md section 9 item 2, which explicitly refuses the 'leave it and fix it later' shape."
     }
   ],
   "totals": {
-    "edits_in_this_table": 19,
-    "reserve_gate": 7,
-    "reserve_execution_budget": 8,
+    "edits_in_this_table": 21,
+    "reserve_gate": 8,
+    "reserve_execution_budget": 9,
     "append_status_manifest": 4,
-    "pending_on_round_10_adjudication": 1
+    "round_10_added": "G8 and B9, the (e)-shaped replacement of the already-broken root digest guard",
+    "pending_on_round_10_adjudication": 0
   }
 }
