@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "kind": "OWNER_DECISION_BASELINE_SUBSTITUTION",
+  "state": "GRANTED_BY_OWNER_IN_SESSION",
+  "decided_at_utc": "2026-09-12T11:0xZ",
+  "decided_by": "tdoljyj",
+
+  "what_was_decided": "Accept in-database tamper evidence (xmin monotonicity plus the three immutability triggers) as the substitute for the lost frozen baseline ActualTerminalFullObservation.json, whose content can no longer be obtained.",
+
+  "the_check_being_substituted": {
+    "file": "scripts/phase2-qualification/control-context-verifier-root6-window11-successor/context.mjs",
+    "lines": "171-172",
+    "names": ["ORIGINAL_44_EVENTS_UNCHANGED", "ALL_SIX_ORIGINAL_ATTEMPTS_AND_RECEIPTS_UNCHANGED"],
+    "what_it_did": "Compared the live first 44 clued_control.execution_events and the six original gate_attempts against a frozen copy taken at the root3 schema recovery.",
+    "why_it_cannot_continue": "The frozen copy lived only on the lost host. It is not in this repository in any shape (every JSON under artifacts/ and scripts/ was searched for a row.metadata.execution.events structure: zero hits), and rebuilding it from the live database is circular, since detecting tampering in that database is its whole purpose."
+  },
+
+  "substitute_evidence_measured_not_asserted": {
+    "measured_at_utc": "2026-09-12T11:0xZ",
+    "immutability_triggers": {
+      "clued_control.execution_events": ["execution_events_immutable:O"],
+      "clued_control.gate_attempts": ["gate_attempt_no_delete:O", "gate_bytes_immutable:O"]
+    },
+    "xmin_evidence": {
+      "why_it_works": "xmin is the transaction that last wrote the row. An UPDATE gives the row a new, much higher xmin, so a rewritten row breaks monotonicity against its neighbours and rises above the rows written after it.",
+      "first44_xmin_inversions": 0,
+      "all88_xmin_inversions": 0,
+      "max_xmin_first44": 1917,
+      "min_xmin_after44": 1926,
+      "max_xmin_all": 2135,
+      "current_xid": 2140,
+      "first44_written_after_any_later_row": 0,
+      "rows_1_to_44": 44,
+      "distinct_xmin_in_first44": 44,
+      "recorded_at_range": ["2026-09-08T18:33:58.784674Z", "2026-09-09T16:04:46.752051Z"],
+      "reading": "Every one of the first 44 rows was written by an older transaction than every later row, with no inversion anywhere in the 88. None of them has been rewritten since it was first written."
+    }
+  },
+
+  "residual_gap_stated_exactly": {
+    "what_is_still_detectable": [
+      "any rewrite of rows 1-44 after 2026-09-09 16:04 (xmin would exceed 1917 and invert)",
+      "any rewrite from today onward (the new baseline plus the triggers)",
+      "any deletion (the immutability triggers deny it)"
+    ],
+    "what_is_no_longer_detectable": "A rewrite performed inside the original writing window itself -- transactions 1815 to 1917, wall clock 2026-09-08T18:33:58Z to 2026-09-09T16:04:46Z. A row rewritten during that window would carry an xmin indistinguishable from a row first written then.",
+    "how_wide_that_is": "About 22 hours, entirely before the qualification preparation work began.",
+    "an_earlier_overstatement_corrected": "The implementer first described this as losing the ability to detect any rewrite of the original forty-four since the root3 recovery. That was too strong: xmin covers almost the whole interval. Only the original writing window is uncovered."
+  },
+
+  "what_this_decision_does_not_do": [
+    "It does not accept the new controller. That still requires independent qualification.",
+    "It does not register any generation, reserve or consume any budget, or grant any authority.",
+    "It does not change the existing controller, which remains pinned by merged artifacts.",
+    "It does not waive any other check in checkBoundedSeries.",
+    "It does not add capacity, create a trust root, a signing identity, a paid budget, a model budget, or any production authority."
+  ],
+
+  "also_decided_implicitly_and_recorded_here": {
+    "proposal_file": "Phase2BoundedRemainingQualificationApprovalProposal20260910.md is also lost, but its read can be removed with no loss of strength: context.mjs uses it only at line 161 for a sha256 check and never reads its content. The binding it evidenced is already closed by the hardcoded proposalSHA constant ea96914e... plus approved.proposal_sha256 and appendix.proposal_sha256 from merged materials, and that digest is independently witnessed in four merged artifacts and four earlier controller generations.",
+    "status": "no downgrade, stated for the reviewer to confirm rather than to take on trust"
+  },
+
+  "authority_effect": "AUTHORISES_ONE_SUBSTITUTION_IN_A_CANDIDATE_CONTROLLER_ONLY; QUALIFIES_NOTHING; REGISTERS_NOTHING; CONSUMES_NO_BUDGET"
+}
