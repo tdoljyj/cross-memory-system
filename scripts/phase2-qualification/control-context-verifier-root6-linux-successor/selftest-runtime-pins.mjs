@@ -461,7 +461,7 @@ const CENSUS = {
   'preentry-parent/runtime-successor/host-tool-bridge600/bridge.py': 1,
   // R21-F3: this controller's own Linux batch reader, replacing the predecessor's PowerShell one
   // on the verifySourcePublication path. Its single literal is the gh pin.
-  'control-context-verifier-root6-linux-successor/read-source-blobs-linux.mjs': 1,
+  'control-context-verifier-root6-linux-successor/read-source-blobs-linux.mjs': 3,
   'control-context-verifier-root6-linux-successor/result-terminal.mjs': 1,
   'control-context-verifier-root6-linux-successor/trusted-github.mjs': 1,
   'control-context-verifier-root6-linux-successor/tool-entry.functions.js': 3,

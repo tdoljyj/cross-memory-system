@@ -82,8 +82,12 @@ const TREE_EVIDENCE = [
   'qualification-runtime/remote_evidence.py',                   // parent600.py load_exact()
   'control-context-verifier-public-runtime-env-diagnostic-successor/fixed_skill_fixture.py', // parent600.py CHILD_SHA
   'RuntimeMaterialPreparation/ordinary-bounded-successor/EvidenceSinkDefinition.json',       // context.mjs previous_evidence_sink_ref
+  // FIXED_BATCH_EXECUTOR_BYTES, restored in read-source-blobs-linux.mjs (R22-F4): the modules
+  // whose judgement decides what a valid blob is, re-hashed at the point of use.
+  'control-context-verifier-original-input-capacity-successor/ref-plan.mjs',
+  'control-context-verifier-original-input-capacity-successor/read-source-blobs.mjs',
 ];
-if (TREE_EVIDENCE.length !== 5) throw new Error('TREE_EVIDENCE length changed; widen the evidence base deliberately, not by accident');
+if (TREE_EVIDENCE.length !== 7) throw new Error('TREE_EVIDENCE length changed; widen the evidence base deliberately, not by accident');
 
 // The controller's own sources, named here rather than discovered. Discovery left a smaller
 // version of R19-F2 open inside the controller directory itself: a launder.py dropped in beside
@@ -467,6 +471,12 @@ const RUNTIME_PINS = [
   {file: 'host-effect.mjs', label: 'invokeFixedHost -> bridge.py', binds: ['bridge'],
    re: /const bridge=fileURLToPath\(new URL\('\.\/([^']+)'(?:[\s\S]*?)sha\(fs\.readFileSync\(bridge\)\)!=='([a-f0-9]{64})'/, pathGroup: 1, shaGroup: 2,
    target: p => path.join(DIR, p)},
+  {file: 'read-source-blobs-linux.mjs', label: 'PLAN_SHA -> ref-plan.mjs', binds: ['PLAN', 'PLAN_SHA'],
+   re: /^const PLAN = fileURLToPath\(new URL\('([^']+)', import\.meta\.url\)\);\nconst PLAN_SHA = '([a-f0-9]{64})';$/m,
+   pathGroup: 1, shaGroup: 2, target: rel => path.join(DIR, rel)},
+  {file: 'read-source-blobs-linux.mjs', label: 'VALIDATOR_SHA -> read-source-blobs.mjs', binds: ['VALIDATOR', 'VALIDATOR_SHA'],
+   re: /^const VALIDATOR = fileURLToPath\(new URL\('([^']+)', import\.meta\.url\)\);\nconst VALIDATOR_SHA = '([a-f0-9]{64})';$/m,
+   pathGroup: 1, shaGroup: 2, target: rel => path.join(DIR, rel)},
   {file: 'read-source-blobs-linux.mjs', label: 'ghSHA -> the gh binary', binds: ['gh', 'ghSHA'],
    re: /^const gh = '([^']+)';\nconst ghSHA = '([a-f0-9]{64})';$/m, pathGroup: 1, shaGroup: 2,
    target: p => p},
@@ -485,7 +495,7 @@ const RUNTIME_PINS = [
    re: /query='([^']+)';\nconst query_sha256='([a-f0-9]{64})';/, shaGroup: 2,
    digestOf: m => crypto.createHash('sha256').update(m[1]).digest('hex')},
 ];
-if (RUNTIME_PINS.length !== 15) throw new Error('RUNTIME_PINS length changed; declare a pin deliberately, not by accident');
+if (RUNTIME_PINS.length !== 17) throw new Error('RUNTIME_PINS length changed; declare a pin deliberately, not by accident');
 {
   for (const pin of RUNTIME_PINS) {
     const abs = path.join(DIR, pin.file);
@@ -591,7 +601,7 @@ for (const [f, abs] of scanTargets) {
 // pair inside the same file, which is stated below rather than claimed away.
 const EXPECTED_PER_FILE = {
   'bridge.py': 1, 'check-digest-pins.mjs': 8, 'context.mjs': 22, 'fixed_host.py': 3,
-  'host-effect.mjs': 2, 'parent600.py': 4, 'read-source-blobs-linux.mjs': 1, 'result-terminal.mjs': 1,
+  'host-effect.mjs': 2, 'parent600.py': 4, 'read-source-blobs-linux.mjs': 3, 'result-terminal.mjs': 1,
   'tool-entry.functions.js': 3, 'trusted-github.mjs': 1,
   // Cross-directory live code, newly scanned (R17-N5). Zero today; declared so it cannot appear
   // unnoticed.
