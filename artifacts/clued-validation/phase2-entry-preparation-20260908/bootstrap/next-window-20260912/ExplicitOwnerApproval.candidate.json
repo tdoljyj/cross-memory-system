@@ -201,7 +201,7 @@
     },
     "covers_both_sides": true,
     "supersedes": {
-      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/root6-capacity/OwnerForwardCapExtensionOverride.json",
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/OwnerForwardCapExtensionOverride.json",
       "why": "That record was never independently reviewed and its stated reason rested on a premise later shown false. It is superseded rather than amended, and the independent opinion required for this clause is ForwardCapExtensionIndependentOpinion20260912.json."
     },
     "independent_opinion_ref": {
@@ -217,7 +217,7 @@
       "charged_evidence_bytes <= 2335812531"
     ],
     "prior_record_caveat": {
-      "record": "artifacts/clued-validation/phase2-entry-preparation-20260908/root6-capacity/OwnerForwardCapExtensionOverride.json",
+      "record": "artifacts/clued-validation/phase2-entry-preparation-20260908/OwnerForwardCapExtensionOverride.json",
       "independently_reviewed": false,
       "rested_on_false_premise": true,
       "false_premise": "The implementing side told the Owner the cap merely lacked a backing document. In fact the database enforced the cap in two functions and the raise was not executable at all."
@@ -290,5 +290,34 @@
     "required_in_final_result": "The final qualification result must state plainly that the enforcement layer of this qualification run was modified by the party being qualified, before the run."
   },
   "preparation_requested_by_owner_in_current_conversation": true,
-  "final_approval_requires_owner_merge": true
+  "final_approval_requires_owner_merge": true,
+  "referenced_documents": {
+    "why_this_section_exists": "Two documents this approval relies on live only on the independent reviewer's branch and are not on main; merging this pull request does not bring them in. Rather than leave dangling repository-relative paths in a signed artifact, each is pinned to an immutable commit and to its own sha256, so the Owner and any later auditor can fetch exactly the bytes this approval was granted against. A third reference cited the wrong directory and is corrected above.",
+    "independent_reviewer_branch": "claude/trusting-keller-mm2s0v",
+    "independent_reviewer_commit": "2bb196f45e896a7f278f08f648864725a11e9c2b",
+    "documents": [
+      {
+        "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/root6-capacity/SuccessorReviewerRound10.md",
+        "resolvable_on": "claude/trusting-keller-mm2s0v@2bb196f45e896a7f278f08f648864725a11e9c2b",
+        "on_main": false,
+        "sha256": "a1b68fd099bbbbd5ebc27203cc39bc62698f9be13655dd52c68e1eb361c0da2c",
+        "relied_on_for": "the adjudication that produced the sixth edit class, and its constraints"
+      },
+      {
+        "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/root6-capacity/ForwardCapExtensionIndependentOpinion20260912.json",
+        "resolvable_on": "claude/trusting-keller-mm2s0v@2bb196f45e896a7f278f08f648864725a11e9c2b",
+        "on_main": false,
+        "sha256": "cecb20c95b0cb64fabfc0dcc5a2dc6caf96c068d78505df085eb4907f03e1116",
+        "relied_on_for": "the independent opinion the forward_cap_extension clause requires"
+      },
+      {
+        "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/OwnerForwardCapExtensionOverride.json",
+        "corrected_from": "artifacts/clued-validation/phase2-entry-preparation-20260908/root6-capacity/OwnerForwardCapExtensionOverride.json",
+        "on_main": true,
+        "sha256": "ba88640b7582a84afab496fa9604df833924e5ac6ba3867c2f6726b0d10d01d3",
+        "relied_on_for": "the record this approval's forward_cap_extension clause supersedes",
+        "note": "The path in an earlier draft placed it under root6-capacity/. It has always been one level up. Every path this approval cites has now been checked to resolve on a named ref; this was the only one that resolved nowhere."
+      }
+    ]
+  }
 }

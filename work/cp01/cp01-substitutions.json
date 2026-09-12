@@ -35,15 +35,16 @@
     "root5_budget_sequence": 64,
     "root6_budget_sequence": 89,
     "superseded_window_expires_at": "2026-09-12T13:14:51Z",
-    "this_window_expires_at": "2026-09-19T00:00:00Z",
+    "this_window_expires_at": "__T_PLUS_24H__",
     "root4_and_root5_budget_expiry": "2026-09-11T10:21:05Z",
     "root5_status_schema_digest": "76bb79f7278905122474f86fe195cb803e3cb5185a4a50899403fa5567726ae0",
-    "root6_status_schema_digest": "510f3b90cdb026c8c4d44ffac2647502ff8003cdd972850dbe042edbd6c310ef"
+    "root6_status_schema_digest": "510f3b90cdb026c8c4d44ffac2647502ff8003cdd972850dbe042edbd6c310ef",
+    "this_window_expires_at_note": "NOT a literal. window_rule in the Owner approval is not_before + 86400 seconds, where not_before is the committed_at of the verified Owner merge C1 -- unknowable until that merge exists (materialize_exact_timestamps_after_verified_merge: true). An earlier version of this table hardcoded 2026-09-19T00:00:00Z here and in ten substitutions. That was wrong: it is the value ControlPlaneChangeScopeAddendumA already retracted, because 2026-09-19 is seven days out and a 86400-second non-rolling window can never reach it. AddendumA section on the corrected path says it plainly: every 2026-09-19T00:00:00Z among these edits becomes T+24h."
   },
   "constant_sources": {
     "root6_generation": "scripts/phase2-qualification/control-context-verifier-root6-window10-successor/context.mjs:15 and :152 (read 2026-09-12)",
     "root6_budget_sequence": "same file :152, root6BudgetSequence=89",
-    "this_window_expires_at": "same file :152, root6Expiry",
+    "this_window_expires_at": "Materialized from C1.committed_at + 86400s after the first Owner merge. The same value must be used to rebuild the controller (rebuild-controller-window11.mjs <T+24h>, runbook step 3), so the repository side and the database side carry one number, not two.",
     "root6_status_schema_digest": "ControllerSourceManifest.candidate.json accepted_subject.control_schema_refs.StatusManifest.sha256"
   },
   "live_measurements_2026_09_12": {
@@ -75,7 +76,8 @@
           "edit_class": "SUPERSEDED_WINDOW_LITERALS_TO_THIS_WINDOW_MATERIALIZED_TIMESTAMPS",
           "expected_count": 1,
           "from": "where root_id=root) is distinct from '2026-09-12T13:14:51Z'::timestamptz",
-          "to": "where root_id=root) is distinct from '2026-09-19T00:00:00Z'::timestamptz"
+          "to": "where root_id=root) is distinct from '__T_PLUS_24H__'::timestamptz",
+          "window_placeholder": "__T_PLUS_24H__"
         },
         {
           "id": "G3",
@@ -92,7 +94,8 @@
           "expected_count": 1,
           "what": "original budget scope segment",
           "from": "  or ((series_e->>'sequence')::bigint >= 64 and (\n       series_budget->>'root_generation' is distinct from 'ctrgen_e5df432221344996afc04b5638121d96'\n       or series_budget->>'expires_at' is distinct from '2026-09-11T10:21:05Z'))",
-          "to": "  or ((series_e->>'sequence')::bigint >= 89 and (\n       series_budget->>'root_generation' is distinct from 'ctrgen_5e0440a95ac8ee257b9e4236cabd275b'\n       or series_budget->>'expires_at' is distinct from '2026-09-19T00:00:00Z'))\n  or ((series_e->>'sequence')::bigint >= 64 and (series_e->>'sequence')::bigint < 89 and (\n       series_budget->>'root_generation' is distinct from 'ctrgen_e5df432221344996afc04b5638121d96'\n       or series_budget->>'expires_at' is distinct from '2026-09-11T10:21:05Z'))"
+          "to": "  or ((series_e->>'sequence')::bigint >= 89 and (\n       series_budget->>'root_generation' is distinct from 'ctrgen_5e0440a95ac8ee257b9e4236cabd275b'\n       or series_budget->>'expires_at' is distinct from '__T_PLUS_24H__'))\n  or ((series_e->>'sequence')::bigint >= 64 and (series_e->>'sequence')::bigint < 89 and (\n       series_budget->>'root_generation' is distinct from 'ctrgen_e5df432221344996afc04b5638121d96'\n       or series_budget->>'expires_at' is distinct from '2026-09-11T10:21:05Z'))",
+          "window_placeholder": "__T_PLUS_24H__"
         },
         {
           "id": "G5",
@@ -101,7 +104,8 @@
           "expected_count": 1,
           "what": "gate authorization window segment",
           "from": "  or ((series_a->>'budget_sequence')::bigint >= 64 and (\n       series_ga->>'control_trust_root_generation' is distinct from 'ctrgen_e5df432221344996afc04b5638121d96'\n       or (series_ga->>'deadline')::timestamptz>'2026-09-11T10:21:05Z'::timestamptz))",
-          "to": "  or ((series_a->>'budget_sequence')::bigint >= 89 and (\n       series_ga->>'control_trust_root_generation' is distinct from 'ctrgen_5e0440a95ac8ee257b9e4236cabd275b'\n       or (series_ga->>'deadline')::timestamptz>'2026-09-19T00:00:00Z'::timestamptz))\n  or ((series_a->>'budget_sequence')::bigint >= 64 and (series_a->>'budget_sequence')::bigint < 89 and (\n       series_ga->>'control_trust_root_generation' is distinct from 'ctrgen_e5df432221344996afc04b5638121d96'\n       or (series_ga->>'deadline')::timestamptz>'2026-09-11T10:21:05Z'::timestamptz))"
+          "to": "  or ((series_a->>'budget_sequence')::bigint >= 89 and (\n       series_ga->>'control_trust_root_generation' is distinct from 'ctrgen_5e0440a95ac8ee257b9e4236cabd275b'\n       or (series_ga->>'deadline')::timestamptz>'__T_PLUS_24H__'::timestamptz))\n  or ((series_a->>'budget_sequence')::bigint >= 64 and (series_a->>'budget_sequence')::bigint < 89 and (\n       series_ga->>'control_trust_root_generation' is distinct from 'ctrgen_e5df432221344996afc04b5638121d96'\n       or (series_ga->>'deadline')::timestamptz>'2026-09-11T10:21:05Z'::timestamptz))",
+          "window_placeholder": "__T_PLUS_24H__"
         },
         {
           "id": "G6",
@@ -120,7 +124,8 @@
           "unreachable_in_this_function": true,
           "unreachable_reason": "reserve_gate:110 reads `if 'GATE'='BUDGET' then` — a constant-false test in the GATE instantiation of this shared template, so lines 111-113 never execute here. The identical line is live in reserve_execution_budget (B7), where :115 reads `if 'BUDGET'='BUDGET' then`. This edit is made to keep the two instantiations byte-comparable, NOT because it has any runtime effect in reserve_gate. ControlPlaneChangeScope.md section 7 listed reserve_gate #7 and reserve_execution_budget #7 as equivalent substantive edits; that was wrong and is corrected here.",
           "from": "  or clock_timestamp()+interval '600 seconds'>='2026-09-12T13:14:51Z'::timestamptz",
-          "to": "  or clock_timestamp()+interval '600 seconds'>='2026-09-19T00:00:00Z'::timestamptz"
+          "to": "  or clock_timestamp()+interval '600 seconds'>='__T_PLUS_24H__'::timestamptz",
+          "window_placeholder": "__T_PLUS_24H__"
         },
         {
           "id": "G8",
@@ -157,7 +162,8 @@
           "edit_class": "SUPERSEDED_WINDOW_LITERALS_TO_THIS_WINDOW_MATERIALIZED_TIMESTAMPS",
           "expected_count": 1,
           "from": "where root_id=root) is distinct from '2026-09-12T13:14:51Z'::timestamptz",
-          "to": "where root_id=root) is distinct from '2026-09-19T00:00:00Z'::timestamptz"
+          "to": "where root_id=root) is distinct from '__T_PLUS_24H__'::timestamptz",
+          "window_placeholder": "__T_PLUS_24H__"
         },
         {
           "id": "B3",
@@ -174,7 +180,8 @@
           "expected_count": 1,
           "what": "original budget scope segment",
           "from": "  or ((series_e->>'sequence')::bigint >= 64 and (\n       series_budget->>'root_generation' is distinct from 'ctrgen_e5df432221344996afc04b5638121d96'\n       or series_budget->>'expires_at' is distinct from '2026-09-11T10:21:05Z'))",
-          "to": "  or ((series_e->>'sequence')::bigint >= 89 and (\n       series_budget->>'root_generation' is distinct from 'ctrgen_5e0440a95ac8ee257b9e4236cabd275b'\n       or series_budget->>'expires_at' is distinct from '2026-09-19T00:00:00Z'))\n  or ((series_e->>'sequence')::bigint >= 64 and (series_e->>'sequence')::bigint < 89 and (\n       series_budget->>'root_generation' is distinct from 'ctrgen_e5df432221344996afc04b5638121d96'\n       or series_budget->>'expires_at' is distinct from '2026-09-11T10:21:05Z'))"
+          "to": "  or ((series_e->>'sequence')::bigint >= 89 and (\n       series_budget->>'root_generation' is distinct from 'ctrgen_5e0440a95ac8ee257b9e4236cabd275b'\n       or series_budget->>'expires_at' is distinct from '__T_PLUS_24H__'))\n  or ((series_e->>'sequence')::bigint >= 64 and (series_e->>'sequence')::bigint < 89 and (\n       series_budget->>'root_generation' is distinct from 'ctrgen_e5df432221344996afc04b5638121d96'\n       or series_budget->>'expires_at' is distinct from '2026-09-11T10:21:05Z'))",
+          "window_placeholder": "__T_PLUS_24H__"
         },
         {
           "id": "B5",
@@ -183,7 +190,8 @@
           "expected_count": 1,
           "what": "gate authorization window segment",
           "from": "  or ((series_a->>'budget_sequence')::bigint >= 64 and (\n       series_ga->>'control_trust_root_generation' is distinct from 'ctrgen_e5df432221344996afc04b5638121d96'\n       or (series_ga->>'deadline')::timestamptz>'2026-09-11T10:21:05Z'::timestamptz))",
-          "to": "  or ((series_a->>'budget_sequence')::bigint >= 89 and (\n       series_ga->>'control_trust_root_generation' is distinct from 'ctrgen_5e0440a95ac8ee257b9e4236cabd275b'\n       or (series_ga->>'deadline')::timestamptz>'2026-09-19T00:00:00Z'::timestamptz))\n  or ((series_a->>'budget_sequence')::bigint >= 64 and (series_a->>'budget_sequence')::bigint < 89 and (\n       series_ga->>'control_trust_root_generation' is distinct from 'ctrgen_e5df432221344996afc04b5638121d96'\n       or (series_ga->>'deadline')::timestamptz>'2026-09-11T10:21:05Z'::timestamptz))"
+          "to": "  or ((series_a->>'budget_sequence')::bigint >= 89 and (\n       series_ga->>'control_trust_root_generation' is distinct from 'ctrgen_5e0440a95ac8ee257b9e4236cabd275b'\n       or (series_ga->>'deadline')::timestamptz>'__T_PLUS_24H__'::timestamptz))\n  or ((series_a->>'budget_sequence')::bigint >= 64 and (series_a->>'budget_sequence')::bigint < 89 and (\n       series_ga->>'control_trust_root_generation' is distinct from 'ctrgen_e5df432221344996afc04b5638121d96'\n       or (series_ga->>'deadline')::timestamptz>'2026-09-11T10:21:05Z'::timestamptz))",
+          "window_placeholder": "__T_PLUS_24H__"
         },
         {
           "id": "B6",
@@ -202,7 +210,8 @@
           "live_in_this_function": true,
           "note": "reserve_execution_budget:115 reads `if 'BUDGET'='BUDGET' then`, so unlike G7 this line does execute. Without this edit no new budget can be reserved at all after 2026-09-12T13:04:51Z.",
           "from": "  or clock_timestamp()+interval '600 seconds'>='2026-09-12T13:14:51Z'::timestamptz",
-          "to": "  or clock_timestamp()+interval '600 seconds'>='2026-09-19T00:00:00Z'::timestamptz"
+          "to": "  or clock_timestamp()+interval '600 seconds'>='__T_PLUS_24H__'::timestamptz",
+          "window_placeholder": "__T_PLUS_24H__"
         },
         {
           "id": "B8",
@@ -210,7 +219,8 @@
           "edit_class": "SUPERSEDED_WINDOW_LITERALS_TO_THIS_WINDOW_MATERIALIZED_TIMESTAMPS",
           "expected_count": 1,
           "from": "if v->>'expires_at' is distinct from '2026-09-12T13:14:51Z' then raise exception 'series_exact_new_budget_expiry_required'; end if;",
-          "to": "if v->>'expires_at' is distinct from '2026-09-19T00:00:00Z' then raise exception 'series_exact_new_budget_expiry_required'; end if;"
+          "to": "if v->>'expires_at' is distinct from '__T_PLUS_24H__' then raise exception 'series_exact_new_budget_expiry_required'; end if;",
+          "window_placeholder": "__T_PLUS_24H__"
         },
         {
           "id": "B9",
@@ -265,7 +275,8 @@
           "edit_class": "SUPERSEDED_WINDOW_LITERALS_TO_THIS_WINDOW_MATERIALIZED_TIMESTAMPS",
           "expected_count": 1,
           "from": "or (obj->>'expires_at')::timestamptz is distinct from '2026-09-11T10:21:05Z'::timestamptz",
-          "to": "or (obj->>'expires_at')::timestamptz is distinct from '2026-09-19T00:00:00Z'::timestamptz"
+          "to": "or (obj->>'expires_at')::timestamptz is distinct from '__T_PLUS_24H__'::timestamptz",
+          "window_placeholder": "__T_PLUS_24H__"
         }
       ]
     }
@@ -298,5 +309,17 @@
     "append_status_manifest": 4,
     "round_10_added": "G8 and B9, the (e)-shaped replacement of the already-broken root digest guard",
     "pending_on_round_10_adjudication": 0
+  },
+  "window_placeholder_resolution": {
+    "placeholder": "__T_PLUS_24H__",
+    "occurrences_in_this_table": 10,
+    "resolved_when": "immediately after the first Owner merge (runbook step 1), from C1.committed_at",
+    "value": "C1.committed_at + 86400 seconds, rendered exactly as the existing literals are: YYYY-MM-DDTHH:MM:SSZ",
+    "must_equal": [
+      "the root6Expiry passed to rebuild-controller-window11.mjs (step 3)",
+      "accepted_binding.expires_at as NW-01 writes it (step 8)",
+      "the registration body's expires_at (step 11), because controller :43 requires runtime.expires_at === registered.expires_at"
+    ],
+    "why_it_is_not_2026-09-19T00:00:00Z": "The controller currently in the repository (control-context-verifier-root6-window10-successor) carries root6Expiry='2026-09-19T00:00:00Z'. That is a draft value the implementer chose while building root6; it is superseded by the window11 rebuild at step 3 and must not leak into the database side."
   }
 }

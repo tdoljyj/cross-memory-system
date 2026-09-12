@@ -186,6 +186,58 @@ The permitted edits are limited to these classes, and to no others:
    actually carries, and adding it to the existing allow-list.
 5. Raising the binding-forward cap from `series_f > 15` to `series_f > 16`. See the separate
    statement below.
+6. Repinning the whole-root digest guard at `reserve_gate:35` and
+   `reserve_execution_budget:40`. See the separate statement below; this class was added after
+   the tenth round of independent review and is the one genuinely new thing in this document
+   since it was first drafted.
+
+### Statement on the whole-root digest guard (class 6)
+
+**Both functions already fail today, and this has nothing to do with root6.** They assert that
+`sha256` of the whole `read_execution()->'root'` equals `4ddd23b5…`. It does not; the actual value
+is `e7624fda…`. The cause is that `root` carries `metadata_binding_sha256`, the digest of the whole
+`accepted_binding` row, and the unreviewed 2026-09-11 out-of-band window migration changed that row
+without updating this guard. Nobody noticed because neither function has been successfully called
+since 2026-09-11 03:47:18Z, and reading the function text does not reveal it — only recomputing the
+digest against the live database does.
+
+The correct new value **cannot be written down in advance in the guard's present shape**, because
+the root object contains its event list and the registration event carries a `recorded_at` that the
+database generates with `clock_timestamp()` at insert time.
+
+Four remediations were put to the independent reviewer. The implementer recommended leaving the
+guard alone in `CP-01` and repinning it in a second transaction after registration. **The reviewer
+rejected that recommendation and the implementer accepts the rejection**, for two reasons worth
+stating here because they bear on what you are being asked to authorize:
+
+- that second transaction would fall **inside the irreversible zone** — after root6 is registered,
+  where there is no rollback to root5, no refund, and no permitted blind retry;
+- its expected value would be **read back by the reviewed party from state it had just written**,
+  replacing a constant you approved in advance with an after-the-fact self-read. In a run whose
+  central governance question is whether the party under qualification is shaping the enforcement
+  layer around its own execution, that is the wrong direction, even though it leaves the guard's
+  shape untouched.
+
+What class 6 permits instead is a guard of the same coverage whose every expected value is
+computable, and publishable for review, **before any write**:
+
+- the five frozen historical root events, hashed byte-for-byte **including** their `recorded_at`,
+  pinned to `45c6a2cb…` — a value measurable today, and measured independently by both the
+  reviewer and the implementer;
+- every other root key plus the registration event with **only** `recorded_at` removed, pinned to
+  a value derived after `NW-01` and before `CP-01` and published for review;
+- an assertion that the event list has exactly six elements, so nothing can be appended outside
+  the digest's domain.
+
+The exception name `series_full_original_root_changed` is unchanged and no `raise` is removed.
+
+**One field leaves the digest's domain: the registration event's `recorded_at`.** This narrows a
+check, so it needs your explicit carve-out from the prohibition on removing original-bytes checks,
+below. The reason it costs no strength: that field is written by `clock_timestamp()`, so no caller
+can set it; `append_event` independently requires `clock_timestamp()` to fall inside
+`[not_before, expires_at)`; and the `events_immutable` trigger forbids `UPDATE`, `DELETE` and
+`TRUNCATE` afterwards. Its immutability is enforced in three other places. Removing it from this
+one digest removes redundancy, not coverage.
 
 Required form of the change, following the convention already used by
 `ActualNineteenthForward.sql` and `binding-evidence-successor/alter.candidate.sql`:
@@ -205,7 +257,10 @@ Explicitly not permitted under `CP-01`:
 - weakening the requirement that a new budget's `expires_at` be no later than
   `accepted_binding.expires_at`;
 - removing or bypassing the first-pass-stops rule, the terminal-receipt checks, or the
-  original-bytes checks;
+  original-bytes checks — **with one carve-out you are asked to grant explicitly**: class 6
+  narrows one digest's domain by exactly one field, the registration event's `recorded_at`, on
+  the grounds given in the statement above. Nothing else may be narrowed, and every other root
+  key stays covered;
 - adding a refund, reset, or automatic-retry path;
 - `DROP FUNCTION`, or any change to the other eleven control-plane functions.
 

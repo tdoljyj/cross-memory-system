@@ -19,7 +19,9 @@
 --                insertion order and not lexicographic. Computing this digest by serialising
 --                in JavaScript is exactly the R9-F1 mistake. It must be computed in-database.
 --
--- BEFORE RUNNING, fill the two values in the `plan` CTE below. Both are inputs we choose and
+-- BEFORE RUNNING, fill __T_PLUS_24H__ (C1.committed_at + 86400s, materialized after the first
+-- Owner merge -- it is NOT 2026-09-19T00:00:00Z; see ControlPlaneChangeScopeAddendumA) and the
+-- two values in the `plan` CTE below. Both are inputs we choose and
 -- publish for review; neither is read back from state we produced.
 --
 -- The query asserts its own preconditions and returns nulls with a stated reason rather than a
@@ -45,7 +47,7 @@ pre as (
     (x->>'generation_id') = 'ctrgen_e5df432221344996afc04b5638121d96'      as still_root5,
     (select expires_at from clued_control.accepted_binding
       where root_id = 'ctr_414bd3c724264a83894b0c55cf2ab878')
-      = '2026-09-19T00:00:00Z'::timestamptz                                as nw01_has_run
+      = '__T_PLUS_24H__'::timestamptz                                      as nw01_has_run
   from root
 ),
 projected as (

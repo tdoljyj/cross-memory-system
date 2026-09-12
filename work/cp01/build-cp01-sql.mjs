@@ -201,8 +201,10 @@ ${missing.map(f => `--   post-image digest unpinned   ${f.function}`).join('\n')
 --      (reserve_gate:35 / reserve_execution_budget:40). This file does NOT touch it.
 --      If the adjudication puts it inside CP-01, it becomes a twentieth entry in the
 --      substitution table and every digest below changes.
---   3. NW-01 has already run (runbook step 8), so accepted_binding.expires_at is
---      2026-09-19T00:00:00Z. G2/B2 pin that value; this transaction does not set it.
+--   3. NW-01 has already run (runbook step 8), so accepted_binding.expires_at is T+24h,
+--      that is C1.committed_at + 86400 seconds. G2/B2 pin that value; this transaction does
+--      not set it. It is NOT 2026-09-19T00:00:00Z -- a 86400-second non-rolling window cannot
+--      reach a date seven days out; see ControlPlaneChangeScopeAddendumA.
 --   4. This file has been read by the independent reviewer.
 --
 -- Shape follows the established precedent (runtime-successor/binding-evidence-successor/
@@ -345,7 +347,9 @@ if (draft) {
   for (const x of placeholders) console.log(`  unresolved placeholder                    ${x}`);
   for (const x of unauthorised) console.log(`  edit class not yet granted by the Owner   ${x}`);
   for (const f of missing)     console.log(`  post-image digest unpinned                ${f.function}`);
-  console.log(`\nOrder: Owner grants the edit class -> NW-01 runs (step 8) ->`);
-  console.log(`derive-projected-root-digest.sql resolves the placeholder ->`);
+  console.log(`\nOrder: Owner merge 1 (step 1) fixes T -> __T_PLUS_24H__ becomes C1.committed_at`);
+  console.log(`+ 86400s, the same value the controller is rebuilt with at step 3 ->`);
+  console.log(`Owner grants the sixth edit class -> NW-01 runs (step 8) ->`);
+  console.log(`derive-projected-root-digest.sql resolves __PROJECTED_ROOT6_ROOT_DIGEST_PENDING__ ->`);
   console.log(`cp01-derive.sql pins the post-image digests -> regenerate -> independent review.`);
 }
