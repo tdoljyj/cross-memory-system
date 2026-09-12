@@ -3,8 +3,10 @@
   "status": "BOOTSTRAP_SOURCE_BOUND_CANDIDATE_NOT_CANONICAL_NOT_FROZEN",
   "authority_effect": "NONE",
   "bootstrap_context_ref": "artifacts/priorities/bootstrap-context.json",
+  "authority_currentness_contract_ref": "artifacts/priorities/authority-currentness-contract.json",
+  "projection_watermark_ref": "artifacts/priorities/projection-watermark.json",
   "fresh_agent_recovery_contract_ref": "docs/governance/priorities/fresh-agent-recovery-contract.md",
-  "zero_memory_structural_preflight": "16/25",
+  "zero_memory_structural_preflight": "20/25",
   "tracks": [
     {"track_id":"E","name":"工程与平台","frontier":["E-001","E-008"],"note":"E-001 是严格主链第一优先；E-008 仅允许非阻塞 Bootstrap/Inventory 工作。"},
     {"track_id":"P","name":"产品与体验","frontier":["P-006","P-004"],"note":"可继续评审/设计，但不得抢占 Kernel 主链资源；Product Runtime 主链仍被 E-007 前置阻塞。"},
@@ -65,7 +67,8 @@
   "known_hard_identity_conflict": null,
   "known_authority_gaps": [
     "E-010 exact Canonical freeze Event/Receipt not materialized in this projection",
-    "principal-specific Authority / Visibility / Eligible Actions unresolved until authenticated Clued read",
-    "Priority Snapshot CurrentnessReceipt / canonical watermark unresolved"
+    "principal-specific Authority / Visibility / Development Grant values unresolved until authenticated Clued read",
+    "Priority Snapshot CurrentnessReceipt / upstream canonical watermark unresolved",
+    "authoritative Replan / PriorityReconciliationReceipt unresolved"
   ]
 }
