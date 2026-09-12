@@ -1,0 +1,51 @@
+name: Archive verified frozen baselines
+
+on:
+  push:
+    paths:
+      - '.github/workflows/archive-frozen-baselines.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  archive:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Materialize exact frozen artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p docs/frozen-baselines/{brand,business,console,distribution,integration,kernel,model,permissions,prototype}
+          git cat-file blob 7f81db1098cc041099e0af18707f02da4c4a2d36 > 'docs/frozen-baselines/brand/Clued_品牌定位_v0.1.2_正式基线_20260910.md'
+          git cat-file blob e485a9c2978459c4e28d977692fd206b4a60f2b5 > 'docs/frozen-baselines/business/Clued_完整商业方案_执行基线_v1.3.1_20260909.md'
+          git cat-file blob dbdfdba9e40300b4b6e46481224a4c68692d7672 > 'docs/frozen-baselines/business/Clued_完整商业方案_执行基线_v1.3.1_20260909.docx'
+          git cat-file blob 888f2c99030fa726a9e5b292cab602bd1f97b04f > 'docs/frozen-baselines/console/Clued_Console_完整产品方案_执行基线_v1.0_20260908.md'
+          git cat-file blob 4b38ada70bd1c4efc23ed870d2b48e92c52bba10 > 'docs/frozen-baselines/distribution/Clued_Cross-Host_Thin-Open_Integration_Distribution_v0.2.4_定点修订候选_20260911.md'
+          git cat-file blob f97feb7ebb2e04bc0ee224323e1d289c948e74f3 > 'docs/frozen-baselines/distribution/Clued_Cross-Host_Thin-Open_Integration_Distribution_v0.2.4_独立终审_PASS_20260911.md'
+          git cat-file blob b3ff2f75c48af5c9a466360b0168d4f09852c158 > 'docs/frozen-baselines/integration/Clued_Integration_安装与更新生命周期基线_v0.1_正式基线_20260910.md'
+          git cat-file blob 69d98fbe1d8dea11e440d0d9b233382cbbfb99ed > 'docs/frozen-baselines/kernel/Clued_Kernel_Health_Surgical_Repair_接入执行方案_v0.1_FIXED_20260908.md'
+          git cat-file blob d449006f86292747eb5402fc8d8885ee819c61cf > 'docs/frozen-baselines/kernel/Clued_Phase2_Kernel_Stability_Hardening_横向接入执行方案_v0.1_正式基线_20260908.md'
+          git cat-file blob 80e391fed0429f94d23b11f17ca36ad33af4701d > 'docs/frozen-baselines/model/Clued_第一方模型系统实施与验收计划_v0.9.2_定点修订候选_20260908.md'
+          git cat-file blob 61119a862ba74063ea5aa50515482c78aa0baab7 > 'docs/frozen-baselines/model/Clued_第一方模型系统实施与验收计划_v0.9.2_独立终审报告_v0.1_PASS_20260908.md'
+          git cat-file blob 5bd274f49d38b7d2ddb652f6982af87e593765ec > 'docs/frozen-baselines/model/Clued_第一方模型系统实施与验收计划_v0.9.2_PlanReviewAttestation_v0.1_PASS.yaml'
+          git cat-file blob a354a65f916ceae491f0fa69c409fb020d10f74b > 'docs/frozen-baselines/model/PACKAGE_MANIFEST.json'
+          git cat-file blob 451d11f3eca4d6b7062b9a080b2e061e928f6fd8 > 'docs/frozen-baselines/permissions/Clued_项目成员与项目组权限完整方案_执行基线_v1.1_20260908.md'
+          git cat-file blob 1be8253abe6b9be5d6a6b980092b4ea57a225f19 > 'docs/frozen-baselines/prototype/Clued_原型制作完整方案_v0.2_正式执行基线_20260908.md'
+          cat > docs/frozen-baselines/README.md <<'EOF'
+          # Clued Frozen Baselines Archive
+          Archive date: 2026-09-12
+
+          This directory stores exact-byte repository copies of fixed / frozen / formally accepted Clued artifacts available at archive time. Frozen bytes are not rewritten. Presence here does not itself create runtime or production Authority.
+
+          Fixed decisions without an exact standalone source artifact are not reconstructed from summaries; they are added only when their original bytes are available.
+          EOF
+          git add docs/frozen-baselines
+          git rm --ignore-unmatch .github/workflows/archive-frozen-baselines.yml
+          git config user.name 'clued-archive-bot'
+          git config user.email 'clued-archive-bot@users.noreply.github.com'
+          git commit -m 'docs: archive exact frozen baseline copies'
+          git push origin HEAD:main
