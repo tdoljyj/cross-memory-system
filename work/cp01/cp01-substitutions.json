@@ -1,0 +1,283 @@
+{
+  "object_type": "ControlPlaneChangeSubstitutionTable",
+  "format": "CP01_PINNED_SUBSTITUTIONS_V1_CANDIDATE",
+  "state": "CANDIDATE_NO_WRITE_PERFORMED",
+  "authority_effect": "NONE",
+  "authorization": {
+    "class": "cp01",
+    "carrier": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-20260912/ExplicitOwnerApproval.candidate.json",
+    "carrier_state": "CANDIDATE_NOT_YET_MERGED_BY_OWNER",
+    "note": "Every entry below must map to one of cp01.permitted_edit_classes. The builder refuses to emit SQL if any entry does not."
+  },
+  "read_at": "2026-09-12T06:1xZ",
+  "preimage_prosrc_sha256": {
+    "clued_control.append_status_manifest(text,text)": "94a444b9174251e8f655ea3a04e160898464caf1f94977cbce1590aff726c615",
+    "clued_control.effective_execution_binding()": "c721b056a771a3a019d1f0cee862408ba56afcbd4d683f45802e8f51c0580d16",
+    "clued_control.reserve_execution_budget(text,text)": "df6087f9d19d99f023a9c789f0c9b34140e92bb82fc00a5dde1d69d9b1aa7d41",
+    "clued_control.reserve_gate(text,text)": "a011292416693ef7e44221868669937261c33848a3ff10882d0f4abd97c9ef2e"
+  },
+  "postimage_prosrc_sha256": {
+    "clued_control.reserve_gate(text,text)": "001dd6a6f29c42e96c7d3762699599cc0239dae2e57452076eafdfc555f032cd",
+    "clued_control.reserve_execution_budget(text,text)": "8ca141de9d006a353d176d739b8bbb21c7f7a4249f7f59af90a77888bc1b11c6",
+    "clued_control.append_status_manifest(text,text)": "84dee7d4c7470d7a077c6b360289a71702b9ef24473107eeeec2bfddc31321c4"
+  },
+  "postimage_derivation": {
+    "how": "Computed in-database by work/cp01/cp01-derive.sql, which performs only SELECT.",
+    "derived_at": "2026-09-12T06:2xZ",
+    "every_substitution_found_exactly_once": true,
+    "counts_agree_between_prosrc_and_full_create_statement": true,
+    "prosrc_len": {
+      "clued_control.reserve_gate(text,text)": [
+        14966,
+        15757
+      ],
+      "clued_control.reserve_execution_budget(text,text)": [
+        13404,
+        14195
+      ],
+      "clued_control.append_status_manifest(text,text)": [
+        3370,
+        3437
+      ]
+    },
+    "offline_cross_check": "The length delta implied by this substitution table alone reproduces every live delta exactly: +791, +791, +67. The two reserve_* deltas are identical because G1..G7 and B1..B7 are the same text and B8 is length-neutral.",
+    "boundary": "These three digests were produced by transcribing cp01-derive.sql into a SQL client by hand. A transcription error cannot pass silently: cp01-apply.candidate.sql is generated from this JSON, not from what was transcribed, so it would recompute a different post-image and abort at CP01_POSTIMAGE_DRIFT before issuing any CREATE OR REPLACE. The independent reviewer should still re-run cp01-derive.sql read-only and reproduce these three values."
+  },
+  "constants": {
+    "root3_generation": "ctrgen_2e778ca66244459f974b081edca8c04e",
+    "root4_generation": "ctrgen_9cf53fa5cd0a4a38bd68613493f95b06",
+    "root5_generation": "ctrgen_e5df432221344996afc04b5638121d96",
+    "root6_generation": "ctrgen_5e0440a95ac8ee257b9e4236cabd275b",
+    "root5_budget_sequence": 64,
+    "root6_budget_sequence": 89,
+    "superseded_window_expires_at": "2026-09-12T13:14:51Z",
+    "this_window_expires_at": "2026-09-19T00:00:00Z",
+    "root4_and_root5_budget_expiry": "2026-09-11T10:21:05Z",
+    "root5_status_schema_digest": "76bb79f7278905122474f86fe195cb803e3cb5185a4a50899403fa5567726ae0",
+    "root6_status_schema_digest": "510f3b90cdb026c8c4d44ffac2647502ff8003cdd972850dbe042edbd6c310ef"
+  },
+  "constant_sources": {
+    "root6_generation": "scripts/phase2-qualification/control-context-verifier-root6-window10-successor/context.mjs:15 and :152 (read 2026-09-12)",
+    "root6_budget_sequence": "same file :152, root6BudgetSequence=89",
+    "this_window_expires_at": "same file :152, root6Expiry",
+    "root6_status_schema_digest": "ControllerSourceManifest.candidate.json accepted_subject.control_schema_refs.StatusManifest.sha256"
+  },
+  "live_measurements_2026_09_12": {
+    "execution_events_count": 88,
+    "max_event_sequence": 88,
+    "max_BUDGET_RESERVED_sequence": 85,
+    "series_f_now": 15,
+    "note": "root6_budget_sequence 89 is above every existing event, and the narrowed segment >=64 and <89 still covers every existing root5-era budget (max 85). The loops that read these segments iterate only BUDGET_RESERVED events (reserve_gate:52) and attempts (reserve_gate:70), so the root6 GENERATION_REGISTERED event that will occupy sequence 89 is never matched by them."
+  },
+  "functions": [
+    {
+      "function": "clued_control.reserve_gate(text,text)",
+      "edits": [
+        {
+          "id": "G1",
+          "line": 31,
+          "edit_class": "LIVE_ROOT_GENERATION_ROOT5_TO_ROOT6",
+          "expected_count": 1,
+          "from": "series_view->'root'->>'generation_id' is distinct from 'ctrgen_e5df432221344996afc04b5638121d96'",
+          "to": "series_view->'root'->>'generation_id' is distinct from 'ctrgen_5e0440a95ac8ee257b9e4236cabd275b'"
+        },
+        {
+          "id": "G2",
+          "line": 33,
+          "edit_class": "SUPERSEDED_WINDOW_LITERALS_TO_THIS_WINDOW_MATERIALIZED_TIMESTAMPS",
+          "expected_count": 1,
+          "from": "where root_id=root) is distinct from '2026-09-12T13:14:51Z'::timestamptz",
+          "to": "where root_id=root) is distinct from '2026-09-19T00:00:00Z'::timestamptz"
+        },
+        {
+          "id": "G3",
+          "line": 48,
+          "edit_class": "BINDING_FORWARD_CAP_SERIES_F_15_TO_16",
+          "expected_count": 1,
+          "from": "if series_n>9 or series_f>15 or",
+          "to": "if series_n>9 or series_f>16 or"
+        },
+        {
+          "id": "G4",
+          "line": "58-60",
+          "edit_class": "BOUND_OPEN_ENDED_SEQUENCE_GE_64_SEGMENT_TO_GE_64_AND_LT_89_AND_ADD_GE_89_ROOT6_SEGMENT",
+          "expected_count": 1,
+          "what": "original budget scope segment",
+          "from": "  or ((series_e->>'sequence')::bigint >= 64 and (\n       series_budget->>'root_generation' is distinct from 'ctrgen_e5df432221344996afc04b5638121d96'\n       or series_budget->>'expires_at' is distinct from '2026-09-11T10:21:05Z'))",
+          "to": "  or ((series_e->>'sequence')::bigint >= 89 and (\n       series_budget->>'root_generation' is distinct from 'ctrgen_5e0440a95ac8ee257b9e4236cabd275b'\n       or series_budget->>'expires_at' is distinct from '2026-09-19T00:00:00Z'))\n  or ((series_e->>'sequence')::bigint >= 64 and (series_e->>'sequence')::bigint < 89 and (\n       series_budget->>'root_generation' is distinct from 'ctrgen_e5df432221344996afc04b5638121d96'\n       or series_budget->>'expires_at' is distinct from '2026-09-11T10:21:05Z'))"
+        },
+        {
+          "id": "G5",
+          "line": "79-81",
+          "edit_class": "BOUND_OPEN_ENDED_SEQUENCE_GE_64_SEGMENT_TO_GE_64_AND_LT_89_AND_ADD_GE_89_ROOT6_SEGMENT",
+          "expected_count": 1,
+          "what": "gate authorization window segment",
+          "from": "  or ((series_a->>'budget_sequence')::bigint >= 64 and (\n       series_ga->>'control_trust_root_generation' is distinct from 'ctrgen_e5df432221344996afc04b5638121d96'\n       or (series_ga->>'deadline')::timestamptz>'2026-09-11T10:21:05Z'::timestamptz))",
+          "to": "  or ((series_a->>'budget_sequence')::bigint >= 89 and (\n       series_ga->>'control_trust_root_generation' is distinct from 'ctrgen_5e0440a95ac8ee257b9e4236cabd275b'\n       or (series_ga->>'deadline')::timestamptz>'2026-09-19T00:00:00Z'::timestamptz))\n  or ((series_a->>'budget_sequence')::bigint >= 64 and (series_a->>'budget_sequence')::bigint < 89 and (\n       series_ga->>'control_trust_root_generation' is distinct from 'ctrgen_e5df432221344996afc04b5638121d96'\n       or (series_ga->>'deadline')::timestamptz>'2026-09-11T10:21:05Z'::timestamptz))"
+        },
+        {
+          "id": "G6",
+          "line": "98-99",
+          "edit_class": "BOUND_OPEN_ENDED_SEQUENCE_GE_64_SEGMENT_TO_GE_64_AND_LT_89_AND_ADD_GE_89_ROOT6_SEGMENT",
+          "expected_count": 1,
+          "what": "terminal receipt binding segment",
+          "from": "  or ((series_a->>'budget_sequence')::bigint >= 64 and\n      series_receipt->>'control_trust_root_generation' is distinct from 'ctrgen_e5df432221344996afc04b5638121d96')",
+          "to": "  or ((series_a->>'budget_sequence')::bigint >= 89 and\n      series_receipt->>'control_trust_root_generation' is distinct from 'ctrgen_5e0440a95ac8ee257b9e4236cabd275b')\n  or ((series_a->>'budget_sequence')::bigint >= 64 and (series_a->>'budget_sequence')::bigint < 89 and\n      series_receipt->>'control_trust_root_generation' is distinct from 'ctrgen_e5df432221344996afc04b5638121d96')"
+        },
+        {
+          "id": "G7",
+          "line": 112,
+          "edit_class": "SUPERSEDED_WINDOW_LITERALS_TO_THIS_WINDOW_MATERIALIZED_TIMESTAMPS",
+          "expected_count": 1,
+          "unreachable_in_this_function": true,
+          "unreachable_reason": "reserve_gate:110 reads `if 'GATE'='BUDGET' then` — a constant-false test in the GATE instantiation of this shared template, so lines 111-113 never execute here. The identical line is live in reserve_execution_budget (B7), where :115 reads `if 'BUDGET'='BUDGET' then`. This edit is made to keep the two instantiations byte-comparable, NOT because it has any runtime effect in reserve_gate. ControlPlaneChangeScope.md section 7 listed reserve_gate #7 and reserve_execution_budget #7 as equivalent substantive edits; that was wrong and is corrected here.",
+          "from": "  or clock_timestamp()+interval '600 seconds'>='2026-09-12T13:14:51Z'::timestamptz",
+          "to": "  or clock_timestamp()+interval '600 seconds'>='2026-09-19T00:00:00Z'::timestamptz"
+        }
+      ]
+    },
+    {
+      "function": "clued_control.reserve_execution_budget(text,text)",
+      "edits": [
+        {
+          "id": "B1",
+          "line": 36,
+          "edit_class": "LIVE_ROOT_GENERATION_ROOT5_TO_ROOT6",
+          "expected_count": 1,
+          "from": "series_view->'root'->>'generation_id' is distinct from 'ctrgen_e5df432221344996afc04b5638121d96'",
+          "to": "series_view->'root'->>'generation_id' is distinct from 'ctrgen_5e0440a95ac8ee257b9e4236cabd275b'"
+        },
+        {
+          "id": "B2",
+          "line": 38,
+          "edit_class": "SUPERSEDED_WINDOW_LITERALS_TO_THIS_WINDOW_MATERIALIZED_TIMESTAMPS",
+          "expected_count": 1,
+          "from": "where root_id=root) is distinct from '2026-09-12T13:14:51Z'::timestamptz",
+          "to": "where root_id=root) is distinct from '2026-09-19T00:00:00Z'::timestamptz"
+        },
+        {
+          "id": "B3",
+          "line": 53,
+          "edit_class": "BINDING_FORWARD_CAP_SERIES_F_15_TO_16",
+          "expected_count": 1,
+          "from": "if series_n>9 or series_f>15 or",
+          "to": "if series_n>9 or series_f>16 or"
+        },
+        {
+          "id": "B4",
+          "line": "63-65",
+          "edit_class": "BOUND_OPEN_ENDED_SEQUENCE_GE_64_SEGMENT_TO_GE_64_AND_LT_89_AND_ADD_GE_89_ROOT6_SEGMENT",
+          "expected_count": 1,
+          "what": "original budget scope segment",
+          "from": "  or ((series_e->>'sequence')::bigint >= 64 and (\n       series_budget->>'root_generation' is distinct from 'ctrgen_e5df432221344996afc04b5638121d96'\n       or series_budget->>'expires_at' is distinct from '2026-09-11T10:21:05Z'))",
+          "to": "  or ((series_e->>'sequence')::bigint >= 89 and (\n       series_budget->>'root_generation' is distinct from 'ctrgen_5e0440a95ac8ee257b9e4236cabd275b'\n       or series_budget->>'expires_at' is distinct from '2026-09-19T00:00:00Z'))\n  or ((series_e->>'sequence')::bigint >= 64 and (series_e->>'sequence')::bigint < 89 and (\n       series_budget->>'root_generation' is distinct from 'ctrgen_e5df432221344996afc04b5638121d96'\n       or series_budget->>'expires_at' is distinct from '2026-09-11T10:21:05Z'))"
+        },
+        {
+          "id": "B5",
+          "line": "84-86",
+          "edit_class": "BOUND_OPEN_ENDED_SEQUENCE_GE_64_SEGMENT_TO_GE_64_AND_LT_89_AND_ADD_GE_89_ROOT6_SEGMENT",
+          "expected_count": 1,
+          "what": "gate authorization window segment",
+          "from": "  or ((series_a->>'budget_sequence')::bigint >= 64 and (\n       series_ga->>'control_trust_root_generation' is distinct from 'ctrgen_e5df432221344996afc04b5638121d96'\n       or (series_ga->>'deadline')::timestamptz>'2026-09-11T10:21:05Z'::timestamptz))",
+          "to": "  or ((series_a->>'budget_sequence')::bigint >= 89 and (\n       series_ga->>'control_trust_root_generation' is distinct from 'ctrgen_5e0440a95ac8ee257b9e4236cabd275b'\n       or (series_ga->>'deadline')::timestamptz>'2026-09-19T00:00:00Z'::timestamptz))\n  or ((series_a->>'budget_sequence')::bigint >= 64 and (series_a->>'budget_sequence')::bigint < 89 and (\n       series_ga->>'control_trust_root_generation' is distinct from 'ctrgen_e5df432221344996afc04b5638121d96'\n       or (series_ga->>'deadline')::timestamptz>'2026-09-11T10:21:05Z'::timestamptz))"
+        },
+        {
+          "id": "B6",
+          "line": "103-105",
+          "edit_class": "BOUND_OPEN_ENDED_SEQUENCE_GE_64_SEGMENT_TO_GE_64_AND_LT_89_AND_ADD_GE_89_ROOT6_SEGMENT",
+          "expected_count": 1,
+          "what": "terminal receipt binding segment",
+          "from": "  or ((series_a->>'budget_sequence')::bigint >= 64 and\n      series_receipt->>'control_trust_root_generation' is distinct from 'ctrgen_e5df432221344996afc04b5638121d96')",
+          "to": "  or ((series_a->>'budget_sequence')::bigint >= 89 and\n      series_receipt->>'control_trust_root_generation' is distinct from 'ctrgen_5e0440a95ac8ee257b9e4236cabd275b')\n  or ((series_a->>'budget_sequence')::bigint >= 64 and (series_a->>'budget_sequence')::bigint < 89 and\n      series_receipt->>'control_trust_root_generation' is distinct from 'ctrgen_e5df432221344996afc04b5638121d96')"
+        },
+        {
+          "id": "B7",
+          "line": 117,
+          "edit_class": "SUPERSEDED_WINDOW_LITERALS_TO_THIS_WINDOW_MATERIALIZED_TIMESTAMPS",
+          "expected_count": 1,
+          "live_in_this_function": true,
+          "note": "reserve_execution_budget:115 reads `if 'BUDGET'='BUDGET' then`, so unlike G7 this line does execute. Without this edit no new budget can be reserved at all after 2026-09-12T13:04:51Z.",
+          "from": "  or clock_timestamp()+interval '600 seconds'>='2026-09-12T13:14:51Z'::timestamptz",
+          "to": "  or clock_timestamp()+interval '600 seconds'>='2026-09-19T00:00:00Z'::timestamptz"
+        },
+        {
+          "id": "B8",
+          "line": 125,
+          "edit_class": "SUPERSEDED_WINDOW_LITERALS_TO_THIS_WINDOW_MATERIALIZED_TIMESTAMPS",
+          "expected_count": 1,
+          "from": "if v->>'expires_at' is distinct from '2026-09-12T13:14:51Z' then raise exception 'series_exact_new_budget_expiry_required'; end if;",
+          "to": "if v->>'expires_at' is distinct from '2026-09-19T00:00:00Z' then raise exception 'series_exact_new_budget_expiry_required'; end if;"
+        }
+      ]
+    },
+    {
+      "function": "clued_control.append_status_manifest(text,text)",
+      "edits": [
+        {
+          "id": "A1",
+          "line": 8,
+          "edit_class": "STATUS_MANIFEST_SCHEMA_DIGEST_TO_DIGEST_CARRIED_BY_THIS_RUN_CONTROLLER_INCLUDING_ALLOW_LIST",
+          "expected_count": 1,
+          "what": "add the root6 status schema digest to the three-member allow list; the three historical members are retained so existing manifests still resubmit as exact duplicates",
+          "from": "not in ('6ba12ed51b3fc0e457c13e83f47e1ad1aa6cc680d8f28c668f8c65d12742ecc2','e6bf45a014926fe5ee1dfbda1851d07a57030733ca411a08cd6364a6e40b3dca','76bb79f7278905122474f86fe195cb803e3cb5185a4a50899403fa5567726ae0')",
+          "to": "not in ('6ba12ed51b3fc0e457c13e83f47e1ad1aa6cc680d8f28c668f8c65d12742ecc2','e6bf45a014926fe5ee1dfbda1851d07a57030733ca411a08cd6364a6e40b3dca','76bb79f7278905122474f86fe195cb803e3cb5185a4a50899403fa5567726ae0','510f3b90cdb026c8c4d44ffac2647502ff8003cdd972850dbe042edbd6c310ef')"
+        },
+        {
+          "id": "A2",
+          "line": 27,
+          "edit_class": "STATUS_MANIFEST_SCHEMA_DIGEST_TO_DIGEST_CARRIED_BY_THIS_RUN_CONTROLLER_INCLUDING_ALLOW_LIST",
+          "expected_count": 1,
+          "what": "strict equality for NEW objects moves to the root6 schema; must run after A1, whose anchor still contains the root5 digest",
+          "from": "if obj->>'schema_digest' is distinct from '76bb79f7278905122474f86fe195cb803e3cb5185a4a50899403fa5567726ae0'",
+          "to": "if obj->>'schema_digest' is distinct from '510f3b90cdb026c8c4d44ffac2647502ff8003cdd972850dbe042edbd6c310ef'"
+        },
+        {
+          "id": "A3",
+          "line": 28,
+          "edit_class": "LIVE_ROOT_GENERATION_ROOT5_TO_ROOT6",
+          "expected_count": 1,
+          "from": "or obj->>'control_trust_root_generation' is distinct from 'ctrgen_e5df432221344996afc04b5638121d96'",
+          "to": "or obj->>'control_trust_root_generation' is distinct from 'ctrgen_5e0440a95ac8ee257b9e4236cabd275b'"
+        },
+        {
+          "id": "A4",
+          "line": 29,
+          "edit_class": "SUPERSEDED_WINDOW_LITERALS_TO_THIS_WINDOW_MATERIALIZED_TIMESTAMPS",
+          "expected_count": 1,
+          "from": "or (obj->>'expires_at')::timestamptz is distinct from '2026-09-11T10:21:05Z'::timestamptz",
+          "to": "or (obj->>'expires_at')::timestamptz is distinct from '2026-09-19T00:00:00Z'::timestamptz"
+        }
+      ]
+    }
+  ],
+  "deliberately_not_edited": [
+    {
+      "where": "append_status_manifest:26",
+      "text": "-- Preserve exact immutable duplicates; only new objects use the ordinary Root5 schema.",
+      "why": "The comment becomes stale once A2 lands, but rewriting a comment is a byte change that maps to none of cp01.permitted_edit_classes. Recorded here instead of silently touched."
+    },
+    {
+      "where": "append_status_manifest:30",
+      "text": "raise exception 'ordinary_root5_status_schema_required'",
+      "why": "Same reason: the exception name becomes misleading, and renaming it is outside the permitted classes."
+    },
+    {
+      "where": "append_status_manifest:33-35",
+      "text": "expires_at > clock_timestamp() and expires_at <= accepted_binding.expires_at",
+      "why": "Untouched by design. Once A4 pins 2026-09-19T00:00:00Z and NW-01 has moved accepted_binding.expires_at to the same instant, :34 holds and :35 holds with equality. Verified line-by-line 2026-09-12."
+    },
+    {
+      "where": "reserve_gate:35 and reserve_execution_budget:40",
+      "text": "sha256(series_view->'root') is distinct from '4ddd23b52ba396909640c7bdbc60217b0f34a840d5e950901b20e4b3c17502a0'",
+      "why": "SEE RootDigestGuardAlreadyBrokenFinding.md. This guard is ALREADY FAILING today (actual value e7624fda1441e309bfa3bdd2afb8a00f8636199ab201b3e5ecfadf46214bc109). It maps to none of cp01.permitted_edit_classes, its correct new value cannot be precomputed, and four remediation options are before the Owner and the independent reviewer in round 10. NOTHING is done to it here. If the adjudication puts it inside CP-01, it enters this table as a twentieth edit and every digest below is recomputed.",
+      "slot": "R10_PENDING"
+    }
+  ],
+  "totals": {
+    "edits_in_this_table": 19,
+    "reserve_gate": 7,
+    "reserve_execution_budget": 8,
+    "append_status_manifest": 4,
+    "pending_on_round_10_adjudication": 1
+  }
+}
