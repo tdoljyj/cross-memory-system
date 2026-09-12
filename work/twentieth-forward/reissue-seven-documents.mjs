@@ -15,6 +15,23 @@
 //
 //   QUAL, PROP  ->  APPR  ->  APPL  ->  REPR  ->  RTA
 //
+// VERSION CHAINS. Five of the six carry an explicit lineage that substitution alone does not
+// advance, and leaving it alone would make each new document claim it supersedes its
+// grandparent rather than the version it actually replaces:
+//
+//   QUAL, RTA, APPL, REPR   supersedes + supersedes_chain
+//   APPR                    reissue.supersedes + reissue.reason
+//
+// The two families record lineage differently, and each is advanced in its own form:
+//   QUAL/RTA use {path, sha256, bytes, blob_sha}; APPL/REPR use {uri, sha256}.
+//
+// WHERE THE OUTPUT GOES is a judgement call, flagged in the report for review rather than
+// buried. History shows QUAL and RTA moving directory each time they are re-issued
+// (root5-final-runtime-v15 -> v16 -> root6-runtime-v17), and their supersedes entries carry a
+// path, so they go to a new directory. The capacity documents record lineage by blob uri and
+// have never moved, so they are rewritten in place. If the reviewer disagrees, only OUT_SUBDIR
+// and the in-place flag change.
+//
 // Usage:
 //   node reissue-seven-documents.mjs <newNotBeforeZ> <newExpiryZ> <newControllerSha256> [outputRoot]
 import fs from 'node:fs';
@@ -35,14 +52,32 @@ const OLD_CTRL_DIR = 'scripts/phase2-qualification/control-context-verifier-root
 const NEW_CTRL_DIR = 'scripts/phase2-qualification/control-context-verifier-root6-window11-successor';
 
 // Topological order. Each entry lists the timestamp literal it stamps as "when this was issued".
+const OLD_RUNTIME_DIR = `${A}/bootstrap/root6-runtime-v17`;
+const NEW_RUNTIME_DIR = `${A}/bootstrap/root6-runtime-v18`;
+
+// lineage: 'pathRef'  -> supersedes/supersedes_chain carrying {path, sha256, bytes, blob_sha}
+//          'uriRef'   -> supersedes/supersedes_chain carrying {uri, sha256}
+//          'reissue'  -> reissue.supersedes {path, sha256, bytes, blob_sha, owner_merge} + reason
+//          null       -> no lineage node
 const DOCS = [
-  {id: 'QUAL', p: `${A}/bootstrap/root6-runtime-v17/ScopedRoot5FinalControllerQualification.json`,          issuedAt: '2026-09-12T02:12:54.730Z'},
-  {id: 'PROP', p: `${A}/root6-capacity/Root6OriginalInput4000000CapacityProposal20260912.json`,             issuedAt: '2026-09-12T00:54:15.197Z'},
-  {id: 'APPR', p: `${A}/root6-capacity/Root6OriginalInput4000000CapacityApproval20260912.v2.json`,          issuedAt: '2026-09-12T00:54:15.197Z'},
-  {id: 'APPL', p: `${A}/root6-capacity/Root6CurrentController4000000CapacityApplicability20260912.json`,    issuedAt: '2026-09-12T01:31:02.664Z'},
-  {id: 'REPR', p: `${A}/root6-capacity/Root6Current043CapacityRepairAcceptance20260912.json`,               issuedAt: null},
-  {id: 'RTA',  p: `${A}/bootstrap/root6-runtime-v17/ExactRoot5FinalPreentryControllerRuntimeAcceptance.json`, issuedAt: '2026-09-12T02:12:54.730Z'},
+  {id: 'QUAL', p: `${OLD_RUNTIME_DIR}/ScopedRoot5FinalControllerQualification.json`,                     issuedAt: '2026-09-12T02:12:54.730Z', lineage: 'pathRef', moveTo: NEW_RUNTIME_DIR},
+  {id: 'PROP', p: `${A}/root6-capacity/Root6OriginalInput4000000CapacityProposal20260912.json`,          issuedAt: '2026-09-12T00:54:15.197Z', lineage: null},
+  {id: 'APPR', p: `${A}/root6-capacity/Root6OriginalInput4000000CapacityApproval20260912.v2.json`,       issuedAt: '2026-09-12T00:54:15.197Z', lineage: 'reissue'},
+  {id: 'APPL', p: `${A}/root6-capacity/Root6CurrentController4000000CapacityApplicability20260912.json`, issuedAt: '2026-09-12T01:31:02.664Z', lineage: 'uriRef'},
+  {id: 'REPR', p: `${A}/root6-capacity/Root6Current043CapacityRepairAcceptance20260912.json`,            issuedAt: null,                       lineage: 'uriRef'},
+  {id: 'RTA',  p: `${OLD_RUNTIME_DIR}/ExactRoot5FinalPreentryControllerRuntimeAcceptance.json`,          issuedAt: '2026-09-12T02:12:54.730Z', lineage: 'pathRef', moveTo: NEW_RUNTIME_DIR},
 ];
+
+// The Owner merge that made the version now being superseded authoritative. Only APPR records one.
+const APPR_SUPERSEDED_OWNER_MERGE = '77330e254896a02c09cc8e22555819dcf5018fdc';
+const REISSUE_REASON =
+  'The root6 controller was rebuilt because root6Expiry was set to 2026-09-19T00:00:00Z, a value ' +
+  'the Owner window mechanism can never produce: every window is exactly 86400 seconds from a ' +
+  'verified Owner merge. This approval pinned that window in limitations[1], which scoped the one ' +
+  'remaining 600-second allocation to it, so the approval no longer authorises the allocation ' +
+  'actually being made. Found by the successor independent reviewer (round 8, addendum A, item 8). ' +
+  'The substance of the capacity decision is unchanged; only the window it is scoped to, and the ' +
+  'controller digest it is issued against, differ.';
 
 const OLD = {
   ctrlSha:  '72d9eb92cf287ee6fda1fdbb97d90d02ed7f0e368398cba4ddb517233413d145',
@@ -105,10 +140,56 @@ for (const doc of DOCS) {
   // Nothing superseded may survive anywhere in the document.
   for (const t of table) assert.equal(text.split(t.from).length, 1, 'SUPERSEDED_VALUE_SURVIVED:' + doc.id + ':' + t.what);
   if (doc.issuedAt) assert.equal(text.split(doc.issuedAt).length, 1, 'OLD_ISSUED_AT_SURVIVED:' + doc.id);
+
+  // Advance the version chain. Substitution alone leaves the lineage node pointing at this
+  // document's predecessor, so the re-issued version would claim to supersede its grandparent.
+  // Re-serialising is only safe because every one of these is stored as two-space indent plus a
+  // newline, which is asserted against the file on disk rather than assumed.
+  const beforeText = before.toString('utf8');
+  assert.equal(JSON.stringify(JSON.parse(beforeText), null, 2) + '\n', beforeText,
+    'PREDECESSOR_NOT_INDENT2_SERIALISED_REFUSING_TO_REWRITE:' + doc.id);
+  const parsed = JSON.parse(text);
+  const pathRef = {path: doc.p, sha256: oldSha, bytes: before.length, blob_sha: oldBlob};
+  const uriRef = {uri: 'https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/' + oldBlob, sha256: oldSha};
+  if (doc.lineage === 'pathRef' || doc.lineage === 'uriRef') {
+    assert.ok(parsed.supersedes && Array.isArray(parsed.supersedes_chain), 'LINEAGE_NODE_ABSENT:' + doc.id);
+    parsed.supersedes_chain = [parsed.supersedes, ...parsed.supersedes_chain];
+    parsed.supersedes = doc.lineage === 'pathRef' ? pathRef : uriRef;
+    applied.version_chain = 'supersedes advanced, chain depth ' + parsed.supersedes_chain.length;
+  } else if (doc.lineage === 'reissue') {
+    assert.ok(parsed.reissue?.supersedes, 'REISSUE_NODE_ABSENT:' + doc.id);
+    parsed.reissue = {
+      supersedes: {...pathRef, owner_merge: APPR_SUPERSEDED_OWNER_MERGE},
+      reason: REISSUE_REASON,
+      substance_unchanged: false,
+      what_changed: 'limitations[1] window, and the controller digest this approval is issued against',
+    };
+    applied.version_chain = 'reissue.supersedes advanced';
+  }
+  text = JSON.stringify(parsed, null, 2) + '\n';
   JSON.parse(text); // must still be valid JSON
 
+  // Re-check for superseded values AFTER the lineage node is written, since that node is added
+  // later than the substitution pass. One exemption, and only one: reissue.reason narrates why the
+  // old window was unsatisfiable and has to name it. A reason that will not say which value was
+  // wrong is worth little to the Owner reading it. Everything outside that field must still be
+  // clean, so the check runs on the document with that one field blanked rather than being skipped.
+  {
+    const probe = structuredClone(parsed);
+    if (probe.reissue?.reason) probe.reissue.reason = '';
+    const probeText = JSON.stringify(probe);
+    for (const t of table) {
+      assert.equal(probeText.split(t.from).length, 1,
+        'SUPERSEDED_VALUE_SURVIVED_OUTSIDE_NARRATION:' + doc.id + ':' + t.what);
+    }
+    if (doc.issuedAt) assert.equal(probeText.split(doc.issuedAt).length, 1, 'OLD_ISSUED_AT_SURVIVED:' + doc.id);
+    if (parsed.reissue?.reason) applied.narrated_old_values = 'reissue.reason names the superseded window deliberately';
+  }
+
   const after = Buffer.from(text, 'utf8');
-  const outAbs = path.join(OUT_ROOT, doc.p);
+  const outAbs = doc.moveTo
+    ? path.join(OUT_ROOT, doc.moveTo, path.basename(doc.p))
+    : path.join(OUT_ROOT, doc.p);
   fs.mkdirSync(path.dirname(outAbs), {recursive: true});
   fs.writeFileSync(outAbs, after);
 
@@ -121,7 +202,10 @@ for (const doc of DOCS) {
 
   report.push({
     id: doc.id,
-    path: doc.p,
+    from: doc.p,
+    to: path.relative(OUT_ROOT, outAbs),
+    moved: Boolean(doc.moveTo),
+    lineage: doc.lineage ?? 'none',
     bytes: {before: before.length, after: after.length},
     sha256: {before: oldSha, after: newSha},
     blob_sha1: {before: oldBlob, after: newBlob},
@@ -138,4 +222,15 @@ console.log(JSON.stringify({
   documents: report,
   authority_effect: 'NONE_UNTIL_VERIFIED_OWNER_MERGE',
   note: 'Six documents plus the ControllerSourceManifest are the seven that pin the controller digest or the window. All must reach the Owner in one merge.',
+  for_review: {
+    placement: 'QUAL and RTA move to ' + NEW_RUNTIME_DIR + ' because their lineage carries a path and ' +
+      'the three prior re-issues each moved directory (v15 -> v16 -> v17). The four capacity documents ' +
+      'record lineage by blob uri, have never moved, and are rewritten in place. This is a judgement ' +
+      'call by the implementing side, not an established rule -- if it is wrong, only the directory ' +
+      'constants change.',
+    not_reissued: 'Root6OriginalInput4000000CapacityApproval20260912.json (the pre-v2 approval) is left ' +
+      'byte-identical: it is on main, its authority_effect is None, v2 references it only as a ' +
+      'supersedes pointer, and rewriting it would breach old_signed_objects_rewritten:false. The ' +
+      'reviewer counted it as an eighth document to re-issue; that push-back is open.',
+  },
 }, null, 2));
