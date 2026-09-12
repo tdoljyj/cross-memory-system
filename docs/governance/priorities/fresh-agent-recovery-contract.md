@@ -11,11 +11,21 @@ A fresh Agent should read, in order:
 1. repository root `README.md`;
 2. `docs/governance/priorities/README.md`;
 3. `artifacts/priorities/current.json`;
-4. `artifacts/priorities/bootstrap-context.json`;
-5. `docs/governance/priorities/current-frontier.md`;
-6. `docs/governance/priorities/tracks.md`;
-7. `docs/governance/priorities/cross-track-map.md`;
-8. `docs/governance/priorities/currentness.md`.
+4. `artifacts/priorities/source-registry.json`;
+5. `artifacts/priorities/bootstrap-context.json`;
+6. `artifacts/priorities/runtime-capability-status.json`;
+7. `artifacts/priorities/authority-currentness-contract.json`;
+8. `artifacts/priorities/projection-watermark.json`;
+9. `artifacts/priorities/bootstrap-currentness-assessment.json`;
+10. `artifacts/priorities/bootstrap-next-action-assessment.json`;
+11. `docs/governance/priorities/current-frontier.md`;
+12. `docs/governance/priorities/tracks.md`;
+13. `docs/governance/priorities/source-registry.md`;
+14. `docs/governance/priorities/cross-track-map.md`;
+15. `docs/governance/priorities/currentness.md`;
+16. `docs/governance/priorities/authority-currentness-contract.md`;
+17. `docs/governance/priorities/runtime-capability-status.md`;
+18. `docs/governance/priorities/zero-memory-preflight.md`.
 
 Repository recovery is only a projection recovery step. It does not replace authenticated Canonical / Authority resolution.
 
@@ -29,11 +39,16 @@ The Agent should be able to recover:
 - `✅ / ◐ / 🔎 / ⛔ / ○ / ⏳ / ↘ / ☐` status;
 - Current Priority Frontier;
 - why items are currently prioritized;
+- exact normalized source / derivation chain for every registered Priority Item;
 - hard dependencies and blockers;
 - non-hard cross-track impacts;
 - known resource conflicts and conditional parallelism;
 - the fact that completed items remain in governance history;
-- the known E-010 Currentness gap;
+- whether an authoritative Multi-Track Reconciliation / Replan runtime is implemented or not;
+- how runtime Principal / Binding / Membership / Development Grant / Resource×Action must be resolved;
+- repository Projection drift state;
+- the safe fail-closed answer when upstream Currentness is not proven;
+- the safe fail-closed answer when no legal side-effect next action can be established;
 - that repository projection carries no execution Authority.
 
 ## 3. What MUST NOT be guessed from the repository
@@ -41,38 +56,100 @@ The Agent should be able to recover:
 The Agent must not guess:
 
 - current authenticated Principal;
+- current Binding / Membership / Development Grant values;
 - current Resource×Action + selector/scope grant;
 - production / database / release / deployment / secret / budget Authority;
-- current Canonical Version or Event watermark when not explicitly verified;
+- a missing Canonical Event / Receipt;
+- `CURRENT` when Currentness is only `UNKNOWN`;
+- that an unimplemented authoritative Replan Registry is equivalent to an empty authoritative registry;
 - whether a high-priority item is legally executable by this Agent;
-- whether an empty Bootstrap Replan Registry proves Canonical has no open Replan Proposal;
 - whether a Candidate revision has become Current without exact Authority evidence.
 
 If any of these are required, the Agent must resolve them through authenticated Clued Authority / Currentness interfaces.
 
-## 4. Eligible next action rule
+## 4. Authority / scope rule
 
-`Priority != Authority`.
+`Priority != Assignment != Authority`.
 
-A next action is eligible only when all of the following hold:
+The runtime resolution path is:
 
 ```text
-Item is READY or explicitly assigned
-+
-Priority / assignment permits work now
-+
-Dependencies and blockers permit work
-+
-Required resource is available
-+
-Currentness is verified for the relevant dependency scope
-+
-Principal is authorized for Resource × Action + selector/scope
+Authenticate
+↓
+Resolve Binding
+↓
+Resolve Authorization Status
+↓
+Resolve Project Membership / Access
+↓
+Resolve Development Grant / Context Scope
+↓
+Resolve effective Resource × Action
+↓
+Verify relevant Currentness
+↓
+Compute eligible next action
 ```
 
-If Authority or Currentness is unknown, the Agent may continue only with work that is explicitly safe under the available scope, such as read-only inspection or non-authoritative drafting. High-risk or side-effecting action fails closed.
+Repository-only safe result:
 
-## 5. Current strict engineering interpretation
+```text
+Principal = NOT_RESOLVED
+Runtime Authority = NOT_ESTABLISHED
+Assignment Scope = NOT_RESOLVED
+Eligible side-effect actions = []
+```
+
+## 5. Eligible next action rule
+
+A next side-effect action is eligible only when all of the following hold:
+
+```text
+Current Priority Frontier
+∩ legal item state
+∩ dependency satisfied
+∩ resource available
+∩ Development Grant / Assignment Scope
+∩ effective Resource × Action
+∩ environment match
+∩ currentness = CURRENT
+```
+
+If Authority or Currentness is unknown:
+
+```text
+status = INDETERMINATE_FAIL_CLOSED
+eligible_side_effect_actions = []
+```
+
+The Agent may continue only with explicitly safe read-only analysis/drafting allowed by its existing repository access.
+
+## 6. Currentness rule
+
+Repository Projection integrity and upstream Canonical Currentness are separate.
+
+- `projection-watermark.json` can detect local projection drift;
+- it cannot prove upstream Priority Snapshot Currentness;
+- `bootstrap-currentness-assessment.json` currently resolves the Priority Snapshot as `UNKNOWN / FAIL_CLOSED` until an authoritative CurrentnessReceipt / dependency-watermark verification exists.
+
+This is the correct answer, not a failure to answer.
+
+## 7. Reconciliation / Replan rule
+
+Current read-only discovery finds no discoverable authoritative Multi-Track PriorityReconciliation / Replan runtime in production or `main`.
+
+Therefore the safe Bootstrap answer is:
+
+```text
+PriorityReconciliation Runtime = NOT_IMPLEMENTED / NOT DISCOVERABLE
+Latest PriorityReconciliationReceipt = NOT_AVAILABLE
+Authoritative Replan Registry = NOT_IMPLEMENTED / NOT DISCOVERABLE
+Open Replan Proposals = UNKNOWN (not [])
+```
+
+When Runtime is implemented, these bootstrap answers must be replaced by real authoritative registry/receipt reads.
+
+## 8. Current strict engineering interpretation
 
 The current repository projection states:
 
@@ -83,16 +160,18 @@ The current repository projection states:
 
 This is a Priority projection, not an execution grant.
 
-## 6. Completion rule
+## 9. Completion rule
 
 `✅ COMPLETED` is not equivalent to “code exists” or “an Agent said done”.
 
 A completed Priority Item must satisfy its applicable completion contract, exact target identity, required verification / gates, evidence and receipt / closeout semantics.
 
-## 7. Zero-memory test rule
+## 10. Zero-memory test rule
 
-Final Zero-Memory validation must use at least three dynamically selected qualified fresh-context Agent Runs. Model / provider identity is not hardcoded.
+The Bootstrap repository now targets **25/25 safe-answer structural coverage**. This means every standard recovery question has an explicit truthful answer path, including `UNKNOWN / NOT_IMPLEMENTED / FAIL_CLOSED` where appropriate.
+
+It does **not** mean the final Runtime gate has passed.
+
+Final Zero-Memory validation still requires at least three dynamically selected qualified fresh-context Agent Runs under legitimate test Authority / Currentness inputs. Model / provider identity is not hardcoded.
 
 The orchestration, comparison and evidence collection should be automated. The user must not be required to manually open multiple Agent sessions, copy prompts, collect screenshots or compare outputs.
-
-This repository-side contract is only the preparation layer for that final automated gate.
