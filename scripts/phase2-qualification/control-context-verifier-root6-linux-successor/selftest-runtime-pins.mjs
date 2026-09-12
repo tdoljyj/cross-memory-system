@@ -35,6 +35,12 @@ let failures = 0;
 const fail = m => { console.error('  FAILED  ' + m); failures++; };
 const ok = m => console.log('  ok       ' + m);
 let unproven = 0;
+// R20-N6: same reason as the gate's stamp -- a measurement with no host attached is not a record.
+const HOST_BINARIES = ['/opt/node22/bin/node', '/usr/bin/docker', '/usr/local/bin/gh', '/usr/bin/python3.11'];
+const hostStamp = () => HOST_BINARIES.map(p => {
+  try { return path.basename(p) + '=' + crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex').slice(0, 12); }
+  catch { return path.basename(p) + '=ABSENT'; }
+}).join(' ');
 const cannotProve = m => { console.log('  UNPROVEN ' + m); unproven++; };
 
 const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'clued-pinselftest-'));
@@ -54,6 +60,13 @@ fs.symlinkSync(path.join(REPO, 'apps/clued-cloud'), path.join(SREPO, 'apps/clued
 // mutation back onto the real tree, and leaving it out would send prepare() looking at a third
 // checkout again -- which is the defect (R19-F3) this copy exists to make testable.
 fs.cpSync(path.join(REPO, 'skills'), path.join(SREPO, 'skills'), {recursive: true});
+// R20-N5 is handled at the criterion, not by pruning the sandbox. Three of the expect strings
+// below are shared with nine to eleven predecessor controllers, whose files the tree copy brings
+// along; the criterion "does stderr contain this substring" would therefore accept a predecessor's
+// check firing as proof that THIS one is live. Deleting the predecessors was tried first and does
+// not work: the manifest lists their files as repository sources, so the trusted-entry items fail
+// on a pruned tree. What distinguishes them is the path, so bothWays additionally requires the
+// failure to name this controller -- see the NAME check there.
 const SDIR = path.join(SQ, NAME);
 const QREL = 'scripts/phase2-qualification';
 
@@ -65,7 +78,7 @@ const py = (script, cwd) => execFileSync('/usr/bin/python3.11', ['-I', '-S', '-B
 // target is relative to the sandbox repository root (SREPO), not to the qualification
 // directory: item 5 mutates skills/clued/SKILL.md, which sits outside it. QREL below spells the
 // qualification prefix once so the other call sites stay readable.
-function bothWays(label, target, probe, expect) {
+function bothWays(label, target, probe, expect, attributedBy = null) {
   const abs = path.join(SREPO, target);
   if (!fs.existsSync(abs)) return fail(`${label}: ${target} is not in the sandbox`);
   const original = fs.readFileSync(abs);
@@ -81,7 +94,14 @@ function bothWays(label, target, probe, expect) {
     return fail(`${label}: does not pass on the pristine copy -- ${text(pristine).trim().split('\n').pop().slice(0, 140)}`);
   if (!text(mutated).includes(expect))
     return fail(`${label}: altering ${path.basename(target)} did NOT trigger ${expect}. The check is not running, so its passing means nothing.`);
-  ok(`${label} (passes clean; altering ${path.basename(target)} raises ${expect})`);
+  // R20-N5: the message alone does not say WHOSE check fired. Where the module is reached by
+  // resolution, the traceback carries the raising module's path, so this controller's directory
+  // name must appear in it -- otherwise a predecessor's copy of the same string would read as
+  // proof about this one. A probe that already names its target by absolute path cannot make that
+  // mistake; those pass attributedBy saying so, in words, rather than being silently exempt.
+  if (!attributedBy && !text(mutated).includes(NAME))
+    return fail(`${label}: ${expect} was raised, but nothing in the failure names ${NAME}, so it may be a predecessor's copy of the same check rather than this controller's. If the probe targets this controller by absolute path, say so via attributedBy.`);
+  ok(`${label} (passes clean; altering ${path.basename(target)} raises ${expect}${attributedBy ? '; attributed because ' + attributedBy : ''})`);
 }
 
 // Mutates a PIN rather than the object it pins, then repairs the cross-pin chain and runs the
@@ -159,7 +179,11 @@ def load(n, f):
 b = load('bridge', 'bridge.py'); b.load_host()
 print('CHAIN_OK')`, cwd);
 bothWays('python chain: bridge -> fixed_host', `${QREL}/${NAME}/fixed_host.py`, loadChain, 'Accepted fixed host bytes changed');
-bothWays('python chain: fixed_host -> parent600', `${QREL}/${NAME}/parent600.py`, loadChain, NAME + '/parent600.py');
+// R20-N4: this used to expect the bare path, which any traceback touching the file would print.
+// Not exploitable as it stood -- load() compares digests before parsing, so even a syntax error
+// hits the pin first -- but a criterion that other failures can satisfy is not a criterion.
+bothWays('python chain: fixed_host -> parent600', `${QREL}/${NAME}/parent600.py`,
+  loadChain, 'Frozen dependency drift: ');
 
 // 2. fixed_host pins observe.py across directories -- the R17-F2 surface.
 bothWays('cross-directory: fixed_host -> observe.py', `${QREL}/docker-engineering-observation/observe.py`,
@@ -175,7 +199,8 @@ try { invokeFixedHost({gaRaw:'{"gate_authorization_id":"ga_selftest"}', operatio
 catch (e) { console.log('THREW:' + e.message); }
 ''', os.path.join(${JSON.stringify(SDIR)}, 'host-effect.mjs')], capture_output=True, text=True)
 print(r.stdout.strip() or r.stderr.strip()[-200:])`, cwd);
-bothWays('host-effect.mjs -> bridge.py bytes', `${QREL}/${NAME}/bridge.py`, jsPin, 'EXACT_PYTHON_BRIDGE_BYTES_REQUIRED');
+bothWays('host-effect.mjs -> bridge.py bytes', `${QREL}/${NAME}/bridge.py`, jsPin, 'EXACT_PYTHON_BRIDGE_BYTES_REQUIRED',
+  'the probe imports this controller\'s host-effect.mjs by absolute path');
 
 // 4. parent600 pins the fixture across directories. Unlike the rest of prepare()'s pins this one
 //    IS inside the tree, so it can be proven rather than asserted.
@@ -295,9 +320,11 @@ const runEntry = () => {
     fail('trusted entry: pristine run does not reach the controller -- ' + clean.trim().split('\n').pop().slice(0, 160));
 }
 bothWays('trusted entry: manifest digest gate', `${QREL}/${NAME}/ControllerSourceManifest.candidate.json`,
-  runEntry, 'ACTUAL_CONTROLLER_SOURCE_MANIFEST_DRIFT');
+  runEntry, 'ACTUAL_CONTROLLER_SOURCE_MANIFEST_DRIFT',
+  'the entry script names this controller\'s manifest path');
 bothWays('trusted entry: per-file byte check (the interpreter step)', `${QREL}/${NAME}/context.mjs`,
-  runEntry, 'EXACT_CONTROLLER_SOURCE_BYTES_DRIFT');
+  runEntry, 'EXACT_CONTROLLER_SOURCE_BYTES_DRIFT',
+  'the entry script names this controller\'s manifest path');
 // Not a byte mutation -- the bypass is a directory appearing -- so this one is done by hand, in
 // both directions all the same.
 {
@@ -392,5 +419,6 @@ const UNCOVERED = [
 // here by hand too -- the census will not catch it.
 for (const u of UNCOVERED) console.log('  not covered  ' + u);
 
+console.log(`  host        ${hostStamp()}`);
 if (failures) { console.log(`runtime pin self-test FAILED (${failures} failed, ${unproven} unproven)`); process.exitCode = 1; }
 else console.log(`runtime pin self-test passed (${unproven} item(s) UNPROVEN, ${UNCOVERED.length} not covered -- see above; passing here is not a claim about those)`);

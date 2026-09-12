@@ -94,6 +94,27 @@ if (TREE_EVIDENCE.length !== 5) throw new Error('TREE_EVIDENCE length changed; w
 // An undeclared .py/.mjs/.js in this directory is now REFUSED outright, not merely excluded: a new
 // controller source is a thing to notice, and silently ignoring it would leave the gate reporting
 // success over a tree it did not fully account for.
+// R17-N5, open since round 17: controllerFiles() is non-recursive and covers only this directory,
+// so a module the controller imports from elsewhere is never scanned for literals at all. The
+// self-test's census counts these; the gate has to check them too, or the two disagree about what
+// "the controller" is. Listed rather than discovered, same rule as everything else here.
+const CROSS_DIRECTORY_SOURCES = [
+  'nonproduction-control-store/runtime-successor/commitment-signing-root6-window/signing.mjs',
+];
+if (CROSS_DIRECTORY_SOURCES.length !== 1) throw new Error('CROSS_DIRECTORY_SOURCES length changed; declare deliberately');
+// Why only signing.mjs, when the controller also loads observe.py, validation.py,
+// remote_evidence.py and fixed_skill_fixture.py across directories: those four are FROZEN
+// dependencies. This controller pins their bytes and several predecessors pin the same bytes, so
+// they cannot be edited by anyone; what this controller guarantees about them is that they have
+// not changed, not what their own digests mean. Scanning them here was tried and produced fifteen
+// refusals whose subjects are that module's business -- docker image layer digests inside
+// validation.py, the Skill file digests inside fixed_skill_fixture.py -- none of which this gate
+// is in a position to adjudicate. Their literal counts ARE checked, by the census in
+// selftest-runtime-pins.mjs, which counts without claiming to explain. signing.mjs is different:
+// it is live code this controller imports, in the same domain as its own sources, and it is what
+// rounds 18 and 20 named as the blind spot. It carries no digest literal today; the point is that
+// if one appears, it will be seen.
+
 const CONTROLLER_SOURCES = [
   'bridge.py', 'build-linux-manifest.mjs', 'check-digest-pins.mjs', 'cli.mjs', 'context.mjs',
   'fixed_host.py', 'grr.mjs', 'historical-component-observations.mjs', 'host-effect.mjs',
@@ -113,6 +134,16 @@ if (CONTROLLER_SOURCES.length !== 18) throw new Error('CONTROLLER_SOURCES length
 // to consult, instead of surfacing as an unexplained digest.
 const HOST_BINARIES = ['/opt/node22/bin/node', '/usr/bin/docker', '/usr/local/bin/gh', '/usr/bin/python3.11'];
 const missingHostBinaries = [];
+
+// R20-N6. Round 20 rechecked nine of my measured claims; eight held and one -- "expectedGh
+// matches /usr/local/bin/gh" -- was false in THEIR container, which has no gh installed. The claim
+// was true where I ran it. That is the problem: a measurement recorded without saying which host
+// it was taken on is not a record. Every run now stamps the four pinned binaries it can see.
+const hostStamp = () => HOST_BINARIES.map(p => {
+  try { return path.basename(p) + '=' + crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex').slice(0, 12); }
+  catch { return path.basename(p) + '=ABSENT'; }
+}).join(' ');
+
 
 const controllerFiles = () => {
   const onDisk = fs.readdirSync(DIR)
@@ -262,8 +293,13 @@ for (const d of (function walk(dir, acc = []) {
 
 let accounted = 0;
 const perFile = {};
-for (const f of controllerFiles()) {
-  const text = fs.readFileSync(path.join(DIR, f), 'utf8');
+const scanTargets = [
+  ...controllerFiles().map(f => [f, path.join(DIR, f)]),
+  ...CROSS_DIRECTORY_SOURCES.map(rel => [path.posix.basename(rel), path.join(QUAL, rel)]),
+];
+for (const [f, abs] of scanTargets) {
+  if (!fs.existsSync(abs)) { problems.push(`${f}: declared as a source but not on disk`); continue; }
+  const text = fs.readFileSync(abs, 'utf8');
   perFile[f] = 0;
   const attempts = new Set([...text.matchAll(ATTEMPT_PIN), ...text.matchAll(BLOBREF_PIN), ...text.matchAll(BLOBREF_PIN2)].map(m => m[1]));
   for (const lit of [...new Set(text.match(HEX) || [])]) {
@@ -294,6 +330,9 @@ const EXPECTED_PER_FILE = {
   'bridge.py': 1, 'check-digest-pins.mjs': 8, 'context.mjs': 22, 'fixed_host.py': 3,
   'host-effect.mjs': 2, 'parent600.py': 4, 'result-terminal.mjs': 1,
   'tool-entry.functions.js': 3, 'trusted-github.mjs': 1,
+  // Cross-directory live code, newly scanned (R17-N5). Zero today; declared so it cannot appear
+  // unnoticed.
+  'signing.mjs': 0,
 };
 if (!problems.length) {
   for (const f of new Set([...Object.keys(EXPECTED_PER_FILE), ...Object.keys(perFile).filter(k => perFile[k])])) {
@@ -318,6 +357,7 @@ if (problems.length) {
     console.log('  HostProvisioning.json beside this file. Install them, then run this again --- if');
     console.log('  refusals remain, they are real.');
   }
+  console.log(`  host        ${hostStamp()}`);
   console.log(`REFUSED: ${problems.length} digest literal(s) unexplained`);
   process.exit(1);
 }
@@ -326,4 +366,5 @@ if (missingHostBinaries.length) {
   console.log('REFUSED: the gate cannot vouch for pins whose binaries are not on this host');
   process.exit(1);
 }
+console.log(`  host        ${hostStamp()}`);
 console.log(`digest pins consistent (${accounted} literal(s) accounted for, 0 unexplained)`);
