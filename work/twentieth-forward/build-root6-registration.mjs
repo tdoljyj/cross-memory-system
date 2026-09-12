@@ -83,8 +83,17 @@ const [snapPath, newNotBefore, newExpiry, ownerMerge, oaBlob, oaSha, ...rest] = 
 const [iaBlob, iaSha, seBlob, seSha, outArg] = PENDING
   ? [NON_VALUE_BLOB, NON_VALUE_SHA, rest[0], rest[1], rest[2]]
   : [rest[0], rest[1], rest[2], rest[3], rest[4]];
-if (PENDING && rest.length > 3)
-  throw Error('WITH_--acceptance-pending_PASS_ONLY_THE_SIGNATURE_EVIDENCE_PAIR_AFTER_THE_APPROVAL_PAIR');
+// R12-F11: `rest.length > 3` was the wrong dimension. Passing exactly three arguments in
+// --acceptance-pending (iaBlob, iaSha, seBlob) slipped through and shifted the output path onto
+// seBlob, writing the artifact to a file named after a sha1. What must be rejected is an argument
+// count that is not one of the two expected shapes, not merely a count above three.
+const EXPECTED_REST = PENDING ? [2, 3] : [4, 5];   // pairs, optionally followed by an output path
+if (!EXPECTED_REST.includes(rest.length))
+  throw Error(PENDING
+    ? `WITH_--acceptance-pending_PASS_ONLY_THE_SIGNATURE_EVIDENCE_PAIR_AFTER_THE_APPROVAL_PAIR (got ${rest.length} trailing arguments, expected 2 or 3)`
+    : `PASS_THE_ACCEPTANCE_PAIR_THEN_THE_SIGNATURE_EVIDENCE_PAIR (got ${rest.length} trailing arguments, expected 4 or 5)`);
+if (outArg !== undefined && /^[a-f0-9]{40}$/.test(path.basename(outArg)))
+  throw Error('OUTPUT_PATH_LOOKS_LIKE_A_BLOB_SHA1_SO_AN_ARGUMENT_HAS_SHIFTED');
 
 const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
 assert.ok(snapPath, 'USAGE: see header');
@@ -94,6 +103,25 @@ assert.equal(Date.parse(newExpiry) - Date.parse(newNotBefore), 86400000, 'OWNER_
 for (const [n, v] of [['ownerMergeCommit', ownerMerge]]) assert.match(v ?? '', /^[a-f0-9]{40}$/, n);
 for (const [n, v] of [['oaBlob', oaBlob], ['iaBlob', iaBlob], ['seBlob', seBlob]]) assert.match(v ?? '', /^[a-f0-9]{40}$/, n);
 for (const [n, v] of [['oaSha', oaSha], ['iaSha', iaSha], ['seSha', seSha]]) assert.match(v ?? '', /^[a-f0-9]{64}$/, n);
+
+// R12-F9: the all-zero string is a well-formed sha1 and a well-formed sha256, so the shape checks
+// above pass it. Only --acceptance-pending is entitled to the placeholder, and only for the
+// acceptance pair, which that mode deletes before emitting anything. Every other pair, in every
+// mode, must be a real reference.
+for (const [n, v] of [['oaBlob', oaBlob], ['oaSha', oaSha], ['seBlob', seBlob], ['seSha', seSha],
+                      ...(PENDING ? [] : [['iaBlob', iaBlob], ['iaSha', iaSha]])])
+  assert.ok(v !== NON_VALUE_BLOB && v !== NON_VALUE_SHA,
+    `PLACEHOLDER_PASSED_FOR_${n}_WHICH_MUST_BE_A_REAL_REFERENCE`);
+
+// Proves the placeholder is absent from whatever is about to be written, rather than trusting the
+// argument checks above to have caught every way it could get there. Applied on BOTH paths: the
+// original check lived inside the --acceptance-pending branch, which is the one branch that emits
+// nothing submittable, so the branch that can burn the generation id ran unguarded (R12-F9).
+const assertNoPlaceholder = (obj, label) => {
+  const asText = JSON.stringify(obj);
+  assert.ok(!asText.includes(NON_VALUE_BLOB) && !asText.includes(NON_VALUE_SHA),
+    `PLACEHOLDER_LEAKED_INTO_${label}`);
+};
 
 const snap = JSON.parse(fs.readFileSync(snapPath, 'utf8'));
 const events = snap.events;
@@ -245,9 +273,7 @@ if (PENDING) {
   delete reviewSubject.signature_binding;
   delete reviewSubject.independent_acceptance_ref;
   // Prove the placeholder is absent rather than trusting that it is.
-  const asText = JSON.stringify(reviewSubject);
-  assert.ok(!asText.includes(NON_VALUE_BLOB) && !asText.includes(NON_VALUE_SHA),
-    'PLACEHOLDER_LEAKED_INTO_THE_REVIEW_SUBJECT');
+  assertNoPlaceholder(reviewSubject, 'THE_REVIEW_SUBJECT');
   assert.equal(reviewSubjectDigest(body), reviewSubjectDigest(reviewSubject),
     'REVIEW_SUBJECT_DIGEST_MUST_NOT_DEPEND_ON_THE_TWO_DELETED_FIELDS');
   const rsOut = outArg ?? path.join(HERE, 'Root6RegistrationReviewSubject.json');
@@ -276,6 +302,10 @@ if (PENDING) {
   if (!predecessorMethodHolds) process.exitCode = 2;
   process.exit(process.exitCode ?? 0);
 }
+
+// The submittable path. append_event does not validate the body, so this is the last check that
+// stands between a malformed reference and a permanently burned generation id.
+assertNoPlaceholder(request, 'THE_SUBMITTABLE_REQUEST');
 
 const out = outArg ?? path.join(HERE, 'Root6GenerationRegistration.candidate.json');
 fs.writeFileSync(out, JSON.stringify({
