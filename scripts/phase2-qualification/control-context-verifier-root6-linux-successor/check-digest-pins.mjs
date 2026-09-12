@@ -122,6 +122,16 @@ if (APPLY) for (;;) {
 
 // ---- verify, fail closed
 const problems = [];
+
+// A __pycache__ beside the controller's own modules is a live bypass of every byte check here.
+// CPython loads the cached bytecode, and -B only stops it being WRITTEN, not read. Demonstrated:
+// forging the .pyc header's source mtime and size lets tampered bytecode run while the .py stays
+// byte-identical, so the manifest, the trusted entry's file check and this gate all pass. The
+// stdlib caches are pinned in the manifest, which covers them; the controller's own are generated
+// and pinning them would create one more chain to keep in sync. They are refused instead.
+if (fs.existsSync(path.join(DIR, '__pycache__')))
+  problems.push('__pycache__/ exists beside the controller modules: bytecode there is loaded in preference to the .py and is not covered by any byte check. Remove it.');
+
 let accounted = 0;
 for (const f of controllerFiles()) {
   const text = fs.readFileSync(path.join(DIR, f), 'utf8');
