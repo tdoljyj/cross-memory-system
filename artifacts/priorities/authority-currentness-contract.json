@@ -1,5 +1,5 @@
 {
-  "schema": "clued.multitrack-authority-currentness-contract/0.1",
+  "schema": "clued.multitrack-authority-currentness-contract/0.2",
   "status": "BOOTSTRAP_CONTRACT_CANDIDATE_NOT_AUTHORITY",
   "authority_effect": "NONE",
   "repository_grants_authority": false,
@@ -28,6 +28,26 @@
       "table": "clued_private.project_memberships_v13",
       "key_fields": ["project_id", "subject_id", "environment"],
       "state_fields": ["actions", "expires_at", "revoked_at", "version"]
+    },
+    "development_scope": {
+      "table": "clued_private.development_grants_v14",
+      "key_fields": ["context_id", "binding_id"],
+      "state_fields": [
+        "actions",
+        "history_policy",
+        "version_policy",
+        "freeze_cursor",
+        "since_cursor",
+        "explicit_record_ids",
+        "allowed_fields",
+        "expires_at",
+        "revoked_at",
+        "version"
+      ]
+    },
+    "development_space": {
+      "table": "clued_private.development_spaces_v14",
+      "state_fields": ["project_id", "environment", "version", "cursor"]
     }
   },
   "resolution_order": [
@@ -35,15 +55,17 @@
     "RESOLVE_BINDING",
     "RESOLVE_AUTHORIZATION_STATUS",
     "RESOLVE_PROJECT_MEMBERSHIP_ACCESS",
+    "RESOLVE_DEVELOPMENT_GRANT_SCOPE",
     "RESOLVE_EFFECTIVE_RESOURCE_ACTIONS",
     "FILTER_TRACK_VISIBILITY",
     "VERIFY_SCOPE_SPECIFIC_CURRENTNESS",
     "COMPUTE_ELIGIBLE_NEXT_ACTION"
   ],
-  "execution_authority_equation": "requested_actions ∩ binding_scopes ∩ membership/group_permission ∩ effective_authorization_entries ∩ environment ∩ policy/gate ∩ currentness",
+  "execution_authority_equation": "requested_actions ∩ binding_scopes ∩ membership/group_permission ∩ development_grant_scope ∩ effective_authorization_entries ∩ environment ∩ policy/gate ∩ currentness",
   "repository_only_default": {
     "principal": "NOT_RESOLVED",
     "runtime_authority": "NOT_ESTABLISHED",
+    "assignment_scope": "NOT_RESOLVED",
     "side_effect_authority_inferable_from_repository": false,
     "eligible_side_effect_actions": []
   },
@@ -53,6 +75,8 @@
     "known_watermark_domains": [
       "canonical_audit_receipt.canonical_version",
       "context_head.version",
+      "development_space.version_cursor",
+      "development_grant.version",
       "repository_memory_snapshot.canonical_version",
       "priority_snapshot.identity"
     ],
@@ -64,14 +88,14 @@
     "development_receipts_v14_has_rows": false,
     "clued_audit_receipts_max_canonical_version_observed": 356,
     "clued_context_heads_max_version_observed": 101,
-    "interpretation": "Observations validate that multiple version domains exist. They are not a CurrentnessReceipt and must be refreshed at runtime."
+    "interpretation": "Observations validate multiple version domains and existing authority/scope infrastructure. They are not a CurrentnessReceipt and must be refreshed at runtime."
   },
   "eligible_next_action_requires": [
     "priority_frontier",
     "legal_item_state",
     "dependencies_satisfied",
     "resource_available",
-    "assignment_scope",
+    "development_grant_assignment_scope",
     "effective_resource_actions",
     "environment_match",
     "currentness_CURRENT"
@@ -81,6 +105,7 @@
     "BINDING_INVALID_OR_UNKNOWN",
     "AUTHORIZATION_UNKNOWN_OR_REVOKED",
     "MEMBERSHIP_INVALID_OR_UNKNOWN",
+    "DEVELOPMENT_GRANT_MISSING_EXPIRED_OR_REVOKED",
     "ACTION_NOT_GRANTED",
     "ENVIRONMENT_MISMATCH",
     "CURRENTNESS_UNKNOWN",
