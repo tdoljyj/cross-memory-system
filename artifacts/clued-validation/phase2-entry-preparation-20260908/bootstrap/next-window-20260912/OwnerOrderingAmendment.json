@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "kind": "OWNER_APPROVAL_AMENDMENT",
+  "state": "GRANTED_BY_OWNER_IN_SESSION",
+  "decided_at_utc": "2026-09-12T09:5xZ",
+  "decided_by": "tdoljyj",
+  "amends": {
+    "document": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-20260912/ExplicitOwnerApproval.candidate.json",
+    "merged_by_owner_merge": "cbe898d3f5b66f279d78a6b8d583d2c1885d9c89",
+    "clause": "generation_registration.must_not_precede",
+    "from": "CP_01_APPLIED_AND_READ_BACK",
+    "to": "NONE"
+  },
+  "why_the_original_clause_no_longer_holds": {
+    "original_reason_quoted": "Until cp01 is applied the control plane requires the live generation to be root5. Registering first would break the existing path without opening the new one.",
+    "measured_refutation": "There is no working path left to break. All three root5-pinned functions are already unusable and registering root6 adds no new damage.",
+    "table": [
+      {"function": "reserve_gate", "usable_today": false, "why": "guards a root digest that NW-01 already moved", "usable_after_registration": false, "new_damage": "none"},
+      {"function": "reserve_execution_budget", "usable_today": false, "why": "same guard", "usable_after_registration": false, "new_damage": "none"},
+      {"function": "append_status_manifest", "usable_today": false, "why": "the store accepts only a root5 manifest with the old schema digest and an expired timestamp, while the controller accepts only root6; mutually exclusive", "usable_after_registration": false, "new_damage": "none"}
+    ],
+    "measured_by": "independent reviewer round 12 (R12-F21) and reproduced by the implementer",
+    "when_it_stopped_holding": "NW-01, 2026-09-12T08:13Z, which rewrote accepted_binding and so moved metadata_binding_sha256"
+  },
+  "why_the_new_order_is_safer": {
+    "principal_reason": "Applying CP-01 after registration lets its guards pin the MEASURED root digest instead of a PROJECTED one. The entire class of failure where the projection does not equal the actual value disappears, and that class sits inside the irreversible zone.",
+    "secondary_reason": "Under the old order, the interval between applying CP-01 and registering root6 is a state only a successful registration can leave. Registration is the one step that burns the generation id permanently on failure. The new order has no such interval.",
+    "consequence_that_simplifies_the_work": "derive-projected-root-digest.sql is no longer needed. Its output, its review, and the hard requirement that the merged registration body stay byte-identical to what CP-01 hashed all fall away, because the digest is measured after the fact rather than predicted.",
+    "cost": "none measured. CP-01 has no root-state precondition; all 33 raise statements were read and not one pins the head generation or the event count."
+  },
+  "new_order": [
+    "1. independent review of the final registration body (round 13)",
+    "2. register root6 (append_event) -- irreversible",
+    "3. measure the resulting root digest directly from the store",
+    "4. finalise CP-01 pinning that measured value, independent review, apply, read back",
+    "5. twentieth forward, Status24, budget reserve",
+    "6. second host verification",
+    "7. the single 600-second run and its 19 observations",
+    "8. GRR"
+  ],
+  "unchanged_by_this_amendment": [
+    "Everything else in the approval stands. This changes one sequencing clause and nothing else.",
+    "No capacity added. No refund. No reuse of an old budget. No new trust root, signing identity, paid budget, model budget, or production authority.",
+    "The window is still 2026-09-12T07:05:16Z .. 2026-09-13T07:05:16Z, fixed, non-rolling, not renewed by this amendment.",
+    "Registration still requires an independent review of the final body and a separate explicit Owner go-ahead.",
+    "SQL9 is still not to be reapplied."
+  ],
+  "authority_effect": "AMENDS_ONE_SEQUENCING_CLAUSE_ONLY; REGISTERS_NOTHING; APPLIES_NOTHING; CONSUMES_NO_BUDGET"
+}
