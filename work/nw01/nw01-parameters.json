@@ -1,0 +1,110 @@
+{
+  "object_type": "NW01CandidateParameters",
+  "state": "CANDIDATE_NO_WRITE_PERFORMED",
+  "authority_effect": "NONE",
+  "window": {
+    "not_before": "2026-09-12T07:05:16Z",
+    "expires_at": "2026-09-13T07:05:16Z",
+    "source": "Owner merge 1, commit cbe898d3f5b66f279d78a6b8d583d2c1885d9c89, committer date + 86400s",
+    "evidence": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-20260912/OwnerApprovalVerification.json"
+  },
+  "subject_signature_merge": {
+    "commit": "3887b9e0a2c4e667823031a5294b8d2921fc8d46",
+    "pr": 159,
+    "evidence": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-20260912/ContinuationSubjectSignatureEvidence.json"
+  },
+
+  "preimage": {
+    "measured_at": "2026-09-12T07:2xZ",
+    "how": "One read-only select against the live control plane. Every value below was measured, not carried over from the previous window's candidate.",
+    "tables": ["accepted_binding", "control_objects", "current_head", "events",
+               "execution_binding", "execution_current", "execution_events", "gate_attempts"],
+    "rows_sha256": "4c7cda8389ab7adadac7d5a7edf5edf38a7ab1799ad1c847f0c72ef0c4ca6de1",
+    "catalog_sha256": "a19f3b5f896c8b85e8fcaca13a28415fac7d144100766ca2e74a3974ddf3af20",
+    "getter_definition_sha256": "6cbfe002198f2caccde8594d5aeaacd43b74941855dbd161027a8d1681ce5f97",
+    "getter_prosrc_sha256": "c721b056a771a3a019d1f0cee862408ba56afcbd4d683f45802e8f51c0580d16",
+    "getter_prosrc_note": "Same value CP-01 pins for the function it asserts but must not replace. The two candidates agree on the getter, measured independently.",
+    "constraint_count": 16,
+    "conname_digest": "12b67839ac1caad7d61979d3a19a39c66c39fa537236dae2231ae2608fd0b031",
+    "conname_digest_note": "sha256 of the comma-joined constraint names in name order. Both this and the count are the round-9 F6 additions, and both reproduce the values Addendum B recorded.",
+    "binding": {
+      "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+      "project_ref": "uscrdifznmlvczcekqpw",
+      "purpose": "SKILL_COEXISTENCE_QUALIFICATION",
+      "environment": "ISOLATED_TEST",
+      "issuer": "tdoljyj",
+      "audience": "urn:clued:audience:skill-coexistence-qualification:uscrdifznmlvczcekqpw",
+      "algorithm_config": "SORTED_JSON_UTF8_NO_FLOATS_LF_V1_CANDIDATE;SHA-256;GITHUB_API_VERIFIED_OWNER_MERGE",
+      "schema_sha256": "87f094fa079034aa886d6c568730370a3264e106529b4bfd79bc3369f30b79e5",
+      "protocol_mapping_sha256": "abbc8e7eae03f2a183fd739fa49b16a97db6e1c0fb62a9353a30db81553db416",
+      "not_before": "2026-09-11T13:14:51Z",
+      "expires_at": "2026-09-12T13:14:51Z",
+      "owner_approval_commit": "4498102661f626c8e0c489c7d27551acbc8436ea",
+      "subject_sha256": "46867dca9fcdda12580fafe429e07f2e1c71d5ae9d8338a03c1f57221debe1b8",
+      "registration_acceptance_sha256": "40508697dd071ea39528aabef36a440d73a7ee3a78c32efaafab3cf51a87e3b7",
+      "store_acceptance_sha256": "66f6d8082e0a0a15a02e473ba870689a9912291c03f6eebcf7f666aaf5294d52",
+      "signature_evidence_sha256": "ae269c08d02d941f91450594c31ce134b999cdfd61b5acd762b5f616a5965376"
+    },
+    "execution": {
+      "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+      "sequence": 88,
+      "charged_seconds": 9906,
+      "charged_evidence_bytes": 2201594803,
+      "active_ga_id": null,
+      "pending_budget_sequence": null
+    },
+    "head": {
+      "sequence": 5,
+      "generation_id": "ctrgen_e5df432221344996afc04b5638121d96",
+      "revoked": false,
+      "note": "Still root5. NW-01 does not register anything; generation_registration.must_not_precede is CP_01_APPLIED_AND_READ_BACK."
+    },
+    "trigger": {
+      "name": "accepted_binding_immutable",
+      "tgenabled": "O",
+      "definition": "CREATE TRIGGER accepted_binding_immutable BEFORE DELETE OR UPDATE OR TRUNCATE ON clued_control.accepted_binding FOR EACH STATEMENT EXECUTE FUNCTION clued_control.deny_mutation()"
+    },
+    "ownership": {"owner": "postgres", "acl": "{postgres=arwdDxtm/postgres}"}
+  },
+
+  "postimage": {
+    "binding": {
+      "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+      "project_ref": "uscrdifznmlvczcekqpw",
+      "purpose": "SKILL_COEXISTENCE_QUALIFICATION",
+      "environment": "ISOLATED_TEST",
+      "issuer": "tdoljyj",
+      "audience": "urn:clued:audience:skill-coexistence-qualification:uscrdifznmlvczcekqpw",
+      "algorithm_config": "SORTED_JSON_UTF8_NO_FLOATS_LF_V1_CANDIDATE;SHA-256;GITHUB_API_VERIFIED_OWNER_MERGE",
+      "schema_sha256": "87f094fa079034aa886d6c568730370a3264e106529b4bfd79bc3369f30b79e5",
+      "protocol_mapping_sha256": "abbc8e7eae03f2a183fd739fa49b16a97db6e1c0fb62a9353a30db81553db416",
+      "not_before": "2026-09-12T07:05:16Z",
+      "expires_at": "2026-09-13T07:05:16Z",
+      "owner_approval_commit": "cbe898d3f5b66f279d78a6b8d583d2c1885d9c89",
+      "subject_sha256": "64ae7adc3c6e156045c4c369ccfaa8fe9ac12611eb926876d26f4100c191a2f5",
+      "registration_acceptance_sha256": "5eb9c845bc98c7e1c2f380cd20a2767ba63a1d2aba9e83427049ac51449b7ebd",
+      "store_acceptance_sha256": "89e4a85149d7110828142017ddb46454bea093b40266ec1803f9852d32e8afba",
+      "signature_evidence_sha256": "954faff130549cebbc6453957d3e86196f8e0c8dd551040bb20e4f9ffb6ed614"
+    },
+    "digest_sources": {
+      "subject_sha256": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-20260912/ContinuationRegistrationSubject.canonical.json",
+      "registration_acceptance_sha256": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-20260912/ContinuationRegistrationSubjectAcceptance.json",
+      "store_acceptance_sha256": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-20260912/ContinuationControlStoreAcceptance.json",
+      "signature_evidence_sha256": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-20260912/ContinuationSubjectSignatureEvidence.json"
+    },
+    "digest_sources_note": "The generator re-measures each of these files and refuses to emit SQL if any disagrees with the value above, so a digest cannot enter the database on the strength of a report."
+  },
+
+  "what_this_does_not_do": [
+    "register any generation",
+    "reserve or consume any budget",
+    "touch charged_seconds, charged_evidence_bytes, or any capacity ceiling",
+    "change any of the fifteen control-plane functions",
+    "change any column of accepted_binding other than the seven named above"
+  ],
+  "required_before_execution": [
+    "the independent review the approval's execution sequencing places at step 8",
+    "an immediate read-only read-back in a separate session afterwards, archived with the exact input and raw response",
+    "no blind retry if the transaction is interrupted"
+  ]
+}
