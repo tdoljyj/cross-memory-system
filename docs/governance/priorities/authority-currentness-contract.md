@@ -2,13 +2,13 @@
 
 **Status:** `BOOTSTRAP CONTRACT CANDIDATE / NOT AUTHORITY / NOT FROZEN`
 
-本合同定义 fresh Agent 如何在**不从 Repository 推导权限**的前提下，把 Clued 现有真实 Binding / Authorization / Membership / Receipt 基础设施投影成多轨治理所需的：
+本合同定义 fresh Agent 如何在**不从 Repository 推导权限**的前提下，把 Clued 现有真实 Binding / Authorization / Membership / Development Grant / Receipt 基础设施投影成多轨治理所需的：
 
-`Principal → Visibility → Effective Actions → Currentness → Eligible Next Action`
+`Principal → Visibility → Assignment Scope → Effective Actions → Currentness → Eligible Next Action`
 
 Repository 只保存解析合同和非敏感 Projection；Token、Secret、真实授权主体和完整授权结果不得写入仓库。
 
-## 1. 已存在的真实 Authority 基础设施
+## 1. 已存在的真实 Authority / Scope 基础设施
 
 生产 `clued-prod` 当前可只读确认以下能力已经存在：
 
@@ -20,12 +20,17 @@ Repository 只保存解析合同和非敏感 Projection；Token、Secret、真�
 - `clued_private.project_memberships_v13`
 - `clued_private.authorizations_v12`
 - `clued_private.authorization_entries_v12`
+- `clued_private.development_grants_v14`
+- `clued_private.development_spaces_v14`
+- `clued_private.development_operations_v14`
 
-因此 Multi-Track 不创建第二套 IAM / Authorization Engine。
+`development_grants_v14` 已包含 `binding_id + context_id + actions + history_policy + version_policy + freeze/since cursor + explicit_record_ids + allowed_fields + expiry/revocation/version`，因此可作为开发上下文 Assignment / Scope 的正式运行来源之一。
 
-## 2. Authority Resolution
+Multi-Track 不创建第二套 IAM、Assignment 或 Authorization Engine。
 
-一个 fresh Agent 在需要执行而不仅是读取公开/仓库投影时，必须按以下顺序解析：
+## 2. Authority / Scope Resolution
+
+一个 fresh Agent 在需要执行而不仅是读取仓库投影时，必须按以下顺序解析：
 
 ```text
 Runtime credential / token
@@ -37,6 +42,8 @@ Principal + Binding + granted scopes
 authorization_status
         ↓
 Project Membership / Access
+        ↓
+Development Grant / Context Scope
         ↓
 effective Resource × Action for exact resource + environment
         ↓
@@ -59,6 +66,7 @@ Priority-item execution eligibility
 Priority Item Requested Actions
 ∩ Binding Scopes
 ∩ Project Membership / Group Permission
+∩ Development Grant / Context Scope
 ∩ Effective Authorization Entries
 ∩ Environment
 ∩ Policy / Gate
@@ -71,7 +79,7 @@ Priority Item Requested Actions
 
 而不是请求用户手工判断权限。
 
-## 4. Visibility Projection
+## 4. Visibility / Assignment Projection
 
 Agent 可见多轨对象必须经过：
 
@@ -79,10 +87,22 @@ Agent 可见多轨对象必须经过：
 Principal
 ∩ Resource × Action
 ∩ selector / scope
+∩ Development Context Grant
 ∩ Track Visibility
 ∩ Context Relevance
 ∩ Policy
 ```
+
+Assignment / Scope 至少应投影：
+
+- context / development space；
+- binding；
+- allowed actions；
+- explicit record/object scope；
+- allowed fields；
+- history/version policy；
+- environment；
+- expiry/revocation/version。
 
 不同 Agent 可以合法看到不同 Track / Item 子集。
 
@@ -94,6 +114,7 @@ Zero-Memory 跨 Agent 一致性要求只比较**共享授权交集内的事实**
 
 - Canonical mutation / audit receipt 的 `canonical_version`；
 - Context Stream / Head 的 `version`；
+- Development Space / Grant 自己的 `version / cursor`；
 - Repository memory snapshot 自己的 Canonical/version pointer；
 - Priority Snapshot / Projection 自己的 snapshot identity。
 
@@ -108,12 +129,12 @@ Scope-specific Watermarks
 +
 Exact Source Identity
 +
-Authority / Policy version where applicable
+Authority / Grant / Policy version where applicable
 ```
 
 只有相关依赖变化才使对应 Priority Context 失效。
 
-## 6. Priority Currentness Projection
+## 6. Priority Authority / Currentness Projection
 
 推荐输出：
 
@@ -126,7 +147,17 @@ Authority / Policy version where applicable
   "visible_items": [],
   "effective_actions": [],
   "forbidden_actions": [],
-  "assignment_scope": [],
+  "assignment_scope": {
+    "context_ref": null,
+    "development_space_ref": null,
+    "allowed_actions": [],
+    "allowed_object_refs": [],
+    "allowed_fields": [],
+    "history_policy": null,
+    "version_policy": null,
+    "grant_version": null,
+    "expires_at": null
+  },
   "priority_snapshot_ref": "...",
   "dependency_manifest": [],
   "watermarks": {},
@@ -147,7 +178,7 @@ Current Priority Frontier
 ∩ READY / IN_PROGRESS legal state
 ∩ Dependency satisfied
 ∩ Resource available
-∩ Assignment / Scope
+∩ Development Grant / Assignment Scope
 ∩ Effective Resource × Action
 ∩ Environment
 ∩ Currentness = CURRENT
@@ -167,6 +198,7 @@ status = INDETERMINATE_FAIL_CLOSED
 ```text
 Principal = NOT_RESOLVED
 Runtime Authority = NOT_ESTABLISHED
+Assignment Scope = NOT_RESOLVED
 Production / Canonical write authority = NONE_INFERABLE_FROM_REPOSITORY
 Eligible side-effect action = NONE
 ```
@@ -179,12 +211,13 @@ Eligible side-effect action = NONE
 
 1. authenticate；
 2. resolve Binding；
-3. resolve visible Tracks / Items；
-4. resolve effective Resource × Action；
-5. verify scope-specific currentness；
-6. compute eligible next action；
-7. 输出结构化结果与 Evidence；
-8. 至少 3 个动态 Qualified fresh-context Agent Runs 对共享授权交集进行一致性比较。
+3. resolve Membership / Development Grant / Agent Scope；
+4. resolve visible Tracks / Items；
+5. resolve effective Resource × Action；
+6. verify scope-specific currentness；
+7. compute eligible next action；
+8. 输出结构化结果与 Evidence；
+9. 至少 3 个动态 Qualified fresh-context Agent Runs 对共享授权交集进行一致性比较。
 
 该流程必须自动运行，不要求用户手工开启多个 Agent 或整理证据。
 
@@ -195,6 +228,7 @@ Eligible side-effect action = NONE
 - 把 Repository `README` / JSON 当 Authority；
 - 在仓库存 token / secret；
 - 用 `READY` 推导执行权限；
-- 把某个 Canonical Version 与无关 Context Head Version 直接比较；
+- 用 Assignment 代替 Authorization；
+- 把某个 Canonical Version 与无关 Context Head / Grant Version 直接比较；
 - Currentness UNKNOWN 时执行高风险副作用；
 - 因缺少 Runtime Binding 就要求用户手工证明数据库权限。
