@@ -1,0 +1,229 @@
+{
+  "schema_version": 1,
+  "kind": "EXPLICIT_OWNER_CONTINUATION_APPROVAL_CANDIDATE",
+  "state": "PENDING_VERIFIED_OWNER_MERGE",
+  "authority_effect": "NONE_UNTIL_VERIFIED_OWNER_MERGE",
+  "repository": "tdoljyj/cross-memory-system",
+  "owner": "tdoljyj",
+  "approval_action": "OWNER_MERGES_CONTAINING_PULL_REQUEST_VIA_GITHUB_WEB_FLOW",
+  "required_merge_verification": {
+    "merged_by": "tdoljyj",
+    "committer": "web-flow",
+    "verified": true,
+    "verification_reason": "valid"
+  },
+  "previous_authorization": {
+    "proposal": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-20260911/OwnerApprovalProposal.md",
+    "owner_merge_commit": "4498102661f626c8e0c489c7d27551acbc8436ea",
+    "materialized_window": {
+      "not_before": "2026-09-11T13:14:51Z",
+      "expires_at": "2026-09-12T13:14:51Z"
+    },
+    "supersedes": false,
+    "note": "This is the second continuation authorization of this run. It does not supersede or reopen the previous window."
+  },
+  "window_rule": {
+    "not_before_source": "VERIFIED_OWNER_MERGE_COMMIT_COMMITTED_AT",
+    "duration_seconds": 86400,
+    "expires_at_rule": "not_before + 86400 seconds",
+    "rolling": false,
+    "auto_renew": false,
+    "backdate": false,
+    "materialize_exact_timestamps_after_verified_merge": true,
+    "duration_unchanged_from_previous_authorization": true,
+    "widening_requested": false
+  },
+  "scope": {
+    "project_ref": "uscrdifznmlvczcekqpw",
+    "control_schema": "clued_control",
+    "root_set_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+    "purpose": "SKILL_COEXISTENCE_QUALIFICATION",
+    "environment": "ISOLATED_TEST",
+    "issuer": "tdoljyj",
+    "audience": "urn:clued:audience:skill-coexistence-qualification:uscrdifznmlvczcekqpw",
+    "production_authority": false,
+    "paid_model_authority": false,
+    "new_trust_root": false,
+    "new_signing_identity": false,
+    "second_root_set": false,
+    "scope_expansion": false
+  },
+  "budget_effect": {
+    "new_capacity": false,
+    "refund": false,
+    "reset": false,
+    "automatic_retry": false,
+    "preserve_existing_charges_and_limits": true,
+    "remaining_allocations_before_and_after": 1,
+    "charged_seconds_at_proposal_time": 9906,
+    "charged_seconds_ceiling_unchanged": 10506,
+    "charged_evidence_bytes_ceiling_unchanged": 2335812531
+  },
+  "nw01": {
+    "reuse_existing_reviewed_mechanism": true,
+    "row": "clued_control.accepted_binding",
+    "allowed_changed_fields": [
+      "not_before",
+      "expires_at",
+      "owner_approval_commit",
+      "subject_sha256",
+      "registration_acceptance_sha256",
+      "store_acceptance_sha256",
+      "signature_evidence_sha256"
+    ],
+    "allowed_replaced_checks": [
+      "accepted_binding_check",
+      "accepted_binding_owner_approval_commit_check",
+      "accepted_binding_subject_sha256_check"
+    ],
+    "temporarily_disabled_trigger": "accepted_binding_immutable",
+    "trigger_must_be_restored_same_transaction": true,
+    "fail_closed_on_mismatch": true
+  },
+  "cp01": {
+    "new_in_this_authorization": true,
+    "reason": "Three SECURITY DEFINER functions hard-code the root5 generation id; two also hard-code the superseded window literal and the binding-forward cap. The run cannot proceed on root5 because the root5 GENERATION_REGISTERED event (clued_control.events sequence 5) declares expires_at 2026-09-11T10:21:05Z and the controller runs currentWindow over that body.",
+    "replaceable_functions": [
+      "clued_control.reserve_gate(text,text)",
+      "clued_control.reserve_execution_budget(text,text)",
+      "clued_control.append_status_manifest(text,text)"
+    ],
+    "excluded_from_direct_replacement": [
+      "clued_control.effective_execution_binding()"
+    ],
+    "excluded_function_may_change_only_via": "APPEND_ONLY_BINDING_FORWARD_TRANSACTION_RECORDING_EXECUTION_BINDING_FORWARD_ACCEPTED",
+    "permitted_edit_classes": [
+      "LIVE_ROOT_GENERATION_ROOT5_TO_ROOT6",
+      "BOUND_OPEN_ENDED_SEQUENCE_GE_64_SEGMENT_TO_GE_64_AND_LT_89_AND_ADD_GE_89_ROOT6_SEGMENT",
+      "SUPERSEDED_WINDOW_LITERALS_TO_THIS_WINDOW_MATERIALIZED_TIMESTAMPS",
+      "STATUS_MANIFEST_SCHEMA_DIGEST_TO_DIGEST_CARRIED_BY_THIS_RUN_CONTROLLER_INCLUDING_ALLOW_LIST",
+      "BINDING_FORWARD_CAP_SERIES_F_15_TO_16"
+    ],
+    "segments_that_must_remain_byte_identical": [
+      "sequence >= 59 and sequence < 64",
+      "sequence < 59"
+    ],
+    "required_transaction_form": {
+      "single_transaction": true,
+      "lock": "access exclusive on the eight clued_control tables",
+      "opening_prosrc_sha256_assertions_for": [
+        "clued_control.append_status_manifest(text,text)",
+        "clued_control.effective_execution_binding()",
+        "clued_control.reserve_execution_budget(text,text)",
+        "clued_control.reserve_gate(text,text)"
+      ],
+      "assert_unchanged_function_too": true,
+      "abort_on_any_drift": true,
+      "immediate_read_only_readback": true,
+      "archive_exact_input_and_raw_response": true,
+      "independent_review_before_owner_merge": true,
+      "blind_retry_after_interruption": false
+    },
+    "prohibited": [
+      "LOOSENING_SERIES_N_GT_9",
+      "LOOSENING_CHARGED_SECONDS_CEILING_10506",
+      "LOOSENING_CHARGED_EVIDENCE_BYTES_CEILING_2335812531",
+      "WEAKENING_NEW_BUDGET_EXPIRES_AT_MUST_NOT_EXCEED_ACCEPTED_BINDING_EXPIRES_AT",
+      "REMOVING_FIRST_PASS_STOPS",
+      "REMOVING_TERMINAL_RECEIPT_CHECKS",
+      "REMOVING_ORIGINAL_BYTES_CHECKS",
+      "ADDING_REFUND_RESET_OR_AUTOMATIC_RETRY_PATH",
+      "DROP_FUNCTION",
+      "CHANGING_ANY_OF_THE_OTHER_ELEVEN_CONTROL_PLANE_FUNCTIONS"
+    ],
+    "prior_unreviewed_change_disclosure": {
+      "recorded_in": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/root5-window9-corrected-binding/ActualNineteenthForwardReceipt.json",
+      "what": "reserve_gate and reserve_execution_budget were rewritten outside this repository on 2026-09-11 as part of the previous window migration.",
+      "receipt_wording": "This rewrite has no corresponding pull request or published evidence in this repository.",
+      "consequence": "That migration missed append_status_manifest, which still pins the superseded window 2026-09-11T10:21:05Z while another check in the same function requires expires_at to be later than now. Status24 has been unappendable since that moment.",
+      "this_authorization_prohibits_repeating_that_method": true
+    }
+  },
+  "forward_cap_extension": {
+    "is_a_cap_extension": true,
+    "described_as_maintenance": false,
+    "from": "series_f > 15",
+    "to": "series_f > 16",
+    "why_needed": "Moving the execution binding onto the rebuilt controller requires a twentieth binding forward; the fifteenth counted forward was consumed on 2026-09-11.",
+    "grants_additional_execution_capacity": false,
+    "unchanged_by_this_extension": [
+      "series_n > 9",
+      "charged_seconds <= 10506",
+      "charged_evidence_bytes <= 2335812531"
+    ],
+    "prior_record_caveat": {
+      "record": "artifacts/clued-validation/phase2-entry-preparation-20260908/root6-capacity/OwnerForwardCapExtensionOverride.json",
+      "independently_reviewed": false,
+      "rested_on_false_premise": true,
+      "false_premise": "The implementing side told the Owner the cap merely lacked a backing document. In fact the database enforced the cap in two functions and the raise was not executable at all."
+    },
+    "rejected_alternative": {
+      "what": "Rewrite effective_execution_binding() directly so no forward is needed and the cap stays at 15.",
+      "rejected_because": "It would move the execution binding silently, outside the append-only event log.",
+      "adopted_by_this_approval_as": "cp01.excluded_from_direct_replacement"
+    }
+  },
+  "generation_registration": {
+    "events_permitted": 1,
+    "kind": "GENERATION_REGISTERED",
+    "generation_id": "ctrgen_5e0440a95ac8ee257b9e4236cabd275b",
+    "root_set_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+    "predecessor_generation_id_source": "CURRENT_HEAD_GENERATION_AT_APPEND_TIME",
+    "new_generation": true,
+    "new_trust_root": false,
+    "second_root_set": false,
+    "new_signing_identity": false,
+    "not_before_and_expires_at_source": "THIS_APPROVAL_MATERIALIZED_WINDOW_TIMESTAMPS",
+    "must_not_precede": "CP_01_APPLIED_AND_READ_BACK",
+    "why": "Until cp01 is applied the control plane requires the live generation to be root5. Registering first would break the existing path without opening the new one, and append_event's generation_reuse_or_rollback forbids re-registering root5."
+  },
+  "controller_rebuild": {
+    "required": true,
+    "reason": "root6Expiry was set to 2026-09-19T00:00:00Z when the root6 controller was built, and expiryForBudget(sequence >= 89) requires a new budget to declare exactly that value. reserve_execution_budget additionally requires a new budget's expires_at to be no later than accepted_binding.expires_at. Under the fixed 86400-second window rule that value can never be produced.",
+    "error_attribution": "IMPLEMENTING_SIDE",
+    "constant_to_change": "root6Expiry",
+    "new_value_source": "THIS_APPROVAL_MATERIALIZED_EXPIRES_AT",
+    "documents_requiring_reissue_and_resigning": [
+      "scripts/phase2-qualification/control-context-verifier-root6-window10-successor/ControllerSourceManifest.candidate.json",
+      "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root6-runtime-v17/ScopedRoot5FinalControllerQualification.json",
+      "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root6-runtime-v17/ExactRoot5FinalPreentryControllerRuntimeAcceptance.json",
+      "artifacts/clued-validation/phase2-entry-preparation-20260908/root6-capacity/Root6OriginalInput4000000CapacityProposal20260912.json",
+      "artifacts/clued-validation/phase2-entry-preparation-20260908/root6-capacity/Root6OriginalInput4000000CapacityApproval20260912.v2.json",
+      "artifacts/clued-validation/phase2-entry-preparation-20260908/root6-capacity/Root6CurrentController4000000CapacityApplicability20260912.json",
+      "artifacts/clued-validation/phase2-entry-preparation-20260908/root6-capacity/Root6Current043CapacityRepairAcceptance20260912.json"
+    ],
+    "not_affected": {
+      "path": "scripts/phase2-qualification/control-context-verifier-root6-window10-successor/status-manifest.root5.schema.json",
+      "sha256": "510f3b90cdb026c8c4d44ffac2647502ff8003cdd972850dbe042edbd6c310ef",
+      "why": "It pins the root6 generation only, and the generation does not change."
+    },
+    "estimate_correction": {
+      "implementing_side_first_said": 3,
+      "verified": 7,
+      "what_was_missed": "All four capacity documents pin the window 2026-09-19T00:00:00Z or the controller digest 72d9eb92, not only capacity_delta.",
+      "occurrence_in_this_run": "SEVENTH_ESTIMATE_SMALLER_THAN_VERIFIED_SCOPE",
+      "corrected_before_merge": true
+    }
+  },
+  "execution_boundary": {
+    "reserve_execution_budget_before_final_pass": false,
+    "reserve_ga_or_gate_before_final_pass": false,
+    "reuse_expired_window_preimage": false,
+    "reuse_expired_window_candidate": false,
+    "fresh_lifecycle_required": true,
+    "expired_windows_whose_material_must_not_be_reused": [
+      "2026-09-10/11",
+      "2026-09-11/12"
+    ]
+  },
+  "recorded_governance_question": {
+    "raised_by": "IMPLEMENTING_SIDE",
+    "times_raised_before_this_document": 2,
+    "question": "The controller under qualification is built by the implementing side. Under this approval the enforcement layer it must satisfy is also modified by the implementing side, specifically so that this controller passes. What does the resulting qualification result certify?",
+    "context": "Seven rounds of independent review examined the repository side only. The database side was not reviewed by anyone until immediately before the single irreversible write, and a prior unreviewed change to these same functions is what left append_status_manifest inconsistent.",
+    "blocks_this_approval": false,
+    "required_in_final_result": "The final qualification result must state plainly that the enforcement layer of this qualification run was modified by the party being qualified, before the run."
+  },
+  "preparation_requested_by_owner_in_current_conversation": true,
+  "final_approval_requires_owner_merge": true
+}
