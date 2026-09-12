@@ -2,8 +2,8 @@
   "state": "ACCEPTED_EXACT_ROOT3_ORIGINAL_INPUT_CAPACITY_SUPPLEMENT",
   "independent_reviewer": "/root/project_list_auth_fix",
   "approval_ref": {
-    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/4b9b8c73a661301ce0a15861520c95fdf511f2b8",
-    "sha256": "80d0566a8a6dd899d7d53648cd0f0fccac45fd81878ee909630aac71186a4ffc"
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/50855b5e5391e0c36f683f0eedba644fcdb1cd9c",
+    "sha256": "b69b793fbe0c5e8a42934d49b9c08ec2e1dca7a5e45b49e65c21015473cde541"
   },
   "base_approval_ref": {
     "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/86636aa78807ca1ce1facbdd910f7c3d27a75177",
@@ -11,8 +11,8 @@
   },
   "base_proposal_sha256": "ea96914e218460339508bc51eff0d10de41e1a94cfa3a0a544a85a132219791b",
   "capacity_proposal_ref": {
-    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/63a1fa29e3771f60b610a4538e5a7ff0bc7620a0",
-    "sha256": "8befb8fd8f89c76759611361a44942b0b8a8800ca2ef753d4f33d7c8ed679149"
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/ad17a3a1e9558591a9cbdb293c1efed27a2a1cf1",
+    "sha256": "40317abfd8f13f9dac5cd37071f3d24b4e0dd036f351948fb5920ff04d0a3873"
   },
   "bounded_series_constraints": {
     "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
@@ -67,8 +67,8 @@
   },
   "scope_unchanged_except_original_input_limit": true,
   "new_action_authorized": false,
-  "accepted_at": "2026-09-12T01:31:02.664Z",
-  "controller_digest": "72d9eb92cf287ee6fda1fdbb97d90d02ed7f0e368398cba4ddb517233413d145",
+  "accepted_at": "2026-09-12T07:09:18.112Z",
+  "controller_digest": "3a58eb873902d1625fa6b1f2d252efed78b205e3cb04cc356f064aacd4172dae",
   "scope_digest": "115408c69dcb2fa606fb0de34ec86c5239487d0cfa9a73abb267664a2482abe5",
   "previous_evidence_sink_ref": {
     "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/a1a5f39b43f2b77bc39a13bee3d42a9a55483d1d",
@@ -80,8 +80,8 @@
   },
   "changed_source_refs": [
     {
-      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/c27f94214d5e55889861f933e111b53241ecbc86",
-      "sha256": "72d9eb92cf287ee6fda1fdbb97d90d02ed7f0e368398cba4ddb517233413d145"
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/eeabe2b8f73c2be791de2a7446c941044129d11d",
+      "sha256": "3a58eb873902d1625fa6b1f2d252efed78b205e3cb04cc356f064aacd4172dae"
     },
     {
       "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/ef368dbacb4ef9d0495330293becfc9ce87f54b6",
@@ -157,14 +157,14 @@
     }
   ],
   "approved_change_index_ref": {
-    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/63a1fa29e3771f60b610a4538e5a7ff0bc7620a0",
-    "sha256": "8befb8fd8f89c76759611361a44942b0b8a8800ca2ef753d4f33d7c8ed679149"
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/ad17a3a1e9558591a9cbdb293c1efed27a2a1cf1",
+    "sha256": "40317abfd8f13f9dac5cd37071f3d24b4e0dd036f351948fb5920ff04d0a3873"
   },
   "issuing_session": "session_018nf6mQ5CQuMFadoJ9WRZCN",
   "succession_basis": "a573ca93e094bc9a4a8dccc23c1e165b6b368ff4",
   "historical_conclusions_not_ratified": "This acceptance does not ratify any historical conclusion of the original /root/project_list_auth_fix session.",
-  "source_set_semantics": "changed_source_refs carries the blobs the root6 window migration introduced and that this reviewer verified byte for byte against the controller manifest: the manifest itself, the 17 repository sources inside scripts/phase2-qualification/control-context-verifier-root6-window10-successor, and the new scripts/phase2-qualification/nonproduction-control-store/runtime-successor/commitment-signing-root6-window/signing.mjs. Historical dependencies remain pinned in the controller manifest. This set is deliberately narrower in kind than the predecessor applicability, whose 20 entries include ten git objects that resolve to no path in this repository -- off-repo administrative sources the predecessor reviewer could see and this one cannot. Nothing unreviewed is asserted here.",
-  "what_is_accepted": "That capacity_delta.source_refs_maximum may be 133 rather than 131 for the root6 controller 72d9eb92cf287ee6fda1fdbb97d90d02ed7f0e368398cba4ddb517233413d145, on the Owner approval 80d0566a8a6dd899d7d53648cd0f0fccac45fd81878ee909630aac71186a4ffc and the root6 capacity proposal 8befb8fd8f89c76759611361a44942b0b8a8800ca2ef753d4f33d7c8ed679149, both of which declare 133 and whose capacity_delta is byte-identical to the controller's own frozen constant. 133 is arithmetically exact: one manifest blob plus 144 declared repository sources minus 12 duplicate-content blobs, by the same construction that gives the predecessor 131 from 142.",
+  "source_set_semantics": "changed_source_refs carries the blobs the root6 window migration introduced and that this reviewer verified byte for byte against the controller manifest: the manifest itself, the 17 repository sources inside scripts/phase2-qualification/control-context-verifier-root6-window11-successor, and the new scripts/phase2-qualification/nonproduction-control-store/runtime-successor/commitment-signing-root6-window/signing.mjs. Historical dependencies remain pinned in the controller manifest. This set is deliberately narrower in kind than the predecessor applicability, whose 20 entries include ten git objects that resolve to no path in this repository -- off-repo administrative sources the predecessor reviewer could see and this one cannot. Nothing unreviewed is asserted here.",
+  "what_is_accepted": "That capacity_delta.source_refs_maximum may be 133 rather than 131 for the root6 controller 3a58eb873902d1625fa6b1f2d252efed78b205e3cb04cc356f064aacd4172dae, on the Owner approval b69b793fbe0c5e8a42934d49b9c08ec2e1dca7a5e45b49e65c21015473cde541 and the root6 capacity proposal 40317abfd8f13f9dac5cd37071f3d24b4e0dd036f351948fb5920ff04d0a3873, both of which declare 133 and whose capacity_delta is byte-identical to the controller's own frozen constant. 133 is arithmetically exact: one manifest blob plus 144 declared repository sources minus 12 duplicate-content blobs, by the same construction that gives the predecessor 131 from 142.",
   "what_is_not_accepted": [
     "No GA, GRR, Entry, gate result, qualification pass or runtime admission.",
     "No extension of qualificationLimits.forwards from 15 to 16. That limit is a controller constant, sits in neither the root3 appendix scope nor capacity_delta, and no document backs it. It is outside this acceptance.",
@@ -174,18 +174,22 @@
   "governing_exclusion_position": "The excluded clause of BoundedSeriesApplicability20260910 governs that appendix's own scope caps. source_refs_maximum sits in capacity_delta, the supplemental layer, which the same mechanism has already raised three times (128, 130, 131), each under an Owner approval plus an independent applicability. Reading excluded to cover capacity_delta would retroactively void those three and the 4,000,000-byte original input limit this run depends on. That reductio is why this reviewer holds 131 to 133 to be the fourth ordinary use of an established route rather than a violation.",
   "preconditions_outside_this_repository": [
     "The root6 GENERATION_REGISTERED body must carry not_before no later than 2026-09-12T00:54:15.197Z, because context.mjs:44 requires registered.not_before <= approved_at and that body is immutable once written.",
-    "That body must carry expires_at exactly 2026-09-19T00:00:00Z, clamped jointly by root-window-validation.mjs:31, context.mjs:44, budget-evidence.mjs:18 and context.mjs:179.",
+    "That body must carry expires_at exactly 2026-09-13T07:05:16Z, clamped jointly by root-window-validation.mjs:31, context.mjs:44, budget-evidence.mjs:18 and context.mjs:179.",
     "Neither could be verified from repository contents: no such body exists here and this reviewer has no database access. If the registered body contradicts either, this acceptance does not apply and must not be consumed."
   ],
-  "binding_requirement_for_the_runtime_acceptance": "The runtime acceptance must bind capacity_materials.approval to 80d0566a8a6dd899d7d53648cd0f0fccac45fd81878ee909630aac71186a4ffc (the reissued v2), not to the superseded first approval d06494658f1c9ee90e83951ab7a4ff33306ac9ff978f2d3a200baf50f2a8b0d7, which remains on main and points at a proposal declaring 131. Both files exist; only this one is accepted.",
+  "binding_requirement_for_the_runtime_acceptance": "The runtime acceptance must bind capacity_materials.approval to b69b793fbe0c5e8a42934d49b9c08ec2e1dca7a5e45b49e65c21015473cde541 (the reissued v2), not to the superseded first approval d06494658f1c9ee90e83951ab7a4ff33306ac9ff978f2d3a200baf50f2a8b0d7, which remains on main and points at a proposal declaring 131. Both files exist; only this one is accepted.",
   "publication_status": "INDEPENDENTLY_REVIEWED_NOT_YET_OWNER_PUBLISHED",
   "runtime_admission": false,
   "authority_effect": "NONE",
   "supersedes": {
-    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/cfaafa310102c61b3f1fed5273a2216c90572f8b",
-    "sha256": "cc3db45bb0931ebe0a539be48e58d25e20e84836809b2995ecb9a0b4fb109537"
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/3fc15c3c688fb975fd17c3566a5eca740e9df375",
+    "sha256": "a6693eea2ae4cf6790588e56a81fe03739b258f0dc0d4b8fe3fa2e7ba62a3f48"
   },
   "supersedes_chain": [
+    {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/cfaafa310102c61b3f1fed5273a2216c90572f8b",
+      "sha256": "cc3db45bb0931ebe0a539be48e58d25e20e84836809b2995ecb9a0b4fb109537"
+    },
     {
       "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/e5754c71c27d703544bfd209765f02cecba24a90",
       "sha256": "da42623655da70e3b0a103ede579a27084896836d9d4639b74245e4a2a44e439"

@@ -1,0 +1,67 @@
+{
+  "accepted_store": {
+    "namespace": "clued_control",
+    "project_ref": "uscrdifznmlvczcekqpw",
+    "root_set_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+    "second_store_created": false
+  },
+  "allowed_maintenance": {
+    "all_prior_root_status_ga_grr_execution_and_budget_history_preserved": true,
+    "application_ordinal": 4,
+    "changed_checks": [
+      "accepted_binding_check",
+      "accepted_binding_owner_approval_commit_check",
+      "accepted_binding_subject_sha256_check"
+    ],
+    "changed_fields": [
+      "not_before",
+      "expires_at",
+      "owner_approval_commit",
+      "subject_sha256",
+      "registration_acceptance_sha256",
+      "store_acceptance_sha256",
+      "signature_evidence_sha256"
+    ],
+    "exception": "NW-01",
+    "production_authority": false,
+    "row": "clued_control.accepted_binding",
+    "surgical_authority": false,
+    "temporarily_disabled_trigger": "accepted_binding_immutable",
+    "trigger_restored_same_transaction": true
+  },
+  "authority_effect": "NONE",
+  "decision": "Accept only the already reviewed one-row/seven-field/three-CHECK NW-01 shape for the signed continuation window. Final application must be regenerated from a fresh live preimage and fail closed on any drift.",
+  "kind": "CONTINUATION_CONTROL_STORE_ACCEPTANCE",
+  "live_observation_baseline": {
+    "accepted_binding_currently_expired": false,
+    "active_ga_id": null,
+    "charged_evidence_bytes": 2201594803,
+    "charged_seconds": 9906,
+    "current_root_generation": "ctrgen_e5df432221344996afc04b5638121d96",
+    "current_root_sequence": 5,
+    "execution_sequence": 88,
+    "pending_budget_sequence": null
+  },
+  "owner_approval_merge": "cbe898d3f5b66f279d78a6b8d583d2c1885d9c89",
+  "registration_acceptance": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-20260912/ContinuationRegistrationSubjectAcceptance.json",
+    "sha256": "5eb9c845bc98c7e1c2f380cd20a2767ba63a1d2aba9e83427049ac51449b7ebd",
+    "bytes": 1956
+  },
+  "registration_subject": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-20260912/ContinuationRegistrationSubject.canonical.json",
+    "sha256": "64ae7adc3c6e156045c4c369ccfaa8fe9ac12611eb926876d26f4100c191a2f5",
+    "bytes": 3320
+  },
+  "remotely_executed": false,
+  "requires_exact_preimage_CAS": true,
+  "requires_fresh_independent_review_before_apply": true,
+  "requires_fresh_live_preimage_before_apply": true,
+  "review_basis": "PREVIOUSLY_INDEPENDENTLY_ACCEPTED_NW01_TRANSACTION_SHAPE_PLUS_CURRENT_VERIFIED_OWNER_SCOPE",
+  "schema_version": 1,
+  "state": "ACCEPTED_EXISTING_NONPRODUCTION_STORE_NW01_REUSE_NOT_EXECUTED",
+  "window": {
+    "not_before": "2026-09-12T07:05:16Z",
+    "expires_at": "2026-09-13T07:05:16Z"
+  }
+}
