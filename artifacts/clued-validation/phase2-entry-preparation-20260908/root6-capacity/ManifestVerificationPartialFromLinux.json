@@ -1,0 +1,36 @@
+{
+  "state": "MANIFEST_HOST_VERIFICATION",
+  "verdict": "PARTIAL_NO_DRIFT_IN_WHAT_COULD_BE_CHECKED",
+  "manifest": {
+    "path": "scripts/phase2-qualification/control-context-verifier-root6-window10-successor/ControllerSourceManifest.candidate.json",
+    "sha256": "72d9eb92cf287ee6fda1fdbb97d90d02ed7f0e368398cba4ddb517233413d145",
+    "entries": 331,
+    "repository_source": 144,
+    "runtime_dependency": 187
+  },
+  "counts": {
+    "verified": 189,
+    "mismatched": 0,
+    "missing": 0,
+    "uncheckable_here": 142
+  },
+  "gh_exe": {
+    "status": "UNCHECKABLE_FROM_HERE",
+    "trusted_github_mjs_pin": "e2efa10a5d2ce93cac9bc4b676932b62947c0967c01c8f2c3a9cb4437ad358d3"
+  },
+  "mismatched": [],
+  "missing": [],
+  "uncheckable_here": {
+    "count": 142,
+    "bytes": 199779933,
+    "note": "Windows absolute paths with no local mapping. These are NOT verified. Run this script on that host with --map to check them.",
+    "sample": [
+      "C:/Program Files/Docker/Docker/resources/bin/docker.exe",
+      "C:/Program Files/GitHub CLI/gh.exe",
+      "C:/Program Files/nodejs/node.exe",
+      "C:/Users/Windows/AppData/Local/Programs/Python/Python312/DLLs/_hashlib.pyd",
+      "C:/Users/Windows/AppData/Local/Programs/Python/Python312/DLLs/_uuid.pyd"
+    ]
+  },
+  "authority_effect": "NONE"
+}
