@@ -107,7 +107,7 @@ fs.writeFileSync(path.join(REPO, OUT_REL), raw);
 
 console.log(JSON.stringify({
   output: OUT_REL,
-  bytes: raw.length,
+  bytes: Buffer.byteLength(raw),
   owner_must_complete: Object.entries(candidate).filter(([, v]) => v === OWNER_TODO).map(([k]) => k),
   checks,
 }, null, 2));

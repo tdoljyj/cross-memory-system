@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "state": "PREPARED_EXACT_PREENTRY_CONTROLLER_RUNTIME_ROOT6_NOT_ACCEPTED",
+  "state": "ACCEPTED_EXACT_PREENTRY_CONTROLLER_RUNTIME",
   "independent_reviewer": "/root",
   "not_before": "2026-09-12T00:00:00Z",
   "expires_at": "2026-09-19T00:00:00Z",
@@ -236,8 +236,8 @@
       "profile_digest": "d1c060b85f0b842a397a478105ea57a208e62eb0a5a2d4c2cd8f93f63eae88f5",
       "dominant_role": "TEST_CONTROLLER",
       "source_ref": {
-        "commit": "006283296d163a061fae9121f91243803cfcfc5b",
-        "tree": "9bbbdc9125dd213d0a74c45a1622324caa4eb521",
+        "commit": "a8fb29ed94a8325a848e3289c362164bce4d15d0",
+        "tree": "b9e508bd7b1d8213fbd8c4a13ef79e5babc1c44a",
         "blobs": [
           {
             "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/c27f94214d5e55889861f933e111b53241ecbc86",
@@ -1065,7 +1065,7 @@
       "publisher_request_bytes": 8388608,
       "publisher_response_bytes": 8388608,
       "source_batch_response_bytes": 33554432,
-      "source_refs_maximum": 131,
+      "source_refs_maximum": 133,
       "root_strict_json_bytes": 2097152,
       "original_field_count": 5,
       "original_nineteen_oracles_unchanged": true,
@@ -1077,22 +1077,22 @@
     "capacity_materials": {
       "approval": {
         "ref": {
-          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/1d7fab869ea580f852a0c69a6b9316e9b9b71742",
-          "sha256": "f3afb108e1f5080c0dc47902c90a3291acebd2171a78095fd95ae8cd30a6ff8f"
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/4b9b8c73a661301ce0a15861520c95fdf511f2b8",
+          "sha256": "80d0566a8a6dd899d7d53648cd0f0fccac45fd81878ee909630aac71186a4ffc"
         },
         "publication": {
-          "commitSha": "46e1b0e412b0b8e016f67f27ebf2c6235822b1f3",
-          "artifactPath": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v16-source-completeness/Root5OriginalInput4000000CapacityApproval20260911.json"
+          "commitSha": "01ea76755526c2d20b93dc56b06ed6f24be801c1",
+          "artifactPath": "artifacts/clued-validation/phase2-entry-preparation-20260908/root6-capacity/Root6OriginalInput4000000CapacityApproval20260912.v2.json"
         }
       },
       "applicability": {
         "ref": {
-          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/cfaafa310102c61b3f1fed5273a2216c90572f8b",
-          "sha256": "cc3db45bb0931ebe0a539be48e58d25e20e84836809b2995ecb9a0b4fb109537"
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/3fc15c3c688fb975fd17c3566a5eca740e9df375",
+          "sha256": "a6693eea2ae4cf6790588e56a81fe03739b258f0dc0d4b8fe3fa2e7ba62a3f48"
         },
         "publication": {
-          "commitSha": "46e1b0e412b0b8e016f67f27ebf2c6235822b1f3",
-          "artifactPath": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v16-source-completeness/Root5CurrentController4000000CapacityApplicability20260911.json"
+          "commitSha": "ad3d589c03ded47110eaecbb47c48ff90600acdc",
+          "artifactPath": "artifacts/clued-validation/phase2-entry-preparation-20260908/root6-capacity/Root6CurrentController4000000CapacityApplicability20260912.json"
         }
       }
     },
@@ -1143,16 +1143,6 @@
       "repairs": [
         {
           "ref": {
-            "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/36dd6b8fe0acf7963a6dd4d58d7d0d5773b3257c",
-            "sha256": "54f91f1964e3d3ad250365f9ba9479444638e4b890ce577ed6e4e06532e8ac17"
-          },
-          "publication": {
-            "commitSha": "274de5f56fa7bd0c4bcf178df1c49c3ff9b7b8e6",
-            "artifactPath": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/EnvOriginal043CapacityRepairAcceptance20260910.json"
-          }
-        },
-        {
-          "ref": {
             "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/6cc3fd7bf7c1a05a2c853cd325a248a132b90200",
             "sha256": "bf49bafa0636f1a89bfaf496598d7f27b162bc1dfd2f4ba22d2218ccbef43b88"
           },
@@ -1197,18 +1187,8 @@
             "sha256": "458ff0e2f8c96e085954f01d384251387e60bfc22f0ff210ac0b23bc5b7f88d9"
           },
           "publication": {
-            "commitSha": "58aff4daa91b4d23ae8546ec051080746f16c44c",
+            "commitSha": "ad3d589c03ded47110eaecbb47c48ff90600acdc",
             "artifactPath": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v15-preparation/ExpiredV14InputCapacityRepairAcceptance20260911.json"
-          }
-        },
-        {
-          "ref": {
-            "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/03567e101cc83598ea02f014461c633f24ebe9b7",
-            "sha256": "5911567d4e4aeb74b76664614746a856704ab588c9dcc98f0655d7b85eb79153"
-          },
-          "publication": {
-            "commitSha": "46e1b0e412b0b8e016f67f27ebf2c6235822b1f3",
-            "artifactPath": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v16-source-completeness/Current043CapacityRepairApplicability20260911.json"
           }
         },
         {
@@ -1229,6 +1209,16 @@
           "publication": {
             "commitSha": "46e1b0e412b0b8e016f67f27ebf2c6235822b1f3",
             "artifactPath": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v16-source-completeness/ExpiredV15CurrentRepairApplicability20260911.json"
+          }
+        },
+        {
+          "ref": {
+            "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/8628a225d351f7b9672f7935f12d0be0644844da",
+            "sha256": "329e70ae5e6d8e153b38d0a4dc180e536636f0b67a09dbd1e6dc10d4a8fa7fac"
+          },
+          "publication": {
+            "commitSha": "ad3d589c03ded47110eaecbb47c48ff90600acdc",
+            "artifactPath": "artifacts/clued-validation/phase2-entry-preparation-20260908/root6-capacity/Root6Current043CapacityRepairAcceptance20260912.json"
           }
         }
       ]
@@ -1594,11 +1584,18 @@
       "sha256": "ee250a365f879f99aa41bf45274296cadc6f11d26567dc15c6be3c8778e4b533"
     }
   },
+  "forward_cap_not_covered_by_independent_review": {
+    "change": "qualificationLimits.forwards 15 to 16",
+    "covered_by_this_acceptance": false,
+    "covered_by_the_independent_capacity_applicability": false,
+    "basis": "artifacts/clued-validation/phase2-entry-preparation-20260908/OwnerForwardCapExtensionOverride.json",
+    "note": "A controller constant, outside both the root3 appendix scope and capacity_delta. Its problem is not that it violates the excluded clause but that no document backs it at all. The successor reviewer stated explicitly that signing the capacity applicability does not endorse it. Recorded here so that is not lost."
+  },
   "window10_continuation_evidence": {
     "controller_publication": {
-      "owner_merge": "a573ca93e094bc9a4a8dccc23c1e165b6b368ff4",
-      "source_commit": "006283296d163a061fae9121f91243803cfcfc5b",
-      "source_tree": "9bbbdc9125dd213d0a74c45a1622324caa4eb521"
+      "owner_merge": "ad3d589c03ded47110eaecbb47c48ff90600acdc",
+      "source_commit": "a8fb29ed94a8325a848e3289c362164bce4d15d0",
+      "source_tree": "b9e508bd7b1d8213fbd8c4a13ef79e5babc1c44a"
     },
     "controller_digest": "72d9eb92cf287ee6fda1fdbb97d90d02ed7f0e368398cba4ddb517233413d145",
     "continuation_constraints": {
@@ -1641,5 +1638,24 @@
       "blob_sha": "389d62d0247f65d9bdda362504b1d3caac52f4b8"
     }
   ],
-  "acceptance_issued": false
+  "acceptance_issued": true,
+  "accepted_at": "2026-09-12T02:12:54.730Z",
+  "acceptance_record": {
+    "prepared_state": "PREPARED_EXACT_PREENTRY_CONTROLLER_RUNTIME_ROOT6_NOT_ACCEPTED",
+    "signed_at": "2026-09-12T02:12:54.730Z",
+    "state_string_source": "Extracted from the controller check that enforces it, not transcribed. Deriving it from the prepared name would have produced a _ROOT6 suffix the controller rejects.",
+    "independent_review": {
+      "concluded_rounds": 5,
+      "independent_reviewer_session": "session_018nf6mQ5CQuMFadoJ9WRZCN",
+      "succession_decision_merge": "a573ca93e094bc9a4a8dccc23c1e165b6b368ff4",
+      "what_the_reviewer_did_not_endorse": [
+        "qualificationLimits.forwards 15 to 16, a controller constant outside capacity_delta with no backing document. Recorded in OwnerForwardCapExtensionOverride.json and in this document under forward_cap_not_covered_by_independent_review."
+      ],
+      "what_the_reviewer_could_not_verify": [
+        "The root6 registration body preconditions: not_before no later than 2026-09-12T00:54:15.197Z and expires_at exactly 2026-09-19T00:00:00Z. It has no database access and stated the applicability does not apply if these conflict.",
+        "The GitHub API side of verifyOwnerMergeArtifact -- committer, signature and PR merged_by. It confirmed all twelve publication descriptors are two-parent merges from the object store only.",
+        "Live control-plane state."
+      ]
+    }
+  }
 }

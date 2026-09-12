@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "state": "PREPARED_SCOPED_CONTROLLER_QUALIFICATION_ROOT6_NOT_ACCEPTED",
+  "state": "ACCEPTED_SCOPED_CONTROLLER_QUALIFICATION",
   "independent_reviewer": "/root",
   "controller_digest": "72d9eb92cf287ee6fda1fdbb97d90d02ed7f0e368398cba4ddb517233413d145",
   "scope_digest": "115408c69dcb2fa606fb0de34ec86c5239487d0cfa9a73abb267664a2482abe5",
@@ -13,8 +13,8 @@
   "independent_of_tested_skill": true,
   "forbidden_stage_dependencies_excluded": true,
   "source_ref": {
-    "commit": "006283296d163a061fae9121f91243803cfcfc5b",
-    "tree": "9bbbdc9125dd213d0a74c45a1622324caa4eb521",
+    "commit": "a8fb29ed94a8325a848e3289c362164bce4d15d0",
+    "tree": "b9e508bd7b1d8213fbd8c4a13ef79e5babc1c44a",
     "blobs": [
       {
         "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/c27f94214d5e55889861f933e111b53241ecbc86",
@@ -550,9 +550,9 @@
       }
     ]
   },
-  "source_commit": "006283296d163a061fae9121f91243803cfcfc5b",
-  "source_tree": "9bbbdc9125dd213d0a74c45a1622324caa4eb521",
-  "source_owner_merge": "a573ca93e094bc9a4a8dccc23c1e165b6b368ff4",
+  "source_commit": "a8fb29ed94a8325a848e3289c362164bce4d15d0",
+  "source_tree": "b9e508bd7b1d8213fbd8c4a13ef79e5babc1c44a",
+  "source_owner_merge": "ad3d589c03ded47110eaecbb47c48ff90600acdc",
   "actual_repository_source_files": 144,
   "ordered_source_ref_count": 133,
   "source_publication_state": "LOCAL_EXACT_PUBLISHED_TREE_PREPARATION_VERIFIED_LIVE_GITHUB_READBACK_REQUIRED",
@@ -742,7 +742,7 @@
     "bytes": 45465,
     "blob_sha": "11543a4296ebff3569c1ab7aeb18db9f759b2f0f"
   },
-  "successor_delta": "Root6 window migration. The predecessor was bound to the root5 generation ctrgen_e5df432221344996afc04b5638121d96 and the window ending 2026-09-11T10:21:05Z, which lapsed before the qualification run could use it. This successor is bound to the root6 generation ctrgen_5e0440a95ac8ee257b9e4236cabd275b, the Owner-approved window 2026-09-12T00:00:00Z .. 2026-09-19T00:00:00Z, and the root6 controller 72d9eb92cf287ee6fda1fdbb97d90d02ed7f0e368398cba4ddb517233413d145 published by Owner merge a573ca93e094bc9a4a8dccc23c1e165b6b368ff4. The controller forward cap was raised from 15 to 16 under an Owner override recorded in OwnerForwardCapExtensionOverride.json, which conflicts with the cap extension exclusion in BoundedSeriesApplicability20260910 and is not independently reviewed. No scope, oracle, limit other than that cap, capacity, reviewer identity or historical record is changed; the window5, window7, window8 and window9 continuation records are preserved byte for byte as statements about those windows.",
+  "successor_delta": "Root6 window migration. The predecessor was bound to the root5 generation ctrgen_e5df432221344996afc04b5638121d96 and the window ending 2026-09-11T10:21:05Z, which lapsed before the qualification run could use it. This successor is bound to the root6 generation ctrgen_5e0440a95ac8ee257b9e4236cabd275b, the Owner-approved window 2026-09-12T00:00:00Z .. 2026-09-19T00:00:00Z, and the root6 controller 72d9eb92cf287ee6fda1fdbb97d90d02ed7f0e368398cba4ddb517233413d145 published by Owner merge ad3d589c03ded47110eaecbb47c48ff90600acdc. The controller forward cap was raised from 15 to 16 under an Owner override recorded in OwnerForwardCapExtensionOverride.json, which conflicts with the cap extension exclusion in BoundedSeriesApplicability20260910 and is not independently reviewed. No scope, oracle, limit other than that cap, capacity, reviewer identity or historical record is changed; the window5, window7, window8 and window9 continuation records are preserved byte for byte as statements about those windows.",
   "historical_component_applicability": {
     "path": "work/env-order-repair-approved-execution/accepted-reviews-exact/EnvHistoricalComponentApplicability.json",
     "sha256": "ce147276bfc766f2381b31fae9a8fb421e077082d899bc05eb6960e4f7cbd060",
@@ -860,5 +860,24 @@
   "prior_successor_deltas": [
     "Reviewed integrated Root5 same-purpose runtime-readiness repair: exact complete inputs up to 4,000,000 bytes, escaped publisher JSON 8 MiB, actual Root5 time and generation bindings, consistent fixed/late-bound fields and current reviewer, full retained historical repairs. One new nonrefundable 600-second allocation only; original nineteen oracles, Root5 expiry and authority boundaries remain unchanged."
   ],
-  "acceptance_issued": false
+  "acceptance_issued": true,
+  "accepted_at": "2026-09-12T02:12:54.730Z",
+  "acceptance_record": {
+    "prepared_state": "PREPARED_SCOPED_CONTROLLER_QUALIFICATION_ROOT6_NOT_ACCEPTED",
+    "signed_at": "2026-09-12T02:12:54.730Z",
+    "state_string_source": "Extracted from the controller check that enforces it, not transcribed. Deriving it from the prepared name would have produced a _ROOT6 suffix the controller rejects.",
+    "independent_review": {
+      "concluded_rounds": 5,
+      "independent_reviewer_session": "session_018nf6mQ5CQuMFadoJ9WRZCN",
+      "succession_decision_merge": "a573ca93e094bc9a4a8dccc23c1e165b6b368ff4",
+      "what_the_reviewer_did_not_endorse": [
+        "qualificationLimits.forwards 15 to 16, a controller constant outside capacity_delta with no backing document. Recorded in OwnerForwardCapExtensionOverride.json and in this document under forward_cap_not_covered_by_independent_review."
+      ],
+      "what_the_reviewer_could_not_verify": [
+        "The root6 registration body preconditions: not_before no later than 2026-09-12T00:54:15.197Z and expires_at exactly 2026-09-19T00:00:00Z. It has no database access and stated the applicability does not apply if these conflict.",
+        "The GitHub API side of verifyOwnerMergeArtifact -- committer, signature and PR merged_by. It confirmed all twelve publication descriptors are two-parent merges from the object store only.",
+        "Live control-plane state."
+      ]
+    }
+  }
 }
