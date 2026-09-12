@@ -1,0 +1,94 @@
+{
+  "schema_version": 1,
+  "state": "ACCEPTED_EXACT_FORWARD_ROOT_GENERATION_SUBJECT",
+  "review_basis": "INDEPENDENT_REVIEWER_ROUND_12_OWN_DATABASE_SNAPSHOT_OWN_BUILDER_RUN_AND_OWN_DIGEST_REIMPLEMENTATION",
+  "decided_at_utc": "2026-09-12T09:04:15Z",
+  "subject_file": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-20260912/root6-registration/Root6RegistrationReviewSubject.json",
+    "sha256": "06b5135aa93288afb087db7814ef0b23012b77af4c1978d687d414a13d3bd4e4",
+    "bytes": 3764
+  },
+  "review_subject_sha256": "293da3c512f63a9b1f7b3d07fa3282975917cac3bb94ccf831f03707bb3b572b",
+  "root_set_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+  "control_trust_root_generation": "ctrgen_5e0440a95ac8ee257b9e4236cabd275b",
+  "generation_ordinal": 6,
+  "accepted_scope": {
+    "profile_id": "DP-PREENTRY-SKILL-QUALIFICATION",
+    "repository": "tdoljyj/cross-memory-system",
+    "environment": "ISOLATED_TEST",
+    "paid_budget": 0,
+    "project_ref": "uscrdifznmlvczcekqpw",
+    "model_budget": 0
+  },
+  "accepted_audience": "urn:clued:audience:skill-coexistence-qualification:uscrdifznmlvczcekqpw",
+  "schema_sha256": "87f094fa079034aa886d6c568730370a3264e106529b4bfd79bc3369f30b79e5",
+  "accepted_algorithm_config": {
+    "digest_algorithm": "SHA-256",
+    "accepted_config_ref": {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/b25abb05e00f72bb2ae910035ba9916a97c822dc",
+      "sha256": "988cdf823eb63806dc3385aa1840e812c1cb1df5ed06e72ca2adf56244b88d20"
+    },
+    "canonicalization_id": "SORTED_JSON_UTF8_NO_FLOATS_LF_V1_CANDIDATE",
+    "signature_verification": "GITHUB_API_VERIFIED_OWNER_MERGE",
+    "signed_payload_excluded_fields": [
+      "signature_binding"
+    ]
+  },
+  "accepted_predecessor": {
+    "generation_id": "ctrgen_e5df432221344996afc04b5638121d96",
+    "sha256": "92186d46e92ee7d27427de813d14faeb1745fb3c1d08c6280ea86a84b258eff5"
+  },
+  "accepted_history_prefix_sha256": "bcc3742e3834776b62f6b4ffff94d93bcad46334afaf63d5b1ae1635ef3ed796",
+  "accepted_history_prefix_sequence": 5,
+  "accepted_issuer_purposes": [
+    {
+      "purpose": "STATUS",
+      "audience": "urn:clued:audience:skill-coexistence-qualification:uscrdifznmlvczcekqpw",
+      "subject_id": "tdoljyj",
+      "signing_service": "web-flow",
+      "qualification_ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/c1749399c047a5b88461ef8df54ea80b1b59938a",
+        "sha256": "1640995831b0c1f8ae616810e12eb7b97ee191e9f20b5c38eee32eb8bfac9d23"
+      }
+    },
+    {
+      "purpose": "GATE_AUTHORIZATION",
+      "audience": "urn:clued:audience:skill-coexistence-qualification:uscrdifznmlvczcekqpw",
+      "subject_id": "tdoljyj",
+      "signing_service": "web-flow",
+      "qualification_ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/3ae8bd4196f80266e2c2fda04a323a7b9d084840",
+        "sha256": "80cf8f471248ae76e5a637b5f94f20f4863a243c7011e5728de86cb5fc7cf5d2"
+      }
+    },
+    {
+      "purpose": "GATE_RESULT",
+      "audience": "urn:clued:audience:skill-coexistence-qualification:uscrdifznmlvczcekqpw",
+      "subject_id": "tdoljyj",
+      "signing_service": "web-flow",
+      "qualification_ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/3ae8bd4196f80266e2c2fda04a323a7b9d084840",
+        "sha256": "80cf8f471248ae76e5a637b5f94f20f4863a243c7011e5728de86cb5fc7cf5d2"
+      }
+    }
+  ],
+  "not_before": "2026-09-12T07:05:16Z",
+  "expires_at": "2026-09-13T07:05:16Z",
+  "owner_approval_merge": "cbe898d3f5b66f279d78a6b8d583d2c1885d9c89",
+  "checks": [
+    "Exported read_root myself; its sha256 computed inside the database is da8c633d6b44d3acf367e06bf3997684744166e966509f0a12d3ef158ba6420f over 23266 bytes, and my own base64 export decodes to exactly those bytes. The implementer's ReadRootSnapshotAfterNW01.json is byte-identical to it, so the four-segment transcription carried no corruption.",
+    "Ran build-root6-registration.mjs --acceptance-pending against MY snapshot in an isolated repository copy. It emitted a review subject byte-identical to both committed copies, and reported review_subject_sha256 293da3c512f63a9b1f7b3d07fa3282975917cac3bb94ccf831f03707bb3b572b.",
+    "Re-derived prefix_digest, predecessor.sha256 and the review-subject digest with my own implementation of the controller's canonical form, not by re-running the implementer's script. All three reproduce: bcc3742e..., 92186d46..., 293da3c5....",
+    "Re-derived all five historical prefix digests from my snapshot; 5/5 match the values declared in the stored bodies.",
+    "Diffed the subject against root5's registration body field by field. The ten fields scope, status, object_type, purpose, audience, root_set_id, schema_digest, schema_version, issuer_bindings and algorithm_config are byte-identical. Changed: control_trust_root_generation, generation_ordinal 5->6, not_before, expires_at, history (3 sub-fields), revocation (as_of and expires_at; event_set_digest recomputed to the same value because no revocation event exists), predecessor, and owner_approval_ref.",
+    "owner_approval_ref points at blob 71bf538405614db6f01d28e4692df05ae2d115a0, sha256 457e32b0ca9c319f23c70b5493a7f649d84bf6f2e2d09a34fd5cbf4d30121fe2. I confirmed by git that this blob is ExplicitOwnerApproval.candidate.json and that it is present in the Owner merge commit cbe898d3f5b66f279d78a6b8d583d2c1885d9c89 and in main.",
+    "validateRootShape was imported from the rebuilt controller control-context-verifier-root6-window11-successor and returned SHAPE_VALID_ONLY / authority_effect NONE / signature_verified false. Its ajv resolves to 6.15.0, and all 41 ajv files pinned in that controller's manifest are byte-identical to the installed copy.",
+    "Verified against the live control store that NW-01 landed exactly the reviewed change: the seven mutable columns hold the post-image values, the nine frozen columns are unchanged, constraint_count is 16 with conname digest 12b67839ac1caad7d61979d3a19a39c66c39fa537236dae2231ae2608fd0b031, accepted_binding_immutable is the sole non-internal trigger and is enabled, and effective_execution_binding's prosrc digest is unchanged at c721b056a771a3a019d1f0cee862408ba56afcbd4d683f45802e8f51c0580d16.",
+    "Confirmed the accepted window is in the store as 2026-09-12T07:05:16Z .. 2026-09-13T07:05:16Z, exactly 86400 seconds, and that head is still root5 at sequence 5 with charged_seconds 9906 and no generation registered.",
+    "Confirmed that all five historical registrations reference an independent acceptance whose review_subject_sha256 equals the review-subject digest of their own body (5/5), that no document in the repository carries 293da3c5..., and therefore that this acceptance is the missing link rather than a duplicate of an existing one.",
+    "This acceptance was written from values I computed or read myself. No accepted_* field was copied from an implementer artifact.",
+    "NOT verified here: the Owner's signature over the final registration body, the signature_binding block, and independent_acceptance_ref itself - none of these exist yet and none are part of the review subject."
+  ],
+  "authority_effect": "NONE",
+  "root_registered": false
+}

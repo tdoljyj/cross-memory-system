@@ -85,6 +85,29 @@ begin
   if got is distinct from 'a011292416693ef7e44221868669937261c33848a3ff10882d0f4abd97c9ef2e' then
     raise exception 'CP01_PREIMAGE_DRIFT % expected % got %', 'clued_control.reserve_gate(text,text)', 'a011292416693ef7e44221868669937261c33848a3ff10882d0f4abd97c9ef2e', coalesce(got, '<absent>');
   end if;
+  -- R11-F12: inside the Owner window. The one condition that changes on its own, so it belongs
+  -- here and not only in a preflight taken minutes earlier.
+  if not (clock_timestamp() >= '2026-09-12T07:05:16Z'::timestamptz
+          and clock_timestamp() < '2026-09-13T07:05:16Z'::timestamptz) then
+    raise exception 'CP01_OUTSIDE_THE_OWNER_WINDOW: % is not within [% , %)',
+      clock_timestamp(), '2026-09-12T07:05:16Z', '2026-09-13T07:05:16Z';
+  end if;
+
+  -- R11-F13: every clued_control function this transaction does not replace, pinned as one digest.
+  select count(*) into c from pg_proc p join pg_namespace n2 on n2.oid = p.pronamespace
+   where n2.nspname = 'clued_control';
+  if c <> 15 then
+    raise exception 'CP01_FUNCTION_COUNT_DRIFT: %', c;
+  end if;
+  got := (select encode(sha256(convert_to(string_agg(sig||'='||sha, E'\n' order by sig),'UTF8')),'hex')
+     from (select p.oid::regprocedure::text as sig,
+                  encode(sha256(convert_to(p.prosrc,'UTF8')),'hex') as sha
+             from pg_proc p join pg_namespace n2 on n2.oid = p.pronamespace
+            where n2.nspname = 'clued_control'
+              and p.oid::regprocedure::text not in ('clued_control.reserve_gate(text,text)', 'clued_control.reserve_execution_budget(text,text)', 'clued_control.append_status_manifest(text,text)')) u);
+  if got is distinct from 'c7af467630e8a7001757095df639d6360d896ffc4c2a143e19ae3dd8fb6d78ce' then
+    raise exception 'CP01_UNTOUCHED_FUNCTIONS_DRIFT: %', got;
+  end if;
 
   -- clued_control.effective_execution_binding() is asserted above and MUST NOT be replaced here.
   -- It may change only via APPEND_ONLY_BINDING_FORWARD_TRANSACTION_RECORDING_EXECUTION_BINDING_
@@ -297,6 +320,29 @@ begin
     raise exception 'CP01_READBACK_MISMATCH % expected % got %', 'clued_control.append_status_manifest(text,text)', want, got;
   end if;
 
+  -- R11-F12: inside the Owner window. The one condition that changes on its own, so it belongs
+  -- here and not only in a preflight taken minutes earlier.
+  if not (clock_timestamp() >= '2026-09-12T07:05:16Z'::timestamptz
+          and clock_timestamp() < '2026-09-13T07:05:16Z'::timestamptz) then
+    raise exception 'CP01_POST_OUTSIDE_THE_OWNER_WINDOW: % is not within [% , %)',
+      clock_timestamp(), '2026-09-12T07:05:16Z', '2026-09-13T07:05:16Z';
+  end if;
+
+  -- R11-F13: every clued_control function this transaction does not replace, pinned as one digest.
+  select count(*) into c from pg_proc p join pg_namespace n2 on n2.oid = p.pronamespace
+   where n2.nspname = 'clued_control';
+  if c <> 15 then
+    raise exception 'CP01_POST_FUNCTION_COUNT_DRIFT: %', c;
+  end if;
+  got := (select encode(sha256(convert_to(string_agg(sig||'='||sha, E'\n' order by sig),'UTF8')),'hex')
+     from (select p.oid::regprocedure::text as sig,
+                  encode(sha256(convert_to(p.prosrc,'UTF8')),'hex') as sha
+             from pg_proc p join pg_namespace n2 on n2.oid = p.pronamespace
+            where n2.nspname = 'clued_control'
+              and p.oid::regprocedure::text not in ('clued_control.reserve_gate(text,text)', 'clued_control.reserve_execution_budget(text,text)', 'clued_control.append_status_manifest(text,text)')) u);
+  if got is distinct from 'c7af467630e8a7001757095df639d6360d896ffc4c2a143e19ae3dd8fb6d78ce' then
+    raise exception 'CP01_POST_UNTOUCHED_FUNCTIONS_DRIFT: %', got;
+  end if;
   -- The one function that must be byte-identical to how it started.
   select encode(sha256(convert_to(p.prosrc, 'UTF8')), 'hex') into got
   from pg_proc p where p.oid = 'clued_control.effective_execution_binding()'::regprocedure;

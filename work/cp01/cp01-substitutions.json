@@ -316,5 +316,48 @@
       "NW-01 accepted_binding.expires_at (runbook step 8, not yet run)",
       "the root6 registration body's expires_at (runbook step 11, not yet built)"
     ]
+  },
+  "transaction_guards_added_after_round_11": {
+    "why": "Round 11 found two gaps in NW-01's guard set and told the implementer to write the corrected shape into CP-01 rather than patch NW-01 on the eve of running it. Both are here. CP-01 has less margin than NW-01: it replaces SECURITY DEFINER functions and pins ten window literals.",
+    "window_assertion": {
+      "finding": "R11-F12",
+      "what_was_wrong": "In NW-01 the inside-the-window check lived in the preflight and in the generator, but not in the transaction. Of sixteen guards it was the only one that flips with time, and the only one not fail-closed -- the fifteen that were pinned static state that essentially cannot change between preflight and apply. The priority was exactly inverted.",
+      "why_it_matters_more_here": "CP-01 writes 2026-09-13T07:05:16Z into ten places. Run after that instant, it would install literals for a window already closed, into three enforcement functions.",
+      "not_before": "2026-09-12T07:05:16Z",
+      "expires_at": "2026-09-13T07:05:16Z",
+      "placement": "both the pre-block and the post-block"
+    },
+    "untouched_functions_assertion": {
+      "finding": "R11-F13, the completeness gap",
+      "what_was_wrong": "NW-01 asserted the named trigger's state but never that it was the ONLY non-internal trigger, and its post-block did not re-verify the other seven tables. The CP-01 analogue: cp01.prohibited forbids CHANGING_ANY_OF_THE_OTHER_ELEVEN_CONTROL_PLANE_FUNCTIONS, but nothing in the transaction enforced it -- the prohibition was words in an approval, not a guard in the SQL.",
+      "measured_at": "2026-09-12T08:4xZ",
+      "total_functions_in_schema": 15,
+      "untouched_count": 12,
+      "digest": "c7af467630e8a7001757095df639d6360d896ffc4c2a143e19ae3dd8fb6d78ce",
+      "digest_definition": "sha256 of the newline-joined 'signature=prosrc_sha256' lines for every clued_control function except the three CP-01 replaces, in signature order",
+      "includes_effective_execution_binding": true,
+      "note": "effective_execution_binding is inside this set and is also asserted individually before and after, so it is covered twice on purpose.",
+      "signatures": [
+        "clued_control.append_event(jsonb)",
+        "clued_control.commit_gate_result(text,text,text)",
+        "clued_control.deny_mutation()",
+        "clued_control.dispatch_recorded_intent(text,text,text,bigint,text)",
+        "clued_control.effective_execution_binding()",
+        "clued_control.execution_transition(jsonb)",
+        "clued_control.guard_gate_bytes()",
+        "clued_control.read_execution_event(bigint)",
+        "clued_control.read_execution()",
+        "clued_control.read_root(text)",
+        "clued_control.record_effect_intent(text,text,jsonb)",
+        "clued_control.rotate_execution_generation(jsonb)"
+      ],
+      "placement": "both the pre-block and the post-block"
+    },
+    "still_open_from_round_11": [
+      "R11-F19 sixth-class state wording (merge 3)",
+      "R11-F5 approved_window in --as signature (capture-owner-merge.mjs)",
+      "R11-F25 self-recorded timestamps to full seconds"
+    ],
+    "why_those_three_are_not_done_yet": "All three touch artefacts or scripts that round 12 is currently reviewing. Changing something under review is the other half of the R11-F6 lesson."
   }
 }

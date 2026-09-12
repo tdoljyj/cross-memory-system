@@ -1,0 +1,103 @@
+{
+  "schema_version": 1,
+  "kind": "THIRD_OWNER_MERGE_SUBJECT",
+  "state": "PROPOSED_NOT_MERGED",
+  "authority_effect": "NONE_UNTIL_MERGED; ON_MERGE_LIMITED_TO_MAKING_TWO_FILES_REFERENCEABLE_FROM_MAIN",
+  "prepared_at_utc": "2026-09-12T09:4xZ",
+  "root_set_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+  "window": {
+    "not_before": "2026-09-12T07:05:16Z",
+    "expires_at": "2026-09-13T07:05:16Z",
+    "source": "Owner merge 1, commit cbe898d3f5b66f279d78a6b8d583d2c1885d9c89",
+    "note": "This merge does NOT move the window. The window rule is not rolling and this merge is not its source. Only Owner merge 1 set it, and NW-01 has already materialised it in the control store."
+  },
+
+  "why_this_merge_is_needed": {
+    "one_line": "The root6 registration body must reference two files by git blob, and neither is reachable from main today.",
+    "mechanism": "build-root6-registration.mjs takes independent_acceptance_ref and signature_binding.signature_evidence_ref as {uri: .../git/blobs/<sha1>, sha256}. Every historical registration references files that are reachable from main; this was measured, not assumed.",
+    "precedent_measured": [
+      {"generation_ordinal": 5, "ref": "independent_acceptance_ref", "blob": "67a9335630b251f90b0bcdb97ab6cc2f6a335d49", "resolves_on_main_to": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final/Root5Acceptance.json"},
+      {"generation_ordinal": 5, "ref": "signature_evidence_ref", "blob": "c8f05988134321d76333d75e40946d040692ad10", "resolves_on_main_to": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final/Root5SignatureEvidence.json"},
+      {"generation_ordinal": 4, "ref": "independent_acceptance_ref", "blob": "f33fae2888d9adea8aeb3f82e280d5b292e13249", "resolves_on_main_to": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/Root4Acceptance.json"}
+    ]
+  },
+
+  "what_this_merge_makes_referenceable": [
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/root6-capacity/Root6RegistrationAcceptance.json",
+      "blob_sha1": "44a637b870efcfb989f33009f0353512b5fdf7d0",
+      "sha256": "5996ab3efe2b826307cd19dce7d176b5854a40c59c7892e804dde3ad331ac45f",
+      "becomes": "independent_acceptance_ref of the root6 registration body",
+      "issued_by": "independent successor reviewer, round 12, session_01ChtvuAjy7YhTpeTyqwBJo6, branch claude/trusting-keller-mm2s0v commit 0a757d2",
+      "on_main_today": false,
+      "blob_unchanged_by_the_copy": "The file was taken onto the implementing branch with git checkout from 0a757d2 and re-hashed: still 44a637b8. It was not edited."
+    },
+    {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-20260912/ContinuationSubjectSignatureEvidence.json",
+      "blob_sha1": "fcddb0acee7056435117fdefdccce55ed5ad1bdc",
+      "sha256": "954faff130549cebbc6453957d3e86196f8e0c8dd551040bb20e4f9ffb6ed614",
+      "becomes": "signature_binding.signature_evidence_ref of the root6 registration body",
+      "on_main_today": false
+    }
+  ],
+
+  "disclosure_r12_f20_a_digest_is_already_in_the_store_whose_source_is_not_yet_on_main": {
+    "what": "clued_control.accepted_binding.signature_evidence_sha256 currently holds 954faff130549cebbc6453957d3e86196f8e0c8dd551040bb20e4f9ffb6ed614.",
+    "when_it_entered_the_store": "NW-01, applied 2026-09-12T08:13Z under Owner approval cbe898d3 and round-11 clearance.",
+    "the_problem": "The bytes that digest was taken over live only on the implementing branch. Until this merge, the control store points at material the Owner has not merged.",
+    "round_11_position": "R11-F4 called this a structural consequence, did not block on it, and required the third merge to carry the file.",
+    "round_12_position": "R12-F20 confirmed the position is unchanged but noted it is no longer a forecast: the digest is in the store now. This merge is what closes it.",
+    "not_hidden": "Stated here rather than left to be discovered, because the merge is the only thing that closes the gap and the Owner should know it exists when merging."
+  },
+
+  "what_this_merge_does_not_do": [
+    "It does not register any generation. current_head is root5 at sequence 5 and stays there.",
+    "It does not authorise applying CP-01. work/cp01/cp01-apply.candidate.sql is included as a DRAFT that carries its own MUST-NOT-BE-RUN banner and two unresolved placeholders; merging it records the draft, it does not clear it. CP-01 requires its own independent review and its own Owner decision.",
+    "It does not decide the CP-01-versus-registration ordering question. That question is put to the Owner separately and is not resolved by merging.",
+    "It does not move the Owner window, extend it, or create a new one.",
+    "It does not reserve, consume, or restore any budget. charged_seconds stays 9906 of 10506 and the single 600-second allocation remains untouched.",
+    "It does not create a trust root, a signing identity, a paid budget, a model budget, or any production authority.",
+    "It does not change any of the fifteen control-plane functions.",
+    "It does not accept the final root6 registration body. Round 12 accepted the review subject only; the final body has two fields nobody has reviewed yet and needs a further independent pass."
+  ],
+
+  "also_carried_by_this_merge_as_record_not_as_authority": [
+    {"path": "artifacts/.../root6-capacity/SuccessorReviewerRound12.md", "what": "the round-12 independent review"},
+    {"path": "artifacts/.../root6-capacity/ImplementerResponseToRound12.md", "what": "the implementer's answer, including the R12-F9 reproduction and fix"},
+    {"path": "artifacts/.../bootstrap/next-window-20260912/nw01-execution/", "what": "the NW-01 exact input, preflight, parameters and execution receipt with read-back"},
+    {"path": "artifacts/.../bootstrap/next-window-20260912/root6-registration/", "what": "the accepted review subject and the post-NW-01 read_root snapshot it was built from"},
+    {"path": "work/nw01/", "what": "the NW-01 generator and the candidate SQL round 11 reviewed"},
+    {"path": "work/cp01/", "what": "incremental DRAFT changes; the two round-11 guards carried into the generator"},
+    {"path": "work/twentieth-forward/build-root6-registration.mjs", "what": "the R12-F9 and R12-F11 fixes"}
+  ],
+
+  "accepted_review_subject_must_not_move": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-20260912/root6-registration/Root6RegistrationReviewSubject.json",
+    "bytes": 3764,
+    "file_sha256": "06b5135aa93288afb087db7814ef0b23012b77af4c1978d687d414a13d3bd4e4",
+    "review_subject_sha256": "293da3c512f63a9b1f7b3d07fa3282975917cac3bb94ccf831f03707bb3b572b",
+    "why_it_matters": "Round 12 accepted these exact bytes by sha256. Any edit invalidates the acceptance and there is no second acceptance.",
+    "duplicate_removed_by_this_merge": {
+      "path": "work/twentieth-forward/Root6RegistrationReviewSubject.json",
+      "was_byte_identical": true,
+      "why_removed": "A second copy of a byte-accepted artifact is a divergence hazard with no benefit. It was unreferenced by any tracked file. One accepted artifact, one path."
+    },
+    "verified_after_the_r12_f9_fix": "The generator was re-run after the fix and reproduced these bytes exactly. Fixing the guard did not disturb what was accepted."
+  },
+
+  "how_the_owner_can_verify_before_merging": [
+    "git show <pr-head>:artifacts/.../root6-capacity/Root6RegistrationAcceptance.json | sha256sum  ->  5996ab3e...",
+    "git hash-object artifacts/.../root6-capacity/Root6RegistrationAcceptance.json  ->  44a637b8...  (must equal the blob on the reviewer's branch at 0a757d2)",
+    "git hash-object artifacts/.../ContinuationSubjectSignatureEvidence.json  ->  fcddb0ac...",
+    "sha256sum artifacts/.../root6-registration/Root6RegistrationReviewSubject.json  ->  06b5135a...  (3764 bytes, unchanged from what round 12 accepted)",
+    "head -12 work/cp01/cp01-apply.candidate.sql  ->  must still read DRAFT / MUST NOT BE EXECUTED"
+  ],
+
+  "after_this_merge": {
+    "immediate": "Re-measure the acceptance blob sha1 and sha256 from the POST-MERGE main tree, not from the branch. Do not carry the values above forward on trust; the merge is when they become real references.",
+    "then_blocked_on": "The Owner's ordering decision (CP-01 before or after root6 registration). The final registration body can be built either way, but the projected-versus-measured root digest question in CP-01 depends on the answer.",
+    "not_permitted_without_a_further_go_ahead": "append_event. Registering burns ctrgen_5e0440a95ac8ee257b9e4236cabd275b permanently with no second attempt."
+  },
+
+  "boundary": "This document is a description of a proposed merge. It performs no database write, registers no generation, consumes no budget, and grants no authority of its own. Its only effect on merge is that two files become reachable from main."
+}
