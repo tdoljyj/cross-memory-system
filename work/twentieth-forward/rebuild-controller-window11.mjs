@@ -50,7 +50,19 @@ assert.match(newExpiry ?? '', /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/, 'USAGE: 
 assert.equal(newExpiry.length, OLD_EXPIRY.length, 'EXPIRY_LITERAL_MUST_BE_THE_SAME_WIDTH');
 assert.ok(Number.isFinite(Date.parse(newExpiry)), 'UNPARSEABLE_EXPIRY');
 assert.ok(Date.parse(newExpiry) > Date.now(), 'NEW_EXPIRY_MUST_BE_IN_THE_FUTURE');
-assert.ok(Date.parse(newExpiry) < Date.parse(OLD_EXPIRY), 'NEW_EXPIRY_MUST_NOT_EXCEED_THE_UNSATISFIABLE_ONE_IT_REPLACES');
+assert.notEqual(newExpiry, OLD_EXPIRY, 'NEW_EXPIRY_MUST_NOT_BE_THE_UNSATISFIABLE_VALUE_IT_REPLACES');
+// The real invariant, stated in terms of the mechanism rather than a date. This script runs at
+// runbook step 3, after the Owner merge that fixed T, so T <= now and the only expiry the window
+// rule can produce is T + 86400s, which is therefore at most 86400s from now. Anything further out
+// did not come from a verified merge.
+//
+// This used to read `Date.parse(newExpiry) < Date.parse(OLD_EXPIRY)`, which happened to hold today
+// and silently made the whole pipeline refuse to run from 2026-09-18 onward, since a merge on or
+// after that date yields T+24h >= the old literal. Nothing documented that coupling; it was a
+// side effect of expressing "must be reachable" as "must be earlier than one specific unreachable
+// value". The bound below is both tighter and free of any calendar date.
+assert.ok(Date.parse(newExpiry) - Date.now() <= 86400000,
+  'NEW_EXPIRY_MUST_BE_AT_MOST_86400_SECONDS_AWAY_OR_IT_DID_NOT_COME_FROM_A_VERIFIED_MERGE');
 const OUT_ROOT = outputRootArg ? path.resolve(outputRootArg) : REPO;
 
 // ---- the four files whose bytes change, and the exact substitutions each takes ----
