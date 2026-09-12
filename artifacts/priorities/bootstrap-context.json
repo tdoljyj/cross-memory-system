@@ -1,0 +1,82 @@
+{
+  "schema": "clued.multitrack-bootstrap-context/0.1",
+  "status": "BOOTSTRAP_PROJECTION_CANDIDATE_NOT_AUTHORITY",
+  "authority_effect": "NONE",
+  "source_snapshot": "CLUED-CURRENT-PRIORITY-SNAPSHOT-v0.1.3-SOURCE-BOUND-20260912",
+  "track_goals": {
+    "E": "把 Clued 的 Kernel、Canonical、Authority、Currentness、Runtime、Integration、Distribution 与研发基础设施推进到可验证、可恢复、可向 Product Next 交棒的健康工程基线。",
+    "P": "把已固定的产品、品牌、Console、Context、Connect 与多轨能力转化为普通用户能够可靠使用、理解并持续继续的产品体验。",
+    "R": "长期研究 Information、Knowledge、Authority、Currentness、Evidence、Context、Memory、Decision、Action 与 Cross-Agent Continuity 的基础理论，并把阶段成果转化为可测试工程合同。",
+    "B": "以真实用户价值、交易与共建证据验证 Clued 的商业循环、Pricing、Packaging、Distribution 与 Growth，不用文档完成冒充市场验证。"
+  },
+  "impact_edges": [
+    {"from":"R-005","relation":"CONSTRAINS","to":"E-005","hard_dependency":false},
+    {"from":"R-006","relation":"CONSTRAINS","to":"E-005","hard_dependency":false},
+    {"from":"R-004","relation":"CONSTRAINS","to":"E-006","hard_dependency":false},
+    {"from":"R-007","relation":"CONSTRAINS","to":"P-009","hard_dependency":false},
+    {"from":"R-007","relation":"CONSTRAINS","to":"P-010","hard_dependency":false},
+    {"from":"E-008","relation":"DOGFOODS","to":"P-013","hard_dependency":false},
+    {"from":"E-010","relation":"INFORMS","to":"E-011","hard_dependency":false},
+    {"from":"P-001","relation":"CONSTRAINS","to":"P-004","hard_dependency":false},
+    {"from":"P-002","relation":"CONSTRAINS","to":"P-004","hard_dependency":false},
+    {"from":"P-003","relation":"CONSTRAINS","to":"P-004","hard_dependency":false},
+    {"from":"B-001","relation":"INFORMS","to":"B-002","hard_dependency":false},
+    {"from":"B-001","relation":"INFORMS","to":"B-003","hard_dependency":false}
+  ],
+  "parallel_policy": {
+    "default": "CONDITIONAL_PARALLEL",
+    "strict_mainline": "E-001",
+    "nonblocking_parallel": ["E-008","R-002","R-003","R-004","R-005","R-006","R-007","R-008","R-009","R-010","P-004","P-006","B-002","B-003","B-007"],
+    "rules": [
+      "E-001 keeps first claim on heavy coding-agent capacity unless explicit authority assigns otherwise.",
+      "Foundational Research may continue in parallel when it does not consume the same constrained engineering resource.",
+      "Product, brand and business design may continue as low-cost parallel work but must not delay E-001.",
+      "Parallel eligibility is revoked when two items require the same exclusive environment, mutable dataset, account, authority window, production state or serialized migration boundary."
+    ]
+  },
+  "resource_conflicts": [
+    {
+      "resource":"heavy_coding_agent_capacity",
+      "winner":"E-001",
+      "contenders":["E-008","P-006","E-009","E-011","E-013"],
+      "policy":"E-001_FIRST_UNLESS_EXPLICIT_PARALLEL_ASSIGNMENT"
+    },
+    {
+      "resource":"kernel_mutation_and_verification_window",
+      "winner":"E-001",
+      "contenders":["E-003","E-004","E-005","E-006","E-007"],
+      "policy":"SERIALIZED_BY_DEPENDENCY"
+    }
+  ],
+  "replan_registry": {
+    "status":"BOOTSTRAP_REGISTRY_ONLY_NOT_CANONICAL",
+    "open_proposals":[],
+    "interpretation":"No open Replan Proposal is represented in this bootstrap projection. This is not proof that authoritative Canonical state contains none."
+  },
+  "currentness": {
+    "snapshot_currentness":"UNKNOWN_UNTIL_CANONICAL_VERIFIED",
+    "repository_projection_currentness":"BRANCH_LOCAL_CANDIDATE",
+    "canonical_version":null,
+    "event_watermark":null,
+    "currentness_receipt":null,
+    "last_known_good_projection":"CLUED-CURRENT-PRIORITY-SNAPSHOT-v0.1.3-SOURCE-BOUND-20260912",
+    "fail_closed_for_high_risk_actions":true
+  },
+  "authority_projection": {
+    "repository_projection_grants_authority":false,
+    "current_principal":null,
+    "visibility_scope":null,
+    "eligible_actions":null,
+    "forbidden_actions":[
+      "Do not infer production, database, deployment, release, secret, budget or canonical-write authority from repository projection files.",
+      "Do not infer an Agent may execute an item merely because it appears READY or high priority.",
+      "Do not use this repository projection to bypass Resource×Action + selector/scope authorization or Owner/Policy gates."
+    ],
+    "resolution_required":"Authenticate against Clued and resolve the principal's current Resource×Action + selector/scope authority before execution."
+  },
+  "known_currentness_gap": {
+    "id":"E-010",
+    "state":"LATEST_ADOPTED_REVISION_UNKNOWN",
+    "safe_claim":"A formal Cross-Host / Thin-Open Integration & Distribution baseline exists; this projection does not assert v0.2.4 as the verified current revision."
+  }
+}
