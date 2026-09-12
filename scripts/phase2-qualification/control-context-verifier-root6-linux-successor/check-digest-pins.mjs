@@ -32,6 +32,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -437,39 +438,39 @@ const FOREIGN_CONTROLLER_REFERENCES = {
 // elsewhere in the file. Where the shape carries the target path, the path is read from the source
 // rather than repeated here, so a port that forgets to update one is caught by the same check.
 const RUNTIME_PINS = [
-  {file: 'bridge.py', label: 'HOST_SHA -> fixed_host.py',
+  {file: 'bridge.py', label: 'HOST_SHA -> fixed_host.py', binds: ['HOST_SHA'],
    re: /^HOST_SHA = '([a-f0-9]{64})'$/m, target: () => path.join(DIR, 'fixed_host.py')},
-  {file: 'fixed_host.py', label: "load('accepted_fixed_parent') -> parent600.py",
+  {file: 'fixed_host.py', label: "load('accepted_fixed_parent') -> parent600.py", binds: ['parent'],
    re: /load\('accepted_fixed_parent', str\(BASE \/ '([^']+)'\),\s*\n\s*'([a-f0-9]{64})'\)/, pathGroup: 1, shaGroup: 2,
    target: p => path.join(DIR, p)},
-  {file: 'fixed_host.py', label: "load('accepted_observation') -> observe.py",
+  {file: 'fixed_host.py', label: "load('accepted_observation') -> observe.py", binds: ['observation'],
    re: /load\('accepted_observation', '([^']+)',\s*\n\s*'([a-f0-9]{64})'\)/, pathGroup: 1, shaGroup: 2,
    target: p => path.join(QUAL, p)},
-  {file: 'fixed_host.py', label: 'PYTHON_SHA -> the interpreter',
+  {file: 'fixed_host.py', label: 'PYTHON_SHA -> the interpreter', binds: ['PYTHON', 'PYTHON_SHA'],
    re: /^PYTHON = Path\('([^']+)'\)\n^PYTHON_SHA = '([a-f0-9]{64})'$/m, pathGroup: 1, shaGroup: 2,
    target: p => p},
-  {file: 'parent600.py', label: "load_exact('accepted_observation_validation') -> validation.py",
+  {file: 'parent600.py', label: "load_exact('accepted_observation_validation') -> validation.py", binds: ['v'],
    re: /load_exact\('accepted_observation_validation', '([^']+)',\s*\n\s*'([a-f0-9]{64})'\)/, pathGroup: 1, shaGroup: 2,
    target: p => path.join(QUAL, p)},
-  {file: 'parent600.py', label: "load_exact('accepted_auxiliary_evidence') -> remote_evidence.py",
+  {file: 'parent600.py', label: "load_exact('accepted_auxiliary_evidence') -> remote_evidence.py", binds: ['remote'],
    re: /load_exact\('accepted_auxiliary_evidence', '([^']+)',\s*\n\s*'([a-f0-9]{64})'\)/, pathGroup: 1, shaGroup: 2,
    target: p => path.join(QUAL, p)},
-  {file: 'parent600.py', label: 'CHILD_SHA -> fixed_skill_fixture.py',
+  {file: 'parent600.py', label: 'CHILD_SHA -> fixed_skill_fixture.py', binds: ['CHILD_SHA', 'CHILD_PATH'],
    re: /^CHILD_SHA = '([a-f0-9]{64})'\n^CHILD_PATH = Path\(__file__\)\.resolve\(\)\.parent\.parent \/ '([^']+)' \/ '([^']+)'$/m,
    shaGroup: 1, target: (_, m) => path.join(QUAL, m[2], m[3])},
-  {file: 'parent600.py', label: 'DOCKER_SHA -> the docker binary',
+  {file: 'parent600.py', label: 'DOCKER_SHA -> the docker binary', binds: ['DOCKER', 'DOCKER_SHA'],
    re: /^DOCKER = '([^']+)'\n(?:.*\n)*?^DOCKER_SHA = '([a-f0-9]{64})'$/m, pathGroup: 1, shaGroup: 2,
    target: p => p},
-  {file: 'host-effect.mjs', label: 'invokeFixedHost -> the interpreter',
+  {file: 'host-effect.mjs', label: 'invokeFixedHost -> the interpreter', binds: ['python'],
    re: /const python='([^']+)';(?:[\s\S]*?)sha\(fs\.readFileSync\(python\)\)!=='([a-f0-9]{64})'/, pathGroup: 1, shaGroup: 2,
    target: p => p},
-  {file: 'host-effect.mjs', label: 'invokeFixedHost -> bridge.py',
+  {file: 'host-effect.mjs', label: 'invokeFixedHost -> bridge.py', binds: ['bridge'],
    re: /const bridge=fileURLToPath\(new URL\('\.\/([^']+)'(?:[\s\S]*?)sha\(fs\.readFileSync\(bridge\)\)!=='([a-f0-9]{64})'/, pathGroup: 1, shaGroup: 2,
    target: p => path.join(DIR, p)},
-  {file: 'read-source-blobs-linux.mjs', label: 'ghSHA -> the gh binary',
+  {file: 'read-source-blobs-linux.mjs', label: 'ghSHA -> the gh binary', binds: ['gh', 'ghSHA'],
    re: /^const gh = '([^']+)';\nconst ghSHA = '([a-f0-9]{64})';$/m, pathGroup: 1, shaGroup: 2,
    target: p => p},
-  {file: 'trusted-github.mjs', label: 'expectedGh -> the gh binary',
+  {file: 'trusted-github.mjs', label: 'expectedGh -> the gh binary', binds: ['gh', 'expectedGh'],
    re: /const gh='([^']+)';\nconst expectedGh='([a-f0-9]{64})';/, pathGroup: 1, shaGroup: 2,
    target: p => p},
   {file: 'tool-entry.functions.js', label: 'entry -> the interpreter',
@@ -480,7 +481,7 @@ const RUNTIME_PINS = [
    target: p => p},
   // Not a file: the digest of the SQL text this entry sends. Self-checking, so it is verified
   // against the query rather than against a path.
-  {file: 'tool-entry.functions.js', label: 'query_sha256 -> the SQL text',
+  {file: 'tool-entry.functions.js', label: 'query_sha256 -> the SQL text', binds: ['query', 'query_sha256'],
    re: /query='([^']+)';\nconst query_sha256='([a-f0-9]{64})';/, shaGroup: 2,
    digestOf: m => crypto.createHash('sha256').update(m[1]).digest('hex')},
 ];
@@ -496,6 +497,50 @@ if (RUNTIME_PINS.length !== 15) throw new Error('RUNTIME_PINS length changed; de
       continue;
     }
     const m = all[0];
+
+    // R22-F1, the eighth instance, and inside the remedy for the seventh exactly as predicted.
+    // Matching a shape once says the TEXT is there; it does not say the text is the binding the
+    // code uses. Round 22 appended a second `PYTHON_SHA = (...)` with its digest split into
+    // fragments: the declared shape still matched exactly once and still verified, no literal count
+    // moved, --write closed the chain around it, and Python took the SECOND value. The same in
+    // JavaScript with a function-scope `const gh` shadowing a module-level pin anchored at column
+    // zero. Both fail-open, both green.
+    //
+    // So each pin now declares the names it binds, and each name must be bound exactly once in the
+    // file. This file's own header already said what the property is -- "what matters is the value
+    // the code COMPARES AT RUNTIME, and source text is only evidence about that" -- and a shape
+    // match is weaker evidence than it looks.
+    //
+    // Python is parsed rather than matched: ast gives module-level assignment targets, so a
+    // shadow inside a function is correctly not counted while a second module-level assignment is.
+    // JavaScript is counted textually -- every declaration and every plain assignment of the name,
+    // at any depth -- which is stricter than scope analysis and refuses the shadow the reviewer
+    // used. Where a pin binds no name (the entry script's shell lines) there is nothing to count,
+    // and those two say so by declaring no binds.
+    for (const name of pin.binds ?? []) {
+      let bindings;
+      if (pin.file.endsWith('.py')) {
+        const script = 'import ast,sys\n'
+          + 'tree=ast.parse(open(sys.argv[1]).read())\n'
+          + 'n=sum(1 for st in tree.body if isinstance(st,ast.Assign) '
+          + 'for t in st.targets if isinstance(t,ast.Name) and t.id==sys.argv[2])\n'
+          + 'print(n)';
+        try {
+          bindings = Number(execFileSync('/usr/bin/python3.11', ['-I', '-S', '-B', '-c', script, abs, name],
+            {encoding: 'utf8'}).trim());
+        } catch (e) {
+          problems.push(`${pin.file}: could not parse to count bindings of ${name} -- ${String(e.message).slice(0, 80)}`);
+          continue;
+        }
+      } else {
+        const decl = [...text.matchAll(new RegExp('\\b(?:const|let|var)\\s+' + name + '\\s*=(?!=)', 'g'))].length;
+        const plain = [...text.matchAll(new RegExp('(?<![\\w.$])' + name + '\\s*=(?!=)', 'g'))].length;
+        bindings = Math.max(decl, plain);
+      }
+      if (bindings !== 1)
+        problems.push(`${pin.file}: the pin "${pin.label}" binds ${name} ${bindings} time(s), expected exactly 1. A second binding of the same name runs INSTEAD of the pinned one while the declared shape still matches once -- which is how a pin passes by shape and fails in fact.`);
+    }
+
     const declared = m[pin.shaGroup ?? 1];
     const expected = pin.digestOf ? pin.digestOf(m)
       : (() => { const t = pin.target(pin.pathGroup ? m[pin.pathGroup] : undefined, m); return fs.existsSync(t) ? sha(t) : null; })();
