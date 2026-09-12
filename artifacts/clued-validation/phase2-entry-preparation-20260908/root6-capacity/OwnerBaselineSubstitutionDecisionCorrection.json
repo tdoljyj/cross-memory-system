@@ -1,18 +1,15 @@
 {
   "schema_version": 1,
   "kind": "CORRECTION_TO_AN_OWNER_DECISION",
-  "state": "CORRECTION_ISSUED_OWNER_MUST_RE_READ",
+  "state": "CORRECTION_READ_AND_RE_ACCEPTED_BY_OWNER",
   "corrects": "artifacts/clued-validation/phase2-entry-preparation-20260908/root6-capacity/OwnerBaselineSubstitutionDecision.json",
   "raised_by": "independent reviewer round 14, R14-N1 and section 2.4",
   "issued_at_utc": "2026-09-12T11:4xZ",
-
   "why_this_exists": "The Owner approved a substitution on the strength of a stated residual gap. That statement was accurate for clued_control.execution_events and WRONG, in the optimistic direction, for clued_control.gate_attempts -- which is half of what the replaced check covered. A decision taken on an inaccurate description of its own cost has to be put back in front of the person who took it.",
-
   "what_the_decision_said": {
     "residual_gap": "A rewrite performed inside the original writing window itself -- transactions 1815 to 1917, 2026-09-08T18:33:58Z to 2026-09-09T16:04:46Z.",
     "how_wide": "About 22 hours, entirely before the qualification preparation work began."
   },
-
   "what_is_actually_true": {
     "for_execution_events": "The statement holds, and is if anything conservative. Reviewer measured ctid ordering as well as xmin; both are monotonic across all 88 rows.",
     "for_gate_attempts": "The statement does not hold. That table is updated in place by design -- created, decided, receipt attached, revoked -- so xmin records each row's LAST update, not its insertion. The monotonicity argument cannot be made there at all.",
@@ -29,24 +26,29 @@
     },
     "accurate_statement": "On the gate_attempts side the residual gap is, per row, the mutable period from insertion until its receipt was settled. It differs row by row and extends as late as 2026-09-11. It is NOT entirely before the preparation work began; eight rows were created during it."
   },
-
   "what_the_reviewer_found_that_closes_it_instead": {
     "mechanism": "guard_gate_bytes() ends with: or (old.receipt_raw is not null and to_jsonb(new) is distinct from to_jsonb(old))",
     "meaning": "Once receipt_raw is non-null, no field of that row can change again.",
     "measured": "All 14 rows have receipt_raw non-null, so all 14 are now fully frozen by the trigger.",
     "note": "This is a stronger forward guarantee than xmin and it covers the going-forward half of the gap above. The implementer cited this trigger by name without reading what it does, and so did not have the argument."
   },
-
   "two_further_limits_the_decision_did_not_state": {
     "triggers_are_origin_not_always": "execution_events_immutable, gate_attempt_no_delete and gate_bytes_immutable are all tgenabled='O'. They do not fire under session_replication_role='replica', so any role that can SET it can bypass all three. Changing them to ALWAYS is one DDL statement, but that is a write and was outside the reviewer's remit; it is recorded as a recommendation.",
     "a_deny_all_trigger_did_not_cover_all_history": "accepted_binding carries a BEFORE DELETE OR UPDATE OR TRUNCATE deny_mutation() trigger, yet pg_stat_user_tables records n_tup_ins=1 and n_tup_upd=4 for it. Read-only evidence cannot say whether those updates predate the trigger or happened while it was bypassed, and the reviewer did not speculate. Either way, the premise that immutability triggers have protected all history is falsifiable on at least one table in this database. pg_stat counters can be reset or lost on crash, so this is a caution, not a conclusion."
   },
-
   "the_consequence_for_how_the_qualification_should_be_worded": "The forward protection is the pinned digests, not the triggers. BASELINE_EVENTS_DIGEST and the fourteen attempt digests catch a rewrite in the controller, on the spot, even if every trigger was bypassed. The qualification statement must say that, rather than listing the triggers as primary evidence -- which is what the decision document did.",
-
   "what_the_owner_should_now_decide": "Whether the substitution is still acceptable given the corrected gap: on gate_attempts it is per-row and reaches into the preparation period, but all fourteen rows are now frozen by guard_gate_bytes, and any rewrite of them is caught by the pinned digests regardless of triggers.",
-
   "implementer_position": "The correction is accepted in full. The original gap statement was written from a measurement of execution_events and extended to gate_attempts without measuring that table, which was an error of exactly the kind recorded elsewhere this run: a finding established in one place and carried to another it did not cover.",
-
-  "authority_effect": "NONE. This corrects a record. It does not qualify anything, register anything, or consume any budget."
+  "authority_effect": "NONE. This corrects a record. It does not qualify anything, register anything, or consume any budget.",
+  "owner_re_acceptance": {
+    "decided_at_utc": "2026-09-12T11:5xZ",
+    "decided_by": "tdoljyj",
+    "what_was_re_accepted": "The substitution stands under the corrected gap statement: on gate_attempts the residual gap is per row and reaches into the preparation period, and eight rows were created during it. Accepted on the footing the reviewer established -- all fourteen rows are now frozen by guard_gate_bytes once receipt_raw is non-null, and any rewrite is caught by the pinned digests regardless of whether the triggers fire.",
+    "explicitly_acknowledged": [
+      "the stated gap in the original decision was wrong for gate_attempts, in the optimistic direction",
+      "the three immutability triggers are tgenabled=O and do not fire under session_replication_role=replica",
+      "accepted_binding shows n_tup_upd=4 despite a deny-all trigger, so trigger coverage of all history is falsifiable on at least one table",
+      "the forward protection relied on is the pinned digests, not the triggers, and the qualification must be worded that way"
+    ]
+  }
 }
