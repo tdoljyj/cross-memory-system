@@ -1,0 +1,76 @@
+{
+  "kind": "EXACT_NW01_CONTINUATION_SUBJECT_SIGNATURE_EVIDENCE",
+  "status": "VERIFIED",
+  "repository": {
+    "full_name": "tdoljyj/cross-memory-system",
+    "private": true
+  },
+  "merge": {
+    "sha": "3887b9e0a2c4e667823031a5294b8d2921fc8d46",
+    "tree": "f93ed02982732628f5fcdae1a9d83a8ecd5327be",
+    "parents": [
+      "0dd6b7f0e1035f4251d86f3260de92a94ce27e08",
+      "e2679281d14311088d41c23cd74707ecddeb1fb6"
+    ],
+    "committer_login": "web-flow",
+    "author_login": "tdoljyj",
+    "verification": {
+      "verified": true,
+      "reason": "valid",
+      "verified_at": "2026-09-12T07:18:16Z"
+    }
+  },
+  "pr": {
+    "number": 159,
+    "merged_by": "tdoljyj",
+    "merged_at": "2026-09-12T07:18:16Z",
+    "merge_commit_sha": "3887b9e0a2c4e667823031a5294b8d2921fc8d46",
+    "base_sha": "0dd6b7f0e1035f4251d86f3260de92a94ce27e08",
+    "head_sha": "e2679281d14311088d41c23cd74707ecddeb1fb6"
+  },
+  "merge_timestamps": {
+    "committed_at": "2026-09-12T07:18:16Z",
+    "merged_at": "2026-09-12T07:18:16Z",
+    "merged_at_minus_committed_at_seconds": 0,
+    "which_one_is_the_window_source": "committed_at",
+    "why": "trusted-github.mjs:73 reads commit.commit.committer.date, and the approval window_rule names not_before_source: VERIFIED_OWNER_MERGE_COMMIT_COMMITTED_AT. The controller requires merged_at only to be present (:41) and never compares its value, so a delta here is recorded rather than treated as a failure."
+  },
+  "verification_method": {
+    "performed_by": "work/twentieth-forward/capture-owner-merge.mjs",
+    "mirrors": "control-context-verifier-*/trusted-github.mjs verifyOwnerMergeArtifact",
+    "is_the_controller_verification": false,
+    "api_bundle_fetched_by": "curl from the Linux qualification session (GITHUB_TOKEN), not the Windows host's pinned gh.exe",
+    "api_bundle_sha256": "90f722ddf68114f5c4b4d3d99168e12ea3cab7f7dd6cbd2e2c6a191e975552e6",
+    "note": "A second implementation of the same conditions, applied to API responses fetched by the caller. The controller performs its own verification at runtime through its pinned gh.exe; this does not substitute for it."
+  },
+  "authority_effect": "NONE_UNTIL_EXACT_NW01_TRANSACTION",
+  "observed_at_utc": "2026-09-12T07:18:58Z",
+  "approved_window": {
+    "not_before": "2026-09-12T07:18:16Z",
+    "expires_at": "2026-09-13T07:18:16Z"
+  },
+  "artifacts": {
+    "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-20260912/ContinuationRegistrationSubject.canonical.json": {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-20260912/ContinuationRegistrationSubject.canonical.json",
+      "blob_sha": "120fa16787d52d2aed6f9bfd54c6b516a92af423",
+      "sha256": "64ae7adc3c6e156045c4c369ccfaa8fe9ac12611eb926876d26f4100c191a2f5",
+      "bytes": 3320
+    },
+    "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-20260912/ContinuationRegistrationSubjectAcceptance.json": {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-20260912/ContinuationRegistrationSubjectAcceptance.json",
+      "blob_sha": "9d7f59cd9f470981eb26a4deb4cbf4ba88ebd572",
+      "sha256": "5eb9c845bc98c7e1c2f380cd20a2767ba63a1d2aba9e83427049ac51449b7ebd",
+      "bytes": 1956
+    },
+    "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-20260912/ContinuationControlStoreAcceptance.json": {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-20260912/ContinuationControlStoreAcceptance.json",
+      "blob_sha": "5f83ce1e4241e6c979e34db7f238df25d9fbedb3",
+      "sha256": "89e4a85149d7110828142017ddb46454bea093b40266ec1803f9852d32e8afba",
+      "bytes": 2792
+    }
+  },
+  "root_registered": false,
+  "status_registered": false,
+  "accepted_binding_updated": false,
+  "ga_created": false
+}
