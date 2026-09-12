@@ -1,0 +1,80 @@
+name: One-shot exact frozen baseline archive
+
+on:
+  push:
+    paths:
+      - '.github/workflows/archive-frozen-baselines-v2.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  archive:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Materialize exact blobs through GitHub API
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p docs/frozen-baselines/{brand,business,console,distribution,integration,kernel,model,permissions,prototype}
+
+          fetch_blob() {
+            local sha="$1"
+            local out="$2"
+            local expected="$3"
+            mkdir -p "$(dirname "$out")"
+            gh api "repos/${GITHUB_REPOSITORY}/git/blobs/${sha}" --jq '.content' | tr -d '\n' | base64 --decode > "$out"
+            printf '%s  %s\n' "$expected" "$out" | sha256sum -c -
+          }
+
+          fetch_blob 7f81db1098cc041099e0af18707f02da4c4a2d36 'docs/frozen-baselines/brand/Clued_品牌定位_v0.1.2_正式基线_20260910.md' b7c9a7d1816e4624de0d7ae6ee29975cfabab0c510fbbdc57b3ff953d14ed5d4
+          fetch_blob e485a9c2978459c4e28d977692fd206b4a60f2b5 'docs/frozen-baselines/business/Clued_完整商业方案_执行基线_v1.3.1_20260909.md' 8ff8eb60f025f5cb118cfa81f8529911cee1a5a09e1044a8dc058144626dfde5
+          fetch_blob dbdfdba9e40300b4b6e46481224a4c68692d7672 'docs/frozen-baselines/business/Clued_完整商业方案_执行基线_v1.3.1_20260909.docx' 6af8f8ce5b6c450f2e221127c5f6084e8d3f9b1c5046267dfa4decce827021ec
+          fetch_blob 888f2c99030fa726a9e5b292cab602bd1f97b04f 'docs/frozen-baselines/console/Clued_Console_完整产品方案_执行基线_v1.0_20260908.md' fbe71bde978a73389f2ab6ed0057148967363f7cad73b572541552fe0c2da363
+          fetch_blob 4b38ada70bd1c4efc23ed870d2b48e92c52bba10 'docs/frozen-baselines/distribution/Clued_Cross-Host_Thin-Open_Integration_Distribution_v0.2.4_定点修订候选_20260911.md' 9b3de9eabc503b0036cfc79bacded5a4160b2a5896e20362fdbeb7d3a97cbf5f
+          fetch_blob f97feb7ebb2e04bc0ee224323e1d289c948e74f3 'docs/frozen-baselines/distribution/Clued_Cross-Host_Thin-Open_Integration_Distribution_v0.2.4_独立终审_PASS_20260911.md' 9058406c2fd34194f10f4fd3391c709e6a3a457f92e0bbe58002ed59937a7ca0
+          fetch_blob b3ff2f75c48af5c9a466360b0168d4f09852c158 'docs/frozen-baselines/integration/Clued_Integration_安装与更新生命周期基线_v0.1_正式基线_20260910.md' f163b2bdb510898058300e2f7ae42c774428ca6b8e206b1041a1e28ed2bbdcd1
+          fetch_blob 69d98fbe1d8dea11e440d0d9b233382cbbfb99ed 'docs/frozen-baselines/kernel/Clued_Kernel_Health_Surgical_Repair_接入执行方案_v0.1_FIXED_20260908.md' 44f59133c78e113710d5ee19e89c8a12a1393b15da27bb9290b521e8294a0b26
+          fetch_blob d449006f86292747eb5402fc8d8885ee819c61cf 'docs/frozen-baselines/kernel/Clued_Phase2_Kernel_Stability_Hardening_横向接入执行方案_v0.1_正式基线_20260908.md' 936cb966a75765ca156f5706237467b940ea32891bbc98c2c21ec9a8b8ec06a0
+          fetch_blob 80e391fed0429f94d23b11f17ca36ad33af4701d 'docs/frozen-baselines/model/Clued_第一方模型系统实施与验收计划_v0.9.2_定点修订候选_20260908.md' 4da58bda92f2a9450f9753b1fa29bb280467e40ed0b85fd1d3c3f304d3ff5f85
+          fetch_blob 61119a862ba74063ea5aa50515482c78aa0baab7 'docs/frozen-baselines/model/Clued_第一方模型系统实施与验收计划_v0.9.2_独立终审报告_v0.1_PASS_20260908.md' d7597891ca26d76df6a0cbcdb81c338235856c7ca2da920f775725a0699b4609
+          fetch_blob 5bd274f49d38b7d2ddb652f6982af87e593765ec 'docs/frozen-baselines/model/Clued_第一方模型系统实施与验收计划_v0.9.2_PlanReviewAttestation_v0.1_PASS.yaml' 0b40e8da654fd8c29d1c28acdda73a7e0fa5dbebe19bfb29ce8c3a98c3960e05
+          fetch_blob a354a65f916ceae491f0fa69c409fb020d10f74b 'docs/frozen-baselines/model/PACKAGE_MANIFEST.json' 6711236b1d9c9e1bd4ef495289dbaa6452462e21effaf7c6cb6906644cba7925
+          fetch_blob 451d11f3eca4d6b7062b9a080b2e061e928f6fd8 'docs/frozen-baselines/permissions/Clued_项目成员与项目组权限完整方案_执行基线_v1.1_20260908.md' 5b54451c68de1a2f0eec4dcf6d4c3122880ab1fbfc6df798df3e7b32f9158bf2
+          fetch_blob 1be8253abe6b9be5d6a6b980092b4ea57a225f19 'docs/frozen-baselines/prototype/Clued_原型制作完整方案_v0.2_正式执行基线_20260908.md' 58bbc9f1632728e68ffc9ac1cd48db86b3437ae545e000e23a316aa2893eff10
+
+          cat > docs/frozen-baselines/README.md <<'EOF'
+          # Clued Frozen Baselines Archive
+
+          Archive date: 2026-09-12
+
+          本目录保存已经明确固定、冻结或正式接受，且当前能够取得精确原始字节的 Clued 文件副本。冻结字节不原地改写；存在于本目录不自行创造 Runtime / Production Authority，原 Event / Receipt / Gate / Review 链仍决定 Authority。
+
+          历史文件名即使包含“候选”，只要该精确字节后来被独立 PASS / Attestation 绑定，就保留原文件名和原字节。
+
+          已固定但本次没有精确独立原件的决定不从摘要伪造文件，包括：Clued 品牌核心概念 / 品牌人格 v0.1、02.4B-R1 视觉方向、Clued 基础理论长期战略与研究成果转化规划 v0.1。原件恢复后再追加归档。
+          EOF
+
+      - name: Commit exact archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'clued-archive-bot'
+          git config user.email 'clued-archive-bot@users.noreply.github.com'
+          git add docs/frozen-baselines
+          if git diff --cached --quiet; then
+            echo 'Archive already current.'
+            exit 0
+          fi
+          git commit -m 'docs: archive exact frozen baseline copies'
+          if ! git push origin HEAD:main; then
+            git pull --rebase origin main
+            git push origin HEAD:main
+          fi
