@@ -23,11 +23,13 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import {execFileSync} from 'node:child_process';
+import crypto from 'node:crypto';
+import {execFileSync, spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
 const QUAL = path.resolve(DIR, '..');
+const REPO = path.resolve(DIR, '..', '..', '..');
 const NAME = path.basename(DIR);
 let failures = 0;
 const fail = m => { console.error('  FAILED  ' + m); failures++; };
@@ -37,8 +39,17 @@ const cannotProve = m => { console.log('  UNPROVEN ' + m); unproven++; };
 
 const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'clued-pinselftest-'));
 process.on('exit', () => fs.rmSync(sandbox, {recursive: true, force: true}));
-fs.cpSync(QUAL, path.join(sandbox, 'q'), {recursive: true, filter: s => !s.includes('node_modules')});
-const SQ = path.join(sandbox, 'q');
+// Laid out as a repository root rather than a bare directory copy: item 6 runs the real trusted
+// entry script, and that resolves every REPOSITORY_SOURCE path against $REPO.
+const SREPO = path.join(sandbox, 'repo');
+const SQ = path.join(SREPO, 'scripts/phase2-qualification');
+fs.mkdirSync(SQ, {recursive: true});
+fs.cpSync(QUAL, SQ, {recursive: true, filter: s => !s.includes('node_modules')});
+// The controller imports ajv out of apps/clued-cloud/node_modules. Symlinked rather than copied:
+// the manifest lists those files by ABSOLUTE path, so they are verified where they really are and
+// the link changes nothing about what is checked -- it only lets node resolve them.
+fs.mkdirSync(path.join(SREPO, 'apps'), {recursive: true});
+fs.symlinkSync(path.join(REPO, 'apps/clued-cloud'), path.join(SREPO, 'apps/clued-cloud'));
 const SDIR = path.join(SQ, NAME);
 
 const py = (script, cwd) => execFileSync('/usr/bin/python3.11', ['-I', '-S', '-B', '-c', script],
@@ -119,7 +130,90 @@ try {
   else fail('prepare(): ' + out.trim().slice(0, 160));
 } catch (e) { fail('prepare(): ' + String(e.stderr || e.message).trim().split('\n').pop().slice(0, 160)); }
 
-// 6. The denominator. Round 18 printed two uncovered items in a free-text line while at least six
+// 6. The trusted entry script's own gates. Until now nothing exercised them, and two holes were
+//    found there by hand: sha256sum and cut resolved through $PATH, so a sha256sum earlier in PATH
+//    defeated both the manifest gate and the node gate; and the interpreter performing every
+//    per-file byte check was itself unverified, so standing an "exit 0" in its place skipped all
+//    308 comparisons. Both are fixed, and these items run the real script rather than a paraphrase.
+//
+//    The expected manifest digest is captured ONCE from the pristine copy and reused. Recomputing
+//    it inside the probe would make the manifest-drift item unable to fail -- the same shape as the
+//    three failures this file exists to stop.
+const entryTemplate = (() => {
+  const src = fs.readFileSync(path.join(DIR, 'tool-entry.functions.js'), 'utf8');
+  const open = 'const cmd=`';
+  const a = src.indexOf(open), z = src.indexOf('cli.mjs`', a);
+  if (a < 0 || z < 0) throw new Error('ENTRY_COMMAND_TEMPLATE_NOT_FOUND in tool-entry.functions.js');
+  // The file stores the command inside a JS template literal, so \$ and \" are escapes of the
+  // literal, not of the shell. Undo exactly those two and nothing else.
+  return src.slice(a + open.length, z + 'cli.mjs'.length).split('\\$').join('$').split('\\"').join('"');
+})();
+// The sandbox manifest is re-measured against the sandbox's own REPOSITORY_SOURCE bytes before
+// anything runs. Without that, this item would be a staleness test for the committed manifest --
+// which is check-digest-pins' and verify-manifest-against-host's job, not this file's -- and it
+// would fail for a reason unrelated to whether the entry's gates are live, hiding the answer.
+// It is deliberately NOT a licence to skip that check elsewhere: RUNTIME_DEPENDENCY entries
+// (the four host binaries, node_modules, the .pyc set) are left exactly as committed, so a
+// genuinely drifted binary still stops the pristine run here.
+const MANIFEST_IN_SANDBOX = path.join(SDIR, 'ControllerSourceManifest.candidate.json');
+{
+  const m = JSON.parse(fs.readFileSync(MANIFEST_IN_SANDBOX, 'utf8'));
+  let remeasured = 0;
+  for (const e of m.files) {
+    if (e.role !== 'REPOSITORY_SOURCE') continue;
+    const bytes = fs.readFileSync(path.join(SREPO, e.path));
+    e.bytes = bytes.length;
+    e.sha256 = crypto.createHash('sha256').update(bytes).digest('hex');
+    remeasured++;
+  }
+  if (!remeasured) throw new Error('NO_REPOSITORY_SOURCE_ENTRIES_REMEASURED');
+  fs.writeFileSync(MANIFEST_IN_SANDBOX, JSON.stringify(m, null, 2) + '\n');
+}
+const PRISTINE_MANIFEST_SHA = crypto.createHash('sha256')
+  .update(fs.readFileSync(MANIFEST_IN_SANDBOX)).digest('hex');
+const ENTRY_SCRIPT = path.join(sandbox, 'entry.sh');
+{
+  const bound = entryTemplate
+    .replace('${expected}', PRISTINE_MANIFEST_SHA)
+    .replace('REPO=/home/user/cross-memory-system', 'REPO=' + SREPO);
+  if (!bound.includes('REPO=' + SREPO)) throw new Error('ENTRY_REPO_SUBSTITUTION_FAILED');
+  if (bound.includes('${expected}')) throw new Error('ENTRY_EXPECTED_SUBSTITUTION_FAILED');
+  fs.writeFileSync(ENTRY_SCRIPT, bound + '\n');
+}
+const runEntry = () => {
+  const r = spawnSync('/bin/sh', [ENTRY_SCRIPT], {encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+                                                  timeout: 120000, env: {}});
+  return (r.stdout || '') + (r.stderr || '');
+};
+// Sanity before using it as a probe: on the pristine copy it must get all the way to node, which
+// answers BOUNDED_STDIN_INPUT_REQUIRED with stdin closed. A probe that never reaches the end would
+// "pass" every mutation for the wrong reason.
+{
+  const clean = runEntry();
+  if (!clean.includes('BOUNDED_STDIN_INPUT_REQUIRED'))
+    fail('trusted entry: pristine run does not reach the controller -- ' + clean.trim().split('\n').pop().slice(0, 160));
+}
+bothWays('trusted entry: manifest digest gate', `${NAME}/ControllerSourceManifest.candidate.json`,
+  runEntry, 'ACTUAL_CONTROLLER_SOURCE_MANIFEST_DRIFT');
+bothWays('trusted entry: per-file byte check (the interpreter step)', `${NAME}/context.mjs`,
+  runEntry, 'EXACT_CONTROLLER_SOURCE_BYTES_DRIFT');
+// Not a byte mutation -- the bypass is a directory appearing -- so this one is done by hand, in
+// both directions all the same.
+{
+  const label = 'trusted entry: __pycache__ refusal';
+  const clean = runEntry();
+  const cache = path.join(SDIR, '__pycache__');
+  fs.mkdirSync(cache); fs.writeFileSync(path.join(cache, 'x.pyc'), 'x');
+  const withCache = runEntry();
+  fs.rmSync(cache, {recursive: true, force: true});
+  if (clean.includes('CONTROLLER_BYTECODE_CACHE_PRESENT'))
+    fail(`${label}: fires on the pristine copy -- ${clean.trim().split('\n').pop().slice(0, 140)}`);
+  else if (!withCache.includes('CONTROLLER_BYTECODE_CACHE_PRESENT'))
+    fail(`${label}: creating __pycache__ did NOT trigger CONTROLLER_BYTECODE_CACHE_PRESENT. The check is not running, so its passing means nothing.`);
+  else ok(`${label} (passes clean; a __pycache__ directory raises CONTROLLER_BYTECODE_CACHE_PRESENT)`);
+}
+
+// 7. The denominator. Round 18 printed two uncovered items in a free-text line while at least six
 //    existed. Writing the set down and asserting its length is what stops it drifting again: add a
 //    pin without listing it here and this fails.
 const UNCOVERED = [
@@ -129,8 +223,10 @@ const UNCOVERED = [
   "grr.mjs accepted schema digest -- needs a terminal result",
   "result-terminal.mjs blob refs -- needs a GitHub API call",
   "context.mjs schema and issuer digests -- need a full dispatch",
+  "trusted entry: the /usr/bin/python3.11 and /opt/node22/bin/node byte gates -- both binaries sit outside the sandbox, so item 6 does not prove those two live",
+  "trusted entry: the shell binary -- chosen by the harness's exec_command, not by the script, so it can be neither pinned from here nor mutated",
 ];
-if (UNCOVERED.length !== 6) fail(`UNCOVERED has ${UNCOVERED.length} entries; update the assertion deliberately, not by accident`);
+if (UNCOVERED.length !== 8) fail(`UNCOVERED has ${UNCOVERED.length} entries; update the assertion deliberately, not by accident`);
 for (const u of UNCOVERED) console.log('  not covered  ' + u);
 
 if (failures) { console.log(`runtime pin self-test FAILED (${failures} failed, ${unproven} unproven)`); process.exitCode = 1; }

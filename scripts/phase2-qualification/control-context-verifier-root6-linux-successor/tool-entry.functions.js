@@ -36,15 +36,35 @@ else{
  material.observation={project,query_sha256,row:observation.row};
  // Expected digest comes from this actual fixed private SQL call, not supplied material.
  // No self-digest cycle: the source manifest excludes itself and all acceptance/signing metadata.
- // Linux successor of the PowerShell entry. Same five checks in the same order: manifest digest
- // against the expected value, manifest shape, every listed file's length and sha256, the node
- // binary's bytes, then exec with NODE_OPTIONS and NODE_PATH cleared. python3 takes the role
- // PowerShell had -- a system interpreter validating the sources before node is started, so the
- // runtime being checked is not the runtime doing the checking.
+ // Linux successor of the PowerShell entry. Checks, in order: manifest digest against the value
+ // this process read from SQL, the interpreter's own bytes, manifest shape, no __pycache__ under
+ // the tree, every listed file's length and sha256, the node binary's bytes, then exec with
+ // NODE_OPTIONS and NODE_PATH cleared. python3.11 takes the role PowerShell had -- a system
+ // interpreter validating the sources before node is started, so the runtime being checked is not
+ // the runtime doing the checking.
+ //
+ // Two holes were found here after the port and are closed above; both were reproduced first.
+ //   - sha256sum and cut were invoked bare, so $PATH chose them. A sha256sum earlier in PATH that
+ //     echoes whatever digest the caller is about to compare against defeated BOTH the manifest
+ //     gate and the node gate: with a deliberately wrong expected manifest digest the entry still
+ //     reached cli.mjs and printed the same BOUNDED_STDIN_INPUT_REQUIRED as an honest run. PATH is
+ //     now set before anything runs and both commands are absolute.
+ //   - the interpreter that performs every per-file byte check was itself unchecked. Standing an
+ //     interpreter that only does "exit 0" in its place skipped all 308 file comparisons and the
+ //     entry proceeded to node, again indistinguishably from an honest run. Its bytes are now
+ //     verified before it is invoked, by the same sha256sum the manifest gate uses.
+ //
+ // Residual, stated rather than papered over: the shell binary itself is chosen by the harness's
+ // exec_command, not by this script, so it cannot be pinned from here. /usr/bin/dash is in the
+ // manifest, but nothing forces the harness to use it. That is the remaining root of trust,
+ // alongside /usr/bin/sha256sum and /usr/bin/cut, which the manifest does pin.
  const cmd=`set -eu
+PATH=/usr/bin:/bin
+export PATH
 REPO=/home/user/cross-memory-system
 MAN="\$REPO/scripts/phase2-qualification/control-context-verifier-root6-linux-successor/ControllerSourceManifest.candidate.json"
-test "\$(sha256sum "\$MAN" | cut -d\" \" -f1)" = "${expected}" || { echo ACTUAL_CONTROLLER_SOURCE_MANIFEST_DRIFT >&2; exit 1; }
+test "\$(/usr/bin/sha256sum "\$MAN" | /usr/bin/cut -d\" \" -f1)" = "${expected}" || { echo ACTUAL_CONTROLLER_SOURCE_MANIFEST_DRIFT >&2; exit 1; }
+test "\$(/usr/bin/sha256sum /usr/bin/python3.11 | /usr/bin/cut -d\" \" -f1)" = "f56a588548dd013906ae1dcd1b6faa417f4e204da634ff354840d9643e78ff9e" || { echo FIXED_PYTHON_BYTES_DRIFT >&2; exit 1; }
 /usr/bin/python3.11 -I -S -B -c 'import json,hashlib,os,sys
 man=sys.argv[1]; repo=sys.argv[2]
 d=json.load(open(man))
@@ -60,7 +80,7 @@ for e in d["files"]:
     if len(b)!=e["bytes"] or hashlib.sha256(b).hexdigest()!=e["sha256"]:
         sys.exit("EXACT_CONTROLLER_SOURCE_BYTES_DRIFT")
 ' "\$MAN" "\$REPO"
-test "\$(sha256sum /opt/node22/bin/node | cut -d\" \" -f1)" = "81925c0995b5c1427b5d538e6a90ca2fdc4daffb786b09af749beaf7369d4e90" || { echo FIXED_NODE_BYTES_DRIFT >&2; exit 1; }
+test "\$(/usr/bin/sha256sum /opt/node22/bin/node | /usr/bin/cut -d\" \" -f1)" = "81925c0995b5c1427b5d538e6a90ca2fdc4daffb786b09af749beaf7369d4e90" || { echo FIXED_NODE_BYTES_DRIFT >&2; exit 1; }
 cd "\$REPO"
 NODE_OPTIONS= NODE_PATH= exec /opt/node22/bin/node scripts/phase2-qualification/control-context-verifier-root6-linux-successor/cli.mjs`;
 
