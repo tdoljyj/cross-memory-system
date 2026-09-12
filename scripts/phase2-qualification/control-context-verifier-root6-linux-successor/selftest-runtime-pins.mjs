@@ -341,64 +341,120 @@ bothWays('trusted entry: per-file byte check (the interpreter step)', `${QREL}/$
   else ok(`${label} (passes clean; a __pycache__ directory raises CONTROLLER_BYTECODE_CACHE_PRESENT)`);
 }
 
-// 7. The denominator, and why the previous attempt at one was worthless.
+// 7. The denominator. Two attempts at this have failed, in different ways.
 //
-// Round 18 printed two uncovered items in a free-text line while at least six existed. The fix was
-// to write the set down and assert its length -- and the comment claimed "add a pin without
-// listing it here and this fails". Round 20 showed that sentence was simply false: UNCOVERED.length
-// is compared against a constant eight lines above it, with ZERO coupling to the controller. A real,
-// live, unlisted byte pin was added to fixed_host.py and this file still printed "6 not covered" and
-// exited 0. That was the SIXTH instance of a check that cannot fail -- and the first one that was
-// born inside the remedy for the previous five.
+// Round 18 printed uncovered items in a free-text line. Round 20 replaced that with
+// `if (UNCOVERED.length !== 6)`, which compared an array's length to a nearby constant and had
+// zero coupling to the controller -- the sixth instance of a check that cannot fail. This census
+// replaced THAT, counting literals per file "across the controller's real load set", and round 21
+// showed the load set was hand-enumerated and wrong: 34 modules are statically reachable from
+// cli.mjs, 24 of them outside this directory, and only signing.mjs was listed. Fourteen digest
+// literals in the reachable set were counted by nobody, six of them real runtime byte checks in
+// read-source-blobs.mjs. A live unlisted pin was planted in runtime600/late-bound-policy.mjs --
+// which context.mjs imports -- and both gates stayed green. Same shape as round 20's finding, one
+// directory further out. That is the SEVENTH instance.
 //
-// So the denominator is now taken FROM the thing under test. Every byte pin necessarily carries a
-// 64-hex literal, so the census counts distinct 64-hex literals per file across the controller's
-// real load set -- its own sources plus the modules it execs or imports across directories -- and
-// requires the total and every per-file count to match. Add a pin anywhere in that set and a count
-// moves and this fails, whatever the lists below say. Counts, not digest values, so repairing a
-// cross-pin chain does not churn the table; a NEW literal is what must be noticed.
-const CENSUS = {
-  'bridge.py': 1, 'check-digest-pins.mjs': 8, 'context.mjs': 22, 'fixed_host.py': 3,
-  'host-effect.mjs': 2, 'parent600.py': 4, 'result-terminal.mjs': 1, 'tool-entry.functions.js': 3,
-  'trusted-github.mjs': 1,
-  // Loaded across directories, so they are part of what runs even though they are not in the
-  // controller directory. signing.mjs is here because round 18 and round 20 both noted that
-  // check-digest-pins' non-recursive readdirSync cannot even see it.
-  'observe.py': 2, 'validation.py': 8, 'remote_evidence.py': 1, 'fixed_skill_fixture.py': 4,
-  'signing.mjs': 0,
+// The lesson each time was the same and I kept missing it: a hand-written set is a claim about the
+// code that nothing forces to stay true. So the load set is COMPUTED here, not declared. The ESM
+// side is the static import closure from cli.mjs; the Python side is bridge.py plus the
+// load()/load_exact()/CHILD_PATH targets named in its chain. The tables below are expected VALUES
+// over that computed set, and a file appearing in the set with no expected count fails -- which is
+// exactly what controllerFiles() already does for this directory, the one list round 21 judged
+// strong.
+const loadSet = () => {
+  const out = new Set();
+  const walk = f => {
+    const abs = path.resolve(f);
+    if (out.has(abs) || !fs.existsSync(abs)) return;
+    out.add(abs);
+    const text = fs.readFileSync(abs, 'utf8');
+    if (/\.(mjs|js)$/.test(abs))
+      for (const m of text.matchAll(/^\s*import\s+(?:[\s\S]*?\sfrom\s+)?['"](\.[^'"]+)['"]/gm))
+        walk(path.resolve(path.dirname(abs), m[1]));
+    if (abs.endsWith('.py')) {
+      // load('name', 'rel/path', digest) and load_exact(...) name their target relative to QUAL;
+      // CHILD_PATH is built from parents, so it is matched on its own.
+      for (const m of text.matchAll(/load(?:_exact)?\(\s*'[^']+'\s*,\s*'([^']+)'/g)) walk(path.join(QUAL, m[1]));
+      for (const m of text.matchAll(/'([^']+\.py)'/g)) {
+        const sibling = path.join(path.dirname(abs), m[1]);
+        if (fs.existsSync(sibling)) walk(sibling);
+      }
+      for (const m of text.matchAll(/parent\.parent\s*\/\s*'([^']+)'\s*\/\s*'([^']+)'/g))
+        walk(path.join(QUAL, m[1], m[2]));
+    }
+  };
+  // Three roots, because the controller has three entry points and only one of them is an import.
+  // tool-entry.functions.js is the real outermost entry -- the harness runs its shell command,
+  // which execs cli.mjs -- so it is reachable from nothing and imports nothing, while carrying
+  // three genuine runtime byte checks (the manifest digest, python3.11, node). Starting only from
+  // cli.mjs left those three uncounted.
+  //
+  // Deliberately NOT roots: check-digest-pins.mjs, build-linux-manifest.mjs and this file. They are
+  // build-time and audit-time tools; the controller never loads them, and counting their literals
+  // would put the auditor inside its own denominator.
+  walk(path.join(DIR, 'tool-entry.functions.js'));
+  walk(path.join(DIR, 'cli.mjs'));
+  walk(path.join(DIR, 'bridge.py'));
+  return [...out].sort();
 };
-const CENSUS_TOTAL = 60;
+
+// Expected literal counts over the COMPUTED set, keyed by path relative to the qualification
+// directory so two files of the same basename cannot be confused. A file in the set with no entry
+// here fails; an entry with no file fails.
+const CENSUS = {
+  'control-context-verifier-root6-linux-successor/bridge.py': 1,
+  'control-context-verifier-root6-linux-successor/context.mjs': 22,
+  'control-context-verifier-root6-linux-successor/fixed_host.py': 3,
+  'control-context-verifier-root6-linux-successor/grr.mjs': 0,
+  'control-context-verifier-root6-linux-successor/host-effect.mjs': 2,
+  'control-context-verifier-root6-linux-successor/parent600.py': 4,
+  'control-context-verifier-root6-linux-successor/result-terminal.mjs': 1,
+  'control-context-verifier-root6-linux-successor/trusted-github.mjs': 1,
+  'control-context-verifier-root6-linux-successor/tool-entry.functions.js': 3,
+  // Outside this directory and statically reachable. Round 21's point: these carry real runtime
+  // byte checks -- read-source-blobs.mjs alone has six FIXED_BATCH_EXECUTOR_BYTES pins -- and
+  // unlike the four frozen Python dependencies, this controller does NOT pin their bytes. They are
+  // covered by the manifest and by nothing else. Counting them is the minimum; it is not the same
+  // as checking them, and the uncovered list below says so.
+  'control-context-verifier-original-input-capacity-successor/read-source-blobs.mjs': 6,
+  'control-context-verifier-runtime600/context.mjs': 2,
+  'control-context-verifier-runtime600/host-effect.mjs': 2,
+  'control-context-verifier-runtime600/result-terminal.mjs': 1,
+  'control-context-verifier-runtime600/trusted-github.mjs': 1,
+  'control-context-verifier-runtime600/write-targets.mjs': 2,
+  // Frozen Python dependencies: pinned byte-for-byte by this controller, so a single changed byte
+  // makes the gate REFUSE. That -- not "their digests are not mine to adjudicate" -- is why they
+  // need no further scrutiny here, and round 21 was right that the earlier wording was wrong.
+  'docker-engineering-observation/observe.py': 2,
+  'docker-engineering-observation/validation.py': 8,
+  'qualification-runtime/remote_evidence.py': 1,
+  'control-context-verifier-public-runtime-env-diagnostic-successor/fixed_skill_fixture.py': 4,
+};
 {
-  const CROSS = ['docker-engineering-observation/observe.py',
-                 'docker-engineering-observation/validation.py',
-                 'qualification-runtime/remote_evidence.py',
-                 'control-context-verifier-public-runtime-env-diagnostic-successor/fixed_skill_fixture.py',
-                 'nonproduction-control-store/runtime-successor/commitment-signing-root6-window/signing.mjs'];
-  const scanned = [
-    ...fs.readdirSync(DIR).filter(f => /\.(py|mjs|js)$/.test(f)).map(f => path.join(DIR, f)),
-    ...CROSS.map(rel => path.join(QUAL, rel)),
-  ];
+  const set = loadSet();
   const actual = {};
   let total = 0;
-  for (const p of scanned) {
-    const n = new Set([...fs.readFileSync(p, 'utf8').matchAll(/[a-f0-9]{64}/g)].map(m => m[0])).size;
-    if (n) actual[path.basename(p)] = n;
+  for (const abs of set) {
+    const rel = path.relative(QUAL, abs).split(path.sep).join('/');
+    const n = new Set([...fs.readFileSync(abs, 'utf8').matchAll(/[a-f0-9]{64}/g)].map(m => m[0])).size;
+    actual[rel] = n;
     total += n;
   }
-  for (const rel of CROSS) if (!fs.existsSync(path.join(QUAL, rel))) fail(`census: ${rel} is not there to scan`);
-  const names = new Set([...Object.keys(CENSUS).filter(k => CENSUS[k] > 0), ...Object.keys(actual)]);
-  for (const n of [...names].sort()) {
-    const want = CENSUS[n], got = actual[n] ?? 0;
-    if (want === undefined) fail(`census: ${n} carries ${got} digest literal(s) and is not in CENSUS -- a new pin is not covered and not admitted`);
-    else if (want !== got) fail(`census: ${n} carries ${got} digest literal(s), CENSUS says ${want} -- reclassify the difference below, deliberately`);
+  for (const rel of new Set([...Object.keys(CENSUS), ...Object.keys(actual).filter(k => actual[k])])) {
+    const want = CENSUS[rel], got = actual[rel];
+    if (got === undefined) fail(`census: ${rel} has an expected count but is not in the computed load set`);
+    else if (want === undefined) fail(`census: ${rel} is in the load set with ${got} digest literal(s) and no expected count -- a pin that is neither covered nor admitted`);
+    else if (want !== got) fail(`census: ${rel} carries ${got} digest literal(s), CENSUS says ${want}`);
   }
-  if (total !== CENSUS_TOTAL) fail(`census: ${total} digest literal(s) across the load set, CENSUS_TOTAL says ${CENSUS_TOTAL}`);
-  else console.log(`  census      ${total} digest literal(s) across ${scanned.length} file(s) of the real load set, all accounted for`);
+  const declaredTotal = Object.values(CENSUS).reduce((a, b) => a + b, 0);
+  if (total !== declaredTotal) fail(`census: ${total} digest literal(s) across the computed load set, the table sums to ${declaredTotal}`);
+  else console.log(`  census      ${total} digest literal(s) over ${set.length} statically reachable module(s), load set computed from tool-entry.functions.js, cli.mjs and bridge.py`);
 }
 
 // Of those literals, the ones that are runtime byte checks split three ways. This list is the
 // honest part -- what is NOT proven live -- and the census above is what stops it going stale.
 const UNCOVERED = [
+
   "fixed_host.py arm_watchdog() PYTHON_SHA -- needs a live GA. Round 20 showed this one is exploitable: written as adjacent-string concatenation of the predecessor's Windows digest, both gates stay green and the controller dies at the first step of START.",
   "trusted-github.mjs expectedGh -- needs a GitHub API call",
   "fixed_host.py _invoke()'s platform gate and DOCKER_SHA -- needs a container operation. Separate from prepare()'s pair, which items 5b now prove; these two have their own messages (R20-N2) so they are separately provable once a container operation can be driven.",

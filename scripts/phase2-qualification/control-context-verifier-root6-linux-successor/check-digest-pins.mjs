@@ -338,7 +338,21 @@ const FOREIGN_CONTROLLER_REFERENCES = {
   ],
   // The frozen Skill fixture, already in TREE_EVIDENCE.
   'parent600.py': ['control-context-verifier-public-runtime-env-diagnostic-successor'],
-  'selftest-runtime-pins.mjs': ['control-context-verifier-public-runtime-env-diagnostic-successor/fixed_skill_fixture.py'],
+  // The self-test's census names every module in the computed load set, which is the point of it:
+  // round 21 found the load set had been hand-enumerated as five modules when 34 are statically
+  // reachable from cli.mjs, and fourteen digest literals in the reachable set were counted by
+  // nobody. Naming them here is not a port leaving a stale path behind -- it is a table of what
+  // the controller actually loads, and the census fails if the computed set stops matching it.
+  'selftest-runtime-pins.mjs': [
+    'control-context-verifier-public-runtime-env-diagnostic-successor/fixed_skill_fixture.py',
+    'control-context-verifier-original-input-capacity-successor/read-source-blobs.mjs',
+    'control-context-verifier-runtime600/context.mjs',
+    'control-context-verifier-runtime600/host-effect.mjs',
+    'control-context-verifier-runtime600/result-terminal.mjs',
+    'control-context-verifier-runtime600/trusted-github.mjs',
+    'control-context-verifier-runtime600/write-targets.mjs',
+    'control-context-verifier-root6-linux-successor',
+  ],
   // This file is handled below rather than listed: the declarations it holds necessarily quote
   // every reference in the table, so its allowed set IS the union. That is not an exemption -- a
   // reference appearing here that no entry declares still refuses.
