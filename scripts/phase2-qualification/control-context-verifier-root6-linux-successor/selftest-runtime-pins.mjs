@@ -50,15 +50,23 @@ fs.cpSync(QUAL, SQ, {recursive: true, filter: s => !s.includes('node_modules')})
 // the link changes nothing about what is checked -- it only lets node resolve them.
 fs.mkdirSync(path.join(SREPO, 'apps'), {recursive: true});
 fs.symlinkSync(path.join(REPO, 'apps/clued-cloud'), path.join(SREPO, 'apps/clued-cloud'));
+// skills/ is COPIED, not linked: prepare() reads it and item 5 mutates it. Linking would put the
+// mutation back onto the real tree, and leaving it out would send prepare() looking at a third
+// checkout again -- which is the defect (R19-F3) this copy exists to make testable.
+fs.cpSync(path.join(REPO, 'skills'), path.join(SREPO, 'skills'), {recursive: true});
 const SDIR = path.join(SQ, NAME);
+const QREL = 'scripts/phase2-qualification';
 
 const py = (script, cwd) => execFileSync('/usr/bin/python3.11', ['-I', '-S', '-B', '-c', script],
   {cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe']});
 
 // Runs `probe` in the sandbox, first pristine, then with one byte appended to `target`.
 // Pass means: pristine succeeds, mutated fails with an error naming `expect`.
+// target is relative to the sandbox repository root (SREPO), not to the qualification
+// directory: item 5 mutates skills/clued/SKILL.md, which sits outside it. QREL below spells the
+// qualification prefix once so the other call sites stay readable.
 function bothWays(label, target, probe, expect) {
-  const abs = path.join(SQ, target);
+  const abs = path.join(SREPO, target);
   if (!fs.existsSync(abs)) return fail(`${label}: ${target} is not in the sandbox`);
   const original = fs.readFileSync(abs);
   let pristine, mutated;
@@ -84,11 +92,11 @@ def load(n, f):
     m = importlib.util.module_from_spec(s); s.loader.exec_module(m); return m
 b = load('bridge', 'bridge.py'); b.load_host()
 print('CHAIN_OK')`, cwd);
-bothWays('python chain: bridge -> fixed_host', `${NAME}/fixed_host.py`, loadChain, 'Accepted fixed host bytes changed');
-bothWays('python chain: fixed_host -> parent600', `${NAME}/parent600.py`, loadChain, NAME + '/parent600.py');
+bothWays('python chain: bridge -> fixed_host', `${QREL}/${NAME}/fixed_host.py`, loadChain, 'Accepted fixed host bytes changed');
+bothWays('python chain: fixed_host -> parent600', `${QREL}/${NAME}/parent600.py`, loadChain, NAME + '/parent600.py');
 
 // 2. fixed_host pins observe.py across directories -- the R17-F2 surface.
-bothWays('cross-directory: fixed_host -> observe.py', 'docker-engineering-observation/observe.py',
+bothWays('cross-directory: fixed_host -> observe.py', `${QREL}/docker-engineering-observation/observe.py`,
   loadChain, 'drift: docker-engineering-observation/observe.py');
 
 // 3. host-effect.mjs pins python3.11 and bridge.py. This is where R16-F1 lived.
@@ -101,16 +109,22 @@ try { invokeFixedHost({gaRaw:'{"gate_authorization_id":"ga_selftest"}', operatio
 catch (e) { console.log('THREW:' + e.message); }
 ''', os.path.join(${JSON.stringify(SDIR)}, 'host-effect.mjs')], capture_output=True, text=True)
 print(r.stdout.strip() or r.stderr.strip()[-200:])`, cwd);
-bothWays('host-effect.mjs -> bridge.py bytes', `${NAME}/bridge.py`, jsPin, 'EXACT_PYTHON_BRIDGE_BYTES_REQUIRED');
+bothWays('host-effect.mjs -> bridge.py bytes', `${QREL}/${NAME}/bridge.py`, jsPin, 'EXACT_PYTHON_BRIDGE_BYTES_REQUIRED');
 
 // 4. parent600 pins the fixture across directories. Unlike the rest of prepare()'s pins this one
 //    IS inside the tree, so it can be proven rather than asserted.
 bothWays('cross-directory: parent600 -> fixed_skill_fixture.py',
-  'control-context-verifier-public-runtime-env-diagnostic-successor/fixed_skill_fixture.py',
+  `${QREL}/control-context-verifier-public-runtime-env-diagnostic-successor/fixed_skill_fixture.py`,
   loadChain, 'Exact proposed fixture bytes changed');
 
-// 5. The platform gate and docker binary identity that round 17 found unported, plus the Skill
-//    bytes. prepare() is CREATE's first step and does all of it.
+// 5. The platform gate, the docker binary identity, and the Skill bytes. prepare() is CREATE's
+//    first step and does all three.
+//
+//    The Skill part used to be untestable and was reported UNPROVEN along with the other two,
+//    because fixed_host.py read a hardcoded /home/user/cross-memory-system/skills/clued -- neither
+//    the sandbox nor, in round 19, even the tree under test, but whatever checkout happened to sit
+//    at that path. It now resolves from the module's own location, so the sandbox copy is what
+//    prepare() reads and the bytes can be proven live like any other pin.
 const prepare = cwd => py(`
 import importlib.util, json, secrets
 from datetime import datetime, timezone, timedelta
@@ -123,12 +137,11 @@ print('PREPARE_OK')`, cwd);
 // prepare() must still complete -- a failure here is a real failure. But completing does not prove
 // its remaining pins are live: sys.platform cannot be mutated, and /usr/bin/docker and the Skill
 // are outside the sandbox. So success is reported as UNPROVEN, not ok.
-try {
-  const out = prepare(SDIR);
-  if (out.includes('PREPARE_OK'))
-    cannotProve('prepare() completes, but its platform gate, docker binary identity and Skill bytes cannot be mutated from inside the sandbox, so none of the three is proven live');
-  else fail('prepare(): ' + out.trim().slice(0, 160));
-} catch (e) { fail('prepare(): ' + String(e.stderr || e.message).trim().split('\n').pop().slice(0, 160)); }
+bothWays('prepare(): accepted Skill bytes', 'skills/clued/SKILL.md',
+  prepare, 'Exact accepted Skill input bytes changed');
+// The other two pins prepare() carries still cannot be touched from here: sys.platform is not a
+// file, and /usr/bin/docker is outside the sandbox. Completing does not prove either live.
+cannotProve("prepare() completes, but its platform gate and its /usr/bin/docker identity check cannot be mutated from inside the sandbox, so neither of those two is proven live");
 
 // 6. The trusted entry script's own gates. Until now nothing exercised them, and two holes were
 //    found there by hand: sha256sum and cut resolved through $PATH, so a sha256sum earlier in PATH
@@ -193,9 +206,9 @@ const runEntry = () => {
   if (!clean.includes('BOUNDED_STDIN_INPUT_REQUIRED'))
     fail('trusted entry: pristine run does not reach the controller -- ' + clean.trim().split('\n').pop().slice(0, 160));
 }
-bothWays('trusted entry: manifest digest gate', `${NAME}/ControllerSourceManifest.candidate.json`,
+bothWays('trusted entry: manifest digest gate', `${QREL}/${NAME}/ControllerSourceManifest.candidate.json`,
   runEntry, 'ACTUAL_CONTROLLER_SOURCE_MANIFEST_DRIFT');
-bothWays('trusted entry: per-file byte check (the interpreter step)', `${NAME}/context.mjs`,
+bothWays('trusted entry: per-file byte check (the interpreter step)', `${QREL}/${NAME}/context.mjs`,
   runEntry, 'EXACT_CONTROLLER_SOURCE_BYTES_DRIFT');
 // Not a byte mutation -- the bypass is a directory appearing -- so this one is done by hand, in
 // both directions all the same.

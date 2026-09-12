@@ -69,9 +69,55 @@ const ATTEMPT_PIN = /"ga_[a-f0-9]{32}":'([a-f0-9]{64})'/g;
 const BLOBREF_PIN = /git\/blobs\/[a-f0-9]{40}'\s*,\s*sha256:\s*'([a-f0-9]{64})'/g;
 const BLOBREF_PIN2 = /git\/blobs\/[a-f0-9]{40}"\s*,\s*"sha256":\s*"([a-f0-9]{64})"/g;
 
-const controllerFiles = () => fs.readdirSync(DIR)
-  .filter(f => /\.(py|mjs|js)$/.test(f))
-  .filter(f => fs.statSync(path.join(DIR, f)).isFile());
+// Files OUTSIDE the controller directory that a literal in this controller may legitimately
+// resolve to. Each is the target of a pin whose path is written in the controller's own source
+// (load()/load_exact()/CHILD_PATH), except the last, which is the evidence-sink definition whose
+// digest context.mjs requires of a submitted material. Adding an entry here is a source change
+// that appears in a diff and needs a reason; dropping a file into the tree is not. That asymmetry
+// is the whole point -- a loop is dangerous in proportion to how well it hides.
+const TREE_EVIDENCE = [
+  'docker-engineering-observation/observe.py',                  // fixed_host.py load()
+  'docker-engineering-observation/validation.py',               // parent600.py load_exact()
+  'qualification-runtime/remote_evidence.py',                   // parent600.py load_exact()
+  'control-context-verifier-public-runtime-env-diagnostic-successor/fixed_skill_fixture.py', // parent600.py CHILD_SHA
+  'RuntimeMaterialPreparation/ordinary-bounded-successor/EvidenceSinkDefinition.json',       // context.mjs previous_evidence_sink_ref
+];
+if (TREE_EVIDENCE.length !== 5) throw new Error('TREE_EVIDENCE length changed; widen the evidence base deliberately, not by accident');
+
+// The controller's own sources, named here rather than discovered. Discovery left a smaller
+// version of R19-F2 open inside the controller directory itself: a launder.py dropped in beside
+// the real files entered the evidence base and washed any digest clean. That file would at least
+// have shown up in the manifest (the build enumerates this directory in full) and so in the
+// controller digest, which makes it far less hideable than the notes.txt case -- but it costs one
+// list to remove, so it is removed rather than written down as a residual.
+//
+// An undeclared .py/.mjs/.js in this directory is now REFUSED outright, not merely excluded: a new
+// controller source is a thing to notice, and silently ignoring it would leave the gate reporting
+// success over a tree it did not fully account for.
+const CONTROLLER_SOURCES = [
+  'bridge.py', 'build-linux-manifest.mjs', 'check-digest-pins.mjs', 'cli.mjs', 'context.mjs',
+  'fixed_host.py', 'grr.mjs', 'historical-component-observations.mjs', 'host-effect.mjs',
+  'original-inputs-blob.mjs', 'parent600.py', 'request-denials.mjs', 'result-terminal.mjs',
+  'root-window-validation.mjs', 'selftest-runtime-pins.mjs', 'source-publication.mjs',
+  'tool-entry.functions.js', 'trusted-github.mjs',
+];
+if (CONTROLLER_SOURCES.length !== 18) throw new Error('CONTROLLER_SOURCES length changed; declare a new source deliberately, not by accident');
+const controllerFiles = () => {
+  const onDisk = fs.readdirSync(DIR)
+    .filter(f => /\.(py|mjs|js)$/.test(f))
+    .filter(f => fs.statSync(path.join(DIR, f)).isFile())
+    .sort();
+  const declared = new Set(CONTROLLER_SOURCES);
+  const undeclared = onDisk.filter(f => !declared.has(f));
+  const missing = CONTROLLER_SOURCES.filter(f => !onDisk.includes(f));
+  if (undeclared.length || missing.length) {
+    for (const f of undeclared) console.error('  UNDECLARED   ' + f + ': present in the controller directory but not in CONTROLLER_SOURCES');
+    for (const f of missing) console.error('  MISSING      ' + f + ': declared in CONTROLLER_SOURCES but not on disk');
+    console.error('REFUSED: the controller directory does not match its declared source set');
+    process.exit(1);
+  }
+  return onDisk;
+};
 
 // index: digest -> paths, over the whole qualification tree, plus the host files this controller's
 // own manifest names, so a pinned interpreter or CLI resolves instead of reading as unexplained.
@@ -90,13 +136,21 @@ const buildIndex = () => {
   // named here, in the gate, where the controller cannot reach them.
   for (const hostFile of ['/opt/node22/bin/node', '/usr/bin/docker', '/usr/local/bin/gh', '/usr/bin/python3.11'])
     if (fs.existsSync(hostFile)) add(hostFile);
-  (function walk(d) {
-    for (const e of fs.readdirSync(d, {withFileTypes: true})) {
-      const p = path.join(d, e.name);
-      if (e.isDirectory()) { if (e.name === 'node_modules') continue; walk(p); }
-      else add(p);
-    }
-  })(QUAL);
+  // R19-F2: this used to walk the whole qualification tree -- 973 files, all of them editable by
+  // the thing being guarded. Dropping the manifest from the evidence base (R18-F2) did not close
+  // the loop, it only closed one instance of it: a 34-byte notes.txt dropped into
+  // docker-engineering-observation/ and an expectedGh pinned to its digest made the gate print
+  // "45 literal(s) accounted for, 0 unexplained" and exit 0. That file was invisible to every other
+  // defence -- the manifest's repository enumeration reads the controller directory one level deep
+  // so it never listed it, and the trusted entry only checks what the manifest lists -- and visible
+  // to this gate alone. An ideal laundering vehicle.
+  //
+  // The evidence base is now closed and written down here, where the controller cannot reach it:
+  // the four host binaries above, the controller's own directory, and the five tree files that
+  // literals in this controller legitimately resolve to. A digest that matches none of them is
+  // unexplained however many files exist elsewhere in the tree.
+  for (const f of controllerFiles()) add(path.join(DIR, f));
+  for (const rel of TREE_EVIDENCE) add(path.join(QUAL, rel));
   return ix;
 };
 index = buildIndex();

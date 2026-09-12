@@ -70,7 +70,13 @@ def prepare(nonce, ga_raw):
     for item in (driver, allowed, folder / 'docker-config', folder / 'temp'):
         item.mkdir()
     # Fixed existing installed inputs; every byte validated before copying.
-    source = Path('/home/user/cross-memory-system/skills/clued')
+    # Resolved from this file's own location, not from a hardcoded absolute path (R19-F3). The
+    # absolute form pointed at whatever checkout happened to live at that path, which on a live
+    # run is the right one but in any sandbox is a THIRD tree: round 19 altered the SKILL.md of
+    # the tree under test and the self-test still reported the Skill bytes fine, because it had
+    # read a different checkout's copy. Resolving relatively makes the check follow the tree it
+    # is checking, which is also what lets the self-test prove it live by mutation.
+    source = Path(__file__).resolve().parents[3] / 'skills' / 'clued'
     blobs = {name: (source / name).read_bytes() for name in parent.child.SUBJECT}
     if not parent.child.subject_bytes_valid(blobs):
         raise ValueError('Exact accepted Skill input bytes changed')
