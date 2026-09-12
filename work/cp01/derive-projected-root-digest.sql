@@ -1,4 +1,25 @@
 -- ========================================================================================
+-- SUPERSEDED. DO NOT RUN. Kept as the record of an approach the Owner replaced.
+-- ========================================================================================
+--
+-- This script computed the (ii) value in CP-01 edits G8/B9 as a PROJECTION, before root6 was
+-- registered, because the approval's generation_registration.must_not_precede clause put CP-01
+-- first. The Owner amended that clause (OwnerOrderingAmendment.json): CP-01 is now applied
+-- AFTER registration.
+--
+-- Replaced by:  work/cp01/measure-root6-root-digest.sql
+--
+-- The replacement measures the same value instead of predicting it, and evaluates the guard's
+-- own expression -- clued_control.read_execution(), read out of pg_proc rather than assumed --
+-- against the live store. What that removes is not a small risk: this script's value was
+-- correct only if the body actually appended matched, byte for byte, the body the projection
+-- was built from. That obligation was carried by a written requirement, i.e. by discipline.
+-- After the amendment there is nothing left to carry.
+--
+-- Nothing below has been edited. It is here so the superseded method stays auditable.
+-- ========================================================================================
+
+-- ========================================================================================
 -- Resolve the (ii) placeholder in CP-01 edits G8/B9. Performs no write of any kind.
 -- ========================================================================================
 --

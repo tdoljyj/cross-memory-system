@@ -6,8 +6,8 @@
 --
 -- !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 -- THIS FILE IS A DRAFT AND MUST NOT BE EXECUTED. Blocking:
---   unresolved placeholder   G8: __PROJECTED_ROOT6_ROOT_DIGEST_PENDING__
---   unresolved placeholder   B9: __PROJECTED_ROOT6_ROOT_DIGEST_PENDING__
+--   unresolved placeholder   G8: __MEASURED_ROOT6_ROOT_DIGEST_PENDING__
+--   unresolved placeholder   B9: __MEASURED_ROOT6_ROOT_DIGEST_PENDING__
 --   (all edit classes granted)
 --   post-image digest unpinned   clued_control.reserve_gate(text,text)
 --   post-image digest unpinned   clued_control.reserve_execution_budget(text,text)
@@ -109,6 +109,24 @@ begin
     raise exception 'CP01_UNTOUCHED_FUNCTIONS_DRIFT: %', got;
   end if;
 
+  -- R11-F13, the half the NW-01 receipt recorded as still owed: accepted_binding must carry
+  -- exactly one non-internal trigger, it must be the immutability trigger, and it must be
+  -- enabled. NW-01 turned it off and back on; nothing has asserted since that it stayed on,
+  -- and this transaction's window guard trusts a row that trigger is what protects.
+  select count(*) into c from pg_trigger t
+   where t.tgrelid = 'clued_control.accepted_binding'::regclass and not t.tgisinternal;
+  if c <> 1 then
+    raise exception 'CP01_ACCEPTED_BINDING_TRIGGER_COUNT: %', c;
+  end if;
+  -- tgenabled is "char", and text || "char" is ambiguous (42725). The cast is not cosmetic:
+  -- without it this statement fails to parse and the guard aborts the transaction it is
+  -- supposed to be protecting.
+  select t.tgname || ':' || t.tgenabled::text into got from pg_trigger t
+   where t.tgrelid = 'clued_control.accepted_binding'::regclass and not t.tgisinternal;
+  if got is distinct from 'accepted_binding_immutable:O' then
+    raise exception 'CP01_ACCEPTED_BINDING_TRIGGER_DRIFT: %', got;
+  end if;
+
   -- clued_control.effective_execution_binding() is asserted above and MUST NOT be replaced here.
   -- It may change only via APPEND_ONLY_BINDING_FORWARD_TRANSACTION_RECORDING_EXECUTION_BINDING_
   -- FORWARD_ACCEPTED (runbook step 14), never by CREATE OR REPLACE.
@@ -159,7 +177,7 @@ begin
  then raise exception 'series_full_original_root_changed'; end if;
  if jsonb_array_length(series_view->'root'->'events') is distinct from 6
  then raise exception 'series_full_original_root_changed'; end if;
- if encode(sha256(convert_to(((series_view->'root' - 'events') || jsonb_build_object('registration_event',(select e - 'recorded_at' from jsonb_array_elements(series_view->'root'->'events') e where (e->>'sequence')::bigint=6)))::text,'UTF8')),'hex') is distinct from '__PROJECTED_ROOT6_ROOT_DIGEST_PENDING__'
+ if encode(sha256(convert_to(((series_view->'root' - 'events') || jsonb_build_object('registration_event',(select e - 'recorded_at' from jsonb_array_elements(series_view->'root'->'events') e where (e->>'sequence')::bigint=6)))::text,'UTF8')),'hex') is distinct from '__MEASURED_ROOT6_ROOT_DIGEST_PENDING__'
  then raise exception 'series_full_original_root_changed'; end if;$cp01lit$)
   ) as v(i, id, want, f, t) order by i loop
     n := n + 1;
@@ -240,7 +258,7 @@ begin
  then raise exception 'series_full_original_root_changed'; end if;
  if jsonb_array_length(series_view->'root'->'events') is distinct from 6
  then raise exception 'series_full_original_root_changed'; end if;
- if encode(sha256(convert_to(((series_view->'root' - 'events') || jsonb_build_object('registration_event',(select e - 'recorded_at' from jsonb_array_elements(series_view->'root'->'events') e where (e->>'sequence')::bigint=6)))::text,'UTF8')),'hex') is distinct from '__PROJECTED_ROOT6_ROOT_DIGEST_PENDING__'
+ if encode(sha256(convert_to(((series_view->'root' - 'events') || jsonb_build_object('registration_event',(select e - 'recorded_at' from jsonb_array_elements(series_view->'root'->'events') e where (e->>'sequence')::bigint=6)))::text,'UTF8')),'hex') is distinct from '__MEASURED_ROOT6_ROOT_DIGEST_PENDING__'
  then raise exception 'series_full_original_root_changed'; end if;$cp01lit$)
   ) as v(i, id, want, f, t) order by i loop
     n := n + 1;
@@ -342,6 +360,24 @@ begin
               and p.oid::regprocedure::text not in ('clued_control.reserve_gate(text,text)', 'clued_control.reserve_execution_budget(text,text)', 'clued_control.append_status_manifest(text,text)')) u);
   if got is distinct from 'c7af467630e8a7001757095df639d6360d896ffc4c2a143e19ae3dd8fb6d78ce' then
     raise exception 'CP01_POST_UNTOUCHED_FUNCTIONS_DRIFT: %', got;
+  end if;
+
+  -- R11-F13, the half the NW-01 receipt recorded as still owed: accepted_binding must carry
+  -- exactly one non-internal trigger, it must be the immutability trigger, and it must be
+  -- enabled. NW-01 turned it off and back on; nothing has asserted since that it stayed on,
+  -- and this transaction's window guard trusts a row that trigger is what protects.
+  select count(*) into c from pg_trigger t
+   where t.tgrelid = 'clued_control.accepted_binding'::regclass and not t.tgisinternal;
+  if c <> 1 then
+    raise exception 'CP01_POST_ACCEPTED_BINDING_TRIGGER_COUNT: %', c;
+  end if;
+  -- tgenabled is "char", and text || "char" is ambiguous (42725). The cast is not cosmetic:
+  -- without it this statement fails to parse and the guard aborts the transaction it is
+  -- supposed to be protecting.
+  select t.tgname || ':' || t.tgenabled::text into got from pg_trigger t
+   where t.tgrelid = 'clued_control.accepted_binding'::regclass and not t.tgisinternal;
+  if got is distinct from 'accepted_binding_immutable:O' then
+    raise exception 'CP01_POST_ACCEPTED_BINDING_TRIGGER_DRIFT: %', got;
   end if;
   -- The one function that must be byte-identical to how it started.
   select encode(sha256(convert_to(p.prosrc, 'UTF8')), 'hex') into got
