@@ -359,6 +359,48 @@ const FOREIGN_CONTROLLER_REFERENCES = {
   }
 }
 
+// HostProvisioning.json was written last round to close R20-F3 -- nothing said which binaries a
+// host must have, so a refusal could not be attributed. It was then read by nothing at all: its
+// name appeared only inside two console.log strings. Measured: setting docker's digest to 0*64,
+// its version to 1.0.0 and adding an invented binary left the gate at exit 0.
+//
+// That is the SEVENTH instance of a verification that cannot fail, and the second in a row to be
+// born inside the remedy for an earlier one -- the sixth was the denominator written to fix the
+// fifth. A document that records requirements and is checked by nothing does not record anything;
+// it only looks as though it does. So the gate reads it now, and the document has to agree with
+// the host it claims to describe.
+{
+  const provPath = path.join(DIR, 'HostProvisioning.json');
+  if (!fs.existsSync(provPath)) problems.push('HostProvisioning.json: missing. The gate names it when a host binary is absent, so it has to exist.');
+  else {
+    let prov = null;
+    try { prov = JSON.parse(fs.readFileSync(provPath, 'utf8')); }
+    catch (e) { problems.push('HostProvisioning.json: not parseable -- ' + e.message); }
+    if (prov) {
+      const declared = (prov.required_binaries || []).map(x => x.path).sort();
+      if (String(declared) !== String([...HOST_BINARIES].sort()))
+        problems.push(`HostProvisioning.json: declares [${declared}] as the required binaries, the gate pins [${[...HOST_BINARIES].sort()}]. The document and the gate must name the same set.`);
+      const groups = [[prov.required_binaries, 'required_binaries'],
+                      [prov.shell_tools_pinned_by_manifest_only, 'shell_tools_pinned_by_manifest_only']];
+      const pinned = new Set(HOST_BINARIES);
+      for (const [list, label] of groups) for (const e of list || []) {
+        if (!fs.existsSync(e.path)) {
+          // Only a path the GATE pins counts as the host missing something. A path only the
+          // document names and that does not exist is the document being wrong, and the set
+          // mismatch above already says so -- reporting it as HOST INCOMPLETE would blame the
+          // host for a fabricated entry.
+          if (pinned.has(e.path)) missingHostBinaries.push(e.path);
+          else problems.push(`HostProvisioning.json ${label}: ${e.path} does not exist on this host and is not a binary the gate pins.`);
+          continue;
+        }
+        const bytes = fs.readFileSync(e.path);
+        if (sha(e.path) !== e.sha256 || bytes.length !== e.bytes)
+          problems.push(`HostProvisioning.json ${label}: ${e.path} records ${String(e.sha256).slice(0, 12)}/${e.bytes}B, this host has ${sha(e.path).slice(0, 12)}/${bytes.length}B. Re-measure the document, or explain the host.`);
+      }
+    }
+  }
+}
+
 let accounted = 0;
 const perFile = {};
 const scanTargets = [
