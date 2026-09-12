@@ -15,16 +15,18 @@ This directory is a repository projection of Clued's multi-track governance stat
 5. `currentness.md` — Currentness / Authority reconciliation
 6. `authority-currentness-contract.md` — Binding / Membership / Development Grant / Resource×Action / Currentness resolution contract
 7. `runtime-capability-status.md` — authoritative Multi-Track Runtime implementation/discovery status
-8. `fresh-agent-recovery-contract.md` — zero-memory recovery read order and fail-closed rules
-9. `zero-memory-preflight.md` — structural safe-answer coverage
-10. `../../../../artifacts/priorities/current.json` — machine-readable Bootstrap Snapshot
-11. `../../../../artifacts/priorities/source-registry.json` — normalized source registry
-12. `../../../../artifacts/priorities/bootstrap-context.json` — Track goals, typed impacts, parallel/resource rules and Bootstrap boundaries
-13. `../../../../artifacts/priorities/runtime-capability-status.json` — runtime implementation/discovery state
-14. `../../../../artifacts/priorities/authority-currentness-contract.json` — runtime Authority / Currentness resolver contract
-15. `../../../../artifacts/priorities/projection-watermark.json` — repository-side projection drift watermark
-16. `../../../../artifacts/priorities/bootstrap-currentness-assessment.json` — fail-closed Priority Snapshot currentness assessment
-17. `../../../../artifacts/priorities/bootstrap-next-action-assessment.json` — fail-closed next-action assessment
+8. `runtime-test-identity-discovery.md` — final Runtime Gate test-identity discovery and blocker
+9. `fresh-agent-recovery-contract.md` — zero-memory recovery read order and fail-closed rules
+10. `zero-memory-preflight.md` — structural safe-answer coverage
+11. `../../../../artifacts/priorities/current.json` — machine-readable Bootstrap Snapshot
+12. `../../../../artifacts/priorities/source-registry.json` — normalized source registry
+13. `../../../../artifacts/priorities/bootstrap-context.json` — Track goals, typed impacts, parallel/resource rules and Bootstrap boundaries
+14. `../../../../artifacts/priorities/runtime-capability-status.json` — runtime implementation/discovery state
+15. `../../../../artifacts/priorities/runtime-test-identity-discovery.json` — aggregate-only test identity discovery
+16. `../../../../artifacts/priorities/authority-currentness-contract.json` — runtime Authority / Currentness resolver contract
+17. `../../../../artifacts/priorities/projection-watermark.json` — repository-side projection drift watermark
+18. `../../../../artifacts/priorities/bootstrap-currentness-assessment.json` — fail-closed Priority Snapshot currentness assessment
+19. `../../../../artifacts/priorities/bootstrap-next-action-assessment.json` — fail-closed next-action assessment
 
 ## Rules
 
@@ -76,11 +78,36 @@ authoritative Replan Registry = NOT_IMPLEMENTED / NOT DISCOVERABLE
 open Replan Proposals = UNKNOWN, not []
 ```
 
+## Automated test identity discovery
+
+Read-only aggregate discovery found real legacy Agent Binding / Authorization records, but **no complete current test/non-production development identity chain**:
+
+```text
+public.bindings = 0
+project_memberships_v13 = 0
+development_spaces_v14 = 0
+development_grants_v14 = 0
+legacy clued_agent_bindings = 19 unrevoked
+authorizations_v12 = 11 active
+authorization_entries_v12 = 66
+```
+
+All 11 currently authorized binding IDs resolve to the legacy `clued_agent_bindings` table, not `public.bindings`; the Authorization Entry aggregate environment is `canonical`, not a test/non-production Development Space.
+
+Current final-gate blocker:
+
+```text
+AUTOMATED_TEST_IDENTITY_NOT_AVAILABLE
+ZERO_MEMORY_MULTI_AGENT_RUNTIME_GATE = BLOCKED
+```
+
+This does **not** ask the user to manually create a test identity. The system must resume the final gate automatically when a legitimate non-production identity path exists under separate implementation/authorization work.
+
 ## Zero-Memory status
 
 ```text
 STRUCTURAL SAFE-ANSWER COVERAGE = 25 / 25 PASS
-FINAL ≥3 AGENT RUNTIME GATE = NOT RUN
+FINAL ≥3 AGENT RUNTIME GATE = BLOCKED_BY_AUTOMATED_TEST_IDENTITY_NOT_AVAILABLE
 ```
 
 `25/25` means every recovery question has a truthful machine-readable answer path, including `UNKNOWN / NOT_IMPLEMENTED / FAIL_CLOSED` where appropriate. It does **not** mean Multi-Track Runtime or the final automated multi-Agent Gate has passed.
