@@ -83,10 +83,13 @@ let index = new Map();
 const buildIndex = () => {
   const ix = new Map();
   const add = p => { try { const h = sha(p); if (!ix.has(h)) ix.set(h, []); ix.get(h).push(p); } catch {} };
-  try {
-    const man = JSON.parse(fs.readFileSync(path.join(DIR, 'ControllerSourceManifest.candidate.json'), 'utf8'));
-    for (const e of man.files) if (path.isAbsolute(e.path) && fs.existsSync(e.path)) add(e.path);
-  } catch {}
+  // R18-F2: this used to seed the index from the manifest, which made the manifest able to explain
+  // literals -- adding one absolute-path line laundered any digest into "accounted for". A gate
+  // whose evidence the thing it guards can edit is not a gate. The host files whose digests
+  // legitimately appear as literals in this controller are these four and no others, so they are
+  // named here, in the gate, where the controller cannot reach them.
+  for (const hostFile of ['/opt/node22/bin/node', '/usr/bin/docker', '/usr/local/bin/gh', '/usr/bin/python3.11'])
+    if (fs.existsSync(hostFile)) add(hostFile);
   (function walk(d) {
     for (const e of fs.readdirSync(d, {withFileTypes: true})) {
       const p = path.join(d, e.name);

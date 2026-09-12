@@ -1,110 +1,115 @@
-// Exercises the controller's real byte checks instead of reading its source.
+// Proves each runtime byte check is BOTH satisfied and live, by mutation in a sandbox.
 //
-// check-digest-pins.mjs scans text, and round 17 showed what that buys: seven ways to write a
-// digest slipped past it, including R16-F1 rewritten as 'aaa'+'bbb'. Patching regexes forever is
-// the wrong answer, because the thing being checked is what the code COMPARES AT RUNTIME and the
-// text is only evidence about that. So this asks the code.
+// Two earlier versions of this file reported ok without the check under test ever running.
+//   - the first passed an expired deadline to invokeFixedHost; the liveness test sits one line
+//     above the byte comparison, so the comparison never executed
+//   - the second treated any unexpected error as "we got past it", so an ENOENT from readFileSync
+//     also read as success (R18-F1)
+// Both were the same mistake: inferring that a check ran from the ABSENCE of its failure. That
+// inference is worthless, because not running produces the same absence.
 //
-// Every pin exercised here throws when it is stale, however the digest is spelled -- uppercase,
-// concatenated, split across lines, or computed. A textual gate cannot say that; this can.
-// The two are kept together on purpose: the scan is cheap and catches a stale pin before anything
-// runs, this is authoritative. build-linux-manifest.mjs requires both.
+// So each pin is now tested in both directions. The check must pass against the pristine copy AND
+// must fail, with its own error, against a copy whose pinned file has been altered by one byte. A
+// check that cannot be made to fail is not running, and this reports that as a failure rather than
+// as ok.
 //
-// It performs no docker operation, creates no container, touches no database and consumes no
-// budget.
-//
-// One trap, hit while writing this: the first draft called invokeFixedHost with a deadline already
-// in the past, reasoning that it would be refused safely. It was -- at host-effect.mjs:13, which
-// sits BEFORE the byte comparison at :14. So the check this test exists for never ran, and with a
-// stale digest planted as a concatenation the test still reported ok. The deadline must be live
-// for the byte check to be reached at all.
+// All mutation happens inside a throwaway copy of scripts/phase2-qualification under the system
+// temp directory. The real tree is never written to. No docker operation, no container, no
+// database, no budget.
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
-const fail = m => { console.error('  FAILED  ' + m); process.exitCode = 1; };
+const QUAL = path.resolve(DIR, '..');
+const NAME = path.basename(DIR);
+let failures = 0;
+const fail = m => { console.error('  FAILED  ' + m); failures++; };
 const ok = m => console.log('  ok      ' + m);
 
-// 1. The python chain. Each module compares the digest of the one below it as it loads, and
-//    bridge.load_host() compares fixed_host.py's, so a stale pin anywhere raises here.
-const py = `
-import importlib.util, sys
-def load(name, f):
-    s = importlib.util.spec_from_file_location(name, f)
-    m = importlib.util.module_from_spec(s); s.loader.exec_module(m); return m
-for f in ('parent600.py', 'fixed_host.py', 'bridge.py'):
-    load(f[:-3], f)
-b = load('bridge2', 'bridge.py')
-b.load_host()
-print('PYTHON_PINS_OK')
-`;
-try {
-  const out = execFileSync('/usr/bin/python3.11', ['-I', '-S', '-B', '-c', py],
-    {cwd: DIR, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe']});
-  if (out.includes('PYTHON_PINS_OK')) ok('parent600 / fixed_host / bridge load, and load_host() returns');
-  else fail('python chain produced no confirmation: ' + out.trim().slice(0, 200));
-} catch (e) {
-  fail('python chain: ' + String(e.stderr || e.message).trim().split('\n').slice(-1)[0].slice(0, 200));
+const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'clued-pinselftest-'));
+process.on('exit', () => fs.rmSync(sandbox, {recursive: true, force: true}));
+fs.cpSync(QUAL, path.join(sandbox, 'q'), {recursive: true, filter: s => !s.includes('node_modules')});
+const SQ = path.join(sandbox, 'q');
+const SDIR = path.join(SQ, NAME);
+
+const py = (script, cwd) => execFileSync('/usr/bin/python3.11', ['-I', '-S', '-B', '-c', script],
+  {cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe']});
+
+// Runs `probe` in the sandbox, first pristine, then with one byte appended to `target`.
+// Pass means: pristine succeeds, mutated fails with an error naming `expect`.
+function bothWays(label, target, probe, expect) {
+  const abs = path.join(SQ, target);
+  if (!fs.existsSync(abs)) return fail(`${label}: ${target} is not in the sandbox`);
+  const original = fs.readFileSync(abs);
+  let pristine, mutated;
+  try { pristine = {out: probe(SDIR), threw: null}; } catch (e) { pristine = {out: '', threw: e}; }
+  try {
+    fs.writeFileSync(abs, Buffer.concat([original, Buffer.from('\n')]));
+    try { mutated = {out: probe(SDIR), threw: null}; } catch (e) { mutated = {out: '', threw: e}; }
+  } finally { fs.writeFileSync(abs, original); }
+
+  const text = r => String(r.threw ? (r.threw.stderr || r.threw.message) : r.out);
+  if (pristine.threw || text(pristine).includes(expect))
+    return fail(`${label}: does not pass on the pristine copy -- ${text(pristine).trim().split('\n').pop().slice(0, 140)}`);
+  if (!text(mutated).includes(expect))
+    return fail(`${label}: altering ${path.basename(target)} did NOT trigger ${expect}. The check is not running, so its passing means nothing.`);
+  ok(`${label} (passes clean; altering ${path.basename(target)} raises ${expect})`);
 }
 
-// 2. The JS pin on python3.11 and bridge.py. This is the one the textual gate could not see when
-//    it was written as a variable comparison, and the one R16-F1 lived in.
-try {
-  const {invokeFixedHost} = await import(path.join(DIR, 'host-effect.mjs'));
-  let reached = false;
-  try {
-    invokeFixedHost({gaRaw: '{"gate_authorization_id":"ga_selftest"}', operation: 'CREATE',
-                     containerId: null, deadline: Date.now() + 120000});
-    reached = true;
-  } catch (e) {
-    const m = String(e.message);
-    if (m.includes('FIXED_LIVE_HOST_OPERATION_REQUIRED'))
-      fail('refused before the byte check ran, so this proved nothing about the pins');
-    else if (m.includes('EXACT_PYTHON_BRIDGE_BYTES_REQUIRED'))
-      fail('host-effect.mjs pins stale python or bridge bytes (the R16-F1 shape)');
-    else { reached = true; }
-  }
-  if (reached) ok('host-effect.mjs byte checks on python3.11 and bridge.py pass');
-} catch (e) { fail('host-effect.mjs did not import: ' + String(e.message).slice(0, 160)); }
+// 1. bridge.py pins fixed_host.py, fixed_host.py pins parent600.py.
+const loadChain = cwd => py(`
+import importlib.util
+def load(n, f):
+    s = importlib.util.spec_from_file_location(n, f)
+    m = importlib.util.module_from_spec(s); s.loader.exec_module(m); return m
+b = load('bridge', 'bridge.py'); b.load_host()
+print('CHAIN_OK')`, cwd);
+bothWays('python chain: bridge -> fixed_host', `${NAME}/fixed_host.py`, loadChain, 'Accepted fixed host bytes changed');
+bothWays('python chain: fixed_host -> parent600', `${NAME}/parent600.py`, loadChain, NAME + '/parent600.py');
 
-// 3. The platform and docker-binary gate that round 17 found had never been ported (R17-F1).
-//    prepare() is the first step of CREATE and refuses before any of it if the host is wrong.
-const probe = `
-import importlib.util, json, secrets, traceback
+// 2. fixed_host pins observe.py across directories -- the R17-F2 surface.
+bothWays('cross-directory: fixed_host -> observe.py', 'docker-engineering-observation/observe.py',
+  loadChain, 'drift: docker-engineering-observation/observe.py');
+
+// 3. host-effect.mjs pins python3.11 and bridge.py. This is where R16-F1 lived.
+const jsPin = cwd => py(`
+import subprocess, json, os
+r = subprocess.run(['/opt/node22/bin/node', '-e', '''
+const {invokeFixedHost} = await import(process.argv[1]);
+try { invokeFixedHost({gaRaw:'{"gate_authorization_id":"ga_selftest"}', operation:'CREATE',
+                       containerId:null, deadline:Date.now()+120000}); console.log('NO_THROW'); }
+catch (e) { console.log('THREW:' + e.message); }
+''', os.path.join(${JSON.stringify(SDIR)}, 'host-effect.mjs')], capture_output=True, text=True)
+print(r.stdout.strip() or r.stderr.strip()[-200:])`, cwd);
+bothWays('host-effect.mjs -> bridge.py bytes', `${NAME}/bridge.py`, jsPin, 'EXACT_PYTHON_BRIDGE_BYTES_REQUIRED');
+
+// 4. The platform gate and docker binary identity that round 17 found unported, plus the Skill
+//    bytes. prepare() is CREATE's first step and does all of it.
+const prepare = cwd => py(`
+import importlib.util, json, secrets
 from datetime import datetime, timezone, timedelta
 s = importlib.util.spec_from_file_location('fh', 'fixed_host.py')
 fh = importlib.util.module_from_spec(s); s.loader.exec_module(fh)
 ga = json.dumps({'gate_authorization_id': 'ga_selftest',
-                 'deadline': (datetime.now(timezone.utc) + timedelta(seconds=120)).isoformat().replace('+00:00', 'Z')})
-try:
-    fh.prepare(secrets.token_hex(16), ga)
-    print('PREPARE_OK')
-except Exception as e:
-    tb = traceback.extract_tb(e.__traceback__)[-1]
-    print('PREPARE_FAILED %s:%d %s: %s' % (tb.filename.split('/')[-1], tb.lineno, type(e).__name__, e))
-`;
+                 'deadline': (datetime.now(timezone.utc)+timedelta(seconds=120)).isoformat().replace('+00:00','Z')})
+fh.prepare(secrets.token_hex(16), ga)
+print('PREPARE_OK')`, cwd);
+// The Skill lives outside the qualification tree, so it cannot be mutated inside the sandbox.
+// Assert it positively instead, and say plainly that this one is one-directional.
 try {
-  const out = execFileSync('/usr/bin/python3.11', ['-I', '-S', '-B', '-c', probe],
-    {cwd: DIR, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe']}).trim();
-  if (out.includes('PREPARE_OK')) ok('fixed_host.prepare() completes on this host: platform gate, docker bytes, Skill bytes');
-  else fail(out.slice(0, 200));
-} catch (e) {
-  fail('prepare() probe: ' + String(e.stderr || e.message).trim().split('\n').slice(-1)[0].slice(0, 200));
-}
+  const out = prepare(SDIR);
+  if (out.includes('PREPARE_OK')) ok('prepare() completes: platform gate, docker binary identity, Skill bytes (one-directional -- the Skill is outside the sandbox)');
+  else fail('prepare(): ' + out.trim().slice(0, 160));
+} catch (e) { fail('prepare(): ' + String(e.stderr || e.message).trim().split('\n').pop().slice(0, 160)); }
 
-// prepare() creates a working folder; leave nothing behind.
-try {
-  const py2 = `
-import importlib.util
-s = importlib.util.spec_from_file_location('p', 'parent600.py')
-p = importlib.util.module_from_spec(s); s.loader.exec_module(p)
-print(str(p.paths('0' * 32)[0].parent))
-`;
-  const root = execFileSync('/usr/bin/python3.11', ['-I', '-S', '-B', '-c', py2], {cwd: DIR, encoding: 'utf8'}).trim();
-  if (root.startsWith('/tmp/')) for (const d of fs.readdirSync(root)) fs.rmSync(path.join(root, d), {recursive: true, force: true});
-} catch {}
+// 5. Coverage this test does NOT provide, stated rather than left to be discovered:
+//    arm_watchdog()'s PYTHON_SHA comparison and trusted-github.mjs's gh binary pin are on paths
+//    that need a live GA and a GitHub call respectively. R18-F1(b) is right that a stale pin there
+//    passes both gates today.
+console.log('  note    not covered: arm_watchdog PYTHON_SHA, trusted-github gh pin (need a live GA / API call)');
 
-if (process.exitCode) console.log('runtime pin self-test FAILED');
-else console.log('runtime pin self-test passed (all three exercised by execution)');
+if (failures) { console.log(`runtime pin self-test FAILED (${failures})`); process.exitCode = 1; }
+else console.log('runtime pin self-test passed (each check proven live by mutation)');

@@ -78,8 +78,16 @@ const nm = prev.files
 // the .pyc set comes from each module's own __cached__ rather than from guessing the layout.
 const pyList = execFileSync('/usr/bin/python3.11', ['-I', '-S', '-B', '-c', `
 import sys, importlib.util, json
-spec = importlib.util.spec_from_file_location('p600', ${JSON.stringify(path.join(REPO, NEW_DIR, 'parent600.py'))})
-m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+# R18: enumerating from parent600 alone missed platform.py, uuid.py and the native _uuid .so,
+# which only load once bridge.py and fixed_host.py do -- and fixed_host is what pulls observe.py in.
+# The set has to come from the deepest load the controller actually performs, not the shallowest.
+import os
+d = ${JSON.stringify(path.join(REPO, NEW_DIR))}
+def load(n, f):
+    s = importlib.util.spec_from_file_location(n, os.path.join(d, f))
+    m = importlib.util.module_from_spec(s); s.loader.exec_module(m); return m
+for n, f in (('p600', 'parent600.py'), ('bridge', 'bridge.py'), ('fh', 'fixed_host.py')):
+    load(n, f)
 src, cached = set(), set()
 for mod in list(sys.modules.values()):
     f = getattr(mod, '__file__', None)
