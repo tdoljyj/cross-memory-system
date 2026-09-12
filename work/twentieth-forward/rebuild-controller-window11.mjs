@@ -11,6 +11,18 @@
 // environment, so their recorded bytes and digests are carried through untouched. Only entries
 // belonging to the controller directory are touched, and the script proves exactly which.
 //
+// WHAT CARRYING THEM THROUGH MEANS, which this comment used to leave unsaid:
+// those 187 entries are 200,048,638 bytes of files on one Windows machine -- node.exe, gh.exe,
+// docker.exe, 44 Python .pyc caches, 106 files under AppData. The digest this script emits is
+// therefore built on the assumption that all of them are still, right now, the bytes recorded when
+// the manifest was collected on 2026-09-08. Nothing here verifies that, and the sources of drift
+// are ordinary: GitHub CLI and Docker Desktop auto-update, and a .pyc is regenerated whenever its
+// source's mtime changes. If any entry has drifted, the emitted digest is computed from a premise
+// that never held, and every document re-issued against it inherits the error -- surfacing only
+// when the controller finally runs, possibly after the budget is spent.
+// Before the Owner's second merge, rescan all 187 on that machine. See
+// artifacts/.../root6-capacity/ControllerDigestDependsOnUnverifiedHostFinding.md.
+//
 // Usage:
 //   node rebuild-controller-window11.mjs <newExpiryZ> [outputRoot]
 //
