@@ -2,48 +2,70 @@
 
 **Projection only — not Authority.**
 
+## Bootstrap recovery status
+
+Current repository-side status:
+
+```text
+ZERO_MEMORY_STRUCTURAL_SAFE_ANSWER_COVERAGE = 25 / 25 PASS
+ZERO_MEMORY_MULTI_AGENT_RUNTIME_GATE = NOT RUN / NOT ELIGIBLE TO CLAIM PASS
+```
+
+The 25/25 result means every standard recovery question now has a machine-readable truthful answer path. Some truthful answers are deliberately `UNKNOWN / NOT_IMPLEMENTED / FAIL_CLOSED`.
+
 ## Source provenance normalization
 
-Multi-Track now has a normalized Source Registry:
+Multi-Track has a normalized Source Registry:
 
 - human-readable: `source-registry.md`;
 - machine-readable: `artifacts/priorities/source-registry.json`;
 - coverage: **49 / 49 Priority Items**.
 
-Each Item can now resolve to:
+Each Item resolves to:
 
 `primary source → exact SHA/Ref → authority state → supporting source chain → Canonical Receipt state`.
 
 Missing Receipts remain explicit (`PENDING`, `NOT_NORMALIZED`, `PARTIALLY_UNAVAILABLE`, etc.) and are never fabricated.
 
-This closes the **structural** provenance question (`ZM12`), but does not claim every historical source already has a materialized Canonical Event/Receipt.
+## Priority Reconciliation / Replan runtime status
 
-## E-010 Cross-Host / Thin-Open currentness
+Read-only discovery of `clued-prod` and repository `main` found no discoverable authoritative Multi-Track PriorityReconciliation / Replan implementation in:
 
-The earlier X-grade identity conflict is resolved at the design-revision layer:
+- specialized tables;
+- specialized routines;
+- generic Clued records;
+- context events;
+- audit receipts;
+- repository main code search.
 
-- exact v0.2.4 candidate exists;
-- its fresh-context independent final review is `PASS / MAJOR 0 / MINOR 0`;
-- reviewed target SHA-256: `9b3de9eabc503b0036cfc79bacded5a4160b2a5896e20362fdbeb7d3a97cbf5f`;
-- Owner governance state subsequently fixes v0.2.4 as the adopted current design baseline;
-- a post-decision persistent projection is stored under `docs/governance/source-projections/2026-09-12/`.
+Therefore the current safe state is:
 
-What remains unresolved is **not the design revision identity**. The remaining gap is the exact authoritative Canonical freeze Event / Receipt, which this repository projection does not fabricate.
+```text
+AUTHORITATIVE_PRIORITY_RECONCILIATION_RUNTIME = NOT_IMPLEMENTED / NOT DISCOVERABLE
+LATEST_TRIGGER_EVENT = NOT_AVAILABLE
+LATEST_PRIORITY_RECONCILIATION_RECEIPT = NOT_AVAILABLE
+AUTHORITATIVE_REPLAN_REGISTRY = NOT_IMPLEMENTED / NOT DISCOVERABLE
+OPEN_REPLAN_PROPOSALS = UNKNOWN (NOT [])
+```
+
+Source: `artifacts/priorities/runtime-capability-status.json`.
+
+This is why ZM17/ZM18 are structurally answerable without pretending the Runtime already exists.
 
 ## Live Authority infrastructure mapping
 
 Read-only inspection of active `clued-prod` confirms reusable Authority / Scope infrastructure already exists:
 
-- Binding resolver: `public.clued_resolve_binding(...)`;
-- Authorization status: `public.clued_authorization_status_v12(...)`;
-- Project access: `public.clued_project_access_v13(...)`;
-- Effective Resource×Action: `clued_private.authorization_effective_actions_v13(...)`;
-- Project membership: `clued_private.project_memberships_v13`;
-- Authorization entries: `clued_private.authorization_entries_v12`;
-- Development assignment/scope: `clued_private.development_grants_v14`;
-- Development space/version cursor: `clued_private.development_spaces_v14`.
+- `public.clued_resolve_binding(...)`;
+- `public.clued_authorization_status_v12(...)`;
+- `public.clued_project_access_v13(...)`;
+- `clued_private.authorization_effective_actions_v13(...)`;
+- `clued_private.project_memberships_v13`;
+- `clued_private.authorization_entries_v12`;
+- `clued_private.development_grants_v14`;
+- `clued_private.development_spaces_v14`.
 
-Therefore Multi-Track reuses existing Authority and Development Grant semantics instead of creating a second permission/assignment system.
+Multi-Track therefore reuses existing Binding / Membership / Development Grant / Resource×Action semantics rather than creating a second permission or assignment system.
 
 ## Currentness is multi-domain
 
@@ -71,35 +93,67 @@ Authority / Grant / Policy version where applicable
 
 A matching Repository Projection watermark proves projection integrity only; it does not prove upstream Canonical Currentness.
 
-## Projection watermark
+## Priority Snapshot Currentness
 
-`artifacts/priorities/projection-watermark.json` binds expected blob identities for the Bootstrap projection.
+Current Bootstrap assessment:
 
-If a tracked blob differs:
+```text
+Priority Snapshot = CLUED-CURRENT-PRIORITY-SNAPSHOT-v0.1.3-SOURCE-BOUND-20260912
+Repository projection integrity = CHECKABLE
+Upstream Canonical Currentness = UNKNOWN
+PrioritySnapshotCurrentnessReceipt = NOT AVAILABLE
+Side-effect policy = FAIL_CLOSED
+```
 
-`repository_projection_currentness = STALE_OR_MUTATED`
+Machine source: `artifacts/priorities/bootstrap-currentness-assessment.json`.
 
-until regeneration/revalidation.
+This makes ZM23 safely answerable: the Agent knows the snapshot is **not proven CURRENT** and must not convert UNKNOWN into CURRENT.
 
-This remains distinct from:
+## Eligible next action
 
-`canonical_currentness = CURRENT | STALE | UNKNOWN`.
+Repository-only assessment:
 
-## Remaining formal Currentness / Reconciliation gaps
+```text
+Principal = NOT_RESOLVED
+Binding = NOT_RESOLVED
+Development Grant = NOT_RESOLVED
+Currentness = UNKNOWN
+eligible_side_effect_actions = []
+```
 
-After Source Registry normalization, remaining hard gaps are now four:
+Allowed within existing GitHub access:
 
-1. authoritative latest `trigger_event + PriorityReconciliationReceipt`;
-2. authoritative Replan Proposal registry;
-3. this Priority Snapshot's authoritative CurrentnessReceipt / dependency-watermark verification;
-4. real eligible-next-action computation under an authenticated authorized test identity.
+- read repository projection;
+- perform read-only analysis;
+- report unresolved Authority / Currentness;
+- automatically attempt legitimate runtime resolution when a test identity becomes available.
 
-Historical Event/Receipt normalization can continue incrementally, but missing historical receipts no longer prevent a fresh Agent from identifying the exact source and its unresolved Receipt state.
+Machine source: `artifacts/priorities/bootstrap-next-action-assessment.json`.
 
-Unknown values remain `UNKNOWN`, and high-risk actions fail closed.
+This makes ZM25 safely answerable without inventing execution Authority.
 
-## Zero-memory structural preflight
+## E-010 Cross-Host / Thin-Open
 
-Current structural maturity: **`21 / 25`**.
+Safe state:
 
-Final runtime Gate remains unpassed.
+```text
+E-010 design milestone = ✅ COMPLETED
+adopted design revision = v0.2.4
+independent review = PASS
+exact reviewed SHA = 9b3de9eabc503b0036cfc79bacded5a4160b2a5896e20362fdbeb7d3a97cbf5f
+Canonical freeze Event / Receipt = NOT MATERIALIZED IN THIS PROJECTION
+runtime implementation = NOT IMPLIED
+production/publication authority = NOT IMPLIED
+```
+
+## What remains before the final runtime gate
+
+The remaining work is no longer a repository question-answer schema gap. It requires real non-production runtime conditions:
+
+1. a legitimate test Principal / Binding / Membership / Development Grant path;
+2. a verifiable Priority Snapshot Currentness input/receipt once such runtime exists;
+3. Multi-Track Reconciliation / Replan runtime when implemented;
+4. automatic eligible-next-action computation under that identity;
+5. ≥3 dynamically selected qualified fresh-context Agent Runs with automated comparison/evidence.
+
+Until then, final runtime status remains `NOT RUN`.
