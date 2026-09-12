@@ -11,7 +11,11 @@ const sha=v=>crypto.createHash('sha256').update(v).digest('hex');
 export const fixedBridgeEnvironment=Object.freeze({TEMP:'/tmp',TMP:'/tmp',HOME:'',PATH:'',SHELL:'',USER:'',LOGNAME:'',LANG:'',LC_ALL:'',PWD:'',TERM:'',XDG_RUNTIME_DIR:''});
 export function invokeFixedHost({gaRaw,operation,containerId,deadline}){
  if(!['CREATE','START'].includes(operation)||!Number.isFinite(deadline)||Date.now()>=deadline)throw Error('FIXED_LIVE_HOST_OPERATION_REQUIRED');
- if(sha(fs.readFileSync(python))!=='f56a588548dd013906ae1dcd1b6faa417f4e204da634ff354840d9643e78ff9e'||sha(fs.readFileSync(bridge))!=='6df20a6d440ad57b43d748a4b19b0c751bab6948383022bf4d41b1e2e7d3dcdd')throw Error('EXACT_PYTHON_BRIDGE_BYTES_REQUIRED');
+ // Two byte checks, two messages. They shared one until R20-N2: a check can only be proven
+ // live on its own if it has an error only it can raise, and with a single message the
+ // self-test proved the bridge half while the python half went both unproven and unlisted.
+ if(sha(fs.readFileSync(python))!=='f56a588548dd013906ae1dcd1b6faa417f4e204da634ff354840d9643e78ff9e')throw Error('EXACT_PYTHON_BYTES_REQUIRED');
+ if(sha(fs.readFileSync(bridge))!=='ad04167bf0e91257be149c7aef2ea7bdee6967c26e17692caa8323e6e084313d')throw Error('EXACT_PYTHON_BRIDGE_BYTES_REQUIRED');
  const ga=JSON.parse(gaRaw),nonce=sha('clued-fixed-host-v1\0'+ga.gate_authorization_id).slice(0,32);
  const request={operation,nonce,ga_raw:gaRaw,ga_sha256:sha(gaRaw),container_id:operation==='CREATE'?null:containerId};
  const remaining=deadline-Date.now();if(remaining<=0)throw Error('HOST_DEADLINE_ELAPSED_DURING_SOURCE_CHECK');

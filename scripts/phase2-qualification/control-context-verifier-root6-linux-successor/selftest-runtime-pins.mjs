@@ -84,6 +84,72 @@ function bothWays(label, target, probe, expect) {
   ok(`${label} (passes clean; altering ${path.basename(target)} raises ${expect})`);
 }
 
+// Mutates a PIN rather than the object it pins, then repairs the cross-pin chain and runs the
+// probe. R20-F2: the previous version declared three checks unprovable because the things they
+// pin -- sys.platform, /usr/bin/docker, the Skill tree -- cannot be altered from inside a
+// sandbox. That confused "this one technique cannot reach it" with "it cannot be shown live".
+// The pin itself is in the sandbox, and a check fires just as well when its expected value is
+// wrong as when the object is. UNPROVEN was becoming the new carpet, harder to spot than a false
+// ok because it looks like modesty.
+//
+// The chain repair is what makes this safe to do: changing one pin breaks the pins that cover the
+// file containing it, and without repair the probe would fail at the wrong check and the item
+// would pass for the wrong reason. --write is run to a fixed point and the run is abandoned if it
+// does not reach one.
+function byRepin(label, file, from, to, probe, expect) {
+  const abs = path.join(SREPO, file);
+  if (!fs.existsSync(abs)) return fail(`${label}: ${file} is not in the sandbox`);
+  const originals = new Map();
+  const snapshot = () => {
+    for (const f of fs.readdirSync(SDIR)) {
+      const p = path.join(SDIR, f);
+      if (fs.statSync(p).isFile() && !originals.has(p)) originals.set(p, fs.readFileSync(p));
+    }
+    if (!originals.has(abs)) originals.set(abs, fs.readFileSync(abs));
+  };
+  const restore = () => { for (const [p, b] of originals) fs.writeFileSync(p, b); };
+  // Runs --write to a fixed point and reports what the gate still objects to. A repinned HOST
+  // BINARY digest is meant to leave the gate refusing -- that is the gate's whole job -- so
+  // "gate exits 0" is the wrong success condition here. What must hold is that the RUNTIME pin
+  // chain settled (no more repairs) and that the only literal the gate cannot explain is the one
+  // this item deliberately injected. Anything else unexplained means the sandbox is in a state
+  // the probe below would misattribute.
+  const repair = injected => {
+    for (let i = 0; i < 5; i++) {
+      const r = spawnSync(process.execPath, [path.join(SDIR, 'check-digest-pins.mjs'), '--write'],
+        {cwd: SDIR, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe']});
+      const out = (r.stdout || '') + (r.stderr || '');
+      if (/repaired \d+ pin/.test(out)) continue;
+      const unexplained = [...out.matchAll(/UNEXPLAINED\s+\S+ ([a-f0-9]{12})/g)].map(m => m[1]);
+      if (!injected) return unexplained.length === 0 && r.status === 0;
+      return unexplained.length > 0
+        && unexplained.every(h => h.startsWith(injected) || injected.startsWith(h));
+    }
+    return false;
+  };
+  // A repin that changes a digest leaves that digest unexplainable by the gate; a repin that
+  // changes something else (the platform string) does not. Which case this is comes from the
+  // replacement text, not from a flag, so the two cannot drift apart.
+  const injected = (to.match(/[0-9a-f]{8,64}/) || [])[0]?.slice(0, 12) ?? null;
+  snapshot();
+  let pristine, mutated;
+  try { pristine = probe(SDIR); } catch (e) { pristine = String(e.stderr || e.message); }
+  try {
+    const text = fs.readFileSync(abs, 'utf8');
+    const n = text.split(from).length - 1;
+    if (n !== 1) { restore(); return fail(`${label}: the pin text occurs ${n} times in ${file}, expected exactly 1`); }
+    fs.writeFileSync(abs, text.replace(from, () => to));
+    if (!repair(injected)) { restore(); repair(null); return fail(`${label}: after the repin the sandbox did not settle with the injected digest as its only complaint, so the probe below would be measuring something else`); }
+    try { mutated = probe(SDIR); } catch (e) { mutated = String(e.stderr || e.message); }
+  } finally { restore(); if (!repair(null)) fail(`${label}: the sandbox did not return to a consistent state`); }
+
+  if (String(pristine).includes(expect))
+    return fail(`${label}: raises ${expect} on the pristine copy -- ${String(pristine).trim().split('\n').pop().slice(0, 140)}`);
+  if (!String(mutated).includes(expect))
+    return fail(`${label}: repinning did NOT raise ${expect}. The check is not running, so its passing means nothing. Got: ${String(mutated).trim().split('\n').pop().slice(0, 140)}`);
+  ok(`${label} (passes clean; repinning raises ${expect}, with the pinned object untouched)`);
+}
+
 // 1. bridge.py pins fixed_host.py, fixed_host.py pins parent600.py.
 const loadChain = cwd => py(`
 import importlib.util
@@ -139,9 +205,31 @@ print('PREPARE_OK')`, cwd);
 // are outside the sandbox. So success is reported as UNPROVEN, not ok.
 bothWays('prepare(): accepted Skill bytes', 'skills/clued/SKILL.md',
   prepare, 'Exact accepted Skill input bytes changed');
-// The other two pins prepare() carries still cannot be touched from here: sys.platform is not a
-// file, and /usr/bin/docker is outside the sandbox. Completing does not prove either live.
-cannotProve("prepare() completes, but its platform gate and its /usr/bin/docker identity check cannot be mutated from inside the sandbox, so neither of those two is proven live");
+
+// 5b. The three checks that used to be reported UNPROVEN, now proven by repinning (R20-F2).
+//     Nothing here touches sys.platform, /usr/bin/docker, or the real skills tree.
+const QC = QREL + '/' + NAME;
+byRepin('prepare(): platform gate', `${QC}/fixed_host.py`,
+  "if sys.platform != 'linux':\n        raise ValueError('Exact Linux host required')",
+  "if sys.platform != 'win32':\n        raise ValueError('Exact Linux host required')",
+  prepare, 'Exact Linux host required');
+byRepin('prepare(): /usr/bin/docker identity', `${QC}/parent600.py`,
+  "DOCKER_SHA = '18c2a16d", "DOCKER_SHA = '08c2a16d",
+  prepare, 'Exact Docker binary bytes required');
+// 5c. host-effect.mjs's python half. Round 20 found it shared one message with the bridge half,
+//     so it was neither proven nor listed as uncovered; the two now have separate messages, which
+//     is what makes this item possible at all.
+byRepin('host-effect.mjs -> python3.11 bytes', `${QC}/host-effect.mjs`,
+  "!=='f56a588548dd", "!=='056a588548dd",
+  jsPin, 'EXACT_PYTHON_BYTES_REQUIRED');
+// 5d. The two load_exact pins on parent600's import path. Round 20: they sit two lines from three
+//     covered pins, execute on every loadChain run, and were neither covered nor admitted.
+bothWays('cross-directory: parent600 -> validation.py', `${QREL}/docker-engineering-observation/validation.py`,
+  loadChain, 'Frozen dependency changed');
+bothWays('cross-directory: parent600 -> remote_evidence.py', `${QREL}/qualification-runtime/remote_evidence.py`,
+  loadChain, 'Frozen dependency changed');
+
+
 
 // 6. The trusted entry script's own gates. Until now nothing exercised them, and two holes were
 //    found there by hand: sha256sum and cut resolved through $PATH, so a sha256sum earlier in PATH
@@ -226,20 +314,82 @@ bothWays('trusted entry: per-file byte check (the interpreter step)', `${QREL}/$
   else ok(`${label} (passes clean; a __pycache__ directory raises CONTROLLER_BYTECODE_CACHE_PRESENT)`);
 }
 
-// 7. The denominator. Round 18 printed two uncovered items in a free-text line while at least six
-//    existed. Writing the set down and asserting its length is what stops it drifting again: add a
-//    pin without listing it here and this fails.
+// 7. The denominator, and why the previous attempt at one was worthless.
+//
+// Round 18 printed two uncovered items in a free-text line while at least six existed. The fix was
+// to write the set down and assert its length -- and the comment claimed "add a pin without
+// listing it here and this fails". Round 20 showed that sentence was simply false: UNCOVERED.length
+// is compared against a constant eight lines above it, with ZERO coupling to the controller. A real,
+// live, unlisted byte pin was added to fixed_host.py and this file still printed "6 not covered" and
+// exited 0. That was the SIXTH instance of a check that cannot fail -- and the first one that was
+// born inside the remedy for the previous five.
+//
+// So the denominator is now taken FROM the thing under test. Every byte pin necessarily carries a
+// 64-hex literal, so the census counts distinct 64-hex literals per file across the controller's
+// real load set -- its own sources plus the modules it execs or imports across directories -- and
+// requires the total and every per-file count to match. Add a pin anywhere in that set and a count
+// moves and this fails, whatever the lists below say. Counts, not digest values, so repairing a
+// cross-pin chain does not churn the table; a NEW literal is what must be noticed.
+const CENSUS = {
+  'bridge.py': 1, 'check-digest-pins.mjs': 8, 'context.mjs': 22, 'fixed_host.py': 3,
+  'host-effect.mjs': 2, 'parent600.py': 4, 'result-terminal.mjs': 1, 'tool-entry.functions.js': 3,
+  'trusted-github.mjs': 1,
+  // Loaded across directories, so they are part of what runs even though they are not in the
+  // controller directory. signing.mjs is here because round 18 and round 20 both noted that
+  // check-digest-pins' non-recursive readdirSync cannot even see it.
+  'observe.py': 2, 'validation.py': 8, 'remote_evidence.py': 1, 'fixed_skill_fixture.py': 4,
+  'signing.mjs': 0,
+};
+const CENSUS_TOTAL = 60;
+{
+  const CROSS = ['docker-engineering-observation/observe.py',
+                 'docker-engineering-observation/validation.py',
+                 'qualification-runtime/remote_evidence.py',
+                 'control-context-verifier-public-runtime-env-diagnostic-successor/fixed_skill_fixture.py',
+                 'nonproduction-control-store/runtime-successor/commitment-signing-root6-window/signing.mjs'];
+  const scanned = [
+    ...fs.readdirSync(DIR).filter(f => /\.(py|mjs|js)$/.test(f)).map(f => path.join(DIR, f)),
+    ...CROSS.map(rel => path.join(QUAL, rel)),
+  ];
+  const actual = {};
+  let total = 0;
+  for (const p of scanned) {
+    const n = new Set([...fs.readFileSync(p, 'utf8').matchAll(/[a-f0-9]{64}/g)].map(m => m[0])).size;
+    if (n) actual[path.basename(p)] = n;
+    total += n;
+  }
+  for (const rel of CROSS) if (!fs.existsSync(path.join(QUAL, rel))) fail(`census: ${rel} is not there to scan`);
+  const names = new Set([...Object.keys(CENSUS).filter(k => CENSUS[k] > 0), ...Object.keys(actual)]);
+  for (const n of [...names].sort()) {
+    const want = CENSUS[n], got = actual[n] ?? 0;
+    if (want === undefined) fail(`census: ${n} carries ${got} digest literal(s) and is not in CENSUS -- a new pin is not covered and not admitted`);
+    else if (want !== got) fail(`census: ${n} carries ${got} digest literal(s), CENSUS says ${want} -- reclassify the difference below, deliberately`);
+  }
+  if (total !== CENSUS_TOTAL) fail(`census: ${total} digest literal(s) across the load set, CENSUS_TOTAL says ${CENSUS_TOTAL}`);
+  else console.log(`  census      ${total} digest literal(s) across ${scanned.length} file(s) of the real load set, all accounted for`);
+}
+
+// Of those literals, the ones that are runtime byte checks split three ways. This list is the
+// honest part -- what is NOT proven live -- and the census above is what stops it going stale.
 const UNCOVERED = [
-  "arm_watchdog() PYTHON_SHA -- needs a live GA",
+  "fixed_host.py arm_watchdog() PYTHON_SHA -- needs a live GA. Round 20 showed this one is exploitable: written as adjacent-string concatenation of the predecessor's Windows digest, both gates stay green and the controller dies at the first step of START.",
   "trusted-github.mjs expectedGh -- needs a GitHub API call",
-  "_invoke() platform gate and DOCKER_SHA -- needs a container operation",
-  "grr.mjs accepted schema digest -- needs a terminal result",
-  "result-terminal.mjs blob refs -- needs a GitHub API call",
-  "context.mjs schema and issuer digests -- need a full dispatch",
+  "fixed_host.py _invoke()'s platform gate and DOCKER_SHA -- needs a container operation. Separate from prepare()'s pair, which items 5b now prove; these two have their own messages (R20-N2) so they are separately provable once a container operation can be driven.",
+  "grr.mjs's schema check -- it re-hashes the local receipt schema, but against acceptedSchemaSha256 passed in rather than a literal of its own, so the census below cannot see it. Needs a terminal result to exercise.",
+  "result-terminal.mjs's blob refs -- digests of remote material, checked against what GitHub returns; needs an API call",
+  "context.mjs's schema and issuer digests -- need a full dispatch",
   "trusted entry: the /usr/bin/python3.11 and /opt/node22/bin/node byte gates -- both binaries sit outside the sandbox, so item 6 does not prove those two live",
   "trusted entry: the shell binary -- chosen by the harness's exec_command, not by the script, so it can be neither pinned from here nor mutated",
 ];
-if (UNCOVERED.length !== 8) fail(`UNCOVERED has ${UNCOVERED.length} entries; update the assertion deliberately, not by accident`);
+// No length assertion here. There used to be one, and round 20 was right that it was the sixth
+// instance of a check that cannot fail: it compared this array's length to a constant a few lines
+// away and had no connection to the controller at all. The census above is the assertion that
+// bites; this list is the explanation of what the census counted, not the guard.
+//
+// The census has one blind spot, stated rather than papered over: it counts 64-hex LITERALS, so a
+// runtime byte check whose expected value arrives as an argument is invisible to it. grr.mjs is
+// exactly that case and is listed above by hand. A new check of that shape would have to be added
+// here by hand too -- the census will not catch it.
 for (const u of UNCOVERED) console.log('  not covered  ' + u);
 
 if (failures) { console.log(`runtime pin self-test FAILED (${failures} failed, ${unproven} unproven)`); process.exitCode = 1; }

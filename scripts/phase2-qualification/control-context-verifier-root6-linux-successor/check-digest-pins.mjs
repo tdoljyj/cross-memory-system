@@ -102,6 +102,18 @@ const CONTROLLER_SOURCES = [
   'tool-entry.functions.js', 'trusted-github.mjs',
 ];
 if (CONTROLLER_SOURCES.length !== 18) throw new Error('CONTROLLER_SOURCES length changed; declare a new source deliberately, not by accident');
+// R20-F3. Round 20 ran this gate on a host with no gh installed and got
+// "UNEXPLAINED trusted-github.mjs: f687dc937534 matches no file", exit 1 -- correct fail-closed
+// behaviour, but indistinguishable from a real controller defect, and since build-linux-manifest
+// starts by running this gate, the manifest could not be rebuilt there at all. The reviewer's
+// objection was not the refusal, it was that nothing said which binaries a host must have, so
+// "environment missing a component" and "controller broken" had no way to be told apart.
+//
+// They are told apart now: a missing host binary is named as such, with the provisioning document
+// to consult, instead of surfacing as an unexplained digest.
+const HOST_BINARIES = ['/opt/node22/bin/node', '/usr/bin/docker', '/usr/local/bin/gh', '/usr/bin/python3.11'];
+const missingHostBinaries = [];
+
 const controllerFiles = () => {
   const onDisk = fs.readdirSync(DIR)
     .filter(f => /\.(py|mjs|js)$/.test(f))
@@ -134,8 +146,10 @@ const buildIndex = () => {
   // whose evidence the thing it guards can edit is not a gate. The host files whose digests
   // legitimately appear as literals in this controller are these four and no others, so they are
   // named here, in the gate, where the controller cannot reach them.
-  for (const hostFile of ['/opt/node22/bin/node', '/usr/bin/docker', '/usr/local/bin/gh', '/usr/bin/python3.11'])
+  for (const hostFile of HOST_BINARIES) {
     if (fs.existsSync(hostFile)) add(hostFile);
+    else missingHostBinaries.push(hostFile);
+  }
   // R19-F2: this used to walk the whole qualification tree -- 973 files, all of them editable by
   // the thing being guarded. Dropping the manifest from the evidence base (R18-F2) did not close
   // the loop, it only closed one instance of it: a 34-byte notes.txt dropped into
@@ -247,8 +261,10 @@ for (const d of (function walk(dir, acc = []) {
   problems.push(`${path.relative(QUAL, d)} exists: bytecode there is loaded in preference to the .py and no byte check covers it. Remove it.`);
 
 let accounted = 0;
+const perFile = {};
 for (const f of controllerFiles()) {
   const text = fs.readFileSync(path.join(DIR, f), 'utf8');
+  perFile[f] = 0;
   const attempts = new Set([...text.matchAll(ATTEMPT_PIN), ...text.matchAll(BLOBREF_PIN), ...text.matchAll(BLOBREF_PIN2)].map(m => m[1]));
   for (const lit of [...new Set(text.match(HEX) || [])]) {
     const owners = index.get(lit) || [];
@@ -257,12 +273,57 @@ for (const f of controllerFiles()) {
     if (stale.length && !mine.length) {
       problems.push(`${f}: ${lit.slice(0, 12)} is ${path.basename(path.dirname(stale[0]))}/${path.basename(stale[0])}, not this controller's copy`);
     } else if (owners.length || attempts.has(lit) || DECLARED_NON_FILE[lit]) {
-      accounted++;
+      accounted++; perFile[f]++;
     } else {
       problems.push(`${f}: ${lit.slice(0, 12)} matches no file and is not a declared non-file digest`);
     }
   }
 }
+// R17-N1, asked for since round 16 and not done until now: the count is compared against an
+// expected value. Without it the gate is blind in the one direction that matters most -- a literal
+// DISAPPEARING. Round 20 demonstrated the exploit: write arm_watchdog's PYTHON_SHA as two adjacent
+// string literals holding the predecessor's Windows digest, and /[a-f0-9]{64}/ no longer matches
+// it, so the pin drops out of the count, the gate's output is byte-identical to a clean run, and
+// the controller dies at the first step of START. Fewer literals than expected now refuses, and
+// so does more -- a new pin has to be declared here as well as in the self-test's census.
+// Per FILE, not one total. A single total cancels: removing a pin from one file while adding one
+// to another leaves the sum unchanged, and that is not hypothetical -- it is what happened the
+// first time this was tested, and the run passed. Per-file counts shrink the cancellation to a
+// pair inside the same file, which is stated below rather than claimed away.
+const EXPECTED_PER_FILE = {
+  'bridge.py': 1, 'check-digest-pins.mjs': 8, 'context.mjs': 22, 'fixed_host.py': 3,
+  'host-effect.mjs': 2, 'parent600.py': 4, 'result-terminal.mjs': 1,
+  'tool-entry.functions.js': 3, 'trusted-github.mjs': 1,
+};
+if (!problems.length) {
+  for (const f of new Set([...Object.keys(EXPECTED_PER_FILE), ...Object.keys(perFile).filter(k => perFile[k])])) {
+    const want = EXPECTED_PER_FILE[f], got = perFile[f] ?? 0;
+    if (want === undefined)
+      problems.push(`${f}: ${got} digest literal(s) and no expected count. A new pin must be declared here and in selftest-runtime-pins' census.`);
+    else if (got < want)
+      problems.push(`${f}: ${want - got} digest literal(s) have GONE MISSING (${got} found, ${want} expected). A pin written as concatenated string fragments reads as absent here while still running -- round 20 did exactly that to arm_watchdog's PYTHON_SHA and both gates stayed green. Find it before changing this number.`);
+    else if (got > want)
+      problems.push(`${f}: ${got - want} digest literal(s) more than expected (${got} found, ${want} expected). Declare the new pin here and in the census.`);
+  }
+}
+
 if (APPLY && repaired) console.log(`repaired ${repaired} pin(s) over ${round} round(s)`);
-if (problems.length) { for (const p of problems) console.log('  UNEXPLAINED  ' + p); console.log(`REFUSED: ${problems.length} digest literal(s) unexplained`); process.exit(1); }
+if (problems.length) {
+  for (const p of problems) console.log('  UNEXPLAINED  ' + p);
+  if (missingHostBinaries.length) {
+    console.log('');
+    console.log('  HOST INCOMPLETE  this host is missing ' + missingHostBinaries.join(', ') + '.');
+    console.log('  Some or all of the refusals above are that, not a controller defect: a pin whose');
+    console.log('  binary is absent can match nothing. Required binaries and their digests are in');
+    console.log('  HostProvisioning.json beside this file. Install them, then run this again --- if');
+    console.log('  refusals remain, they are real.');
+  }
+  console.log(`REFUSED: ${problems.length} digest literal(s) unexplained`);
+  process.exit(1);
+}
+if (missingHostBinaries.length) {
+  console.log('  HOST INCOMPLETE  missing ' + missingHostBinaries.join(', ') + ' --- see HostProvisioning.json');
+  console.log('REFUSED: the gate cannot vouch for pins whose binaries are not on this host');
+  process.exit(1);
+}
 console.log(`digest pins consistent (${accounted} literal(s) accounted for, 0 unexplained)`);

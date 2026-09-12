@@ -56,8 +56,14 @@ def prepare(nonce, ga_raw):
     # R17-F1: this is the Linux successor. The platform test and the binary identity both move
     # to the already-ported parent600, leaving observe.py -- shared with the predecessors that
     # pin its bytes -- untouched.
-    if sys.platform != 'linux' or observation.digest(Path(parent.DOCKER)) != parent.DOCKER_SHA:
-        raise ValueError('Exact Linux Docker host required')
+    # Two gates, two messages (R20-N2). Sharing one meant neither could be proven live on its
+    # own: mutating the platform check and mutating the docker pin raised the same string, so a
+    # self-test could not tell which had fired -- or whether both were dead and a third thing
+    # raised it.
+    if sys.platform != 'linux':
+        raise ValueError('Exact Linux host required')
+    if observation.digest(Path(parent.DOCKER)) != parent.DOCKER_SHA:
+        raise ValueError('Exact Docker binary bytes required')
     if type(ga_raw) is not str or len(ga_raw.encode()) > 65536:
         raise ValueError('Bounded exact GA bytes required')
     ga = json.loads(ga_raw)
@@ -122,8 +128,12 @@ class FixedHost:
     def _invoke(self, tag, operation, timeout=6, guard=None):
         if operation not in ('create', 'start', 'inspect', 'stop', 'wait'):
             raise ValueError('Fixed operation required')
-        if sys.platform != 'linux' or observation.digest(Path(parent.DOCKER)) != parent.DOCKER_SHA:
-            raise ValueError('Exact Docker executable required')
+        # Same split as prepare()'s, for the same reason (R20-N2): one message over two gates
+        # means neither can be shown to have fired on its own.
+        if sys.platform != 'linux':
+            raise ValueError('Exact Linux host required at invoke')
+        if observation.digest(Path(parent.DOCKER)) != parent.DOCKER_SHA:
+            raise ValueError('Exact Docker executable bytes required at invoke')
         argv = parent.fixed_argv(self.nonce, operation, None if operation == 'create' else identity(self.container))
         started = time.monotonic()
         utc_remaining = (parent.timestamp(self.record['deadline_utc']) - datetime.now(timezone.utc)).total_seconds()
