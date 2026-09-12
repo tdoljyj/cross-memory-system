@@ -1,0 +1,116 @@
+{
+  "schema_version": 1,
+  "kind": "NW01_EXECUTION_RECEIPT",
+  "state": "APPLIED_AND_READ_BACK",
+  "authority_effect": "OWNER_WINDOW_MATERIALIZED_IN_THE_CONTROL_STORE; NO_GENERATION_REGISTERED; NO_BUDGET_CONSUMED",
+  "runbook_step": 9,
+  "executed_at_utc": "2026-09-12T08:13:0xZ",
+  "read_back_at_utc": "2026-09-12T08:14:37.985704Z",
+
+  "authorisation": {
+    "owner_approval_commit": "cbe898d3f5b66f279d78a6b8d583d2c1885d9c89",
+    "owner_approval_pr": 158,
+    "subject_signature_merge": "3887b9e0a2c4e667823031a5294b8d2921fc8d46",
+    "subject_signature_pr": 159,
+    "independent_review": {
+      "round": 11,
+      "document": "artifacts/clued-validation/phase2-entry-preparation-20260908/root6-capacity/SuccessorReviewerRound11.md",
+      "branch": "claude/trusting-keller-mm2s0v",
+      "commit": "fde6a83",
+      "verdict": "NW-01 may be executed; no blocking defect found across all nine questions"
+    },
+    "owner_go_ahead": "given in the running conversation immediately before execution"
+  },
+
+  "exact_input": {
+    "file": "NW01Applied.sql",
+    "sha256": "4d42130aa11efa7b6b678ea7c9fd02e9fe812585b846f87a75f227a62b8e0b57",
+    "identical_to_the_reviewed_bytes": true,
+    "reviewed_value_recorded_by": "SuccessorReviewerRound11.md R11-F10, independently reproduced by the reviewer",
+    "generated_from": {"parameters": "NW01Parameters.json",
+                       "sha256": "e829d90ce0b6559f06b51c914a054bdd52508a3a699aea0842e6cf24e1f744fa",
+                       "generator": "work/nw01/build-nw01.mjs"},
+    "how_it_was_submitted": "transcribed from the file into the Supabase MCP execute_sql client in this session",
+    "transcription_boundary": "The bytes the database received were typed into the tool call, so they are not hash-identical to the archived file by construction; what makes this safe is that the transaction is fail-closed on 26 assertions (15 pre, 11 post). Any transcription error in a pinned literal aborts before or after the mutation and rolls back. The post-image read-back below is the evidence that what committed is what the file specifies."
+  },
+
+  "why_not_apply_migration": "The candidate carries its own begin/commit and was reviewed in that form. apply_migration would wrap it in a second transaction and insert a row into the migration ledger -- a side effect absent from the reviewed candidate and not covered by the approval. The previous window's NW-01 also did not go through the ledger: its last entry is 20260911051555, before that window opened.",
+
+  "preflight": {
+    "file": "NW01Preflight.sql",
+    "sha256": "26dc278fca8d0326971ab63a9c8677f9f041afcfb6c4b7bbe0f6517857b4ad57",
+    "runs": [
+      {"at": "2026-09-12T07:24:12.623162Z", "by": "implementer", "result": "16/16 true"},
+      {"at": "2026-09-12T07:36:11.860467Z", "by": "independent reviewer round 11 (R11-F14)", "result": "16/16 true"},
+      {"at": "2026-09-12T08:13:02.055527Z", "by": "implementer, immediately before execution", "result": "16/16 true"}
+    ],
+    "nothing_between_preflight_and_apply": true,
+    "why_that_mattered": "R11-F12: inside_the_new_window is the only one of the sixteen that flips with time, and it is NOT inside the transaction. The immediately-preceding run is what stood between this and committing an already-expired window."
+  },
+
+  "what_changed": {
+    "rows": 1,
+    "table": "clued_control.accepted_binding",
+    "fields": {
+      "not_before": ["2026-09-11T13:14:51Z", "2026-09-12T07:05:16Z"],
+      "expires_at": ["2026-09-12T13:14:51Z", "2026-09-13T07:05:16Z"],
+      "owner_approval_commit": ["4498102661f626c8e0c489c7d27551acbc8436ea", "cbe898d3f5b66f279d78a6b8d583d2c1885d9c89"],
+      "subject_sha256": ["46867dca9fcdda12580fafe429e07f2e1c71d5ae9d8338a03c1f57221debe1b8", "64ae7adc3c6e156045c4c369ccfaa8fe9ac12611eb926876d26f4100c191a2f5"],
+      "registration_acceptance_sha256": ["40508697dd071ea39528aabef36a440d73a7ee3a78c32efaafab3cf51a87e3b7", "5eb9c845bc98c7e1c2f380cd20a2767ba63a1d2aba9e83427049ac51449b7ebd"],
+      "store_acceptance_sha256": ["66f6d8082e0a0a15a02e473ba870689a9912291c03f6eebcf7f666aaf5294d52", "89e4a85149d7110828142017ddb46454bea093b40266ec1803f9852d32e8afba"],
+      "signature_evidence_sha256": ["ae269c08d02d941f91450594c31ce134b999cdfd61b5acd762b5f616a5965376", "954faff130549cebbc6453957d3e86196f8e0c8dd551040bb20e4f9ffb6ed614"]
+    },
+    "check_constraints_replaced": 3,
+    "trigger_disabled_and_restored": "accepted_binding_immutable",
+    "fields_asserted_unchanged": 9
+  },
+
+  "read_back": {
+    "session": "separate call, read-only select, after COMMIT",
+    "accepted_binding_window": {"not_before": "2026-09-12T07:05:16+00:00", "expires_at": "2026-09-13T07:05:16+00:00"},
+    "constraint_count": 16,
+    "conname_digest": "12b67839ac1caad7d61979d3a19a39c66c39fa537236dae2231ae2608fd0b031",
+    "conname_digest_unchanged": true,
+    "non_internal_triggers": 1,
+    "non_internal_trigger": "accepted_binding_immutable:O",
+    "non_internal_trigger_note": "R11-F13 observed that no guard asserts this table has exactly one non-internal trigger. Measured here after the fact: it does, and it is enabled. The assertion still belongs in CP-01's post-block.",
+    "execution_current": {"sequence": 88, "charged_seconds": 9906, "charged_evidence_bytes": 2201594803,
+                          "active_ga_id": null, "pending_budget_sequence": null},
+    "current_head": {"sequence": 5, "generation_id": "ctrgen_e5df432221344996afc04b5638121d96", "revoked": false},
+    "root_state": "STORED_NO_GATE_AUTHORITY",
+    "root_events": 5,
+    "effective_execution_binding_prosrc_sha256": "c721b056a771a3a019d1f0cee862408ba56afcbd4d683f45802e8f51c0580d16"
+  },
+
+  "consequences_measured_not_assumed": {
+    "metadata_binding_sha256": ["356416e8...", "ee5d85faebda1878b3c676dfcc13ecd35d896e5f390907bce39e79bda83caba5"],
+    "sha256_of_read_execution_root": ["e7624fda1441e309bfa3bdd2afb8a00f8636199ab201b3e5ecfadf46214bc109",
+                                      "da8c633d6b44d3acf367e06bf3997684744166e966509f0a12d3ef158ba6420f"],
+    "note": "root carries metadata_binding_sha256, the digest of this whole row, so changing the row changes the root digest. This is the exact mechanism that broke reserve_gate:35 and reserve_execution_budget:40 in the first place, and it has now moved that value a second time. Neither function was callable before this transaction and neither is callable after it; CP-01 edits G8/B9 are what repair them, in the shape round 10 adjudicated."
+  },
+
+  "not_done_by_this_transaction": [
+    "no generation registered; current_head is still root5 at sequence 5",
+    "no budget reserved or consumed; charged_seconds is 9906 of 10506 and the single 600-second allocation remains",
+    "no control-plane function changed; effective_execution_binding's prosrc is byte-identical",
+    "no capacity ceiling touched",
+    "no row in any table other than accepted_binding"
+  ],
+
+  "ordering_consequence_discovered_here": {
+    "what": "CP-01 cannot be finalized at runbook step 9 as written, because round 10's option (e) makes edits G8/B9 pin a digest of the projected root that INCLUDES the root6 registration event.",
+    "why": "derive-projected-root-digest.sql takes the registration body and its idempotency_key as inputs. Those are produced at runbook step 11.",
+    "revised_order": [
+      "9a. build the root6 registration body (was step 11)",
+      "9b. run derive-projected-root-digest.sql to resolve the (ii) placeholder, publish it for review",
+      "9c. finalize CP-01, pin the three post-image digests, submit for independent review",
+      "9d. apply CP-01 with read-back",
+      "9e. Owner merge 3 carrying the registration body BYTE-IDENTICAL to what 9b hashed, plus ContinuationSubjectSignatureEvidence.json (R11-F4)",
+      "9f. register root6"
+    ],
+    "hard_requirement": "The registration body merged at 9e must be byte-identical to the one whose digest CP-01 pinned at 9c. If it is edited after 9c, the guard installed by CP-01 will reject the very registration it was built for.",
+    "status": "recorded, not yet reflected in ExecutionRunbook.md"
+  },
+
+  "boundary": "One transaction, committed. Preflight ran immediately before with all sixteen guards true, and nothing was interposed between them. The transaction was not interrupted and was not retried. Everything else in this receipt is read-only measurement."
+}
