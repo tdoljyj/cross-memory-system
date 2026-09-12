@@ -1,6 +1,8 @@
 # Owner 待签清单：root6 容量批准
 
-**状态：`CANDIDATE_AWAITING_OWNER`。** 本清单与同目录的 [`CapacityApprovalCandidate.json`](CapacityApprovalCandidate.json) 由实施方起草。**候选文件不是批准**，它是一张表格；只有你补全四个字段并合并之后，它才成为批准。
+**状态：`COMPLETED_AWAITING_OWNER_MERGE`。** 本清单与同目录的 [`Root6OriginalInput4000000CapacityApproval20260912.json`](Root6OriginalInput4000000CapacityApproval20260912.json) 由实施方起草并按 Owner 指示填写完毕。
+
+**它现在仍不是一份生效的批准。** 权威依据是 owner-merge 签名链——只有你合并之后它才生效。
 
 ## 为什么需要它
 
@@ -12,20 +14,11 @@ root6 控制器把 `capacityDelta.source_refs_maximum` 从 131 改为 **133**。
 
 三份缺一，运行在第一道容量检查上就失败。
 
-## 你只需要填四个字段
+## 受控制器强制的字段
 
-候选文件里其余全部已按控制器强制值填好，并已自检通过（`capacity_delta`、`baseline`、`bounded_series_constraints` 三项与控制器常量的 `canonicalDigest` 完全一致）。
+除下列四项外，其余全部由生成器**直接从控制器的冻结常量取值**，而非手抄——手抄正是把逐字节比对搞坏的典型方式。生成器在写文件前用 `canonicalDigest` 自检 `capacity_delta`、`baseline`、`bounded_series_constraints` 三项与控制器完全一致，不一致即拒绝输出。
 
-| 字段 | 说明 |
-| --- | --- |
-| `approved_at` | UTC 时间戳。**必须 ≥ `2026-09-12T00:00:00Z`，且早于继任者的 `accepted_at`，且早于运行时刻** |
-| `authority` | 授权依据的类型 |
-| `approval_text` | 你的批准原话 |
-| `source` | 该批准出自何处 |
-
-`limitations` 已从前代继承，你可以改。
-
-## 关于前代的做法，必须先说清楚
+## 关于授权形式
 
 前代那份批准（`f3afb108…`）的字段是：
 
@@ -35,14 +28,9 @@ approval_text  = "不要一直问我了，我授权你替我批准，直到完�
 source.kind    = "CURRENT_CONVERSATION_USER_DELEGATION"
 ```
 
-也就是说——**上一份容量批准是实施方援引你在对话里的一句概括性授权、代你起草并代批的。**
+即：**上一份容量批准是实施方援引一句概括性对话授权、代为起草并代批的。**
 
-我不打算默认照抄这个做法，理由有二：
-
-1. 这一次批准的实质内容是**一次 cap extension**，而它与治理文档的明示排除条款逐字冲突（见下）。用一句"我授权你替我批准，直到完成此任务"去覆盖一次明知与排除条款冲突的扩容，是把概括授权当成了具体授权。
-2. 本系统在别处使用的权威形式是 **owner-merge 签名链**，比对话记述强得多。这份文件本来就要经你合并，那就让合并本身成为权威依据。
-
-**如果你选择沿用 `user_explicit` 的写法，那也是你的决定，只是请明确说一句**，我会把「本批准沿用概括性对话授权，未针对该 cap extension 单独取得具体授权」如实写进文件。
+实施方本不打算默认照抄，理由是这次批的实质是一次与治理排除条款逐字冲突的 cap extension，用概括授权覆盖它等于把概括当具体。Owner 指示「沿用旧写法，你填上」，故沿用该形式——但见下节，实际记录比原计划更准确。
 
 ## 这次批准实际上在批什么
 
@@ -69,12 +57,35 @@ source.kind    = "CURRENT_CONVERSATION_USER_DELEGATION"
 
 三者须**依次递增**。不得盖同一时间戳再倒排顺序。当前已在窗口内，所以取"现在"即可。
 
-## 步骤
+## 已完成的填写
 
-1. 编辑 `CapacityApprovalCandidate.json`，把四个 `<<OWNER_MUST_COMPLETE>>` 换成实际值
-2. 删除 `candidate_status` 与 `authority_effect` 两个字段（它们只是候选态标记，控制器不读，但留着会让文档自称"尚未生效"）
-3. 提交并开 PR，**创建合并提交**（非 squash / 非 rebase），base `main`，由你本人在 GitHub 上合并
-4. 合并后把 merge commit 告诉我，我核验签名链并把新批准的 blob / sha256 交给继任者
+Owner 指示「沿用旧写法，你填上」，四个字段已由实施方填入：
+
+| 字段 | 值 |
+| --- | --- |
+| `approved_at` | `2026-09-12T00:54:15.197Z`（在窗口内） |
+| `authority` | `user_explicit`（沿用前代形式） |
+| `approval_text` | `行 按你的建议来` |
+| `source.messages` | 三条实际对话原文，各自批准了什么已逐条标注 |
+
+**一处比原计划更准确的记录**：此前打算写「未针对该 cap extension 单独取得具体授权」。实际不然——实施方的建议里逐字写了「三处 131 上限抬到 133」，Owner 以「行 按你的建议来」批准。**该扩容在被批准之前已被指名**，因此文件记的是这一事实，而非一句泛泛的概括授权。
+
+文件另含 `conflicts_with_governing_exclusion` 字段，逐字引用与之冲突的 `excluded` 条款，并标注 `independently_reviewed: false`。
+
+已核验（控制器 `REAL_EXACT_CAPACITY_APPROVAL_REQUIRED` 六项 + 时序两项，8/8 通过）：
+
+```
+sha256   d06494658f1c9ee90e83951ab7a4ff33306ac9ff978f2d3a200baf50f2a8b0d7
+blob_sha b923d2cf2c97b3a6707ea3714b81a990fa6858c8
+bytes    6049
+```
+
+**注意：上述 blob_sha 只有在文件字节不再变动时才有效。** 若合并前又改动，须重算。
+
+## 剩下要 Owner 做的
+
+1. 开 PR，**创建合并提交**（非 squash / 非 rebase），base `main`，由你本人在 GitHub 上合并
+2. 合并后把 merge commit 告诉实施方，核验签名链后把新批准的 blob / sha256 交给继任评估者
 
 ## 之后会发生什么
 

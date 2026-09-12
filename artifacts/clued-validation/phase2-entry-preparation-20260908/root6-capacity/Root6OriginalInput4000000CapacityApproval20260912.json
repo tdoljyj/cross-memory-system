@@ -61,16 +61,30 @@
     "sha256": "0021a37881a62d61d47da9b5f4125e822b0196ac5f245210fe5bc6823c0049ab"
   },
   "approved_change_index_sha256": "0021a37881a62d61d47da9b5f4125e822b0196ac5f245210fe5bc6823c0049ab",
-  "approved_at": "<<OWNER_MUST_COMPLETE>>",
-  "authority": "<<OWNER_MUST_COMPLETE>>",
-  "approval_text": "<<OWNER_MUST_COMPLETE>>",
-  "source": "<<OWNER_MUST_COMPLETE>>",
+  "approved_at": "2026-09-12T00:54:15.197Z",
+  "authority": "user_explicit",
+  "approval_text": "行 按你的建议来",
+  "source": {
+    "kind": "CURRENT_CONVERSATION_USER_DELEGATION",
+    "messages": [
+      "可以抬",
+      "行 按你的建议来",
+      "沿用旧写法，你填上"
+    ],
+    "what_each_approved": {
+      "可以抬": "前推额度 15 → 16（另见 OwnerForwardCapExtensionOverride.json）",
+      "行 按你的建议来": "实施方所提建议，其中逐字包含「三处 131 上限抬到 133」与窗口延长至一周。本批准的实质内容即此项。",
+      "沿用旧写法，你填上": "授权实施方以本 authority/source 形式代为填写本文件。"
+    },
+    "timestamp_semantics": "approved_at is the actual delegated approval preparation time, not the time of the user message"
+  },
   "limitations": [
-    "One additional 600-second nonproduction allocation, no automatic retry/refund; only within unchanged Root5 expiry.",
+    "Raises capacity_delta.source_refs_maximum from 131 to 133 only. Every other capacity_delta field is byte-identical to the predecessor.",
+    "One additional 600-second nonproduction allocation, no automatic retry/refund; only within the root6 window ending 2026-09-19T00:00:00Z.",
     "Original input 4,000,000 bytes and escaped publisher JSON 8 MiB; first/second frames remain 4 MiB, original nineteen oracles unchanged.",
-    "Does not replace independent review, signed Status/runtime binding, real observations or final signed GRR."
+    "Does not replace independent review, signed Status/runtime binding, real observations or final signed GRR.",
+    "Does not authorize any further cap extension, new root, new signing identity, paid/model budget or production authority."
   ],
-  "candidate_status": "CANDIDATE_NOT_AN_APPROVAL_UNTIL_OWNER_COMPLETES_AND_MERGES",
   "what_changed_from_predecessor": {
     "field": "capacity_delta.source_refs_maximum",
     "from": 131,
@@ -80,5 +94,6 @@
     "independently_reviewed": false,
     "note": "Every other field of capacity_delta is identical to the predecessor."
   },
-  "authority_effect": "NONE_UNTIL_OWNER_MERGE"
+  "approval_provenance": "Prepared by the implementing side under the Owner instruction 「沿用旧写法，你填上」, following the same authority form as the predecessor approval f3afb108…, which also carried authority \"user_explicit\" with an approval_text quoting a conversational delegation. Recorded plainly rather than presented as a bespoke signature. Note the delegation here is NOT merely general: the implementing side stated the change as 「三处 131 上限抬到 133」 in the recommendation the Owner approved with 「行 按你的建议来」, so this extension was named before it was approved. The authoritative form remains the owner-merge signature chain; this document carries no authority until the Owner merges it.",
+  "conflicts_with_governing_exclusion": "BoundedSeriesApplicability20260910.excluded reads verbatim: \"Production, paid/model budget, Gold, A03-A11 formal business measurement, new root or identity, cap extension, automatic retry, refund.\" Raising a cap is a cap extension. The code does not enforce excluded — context.mjs:165 executes only three booleans — but the conflict does not disappear because of that. This is the second instance of the class, after the forward cap raise recorded in OwnerForwardCapExtensionOverride.json. Not independently reviewed."
 }
