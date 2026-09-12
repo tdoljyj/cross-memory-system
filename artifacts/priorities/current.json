@@ -4,10 +4,14 @@
   "authority_effect": "NONE",
   "source_registry_ref": "artifacts/priorities/source-registry.json",
   "bootstrap_context_ref": "artifacts/priorities/bootstrap-context.json",
+  "runtime_capability_status_ref": "artifacts/priorities/runtime-capability-status.json",
   "authority_currentness_contract_ref": "artifacts/priorities/authority-currentness-contract.json",
   "projection_watermark_ref": "artifacts/priorities/projection-watermark.json",
+  "bootstrap_currentness_assessment_ref": "artifacts/priorities/bootstrap-currentness-assessment.json",
+  "bootstrap_next_action_assessment_ref": "artifacts/priorities/bootstrap-next-action-assessment.json",
   "fresh_agent_recovery_contract_ref": "docs/governance/priorities/fresh-agent-recovery-contract.md",
-  "zero_memory_structural_preflight": "21/25",
+  "zero_memory_structural_safe_answer_coverage": "25/25",
+  "zero_memory_multi_agent_runtime_gate": "NOT_RUN_NOT_ELIGIBLE_TO_CLAIM_PASS",
   "tracks": [
     {"track_id":"E","name":"工程与平台","frontier":["E-001","E-008"],"note":"E-001 是严格主链第一优先；E-008 仅允许非阻塞 Bootstrap/Inventory 工作。"},
     {"track_id":"P","name":"产品与体验","frontier":["P-006","P-004"],"note":"可继续评审/设计，但不得抢占 Kernel 主链资源；Product Runtime 主链仍被 E-007 前置阻塞。"},
@@ -66,10 +70,15 @@
     {"id":"B-007","track":"B","title":"Distribution / Go-to-market / Growth Validation","status":"READY","mark":"○","priority":"B1"}
   ],
   "known_hard_identity_conflict": null,
+  "runtime_state": {
+    "priority_reconciliation_runtime": "NOT_IMPLEMENTED_OR_NOT_DISCOVERABLE",
+    "authoritative_replan_registry": "NOT_IMPLEMENTED_OR_NOT_DISCOVERABLE",
+    "priority_snapshot_currentness": "UNKNOWN_FAIL_CLOSED",
+    "repository_only_eligible_side_effect_actions": []
+  },
   "known_authority_gaps": [
-    "not every normalized source has a materialized Canonical Event/Receipt",
-    "principal-specific Authority / Visibility / Development Grant values unresolved until authenticated Clued read",
-    "Priority Snapshot CurrentnessReceipt / upstream dependency watermark unresolved",
-    "authoritative Replan / PriorityReconciliationReceipt unresolved"
+    "final runtime test identity/binding/currentness inputs not yet resolved",
+    "Priority Snapshot does not yet have authoritative CurrentnessReceipt",
+    "PriorityReconciliation/Replan runtime remains unimplemented"
   ]
 }
