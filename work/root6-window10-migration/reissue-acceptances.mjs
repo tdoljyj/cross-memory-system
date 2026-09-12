@@ -19,7 +19,12 @@ const V17_REL = 'artifacts/clued-validation/phase2-entry-preparation-20260908/bo
 const CONTROLLER_REL = 'scripts/phase2-qualification/control-context-verifier-root6-window10-successor';
 
 const sha = x => crypto.createHash('sha256').update(x).digest('hex');
-const blobSha = b => crypto.createHash('sha1').update('blob ' + b.length + '\0').update(b).digest('hex');
+const blobSha = b => {
+  // Must be a Buffer. Given a string, b.length is the UTF-16 code unit count, not the byte
+  // length, and the git blob header would be wrong -- producing a plausible but incorrect id.
+  if (!Buffer.isBuffer(b)) throw Error('blobSha_REQUIRES_A_BUFFER_NOT_A_STRING');
+  return crypto.createHash('sha1').update('blob ' + b.length + '\0').update(b).digest('hex');
+};
 const blobUri = id => 'https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/' + id;
 
 // ---- fixed inputs, all independently verified before this script was written ----

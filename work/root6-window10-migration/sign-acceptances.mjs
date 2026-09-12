@@ -20,7 +20,12 @@ const V17_REL = 'artifacts/clued-validation/phase2-entry-preparation-20260908/bo
 const CTX = path.join(REPO, 'scripts/phase2-qualification/control-context-verifier-root6-window10-successor/context.mjs');
 
 const sha = x => crypto.createHash('sha256').update(x).digest('hex');
-const blobSha = b => crypto.createHash('sha1').update('blob ' + b.length + '\0').update(b).digest('hex');
+const blobSha = b => {
+  // Must be a Buffer. Given a string, b.length is the UTF-16 code unit count, not the byte
+  // length, and the git blob header would be wrong -- producing a plausible but incorrect id.
+  if (!Buffer.isBuffer(b)) throw Error('blobSha_REQUIRES_A_BUFFER_NOT_A_STRING');
+  return crypto.createHash('sha1').update('blob ' + b.length + '\0').update(b).digest('hex');
+};
 const src = fs.readFileSync(CTX, 'utf8');
 
 // Pull each required state string out of the check that enforces it. If the controller ever states
@@ -92,7 +97,7 @@ for (const [file, state] of [
 
   const raw = JSON.stringify(doc, null, 2) + '\n';
   fs.writeFileSync(p, raw);
-  out[file] = { state: doc.state, accepted_at: ACCEPTED_AT, bytes: raw.length, sha256: sha(raw), blob_sha: blobSha(Buffer.from(raw)) };
+  out[file] = { state: doc.state, accepted_at: ACCEPTED_AT, bytes: Buffer.byteLength(raw), sha256: sha(raw), blob_sha: blobSha(Buffer.from(raw)) };
 }
 
 console.log(JSON.stringify({
