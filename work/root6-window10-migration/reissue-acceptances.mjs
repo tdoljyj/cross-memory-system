@@ -33,9 +33,9 @@ const NEW_DIGEST = '72d9eb92cf287ee6fda1fdbb97d90d02ed7f0e368398cba4ddb517233413
 // source_commit must contain the root6 directory, because verifySourcePublication requires every
 // declared source to be present in BOTH source_ref.tree and the owner merge tree. 4d33717 is the
 // second parent of the owner merge, so the required ancestor relation holds.
-const SOURCE_COMMIT = '006283296d163a061fae9121f91243803cfcfc5b';
-const SOURCE_TREE = '9bbbdc9125dd213d0a74c45a1622324caa4eb521';
-const OWNER_MERGE = 'a573ca93e094bc9a4a8dccc23c1e165b6b368ff4';
+const SOURCE_COMMIT = 'a8fb29ed94a8325a848e3289c362164bce4d15d0';
+const SOURCE_TREE = 'b9e508bd7b1d8213fbd8c4a13ef79e5babc1c44a';
+const OWNER_MERGE = 'ad3d589c03ded47110eaecbb47c48ff90600acdc';
 const FORWARD_CAP_FROM = 15, FORWARD_CAP_TO = 16;
 
 
@@ -66,6 +66,39 @@ function setPathShape(doc, label, dotted, expectedShape, next) {
   node[parts.at(-1)] = next;
   changes.push({ document: label, path: dotted, from: expectedShape, to: { commit: next.commit, tree: next.tree, refs: next.blobs.length } });
 }
+
+
+// ---- the four capacity documents, all now Owner-published ----
+// Each descriptor's publication is checked by verifyOwnerMergeArtifact (context.mjs:214), so each
+// must sit in an Owner-merged tree at the stated path with exactly these bytes.
+const CAP_DIR = 'artifacts/clued-validation/phase2-entry-preparation-20260908/root6-capacity/';
+const APPROVAL_V2 = {
+  path: CAP_DIR + 'Root6OriginalInput4000000CapacityApproval20260912.v2.json',
+  publication_commit: '01ea76755526c2d20b93dc56b06ed6f24be801c1',
+};
+const APPLICABILITY = {
+  path: CAP_DIR + 'Root6CurrentController4000000CapacityApplicability20260912.json',
+  publication_commit: 'ad3d589c03ded47110eaecbb47c48ff90600acdc',
+};
+const REPAIR_043 = {
+  path: CAP_DIR + 'Root6Current043CapacityRepairAcceptance20260912.json',
+  publication_commit: 'ad3d589c03ded47110eaecbb47c48ff90600acdc',
+};
+// v1 is also on main. Binding it instead of v2 fails outright, and the successor's applicability
+// says so explicitly, so the descriptor is built from the path rather than from a copied hash.
+const descriptor = d => {
+  const raw = fs.readFileSync(path.join(REPO, d.path));
+  return {
+    ref: { uri: blobUri(blobSha(raw)), sha256: sha(raw) },
+    publication: { commitSha: d.publication_commit, artifactPath: d.path },
+  };
+};
+
+
+// The controller's frozen capacity delta, extracted rather than retyped.
+const capacityDelta = (0, eval)('(' + /const capacityDelta=Object\.freeze\((\{.*?\})\);/s
+  .exec(fs.readFileSync(path.join(REPO, CONTROLLER_REL + '/context.mjs'), 'utf8'))[1] + ')');
+if (capacityDelta.source_refs_maximum !== 133) throw Error('CONTROLLER_NOT_AT_133');
 
 const readJson = rel => JSON.parse(fs.readFileSync(path.join(REPO, rel), 'utf8'));
 const changes = [];
@@ -269,6 +302,38 @@ const DELTA =
     PREDECESSOR_STATUS_SCHEMA, controller('status-manifest.root5.schema.json'));
   setPath(doc, L, 'accepted_subject.control_schema_refs.GateResultReceipt',
     PREDECESSOR_GRR_SCHEMA, controller('gate-result-receipt.root5.schema.json'));
+
+  // ---- the three capacity bindings, all now Owner-published ----
+  // This is the third and last place source_refs_maximum had to move to 133. The approval and the
+  // applicability carry it too; the successor reviewer found this one, which an earlier round here
+  // missed while claiming to have enumerated the conflict.
+  setPath(doc, L, 'accepted_subject.capacity_delta',
+    doc.accepted_subject.capacity_delta.source_refs_maximum === 131
+      ? doc.accepted_subject.capacity_delta : null,
+    capacityDelta);
+  setPath(doc, L, 'accepted_subject.capacity_materials.approval',
+    doc.accepted_subject.capacity_materials.approval, descriptor(APPROVAL_V2));
+  setPath(doc, L, 'accepted_subject.capacity_materials.applicability',
+    doc.accepted_subject.capacity_materials.applicability, descriptor(APPLICABILITY));
+
+  // The 043 repair is appended, not substituted. repairAccepted uses .some(), so the predecessor
+  // entry simply stops matching while remaining in the record.
+  const repairs = doc.accepted_subject.bounded_series_materials.repairs;
+  const before = repairs.length;
+  repairs.push(descriptor(REPAIR_043));
+  changes.push({ document: L, path: 'bounded_series_materials.repairs', appended: REPAIR_043.path, from_count: before, to_count: repairs.length });
+
+  // Stated so no downstream reader mistakes the forward cap for independently reviewed.
+  doc.forward_cap_not_covered_by_independent_review = {
+    change: 'qualificationLimits.forwards ' + FORWARD_CAP_FROM + ' to ' + FORWARD_CAP_TO,
+    covered_by_this_acceptance: false,
+    covered_by_the_independent_capacity_applicability: false,
+    basis: 'artifacts/clued-validation/phase2-entry-preparation-20260908/OwnerForwardCapExtensionOverride.json',
+    note: 'A controller constant, outside both the root3 appendix scope and capacity_delta. Its problem ' +
+          'is not that it violates the excluded clause but that no document backs it at all. The ' +
+          'successor reviewer stated explicitly that signing the capacity applicability does not ' +
+          'endorse it. Recorded here so that is not lost.',
+  };
 
   // window5/7/8/9 continuation evidence is historical and untouched. Root6 is added beside it.
   doc.window10_continuation_evidence = {

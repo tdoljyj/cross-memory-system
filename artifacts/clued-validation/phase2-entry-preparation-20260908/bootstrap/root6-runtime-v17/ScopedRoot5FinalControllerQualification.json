@@ -13,8 +13,8 @@
   "independent_of_tested_skill": true,
   "forbidden_stage_dependencies_excluded": true,
   "source_ref": {
-    "commit": "006283296d163a061fae9121f91243803cfcfc5b",
-    "tree": "9bbbdc9125dd213d0a74c45a1622324caa4eb521",
+    "commit": "a8fb29ed94a8325a848e3289c362164bce4d15d0",
+    "tree": "b9e508bd7b1d8213fbd8c4a13ef79e5babc1c44a",
     "blobs": [
       {
         "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/c27f94214d5e55889861f933e111b53241ecbc86",
@@ -550,9 +550,9 @@
       }
     ]
   },
-  "source_commit": "006283296d163a061fae9121f91243803cfcfc5b",
-  "source_tree": "9bbbdc9125dd213d0a74c45a1622324caa4eb521",
-  "source_owner_merge": "a573ca93e094bc9a4a8dccc23c1e165b6b368ff4",
+  "source_commit": "a8fb29ed94a8325a848e3289c362164bce4d15d0",
+  "source_tree": "b9e508bd7b1d8213fbd8c4a13ef79e5babc1c44a",
+  "source_owner_merge": "ad3d589c03ded47110eaecbb47c48ff90600acdc",
   "actual_repository_source_files": 144,
   "ordered_source_ref_count": 133,
   "source_publication_state": "LOCAL_EXACT_PUBLISHED_TREE_PREPARATION_VERIFIED_LIVE_GITHUB_READBACK_REQUIRED",
@@ -742,7 +742,7 @@
     "bytes": 45465,
     "blob_sha": "11543a4296ebff3569c1ab7aeb18db9f759b2f0f"
   },
-  "successor_delta": "Root6 window migration. The predecessor was bound to the root5 generation ctrgen_e5df432221344996afc04b5638121d96 and the window ending 2026-09-11T10:21:05Z, which lapsed before the qualification run could use it. This successor is bound to the root6 generation ctrgen_5e0440a95ac8ee257b9e4236cabd275b, the Owner-approved window 2026-09-12T00:00:00Z .. 2026-09-19T00:00:00Z, and the root6 controller 72d9eb92cf287ee6fda1fdbb97d90d02ed7f0e368398cba4ddb517233413d145 published by Owner merge a573ca93e094bc9a4a8dccc23c1e165b6b368ff4. The controller forward cap was raised from 15 to 16 under an Owner override recorded in OwnerForwardCapExtensionOverride.json, which conflicts with the cap extension exclusion in BoundedSeriesApplicability20260910 and is not independently reviewed. No scope, oracle, limit other than that cap, capacity, reviewer identity or historical record is changed; the window5, window7, window8 and window9 continuation records are preserved byte for byte as statements about those windows.",
+  "successor_delta": "Root6 window migration. The predecessor was bound to the root5 generation ctrgen_e5df432221344996afc04b5638121d96 and the window ending 2026-09-11T10:21:05Z, which lapsed before the qualification run could use it. This successor is bound to the root6 generation ctrgen_5e0440a95ac8ee257b9e4236cabd275b, the Owner-approved window 2026-09-12T00:00:00Z .. 2026-09-19T00:00:00Z, and the root6 controller 72d9eb92cf287ee6fda1fdbb97d90d02ed7f0e368398cba4ddb517233413d145 published by Owner merge ad3d589c03ded47110eaecbb47c48ff90600acdc. The controller forward cap was raised from 15 to 16 under an Owner override recorded in OwnerForwardCapExtensionOverride.json, which conflicts with the cap extension exclusion in BoundedSeriesApplicability20260910 and is not independently reviewed. No scope, oracle, limit other than that cap, capacity, reviewer identity or historical record is changed; the window5, window7, window8 and window9 continuation records are preserved byte for byte as statements about those windows.",
   "historical_component_applicability": {
     "path": "work/env-order-repair-approved-execution/accepted-reviews-exact/EnvHistoricalComponentApplicability.json",
     "sha256": "ce147276bfc766f2381b31fae9a8fb421e077082d899bc05eb6960e4f7cbd060",
