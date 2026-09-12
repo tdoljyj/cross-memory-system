@@ -185,6 +185,39 @@ const pinned = table.postimage_prosrc_sha256 || {};
 const missing = table.functions.filter(f => !/^[0-9a-f]{64}$/.test(pinned[f.function] || ''));
 const draft = placeholders.length > 0 || unauthorised.length > 0 || missing.length > 0;
 
+// ---- guards added after round 11 ------------------------------------------------------------
+// R11-F12: the only condition that flips with time must be inside the transaction, not only in a
+// preflight run beforehand. R11-F13: a prohibition stated in the approval is not a guard; the
+// eleven other control-plane functions are pinned here so the transaction enforces what
+// cp01.prohibited only asserts.
+const G = table.transaction_guards_added_after_round_11;
+const UNTOUCHED_DIGEST_EXPR = `(select encode(sha256(convert_to(string_agg(sig||'='||sha, E'\\n' order by sig),'UTF8')),'hex')
+     from (select p.oid::regprocedure::text as sig,
+                  encode(sha256(convert_to(p.prosrc,'UTF8')),'hex') as sha
+             from pg_proc p join pg_namespace n2 on n2.oid = p.pronamespace
+            where n2.nspname = 'clued_control'
+              and p.oid::regprocedure::text not in (${table.functions.map(f => q(f.function)).join(', ')})) u)`;
+
+const roundElevenGuards = tag => `
+  -- R11-F12: inside the Owner window. The one condition that changes on its own, so it belongs
+  -- here and not only in a preflight taken minutes earlier.
+  if not (clock_timestamp() >= ${q(G.window_assertion.not_before)}::timestamptz
+          and clock_timestamp() < ${q(G.window_assertion.expires_at)}::timestamptz) then
+    raise exception 'CP01_${tag}OUTSIDE_THE_OWNER_WINDOW: % is not within [% , %)',
+      clock_timestamp(), ${q(G.window_assertion.not_before)}, ${q(G.window_assertion.expires_at)};
+  end if;
+
+  -- R11-F13: every clued_control function this transaction does not replace, pinned as one digest.
+  select count(*) into c from pg_proc p join pg_namespace n2 on n2.oid = p.pronamespace
+   where n2.nspname = 'clued_control';
+  if c <> ${G.untouched_functions_assertion.total_functions_in_schema} then
+    raise exception 'CP01_${tag}FUNCTION_COUNT_DRIFT: %', c;
+  end if;
+  got := ${UNTOUCHED_DIGEST_EXPR};
+  if got is distinct from ${q(G.untouched_functions_assertion.digest)} then
+    raise exception 'CP01_${tag}UNTOUCHED_FUNCTIONS_DRIFT: %', got;
+  end if;`;
+
 let apply = banner(draft
   ? 'CP-01 DRAFT transaction. MUST NOT BE RUN. See the blocking list immediately below.'
   : 'CP-01 candidate transaction. NOT YET AUTHORISED TO RUN.') +
@@ -251,6 +284,8 @@ for (const [sig, sha] of Object.entries(table.preimage_prosrc_sha256)) {
   end if;`;
 }
 
+apply += roundElevenGuards('');
+
 apply += `
 
   -- clued_control.effective_execution_binding() is asserted above and MUST NOT be replaced here.
@@ -303,6 +338,8 @@ ${subsValues(fn)}
 `;
 }
 
+apply += roundElevenGuards('POST_');
+
 apply += `
   -- The one function that must be byte-identical to how it started.
   select encode(sha256(convert_to(p.prosrc, 'UTF8')), 'hex') into got
@@ -337,6 +374,25 @@ const opens = apply.split('$' + DOTAG + '$').length - 1;
 if (opens !== 2) fail(`the DO block tag $${DOTAG}$ appears ${opens} times in the generated ` +
                       `transaction; expected exactly 2 (open and close)`);
 if (derive.includes('$' + DOTAG + '$')) fail(`the read-only derivation must not contain a DO block`);
+
+// A missing key interpolates as the string "undefined" and lands in the SQL. That happened here
+// with total_functions vs total_functions_in_schema, and earlier in this run with a Python
+// dict.get() returning None into a document. It fails loudly in Postgres rather than passing
+// silently, but a generator should not be able to emit it at all.
+//
+// The needle is escaped before it becomes a pattern. The first version of this check did not, and
+// "[object Object]" was read as a character class -- the guard was matching something other than
+// what it named, which is the same family of mistake it exists to catch.
+// `null` is deliberately not on the list: it is valid SQL and seeds the recursive CTE rows.
+const reEscape = t => t.replace(/[.*+?^${}()|[\]\\]/g, m => '\\' + m);
+for (const [name, text] of [['cp01-derive.sql', derive], ['cp01-apply.candidate.sql', apply]])
+  for (const bad of ['undefined', 'NaN', '[object Object]']) {
+    const at = text.search(new RegExp('(^|[^A-Za-z_.])' + reEscape(bad) + '($|[^A-Za-z_])'));
+    if (at >= 0)
+      fail(`${name} contains the literal ${JSON.stringify(bad)} at offset ${at} -- a template read ` +
+           `a key that does not exist. Fix the reference, not the output.\n  context: ...` +
+           text.slice(Math.max(0, at - 100), at + 90).replace(/\n/g, ' ') + '...');
+  }
 
 fs.writeFileSync(path.join(HERE, 'cp01-derive.sql'), derive);
 fs.writeFileSync(path.join(HERE, 'cp01-apply.candidate.sql'), apply);
