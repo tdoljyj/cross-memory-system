@@ -1,0 +1,70 @@
+{
+  "schema": "clued.bootstrap-priority-diff/0.1",
+  "status": "BOOTSTRAP_DIFF_NOT_AUTHORITY",
+  "authority_effect": "NONE",
+  "trigger_facts": [
+    {
+      "id": "TRIGGER-ZM-STRUCTURAL-25",
+      "type": "VERIFICATION_RESULT",
+      "fact": "ZERO_MEMORY_STRUCTURAL_SAFE_ANSWER_COVERAGE=25/25 PASS",
+      "source": "docs/governance/priorities/zero-memory-preflight.md"
+    },
+    {
+      "id": "TRIGGER-TEST-IDENTITY-DISCOVERY",
+      "type": "RESOURCE_CAPABILITY_CHANGE",
+      "fact": "AUTOMATED_TEST_IDENTITY_NOT_AVAILABLE",
+      "source": "artifacts/priorities/runtime-test-identity-discovery.json"
+    },
+    {
+      "id": "TRIGGER-CI-PREEXEC",
+      "type": "EXTERNAL_EXECUTION_BLOCKER",
+      "fact": "PR workflows fail before repository steps start: steps=[] / runner_id=0",
+      "source": "PR #160 CI evidence"
+    }
+  ],
+  "before_frontier": {
+    "engineering": ["E-001", "E-008"],
+    "product": ["P-006", "P-004"],
+    "research": ["R-002", "R-004", "R-005", "R-006"],
+    "business": ["B-002", "B-003"]
+  },
+  "after_frontier": {
+    "engineering": ["E-001", "E-008"],
+    "product": ["P-006", "P-004"],
+    "research": ["R-002", "R-004", "R-005", "R-006"],
+    "business": ["B-002", "B-003"]
+  },
+  "priority_rank_changes": [],
+  "status_effects": [
+    {
+      "item": "E-008",
+      "effect": "BOOTSTRAP_STRUCTURAL_RECOVERY_SUBMILESTONE_COMPLETED",
+      "detail": "25/25 safe-answer coverage reached"
+    },
+    {
+      "item": "E-008",
+      "effect": "FINAL_RUNTIME_GATE_BLOCKED",
+      "reason": "AUTOMATED_TEST_IDENTITY_NOT_AVAILABLE"
+    },
+    {
+      "item": "E-008",
+      "effect": "PR_MERGE_BLOCKED",
+      "reason": "CI_PRE_EXECUTION_STARTUP_FAILURE"
+    }
+  ],
+  "resource_arbitration": {
+    "changed": false,
+    "strict_heavy_engineering_priority": "E-001",
+    "explanation": "Neither Bootstrap structural completion nor its external blockers justify consuming E-001 heavy engineering capacity."
+  },
+  "replan_required": false,
+  "human_approval_required": false,
+  "churn_prevention": "No frontier reorder because the discoveries change E-008 closeout/readiness, not strategic priority.",
+  "safe_next_bootstrap_actions": [
+    "prepare E-008 closeout execution plan",
+    "continue read-only CI startup diagnosis when evidence is available",
+    "run fresh-context independent repository review when an automated qualified reviewer is available",
+    "do not create runtime test identity without separate authorized implementation work"
+  ],
+  "interpretation": "This is a Bootstrap dogfood diff. It demonstrates the intended future reconciliation semantics but is not a PriorityReconciliationReceipt and does not mutate Canonical priority state."
+}
