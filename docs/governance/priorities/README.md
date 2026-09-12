@@ -14,13 +14,17 @@ This directory is a repository projection of Clued's multi-track governance stat
 4. `cross-track-map.md` — hard dependency / typed impact map
 5. `currentness.md` — Currentness / Authority reconciliation
 6. `authority-currentness-contract.md` — Binding / Membership / Development Grant / Resource×Action / Currentness resolution contract
-7. `fresh-agent-recovery-contract.md` — zero-memory recovery read order and fail-closed rules
-8. `zero-memory-preflight.md` — current structural recovery score
-9. `../../../../artifacts/priorities/current.json` — machine-readable Bootstrap Snapshot
-10. `../../../../artifacts/priorities/source-registry.json` — machine-readable normalized source registry
-11. `../../../../artifacts/priorities/bootstrap-context.json` — Track goals, typed impacts, parallel/resource rules and Bootstrap boundaries
-12. `../../../../artifacts/priorities/authority-currentness-contract.json` — machine-readable runtime Authority / Currentness resolver contract
-13. `../../../../artifacts/priorities/projection-watermark.json` — repository-side projection drift watermark
+7. `runtime-capability-status.md` — authoritative Multi-Track Runtime implementation/discovery status
+8. `fresh-agent-recovery-contract.md` — zero-memory recovery read order and fail-closed rules
+9. `zero-memory-preflight.md` — structural safe-answer coverage
+10. `../../../../artifacts/priorities/current.json` — machine-readable Bootstrap Snapshot
+11. `../../../../artifacts/priorities/source-registry.json` — normalized source registry
+12. `../../../../artifacts/priorities/bootstrap-context.json` — Track goals, typed impacts, parallel/resource rules and Bootstrap boundaries
+13. `../../../../artifacts/priorities/runtime-capability-status.json` — runtime implementation/discovery state
+14. `../../../../artifacts/priorities/authority-currentness-contract.json` — runtime Authority / Currentness resolver contract
+15. `../../../../artifacts/priorities/projection-watermark.json` — repository-side projection drift watermark
+16. `../../../../artifacts/priorities/bootstrap-currentness-assessment.json` — fail-closed Priority Snapshot currentness assessment
+17. `../../../../artifacts/priorities/bootstrap-next-action-assessment.json` — fail-closed next-action assessment
 
 ## Rules
 
@@ -37,9 +41,9 @@ This directory is a repository projection of Clued's multi-track governance stat
 
 ## Source provenance
 
-`source-registry.json` now covers **49/49** Priority Items.
+`source-registry.json` covers **49/49** Priority Items.
 
-For each item a fresh Agent can resolve:
+For each Item a fresh Agent can resolve:
 
 `primary source → exact SHA/Ref → authority state → supporting source chain → Receipt state`.
 
@@ -47,7 +51,7 @@ Receipt gaps remain explicit and never become invented Authority.
 
 ## Authority / Currentness
 
-The Bootstrap contract reuses existing Clued runtime infrastructure rather than creating a second authorization system:
+Multi-Track reuses existing Clued runtime infrastructure:
 
 `Binding → Authorization → Membership → Development Grant / Scope → Effective Resource×Action → Currentness → Eligible Next Action`
 
@@ -60,15 +64,23 @@ Assignment Scope = NOT_RESOLVED
 Eligible side-effect actions = []
 ```
 
-## Current Zero-Memory status
+## Runtime capability truth
 
-Structural preflight is currently **21 / 25**.
+Authoritative Multi-Track PriorityReconciliation / Replan Runtime is currently `NOT_IMPLEMENTED / NOT DISCOVERABLE` in the read-only discovery scope.
 
-Remaining four hard gaps:
+Therefore:
 
-1. authoritative PriorityReconciliation trigger/Receipt;
-2. authoritative Replan registry;
-3. Priority Snapshot CurrentnessReceipt / upstream dependency watermark verification;
-4. real eligible-next-action computation under an authorized test identity.
+```text
+latest PriorityReconciliationReceipt = NOT_AVAILABLE
+authoritative Replan Registry = NOT_IMPLEMENTED / NOT DISCOVERABLE
+open Replan Proposals = UNKNOWN, not []
+```
 
-Final ≥3 Agent Runtime Gate remains unpassed.
+## Zero-Memory status
+
+```text
+STRUCTURAL SAFE-ANSWER COVERAGE = 25 / 25 PASS
+FINAL ≥3 AGENT RUNTIME GATE = NOT RUN
+```
+
+`25/25` means every recovery question has a truthful machine-readable answer path, including `UNKNOWN / NOT_IMPLEMENTED / FAIL_CLOSED` where appropriate. It does **not** mean Multi-Track Runtime or the final automated multi-Agent Gate has passed.
