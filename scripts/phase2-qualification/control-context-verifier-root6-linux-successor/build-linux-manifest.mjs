@@ -61,6 +61,35 @@ for (const f of fs.readdirSync(path.join(REPO, NEW_DIR)).sort()) {
   repoSrc.push(entry(p, 'REPOSITORY_SOURCE'));
 }
 
+// 1b. Files the controller reads at runtime by path, which neither the predecessor's list nor the
+// controller-directory enumeration produces. The route B review found these by strace, not by
+// pattern: every one is opened during a real run and none was in the manifest.
+//
+// The three Skill files are the reason this cannot wait for a route decision. Their bytes are
+// checked by fixed_skill_fixture.py's SUBJECT digests -- but inside prepare(), which is part of
+// CREATE, which happens AFTER the GA is issued and AFTER the budget is reserved. A drifted Skill
+// byte would therefore burn the single 600-second allocation, exactly the shape of R21-F3. Listed
+// here, the trusted entry refuses before node starts, at no cost. They are also absent from
+// source_ref.blobs today, so nothing compares them between the source tree and the Owner merge
+// tree either.
+//
+// package.json is read by node while resolving ajv. Its content barely matters -- it is a lone
+// "type": "module" -- but "every file the controller reads is in the manifest" should be true
+// rather than nearly true.
+const RUNTIME_PATH_READS = [
+  'skills/clued/SKILL.md',
+  'skills/clued/references/engineering.md',
+  'skills/clued/references/memory-operations.md',
+  'apps/clued-cloud/package.json',
+];
+if (RUNTIME_PATH_READS.length !== 4) throw new Error('RUNTIME_PATH_READS length changed; declare deliberately');
+for (const rel of RUNTIME_PATH_READS) {
+  if (listed.has(rel)) continue;
+  if (!fs.existsSync(path.join(REPO, rel))) throw new Error('RUNTIME_PATH_READ_MISSING: ' + rel);
+  repoSrc.push(entry(rel, 'REPOSITORY_SOURCE'));
+  listed.add(rel);
+}
+
 // 2. Host binaries. Symlinks are resolved: what is pinned must be the bytes that execute.
 const bins = ['/opt/node22/bin/node', '/usr/bin/docker', '/usr/local/bin/gh', '/usr/bin/python3.11']
   .map(p => entry(fs.realpathSync(p), 'RUNTIME_DEPENDENCY'));
