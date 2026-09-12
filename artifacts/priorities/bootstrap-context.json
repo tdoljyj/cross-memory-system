@@ -1,8 +1,10 @@
 {
-  "schema": "clued.multitrack-bootstrap-context/0.1",
+  "schema": "clued.multitrack-bootstrap-context/0.2",
   "status": "BOOTSTRAP_PROJECTION_CANDIDATE_NOT_AUTHORITY",
   "authority_effect": "NONE",
   "source_snapshot": "CLUED-CURRENT-PRIORITY-SNAPSHOT-v0.1.3-SOURCE-BOUND-20260912",
+  "authority_currentness_contract_ref": "artifacts/priorities/authority-currentness-contract.json",
+  "projection_watermark_ref": "artifacts/priorities/projection-watermark.json",
   "track_goals": {
     "E": "把 Clued 的 Kernel、Canonical、Authority、Currentness、Runtime、Integration、Distribution 与研发基础设施推进到可验证、可恢复、可向 Product Next 交棒的健康工程基线。",
     "P": "把已固定的产品、品牌、Console、Context、Connect 与多轨能力转化为普通用户能够可靠使用、理解并持续继续的产品体验。",
@@ -55,28 +57,35 @@
   },
   "currentness": {
     "snapshot_currentness":"UNKNOWN_UNTIL_CANONICAL_VERIFIED",
-    "repository_projection_currentness":"BRANCH_LOCAL_CANDIDATE",
+    "repository_projection_currentness":"CHECKABLE_WITH_PROJECTION_WATERMARK",
     "canonical_version":null,
     "event_watermark":null,
     "currentness_receipt":null,
     "last_known_good_projection":"CLUED-CURRENT-PRIORITY-SNAPSHOT-v0.1.3-SOURCE-BOUND-20260912",
-    "fail_closed_for_high_risk_actions":true
+    "fail_closed_for_high_risk_actions":true,
+    "model":"DEPENDENCY_MANIFEST_PLUS_SCOPE_SPECIFIC_WATERMARKS"
   },
   "authority_projection": {
     "repository_projection_grants_authority":false,
     "current_principal":null,
     "visibility_scope":null,
+    "development_grant_scope":null,
     "eligible_actions":null,
+    "resolver_contract":"artifacts/priorities/authority-currentness-contract.json",
     "forbidden_actions":[
       "Do not infer production, database, deployment, release, secret, budget or canonical-write authority from repository projection files.",
       "Do not infer an Agent may execute an item merely because it appears READY or high priority.",
-      "Do not use this repository projection to bypass Resource×Action + selector/scope authorization or Owner/Policy gates."
+      "Do not use this repository projection to bypass Resource×Action + selector/scope authorization, Development Grant scope or Owner/Policy gates."
     ],
-    "resolution_required":"Authenticate against Clued and resolve the principal's current Resource×Action + selector/scope authority before execution."
+    "resolution_required":"Authenticate against Clued, resolve Binding + Membership + Development Grant + effective Resource×Action, then verify currentness before execution."
   },
-  "known_currentness_gap": {
+  "cross_host_currentness": {
     "id":"E-010",
-    "state":"LATEST_ADOPTED_REVISION_UNKNOWN",
-    "safe_claim":"A formal Cross-Host / Thin-Open Integration & Distribution baseline exists; this projection does not assert v0.2.4 as the verified current revision."
+    "design_milestone":"COMPLETED",
+    "adopted_design_revision":"v0.2.4",
+    "independent_review":"PASS",
+    "reviewed_sha256":"9b3de9eabc503b0036cfc79bacded5a4160b2a5896e20362fdbeb7d3a97cbf5f",
+    "canonical_freeze_event_receipt":"NOT_MATERIALIZED_IN_THIS_PROJECTION",
+    "runtime_implementation":"NOT_IMPLIED"
   }
 }
