@@ -91,8 +91,8 @@
         "owner_merge_commit": "cbe898d3f5b66f279d78a6b8d583d2c1885d9c89",
         "signed_object_sha256": "95973246e3ae8d33fe407960d41e47039399575c59b4f78f83882835e73d9f80",
         "signature_evidence_ref": {
-          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/fcddb0acee7056435117fdefdccce55ed5ad1bdc",
-          "sha256": "954faff130549cebbc6453957d3e86196f8e0c8dd551040bb20e4f9ffb6ed614"
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/cad73582f879ed77df94edc13f23af1ebb95fc4d",
+          "sha256": "69e84e741814765067e81dfa5842f46d9887cea2a3c149fc03b422b7bd51cfc1"
         }
       },
       "generation_ordinal": 6,
