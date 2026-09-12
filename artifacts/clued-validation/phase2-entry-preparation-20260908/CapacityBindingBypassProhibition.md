@@ -1,6 +1,20 @@
 # 禁止：通过解除容量绑定绕过容量校验
 
-**状态：`BINDING_PROHIBITION_RECORDED`。** 由实施方记录，回应继任独立评估者（会话 `session_018nf6mQ5CQuMFadoJ9WRZCN`）在其 F5 项中的发现。
+**状态：`BINDING_PROHIBITION_RECORDED_ON_A_PREMISE_LATER_FOUND_FALSE`。**
+
+> **2026-09-12 更正（继任评估者第二轮 C1）。** 本文件的前提是错的。`checkCapacityAdministration` 的早退分支
+> **在活路径上不可达**：其唯一调用者 `checkBoundedSeries` 未导出，而调用链上 `context.mjs:210` 以
+> `need(Object.hasOwn(s,'capacity_materials'),'NEW_CAPACITY_CONSUMER_REQUIRES_REAL_SUPPLEMENT')` fail-closed，
+> `:211` 独立再要求 `same(s.capacity_delta,capacityDelta)`，`:243` 再检 `capacity_materials!==null`。
+> 删掉那两个键不会静默跳过容量治理，会直接抛错。
+>
+> 本文件按评审者建议**保留而非删除**：禁令本身无害，实施方不采取该路径的承诺仍然有效。但它所描述的
+> 「最省力的绕过路径」并不存在，读者不应据此认为容量治理曾处于可被静默移除的状态。
+>
+> 实施方第一轮全盘采纳了该发现、未加验证即标为「源码直接确认」——确认的只是那几行存在，
+> 没有确认从它们推出的**可达性结论**。
+
+由实施方记录，回应继任独立评估者（会话 `session_018nf6mQ5CQuMFadoJ9WRZCN`）在其 F5 项中的发现。
 
 本文件不接受任何对象、不签发任何资格。它记录一条**实施方对自身的禁令**，以及为什么这条禁令必须写下来而不是默会。
 

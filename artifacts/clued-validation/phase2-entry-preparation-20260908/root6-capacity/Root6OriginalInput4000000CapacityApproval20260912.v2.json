@@ -1,0 +1,111 @@
+{
+  "state": "APPROVED_EXACT_ORIGINAL_INPUT_CAPACITY_SUPPLEMENT",
+  "base_proposal_sha256": "ea96914e218460339508bc51eff0d10de41e1a94cfa3a0a544a85a132219791b",
+  "base_approval_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/86636aa78807ca1ce1facbdd910f7c3d27a75177",
+    "sha256": "fe114f0860dc69a52cd448ae697e8d8692fe39e51d84ab8bb60edfe01ace97fe"
+  },
+  "bounded_series_constraints": {
+    "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+    "root_generation": "ctrgen_2e778ca66244459f974b081edca8c04e",
+    "project": "uscrdifznmlvczcekqpw",
+    "expires_at": "2026-09-10T10:13:16Z",
+    "maximum_new_ga": 3,
+    "maximum_new_forward": 3,
+    "per_ga_seconds": 600,
+    "per_ga_evidence_bytes": 134217728,
+    "maximum_series_charged_seconds": 6906,
+    "root_seconds_cap": 7200,
+    "evidence_cap": 1530506163,
+    "first_pass_stops": true,
+    "refund": false,
+    "automatic_retry": false,
+    "production": false,
+    "model_budget": 0,
+    "paid_budget": 0
+  },
+  "capacity_delta": {
+    "original_input_bytes_before": 3300000,
+    "original_input_bytes_after": 4000000,
+    "original_input_kind_before": "EXACT_ORIGINAL_VERIFIER_INPUTS_BLOB_V5_3300000",
+    "original_input_kind_after": "EXACT_ORIGINAL_VERIFIER_INPUTS_BLOB_V6_4000000",
+    "ga_raw_bytes": 65536,
+    "control_request_and_grr_bytes": 131072,
+    "evidence_index_bytes": 131072,
+    "first_frame_bytes": 4194304,
+    "second_frame_bytes": 4194304,
+    "publisher_request_bytes": 8388608,
+    "publisher_response_bytes": 8388608,
+    "source_batch_response_bytes": 33554432,
+    "source_refs_maximum": 133,
+    "root_strict_json_bytes": 2097152,
+    "original_field_count": 5,
+    "original_nineteen_oracles_unchanged": true,
+    "old_signed_objects_rewritten": false,
+    "new_root": false,
+    "new_signing_identity": false,
+    "refund": false
+  },
+  "baseline": {
+    "failed_ga_id": "ga_04377008dc04437d9ee9d28a3c79ff3a",
+    "failed_receipt_sha256": "b27286d6fcb54e34a62d8738f49c1ecafe3210c9a321a703c3828e38497e434c",
+    "terminal_phase": "BLOCKED",
+    "sequence": 49,
+    "charged_seconds": 5706,
+    "charged_evidence_bytes": 1262070707,
+    "used_series_allocations": 1,
+    "maximum_remaining_allocations": 2
+  },
+  "capacity_proposal_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/63a1fa29e3771f60b610a4538e5a7ff0bc7620a0",
+    "sha256": "8befb8fd8f89c76759611361a44942b0b8a8800ca2ef753d4f33d7c8ed679149"
+  },
+  "approved_change_index_sha256": "8befb8fd8f89c76759611361a44942b0b8a8800ca2ef753d4f33d7c8ed679149",
+  "approved_at": "2026-09-12T00:54:15.197Z",
+  "authority": "user_explicit",
+  "approval_text": "行 按你的建议来",
+  "source": {
+    "kind": "CURRENT_CONVERSATION_USER_DELEGATION",
+    "messages": [
+      "可以抬",
+      "行 按你的建议来",
+      "沿用旧写法，你填上"
+    ],
+    "what_each_approved": {
+      "可以抬": "前推额度 15 → 16（另见 OwnerForwardCapExtensionOverride.json）",
+      "行 按你的建议来": "实施方所提建议，其中逐字包含「三处 131 上限抬到 133」与窗口延长至一周。本批准的实质内容即此项。",
+      "沿用旧写法，你填上": "授权实施方以本 authority/source 形式代为填写本文件。"
+    },
+    "timestamp_semantics": "approved_at is the actual delegated approval preparation time, not the time of the user message"
+  },
+  "limitations": [
+    "Raises capacity_delta.source_refs_maximum from 131 to 133 only. Every other capacity_delta field is byte-identical to the predecessor.",
+    "One additional 600-second nonproduction allocation, no automatic retry/refund; only within the root6 window ending 2026-09-19T00:00:00Z.",
+    "Original input 4,000,000 bytes and escaped publisher JSON 8 MiB; first/second frames remain 4 MiB, original nineteen oracles unchanged.",
+    "Does not replace independent review, signed Status/runtime binding, real observations or final signed GRR.",
+    "Does not authorize any further cap extension, new root, new signing identity, paid/model budget or production authority."
+  ],
+  "what_changed_from_predecessor": {
+    "field": "capacity_delta.source_refs_maximum",
+    "from": 131,
+    "to": 133,
+    "why": "The root6 controller declares 133 ordered source references: 131 plus the two files added to avoid editing a signing module that 64 other artifacts pin by hash.",
+    "conflicts_with": "BoundedSeriesApplicability20260910.excluded, which reads verbatim \"... new root or identity, cap extension, automatic retry, refund.\" Raising a cap is a cap extension.",
+    "independently_reviewed": false,
+    "note": "Every other field of capacity_delta is identical to the predecessor."
+  },
+  "approval_provenance": "Prepared by the implementing side under the Owner instruction 「沿用旧写法，你填上」, following the same authority form as the predecessor approval f3afb108…, which also carried authority \"user_explicit\" with an approval_text quoting a conversational delegation. Recorded plainly rather than presented as a bespoke signature. Note the delegation here is NOT merely general: the implementing side stated the change as 「三处 131 上限抬到 133」 in the recommendation the Owner approved with 「行 按你的建议来」, so this extension was named before it was approved. The authoritative form remains the owner-merge signature chain; this document carries no authority until the Owner merges it.",
+  "reissue": {
+    "supersedes": {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/root6-capacity/Root6OriginalInput4000000CapacityApproval20260912.json",
+      "sha256": "d06494658f1c9ee90e83951ab7a4ff33306ac9ff978f2d3a200baf50f2a8b0d7",
+      "bytes": 6049,
+      "blob_sha": "b923d2cf2c97b3a6707ea3714b81a990fa6858c8",
+      "owner_merge": "77330e254896a02c09cc8e22555819dcf5018fdc"
+    },
+    "reason": "The superseded approval declared source_refs_maximum 133 while capacity_proposal_ref and approved_change_index_sha256 pointed at a proposal declaring 131. Those two fields were carried over from the predecessor by the implementing side as historical pins; they are not historical pins, they are the pointer to the proposal being approved. Found by the successor independent reviewer (R2-F1). The controller cannot detect it -- it checks the ref shape and never reads the proposal.",
+    "substance_unchanged": true,
+    "approved_at_unchanged_because": "The Owner decision being recorded is the same one, at the same moment. Only the pointer is corrected, so re-dating it would misrepresent when the decision was made and would also disturb the ordering constraint against the applicability."
+  },
+  "governing_exclusion_analysis": "An earlier version of this approval asserted that raising source_refs_maximum conflicts with the \"cap extension\" term in BoundedSeriesApplicability20260910.excluded, and recorded it as the second instance of that class after the forward cap. The successor independent reviewer rejected that reading, and the rejection is accepted here. The excluded clause governs the root3 appendix's own scope caps; source_refs_maximum sits in capacity_delta, the supplemental layer, which has been raised under this same mechanism three times already (128, 130, 131), each with an Owner approval and an independent applicability. Reading excluded to cover it would retroactively invalidate those three and the 4,000,000-byte original input limit that this run depends on. This is the fourth use of the path the appendix's own delegation_effect prescribes. NOTE: this reasoning does NOT extend to qualificationLimits.forwards 15 to 16, which is a controller constant outside capacity_delta with no document backing; that remains an open item recorded in OwnerForwardCapExtensionOverride.json."
+}

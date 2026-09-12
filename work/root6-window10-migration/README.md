@@ -38,7 +38,7 @@ manifest 使用**规范编码**：紧凑单行、固定键序、按 `localeCompa
 | 2 | `source-publication.mjs:10` | manifest 路径改指 root6 目录 | **唯一能"静默产出无效结果"的路径**。留旧值则要么在 600 秒窗口内、GA 签发之后死于 `ACTUAL_CONTROLLER_MANIFEST_BYTES`；要么为使其通过而把绑定摘要留在 root5，于是运行成功却认证了错误的源闭包——root6 文件从未被任何 manifest 校验覆盖 |
 | 3 | `tool-entry.functions.js:39` | 启动路径改指 root6 目录（2 处） | 该文件跨三代逐字节抄写，从未更新路径，实际校验并启动的是 `root5-final-successor/cli.mjs`。fail-closed，但其字节受 manifest 摘要约束 |
 | 4 | `context.mjs` ×9 | 代际常量、代际链、`generationForBudget`/`expiryForBudget` 的 root6 分支、continuation 钉住点、2 处 cutoff、1 处容量到期 | 多处硬失败；第 170 行 continuation 与第 55 行 `CURRENT_ROOT_GENERATION_REQUIRED`（每个操作都跑）**互斥无解** |
-| 5 | `root-window-validation.mjs:31` | Owner 窗口**只抬上界** | 经 `context.mjs:58` 在 `checkCurrentSemantics` 中每个操作调用。**只抬上界，下界保持 `2026-09-10T13:18:47Z` 不动。** 曾一度把下界前推至窗口起点，理由是「批准窗口否则只有一端受约束」——那个改动是错的，`context.mjs:44` 要求注册体 `not_before ≤ 容量批准 approved_at`，而批准早于窗口起点，收紧下界会使 `CAPACITY_APPROVAL_CURRENT_ROOT5_TIME` 在窗口内**任何时刻**无解。已回退。须知：`approved_at` 对下界的约束**只在容量材料被绑定时成立**（`checkCapacityApprovalTime` 仅在 `checkCapacityAdministration` 内被调用，而后者可早退，见 `CapacityBindingBypassProhibition.md`） |
+| 5 | `root-window-validation.mjs:31` | Owner 窗口**只抬上界** | 经 `context.mjs:58` 在 `checkCurrentSemantics` 中每个操作调用。**只抬上界，下界保持 `2026-09-10T13:18:47Z` 不动。** 曾一度把下界前推至窗口起点，理由是「批准窗口否则只有一端受约束」——那个改动是错的，`context.mjs:44` 要求注册体 `not_before ≤ 容量批准 approved_at`，而批准早于窗口起点，收紧下界会使 `CAPACITY_APPROVAL_CURRENT_ROOT5_TIME` 在窗口内**任何时刻**无解。已回退。`approved_at` 对下界的约束是**无条件成立**的：容量材料恒被绑定（`context.mjs:210` fail-closed），故 `checkCapacityApprovalTime` 恒执行。（此处一度按第一轮 F4-2 写成「只在容量材料被绑定时成立」，该发现已由评审者自行更正为错误，此句随之回退。） |
 | 6 | manifest 编码 | 规范编码 + 自检 | 初版用缩进 + 码点排序，与项目编码器在第 106 项即分叉。`verifySourcePublication` 只做 `JSON.parse` + 摘要比对，不会发现；但任何用项目自带 builder 重新推导的复核者会得到不同 digest，而该 digest 是资格、运行时验收、预算事件与 StatusManifest 共同承诺的值 |
 | 7 | `status-manifest.root5.schema.json` | 2 处代际 const | schema 被实际编译执行，与 `context.mjs:310` 要求的 root6 及 `:312` 的 `observations.root_generation` **互斥无解** |
 | 8 | `gate-result-receipt.root5.schema.json` + `commitment-signing-root6-window/signing.mjs`（新后继） | 1 处代际 const；代际白名单 | 前者使**最终 GRR 交付物过不了自己的 schema**；后者使 `makeCommitment` 在签 GA 与 GRR 时抛 `purpose_audience_generation_mismatch`——**在最后 600 秒里才会炸** |
@@ -62,46 +62,49 @@ manifest 使用**规范编码**：紧凑单行、固定键序、按 `localeCompa
 - 第 165 行读取的是该文档的静态字段，检的是"文档声明了这三项为 false"，而非"当前世界中不存在新代际"。root6 注册不改动该文档任何字节。
 - **决定性依据**：该控制器自身经评审的源码即预期新代际——`generationForBudget` 显式含 root4 与 root5 两个代际分支，而它同时携带第 165 行与这份 root3 appendix。若注册新代际违反第 165 行，root4 与 root5 不可能存在。
 
-**2. 前推额度 15 → 16：与治理文档的明示排除冲突，经 Owner 明示批准后 override。**
+**2. 前推额度 15 → 16：无任何文档背书，经 Owner override。定性已修正。**
 
-同一份 appendix 的 `excluded` 字段逐字包含 "**cap extension**"。抬升前推额度即属此项。该冲突**不因代码不拦而消失**——第 165 行只执行那三个布尔值，`excluded` 是散文，未被任何 `need()` 执行。
+> **2026-09-12 修正（继任评估者第二轮）。** 此前把它与 `source_refs_maximum` 一并写成「违反 `excluded` 的 cap extension」，
+> 那个定性是错的，至少是不精确的。评审者指出 `excluded` 管的是 root3 appendix **自己那套 scope 上限**；
+> `source_refs_maximum` 在 `capacity_delta` 里，属既有补充层，已走过 128→130→131 三次正路。按逐字读法，
+> 那三次也违规，整条容量补充链连同本轮依赖的 4,000,000 字节上限一并作废——归谬成立，故该读法不成立。
+>
+> 同一论证也适用于前推额度：`qualificationLimits.forwards` 既不在 appendix 的 scope 里，也不在 `capacity_delta` 里。
+> 所以它的问题**不是「违反 excluded」，而是更直接的一条——它没有任何文档背书**。
+> 评审者指出较廉价的补法是重签有界序列适用性（Owner 决定评估范围第 3 项）。这是 Owner 的决定，未定。
 
 已按 Owner 决定走 override，并如实记录于
 [`OwnerForwardCapExtensionOverride.json`](../../artifacts/clued-validation/phase2-entry-preparation-20260908/OwnerForwardCapExtensionOverride.json)，其中载明：被推翻的确切条款与文档字节哈希、实时数据库核验、未采取的正路及其受阻原因、以及该批准的权威形式弱于本系统他处使用的 owner-merge 签名链。
 
 **未采取的正路**：该 appendix 自身的 `delegation_effect` 表明，当年 one-GA 数量上限耗尽时，走的是**新签一份补充批准**而非推翻旧条款。同一机制本可用于此处，但 `context.mjs:164` 硬校验 `appendix.independent_reviewer === '/root/project_list_auth_fix'`，而该评估主体已不存在，且原始 bootstrap 授权禁止实施方自行更换评估者。该问题已由 Owner 解决：见 [`OwnerIndependentReviewerSuccessionDecision.md`](../../artifacts/clued-validation/phase2-entry-preparation-20260908/OwnerIndependentReviewerSuccessionDecision.md)，经 `a573ca9` 合并生效。继任者为独立会话 `session_018nf6mQ5CQuMFadoJ9WRZCN`。**注意：main 上的 `IndependentReviewerSuccessionProposal.md` 是被它取代的旧提案，其 `<SUCCESSOR_IDENTITY>` 占位符已不再适用。**
 
-**须明说的后果**：本轮的合规叙事因此存在一处已知缺口——一项声明的上限经 Owner 单方决定、在明示排除条款之上被扩展，未经独立评审。任何将本轮结果作为正式凭据使用的下游消费者，必须一并权衡此点。
+**须明说的后果**：本轮的合规叙事存在一处已知缺口——`qualificationLimits.forwards` 由 15 抬至 16，仅有 Owner 单方决定，无任何背书文档，未经独立评审。任何将本轮结果作为正式凭据使用的下游消费者，必须一并权衡此点。`source_refs_maximum` 131→133 **不属于此缺口**：它走的是正路，并将由继任评估者独立出具适用性。
 
-## 当前阻塞（继任独立评估者 2026-09-12 复核结论：不该签）
+## 当前阻塞（继任评估者第二轮：仍不该签，但已很窄）
 
-- **容量材料未重签。** 控制器 `capacityDelta.source_refs_maximum` 已为 133，而该常量在**三处**被 `same()` 逐字节比对，三处全是 131：Owner 签署容量批准 `f3afb108…`、独立容量适用性 `cc3db45b…`、以及**运行时验收自身的 `accepted_subject.capacity_delta`**（此前漏记的第三处）。需继任者出具容量适用性 + Owner 重签容量批准 + 实施方重签运行时验收，三者有严格依赖顺序。
-- **签署时序**（复核 F3，仓库此前未记录）：
-  `2026-09-12T00:00:00Z ≤ 容量批准 approved_at ≤ 容量适用性 accepted_at ≤ 运行时刻 < 2026-09-19T00:00:00Z`，
-  三者须依次递增。不得为省事盖同一时间戳再倒排。
-- **`reissue-acceptances.mjs` 的源引用常量需在每次控制器合并后更新**（`SOURCE_COMMIT`/`SOURCE_TREE`/`OWNER_MERGE`）。守卫会拦住不一致，但不会自动更新。`OWNER_MERGE` 在运行时不被读取（`verifySourcePublication` 用的是 `material.runtime_acceptance.publication.commitSha`），仅为文档字段。
-- **四份 `*.WindowSuccessorSubject.json` 仍在 main 未标作废**，钉着已死的 `ac7bdd53…` 与 `2026-09-12T13:14:51Z`，与 root6 方案互斥。按旧提案行事者可能去评审它们。
-- **`root6-readiness.test.mjs` 是实施方自写的，不构成独立证据。**
+真实顺序是 **① → ② → ④ → ③**，四份文档，不是三份：
 
-## 执行之后仍未完成的事
+| | 文档 | 谁出 | 状态 |
+| --- | --- | --- | --- |
+| ① | 容量批准（声明 133）+ 其引用的 root6 容量提案 | Owner 合并 | v2 待合并 |
+| ② | 容量适用性 | 继任评估者 | 待 ① |
+| ④ | 043 容量修复接受（须带新控制器摘要 + ①② 的 ref） | 继任评估者 | 待 ①② |
+| ③ | 重签运行时验收 | 实施方 | 待 ①②④ |
 
-脚本只产出候选源。它**不**做下列任何一项：
+**① 的第一版已合并但有缺陷**（R2-F1）：声明 133，而 `capacity_proposal_ref` 指向一份声明 131 的提案。
+该指针被实施方当作「历史钉」从前代抄来，实则是**「被批准的那份提案」的指针**。控制器查不出——它只校验
+ref 形状，从不读提案内容。v2 附带新造的 root6 容量提案，链条第一环对齐。
 
-- 重建后的 manifest 产生**新的 controller_digest**，资格文档与运行时验收必须据此重新签发
-- 两个 schema 改动改变其 sha256 与 blob sha，而 `readBlobRef` 要求改后的 schema **以 blob 形式存在于仓库并可取回**，故须先经 Owner 合并进 GitHub，运行时验收的 `control_schema_refs` 才能指向它们
-- StatusManifest generation 24 须按新 schema 重建并经 Owner 合并签名
-- 第二十次绑定前推（额度抬升后方可进行）
-- root6 的 `GENERATION_REGISTERED` 追加。其 `expires_at` 须**精确**为 `2026-09-19T00:00:00Z`（由 `context.mjs:43` 的 `runtime.expires_at===registered.expires_at`、`budget-evidence.mjs:18` 的 `budget.expires_at <= root.expires_at`、以及 `expiryForBudget(seq>=89)` 共同夹出唯一解）。其 `not_before` 须落在 `[2026-09-10T13:18:47Z, 容量批准 approved_at]` 内——下界来自 `root-window-validation.mjs:31`，上界来自 `context.mjs:44`。`revocation.expires_at` 须 ≤ 窗口末，且须绑定真实的历史前缀摘要。**注册不可回退：写错 `expires_at` 即废掉该代际。**
+**时序**（第一轮 F3 推出，仓库此前未记录）：
+`2026-09-12T00:00:00Z ≤ ①approved_at ≤ ②accepted_at ≤ 运行时刻 < 2026-09-19T00:00:00Z`，依次递增。
 
-边界不变：不重复应用 SQL9、不退款、不复用旧预算；不创建新 trust root、新签名身份、付费/模型预算或生产权限。预算 `charged_seconds` 为 10506 上限中的 9906（`5106 + 600×8`，即 9 次分配中已用 8 次），每次预留固定 600 秒，**恰好只剩一次分配且不可重试**。
+**未决**：`qualificationLimits.forwards` 15→16 是控制器常量，不在 `capacity_delta` 内，无任何文档背书。
+其原定理由（「继任者未定，补充批准签不出」）自 `a573ca9` 起已消失。评审者指出较廉价的补法是重签
+有界序列适用性（Owner 决定评估范围第 3 项），但这是 Owner 的决定。
 
-## 已知结构性风险（非本次引入，不阻塞）
+**`reissue-acceptances.mjs` 的源引用常量需在每次控制器合并后更新**。守卫会拦住不一致但不会自动更新。
+`OWNER_MERGE` 运行时不被读取，仅为文档字段。
 
-**单进程内驻留第二套 signing 白名单**（复核 F9）。从 root6 `cli.mjs` 出发的静态导入闭包共 34 个模块，其中同时载入：
+**四份 `*.WindowSuccessorSubject.json`** 仍在 main，已加作废标记。
 
-- `commitment-signing-root6-window/signing.mjs`（允许 root6，正确）
-- `commitment-signing/signing.mjs`（`makeCommitment` 硬钉一个更早的代际）
-
-引入链之一：`root6/context.mjs → root6/result-terminal.mjs → root6/original-inputs-blob.mjs → evidence-blob-successor/original-inputs-blob.mjs → runtime600/trusted-github.mjs → commitment-signing/signing.mjs`（复核者另追出一条经 `request-denials-packed.mjs` 的路径，说明不止一条）。
-
-在 root6 路径上它是**休眠**的，且 root5 前代结构相同，故非本次回归。记录在此是因为：同一进程里同时驻留一份旧的代际白名单和一份旧的 `checkCurrentSemantics`，未来任何一次「顺手复用一下那个函数」都会在最后 600 秒里炸。
+**`root6-readiness.test.mjs` 是实施方自写的，不构成独立证据。**
