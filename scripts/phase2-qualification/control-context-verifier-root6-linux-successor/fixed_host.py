@@ -30,7 +30,7 @@ def load(name, relative, expected):
 
 
 parent = load('accepted_fixed_parent', str(BASE / 'parent600.py'),
-              '7f952787e57dd6e27f7facba78e7a5bac3cc64f987f8555d45f10e9a36ae8f10')
+              'feb409d4947440802ba2c986b047a209897582919cb0ab043681d0cf74c85101')
 observation = load('accepted_observation', 'docker-engineering-observation/observe.py',
                    'cc3498e6dc5eed1f13fb0b84c4dd4df75f5ee76fb5d24d4167852cb92588ef5a')
 MAX_OUTPUT = 128 * 1024
@@ -53,8 +53,11 @@ def source_sha():
 
 def prepare(nonce, ga_raw):
     """Prepare only exact synthetic inputs. This does not accept/authorize a GA."""
-    if sys.platform != 'win32' or observation.digest(observation.DOCKER) != observation.DOCKER_SHA:
-        raise ValueError('Exact Windows Docker host required')
+    # R17-F1: this is the Linux successor. The platform test and the binary identity both move
+    # to the already-ported parent600, leaving observe.py -- shared with the predecessors that
+    # pin its bytes -- untouched.
+    if sys.platform != 'linux' or observation.digest(Path(parent.DOCKER)) != parent.DOCKER_SHA:
+        raise ValueError('Exact Linux Docker host required')
     if type(ga_raw) is not str or len(ga_raw.encode()) > 65536:
         raise ValueError('Bounded exact GA bytes required')
     ga = json.loads(ga_raw)
@@ -113,7 +116,7 @@ class FixedHost:
     def _invoke(self, tag, operation, timeout=6, guard=None):
         if operation not in ('create', 'start', 'inspect', 'stop', 'wait'):
             raise ValueError('Fixed operation required')
-        if sys.platform != 'win32' or observation.digest(observation.DOCKER) != observation.DOCKER_SHA:
+        if sys.platform != 'linux' or observation.digest(Path(parent.DOCKER)) != parent.DOCKER_SHA:
             raise ValueError('Exact Docker executable required')
         argv = parent.fixed_argv(self.nonce, operation, None if operation == 'create' else identity(self.container))
         started = time.monotonic()

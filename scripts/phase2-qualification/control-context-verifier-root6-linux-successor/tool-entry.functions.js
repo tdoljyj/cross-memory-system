@@ -50,8 +50,10 @@ man=sys.argv[1]; repo=sys.argv[2]
 d=json.load(open(man))
 if d.get("object_type")!="ControllerSourceManifest" or d.get("qualification_issued") is not False or len(d.get("files",[]))<30:
     sys.exit("EXACT_SOURCE_MANIFEST_REQUIRED")
-if os.path.isdir(os.path.join(os.path.dirname(man), "__pycache__")):
-    sys.exit("CONTROLLER_BYTECODE_CACHE_PRESENT")
+qual=os.path.dirname(os.path.dirname(man))
+for root,dirs,_ in os.walk(qual):
+    if "node_modules" in dirs: dirs.remove("node_modules")
+    if "__pycache__" in dirs: sys.exit("CONTROLLER_BYTECODE_CACHE_PRESENT")
 for e in d["files"]:
     q=e["path"] if os.path.isabs(e["path"]) else os.path.join(repo,e["path"])
     b=open(q,"rb").read()

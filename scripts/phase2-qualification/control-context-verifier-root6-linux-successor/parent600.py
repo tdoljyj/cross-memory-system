@@ -37,6 +37,11 @@ PUBLIC_ENV = [key + '=' + value for key, value in child.PUBLIC_ENV.items()]
 if PUBLIC_ENV[:5] != v.PUBLIC_ENV or len(PUBLIC_ENV) != 7:
     raise RuntimeError('Original image environment must remain the original five values')
 DOCKER = '/usr/bin/docker'
+# R17-F1. fixed_host.py used to gate on sys.platform=='win32' and on observe.py's DOCKER,
+# which is still the Windows path -- so CREATE raised before anything ran. The binary
+# identity moves here, beside the Linux path it belongs to, rather than into the shared
+# docker-engineering-observation module, whose bytes the predecessor controllers pin.
+DOCKER_SHA = '18c2a16d6aa0331bbd78b93e0a57f344c62bda0be52c054d4ee80e11176b0c30'
 ENDPOINT = 'unix:///var/run/docker.sock'
 # Literal fixed program: invokes the reviewed library primitive, not Skill text.
 # No caller can supply code or arguments. This argv is review data, never run here.

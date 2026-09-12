@@ -9,8 +9,15 @@
 //
 // Two changes follow from that.
 //
-// Fail closed. Every [a-f0-9]{64} literal in every controller file must resolve to something.
-// A literal nobody can account for is an error, not silence.
+// Fail closed. Every 64-hex literal in every controller file must resolve to something. A literal
+// nobody can account for is an error, not silence.
+//
+// BUT THIS IS NOT THE AUTHORITATIVE CHECK, and round 17 is why. Seven ways of writing a digest
+// walked past it, including R16-F1 rewritten as 'aaa'+'bbb'. That is not a missing regex; it is
+// what textual analysis is. What matters is the value the code COMPARES AT RUNTIME, and source
+// text is only evidence about that. selftest-runtime-pins.mjs asks the code instead, and catches
+// the concatenation case this scan still cannot see. Both are required by
+// build-linux-manifest.mjs: this one is cheap and runs first, that one decides.
 //
 // Repair by identity, not by syntax. The defect has the same signature all four times: a literal
 // equals the digest of a PREDECESSOR controller's copy of a file that also exists here. That is
@@ -31,7 +38,8 @@ const DIR = path.dirname(fileURLToPath(import.meta.url));
 const QUAL = path.resolve(DIR, '..');
 const APPLY = process.argv.includes('--write');
 const sha = p => crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
-const HEX = /\b[a-f0-9]{64}\b/g;
+// Case-insensitive: R17 showed an uppercase digest walked straight past the lowercase class.
+const HEX = /\b[a-fA-F0-9]{64}\b/g;
 
 // Digests that are deliberately not the digest of any file. Each needs a reason; anything not
 // listed here and not resolvable to a file fails the gate.
@@ -90,6 +98,29 @@ const buildIndex = () => {
 };
 index = buildIndex();
 
+// Named-target pins, used only by --write. Repair by identity handles the historic case where a
+// literal still equals a predecessor's copy; it cannot handle the case this very tool creates,
+// where a repair changes a file and the pin above it now matches nothing at all (R17). For that,
+// the pin has to say which file it is for, so these read the target out of the syntax. Verification
+// below never relies on them -- it stays fail-closed on every literal, however written.
+const NAMED = [
+  [/str\(BASE \/ '([^']+)'\)\s*,\s*\n?\s*'([a-f0-9]{64})'/g, 1, 2],
+  [/\w+ = BASE \/ '([^']+)'\n\w+_SHA = '([a-f0-9]{64})'/g, 1, 2],
+];
+// The JS form binds the path to a variable and compares somewhere else entirely, so a single
+// regex spanning both is a guess about how far apart they sit -- an earlier attempt used a
+// 400-character window and missed by about two hundred. Resolve the variable first, then look for
+// a comparison against it anywhere in the same file.
+const namedJsPins = text => {
+  const vars = new Map();
+  for (const m of text.matchAll(/const (\w+)\s*=\s*fileURLToPath\(new URL\('\.\/([^']+)'/g)) vars.set(m[1], m[2]);
+  const out = [];
+  for (const [v, file] of vars)
+    for (const m of text.matchAll(new RegExp('sha\\(fs\\.readFileSync\\(' + v + "\\)\\)\\s*!==\\s*'([a-f0-9]{64})'", 'g')))
+      out.push([file, m[1]]);
+  return out;
+};
+
 // ---- repair: a literal equal to a predecessor's copy of a file we also have is re-pinned here
 let round = 0, repaired = 0;
 if (APPLY) for (;;) {
@@ -113,6 +144,19 @@ if (APPLY) for (;;) {
         break;
       }
     }
+    // second channel: the pin names its target, and that target's digest has moved
+    const named = [...NAMED.flatMap(([re, ti, di]) => [...text.matchAll(re)].map(m => [m[ti], m[di]])),
+                   ...namedJsPins(text)];
+    for (const m of named.map(([t, d]) => ({1: t, 2: d}))) {
+      const ti = 1, di = 2;
+      const tp = path.join(DIR, m[ti]);
+      if (!fs.existsSync(tp)) continue;
+      const actual = sha(tp);
+      if (actual === m[di]) continue;
+      console.log(`  round ${round}  ${f} pins ${m[ti]}: ${m[di].slice(0, 12)} -> ${actual.slice(0, 12)} (named target)`);
+      text = text.split(m[di]).join(actual);
+      changed++;
+    }
     if (text !== before) { fs.writeFileSync(p, text); index = buildIndex(); }
   }
   repaired += changed;
@@ -129,8 +173,21 @@ const problems = [];
 // byte-identical, so the manifest, the trusted entry's file check and this gate all pass. The
 // stdlib caches are pinned in the manifest, which covers them; the controller's own are generated
 // and pinning them would create one more chain to keep in sync. They are refused instead.
-if (fs.existsSync(path.join(DIR, '__pycache__')))
-  problems.push('__pycache__/ exists beside the controller modules: bytecode there is loaded in preference to the .py and is not covered by any byte check. Remove it.');
+// R17-F2: covering only this directory was not enough. fixed_host.py and parent600.py load
+// observe.py, validation.py, remote_evidence.py and fixed_skill_fixture.py from sibling
+// directories by digest-then-exec, and a forged .pyc beside any of those runs while the .py it
+// checked stays byte-identical -- demonstrated by the reviewer on the real tree. No python under
+// this tree should execute from cache, so none of it may carry one. The stdlib caches are a
+// different case: they are pinned in the manifest, so tampering with them is caught.
+for (const d of (function walk(dir, acc = []) {
+  for (const e of fs.readdirSync(dir, {withFileTypes: true})) {
+    if (!e.isDirectory() || e.name === 'node_modules') continue;
+    if (e.name === '__pycache__') acc.push(path.join(dir, e.name));
+    else walk(path.join(dir, e.name), acc);
+  }
+  return acc;
+})(QUAL))
+  problems.push(`${path.relative(QUAL, d)} exists: bytecode there is loaded in preference to the .py and no byte check covers it. Remove it.`);
 
 let accounted = 0;
 for (const f of controllerFiles()) {

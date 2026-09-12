@@ -29,6 +29,10 @@ const NM_WIN = 'C:/Users/Windows/.codex/projects/codex-memory-system/apps/clued-
 // A manifest over a controller that contradicts itself is worse than no manifest -- round 14 had
 // exactly that, the manifest listing one python digest while the code demanded another.
 execFileSync(process.execPath, [path.join(HERE, 'check-digest-pins.mjs')], {stdio: 'inherit'});
+// The scan above reads text; this one runs the controller's own byte checks. A manifest is a
+// claim that these bytes are the controller, so it is not emitted until the controller has
+// demonstrated it accepts them.
+execFileSync(process.execPath, [path.join(HERE, 'selftest-runtime-pins.mjs')], {stdio: 'inherit'});
 
 const prev = JSON.parse(fs.readFileSync(path.join(REPO, OLD_DIR, 'ControllerSourceManifest.candidate.json'), 'utf8'));
 const entry = (p, role) => {
