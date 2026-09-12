@@ -21,8 +21,13 @@
 // Usage:
 //   node verify-manifest-against-host.mjs <manifest.json> [--out <evidence.json>] [--map <fromPrefix>=<toPath>]
 //
-// On the Windows host, typically:
-//   node verify-manifest-against-host.mjs <manifest.json> --out HostVerification.json --map /=/
+// On the Windows host:
+//   node verify-manifest-against-host.mjs <manifest.json> --out HostVerification.json --map C:/=C:/
+//
+// The prefix must be C:/ and not /. Every one of the 187 RUNTIME_DEPENDENCY paths is a drive-letter
+// absolute path, so a --map whose `from` is / matches none of them: resolveLocal returns null and
+// they are counted UNCHECKABLE rather than verified. An earlier version of this header said /=/,
+// which would silently have checked 144 entries and reported the other 187 as unverifiable.
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
