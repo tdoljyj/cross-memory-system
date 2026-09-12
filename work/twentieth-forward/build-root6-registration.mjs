@@ -59,8 +59,32 @@ const ROOT5 = 'ctrgen_e5df432221344996afc04b5638121d96';
 const AUDIENCE = 'urn:clued:audience:skill-coexistence-qualification:uscrdifznmlvczcekqpw';
 const blobUri = sha1 => 'https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/' + sha1;
 
-const [snapPath, newNotBefore, newExpiry, ownerMerge,
-       oaBlob, oaSha, iaBlob, iaSha, seBlob, seSha, outArg] = process.argv.slice(2);
+const argvAll = process.argv.slice(2);
+// --acceptance-pending: the independent acceptance of THIS registration subject does not exist
+// yet, so no submittable body can be produced. In this mode the script emits ONLY the review
+// subject -- the object validateRootShape's reviewSubjectDigest hashes, which is the body with
+// signature_binding and independent_acceptance_ref deleted. Because that function deletes the
+// field, the placeholder passed for it cannot reach the emitted artifact; the assertion below
+// proves that rather than asserting it.
+//
+// Why this mode exists: every historical registration references an independent acceptance of its
+// own review subject (root5's is Root5Acceptance.json). For root6 no such document exists. The
+// nearest candidate, ContinuationRegistrationSubjectAcceptance.json, accepts the NW-01
+// continuation subject, not a generation registration, and says of itself
+// review_independence: NO_NEW_INDEPENDENT_RUNTIME_REVIEW_CLAIMED_AT_THIS_STAGE. Pointing at it
+// would be a false reference in the one artifact that cannot be retried.
+const PENDING = argvAll.includes('--acceptance-pending');
+const argv2 = argvAll.filter(a => a !== '--acceptance-pending');
+// In --acceptance-pending the acceptance pair is omitted from the command line entirely, so the
+// signature-evidence pair moves two positions left. Parsing that shift explicitly beats silently
+// reading the wrong argument into the wrong field.
+const NON_VALUE_BLOB = '0'.repeat(40), NON_VALUE_SHA = '0'.repeat(64);
+const [snapPath, newNotBefore, newExpiry, ownerMerge, oaBlob, oaSha, ...rest] = argv2;
+const [iaBlob, iaSha, seBlob, seSha, outArg] = PENDING
+  ? [NON_VALUE_BLOB, NON_VALUE_SHA, rest[0], rest[1], rest[2]]
+  : [rest[0], rest[1], rest[2], rest[3], rest[4]];
+if (PENDING && rest.length > 3)
+  throw Error('WITH_--acceptance-pending_PASS_ONLY_THE_SIGNATURE_EVIDENCE_PAIR_AFTER_THE_APPROVAL_PAIR');
 
 const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
 assert.ok(snapPath, 'USAGE: see header');
@@ -213,6 +237,45 @@ assert.deepEqual(Object.keys(request).sort(),
    'metadata_binding_sha256', 'predecessor_generation_id', 'root_set_id'],
   'APPEND_EVENT_TOP_LEVEL_KEYS_MUST_BE_EXACTLY_THESE_EIGHT');
 assert.match(request.idempotency_key, /^[A-Za-z0-9_-]{1,128}$/, 'IDEMPOTENCY_KEY_SHAPE');
+
+if (PENDING) {
+  const {reviewSubjectDigest} = await import(
+    path.join(path.resolve(HERE, '..', '..'), CONTROLLER_DIR, 'root-window-validation.mjs'));
+  const reviewSubject = structuredClone(body);
+  delete reviewSubject.signature_binding;
+  delete reviewSubject.independent_acceptance_ref;
+  // Prove the placeholder is absent rather than trusting that it is.
+  const asText = JSON.stringify(reviewSubject);
+  assert.ok(!asText.includes(NON_VALUE_BLOB) && !asText.includes(NON_VALUE_SHA),
+    'PLACEHOLDER_LEAKED_INTO_THE_REVIEW_SUBJECT');
+  assert.equal(reviewSubjectDigest(body), reviewSubjectDigest(reviewSubject),
+    'REVIEW_SUBJECT_DIGEST_MUST_NOT_DEPEND_ON_THE_TWO_DELETED_FIELDS');
+  const rsOut = outArg ?? path.join(HERE, 'Root6RegistrationReviewSubject.json');
+  fs.writeFileSync(rsOut, JSON.stringify(reviewSubject, null, 2) + '\n');
+  console.log(JSON.stringify({
+    state: 'REVIEW_SUBJECT_ONLY_INDEPENDENT_ACCEPTANCE_PENDING',
+    no_submittable_body_emitted: true,
+    why: 'independent_acceptance_ref has no correct target yet. Every historical registration ' +
+         'references an independent acceptance of its own review subject; root6 has none.',
+    output: path.relative(path.resolve(HERE, '..', '..'), rsOut),
+    review_subject_sha256: reviewSubjectDigest(body),
+    self_test: {historical_registrations_reproduced: reproduced.length,
+                all_prefix_digests_match: true,
+                predecessor_method_reproduces_history: predecessorMethodHolds},
+    emitted_subject: {
+      generation_id: ROOT6, generation_ordinal: body.generation_ordinal,
+      window: {not_before: body.not_before, expires_at: body.expires_at},
+      history: {prefix_sequence: body.history.prefix_sequence, prefix_digest: body.history.prefix_digest},
+      predecessor: body.predecessor,
+    },
+    validate_root_shape: shape,
+    next: 'Independent reviewer accepts this review subject by its sha256, that acceptance is ' +
+          'committed, then re-run without --acceptance-pending passing its blob sha1 and sha256.',
+    authority_effect: 'NONE',
+  }, null, 2));
+  if (!predecessorMethodHolds) process.exitCode = 2;
+  process.exit(process.exitCode ?? 0);
+}
 
 const out = outArg ?? path.join(HERE, 'Root6GenerationRegistration.candidate.json');
 fs.writeFileSync(out, JSON.stringify({
