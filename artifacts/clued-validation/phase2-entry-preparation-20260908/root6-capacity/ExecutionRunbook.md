@@ -5,8 +5,7 @@
 **未写库、未注册代际、`charged_seconds` 仍为 9906/10506，那唯一一次分配未消耗。**
 
 本文件把散落在补遗 A/B/C 与 `work/twentieth-forward/` 里的准备工作整合成一条可执行路径。
-它**不是授权**，也不解除任何前置条件——第八轮评估者的结论「不可以开始写候选 SQL」仍然有效，
-四件缺件的答复尚待第九轮确认（见第六节）。
+它**不是授权**。第九轮已改判「候选 SQL 可以开始写」，但**执行**仍受第六节五项前置约束。
 
 ---
 
@@ -30,19 +29,30 @@
 | 脚本 | 作用 | 自检锚点 |
 | --- | --- | --- |
 | `verify-manifest-against-host.mjs` | manifest 对盘复验，两处可用 | 本环境 189/331 已过；142 条待主机 |
-| `capture-owner-merge.mjs` | 合并 → 证据文件（stage 0 / 2） | PR #149 复现历史证据 29/29 字段 |
+| `capture-owner-merge.mjs` | 合并 → 证据文件（stage 0 / 2） | PR #149 复现历史证据（我比 29 项，评估者比到 **43** 项，R9-F4） |
 | `rebuild-controller-window11.mjs` | 重建控制器，`root6Expiry` 参数化 | encoder 逐字节复现前代 manifest |
 | `reissue-seven-documents.mjs` | 七份文档重签 + 版本链推进 | 序列化形式对盘断言 |
 | `reissue-continuation-subject.mjs` | subject 三件套换发 | 两个序列化器逐字节复现前代 |
 | `selftest-reproduce-nineteenth.mjs` | 前推构造器活库锚定自检 | 复现活库 `c721b056`（107,827 字符） |
 | `derive-getter-module.mjs` | 派生 `<20` 版 getter 模块 | 仅 2 字符差异，两模块输出相同 |
 | `twentieth-forward-compact.mjs` | 第 20 次前推事务 | 回放逐字节复现执行过的第 19 次 |
-| `build-root6-registration.mjs` | root6 注册体 | 复现 5 个历史 `prefix_digest`（成功路径未演练） |
+| `build-root6-registration.mjs` | root6 注册体 | 复现 5 个历史 `prefix_digest`；**成功路径已由第九轮评估者跑通**，并借此发现 R9-F1 |
 | `exact-getter-root6-window11.candidate.mjs` | 派生产物，被上面两个 import | — |
 
 **跑任何脚本前先确认 ajv 版本**：`root-window-validation.mjs` 要 Ajv6。
-npm 默认给 ajv 8，对该 schema 直接报错；**更危险的是它可能看起来通过却什么都不证明**。
-装 `ajv@6` 后跑 `verify-manifest-against-host.mjs`，manifest 钉住的 41 个 ajv 文件必须 41/41 一致。
+
+```
+cd apps/clued-cloud && npm ci        # ← 不要用 npm i ajv@6
+```
+
+**`npm i ajv@6` 会改动 `package.json` 与 `package-lock.json` 两个受版本控制的文件，而且没必要**
+（R9-F7）：`ajv` 不是 `apps/clued-cloud` 的声明依赖，只是传递依赖提升上来的，
+而 `HEAD` 版 lock 里 `packages["node_modules/ajv"].version` **已经是 `6.15.0`**——
+`npm ci` 严格按 lock 安装，装出来就是对的版本，且不碰任何受版本控制的文件。
+若已误用 `npm i`，用 `git checkout -- apps/clued-cloud/package.json apps/clued-cloud/package-lock.json` 还原。
+
+装好后跑 `verify-manifest-against-host.mjs`，manifest 钉住的 41 个 ajv 文件必须 41/41 一致。
+npm 默认解析会给 ajv 8，对该 schema 直接报错；**更危险的是错版本下可能看起来通过却什么都不证明。**
 
 ## 三、执行顺序
 
@@ -52,8 +62,8 @@ npm 默认给 ajv 8，对该 schema 直接报错；**更危险的是它可能看
 0a  在 Windows 上：node verify-manifest-against-host.mjs <manifest> --map C:/=C:/ --out HostVerification.json
     → 331/331 必须全过。任何漂移都停下，见补遗《ControllerDigestDependsOnUnverifiedHost》第五节。
     → gh.exe 若漂移，控制器一个 API 调用都发不出去，必须先解决。
-0b  第九轮独立评审通过（第六节）
-0c  Status24 签署主体受理已由评估者签发（尚缺，见第六节）
+0b  第九轮独立评审 —— 已通过（`96dd5e5`）
+0c  Status24 签署主体受理 —— 已签发（交付件 F），五项待定钉需填齐并逐项复核
 ```
 
 ### 第 1 阶段：Owner 第一次合并 —— 定窗口
@@ -93,9 +103,10 @@ npm 默认给 ajv 8，对该 schema 直接报错；**更危险的是它可能看
 
 ```
 8   NW-01：停触发器 → 落三条 CHECK → 改七字段 → 以新值建回 → 恢复触发器 → 回读
-      前置守卫按补遗 B §1.1（三条 CHECK 定义 + 触发器 tgenabled 与定义 + owner/ACL）
+      前置守卫按补遗 B §1.1（三条 CHECK 定义 + 触发器 tgenabled 与定义 + owner/ACL
+      + R9-F6 追加的约束条数 16 与 conname 排序摘要），回读时同样断言
 9   CP-01：三个函数 19 处编辑，前置守卫四个 prosrc，回读
-      ※ 候选 SQL 尚未编写，见第六节
+      ※ 候选 SQL 可以开写（第九轮放行）；窗口时刻留具名占位符；写成后必须再经独立评审
 ```
 
 **顺序不可颠倒**：`append_event` 受 `accepted_binding` 窗口管辖，让旧窗口过期就等于失去注册所需的调用。
@@ -142,17 +153,24 @@ npm 默认给 ajv 8，对该 schema 直接报错；**更危险的是它可能看
 **旧窗口过期不影响本计划**——第 1 阶段重开一个新的 24 小时窗口，
 NW-01 之前不需要 `append_event`。所以**不要为了赶今天 13:04:51Z 而跳过任何前置**。
 
-## 六、尚缺，且不能由实施方补
+## 六、第九轮之后的状态
 
-1. **第九轮独立评审**。第八轮结论「不可以开始写候选 SQL」，四件缺件的答复已推送
-   （补遗 B 对 R8-F1/F3、换发脚本对 R8-F2、`ForwardCapAuthorisationHasNoCarrier` 撤回并更正 R8-F4）
-   ，**待确认**。
-2. **CP-01 候选 SQL 尚未编写**，等第 1 项。
-3. **Status24 签署主体受理**（补遗 C §六）。第 20 次前推的第六份材料，评估者签发，可并入第三次合并。
-4. **`series_f` 抬高的独立意见**。载体已在 `ExplicitOwnerApproval.candidate.json`
-   的 `forward_cap_extension`，缺一份独立评审意见。
-5. **主机 142 条复验**（第 0a 步）。
-6. **实施方回推的一条**：第八件（v1 旧 Approval）不重签，评估者未答复。
+第九轮（`SuccessorReviewerRound9.md`，评估者分支 `claude/trusting-keller-mm2s0v` `96dd5e5`）
+**改判：候选 SQL 可以开始写。** 第八轮四件缺件全部关闭。开写时两条约束：
+窗口时刻一律留具名占位符，不得写入任何猜测的时间戳（五处）；
+候选 SQL 写成后**必须再经独立评审才能执行**。
+
+### 执行之前必须闭合的五项（不阻断开写，阻断执行）
+
+| # | 事项 | 状态 |
+| --- | --- | --- |
+| 1 | **R9-F1**：`build-root6-registration.mjs` 的 predecessor 自检比较器 | **已修**（键序无关比较）；仍须用 NW-01 之后重新导出的快照重跑至 exit 0 |
+| 2 | **R9-F2**：`forward_cap_extension` 只覆盖数据库侧 | **已补**（`repository_side` + `covers_both_sides` + `supersedes` + `independent_opinion_ref`） |
+| 3 | **主机 331/331 复验** | 待那台 Windows 机器。**两次**：第二次合并前 + 第 13 步前；`gh.exe` 单独确认 |
+| 4 | **Status24 受理的五项待定钉** | 交付件 F 已签发，五项待填并逐项复核 |
+| 5 | **v3 继承否定钉** | 待重签时写入「不得绑定 `d0649465…`」 |
+
+另：CP-01 候选 SQL 可以开写（本节第一段），写成后送独立评审。
 
 ## 七、治理
 
@@ -163,6 +181,17 @@ NW-01 之前不需要 `append_event`。所以**不要为了赶今天 13:04:51Z �
 ——该文件**不在本分支**，在继任评估者的分支 `claude/trusting-keller-mm2s0v`
 （连同 `SuccessorReviewerRound8AddendumA.md`）。两份都是本轮的关键证据，
 执行前应一并取到手边；实施方未将其搬入本分支，以免改变其归属。
+
+第九轮按其所得**追加两句，同样必须写进 GRR**：
+
+> 本次运行对「Owner 已批准」这一事实的验证，是对 GitHub API `verification.verified`
+> 与 `reason: 'valid'` 的转述。`capture-owner-merge.mjs` 与控制器 `trusted-github.mjs:39`
+> 都只检查 `signature` 与 `payload` **存在**，均未验证 payload 与 commit 的对应关系，
+> 也未验证签名本身。整个 24 小时窗口的起点是该 API 报告的一个 `committed_at` 字段。
+>
+> 控制器摘要即其 manifest 摘要，其中 187 条（200,048,638 字节）是单台 Windows 主机上的本地文件。
+> 若这些文件未在运行前后经过复验，本次 GRR 对控制器身份的断言只在
+> 「那台机器上的那 200 MB 未变」这一未经验证的假设下成立。
 
 ---
 

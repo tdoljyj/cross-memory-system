@@ -34,6 +34,17 @@
 另沿用先例的其余守卫：八张表存在、`current_database()`、`project_ref`、全表 rows/catalog 摘要 CAS、
 `current_head` 的代际与 `revoked=false`。
 
+**R9-F6 追加两条**（上面七项守的是「这三条 CHECK 与这个触发器长什么样」，
+守不住「有没有多出来别的东西」；§1.1 末尾「全表 rows/catalog 摘要 CAS」是否覆盖
+`pg_constraint` 措辞含糊，写明比推测好）：
+
+| 对象 | 守卫方式 | 当前值（`2026-09-12` 实测） |
+| --- | --- | --- |
+| `accepted_binding` 上的约束条数 | `count(*) from pg_constraint where conrelid=…` | **16** |
+| 全部 `conname` 的排序摘要 | `sha256(string_agg(conname,',' order by conname))` | `12b67839ac1caad7d61979d3a19a39c66c39fa537236dae2231ae2608fd0b031` |
+
+**事后回读时同样断言这两项**，并断言 `tgenabled` 已回到 `'O'`。
+
 ### 1.2 变更本体
 
 ```sql
@@ -150,7 +161,10 @@ CP-01 早于注册（第 13 步）的理由由评审 C9 独立确认：`append_e
 > 补充一条本轮实测、影响该离线校验有效性的事实：`root-window-validation.mjs` 依赖 ajv，
 > 而其注释指明 Ajv6。本环境初装得到 ajv 8，对该 schema 直接报错——
 > **危险的不是报错，是在错误的 ajv 下跑会看起来像通过却什么都不证明。**
-> 换 ajv 6.15.0 后，控制器 manifest 钉住的 41 个 ajv 文件与本地逐字节一致（41/41），
+> 取得 ajv 6.15.0 后（**用 `npm ci`，不要 `npm i ajv@6`**——后者会改动 `package.json`
+> 与 `package-lock.json` 两个受版本控制的文件，而 `HEAD` 版 lock 里
+> `packages["node_modules/ajv"].version` 本来就是 `6.15.0`，见 R9-F7），
+> 控制器 manifest 钉住的 41 个 ajv 文件与本地逐字节一致（41/41），
 > 该离线校验此时才是可信的。**执行者必须先做这个比对，再相信校验结果。**
 
 ---

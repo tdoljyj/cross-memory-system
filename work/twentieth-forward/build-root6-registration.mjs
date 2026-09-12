@@ -45,6 +45,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import assert from 'node:assert';
 import {fileURLToPath} from 'node:url';
+import {isDeepStrictEqual as same} from 'node:util';
 // The validator is imported from the controller itself, never reimplemented, so the offline check
 // is the same code the controller will run. CONTROLLER_DIR points at the rebuilt controller in a
 // real run; a rehearsal may point it at the current one to exercise the logic.
@@ -137,7 +138,12 @@ for (const e of events) {
   const declared = e.request.body.predecessor, computed = predecessorOf(e.sequence);
   predecessorChecks.push({
     sequence: e.sequence,
-    match: JSON.stringify(declared) === JSON.stringify(computed),
+    // Key-order-insensitive. jsonb normalises object keys shortest-first, so every stored
+    // predecessor reads {sha256, generation_id} while this script builds {generation_id, sha256}.
+    // JSON.stringify made all five historical records mismatch on identical content, which meant
+    // this anchor had never once passed -- an alarm that is always on is worth nothing at the last
+    // gate before an irreversible append. Found by the reviewer running the success path (R9-F1).
+    match: same(declared, computed),
     declared, computed,
   });
 }

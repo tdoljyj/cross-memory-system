@@ -144,6 +144,23 @@
     "described_as_maintenance": false,
     "from": "series_f > 15",
     "to": "series_f > 16",
+    "repository_side": {
+      "file": "scripts/phase2-qualification/control-context-verifier-*/context.mjs",
+      "constant": "qualificationLimits.forwards",
+      "from": 15,
+      "to": 16,
+      "note": "Authorised here alongside the database side. Previously the only authorisation for this half was OwnerForwardCapExtensionOverride.json, which this clause supersedes."
+    },
+    "covers_both_sides": true,
+    "supersedes": {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/root6-capacity/OwnerForwardCapExtensionOverride.json",
+      "why": "That record was never independently reviewed and its stated reason rested on a premise later shown false. It is superseded rather than amended, and the independent opinion required for this clause is ForwardCapExtensionIndependentOpinion20260912.json."
+    },
+    "independent_opinion_ref": {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/root6-capacity/ForwardCapExtensionIndependentOpinion20260912.json",
+      "issued_by": "/root/project_list_auth_fix",
+      "round": 9
+    },
     "why_needed": "Moving the execution binding onto the rebuilt controller requires a twentieth binding forward; the fifteenth counted forward was consumed on 2026-09-11.",
     "grants_additional_execution_capacity": false,
     "unchanged_by_this_extension": [

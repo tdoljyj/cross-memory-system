@@ -111,7 +111,20 @@ new_signing_identity, refund
    已载明 override 的两条缺陷，已说明它**不授予任何新的执行容量**
    （`series_n`、`charged_seconds ≤ 10506`、`charged_evidence_bytes ≤ 2335812531` 一个未动，
    移窗前后都只剩一次 600 秒分配）。
-   **该小节同时覆盖仓库侧常量与数据库侧 `series_f`**，堵住 R8-F4 指出的外推。
+   ~~**该小节同时覆盖仓库侧常量与数据库侧 `series_f`**，堵住 R8-F4 指出的外推。~~
+
+   > **R9-F2 更正**：写这句话时它**不成立**。评估者对该批准件全文检索：
+   > `qualificationLimits`、`context.mjs`、`forwards` 出现次数**均为 0**，
+   > 与前推限额有关的只有 `series_f > 15 → > 16` 与 `cp01` 里那条编辑类，**全是数据库侧**。
+   > 也就是说 R8-F4 的缺口当时只补了一半，而且补的是**反向的一半**：
+   > 原 override 只写控制器、被我外推到数据库；新载体只写数据库、没写控制器。
+   > 两份合起来确实不重叠地覆盖了两侧，**但没有任何一份文件说过这句话，而本文件说了。**
+   >
+   > 已按评估者推荐的 (a) 补救：`forward_cap_extension` 增加 `repository_side`
+   > （`qualificationLimits.forwards` 15→16）、`covers_both_sides: true`、
+   > `supersedes`（明文取代那份从未独立评审的 override）与 `independent_opinion_ref`
+   > （指向第九轮交付件 G）。补后该批准件里 `qualificationLimits` 与 `context.mjs` 各出现 1 次。
+   > **现在这句话才成立。**
 2. **缺的只是独立评审意见**：请继任评估者以 `/root/project_list_auth_fix` 身份，
    对该小节单独出具意见。这补上 R8-F4 的第 1 条缺陷，且不需要一条走不通的正路。
 3. Owner 在第一次合并中一并批准。

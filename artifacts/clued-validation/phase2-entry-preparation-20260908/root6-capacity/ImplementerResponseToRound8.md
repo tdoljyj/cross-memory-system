@@ -152,9 +152,21 @@ F7：`reserve_gate:110` 是 `if 'GATE'='BUDGET' then`，恒假，故 `:112` 是�
 | 事实 | 取值 |
 | --- | --- |
 | 它在 `main` 上 | `5550c5c`，`git merge-base --is-ancestor … origin/main` = **YES** |
-| 它的 `authority_effect` | **`None`** |
+| ~~它的 `authority_effect`~~ | ~~`None`~~ —— **编造，已剔除，见下** |
 | `v2` 如何引用它 | 仅 `/reissue/supersedes/sha256 = d0649465…`，即「我取代了摘要为此的那一份」 |
 | `ApprovalV2Erratum.md` 的状态 | `ERRATUM_RECORDED_SOURCE_DOCUMENT_DELIBERATELY_UNCHANGED` |
+
+> **R9-F3 更正**：`Root6OriginalInput4000000CapacityApproval20260912.json` **没有
+> `authority_effect` 这个键**（全文出现 0 次，v2 同样没有）；它唯一的权威字段是
+> `"authority": "user_explicit"`。`None` 是 Python `dict.get()` 读一个不存在的键的返回值，
+> 我把读取失败的结果当成了读到的值。**这与本轮 `verified_at` 用 `committed_at` 冒充是同一类错误，
+> 已是第三次。** 该行理由予以剔除。
+>
+> 第九轮评估者裁决**结论不变（七件）**，但换了判据，且它的判据比我的好：
+> 不看文档自称什么权威，而看**这份对象是否被验证链消费**。v1 在全仓只有两处引用，
+> 两处都是「记录 v1 是这些字节」——重写它会让前者变成悬空指针、后者的否定钉指向
+> 一份不再存在的字节序列。它另附一个条件：**v3 必须继承那条否定钉**，
+> 明文写「不得绑定 `d0649465…`」。该条件已并入待办。
 
 它是一份**已经过 Owner 合并、随后被 v2 取代**的历史签署对象。三点理由：
 
