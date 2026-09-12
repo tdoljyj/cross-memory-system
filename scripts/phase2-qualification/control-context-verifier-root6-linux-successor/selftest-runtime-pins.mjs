@@ -8,10 +8,14 @@
 // Both were the same mistake: inferring that a check ran from the ABSENCE of its failure. That
 // inference is worthless, because not running produces the same absence.
 //
-// So each pin is now tested in both directions. The check must pass against the pristine copy AND
-// must fail, with its own error, against a copy whose pinned file has been altered by one byte. A
-// check that cannot be made to fail is not running, and this reports that as a failure rather than
-// as ok.
+// So each pin is tested in both directions. The check must pass against the pristine copy AND must
+// fail, with its own error, against a copy whose pinned file has been altered by one byte.
+//
+// A third version then broke that rule in its own last item. prepare() covers four pins -- the
+// platform gate, the docker binary identity, the fixture bytes and the Skill bytes -- and three of
+// them sit outside the sandbox and cannot be mutated, so the item was one-directional. It printed
+// ok anyway, which is exactly the claim this file exists to refuse. Anything that cannot be proven
+// live is now reported as UNPROVEN, never as ok, and the unproven set is counted and printed.
 //
 // All mutation happens inside a throwaway copy of scripts/phase2-qualification under the system
 // temp directory. The real tree is never written to. No docker operation, no container, no
@@ -27,7 +31,9 @@ const QUAL = path.resolve(DIR, '..');
 const NAME = path.basename(DIR);
 let failures = 0;
 const fail = m => { console.error('  FAILED  ' + m); failures++; };
-const ok = m => console.log('  ok      ' + m);
+const ok = m => console.log('  ok       ' + m);
+let unproven = 0;
+const cannotProve = m => { console.log('  UNPROVEN ' + m); unproven++; };
 
 const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'clued-pinselftest-'));
 process.on('exit', () => fs.rmSync(sandbox, {recursive: true, force: true}));
@@ -86,7 +92,13 @@ catch (e) { console.log('THREW:' + e.message); }
 print(r.stdout.strip() or r.stderr.strip()[-200:])`, cwd);
 bothWays('host-effect.mjs -> bridge.py bytes', `${NAME}/bridge.py`, jsPin, 'EXACT_PYTHON_BRIDGE_BYTES_REQUIRED');
 
-// 4. The platform gate and docker binary identity that round 17 found unported, plus the Skill
+// 4. parent600 pins the fixture across directories. Unlike the rest of prepare()'s pins this one
+//    IS inside the tree, so it can be proven rather than asserted.
+bothWays('cross-directory: parent600 -> fixed_skill_fixture.py',
+  'control-context-verifier-public-runtime-env-diagnostic-successor/fixed_skill_fixture.py',
+  loadChain, 'Exact proposed fixture bytes changed');
+
+// 5. The platform gate and docker binary identity that round 17 found unported, plus the Skill
 //    bytes. prepare() is CREATE's first step and does all of it.
 const prepare = cwd => py(`
 import importlib.util, json, secrets
@@ -97,19 +109,29 @@ ga = json.dumps({'gate_authorization_id': 'ga_selftest',
                  'deadline': (datetime.now(timezone.utc)+timedelta(seconds=120)).isoformat().replace('+00:00','Z')})
 fh.prepare(secrets.token_hex(16), ga)
 print('PREPARE_OK')`, cwd);
-// The Skill lives outside the qualification tree, so it cannot be mutated inside the sandbox.
-// Assert it positively instead, and say plainly that this one is one-directional.
+// prepare() must still complete -- a failure here is a real failure. But completing does not prove
+// its remaining pins are live: sys.platform cannot be mutated, and /usr/bin/docker and the Skill
+// are outside the sandbox. So success is reported as UNPROVEN, not ok.
 try {
   const out = prepare(SDIR);
-  if (out.includes('PREPARE_OK')) ok('prepare() completes: platform gate, docker binary identity, Skill bytes (one-directional -- the Skill is outside the sandbox)');
+  if (out.includes('PREPARE_OK'))
+    cannotProve('prepare() completes, but its platform gate, docker binary identity and Skill bytes cannot be mutated from inside the sandbox, so none of the three is proven live');
   else fail('prepare(): ' + out.trim().slice(0, 160));
 } catch (e) { fail('prepare(): ' + String(e.stderr || e.message).trim().split('\n').pop().slice(0, 160)); }
 
-// 5. Coverage this test does NOT provide, stated rather than left to be discovered:
-//    arm_watchdog()'s PYTHON_SHA comparison and trusted-github.mjs's gh binary pin are on paths
-//    that need a live GA and a GitHub call respectively. R18-F1(b) is right that a stale pin there
-//    passes both gates today.
-console.log('  note    not covered: arm_watchdog PYTHON_SHA, trusted-github gh pin (need a live GA / API call)');
+// 6. The denominator. Round 18 printed two uncovered items in a free-text line while at least six
+//    existed. Writing the set down and asserting its length is what stops it drifting again: add a
+//    pin without listing it here and this fails.
+const UNCOVERED = [
+  "arm_watchdog() PYTHON_SHA -- needs a live GA",
+  "trusted-github.mjs expectedGh -- needs a GitHub API call",
+  "_invoke() platform gate and DOCKER_SHA -- needs a container operation",
+  "grr.mjs accepted schema digest -- needs a terminal result",
+  "result-terminal.mjs blob refs -- needs a GitHub API call",
+  "context.mjs schema and issuer digests -- need a full dispatch",
+];
+if (UNCOVERED.length !== 6) fail(`UNCOVERED has ${UNCOVERED.length} entries; update the assertion deliberately, not by accident`);
+for (const u of UNCOVERED) console.log('  not covered  ' + u);
 
-if (failures) { console.log(`runtime pin self-test FAILED (${failures})`); process.exitCode = 1; }
-else console.log('runtime pin self-test passed (each check proven live by mutation)');
+if (failures) { console.log(`runtime pin self-test FAILED (${failures} failed, ${unproven} unproven)`); process.exitCode = 1; }
+else console.log(`runtime pin self-test passed (${unproven} item(s) UNPROVEN, ${UNCOVERED.length} not covered -- see above; passing here is not a claim about those)`);

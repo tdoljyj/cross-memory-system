@@ -117,8 +117,6 @@ assert.equal(c.pending_budget_sequence, null);
 assert.equal(Number(c.charged_seconds), 9906, 'CHARGED_SECONDS_MUST_STILL_BE_9906 — the single allocation must be unspent');
 assert.equal(Number(c.charged_evidence_bytes), 2201594803);
 const existing = Number(p.existing_forwards), N = existing + 1, seq = Number(c.sequence), next = seq + 1;
-// The successor-count whitelist inside effective_execution_binding, as a literal list.
-const listOf = n => Array.from({length: n}, (_, i) => i + 1).join(',');
 assert.ok(ORDINAL[N], 'THIS_SCRIPT_ONLY_KNOWS_FORWARDS_19_AND_20, got ' + N);
 if (replay) { assert.equal(N, 19, 'REPLAY_IS_THE_NINETEENTH'); assert.equal(seq, N19.prev_seq); }
 else {
@@ -177,6 +175,15 @@ const built = buildExactGetter({
   previous_sql: vNorm, previous_sha256: vNormSha, existing_forwards: existing, next_sequence: next, key,
   previous_binding: p.previous_binding, new_binding: newBinding, source_acceptance_refs: refs,
 });
+// Despite the name, this IS the successor-count whitelist inside
+// effective_execution_binding(): "if n not in (1,...,n)". The 'guard replace' rule below is
+// therefore what bumps that list at every forward -- 18 to 19 last time, 19 to 20 next.
+// Round 18 read the name, took it for the exception name, concluded the whitelist was
+// unhandled, and added a second rule whose `from` was byte-identical to this one's. Replay
+// could not see it: at existing=18/N=19 both rules are identity replacements. On a real run
+// the first consumed the single occurrence and the duplicate aborted the generator with
+// OCCURRENCE_COUNT:successor whitelist expected 1, found 0 -- the twentieth forward could not
+// be generated at all. Do not add it back.
 const guardOf = n => 'if n not in (' + Array.from({length: n}, (_, i) => i + 1).join(',') + ')';
 const END = ' return next result;\nend $$;';
 const prefix = vNorm.replace(guardOf(existing), guardOf(N));
@@ -228,16 +235,6 @@ const R = [
   ['guard exception',        N19.guard_exception,              cp.guard_exception_name,                               1],
   ['window',                 `'${N19.window}'`,                `'${cp.accepted_binding_expires_at}'`,                 2],
   ['guard replace',          `'${guardOf(18)}','${guardOf(19)}'`, `'${guardOf(existing)}','${guardOf(N)}'`,          1],
-  // R18-F3. effective_execution_binding() carries a whitelist of permitted successor counts, and
-  // raises at_most_four_exact_binding_successors_required for anything outside it -- the name still
-  // says four; the list has been extended by one at every forward since. The nineteenth's compact
-  // does that with an in-database replace(), and this generator inherited the line verbatim without
-  // ever substituting it. Left alone, the twentieth forward appends its event and then makes
-  // effective_execution_binding() raise for n=20, which takes read_execution() down with it -- and
-  // read_execution() is the trusted entry's first call. Nobody had listed this step in seventeen
-  // rounds of scheduling. The pinned count of 1 is what makes the omission impossible to repeat.
-  ['successor whitelist',    `'if n not in (${listOf(18)})','if n not in (${listOf(19)})'`,
-                             `'if n not in (${listOf(existing)})','if n not in (${listOf(N)})'`,    1],
   ['insert seq+key',         `',${N19.next_seq},'${N19.key}'`, `',${next},'${key}'`,                                  1],
   ['cas update',             `set sequence=${N19.next_seq} where root_id='${ROOT_ID}' and sequence=${N19.prev_seq}`, `set sequence=${next} where root_id='${ROOT_ID}' and sequence=${seq}`, 1],
   ['readback ev',            `e.sequence=${N19.next_seq};`,    `e.sequence=${next};`,                                 1],
