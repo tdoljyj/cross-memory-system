@@ -180,6 +180,19 @@ F7：`reserve_gate:110` 是 `if 'GATE'='BUDGET' then`，恒假，故 `:112` 是�
 
 ## 四、采纳评估者的一条建议：正路已通，不该再走 override
 
+> **本节已撤回，见 `ForwardCapAuthorisationHasNoCarrier.md`。**
+> 动手准备时先查了这条路能否承载 forwards 授权，答案是不能：
+> appendix 的 `scope` 必须与控制器 `scope` 逐字段相同（`context.mjs:164` 的 `same()`），
+> 那份 scope 写着 `maximum_new_forward: 3`，而控制器根本不用它限制前推；
+> appendix 的 15 个字段里没有一个能表达前推限额，其 `excluded` 反而明文排除 "cap extension"。
+> `capacity_delta` 的 20 个字段里含 `forward` 的为零个。
+> **`qualificationLimits.forwards` 是一个没有任何文档载体的控制器常量。**
+> 评估者的建议对 `source_refs_maximum` 那类成立（那类确有三级文档承载），对本项不成立。
+> **我采纳得太快——在验证载体存在之前就接受了一条建议**，与此前「九条全收、两条本应回推」同一个毛病。
+> 下文保留原样以存档。
+
+---
+
 评估者在第五节指出：`context.mjs:164` 要求
 `appendix.independent_reviewer === '/root/project_list_auth_fix'`，
 而 `OwnerForwardCapExtensionOverride.json` 自承「那条路走不通、因而选择 override」——
