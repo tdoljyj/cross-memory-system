@@ -1,0 +1,837 @@
+{
+ "schema_version": 1,
+ "kind": "EXECUTION_HISTORY_TAMPER_EVIDENCE",
+ "state": "MEASURED_READ_ONLY",
+ "why_this_file_exists": "R14-N5. The xmin evidence the Owner decision rests on is perishable: after a VACUUM FREEZE every xmin reads as 2 and the argument can never be re-made. The decision recorded only aggregates. This preserves the per-row measurement while it still exists.",
+ "raised_by": "independent reviewer round 14, R14-N5",
+ "supports": "OwnerBaselineSubstitutionDecision.json and OwnerBaselineSubstitutionDecisionCorrection.json",
+ "authority_effect": "NONE. Read-only measurement. Registers nothing, qualifies nothing, consumes no budget.",
+ "current_xid": "2142",
+ "measured_at": "2026-09-12T11:38:52.717544+00:00",
+ "gate_attempts": [
+  {
+   "ctid": "(0,14)",
+   "xmin": 1935,
+   "ga_id": "ga_04377008dc04437d9ee9d28a3c79ff3a",
+   "receipt_raw_present": true
+  },
+  {
+   "ctid": "(0,11)",
+   "xmin": 1898,
+   "ga_id": "ga_165dc2e72b62414a8023e726d8114f28",
+   "receipt_raw_present": true
+  },
+  {
+   "ctid": "(0,7)",
+   "xmin": 1824,
+   "ga_id": "ga_18ce0e28e92f448c967fae1c92de7100",
+   "receipt_raw_present": true
+  },
+  {
+   "ctid": "(1,4)",
+   "xmin": 1972,
+   "ga_id": "ga_1d52f4778d494399b12aea54fe4a189e",
+   "receipt_raw_present": true
+  },
+  {
+   "ctid": "(1,14)",
+   "xmin": 2080,
+   "ga_id": "ga_41643fece183424daf7f05b8b2868f8e",
+   "receipt_raw_present": true
+  },
+  {
+   "ctid": "(0,13)",
+   "xmin": 1951,
+   "ga_id": "ga_4e7ce4ad385e4f5aa633bcea2ddb71ce",
+   "receipt_raw_present": true
+  },
+  {
+   "ctid": "(1,3)",
+   "xmin": 2047,
+   "ga_id": "ga_6abb193a56304029a788f7cb624a0d35",
+   "receipt_raw_present": true
+  },
+  {
+   "ctid": "(0,5)",
+   "xmin": 1857,
+   "ga_id": "ga_6de636122e9c4fb782c0dc12fd223a9b",
+   "receipt_raw_present": true
+  },
+  {
+   "ctid": "(1,10)",
+   "xmin": 2068,
+   "ga_id": "ga_71a1d946fca34c1e9e700c80a546b3ad",
+   "receipt_raw_present": true
+  },
+  {
+   "ctid": "(0,2)",
+   "xmin": 1873,
+   "ga_id": "ga_87882f42d0b4460f8430d73239386c35",
+   "receipt_raw_present": true
+  },
+  {
+   "ctid": "(1,8)",
+   "xmin": 2120,
+   "ga_id": "ga_8eb410609e294d899806a319e6615f2b",
+   "receipt_raw_present": true
+  },
+  {
+   "ctid": "(0,15)",
+   "xmin": 1838,
+   "ga_id": "ga_a7a420f7de4a4037b9dcb5cd7dae796e",
+   "receipt_raw_present": true
+  },
+  {
+   "ctid": "(0,20)",
+   "xmin": 1918,
+   "ga_id": "ga_c5041817c641487f827cc4ed5e0fc9ad",
+   "receipt_raw_present": true
+  },
+  {
+   "ctid": "(1,18)",
+   "xmin": 2101,
+   "ga_id": "ga_e56ca0eb07304f2fbcf60eb8f29f3889",
+   "receipt_raw_present": true
+  }
+ ],
+ "execution_events": [
+  {
+   "ctid": "(0,1)",
+   "xmin": 1815,
+   "sequence": 1,
+   "recorded_at": "2026-09-08T18:33:58.784674+00:00",
+   "recording_transaction_id": "1815"
+  },
+  {
+   "ctid": "(0,2)",
+   "xmin": 1819,
+   "sequence": 2,
+   "recorded_at": "2026-09-08T19:00:09.472467+00:00",
+   "recording_transaction_id": "1819"
+  },
+  {
+   "ctid": "(0,3)",
+   "xmin": 1822,
+   "sequence": 3,
+   "recorded_at": "2026-09-08T19:32:31.821823+00:00",
+   "recording_transaction_id": "1822"
+  },
+  {
+   "ctid": "(0,4)",
+   "xmin": 1823,
+   "sequence": 4,
+   "recorded_at": "2026-09-08T19:33:00.642615+00:00",
+   "recording_transaction_id": "1823"
+  },
+  {
+   "ctid": "(0,5)",
+   "xmin": 1828,
+   "sequence": 5,
+   "recorded_at": "2026-09-08T20:32:58.067275+00:00",
+   "recording_transaction_id": "1828"
+  },
+  {
+   "ctid": "(0,6)",
+   "xmin": 1830,
+   "sequence": 6,
+   "recorded_at": "2026-09-08T20:37:17.491703+00:00",
+   "recording_transaction_id": "1830"
+  },
+  {
+   "ctid": "(0,7)",
+   "xmin": 1831,
+   "sequence": 7,
+   "recorded_at": "2026-09-08T20:40:24.220991+00:00",
+   "recording_transaction_id": "1831"
+  },
+  {
+   "ctid": "(0,8)",
+   "xmin": 1836,
+   "sequence": 8,
+   "recorded_at": "2026-09-08T21:12:49.030254+00:00",
+   "recording_transaction_id": "1836"
+  },
+  {
+   "ctid": "(0,9)",
+   "xmin": 1837,
+   "sequence": 9,
+   "recorded_at": "2026-09-08T21:12:59.869396+00:00",
+   "recording_transaction_id": "1837"
+  },
+  {
+   "ctid": "(0,10)",
+   "xmin": 1844,
+   "sequence": 10,
+   "recorded_at": "2026-09-08T23:53:56.935957+00:00",
+   "recording_transaction_id": "1844"
+  },
+  {
+   "ctid": "(0,11)",
+   "xmin": 1845,
+   "sequence": 11,
+   "recorded_at": "2026-09-08T23:56:47.238745+00:00",
+   "recording_transaction_id": "1845"
+  },
+  {
+   "ctid": "(0,12)",
+   "xmin": 1847,
+   "sequence": 12,
+   "recorded_at": "2026-09-09T00:02:16.75665+00:00",
+   "recording_transaction_id": "1847"
+  },
+  {
+   "ctid": "(0,13)",
+   "xmin": 1848,
+   "sequence": 13,
+   "recorded_at": "2026-09-09T00:02:27.16527+00:00",
+   "recording_transaction_id": "1848"
+  },
+  {
+   "ctid": "(0,14)",
+   "xmin": 1849,
+   "sequence": 14,
+   "recorded_at": "2026-09-09T00:07:23.221467+00:00",
+   "recording_transaction_id": "1849"
+  },
+  {
+   "ctid": "(0,15)",
+   "xmin": 1850,
+   "sequence": 15,
+   "recorded_at": "2026-09-09T00:09:32.849153+00:00",
+   "recording_transaction_id": "1850"
+  },
+  {
+   "ctid": "(0,16)",
+   "xmin": 1855,
+   "sequence": 16,
+   "recorded_at": "2026-09-09T01:47:01.558244+00:00",
+   "recording_transaction_id": "1855"
+  },
+  {
+   "ctid": "(1,1)",
+   "xmin": 1856,
+   "sequence": 17,
+   "recorded_at": "2026-09-09T01:49:11.900135+00:00",
+   "recording_transaction_id": "1856"
+  },
+  {
+   "ctid": "(1,2)",
+   "xmin": 1862,
+   "sequence": 18,
+   "recorded_at": "2026-09-09T02:42:42.767288+00:00",
+   "recording_transaction_id": "1862"
+  },
+  {
+   "ctid": "(1,3)",
+   "xmin": 1864,
+   "sequence": 19,
+   "recorded_at": "2026-09-09T02:48:47.149049+00:00",
+   "recording_transaction_id": "1864"
+  },
+  {
+   "ctid": "(1,4)",
+   "xmin": 1865,
+   "sequence": 20,
+   "recorded_at": "2026-09-09T02:48:57.790257+00:00",
+   "recording_transaction_id": "1865"
+  },
+  {
+   "ctid": "(1,5)",
+   "xmin": 1866,
+   "sequence": 21,
+   "recorded_at": "2026-09-09T02:51:11.590432+00:00",
+   "recording_transaction_id": "1866"
+  },
+  {
+   "ctid": "(1,6)",
+   "xmin": 1867,
+   "sequence": 22,
+   "recorded_at": "2026-09-09T02:52:35.22525+00:00",
+   "recording_transaction_id": "1867"
+  },
+  {
+   "ctid": "(1,7)",
+   "xmin": 1871,
+   "sequence": 23,
+   "recorded_at": "2026-09-09T03:24:39.147164+00:00",
+   "recording_transaction_id": "1871"
+  },
+  {
+   "ctid": "(1,8)",
+   "xmin": 1872,
+   "sequence": 24,
+   "recorded_at": "2026-09-09T03:25:12.660056+00:00",
+   "recording_transaction_id": "1872"
+  },
+  {
+   "ctid": "(1,9)",
+   "xmin": 1878,
+   "sequence": 25,
+   "recorded_at": "2026-09-09T05:01:40.127178+00:00",
+   "recording_transaction_id": "1878"
+  },
+  {
+   "ctid": "(1,10)",
+   "xmin": 1881,
+   "sequence": 26,
+   "recorded_at": "2026-09-09T07:01:29.202476+00:00",
+   "recording_transaction_id": "1881"
+  },
+  {
+   "ctid": "(1,11)",
+   "xmin": 1883,
+   "sequence": 27,
+   "recorded_at": "2026-09-09T07:06:12.855757+00:00",
+   "recording_transaction_id": "1883"
+  },
+  {
+   "ctid": "(1,12)",
+   "xmin": 1885,
+   "sequence": 28,
+   "recorded_at": "2026-09-09T07:10:50.499584+00:00",
+   "recording_transaction_id": "1885"
+  },
+  {
+   "ctid": "(1,13)",
+   "xmin": 1886,
+   "sequence": 29,
+   "recorded_at": "2026-09-09T07:11:03.851695+00:00",
+   "recording_transaction_id": "1886"
+  },
+  {
+   "ctid": "(1,14)",
+   "xmin": 1887,
+   "sequence": 30,
+   "recorded_at": "2026-09-09T07:11:25.917549+00:00",
+   "recording_transaction_id": "1887"
+  },
+  {
+   "ctid": "(1,15)",
+   "xmin": 1888,
+   "sequence": 31,
+   "recorded_at": "2026-09-09T07:14:07.623283+00:00",
+   "recording_transaction_id": "1888"
+  },
+  {
+   "ctid": "(1,16)",
+   "xmin": 1889,
+   "sequence": 32,
+   "recorded_at": "2026-09-09T07:14:18.370471+00:00",
+   "recording_transaction_id": "1889"
+  },
+  {
+   "ctid": "(1,17)",
+   "xmin": 1890,
+   "sequence": 33,
+   "recorded_at": "2026-09-09T07:14:48.750491+00:00",
+   "recording_transaction_id": "1890"
+  },
+  {
+   "ctid": "(2,1)",
+   "xmin": 1891,
+   "sequence": 34,
+   "recorded_at": "2026-09-09T07:16:08.414241+00:00",
+   "recording_transaction_id": "1891"
+  },
+  {
+   "ctid": "(2,2)",
+   "xmin": 1892,
+   "sequence": 35,
+   "recorded_at": "2026-09-09T07:19:48.015236+00:00",
+   "recording_transaction_id": "1892"
+  },
+  {
+   "ctid": "(2,3)",
+   "xmin": 1893,
+   "sequence": 36,
+   "recorded_at": "2026-09-09T07:48:47.110932+00:00",
+   "recording_transaction_id": "1893"
+  },
+  {
+   "ctid": "(2,4)",
+   "xmin": 1894,
+   "sequence": 37,
+   "recorded_at": "2026-09-09T07:58:19.14069+00:00",
+   "recording_transaction_id": "1894"
+  },
+  {
+   "ctid": "(2,5)",
+   "xmin": 1895,
+   "sequence": 38,
+   "recorded_at": "2026-09-09T08:32:50.585488+00:00",
+   "recording_transaction_id": "1895"
+  },
+  {
+   "ctid": "(2,6)",
+   "xmin": 1896,
+   "sequence": 39,
+   "recorded_at": "2026-09-09T08:33:21.537114+00:00",
+   "recording_transaction_id": "1896"
+  },
+  {
+   "ctid": "(2,7)",
+   "xmin": 1907,
+   "sequence": 40,
+   "recorded_at": "2026-09-09T14:55:21.434917+00:00",
+   "recording_transaction_id": "1907"
+  },
+  {
+   "ctid": "(2,8)",
+   "xmin": 1910,
+   "sequence": 41,
+   "recorded_at": "2026-09-09T15:12:00.582351+00:00",
+   "recording_transaction_id": "1910"
+  },
+  {
+   "ctid": "(2,9)",
+   "xmin": 1912,
+   "sequence": 42,
+   "recorded_at": "2026-09-09T15:24:40.600035+00:00",
+   "recording_transaction_id": "1912"
+  },
+  {
+   "ctid": "(2,10)",
+   "xmin": 1915,
+   "sequence": 43,
+   "recorded_at": "2026-09-09T16:03:06.420507+00:00",
+   "recording_transaction_id": "1915"
+  },
+  {
+   "ctid": "(2,11)",
+   "xmin": 1917,
+   "sequence": 44,
+   "recorded_at": "2026-09-09T16:04:46.752051+00:00",
+   "recording_transaction_id": "1917"
+  },
+  {
+   "ctid": "(2,12)",
+   "xmin": 1926,
+   "sequence": 45,
+   "recorded_at": "2026-09-10T01:35:48.642228+00:00",
+   "recording_transaction_id": "1926"
+  },
+  {
+   "ctid": "(2,13)",
+   "xmin": 1928,
+   "sequence": 46,
+   "recorded_at": "2026-09-10T01:45:52.158526+00:00",
+   "recording_transaction_id": "1928"
+  },
+  {
+   "ctid": "(2,14)",
+   "xmin": 1930,
+   "sequence": 47,
+   "recorded_at": "2026-09-10T01:58:00.449595+00:00",
+   "recording_transaction_id": "1930"
+  },
+  {
+   "ctid": "(2,15)",
+   "xmin": 1932,
+   "sequence": 48,
+   "recorded_at": "2026-09-10T02:19:32.543778+00:00",
+   "recording_transaction_id": "1932"
+  },
+  {
+   "ctid": "(2,16)",
+   "xmin": 1934,
+   "sequence": 49,
+   "recorded_at": "2026-09-10T02:23:10.976122+00:00",
+   "recording_transaction_id": "1934"
+  },
+  {
+   "ctid": "(2,17)",
+   "xmin": 1938,
+   "sequence": 50,
+   "recorded_at": "2026-09-10T04:52:55.083373+00:00",
+   "recording_transaction_id": "1938"
+  },
+  {
+   "ctid": "(3,1)",
+   "xmin": 1940,
+   "sequence": 51,
+   "recorded_at": "2026-09-10T04:58:15.664067+00:00",
+   "recording_transaction_id": "1940"
+  },
+  {
+   "ctid": "(3,2)",
+   "xmin": 1943,
+   "sequence": 52,
+   "recorded_at": "2026-09-10T05:05:19.855555+00:00",
+   "recording_transaction_id": "1943"
+  },
+  {
+   "ctid": "(3,3)",
+   "xmin": 1944,
+   "sequence": 53,
+   "recorded_at": "2026-09-10T05:05:31.808391+00:00",
+   "recording_transaction_id": "1944"
+  },
+  {
+   "ctid": "(3,4)",
+   "xmin": 1945,
+   "sequence": 54,
+   "recorded_at": "2026-09-10T05:11:31.082059+00:00",
+   "recording_transaction_id": "1945"
+  },
+  {
+   "ctid": "(3,5)",
+   "xmin": 1946,
+   "sequence": 55,
+   "recorded_at": "2026-09-10T05:12:28.484548+00:00",
+   "recording_transaction_id": "1946"
+  },
+  {
+   "ctid": "(3,6)",
+   "xmin": 1948,
+   "sequence": 56,
+   "recorded_at": "2026-09-10T05:47:47.140795+00:00",
+   "recording_transaction_id": "1948"
+  },
+  {
+   "ctid": "(3,7)",
+   "xmin": 1950,
+   "sequence": 57,
+   "recorded_at": "2026-09-10T05:50:56.624937+00:00",
+   "recording_transaction_id": "1950"
+  },
+  {
+   "ctid": "(3,8)",
+   "xmin": 1958,
+   "sequence": 58,
+   "recorded_at": "2026-09-10T11:21:57.239378+00:00",
+   "recording_transaction_id": "1958"
+  },
+  {
+   "ctid": "(3,9)",
+   "xmin": 1959,
+   "sequence": 59,
+   "recorded_at": "2026-09-10T11:27:19.451324+00:00",
+   "recording_transaction_id": "1959"
+  },
+  {
+   "ctid": "(3,10)",
+   "xmin": 1970,
+   "sequence": 60,
+   "recorded_at": "2026-09-10T12:33:51.858128+00:00",
+   "recording_transaction_id": "1970"
+  },
+  {
+   "ctid": "(3,11)",
+   "xmin": 1971,
+   "sequence": 61,
+   "recorded_at": "2026-09-10T12:37:09.727478+00:00",
+   "recording_transaction_id": "1971"
+  },
+  {
+   "ctid": "(3,12)",
+   "xmin": 1992,
+   "sequence": 62,
+   "recorded_at": "2026-09-10T15:17:30.187844+00:00",
+   "recording_transaction_id": "1992"
+  },
+  {
+   "ctid": "(3,13)",
+   "xmin": 1999,
+   "sequence": 63,
+   "recorded_at": "2026-09-10T16:58:45.835117+00:00",
+   "recording_transaction_id": "1999"
+  },
+  {
+   "ctid": "(3,14)",
+   "xmin": 2004,
+   "sequence": 64,
+   "recorded_at": "2026-09-10T17:35:40.52395+00:00",
+   "recording_transaction_id": "2004"
+  },
+  {
+   "ctid": "(3,15)",
+   "xmin": 2009,
+   "sequence": 65,
+   "recorded_at": "2026-09-10T18:02:34.249582+00:00",
+   "recording_transaction_id": "2009"
+  },
+  {
+   "ctid": "(3,16)",
+   "xmin": 2015,
+   "sequence": 66,
+   "recorded_at": "2026-09-10T18:36:25.802872+00:00",
+   "recording_transaction_id": "2015"
+  },
+  {
+   "ctid": "(3,17)",
+   "xmin": 2027,
+   "sequence": 67,
+   "recorded_at": "2026-09-10T19:32:55.875541+00:00",
+   "recording_transaction_id": "2027"
+  },
+  {
+   "ctid": "(4,3)",
+   "xmin": 2040,
+   "sequence": 68,
+   "recorded_at": "2026-09-10T19:46:01.276292+00:00",
+   "recording_transaction_id": "2040"
+  },
+  {
+   "ctid": "(4,4)",
+   "xmin": 2045,
+   "sequence": 69,
+   "recorded_at": "2026-09-10T20:36:34.770596+00:00",
+   "recording_transaction_id": "2045"
+  },
+  {
+   "ctid": "(4,5)",
+   "xmin": 2045,
+   "sequence": 70,
+   "recorded_at": "2026-09-10T20:36:34.78422+00:00",
+   "recording_transaction_id": "2045"
+  },
+  {
+   "ctid": "(4,6)",
+   "xmin": 2053,
+   "sequence": 71,
+   "recorded_at": "2026-09-10T21:35:24.438977+00:00",
+   "recording_transaction_id": "2053"
+  },
+  {
+   "ctid": "(4,7)",
+   "xmin": 2060,
+   "sequence": 72,
+   "recorded_at": "2026-09-10T22:02:39.987328+00:00",
+   "recording_transaction_id": "2060"
+  },
+  {
+   "ctid": "(4,8)",
+   "xmin": 2062,
+   "sequence": 73,
+   "recorded_at": "2026-09-10T22:21:47.840279+00:00",
+   "recording_transaction_id": "2062"
+  },
+  {
+   "ctid": "(4,9)",
+   "xmin": 2067,
+   "sequence": 74,
+   "recorded_at": "2026-09-11T00:28:34.096316+00:00",
+   "recording_transaction_id": "2067"
+  },
+  {
+   "ctid": "(4,10)",
+   "xmin": 2067,
+   "sequence": 75,
+   "recorded_at": "2026-09-11T00:28:34.14303+00:00",
+   "recording_transaction_id": "2067"
+  },
+  {
+   "ctid": "(4,11)",
+   "xmin": 2074,
+   "sequence": 76,
+   "recorded_at": "2026-09-11T01:42:40.813248+00:00",
+   "recording_transaction_id": "2074"
+  },
+  {
+   "ctid": "(4,12)",
+   "xmin": 2075,
+   "sequence": 77,
+   "recorded_at": "2026-09-11T01:48:11.37889+00:00",
+   "recording_transaction_id": "2075"
+  },
+  {
+   "ctid": "(4,13)",
+   "xmin": 2078,
+   "sequence": 78,
+   "recorded_at": "2026-09-11T02:03:42.063382+00:00",
+   "recording_transaction_id": "2078"
+  },
+  {
+   "ctid": "(4,14)",
+   "xmin": 2078,
+   "sequence": 79,
+   "recorded_at": "2026-09-11T02:03:42.10279+00:00",
+   "recording_transaction_id": "2078"
+  },
+  {
+   "ctid": "(4,15)",
+   "xmin": 2088,
+   "sequence": 80,
+   "recorded_at": "2026-09-11T02:56:25.155651+00:00",
+   "recording_transaction_id": "2088"
+  },
+  {
+   "ctid": "(5,1)",
+   "xmin": 2090,
+   "sequence": 81,
+   "recorded_at": "2026-09-11T03:01:16.876345+00:00",
+   "recording_transaction_id": "2090"
+  },
+  {
+   "ctid": "(5,3)",
+   "xmin": 2099,
+   "sequence": 82,
+   "recorded_at": "2026-09-11T03:19:05.993431+00:00",
+   "recording_transaction_id": "2099"
+  },
+  {
+   "ctid": "(5,4)",
+   "xmin": 2099,
+   "sequence": 83,
+   "recorded_at": "2026-09-11T03:19:06.001304+00:00",
+   "recording_transaction_id": "2099"
+  },
+  {
+   "ctid": "(5,5)",
+   "xmin": 2109,
+   "sequence": 84,
+   "recorded_at": "2026-09-11T03:45:17.851287+00:00",
+   "recording_transaction_id": "2109"
+  },
+  {
+   "ctid": "(5,6)",
+   "xmin": 2111,
+   "sequence": 85,
+   "recorded_at": "2026-09-11T03:47:18.121561+00:00",
+   "recording_transaction_id": "2111"
+  },
+  {
+   "ctid": "(5,8)",
+   "xmin": 2118,
+   "sequence": 86,
+   "recorded_at": "2026-09-11T04:02:33.721059+00:00",
+   "recording_transaction_id": "2118"
+  },
+  {
+   "ctid": "(5,9)",
+   "xmin": 2118,
+   "sequence": 87,
+   "recorded_at": "2026-09-11T04:02:33.74073+00:00",
+   "recording_transaction_id": "2118"
+  },
+  {
+   "ctid": "(5,10)",
+   "xmin": 2135,
+   "sequence": 88,
+   "recorded_at": "2026-09-11T17:35:39.320229+00:00",
+   "recording_transaction_id": "2135"
+  }
+ ],
+ "pg_stat_user_tables": {
+  "events": {
+   "n_tup_del": 0,
+   "n_tup_ins": 5,
+   "n_tup_upd": 0
+  },
+  "current_head": {
+   "n_tup_del": 0,
+   "n_tup_ins": 1,
+   "n_tup_upd": 5
+  },
+  "gate_attempts": {
+   "n_tup_del": 0,
+   "n_tup_ins": 14,
+   "n_tup_upd": 90
+  },
+  "control_objects": {
+   "n_tup_del": 0,
+   "n_tup_ins": 24,
+   "n_tup_upd": 0
+  },
+  "accepted_binding": {
+   "n_tup_del": 0,
+   "n_tup_ins": 1,
+   "n_tup_upd": 4
+  },
+  "execution_events": {
+   "n_tup_del": 0,
+   "n_tup_ins": 92,
+   "n_tup_upd": 0
+  },
+  "execution_binding": {
+   "n_tup_del": 0,
+   "n_tup_ins": 1,
+   "n_tup_upd": 0
+  },
+  "execution_current": {
+   "n_tup_del": 0,
+   "n_tup_ins": 1,
+   "n_tup_upd": 118
+  }
+ },
+ "non_internal_triggers": {
+  "events": [
+   "events_immutable:O"
+  ],
+  "gate_attempts": [
+   "gate_attempt_no_delete:O",
+   "gate_bytes_immutable:O"
+  ],
+  "control_objects": [
+   "control_objects_immutable:O"
+  ],
+  "accepted_binding": [
+   "accepted_binding_immutable:O"
+  ],
+  "execution_events": [
+   "execution_events_immutable:O"
+  ],
+  "execution_binding": [
+   "execution_binding_immutable:O"
+  ]
+ },
+ "rows_with_frozen_xmin": {
+  "gate_attempts": 0,
+  "execution_events": 0
+ },
+ "derived_analysis": {
+  "execution_events": {
+   "row_count": 88,
+   "xmin_inversions": 0,
+   "ctid_inversions": 0,
+   "max_xmin_first44": 1917,
+   "min_xmin_after44": 1926,
+   "first44_all_older_than_every_later_row": true,
+   "shared_xmin_pairs": [
+    [
+     69,
+     70
+    ],
+    [
+     74,
+     75
+    ],
+    [
+     78,
+     79
+    ],
+    [
+     82,
+     83
+    ],
+    [
+     86,
+     87
+    ]
+   ],
+   "n_tup_ins_vs_rows": {
+    "n_tup_ins": 92,
+    "rows": 88,
+    "difference": 4
+   },
+   "unused_ctid_slots": [
+    "(4,1)",
+    "(4,2)",
+    "(5,2)",
+    "(5,7)"
+   ],
+   "reading": "n_tup_ins exceeds the row count by 4 and exactly 4 ctid slots are unused ((4,1), (4,2), (5,2), (5,7)). Aborted inserts still increment n_tup_ins and still consume a slot, so the two numbers explain each other. This is corroboration, not proof: pg_stat counters can be reset or lost on crash. The load-bearing evidence is the ctid and xmin ordering."
+  },
+  "gate_attempts": {
+   "row_count": 14,
+   "all_receipt_raw_present": true,
+   "xmin_range": [
+    1824,
+    2120
+   ],
+   "ctid_is_monotonic_by_ga_id": false,
+   "why_no_monotonicity_argument": "This table is updated in place by design, so xmin records each row last update rather than its insertion, and updates reuse nearby space so ctid ordering carries nothing either. What does hold: guard_gate_bytes freezes a row entirely once receipt_raw is non-null, and all rows have it."
+  },
+  "triggers_note": "All non-internal triggers in the schema are tgenabled=O and therefore do not fire under session_replication_role=replica. Six tables carry them, more than the three the Owner decision cited. Forward protection is relied on from the pinned digests, not from these."
+ }
+}
