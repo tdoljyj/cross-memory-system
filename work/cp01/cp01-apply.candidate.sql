@@ -6,20 +6,9 @@
 --
 -- !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 -- THIS FILE IS A DRAFT AND MUST NOT BE EXECUTED. Blocking:
---   unresolved placeholder   G2: __T_PLUS_24H__
---   unresolved placeholder   G4: __T_PLUS_24H__
---   unresolved placeholder   G5: __T_PLUS_24H__
---   unresolved placeholder   G7: __T_PLUS_24H__
 --   unresolved placeholder   G8: __PROJECTED_ROOT6_ROOT_DIGEST_PENDING__
---   unresolved placeholder   B2: __T_PLUS_24H__
---   unresolved placeholder   B4: __T_PLUS_24H__
---   unresolved placeholder   B5: __T_PLUS_24H__
---   unresolved placeholder   B7: __T_PLUS_24H__
---   unresolved placeholder   B8: __T_PLUS_24H__
 --   unresolved placeholder   B9: __PROJECTED_ROOT6_ROOT_DIGEST_PENDING__
---   unresolved placeholder   A4: __T_PLUS_24H__
---   edit class not yet granted by the Owner   G8: FULL_ROOT_OBJECT_DIGEST_REPINNED_TO_THIS_WINDOW_WITH_REGISTRATION_EVENT_RECORDED_AT_EXCLUDED
---   edit class not yet granted by the Owner   B9: FULL_ROOT_OBJECT_DIGEST_REPINNED_TO_THIS_WINDOW_WITH_REGISTRATION_EVENT_RECORDED_AT_EXCLUDED
+--   (all edit classes granted)
 --   post-image digest unpinned   clued_control.reserve_gate(text,text)
 --   post-image digest unpinned   clued_control.reserve_execution_budget(text,text)
 --   post-image digest unpinned   clued_control.append_status_manifest(text,text)
@@ -112,7 +101,7 @@ begin
     (1, 'G1', 1, $cp01lit$series_view->'root'->>'generation_id' is distinct from 'ctrgen_e5df432221344996afc04b5638121d96'$cp01lit$,
         $cp01lit$series_view->'root'->>'generation_id' is distinct from 'ctrgen_5e0440a95ac8ee257b9e4236cabd275b'$cp01lit$),
     (2, 'G2', 1, $cp01lit$where root_id=root) is distinct from '2026-09-12T13:14:51Z'::timestamptz$cp01lit$,
-        $cp01lit$where root_id=root) is distinct from '__T_PLUS_24H__'::timestamptz$cp01lit$),
+        $cp01lit$where root_id=root) is distinct from '2026-09-13T07:05:16Z'::timestamptz$cp01lit$),
     (3, 'G3', 1, $cp01lit$if series_n>9 or series_f>15 or$cp01lit$,
         $cp01lit$if series_n>9 or series_f>16 or$cp01lit$),
     (4, 'G4', 1, $cp01lit$  or ((series_e->>'sequence')::bigint >= 64 and (
@@ -120,7 +109,7 @@ begin
        or series_budget->>'expires_at' is distinct from '2026-09-11T10:21:05Z'))$cp01lit$,
         $cp01lit$  or ((series_e->>'sequence')::bigint >= 89 and (
        series_budget->>'root_generation' is distinct from 'ctrgen_5e0440a95ac8ee257b9e4236cabd275b'
-       or series_budget->>'expires_at' is distinct from '__T_PLUS_24H__'))
+       or series_budget->>'expires_at' is distinct from '2026-09-13T07:05:16Z'))
   or ((series_e->>'sequence')::bigint >= 64 and (series_e->>'sequence')::bigint < 89 and (
        series_budget->>'root_generation' is distinct from 'ctrgen_e5df432221344996afc04b5638121d96'
        or series_budget->>'expires_at' is distinct from '2026-09-11T10:21:05Z'))$cp01lit$),
@@ -129,7 +118,7 @@ begin
        or (series_ga->>'deadline')::timestamptz>'2026-09-11T10:21:05Z'::timestamptz))$cp01lit$,
         $cp01lit$  or ((series_a->>'budget_sequence')::bigint >= 89 and (
        series_ga->>'control_trust_root_generation' is distinct from 'ctrgen_5e0440a95ac8ee257b9e4236cabd275b'
-       or (series_ga->>'deadline')::timestamptz>'__T_PLUS_24H__'::timestamptz))
+       or (series_ga->>'deadline')::timestamptz>'2026-09-13T07:05:16Z'::timestamptz))
   or ((series_a->>'budget_sequence')::bigint >= 64 and (series_a->>'budget_sequence')::bigint < 89 and (
        series_ga->>'control_trust_root_generation' is distinct from 'ctrgen_e5df432221344996afc04b5638121d96'
        or (series_ga->>'deadline')::timestamptz>'2026-09-11T10:21:05Z'::timestamptz))$cp01lit$),
@@ -140,7 +129,7 @@ begin
   or ((series_a->>'budget_sequence')::bigint >= 64 and (series_a->>'budget_sequence')::bigint < 89 and
       series_receipt->>'control_trust_root_generation' is distinct from 'ctrgen_e5df432221344996afc04b5638121d96')$cp01lit$),
     (7, 'G7', 1, $cp01lit$  or clock_timestamp()+interval '600 seconds'>='2026-09-12T13:14:51Z'::timestamptz$cp01lit$,
-        $cp01lit$  or clock_timestamp()+interval '600 seconds'>='__T_PLUS_24H__'::timestamptz$cp01lit$),
+        $cp01lit$  or clock_timestamp()+interval '600 seconds'>='2026-09-13T07:05:16Z'::timestamptz$cp01lit$),
     (8, 'G8', 1, $cp01lit$ if encode(sha256(convert_to((series_view->'root')::text,'UTF8')),'hex') is distinct from '4ddd23b52ba396909640c7bdbc60217b0f34a840d5e950901b20e4b3c17502a0'
  then raise exception 'series_full_original_root_changed'; end if;$cp01lit$,
         $cp01lit$ if encode(sha256(convert_to((select jsonb_agg(e order by (e->>'sequence')::bigint) from jsonb_array_elements(series_view->'root'->'events') e where (e->>'sequence')::bigint<=5)::text,'UTF8')),'hex') is distinct from '45c6a2cbaf33bb27f6b4c136440d71d767943acfa9772867e219627759ca5bbc'
@@ -191,7 +180,7 @@ begin
     (1, 'B1', 1, $cp01lit$series_view->'root'->>'generation_id' is distinct from 'ctrgen_e5df432221344996afc04b5638121d96'$cp01lit$,
         $cp01lit$series_view->'root'->>'generation_id' is distinct from 'ctrgen_5e0440a95ac8ee257b9e4236cabd275b'$cp01lit$),
     (2, 'B2', 1, $cp01lit$where root_id=root) is distinct from '2026-09-12T13:14:51Z'::timestamptz$cp01lit$,
-        $cp01lit$where root_id=root) is distinct from '__T_PLUS_24H__'::timestamptz$cp01lit$),
+        $cp01lit$where root_id=root) is distinct from '2026-09-13T07:05:16Z'::timestamptz$cp01lit$),
     (3, 'B3', 1, $cp01lit$if series_n>9 or series_f>15 or$cp01lit$,
         $cp01lit$if series_n>9 or series_f>16 or$cp01lit$),
     (4, 'B4', 1, $cp01lit$  or ((series_e->>'sequence')::bigint >= 64 and (
@@ -199,7 +188,7 @@ begin
        or series_budget->>'expires_at' is distinct from '2026-09-11T10:21:05Z'))$cp01lit$,
         $cp01lit$  or ((series_e->>'sequence')::bigint >= 89 and (
        series_budget->>'root_generation' is distinct from 'ctrgen_5e0440a95ac8ee257b9e4236cabd275b'
-       or series_budget->>'expires_at' is distinct from '__T_PLUS_24H__'))
+       or series_budget->>'expires_at' is distinct from '2026-09-13T07:05:16Z'))
   or ((series_e->>'sequence')::bigint >= 64 and (series_e->>'sequence')::bigint < 89 and (
        series_budget->>'root_generation' is distinct from 'ctrgen_e5df432221344996afc04b5638121d96'
        or series_budget->>'expires_at' is distinct from '2026-09-11T10:21:05Z'))$cp01lit$),
@@ -208,7 +197,7 @@ begin
        or (series_ga->>'deadline')::timestamptz>'2026-09-11T10:21:05Z'::timestamptz))$cp01lit$,
         $cp01lit$  or ((series_a->>'budget_sequence')::bigint >= 89 and (
        series_ga->>'control_trust_root_generation' is distinct from 'ctrgen_5e0440a95ac8ee257b9e4236cabd275b'
-       or (series_ga->>'deadline')::timestamptz>'__T_PLUS_24H__'::timestamptz))
+       or (series_ga->>'deadline')::timestamptz>'2026-09-13T07:05:16Z'::timestamptz))
   or ((series_a->>'budget_sequence')::bigint >= 64 and (series_a->>'budget_sequence')::bigint < 89 and (
        series_ga->>'control_trust_root_generation' is distinct from 'ctrgen_e5df432221344996afc04b5638121d96'
        or (series_ga->>'deadline')::timestamptz>'2026-09-11T10:21:05Z'::timestamptz))$cp01lit$),
@@ -219,9 +208,9 @@ begin
   or ((series_a->>'budget_sequence')::bigint >= 64 and (series_a->>'budget_sequence')::bigint < 89 and
       series_receipt->>'control_trust_root_generation' is distinct from 'ctrgen_e5df432221344996afc04b5638121d96')$cp01lit$),
     (7, 'B7', 1, $cp01lit$  or clock_timestamp()+interval '600 seconds'>='2026-09-12T13:14:51Z'::timestamptz$cp01lit$,
-        $cp01lit$  or clock_timestamp()+interval '600 seconds'>='__T_PLUS_24H__'::timestamptz$cp01lit$),
+        $cp01lit$  or clock_timestamp()+interval '600 seconds'>='2026-09-13T07:05:16Z'::timestamptz$cp01lit$),
     (8, 'B8', 1, $cp01lit$if v->>'expires_at' is distinct from '2026-09-12T13:14:51Z' then raise exception 'series_exact_new_budget_expiry_required'; end if;$cp01lit$,
-        $cp01lit$if v->>'expires_at' is distinct from '__T_PLUS_24H__' then raise exception 'series_exact_new_budget_expiry_required'; end if;$cp01lit$),
+        $cp01lit$if v->>'expires_at' is distinct from '2026-09-13T07:05:16Z' then raise exception 'series_exact_new_budget_expiry_required'; end if;$cp01lit$),
     (9, 'B9', 1, $cp01lit$ if encode(sha256(convert_to((series_view->'root')::text,'UTF8')),'hex') is distinct from '4ddd23b52ba396909640c7bdbc60217b0f34a840d5e950901b20e4b3c17502a0'
  then raise exception 'series_full_original_root_changed'; end if;$cp01lit$,
         $cp01lit$ if encode(sha256(convert_to((select jsonb_agg(e order by (e->>'sequence')::bigint) from jsonb_array_elements(series_view->'root'->'events') e where (e->>'sequence')::bigint<=5)::text,'UTF8')),'hex') is distinct from '45c6a2cbaf33bb27f6b4c136440d71d767943acfa9772867e219627759ca5bbc'
@@ -276,7 +265,7 @@ begin
     (3, 'A3', 1, $cp01lit$or obj->>'control_trust_root_generation' is distinct from 'ctrgen_e5df432221344996afc04b5638121d96'$cp01lit$,
         $cp01lit$or obj->>'control_trust_root_generation' is distinct from 'ctrgen_5e0440a95ac8ee257b9e4236cabd275b'$cp01lit$),
     (4, 'A4', 1, $cp01lit$or (obj->>'expires_at')::timestamptz is distinct from '2026-09-11T10:21:05Z'::timestamptz$cp01lit$,
-        $cp01lit$or (obj->>'expires_at')::timestamptz is distinct from '__T_PLUS_24H__'::timestamptz$cp01lit$)
+        $cp01lit$or (obj->>'expires_at')::timestamptz is distinct from '2026-09-13T07:05:16Z'::timestamptz$cp01lit$)
   ) as v(i, id, want, f, t) order by i loop
     n := n + 1;
     if n <> rec.i then raise exception 'CP01_STEP_OUT_OF_ORDER % %', n, rec.i; end if;

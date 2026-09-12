@@ -40,9 +40,12 @@ const PERMITTED = [
   // generator emits a DRAFT.
   'FULL_ROOT_OBJECT_DIGEST_REPINNED_TO_THIS_WINDOW_WITH_REGISTRATION_EVENT_RECORDED_AT_EXCLUDED',
 ];
-const NOT_YET_AUTHORISED = [
-  'FULL_ROOT_OBJECT_DIGEST_REPINNED_TO_THIS_WINDOW_WITH_REGISTRATION_EVENT_RECORDED_AT_EXCLUDED',
-];
+// Granted by the Owner merge of PR #158, commit cbe898d3f5b66f279d78a6b8d583d2c1885d9c89, which
+// carried ExplicitOwnerApproval.candidate.json with all six classes and the explicit carve-out from
+// REMOVING_ORIGINAL_BYTES_CHECKS. Verified by capture-owner-merge.mjs against every condition in
+// trusted-github.mjs verifyOwnerMergeArtifact; evidence in next-window-20260912/
+// OwnerApprovalVerification.json. Nothing is awaiting authorization now.
+const NOT_YET_AUTHORISED = [];
 
 const TABLES = ['accepted_binding','control_objects','current_head','events',
                 'execution_binding','execution_current','execution_events','gate_attempts'];

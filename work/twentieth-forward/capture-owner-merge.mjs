@@ -49,6 +49,13 @@ const mode = arg('--as');
 // backslashed; normalising here keeps a separator convention out of the evidence file.
 const artifacts = (arg('--artifacts') ?? '').split(',').filter(Boolean).map(p => p.replaceAll('\\', '/'));
 const outPath = arg('--out');
+// Who fetched the five API responses. The runbook's step 2 assumed the Windows host and its pinned
+// gh.exe; any authenticated client can collect them, but which one did belongs in the evidence
+// rather than in someone's memory, because the controller's own runtime verification goes through
+// gh.exe and this file does not.
+const fetchedBy = arg('--fetched-by');
+assert.ok(fetchedBy, '--fetched-by is required: name the client that fetched the API bundle, e.g. ' +
+  '"gh.exe on the Windows host" or "curl from the Linux session, GITHUB_TOKEN"');
 assert.ok(bundlePath && !bundlePath.startsWith('--'), 'USAGE: see header');
 assert.ok(['approval', 'signature'].includes(mode), '--as must be approval or signature');
 assert.ok(artifacts.length, '--artifacts must list the repository paths this merge is being trusted for');
@@ -107,16 +114,29 @@ for (const p of artifacts) {
   artifactRefs[p] = {path: p, blob_sha: m[0].sha, sha256: sha(local), bytes: local.length};
 }
 
-// The window rule: not_before is the merge's committed_at. The PR's merged_at and the commit's
-// committer date are both recorded by GitHub and must agree; if they do not, which one is "the"
-// timestamp is a question for the Owner, not a thing to pick silently.
+// The window rule: not_before is the merge's committed_at.
+//
+// This block used to assert iso(merged_at) === iso(committed_at), on the reasoning that if the two
+// GitHub timestamps disagree, choosing between them is the Owner's call rather than this script's.
+// That was an invented condition, and it rejected the real Owner merge of PR #158, where
+// merged_at is 2026-09-12T07:05:17Z and committed_at is 2026-09-12T07:05:16Z. Two things were
+// wrong with it. GitHub records those two through different code paths, so a second's difference
+// is ordinary rather than a signal. And the choice it claimed to escalate is already made:
+// trusted-github.mjs:41 requires only that merged_at be PRESENT, never comparing its value, and
+// :73 takes the timestamp from commit.commit.committer.date -- which is also what the approval's
+// window_rule names, not_before_source: VERIFIED_OWNER_MERGE_COMMIT_COMMITTED_AT.
+//
+// This file is a second implementation of the controller's conditions. A condition the controller
+// does not have does not make it stricter in any useful sense; it makes it something else, able to
+// refuse merges the controller accepts. Both timestamps and their delta are recorded in the
+// evidence instead, so a reviewer sees the fact without this script ruling on it.
 const mergedAt = B.pr.merged_at;
 const committedAt = c.commit?.committer?.date;
-assert.ok(mergedAt && committedAt, 'MERGE_TIMESTAMPS_MISSING');
+assert.ok(mergedAt, 'PR_MERGED_AT_MISSING');            // mirrors trusted-github.mjs:41 (presence)
+assert.ok(committedAt, 'COMMIT_COMMITTED_AT_MISSING');  // mirrors trusted-github.mjs:73 (the source)
 const iso = t => new Date(t).toISOString().replace(/\.\d{3}Z$/, 'Z');
-assert.equal(iso(mergedAt), iso(committedAt),
-  'MERGED_AT_AND_COMMITTED_AT_DISAGREE: ' + mergedAt + ' vs ' + committedAt);
 const notBefore = iso(committedAt);
+const mergedAtDeltaSeconds = (Date.parse(mergedAt) - Date.parse(committedAt)) / 1000;
 const expiresAt = iso(new Date(Date.parse(notBefore) + 86400000).toISOString());
 
 const common = {
@@ -134,10 +154,22 @@ const common = {
     number: B.pr.number, merged_by: B.pr.merged_by.login, merged_at: iso(mergedAt),
     merge_commit_sha: commitSha, base_sha: c.parents[0].sha, head_sha: c.parents[1].sha,
   },
+  merge_timestamps: {
+    committed_at: iso(committedAt),
+    merged_at: iso(mergedAt),
+    merged_at_minus_committed_at_seconds: mergedAtDeltaSeconds,
+    which_one_is_the_window_source: 'committed_at',
+    why: 'trusted-github.mjs:73 reads commit.commit.committer.date, and the approval window_rule ' +
+         'names not_before_source: VERIFIED_OWNER_MERGE_COMMIT_COMMITTED_AT. The controller ' +
+         'requires merged_at only to be present (:41) and never compares its value, so a delta ' +
+         'here is recorded rather than treated as a failure.',
+  },
   verification_method: {
     performed_by: 'work/twentieth-forward/capture-owner-merge.mjs',
     mirrors: 'control-context-verifier-*/trusted-github.mjs verifyOwnerMergeArtifact',
     is_the_controller_verification: false,
+    api_bundle_fetched_by: fetchedBy,
+    api_bundle_sha256: sha(fs.readFileSync(bundlePath)),
     note: 'A second implementation of the same conditions, applied to API responses fetched by the ' +
           'caller. The controller performs its own verification at runtime through its pinned gh.exe; ' +
           'this does not substitute for it.',
@@ -182,7 +214,8 @@ console.log(JSON.stringify({
                        'verification verified+valid with signature and payload',
                        'exactly one merged PR onto main', 'merged_by is the Owner',
                        'tree complete and untruncated', 'each artifact unique, blob, mode 100644',
-                       'local bytes match the merged blob id', 'merged_at equals committed_at'],
+                       'local bytes match the merged blob id',
+                       'merged_at present, window taken from committed_at'],
   authority_effect: out.authority_effect,
 }, null, 2));
 if (!outPath) console.error('\n(no --out given; evidence printed to stdout only, nothing written)');

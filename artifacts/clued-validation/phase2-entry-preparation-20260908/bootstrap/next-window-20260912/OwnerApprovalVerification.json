@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "kind": "VERIFIED_OWNER_CONTINUATION_APPROVAL",
+  "status": "VERIFIED",
+  "repository": {
+    "full_name": "tdoljyj/cross-memory-system",
+    "private": true
+  },
+  "merge": {
+    "sha": "cbe898d3f5b66f279d78a6b8d583d2c1885d9c89",
+    "tree": "cdbd6c0275fad96ab345ac58a0aebf849d8bf953",
+    "parents": [
+      "9abd270505e8429e763d91dab8d03eaae0a2028e",
+      "76e6a5a6a2da0c80786ba47cef7eb31aea26e2af"
+    ],
+    "committer_login": "web-flow",
+    "author_login": "tdoljyj",
+    "verification": {
+      "verified": true,
+      "reason": "valid",
+      "verified_at": "2026-09-12T07:05:17Z"
+    }
+  },
+  "pr": {
+    "number": 158,
+    "merged_by": "tdoljyj",
+    "merged_at": "2026-09-12T07:05:17Z",
+    "merge_commit_sha": "cbe898d3f5b66f279d78a6b8d583d2c1885d9c89",
+    "base_sha": "9abd270505e8429e763d91dab8d03eaae0a2028e",
+    "head_sha": "76e6a5a6a2da0c80786ba47cef7eb31aea26e2af"
+  },
+  "merge_timestamps": {
+    "committed_at": "2026-09-12T07:05:16Z",
+    "merged_at": "2026-09-12T07:05:17Z",
+    "merged_at_minus_committed_at_seconds": 1,
+    "which_one_is_the_window_source": "committed_at",
+    "why": "trusted-github.mjs:73 reads commit.commit.committer.date, and the approval window_rule names not_before_source: VERIFIED_OWNER_MERGE_COMMIT_COMMITTED_AT. The controller requires merged_at only to be present (:41) and never compares its value, so a delta here is recorded rather than treated as a failure."
+  },
+  "verification_method": {
+    "performed_by": "work/twentieth-forward/capture-owner-merge.mjs",
+    "mirrors": "control-context-verifier-*/trusted-github.mjs verifyOwnerMergeArtifact",
+    "is_the_controller_verification": false,
+    "api_bundle_fetched_by": "curl from the Linux qualification session (GITHUB_TOKEN), not the Windows host's pinned gh.exe",
+    "api_bundle_sha256": "faf3be109694209f54b33a7599cf95d48cb49f76272a5a47bf59d5413888f061",
+    "note": "A second implementation of the same conditions, applied to API responses fetched by the caller. The controller performs its own verification at runtime through its pinned gh.exe; this does not substitute for it."
+  },
+  "authority_effect": "FIXED_WINDOW_SCOPE_APPROVED_ONLY; NO_DATABASE_EFFECT",
+  "fixed_window": {
+    "not_before": "2026-09-12T07:05:16Z",
+    "expires_at": "2026-09-13T07:05:16Z",
+    "duration_seconds": 86400,
+    "rolling": false,
+    "auto_renew": false,
+    "backdate": false
+  },
+  "approval_artifacts": {
+    "proposal": {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-20260912/OwnerApprovalProposal.md",
+      "blob_sha": "aa0835e3f7e1453da484df30a59ad6b7581eaa44",
+      "sha256": "c760f73b9dada79764a7d835f473d8379b98a24b28d03d52d90e262060fd1576",
+      "bytes": 19938
+    },
+    "approval": {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-20260912/ExplicitOwnerApproval.candidate.json",
+      "blob_sha": "71bf538405614db6f01d28e4692df05ae2d115a0",
+      "sha256": "457e32b0ca9c319f23c70b5493a7f649d84bf6f2e2d09a34fd5cbf4d30121fe2",
+      "bytes": 20444
+    }
+  },
+  "scope": {
+    "project_ref": "uscrdifznmlvczcekqpw",
+    "namespace": "clued_control",
+    "root_set_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+    "purpose": "SKILL_COEXISTENCE_QUALIFICATION",
+    "environment": "ISOLATED_TEST",
+    "production_authority": false,
+    "paid_model_authority": false,
+    "new_trust_root": false,
+    "scope_expansion": false
+  }
+}
