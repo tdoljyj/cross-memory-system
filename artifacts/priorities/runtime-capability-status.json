@@ -1,0 +1,39 @@
+{
+  "schema": "clued.multitrack-runtime-capability-status/0.1",
+  "status": "READ_ONLY_RUNTIME_DISCOVERY_PROJECTION_NOT_AUTHORITY",
+  "authority_effect": "NONE",
+  "observed_project": "clued-prod",
+  "observed_on": "2026-09-12",
+  "capabilities": {
+    "priority_reconciliation_runtime": {
+      "implementation_state": "NOT_IMPLEMENTED_OR_NOT_PRESENT_IN_DISCOVERABLE_RUNTIME",
+      "authoritative_registry_available": false,
+      "safe_answer_for_zero_memory": "NO_AUTHORITATIVE_PRIORITY_RECONCILIATION_RUNTIME_AVAILABLE",
+      "do_not_claim": [
+        "Do not claim a recent PriorityReconciliationReceipt exists.",
+        "Do not fabricate trigger_event.",
+        "Do not treat Bootstrap priority changes as Canonical reconciliation."
+      ]
+    },
+    "replan_proposal_runtime": {
+      "implementation_state": "NOT_IMPLEMENTED_OR_NOT_PRESENT_IN_DISCOVERABLE_RUNTIME",
+      "authoritative_registry_available": false,
+      "safe_answer_for_zero_memory": "NO_AUTHORITATIVE_REPLAN_REGISTRY_AVAILABLE",
+      "do_not_claim": [
+        "Do not claim there are zero open Replan Proposals.",
+        "Do not use bootstrap-context.open_proposals=[] as proof of Canonical absence."
+      ]
+    }
+  },
+  "read_only_discovery_evidence": {
+    "specialized_tables_matching_priority_replan_reconciliation_governance_proposal": 0,
+    "specialized_routines_matching_priority_replan_reconciliation_governance_proposal": 0,
+    "generic_clued_records_v2_matches": 0,
+    "generic_clued_records_m1_matches": 0,
+    "generic_clued_context_events_matches": 0,
+    "generic_clued_audit_receipts_matches": 0,
+    "repository_main_code_search_matches": 0
+  },
+  "interpretation": "The current Bootstrap can safely recover that authoritative Multi-Track Reconciliation/Replan runtime is not yet discoverably implemented. This is a truthful NOT_IMPLEMENTED state, not a claim that an implemented registry is empty.",
+  "future_transition": "When Multi-Track runtime is implemented, this projection must be replaced by exact runtime registry/receipt reads and Currentness validation."
+}
