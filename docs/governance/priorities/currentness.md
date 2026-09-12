@@ -4,26 +4,87 @@
 
 ## E-010 Cross-Host / Thin-Open currentness
 
-The earlier X-grade identity conflict is now resolved at the design-revision layer:
+The earlier X-grade identity conflict is resolved at the design-revision layer:
 
 - exact v0.2.4 candidate exists;
 - its fresh-context independent final review is `PASS / MAJOR 0 / MINOR 0`;
-- the reviewed target SHA-256 is `9b3de9eabc503b0036cfc79bacded5a4160b2a5896e20362fdbeb7d3a97cbf5f`;
+- reviewed target SHA-256: `9b3de9eabc503b0036cfc79bacded5a4160b2a5896e20362fdbeb7d3a97cbf5f`;
 - Owner governance state subsequently fixes v0.2.4 as the adopted current design baseline;
-- a post-decision persistent projection is stored at `docs/governance/source-projections/2026-09-12/Clued_Cross-Host_Thin-Open_v0.2.4_freeze_projection.md`.
+- a post-decision persistent projection is stored under `docs/governance/source-projections/2026-09-12/`.
 
-What remains unresolved is **not the design revision identity**. The remaining gap is the exact authoritative Canonical freeze Event / Receipt, which is not fabricated by this repository projection.
+What remains unresolved is **not the design revision identity**. The remaining gap is the exact authoritative Canonical freeze Event / Receipt, which this repository projection does not fabricate.
 
-Therefore the safe current state is:
+Safe state:
 
 ```text
 E-010 design milestone = ✅ COMPLETED
-adopted design revision = v0.2.4 (Owner-fixed after independent PASS)
+adopted design revision = v0.2.4
+independent review = PASS
 exact reviewed SHA = 9b3de9eabc503b0036cfc79bacded5a4160b2a5896e20362fdbeb7d3a97cbf5f
 Canonical freeze Event / Receipt = NOT MATERIALIZED IN THIS PROJECTION
 runtime implementation = NOT IMPLIED
 production/publication authority = NOT IMPLIED
 ```
+
+## Live Authority infrastructure mapping
+
+A read-only inspection of active `clued-prod` confirms reusable Authority / Scope infrastructure already exists:
+
+- Binding resolver: `public.clued_resolve_binding(...)`;
+- Authorization status: `public.clued_authorization_status_v12(...)`;
+- Project access: `public.clued_project_access_v13(...)`;
+- Effective Resource×Action: `clued_private.authorization_effective_actions_v13(...)`;
+- Project membership: `clued_private.project_memberships_v13`;
+- Authorization entries: `clued_private.authorization_entries_v12`;
+- Development assignment/scope: `clued_private.development_grants_v14`;
+- Development space/version cursor: `clued_private.development_spaces_v14`.
+
+Therefore Multi-Track reuses existing Authority and Development Grant semantics instead of creating a second permission/assignment system.
+
+Exact resolver contract:
+
+- human-readable: `authority-currentness-contract.md`;
+- machine-readable: `artifacts/priorities/authority-currentness-contract.json`.
+
+## Currentness is multi-domain
+
+Read-only production inspection also confirms several distinct version domains exist. Examples include:
+
+- `clued_audit_receipts.canonical_version`;
+- `clued_context_heads.version`;
+- Development Space / Grant version/cursor;
+- repository memory snapshot Canonical/version pointer;
+- Multi-Track Priority Snapshot identity.
+
+These counters are **not interchangeable**.
+
+Currentness therefore uses:
+
+```text
+Dependency Manifest
++
+Scope-specific Watermarks
++
+Exact Source Identity
++
+Authority / Grant / Policy version where applicable
+```
+
+A matching Repository Projection watermark only proves projection integrity; it does not prove upstream Canonical Currentness.
+
+## Projection watermark
+
+`artifacts/priorities/projection-watermark.json` binds the expected blob SHA values for the current Bootstrap projection inputs.
+
+If a tracked blob differs:
+
+`repository_projection_currentness = STALE_OR_MUTATED`
+
+until regeneration / revalidation.
+
+This is deliberately separate from:
+
+`canonical_currentness = CURRENT|STALE|UNKNOWN`.
 
 ## Source materialization status
 
@@ -36,22 +97,28 @@ Persistent source projections are now available for:
 
 These projection files do **not** fabricate historical Canonical Events or Receipts.
 
-## Remaining Currentness / Authority gaps
+## Remaining Authority / Currentness gaps
 
-The Bootstrap projection still lacks authoritative machine-readable bindings for:
+The Bootstrap projection still does not possess runtime values for:
 
 - current authenticated Principal;
-- principal-specific Resource×Action + selector/scope;
-- current Canonical Version / Event watermark for this multi-track Snapshot;
-- CurrentnessReceipt;
-- authoritative open Replan Proposal registry;
+- current Binding / Membership / Development Grant values;
+- current effective Resource×Action result;
+- this Priority Snapshot's authoritative CurrentnessReceipt;
+- authoritative Replan Proposal registry;
 - latest PriorityReconciliationReceipt / trigger_event;
 - exact Canonical Event / Receipt normalization for every historical baseline.
 
-Unknown values remain `UNKNOWN` and high-risk actions fail closed.
+Unknown values remain `UNKNOWN`, and high-risk actions fail closed.
 
 ## Zero-memory structural preflight
 
-- Current structural preflight: **`16 / 25`** recovery questions answerable from repository Bootstrap projection.
-- Newly covered: Track goals, typed non-hard impacts, conditional parallel/resource conflicts, normalized forbidden-action boundaries.
-- Remaining failures are concentrated in authenticated Authority, Agent Scope, Currentness, formal Replan/Reconciliation and eligible-next-action resolution.
+Current structural maturity: **`20 / 25`**.
+
+The remaining five questions require either complete Canonical provenance or actual authenticated runtime resolution:
+
+- exact source/Event/Receipt normalization;
+- latest authoritative Priority Reconciliation trigger/receipt;
+- authoritative Replan registry;
+- Priority Snapshot CurrentnessReceipt;
+- real eligible-next-action computation.
