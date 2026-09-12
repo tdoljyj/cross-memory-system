@@ -44,7 +44,10 @@ const argv = process.argv.slice(2);
 const bundlePath = argv[0];
 const arg = n => argv.includes(n) ? argv[argv.indexOf(n) + 1] : null;
 const mode = arg('--as');
-const artifacts = (arg('--artifacts') ?? '').split(',').filter(Boolean);
+// Repository paths go into signed evidence and must be forward-slashed exactly as git records
+// them. This script is meant to be run on the Windows host, where a shell-completed path arrives
+// backslashed; normalising here keeps a separator convention out of the evidence file.
+const artifacts = (arg('--artifacts') ?? '').split(',').filter(Boolean).map(p => p.replaceAll('\\', '/'));
 const outPath = arg('--out');
 assert.ok(bundlePath && !bundlePath.startsWith('--'), 'USAGE: see header');
 assert.ok(['approval', 'signature'].includes(mode), '--as must be approval or signature');
