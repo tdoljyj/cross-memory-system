@@ -8,6 +8,35 @@ Clued 是一个围绕「发现与继续」建立的数字平台。
 
 本仓库 `cross-memory-system` 是 Clued 的研发与发布控制面之一，承载协议、Kernel、适配器、Skills/MCP、治理合同、验证与发布证据。它不是普通用户产品运行链的必经组件，也不是用户 Canonical Store；具体运行时权威边界见下文。
 
+## 当前多轨治理（Bootstrap Projection）
+
+Clued 当前采用四条长期治理轨道：
+
+- **Engineering & Platform / 工程与平台**
+- **Product & Experience / 产品与体验**
+- **Foundational Research / 基础研究**
+- **Business & Growth / 商业与增长**
+
+当前严格工程 Frontier 是 `E-001 Kernel Phase 2 Real Closeout`。`E-008 Multi-Track Bootstrap Governance / Current Governance Inventory` 只允许作为**不阻塞 E-001 的并行治理工作**继续推进。
+
+当前多轨状态入口：
+
+- `docs/governance/priorities/README.md`：多轨投影说明与边界；
+- `docs/governance/priorities/current-frontier.md`：四轨 Current Priority Frontier；
+- `docs/governance/priorities/tracks.md`：当前 Program / Priority Item 与 `✅ / ◐ / 🔎 / ⛔ / ○ / ⏳ / ↘ / ☐` 状态；
+- `docs/governance/priorities/cross-track-map.md`：跨轨依赖与影响；
+- `docs/governance/priorities/currentness.md`：Currentness / Authority 对账缺口；
+- `docs/governance/priorities/zero-memory-preflight.md`：fresh-context / zero-memory 恢复预演；
+- `artifacts/priorities/current.json`：机器可读 Bootstrap Priority Snapshot。
+
+`✅ COMPLETED` 表示**该 Priority Item 自身的完成合同成立**，不代表相关 Runtime、产品或生产能力已经全部实现。完成项不会从治理历史中消失。
+
+这一整套多轨内容目前仍是：
+
+`BOOTSTRAP SOURCE-BOUND CANDIDATE / NOT AUTHORITY / NOT FROZEN`
+
+它用于帮助 Human / Agent 在不依赖私人聊天记忆的情况下恢复 Clued 当前轨道、优先级、完成态、依赖和阻塞；**Repository Projection 本身不创建 Authority，也不能反向改写 Canonical。** 本地手工修改治理投影应视为 `PRIORITY_PROJECTION_DRIFT`，不得自动吸收为正式现实。
+
 ## 当前权威边界
 
 - 生产 Supabase（经认证 Clued API/MCP）是唯一在线 Canonical Store。
