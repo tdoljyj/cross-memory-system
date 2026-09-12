@@ -408,6 +408,9 @@ const CENSUS = {
   'control-context-verifier-root6-linux-successor/grr.mjs': 0,
   'control-context-verifier-root6-linux-successor/host-effect.mjs': 2,
   'control-context-verifier-root6-linux-successor/parent600.py': 4,
+  // R21-F3: this controller's own Linux batch reader, replacing the predecessor's PowerShell one
+  // on the verifySourcePublication path. Its single literal is the gh pin.
+  'control-context-verifier-root6-linux-successor/read-source-blobs-linux.mjs': 1,
   'control-context-verifier-root6-linux-successor/result-terminal.mjs': 1,
   'control-context-verifier-root6-linux-successor/trusted-github.mjs': 1,
   'control-context-verifier-root6-linux-successor/tool-entry.functions.js': 3,
@@ -457,6 +460,7 @@ const UNCOVERED = [
 
   "fixed_host.py arm_watchdog() PYTHON_SHA -- needs a live GA. Round 20 showed this one is exploitable: written as adjacent-string concatenation of the predecessor's Windows digest, both gates stay green and the controller dies at the first step of START.",
   "trusted-github.mjs expectedGh -- needs a GitHub API call",
+  "read-source-blobs-linux.mjs ghSHA -- same binary, same reason: proving it live needs a real blob read, and the batch path is only reached inside a real verifySourcePublication",
   "fixed_host.py _invoke()'s platform gate and DOCKER_SHA -- needs a container operation. Separate from prepare()'s pair, which items 5b now prove; these two have their own messages (R20-N2) so they are separately provable once a container operation can be driven.",
   "grr.mjs's schema check -- it re-hashes the local receipt schema, but against acceptedSchemaSha256 passed in rather than a literal of its own, so the census below cannot see it. Needs a terminal result to exercise.",
   "result-terminal.mjs's blob refs -- digests of remote material, checked against what GitHub returns; needs an API call",

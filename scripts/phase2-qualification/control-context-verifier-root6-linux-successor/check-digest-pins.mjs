@@ -118,11 +118,12 @@ if (CROSS_DIRECTORY_SOURCES.length !== 1) throw new Error('CROSS_DIRECTORY_SOURC
 const CONTROLLER_SOURCES = [
   'bridge.py', 'build-linux-manifest.mjs', 'check-digest-pins.mjs', 'cli.mjs', 'context.mjs',
   'fixed_host.py', 'grr.mjs', 'historical-component-observations.mjs', 'host-effect.mjs',
-  'original-inputs-blob.mjs', 'parent600.py', 'request-denials.mjs', 'result-terminal.mjs',
+  'original-inputs-blob.mjs', 'parent600.py', 'read-source-blobs-linux.mjs',
+  'request-denials.mjs', 'result-terminal.mjs',
   'root-window-validation.mjs', 'selftest-runtime-pins.mjs', 'source-publication.mjs',
   'tool-entry.functions.js', 'trusted-github.mjs',
 ];
-if (CONTROLLER_SOURCES.length !== 18) throw new Error('CONTROLLER_SOURCES length changed; declare a new source deliberately, not by accident');
+if (CONTROLLER_SOURCES.length !== 19) throw new Error('CONTROLLER_SOURCES length changed; declare a new source deliberately, not by accident');
 // R20-F3. Round 20 ran this gate on a host with no gh installed and got
 // "UNEXPLAINED trusted-github.mjs: f687dc937534 matches no file", exit 1 -- correct fail-closed
 // behaviour, but indistinguishable from a real controller defect, and since build-linux-manifest
@@ -332,7 +333,11 @@ const FOREIGN_CONTROLLER_REFERENCES = {
     'control-context-verifier-runtime600/late-bound-policy.mjs',
   ],
   'result-terminal.mjs': ['control-context-verifier-runtime600/write-targets.mjs'],
-  'source-publication.mjs': [
+  // R21-F3: source-publication.mjs now imports this controller's own Linux reader; the two
+  // references left here are the pure-logic modules that reader reuses.
+  // source-publication.mjs still imports ref-plan.mjs directly for planSourceBatches.
+  'source-publication.mjs': ['control-context-verifier-original-input-capacity-successor/ref-plan.mjs'],
+  'read-source-blobs-linux.mjs': [
     'control-context-verifier-original-input-capacity-successor/read-source-blobs.mjs',
     'control-context-verifier-original-input-capacity-successor/ref-plan.mjs',
   ],
@@ -415,6 +420,95 @@ const FOREIGN_CONTROLLER_REFERENCES = {
   }
 }
 
+// R21-F5. Counting literals is the wrong instrument and this is where it ended.
+//
+// Per-file counts refuse a plain addition, a plain removal, and a cancellation across two files --
+// all three measured. They do not refuse the one attack they were written for. Round 20 hid
+// arm_watchdog's PYTHON_SHA as adjacent string fragments holding the predecessor's Windows digest;
+// round 21 did the same and added ONE COMMENT LINE in the same file quoting a digest the gate can
+// explain. Net count unchanged, gate green, exit 0, and the controller dies at the first step of
+// START. The comment in this file said per-file counts "shrink the cancellation to a pair inside
+// the same file", which reads as though the bar were raised. The bar is one comment line.
+//
+// So the pins are checked by POSITION, not by population. Every runtime byte check in this
+// controller has a definite syntactic shape; each is required to match exactly once, and the digest
+// it captures must equal what is actually on disk at the target it names. A pin rewritten as
+// concatenation no longer matches its shape and is refused, however many literals are added
+// elsewhere in the file. Where the shape carries the target path, the path is read from the source
+// rather than repeated here, so a port that forgets to update one is caught by the same check.
+const RUNTIME_PINS = [
+  {file: 'bridge.py', label: 'HOST_SHA -> fixed_host.py',
+   re: /^HOST_SHA = '([a-f0-9]{64})'$/m, target: () => path.join(DIR, 'fixed_host.py')},
+  {file: 'fixed_host.py', label: "load('accepted_fixed_parent') -> parent600.py",
+   re: /load\('accepted_fixed_parent', str\(BASE \/ '([^']+)'\),\s*\n\s*'([a-f0-9]{64})'\)/, pathGroup: 1, shaGroup: 2,
+   target: p => path.join(DIR, p)},
+  {file: 'fixed_host.py', label: "load('accepted_observation') -> observe.py",
+   re: /load\('accepted_observation', '([^']+)',\s*\n\s*'([a-f0-9]{64})'\)/, pathGroup: 1, shaGroup: 2,
+   target: p => path.join(QUAL, p)},
+  {file: 'fixed_host.py', label: 'PYTHON_SHA -> the interpreter',
+   re: /^PYTHON = Path\('([^']+)'\)\n^PYTHON_SHA = '([a-f0-9]{64})'$/m, pathGroup: 1, shaGroup: 2,
+   target: p => p},
+  {file: 'parent600.py', label: "load_exact('accepted_observation_validation') -> validation.py",
+   re: /load_exact\('accepted_observation_validation', '([^']+)',\s*\n\s*'([a-f0-9]{64})'\)/, pathGroup: 1, shaGroup: 2,
+   target: p => path.join(QUAL, p)},
+  {file: 'parent600.py', label: "load_exact('accepted_auxiliary_evidence') -> remote_evidence.py",
+   re: /load_exact\('accepted_auxiliary_evidence', '([^']+)',\s*\n\s*'([a-f0-9]{64})'\)/, pathGroup: 1, shaGroup: 2,
+   target: p => path.join(QUAL, p)},
+  {file: 'parent600.py', label: 'CHILD_SHA -> fixed_skill_fixture.py',
+   re: /^CHILD_SHA = '([a-f0-9]{64})'\n^CHILD_PATH = Path\(__file__\)\.resolve\(\)\.parent\.parent \/ '([^']+)' \/ '([^']+)'$/m,
+   shaGroup: 1, target: (_, m) => path.join(QUAL, m[2], m[3])},
+  {file: 'parent600.py', label: 'DOCKER_SHA -> the docker binary',
+   re: /^DOCKER = '([^']+)'\n(?:.*\n)*?^DOCKER_SHA = '([a-f0-9]{64})'$/m, pathGroup: 1, shaGroup: 2,
+   target: p => p},
+  {file: 'host-effect.mjs', label: 'invokeFixedHost -> the interpreter',
+   re: /const python='([^']+)';(?:[\s\S]*?)sha\(fs\.readFileSync\(python\)\)!=='([a-f0-9]{64})'/, pathGroup: 1, shaGroup: 2,
+   target: p => p},
+  {file: 'host-effect.mjs', label: 'invokeFixedHost -> bridge.py',
+   re: /const bridge=fileURLToPath\(new URL\('\.\/([^']+)'(?:[\s\S]*?)sha\(fs\.readFileSync\(bridge\)\)!=='([a-f0-9]{64})'/, pathGroup: 1, shaGroup: 2,
+   target: p => path.join(DIR, p)},
+  {file: 'read-source-blobs-linux.mjs', label: 'ghSHA -> the gh binary',
+   re: /^const gh = '([^']+)';\nconst ghSHA = '([a-f0-9]{64})';$/m, pathGroup: 1, shaGroup: 2,
+   target: p => p},
+  {file: 'trusted-github.mjs', label: 'expectedGh -> the gh binary',
+   re: /const gh='([^']+)';\nconst expectedGh='([a-f0-9]{64})';/, pathGroup: 1, shaGroup: 2,
+   target: p => p},
+  {file: 'tool-entry.functions.js', label: 'entry -> the interpreter',
+   re: /sha256sum (\/[^ "|]*python[0-9.]*) \|[\s\S]{0,80}?= "([a-f0-9]{64})"/, pathGroup: 1, shaGroup: 2,
+   target: p => p},
+  {file: 'tool-entry.functions.js', label: 'entry -> node',
+   re: /sha256sum (\/[^ "|]*node) \|[\s\S]{0,80}?= "([a-f0-9]{64})"/, pathGroup: 1, shaGroup: 2,
+   target: p => p},
+  // Not a file: the digest of the SQL text this entry sends. Self-checking, so it is verified
+  // against the query rather than against a path.
+  {file: 'tool-entry.functions.js', label: 'query_sha256 -> the SQL text',
+   re: /query='([^']+)';\nconst query_sha256='([a-f0-9]{64})';/, shaGroup: 2,
+   digestOf: m => crypto.createHash('sha256').update(m[1]).digest('hex')},
+];
+if (RUNTIME_PINS.length !== 15) throw new Error('RUNTIME_PINS length changed; declare a pin deliberately, not by accident');
+{
+  for (const pin of RUNTIME_PINS) {
+    const abs = path.join(DIR, pin.file);
+    if (!fs.existsSync(abs)) { problems.push(`${pin.file}: declared to hold the pin "${pin.label}" and is not on disk`); continue; }
+    const text = fs.readFileSync(abs, 'utf8');
+    const all = [...text.matchAll(new RegExp(pin.re.source, pin.re.flags.includes('g') ? pin.re.flags : pin.re.flags + 'g'))];
+    if (all.length !== 1) {
+      problems.push(`${pin.file}: the pin "${pin.label}" matches its declared shape ${all.length} time(s), expected exactly 1. A pin rewritten -- as concatenated fragments, say -- stops matching while it keeps running, and no count of literals will notice.`);
+      continue;
+    }
+    const m = all[0];
+    const declared = m[pin.shaGroup ?? 1];
+    const expected = pin.digestOf ? pin.digestOf(m)
+      : (() => { const t = pin.target(pin.pathGroup ? m[pin.pathGroup] : undefined, m); return fs.existsSync(t) ? sha(t) : null; })();
+    if (expected === null) {
+      const t = pin.target(pin.pathGroup ? m[pin.pathGroup] : undefined, m);
+      if (HOST_BINARIES.includes(t)) missingHostBinaries.push(t);
+      else problems.push(`${pin.file}: the pin "${pin.label}" names ${t}, which is not on this host`);
+    } else if (declared !== expected) {
+      problems.push(`${pin.file}: the pin "${pin.label}" declares ${declared.slice(0, 12)} but its target measures ${expected.slice(0, 12)}`);
+    }
+  }
+}
+
 let accounted = 0;
 const perFile = {};
 const scanTargets = [
@@ -452,7 +546,7 @@ for (const [f, abs] of scanTargets) {
 // pair inside the same file, which is stated below rather than claimed away.
 const EXPECTED_PER_FILE = {
   'bridge.py': 1, 'check-digest-pins.mjs': 8, 'context.mjs': 22, 'fixed_host.py': 3,
-  'host-effect.mjs': 2, 'parent600.py': 4, 'result-terminal.mjs': 1,
+  'host-effect.mjs': 2, 'parent600.py': 4, 'read-source-blobs-linux.mjs': 1, 'result-terminal.mjs': 1,
   'tool-entry.functions.js': 3, 'trusted-github.mjs': 1,
   // Cross-directory live code, newly scanned (R17-N5). Zero today; declared so it cannot appear
   // unnoticed.

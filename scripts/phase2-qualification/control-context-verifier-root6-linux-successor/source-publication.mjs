@@ -1,5 +1,9 @@
 // Explicit parallel-source controller successor; requires its own accepted source binding.
-import {readSourceBlobRefsBounded} from '../control-context-verifier-original-input-capacity-successor/read-source-blobs.mjs';
+// R21-F3: the predecessor's reader spawns PowerShell and pins C:/Program Files/nodejs/node.exe,
+// which throws ENOENT here -- and is first reached AFTER the one-shot budget reservation and GA
+// issuance, so the single allocation would burn on it. The Linux reader is owned by this
+// controller; the predecessor's module is left untouched because eight controllers pin its bytes.
+import {readSourceBlobRefsBounded} from './read-source-blobs-linux.mjs';
 import {planRefs} from '../control-context-verifier-original-input-capacity-successor/ref-plan.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
