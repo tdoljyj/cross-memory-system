@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 import {execFileSync} from 'node:child_process';
 import {makeCommitment,prepareMutation,verifyObservedCommit,branch,prefix,repository} from '../nonproduction-control-store/runtime-successor/commitment-signing-root6-window/signing.mjs';
 const gh='/usr/local/bin/gh';
-const expectedGh='e2efa10a5d2ce93cac9bc4b676932b62947c0967c01c8f2c3a9cb4437ad358d3';
+const expectedGh='f687dc937534f8aa77ff9d2362163c645b5a8cc78297ef1a642c74c56aa48618';
 const immutableReads=new Map();
 const ownerMergeTrees=new Map();
 export const sha=b=>crypto.createHash('sha256').update(b).digest('hex');

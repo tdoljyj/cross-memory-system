@@ -37,7 +37,7 @@ PUBLIC_ENV = [key + '=' + value for key, value in child.PUBLIC_ENV.items()]
 if PUBLIC_ENV[:5] != v.PUBLIC_ENV or len(PUBLIC_ENV) != 7:
     raise RuntimeError('Original image environment must remain the original five values')
 DOCKER = '/usr/bin/docker'
-ENDPOINT = 'npipe:////./pipe/dockerDesktopLinuxEngine'
+ENDPOINT = 'unix:///var/run/docker.sock'
 # Literal fixed program: invokes the reviewed library primitive, not Skill text.
 # No caller can supply code or arguments. This argv is review data, never run here.
 PROGRAM = "import json,runpy,time,signal,sys; signal.signal(signal.SIGTERM,lambda *_:sys.exit(0)); print(json.dumps(runpy.run_path('/driver/fixed_skill_fixture.py',run_name='fixed_fixture_input')['isolated_action_primitive'](),sort_keys=True),flush=True); time.sleep(600)"

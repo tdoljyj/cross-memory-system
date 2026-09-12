@@ -11,7 +11,7 @@ const sha=v=>crypto.createHash('sha256').update(v).digest('hex');
 export const fixedBridgeEnvironment=Object.freeze({TEMP:'/tmp',TMP:'/tmp',HOME:'',PATH:'',SHELL:'',USER:'',LOGNAME:'',LANG:'',LC_ALL:'',PWD:'',TERM:'',XDG_RUNTIME_DIR:''});
 export function invokeFixedHost({gaRaw,operation,containerId,deadline}){
  if(!['CREATE','START'].includes(operation)||!Number.isFinite(deadline)||Date.now()>=deadline)throw Error('FIXED_LIVE_HOST_OPERATION_REQUIRED');
- if(sha(fs.readFileSync(python))!=='4d6f5f81a4bca11191c4c7c6b43632694d0a4ce74e068619d8fdc161d469859a'||sha(fs.readFileSync(bridge))!=='60e4cfac015c15fd53921a61a6566f740e7414f218120b0bdbc17bf17be64fd7')throw Error('EXACT_PYTHON_BRIDGE_BYTES_REQUIRED');
+ if(sha(fs.readFileSync(python))!=='f56a588548dd013906ae1dcd1b6faa417f4e204da634ff354840d9643e78ff9e'||sha(fs.readFileSync(bridge))!=='60e4cfac015c15fd53921a61a6566f740e7414f218120b0bdbc17bf17be64fd7')throw Error('EXACT_PYTHON_BRIDGE_BYTES_REQUIRED');
  const ga=JSON.parse(gaRaw),nonce=sha('clued-fixed-host-v1\0'+ga.gate_authorization_id).slice(0,32);
  const request={operation,nonce,ga_raw:gaRaw,ga_sha256:sha(gaRaw),container_id:operation==='CREATE'?null:containerId};
  const remaining=deadline-Date.now();if(remaining<=0)throw Error('HOST_DEADLINE_ELAPSED_DURING_SOURCE_CHECK');

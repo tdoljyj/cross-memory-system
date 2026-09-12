@@ -53,16 +53,35 @@ const nm = prev.files
   .map(f => entry(path.join(REPO, 'apps/clued-cloud/node_modules', f.path.slice(NM_WIN.length)), 'RUNTIME_DEPENDENCY'));
 
 // 4. Python standard library actually imported, enumerated by importing parent600.py.
+// R14-F4: the predecessor pinned .pyc files, and it was right to. CPython loads the cached
+// bytecode, not the source, and a timestamp-based .pyc carries its own validation fields, so
+// editing a .pyc while leaving its .py alone passes a source-only manifest. Both are pinned, and
+// the .pyc set comes from each module's own __cached__ rather than from guessing the layout.
 const pyList = execFileSync('/usr/bin/python3.11', ['-I', '-S', '-B', '-c', `
 import sys, importlib.util, json
 spec = importlib.util.spec_from_file_location('p600', ${JSON.stringify(path.join(REPO, NEW_DIR, 'parent600.py'))})
 m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
-out = sorted({f for f in (getattr(mod, '__file__', None) for mod in sys.modules.values()) if f and f.startswith('/usr/lib/python3.11/')})
-print(json.dumps(out))
+src, cached = set(), set()
+for mod in list(sys.modules.values()):
+    f = getattr(mod, '__file__', None)
+    if f and f.startswith('/usr/lib/python3.11/'):
+        src.add(f)
+        c = getattr(mod, '__cached__', None)
+        if c and c.startswith('/usr/lib/python3.11/'):
+            cached.add(c)
+print(json.dumps({'src': sorted(src), 'cached': sorted(cached)}))
 `], {encoding: 'utf8', cwd: path.join(REPO, NEW_DIR)});
-const py = JSON.parse(pyList).map(p => entry(p, 'RUNTIME_DEPENDENCY'));
+const pyParsed = JSON.parse(pyList);
+const py = [...pyParsed.src, ...pyParsed.cached.filter(p => fs.existsSync(p))]
+  .map(p => entry(p, 'RUNTIME_DEPENDENCY'));
 
-const files = [...repoSrc, ...bins, ...nm, ...py].sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
+// R14-F5: steps 1 and 4 of the trusted entry -- the manifest digest check and the node byte check
+// -- run on a shell and three coreutils that nothing pinned. The predecessor pinned
+// powershell.exe and its two assemblies for exactly this role.
+const shellTools = ['/bin/sh', '/usr/bin/sha256sum', '/usr/bin/cut', '/usr/bin/test']
+  .map(p => entry(fs.realpathSync(p), 'RUNTIME_DEPENDENCY'));
+
+const files = [...repoSrc, ...bins, ...nm, ...py, ...shellTools].sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
 const dup = files.map(f => f.path).filter((p, i, a) => a.indexOf(p) !== i);
 if (dup.length) { console.error('DUPLICATE PATHS:', dup.slice(0, 5)); process.exit(1); }
 
@@ -77,7 +96,7 @@ const manifest = {
 
 const counts = files.reduce((a, f) => (a[f.role] = (a[f.role] || 0) + 1, a), {});
 console.log('files      ', files.length, JSON.stringify(counts));
-console.log('repo source', repoSrc.length, ' host bins', bins.length, ' node_modules', nm.length, ' python stdlib', py.length);
+console.log('repo source', repoSrc.length, ' host bins', bins.length, ' node_modules', nm.length, ' python .py+.pyc', py.length, ' shell tools', shellTools.length);
 if (process.argv.includes('--write')) {
   const out = path.join(REPO, NEW_DIR, 'ControllerSourceManifest.candidate.json');
   fs.writeFileSync(out, JSON.stringify(manifest));

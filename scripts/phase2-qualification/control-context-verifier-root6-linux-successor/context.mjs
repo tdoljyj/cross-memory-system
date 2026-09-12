@@ -157,20 +157,21 @@ const proposalSHA='ea96914e218460339508bc51eff0d10de41e1a94cfa3a0a544a85a1322197
 // gate_bytes_immutable. What is no longer detectable is a rewrite performed inside the original
 // writing window itself, transactions 1815-1917, 2026-09-08T18:33:58Z to 2026-09-09T16:04:46Z.
 // The content comparison is kept, in digest form, over values measured under that evidence.
-// canonical/canonicalDigest below are byte-for-byte the definitions in root-window-validation.mjs;
-// repeated here rather than imported so this module's import graph does not change.
-function canonical(value){
- if(typeof value==='number'&&!Number.isSafeInteger(value))throw Error('Unsafe or floating canonical number');
- if(Array.isArray(value))return '['+value.map(canonical).join(',')+']';
- if(value&&typeof value==='object')return '{'+Object.keys(value).sort().map(k=>JSON.stringify(k)+':'+canonical(value[k])).join(',')+'}';
- if(!['string','number','boolean'].includes(typeof value)&&value!==null)throw Error('Unsupported canonical value');
- return JSON.stringify(value);
-}
-const canonicalDigest=value=>boundedCrypto.createHash('sha256').update(canonical(value)+'\n','utf8').digest('hex');
+// The digests below are canonicalDigest values. That function is already imported at the top of
+// this module and is used at :30 and :59, so it is used here directly. An earlier draft duplicated
+// it inside this IIFE, justified as avoiding a change to the import graph -- the import was
+// already there, so nothing needed avoiding, and the duplicate merely shadowed it and created two
+// definitions that could drift. Removed.
 const BASELINE_EVENT_COUNT=44;
 const BASELINE_EVENTS_DIGEST='64b2ba3ef6bfe2755b78e03b19d6a6b6ea5a0e3735c4b9328e9be2c4715dff07';
-// All fourteen attempts are pinned, where the lost baseline pinned six. Strictly stronger, and it
-// removes any need to guess which six that file had treated as original.
+// All fourteen attempts are pinned, where the lost baseline pinned six, and it removes any need
+// to guess which six that file had treated as original. R14-N2: not simply 'strictly stronger'.
+// Pinning content by digest is stronger on content and weaker on the three derived guards the
+// old structural comparison also fed; the digests neutralise that, but the trade is real and is
+// stated rather than glossed.
+// R14-F4/2.6: the forward protection here is these digests, NOT the immutability triggers. Those
+// are tgenabled='O' and so do not fire under session_replication_role='replica'. A rewrite that
+// slipped past them is still caught here, on the spot.
 const BASELINE_ATTEMPT_DIGESTS=Object.freeze({
  "ga_04377008dc04437d9ee9d28a3c79ff3a":'c851e3dfb54229470ba56ddb4f96847db34e84f4387467492080314837543dc2',
  "ga_165dc2e72b62414a8023e726d8114f28":'8533394e3cc1696d06a3683fd083f341ae5f35bfe741e9e7c411c7bdf860ca65',

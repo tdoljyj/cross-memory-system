@@ -38,7 +38,7 @@ STOP_RESERVE_SECONDS = 30  # 6 inspect + 7 stop + 5 wait + 6 inspect + 6 schedul
 START_MAX_SECONDS = 6
 MAX_GA_SECONDS = 600  # Proposed explicit Profile successor; not implicitly active.
 PYTHON = Path('/usr/bin/python3.11')
-PYTHON_SHA = '4d6f5f81a4bca11191c4c7c6b43632694d0a4ce74e068619d8fdc161d469859a'
+PYTHON_SHA = 'f56a588548dd013906ae1dcd1b6faa417f4e204da634ff354840d9643e78ff9e'
 
 
 def identity(value):
