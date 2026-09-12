@@ -1,0 +1,106 @@
+{
+  "state": "MANIFEST_HOST_VERIFICATION",
+  "verdict": "DRIFT_DETECTED",
+  "manifest": {
+    "path": "C:\\Users\\Windows\\Documents\\Codex\\2026-09-08\\n\\work\\host-verification-20260912\\scripts\\phase2-qualification\\control-context-verifier-root6-window10-successor\\ControllerSourceManifest.candidate.json",
+    "sha256": "72d9eb92cf287ee6fda1fdbb97d90d02ed7f0e368398cba4ddb517233413d145",
+    "entries": 331,
+    "repository_source": 144,
+    "runtime_dependency": 187
+  },
+  "counts": {
+    "verified": 312,
+    "mismatched": 1,
+    "missing": 18,
+    "uncheckable_here": 0
+  },
+  "gh_exe": {
+    "status": "MATCHES_BOTH_PINS",
+    "trusted_github_mjs_pin": "e2efa10a5d2ce93cac9bc4b676932b62947c0967c01c8f2c3a9cb4437ad358d3"
+  },
+  "mismatched": [
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/commitment-signing-next-window/signing.mjs",
+      "expected_bytes": 6787,
+      "actual_bytes": 6636,
+      "expected_sha256": "8cfd506f17d261f8a1b076f6ecfdc21a7067f66c7e2c31f79bce058378118e7e",
+      "actual_sha256": "9c4341f8764963f6fc4b1e73ece7c71c6cc62671129a8f64dca1f868de438de4"
+    }
+  ],
+  "missing": [
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-root6-window10-successor/bridge.py",
+      "looked_at": "C:\\Users\\Windows\\.codex\\projects\\codex-memory-system\\scripts\\phase2-qualification\\control-context-verifier-root6-window10-successor\\bridge.py"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-root6-window10-successor/cli.mjs",
+      "looked_at": "C:\\Users\\Windows\\.codex\\projects\\codex-memory-system\\scripts\\phase2-qualification\\control-context-verifier-root6-window10-successor\\cli.mjs"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-root6-window10-successor/context.mjs",
+      "looked_at": "C:\\Users\\Windows\\.codex\\projects\\codex-memory-system\\scripts\\phase2-qualification\\control-context-verifier-root6-window10-successor\\context.mjs"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-root6-window10-successor/fixed_host.py",
+      "looked_at": "C:\\Users\\Windows\\.codex\\projects\\codex-memory-system\\scripts\\phase2-qualification\\control-context-verifier-root6-window10-successor\\fixed_host.py"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-root6-window10-successor/gate-result-receipt.root5.schema.json",
+      "looked_at": "C:\\Users\\Windows\\.codex\\projects\\codex-memory-system\\scripts\\phase2-qualification\\control-context-verifier-root6-window10-successor\\gate-result-receipt.root5.schema.json"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-root6-window10-successor/grr.mjs",
+      "looked_at": "C:\\Users\\Windows\\.codex\\projects\\codex-memory-system\\scripts\\phase2-qualification\\control-context-verifier-root6-window10-successor\\grr.mjs"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-root6-window10-successor/historical-component-observations.mjs",
+      "looked_at": "C:\\Users\\Windows\\.codex\\projects\\codex-memory-system\\scripts\\phase2-qualification\\control-context-verifier-root6-window10-successor\\historical-component-observations.mjs"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-root6-window10-successor/host-effect.mjs",
+      "looked_at": "C:\\Users\\Windows\\.codex\\projects\\codex-memory-system\\scripts\\phase2-qualification\\control-context-verifier-root6-window10-successor\\host-effect.mjs"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-root6-window10-successor/original-inputs-blob.mjs",
+      "looked_at": "C:\\Users\\Windows\\.codex\\projects\\codex-memory-system\\scripts\\phase2-qualification\\control-context-verifier-root6-window10-successor\\original-inputs-blob.mjs"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-root6-window10-successor/parent600.py",
+      "looked_at": "C:\\Users\\Windows\\.codex\\projects\\codex-memory-system\\scripts\\phase2-qualification\\control-context-verifier-root6-window10-successor\\parent600.py"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-root6-window10-successor/request-denials.mjs",
+      "looked_at": "C:\\Users\\Windows\\.codex\\projects\\codex-memory-system\\scripts\\phase2-qualification\\control-context-verifier-root6-window10-successor\\request-denials.mjs"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-root6-window10-successor/result-terminal.mjs",
+      "looked_at": "C:\\Users\\Windows\\.codex\\projects\\codex-memory-system\\scripts\\phase2-qualification\\control-context-verifier-root6-window10-successor\\result-terminal.mjs"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-root6-window10-successor/root-window-validation.mjs",
+      "looked_at": "C:\\Users\\Windows\\.codex\\projects\\codex-memory-system\\scripts\\phase2-qualification\\control-context-verifier-root6-window10-successor\\root-window-validation.mjs"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-root6-window10-successor/source-publication.mjs",
+      "looked_at": "C:\\Users\\Windows\\.codex\\projects\\codex-memory-system\\scripts\\phase2-qualification\\control-context-verifier-root6-window10-successor\\source-publication.mjs"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-root6-window10-successor/status-manifest.root5.schema.json",
+      "looked_at": "C:\\Users\\Windows\\.codex\\projects\\codex-memory-system\\scripts\\phase2-qualification\\control-context-verifier-root6-window10-successor\\status-manifest.root5.schema.json"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-root6-window10-successor/tool-entry.functions.js",
+      "looked_at": "C:\\Users\\Windows\\.codex\\projects\\codex-memory-system\\scripts\\phase2-qualification\\control-context-verifier-root6-window10-successor\\tool-entry.functions.js"
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-root6-window10-successor/trusted-github.mjs",
+      "looked_at": "C:\\Users\\Windows\\.codex\\projects\\codex-memory-system\\scripts\\phase2-qualification\\control-context-verifier-root6-window10-successor\\trusted-github.mjs"
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/commitment-signing-root6-window/signing.mjs",
+      "looked_at": "C:\\Users\\Windows\\.codex\\projects\\codex-memory-system\\scripts\\phase2-qualification\\nonproduction-control-store\\runtime-successor\\commitment-signing-root6-window\\signing.mjs"
+    }
+  ],
+  "uncheckable_here": null,
+  "authority_effect": "NONE"
+}
