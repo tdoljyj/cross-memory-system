@@ -24,7 +24,7 @@ Current frontier: `E-001`, `E-008`
 | `E-014` | ✅ COMPLETED | 完成项 | 项目成员 / 项目组权限 v1.1 设计基线 | A | `CONFIRMED_PRODUCT_PERMISSION_DESIGN_BASELINE` |
 | `E-015` | ✅ COMPLETED | 完成项 | Integration 安装与更新生命周期 v0.1 设计基线 | A | `FORMAL_FROZEN_VERIFIED` |
 | `E-016` | ✅ COMPLETED | 完成项 | 第一方模型实施计划独立 Plan Review 里程碑 | A | `INDEPENDENT_PLAN_REVIEW_PASS_VERIFIED` |
-| `E-017` | ✅ COMPLETED | 完成项 | 多轨优先级治理引擎 v0.2.1 设计基线 | B | `OWNER_FIXED_SOURCE_NOT_MATERIALIZED` |
+| `E-017` | ✅ COMPLETED | 完成项 | 多轨优先级治理引擎 v0.2.1 设计基线 | B | `OWNER_FIXED_PERSISTENT_SOURCE_PROJECTION_AVAILABLE` |
 | `E-018` | ✅ COMPLETED | 完成项 | Phase 2 Kernel Stability Hardening v0.1 正式执行基线 | A | `FORMAL_EXECUTION_BASELINE_FROZEN_VERIFIED` |
 
 ## P — 产品与体验
@@ -35,7 +35,7 @@ Current frontier: `P-006`, `P-004`
 |---|---|---|---|---|---|
 | `P-001` | ✅ COMPLETED | 完成项 | 品牌定位 v0.1.2 | A | `FORMAL_CURRENT_FROZEN_VERIFIED` |
 | `P-002` | ✅ COMPLETED | 完成项 | 品牌核心概念 / 品牌人格 v0.1 | B | `FROZEN_UPSTREAM_REFERENCED_BY_CURRENT_BRAND_BASELINE` |
-| `P-003` | ✅ COMPLETED | 完成项 | Visual Territory 02.4B-R1 | B | `OWNER_CONFIRMED_FROZEN_SOURCE_NOT_MATERIALIZED` |
+| `P-003` | ✅ COMPLETED | 完成项 | Visual Territory 02.4B-R1 | B | `OWNER_CONFIRMED_FROZEN_PERSISTENT_SOURCE_PROJECTION_AVAILABLE` |
 | `P-004` | ○ READY | P1 / Product Frontier | Logo + 核心 VI 联合探索 | D | `DERIVED_OR_PROGRAM_ITEM` |
 | `P-005` | ✅ COMPLETED | 完成项 | Clued Console v1.0 产品基线 | A | `FORMAL_EXECUTION_BASELINE_VERIFIED` |
 | `P-006` | 🔎 VERIFYING | P1 / Product Frontier | Clued Console v2.0 Multi-Agent 完整合并候选 | A | `EXACT_MERGED_CANDIDATE_VERIFIED` |
@@ -54,7 +54,7 @@ Current frontier: `R-002`, `R-004`, `R-005`, `R-006`
 
 | ID | Status | Priority | Item | Evidence | Identity |
 |---|---|---|---|---|---|
-| `R-001` | ✅ COMPLETED | 完成项 | Clued Foundational Research 长期战略 | B | `OWNER_FIXED_LONG_TERM_STRATEGY_SOURCE_NOT_MATERIALIZED` |
+| `R-001` | ✅ COMPLETED | 完成项 | Clued Foundational Research 长期战略 | B | `OWNER_FIXED_LONG_TERM_STRATEGY_PERSISTENT_SOURCE_PROJECTION_AVAILABLE` |
 | `R-002` | ◐ IN_PROGRESS | R0 / Frontier | GIKAO | C | `ACTIVE_WORKING_RESEARCH` |
 | `R-003` | ◐ IN_PROGRESS | R1 | 现实—表征—知识—行动双向闭环研究 | C | `ACTIVE_WORKING_RESEARCH` |
 | `R-004` | ○ READY | R0 / Frontier | 时间 / 版本 / Currentness 理论 | B | `DERIVED_FROM_OWNER_FIXED_FOUNDATIONAL_RESEARCH_STRATEGY` |
