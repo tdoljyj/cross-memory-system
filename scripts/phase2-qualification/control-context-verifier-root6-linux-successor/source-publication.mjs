@@ -7,7 +7,15 @@ import crypto from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import {api,sha,readBlobRef,verifyOwnerMergeArtifact} from './trusted-github.mjs';
 const repo=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../../..'),repository='tdoljyj/cross-memory-system';
-const manifestPath='scripts/phase2-qualification/control-context-verifier-root6-window11-successor/ControllerSourceManifest.candidate.json';
+// Derived from this module's own location, not written out. The Linux port copied the
+// predecessor's literal verbatim and nobody caught it for four rounds, because both uses sit on
+// the GitHub-API path that the self-test lists as uncovered. The consequence was fatal at the
+// first line of verifySourcePublication: it read the WINDOW11 manifest (3a58eb87...) and compared
+// it against the Linux controller digest the run is bound to (dd11e428...), so
+// ACTUAL_CONTROLLER_MANIFEST_BYTES threw before any GitHub call -- and the second use would have
+// asked the Owner merge for the predecessor's artifact path. Deriving it means the next port
+// cannot repeat this.
+const manifestPath=path.relative(repo,fileURLToPath(new URL('./ControllerSourceManifest.candidate.json',import.meta.url))).split(path.sep).join('/');
 const need=(ok,why)=>{if(!ok)throw Error(why);};
 export function planSourceBatches(refs,sizes){
  need(Array.isArray(refs)&&refs.length>0&&refs.length<=133&&Array.isArray(sizes)&&sizes.length===refs.length,'COMPLETE_BOUNDED_SOURCE_SET');

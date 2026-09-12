@@ -291,6 +291,74 @@ for (const d of (function walk(dir, acc = []) {
 })(QUAL))
   problems.push(`${path.relative(QUAL, d)} exists: bytecode there is loaded in preference to the .py and no byte check covers it. Remove it.`);
 
+// A port copies a directory and edits it. Whatever it forgets to edit still names the PREDECESSOR,
+// and the reference keeps working -- the predecessor's files are still there -- so nothing fails
+// until the controller runs. source-publication.mjs's manifestPath was exactly that: copied
+// verbatim, pointing at window11's manifest, fatal at the first line of verifySourcePublication,
+// and invisible for four rounds because both its uses sit on the GitHub-API path the self-test
+// lists as uncovered.
+//
+// So every mention of another controller's directory must be declared here with a reason. The two
+// below are historical facts -- the recorded entry point of a call that actually happened -- and
+// are asserted in pairs by the code that cites them; they are not paths this controller resolves.
+// Each entry says why the reference is legitimate. The test applied to every import was: does this
+// directory hold a file of the same name? Six of the seven imports below have no local namesake,
+// so they are shared implementations rather than paths a port forgot to update. The seventh does
+// have one, and imports the predecessor's under the alias decodePriorBlob -- decoding the OLD blob
+// format is the point, so that is deliberate too.
+//
+// This table is itself a hand-maintained list, the seventh in this controller, and like the others
+// it can go stale. What it cannot do is go stale SILENTLY: a reference that is not declared here
+// refuses, so drift shows up as a refusal rather than as a controller that runs against the wrong
+// predecessor.
+const FOREIGN_CONTROLLER_REFERENCES = {
+  // Recorded history: the entry point of a call that actually happened. Asserted in pairs by the
+  // code citing it; not a path this controller resolves.
+  'request-denials.mjs': ['control-context-verifier-root5-final-successor/context.mjs#checkCurrentSemantics'],
+  'original-inputs-blob.mjs': [
+    'control-context-verifier-root5-final-successor/context.mjs#checkCurrentSemantics',
+    'control-context-verifier-ordinary-bounded-acyclic-successor/context.mjs#checkCurrentSemantics',
+    // Imported as decodePriorBlob: this controller handles the current format and still has to
+    // decode the previous one. A local namesake exists, and that is the point of the alias.
+    'control-context-verifier-evidence-blob-successor/original-inputs-blob.mjs',
+  ],
+  // Deliberate: the manifest is built by remapping the predecessor's entries onto this directory,
+  // so the old directory has to be named.
+  'build-linux-manifest.mjs': ['scripts/phase2-qualification/control-context-verifier-root6-window11-successor'],
+  // Shared implementations. None has a namesake in this directory.
+  'context.mjs': [
+    'control-context-verifier-runtime180/dispatch-evidence.mjs',
+    'control-context-verifier-runtime600/budget-evidence.mjs',
+    'control-context-verifier-runtime600/late-bound-policy.mjs',
+  ],
+  'result-terminal.mjs': ['control-context-verifier-runtime600/write-targets.mjs'],
+  'source-publication.mjs': [
+    'control-context-verifier-original-input-capacity-successor/read-source-blobs.mjs',
+    'control-context-verifier-original-input-capacity-successor/ref-plan.mjs',
+  ],
+  // The frozen Skill fixture, already in TREE_EVIDENCE.
+  'parent600.py': ['control-context-verifier-public-runtime-env-diagnostic-successor'],
+  'selftest-runtime-pins.mjs': ['control-context-verifier-public-runtime-env-diagnostic-successor/fixed_skill_fixture.py'],
+  // This file is handled below rather than listed: the declarations it holds necessarily quote
+  // every reference in the table, so its allowed set IS the union. That is not an exemption -- a
+  // reference appearing here that no entry declares still refuses.
+};
+{
+  const FOREIGN = /control-context-verifier-[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._#-]+)*/g;
+  const selfDir = path.basename(DIR);
+  for (const f of controllerFiles()) {
+    const text = fs.readFileSync(path.join(DIR, f), 'utf8');
+    const declared = f === path.basename(fileURLToPath(import.meta.url))
+      ? Object.values(FOREIGN_CONTROLLER_REFERENCES).flat()
+      : FOREIGN_CONTROLLER_REFERENCES[f] || [];
+    for (const hit of new Set(text.match(FOREIGN) || [])) {
+      if (hit.includes(selfDir)) continue;
+      if (declared.some(d => d.includes(hit) || hit.includes(d))) continue;
+      problems.push(`${f}: names another controller, "${hit}", with no declared reason. A port that forgets to update a path leaves it pointing at the predecessor, where it still resolves and still runs -- and fails only when the controller does.`);
+    }
+  }
+}
+
 let accounted = 0;
 const perFile = {};
 const scanTargets = [
