@@ -21,13 +21,20 @@ Clued 当前采用四条长期治理轨道：
 
 当前多轨状态入口：
 
-- `docs/governance/priorities/README.md`：多轨投影说明与边界；
+- `docs/governance/priorities/README.md`：多轨投影说明、fresh-Agent 读取顺序与边界；
 - `docs/governance/priorities/current-frontier.md`：四轨 Current Priority Frontier；
 - `docs/governance/priorities/tracks.md`：当前 Program / Priority Item 与 `✅ / ◐ / 🔎 / ⛔ / ○ / ⏳ / ↘ / ☐` 状态；
 - `docs/governance/priorities/cross-track-map.md`：跨轨依赖与影响；
-- `docs/governance/priorities/currentness.md`：Currentness / Authority 对账缺口；
-- `docs/governance/priorities/zero-memory-preflight.md`：fresh-context / zero-memory 恢复预演；
-- `artifacts/priorities/current.json`：机器可读 Bootstrap Priority Snapshot。
+- `docs/governance/priorities/currentness.md`：Currentness / Authority 对账；
+- `docs/governance/priorities/authority-currentness-contract.md`：Principal / Binding / Membership / Development Grant / Resource×Action / Currentness 的运行解析合同；
+- `docs/governance/priorities/fresh-agent-recovery-contract.md`：fresh Agent 恢复合同；
+- `docs/governance/priorities/zero-memory-preflight.md`：fresh-context / zero-memory 结构预演；
+- `artifacts/priorities/current.json`：机器可读 Bootstrap Priority Snapshot；
+- `artifacts/priorities/bootstrap-context.json`：Track Goal、typed impact、并行/资源冲突与 Bootstrap 边界；
+- `artifacts/priorities/authority-currentness-contract.json`：机器可读 Authority / Currentness resolver contract；
+- `artifacts/priorities/projection-watermark.json`：Repository Projection 自身 drift watermark。
+
+当前 Zero-Memory 结构预演为 **`20 / 25`**。剩余五项集中在完整 Canonical provenance、正式 PriorityReconciliation / Replan、Priority Snapshot CurrentnessReceipt，以及真实授权测试身份下的 eligible-next-action 计算。
 
 `✅ COMPLETED` 表示**该 Priority Item 自身的完成合同成立**，不代表相关 Runtime、产品或生产能力已经全部实现。完成项不会从治理历史中消失。
 
@@ -36,6 +43,8 @@ Clued 当前采用四条长期治理轨道：
 `BOOTSTRAP SOURCE-BOUND CANDIDATE / NOT AUTHORITY / NOT FROZEN`
 
 它用于帮助 Human / Agent 在不依赖私人聊天记忆的情况下恢复 Clued 当前轨道、优先级、完成态、依赖和阻塞；**Repository Projection 本身不创建 Authority，也不能反向改写 Canonical。** 本地手工修改治理投影应视为 `PRIORITY_PROJECTION_DRIFT`，不得自动吸收为正式现实。
+
+特别注意：Repository 中出现 `READY`、Assignment、Priority 或可见 Item，都**不等于当前 Agent 获得执行 Authority**。真实执行必须在 Clued Runtime 中解析 Binding、Project Membership、Development Grant / Scope、Effective Resource×Action、Environment 与 Currentness；未解析时 side-effect action 必须 fail closed。
 
 ## 当前权威边界
 
