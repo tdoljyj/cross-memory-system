@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "state": "PREPARED_EXACT_PREENTRY_CONTROLLER_RUNTIME_ROOT6_NOT_ACCEPTED",
+  "state": "ACCEPTED_EXACT_PREENTRY_CONTROLLER_RUNTIME",
   "independent_reviewer": "/root",
   "not_before": "2026-09-12T00:00:00Z",
   "expires_at": "2026-09-19T00:00:00Z",
@@ -1638,5 +1638,24 @@
       "blob_sha": "389d62d0247f65d9bdda362504b1d3caac52f4b8"
     }
   ],
-  "acceptance_issued": false
+  "acceptance_issued": true,
+  "accepted_at": "2026-09-12T02:12:54.730Z",
+  "acceptance_record": {
+    "prepared_state": "PREPARED_EXACT_PREENTRY_CONTROLLER_RUNTIME_ROOT6_NOT_ACCEPTED",
+    "signed_at": "2026-09-12T02:12:54.730Z",
+    "state_string_source": "Extracted from the controller check that enforces it, not transcribed. Deriving it from the prepared name would have produced a _ROOT6 suffix the controller rejects.",
+    "independent_review": {
+      "concluded_rounds": 5,
+      "independent_reviewer_session": "session_018nf6mQ5CQuMFadoJ9WRZCN",
+      "succession_decision_merge": "a573ca93e094bc9a4a8dccc23c1e165b6b368ff4",
+      "what_the_reviewer_did_not_endorse": [
+        "qualificationLimits.forwards 15 to 16, a controller constant outside capacity_delta with no backing document. Recorded in OwnerForwardCapExtensionOverride.json and in this document under forward_cap_not_covered_by_independent_review."
+      ],
+      "what_the_reviewer_could_not_verify": [
+        "The root6 registration body preconditions: not_before no later than 2026-09-12T00:54:15.197Z and expires_at exactly 2026-09-19T00:00:00Z. It has no database access and stated the applicability does not apply if these conflict.",
+        "The GitHub API side of verifyOwnerMergeArtifact -- committer, signature and PR merged_by. It confirmed all twelve publication descriptors are two-parent merges from the object store only.",
+        "Live control-plane state."
+      ]
+    }
+  }
 }
