@@ -365,20 +365,62 @@ const loadSet = () => {
   const out = new Set();
   const walk = f => {
     const abs = path.resolve(f);
-    if (out.has(abs) || !fs.existsSync(abs)) return;
+    // A base URL literal resolves to a directory, and the read patterns below will match it.
+    // Directories are not members of the load set; only what is read out of them is.
+    if (out.has(abs) || !fs.existsSync(abs) || !fs.statSync(abs).isFile()) return;
     out.add(abs);
     const text = fs.readFileSync(abs, 'utf8');
-    if (/\.(mjs|js)$/.test(abs))
+    if (/\.(mjs|js)$/.test(abs)) {
       for (const m of text.matchAll(/^\s*import\s+(?:[\s\S]*?\sfrom\s+)?['"](\.[^'"]+)['"]/gm))
         walk(path.resolve(path.dirname(abs), m[1]));
+      // Files read at runtime BY PATH, which the import graph cannot see. Preparing route B turned
+      // four of these up -- grr.mjs's receipt schema, context.mjs's status-manifest schema, and the
+      // two profile schemas bytes() resolves -- all genuinely loaded, all in the manifest, none in
+      // this walk. The load set was therefore wrong in the same way the hand-written list it
+      // replaced was wrong, one level down: computed, but computed over the wrong relation.
+      for (const m of text.matchAll(/new URL\(\s*'(\.[^']+)'\s*,\s*import\.meta\.url\s*\)/g))
+        walk(path.resolve(path.dirname(abs), m[1]));
+      // A base URL plus names resolved against it. Only the literal names are visible statically,
+      // so both parts are matched and joined; a name built at runtime would still be missed, which
+      // is why BASE_RELATIVE_READS below is asserted rather than assumed.
+      for (const b of text.matchAll(/const (\w+)\s*=\s*new URL\(\s*'(\.[^']+\/)'\s*,\s*import\.meta\.url\s*\)/g)) {
+        const base = path.resolve(path.dirname(abs), b[2]);
+        for (const n of text.matchAll(/'([A-Za-z0-9._-]+\.(?:json|mjs|js|py))'/g)) {
+          const cand = path.join(base, n[1]);
+          if (fs.existsSync(cand)) walk(cand);
+        }
+      }
+    }
     if (abs.endsWith('.py')) {
       // load('name', 'rel/path', digest) and load_exact(...) name their target relative to QUAL;
       // CHILD_PATH is built from parents, so it is matched on its own.
+      // Two shapes, both naming their target explicitly. A path literal resolves against the
+      // qualification directory; str(BASE / 'name') resolves against the module's own directory.
+      // The second is how bridge.py reaches fixed_host.py and fixed_host.py reaches parent600.py,
+      // and dropping it with the sibling heuristic broke the whole Python chain -- which the census
+      // caught immediately, since those files have expected counts and stopped appearing.
       for (const m of text.matchAll(/load(?:_exact)?\(\s*'[^']+'\s*,\s*'([^']+)'/g)) walk(path.join(QUAL, m[1]));
-      for (const m of text.matchAll(/'([^']+\.py)'/g)) {
-        const sibling = path.join(path.dirname(abs), m[1]);
-        if (fs.existsSync(sibling)) walk(sibling);
-      }
+      for (const m of text.matchAll(/load(?:_exact)?\(\s*'[^']+'\s*,\s*str\(BASE \/ '([^']+)'\)/g))
+        walk(path.join(path.dirname(abs), m[1]));
+      // A module-level constant naming a sibling: bridge.py reaches fixed_host.py as
+      // HOST = BASE / 'fixed_host.py', with the load happening later through that name. Still
+      // explicit -- BASE is the module's own directory and the filename is a literal -- unlike the
+      // sibling heuristic removed above, which matched any '<name>.py' string anywhere.
+      for (const m of text.matchAll(/^\w+ = BASE \/ '([^']+)'$/gm))
+        walk(path.join(path.dirname(abs), m[1]));
+      // No sibling-name heuristic. One was here -- "any '<name>.py' string pulls in the file of
+      // that name next to the file mentioning it" -- and it is too loose: it would admit a file
+      // merely because some module mentions its name. An over-inclusive load set is not the safe
+      // direction it looks like, because the census would then demand entries for files the
+      // controller never loads and the count route B turns on would be wrong.
+      //
+      // Correction to my own reasoning when removing it: I claimed it was what pulled
+      // preentry-parent/.../host-tool-bridge600/bridge.py into the set. It was not. Tracing the
+      // chain shows that module is genuinely reachable -- result-terminal.mjs ->
+      // original-inputs-blob.mjs -> scenario-observations/request-denials-packed.mjs ->
+      // request-denials.mjs -> runtime600/context.mjs -> runtime600/host-effect.mjs -> it. The
+      // heuristic deserved removing on its own merits; the example I gave for removing it was
+      // wrong, and the real load set is larger than I thought, not smaller.
       for (const m of text.matchAll(/parent\.parent\s*\/\s*'([^']+)'\s*\/\s*'([^']+)'/g))
         walk(path.join(QUAL, m[1], m[2]));
     }
@@ -408,6 +450,15 @@ const CENSUS = {
   'control-context-verifier-root6-linux-successor/grr.mjs': 0,
   'control-context-verifier-root6-linux-successor/host-effect.mjs': 2,
   'control-context-verifier-root6-linux-successor/parent600.py': 4,
+  // Read at runtime by path, not imported -- invisible until the walk learned to follow new URL().
+  // grr.mjs and context.mjs read the first two; bytes() resolves the ProfileDefinitions against
+  // profileBase; root-window-validation.mjs reads the trust-root schema.
+  'nonproduction-control-store/protocol-successor/control-trust-root-set.schema.json': 1,
+  'preentry-parent/profile-runtime600/ProfileDefinition.json': 1,
+  'preentry-parent/profile-successor/ProfileDefinition.json': 1,
+  // Reached transitively through the runtime600 predecessor: result-terminal -> original-inputs-blob
+  // -> scenario-observations -> runtime600/context -> runtime600/host-effect -> this.
+  'preentry-parent/runtime-successor/host-tool-bridge600/bridge.py': 1,
   // R21-F3: this controller's own Linux batch reader, replacing the predecessor's PowerShell one
   // on the verifySourcePublication path. Its single literal is the gh pin.
   'control-context-verifier-root6-linux-successor/read-source-blobs-linux.mjs': 1,
@@ -437,8 +488,15 @@ const CENSUS = {
   const set = loadSet();
   const actual = {};
   let total = 0;
+  // The manifest is in the load set -- source-publication.mjs reads it by path -- but its 298
+  // digest literals are ENTRIES, not pins: each is a file this manifest describes. Counting them
+  // would swamp the census with data. It is excluded from the literal count and not from the set,
+  // and its own integrity is not taken on faith: the trusted entry checks its digest against a
+  // value read from SQL before anything else runs, and that gate is proven live by item 6.
+  const MANIFEST_REL = QREL + '/' + NAME + '/ControllerSourceManifest.candidate.json';
   for (const abs of set) {
     const rel = path.relative(QUAL, abs).split(path.sep).join('/');
+    if (QREL + '/' + rel === MANIFEST_REL) continue;
     const n = new Set([...fs.readFileSync(abs, 'utf8').matchAll(/[a-f0-9]{64}/g)].map(m => m[0])).size;
     actual[rel] = n;
     total += n;

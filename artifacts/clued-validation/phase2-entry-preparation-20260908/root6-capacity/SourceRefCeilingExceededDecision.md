@@ -64,6 +64,19 @@
 
 ### 路线 B：把清单收敛到真实加载集
 
+**【2026-09-12 更新，数字已修正】** 我给出的第一版数字（43 个模块 / 44 blob）**偏小，是错的**。
+当时的加载集只跟 `import`，看不见运行期按路径读取的文件。【实测】补上 `new URL(...)` 之后又发现：
+
+- `grr.mjs` 读 `gate-result-receipt.root5.schema.json`
+- `context.mjs` 读 `status-manifest.root5.schema.json`，并通过 `bytes()` 读两份 profile schema
+  与两份 `ProfileDefinition.json`
+- `root-window-validation.mjs` 读 `control-trust-root-set.schema.json`
+- 经 `result-terminal → original-inputs-blob → scenario-observations → runtime600` 这条链，
+  还传递可达 `preentry-parent/.../host-tool-bridge600/bridge.py`
+
+**修正后：加载集 56 个模块，其中 52 个是仓库源，去重 blob 52，加清单自身 53。**
+对上限 133 **余量 80**。结论方向不变（B 在数量上成立），但先前那个数不可用。
+
 第二十一轮 R21-F1 确立了一件事：控制器**真实静态可达**的模块是 **43 个**，而清单声明了 149 条
 `REPOSITORY_SOURCE`。差额是前代目录里那些不被加载的文件。
 
