@@ -1,0 +1,24 @@
+{
+  "schema": "clued.multitrack-projection-watermark/0.1",
+  "status": "BOOTSTRAP_PROJECTION_WATERMARK_CANDIDATE_NOT_AUTHORITY",
+  "authority_effect": "NONE",
+  "source_priority_snapshot": "CLUED-CURRENT-PRIORITY-SNAPSHOT-v0.1.3-SOURCE-BOUND-20260912",
+  "observed_main_commit": "2c3a6f9d2c654614b0e5198658c8f03e32f36790",
+  "projection_branch": "governance/multitrack-bootstrap-v0.1.3",
+  "tracked_blobs": {
+    "README.md": "19a9bc99e297f25184907c0cbeae6bf9f0d241bb",
+    "docs/governance/priorities/README.md": "56f11c515a117db933fea40e12c82e72ef5c06b5",
+    "docs/governance/priorities/currentness.md": "168809e889e93dba4a93005f616a4eedfee3867c",
+    "docs/governance/priorities/zero-memory-preflight.md": "e79bff34c86e4353e1676d50977901232f2d306e",
+    "docs/governance/priorities/fresh-agent-recovery-contract.md": "39c957ebecddda2b1692307779343f36bc25e763",
+    "artifacts/priorities/current.json": "df21939e3edb59fe471502a69047c26b17ad0fc4",
+    "artifacts/priorities/bootstrap-context.json": "a2909a31347ed25129cb3f64e0a76a13b1f20ec4",
+    "artifacts/priorities/authority-currentness-contract.json": "cf08796d7bce731edb0fa94e672e907e56cd4be2"
+  },
+  "drift_rule": "If any tracked blob SHA differs, repository_projection_currentness=STALE_OR_MUTATED until regenerated and revalidated.",
+  "canonical_currentness_rule": "A matching repository watermark proves only internal projection integrity. It does not prove upstream Canonical currentness.",
+  "currentness_layers": {
+    "repository_projection": "CHECKABLE_BY_BLOB_SHA",
+    "upstream_canonical": "UNKNOWN_UNTIL_RUNTIME_CURRENTNESS_VERIFIED"
+  }
+}
