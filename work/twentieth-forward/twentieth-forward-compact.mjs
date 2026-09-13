@@ -175,6 +175,15 @@ const built = buildExactGetter({
   previous_sql: vNorm, previous_sha256: vNormSha, existing_forwards: existing, next_sequence: next, key,
   previous_binding: p.previous_binding, new_binding: newBinding, source_acceptance_refs: refs,
 });
+// Despite the name, this IS the successor-count whitelist inside
+// effective_execution_binding(): "if n not in (1,...,n)". The 'guard replace' rule below is
+// therefore what bumps that list at every forward -- 18 to 19 last time, 19 to 20 next.
+// Round 18 read the name, took it for the exception name, concluded the whitelist was
+// unhandled, and added a second rule whose `from` was byte-identical to this one's. Replay
+// could not see it: at existing=18/N=19 both rules are identity replacements. On a real run
+// the first consumed the single occurrence and the duplicate aborted the generator with
+// OCCURRENCE_COUNT:successor whitelist expected 1, found 0 -- the twentieth forward could not
+// be generated at all. Do not add it back.
 const guardOf = n => 'if n not in (' + Array.from({length: n}, (_, i) => i + 1).join(',') + ')';
 const END = ' return next result;\nend $$;';
 const prefix = vNorm.replace(guardOf(existing), guardOf(N));
@@ -195,10 +204,29 @@ assert.equal(templateFragment.length, 5630, 'TEMPLATE_FRAGMENT_LENGTH');
 let out = template.slice(0, fa) + '<<FRAGMENT>>' + template.slice(fb);
 const lines = template.split('\n');
 const literalOn = (lineIdx, pre, post) => { const l = lines[lineIdx]; const s = l.indexOf(pre) + pre.length; return l.slice(s, l.indexOf(post, s)); };
+// Line 22 carries TWO large literals, not one, and only the first had a rule (R21-F4). The second
+// is the previous_binding the guard requires effective_execution_binding() to still return, and it
+// survived every real generation carrying the NINETEENTH forward's controller/qualification/
+// runtime_acceptance digests -- three fields wrong against the live database, in a file whose
+// lines 39, 51 and 69 all had the right values. --replay could not see it because at N=19 the
+// template's value IS the correct one, so the missing rule is an identity replacement: the exact
+// mirror of the duplicate rule added in round 18 and found in round 19.
+//
+// It is fail-closed -- the real run raises exact_current_and_previous_binding_required and rolls
+// back -- but it sits at Runbook step 14, and step 13 registers root6 irreversibly. The cost of
+// finding it there is the whole flow stopped just past the one point of no return.
 const lit22 = literalOn(21, "is distinct from '", "'::jsonb");
+const lit22b = (() => {
+  const l = lines[21], marker = "effective_execution_binding() x) is distinct from '";
+  const s = l.indexOf(marker) + marker.length;
+  assert.ok(s > marker.length, 'LINE22_PREVIOUS_BINDING_LITERAL_NOT_FOUND');
+  return l.slice(s, l.indexOf("'::jsonb", s));
+})();
 const lit51 = literalOn(50, "request_body:='", "'::jsonb");
 const lit69 = literalOn(68, "effective_execution_binding() x) is distinct from '", "'::jsonb");
 assert.equal(lit22.length, 373); assert.equal(lit51.length, 4134); assert.equal(lit69.length, 729);
+assert.equal(lit22b.length, 729, 'LINE22_PREVIOUS_BINDING_LITERAL_LENGTH');
+assert.notEqual(lit22b, lit69, 'LINE22_AND_LINE69_LITERALS_MUST_DIFFER — one is the previous binding, one the new');
 
 // Order matters in one place: the v_new target (f97d8585) is rewritten BEFORE the v_norm site, because
 // for the twentieth forward the new v_norm digest IS f97d8585, and a later replaceAll would clobber it.
@@ -213,6 +241,10 @@ const R = [
                              `request_body:='${json({new_binding: newBinding, previous_binding: p.previous_binding, source_acceptance_refs: refs})}'::jsonb`, 1],
   ['line69 final binding',   `effective_execution_binding() x) is distinct from '${lit69}'::jsonb`,
                              `effective_execution_binding() x) is distinct from '${json(newBinding)}'::jsonb`, 1],
+  // The second literal on line 22. Same surrounding syntax as line 69's, distinguished by the
+  // literal itself, which is why the two rules cannot collide.
+  ['line22 previous binding', `effective_execution_binding() x) is distinct from '${lit22b}'::jsonb`,
+                             `effective_execution_binding() x) is distinct from '${json(p.previous_binding)}'::jsonb`, 1],
   ['fragment',               '<<FRAGMENT>>',                   sqlEscape(fragment),                                   1],
   ['v_new target',           N19.v_new_sha256,                 vNewSha,                                               1],
   ['v_norm digest',          N19.v_norm_sha256,                vNormSha,                                              1],
@@ -255,6 +287,34 @@ if (!replay) {
   assert.equal(out.split(N19.v_new_sha256).length - 1, 1, 'f97d8585 must appear exactly once, as the twentieth v_norm digest');
   assert.equal(out.split('exact_bounded_forward_20_required').length - 1, 1);
   assert.equal(out.split(`offset ${existing} limit 1`).length - 1, 1);
+
+  // Structural closing check, and the reason the list above is not enough on its own. That list is
+  // hand-written: it catches a nineteenth literal it happens to name, and R21-F4 was a nineteenth
+  // literal it did not name -- the previous_binding object on line 22, which is not in N19 at all.
+  // Every check passed because the thing to look at was not on the list.
+  //
+  // So the denominator comes from the ARTIFACT instead: every 64-hex digest in the generated SQL
+  // must be traceable to this run's inputs. Anything else is a value inherited from the template,
+  // which is exactly what a missing replacement rule looks like.
+  const known = new Set();
+  const collect = v => {
+    if (typeof v === 'string') { for (const m of v.matchAll(/[a-f0-9]{64}/g)) known.add(m[0]); }
+    else if (Array.isArray(v)) v.forEach(collect);
+    else if (v && typeof v === 'object') Object.values(v).forEach(collect);
+  };
+  collect(p);                    // the live preimage, including previous_binding
+  collect(newBinding);
+  collect(refs);
+  collect(cp);                   // post-CP-01 control-plane digests
+  collect(input.gate_definition_raw);
+  known.add(vNewSha); known.add(vNormSha); known.add(prosrcAfter);
+  known.add(sha(input.previous_getter_definition_raw));
+  for (const m of Object.values(materials)) { known.add(m.ref.sha256); collect(m.publication); }
+  const strays = [...new Set([...out.matchAll(/[a-f0-9]{64}/g)].map(m => m[0]))].filter(d => !known.has(d));
+  assert.equal(strays.length, 0,
+    'UNTRACEABLE_DIGEST_IN_OUTPUT: ' + strays.map(d => d.slice(0, 12)).join(',') +
+    ' — every digest in the generated SQL must come from this run\'s inputs. A digest that does not ' +
+    'is a value carried over from the nineteenth template, i.e. a replacement rule that is missing.');
 } else if (out !== template) {
   // Locate the first differing byte rather than printing two 23KB strings.
   let i = 0; while (i < out.length && i < template.length && out[i] === template[i]) i++;

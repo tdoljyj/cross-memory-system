@@ -128,7 +128,7 @@ if (placeholders.length) derive += `--
 ${placeholders.map(x => `--   ${x}`).join('\n')}
 -- so the post_prosrc_sha this query returns describes text that still contains them.
 -- It is NOT the value to pin. Resolve the placeholders first
--- (work/cp01/derive-projected-root-digest.sql, after NW-01), then re-run this.
+-- (work/cp01/measure-root6-root-digest.sql, after root6 is REGISTERED), then re-run this.
 `;
 
 // One statement, three functions. A single WITH RECURSIVE clause may hold several CTEs, so the
@@ -216,6 +216,25 @@ const roundElevenGuards = tag => `
   got := ${UNTOUCHED_DIGEST_EXPR};
   if got is distinct from ${q(G.untouched_functions_assertion.digest)} then
     raise exception 'CP01_${tag}UNTOUCHED_FUNCTIONS_DRIFT: %', got;
+  end if;
+
+  -- R11-F13, the half the NW-01 receipt recorded as still owed: accepted_binding must carry
+  -- exactly one non-internal trigger, it must be the immutability trigger, and it must be
+  -- enabled. NW-01 turned it off and back on; nothing has asserted since that it stayed on,
+  -- and this transaction's window guard trusts a row that trigger is what protects.
+  select count(*) into c from pg_trigger t
+   where t.tgrelid = 'clued_control.accepted_binding'::regclass and not t.tgisinternal;
+  if c <> ${G.accepted_binding_trigger_assertion.expected_non_internal_triggers} then
+    raise exception 'CP01_${tag}ACCEPTED_BINDING_TRIGGER_COUNT: %', c;
+  end if;
+  -- tgenabled is "char", and text || "char" is ambiguous (42725). The cast is not cosmetic:
+  -- without it this statement fails to parse and the guard aborts the transaction it is
+  -- supposed to be protecting.
+  select t.tgname || ':' || t.tgenabled::text into got from pg_trigger t
+   where t.tgrelid = 'clued_control.accepted_binding'::regclass and not t.tgisinternal;
+  if got is distinct from ${q(G.accepted_binding_trigger_assertion.expected_trigger_name + ':' +
+                              G.accepted_binding_trigger_assertion.expected_tgenabled)} then
+    raise exception 'CP01_${tag}ACCEPTED_BINDING_TRIGGER_DRIFT: %', got;
   end if;`;
 
 let apply = banner(draft
@@ -406,9 +425,11 @@ if (draft) {
   for (const x of placeholders) console.log(`  unresolved placeholder                    ${x}`);
   for (const x of unauthorised) console.log(`  edit class not yet granted by the Owner   ${x}`);
   for (const f of missing)     console.log(`  post-image digest unpinned                ${f.function}`);
-  console.log(`\nOrder: Owner merge 1 (step 1) fixes T -> __T_PLUS_24H__ becomes C1.committed_at`);
-  console.log(`+ 86400s, the same value the controller is rebuilt with at step 3 ->`);
-  console.log(`Owner grants the sixth edit class -> NW-01 runs (step 8) ->`);
-  console.log(`derive-projected-root-digest.sql resolves __PROJECTED_ROOT6_ROOT_DIGEST_PENDING__ ->`);
-  console.log(`cp01-derive.sql pins the post-image digests -> regenerate -> independent review.`);
+  console.log(`\nOrder, as amended by the Owner (OwnerOrderingAmendment.json): CP-01 is applied`);
+  console.log(`AFTER root6 is registered, not before, so its guards pin a MEASURED root digest`);
+  console.log(`rather than a projected one.`);
+  console.log(`  Owner merge 1 fixed T -> __T_PLUS_24H__ is C1.committed_at + 86400s ->`);
+  console.log(`  NW-01 applied -> root6 REGISTERED (step 13) ->`);
+  console.log(`  measure-root6-root-digest.sql resolves __MEASURED_ROOT6_ROOT_DIGEST_PENDING__ ->`);
+  console.log(`  cp01-derive.sql pins the post-image digests -> regenerate -> independent review.`);
 }

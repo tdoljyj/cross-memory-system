@@ -1,0 +1,148 @@
+{
+  "state": "APPROVED_EXACT_ORIGINAL_INPUT_CAPACITY_SUPPLEMENT",
+  "base_proposal_sha256": "ea96914e218460339508bc51eff0d10de41e1a94cfa3a0a544a85a132219791b",
+  "base_approval_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/86636aa78807ca1ce1facbdd910f7c3d27a75177",
+    "sha256": "fe114f0860dc69a52cd448ae697e8d8692fe39e51d84ab8bb60edfe01ace97fe"
+  },
+  "bounded_series_constraints": {
+    "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+    "root_generation": "ctrgen_2e778ca66244459f974b081edca8c04e",
+    "project": "uscrdifznmlvczcekqpw",
+    "expires_at": "2026-09-10T10:13:16Z",
+    "maximum_new_ga": 3,
+    "maximum_new_forward": 3,
+    "per_ga_seconds": 600,
+    "per_ga_evidence_bytes": 134217728,
+    "maximum_series_charged_seconds": 6906,
+    "root_seconds_cap": 7200,
+    "evidence_cap": 1530506163,
+    "first_pass_stops": true,
+    "refund": false,
+    "automatic_retry": false,
+    "production": false,
+    "model_budget": 0,
+    "paid_budget": 0
+  },
+  "capacity_delta": {
+    "original_input_bytes_before": 3300000,
+    "original_input_bytes_after": 4000000,
+    "original_input_kind_before": "EXACT_ORIGINAL_VERIFIER_INPUTS_BLOB_V5_3300000",
+    "original_input_kind_after": "EXACT_ORIGINAL_VERIFIER_INPUTS_BLOB_V6_4000000",
+    "ga_raw_bytes": 65536,
+    "control_request_and_grr_bytes": 131072,
+    "evidence_index_bytes": 131072,
+    "first_frame_bytes": 4194304,
+    "second_frame_bytes": 4194304,
+    "publisher_request_bytes": 8388608,
+    "publisher_response_bytes": 8388608,
+    "source_batch_response_bytes": 33554432,
+    "source_refs_maximum": 160,
+    "root_strict_json_bytes": 2097152,
+    "original_field_count": 5,
+    "original_nineteen_oracles_unchanged": true,
+    "old_signed_objects_rewritten": false,
+    "new_root": false,
+    "new_signing_identity": false,
+    "refund": false
+  },
+  "baseline": {
+    "failed_ga_id": "ga_04377008dc04437d9ee9d28a3c79ff3a",
+    "failed_receipt_sha256": "b27286d6fcb54e34a62d8738f49c1ecafe3210c9a321a703c3828e38497e434c",
+    "terminal_phase": "BLOCKED",
+    "sequence": 49,
+    "charged_seconds": 5706,
+    "charged_evidence_bytes": 1262070707,
+    "used_series_allocations": 1,
+    "maximum_remaining_allocations": 2
+  },
+  "capacity_proposal_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/38db69db616f2da9e5f9019103fc880c46c36b4f",
+    "sha256": "e224c379718a0afb12201910b1d00253c193b01a8a6a4bd48d3176f397d6e19f"
+  },
+  "approved_change_index_sha256": "e224c379718a0afb12201910b1d00253c193b01a8a6a4bd48d3176f397d6e19f",
+  "approved_at": "2026-09-12T23:41:49Z",
+  "authority": "user_explicit",
+  "approval_text": "确认走C / 160 / 冲，按规格生成两份批准件",
+  "source": {
+    "kind": "owner_chat_messages",
+    "messages": [
+      "确认走C",
+      "160",
+      "按规格生成两份批准件"
+    ],
+    "what_each_approved": {
+      "160": "新的 capacity_delta.source_refs_maximum 数值，由 Owner 亲自给出。控制器实际需要 142。",
+      "确认走C": "在 SourceRefCeilingExceededDecision.md 的 B/C 两路线中确认走 C：以更高上限重出容量材料，而不是收窄清单。",
+      "按规格生成两份批准件": "授权实施方按 RouteCApprovalFieldSpec.md 生成本文件与另一份批准件。"
+    },
+    "timestamp_semantics": "approved_at is the time of the 160 instruction, not of this correction."
+  },
+  "limitations": [
+    "Raises capacity_delta.source_refs_maximum from 133 to 160 only. Every other capacity_delta field is byte-identical to the predecessor.",
+    "One additional 600-second nonproduction allocation, no automatic retry/refund; only within the root6 window ending 2026-09-13T07:05:16Z.",
+    "Original input 4,000,000 bytes and escaped publisher JSON 8 MiB; first/second frames remain 4 MiB, original nineteen oracles unchanged.",
+    "Does not replace independent review, signed Status/runtime binding, real observations or final signed GRR.",
+    "Does not authorize any further cap extension, new root, new signing identity, paid/model budget or production authority."
+  ],
+  "what_changed_from_predecessor": {
+    "field": "capacity_delta.source_refs_maximum",
+    "from": 133,
+    "to": 160,
+    "why": "The Linux port closes at 142 distinct ordered source references and has exceeded 133 since its first commit (755d744, at 134). 160 was set by the Owner; every ceiling site in the frozen controller (68133f2d) reads 160.",
+    "conflicts_with": "BoundedSeriesApplicability20260910.excluded, which reads verbatim \"... new root or identity, cap extension, automatic retry, refund.\" Raising a cap is a cap extension.",
+    "independently_reviewed": false,
+    "note": "Every other field of capacity_delta is identical to the predecessor."
+  },
+  "approval_provenance": "Drafted by the implementing side to the field specification in RouteCApprovalFieldSpec.md, on the Owner instruction to generate the two approvals to that spec. It records an approval given in session; it is not a signing event separate from those instructions.",
+  "conflicts_with_governing_exclusion": "BoundedSeriesApplicability20260910.excluded reads verbatim: \"Production, paid/model budget, Gold, A03-A11 formal business measurement, new root or identity, cap extension, automatic retry, refund.\" Raising a cap is a cap extension. The code does not enforce excluded — context.mjs:165 executes only three booleans — but the conflict does not disappear because of that. This is the second instance of the class, after the forward cap raise recorded in OwnerForwardCapExtensionOverride.json. Not independently reviewed.",
+  "controller_digest": "68133f2d617718c8ea964e3cebb6abcdbe98671aa5c630d81f0ea2daa9eed24a",
+  "reissue": {
+    "supersedes": "Root6OriginalInput4000000CapacityApproval20260912.json",
+    "reason": "The Windows qualification host was lost and the controller was ported to Linux. The ported controller closes at 142 distinct ordered source references against an approved ceiling of 133, and has been over that ceiling since its first commit (755d744, 134). No revert reaches back under it: the paths carrying it over are the port itself.",
+    "substance_unchanged": "Every capacity_delta field other than source_refs_maximum is byte-identical to the superseded approval. No new trust root, no new signing identity, no paid budget, no model budget, no refund, no production authority, no additional allocation, no change to per-allocation seconds or evidence bytes.",
+    "what_changed": "capacity_delta.source_refs_maximum 133 -> 160; controller_digest 3a58eb87... -> 68133f2d617718c8ea964e3cebb6abcdbe98671aa5c630d81f0ea2daa9eed24a. Note the digest moved once during preparation: an earlier draft pointed at 389fee9b, a controller that still carried 133 in its own bytes, so no value could satisfy both the deep comparison and the real blob count."
+  },
+  "known_open_at_approval": {
+    "note": "Open at the time of approval, and approved with them open. The Owner elected to run at the 2026-09-13T07:05:16Z window rather than close them first, having been told the remaining programme carries three irreversible points.",
+    "items": [
+      "R22-F3: the computed load set follows one edge type out of five.",
+      "R22-F5, R22-F6, R22-F7: HostProvisioning.json does not describe the node_modules prerequisite, plus two further items.",
+      "A real verifySourcePublication has never run end to end. The Linux batch reader has been driven against live GitHub over 8 real blobs."
+    ]
+  },
+  "predecessor_source": {
+    "kind": "CURRENT_CONVERSATION_USER_DELEGATION",
+    "messages": [
+      "可以抬",
+      "行 按你的建议来",
+      "沿用旧写法，你填上"
+    ],
+    "what_each_approved": {
+      "可以抬": "前推额度 15 → 16（另见 OwnerForwardCapExtensionOverride.json）",
+      "行 按你的建议来": "实施方所提建议，其中逐字包含「三处 131 上限抬到 133」与窗口延长至一周。本批准的实质内容即此项。",
+      "沿用旧写法，你填上": "授权实施方以本 authority/source 形式代为填写本文件。"
+    },
+    "timestamp_semantics": "approved_at is the actual delegated approval preparation time, not the time of the user message"
+  },
+  "descriptive_corrections_20260913": {
+    "corrected_at": "2026-09-13T01:22:00Z",
+    "corrected_by": "implementer, under the Owner's standing instruction 你看着办，想尽办法，快点完成任务",
+    "findings": [
+      "R25-F3",
+      "R25-F2 (v1 window only)"
+    ],
+    "what": "limitations[0], what_changed_from_predecessor and source carried 133-era text verbatim from the template because RouteCApprovalFieldSpec.md listed only the operative fields as changeable. The 133-era source block is preserved as predecessor_source; source now records the messages that actually approved 160, which approval_text already named. v1 additionally stated a root6 window ending 2026-09-19T00:00:00Z, six days past the live binding; corrected to 2026-09-13T07:05:16Z.",
+    "operative_fields_untouched": [
+      "capacity_delta",
+      "capacity_proposal_ref",
+      "approved_change_index_sha256",
+      "approved_at",
+      "approval_text",
+      "authority",
+      "base_approval_ref",
+      "bounded_series_constraints",
+      "baseline"
+    ]
+  }
+}
