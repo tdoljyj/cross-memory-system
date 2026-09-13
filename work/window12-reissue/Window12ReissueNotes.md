@@ -299,9 +299,16 @@ RTA.superseded_draft_replaced_here.path 仍指 root6-runtime-v19   ← 未被搬
 2. **E3 放 GATE 还是 STATUS**（§4）。我按 `context.mjs:320` 实测落 GATE 并给出全部证据，
    但这与本会话任务书字面相反。**如果评审认定任务书为准，请连带说明 `:320` 怎么过。**
 3. **`__PENDING_STATUS24_PAYLOAD_SHA256__` 是我新造的名字。** 既有占位符集里没有任何一个
-   指 S24 载荷摘要（`grep -rhoE '__(F12|PENDING)_[A-Z0-9_]*__' work/f12 work/window12-registration
-   artifacts/.../next-window-m3` 全表已核）。我按既有构词法造了这一个；若 Round 32 已在
-   `status24/` 下用了别的名字（该目录本轮禁动，我没看），**以那边为准**。
+   指 S24 载荷摘要。全表命令：
+   ```sh
+   grep -rhoE '__(F12|PENDING)_[A-Z0-9_]*__' work/ \
+     artifacts/clued-validation/phase2-entry-preparation-20260908/ | sort -u
+   ```
+   我按既有构词法造了这一个。
+   `status24/`（本轮禁**改**，只读允许）也核过了：其占位符是 `__PENDING_AS_OF__` /
+   `__PENDING_EXPIRES_AT__` / 三代际那五个，**没有**指 S24 载荷摘要的名字 —— 因为载荷摘要是
+   那套工具的**产出**而非输入。所以目前无冲突；但这个名字是我起的，**评审若另有偏好请改**
+   （只在生成器的 `PENDING` 常量表里一处）。
 4. **E2 复用 `__PENDING_CP02_MEASURED_ROOT_DIGEST_POST_ROOT7_REGISTRATION__` 是否合适。**
    值是同一个（root7 注册体的 canonicalDigest），复用能保证一次实化两处一致；但名字带
    `CP02_` 前缀，出现在受理件里读着怪。要么接受这个别扭，要么另立一个名字并**保证两处同源实化**。
