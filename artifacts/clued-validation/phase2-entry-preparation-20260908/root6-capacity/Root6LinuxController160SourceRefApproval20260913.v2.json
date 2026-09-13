@@ -72,8 +72,8 @@
       "按规格生成两份批准件"
     ],
     "what_each_approved": {
-      "确认走C": "在 SourceRefCeilingExceededDecision.md 的 B/C 两路线中确认走 C：以更高上限重出容量材料，而不是收窄清单。",
       "160": "新的 capacity_delta.source_refs_maximum 数值，由 Owner 亲自给出。控制器实际需要 142。",
+      "确认走C": "在 SourceRefCeilingExceededDecision.md 的 B/C 两路线中确认走 C：以更高上限重出容量材料，而不是收窄清单。",
       "按规格生成两份批准件": "授权实施方按 RouteCApprovalFieldSpec.md 生成本文件与另一份批准件。"
     },
     "timestamp_semantics": "approved_at is the time of the 160 instruction, not of this correction."
