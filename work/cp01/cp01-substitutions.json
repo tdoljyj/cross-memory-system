@@ -16,16 +16,21 @@
     "clued_control.reserve_execution_budget(text,text)": "df6087f9d19d99f023a9c789f0c9b34140e92bb82fc00a5dde1d69d9b1aa7d41",
     "clued_control.reserve_gate(text,text)": "a011292416693ef7e44221868669937261c33848a3ff10882d0f4abd97c9ef2e"
   },
-  "postimage_prosrc_sha256": null,
+  "postimage_prosrc_sha256": {
+    "clued_control.reserve_gate(text,text)": "d5bba9ef6a3a67966b27c0450fe3f65536010778670434798fd3f936543ec17e",
+    "clued_control.reserve_execution_budget(text,text)": "054c631abd6547310b0b70773b263a570b281ad9ee757f6970af70f0e5127b9b",
+    "clued_control.append_status_manifest(text,text)": "4f9d2be6a501efe57ba8dfe33f999781720094feda2151b5fea031a4c5bc0ccc"
+  },
   "postimage_derivation": {
-    "state": "VOID_PENDING_PLACEHOLDER_RESOLUTION",
+    "state": "PINNED_FROM_LIVE_READONLY_DERIVE_20260913T0254Z",
     "why": "The digests recorded at 06:2xZ were for the 19-edit table. Round 10 added the two guard edits (G8/B9), so they no longer describe the post-image. They cannot be recomputed until the (ii) placeholder is resolved, which needs NW-01 to have run.",
     "void_digests_for_the_record": {
       "clued_control.reserve_gate(text,text)": "001dd6a6f29c42e96c7d3762699599cc0239dae2e57452076eafdfc555f032cd",
       "clued_control.reserve_execution_budget(text,text)": "8ca141de9d006a353d176d739b8bbb21c7f7a4249f7f59af90a77888bc1b11c6",
       "clued_control.append_status_manifest(text,text)": "84dee7d4c7470d7a077c6b360289a71702b9ef24473107eeeec2bfddc31321c4"
     },
-    "append_status_manifest_note": "Its four edits are untouched by round 10, so 84dee7d4... will reappear unchanged when the table is re-derived. Recorded here as a prediction to be checked, not carried forward as a pin."
+    "append_status_manifest_note": "Its four edits are untouched by round 10, so 84dee7d4... will reappear unchanged when the table is re-derived. Recorded here as a prediction to be checked, not carried forward as a pin.",
+    "derived_by": "cp01-derive.sql, read-only, pre_matches/all_counts_ok/all_steps_ran all true for all three functions"
   },
   "constants": {
     "root3_generation": "ctrgen_2e778ca66244459f974b081edca8c04e",
@@ -134,10 +139,10 @@
           "why_that_costs_no_strength": "It is written by clock_timestamp(), so no caller can set it; append_event already pins clock_timestamp() inside [not_before, expires_at); and events_immutable forbids UPDATE/DELETE/TRUNCATE afterwards.",
           "frozen_prefix_digest": "45c6a2cbaf33bb27f6b4c136440d71d767943acfa9772867e219627759ca5bbc",
           "frozen_prefix_digest_independently_measured_by_implementer": true,
-          "unresolved_placeholder": "__MEASURED_ROOT6_ROOT_DIGEST_PENDING__",
+          "unresolved_placeholder": "72355efd8abde02fda6401034ee39687b5ef5c54d7511d916ccd00f70a7cd6e2",
           "placeholder_resolution": "MEASURED, not projected. Computed by work/cp01/measure-root6-root-digest.sql AFTER root6 is registered (runbook step 13) and BEFORE CP-01 is finalised, with a read-only SQL that evaluates the guard's own expression -- clued_control.read_execution(), the value series_view is assigned, measured from pg_proc -- against the live store. The Owner amended the sequencing clause (OwnerOrderingAmendment.json) so CP-01 applies after registration; that turns this from a prediction into a reading, and the projection-does-not-equal-actual failure class ceases to exist rather than being mitigated. Superseded work/cp01/derive-projected-root-digest.sql. Never with JS-side serialisation: jsonb key order is Postgres's, not insertion order and not lexicographic (R9-F1).",
           "from": " if encode(sha256(convert_to((series_view->'root')::text,'UTF8')),'hex') is distinct from '4ddd23b52ba396909640c7bdbc60217b0f34a840d5e950901b20e4b3c17502a0'\n then raise exception 'series_full_original_root_changed'; end if;",
-          "to": " if encode(sha256(convert_to((select jsonb_agg(e order by (e->>'sequence')::bigint) from jsonb_array_elements(series_view->'root'->'events') e where (e->>'sequence')::bigint<=5)::text,'UTF8')),'hex') is distinct from '45c6a2cbaf33bb27f6b4c136440d71d767943acfa9772867e219627759ca5bbc'\n then raise exception 'series_full_original_root_changed'; end if;\n if jsonb_array_length(series_view->'root'->'events') is distinct from 6\n then raise exception 'series_full_original_root_changed'; end if;\n if encode(sha256(convert_to(((series_view->'root' - 'events') || jsonb_build_object('registration_event',(select e - 'recorded_at' from jsonb_array_elements(series_view->'root'->'events') e where (e->>'sequence')::bigint=6)))::text,'UTF8')),'hex') is distinct from '__MEASURED_ROOT6_ROOT_DIGEST_PENDING__'\n then raise exception 'series_full_original_root_changed'; end if;"
+          "to": " if encode(sha256(convert_to((select jsonb_agg(e order by (e->>'sequence')::bigint) from jsonb_array_elements(series_view->'root'->'events') e where (e->>'sequence')::bigint<=5)::text,'UTF8')),'hex') is distinct from '45c6a2cbaf33bb27f6b4c136440d71d767943acfa9772867e219627759ca5bbc'\n then raise exception 'series_full_original_root_changed'; end if;\n if jsonb_array_length(series_view->'root'->'events') is distinct from 6\n then raise exception 'series_full_original_root_changed'; end if;\n if encode(sha256(convert_to(((series_view->'root' - 'events') || jsonb_build_object('registration_event',(select e - 'recorded_at' from jsonb_array_elements(series_view->'root'->'events') e where (e->>'sequence')::bigint=6)))::text,'UTF8')),'hex') is distinct from '72355efd8abde02fda6401034ee39687b5ef5c54d7511d916ccd00f70a7cd6e2'\n then raise exception 'series_full_original_root_changed'; end if;"
         }
       ]
     },
@@ -224,10 +229,10 @@
           "why_that_costs_no_strength": "It is written by clock_timestamp(), so no caller can set it; append_event already pins clock_timestamp() inside [not_before, expires_at); and events_immutable forbids UPDATE/DELETE/TRUNCATE afterwards.",
           "frozen_prefix_digest": "45c6a2cbaf33bb27f6b4c136440d71d767943acfa9772867e219627759ca5bbc",
           "frozen_prefix_digest_independently_measured_by_implementer": true,
-          "unresolved_placeholder": "__MEASURED_ROOT6_ROOT_DIGEST_PENDING__",
+          "unresolved_placeholder": "72355efd8abde02fda6401034ee39687b5ef5c54d7511d916ccd00f70a7cd6e2",
           "placeholder_resolution": "MEASURED, not projected. Computed by work/cp01/measure-root6-root-digest.sql AFTER root6 is registered (runbook step 13) and BEFORE CP-01 is finalised, with a read-only SQL that evaluates the guard's own expression -- clued_control.read_execution(), the value series_view is assigned, measured from pg_proc -- against the live store. The Owner amended the sequencing clause (OwnerOrderingAmendment.json) so CP-01 applies after registration; that turns this from a prediction into a reading, and the projection-does-not-equal-actual failure class ceases to exist rather than being mitigated. Superseded work/cp01/derive-projected-root-digest.sql. Never with JS-side serialisation: jsonb key order is Postgres's, not insertion order and not lexicographic (R9-F1).",
           "from": " if encode(sha256(convert_to((series_view->'root')::text,'UTF8')),'hex') is distinct from '4ddd23b52ba396909640c7bdbc60217b0f34a840d5e950901b20e4b3c17502a0'\n then raise exception 'series_full_original_root_changed'; end if;",
-          "to": " if encode(sha256(convert_to((select jsonb_agg(e order by (e->>'sequence')::bigint) from jsonb_array_elements(series_view->'root'->'events') e where (e->>'sequence')::bigint<=5)::text,'UTF8')),'hex') is distinct from '45c6a2cbaf33bb27f6b4c136440d71d767943acfa9772867e219627759ca5bbc'\n then raise exception 'series_full_original_root_changed'; end if;\n if jsonb_array_length(series_view->'root'->'events') is distinct from 6\n then raise exception 'series_full_original_root_changed'; end if;\n if encode(sha256(convert_to(((series_view->'root' - 'events') || jsonb_build_object('registration_event',(select e - 'recorded_at' from jsonb_array_elements(series_view->'root'->'events') e where (e->>'sequence')::bigint=6)))::text,'UTF8')),'hex') is distinct from '__MEASURED_ROOT6_ROOT_DIGEST_PENDING__'\n then raise exception 'series_full_original_root_changed'; end if;"
+          "to": " if encode(sha256(convert_to((select jsonb_agg(e order by (e->>'sequence')::bigint) from jsonb_array_elements(series_view->'root'->'events') e where (e->>'sequence')::bigint<=5)::text,'UTF8')),'hex') is distinct from '45c6a2cbaf33bb27f6b4c136440d71d767943acfa9772867e219627759ca5bbc'\n then raise exception 'series_full_original_root_changed'; end if;\n if jsonb_array_length(series_view->'root'->'events') is distinct from 6\n then raise exception 'series_full_original_root_changed'; end if;\n if encode(sha256(convert_to(((series_view->'root' - 'events') || jsonb_build_object('registration_event',(select e - 'recorded_at' from jsonb_array_elements(series_view->'root'->'events') e where (e->>'sequence')::bigint=6)))::text,'UTF8')),'hex') is distinct from '72355efd8abde02fda6401034ee39687b5ef5c54d7511d916ccd00f70a7cd6e2'\n then raise exception 'series_full_original_root_changed'; end if;"
         }
       ]
     },

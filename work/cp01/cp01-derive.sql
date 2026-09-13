@@ -15,13 +15,6 @@
 --
 -- The already-broken root digest guard (reserve_gate:35, reserve_execution_budget:40) IS in this
 -- table, as edits G8/B9, in the shape Round 10 adjudicated (option (e)).
---
--- CAUTION: the substitution table still carries unresolved placeholders
---   G8: __MEASURED_ROOT6_ROOT_DIGEST_PENDING__
---   B9: __MEASURED_ROOT6_ROOT_DIGEST_PENDING__
--- so the post_prosrc_sha this query returns describes text that still contains them.
--- It is NOT the value to pin. Resolve the placeholders first
--- (work/cp01/measure-root6-root-digest.sql, after root6 is REGISTERED), then re-run this.
 
 with recursive f0_subs(i, id, want, f, t) as (values
     (1, 'G1', 1, $cp01lit$series_view->'root'->>'generation_id' is distinct from 'ctrgen_e5df432221344996afc04b5638121d96'$cp01lit$,
@@ -62,7 +55,7 @@ with recursive f0_subs(i, id, want, f, t) as (values
  then raise exception 'series_full_original_root_changed'; end if;
  if jsonb_array_length(series_view->'root'->'events') is distinct from 6
  then raise exception 'series_full_original_root_changed'; end if;
- if encode(sha256(convert_to(((series_view->'root' - 'events') || jsonb_build_object('registration_event',(select e - 'recorded_at' from jsonb_array_elements(series_view->'root'->'events') e where (e->>'sequence')::bigint=6)))::text,'UTF8')),'hex') is distinct from '__MEASURED_ROOT6_ROOT_DIGEST_PENDING__'
+ if encode(sha256(convert_to(((series_view->'root' - 'events') || jsonb_build_object('registration_event',(select e - 'recorded_at' from jsonb_array_elements(series_view->'root'->'events') e where (e->>'sequence')::bigint=6)))::text,'UTF8')),'hex') is distinct from '72355efd8abde02fda6401034ee39687b5ef5c54d7511d916ccd00f70a7cd6e2'
  then raise exception 'series_full_original_root_changed'; end if;$cp01lit$)
 ),
 f0_base as (
@@ -121,7 +114,7 @@ f1_subs(i, id, want, f, t) as (values
  then raise exception 'series_full_original_root_changed'; end if;
  if jsonb_array_length(series_view->'root'->'events') is distinct from 6
  then raise exception 'series_full_original_root_changed'; end if;
- if encode(sha256(convert_to(((series_view->'root' - 'events') || jsonb_build_object('registration_event',(select e - 'recorded_at' from jsonb_array_elements(series_view->'root'->'events') e where (e->>'sequence')::bigint=6)))::text,'UTF8')),'hex') is distinct from '__MEASURED_ROOT6_ROOT_DIGEST_PENDING__'
+ if encode(sha256(convert_to(((series_view->'root' - 'events') || jsonb_build_object('registration_event',(select e - 'recorded_at' from jsonb_array_elements(series_view->'root'->'events') e where (e->>'sequence')::bigint=6)))::text,'UTF8')),'hex') is distinct from '72355efd8abde02fda6401034ee39687b5ef5c54d7511d916ccd00f70a7cd6e2'
  then raise exception 'series_full_original_root_changed'; end if;$cp01lit$)
 ),
 f1_base as (

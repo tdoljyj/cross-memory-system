@@ -9,6 +9,7 @@ export const project='uscrdifznmlvczcekqpw';
 export const rootGeneration='ctrgen_2e778ca66244459f974b081edca8c04e';
 export const root5Generation='ctrgen_e5df432221344996afc04b5638121d96';
 export const root6Generation='ctrgen_5e0440a95ac8ee257b9e4236cabd275b';
+export const root7Generation='ctrgen_26769cc7109ced40bc4016b2af678198';
 export const audience='urn:clued:audience:skill-coexistence-qualification:'+project;
 const sha=s=>crypto.createHash('sha256').update(s,'utf8').digest('hex');
 const need=(ok,why)=>{if(!ok)throw Error(why);};
@@ -28,7 +29,7 @@ export function makeCommitment(raw,type){
  const purpose=ga?'GATE_AUTHORIZATION':'GATE_RESULT';
  const uri='urn:clued:'+(ga?'gate-authorization:':'gate-result-receipt:')+project+':'+id;
  const boundRootGeneration=payload.control_trust_root_generation;
- need(payload.issuer_purpose===purpose&&payload.audience===audience&&[rootGeneration,root5Generation,root6Generation].includes(boundRootGeneration),'purpose_audience_generation_mismatch');
+ need(payload.issuer_purpose===purpose&&payload.audience===audience&&[rootGeneration,root5Generation,root6Generation,root7Generation].includes(boundRootGeneration),'purpose_audience_generation_mismatch');
  need(hex(payload.schema_digest,64),'exact_schema_digest_required');
  // A stable same-domain proof URI breaks no hash by exclusion: it is itself
  // inside the complete signed payload. Actual proof storage/mapping is pending.

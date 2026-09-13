@@ -57,9 +57,9 @@ const DECLARED_NON_FILE = {
     'inherited STATUS issuer-purpose digest.',
   b6d4782fcf79cf599f3ccc7e2c7b7434e41a26c6d4a28c6711eac0c9f469e146:
     'inherited GATE_AUTHORIZATION and GATE_RESULT issuer-purpose digest.',
-  '1640995831b0c1f8ae616810e12eb7b97ee191e9f20b5c38eee32eb8bfac9d23':
+  '__F12_PENDING_ISSUER_STATUS_SHA256__':
     'qualification_ref.sha256 required of the STATUS issuer binding. A remote blob digest checked against the submitted body, not a local file.',
-  '80cf8f471248ae76e5a637b5f94f20f4863a243c7011e5728de86cb5fc7cf5d2':
+  '__F12_PENDING_ISSUER_GATE_SHA256__':
     'qualification_ref.sha256 required of the GATE_AUTHORIZATION and GATE_RESULT issuer bindings. Same shape.',
 };
 // Structural recognitions, each tied to the syntax that gives the literal its meaning, so a stray

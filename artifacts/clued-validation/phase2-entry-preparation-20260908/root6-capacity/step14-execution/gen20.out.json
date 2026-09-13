@@ -1,0 +1,59 @@
+{
+  "state": "TWENTIETH_FORWARD_COMPACT_CANDIDATE_NOT_REVIEWED_NOT_EXECUTED",
+  "persists": true,
+  "executed_form": "COMPACT_IN_DATABASE_REBUILD_WITH_OFFLINE_DIGEST_ADMISSION",
+  "template": {
+    "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/root5-window9-corrected-binding/ActualNineteenthForward.executed-compact.sql",
+    "sha256": "23cab1118cc5c707718a92924d5e29f7a7c2c0abcd3afee2f95c89174cc115b6"
+  },
+  "sha256": "a66b104e7543d478cc23e807e4c8d38b7411bb5d11e305806bf5753a70658bb5",
+  "bytes": 23047,
+  "forward_number": 20,
+  "previous_sequence": 88,
+  "next_sequence": 89,
+  "idempotency_key": "root6-linux-controller-forward-68133f2d617718c8",
+  "getter": {
+    "v_norm_sha256_expected": "f97d85852a722697cd66b3e73ae79e40144c907a51b85fe5d7a3631aa9eda354",
+    "v_new_sha256_target": "e2bf20c8a8465af6162f7a096d7ab94d14dbe3028a8f81f90646a132488e183a",
+    "prosrc_sha256_after": "633269f15c362b06e19b6c23a9fddefddc5c4567f78ac8820d70579c697f4df2",
+    "previous_definition_sha256": "6cbfe002198f2caccde8594d5aeaacd43b74941855dbd161027a8d1681ce5f97"
+  },
+  "control_plane_guards": {
+    "reserve_execution_budget_prosrc_sha256": "054c631abd6547310b0b70773b263a570b281ad9ee757f6970af70f0e5127b9b",
+    "reserve_gate_prosrc_sha256": "d5bba9ef6a3a67966b27c0450fe3f65536010778670434798fd3f936543ec17e",
+    "append_status_manifest_prosrc_sha256": "4f9d2be6a501efe57ba8dfe33f999781720094feda2151b5fea031a4c5bc0ccc",
+    "accepted_binding_expires_at": "2026-09-13T07:05:16Z",
+    "guard_exception_name": "accepted_root6_linux_capacity_160"
+  },
+  "actual_preimage_ref": {
+    "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/root5-window9-corrected-binding/ActualNineteenthForwardRow.json",
+    "sha256": "d41ada4013c0b117b2afb35b1b476a4b87c91b0df68b4e6a1944abd0583395f1"
+  },
+  "replacements": [
+    "do tag",
+    "line22 exec_current",
+    "line51 request_body",
+    "line69 final binding",
+    "line22 previous binding",
+    "fragment",
+    "v_new target",
+    "v_norm digest",
+    "getter def digest",
+    "prosrc after",
+    "rows sha",
+    "catalog sha",
+    "reserve_execution_budget",
+    "reserve_gate",
+    "append_status_manifest",
+    "guard exception",
+    "window",
+    "guard replace",
+    "insert seq+key",
+    "cas update",
+    "readback ev",
+    "readback compare",
+    "event exception",
+    "expected_rows seq"
+  ],
+  "authority_effect": "NONE"
+}

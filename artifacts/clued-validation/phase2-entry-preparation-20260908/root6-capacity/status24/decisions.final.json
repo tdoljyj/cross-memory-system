@@ -1,0 +1,55 @@
+{
+ "_comment": "R31 独立评审 (/root) 裁定版。决策表全部『评审』项已裁；五项待定钉（as_of/expires_at/三代际）留待 M3 开窗后、预留前实测。每项裁定的实测依据见 R31ReviewStatus24DecisionsAndRepin.md。",
+ "_R31_rulings": {
+  "#8": "root5 注册体摘要 92186d46 的取法已复算确定：canonicalDigest(完整注册体，含 signature_binding)，即 sorted+compact+LF（root-window-validation.mjs:17-24 本尊函数，对活库 event seq 5 body 复算精确命中）。同法对 root6 注册体（event seq 6 body）= a93bfdda74d9d693584c32ecb9e1ec963fa448b51595fbe245abfeefbb4081c5。候选 4c9fcf89 为无 LF 变体，否定。旁证：两代 body 的减 signature_binding 摘要各自命中其声明的 signed_object_sha256（9d0c4ba0/95973246）。",
+  "#9-11": "沿用。三件是三代际的定义供源史料（自述 NOT_LIVE_RUNTIME_STATE / authority_effect NONE），GRR 不读其字节；活库 execution_current 三代际实测与 bac3ff3d 定义值逐字相等（runnergen_a256855f/credgen_bac92a11/sessiongen_ffb02a90）。条件：预留前复测仍相等；若漂移则须由实施方重出（新提案+独立受理+源观测三件），且本文件三项待定钉同时失效。",
+  "#15": "沿用。活受理件 expected_ga.host_runtime_config_digest 与 artifact_refs[2] 仍钉 512aae74 所受理的宿主定义 9e5edb91，无任何后继受理重钉过它；GA 将携带 9e5edb91，Status24 引用其受理件才与 GA 一致，重出反制造不一致。caveat：9e5edb91 内 host_platform=Windows/endpoint/docker_endpoint 条目已死但无谓词消费；其规范性内容（image 285a7132、profile d1c060b8、600s 资源）已在 Linux 复验（R29 前置 1-4）。宿主定义换钉是另一桩 Owner 级操作，不在本轮修复单内。",
+  "#16": "沿用。活受理件 profile_window_applicability_ref 现钉即 d5b261ce 本件；profile d1c060b8 未变（= 活绑定 profile_sha256），R05-R10 未变（:81）。其 3000000 容量语句已被 capacity_materials 链（bc541370/e7ec06c2，:122-:133 专门谓词族）显式接续，不由本件担保。",
+  "#18": "重出为本轮 CP-01 apply（work/cp01/cp01-apply.candidate.sql，sha256 2e2653d2…，git blob 91772be1…）。1a89e43f 是 window9 把控制面函数/约束修到当时现状的 SQL；本轮对应物即 CP-01（活库三函数源哈希实测 = CP-01 三后像 d5bba9ef/054c631a/4f9d2be6）。『043 修复 SQL』不存在（043 修复为源文件+解析器改动，无 DB SQL，其受理即 #19 的 d3f643b4）。删除虽 schema 合法（minItems:1 实测），但会丢弃 Status24 自身 schema 准入（CP-01 A1/A2 容许 510f3b90）的真实供源。M3 合并后 91772be1 blob 方可经 API 取到——重钉工具须复验。",
+  "#19": "复核通过。d3f643b4 状态= ACCEPTED_EXACT_QUALIFICATION_REPAIR_WITH_APPROVED_CAPACITY_DELTA（context.mjs:115 常量），failed_ga_id=ga_04377008…、bytes sha256 实测命中、且在活受理件 bounded_series_materials.repairs 8 件钉集内。",
+  "附带A": "保留重复。:81 EXACT_STAGE_INPUTS 硬性要求 ga.stage_receipt_refs.length===6，去重即 5，直接炸；:350 statusExpected 深等把同一数组带进 Status24 observations。source_digests 侧本就按唯一值收敛为 5（uniqueItems 实测）。",
+  "附带B": "随 #8 换钉为 a93bfdda。沿用 92186d46 是两头堵：GA 带 92186d46 则 :322 ACTUAL_CURRENT_ROOT_REF 炸（要求 = canonicalDigest(root6 body)）；GA 带 a93bfdda 则 :37 EXACT_ACCEPTED_GA_FIELD:authority_source_ref 炸（authority_source_ref 在 GA schema required 51 项内、不在 :36 varying 集）。换钉后波及谓词逐条：:37 过（GA=expected）、:322 过（=活 root6 实测值）、:353 过（Status24 source_refs #8 同步换为 {urn, a93bfdda}）、:351 不涉（authority 摘要不在四绑定摘要内）。uri 不变（urn:clued:control-trust-root-set:…）。",
+  "R31-F1": "R30 的核心断言证伪：活字节 fb389314（main@88fc944b，与活绑定 runtime_acceptance_sha256 实测相等）的 expected_ga.controller_qualification_ref 已经是 e7cfb30b/blob 0427b0e6。6e35ff20 只存在于分支陈旧工作副本（sha256 775fd644，该副本还带 \\u 转义、过不了 admin parser）。后果：受理件重钉不需要改此字段（下方 override 保留，语义从『修复』改为『显式钉住活值』）；重钉基底必须取 fb389314 活字节，绝不可用分支副本。R29 死锁本身复核为真（f4002ae4 原像 = SignedStatus23 减 signature_binding，canonicalDigest 复算命中）。"
+ },
+ "status_manifest_id": "sm_672def3d43b1dc5357d5f25ec6f737c7",
+ "source_digest_map": {
+  "dfe6299d2102b051abe87fe6eb502f62c4d4f40559fe6e16074a49ee467203a2": "e7cfb30b1d6241ad8b0a9976ae8a44d2b6fadd429f2f95bcf523c20fbe912888",
+  "ac7bdd53b7fe5705ee70f4fbb08ce6a5889ccf6d6574a3575e51f16bb09c2daa": "68133f2d617718c8ea964e3cebb6abcdbe98671aa5c630d81f0ea2daa9eed24a",
+  "e34850ab8629d6aaf00b6b2ce773d010dc308957b53b35003816ac0d36417b32": "d3f643b4a9d793b7f0fd788b70fcf1088781bbf0e8661fc1b27df78411d7f1f0",
+  "92186d46e92ee7d27427de813d14faeb1745fb3c1d08c6280ea86a84b258eff5": "a93bfdda74d9d693584c32ecb9e1ec963fa448b51595fbe245abfeefbb4081c5",
+  "1a89e43f29ecd3c6c4524434e2da6b29ddc1c6fa4b343f1bde28d296fdde1f6d": "2e2653d210f9f1be50c91cca7dcf8b70ce59de0aa193144fe3a6a0190440391c"
+ },
+ "source_ref_map": {
+  "dfe6299d2102b051abe87fe6eb502f62c4d4f40559fe6e16074a49ee467203a2": {
+   "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/0427b0e67756583d9916a0fdd9cac66ffa20c9ad",
+   "sha256": "e7cfb30b1d6241ad8b0a9976ae8a44d2b6fadd429f2f95bcf523c20fbe912888"
+  },
+  "ac7bdd53b7fe5705ee70f4fbb08ce6a5889ccf6d6574a3575e51f16bb09c2daa": {
+   "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/6844a6ed82d5577dd79e374e6280acc51f06a26a",
+   "sha256": "68133f2d617718c8ea964e3cebb6abcdbe98671aa5c630d81f0ea2daa9eed24a"
+  },
+  "e34850ab8629d6aaf00b6b2ce773d010dc308957b53b35003816ac0d36417b32": {
+   "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/4ca394474e6524eedaa482f20761330accb4e15a",
+   "sha256": "d3f643b4a9d793b7f0fd788b70fcf1088781bbf0e8661fc1b27df78411d7f1f0"
+  },
+  "92186d46e92ee7d27427de813d14faeb1745fb3c1d08c6280ea86a84b258eff5": {
+   "uri": "urn:clued:control-trust-root-set:uscrdifznmlvczcekqpw:ctr_414bd3c724264a83894b0c55cf2ab878",
+   "sha256": "a93bfdda74d9d693584c32ecb9e1ec963fa448b51595fbe245abfeefbb4081c5"
+  },
+  "1a89e43f29ecd3c6c4524434e2da6b29ddc1c6fa4b343f1bde28d296fdde1f6d": {
+   "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/91772be1948b81cbc97ccc5537790522e6b33cda",
+   "sha256": "2e2653d210f9f1be50c91cca7dcf8b70ce59de0aa193144fe3a6a0190440391c"
+  }
+ },
+ "expected_ga_overrides": {
+  "controller_qualification_ref": {
+   "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/0427b0e67756583d9916a0fdd9cac66ffa20c9ad",
+   "sha256": "e7cfb30b1d6241ad8b0a9976ae8a44d2b6fadd429f2f95bcf523c20fbe912888"
+  },
+  "authority_source_ref": {
+   "uri": "urn:clued:control-trust-root-set:uscrdifznmlvczcekqpw:ctr_414bd3c724264a83894b0c55cf2ab878",
+   "sha256": "a93bfdda74d9d693584c32ecb9e1ec963fa448b51595fbe245abfeefbb4081c5"
+  }
+ },
+ "_overrides_note": "controller_qualification_ref：活字节已是此值（R31-F1），override 仅显式钉住，不构成修改；生成器 :17 读的分支副本仍是 6e35ff20，故 override 依然必需。authority_source_ref：附带 B 的真修改，受理件重钉同一编辑内落地。"
+}
