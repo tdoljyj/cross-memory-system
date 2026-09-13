@@ -57,3 +57,36 @@ M3 合并（含 root7 注册与 cp02 授权条款）、M4 合并（定稿文书�
   `charged_seconds===5106+600*budgets.length` 与现值 9906=5106+600*8 一致，第 9 次分配
   （budgets.length 8→9）恰达 10506 上限 —— **分配次数还剩 1，不因窗口更换而增减**，
   v2 不申请任何新容量。
+
+## v2 增补（同日）：第 4/5 条钉死 —— issuer 资格件是本窗口的又一必炸点（实测）
+
+4. **`context.mjs:15` `generation='ctrgen_5e0440a9…'`（源内常量）** —— root7 注册后必改
+   → 又一处强制控制器字节变更（与钉 1/2 同归 F12 吸收）。
+5. **`:317` 钉死两份 issuer 资格件摘要（STATUS=1640995831…，GATE_*=80cf8f47…）**。
+   实测这两份件（blob c1749399 / 3ae8bd41）声明的是
+   `control_trust_root_generation=ctrgen_e5df4322`（root5）且
+   `expires_at=2026-09-11T10:21:05Z`（已过期）。而 `:319` 在 GRR 运行时同时断言
+   `metadata.control_trust_root_generation===generation`（root6 ≠ root5 → 必炸）与
+   `currentWindow(metadata.not_before, metadata.expires_at, Date.now())`（已过期 → 必炸）。
+   **即：本窗口即使没有 R29，600 秒也会在 `:319` 处 EXACT_PURPOSE_QUALIFICATION 中止 ——
+   R29 的停手（甲）恰好救下唯一一次分配。**
+   root7 需要：新出两份 issuer 资格件（绑 root7 ctrgen、窗口覆盖新窗），digest 重钉进 F12。
+
+## root7 注册前置清单（对照 root6 step13 实样逐项）
+
+依赖序：**先造 root7 ctrgen 号**（仅造号不烧，`:15` 与 issuer 件都要引它，必须在 F12 冻结前定）
+→ issuer 资格件×2 新出 → F12 冻结 → M3（开窗给 T）→ 注册体成型 → Owner 授权 → append_event。
+
+| # | 字段 | root6 实样 | root7 来源 |
+|---|------|-----------|-----------|
+| 1 | generation_id | ctrgen_5e0440a9… | 新造号（冻结前定，注册时烧）|
+| 2 | predecessor_generation_id / expected_sequence | e5df4322 / 5 | 5e0440a9 / 6 |
+| 3 | body.predecessor.sha256 | 92186d46（root5 注册体）| root6 注册体摘要 —— 派生法即 G 决策表 #8；`:322` `canonicalDigest(root)` 为佐证（sorted+compact+LF）|
+| 4 | history.prefix_digest/sequence | canonicalDigest(events[0..5]) / 5 | 活链只读取 events[0..6] / 6（`:59` 派生式已知）|
+| 5 | expires_at / not_before / revocation | 07:05:16Z 窗 | M3 committed_at + 86400s（window_rule 沿用）|
+| 6 | issuer_bindings×3 qualification_ref | root5 代 c1749399/3ae8bd41（已过期，见钉 5）| **新出×2**（STATUS 一份、GATE 两 purpose 共一份），绑 root7、新窗 |
+| 7 | algorithm_config.accepted_config_ref | b25abb05 | 若 F12 重出该受理件则随动，否则沿用（G #9-11 裁定后定）|
+| 8 | signature_binding | M(root6 注册)=cbe898d3 | M3 合并 sha + signed_object_sha256（体去 signature_binding 的 canonicalDigest）+ 证据 blob |
+| 9 | owner_approval_ref | 71bf5384 | M3 ExplicitOwnerApproval（root7 条款）blob |
+| 10 | independent_acceptance_ref | 44a637b8 | 评审会话独立受理件（新出）blob |
+| 11 | metadata_binding_sha256 / idempotency_key | build-step13-sql.mjs 派生 | 同生成器，register-root7-window12-日期 |
