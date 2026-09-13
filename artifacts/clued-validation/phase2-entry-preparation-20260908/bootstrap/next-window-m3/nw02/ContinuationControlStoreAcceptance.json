@@ -1,0 +1,100 @@
+{
+  "accepted_store": {
+    "namespace": "clued_control",
+    "project_ref": "uscrdifznmlvczcekqpw",
+    "root_set_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+    "second_store_created": false
+  },
+  "allowed_maintenance": {
+    "all_prior_root_status_ga_grr_execution_and_budget_history_preserved": true,
+    "application_ordinal": 5,
+    "changed_checks": [
+      "accepted_binding_check",
+      "accepted_binding_owner_approval_commit_check",
+      "accepted_binding_subject_sha256_check"
+    ],
+    "changed_fields": [
+      "not_before",
+      "expires_at",
+      "owner_approval_commit",
+      "subject_sha256",
+      "registration_acceptance_sha256",
+      "store_acceptance_sha256",
+      "signature_evidence_sha256"
+    ],
+    "exception": "NW-02",
+    "guards_added_beyond_nw01": {
+      "in_transaction_window_assertion": "clock_timestamp() within [2026-09-13T05:45:14Z, 2026-09-14T05:45:14Z) asserted inside the transaction, pre-block AND post-block (R11-F12)",
+      "sole_non_internal_trigger_assertion": "exactly one non-internal trigger on clued_control.accepted_binding, named accepted_binding_immutable, tgenabled O, asserted pre-block AND post-block (R11-F13)"
+    },
+    "ordering_asserted_here_because_the_subject_does_not_state_it": "NW-02 must be applied BEFORE the root7 generation registration (M3 nw02.ordering.nw02_before_generation_registration true). The adopted option-B subject does not carry this; at apply time it is enforced only by the exact-preimage CAS on current_head sequence 6 / ctrgen_5e0440a95ac8ee257b9e4236cabd275b. Any transaction that finds a different head must fail closed rather than proceed.",
+    "production_authority": false,
+    "row": "clued_control.accepted_binding",
+    "surgical_authority": false,
+    "temporarily_disabled_trigger": "accepted_binding_immutable",
+    "trigger_restored_same_transaction": true
+  },
+  "authority_effect": "NONE",
+  "decision": "Two separable things are decided here. The NW-02 transaction SHAPE is accepted: one transaction, the pre-block failing closed on drift, disable trigger -> drop the three named CHECKs -> update the seven named fields -> add the three CHECKs -> enable trigger, then the post-block, with the nine remaining columns asserted identical on both sides, plus the two guard families the M3 nw02 clause adds beyond NW-01 (R11-F12 and R11-F13). That shape was checked line by line against the M3 clause and against the live catalog and matches. The INSTANCE is rejected and must not be executed. It is rejected for two independent reasons. First, it would pin a subject this session refused: the companion ContinuationRegistrationSubjectAcceptance.json records NW02-R1 against approval.proposal_path, so there is at present no accepted subject for this window. Second, the prepared instance is stale on its own terms: NW02Applied.sql and nw02-parameters.json.postimage.binding would write subject_sha256 338a3487... (superseded by fa4b9ea3...), registration_acceptance_sha256 b422667081... and store_acceptance_sha256 645f886e..., which are the digests of the two skeleton files rather than of any acceptance, and signature_evidence_sha256 0a3dfa95..., which matches no file now in the directory. The drafting session marked all of this itself; it is recorded here so that this acceptance cannot be mistaken for clearance of the file as it stands.",
+  "kind": "CONTINUATION_CONTROL_STORE_ACCEPTANCE",
+  "live_observation_baseline": {
+    "accepted_binding_currently_expired": false,
+    "accepted_binding_expires_at": "2026-09-13T07:05:16Z",
+    "accepted_binding_seconds_remaining_at_measurement": 921,
+    "accepted_binding_subject_sha256": "64ae7adc3c6e156045c4c369ccfaa8fe9ac12611eb926876d26f4100c191a2f5",
+    "active_ga_id": null,
+    "charged_evidence_bytes": 2201594803,
+    "charged_seconds": 9906,
+    "current_root_generation": "ctrgen_5e0440a95ac8ee257b9e4236cabd275b",
+    "current_root_sequence": 6,
+    "execution_sequence": 89,
+    "generation_events_max_sequence": 6,
+    "non_internal_trigger_count": 1,
+    "pending_budget_sequence": null,
+    "measured_at_utc": "2026-09-13T06:49:54Z",
+    "measured_by": "read-only select by this review session; supersedes the session J measurement of 2026-09-13T06:04:42Z carried by the skeleton",
+    "staleness_warning": "accepted_binding_currently_expired false was true only at the measurement instant. The live binding lapses at 2026-09-13T07:05:16Z, 921 seconds after this measurement, so this field is expected to be false no longer by the time anyone reads it. The NW-02 window itself (opened 2026-09-13T05:45:14Z) is unaffected and runs to 2026-09-14T05:45:14Z; the lapse of the window11 binding in the interval is a gap in the live store, not an obstacle to NW-02. Re-measure before any apply, as required_before_execution demands."
+  },
+  "owner_approval_merge": "f92cd46e42e20e1fa305c573964e0597230c0b65",
+  "prepared_transaction_reviewed_and_refused": {
+    "files": [
+      "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-m3/nw02/NW02Applied.sql",
+      "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-m3/nw02/NW02Preflight.sql",
+      "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-m3/nw02/nw02-parameters.json"
+    ],
+    "parameters_state": "DRAFT_NO_WRITE_PERFORMED_SOURCE_DOCUMENTS_NOT_FINAL",
+    "banner_present_in_sql": true,
+    "stale_values_it_would_write": {
+      "subject_sha256": "338a348738447aa6e3ab724606703b602a1513d4ac032d75ddded7e8eca7dd77",
+      "registration_acceptance_sha256": "b422667081dfd7bc6290724e884307b43feea30e9f9cb934e12e46315f342e61",
+      "store_acceptance_sha256": "645f886e5454637c2449df8c98d46ada0dc5080e998f8487b7bc9991be76cd6e",
+      "signature_evidence_sha256": "0a3dfa951ad1e170f8d2e3e8df0b2196d2b85563abc14105d1ee4fffed2f79bc"
+    },
+    "measured_source_of_two_of_them": "b422667081... is the sha256 of ContinuationRegistrationSubjectAcceptance.skeleton.json and 645f886e... is the sha256 of ContinuationControlStoreAcceptance.skeleton.json, both of which declare sha256_of_this_skeleton_is_NOT_..._sha256: true.",
+    "requirement": "regenerate from parameters after an accepted subject exists and both acceptances are issued, against a freshly measured live pre-image"
+  },
+  "registration_acceptance": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-m3/nw02/ContinuationRegistrationSubjectAcceptance.json",
+    "sha256": "c824263e725fa027435602d6fd296bd4f0201773ef1f6d111a1bc00dfc9fe7b8",
+    "bytes": 15691,
+    "state": "REJECTED_EXACT_SUBJECT_NOT_ACCEPTED_FOR_OWNER_SIGNATURE",
+    "note": "the independently issued acceptance, not the skeleton in this directory"
+  },
+  "registration_subject": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-m3/nw02/ContinuationRegistrationSubject.canonical.json",
+    "sha256": "fa4b9ea33d47a7509be4c7a687375bdee74f649e35b2bf579366f9d8ff7c4624",
+    "bytes": 3626,
+    "provisional": false
+  },
+  "remotely_executed": false,
+  "requires_exact_preimage_CAS": true,
+  "requires_fresh_independent_review_before_apply": true,
+  "requires_fresh_live_preimage_before_apply": true,
+  "review_basis": "NEW_INDEPENDENT_RUNTIME_REVIEW of the store and of the transaction shape, not a restatement of the drafting session account. The live catalog was read directly: clued_control.accepted_binding carries exactly one non-internal trigger, accepted_binding_immutable, tgenabled O, BEFORE DELETE OR UPDATE OR TRUNCATE FOR EACH STATEMENT EXECUTE FUNCTION clued_control.deny_mutation(), alongside six internal RI constraint triggers from events, current_head and execution_binding - so the R11-F13 assertion is satisfiable as written and the count it asserts is the count that exists. The seven changed_fields and three changed_checks were compared element by element with M3 nw02.allowed_changed_fields and allowed_replaced_checks and match exactly and in order. NW02Applied.sql was read: its only write statements are the one disable, one three-constraint drop, one single-row update touching exactly the seven named columns under where root_id = the root set, one three-constraint add, and one enable - nothing else writes, and the fail-closed pre-block pins the old CHECK definitions verbatim. application_ordinal 5 was checked against the measured 2/3/4 lineage of the prior subjects and store acceptances. The live baseline above was measured by this session rather than copied; the skeleton figure of 2026-09-13T06:04:42Z was deliberately not carried forward.",
+  "schema_version": 1,
+  "state": "NW02_TRANSACTION_SHAPE_ACCEPTED_INSTANCE_REJECTED_NOT_EXECUTED",
+  "window": {
+    "not_before": "2026-09-13T05:45:14Z",
+    "expires_at": "2026-09-14T05:45:14Z"
+  }
+}

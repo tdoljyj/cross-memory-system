@@ -1,0 +1,129 @@
+{
+  "authority_effect": "NONE",
+  "current_root_generation": "ctrgen_5e0440a95ac8ee257b9e4236cabd275b",
+  "current_root_sequence": 6,
+  "database_effect": "NONE",
+  "decision": "The exact subject is NOT accepted for the Owner signature. One field inside the bytes that would be signed states something that does not hold: approval.proposal_path / approval.proposal_sha256 name artifacts/clued-validation/phase2-entry-preparation-20260908/root6-capacity/NextWindowPlanV2Window12Cycle.md, which is not the proposal for approval f92cd46e. See findings NW02-R1. Everything else in the subject was re-measured against the live store, the GitHub API and the repository bytes, and holds: see verified_independently. The defect is narrow and cheap to repair - the subject is CANDIDATE_FOR_OWNER_SIGNATURE_NOT_LIVE, no acceptance existed before this document, no digest of it is in the database, and the prepared transaction is banner-marked NOT FOR EXECUTION - so a re-issued subject costs one regeneration, while an Owner signature over a false provenance field is permanent and, as measured here, unreachable by any gate.",
+  "execution_baseline": {
+    "sequence": 89,
+    "charged_seconds": 9906,
+    "charged_evidence_bytes": 2201594803,
+    "active_ga_id": null,
+    "pending_budget_sequence": null,
+    "existing_cumulative_seconds_ceiling": 10506,
+    "existing_cumulative_evidence_bytes_ceiling": 2335812531,
+    "measured_at_utc": "2026-09-13T06:49:54Z",
+    "measured_by": "read-only select by this review session, independent of the drafting session; supersedes the session J measurement of 2026-09-13T06:04:42Z carried by the skeleton"
+  },
+  "findings": [
+    {
+      "id": "NW02-R1",
+      "severity": "BLOCKING",
+      "scope": "NW-02, inside the signed bytes",
+      "field": "approval.proposal_path / approval.proposal_sha256",
+      "claim_made_by_the_subject": "NextWindowPlanV2Window12Cycle.md (sha256 73489f68fccb2a98b23fd8ac362d2b600f4e946584eb210176b48dc5ed3f8cb6) is the proposal for the Owner approval merged as f92cd46e.",
+      "why_it_does_not_hold": [
+        "The meaning of this field in this document family is fixed by its only prior use: the NW-01 subject names bootstrap/next-window-20260912/OwnerApprovalProposal.md, a 19938-byte prose counterpart of the NW-01 carrier with the sections Approval action, Fixed window rule, Exact scope, accepted_binding maintenance boundary, Control plane maintenance boundary and Generation registration boundary. The M3 carrier itself uses the same word the same way: previous_authorization.proposal points at that document.",
+        "NextWindowPlanV2Window12Cycle.md is a 7315-byte cycle work plan (its own status line reads PLAN_SUPERSEDES_R29_SHEET_STEPS_3_TO_7). It states none of those sections. It is one of the 48 files the merge carried, not the document that put the approval to the Owner.",
+        "The one document-specific ground recorded for the adjudication - that it carries a \"Owner actions required\" section - is refuted inside this same directory by the drafting side. NW02FindingExtraOwnerMerge.md (NW02-F1) establishes by measurement against NW01Parameters.json that this very section omits an Owner merge, so the Owner actions go from the three it lists to four. The document held out as the proposal misstates the Owner obligations it purports to propose.",
+        "The M3 carrier separately records that the plan is materially short of what was approved: cp02.additional_classes...rule reads \"ADJUDICATED: all three classes are REQUIRED ... Plan v2 step 3 was an omission, not an exclusion.\"",
+        "The other ground - same merge - does not discriminate. The merge added 48 files, among them R29OwnerDecisionAndNextWindowPlan.md, Round32Review.md, M3AdjudicationsRound1.md and M3DraftNotes.md."
+      ],
+      "what_the_proposal_actually_is": "The body of pull request 164, fetched read-only for this review. It carries the NW-01 proposal structure section for section: \"What this carrier is for\" states the approval action and the fixed window rule (\"Merging this document is the Owner authorization that opens window12. Its committed_at becomes T; the window is T + 86400 seconds, non-rolling.\"), \"What is in the package\" states the exact scope including the NW-02 clause, \"Self-approval boundary\" states \"The Owner merge is the approval gate\", \"Capacity and authority - unchanged\" states the budget effect, and \"Still gated on the Owner after this merge\" states the Owner obligations correctly where the plan states them wrongly.",
+      "why_the_recorded_reason_for_excluding_it_fails": "NW02DraftNotes.md open point 3 excluded the PR body because it is \"not a repository object, no stable digest obtainable\". That is not true of this lineage: OwnerApprovalVerification.json, which this same subject pins at approval.verification_ref, was itself produced over fetched API responses and records api_bundle_sha256 2a6f178272f556625d6300c94265f4e59df039d648398bdafe38cd2384cbb61f over a bundle that includes the pull-request response. A stable digest over the proposal was available by the method this chain already uses.",
+      "remedy_any_one_of": [
+        "Re-issue the subject with approval.proposal_path naming an in-repository record of the PR 164 body captured by the capture-owner-merge.mjs lineage, and proposal_sha256 its digest.",
+        "Re-issue the subject recording explicitly that M3 has no proposal document, rather than filling the typed slot with a document that is not one.",
+        "Write and merge the missing prose proposal, then name it. Costlier and no better than the first option, since the approval merge has already happened."
+      ],
+      "not_a_remedy": "Leaving the field as it stands with the qualification recorded only in this acceptance. The subject digest is what the Owner signs and what accepted_binding.subject_sha256 pins; a provenance field that means one thing in NW-01 and another in NW-02, with no gate able to tell them apart, is exactly the failure mode this review exists to catch."
+    },
+    {
+      "id": "NW02-R2",
+      "severity": "BLOCKING_FOR_EXECUTION_DISCLOSED_BY_THE_DRAFTER",
+      "scope": "the prepared transaction, not the subject",
+      "summary": "NW02Applied.sql and nw02-parameters.json.postimage.binding pin subject_sha256 338a348738447aa6e3ab724606703b602a1513d4ac032d75ddded7e8eca7dd77 (a superseded draft; the final subject is fa4b9ea3...), registration_acceptance_sha256 b422667081dfd7bc6290724e884307b43feea30e9f9cb934e12e46315f342e61 and store_acceptance_sha256 645f886e5454637c2449df8c98d46ada0dc5080e998f8487b7bc9991be76cd6e, which are the digests of the two skeleton files - documents whose own text reads sha256_of_this_skeleton_is_NOT_..._sha256: true - and signature_evidence_sha256 0a3dfa95..., which matches no file now in the directory.",
+      "honesty_note": "This is disclosed, not concealed. The SQL carries a NOT FOR EXECUTION banner naming all four documents, the generator refuses to emit without --draft, and nw02-parameters.json.postimage.digest_sources_note states it plainly. Recorded here because the acceptance must not be read as accepting the prepared instance.",
+      "remedy": "Regenerate from nw02-parameters.json after the subject is re-issued and both acceptances exist, against a freshly measured live pre-image."
+    },
+    {
+      "id": "NW02-O1",
+      "severity": "OBSERVATION_PRE_EXISTING_OUT_OF_NW02_SCOPE",
+      "summary": "schema_sha256 87f094fa079034aa886d6c568730370a3264e106529b4bfd79bc3369f30b79e5 is the digest of protocol/continuity/v1/schemas/core/control-trust-root-set.schema.json, whose title is ControlTrustRootSet, whose $id is urn:clued:schema:control-trust-root-set:v1, whose object_type is const ControlTrustRootSet and whose additionalProperties is false. The subject declares object_type AcceptedBindingContinuationWindow, lacks 15 of that schema 20 required keys, and carries 16 keys the schema forbids. The subject therefore asserts conformance to a schema it categorically fails.",
+      "why_not_a_rejection_ground_here": "The value is inherited: the NW-01 subject carries it and the live accepted_binding row carries it. schema_sha256 is one of the nine columns the NW-02 transaction must leave identical, so NW-02 cannot repair it, and a subject that named a different schema would disagree with the row it describes. Carried upward to whoever owns the row schema binding."
+    },
+    {
+      "id": "NW02-O2",
+      "severity": "OBSERVATION",
+      "summary": "The M3 nw02 clause carries ordering.nw02_before_generation_registration: true, described in the carrier as pinned by Round 32 \"so the order cannot drift silently\". The adopted option-B subject does not state it. It survives only as current_control_root.append_new_generation false plus current_head_sequence 6, enforced at apply time by the exact-preimage CAS.",
+      "note": "M3AdjudicationsRound1.md preferred option A for exactly this reason. Option B was the Owner choice, so this is not a drafting defect. The store acceptance issued alongside this document states the ordering explicitly so it is not carried by inference alone."
+    },
+    {
+      "id": "NW02-O3",
+      "severity": "OBSERVATION_CARRIER_LEVEL",
+      "summary": "The merged M3 carrier still reads state DRAFT_PENDING_VERIFIED_OWNER_MERGE and retains all 26 of its PENDING-prefixed placeholders, contradicting its own placeholders.rule (\"All placeholders must be resolved (and this state field advanced) before the pull request carrying this document is opened for the Owner\") and placeholders.resolution_deadline (\"none survives into the merged document\"). The NW-01 carrier merged with zero surviving placeholders.",
+      "note": "The mechanism is nonetheless sound: the three M3_* placeholders are the genuine chicken-and-egg the carrier documents at this_document_must_not_contain_its_own_merge_time, and their materialization is recorded in OwnerApprovalVerification.json exactly as NW-01 did. What is false of the merged artifact is the carrier prose about itself, not the window."
+    },
+    {
+      "id": "NW02-O4",
+      "severity": "OBSERVATION",
+      "summary": "Two columns of the row the subject describes are absent from the subject and so fall outside the Owner signature: audience (urn:clued:audience:skill-coexistence-qualification:uscrdifznmlvczcekqpw) and algorithm_config (SORTED_JSON_UTF8_NO_FLOATS_LF_V1_CANDIDATE;SHA-256;GITHUB_API_VERIFIED_OWNER_MERGE). The second means the subject does not state the canonicalization rule by which its own digest is computed.",
+      "note": "Pre-existing: the NW-01 subject omits both, and option B is defined as the strict NW-01 key set. Recorded, not charged to NW-02."
+    }
+  ],
+  "kind": "CONTINUATION_REGISTRATION_SUBJECT_ACCEPTANCE",
+  "new_budget_capacity": false,
+  "new_root_generation": false,
+  "owner_approval": {
+    "merge_commit": "f92cd46e42e20e1fa305c573964e0597230c0b65",
+    "merge_pr": 164,
+    "verification_ref": {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-m3/OwnerApprovalVerification.json",
+      "sha256": "a15169bc8d6f916103ea023fff4401a12d0e055e534fc0bdda1ef3a53340fbd6"
+    },
+    "independently_reverified_by_this_session": {
+      "method": "GitHub API read of the commit and of pull request 164, not a re-read of the repository verification artifact",
+      "committer_login": "web-flow",
+      "author_login": "tdoljyj",
+      "merged_by": "tdoljyj",
+      "committer_date": "2026-09-13T05:45:14Z",
+      "parents": 2,
+      "not_reverified": "the commit signature verification block (verified:true;reason:valid) was not returned by the API read performed here; that string is confirmed only against OwnerApprovalVerification.json, whose digest this session did verify against its bytes"
+    }
+  },
+  "registration_subject": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-m3/nw02/ContinuationRegistrationSubject.canonical.json",
+    "sha256": "fa4b9ea33d47a7509be4c7a687375bdee74f649e35b2bf579366f9d8ff7c4624",
+    "bytes": 3626,
+    "provisional": false,
+    "top_level_keys": 21,
+    "canonical_form_reproduced": "sorted keys + compact separators + UTF-8 + single trailing LF re-serialized byte-identical to the committed file; no floats; no CR"
+  },
+  "requires_actual_owner_signature": true,
+  "requires_fresh_independent_review_before_NW02": true,
+  "requires_fresh_preimage_CAS_before_NW02": true,
+  "requires_signature_evidence_readback": true,
+  "review_basis": "NEW_INDEPENDENT_RUNTIME_REVIEW; every conclusion re-derived from a primary source, not from the subject own account of itself. Live store: read-only select at 2026-09-13T06:49:54Z against project uscrdifznmlvczcekqpw (current_head 6 / ctrgen_5e0440a9 / revoked false; events max sequence 6, so no root7 exists and the subject correctly names the live head rather than a pending generation; execution_current sequence 89, charged_seconds 9906, charged_evidence_bytes 2201594803, active_ga_id null, pending_budget_sequence null; exactly one non-internal trigger on accepted_binding). signed_object_sha256 95973246... re-read from the body of events row 6 signature_binding. Ceilings re-derived: 9906+600=10506 and 2201594803+134217728=2335812531. Canonical bytes re-serialized byte-identically. not_before re-derived from the GitHub API commit committer date and expires_at from +86400s. approval_sha256, proposal_sha256 and verification_ref.sha256 recomputed from the repository bytes. window_maintenance checked field by field against the M3 nw02 clause: the seven allowed_changed_fields and three allowed_replaced_checks match exactly and in order; both R11 guard sources were opened and exist (M3 nw02.transaction_guards_required_beyond_nw01, and NW01ExecutionReceipt.read_back.non_internal_trigger_note); application_ordinal 5 follows the measured 2/3/4 lineage. The adjudication put to this session - that NextWindowPlanV2Window12Cycle.md is the proposal counterpart because it shares the merge and carries an Owner-actions section - was tested against both of its grounds and against the NW-01 usage of the field, and does not hold: see NW02-R1.",
+  "review_independence": "INDEPENDENT. This session did not draft the subject, the parameters, the SQL or the skeletons, and did not author the adjudication it was asked to test. It performed its own read-only measurements and its own GitHub API reads rather than adopting the drafting session figures. No write of any kind was performed: no append_event, no reservation, no execution, no edit to the subject or to scripts/phase2-qualification/. Unlike the NW-01 acceptance, which recorded NO_NEW_INDEPENDENT_RUNTIME_REVIEW_CLAIMED_AT_THIS_STAGE, a new runtime review is claimed here and its commands are reproduced in NW02AcceptanceReviewNotes.md.",
+  "root_set_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+  "schema_version": 1,
+  "state": "REJECTED_EXACT_SUBJECT_NOT_ACCEPTED_FOR_OWNER_SIGNATURE",
+  "verified_independently": {
+    "subject_sha256": "fa4b9ea33d47a7509be4c7a687375bdee74f649e35b2bf579366f9d8ff7c4624",
+    "subject_top_level_keys": 21,
+    "canonical_bytes_reproduce": true,
+    "live_head_is_root6_not_pending_root7": true,
+    "execution_sequence": 89,
+    "charged_seconds": 9906,
+    "ceilings_arithmetic": true,
+    "window_derived_from_merge_committer_date": true,
+    "approval_digests": true,
+    "window_maintenance_matches_m3_nw02_clause": true,
+    "guard_sources_exist": true,
+    "live_trigger_census_matches_the_guard": true
+  },
+  "window": {
+    "not_before": "2026-09-13T05:45:14Z",
+    "expires_at": "2026-09-14T05:45:14Z"
+  }
+}
