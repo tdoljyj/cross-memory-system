@@ -1238,7 +1238,42 @@
     }
    ]
   },
-  "capacity_materials_state": "CANNOT_BE_FORMED_AT_THIS_CEILING_AND_DIGEST_SEE_not_accepted_because"
+  "capacity_materials_state": "CANNOT_BE_FORMED_UNTIL_THE_APPLICABILITY_EXISTS_SEE_capacity_materials_intent",
+  "capacity_materials_intent": {
+   "purpose": "Declares, in advance and by exact bytes, the approval this document will pin when it is accepted, so the applicability issuer can bind approval_ref to it without a round trip. context.mjs:129 requires same(d.approval_ref, s.capacity_materials.approval.ref), and :122 requires exactly the two keys approval and applicability, so a half-formed capacity_materials would be a malformed descriptor rather than a useful one. This field is deliberately named so it cannot be mistaken for a live descriptor; the controller does not read it.",
+   "approval": {
+    "chosen": "Root6LinuxController160SourceRefApproval20260913.v2.json",
+    "ref": {
+     "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/69111a4e7f966b2b611c5246f3ba83ad14aba277",
+     "sha256": "2834015707bc17d16d896572759af30ee4e12a99832552cdc539c8a49f9441e2"
+    },
+    "publication": null,
+    "publication_state": "OWNER_MERGE_PENDING",
+    "why_v2_and_not_v1": "v1 still asserts conflicts_with_governing_exclusion, the reading the successor independent reviewer rejected and which v2 records as retracted under governing_exclusion_analysis; v1 also names the wrong predecessor in what_changed_from_predecessor.supersedes and states the root6 window as ending 2026-09-19T00:00:00Z, where the live window ends 2026-09-13T07:05:16Z. v2 is correct on all three. Both carry capacity_delta at 160 and both now pass ref(capacity_proposal_ref) after b7e79d2.",
+    "rejected_alternative": {
+     "doc": "Root6LinuxController160SourceRefApproval20260913.json",
+     "sha256": "17908c8652e0be5c6d4d503d01266ac713adf7a01f445e6752662c8bdc2d0634",
+     "blob_sha": "12c35560c9330f639c476da7a8d1f75b0511344d"
+    }
+   },
+   "applicability": {
+    "state": "AWAITING_ISSUANCE_BY_/root/project_list_auth_fix",
+    "must_satisfy": [
+     "state ACCEPTED_EXACT_ROOT3_ORIGINAL_INPUT_CAPACITY_SUPPLEMENT (context.mjs:129)",
+     "independent_reviewer /root/project_list_auth_fix (:129)",
+     "approval_ref deep-equal to the approval ref declared above (:129)",
+     "capacity_proposal_ref deep-equal to the v2 approval's, i.e. uri https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/38db69db616f2da9e5f9019103fc880c46c36b4f sha256 e224c379718a0afb12201910b1d00253c193b01a8a6a4bd48d3176f397d6e19f (:129)",
+     "base_approval_ref deep-equal to the bounded-series explicit_approval_ref (:129)",
+     "base_proposal_sha256 ea96914e218460339508bc51eff0d10de41e1a94cfa3a0a544a85a132219791b (:129)",
+     "capacity_delta deep-equal to the controller's frozen capacityDelta, source_refs_maximum 160 (:130)",
+     "bounded_series_constraints deep-equal to the controller's frozen scope (:130)",
+     "controller_digest 68133f2d617718c8ea964e3cebb6abcdbe98671aa5c630d81f0ea2daa9eed24a (:132)",
+     "scope_digest 115408c69dcb2fa606fb0de34ec86c5239487d0cfa9a73abb267664a2482abe5 (:132)",
+     "changed_source_refs non-empty, every entry a blob-form ref, uris unique (:135)"
+    ]
+   },
+   "ordering_note": "The blocker recorded at 2e4c6a8 by session_019Xz1px5xGCFwmbTVsc43z1 -- that the only runtime acceptance in the repository declared capacity_delta 133 and expected_ga.controller_digest 389fee9b -- is cleared as of 64c01ac. This subject declares 160 and 68133f2d. Its blockers A (capacity_proposal_ref.uri) and C (approvals pinning 389fee9b) are cleared at b7e79d2 and b68d74f respectively."
+  }
  },
  "reviewed_subject": {
   "path": "scripts/phase2-qualification/control-context-verifier-root6-linux-successor/ControllerSourceManifest.candidate.json",
@@ -1657,12 +1692,19 @@
   "note": "A controller constant, outside both the root3 appendix scope and capacity_delta. Its problem is not that it violates the excluded clause but that no document backs it at all. The successor reviewer stated explicitly that signing the capacity applicability does not endorse it. Recorded here so that is not lost."
  },
  "window10_continuation_evidence": {
-  "controller_publication": {
-   "owner_merge": "ad3d589c03ded47110eaecbb47c48ff90600acdc",
-   "source_commit": "a8fb29ed94a8325a848e3289c362164bce4d15d0",
-   "source_tree": "b9e508bd7b1d8213fbd8c4a13ef79e5babc1c44a"
+  "controller_digest": "68133f2d617718c8ea964e3cebb6abcdbe98671aa5c630d81f0ea2daa9eed24a",
+  "controller_publication": null,
+  "controller_publication_state": "OWNER_MERGE_PENDING",
+  "correction": "The superseded draft at this path carried controller_digest 389fee9b (the superseded freeze) beside a controller_publication naming Owner merge ad3d589c03ded47110eaecbb47c48ff90600acdc, which publishes 3a58eb87, not 389fee9b. The block was therefore internally inconsistent. Setting the digest alone to 68133f2d would not repair that: ad3d589c does not publish 68133f2d either, and 68133f2d has no Owner merge at all yet. The digest is now 68133f2d with publication explicitly pending, and the true window-10 publication record is preserved below rather than overwritten. This field is documentary; grep of the controller source confirms no code path reads window10_continuation_evidence.",
+  "window10_published_controller_as_observed": {
+   "controller_digest": "3a58eb873902d1625fa6b1f2d252efed78b205e3cb04cc356f064aacd4172dae",
+   "controller_publication": {
+    "owner_merge": "ad3d589c03ded47110eaecbb47c48ff90600acdc",
+    "source_commit": "a8fb29ed94a8325a848e3289c362164bce4d15d0",
+    "source_tree": "b9e508bd7b1d8213fbd8c4a13ef79e5babc1c44a"
+   },
+   "note": "True as an observation about window 10 at the time it was recorded. Superseded as a statement about the controller this document now binds."
   },
-  "controller_digest": "389fee9b7e533041119838df59706cc2166b44497369cca419b1dc125e9a98ec",
   "continuation_constraints": {
    "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
    "root_generation": "ctrgen_5e0440a95ac8ee257b9e4236cabd275b",
