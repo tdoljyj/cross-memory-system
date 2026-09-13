@@ -21,6 +21,7 @@
 // 位于同目录时可不带参数。
 
 import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -56,10 +57,8 @@ const EXPECTED_PLACEHOLDERS = [
   '__PENDING_CP02_PREIMAGE_PROSRC_SHA256_TABLE__',
   '__PENDING_CP02_UNTOUCHED_FUNCTIONS_DIGEST__',
   '__PENDING_F12_CONTROLLER_DIGEST__',
-  '__PENDING_FORWARD_CAP_EXTENSION_OPINION_PATH__',
-  '__PENDING_FORWARD_CAP_EXTENSION_OPINION_SHA256__',
 ];
-const EXPECTED_PLACEHOLDER_COUNT = 28;
+const EXPECTED_PLACEHOLDER_COUNT = 26;
 
 // 历史时间戳允许集（全部来自既往窗口的已合并/已记录材料）。
 const ALLOWED_TIMESTAMPS = new Set([
@@ -155,7 +154,16 @@ function checkA5(v) {
     'FULL_ROOT_OBJECT_DIGEST_REPINNED_TO_ROOT7_POST_REGISTRATION_MEASURED_VALUES',
   ];
   pin(JSON.stringify(classes) === JSON.stringify(wantClasses), 'cp02.permitted_edit_classes differs from the plan-v2-step-3 set');
-  pin(v.cp02?.additional_classes_this_draft_believes_required_but_plan_v2_step_3_does_not_name?.state === 'AWAITING_ADJUDICATION_DO_NOT_TREAT_AS_GRANTED', 'cp02 additional classes must stay marked un-granted');
+  pin(v.cp02?.additional_classes_this_draft_believes_required_but_plan_v2_step_3_does_not_name?.state === 'ADJUDICATED_REQUIRED_AND_GRANTED', 'cp02 additional classes must carry the Round-32 adjudicated state, nothing else');
+  pin(v.nw02?.ordering?.nw02_before_generation_registration === true, 'nw02 must pin NW-02 before root7 registration (M3AdjudicationsRound1 item 5)');
+  {
+    const r = v.forward_cap_extension?.independent_opinion_ref ?? {};
+    pin(r.path === 'artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-m3/ForwardCapExtensionIndependentOpinion16To17.json', 'forward cap opinion path wrong');
+    let actual;
+    try { actual = createHash('sha256').update(readFileSync(join(here, 'ForwardCapExtensionIndependentOpinion16To17.json'))).digest('hex'); }
+    catch (e) { fail('A5', 'forward cap opinion file unreadable: ' + e.message); }
+    pin(r.sha256 === actual, 'forward cap opinion sha256 does not match the file bytes on disk');
+  }
   const f = v.forward_cap_extension ?? {};
   pin(f.from === 'series_f > 16' && f.to === 'series_f > 17', 'forward_cap_extension DB side must be 16 -> 17');
   pin(f.repository_side?.from === 16 && f.repository_side?.to === 17, 'forward_cap_extension repository side must be 16 -> 17');
@@ -225,10 +233,16 @@ function runDiscriminators(raw) {
     bad.forward_cap_extension.to = 'series_f > 18';
     checkA5(bad);
   }));
-  // D6c: 草案补充类被改标成已授予 → A5 必须失败。
-  out.push(mustFail('D6c(A5,granted)', () => {
+  // D6c: 已裁定状态被退回 AWAITING（或改成任何其它值）→ A5 必须失败。
+  out.push(mustFail('D6c(A5,state reverted)', () => {
     const bad = structuredClone(value);
-    bad.cp02.additional_classes_this_draft_believes_required_but_plan_v2_step_3_does_not_name.state = 'GRANTED';
+    bad.cp02.additional_classes_this_draft_believes_required_but_plan_v2_step_3_does_not_name.state = 'AWAITING_ADJUDICATION_DO_NOT_TREAT_AS_GRANTED';
+    checkA5(bad);
+  }));
+  // D6d: 意见件摘要与文件字节不符 → A5 必须失败。
+  out.push(mustFail('D6d(A5,opinion sha)', () => {
+    const bad = structuredClone(value);
+    bad.forward_cap_extension.independent_opinion_ref.sha256 = '0'.repeat(64);
     checkA5(bad);
   }));
   return out;

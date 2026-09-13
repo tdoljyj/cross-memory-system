@@ -94,6 +94,10 @@
     "temporarily_disabled_trigger": "accepted_binding_immutable",
     "trigger_must_be_restored_same_transaction": true,
     "fail_closed_on_mismatch": true,
+    "ordering": {
+      "nw02_before_generation_registration": true,
+      "why": "plan v2 already fixes the sequence (step 4 NW-02 before step 6 root7 registration); M3AdjudicationsRound1.md item 5 ruled the order into this carrier, and Round 32 pins it as a hard clause so the order cannot drift silently."
+    },
     "pending_field_values": {
       "not_before": "__PENDING_M3_NOT_BEFORE__",
       "expires_at": "__PENDING_M3_EXPIRES_AT__",
@@ -207,8 +211,8 @@
       "FULL_ROOT_OBJECT_DIGEST_REPINNED_TO_ROOT7_POST_REGISTRATION_MEASURED_VALUES": "the G8/B9 three-assertion guard, re-pinned to values measured from the live store after root7 registration"
     },
     "additional_classes_this_draft_believes_required_but_plan_v2_step_3_does_not_name": {
-      "state": "AWAITING_ADJUDICATION_DO_NOT_TREAT_AS_GRANTED",
-      "rule": "None of the three classes below is authorized by this clause until the plan author or independent reviewer confirms them and this candidate is re-issued; they are recorded here instead of silently added or silently dropped (M3DraftNotes.md section on open points has the full argument).",
+      "state": "ADJUDICATED_REQUIRED_AND_GRANTED",
+      "rule": "ADJUDICATED: all three classes are REQUIRED and are authorized as CP-02 edit classes on equal footing with permitted_edit_classes, under the same discipline and prohibitions. Basis: M3AdjudicationsRound1.md item 1 (plan author, cp01 byte evidence) independently re-verified by Round 32 (Round32Review.md) -- cp01-substitutions.json from/to strings re-read, live store re-measured (89 events, every BUDGET_RESERVED sequence <= 85, post-baseline budgets exactly 8, so the ninth lands >= 90 with root7 and the new expiry), and the F12 schema digest 7e5df5dd re-measured from the tree. Plan v2 step 3 was an omission, not an exclusion.",
       "candidate_classes": [
         {
           "class": "LIVE_ROOT_GENERATION_ROOT6_TO_ROOT7",
@@ -289,9 +293,9 @@
     },
     "covers_both_sides": true,
     "independent_opinion_ref": {
-      "path": "__PENDING_FORWARD_CAP_EXTENSION_OPINION_PATH__",
-      "sha256": "__PENDING_FORWARD_CAP_EXTENSION_OPINION_SHA256__",
-      "note": "the 15-to-16 opinion (ForwardCapExtensionIndependentOpinion20260912.json, round 9) argued that one window's migration needs exactly one more forward; it does not speak for 16-to-17. A NEW independent opinion for this extension is required before merge; this placeholder fails closed until it exists."
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-m3/ForwardCapExtensionIndependentOpinion16To17.json",
+      "sha256": "4b1aab9d49eae48904ef899661d58e65b6eac93a6fc7cc07ead1d3d23d171880",
+      "note": "issued by Round 32 (independent of plan author and drafting session H); validate-m3-candidate.mjs A5 verifies this sha256 against the file bytes, so any later edit to the opinion refuses here until re-adjudicated. The round 9 opinion (15-to-16) was cited by the merged NW-01 carrier at a path that never existed in the repository (Round32Review.md R32-F3) -- this ref is anchored by digest precisely so that cannot recur."
     },
     "why_needed": "Moving the execution binding onto the F12 controller requires a twenty-first binding forward; the sixteenth counted forward was consumed as execution event 89 in the 2026-09-12/13 window (R29LateBoundStatusPayloadDeadlock.md measured series_f = 16 and live reserve_gate G3 refusing at series_f > 16).",
     "grants_additional_execution_capacity": false,
@@ -468,16 +472,6 @@
         "placeholder": "__PENDING_F12_CONTROLLER_DIGEST__",
         "resolved_from": "build-linux-manifest.mjs over the realized F12 sources",
         "resolvable": "after realize-f12.mjs runs post-merge"
-      },
-      {
-        "placeholder": "__PENDING_FORWARD_CAP_EXTENSION_OPINION_PATH__",
-        "resolved_from": "the new independent opinion for 16-to-17",
-        "resolvable": "when that opinion is issued; blocks merge until then"
-      },
-      {
-        "placeholder": "__PENDING_FORWARD_CAP_EXTENSION_OPINION_SHA256__",
-        "resolved_from": "same document",
-        "resolvable": "same"
       }
     ]
   },
