@@ -103,12 +103,12 @@
     "sha256": "115408c69dcb2fa606fb0de34ec86c5239487d0cfa9a73abb267664a2482abe5"
    },
    "issuer_ref": {
-    "uri": "__PENDING_ROOT7_ISSUER_GATE_QUALIFICATION_URI__",
-    "sha256": "__PENDING_ROOT7_ISSUER_GATE_QUALIFICATION_SHA256__"
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/29ce0c11a1be59aab7f368565c5986940d66d8b9",
+    "sha256": "209712fb1bd80b4dfb5678a62390b57b9ed875eff6137f708bb7c4f08797aac8"
    },
    "authority_source_ref": {
     "uri": "urn:clued:control-trust-root-set:uscrdifznmlvczcekqpw:ctr_414bd3c724264a83894b0c55cf2ab878",
-    "sha256": "__PENDING_ROOT7_REGISTRATION_BODY_CANONICAL_SHA256__"
+    "sha256": "cf81f6b39561d2d78fbd0ec9d8ec060f20920584cf09a2b7179be66d64f8b7b7"
    },
    "audience": "urn:clued:audience:skill-coexistence-qualification:uscrdifznmlvczcekqpw",
    "issuer_purpose": "GATE_AUTHORIZATION",
@@ -822,7 +822,7 @@
    },
    "status_manifest_ref": {
     "resolver": "STORED_STATUS_FROM_EXACT_OWNER_SIGNED_PAYLOAD_V1",
-    "signed_payload_sha256": "__PENDING_STATUS24_PAYLOAD_SHA256__"
+    "signed_payload_sha256": "f93bf492d7d9613d0aaed6a6e315c1e25d988b4de4c9d9010cea4ad158530109"
    },
    "target_revision": {
     "resolver": "ACTUAL_RUNTIME_AND_SOURCE_MANIFEST_OWNER_MERGE_V1"
