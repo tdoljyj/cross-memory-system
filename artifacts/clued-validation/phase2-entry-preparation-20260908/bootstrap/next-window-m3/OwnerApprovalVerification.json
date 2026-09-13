@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "kind": "VERIFIED_OWNER_CONTINUATION_APPROVAL",
+  "status": "VERIFIED",
+  "repository": {
+    "full_name": "tdoljyj/cross-memory-system",
+    "private": true
+  },
+  "merge": {
+    "sha": "f92cd46e42e20e1fa305c573964e0597230c0b65",
+    "tree": "20ae3f15d247d48d46b7e7f35d7d5502ad2a5e9e",
+    "parents": [
+      "88fc944b1a2b8530478763224dc0209fa1732785",
+      "c8628798b688c547b044bd75c75c25986f9c2256"
+    ],
+    "committer_login": "web-flow",
+    "author_login": "tdoljyj",
+    "verification": {
+      "verified": true,
+      "reason": "valid",
+      "verified_at": "2026-09-13T05:45:15Z"
+    }
+  },
+  "pr": {
+    "number": 164,
+    "merged_by": "tdoljyj",
+    "merged_at": "2026-09-13T05:45:14Z",
+    "merge_commit_sha": "f92cd46e42e20e1fa305c573964e0597230c0b65",
+    "base_sha": "88fc944b1a2b8530478763224dc0209fa1732785",
+    "head_sha": "c8628798b688c547b044bd75c75c25986f9c2256"
+  },
+  "merge_timestamps": {
+    "committed_at": "2026-09-13T05:45:14Z",
+    "merged_at": "2026-09-13T05:45:14Z",
+    "merged_at_minus_committed_at_seconds": 0,
+    "which_one_is_the_window_source": "committed_at",
+    "why": "trusted-github.mjs:73 reads commit.commit.committer.date, and the approval window_rule names not_before_source: VERIFIED_OWNER_MERGE_COMMIT_COMMITTED_AT. The controller requires merged_at only to be present (:41) and never compares its value, so a delta here is recorded rather than treated as a failure."
+  },
+  "verification_method": {
+    "performed_by": "work/twentieth-forward/capture-owner-merge.mjs",
+    "mirrors": "control-context-verifier-*/trusted-github.mjs verifyOwnerMergeArtifact",
+    "is_the_controller_verification": false,
+    "api_bundle_fetched_by": "curl from the Linux qualification session, agent proxy",
+    "api_bundle_sha256": "2a6f178272f556625d6300c94265f4e59df039d648398bdafe38cd2384cbb61f",
+    "note": "A second implementation of the same conditions, applied to API responses fetched by the caller. The controller performs its own verification at runtime through its pinned gh.exe; this does not substitute for it."
+  },
+  "authority_effect": "FIXED_WINDOW_SCOPE_APPROVED_ONLY; NO_DATABASE_EFFECT",
+  "fixed_window": {
+    "not_before": "2026-09-13T05:45:14Z",
+    "expires_at": "2026-09-14T05:45:14Z",
+    "duration_seconds": 86400,
+    "rolling": false,
+    "auto_renew": false,
+    "backdate": false
+  },
+  "approval_artifacts": {
+    "approval": {
+      "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-m3/ExplicitOwnerApprovalM3.candidate.json",
+      "blob_sha": "238671a8efa4a556e5bf946a0c1775343109a83e",
+      "sha256": "e1fcd30a6225a292e93430a088284060008ebf7520fe79246f4f7d14cc6d5676",
+      "bytes": 34084
+    }
+  },
+  "scope": {
+    "project_ref": "uscrdifznmlvczcekqpw",
+    "namespace": "clued_control",
+    "root_set_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+    "purpose": "SKILL_COEXISTENCE_QUALIFICATION",
+    "environment": "ISOLATED_TEST",
+    "production_authority": false,
+    "paid_model_authority": false,
+    "new_trust_root": false,
+    "scope_expansion": false
+  }
+}

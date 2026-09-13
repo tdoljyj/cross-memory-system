@@ -1,55 +1,86 @@
 {
- "_comment": "R31 独立评审 (/root) 裁定版。决策表全部『评审』项已裁；五项待定钉（as_of/expires_at/三代际）留待 M3 开窗后、预留前实测。每项裁定的实测依据见 R31ReviewStatus24DecisionsAndRepin.md。",
- "_R31_rulings": {
-  "#8": "root5 注册体摘要 92186d46 的取法已复算确定：canonicalDigest(完整注册体，含 signature_binding)，即 sorted+compact+LF（root-window-validation.mjs:17-24 本尊函数，对活库 event seq 5 body 复算精确命中）。同法对 root6 注册体（event seq 6 body）= a93bfdda74d9d693584c32ecb9e1ec963fa448b51595fbe245abfeefbb4081c5。候选 4c9fcf89 为无 LF 变体，否定。旁证：两代 body 的减 signature_binding 摘要各自命中其声明的 signed_object_sha256（9d0c4ba0/95973246）。",
-  "#9-11": "沿用。三件是三代际的定义供源史料（自述 NOT_LIVE_RUNTIME_STATE / authority_effect NONE），GRR 不读其字节；活库 execution_current 三代际实测与 bac3ff3d 定义值逐字相等（runnergen_a256855f/credgen_bac92a11/sessiongen_ffb02a90）。条件：预留前复测仍相等；若漂移则须由实施方重出（新提案+独立受理+源观测三件），且本文件三项待定钉同时失效。",
-  "#15": "沿用。活受理件 expected_ga.host_runtime_config_digest 与 artifact_refs[2] 仍钉 512aae74 所受理的宿主定义 9e5edb91，无任何后继受理重钉过它；GA 将携带 9e5edb91，Status24 引用其受理件才与 GA 一致，重出反制造不一致。caveat：9e5edb91 内 host_platform=Windows/endpoint/docker_endpoint 条目已死但无谓词消费；其规范性内容（image 285a7132、profile d1c060b8、600s 资源）已在 Linux 复验（R29 前置 1-4）。宿主定义换钉是另一桩 Owner 级操作，不在本轮修复单内。",
-  "#16": "沿用。活受理件 profile_window_applicability_ref 现钉即 d5b261ce 本件；profile d1c060b8 未变（= 活绑定 profile_sha256），R05-R10 未变（:81）。其 3000000 容量语句已被 capacity_materials 链（bc541370/e7ec06c2，:122-:133 专门谓词族）显式接续，不由本件担保。",
-  "#18": "重出为本轮 CP-01 apply（work/cp01/cp01-apply.candidate.sql，sha256 2e2653d2…，git blob 91772be1…）。1a89e43f 是 window9 把控制面函数/约束修到当时现状的 SQL；本轮对应物即 CP-01（活库三函数源哈希实测 = CP-01 三后像 d5bba9ef/054c631a/4f9d2be6）。『043 修复 SQL』不存在（043 修复为源文件+解析器改动，无 DB SQL，其受理即 #19 的 d3f643b4）。删除虽 schema 合法（minItems:1 实测），但会丢弃 Status24 自身 schema 准入（CP-01 A1/A2 容许 510f3b90）的真实供源。M3 合并后 91772be1 blob 方可经 API 取到——重钉工具须复验。",
-  "#19": "复核通过。d3f643b4 状态= ACCEPTED_EXACT_QUALIFICATION_REPAIR_WITH_APPROVED_CAPACITY_DELTA（context.mjs:115 常量），failed_ga_id=ga_04377008…、bytes sha256 实测命中、且在活受理件 bounded_series_materials.repairs 8 件钉集内。",
-  "附带A": "保留重复。:81 EXACT_STAGE_INPUTS 硬性要求 ga.stage_receipt_refs.length===6，去重即 5，直接炸；:350 statusExpected 深等把同一数组带进 Status24 observations。source_digests 侧本就按唯一值收敛为 5（uniqueItems 实测）。",
-  "附带B": "随 #8 换钉为 a93bfdda。沿用 92186d46 是两头堵：GA 带 92186d46 则 :322 ACTUAL_CURRENT_ROOT_REF 炸（要求 = canonicalDigest(root6 body)）；GA 带 a93bfdda 则 :37 EXACT_ACCEPTED_GA_FIELD:authority_source_ref 炸（authority_source_ref 在 GA schema required 51 项内、不在 :36 varying 集）。换钉后波及谓词逐条：:37 过（GA=expected）、:322 过（=活 root6 实测值）、:353 过（Status24 source_refs #8 同步换为 {urn, a93bfdda}）、:351 不涉（authority 摘要不在四绑定摘要内）。uri 不变（urn:clued:control-trust-root-set:…）。",
-  "R31-F1": "R30 的核心断言证伪：活字节 fb389314（main@88fc944b，与活绑定 runtime_acceptance_sha256 实测相等）的 expected_ga.controller_qualification_ref 已经是 e7cfb30b/blob 0427b0e6。6e35ff20 只存在于分支陈旧工作副本（sha256 775fd644，该副本还带 \\u 转义、过不了 admin parser）。后果：受理件重钉不需要改此字段（下方 override 保留，语义从『修复』改为『显式钉住活值』）；重钉基底必须取 fb389314 活字节，绝不可用分支副本。R29 死锁本身复核为真（f4002ae4 原像 = SignedStatus23 减 signature_binding，canonicalDigest 复算命中）。"
- },
+ "_comment": "R31 独立评审裁定版，按 R31『v2 兼容映射』落到 window12（root7 代际 / F12 冻结点）。只生成不执行：本文件不构成签发、注册或预留。六项待定钉（as_of/expires_at/三代际/root7 注册体摘要）等 M3 的 T、预留前实测与 root7 注册后实测。",
+ "window": "window12-root7",
  "status_manifest_id": "sm_672def3d43b1dc5357d5f25ec6f737c7",
- "source_digest_map": {
-  "dfe6299d2102b051abe87fe6eb502f62c4d4f40559fe6e16074a49ee467203a2": "e7cfb30b1d6241ad8b0a9976ae8a44d2b6fadd429f2f95bcf523c20fbe912888",
-  "ac7bdd53b7fe5705ee70f4fbb08ce6a5889ccf6d6574a3575e51f16bb09c2daa": "68133f2d617718c8ea964e3cebb6abcdbe98671aa5c630d81f0ea2daa9eed24a",
-  "e34850ab8629d6aaf00b6b2ce773d010dc308957b53b35003816ac0d36417b32": "d3f643b4a9d793b7f0fd788b70fcf1088781bbf0e8661fc1b27df78411d7f1f0",
-  "92186d46e92ee7d27427de813d14faeb1745fb3c1d08c6280ea86a84b258eff5": "a93bfdda74d9d693584c32ecb9e1ec963fa448b51595fbe245abfeefbb4081c5",
-  "1a89e43f29ecd3c6c4524434e2da6b29ddc1c6fa4b343f1bde28d296fdde1f6d": "2e2653d210f9f1be50c91cca7dcf8b70ce59de0aa193144fe3a6a0190440391c"
+
+ "_window12_deltas": {
+  "1_代际参数化": "build-status24.mjs 的 GEN 常量与 observations.root_generation 不再硬编码 root6；改由窗口参数面 WINDOWS['window12-root7'].root_generation = ctrgen_26769cc7109ced40bc4016b2af678198 供给，并与受理件 expected_ga.control_trust_root_generation 交叉核对（判别器 NC1）。root7 已造未烧 —— 该代际注册后才生效。",
+  "2_第六个待定钉": "决策表 #8 的 Status24 值在 window12 下 = canonicalDigest(root7 注册体)，注册后才可算，故升为第六个待定钉 root_registration_body_digest，占位符 __PENDING_ROOT7_REGISTRATION_BODY_CANONICAL_SHA256__（与 root7-runtime-v20 受理件 expected_ga.authority_source_ref 里的占位符逐字相同，判别器 NC5 钉住这一点）。",
+  "3_a93bfdda_转岗": "R31 所算 root6 注册体摘要 a93bfdda 不再是 #8 的值，转岗为 root7 注册体的 predecessor 钉（见 root_registration_predecessor）。生成器对 Root6RegistrationBodySnapshot20260913.json 现算 canonicalDigest 复核该值，不抄常量（判别器 NC10）。三处旧用法（source_digest_map / source_ref_map / expected_ga_overrides.authority_source_ref）改为 @pin 间接引用，保证一次实化、三处同源。",
+  "4_决策表_17_翻案": "R31 v2 映射钉 5：root7 下 STATUS issuer 资格件必换。context.mjs:317 实测把 STATUS 钉死为 3cb175ca…（GATE_* 为 209712fb…），:341 又要求 sm.issuer_ref === root.issuer_bindings[STATUS].qualification_ref。故 #17 与载荷 issuer_ref 同时换为 f12-issuer/Root7StatusIssuerPurposeMetadata.candidate.json（3cb175ca…，blob 28ec4cca…）。生成器直接从 context.mjs 正则量出 :317 的钉再比对，不抄常量（判别器 NC3）。注意：受理件 expected_ga.issuer_ref 是另一个字段，:320 只在 GATE_AUTHORIZATION 分支约束它 —— 那里应是 GATE 件（209712fb…），与本处无关（见 Window12ReissueNotes.md §4 E3）。",
+  "5_受理件与重出件改指": "acceptance_path 由 bootstrap/root6-runtime-v19/ 改指 bootstrap/root7-runtime-v20/ 的重出件。连带：#7 资格化由 v19 的 e7cfb30b 改为 v20 重出的 15f2ee74（与该受理件 expected_ga.controller_qualification_ref 逐字相同）；#13 控制器由 68133f2d 改为 F12 冻结点 73c05cad；#19 由 d3f643b4 改为原地重出后的 82e9e2f0。",
+  "6_overrides_收敛": "R31 的 expected_ga_overrides.controller_qualification_ref 已删除 —— 它当初存在只因生成器读的是 v19 陈旧工作副本（6e35ff20）。root7-runtime-v20 的重出件已直接携带正确值，override 的理由随之消失。仅保留 authority_source_ref 一条，且其值改为 @pin 间接引用。",
+  "7_未改动项": "#9-11（bac3ff3d/bf3dcbcf/9a88b7cf）、#15（512aae74）、#16（d5b261ce）、#18（CP-01 2e2653d2）、附带 A（stage_receipt_refs 保留 6 条重复）—— R31 裁定按 v2 映射『不随冻结点变』原样沿用；#15/#16/#18 的字节本轮实测未变（见 source_provenance）。generation 仍为 24（状态清单序数，与 root 代际无关）。"
  },
+
+ "root_registration_predecessor": {
+  "sha256": "a93bfdda74d9d693584c32ecb9e1ec963fa448b51595fbe245abfeefbb4081c5",
+  "generation_id": "ctrgen_5e0440a95ac8ee257b9e4236cabd275b",
+  "_note": "root7 注册体的 predecessor 应钉此值（= canonicalDigest(root6 注册体)，取法见 _R31_rulings.#8）。root6 体自身的 predecessor 实测为 {92186d46…, ctrgen_e5df4322…}，同构。本项是 a93bfdda 在 window12 的新岗位，不再是决策表 #8 的值。"
+ },
+
+ "source_digest_map": {
+  "dfe6299d2102b051abe87fe6eb502f62c4d4f40559fe6e16074a49ee467203a2": "15f2ee74aab54f19ef504b1448f171fe10919a38cdf8ef37de341383d085068d",
+  "ac7bdd53b7fe5705ee70f4fbb08ce6a5889ccf6d6574a3575e51f16bb09c2daa": "73c05cada90b00915f8b352a2dac6f77bf82b44660950e7e9a1415f5cab99b35",
+  "e34850ab8629d6aaf00b6b2ce773d010dc308957b53b35003816ac0d36417b32": "82e9e2f0ce178971ec8986a03479a76e56f91e7aed30b4500e5f9651787882ed",
+  "92186d46e92ee7d27427de813d14faeb1745fb3c1d08c6280ea86a84b258eff5": "@pin:root_registration_body_digest",
+  "1a89e43f29ecd3c6c4524434e2da6b29ddc1c6fa4b343f1bde28d296fdde1f6d": "2e2653d210f9f1be50c91cca7dcf8b70ce59de0aa193144fe3a6a0190440391c",
+  "1640995831b0c1f8ae616810e12eb7b97ee191e9f20b5c38eee32eb8bfac9d23": "3cb175ca0d3720773c9561840aa1e12bf3c04f2dd864d8bdde6d3e1690bf03b4"
+ },
+
  "source_ref_map": {
   "dfe6299d2102b051abe87fe6eb502f62c4d4f40559fe6e16074a49ee467203a2": {
-   "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/0427b0e67756583d9916a0fdd9cac66ffa20c9ad",
-   "sha256": "e7cfb30b1d6241ad8b0a9976ae8a44d2b6fadd429f2f95bcf523c20fbe912888"
+   "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/e4ad4d34de37a44ab2c50783013fd8f75fc6bf9b",
+   "sha256": "15f2ee74aab54f19ef504b1448f171fe10919a38cdf8ef37de341383d085068d"
   },
   "ac7bdd53b7fe5705ee70f4fbb08ce6a5889ccf6d6574a3575e51f16bb09c2daa": {
-   "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/6844a6ed82d5577dd79e374e6280acc51f06a26a",
-   "sha256": "68133f2d617718c8ea964e3cebb6abcdbe98671aa5c630d81f0ea2daa9eed24a"
+   "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/f11632b78ae28181e907a94cce186941f00ff5b2",
+   "sha256": "73c05cada90b00915f8b352a2dac6f77bf82b44660950e7e9a1415f5cab99b35"
   },
   "e34850ab8629d6aaf00b6b2ce773d010dc308957b53b35003816ac0d36417b32": {
-   "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/4ca394474e6524eedaa482f20761330accb4e15a",
-   "sha256": "d3f643b4a9d793b7f0fd788b70fcf1088781bbf0e8661fc1b27df78411d7f1f0"
+   "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/012294f39e961ee2c7b2a76d2a27a39f18ca179a",
+   "sha256": "82e9e2f0ce178971ec8986a03479a76e56f91e7aed30b4500e5f9651787882ed"
   },
   "92186d46e92ee7d27427de813d14faeb1745fb3c1d08c6280ea86a84b258eff5": {
    "uri": "urn:clued:control-trust-root-set:uscrdifznmlvczcekqpw:ctr_414bd3c724264a83894b0c55cf2ab878",
-   "sha256": "a93bfdda74d9d693584c32ecb9e1ec963fa448b51595fbe245abfeefbb4081c5"
+   "sha256": "@pin:root_registration_body_digest"
   },
   "1a89e43f29ecd3c6c4524434e2da6b29ddc1c6fa4b343f1bde28d296fdde1f6d": {
    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/91772be1948b81cbc97ccc5537790522e6b33cda",
    "sha256": "2e2653d210f9f1be50c91cca7dcf8b70ce59de0aa193144fe3a6a0190440391c"
+  },
+  "1640995831b0c1f8ae616810e12eb7b97ee191e9f20b5c38eee32eb8bfac9d23": {
+   "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/28ec4ccab807fbdbbb84c31e78e2a9a9070f2149",
+   "sha256": "3cb175ca0d3720773c9561840aa1e12bf3c04f2dd864d8bdde6d3e1690bf03b4"
   }
  },
+
  "expected_ga_overrides": {
-  "controller_qualification_ref": {
-   "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/0427b0e67756583d9916a0fdd9cac66ffa20c9ad",
-   "sha256": "e7cfb30b1d6241ad8b0a9976ae8a44d2b6fadd429f2f95bcf523c20fbe912888"
-  },
   "authority_source_ref": {
    "uri": "urn:clued:control-trust-root-set:uscrdifznmlvczcekqpw:ctr_414bd3c724264a83894b0c55cf2ab878",
-   "sha256": "a93bfdda74d9d693584c32ecb9e1ec963fa448b51595fbe245abfeefbb4081c5"
+   "sha256": "@pin:root_registration_body_digest"
   }
  },
- "_overrides_note": "controller_qualification_ref：活字节已是此值（R31-F1），override 仅显式钉住，不构成修改；生成器 :17 读的分支副本仍是 6e35ff20，故 override 依然必需。authority_source_ref：附带 B 的真修改，受理件重钉同一编辑内落地。"
+
+ "source_provenance": {
+  "15f2ee74aab54f19ef504b1448f171fe10919a38cdf8ef37de341383d085068d": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root7-runtime-v20/ScopedRoot5FinalControllerQualification.json",
+  "73c05cada90b00915f8b352a2dac6f77bf82b44660950e7e9a1415f5cab99b35": "scripts/phase2-qualification/control-context-verifier-root6-linux-successor/ControllerSourceManifest.candidate.json",
+  "3cb175ca0d3720773c9561840aa1e12bf3c04f2dd864d8bdde6d3e1690bf03b4": "artifacts/clued-validation/phase2-entry-preparation-20260908/root6-capacity/f12-issuer/Root7StatusIssuerPurposeMetadata.candidate.json",
+  "82e9e2f0ce178971ec8986a03479a76e56f91e7aed30b4500e5f9651787882ed": "artifacts/clued-validation/phase2-entry-preparation-20260908/root6-capacity/Root6Current043CapacityRepairAcceptance20260912.json",
+  "2e2653d210f9f1be50c91cca7dcf8b70ce59de0aa193144fe3a6a0190440391c": "work/cp01/cp01-apply.candidate.sql",
+  "512aae741692a87c5a6ed43f007290201f16aea46454a5523874ad4dc034cd81": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/EnvHostScopeIndependentAcceptance.json",
+  "d5b261ce6a2ad39da69cd14f4b7537ab8e3d8e2b12ce796b77a550df9aec196a": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/EnvProfileStageApplicability.json"
+ },
+
+ "_R31_rulings": {
+  "#8": "root5 注册体摘要 92186d46 的取法已复算确定：canonicalDigest(完整注册体，含 signature_binding)，即 sorted+compact+LF（root-window-validation.mjs:17-24 本尊函数，对活库 event seq 5 body 复算精确命中）。同法对 root6 注册体（event seq 6 body）= a93bfdda…。候选 4c9fcf89 为无 LF 变体，否定。**window12 增补**：取法不随冻结点变，v2 直接复用；变的是它作用的对象 —— 本窗 #8 = canonicalDigest(root7 注册体)，注册后才可算。",
+  "#9-11": "沿用。三件是三代际的定义供源史料（自述 NOT_LIVE_RUNTIME_STATE / authority_effect NONE），GRR 不读其字节。条件：预留前复测活库 execution_current 三代际仍与定义值相等；若漂移则须由实施方重出，且三项待定钉同时失效。",
+  "#15": "沿用（带 caveat）。活受理件 expected_ga.host_runtime_config_digest 仍钉 9e5edb91（v20 重出件实测未变）；重出反制造不一致。caveat：9e5edb91 内 Windows/endpoint 条目已死但无谓词消费。宿主定义换钉是另一桩 Owner 级操作。",
+  "#16": "沿用。profile d1c060b8 未变（= 活绑定 profile_sha256）；其 3000000 容量语句已被 capacity_materials 链显式接续，不由本件担保。",
+  "#18": "重出为本轮 CP-01 apply（work/cp01/cp01-apply.candidate.sql，sha256 2e2653d2…，git blob 91772be1…）。**window12 增补**：v2 映射写明 publication 从 M3 变 M4，继任关系不动；本轮实测该文件字节未变。blob 需经 owner merge 后方可经 API 取到 —— 下游工具须复验。",
+  "#19": "复核通过（状态 = ACCEPTED_EXACT_QUALIFICATION_REPAIR_WITH_APPROVED_CAPACITY_DELTA）。**window12 增补**：该件属 window12 九件重出集（REPR043，原地重写），字节已由重出线换为 82e9e2f0…，故本窗 #19 钉新值。",
+  "附带A": "保留重复。context.mjs:81 EXACT_STAGE_INPUTS 硬性要求 ga.stage_receipt_refs.length===6，去重即 5，直接炸；:351 statusExpected 深等把同一数组带进 Status24 observations。source_digests 侧本就按唯一值收敛为 5。判别器 NC12 复现去重必炸。",
+  "附带B": "裁定**原则**沿用：authority_source_ref 必须 = canonicalDigest(现任注册体)（:322 ACTUAL_CURRENT_ROOT_REF），且因 :37 EXACT_ACCEPTED_GA_FIELD 强制 GA 深等 expected_ga，两处必须同值 —— 两头堵论证按行号平移成立。**window12 下现任注册体是 root7 体**，故本文件三处改为 @pin 间接引用同一个待定钉。uri 不变。",
+  "R31-F1": "R30 的核心断言证伪：M2 活字节 fb389314 的 expected_ga.controller_qualification_ref 已经是 e7cfb30b。6e35ff20/775fd644 只是本分支陈旧工作副本。**window12 增补**：本窗生成器读 root7-runtime-v20 重出件（基底取自 M2 活字节，见 Window12ReissueNotes.md §0），不再触碰 v19 工作副本，故 R31 的 controller_qualification_ref override 已删除。"
+ }
 }

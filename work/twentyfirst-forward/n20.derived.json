@@ -1,0 +1,26 @@
+{
+  "source": "artifacts/clued-validation/phase2-entry-preparation-20260908/root6-capacity/step14-execution/forward20.real.sql",
+  "source_sha256": "a66b104e7543d478cc23e807e4c8d38b7411bb5d11e305806bf5753a70658bb5",
+  "fields": {
+    "tag": "$nf20$",
+    "reserve_execution_budget": "054c631abd6547310b0b70773b263a570b281ad9ee757f6970af70f0e5127b9b",
+    "reserve_gate": "d5bba9ef6a3a67966b27c0450fe3f65536010778670434798fd3f936543ec17e",
+    "append_status_manifest": "4f9d2be6a501efe57ba8dfe33f999781720094feda2151b5fea031a4c5bc0ccc",
+    "guard_exception": "accepted_root6_linux_capacity_160",
+    "window": "2026-09-13T07:05:16Z",
+    "rows_sha256": "3544cf460a4fe52101e13f13d155535fb245f85f89e80ff3da442a700bed9644",
+    "catalog_sha256": "e88ca499a1bc02b9cec6f4f97435d8117c4c571e54f8ec6e579c6bcb6b5634f2",
+    "getter_definition_sha256": "6cbfe002198f2caccde8594d5aeaacd43b74941855dbd161027a8d1681ce5f97",
+    "v_norm_sha256": "f97d85852a722697cd66b3e73ae79e40144c907a51b85fe5d7a3631aa9eda354",
+    "v_new_sha256": "e2bf20c8a8465af6162f7a096d7ab94d14dbe3028a8f81f90646a132488e183a",
+    "key": "root6-linux-controller-forward-68133f2d617718c8",
+    "event_exception": "exact_real_twentieth_forward_event_required",
+    "existing_forwards": 19,
+    "guard_pre": "if n not in (1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19)",
+    "guard_post": "if n not in (1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20)",
+    "next_seq": 89,
+    "prev_seq": 88,
+    "this_forward": 20,
+    "next_forward": 21
+  }
+}

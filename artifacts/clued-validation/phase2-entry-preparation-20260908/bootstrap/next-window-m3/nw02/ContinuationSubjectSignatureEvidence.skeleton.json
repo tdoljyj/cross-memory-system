@@ -9,26 +9,26 @@
   },
   "accepted_binding_updated": false,
   "approved_window": {
-    "not_before": "__PENDING_M4_MERGE_COMMITTED_AT__",
-    "expires_at": "__PENDING_M4_MERGE_COMMITTED_AT_PLUS_86400__",
+    "not_before": "__PENDING_SUBJECTMERGE_MERGE_COMMITTED_AT__",
+    "expires_at": "__PENDING_SUBJECTMERGE_MERGE_COMMITTED_AT_PLUS_86400__",
     "note": "NW-01 recorded the M-merge window here, which differed from the accepted_binding window by 13 minutes (07:18:16 vs 07:05:16). Whether the NW-02 evidence should carry the M4 window or the M3-materialized accepted_binding window is open point 4 in NW02DraftNotes.md."
   },
   "artifacts": {
     "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-m3/nw02/ContinuationControlStoreAcceptance.json": {
       "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-m3/nw02/ContinuationControlStoreAcceptance.json",
-      "blob_sha": "__PENDING_M4_BLOB_SHA_STORE_ACCEPTANCE__",
+      "blob_sha": "__PENDING_SUBJECTMERGE_BLOB_SHA_STORE_ACCEPTANCE__",
       "sha256": "__PENDING_NW02_STORE_ACCEPTANCE_SHA256__",
       "bytes": "__PENDING_NW02_STORE_ACCEPTANCE_BYTES__"
     },
     "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-m3/nw02/ContinuationRegistrationSubject.canonical.json": {
       "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-m3/nw02/ContinuationRegistrationSubject.canonical.json",
-      "blob_sha": "__PENDING_M4_BLOB_SHA_SUBJECT__",
+      "blob_sha": "__PENDING_SUBJECTMERGE_BLOB_SHA_SUBJECT__",
       "sha256": "__PENDING_NW02_SUBJECT_SHA256__",
       "bytes": "__PENDING_NW02_SUBJECT_BYTES__"
     },
     "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-m3/nw02/ContinuationRegistrationSubjectAcceptance.json": {
       "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-m3/nw02/ContinuationRegistrationSubjectAcceptance.json",
-      "blob_sha": "__PENDING_M4_BLOB_SHA_REGISTRATION_ACCEPTANCE__",
+      "blob_sha": "__PENDING_SUBJECTMERGE_BLOB_SHA_REGISTRATION_ACCEPTANCE__",
       "sha256": "__PENDING_NW02_REGISTRATION_ACCEPTANCE_SHA256__",
       "bytes": "__PENDING_NW02_REGISTRATION_ACCEPTANCE_BYTES__"
     }
@@ -37,32 +37,32 @@
   "ga_created": false,
   "kind": "EXACT_NW02_CONTINUATION_SUBJECT_SIGNATURE_EVIDENCE",
   "merge": {
-    "sha": "__PENDING_M4_MERGE_SHA__",
-    "tree": "__PENDING_M4_MERGE_TREE__",
-    "parents": ["__PENDING_M4_BASE_SHA__", "__PENDING_M4_HEAD_SHA__"],
+    "sha": "__PENDING_SUBJECTMERGE_MERGE_SHA__",
+    "tree": "__PENDING_SUBJECTMERGE_MERGE_TREE__",
+    "parents": ["__PENDING_SUBJECTMERGE_BASE_SHA__", "__PENDING_SUBJECTMERGE_HEAD_SHA__"],
     "committer_login": "web-flow",
     "author_login": "tdoljyj",
     "verification": {
-      "verified": "__PENDING_M4_VERIFIED__",
-      "reason": "__PENDING_M4_VERIFICATION_REASON__",
-      "verified_at": "__PENDING_M4_VERIFIED_AT__"
+      "verified": "__PENDING_SUBJECTMERGE_VERIFIED__",
+      "reason": "__PENDING_SUBJECTMERGE_VERIFICATION_REASON__",
+      "verified_at": "__PENDING_SUBJECTMERGE_VERIFIED_AT__"
     }
   },
   "merge_timestamps": {
-    "committed_at": "__PENDING_M4_COMMITTED_AT__",
-    "merged_at": "__PENDING_M4_MERGED_AT__",
-    "merged_at_minus_committed_at_seconds": "__PENDING_M4_DELTA_SECONDS__",
+    "committed_at": "__PENDING_SUBJECTMERGE_COMMITTED_AT__",
+    "merged_at": "__PENDING_SUBJECTMERGE_MERGED_AT__",
+    "merged_at_minus_committed_at_seconds": "__PENDING_SUBJECTMERGE_DELTA_SECONDS__",
     "which_one_is_the_window_source": "committed_at",
     "why": "trusted-github.mjs:73 reads commit.commit.committer.date, and the M3 window_rule names not_before_source VERIFIED_OWNER_MERGE_COMMIT_COMMITTED_AT. The controller requires merged_at only to be present (:41) and never compares its value, so a delta is recorded rather than treated as a failure. Measured for M3/PR164: committed_at and merged_at were both 2026-09-13T05:45:14Z, delta 0."
   },
   "observed_at_utc": "__PENDING_CAPTURE_TIME__",
   "pr": {
-    "number": "__PENDING_M4_PR_NUMBER__",
-    "merged_by": "__PENDING_M4_MERGED_BY__",
-    "merged_at": "__PENDING_M4_MERGED_AT__",
-    "merge_commit_sha": "__PENDING_M4_MERGE_SHA__",
-    "base_sha": "__PENDING_M4_BASE_SHA__",
-    "head_sha": "__PENDING_M4_HEAD_SHA__"
+    "number": "__PENDING_SUBJECTMERGE_PR_NUMBER__",
+    "merged_by": "__PENDING_SUBJECTMERGE_MERGED_BY__",
+    "merged_at": "__PENDING_SUBJECTMERGE_MERGED_AT__",
+    "merge_commit_sha": "__PENDING_SUBJECTMERGE_MERGE_SHA__",
+    "base_sha": "__PENDING_SUBJECTMERGE_BASE_SHA__",
+    "head_sha": "__PENDING_SUBJECTMERGE_HEAD_SHA__"
   },
   "repository": {
     "full_name": "tdoljyj/cross-memory-system",
@@ -76,7 +76,7 @@
     "mirrors": "control-context-verifier-*/trusted-github.mjs verifyOwnerMergeArtifact",
     "is_the_controller_verification": false,
     "api_bundle_fetched_by": "__PENDING__",
-    "api_bundle_sha256": "__PENDING_M4_API_BUNDLE_SHA256__",
+    "api_bundle_sha256": "__PENDING_SUBJECTMERGE_API_BUNDLE_SHA256__",
     "note": "A second implementation of the same conditions, applied to API responses fetched by the caller. The controller performs its own verification at runtime through its pinned gh.exe; this does not substitute for it."
   }
 }

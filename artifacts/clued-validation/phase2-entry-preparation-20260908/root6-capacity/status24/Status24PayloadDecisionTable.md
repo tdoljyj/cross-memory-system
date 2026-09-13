@@ -49,3 +49,51 @@ controller(**68133f2d**) / scope(115408c6) / runner・credential・session_gener
 S24 = canonicalDigest(本载荷 减 signature_binding)+LF。受理件重钉（第 2 步）把
 `late_bound_fields.status_manifest_ref.signed_payload_sha256 → S24`，即 R29 死锁的解。
 :357 与 :349 由此同时可满足 —— 这次的载荷是**先造后钉**，不是从模板抄前瞻摘要。
+
+---
+
+# window12（root7 / F12）增补节
+
+上表是 **root6 期**的记录，原样保留。本节只列 window12 下**变了的行**，依据见
+`Status24Window12Notes.md` 与 R31 的「v2 兼容映射」。生成器已参数化：
+`node build-status24.mjs --decisions decisions.final.json --pending`。
+
+## 顶层字段
+
+| 字段 | root6 值 | window12 值 | 依据 | 裁定 |
+| --- | --- | --- | --- | --- |
+| schema_digest | 510f3b90… | **7e5df5dd…** | F12 已原地实化本地 schema；受理件 `control_schema_refs.StatusManifest.sha256` 同值（:348） | 定 |
+| control_trust_root_generation | ctrgen_5e0440a9… | **ctrgen_26769cc7…** | root7 代际，与受理件 `expected_ga` 交叉核对 | 定（已造未烧） |
+| issuer_ref | c1749399 / 1640995831… | **28ec4cca / 3cb175ca…** | :341 钉 root.issuer_bindings[STATUS]；:317 把 STATUS 钉死为 3cb175ca | **定（#17 翻案，见下）** |
+| status_manifest_id | sm_672def3d… | 沿用 | :342 仅要求 uri 一致 | 沿用（不确定点 2） |
+| generation | 24 | 24 | 状态清单序数，与 root 代际无关 | 沿用（不确定点 3） |
+| as_of / expires_at | 待定钉 | 待定钉 | :349 | 待 T |
+
+## observations
+
+`root_generation` → **ctrgen_26769cc7…**；`controller_digest` → **73c05cad…**（F12 冻结点）；
+`root_set_id` / `profile` / `gate` / `scope` 不变；三代际仍为待定钉。
+
+## source_digests：变了的四行 + 一行升为待定钉
+
+| # | root6 值 | window12 值 | 依据 | 裁定 |
+| --- | --- | --- | --- | --- |
+| 7 | e7cfb30b（v19 资格化） | **15f2ee74** | root7-runtime-v20 重出件；= 受理件 `expected_ga.controller_qualification_ref` | 定 |
+| 8 | a93bfdda（root6 注册体） | **待定钉：canonicalDigest(root7 注册体)** | root7 注册后才可算 | **第六个待定钉** |
+| 13 | 68133f2d（控制器清单） | **73c05cad** | F12 冻结点；= 受理件 `expected_ga.controller_digest` | 定 |
+| 17 | 1640995831（STATUS issuer 资格） | **3cb175ca** | :317 钉死 + :341 —— root7 下必换新件 | **定（原「定」项翻案）** |
+| 19 | d3f643b4（043 修复受理） | **82e9e2f0** | 该件属 window12 九件重出集，原地重写 | 定 |
+
+其余各行（#1-6、#9-12、#14-16、#18）沿用 R31 裁定，字节本轮实测未变。
+
+## a93bfdda 的去向
+
+不再是 #8 的值，转岗为 **root7 注册体的 `predecessor` 钉**
+（`decisions.final.json` → `root_registration_predecessor`）。取法（canonical+LF）不随冻结点变。
+
+## 与 R29 修复的闭环（window12 版）
+
+S24 = canonicalDigest(本载荷 减 signature_binding)+LF，落到受理件
+`late_bound_fields.status_manifest_ref.signed_payload_sha256`（v20 重出件里现为
+`__PENDING_STATUS24_PAYLOAD_SHA256__`）。**window12 下受理件按 F12 重出而非重钉** ——
+`repin-acceptance.mjs` 转岗为谓词自验/判别器库（R31 v2 映射钉 4），本轮未改。

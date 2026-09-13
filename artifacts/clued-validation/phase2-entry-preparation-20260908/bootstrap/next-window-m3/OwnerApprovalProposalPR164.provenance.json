@@ -1,0 +1,19 @@
+{
+  "object_type": "OwnerApprovalProposalCaptureProvenance",
+  "state": "CAPTURED_NOT_AUTHORED",
+  "what": "The body of pull request 164 exactly as the GitHub API returned it. This is the proposal that was put to the Owner for approval f92cd46e; it is archived here so the subject can pin it by path and digest the way NW-01 pinned OwnerApprovalProposal.md. Nothing was written or edited at capture time -- the bytes are the API response's body field verbatim, so the digest below is of the proposal as the Owner read it.",
+  "captured_file": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-m3/OwnerApprovalProposalPR164.md",
+  "captured_bytes": 6461,
+  "captured_sha256": "b340f46d1aeb64b338651504cf42b67ef643c56508517a6fca0efd49a40b2827",
+  "source": {
+    "pull_request": 164,
+    "merged": true,
+    "merge_commit_sha": "f92cd46e42e20e1fa305c573964e0597230c0b65",
+    "merged_by": "tdoljyj",
+    "api": "GET /repos/tdoljyj/cross-memory-system/pulls/164"
+  },
+  "corroborating_bundle_sha256": "2a6f178272f556625d6300c94265f4e59df039d648398bdafe38cd2384cbb61f",
+  "corroboration_note": "OwnerApprovalVerification.json, which the subject also pins, records api_bundle_sha256 over the bundle containing this same pull-request response. The captured bytes and that bundle are two anchors on one artifact.",
+  "why_not_the_plan_document": "NW02-R1 (independent acceptance, refused): NextWindowPlanV2Window12Cycle.md is the cycle work plan, not the proposal for this approval. Its Owner-actions section -- the sole document-specific ground the earlier adjudication cited -- was itself measured defective by NW02-F1 in the same directory, listing three Owner actions where four are owed. This PR body states those obligations correctly.",
+  "authority_effect": "NONE"
+}

@@ -1,0 +1,156 @@
+{
+  "accepted_store": {
+    "namespace": "clued_control",
+    "project_ref": "uscrdifznmlvczcekqpw",
+    "root_set_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+    "second_store_created": false
+  },
+  "allowed_maintenance": {
+    "all_prior_root_status_ga_grr_execution_and_budget_history_preserved": true,
+    "application_ordinal": 5,
+    "changed_checks": [
+      "accepted_binding_check",
+      "accepted_binding_owner_approval_commit_check",
+      "accepted_binding_subject_sha256_check"
+    ],
+    "changed_fields": [
+      "not_before",
+      "expires_at",
+      "owner_approval_commit",
+      "subject_sha256",
+      "registration_acceptance_sha256",
+      "store_acceptance_sha256",
+      "signature_evidence_sha256"
+    ],
+    "exception": "NW-02",
+    "guards_added_beyond_nw01": {
+      "in_transaction_window_assertion": "clock_timestamp() within [2026-09-13T05:45:14Z, 2026-09-14T05:45:14Z) asserted inside the transaction, pre-block AND post-block (R11-F12)",
+      "sole_non_internal_trigger_assertion": "exactly one non-internal trigger on clued_control.accepted_binding, named accepted_binding_immutable, tgenabled O, asserted pre-block AND post-block (R11-F13)"
+    },
+    "nine_unchanged_columns_asserted_identical_on_both_sides": [
+      "algorithm_config",
+      "audience",
+      "environment",
+      "issuer",
+      "project_ref",
+      "protocol_mapping_sha256",
+      "purpose",
+      "root_id",
+      "schema_sha256"
+    ],
+    "ordering_stated_explicitly_here_because_the_subject_does_not_carry_it": "NW-02 is applied BEFORE the root7 generation_registration, per the M3 nw02 clause ordering.nw02_before_generation_registration true. The adopted option-B subject has no key for it (NW02-O2), so it is stated here: at apply time clued_control.events must still have max(sequence) 6 and current_head must still be sequence 6 / ctrgen_5e0440a95ac8ee257b9e4236cabd275b / revoked false. Measured true by this session at 2026-09-13T07:21:04Z.",
+    "production_authority": false,
+    "row": "clued_control.accepted_binding",
+    "surgical_authority": false,
+    "temporarily_disabled_trigger": "accepted_binding_immutable",
+    "trigger_restored_same_transaction": true
+  },
+  "authority_effect": "NONE",
+  "decision": "Two separable judgements, as in round 1, and the split is unchanged because only one half was repaired. FIRST, the NW-02 transaction SHAPE is accepted: one transaction, ACCESS EXCLUSIVE on accepted_binding and SHARE on the other seven tables, a fail-closed pre-condition block, disable trigger then drop three CHECKs then a single-row seven-column update then add three CHECKs then enable trigger, then a fail-closed post-condition block; the seven changed fields and three replaced checks match the M3 nw02 clause element for element and in order; the nine other columns are asserted identical on both sides so nothing changes by omission; and both guard families the M3 clause requires beyond NW-01 (R11-F12 window assertion, R11-F13 sole-non-internal-trigger census) are present in BOTH blocks. This session re-derived all of that from the SQL text rather than from the round-1 record. SECOND, the prepared INSTANCE NW02Applied.sql is REJECTED and must not be executed in its current form: four of the seven values it writes are wrong (NW02-R2), unchanged since round 1 because regeneration was deliberately deferred. Nothing here authorizes execution, and this document creates no database effect of any kind.",
+  "kind": "CONTINUATION_CONTROL_STORE_ACCEPTANCE",
+  "live_observation_baseline": {
+    "accepted_binding_currently_expired": true,
+    "accepted_binding_expires_at": "2026-09-13T07:05:16Z",
+    "accepted_binding_not_before": "2026-09-12T07:05:16Z",
+    "active_ga_id": null,
+    "charged_evidence_bytes": 2201594803,
+    "charged_seconds": 9906,
+    "current_root_generation": "ctrgen_5e0440a95ac8ee257b9e4236cabd275b",
+    "current_root_sequence": 6,
+    "events_max_sequence": 6,
+    "execution_sequence": 89,
+    "expiry_note": "The window11 binding expired at 07:05:16Z, sixteen minutes before this measurement. That is a gap in the control plane, not an obstacle to NW-02: the NW-02 window is open until 2026-09-14T05:45:14Z, the in-transaction assertion is against that window, and the old-side accepted_binding_check the transaction drops is pinned to expires_at <= 2026-09-13T07:05:16Z, which still matches the live row.",
+    "measured_at_utc": "2026-09-13T07:21:14Z",
+    "measured_by": "read-only select by this second-round review session; supersedes the session J measurement of 2026-09-13T06:04:42Z carried by the skeleton, which recorded accepted_binding_currently_expired false and is no longer true",
+    "non_internal_trigger_census": "1 trigger, accepted_binding_immutable, tgenabled O",
+    "pending_budget_sequence": null
+  },
+  "live_preimage_as_measured_by_this_session": {
+    "agrees_with_the_prepared_sql": true,
+    "effective_execution_binding_functiondef_sha256": "9b6518b94d246b4a3415ff8bbf791f4be6a22dd42ded751ceae90801c8b3e2d6",
+    "effective_execution_binding_prosrc_sha256": "633269f15c362b06e19b6c23a9fddefddc5c4567f78ac8820d70579c697f4df2",
+    "meaning": "The eight-table rows digest and both getter digests this session computed are identical to the literals NW02Applied.sql asserts, which were measured at 2026-09-13T06:04:42Z. The control store has therefore not drifted by a single byte in that interval - independent confirmation that no write has been performed by anyone, this session included.",
+    "measured_at_utc": "2026-09-13T07:22:08Z",
+    "rows_sha256": "795f215980738b1075782681af4ac92a97138e7ece77f53a0628f2000a8cbe5f",
+    "still_must_be_remeasured_before_apply": true
+  },
+  "owner_approval_merge": "f92cd46e42e20e1fa305c573964e0597230c0b65",
+  "prepared_instance_rejected": {
+    "file": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-m3/nw02/NW02Applied.sql",
+    "file_sha256": "269a0a65c6b32d6c038081949d082513254647c633c3e9f98316e9459acf5ae7",
+    "honesty_note": "Disclosed by the drafting side rather than concealed: the file carries a DRAFT / NOT FOR EXECUTION banner naming all four documents, build-nw02-sql.mjs refuses to emit without --draft while any of them is provisional, and nw02-parameters.json.postimage.digest_sources_note states that none of the four digests may enter the database. This rejection exists so that no later reader can mistake the shape acceptance for a release of this file.",
+    "reason": "NW02-R2. Of the seven values the update writes, three are correct (not_before 2026-09-13T05:45:14Z, expires_at 2026-09-14T05:45:14Z, owner_approval_commit f92cd46e...) and four are wrong.",
+    "state": "NOT_EXECUTABLE",
+    "wrong_values_measured_this_round": {
+      "registration_acceptance_sha256": {
+        "correct_value": "406269b83d6ce4bafd8b89d87f3b70f8b89ca207328ccf2f85d9a61cc854b808",
+        "sql_writes": "b422667081dfd7bc6290724e884307b43feea30e9f9cb934e12e46315f342e61",
+        "what_is_wrong": "this session recomputed it: it is the digest of ContinuationRegistrationSubjectAcceptance.skeleton.json itself, a file whose own text reads sha256_of_this_skeleton_is_NOT_registration_acceptance_sha256 true"
+      },
+      "signature_evidence_sha256": {
+        "correct_value": "not computable yet - it is the digest of the realized ContinuationSubjectSignatureEvidence.json, which can only be captured AFTER the Owner merge that publishes this subject and these two acceptances",
+        "sql_writes": "0a3dfa951ad1e170f8d2e3e8df0b2196d2b85563abc14105d1ee4fffed2f79bc",
+        "what_is_wrong": "it matches no file in the directory at all. The signature-evidence skeleton now hashes to 4133e06afca62f864a059757eb98d2b5a45995e823dd673c2523c68677e34008, having been edited after the SQL was generated by the NW02-F1 sentinel rename (__PENDING_M4_*__ to __PENDING_SUBJECTMERGE_*__, 22 sites). So the SQL pins a digest of a version of a skeleton that no longer exists."
+      },
+      "store_acceptance_sha256": {
+        "correct_value": "the sha256 of THIS file, which cannot be stated inside it; the regenerator must measure it from the file at artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-m3/nw02/ContinuationControlStoreAcceptance.json",
+        "sql_writes": "645f886e5454637c2449df8c98d46ada0dc5080e998f8487b7bc9991be76cd6e",
+        "what_is_wrong": "this session recomputed it: it is the digest of ContinuationControlStoreAcceptance.skeleton.json itself, likewise self-disclaimed"
+      },
+      "subject_sha256": {
+        "correct_value": "e75176b5dcdbc909086c12ddd72d70b811e4e969c8e79eb20c80771f4fb29ee2",
+        "sql_writes": "338a348738447aa6e3ab724606703b602a1513d4ac032d75ddded7e8eca7dd77",
+        "what_is_wrong": "a subject draft superseded twice over; the file it names now hashes to the correct value"
+      }
+    }
+  },
+  "registration_acceptance": {
+    "bytes": 26298,
+    "note": "the independently issued second-round acceptance, not the skeleton in this directory and not the round-1 rejection it supersedes",
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-m3/nw02/ContinuationRegistrationSubjectAcceptance.json",
+    "sha256": "406269b83d6ce4bafd8b89d87f3b70f8b89ca207328ccf2f85d9a61cc854b808",
+    "state": "ACCEPTED_EXACT_SUBJECT_FOR_OWNER_SIGNATURE_ONLY"
+  },
+  "registration_subject": {
+    "bytes": 3633,
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-m3/nw02/ContinuationRegistrationSubject.canonical.json",
+    "provisional": false,
+    "sha256": "e75176b5dcdbc909086c12ddd72d70b811e4e969c8e79eb20c80771f4fb29ee2"
+  },
+  "remotely_executed": false,
+  "requirements_a_regenerated_instance_must_satisfy_to_be_acceptable": {
+    "conditions": [
+      "1. PROVENANCE OF EVERY DIGEST. Each of the four document digests must be obtained by hashing the named file at regeneration time, never copied from a note file, a prior SQL, a parameters file or this document's prose. NW02-O6 records that four different superseded subject digests are quoted across the notes in this directory; any of them appearing in the regenerated SQL is proof the rule was broken.",
+      "2. subject_sha256 must equal the sha256 of artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-m3/nw02/ContinuationRegistrationSubject.canonical.json, which is e75176b5dcdbc909086c12ddd72d70b811e4e969c8e79eb20c80771f4fb29ee2 over 3633 bytes for the subject accepted today. If the subject is re-issued again for any reason, this acceptance and the registration acceptance both lapse and both must be re-issued first: the digest chain is subject -> registration acceptance -> store acceptance, in that order.",
+      "3. registration_acceptance_sha256 must equal the sha256 of artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-m3/nw02/ContinuationRegistrationSubjectAcceptance.json - the issued acceptance, not the skeleton. For the document issued today that is 406269b83d6ce4bafd8b89d87f3b70f8b89ca207328ccf2f85d9a61cc854b808 over 26298 bytes.",
+      "4. store_acceptance_sha256 must equal the sha256 of artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-m3/nw02/ContinuationControlStoreAcceptance.json, this file, measured from disk. It cannot be written inside this file; the regenerator must measure it.",
+      "5. signature_evidence_sha256 must equal the sha256 of a realized ContinuationSubjectSignatureEvidence.json that actually exists on disk and contains zero __PENDING_*__ sentinels. Per NW02-F1 that document captures the merge that publishes this subject and the two acceptances - NOT the M4 merge ecd4028e, which predates this subject's existence. The 22 sentinels in the skeleton were renamed to __PENDING_SUBJECTMERGE_*__ precisely so that no realizer fills in M4's sha; a regenerated SQL whose signature_evidence_sha256 traces back to ecd4028e is wrong. Until that document exists, NO regenerated SQL can be final.",
+      "6. nw02-parameters.json.digest_sources must name the four FINAL paths rather than the three skeletons, and digest_sources_note must no longer say that none of the digests may enter the database - if it still says that, the parameters were not updated and the emitted SQL inherits the defect.",
+      "7. The generator must emit WITHOUT --draft, and the emitted file must carry no DRAFT / NOT FOR EXECUTION banner. A banner-marked file is by its own declaration not executable.",
+      "8. SHAPE, unchanged from what is accepted above: a single transaction; lock_timeout and statement_timeout set local; ACCESS EXCLUSIVE on accepted_binding and SHARE on the other seven tables; exactly one disable trigger, one three-constraint drop, one single-row seven-column update with a where root_id clause, one three-constraint add, one enable trigger; nothing else that writes.",
+      "9. PRE-BLOCK, fail-closed on: the R11-F12 in-transaction window assertion; the eight-table rows_sha256; the catalog digest and both effective_execution_binding digests; accepted_binding row count exactly 1; all sixteen old column values as literals; execution_current and current_head state; the R11-F13 trigger census plus the trigger definition; table owner and ACL; constraint count 16 and the sorted-constraint-name digest; and the three old CHECK definitions quoted literally.",
+      "10. POST-BLOCK, fail-closed on: the R11-F12 window assertion again; row count exactly 1; all sixteen new column values as literals including the four corrected digests; execution_current and current_head unchanged; the R11-F13 census again with the trigger re-enabled at tgenabled O; and the three new CHECK definitions.",
+      "11. FRESH PRE-IMAGE. rows_sha256 and the catalog digests must be re-measured immediately before apply, not reused from 06:04:42Z and not reused from this document's 07:22:08Z reading. They happened to be identical at both times, which proves only that nothing had drifted by then.",
+      "12. WINDOW. Apply must occur strictly inside [2026-09-13T05:45:14Z, 2026-09-14T05:45:14Z). The in-transaction assertion enforces it, so a late attempt aborts rather than writes; but a regeneration performed after the window closes is worthless and the window must be re-approved instead.",
+      "13. ORDER. The regenerated instance must be applied BEFORE the root7 append_event, per allowed_maintenance.ordering_stated_explicitly_here_because_the_subject_does_not_carry_it. Concretely: clued_control.events max(sequence) must still be 6 when it runs. The pre-block's current_head assertion enforces this, since registering root7 moves the head.",
+      "14. A FRESH INDEPENDENT REVIEW. Neither this document nor the registration acceptance discharges requires_fresh_independent_review_before_apply. They accept a shape and a subject; the instance that actually runs must be reviewed as an instance, against a live pre-image, by a session that did not generate it."
+    ],
+    "why_this_list_exists": "The SQL is generated, not hand-edited (the file says DO NOT EDIT THIS FILE; edit the parameters and regenerate). It will be regenerated by build-nw02-sql.mjs from nw02-parameters.json once the inputs are final. These are the conditions a fresh independent reviewer should check on that regenerated file; meeting all of them is what 'acceptable' means here. Failing any one of them is a rejection."
+  },
+  "requires_exact_preimage_CAS": true,
+  "requires_fresh_independent_review_before_apply": true,
+  "requires_fresh_live_preimage_before_apply": true,
+  "review_basis": "NEW_INDEPENDENT_RUNTIME_REVIEW_ROUND_2_TRANSACTION_SHAPE_RE_DERIVED_FROM_THE_SQL_TEXT. This session read NW02Applied.sql in full rather than citing the round-1 conclusion. Write statements enumerated: one disable trigger (line 172), one three-constraint drop (175-177), one single-row seven-column update with a where root_id clause (179-188), one three-constraint add (190-195), one enable trigger (197); no other statement writes. Guard families counted: the R11-F12 window assertion appears at lines 49-51 (pre) and 205-207 (post), and the R11-F13 non-internal-trigger census at 118-134 (pre) and 249-263 (post). The pre-block asserts the old row by all sixteen columns as literals, the row count, the execution and head state, the table owner and ACL, a constraint count of 16 with a sorted-name digest, and the three old CHECK definitions quoted literally; the post-block asserts the new row by all sixteen columns, the row count, the execution and head state and the census again. Every one of those sixteen pre-side literals was compared against a live read of clued_control.accepted_binding at 2026-09-13T07:21:14Z and all sixteen agree, and the four NW-01 document digests among them were each reproduced by hashing the corresponding file under bootstrap/next-window-20260912/. The eight-table rows digest and both getter digests were recomputed live at 07:22:08Z and equal the literals the SQL asserts. The seven changed fields and three replaced checks were compared element by element and in order against ExplicitOwnerApprovalM3.candidate.json nw02.allowed_changed_fields and nw02.allowed_replaced_checks and match exactly. application_ordinal 5 follows the measured 2/3/4 lineage.",
+  "schema_version": 1,
+  "state": "NW02_TRANSACTION_SHAPE_ACCEPTED_PREPARED_INSTANCE_REJECTED_NOT_EXECUTED",
+  "supersedes": {
+    "at_commit": "668888b",
+    "document": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-m3/nw02/ContinuationControlStoreAcceptance.json",
+    "its_state": "NW02_TRANSACTION_SHAPE_ACCEPTED_INSTANCE_REJECTED_NOT_EXECUTED",
+    "why": "re-issued because the subject it pinned (fa4b9ea3...) has been replaced and because the registration acceptance whose digest it carries has been re-issued as an acceptance rather than a rejection; the shape judgement is unchanged and was re-derived, not copied"
+  },
+  "window": {
+    "expires_at": "2026-09-14T05:45:14Z",
+    "not_before": "2026-09-13T05:45:14Z"
+  }
+}
