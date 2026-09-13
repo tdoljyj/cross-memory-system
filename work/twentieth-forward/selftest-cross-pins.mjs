@@ -36,6 +36,37 @@ fs.mkdirSync(path.join(sandbox, 'apps'), {recursive: true});
 fs.symlinkSync(path.join(REPO, 'apps/clued-cloud'), path.join(sandbox, 'apps/clued-cloud'));
 
 const abs = p => path.join(sandbox, p);
+
+// The sandbox used to be built from a hand-written list of directories to copy. That is the same
+// shape as the hand-enumerated load set that was wrong twice in rounds 21 and 22: when the manifest
+// gained skills/clued/SKILL.md and two files under skills/clued/references, nothing copied them,
+// and remeasure() died with ENOENT on skills/clued/SKILL.md before the first case ran. Fail-closed,
+// so never a false green -- but "4/4" was unobtainable on the committed file, which is the same
+// thing as not having the proof. The copy set is now derived from the manifest under test: every
+// REPOSITORY_SOURCE path it declares has to exist in the sandbox, whatever directory it lives in.
+// A path that cannot be satisfied is named here and aborts, instead of surfacing later as an ENOENT
+// inside a case where it reads as that case failing.
+const DECLARED_SOURCES = JSON.parse(fs.readFileSync(path.join(REPO, MANIFEST), 'utf8'))
+  .files.filter(e => e.role === 'REPOSITORY_SOURCE').map(e => e.path);
+const missingFromRepo = [];
+let copiedIndividually = 0;
+for (const declared of DECLARED_SOURCES) {
+  if (fs.existsSync(abs(declared))) continue; // already covered by a directory copy or the symlink
+  const from = path.join(REPO, declared);
+  if (!fs.existsSync(from)) { missingFromRepo.push(declared); continue; }
+  fs.mkdirSync(path.dirname(abs(declared)), {recursive: true});
+  fs.copyFileSync(from, abs(declared));
+  copiedIndividually++;
+}
+const stillMissing = DECLARED_SOURCES.filter(d => !fs.existsSync(abs(d)));
+if (missingFromRepo.length || stillMissing.length) {
+  console.error('SANDBOX_INCOMPLETE: declared REPOSITORY_SOURCE paths the sandbox cannot supply');
+  for (const d of new Set([...missingFromRepo, ...stillMissing])) console.error('  ' + d);
+  process.exit(1);
+}
+console.log('  sandbox  ' + DECLARED_SOURCES.length + ' declared sources present ('
+  + copiedIndividually + ' copied outside the directory copies)');
+
 const run = () => {
   const r = spawnSync(process.execPath,
     [abs('work/twentieth-forward/verify-manifest-against-host.mjs'), abs(MANIFEST), '--map', '/=/'],
