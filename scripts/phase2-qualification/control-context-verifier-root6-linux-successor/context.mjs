@@ -12,10 +12,10 @@ import boundedCrypto from 'node:crypto';import {isDeepStrictEqual as boundedSame
 import {createRequire} from 'node:module';
 import {sha,readBlobRef,verifyOwnerMergeArtifact,verifyDynamicPayload} from './trusted-github.mjs';
 import {validateRootShape,canonicalDigest,signaturePayloadDigest} from './root-window-validation.mjs';
-export const project='uscrdifznmlvczcekqpw',rootID='ctr_414bd3c724264a83894b0c55cf2ab878',generation='ctrgen_5e0440a95ac8ee257b9e4236cabd275b';
+export const project='uscrdifznmlvczcekqpw',rootID='ctr_414bd3c724264a83894b0c55cf2ab878',generation='ctrgen_26769cc7109ced40bc4016b2af678198';
 export const gateID='G-PREENTRY-SKILL-QUALIFICATION',audience='urn:clued:audience:skill-coexistence-qualification:'+project;
 export const sql="select clock_timestamp() as observed_at, clued_control.read_execution() as execution";
-export const qualificationLimits=Object.freeze({allocations:9,forwards:16,seconds:10506,evidenceBytes:2335812531,originalInputBytes:4000000,publicationBytes:8388608});
+export const qualificationLimits=Object.freeze({allocations:9,forwards:17,seconds:10506,evidenceBytes:2335812531,originalInputBytes:4000000,publicationBytes:8388608});
 const require=createRequire(new URL('../../../apps/clued-cloud/package.json',import.meta.url)),Ajv=require('ajv');
 const ajv=new Ajv({allErrors:true,strictKeywords:true,format:'full'});
 const profileBase=new URL('../preentry-parent/profile-successor/',import.meta.url);
@@ -40,7 +40,7 @@ export function parseStoredStatus(raw){check(typeof raw==='string'&&Buffer.byteL
 export function checkCapacityApprovalTime(approvedAt,runtime,execution,now){
  const registered=execution?.root?.events?.filter(e=>e.request?.kind==='GENERATION_REGISTERED'&&e.request.generation_id===generation).at(-1)?.request.body;
  check(execution?.root?.generation_id===generation&&runtime?.accepted_subject?.expected_ga?.control_trust_root_generation===generation&&registered?.control_trust_root_generation===generation,'CAPACITY_CURRENT_ROOT5_BINDING');
- check(runtime.expires_at===registered.expires_at&&time(runtime.expires_at)<=time(root6Expiry),'CAPACITY_CURRENT_ROOT5_EXPIRY');
+ check(runtime.expires_at===registered.expires_at&&time(runtime.expires_at)<=time(root7Expiry),'CAPACITY_CURRENT_ROOT5_EXPIRY');
  check(time(registered.not_before)<=time(approvedAt)&&time(approvedAt)<=time(now)&&time(approvedAt)<time(runtime.expires_at),'CAPACITY_APPROVAL_CURRENT_ROOT5_TIME');
 }
 export function time(s){check(typeof s==='string'&&/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,3})?Z$/.test(s),'UTC_TIME_REQUIRED');const v=Date.parse(s);check(Number.isFinite(v)&&new Date(v).toISOString().slice(0,19)===s.slice(0,19),'INVALID_CALENDAR_TIME');return v;}
@@ -188,11 +188,11 @@ const BASELINE_ATTEMPT_DIGESTS=Object.freeze({
  "ga_c5041817c641487f827cc4ed5e0fc9ad":'978f43100dbce9decc6429de5667332539fc42fd965602fd07f136bd5d1e92e0',
  "ga_e56ca0eb07304f2fbcf60eb8f29f3889":'a557151ca801dfee32f26f430efcf21c0457c65c7ea22df0aa543825ad9bdac4'});
 const scope=Object.freeze({root_id:'ctr_414bd3c724264a83894b0c55cf2ab878',root_generation:'ctrgen_2e778ca66244459f974b081edca8c04e',project:'uscrdifznmlvczcekqpw',expires_at:'2026-09-10T10:13:16Z',maximum_new_ga:3,maximum_new_forward:3,per_ga_seconds:600,per_ga_evidence_bytes:134217728,maximum_series_charged_seconds:6906,root_seconds_cap:7200,evidence_cap:1530506163,first_pass_stops:true,refund:false,automatic_retry:false,production:false,model_budget:0,paid_budget:0});
-const root4Generation='ctrgen_9cf53fa5cd0a4a38bd68613493f95b06',root5Generation='ctrgen_e5df432221344996afc04b5638121d96',root6Generation='ctrgen_5e0440a95ac8ee257b9e4236cabd275b',root4Expiry='2026-09-11T10:21:05Z',root6Expiry='2026-09-13T07:05:16Z',root5BudgetSequence=64,root6BudgetSequence=89;
+const root4Generation='ctrgen_9cf53fa5cd0a4a38bd68613493f95b06',root5Generation='ctrgen_e5df432221344996afc04b5638121d96',root7Generation='ctrgen_26769cc7109ced40bc4016b2af678198',root4Expiry='2026-09-11T10:21:05Z',root7Expiry='__F12_PENDING_WINDOW_END__',root5BudgetSequence=64,root7BudgetSequence=90;
 const inherited={STATUS:'acaf2073c654be95a3beab820f1460de1e6e68caa267e9c75bdd3c891bd894b3',GATE_AUTHORIZATION:'b6d4782fcf79cf599f3ccc7e2c7b7434e41a26c6d4a28c6711eac0c9f469e146',GATE_RESULT:'b6d4782fcf79cf599f3ccc7e2c7b7434e41a26c6d4a28c6711eac0c9f469e146'};
 function material(x,ref,label){need(ref&&hex(ref.sha256)&&typeof ref.uri==='string'&&x&&same(x.ref,ref)&&typeof x.raw==='string'&&sha(x.raw)===ref.sha256,'EXACT_PINNED_'+label);return JSON.parse(x.raw);}
-const generationForBudget=sequence=>sequence>=root6BudgetSequence?root6Generation:sequence>=root5BudgetSequence?root5Generation:sequence>=59?root4Generation:scope.root_generation;
-const expiryForBudget=sequence=>sequence>=root6BudgetSequence?root6Expiry:sequence>=59?root4Expiry:scope.expires_at;
+const generationForBudget=sequence=>sequence>=root7BudgetSequence?root7Generation:sequence>=root5BudgetSequence?root5Generation:sequence>=59?root4Generation:scope.root_generation;
+const expiryForBudget=sequence=>sequence>=root7BudgetSequence?root7Expiry:sequence>=59?root4Expiry:scope.expires_at;
 function terminal(a){if(!['PASS','FAIL','BLOCKED','STALE'].includes(a.phase)||typeof a.receipt_raw!=='string'||sha(a.receipt_raw)!==a.receipt_sha256)return false;const r=JSON.parse(a.receipt_raw);return r.result===a.phase&&r.gate_authorization_id===a.ga_id&&r.gate_authorization_sha256===a.ga_sha256&&r.control_trust_root_generation===generationForBudget(a.budget_sequence);}
 function checkBoundedSeries({pins,approval,applicability,runtime,execution,now,operation,ga_id=null,result=null,repair_acceptances=[],capacity_materials=null}){
  // These pins must be fixed by the independently reviewed future consumer, not accepted from GA/user args.
@@ -204,8 +204,8 @@ function checkBoundedSeries({pins,approval,applicability,runtime,execution,now,o
  need(runtime?.state==='ACCEPTED_EXACT_PREENTRY_CONTROLLER_RUNTIME'&&same(runtime.accepted_subject?.bounded_series_applicability_ref,pins.applicability_ref)&&same(runtime.accepted_subject?.bounded_series_constraints,scope),'RUNTIME_MUST_ACTUALLY_BIND_THE_APPENDIX');
  need(utc(now)&&Date.parse(now)>=Date.parse(appendix.not_before),'TRUSTED_CURRENT_UTC_REQUIRED');
  need(['NEXT_ALLOCATION','CONSUME_RESERVED_BUDGET','NEXT_FORWARD','CURRENT_DISPATCH','RESULT_RECONCILIATION'].includes(operation),'EXACT_SERIES_CHECK_POINT');
- if(operation==='RESULT_RECONCILIATION')need(['FAIL','BLOCKED','STALE'].includes(result),'EXPIRED_LIFETIME_EXCEPTION_NONPASS_ONLY');else need(Date.parse(now)<Date.parse(root6Expiry),'FIXED_OWNER_CUTOFF_NO_DISPATCH');
- const x=execution;need(x?.root?.root_set_id===scope.root_id&&x.root.generation_id===root6Generation&&x.current?.root_id===scope.root_id,'EXACT_REGISTERED_ROOT5_CONTINUATION');
+ if(operation==='RESULT_RECONCILIATION')need(['FAIL','BLOCKED','STALE'].includes(result),'EXPIRED_LIFETIME_EXCEPTION_NONPASS_ONLY');else need(Date.parse(now)<Date.parse(root7Expiry),'FIXED_OWNER_CUTOFF_NO_DISPATCH');
+ const x=execution;need(x?.root?.root_set_id===scope.root_id&&x.root.generation_id===root7Generation&&x.current?.root_id===scope.root_id,'EXACT_REGISTERED_ROOT5_CONTINUATION');
  need(Array.isArray(x.events)&&Array.isArray(x.attempts)&&x.events.length>=BASELINE_EVENT_COUNT,'COMPLETE_EXECUTION_HISTORY_REQUIRED');need(canonicalDigest(x.events.slice(0,BASELINE_EVENT_COUNT))===BASELINE_EVENTS_DIGEST,'ORIGINAL_44_EVENTS_UNCHANGED');
  for(const [ga,digest] of Object.entries(BASELINE_ATTEMPT_DIGESTS)){const m=x.attempts.filter(t=>t.ga_id===ga);need(m.length===1&&canonicalDigest(m[0])===digest,'ALL_FOURTEEN_BASELINE_ATTEMPTS_AND_RECEIPTS_UNCHANGED');}
  const extra=x.events.slice(BASELINE_EVENT_COUNT),newAttempts=x.attempts.filter(a=>BASELINE_ATTEMPT_DIGESTS[a.ga_id]===undefined);need(new Set(x.attempts.map(a=>a.ga_id)).size===x.attempts.length,'UNIQUE_GA_IDENTITIES');
@@ -223,7 +223,7 @@ function checkBoundedSeries({pins,approval,applicability,runtime,execution,now,o
  for(const a of ordered.slice(0,-1))need(repairs.some(r=>repairAccepted(r,a,true)),'INDEPENDENT_IDENTIFIED_ERROR_AND_FIX_BEFORE_NEXT_ATTEMPT');
  // Forward admission remains enforced by the original exact getter and independently reviewed registration transaction; no future-event back-reference.
  const unspent=budgets.filter(e=>!used.has(e.sequence));
- if(['NEXT_ALLOCATION','NEXT_FORWARD'].includes(operation)){need(x.current.active_ga_id===null&&x.current.pending_budget_sequence===null&&unspent.length===0&&newAttempts.every(terminal),'NO_UNKNOWN_ACTIVE_OR_PENDING_BEFORE_NEXT');need(!newAttempts.some(a=>a.phase==='PASS'),'FIRST_FORMAL_PASS_CANCELS_REMAINING');need(operation==='NEXT_ALLOCATION'?budgets.length<qualificationLimits.allocations:forwards.length<qualificationLimits.forwards,'ALLOCATION_OR_FORWARD_LIMIT_REACHED');for(const a of ordered)need(repairs.some(r=>repairAccepted(r,a,false)),'FIX_REQUIRED_BEFORE_ANOTHER_ALLOCATION_OR_FORWARD');if(operation==='NEXT_ALLOCATION')need(Date.parse(now)+600000<Date.parse(root6Expiry),'FULL_600_SECOND_WINDOW_REQUIRED');}
+ if(['NEXT_ALLOCATION','NEXT_FORWARD'].includes(operation)){need(x.current.active_ga_id===null&&x.current.pending_budget_sequence===null&&unspent.length===0&&newAttempts.every(terminal),'NO_UNKNOWN_ACTIVE_OR_PENDING_BEFORE_NEXT');need(!newAttempts.some(a=>a.phase==='PASS'),'FIRST_FORMAL_PASS_CANCELS_REMAINING');need(operation==='NEXT_ALLOCATION'?budgets.length<qualificationLimits.allocations:forwards.length<qualificationLimits.forwards,'ALLOCATION_OR_FORWARD_LIMIT_REACHED');for(const a of ordered)need(repairs.some(r=>repairAccepted(r,a,false)),'FIX_REQUIRED_BEFORE_ANOTHER_ALLOCATION_OR_FORWARD');if(operation==='NEXT_ALLOCATION')need(Date.parse(now)+600000<Date.parse(root7Expiry),'FULL_600_SECOND_WINDOW_REQUIRED');}
  else if(operation==='CONSUME_RESERVED_BUDGET'){need(x.current.active_ga_id===null&&unspent.length===1&&x.current.pending_budget_sequence===unspent[0].sequence&&newAttempts.every(terminal),'ONE_REAL_PENDING_BUDGET_ONLY');for(const a of ordered)need(repairs.some(r=>repairAccepted(r,a,false)),'FIX_REQUIRED_BEFORE_CONSUMING_NEXT_BUDGET');}
  else{need(current&&current===ordered.at(-1)&&x.current.active_ga_id===ga_id&&x.current.pending_budget_sequence===null&&unspent.length===0,'EXACT_SOLE_LATEST_CURRENT_ATTEMPT');if(operation==='CURRENT_DISPATCH')need(current.revoked===false&&!terminal(current)&&current.phase!=='UNKNOWN','NO_DISPATCH_AFTER_REVOKE_UNKNOWN_OR_TERMINAL');}
  // Static bytes are checked by the fixed preparer, without creating a new receipt or approval type.
@@ -314,7 +314,7 @@ export async function prepareTrustedToolMaterial(material){
  verifyOwnerMergeArtifact({commitSha:rootProof.merge.sha,artifactPath:rootProof.payload.artifact_path??rootProof.payload.path,raw:rootPayloadRaw});
  for(const purpose of ['STATUS','GATE_AUTHORIZATION','GATE_RESULT']){
   const issuers=root.issuer_bindings.filter(i=>i.purpose===purpose);check(issuers.length===1&&issuers[0].subject_id==='tdoljyj'&&issuers[0].signing_service==='web-flow'&&issuers[0].audience===audience,'SEPARATE_ROOT_ISSUER_PURPOSE');
-  check(issuers[0].qualification_ref.sha256===(purpose==='STATUS'?'1640995831b0c1f8ae616810e12eb7b97ee191e9f20b5c38eee32eb8bfac9d23':'80cf8f471248ae76e5a637b5f94f20f4863a243c7011e5728de86cb5fc7cf5d2'),'EXACT_ACCEPTED_PURPOSE_ALGORITHM_METADATA');
+  check(issuers[0].qualification_ref.sha256===(purpose==='STATUS'?'__F12_PENDING_ISSUER_STATUS_SHA256__':'__F12_PENDING_ISSUER_GATE_SHA256__'),'EXACT_ACCEPTED_PURPOSE_ALGORITHM_METADATA');
   const metadata=JSON.parse(readBlobRef(issuers[0].qualification_ref));
   check(metadata.control_trust_root_generation===generation&&metadata.root_set_id===rootID&&metadata.accepted_audience===audience&&metadata.accepted_issuer_purposes?.some(p=>p.purpose===purpose&&p.accepted===true&&p.audience===audience),'EXACT_PURPOSE_QUALIFICATION');currentWindow(metadata.not_before,metadata.expires_at,Date.now());
   if(purpose==='GATE_AUTHORIZATION')check(same(result.ga.issuer_ref,issuers[0].qualification_ref),'ACTUAL_GA_ISSUER_QUALIFICATION_REF');
