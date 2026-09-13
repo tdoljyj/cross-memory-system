@@ -122,7 +122,11 @@ const DEFAULT_NEW_SCHEMA_SHA = '7e5df5dd2b2341fe38c7b2a86ef68542700ee878bec0c947
 // Window12ReissueNotes.md section "拿不准").
 const PENDING = {
   status24:      '__PENDING_STATUS24_PAYLOAD_SHA256__',
-  rootDigest:    '__PENDING_CP02_MEASURED_ROOT_DIGEST_POST_ROOT7_REGISTRATION__',
+  // NOT the CP02 sentinel: context.mjs:322 needs canonicalDigest(registration body) -- the
+  // a93bfdda class -- while CP02's G8/B9 pin sha256(r::text) over the whole root row (the
+  // 72355efd class). Same moment of measurement, different value; distinct names so neither
+  // can be realized with the other's number.
+  rootDigest:    '__PENDING_ROOT7_REGISTRATION_BODY_CANONICAL_SHA256__',
   issuerGateUri: '__PENDING_ROOT7_ISSUER_GATE_QUALIFICATION_URI__',
   issuerGateSha: '__PENDING_ROOT7_ISSUER_GATE_QUALIFICATION_SHA256__',
 };
@@ -238,7 +242,13 @@ const stampAt = (oldStamp, when) => {
 export function reissue(opts) {
   const {
     newNotBefore, newExpiry, newCtrlSha, newSchemaSha = DEFAULT_NEW_SCHEMA_SHA,
-    outRoot, dryRun = false, runtimeNext = DEFAULT_RUNTIME_NEXT, now = new Date(),
+    outRoot, dryRun = false, runtimeNext = DEFAULT_RUNTIME_NEXT,
+    // Deterministic by default: the acceptance stamp is T, the window's not_before, so two runs
+    // with the same inputs produce byte-identical documents and the reviewed bytes are pinnable.
+    // Wall-clock stamping (the original default) made every rerun cascade new digests through the
+    // whole dependency chain via accepted_at -- measured: two consecutive runs differed only in
+    // accepted_at milliseconds and everything downstream of it. --stamp overrides deliberately.
+    now = new Date(Date.parse(opts.newNotBefore)),
     // fault injection, used only by --selftest
     fault = {},
   } = opts;
@@ -598,5 +608,6 @@ if (!IS_ENTRY) {
   console.log(JSON.stringify(reissue({
     newNotBefore: nb, newExpiry: ex, newCtrlSha: ctrl, newSchemaSha: schema || DEFAULT_NEW_SCHEMA_SHA,
     outRoot, dryRun, runtimeNext: val('runtime-dir') ?? DEFAULT_RUNTIME_NEXT,
+    ...(val('stamp') ? {now: new Date(Date.parse(val('stamp')))} : {}),
   }), null, 2));
 }

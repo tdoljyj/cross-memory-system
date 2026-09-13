@@ -57,11 +57,11 @@
     "maximum_remaining_allocations": 2
   },
   "capacity_proposal_ref": {
-    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/ad17a3a1e9558591a9cbdb293c1efed27a2a1cf1",
-    "sha256": "40317abfd8f13f9dac5cd37071f3d24b4e0dd036f351948fb5920ff04d0a3873"
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/6cb1c2133246e8249b0a18c84a5f82c938af8f18",
+    "sha256": "f418cfd7d71cabd6a74b59ff8bb17e087ac4ac12364ae31b9954a47df16ab5a2"
   },
-  "approved_change_index_sha256": "40317abfd8f13f9dac5cd37071f3d24b4e0dd036f351948fb5920ff04d0a3873",
-  "approved_at": "2026-09-12T07:09:18.112Z",
+  "approved_change_index_sha256": "f418cfd7d71cabd6a74b59ff8bb17e087ac4ac12364ae31b9954a47df16ab5a2",
+  "approved_at": "2026-09-13T05:45:14.000Z",
   "authority": "user_explicit",
   "approval_text": "行 按你的建议来",
   "source": {
@@ -80,7 +80,7 @@
   },
   "limitations": [
     "Raises capacity_delta.source_refs_maximum from 131 to 133 only. Every other capacity_delta field is byte-identical to the predecessor.",
-    "One additional 600-second nonproduction allocation, no automatic retry/refund; only within the root6 window ending 2026-09-13T07:05:16Z.",
+    "One additional 600-second nonproduction allocation, no automatic retry/refund; only within the root7 window ending 2026-09-14T05:45:14Z.",
     "Original input 4,000,000 bytes and escaped publisher JSON 8 MiB; first/second frames remain 4 MiB, original nineteen oracles unchanged.",
     "Does not replace independent review, signed Status/runtime binding, real observations or final signed GRR.",
     "Does not authorize any further cap extension, new root, new signing identity, paid/model budget or production authority."
@@ -98,9 +98,9 @@
   "reissue": {
     "supersedes": {
       "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/root6-capacity/Root6OriginalInput4000000CapacityApproval20260912.v2.json",
-      "sha256": "80d0566a8a6dd899d7d53648cd0f0fccac45fd81878ee909630aac71186a4ffc",
-      "bytes": 7833,
-      "blob_sha": "4b9b8c73a661301ce0a15861520c95fdf511f2b8",
+      "sha256": "b69b793fbe0c5e8a42934d49b9c08ec2e1dca7a5e45b49e65c21015473cde541",
+      "bytes": 7791,
+      "blob_sha": "50855b5e5391e0c36f683f0eedba644fcdb1cd9c",
       "owner_merge": "77330e254896a02c09cc8e22555819dcf5018fdc"
     },
     "reason": "The root6 controller was rebuilt because root6Expiry was set to 2026-09-19T00:00:00Z, a value the Owner window mechanism can never produce: every window is exactly 86400 seconds from a verified Owner merge. This approval pinned that window in limitations[1], which scoped the one remaining 600-second allocation to it, so the approval no longer authorises the allocation actually being made. Found by the successor independent reviewer (round 8, addendum A, item 8). The substance of the capacity decision is unchanged; only the window it is scoped to, and the controller digest it is issued against, differ.",
