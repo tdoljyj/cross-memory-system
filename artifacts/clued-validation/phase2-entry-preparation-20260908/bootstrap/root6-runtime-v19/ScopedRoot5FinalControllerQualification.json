@@ -1001,7 +1001,7 @@
   },
   "R24-F1": {
    "severity": "BLOCKER",
-   "state": "OPEN_FOUND_BY_THIS_REVIEW",
+   "state": "CLOSED",
    "blocks": "ExactRoot5FinalPreentryControllerRuntimeAcceptance",
    "does_not_block": "this qualification",
    "note": "The capacity supplement chain is not complete at 160/68133f2d, so no loadable runtime acceptance can be issued. context.mjs:248 NEW_CAPACITY_CONSUMER_REQUIRES_REAL_SUPPLEMENT and context.mjs:281 NEW_CAPACITY_CONSUMER_REQUIRES_ACTUAL_SUPPLEMENT make accepted_subject.capacity_materials mandatory on this path, so omitting it is not an escape. Three separate defects, each verified mechanically against the controller s own frozen literal and its own ref() predicate lifted from source rather than transcribed.",
@@ -1045,7 +1045,7 @@
   },
   "R24-F2": {
    "severity": "BLOCKER",
-   "state": "OPEN_FOUND_BY_THIS_REVIEW",
+   "state": "CLOSED_BY_OWNER_MERGES_162_AND_163",
    "blocks": "every Owner-merge-pinned leg: verifySourcePublication, capacity_materials.*.publication, and therefore the flip of this runtime acceptance to ACCEPTED",
    "note": "The Linux controller is not on main. Measured against origin/main at 2c3a6f9: of the 153 REPOSITORY_SOURCE paths the manifest declares, 22 are absent, and they are the whole of scripts/phase2-qualification/control-context-verifier-root6-linux-successor. The manifest itself is absent. The 131 that are present are byte-identical to their manifest entries, so there is no drift, only absence. This is independent of the capacity chain and is not closed by any session: it needs an Owner merge of claude/nice-fermat-njqlmm into main.",
    "consequences": [
@@ -1058,16 +1058,18 @@
    "last_owner_merge_observed": "2c3a6f9, PR #161 from claude/nice-fermat-njqlmm, 2026-09-12T09:30:13Z, about 15.5 hours before this measurement. Eight such merges happened on 2026-09-12; none since.",
    "required_owner_action": "Merge claude/nice-fermat-njqlmm into main by pull request, as with #153 through #161. verifyOwnerMergeArtifact requires two parents, committer web-flow, a verified valid signature, exactly one merged PR with base main, and merged_by tdoljyj, so a direct push or a squash will not satisfy it.",
    "not_done_by_this_session": "No merge. The boundary is explicit and this session did not cross it.",
-   "independently_confirmed_by": "session_017iY1oKT4HCLhcNzisKBC1Q at d408432, re-verified at 3fe90ce. Both sessions reached it separately and neither issued."
+   "independently_confirmed_by": "session_017iY1oKT4HCLhcNzisKBC1Q at d408432, re-verified at 3fe90ce. Both sessions reached it separately and neither issued.",
+   "closed_note": "All 153 REPOSITORY_SOURCE paths and the manifest are on main at 68133f2d as of 88fc944; 0 absent, 0 byte-mismatched. Both Owner merges satisfy every condition verifyOwnerMergeArtifact enforces, checked against the GitHub API."
   },
   "R25-F1": {
    "severity": "BLOCKER",
-   "state": "OPEN_FOUND_BY_SESSION_D_CONFIRMED_HERE",
+   "state": "CLOSED_AT_THE_FLIP",
    "found_by": "session_017iY1oKT4HCLhcNzisKBC1Q at 66cb910, against this document. Not found by this reviewer, and it is a defect in a document this reviewer issued.",
    "where": "accepted_subject.bounded_series_materials.repairs[7].ref",
    "note": "repairs[7] pins Root6Current043CapacityRepairAcceptance20260912.json at sha256 3b7b288c02442fe23c830d18b4a9eecac04d572b0922cef18bc07bb23d84026a, which is its CURRENT 3a58eb87-era bytes. readBlobRef addresses by content hash, so when that document is re-issued at 68133f2d under R24-F1c its bytes change and this ref keeps resolving the superseded blob. The loader succeeds, isApprovedCapacityRepair then rejects the stale document on controller_digest, and the failure surfaces at INDEPENDENT_IDENTIFIED_ERROR_AND_FIX_BEFORE_NEXT_ATTEMPT (context.mjs:223) without ever naming the stale pin as the cause. Verified here: repairs has 8 entries and repairs[7].ref.sha256 is exactly the 043 repair's current digest; context.mjs:223 is the line quoted.",
    "why_it_was_missed": "It is not capacity_materials, it is not empty, and it appears in neither the flip instruction nor the R24-F1 to_accept list. This reviewer re-pinned capacity_materials and left bounded_series_materials untouched because nothing pointed at it.",
-   "fix": "When the 043 repair is re-issued at 68133f2d, repairs[7].ref must be re-measured to the new bytes and repairs[7].publication updated to the Owner merge that carries them. It cannot be pre-filled: the re-issued bytes do not exist yet."
+   "fix": "When the 043 repair is re-issued at 68133f2d, repairs[7].ref must be re-measured to the new bytes and repairs[7].publication updated to the Owner merge that carries them. It cannot be pre-filled: the re-issued bytes do not exist yet.",
+   "closed_note": "repairs[7] now pins d3f643b4, the re-issued 043 repair, verified byte-for-byte."
   },
   "R25-F2": {
    "severity": "MODERATE",
