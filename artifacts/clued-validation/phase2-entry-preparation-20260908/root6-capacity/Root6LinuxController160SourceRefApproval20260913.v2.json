@@ -58,9 +58,9 @@
   },
   "capacity_proposal_ref": {
     "uri": "artifacts/clued-validation/phase2-entry-preparation-20260908/root6-capacity/Root6LinuxController160SourceRefCapacityProposal20260913.json",
-    "sha256": "c2498752d2c81f22c2701a4d6e381929308f838f52fad20699b9939fab5bad74"
+    "sha256": "e224c379718a0afb12201910b1d00253c193b01a8a6a4bd48d3176f397d6e19f"
   },
-  "approved_change_index_sha256": "c2498752d2c81f22c2701a4d6e381929308f838f52fad20699b9939fab5bad74",
+  "approved_change_index_sha256": "e224c379718a0afb12201910b1d00253c193b01a8a6a4bd48d3176f397d6e19f",
   "approved_at": "2026-09-12T23:41:49Z",
   "authority": "user_explicit",
   "approval_text": "确认走C / 160 / 冲，按规格生成两份批准件",
@@ -99,10 +99,10 @@
     "supersedes": "Root6OriginalInput4000000CapacityApproval20260912.v2.json",
     "reason": "The Windows qualification host was lost and the controller was ported to Linux. The ported controller closes at 142 distinct ordered source references against an approved ceiling of 133, and has been over that ceiling since its first commit (755d744, 134). No revert reaches back under it: the paths carrying it over are the port itself.",
     "substance_unchanged": "Every capacity_delta field other than source_refs_maximum is byte-identical to the superseded approval. No new trust root, no new signing identity, no paid budget, no model budget, no refund, no production authority, no additional allocation, no change to per-allocation seconds or evidence bytes.",
-    "what_changed": "capacity_delta.source_refs_maximum 133 -> 160; controller_digest 3a58eb873902d1625fa6b1f2d252efed78b205e3cb04cc356f064aacd4172dae -> 389fee9b7e533041119838df59706cc2166b44497369cca419b1dc125e9a98ec (the Linux controller manifest)."
+    "what_changed": "capacity_delta.source_refs_maximum 133 -> 160; controller_digest 3a58eb87... -> 68133f2d617718c8ea964e3cebb6abcdbe98671aa5c630d81f0ea2daa9eed24a. Note the digest moved once during preparation: an earlier draft pointed at 389fee9b, a controller that still carried 133 in its own bytes, so no value could satisfy both the deep comparison and the real blob count."
   },
   "governing_exclusion_analysis": "An earlier version of this approval asserted that raising source_refs_maximum conflicts with the \"cap extension\" term in BoundedSeriesApplicability20260910.excluded, and recorded it as the second instance of that class after the forward cap. The successor independent reviewer rejected that reading, and the rejection is accepted here. The excluded clause governs the root3 appendix's own scope caps; source_refs_maximum sits in capacity_delta, the supplemental layer, which has been raised under this same mechanism three times already (128, 130, 131), each with an Owner approval and an independent applicability. Reading excluded to cover it would retroactively invalidate those three and the 4,000,000-byte original input limit that this run depends on. This is the fourth use of the path the appendix's own delegation_effect prescribes. NOTE: this reasoning does NOT extend to qualificationLimits.forwards 15 to 16, which is a controller constant outside capacity_delta with no document backing; that remains an open item recorded in OwnerForwardCapExtensionOverride.json.",
-  "controller_digest": "389fee9b7e533041119838df59706cc2166b44497369cca419b1dc125e9a98ec",
+  "controller_digest": "68133f2d617718c8ea964e3cebb6abcdbe98671aa5c630d81f0ea2daa9eed24a",
   "known_open_at_approval": {
     "note": "Open at the time of approval, and approved with them open. The Owner elected to run at the 2026-09-13T07:05:16Z window rather than close them first, having been told the remaining programme carries three irreversible points.",
     "items": [

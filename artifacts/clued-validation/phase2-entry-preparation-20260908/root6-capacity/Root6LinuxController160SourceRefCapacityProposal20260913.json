@@ -6,7 +6,7 @@
   "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
   "root_generation": "ctrgen_5e0440a95ac8ee257b9e4236cabd275b",
   "expires_at": "2026-09-13T07:05:16Z",
-  "controller_digest": "389fee9b7e533041119838df59706cc2166b44497369cca419b1dc125e9a98ec",
+  "controller_digest": "68133f2d617718c8ea964e3cebb6abcdbe98671aa5c630d81f0ea2daa9eed24a",
   "observed_pre_v16_original_input_bytes": 3366100,
   "observed_pre_v16_publisher_request_bytes": 4218815,
   "measurement_scope": "Historical sequence87 plus v15 material, sizing only; v16 final material must be measured before allocation.",
@@ -67,5 +67,6 @@
     "blob_sha": "a092359f064d5997f4792f4f074be970f94f39c2"
   },
   "authority_effect": "PROPOSAL_ONLY",
-  "drafted_by": "implementing side; requires Owner approval before any effect"
+  "drafted_by": "implementing side; requires Owner approval before any effect",
+  "supersedes_note": "Drafted first against 389fee9b7e533041. That controller still carried the old ceiling in three places; raising it changed the manifest and therefore the digest. Re-pointed at 68133f2d617718c8, which is the first controller whose own bytes carry source_refs_maximum 160."
 }
