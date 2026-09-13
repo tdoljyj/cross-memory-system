@@ -810,8 +810,8 @@
     ]
    },
    "controller_qualification_ref": {
-    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/2c89f3a9e614883b8135c2e850a13dc2b2a08fb8",
-    "sha256": "ee08e48ec69c5222effae53aab4ececcfb3ed9aaca2a857e4e871d6a8b148cab"
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/0427b0e67756583d9916a0fdd9cac66ffa20c9ad",
+    "sha256": "e7cfb30b1d6241ad8b0a9976ae8a44d2b6fadd429f2f95bcf523c20fbe912888"
    }
   },
   "late_bound_fields": {
@@ -1244,17 +1244,18 @@
    "approval": {
     "chosen": "Root6LinuxController160SourceRefApproval20260913.v2.json",
     "ref": {
-     "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/69111a4e7f966b2b611c5246f3ba83ad14aba277",
-     "sha256": "2834015707bc17d16d896572759af30ee4e12a99832552cdc539c8a49f9441e2"
+     "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/bf5376c591893b905b6163d1aac0e6d0571881b4",
+     "sha256": "83a5924be017c6d3886a566b18986812d5fcefebcd82616afb6d350427a8ac8e"
     },
     "publication": null,
     "publication_state": "OWNER_MERGE_PENDING",
-    "why_v2_and_not_v1": "v1 still asserts conflicts_with_governing_exclusion, the reading the successor independent reviewer rejected and which v2 records as retracted under governing_exclusion_analysis; v1 also names the wrong predecessor in what_changed_from_predecessor.supersedes and states the root6 window as ending 2026-09-19T00:00:00Z, where the live window ends 2026-09-13T07:05:16Z. v2 is correct on all three. Both carry capacity_delta at 160 and both now pass ref(capacity_proposal_ref) after b7e79d2.",
+    "why_v2_and_not_v1": "v1 still asserts conflicts_with_governing_exclusion, the reading the successor independent reviewer rejected and which v2 records as retracted under governing_exclusion_analysis; and v1 names the wrong predecessor in what_changed_from_predecessor.supersedes. CORRECTION to the earlier version of this field: it also cited v1 stating the root6 window as ending 2026-09-19T00:00:00Z. That difference no longer exists after 4d73b18 -- both documents now carry one such occurrence -- so that third reason is withdrawn. The two above stand. Note R25-F2: no controller gate distinguishes the two, so this choice is documentary.",
     "rejected_alternative": {
      "doc": "Root6LinuxController160SourceRefApproval20260913.json",
-     "sha256": "17908c8652e0be5c6d4d503d01266ac713adf7a01f445e6752662c8bdc2d0634",
-     "blob_sha": "12c35560c9330f639c476da7a8d1f75b0511344d"
-    }
+     "sha256": "f6bc3c615b824699782e2c616fe564e0b1cc18f09635386b2b47c839c4753552",
+     "blob_sha": "922ae62aeb930d893f72614e180e3c2bd963dc61"
+    },
+    "measured_at_commit": "4d73b18, after the R25-F3 purge. The earlier declaration in this field pinned 28340157..., the pre-purge bytes, and was stale within twenty minutes of being written. Re-measure before pinning; these bytes have now moved three times."
    },
    "applicability": {
     "state": "AWAITING_ISSUANCE_BY_/root/project_list_auth_fix",
@@ -1272,7 +1273,17 @@
      "changed_source_refs non-empty, every entry a blob-form ref, uris unique (:135)"
     ]
    },
-   "ordering_note": "The blocker recorded at 2e4c6a8 by session_019Xz1px5xGCFwmbTVsc43z1 -- that the only runtime acceptance in the repository declared capacity_delta 133 and expected_ga.controller_digest 389fee9b -- is cleared as of 64c01ac. This subject declares 160 and 68133f2d. Its blockers A (capacity_proposal_ref.uri) and C (approvals pinning 389fee9b) are cleared at b7e79d2 and b68d74f respectively."
+   "ordering_note": "The blocker recorded at 2e4c6a8 by session_019Xz1px5xGCFwmbTVsc43z1 -- that the only runtime acceptance in the repository declared capacity_delta 133 and expected_ga.controller_digest 389fee9b -- is cleared as of 64c01ac. This subject declares 160 and 68133f2d. Its blockers A (capacity_proposal_ref.uri) and C (approvals pinning 389fee9b) are cleared at b7e79d2 and b68d74f respectively.",
+   "bounded_series_materials_repairs_7": {
+    "state": "MUST_BE_RE_MEASURED_SEE_known_open.R25-F1",
+    "currently_pins": {
+     "doc": "Root6Current043CapacityRepairAcceptance20260912.json",
+     "sha256": "3b7b288c02442fe23c830d18b4a9eecac04d572b0922cef18bc07bb23d84026a",
+     "blob_sha": "7954c108d83aef1495942cc85e95483473ac6fd0",
+     "controller_digest": "3a58eb873902d1625fa6b1f2d252efed78b205e3cb04cc356f064aacd4172dae"
+    },
+    "note": "Stale the moment R24-F1c re-issues that document. Cannot be pre-filled; the new bytes do not exist."
+   }
   }
  },
  "reviewed_subject": {
@@ -1894,7 +1905,29 @@
    ],
    "last_owner_merge_observed": "2c3a6f9, PR #161 from claude/nice-fermat-njqlmm, 2026-09-12T09:30:13Z, about 15.5 hours before this measurement. Eight such merges happened on 2026-09-12; none since.",
    "required_owner_action": "Merge claude/nice-fermat-njqlmm into main by pull request, as with #153 through #161. verifyOwnerMergeArtifact requires two parents, committer web-flow, a verified valid signature, exactly one merged PR with base main, and merged_by tdoljyj, so a direct push or a squash will not satisfy it.",
-   "not_done_by_this_session": "No merge. The boundary is explicit and this session did not cross it."
+   "not_done_by_this_session": "No merge. The boundary is explicit and this session did not cross it.",
+   "independently_confirmed_by": "session_017iY1oKT4HCLhcNzisKBC1Q at d408432, re-verified at 3fe90ce. Both sessions reached it separately and neither issued."
+  },
+  "R25-F1": {
+   "severity": "BLOCKER",
+   "state": "OPEN_FOUND_BY_SESSION_D_CONFIRMED_HERE",
+   "found_by": "session_017iY1oKT4HCLhcNzisKBC1Q at 66cb910, against this document. Not found by this reviewer, and it is a defect in a document this reviewer issued.",
+   "where": "accepted_subject.bounded_series_materials.repairs[7].ref",
+   "note": "repairs[7] pins Root6Current043CapacityRepairAcceptance20260912.json at sha256 3b7b288c02442fe23c830d18b4a9eecac04d572b0922cef18bc07bb23d84026a, which is its CURRENT 3a58eb87-era bytes. readBlobRef addresses by content hash, so when that document is re-issued at 68133f2d under R24-F1c its bytes change and this ref keeps resolving the superseded blob. The loader succeeds, isApprovedCapacityRepair then rejects the stale document on controller_digest, and the failure surfaces at INDEPENDENT_IDENTIFIED_ERROR_AND_FIX_BEFORE_NEXT_ATTEMPT (context.mjs:223) without ever naming the stale pin as the cause. Verified here: repairs has 8 entries and repairs[7].ref.sha256 is exactly the 043 repair's current digest; context.mjs:223 is the line quoted.",
+   "why_it_was_missed": "It is not capacity_materials, it is not empty, and it appears in neither the flip instruction nor the R24-F1 to_accept list. This reviewer re-pinned capacity_materials and left bounded_series_materials untouched because nothing pointed at it.",
+   "fix": "When the 043 repair is re-issued at 68133f2d, repairs[7].ref must be re-measured to the new bytes and repairs[7].publication updated to the Owner merge that carries them. It cannot be pre-filled: the re-issued bytes do not exist yet."
+  },
+  "R25-F2": {
+   "severity": "MODERATE",
+   "state": "OPEN",
+   "found_by": "session_017iY1oKT4HCLhcNzisKBC1Q",
+   "note": "No controller gate distinguishes the two 160 approvals. Either would satisfy every executed check, so which one is pinned is decided by the pinning document alone, not by the controller. This document pins v2 and states why below."
+  },
+  "R25-F3": {
+   "severity": "MODERATE",
+   "state": "ADDRESSED_AT_4d73b18",
+   "found_by": "session_017iY1oKT4HCLhcNzisKBC1Q",
+   "note": "Both 160 approvals had carried 133-era text verbatim in limitations, what_changed_from_predecessor and the source provenance block while capacity_delta said 160. Purged at 4d73b18. Re-checked here: the 12 remaining occurrences of \"133\" in each are historical statements (\"133 -> 160\", \"has exceeded 133 since its first commit\", \"preserved as predecessor\"), not live claims. Both still pass same(capacity_delta, capacityDelta) and ref(capacity_proposal_ref) against the controller's own frozen literal and predicate."
   }
  },
  "verified_on_host": {
@@ -1962,12 +1995,13 @@
   ]
  },
  "not_accepted_because": {
-  "summary": "Two independent blockers. R24-F1b: the capacity applicability at 160/68133f2d does not exist, so accepted_subject.capacity_materials.applicability has no blob to name. R24-F2: the Linux controller and the 160 approval are not in any Owner merge, so neither publication descriptor has a real commitSha to name either. Issued PREPARED rather than ACCEPTED so it fails at EXACT_RUNTIME_ACCEPTANCE_METADATA_REQUIRED (context.mjs:71), attributably, instead of asserting an acceptance the controller would then refuse.",
+  "summary": "Three independent blockers. R24-F1b: the capacity applicability at 160/68133f2d does not exist. R24-F2: the Linux controller and the 160 approval are in no Owner merge, so no publication descriptor has a real commitSha. R25-F1: bounded_series_materials.repairs[7] pins the 043 repair at its pre-re-issue bytes and will silently resolve the superseded blob. Issued PREPARED so it fails at EXACT_RUNTIME_ACCEPTANCE_METADATA_REQUIRED (context.mjs:71), attributably.",
   "blocking": "known_open.R24-F1 in the companion ScopedRoot5FinalControllerQualification at this same path",
   "to_accept": [
    "R24-F1a: DONE at b7e79d2, capacity_proposal_ref.uri now blob-form in both approvals.",
    "R24-F1b: issue the capacity applicability at 160 / 68133f2d as /root/project_list_auth_fix, binding approval_ref to the v2 approval declared in capacity_materials_intent.",
    "R24-F1c: re-issue Root6Current043CapacityRepairAcceptance against 68133f2d and both refs.",
+   "R25-F1: re-measure accepted_subject.bounded_series_materials.repairs[7].ref to the re-issued 043 repair bytes, and its publication to the merge carrying them. Found by session_017iY1oKT4HCLhcNzisKBC1Q; missed here.",
    "R24-F2: Owner merges claude/nice-fermat-njqlmm into main by pull request. Without this the flip cannot be completed at all, whatever the capacity chain does.",
    "Then set state ACCEPTED_EXACT_PREENTRY_CONTROLLER_RUNTIME, fill capacity_materials with the two {ref,publication} descriptors using the real merge commitSha, set accepted_at, and re-pin binding.controller_sha256 and binding.qualification_sha256."
   ]

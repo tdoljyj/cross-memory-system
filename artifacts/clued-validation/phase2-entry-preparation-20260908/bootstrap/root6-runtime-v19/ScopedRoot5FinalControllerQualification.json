@@ -1057,7 +1057,29 @@
    ],
    "last_owner_merge_observed": "2c3a6f9, PR #161 from claude/nice-fermat-njqlmm, 2026-09-12T09:30:13Z, about 15.5 hours before this measurement. Eight such merges happened on 2026-09-12; none since.",
    "required_owner_action": "Merge claude/nice-fermat-njqlmm into main by pull request, as with #153 through #161. verifyOwnerMergeArtifact requires two parents, committer web-flow, a verified valid signature, exactly one merged PR with base main, and merged_by tdoljyj, so a direct push or a squash will not satisfy it.",
-   "not_done_by_this_session": "No merge. The boundary is explicit and this session did not cross it."
+   "not_done_by_this_session": "No merge. The boundary is explicit and this session did not cross it.",
+   "independently_confirmed_by": "session_017iY1oKT4HCLhcNzisKBC1Q at d408432, re-verified at 3fe90ce. Both sessions reached it separately and neither issued."
+  },
+  "R25-F1": {
+   "severity": "BLOCKER",
+   "state": "OPEN_FOUND_BY_SESSION_D_CONFIRMED_HERE",
+   "found_by": "session_017iY1oKT4HCLhcNzisKBC1Q at 66cb910, against this document. Not found by this reviewer, and it is a defect in a document this reviewer issued.",
+   "where": "accepted_subject.bounded_series_materials.repairs[7].ref",
+   "note": "repairs[7] pins Root6Current043CapacityRepairAcceptance20260912.json at sha256 3b7b288c02442fe23c830d18b4a9eecac04d572b0922cef18bc07bb23d84026a, which is its CURRENT 3a58eb87-era bytes. readBlobRef addresses by content hash, so when that document is re-issued at 68133f2d under R24-F1c its bytes change and this ref keeps resolving the superseded blob. The loader succeeds, isApprovedCapacityRepair then rejects the stale document on controller_digest, and the failure surfaces at INDEPENDENT_IDENTIFIED_ERROR_AND_FIX_BEFORE_NEXT_ATTEMPT (context.mjs:223) without ever naming the stale pin as the cause. Verified here: repairs has 8 entries and repairs[7].ref.sha256 is exactly the 043 repair's current digest; context.mjs:223 is the line quoted.",
+   "why_it_was_missed": "It is not capacity_materials, it is not empty, and it appears in neither the flip instruction nor the R24-F1 to_accept list. This reviewer re-pinned capacity_materials and left bounded_series_materials untouched because nothing pointed at it.",
+   "fix": "When the 043 repair is re-issued at 68133f2d, repairs[7].ref must be re-measured to the new bytes and repairs[7].publication updated to the Owner merge that carries them. It cannot be pre-filled: the re-issued bytes do not exist yet."
+  },
+  "R25-F2": {
+   "severity": "MODERATE",
+   "state": "OPEN",
+   "found_by": "session_017iY1oKT4HCLhcNzisKBC1Q",
+   "note": "No controller gate distinguishes the two 160 approvals. Either would satisfy every executed check, so which one is pinned is decided by the pinning document alone, not by the controller. This document pins v2 and states why below."
+  },
+  "R25-F3": {
+   "severity": "MODERATE",
+   "state": "ADDRESSED_AT_4d73b18",
+   "found_by": "session_017iY1oKT4HCLhcNzisKBC1Q",
+   "note": "Both 160 approvals had carried 133-era text verbatim in limitations, what_changed_from_predecessor and the source provenance block while capacity_delta said 160. Purged at 4d73b18. Re-checked here: the 12 remaining occurrences of \"133\" in each are historical statements (\"133 -> 160\", \"has exceeded 133 since its first commit\", \"preserved as predecessor\"), not live claims. Both still pass same(capacity_delta, capacityDelta) and ref(capacity_proposal_ref) against the controller's own frozen literal and predicate."
   }
  },
  "verified_on_host": {
