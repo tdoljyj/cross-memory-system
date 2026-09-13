@@ -810,8 +810,8 @@
     ]
    },
    "controller_qualification_ref": {
-    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/0e961dec7326fda67064f6c7f489330772411445",
-    "sha256": "000cb21082205b15276e241d425e8c213e84f34af63ec76b4716efea28d84ffc"
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/2c89f3a9e614883b8135c2e850a13dc2b2a08fb8",
+    "sha256": "ee08e48ec69c5222effae53aab4ececcfb3ed9aaca2a857e4e871d6a8b148cab"
    }
   },
   "late_bound_fields": {
@@ -1828,7 +1828,7 @@
   "CONDITIONS_THAT_COULD_NOT_FAIL": {
    "severity": "INFORMATIONAL",
    "state": "CARRIED_FORWARD",
-   "note": "Nine instances of a verification completed under conditions where it could not fail have been found and closed across rounds 16-22; the ninth was the computed load set itself. R23-F1 was the tenth and is closed at this commit. R24-F1 is recorded, not repaired, and deliberately not repaired by this session."
+   "note": "Nine instances of a verification completed under conditions where it could not fail have been found and closed across rounds 16-22; the ninth was the computed load set itself. R23-F1 was the tenth and is closed. R24-F1 and R24-F2 are recorded, not repaired. R24-F2 in particular is the shape this class keeps taking: every Owner-merge-pinned check in this controller has been reasoned about but never once executed against a tree that actually contains the controller, because no such tree has ever been merged."
   },
   "R23-F1": {
    "severity": "MODERATE",
@@ -1879,6 +1879,22 @@
     "then the runtime acceptance can be issued and accepted"
    ],
    "not_done_by_this_session": "This reviewer did not issue the applicability or the 043 repair. Both require independent_reviewer /root/project_list_auth_fix, a different identity from the /root this document is issued under, and b49588f put that re-issue on a deliberately separate track. Issuing them here would collapse the independence that separation exists to provide, which is the same shape as the nine conditions-that-could-not-fail already closed."
+  },
+  "R24-F2": {
+   "severity": "BLOCKER",
+   "state": "OPEN_FOUND_BY_THIS_REVIEW",
+   "blocks": "every Owner-merge-pinned leg: verifySourcePublication, capacity_materials.*.publication, and therefore the flip of this runtime acceptance to ACCEPTED",
+   "note": "The Linux controller is not on main. Measured against origin/main at 2c3a6f9: of the 153 REPOSITORY_SOURCE paths the manifest declares, 22 are absent, and they are the whole of scripts/phase2-qualification/control-context-verifier-root6-linux-successor. The manifest itself is absent. The 131 that are present are byte-identical to their manifest entries, so there is no drift, only absence. This is independent of the capacity chain and is not closed by any session: it needs an Owner merge of claude/nice-fermat-njqlmm into main.",
+   "consequences": [
+    "verifyOwnerMergeArtifact({commitSha:ownerMerge, artifactPath:manifestPath}) fails at EXACT_REGULAR_STATIC_ARTIFACT (trusted-github.mjs:48): the manifest is not in any Owner merge tree.",
+    "verifySourcePublication therefore cannot reach SAME_EXACT_CLOSED_SOURCE_IN_BOTH_TREES for the 22 absent paths (source-publication.mjs).",
+    "capacity_materials.approval.publication cannot be filled: Root6LinuxController160SourceRefApproval20260913.v2.json is not on main either. The 133 predecessor was merged at 01ea7675, which is why the superseded draft could pin one.",
+    "capacity_materials.applicability.publication cannot be filled once that document is issued, for the same reason.",
+    "This runtime acceptance therefore cannot be flipped to ACCEPTED even if the applicability lands, because two of its publication descriptors have no real commitSha to name."
+   ],
+   "last_owner_merge_observed": "2c3a6f9, PR #161 from claude/nice-fermat-njqlmm, 2026-09-12T09:30:13Z, about 15.5 hours before this measurement. Eight such merges happened on 2026-09-12; none since.",
+   "required_owner_action": "Merge claude/nice-fermat-njqlmm into main by pull request, as with #153 through #161. verifyOwnerMergeArtifact requires two parents, committer web-flow, a verified valid signature, exactly one merged PR with base main, and merged_by tdoljyj, so a direct push or a squash will not satisfy it.",
+   "not_done_by_this_session": "No merge. The boundary is explicit and this session did not cross it."
   }
  },
  "verified_on_host": {
@@ -1932,6 +1948,11 @@
     "check": "source_ref blob set against the published tree",
     "result": "OBSERVED",
     "observed": "All 142 refs were derived from the working tree at b7e9a30ad075af94fd111be99ba2979b9f056910, which is the published head of claude/nice-fermat-njqlmm. Their presence in the GitHub-side tree object was not read back: that is part of verifySourcePublication, which needs the Owner merge that has not happened."
+   },
+   {
+    "check": "controller presence in the Owner-merged tree (origin/main at 2c3a6f9)",
+    "result": "FAIL",
+    "observed": "153 REPOSITORY_SOURCE declared; 131 present on main and byte-identical; 22 absent, being the entire control-context-verifier-root6-linux-successor directory; the manifest itself absent. See R24-F2."
    }
   ],
   "not_done": [
@@ -1941,14 +1962,14 @@
   ]
  },
  "not_accepted_because": {
-  "summary": "The capacity supplement chain is incomplete at 160/68133f2d. accepted_subject.capacity_materials.applicability has no candidate blob to name, so no value of this document loads. It is issued PREPARED rather than ACCEPTED so that it fails at EXACT_RUNTIME_ACCEPTANCE_METADATA_REQUIRED (context.mjs:71), attributably, instead of asserting an acceptance that context.mjs:130 would then refuse.",
+  "summary": "Two independent blockers. R24-F1b: the capacity applicability at 160/68133f2d does not exist, so accepted_subject.capacity_materials.applicability has no blob to name. R24-F2: the Linux controller and the 160 approval are not in any Owner merge, so neither publication descriptor has a real commitSha to name either. Issued PREPARED rather than ACCEPTED so it fails at EXACT_RUNTIME_ACCEPTANCE_METADATA_REQUIRED (context.mjs:71), attributably, instead of asserting an acceptance the controller would then refuse.",
   "blocking": "known_open.R24-F1 in the companion ScopedRoot5FinalControllerQualification at this same path",
   "to_accept": [
-   "Fix capacity_proposal_ref.uri in Root6LinuxController160SourceRefApproval20260913.json and .v2.json to the https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/<40 hex> form the controller ref() predicate requires (R24-F1a).",
-   "Issue the capacity applicability at capacity_delta.source_refs_maximum 160 and controller_digest 68133f2d, by /root/project_list_auth_fix, naming whichever 160 approval is pinned (R24-F1b).",
-   "Re-issue Root6Current043CapacityRepairAcceptance against 68133f2d and both of those refs (R24-F1c).",
-   "Owner merge to main so verifyOwnerMergeArtifact can pin all of them.",
-   "Then set state to ACCEPTED_EXACT_PREENTRY_CONTROLLER_RUNTIME, fill accepted_subject.capacity_materials with the two {ref,publication} descriptors, set accepted_at, and re-pin binding.controller_sha256 and binding.qualification_sha256."
+   "R24-F1a: DONE at b7e79d2, capacity_proposal_ref.uri now blob-form in both approvals.",
+   "R24-F1b: issue the capacity applicability at 160 / 68133f2d as /root/project_list_auth_fix, binding approval_ref to the v2 approval declared in capacity_materials_intent.",
+   "R24-F1c: re-issue Root6Current043CapacityRepairAcceptance against 68133f2d and both refs.",
+   "R24-F2: Owner merges claude/nice-fermat-njqlmm into main by pull request. Without this the flip cannot be completed at all, whatever the capacity chain does.",
+   "Then set state ACCEPTED_EXACT_PREENTRY_CONTROLLER_RUNTIME, fill capacity_materials with the two {ref,publication} descriptors using the real merge commitSha, set accepted_at, and re-pin binding.controller_sha256 and binding.qualification_sha256."
   ]
  },
  "superseded_draft_replaced_here": {

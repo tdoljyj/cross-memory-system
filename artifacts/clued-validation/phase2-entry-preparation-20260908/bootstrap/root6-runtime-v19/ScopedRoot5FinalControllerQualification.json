@@ -991,7 +991,7 @@
   "CONDITIONS_THAT_COULD_NOT_FAIL": {
    "severity": "INFORMATIONAL",
    "state": "CARRIED_FORWARD",
-   "note": "Nine instances of a verification completed under conditions where it could not fail have been found and closed across rounds 16-22; the ninth was the computed load set itself. R23-F1 was the tenth and is closed at this commit. R24-F1 is recorded, not repaired, and deliberately not repaired by this session."
+   "note": "Nine instances of a verification completed under conditions where it could not fail have been found and closed across rounds 16-22; the ninth was the computed load set itself. R23-F1 was the tenth and is closed. R24-F1 and R24-F2 are recorded, not repaired. R24-F2 in particular is the shape this class keeps taking: every Owner-merge-pinned check in this controller has been reasoned about but never once executed against a tree that actually contains the controller, because no such tree has ever been merged."
   },
   "R23-F1": {
    "severity": "MODERATE",
@@ -1042,6 +1042,22 @@
     "then the runtime acceptance can be issued and accepted"
    ],
    "not_done_by_this_session": "This reviewer did not issue the applicability or the 043 repair. Both require independent_reviewer /root/project_list_auth_fix, a different identity from the /root this document is issued under, and b49588f put that re-issue on a deliberately separate track. Issuing them here would collapse the independence that separation exists to provide, which is the same shape as the nine conditions-that-could-not-fail already closed."
+  },
+  "R24-F2": {
+   "severity": "BLOCKER",
+   "state": "OPEN_FOUND_BY_THIS_REVIEW",
+   "blocks": "every Owner-merge-pinned leg: verifySourcePublication, capacity_materials.*.publication, and therefore the flip of this runtime acceptance to ACCEPTED",
+   "note": "The Linux controller is not on main. Measured against origin/main at 2c3a6f9: of the 153 REPOSITORY_SOURCE paths the manifest declares, 22 are absent, and they are the whole of scripts/phase2-qualification/control-context-verifier-root6-linux-successor. The manifest itself is absent. The 131 that are present are byte-identical to their manifest entries, so there is no drift, only absence. This is independent of the capacity chain and is not closed by any session: it needs an Owner merge of claude/nice-fermat-njqlmm into main.",
+   "consequences": [
+    "verifyOwnerMergeArtifact({commitSha:ownerMerge, artifactPath:manifestPath}) fails at EXACT_REGULAR_STATIC_ARTIFACT (trusted-github.mjs:48): the manifest is not in any Owner merge tree.",
+    "verifySourcePublication therefore cannot reach SAME_EXACT_CLOSED_SOURCE_IN_BOTH_TREES for the 22 absent paths (source-publication.mjs).",
+    "capacity_materials.approval.publication cannot be filled: Root6LinuxController160SourceRefApproval20260913.v2.json is not on main either. The 133 predecessor was merged at 01ea7675, which is why the superseded draft could pin one.",
+    "capacity_materials.applicability.publication cannot be filled once that document is issued, for the same reason.",
+    "This runtime acceptance therefore cannot be flipped to ACCEPTED even if the applicability lands, because two of its publication descriptors have no real commitSha to name."
+   ],
+   "last_owner_merge_observed": "2c3a6f9, PR #161 from claude/nice-fermat-njqlmm, 2026-09-12T09:30:13Z, about 15.5 hours before this measurement. Eight such merges happened on 2026-09-12; none since.",
+   "required_owner_action": "Merge claude/nice-fermat-njqlmm into main by pull request, as with #153 through #161. verifyOwnerMergeArtifact requires two parents, committer web-flow, a verified valid signature, exactly one merged PR with base main, and merged_by tdoljyj, so a direct push or a squash will not satisfy it.",
+   "not_done_by_this_session": "No merge. The boundary is explicit and this session did not cross it."
   }
  },
  "verified_on_host": {
@@ -1095,6 +1111,11 @@
     "check": "source_ref blob set against the published tree",
     "result": "OBSERVED",
     "observed": "All 142 refs were derived from the working tree at b7e9a30ad075af94fd111be99ba2979b9f056910, which is the published head of claude/nice-fermat-njqlmm. Their presence in the GitHub-side tree object was not read back: that is part of verifySourcePublication, which needs the Owner merge that has not happened."
+   },
+   {
+    "check": "controller presence in the Owner-merged tree (origin/main at 2c3a6f9)",
+    "result": "FAIL",
+    "observed": "153 REPOSITORY_SOURCE declared; 131 present on main and byte-identical; 22 absent, being the entire control-context-verifier-root6-linux-successor directory; the manifest itself absent. See R24-F2."
    }
   ],
   "not_done": [
