@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "object_type": "FORWARD_CAP_EXTENSION_INDEPENDENT_OPINION",
+  "state": "OPINION_ISSUED",
+  "authority_effect": "NONE",
+  "subject": {
+    "extension": "series_f > 16 -> series_f > 17",
+    "repository_side": "qualificationLimits.forwards 16 -> 17 (context.mjs:18, already carried by the F12 pre-image; authority only from the M3 Owner merge)",
+    "covers_both_sides": true,
+    "carrier_clause": "ExplicitOwnerApprovalM3.candidate.json forward_cap_extension"
+  },
+  "issued_by": "Round 32 independent review session (claude.ai/code session_01Qf3LXsTFayUEgkWPKoFx9Z), not the plan author and not the drafting session H",
+  "round": 32,
+  "verdict": "EXTENSION_JUSTIFIED_EXACTLY_ONE_FORWARD",
+  "verified_facts": [
+    {
+      "fact": "The live gate refuses a 21st counted forward today: reserve_gate G3 reads \"if series_n>9 or series_f>16 or ...\" and series_f counts EXECUTION_BINDING_FORWARD_ACCEPTED events with sequence > 44.",
+      "reproduce": "select m[1] from (select prosrc from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='clued_control' and p.proname='reserve_gate') p, regexp_matches(prosrc,'([^\\n]*series_f[^\\n]*)','g') m -- read-only"
+    },
+    {
+      "fact": "series_f measured 16 of 20 total forward events (4 pre-baseline at sequence <= 44); the 20th counted forward is execution event 89, consumed in the 2026-09-12/13 window.",
+      "reproduce": "select count(*) from jsonb_array_elements(clued_control.read_execution()->'events') ev where (ev->>'sequence')::bigint>44 and ev->'request'->>'operation'='EXECUTION_BINDING_FORWARD_ACCEPTED' -- returns 16"
+    },
+    {
+      "fact": "R29 deadlock is real and its only lawful exit consumes one forward: the live acceptance document fb389314 pins mutually exclusive late_bound (f4002ae4 = Status23 payload, schema 76bb79f7) and schema_digest (510f3b90) values; acceptance bytes are pinned exactly by the live binding, and the only append-only path that can re-pin them is a new binding forward. Rewriting effective_execution_binding() directly was rejected in the previous authorization and stands excluded (cp02.excluded_from_direct_replacement).",
+      "reproduce": "R29LateBoundStatusPayloadDeadlock.md (measured chain, sections 1-2); ExplicitOwnerApprovalM3.candidate.json cp02.excluded_from_direct_replacement"
+    },
+    {
+      "fact": "The window12 cycle independently requires the same forward: plan v2 moves the execution binding onto the realized F12 controller, and one binding forward carries all three pins together (controller digest, qualification digest, acceptance digest), exactly as the live binding 68133f2d/e7cfb30b/fb389314 was set by forward 20. The deadlock repair and the F12 migration are therefore ONE forward, not two.",
+      "reproduce": "NextWindowPlanV2Window12Cycle.md (window12 cycle steps); R29LateBoundStatusPayloadDeadlock.md fix path items 2-3"
+    },
+    {
+      "fact": "The extension grants no execution capacity: allocations stay 9, charged_seconds ceiling 10506, evidence ceiling 2335812531, remaining allocations 1; a forward moves the binding and burns nothing.",
+      "reproduce": "ExplicitOwnerApprovalM3.candidate.json forward_cap_extension.unchanged_by_this_extension and budget_effect"
+    },
+    {
+      "fact": "Repository side is symmetric: context.mjs NEXT_FORWARD checks forwards.length < qualificationLimits.forwards over the same post-baseline population (events sliced at BASELINE_EVENT_COUNT 44), so 17 admits exactly the 21st counted forward on both sides and refuses the 22nd.",
+      "reproduce": "context.mjs:226 (ALLOCATION_OR_FORWARD_LIMIT_REACHED) and :18"
+    }
+  ],
+  "scope_and_conditions": [
+    "This opinion covers exactly 16 -> 17 and nothing beyond; a 22nd counted forward requires a new opinion.",
+    "Both sides must move in the same authorization clause; single-sided application is prohibited (the OwnerForwardCapExtensionOverride lesson).",
+    "If the acceptance repin and the F12 binding migration are ever split into two separate forwards, 17 is insufficient by construction and this opinion does NOT extend to 18: come back for a new adjudication instead of widening."
+  ],
+  "predecessor_opinion_note": "The 15-to-16 opinion this document is patterned on (ForwardCapExtensionIndependentOpinion20260912.json, round 9) is cited by the merged NW-01 carrier at a path that has NEVER existed in the repository, with no content digest, so its reasoning is unverifiable today (Round32Review.md finding). This opinion is therefore bound into the M3 carrier by path AND sha256, and the M3 validator verifies that digest against the file bytes, so the same dangling-reference defect cannot recur.",
+  "argument_summary": "One window migration needs exactly one more counted forward. The 15-to-16 principle is re-derived here from current measurements rather than inherited: the 21st forward is forced twice over (deadlock repair and F12 migration), the two forcings are satisfied by the same single event, the cap is enforced symmetrically on both sides at 17, and no capacity of any other kind moves."
+}
