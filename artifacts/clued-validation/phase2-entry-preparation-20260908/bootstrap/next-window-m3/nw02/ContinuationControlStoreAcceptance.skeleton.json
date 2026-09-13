@@ -1,0 +1,92 @@
+{
+  "__skeleton__": {
+    "state": "SKELETON_NOT_AN_ACCEPTANCE",
+    "who_may_issue_the_real_document": "AN INDEPENDENT REVIEW SESSION ONLY",
+    "why": "Same reason as the registration-subject acceptance: the operative content is a decision about the transaction shape session J itself generated. M3 nw02 inherits fresh_independent_review_required_before_apply from the NW-01 clause.",
+    "what_a_generator_may_fill": [
+      "accepted_store.*",
+      "allowed_maintenance.* (copied verbatim from the M3 nw02 clause)",
+      "live_observation_baseline.* (measured read-only)",
+      "owner_approval_merge",
+      "registration_subject / registration_acceptance path+sha256+bytes (measured)",
+      "window.*"
+    ],
+    "what_only_the_reviewer_may_fill": ["decision", "state", "review_basis"],
+    "sha256_of_this_skeleton_is_NOT_store_acceptance_sha256": true,
+    "ordering": "this document must be issued AFTER the registration-subject acceptance, because it pins that document's digest"
+  },
+  "accepted_store": {
+    "namespace": "clued_control",
+    "project_ref": "uscrdifznmlvczcekqpw",
+    "root_set_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+    "second_store_created": false
+  },
+  "allowed_maintenance": {
+    "all_prior_root_status_ga_grr_execution_and_budget_history_preserved": true,
+    "application_ordinal": 5,
+    "changed_checks": [
+      "accepted_binding_check",
+      "accepted_binding_owner_approval_commit_check",
+      "accepted_binding_subject_sha256_check"
+    ],
+    "changed_fields": [
+      "not_before",
+      "expires_at",
+      "owner_approval_commit",
+      "subject_sha256",
+      "registration_acceptance_sha256",
+      "store_acceptance_sha256",
+      "signature_evidence_sha256"
+    ],
+    "exception": "NW-02",
+    "guards_added_beyond_nw01": {
+      "in_transaction_window_assertion": "clock_timestamp() within [2026-09-13T05:45:14Z, 2026-09-14T05:45:14Z) asserted inside the transaction, pre-block AND post-block (R11-F12)",
+      "sole_non_internal_trigger_assertion": "exactly one non-internal trigger on clued_control.accepted_binding, named accepted_binding_immutable, tgenabled O, asserted pre-block AND post-block (R11-F13)"
+    },
+    "production_authority": false,
+    "row": "clued_control.accepted_binding",
+    "surgical_authority": false,
+    "temporarily_disabled_trigger": "accepted_binding_immutable",
+    "trigger_restored_same_transaction": true
+  },
+  "authority_effect": "NONE",
+  "decision": "__REVIEWER_TO_WRITE__",
+  "kind": "CONTINUATION_CONTROL_STORE_ACCEPTANCE",
+  "live_observation_baseline": {
+    "accepted_binding_currently_expired": false,
+    "accepted_binding_expires_at": "2026-09-13T07:05:16Z",
+    "active_ga_id": null,
+    "charged_evidence_bytes": 2201594803,
+    "charged_seconds": 9906,
+    "current_root_generation": "ctrgen_5e0440a95ac8ee257b9e4236cabd275b",
+    "current_root_sequence": 6,
+    "execution_sequence": 89,
+    "measured_at_utc": "2026-09-13T06:04:42Z",
+    "measured_by": "read-only select, session J; MUST be re-measured by the reviewer",
+    "pending_budget_sequence": null
+  },
+  "owner_approval_merge": "f92cd46e42e20e1fa305c573964e0597230c0b65",
+  "registration_acceptance": {
+    "path": "__PENDING_NW02_REGISTRATION_ACCEPTANCE_PATH__",
+    "sha256": "__PENDING_NW02_REGISTRATION_ACCEPTANCE_SHA256__",
+    "bytes": "__PENDING_NW02_REGISTRATION_ACCEPTANCE_BYTES__",
+    "note": "the independently issued acceptance, not the skeleton in this directory"
+  },
+  "registration_subject": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-m3/nw02/ContinuationRegistrationSubject.canonical.json",
+    "sha256": "c6b354a80b1c5c625df63726854a7525a91528f5820731936d06ac77d4cedf57",
+    "bytes": 4917,
+    "provisional": true
+  },
+  "remotely_executed": false,
+  "requires_exact_preimage_CAS": true,
+  "requires_fresh_independent_review_before_apply": true,
+  "requires_fresh_live_preimage_before_apply": true,
+  "review_basis": "__REVIEWER_TO_WRITE__",
+  "schema_version": 1,
+  "state": "__REVIEWER_TO_WRITE__",
+  "window": {
+    "not_before": "2026-09-13T05:45:14Z",
+    "expires_at": "2026-09-14T05:45:14Z"
+  }
+}

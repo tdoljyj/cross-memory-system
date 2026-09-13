@@ -1,0 +1,140 @@
+{
+  "object_type": "NW02CandidateParameters",
+  "state": "DRAFT_NO_WRITE_PERFORMED_SOURCE_DOCUMENTS_NOT_FINAL",
+  "authority_effect": "NONE",
+
+  "window": {
+    "not_before": "2026-09-13T05:45:14Z",
+    "expires_at": "2026-09-14T05:45:14Z",
+    "source": "Owner merge M3, commit f92cd46e42e20e1fa305c573964e0597230c0b65 (PR 164), commit.committer.date + 86400s",
+    "source_measurement": "GitHub API commit object; committer.date 2026-09-13T05:45:14Z, committer login web-flow, author login tdoljyj; PR164 merged_by tdoljyj, merged_at 2026-09-13T05:45:14Z (delta 0s)",
+    "evidence": "__PENDING_M3_OWNER_APPROVAL_VERIFICATION_PATH__",
+    "evidence_note": "the M3 analogue of next-window-20260912/OwnerApprovalVerification.json DOES NOT EXIST YET. See NW02DraftNotes.md open point 2."
+  },
+
+  "subject_signature_merge": {
+    "commit": "__PENDING_M4_MERGE_SHA__",
+    "pr": "__PENDING_M4_PR_NUMBER__",
+    "evidence": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-m3/nw02/ContinuationSubjectSignatureEvidence.json",
+    "note": "M4 has not been opened. NW-01's analogue was merge 3887b9e0 / PR 159, distinct from the approval merge cbe898d3 / PR 158."
+  },
+
+  "preimage": {
+    "measured_at": "2026-09-13T06:04:42Z and 2026-09-13T06:05:04Z",
+    "measured_by": "two read-only selects against the live control plane, session J",
+    "MUST_REMEASURE_BEFORE_APPLY": true,
+    "why_remeasure": "rows_sha256 covers events, execution_events and gate_attempts, which move whenever anything runs. The M3 clause inherits requires_fresh_live_preimage_before_apply from NW-01. These values are a DRAFT baseline that lets the reviewer see the transaction's shape, not the pre-image the transaction will assert.",
+    "tables": ["accepted_binding", "control_objects", "current_head", "events",
+               "execution_binding", "execution_current", "execution_events", "gate_attempts"],
+    "rows_sha256": "795f215980738b1075782681af4ac92a97138e7ece77f53a0628f2000a8cbe5f",
+    "catalog_sha256": "6cef1483a84c1f2a27ef3a1fd14bb76921364c979ac79a6ee94385a23f356de3",
+    "getter_definition_sha256": "9b6518b94d246b4a3415ff8bbf791f4be6a22dd42ded751ceae90801c8b3e2d6",
+    "getter_prosrc_sha256": "633269f15c362b06e19b6c23a9fddefddc5c4567f78ac8820d70579c697f4df2",
+    "getter_note": "ALL FOUR DIFFER FROM NW-01. NW-01 pinned catalog a19f3b5f / definition 6cbfe002 / prosrc c721b056. CP-01 replaced the control-plane functions between the two windows, so copying NW-01's values forward would have failed closed at the first DO block.",
+    "constraint_count": 16,
+    "conname_digest": "12b67839ac1caad7d61979d3a19a39c66c39fa537236dae2231ae2608fd0b031",
+    "conname_digest_note": "unchanged from NW-01: the same sixteen constraint names.",
+    "binding": {
+      "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+      "project_ref": "uscrdifznmlvczcekqpw",
+      "purpose": "SKILL_COEXISTENCE_QUALIFICATION",
+      "environment": "ISOLATED_TEST",
+      "issuer": "tdoljyj",
+      "audience": "urn:clued:audience:skill-coexistence-qualification:uscrdifznmlvczcekqpw",
+      "algorithm_config": "SORTED_JSON_UTF8_NO_FLOATS_LF_V1_CANDIDATE;SHA-256;GITHUB_API_VERIFIED_OWNER_MERGE",
+      "schema_sha256": "87f094fa079034aa886d6c568730370a3264e106529b4bfd79bc3369f30b79e5",
+      "protocol_mapping_sha256": "abbc8e7eae03f2a183fd739fa49b16a97db6e1c0fb62a9353a30db81553db416",
+      "not_before": "2026-09-12T07:05:16Z",
+      "expires_at": "2026-09-13T07:05:16Z",
+      "owner_approval_commit": "cbe898d3f5b66f279d78a6b8d583d2c1885d9c89",
+      "subject_sha256": "64ae7adc3c6e156045c4c369ccfaa8fe9ac12611eb926876d26f4100c191a2f5",
+      "registration_acceptance_sha256": "5eb9c845bc98c7e1c2f380cd20a2767ba63a1d2aba9e83427049ac51449b7ebd",
+      "store_acceptance_sha256": "89e4a85149d7110828142017ddb46454bea093b40266ec1803f9852d32e8afba",
+      "signature_evidence_sha256": "954faff130549cebbc6453957d3e86196f8e0c8dd551040bb20e4f9ffb6ed614"
+    },
+    "execution": {
+      "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+      "sequence": 89,
+      "charged_seconds": 9906,
+      "charged_evidence_bytes": 2201594803,
+      "active_ga_id": null,
+      "pending_budget_sequence": null,
+      "note": "sequence moved 88 -> 89 since NW-01; charged_seconds and charged_evidence_bytes did not."
+    },
+    "head": {
+      "sequence": 6,
+      "generation_id": "ctrgen_5e0440a95ac8ee257b9e4236cabd275b",
+      "revoked": false,
+      "note": "root6, registered as events.sequence 6 with idempotency_key register-root6-window11-20260912 at 2026-09-13T02:49:08Z. NW-02 registers nothing; root7 registration follows it (M3 nw02.ordering.nw02_before_generation_registration)."
+    },
+    "trigger": {
+      "name": "accepted_binding_immutable",
+      "tgenabled": "O",
+      "non_internal_trigger_count": 1,
+      "definition": "CREATE TRIGGER accepted_binding_immutable BEFORE DELETE OR UPDATE OR TRUNCATE ON clued_control.accepted_binding FOR EACH STATEMENT EXECUTE FUNCTION clued_control.deny_mutation()"
+    },
+    "ownership": {"owner": "postgres", "acl": "{postgres=arwdDxtm/postgres}"}
+  },
+
+  "postimage": {
+    "binding": {
+      "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+      "project_ref": "uscrdifznmlvczcekqpw",
+      "purpose": "SKILL_COEXISTENCE_QUALIFICATION",
+      "environment": "ISOLATED_TEST",
+      "issuer": "tdoljyj",
+      "audience": "urn:clued:audience:skill-coexistence-qualification:uscrdifznmlvczcekqpw",
+      "algorithm_config": "SORTED_JSON_UTF8_NO_FLOATS_LF_V1_CANDIDATE;SHA-256;GITHUB_API_VERIFIED_OWNER_MERGE",
+      "schema_sha256": "87f094fa079034aa886d6c568730370a3264e106529b4bfd79bc3369f30b79e5",
+      "protocol_mapping_sha256": "abbc8e7eae03f2a183fd739fa49b16a97db6e1c0fb62a9353a30db81553db416",
+      "not_before": "2026-09-13T05:45:14Z",
+      "expires_at": "2026-09-14T05:45:14Z",
+      "owner_approval_commit": "f92cd46e42e20e1fa305c573964e0597230c0b65",
+      "subject_sha256": "c6b354a80b1c5c625df63726854a7525a91528f5820731936d06ac77d4cedf57",
+      "registration_acceptance_sha256": "785fec9473bf15c05a119f787a75fa26d4538363a1d22089913b022a3c07a925",
+      "store_acceptance_sha256": "478cdbc4937dc09e07ba7c06ebec388c3fff773e09241df2624d5e11ba41b4f4",
+      "signature_evidence_sha256": "0a3dfa951ad1e170f8d2e3e8df0b2196d2b85563abc14105d1ee4fffed2f79bc"
+    },
+    "digest_sources": {
+      "subject_sha256": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-m3/nw02/ContinuationRegistrationSubject.canonical.json",
+      "registration_acceptance_sha256": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-m3/nw02/ContinuationRegistrationSubjectAcceptance.skeleton.json",
+      "store_acceptance_sha256": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-m3/nw02/ContinuationControlStoreAcceptance.skeleton.json",
+      "signature_evidence_sha256": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-m3/nw02/ContinuationSubjectSignatureEvidence.skeleton.json"
+    },
+    "digest_sources_note": "THREE OF THE FOUR ARE SKELETONS AND ONE CARRIES FIVE UNRESOLVED SENTINELS. None of these four digests may enter the database. The generator refuses to emit anything without --draft while that is true, and what --draft emits is banner-marked NOT FOR EXECUTION.",
+    "final_paths_after_the_skeletons_are_replaced": {
+      "registration_acceptance_sha256": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-m3/nw02/ContinuationRegistrationSubjectAcceptance.json",
+      "store_acceptance_sha256": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-m3/nw02/ContinuationControlStoreAcceptance.json",
+      "signature_evidence_sha256": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-m3/nw02/ContinuationSubjectSignatureEvidence.json"
+    }
+  },
+
+  "guards_added_beyond_nw01": {
+    "in_transaction_window_assertion": {
+      "finding": "R11-F12",
+      "what": "clock_timestamp() >= not_before and < expires_at, asserted inside the transaction in BOTH the pre-block and the post-block",
+      "why": "NW-01 had this only in the read-only preflight, outside the transaction. It is the one guard of the sixteen that flips with time, so a delay between preflight and apply could commit an already-expired window. NW01ExecutionReceipt.preflight.why_that_mattered records that only operational discipline stood in for it."
+    },
+    "sole_non_internal_trigger_assertion": {
+      "finding": "R11-F13",
+      "what": "exactly one non-internal trigger on clued_control.accepted_binding, named accepted_binding_immutable, asserted in BOTH blocks",
+      "why": "NW-01 asserted the definition and tgenabled of the trigger it names, but nothing stopped a SECOND non-internal trigger from existing. NW01ExecutionReceipt.read_back.non_internal_trigger_note measured it after the fact and said the assertion still belongs in the transaction."
+    }
+  },
+
+  "what_this_does_not_do": [
+    "register any generation (root7 registration is a separate, later, separately approved append_event)",
+    "reserve or consume any budget",
+    "touch charged_seconds, charged_evidence_bytes, or any capacity ceiling",
+    "change any control-plane function",
+    "change any column of accepted_binding other than the seven named"
+  ],
+  "required_before_execution": [
+    "the four source documents finalized: the subject's five sentinels resolved, two independently issued acceptances, one post-M4 evidence capture",
+    "a fresh independent review of the final candidate",
+    "a fresh live pre-image, re-measured and regenerated",
+    "the read-only preflight run immediately before, with nothing interposed",
+    "an immediate read-only read-back in a separate session afterwards",
+    "no blind retry if the transaction is interrupted"
+  ]
+}
