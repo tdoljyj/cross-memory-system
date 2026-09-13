@@ -156,6 +156,16 @@ node artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next
 产出后自动重跑 validator；validator 编辑由脚本一并完成。执行后预期：A1-A5 PASS、
 判别器全 rejected、占位符 26。
 
+## 对 ff7c572 先例注记的裁定（占位符机制 keep-vs-rewrite）
+
+**裁定：保留 validator 护卫的字面占位符机制，不改写为 NW-01 式「合并前静默解析」。**
+理由：NW-01 的「无字面占位」意味着解析动作发生在无机械护栏的窗口里（哪个值在
+何时被谁填入，事后只能靠 diff 考古 —— round 9 意见件悬空正是同一类「引用无锚」
+问题的近亲）；M3 的 A3 三方集合相等使「多一个、少一个、改名一个」占位符全部即时
+拒绝，回填历史又逐条落在裁定记录里（M3AdjudicationsRound1 + 本文）。候选件自带
+规则「none survives into the merged document」已覆盖合并前必须清零的要求 ——
+两机制的终态相同，过程可核性 validator 侧严格占优。与注记的 stated leaning 一致。
+
 ## 边界与未尽
 
 - 本会话未做任何库写/预留/PR/合并；Supabase 全部查询为 select 只读。
