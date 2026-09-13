@@ -10,19 +10,14 @@
 -- !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 --
 -- Blocking:
---   unresolved sentinel          rule C6.to: __PENDING_MEASURED_AFTER_ROOT7_REGISTRATION__
+--   unresolved sentinel          rule C6a.to: __PENDING_MEASURED_AFTER_ROOT7_REGISTRATION_PREFIX_LE6__
+--   unresolved sentinel          rule C6c.to: __PENDING_MEASURED_AFTER_ROOT7_REGISTRATION__
 --   unresolved sentinel          R11-F13 untouched-functions digest: __PENDING_MEASURED_IMMEDIATELY_BEFORE_APPLY__
 --   unresolved sentinel          pre-image of clued_control.effective_execution_binding(): __PENDING_MEASURED_IMMEDIATELY_BEFORE_APPLY__
 --   post-image digest unpinned   clued_control.reserve_gate(text,text)
 --   post-image digest unpinned   clued_control.reserve_execution_budget(text,text)
 --   post-image digest unpinned   clued_control.append_status_manifest(text,text)
---   open finding                CP02-OF1  C6 moves one literal of a three-literal guard; the other two stay root6-shaped
---     measured:    Read-only, 2026-09-13. reserve_gate and reserve_execution_budget each carry ONE copy of a coupled three-assertion block that CP-01 G8/B9 installed:
---           (i)   sha256 over root events with (e->>'sequence')::bigint<=5  is distinct from 45c6a2cb...
---           (ii)  jsonb_array_length(series_view->'root'->'events')         is distinct from 6
---           (iii) sha256 over (root - events) || {registration_event: the event at (e->>'sequence')::bigint=6}  is distinct from 72355efd...
---         C6 replaces the digest in (iii) and nothing else. After the root7 registration the root carries seven events, so (ii) raises series_full_original_root_changed on every call, and (iii) would still select the ROOT6 registration event by sequence=6 whatever digest is pinned into it. Measured occurrences of each literal: 1 in reserve_gate, 1 in reserve_execution_budget, 0 in append_status_manifest.
---     clears when: Either the M3 carrier is read as already covering (ii) and (iii) inside FULL_ROOT_OBJECT_DIGEST_REPINNED_TO_ROOT7_POST_REGISTRATION_MEASURED_VALUES and C6 is rewritten to span the whole coupled block as one anchor, or a further class is adjudicated for them. Whether (i) also moves (<=5 -> <=6, and a new prefix digest) is a separate question: the first five root events do not change, so <=5 may well be correct as it stands. Not decided here.
+--   (no open findings)
 --
 -- Two tripwires below (one before BEGIN, one as the first statement inside the transaction)
 -- raise immediately if this file is fed to a client anyway. The second one is inside the
@@ -62,7 +57,7 @@
 -- !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 do $cp02abort$ begin
   raise exception 'CP02_DRAFT_NOT_FOR_EXECUTION (before BEGIN): this file is a draft. %',
-    'unresolved: rule C6.to: __PENDING_MEASURED_AFTER_ROOT7_REGISTRATION__; R11-F13 untouched-functions digest: __PENDING_MEASURED_IMMEDIATELY_BEFORE_APPLY__; pre-image of clued_control.effective_execution_binding(): __PENDING_MEASURED_IMMEDIATELY_BEFORE_APPLY__; post-image digest unpinned reserve_gate; post-image digest unpinned reserve_execution_budget; post-image digest unpinned append_status_manifest; open finding CP02-OF1';
+    'unresolved: rule C6a.to: __PENDING_MEASURED_AFTER_ROOT7_REGISTRATION_PREFIX_LE6__; rule C6c.to: __PENDING_MEASURED_AFTER_ROOT7_REGISTRATION__; R11-F13 untouched-functions digest: __PENDING_MEASURED_IMMEDIATELY_BEFORE_APPLY__; pre-image of clued_control.effective_execution_binding(): __PENDING_MEASURED_IMMEDIATELY_BEFORE_APPLY__; post-image digest unpinned reserve_gate; post-image digest unpinned reserve_execution_budget; post-image digest unpinned append_status_manifest';
 end $cp02abort$;
 -- !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
@@ -71,7 +66,7 @@ begin;
 -- !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 do $cp02abort$ begin
   raise exception 'CP02_DRAFT_NOT_FOR_EXECUTION (inside the transaction): this file is a draft. %',
-    'unresolved: rule C6.to: __PENDING_MEASURED_AFTER_ROOT7_REGISTRATION__; R11-F13 untouched-functions digest: __PENDING_MEASURED_IMMEDIATELY_BEFORE_APPLY__; pre-image of clued_control.effective_execution_binding(): __PENDING_MEASURED_IMMEDIATELY_BEFORE_APPLY__; post-image digest unpinned reserve_gate; post-image digest unpinned reserve_execution_budget; post-image digest unpinned append_status_manifest; open finding CP02-OF1';
+    'unresolved: rule C6a.to: __PENDING_MEASURED_AFTER_ROOT7_REGISTRATION_PREFIX_LE6__; rule C6c.to: __PENDING_MEASURED_AFTER_ROOT7_REGISTRATION__; R11-F13 untouched-functions digest: __PENDING_MEASURED_IMMEDIATELY_BEFORE_APPLY__; pre-image of clued_control.effective_execution_binding(): __PENDING_MEASURED_IMMEDIATELY_BEFORE_APPLY__; post-image digest unpinned reserve_gate; post-image digest unpinned reserve_execution_budget; post-image digest unpinned append_status_manifest';
 end $cp02abort$;
 -- !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
@@ -161,8 +156,8 @@ begin
   -- FORWARD_ACCEPTED, never by CREATE OR REPLACE.
 
   -- ------------------------------------------------------------------------------------
-  -- clued_control.reserve_gate(text,text) — 7 rules, applied in order
-  --   C1:4  C2:4  C3:1  C4:3  C5a:0  C5b:0  C6:1
+  -- clued_control.reserve_gate(text,text) — 9 rules, applied in order
+  --   C1:4  C2:4  C3:1  C4:3  C5a:0  C5b:0  C6a:1  C6b:1  C6c:1
   -- A rule expecting 0 here is still asserted: "must not appear in this body" is a check, not
   -- an omission.
   -- ------------------------------------------------------------------------------------
@@ -183,8 +178,12 @@ begin
         $cp02lit$'510f3b90cdb026c8c4d44ffac2647502ff8003cdd972850dbe042edbd6c310ef','7e5df5dd2b2341fe38c7b2a86ef68542700ee878bec0c947b13d7c8311fecd2d')$cp02lit$),
     (6, 'C5b@reserve_gate', 0, $cp02lit$obj->>'schema_digest' is distinct from '510f3b90cdb026c8c4d44ffac2647502ff8003cdd972850dbe042edbd6c310ef'$cp02lit$,
         $cp02lit$obj->>'schema_digest' is distinct from '7e5df5dd2b2341fe38c7b2a86ef68542700ee878bec0c947b13d7c8311fecd2d'$cp02lit$),
-    (7, 'C6@reserve_gate', 1, $cp02lit$72355efd8abde02fda6401034ee39687b5ef5c54d7511d916ccd00f70a7cd6e2$cp02lit$,
-        $cp02lit$__PENDING_MEASURED_AFTER_ROOT7_REGISTRATION__$cp02lit$)
+    (7, 'C6a@reserve_gate', 1, $cp02lit$(e->>'sequence')::bigint<=5)::text,'UTF8')),'hex') is distinct from '45c6a2cbaf33bb27f6b4c136440d71d767943acfa9772867e219627759ca5bbc'$cp02lit$,
+        $cp02lit$(e->>'sequence')::bigint<=6)::text,'UTF8')),'hex') is distinct from '__PENDING_MEASURED_AFTER_ROOT7_REGISTRATION_PREFIX_LE6__'$cp02lit$),
+    (8, 'C6b@reserve_gate', 1, $cp02lit$jsonb_array_length(series_view->'root'->'events') is distinct from 6$cp02lit$,
+        $cp02lit$jsonb_array_length(series_view->'root'->'events') is distinct from 7$cp02lit$),
+    (9, 'C6c@reserve_gate', 1, $cp02lit$(e->>'sequence')::bigint=6)))::text,'UTF8')),'hex') is distinct from '72355efd8abde02fda6401034ee39687b5ef5c54d7511d916ccd00f70a7cd6e2'$cp02lit$,
+        $cp02lit$(e->>'sequence')::bigint=7)))::text,'UTF8')),'hex') is distinct from '__PENDING_MEASURED_AFTER_ROOT7_REGISTRATION__'$cp02lit$)
   ) as v(i, id, want, f, t) order by i loop
     n := n + 1;
     if n <> rec.i then raise exception 'CP02_STEP_OUT_OF_ORDER % %', n, rec.i; end if;
@@ -198,8 +197,8 @@ begin
     src := replace(src, rec.f, rec.t);
     def := replace(def, rec.f, rec.t);
   end loop;
-  if n <> 7 then
-    raise exception 'CP02_EXPECTED_%_RULES_APPLIED_%', 7, n;
+  if n <> 9 then
+    raise exception 'CP02_EXPECTED_%_RULES_APPLIED_%', 9, n;
   end if;
 
   want := '__PIN_FROM_cp02-derive.sql__';
@@ -217,8 +216,8 @@ begin
   end if;
 
   -- ------------------------------------------------------------------------------------
-  -- clued_control.reserve_execution_budget(text,text) — 7 rules, applied in order
-  --   C1:4  C2:5  C3:1  C4:3  C5a:0  C5b:0  C6:1
+  -- clued_control.reserve_execution_budget(text,text) — 9 rules, applied in order
+  --   C1:4  C2:5  C3:1  C4:3  C5a:0  C5b:0  C6a:1  C6b:1  C6c:1
   -- A rule expecting 0 here is still asserted: "must not appear in this body" is a check, not
   -- an omission.
   -- ------------------------------------------------------------------------------------
@@ -239,8 +238,12 @@ begin
         $cp02lit$'510f3b90cdb026c8c4d44ffac2647502ff8003cdd972850dbe042edbd6c310ef','7e5df5dd2b2341fe38c7b2a86ef68542700ee878bec0c947b13d7c8311fecd2d')$cp02lit$),
     (6, 'C5b@reserve_execution_budget', 0, $cp02lit$obj->>'schema_digest' is distinct from '510f3b90cdb026c8c4d44ffac2647502ff8003cdd972850dbe042edbd6c310ef'$cp02lit$,
         $cp02lit$obj->>'schema_digest' is distinct from '7e5df5dd2b2341fe38c7b2a86ef68542700ee878bec0c947b13d7c8311fecd2d'$cp02lit$),
-    (7, 'C6@reserve_execution_budget', 1, $cp02lit$72355efd8abde02fda6401034ee39687b5ef5c54d7511d916ccd00f70a7cd6e2$cp02lit$,
-        $cp02lit$__PENDING_MEASURED_AFTER_ROOT7_REGISTRATION__$cp02lit$)
+    (7, 'C6a@reserve_execution_budget', 1, $cp02lit$(e->>'sequence')::bigint<=5)::text,'UTF8')),'hex') is distinct from '45c6a2cbaf33bb27f6b4c136440d71d767943acfa9772867e219627759ca5bbc'$cp02lit$,
+        $cp02lit$(e->>'sequence')::bigint<=6)::text,'UTF8')),'hex') is distinct from '__PENDING_MEASURED_AFTER_ROOT7_REGISTRATION_PREFIX_LE6__'$cp02lit$),
+    (8, 'C6b@reserve_execution_budget', 1, $cp02lit$jsonb_array_length(series_view->'root'->'events') is distinct from 6$cp02lit$,
+        $cp02lit$jsonb_array_length(series_view->'root'->'events') is distinct from 7$cp02lit$),
+    (9, 'C6c@reserve_execution_budget', 1, $cp02lit$(e->>'sequence')::bigint=6)))::text,'UTF8')),'hex') is distinct from '72355efd8abde02fda6401034ee39687b5ef5c54d7511d916ccd00f70a7cd6e2'$cp02lit$,
+        $cp02lit$(e->>'sequence')::bigint=7)))::text,'UTF8')),'hex') is distinct from '__PENDING_MEASURED_AFTER_ROOT7_REGISTRATION__'$cp02lit$)
   ) as v(i, id, want, f, t) order by i loop
     n := n + 1;
     if n <> rec.i then raise exception 'CP02_STEP_OUT_OF_ORDER % %', n, rec.i; end if;
@@ -254,8 +257,8 @@ begin
     src := replace(src, rec.f, rec.t);
     def := replace(def, rec.f, rec.t);
   end loop;
-  if n <> 7 then
-    raise exception 'CP02_EXPECTED_%_RULES_APPLIED_%', 7, n;
+  if n <> 9 then
+    raise exception 'CP02_EXPECTED_%_RULES_APPLIED_%', 9, n;
   end if;
 
   want := '__PIN_FROM_cp02-derive.sql__';
@@ -273,8 +276,8 @@ begin
   end if;
 
   -- ------------------------------------------------------------------------------------
-  -- clued_control.append_status_manifest(text,text) — 7 rules, applied in order
-  --   C1:1  C2:1  C3:0  C4:0  C5a:1  C5b:1  C6:0
+  -- clued_control.append_status_manifest(text,text) — 9 rules, applied in order
+  --   C1:1  C2:1  C3:0  C4:0  C5a:1  C5b:1  C6a:0  C6b:0  C6c:0
   -- A rule expecting 0 here is still asserted: "must not appear in this body" is a check, not
   -- an omission.
   -- ------------------------------------------------------------------------------------
@@ -295,8 +298,12 @@ begin
         $cp02lit$'510f3b90cdb026c8c4d44ffac2647502ff8003cdd972850dbe042edbd6c310ef','7e5df5dd2b2341fe38c7b2a86ef68542700ee878bec0c947b13d7c8311fecd2d')$cp02lit$),
     (6, 'C5b@append_status_manifest', 1, $cp02lit$obj->>'schema_digest' is distinct from '510f3b90cdb026c8c4d44ffac2647502ff8003cdd972850dbe042edbd6c310ef'$cp02lit$,
         $cp02lit$obj->>'schema_digest' is distinct from '7e5df5dd2b2341fe38c7b2a86ef68542700ee878bec0c947b13d7c8311fecd2d'$cp02lit$),
-    (7, 'C6@append_status_manifest', 0, $cp02lit$72355efd8abde02fda6401034ee39687b5ef5c54d7511d916ccd00f70a7cd6e2$cp02lit$,
-        $cp02lit$__PENDING_MEASURED_AFTER_ROOT7_REGISTRATION__$cp02lit$)
+    (7, 'C6a@append_status_manifest', 0, $cp02lit$(e->>'sequence')::bigint<=5)::text,'UTF8')),'hex') is distinct from '45c6a2cbaf33bb27f6b4c136440d71d767943acfa9772867e219627759ca5bbc'$cp02lit$,
+        $cp02lit$(e->>'sequence')::bigint<=6)::text,'UTF8')),'hex') is distinct from '__PENDING_MEASURED_AFTER_ROOT7_REGISTRATION_PREFIX_LE6__'$cp02lit$),
+    (8, 'C6b@append_status_manifest', 0, $cp02lit$jsonb_array_length(series_view->'root'->'events') is distinct from 6$cp02lit$,
+        $cp02lit$jsonb_array_length(series_view->'root'->'events') is distinct from 7$cp02lit$),
+    (9, 'C6c@append_status_manifest', 0, $cp02lit$(e->>'sequence')::bigint=6)))::text,'UTF8')),'hex') is distinct from '72355efd8abde02fda6401034ee39687b5ef5c54d7511d916ccd00f70a7cd6e2'$cp02lit$,
+        $cp02lit$(e->>'sequence')::bigint=7)))::text,'UTF8')),'hex') is distinct from '__PENDING_MEASURED_AFTER_ROOT7_REGISTRATION__'$cp02lit$)
   ) as v(i, id, want, f, t) order by i loop
     n := n + 1;
     if n <> rec.i then raise exception 'CP02_STEP_OUT_OF_ORDER % %', n, rec.i; end if;
@@ -310,8 +317,8 @@ begin
     src := replace(src, rec.f, rec.t);
     def := replace(def, rec.f, rec.t);
   end loop;
-  if n <> 7 then
-    raise exception 'CP02_EXPECTED_%_RULES_APPLIED_%', 7, n;
+  if n <> 9 then
+    raise exception 'CP02_EXPECTED_%_RULES_APPLIED_%', 9, n;
   end if;
 
   want := '__PIN_FROM_cp02-derive.sql__';

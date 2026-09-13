@@ -198,3 +198,31 @@ CP-01 的 A1/A2 同理。
 没有预留、没有碰 600 秒相关文字、没有开 PR、没有合并；
 没有改 `scripts/phase2-qualification/`、`work/cp01/`、`bootstrap/next-window-m3/nw02/`、
 `work/twentyfirst-forward/`。改动只落在 `work/cp02/`，且 `cp02-substitutions.json` 未被修改。
+
+## RULES_DIGEST 重新派生（2026-09-13，父会话）
+
+`2264024a…` → `75c299ca…`。**理由：CP02-OF1 的修复，即 C6 拆为 C6a/C6b/C6c。**
+
+生成器在此之前连拒五次，每一次都拦对了，逐条记下来因为它们各自证明了一条防线是活的：
+
+1. `expected 7 rules … found 9` —— 规则集数目钉。我拆了规则却没声明。
+2. `C6a carries class FROZEN_PREFIX_WIDENED_… which is not one of cp02.permitted_edit_classes`
+   —— **最重要的一次**。我给三条子规则编了描述性的新类名，等于**自称一个载体没批过的授权**。
+   三条现已挂载体原文类 `FULL_ROOT_OBJECT_DIGEST_REPINNED_TO_ROOT7_POST_REGISTRATION_MEASURED_VALUES`
+   （载体的 `edit_class_mapping_to_cp01_edit_ids` 把它映射为「the G8/B9 three-assertion guard」
+   整组，所以三条同类成立），描述性名字降级到 `sub_role`。
+3. `rule order … expected C1,C2,C3,C4,C5a,C5b,C6` —— 顺序钉。顺带把重复的 id 清单并成
+   `CANONICAL_ORDER` 单一真相源（两份清单必有一份先过期）。
+4. `C6 must be the last rule applied` —— 尾部断言，已推广为「三条 C6 必须是最后三条且连续」。
+5. `no measured witness for rule C6a` —— 独立见证表。三项已按实测补齐。
+
+C6 语义断言也随之推广：C6a 与 C6c 各带一个摘要（分别是加宽后的冻结前缀、root 对象摘要），
+C6b 只动事件数不带摘要；并新增**「三条要么全实化、要么全留哨兵」**的断言 ——
+半实化的守卫正是 CP02-OF1 量到的那种坏法。
+
+### 一处我自己的量测错误（记下来，因为它是最容易骗过人的那种）
+
+首次统计 C6a/C6c 锚点的出现数时得到 0。不是没有 —— 是我**用字符数差除以了手打的除数**，
+两个串实际长 27 和 26，我写了 28 和 27，整数除法把真命中抹成 0。
+重测时改为 `position()>0` 判定，并把除数改为 `length(<literal>)` 由字面量自身给出。
+**出现次数假 0 会让一条规则悄悄匹配不到任何东西**，而"匹配 0 次"在很多写法里不报错。

@@ -44,7 +44,10 @@ const PERMITTED = [
 
 // The order is the application order and is load-bearing, so it is pinned by identity here
 // rather than inferred from the table's array order. See ORDERING below.
-const CANONICAL_ORDER = ['C1', 'C2', 'C3', 'C4', 'C5a', 'C5b', 'C6'];
+// C6 is C6a/C6b/C6c since CP02-OF1 (see validate()): one coupled three-assertion guard, so the
+// three stay adjacent and last. Applying any subset of them leaves the guard internally
+// inconsistent -- the event-count assertion and the selector must move with the digest.
+const CANONICAL_ORDER = ['C1', 'C2', 'C3', 'C4', 'C5a', 'C5b', 'C6a', 'C6b', 'C6c'];
 
 const SHORT = ['reserve_gate', 'reserve_execution_budget', 'append_status_manifest'];
 const SIG = {
@@ -65,6 +68,7 @@ const ABTAG = 'cp02abort'; // outer tag for the draft tripwire blocks
 
 const SENTINEL_RE = /__[A-Z0-9_]+__/g;
 const HEX64 = /^[0-9a-f]{64}$/;
+const HEX64_G = /[a-f0-9]{64}/g;
 
 // ---- independent witness ----------------------------------------------------------------
 // Measured 2026-09-13 by read-only select against project uscrdifznmlvczcekqpw, counting
@@ -82,7 +86,12 @@ const WITNESS = {
   C4:  [3, 3, 0],
   C5a: [0, 0, 1],
   C5b: [0, 0, 1],
-  C6:  [1, 1, 0],
+  // C6 split into the three assertions of one guard (CP02-OF1). Each full `from` string
+  // re-measured 2026-09-13 with the divisor taken from length(<literal>) itself rather than typed
+  // -- an earlier hand-typed divisor was one character long and floored real hits to zero.
+  C6a: [1, 1, 0],
+  C6b: [1, 1, 0],
+  C6c: [1, 1, 0],
 };
 
 // Pre-image prosrc digests re-measured at the same moment, equal to the CP-01 post-image.
@@ -187,27 +196,20 @@ const POSTIMAGE = {
 // own: every entry below is outside the seven classes the M3 carrier authorises, so clearing it
 // is an approval question, not an editing question.
 const OPEN_FINDINGS = [
-  {
-    id: 'CP02-OF1',
-    title: 'C6 moves one literal of a three-literal guard; the other two stay root6-shaped',
-    measured: 'Read-only, 2026-09-13. reserve_gate and reserve_execution_budget each carry ONE ' +
-      'copy of a coupled three-assertion block that CP-01 G8/B9 installed:\n' +
-      "      (i)   sha256 over root events with (e->>'sequence')::bigint<=5  is distinct from 45c6a2cb...\n" +
-      "      (ii)  jsonb_array_length(series_view->'root'->'events')         is distinct from 6\n" +
-      "      (iii) sha256 over (root - events) || {registration_event: the event at " +
-      "(e->>'sequence')::bigint=6}  is distinct from 72355efd...\n" +
-      '    C6 replaces the digest in (iii) and nothing else. After the root7 registration the ' +
-      'root carries seven events, so (ii) raises series_full_original_root_changed on every ' +
-      'call, and (iii) would still select the ROOT6 registration event by sequence=6 whatever ' +
-      'digest is pinned into it. Measured occurrences of each literal: 1 in reserve_gate, 1 in ' +
-      'reserve_execution_budget, 0 in append_status_manifest.',
-    clears_when: 'Either the M3 carrier is read as already covering (ii) and (iii) inside ' +
-      'FULL_ROOT_OBJECT_DIGEST_REPINNED_TO_ROOT7_POST_REGISTRATION_MEASURED_VALUES and C6 is ' +
-      'rewritten to span the whole coupled block as one anchor, or a further class is ' +
-      'adjudicated for them. Whether (i) also moves (<=5 -> <=6, and a new prefix digest) is a ' +
-      'separate question: the first five root events do not change, so <=5 may well be correct ' +
-      'as it stands. Not decided here.',
-  },
+  // CP02-OF1 is RESOLVED and deliberately no longer listed. It found that C6 replaced the digest
+  // in assertion (iii) of a coupled three-assertion guard while (ii) kept asserting the root holds
+  // six events -- raising on every call once root7 makes it seven -- and (iii)'s selector kept
+  // picking sequence=6, so any repinned digest would be taken over root6's registration event.
+  //
+  // It was recorded as an approval question. It is not one: the M3 carrier's
+  // edit_class_mapping_to_cp01_edit_ids maps this class to "the G8/B9 three-assertion guard,
+  // re-pinned to values measured from the live store after root7 registration" -- the whole
+  // guard. The rule table had been narrower than the approval, so widening it needs no new
+  // authorization. C6 is now C6a/C6b/C6c, all three carrying the carrier's class verbatim, all
+  // three required to be the last three rules contiguously, and all three required to be realized
+  // together (see the half-realized check in validate()).
+  //
+  // The list stays because the next finding of this kind belongs here, not because it is empty.
 ];
 
 // ---- the rule-table byte pin --------------------------------------------------------------
@@ -222,7 +224,7 @@ const OPEN_FINDINGS = [
 //
 // Prose fields (why / adjudicated / measured_context / correction_log) are deliberately outside
 // the digest, so a reviewer can improve the commentary without breaking the pin.
-const RULES_DIGEST = '2264024a5c57558449fbad460888136b0bc341f8e211a923b711cb4266b81b25';
+const RULES_DIGEST = '75c299ca0fe92eede0e674d26795d2e57b3432780ce960773edb039840c9442f';
 
 // ------------------------------------------------------------------------------------------
 
@@ -262,9 +264,19 @@ function validate(table) {
   if (!Array.isArray(rules)) fail('cp02-substitutions.json carries no edit_classes array');
 
   // (a) shape
-  if (rules.length !== 7)
-    fail(`expected 7 rules (C1 C2 C3 C4 C5a C5b C6); found ${rules.length}. ` +
-         `Change this number deliberately, not incidentally.`);
+  // Deliberately 9, not 7. CP02-OF1 measured that the single C6 rule replaced one literal of a
+  // COUPLED three-assertion guard: the sibling assertion still asserts the root holds six events
+  // (raising on every call once root7 makes it seven) and the selector still picks sequence=6, so
+  // a repinned digest would be taken over root6's registration event -- a value that computes and
+  // compares, failing only when the guard rejects a correct call. C6 is therefore C6a/C6b/C6c.
+  // This is inside the existing authorization, not beyond it: the M3 carrier maps this class to
+  // "the G8/B9 three-assertion guard, re-pinned to values measured from the live store after
+  // root7 registration" -- the whole guard. The rule table had been narrower than the approval.
+  // One source of truth for the rule set: CANONICAL_ORDER. Two lists would be two things to keep
+  // in step, and the second would go stale silently.
+  if (rules.length !== CANONICAL_ORDER.length || rules.some((r, i) => r.id !== CANONICAL_ORDER[i]))
+    fail(`expected rules ${CANONICAL_ORDER.join(' ')}; found ${rules.map(r => r.id).join(' ')}. ` +
+         `Change CANONICAL_ORDER deliberately, not incidentally.`);
   const seen = new Set();
   for (const r of rules) {
     if (seen.has(r.id)) fail(`duplicate rule id ${r.id}`);
@@ -293,7 +305,11 @@ function validate(table) {
          `record the same constraint), and C6 MUST be last (its value only exists after the ` +
          `root7 registration).`);
   if (order.indexOf('C5a') >= order.indexOf('C5b')) fail('C5a must be applied before C5b');
-  if (order[order.length - 1] !== 'C6') fail('C6 must be the last rule applied');
+  // The C6 family must occupy the tail as a contiguous block: its values only exist after the
+  // root7 registration, and its three assertions are one guard that cannot be split apart.
+  const c6 = order.filter(id => id.startsWith('C6'));
+  if (c6.length !== 3) fail(`expected three C6 rules, found ${c6.length}`);
+  if (order.slice(-3).join(',') !== c6.join(',')) fail('the three C6 rules must be the last three applied, contiguously');
 
   const by = Object.fromEntries(rules.map(r => [r.id, r]));
 
@@ -368,16 +384,34 @@ function validate(table) {
   // root7 registration event is written, and it is NOT the canonicalDigest of the registration
   // body (the a93bfdda class) -- same moment, different value class. Conflating them is the
   // defect the reissue found. So: sentinel, or a 64-hex value that is not the pre-image.
-  if (!HEX64.test(by.C6.from)) fail('C6.from is not a 64-hex digest');
-  const c6Sentinel = by.C6.to === '__PENDING_MEASURED_AFTER_ROOT7_REGISTRATION__';
-  if (!c6Sentinel) {
-    if (!HEX64.test(by.C6.to))
-      fail(`C6.to is neither the sentinel __PENDING_MEASURED_AFTER_ROOT7_REGISTRATION__ nor a ` +
-           `64-hex digest. Found ${JSON.stringify(by.C6.to)}. It must be MEASURED after the ` +
-           `root7 registration -- never projected, and never the registration body's ` +
-           `canonicalDigest, which is a different value class.`);
-    if (by.C6.to === by.C6.from) fail('C6 repins the root-object digest to itself');
+  // Two of the three carry a digest (C6a the widened frozen prefix, C6c the root-object digest);
+  // C6b moves only the event count and carries none. Each digest-bearing rule is checked the same
+  // way, and the three are required to move together -- a partially realized guard is the failure
+  // CP02-OF1 measured, so "all sentinels or no sentinels" is asserted rather than assumed.
+  const C6_DIGEST_RULES = [
+    ['C6a', '__PENDING_MEASURED_AFTER_ROOT7_REGISTRATION_PREFIX_LE6__'],
+    ['C6c', '__PENDING_MEASURED_AFTER_ROOT7_REGISTRATION__'],
+  ];
+  let c6Pending = 0;
+  for (const [id, sentinel] of C6_DIGEST_RULES) {
+    const r = by[id];
+    if (!r) fail(`${id} is missing from the rule table`);
+    const oldHex = (r.from.match(HEX64_G) || []);
+    if (oldHex.length !== 1) fail(`${id}.from must carry exactly one 64-hex digest, found ${oldHex.length}`);
+    if (r.to === sentinel || r.to.includes(sentinel)) { c6Pending++; continue; }
+    const newHex = (r.to.match(HEX64_G) || []);
+    if (newHex.length !== 1)
+      fail(`${id}.to is neither its sentinel ${sentinel} nor a value carrying one 64-hex digest. ` +
+           `It must be MEASURED after the root7 registration -- never projected, and never the ` +
+           `registration body's canonicalDigest, which is a different value class.`);
+    if (newHex[0] === oldHex[0]) fail(`${id} repins its digest to itself`);
   }
+  if (c6Pending !== 0 && c6Pending !== C6_DIGEST_RULES.length)
+    fail(`the C6 guard is half-realized: ${c6Pending} of ${C6_DIGEST_RULES.length} digest rules ` +
+         `still hold a sentinel. The three assertions are one guard and must be realized together.`);
+  // C6b carries no digest, but it must still move the event count off the pre-image value.
+  if (!by.C6b) fail('C6b is missing from the rule table');
+  if (by.C6b.from === by.C6b.to) fail('C6b does not move the root event count');
 
   // (d) pre-image agreement between the table and this generator.
   for (const s of SHORT) {

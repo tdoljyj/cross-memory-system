@@ -93,7 +93,7 @@
     },
     {
       "id": "C6a",
-      "class": "FROZEN_PREFIX_WIDENED_TO_INCLUDE_THE_ROOT6_REGISTRATION_EVENT",
+      "class": "FULL_ROOT_OBJECT_DIGEST_REPINNED_TO_ROOT7_POST_REGISTRATION_MEASURED_VALUES",
       "operation": "REPLACE (selector and digest together)",
       "from": "(e->>'sequence')::bigint<=5)::text,'UTF8')),'hex') is distinct from '45c6a2cbaf33bb27f6b4c136440d71d767943acfa9772867e219627759ca5bbc'",
       "to": "(e->>'sequence')::bigint<=6)::text,'UTF8')),'hex') is distinct from '__PENDING_MEASURED_AFTER_ROOT7_REGISTRATION_PREFIX_LE6__'",
@@ -102,11 +102,13 @@
         "reserve_execution_budget": 1,
         "append_status_manifest": 0
       },
-      "why": "the root6 registration event's recorded_at is frozen once written, so the frozen prefix widens from <=5 to <=6 and only sequence=7's recorded_at stays carved out. Measured: the anchor is 27 characters and present once in each of the two functions."
+      "why": "the root6 registration event's recorded_at is frozen once written, so the frozen prefix widens from <=5 to <=6 and only sequence=7's recorded_at stays carved out. Measured: the anchor is 27 characters and present once in each of the two functions.",
+      "sub_role": "FROZEN_PREFIX_WIDENED_TO_INCLUDE_THE_ROOT6_REGISTRATION_EVENT",
+      "class_note": "All three C6 rules carry the carrier class verbatim because the carrier maps it to \"the G8/B9 three-assertion guard\" as a whole. Inventing a per-assertion class name would have asserted an authorization that does not exist -- the generator refused exactly that, which is why sub_role holds the descriptive name instead."
     },
     {
       "id": "C6b",
-      "class": "ROOT_EVENT_COUNT_ASSERTION_6_TO_7",
+      "class": "FULL_ROOT_OBJECT_DIGEST_REPINNED_TO_ROOT7_POST_REGISTRATION_MEASURED_VALUES",
       "operation": "REPLACE",
       "from": "jsonb_array_length(series_view->'root'->'events') is distinct from 6",
       "to": "jsonb_array_length(series_view->'root'->'events') is distinct from 7",
@@ -115,11 +117,13 @@
         "reserve_execution_budget": 1,
         "append_status_manifest": 0
       },
-      "why": "after the root7 registration the root carries seven events. WITHOUT THIS the sibling assertion raises series_full_original_root_changed on every call, which is what CP02-OF1 measured."
+      "why": "after the root7 registration the root carries seven events. WITHOUT THIS the sibling assertion raises series_full_original_root_changed on every call, which is what CP02-OF1 measured.",
+      "sub_role": "ROOT_EVENT_COUNT_ASSERTION_6_TO_7",
+      "class_note": "All three C6 rules carry the carrier class verbatim because the carrier maps it to \"the G8/B9 three-assertion guard\" as a whole. Inventing a per-assertion class name would have asserted an authorization that does not exist -- the generator refused exactly that, which is why sub_role holds the descriptive name instead."
     },
     {
       "id": "C6c",
-      "class": "REGISTRATION_EVENT_SELECTOR_AND_ROOT_OBJECT_DIGEST_TO_ROOT7",
+      "class": "FULL_ROOT_OBJECT_DIGEST_REPINNED_TO_ROOT7_POST_REGISTRATION_MEASURED_VALUES",
       "operation": "REPLACE (selector and digest together)",
       "from": "(e->>'sequence')::bigint=6)))::text,'UTF8')),'hex') is distinct from '72355efd8abde02fda6401034ee39687b5ef5c54d7511d916ccd00f70a7cd6e2'",
       "to": "(e->>'sequence')::bigint=7)))::text,'UTF8')),'hex') is distinct from '__PENDING_MEASURED_AFTER_ROOT7_REGISTRATION__'",
@@ -129,7 +133,9 @@
         "append_status_manifest": 0
       },
       "why": "the current registration event becomes sequence 7. Repinning the digest WITHOUT moving the selector would keep digesting root6's registration event -- a value that still computes and still compares, so nothing would object until the guard rejected a correct call.",
-      "distinct_from": "the a93bfdda class, which is canonicalDigest(registration body) and is what context.mjs:322 needs. Same moment, different value."
+      "distinct_from": "the a93bfdda class, which is canonicalDigest(registration body) and is what context.mjs:322 needs. Same moment, different value.",
+      "sub_role": "REGISTRATION_EVENT_SELECTOR_AND_ROOT_OBJECT_DIGEST_TO_ROOT7",
+      "class_note": "All three C6 rules carry the carrier class verbatim because the carrier maps it to \"the G8/B9 three-assertion guard\" as a whole. Inventing a per-assertion class name would have asserted an authorization that does not exist -- the generator refused exactly that, which is why sub_role holds the descriptive name instead."
     }
   ],
   "prohibited": [

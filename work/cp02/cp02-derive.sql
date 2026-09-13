@@ -29,7 +29,8 @@
 -- duplicates; C5b moves the strict-equality pin for NEW objects only.
 --
 -- CAUTION: the inputs still carry unresolved sentinels
---   rule C6.to: __PENDING_MEASURED_AFTER_ROOT7_REGISTRATION__
+--   rule C6a.to: __PENDING_MEASURED_AFTER_ROOT7_REGISTRATION_PREFIX_LE6__
+--   rule C6c.to: __PENDING_MEASURED_AFTER_ROOT7_REGISTRATION__
 --   R11-F13 untouched-functions digest: __PENDING_MEASURED_IMMEDIATELY_BEFORE_APPLY__
 --   pre-image of clued_control.effective_execution_binding(): __PENDING_MEASURED_IMMEDIATELY_BEFORE_APPLY__
 -- so the post_prosrc_sha this query returns describes text that still contains them.
@@ -51,8 +52,12 @@ with recursive f0_subs(i, id, want, f, t) as (values
         $cp02lit$'510f3b90cdb026c8c4d44ffac2647502ff8003cdd972850dbe042edbd6c310ef','7e5df5dd2b2341fe38c7b2a86ef68542700ee878bec0c947b13d7c8311fecd2d')$cp02lit$),
     (6, 'C5b@reserve_gate', 0, $cp02lit$obj->>'schema_digest' is distinct from '510f3b90cdb026c8c4d44ffac2647502ff8003cdd972850dbe042edbd6c310ef'$cp02lit$,
         $cp02lit$obj->>'schema_digest' is distinct from '7e5df5dd2b2341fe38c7b2a86ef68542700ee878bec0c947b13d7c8311fecd2d'$cp02lit$),
-    (7, 'C6@reserve_gate', 1, $cp02lit$72355efd8abde02fda6401034ee39687b5ef5c54d7511d916ccd00f70a7cd6e2$cp02lit$,
-        $cp02lit$__PENDING_MEASURED_AFTER_ROOT7_REGISTRATION__$cp02lit$)
+    (7, 'C6a@reserve_gate', 1, $cp02lit$(e->>'sequence')::bigint<=5)::text,'UTF8')),'hex') is distinct from '45c6a2cbaf33bb27f6b4c136440d71d767943acfa9772867e219627759ca5bbc'$cp02lit$,
+        $cp02lit$(e->>'sequence')::bigint<=6)::text,'UTF8')),'hex') is distinct from '__PENDING_MEASURED_AFTER_ROOT7_REGISTRATION_PREFIX_LE6__'$cp02lit$),
+    (8, 'C6b@reserve_gate', 1, $cp02lit$jsonb_array_length(series_view->'root'->'events') is distinct from 6$cp02lit$,
+        $cp02lit$jsonb_array_length(series_view->'root'->'events') is distinct from 7$cp02lit$),
+    (9, 'C6c@reserve_gate', 1, $cp02lit$(e->>'sequence')::bigint=6)))::text,'UTF8')),'hex') is distinct from '72355efd8abde02fda6401034ee39687b5ef5c54d7511d916ccd00f70a7cd6e2'$cp02lit$,
+        $cp02lit$(e->>'sequence')::bigint=7)))::text,'UTF8')),'hex') is distinct from '__PENDING_MEASURED_AFTER_ROOT7_REGISTRATION__'$cp02lit$)
 ),
 f0_base as (
   select p.prosrc as s, pg_get_functiondef(p.oid) as d
@@ -82,8 +87,12 @@ f1_subs(i, id, want, f, t) as (values
         $cp02lit$'510f3b90cdb026c8c4d44ffac2647502ff8003cdd972850dbe042edbd6c310ef','7e5df5dd2b2341fe38c7b2a86ef68542700ee878bec0c947b13d7c8311fecd2d')$cp02lit$),
     (6, 'C5b@reserve_execution_budget', 0, $cp02lit$obj->>'schema_digest' is distinct from '510f3b90cdb026c8c4d44ffac2647502ff8003cdd972850dbe042edbd6c310ef'$cp02lit$,
         $cp02lit$obj->>'schema_digest' is distinct from '7e5df5dd2b2341fe38c7b2a86ef68542700ee878bec0c947b13d7c8311fecd2d'$cp02lit$),
-    (7, 'C6@reserve_execution_budget', 1, $cp02lit$72355efd8abde02fda6401034ee39687b5ef5c54d7511d916ccd00f70a7cd6e2$cp02lit$,
-        $cp02lit$__PENDING_MEASURED_AFTER_ROOT7_REGISTRATION__$cp02lit$)
+    (7, 'C6a@reserve_execution_budget', 1, $cp02lit$(e->>'sequence')::bigint<=5)::text,'UTF8')),'hex') is distinct from '45c6a2cbaf33bb27f6b4c136440d71d767943acfa9772867e219627759ca5bbc'$cp02lit$,
+        $cp02lit$(e->>'sequence')::bigint<=6)::text,'UTF8')),'hex') is distinct from '__PENDING_MEASURED_AFTER_ROOT7_REGISTRATION_PREFIX_LE6__'$cp02lit$),
+    (8, 'C6b@reserve_execution_budget', 1, $cp02lit$jsonb_array_length(series_view->'root'->'events') is distinct from 6$cp02lit$,
+        $cp02lit$jsonb_array_length(series_view->'root'->'events') is distinct from 7$cp02lit$),
+    (9, 'C6c@reserve_execution_budget', 1, $cp02lit$(e->>'sequence')::bigint=6)))::text,'UTF8')),'hex') is distinct from '72355efd8abde02fda6401034ee39687b5ef5c54d7511d916ccd00f70a7cd6e2'$cp02lit$,
+        $cp02lit$(e->>'sequence')::bigint=7)))::text,'UTF8')),'hex') is distinct from '__PENDING_MEASURED_AFTER_ROOT7_REGISTRATION__'$cp02lit$)
 ),
 f1_base as (
   select p.prosrc as s, pg_get_functiondef(p.oid) as d
@@ -113,8 +122,12 @@ f2_subs(i, id, want, f, t) as (values
         $cp02lit$'510f3b90cdb026c8c4d44ffac2647502ff8003cdd972850dbe042edbd6c310ef','7e5df5dd2b2341fe38c7b2a86ef68542700ee878bec0c947b13d7c8311fecd2d')$cp02lit$),
     (6, 'C5b@append_status_manifest', 1, $cp02lit$obj->>'schema_digest' is distinct from '510f3b90cdb026c8c4d44ffac2647502ff8003cdd972850dbe042edbd6c310ef'$cp02lit$,
         $cp02lit$obj->>'schema_digest' is distinct from '7e5df5dd2b2341fe38c7b2a86ef68542700ee878bec0c947b13d7c8311fecd2d'$cp02lit$),
-    (7, 'C6@append_status_manifest', 0, $cp02lit$72355efd8abde02fda6401034ee39687b5ef5c54d7511d916ccd00f70a7cd6e2$cp02lit$,
-        $cp02lit$__PENDING_MEASURED_AFTER_ROOT7_REGISTRATION__$cp02lit$)
+    (7, 'C6a@append_status_manifest', 0, $cp02lit$(e->>'sequence')::bigint<=5)::text,'UTF8')),'hex') is distinct from '45c6a2cbaf33bb27f6b4c136440d71d767943acfa9772867e219627759ca5bbc'$cp02lit$,
+        $cp02lit$(e->>'sequence')::bigint<=6)::text,'UTF8')),'hex') is distinct from '__PENDING_MEASURED_AFTER_ROOT7_REGISTRATION_PREFIX_LE6__'$cp02lit$),
+    (8, 'C6b@append_status_manifest', 0, $cp02lit$jsonb_array_length(series_view->'root'->'events') is distinct from 6$cp02lit$,
+        $cp02lit$jsonb_array_length(series_view->'root'->'events') is distinct from 7$cp02lit$),
+    (9, 'C6c@append_status_manifest', 0, $cp02lit$(e->>'sequence')::bigint=6)))::text,'UTF8')),'hex') is distinct from '72355efd8abde02fda6401034ee39687b5ef5c54d7511d916ccd00f70a7cd6e2'$cp02lit$,
+        $cp02lit$(e->>'sequence')::bigint=7)))::text,'UTF8')),'hex') is distinct from '__PENDING_MEASURED_AFTER_ROOT7_REGISTRATION__'$cp02lit$)
 ),
 f2_base as (
   select p.prosrc as s, pg_get_functiondef(p.oid) as d
@@ -136,40 +149,40 @@ select
   'clued_control.reserve_gate(text,text)' as function,
   (select encode(sha256(convert_to(s, 'UTF8')), 'hex') from f0_base) = 'd5bba9ef6a3a67966b27c0450fe3f65536010778670434798fd3f936543ec17e' as pre_matches,
   (select bool_and(cnt = want and cnt = dcnt) from f0_fold where i > 0) as all_counts_ok,
-  (select count(*) from f0_fold where i > 0) = 7 as all_steps_ran,
+  (select count(*) from f0_fold where i > 0) = 9 as all_steps_ran,
   (select jsonb_agg(jsonb_build_object('id', id, 'found', cnt, 'expected', want,
                                        'def_agrees', cnt = dcnt) order by i)
      from f0_fold where i > 0) as steps,
   (select length(s) from f0_base) as pre_len,
   length(s) as post_len,
   encode(sha256(convert_to(s, 'UTF8')), 'hex') as post_prosrc_sha
-from f0_fold where i = 7
+from f0_fold where i = 9
 union all
 select
   2 as ord,
   'clued_control.reserve_execution_budget(text,text)' as function,
   (select encode(sha256(convert_to(s, 'UTF8')), 'hex') from f1_base) = '054c631abd6547310b0b70773b263a570b281ad9ee757f6970af70f0e5127b9b' as pre_matches,
   (select bool_and(cnt = want and cnt = dcnt) from f1_fold where i > 0) as all_counts_ok,
-  (select count(*) from f1_fold where i > 0) = 7 as all_steps_ran,
+  (select count(*) from f1_fold where i > 0) = 9 as all_steps_ran,
   (select jsonb_agg(jsonb_build_object('id', id, 'found', cnt, 'expected', want,
                                        'def_agrees', cnt = dcnt) order by i)
      from f1_fold where i > 0) as steps,
   (select length(s) from f1_base) as pre_len,
   length(s) as post_len,
   encode(sha256(convert_to(s, 'UTF8')), 'hex') as post_prosrc_sha
-from f1_fold where i = 7
+from f1_fold where i = 9
 union all
 select
   3 as ord,
   'clued_control.append_status_manifest(text,text)' as function,
   (select encode(sha256(convert_to(s, 'UTF8')), 'hex') from f2_base) = '4f9d2be6a501efe57ba8dfe33f999781720094feda2151b5fea031a4c5bc0ccc' as pre_matches,
   (select bool_and(cnt = want and cnt = dcnt) from f2_fold where i > 0) as all_counts_ok,
-  (select count(*) from f2_fold where i > 0) = 7 as all_steps_ran,
+  (select count(*) from f2_fold where i > 0) = 9 as all_steps_ran,
   (select jsonb_agg(jsonb_build_object('id', id, 'found', cnt, 'expected', want,
                                        'def_agrees', cnt = dcnt) order by i)
      from f2_fold where i > 0) as steps,
   (select length(s) from f2_base) as pre_len,
   length(s) as post_len,
   encode(sha256(convert_to(s, 'UTF8')), 'hex') as post_prosrc_sha
-from f2_fold where i = 7
+from f2_fold where i = 9
 order by ord;
