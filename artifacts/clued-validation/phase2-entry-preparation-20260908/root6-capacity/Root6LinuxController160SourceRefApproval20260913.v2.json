@@ -57,7 +57,7 @@
     "maximum_remaining_allocations": 2
   },
   "capacity_proposal_ref": {
-    "uri": "artifacts/clued-validation/phase2-entry-preparation-20260908/root6-capacity/Root6LinuxController160SourceRefCapacityProposal20260913.json",
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/38db69db616f2da9e5f9019103fc880c46c36b4f",
     "sha256": "e224c379718a0afb12201910b1d00253c193b01a8a6a4bd48d3176f397d6e19f"
   },
   "approved_change_index_sha256": "e224c379718a0afb12201910b1d00253c193b01a8a6a4bd48d3176f397d6e19f",
