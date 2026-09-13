@@ -1,0 +1,61 @@
+{
+  "__skeleton__": {
+    "state": "SKELETON_NOT_AN_ACCEPTANCE",
+    "who_may_issue_the_real_document": "AN INDEPENDENT REVIEW SESSION ONLY",
+    "why": "This document's operative content is a decision ('the exact subject is suitable for signature'). The drafting session that produced the subject cannot also accept it; that is self-certification. Session J wrote this skeleton and deliberately did NOT fill decision, state, review_basis or review_independence with an accepting value.",
+    "what_a_generator_may_fill": [
+      "registration_subject.path / .sha256 / .bytes (measured from the file)",
+      "owner_approval.merge_commit (measured from git)",
+      "current_root_generation / current_root_sequence / execution_baseline (measured read-only)",
+      "window.not_before / window.expires_at (copied from the materialized M3 window)",
+      "every requires_* boolean (copied from the M3 nw02 clause)"
+    ],
+    "what_only_the_reviewer_may_fill": ["decision", "state", "review_basis", "review_independence"],
+    "sha256_of_this_skeleton_is_NOT_registration_acceptance_sha256": true
+  },
+  "authority_effect": "NONE",
+  "current_root_generation": "ctrgen_5e0440a95ac8ee257b9e4236cabd275b",
+  "current_root_sequence": 6,
+  "database_effect": "NONE",
+  "decision": "__REVIEWER_TO_WRITE__",
+  "execution_baseline": {
+    "sequence": 89,
+    "charged_seconds": 9906,
+    "charged_evidence_bytes": 2201594803,
+    "active_ga_id": null,
+    "pending_budget_sequence": null,
+    "measured_at_utc": "2026-09-13T06:04:42Z",
+    "measured_by": "read-only select, session J; MUST be re-measured by the reviewer"
+  },
+  "kind": "CONTINUATION_REGISTRATION_SUBJECT_ACCEPTANCE",
+  "new_budget_capacity": false,
+  "new_root_generation": false,
+  "owner_approval": {
+    "merge_commit": "f92cd46e42e20e1fa305c573964e0597230c0b65",
+    "merge_pr": 164,
+    "verification_ref": {
+      "path": "__PENDING_M3_OWNER_APPROVAL_VERIFICATION_PATH__",
+      "sha256": "__PENDING_M3_OWNER_APPROVAL_VERIFICATION_SHA256__"
+    }
+  },
+  "registration_subject": {
+    "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-m3/nw02/ContinuationRegistrationSubject.canonical.json",
+    "sha256": "c6b354a80b1c5c625df63726854a7525a91528f5820731936d06ac77d4cedf57",
+    "bytes": 4917,
+    "provisional": true,
+    "provisional_reason": "the subject still carries five __PENDING_M3_*__ sentinels; resolving any of them moves this digest"
+  },
+  "requires_actual_owner_signature": true,
+  "requires_fresh_independent_review_before_NW02": true,
+  "requires_fresh_preimage_CAS_before_NW02": true,
+  "requires_signature_evidence_readback": true,
+  "review_basis": "__REVIEWER_TO_WRITE__",
+  "review_independence": "__REVIEWER_TO_WRITE__",
+  "root_set_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+  "schema_version": 1,
+  "state": "__REVIEWER_TO_WRITE__",
+  "window": {
+    "not_before": "2026-09-13T05:45:14Z",
+    "expires_at": "2026-09-14T05:45:14Z"
+  }
+}

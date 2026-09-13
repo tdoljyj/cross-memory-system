@@ -2,8 +2,8 @@
   "state": "ACCEPTED_EXACT_ROOT3_ORIGINAL_INPUT_CAPACITY_SUPPLEMENT",
   "independent_reviewer": "/root/project_list_auth_fix",
   "approval_ref": {
-    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/6d02472ab5ee79051e266d9f49fce977782f1b8a",
-    "sha256": "bc541370c238309730485e33f05b03ba44566fb4f6b83da9d657f7298b5a88e6"
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/79ee0a198c28ecef69db515078fbd97b30448ca3",
+    "sha256": "02b120896736965f487491e8f2ce05dbfe1cf0efa9f8832230d24ebfa0357f2b"
   },
   "base_approval_ref": {
     "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/86636aa78807ca1ce1facbdd910f7c3d27a75177",
@@ -11,8 +11,8 @@
   },
   "base_proposal_sha256": "ea96914e218460339508bc51eff0d10de41e1a94cfa3a0a544a85a132219791b",
   "capacity_proposal_ref": {
-    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/38db69db616f2da9e5f9019103fc880c46c36b4f",
-    "sha256": "e224c379718a0afb12201910b1d00253c193b01a8a6a4bd48d3176f397d6e19f"
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/ffbc4b97c4a183932ebbdfddda145732b2a6a152",
+    "sha256": "761f0e0df18c6ea4c3f168a3d2f8219cc9f5798a518e00078531034529c22d93"
   },
   "bounded_series_constraints": {
     "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
@@ -67,8 +67,8 @@
   },
   "scope_unchanged_except_original_input_limit": true,
   "new_action_authorized": false,
-  "accepted_at": "2026-09-13T02:15:38.154Z",
-  "controller_digest": "68133f2d617718c8ea964e3cebb6abcdbe98671aa5c630d81f0ea2daa9eed24a",
+  "accepted_at": "2026-09-13T05:45:14.000Z",
+  "controller_digest": "73c05cada90b00915f8b352a2dac6f77bf82b44660950e7e9a1415f5cab99b35",
   "scope_digest": "115408c69dcb2fa606fb0de34ec86c5239487d0cfa9a73abb267664a2482abe5",
   "previous_evidence_sink_ref": {
     "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/a1a5f39b43f2b77bc39a13bee3d42a9a55483d1d",
@@ -80,8 +80,8 @@
   },
   "changed_source_refs": [
     {
-      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/6844a6ed82d5577dd79e374e6280acc51f06a26a",
-      "sha256": "68133f2d617718c8ea964e3cebb6abcdbe98671aa5c630d81f0ea2daa9eed24a"
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/f11632b78ae28181e907a94cce186941f00ff5b2",
+      "sha256": "73c05cada90b00915f8b352a2dac6f77bf82b44660950e7e9a1415f5cab99b35"
     },
     {
       "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/39cf82b90c087be8817a008cf976a3916f36a5a8",
@@ -161,7 +161,7 @@
     },
     {
       "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/e417d492b2701ca723b0f41d50ebca3979b98c0e",
-      "sha256": "510f3b90cdb026c8c4d44ffac2647502ff8003cdd972850dbe042edbd6c310ef"
+      "sha256": "7e5df5dd2b2341fe38c7b2a86ef68542700ee878bec0c947b13d7c8311fecd2d"
     },
     {
       "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/61d621f8f4e86029540971e44389d74070dffd83",
@@ -176,17 +176,17 @@
   "reviewed_at_commit": "90e2341528ab7b7493c5e0306993c8196dd2ec2c",
   "historical_conclusions_not_ratified": "This acceptance does not ratify any historical conclusion of any prior /root/project_list_auth_fix session; it builds on their findings, each re-measured here.",
   "source_set_semantics": "changed_source_refs carries the 23 blobs the root6-linux migration introduced, re-verified byte for byte on this host at 90e2341: the controller manifest itself (sha256 68133f2d..., the controller_digest), plus the 22 REPOSITORY_SOURCE entries of that manifest under scripts/phase2-qualification/control-context-verifier-root6-linux-successor -- the set R24-F2 measured as absent from origin/main. All 23 uris and all 23 sha256 values are distinct.",
-  "what_is_accepted": "That capacity_delta.source_refs_maximum may be 160 rather than 133 for the root6 controller 68133f2d617718c8ea964e3cebb6abcdbe98671aa5c630d81f0ea2daa9eed24a, on the Owner approval bc541370c238309730485e33f05b03ba44566fb4f6b83da9d657f7298b5a88e6 (the v2 160 approval, re-serialized at 7d904526 per R26-F1 with content identical to the 4d73b18 value, isDeepStrictEqual true, and loadable by parseAuthenticatedAdministrativeJSON -- verified on this host) and the root6 capacity proposal e224c379718a0afb12201910b1d00253c193b01a8a6a4bd48d3176f397d6e19f. The controller closes at 142 distinct source blobs, and 142 <= 160 at every ceiling site (source-publication.mjs:25, context.mjs:134, context.mjs:113).",
+  "what_is_accepted": "That capacity_delta.source_refs_maximum may be 160 rather than 133 for the root6 controller 73c05cada90b00915f8b352a2dac6f77bf82b44660950e7e9a1415f5cab99b35, on the Owner approval 02b120896736965f487491e8f2ce05dbfe1cf0efa9f8832230d24ebfa0357f2b (the v2 160 approval, re-serialized at 7d904526 per R26-F1 with content identical to the 4d73b18 value, isDeepStrictEqual true, and loadable by parseAuthenticatedAdministrativeJSON -- verified on this host) and the root6 capacity proposal 761f0e0df18c6ea4c3f168a3d2f8219cc9f5798a518e00078531034529c22d93. The controller closes at 142 distinct source blobs, and 142 <= 160 at every ceiling site (source-publication.mjs:25, context.mjs:134, context.mjs:113).",
   "what_is_not_accepted": [
     "No GA, GRR, Entry, gate result, qualification pass or runtime admission.",
     "No further cap extension, new trust root, new signing identity, paid or model budget, refund, or production authority.",
     "No claim about the live control plane: the GENERATION_REGISTERED body, the 043 attempt receipt bytes and the charged budget were not read; see preconditions_outside_this_repository.",
     "No ratification of the implementing side conclusions; every forced value here was re-measured from bytes or lifted from context.mjs source on this host before issuance."
   ],
-  "binding_requirement_for_the_flip": "capacity_materials.approval must pin the v2 approval AT ITS 7d904526 BYTES: sha256 bc541370c238309730485e33f05b03ba44566fb4f6b83da9d657f7298b5a88e6, blob 6d02472ab5ee79051e266d9f49fce977782f1b8a. The capacity_materials_intent block in the v19 acceptance pins the pre-7d904526 bytes 83a5924b... and is stale for the fourth time; it is declared non-live, the controller never reads it, and its own measured_at_commit field says to re-measure before pinning. Copying it forward would fail context.mjs:129 against this document. capacity_materials.applicability must pin the bytes of this document itself, and bounded_series_materials.repairs[7].ref must be repointed to the re-issued Root6Current043CapacityRepairAcceptance20260912.json in the same edit (R25-F1).",
+  "binding_requirement_for_the_flip": "capacity_materials.approval must pin the v2 approval AT ITS 7d904526 BYTES: sha256 02b120896736965f487491e8f2ce05dbfe1cf0efa9f8832230d24ebfa0357f2b, blob 79ee0a198c28ecef69db515078fbd97b30448ca3. The capacity_materials_intent block in the v19 acceptance pins the pre-7d904526 bytes 83a5924b... and is stale for the fourth time; it is declared non-live, the controller never reads it, and its own measured_at_commit field says to re-measure before pinning. Copying it forward would fail context.mjs:129 against this document. capacity_materials.applicability must pin the bytes of this document itself, and bounded_series_materials.repairs[7].ref must be repointed to the re-issued Root6Current043CapacityRepairAcceptance20260912.json in the same edit (R25-F1).",
   "preconditions_outside_this_repository": [
     "The root6 GENERATION_REGISTERED body must carry not_before no later than 2026-09-12T23:41:49Z (the v2 approved_at), because context.mjs:44 requires registered.not_before <= approved_at and that body is immutable once written.",
-    "That body must carry expires_at exactly 2026-09-13T07:05:16Z, equal to the expires_at of the acceptance, as context.mjs:43 requires runtime.expires_at === registered.expires_at.",
+    "That body must carry expires_at exactly 2026-09-14T05:45:14Z, equal to the expires_at of the acceptance, as context.mjs:43 requires runtime.expires_at === registered.expires_at.",
     "The live store must still hold the 043 attempt terminal at BLOCKED with receipt sha256 b27286d6fcb54e34a62d8738f49c1ecafe3210c9a321a703c3828e38497e434c and a budget history at or beyond sequence 49 / 5706 seconds / 1262070707 evidence bytes (context.mjs:136-137).",
     "None of these could be verified from repository contents; this reviewer used no database access. If the live store contradicts any of them, this applicability does not apply and must not be consumed."
   ],
@@ -194,10 +194,14 @@
   "runtime_admission": false,
   "authority_effect": "NONE",
   "supersedes": {
-    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/d09a1bcc69673f07b2e0a3c38216b2e9588a2c86",
-    "sha256": "77b7d7b28fafaa503401b360dd3212c611d1547ba17c5057276e71f0dce59c1d"
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/f21085e652c81b4195c68e30f2c9aaf4dba979e2",
+    "sha256": "e7ec06c28bc9f1c4819618c00c95762025bbcf7bedc559e1b28ded0d05b31183"
   },
   "supersedes_chain": [
+    {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/d09a1bcc69673f07b2e0a3c38216b2e9588a2c86",
+      "sha256": "77b7d7b28fafaa503401b360dd3212c611d1547ba17c5057276e71f0dce59c1d"
+    },
     {
       "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/cfaafa310102c61b3f1fed5273a2216c90572f8b",
       "sha256": "cc3db45bb0931ebe0a539be48e58d25e20e84836809b2995ecb9a0b4fb109537"

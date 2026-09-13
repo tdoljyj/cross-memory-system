@@ -188,7 +188,7 @@ const BASELINE_ATTEMPT_DIGESTS=Object.freeze({
  "ga_c5041817c641487f827cc4ed5e0fc9ad":'978f43100dbce9decc6429de5667332539fc42fd965602fd07f136bd5d1e92e0',
  "ga_e56ca0eb07304f2fbcf60eb8f29f3889":'a557151ca801dfee32f26f430efcf21c0457c65c7ea22df0aa543825ad9bdac4'});
 const scope=Object.freeze({root_id:'ctr_414bd3c724264a83894b0c55cf2ab878',root_generation:'ctrgen_2e778ca66244459f974b081edca8c04e',project:'uscrdifznmlvczcekqpw',expires_at:'2026-09-10T10:13:16Z',maximum_new_ga:3,maximum_new_forward:3,per_ga_seconds:600,per_ga_evidence_bytes:134217728,maximum_series_charged_seconds:6906,root_seconds_cap:7200,evidence_cap:1530506163,first_pass_stops:true,refund:false,automatic_retry:false,production:false,model_budget:0,paid_budget:0});
-const root4Generation='ctrgen_9cf53fa5cd0a4a38bd68613493f95b06',root5Generation='ctrgen_e5df432221344996afc04b5638121d96',root7Generation='ctrgen_26769cc7109ced40bc4016b2af678198',root4Expiry='2026-09-11T10:21:05Z',root7Expiry='__F12_PENDING_WINDOW_END__',root5BudgetSequence=64,root7BudgetSequence=90;
+const root4Generation='ctrgen_9cf53fa5cd0a4a38bd68613493f95b06',root5Generation='ctrgen_e5df432221344996afc04b5638121d96',root7Generation='ctrgen_26769cc7109ced40bc4016b2af678198',root4Expiry='2026-09-11T10:21:05Z',root7Expiry='2026-09-14T05:45:14Z',root5BudgetSequence=64,root7BudgetSequence=90;
 const inherited={STATUS:'acaf2073c654be95a3beab820f1460de1e6e68caa267e9c75bdd3c891bd894b3',GATE_AUTHORIZATION:'b6d4782fcf79cf599f3ccc7e2c7b7434e41a26c6d4a28c6711eac0c9f469e146',GATE_RESULT:'b6d4782fcf79cf599f3ccc7e2c7b7434e41a26c6d4a28c6711eac0c9f469e146'};
 function material(x,ref,label){need(ref&&hex(ref.sha256)&&typeof ref.uri==='string'&&x&&same(x.ref,ref)&&typeof x.raw==='string'&&sha(x.raw)===ref.sha256,'EXACT_PINNED_'+label);return JSON.parse(x.raw);}
 const generationForBudget=sequence=>sequence>=root7BudgetSequence?root7Generation:sequence>=root5BudgetSequence?root5Generation:sequence>=59?root4Generation:scope.root_generation;
@@ -314,7 +314,7 @@ export async function prepareTrustedToolMaterial(material){
  verifyOwnerMergeArtifact({commitSha:rootProof.merge.sha,artifactPath:rootProof.payload.artifact_path??rootProof.payload.path,raw:rootPayloadRaw});
  for(const purpose of ['STATUS','GATE_AUTHORIZATION','GATE_RESULT']){
   const issuers=root.issuer_bindings.filter(i=>i.purpose===purpose);check(issuers.length===1&&issuers[0].subject_id==='tdoljyj'&&issuers[0].signing_service==='web-flow'&&issuers[0].audience===audience,'SEPARATE_ROOT_ISSUER_PURPOSE');
-  check(issuers[0].qualification_ref.sha256===(purpose==='STATUS'?'__F12_PENDING_ISSUER_STATUS_SHA256__':'__F12_PENDING_ISSUER_GATE_SHA256__'),'EXACT_ACCEPTED_PURPOSE_ALGORITHM_METADATA');
+  check(issuers[0].qualification_ref.sha256===(purpose==='STATUS'?'3cb175ca0d3720773c9561840aa1e12bf3c04f2dd864d8bdde6d3e1690bf03b4':'209712fb1bd80b4dfb5678a62390b57b9ed875eff6137f708bb7c4f08797aac8'),'EXACT_ACCEPTED_PURPOSE_ALGORITHM_METADATA');
   const metadata=JSON.parse(readBlobRef(issuers[0].qualification_ref));
   check(metadata.control_trust_root_generation===generation&&metadata.root_set_id===rootID&&metadata.accepted_audience===audience&&metadata.accepted_issuer_purposes?.some(p=>p.purpose===purpose&&p.accepted===true&&p.audience===audience),'EXACT_PURPOSE_QUALIFICATION');currentWindow(metadata.not_before,metadata.expires_at,Date.now());
   if(purpose==='GATE_AUTHORIZATION')check(same(result.ga.issuer_ref,issuers[0].qualification_ref),'ACTUAL_GA_ISSUER_QUALIFICATION_REF');

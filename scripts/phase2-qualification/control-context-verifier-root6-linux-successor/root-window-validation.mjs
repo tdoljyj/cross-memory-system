@@ -28,7 +28,7 @@ export function validateRootShape(value){
  if(!check(value))throw Error('RootSet schema shape rejected: '+JSON.stringify(check.errors));
  assert.equal(value.schema_digest,schemaDigest,'exact active schema digest');
  const start=Date.parse(value.not_before),end=Date.parse(value.expires_at);
- assert.ok(start>=Date.parse('__F12_PENDING_WINDOW_START__')&&start<end&&end<=Date.parse('__F12_PENDING_WINDOW_END__'),'Owner window');
+ assert.ok(start>=Date.parse('2026-09-13T05:45:14Z')&&start<end&&end<=Date.parse('2026-09-14T05:45:14Z'),'Owner window');
  assert.ok(Date.parse(value.revocation.as_of)<Date.parse(value.revocation.expires_at)&&Date.parse(value.revocation.expires_at)<=end,'revocation freshness window');
  const purposes=value.issuer_bindings.map(x=>x.purpose);
  assert.equal(new Set(purposes).size,purposes.length,'separate issuer purpose binding');

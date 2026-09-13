@@ -57,11 +57,11 @@
     "maximum_remaining_allocations": 2
   },
   "capacity_proposal_ref": {
-    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/38db69db616f2da9e5f9019103fc880c46c36b4f",
-    "sha256": "e224c379718a0afb12201910b1d00253c193b01a8a6a4bd48d3176f397d6e19f"
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/ffbc4b97c4a183932ebbdfddda145732b2a6a152",
+    "sha256": "761f0e0df18c6ea4c3f168a3d2f8219cc9f5798a518e00078531034529c22d93"
   },
-  "approved_change_index_sha256": "e224c379718a0afb12201910b1d00253c193b01a8a6a4bd48d3176f397d6e19f",
-  "approved_at": "2026-09-12T23:41:49Z",
+  "approved_change_index_sha256": "761f0e0df18c6ea4c3f168a3d2f8219cc9f5798a518e00078531034529c22d93",
+  "approved_at": "2026-09-13T05:45:14Z",
   "authority": "user_explicit",
   "approval_text": "确认走C / 160 / 冲，按规格生成两份批准件",
   "source": {
@@ -80,7 +80,7 @@
   },
   "limitations": [
     "Raises capacity_delta.source_refs_maximum from 133 to 160 only. Every other capacity_delta field is byte-identical to the predecessor.",
-    "One additional 600-second nonproduction allocation, no automatic retry/refund; only within the root6 window ending 2026-09-13T07:05:16Z.",
+    "One additional 600-second nonproduction allocation, no automatic retry/refund; only within the root7 window ending 2026-09-14T05:45:14Z.",
     "Original input 4,000,000 bytes and escaped publisher JSON 8 MiB; first/second frames remain 4 MiB, original nineteen oracles unchanged.",
     "Does not replace independent review, signed Status/runtime binding, real observations or final signed GRR.",
     "Does not authorize any further cap extension, new root, new signing identity, paid/model budget or production authority."
@@ -96,15 +96,15 @@
   },
   "approval_provenance": "Drafted by the implementing side to the field specification in RouteCApprovalFieldSpec.md, on the Owner instruction to generate the two approvals to that spec. It records an approval given in session; it is not a signing event separate from those instructions.",
   "conflicts_with_governing_exclusion": "BoundedSeriesApplicability20260910.excluded reads verbatim: \"Production, paid/model budget, Gold, A03-A11 formal business measurement, new root or identity, cap extension, automatic retry, refund.\" Raising a cap is a cap extension. The code does not enforce excluded — context.mjs:165 executes only three booleans — but the conflict does not disappear because of that. This is the second instance of the class, after the forward cap raise recorded in OwnerForwardCapExtensionOverride.json. Not independently reviewed.",
-  "controller_digest": "68133f2d617718c8ea964e3cebb6abcdbe98671aa5c630d81f0ea2daa9eed24a",
+  "controller_digest": "73c05cada90b00915f8b352a2dac6f77bf82b44660950e7e9a1415f5cab99b35",
   "reissue": {
     "supersedes": "Root6OriginalInput4000000CapacityApproval20260912.json",
     "reason": "The Windows qualification host was lost and the controller was ported to Linux. The ported controller closes at 142 distinct ordered source references against an approved ceiling of 133, and has been over that ceiling since its first commit (755d744, 134). No revert reaches back under it: the paths carrying it over are the port itself.",
     "substance_unchanged": "Every capacity_delta field other than source_refs_maximum is byte-identical to the superseded approval. No new trust root, no new signing identity, no paid budget, no model budget, no refund, no production authority, no additional allocation, no change to per-allocation seconds or evidence bytes.",
-    "what_changed": "capacity_delta.source_refs_maximum 133 -> 160; controller_digest 3a58eb87... -> 68133f2d617718c8ea964e3cebb6abcdbe98671aa5c630d81f0ea2daa9eed24a. Note the digest moved once during preparation: an earlier draft pointed at 389fee9b, a controller that still carried 133 in its own bytes, so no value could satisfy both the deep comparison and the real blob count."
+    "what_changed": "capacity_delta.source_refs_maximum 133 -> 160; controller_digest 3a58eb87... -> 73c05cada90b00915f8b352a2dac6f77bf82b44660950e7e9a1415f5cab99b35. Note the digest moved once during preparation: an earlier draft pointed at 389fee9b, a controller that still carried 133 in its own bytes, so no value could satisfy both the deep comparison and the real blob count."
   },
   "known_open_at_approval": {
-    "note": "Open at the time of approval, and approved with them open. The Owner elected to run at the 2026-09-13T07:05:16Z window rather than close them first, having been told the remaining programme carries three irreversible points.",
+    "note": "Open at the time of approval, and approved with them open. The Owner elected to run at the 2026-09-14T05:45:14Z window rather than close them first, having been told the remaining programme carries three irreversible points.",
     "items": [
       "R22-F3: the computed load set follows one edge type out of five.",
       "R22-F5, R22-F6, R22-F7: HostProvisioning.json does not describe the node_modules prerequisite, plus two further items.",
@@ -132,7 +132,7 @@
       "R25-F3",
       "R25-F2 (v1 window only)"
     ],
-    "what": "limitations[0], what_changed_from_predecessor and source carried 133-era text verbatim from the template because RouteCApprovalFieldSpec.md listed only the operative fields as changeable. The 133-era source block is preserved as predecessor_source; source now records the messages that actually approved 160, which approval_text already named. v1 additionally stated a root6 window ending 2026-09-19T00:00:00Z, six days past the live binding; corrected to 2026-09-13T07:05:16Z.",
+    "what": "limitations[0], what_changed_from_predecessor and source carried 133-era text verbatim from the template because RouteCApprovalFieldSpec.md listed only the operative fields as changeable. The 133-era source block is preserved as predecessor_source; source now records the messages that actually approved 160, which approval_text already named. v1 additionally stated a root7 window ending 2026-09-19T00:00:00Z, six days past the live binding; corrected to 2026-09-14T05:45:14Z.",
     "operative_fields_untouched": [
       "capacity_delta",
       "capacity_proposal_ref",
