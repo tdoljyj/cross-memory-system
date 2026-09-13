@@ -1,6 +1,6 @@
 {
  "schema_version": 1,
- "state": "PREPARED_EXACT_PREENTRY_CONTROLLER_RUNTIME_ROOT6_LINUX_68133f2d_NOT_ACCEPTED",
+ "state": "ACCEPTED_EXACT_PREENTRY_CONTROLLER_RUNTIME",
  "independent_reviewer": "/root",
  "not_before": "2026-09-12T07:05:16Z",
  "expires_at": "2026-09-13T07:05:16Z",
@@ -195,28 +195,28 @@
     "vector_schema_version": "clued.fixed-synthetic-skill-input/1",
     "not_applicable_evidence": {
      "account": {
-      "reason": "\u8be5\u56fa\u5b9achild\u6ca1\u6709Clued\u4e1a\u52a1account\u3001\u4e1a\u52a1\u7528\u6237\u4ee4\u724c\u6216\u8d26\u6237API\uff1b\u53ea\u8bfb\u53d6\u660e\u786e\u4e09Skill\u6587\u672c\u548c\u56fa\u5b9a\u5408\u6210fixture\u3002GitHub Owner\u63a7\u5236\u8eab\u4efd\u4ecd\u5b58\u5728\u5e76\u5355\u72ec\u6838\u9a8c\uff0c\u4e0d\u4e0e\u6b64Clued\u4e1a\u52a1account\u5c42\u6df7\u540c\u3002",
+      "reason": "该固定child没有Clued业务account、业务用户令牌或账户API；只读取明确三Skill文本和固定合成fixture。GitHub Owner控制身份仍存在并单独核验，不与此Clued业务account层混同。",
       "accepted_schema_ref": {
        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/1622355e303cd0f22e2b0d0b4b0beb943559c78d",
        "sha256": "f57cceb29853c67f8702c1560017c3be7b96626d6358299b5215add63d01e916"
       }
      },
      "integration_installation": {
-      "reason": "\u6ca1\u6709Clued\u96c6\u6210\u5b89\u88c5\u5b9e\u4f8b\u3001\u96c6\u6210\u4e1a\u52a1\u51ed\u636e\u6216installation\u63a5\u53e3\u8c03\u7528\uff1b\u5bbf\u4e3bDocker\u5b89\u88c5\u53ca\u53d7\u4fe1Git\u53d1\u5e03\u6e20\u9053\u4e0d\u662f\u672c\u5408\u6210\u4e1a\u52a1\u5c42installation\uff0c\u5176\u63a7\u5236/\u51ed\u636e\u4ee3\u9645\u7ee7\u7eed\u72ec\u7acb\u6838\u9a8c\u3002",
+      "reason": "没有Clued集成安装实例、集成业务凭据或installation接口调用；宿主Docker安装及受信Git发布渠道不是本合成业务层installation，其控制/凭据代际继续独立核验。",
       "accepted_schema_ref": {
        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/1622355e303cd0f22e2b0d0b4b0beb943559c78d",
        "sha256": "f57cceb29853c67f8702c1560017c3be7b96626d6358299b5215add63d01e916"
       }
      },
      "context": {
-      "reason": "\u4e0d\u521b\u5efa\u6216\u8bfb\u53d6ContextStream/context/session\u4e1a\u52a1\u5bf9\u8c61\uff1b/allowed/fixture.json\u4e0d\u662fContextStream\u6216Canon\u3002\u7236\u76d1\u7763\u4f1a\u8bddsession_generation\u4e0d\u56e0\u6b64\u6d88\u5931\u3002",
+      "reason": "不创建或读取ContextStream/context/session业务对象；/allowed/fixture.json不是ContextStream或Canon。父监督会话session_generation不因此消失。",
       "accepted_schema_ref": {
        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/1622355e303cd0f22e2b0d0b4b0beb943559c78d",
        "sha256": "f57cceb29853c67f8702c1560017c3be7b96626d6358299b5215add63d01e916"
       }
      },
      "binding": {
-      "reason": "\u6ca1\u6709Clued Binding\u53d1\u884c\u3001\u9009\u62e9\u3001\u8d44\u6e90\u7ed1\u5b9a\u6216Binding token\uff1b\u7eaf\u56fa\u5b9a\u6587\u4ef6\u6302\u8f7d\u4e0d\u662f\u4e1a\u52a1Binding\u3002\u786e\u5207container/Skill/Scope/Root\u5f15\u7528\u4ecd\u5fc5\u987b\u7ed1\u5b9a\u4e14\u7981\u6b62\u6539\u53d8\u3002",
+      "reason": "没有Clued Binding发行、选择、资源绑定或Binding token；纯固定文件挂载不是业务Binding。确切container/Skill/Scope/Root引用仍必须绑定且禁止改变。",
       "accepted_schema_ref": {
        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/1622355e303cd0f22e2b0d0b4b0beb943559c78d",
        "sha256": "f57cceb29853c67f8702c1560017c3be7b96626d6358299b5215add63d01e916"
@@ -1110,7 +1110,28 @@
    "new_signing_identity": false,
    "refund": false
   },
-  "capacity_materials": null,
+  "capacity_materials": {
+   "approval": {
+    "ref": {
+     "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/6d02472ab5ee79051e266d9f49fce977782f1b8a",
+     "sha256": "bc541370c238309730485e33f05b03ba44566fb4f6b83da9d657f7298b5a88e6"
+    },
+    "publication": {
+     "commitSha": "7c9f612b4c21a549eb4141096c64d8a2c02264af",
+     "artifactPath": "artifacts/clued-validation/phase2-entry-preparation-20260908/root6-capacity/Root6LinuxController160SourceRefApproval20260913.v2.json"
+    }
+   },
+   "applicability": {
+    "ref": {
+     "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/f21085e652c81b4195c68e30f2c9aaf4dba979e2",
+     "sha256": "e7ec06c28bc9f1c4819618c00c95762025bbcf7bedc559e1b28ded0d05b31183"
+    },
+    "publication": {
+     "commitSha": "7c9f612b4c21a549eb4141096c64d8a2c02264af",
+     "artifactPath": "artifacts/clued-validation/phase2-entry-preparation-20260908/root6-capacity/Root6CurrentController4000000CapacityApplicability20260912.json"
+    }
+   }
+  },
   "bounded_series_applicability_ref": {
    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/c9d4dcd95cec4aff6c5c02317414217ce31de96f",
    "sha256": "f8ed552ebe18010321d57a4565484f4aef25daedc43d7aff9f5a239be1ec61b2"
@@ -1228,17 +1249,17 @@
     },
     {
      "ref": {
-      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/7954c108d83aef1495942cc85e95483473ac6fd0",
-      "sha256": "3b7b288c02442fe23c830d18b4a9eecac04d572b0922cef18bc07bb23d84026a"
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/4ca394474e6524eedaa482f20761330accb4e15a",
+      "sha256": "d3f643b4a9d793b7f0fd788b70fcf1088781bbf0e8661fc1b27df78411d7f1f0"
      },
      "publication": {
-      "commitSha": "ad3d589c03ded47110eaecbb47c48ff90600acdc",
+      "commitSha": "7c9f612b4c21a549eb4141096c64d8a2c02264af",
       "artifactPath": "artifacts/clued-validation/phase2-entry-preparation-20260908/root6-capacity/Root6Current043CapacityRepairAcceptance20260912.json"
      }
     }
    ]
   },
-  "capacity_materials_state": "CANNOT_BE_FORMED_UNTIL_THE_APPLICABILITY_EXISTS_SEE_capacity_materials_intent",
+  "capacity_materials_state": "FILLED_AT_OWNER_MERGE_7c9f612b_ALL_REFS_RE_MEASURED_FROM_MERGED_BYTES",
   "capacity_materials_intent": {
    "purpose": "Declares, in advance and by exact bytes, the approval this document will pin when it is accepted, so the applicability issuer can bind approval_ref to it without a round trip. context.mjs:129 requires same(d.approval_ref, s.capacity_materials.approval.ref), and :122 requires exactly the two keys approval and applicability, so a half-formed capacity_materials would be a malformed descriptor rather than a useful one. This field is deliberately named so it cannot be mistaken for a live descriptor; the controller does not read it.",
    "approval": {
@@ -1275,7 +1296,7 @@
    },
    "ordering_note": "The blocker recorded at 2e4c6a8 by session_019Xz1px5xGCFwmbTVsc43z1 -- that the only runtime acceptance in the repository declared capacity_delta 133 and expected_ga.controller_digest 389fee9b -- is cleared as of 64c01ac. This subject declares 160 and 68133f2d. Its blockers A (capacity_proposal_ref.uri) and C (approvals pinning 389fee9b) are cleared at b7e79d2 and b68d74f respectively.",
    "bounded_series_materials_repairs_7": {
-    "state": "MUST_BE_RE_MEASURED_SEE_known_open.R25-F1",
+    "state": "RE_MEASURED_AND_REPOINTED_AT_THIS_FLIP_SEE_bounded_series_materials.repairs_7",
     "currently_pins": {
      "doc": "Root6Current043CapacityRepairAcceptance20260912.json",
      "sha256": "3b7b288c02442fe23c830d18b4a9eecac04d572b0922cef18bc07bb23d84026a",
@@ -1283,6 +1304,11 @@
      "controller_digest": "3a58eb873902d1625fa6b1f2d252efed78b205e3cb04cc356f064aacd4172dae"
     },
     "note": "Stale the moment R24-F1c re-issues that document. Cannot be pre-filled; the new bytes do not exist."
+   },
+   "state": "FULFILLED_NOT_COPIED",
+   "fulfillment": {
+    "note": "The live capacity_materials above was filled by re-measuring bytes from the M1 merge tree 7c9f612b4c21a549eb4141096c64d8a2c02264af (PR #162, merged_by tdoljyj, 2026-09-13T02:22:13Z), exactly as this intent field and R26/R27 instructed. The intent approval ref (83a5924b/bf5376c5) was stale a fourth time at fulfillment: 7d90452 re-serialized the approval after this intent was last written, and the merged bytes measure sha256 bc541370c238309730485e33f05b03ba44566fb4f6b83da9d657f7298b5a88e6, git blob 6d02472ab5ee79051e266d9f49fce977782f1b8a. Copying the intent forward would have failed CAPACITY_EXACT_APPROVAL (context.mjs:117); the negative control in the M2 flip record reproduces that.",
+    "fulfilled_at": "2026-09-13T02:38:53.099Z"
    }
   }
  },
@@ -1774,13 +1800,13 @@
    "blob_sha": "389d62d0247f65d9bdda362504b1d3caac52f4b8"
   }
  ],
- "acceptance_issued": false,
- "accepted_at": null,
+ "acceptance_issued": true,
+ "accepted_at": "2026-09-13T02:38:53.099Z",
  "acceptance_record": {
   "prepared_state": "PREPARED_EXACT_PREENTRY_CONTROLLER_RUNTIME_ROOT6_LINUX_NOT_ACCEPTED",
   "signed_at": "2026-09-13T00:47:00.000Z",
-  "accepted": false,
-  "state_string_source": "The accepted state string this document would have to carry is ACCEPTED_EXACT_PREENTRY_CONTROLLER_RUNTIME, extracted from the controller check that enforces it (context.mjs:71). It is deliberately NOT set here.",
+  "accepted": true,
+  "state_string_source": "ACCEPTED_EXACT_PREENTRY_CONTROLLER_RUNTIME, extracted from the controller check that enforces it (context.mjs:71). Set by the M2 flip after the Owner merge 7c9f612b landed; it was deliberately absent until then.",
   "independent_review": {
    "independent_reviewer": "/root",
    "host_stamp": "node=81925c0995b5 docker=18c2a16d6aa0 gh=f687dc937534 python3.11=f56a588548dd",
@@ -1795,6 +1821,36 @@
     "The GitHub API side of verifyOwnerMergeArtifact: committer, signature and PR merged_by.",
     "R22-F6 and R22-F7, which are not present in the tree at this commit."
    ]
+  },
+  "accepted_state": "ACCEPTED_EXACT_PREENTRY_CONTROLLER_RUNTIME",
+  "m2_flip": {
+   "flipped_at": "2026-09-13T02:38:53.099Z",
+   "flipped_by": "/root (independent reviewer, M2 flip session)",
+   "owner_merge": {
+    "commitSha": "7c9f612b4c21a549eb4141096c64d8a2c02264af",
+    "pr": 162,
+    "merged_by": "tdoljyj",
+    "merged_at": "2026-09-13T02:22:13Z",
+    "parents": [
+     "2c3a6f9d2c654614b0e5198658c8f03e32f36790",
+     "f5f7bc444d16552167f216f5a67257147a86af64"
+    ],
+    "committer": "web-flow",
+    "signature": "verified, reason valid — read via gh api in this session, not taken on report"
+   },
+   "verified_before_flip": [
+    "verifyOwnerMergeArtifact (trusted-github.mjs, real module, real gh api) PASSED for all three descriptors against 7c9f612b: approval v2 bc541370/6d02472a, applicability e7ec06c2/f21085e6, 043 d3f643b4/4ca39447 — the first true GitHub-side run of this check in the project. Negative controls: single-parent commit -> OWNER_MERGE_VALID_SIGNATURE_REQUIRED, wrong path -> EXACT_REGULAR_STATIC_ARTIFACT, tampered raw -> GITHUB_BLOB_RAW_SHA.",
+    "gh 2.63.2 bytes hash f687dc937534f8aa77ff9d2362163c645b5a8cc78297ef1a642c74c56aa48618 (50098328 bytes), the HostProvisioning.json pin, so GITHUB_CLI_BYTES_DRIFT holds.",
+    "All three refs re-measured from the M1 tree locally (git cat-file at 7c9f612b) and equal to the GitHub-side blobs byte for byte.",
+    "The issued applicability approval_ref deep-equals the approval descriptor written here (uri and sha256), satisfying EXACT_INDEPENDENT_CAPACITY_APPLICABILITY (:129) on the document side.",
+    "Controller freeze untouched: manifest self-digest 68133f2d before and after this edit; this edit changes only this JSON document."
+   ],
+   "not_verified": [
+    "Live control-plane state: the GENERATION_REGISTERED body, the 043 receipt bytes b27286d6, the budget line. The full lifted checkCapacityAdministration over this flipped subject stops at ACTUAL_043_BLOCKED_TERMINAL_REQUIRED, exactly as R26 SS5 and R27 SS3 predicted; every document predicate before it passed.",
+    "binding.runtime_acceptance_sha256 / binding.controller_sha256 / binding.qualification_sha256 in the database: no database access from this session; the post-flip sha256 of this file is in the M2 flip record for the Owner-side re-pin.",
+    "This document’s own publication: these flipped bytes are in no Owner merge yet; historical-component-observations.mjs:13 becomes satisfiable only after the next Owner merge carries them."
+   ],
+   "byte_form_note": "This edit also re-serialized the whole document to JSON.stringify(value,null,1) form with raw UTF-8 strings. The previous bytes carried \\uXXXX escapes, which parseAuthenticatedAdministrativeJSON (context.mjs:104-110) rejects as ADMIN_JSON_UNIQUE_CANONICAL_VALUES: escape normalization is outside the accepted whitespace-only tolerance. The controller parses this file with plain JSON.parse (context.mjs:296), so this was latent, not blocking; it is fixed here under the R26-F1 lesson. isDeepStrictEqual(old value, new value) restricted to unedited paths is true."
   }
  },
  "known_open": {
@@ -1849,7 +1905,7 @@
   },
   "R24-F1": {
    "severity": "BLOCKER",
-   "state": "OPEN_FOUND_BY_THIS_REVIEW",
+   "state": "CLOSED_AT_f5f7bc4",
    "blocks": "ExactRoot5FinalPreentryControllerRuntimeAcceptance",
    "does_not_block": "this qualification",
    "note": "The capacity supplement chain is not complete at 160/68133f2d, so no loadable runtime acceptance can be issued. context.mjs:248 NEW_CAPACITY_CONSUMER_REQUIRES_REAL_SUPPLEMENT and context.mjs:281 NEW_CAPACITY_CONSUMER_REQUIRES_ACTUAL_SUPPLEMENT make accepted_subject.capacity_materials mandatory on this path, so omitting it is not an escape. Three separate defects, each verified mechanically against the controller s own frozen literal and its own ref() predicate lifted from source rather than transcribed.",
@@ -1889,11 +1945,12 @@
     "Owner merge to main so verifyOwnerMergeArtifact can pin them",
     "then the runtime acceptance can be issued and accepted"
    ],
-   "not_done_by_this_session": "This reviewer did not issue the applicability or the 043 repair. Both require independent_reviewer /root/project_list_auth_fix, a different identity from the /root this document is issued under, and b49588f put that re-issue on a deliberately separate track. Issuing them here would collapse the independence that separation exists to provide, which is the same shape as the nine conditions-that-could-not-fail already closed."
+   "not_done_by_this_session": "This reviewer did not issue the applicability or the 043 repair. Both require independent_reviewer /root/project_list_auth_fix, a different identity from the /root this document is issued under, and b49588f put that re-issue on a deliberately separate track. Issuing them here would collapse the independence that separation exists to provide, which is the same shape as the nine conditions-that-could-not-fail already closed.",
+   "closed_by": "R24-F1a at b7e79d2; R24-F1b and R24-F1c issued by /root/project_list_auth_fix at f5f7bc4 (R27): applicability e7ec06c2/f21085e6, 043 d3f643b4/4ca39447, both verified here from the M1 merge tree."
   },
   "R24-F2": {
    "severity": "BLOCKER",
-   "state": "OPEN_FOUND_BY_THIS_REVIEW",
+   "state": "CLOSED_AT_7c9f612b",
    "blocks": "every Owner-merge-pinned leg: verifySourcePublication, capacity_materials.*.publication, and therefore the flip of this runtime acceptance to ACCEPTED",
    "note": "The Linux controller is not on main. Measured against origin/main at 2c3a6f9: of the 153 REPOSITORY_SOURCE paths the manifest declares, 22 are absent, and they are the whole of scripts/phase2-qualification/control-context-verifier-root6-linux-successor. The manifest itself is absent. The 131 that are present are byte-identical to their manifest entries, so there is no drift, only absence. This is independent of the capacity chain and is not closed by any session: it needs an Owner merge of claude/nice-fermat-njqlmm into main.",
    "consequences": [
@@ -1906,28 +1963,37 @@
    "last_owner_merge_observed": "2c3a6f9, PR #161 from claude/nice-fermat-njqlmm, 2026-09-12T09:30:13Z, about 15.5 hours before this measurement. Eight such merges happened on 2026-09-12; none since.",
    "required_owner_action": "Merge claude/nice-fermat-njqlmm into main by pull request, as with #153 through #161. verifyOwnerMergeArtifact requires two parents, committer web-flow, a verified valid signature, exactly one merged PR with base main, and merged_by tdoljyj, so a direct push or a squash will not satisfy it.",
    "not_done_by_this_session": "No merge. The boundary is explicit and this session did not cross it.",
-   "independently_confirmed_by": "session_017iY1oKT4HCLhcNzisKBC1Q at d408432, re-verified at 3fe90ce. Both sessions reached it separately and neither issued."
+   "independently_confirmed_by": "session_017iY1oKT4HCLhcNzisKBC1Q at d408432, re-verified at 3fe90ce. Both sessions reached it separately and neither issued.",
+   "closed_by": "Owner merge 7c9f612b4c21a549eb4141096c64d8a2c02264af, PR #162 base main, merged_by tdoljyj, committer web-flow, signature verified/valid, merged 2026-09-13T02:22:13Z. Verified in this session via gh api against the real verifyOwnerMergeArtifact, which passed for all three capacity descriptors; the negative controls each failed at their named gate."
   },
   "R25-F1": {
    "severity": "BLOCKER",
-   "state": "OPEN_FOUND_BY_SESSION_D_CONFIRMED_HERE",
+   "state": "CLOSED_BY_THIS_EDIT",
    "found_by": "session_017iY1oKT4HCLhcNzisKBC1Q at 66cb910, against this document. Not found by this reviewer, and it is a defect in a document this reviewer issued.",
    "where": "accepted_subject.bounded_series_materials.repairs[7].ref",
    "note": "repairs[7] pins Root6Current043CapacityRepairAcceptance20260912.json at sha256 3b7b288c02442fe23c830d18b4a9eecac04d572b0922cef18bc07bb23d84026a, which is its CURRENT 3a58eb87-era bytes. readBlobRef addresses by content hash, so when that document is re-issued at 68133f2d under R24-F1c its bytes change and this ref keeps resolving the superseded blob. The loader succeeds, isApprovedCapacityRepair then rejects the stale document on controller_digest, and the failure surfaces at INDEPENDENT_IDENTIFIED_ERROR_AND_FIX_BEFORE_NEXT_ATTEMPT (context.mjs:223) without ever naming the stale pin as the cause. Verified here: repairs has 8 entries and repairs[7].ref.sha256 is exactly the 043 repair's current digest; context.mjs:223 is the line quoted.",
    "why_it_was_missed": "It is not capacity_materials, it is not empty, and it appears in neither the flip instruction nor the R24-F1 to_accept list. This reviewer re-pinned capacity_materials and left bounded_series_materials untouched because nothing pointed at it.",
-   "fix": "When the 043 repair is re-issued at 68133f2d, repairs[7].ref must be re-measured to the new bytes and repairs[7].publication updated to the Owner merge that carries them. It cannot be pre-filled: the re-issued bytes do not exist yet."
+   "fix": "When the 043 repair is re-issued at 68133f2d, repairs[7].ref must be re-measured to the new bytes and repairs[7].publication updated to the Owner merge that carries them. It cannot be pre-filled: the re-issued bytes do not exist yet.",
+   "closed_by": "repairs[7].ref re-measured to the issued 043 (sha256 d3f643b4a9d793b7f0fd788b70fcf1088781bbf0e8661fc1b27df78411d7f1f0, blob 4ca394474e6524eedaa482f20761330accb4e15a) and repairs[7].publication set to the M1 merge, in the same atomic edit that filled capacity_materials, per the R25-F1 remedy. isApprovedCapacityRepair(new 043, 043 attempt, c) is true; the superseded 3b7b288c bytes are false."
   },
   "R25-F2": {
    "severity": "MODERATE",
-   "state": "OPEN",
+   "state": "RESOLVED_BY_ISSUED_APPLICABILITY",
    "found_by": "session_017iY1oKT4HCLhcNzisKBC1Q",
-   "note": "No controller gate distinguishes the two 160 approvals. Either would satisfy every executed check, so which one is pinned is decided by the pinning document alone, not by the controller. This document pins v2 and states why below."
+   "note": "No controller gate distinguishes the two 160 approvals. Either would satisfy every executed check, so which one is pinned is decided by the pinning document alone, not by the controller. This document pins v2 and states why below.",
+   "resolution": "The issued applicability binds approval_ref to v2 (bc541370), and context.mjs:129 requires same(d.approval_ref, s.capacity_materials.approval.ref), so the v1/v2 choice is now enforced by the controller through the applicability, no longer documentary only. This document pins v2, matching."
   },
   "R25-F3": {
    "severity": "MODERATE",
    "state": "ADDRESSED_AT_4d73b18",
    "found_by": "session_017iY1oKT4HCLhcNzisKBC1Q",
    "note": "Both 160 approvals had carried 133-era text verbatim in limitations, what_changed_from_predecessor and the source provenance block while capacity_delta said 160. Purged at 4d73b18. Re-checked here: the 12 remaining occurrences of \"133\" in each are historical statements (\"133 -> 160\", \"has exceeded 133 since its first commit\", \"preserved as predecessor\"), not live claims. Both still pass same(capacity_delta, capacityDelta) and ref(capacity_proposal_ref) against the controller's own frozen literal and predicate."
+  },
+  "R26-F1": {
+   "severity": "BLOCKER",
+   "state": "CLOSED_AT_7d90452_VERIFIED_AT_f5f7bc4",
+   "found_by": "R26 (session_015Tt97v7JR1XcGCwvZG7Npk)",
+   "note": "Both 160 approvals failed parseAuthenticatedAdministrativeJSON at 4d73b18 because what_each_approved contained the array-index-like key \"160\" after a non-numeric key; JSON.stringify reorders such keys first. 7d90452 re-serialized both approvals value-identically; R27 verified byte-identity with the R26 fix candidate. The merged v2 bytes parse clean under the lifted gate in this session too."
   }
  },
  "verified_on_host": {
@@ -1994,7 +2060,14 @@
    "No GitHub API call was made by the controller; gh was installed and byte-verified but not exercised against the API."
   ]
  },
- "not_accepted_because": {
+ "superseded_draft_replaced_here": {
+  "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root6-runtime-v19/ExactRoot5FinalPreentryControllerRuntimeAcceptance.json",
+  "sha256": "7f83c62934bd3ad97da497114e946b7d3536491d5a386bbb807739b799a14ab4",
+  "bytes": 111112,
+  "blob_sha": "4f88fc332a93b7c3d6df1284e4b08aabe2a42908",
+  "state": "SUPERSEDED_DRAFT_AT_THIS_SAME_PATH_PINNED_389fee9b_NEVER_USABLE"
+ },
+ "formerly_not_accepted_because": {
   "summary": "Three independent blockers. R24-F1b: the capacity applicability at 160/68133f2d does not exist. R24-F2: the Linux controller and the 160 approval are in no Owner merge, so no publication descriptor has a real commitSha. R25-F1: bounded_series_materials.repairs[7] pins the 043 repair at its pre-re-issue bytes and will silently resolve the superseded blob. Issued PREPARED so it fails at EXACT_RUNTIME_ACCEPTANCE_METADATA_REQUIRED (context.mjs:71), attributably.",
   "blocking": "known_open.R24-F1 in the companion ScopedRoot5FinalControllerQualification at this same path",
   "to_accept": [
@@ -2004,13 +2077,13 @@
    "R25-F1: re-measure accepted_subject.bounded_series_materials.repairs[7].ref to the re-issued 043 repair bytes, and its publication to the merge carrying them. Found by session_017iY1oKT4HCLhcNzisKBC1Q; missed here.",
    "R24-F2: Owner merges claude/nice-fermat-njqlmm into main by pull request. Without this the flip cannot be completed at all, whatever the capacity chain does.",
    "Then set state ACCEPTED_EXACT_PREENTRY_CONTROLLER_RUNTIME, fill capacity_materials with the two {ref,publication} descriptors using the real merge commitSha, set accepted_at, and re-pin binding.controller_sha256 and binding.qualification_sha256."
+  ],
+  "resolution_state": "ALL_THREE_BLOCKERS_CLOSED_THIS_DOCUMENT_IS_NOW_ACCEPTED",
+  "resolution": [
+   "R24-F1b/R24-F1c: closed at f5f7bc4 (R27 issued both capacity documents at 160/68133f2d).",
+   "R24-F2: closed at 7c9f612b (Owner merge, PR #162, merged_by tdoljyj).",
+   "R25-F1: closed by this edit (repairs[7] repointed to the issued 043 with its M1 publication).",
+   "The remaining to_accept step -- re-pin binding.controller_sha256 and binding.qualification_sha256 -- is a database write and stays outside this edit; the post-flip file sha256 for binding.runtime_acceptance_sha256 is recorded in the M2 flip record."
   ]
- },
- "superseded_draft_replaced_here": {
-  "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root6-runtime-v19/ExactRoot5FinalPreentryControllerRuntimeAcceptance.json",
-  "sha256": "7f83c62934bd3ad97da497114e946b7d3536491d5a386bbb807739b799a14ab4",
-  "bytes": 111112,
-  "blob_sha": "4f88fc332a93b7c3d6df1284e4b08aabe2a42908",
-  "state": "SUPERSEDED_DRAFT_AT_THIS_SAME_PATH_PINNED_389fee9b_NEVER_USABLE"
  }
 }
