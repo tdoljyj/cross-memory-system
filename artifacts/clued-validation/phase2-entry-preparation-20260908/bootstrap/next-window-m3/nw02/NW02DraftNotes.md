@@ -9,13 +9,13 @@
 
 | 文件 | bytes | sha256 | 性质 |
 |---|---|---|---|
-| `ContinuationRegistrationSubject.canonical.json` | 4917 | `c6b354a80b1c5c625df63726854a7525a91528f5820731936d06ac77d4cedf57` | 候选主体件，**带 5 个未决哨兵** |
-| `ContinuationRegistrationSubjectAcceptance.skeleton.json` | 2967 | `785fec9473bf15c05a119f787a75fa26d4538363a1d22089913b022a3c07a925` | 骨架，**须独立评审出具** |
-| `ContinuationControlStoreAcceptance.skeleton.json` | 4160 | `478cdbc4937dc09e07ba7c06ebec388c3fff773e09241df2624d5e11ba41b4f4` | 骨架，**须独立评审出具** |
+| `ContinuationRegistrationSubject.canonical.json` | 3442 | `338a348738447aa6e3ab724606703b602a1513d4ac032d75ddded7e8eca7dd77` | 候选主体件，**带 5 个未决哨兵** |
+| `ContinuationRegistrationSubjectAcceptance.skeleton.json` | 2967 | `b422667081dfd7bc6290724e884307b43feea30e9f9cb934e12e46315f342e61` | 骨架，**须独立评审出具** |
+| `ContinuationControlStoreAcceptance.skeleton.json` | 4160 | `645f886e5454637c2449df8c98d46ada0dc5080e998f8487b7bc9991be76cd6e` | 骨架，**须独立评审出具** |
 | `ContinuationSubjectSignatureEvidence.skeleton.json` | 5159 | `0a3dfa951ad1e170f8d2e3e8df0b2196d2b85563abc14105d1ee4fffed2f79bc` | 骨架，生成器可出，**须待 M4 合并后** |
 | `nw02-parameters.json` | — | — | 生成器参数（前像为草稿基线） |
 | `build-nw02-sql.mjs` | — | — | 生成器，**只生成不执行** |
-| `NW02Applied.sql` | 19863 | `c064f919f80df253b1c69209938f078b804992156d58e317c9702a7bc01c119e` | `--draft` 产物，**首 11 行是不可执行横幅** |
+| `NW02Applied.sql` | 19863 | `269a0a65c6b32d6c038081949d082513254647c633c3e9f98316e9459acf5ae7` | `--draft` 产物，**首 11 行是不可执行横幅** |
 | `NW02Preflight.sql` | 7324 | `4df42c989cacdaf2bac47d7b48dada2923b31b341d31d51ad986602439f08721` | 纯 SELECT，17 条守卫 |
 
 **这四个 sha256 一个都不得进库。** 三份是骨架、一份带哨兵；生成器在没有 `--draft` 时拒绝出文件
@@ -41,7 +41,7 @@ sha256sum $A/ContinuationSubjectSignatureEvidence.json             # 954faff1…
 规范化实测（`ContinuationRegistrationSubject.canonical.json`）：
 `json.dumps(sort_keys=True, separators=(',',':'), ensure_ascii=False)` + 一个尾随 `\n`，
 重新序列化后 **3320 字节、逐字节相同、sha256 相同**。本目录的 NW-02 主体件按同一规则产出，
-同样验过 round-trip（4917 字节，逐字节相同）。
+同样验过 round-trip（3442 字节，逐字节相同）。
 `blob_sha` 实测就是 `git hash-object`：`git hash-object $A/ContinuationRegistrationSubject.canonical.json`
 → `120fa16787d52d2aed6f9bfd54c6b516a92af423`，与 NW-01 证据件里记的一致。
 
@@ -99,8 +99,7 @@ accepted_binding 的四个摘要字段（NW-02 事务写入）
 | `window_maintenance.exception` | `NW-02` | M3 载体 `nw02` 条款（第 76 行起） |
 | `window_maintenance.application_ordinal` | `5` | NW-01 为 4，本次为第五次施用 |
 | `window_maintenance.changed_fields` / `changed_checks` | 七 / 三 | M3 载体第 80–96 行，与 NW-01 逐项相同 |
-| `window_maintenance.guards_added_beyond_nw01` | 两条 | M3 载体第 110–113 行；**新增子键**，见 §6 开放点 1 |
-| `window_generation_and_controller.*` | F12 `73c05cad…` + root7 `ctrgen_26769cc7…` | 任务交待；F12 值实测于 `bootstrap/root7-runtime-v20/ScopedRoot5FinalControllerQualification.json:5`，root7 代际见 M3 载体第 119 行。**整个顶层键是 NW-01 形态里没有的**，见 §6 开放点 1 |
+| `window_maintenance.guards_added_beyond_nw01` | 两条 | M3 载体第 110–113 行；**唯一的新增子键**，见 §6 开放点 1 |
 
 ### 3.2 前像（`nw02-parameters.json` 的 `preimage`）
 
@@ -130,7 +129,7 @@ NW-01 逐字相同。属主 `postgres`，ACL `{postgres=arwdDxtm/postgres}`。
     │
     ├─(a) 补出 M3 的 OwnerApprovalVerification 等价件  ← 开放点 2，主体件卡在这里
     ├─(b) 定 proposal_path                            ← 开放点 3
-    ├─(c) 定主体件形态（多出来的顶层键留不留）           ← 开放点 1
+    ├─(c) 主体件形态 —— 已裁定方案 B，严格 21 键（开放点 1 已关）
     │
     ▼
 [1] 主体件定稿 → subject_sha256 落定
@@ -212,33 +211,52 @@ S14 断言写入侧不含任何前像摘要、前置块不含任何后像摘要�
 
 ## 6. 我拿不准的点 —— 列出来，不拍板
 
-### 开放点 1：主体件的形态该不该动（**影响 subject_sha256，进而影响全部四个摘要**）
+### 开放点 1（**已裁定：方案 B**）：主体件的形态不动
 
-任务交待「代际相关处指向 root7 `ctrgen_26769cc7…`，控制器摘要用 F12」。照办时撞上两件事：
+**裁定：Owner 于 2026-09-13 在会话中选方案 B —— 去掉那个顶层键。已按此重出。**
+
+原本的问题是：任务交待「代际相关处指向 root7 `ctrgen_26769cc7…`，控制器摘要用 F12」，照办时撞上两件事。
 
 - **NW-01 的 `current_control_root` 指的是活头，不是待注册代际。** 实测：NW-01 执行时活头是 root5
   （`NW01Parameters.preimage.head.generation_id = ctrgen_e5df4322…`），主体件 `current_control_root`
   写的就是 root5；而那一窗里随后注册的是 root6。**同构地，NW-02 的活头是 root6**（只读实测 seq 6 /
   `ctrgen_5e0440a9…`），root7 要到第 [10] 步才注册。把 `current_control_root` 写成 root7 会
   与同一份候选里 `NW02Preflight.sql` 的 `root_head_ok` 守卫**自相矛盾**。
-- **NW-01 形态里根本没有控制器摘要字段。** 我比对了 `next-window-20260911` 与 `next-window-20260912`
-  两版主体件，**顶层键集合完全相同**（21 个）。两窗未变的形态，本窗要不要变，不该由起草方定。
+- **NW-01 形态里根本没有控制器摘要字段。** 比对 `next-window-20260911` 与 `next-window-20260912`
+  两版主体件，**顶层键集合完全相同**（21 个）。两窗未变的形态，不该由起草方改。
 
-我采取的处置（**请评审推翻或确认**）：`current_control_root` 保持活头 root6 不动；另加**一个**顶层键
-`window_generation_and_controller`，装 F12 摘要、root7 代际与序数、两份 f12-issuer 件与两份
-root7-runtime-v20 件的 path+sha256，并显式写 `generation_registered_by_this_subject: false`、
-`nw02_precedes_generation_registration: true`。顶层键因此是 **22 个**。
-另在 `window_maintenance` 下加了 `guards_added_beyond_nw01` 子键。
-
-三个可选方案与代价：
+当时列的三个方案：
 
 | 方案 | 形态 | 代价 |
 |---|---|---|
-| A（本稿） | 21 + 1 顶层键 | 两窗稳定的形态被打破，须评审背书 |
-| B | 严格 21 键，F12/root7 不进主体件 | 与任务交待不符；F12 与 root7 只在 SQL 与参数件里出现，主体件不自述本窗代际 |
-| C | 21 键，但把 root7/F12 塞进 `current_control_root` | **我认为不可取**：它会写下一个当时并不成立的事实，且与 preflight 的 `root_head_ok` 冲突 |
+| A（初稿，**已作废**） | 21 + 1 顶层键 `window_generation_and_controller` | 两窗稳定的形态被打破 |
+| **B（已采纳）** | **严格 21 键，F12/root7 不进主体件** | 主体件不自述本窗的代际与控制器；F12 `73c05cad…` 与 root7 `ctrgen_26769cc7…` 只存在于 M3 载体、`f12-issuer/` 两件、`root7-runtime-v20/` 两件与控制器自身 |
+| C | 21 键，但把 root7/F12 塞进 `current_control_root` | 未采纳；它会写下一个当时并不成立的事实，且与 preflight 的 `root_head_ok` 冲突 |
 
-无论选哪个，**subject_sha256 都不同**，链上三份都要重出。**我没有权限替这件事定案。**
+**按 B 重出后的实测**：顶层键 21 个，与
+`next-window-20260912/ContinuationRegistrationSubject.canonical.json` 的键集合**逐项相同**；
+主体件 4917 字节 / `c6b354a8…` 作废，现为 **3442 字节 / `338a3487…`**。
+`current_control_root` 仍是实测活头 root6，未动。
+
+级联（全部已重出，见 §0 的表）：
+
+| 件 | 方案 A 时的值（作废） | 方案 B 现值 |
+|---|---|---|
+| 主体件 | 4917 / `c6b354a8…` | **3442 / `338a3487…`** |
+| 受理骨架 | 2967 / `785fec94…` | 2967 / **`b4226670…`** |
+| 库受理骨架 | 4160 / `478cdbc4…` | 4160 / **`645f886e…`** |
+| `NW02Applied.sql` | `c064f919…` | **`269a0a65…`** |
+| `NW02Preflight.sql` | `4df42c98…` | `4df42c98…`（**不变**） |
+
+证据件骨架未受影响：它对三份文书的摘要一律是 `__PENDING_NW02_*__`，不内嵌主体件的值。
+`NW02Preflight.sql` 不变是对的，也是一次顺带的自洽检验：preflight 只钉**前像**，而这次改动
+只动后像。
+
+**一处仍存的形态偏离，裁定未覆盖，留给评审**：`window_maintenance` 下的子键
+`guards_added_beyond_nw01`（记 R11-F12 / R11-F13 两条守卫）。Owner 的话是「去掉那个顶层键」，
+指的是 `window_generation_and_controller`；这个子键不改变顶层键数（仍是 21），且它记的是
+M3 载体第 110–113 行**明文要求**的两条守卫，所以我保留了。若评审认为主体件也不该记这个，
+删掉它会再走一遍上面的级联。
 
 ### 开放点 2：M3 没有 `OwnerApprovalVerification.json` 的等价件（**硬阻塞**）
 

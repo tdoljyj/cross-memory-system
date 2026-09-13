@@ -40,8 +40,8 @@
   },
   "registration_subject": {
     "path": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-m3/nw02/ContinuationRegistrationSubject.canonical.json",
-    "sha256": "c6b354a80b1c5c625df63726854a7525a91528f5820731936d06ac77d4cedf57",
-    "bytes": 4917,
+    "sha256": "338a348738447aa6e3ab724606703b602a1513d4ac032d75ddded7e8eca7dd77",
+    "bytes": 3442,
     "provisional": true,
     "provisional_reason": "the subject still carries five __PENDING_M3_*__ sentinels; resolving any of them moves this digest"
   },
