@@ -67,8 +67,8 @@
     "automatic_retry": false,
     "preserve_existing_charges_and_limits": true,
     "remaining_allocations_before_and_after": 1,
-    "charged_seconds_at_proposal_time": "__PENDING_LIVE_CHARGED_SECONDS_AT_PROPOSAL_TIME__",
-    "charged_seconds_at_proposal_time_expected": "9906 per NextWindowPlanV2Window12Cycle.md honesty-boundary section (5106 + 600*8, budgets.length 8); to be confirmed by a read-only live query before this candidate is finalised, never assumed",
+    "charged_seconds_at_proposal_time": "9906",
+    "charged_seconds_at_proposal_time_expected": "9906 per NextWindowPlanV2Window12Cycle.md honesty-boundary section (5106 + 600*8, budgets.length 8); MEASURED by read-only select of clued_control.read_execution() current.charged_seconds (parent session; generation_id still ctrgen_5e0440a9 at measurement time; measurement timestamp recorded in M3AdjudicationsRound1.md, kept out of this carrier per the A4 no-new-timestamps rule); re-verify at finalisation if any charging action has occurred since",
     "charged_seconds_ceiling_unchanged": 10506,
     "charged_evidence_bytes_ceiling_unchanged": 2335812531,
     "allocation_count_note": "The ninth allocation (budgets.length 8 to 9) exactly reaches the 10506 ceiling. Window replacement neither adds nor removes allocations (NextWindowPlanV2Window12Cycle.md honesty boundary)."
@@ -135,7 +135,7 @@
     },
     "registration_body_prerequisites": {
       "source_table": "NextWindowPlanV2Window12Cycle.md, root7 registration prerequisite checklist (11 items, keyed to the root6 step13-exec.sql actual sample)",
-      "predecessor_sha256": "__PENDING_ROOT6_REGISTRATION_BODY_SHA256__",
+      "predecessor_sha256": "a93bfdda74d9d693584c32ecb9e1ec963fa448b51595fbe245abfeefbb4081c5",
       "predecessor_sha256_derivation": "digest of the root6 registration body per G decision table item 8; canonicalDigest(root) at context.mjs:322 (sorted+compact+LF) as corroboration; never JS insertion-order serialisation (R9-F1)",
       "history_prefix_digest": "__PENDING_ROOT7_HISTORY_PREFIX_DIGEST__",
       "history_prefix_digest_derivation": "canonicalDigest over live root events 0..6 (the live chain reads only events[0..6], derivation formula known at context.mjs:59); requires a read-only live measurement, so it is pending here",
@@ -155,8 +155,8 @@
         },
         "window_fields": "both documents bind ctrgen_26769cc7109ced40bc4016b2af678198 and carry this approval's materialized window; their digests therefore finalise only after M3, and context.mjs:317 is repinned to them by realize-f12.mjs"
       },
-      "algorithm_config_accepted_config_ref": "__PENDING_ROOT7_ALGORITHM_CONFIG_REF_DECISION__",
-      "algorithm_config_accepted_config_ref_rule": "carried forward from the root6 body (blob b25abb05) unless the F12 reissue set includes that acceptance document, per G decision table items 9-11; the decision, not this draft, resolves the placeholder",
+      "algorithm_config_accepted_config_ref": "CARRIED_FORWARD_FROM_ROOT6_BODY: https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/b25abb05e00f72bb2ae910035ba9916a97c822dc sha256 988cdf823eb63806dc3385aa1840e812c1cb1df5ed06e72ca2adf56244b88d20",
+      "algorithm_config_accepted_config_ref_rule": "ADJUDICATED 2026-09-13 (R31 items 9-11 carry-forward ruling, applied by the plan author): the algorithm-config acceptance is not in the F12 reissue set, so the root6 body's ref carries forward byte-identically; if a later round DOES reissue that acceptance, this value must be re-adjudicated before merge",
       "revocation_event_set_digest": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570",
       "revocation_event_set_digest_note": "unchanged from the root6 body: the empty revocation set digest; revocation as_of/expires_at fields take this approval's materialized window",
       "signature_binding": {
@@ -223,7 +223,7 @@
         {
           "class": "STATUS_MANIFEST_SCHEMA_DIGEST_TO_DIGEST_CARRIED_BY_THIS_RUN_CONTROLLER_INCLUDING_ALLOW_LIST",
           "cp01_analogue": "A1/A2",
-          "why_believed_required": "status-manifest.root5.schema.json pins the root6 generation (the previous authorization's controller_rebuild.not_affected clause spared it ONLY because the generation did not change then); with root7 the schema digest changes to __PENDING_F12_STATUS_MANIFEST_SCHEMA_DIGEST_DECISION__ and append_status_manifest's allow list and strict-equality lines must follow"
+          "why_believed_required": "status-manifest.root5.schema.json pins the root6 generation (the previous authorization's controller_rebuild.not_affected clause spared it ONLY because the generation did not change then); with root7 the schema digest changes to 7e5df5dd2b2341fe38c7b2a86ef68542700ee878bec0c947b13d7c8311fecd2d and append_status_manifest's allow list and strict-equality lines must follow"
         }
       ]
     },
@@ -311,7 +311,7 @@
     "frozen_controller_digest": "__PENDING_F12_CONTROLLER_DIGEST__",
     "document_set_reissued_against_f12": "the capacity four-set, qualification and acceptance documents, generator-built with the field specifications, decision table and R26 lessons built in (plan v2 step 2); the S24-dependent parts finalise after this merge and travel via the M4 carrier",
     "status_manifest_schema": {
-      "digest_decision": "__PENDING_F12_STATUS_MANIFEST_SCHEMA_DIGEST_DECISION__",
+      "digest_decision": "7e5df5dd2b2341fe38c7b2a86ef68542700ee878bec0c947b13d7c8311fecd2d (sha256 of status-manifest.root5.schema.json at the F12 pre-image, commit 6bbfeac; the file carries no F12 sentinels, so this value is final unless a later review round edits the schema again, in which case it must be re-measured)",
       "note": "the previous authorization could declare the schema not_affected only because the generation did not change; this window it does. Whether the schema is reissued (and its digest re-pinned in append_status_manifest via the A1/A2-analogue class) is an open adjudication recorded in cp02.additional_classes above."
     }
   },
@@ -375,16 +375,6 @@
         "resolvable": "after merge evidence capture"
       },
       {
-        "placeholder": "__PENDING_LIVE_CHARGED_SECONDS_AT_PROPOSAL_TIME__",
-        "resolved_from": "read-only live query of charged seconds",
-        "resolvable": "now, by a session with read access; this drafting session performs no store access by mandate"
-      },
-      {
-        "placeholder": "__PENDING_ROOT6_REGISTRATION_BODY_SHA256__",
-        "resolved_from": "digest of the root6 registration body, derivation per G decision table item 8",
-        "resolvable": "now, once the derivation method is adjudicated"
-      },
-      {
         "placeholder": "__PENDING_ROOT7_HISTORY_PREFIX_DIGEST__",
         "resolved_from": "canonicalDigest over live root events 0..6",
         "resolvable": "now, by a read-only live measurement"
@@ -408,11 +398,6 @@
         "placeholder": "__PENDING_ROOT7_ISSUER_GATE_QUALIFICATION_SHA256__",
         "resolved_from": "same document",
         "resolvable": "after window materialization"
-      },
-      {
-        "placeholder": "__PENDING_ROOT7_ALGORITHM_CONFIG_REF_DECISION__",
-        "resolved_from": "G decision table items 9-11: carry forward blob b25abb05 or follow the F12 reissue",
-        "resolvable": "at adjudication"
       },
       {
         "placeholder": "__PENDING_ROOT7_SIGNED_OBJECT_SHA256__",
@@ -483,11 +468,6 @@
         "placeholder": "__PENDING_F12_CONTROLLER_DIGEST__",
         "resolved_from": "build-linux-manifest.mjs over the realized F12 sources",
         "resolvable": "after realize-f12.mjs runs post-merge"
-      },
-      {
-        "placeholder": "__PENDING_F12_STATUS_MANIFEST_SCHEMA_DIGEST_DECISION__",
-        "resolved_from": "the adjudication of the status-manifest schema question in cp02.additional_classes",
-        "resolvable": "at adjudication"
       },
       {
         "placeholder": "__PENDING_FORWARD_CAP_EXTENSION_OPINION_PATH__",
