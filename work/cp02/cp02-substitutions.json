@@ -1,0 +1,130 @@
+{
+  "object_type": "CP02Substitutions",
+  "state": "CANDIDATE_NO_WRITE_PERFORMED",
+  "authority_effect": "NONE",
+  "authorized_by": "ExplicitOwnerApprovalM3.candidate.json cp02 clause, merged f92cd46e (PR 164)",
+  "preimage": {
+    "measured": "read-only select, 2026-09-13",
+    "equals": "the CP-01 postimage, confirmed unchanged",
+    "reserve_gate": "d5bba9ef6a3a67966b27c0450fe3f65536010778670434798fd3f936543ec17e",
+    "reserve_execution_budget": "054c631abd6547310b0b70773b263a570b281ad9ee757f6970af70f0e5127b9b",
+    "append_status_manifest": "4f9d2be6a501efe57ba8dfe33f999781720094feda2151b5fea031a4c5bc0ccc",
+    "MUST_REMEASURE_BEFORE_APPLY": true,
+    "why_remeasure": "the transaction pins these as its precondition; any control-plane change between now and apply invalidates them, and the guarded transaction must fail closed rather than proceed on a stale pre-image"
+  },
+  "edit_classes": [
+    {
+      "id": "C1",
+      "class": "LIVE_ROOT_GENERATION_ROOT6_TO_ROOT7",
+      "adjudicated": "M3AdjudicationsRound1 item 1, independently re-verified by Round 32; plan v2 step 3 omitted it",
+      "from": "ctrgen_5e0440a95ac8ee257b9e4236cabd275b",
+      "to": "ctrgen_26769cc7109ced40bc4016b2af678198",
+      "expected_occurrences": {
+        "reserve_gate": 4,
+        "reserve_execution_budget": 4,
+        "append_status_manifest": 1
+      },
+      "why": "after the root7 registration the live root.generation_id is root7; every root6 equality assertion CP-01 pinned would raise"
+    },
+    {
+      "id": "C2",
+      "class": "SUPERSEDED_WINDOW_LITERALS_TO_THIS_WINDOW_MATERIALIZED_TIMESTAMPS",
+      "adjudicated": "M3 carrier cp02.permitted_edit_classes",
+      "from": "2026-09-13T07:05:16Z",
+      "to": "2026-09-14T05:45:14Z",
+      "expected_occurrences": {
+        "reserve_gate": 4,
+        "reserve_execution_budget": 5,
+        "append_status_manifest": 1
+      },
+      "why": "T is the M3 merge committer.date 2026-09-13T05:45:14Z; the window expiry is T+86400s"
+    },
+    {
+      "id": "C3",
+      "class": "BINDING_FORWARD_CAP_SERIES_F_16_TO_17",
+      "adjudicated": "M3 carrier cp02.permitted_edit_classes; independent opinion ForwardCapExtensionIndependentOpinion16To17.json (sha 4b1aab9d), issued by Round 32",
+      "from": "series_f>16",
+      "to": "series_f>17",
+      "expected_occurrences": {
+        "reserve_gate": 1,
+        "reserve_execution_budget": 1,
+        "append_status_manifest": 0
+      },
+      "why": "the 21st forward makes series_f 17; MEASURED FORM HAS NO SPACES -- the spaced form 'series_f > 16' returns zero hits"
+    },
+    {
+      "id": "C4",
+      "class": "BUDGET_SCOPE_SEGMENT_BOUNDARY_89_TO_90",
+      "adjudicated": "M3AdjudicationsRound1 item 1 (second family), independently re-verified by Round 32",
+      "from": ">= 89",
+      "to": ">= 90",
+      "expected_occurrences": {
+        "reserve_gate": 3,
+        "reserve_execution_budget": 3,
+        "append_status_manifest": 0
+      },
+      "why": "the ninth budget lands at sequence >= 90 carrying root7 and the new expiry; CP-01's '>= 89 means root6 + this window' segment would reject it. Threshold re-measured live: every BUDGET_RESERVED sequence <= 85, post-baseline budgets exactly 8, max(sequence) 89. MEASURED FORM HAS SPACES -- the unspaced '>=89' returns zero hits, the opposite convention to C3 in the same prosrc"
+    },
+    {
+      "id": "C5a",
+      "class": "STATUS_MANIFEST_SCHEMA_ALLOW_LIST_APPEND_F12",
+      "adjudicated": "M3AdjudicationsRound1 item 1 (third family); shape follows CP-01 A1 exactly",
+      "operation": "APPEND, NOT REPLACE",
+      "from": "'510f3b90cdb026c8c4d44ffac2647502ff8003cdd972850dbe042edbd6c310ef')",
+      "to": "'510f3b90cdb026c8c4d44ffac2647502ff8003cdd972850dbe042edbd6c310ef','7e5df5dd2b2341fe38c7b2a86ef68542700ee878bec0c947b13d7c8311fecd2d')",
+      "expected_occurrences": {
+        "append_status_manifest": 1
+      },
+      "why": "the allow list is a three-member IN(...) whose historical members are RETAINED so existing manifests still resubmit as exact duplicates -- CP-01 A1 states that rationale verbatim. Substituting here instead of appending would silently drop 510f3b90 from the allow list and break resubmission of every existing manifest.",
+      "measured_context": "...,'76bb79f7...','510f3b90...')\\n or coalesce(obj->>'status_manife"
+    },
+    {
+      "id": "C5b",
+      "class": "STATUS_MANIFEST_STRICT_EQUALITY_FOR_NEW_OBJECTS_TO_F12",
+      "adjudicated": "same; shape follows CP-01 A2, which must run AFTER A1",
+      "operation": "REPLACE",
+      "from": "obj->>'schema_digest' is distinct from '510f3b90cdb026c8c4d44ffac2647502ff8003cdd972850dbe042edbd6c310ef'",
+      "to": "obj->>'schema_digest' is distinct from '7e5df5dd2b2341fe38c7b2a86ef68542700ee878bec0c947b13d7c8311fecd2d'",
+      "expected_occurrences": {
+        "append_status_manifest": 1
+      },
+      "why": "strict equality for NEW objects moves to the F12 schema. Ordering matters: C5a must apply first, because its anchor still contains the old digest (CP-01 A2 records the same ordering constraint).",
+      "measured_context": "y new objects use the ordinary Root5 schema.\\n if obj->>'schema_digest' is distinct from '510f3b90..."
+    },
+    {
+      "id": "C6",
+      "class": "FULL_ROOT_OBJECT_DIGEST_REPINNED_TO_ROOT7_POST_REGISTRATION_MEASURED_VALUES",
+      "adjudicated": "M3 carrier cp02.permitted_edit_classes",
+      "from": "72355efd8abde02fda6401034ee39687b5ef5c54d7511d916ccd00f70a7cd6e2",
+      "to": "__PENDING_MEASURED_AFTER_ROOT7_REGISTRATION__",
+      "expected_occurrences": {
+        "reserve_gate": 1,
+        "reserve_execution_budget": 1,
+        "append_status_manifest": 0
+      },
+      "why": "sha256(r::text) over the whole root row, which only exists once the root7 registration event is written. MEASURED, never projected -- this is why the M3 carrier orders registration before CP-02",
+      "distinct_from": "the a93bfdda class, which is canonicalDigest(registration body) and is what context.mjs:322 needs. Same moment, different value. Conflating them was the second generator defect found during the reissue"
+    }
+  ],
+  "prohibited": [
+    "any edit not matching one of the six classes above",
+    "replacing the getter function CP-01 asserts but must not touch",
+    "proceeding on a stale pre-image",
+    "blind retry after an interruption",
+    "raising the forward cap past 17, or on one side only",
+    "any capacity, refund, reset or automatic-retry effect"
+  ],
+  "required_transaction_form": "same as CP-01: single transaction, eight tables ACCESS EXCLUSIVE, all four function prosrc digests asserted at the head including the one that must not change, abandon on drift, read-only readback, archived, independently reviewed, no blind retry; plus the three Round-11 guards CP-01 already carries (in-transaction window assertion pre and post, untouched-function combined digest, accepted_binding trigger assertion)",
+  "ordering_constraints": [
+    "C5a before C5b (C5b's anchor is inside the text C5a rewrites)",
+    "C6 last: its value only exists after the root7 registration"
+  ],
+  "correction_log": [
+    {
+      "was": "C5 as a single blanket substitution of both 510f3b90 occurrences",
+      "found": "the two occurrences have DIFFERENT semantics -- one is an allow-list member to APPEND beside, one is a strict-equality pin to REPLACE. A blanket substitution would have removed the old digest from the allow list and broken exact-duplicate resubmission of every existing manifest.",
+      "how": "read the full 64-hex value and 190 chars of context around each occurrence from the live prosrc, instead of matching the 8-char prefix the first draft used",
+      "note": "the first draft also flagged itself BLOCKED_PENDING for exactly this reason -- matching on an 8-char abbreviation is the R33-F1 class -- and the block was correct"
+    }
+  ]
+}
