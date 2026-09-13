@@ -57,19 +57,33 @@ const sql = bytes.toString('utf8');
 
 // [name, regexp, capture group]. Each must match EXACTLY once; more than one means the anchor is
 // too loose to identify the value, which is a failure, not something to pick the first of.
+// Anchors below were determined by reading each field's USE SITE in the twentieth forward's SQL,
+// after the first draft's guesses (carried over from the nineteenth's shapes) refused on five.
+// Every digest field is anchored on the comparison that gives it meaning -- the
+// "is distinct from '<sha>'" guard -- rather than on a nearby name, because the file holds 57
+// occurrences of 64-hex over 20 distinct values and proximity would pick a plausible wrong one.
 const FIELDS = [
   ['tag', /(\$nf\d+\$)/g, 1],
-  ['reserve_execution_budget', /reserve_execution_budget[^\n]*?'([a-f0-9]{64})'/g, 1],
-  ['reserve_gate', /reserve_gate[^\n]*?'([a-f0-9]{64})'/g, 1],
-  ['append_status_manifest', /append_status_manifest[^\n]*?'([a-f0-9]{64})'/g, 1],
-  ['guard_exception', /'(accepted_[a-z0-9_]+_required)'/g, 1],
+  // The three control-plane function prosrc guards, each keyed by the regprocedure it names.
+  ['reserve_execution_budget', /reserve_execution_budget\(text,text\)'::regprocedure\) is distinct from '([a-f0-9]{64})'/g, 1],
+  ['reserve_gate', /reserve_gate\(text,text\)'::regprocedure\) is distinct from '([a-f0-9]{64})'/g, 1],
+  ['append_status_manifest', /append_status_manifest\(text,text\)'::regprocedure\) is distinct from '([a-f0-9]{64})'/g, 1],
+  // Not the _required suffix the nineteenth used: the twentieth's capacity guard is
+  // 'accepted_root6_linux_capacity_160'. Anchored on being THE raise exception whose name starts
+  // accepted_, of which there is exactly one.
+  ['guard_exception', /raise exception '(accepted_[a-z0-9_]+)'/g, 1],
   ['window', /'(20\d\d-\d\d-\d\dT\d\d:\d\d:\d\dZ)'/g, 1],
-  ['rows_sha256', /rows_sha256[^\n]*?'([a-f0-9]{64})'/g, 1],
-  ['catalog_sha256', /catalog_sha256[^\n]*?'([a-f0-9]{64})'/g, 1],
-  ['getter_definition_sha256', /getter_definition_sha256[^\n]*?'([a-f0-9]{64})'/g, 1],
-  ['v_norm_sha256', /v_norm[^\n]*?'([a-f0-9]{64})'/g, 1],
-  ['v_new_sha256', /v_new[^\n]*?'([a-f0-9]{64})'/g, 1],
-  ['key', /'([a-z0-9-]+-20\d{6})'/g, 1],
+  // Computed locals compared against a pinned digest, not named literals.
+  ['rows_sha256', /convert_to\(rows_now::text,'UTF8'\)\),'hex'\) is distinct from '([a-f0-9]{64})'/g, 1],
+  ['catalog_sha256', /convert_to\(catalog_now::text,'UTF8'\)\),'hex'\) is distinct from '([a-f0-9]{64})'/g, 1],
+  // The getter is identified by the function it reads, effective_execution_binding, and by which
+  // of the two digests of it is taken: pg_get_functiondef for the definition.
+  ['getter_definition_sha256', /pg_get_functiondef\(oid\)[^\n]*?effective_execution_binding\(\)'::regprocedure\) is distinct from '([a-f0-9]{64})'/g, 1],
+  ['v_norm_sha256', /convert_to\(v_norm,'UTF8'\)\),'hex'\) is distinct from '([a-f0-9]{64})'/g, 1],
+  ['v_new_sha256', /convert_to\(v_new,'UTF8'\)\),'hex'\) is distinct from '([a-f0-9]{64})'/g, 1],
+  // Doubled single quotes: the key sits inside dollar-quoted body text. Also NOT the
+  // date-suffixed convention the nineteenth used, so the shape is read from the guard itself.
+  ['key', /idempotency_key is distinct from ''([a-z0-9-]+)''/g, 1],
   ['event_exception', /'(exact_real_[a-z]+_forward_event_required)'/g, 1],
 ];
 
@@ -116,8 +130,17 @@ if (missing.length) throw new Error('MISSING_FIELDS: ' + missing.join(', '));
 
 // Cross-check the pieces against each other, so a plausible-but-wrong extraction still fails.
 if (out.next_seq !== out.prev_seq + 1) throw new Error('SEQUENCE_NOT_CONSECUTIVE: ' + out.prev_seq + ' -> ' + out.next_seq);
-if (out.existing_forwards !== 20) throw new Error('TEMPLATE_IS_NOT_THE_TWENTIETH_FORWARD: its post-image whitelist ends at ' + out.existing_forwards);
+// existing_forwards is the count BEFORE the template's own forward, matching the N19 block's
+// meaning (18 for the nineteenth). The template is the twentieth, so it is 19 and its post-image
+// whitelist ends at 20. The first draft asserted 20 here and was reading the field's name rather
+// than its meaning.
+if (out.existing_forwards !== 19) throw new Error('TEMPLATE_IS_NOT_THE_TWENTIETH_FORWARD: forwards before it = ' + out.existing_forwards + ', expected 19');
+out.this_forward = out.existing_forwards + 1;
+out.next_forward = out.this_forward + 1;
 if (!out.event_exception.includes('twentieth')) throw new Error('EVENT_EXCEPTION_IS_NOT_THE_TWENTIETH: ' + out.event_exception);
+// The dollar-quote tag encodes the ordinal too, so it must agree with the whitelist's -- two
+// independent statements of "which forward is this", required to say the same thing.
+if (out.tag !== '$nf' + out.this_forward + '$') throw new Error('TAG_DISAGREES_WITH_WHITELIST: tag ' + out.tag + ' vs post-image whitelist ending at ' + out.this_forward);
 
 console.log(JSON.stringify({
   object_type: 'N20DerivedConstants',
@@ -125,7 +148,7 @@ console.log(JSON.stringify({
   source: path.relative(REPO, SRC),
   source_sha256: srcSha,
   source_bytes: bytes.length,
-  next_forward: out.existing_forwards + 1,
+  next_forward: out.next_forward,
   fields: out,
 }, null, 2));
 
