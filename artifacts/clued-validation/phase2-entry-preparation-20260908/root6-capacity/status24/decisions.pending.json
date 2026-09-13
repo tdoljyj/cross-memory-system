@@ -1,0 +1,29 @@
+{
+ "_comment": "只含决策表『定』项；『评审』项与窗口时间为待定钉",
+ "source_digest_map": {
+  "dfe6299d2102b051abe87fe6eb502f62c4d4f40559fe6e16074a49ee467203a2": "e7cfb30b1d6241ad8b0a9976ae8a44d2b6fadd429f2f95bcf523c20fbe912888",
+  "ac7bdd53b7fe5705ee70f4fbb08ce6a5889ccf6d6574a3575e51f16bb09c2daa": "68133f2d617718c8ea964e3cebb6abcdbe98671aa5c630d81f0ea2daa9eed24a",
+  "e34850ab8629d6aaf00b6b2ce773d010dc308957b53b35003816ac0d36417b32": "d3f643b4a9d793b7f0fd788b70fcf1088781bbf0e8661fc1b27df78411d7f1f0"
+ },
+ "source_ref_map": {
+  "dfe6299d2102b051abe87fe6eb502f62c4d4f40559fe6e16074a49ee467203a2": {
+   "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/0427b0e67756583d9916a0fdd9cac66ffa20c9ad",
+   "sha256": "e7cfb30b1d6241ad8b0a9976ae8a44d2b6fadd429f2f95bcf523c20fbe912888"
+  },
+  "ac7bdd53b7fe5705ee70f4fbb08ce6a5889ccf6d6574a3575e51f16bb09c2daa": {
+   "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/6844a6ed82d5577dd79e374e6280acc51f06a26a",
+   "sha256": "68133f2d617718c8ea964e3cebb6abcdbe98671aa5c630d81f0ea2daa9eed24a"
+  },
+  "e34850ab8629d6aaf00b6b2ce773d010dc308957b53b35003816ac0d36417b32": {
+   "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/4ca394474e6524eedaa482f20761330accb4e15a",
+   "sha256": "d3f643b4a9d793b7f0fd788b70fcf1088781bbf0e8661fc1b27df78411d7f1f0"
+  }
+ },
+ "expected_ga_overrides": {
+  "controller_qualification_ref": {
+   "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/0427b0e67756583d9916a0fdd9cac66ffa20c9ad",
+   "sha256": "e7cfb30b1d6241ad8b0a9976ae8a44d2b6fadd429f2f95bcf523c20fbe912888"
+  }
+ },
+ "_R30": "expected_ga.controller_qualification_ref 现值 6e35ff20 为错钉，重钉受理件时改为活绑定 e7cfb30b；本 override 即该修复后的期望"
+}
