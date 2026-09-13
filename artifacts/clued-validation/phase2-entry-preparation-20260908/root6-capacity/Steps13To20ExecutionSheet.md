@@ -753,6 +753,36 @@ v19 两份文书的实际内容（`publication.commitSha`、各自 sha256），�
 
 ---
 
+## 十一之二、本单自身的验证记录
+
+任务书要求「没有任何需要临场即兴的东西」。为此本单的每一份 SQL 都做过下面这些，
+【实测】结果如下：
+
+| 验证 | 结果 |
+| --- | --- |
+| 每一份 `.sql` 在活库上通过解析与规划（`prepare` / `deallocate`，或直接只读执行） | **全部通过**，无语法或列名错误 |
+| `step13-pre.sql` 的 13 列 | 2026-09-12T23:58:04Z **全为 `t`**，`window_remaining` 07:07:11 |
+| `step13-readback.sql` 只读实跑 | `landed=false`（注册尚未发生，符合预期），并证明那段 4 KB dollar-quoted jsonb 字面量能正确解析与转型 |
+| 注册体 `request` 的键集 vs `append_event:7` 要求的 8 键 | 逐一相同 |
+| 注册体 `metadata_binding_sha256` vs `append_event:17` 现场算的值 | 两边都是 `ee5d85fa…ba5` |
+| `cp01-pre.sql` 的三处锚点行号 vs `cp01-substitutions.json` | G3 第 48 行、B3 第 53 行、A4 第 29 行，逐一对上 |
+| CP-01 的 `2026-09-12T13:14:51Z` 字面量在两个 reserve 函数中的出现次数 | **5 次**，与替换表的 G2／G7／B2／B7／B8 恰好对应 |
+| A1／A2 钉的 `510f3b90…` vs 本控制器 `status-manifest.root5.schema.json` | 相同 |
+| G8 的 `frozen_prefix_digest` vs 活库五条历史事件摘要 | 都是 `45c6a2cb…5bbc` |
+| `to_char(... 'YYYY-MM-DD"T"HH24:MI:SS"Z"')` 的输出 vs 生成器对 `accepted_binding_expires_at` 的正则 | 得 `2026-09-13T07:05:16Z`，合 `^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$` |
+| 注册体 JSON 里是否含 `$`、反斜杠、单引号 | 三者皆无，故 dollar-quoting 安全；生成器的断言已扩到两个标签 |
+
+两处为消除凌晨的失败模式而收紧的地方，一并记下：
+
+1. `step16-readback.sql` 原先按 `request->'body'->>'expires_at'` 读预留出来的窗口。
+   【实测】上一条 `BUDGET_RESERVED` 事件（第 85 号）的 body 形状是 `{raw:"<JSON 字符串>", sha256:…}`，
+   所以改为 `(request->'body'->>'raw')::jsonb->>'expires_at'`。按原写法会恒为 NULL，
+   而那一列正是用来确认「预留出来的 `expires_at` 恰为 `2026-09-13T07:05:16Z`」的。
+2. 第 19／20 步里按 `ga_id` 取 `gate_attempts` 的标量子查询，若某个 `ga_id` 有两行会直接报错。
+   已一律加 `order by sequence desc limit 1`。**前置文件在该报警时应当给出答案，而不是抛异常。**
+
+---
+
 ## 十二、按任务书列项的对照表
 
 | 要求 | 交付 |
