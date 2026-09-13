@@ -22,7 +22,7 @@ const repo=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../../..')
 const manifestPath=path.relative(repo,fileURLToPath(new URL('./ControllerSourceManifest.candidate.json',import.meta.url))).split(path.sep).join('/');
 const need=(ok,why)=>{if(!ok)throw Error(why);};
 export function planSourceBatches(refs,sizes){
- need(Array.isArray(refs)&&refs.length>0&&refs.length<=133&&Array.isArray(sizes)&&sizes.length===refs.length,'COMPLETE_BOUNDED_SOURCE_SET');
+ need(Array.isArray(refs)&&refs.length>0&&refs.length<=160&&Array.isArray(sizes)&&sizes.length===refs.length,'COMPLETE_BOUNDED_SOURCE_SET');
  const batches=[],seen=new Map();let plannedEncodedBytes=0;
  for(let i=0;i<refs.length;i+=128){
   const batch={refs:refs.slice(i,i+128),sizes:sizes.slice(i,i+128)};planRefs(batch.refs,batch.sizes);batches.push(batch);
