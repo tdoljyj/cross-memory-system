@@ -35,11 +35,11 @@
     ]
   },
   "authority_basis": {
-    "actual_owner_approval_sha256": "__F12_PENDING_M3_APPROVAL_SHA256__",
-    "actual_verified_owner_merge": "__F12_PENDING_M3_MERGE_SHA__"
+    "actual_owner_approval_sha256": "e1fcd30a6225a292e93430a088284060008ebf7520fe79246f4f7d14cc6d5676",
+    "actual_verified_owner_merge": "f92cd46e42e20e1fa305c573964e0597230c0b65"
   },
-  "not_before": "__F12_PENDING_WINDOW_START__",
-  "expires_at": "__F12_PENDING_WINDOW_END__",
+  "not_before": "2026-09-13T05:45:14Z",
+  "expires_at": "2026-09-14T05:45:14Z",
   "root_review_subject_sha256_included": false,
   "authority_effect": "NONE",
   "accepted_issuer_purposes": [
