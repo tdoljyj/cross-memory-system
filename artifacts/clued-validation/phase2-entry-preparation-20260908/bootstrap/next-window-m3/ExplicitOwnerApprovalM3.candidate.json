@@ -1,0 +1,507 @@
+{
+  "schema_version": 1,
+  "kind": "EXPLICIT_OWNER_CONTINUATION_APPROVAL_CANDIDATE",
+  "state": "DRAFT_PENDING_VERIFIED_OWNER_MERGE",
+  "authority_effect": "NONE_UNTIL_VERIFIED_OWNER_MERGE",
+  "carrier_name": "M3",
+  "repository": "tdoljyj/cross-memory-system",
+  "owner": "tdoljyj",
+  "approval_action": "OWNER_MERGES_CONTAINING_PULL_REQUEST_VIA_GITHUB_WEB_FLOW",
+  "required_merge_verification": {
+    "merged_by": "tdoljyj",
+    "committer": "web-flow",
+    "verified": true,
+    "verification_reason": "valid"
+  },
+  "this_document_must_not_contain_its_own_merge_time": {
+    "rule": "T is produced by the Owner merge of this document and cannot appear inside it. Every timestamp below is either a historical value from a previous window or a __PENDING_*__ placeholder materialized after the merge.",
+    "enforced_by": "validate-m3-candidate.mjs assertion A4 (timestamp allow-list)"
+  },
+  "previous_authorization": {
+    "proposal": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-20260912/OwnerApprovalProposal.md",
+    "carrier": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-20260912/ExplicitOwnerApproval.candidate.json",
+    "owner_merge_commit": "cbe898d3f5b66f279d78a6b8d583d2c1885d9c89",
+    "owner_merge_pr": 158,
+    "materialized_window": {
+      "not_before": "2026-09-12T07:05:16Z",
+      "expires_at": "2026-09-13T07:05:16Z"
+    },
+    "amended_by": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-20260912/OwnerOrderingAmendment.json",
+    "supersedes": false,
+    "note": "This is the third continuation authorization of this run. It does not supersede or reopen either previous window. The previous window ended with the R29 stop (option A, commit bb193dc): the single remaining allocation was deliberately not consumed."
+  },
+  "window_rule": {
+    "not_before_source": "VERIFIED_OWNER_MERGE_COMMIT_COMMITTED_AT",
+    "duration_seconds": 86400,
+    "expires_at_rule": "not_before + 86400 seconds",
+    "rolling": false,
+    "auto_renew": false,
+    "backdate": false,
+    "materialize_exact_timestamps_after_verified_merge": true,
+    "duration_unchanged_from_previous_authorization": true,
+    "widening_requested": false,
+    "materialized_not_before": "__PENDING_M3_NOT_BEFORE__",
+    "materialized_expires_at": "__PENDING_M3_EXPIRES_AT__",
+    "materialized_owner_merge_commit": "__PENDING_M3_OWNER_MERGE_COMMIT__",
+    "materialization_source_field": "the merge commit's commit.committer.date, per trusted-github.mjs:73; NOT the PR's merged_at, which ran one second later on the previous window (F12PinInventory precedent, window_placeholder_resolution in work/cp01/cp01-substitutions.json)"
+  },
+  "scope": {
+    "project_ref": "uscrdifznmlvczcekqpw",
+    "control_schema": "clued_control",
+    "root_set_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+    "purpose": "SKILL_COEXISTENCE_QUALIFICATION",
+    "environment": "ISOLATED_TEST",
+    "issuer": "tdoljyj",
+    "audience": "urn:clued:audience:skill-coexistence-qualification:uscrdifznmlvczcekqpw",
+    "production_authority": false,
+    "paid_model_authority": false,
+    "new_trust_root": false,
+    "new_signing_identity": false,
+    "second_root_set": false,
+    "scope_expansion": false
+  },
+  "budget_effect": {
+    "new_capacity": false,
+    "refund": false,
+    "reset": false,
+    "automatic_retry": false,
+    "preserve_existing_charges_and_limits": true,
+    "remaining_allocations_before_and_after": 1,
+    "charged_seconds_at_proposal_time": "__PENDING_LIVE_CHARGED_SECONDS_AT_PROPOSAL_TIME__",
+    "charged_seconds_at_proposal_time_expected": "9906 per NextWindowPlanV2Window12Cycle.md honesty-boundary section (5106 + 600*8, budgets.length 8); to be confirmed by a read-only live query before this candidate is finalised, never assumed",
+    "charged_seconds_ceiling_unchanged": 10506,
+    "charged_evidence_bytes_ceiling_unchanged": 2335812531,
+    "allocation_count_note": "The ninth allocation (budgets.length 8 to 9) exactly reaches the 10506 ceiling. Window replacement neither adds nor removes allocations (NextWindowPlanV2Window12Cycle.md honesty boundary)."
+  },
+  "nw02": {
+    "reuse_existing_reviewed_mechanism": true,
+    "mechanism_precedent": "nw01 clause of the previous authorization (merged cbe898d3) and its executed transaction under bootstrap/next-window-20260912/nw01-execution",
+    "row": "clued_control.accepted_binding",
+    "allowed_changed_fields": [
+      "not_before",
+      "expires_at",
+      "owner_approval_commit",
+      "subject_sha256",
+      "registration_acceptance_sha256",
+      "store_acceptance_sha256",
+      "signature_evidence_sha256"
+    ],
+    "allowed_replaced_checks": [
+      "accepted_binding_check",
+      "accepted_binding_owner_approval_commit_check",
+      "accepted_binding_subject_sha256_check"
+    ],
+    "temporarily_disabled_trigger": "accepted_binding_immutable",
+    "trigger_must_be_restored_same_transaction": true,
+    "fail_closed_on_mismatch": true,
+    "pending_field_values": {
+      "not_before": "__PENDING_M3_NOT_BEFORE__",
+      "expires_at": "__PENDING_M3_EXPIRES_AT__",
+      "owner_approval_commit": "__PENDING_M3_OWNER_MERGE_COMMIT__",
+      "subject_sha256": "__PENDING_NW02_SUBJECT_SHA256__",
+      "registration_acceptance_sha256": "__PENDING_NW02_REGISTRATION_ACCEPTANCE_SHA256__",
+      "store_acceptance_sha256": "__PENDING_NW02_STORE_ACCEPTANCE_SHA256__",
+      "signature_evidence_sha256": "__PENDING_NW02_SIGNATURE_EVIDENCE_SHA256__"
+    },
+    "transaction_guards_required_beyond_nw01": {
+      "source": "work/cp01/cp01-substitutions.json transaction_guards_added_after_round_11 (R11-F12 and R11-F13); NW-01's receipt recorded these as owed by the next transaction of this shape",
+      "in_transaction_window_assertion": "clock_timestamp() within [materialized not_before, materialized expires_at) asserted INSIDE the transaction, pre-block and post-block, not only in a preflight (R11-F12)",
+      "sole_non_internal_trigger_assertion": "accepted_binding carries exactly one non-internal trigger, named accepted_binding_immutable, tgenabled O, asserted pre-block and post-block (R11-F13)"
+    }
+  },
+  "generation_registration": {
+    "events_permitted": 1,
+    "kind": "GENERATION_REGISTERED",
+    "generation_id": "ctrgen_26769cc7109ced40bc4016b2af678198",
+    "generation_id_state": "MINTED_NOT_BURNED; minted before the F12 freeze because context.mjs:15 and both issuer qualification documents must reference it (F12PinInventory.md line 3); burned only by the append_event of this clause",
+    "root_set_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+    "predecessor_generation_id": "ctrgen_5e0440a95ac8ee257b9e4236cabd275b",
+    "predecessor_generation_id_source": "CURRENT_HEAD_GENERATION_AT_APPEND_TIME",
+    "expected_sequence": 6,
+    "generation_ordinal": 7,
+    "new_generation": true,
+    "new_trust_root": false,
+    "second_root_set": false,
+    "new_signing_identity": false,
+    "not_before_and_expires_at_source": "THIS_APPROVAL_MATERIALIZED_WINDOW_TIMESTAMPS",
+    "must_not_precede": "NONE",
+    "ordering": {
+      "registration_before_cp02": true,
+      "why": "Adopts from the start the order the Owner granted for root6 in OwnerOrderingAmendment.json: registering before the control-plane change lets CP-02's root digest guard pin a MEASURED value instead of a projected one, and leaves no interval that only a successful registration can exit. The root6-era refutation table applies identically: after this window's literals expire, the three CP-01-pinned functions are already unusable, so registration adds no new damage.",
+      "still_required_before_append_event": [
+        "independent review of the final registration body (round number pending)",
+        "a separate explicit Owner go-ahead for the append_event itself, distinct from the merge of this document (step13 precedent: build-step13-sql.mjs, step13-pre.sql with every column confirmed, step13-readback.sql immediately after, no blind re-run on interruption)"
+      ]
+    },
+    "registration_body_prerequisites": {
+      "source_table": "NextWindowPlanV2Window12Cycle.md, root7 registration prerequisite checklist (11 items, keyed to the root6 step13-exec.sql actual sample)",
+      "predecessor_sha256": "__PENDING_ROOT6_REGISTRATION_BODY_SHA256__",
+      "predecessor_sha256_derivation": "digest of the root6 registration body per G decision table item 8; canonicalDigest(root) at context.mjs:322 (sorted+compact+LF) as corroboration; never JS insertion-order serialisation (R9-F1)",
+      "history_prefix_digest": "__PENDING_ROOT7_HISTORY_PREFIX_DIGEST__",
+      "history_prefix_digest_derivation": "canonicalDigest over live root events 0..6 (the live chain reads only events[0..6], derivation formula known at context.mjs:59); requires a read-only live measurement, so it is pending here",
+      "history_prefix_sequence": 6,
+      "minimum_accepted_generation": "ctrgen_26769cc7109ced40bc4016b2af678198",
+      "issuer_bindings": {
+        "count": 3,
+        "shape": "STATUS one document; GATE_AUTHORIZATION and GATE_RESULT share one document, as in the root6 body",
+        "why_new_documents_are_mandatory": "Pin 5 of NextWindowPlanV2Window12Cycle.md (measured): the root5-era documents c1749399/3ae8bd41 declare control_trust_root_generation ctrgen_e5df4322 and expires_at 2026-09-11T10:21:05Z; context.mjs:319 asserts generation equality and currentWindow over exactly these fields at GRR time, so reusing them aborts the 600-second run at EXACT_PURPOSE_QUALIFICATION.",
+        "status_qualification_ref": {
+          "uri": "__PENDING_ROOT7_ISSUER_STATUS_QUALIFICATION_URI__",
+          "sha256": "__PENDING_ROOT7_ISSUER_STATUS_QUALIFICATION_SHA256__"
+        },
+        "gate_qualification_ref": {
+          "uri": "__PENDING_ROOT7_ISSUER_GATE_QUALIFICATION_URI__",
+          "sha256": "__PENDING_ROOT7_ISSUER_GATE_QUALIFICATION_SHA256__"
+        },
+        "window_fields": "both documents bind ctrgen_26769cc7109ced40bc4016b2af678198 and carry this approval's materialized window; their digests therefore finalise only after M3, and context.mjs:317 is repinned to them by realize-f12.mjs"
+      },
+      "algorithm_config_accepted_config_ref": "__PENDING_ROOT7_ALGORITHM_CONFIG_REF_DECISION__",
+      "algorithm_config_accepted_config_ref_rule": "carried forward from the root6 body (blob b25abb05) unless the F12 reissue set includes that acceptance document, per G decision table items 9-11; the decision, not this draft, resolves the placeholder",
+      "revocation_event_set_digest": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570",
+      "revocation_event_set_digest_note": "unchanged from the root6 body: the empty revocation set digest; revocation as_of/expires_at fields take this approval's materialized window",
+      "signature_binding": {
+        "owner_merge_commit": "__PENDING_M3_OWNER_MERGE_COMMIT__",
+        "signed_object_sha256": "__PENDING_ROOT7_SIGNED_OBJECT_SHA256__",
+        "signed_object_sha256_rule": "canonicalDigest of the registration body with signature_binding excluded, as declared by algorithm_config.signed_payload_excluded_fields in the root6 body",
+        "signature_evidence_ref": {
+          "uri": "__PENDING_ROOT7_SIGNATURE_EVIDENCE_REF_URI__",
+          "sha256": "__PENDING_ROOT7_SIGNATURE_EVIDENCE_REF_SHA256__"
+        }
+      },
+      "owner_approval_ref": {
+        "uri": "__PENDING_ROOT7_OWNER_APPROVAL_REF_URI__",
+        "sha256": "__PENDING_ROOT7_OWNER_APPROVAL_REF_SHA256__",
+        "note": "the blob of THIS document as merged; resolvable only after the merge"
+      },
+      "independent_acceptance_ref": {
+        "uri": "__PENDING_ROOT7_INDEPENDENT_ACCEPTANCE_REF_URI__",
+        "sha256": "__PENDING_ROOT7_INDEPENDENT_ACCEPTANCE_REF_SHA256__",
+        "note": "new document from the independent review session, root6 analogue blob 44a637b8"
+      },
+      "metadata_binding_sha256": "__PENDING_ROOT7_METADATA_BINDING_SHA256__",
+      "idempotency_key": "__PENDING_ROOT7_IDEMPOTENCY_KEY__",
+      "idempotency_key_format": "register-root7-window12-<M3 merge date, YYYYMMDD>, derived by the same build-step13-sql.mjs generator lineage as the root6 key register-root6-window11-20260912"
+    },
+    "why_root7_and_not_root6_reuse": "context.mjs pins 1-3 of NextWindowPlanV2Window12Cycle.md (all measured): the root6 registration body declares expires_at 2026-09-13T07:05:16Z and currentWindow at context.mjs:62 validates the registration body window; GENERATION_REGISTERED events cannot be re-registered (append_event generation_reuse_or_rollback); therefore a new window requires a new generation."
+  },
+  "cp02": {
+    "new_in_this_authorization": true,
+    "reason": "CP-01 (applied and read back, commit a0cdb28) pinned into the three replaceable functions the root6 generation id, the window literals 2026-09-12T07:05:16Z / 2026-09-13T07:05:16Z, the series_f > 16 forward cap, and the root object digest of the six-event root. All four pin families go stale in this window: the window literals expire at 2026-09-13T07:05:16Z, the twenty-first forward makes series_f 17, and registering root7 changes root.generation_id, the event count and therefore the root object digest. CP-02 re-pins them under the same discipline.",
+    "replaceable_functions": [
+      "clued_control.reserve_gate(text,text)",
+      "clued_control.reserve_execution_budget(text,text)",
+      "clued_control.append_status_manifest(text,text)"
+    ],
+    "excluded_from_direct_replacement": [
+      "clued_control.effective_execution_binding()"
+    ],
+    "excluded_function_may_change_only_via": "APPEND_ONLY_BINDING_FORWARD_TRANSACTION_RECORDING_EXECUTION_BINDING_FORWARD_ACCEPTED",
+    "permitted_edit_classes": [
+      "BINDING_FORWARD_CAP_SERIES_F_16_TO_17",
+      "SUPERSEDED_WINDOW_LITERALS_TO_THIS_WINDOW_MATERIALIZED_TIMESTAMPS",
+      "FULL_ROOT_OBJECT_DIGEST_REPINNED_TO_ROOT7_POST_REGISTRATION_MEASURED_VALUES"
+    ],
+    "edit_class_mapping_to_cp01_edit_ids": {
+      "BINDING_FORWARD_CAP_SERIES_F_16_TO_17": "the G3/B3 lines, 16 to 17",
+      "SUPERSEDED_WINDOW_LITERALS_TO_THIS_WINDOW_MATERIALIZED_TIMESTAMPS": "the G2/B2/B7/B8/A4 lines, 2026-09-13T07:05:16Z literals to this approval's materialized timestamps (G7 stays byte-comparable with B7 as in CP-01, constant-false in reserve_gate)",
+      "FULL_ROOT_OBJECT_DIGEST_REPINNED_TO_ROOT7_POST_REGISTRATION_MEASURED_VALUES": "the G8/B9 three-assertion guard, re-pinned to values measured from the live store after root7 registration"
+    },
+    "additional_classes_this_draft_believes_required_but_plan_v2_step_3_does_not_name": {
+      "state": "AWAITING_ADJUDICATION_DO_NOT_TREAT_AS_GRANTED",
+      "rule": "None of the three classes below is authorized by this clause until the plan author or independent reviewer confirms them and this candidate is re-issued; they are recorded here instead of silently added or silently dropped (M3DraftNotes.md section on open points has the full argument).",
+      "candidate_classes": [
+        {
+          "class": "LIVE_ROOT_GENERATION_ROOT6_TO_ROOT7",
+          "cp01_analogue": "G1/B1/A3",
+          "why_believed_required": "after root7 registration, series_view->'root'->>'generation_id' is ctrgen_26769cc7..., so the CP-01 pin 'is distinct from ctrgen_5e0440a9...' raises in all three functions; without this class the run cannot pass reserve_gate at all"
+        },
+        {
+          "class": "BOUND_OPEN_ENDED_SEQUENCE_GE_89_SEGMENT_TO_GE_89_AND_LT_90_AND_ADD_GE_90_ROOT7_SEGMENT",
+          "cp01_analogue": "G4/G5/G6/B4/B5/B6",
+          "why_believed_required": "execution_events has 89 rows (forward 20 at sequence 89), so the ninth budget lands at sequence >= 90 carrying the root7 generation and this window's expiry; the CP-01 segment 'sequence >= 89 pins root6 + 2026-09-13T07:05:16Z' would reject it. Boundary 90 per F12PinInventory.md (ninth budget necessarily >= 90, budgets 1-8 all <= 89) and must be re-verified against the live store before the substitution table is built, per that file's own caveat"
+        },
+        {
+          "class": "STATUS_MANIFEST_SCHEMA_DIGEST_TO_DIGEST_CARRIED_BY_THIS_RUN_CONTROLLER_INCLUDING_ALLOW_LIST",
+          "cp01_analogue": "A1/A2",
+          "why_believed_required": "status-manifest.root5.schema.json pins the root6 generation (the previous authorization's controller_rebuild.not_affected clause spared it ONLY because the generation did not change then); with root7 the schema digest changes to __PENDING_F12_STATUS_MANIFEST_SCHEMA_DIGEST_DECISION__ and append_status_manifest's allow list and strict-equality lines must follow"
+        }
+      ]
+    },
+    "root_digest_repin": {
+      "shape": "identical to the CP-01 G8/B9 three-assertion shape ruled (e) by SuccessorReviewerRound10.md: (i) frozen historical prefix byte-for-byte INCLUDING recorded_at, (ii) every other root key plus the registration event with only recorded_at removed, (iii) exact event count",
+      "frozen_prefix_now_covers": "root events with sequence <= 6 (the five original events plus the root6 registration event, whose recorded_at is frozen the moment it is written)",
+      "frozen_prefix_digest": "__PENDING_CP02_FROZEN_PREFIX_DIGEST_EVENTS_LE_6__",
+      "frozen_prefix_digest_rule": "measured by a read-only query evaluating the guard's own expression against the live store, published for review before the CP-02 transaction, independently re-measured; never JS-side serialisation (R9-F1: jsonb key order is Postgres's)",
+      "registration_event_in_domain": "root.events[sequence=7], the root7 registration event; only its recorded_at leaves the digest domain, same carve-out and same justification as CP-01 (clock_timestamp-written, append_event window-pinned, events_immutable enforced)",
+      "other_keys_digest": "__PENDING_CP02_MEASURED_ROOT_DIGEST_POST_ROOT7_REGISTRATION__",
+      "other_keys_digest_rule": "MEASURED, not projected: computed after root7 registration and before CP-02 is finalised, by the measure-root6-root-digest.sql lineage parameterised to root7 (the OwnerOrderingAmendment consequence, carried into this window by the ordering clause above)",
+      "root_events_length_must_be_asserted_equal": 7,
+      "exception_name_must_remain": "series_full_original_root_changed",
+      "no_raise_may_be_removed": true
+    },
+    "required_transaction_form": {
+      "single_transaction": true,
+      "lock": "access exclusive on the eight clued_control tables",
+      "opening_prosrc_sha256_assertions_for": [
+        "clued_control.append_status_manifest(text,text)",
+        "clued_control.effective_execution_binding()",
+        "clued_control.reserve_execution_budget(text,text)",
+        "clued_control.reserve_gate(text,text)"
+      ],
+      "preimage_prosrc_sha256_source": "__PENDING_CP02_PREIMAGE_PROSRC_SHA256_TABLE__",
+      "preimage_note": "the CP-02 pre-image is the CP-01 POST-image plus whatever NW-02 has not touched (NW-02 touches no function); the table is derived read-only by the cp01-derive.sql lineage and pinned in the cp02 substitution table before any write",
+      "assert_unchanged_function_too": true,
+      "abort_on_any_drift": true,
+      "in_transaction_window_assertion": "clock_timestamp() within [this approval's materialized not_before, expires_at), pre-block and post-block (R11-F12, carried from CP-01)",
+      "untouched_functions_digest_assertion": "all clued_control functions except the three replaced, pinned as one digest, function count asserted, pre-block and post-block (R11-F13, carried from CP-01); expected value __PENDING_CP02_UNTOUCHED_FUNCTIONS_DIGEST__ derived read-only before the transaction",
+      "accepted_binding_trigger_assertion": "exactly one non-internal trigger, accepted_binding_immutable, tgenabled O, pre-block and post-block (carried from CP-01; NW-02 is the transaction immediately before, so this is again the first opportunity to check)",
+      "immediate_read_only_readback": true,
+      "archive_exact_input_and_raw_response": true,
+      "independent_review_before_owner_merge": true,
+      "blind_retry_after_interruption": false
+    },
+    "prohibited": [
+      "LOOSENING_SERIES_N_GT_9",
+      "LOOSENING_CHARGED_SECONDS_CEILING_10506",
+      "LOOSENING_CHARGED_EVIDENCE_BYTES_CEILING_2335812531",
+      "WEAKENING_NEW_BUDGET_EXPIRES_AT_MUST_NOT_EXCEED_ACCEPTED_BINDING_EXPIRES_AT",
+      "REMOVING_FIRST_PASS_STOPS",
+      "REMOVING_TERMINAL_RECEIPT_CHECKS",
+      "REMOVING_ORIGINAL_BYTES_CHECKS",
+      "ADDING_REFUND_RESET_OR_AUTOMATIC_RETRY_PATH",
+      "DROP_FUNCTION",
+      "CHANGING_ANY_OF_THE_OTHER_ELEVEN_CONTROL_PLANE_FUNCTIONS",
+      "RAISING_THE_FORWARD_CAP_BEYOND_17_OR_APPLYING_IT_TO_ONLY_ONE_SIDE",
+      "REPEATING_THE_2026_09_11_OUT_OF_BAND_REWRITE_METHOD"
+    ]
+  },
+  "forward_cap_extension": {
+    "is_a_cap_extension": true,
+    "described_as_maintenance": false,
+    "from": "series_f > 16",
+    "to": "series_f > 17",
+    "repository_side": {
+      "file": "scripts/phase2-qualification/control-context-verifier-*/context.mjs",
+      "constant": "qualificationLimits.forwards",
+      "from": 16,
+      "to": 17,
+      "note": "The F12 candidate controller already carries 17 (F12PinInventory.md, context.mjs:18, settable now); its AUTHORITY comes only from the Owner merge of this clause. Database side is the G3/B3 class above. One clause covers both halves, as the previous authorization established."
+    },
+    "covers_both_sides": true,
+    "independent_opinion_ref": {
+      "path": "__PENDING_FORWARD_CAP_EXTENSION_OPINION_PATH__",
+      "sha256": "__PENDING_FORWARD_CAP_EXTENSION_OPINION_SHA256__",
+      "note": "the 15-to-16 opinion (ForwardCapExtensionIndependentOpinion20260912.json, round 9) argued that one window's migration needs exactly one more forward; it does not speak for 16-to-17. A NEW independent opinion for this extension is required before merge; this placeholder fails closed until it exists."
+    },
+    "why_needed": "Moving the execution binding onto the F12 controller requires a twenty-first binding forward; the sixteenth counted forward was consumed as execution event 89 in the 2026-09-12/13 window (R29LateBoundStatusPayloadDeadlock.md measured series_f = 16 and live reserve_gate G3 refusing at series_f > 16).",
+    "grants_additional_execution_capacity": false,
+    "unchanged_by_this_extension": [
+      "series_n > 9",
+      "charged_seconds <= 10506",
+      "charged_evidence_bytes <= 2335812531"
+    ]
+  },
+  "controller_realization_f12": {
+    "required": true,
+    "reason": "Pins 1-5 of NextWindowPlanV2Window12Cycle.md: the window12 cycle forces controller byte changes (forwards 17, window expiry, generation constant, root7 budget-sequence branch, issuer qualification digests), so the freeze point leaves 68133f2d and every document pinning a controller digest is re-issued against F12.",
+    "pin_inventory": "artifacts/clued-validation/phase2-entry-preparation-20260908/root6-capacity/F12PinInventory.md",
+    "constants_settable_before_merge": "context.mjs:15 generation to ctrgen_26769cc7..., :18 forwards to 17, root7 generation constant and budget-sequence threshold 90 (subject to the live re-check the inventory itself requires), root7 branch at :194/:195",
+    "constants_materialized_after_merge": "root6Expiry at :191 (and its uses at :43/:207/:226) to __PENDING_M3_EXPIRES_AT__; issuer qualification digests at :317 to the two __PENDING_ROOT7_ISSUER_*_SHA256__ values once those documents carry the materialized window",
+    "sole_post_merge_entry_point": "realize-f12.mjs, replacement counts asserted one by one (F12PinInventory.md conclusion); no hand edits",
+    "frozen_controller_digest": "__PENDING_F12_CONTROLLER_DIGEST__",
+    "document_set_reissued_against_f12": "the capacity four-set, qualification and acceptance documents, generator-built with the field specifications, decision table and R26 lessons built in (plan v2 step 2); the S24-dependent parts finalise after this merge and travel via the M4 carrier",
+    "status_manifest_schema": {
+      "digest_decision": "__PENDING_F12_STATUS_MANIFEST_SCHEMA_DIGEST_DECISION__",
+      "note": "the previous authorization could declare the schema not_affected only because the generation did not change; this window it does. Whether the schema is reissued (and its digest re-pinned in append_status_manifest via the A1/A2-analogue class) is an open adjudication recorded in cp02.additional_classes above."
+    }
+  },
+  "execution_boundary": {
+    "reserve_execution_budget_before_final_pass": false,
+    "reserve_ga_or_gate_before_final_pass": false,
+    "reuse_expired_window_preimage": false,
+    "reuse_expired_window_candidate": false,
+    "fresh_lifecycle_required": true,
+    "expired_windows_whose_material_must_not_be_reused": [
+      "2026-09-10/11",
+      "2026-09-11/12",
+      "2026-09-12/13"
+    ]
+  },
+  "recorded_governance_question": {
+    "raised_by": "IMPLEMENTING_SIDE",
+    "times_raised_before_this_document": 3,
+    "question": "The controller under qualification is built by the implementing side. Under this approval the enforcement layer it must satisfy is again modified by the implementing side, specifically so that this controller passes. What does the resulting qualification result certify?",
+    "context": "Carried forward verbatim in substance from the previous authorization; this window repeats the pattern a second time (CP-02 after CP-01), which strengthens rather than weakens the question.",
+    "blocks_this_approval": false,
+    "required_in_final_result": "The final qualification result must state plainly that the enforcement layer of this qualification run was modified by the party being qualified, before the run, in two successive windows."
+  },
+  "placeholders": {
+    "rule": "Every value of the form __PENDING_<NAME>__ in this document is enumerated below. validate-m3-candidate.mjs asserts set equality between this list, the hard-coded list in the script, and the placeholders actually occurring in the file; a placeholder appearing anywhere but this list, or listed but absent, fails validation. All placeholders must be resolved (and this state field advanced) before the pull request carrying this document is opened for the Owner.",
+    "resolution_deadline": "before independent review of the final candidate; none survives into the merged document",
+    "list": [
+      {
+        "placeholder": "__PENDING_M3_NOT_BEFORE__",
+        "resolved_from": "the M3 verified owner merge commit committer date",
+        "resolvable": "after merge only; the merged document keeps the window_rule and the materialization is recorded in the verification artifact, as OwnerApprovalVerification.json did for the previous window"
+      },
+      {
+        "placeholder": "__PENDING_M3_EXPIRES_AT__",
+        "resolved_from": "not_before + 86400 seconds",
+        "resolvable": "after merge only, same as above"
+      },
+      {
+        "placeholder": "__PENDING_M3_OWNER_MERGE_COMMIT__",
+        "resolved_from": "the merge commit sha of this document's pull request",
+        "resolvable": "after merge only, same as above"
+      },
+      {
+        "placeholder": "__PENDING_NW02_SUBJECT_SHA256__",
+        "resolved_from": "the NW-02 registration subject canonical bytes",
+        "resolvable": "after the subject is assembled post-merge"
+      },
+      {
+        "placeholder": "__PENDING_NW02_REGISTRATION_ACCEPTANCE_SHA256__",
+        "resolved_from": "the NW-02 registration subject acceptance document",
+        "resolvable": "after independent acceptance post-merge"
+      },
+      {
+        "placeholder": "__PENDING_NW02_STORE_ACCEPTANCE_SHA256__",
+        "resolved_from": "the NW-02 control store acceptance document",
+        "resolvable": "after independent acceptance post-merge"
+      },
+      {
+        "placeholder": "__PENDING_NW02_SIGNATURE_EVIDENCE_SHA256__",
+        "resolved_from": "the NW-02 subject signature evidence blob",
+        "resolvable": "after merge evidence capture"
+      },
+      {
+        "placeholder": "__PENDING_LIVE_CHARGED_SECONDS_AT_PROPOSAL_TIME__",
+        "resolved_from": "read-only live query of charged seconds",
+        "resolvable": "now, by a session with read access; this drafting session performs no store access by mandate"
+      },
+      {
+        "placeholder": "__PENDING_ROOT6_REGISTRATION_BODY_SHA256__",
+        "resolved_from": "digest of the root6 registration body, derivation per G decision table item 8",
+        "resolvable": "now, once the derivation method is adjudicated"
+      },
+      {
+        "placeholder": "__PENDING_ROOT7_HISTORY_PREFIX_DIGEST__",
+        "resolved_from": "canonicalDigest over live root events 0..6",
+        "resolvable": "now, by a read-only live measurement"
+      },
+      {
+        "placeholder": "__PENDING_ROOT7_ISSUER_STATUS_QUALIFICATION_URI__",
+        "resolved_from": "the new STATUS issuer qualification document blob",
+        "resolvable": "document body now, digest after window materialization"
+      },
+      {
+        "placeholder": "__PENDING_ROOT7_ISSUER_STATUS_QUALIFICATION_SHA256__",
+        "resolved_from": "same document",
+        "resolvable": "after window materialization"
+      },
+      {
+        "placeholder": "__PENDING_ROOT7_ISSUER_GATE_QUALIFICATION_URI__",
+        "resolved_from": "the new GATE issuer qualification document blob (two purposes, one document)",
+        "resolvable": "document body now, digest after window materialization"
+      },
+      {
+        "placeholder": "__PENDING_ROOT7_ISSUER_GATE_QUALIFICATION_SHA256__",
+        "resolved_from": "same document",
+        "resolvable": "after window materialization"
+      },
+      {
+        "placeholder": "__PENDING_ROOT7_ALGORITHM_CONFIG_REF_DECISION__",
+        "resolved_from": "G decision table items 9-11: carry forward blob b25abb05 or follow the F12 reissue",
+        "resolvable": "at adjudication"
+      },
+      {
+        "placeholder": "__PENDING_ROOT7_SIGNED_OBJECT_SHA256__",
+        "resolved_from": "canonicalDigest of the registration body minus signature_binding",
+        "resolvable": "after the body is final post-merge"
+      },
+      {
+        "placeholder": "__PENDING_ROOT7_SIGNATURE_EVIDENCE_REF_URI__",
+        "resolved_from": "the captured merge evidence blob",
+        "resolvable": "after merge"
+      },
+      {
+        "placeholder": "__PENDING_ROOT7_SIGNATURE_EVIDENCE_REF_SHA256__",
+        "resolved_from": "same blob",
+        "resolvable": "after merge"
+      },
+      {
+        "placeholder": "__PENDING_ROOT7_OWNER_APPROVAL_REF_URI__",
+        "resolved_from": "the blob of this document as merged",
+        "resolvable": "after merge"
+      },
+      {
+        "placeholder": "__PENDING_ROOT7_OWNER_APPROVAL_REF_SHA256__",
+        "resolved_from": "same blob",
+        "resolvable": "after merge"
+      },
+      {
+        "placeholder": "__PENDING_ROOT7_INDEPENDENT_ACCEPTANCE_REF_URI__",
+        "resolved_from": "the independent review session's acceptance blob",
+        "resolvable": "after independent acceptance"
+      },
+      {
+        "placeholder": "__PENDING_ROOT7_INDEPENDENT_ACCEPTANCE_REF_SHA256__",
+        "resolved_from": "same blob",
+        "resolvable": "after independent acceptance"
+      },
+      {
+        "placeholder": "__PENDING_ROOT7_METADATA_BINDING_SHA256__",
+        "resolved_from": "the build-step13-sql.mjs generator lineage",
+        "resolvable": "when the body is final"
+      },
+      {
+        "placeholder": "__PENDING_ROOT7_IDEMPOTENCY_KEY__",
+        "resolved_from": "register-root7-window12-<M3 merge date>",
+        "resolvable": "after merge"
+      },
+      {
+        "placeholder": "__PENDING_CP02_FROZEN_PREFIX_DIGEST_EVENTS_LE_6__",
+        "resolved_from": "read-only measurement of root events sequence <= 6 byte-for-byte including recorded_at, in-database",
+        "resolvable": "now, by a session with read access; published for review before CP-02"
+      },
+      {
+        "placeholder": "__PENDING_CP02_MEASURED_ROOT_DIGEST_POST_ROOT7_REGISTRATION__",
+        "resolved_from": "measure-root6-root-digest.sql lineage parameterised to root7, run after root7 registration",
+        "resolvable": "only after root7 registration"
+      },
+      {
+        "placeholder": "__PENDING_CP02_PREIMAGE_PROSRC_SHA256_TABLE__",
+        "resolved_from": "cp01-derive.sql lineage run read-only against the live functions",
+        "resolvable": "before the CP-02 transaction"
+      },
+      {
+        "placeholder": "__PENDING_CP02_UNTOUCHED_FUNCTIONS_DIGEST__",
+        "resolved_from": "the R11-F13 digest recomputed over the twelve untouched functions",
+        "resolvable": "before the CP-02 transaction"
+      },
+      {
+        "placeholder": "__PENDING_F12_CONTROLLER_DIGEST__",
+        "resolved_from": "build-linux-manifest.mjs over the realized F12 sources",
+        "resolvable": "after realize-f12.mjs runs post-merge"
+      },
+      {
+        "placeholder": "__PENDING_F12_STATUS_MANIFEST_SCHEMA_DIGEST_DECISION__",
+        "resolved_from": "the adjudication of the status-manifest schema question in cp02.additional_classes",
+        "resolvable": "at adjudication"
+      },
+      {
+        "placeholder": "__PENDING_FORWARD_CAP_EXTENSION_OPINION_PATH__",
+        "resolved_from": "the new independent opinion for 16-to-17",
+        "resolvable": "when that opinion is issued; blocks merge until then"
+      },
+      {
+        "placeholder": "__PENDING_FORWARD_CAP_EXTENSION_OPINION_SHA256__",
+        "resolved_from": "same document",
+        "resolvable": "same"
+      }
+    ]
+  },
+  "preparation_requested_by_owner_in_current_conversation": false,
+  "preparation_context": "Drafted by parallel session H per the window12 cycle plan (NextWindowPlanV2Window12Cycle.md step 3); carries no authority and performs no store access.",
+  "final_approval_requires_owner_merge": true
+}
