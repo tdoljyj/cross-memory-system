@@ -25,7 +25,13 @@ const rel = p => path.relative(REPO, p).replaceAll('\\', '/');
 // Repo-relative paths whose digests are computed here rather than pasted, so a stale digest is
 // impossible: the file is read and hashed at substitution time.
 const VERIFICATION = path.join(HERE, '..', 'OwnerApprovalVerification.json');
-const PROPOSAL = path.join(REPO, 'artifacts/clued-validation/phase2-entry-preparation-20260908/root6-capacity/NextWindowPlanV2Window12Cycle.md');
+// NW02-R1 (independent acceptance, REFUSED the previous choice): the proposal is the PR 164 body,
+// captured verbatim from the API alongside OwnerApprovalVerification.json. The earlier choice --
+// the window12 work plan -- was refused because its Owner-actions section, the only
+// document-specific ground cited for it, had itself been measured defective by NW02-F1 in this
+// same directory (three actions listed, four owed). The PR body states those obligations
+// correctly and carries the NW-01 proposal structure section for section.
+const PROPOSAL = path.join(HERE, '..', 'OwnerApprovalProposalPR164.md');
 
 for (const f of [SUBJECT, VERIFICATION, PROPOSAL]) {
   if (!fs.existsSync(f)) throw new Error('MISSING_INPUT: ' + rel(f));
@@ -48,11 +54,10 @@ const SUBS = [
   ['__PENDING_M3_MERGE_VERIFICATION_STRING__', verificationString],
   ['__PENDING_M3_OWNER_APPROVAL_VERIFICATION_PATH__', rel(VERIFICATION)],
   ['__PENDING_M3_OWNER_APPROVAL_VERIFICATION_SHA256__', sha256(fs.readFileSync(VERIFICATION))],
-  // Adjudication (NW02AdjudicationsRound1, open point 3): M3 has no file named
-  // OwnerApprovalProposal.md. Its structural analogue is the plan document, which was merged in
-  // the SAME Owner merge as the carrier (PR 164) and carries the explicit "Owner actions" section
-  // naming the M3 merge as the first of them -- the same proposal-and-approval-in-one-merge shape
-  // NW-01 had. Nothing is fabricated after the fact.
+  // Superseded adjudication, kept for the record: open point 3 first chose the plan document on a
+  // same-merge argument. Independent acceptance refused it (NW02-R1) -- same-merge does not
+  // discriminate among 48 files, and the one specific ground was self-refuted. Now the captured
+  // proposal itself.
   ['__PENDING_M3_PROPOSAL_PATH__', rel(PROPOSAL)],
   ['__PENDING_M3_PROPOSAL_SHA256__', sha256(fs.readFileSync(PROPOSAL))],
 ];
