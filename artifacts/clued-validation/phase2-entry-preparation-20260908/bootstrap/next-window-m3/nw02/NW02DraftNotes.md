@@ -215,6 +215,32 @@ S14 断言写入侧不含任何前像摘要、前置块不含任何后像摘要�
 
 **裁定：Owner 于 2026-09-13 在会话中选方案 B —— 去掉那个顶层键。已按此重出。**
 
+**与父会话裁定冲突，已记录。** 同日父会话（plan 作者）在
+`NW02AdjudicationsRound1.md` 裁定采**方案 A**，并给出我没量到的两条事实：
+控制器源码里 `subject_sha256` **零命中**（控制器不读它），活库唯一消费方
+`accepted_binding_subject_sha256_check` 实测只钉摘要值、**不校验形态**。
+
+我复核了这两条，**接受，但把第一条说得更准一点**：
+
+```sh
+grep -rn subject_sha256 scripts/phase2-qualification/control-context-verifier-root6-linux-successor/ | wc -l   # 0
+grep -rn subject_sha256 scripts/phase2-qualification/ | wc -l                                                  # 91
+```
+
+「零命中」对 **F12 控制器目录**成立；全 `scripts/phase2-qualification/` 下另有 91 处，分布在
+`nonproduction-control-store`（25）、`preentry-parent`（15）、`control-root-registration`（3）。
+逐条看过：绝大多数是**另一个字段** `review_subject_sha256`（评审主体摘要，与本件无关），
+其余是把 `subject_sha256` 当 `accepted_binding` 的**列名**用（如一条 insert 的列清单）。
+**没有一处把主体件当文档去校验其形态。** 所以父会话的结论成立，只是措辞该限定到控制器目录。
+
+第二条与我自己那次只读 select 的结果一致：
+`CHECK (subject_sha256 = '64ae7adc…'::text)` —— 只比对摘要值。
+
+它们确实把我「打破被评审背书的形态」的顾虑降了级。
+但它们证明的是**两案都不触闸门**，而不是 A 优于 B；在两者皆可的前提下，
+**Owner 在会话中的选择是更高的依据**，故本目录按 B 执行。
+父会话那份裁定我没有删改，它与本节并存，供评审一并看。
+
 原本的问题是：任务交待「代际相关处指向 root7 `ctrgen_26769cc7…`，控制器摘要用 F12」，照办时撞上两件事。
 
 - **NW-01 的 `current_control_root` 指的是活头，不是待注册代际。** 实测：NW-01 执行时活头是 root5
@@ -262,9 +288,25 @@ M3 载体第 110–113 行**明文要求**的两条守卫，所以我保留了�
 
 NW-01 主体件的 `approval.verification` = `"verified:true;reason:valid"`，
 `approval.verification_ref` 指向 `next-window-20260912/OwnerApprovalVerification.json`（sha `69e84e74…`）。
-`next-window-m3/` 下**没有**对应文件，`find` 全仓也没有。
+`next-window-m3/` 下**当时没有**对应文件。
 
-我拿不到的那一项：**`commit.verification.verified` / `.reason`**。本会话可用的
+**已解除（2026-09-13，父会话补出，提交 `b5a2076`）**：
+`artifacts/.../bootstrap/next-window-m3/OwnerApprovalVerification.json`，
+3114 字节，sha256 `a15169bc8d6f916103ea023fff4401a12d0e055e534fc0bdda1ef3a53340fbd6`。
+我复核过它的关键字段：`merge.sha=f92cd46e…`、`parents=[88fc944b…, c8628798…]`（与我量到的
+PR 164 base/head 一致）、`committer_login=web-flow`、`author_login=tdoljyj`、
+`verification={verified:true, reason:"valid", verified_at:"2026-09-13T05:45:15Z"}`，
+`is_the_controller_verification=false`。它由世系脚本
+`work/twentieth-forward/capture-owner-merge.mjs` 产出，不是手写。
+
+**但主体件的三个哨兵本轮没有实化**，因为开放点 3（`proposal_path`）仍未决，主体件
+无论如何还定不了稿；实化会再把 `subject_sha256` 挪一次，级联三份文书。
+两者一并解决时再动，届时 `approval.verification` 写 `"verified:true;reason:valid"`、
+`verification_ref` 指向上面这份件及其 sha256。
+
+原始记述（保留）：
+
+本会话拿不到的那一项：**`commit.verification.verified` / `.reason`**。本会话可用的
 `get_commit` 工具返回的提交对象里**不含 `verification` 子对象**，我没有别的只读途径去量它。
 `committer.login=web-flow`、`author.login=tdoljyj`、`committed_at`、PR 164 的 `merged_by` / `merged_at`
 我都量到了并写进了参数件的 `window.source_measurement`，但**签名是否 verified 我没有量到，就不写**。
