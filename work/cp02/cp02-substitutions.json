@@ -92,18 +92,44 @@
       "measured_context": "y new objects use the ordinary Root5 schema.\\n if obj->>'schema_digest' is distinct from '510f3b90..."
     },
     {
-      "id": "C6",
-      "class": "FULL_ROOT_OBJECT_DIGEST_REPINNED_TO_ROOT7_POST_REGISTRATION_MEASURED_VALUES",
-      "adjudicated": "M3 carrier cp02.permitted_edit_classes",
-      "from": "72355efd8abde02fda6401034ee39687b5ef5c54d7511d916ccd00f70a7cd6e2",
-      "to": "__PENDING_MEASURED_AFTER_ROOT7_REGISTRATION__",
+      "id": "C6a",
+      "class": "FROZEN_PREFIX_WIDENED_TO_INCLUDE_THE_ROOT6_REGISTRATION_EVENT",
+      "operation": "REPLACE (selector and digest together)",
+      "from": "(e->>'sequence')::bigint<=5)::text,'UTF8')),'hex') is distinct from '45c6a2cbaf33bb27f6b4c136440d71d767943acfa9772867e219627759ca5bbc'",
+      "to": "(e->>'sequence')::bigint<=6)::text,'UTF8')),'hex') is distinct from '__PENDING_MEASURED_AFTER_ROOT7_REGISTRATION_PREFIX_LE6__'",
       "expected_occurrences": {
         "reserve_gate": 1,
         "reserve_execution_budget": 1,
         "append_status_manifest": 0
       },
-      "why": "sha256(r::text) over the whole root row, which only exists once the root7 registration event is written. MEASURED, never projected -- this is why the M3 carrier orders registration before CP-02",
-      "distinct_from": "the a93bfdda class, which is canonicalDigest(registration body) and is what context.mjs:322 needs. Same moment, different value. Conflating them was the second generator defect found during the reissue"
+      "why": "the root6 registration event's recorded_at is frozen once written, so the frozen prefix widens from <=5 to <=6 and only sequence=7's recorded_at stays carved out. Measured: the anchor is 27 characters and present once in each of the two functions."
+    },
+    {
+      "id": "C6b",
+      "class": "ROOT_EVENT_COUNT_ASSERTION_6_TO_7",
+      "operation": "REPLACE",
+      "from": "jsonb_array_length(series_view->'root'->'events') is distinct from 6",
+      "to": "jsonb_array_length(series_view->'root'->'events') is distinct from 7",
+      "expected_occurrences": {
+        "reserve_gate": 1,
+        "reserve_execution_budget": 1,
+        "append_status_manifest": 0
+      },
+      "why": "after the root7 registration the root carries seven events. WITHOUT THIS the sibling assertion raises series_full_original_root_changed on every call, which is what CP02-OF1 measured."
+    },
+    {
+      "id": "C6c",
+      "class": "REGISTRATION_EVENT_SELECTOR_AND_ROOT_OBJECT_DIGEST_TO_ROOT7",
+      "operation": "REPLACE (selector and digest together)",
+      "from": "(e->>'sequence')::bigint=6)))::text,'UTF8')),'hex') is distinct from '72355efd8abde02fda6401034ee39687b5ef5c54d7511d916ccd00f70a7cd6e2'",
+      "to": "(e->>'sequence')::bigint=7)))::text,'UTF8')),'hex') is distinct from '__PENDING_MEASURED_AFTER_ROOT7_REGISTRATION__'",
+      "expected_occurrences": {
+        "reserve_gate": 1,
+        "reserve_execution_budget": 1,
+        "append_status_manifest": 0
+      },
+      "why": "the current registration event becomes sequence 7. Repinning the digest WITHOUT moving the selector would keep digesting root6's registration event -- a value that still computes and still compares, so nothing would object until the guard rejected a correct call.",
+      "distinct_from": "the a93bfdda class, which is canonicalDigest(registration body) and is what context.mjs:322 needs. Same moment, different value."
     }
   ],
   "prohibited": [
@@ -117,7 +143,8 @@
   "required_transaction_form": "same as CP-01: single transaction, eight tables ACCESS EXCLUSIVE, all four function prosrc digests asserted at the head including the one that must not change, abandon on drift, read-only readback, archived, independently reviewed, no blind retry; plus the three Round-11 guards CP-01 already carries (in-transaction window assertion pre and post, untouched-function combined digest, accepted_binding trigger assertion)",
   "ordering_constraints": [
     "C5a before C5b (C5b's anchor is inside the text C5a rewrites)",
-    "C6 last: its value only exists after the root7 registration"
+    "C6 last: its value only exists after the root7 registration",
+    "C6a/C6b/C6c all belong to one guard and must be applied together; applying any subset leaves the guard internally inconsistent and raising"
   ],
   "correction_log": [
     {
@@ -125,6 +152,13 @@
       "found": "the two occurrences have DIFFERENT semantics -- one is an allow-list member to APPEND beside, one is a strict-equality pin to REPLACE. A blanket substitution would have removed the old digest from the allow list and broken exact-duplicate resubmission of every existing manifest.",
       "how": "read the full 64-hex value and 190 chars of context around each occurrence from the live prosrc, instead of matching the 8-char prefix the first draft used",
       "note": "the first draft also flagged itself BLOCKED_PENDING for exactly this reason -- matching on an 8-char abbreviation is the R33-F1 class -- and the block was correct"
+    },
+    {
+      "was": "C6 as a single digest replacement of 72355efd",
+      "found": "CP02-OF1 (CP-02 generator session, measured): 72355efd sits in a COUPLED three-assertion guard, all three raising series_full_original_root_changed. Replacing only the digest leaves the sibling event-count assertion at 6 -- raising on every call once the root carries seven events -- and leaves the selector picking sequence=6, so the repinned digest would be taken over root6's registration event.",
+      "authorization": "NOT a new approval question, contrary to the finding's framing. The M3 carrier's edit_class_mapping_to_cp01_edit_ids maps this class to 'the G8/B9 three-assertion guard, re-pinned to values measured from the live store after root7 registration' -- the whole guard, not one literal. The rule table was narrower than the authorization, not the other way round.",
+      "how": "split into C6a/C6b/C6c against anchors read from the live prosrc, each measured present exactly once in reserve_gate and reserve_execution_budget and absent from append_status_manifest",
+      "measurement_note": "first count attempt returned false zeros: the two selector anchors are 27 and 26 characters and the divisors used were 28 and 27, so integer division floored real hits to 0. Re-measured with position()>0 rather than character arithmetic."
     }
   ]
 }
