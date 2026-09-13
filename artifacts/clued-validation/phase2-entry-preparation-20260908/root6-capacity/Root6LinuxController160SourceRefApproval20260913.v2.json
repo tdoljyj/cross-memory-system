@@ -65,21 +65,21 @@
   "authority": "user_explicit",
   "approval_text": "确认走C / 160 / 冲，按规格生成两份批准件",
   "source": {
-    "kind": "CURRENT_CONVERSATION_USER_DELEGATION",
+    "kind": "owner_chat_messages",
     "messages": [
-      "可以抬",
-      "行 按你的建议来",
-      "沿用旧写法，你填上"
+      "确认走C",
+      "160",
+      "按规格生成两份批准件"
     ],
     "what_each_approved": {
-      "可以抬": "前推额度 15 → 16（另见 OwnerForwardCapExtensionOverride.json）",
-      "行 按你的建议来": "实施方所提建议，其中逐字包含「三处 131 上限抬到 133」与窗口延长至一周。本批准的实质内容即此项。",
-      "沿用旧写法，你填上": "授权实施方以本 authority/source 形式代为填写本文件。"
+      "确认走C": "在 SourceRefCeilingExceededDecision.md 的 B/C 两路线中确认走 C：以更高上限重出容量材料，而不是收窄清单。",
+      "160": "新的 capacity_delta.source_refs_maximum 数值，由 Owner 亲自给出。控制器实际需要 142。",
+      "按规格生成两份批准件": "授权实施方按 RouteCApprovalFieldSpec.md 生成本文件与另一份批准件。"
     },
-    "timestamp_semantics": "approved_at is the actual delegated approval preparation time, not the time of the user message"
+    "timestamp_semantics": "approved_at is the time of the 160 instruction, not of this correction."
   },
   "limitations": [
-    "Raises capacity_delta.source_refs_maximum from 131 to 133 only. Every other capacity_delta field is byte-identical to the predecessor.",
+    "Raises capacity_delta.source_refs_maximum from 133 to 160 only. Every other capacity_delta field is byte-identical to the predecessor.",
     "One additional 600-second nonproduction allocation, no automatic retry/refund; only within the root6 window ending 2026-09-13T07:05:16Z.",
     "Original input 4,000,000 bytes and escaped publisher JSON 8 MiB; first/second frames remain 4 MiB, original nineteen oracles unchanged.",
     "Does not replace independent review, signed Status/runtime binding, real observations or final signed GRR.",
@@ -87,9 +87,9 @@
   ],
   "what_changed_from_predecessor": {
     "field": "capacity_delta.source_refs_maximum",
-    "from": 131,
-    "to": 133,
-    "why": "The root6 controller declares 133 ordered source references: 131 plus the two files added to avoid editing a signing module that 64 other artifacts pin by hash.",
+    "from": 133,
+    "to": 160,
+    "why": "The Linux port closes at 142 distinct ordered source references and has exceeded 133 since its first commit (755d744, at 134). 160 was set by the Owner; every ceiling site in the frozen controller (68133f2d) reads 160.",
     "conflicts_with": "BoundedSeriesApplicability20260910.excluded, which reads verbatim \"... new root or identity, cap extension, automatic retry, refund.\" Raising a cap is a cap extension.",
     "independently_reviewed": false,
     "note": "Every other field of capacity_delta is identical to the predecessor."
@@ -109,6 +109,40 @@
       "R22-F3: the computed load set follows one edge type out of five.",
       "R22-F5, R22-F6, R22-F7: HostProvisioning.json does not describe the node_modules prerequisite, plus two further items.",
       "A real verifySourcePublication has never run end to end. The Linux batch reader has been driven against live GitHub over 8 real blobs."
+    ]
+  },
+  "predecessor_source": {
+    "kind": "CURRENT_CONVERSATION_USER_DELEGATION",
+    "messages": [
+      "可以抬",
+      "行 按你的建议来",
+      "沿用旧写法，你填上"
+    ],
+    "what_each_approved": {
+      "可以抬": "前推额度 15 → 16（另见 OwnerForwardCapExtensionOverride.json）",
+      "行 按你的建议来": "实施方所提建议，其中逐字包含「三处 131 上限抬到 133」与窗口延长至一周。本批准的实质内容即此项。",
+      "沿用旧写法，你填上": "授权实施方以本 authority/source 形式代为填写本文件。"
+    },
+    "timestamp_semantics": "approved_at is the actual delegated approval preparation time, not the time of the user message"
+  },
+  "descriptive_corrections_20260913": {
+    "corrected_at": "2026-09-13T01:22:00Z",
+    "corrected_by": "implementer, under the Owner's standing instruction 你看着办，想尽办法，快点完成任务",
+    "findings": [
+      "R25-F3",
+      "R25-F2 (v1 window only)"
+    ],
+    "what": "limitations[0], what_changed_from_predecessor and source carried 133-era text verbatim from the template because RouteCApprovalFieldSpec.md listed only the operative fields as changeable. The 133-era source block is preserved as predecessor_source; source now records the messages that actually approved 160, which approval_text already named. v1 additionally stated a root6 window ending 2026-09-19T00:00:00Z, six days past the live binding; corrected to 2026-09-13T07:05:16Z.",
+    "operative_fields_untouched": [
+      "capacity_delta",
+      "capacity_proposal_ref",
+      "approved_change_index_sha256",
+      "approved_at",
+      "approval_text",
+      "authority",
+      "base_approval_ref",
+      "bounded_series_constraints",
+      "baseline"
     ]
   }
 }
