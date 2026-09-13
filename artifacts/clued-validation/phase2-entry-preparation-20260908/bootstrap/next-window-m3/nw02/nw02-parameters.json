@@ -2,7 +2,6 @@
   "object_type": "NW02CandidateParameters",
   "state": "DRAFT_NO_WRITE_PERFORMED_SOURCE_DOCUMENTS_NOT_FINAL",
   "authority_effect": "NONE",
-
   "window": {
     "not_before": "2026-09-13T05:45:14Z",
     "expires_at": "2026-09-14T05:45:14Z",
@@ -11,21 +10,27 @@
     "evidence": "__PENDING_M3_OWNER_APPROVAL_VERIFICATION_PATH__",
     "evidence_note": "the M3 analogue of next-window-20260912/OwnerApprovalVerification.json DOES NOT EXIST YET. See NW02DraftNotes.md open point 2."
   },
-
   "subject_signature_merge": {
     "commit": "__PENDING_M4_MERGE_SHA__",
     "pr": "__PENDING_M4_PR_NUMBER__",
     "evidence": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-m3/nw02/ContinuationSubjectSignatureEvidence.json",
     "note": "M4 has not been opened. NW-01's analogue was merge 3887b9e0 / PR 159, distinct from the approval merge cbe898d3 / PR 158."
   },
-
   "preimage": {
     "measured_at": "2026-09-13T06:04:42Z and 2026-09-13T06:05:04Z",
     "measured_by": "two read-only selects against the live control plane, session J",
     "MUST_REMEASURE_BEFORE_APPLY": true,
     "why_remeasure": "rows_sha256 covers events, execution_events and gate_attempts, which move whenever anything runs. The M3 clause inherits requires_fresh_live_preimage_before_apply from NW-01. These values are a DRAFT baseline that lets the reviewer see the transaction's shape, not the pre-image the transaction will assert.",
-    "tables": ["accepted_binding", "control_objects", "current_head", "events",
-               "execution_binding", "execution_current", "execution_events", "gate_attempts"],
+    "tables": [
+      "accepted_binding",
+      "control_objects",
+      "current_head",
+      "events",
+      "execution_binding",
+      "execution_current",
+      "execution_events",
+      "gate_attempts"
+    ],
     "rows_sha256": "795f215980738b1075782681af4ac92a97138e7ece77f53a0628f2000a8cbe5f",
     "catalog_sha256": "6cef1483a84c1f2a27ef3a1fd14bb76921364c979ac79a6ee94385a23f356de3",
     "getter_definition_sha256": "9b6518b94d246b4a3415ff8bbf791f4be6a22dd42ded751ceae90801c8b3e2d6",
@@ -73,9 +78,11 @@
       "non_internal_trigger_count": 1,
       "definition": "CREATE TRIGGER accepted_binding_immutable BEFORE DELETE OR UPDATE OR TRUNCATE ON clued_control.accepted_binding FOR EACH STATEMENT EXECUTE FUNCTION clued_control.deny_mutation()"
     },
-    "ownership": {"owner": "postgres", "acl": "{postgres=arwdDxtm/postgres}"}
+    "ownership": {
+      "owner": "postgres",
+      "acl": "{postgres=arwdDxtm/postgres}"
+    }
   },
-
   "postimage": {
     "binding": {
       "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
@@ -90,25 +97,23 @@
       "not_before": "2026-09-13T05:45:14Z",
       "expires_at": "2026-09-14T05:45:14Z",
       "owner_approval_commit": "f92cd46e42e20e1fa305c573964e0597230c0b65",
-      "subject_sha256": "338a348738447aa6e3ab724606703b602a1513d4ac032d75ddded7e8eca7dd77",
-      "registration_acceptance_sha256": "b422667081dfd7bc6290724e884307b43feea30e9f9cb934e12e46315f342e61",
-      "store_acceptance_sha256": "645f886e5454637c2449df8c98d46ada0dc5080e998f8487b7bc9991be76cd6e",
-      "signature_evidence_sha256": "0a3dfa951ad1e170f8d2e3e8df0b2196d2b85563abc14105d1ee4fffed2f79bc"
+      "subject_sha256": "e75176b5dcdbc909086c12ddd72d70b811e4e969c8e79eb20c80771f4fb29ee2",
+      "registration_acceptance_sha256": "406269b83d6ce4bafd8b89d87f3b70f8b89ca207328ccf2f85d9a61cc854b808",
+      "store_acceptance_sha256": "a6bb7c3165f405b9a003b6715fa89fb3fd58e23455f538934df88110549574e0",
+      "signature_evidence_sha256": "4133e06afca62f864a059757eb98d2b5a45995e823dd673c2523c68677e34008"
     },
     "digest_sources": {
       "subject_sha256": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-m3/nw02/ContinuationRegistrationSubject.canonical.json",
-      "registration_acceptance_sha256": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-m3/nw02/ContinuationRegistrationSubjectAcceptance.skeleton.json",
-      "store_acceptance_sha256": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-m3/nw02/ContinuationControlStoreAcceptance.skeleton.json",
-      "signature_evidence_sha256": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-m3/nw02/ContinuationSubjectSignatureEvidence.skeleton.json"
-    },
-    "digest_sources_note": "THREE OF THE FOUR ARE SKELETONS AND ONE CARRIES FIVE UNRESOLVED SENTINELS. None of these four digests may enter the database. The generator refuses to emit anything without --draft while that is true, and what --draft emits is banner-marked NOT FOR EXECUTION.",
-    "final_paths_after_the_skeletons_are_replaced": {
       "registration_acceptance_sha256": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-m3/nw02/ContinuationRegistrationSubjectAcceptance.json",
       "store_acceptance_sha256": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-m3/nw02/ContinuationControlStoreAcceptance.json",
-      "signature_evidence_sha256": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-m3/nw02/ContinuationSubjectSignatureEvidence.json"
+      "signature_evidence_sha256": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-m3/nw02/ContinuationSubjectSignatureEvidence.skeleton.json"
+    },
+    "digest_sources_note": "Two of the four are now ISSUED documents: the acceptances were issued by an independent party at dd6ed30 (round 2, after round 1 refused the subject on NW02-R1), and the sources point at the issued files rather than the skeletons. The subject is final at e75176b5. The FOURTH, the signature evidence, is still the skeleton and still carries its sentinels, because it captures the continuation merge that publishes the subject and the two acceptances -- a merge that has not happened. It keeps pointing at the skeleton deliberately: the generator's S12 is what stops a skeleton digest reaching the database, and giving the field a non-hex placeholder instead breaks S7 and disables that very check. So this instance still may not execute. What changed is why: one missing merge, not three missing documents.",
+    "final_paths_after_the_skeletons_are_replaced": {
+      "signature_evidence_sha256": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-m3/nw02/ContinuationSubjectSignatureEvidence.json",
+      "note": "the only one left; produced by capture-owner-merge.mjs --as signature over the continuation merge"
     }
   },
-
   "guards_added_beyond_nw01": {
     "in_transaction_window_assertion": {
       "finding": "R11-F12",
@@ -121,7 +126,6 @@
       "why": "NW-01 asserted the definition and tgenabled of the trigger it names, but nothing stopped a SECOND non-internal trigger from existing. NW01ExecutionReceipt.read_back.non_internal_trigger_note measured it after the fact and said the assertion still belongs in the transaction."
     }
   },
-
   "what_this_does_not_do": [
     "register any generation (root7 registration is a separate, later, separately approved append_event)",
     "reserve or consume any budget",

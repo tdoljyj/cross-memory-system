@@ -1,9 +1,6 @@
 -- ############################################################################################
 -- DRAFT. NOT FOR EXECUTION. NOT REVIEWED. Emitted with --draft because the documents whose
 -- digests this transaction would write are not final:
---   artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-m3/nw02/ContinuationRegistrationSubject.canonical.json (unresolved sentinel)
---   artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-m3/nw02/ContinuationRegistrationSubjectAcceptance.skeleton.json (skeleton)
---   artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-m3/nw02/ContinuationControlStoreAcceptance.skeleton.json (skeleton)
 --   artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-m3/nw02/ContinuationSubjectSignatureEvidence.skeleton.json (skeleton)
 -- Two of those must be issued by an INDEPENDENT REVIEW SESSION and one only exists after the M4
 -- merge. Running this would write skeleton digests into clued_control.accepted_binding.
@@ -180,10 +177,10 @@ update clued_control.accepted_binding
 set not_before='2026-09-13T05:45:14Z'::timestamptz,
     expires_at='2026-09-14T05:45:14Z'::timestamptz,
     owner_approval_commit='f92cd46e42e20e1fa305c573964e0597230c0b65',
-    subject_sha256='338a348738447aa6e3ab724606703b602a1513d4ac032d75ddded7e8eca7dd77',
-    registration_acceptance_sha256='b422667081dfd7bc6290724e884307b43feea30e9f9cb934e12e46315f342e61',
-    store_acceptance_sha256='645f886e5454637c2449df8c98d46ada0dc5080e998f8487b7bc9991be76cd6e',
-    signature_evidence_sha256='0a3dfa951ad1e170f8d2e3e8df0b2196d2b85563abc14105d1ee4fffed2f79bc'
+    subject_sha256='e75176b5dcdbc909086c12ddd72d70b811e4e969c8e79eb20c80771f4fb29ee2',
+    registration_acceptance_sha256='406269b83d6ce4bafd8b89d87f3b70f8b89ca207328ccf2f85d9a61cc854b808',
+    store_acceptance_sha256='a6bb7c3165f405b9a003b6715fa89fb3fd58e23455f538934df88110549574e0',
+    signature_evidence_sha256='4133e06afca62f864a059757eb98d2b5a45995e823dd673c2523c68677e34008'
 where root_id='ctr_414bd3c724264a83894b0c55cf2ab878';
 
 alter table clued_control.accepted_binding
@@ -192,7 +189,7 @@ alter table clued_control.accepted_binding
   add constraint accepted_binding_owner_approval_commit_check
     check (owner_approval_commit='f92cd46e42e20e1fa305c573964e0597230c0b65'::text),
   add constraint accepted_binding_subject_sha256_check
-    check (subject_sha256='338a348738447aa6e3ab724606703b602a1513d4ac032d75ddded7e8eca7dd77'::text);
+    check (subject_sha256='e75176b5dcdbc909086c12ddd72d70b811e4e969c8e79eb20c80771f4fb29ee2'::text);
 
 alter table clued_control.accepted_binding enable trigger accepted_binding_immutable;
 
@@ -222,12 +219,12 @@ begin
      and b.project_ref='uscrdifznmlvczcekqpw'
      and b.protocol_mapping_sha256='abbc8e7eae03f2a183fd739fa49b16a97db6e1c0fb62a9353a30db81553db416'
      and b.purpose='SKILL_COEXISTENCE_QUALIFICATION'
-     and b.registration_acceptance_sha256='b422667081dfd7bc6290724e884307b43feea30e9f9cb934e12e46315f342e61'
+     and b.registration_acceptance_sha256='406269b83d6ce4bafd8b89d87f3b70f8b89ca207328ccf2f85d9a61cc854b808'
      and b.root_id='ctr_414bd3c724264a83894b0c55cf2ab878'
      and b.schema_sha256='87f094fa079034aa886d6c568730370a3264e106529b4bfd79bc3369f30b79e5'
-     and b.signature_evidence_sha256='0a3dfa951ad1e170f8d2e3e8df0b2196d2b85563abc14105d1ee4fffed2f79bc'
-     and b.store_acceptance_sha256='645f886e5454637c2449df8c98d46ada0dc5080e998f8487b7bc9991be76cd6e'
-     and b.subject_sha256='338a348738447aa6e3ab724606703b602a1513d4ac032d75ddded7e8eca7dd77';
+     and b.signature_evidence_sha256='4133e06afca62f864a059757eb98d2b5a45995e823dd673c2523c68677e34008'
+     and b.store_acceptance_sha256='a6bb7c3165f405b9a003b6715fa89fb3fd58e23455f538934df88110549574e0'
+     and b.subject_sha256='e75176b5dcdbc909086c12ddd72d70b811e4e969c8e79eb20c80771f4fb29ee2';
   if not found then raise exception 'NW02_POST_BINDING_MISMATCH'; end if;
 
   perform 1 from clued_control.execution_current
@@ -294,7 +291,7 @@ begin
 
   select pg_get_constraintdef(oid,true) into v_def from pg_constraint
    where conrelid='clued_control.accepted_binding'::regclass and conname='accepted_binding_subject_sha256_check';
-  if v_def is distinct from 'CHECK (subject_sha256 = ''338a348738447aa6e3ab724606703b602a1513d4ac032d75ddded7e8eca7dd77''::text)' then
+  if v_def is distinct from 'CHECK (subject_sha256 = ''e75176b5dcdbc909086c12ddd72d70b811e4e969c8e79eb20c80771f4fb29ee2''::text)' then
     raise exception 'NW02_POST_SUBJECT_CHECK_MISMATCH: %', v_def;
   end if;
 end
