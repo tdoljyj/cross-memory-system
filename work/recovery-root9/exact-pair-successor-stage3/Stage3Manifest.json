@@ -1,0 +1,85 @@
+{
+  "object_type": "Root9ExactPairStage3Manifest",
+  "schema_version": "1.0",
+  "files": {
+    "Stage2PublicationEvidence.verified.json": {
+      "sha256": "5989508e165c4b2033e183e8feb0e5ed1f9c0e1175d843bc4551a90fa8cd2b88",
+      "git_blob_sha1": "6996d7b7b14689bc77149e27ad94712775b3e174",
+      "bytes": 3095
+    },
+    "Status28SignatureEvidence.json": {
+      "sha256": "15961e8874b3509f8a5a180b30ef472b98013011dbcbf5eaa8cdfbcd74f55db7",
+      "git_blob_sha1": "ec2e4738e75a3e595e7911d501e6bd4c5b5e0142",
+      "bytes": 2489
+    },
+    "Status28Generation.json": {
+      "sha256": "4a6dddd73433b51aa1339ae2ebcd08f0d170f71d8ec35e9fb5905efecb3f5944",
+      "git_blob_sha1": "ca1cdffbe319dea6e804960a7057e9f26c2be624",
+      "bytes": 7861
+    },
+    "RuntimeAcceptance.root9.exact-pair.json": {
+      "sha256": "2231d936ce0dcaeae53b5ae5a2756c50626ab1824d5682ca514ec8b5d66ee1df",
+      "git_blob_sha1": "b7acf2b5008fb558cd5bef4c6796d594424ba8ba",
+      "bytes": 45537
+    },
+    "STAGE3_RESULT.json": {
+      "sha256": "3817d07406581c58befa5d10bb6af9f70c012a4bedfd36144dfebdb590ca3cd5",
+      "git_blob_sha1": "5aece05526d772585b265bf9e0cddfaf832957bf",
+      "bytes": 2103
+    },
+    "CAS_BUILD_RESULT.json": {
+      "sha256": "b447f8588646b28b0c52fd11021f3dc643309a9b11976454ba74cd879ab02499",
+      "git_blob_sha1": "4d425e5244c9190d8a328bbedb33c528a2745df6",
+      "bytes": 732
+    },
+    "FUNCTION_SUCCESSOR_RESULT.json": {
+      "sha256": "07f8838c05dd7df827a0f95dc6884d3dba4cdba95499440bb4923268a54d4707",
+      "git_blob_sha1": "58d2480f7bea8945c09adcbc089aa1723b741ef8",
+      "bytes": 1036
+    },
+    "root9_exact_pair_expected_current_cas.sealed.sql": {
+      "sha256": "4f20bbf665d700b6b57c3da91aff34e2064ab017752c6ad9fe645bfbf623ac91",
+      "git_blob_sha1": "ab42cb6d787d1e9b9d2a448823e599f8b5f7f650",
+      "bytes": 76112
+    },
+    "execution_transition.exact-pair.sql": {
+      "sha256": "387119baa4842785b2264be84d25bc6cf1d11ed7ca8bc2ae6332cdca7e6c1b9b",
+      "git_blob_sha1": "7d3475a879b76d8b18edf6e243d56c2de6ec0e23",
+      "bytes": 13536
+    },
+    "commit_gate_result.exact-pair.sql": {
+      "sha256": "8bf94fd9b1917614ea1d6a281f397c4890f9019f7bba1037ddb36776c1aad3c3",
+      "git_blob_sha1": "88fe0b2d0be939d2a0dfff0f30d95eab5d1ad5db",
+      "bytes": 5110
+    },
+    "reserve_gate.exact-pair.sql": {
+      "sha256": "c91075c87593318fd4877cb89863fa22accfc8df373549d58b0a595243f359a2",
+      "git_blob_sha1": "f7d70168d2bc926b6c8bbbd3cec09fc5f0e90225",
+      "bytes": 30413
+    }
+  },
+  "controller_digest": "9373e3d9843055e9babc1564f4aaceb0966886f854fc0e107281d4ce618b3ce1",
+  "qualification_sha256": "3197a38e686ec6b8f8ebff0cf8b6344bfd427d7c6e6a0bdb8f157d142fe307aa",
+  "runtime_acceptance_sha256": "2231d936ce0dcaeae53b5ae5a2756c50626ab1824d5682ca514ec8b5d66ee1df",
+  "status28_sha256": "4a6dddd73433b51aa1339ae2ebcd08f0d170f71d8ec35e9fb5905efecb3f5944",
+  "expected_current": {
+    "before": 104,
+    "after": 106,
+    "old_ga_phase_after": "PENDING"
+  },
+  "terminal_sequences": {
+    "decision_reserved": 107,
+    "signing": 108
+  },
+  "budget_sequence": 102,
+  "root_unchanged": true,
+  "gate_unchanged": true,
+  "profile_unchanged": true,
+  "scope_unchanged": true,
+  "generations_unchanged": true,
+  "refund": false,
+  "capacity_increase": false,
+  "new_allocation": false,
+  "budget_reassignment": false,
+  "authority_effect": "NONE_UNTIL_OWNER_MERGE_INDEPENDENT_FINAL_GO_AND_EXECUTION"
+}

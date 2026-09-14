@@ -1,0 +1,42 @@
+{
+  "state": "ROOT9_EXACT_PAIR_STAGE3_MATERIALS_BUILT",
+  "stage2_owner_merge": "ec6e3df1cc36d4ef8dbd2bfb91555aa5a604f5b6",
+  "stage2_publication_evidence_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/6996d7b7b14689bc77149e27ad94712775b3e174",
+    "sha256": "5989508e165c4b2033e183e8feb0e5ed1f9c0e1175d843bc4551a90fa8cd2b88"
+  },
+  "status28_signature_evidence_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/ec2e4738e75a3e595e7911d501e6bd4c5b5e0142",
+    "sha256": "15961e8874b3509f8a5a180b30ef472b98013011dbcbf5eaa8cdfbcd74f55db7"
+  },
+  "status28_generation_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/ca1cdffbe319dea6e804960a7057e9f26c2be624",
+    "sha256": "4a6dddd73433b51aa1339ae2ebcd08f0d170f71d8ec35e9fb5905efecb3f5944"
+  },
+  "status28_signed_object_sha256": "a765cc9a6506c8486cb46087cbfa0c9f81f0ff03df23cb0dd421ea83f877a154",
+  "runtime_acceptance_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/b7acf2b5008fb558cd5bef4c6796d594424ba8ba",
+    "sha256": "2231d936ce0dcaeae53b5ae5a2756c50626ab1824d5682ca514ec8b5d66ee1df"
+  },
+  "controller_digest": "9373e3d9843055e9babc1564f4aaceb0966886f854fc0e107281d4ce618b3ce1",
+  "controller_qualification_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/45e4519e7cf8acd5261f339913758797f5eae2ef",
+    "sha256": "3197a38e686ec6b8f8ebff0cf8b6344bfd427d7c6e6a0bdb8f157d142fe307aa"
+  },
+  "repair_acceptance_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/87571bfd9ae43c8652c1a4f182abb431c0b964f2",
+    "sha256": "21eb0391fb2de19789441eca3ae8915fa9741ed0aad56994ec469f52fe7ec10a"
+  },
+  "source_blob_count": 24,
+  "repair_descriptor_count": 9,
+  "status_schema_valid": true,
+  "database_writes": 0,
+  "signature_mutations": 0,
+  "activation": false,
+  "expected_current_cas": false,
+  "budget_sequence": 102,
+  "refund": false,
+  "capacity_increase": false,
+  "new_allocation": false,
+  "budget_reassignment": false
+}

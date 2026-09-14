@@ -1,0 +1,30 @@
+{
+  "state": "ROOT9_EXACT_PAIR_FINAL_FUNCTION_SUCCESSORS_BUILT",
+  "functions": {
+    "execution_transition.exact-pair.sql": {
+      "sha256": "387119baa4842785b2264be84d25bc6cf1d11ed7ca8bc2ae6332cdca7e6c1b9b",
+      "bytes": 13536
+    },
+    "commit_gate_result.exact-pair.sql": {
+      "sha256": "8bf94fd9b1917614ea1d6a281f397c4890f9019f7bba1037ddb36776c1aad3c3",
+      "bytes": 5110
+    },
+    "reserve_gate.exact-pair.sql": {
+      "sha256": "c91075c87593318fd4877cb89863fa22accfc8df373549d58b0a595243f359a2",
+      "bytes": 30413
+    }
+  },
+  "sequence_before_cas": 104,
+  "sequence_after_cas": 106,
+  "decision_reserved_sequence": 107,
+  "signing_sequence": 108,
+  "reserve_from_sequence": 108,
+  "budget_sequence": 102,
+  "old_controller": "c0b49c6a782efe219485486c120c05a7b5e7171394194cebc8b7aec76047d10a",
+  "new_controller": "9373e3d9843055e9babc1564f4aaceb0966886f854fc0e107281d4ce618b3ce1",
+  "refund": false,
+  "capacity_increase": false,
+  "new_allocation": false,
+  "budget_reassignment": false,
+  "database_writes": 0
+}

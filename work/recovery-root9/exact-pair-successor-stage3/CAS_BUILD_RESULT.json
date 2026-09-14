@@ -1,0 +1,18 @@
+{
+  "state": "ROOT9_EXACT_PAIR_EXPECTED_CURRENT_CAS_BUILT",
+  "sha256": "4f20bbf665d700b6b57c3da91aff34e2064ab017752c6ad9fe645bfbf623ac91",
+  "bytes": 76112,
+  "expected_sequence_before": 104,
+  "expected_sequence_after": 106,
+  "status_generation": 28,
+  "runtime_acceptance_sha256": "2231d936ce0dcaeae53b5ae5a2756c50626ab1824d5682ca514ec8b5d66ee1df",
+  "qualification_sha256": "3197a38e686ec6b8f8ebff0cf8b6344bfd427d7c6e6a0bdb8f157d142fe307aa",
+  "controller_sha256": "9373e3d9843055e9babc1564f4aaceb0966886f854fc0e107281d4ce618b3ce1",
+  "old_ga_untouched_by_cas": true,
+  "budget_sequence": 102,
+  "refund": false,
+  "capacity_increase": false,
+  "new_allocation": false,
+  "budget_reassignment": false,
+  "database_writes": 0
+}
