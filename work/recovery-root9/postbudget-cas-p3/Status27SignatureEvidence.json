@@ -1,0 +1,52 @@
+{
+  "state": "P2_OWNER_MERGE_BOUND_VERIFIED",
+  "repository": "tdoljyj/cross-memory-system",
+  "issuer_purpose": "STATUS",
+  "audience": "urn:clued:audience:skill-coexistence-qualification:uscrdifznmlvczcekqpw",
+  "control_trust_root_generation": "ctrgen_308a1dfc185cff633892638581e0a34c",
+  "merge": {
+    "sha": "20d6ec1e62eebed26e56bc2e4f52eed87704e8ab",
+    "tree": "54c448837711086bcf0e334de4c6acc97c1f338f",
+    "parents": [
+      "251b3b7eed1d9d3149c73f4b17dedda8aea7bfa5",
+      "64e8dec1549af469cf4647df8a3aa3945b76a3e6"
+    ],
+    "first_parent": "251b3b7eed1d9d3149c73f4b17dedda8aea7bfa5",
+    "source_parent": "64e8dec1549af469cf4647df8a3aa3945b76a3e6",
+    "source_tree": "54c448837711086bcf0e334de4c6acc97c1f338f",
+    "author_login": "tdoljyj",
+    "merged_by": "tdoljyj",
+    "committer_login": "web-flow",
+    "base_ref": "main",
+    "pull_request_count": 1,
+    "verification": {
+      "verified": true,
+      "reason": "valid",
+      "ui_detail": "This commit was created on GitHub.com and signed with GitHub’s verified signature."
+    },
+    "merged_at": "2026-09-14T09:42:42Z"
+  },
+  "payload": {
+    "path": "work/recovery-root9/postbudget-stage2/Status27SigningPayload.json",
+    "blob_sha1": "1816ca696f55bd8d4b182d1edd4d5e2d912f5705",
+    "raw_sha256": "9701fd4512797f4a90b96a59e06f438422e84f8eb03038fd3ae947ec46fd5c95",
+    "signed_object_sha256": "c3fd1848edbd0b186cb0ba259cb3e8d739bcb3f0dac25754985133de68813a06"
+  },
+  "bound_refs": {
+    "p2_publication_evidence": {
+      "sha256": "dec179df0626c5f22bb33a979336430dd136c8a54895666bae2ce4b2b0eae887"
+    },
+    "controller_manifest": {
+      "sha256": "c0b49c6a782efe219485486c120c05a7b5e7171394194cebc8b7aec76047d10a"
+    },
+    "controller_qualification": {
+      "sha256": "a48aa5934112cc968c622c200c7b994d7b928e0bb3d433b49b3d741680a57013"
+    },
+    "runtime_acceptance": {
+      "sha256": "c1456fd186da21a707693af18f3dce5fdf1dcd54d7cc1b3c661290476f162552"
+    }
+  },
+  "no_full_status_reverse_hash": true,
+  "authority_effect": "NONE",
+  "database_writes": 0
+}

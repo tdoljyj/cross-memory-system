@@ -1,0 +1,28 @@
+{
+  "state": "P2_SIGNED_STATUS27_COMPLETION_PASS_FOR_P3_PUBLICATION",
+  "p2_owner_merge_commit": "20d6ec1e62eebed26e56bc2e4f52eed87704e8ab",
+  "p2_publication_evidence_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/bfc65714f9b596c6140c745948185e92665a48dd",
+    "sha256": "dec179df0626c5f22bb33a979336430dd136c8a54895666bae2ce4b2b0eae887"
+  },
+  "status27_signature_evidence_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/023bc9a616e1454eefe374cc67412e2a3d15976d",
+    "sha256": "54a8dfdeb553266ddc83842d523869ab65488d73f2356645a87a3a3ce26664e4"
+  },
+  "status27_generation_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/a4702980f8685a6d169a751c7fde6725a32613c3",
+    "sha256": "186879980141db38eb14bd9ee5ced915c9ab37f91d290e822addd22288c5e485"
+  },
+  "status27_signed_object_sha256": "c3fd1848edbd0b186cb0ba259cb3e8d739bcb3f0dac25754985133de68813a06",
+  "unsigned_payload_exact_raw_reencoding": true,
+  "status_schema_valid": true,
+  "one_way_binding_no_mutual_hash_cycle": true,
+  "ready_for_p3_publication": true,
+  "database_writes": 0,
+  "budget_allocations": 0,
+  "gate_reservations": 0,
+  "dispatches": 0,
+  "capacity_change": false,
+  "refund": false,
+  "history_rewritten": false
+}

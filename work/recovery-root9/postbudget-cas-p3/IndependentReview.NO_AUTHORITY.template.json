@@ -1,0 +1,19 @@
+{
+  "template_state": "NO_AUTHORITY_NOT_AN_INDEPENDENT_REVIEW",
+  "state": null,
+  "independent_reviewer": null,
+  "fresh_context": null,
+  "authority_effect": "NONE",
+  "live_writes": 0,
+  "blockers": null,
+  "majors": null,
+  "minors": null,
+  "reviewed_targets": {
+    "controller_sha256": "c0b49c6a782efe219485486c120c05a7b5e7171394194cebc8b7aec76047d10a",
+    "qualification_sha256": "a48aa5934112cc968c622c200c7b994d7b928e0bb3d433b49b3d741680a57013",
+    "runtime_acceptance_sha256": "c1456fd186da21a707693af18f3dce5fdf1dcd54d7cc1b3c661290476f162552",
+    "status_sha256": "186879980141db38eb14bd9ee5ced915c9ab37f91d290e822addd22288c5e485",
+    "p2_publication_sha256": "dec179df0626c5f22bb33a979336430dd136c8a54895666bae2ce4b2b0eae887",
+    "p3_publication_sha256": "__P3_PUBLICATION_EVIDENCE_SHA256__"
+  }
+}
