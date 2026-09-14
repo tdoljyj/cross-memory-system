@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "state": "REPRODUCED_AND_FIXED_OFFLINE_NO_AUTHORITY",
+  "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+  "root_generation": "ctrgen_308a1dfc185cff633892638581e0a34c",
+  "budget_sequence_preserved": 102,
+  "defect": {
+    "module": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/commitment-signing-root6-window/signing.mjs",
+    "importer": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9/trusted-github.mjs",
+    "observed_error": "purpose_audience_generation_mismatch",
+    "cause": "The live imported helper allowed Root generations only through Root7 and excluded the active Root9 generation.",
+    "old_controller_manifest_files": 22,
+    "helper_was_manifest_covered": false
+  },
+  "fix": {
+    "local_helper": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9/dynamic-signing.mjs",
+    "import_changed_to_local_manifest_covered_helper": true,
+    "root9_generation_added": true,
+    "new_controller_manifest_files": 23,
+    "root_generation_changed": false,
+    "history_rewritten": false,
+    "refund": false,
+    "capacity_change": false,
+    "second_budget_allocation": false
+  },
+  "offline_probe": {
+    "ga_id": "ga_d41841e614988cfc95af4f57d0b674bc",
+    "ga_sha256": "a3cdf36e3384e549d867c32bb9ee558c918ff194842e773831a852411bcd2f9b",
+    "before": "REJECTED",
+    "after": "HISTORICAL_SIGNATURE_COMMITMENT_CONSTRUCTED"
+  },
+  "authority_effect": "NONE"
+}
