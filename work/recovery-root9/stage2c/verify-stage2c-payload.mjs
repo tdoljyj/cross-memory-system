@@ -33,6 +33,11 @@ exact('Stage2BPublicationEvidence.verified.json', '7bf41dbb104586cddd67933a90cc1
 exact('Status26SignatureEvidence.json', '64f4f97a9b1bfd8f2d668dcd3dad77cec86ab96e1855b5c09c465e028bb77e1b');
 exact('Status26Generation.json', '8e02293caa447a5c2fe1749d89c082fe2e1e937180c937d746512d9b7e32b6a3');
 exact('SuccessorBinding.root9.json', 'd3c597a2425343bb6fb897e4a6eaddd76cb73adf282a8cd07187e23a527cd76e');
+exact('root9_apply_once.sealed.sql', 'f3f58366a06411d9578a29baf226543760027d0bfef3b33261b08161d394eeb1');
+exact('SQL_RESULT.json', '61e3df6b44132993dd63c0abd9879977870a79ba2f9ce7cde4b4e769032dca09');
+exact('SQL_SHA256SUMS.txt', '88e8c9ec1bf1a2118cb674adcc32ca98d3cb848214ae87bfb72cff3e076aac47');
+exact('SQL_VERIFY_RESULT.json', 'cce3835105eca718511651d154ddf3c8b7c9a2f7b6a40ca15380ef171edeffaf');
+exact('OPERATIONAL_RESULT.json', '3167d9a114652e90e0f32eccf26717c2db3bd2f9676920647e6cbb49cb8f1c06');
 
 const publication = parse('Stage2BPublicationEvidence.verified.json');
 const signature = parse('Status26SignatureEvidence.json');
@@ -138,6 +143,16 @@ assert.equal(result.budget_reservations, 0);
 assert.equal(result.capacity_value_change, false);
 assert.equal(result.refund, false);
 assert.equal(result.ga_dispatches, 0);
+assert.equal(result.state, 'STAGE2C_M5_HOTFIX_CORE_READY_FOR_INDEPENDENT_REVIEW');
+assert.equal(result.m4_owner_merge.commit, 'dcc9fd1fa47ef9d04af3f53244a240e60ae390c3');
+assert.equal(result.m4_owner_merge.evidence_sha256, 'bf9c35f1144eda43c31bf378e1918fa1412d9d8907d7e54271e6ae8c84716127');
+assert.equal(result.hotfix.apply_sha256, 'f3f58366a06411d9578a29baf226543760027d0bfef3b33261b08161d394eeb1');
+assert.equal(result.hotfix.supersedes_apply_sha256, 'bf180ec5e01e93f9103db5363ecee8a14ae06a4d5d73f2e9068b96a3da4f9dac');
+assert.equal(result.incident_rollback_evidence.evidence_sha256, '9f1ecdcbb706f7bf3b0a34a7c8fb271e732acda7eeddeb10076fd4f5bc30f644');
+assert.equal(result.incident_rollback_evidence.provenance, 'EXTERNAL_POST_M4_OPERATIONAL_EVIDENCE_NOT_PART_OF_M4_ARTIFACT_SET');
+assert.equal(result.incident_rollback_evidence.explicit_full_rollback_verified, true);
+assert.equal(result.incident_rollback_evidence.committed_database_writes, 0);
+assert.equal(result.incident_rollback_evidence.retry_performed, false);
 
 const allText = fs.readdirSync(OUT, { recursive: true })
   .filter((name) => fs.statSync(path.join(OUT, name)).isFile() && name !== 'verify-stage2c-payload.mjs')
@@ -164,14 +179,15 @@ if (fs.existsSync(path.join(OUT, 'PACKAGE_SHA256SUMS.txt'))) {
 }
 
 console.log(JSON.stringify({
-  state: 'STAGE2C_PREPUBLICATION_VERIFY_PASS',
+  state: 'STAGE2C_M5_HOTFIX_PREPUBLICATION_VERIFY_PASS',
   m3: publication.merge.sha,
   status_generation: status.generation,
   status_S: digest(unsignedStatus),
   successor_binding_sha256: sha256(read('SuccessorBinding.root9.json')),
   controller_entry_count: 22,
   repair_refs: 8,
-  m4_sha_late_bound: true,
+  m4_owner_merge_commit: result.m4_owner_merge.commit,
+  m5_sha_late_bound: true,
   database_writes: 0,
   budget_reservations: 0,
   capacity_value_change: false,

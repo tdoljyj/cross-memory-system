@@ -165,7 +165,7 @@ begin
  or rb->>'qualification_sha256' is distinct from new_qualification
  then raise exception 'exact_root9_successor_binding_required'; end if;
 
- status_uri:='control://status-manifests/'||sm->>'status_manifest_id'; status_ref:=qual_ev->'status_manifest_ref';
+ status_uri:='control://status-manifests/'||(sm->>'status_manifest_id'); status_ref:=qual_ev->'status_manifest_ref';
  if sm->>'object_type' is distinct from 'StatusManifest' or sm->'generation' is distinct from '26'::jsonb
  or sm->>'control_trust_root_generation' is distinct from root9 or sm->>'schema_digest' is distinct from status_schema
  or (sm->>'expires_at')::timestamptz is distinct from ex

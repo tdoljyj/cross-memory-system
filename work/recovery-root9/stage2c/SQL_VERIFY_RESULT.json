@@ -1,6 +1,6 @@
 {
   "state": "PASS_SEALED_STAGE2C_SQL_OFFLINE_NOT_APPLIED",
-  "checks": 22,
+  "checks": 23,
   "check_names": [
     "single-transaction",
     "no-persistent-installer",
@@ -16,6 +16,7 @@
     "exact-22-not-30",
     "repair-refs-correct-path-exact-eight",
     "append-status-compatible-path",
+    "status-uri-json-extraction-precedence-regression",
     "events-exact-order",
     "exact-preimage-and-postimage",
     "cas-does-not-touch-budget-ga-capacity-refund",
@@ -25,7 +26,7 @@
     "offline-only-artifacts",
     "sha256sums"
   ],
-  "apply_sha256": "bf180ec5e01e93f9103db5363ecee8a14ae06a4d5d73f2e9068b96a3da4f9dac",
+  "apply_sha256": "f3f58366a06411d9578a29baf226543760027d0bfef3b33261b08161d394eeb1",
   "request_sha256": "eccaa84262cee349a49636a3a4aed8c85a540a8c42d9ae5d43cacab67a782c07",
   "database_writes": 0,
   "budget_reservations": 0,

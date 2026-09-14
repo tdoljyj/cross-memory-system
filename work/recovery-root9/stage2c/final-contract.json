@@ -26,6 +26,7 @@
     "controller_entry_count": 22,
     "controller_qualification_sha256": "171828b556756186ed30b88928855fb8e6607f799911bf63214e9505fa984c71",
     "runtime_acceptance_sha256": "107fe912496392a0a677f103feb395321292231db4459d1a9a0f170573125cb9",
+    "root9_apply_once_sealed_sha256": "f3f58366a06411d9578a29baf226543760027d0bfef3b33261b08161d394eeb1",
     "status_schema_sha256": "6f9a6799109cbad00b4e615b58f535f91fe0ec4a53790fa744000caa2bf3282e",
     "not_before": "2026-09-14T03:00:00Z",
     "expires_at_exclusive": "2026-09-15T03:00:00Z"
