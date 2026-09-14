@@ -17,13 +17,13 @@
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9/build-linux-manifest.mjs",
-      "sha256": "e43008ffe1b943cbe5a53e328eed1c2fca1dea735d750b790df64d894b389d08",
-      "bytes": 2856
+      "sha256": "11a3a92b2e72f350bed96edc84fc6f1c4492fee65046dc89bc9db51ec3731ad4",
+      "bytes": 2855
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9/check-digest-pins.mjs",
-      "sha256": "5475dc21efcf5a0547fdb4af355932933f147aea47e572eca790e7e100495cc9",
-      "bytes": 43369
+      "sha256": "e05dd6c3f140487a35b4fa31a1488429f9fe178070410ca1c9ddf28d69ced276",
+      "bytes": 43298
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9/cli.mjs",
@@ -34,6 +34,11 @@
       "path": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9/context.mjs",
       "sha256": "7784e091524384aeece0cfcdf6ca753bf66abae8989d2763fd4bc5234718db89",
       "bytes": 52773
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9/dynamic-signing.mjs",
+      "sha256": "e067177cefb9311b4bce88242661bf6109f0ad78e75ae69b156adc1a8b3c9002",
+      "bytes": 7051
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9/fixed_host.py",
@@ -97,7 +102,7 @@
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9/source-publication.mjs",
-      "sha256": "d6289c0a92b2ec421be35e5738a44d4a6155fe4432453f25d0f8a948ac29755f",
+      "sha256": "8c724a0a3b33a6515c5751ad164a9237723d3cdb48956fcb0892750d407afc08",
       "bytes": 6793
     },
     {
@@ -107,13 +112,13 @@
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9/tool-entry.functions.js",
-      "sha256": "a3f739e1bfd756f73194d13e230c467336e686d6e88ce9a999fd07f738fd1102",
+      "sha256": "ffbf642a886e694b4cd0ff713552e236d3c703e831ae8795864f441067859b0e",
       "bytes": 12243
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9/trusted-github.mjs",
-      "sha256": "629c7916ab65a4ea7df08e1cd7335ae5384f5a3eb3f6ce37ef4d734f4f250f08",
-      "bytes": 6079
+      "sha256": "ff9feeff0c02dba8f089725653bc9d38dd418674654044eb7595360d0c811c05",
+      "bytes": 6008
     }
   ],
   "qualification_issued": false,

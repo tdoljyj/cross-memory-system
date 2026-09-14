@@ -71,7 +71,7 @@ test "\$(/usr/bin/sha256sum /usr/bin/python3.11 | /usr/bin/cut -d\" \" -f1)" = "
 /usr/bin/python3.11 -I -S -B -c 'import json,hashlib,os,sys
 man=sys.argv[1]; repo=sys.argv[2]
 d=json.load(open(man))
-if d.get("object_type")!="ControllerSourceManifest" or d.get("qualification_issued") is not False or len(d.get("files",[]))!=22:
+if d.get("object_type")!="ControllerSourceManifest" or d.get("qualification_issued") is not False or len(d.get("files",[]))!=23:
     sys.exit("EXACT_SOURCE_MANIFEST_REQUIRED")
 qual=os.path.dirname(os.path.dirname(man))
 for root,dirs,_ in os.walk(qual):
