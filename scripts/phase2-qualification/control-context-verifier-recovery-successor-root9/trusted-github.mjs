@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import {execFileSync} from 'node:child_process';
-import {makeCommitment,prepareMutation,verifyObservedCommit,branch,prefix,repository} from '../nonproduction-control-store/runtime-successor/commitment-signing-root6-window/signing.mjs';
+import {makeCommitment,prepareMutation,verifyObservedCommit,branch,prefix,repository} from './dynamic-signing.mjs';
 const gh='/usr/local/bin/gh';
 const expectedGh='f687dc937534f8aa77ff9d2362163c645b5a8cc78297ef1a642c74c56aa48618';
 const immutableReads=new Map();

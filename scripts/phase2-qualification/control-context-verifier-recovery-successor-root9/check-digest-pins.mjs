@@ -109,10 +109,8 @@ if (TREE_EVIDENCE.length !== 7) throw new Error('TREE_EVIDENCE length changed; w
 // so a module the controller imports from elsewhere is never scanned for literals at all. The
 // self-test's census counts these; the gate has to check them too, or the two disagree about what
 // "the controller" is. Listed rather than discovered, same rule as everything else here.
-const CROSS_DIRECTORY_SOURCES = [
-  'nonproduction-control-store/runtime-successor/commitment-signing-root6-window/signing.mjs',
-];
-if (CROSS_DIRECTORY_SOURCES.length !== 1) throw new Error('CROSS_DIRECTORY_SOURCES length changed; declare deliberately');
+const CROSS_DIRECTORY_SOURCES = [];
+if (CROSS_DIRECTORY_SOURCES.length !== 0) throw new Error('CROSS_DIRECTORY_SOURCES length changed; declare deliberately');
 // Why only signing.mjs, when the controller also loads observe.py, validation.py,
 // remote_evidence.py and fixed_skill_fixture.py across directories: those four are FROZEN
 // dependencies. This controller pins their bytes and several predecessors pin the same bytes, so
@@ -128,13 +126,14 @@ if (CROSS_DIRECTORY_SOURCES.length !== 1) throw new Error('CROSS_DIRECTORY_SOURC
 
 const CONTROLLER_SOURCES = [
   'bridge.py', 'build-linux-manifest.mjs', 'check-digest-pins.mjs', 'cli.mjs', 'context.mjs',
+  'dynamic-signing.mjs',
   'fixed_host.py', 'grr.mjs', 'historical-component-observations.mjs', 'host-effect.mjs',
   'original-inputs-blob.mjs', 'parent600.py', 'read-source-blobs-linux.mjs',
   'request-denials.mjs', 'result-terminal.mjs',
   'root-window-validation.mjs', 'selftest-runtime-pins.mjs', 'source-publication.mjs',
   'tool-entry.functions.js', 'trusted-github.mjs',
 ];
-if (CONTROLLER_SOURCES.length !== 19) throw new Error('CONTROLLER_SOURCES length changed; declare a new source deliberately, not by accident');
+if (CONTROLLER_SOURCES.length !== 20) throw new Error('CONTROLLER_SOURCES length changed; declare a new source deliberately, not by accident');
 // R20-F3. Round 20 ran this gate on a host with no gh installed and got
 // "UNEXPLAINED trusted-github.mjs: f687dc937534 matches no file", exit 1 -- correct fail-closed
 // behaviour, but indistinguishable from a real controller defect, and since build-linux-manifest

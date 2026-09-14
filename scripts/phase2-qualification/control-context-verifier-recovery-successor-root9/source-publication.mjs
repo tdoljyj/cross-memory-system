@@ -23,7 +23,7 @@ const manifestPath=path.relative(repo,fileURLToPath(new URL('./ControllerSourceM
 const need=(ok,why)=>{if(!ok)throw Error(why);};
 export function exactDeclaredSources(manifest){
  const sources=manifest?.files;
- if(!(Array.isArray(sources)&&sources.length===22&&sources.every(e=>e&&typeof e==='object'&&!Array.isArray(e)&&Object.keys(e).sort().join(',')==='bytes,path,sha256')))throw Error('EXACT_22_DECLARED_REPOSITORY_SOURCE_SET');
+ if(!(Array.isArray(sources)&&sources.length===23&&sources.every(e=>e&&typeof e==='object'&&!Array.isArray(e)&&Object.keys(e).sort().join(',')==='bytes,path,sha256')))throw Error('EXACT_23_DECLARED_REPOSITORY_SOURCE_SET');
  return sources;
 }
 export function planSourceBatches(refs,sizes){
@@ -59,7 +59,7 @@ export function verifySourcePublication({sourceRef,ownerMerge,controllerDigest})
  readCompleteSourceSet(sourceRef.blobs,sizes);
  const merge=api('repos/'+repository+'/commits/'+ownerMerge),mergeTree=api('repos/'+repository+'/git/trees/'+merge.commit.tree.sha+'?recursive=1');
  need(mergeTree.truncated===false,'FULL_OWNER_MERGE_TREE_REQUIRED');
- // The accepted successor manifest is source-only: exactly 22 repository files and no
+ // The accepted successor manifest is source-only: exactly 23 repository files and no
  // predecessor role field. Treating the absent role as a filter selected zero files and made
  // the publication gate impossible to satisfy. Exact cardinality is fail-closed: 21 or 23
  // files are both a different controller, never an implicitly acceptable subset/superset.
