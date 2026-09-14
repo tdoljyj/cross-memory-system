@@ -77,5 +77,3 @@ export function verifyObservedCommit({plan,commit,comparison,tree,blobRaw,now,ex
 // response, changed head, failed verification or timeout stays UNKNOWN: inspect
 // immutable objects by exact references, never automatically re-sign or overwrite.
 // Current root/issuer/GA/epochs and one-reservation/one-GRR remain SQL obligations.
-
-

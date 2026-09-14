@@ -73,5 +73,3 @@ export function verifySourcePublication({sourceRef,ownerMerge,controllerDigest})
  }
  return {state:'ACTUAL_FIXED_SOURCE_PUBLICATION_VERIFIED',source_commit:sourceRef.commit,owner_merge:ownerMerge};
 }
-
-

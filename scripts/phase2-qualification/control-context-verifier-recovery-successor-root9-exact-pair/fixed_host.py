@@ -275,5 +275,3 @@ if __name__ == '__main__':
     if len(sys.argv) != 5 or sys.argv[1] != '--watch':
         raise SystemExit('Only fixed safety watchdog CLI; normal effects use trusted supervisor')
     raise SystemExit(watchdog(*sys.argv[2:]))
-
-

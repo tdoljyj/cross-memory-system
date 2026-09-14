@@ -192,5 +192,3 @@ two fresh authority checks. No callback or accepted=True bypass is exposed.
 
 if __name__ == '__main__':
     print(json.dumps(admission(None, None, datetime.now(timezone.utc))))
-
-

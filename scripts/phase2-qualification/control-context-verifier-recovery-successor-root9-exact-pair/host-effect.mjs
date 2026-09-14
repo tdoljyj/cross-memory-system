@@ -26,5 +26,3 @@ export function invokeFixedHost({gaRaw,operation,containerId,deadline}){
  if(operation==='CREATE'&&result.observation.State?.Running!==false)throw Error('CREATED_CONTAINER_MUST_BE_STOPPED');
  return result;
 }
-
-

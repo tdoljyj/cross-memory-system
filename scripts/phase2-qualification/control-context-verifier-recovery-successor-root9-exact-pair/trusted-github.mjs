@@ -76,5 +76,3 @@ export function verifyDynamicPayload(raw,type,expiresAt,historicalNotBefore=null
  return verifyObservedCommit({plan,commit,comparison,tree,blobRaw,now:observedNow,expiresAt});
 }
 // Network reads only. A valid historical signature is never live admission.
-
-

@@ -95,5 +95,3 @@ export function observeRequestDenials({gaRaw,observation,runtimeAcceptance,quali
    'unconverged capacity/renewal fencing','unknown result and no duplicate terminal','unwritable sink refusal',
    'no automatic readiness or broader authority after results','independent assessment of every original Test oracle']};
 }
-
-

@@ -53,5 +53,3 @@ export function verifyHistoricalObservationChain({value,subject}){
  need(value.pg_started===false&&value.authority_effect==='NONE'&&value.complete_case_pass===false,'HISTORICAL_READBACK_NOT_NEW_EXECUTION');
  return {state:'ORIGINAL_COMPONENT_BYTES_AND_APPLICABILITY_ACTUALLY_READ',test_id:value.test_id,authority_effect:'NONE'};
 }
-
-

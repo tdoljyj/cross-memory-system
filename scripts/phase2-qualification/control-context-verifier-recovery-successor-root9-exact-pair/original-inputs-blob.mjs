@@ -153,5 +153,3 @@ export function checkRestoredOriginal(raw,envelope){return (envelope.kind===kind
 export function decodeOriginalInputs(raw,ref,x){const k=choose(raw);return ({v2,v3})[k].decodeOriginalInputs(raw,ref,session(x,k));}
 export function envelopeFromPublication(...args){return v3.envelopeFromPublication(...args);}
 export function validatePackedDenialSource({packedRaw,sourceRaw,verificationSession}){const k=choose(packedRaw);return ({v2,v3})[k].validatePackedDenialSource({packedRaw,sourceRaw,verificationSession:session(verificationSession,k)});}
-
-

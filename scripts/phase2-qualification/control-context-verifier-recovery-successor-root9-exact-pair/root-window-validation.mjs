@@ -59,5 +59,3 @@ export async function readControlUri(uri,store){
  }
  return {data,status:'UNVERIFIED_SOURCE_READ_ONLY',authority_effect:'NONE',signature_verified:false};
 }
-
-

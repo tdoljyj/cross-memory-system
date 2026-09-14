@@ -15,5 +15,3 @@ try{
  process.stdout.write(JSON.stringify(prepared.kind==='RESULT_TERMINAL'?prepared.finishResult(fresh.observation):prepared.finishDispatch(fresh))+'\n');
 }catch(e){process.stdout.write(JSON.stringify({state:dispatchMayExist?'UNKNOWN':'BLOCKED',reason:String(e.message),capacity_released:false,automatic_retry:false,qualified:false})+'\n');process.exitCode=1;}
 finally{clearTimeout(watchdog);lines.close();}
-
-
