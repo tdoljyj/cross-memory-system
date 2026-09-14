@@ -1,0 +1,35 @@
+{
+  "state": "STAGE2C_PREPUBLICATION_CORE_READY_FOR_INDEPENDENT_REVIEW",
+  "authority_effect": "NONE",
+  "m3_owner_merge_commit": "9398c6cb8db84b802facebf683c134fb1ba4ad5d",
+  "status26": {
+    "generation": 26,
+    "sha256": "8e02293caa447a5c2fe1749d89c082fe2e1e937180c937d746512d9b7e32b6a3",
+    "signed_object_sha256": "d0c0126ae12d710e531e6ceea07c9ff4636d1f69ca85b6a91a49cd75021bccd8",
+    "schema_valid": true
+  },
+  "successor_binding": {
+    "sha256": "d3c597a2425343bb6fb897e4a6eaddd76cb73adf282a8cd07187e23a527cd76e",
+    "published_in_m3": false,
+    "publish_in_m4": true
+  },
+  "sealed_sql": {
+    "sha256": "bf180ec5e01e93f9103db5363ecee8a14ae06a4d5d73f2e9068b96a3da4f9dac",
+    "offline_checks": 22,
+    "applied": false
+  },
+  "operational_suite": {
+    "offline_checks": 17,
+    "live_final_bytes_preflight_required": true
+  },
+  "controller_entry_count": 22,
+  "m4_sha_late_bound": true,
+  "independent_review": "PENDING",
+  "live_preflight": "NOT_RUN",
+  "live_apply": "NOT_RUN",
+  "database_writes": 0,
+  "budget_reservations": 0,
+  "capacity_value_change": false,
+  "refund": false,
+  "ga_dispatches": 0
+}

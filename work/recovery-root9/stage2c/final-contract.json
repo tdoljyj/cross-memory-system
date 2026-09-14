@@ -1,0 +1,122 @@
+{
+  "schema_version": 1,
+  "object_type": "Root9Stage2CFinalOperationalContract",
+  "state": "PREPUBLICATION_ONLY_NOT_APPLY_AUTHORITY",
+  "authority_effect": "NONE",
+  "repository": "tdoljyj/cross-memory-system",
+  "publication_root": "work/recovery-root9/stage2c",
+  "fixed": {
+    "m3_owner_merge_commit": "9398c6cb8db84b802facebf683c134fb1ba4ad5d",
+    "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+    "root8_generation": "ctrgen_b060bc520329398936e461af6a477f94",
+    "root9_generation": "ctrgen_308a1dfc185cff633892638581e0a34c",
+    "root8_sequence": 8,
+    "root9_sequence": 9,
+    "pre_execution_sequence": 97,
+    "post_execution_sequence": 101,
+    "next_possible_budget_sequence": 102,
+    "successor_binding_id": "sb_201178b7a8111000d515f7f26a75a28b",
+    "successor_binding_sha256": "d3c597a2425343bb6fb897e4a6eaddd76cb73adf282a8cd07187e23a527cd76e",
+    "root9_raw_sha256": "956975e5131aaf858dc06bc7923e0186416740d82db64363af6103e7f69f94e1",
+    "root9_canonical_sha256": "7483e3d240b270d7ad49d9262c63bd49ae0290db08c1dec66aa0de2f239eab60",
+    "status26_full_sha256": "8e02293caa447a5c2fe1749d89c082fe2e1e937180c937d746512d9b7e32b6a3",
+    "status26_signed_object_sha256": "d0c0126ae12d710e531e6ceea07c9ff4636d1f69ca85b6a91a49cd75021bccd8",
+    "status26_signature_evidence_sha256": "64f4f97a9b1bfd8f2d668dcd3dad77cec86ab96e1855b5c09c465e028bb77e1b",
+    "controller_sha256": "c76438600d93d708ffe312c5980d8574f649836b65ae523daab0271e7fc9ff1b",
+    "controller_entry_count": 22,
+    "controller_qualification_sha256": "171828b556756186ed30b88928855fb8e6607f799911bf63214e9505fa984c71",
+    "runtime_acceptance_sha256": "107fe912496392a0a677f103feb395321292231db4459d1a9a0f170573125cb9",
+    "status_schema_sha256": "6f9a6799109cbad00b4e615b58f535f91fe0ec4a53790fa744000caa2bf3282e",
+    "not_before": "2026-09-14T03:00:00Z",
+    "expires_at_exclusive": "2026-09-15T03:00:00Z"
+  },
+  "future_m4": {
+    "commit": null,
+    "tree": null,
+    "source_parent": null,
+    "pull_request": null,
+    "resolution": "EXTERNAL_POST_MERGE_EVIDENCE_ONLY",
+    "required_state": "VERIFIED_STAGE2C_OWNER_MERGE",
+    "required_first_parent": "9398c6cb8db84b802facebf683c134fb1ba4ad5d",
+    "required_base_ref": "main",
+    "required_merged_by": "tdoljyj",
+    "required_committer": "web-flow",
+    "required_verification": {"verified":true,"reason":"valid"},
+    "exact_path_and_hash_inventory_required": true
+  },
+  "live_preimage": {
+    "root_sequence": 8,
+    "root_generation": "ctrgen_b060bc520329398936e461af6a477f94",
+    "execution_sequence": 97,
+    "root_event_count": 8,
+    "execution_event_count": 97,
+    "gate_attempt_count": 14,
+    "allocation_count": 9,
+    "forward_count": 17,
+    "charged_seconds": 10506,
+    "charged_evidence_bytes": 2335812531,
+    "pending_budget_sequence": null,
+    "active_ga_id": null,
+    "status26_count": 0,
+    "successor_count": 1
+  },
+  "only_permitted_postimage": {
+    "root_event_9": "GENERATION_REGISTERED",
+    "execution_event_98": "SUCCESSOR_BINDING_REGISTERED",
+    "execution_event_99": "SUCCESSOR_BINDING_PREPARED",
+    "status_object": "StatusManifest generation 26",
+    "execution_event_100": "SUCCESSOR_BINDING_QUALIFIED",
+    "execution_event_101": "EXECUTION_RUNTIME_ACCEPTANCE_REPOINTED",
+    "successor_count": 2,
+    "binding_value_changes": ["controller_sha256","qualification_sha256","runtime_acceptance_sha256"]
+  },
+  "must_remain_identical": [
+    "root events 1..8 raw relational rows",
+    "execution events 1..97 raw relational rows",
+    "all 14 gate attempts",
+    "accepted_binding",
+    "Root8 successor row",
+    "all control objects through Status generation 25",
+    "charged_seconds=10506",
+    "charged_evidence_bytes=2335812531",
+    "allocation_count=9",
+    "forward_count=17",
+    "all non-target routine ACLs and all table ACL inventories",
+    "all non-target functions and constraints"
+  ],
+  "forbidden": {
+    "history_rewrite": true,
+    "capacity_increase": true,
+    "refund": true,
+    "budget_reservation": true,
+    "sequence_102_creation": true,
+    "ga_dispatch": true,
+    "acl_expansion": true,
+    "automatic_retry_after_unknown": true,
+    "future_m4_sha_embedded_in_m4": true
+  },
+  "target_function_final_acl": {
+    "functions": [
+      "clued_control.read_root(text)",
+      "clued_control.reserve_execution_budget(text,text)",
+      "clued_control.reserve_gate(text,text)"
+    ],
+    "execute_denied_to": ["public","anon","authenticated"],
+    "execute_granted_to": ["service_role"],
+    "installer_must_be_absent": "clued_control.install_root9_successor_v1(jsonb)"
+  },
+  "host_launcher": {
+    "default_mode": "DRY_RUN_NO_DATABASE_CONTACT",
+    "apply_confirmation": "ROOT9_STAGE2C_CAS_REPOINT_ONCE",
+    "requires_external_evidence_file_and_sha256": true,
+    "requires_database_url_only_in_apply_mode": true,
+    "applies_exact_sql_once": true,
+    "on_unknown": "READBACK_ONCE_NEVER_RETRY"
+  },
+  "connector_compatibility": {
+    "canonical_runner": "psql on an ordinary Linux host or a raw-SQL connector",
+    "psql_meta_commands_in_sql": [],
+    "sql_is_pure_postgresql": true,
+    "runner_sets_on_error_stop": "psql launcher supplies -v ON_ERROR_STOP=1 outside SQL"
+  }
+}

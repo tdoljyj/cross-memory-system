@@ -1,0 +1,17 @@
+{
+  "binding_id": "sb_201178b7a8111000d515f7f26a75a28b",
+  "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+  "predecessor_generation_id": "ctrgen_b060bc520329398936e461af6a477f94",
+  "generation_id": "ctrgen_308a1dfc185cff633892638581e0a34c",
+  "not_before": "2026-09-14T03:00:00Z",
+  "expires_at": "2026-09-15T03:00:00Z",
+  "budget_sequence_floor": 98,
+  "controller_sha256": "c76438600d93d708ffe312c5980d8574f649836b65ae523daab0271e7fc9ff1b",
+  "qualification_sha256": "171828b556756186ed30b88928855fb8e6607f799911bf63214e9505fa984c71",
+  "profile_sha256": "d1c060b85f0b842a397a478105ea57a208e62eb0a5a2d4c2cd8f93f63eae88f5",
+  "scope_sha256": "115408c69dcb2fa606fb0de34ec86c5239487d0cfa9a73abb267664a2482abe5",
+  "gate_id": "G-PREENTRY-SKILL-QUALIFICATION",
+  "gate_version": "fixed-synthetic-20260910.v10-env-order-repair",
+  "gate_sha256": "3487d9fc6ccee5478569021961eac93bf5ef6bd4bc2428559b20a44abb9c155a",
+  "status_schema_sha256": "6f9a6799109cbad00b4e615b58f535f91fe0ec4a53790fa744000caa2bf3282e"
+}
