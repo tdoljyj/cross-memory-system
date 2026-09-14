@@ -1,0 +1,63 @@
+{
+  "state": "VERIFIED_POSTBUDGET_P1_OWNER_MERGE",
+  "repository": "tdoljyj/cross-memory-system",
+  "pull_request": 176,
+  "merge": {
+    "sha": "251b3b7eed1d9d3149c73f4b17dedda8aea7bfa5",
+    "tree": "4a05e51035ddc3a57e673d8d3de0f31c7ddb2617",
+    "parents": [
+      "41b6ef562509f28c386644f98d0f6ea879a41d12",
+      "0b139bb347634fc6d8298a7f187ce0e16618f020"
+    ],
+    "first_parent": "41b6ef562509f28c386644f98d0f6ea879a41d12",
+    "source_parent": "0b139bb347634fc6d8298a7f187ce0e16618f020",
+    "source_tree": "4a05e51035ddc3a57e673d8d3de0f31c7ddb2617",
+    "source_commits": [
+      "eb23eaff2f9f7d10819f5126f074d7a4dc7393f9",
+      "0b139bb347634fc6d8298a7f187ce0e16618f020"
+    ],
+    "author_login": "tdoljyj",
+    "merged_by": "tdoljyj",
+    "committer_login": "web-flow",
+    "base_ref": "main",
+    "pull_request_count": 1,
+    "verification": {
+      "verified": true,
+      "reason": "valid"
+    },
+    "merged_at": "2026-09-14T09:09:23Z"
+  },
+  "coordinate_derivation": {
+    "source_tree_method": "GITHUB_SOURCE_HEAD_ZIP_RAW_BLOB_BYTES_AND_EXECUTABLE_BITS_GIT_CANONICAL_TREE_OBJECT_V1",
+    "source_tree_eol_filter_applied": false,
+    "source_tree_sha": "4a05e51035ddc3a57e673d8d3de0f31c7ddb2617",
+    "merge_tree_equivalence_basis": "FIRST_PARENT_REMAINED_SOURCE_BRANCH_BASELINE_AND_PR_MERGED_WITHOUT_CONFLICT",
+    "merge_tree_equals_source_tree": true,
+    "commit_page_observations": [
+      "two parents: 41b6ef562509f28c386644f98d0f6ea879a41d12 + 0b139bb347634fc6d8298a7f187ce0e16618f020",
+      "committer: web-flow",
+      "signature state: Verified",
+      "merged by: tdoljyj"
+    ]
+  },
+  "artifacts": {
+    "controller_manifest": {
+      "path": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9/ControllerSourceManifest.candidate.json",
+      "ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/51bf542e98808d9a64d16ef079fdb927de5f1d27",
+        "sha256": "c0b49c6a782efe219485486c120c05a7b5e7171394194cebc8b7aec76047d10a"
+      }
+    },
+    "defect_evidence": {
+      "path": "work/recovery-root9/postbudget-signing-repair/Root9DynamicSigningDefectAndFixEvidence.json",
+      "ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/50bf30b25fffae4031160e8439c69c878f6d5c3c",
+        "sha256": "3d74fc54f4784cb0e80f6456c1f88cbf79e6ec2b1193aa2e934423c03d875170"
+      }
+    }
+  },
+  "exact_controller_files": 23,
+  "authority_effect": "NONE",
+  "database_writes": 0,
+  "budget_allocations": 0
+}
