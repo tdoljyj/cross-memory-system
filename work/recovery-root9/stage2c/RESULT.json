@@ -1,32 +1,44 @@
 {
-  "state": "STAGE2C_PREPUBLICATION_CORE_READY_FOR_INDEPENDENT_REVIEW",
+  "schema_version": 1,
+  "object_type": "Stage2CM5MinimalHotfixPackageResult",
+  "state": "STAGE2C_M5_HOTFIX_CORE_READY_FOR_INDEPENDENT_REVIEW",
   "authority_effect": "NONE",
-  "m3_owner_merge_commit": "9398c6cb8db84b802facebf683c134fb1ba4ad5d",
-  "status26": {
-    "generation": 26,
-    "sha256": "8e02293caa447a5c2fe1749d89c082fe2e1e937180c937d746512d9b7e32b6a3",
-    "signed_object_sha256": "d0c0126ae12d710e531e6ceea07c9ff4636d1f69ca85b6a91a49cd75021bccd8",
-    "schema_valid": true
+  "m4_owner_merge": {
+    "state": "VERIFIED_STAGE2C_M4_OWNER_MERGE",
+    "pull_request": 174,
+    "commit": "dcc9fd1fa47ef9d04af3f53244a240e60ae390c3",
+    "tree": "464f4f9d209c9383dfce37371e49f2b8ff50dd0f",
+    "evidence_sha256": "bf9c35f1144eda43c31bf378e1918fa1412d9d8907d7e54271e6ae8c84716127",
+    "published_apply_sha256": "bf180ec5e01e93f9103db5363ecee8a14ae06a4d5d73f2e9068b96a3da4f9dac"
   },
-  "successor_binding": {
-    "sha256": "d3c597a2425343bb6fb897e4a6eaddd76cb73adf282a8cd07187e23a527cd76e",
-    "published_in_m3": false,
-    "publish_in_m4": true
-  },
-  "sealed_sql": {
-    "sha256": "bf180ec5e01e93f9103db5363ecee8a14ae06a4d5d73f2e9068b96a3da4f9dac",
-    "offline_checks": 22,
+  "hotfix": {
+    "apply_sha256": "f3f58366a06411d9578a29baf226543760027d0bfef3b33261b08161d394eeb1",
+    "supersedes_apply_sha256": "bf180ec5e01e93f9103db5363ecee8a14ae06a4d5d73f2e9068b96a3da4f9dac",
+    "reason": "STATUS_URI_JSON_EXTRACTION_OPERATOR_PRECEDENCE_CORRECTION",
+    "exact_change": "status_uri := 'control://status-manifests/' || (sm->>'status_manifest_id')",
+    "sql_offline_checks": 23,
+    "operational_offline_checks": 19,
     "applied": false
   },
-  "operational_suite": {
-    "offline_checks": 17,
-    "live_final_bytes_preflight_required": true
+  "incident_rollback_evidence": {
+    "provenance": "EXTERNAL_POST_M4_OPERATIONAL_EVIDENCE_NOT_PART_OF_M4_ARTIFACT_SET",
+    "evidence_sha256": "9f1ecdcbb706f7bf3b0a34a7c8fb271e732acda7eeddeb10076fd4f5bc30f644",
+    "state": "EXPLICIT_FAILURE_FULL_TRANSACTION_ROLLBACK_VERIFIED",
+    "failed_apply_sha256": "bf180ec5e01e93f9103db5363ecee8a14ae06a4d5d73f2e9068b96a3da4f9dac",
+    "sqlstate": "22P02",
+    "cause": "PostgreSQL operator precedence caused the text prefix to enter JSON concatenation before text extraction",
+    "explicit_full_rollback_verified": true,
+    "restored_root_sequence": 8,
+    "restored_execution_sequence": 97,
+    "unique_budget_untouched": true,
+    "committed_database_writes": 0,
+    "retry_performed": false
   },
-  "controller_entry_count": 22,
-  "m4_sha_late_bound": true,
-  "independent_review": "PENDING",
-  "live_preflight": "NOT_RUN",
-  "live_apply": "NOT_RUN",
+  "path_set_unchanged_from_m4": true,
+  "path_count": 30,
+  "database_connections_by_builder": 0,
+  "database_writes_by_builder": 0,
+  "cas_executions_by_builder": 0,
   "database_writes": 0,
   "budget_reservations": 0,
   "capacity_value_change": false,

@@ -16,7 +16,7 @@
     {"id":"status26","kind":"complete_status","sha256":"8e02293caa447a5c2fe1749d89c082fe2e1e937180c937d746512d9b7e32b6a3"},
     {"id":"acceptance","kind":"runtime_acceptance","sha256":"107fe912496392a0a677f103feb395321292231db4459d1a9a0f170573125cb9"},
     {"id":"successor_binding","kind":"exact_binding","sha256":"d3c597a2425343bb6fb897e4a6eaddd76cb73adf282a8cd07187e23a527cd76e"},
-    {"id":"apply_once","kind":"single_transaction_cas","late_bound_file_hash":true},
+    {"id":"apply_once","kind":"single_transaction_cas","sha256":"f3f58366a06411d9578a29baf226543760027d0bfef3b33261b08161d394eeb1","late_bound_file_hash":false},
     {"id":"m4","kind":"future_owner_merge","late_bound":true},
     {"id":"m4_evidence","kind":"external_post_merge_evidence","not_in_m4":true},
     {"id":"preflight","kind":"live_read_only"},

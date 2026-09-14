@@ -13,6 +13,7 @@ OUTPUT_DIR=
 WINDOW_NOT_BEFORE=2026-09-14T03:00:00Z
 WINDOW_EXPIRES=2026-09-15T03:00:00Z
 EXPECTED_M3=9398c6cb8db84b802facebf683c134fb1ba4ad5d
+EXPECTED_APPLY_SHA256=f3f58366a06411d9578a29baf226543760027d0bfef3b33261b08161d394eeb1
 
 usage() {
   printf '%s\n' \
@@ -45,9 +46,9 @@ command -v python3 >/dev/null || { printf '%s\n' 'REFUSED_PYTHON3_REQUIRED' >&2;
 # This validates every path and byte described by post-M4 evidence against the
 # local M4 directory. The M4 SHA is supplied only after merge; it is not baked in.
 validate_evidence() {
-  python3 - "$EVIDENCE" "$EVIDENCE_SHA256" "$M4_COMMIT" "$EXPECTED_M3" "$SCRIPT_DIR" "$APPLY_SQL" <<'PY'
+  python3 - "$EVIDENCE" "$EVIDENCE_SHA256" "$M4_COMMIT" "$EXPECTED_M3" "$SCRIPT_DIR" "$APPLY_SQL" "$EXPECTED_APPLY_SHA256" <<'PY'
 import hashlib,json,os,re,sys
-epath, expected_ehash, cli_m4, m3, script_dir, apply_sql = sys.argv[1:]
+epath, expected_ehash, cli_m4, m3, script_dir, apply_sql, expected_apply_sha = sys.argv[1:]
 def die(msg):
     print('REFUSED_M4_EVIDENCE_'+msg, file=sys.stderr); raise SystemExit(65)
 if not epath or not os.path.isfile(epath): die('FILE_REQUIRED')
@@ -94,7 +95,9 @@ for a in arts:
     if len(b)!=a['bytes'] or hashlib.sha256(b).hexdigest()!=a['sha256']: die('LOCAL_FILE_MISMATCH_'+rel)
 expected_apply=os.path.realpath(os.path.join(script_dir,'root9_apply_once.sealed.sql'))
 if os.path.realpath(apply_sql)!=expected_apply: die('APPLY_SQL_PATH')
-if by_path[prefix+'root9_apply_once.sealed.sql']['sha256']!=hashlib.sha256(open(apply_sql,'rb').read()).hexdigest(): die('APPLY_SQL_HASH')
+actual_apply_sha=hashlib.sha256(open(apply_sql,'rb').read()).hexdigest()
+if expected_apply_sha!='f3f58366a06411d9578a29baf226543760027d0bfef3b33261b08161d394eeb1': die('INTERNAL_APPLY_PIN')
+if actual_apply_sha!=expected_apply_sha or by_path[prefix+'root9_apply_once.sealed.sql']['sha256']!=expected_apply_sha: die('APPLY_SQL_HASH')
 safety=e.get('safety_boundary') or {}
 for key,want in {'history_rewrite':False,'capacity_value_change':False,'refund':False,'budget_reservations':0,'ga_dispatches':0}.items():
     if safety.get(key)!=want: die('SAFETY_'+key.upper())

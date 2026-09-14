@@ -80,6 +80,13 @@ test('target-function-acls-excluded-from-symmetric-snapshot', () => {
   assert.deepEqual(contract.target_function_final_acl.execute_denied_to, ['public','anon','authenticated']);
   assert.deepEqual(contract.target_function_final_acl.execute_granted_to, ['service_role']);
 });
+test('corrected-sealed-apply-pin', () => {
+  const sha = 'f3f58366a06411d9578a29baf226543760027d0bfef3b33261b08161d394eeb1';
+  assert.equal(contract.fixed.root9_apply_once_sealed_sha256, sha);
+  assert.equal(graph.nodes.find(x => x.id === 'apply_once').sha256, sha);
+  assert.match(launcher, new RegExp(`EXPECTED_APPLY_SHA256=${sha}`));
+  assert.doesNotMatch(launcher + JSON.stringify(graph) + JSON.stringify(contract), /bf180ec5e01e93f9103db5363ecee8a14ae06a4d5d73f2e9068b96a3da4f9dac/);
+});
 test('launcher-default-never-connects', () => {
   const env = {...process.env}; delete env.DATABASE_URL;
   const out = execFileSync('bash', [path.join(dir,'run-stage2c.sh')], {encoding:'utf8', env});

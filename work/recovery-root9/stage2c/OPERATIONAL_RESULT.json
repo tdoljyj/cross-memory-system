@@ -2,15 +2,21 @@
   "state": "PASS_STAGE2C_OPERATIONAL_OFFLINE",
   "authority_effect": "NONE",
   "m3_owner_merge_commit": "9398c6cb8db84b802facebf683c134fb1ba4ad5d",
-  "offline_checks": 18,
+  "offline_checks": 19,
+  "sealed_apply_sql_dependency": {
+    "path": "work/recovery-root9/stage2c/root9_apply_once.sealed.sql",
+    "sha256": "f3f58366a06411d9578a29baf226543760027d0bfef3b33261b08161d394eeb1",
+    "supersedes_sha256": "bf180ec5e01e93f9103db5363ecee8a14ae06a4d5d73f2e9068b96a3da4f9dac",
+    "reason": "STATUS_URI_JSON_EXTRACTION_OPERATOR_PRECEDENCE_CORRECTION"
+  },
   "live_preflight_observation": "PASS_14_OF_14_READ_ONLY_REPORTED_BY_ROOT_OPERATOR_BEFORE_FINAL_META_COMMAND_REMOVAL; RERUN_FINAL_BYTES_BEFORE_APPLY",
   "artifacts": [
     {"path":"preflight.sql","bytes":11139,"sha256":"cda07b63cbf5f7a6c77aca31d5cfbb36a06a6cb39f840ca5808c29a8452a29f8"},
     {"path":"post-readback.sql","bytes":14099,"sha256":"d81ba672db7932e7124d5fab1590607a3b5456ed50dba449f016f56451cf1928"},
-    {"path":"run-stage2c.sh","bytes":10811,"sha256":"8fd983cec014eab8965591551773c09a22790e29aec836c27e78631f65b9b203"},
-    {"path":"dependency-graph.json","bytes":2027,"sha256":"193b9e712caa902ea3bd5051b32435cf74fb79363fa86e1aa97ce3f5a59bcb5d"},
-    {"path":"final-contract.json","bytes":5199,"sha256":"9947f50be6b21d7dfe17d3580a824d4a7e83546374e04c523532a09873e0d285"},
-    {"path":"verify-operational.mjs","bytes":6410,"sha256":"cedbdc3fd542a702d23e7c1451c85e5d7b2b177469d8a373d3d78b4e158cb7c5"}
+    {"path":"run-stage2c.sh","bytes":11136,"sha256":"b176386953073db225d678d61d3d365663e84c84911ab4fab902c985091da9e3"},
+    {"path":"dependency-graph.json","bytes":2104,"sha256":"75f81aa5ffda764d89e31b79c4f3ecfb0279ee7b3566778e40997a68558eaa4b"},
+    {"path":"final-contract.json","bytes":5305,"sha256":"070e0cea212a979c3f90c4166a25e9b896bbf65e023a1c52fabe8936806307a2"},
+    {"path":"verify-operational.mjs","bytes":6903,"sha256":"073db5c3d24bc11b9f5512e7434f1fb4d3ec3c577758483e2735440aa8cc8273"}
   ],
   "safety_boundary": {
     "database_writes": 0,
