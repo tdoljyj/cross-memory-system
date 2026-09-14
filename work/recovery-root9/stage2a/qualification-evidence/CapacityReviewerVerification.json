@@ -1,0 +1,60 @@
+{
+  "state": "PASS",
+  "positive_checks": {
+    "authenticated_administrative_json": 3,
+    "controller_source_predicates_pinned": 6,
+    "controller_digest": "c76438600d93d708ffe312c5980d8574f649836b65ae523daab0271e7fc9ff1b",
+    "capacity_delta_exact_unchanged": true,
+    "historical_series_and_repairs_verified": true,
+    "changed_source_refs_exact_stage1": 23,
+    "repair_ref_binding": true,
+    "no_capacity_increase": true,
+    "no_refund": true,
+    "no_unique_budget_operation": true,
+    "no_database_write": true
+  },
+  "negative_controls": [
+    {
+      "id": "STALE_ROOT6_APPROVAL_TIME",
+      "result": "PASS",
+      "expected": "CAPACITY_APPROVAL_CURRENT_ROOT5_TIME",
+      "observed": "CAPACITY_APPROVAL_CURRENT_ROOT5_TIME"
+    },
+    {
+      "id": "STALE_CONTROLLER",
+      "result": "PASS",
+      "expected": "CAPACITY_EXACT_CURRENT_CONTROLLER_SCOPE",
+      "observed": "CAPACITY_EXACT_CURRENT_CONTROLLER_SCOPE"
+    },
+    {
+      "id": "UNREVIEWED_SCOPE_FIELD",
+      "result": "PASS",
+      "expected": "CAPACITY_ONLY_EXPLICIT_DELTA",
+      "observed": "CAPACITY_ONLY_EXPLICIT_DELTA"
+    },
+    {
+      "id": "NON_STAGE1_CHANGED_REF",
+      "result": "PASS",
+      "expected": "CHANGED_SOURCE_REFS_EXACT_STAGE1_SET",
+      "observed": "CHANGED_SOURCE_REFS_EXACT_STAGE1_SET"
+    },
+    {
+      "id": "CAPACITY_INCREASE",
+      "result": "PASS",
+      "expected": "REAL_EXACT_CAPACITY_APPROVAL_REQUIRED",
+      "observed": "REAL_EXACT_CAPACITY_APPROVAL_REQUIRED"
+    },
+    {
+      "id": "REPAIR_APPLICABILITY_DRIFT",
+      "result": "PASS",
+      "expected": "CAPACITY_REPAIR_REJECTED",
+      "observed": "CAPACITY_REPAIR_REJECTED"
+    }
+  ],
+  "remaining_gates": [
+    "Owner must merge exact Stage2A bytes via the verified merge path.",
+    "Read back approval/applicability/repair from that merge and bind exact publication descriptors.",
+    "Live Root9 registration and ga_043/no-refund readback remain unverified here."
+  ],
+  "authority_effect": "NONE"
+}

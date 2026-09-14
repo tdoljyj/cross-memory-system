@@ -1,0 +1,31 @@
+{
+  "state": "PASS_UNSEALED_DO_NOT_APPLY",
+  "checks": 23,
+  "check_names": [
+    "unsealed-fail-before-ddl",
+    "exact-two-functions-only",
+    "root9-exact-identities",
+    "root9-full-prefix-pg-jsonb-digest",
+    "derive-live-prefix-pg-jsonb-digests",
+    "root9-canonical-prefix-commitment",
+    "root8-branch-preserved",
+    "original-first-six-guard-preserved",
+    "budget-capacity-literals-preserved",
+    "acl-preserved",
+    "no-history-table-ddl",
+    "model-root9-positive",
+    "model-root8-positive",
+    "root9-event-count-negative",
+    "root9-generation-negative",
+    "root9-sequence-negative",
+    "root9-prefix-bytes-negative",
+    "root9-prefix-claim-negative",
+    "root9-predecessor-negative",
+    "root9-predecessor-sha-negative",
+    "root9-metadata-negative",
+    "root9-state-negative",
+    "model-root8-negative"
+  ],
+  "database_writes": 0,
+  "budget_reservations": 0
+}

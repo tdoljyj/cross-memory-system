@@ -1,0 +1,86 @@
+{
+  "state": "APPROVED_EXACT_ORIGINAL_INPUT_CAPACITY_SUPPLEMENT",
+  "base_proposal_sha256": "ea96914e218460339508bc51eff0d10de41e1a94cfa3a0a544a85a132219791b",
+  "base_approval_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/86636aa78807ca1ce1facbdd910f7c3d27a75177",
+    "sha256": "fe114f0860dc69a52cd448ae697e8d8692fe39e51d84ab8bb60edfe01ace97fe"
+  },
+  "bounded_series_constraints": {
+    "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+    "root_generation": "ctrgen_2e778ca66244459f974b081edca8c04e",
+    "project": "uscrdifznmlvczcekqpw",
+    "expires_at": "2026-09-10T10:13:16Z",
+    "maximum_new_ga": 3,
+    "maximum_new_forward": 3,
+    "per_ga_seconds": 600,
+    "per_ga_evidence_bytes": 134217728,
+    "maximum_series_charged_seconds": 6906,
+    "root_seconds_cap": 7200,
+    "evidence_cap": 1530506163,
+    "first_pass_stops": true,
+    "refund": false,
+    "automatic_retry": false,
+    "production": false,
+    "model_budget": 0,
+    "paid_budget": 0
+  },
+  "capacity_delta": {
+    "original_input_bytes_before": 3300000,
+    "original_input_bytes_after": 4000000,
+    "original_input_kind_before": "EXACT_ORIGINAL_VERIFIER_INPUTS_BLOB_V5_3300000",
+    "original_input_kind_after": "EXACT_ORIGINAL_VERIFIER_INPUTS_BLOB_V6_4000000",
+    "ga_raw_bytes": 65536,
+    "control_request_and_grr_bytes": 131072,
+    "evidence_index_bytes": 131072,
+    "first_frame_bytes": 4194304,
+    "second_frame_bytes": 4194304,
+    "publisher_request_bytes": 8388608,
+    "publisher_response_bytes": 8388608,
+    "source_batch_response_bytes": 33554432,
+    "source_refs_maximum": 160,
+    "root_strict_json_bytes": 2097152,
+    "original_field_count": 5,
+    "original_nineteen_oracles_unchanged": true,
+    "old_signed_objects_rewritten": false,
+    "new_root": false,
+    "new_signing_identity": false,
+    "refund": false
+  },
+  "baseline": {
+    "failed_ga_id": "ga_04377008dc04437d9ee9d28a3c79ff3a",
+    "failed_receipt_sha256": "b27286d6fcb54e34a62d8738f49c1ecafe3210c9a321a703c3828e38497e434c",
+    "terminal_phase": "BLOCKED",
+    "sequence": 49,
+    "charged_seconds": 5706,
+    "charged_evidence_bytes": 1262070707,
+    "used_series_allocations": 1,
+    "maximum_remaining_allocations": 2
+  },
+  "capacity_proposal_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/ffbc4b97c4a183932ebbdfddda145732b2a6a152",
+    "sha256": "761f0e0df18c6ea4c3f168a3d2f8219cc9f5798a518e00078531034529c22d93"
+  },
+  "approved_at": "2026-09-14T05:42:08Z",
+  "authority": "user_explicit",
+  "approval_text": "授权 successor post-activation 定点修复；不加容量、不退款、不触碰唯一预算。",
+  "owner_instruction_scope": {
+    "capacity_value_change": false,
+    "refund": false,
+    "unique_budget_operation": false,
+    "database_write": false
+  },
+  "controller_digest": "c76438600d93d708ffe312c5980d8574f649836b65ae523daab0271e7fc9ff1b",
+  "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+  "root_generation": "ctrgen_308a1dfc185cff633892638581e0a34c",
+  "root_window": {
+    "not_before": "2026-09-14T03:00:00Z",
+    "expires_at": "2026-09-15T03:00:00Z"
+  },
+  "prior_owner_published_approval": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/79ee0a198c28ecef69db515078fbd97b30448ca3",
+    "sha256": "02b120896736965f487491e8f2ce05dbfe1cf0efa9f8832230d24ebfa0357f2b"
+  },
+  "no_change_attestation": "capacity_delta is exactly unchanged from the Owner-published 160 approval; this only refreshes approved_at into the Root9 window required by the frozen controller.",
+  "publication_status": "OWNER_MERGE_PENDING",
+  "authority_effect": "NONE"
+}
