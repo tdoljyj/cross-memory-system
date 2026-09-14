@@ -1,0 +1,81 @@
+{
+  "object_type": "Root9ExactPairStage2OwnerPublicationEvidence",
+  "schema_version": "1.0",
+  "state": "VERIFIED_STAGE2_EXACT_PAIR_OWNER_MERGE",
+  "repository": "tdoljyj/cross-memory-system",
+  "pull_request": 180,
+  "merge": {
+    "sha": "ec6e3df1cc36d4ef8dbd2bfb91555aa5a604f5b6",
+    "tree": "69c39c39c4dbca762ad889236637000a2fa7f944",
+    "parents": [
+      "461581e6a19af45c7091f58cf3fe7fcbb39a78e8",
+      "44c5638c5e717bdd1e296a84b9d1a1dd44cea106"
+    ],
+    "first_parent": "461581e6a19af45c7091f58cf3fe7fcbb39a78e8",
+    "source_parent": "44c5638c5e717bdd1e296a84b9d1a1dd44cea106",
+    "author_login": "tdoljyj",
+    "merged_by": "tdoljyj",
+    "committer_login": "web-flow",
+    "base_ref": "main",
+    "verification": {
+      "verified": true,
+      "reason": "valid"
+    },
+    "merged_at": "2026-09-14T17:14:31Z"
+  },
+  "independent_review": {
+    "reviewer": "/root/root9_recovery_review",
+    "decision": "STAGE2_PUBLICATION_GO",
+    "artifact_count": 12,
+    "git_blob_sha_and_bytes_checked": 12,
+    "github_blob_refs_checked": 29,
+    "missing_refs": 0,
+    "sha_mismatches": 0
+  },
+  "artifacts": {
+    "controller_qualification": {
+      "path": "work/recovery-root9/exact-pair-successor-stage2/ControllerQualification.root9.exact-pair.candidate.json",
+      "ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/45e4519e7cf8acd5261f339913758797f5eae2ef",
+        "sha256": "3197a38e686ec6b8f8ebff0cf8b6344bfd427d7c6e6a0bdb8f157d142fe307aa"
+      },
+      "bytes": 6126
+    },
+    "repair_acceptance": {
+      "path": "work/recovery-root9/exact-pair-successor-stage2/Root9ExactPairRepairAcceptance.candidate.json",
+      "ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/87571bfd9ae43c8652c1a4f182abb431c0b964f2",
+        "sha256": "21eb0391fb2de19789441eca3ae8915fa9741ed0aad56994ec469f52fe7ec10a"
+      },
+      "bytes": 1725
+    },
+    "status28_signing_payload": {
+      "path": "work/recovery-root9/exact-pair-successor-stage2/Status28SigningPayload.json",
+      "ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/b970c2c45c4de0089e9677a680783a97dccb39a2",
+        "sha256": "4eef9d9a49e7958417b4c76e543462dca4c4abcd10d78d563701d77261f04c19"
+      },
+      "bytes": 7420,
+      "signed_payload_sha256": "a765cc9a6506c8486cb46087cbfa0c9f81f0ff03df23cb0dd421ea83f877a154"
+    },
+    "stage2_build_manifest": {
+      "path": "work/recovery-root9/exact-pair-successor-stage2/Stage2BuildManifest.json",
+      "ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/b02b10a64d5a4f2a9ce7195706fc41e145d28906",
+        "sha256": "79a5bf622e727d5cb591135ab0231609845217a53610f197b7c3bdd143a7b622"
+      },
+      "bytes": 1679
+    }
+  },
+  "boundary": {
+    "database_writes": 0,
+    "signature_mutations": 0,
+    "activation": false,
+    "expected_current_cas": false,
+    "refund": false,
+    "capacity_increase": false,
+    "new_allocation": false,
+    "budget_reassignment": false
+  },
+  "authority_effect": "NONE"
+}
