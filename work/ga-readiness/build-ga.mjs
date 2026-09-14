@@ -1,0 +1,33 @@
+#!/usr/bin/env node
+// Stage2B GA builder. It refuses to run until a real M3 Owner merge is supplied and verified.
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+import {pathToFileURL,fileURLToPath} from 'node:url';
+const need=(v,m)=>{if(!v)throw Error(m);},arg=n=>{const i=process.argv.indexOf(n);return i<0?null:process.argv[i+1];};
+const sha=b=>crypto.createHash('sha256').update(b).digest('hex'),time=s=>Date.parse(s),hex=(s,n)=>typeof s==='string'&&new RegExp(`^[a-f0-9]{${n}}$`).test(s);
+const M2='0ae9f5f29cc97982ef30f36fd8efbd67c521e5fd',ACC_PATH='work/recovery-root9/stage2b/RuntimeAcceptance.root9.json',BUILD_PATH='work/ga-readiness/build-ga.mjs';
+const repo=path.resolve(arg('--repo-root')??'.'),accPath=path.join(repo,ACC_PATH),selfPath=fileURLToPath(import.meta.url);
+const evidencePath=arg('--stage2b-publication-evidence');need(evidencePath,'STAGE2B_OWNER_MERGE_EVIDENCE_REQUIRED');
+const evidence=JSON.parse(fs.readFileSync(evidencePath)),accRaw=fs.readFileSync(accPath),acc=JSON.parse(accRaw);
+const target=arg('--target-revision');need(hex(target,40),'TARGET_REVISION_REQUIRED');need(target!==M2,'TARGET_REVISION_MUST_BE_POST_M2_STAGE2B_MERGE');
+need(evidence.state==='VERIFIED_STAGE2B_OWNER_MERGE'&&evidence.merge?.sha===target,'TARGET_REVISION_EVIDENCE_MISMATCH');
+need(evidence.merge.author_login==='tdoljyj'&&evidence.merge.merged_by==='tdoljyj'&&evidence.merge.committer_login==='web-flow'&&evidence.merge.verification?.verified===true&&evidence.merge.verification.reason==='valid','UNVERIFIED_OWNER_WEB_FLOW_MERGE');
+need(evidence.merge.base_ref==='main'&&evidence.merge.pull_request_count===1&&Number.isSafeInteger(evidence.merge.pull_request),'UNIQUE_MAIN_PR_REQUIRED');
+need(Array.isArray(evidence.merge.parents)&&evidence.merge.parents.length===2&&evidence.merge.parents[0]===M2&&evidence.merge.first_parent===M2&&evidence.merge.source_parent===evidence.merge.parents[1],'EXACT_TWO_PARENT_M2_MERGE_REQUIRED');
+need(hex(evidence.merge.tree,40),'M3_TREE_REQUIRED');
+need(evidence.artifacts?.runtime_acceptance?.path===ACC_PATH&&evidence.artifacts.runtime_acceptance.sha256===sha(accRaw),'RUNTIME_ACCEPTANCE_NOT_IN_M3');
+need(evidence.artifacts?.build_ga?.path===BUILD_PATH&&evidence.artifacts.build_ga.sha256===sha(fs.readFileSync(selfPath)),'BUILD_GA_NOT_IN_M3');
+need(acc.publication_boundary?.future_merge_sha_embedded===false&&acc.accepted_subject?.late_bound_fields?.target_revision?.resolver==='ACTUAL_RUNTIME_AND_SOURCE_MANIFEST_OWNER_MERGE_V1','TARGET_REVISION_POLICY_DRIFT');
+const context=await import(pathToFileURL(path.join(repo,'scripts/phase2-qualification/control-context-verifier-recovery-successor-root9/context.mjs')).href);
+const schema=JSON.parse(fs.readFileSync(path.join(repo,'scripts/phase2-qualification/preentry-parent/profile-successor/gate-authorization.candidate.schema.json')));
+const issued=arg('--issued-at'),out=arg('--out');need(issued&&out,'ISSUED_AT_AND_OUT_REQUIRED');const issuedMs=time(issued),endMs=issuedMs+600000;need(Number.isFinite(issuedMs),'ISSUED_AT_INVALID');const end=new Date(endMs).toISOString().replace('.000Z','Z');
+const getRef=(prefix)=>{const uri=arg(`--${prefix}-uri`),digest=arg(`--${prefix}-sha256`);need(uri&&hex(digest,64),prefix.toUpperCase()+'_REF_REQUIRED');return {uri,sha256:digest};};
+const gaId=arg('--ga-id')??`ga_${crypto.randomBytes(16).toString('hex')}`;need(/^ga_[a-f0-9]{32}$/.test(gaId),'GA_ID_SHAPE');
+const varying={budget_reservation_ref:getRef('budget-reservation'),status_manifest_ref:getRef('status-manifest'),target_revision:target,gate_authorization_id:gaId,authorization_status:'AUTHORIZED',issued_at:issued,expires_at:end,deadline:end,idempotency_key:`ga600_${crypto.randomBytes(16).toString('hex')}`,signature:`urn:clued:gate-authorization:uscrdifznmlvczcekqpw:${gaId}#signature`,runner_generation:arg('--runner-generation'),credential_generation:arg('--credential-generation'),session_generation:arg('--session-generation')};
+for(const k of ['runner_generation','credential_generation','session_generation'])need(typeof varying[k]==='string'&&varying[k].length>0,k.toUpperCase()+'_REQUIRED');
+const expected=acc.accepted_subject.expected_ga,ga={};for(const k of schema.required)ga[k]=Object.hasOwn(varying,k)?varying[k]:expected[k];const gaRaw=JSON.stringify(ga)+'\n';
+const parsed=context.checkGAShape(gaRaw);context.checkFixedGAFields(parsed,acc.accepted_subject);
+need(time(issued)>=time(acc.not_before)&&time(end)<=time(acc.expires_at)&&endMs-issuedMs<=600000,'GA_WINDOW');
+fs.mkdirSync(out,{recursive:true});fs.writeFileSync(path.join(out,'ga.raw.json'),gaRaw);fs.writeFileSync(path.join(out,'provenance.json'),JSON.stringify({state:'BUILT_AFTER_VERIFIED_STAGE2B_OWNER_MERGE',target_revision:target,stage2b_publication_evidence:evidencePath,fixed_fields:38,varying_fields:13,controller_checks:['checkGAShape','checkFixedGAFields'],not_published:true,not_reserved:true,not_dispatched:true},null,2)+'\n');
+console.log(JSON.stringify({state:'GA_CANDIDATE_BUILT_NOT_RESERVED_NOT_DISPATCHED',ga_id:gaId,target_revision:target,ga_sha256:sha(gaRaw),fixed_fields:38,varying_fields:13,total_fields:Object.keys(ga).length},null,2));
