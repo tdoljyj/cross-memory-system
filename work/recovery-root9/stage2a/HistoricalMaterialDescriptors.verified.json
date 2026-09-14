@@ -1,0 +1,139 @@
+{
+  "state": "VERIFIED_HISTORICAL_MATERIAL_DESCRIPTORS",
+  "source_path": "ga-build-patch/artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root7-runtime-v20/ExactRoot5FinalPreentryControllerRuntimeAcceptance.json",
+  "capacity": {
+    "approval": {
+      "ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/79ee0a198c28ecef69db515078fbd97b30448ca3",
+        "sha256": "02b120896736965f487491e8f2ce05dbfe1cf0efa9f8832230d24ebfa0357f2b"
+      },
+      "publication": {
+        "commitSha": "7c9f612b4c21a549eb4141096c64d8a2c02264af",
+        "artifactPath": "artifacts/clued-validation/phase2-entry-preparation-20260908/root6-capacity/Root6LinuxController160SourceRefApproval20260913.v2.json"
+      }
+    },
+    "applicability": {
+      "ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/5fcc6fd7c2a4cb959ec096efab9b3a6128efa643",
+        "sha256": "cdb69f29a2c71f1a2a077f404f28f27f48874887d9782d6b5d0a0eae28d6e7f7"
+      },
+      "publication": {
+        "commitSha": "7c9f612b4c21a549eb4141096c64d8a2c02264af",
+        "artifactPath": "artifacts/clued-validation/phase2-entry-preparation-20260908/root6-capacity/Root6CurrentController4000000CapacityApplicability20260912.json"
+      }
+    }
+  },
+  "series": {
+    "approval": {
+      "ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/86636aa78807ca1ce1facbdd910f7c3d27a75177",
+        "sha256": "fe114f0860dc69a52cd448ae697e8d8692fe39e51d84ab8bb60edfe01ace97fe"
+      },
+      "publication": {
+        "commitSha": "55310a5a1424fe4d666ceead5a007f85b9f0e902",
+        "artifactPath": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/BoundedSeriesExplicitUserApproval20260910.json"
+      }
+    },
+    "applicability": {
+      "ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/c9d4dcd95cec4aff6c5c02317414217ce31de96f",
+        "sha256": "f8ed552ebe18010321d57a4565484f4aef25daedc43d7aff9f5a239be1ec61b2"
+      },
+      "publication": {
+        "commitSha": "55310a5a1424fe4d666ceead5a007f85b9f0e902",
+        "artifactPath": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/BoundedSeriesApplicability20260910.json"
+      }
+    },
+    "repairs": [
+      {
+        "ref": {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/6cc3fd7bf7c1a05a2c853cd325a248a132b90200",
+          "sha256": "bf49bafa0636f1a89bfaf496598d7f27b162bc1dfd2f4ba22d2218ccbef43b88"
+        },
+        "publication": {
+          "commitSha": "274de5f56fa7bd0c4bcf178df1c49c3ff9b7b8e6",
+          "artifactPath": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/EnvOrderRepairAcceptance20260910.json"
+        }
+      },
+      {
+        "ref": {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/1c9bdc8ba3097198d7f4b7f57b272f19840ab4b7",
+          "sha256": "82227b29672f09bd6a9c3eb0d04de57b242890a79d4d66c6dd5c002fc4ed8e5a"
+        },
+        "publication": {
+          "commitSha": "fff74543b2c4e87de49ee04634a8934b1b49b8e2",
+          "artifactPath": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-repair/UndispatchedExpiredGARepairAcceptance20260910.json"
+        }
+      },
+      {
+        "ref": {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/4786f9bb4780222cc65ed03a8195daab55c5b831",
+          "sha256": "39155ddc1ebfee0cc6921f6e71cab68ae644141aa2f52a5a42fd66ad91b09280"
+        },
+        "publication": {
+          "commitSha": "2354e266a28b4891d7f1395717cd7d310404d471",
+          "artifactPath": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v12-preparation/ExpiredV11CurrentControllerRepairAcceptance20260911.json"
+        }
+      },
+      {
+        "ref": {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/4c26479e997334fcfe8af5dd3d3af1f1b6a8b4ee",
+          "sha256": "73494ab546e4cda9815d13a3d00aa0c2ff8928c40e9818eb1d41575d351230cd"
+        },
+        "publication": {
+          "commitSha": "d7a89b4b0e05017c6bf4011b678d81ed7a40121e",
+          "artifactPath": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v14-preparation/ExpiredV13InputCapacityRepairAcceptance20260911.json"
+        }
+      },
+      {
+        "ref": {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/e4b672e0dddd81e59f962b00a7991c57dae7d685",
+          "sha256": "458ff0e2f8c96e085954f01d384251387e60bfc22f0ff210ac0b23bc5b7f88d9"
+        },
+        "publication": {
+          "commitSha": "ad3d589c03ded47110eaecbb47c48ff90600acdc",
+          "artifactPath": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v15-preparation/ExpiredV14InputCapacityRepairAcceptance20260911.json"
+        }
+      },
+      {
+        "ref": {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/abca0c94e09bcf8a33a2a33ee8acb833a6971669",
+          "sha256": "5d4c264b3f5488ac01e942231df4e44c24047d98f699a5b92fcb60ba535f5663"
+        },
+        "publication": {
+          "commitSha": "46e1b0e412b0b8e016f67f27ebf2c6235822b1f3",
+          "artifactPath": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v16-source-completeness/Expired6abbCurrentRepairApplicability20260911.json"
+        }
+      },
+      {
+        "ref": {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/fc1e4c540a7da7b153ea878cc7ec4ac5e415ecbe",
+          "sha256": "cd2d0f9b9dd8bd576232c5744e9e2c3b38bf39171b80c2c90b342b8cd849129f"
+        },
+        "publication": {
+          "commitSha": "46e1b0e412b0b8e016f67f27ebf2c6235822b1f3",
+          "artifactPath": "artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root5-final-runtime-v16-source-completeness/ExpiredV15CurrentRepairApplicability20260911.json"
+        }
+      },
+      {
+        "ref": {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/012294f39e961ee2c7b2a76d2a27a39f18ca179a",
+          "sha256": "82e9e2f0ce178971ec8986a03479a76e56f91e7aed30b4500e5f9651787882ed"
+        },
+        "publication": {
+          "commitSha": "7c9f612b4c21a549eb4141096c64d8a2c02264af",
+          "artifactPath": "artifacts/clued-validation/phase2-entry-preparation-20260908/root6-capacity/Root6Current043CapacityRepairAcceptance20260912.json"
+        }
+      }
+    ]
+  },
+  "usage": {
+    "capacity_approval": "superseded only because its approved_at predates Root9.not_before; capacity_delta copied exactly unchanged",
+    "capacity_applicability": "superseded by c764 applicability",
+    "series_approval": "retained",
+    "series_applicability": "retained",
+    "repairs_0_through_6": "retained",
+    "repair_7": "superseded by c764-bound repair"
+  },
+  "authority_effect": "NONE"
+}

@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "object_type": "QualificationCorrectionEvidence",
+  "evidence_id": "qce_root9_status26_dependency_audit_v1",
+  "evidence_class": "CORRECTION",
+  "generation_id": "ctrgen_308a1dfc185cff633892638581e0a34c",
+  "controller_digest": "c76438600d93d708ffe312c5980d8574f649836b65ae523daab0271e7fc9ff1b",
+  "observed_through": "2026-09-14T05:24:54Z",
+  "stage1_publication": {
+    "pull_request": 171,
+    "source_commit": "128e581630db2f0d103025a6aa540793a44e9c5e",
+    "merge_commit": "ab097d2a46677a22ae2a102f278bd9c5f98573c5",
+    "source_tree": "11acbc62414e9df37b35a4d4039a57d41abe9548",
+    "merge_tree": "11acbc62414e9df37b35a4d4039a57d41abe9548",
+    "contained_status26": false,
+    "contained_root9_signing_payload": false,
+    "contained_runtime_acceptance": false,
+    "contained_capacity_or_repair_publications": false
+  },
+  "findings": {
+    "final_status26": false,
+    "final_status26_s": null,
+    "final_status26_s_state": "UNKNOWN",
+    "reason_s_unknown": [
+      "Final full signed Root9 canonical digest is not fixed until the Owner merge publishing the Root9 signing payload exists.",
+      "The immutable ControllerQualification ref/digest is not yet fixed."
+    ],
+    "template_digest_not_signable": "fc1e9b0bd619c4ba2ef9a6cdc2a7df7fa0c9e54511b3cd782a46c8704b3f9b2e",
+    "status_schema_signature_field": "signature_binding.signed_object_sha256",
+    "canonicalization": "Delete only top-level signature_binding; recursively sort object keys lexicographically; preserve array order; accept safe integers only; JSON-encode primitives; append exactly one LF; SHA-256 the UTF-8 bytes.",
+    "immediate_stage2_status26_publication": "IMPOSSIBLE_IF_THE_SAME_MERGE_PUBLISHES_ROOT9_SIGNING_PAYLOAD",
+    "stage2_split_required": true,
+    "legacy_builder_stage1_binding": "OBSERVED_UNSATISFIABLE_AND_NOW_REMOVED_IN_WORKSPACE",
+    "legacy_builder_reason": "build-root9-materials.mjs requires capacity approval/applicability and all eight repair publication_commit values to equal Stage1 merge ab097d2a46677a22ae2a102f278bd9c5f98573c5, while PR #171 contains none of those artifacts.",
+    "required_correction": "Bind each material to its actual immutable publication commit and verify that exact commit/path/raw tuple, or publish Root9-specific materials in a later Owner merge and bind to that merge. Do not falsely relabel artifacts as Stage1 publications."
+  },
+  "repair_attempt_refs": [
+    {"ga_id":"ga_04377008dc04437d9ee9d28a3c79ff3a","receipt_sha256":"b27286d6fcb54e34a62d8738f49c1ecafe3210c9a321a703c3828e38497e434c","budget_sequence":46},
+    {"ga_id":"ga_4e7ce4ad385e4f5aa633bcea2ddb71ce","receipt_sha256":"2fd3b68be76b3f4efcf10050d6c908bcb79c8d5a3e22290e18f582d780b53b7e","budget_sequence":51},
+    {"ga_id":"ga_1d52f4778d494399b12aea54fe4a189e","receipt_sha256":"3a311d678ed563d5dd1492ef53675fcba8e985dccf3880d032ca2029168fedf9","budget_sequence":59},
+    {"ga_id":"ga_6abb193a56304029a788f7cb624a0d35","receipt_sha256":"0bd435f4fd4bb9c4174a1d96b132908f128ceadcfa51021ba1871757ed16df77","budget_sequence":68},
+    {"ga_id":"ga_71a1d946fca34c1e9e700c80a546b3ad","receipt_sha256":"90955f5c896d8a76f65458fe36bff5d321b2d3d92d1ed10f1857f8628cb83bed","budget_sequence":73},
+    {"ga_id":"ga_41643fece183424daf7f05b8b2868f8e","receipt_sha256":"9a75bf4694d1584a51adbeb7c2497da62f6266e2654da9e0189ff2a43a87a0be","budget_sequence":77},
+    {"ga_id":"ga_e56ca0eb07304f2fbcf60eb8f29f3889","receipt_sha256":"74afd52096ce817ad2da9e5af8ce63e7f95705a13702ad7f12edce8fa4d4a4f5","budget_sequence":81},
+    {"ga_id":"ga_8eb410609e294d899806a319e6615f2b","receipt_sha256":"ee250a365f879f99aa41bf45274296cadc6f11d26567dc15c6be3c8778e4b533","budget_sequence":85}
+  ],
+  "source_artifacts": {
+    "status26_audit_result_sha256": "7fe4be5dd149b1ed7d2d225e061e59673126c08e42e9d361f540278085c2ede1",
+    "status26_audit_report_sha256": "7f3162910b68a3ab5af19a350a2f68f375e8c485841b8bb01414b74ffbeaf48b",
+    "status26_audit_script_sha256": "b999327fc174337c8c0108ba62fd8bf10e56ff93a5cbe0970e1e6624d2f99f8a",
+    "corrected_builder_sha256": "7ffb694419b271a71912fc39f0fee4c899d4bf9c2078a84b638a5958b8d5729c",
+    "legacy_builder_exact_failure_code": "MATERIAL_MUST_BE_IN_STAGE1_OWNER_MERGE",
+    "legacy_builder_exact_rejected_relation": "spec.publication_commit===stage1"
+  },
+  "qualification_use": "May be referenced as ControllerQualification correction evidence only.",
+  "prohibited_use": [
+    "Do not treat this object as final Status26.",
+    "Do not use template_digest_not_signable as S.",
+    "Do not infer Owner approval, publication, DB authority, budget authority, or GA-send authority."
+  ],
+  "authority_effect": "NONE"
+}

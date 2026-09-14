@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "kind": "EXPLICIT_OWNER_SUCCESSOR_ROOT9_APPROVAL_CANDIDATE",
+  "state": "OWNER_MERGE_PENDING",
+  "authority_effect": "NONE_UNTIL_VERIFIED_OWNER_WEB_FLOW_MERGE",
+  "repository": "tdoljyj/cross-memory-system",
+  "owner": "tdoljyj",
+  "root_set_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+  "control_trust_root_generation": "ctrgen_308a1dfc185cff633892638581e0a34c",
+  "generation_ordinal": 9,
+  "predecessor": {
+    "generation_id": "ctrgen_b060bc520329398936e461af6a477f94",
+    "sha256": "cafe4ed82c21cc3fc4a9e009afe6a29017be6834f60150d81f3c77d6897dd0ce"
+  },
+  "history": {
+    "prefix_sequence": 8,
+    "prefix_digest": "bf0660f3afe7de7e9506e642fdf7ecd15b61de97775b62c3a7d6e5c98f0b1a75"
+  },
+  "window": {
+    "not_before": "2026-09-14T03:00:00Z",
+    "expires_at": "2026-09-15T03:00:00Z"
+  },
+  "authorized_scope": [
+    "append one complete schema-valid successor Root generation",
+    "repair Status26, the 22/30 entry conflict, RuntimeAcceptance, and one-shot CAS repoint",
+    "publish the exact supporting qualification and no-change capacity re-attestation materials"
+  ],
+  "explicit_prohibitions": [
+    "rewrite history",
+    "add capacity",
+    "refund",
+    "reserve or consume the unique remaining budget",
+    "dispatch a GA",
+    "production authority"
+  ],
+  "owner_messages": [
+    "授权启动 successor post-activation 定点修复，只处理 Status26、入口 22/30 冲突、运行时 Acceptance 与一次性 CAS repoint；不改历史、不加容量、不退款、不触碰唯一预算，独立复核通过后再应用。",
+    "追加一个完整、Schema-valid 的新 successor Root generation。"
+  ],
+  "stage2a_effect": "PUBLISH_CANDIDATE_BYTES_ONLY_NO_DATABASE_EFFECT",
+  "required_merge": {
+    "merged_by": "tdoljyj",
+    "committer": "web-flow",
+    "verified": true,
+    "verification_reason": "valid",
+    "two_parents": true
+  }
+}

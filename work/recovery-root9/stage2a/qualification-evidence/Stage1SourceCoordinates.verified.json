@@ -1,0 +1,366 @@
+{
+  "state": "STAGE1_SOURCE_COORDINATES_INDEPENDENTLY_VERIFIED",
+  "captured_at": "2026-09-14T05:37:56Z",
+  "authority_effect": "NONE",
+  "repository": "tdoljyj/cross-memory-system",
+  "pull_request": {
+    "number": 171,
+    "url": "https://github.com/tdoljyj/cross-memory-system/pull/171",
+    "state": "closed",
+    "merged": true,
+    "merged_at": "2026-09-14T05:24:54Z",
+    "changed_files": 29,
+    "additions": 4122,
+    "deletions": 0
+  },
+  "source_commit": {
+    "sha": "128e581630db2f0d103025a6aa540793a44e9c5e",
+    "tree_sha": "11acbc62414e9df37b35a4d4039a57d41abe9548",
+    "author_login": "tdoljyj",
+    "committer_login": "tdoljyj",
+    "verification": {
+      "verified": false,
+      "reason": "unsigned"
+    }
+  },
+  "owner_merge": {
+    "sha": "ab097d2a46677a22ae2a102f278bd9c5f98573c5",
+    "tree_sha": "11acbc62414e9df37b35a4d4039a57d41abe9548",
+    "parents": [
+      "fbf8d3aa67219f9c98a747c148c4c5fe2e9816c2",
+      "128e581630db2f0d103025a6aa540793a44e9c5e"
+    ],
+    "author_login": "tdoljyj",
+    "committer_login": "web-flow",
+    "verification": {
+      "verified": true,
+      "reason": "valid",
+      "verified_at": "2026-09-14T05:24:55Z"
+    }
+  },
+  "ancestry": {
+    "source_to_owner_merge": {
+      "status": "ahead",
+      "ahead_by": 1,
+      "behind_by": 0,
+      "base_commit": "128e581630db2f0d103025a6aa540793a44e9c5e",
+      "merge_base_commit": "128e581630db2f0d103025a6aa540793a44e9c5e"
+    }
+  },
+  "trees": {
+    "repository": "11acbc62414e9df37b35a4d4039a57d41abe9548",
+    "controller_directory": "8ee86f3a5cee4f4b59a2d7fae41c56c14973d466",
+    "issuer_directory": "de96bfee1950e88203bd5541629d6cd61ed86610",
+    "stage1_work_directory": "a15b77dab2928cf382191a1924163494f557c181"
+  },
+  "controller": {
+    "directory": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9",
+    "manifest": {
+      "path": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9/ControllerSourceManifest.candidate.json",
+      "blob_sha": "6fa9ac916ad3f52dcf3f3a9968a299c86f100ae5",
+      "sha256": "c76438600d93d708ffe312c5980d8574f649836b65ae523daab0271e7fc9ff1b",
+      "bytes": 5457
+    },
+    "declared_files": 22,
+    "remote_byte_mismatches": 0,
+    "source_ref": {
+      "commit": "128e581630db2f0d103025a6aa540793a44e9c5e",
+      "tree": "11acbc62414e9df37b35a4d4039a57d41abe9548",
+      "blobs": [
+        {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/39cf82b90c087be8817a008cf976a3916f36a5a8",
+          "sha256": "9d396c914cfbf940f5c0cf29b6cf50ff5c4ad7fc2af66583d593d37fe0728d1f"
+        },
+        {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/a4a638557957b16a565968ab28e98b3f101412d3",
+          "sha256": "ad04167bf0e91257be149c7aef2ea7bdee6967c26e17692caa8323e6e084313d"
+        },
+        {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/59000b083debb98ef7fdcd698e3957442ccb906c",
+          "sha256": "e43008ffe1b943cbe5a53e328eed1c2fca1dea735d750b790df64d894b389d08"
+        },
+        {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/fc026e6ca561c9ec3b29099f5059c87b18c2b765",
+          "sha256": "5475dc21efcf5a0547fdb4af355932933f147aea47e572eca790e7e100495cc9"
+        },
+        {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/e8f955f454697abf29f030486e0dc712f5f5751a",
+          "sha256": "23e5c73b8af535cf2c39c9841ea8080f818c93aad22d11f3d2a6cd80326bad74"
+        },
+        {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/ba4867d485dc99e44e4e521c611dd6d88f4690b3",
+          "sha256": "7784e091524384aeece0cfcdf6ca753bf66abae8989d2763fd4bc5234718db89"
+        },
+        {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/7e6e375756982b79ecee0a6f8b3a0d1808013cb7",
+          "sha256": "d7d5e2cace4810ab321f553fb236f74368bb8425e206bbf009e5d1985232ed96"
+        },
+        {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/d2f04b08278a25bf7005404e0a971080880701b9",
+          "sha256": "292da87d05b1bb00337a2045e3d26f6df0be70aaf520aa519572fa3dec395252"
+        },
+        {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/28c116baa77c356f85281e29bcd29d358c90c85e",
+          "sha256": "b8608653ddace5b075a695a5eae32e9e874c34e9d2d9811a7e15552c0ef28017"
+        },
+        {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/cc1ea17fa8dad2fb12de7631582d7a0dae65e3cd",
+          "sha256": "dc9098bc8ea9a32630cfa2764787fc7a584a6c8866eef4839172a22c0221757c"
+        },
+        {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/6c1c0e5e93abf5215e673c6591f2ce0c8c951fbd",
+          "sha256": "ed044a9c6ab4f71cb3c80cc46be9ceb8ff8d6f2e3a763b3ddf6c5bd7c004c80a"
+        },
+        {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/a828acb3eae2e379aed64f237f1417e457212c7f",
+          "sha256": "1044f007d3749c1c5f6982a2a7eec58075d7ae7276f2bc88fc43eca51debc800"
+        },
+        {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/e8c972cc2348689b58ff444b19579b420f67f4b5",
+          "sha256": "feb409d4947440802ba2c986b047a209897582919cb0ab043681d0cf74c85101"
+        },
+        {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/1d68ffd99deaa8d454f7e7a9b9754e20bf44c8f7",
+          "sha256": "34039584f91eed16028a88c70ed772938408ee3c05aacd4165876cd4bfc8383c"
+        },
+        {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/3ab893bc79bff876eb81703fd5ddcfac4972b5e2",
+          "sha256": "378653fc45e37cd108e8abc1d9e9e9ff6e0ef6e6167eb1aa59f737b71811332f"
+        },
+        {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/25246007e16e9b8bdc4a991d80f6fc804b71b298",
+          "sha256": "6c46d286f611ef31ba29ee845009b39d307ab3bf18eb5eb488be7ad489338e11"
+        },
+        {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/ae2426b3c22c42d238e831d52e4dee9c740fdcaf",
+          "sha256": "9bff731585658a57eb8ec19aec330deb3b9aa6bde3e81902d1b97cfab670f226"
+        },
+        {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/e4cee81d1b3c368adea93eeca1c53877c0ad45c7",
+          "sha256": "ebfed04ad59f916938de9765379b2cf6d5699aadd887a003a2f7a1dd72daeb46"
+        },
+        {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/3438bb65d02fcb1dc69848414e4d236b4cc113f3",
+          "sha256": "d6289c0a92b2ec421be35e5738a44d4a6155fe4432453f25d0f8a948ac29755f"
+        },
+        {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/38c9cb810e7b7514c3659388f9640b1ff07a773a",
+          "sha256": "6f9a6799109cbad00b4e615b58f535f91fe0ec4a53790fa744000caa2bf3282e"
+        },
+        {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/c74b775da5c98322e620bce1a5e9f680fad2fd51",
+          "sha256": "a3f739e1bfd756f73194d13e230c467336e686d6e88ce9a999fd07f738fd1102"
+        },
+        {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/32025d1e293a242ddae5ba4d8905dd95cb3a9a51",
+          "sha256": "629c7916ab65a4ea7df08e1cd7335ae5384f5a3eb3f6ce37ef4d734f4f250f08"
+        },
+        {
+          "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/6fa9ac916ad3f52dcf3f3a9968a299c86f100ae5",
+          "sha256": "c76438600d93d708ffe312c5980d8574f649836b65ae523daab0271e7fc9ff1b"
+        }
+      ]
+    },
+    "source_entries": [
+      {
+        "blob_sha": "39cf82b90c087be8817a008cf976a3916f36a5a8",
+        "bytes": 4283,
+        "path": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9/HostProvisioning.json",
+        "sha256": "9d396c914cfbf940f5c0cf29b6cf50ff5c4ad7fc2af66583d593d37fe0728d1f"
+      },
+      {
+        "blob_sha": "a4a638557957b16a565968ab28e98b3f101412d3",
+        "bytes": 5121,
+        "path": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9/bridge.py",
+        "sha256": "ad04167bf0e91257be149c7aef2ea7bdee6967c26e17692caa8323e6e084313d"
+      },
+      {
+        "blob_sha": "59000b083debb98ef7fdcd698e3957442ccb906c",
+        "bytes": 2856,
+        "path": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9/build-linux-manifest.mjs",
+        "sha256": "e43008ffe1b943cbe5a53e328eed1c2fca1dea735d750b790df64d894b389d08"
+      },
+      {
+        "blob_sha": "fc026e6ca561c9ec3b29099f5059c87b18c2b765",
+        "bytes": 43369,
+        "path": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9/check-digest-pins.mjs",
+        "sha256": "5475dc21efcf5a0547fdb4af355932933f147aea47e572eca790e7e100495cc9"
+      },
+      {
+        "blob_sha": "e8f955f454697abf29f030486e0dc712f5f5751a",
+        "bytes": 1732,
+        "path": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9/cli.mjs",
+        "sha256": "23e5c73b8af535cf2c39c9841ea8080f818c93aad22d11f3d2a6cd80326bad74"
+      },
+      {
+        "blob_sha": "ba4867d485dc99e44e4e521c611dd6d88f4690b3",
+        "bytes": 52773,
+        "path": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9/context.mjs",
+        "sha256": "7784e091524384aeece0cfcdf6ca753bf66abae8989d2763fd4bc5234718db89"
+      },
+      {
+        "blob_sha": "7e6e375756982b79ecee0a6f8b3a0d1808013cb7",
+        "bytes": 15678,
+        "path": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9/fixed_host.py",
+        "sha256": "d7d5e2cace4810ab321f553fb236f74368bb8425e206bbf009e5d1985232ed96"
+      },
+      {
+        "blob_sha": "d2f04b08278a25bf7005404e0a971080880701b9",
+        "bytes": 8117,
+        "path": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9/gate-result-receipt.root5.schema.json",
+        "sha256": "292da87d05b1bb00337a2045e3d26f6df0be70aaf520aa519572fa3dec395252"
+      },
+      {
+        "blob_sha": "28c116baa77c356f85281e29bcd29d358c90c85e",
+        "bytes": 5511,
+        "path": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9/grr.mjs",
+        "sha256": "b8608653ddace5b075a695a5eae32e9e874c34e9d2d9811a7e15552c0ef28017"
+      },
+      {
+        "blob_sha": "cc1ea17fa8dad2fb12de7631582d7a0dae65e3cd",
+        "bytes": 6402,
+        "path": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9/historical-component-observations.mjs",
+        "sha256": "dc9098bc8ea9a32630cfa2764787fc7a584a6c8866eef4839172a22c0221757c"
+      },
+      {
+        "blob_sha": "6c1c0e5e93abf5215e673c6591f2ce0c8c951fbd",
+        "bytes": 2829,
+        "path": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9/host-effect.mjs",
+        "sha256": "ed044a9c6ab4f71cb3c80cc46be9ceb8ff8d6f2e3a763b3ddf6c5bd7c004c80a"
+      },
+      {
+        "blob_sha": "a828acb3eae2e379aed64f237f1417e457212c7f",
+        "bytes": 17079,
+        "path": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9/original-inputs-blob.mjs",
+        "sha256": "1044f007d3749c1c5f6982a2a7eec58075d7ae7276f2bc88fc43eca51debc800"
+      },
+      {
+        "blob_sha": "e8c972cc2348689b58ff444b19579b420f67f4b5",
+        "bytes": 11233,
+        "path": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9/parent600.py",
+        "sha256": "feb409d4947440802ba2c986b047a209897582919cb0ab043681d0cf74c85101"
+      },
+      {
+        "blob_sha": "1d68ffd99deaa8d454f7e7a9b9754e20bf44c8f7",
+        "bytes": 8406,
+        "path": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9/read-source-blobs-linux.mjs",
+        "sha256": "34039584f91eed16028a88c70ed772938408ee3c05aacd4165876cd4bfc8383c"
+      },
+      {
+        "blob_sha": "3ab893bc79bff876eb81703fd5ddcfac4972b5e2",
+        "bytes": 7917,
+        "path": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9/request-denials.mjs",
+        "sha256": "378653fc45e37cd108e8abc1d9e9e9ff6e0ef6e6167eb1aa59f737b71811332f"
+      },
+      {
+        "blob_sha": "25246007e16e9b8bdc4a991d80f6fc804b71b298",
+        "bytes": 7684,
+        "path": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9/result-terminal.mjs",
+        "sha256": "6c46d286f611ef31ba29ee845009b39d307ab3bf18eb5eb488be7ad489338e11"
+      },
+      {
+        "blob_sha": "ae2426b3c22c42d238e831d52e4dee9c740fdcaf",
+        "bytes": 5011,
+        "path": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9/root-window-validation.mjs",
+        "sha256": "9bff731585658a57eb8ec19aec330deb3b9aa6bde3e81902d1b97cfab670f226"
+      },
+      {
+        "blob_sha": "e4cee81d1b3c368adea93eeca1c53877c0ad45c7",
+        "bytes": 37237,
+        "path": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9/selftest-runtime-pins.mjs",
+        "sha256": "ebfed04ad59f916938de9765379b2cf6d5699aadd887a003a2f7a1dd72daeb46"
+      },
+      {
+        "blob_sha": "3438bb65d02fcb1dc69848414e4d236b4cc113f3",
+        "bytes": 6793,
+        "path": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9/source-publication.mjs",
+        "sha256": "d6289c0a92b2ec421be35e5738a44d4a6155fe4432453f25d0f8a948ac29755f"
+      },
+      {
+        "blob_sha": "38c9cb810e7b7514c3659388f9640b1ff07a773a",
+        "bytes": 5327,
+        "path": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9/status-manifest.root5.schema.json",
+        "sha256": "6f9a6799109cbad00b4e615b58f535f91fe0ec4a53790fa744000caa2bf3282e"
+      },
+      {
+        "blob_sha": "c74b775da5c98322e620bce1a5e9f680fad2fd51",
+        "bytes": 12243,
+        "path": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9/tool-entry.functions.js",
+        "sha256": "a3f739e1bfd756f73194d13e230c467336e686d6e88ce9a999fd07f738fd1102"
+      },
+      {
+        "blob_sha": "32025d1e293a242ddae5ba4d8905dd95cb3a9a51",
+        "bytes": 6079,
+        "path": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9/trusted-github.mjs",
+        "sha256": "629c7916ab65a4ea7df08e1cd7335ae5384f5a3eb3f6ce37ef4d734f4f250f08"
+      },
+      {
+        "blob_sha": "6fa9ac916ad3f52dcf3f3a9968a299c86f100ae5",
+        "bytes": 5457,
+        "path": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9/ControllerSourceManifest.candidate.json",
+        "sha256": "c76438600d93d708ffe312c5980d8574f649836b65ae523daab0271e7fc9ff1b"
+      }
+    ]
+  },
+  "issuer_qualifications": {
+    "STATUS": {
+      "path": "scripts/phase2-qualification/control-trust-root-issuer-qualifications-root9/IssuerQualification.STATUS.root9.candidate.json",
+      "blob_sha": "a0752111b99fb11f14108d99dd08a8f8bfe2eac9",
+      "sha256": "2bbd9352b79da288b1a161f32cf59fc946e4cd68167b608fbd3d994617df65e9",
+      "bytes": 2035,
+      "ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/a0752111b99fb11f14108d99dd08a8f8bfe2eac9",
+        "sha256": "2bbd9352b79da288b1a161f32cf59fc946e4cd68167b608fbd3d994617df65e9"
+      }
+    },
+    "GATE_AUTHORIZATION": {
+      "path": "scripts/phase2-qualification/control-trust-root-issuer-qualifications-root9/IssuerQualification.GATE_AUTHORIZATION.root9.candidate.json",
+      "blob_sha": "21aa668c5c5fb69b0633f83beb0ae31a42b7ab0d",
+      "sha256": "751afdf957b8055ea28d5fbc9ae7bcea2b384c0b005bc53263244cf1612d1004",
+      "bytes": 1854,
+      "ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/21aa668c5c5fb69b0633f83beb0ae31a42b7ab0d",
+        "sha256": "751afdf957b8055ea28d5fbc9ae7bcea2b384c0b005bc53263244cf1612d1004"
+      }
+    },
+    "GATE_RESULT": {
+      "path": "scripts/phase2-qualification/control-trust-root-issuer-qualifications-root9/IssuerQualification.GATE_RESULT.root9.candidate.json",
+      "blob_sha": "4996089908b1f2c0bad36234c54271d350062f55",
+      "sha256": "ffafc9eb63a2148176dca0e66d5a22bf07ee9f0a5462c966d42a79d247f0088c",
+      "bytes": 1847,
+      "ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/4996089908b1f2c0bad36234c54271d350062f55",
+        "sha256": "ffafc9eb63a2148176dca0e66d5a22bf07ee9f0a5462c966d42a79d247f0088c"
+      }
+    }
+  },
+  "schemas": {
+    "control_trust_root_set": {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/protocol-successor/control-trust-root-set.schema.json",
+      "blob_sha": "e1d9877311c3416c020baacc470a68a91c71c04b",
+      "sha256": "87f094fa079034aa886d6c568730370a3264e106529b4bfd79bc3369f30b79e5"
+    },
+    "gate_authorization": {
+      "path": "scripts/phase2-qualification/preentry-parent/profile-successor/gate-authorization.candidate.schema.json",
+      "blob_sha": "90be47cb00542eafe33d07d0d2678718b3efc845",
+      "sha256": "f7f7e2a011f3f81a005e46f9cf7683edeb010dc7812eadfb4473f6ad5368a1ce"
+    },
+    "status_manifest": {
+      "path": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9/status-manifest.root5.schema.json",
+      "blob_sha": "38c9cb810e7b7514c3659388f9640b1ff07a773a",
+      "sha256": "6f9a6799109cbad00b4e615b58f535f91fe0ec4a53790fa744000caa2bf3282e"
+    },
+    "gate_result_receipt": {
+      "path": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9/gate-result-receipt.root5.schema.json",
+      "blob_sha": "d2f04b08278a25bf7005404e0a971080880701b9",
+      "sha256": "292da87d05b1bb00337a2045e3d26f6df0be70aaf520aa519572fa3dec395252"
+    }
+  },
+  "external_writes": {
+    "github": 0,
+    "database": 0,
+    "budget_reservations": 0,
+    "ga_dispatches": 0
+  }
+}
+

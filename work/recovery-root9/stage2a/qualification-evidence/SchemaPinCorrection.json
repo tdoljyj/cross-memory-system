@@ -1,0 +1,89 @@
+{
+  "state": "PASS_C764_SCHEMA_PIN_CORRECTION_EVIDENCE_NO_AUTHORITY",
+  "captured_at": "2026-09-14T05:39:38Z",
+  "authority_effect": "NONE",
+  "repository": "tdoljyj/cross-memory-system",
+  "stage1_source_commit": "128e581630db2f0d103025a6aa540793a44e9c5e",
+  "stage1_source_tree": "11acbc62414e9df37b35a4d4039a57d41abe9548",
+  "stage1_owner_merge_commit": "ab097d2a46677a22ae2a102f278bd9c5f98573c5",
+  "controller_manifest": {
+    "path": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9/ControllerSourceManifest.candidate.json",
+    "blob_sha": "6fa9ac916ad3f52dcf3f3a9968a299c86f100ae5",
+    "sha256": "c76438600d93d708ffe312c5980d8574f649836b65ae523daab0271e7fc9ff1b"
+  },
+  "required_schema_pins": {
+    "ControlTrustRootSet": {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/protocol-successor/control-trust-root-set.schema.json",
+      "ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/e1d9877311c3416c020baacc470a68a91c71c04b",
+        "sha256": "87f094fa079034aa886d6c568730370a3264e106529b4bfd79bc3369f30b79e5"
+      }
+    },
+    "GateAuthorization": {
+      "path": "scripts/phase2-qualification/preentry-parent/profile-successor/gate-authorization.candidate.schema.json",
+      "ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/90be47cb00542eafe33d07d0d2678718b3efc845",
+        "sha256": "f7f7e2a011f3f81a005e46f9cf7683edeb010dc7812eadfb4473f6ad5368a1ce"
+      }
+    },
+    "StatusManifest": {
+      "path": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9/status-manifest.root5.schema.json",
+      "ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/38c9cb810e7b7514c3659388f9640b1ff07a773a",
+        "sha256": "6f9a6799109cbad00b4e615b58f535f91fe0ec4a53790fa744000caa2bf3282e"
+      }
+    },
+    "GateResultReceipt": {
+      "path": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9/gate-result-receipt.root5.schema.json",
+      "ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/d2f04b08278a25bf7005404e0a971080880701b9",
+        "sha256": "292da87d05b1bb00337a2045e3d26f6df0be70aaf520aa519572fa3dec395252"
+      }
+    }
+  },
+  "detected_stale_or_invalid_pins": [
+    {
+      "location": "repair-root9/acceptance/params.pending.json#ga_schema_sha256",
+      "observed": "6f7f5f7a1ff78927eae801c028f6faca0e02826448231d09b28c8fdacc981f40",
+      "required": "f7f7e2a011f3f81a005e46f9cf7683edeb010dc7812eadfb4473f6ad5368a1ce",
+      "code": "GA_SCHEMA_DIGEST_NOT_C764_RUNTIME_SCHEMA"
+    },
+    {
+      "location": "repair-root9/stage2-pr/build-stage2-offline.mjs#status_schema_ref",
+      "observed": "7e5df5dd2b2341fe38c7b2a86ef68542700ee878bec0c947b13d7c8311fecd2d",
+      "required": "6f9a6799109cbad00b4e615b58f535f91fe0ec4a53790fa744000caa2bf3282e",
+      "code": "ROOT7_STATUS_SCHEMA_CANNOT_BIND_C764_RUNTIME"
+    },
+    {
+      "location": "repair-root9/acceptance/build-root9-materials.mjs#control_schema_refs.GateResultReceipt",
+      "observed": "INHERITED_ROOT7_fae1e8562fa1a55186bfcc594400d3b0349808b4dcc7a5bbc3165a720f33db6d",
+      "required": "292da87d05b1bb00337a2045e3d26f6df0be70aaf520aa519572fa3dec395252",
+      "code": "ROOT7_GRR_SCHEMA_CANNOT_BIND_C764_RUNTIME"
+    },
+    {
+      "location": "repair-root9/acceptance/validate-root9-materials.mjs#import",
+      "observed": "../../ga-build-patch/scripts/phase2-qualification/control-context-verifier-recovery-successor/context.mjs",
+      "required": "EXACT_C764_RUNTIME_TREE/scripts/phase2-qualification/control-context-verifier-recovery-successor-root9/context.mjs",
+      "code": "VALIDATOR_USES_PREDECESSOR_CONTROLLER"
+    }
+  ],
+  "required_builder_contract": {
+    "ga_schema_sha256": "f7f7e2a011f3f81a005e46f9cf7683edeb010dc7812eadfb4473f6ad5368a1ce",
+    "status_schema_ref_key": "control_schema_refs.StatusManifest",
+    "gate_result_schema_ref_key": "control_schema_refs.GateResultReceipt",
+    "validator_context": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9/context.mjs",
+    "must_validate_both_control_schema_refs": true,
+    "must_not_modify_stage1_controller_bytes": true
+  },
+  "verdict": {
+    "schema_coordinates": "PASS",
+    "current_stage2_builder_runtime_closure": "FAIL_CLOSED",
+    "stage2a_publication_ready_after_correction": false
+  },
+  "external_writes": {
+    "github": 0,
+    "database": 0,
+    "budget_reservations": 0,
+    "ga_dispatches": 0
+  }
+}

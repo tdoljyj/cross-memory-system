@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "state": "ACCEPTED_EXACT_FORWARD_ROOT_GENERATION_SUBJECT",
+  "independent_reviewer": "/root",
+  "authority_effect": "NONE",
+  "database_access": "NO_DATABASE_WRITE",
+  "root_registered": false,
+  "review_subject_sha256": "cbea71946f281d99cad0217a1efaf653d6959965940dc006c2d0d5f2cd714735",
+  "root_set_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+  "control_trust_root_generation": "ctrgen_308a1dfc185cff633892638581e0a34c",
+  "generation_ordinal": 9,
+  "accepted_predecessor": {
+    "generation_id": "ctrgen_b060bc520329398936e461af6a477f94",
+    "sha256": "cafe4ed82c21cc3fc4a9e009afe6a29017be6834f60150d81f3c77d6897dd0ce"
+  },
+  "accepted_history_prefix_sha256": "bf0660f3afe7de7e9506e642fdf7ecd15b61de97775b62c3a7d6e5c98f0b1a75",
+  "accepted_history_prefix_sequence": 8,
+  "accepted_schema_sha256": "87f094fa079034aa886d6c568730370a3264e106529b4bfd79bc3369f30b79e5",
+  "accepted_owner_approval_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/967857d2d423aaffeee0ef345f9a2cf3fea1a633",
+    "sha256": "9dd355237ad0eee56a3bde6ac0b5941fba7e82da519ba33f4d694f881e4f9df6"
+  },
+  "accepted_issuer_qualification_refs": {
+    "STATUS": {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/a0752111b99fb11f14108d99dd08a8f8bfe2eac9",
+      "sha256": "2bbd9352b79da288b1a161f32cf59fc946e4cd68167b608fbd3d994617df65e9"
+    },
+    "GATE_AUTHORIZATION": {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/21aa668c5c5fb69b0633f83beb0ae31a42b7ab0d",
+      "sha256": "751afdf957b8055ea28d5fbc9ae7bcea2b384c0b005bc53263244cf1612d1004"
+    },
+    "GATE_RESULT": {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/4996089908b1f2c0bad36234c54271d350062f55",
+      "sha256": "ffafc9eb63a2148176dca0e66d5a22bf07ee9f0a5462c966d42a79d247f0088c"
+    }
+  },
+  "not_before": "2026-09-14T03:00:00Z",
+  "expires_at": "2026-09-15T03:00:00Z",
+  "checks": [
+    "Root9 strict schema accepted with additionalProperties rejected",
+    "actual immutable events 1 through 8 canonical digest reproduced",
+    "Root8 predecessor body canonical digest reproduced",
+    "three Stage1 Root9 issuer byte identities reproduced",
+    "review subject excludes only signature_binding and independent_acceptance_ref",
+    "no history rewrite, capacity increase, refund, reservation, GA dispatch, or database write"
+  ],
+  "negative_controls": [
+    "prefix mutation rejected",
+    "predecessor mutation rejected",
+    "extra root property rejected",
+    "missing signature binding rejected"
+  ],
+  "not_verified_here": [
+    "future Owner merge commit",
+    "future signature evidence object",
+    "live append/CAS postimage"
+  ]
+}
