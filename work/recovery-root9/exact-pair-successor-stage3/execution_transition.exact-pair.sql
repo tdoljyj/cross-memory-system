@@ -142,10 +142,11 @@ begin
    then raise exception 'root9_not_started_reconciliation_subject_or_history_mismatch'; end if;
    if ((p->'body'->>'decision_raw')::jsonb)->'test_results' is distinct from '[]'::jsonb
    or ((p->'body'->>'evidence_index_raw')::jsonb)->'tests' is distinct from '[]'::jsonb
+   or ((p->'body'->>'decision_raw')::jsonb)->'not_started_evidence_ref'->>'sha256' is distinct from p->'body'->'not_started_evidence_ref'->>'sha256'
    or (select count(*) from jsonb_array_elements(((p->'body'->>'evidence_index_raw')::jsonb)->'artifacts') x
       where x->>'raw'=p->'body'->>'not_started_evidence_raw'
       and x->>'sha256'=p->'body'->'not_started_evidence_ref'->>'sha256'
-      and x->>'uri'=p->'body'->'not_started_evidence_ref'->>'uri')<>1
+      and x->>'uri'=((p->'body'->>'decision_raw')::jsonb)->'not_started_evidence_ref'->>'uri')<>1
    then raise exception 'root9_no_test_execution_and_exact_indexed_reconciliation_required'; end if;
   end if;
   foreach field_name in array array['decision','evidence_index'] loop
