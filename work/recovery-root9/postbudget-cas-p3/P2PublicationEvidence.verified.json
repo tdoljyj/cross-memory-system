@@ -1,0 +1,94 @@
+{
+  "state": "VERIFIED_POSTBUDGET_STAGE2_OWNER_MERGE",
+  "repository": "tdoljyj/cross-memory-system",
+  "pull_request": 177,
+  "merge": {
+    "sha": "20d6ec1e62eebed26e56bc2e4f52eed87704e8ab",
+    "tree": "54c448837711086bcf0e334de4c6acc97c1f338f",
+    "parents": [
+      "251b3b7eed1d9d3149c73f4b17dedda8aea7bfa5",
+      "64e8dec1549af469cf4647df8a3aa3945b76a3e6"
+    ],
+    "first_parent": "251b3b7eed1d9d3149c73f4b17dedda8aea7bfa5",
+    "source_parent": "64e8dec1549af469cf4647df8a3aa3945b76a3e6",
+    "source_tree": "54c448837711086bcf0e334de4c6acc97c1f338f",
+    "author_login": "tdoljyj",
+    "merged_by": "tdoljyj",
+    "committer_login": "web-flow",
+    "base_ref": "main",
+    "pull_request_count": 1,
+    "verification": {
+      "verified": true,
+      "reason": "valid",
+      "ui_detail": "This commit was created on GitHub.com and signed with GitHub’s verified signature."
+    },
+    "merged_at": "2026-09-14T09:42:42Z"
+  },
+  "coordinate_derivation": {
+    "merge_tree_method": "P1_RAW_SOURCE_TREE_PLUS_FINAL_P2_V3_TEN_FILE_OVERLAY_GIT_CANONICAL_TREE_V1",
+    "p1_base_tree": "4a05e51035ddc3a57e673d8d3de0f31c7ddb2617",
+    "overlay_file_count": 10,
+    "merge_tree_equals_source_tree": true,
+    "independently_reproduced": true
+  },
+  "controller": {
+    "generation_id": "ctrgen_308a1dfc185cff633892638581e0a34c",
+    "file_count": 23,
+    "manifest_ref": {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/51bf542e98808d9a64d16ef079fdb927de5f1d27",
+      "sha256": "c0b49c6a782efe219485486c120c05a7b5e7171394194cebc8b7aec76047d10a"
+    },
+    "dynamic_signing_ref": {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/136d57d502f8c0206d34354db5a39878187f19f9",
+      "sha256": "e067177cefb9311b4bce88242661bf6109f0ad78e75ae69b156adc1a8b3c9002"
+    }
+  },
+  "artifacts": {
+    "controller_qualification": {
+      "path": "work/recovery-root9/postbudget-stage2/ControllerQualification.root9.postbudget.candidate.json",
+      "ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/7ed2fcfa163b98a041403531e718ce37119495b7",
+        "sha256": "a48aa5934112cc968c622c200c7b994d7b928e0bb3d433b49b3d741680a57013"
+      }
+    },
+    "runtime_acceptance": {
+      "path": "work/recovery-root9/postbudget-stage2/RuntimeAcceptance.root9.postbudget.json",
+      "ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/66fd881e994c418b63f012f721831a4202247b67",
+        "sha256": "c1456fd186da21a707693af18f3dce5fdf1dcd54d7cc1b3c661290476f162552"
+      }
+    },
+    "status27_signing_payload": {
+      "path": "work/recovery-root9/postbudget-stage2/Status27SigningPayload.json",
+      "ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/1816ca696f55bd8d4b182d1edd4d5e2d912f5705",
+        "sha256": "9701fd4512797f4a90b96a59e06f438422e84f8eb03038fd3ae947ec46fd5c95"
+      },
+      "signed_payload_sha256": "c3fd1848edbd0b186cb0ba259cb3e8d739bcb3f0dac25754985133de68813a06"
+    },
+    "build_ga": {
+      "path": "work/ga-readiness/build-ga.mjs",
+      "ref": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/2a1726db8eb8ab2d405339f693085fd4d2af9402",
+        "sha256": "998e92f41cbe8a04d7205606a0ca883e06a8fdf663457e35b4dc370b9e0ed322"
+      }
+    }
+  },
+  "budget_inheritance": {
+    "sequence": 102,
+    "uri": "urn:clued:control-evidence:uscrdifznmlvczcekqpw:execution-events:102",
+    "sha256": "51eeb017ff28e5c15848a726de43436fe8421a8c574c0cdbdbce84a1aefc9e2a",
+    "seconds": 600,
+    "evidence_bytes": 134217728,
+    "automatic_refund": false,
+    "inherited": true,
+    "new_allocation": false,
+    "second_budget_allocation": false
+  },
+  "authority_effect": "NONE",
+  "database_writes": 0,
+  "history_rewritten": false,
+  "refund": false,
+  "capacity_change": false,
+  "budget_allocations": 0
+}
