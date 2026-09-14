@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "object_type": "Stage2CExactM3ArtifactPins",
+  "state": "EXACT_M3_ARTIFACTS_VERIFIED_READ_ONLY",
+  "authority_effect": "NONE",
+  "repository": "tdoljyj/cross-memory-system",
+  "owner_merge": {
+    "pull_request": 173,
+    "commit": "9398c6cb8db84b802facebf683c134fb1ba4ad5d",
+    "tree": "d553a78484d8f9c452dc6551a8b8cb88bf65869d",
+    "parents": [
+      "0ae9f5f29cc97982ef30f36fd8efbd67c521e5fd",
+      "8c87fc1213d8cc2c8f60508fb303af7460e44d2f"
+    ],
+    "author_login": "tdoljyj",
+    "merged_by": "tdoljyj",
+    "committer_login": "web-flow",
+    "base_ref": "main",
+    "verification": {
+      "verified": true,
+      "reason": "valid"
+    }
+  },
+  "artifacts": {
+    "root9_generation": {
+      "path": "work/recovery-root9/stage2b/Root9Generation.json",
+      "blob_sha": "9f36e78ce6d3b95d48bc082317548c4abeda143e",
+      "sha256": "956975e5131aaf858dc06bc7923e0186416740d82db64363af6103e7f69f94e1",
+      "canonical_sha256": "7483e3d240b270d7ad49d9262c63bd49ae0290db08c1dec66aa0de2f239eab60"
+    },
+    "runtime_acceptance": {
+      "path": "work/recovery-root9/stage2b/RuntimeAcceptance.root9.json",
+      "blob_sha": "00d41f5112ffd286b0a35ada745b7a09b8f7ef6d",
+      "sha256": "107fe912496392a0a677f103feb395321292231db4459d1a9a0f170573125cb9"
+    },
+    "build_ga": {
+      "path": "work/ga-readiness/build-ga.mjs",
+      "blob_sha": "d56e01a94051d8f248db3793e03c1eda2dfab1df",
+      "sha256": "df4171ad2d71c2ed975fe65a7f63b3dbb1acf3918e25fb6882a96399853d8953"
+    },
+    "controller_qualification": {
+      "path": "work/recovery-root9/stage2a/ControllerQualification.root9.candidate.json",
+      "blob_sha": "70e1a2b3ab171e6e93819518d39512575d7fc4a3",
+      "sha256": "171828b556756186ed30b88928855fb8e6607f799911bf63214e9505fa984c71"
+    }
+  },
+  "invariants": {
+    "controller_entry_count": 22,
+    "status_generation": 26,
+    "runtime_acceptance_fixed_ga_fields": 38,
+    "runtime_acceptance_repair_refs": 8,
+    "future_m4_sha_embedded": false
+  }
+}

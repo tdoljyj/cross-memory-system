@@ -1,0 +1,31 @@
+{
+  "state": "SEALED_STAGE2C_SQL_OFFLINE_NOT_APPLIED",
+  "m3": "9398c6cb8db84b802facebf683c134fb1ba4ad5d",
+  "status26_sha256": "8e02293caa447a5c2fe1749d89c082fe2e1e937180c937d746512d9b7e32b6a3",
+  "binding_sha256": "d3c597a2425343bb6fb897e4a6eaddd76cb73adf282a8cd07187e23a527cd76e",
+  "request_sha256": "eccaa84262cee349a49636a3a4aed8c85a540a8c42d9ae5d43cacab67a782c07",
+  "apply_sha256": "bf180ec5e01e93f9103db5363ecee8a14ae06a4d5d73f2e9068b96a3da4f9dac",
+  "persistent_functions": [
+    "clued_control.read_root(text)",
+    "clued_control.reserve_execution_budget(text,text)",
+    "clued_control.reserve_gate(text,text)"
+  ],
+  "new_persistent_installer": false,
+  "direct_root_event9_cas": true,
+  "legacy_append_event_dependency": false,
+  "sequences": [
+    9,
+    98,
+    99,
+    100,
+    101
+  ],
+  "sequence102_created": false,
+  "charged_seconds": 10506,
+  "charged_evidence_bytes": 2335812531,
+  "capacity_changed": false,
+  "refund": false,
+  "budget_reservation": false,
+  "ga_dispatch": false,
+  "database_writes": 0
+}
