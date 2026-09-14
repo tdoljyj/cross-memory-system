@@ -1,7 +1,10 @@
 {
   "state": "ROOT9_EXACT_PAIR_EXPECTED_CURRENT_CAS_BUILT",
-  "sha256": "4f20bbf665d700b6b57c3da91aff34e2064ab017752c6ad9fe645bfbf623ac91",
-  "bytes": 76112,
+  "sha256": "365c5892e1100242cec4b60c534d4f7d26b25803ff19f3746b8ea2d20e54e717",
+  "bytes": 76134,
+  "rollback_dryrun_pass": true,
+  "rollback_dryrun_validated_at": "2026-09-14T21:33:27Z",
+  "rollback_dryrun_persistent_writes": 0,
   "expected_sequence_before": 104,
   "expected_sequence_after": 106,
   "status_generation": 28,
