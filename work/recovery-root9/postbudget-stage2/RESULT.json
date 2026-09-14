@@ -1,0 +1,67 @@
+{
+  "state": "POSTBUDGET_STAGE2_PREPUBLICATION_CANDIDATE_PASS",
+  "authority_effect": "NONE",
+  "p1_owner_merge_commit": "251b3b7eed1d9d3149c73f4b17dedda8aea7bfa5",
+  "p1_source_commit": "0b139bb347634fc6d8298a7f187ce0e16618f020",
+  "p1_source_tree": "4a05e51035ddc3a57e673d8d3de0f31c7ddb2617",
+  "root9": {
+    "generation": "ctrgen_308a1dfc185cff633892638581e0a34c",
+    "unchanged": true,
+    "ref": {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/9f36e78ce6d3b95d48bc082317548c4abeda143e",
+      "sha256": "956975e5131aaf858dc06bc7923e0186416740d82db64363af6103e7f69f94e1"
+    },
+    "canonical_sha256": "7483e3d240b270d7ad49d9262c63bd49ae0290db08c1dec66aa0de2f239eab60"
+  },
+  "controller": {
+    "digest": "c0b49c6a782efe219485486c120c05a7b5e7171394194cebc8b7aec76047d10a",
+    "files": 23,
+    "manifest_ref": {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/51bf542e98808d9a64d16ef079fdb927de5f1d27",
+      "sha256": "c0b49c6a782efe219485486c120c05a7b5e7171394194cebc8b7aec76047d10a"
+    },
+    "qualification_ref": {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/7ed2fcfa163b98a041403531e718ce37119495b7",
+      "sha256": "a48aa5934112cc968c622c200c7b994d7b928e0bb3d433b49b3d741680a57013"
+    }
+  },
+  "status27": {
+    "generation": 27,
+    "status_manifest_id": "sm_root9_status27_postbudget_signing_repair_v1",
+    "signing_payload_ref": {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/1816ca696f55bd8d4b182d1edd4d5e2d912f5705",
+      "sha256": "9701fd4512797f4a90b96a59e06f438422e84f8eb03038fd3ae947ec46fd5c95"
+    },
+    "signed_payload_sha256": "c3fd1848edbd0b186cb0ba259cb3e8d739bcb3f0dac25754985133de68813a06",
+    "schema_probe_valid": true,
+    "full_signed_status": false
+  },
+  "runtime_acceptance": {
+    "ref": {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/66fd881e994c418b63f012f721831a4202247b67",
+      "sha256": "c1456fd186da21a707693af18f3dce5fdf1dcd54d7cc1b3c661290476f162552"
+    },
+    "fixed_ga_fields": 38,
+    "repair_refs": 8
+  },
+  "budget": {
+    "sequence": 102,
+    "uri": "urn:clued:control-evidence:uscrdifznmlvczcekqpw:execution-events:102",
+    "sha256": "51eeb017ff28e5c15848a726de43436fe8421a8c574c0cdbdbce84a1aefc9e2a",
+    "seconds": 600,
+    "evidence_bytes": 134217728,
+    "automatic_refund": false,
+    "inherited": true,
+    "new_allocation": false
+  },
+  "safety": {
+    "history_rewritten": false,
+    "refund": false,
+    "capacity_change": false,
+    "database_writes": 0,
+    "budget_allocations": 0,
+    "gate_reservations": 0,
+    "dispatches": 0
+  },
+  "next": "Owner publishes exact P2 payload; then bind Status27 signature evidence and independently review one-shot live CAS"
+}
