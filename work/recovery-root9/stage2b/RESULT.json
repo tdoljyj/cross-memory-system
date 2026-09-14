@@ -1,0 +1,55 @@
+{
+  "state": "STAGE2B_PREPUBLICATION_CANDIDATE_PASS",
+  "authority_effect": "NONE",
+  "m2_owner_merge_commit": "0ae9f5f29cc97982ef30f36fd8efbd67c521e5fd",
+  "controller_digest": "c76438600d93d708ffe312c5980d8574f649836b65ae523daab0271e7fc9ff1b",
+  "root9": {
+    "ref": {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/9f36e78ce6d3b95d48bc082317548c4abeda143e",
+      "sha256": "956975e5131aaf858dc06bc7923e0186416740d82db64363af6103e7f69f94e1"
+    },
+    "canonical_sha256": "7483e3d240b270d7ad49d9262c63bd49ae0290db08c1dec66aa0de2f239eab60",
+    "signed_object_sha256": "f4c24b8dc86bfb7472d3b844c453b0821fe868ef02289870c6f0f13198888bfd",
+    "schema_valid": true
+  },
+  "status26": {
+    "signing_payload_ref": {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/82ae28e4dde3947bb7ef087c304dadedb3e5c15a",
+      "sha256": "101d72576f405b859582fdac34c735edf2cc46a11b306955cdbdb2f9718f28db"
+    },
+    "signed_object_sha256": "d0c0126ae12d710e531e6ceea07c9ff4636d1f69ca85b6a91a49cd75021bccd8",
+    "generation": 26,
+    "full_signed_status": false,
+    "schema_probe_valid": true
+  },
+  "runtime_acceptance": {
+    "ref": {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/00d41f5112ffd286b0a35ada745b7a09b8f7ef6d",
+      "sha256": "107fe912496392a0a677f103feb395321292231db4459d1a9a0f170573125cb9"
+    },
+    "fixed_ga_fields": 38,
+    "repair_refs": 8,
+    "future_m3_sha_embedded": false
+  },
+  "build_ga": {
+    "ref": {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/d56e01a94051d8f248db3793e03c1eda2dfab1df",
+      "sha256": "df4171ad2d71c2ed975fe65a7f63b3dbb1acf3918e25fb6882a96399853d8953"
+    },
+    "requires_verified_m3": true,
+    "pre_m3_rejected": true
+  },
+  "controller_entry_count": 22,
+  "stale_minimum_30": false,
+  "schema_pins": {
+    "ga": "f7f7e2a011f3f81a005e46f9cf7683edeb010dc7812eadfb4473f6ad5368a1ce",
+    "status": "6f9a6799109cbad00b4e615b58f535f91fe0ec4a53790fa744000caa2bf3282e",
+    "grr": "292da87d05b1bb00337a2045e3d26f6df0be70aaf520aa519572fa3dec395252"
+  },
+  "capacity_value_change": false,
+  "refund": false,
+  "database_writes": 0,
+  "budget_reservations": 0,
+  "ga_dispatches": 0,
+  "next_after_owner_merge": "construct full Status26 and sealed Stage2C; no live apply until independent review"
+}

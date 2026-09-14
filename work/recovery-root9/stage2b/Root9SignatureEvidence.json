@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "object_type": "RootOwnerMergeSignatureEvidence",
+  "state": "M2_OWNER_MERGE_COORDINATE_BOUND_OFFLINE_TRUSTED_RUNTIME_VERIFICATION_REQUIRED",
+  "authority_effect": "NONE",
+  "repository": "tdoljyj/cross-memory-system",
+  "root_set_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+  "control_trust_root_generation": "ctrgen_308a1dfc185cff633892638581e0a34c",
+  "merge": {
+    "sha": "0ae9f5f29cc97982ef30f36fd8efbd67c521e5fd",
+    "required_verification": {
+      "verified": true,
+      "verification_reason": "valid",
+      "two_parents": true,
+      "committer": "web-flow",
+      "merged_by": "tdoljyj",
+      "base_branch": "main",
+      "exact_merged_pr": true
+    },
+    "offline_observation": "MERGE_SHA_SUPPLIED; CRYPTOGRAPHIC_AND_RELATIONAL_GITHUB_API_CHECK_DEFERRED_TO_TRUSTED_RUNTIME"
+  },
+  "payload": {
+    "artifact_path": "work/recovery-root9/stage2a/Root9SigningPayload.json",
+    "blob_sha": "8959f752626bc5deb3902e5477d55b1350661a1a",
+    "file_sha256": "4c355619730d9e5e9d9bb0a2e5af7ace2fc619afcfe43dc6ba21c5385f84f37a",
+    "signed_object_sha256": "f4c24b8dc86bfb7472d3b844c453b0821fe868ef02289870c6f0f13198888bfd",
+    "canonicalization_id": "SORTED_JSON_UTF8_NO_FLOATS_LF_V1_CANDIDATE",
+    "excluded_fields": [
+      "signature_binding"
+    ]
+  },
+  "bound_refs": {
+    "owner_approval": {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/967857d2d423aaffeee0ef345f9a2cf3fea1a633",
+      "sha256": "9dd355237ad0eee56a3bde6ac0b5941fba7e82da519ba33f4d694f881e4f9df6"
+    },
+    "independent_acceptance": {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/10fd545c697cbfc371d21ae5c0d52b9a9143b598",
+      "sha256": "1cbb49f06c99cb014b8780fc620631b1f9cea350c480ced45e4d5a3f083feeb0"
+    },
+    "issuer_qualifications": {
+      "STATUS": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/a0752111b99fb11f14108d99dd08a8f8bfe2eac9",
+        "sha256": "2bbd9352b79da288b1a161f32cf59fc946e4cd68167b608fbd3d994617df65e9"
+      },
+      "GATE_AUTHORIZATION": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/21aa668c5c5fb69b0633f83beb0ae31a42b7ab0d",
+        "sha256": "751afdf957b8055ea28d5fbc9ae7bcea2b384c0b005bc53263244cf1612d1004"
+      },
+      "GATE_RESULT": {
+        "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/4996089908b1f2c0bad36234c54271d350062f55",
+        "sha256": "ffafc9eb63a2148176dca0e66d5a22bf07ee9f0a5462c966d42a79d247f0088c"
+      }
+    },
+    "controller_qualification": {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/70e1a2b3ab171e6e93819518d39512575d7fc4a3",
+      "sha256": "171828b556756186ed30b88928855fb8e6607f799911bf63214e9505fa984c71"
+    }
+  },
+  "verification_boundary": {
+    "offline_checks": [
+      "exact Stage2A raw bytes",
+      "Git blob identity",
+      "canonical signed-object digest",
+      "strict Root9 schema",
+      "exact bound refs"
+    ],
+    "trusted_runtime_checks": [
+      "private repository identity",
+      "signed merge verification",
+      "two-parent merge",
+      "exact one merged PR into main",
+      "merged_by tdoljyj",
+      "complete merge tree",
+      "exact regular artifact path and blob bytes"
+    ],
+    "database_write": false,
+    "budget_reservation": false,
+    "capacity_value_change": false,
+    "refund": false,
+    "ga_dispatch": false
+  }
+}

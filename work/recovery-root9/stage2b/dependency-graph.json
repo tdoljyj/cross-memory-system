@@ -1,0 +1,44 @@
+{
+  "state": "ACYCLIC_STAGE2B_DEPENDENCY_GRAPH",
+  "m2_owner_merge": "0ae9f5f29cc97982ef30f36fd8efbd67c521e5fd",
+  "fixed_edges": [
+    [
+      "M2 Root9SigningPayload",
+      "Root9SignatureEvidence"
+    ],
+    [
+      "Root9SignatureEvidence",
+      "Root9Generation"
+    ],
+    [
+      "Root9Generation canonical digest",
+      "Status26SigningPayload"
+    ],
+    [
+      "Status26SigningPayload S",
+      "RuntimeAcceptance"
+    ],
+    [
+      "M2 qualification/capacity/repair[7]",
+      "RuntimeAcceptance"
+    ]
+  ],
+  "m3_late_bound": [
+    "RuntimeAcceptance external publication.commitSha",
+    "Status26 signing payload external publication.commitSha",
+    "GA target_revision"
+  ],
+  "after_m3_only": [
+    "Status26 signature evidence",
+    "full signed Status26",
+    "sealed SQL and invocation"
+  ],
+  "forbidden_before_m3": [
+    "future M3 SHA",
+    "full signed Status26",
+    "sealed SQL",
+    "budget reservation",
+    "GA dispatch"
+  ],
+  "cycle_detected": false
+}
