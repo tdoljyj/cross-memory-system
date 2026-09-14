@@ -135,7 +135,7 @@ begin
    or reconciliation->'not_started' is distinct from 'true'::jsonb
    or reconciliation->'container_id' is distinct from 'null'::jsonb
    or reconciliation->'stop_action_performed' is distinct from 'false'::jsonb
-   or reconciliation->'execution_sequence' is distinct from to_jsonb(c.sequence)
+   or reconciliation->'execution_sequence' is distinct from '104'::jsonb
    or reconciliation->'event_sequences' is distinct from '[]'::jsonb
    or reconciliation->'observed_at' is null
    or p->'body'->'not_started_evidence_ref'->>'uri' is distinct from 'urn:clued:execution-evidence:'||root||':'||(p->'body'->'not_started_evidence_ref'->>'sha256')
