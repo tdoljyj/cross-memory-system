@@ -1,0 +1,43 @@
+{
+  "object_type": "Root9ExactPairControllerSuccessorIntent",
+  "schema_version": "1.0",
+  "controller_digest": "9373e3d9843055e9babc1564f4aaceb0966886f854fc0e107281d4ce618b3ce1",
+  "controller_source_manifest_sha256": "9373e3d9843055e9babc1564f4aaceb0966886f854fc0e107281d4ce618b3ce1",
+  "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+  "gate_id": "G-PREENTRY-SKILL-QUALIFICATION",
+  "profile_sha256": "d1c060b85f0b842a397a478105ea57a208e62eb0a5a2d4c2cd8f93f63eae88f5",
+  "scope_sha256": "115408c69dcb2fa606fb0de34ec86c5239487d0cfa9a73abb267664a2482abe5",
+  "gate_sha256": "3487d9fc6ccee5478569021961eac93bf5ef6bd4bc2428559b20a44abb9c155a",
+  "generation_ids": {
+    "root": "ctrgen_308a1dfc185cff633892638581e0a34c",
+    "runner": "runnergen_a256855fec9441839105c69b746c5244",
+    "credential": "credgen_bac92a11e7144a3fb9e67f40a6a07d11",
+    "session": "sessiongen_ffb02a907d334b0da0b37bf457a758c2"
+  },
+  "exact_pair": {
+    "predecessor_ga_id": "ga_4a88b0436cf80beeb5e194c98bb0297e",
+    "predecessor_ga_sha256": "50583449ba31202aa5a7cbb908ff82e556baf95bc6a8734c5b8e58890d6d8819",
+    "predecessor_controller_digest": "c0b49c6a782efe219485486c120c05a7b5e7171394194cebc8b7aec76047d10a",
+    "budget_sequence": 102,
+    "budget_event_raw_sha256": "51eeb017ff28e5c15848a726de43436fe8421a8c574c0cdbdbce84a1aefc9e2a",
+    "repair_state": "ACCEPTED_EXACT_ROOT9_PREDISPATCH_BUDGET_INHERITANCE_REPAIR",
+    "termination_mode": "EXPIRED_PREDISPATCH_NOT_STARTED_BLOCKED_ROOT9",
+    "not_started_evidence_sha256": "ba0edadea01000daafd51fb8985870f6e6a946be3a3959102e998f800a2dcb20"
+  },
+  "guard_model": {
+    "ordinary_one_budget_one_ga_path_unchanged": true,
+    "exception_cardinality": 1,
+    "requires_exact_predecessor_blocked": true,
+    "requires_selected_current_successor": true,
+    "requires_exact_seq102_raw_bytes": true,
+    "rejects_third_participant": true,
+    "rejects_refund": true,
+    "rejects_capacity_increase": true,
+    "rejects_new_allocation": true,
+    "rejects_budget_reassignment": true,
+    "dynamic_successor_ga_binding_avoids_hash_cycle": true
+  },
+  "publication_stage": "OWNER_SOURCE_PUBLICATION_ONLY",
+  "live_write_authorized_by_this_object": false,
+  "authority_effect": "NONE"
+}

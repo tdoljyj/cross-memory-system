@@ -1,0 +1,84 @@
+{
+  "object_type": "HostProvisioning",
+  "state": "HOST_PREREQUISITES_DECLARED_NO_AUTHORITY",
+  "scope": "ISOLATED_TEST",
+  "purpose": "Says what a host must have before this controller can be built or run, so that a gate refusal can be attributed. Round 20 ran check-digest-pins on a host without gh and got an unexplained digest -- correct fail-closed behaviour, indistinguishable from a controller defect, and since build-linux-manifest.mjs runs that gate first, the manifest could not be rebuilt there at all. Requested since round 15 as R15-N1 and not written until now.",
+  "how_to_read_this": "The four binaries below are pinned inside the controller and their digests must match exactly -- a different build of the same version will not do, because the manifest and the runtime checks name bytes, not versions. The shell tools are pinned by the manifest only; the trusted entry calls sha256sum and cut by absolute path and bounds PATH, but the shell itself is chosen by the harness and cannot be pinned from here.",
+  "attribution_rule": "If check-digest-pins.mjs refuses AND prints HOST INCOMPLETE, the host is missing a binary: install it and run again. If it refuses without that line, the refusal is about the controller.",
+  "measured_on": {
+    "platform": "linux",
+    "arch": "x64",
+    "at": "2026-09-12T16:58:32Z"
+  },
+  "required_binaries": [
+    {
+      "path": "/opt/node22/bin/node",
+      "role": "runs the controller; the trusted entry checks its bytes before exec",
+      "version_command": "node --version",
+      "version": "v22.22.2",
+      "sha256": "81925c0995b5c1427b5d538e6a90ca2fdc4daffb786b09af749beaf7369d4e90",
+      "bytes": 124679552
+    },
+    {
+      "path": "/usr/bin/python3.11",
+      "role": "validates the source manifest before node starts, and runs bridge.py/fixed_host.py/parent600.py",
+      "version_command": "python3.11 --version",
+      "version": "Python 3.11.15",
+      "sha256": "f56a588548dd013906ae1dcd1b6faa417f4e204da634ff354840d9643e78ff9e",
+      "bytes": 6639992
+    },
+    {
+      "path": "/usr/bin/docker",
+      "role": "the 600-second run is a docker container; parent600 invokes this binary by absolute path",
+      "version_command": "docker --version",
+      "version": "Docker version 29.3.1, build c2be9cc",
+      "sha256": "18c2a16d6aa0331bbd78b93e0a57f344c62bda0be52c054d4ee80e11176b0c30",
+      "bytes": 44320674
+    },
+    {
+      "path": "/usr/local/bin/gh",
+      "role": "trusted-github.mjs re-hashes it before every API call",
+      "version_command": "gh --version",
+      "version": "gh version 2.63.2 (2024-12-05)",
+      "sha256": "f687dc937534f8aa77ff9d2362163c645b5a8cc78297ef1a642c74c56aa48618",
+      "bytes": 50098328
+    }
+  ],
+  "shell_tools_pinned_by_manifest_only": [
+    {
+      "path": "/usr/bin/sha256sum",
+      "sha256": "e484c36c0613879fbd11058f7a2e194783bced59d4805d64c3d4b0d7f664094d",
+      "bytes": 39336
+    },
+    {
+      "path": "/usr/bin/cut",
+      "sha256": "e48d15703786f49ae0e01003d72d335b6307769735bd36d93df2983d6b340122",
+      "bytes": 39432
+    },
+    {
+      "path": "/usr/bin/test",
+      "sha256": "da73061ae72b78c517da9c1ed85ae6cbaf1cc00102c6afdb342e6347effc48af",
+      "bytes": 47552
+    },
+    {
+      "path": "/usr/bin/dash",
+      "sha256": "86d31f6fb799e91fa21bad341484564510ca287703a16e9e46c53338776f4f42",
+      "bytes": 129784
+    }
+  ],
+  "not_pinned_and_why": [
+    {
+      "what": "the shell that runs the trusted entry command",
+      "reason": "chosen by the harness's exec_command, not by the controller. /usr/bin/dash is in the manifest but nothing forces the harness to use it. This is the residual root of trust, alongside sha256sum and cut."
+    },
+    {
+      "what": "the docker daemon and its storage driver",
+      "reason": "the controller pins the client binary and validates the image by digest; the daemon is outside what a byte pin can cover."
+    }
+  ],
+  "container_image": {
+    "reference": "docker.io/library/python@sha256:285a71327884a4d50efbea30104473b0fa43ecefa499458899670ca30dae76e5",
+    "note": "Obtained via mirror.gcr.io: the docker.io blob CDN is blocked by this environment's proxy policy. The digest is identical from either source and the controller's own image_valid() checks it."
+  },
+  "authority_effect": "NONE"
+}

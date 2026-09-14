@@ -1,0 +1,31 @@
+{
+  "object_type": "Root9ExactPairControllerSelfTest",
+  "schema_version": "1.0",
+  "controller_digest": "9373e3d9843055e9babc1564f4aaceb0966886f854fc0e107281d4ce618b3ce1",
+  "environment": {
+    "platform": "linux",
+    "container": "clued-root9-livehost",
+    "node": "v22.22.2",
+    "live_database_write": false
+  },
+  "results": {
+    "manifest_rebuild": "PASS_EXACT_23_SOURCE_MANIFEST_REBUILT",
+    "digest_pin_accounting": "PASS_59_LITERAL_0_UNEXPLAINED",
+    "runtime_pin_selftest": "PASS_0_UNPROVEN_9_NOT_COVERED",
+    "exact_pair_budget_state_machine": "EXACT_PAIR_BUDGET_SELFTEST_PASS",
+    "positive_cases": 2,
+    "negative_cases": 4,
+    "allocation_events": 1,
+    "attempts_in_exact_pair": 2,
+    "refund": false,
+    "capacity_increase": false,
+    "new_allocation": false,
+    "budget_reassignment": false
+  },
+  "limitations": [
+    "Owner source publication does not qualify or activate this controller.",
+    "Live GitHub and terminal receipt paths remain subject to the later qualification, runtime acceptance, Owner publication and independent review.",
+    "No database mutation was executed by these tests."
+  ],
+  "authority_effect": "NONE"
+}
