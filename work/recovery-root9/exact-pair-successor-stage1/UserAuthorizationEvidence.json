@@ -1,0 +1,28 @@
+{
+  "kind": "USER_EXPLICIT_ROOT9_DURABLE_EXACT_PAIR_SUCCESSOR_AUTHORIZATION",
+  "authorized_at_session_date": "2026-09-15",
+  "authorized_order": [
+    "implement the durable exact-pair controller successor",
+    "publish through the Owner path",
+    "obtain an independent successor review",
+    "apply an expected-current CAS only after review GO",
+    "terminate the expired never-started pending GA as BLOCKED",
+    "issue exactly one successor GA inheriting budget sequence 102"
+  ],
+  "invariants": {
+    "root_unchanged": true,
+    "gate_unchanged": true,
+    "profile_unchanged": true,
+    "scope_unchanged": true,
+    "root_generation_unchanged": true,
+    "runner_generation_unchanged": true,
+    "credential_generation_unchanged": true,
+    "session_generation_unchanged": true,
+    "refund": false,
+    "capacity_increase": false,
+    "new_allocation": false,
+    "budget_reassignment": false
+  },
+  "user_statement": "确认授权你实施上述持久 exact-pair controller successor，并经过 Owner 发布、独立复审和 expected-current CAS 后，再终结旧 GA、继承 seq102 签发新 GA。全程仍保持 Root/Gate/Profile/Scope 与各 generation 不变，不退款、不增容、不新增或重新分配预算。",
+  "authority_effect": "USER_AUTHORIZATION_EVIDENCE_ONLY"
+}

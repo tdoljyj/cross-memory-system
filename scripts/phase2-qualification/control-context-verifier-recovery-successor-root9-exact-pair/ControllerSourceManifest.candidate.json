@@ -1,0 +1,126 @@
+{
+  "object_type": "ControllerSourceManifest",
+  "schema_version": 1,
+  "generation_id": "ctrgen_308a1dfc185cff633892638581e0a34c",
+  "not_before": "2026-09-14T03:00:00Z",
+  "expires_at": "2026-09-15T03:00:00Z",
+  "files": [
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9-exact-pair/HostProvisioning.json",
+      "sha256": "9d396c914cfbf940f5c0cf29b6cf50ff5c4ad7fc2af66583d593d37fe0728d1f",
+      "bytes": 4283
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9-exact-pair/bridge.py",
+      "sha256": "ad04167bf0e91257be149c7aef2ea7bdee6967c26e17692caa8323e6e084313d",
+      "bytes": 5121
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9-exact-pair/build-linux-manifest.mjs",
+      "sha256": "6c344cbc56deefd07935246aadd3b53233904b0d6547f74c4b357c723e1e9602",
+      "bytes": 2871
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9-exact-pair/check-digest-pins.mjs",
+      "sha256": "b0d5846a5cdb57ad8da6d7bc4264ebfe42b9b9ee1734ab99185540720b856843",
+      "bytes": 43760
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9-exact-pair/cli.mjs",
+      "sha256": "23e5c73b8af535cf2c39c9841ea8080f818c93aad22d11f3d2a6cd80326bad74",
+      "bytes": 1732
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9-exact-pair/context.mjs",
+      "sha256": "0cd8e48c30a6d90bd153dcc3b7b5867a94c21b24f30744e95976de453fccfa72",
+      "bytes": 59161
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9-exact-pair/dynamic-signing.mjs",
+      "sha256": "e067177cefb9311b4bce88242661bf6109f0ad78e75ae69b156adc1a8b3c9002",
+      "bytes": 7051
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9-exact-pair/fixed_host.py",
+      "sha256": "d7d5e2cace4810ab321f553fb236f74368bb8425e206bbf009e5d1985232ed96",
+      "bytes": 15678
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9-exact-pair/gate-result-receipt.root5.schema.json",
+      "sha256": "292da87d05b1bb00337a2045e3d26f6df0be70aaf520aa519572fa3dec395252",
+      "bytes": 8117
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9-exact-pair/grr.mjs",
+      "sha256": "8f25737957413bb8cde738736d5ffe116ed98b6d281905ebdde7a7e1c212de31",
+      "bytes": 6566
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9-exact-pair/historical-component-observations.mjs",
+      "sha256": "dc9098bc8ea9a32630cfa2764787fc7a584a6c8866eef4839172a22c0221757c",
+      "bytes": 6402
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9-exact-pair/host-effect.mjs",
+      "sha256": "ed044a9c6ab4f71cb3c80cc46be9ceb8ff8d6f2e3a763b3ddf6c5bd7c004c80a",
+      "bytes": 2829
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9-exact-pair/original-inputs-blob.mjs",
+      "sha256": "1044f007d3749c1c5f6982a2a7eec58075d7ae7276f2bc88fc43eca51debc800",
+      "bytes": 17079
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9-exact-pair/parent600.py",
+      "sha256": "feb409d4947440802ba2c986b047a209897582919cb0ab043681d0cf74c85101",
+      "bytes": 11233
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9-exact-pair/read-source-blobs-linux.mjs",
+      "sha256": "34039584f91eed16028a88c70ed772938408ee3c05aacd4165876cd4bfc8383c",
+      "bytes": 8406
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9-exact-pair/request-denials.mjs",
+      "sha256": "378653fc45e37cd108e8abc1d9e9e9ff6e0ef6e6167eb1aa59f737b71811332f",
+      "bytes": 7917
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9-exact-pair/result-terminal.mjs",
+      "sha256": "fa419579ae801f6e873af5ff6c15f67d097bc05d64eb94680bac319529fb64ed",
+      "bytes": 11798
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9-exact-pair/root-window-validation.mjs",
+      "sha256": "9bff731585658a57eb8ec19aec330deb3b9aa6bde3e81902d1b97cfab670f226",
+      "bytes": 5011
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9-exact-pair/selftest-runtime-pins.mjs",
+      "sha256": "812285803aa4e55ecee0e7a65d4d0eaeacd4aca2f9b6dff227e3b192ccc7823e",
+      "bytes": 37451
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9-exact-pair/source-publication.mjs",
+      "sha256": "8c724a0a3b33a6515c5751ad164a9237723d3cdb48956fcb0892750d407afc08",
+      "bytes": 6793
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9-exact-pair/status-manifest.root5.schema.json",
+      "sha256": "6f9a6799109cbad00b4e615b58f535f91fe0ec4a53790fa744000caa2bf3282e",
+      "bytes": 5327
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9-exact-pair/tool-entry.functions.js",
+      "sha256": "30925cd3ee465afa2af039f328d37dcd55106e54b955afc2a9d091d0abfe7827",
+      "bytes": 12266
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9-exact-pair/trusted-github.mjs",
+      "sha256": "ff9feeff0c02dba8f089725653bc9d38dd418674654044eb7595360d0c811c05",
+      "bytes": 6008
+    }
+  ],
+  "qualification_issued": false,
+  "authority_effect": "NONE"
+}

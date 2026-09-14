@@ -1,0 +1,20 @@
+{
+  "kind": "EXPIRED_PREDISPATCH_NOT_STARTED_RECONCILIATION_ROOT9",
+  "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+  "ga_id": "ga_4a88b0436cf80beeb5e194c98bb0297e",
+  "ga_sha256": "50583449ba31202aa5a7cbb908ff82e556baf95bc6a8734c5b8e58890d6d8819",
+  "controller_digest": "c0b49c6a782efe219485486c120c05a7b5e7171394194cebc8b7aec76047d10a",
+  "docker_nonce": "b11db56b210e5e217353025bf63fc6e7",
+  "docker_inventory": [],
+  "nonce_directory_present": false,
+  "create_intent_present": false,
+  "start_intent_present": false,
+  "not_started": true,
+  "container_id": null,
+  "stop_action_performed": false,
+  "execution_sequence": 104,
+  "event_sequences": [],
+  "observed_at": "2026-09-14T15:10:22Z",
+  "observer": "Codex@DESK-W-591 via clued-root9-livehost",
+  "authority_effect": "NONE"
+}
