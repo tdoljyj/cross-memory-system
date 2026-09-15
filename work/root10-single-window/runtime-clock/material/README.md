@@ -50,3 +50,36 @@ half cannot be baked into a template. The dispatch driver fills these from
 | `status_manifest.raw` | the stored StatusManifest from `control_objects` — Status29 is a live control object, not another Git payload authority |
 | `status_manifest.store_ref` | the GA's `status_manifest_ref` |
 | `status_manifest.source_binding_sha256` | the original runtime acceptance digest Status29 was signed against |
+
+## Dispatch driver
+
+`drive-root10-runtime-clock-dispatch.mjs` is the trusted caller the controller expects. It
+supplies a fresh observation, drives the entry's handshake, and commits — as separate
+transactions — the intent, dispatch and result rows the controller asks for. It decides
+nothing: every admission, window and byte check lives behind the trusted entry.
+
+```
+CLUED_CONTROL_DATABASE_URL=postgresql://... \
+  node drive-root10-runtime-clock-dispatch.mjs --template TEMPLATE.json --operation CREATE [--dry-run]
+```
+
+`entry-root10-runtime-clock.sh` is the Linux trusted entry, byte-for-byte the command the
+tool-origin entry runs inside its relay container: it checks the source manifest against the
+digest the driver read from SQL (never against supplied material), then python3.11's bytes,
+then the manifest shape, no `__pycache__` under the tree, every listed file's length and
+sha256, the three host shell tools, the runtime dependency package trees, and node's bytes —
+and only then execs `cli.mjs`.
+
+SQL goes through `psql` rather than an MCP tool because the controller requires the observation
+to be at most 15 seconds old, and `read_execution()` returns roughly 3 MB: no human-mediated
+round trip fits in that window. The driver needs network reach to the control store and a
+credential; nothing else in this directory does.
+
+The steps, in order, each a separate invocation:
+
+| # | Operation | Attempt phase in → out |
+| --- | --- | --- |
+| 1 | `CREATE` | `PENDING` → `INTENT_RECORDED` → `CREATE_SENT` → `CREATED` |
+| 2 | `START` | `CREATED` → `INTENT_RECORDED` → `START_SENT` → `RUNNING` |
+| 3 | stop | `RUNNING` → `STOP_SENT` → `STOPPED` |
+| 4 | `GRR` | `STOPPED` → `DECISION_RESERVED` → `SIGNING` → committed receipt |
