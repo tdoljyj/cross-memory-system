@@ -1,0 +1,18 @@
+{
+  "schema_version": "clued.multitrack-repository-track/1",
+  "source_snapshot_id": "CLUED-CURRENT-PRIORITY-SNAPSHOT-v0.1.3-SOURCE-BOUND-20260912",
+  "source_inventory_id": "CLUED-CURRENT-GOVERNANCE-INVENTORY-v0.1.3-SOURCE-BOUND-20260912",
+  "authority_effect": "NONE",
+  "track_id": "B",
+  "track_name": "商业与增长",
+  "frontier": ["B-002","B-003"],
+  "items": [
+    {"id":"B-001","track":"B","title":"完整商业方案 v1.3.1","status":"COMPLETED","mark":"✅","priority":"完成项","depends_on":[],"blocked_by":[],"unlocks":["B-002","B-003","B-004","B-005"],"evidence_grade":"B","canonical_reconciliation":"CANONICAL_CURRENT_IDENTITY_CONFIRMATION_RECOMMENDED"},
+    {"id":"B-002","track":"B","title":"商业可行性 / 单位经济 / 真实指标验证","status":"READY","mark":"○","priority":"B0 / Frontier","depends_on":["B-001"],"blocked_by":[],"unlocks":["规模化商业启用"],"evidence_grade":"D","canonical_reconciliation":"NOT_REQUIRED_UNTIL_PROMOTION_OR_EXECUTION"},
+    {"id":"B-003","track":"B","title":"Pricing / Packaging / 权益与额度验证","status":"READY","mark":"○","priority":"B0 / Frontier","depends_on":["B-001"],"blocked_by":[],"unlocks":["商业启用策略"],"evidence_grade":"D","canonical_reconciliation":"NOT_REQUIRED_UNTIL_PROMOTION_OR_EXECUTION"},
+    {"id":"B-004","track":"B","title":"循环一：发现与私人持续使用","status":"WAITING","mark":"⏳","priority":"B1","depends_on":["P-007","P-011","P-012"],"blocked_by":["P-007","P-011","P-012"],"unlocks":["循环二验证"],"evidence_grade":"D","canonical_reconciliation":"NOT_REQUIRED_UNTIL_PROMOTION_OR_EXECUTION"},
+    {"id":"B-005","track":"B","title":"循环二：成品 / 创作者 / 精选发行与交易","status":"WAITING","mark":"⏳","priority":"B2","depends_on":["B-004"],"blocked_by":["B-004"],"unlocks":["B-006"],"evidence_grade":"D","canonical_reconciliation":"NOT_REQUIRED_UNTIL_PROMOTION_OR_EXECUTION"},
+    {"id":"B-006","track":"B","title":"循环三：共建、资源与回流","status":"WAITING","mark":"⏳","priority":"B3","depends_on":["B-005"],"blocked_by":["B-005"],"unlocks":["完整商业循环"],"evidence_grade":"D","canonical_reconciliation":"NOT_REQUIRED_UNTIL_PROMOTION_OR_EXECUTION"},
+    {"id":"B-007","track":"B","title":"Distribution / Go-to-market / Growth Validation","status":"READY","mark":"○","priority":"B1","depends_on":["B-001"],"blocked_by":[],"unlocks":["更准确商业优先级"],"evidence_grade":"D","canonical_reconciliation":"NOT_REQUIRED_UNTIL_PROMOTION_OR_EXECUTION"}
+  ]
+}
