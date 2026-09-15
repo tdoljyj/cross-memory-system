@@ -117,3 +117,35 @@ the host's own watchdog at its deadline, and `STOP_SENT`/`STOPPED` are recorded 
 15 seconds old. Measured on this host, the entry's whole preflight — manifest digest, python
 bytes, all 34 declared files, the five dependency package trees, node's bytes — runs in about
 450 ms, so the observation is consumed with seconds to spare.
+
+## Cloud environment setup
+
+A fresh clone cannot run the trusted entry: `apps/clued-cloud/node_modules` is gitignored, and
+the entry verifies five package trees file by file against `RuntimeDependencyManifest.json`.
+Without them it refuses with `RUNTIME_DEPENDENCY_PACKAGE_TREE_DRIFT:ajv` before anything runs —
+confirmed by moving the directory aside and watching the entry refuse.
+
+`environment-setup.sh` recreates them. Paste it into the environment's **Setup script** field.
+`npm ci` is not an option here: `package.json` and `package-lock.json` are out of sync
+(`gcp-metadata` and `google-logging-utils` are missing from the lock) and it refuses. Installing
+`ajv@6.15.0` in an isolated directory works instead, because its dependencies are exactly the
+other four pinned packages. Verified on 2026-09-15: the five resulting trees are byte-identical
+to the originals and to what the manifest pins, and the entry passes on them.
+
+Two more things the environment needs, neither of which belongs in a setup script:
+
+* **Network access to the control store.** `db.uscrdifznmlvczcekqpw.supabase.co` must be
+  reachable. Under the "Trusted" policy every Supabase host is refused at CONNECT, so the
+  driver cannot read the observation at all.
+* **`CLUED_CONTROL_DB_PASSWORD`.** The environment-variable field warns that its contents are
+  visible to anyone using the environment, and a database password is a credential — so treat
+  this as a deliberate, time-boxed exposure and reset the password in Supabase once the round is
+  finished. Setting it to an alphanumeric-only value first also avoids `.env` parsing surprises:
+  a `#` in a value starts a comment.
+
+The pinned container image is a third prerequisite. Docker Hub's blob CDN
+(`production.cloudfront.docker.com`) is refused under "Trusted", but `mirror.gcr.io` serves the
+identical content-addressed digest and redirects blobs to itself, so
+`{"registry-mirrors":["https://mirror.gcr.io"]}` in `/etc/docker/daemon.json` plus a `SIGHUP` to
+dockerd is enough. That is left out of the setup script deliberately: it depends on dockerd
+already running, and a setup script that fails blocks the session from starting at all.
