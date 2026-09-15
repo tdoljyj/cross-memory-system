@@ -46,3 +46,17 @@ scripts/phase2-qualification/RuntimeMaterialPreparation/env-order-repair-success
 artifacts/clued-validation/structure-freeze-prep/naming/auth-config-20260907/CurrentAuthDependencyReview.json -text
 artifacts/clued-validation/structure-freeze-prep/naming/auth-config-20260907/NamingRecords.jsonl -text
 artifacts/v17-audit-inputs-20260904/Clued-Kernel-Next-V17-Local-RC-20260903.zip -text
+
+# Same reason, and these carry pinned digests. The Root9 sealed/template SQL was
+# committed with CRLF, but the *.sql text rule above made git want to normalize it
+# on every add: that would rewrite the bytes and change the sha256 recorded as
+# root9_apply_once_sealed_sha256 in stage2c/final-contract.json, apply_sha256 in
+# stage2c/RESULT.json and the single_transaction_cas digest in
+# stage2c/dependency-graph.json. The files themselves are unchanged; only the
+# normalization intent is being turned off, so the pins keep matching.
+work/recovery-root9/postbudget-cas-p3/postbudget_root9_cas.template.sql -text
+work/recovery-root9/postbudget-cas-p3/reserve_gate.seq102-inheritance.cas-wrapper.template.sql -text
+work/recovery-root9/postbudget-cas-p3/reserve_gate.seq102-inheritance.full.template.sql -text
+work/recovery-root9/stage2a/runtime-function-patch.UNSEALED.sql -text
+work/recovery-root9/stage2c/root9_apply_once.sealed.sql -text
+work/recovery-root9/stage2c/runtime-series-guard.sealed.fragment.sql -text
