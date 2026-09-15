@@ -2,20 +2,20 @@
   "schema_version": "root10-controller-source-independent-acceptance/1",
   "decision": "ROOT10_CONTROLLER_SOURCE_GO",
   "independent_reviewer": "/root/root9_recovery_review",
-  "reviewed_at": "2026-09-15T04:30:18.008Z",
+  "reviewed_at": "2026-09-15T07:49:44.840Z",
   "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
   "control_trust_root_generation": "ctrgen_48100437d24e448ba01c542ebe1290da",
-  "controller_manifest_sha256": "6b03b143d13f81c27602d44b071e70fc1f40cb9ca46e36286d499bd34341bc87",
+  "controller_manifest_sha256": "d01bd55e02614c0d2b6f51f80fe5b56816aecc2f29e753344a4bcac56aaaf559",
   "controller_manifest_bytes": 8010,
   "controller_manifest_file_count": 33,
   "controller_contract_sha256": "c2943e560b9d5f8fb097b2fa2bf09ee9873b7deb9435f5771a059587a9534595",
   "controller_contract_ready": true,
   "readiness_evidence": {
-    "path": "work/new-window/preflight/Root10PreflightReadiness.json",
-    "sha256": "756d46932e514eb755ee3bf7fbcbe4e09e1164553b2b4e8636810e8fbdf46cf9",
+    "path": "work/root10-single-window/stage1/Root10CorrectedPreflightReadiness.json",
+    "sha256": "55006862bdcffb60e01e7635146bb16520d55767335898c2ca1e9be2e9f1e417",
     "bytes": 22534,
     "state": "ROOT10_PRE_GA_READINESS_READY_NO_AUTHORITY",
-    "observed_at": "2026-09-15T04:28:52.142Z",
+    "observed_at": "2026-09-15T07:48:32.137Z",
     "linux_stdout_sha256": "8ca37654271c2a68871267d5c7554810408c1fd2799efcd18954d87ab2f00015",
     "linux_exit_code": 0,
     "formal_suite_claimed": false,
@@ -24,6 +24,27 @@
   "source_review": {
     "manifest_entries_exact_bytes_and_sha256": true,
     "manifest_entry_count": 33,
+    "predecessor_controller_manifest_sha256": "6b03b143d13f81c27602d44b071e70fc1f40cb9ca46e36286d499bd34341bc87",
+    "changed_source_count": 2,
+    "unchanged_source_count": 31,
+    "changed_sources": [
+      {
+        "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/tool-entry.functions.js",
+        "old_sha256": "c2dee3178e47de8a9e728f1a7e5589ab8787e84d9363995d768abd5298f7d11b",
+        "old_bytes": 15614,
+        "new_sha256": "b4a9a390798ae3c358112efa2b0306dec507197af7113c85e46958010d110bbc",
+        "new_bytes": 15615,
+        "change": "Transport representation correction: the generated Python source now receives a literal backslash-n rather than an embedded line feed."
+      },
+      {
+        "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/selftest-runtime-pins.mjs",
+        "old_sha256": "0ea6d4c12d2dc580d8a6ecbd02ee53912fb6c71c586b5a53f7cf389ca2f69716",
+        "old_bytes": 38334,
+        "new_sha256": "e3e344250180db7739e96b74ac4013c564ac26261a68e1ba5d4995350269225d",
+        "new_bytes": 38654,
+        "change": "The self-test evaluates the actual JavaScript template semantics and rejects any interpolation other than the single expected-digest placeholder."
+      }
+    ],
     "digest_pins_accounted": 37,
     "digest_pins_unexplained": 0,
     "runtime_pin_items_unproven": 0,
@@ -38,7 +59,21 @@
     "fixed_child_image_sha256": "285a71327884a4d50efbea30104473b0fa43ecefa499458899670ca30dae76e5",
     "fixed_toolhost_image_sha256": "c2ee561dddcb5de59ba6d0a1cd8cd0d17ce50c9f916436075771629a6e0dab71",
     "graphql_branch_field": "branchName",
-    "graphql_refName_present": false
+    "graphql_refName_present": false,
+    "generated_entry_regression": {
+      "path": "work/root10-single-window/stage1/Root10FinalGeneratedEntryRegression.json",
+      "sha256": "2652f248b3e2a491d5df5a980d27c16264cd66385c809f0c8a3fbe4863258325",
+      "bytes": 1307,
+      "state": "EXACT_GENERATED_TOOL_ENTRY_CORRECTION_REGRESSION_PASS",
+      "positive_reached_cli": true,
+      "negative_reproduced_original_syntax_error": true,
+      "formal_pqual_claimed": false,
+      "authority_effect": "NONE"
+    },
+    "root10_root_artifacts_changed": false,
+    "controller_contract_changed": false,
+    "root_signature_payload_binds_controller_digest": false,
+    "existing_root_signature_reusable_for_corrective_controller_publication": true
   },
   "accepted_boundary": {
     "baseline_execution_sequence": 112,
@@ -73,8 +108,9 @@
   },
   "limitations": [
     "The nine runtime-pin paths explicitly listed as not covered require the later real GitHub, dispatch, container, or terminal-result paths; this source review does not claim those effects occurred.",
-    "The readiness unit checks are structural and negative admission checks only; they are not formal PQUAL outcomes.",
-    "This acceptance does not publish or activate the controller, sign any object, issue a GA, write PostgreSQL, or authorize a successor attempt."
+    "The corrected Linux readiness, unit checks and generated-entry regression are structural and negative admission evidence only; none is a formal PQUAL outcome.",
+    "This corrective acceptance applies to the new controller source revision and does not alter the already signed Root10 root payload, which contains no controller-manifest digest.",
+    "This acceptance does not publish or activate the corrected controller, sign any object, issue a GA, write PostgreSQL, or authorize a successor attempt. A new Owner source publication, rebuilt controller qualification/runtime metadata and exact activation binding remain required."
   ],
   "blocking_findings": []
 }
