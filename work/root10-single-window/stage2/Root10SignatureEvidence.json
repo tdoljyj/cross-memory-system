@@ -1,0 +1,42 @@
+{
+  "kind": "ROOT_SIGNING_PAYLOAD_SIGNATURE_BINDING",
+  "status": "VERIFIED",
+  "observed_at": "2026-09-15T06:08:02.093Z",
+  "repository": {
+    "full_name": "tdoljyj/cross-memory-system",
+    "private": true
+  },
+  "pr": {
+    "number": 190,
+    "url": "https://github.com/tdoljyj/cross-memory-system/pull/190",
+    "state": "MERGED",
+    "merged_by": "tdoljyj",
+    "merge_commit_sha": "1443bbe0164cd756136705897ec0cccb56cfc102"
+  },
+  "merge": {
+    "sha": "1443bbe0164cd756136705897ec0cccb56cfc102",
+    "tree": "7d44d28bdd9216889ec2f01f64b39c827815e130",
+    "parents": [
+      "3694ae41d6e80602ac73da9c6f73667277881d61",
+      "b15b8560d9bb20bf2641b533f7a59dd3606d3cf4"
+    ],
+    "committer_login": "web-flow",
+    "verification": {
+      "verified": true,
+      "reason": "valid"
+    }
+  },
+  "payload": {
+    "artifact_path": "work/root10-single-window/stage1/root/Root10SigningPayload.json",
+    "blob_sha": "db77e086449497cf5eb362bc84422408537fe1c0",
+    "file_sha256": "c5848b390ed054184a0ed3755d737a0b0922b58a26ecf3f367348b7d200b86e4",
+    "payload_sha256": "7bba3cb0e486015c90b94ab1ed9fa69a042be3100d75b9f2bcc16e68af852ba6",
+    "review_subject_sha256": "91f94d05a22f5da7945be0f9f6d03359ba9268e6850f3a9c981e7b33a072fab6"
+  },
+  "acceptance": {
+    "artifact_path": "work/root10-single-window/stage1/root/Root10IndependentAcceptance.json",
+    "sha256": "b057eb56b92b94109f9aec965a22c08433691e4f3e6d99ba1def4f4011abc966"
+  },
+  "authority_effect": "NONE",
+  "current_registration_claimed": false
+}

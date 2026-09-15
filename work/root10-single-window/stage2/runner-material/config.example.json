@@ -1,0 +1,23 @@
+{
+  "gh_path": "gh",
+  "original_source": {
+    "pr_number": 0,
+    "merge_commit": "ACTUAL_40_HEX_ORIGINAL_GATE_PROFILE_PREREQUISITE_OWNER_MERGE"
+  },
+  "p1": {
+    "pr_number": 0,
+    "merge_commit": "ACTUAL_40_HEX_P1_MERGE"
+  },
+  "p2": {
+    "pr_number": 0,
+    "merge_commit": "ACTUAL_40_HEX_P2_MERGE"
+  },
+  "paths": {
+    "runtime_acceptance_local": "ACTUAL_LOCAL_RuntimeAcceptance.root10.json",
+    "runtime_acceptance_repo": "ACTUAL_P2_REPO_PATH_RuntimeAcceptance.root10.json",
+    "controller_qualification_local": "ACTUAL_LOCAL_ControllerQualification.root10.json",
+    "controller_qualification_repo": "ACTUAL_P2_REPO_PATH_ControllerQualification.root10.json",
+    "status29_signing_payload_local": "ACTUAL_LOCAL_Status29SigningPayload.json",
+    "status29_signing_payload_repo": "ACTUAL_P2_REPO_PATH_Status29SigningPayload.json"
+  }
+}
