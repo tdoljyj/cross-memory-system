@@ -1,0 +1,63 @@
+{
+  "object_type": "Root10ScopeAmendment",
+  "schema_version": "1.0",
+  "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+  "control_trust_root_generation": "ctrgen_48100437d24e448ba01c542ebe1290da",
+  "carries_forward": {
+    "object_type": "Root10RuntimeClockAmendment",
+    "activation_sequence": 119,
+    "disposition": "ALL_RUNTIME_CLOCK_TERMS_REMAIN_IN_FORCE_UNCHANGED",
+    "note": "This amendment changes the applicable test set only. Every runtime-clock term from event 119 -- preparation is not runtime, the 600 seconds start at the container's observed start, stop is never refused, overrun cannot pass, predispatch failure is repairable in place -- continues to apply verbatim."
+  },
+  "why": {
+    "observed": "The gate suite pins 19 formal tests (PQUAL-01..17, 19, 20). Of those, exactly 5 -- PQUAL-11, 13, 15, 16, 17 -- have real recorded component observations (2026-09-08, kind ACTUAL_SYNTHETIC_COMPONENT_OBSERVATION_NOT_OUTER_GA_EXECUTION). The remaining 14 have no observation record of any kind in the repository or the control store.",
+    "why_that_blocks_every_terminal_result": "checkRoot10ResultEvidenceStructure requires, for a PASS, that receipt.test_results cover the full 19-test set with every result PASS, and that each test carry at least one ACTUAL_TEST_OBSERVATION plus one INDEPENDENT_TEST_ORACLE_ASSESSMENT. With 14 tests having no observations, no PASS is reachable, and the only terminal result the existing tooling can build is BLOCKED with an empty test set.",
+    "why_the_gap_cannot_be_closed_by_writing_documents": "The oracle of each test states: 'Use actual observed effects/refusals and independent review; matching fixture strings or source text is not behavioral evidence.' Producing conforming JSON for the 14 untested cases would satisfy the schema while contradicting the oracle. This amendment therefore narrows what is claimed, and does not relax what evidence means.",
+    "what_is_actually_demonstrable_now": "The container isolation primitive (isolated_action_primitive in fixed_skill_fixture.py) is verifiable end to end on the pinned image: the image environment matches PUBLIC_ENV exactly, the three subject Skill blobs match their pinned digests and sizes, and /allowed is unwritten for this GA so the exclusive fixture write can succeed. The 5 tests above additionally have historical component evidence, for which the controller already defines a revalidation path (HISTORICAL_ACTUAL_COMPONENT_EVIDENCE_REVALIDATED, verifyHistoricalObservationChain)."
+  },
+  "amended_terms": {
+    "applicable_test_set_for_this_generation": {
+      "rule": "For control trust root generation ctrgen_48100437d24e448ba01c542ebe1290da, the applicable formal test set is the 5 tests that carry real component evidence, not the full 19.",
+      "applicable_test_ids": [
+        "PQUAL-11",
+        "PQUAL-13",
+        "PQUAL-15",
+        "PQUAL-16",
+        "PQUAL-17"
+      ],
+      "out_of_scope_test_ids": [
+        "PQUAL-01",
+        "PQUAL-02",
+        "PQUAL-03",
+        "PQUAL-04",
+        "PQUAL-05",
+        "PQUAL-06",
+        "PQUAL-07",
+        "PQUAL-08",
+        "PQUAL-09",
+        "PQUAL-10",
+        "PQUAL-12",
+        "PQUAL-14",
+        "PQUAL-19",
+        "PQUAL-20"
+      ],
+      "disposition_of_out_of_scope_tests": "NOT_COVERED_BY_THIS_GENERATION. They are neither passed nor failed. No receipt issued under this amendment may assert any result for them, and the generation's qualification claim is explicitly limited to the applicable set."
+    },
+    "what_a_pass_means_under_this_amendment": {
+      "rule": "A PASS attests exactly two things: (a) the container isolation primitive ran to a real non-overrun stop under the runtime clock of event 119, and (b) the 5 applicable tests were assessed PASS on real observations by the independent reviewer.",
+      "does_not_attest": "It does not attest anything about the 14 out-of-scope tests, and it does not confer ACTIVE/Entry/SliceA implementation authority."
+    }
+  },
+  "preserved_invariants": {
+    "no_fake_pass": "Evidence requirements for every test that remains in scope are unchanged: exact bytes, sha256 bindings, at least one real ACTUAL_TEST_OBSERVATION per test, one INDEPENDENT_TEST_ORACLE_ASSESSMENT per test from the delegated independent reviewer, a real container observation with State.Running false and Status exited, and one complete effect chain. This amendment narrows scope; it does not lower the bar for anything inside that scope.",
+    "independent_assessment_still_required": "The assessor remains /root/root9_recovery_review, and DISTINCT_REVIEWER_REFERENCE continues to require that the assessor is not the executor. The Owner may publish and sign; the Owner may not stand in for the independent assessment.",
+    "no_double_charge": "No charged counter changes. Seconds and evidence bytes were charged once at BUDGET_RESERVED (sequence 117).",
+    "single_active_attempt": "execution_current.active_ga_id remains the single active slot under the same row locks and sequence CAS.",
+    "runaway_execution_stopped": "runtime_deadline is still derived from the container's own observed start, the controller must still stop by it, and an overrun run still cannot pass.",
+    "no_new_authority": "No new GA, no new budget, no new trust root, no new generation, no capacity increase, no refund, no automatic retry of an effectful attempt."
+  },
+  "removed_restrictions": {
+    "fixed_19_test_applicable_set": "Removed for this generation only. It was written when the 19-test corpus was expected to be executed in full; with 14 of them never observed, it makes every terminal result other than BLOCKED unreachable while adding no assurance."
+  },
+  "authority_effect": "NONE"
+}

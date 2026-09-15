@@ -1,0 +1,141 @@
+{
+  "schema_version": "root10-single-window-controller-contract/1",
+  "ready": true,
+  "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+  "predecessor_generation": "ctrgen_308a1dfc185cff633892638581e0a34c",
+  "generation_id": "ctrgen_48100437d24e448ba01c542ebe1290da",
+  "generation_ordinal": 10,
+  "window": {
+    "not_before": "2026-09-15T03:00:00Z",
+    "expires_at": "2026-09-16T03:00:00Z"
+  },
+  "baseline": {
+    "root_sequence": 9,
+    "root_events_sha256": "cc08775938519ad1ecbc1e956c7314cd9c07b7230dd9392309c27c6d05d830e8",
+    "execution_sequence": 112,
+    "historical_preimage110": {
+      "execution_events_sha256": "715256b00b82b60de7014133d0cc8f83e262910bc1004db0fb03a7f2fef2ab05",
+      "other_attempts_sha256": "9d7fff4c8b5d898aa4c6826f5c1328694363bcd98168d3bd029efbb6bc483e41",
+      "attempt_ids": [
+        "ga_04377008dc04437d9ee9d28a3c79ff3a",
+        "ga_165dc2e72b62414a8023e726d8114f28",
+        "ga_18ce0e28e92f448c967fae1c92de7100",
+        "ga_1d52f4778d494399b12aea54fe4a189e",
+        "ga_41643fece183424daf7f05b8b2868f8e",
+        "ga_4a88b0436cf80beeb5e194c98bb0297e",
+        "ga_4e7ce4ad385e4f5aa633bcea2ddb71ce",
+        "ga_6abb193a56304029a788f7cb624a0d35",
+        "ga_6addc4f9764b69ba8c10d258135ae0d4",
+        "ga_6de636122e9c4fb782c0dc12fd223a9b",
+        "ga_71a1d946fca34c1e9e700c80a546b3ad",
+        "ga_87882f42d0b4460f8430d73239386c35",
+        "ga_8eb410609e294d899806a319e6615f2b",
+        "ga_a7a420f7de4a4037b9dcb5cd7dae796e",
+        "ga_c5041817c641487f827cc4ed5e0fc9ad",
+        "ga_dd2dc30bfc6b93ac2f30b7292dc347cc",
+        "ga_e56ca0eb07304f2fbcf60eb8f29f3889"
+      ]
+    },
+    "closure": {
+      "ga_id": "ga_6addc4f9764b69ba8c10d258135ae0d4",
+      "ga_sha256": "327bb92ca8a27f8e67eac06daaa27afa5df99814823fe0a2eb69b7c41747641a",
+      "budget_sequence": 102,
+      "decision_sequence": 111,
+      "decision_idempotency_key": "root9_ga6_single_window_close_decision_111",
+      "signing_sequence": 112,
+      "signing_idempotency_key": "root9_ga6_single_window_close_signing_112",
+      "termination_mode": "EXPIRED_PREDISPATCH_NOT_STARTED_BLOCKED_ROOT9_SUCCESSOR_GA6",
+      "decision_sha256": "be4951c1c8177efd8fd9371669ba7988610cc84080c01500d33349f89214f0e4",
+      "evidence_index_sha256": "6f935fa4e5d9c2ca8544653fe01a74f703f36452daa46460b8409373b40c764c",
+      "observation_sha256": "1556f55026e8861a059fada73c8d91127a885232856023aea0203aae03337dc6",
+      "receipt_id": "grr_root9_exact_pair_ga6_blocked_20260915",
+      "receipt_sha256": "3d6fc55e6d2065fb40974161f3c0abb556817989c560e3072a080bea033ccfdd"
+    },
+    "charged_seconds": 11106,
+    "charged_evidence_bytes": 2470030259,
+    "series_start_sequence": 44,
+    "allocation_count": 10,
+    "historical_budget_count": 16,
+    "series_forward_count": 17,
+    "active_ga_id": null,
+    "pending_budget_sequence": null
+  },
+  "postbaseline": {
+    "budget_sequence": 117,
+    "budget_idempotency_key": "root10_single_window_budget_20260915",
+    "seconds": 600,
+    "evidence_bytes": 134217728,
+    "max_budgets": 1,
+    "max_ga": 1
+  },
+  "caps": {
+    "allocations": 11,
+    "seconds": 11706,
+    "evidence_bytes": 2604247987,
+    "forwards": 19,
+    "original_input_bytes": 4000000,
+    "publication_bytes": 8388608
+  },
+  "fixed_digests": {
+    "gate_sha256": "3487d9fc6ccee5478569021961eac93bf5ef6bd4bc2428559b20a44abb9c155a",
+    "profile_sha256": "d1c060b85f0b842a397a478105ea57a208e62eb0a5a2d4c2cd8f93f63eae88f5",
+    "scope_sha256": "115408c69dcb2fa606fb0de34ec86c5239487d0cfa9a73abb267664a2482abe5"
+  },
+  "accepted_suite": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/5a8ea176137f0f601488a0cbfa5ab69430a57744",
+    "sha256": "118cde8774c91adbdff439a8d6b6216d2a353ec983b24c49d3ce16d6c487433a",
+    "original_executor_sha256": "27ede0fc0ff6afc4d5abf2f5c9f256fe22776165746dddc19aa2693c47bbc97c",
+    "formal_test_ids": [
+      "PQUAL-11",
+      "PQUAL-13",
+      "PQUAL-15",
+      "PQUAL-16",
+      "PQUAL-17"
+    ],
+    "pqual18_disposition": "NEGATIVE_ADMISSION_CHECK_NOT_FORMAL_RESULT"
+  },
+  "issuer_qualification_refs": {
+    "STATUS": {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/0affcf8b323f0f225f0b914eb3acb9e26b6486af",
+      "sha256": "a8b9c147a414fca4947fea33c4a70b929f8b170f8619b01fe733816cf887e799"
+    },
+    "GATE_AUTHORIZATION": {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/8dc23635950b51b071a8d73c67cc61cc2abcba98",
+      "sha256": "e3b225d3b4cd6c904aa433c43e79bba8571b69dc308c0fd0cefe7da35fb105e6"
+    },
+    "GATE_RESULT": {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/1bebfe9bd4f7bb997a6e70c521f94a9e3497842e",
+      "sha256": "8c8ed69191218b8aa96fb1e3ef53fbef01425a08a8a2b6e9988eef6086ebbca8"
+    }
+  },
+  "reviewer_delegation": {
+    "ref": {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/eafdbc2728dd1fecd987f9c32169a4df7a89ff68",
+      "sha256": "5baeb567ce212462e1605bc52eb119916563b90fbaf656d4007f831086e63b1e"
+    },
+    "independent_reviewer": "/root/root9_recovery_review"
+  },
+  "source_closure": [
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/install.candidate.sql",
+      "sha256": "3cbbed94e1c9ef5fec4db281526ca69b9b30a24d2812b5a8bb5eb6bc728146fb"
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/budget-reservation-successor/install.candidate.sql",
+      "sha256": "8f732dd4013a18adde33a254631cdd5a04022f300d4c0a13d05dffbf36f97285"
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/runtime600-successor/alter.candidate.sql",
+      "sha256": "0ab15bbbc2f80421cb619b50de8816095359d9ffab1e96e372960c063bc80c9b"
+    }
+  ],
+  "invariants": {
+    "automatic_retry": false,
+    "successor_ga": false,
+    "repair_refs": 0,
+    "refund": false,
+    "reset_counters": false,
+    "budget_reassignment": false,
+    "root9_seq102_historical_only": true
+  }
+}
