@@ -282,9 +282,14 @@ const entryTemplate = (() => {
   const open = 'const linuxCmd=`';
   const a = src.indexOf(open), z = src.indexOf('cli.mjs`', a);
   if (a < 0 || z < 0) throw new Error('ENTRY_COMMAND_TEMPLATE_NOT_FOUND in tool-entry.functions.js');
-  // The file stores the command inside a JS template literal, so \$ and \" are escapes of the
-  // literal, not of the shell. Undo exactly those two and nothing else.
-  return src.slice(a + open.length, z + 'cli.mjs'.length).split('\\$').join('$').split('\\"').join('"');
+  // Evaluate the actual JavaScript template, including newline/backslash escapes.
+  // Partial unescaping masked a syntax error in the production Python command.
+  // Preserve only the expected-digest placeholder for the sandbox binding below.
+  const template = src.slice(a + open.length, z + 'cli.mjs'.length);
+  const interpolations = template.match(/\$\{[^}]*\}/g) ?? [];
+  if (interpolations.length !== 1 || interpolations[0] !== '${expected}')
+    throw new Error('ENTRY_EXPECTED_ONLY_INTERPOLATION_REQUIRED');
+  return Function('expected', 'return `' + template + '`')('${expected}');
 })();
 // The sandbox manifest is re-measured against every source-only entry before
 // anything runs. Without that, this item would be a staleness test for the committed manifest --

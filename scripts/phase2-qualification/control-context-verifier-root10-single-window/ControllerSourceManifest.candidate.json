@@ -132,8 +132,8 @@
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/selftest-runtime-pins.mjs",
-      "sha256": "0ea6d4c12d2dc580d8a6ecbd02ee53912fb6c71c586b5a53f7cf389ca2f69716",
-      "bytes": 38334
+      "sha256": "e3e344250180db7739e96b74ac4013c564ac26261a68e1ba5d4995350269225d",
+      "bytes": 38654
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/source-publication.mjs",
@@ -147,8 +147,8 @@
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/tool-entry.functions.js",
-      "sha256": "c2dee3178e47de8a9e728f1a7e5589ab8787e84d9363995d768abd5298f7d11b",
-      "bytes": 15614
+      "sha256": "b4a9a390798ae3c358112efa2b0306dec507197af7113c85e46958010d110bbc",
+      "bytes": 15615
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/trusted-github.mjs",

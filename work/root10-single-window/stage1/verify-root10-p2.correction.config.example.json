@@ -1,0 +1,7 @@
+{
+  "p2_pr_number": 0,
+  "p2_head_branch": "codex/REQUIRED_ACTUAL_CORRECTIVE_P2_BRANCH",
+  "stage2_directory": "REQUIRED_ACTUAL_CORRECTIVE_STAGE2_DIRECTORY",
+  "original_root_publication_path": "REQUIRED_ACTUAL_PR190_ROOT_PUBLICATION_PATH",
+  "corrective_source_publication_path": "REQUIRED_ACTUAL_CORRECTIVE_SOURCE_PUBLICATION_PATH"
+}

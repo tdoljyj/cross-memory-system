@@ -104,7 +104,7 @@ for x in r["packages"]:
             q=os.path.join(here,name); b=open(q,"rb").read(); rel=os.path.relpath(q,root).replace(os.sep,"/")
             entries.append({"path":rel,"bytes":len(b),"sha256":hashlib.sha256(b).hexdigest()})
     entries.sort(key=lambda e:e["path"])
-    encoded=(json.dumps(entries,separators=(",",":"))+"\n").encode()
+    encoded=(json.dumps(entries,separators=(",",":"))+"\\n").encode()
     if len(entries)!=x["files"] or sum(e["bytes"] for e in entries)!=x["bytes"] or hashlib.sha256(encoded).hexdigest()!=x["tree_sha256"]: sys.exit("RUNTIME_DEPENDENCY_PACKAGE_TREE_DRIFT:"+x["request"])
 ' "\$MAN" "\$REPO"
 test "\$(/usr/bin/sha256sum /opt/node22/bin/node | /usr/bin/cut -d\" \" -f1)" = "81925c0995b5c1427b5d538e6a90ca2fdc4daffb786b09af749beaf7369d4e90" || { echo FIXED_NODE_BYTES_DRIFT >&2; exit 1; }

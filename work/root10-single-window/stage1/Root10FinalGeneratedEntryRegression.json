@@ -1,0 +1,31 @@
+{
+  "state": "EXACT_GENERATED_TOOL_ENTRY_CORRECTION_REGRESSION_PASS",
+  "observed_at": "2026-09-15T07:48:39.443Z",
+  "controller_sha256": "d01bd55e02614c0d2b6f51f80fe5b56816aecc2f29e753344a4bcac56aaaf559",
+  "source_sha256": "b4a9a390798ae3c358112efa2b0306dec507197af7113c85e46958010d110bbc",
+  "source_bytes": 15615,
+  "manifest_file_count": 33,
+  "positive": {
+    "status": 1,
+    "stdout": "{\"state\":\"BLOCKED\",\"reason\":\"BOUNDED_STDIN_INPUT_REQUIRED\",\"capacity_released\":false,\"automatic_retry\":false,\"qualified\":false}\n",
+    "stderr": "",
+    "command_sha256": "c7bb2a971fae9a69d45e36549b78343765d72f932a2813c2aadc46136efe90b7"
+  },
+  "negative": {
+    "status": 1,
+    "stdout": "",
+    "stderr": "  File \"<string>\", line 37\n    encoded=(json.dumps(entries,separators=(\",\",\":\"))+\"\n                                                      ^\nSyntaxError: unterminated string literal (detected at line 37)\n",
+    "command_sha256": "473a47eeb6ebc4aa328e700b36d5d6f02ae6554775fbdfa159b0ef185fb71d96"
+  },
+  "isolation": {
+    "network": "none",
+    "read_only_root": true,
+    "read_only_repository": true,
+    "docker_socket_mounted": false,
+    "stdin": "absent"
+  },
+  "ga_issued": false,
+  "database_write": false,
+  "formal_pqual_claimed": false,
+  "authority_effect": "NONE"
+}

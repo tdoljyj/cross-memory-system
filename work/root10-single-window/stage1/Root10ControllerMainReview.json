@@ -2,36 +2,49 @@
   "schema_version": 1,
   "decision": "ROOT10_CONTROLLER_RUNTIME_GO",
   "independent_reviewer": "/root",
-  "implementation_author": "/root/controller_evidence_cap",
-  "reviewed_at": "2026-09-15T04:28:52.142Z",
-  "controller_manifest_sha256": "6b03b143d13f81c27602d44b071e70fc1f40cb9ca46e36286d499bd34341bc87",
+  "implementation_author": "/root (bounded corrective patch); original controller /root/controller_evidence_cap",
+  "reviewed_at": "2026-09-15T07:49:00Z",
+  "controller_manifest_sha256": "d01bd55e02614c0d2b6f51f80fe5b56816aecc2f29e753344a4bcac56aaaf559",
   "contract_sha256": "c2943e560b9d5f8fb097b2fa2bf09ee9873b7deb9435f5771a059587a9534595",
   "source_file_count": 33,
-  "readiness_record": "work/root10-single-window/stage1/Root10PreflightReadiness.json",
+  "readiness_record": "work/root10-single-window/stage1/Root10CorrectedPreflightReadiness.json",
   "actual_linux_stdout_sha256": "8ca37654271c2a68871267d5c7554810408c1fd2799efcd18954d87ab2f00015",
   "checks": [
-    "Actual fixed Linux image and exact candidate repository, without network or Docker socket, passed digest-pins and source runtime tests",
-    "Pristine source reached the real CLI before refusing absent input; wrong-source controls remained tested",
-    "All 33 declared source files match the frozen manifest",
-    "Entire Ajv runtime dependency closure verified before imports: 5 packages, 176 files",
-    "20 of 20 single-window unit checks passed; no unit result is classified as formal PQUAL",
-    "Context/schema imports and Python source compilation passed",
-    "Fixed Windows-to-Linux relay used one actual TTY process for two frames, including 3300049-byte JSON; Docker container and image are fixed",
-    "Direct GraphQL signer uses actual CommittableBranch branchName mapping",
-    "Root10 preserves all historical charges and closed seq102; permits one new 600-second/134217728-byte budget and one GA only",
-    "Cumulative ceilings are 11706 seconds, 2604247987 bytes and 11 series allocations; no reset, refund, reassignment, retry, repair or successor",
-    "Gate/Profile/Scope and runner/credential/session generations remain unchanged",
-    "Result handling requires actual evidence and independently authored assessments; PQUAL-18 stays outside formal positive scope"
+    "Actual evaluated frozen Linux entry, in the fixed read-only networkless image without Docker socket or GA input, reaches the real CLI and rejects absent input",
+    "Reverting only the entry escape reproduces the original SyntaxError before reaching CLI; exact final result is Root10FinalGeneratedEntryRegression.json",
+    "Runtime-pin regression now evaluates the actual JavaScript template and only permits the expected digest interpolation; the prior partial-unescape false-positive path is removed",
+    "All 33 final source files match the rebuilt manifest; only the entry and its test differ from the previous 33-file controller",
+    "Actual final Linux readiness passed the 20 of 20 single-window unit checks and all runtime-pin positive/negative checks; formal PQUAL is not claimed",
+    "Entire unchanged Ajv dependency closure verified: five packages and 176 files; schema/context imports and Python sources compile",
+    "Root10 signed payload, original PR190 signature, issuer bindings, generation and window are unchanged and reused rather than re-signed",
+    "Gate/Profile/Scope, runner/credential/session generations, original oracle bytes and fixture refs are unchanged",
+    "One new 600-second/134217728-byte budget and one formal GA remain the sole allowed execution; original counters, no refund/reset/reassignment/automatic retry/successor constraints remain",
+    "This is the main integration review of a patch authored by /root; the separate independent source review is supplied by /root/root9_recovery_review"
   ],
   "limits": [
-    "The Windows coordinator and Docker daemon remain the explicitly declared host-side trust boundary",
-    "Runtime self-test names 9 checks not covered there; actual signed metadata, live state, effect dispatch and GRR still require their formal guards",
-    "Pre-GA readiness does not prove formal PQUAL behavior or guarantee GRR PASS"
+    "The corrected source still requires Owner source publication and corresponding exact P2 metadata publication/activation",
+    "The host relay and Docker daemon remain the declared trust boundary",
+    "Nine runtime checks not covered by the no-authority pin self-test still require actual signed/live execution evidence",
+    "Signing coordinator and result transport need their independent exact-input review before the single formal GA is issued",
+    "No readiness, syntax regression, unit check or publication constitutes formal PQUAL or GRR PASS"
   ],
   "formal_pqual_claimed": false,
   "formal_ga_issued": false,
   "budget_allocated": false,
   "database_write": false,
   "qualification_issued": false,
-  "authority_effect": "NONE_UNTIL_OWNER_PUBLICATION_AND_EXACT_CAS"
+  "authority_effect": "NONE_UNTIL_OWNER_PUBLICATION_AND_EXACT_CAS",
+  "corrective_scope": {
+    "baseline_owner_merge": "0225aba1abb4f12bb4ef01ad39fafa8ad01a4bf4",
+    "old_controller_sha256": "6b03b143d13f81c27602d44b071e70fc1f40cb9ca46e36286d499bd34341bc87",
+    "changed_source_files": [
+      "tool-entry.functions.js",
+      "selftest-runtime-pins.mjs"
+    ],
+    "unchanged_source_files": 31,
+    "original_root_owner_merge_reused": "1443bbe0164cd756136705897ec0cccb56cfc102",
+    "root_generation_or_window_changed": false,
+    "gate_profile_scope_changed": false,
+    "budget_or_ga_issued": false
+  }
 }

@@ -1,54 +1,97 @@
 {
   "schema_version": "root10-stage2-metadata-builder-independent-review/1",
   "decision": "ROOT10_STAGE2_METADATA_BUILDER_SOURCE_GO",
+  "review_scope": "CORRECTIVE_CONTROLLER_DUAL_PUBLICATION",
   "independent_reviewer": "/root/root9_recovery_review",
-  "reviewed_at": "2026-09-15T04:30:18.008Z",
+  "reviewed_at": "2026-09-15T07:49:44.840Z",
+  "prior_review": {
+    "sha256": "d2f1a15418a3af51f95d9d2dd29b882c0ba595815caff7c27ab13a89e956b440",
+    "scope": "ORIGINAL_SINGLE_P1_STAGE2_BUILDER_REVIEW",
+    "superseded_only_for_publication_routing": true
+  },
+  "review_subject": {
+    "path": "work/root10-single-window/stage1/Root10CorrectiveMetadataBuilderReviewSubject.json",
+    "sha256": "f992f00ebca4c37061007fae66502dad7461e2b30b36aac8c27d46697b8ead6e",
+    "bytes": 1631,
+    "state": "PENDING_INDEPENDENT_REVIEW_NO_AUTHORITY"
+  },
   "subject": {
-    "path": "work/new-window/build-root10-stage2-metadata.mjs",
-    "sha256": "f9c6d252c0cdcd999f0bcd525f4e020f691aa95b7c367e419d84b2ab4fa5370f",
-    "bytes": 14953,
-    "node_syntax_check": "PASS"
+    "path": "work/root10-single-window/stage1/build-root10-stage2-metadata.mjs",
+    "sha256": "006c8fa5bdc5852f54e682948916cadc43bd7bc547c9957a0a75e11cec1ebf29",
+    "bytes": 16060,
+    "node_syntax_check": "PASS",
+    "selftest": {
+      "path": "work/root10-single-window/stage1/selftest-dual-publication-metadata.mjs",
+      "sha256": "1cd8a51ec18d7b6fc8a2ed4c32b6b2cea1be585ff9f46eaf6a8b9d923ed12cd5",
+      "bytes": 1712,
+      "state": "DUAL_PUBLICATION_METADATA_BUILDER_LOCAL_PASS"
+    }
+  },
+  "p2_observation_assembler": {
+    "path": "work/root10-single-window/stage1/verify-root10-p2-and-assemble.mjs",
+    "sha256": "d44aaa2a5259a41cd2df5da7555f700320ccdd46f04fa00775b09ec21fd5365d",
+    "bytes": 11694,
+    "node_syntax_check": "PASS",
+    "selftest": {
+      "path": "work/root10-single-window/stage1/selftest-dual-publication-p2-verifier.mjs",
+      "sha256": "2a1cde4ca8f4b906a3ebd7474a3b5f1db7737715eaae3e011aa903621033c7f8",
+      "bytes": 1629,
+      "state": "DUAL_PUBLICATION_P2_VERIFIER_LOCAL_PASS"
+    }
   },
   "closed_prior_blockers": [
     {
-      "finding": "Controller review references could previously be assembled from unpublished local bytes.",
-      "closure": "Both main and independent controller reviews now require stage1 repository paths and exact Git blob identity at the fixed P1 merge commit."
+      "finding": "A single publication selector could not distinguish the immutable PR190 Root signature from the corrected controller source revision.",
+      "closure": "The builder now requires distinct original_root_publication and corrective_source_publication records and binds the signed Root only to PR190 while binding the manifest, all 33 source blobs, controller reviews and executor applicability only to the corrective source merge and tree."
     },
     {
-      "finding": "The signed Root10 object previously had only generation and merge-commit spot checks before its authority and issuer fields were consumed.",
-      "closure": "The complete unsigned Root10 is now canonically equal to the independently reviewed, fixed-hash P1 payload; root scope, audience, window, signature binding, three exact issuer purposes, signature evidence, payload blob/hash, and Owner-published independent acceptance are additionally checked."
+      "finding": "The final P2 observer needed to authenticate both lineages without inventing a second Root signature.",
+      "closure": "The read-only verifier authenticates both Owner web-flow merges, proves PR190 is an ancestor of the corrective source merge and that the corrective source merge is an ancestor of P2, then checks the exact eight P2 artifacts and their remote Git blobs."
     }
   ],
   "checks": {
-    "p1_manifest_and_every_source_blob_exact": true,
-    "p1_controller_reviews_exact": true,
-    "complete_root10_unsigned_payload_exact": true,
-    "root10_signature_evidence_exact": true,
-    "root10_issuer_set_exact": true,
-    "executor_applicability_p1_blob_exact": true,
-    "reviewer_delegation_p1_blob_exact": true,
-    "predecessor_runtime_template_sha256_pinned": true,
-    "generation_replacement_occurrences_in_template": 1,
-    "old_controller_artifact_ref_occurrences_in_template": 1,
-    "graphql_or_remote_mutation": false,
-    "signature_created": false,
+    "original_root_publication_fixed_to_pr190": true,
+    "complete_pr190_unsigned_root_payload_sha256": "7bba3cb0e486015c90b94ab1ed9fa69a042be3100d75b9f2bcc16e68af852ba6",
+    "root_signature_binding_remains_original_pr190": true,
+    "root_signature_evidence_and_owner_publication_checked": true,
+    "corrective_manifest_and_every_source_blob_exact": true,
+    "corrective_controller_reviews_exact": true,
+    "corrective_executor_applicability_exact": true,
+    "reviewer_delegation_remains_original_pr190": true,
+    "controller_qualification_source_publication_is_corrective_merge": true,
+    "expected_ga_source_ref_is_corrective_merge": true,
+    "status29_remains_unsigned_until_actual_p2_owner_merge": true,
+    "p2_status_signature_uses_actual_owner_web_flow_merge": true,
+    "p2_requires_corrective_source_ancestor": true,
+    "p2_remote_tree_complete_and_exact_blobs_required": true,
+    "root_generation_window_gate_profile_scope_unchanged": true,
+    "budget_caps_repair_and_ga_count_unchanged": true,
+    "graphql_or_remote_mutation_in_builder": false,
     "database_write": false,
+    "signature_created": false,
     "gate_authorization_issued": false,
+    "formal_pqual_claimed": false,
     "automatic_retry": false,
     "successor_ga": false
   },
   "hash_and_binding_cycle_review": {
-    "controller_manifest_is_already_p1_published": true,
+    "root_signature_precedes_and_does_not_bind_controller_manifest": true,
+    "corrective_source_publication_binds_manifest_and_reviews": true,
     "controller_qualification_ref_is_derived_before_expected_ga": true,
     "status_payload_digest_is_late_bound_into_runtime_subject": true,
     "runtime_acceptance_does_not_self_reference": true,
-    "root_authority_ref_uses_the_complete_signed_root": true,
+    "status_signature_is_derived_only_after_owner_p2_merge": true,
     "result": "ACYCLIC"
   },
   "preconditions": [
-    "Run only after an independently verified Owner P1 merge record and exact signed Root10/signature-evidence inputs exist.",
-    "The two controller reviews, executor applicability, reviewer delegation, controller manifest, and all manifest source bytes must be present at the exact P1 paths checked by the builder.",
-    "This review approves the deterministic source only; the generated stage2 bytes still require exact output validation and Owner P2 publication before activation/CAS."
+    "Run the metadata builder only after the immutable PR190 Root publication and a distinct verified Owner corrective-source publication exist locally as exact evidence records.",
+    "The corrective publication must contain the exact d01bd55e02614c0d2b6f51f80fe5b56816aecc2f29e753344a4bcac56aaaf559 controller manifest, all 33 declared sources, both controller reviews and the corrected executor-applicability artifact.",
+    "The original PR190 publication must contain the exact Root10 signing payload, independent Root acceptance and reviewer delegation used by the builder.",
+    "Generated stage2 bytes require a fresh independent exact-byte review before Owner P2 publication. The P2 observer may run only after the actual Owner merge and grants no activation or GA authority by itself."
+  ],
+  "limitations": [
+    "The local self-tests are structural and do not substitute for actual GitHub Owner-merge verification performed by the P2 observer.",
+    "This review does not publish either revision, sign Status29, activate the controller, allocate budget, issue a GA, write PostgreSQL or claim formal PQUAL results."
   ],
   "blocking_findings": []
 }

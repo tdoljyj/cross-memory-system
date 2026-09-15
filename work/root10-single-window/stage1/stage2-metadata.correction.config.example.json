@@ -1,0 +1,18 @@
+{
+  "repo": "C:/Users/17531/AppData/Local/Temp/clued-root10-entry-correction-20260915",
+  "intent_path": "REQUIRED_ACTUAL_ROOT10_INTENT_PATH",
+  "live_preimage_path": "REQUIRED_ACTUAL_SEQ110_PREIMAGE_PATH",
+  "original_root_publication_path": "REQUIRED_ACTUAL_PR190_ROOT_PUBLICATION_PATH",
+  "corrective_source_publication_path": "REQUIRED_ACTUAL_CORRECTIVE_SOURCE_PUBLICATION_PATH",
+  "controller_main_review_path": "REQUIRED_CORRECTIVE_CONTROLLER_MAIN_REVIEW_PATH",
+  "controller_main_review_repo_path": "work/root10-single-window/stage1/Root10ControllerMainReview.json",
+  "controller_independent_review_path": "REQUIRED_CORRECTIVE_CONTROLLER_INDEPENDENT_REVIEW_PATH",
+  "controller_independent_review_repo_path": "work/root10-single-window/stage1/Root10ControllerSourceIndependentAcceptance.json",
+  "root10_signed_path": "REQUIRED_UNCHANGED_PR190_ROOT10_GENERATION_PATH",
+  "root10_signature_evidence_path": "REQUIRED_UNCHANGED_PR190_ROOT_SIGNATURE_EVIDENCE_PATH",
+  "assembled_at": "REQUIRED_ACTUAL_ASSEMBLY_TIMESTAMP",
+  "executor_applicability_path": "REQUIRED_CORRECTIVE_EXECUTOR_APPLICABILITY_PATH",
+  "executor_applicability_repo_path": "work/root10-single-window/stage1/Root10ExecutorApplicability.candidate.json",
+  "reviewer_delegation_path": "REQUIRED_UNCHANGED_PR190_REVIEWER_DELEGATION_PATH",
+  "reviewer_delegation_repo_path": "work/root10-single-window/stage1/root/Root10ReviewerDelegation.candidate.json"
+}
