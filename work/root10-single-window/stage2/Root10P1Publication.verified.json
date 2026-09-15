@@ -1,0 +1,18 @@
+{
+  "state": "ACTUAL_ROOT10_P1_OWNER_PUBLICATION_VERIFIED",
+  "private": true,
+  "repository": "tdoljyj/cross-memory-system",
+  "pr": 190,
+  "url": "https://github.com/tdoljyj/cross-memory-system/pull/190",
+  "merged_by": "tdoljyj",
+  "committer": "web-flow",
+  "verified": true,
+  "verification_reason": "valid",
+  "merge_commit": "1443bbe0164cd756136705897ec0cccb56cfc102",
+  "tree": "7d44d28bdd9216889ec2f01f64b39c827815e130",
+  "parents": [
+    "3694ae41d6e80602ac73da9c6f73667277881d61",
+    "b15b8560d9bb20bf2641b533f7a59dd3606d3cf4"
+  ],
+  "observed_at": "2026-09-15T06:08:02.093Z"
+}
