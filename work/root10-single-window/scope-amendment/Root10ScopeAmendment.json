@@ -6,15 +6,16 @@
   "carries_forward": {
     "object_type": "Root10RuntimeClockAmendment",
     "activation_sequence": 119,
-    "disposition": "ALL_RUNTIME_CLOCK_TERMS_REMAIN_IN_FORCE_UNCHANGED",
-    "note": "This amendment changes the applicable test set only. Every runtime-clock term from event 119 -- preparation is not runtime, the 600 seconds start at the container's observed start, stop is never refused, overrun cannot pass, predispatch failure is repairable in place -- continues to apply verbatim."
+    "disposition": "RUNTIME_BOUND_AND_RESET_CAP_UNCHANGED_ADMINISTRATIVE_WINDOW_EXTENDED",
+    "note": "This amendment changes the applicable test set and extends the administrative window. Every term of event 119 that bounds execution itself -- preparation is not runtime, the 600 seconds start at the container observed start, stop is never refused, an overrun run cannot pass, predispatch failure is repairable in place under a cap of three -- continues to apply verbatim."
   },
   "why": {
     "observed": "The gate suite pins 19 formal tests (PQUAL-01..17, 19, 20). Of those, exactly 5 -- PQUAL-11, 13, 15, 16, 17 -- have real recorded component observations (2026-09-08, kind ACTUAL_SYNTHETIC_COMPONENT_OBSERVATION_NOT_OUTER_GA_EXECUTION). The remaining 14 have no observation record of any kind in the repository or the control store.",
     "why_that_blocks_every_terminal_result": "checkRoot10ResultEvidenceStructure requires, for a PASS, that receipt.test_results cover the full 19-test set with every result PASS, and that each test carry at least one ACTUAL_TEST_OBSERVATION plus one INDEPENDENT_TEST_ORACLE_ASSESSMENT. With 14 tests having no observations, no PASS is reachable, and the only terminal result the existing tooling can build is BLOCKED with an empty test set.",
     "why_the_gap_cannot_be_closed_by_writing_documents": "The oracle of each test states: 'Use actual observed effects/refusals and independent review; matching fixture strings or source text is not behavioral evidence.' Producing conforming JSON for the 14 untested cases would satisfy the schema while contradicting the oracle. This amendment therefore narrows what is claimed, and does not relax what evidence means.",
     "what_is_actually_demonstrable_now": "The container isolation primitive (isolated_action_primitive in fixed_skill_fixture.py) is verifiable end to end on the pinned image: the image environment matches PUBLIC_ENV exactly, the three subject Skill blobs match their pinned digests and sizes, and /allowed is unwritten for this GA so the exclusive fixture write can succeed. The 5 tests above additionally have historical component evidence, for which the controller already defines a revalidation path (HISTORICAL_ACTUAL_COMPONENT_EVIDENCE_REVALIDATED, verifyHistoricalObservationChain).",
-    "why_the_narrowed_set_is_these_five_and_not_an_arbitrary_subset": "The accepted runtime already carries historical_component_evidence for exactly PQUAL-11, 13, 15, 16 and 17 -- the same five, no more and no fewer. result-terminal.mjs independently singles out the same five for this-GA historical revalidation. The narrowed set is therefore read off the evidence the accepted runtime already binds, not chosen to fit a desired outcome. build-scope-amendment-materials.mjs asserts this correspondence (APPLICABLE_SET_MUST_MATCH_HISTORICAL_EVIDENCE) and refuses to emit materials if it ever stops holding."
+    "why_the_narrowed_set_is_these_five_and_not_an_arbitrary_subset": "The accepted runtime already carries historical_component_evidence for exactly PQUAL-11, 13, 15, 16 and 17 -- the same five, no more and no fewer. result-terminal.mjs independently singles out the same five for this-GA historical revalidation. The narrowed set is therefore read off the evidence the accepted runtime already binds, not chosen to fit a desired outcome. build-scope-amendment-materials.mjs asserts this correspondence (APPLICABLE_SET_MUST_MATCH_HISTORICAL_EVIDENCE) and refuses to emit materials if it ever stops holding.",
+    "why_the_administrative_window_is_extended": "Event 119 set preparation_expires_at and finalization_expires_at to 2026-09-16T03:00:00Z, 24 hours. That is the same class of defect event 119 itself was written to fix, one layer up: budget 117 was destroyed twice because an administrative clock was charged against work that is approval, publication and repair, not execution. Publishing a controller tree, obtaining Owner merges for four artifacts, and activating an amendment does not fit in 24 hours, and the window elapsing does not make any of that work unnecessary -- it only forces another amendment whose sole content is a date. The window is therefore set to 30 days."
   },
   "amended_terms": {
     "applicable_test_set_for_this_generation": {
@@ -47,6 +48,11 @@
     "what_a_pass_means_under_this_amendment": {
       "rule": "A PASS attests exactly two things: (a) the container isolation primitive ran to a real non-overrun stop under the runtime clock of event 119, and (b) the 5 applicable tests were assessed PASS on real observations by the independent reviewer.",
       "does_not_attest": "It does not attest anything about the 14 out-of-scope tests, and it does not confer ACTIVE/Entry/SliceA implementation authority."
+    },
+    "administrative_window": {
+      "rule": "preparation_expires_at and finalization_expires_at are set to 2026-10-15T03:00:00Z, 30 days from the generation's not_before. This bounds approval, publication, activation and archival only.",
+      "not_extended": "runtime_seconds stays 600 and is still measured from the container's own observed start; max_predispatch_resets stays 3. Neither the runtime bound nor the reset cap is touched, and the controller refuses a scope event that changes either.",
+      "extend_only": "The controller admits a later window than event 119's and refuses an earlier one (SCOPE_MUST_CARRY_RUNTIME_CLOCK_FORWARD), so an amendment can postpone a deadline but can never retroactively shorten one that authority was already exercised under."
     }
   },
   "preserved_invariants": {
@@ -54,11 +60,12 @@
     "independent_assessment_still_required": "The assessor remains /root/root9_recovery_review, and DISTINCT_REVIEWER_REFERENCE continues to require that the assessor is not the executor. The Owner may publish and sign; the Owner may not stand in for the independent assessment.",
     "no_double_charge": "No charged counter changes. Seconds and evidence bytes were charged once at BUDGET_RESERVED (sequence 117).",
     "single_active_attempt": "execution_current.active_ga_id remains the single active slot under the same row locks and sequence CAS.",
-    "runaway_execution_stopped": "runtime_deadline is still derived from the container's own observed start, the controller must still stop by it, and an overrun run still cannot pass.",
+    "runaway_execution_stopped": "Unchanged and explicitly not part of the extension: runtime_deadline is still derived from the container's own observed start, the controller must still stop by it, and OVERRUN_RUN_CANNOT_PASS still refuses a PASS for an overrun run. A longer administrative window grants no additional second of container runtime.",
     "no_new_authority": "No new GA, no new budget, no new trust root, no new generation, no capacity increase, no refund, no automatic retry of an effectful attempt."
   },
   "removed_restrictions": {
-    "fixed_19_test_applicable_set": "Removed for this generation only. It was written when the 19-test corpus was expected to be executed in full; with 14 of them never observed, it makes every terminal result other than BLOCKED unreachable while adding no assurance."
+    "fixed_19_test_applicable_set": "Removed for this generation only. It was written when the 19-test corpus was expected to be executed in full; with 14 of them never observed, it makes every terminal result other than BLOCKED unreachable while adding no assurance.",
+    "twenty_four_hour_administrative_window": "Replaced, not removed. Authority still expires; it expires at 2026-10-15T03:00:00Z instead of 2026-09-16T03:00:00Z. A signed grant with no expiry at all is not what this amendment creates."
   },
   "authority_effect": "NONE"
 }

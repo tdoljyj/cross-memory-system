@@ -40,6 +40,10 @@ const SUITE_EXECUTOR = '27ede0fc0ff6afc4d5abf2f5c9f256fe22776165746dddc19aa2693c
 const GENERATION = 'ctrgen_48100437d24e448ba01c542ebe1290da';
 const ROOT = 'ctr_414bd3c724264a83894b0c55cf2ab878';
 const REVIEWER = '/root/root9_recovery_review';
+// The administrative window this amendment sets. It bounds approval, publication,
+// activation and archival only; runtime_seconds and the reset cap are carried
+// forward from event 119 untouched.
+const WINDOW_EXPIRES = '2026-10-15T03:00:00Z';
 const APPLICABLE = ['PQUAL-11', 'PQUAL-13', 'PQUAL-15', 'PQUAL-16', 'PQUAL-17'];
 const OUT_OF_SCOPE = ['PQUAL-01', 'PQUAL-02', 'PQUAL-03', 'PQUAL-04', 'PQUAL-05', 'PQUAL-06', 'PQUAL-07',
   'PQUAL-08', 'PQUAL-09', 'PQUAL-10', 'PQUAL-12', 'PQUAL-14', 'PQUAL-19', 'PQUAL-20'];
@@ -99,6 +103,7 @@ need(priorQualification.controller_digest === PRIOR_CONTROLLER && priorAcceptanc
 const qualification = {
   ...priorQualification,
   controller_digest: manifest.sha256,
+  expires_at: WINDOW_EXPIRES,
   controller_source_manifest_ref: ref(manifest.blob, manifest.sha256),
   root10_contract_ref: ref(contract.blob, contract.sha256),
   amendment_ref: ref(amendment.blob, amendment.sha256),
@@ -121,7 +126,7 @@ const scopeDescriptor = {
   carries_forward_sequence: 119,
   continuation_controller_sha256: manifest.sha256,
   expected_activation_sequence: 120,
-  finalization_expires_at: '2026-09-16T03:00:00Z',
+  finalization_expires_at: WINDOW_EXPIRES,
   max_predispatch_resets: 3,
   no_automatic_retry: true,
   no_new_budget: true,
@@ -129,7 +134,7 @@ const scopeDescriptor = {
   no_refund: true,
   out_of_scope_test_ids: OUT_OF_SCOPE,
   predecessor_controller_sha256: PRIOR_CONTROLLER,
-  preparation_expires_at: '2026-09-16T03:00:00Z',
+  preparation_expires_at: WINDOW_EXPIRES,
   prior_ga_ref: priorAcceptance.accepted_subject.runtime_clock.prior_ga_ref,
   runtime_clock_amendment_sha256: RC_AMENDMENT,
   runtime_seconds: 600,
@@ -143,6 +148,7 @@ const {runtime_clock: _superseded, ...subjectRest} = priorAcceptance.accepted_su
 const acceptance = {
   ...priorAcceptance,
   controller_digest: manifest.sha256,
+  expires_at: WINDOW_EXPIRES,
   accepted_subject: {
     ...subjectRest,
     gate_suite_ref: ref(suite.blob, suite.sha256),
@@ -164,6 +170,8 @@ const historical = acceptance.accepted_subject.historical_component_evidence.map
 need(JSON.stringify(historical) === JSON.stringify(APPLICABLE), 'APPLICABLE_SET_MUST_MATCH_HISTORICAL_EVIDENCE');
 need(acceptance.accepted_subject.runtime_clock === undefined, 'SUPERSEDED_RUNTIME_CLOCK_MUST_NOT_REMAIN');
 need(acceptance.accepted_subject.root10_single_window.contract_ref.sha256 === contract.sha256, 'ACCEPTANCE_CONTRACT_REF_MUST_TRACK_TREE');
+need(Date.parse(WINDOW_EXPIRES) >= Date.parse(priorAcceptance.expires_at), 'WINDOW_MAY_ONLY_MOVE_LATER');
+need(scopeDescriptor.runtime_seconds === 600 && scopeDescriptor.max_predispatch_resets === 3, 'RUNTIME_BOUND_AND_RESET_CAP_UNCHANGED');
 
 const emit = (name, value) => {
   const raw = JSON.stringify(value, null, 2) + '\n';

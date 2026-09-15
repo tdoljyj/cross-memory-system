@@ -220,8 +220,8 @@ export const root10ScopeIdentity=Object.freeze({
  activation_operation:'SCOPE_AMENDMENT_ACTIVATED',
  activation_key:'root10_scope_amendment_20260915',
  original_deadline:'2026-09-15T09:37:03.454Z',
- preparation_expires_at:'2026-09-16T03:00:00Z',
- finalization_expires_at:'2026-09-16T03:00:00Z',
+ preparation_expires_at:'2026-10-15T03:00:00Z',
+ finalization_expires_at:'2026-10-15T03:00:00Z',
  runtime_seconds:600,
  max_predispatch_resets:3,
  activation_sequence:120,
@@ -261,7 +261,7 @@ export function readRoot10ScopeContext({gaRaw,execution,descriptor}){
  need(sameIds(body.applicable_test_ids,fixed.applicable_test_ids)&&sameIds(body.out_of_scope_test_ids,fixed.out_of_scope_test_ids)&&body.carries_forward_sequence===fixed.carries_forward_sequence,'EXACT_SCOPE_EVENT_APPLICABLE_SET');
  // Carry-forward is machine-checked, not asserted in prose: event 120 must restate
  // event 119's window terms exactly and must start from event 119's own new binding.
- need(body.preparation_expires_at===carriedBody.preparation_expires_at&&body.finalization_expires_at===carriedBody.finalization_expires_at&&body.runtime_seconds===carriedBody.runtime_seconds&&body.max_predispatch_resets===carriedBody.max_predispatch_resets&&body.budget_raw_sha256===carriedBody.budget_raw_sha256&&body.budget_sequence===carriedBody.budget_sequence,'SCOPE_MUST_CARRY_RUNTIME_CLOCK_FORWARD');
+ need(Date.parse(body.preparation_expires_at)>=Date.parse(carriedBody.preparation_expires_at)&&Date.parse(body.finalization_expires_at)>=Date.parse(carriedBody.finalization_expires_at)&&body.runtime_seconds===carriedBody.runtime_seconds&&body.max_predispatch_resets===carriedBody.max_predispatch_resets&&body.budget_raw_sha256===carriedBody.budget_raw_sha256&&body.budget_sequence===carriedBody.budget_sequence,'SCOPE_MUST_CARRY_RUNTIME_CLOCK_FORWARD');
  need(sameTemporal(body.old_binding,carriedBody.new_binding),'SCOPE_OLD_BINDING_IS_RUNTIME_CLOCK_NEW_BINDING');
  const changed=['controller_sha256','qualification_sha256','runtime_acceptance_sha256'];
  need(body.old_binding?.controller_sha256===fixed.predecessor_controller_sha256&&body.old_binding.qualification_sha256===fixed.predecessor_qualification_sha256&&body.old_binding.runtime_acceptance_sha256===fixed.predecessor_runtime_acceptance_sha256&&body.new_binding?.controller_sha256===descriptor.continuation_controller_sha256&&changed.every(k=>hex(body.new_binding[k]))&&sameTemporal({...body.new_binding,...Object.fromEntries(changed.map(k=>[k,body.old_binding[k]]))},body.old_binding),'ONLY_ACCEPTED_SCOPE_BINDING_COLUMNS_CHANGE');

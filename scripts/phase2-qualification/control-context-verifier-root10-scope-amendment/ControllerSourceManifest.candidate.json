@@ -3,7 +3,7 @@
   "schema_version": 1,
   "generation_id": "ctrgen_48100437d24e448ba01c542ebe1290da",
   "not_before": "2026-09-15T03:00:00Z",
-  "expires_at": "2026-09-16T03:00:00Z",
+  "expires_at": "2026-10-15T03:00:00Z",
   "files": [
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/bridge.py",
@@ -107,12 +107,12 @@
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/root10-single-window.mjs",
-      "sha256": "bd6d7144a4f90cf65386883789cbaddca23e95640e80809c5486f61450367e1a",
-      "bytes": 55465
+      "sha256": "da3c25c3d53a1a00bee7b381ec1a45c200c81c10b96d9a5c7cd20137e5228755",
+      "bytes": 55511
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/Root10ControllerContract.candidate.json",
-      "sha256": "767fb3b0eea30d26a1c9178e606d92caac9a13219cc47f486b23c1da09842023",
+      "sha256": "c2ab5d3c037ba1bd93a12025dbde7c66c88bb44d9b40310c1db753f92a387716",
       "bytes": 6039
     },
     {
