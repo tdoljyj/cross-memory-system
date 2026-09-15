@@ -193,7 +193,7 @@ def runtime_clock_window(ga_raw, material):
 
 # Exact separate scope amendment bytes (event 120). Written once so the dispatch in
 # effective_window() and the branch below can never drift apart.
-SCOPE_AMENDMENT_SHA256 = '5ae14a3c383b318e3e1e5fb22a2dacf546e74b5c51ef9c133d356caf6475b4a7'
+SCOPE_AMENDMENT_SHA256 = 'a71bd7128eff8d3125711bf7967faddc9eab3c4ef675035db711b95b45136537'
 RUNTIME_CLOCK_AMENDMENT_SHA256 = 'e92a252a0ab62600d6153ece3e3df92a35bd5680b3d9e2c8f65b6c77ff236402'
 SCOPE_APPLICABLE_TEST_IDS = ['PQUAL-11', 'PQUAL-13', 'PQUAL-15', 'PQUAL-16', 'PQUAL-17']
 SCOPE_OUT_OF_SCOPE_TEST_IDS = ['PQUAL-01', 'PQUAL-02', 'PQUAL-03', 'PQUAL-04', 'PQUAL-05',

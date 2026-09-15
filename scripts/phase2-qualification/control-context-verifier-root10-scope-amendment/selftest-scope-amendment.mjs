@@ -222,16 +222,22 @@ test('01 a valid scope context is accepted',()=>{
  if(!Object.isFrozen(context))throw Error('a scope context must be frozen');
 });
 test('02 a widened preparation/finalization window is accepted (extend only)',()=>{
- // Event 119 closes 2026-09-16; event 120 carries it to 2026-10-15. Extending is
- // the whole point of the amendment, so a rule tightened to equality would break
- // the live shape -- and a window that merely equals event 119's must also pass.
- const widened=carriedOf(history());
- if(Date.parse(fixed.preparation_expires_at)<=Date.parse(widened.preparation_expires_at))throw Error('fixture no longer widens the carried window');
- expectPass(read(copy),'02a');
+ // Event 119 and event 120 now close at the same instant. An earlier revision of this
+ // amendment moved the window to 2026-10-15 and was withdrawn: validateRootShape requires
+ // the controller contract window to EQUAL the signed trust root generation's, and that
+ // generation ends 2026-09-16T03:00:00Z. So equality is the shape the live amendment uses.
+ //
+ // The extend-only rule is still live and still has to be tested, so 02a moves the CARRIED
+ // window earlier to exercise admission of a later one. 02b is the live shape, equality.
  const events=history(),carried=carriedOf(events);
- carried.preparation_expires_at=fixed.preparation_expires_at;
- carried.finalization_expires_at=fixed.finalization_expires_at;
- expectPass(read(copy,{executionValue:execution({events})}),'02b');
+ carried.preparation_expires_at='2026-09-15T12:00:00Z';
+ carried.finalization_expires_at='2026-09-15T12:00:00Z';
+ if(Date.parse(fixed.preparation_expires_at)<=Date.parse(carried.preparation_expires_at))throw Error('fixture no longer widens the carried window');
+ expectPass(read(copy,{executionValue:execution({events})}),'02a');
+ const equalEvents=history(),equalCarried=carriedOf(equalEvents);
+ equalCarried.preparation_expires_at=fixed.preparation_expires_at;
+ equalCarried.finalization_expires_at=fixed.finalization_expires_at;
+ expectPass(read(copy,{executionValue:execution({events:equalEvents})}),'02b');
 });
 
 // --- Carry-forward of event 119's runtime clock ------------------------------

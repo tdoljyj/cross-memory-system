@@ -11,13 +11,13 @@
   "generation_id": "ctrgen_48100437d24e448ba01c542ebe1290da",
   "predecessor_generation_id": "ctrgen_308a1dfc185cff633892638581e0a34c",
   "not_before": "2026-09-15T03:00:00Z",
-  "expires_at": "2026-10-15T03:00:00Z",
+  "expires_at": "2026-09-16T03:00:00Z",
   "purpose": "SKILL_COEXISTENCE_QUALIFICATION",
   "environment": "ISOLATED_TEST",
-  "controller_digest": "9d73c49ce17372650df10ee5201316d31f681c3897965dc1c286a83cc3530f76",
+  "controller_digest": "0eb589d1ee403b94b45ea5f8b9bd3773f6d8291c26818540626d9f36d6f86689",
   "controller_source_manifest_ref": {
-    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/79e42bfb7a8d1a1db09a47edd3b42d0c68b61cbf",
-    "sha256": "9d73c49ce17372650df10ee5201316d31f681c3897965dc1c286a83cc3530f76"
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/f01ed98b3bee2917af58613f6984de275ecadc06",
+    "sha256": "0eb589d1ee403b94b45ea5f8b9bd3773f6d8291c26818540626d9f36d6f86689"
   },
   "scope_digest": "115408c69dcb2fa606fb0de34ec86c5239487d0cfa9a73abb267664a2482abe5",
   "ga_schema_ref": {
@@ -63,8 +63,8 @@
     }
   ],
   "root10_contract_ref": {
-    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/8c2df2d8827224e4f044b395a1828576fe0606af",
-    "sha256": "c2ab5d3c037ba1bd93a12025dbde7c66c88bb44d9b40310c1db753f92a387716"
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/c2ee9e0a8d4ee6fe324aabd8e8ff889849dd9777",
+    "sha256": "767fb3b0eea30d26a1c9178e606d92caac9a13219cc47f486b23c1da09842023"
   },
   "source_publication": {
     "owner_merge_commit": "__OWNER_MERGE_COMMIT__",
@@ -74,8 +74,8 @@
   "automatic_retry": false,
   "successor_ga": false,
   "amendment_ref": {
-    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/aad623ff11c32f46f03fbf883782ae29d4f878cc",
-    "sha256": "5ae14a3c383b318e3e1e5fb22a2dacf546e74b5c51ef9c133d356caf6475b4a7"
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/9ab54f59d475330bc40fd6c74dc9f2f188d099f5",
+    "sha256": "a71bd7128eff8d3125711bf7967faddc9eab3c4ef675035db711b95b45136537"
   },
   "amendment_object_type": "Root10ScopeAmendment",
   "predecessor_controller_digest": "5c72dd8923436f6e9ab5b51160cd8751944158d3919d3ef09f6f3ec5006e40b6"

@@ -43,7 +43,7 @@ const REVIEWER = '/root/root9_recovery_review';
 // The administrative window this amendment sets. It bounds approval, publication,
 // activation and archival only; runtime_seconds and the reset cap are carried
 // forward from event 119 untouched.
-const WINDOW_EXPIRES = '2026-10-15T03:00:00Z';
+const WINDOW_EXPIRES = '2026-09-16T03:00:00Z';
 const APPLICABLE = ['PQUAL-11', 'PQUAL-13', 'PQUAL-15', 'PQUAL-16', 'PQUAL-17'];
 const OUT_OF_SCOPE = ['PQUAL-01', 'PQUAL-02', 'PQUAL-03', 'PQUAL-04', 'PQUAL-05', 'PQUAL-06', 'PQUAL-07',
   'PQUAL-08', 'PQUAL-09', 'PQUAL-10', 'PQUAL-12', 'PQUAL-14', 'PQUAL-19', 'PQUAL-20'];

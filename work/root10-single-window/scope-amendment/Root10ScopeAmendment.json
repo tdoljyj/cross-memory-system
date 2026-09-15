@@ -25,10 +25,10 @@
       "seconds": 600,
       "evidence_bytes": 134217728
     },
-    "preparation_expires_at": "2026-10-15T03:00:00Z",
+    "preparation_expires_at": "2026-09-16T03:00:00Z",
     "runtime_seconds": 600,
     "max_predispatch_resets": 3,
-    "finalization_expires_at": "2026-10-15T03:00:00Z"
+    "finalization_expires_at": "2026-09-16T03:00:00Z"
   },
   "carries_forward": {
     "object_type": "Root10RuntimeClockAmendment",
@@ -42,7 +42,7 @@
     "why_the_gap_cannot_be_closed_by_writing_documents": "The oracle of each test states: 'Use actual observed effects/refusals and independent review; matching fixture strings or source text is not behavioral evidence.' Producing conforming JSON for the 14 untested cases would satisfy the schema while contradicting the oracle. This amendment therefore narrows what is claimed, and does not relax what evidence means.",
     "what_is_actually_demonstrable_now": "The container isolation primitive (isolated_action_primitive in fixed_skill_fixture.py) is verifiable end to end on the pinned image: the image environment matches PUBLIC_ENV exactly, the three subject Skill blobs match their pinned digests and sizes, and /allowed is unwritten for this GA so the exclusive fixture write can succeed. The 5 tests above additionally have historical component evidence, for which the controller already defines a revalidation path (HISTORICAL_ACTUAL_COMPONENT_EVIDENCE_REVALIDATED, verifyHistoricalObservationChain).",
     "why_the_narrowed_set_is_these_five_and_not_an_arbitrary_subset": "The accepted runtime already carries historical_component_evidence for exactly PQUAL-11, 13, 15, 16 and 17 -- the same five, no more and no fewer. result-terminal.mjs independently singles out the same five for this-GA historical revalidation. The narrowed set is therefore read off the evidence the accepted runtime already binds, not chosen to fit a desired outcome. build-scope-amendment-materials.mjs asserts this correspondence (APPLICABLE_SET_MUST_MATCH_HISTORICAL_EVIDENCE) and refuses to emit materials if it ever stops holding.",
-    "why_the_administrative_window_is_extended": "Event 119 set preparation_expires_at and finalization_expires_at to 2026-09-16T03:00:00Z, 24 hours. That is the same class of defect event 119 itself was written to fix, one layer up: budget 117 was destroyed twice because an administrative clock was charged against work that is approval, publication and repair, not execution. Publishing a controller tree, obtaining Owner merges for four artifacts, and activating an amendment does not fit in 24 hours, and the window elapsing does not make any of that work unnecessary -- it only forces another amendment whose sole content is a date. The window is therefore set to 30 days."
+    "why_the_administrative_window_is_not_extended": "It was, for one revision, set to 2026-10-15 -- 30 days -- on the reasoning that budget 117 was destroyed twice by an administrative clock charged against approval, publication and repair rather than execution. That reasoning still holds and the change was still wrong, because this is not the layer that sets the clock. validateRootShape requires the controller contract window to EQUAL the signed control trust root generation's window, and the registered root runs 2026-09-15T03:00:00Z to 2026-09-16T03:00:00Z. A contract naming any other window is refused outright, measured: validateRootShape throws 'Owner window'. Two further checks sit under it -- the root's own not_before/expires_at and revocation window, and all three IssuerQualification documents, every one of them ending 2026-09-16T03:00:00Z and re-checked on every operation. All of it is inside the signed payload, which signaturePayloadDigest covers in full apart from signature_binding. An amendment cannot move any of it. Extending the administrative clock is an Owner re-signing of the trust root generation, one layer above this document, and this amendment does not create one."
   },
   "amended_terms": {
     "applicable_test_set_for_this_generation": {
@@ -77,9 +77,9 @@
       "does_not_attest": "It does not attest anything about the 14 out-of-scope tests, and it does not confer ACTIVE/Entry/SliceA implementation authority."
     },
     "administrative_window": {
-      "rule": "preparation_expires_at and finalization_expires_at are set to 2026-10-15T03:00:00Z, 30 days from the generation's not_before. This bounds approval, publication, activation and archival only.",
-      "not_extended": "runtime_seconds stays 600 and is still measured from the container's own observed start; max_predispatch_resets stays 3. Neither the runtime bound nor the reset cap is touched, and the controller refuses a scope event that changes either.",
-      "extend_only": "The controller admits a later window than event 119's and refuses an earlier one (SCOPE_MUST_CARRY_RUNTIME_CLOCK_FORWARD), so an amendment can postpone a deadline but can never retroactively shorten one that authority was already exercised under."
+      "rule": "preparation_expires_at and finalization_expires_at stay at 2026-09-16T03:00:00Z, unchanged from event 119, because the signed trust root generation ends there and validateRootShape requires the controller contract window to equal it exactly.",
+      "not_extended": "runtime_seconds stays 600 and is still measured from the container's own observed start; max_predispatch_resets stays 3. Neither the runtime bound nor the reset cap is touched, and the controller refuses a scope event that changes either. The administrative window is not touched either.",
+      "extend_only": "The controller still admits a later window than event 119's and refuses an earlier one (SCOPE_MUST_CARRY_RUNTIME_CLOCK_FORWARD), so a future amendment could postpone a deadline but never retroactively shorten one. This amendment exercises that as equality, not as an extension: a later window would be refused one layer up, by validateRootShape, against the signed root."
     }
   },
   "preserved_invariants": {
@@ -92,7 +92,7 @@
   },
   "removed_restrictions": {
     "fixed_19_test_applicable_set": "Removed for this generation only. It was written when the 19-test corpus was expected to be executed in full; with 14 of them never observed, it makes every terminal result other than BLOCKED unreachable while adding no assurance.",
-    "twenty_four_hour_administrative_window": "Replaced, not removed. Authority still expires; it expires at 2026-10-15T03:00:00Z instead of 2026-09-16T03:00:00Z. A signed grant with no expiry at all is not what this amendment creates."
+    "twenty_four_hour_administrative_window": "NOT removed and NOT replaced. It is carried forward verbatim at 2026-09-16T03:00:00Z. This amendment narrows the applicable test set and changes no clock at all."
   },
   "authority_effect": "NONE"
 }

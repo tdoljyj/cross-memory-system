@@ -15,7 +15,7 @@ export function invokeFixedHost({gaRaw,operation,containerId,deadline,temporal=n
  // live on its own if it has an error only it can raise, and with a single message the
  // self-test proved the bridge half while the python half went both unproven and unlisted.
  if(sha(fs.readFileSync(python))!=='f56a588548dd013906ae1dcd1b6faa417f4e204da634ff354840d9643e78ff9e')throw Error('EXACT_PYTHON_BYTES_REQUIRED');
- if(sha(fs.readFileSync(bridge))!=='48386a5447a7a0ac465213025918f54699e9c84d4c19933acffb6c03ebb9e170')throw Error('EXACT_PYTHON_BRIDGE_BYTES_REQUIRED');
+ if(sha(fs.readFileSync(bridge))!=='e76eb89e35a2d4c3e7c920a1f8773cbdb8fe34baf4d65be9c8e450990fde0987')throw Error('EXACT_PYTHON_BRIDGE_BYTES_REQUIRED');
  const ga=JSON.parse(gaRaw),nonce=sha('clued-fixed-host-v1\0'+ga.gate_authorization_id).slice(0,32);
  if(temporal!==null){
   const shape=Object.keys(temporal).sort().join(',');
