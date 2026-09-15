@@ -1,0 +1,18 @@
+{
+  "state": "ROOT10_UNSIGNED_PAYLOAD_READY_FOR_OWNER_MERGE",
+  "root_generation": "ctrgen_48100437d24e448ba01c542ebe1290da",
+  "review_subject_sha256": "91f94d05a22f5da7945be0f9f6d03359ba9268e6850f3a9c981e7b33a072fab6",
+  "payload_sha256": "7bba3cb0e486015c90b94ab1ed9fa69a042be3100d75b9f2bcc16e68af852ba6",
+  "payload_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/db77e086449497cf5eb362bc84422408537fe1c0",
+    "sha256": "c5848b390ed054184a0ed3755d737a0b0922b58a26ecf3f367348b7d200b86e4"
+  },
+  "independent_acceptance_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/0efea4b287412101851af157b6933d94fdd01d92",
+    "sha256": "b057eb56b92b94109f9aec965a22c08433691e4f3e6d99ba1def4f4011abc966"
+  },
+  "root_registered": false,
+  "signature_created": false,
+  "database_write": false,
+  "ga_issued": false
+}

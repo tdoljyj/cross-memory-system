@@ -1,0 +1,90 @@
+// Deterministic post-P1 metadata assembly. No network, signatures, database writes or GA.
+import fs from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import {execFileSync} from 'node:child_process';
+const [configPath]=process.argv.slice(2);
+if(!configPath)throw Error('Provide actual verified P1 publication, signed Root10 and review paths');
+const cfg=JSON.parse(fs.readFileSync(configPath,'utf8'));
+const read=p=>fs.readFileSync(p,'utf8').replace(/\r\n/g,'\n');
+const json=p=>JSON.parse(read(p));
+const sha=s=>crypto.createHash('sha256').update(s).digest('hex');
+const ordered=v=>Array.isArray(v)?v.map(ordered):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().map(k=>[k,ordered(v[k])])):v;
+const digest=v=>sha(JSON.stringify(ordered(v))+'\n');
+const serialize=v=>JSON.stringify(v,null,2)+'\n';
+const blob=s=>crypto.createHash('sha1').update('blob '+Buffer.byteLength(s)+'\0').update(s).digest('hex');
+const ref=s=>({uri:'https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/'+blob(s),sha256:sha(s)});
+const need=(v,m)=>{if(!v)throw Error(m);};
+const repo=cfg.repo,controllerDir='scripts/phase2-qualification/control-context-verifier-root10-single-window';
+const at=p=>path.join(repo,p),git=(...a)=>execFileSync('git',['-c','safe.directory='+repo,'-C',repo,...a],{encoding:'utf8'});
+const intent=json(cfg.intent_path),prior=json(cfg.live_preimage_path),publication=json(cfg.publication_path);
+need(publication.state==='ACTUAL_ROOT10_P1_OWNER_PUBLICATION_VERIFIED'&&publication.private===true&&publication.merged_by==='tdoljyj'&&publication.committer==='web-flow'&&publication.verified===true,'ACTUAL_P1_OWNER_PROOF_REQUIRED');
+need(/^[a-f0-9]{40}$/.test(publication.merge_commit)&&git('show','-s','--format=%T',publication.merge_commit).trim()===publication.tree,'P1_ACTUAL_TREE');
+const manifestRaw=read(at(controllerDir+'/ControllerSourceManifest.candidate.json')),manifest=JSON.parse(manifestRaw),controllerRef=ref(manifestRaw);
+const contractRaw=read(at(controllerDir+'/Root10ControllerContract.candidate.json')),contract=JSON.parse(contractRaw);
+need(contract.ready===true&&contract.generation_id===intent.generation_id&&contract.postbaseline.budget_sequence===117,'FINAL_ROOT10_CONTRACT');
+const sourceRefs=[controllerRef];
+for(const entry of manifest.files){
+ const source=fs.readFileSync(at(entry.path));need(source.length===entry.bytes&&sha(source)===entry.sha256,'FROZEN_SOURCE_BYTES:'+entry.path);
+ const sourceBlob=crypto.createHash('sha1').update('blob '+source.length+'\0').update(source).digest('hex');
+ need(git('rev-parse',publication.merge_commit+':'+entry.path).trim()===sourceBlob,'P1_SOURCE_TREE_IDENTITY:'+entry.path);
+ sourceRefs.push({uri:'https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/'+sourceBlob,sha256:entry.sha256});
+}
+need(git('rev-parse',publication.merge_commit+':'+controllerDir+'/ControllerSourceManifest.candidate.json').trim()===blob(manifestRaw),'P1_MANIFEST_IDENTITY');
+const reviewRaw=read(cfg.controller_main_review_path),review=JSON.parse(reviewRaw);
+need(review.decision==='ROOT10_CONTROLLER_RUNTIME_GO'&&review.independent_reviewer==='/root'&&review.controller_manifest_sha256===controllerRef.sha256&&review.formal_pqual_claimed===false,'ACTUAL_MAIN_CONTROLLER_REVIEW_REQUIRED');
+const independentRaw=read(cfg.controller_independent_review_path),independent=JSON.parse(independentRaw);
+need(independent.decision==='ROOT10_CONTROLLER_SOURCE_GO'&&independent.independent_reviewer==='/root/root9_recovery_review'&&independent.controller_manifest_sha256===controllerRef.sha256,'ACTUAL_INDEPENDENT_CONTROLLER_REVIEW_REQUIRED');
+for(const [repoPath,raw] of [[cfg.controller_main_review_repo_path,reviewRaw],[cfg.controller_independent_review_repo_path,independentRaw]]){
+ need(typeof repoPath==='string'&&repoPath.startsWith('work/root10-single-window/stage1/')&&!repoPath.includes('..'),'EXACT_P1_CONTROLLER_REVIEW_PATH');
+ need(git('rev-parse',publication.merge_commit+':'+repoPath).trim()===blob(raw),'P1_CONTROLLER_REVIEW_PUBLICATION:'+repoPath);
+}
+const rootRaw=read(cfg.root10_signed_path),root=JSON.parse(rootRaw);
+need(root.control_trust_root_generation===intent.generation_id&&root.signature_binding.owner_merge_commit===publication.merge_commit,'ACTUAL_SIGNED_ROOT10_FROM_P1');
+// Compare the complete unsigned object to the independently schema-reviewed P1
+// payload, not a handful of fields. This preserves its exact schema, authority,
+// history, issuer and window shape without importing a Linux-only Ajv runtime.
+const publishedRootPayloadRaw=git('show',publication.merge_commit+':work/root10-single-window/stage1/root/Root10SigningPayload.json');
+const publishedRootPayload=JSON.parse(publishedRootPayloadRaw),unsignedRoot=structuredClone(root);delete unsignedRoot.signature_binding;
+need(digest(publishedRootPayload)==='7bba3cb0e486015c90b94ab1ed9fa69a042be3100d75b9f2bcc16e68af852ba6'&&digest(unsignedRoot)===digest(publishedRootPayload),'EXACT_COMPLETE_SCHEMA_REVIEWED_P1_ROOT_PAYLOAD');
+need(root.root_set_id===intent.root_id&&root.scope.project_ref==='uscrdifznmlvczcekqpw'&&root.scope.repository==='tdoljyj/cross-memory-system'&&root.audience==='urn:clued:audience:skill-coexistence-qualification:uscrdifznmlvczcekqpw'&&root.not_before===intent.not_before&&root.expires_at===intent.expires_at,'EXACT_ROOT10_SCOPE_AUDIENCE_WINDOW');
+need(Object.keys(root.signature_binding).sort().join(',')==='owner_merge_commit,signature_evidence_ref,signed_object_sha256'&&root.signature_binding.signed_object_sha256===digest(unsignedRoot),'EXACT_ROOT10_SIGNATURE_BINDING');
+need(root.issuer_bindings.length===3&&JSON.stringify(root.issuer_bindings.map(x=>x.purpose).sort())===JSON.stringify(['GATE_AUTHORIZATION','GATE_RESULT','STATUS']),'EXACT_ROOT10_ISSUER_PURPOSE_SET');
+for(const issuerBinding of root.issuer_bindings)need(digest(issuerBinding.qualification_ref)===digest(contract.issuer_qualification_refs[issuerBinding.purpose])&&issuerBinding.audience===root.audience&&issuerBinding.subject_id==='tdoljyj'&&issuerBinding.signing_service==='web-flow','EXACT_ROOT10_PURPOSE_ISSUER');
+const rootEvidenceRaw=read(cfg.root10_signature_evidence_path),rootEvidence=JSON.parse(rootEvidenceRaw);
+need(digest(root.signature_binding.signature_evidence_ref)===digest(ref(rootEvidenceRaw))&&rootEvidence.kind==='ROOT_SIGNING_PAYLOAD_SIGNATURE_BINDING'&&rootEvidence.status==='VERIFIED'&&rootEvidence.repository.private===true&&rootEvidence.repository.full_name==='tdoljyj/cross-memory-system','EXACT_ROOT10_SIGNATURE_EVIDENCE_BYTES');
+need(rootEvidence.merge.sha===publication.merge_commit&&rootEvidence.merge.tree===publication.tree&&rootEvidence.merge.committer_login==='web-flow'&&rootEvidence.merge.verification.verified===true&&rootEvidence.merge.verification.reason==='valid'&&rootEvidence.pr.merged_by==='tdoljyj'&&rootEvidence.pr.number===publication.pr,'EXACT_P1_ROOT_SIGNATURE_PUBLICATION');
+need(rootEvidence.payload.blob_sha===blob(publishedRootPayloadRaw)&&rootEvidence.payload.file_sha256===sha(publishedRootPayloadRaw)&&rootEvidence.payload.payload_sha256===digest(unsignedRoot),'EXACT_P1_ROOT_SIGNATURE_PAYLOAD');
+const acceptedRootRaw=git('show',publication.merge_commit+':work/root10-single-window/stage1/root/Root10IndependentAcceptance.json');
+need(digest(root.independent_acceptance_ref)===digest(ref(acceptedRootRaw))&&JSON.parse(acceptedRootRaw).decision==='ROOT10_AUTHORIZATION_MATERIALS_GO','EXACT_OWNER_PUBLISHED_ROOT_REVIEW');
+const rootAuthority={uri:'urn:clued:control-trust-root-set:uscrdifznmlvczcekqpw:'+intent.root_id,sha256:digest(root)};
+const schemas={StatusManifest:ref(read(at(controllerDir+'/status-manifest.root5.schema.json'))),GateResultReceipt:ref(read(at(controllerDir+'/gate-result-receipt.root5.schema.json')))};
+const issuer=Object.fromEntries(root.issuer_bindings.map(i=>[i.purpose,i.qualification_ref]));
+const oldRuntimeRaw=read(at('work/recovery-root9/exact-pair-successor-stage3/RuntimeAcceptance.root9.exact-pair.json'));
+need(sha(oldRuntimeRaw)==='2231d936ce0dcaeae53b5ae5a2756c50626ab1824d5682ca514ec8b5d66ee1df','EXACT_ACCEPTED_PREDECESSOR_TEMPLATE');
+const old=JSON.parse(oldRuntimeRaw),oldSubject=old.accepted_subject;
+const assembledAt=cfg.assembled_at;need(Number.isFinite(Date.parse(assembledAt))&&Date.parse(assembledAt)>=Date.parse(intent.not_before)&&Date.parse(assembledAt)<Date.parse(intent.expires_at),'ACTUAL_ASSEMBLY_TIME_IN_WINDOW');
+const files={};
+const qualification={schema_version:1,object_type:'ControllerQualification',state:'ACCEPTED_SCOPED_CONTROLLER_QUALIFICATION',independent_reviewer:'/root',qualification_issued:false,authority_effect:'NONE_UNTIL_OWNER_P2_PUBLICATION_AND_EXACT_CAS',signature_verified:false,root_id:intent.root_id,project_ref:'uscrdifznmlvczcekqpw',generation_id:intent.generation_id,predecessor_generation_id:intent.predecessor_generation,not_before:intent.not_before,expires_at:intent.expires_at,purpose:'SKILL_COEXISTENCE_QUALIFICATION',environment:'ISOLATED_TEST',controller_digest:controllerRef.sha256,controller_source_manifest_ref:controllerRef,scope_digest:intent.scope_sha256,ga_schema_ref:oldSubject.expected_ga.schema_digest?ref(read(at('scripts/phase2-qualification/preentry-parent/profile-successor/gate-authorization.candidate.schema.json'))):null,status_schema_ref:schemas.StatusManifest,gate_result_receipt_schema_ref:schemas.GateResultReceipt,issuer_qualification_sha256:Object.fromEntries(Object.entries(issuer).map(([p,r])=>[p,r.sha256])),first_budget_sequence:117,independent_of_tested_skill:true,forbidden_stage_dependencies_excluded:true,required_stages:oldSubject.required_stages,test_evidence_refs:[ref(reviewRaw),ref(independentRaw)],root10_contract_ref:ref(contractRaw),source_publication:{owner_merge_commit:publication.merge_commit,source_tree:publication.tree,controller_manifest_entries:manifest.files.length},automatic_retry:false,successor_ga:false};
+files['ControllerQualification.root10.json']=serialize(qualification);const qualificationRef=ref(files['ControllerQualification.root10.json']);
+const expected=structuredClone(oldSubject.expected_ga);
+Object.assign(expected,{control_trust_root_generation:intent.generation_id,controller_digest:controllerRef.sha256,controller_qualification_ref:qualificationRef,issuer_ref:issuer.GATE_AUTHORIZATION,authority_source_ref:rootAuthority,source_ref:{commit:publication.merge_commit,tree:publication.tree,blobs:sourceRefs}});
+expected.artifact_refs=expected.artifact_refs.filter(r=>r.sha256!==old.controller_digest).concat(controllerRef);
+const replaceGeneration=v=>typeof v==='string'&&v===intent.predecessor_generation?intent.generation_id:Array.isArray(v)?v.map(replaceGeneration):v&&typeof v==='object'?Object.fromEntries(Object.entries(v).map(([k,x])=>[k,replaceGeneration(x)])):v;
+for(const key of Object.keys(expected))expected[key]=replaceGeneration(expected[key]);
+const stageRefs=expected.stage_receipt_refs,observations={root_set_id:intent.root_id,root_generation:intent.generation_id,profile_digest:intent.profile_sha256,gate_digest:intent.gate_sha256,controller_digest:controllerRef.sha256,scope_digest:intent.scope_sha256,runner_generation:prior.execution.current.runner_generation,credential_generation:prior.execution.current.credential_generation,session_generation:prior.execution.current.session_generation,stage_receipt_refs:stageRefs};
+const statusRefs=[...stageRefs,expected.scope_ref,qualificationRef,rootAuthority,controllerRef,ref(reviewRaw),ref(independentRaw)];
+const uniqueRefs=[...new Map(statusRefs.map(r=>[r.uri+'\0'+r.sha256,r])).values()];
+const status={object_type:'StatusManifest',schema_version:'1.0',schema_digest:schemas.StatusManifest.sha256,audience:root.audience,control_trust_root_generation:intent.generation_id,issuer_ref:issuer.STATUS,status_manifest_id:intent.status_manifest_id,issuer_purpose:'STATUS',as_of:assembledAt,expires_at:intent.expires_at,generation:intent.status_generation,source_digests:[...new Set([...uniqueRefs.map(r=>r.sha256),intent.profile_sha256,intent.gate_sha256])],source_refs:uniqueRefs,observations};
+files['Status29SigningPayload.json']=serialize(status);
+const executorRaw=read(cfg.executor_applicability_path),executor=JSON.parse(executorRaw),delegationRaw=read(cfg.reviewer_delegation_path);
+need(executor.state==='ACCEPTED_EXACT_ROOT10_EXECUTOR_APPLICABILITY'&&executor.independent_reviewer==='/root/root9_recovery_review'&&executor.current_controller_sha256===controllerRef.sha256,'ACTUAL_EXECUTOR_MAPPING_REVIEW');
+need(git('rev-parse',publication.merge_commit+':'+cfg.executor_applicability_repo_path).trim()===blob(executorRaw),'P1_EXECUTOR_MAPPING_PUBLICATION');
+need(git('rev-parse',publication.merge_commit+':'+cfg.reviewer_delegation_repo_path).trim()===blob(delegationRaw),'P1_REVIEWER_DELEGATION_PUBLICATION');
+const subject={};
+for(const key of ['root_id','project_ref','gate','required_stages','profile_signing_payload_ref','gate_suite_ref','historical_component_evidence','historical_component_applicability_ref','profile_window_applicability_ref'])subject[key]=structuredClone(oldSubject[key]);
+Object.assign(subject,{expected_ga:expected,late_bound_fields:{...structuredClone(oldSubject.late_bound_fields),status_manifest_ref:{resolver:'STORED_STATUS_FROM_EXACT_OWNER_SIGNED_PAYLOAD_V1',signed_payload_sha256:digest(status)}},control_schema_refs:schemas,result_reviewer_ref:ref(delegationRaw),root10_single_window:{contract_ref:ref(contractRaw),issuer_qualification_refs:issuer,result_reviewer:{ref:ref(delegationRaw),publication:{commitSha:publication.merge_commit,artifactPath:cfg.reviewer_delegation_repo_path}},executor_applicability:{ref:ref(executorRaw),publication:{commitSha:publication.merge_commit,artifactPath:cfg.executor_applicability_repo_path}}}});
+const runtime={schema_version:1,state:'ACCEPTED_EXACT_PREENTRY_CONTROLLER_RUNTIME',independent_reviewer:'/root',acceptance_issued:false,authority_effect:'NONE_UNTIL_OWNER_P2_PUBLICATION_AND_EXACT_CAS',signature_verified:false,not_before:intent.not_before,expires_at:intent.expires_at,purpose:'SKILL_COEXISTENCE_QUALIFICATION',environment:'ISOLATED_TEST',accepted_at:assembledAt,controller_digest:controllerRef.sha256,scope_digest:intent.scope_sha256,accepted_subject:subject,controller_review_refs:[ref(reviewRaw),ref(independentRaw)],no_automatic_retry:true,no_successor_ga:true};
+files['RuntimeAcceptance.root10.json']=serialize(runtime);
+files['Root10Stage2MetadataBuild.json']=serialize({state:'ROOT10_STAGE2_UNSIGNED_METADATA_BUILT',controller_ref:controllerRef,controller_qualification_ref:qualificationRef,runtime_acceptance_ref:ref(files['RuntimeAcceptance.root10.json']),status_signed_payload_sha256:digest(status),status_payload_ref:ref(files['Status29SigningPayload.json']),root_authority_ref:rootAuthority,control_schema_refs:schemas,source_blob_count:sourceRefs.length,signature_created:false,database_write:false,ga_issued:false});
+process.stdout.write(JSON.stringify({files})+'\n');

@@ -1,0 +1,28 @@
+{
+  "state": "EXACT_GA6_CLOSURE_REVIEW_AND_ROLLBACK_PASSED",
+  "independent_reviewer": "/root",
+  "implementation_author": "/root/root9_recovery_review",
+  "main_corrections": ["Use literal callback replacement when transforming SQL", "Count execution budget events by operation, not kind"],
+  "builder_sha256": "b9b8985cd7d0f2dac0b65a3f606258d9c4274f8a65d6454604b09a15ad75e759",
+  "apply_sql_sha256": "430a5ff13c00dfa2364993baa61f362ecbcafb7b1440926a68c9a4de76715d3f",
+  "rollback_sql_sha256": "c7141accef87d860b40a5022de2229be37214f58cdc6a102d7f0e7564bcd014d",
+  "transient_function_sha256": "20ff0a91eeaccab87a2de764e10a9830ee254b4f25bbbae75b51979b18ef2b5a",
+  "restored_function_sha256": "96ee8ccbcfaa97ffce03a3a233968bd9f4db04b61cc333dac6977f39d38cd754",
+  "checks": [
+    "Exact GA6 ID, raw SHA, Root9 generation, seq110, empty container and no create/start history are preconditions",
+    "Only the identified expired PENDING GA6 may use this added BLOCKED branch; existing STALE and other transitions are preserved",
+    "Blocked decision, evidence index, never-started observation and signed GRR are exact PR189 published bytes",
+    "GitHub API reverified the original Owner signature and append-only commitment at a timestamp within Root9",
+    "Original commit_gate_result remains unmodified",
+    "One transaction restores original function source, owner, ACL, security and configuration before commit",
+    "Actual rollback run reached seq112, GA6 BLOCKED, active and pending null, charges unchanged and no successor",
+    "Independent post-rollback live read confirmed seq110, GA6 still active, original function hash and unchanged charges"
+  ],
+  "preconditions_for_apply": ["Owner merge publishes this exact helper and review", "Fresh exact preimage still matches", "No new GA or budget in this transaction"],
+  "executed_committed": false,
+  "new_ga_issued": false,
+  "refund": false,
+  "capacity_increase": false,
+  "budget_reassignment": false,
+  "authority_effect": "NONE_UNTIL_EXACT_OWNER_PUBLICATION_AND_CAS"
+}

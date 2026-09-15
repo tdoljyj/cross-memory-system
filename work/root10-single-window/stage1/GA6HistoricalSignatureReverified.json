@@ -1,0 +1,22 @@
+{
+  "state": "ACTUAL_HISTORICAL_GA6_BLOCKED_SIGNATURE_REVERIFIED",
+  "observed_at": "2026-09-15T03:40:54.776Z",
+  "repository": "tdoljyj/cross-memory-system",
+  "private": true,
+  "signature_commit": "344cd2fa4c700320acc3e18ec8cde1052b8417c7",
+  "signature_verification": {
+    "verified": true,
+    "reason": "valid",
+    "committer": "web-flow",
+    "signed_at": "2026-09-15T02:09:16Z"
+  },
+  "commitment_blob": "a4b9b149c8e328aeb6459a20a127061c2e818091",
+  "commitment_sha256": "16775aa9323a7a08c0e931a3cc9b91da24067564439979c30635a073357c28db",
+  "payload_sha256": "3d6fc55e6d2065fb40974161f3c0abb556817989c560e3072a080bea033ccfdd",
+  "publication_pr": 189,
+  "publication_commit": "3694ae41d6e80602ac73da9c6f73667277881d61",
+  "historical_signature_only": true,
+  "current_execution_authority": false,
+  "database_write": false,
+  "ga_issued": false
+}

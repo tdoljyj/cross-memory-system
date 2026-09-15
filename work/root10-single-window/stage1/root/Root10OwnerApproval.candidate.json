@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "kind": "EXPLICIT_OWNER_SINGLE_WINDOW_ROOT10_APPROVAL_CANDIDATE",
+  "state": "OWNER_MERGE_PENDING",
+  "authority_effect": "NONE_UNTIL_VERIFIED_OWNER_WEB_FLOW_MERGE",
+  "repository": "tdoljyj/cross-memory-system",
+  "owner": "tdoljyj",
+  "root_set_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+  "control_trust_root_generation": "ctrgen_48100437d24e448ba01c542ebe1290da",
+  "generation_ordinal": 10,
+  "predecessor": {
+    "generation_id": "ctrgen_308a1dfc185cff633892638581e0a34c",
+    "sha256": "7483e3d240b270d7ad49d9262c63bd49ae0290db08c1dec66aa0de2f239eab60"
+  },
+  "history": {
+    "prefix_sequence": 9,
+    "prefix_digest": "cc08775938519ad1ecbc1e956c7314cd9c07b7230dd9392309c27c6d05d830e8"
+  },
+  "window": {
+    "not_before": "2026-09-15T03:00:00Z",
+    "expires_at": "2026-09-16T03:00:00Z"
+  },
+  "budget": {
+    "preserved_charged_seconds": 11106,
+    "preserved_charged_evidence_bytes": 2470030259,
+    "maximum_cumulative_seconds": 11706,
+    "maximum_cumulative_evidence_bytes": 2604247987,
+    "maximum_series_allocations": 11,
+    "one_new_budget_seconds": 600,
+    "one_new_budget_evidence_bytes": 134217728,
+    "maximum_new_allocations": 1,
+    "maximum_new_ga": 1
+  },
+  "unchanged": {
+    "gate_sha256": "3487d9fc6ccee5478569021961eac93bf5ef6bd4bc2428559b20a44abb9c155a",
+    "profile_sha256": "d1c060b85f0b842a397a478105ea57a208e62eb0a5a2d4c2cd8f93f63eae88f5",
+    "scope_sha256": "115408c69dcb2fa606fb0de34ec86c5239487d0cfa9a73abb267664a2482abe5",
+    "runner_generation": "runnergen_a256855fec9441839105c69b746c5244",
+    "credential_generation": "credgen_bac92a11e7144a3fb9e67f40a6a07d11",
+    "session_generation": "sessiongen_ffb02a907d334b0da0b37bf457a758c2"
+  },
+  "authorized_scope": [
+    "terminate expired never-started GA6 as BLOCKED using existing signed historical result",
+    "retire Root9 and permanently stop seq102 budget inheritance",
+    "publish and activate one complete Root10 generation and its accepted controller",
+    "increase cumulative ceilings by exactly 600 seconds and 134217728 bytes and permit allocation number 11",
+    "run same-source preflight before issuing the sole final GA",
+    "execute the unchanged fixed synthetic qualification within the 600-second authorization lifetime and commit its actual result"
+  ],
+  "explicit_prohibitions": [
+    "refund or reset cumulative counters",
+    "reassign seq102 to the new generation",
+    "second new budget or second formal GA",
+    "retry or GA successor after a formal failure",
+    "change Gate, Profile, Scope, runner, credential or session generation",
+    "production, business Canon, real user payload, real model or paid actions"
+  ],
+  "owner_messages": [
+    "授权新的受限执行窗口，结束 Root9，并创建一个新的单次 Root generation/window；Gate、Profile、Scope 和额度数值不变，允许为新窗口进行一次新预算分配；不退款、不增容、不重分配，预检 20/20 后只签一个正式 GA，失败即终结、不再 successor。",
+    "放宽原先的“不增容”限制，我授权按照你推荐的方案执行"
+  ],
+  "required_merge": {
+    "merged_by": "tdoljyj",
+    "committer": "web-flow",
+    "verified": true,
+    "verification_reason": "valid",
+    "two_parents": true
+  }
+}

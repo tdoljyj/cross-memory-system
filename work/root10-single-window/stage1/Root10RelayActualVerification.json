@@ -1,0 +1,41 @@
+{
+  "state": "ACTUAL_FIXED_WINDOWS_LINUX_RELAY_VERIFIED",
+  "effect_scope": "STDIN_TRANSPORT_ONLY",
+  "observed_at": "2026-09-15 04:20:15 UTC",
+  "coordinator": "PowerShell 7.6.5",
+  "docker_executable": "C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.exe",
+  "container_id": "1c38ec8320a5dfb8ae02d6cd904ddebeeb09676748bc7909868c859fe77dfb43",
+  "image_id": "sha256:c2ee561dddcb5de59ba6d0a1cd8cd0d17ce50c9f916436075771629a6e0dab71",
+  "entry": [
+    "exec",
+    "--interactive",
+    "--tty",
+    "FIXED_CONTAINER_ID",
+    "/usr/bin/dash",
+    "-ec",
+    "FIXED_REVIEWED_SCRIPT"
+  ],
+  "same_session": true,
+  "stdin_is_tty": true,
+  "frame_results": [
+    {
+      "frame": 1,
+      "bytes": 3300049,
+      "sha256": "22f9670d0704c3575112971dd8577ad855c8aab34a532f2ba32d7131e93edb55",
+      "observed_state": "NEED_SECOND_FRAME"
+    },
+    {
+      "frame": 2,
+      "bytes": 71,
+      "sha256": "67276bc6d81591c449418c86ab24f9e7af0f80cdd3599504feb94f1f30200456",
+      "observed_state": "RELAY_PASS"
+    }
+  ],
+  "exit_code": 0,
+  "sql_invoked": false,
+  "ga_issued": false,
+  "budget_allocated": false,
+  "qualification_effect_invoked": false,
+  "formal_pqual_claimed": false,
+  "credentials_disclosed": false
+}
