@@ -81,5 +81,24 @@ The steps, in order, each a separate invocation:
 | --- | --- | --- |
 | 1 | `CREATE` | `PENDING` → `INTENT_RECORDED` → `CREATE_SENT` → `CREATED` |
 | 2 | `START` | `CREATED` → `INTENT_RECORDED` → `START_SENT` → `RUNNING` |
-| 3 | stop | `RUNNING` → `STOP_SENT` → `STOPPED` |
+| 3 | stop (out of band) | `RUNNING` → `STOP_SENT` → `STOPPED` |
 | 4 | `GRR` | `STOPPED` → `DECISION_RESERVED` → `SIGNING` → committed receipt |
+
+**One host window covers CREATE and START.** `bridge.py` compares the START material against the
+dict persisted at CREATE and refuses any difference, so CREATE writes `.host-window.json`
+(exclusive create) and START replays it byte for byte. This is the accepted limitation recorded
+in the activation README: the 600 authorized seconds are anchored host-side at CREATE, while the
+accounting clock the PASS rule uses is anchored at the container's observed `State.StartedAt`.
+START must therefore run more than 36 seconds before `deadline_utc` — the host's 30-second stop
+reserve plus its 6-second start budget — and the driver refuses earlier, naming that reason,
+rather than letting it surface as an opaque host refusal.
+
+**`STOP` is not an operation of this driver.** The entry has no dispatch handshake for it:
+`prepareTrustedToolMaterial` returns a stop-authority object with no intent, no dispatch key and
+no `finishDispatch`, and `invokeFixedHost` refuses `STOP` outright. The container is stopped by
+the host's own watchdog at its deadline, and `STOP_SENT`/`STOPPED` are recorded out of band.
+
+**Freshness is not the bottleneck here.** The controller requires the observation to be at most
+15 seconds old. Measured on this host, the entry's whole preflight — manifest digest, python
+bytes, all 34 declared files, the five dependency package trees, node's bytes — runs in about
+450 ms, so the observation is consumed with seconds to spare.

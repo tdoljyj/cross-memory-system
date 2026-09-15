@@ -16,6 +16,11 @@
 //   node drive-root10-runtime-clock-dispatch.mjs --template TEMPLATE.json --operation CREATE
 //
 // --dry-run stops after building the material and prints what it would send.
+//
+// STOP is deliberately not an operation here. The entry has no dispatch handshake for it:
+// prepareTrustedToolMaterial returns a stop-authority object with no intent, no dispatch key and
+// no finishDispatch, and invokeFixedHost refuses STOP outright. The container is stopped by the
+// host's own watchdog at its deadline, and STOP_SENT/STOPPED are recorded out of band.
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -40,7 +45,12 @@ const ENTRY = path.resolve(import.meta.dirname, 'entry-root10-runtime-clock.sh')
 const RUNTIME_SECONDS = 600;
 
 const operation = valueAfter('--operation');
-need(['CREATE', 'START', 'STOP', 'GRR'].includes(operation), 'FIXED_OPERATION_REQUIRED');
+need(['CREATE', 'START', 'GRR'].includes(operation), 'FIXED_OPERATION_REQUIRED');
+// CREATE mints the host window; START must replay it byte for byte. bridge.py compares the
+// START material against the dict persisted at CREATE and refuses any difference, so the window
+// is written once and read back rather than re-cut -- the accepted limitation recorded in the
+// activation README, not something this driver may quietly work around.
+const windowPath = valueAfter('--window-file') ?? path.resolve(import.meta.dirname, '.host-window.json');
 const templatePath = valueAfter('--template');
 need(templatePath && fs.existsSync(templatePath), 'MATERIAL_TEMPLATE_REQUIRED');
 const url = process.env.CLUED_CONTROL_DATABASE_URL;
@@ -115,11 +125,23 @@ need(hex64(originalAcceptance), 'ORIGINAL_RUNTIME_ACCEPTANCE_DIGEST_REQUIRED');
 
 // Preparation is not runtime: the window is cut for THIS dispatch, never inherited, and the
 // 600 authorized seconds bound only the container's life.
-const preparedAt = Date.now();
 const iso = ms => new Date(ms).toISOString();
-const hostWindow = {prepared_utc: iso(preparedAt), deadline_utc: iso(preparedAt + RUNTIME_SECONDS * 1000)};
+let hostWindow;
+if (operation === 'CREATE') {
+  const preparedAt = Date.now();
+  hostWindow = {prepared_utc: iso(preparedAt), deadline_utc: iso(preparedAt + RUNTIME_SECONDS * 1000)};
+  // Exclusive create: a second CREATE cannot silently re-cut the window a START would replay.
+  fs.writeFileSync(windowPath, JSON.stringify(hostWindow) + '\n', {flag: 'wx'});
+} else {
+  hostWindow = JSON.parse(fs.readFileSync(windowPath, 'utf8'));
+  need(Object.keys(hostWindow).sort().join(',') === 'deadline_utc,prepared_utc', 'EXACT_RECORDED_HOST_WINDOW');
+}
+need(Date.parse(hostWindow.deadline_utc) - Date.parse(hostWindow.prepared_utc) === RUNTIME_SECONDS * 1000, 'EXACT_600_SECOND_HOST_WINDOW');
 need(Date.parse(hostWindow.prepared_utc) >= Date.parse(rcBody.activated_at), 'HOST_WINDOW_BEFORE_ACTIVATION');
 need(Date.parse(hostWindow.deadline_utc) <= Date.parse(rcBody.finalization_expires_at), 'HOST_WINDOW_PAST_FINALIZATION');
+// The host refuses START inside its own stop reserve (30s) plus the start budget (6s). Failing
+// here names the real reason instead of surfacing it as an opaque host refusal.
+if (operation === 'START') need(Date.parse(hostWindow.deadline_utc) - Date.now() > 36000, 'RECORDED_HOST_WINDOW_TOO_LATE_TO_START');
 
 material.operation = operation;
 material.ga_raw = attempt.ga_raw;
@@ -134,7 +156,7 @@ const summary = {
   state: 'ROOT10_RUNTIME_CLOCK_DISPATCH_MATERIAL_READY', authority_effect: 'NONE', qualified: false,
   operation, attempt_phase: attempt.phase, container_id: attempt.container_id,
   current_sequence: execution.current.sequence, charged_seconds: execution.current.charged_seconds,
-  observed_at: observation.row.observed_at, host_window: hostWindow,
+  observed_at: observation.row.observed_at, host_window: hostWindow, host_window_file: windowPath,
   controller_sha256: execution.binding.controller_sha256,
 };
 if (flag('--dry-run')) {process.stdout.write(JSON.stringify(summary, null, 2) + '\n'); process.exit(0);}
