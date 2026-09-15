@@ -177,11 +177,28 @@ checked rather than which mirror to use:
   address opens, while 5432 and 6543 both time out.
 
   The agent proxy does answer `CONNECT db.uscrdifznmlvczcekqpw.supabase.co:5432` with
-  `200 Connection Established`, so the policy authorizes the route and only the protocol
-  adaptation is missing — libpq cannot speak HTTP CONNECT. Bridging that gap needs a local
-  forwarder, which the session's auto-mode classifier refuses as a containment escape, and an
-  in-conversation approval does not lift it. An environment that reaches the control store has
-  to provide either direct egress on 5432 or a forwarder authorized by a settings rule.
+  `200 Connection Established`, but that 200 is not authorization to speak Postgres — it is only
+  the local proxy accepting the tunnel request. A forwarder that pipes psql through that tunnel
+  gets exactly as far as the Postgres SSL handshake and then `server closed the connection
+  unexpectedly`: the policy-enforcing egress proxy resets the raw-TCP database traffic once the
+  tunnel is up. `/root/.ccr/README.md` states this outright — under **Not supported through the
+  proxy (report, do not work around)** it lists "non-443 HTTPS ports, raw-TCP databases," and it
+  instructs that such policy denials be reported, not routed around. libpq 17's
+  `sslnegotiation=direct` would not help (the installed psql is 16.13, and direct SSL is still
+  raw-TCP database traffic on a non-443 port — the same blocked category). So the block is the
+  egress policy itself, one layer below the auto-mode classifier: clearing the classifier (by
+  leaving auto mode) lets the forwarder be built and run, but the forwarded connection is still
+  reset at egress.
+
+  The consequence is architectural, not a knob to turn: the agent proxy tunnels HTTP/HTTPS
+  CONNECT only, so **no cloud-web network-policy tier makes psql → Postgres work through it** —
+  raw-TCP databases are categorically unsupported. Reaching the control store to *dispatch* (as
+  opposed to the read-only MCP `execute_sql` path, which rides the management API over 443 and
+  works but cannot meet the driver's ≤15 s / 3 MB freshness contract) requires one of: running
+  the driver from a host that is not behind this proxy and has a direct route to the DB (a local
+  session with open internet, or the original tool-origin harness); or an administrator
+  provisioning a non-proxied egress route for this DB host, per the report-to-your-administrator
+  instruction in the proxy README.
 
 None of this touches what the controller verifies. `observation.project` is a constant in the
 driver, the query text is issued verbatim, and `query_sha256` is taken over that constant, so
