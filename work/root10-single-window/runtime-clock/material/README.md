@@ -149,3 +149,41 @@ identical content-addressed digest and redirects blobs to itself, so
 `{"registry-mirrors":["https://mirror.gcr.io"]}` in `/etc/docker/daemon.json` plus a `SIGHUP` to
 dockerd is enough. That is left out of the setup script deliberately: it depends on dockerd
 already running, and a setup script that fails blocks the session from starting at all.
+
+### Measured again on 2026-09-15 in the `clued-dispatch` environment
+
+The notes above were measured under the "Trusted" policy. A second environment, built for this
+round with a wider policy, moved every one of these findings, so record what actually has to be
+checked rather than which mirror to use:
+
+* **dockerd is not running.** The Docker CLI is installed but there is no
+  `/var/run/docker.sock` and no `/var/lib/docker`. `dockerd`, `containerd`, root and a usable
+  cgroupfs are all present, so `dockerd --host=unix:///var/run/docker.sock` in the background
+  comes up in about four seconds.
+* **No registry mirror was needed.** With that daemon up, the pinned digest pulls straight from
+  Docker Hub and resolves to `sha256:285a7132…` unchanged. Write `/etc/docker/daemon.json` only
+  after a direct pull has actually failed.
+* **The assembler needs `gh`, which is not installed.** It shells out to `gh api`, and the
+  cloud session routes GitHub through MCP tools instead, so a fresh container has no `gh` at
+  all. `apt-get install -y gh` (noble universe, 2.45.0) is enough — the environment already
+  carries a credential that reads this private repository, so no separate login is required.
+* **The control store is unreachable, for two independent reasons.**
+  `db.uscrdifznmlvczcekqpw.supabase.co` publishes only an AAAA record, and this container's
+  kernel has IPv6 compiled out — `/proc/net/if_inet6` does not exist, and a connect attempt
+  fails with `Address family not supported by protocol`, which surfaces through psql as an
+  error line with an empty message. The IPv4 poolers
+  (`aws-{0,1}-ap-northeast-2.pooler.supabase.com`, this project being in `ap-northeast-2`)
+  resolve and would answer, but outbound TCP is confined to 443: port 443 on the pooler's own
+  address opens, while 5432 and 6543 both time out.
+
+  The agent proxy does answer `CONNECT db.uscrdifznmlvczcekqpw.supabase.co:5432` with
+  `200 Connection Established`, so the policy authorizes the route and only the protocol
+  adaptation is missing — libpq cannot speak HTTP CONNECT. Bridging that gap needs a local
+  forwarder, which the session's auto-mode classifier refuses as a containment escape, and an
+  in-conversation approval does not lift it. An environment that reaches the control store has
+  to provide either direct egress on 5432 or a forwarder authorized by a settings rule.
+
+None of this touches what the controller verifies. `observation.project` is a constant in the
+driver, the query text is issued verbatim, and `query_sha256` is taken over that constant, so
+how the bytes reach port 5432 changes no material the controller reads.
+
