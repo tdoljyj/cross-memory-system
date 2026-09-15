@@ -167,6 +167,19 @@ checked rather than which mirror to use:
   cloud session routes GitHub through MCP tools instead, so a fresh container has no `gh` at
   all. `apt-get install -y gh` (noble universe, 2.45.0) is enough — the environment already
   carries a credential that reads this private repository, so no separate login is required.
+* **That `gh` is NOT enough for the controller, and the difference is not the path.** Measured
+  2026-09-15: after `apt-get install`, the host carries gh **2.45.0** at `/usr/bin/gh`,
+  `2fd925d6…`, 45201664 B. `trusted-github.mjs` and `read-source-blobs-linux.mjs` re-hash
+  `/usr/local/bin/gh` before every call and require gh **2.63.2**, `f687dc93…`, 50098328 B, as
+  `HostProvisioning.json` records. So a symlink or a `PATH` change does not satisfy it — the
+  digest is of different bytes, not of the same binary somewhere else. An activation host must
+  install 2.63.2 at that exact path.
+
+  Until it does, `check-digest-pins.mjs` refuses with `UNEXPLAINED … f687dc937534` in both of
+  those files plus `HOST INCOMPLETE … missing /usr/local/bin/gh`. That is the gate working: its
+  own comment records R20-F3, where this exact output was mistaken for a controller defect. It
+  is the environment, and it is the same two refusals on the live tree and on any candidate,
+  which is what makes it usable as a baseline for comparing the two.
 * **The control store is unreachable, for two independent reasons.**
   `db.uscrdifznmlvczcekqpw.supabase.co` publishes only an AAAA record, and this container's
   kernel has IPv6 compiled out — `/proc/net/if_inet6` does not exist, and a connect attempt
