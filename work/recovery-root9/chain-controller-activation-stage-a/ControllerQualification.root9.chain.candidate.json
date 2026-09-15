@@ -1,0 +1,145 @@
+{
+  "schema_version": 1,
+  "object_type": "ControllerQualification",
+  "state": "ACCEPTED_SCOPED_CONTROLLER_QUALIFICATION",
+  "independent_reviewer": "/root",
+  "qualification_issued": false,
+  "authority_effect": "NONE",
+  "signature_verified": false,
+  "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+  "project_ref": "uscrdifznmlvczcekqpw",
+  "generation_id": "ctrgen_308a1dfc185cff633892638581e0a34c",
+  "predecessor_generation_id": "ctrgen_b060bc520329398936e461af6a477f94",
+  "not_before": "2026-09-14T03:00:00Z",
+  "expires_at": "2026-09-15T03:00:00Z",
+  "purpose": "SKILL_COEXISTENCE_QUALIFICATION",
+  "environment": "ISOLATED_TEST",
+  "controller_digest": "f686f199ade403328dbef9cacb88439421d23f1861d196143af06909a9fab24f",
+  "controller_source_manifest_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/ef3a0f34814dbdd0c9f66f6f2498e78e982969c0",
+    "sha256": "f686f199ade403328dbef9cacb88439421d23f1861d196143af06909a9fab24f"
+  },
+  "scope_digest": "115408c69dcb2fa606fb0de34ec86c5239487d0cfa9a73abb267664a2482abe5",
+  "ga_schema_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/90be47cb00542eafe33d07d0d2678718b3efc845",
+    "sha256": "f7f7e2a011f3f81a005e46f9cf7683edeb010dc7812eadfb4473f6ad5368a1ce"
+  },
+  "status_schema_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/38c9cb810e7b7514c3659388f9640b1ff07a773a",
+    "sha256": "6f9a6799109cbad00b4e615b58f535f91fe0ec4a53790fa744000caa2bf3282e"
+  },
+  "gate_result_receipt_schema_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/d2f04b08278a25bf7005404e0a971080880701b9",
+    "sha256": "292da87d05b1bb00337a2045e3d26f6df0be70aaf520aa519572fa3dec395252"
+  },
+  "issuer_qualification_sha256": {
+    "STATUS": "2bbd9352b79da288b1a161f32cf59fc946e4cd68167b608fbd3d994617df65e9",
+    "GATE_AUTHORIZATION": "751afdf957b8055ea28d5fbc9ae7bcea2b384c0b005bc53263244cf1612d1004",
+    "GATE_RESULT": "ffafc9eb63a2148176dca0e66d5a22bf07ee9f0a5462c966d42a79d247f0088c"
+  },
+  "first_budget_sequence": 102,
+  "independent_of_tested_skill": true,
+  "forbidden_stage_dependencies_excluded": true,
+  "required_stages": [
+    "R05",
+    "R06",
+    "R07",
+    "R08",
+    "R09",
+    "R10"
+  ],
+  "test_evidence_refs": [
+    {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/8b9a4302d99eadf1227b2cc1534d407c6c411586",
+      "sha256": "b651e12553aa91efaffc7666aa1b4d10bac531e6f1c6441f9996762f26657c5f"
+    },
+    {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/304c26134236a848b68025f283b5ea8e8509ca1c",
+      "sha256": "c2e1787aae1e850bdef99d2f0557552581d12fec07db27f37a44e3a7dc1a619c"
+    },
+    {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/27d9d3b0512caf5c4dfbc8015ecca382caec1d2a",
+      "sha256": "85a4082c8b26237ccfbb7f001cd7c2ab04e3e4bc47439929c051bf432f547939"
+    },
+    {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/50bf30b25fffae4031160e8439c69c878f6d5c3c",
+      "sha256": "3d74fc54f4784cb0e80f6456c1f88cbf79e6ec2b1193aa2e934423c03d875170"
+    },
+    {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/27adb2378a13da974a0bd0fa78b08cdb36f1162c",
+      "sha256": "085e72d538e7823fbb56abe6f693bf9ec642779f3e98d126ebe3751180987455"
+    },
+    {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/4b5d6f008a3b32c64b7ab9668e2df976bad4499e",
+      "sha256": "6341dce2ad675eabf5e5c7a032a640f8c2d6e3df14600d8f0d9c262bad629deb"
+    }
+  ],
+  "correction_evidence_refs": [
+    {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/39f01c2f9b8d9ef76e3ab1dbac157fdc08447d55",
+      "sha256": "fb5babbfcc4b5a469605e8a722b29e89166f680a697a56d5c3dada06a3b96382"
+    },
+    {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/4bb7262fbec1d889368682044e30f28606a5387c",
+      "sha256": "5eac0f1f7b40e207b3742ca48ee3e73f911086a4d2f7be3b1404547c0f8de54f"
+    },
+    {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/ce26b5130aa7cb5cd11fd5790747595312f7a349",
+      "sha256": "ba0edadea01000daafd51fb8985870f6e6a946be3a3959102e998f800a2dcb20"
+    },
+    {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/cc0c5ceb8c56921e8100d384c1adc001b61e0ea9",
+      "sha256": "0d5ad3c6ba602e0fb2d795906e7f03f4f4209600c449a100fe76a6ff45dfecd0"
+    },
+    {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/6eba5844c8ff6f3038a0c9425710a7bf3b94f06f",
+      "sha256": "d0695a9c197e4c82dc1fb5fd33705f05c9aed2c3b8bdc83d6b34cf18425d3d65"
+    },
+    {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/177a1b925ad11a988c7f797b877397ff9abb0f32",
+      "sha256": "842f7eb88d8803a4ed56463b7216adfbefdab997fcd15ae612363eb3bfa47f0e"
+    },
+    {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/673689c29ea55c4392ed2659c9903bf57f97b193",
+      "sha256": "1ad07e75fe49572aee5f5caaaa5f7c8a9269fde1a4cc19d4b6bd3ff49dc27cb7"
+    },
+    {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/d2244bb4ea32c88a3300f9a37f7a92530ff8642a",
+      "sha256": "1556f55026e8861a059fada73c8d91127a885232856023aea0203aae03337dc6"
+    }
+  ],
+  "runtime_guard_candidate_sha256": "6ca8468931c69054e8ce5db91f9bf229de2b98ef4e8475fb6f41f096801bd7b1",
+  "source_publication": {
+    "owner_merge_commit": "5fca3828a953520c7e1884a3718a23663cc975fb",
+    "source_commit": "3028314d9bb27166b123ec17fbc975023be9095a",
+    "source_tree": "adec078e6490dd487718ad3f85b2d691b7fd68d5",
+    "merge_tree": "adec078e6490dd487718ad3f85b2d691b7fd68d5",
+    "controller_manifest_entries": 23,
+    "controller_directory_files_including_manifest": 24,
+    "exact_published_files": 4
+  },
+  "candidate_boundary": "ROOT9_CHAIN_STAGE_A_OWNER_PUBLICATION_REQUIRED_BEFORE_ACTIVATION",
+  "postbudget_repair": {
+    "scope": "ROOT9_EXACT_PREDISPATCH_SUCCESSOR_CHAIN_ONLY",
+    "root_generation_changed": false,
+    "failed_ga_id": "ga_6addc4f9764b69ba8c10d258135ae0d4",
+    "failed_ga_sha256": "327bb92ca8a27f8e67eac06daaa27afa5df99814823fe0a2eb69b7c41747641a",
+    "failed_receipt_sha256": "3d6fc55e6d2065fb40974161f3c0abb556817989c560e3072a080bea033ccfdd",
+    "inherited_pending_budget": {
+      "sequence": 102,
+      "uri": "urn:clued:control-evidence:uscrdifznmlvczcekqpw:execution-events:102",
+      "sha256": "51eeb017ff28e5c15848a726de43436fe8421a8c574c0cdbdbce84a1aefc9e2a",
+      "seconds": 600,
+      "evidence_bytes": 134217728,
+      "automatic_refund": false,
+      "inherited": true,
+      "new_allocation": false,
+      "second_budget_allocation": false
+    },
+    "history_rewritten": false,
+    "refund": false,
+    "capacity_change": false,
+    "second_budget_allocation": false,
+    "budget_reassignment": false
+  }
+}
