@@ -7,8 +7,8 @@
   "files": [
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/bridge.py",
-      "sha256": "350224d624568fa652acfa75508035f280d33f8b1caff339baa92fac99664fb7",
-      "bytes": 5121
+      "sha256": "cd25d687502c06ea5e34773582d6bcc90261ecac96763f52292ef6c49b6ed2ea",
+      "bytes": 5616
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/build-linux-manifest.mjs",
@@ -22,8 +22,8 @@
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/check-digest-pins.mjs",
-      "sha256": "c7c767b2b1ae08d02250c54a465322b7a57c03715459020fdbc0e1ca0e3b82fc",
-      "bytes": 45378
+      "sha256": "26e8decf8112501c1d32dbc40cac519f2607cd6ccac8c6db71083cf2927d30d3",
+      "bytes": 46159
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/cli.mjs",
@@ -32,8 +32,8 @@
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/context.mjs",
-      "sha256": "e434a1d309e0f7b735bccaacb443f23be7ea8f9d25bfad760539390b5e782912",
-      "bytes": 25625
+      "sha256": "e0c8e01b67eb73a3f71d6407d2a2ac2ba7de96fd08926af94251dfd14591b8ee",
+      "bytes": 30155
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/dynamic-signing.mjs",
@@ -42,8 +42,8 @@
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/fixed_host.py",
-      "sha256": "cc1ff74983f0a246a50a6cd3d7a5529b49f43bfed3972a5a326aa68ff66a4e7b",
-      "bytes": 15678
+      "sha256": "21a6bba36f2284fc37ce4eb2cc4f372ff2c1a7507f76e1816554d7a9806eb23d",
+      "bytes": 16927
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/gate-result-receipt.root5.schema.json",
@@ -52,18 +52,18 @@
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/grr.mjs",
-      "sha256": "358def694b0a36ad7cdc1e1b05b92ed0d54beb9046f2efc0fa12e8c97ebb3e66",
-      "bytes": 5610
+      "sha256": "1bac8d0099007e5884859be2a6cba7bf0f84ad406736261c793ef63df98d5ed0",
+      "bytes": 6082
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/historical-component-observations.mjs",
-      "sha256": "e2dd30e3076fb055b0cf8e22da857cbecbae15aa2c8bd10a2749e6975e4946d6",
-      "bytes": 6403
+      "sha256": "fd72e20b03bdcabd87b3b21fdea64687dc0b82c3be7ee68f9e06fbb5299653bb",
+      "bytes": 6715
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/host-effect.mjs",
-      "sha256": "08c90a7c1e29bfd5137752ec1765a9c000bf0215f3836f4454e4c28c8e6950a5",
-      "bytes": 2829
+      "sha256": "93586da5092a3b0ad1b5b0b1584b704228500126f08532f166f4c023d55beed0",
+      "bytes": 3142
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/HostProvisioning.json",
@@ -77,8 +77,8 @@
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/parent600.py",
-      "sha256": "8da1c067710859a417a9560fc3456cde4ebe0bf22931b03ecfdf25676d847a49",
-      "bytes": 12243
+      "sha256": "11d8a9da714d50c07c8357746868b0c9ffd2932fbd1091d30e3825fd4d35ce00",
+      "bytes": 15655
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/read-source-blobs-linux.mjs",
@@ -87,18 +87,18 @@
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/request-denials.mjs",
-      "sha256": "ba10acddd93289a3c75d6f14cc35a087cb5f2ba9d8a781ada31a7335375aa696",
-      "bytes": 7918
+      "sha256": "a9b9ad945eafe0b51e5bdf9d69b26a2dd2dfb4411e55e84636f004d5d455e937",
+      "bytes": 7916
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/result-evidence-root10.mjs",
-      "sha256": "3ce716409fae1a313ec19aa55a325dd0fb1876db1bff53fd7306c7e319489afc",
-      "bytes": 10618
+      "sha256": "d15b6c32768815e90b81a8ac12aedd3a7563b3481405d324eecd72d42479bc62",
+      "bytes": 11207
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/result-terminal.mjs",
-      "sha256": "85eee9e8686ff04630fb84cb1ba1e4f5ad77c6c29211e61e5e4897acf2341bb9",
-      "bytes": 8498
+      "sha256": "224780595ddaa0a0b18a7440c5e55a70a9248cdc91c80ad60051f3c212ab32f3",
+      "bytes": 8608
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/root-window-validation.mjs",
@@ -107,8 +107,8 @@
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/root10-single-window.mjs",
-      "sha256": "60a3948fe4ed4b25896471f192559d74e695bd0d61d8c2e46f7d343f2cf511d2",
-      "bytes": 18781
+      "sha256": "207b24f66223b098fc5b6115669baafd0ed4decd035c7af9acc4fee881ea6c32",
+      "bytes": 28541
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/Root10ControllerContract.candidate.json",
@@ -132,8 +132,8 @@
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/selftest-runtime-pins.mjs",
-      "sha256": "e3e344250180db7739e96b74ac4013c564ac26261a68e1ba5d4995350269225d",
-      "bytes": 38654
+      "sha256": "aca4a0c0ed6ca9231b196a8c9283ed021272e3dc1e5be08fcaf5da77762492d2",
+      "bytes": 38786
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/source-publication.mjs",

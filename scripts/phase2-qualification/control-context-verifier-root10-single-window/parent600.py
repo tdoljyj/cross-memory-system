@@ -84,6 +84,48 @@ def root10_window():
     return start, end
 
 
+def effective_window(ga_raw, temporal=None):
+    """Check the exact separately verified supplement; never rewrite GA bytes.
+
+    Owner signature and authentic DB event checks belong to the trusted parent
+    entry. This fixed host additionally rejects mismatched raw data or clocks.
+    """
+    ga = json.loads(ga_raw)
+    if temporal is None:
+        return tuple(timestamp(ga[key]) for key in ('issued_at', 'deadline', 'expires_at'))
+    require(type(temporal) is dict and set(temporal) == {'raw', 'sha256', 'event'}, 'exact_temporal_host_fields')
+    ga_sha = hashlib.sha256(ga_raw.encode('utf-8')).hexdigest()
+    expected_ga = '68afb1e6dc1367729cd6864b9ba9b5d846ab123ff5539d7a646f7fa1df988f78'
+    expected_amendment = '38eb6adca66de464fa88f4b7333649e9555d6a7d6b3fc23cd20ac18a0cfec4a6'
+    require(ga_sha == expected_ga and ga.get('gate_authorization_id') == 'ga_32daa5daf52c4deb8e893c25b08eff38', 'exact_temporal_original_ga')
+    require(type(temporal['raw']) is str and temporal['sha256'] == expected_amendment
+            and hashlib.sha256(temporal['raw'].encode('utf-8')).hexdigest() == expected_amendment, 'exact_temporal_amendment_bytes')
+    amendment = json.loads(temporal['raw'])
+    event = temporal['event']
+    require(type(event) is dict and event.get('sequence') == 118, 'exact_temporal_activation_event')
+    request = event.get('request', {})
+    key = 'root10_same_ga_temporal_continuation_20260915'
+    require(set(request) == {'operation', 'ga_id', 'expected_sequence', 'idempotency_key', 'body'}
+            and request['operation'] == 'TEMPORAL_CONTINUATION_ACTIVATED' and request['expected_sequence'] == 117
+            and request['idempotency_key'] == key and event.get('idempotency_key') == key
+            and request['ga_id'] == ga['gate_authorization_id'], 'exact_temporal_activation_binding')
+    body = request['body']
+    require(type(body) is dict and set(body) == {'activated_at', 'amendment_ref', 'amendment_sha256', 'automatic_retry',
+            'budget_raw_sha256', 'budget_refund', 'budget_sequence', 'effect_deadline', 'finalization_expires_at',
+            'new_binding', 'new_binding_sha256', 'new_budget', 'new_ga', 'old_binding', 'old_binding_sha256', 'prior_ga_sha256'}, 'exact_temporal_event_body')
+    require(body['prior_ga_sha256'] == ga_sha and body['amendment_sha256'] == expected_amendment
+            and body['amendment_ref'].get('sha256') == expected_amendment
+            and body['budget_sequence'] == 117 and body['budget_raw_sha256'] == ga['budget_reservation_ref']['sha256']
+            and all(body[key] is False for key in ('automatic_retry', 'budget_refund', 'new_budget', 'new_ga')), 'exact_temporal_nonexpanding_binding')
+    require(event.get('root_id') == amendment['root_id'] and ga['control_trust_root_generation'] == amendment['control_trust_root_generation']
+            and ga['deadline'] == ga['expires_at'] == amendment['ga_ref']['original_deadline'], 'original_temporal_identity_and_clock_immutable')
+    issued, deadline, expires = (timestamp(body[key]) for key in ('activated_at', 'effect_deadline', 'finalization_expires_at'))
+    owner_start, owner_end = root10_window()
+    require(owner_start <= issued and timestamp(ga['deadline']) < issued and (deadline-issued).total_seconds() == 600
+            and deadline <= expires == owner_end, 'exact_temporal_effect_and_finalization_window')
+    return issued, deadline, expires
+
+
 def reject_constraints(ga, profile, now):
     """Original GA/Profile semantic rejection checks; no signature/acceptance."""
     require(type(ga) is dict and type(profile) is dict, 'missing_ga_profile')

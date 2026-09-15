@@ -233,8 +233,11 @@ import importlib.util, json, secrets
 from datetime import datetime, timezone, timedelta
 s = importlib.util.spec_from_file_location('fh', 'fixed_host.py')
 fh = importlib.util.module_from_spec(s); s.loader.exec_module(fh)
+issued = datetime.now(timezone.utc)
+deadline = (issued+timedelta(seconds=120)).isoformat().replace('+00:00','Z')
 ga = json.dumps({'gate_authorization_id': 'ga_selftest',
-                 'deadline': (datetime.now(timezone.utc)+timedelta(seconds=120)).isoformat().replace('+00:00','Z')})
+                 'issued_at': issued.isoformat().replace('+00:00','Z'),
+                 'deadline': deadline, 'expires_at': deadline})
 fh.prepare(secrets.token_hex(16), ga)
 print('PREPARE_OK')`, cwd);
 // prepare() must still complete -- a failure here is a real failure. But completing does not prove
@@ -464,7 +467,7 @@ const CENSUS = {
   'control-context-verifier-root10-single-window/fixed_host.py': 3,
   'control-context-verifier-root10-single-window/grr.mjs': 0,
   'control-context-verifier-root10-single-window/host-effect.mjs': 2,
-  'control-context-verifier-root10-single-window/parent600.py': 4,
+  'control-context-verifier-root10-single-window/parent600.py': 6,
   // Read at runtime by path, not imported -- invisible until the walk learned to follow new URL().
   // grr.mjs and context.mjs read the first two; bytes() resolves the ProfileDefinitions against
   // profileBase; root-window-validation.mjs reads the trust-root schema.
@@ -479,7 +482,7 @@ const CENSUS = {
   'control-context-verifier-root10-single-window/read-source-blobs-linux.mjs': 3,
   'control-context-verifier-root10-single-window/result-evidence-root10.mjs': 1,
   'control-context-verifier-root10-single-window/result-terminal.mjs': 0,
-  'control-context-verifier-root10-single-window/root10-single-window.mjs': 0,
+  'control-context-verifier-root10-single-window/root10-single-window.mjs': 4,
   'control-context-verifier-root10-single-window/Root10ControllerContract.candidate.json': 20,
   'control-context-verifier-root10-single-window/runtime-dependencies.mjs': 0,
   'control-context-verifier-root10-single-window/RuntimeDependencyManifest.json': 5,

@@ -9,15 +9,16 @@ const sha=v=>crypto.createHash('sha256').update(v).digest('hex');
 // libuv otherwise injects these Windows baseline variables from the parent. Explicit
 // empty entries prevent that implicit inheritance; only four values are nonempty.
 export const fixedBridgeEnvironment=Object.freeze({TEMP:'/tmp',TMP:'/tmp',HOME:'',PATH:'',SHELL:'',USER:'',LOGNAME:'',LANG:'',LC_ALL:'',PWD:'',TERM:'',XDG_RUNTIME_DIR:''});
-export function invokeFixedHost({gaRaw,operation,containerId,deadline}){
+export function invokeFixedHost({gaRaw,operation,containerId,deadline,temporal=null}){
  if(!['CREATE','START'].includes(operation)||!Number.isFinite(deadline)||Date.now()>=deadline)throw Error('FIXED_LIVE_HOST_OPERATION_REQUIRED');
  // Two byte checks, two messages. They shared one until R20-N2: a check can only be proven
  // live on its own if it has an error only it can raise, and with a single message the
  // self-test proved the bridge half while the python half went both unproven and unlisted.
  if(sha(fs.readFileSync(python))!=='f56a588548dd013906ae1dcd1b6faa417f4e204da634ff354840d9643e78ff9e')throw Error('EXACT_PYTHON_BYTES_REQUIRED');
- if(sha(fs.readFileSync(bridge))!=='350224d624568fa652acfa75508035f280d33f8b1caff339baa92fac99664fb7')throw Error('EXACT_PYTHON_BRIDGE_BYTES_REQUIRED');
+ if(sha(fs.readFileSync(bridge))!=='cd25d687502c06ea5e34773582d6bcc90261ecac96763f52292ef6c49b6ed2ea')throw Error('EXACT_PYTHON_BRIDGE_BYTES_REQUIRED');
  const ga=JSON.parse(gaRaw),nonce=sha('clued-fixed-host-v1\0'+ga.gate_authorization_id).slice(0,32);
- const request={operation,nonce,ga_raw:gaRaw,ga_sha256:sha(gaRaw),container_id:operation==='CREATE'?null:containerId};
+ if(temporal!==null&&(Object.keys(temporal).sort().join(',')!=='event,raw,sha256'||sha(temporal.raw)!==temporal.sha256||Date.parse(temporal.event?.request?.body?.effect_deadline)!==deadline))throw Error('EXACT_SEPARATE_TEMPORAL_HOST_INPUT');
+ const request={operation,nonce,ga_raw:gaRaw,ga_sha256:sha(gaRaw),container_id:operation==='CREATE'?null:containerId,...(temporal===null?{}:{temporal_continuation:temporal})};
  const remaining=deadline-Date.now();if(remaining<=0)throw Error('HOST_DEADLINE_ELAPSED_DURING_SOURCE_CHECK');
  const raw=execFileSync(python,['-I','-S','-B','-X','utf8',bridge],{input:JSON.stringify(request)+'\n',encoding:'utf8',env:fixedBridgeEnvironment,timeout:remaining,maxBuffer:262144,windowsHide:true});
  const result=JSON.parse(raw);

@@ -30,7 +30,7 @@ def load(name, relative, expected):
 
 
 parent = load('accepted_fixed_parent', str(BASE / 'parent600.py'),
-              '8da1c067710859a417a9560fc3456cde4ebe0bf22931b03ecfdf25676d847a49')
+              '11d8a9da714d50c07c8357746868b0c9ffd2932fbd1091d30e3825fd4d35ce00')
 observation = load('accepted_observation', 'docker-engineering-observation/observe.py',
                    'cc3498e6dc5eed1f13fb0b84c4dd4df75f5ee76fb5d24d4167852cb92588ef5a')
 MAX_OUTPUT = 128 * 1024
@@ -51,7 +51,7 @@ def source_sha():
     return hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
 
 
-def prepare(nonce, ga_raw):
+def prepare(nonce, ga_raw, temporal=None):
     """Prepare only exact synthetic inputs. This does not accept/authorize a GA."""
     # R17-F1: this is the Linux successor. The platform test and the binary identity both move
     # to the already-ported parent600, leaving observe.py -- shared with the predecessors that
@@ -67,9 +67,11 @@ def prepare(nonce, ga_raw):
     if type(ga_raw) is not str or len(ga_raw.encode()) > 65536:
         raise ValueError('Bounded exact GA bytes required')
     ga = json.loads(ga_raw)
-    remaining = (parent.timestamp(ga['deadline']) - datetime.now(timezone.utc)).total_seconds()
+    effective_start, effective_deadline, _ = parent.effective_window(ga_raw, temporal)
+    now = datetime.now(timezone.utc)
+    remaining = (effective_deadline - now).total_seconds()
     started = time.monotonic()
-    if not 0 < remaining <= MAX_GA_SECONDS:
+    if not effective_start <= now or not 0 < remaining <= MAX_GA_SECONDS:
         raise ValueError('Current bounded deadline required')
     folder, driver, allowed = parent.paths(nonce)
     folder.mkdir(parents=True, exist_ok=False)
@@ -98,9 +100,12 @@ def prepare(nonce, ga_raw):
         output.write(primitive.read_bytes()); output.flush(); os.fsync(output.fileno())
     with (folder / 'ga.raw').open('xb') as output:
         output.write(ga_raw.encode()); output.flush(); os.fsync(output.fileno())
+    temporal_raw = None if temporal is None else json.dumps(temporal, ensure_ascii=False, sort_keys=True, separators=(',', ':')) + '\n'
     record = {'nonce': nonce, 'ga_sha256': hashlib.sha256(ga_raw.encode()).hexdigest(),
               'host_source_sha256': source_sha(), 'started_monotonic': started,
-              'deadline_monotonic': started + remaining, 'deadline_utc': ga['deadline'],
+              'deadline_monotonic': started + remaining, 'deadline_utc': effective_deadline.isoformat().replace('+00:00', 'Z'),
+              'temporal_sha256': None if temporal_raw is None else hashlib.sha256(temporal_raw.encode('utf-8')).hexdigest(),
+              'temporal_continuation': temporal,
               'authority_effect': 'NONE'}
     observation.persist(folder, 'host-intent.json', record)
     return record
@@ -118,8 +123,18 @@ class FixedHost:
             raise ValueError('Exact prepared host input mismatch')
         self.nonce, self.prefix = nonce, prefix
         ga = json.loads((self.folder / 'ga.raw').read_text(encoding='utf-8'))
-        if self.record.get('deadline_utc') != ga.get('deadline'):
-            raise ValueError('Intent deadline differs from exact GA')
+        self.temporal = None
+        temporal_sha = self.record.get('temporal_sha256')
+        if temporal_sha is not None:
+            self.temporal = self.record.get('temporal_continuation')
+            temporal_raw = json.dumps(self.temporal, ensure_ascii=False, sort_keys=True, separators=(',', ':')) + '\n'
+            if hashlib.sha256(temporal_raw.encode('utf-8')).hexdigest() != temporal_sha:
+                raise ValueError('Exact temporal host bytes changed')
+        elif self.record.get('temporal_continuation') is not None:
+            raise ValueError('Unbound temporal host material')
+        _, effective_deadline, _ = parent.effective_window((self.folder / 'ga.raw').read_text(encoding='utf-8'), self.temporal)
+        if parent.timestamp(self.record.get('deadline_utc')) != effective_deadline:
+            raise ValueError('Intent deadline differs from exact original authority pair')
         self.deadline = self.record['deadline_monotonic']
         if type(self.deadline) not in (int, float) or not math.isfinite(self.deadline):
             raise ValueError('Actual host deadline required')

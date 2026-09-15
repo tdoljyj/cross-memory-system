@@ -1,0 +1,21 @@
+{
+  "state": "CANDIDATE_FULL_ENTRY_NO_EFFECT_PASS",
+  "observed_at": "2026-09-15T11:21:48.936Z",
+  "controller_manifest_sha256": "aca4db237a7572426fdf43c384abcc7fd945e5d0554b8a3b01a71959c2102041",
+  "entry_sha256": "b4a9a390798ae3c358112efa2b0306dec507197af7113c85e46958010d110bbc",
+  "command_sha256": "d1b46c9334ca967cf6b28e848df145d77fb5dece32c84c4a4c650415ac911ceb",
+  "image": "sha256:c2ee561dddcb5de59ba6d0a1cd8cd0d17ce50c9f916436075771629a6e0dab71",
+  "network": "none",
+  "docker_socket_mounted": false,
+  "read_only_mounts": true,
+  "stdin_bytes": 0,
+  "status": 1,
+  "signal": null,
+  "error_code": null,
+  "stdout": "{\"state\":\"BLOCKED\",\"reason\":\"BOUNDED_STDIN_INPUT_REQUIRED\",\"capacity_released\":false,\"automatic_retry\":false,\"qualified\":false}\n",
+  "stderr": "",
+  "ga_issued": false,
+  "database_write": false,
+  "formal_pqual": false,
+  "authority_effect": "NONE"
+}
