@@ -93,7 +93,10 @@ def effective_window(ga_raw, temporal=None):
     ga = json.loads(ga_raw)
     if temporal is None:
         return tuple(timestamp(ga[key]) for key in ('issued_at', 'deadline', 'expires_at'))
-    require(type(temporal) is dict and set(temporal) == {'raw', 'sha256', 'event'}, 'exact_temporal_host_fields')
+    require(type(temporal) is dict and set(temporal) in ({'raw', 'sha256', 'event'},
+            {'raw', 'sha256', 'event', 'host_window'}), 'exact_temporal_host_fields')
+    if 'host_window' in temporal:
+        return runtime_clock_window(ga_raw, temporal)
     ga_sha = hashlib.sha256(ga_raw.encode('utf-8')).hexdigest()
     expected_ga = '68afb1e6dc1367729cd6864b9ba9b5d846ab123ff5539d7a646f7fa1df988f78'
     expected_amendment = '38eb6adca66de464fa88f4b7333649e9555d6a7d6b3fc23cd20ac18a0cfec4a6'
@@ -124,6 +127,59 @@ def effective_window(ga_raw, temporal=None):
     require(owner_start <= issued and timestamp(ga['deadline']) < issued and (deadline-issued).total_seconds() == 600
             and deadline <= expires == owner_end, 'exact_temporal_effect_and_finalization_window')
     return issued, deadline, expires
+
+
+def runtime_clock_window(ga_raw, material):
+    """Runtime-clock amendment host window: preparation is not runtime.
+
+    The 600 authorized seconds bound the container's own life via an explicit
+    per-dispatch host window chosen at prepare time, never an administrative
+    instant such as GA issue or amendment activation. Owner signature and
+    authentic DB event checks belong to the trusted parent entry; this fixed
+    host additionally rejects mismatched raw data or clocks.
+    """
+    ga = json.loads(ga_raw)
+    ga_sha = hashlib.sha256(ga_raw.encode('utf-8')).hexdigest()
+    expected_ga = '68afb1e6dc1367729cd6864b9ba9b5d846ab123ff5539d7a646f7fa1df988f78'
+    expected_amendment = 'e92a252a0ab62600d6153ece3e3df92a35bd5680b3d9e2c8f65b6c77ff236402'
+    require(ga_sha == expected_ga and ga.get('gate_authorization_id') == 'ga_32daa5daf52c4deb8e893c25b08eff38',
+            'exact_runtime_clock_original_ga')
+    require(type(material['raw']) is str and material['sha256'] == expected_amendment
+            and hashlib.sha256(material['raw'].encode('utf-8')).hexdigest() == expected_amendment,
+            'exact_runtime_clock_amendment_bytes')
+    amendment = json.loads(material['raw'])
+    event = material['event']
+    key = 'root10_runtime_clock_amendment_20260915'
+    require(type(event) is dict and event.get('sequence') == 119, 'exact_runtime_clock_activation_event')
+    request = event.get('request', {})
+    require(set(request) == {'operation', 'ga_id', 'expected_sequence', 'idempotency_key', 'body'}
+            and request['operation'] == 'RUNTIME_CLOCK_AMENDMENT_ACTIVATED' and request['expected_sequence'] == 118
+            and request['idempotency_key'] == key and event.get('idempotency_key') == key
+            and request['ga_id'] == ga['gate_authorization_id'], 'exact_runtime_clock_activation_binding')
+    body = request['body']
+    require(type(body) is dict and set(body) == {'activated_at', 'amendment_ref', 'amendment_sha256',
+            'automatic_retry', 'budget_raw_sha256', 'budget_refund', 'budget_sequence',
+            'finalization_expires_at', 'max_predispatch_resets', 'new_binding', 'new_binding_sha256',
+            'new_budget', 'new_ga', 'old_binding', 'old_binding_sha256', 'preparation_expires_at',
+            'prior_ga_sha256', 'runtime_seconds'}, 'exact_runtime_clock_event_body')
+    require(body['prior_ga_sha256'] == ga_sha and body['amendment_sha256'] == expected_amendment
+            and body['amendment_ref'].get('sha256') == expected_amendment
+            and body['budget_sequence'] == 117 and body['budget_raw_sha256'] == ga['budget_reservation_ref']['sha256']
+            and body['runtime_seconds'] == 600 and body['max_predispatch_resets'] == 3
+            and all(body[key] is False for key in ('automatic_retry', 'budget_refund', 'new_budget', 'new_ga')),
+            'exact_runtime_clock_nonexpanding_binding')
+    require(event.get('root_id') == amendment['root_id'] and ga['control_trust_root_generation'] == amendment['control_trust_root_generation']
+            and ga['deadline'] == ga['expires_at'], 'original_runtime_clock_identity_and_clock_immutable')
+    activated, prep, final = (timestamp(body[key]) for key in ('activated_at', 'preparation_expires_at', 'finalization_expires_at'))
+    owner_start, owner_end = root10_window()
+    require(owner_start <= activated and timestamp(ga['deadline']) < activated and prep <= final == owner_end,
+            'exact_runtime_clock_windows')
+    hw = material['host_window']
+    require(type(hw) is dict and set(hw) == {'prepared_utc', 'deadline_utc'}, 'exact_runtime_clock_host_window')
+    prepared, deadline = timestamp(hw['prepared_utc']), timestamp(hw['deadline_utc'])
+    require(activated <= prepared < deadline and (deadline - prepared).total_seconds() == 600
+            and deadline <= final, 'exact_runtime_clock_host_window_bounds')
+    return prepared, deadline, final
 
 
 def reject_constraints(ga, profile, now):

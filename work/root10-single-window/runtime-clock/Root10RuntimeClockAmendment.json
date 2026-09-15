@@ -1,0 +1,91 @@
+{
+  "object_type": "Root10RuntimeClockAmendment",
+  "schema_version": "1.0",
+  "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+  "control_trust_root_generation": "ctrgen_48100437d24e448ba01c542ebe1290da",
+  "supersedes": {
+    "object_type": "Root10TemporalContinuationAmendment",
+    "sha256": "38eb6adca66de464fa88f4b7333649e9555d6a7d6b3fc23cd20ac18a0cfec4a6",
+    "activation_sequence": 118,
+    "disposition": "HISTORICAL_ONLY_NO_LONGER_DERIVES_A_DEADLINE"
+  },
+  "why": {
+    "observed": "Budget 117 has now been destroyed twice without a container ever being created. The original GA deadline 2026-09-15T09:37:03.454Z and the temporal effect deadline 2026-09-15T13:01:30.377084Z both elapsed while the attempt was still PENDING with container_id null, so the entire 600 seconds was spent on approval, transport, source pinning and repair, and zero seconds were spent running anything.",
+    "root_cause_of_the_2026_09_15_failure": "FIXED_SHELL_TOOL_BYTES_DRIFT. /usr/bin/sha256sum, /usr/bin/cut and /usr/bin/test on the actual runtime host had moved to coreutils 9.4-3ubuntu6.1, and /usr/local/bin/gh was absent. The refusal was correct. What was not correct is that diagnosing and repairing it consumed the execution budget, because the clock was already running.",
+    "defect_in_the_prior_terms": "per_ga_maximum_seconds was enforced as wall-clock from an administrative instant (GA issue, then amendment activation) rather than as runtime. Preparation, transport, approval and repair were charged against a budget that is meant to bound how long a container runs.",
+    "second_defect": "STOP_SENT was refused once the effect deadline passed. A limit that forbids stopping a running container does not bound runaway execution, it causes it. Stop must never be refused."
+  },
+  "amended_terms": {
+    "preparation_is_not_runtime": {
+      "rule": "Recording an intent, sending CREATE, observing CREATED, and sending START consume no part of the 600 seconds. They are bounded only by preparation_expires_at.",
+      "covers": ["INTENT_RECORDED", "CREATE_SENT", "CREATED", "START_SENT", "PREDISPATCH_RESET"]
+    },
+    "runtime_clock_starts_at_observed_container_start": {
+      "rule": "The 600 seconds begin at the container's own observed start time, taken from the RUNNING evidence, not from any administrative instant. runtime_deadline = started_utc + runtime_seconds and is recorded immutably in the RUNNING event.",
+      "runtime_seconds": 600
+    },
+    "timeout_stops_the_container_and_stop_is_never_refused": {
+      "rule": "The controller must stop the container at or before runtime_deadline. STOP_SENT and STOPPED are never refused on account of any clock. A stop recorded after runtime_deadline is admitted and recorded with overrun true.",
+      "runaway_control": "Overrun is not silently forgiven: an attempt whose observed run exceeded runtime_seconds cannot reserve a PASS decision. The container is stopped and the result is not a pass."
+    },
+    "acceptance_and_archival_are_not_runtime": {
+      "rule": "DECISION_RESERVED, SIGNING and the gate result receipt consume no part of the 600 seconds and are bounded only by finalization_expires_at."
+    },
+    "predispatch_failure_is_repairable_in_place": {
+      "rule": "A failure before the container ever ran returns the attempt to PENDING under the same GA and the same budget sequence 117, and is retried in place. No new GateAuthorization, no new budget, no refund, no counter reset, no capacity increase.",
+      "operation": "PREDISPATCH_RESET",
+      "zero_effect_precondition": "No RUNNING event may exist for this GA. If a container was created but never started, its observation must show State.Running false and State.StartedAt at the zero instant, and the reset clears container_id.",
+      "max_predispatch_resets": 3,
+      "charge": "none"
+    }
+  },
+  "preserved_invariants": {
+    "no_double_charge": "Seconds and evidence bytes were charged once at BUDGET_RESERVED (sequence 117). This amendment changes no charged counter and creates no path that charges again. At most one RUNNING event may exist per GA, so at most one runtime interval is ever chargeable.",
+    "single_active_attempt": "execution_current.active_ga_id remains the single active slot under the same row locks and sequence CAS. A reset never releases it and never admits a concurrent attempt.",
+    "runaway_execution_stopped": "runtime_deadline is derived from the container's own start, the controller must stop by it, and an overrun run cannot pass.",
+    "no_fake_pass": "Every existing evidence requirement is unchanged: exact bytes, sha256 bindings, a real container observation with State.Running false and Status exited, and one complete effect chain. A reset can never produce a terminal result on its own.",
+    "no_new_authority": "No new GA, no new budget, no new trust root, no new generation, no capacity increase, no refund, no automatic retry of an effectful attempt."
+  },
+  "removed_restrictions": {
+    "administrative_wall_clock_on_preparation": "Removed. It bounded the wrong thing and was the direct cause of two destroyed budgets.",
+    "stop_refused_after_deadline": "Removed. It could strand a running container.",
+    "single_amendment_activation_as_the_only_retry_path": "Removed. A zero-effect predispatch failure is now repaired in place under a bounded reset counter, instead of requiring a separately signed amendment for every repair."
+  },
+  "activation": {
+    "operation": "RUNTIME_CLOCK_AMENDMENT_ACTIVATED",
+    "idempotency_key": "root10_runtime_clock_amendment_20260915",
+    "expected_sequence": 118,
+    "activation_sequence": 119,
+    "maximum_activations": 1,
+    "ga_ref": {
+      "ga_id": "ga_32daa5daf52c4deb8e893c25b08eff38",
+      "sha256": "68afb1e6dc1367729cd6864b9ba9b5d846ab123ff5539d7a646f7fa1df988f78"
+    },
+    "budget_ref": {
+      "sequence": 117,
+      "sha256": "669d96057a44ed5e9c3eae9fed6ed8720aae8a2b48eef03761b8e9361433a462",
+      "seconds": 600,
+      "evidence_bytes": 134217728
+    },
+    "preparation_expires_at": "2026-09-16T03:00:00Z",
+    "runtime_seconds": 600,
+    "max_predispatch_resets": 3,
+    "finalization_expires_at": "2026-09-16T03:00:00Z"
+  },
+  "invariants": {
+    "root_unchanged": true,
+    "gate_unchanged": true,
+    "profile_unchanged": true,
+    "scope_unchanged": true,
+    "generations_unchanged": true,
+    "ga_raw_unchanged": true,
+    "budget_raw_unchanged": true,
+    "charged_counters_unchanged": true,
+    "automatic_retry": false,
+    "refund": false,
+    "capacity_increase": false,
+    "new_gate_authorizations": 0,
+    "new_budgets": 0
+  },
+  "authority_effect": "NONE"
+}

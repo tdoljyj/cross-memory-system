@@ -7,8 +7,8 @@
   "files": [
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/bridge.py",
-      "sha256": "cd25d687502c06ea5e34773582d6bcc90261ecac96763f52292ef6c49b6ed2ea",
-      "bytes": 5616
+      "sha256": "1871c60e8a3809af254eef6c89cdfdf6de1f28653ff853409b99a5c744962983",
+      "bytes": 5892
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/build-linux-manifest.mjs",
@@ -22,8 +22,8 @@
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/check-digest-pins.mjs",
-      "sha256": "26e8decf8112501c1d32dbc40cac519f2607cd6ccac8c6db71083cf2927d30d3",
-      "bytes": 46159
+      "sha256": "5fea425f9b4fc5cc222beaca6f5890d595360473c34885bf1653123ee1d09fd5",
+      "bytes": 48083
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/cli.mjs",
@@ -32,8 +32,8 @@
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/context.mjs",
-      "sha256": "e0c8e01b67eb73a3f71d6407d2a2ac2ba7de96fd08926af94251dfd14591b8ee",
-      "bytes": 30155
+      "sha256": "ec0ed4fdf77da70f35947a82084a3531b1277a8a6c712bdb91b2af808bc5f51c",
+      "bytes": 34408
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/dynamic-signing.mjs",
@@ -42,7 +42,7 @@
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/fixed_host.py",
-      "sha256": "21a6bba36f2284fc37ce4eb2cc4f372ff2c1a7507f76e1816554d7a9806eb23d",
+      "sha256": "43a5fc0017042493710dc5cb4da96beb2455238f47ea2e270af6906070860fba",
       "bytes": 16927
     },
     {
@@ -52,23 +52,23 @@
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/grr.mjs",
-      "sha256": "1bac8d0099007e5884859be2a6cba7bf0f84ad406736261c793ef63df98d5ed0",
-      "bytes": 6082
+      "sha256": "df88084bb341738e30d398534a016dc28c675f95d6fa0839fe755475fb1437a8",
+      "bytes": 6523
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/historical-component-observations.mjs",
-      "sha256": "fd72e20b03bdcabd87b3b21fdea64687dc0b82c3be7ee68f9e06fbb5299653bb",
-      "bytes": 6715
+      "sha256": "9120cec8caa1be89eddc54d97b6563bd55e8cefb7f1cfb1677e9edee22b925ba",
+      "bytes": 6918
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/host-effect.mjs",
-      "sha256": "93586da5092a3b0ad1b5b0b1584b704228500126f08532f166f4c023d55beed0",
-      "bytes": 3142
+      "sha256": "8e1059e1c9414bf5eb2038b4b287e396724080cf8a9ef2f7c630e9191d540fb7",
+      "bytes": 3777
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/HostProvisioning.json",
-      "sha256": "5af3f5e94d1c10c4e644ef977ed5d77cf2c729580d2070e552ebf8f327acfffc",
-      "bytes": 5478
+      "sha256": "c6dcc93da5e58f7200a74735b532ce0f0393d3c909cf5a78530dfe437851eb3e",
+      "bytes": 7635
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/original-inputs-blob.mjs",
@@ -77,8 +77,8 @@
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/parent600.py",
-      "sha256": "11d8a9da714d50c07c8357746868b0c9ffd2932fbd1091d30e3825fd4d35ce00",
-      "bytes": 15655
+      "sha256": "7abfd18ff8457c5d3f9c183a949dc9fd877d8d39ebf362296c71731afd2853c2",
+      "bytes": 19712
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/read-source-blobs-linux.mjs",
@@ -97,8 +97,8 @@
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/result-terminal.mjs",
-      "sha256": "224780595ddaa0a0b18a7440c5e55a70a9248cdc91c80ad60051f3c212ab32f3",
-      "bytes": 8608
+      "sha256": "15bd22bd8297445b121b56cfa99b9dccd2fe1e5e7de21c7fa2a9ccf5d01d9ea1",
+      "bytes": 8682
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/root-window-validation.mjs",
@@ -107,8 +107,8 @@
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/root10-single-window.mjs",
-      "sha256": "207b24f66223b098fc5b6115669baafd0ed4decd035c7af9acc4fee881ea6c32",
-      "bytes": 28541
+      "sha256": "f2d900a8fe7c960941b2f6e1e8e5e8331256a4ddd5df2ab7965600451b369298",
+      "bytes": 41724
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/Root10ControllerContract.candidate.json",
@@ -131,9 +131,14 @@
       "bytes": 12173
     },
     {
+      "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/selftest-runtime-clock.mjs",
+      "sha256": "707da2d73e4bd44a2127787e97afd4c2d5e8cd1e7933c71bdf73396715077a54",
+      "bytes": 12295
+    },
+    {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/selftest-runtime-pins.mjs",
-      "sha256": "aca4a0c0ed6ca9231b196a8c9283ed021272e3dc1e5be08fcaf5da77762492d2",
-      "bytes": 38786
+      "sha256": "9fc66b0c28e96e186e6e1a1b52b402406eabed32cd61c8ea6761a5f91584565a",
+      "bytes": 39186
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/source-publication.mjs",
@@ -147,8 +152,8 @@
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/tool-entry.functions.js",
-      "sha256": "b4a9a390798ae3c358112efa2b0306dec507197af7113c85e46958010d110bbc",
-      "bytes": 15615
+      "sha256": "df5a90964f0b8c7e5bb4c4eb0eb0962619f8f95f0459381727aa441a941742c4",
+      "bytes": 16378
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/trusted-github.mjs",
