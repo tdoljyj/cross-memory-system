@@ -1,0 +1,78 @@
+{
+  "schema_version": "clued.multitrack-repository-projection/1",
+  "projection_id": "CLUED-MULTITRACK-REPOSITORY-PROJECTION-v0.1-20260916",
+  "projection_status": "REPOSITORY_PROJECTION_CANDIDATE_NOT_AUTHORITY_NOT_FROZEN",
+  "authority_effect": "NONE",
+  "writeback": "FORBIDDEN",
+  "source": {
+    "snapshot_id": "CLUED-CURRENT-PRIORITY-SNAPSHOT-v0.1.3-SOURCE-BOUND-20260912",
+    "inventory_id": "CLUED-CURRENT-GOVERNANCE-INVENTORY-v0.1.3-SOURCE-BOUND-20260912",
+    "source_status": "BOOTSTRAP_SOURCE_BOUND_CANDIDATE_NOT_CANONICAL_NOT_FROZEN",
+    "source_generated_at_date": "2026-09-12",
+    "source_file_sha256": "bca8fd9244657beabe09a3f815295e09d5207b4709f11ab8722d9a8d58491f5f",
+    "source_file_bytes": 51431,
+    "source_kind": "SOURCE_BOUND_BOOTSTRAP_SNAPSHOT",
+    "freshness": "HISTORICAL_SOURCE_BOUND_REQUIRES_RECONCILIATION_BEFORE_CANONICAL_CURRENT_CLAIM",
+    "connector_local_ids_omitted": true
+  },
+  "repository_semantics": {
+    "canonical_store": "authenticated Clued service backed by Supabase",
+    "repository_role": "development_and_release_control_plane_projection",
+    "projection_is_canonical": false,
+    "projection_can_grant_authority": false,
+    "reverse_write_to_canonical": false,
+    "stable_priority_item_ids_required": true,
+    "derived_markdown_is_read_only": true
+  },
+  "authority_evidence_grades": {
+    "A": "Exact accessible source explicitly establishes the relevant formal/candidate/review status.",
+    "B": "Strong source support exists, but current/adopted revision or original package/receipt still needs reconciliation.",
+    "C": "Owner/current-project governance confirms the state, but exact persistent source/receipt is not yet materialized in accessible storage.",
+    "D": "Derived future/program item; its existence/priority is a governance projection rather than a pre-existing canonical artifact.",
+    "X": "Conflicting currentness/identity evidence; do not resolve by guessing."
+  },
+  "tracks": [
+    {"track_id":"E","name":"工程与平台","frontier":["E-001","E-008"],"note":"E-001 是严格主链第一优先；E-008 仅允许非阻塞 Bootstrap/Inventory 工作。"},
+    {"track_id":"P","name":"产品与体验","frontier":["P-006","P-004"],"note":"可继续评审/设计，但不得抢占 Kernel 主链资源；Product Runtime 主链仍被 E-007 前置阻塞。"},
+    {"track_id":"R","name":"基础研究","frontier":["R-002","R-004","R-005","R-006"],"note":"长期并行，不因工程阶段中断；当前优先 GIKAO + Currentness + Authority + Evidence。"},
+    {"track_id":"B","name":"商业与增长","frontier":["B-002","B-003"],"note":"可做低成本验证与模型维护，但不抢占 Kernel 主工程资源。"}
+  ],
+  "track_files": {
+    "E": {"path":"development/projections/multitrack/tracks/E.items.json","canonical_sha256":"c037de8547b747fdbf957e2f0ea3b80f8056290eecc3c435dd8c53a3a1033ab2","items":18},
+    "P": {"path":"development/projections/multitrack/tracks/P.items.json","canonical_sha256":"b688aa5b4428cc768db2774ca764ddf646fe4384ec5f2ab56041d4d21bd27366","items":14},
+    "R": {"path":"development/projections/multitrack/tracks/R.items.json","canonical_sha256":"f00e9edb201be786ad8e48846065829fd397dcb28e2bf2ed00f7e3026bc9c2dc","items":10},
+    "B": {"path":"development/projections/multitrack/tracks/B.items.json","canonical_sha256":"6ac381acb5132111432ec7d90a432c8580c2744f028d8478a2cc58693f148805","items":7}
+  },
+  "reconciliation_summary": {
+    "total_items": 49,
+    "hard_identity_conflicts": ["E-010"],
+    "source_materialization_required": [],
+    "canonical_or_latest_revision_reconciliation": ["E-010","B-001","E-016","E-018"],
+    "strict_engineering_frontier": "E-001",
+    "nonblocking_bootstrap": "E-008"
+  },
+  "global_resource_arbitration": {
+    "heavy_coding_agent_primary": "E-001",
+    "rule": "Current Kernel Phase 2 strict mainline takes precedence unless explicit authority assigns parallel work."
+  },
+  "known_gaps": [
+    "E-010 Cross-Host/Thin-Open latest adopted/current revision still requires Canonical Freeze Event/Receipt reconciliation.",
+    "Original Authority Event/Receipt references for the newly materialized Owner-fixed projections are not directly queryable in this session.",
+    "Several pre-2026-09-12 baselines have exact files but not all exact Event/Receipt refs are normalized into this Snapshot.",
+    "Repository main does not yet contain the multi-track governance projection.",
+    "Per-agent authorization/visibility/eligible-action projection is not yet encoded in this Bootstrap Snapshot."
+  ],
+  "source_projection_pack": {
+    "package_id": "CLUED-OWNER-FIXED-GOVERNANCE-SOURCE-PROJECTION-PACK-v0.1-20260912",
+    "external_source_path_hint": "/Clued/Governance/Source-Projections/2026-09-12",
+    "authority_effect": "NONE"
+  },
+  "repository_projection": {
+    "projected_at_date": "2026-09-16",
+    "validation_contract": "development/contracts/multitrack/RepositoryProjection.contract.json",
+    "validator": "scripts/governance/validate_multitrack_projection.py",
+    "human_projection": "development/projections/multitrack/CurrentGovernanceInventory.projection.md",
+    "workflow": ".github/workflows/multitrack-governance-projection.yml",
+    "update_rule": "Replace only from a newer source-bound/canonical export through a reviewed repository change; never hand-edit business truth in this projection."
+  }
+}

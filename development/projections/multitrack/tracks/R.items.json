@@ -1,0 +1,21 @@
+{
+  "schema_version": "clued.multitrack-repository-track/1",
+  "source_snapshot_id": "CLUED-CURRENT-PRIORITY-SNAPSHOT-v0.1.3-SOURCE-BOUND-20260912",
+  "source_inventory_id": "CLUED-CURRENT-GOVERNANCE-INVENTORY-v0.1.3-SOURCE-BOUND-20260912",
+  "authority_effect": "NONE",
+  "track_id": "R",
+  "track_name": "基础研究",
+  "frontier": ["R-002","R-004","R-005","R-006"],
+  "items": [
+    {"id":"R-001","track":"R","title":"Clued Foundational Research 长期战略","status":"COMPLETED","mark":"✅","priority":"完成项","depends_on":[],"blocked_by":[],"unlocks":["R-002","R-004","R-005","R-006","R-007"],"evidence_grade":"B","canonical_reconciliation":"ORIGINAL_AUTHORITY_EVENT_RECEIPT_STILL_REQUIRED_FOR_HARD_CANONICAL_PROOF"},
+    {"id":"R-002","track":"R","title":"GIKAO","status":"IN_PROGRESS","mark":"◐","priority":"R0 / Frontier","depends_on":["R-001"],"blocked_by":[],"unlocks":["E-005","P-009","P-011"],"evidence_grade":"C","canonical_reconciliation":"PERSISTENT_RESEARCH_OBJECT_REQUIRED"},
+    {"id":"R-003","track":"R","title":"现实—表征—知识—行动双向闭环研究","status":"IN_PROGRESS","mark":"◐","priority":"R1","depends_on":["R-001"],"blocked_by":[],"unlocks":["GIKAO 扩展","Context/Knowledge 理论"],"evidence_grade":"C","canonical_reconciliation":"PERSISTENT_RESEARCH_OBJECT_REQUIRED"},
+    {"id":"R-004","track":"R","title":"时间 / 版本 / Currentness 理论","status":"READY","mark":"○","priority":"R0 / Frontier","depends_on":["R-001"],"blocked_by":[],"unlocks":["E-006"],"evidence_grade":"B","canonical_reconciliation":"ORIGINAL_AUTHORITY_EVENT_RECEIPT_STILL_REQUIRED_FOR_HARD_CANONICAL_PROOF"},
+    {"id":"R-005","track":"R","title":"Authority / Authorization / Governance 理论","status":"READY","mark":"○","priority":"R0 / Frontier","depends_on":["R-001"],"blocked_by":[],"unlocks":["E-005"],"evidence_grade":"B","canonical_reconciliation":"ORIGINAL_AUTHORITY_EVENT_RECEIPT_STILL_REQUIRED_FOR_HARD_CANONICAL_PROOF"},
+    {"id":"R-006","track":"R","title":"Evidence / Provenance / Epistemic Trust","status":"READY","mark":"○","priority":"R0 / Frontier","depends_on":["R-001"],"blocked_by":[],"unlocks":["E-005","P-011"],"evidence_grade":"B","canonical_reconciliation":"ORIGINAL_AUTHORITY_EVENT_RECEIPT_STILL_REQUIRED_FOR_HARD_CANONICAL_PROOF"},
+    {"id":"R-007","track":"R","title":"Context Science","status":"READY","mark":"○","priority":"R1","depends_on":["R-001"],"blocked_by":[],"unlocks":["P-009","P-010"],"evidence_grade":"B","canonical_reconciliation":"ORIGINAL_AUTHORITY_EVENT_RECEIPT_STILL_REQUIRED_FOR_HARD_CANONICAL_PROOF"},
+    {"id":"R-008","track":"R","title":"Memory / Knowledge Lifecycle","status":"READY","mark":"○","priority":"R1","depends_on":["R-001"],"blocked_by":[],"unlocks":["P-011"],"evidence_grade":"B","canonical_reconciliation":"ORIGINAL_AUTHORITY_EVENT_RECEIPT_STILL_REQUIRED_FOR_HARD_CANONICAL_PROOF"},
+    {"id":"R-009","track":"R","title":"Cross-Agent Continuity / Distributed Cognition","status":"READY","mark":"○","priority":"R1","depends_on":["R-001"],"blocked_by":[],"unlocks":["E-006","Real Cross-Agent E2E"],"evidence_grade":"B","canonical_reconciliation":"ORIGINAL_AUTHORITY_EVENT_RECEIPT_STILL_REQUIRED_FOR_HARD_CANONICAL_PROOF"},
+    {"id":"R-010","track":"R","title":"Decision/Action + Human-Agent Governance + Agent Qualification 研究簇","status":"READY","mark":"○","priority":"R2","depends_on":["R-001"],"blocked_by":[],"unlocks":["Console/Multi-Agent/Action Runtime"],"evidence_grade":"B","canonical_reconciliation":"ORIGINAL_AUTHORITY_EVENT_RECEIPT_STILL_REQUIRED_FOR_HARD_CANONICAL_PROOF"}
+  ]
+}

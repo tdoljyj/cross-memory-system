@@ -50,6 +50,43 @@ powershell -ExecutionPolicy Bypass -File sync-memory.ps1 -Pull -Access PROJECT
 
 `memory.py` 的旧本地写命令以及同步脚本的业务-memory push 路径会 fail closed。Canonical 写入只使用认证的 `clued_record_mutate`、`clued_decision_supersede`、`clued_project_mutate`、`clued_evidence_ingest` 或 `clued_event_append`；成功事务已经生成 Event 与 Receipt，禁止再写一份 Markdown。
 
+## Current Governance Inventory / 多轨治理 Repository Projection
+
+Current Governance Inventory 现在有正式的 **Repository-side read-only projection**，用于研发、审查、CI、Agent 路由与零记忆恢复；它不是第二套 Canonical Store，也不会从 Git 反向写入业务 Canon。
+
+- Manifest：`development/projections/multitrack/CurrentGovernanceInventory.projection.json`
+- 人类可读投影：`development/projections/multitrack/CurrentGovernanceInventory.projection.md`
+- 四轨机器投影：`development/projections/multitrack/tracks/{E,P,R,B}.items.json`
+- 投影合同：`development/contracts/multitrack/RepositoryProjection.contract.json`
+- Fail-closed Validator：`scripts/governance/validate_multitrack_projection.py`
+- CI：`.github/workflows/multitrack-governance-projection.yml`
+
+当前落库来源绑定：
+
+```text
+Snapshot  CLUED-CURRENT-PRIORITY-SNAPSHOT-v0.1.3-SOURCE-BOUND-20260912
+Inventory CLUED-CURRENT-GOVERNANCE-INVENTORY-v0.1.3-SOURCE-BOUND-20260912
+Source SHA bca8fd9244657beabe09a3f815295e09d5207b4709f11ab8722d9a8d58491f5f
+Status    REPOSITORY_PROJECTION_CANDIDATE_NOT_AUTHORITY_NOT_FROZEN
+```
+
+Source-bound Frontier：
+
+| Track | Frontier |
+|---|---|
+| E · 工程与平台 | `E-001`, `E-008` |
+| P · 产品与体验 | `P-006`, `P-004` |
+| R · 基础研究 | `R-002`, `R-004`, `R-005`, `R-006` |
+| B · 商业与增长 | `B-002`, `B-003` |
+
+验证命令：
+
+```bash
+python scripts/governance/validate_multitrack_projection.py
+```
+
+Validator PASS 只证明 Repository 投影内部完整；**不等于 Canonical Currentness 已重新裁决、不等于 Inventory 已冻结，也不授予生产/Kernel/数据库/Provider 执行 Authority。**
+
 ## 发布与回滚
 
 新快照走 `canonical_export → build → validate → expected-current CAS publish`。`published/{snapshot_version}` 不可原地修改。回滚只切换快照指针和只读根/镜像，不删除或倒退已经提交的 Canonical 历史。
