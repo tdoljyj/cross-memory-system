@@ -14,10 +14,10 @@
   "expires_at": "2026-09-16T03:00:00Z",
   "purpose": "SKILL_COEXISTENCE_QUALIFICATION",
   "environment": "ISOLATED_TEST",
-  "controller_digest": "c7594362480dca787fcda8cf3ca3473a60fe8d5e3b83fdece6bdd19dc7d8cac8",
+  "controller_digest": "0fda09bf2cb617ceff50dc6e7f1cabc19a1f7bff4c5ace63d17b2d5563ff40fe",
   "controller_source_manifest_ref": {
-    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/95ba909d19f7ab04a14dd6a459e2019cc956b11a",
-    "sha256": "c7594362480dca787fcda8cf3ca3473a60fe8d5e3b83fdece6bdd19dc7d8cac8"
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/9f1140eaa10ba6eb9f67b14add0808408584171f",
+    "sha256": "0fda09bf2cb617ceff50dc6e7f1cabc19a1f7bff4c5ace63d17b2d5563ff40fe"
   },
   "scope_digest": "115408c69dcb2fa606fb0de34ec86c5239487d0cfa9a73abb267664a2482abe5",
   "ga_schema_ref": {

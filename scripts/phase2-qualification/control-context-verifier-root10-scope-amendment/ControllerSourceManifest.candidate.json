@@ -87,8 +87,8 @@
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/request-denials.mjs",
-      "sha256": "a9b9ad945eafe0b51e5bdf9d69b26a2dd2dfb4411e55e84636f004d5d455e937",
-      "bytes": 7916
+      "sha256": "cb69f43c8fd4e48d61ba8bc96eb73dc42d4e9858b056fdce9f2e00f98dc15dd3",
+      "bytes": 8348
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/result-evidence-root10.mjs",
