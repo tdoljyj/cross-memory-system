@@ -294,7 +294,14 @@ export async function prepareTrustedToolMaterial(material){
   const current=checkCurrentSemantics({gaRaw,operation,observation,runtimeAcceptance:runtime,qualification,admissionPhase:'DISPATCHED_ONCE',expectedQuerySha256:sha(expectedQuery)});
   check(current.sequence===response.sequence,'EXACT_DISPATCH_CURRENT_SEQUENCE');currentWindow(sm.as_of,sm.expires_at,Date.now());
   seriesCheck(currentSource);
-   const actual=invokeFixedHost({gaRaw,operation,containerId:current.attempt.container_id,deadline:current.rc?time(material.runtime_clock.host_window.deadline_utc):current.temporal?.deadline??time(current.ga.deadline),temporal:current.rc?{raw:material.runtime_clock.raw,sha256:material.runtime_clock.sha256,event:current.rc.event,host_window:material.runtime_clock.host_window}:current.temporal?{raw:material.temporal_continuation.raw,sha256:material.temporal_continuation.sha256,event:current.temporal.event}:null});
+  // Which material the fixed host is handed follows which amendment is in force, not
+  // which slot the runtime clock used to occupy. current.rc is scope ?? runtimeClock, so
+  // it is TRUTHY under the scope amendment -- reading material.runtime_clock off the back
+  // of it dereferenced undefined and every CREATE and START died here with a TypeError,
+  // after the host had been taught event 120 and before its caller had. The clock context
+  // and the clock material have to be selected by the same question.
+  const clock=current.scope?material.scope_amendment:material.runtime_clock;
+  const actual=invokeFixedHost({gaRaw,operation,containerId:current.attempt.container_id,deadline:current.rc?time(clock.host_window.deadline_utc):current.temporal?.deadline??time(current.ga.deadline),temporal:current.rc?{raw:clock.raw,sha256:clock.sha256,event:current.rc.event,host_window:clock.host_window}:current.temporal?{raw:material.temporal_continuation.raw,sha256:material.temporal_continuation.sha256,event:current.temporal.event}:null});
   const eventOperation=operation==='CREATE'?'CREATED':'RUNNING';
   const raw=JSON.stringify({ga_id:intent.gaId,ga_sha256:sha(gaRaw),operation:eventOperation,container_id:actual.container_id,observation:actual.observation,started_utc:actual.started_utc,ended_utc:actual.ended_utc})+'\n';
   // Under the runtime-clock amendment the RUNNING event immutably records the

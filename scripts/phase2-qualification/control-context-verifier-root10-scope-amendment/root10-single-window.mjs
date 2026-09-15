@@ -241,7 +241,15 @@ export function readRoot10ScopeContext({gaRaw,execution,descriptor}){
  const fixed=root10ScopeIdentity;
  need(exact(descriptor,scDescriptorKeys),'EXACT_SCOPE_DESCRIPTOR');
  need(ref(descriptor.amendment_ref)&&descriptor.amendment_ref.sha256===fixed.amendment_sha256&&descriptor.activation_operation===fixed.activation_operation&&descriptor.activation_idempotency_key===fixed.activation_key&&descriptor.expected_activation_sequence===fixed.activation_sequence,'EXACT_SCOPE_ACTIVATION_CONTRACT');
- need(descriptor.predecessor_controller_sha256===fixed.predecessor_controller_sha256&&hex(descriptor.continuation_controller_sha256)&&descriptor.continuation_controller_sha256!==fixed.predecessor_controller_sha256,'EXACT_SCOPE_CONTROLLER_FORWARD');
+ // The exclusion list is the runtime clock's, not a shorter one. A scope descriptor
+ // naming the ORIGINAL Root10 controller as its continuation would move the binding
+ // backwards to a controller that predates both amendments while reading as a forward
+ // step, and the shorter list admitted it.
+ need(descriptor.predecessor_controller_sha256===fixed.predecessor_controller_sha256&&hex(descriptor.continuation_controller_sha256)&&descriptor.continuation_controller_sha256!==fixed.predecessor_controller_sha256&&descriptor.continuation_controller_sha256!==fixed.original_controller_sha256,'EXACT_SCOPE_CONTROLLER_FORWARD');
+ // The runtime clock pins these two in EXACT_RUNTIME_CLOCK_GA_BUDGET_WINDOW. The scope
+ // read required them present and never looked at them, so a descriptor could name any
+ // GA and any budget and still be accepted.
+ need(descriptor.prior_ga_ref?.ga_id===fixed.ga_id&&descriptor.prior_ga_ref.sha256===fixed.ga_sha256&&descriptor.budget_ref?.sha256===fixed.budget_sha256,'EXACT_SCOPE_GA_AND_BUDGET_REF');
  need(descriptor.runtime_clock_amendment_sha256===fixed.runtime_clock_amendment_sha256&&descriptor.carries_forward_sequence===fixed.carries_forward_sequence,'EXACT_SCOPE_CARRIES_FORWARD_RUNTIME_CLOCK');
  need(descriptor.preparation_expires_at===fixed.preparation_expires_at&&descriptor.finalization_expires_at===fixed.finalization_expires_at&&descriptor.runtime_seconds===fixed.runtime_seconds&&descriptor.max_predispatch_resets===fixed.max_predispatch_resets,'EXACT_SCOPE_WINDOW_TERMS');
  need(sameIds(descriptor.applicable_test_ids,fixed.applicable_test_ids)&&sameIds(descriptor.out_of_scope_test_ids,fixed.out_of_scope_test_ids),'EXACT_SCOPE_APPLICABLE_SET');

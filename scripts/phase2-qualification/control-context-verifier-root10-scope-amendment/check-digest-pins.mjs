@@ -165,11 +165,15 @@ const CONTROLLER_SOURCES = [
   'original-inputs-blob.mjs', 'parent600.py', 'read-source-blobs-linux.mjs',
   'request-denials.mjs', 'result-terminal.mjs', 'runtime-dependencies.mjs',
   'result-evidence-root10.mjs', 'root10-single-window.mjs', 'root-window-validation.mjs',
-  'selftest-root10-single-window.mjs', 'selftest-runtime-clock.mjs', 'selftest-runtime-pins.mjs', 'source-publication.mjs',
+  'selftest-root10-single-window.mjs', 'selftest-runtime-clock.mjs', 'selftest-runtime-pins.mjs',
+  'selftest-scope-amendment.mjs', 'source-publication.mjs',
   'tool-entry.functions.js', 'trusted-github.mjs',
 ];
 // R22: +1 for selftest-runtime-clock.mjs, the runtime-clock amendment's unit tests.
-if (CONTROLLER_SOURCES.length !== 26) throw new Error('CONTROLLER_SOURCES length changed; declare a new source deliberately, not by accident');
+// R23: +1 for selftest-scope-amendment.mjs, the scope amendment's. It carries no digest
+// literal by construction, same as its runtime-clock counterpart -- every value it uses is
+// read from the frozen identity or from the contract -- so a pin cannot hide inside a test.
+if (CONTROLLER_SOURCES.length !== 27) throw new Error('CONTROLLER_SOURCES length changed; declare a new source deliberately, not by accident');
 // R20-F3. Round 20 ran this gate on a host with no gh installed and got
 // "UNEXPLAINED trusted-github.mjs: f687dc937534 matches no file", exit 1 -- correct fail-closed
 // behaviour, but indistinguishable from a real controller defect, and since build-linux-manifest
@@ -682,6 +686,7 @@ const EXPECTED_PER_FILE = {
   'tool-entry.functions.js': 8, 'trusted-github.mjs': 1,
   // Cross-directory live code, newly scanned (R17-N5). Zero today; declared so it cannot appear
   // unnoticed.
+  'selftest-scope-amendment.mjs': 0,
   'signing.mjs': 0,
 };
 if (!problems.length) {
