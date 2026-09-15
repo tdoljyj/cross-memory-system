@@ -59,8 +59,15 @@
     "E-010 Cross-Host/Thin-Open latest adopted/current revision still requires Canonical Freeze Event/Receipt reconciliation.",
     "Original Authority Event/Receipt references for the newly materialized Owner-fixed projections are not directly queryable in this session.",
     "Several pre-2026-09-12 baselines have exact files but not all exact Event/Receipt refs are normalized into this Snapshot.",
-    "Repository main does not yet contain the multi-track governance projection.",
     "Per-agent authorization/visibility/eligible-action projection is not yet encoded in this Bootstrap Snapshot."
+  ],
+  "source_historical_gaps": [
+    {
+      "gap": "Repository main does not yet contain the multi-track governance projection.",
+      "source_date": "2026-09-12",
+      "resolution": "RESOLVED_BY_CLUED-MULTITRACK-REPOSITORY-PROJECTION-v0.1-20260916",
+      "resolved_on": "2026-09-16"
+    }
   ],
   "source_projection_pack": {
     "package_id": "CLUED-OWNER-FIXED-GOVERNANCE-SOURCE-PROJECTION-PACK-v0.1-20260912",
