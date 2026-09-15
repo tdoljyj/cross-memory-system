@@ -1,0 +1,78 @@
+{
+  "state": "ROOT10_TEMPORAL_ACTIVATION_CANDIDATE_NOT_EXECUTED",
+  "authority_effect": "NONE",
+  "inputs": {
+    "amendment_sha256": "38eb6adca66de464fa88f4b7333649e9555d6a7d6b3fc23cd20ac18a0cfec4a6",
+    "publication_evidence_sha256": "2ec7292b10606525ef7430a7db0ee63908e0dd21e38f7d7eb41b27c111613bf2",
+    "publication": {
+      "commitSha": "71322e8b9eafdaeb885123c47e2759291180fca1",
+      "parentSha": "7770bd05b7b4b5dddecebdb3216cbbd78e2fec2f",
+      "treeSha": "e9f5324113c1edc070ee9d355f9f94b32dc2f364",
+      "artifactPath": "work/root10-single-window/temporal-continuation/Root10TemporalContinuationAmendment.json",
+      "blobSha": "fc0770fc90b90a1fb3bfa167fd3ee75c0db92604"
+    },
+    "new_controller_sha256": "aca4db237a7572426fdf43c384abcc7fd945e5d0554b8a3b01a71959c2102041",
+    "new_qualification_sha256": "e3ded3a817082660fce7edc6e5a1964327cb7e7af413d15d49ce155298788405",
+    "new_runtime_acceptance_sha256": "17a5d20b7e6236cb276c7321955f6d0a5e5f83d9a35e83a570fcef251d59af42"
+  },
+  "pins": {
+    "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+    "generation": "ctrgen_48100437d24e448ba01c542ebe1290da",
+    "ga_id": "ga_32daa5daf52c4deb8e893c25b08eff38",
+    "ga_sha256": "68afb1e6dc1367729cd6864b9ba9b5d846ab123ff5539d7a646f7fa1df988f78",
+    "budget_sequence": 117,
+    "budget_sha256": "669d96057a44ed5e9c3eae9fed6ed8720aae8a2b48eef03761b8e9361433a462",
+    "expected_sequence": 117,
+    "activation_sequence": 118,
+    "finalization_expires_at": "2026-09-16T03:00:00Z",
+    "old_binding": {
+      "gate_id": "G-PREENTRY-SKILL-QUALIFICATION",
+      "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+      "gate_sha256": "3487d9fc6ccee5478569021961eac93bf5ef6bd4bc2428559b20a44abb9c155a",
+      "gate_version": "fixed-synthetic-20260910.v10-env-order-repair",
+      "scope_sha256": "115408c69dcb2fa606fb0de34ec86c5239487d0cfa9a73abb267664a2482abe5",
+      "prior_seconds": 1506,
+      "profile_sha256": "d1c060b85f0b842a397a478105ea57a208e62eb0a5a2d4c2cd8f93f63eae88f5",
+      "controller_sha256": "d01bd55e02614c0d2b6f51f80fe5b56816aecc2f29e753344a4bcac56aaaf559",
+      "prior_evidence_bytes": 322546611,
+      "qualification_sha256": "3cd157e704660dac18d3e6c5fb790f6854f29d644c66d53b968bf94c07f12143",
+      "runtime_acceptance_sha256": "bc6cb688231763f2ad1a56bbc77a22eb7a35cfd749b12e8827f5040582443a88"
+    },
+    "old_function_sha256": {
+      "effective": "9d8278d9845cffab99624d0ab70d592e2398d8d6a906d608ce5bdd0b14d2e7a1",
+      "transition": "96ee8ccbcfaa97ffce03a3a233968bd9f4db04b61cc333dac6977f39d38cd754",
+      "commit": "705915e4c9b930a5d03bfc37fd1b4e690b9f7817f9f6c8dbaeb856742d9067e3"
+    },
+    "new_function_catalog_sha256": {
+      "effective": "685070f12373dad44181b1e965ee5ccb4ba7507f7d4f145552d5c1ae31854044",
+      "transition": "503e95d6eab7dd7389818c0deb1885e8ed85d31c5aacc110b20413d36d0ebb9b",
+      "commit": "022daeea5c9e63099d91bf34df31e8d8729133b2255f66a63421182e6b1767a6"
+    }
+  },
+  "files": {
+    "root10-temporal-activation.apply-once.sql": {
+      "sha256": "d06b3204f021416ee8b5a9a43f4c42deca065dc69abaa2085bc24db604bf7b5a",
+      "bytes": 58380
+    },
+    "root10-temporal-activation.full-rollback.sql": {
+      "sha256": "41969dea864aabb19e1a6f0d5fcbb70d2c049234cb96865660dbfbeb54495144",
+      "bytes": 58382
+    },
+    "root10-temporal-activation.readback.sql": {
+      "sha256": "76c752d70b3870216f8ddab8173daf0f3f05b48102b87626e723888a86dbe8a6",
+      "bytes": 2091
+    },
+    "effective_execution_binding.temporal.sql": {
+      "sha256": "02be79dd98f05cedb33c00bfb615fdfc0a9a4d9260809f930199d0b8f4199ef5",
+      "bytes": 5620
+    },
+    "execution_transition.temporal.sql": {
+      "sha256": "49b24a376a715f5c33e66142782fb9456405582afd2c79e16098ad6472435534",
+      "bytes": 17755
+    },
+    "commit_gate_result.temporal.sql": {
+      "sha256": "7117c67420af6e2375db33c2f56c82b22f02f012a1c4f5c9d1e7a5bb733b4a88",
+      "bytes": 9862
+    }
+  }
+}

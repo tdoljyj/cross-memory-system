@@ -1,0 +1,119 @@
+{
+  "state": "EXACT_FIXED_TOOLHOST_GENERATED_ENTRY_REGRESSION_PASS",
+  "observed_at": "2026-09-15T12:20:34.109Z",
+  "controller_sha256": "aca4db237a7572426fdf43c384abcc7fd945e5d0554b8a3b01a71959c2102041",
+  "source_sha256": "b4a9a390798ae3c358112efa2b0306dec507197af7113c85e46958010d110bbc",
+  "source_bytes": 15615,
+  "manifest_file_count": 33,
+  "fixed_toolhost": {
+    "container_id": "1c38ec8320a5dfb8ae02d6cd904ddebeeb09676748bc7909868c859fe77dfb43",
+    "image_id": "sha256:c2ee561dddcb5de59ba6d0a1cd8cd0d17ce50c9f916436075771629a6e0dab71",
+    "actual_tools": [
+      {
+        "path": "/opt/node22/bin/node",
+        "bytes": 124679552,
+        "sha256": "81925c0995b5c1427b5d538e6a90ca2fdc4daffb786b09af749beaf7369d4e90"
+      },
+      {
+        "path": "/usr/bin/python3.11",
+        "bytes": 6639992,
+        "sha256": "f56a588548dd013906ae1dcd1b6faa417f4e204da634ff354840d9643e78ff9e"
+      },
+      {
+        "path": "/usr/bin/docker",
+        "bytes": 44320674,
+        "sha256": "18c2a16d6aa0331bbd78b93e0a57f344c62bda0be52c054d4ee80e11176b0c30"
+      },
+      {
+        "path": "/usr/local/bin/gh",
+        "bytes": 50098328,
+        "sha256": "f687dc937534f8aa77ff9d2362163c645b5a8cc78297ef1a642c74c56aa48618"
+      },
+      {
+        "path": "/usr/bin/sha256sum",
+        "bytes": 39336,
+        "sha256": "4d2db56c867e5324e0084c9e897f6360d37517de77ac96f2bd31494223d69a60"
+      },
+      {
+        "path": "/usr/bin/cut",
+        "bytes": 39432,
+        "sha256": "74e458a2da3a338c2b9e9a9180c300ed344f214d5f9de79dc39f7fa050d9c476"
+      },
+      {
+        "path": "/usr/bin/test",
+        "bytes": 47552,
+        "sha256": "f789529392eab055ddbd6d4e3f44f6499ce7706ed623078c704406bc9f085b53"
+      },
+      {
+        "path": "/usr/bin/dash",
+        "bytes": 129784,
+        "sha256": "86d31f6fb799e91fa21bad341484564510ca287703a16e9e46c53338776f4f42"
+      }
+    ],
+    "declared_tools": [
+      {
+        "path": "/opt/node22/bin/node",
+        "bytes": 124679552,
+        "sha256": "81925c0995b5c1427b5d538e6a90ca2fdc4daffb786b09af749beaf7369d4e90"
+      },
+      {
+        "path": "/usr/bin/python3.11",
+        "bytes": 6639992,
+        "sha256": "f56a588548dd013906ae1dcd1b6faa417f4e204da634ff354840d9643e78ff9e"
+      },
+      {
+        "path": "/usr/bin/docker",
+        "bytes": 44320674,
+        "sha256": "18c2a16d6aa0331bbd78b93e0a57f344c62bda0be52c054d4ee80e11176b0c30"
+      },
+      {
+        "path": "/usr/local/bin/gh",
+        "bytes": 50098328,
+        "sha256": "f687dc937534f8aa77ff9d2362163c645b5a8cc78297ef1a642c74c56aa48618"
+      },
+      {
+        "path": "/usr/bin/sha256sum",
+        "bytes": 39336,
+        "sha256": "4d2db56c867e5324e0084c9e897f6360d37517de77ac96f2bd31494223d69a60"
+      },
+      {
+        "path": "/usr/bin/cut",
+        "bytes": 39432,
+        "sha256": "74e458a2da3a338c2b9e9a9180c300ed344f214d5f9de79dc39f7fa050d9c476"
+      },
+      {
+        "path": "/usr/bin/test",
+        "bytes": 47552,
+        "sha256": "f789529392eab055ddbd6d4e3f44f6499ce7706ed623078c704406bc9f085b53"
+      },
+      {
+        "path": "/usr/bin/dash",
+        "bytes": 129784,
+        "sha256": "86d31f6fb799e91fa21bad341484564510ca287703a16e9e46c53338776f4f42"
+      }
+    ],
+    "all_eight_pins_match": true
+  },
+  "positive": {
+    "status": 1,
+    "stdout": "{\"state\":\"BLOCKED\",\"reason\":\"BOUNDED_STDIN_INPUT_REQUIRED\",\"capacity_released\":false,\"automatic_retry\":false,\"qualified\":false}\n",
+    "stderr": "",
+    "command_sha256": "d1b46c9334ca967cf6b28e848df145d77fb5dece32c84c4a4c650415ac911ceb"
+  },
+  "negative": {
+    "status": 1,
+    "stdout": "",
+    "stderr": "  File \"<string>\", line 37\n    encoded=(json.dumps(entries,separators=(\",\",\":\"))+\"\n                                                      ^\nSyntaxError: unterminated string literal (detected at line 37)\n",
+    "command_sha256": "ec6fc0fdede7a0ef04a38923a0d2c8173b55cb53726c680e2edb79d66e8bd2d2"
+  },
+  "isolation": {
+    "network": "bridge",
+    "read_only_repository": true,
+    "docker_socket_mounted": true,
+    "stdin": "absent"
+  },
+  "ga_issued": false,
+  "database_write": false,
+  "formal_pqual_claimed": false,
+  "authority_effect": "NONE"
+}

@@ -1,0 +1,102 @@
+{
+  "object_type": "Root10TemporalP2PublicationIndependentReview",
+  "schema_version": "1.0",
+  "decision": "ROOT10_TEMPORAL_OWNER_P2_PUBLICATION_GO",
+  "independent_reviewer": "/root/root9_recovery_review",
+  "reviewed_at": "2026-09-15T12:25:18.290Z",
+  "review_scope": "EXACT_P2_METADATA_AND_TEMPORAL_ACTIVATION_SOURCE_PUBLICATION_ONLY",
+  "subject": {
+    "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+    "root_generation": "ctrgen_48100437d24e448ba01c542ebe1290da",
+    "ga_id": "ga_32daa5daf52c4deb8e893c25b08eff38",
+    "ga_sha256": "68afb1e6dc1367729cd6864b9ba9b5d846ab123ff5539d7a646f7fa1df988f78",
+    "budget_sequence": 117,
+    "budget_sha256": "669d96057a44ed5e9c3eae9fed6ed8720aae8a2b48eef03761b8e9361433a462",
+    "controller_sha256": "aca4db237a7572426fdf43c384abcc7fd945e5d0554b8a3b01a71959c2102041",
+    "amendment_sha256": "38eb6adca66de464fa88f4b7333649e9555d6a7d6b3fc23cd20ac18a0cfec4a6"
+  },
+  "reviewed_artifacts": {
+    "Root10TemporalP2IndependentReview.json": {
+      "sha256": "d1f5069e0f84ffd7377c2cb36dd60beb0787f942518c20949831e2bf8cad8170",
+      "bytes": 4171
+    },
+    "ControllerQualification.root10.temporal.json": {
+      "sha256": "e3ded3a817082660fce7edc6e5a1964327cb7e7af413d15d49ce155298788405",
+      "bytes": 3513
+    },
+    "RuntimeAcceptance.root10.temporal.json": {
+      "sha256": "17a5d20b7e6236cb276c7321955f6d0a5e5f83d9a35e83a570fcef251d59af42",
+      "bytes": 51054
+    },
+    "Root10TemporalP2MetadataBuild.json": {
+      "sha256": "aa5b8e4d8107f779843b815ea294efa7c06daf572c9284cc072e023c06397936",
+      "bytes": 3270
+    },
+    "build-root10-temporal-activation.mjs": {
+      "sha256": "53054e6b9e6ab9386cfaeecc18f2cc90169f7628deb2fdd1ca6e0f2e61210fec",
+      "bytes": 39269
+    },
+    "root10-temporal-activation.apply-once.sql": {
+      "sha256": "d06b3204f021416ee8b5a9a43f4c42deca065dc69abaa2085bc24db604bf7b5a",
+      "bytes": 58380
+    },
+    "root10-temporal-activation.full-rollback.sql": {
+      "sha256": "41969dea864aabb19e1a6f0d5fcbb70d2c049234cb96865660dbfbeb54495144",
+      "bytes": 58382
+    },
+    "manifest.json": {
+      "sha256": "2e7012bbcbe69bb15656eb8338cf9f98a5919c35cbe8dc493dd74514b47d7545",
+      "bytes": 3917
+    },
+    "root10-temporal-activation.readback.sql": {
+      "sha256": "76c752d70b3870216f8ddab8173daf0f3f05b48102b87626e723888a86dbe8a6",
+      "bytes": 2091
+    },
+    "effective_execution_binding.temporal.sql": {
+      "sha256": "02be79dd98f05cedb33c00bfb615fdfc0a9a4d9260809f930199d0b8f4199ef5",
+      "bytes": 5620
+    },
+    "execution_transition.temporal.sql": {
+      "sha256": "49b24a376a715f5c33e66142782fb9456405582afd2c79e16098ad6472435534",
+      "bytes": 17755
+    },
+    "commit_gate_result.temporal.sql": {
+      "sha256": "7117c67420af6e2375db33c2f56c82b22f02f012a1c4f5c9d1e7a5bb733b4a88",
+      "bytes": 9862
+    },
+    "Root10TemporalFullRollback.actual.json": {
+      "sha256": "02695ffbc7fe0bd09eb2ec71262ccbccca6d759335de3266188f0a3cb86d66e1",
+      "bytes": 15438
+    },
+    "Root10TemporalDeployedEntryRegression.actual.json": {
+      "sha256": "00958be4d983177520b305596c2ca417821b361cc7f09500d2ae034f8baf91af",
+      "bytes": 4192
+    }
+  },
+  "findings": {
+    "corrected_catalog_digest_derivation_verified": true,
+    "actual_full_rollback_exit_zero_and_all_postconditions_passed": true,
+    "actual_post_rollback_readback_restored_exact_sequence117_preimage": true,
+    "actual_post_rollback_live_event118_absent": true,
+    "actual_post_rollback_original_function_bytes_owner_acl_config_restored": true,
+    "root_gate_profile_scope_generations_unchanged": true,
+    "old_ga_raw_signature_and_expiry_unchanged": true,
+    "new_ga": false,
+    "new_budget": false,
+    "refund": false,
+    "capacity_increase": false,
+    "reassignment": false,
+    "formal_pqual_created": false,
+    "persistent_activation_at_review_time": false
+  },
+  "publication_boundary": "GO applies only to publishing these exact reviewed bytes under Owner review. Publication does not activate the controller, mutate PostgreSQL, sign or issue a GA, run Docker, create PQUAL, or create GRR.",
+  "activation_prerequisites": [
+    "Verify an actual Owner merge and immutable Git blobs byte-for-byte against this exact reviewed artifact set.",
+    "Immediately before execution, obtain a fresh read-only expected-current preimage matching sequence 117, the exact original PENDING GA with attempt sequence 0 and zero GA events, no event 118, exact budget 117 and unchanged charges/counts, exact old effective binding, and exact old function catalog and security metadata.",
+    "Execute only root10-temporal-activation.apply-once.sql SHA d06b3204f021416ee8b5a9a43f4c42deca065dc69abaa2085bc24db604bf7b5a once; any failed assertion must roll back the whole transaction; then perform exact post-commit readback for sequence 118, the event-mapped three-field binding, new function catalog hashes, and unchanged budget/capacity/allocation invariants."
+  ],
+  "superseded": [
+    "Do not publish or execute the earlier catalog-mispinned apply/full-rollback pair 66447468e7673763e3890ef343c5a21a018fee00041de36850237e8f5b8ab341 / 6c74c1f3032caf57d0e08fb1e699b1f678469bc7ea8fdbe794050ca3dcd15a93."
+  ],
+  "blockers": []
+}

@@ -1,0 +1,86 @@
+{
+  "object_type": "Root10TemporalP2IndependentReview",
+  "schema_version": "1.0",
+  "decision": "ROOT10_TEMPORAL_P2_METADATA_GO",
+  "independent_reviewer": "/root/root9_recovery_review",
+  "reviewed_at": "2026-09-15T12:10:02.428Z",
+  "review_scope": "ACTUAL_P2_UNSIGNED_METADATA_ONLY",
+  "subject": {
+    "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+    "control_trust_root_generation": "ctrgen_48100437d24e448ba01c542ebe1290da",
+    "p1_owner_merge_commit": "71322e8b9eafdaeb885123c47e2759291180fca1",
+    "p1_owner_merge_tree": "e9f5324113c1edc070ee9d355f9f94b32dc2f364",
+    "continuation_controller_sha256": "aca4db237a7572426fdf43c384abcc7fd945e5d0554b8a3b01a71959c2102041",
+    "amendment_sha256": "38eb6adca66de464fa88f4b7333649e9555d6a7d6b3fc23cd20ac18a0cfec4a6"
+  },
+  "reviewed_artifacts": {
+    "ControllerQualification.root10.temporal.json": {
+      "sha256": "e3ded3a817082660fce7edc6e5a1964327cb7e7af413d15d49ce155298788405",
+      "bytes": 3513
+    },
+    "RuntimeAcceptance.root10.temporal.json": {
+      "sha256": "17a5d20b7e6236cb276c7321955f6d0a5e5f83d9a35e83a570fcef251d59af42",
+      "bytes": 51054
+    },
+    "Root10TemporalP2MetadataBuild.json": {
+      "sha256": "aa5b8e4d8107f779843b815ea294efa7c06daf572c9284cc072e023c06397936",
+      "bytes": 3270
+    },
+    "Root10TemporalP2ActualBuildVerification.json": {
+      "sha256": "ad37f3f90a4d368b82fdd374468cf580d725d6f077862c87393fd0a6ca23386c",
+      "bytes": 2962
+    },
+    "P1-source-publication.actual.json": {
+      "sha256": "84ff846c8a6c33fe350e929bf12ee83decaa8b0fb38ed518dbf991f4cb26be60",
+      "bytes": 1333
+    },
+    "P1-amendment-publication.actual.json": {
+      "sha256": "2ec7292b10606525ef7430a7db0ee63908e0dd21e38f7d7eb41b27c111613bf2",
+      "bytes": 1336
+    }
+  },
+  "build_chain": {
+    "builder_sha256": "52dfaea8092fb26621cefd1bb158e4364c6ff726e7992cfd1ef74edfd9fa6c40",
+    "actual_checker_adapter_sha256": "8f093412cf0c83bee9ec829501a238d63df7e34403d7f4b65c9a4a393e759fa9",
+    "builder_output_reproduced_byte_exact": true,
+    "actual_published_context_check_calls": 1,
+    "actual_published_context_check_exit_code": 0,
+    "actual_published_context_check_stdout_sha256": "a74bc4ec8c142d5e276c4542b04979288f3f5589f8f794c07ac5de116aae9489",
+    "actual_published_context_check_stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "findings": {
+    "p1_owner_publication_verified": true,
+    "p1_source_and_amendment_exact_bytes_bound": true,
+    "controller_manifest_file_count": 33,
+    "controller_manifest_closure_bound_to_p1_tree": true,
+    "original_ga_id": "ga_32daa5daf52c4deb8e893c25b08eff38",
+    "original_ga_sha256": "68afb1e6dc1367729cd6864b9ba9b5d846ab123ff5539d7a646f7fa1df988f78",
+    "original_ga_raw_and_signature_unchanged": true,
+    "original_status29_sha256": "72f6c8a2c4c5b5621814c8d4515e2821eb39c11247e318684d36d2e2be8afe83",
+    "original_status29_and_late_bound_fields_unchanged": true,
+    "budget_sequence": 117,
+    "budget_sha256": "669d96057a44ed5e9c3eae9fed6ed8720aae8a2b48eef03761b8e9361433a462",
+    "budget_unchanged": true,
+    "root_gate_profile_scope_and_generations_unchanged": true,
+    "expected_ga_unchanged": true,
+    "formal_test_ids_unchanged": true,
+    "pqual18_remains_negative_guard_not_formal_result": true,
+    "new_ga": false,
+    "new_budget": false,
+    "refund": false,
+    "capacity_increase": false,
+    "reassignment": false,
+    "automatic_retry": false,
+    "formal_pqual_result_created": false,
+    "signature_created": false,
+    "database_write": false,
+    "network_mutation": false,
+    "execution_container_effect": false
+  },
+  "limitations": [
+    "This review approves only publication of the three exact unsigned P2 metadata artifacts.",
+    "It does not approve database activation, SQL execution, GA issue or reissue, signing, Docker execution, PQUAL, GRR, Entry, model, or production authority.",
+    "The first actual SQL full-rollback candidate failed its postimage assertion and rolled back completely; SQL activation remains separately blocked until a corrected candidate passes exact rollback and fresh readback review."
+  ],
+  "blockers": []
+}
