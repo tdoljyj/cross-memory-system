@@ -4,7 +4,7 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {sha,readBlobRef,verifyOwnerMergeArtifact} from './trusted-github.mjs';
 import {checkGAShape,time} from './context.mjs';
-import {readRoot10TemporalContext,readRoot10RuntimeClockContext} from './root10-single-window.mjs';
+import {readRoot10TemporalContext,readRoot10RuntimeClockContext,readRoot10ScopeContext} from './root10-single-window.mjs';
 const repo=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../../..');
 const need=(v,m)=>{if(!v)throw Error(m);};
 const cases=['PQUAL-11','PQUAL-13','PQUAL-15','PQUAL-16','PQUAL-17'];
@@ -16,10 +16,14 @@ export function revalidateHistoricalComponents({gaRaw,state,runtimeAcceptance}){
  need(accepted.state==='ACCEPTED_EXACT_PREENTRY_CONTROLLER_RUNTIME'&&accepted.independent_reviewer==='/root','ACTUAL_INDEPENDENT_RUNTIME_ACCEPTANCE');
  const entries=accepted.accepted_subject.historical_component_evidence;
  need(Array.isArray(entries)&&entries.length===cases.length&&new Set(entries.map(e=>e.test_id)).size===cases.length&&cases.every(id=>entries.some(e=>e.test_id===id)),'EXACT_FIVE_COMPONENT_CASE_BINDINGS');
- const rc=readRoot10RuntimeClockContext({gaRaw,execution:state,descriptor:accepted.accepted_subject.runtime_clock});
- const temporal=rc?null:readRoot10TemporalContext({gaRaw,execution:state,descriptor:accepted.accepted_subject.temporal_continuation});
+ // Whichever amendment is in force supplies the executing controller digest. The
+ // scope amendment supersedes the runtime clock, which supersedes the temporal
+ // continuation; with none declared the original signed GA digest still governs.
+ const scope=readRoot10ScopeContext({gaRaw,execution:state,descriptor:accepted.accepted_subject.scope_amendment});
+ const rc=scope?null:readRoot10RuntimeClockContext({gaRaw,execution:state,descriptor:accepted.accepted_subject.runtime_clock});
+ const temporal=(scope||rc)?null:readRoot10TemporalContext({gaRaw,execution:state,descriptor:accepted.accepted_subject.temporal_continuation});
  const manifestRaw=fs.readFileSync(new URL('ControllerSourceManifest.candidate.json',import.meta.url),'utf8');
- need(sha(manifestRaw)===(rc?rc.descriptor.continuation_controller_sha256:temporal?temporal.descriptor.continuation_controller_sha256:ga.controller_digest)&&sha(manifestRaw)===state.binding.controller_sha256,'CURRENT_EXACT_CONTROLLER_SOURCE');
+ need(sha(manifestRaw)===(scope?scope.descriptor.continuation_controller_sha256:rc?rc.descriptor.continuation_controller_sha256:temporal?temporal.descriptor.continuation_controller_sha256:ga.controller_digest)&&sha(manifestRaw)===state.binding.controller_sha256,'CURRENT_EXACT_CONTROLLER_SOURCE');
  const manifest=JSON.parse(manifestRaw),results=[];
  for(const binding of entries){
   need(time(binding.original_observed_at)<Date.now(),'ACTUAL_ORIGINAL_OBSERVATION_TIME');
