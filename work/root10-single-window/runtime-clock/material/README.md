@@ -180,6 +180,39 @@ checked rather than which mirror to use:
   own comment records R20-F3, where this exact output was mistaken for a controller defect. It
   is the environment, and it is the same two refusals on the live tree and on any candidate,
   which is what makes it usable as a baseline for comparing the two.
+* **The pin is satisfiable, and this is how.** The official release asset hashes to the pinned
+  value exactly — no build, no patching:
+
+  ```
+  curl -sSL -o gh.tgz https://github.com/cli/cli/releases/download/v2.63.2/gh_2.63.2_linux_amd64.tar.gz
+  tar xzf gh.tgz gh_2.63.2_linux_amd64/bin/gh
+  sha256sum gh_2.63.2_linux_amd64/bin/gh
+  #   f687dc937534f8aa77ff9d2362163c645b5a8cc78297ef1a642c74c56aa48618   (50098328 bytes)
+  install -m 0755 gh_2.63.2_linux_amd64/bin/gh /usr/local/bin/gh
+  ```
+
+  Measured 2026-09-15 through the proxy in this container: digest and byte count both match
+  `HostProvisioning.json`. After it, `check-digest-pins.mjs` reports `digest pins consistent
+  (69 literal(s) accounted for, 0 unexplained)` instead of refusing.
+* **`selftest-runtime-pins.mjs`'s six failures were this, not Docker.** I said twice that they
+  needed a running `dockerd`. That was wrong, and the mechanism is worth writing down because
+  the message does not point at it. `bothWays()` mutates one pin and then requires the sandbox
+  to settle with the injected digest as its ONLY complaint (`repair(injected)`), and afterwards
+  to settle with no complaint at all (`repair(null)`, which additionally requires exit status
+  0). While `/usr/local/bin/gh` is absent, `f687dc93` is unexplained on every one of those runs,
+  so both conditions fail for reasons that have nothing to do with the pin under test — hence
+  "did not settle … so the probe below would be measuring something else", which is the check
+  correctly refusing to measure a confounded sandbox.
+
+  Demonstrated rather than argued, in this order: `dockerd` up and `gh` absent → the same six
+  failures; `gh` installed → `runtime pin self-test passed`; `dockerd` then killed and the suite
+  re-run → **still passes**. Docker is not required for it. One intermediate run appeared to
+  show four failures without Docker; that run was started from the staging directory, where
+  `check-digest-pins` exits non-zero on the foreign-directory references, so `repair(null)`
+  could never return true. Confounded, discarded, re-run through the landed harness.
+
+  `dockerd` is still required for the actual container operation (see the entry above); it is
+  simply not what these six were about.
 * **The control store is unreachable, for two independent reasons.**
   `db.uscrdifznmlvczcekqpw.supabase.co` publishes only an AAAA record, and this container's
   kernel has IPv6 compiled out — `/proc/net/if_inet6` does not exist, and a connect attempt
