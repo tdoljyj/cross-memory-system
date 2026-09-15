@@ -1,0 +1,52 @@
+{
+  "state": "ROOT10_TEMPORAL_P2_ACTUAL_BUILD_VALIDATED_NO_EFFECT",
+  "fixed_ga_check": {
+    "status": 0,
+    "signal": null,
+    "stdout": "{\"state\":\"ACTUAL_PUBLISHED_CONTEXT_FIXED_GA_FIELDS_PASS\",\"ga_sha256\":\"68afb1e6dc1367729cd6864b9ba9b5d846ab123ff5539d7a646f7fa1df988f78\",\"expected_ga_unchanged\":true,\"authority_effect\":\"NONE\"}\n",
+    "stdout_sha256": "a74bc4ec8c142d5e276c4542b04979288f3f5589f8f794c07ac5de116aae9489",
+    "stderr": "",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "checker_source_sha256": "2b9bd7871598591dcef78218b693ebdc6745de1108c3cc72e67abdc5d0521ec8",
+    "docker_executable": "C:/Program Files/Docker/Docker/resources/bin/docker.exe",
+    "docker_arguments": [
+      "run",
+      "--rm",
+      "--interactive",
+      "--pull",
+      "never",
+      "--network",
+      "none",
+      "--read-only",
+      "--mount",
+      "type=bind,source=C:\\Users\\17531\\AppData\\Local\\Temp\\clued-root10-entry-correction-20260915,target=/repo,readonly",
+      "--mount",
+      "source=clued-root9-node-modules,target=/repo/apps/clued-cloud,readonly",
+      "sha256:c2ee561dddcb5de59ba6d0a1cd8cd0d17ce50c9f916436075771629a6e0dab71",
+      "/opt/node22/bin/node",
+      "--input-type=module",
+      "-e",
+      "import fs from 'node:fs';import crypto from 'node:crypto';const x=JSON.parse(fs.readFileSync(0,'utf8'));const m=await import('/repo/scripts/phase2-qualification/control-context-verifier-root10-single-window/context.mjs?root10-temporal-p2-actual');m.checkFixedGAFields(x.ga,x.subject);const sha=r=>crypto.createHash('sha256').update(r).digest('hex');process.stdout.write(JSON.stringify({state:'ACTUAL_PUBLISHED_CONTEXT_FIXED_GA_FIELDS_PASS',ga_sha256:sha(JSON.stringify(x.ga)+'\\n'),expected_ga_unchanged:JSON.stringify(x.subject.expected_ga)===JSON.stringify(x.original_expected_ga),authority_effect:'NONE'})+'\\n');"
+    ],
+    "image": "sha256:c2ee561dddcb5de59ba6d0a1cd8cd0d17ce50c9f916436075771629a6e0dab71",
+    "network": "none",
+    "root_filesystem": "read_only",
+    "repository_mount": "read_only",
+    "dependency_volume_mount": "read_only"
+  },
+  "checker_calls": 1,
+  "adapter_sha256": "8f093412cf0c83bee9ec829501a238d63df7e34403d7f4b65c9a4a393e759fa9",
+  "builder_sha256": "52dfaea8092fb26621cefd1bb158e4364c6ff726e7992cfd1ef74edfd9fa6c40",
+  "config_sha256": "9d3765f64ea5e8fec2b16ccb00239047a0f08a924b2a8a568c2334679e657ce6",
+  "network_mutation": false,
+  "database_write": false,
+  "formal_execution_container_effect": false,
+  "ga_generated": false,
+  "status_generated": false,
+  "authority_effect": "NONE",
+  "invocation": {
+    "cwd": "C:\\Users\\17531\\Documents\\Codex\\2026-09-14\\cas-pass-exact-root9-seq104-pending102",
+    "command": "node work/new-window/manual-continuation/temporal-amendment/metadata/run-actual-p2-build.mjs work/new-window/manual-continuation/temporal-amendment/metadata/config.actual.json",
+    "outer_exit_code": 0
+  }
+}

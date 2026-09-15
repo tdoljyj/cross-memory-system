@@ -1,0 +1,30 @@
+{
+  "state": "ACTUAL_ROOT10_TEMPORAL_AMENDMENT_OWNER_PUBLICATION_VERIFIED",
+  "repository": "tdoljyj/cross-memory-system",
+  "private": true,
+  "pr": 195,
+  "url": "https://github.com/tdoljyj/cross-memory-system/pull/195",
+  "base_ref": "main",
+  "merged_at": "2026-09-15T11:55:41Z",
+  "merged_by": "tdoljyj",
+  "committer": "web-flow",
+  "verified": true,
+  "verification_reason": "valid",
+  "verification_signature_sha256": "cd01aa8ab44feeddf6b4a1567a7b1dd195fd7a959bf008506093daa4451c1875",
+  "verification_payload_sha256": "3bf96a9d52bfb359d6a1b5e70fe1e1b561452e5390f7819e268efe01e463b836",
+  "signed_at": "2026-09-15T11:55:41Z",
+  "merge_commit": "71322e8b9eafdaeb885123c47e2759291180fca1",
+  "tree": "e9f5324113c1edc070ee9d355f9f94b32dc2f364",
+  "parents": [
+    "7770bd05b7b4b5dddecebdb3216cbbd78e2fec2f",
+    "51f03085aeddcfe4f3821fa4d7c744f67acc8b12"
+  ],
+  "observed_at": "2026-09-15T11:56:13.159Z",
+  "artifact": {
+    "artifactPath": "work/root10-single-window/temporal-continuation/Root10TemporalContinuationAmendment.json",
+    "blobSha": "fc0770fc90b90a1fb3bfa167fd3ee75c0db92604",
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/fc0770fc90b90a1fb3bfa167fd3ee75c0db92604",
+    "sha256": "38eb6adca66de464fa88f4b7333649e9555d6a7d6b3fc23cd20ac18a0cfec4a6"
+  },
+  "authority_effect": "NONE"
+}
