@@ -12,7 +12,7 @@ import boundedCrypto from 'node:crypto';import {isDeepStrictEqual as boundedSame
 import {createRequire} from 'node:module';
 import {sha,readBlobRef,verifyOwnerMergeArtifact,verifyDynamicPayload} from './trusted-github.mjs';
 import {validateRootShape,canonicalDigest,signaturePayloadDigest} from './root-window-validation.mjs';
-import {loadRoot10ControllerContract,checkRoot10RuntimeBinding,checkRoot10SingleWindowSeries,readRoot10TemporalContext,checkRoot10TemporalTime,root10TemporalIdentity,readRoot10RuntimeClockContext,checkRoot10RuntimeClockTime,root10RuntimeClockIdentity} from './root10-single-window.mjs';
+import {loadRoot10ControllerContract,checkRoot10RuntimeBinding,checkRoot10SingleWindowSeries,readRoot10TemporalContext,checkRoot10TemporalTime,root10TemporalIdentity,readRoot10RuntimeClockContext,checkRoot10RuntimeClockTime,root10RuntimeClockIdentity,readRoot10ScopeContext,checkRoot10ScopeTime} from './root10-single-window.mjs';
 import {verifyRuntimeDependencies} from './runtime-dependencies.mjs';
 const root10Contract=loadRoot10ControllerContract();
 export const project='uscrdifznmlvczcekqpw',rootID=root10Contract.value.root_id,generation=root10Contract.value.generation_id;
@@ -71,8 +71,12 @@ export function checkCurrentSemantics({gaRaw,operation,observation,runtimeAccept
  check(ga.profile_ref.profile_id===profile.profile_id&&ga.profile_ref.definition_version===profile.definition_version&&ga.profile_ref.content_digest===sha(bytes('ProfileDefinition.json'))&&ga.profile_digest===ga.profile_ref.content_digest,'EXACT_SIGNED_PROFILE');
  const {binding,current,attempts}=state;safe(current);safe(binding);
  const temporal=readRoot10TemporalContext({gaRaw,execution:state,descriptor:runtimeAcceptance?.accepted_subject?.temporal_continuation});
- const rc=readRoot10RuntimeClockContext({gaRaw,execution:state,descriptor:runtimeAcceptance?.accepted_subject?.runtime_clock});
- check(!(temporal&&rc),'ONE_CLOCK_AMENDMENT_ONLY');
+ const runtimeClock=readRoot10RuntimeClockContext({gaRaw,execution:state,descriptor:runtimeAcceptance?.accepted_subject?.runtime_clock});
+ // The scope amendment carries the runtime clock forward and occupies the same
+ // slot, so exactly one clock amendment is ever in force.
+ const scope=readRoot10ScopeContext({gaRaw,execution:state,descriptor:runtimeAcceptance?.accepted_subject?.scope_amendment});
+ check([temporal,runtimeClock,scope].filter(Boolean).length<=1,'ONE_CLOCK_AMENDMENT_ONLY');
+ const rc=scope??runtimeClock;
  check(binding.gate_id===gateID&&ga.gate_id===gateID,'EXACT_SINGLE_REGISTERED_GATE');
  const gaBinding=rc?{controller_sha256:root10RuntimeClockIdentity.original_controller_sha256,qualification_sha256:root10RuntimeClockIdentity.original_qualification_sha256}:temporal?temporal.body.old_binding:binding;
  check(ga.controller_digest===gaBinding.controller_sha256&&ga.controller_qualification_ref.sha256===gaBinding.qualification_sha256&&ga.scope_digest===binding.scope_sha256&&ga.profile_digest===binding.profile_sha256,'EXACT_CONTROLLER_SCOPE_BINDING');
@@ -94,7 +98,8 @@ export function checkCurrentSemantics({gaRaw,operation,observation,runtimeAccept
   // preparation and finalization windows, and the container's own observed
   // start supplies the runtime clock.
   check(issued<deadline&&deadline===expires&&expires-issued===600000,'ORIGINAL_GA_WINDOW');
-  checkRoot10RuntimeClockTime({context:rc,execution:state,operation,now});
+  if(scope)checkRoot10ScopeTime({context:scope,execution:state,operation,now});
+  else checkRoot10RuntimeClockTime({context:rc,execution:state,operation,now});
  }else if(temporal){
   // Validate the original signed lifetime without substituting a new clock in
   // the GA; the separately accepted amendment supplies the current window.
@@ -255,7 +260,7 @@ export async function prepareTrustedToolMaterial(material){
    check(canonicalDigest(observation?.row?.execution)===originalState,'RESULT_RESERVATION_OR_CURRENT_CHANGED');
    checkCurrentSemantics({gaRaw,operation,observation,runtimeAcceptance:runtime,qualification,terminalResult:receipt.result});
    seriesCheck(observation.row.execution);
-   checkResultSemantics({raw:material.grr_raw,gaRaw,state:observation.row.execution,acceptedSchemaSha256:result.accepted_subject.control_schema_refs.GateResultReceipt.sha256,temporalDescriptor:result.accepted_subject.temporal_continuation??null,runtimeClockDescriptor:result.accepted_subject.runtime_clock??null});
+   checkResultSemantics({raw:material.grr_raw,gaRaw,state:observation.row.execution,acceptedSchemaSha256:result.accepted_subject.control_schema_refs.GateResultReceipt.sha256,temporalDescriptor:result.accepted_subject.temporal_continuation??null,runtimeClockDescriptor:result.accepted_subject.runtime_clock??null,scopeDescriptor:result.accepted_subject.scope_amendment??null});
    return {state:'EXACT_RESULT_REQUIRES_TERMINAL_CAS',request:resultCommitRequest(material.grr_raw,receipt),receipt_id:receipt.gate_result_receipt_id,ga_id:receipt.gate_authorization_id,result:receipt.result,automatic_retry:false,qualified:false};
   }});
  }

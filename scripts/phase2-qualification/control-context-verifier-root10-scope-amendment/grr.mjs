@@ -3,13 +3,13 @@ import {createRequire} from 'node:module';
 import {parseExact,checkGAShape,time,audience,generation,gateID} from './context.mjs';
 import {sha,verifyDynamicPayload,readBlobRef} from './trusted-github.mjs';
 import {verifyRuntimeDependencies} from './runtime-dependencies.mjs';
-import {readRoot10TemporalContext,checkRoot10TemporalTime,readRoot10RuntimeClockContext,checkRoot10RuntimeClockTime} from './root10-single-window.mjs';
+import {readRoot10TemporalContext,checkRoot10TemporalTime,readRoot10RuntimeClockContext,checkRoot10RuntimeClockTime,readRoot10ScopeContext,checkRoot10ScopeTime} from './root10-single-window.mjs';
 verifyRuntimeDependencies();
 const require=createRequire(new URL('../../../apps/clued-cloud/package.json',import.meta.url)),Ajv=require('ajv');
 const localSchema=fs.readFileSync(new URL('./gate-result-receipt.root5.schema.json',import.meta.url));
 const checkSchema=new Ajv({allErrors:true,strictKeywords:true,format:'full'}).compile(JSON.parse(localSchema));
 const need=(v,m)=>{if(!v)throw Error(m);};
-export function checkResultSemantics({raw,gaRaw,state,acceptedSchemaSha256,temporalDescriptor=null,runtimeClockDescriptor=null,now=Date.now()}){
+export function checkResultSemantics({raw,gaRaw,state,acceptedSchemaSha256,temporalDescriptor=null,runtimeClockDescriptor=null,scopeDescriptor=null,now=Date.now()}){
  const receipt=parseExact(raw),ga=checkGAShape(gaRaw);
  need(acceptedSchemaSha256===sha(localSchema)&&receipt.schema_digest===acceptedSchemaSha256&&checkSchema(receipt),'EXACT_ACCEPTED_COMPLETE_GRR_SCHEMA');
  need(receipt.issuer_purpose==='GATE_RESULT'&&receipt.audience===audience&&receipt.control_trust_root_generation===generation,'GRR_PURPOSE_AUDIENCE_GENERATION');
@@ -28,8 +28,11 @@ export function checkResultSemantics({raw,gaRaw,state,acceptedSchemaSha256,tempo
  need(new Set(receipt.test_results.map(t=>t.test_id)).size===receipt.test_results.length,'UNIQUE_TEST_RESULTS');
  if(receipt.result==='PASS'){
   need(!(temporalDescriptor&&runtimeClockDescriptor),'ONE_CLOCK_AMENDMENT_ONLY');
-  const rc=readRoot10RuntimeClockContext({gaRaw,execution:state,descriptor:runtimeClockDescriptor});
-  if(rc)checkRoot10RuntimeClockTime({context:rc,execution:state,operation:'GRR',now});
+  const scope=readRoot10ScopeContext({gaRaw,execution:state,descriptor:scopeDescriptor});
+  const runtimeClock=scope?null:readRoot10RuntimeClockContext({gaRaw,execution:state,descriptor:runtimeClockDescriptor});
+  const rc=scope??runtimeClock;
+  if(scope)checkRoot10ScopeTime({context:scope,execution:state,operation:'GRR',now});
+  else if(rc)checkRoot10RuntimeClockTime({context:rc,execution:state,operation:'GRR',now});
   const temporal=rc?null:readRoot10TemporalContext({gaRaw,execution:state,descriptor:temporalDescriptor});
   if(temporal)checkRoot10TemporalTime({context:temporal,execution:state,operation:'GRR',now});
   const ids=['PQUAL-11','PQUAL-13','PQUAL-15','PQUAL-16','PQUAL-17'];

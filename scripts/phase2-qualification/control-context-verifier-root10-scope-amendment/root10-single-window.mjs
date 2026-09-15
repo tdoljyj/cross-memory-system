@@ -202,6 +202,120 @@ export function checkRoot10RuntimeClockTime({context,execution,operation,now=Dat
  return {finalization_expires_at:context.final,authority_effect:'NONE'};
 }
 
+// Scope amendment: the applicable formal test set for this generation is the
+// five tests the accepted runtime already carries component evidence for. It
+// narrows what a result claims; it relaxes no evidence rule. Every runtime-clock
+// term of event 119 is carried forward and re-checked here, so a scope event
+// cannot quietly widen a window, lift the reset bound or forgive an overrun.
+// This parser is a rejection check, not proof of Owner authority.
+export const root10ScopeIdentity=Object.freeze({
+ ga_id:'ga_32daa5daf52c4deb8e893c25b08eff38',
+ ga_sha256:'68afb1e6dc1367729cd6864b9ba9b5d846ab123ff5539d7a646f7fa1df988f78',
+ original_controller_sha256:'d01bd55e02614c0d2b6f51f80fe5b56816aecc2f29e753344a4bcac56aaaf559',
+ predecessor_controller_sha256:'5c72dd8923436f6e9ab5b51160cd8751944158d3919d3ef09f6f3ec5006e40b6',
+ predecessor_qualification_sha256:'6a7145fa0c09a00a917b40c42f5dbaa38f4c6028e75ab747dd234351b993b849',
+ predecessor_runtime_acceptance_sha256:'321221816f4c368d98833de6f698adcb1835d88e6b7c991c0b9d9537abba3c1e',
+ budget_sha256:'669d96057a44ed5e9c3eae9fed6ed8720aae8a2b48eef03761b8e9361433a462',
+ runtime_clock_amendment_sha256:'e92a252a0ab62600d6153ece3e3df92a35bd5680b3d9e2c8f65b6c77ff236402',
+ activation_operation:'SCOPE_AMENDMENT_ACTIVATED',
+ activation_key:'root10_scope_amendment_20260915',
+ original_deadline:'2026-09-15T09:37:03.454Z',
+ preparation_expires_at:'2026-09-16T03:00:00Z',
+ finalization_expires_at:'2026-09-16T03:00:00Z',
+ runtime_seconds:600,
+ max_predispatch_resets:3,
+ activation_sequence:120,
+ carries_forward_sequence:119,
+ applicable_test_ids:['PQUAL-11','PQUAL-13','PQUAL-15','PQUAL-16','PQUAL-17'],
+ out_of_scope_test_ids:['PQUAL-01','PQUAL-02','PQUAL-03','PQUAL-04','PQUAL-05','PQUAL-06','PQUAL-07','PQUAL-08','PQUAL-09','PQUAL-10','PQUAL-12','PQUAL-14','PQUAL-19','PQUAL-20']
+});
+const scContexts=new WeakSet();
+const scDescriptorKeys=['activation_idempotency_key','activation_operation','amendment_ref','applicable_test_ids','budget_ref','carries_forward_sequence','continuation_controller_sha256','expected_activation_sequence','finalization_expires_at','max_predispatch_resets','no_automatic_retry','no_new_budget','no_new_ga','no_refund','out_of_scope_test_ids','predecessor_controller_sha256','preparation_expires_at','prior_ga_ref','runtime_clock_amendment_sha256','runtime_seconds','source_ref'];
+const scBodyKeys=['activated_at','amendment_ref','amendment_sha256','applicable_test_ids','automatic_retry','budget_raw_sha256','budget_refund','budget_sequence','carries_forward_sequence','finalization_expires_at','max_predispatch_resets','new_binding','new_binding_sha256','new_budget','new_ga','old_binding','old_binding_sha256','out_of_scope_test_ids','preparation_expires_at','prior_ga_sha256','runtime_seconds'];
+const scEffectOperations=rcEffectOperations;
+const sameIds=(a,b)=>Array.isArray(a)&&Array.isArray(b)&&a.length===b.length&&a.every((v,i)=>v===b[i]);
+export function readRoot10ScopeContext({gaRaw,execution,descriptor}){
+ if(descriptor===undefined||descriptor===null)return null;
+ const fixed=root10ScopeIdentity;
+ need(exact(descriptor,scDescriptorKeys),'EXACT_SCOPE_DESCRIPTOR');
+ need(ref(descriptor.amendment_ref)&&descriptor.activation_operation===fixed.activation_operation&&descriptor.activation_idempotency_key===fixed.activation_key&&descriptor.expected_activation_sequence===fixed.activation_sequence,'EXACT_SCOPE_ACTIVATION_CONTRACT');
+ need(descriptor.predecessor_controller_sha256===fixed.predecessor_controller_sha256&&hex(descriptor.continuation_controller_sha256)&&descriptor.continuation_controller_sha256!==fixed.predecessor_controller_sha256,'EXACT_SCOPE_CONTROLLER_FORWARD');
+ need(descriptor.runtime_clock_amendment_sha256===fixed.runtime_clock_amendment_sha256&&descriptor.carries_forward_sequence===fixed.carries_forward_sequence,'EXACT_SCOPE_CARRIES_FORWARD_RUNTIME_CLOCK');
+ need(descriptor.preparation_expires_at===fixed.preparation_expires_at&&descriptor.finalization_expires_at===fixed.finalization_expires_at&&descriptor.runtime_seconds===fixed.runtime_seconds&&descriptor.max_predispatch_resets===fixed.max_predispatch_resets,'EXACT_SCOPE_WINDOW_TERMS');
+ need(sameIds(descriptor.applicable_test_ids,fixed.applicable_test_ids)&&sameIds(descriptor.out_of_scope_test_ids,fixed.out_of_scope_test_ids),'EXACT_SCOPE_APPLICABLE_SET');
+ need(['no_automatic_retry','no_new_budget','no_new_ga','no_refund'].every(k=>descriptor[k]===true),'NO_SCOPE_BUDGET_OR_GA_EFFECT');
+ const events=execution.events;
+ need(Array.isArray(events),'ACTUAL_EXECUTION_EVENTS_REQUIRED');
+ // The runtime clock must still be present and valid in history: a scope event
+ // has no independent force and may only ride on the accepted event 119.
+ const carried=events.filter(e=>e.sequence===fixed.carries_forward_sequence&&e.request?.operation===root10RuntimeClockIdentity.activation_operation&&e.request.ga_id===fixed.ga_id);
+ need(carried.length===1&&carried[0].request.idempotency_key===root10RuntimeClockIdentity.activation_key&&carried[0].request.body?.amendment_sha256===fixed.runtime_clock_amendment_sha256,'SCOPE_REQUIRES_ACCEPTED_RUNTIME_CLOCK');
+ const carriedBody=carried[0].request.body;
+ const selected=events.filter(e=>e.sequence===fixed.activation_sequence&&e.request?.operation===fixed.activation_operation&&e.request.ga_id===fixed.ga_id);
+ need(selected.length===1,'ONE_EXACT_SCOPE_ACTIVATION_EVENT');
+ const event=selected[0],request=event.request,body=request.body;
+ need(exact(request,['operation','ga_id','expected_sequence','idempotency_key','body'])&&request.ga_id===fixed.ga_id&&request.expected_sequence===fixed.activation_sequence-1&&request.idempotency_key===fixed.activation_key&&exact(body,scBodyKeys),'EXACT_SCOPE_ACTIVATION_EVENT');
+ need(event.root_id===execution.current.root_id&&sameTemporal(body.amendment_ref,descriptor.amendment_ref)&&body.amendment_sha256===descriptor.amendment_ref.sha256&&body.prior_ga_sha256===fixed.ga_sha256&&body.budget_sequence===117&&body.budget_raw_sha256===fixed.budget_sha256,'EXACT_SCOPE_EVENT_BINDINGS');
+ need(['automatic_retry','budget_refund','new_budget','new_ga'].every(k=>body[k]===false),'NO_SCOPE_BUDGET_OR_GA_EFFECT');
+ need(body.preparation_expires_at===fixed.preparation_expires_at&&body.finalization_expires_at===fixed.finalization_expires_at&&body.runtime_seconds===fixed.runtime_seconds&&body.max_predispatch_resets===fixed.max_predispatch_resets,'EXACT_SCOPE_EVENT_WINDOW_TERMS');
+ need(sameIds(body.applicable_test_ids,fixed.applicable_test_ids)&&sameIds(body.out_of_scope_test_ids,fixed.out_of_scope_test_ids)&&body.carries_forward_sequence===fixed.carries_forward_sequence,'EXACT_SCOPE_EVENT_APPLICABLE_SET');
+ // Carry-forward is machine-checked, not asserted in prose: event 120 must restate
+ // event 119's window terms exactly and must start from event 119's own new binding.
+ need(body.preparation_expires_at===carriedBody.preparation_expires_at&&body.finalization_expires_at===carriedBody.finalization_expires_at&&body.runtime_seconds===carriedBody.runtime_seconds&&body.max_predispatch_resets===carriedBody.max_predispatch_resets&&body.budget_raw_sha256===carriedBody.budget_raw_sha256&&body.budget_sequence===carriedBody.budget_sequence,'SCOPE_MUST_CARRY_RUNTIME_CLOCK_FORWARD');
+ need(sameTemporal(body.old_binding,carriedBody.new_binding),'SCOPE_OLD_BINDING_IS_RUNTIME_CLOCK_NEW_BINDING');
+ const changed=['controller_sha256','qualification_sha256','runtime_acceptance_sha256'];
+ need(body.old_binding?.controller_sha256===fixed.predecessor_controller_sha256&&body.old_binding.qualification_sha256===fixed.predecessor_qualification_sha256&&body.old_binding.runtime_acceptance_sha256===fixed.predecessor_runtime_acceptance_sha256&&body.new_binding?.controller_sha256===descriptor.continuation_controller_sha256&&changed.every(k=>hex(body.new_binding[k]))&&sameTemporal({...body.new_binding,...Object.fromEntries(changed.map(k=>[k,body.old_binding[k]]))},body.old_binding),'ONLY_ACCEPTED_SCOPE_BINDING_COLUMNS_CHANGE');
+ need(sha(postgresJsonbText(body.old_binding))===body.old_binding_sha256&&sha(postgresJsonbText(body.new_binding))===body.new_binding_sha256&&sameTemporal(body.new_binding,execution.binding),'EXACT_SCOPE_BINDING_PREIMAGE_AND_CURRENT');
+ need(execution.current.charged_seconds===11706&&execution.current.charged_evidence_bytes===2604247987,'SCOPE_CUMULATIVE_CHARGES_UNCHANGED');
+ need(typeof gaRaw==='string'&&sha(gaRaw)===fixed.ga_sha256,'EXACT_UNCHANGED_SCOPE_GA_BYTES');
+ const ga=JSON.parse(gaRaw);
+ need(ga.gate_authorization_id===fixed.ga_id&&ga.controller_digest===fixed.original_controller_sha256&&ga.deadline===fixed.original_deadline&&ga.expires_at===fixed.original_deadline,'ORIGINAL_GA_CLOCK_IMMUTABLE');
+ const attempt=execution.attempts?.filter(a=>a.ga_id===fixed.ga_id);
+ need(attempt?.length===1&&attempt[0].ga_raw===gaRaw&&attempt[0].ga_sha256===fixed.ga_sha256&&attempt[0].budget_sequence===117&&Date.parse(attempt[0].expires_at)===Date.parse(fixed.original_deadline)&&attempt[0].revoked===false,'ORIGINAL_SCOPE_ATTEMPT_UNCHANGED');
+ const issued=Date.parse(body.activated_at),prep=Date.parse(fixed.preparation_expires_at),final=Date.parse(fixed.finalization_expires_at);
+ need(temporalUtc(body.activated_at)&&Date.parse(carriedBody.activated_at)<=issued&&issued<prep&&prep<=final,'EXACT_DATABASE_DERIVED_SCOPE_WINDOW');
+ // The reset bound and the one-run rule are the runtime clock's, carried forward
+ // unchanged. Rounds are counted from event 119, not from event 120, so a scope
+ // amendment can never hand back a reset that was already spent.
+ const gaEvents=events.filter(e=>e.request?.ga_id===fixed.ga_id&&e.sequence>fixed.carries_forward_sequence&&e.sequence!==fixed.activation_sequence);
+ const resets=gaEvents.filter(e=>e.request.operation==='PREDISPATCH_RESET');
+ need(resets.length<=fixed.max_predispatch_resets,'BOUNDED_PREDISPATCH_RESETS');
+ for(const reset of resets){
+  need(reset.request.body?.automatic_retry===false&&typeof reset.request.body.reason==='string'&&reset.request.body.reason.length>0&&reset.request.body.reason.length<=200,'EXACT_ZERO_EFFECT_RESET_EVENT');
+  need(!gaEvents.some(e=>e.sequence<reset.sequence&&['RUNNING','STOPPED'].includes(e.request.operation)),'RESET_ONLY_BEFORE_ANY_RUN');
+ }
+ need(gaEvents.filter(e=>e.request.operation==='RUNNING').length<=1,'ONE_RUNTIME_INTERVAL_ONLY');
+ const lastReset=resets.length?resets.at(-1).sequence:fixed.activation_sequence;
+ const context=Object.freeze({state:'SCOPE_SEMANTICS_ONLY_NOT_AUTHORITY',descriptor,event,body,issued,prep,final,runtimeSeconds:fixed.runtime_seconds,resets:resets.length,lastReset,execution_baseline_sequence:fixed.activation_sequence,applicable_test_ids:fixed.applicable_test_ids,authority_effect:'NONE'});
+ scContexts.add(context);return context;
+}
+export function checkRoot10ScopeTime({context,execution,operation,now=Date.now()}){
+ need(scContexts.has(context)&&Number.isFinite(now)&&now>=context.issued,'RECOGNIZED_SCOPE_CONTEXT_AND_REAL_CLOCK');
+ if(['CREATE','START'].includes(operation)){
+  // Identical to the runtime clock: preparation is not runtime.
+  need(now<context.prep,'SCOPE_PREPARATION_WINDOW_EXPIRED');
+  return {preparation_expires_at:context.prep,authority_effect:'NONE'};
+ }
+ if(operation==='STOP')return {stop_never_clock_refused:true,authority_effect:'NONE'};
+ need(operation==='GRR'&&now<context.final,'SCOPE_FINALIZATION_WINDOW_EXPIRED');
+ const gaId=root10ScopeIdentity.ga_id;
+ const events=execution.events.filter(e=>e.request?.ga_id===gaId&&e.sequence>context.execution_baseline_sequence&&e.request.operation!=='PREDISPATCH_RESET');
+ const finalRound=events.filter(e=>e.sequence>context.lastReset);
+ const effects=finalRound.filter(e=>scEffectOperations.includes(e.request.operation));
+ need(effects.length===8&&effects.every((e,i)=>e.request.operation===scEffectOperations[i]&&e.sequence===effects[0].sequence+i)&&finalRound.every(e=>scEffectOperations.includes(e.request.operation)||['DECISION_RESERVED','SIGNING'].includes(e.request.operation)),'ONE_COMPLETE_SCOPE_EFFECT_CHAIN');
+ need(!events.some(e=>e.sequence<=context.lastReset&&['RUNNING','STOPPED','DECISION_RESERVED','SIGNING'].includes(e.request.operation)),'EARLIER_ROUNDS_ZERO_EFFECT_ONLY');
+ const running=effects[5],runningValue=JSON.parse(running.request.body.raw);
+ need(sha(running.request.body.raw)===running.request.body.sha256&&typeof running.request.body.runtime_deadline==='string'&&Math.abs(Date.parse(running.request.body.runtime_deadline)-(Date.parse(runningValue.observation?.State?.StartedAt)+context.runtimeSeconds*1000))<1000,'EXACT_IMMUTABLE_RUNTIME_DEADLINE');
+ const stopped=effects[7],raw=stopped.request.body.raw,stop=JSON.parse(raw),container=execution.attempts.find(a=>a.ga_id===gaId).container_id;
+ need(sha(raw)===stopped.request.body.sha256&&stop.ga_id===gaId&&stop.ga_sha256===root10ScopeIdentity.ga_sha256&&stop.container_id===container&&/^[a-f0-9]{64}$/.test(container??'')&&stop.observation?.Id===container&&stop.observation.State?.Running===false&&stop.observation.State?.Pid===0&&stop.observation.State?.Status==='exited','EXACT_SCOPE_REAL_STOP');
+ // Runaway control is carried forward verbatim: an overrun run can never pass.
+ need(stopped.request.body.overrun===false,'OVERRUN_RUN_CANNOT_PASS');
+ const startedAt=Date.parse(stop.observation.State.StartedAt),finishedAt=Date.parse(stop.observation.State.FinishedAt);
+ need(Number.isFinite(startedAt)&&Number.isFinite(finishedAt)&&startedAt>=context.issued&&startedAt<=finishedAt&&finishedAt-startedAt<=context.runtimeSeconds*1000,'RUNTIME_INTERVAL_WITHIN_BUDGET');
+ need(['STOPPED','DECISION_RESERVED','SIGNING'].includes(execution.attempts.find(a=>a.ga_id===gaId)?.phase),'REAL_STOP_REQUIRED_FOR_SCOPE_FINALIZATION');
+ return {finalization_expires_at:context.final,authority_effect:'NONE'};
+}
+
 const ref=value=>exact(value,['uri','sha256'])&&typeof value.uri==='string'&&/^https:\/\/api\.github\.com\/repos\/tdoljyj\/cross-memory-system\/git\/blobs\/[a-f0-9]{40}$/.test(value.uri)&&hex(value.sha256);
 const contractKeys=['schema_version','ready','root_id','predecessor_generation','generation_id','generation_ordinal','window','baseline','postbaseline','caps','fixed_digests','accepted_suite','issuer_qualification_refs','reviewer_delegation','source_closure','invariants'];
 export function validateRoot10ControllerContract(value){

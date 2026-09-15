@@ -32,8 +32,8 @@
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/context.mjs",
-      "sha256": "ec0ed4fdf77da70f35947a82084a3531b1277a8a6c712bdb91b2af808bc5f51c",
-      "bytes": 34408
+      "sha256": "221f5c887c06dc23a302d7543c3452279381bc71eae446747852b605a219a0ab",
+      "bytes": 34945
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/dynamic-signing.mjs",
@@ -52,8 +52,8 @@
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/grr.mjs",
-      "sha256": "e7738d7d63931a9d7e02ead9eea3c23e3cc7d3a18cda34abb7c40fc418a8a869",
-      "bytes": 6485
+      "sha256": "935206da4fd2b259baeb3a3484eb65307f756a2d6a09885b8eb6f8aae41e4d20",
+      "bytes": 6784
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/historical-component-observations.mjs",
@@ -97,8 +97,8 @@
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/result-terminal.mjs",
-      "sha256": "15bd22bd8297445b121b56cfa99b9dccd2fe1e5e7de21c7fa2a9ccf5d01d9ea1",
-      "bytes": 8682
+      "sha256": "bd18f342e0ab99a49b918e67bbeb2b8f7eff31afd349862e9eb34835fbf6bfa0",
+      "bytes": 8753
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/root-window-validation.mjs",
@@ -107,8 +107,8 @@
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/root10-single-window.mjs",
-      "sha256": "c217037c4d1434962e444d50a7d931219d80037009706a2c689bcb4e69a2c0c9",
-      "bytes": 41678
+      "sha256": "bd6d7144a4f90cf65386883789cbaddca23e95640e80809c5486f61450367e1a",
+      "bytes": 55465
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/Root10ControllerContract.candidate.json",
