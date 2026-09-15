@@ -446,7 +446,7 @@ const loadSet = () => {
 // here fails; an entry with no file fails.
 const CENSUS = {
   'control-context-verifier-recovery-successor-root9-exact-pair/bridge.py': 1,
-  'control-context-verifier-recovery-successor-root9-exact-pair/context.mjs': 27,
+  'control-context-verifier-recovery-successor-root9-exact-pair/context.mjs': 28,
   'control-context-verifier-recovery-successor-root9-exact-pair/fixed_host.py': 3,
   'control-context-verifier-recovery-successor-root9-exact-pair/grr.mjs': 0,
   'control-context-verifier-recovery-successor-root9-exact-pair/host-effect.mjs': 2,

@@ -22,8 +22,8 @@
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9-exact-pair/check-digest-pins.mjs",
-      "sha256": "b0d5846a5cdb57ad8da6d7bc4264ebfe42b9b9ee1734ab99185540720b856843",
-      "bytes": 43760
+      "sha256": "3cb343215afe09ea585fdbf4d1033591cd25d028db860e401c3bc8cae35c870a",
+      "bytes": 43977
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9-exact-pair/cli.mjs",
@@ -32,8 +32,8 @@
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9-exact-pair/context.mjs",
-      "sha256": "0cd8e48c30a6d90bd153dcc3b7b5867a94c21b24f30744e95976de453fccfa72",
-      "bytes": 59161
+      "sha256": "6ca8468931c69054e8ce5db91f9bf229de2b98ef4e8475fb6f41f096801bd7b1",
+      "bytes": 63468
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9-exact-pair/dynamic-signing.mjs",
@@ -97,7 +97,7 @@
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-recovery-successor-root9-exact-pair/selftest-runtime-pins.mjs",
-      "sha256": "812285803aa4e55ecee0e7a65d4d0eaeacd4aca2f9b6dff227e3b192ccc7823e",
+      "sha256": "c89dd50aebfefaaa5381f6ecf8994ffdd2ff8a4930426179aa809a47feb95700",
       "bytes": 37451
     },
     {
