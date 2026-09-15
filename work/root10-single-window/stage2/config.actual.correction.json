@@ -1,0 +1,18 @@
+{
+  "repo": "C:/Users/17531/AppData/Local/Temp/clued-root10-entry-correction-20260915",
+  "intent_path": "C:/Users/17531/Documents/Codex/2026-09-14/cas-pass-exact-root9-seq104-pending102/work/new-window/Root10Intent.json",
+  "live_preimage_path": "C:/Users/17531/Documents/Codex/2026-09-14/cas-pass-exact-root9-seq104-pending102/work/new-window/live-preimage-seq110.json",
+  "corrective_source_publication_path": "C:/Users/17531/AppData/Local/Temp/clued-root10-entry-correction-20260915/work/root10-single-window/stage2/Root10CorrectiveSourcePublication.verified.json",
+  "original_root_publication_path": "C:/Users/17531/Documents/Codex/2026-09-14/cas-pass-exact-root9-seq104-pending102/work/new-window/stage2/Root10P1Publication.verified.json",
+  "controller_main_review_path": "C:/Users/17531/AppData/Local/Temp/clued-root10-entry-correction-20260915/work/root10-single-window/stage1/Root10ControllerMainReview.json",
+  "controller_main_review_repo_path": "work/root10-single-window/stage1/Root10ControllerMainReview.json",
+  "controller_independent_review_path": "C:/Users/17531/AppData/Local/Temp/clued-root10-entry-correction-20260915/work/root10-single-window/stage1/Root10ControllerSourceIndependentAcceptance.json",
+  "controller_independent_review_repo_path": "work/root10-single-window/stage1/Root10ControllerSourceIndependentAcceptance.json",
+  "root10_signed_path": "C:/Users/17531/Documents/Codex/2026-09-14/cas-pass-exact-root9-seq104-pending102/work/new-window/stage2/Root10Generation.json",
+  "root10_signature_evidence_path": "C:/Users/17531/Documents/Codex/2026-09-14/cas-pass-exact-root9-seq104-pending102/work/new-window/stage2/Root10SignatureEvidence.json",
+  "assembled_at": "2026-09-15T08:07:17.000Z",
+  "executor_applicability_path": "C:/Users/17531/AppData/Local/Temp/clued-root10-entry-correction-20260915/work/root10-single-window/stage1/Root10ExecutorApplicability.candidate.json",
+  "executor_applicability_repo_path": "work/root10-single-window/stage1/Root10ExecutorApplicability.candidate.json",
+  "reviewer_delegation_path": "C:/Users/17531/Documents/Codex/2026-09-14/cas-pass-exact-root9-seq104-pending102/work/new-window/root/Root10ReviewerDelegation.candidate.json",
+  "reviewer_delegation_repo_path": "work/root10-single-window/stage1/root/Root10ReviewerDelegation.candidate.json"
+}

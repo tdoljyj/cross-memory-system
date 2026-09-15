@@ -3,9 +3,9 @@
   "object_type": "Root10Stage2IndependentReview",
   "decision": "ROOT10_STAGE2_GO",
   "independent_reviewer": "/root/root9_recovery_review",
-  "reviewed_at": "2026-09-15T06:18:25.553Z",
-  "scope": "ACTUAL_P1_OWNER_PUBLICATION_AND_EXACT_STAGE2_UNSIGNED_METADATA_ONLY",
-  "p1_publication": {
+  "reviewed_at": "2026-09-15T08:12:17.501Z",
+  "scope": "ACTUAL_PR190_ROOT_PLUS_PR192_CORRECTIVE_SOURCE_AND_EXACT_STAGE2_UNSIGNED_METADATA_ONLY",
+  "original_root_publication": {
     "repository": "tdoljyj/cross-memory-system",
     "private": true,
     "pr": 190,
@@ -19,28 +19,42 @@
     "committer": "web-flow",
     "verification": {
       "verified": true,
-      "reason": "valid",
-      "signature_present": true,
-      "payload_present": true
+      "reason": "valid"
     },
-    "merged_at": "2026-09-15T06:07:03Z",
-    "required_checks": {
-      "gitleaks": "PASS",
-      "public-mcp-behavior": "PASS",
-      "public-mcp-gate-receipt": "PASS",
-      "public-mcp-protocol": "PASS",
-      "trivy": "PASS"
-    }
+    "merged_at": "2026-09-15T06:07:03Z"
+  },
+  "corrective_source_publication": {
+    "repository": "tdoljyj/cross-memory-system",
+    "private": true,
+    "pr": 192,
+    "merge_commit": "593bc7d26fbb850b30e80c9e4ea726e82f4d5eed",
+    "tree": "08e7e253f80aa9c3079df927619cc7aa3706ccb3",
+    "parents": [
+      "0225aba1abb4f12bb4ef01ad39fafa8ad01a4bf4",
+      "951852aaff5db0f09331f4144300111876c2871e"
+    ],
+    "merged_by": "tdoljyj",
+    "committer": "web-flow",
+    "verification": {
+      "verified": true,
+      "reason": "valid"
+    },
+    "observed_at": "2026-09-15T08:06:22.971Z",
+    "controller_manifest_sha256": "d01bd55e02614c0d2b6f51f80fe5b56816aecc2f29e753344a4bcac56aaaf559",
+    "manifest_file_count": 33
   },
   "reviewed_artifacts": {
     "Root10P1Publication.verified.json": {
       "bytes": 591,
       "sha256": "451e2c2f14f647ee22902c0f1babfefaf7e4048629b5127387a7d471e231022f"
     },
+    "Root10CorrectiveSourcePublication.verified.json": {
+      "bytes": 15307,
+      "sha256": "a791366b8d91daa8e63a4f665da72ccea6c671fc558ba243b7893c3323e9076d"
+    },
     "Root10SignatureEvidence.json": {
       "bytes": 1511,
-      "sha256": "81f19bc64d1730f1e222c4e36c31350ad561494dfa77c24da83d0a470da41a48",
-      "git_blob": "8a524d9be56cc3fcea32850847b631ee84f1bbd4"
+      "sha256": "81f19bc64d1730f1e222c4e36c31350ad561494dfa77c24da83d0a470da41a48"
     },
     "Root10Generation.json": {
       "bytes": 4448,
@@ -50,87 +64,61 @@
     },
     "ControllerQualification.root10.json": {
       "bytes": 3293,
-      "sha256": "c047cce4a2f9b8d4e9b47222d6e0789ce09e7602e140ee9971a63f936190b2ca",
-      "git_blob": "67d8e7878e50a534c7d283f42d43f16f5a8e26c4"
-    },
-    "Status29SigningPayload.json": {
-      "bytes": 6248,
-      "sha256": "de8e124b2ff2c797b0f6778e2763978519be2baf71c4b9cce2b9e3959cdb27fa",
-      "git_blob": "f4d30e772c91baee6d94d4070293186b106c1caf",
-      "signed_payload_canonical_sha256": "616e3b9a3026b4bba989d1b95c6b600fca11138fbc963d9d12fab0661066ad8a"
+      "sha256": "3cd157e704660dac18d3e6c5fb790f6854f29d644c66d53b968bf94c07f12143"
     },
     "RuntimeAcceptance.root10.json": {
       "bytes": 40737,
-      "sha256": "9f41c0abf4cf507bd3d5218063cdf6928f6369e040ffaba375cb19db2fb96d4c",
-      "git_blob": "8706c156c796a6f731fd7e8bf9ae9b389783a7d4"
+      "sha256": "bc6cb688231763f2ad1a56bbc77a22eb7a35cfd749b12e8827f5040582443a88"
     },
-    "Root10Stage2MetadataBuild.json": {
-      "bytes": 1936,
-      "sha256": "b1d5a93edb74b58c650754f57c9b56fb262f1bc595e54c8702bbf68f40c2174d"
-    },
-    "config.actual.json": {
-      "bytes": 2115,
-      "sha256": "fe007dc7708c9f883effb0f3be41d95334510ebdba04e8a50b9e6c01f4cfba4c"
+    "Status29SigningPayload.json": {
+      "bytes": 6248,
+      "sha256": "de8ad03f35d8c13714042eb406c35f89c95009664a9a832fc3a67185a19778a3",
+      "signed_payload_canonical_sha256": "a59d5bc2b344e4e13cdbb7d0901089ab5210081288ebae379d8fdef1373d4231"
     }
   },
-  "published_inputs": {
-    "stage2_builder": {
-      "path": "work/root10-single-window/stage1/build-root10-stage2-metadata.mjs",
-      "bytes": 14953,
-      "sha256": "f9c6d252c0cdcd999f0bcd525f4e020f691aa95b7c367e419d84b2ab4fa5370f",
-      "git_blob": "5852d53fe0afb32395abe81a7c8632d7c20beb27"
-    },
-    "controller_manifest": {
-      "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/ControllerSourceManifest.candidate.json",
-      "bytes": 8010,
-      "sha256": "6b03b143d13f81c27602d44b071e70fc1f40cb9ca46e36286d499bd34341bc87",
-      "git_blob": "95748435d5198051157e8097a5e9efeb56babc8e",
-      "entries": 33
-    },
-    "controller_source_independent_acceptance_sha256": "11a64c61f1f4e11ad0535d6e220ee961c0dd4e4799ae7d931161230bd8a1b446",
-    "executor_applicability_sha256": "e7e1f673a613a262453f376d10172757addbd006557908ab15343ca99a6de5e8",
-    "stage2_builder_independent_review_sha256": "d2f1a15418a3af51f95d9d2dd29b882c0ba595815caff7c27ab13a89e956ba12",
-    "root_signing_payload": {
-      "bytes": 4007,
-      "sha256": "c5848b390ed054184a0ed3755d737a0b0922b58a26ecf3f367348b7d200b86e4",
-      "git_blob": "db77e086449497cf5eb362bc84422408537fe1c0"
-    },
-    "root_independent_acceptance_sha256": "b057eb56b92b94109f9aec965a22c08433691e4f3e6d99ba1def4f4011abc966",
-    "reviewer_delegation_sha256": "5baeb567ce212462e1605bc52eb119916563b90fbaf656d4007f831086e63b1e"
+  "deterministic_builder_replay": {
+    "builder_path": "work/root10-single-window/stage1/build-root10-stage2-metadata.mjs",
+    "builder_sha256": "006c8fa5bdc5852f54e682948916cadc43bd7bc547c9957a0a75e11cec1ebf29",
+    "config_path": "work/root10-single-window/stage2/config.actual.correction.json",
+    "config_sha256": "3aad919ed4131bc8728186fefcdae4e1d219bc0da5632462bdd14815257d3124",
+    "outputs_byte_exact": true,
+    "metadata_build_sha256": "d16f3f682ffa6197937fbb6cd56ed0853b6b3ce7194baaba1487fd277658d2f6"
   },
   "checks": {
-    "p1_merge_tree_parents_owner_and_signature_exact": true,
-    "controller_manifest_33_entries_bytes_sha256_and_git_objects_exact": true,
-    "runtime_source_ref_exact_manifest_plus_33_files": true,
-    "all_150_blob_references_80_unique_resolve_to_exact_bytes": true,
-    "published_builder_replay_four_outputs_byte_exact": true,
-    "root10_full_unsigned_payload_and_signature_evidence_closed": true,
-    "gate_profile_scope_fixed": true,
-    "runner_credential_session_generations_unchanged_from_preimage": true,
-    "root10_single_window": true,
-    "budget_sequence_117": true,
-    "budget_max_seconds_600": true,
-    "budget_max_evidence_bytes_134217728": true,
-    "max_budgets_1": true,
-    "max_ga_1": true,
+    "original_root_publication_exact_and_signature_valid": true,
+    "corrective_source_publication_exact_owner_merge_and_signature_valid": true,
+    "corrective_publication_42_artifacts_local_sha_bytes_and_immutable_git_blobs_exact": true,
+    "controller_manifest_33_entries_closed": true,
+    "controller_manifest_sha256": "d01bd55e02614c0d2b6f51f80fe5b56816aecc2f29e753344a4bcac56aaaf559",
+    "root10_generation_json_byte_unchanged_from_original_root_publication": true,
+    "root10_generation": "ctrgen_48100437d24e448ba01c542ebe1290da",
+    "root_signature_reuse_valid_because_signed_root_payload_does_not_bind_controller_manifest": true,
+    "root_window_unchanged": true,
+    "gate_profile_scope_unchanged": true,
+    "runner_credential_session_generations_unchanged": true,
+    "budget_sequence": 117,
+    "budget_max_seconds": 600,
+    "budget_max_evidence_bytes": 134217728,
+    "max_budgets": 1,
+    "max_ga": 1,
     "cumulative_caps_allocations_seconds_evidence_bytes": "11/11706/2604247987",
     "repair_refs": 0,
+    "formal_pqual_count": 19,
+    "pqual18_disposition": "NEGATIVE_ADMISSION_CHECK_NOT_FORMAL_RESULT",
+    "accepted_suite_sha256": "a7a70ddbe089d46609d2f8c877aa69792ad3b5aef7c5487a10d6b8951dee7c2c",
+    "accepted_suite_executor_sha256": "27ede0fc0ff6afc4d5abf2f5c9f256fe22776165746dddc19aa2693c47bbc97c",
+    "status29_is_unsigned_and_missing_only_signature_binding": true,
+    "status29_has_no_p3_dependency": true,
     "automatic_retry": false,
     "successor_ga": false,
     "refund": false,
-    "reset_counters": false,
+    "capacity_increase": false,
     "budget_reassignment": false,
-    "accepted_suite_sha256": "a7a70ddbe089d46609d2f8c877aa69792ad3b5aef7c5487a10d6b8951dee7c2c",
-    "accepted_suite_executor_sha256": "27ede0fc0ff6afc4d5abf2f5c9f256fe22776165746dddc19aa2693c47bbc97c",
-    "formal_pqual_count": 19,
-    "pqual18_disposition": "NEGATIVE_ADMISSION_CHECK_NOT_FORMAL_RESULT",
-    "executor_applicability_validator": "PASS",
-    "status29_is_unsigned_payload_missing_only_signature_binding": true,
-    "p2_inputs_are_self_contained_and_have_no_p3_dependency": true
+    "new_root_signature_required": false
   },
   "authorization_boundary": {
-    "p2_owner_publication_authorized_by_this_review": true,
-    "status29_signing_after_exact_p2_publication_requires_separate_exact_signing_step": true,
+    "corrective_stage2_owner_publication_authorized_by_this_review": true,
+    "status29_signing_after_exact_p2_owner_publication_requires_a_separate_exact_signing_step": true,
     "activation_or_cas_authorized_by_this_review": false,
     "gate_authorization_issuance_authorized_by_this_review": false,
     "database_write_performed": false,
@@ -138,19 +126,21 @@
     "signature_performed": false,
     "gate_authorization_issued": false
   },
+  "limitations": [
+    "This review covers the exact corrective Stage2 publication candidate only; it is not formal PQUAL, activation/CAS approval, GA authorization, or a signature."
+  ],
   "blockers": [],
   "sources_read": [
-    "isolated-repository-source/memory/manifest.json",
-    "isolated-repository-source/artifacts/clued-two-level-snapshots/current.json",
-    "local-mirror/manifest.json",
     "github:tdoljyj/cross-memory-system@1443bbe0164cd756136705897ec0cccb56cfc102",
-    "work/new-window/stage2/Root10P1Publication.verified.json",
-    "work/new-window/stage2/Root10SignatureEvidence.json",
-    "work/new-window/stage2/Root10Generation.json",
-    "work/new-window/stage2/ControllerQualification.root10.json",
-    "work/new-window/stage2/Status29SigningPayload.json",
-    "work/new-window/stage2/RuntimeAcceptance.root10.json",
-    "work/new-window/stage2/Root10Stage2MetadataBuild.json",
-    "work/new-window/stage2/config.actual.json"
+    "github:tdoljyj/cross-memory-system@593bc7d26fbb850b30e80c9e4ea726e82f4d5eed",
+    "work/root10-single-window/stage2/Root10P1Publication.verified.json",
+    "work/root10-single-window/stage2/Root10CorrectiveSourcePublication.verified.json",
+    "work/root10-single-window/stage2/Root10SignatureEvidence.json",
+    "work/root10-single-window/stage2/Root10Generation.json",
+    "work/root10-single-window/stage2/ControllerQualification.root10.json",
+    "work/root10-single-window/stage2/RuntimeAcceptance.root10.json",
+    "work/root10-single-window/stage2/Status29SigningPayload.json",
+    "work/root10-single-window/stage2/Root10Stage2MetadataBuild.json",
+    "work/root10-single-window/stage2/config.actual.correction.json"
   ]
 }
