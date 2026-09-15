@@ -142,8 +142,8 @@
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/selftest-scope-amendment.mjs",
-      "sha256": "6d719548e8b5ec5fa57ed911d776ed5d4b039b319b9ef53c0876bf61f47eaa6d",
-      "bytes": 45326
+      "sha256": "2ae92f960d8cf2b142a81ad9e13fe817f4ed777329209b1e7168d59797ab157b",
+      "bytes": 47697
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/source-publication.mjs",

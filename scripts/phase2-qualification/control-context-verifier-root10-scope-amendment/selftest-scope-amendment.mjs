@@ -96,11 +96,17 @@ const CLOCK_OLD_BINDING=binding(clock.predecessor_controller_sha256,clock.predec
 const CARRIED_BINDING=binding(fixed.predecessor_controller_sha256,fixed.predecessor_qualification_sha256,fixed.predecessor_runtime_acceptance_sha256);
 const SCOPE_NEW_BINDING=binding(NEW_CONTROLLER,NEW_QUALIFICATION,NEW_ACCEPTANCE);
 
-function descriptor(overrides={}){
+// EXACT_SCOPE_GA_AND_BUDGET_REF pins prior_ga_ref and budget_ref against the
+// identity of the module doing the reading, and that check runs BEFORE the GA
+// byte pin so each rule stays independently provable. A descriptor is therefore
+// only well formed with respect to one identity: the synthetic pins for a
+// pin-substituted copy, the real pins for the controller itself. `identity`
+// carries that, so a test never has to remember which module it is aimed at.
+function descriptor(overrides={},identity=copy.root10ScopeIdentity){
  return {activation_idempotency_key:fixed.activation_key,activation_operation:fixed.activation_operation,
   amendment_ref:{uri:AMEND_URI,sha256:fixed.amendment_sha256},
   applicable_test_ids:[...fixed.applicable_test_ids],
-  budget_ref:{sequence:117,sha256:BUDGET_SHA,seconds:600,evidence_bytes:134217728},
+  budget_ref:{sequence:117,sha256:identity.budget_sha256,seconds:600,evidence_bytes:134217728},
   carries_forward_sequence:fixed.carries_forward_sequence,
   continuation_controller_sha256:NEW_CONTROLLER,
   expected_activation_sequence:fixed.activation_sequence,
@@ -110,7 +116,7 @@ function descriptor(overrides={}){
   out_of_scope_test_ids:[...fixed.out_of_scope_test_ids],
   predecessor_controller_sha256:fixed.predecessor_controller_sha256,
   preparation_expires_at:fixed.preparation_expires_at,
-  prior_ga_ref:{ga_id:fixed.ga_id,sha256:GA_SHA},
+  prior_ga_ref:{ga_id:identity.ga_id,sha256:identity.ga_sha256},
   runtime_clock_amendment_sha256:fixed.runtime_clock_amendment_sha256,
   runtime_seconds:fixed.runtime_seconds,source_ref:SOURCE_REF,...overrides};
 }
@@ -166,8 +172,11 @@ function execution({events=history(),phase='PENDING',container=null,sequence=nul
   attempts:[{root_id:ROOT,ga_id:fixed.ga_id,ga_raw:GA_RAW,ga_sha256:GA_SHA,budget_sequence:117,
    phase,container_id:container,expires_at:fixed.original_deadline,revoked:false}]};
 }
-const read=(module,{descriptorValue=descriptor(),executionValue=execution(),gaRawValue=GA_RAW}={})=>
- ()=>module.readRoot10ScopeContext({gaRaw:gaRawValue,execution:executionValue,descriptor:descriptorValue});
+// The default descriptor is always built for the module being read, never for
+// whichever module happened to be the usual one.
+const read=(module,{descriptorValue=null,executionValue=execution(),gaRawValue=GA_RAW}={})=>
+ ()=>module.readRoot10ScopeContext({gaRaw:gaRawValue,execution:executionValue,
+  descriptor:descriptorValue??descriptor({},module.root10ScopeIdentity)});
 
 // --- Effect-chain fixtures for the time check --------------------------------
 const CHAIN=['INTENT_RECORDED','CREATE_SENT','CREATED','INTENT_RECORDED','START_SENT','RUNNING','STOP_SENT','STOPPED'];
@@ -197,7 +206,7 @@ function ran({before=[],mutate=null,phase='STOPPED',container=CONTAINER}={}){
 // Every time-check case reads first, so a refusal from the read names itself
 // instead of hiding as an unrecognized context.
 function timed(value,{operation='GRR',now=GRR_NOW,module=copy}={}){
- const context=module.readRoot10ScopeContext({gaRaw:GA_RAW,execution:value,descriptor:descriptor()});
+ const context=module.readRoot10ScopeContext({gaRaw:GA_RAW,execution:value,descriptor:descriptor({},module.root10ScopeIdentity)});
  return {context,call:()=>module.checkRoot10ScopeTime({context,execution:value,operation,now})};
 }
 
@@ -370,8 +379,9 @@ test('19 the controller GA byte pin refuses synthetic bytes',()=>{
  // On the real controller nothing synthetic can reach a context; this is the
  // rule that makes the pin-substituted copy necessary, and it is live. The
  // state is first restated against the REAL pins everywhere a digest is only
- // compared, so the GA byte pin -- which compares bytes, and cannot be talked
- // around -- is the first rule left that can refuse.
+ // compared -- the descriptor via `read`, which builds it for the module it is
+ // reading, and the event body here -- so the GA byte pin, which compares bytes
+ // and cannot be talked around, is the first rule left that can refuse.
  const events=history();
  scopeOf(events).prior_ga_sha256=fixed.ga_sha256;
  scopeOf(events).budget_raw_sha256=fixed.budget_sha256;
@@ -394,6 +404,9 @@ test('20 a descriptor whose key set is not exactly scDescriptorKeys is refused',
 });
 test('21 the continuation controller must move forward',()=>{
  expectThrow(read(copy,{descriptorValue:descriptor({continuation_controller_sha256:fixed.predecessor_controller_sha256})}),'EXACT_SCOPE_CONTROLLER_FORWARD','21a');
+ // The ORIGINAL Root10 controller predates both amendments, so naming it as the
+ // continuation moves the binding backwards while reading as a forward step.
+ expectThrow(read(copy,{descriptorValue:descriptor({continuation_controller_sha256:fixed.original_controller_sha256})}),'EXACT_SCOPE_CONTROLLER_FORWARD','21d');
  expectThrow(read(copy,{descriptorValue:descriptor({continuation_controller_sha256:'not-a-digest'})}),'EXACT_SCOPE_CONTROLLER_FORWARD','21b');
  expectThrow(read(copy,{descriptorValue:descriptor({predecessor_controller_sha256:clock.predecessor_controller_sha256})}),'EXACT_SCOPE_CONTROLLER_FORWARD','21c');
 });
@@ -402,171 +415,183 @@ test('22 the descriptor must name event 119 as what it carries forward',()=>{
  expectThrow(read(copy,{descriptorValue:descriptor({runtime_clock_amendment_sha256:fixed.amendment_sha256})}),'EXACT_SCOPE_CARRIES_FORWARD_RUNTIME_CLOCK','22b');
  expectThrow(read(copy,{descriptorValue:descriptor({carries_forward_sequence:118})}),'EXACT_SCOPE_CARRIES_FORWARD_RUNTIME_CLOCK','22c');
 });
-test('23 window terms are fixed in both the descriptor and the event body',()=>{
+test('23 the descriptor must name the original GA and the reserved budget',()=>{
+ // A descriptor that names any other GA or any other budget is refused before
+ // the byte pin is reached, so this rule is provable on its own.
+ const identity=copy.root10ScopeIdentity;
+ expectThrow(read(copy,{descriptorValue:descriptor({prior_ga_ref:{ga_id:'ga_ffffffffffffffffffffffffffffffff',sha256:identity.ga_sha256}})}),'EXACT_SCOPE_GA_AND_BUDGET_REF','23a');
+ expectThrow(read(copy,{descriptorValue:descriptor({prior_ga_ref:{ga_id:identity.ga_id,sha256:OTHER_DIGEST}})}),'EXACT_SCOPE_GA_AND_BUDGET_REF','23b');
+ // The controller's own GA digest is still the wrong answer for this module.
+ expectThrow(read(copy,{descriptorValue:descriptor({prior_ga_ref:{ga_id:identity.ga_id,sha256:fixed.ga_sha256}})}),'EXACT_SCOPE_GA_AND_BUDGET_REF','23c');
+ expectThrow(read(copy,{descriptorValue:descriptor({budget_ref:{sequence:117,sha256:OTHER_DIGEST,seconds:600,evidence_bytes:134217728}})}),'EXACT_SCOPE_GA_AND_BUDGET_REF','23d');
+ expectThrow(read(copy,{descriptorValue:descriptor({prior_ga_ref:{ga_id:identity.ga_id}})}),'EXACT_SCOPE_GA_AND_BUDGET_REF','23e');
+ expectThrow(read(copy,{descriptorValue:descriptor({budget_ref:null})}),'EXACT_SCOPE_GA_AND_BUDGET_REF','23f');
+});
+test('24 window terms are fixed in both the descriptor and the event body',()=>{
  for(const [key,value] of [['preparation_expires_at','2026-11-15T03:00:00Z'],['finalization_expires_at','2026-11-15T03:00:00Z'],['runtime_seconds',601],['max_predispatch_resets',4]]){
-  expectThrow(read(copy,{descriptorValue:descriptor({[key]:value})}),'EXACT_SCOPE_WINDOW_TERMS','23-descriptor-'+key);
+  expectThrow(read(copy,{descriptorValue:descriptor({[key]:value})}),'EXACT_SCOPE_WINDOW_TERMS','24-descriptor-'+key);
   const events=history();scopeOf(events)[key]=value;
-  expectThrow(read(copy,{executionValue:execution({events})}),'EXACT_SCOPE_EVENT_WINDOW_TERMS','23-body-'+key);
+  expectThrow(read(copy,{executionValue:execution({events})}),'EXACT_SCOPE_EVENT_WINDOW_TERMS','24-body-'+key);
  }
 });
-test('24 the event body applicable set and generation are fixed',()=>{
+test('25 the event body applicable set and generation are fixed',()=>{
  const dropped=history();const body=scopeOf(dropped);body.applicable_test_ids=body.applicable_test_ids.slice(1);
- expectThrow(read(copy,{executionValue:execution({events:dropped})}),'EXACT_SCOPE_EVENT_APPLICABLE_SET','24a');
+ expectThrow(read(copy,{executionValue:execution({events:dropped})}),'EXACT_SCOPE_EVENT_APPLICABLE_SET','25a');
  const widened=history();scopeOf(widened).out_of_scope_test_ids=fixed.out_of_scope_test_ids.slice(1);
- expectThrow(read(copy,{executionValue:execution({events:widened})}),'EXACT_SCOPE_EVENT_APPLICABLE_SET','24b');
+ expectThrow(read(copy,{executionValue:execution({events:widened})}),'EXACT_SCOPE_EVENT_APPLICABLE_SET','25b');
  const generation=history();scopeOf(generation).control_trust_root_generation='ctrgen_00000000000000000000000000000000';
- expectThrow(read(copy,{executionValue:execution({events:generation})}),'EXACT_SCOPE_EVENT_APPLICABLE_SET','24c');
+ expectThrow(read(copy,{executionValue:execution({events:generation})}),'EXACT_SCOPE_EVENT_APPLICABLE_SET','25c');
  const carries=history();scopeOf(carries).carries_forward_sequence=118;
- expectThrow(read(copy,{executionValue:execution({events:carries})}),'EXACT_SCOPE_EVENT_APPLICABLE_SET','24d');
+ expectThrow(read(copy,{executionValue:execution({events:carries})}),'EXACT_SCOPE_EVENT_APPLICABLE_SET','25d');
 });
-test('25 the event must bind to this root, amendment, GA and budget',()=>{
+test('26 the event must bind to this root, amendment, GA and budget',()=>{
  const root=history();root[fixed.activation_sequence-1].root_id='ctr_00000000000000000000000000000000';
- expectThrow(read(copy,{executionValue:execution({events:root})}),'EXACT_SCOPE_EVENT_BINDINGS','25a');
+ expectThrow(read(copy,{executionValue:execution({events:root})}),'EXACT_SCOPE_EVENT_BINDINGS','26a');
  const amendment=history();scopeOf(amendment).amendment_ref={uri:AMEND_URI.slice(0,-1)+'0',sha256:fixed.amendment_sha256};
- expectThrow(read(copy,{executionValue:execution({events:amendment})}),'EXACT_SCOPE_EVENT_BINDINGS','25b');
+ expectThrow(read(copy,{executionValue:execution({events:amendment})}),'EXACT_SCOPE_EVENT_BINDINGS','26b');
  const digest=history();scopeOf(digest).amendment_sha256=OTHER_DIGEST;
- expectThrow(read(copy,{executionValue:execution({events:digest})}),'EXACT_SCOPE_EVENT_BINDINGS','25c');
+ expectThrow(read(copy,{executionValue:execution({events:digest})}),'EXACT_SCOPE_EVENT_BINDINGS','26c');
  const priorGa=history();scopeOf(priorGa).prior_ga_sha256=OTHER_DIGEST;
- expectThrow(read(copy,{executionValue:execution({events:priorGa})}),'EXACT_SCOPE_EVENT_BINDINGS','25d');
+ expectThrow(read(copy,{executionValue:execution({events:priorGa})}),'EXACT_SCOPE_EVENT_BINDINGS','26d');
  const budget=history();scopeOf(budget).budget_sequence=118;
- expectThrow(read(copy,{executionValue:execution({events:budget})}),'EXACT_SCOPE_EVENT_BINDINGS','25e');
+ expectThrow(read(copy,{executionValue:execution({events:budget})}),'EXACT_SCOPE_EVENT_BINDINGS','26e');
  const budgetBytes=history();scopeOf(budgetBytes).budget_raw_sha256=OTHER_DIGEST;
- expectThrow(read(copy,{executionValue:execution({events:budgetBytes})}),'EXACT_SCOPE_EVENT_BINDINGS','25f');
+ expectThrow(read(copy,{executionValue:execution({events:budgetBytes})}),'EXACT_SCOPE_EVENT_BINDINGS','26f');
 });
-test('26 the binding may change only the three accepted columns',()=>{
+test('27 the binding may change only the three accepted columns',()=>{
  const fourth=history();scopeOf(fourth).new_binding.prior_seconds=0;
- expectThrow(read(copy,{executionValue:execution({events:fourth})}),'ONLY_ACCEPTED_SCOPE_BINDING_COLUMNS_CHANGE','26a');
+ expectThrow(read(copy,{executionValue:execution({events:fourth})}),'ONLY_ACCEPTED_SCOPE_BINDING_COLUMNS_CHANGE','27a');
  const unmoved=history();scopeOf(unmoved).new_binding.controller_sha256=fixed.predecessor_controller_sha256;
- expectThrow(read(copy,{executionValue:execution({events:unmoved})}),'ONLY_ACCEPTED_SCOPE_BINDING_COLUMNS_CHANGE','26b');
+ expectThrow(read(copy,{executionValue:execution({events:unmoved})}),'ONLY_ACCEPTED_SCOPE_BINDING_COLUMNS_CHANGE','27b');
  // An old binding that is not the accepted predecessor triple, carried forward
  // consistently from event 119 so the carry-forward rule is not what fires.
  const wrongOld=history();const substitute=binding(NEW_CONTROLLER,fixed.predecessor_qualification_sha256,fixed.predecessor_runtime_acceptance_sha256);
  carriedOf(wrongOld).new_binding=structuredClone(substitute);
  scopeOf(wrongOld).old_binding=structuredClone(substitute);
- expectThrow(read(copy,{executionValue:execution({events:wrongOld})}),'ONLY_ACCEPTED_SCOPE_BINDING_COLUMNS_CHANGE','26c');
+ expectThrow(read(copy,{executionValue:execution({events:wrongOld})}),'ONLY_ACCEPTED_SCOPE_BINDING_COLUMNS_CHANGE','27c');
  const preimage=history();scopeOf(preimage).new_binding_sha256=OTHER_DIGEST;
- expectThrow(read(copy,{executionValue:execution({events:preimage})}),'EXACT_SCOPE_BINDING_PREIMAGE_AND_CURRENT','26d');
+ expectThrow(read(copy,{executionValue:execution({events:preimage})}),'EXACT_SCOPE_BINDING_PREIMAGE_AND_CURRENT','27d');
  const oldPreimage=history();scopeOf(oldPreimage).old_binding_sha256=OTHER_DIGEST;
- expectThrow(read(copy,{executionValue:execution({events:oldPreimage})}),'EXACT_SCOPE_BINDING_PREIMAGE_AND_CURRENT','26e');
+ expectThrow(read(copy,{executionValue:execution({events:oldPreimage})}),'EXACT_SCOPE_BINDING_PREIMAGE_AND_CURRENT','27e');
  const current=execution();current.binding=structuredClone(CARRIED_BINDING);
- expectThrow(read(copy,{executionValue:current}),'EXACT_SCOPE_BINDING_PREIMAGE_AND_CURRENT','26f');
+ expectThrow(read(copy,{executionValue:current}),'EXACT_SCOPE_BINDING_PREIMAGE_AND_CURRENT','27f');
 });
-test('27 no pre-118 event may carry this GA',()=>{
+test('28 no pre-118 event may carry this GA',()=>{
  const events=history();events[50].request.ga_id=fixed.ga_id;
- expectThrow(read(copy,{executionValue:execution({events})}),'SCOPE_ZERO_PRIOR_GA_EFFECT','27a');
+ expectThrow(read(copy,{executionValue:execution({events})}),'SCOPE_ZERO_PRIOR_GA_EFFECT','28a');
  const budget=history();budget[116].request.ga_id=fixed.ga_id;
- expectThrow(read(copy,{executionValue:execution({events:budget})}),'SCOPE_ZERO_PRIOR_GA_EFFECT','27b');
+ expectThrow(read(copy,{executionValue:execution({events:budget})}),'SCOPE_ZERO_PRIOR_GA_EFFECT','28b');
 });
-test('28 the original GA, attempt and budget stay unchanged',()=>{
+test('29 the original GA, attempt and budget stay unchanged',()=>{
  // Reachable only against a copy pinned to these moved GA bytes; on any other
  // pin the byte check fires first, which is itself the point of the byte check.
  const events=history();scopeOf(events).prior_ga_sha256=sha(MOVED_GA_RAW);
  const value=execution({events});
  value.attempts[0].ga_raw=MOVED_GA_RAW;value.attempts[0].ga_sha256=sha(MOVED_GA_RAW);
- expectThrow(()=>movedCopy.readRoot10ScopeContext({gaRaw:MOVED_GA_RAW,execution:value,descriptor:descriptor()}),'ORIGINAL_GA_CLOCK_IMMUTABLE','28a');
+ expectThrow(read(movedCopy,{executionValue:value,gaRawValue:MOVED_GA_RAW}),'ORIGINAL_GA_CLOCK_IMMUTABLE','29a');
  const revoked=execution();revoked.attempts[0].revoked=true;
- expectThrow(read(copy,{executionValue:revoked}),'ORIGINAL_SCOPE_ATTEMPT_UNCHANGED','28b');
+ expectThrow(read(copy,{executionValue:revoked}),'ORIGINAL_SCOPE_ATTEMPT_UNCHANGED','29b');
  const moved=execution();moved.attempts[0].expires_at=fixed.preparation_expires_at;
- expectThrow(read(copy,{executionValue:moved}),'ORIGINAL_SCOPE_ATTEMPT_UNCHANGED','28c');
+ expectThrow(read(copy,{executionValue:moved}),'ORIGINAL_SCOPE_ATTEMPT_UNCHANGED','29c');
  const rebudgeted=execution();rebudgeted.attempts[0].budget_sequence=118;
- expectThrow(read(copy,{executionValue:rebudgeted}),'ORIGINAL_SCOPE_ATTEMPT_UNCHANGED','28d');
+ expectThrow(read(copy,{executionValue:rebudgeted}),'ORIGINAL_SCOPE_ATTEMPT_UNCHANGED','29d');
  const twice=execution();twice.attempts.push({...twice.attempts[0]});
- expectThrow(read(copy,{executionValue:twice}),'ORIGINAL_SCOPE_ATTEMPT_UNCHANGED','28e');
+ expectThrow(read(copy,{executionValue:twice}),'ORIGINAL_SCOPE_ATTEMPT_UNCHANGED','29e');
  const budgetBytes=history();budgetBytes[116].request.body.raw=BUDGET_RAW+' ';
- expectThrow(read(copy,{executionValue:execution({events:budgetBytes})}),'ORIGINAL_SCOPE_BUDGET_UNCHANGED','28f');
+ expectThrow(read(copy,{executionValue:execution({events:budgetBytes})}),'ORIGINAL_SCOPE_BUDGET_UNCHANGED','29f');
  const budgetOperation=history();budgetOperation[116].request.operation='HISTORICAL';
- expectThrow(read(copy,{executionValue:execution({events:budgetOperation})}),'ORIGINAL_SCOPE_BUDGET_UNCHANGED','28g');
+ expectThrow(read(copy,{executionValue:execution({events:budgetOperation})}),'ORIGINAL_SCOPE_BUDGET_UNCHANGED','29g');
  const shared=execution();shared.attempts.push({...shared.attempts[0],ga_id:'ga_ffffffffffffffffffffffffffffffff'});
- expectThrow(read(copy,{executionValue:shared}),'ORIGINAL_SCOPE_BUDGET_UNCHANGED','28h');
+ expectThrow(read(copy,{executionValue:shared}),'ORIGINAL_SCOPE_BUDGET_UNCHANGED','29h');
 });
-test('29 the derived window is taken from the database, not from prose',()=>{
+test('30 the derived window is taken from the database, not from prose',()=>{
  const before=history();scopeOf(before).activated_at='2026-09-15T14:00:00.000000+00:00';
- expectThrow(read(copy,{executionValue:execution({events:before})}),'EXACT_DATABASE_DERIVED_SCOPE_WINDOW','29a');
+ expectThrow(read(copy,{executionValue:execution({events:before})}),'EXACT_DATABASE_DERIVED_SCOPE_WINDOW','30a');
  const past=history();scopeOf(past).activated_at='2026-11-01T00:00:00.000000+00:00';
- expectThrow(read(copy,{executionValue:execution({events:past})}),'EXACT_DATABASE_DERIVED_SCOPE_WINDOW','29b');
+ expectThrow(read(copy,{executionValue:execution({events:past})}),'EXACT_DATABASE_DERIVED_SCOPE_WINDOW','30b');
  const offset=history();scopeOf(offset).activated_at='2026-09-15T17:00:00.000000+01:00';
- expectThrow(read(copy,{executionValue:execution({events:offset})}),'EXACT_DATABASE_DERIVED_SCOPE_WINDOW','29c');
+ expectThrow(read(copy,{executionValue:execution({events:offset})}),'EXACT_DATABASE_DERIVED_SCOPE_WINDOW','30c');
  const unparsable=history();scopeOf(unparsable).activated_at='shortly after approval';
- expectThrow(read(copy,{executionValue:execution({events:unparsable})}),'EXACT_DATABASE_DERIVED_SCOPE_WINDOW','29d');
+ expectThrow(read(copy,{executionValue:execution({events:unparsable})}),'EXACT_DATABASE_DERIVED_SCOPE_WINDOW','30d');
 });
-test('30 the reset bound and the one-run rule are carried forward, not reset',()=>{
+test('31 the reset bound and the one-run rule are carried forward, not reset',()=>{
  const bounded=[121,122,123,124].map(sequence=>resetEvent(sequence));
- expectThrow(read(copy,{executionValue:execution({events:[...history(),...bounded]})}),'BOUNDED_PREDISPATCH_RESETS','30a');
+ expectThrow(read(copy,{executionValue:execution({events:[...history(),...bounded]})}),'BOUNDED_PREDISPATCH_RESETS','31a');
  const retrying=[resetEvent(121,{automatic_retry:true,reason:'retry'})];
- expectThrow(read(copy,{executionValue:execution({events:[...history(),...retrying]})}),'EXACT_ZERO_EFFECT_RESET_EVENT','30b');
+ expectThrow(read(copy,{executionValue:execution({events:[...history(),...retrying]})}),'EXACT_ZERO_EFFECT_RESET_EVENT','31b');
  const unexplained=[resetEvent(121,{automatic_retry:false,reason:''})];
- expectThrow(read(copy,{executionValue:execution({events:[...history(),...unexplained]})}),'EXACT_ZERO_EFFECT_RESET_EVENT','30c');
+ expectThrow(read(copy,{executionValue:execution({events:[...history(),...unexplained]})}),'EXACT_ZERO_EFFECT_RESET_EVENT','31c');
  const verbose=[resetEvent(121,{automatic_retry:false,reason:'x'.repeat(201)})];
- expectThrow(read(copy,{executionValue:execution({events:[...history(),...verbose]})}),'EXACT_ZERO_EFFECT_RESET_EVENT','30d');
+ expectThrow(read(copy,{executionValue:execution({events:[...history(),...verbose]})}),'EXACT_ZERO_EFFECT_RESET_EVENT','31d');
  const afterRun=[gaEvent(121,'RUNNING',runningBody()),resetEvent(122)];
- expectThrow(read(copy,{executionValue:execution({events:[...history(),...afterRun]})}),'RESET_ONLY_BEFORE_ANY_RUN','30e');
+ expectThrow(read(copy,{executionValue:execution({events:[...history(),...afterRun]})}),'RESET_ONLY_BEFORE_ANY_RUN','31e');
  const twice=[gaEvent(121,'RUNNING',runningBody()),gaEvent(122,'RUNNING',runningBody())];
- expectThrow(read(copy,{executionValue:execution({events:[...history(),...twice]})}),'ONE_RUNTIME_INTERVAL_ONLY','30f');
+ expectThrow(read(copy,{executionValue:execution({events:[...history(),...twice]})}),'ONE_RUNTIME_INTERVAL_ONLY','31f');
  // Three resets before any run remain admissible: the bound is 3, not 0.
- expectPass(read(copy,{executionValue:execution({events:[...history(),resetEvent(121),resetEvent(122),resetEvent(123)]})}),'30g');
+ expectPass(read(copy,{executionValue:execution({events:[...history(),resetEvent(121),resetEvent(122),resetEvent(123)]})}),'31g');
 });
-test('31 only a context this module issued is recognized',()=>{
+test('32 only a context this module issued is recognized',()=>{
  const value=ran();
  const {context}=timed(value);
- expectThrow(()=>copy.checkRoot10ScopeTime({context:{issued:0,prep:1,final:2},execution:value,operation:'CREATE',now:Date.now()}),'RECOGNIZED_SCOPE_CONTEXT_AND_REAL_CLOCK','31a');
+ expectThrow(()=>copy.checkRoot10ScopeTime({context:{issued:0,prep:1,final:2},execution:value,operation:'CREATE',now:Date.now()}),'RECOGNIZED_SCOPE_CONTEXT_AND_REAL_CLOCK','32a');
  // A structural copy of a real context is still not a context.
- expectThrow(()=>copy.checkRoot10ScopeTime({context:{...context},execution:value,operation:'CREATE',now:GRR_NOW}),'RECOGNIZED_SCOPE_CONTEXT_AND_REAL_CLOCK','31b');
- expectThrow(()=>copy.checkRoot10ScopeTime({context,execution:value,operation:'CREATE',now:context.issued-1}),'RECOGNIZED_SCOPE_CONTEXT_AND_REAL_CLOCK','31c');
- expectThrow(()=>copy.checkRoot10ScopeTime({context,execution:value,operation:'CREATE',now:Number.NaN}),'RECOGNIZED_SCOPE_CONTEXT_AND_REAL_CLOCK','31d');
+ expectThrow(()=>copy.checkRoot10ScopeTime({context:{...context},execution:value,operation:'CREATE',now:GRR_NOW}),'RECOGNIZED_SCOPE_CONTEXT_AND_REAL_CLOCK','32b');
+ expectThrow(()=>copy.checkRoot10ScopeTime({context,execution:value,operation:'CREATE',now:context.issued-1}),'RECOGNIZED_SCOPE_CONTEXT_AND_REAL_CLOCK','32c');
+ expectThrow(()=>copy.checkRoot10ScopeTime({context,execution:value,operation:'CREATE',now:Number.NaN}),'RECOGNIZED_SCOPE_CONTEXT_AND_REAL_CLOCK','32d');
  // Contexts do not cross module instances either.
- expectThrow(()=>movedCopy.checkRoot10ScopeTime({context,execution:value,operation:'CREATE',now:GRR_NOW}),'RECOGNIZED_SCOPE_CONTEXT_AND_REAL_CLOCK','31e');
+ expectThrow(()=>movedCopy.checkRoot10ScopeTime({context,execution:value,operation:'CREATE',now:GRR_NOW}),'RECOGNIZED_SCOPE_CONTEXT_AND_REAL_CLOCK','32e');
 });
-test('32 a complete effect chain finalizes, with or without a spent reset',()=>{
- const clean=expectPass(timed(ran()).call,'32a');
+test('33 a complete effect chain finalizes, with or without a spent reset',()=>{
+ const clean=expectPass(timed(ran()).call,'33a');
  if(clean.finalization_expires_at!==Date.parse(fixed.finalization_expires_at))throw Error('finalization bound changed');
  if(clean.authority_effect!=='NONE')throw Error('finalization must never carry authority');
  const repaired=ran({before:[gaEvent(121,'INTENT_RECORDED'),resetEvent(122)]});
- expectPass(timed(repaired).call,'32b');
+ expectPass(timed(repaired).call,'33b');
  const signing=ran({mutate:effects=>{effects.push(gaEvent(effects.at(-1).sequence+1,'DECISION_RESERVED'));},phase:'DECISION_RESERVED'});
- expectPass(timed(signing).call,'32c');
+ expectPass(timed(signing).call,'33c');
 });
-test('33 the effect chain must be complete, ordered and the only round with effect',()=>{
+test('34 the effect chain must be complete, ordered and the only round with effect',()=>{
  const broken=ran({mutate:effects=>{effects[6].request.operation='NOTE_RECORDED';}});
- expectThrow(timed(broken).call,'ONE_COMPLETE_SCOPE_EFFECT_CHAIN','33a');
+ expectThrow(timed(broken).call,'ONE_COMPLETE_SCOPE_EFFECT_CHAIN','34a');
  const swapped=ran({mutate:effects=>{const operation=effects[4].request.operation;effects[4].request.operation=effects[5].request.operation;effects[5].request.operation=operation;}});
- expectThrow(timed(swapped).call,'ONE_COMPLETE_SCOPE_EFFECT_CHAIN','33b');
+ expectThrow(timed(swapped).call,'ONE_COMPLETE_SCOPE_EFFECT_CHAIN','34b');
  const gapped=ran({mutate:effects=>{effects[3].request.operation='NOTE_RECORDED';}});
- expectThrow(timed(gapped).call,'ONE_COMPLETE_SCOPE_EFFECT_CHAIN','33c');
+ expectThrow(timed(gapped).call,'ONE_COMPLETE_SCOPE_EFFECT_CHAIN','34c');
  // An earlier round that reserved a decision before a reset is zero-effect only.
  const earlier=ran({before:[gaEvent(121,'DECISION_RESERVED'),resetEvent(122)]});
- expectThrow(timed(earlier).call,'EARLIER_ROUNDS_ZERO_EFFECT_ONLY','33d');
+ expectThrow(timed(earlier).call,'EARLIER_ROUNDS_ZERO_EFFECT_ONLY','34d');
 });
-test('34 the runtime deadline and the real stop are both checked',()=>{
+test('35 the runtime deadline and the real stop are both checked',()=>{
  const drifted=ran({mutate:effects=>{effects[5].request.body=runningBody({deadline:'2026-09-15T16:20:00.000Z'});}});
- expectThrow(timed(drifted).call,'EXACT_IMMUTABLE_RUNTIME_DEADLINE','34a');
+ expectThrow(timed(drifted).call,'EXACT_IMMUTABLE_RUNTIME_DEADLINE','35a');
  const untyped=ran({mutate:effects=>{effects[5].request.body.runtime_deadline=Date.parse(STARTED)+600000;}});
- expectThrow(timed(untyped).call,'EXACT_IMMUTABLE_RUNTIME_DEADLINE','34b');
+ expectThrow(timed(untyped).call,'EXACT_IMMUTABLE_RUNTIME_DEADLINE','35b');
  const rewritten=ran({mutate:effects=>{effects[5].request.body.raw+=' ';}});
- expectThrow(timed(rewritten).call,'EXACT_IMMUTABLE_RUNTIME_DEADLINE','34c');
+ expectThrow(timed(rewritten).call,'EXACT_IMMUTABLE_RUNTIME_DEADLINE','35c');
  const running=ran({mutate:effects=>{effects[7].request.body=stoppedBody({state:{Running:true}});}});
- expectThrow(timed(running).call,'EXACT_SCOPE_REAL_STOP','34d');
+ expectThrow(timed(running).call,'EXACT_SCOPE_REAL_STOP','35d');
  const alive=ran({mutate:effects=>{effects[7].request.body=stoppedBody({state:{Pid:41}});}});
- expectThrow(timed(alive).call,'EXACT_SCOPE_REAL_STOP','34e');
+ expectThrow(timed(alive).call,'EXACT_SCOPE_REAL_STOP','35e');
  const unexited=ran({mutate:effects=>{effects[7].request.body=stoppedBody({state:{Status:'running'}});}});
- expectThrow(timed(unexited).call,'EXACT_SCOPE_REAL_STOP','34f');
+ expectThrow(timed(unexited).call,'EXACT_SCOPE_REAL_STOP','35f');
  const wrongContainer=ran({mutate:effects=>{effects[7].request.body=stoppedBody({container:'b'.repeat(64)});}});
- expectThrow(timed(wrongContainer).call,'EXACT_SCOPE_REAL_STOP','34g');
+ expectThrow(timed(wrongContainer).call,'EXACT_SCOPE_REAL_STOP','35g');
  const unsigned=ran({mutate:effects=>{effects[7].request.body=stoppedBody({digest:OTHER_DIGEST});}});
- expectThrow(timed(unsigned).call,'EXACT_SCOPE_REAL_STOP','34h');
+ expectThrow(timed(unsigned).call,'EXACT_SCOPE_REAL_STOP','35h');
 });
-test('35 the observed interval must fit the budget and the attempt must be stopped',()=>{
+test('36 the observed interval must fit the budget and the attempt must be stopped',()=>{
  const overlong=ran({mutate:effects=>{effects[7].request.body=stoppedBody({state:{FinishedAt:'2026-09-15T16:16:00.000Z'}});}});
- expectThrow(timed(overlong).call,'RUNTIME_INTERVAL_WITHIN_BUDGET','35a');
+ expectThrow(timed(overlong).call,'RUNTIME_INTERVAL_WITHIN_BUDGET','36a');
  const backwards=ran({mutate:effects=>{effects[7].request.body=stoppedBody({state:{FinishedAt:'2026-09-15T16:04:00.000Z'}});}});
- expectThrow(timed(backwards).call,'RUNTIME_INTERVAL_WITHIN_BUDGET','35b');
+ expectThrow(timed(backwards).call,'RUNTIME_INTERVAL_WITHIN_BUDGET','36b');
  const early=ran({mutate:effects=>{effects[7].request.body=stoppedBody({state:{StartedAt:'2026-09-15T15:30:00.000Z'}});}});
- expectThrow(timed(early).call,'RUNTIME_INTERVAL_WITHIN_BUDGET','35c');
+ expectThrow(timed(early).call,'RUNTIME_INTERVAL_WITHIN_BUDGET','36c');
  const unfinished=ran({phase:'RUNNING'});
- expectThrow(timed(unfinished).call,'REAL_STOP_REQUIRED_FOR_SCOPE_FINALIZATION','35d');
+ expectThrow(timed(unfinished).call,'REAL_STOP_REQUIRED_FOR_SCOPE_FINALIZATION','36d');
 });
 
 // --- Harness guarantees ------------------------------------------------------
-test('36 an absent descriptor reads as null and the pin-substituted copy is faithful',()=>{
+test('37 an absent descriptor reads as null and the pin-substituted copy is faithful',()=>{
  if(controller.readRoot10ScopeContext({gaRaw:GA_RAW,execution:execution(),descriptor:null})!==null)throw Error('null descriptor must not create a context');
  if(copy.readRoot10ScopeContext({gaRaw:GA_RAW,execution:execution(),descriptor:undefined})!==null)throw Error('undefined descriptor must not create a context');
  // Substituting the two pins back reproduces the controller byte for byte, so
@@ -578,7 +603,7 @@ test('36 an absent descriptor reads as null and the pin-substituted copy is fait
  for(const key of Object.keys(fixed))
   if(!['ga_sha256','budget_sha256'].includes(key)&&JSON.stringify(copy.root10ScopeIdentity[key])!==JSON.stringify(fixed[key]))throw Error('the copy changed identity field '+key);
 });
-test('37 canonical digests of the carried bindings stay stable under jsonb text rules',()=>{
+test('38 canonical digests of the carried bindings stay stable under jsonb text rules',()=>{
  const text=postgresJsonbText(CARRIED_BINDING);
  if(!text.startsWith('{"gate_id": ')||!text.includes('"controller_sha256": '))throw Error('postgres jsonb text ordering changed: '+text.slice(0,60));
  if(canonicalDigest(CARRIED_BINDING)===canonicalDigest(SCOPE_NEW_BINDING))throw Error('distinct bindings must not collide');

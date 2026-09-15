@@ -14,10 +14,10 @@
   "expires_at": "2026-10-15T03:00:00Z",
   "purpose": "SKILL_COEXISTENCE_QUALIFICATION",
   "environment": "ISOLATED_TEST",
-  "controller_digest": "85427255b7a38daf629ec9666ab915bc13990555d40c536f41051438f16e34e9",
+  "controller_digest": "9d73c49ce17372650df10ee5201316d31f681c3897965dc1c286a83cc3530f76",
   "controller_source_manifest_ref": {
-    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/9d20f2026f3ba4a1ff497565d818d8918e2971bc",
-    "sha256": "85427255b7a38daf629ec9666ab915bc13990555d40c536f41051438f16e34e9"
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/79e42bfb7a8d1a1db09a47edd3b42d0c68b61cbf",
+    "sha256": "9d73c49ce17372650df10ee5201316d31f681c3897965dc1c286a83cc3530f76"
   },
   "scope_digest": "115408c69dcb2fa606fb0de34ec86c5239487d0cfa9a73abb267664a2482abe5",
   "ga_schema_ref": {
@@ -69,7 +69,7 @@
   "source_publication": {
     "owner_merge_commit": "__OWNER_MERGE_COMMIT__",
     "source_tree": "__SOURCE_TREE__",
-    "controller_manifest_entries": 34
+    "controller_manifest_entries": 35
   },
   "automatic_retry": false,
   "successor_ga": false,
