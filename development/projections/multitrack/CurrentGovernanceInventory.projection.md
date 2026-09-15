@@ -7,7 +7,7 @@
 - Source Inventory: `CLUED-CURRENT-GOVERNANCE-INVENTORY-v0.1.3-SOURCE-BOUND-20260912`
 - Source date: `2026-09-12`
 - Source JSON SHA-256: `bca8fd9244657beabe09a3f815295e09d5207b4709f11ab8722d9a8d58491f5f`
-- Projection manifest canonical SHA-256: `544ef822c558f47bdf13dd3f4ddca362629abbce62ef7d14b7a5386134852aea`
+- Projection manifest canonical SHA-256: `c64f27203762dcf3e316e6b497cfbdf5e74e807d2ed098bcedf0efb2aa9d21ff`
 - Authority effect: `NONE`
 - Writeback: `FORBIDDEN`
 - Freshness: `HISTORICAL_SOURCE_BOUND_REQUIRES_RECONCILIATION_BEFORE_CANONICAL_CURRENT_CLAIM`
@@ -49,6 +49,10 @@
 - Hard identity conflicts: `E-010`
 
 `E-010` 必须继续保持 fail-closed：当前 Repository 投影不凭聊天历史或候选文件猜测最新 Freeze/Current 身份，直到能绑定可重放的 Canonical Freeze Event/Receipt。
+
+### Source gap resolution
+
+2026-09-12 来源 Snapshot 曾记录：`Repository main does not yet contain the multi-track governance projection.`。该条只作为历史 source gap 保留，并已由 `CLUED-MULTITRACK-REPOSITORY-PROJECTION-v0.1-20260916` 在 2026-09-16 的 Repository 落地关闭；它不再属于当前 Repository projection 的 `known_gaps`。
 
 ## Update protocol
 
