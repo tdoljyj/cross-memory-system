@@ -1,0 +1,21 @@
+{
+  "gh_path": "gh",
+  "publications": {
+    "original_source": {"pr_number": 192, "merge_commit": "593bc7d26fbb850b30e80c9e4ea726e82f4d5eed"},
+    "ga_target": {"pr_number": 193, "merge_commit": "67e55ee767c3aaff6ae79a238e5ec3e1985d8003"},
+    "reviewer": {"pr_number": 190, "merge_commit": "1443bbe0164cd756136705897ec0cccb56cfc102"},
+    "runtime_clock": {"pr_number": 197, "merge_commit": "c8be72af5477fbbe20d468f1ec2524521e180383"},
+    "acceptance": {"pr_number": 198, "merge_commit": "1b6d30437e61498fb07e44a3a90f7fd5fc4b68dc"},
+    "status_manifest": {"pr_number": 193, "merge_commit": "67e55ee767c3aaff6ae79a238e5ec3e1985d8003"}
+  },
+  "paths": {
+    "runtime_acceptance_local": "work/root10-single-window/runtime-clock/stage2/RuntimeAcceptance.root10.runtime-clock.json",
+    "runtime_acceptance_repo": "work/root10-single-window/runtime-clock/stage2/RuntimeAcceptance.root10.runtime-clock.json",
+    "controller_qualification_local": "work/root10-single-window/runtime-clock/stage2/ControllerQualification.root10.runtime-clock.json",
+    "controller_qualification_repo": "work/root10-single-window/runtime-clock/stage2/ControllerQualification.root10.runtime-clock.json",
+    "amendment_local": "work/root10-single-window/runtime-clock/Root10RuntimeClockAmendment.json",
+    "amendment_repo": "work/root10-single-window/runtime-clock/Root10RuntimeClockAmendment.json",
+    "status29_signing_payload_local": "work/root10-single-window/stage2/Status29SigningPayload.json",
+    "status29_signing_payload_repo": "work/root10-single-window/stage2/Status29SigningPayload.json"
+  }
+}

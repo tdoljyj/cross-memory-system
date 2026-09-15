@@ -113,3 +113,23 @@ literally.
   Event 118 remains in history and must still validate exactly, but it no
   longer supplies any deadline once event 119 exists; if event 119 is absent
   the functions behave exactly as the temporal versions do today.
+
+## Repair (2026-09-15, after activation)
+
+An adversarial review of the activated functions found four defects. Three are
+fixed here, in SQL only; the fourth is recorded below as an accepted limitation.
+
+| # | Defect | Fix |
+| --- | --- | --- |
+| 1 | The stop report certified its own runtime. `rc_overrun` was computed from `State.StartedAt` and `State.FinishedAt` taken from the bytes the host supplied *at STOPPED*, so a host reporting a later start turned an overrun into a compliant run — and a PASS. | `execution_transition` now reads the single committed `RUNNING` event, requires the stop report's observed start to equal the start that event recorded, and measures against that event's `runtime_deadline` — both fixed before the outcome could be known. `commit_gate_result` stops re-deriving the duration and tests the same recorded deadline. |
+| 2 | The STALE closeout for an attempt that never dispatched was unreachable. It required `clock_timestamp()>=rc_prep`, but preparation and finalization expire at the same instant and the finalization guard already refuses `DECISION_RESERVED` from that instant on — so the branch was dead in both directions. | The time precondition is dropped. "Nothing was ever dispatched" (phase PENDING, no container, no `RUNNING`/`CREATED` event) is the judge, still bounded by the finalization window. |
+| 3 | `rc_event.sequence=119` is NULL when no runtime-clock event exists, and a NULL inside `if not (...) then raise` does not raise — so the `DECISION_RESERVED` phase guard failed **open**. | Both amendments now bind to explicit booleans (`rc_active`, `temporal_active`) set only after their byte checks pass; every amendment predicate in the function is two-valued. |
+| 4 | The 600 authorized seconds are anchored at CREATE preparation, and `bridge.py`/`fixed_host.py` require START to reuse that identical window, so container preparation is charged against the container's own life. | **Not fixed.** The fix is in controller bytes, and event 119 pins `controller_sha256`, so changing them would make the activation event fail its own validation — it would cost a second full amendment cycle. It cannot change a verdict: the container's program prints its result at startup and then sleeps, the accounting clock the PASS rule uses is anchored to the observed `State.StartedAt`, and an early host deadline only shortens that sleep. |
+
+`build-root10-runtime-clock-repair.mjs` emits the repair as a transaction that
+replaces the function bodies and proves the whole control state came through
+byte-identical; event 119 is never rewritten and no event is appended.
+`build-root10-runtime-clock-repair-delta.py` emits the same transaction with the
+two changed functions expressed as in-database edits over their own installed
+text, digest-asserted against the artifact above — same effect, a third of the
+bytes, and a mistyped fragment aborts rather than installing unreviewed text.
