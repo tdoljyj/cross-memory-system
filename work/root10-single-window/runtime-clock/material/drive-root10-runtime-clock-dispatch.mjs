@@ -8,13 +8,17 @@
 // This is the Linux successor of the tool-origin entry in
 // scripts/phase2-qualification/control-context-verifier-root10-single-window/tool-entry.functions.js,
 // which drove the same handshake through a harness that could call an MCP SQL tool from inside
-// the program. Here the SQL goes through psql against CLUED_CONTROL_DATABASE_URL, because the
-// controller requires the observation to be at most 15 seconds old and a 3 MB snapshot cannot
-// make a human-mediated round trip in that window.
+// the program. Here the SQL goes through psql, because the controller requires the observation
+// to be at most 15 seconds old and a 3 MB snapshot cannot make a human-mediated round trip in
+// that window.
 //
-//   CLUED_CONTROL_DATABASE_URL=postgresql://... \
+//   CLUED_CONTROL_DB_PASSWORD='<the database password, verbatim>' \
+//   node drive-root10-runtime-clock-dispatch.mjs --check-connection
+//
+//   CLUED_CONTROL_DB_PASSWORD='<...>' \
 //   node drive-root10-runtime-clock-dispatch.mjs --template TEMPLATE.json --operation CREATE
 //
+// --check-connection is a read-only reachability probe: it appends nothing and changes nothing.
 // --dry-run stops after building the material and prints what it would send.
 //
 // STOP is deliberately not an operation here. The entry has no dispatch handshake for it:
@@ -44,23 +48,40 @@ const UNIT = '\x1f';
 const ENTRY = path.resolve(import.meta.dirname, 'entry-root10-runtime-clock.sh');
 const RUNTIME_SECONDS = 600;
 
+const probeOnly = flag('--check-connection');
 const operation = valueAfter('--operation');
-need(['CREATE', 'START', 'GRR'].includes(operation), 'FIXED_OPERATION_REQUIRED');
+need(probeOnly || ['CREATE', 'START', 'GRR'].includes(operation), 'FIXED_OPERATION_REQUIRED');
 // CREATE mints the host window; START must replay it byte for byte. bridge.py compares the
 // START material against the dict persisted at CREATE and refuses any difference, so the window
 // is written once and read back rather than re-cut -- the accepted limitation recorded in the
 // activation README, not something this driver may quietly work around.
 const windowPath = valueAfter('--window-file') ?? path.resolve(import.meta.dirname, '.host-window.json');
 const templatePath = valueAfter('--template');
-need(templatePath && fs.existsSync(templatePath), 'MATERIAL_TEMPLATE_REQUIRED');
-const url = process.env.CLUED_CONTROL_DATABASE_URL;
-need(typeof url === 'string' && url.startsWith('postgresql://'), 'CLUED_CONTROL_DATABASE_URL_REQUIRED');
+need(probeOnly || (templatePath && fs.existsSync(templatePath)), 'MATERIAL_TEMPLATE_REQUIRED');
+
+// Two ways to reach the control store. CLUED_CONTROL_DB_PASSWORD takes the password verbatim
+// and is the one to prefer: a generated Postgres password routinely contains characters that a
+// URL must percent-encode, and an unencoded one truncates the URL silently -- the failure then
+// looks exactly like a wrong password. It also keeps the password out of the process argument
+// list, where a connection string would be readable by anything that can run `ps`.
+// CLUED_CONTROL_DATABASE_URL is still honoured for a URL someone has already built.
+const DEFAULTS = {PGHOST: 'db.uscrdifznmlvczcekqpw.supabase.co', PGPORT: '5432', PGUSER: 'postgres', PGDATABASE: 'postgres', PGSSLMODE: 'require'};
+const url = process.env.CLUED_CONTROL_DATABASE_URL ?? null;
+const password = process.env.CLUED_CONTROL_DB_PASSWORD ?? null;
+need(url || password, 'CLUED_CONTROL_DB_PASSWORD_OR_DATABASE_URL_REQUIRED');
+need(!url || /^postgres(ql)?:\/\//.test(url), 'EXACT_POSTGRES_URL_REQUIRED');
+const connection = url ? {} : {
+  ...DEFAULTS, PGPASSWORD: password,
+  ...Object.fromEntries(['PGHOST', 'PGPORT', 'PGUSER', 'PGDATABASE', 'PGSSLMODE']
+    .filter(k => process.env['CLUED_CONTROL_DB_' + k.slice(2)])
+    .map(k => [k, process.env['CLUED_CONTROL_DB_' + k.slice(2)]])),
+};
 
 // psql, not a driver library: nothing here may depend on a package the controller's runtime
 // dependency manifest does not pin.
 function sql(text, {columns = 1} = {}) {
-  const out = execFileSync('/usr/bin/psql', [url, '-X', '-q', '-A', '-t', '-F', UNIT, '-v', 'ON_ERROR_STOP=1', '-c', text],
-    {encoding: 'utf8', timeout: 120000, maxBuffer: 256 * 1024 * 1024, windowsHide: true});
+  const out = execFileSync('/usr/bin/psql', [...(url ? [url] : []), '-X', '-q', '-A', '-t', '-F', UNIT, '-v', 'ON_ERROR_STOP=1', '-c', text],
+    {encoding: 'utf8', timeout: 120000, maxBuffer: 256 * 1024 * 1024, windowsHide: true, env: {...process.env, ...connection}});
   const lines = out.split('\n').filter(l => l.length > 0);
   need(lines.length === 1, 'EXACT_SINGLE_SQL_ROW_REQUIRED');
   const fields = lines[0].split(UNIT);
@@ -95,6 +116,18 @@ function call(text, column) {
   const [value] = sql(text);
   need(text.endsWith(' as ' + column), 'EXACT_SQL_COLUMN_ALIAS_REQUIRED');
   return {project: PROJECT, query: text, row: {[column]: JSON.parse(value)}};
+}
+
+// A read-only reachability probe, so the credential and the network route can be confirmed
+// before anything touches the attempt. It appends nothing and changes nothing.
+if (probeOnly) {
+  const [now, seq, phase, ctrl] = sql(
+    "select clock_timestamp() as now, (select c.sequence from clued_control.execution_current c where c.root_id='" + ROOT + "') as seq,"
+    + " (select a.phase from clued_control.gate_attempts a where a.root_id='" + ROOT + "' and a.ga_id=(select c.active_ga_id from clued_control.execution_current c where c.root_id='" + ROOT + "')) as phase,"
+    + " (select b.controller_sha256 from clued_control.effective_execution_binding() b) as controller", {columns: 4});
+  process.stdout.write(JSON.stringify({state: 'CONTROL_STORE_REACHABLE', authority_effect: 'NONE',
+    observed_at: now, current_sequence: Number(seq), attempt_phase: phase, controller_sha256: ctrl}, null, 2) + '\n');
+  process.exit(0);
 }
 
 // --- Build the live half of the material ------------------------------------

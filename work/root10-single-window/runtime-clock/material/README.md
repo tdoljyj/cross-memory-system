@@ -59,9 +59,24 @@ transactions — the intent, dispatch and result rows the controller asks for. I
 nothing: every admission, window and byte check lives behind the trusted entry.
 
 ```
-CLUED_CONTROL_DATABASE_URL=postgresql://... \
+CLUED_CONTROL_DB_PASSWORD='<database password, verbatim>' \
+  node drive-root10-runtime-clock-dispatch.mjs --check-connection
+
+CLUED_CONTROL_DB_PASSWORD='<...>' \
   node drive-root10-runtime-clock-dispatch.mjs --template TEMPLATE.json --operation CREATE [--dry-run]
 ```
+
+`--check-connection` is a read-only reachability probe: it appends nothing and changes nothing,
+so the credential and the network route can be confirmed before anything touches the attempt.
+
+Pass the password **verbatim** in `CLUED_CONTROL_DB_PASSWORD` — no quoting or escaping. A
+generated Postgres password routinely contains characters a URL must percent-encode, and an
+unencoded one truncates the connection string silently, producing a failure indistinguishable
+from a wrong password. It also keeps the password out of the process argument list, where a
+connection string is readable by anything that can run `ps`. Host, port, user and database
+default to this project and are overridable with `CLUED_CONTROL_DB_HOST`, `CLUED_CONTROL_DB_PORT`,
+`CLUED_CONTROL_DB_USER`, `CLUED_CONTROL_DB_DATABASE`, `CLUED_CONTROL_DB_SSLMODE`.
+`CLUED_CONTROL_DATABASE_URL` is still honoured for a URL someone has already built.
 
 `entry-root10-runtime-clock.sh` is the Linux trusted entry, byte-for-byte the command the
 tool-origin entry runs inside its relay container: it checks the source manifest against the
