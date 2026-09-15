@@ -12,7 +12,7 @@ import boundedCrypto from 'node:crypto';import {isDeepStrictEqual as boundedSame
 import {createRequire} from 'node:module';
 import {sha,readBlobRef,verifyOwnerMergeArtifact,verifyDynamicPayload} from './trusted-github.mjs';
 import {validateRootShape,canonicalDigest,signaturePayloadDigest} from './root-window-validation.mjs';
-import {loadRoot10ControllerContract,checkRoot10RuntimeBinding,checkRoot10SingleWindowSeries,readRoot10TemporalContext,checkRoot10TemporalTime,root10TemporalIdentity} from './root10-single-window.mjs';
+import {loadRoot10ControllerContract,checkRoot10RuntimeBinding,checkRoot10SingleWindowSeries,readRoot10TemporalContext,checkRoot10TemporalTime,root10TemporalIdentity,readRoot10RuntimeClockContext,checkRoot10RuntimeClockTime,root10RuntimeClockIdentity} from './root10-single-window.mjs';
 import {verifyRuntimeDependencies} from './runtime-dependencies.mjs';
 const root10Contract=loadRoot10ControllerContract();
 export const project='uscrdifznmlvczcekqpw',rootID=root10Contract.value.root_id,generation=root10Contract.value.generation_id;
@@ -71,8 +71,10 @@ export function checkCurrentSemantics({gaRaw,operation,observation,runtimeAccept
  check(ga.profile_ref.profile_id===profile.profile_id&&ga.profile_ref.definition_version===profile.definition_version&&ga.profile_ref.content_digest===sha(bytes('ProfileDefinition.json'))&&ga.profile_digest===ga.profile_ref.content_digest,'EXACT_SIGNED_PROFILE');
  const {binding,current,attempts}=state;safe(current);safe(binding);
  const temporal=readRoot10TemporalContext({gaRaw,execution:state,descriptor:runtimeAcceptance?.accepted_subject?.temporal_continuation});
+ const rc=readRoot10RuntimeClockContext({gaRaw,execution:state,descriptor:runtimeAcceptance?.accepted_subject?.runtime_clock});
+ check(!(temporal&&rc),'ONE_CLOCK_AMENDMENT_ONLY');
  check(binding.gate_id===gateID&&ga.gate_id===gateID,'EXACT_SINGLE_REGISTERED_GATE');
- const gaBinding=temporal?temporal.body.old_binding:binding;
+ const gaBinding=rc?{controller_sha256:root10RuntimeClockIdentity.original_controller_sha256,qualification_sha256:root10RuntimeClockIdentity.original_qualification_sha256}:temporal?temporal.body.old_binding:binding;
  check(ga.controller_digest===gaBinding.controller_sha256&&ga.controller_qualification_ref.sha256===gaBinding.qualification_sha256&&ga.scope_digest===binding.scope_sha256&&ga.profile_digest===binding.profile_sha256,'EXACT_CONTROLLER_SCOPE_BINDING');
  check(runtimeAcceptance?.state==='ACCEPTED_EXACT_PREENTRY_CONTROLLER_RUNTIME'&&runtimeAcceptance.independent_reviewer==='/root','EXACT_RUNTIME_ACCEPTANCE_METADATA_REQUIRED');
  currentWindow(runtimeAcceptance.not_before,runtimeAcceptance.expires_at,now);
@@ -86,7 +88,14 @@ export function checkCurrentSemantics({gaRaw,operation,observation,runtimeAccept
  checkFixedGAFields(ga,subject);
  check(ga.stage_receipt_refs.length===6&&subject.required_stages?.join(',')==='R05,R06,R07,R08,R09,R10','EXACT_STAGE_INPUTS');
  const issued=time(ga.issued_at),expires=time(ga.expires_at),deadline=time(ga.deadline);
- if(temporal){
+ if(rc){
+  // Validate the original signed lifetime without substituting a new clock in
+  // the GA; the separately accepted runtime-clock amendment supplies the
+  // preparation and finalization windows, and the container's own observed
+  // start supplies the runtime clock.
+  check(issued<deadline&&deadline===expires&&expires-issued===600000,'ORIGINAL_GA_WINDOW');
+  checkRoot10RuntimeClockTime({context:rc,execution:state,operation,now});
+ }else if(temporal){
   // Validate the original signed lifetime without substituting a new clock in
   // the GA; the separately accepted amendment supplies the current window.
   check(issued<deadline&&deadline===expires&&expires-issued===600000,'ORIGINAL_GA_WINDOW');
@@ -102,7 +111,7 @@ export function checkCurrentSemantics({gaRaw,operation,observation,runtimeAccept
  check(attempt.phase===(admissionPhase==='DISPATCHED_ONCE'?operation+'_SENT':({CREATE:'PENDING',START:'CREATED',STOP:'RUNNING',GRR:'SIGNING'}[operation])),'NO_REDISPATCH_OR_UNKNOWN');
  check(Date.parse(attempt.expires_at)===deadline,'RESERVATION_DEADLINE');
  checkCumulativeBudget(current,binding);
- return {state:'SEMANTICS_ONLY_NOT_ADMISSION',ga,root:body,attempt,accepted_subject:subject,sequence:current.sequence,temporal};
+ return {state:'SEMANTICS_ONLY_NOT_ADMISSION',ga,root:body,attempt,accepted_subject:subject,sequence:current.sequence,temporal,rc};
 }
 function signedMetadata(item,expectedSha){check(typeof item?.raw==='string'&&sha(item.raw)===expectedSha,'ACCEPTANCE_BYTES_MISSING_OR_DRIFT');verifyOwnerMergeArtifact({...item.publication,raw:item.raw});return JSON.parse(item.raw);}
 
@@ -138,7 +147,21 @@ export async function prepareTrustedToolMaterial(material){
  seriesCheck(material.observation.row.execution);
  // No effects or admission exist while these initially untrusted metadata bytes are checked.
  signedMetadata(material.controller_qualification,binding.qualification_sha256);
- if(result.temporal){
+ if(result.rc){
+  const descriptor=result.rc.descriptor,input=material.runtime_clock;
+  check(input&&Object.keys(input).sort().join(',')==='event,host_window,publication,raw,sha256'&&sha(input.raw)===descriptor.amendment_ref.sha256&&input.sha256===descriptor.amendment_ref.sha256&&same(input.event,result.rc.event),'EXACT_SEPARATE_RUNTIME_CLOCK_AUTHORITY_MATERIAL');
+  const hw=input.host_window;
+  check(hw&&Object.keys(hw).sort().join(',')==='deadline_utc,prepared_utc'&&time(hw.deadline_utc)-time(hw.prepared_utc)===600000&&time(hw.prepared_utc)>=result.rc.issued&&time(hw.prepared_utc)<=Date.now()+2000&&time(hw.deadline_utc)<=result.rc.final,'EXACT_RUNTIME_CLOCK_HOST_WINDOW');
+  const publication=verifyOwnerMergeArtifact({commitSha:input.publication.commitSha,artifactPath:input.publication.artifactPath,raw:input.raw});
+  check(same(publication.blob_ref,descriptor.amendment_ref),'ACTUAL_OWNER_RUNTIME_CLOCK_AMENDMENT_PUBLICATION');
+  const amendment=JSON.parse(input.raw);
+  check(amendment.object_type==='Root10RuntimeClockAmendment'&&amendment.root_id===rootID&&amendment.control_trust_root_generation===generation&&amendment.activation?.ga_ref?.ga_id===root10RuntimeClockIdentity.ga_id&&amendment.activation.ga_ref.sha256===sha(material.ga_raw)&&amendment.activation.budget_ref?.sequence===117&&amendment.activation.budget_ref.sha256===root10RuntimeClockIdentity.budget_sha256&&amendment.activation.maximum_activations===1&&amendment.activation.expected_sequence===118&&amendment.activation.runtime_seconds===600&&amendment.activation.max_predispatch_resets===3&&amendment.activation.preparation_expires_at===windowExpiry&&amendment.activation.finalization_expires_at===windowExpiry&&amendment.supersedes?.sha256===root10TemporalIdentity.amendment_sha256,'EXACT_SIGNED_RUNTIME_CLOCK_AUTHORITY_SCOPE');
+  const originalManifest=result.ga.source_ref.blobs.filter(ref=>ref.sha256===result.ga.controller_digest);
+  check(originalManifest.length===1,'ONE_ORIGINAL_RUNTIME_CLOCK_SOURCE_MANIFEST');
+  const originalRaw=readBlobRef(originalManifest[0]);
+  verifyOwnerMergeArtifact({commitSha:result.ga.target_revision,artifactPath:'scripts/phase2-qualification/control-context-verifier-root10-single-window/ControllerSourceManifest.candidate.json',raw:originalRaw});
+  verifySourcePublication({sourceRef:descriptor.source_ref,ownerMerge:material.runtime_acceptance.publication.commitSha,controllerDigest:binding.controller_sha256});
+ }else if(result.temporal){
   const descriptor=result.temporal.descriptor,input=material.temporal_continuation;
   check(input&&Object.keys(input).sort().join(',')==='event,publication,raw,sha256'&&sha(input.raw)===descriptor.amendment_ref.sha256&&input.sha256===descriptor.amendment_ref.sha256&&same(input.event,result.temporal.event)&&same(input.publication,descriptor.publication),'EXACT_SEPARATE_TEMPORAL_AUTHORITY_MATERIAL');
   const publication=verifyOwnerMergeArtifact({commitSha:input.publication.commitSha,artifactPath:input.publication.artifactPath,raw:input.raw});
@@ -172,7 +195,7 @@ export async function prepareTrustedToolMaterial(material){
  check(profileInput?.raw&&sha(profileInput.raw)===result.accepted_subject.profile_signing_payload_ref?.sha256,'EXACT_ACCEPTED_PROFILE_PAYLOAD_INPUT');
  const profileProof=JSON.parse(profileInput.raw);check(same(profileProof.profile_definition,profile),'PROFILE_SOURCE');
  verifyOwnerMergeArtifact({...profileInput.publication,raw:profileInput.raw});
- verifyDynamicPayload(material.ga_raw,'GateAuthorization',result.ga.deadline,(nonPass||result.temporal)?result.ga.issued_at:null);
+ verifyDynamicPayload(material.ga_raw,'GateAuthorization',result.ga.deadline,(nonPass||result.temporal||result.rc)?result.ga.issued_at:null);
  // Required prerequisite proof bytes must be actual accepted immutable sources; no digest-only admission.
  const requiredRefs=[result.ga.profile_ref.accepted_ref,...result.ga.stage_receipt_refs,...result.ga.upstream_gate_result_receipt_refs];
  for(const ref of requiredRefs){
@@ -195,8 +218,9 @@ export async function prepareTrustedToolMaterial(material){
  check(statusCheck(sm)&&sm.schema_digest===acceptedStatus.sha256&&sm.issuer_purpose==='STATUS'&&sm.audience===audience&&sm.control_trust_root_generation===generation,'EXACT_SIGNED_STATUS_SCHEMA_PURPOSE');
  check(time(sm.as_of)<=Date.now()&&(nonPass||Date.now()<time(sm.expires_at))&&Array.isArray(sm.source_digests)&&sm.source_digests.length>0,'STATUS_CURRENT_INPUTS');
  // Status29 remains the original signed GA input. The separate immutable
- // temporal event binds the new controller; Status29 is never rewritten.
- const statusBinding=result.temporal?result.temporal.body.old_binding:binding;
+ // temporal or runtime-clock event binds the new controller; Status29 is never
+ // rewritten, so it always names the original controller and acceptance.
+ const statusBinding=result.rc?{controller_sha256:root10RuntimeClockIdentity.original_controller_sha256,runtime_acceptance_sha256:root10RuntimeClockIdentity.original_runtime_acceptance_sha256}:result.temporal?result.temporal.body.old_binding:binding;
  const statusExpected={root_set_id:rootID,root_generation:generation,profile_digest:binding.profile_sha256,gate_digest:binding.gate_sha256,controller_digest:statusBinding.controller_sha256,scope_digest:binding.scope_sha256,runner_generation:result.ga.runner_generation,credential_generation:result.ga.credential_generation,session_generation:result.ga.session_generation,stage_receipt_refs:result.ga.stage_receipt_refs};
  check(same(sm.observations,statusExpected)&&[binding.profile_sha256,binding.gate_sha256,statusBinding.controller_sha256,binding.scope_sha256].every(h=>sm.source_digests.includes(h)),'STATUS_EXACT_CURRENT_OBSERVATION_BINDING');
  const statusSources=[...result.ga.stage_receipt_refs,result.ga.scope_ref,result.ga.controller_qualification_ref,result.ga.authority_source_ref];
@@ -211,7 +235,7 @@ export async function prepareTrustedToolMaterial(material){
  const originalBinding=canonicalDigest(binding),originalRoot=canonicalDigest(material.observation.row.execution.root);
  const gaRaw=material.ga_raw,operation=material.operation;
  if(operation==='STOP'){
-  check(result.temporal,'EXACT_TEMPORAL_STOP_AUTHORITY_REQUIRED');
+  check(result.temporal||result.rc,'EXACT_CLOCK_AMENDED_STOP_AUTHORITY_REQUIRED');
   let used=false;
   return Object.freeze({kind:'VERIFIED_TEMPORAL_STOP_AUTHORITY',verifyCommittedStop(observation){
    check(!used,'ONE_STOP_AUTHORITY_USE_ONLY');used=true;
@@ -219,7 +243,7 @@ export async function prepareTrustedToolMaterial(material){
    check(canonicalDigest(execution?.binding)===originalBinding&&canonicalDigest(execution.root)===originalRoot&&same(execution.control_objects,material.observation.row.execution.control_objects),'STOP_AUTHORITY_BOUNDARY_CHANGED');
    const checked=checkCurrentSemantics({gaRaw,operation,observation,runtimeAcceptance:runtime,qualification,admissionPhase:'DISPATCHED_ONCE'});
    seriesCheck(execution);
-   return {state:'VERIFIED_TEMPORAL_STOP_DISPATCH',ga_id:checked.ga.gate_authorization_id,container_id:checked.attempt.container_id,deadline:checked.temporal.deadline};
+   return {state:'VERIFIED_TEMPORAL_STOP_DISPATCH',ga_id:checked.ga.gate_authorization_id,container_id:checked.attempt.container_id,deadline:checked.temporal?checked.temporal.deadline:checked.rc.final};
   }});
  }
  if(operation==='GRR'){
@@ -231,7 +255,7 @@ export async function prepareTrustedToolMaterial(material){
    check(canonicalDigest(observation?.row?.execution)===originalState,'RESULT_RESERVATION_OR_CURRENT_CHANGED');
    checkCurrentSemantics({gaRaw,operation,observation,runtimeAcceptance:runtime,qualification,terminalResult:receipt.result});
    seriesCheck(observation.row.execution);
-   checkResultSemantics({raw:material.grr_raw,gaRaw,state:observation.row.execution,acceptedSchemaSha256:result.accepted_subject.control_schema_refs.GateResultReceipt.sha256,temporalDescriptor:result.accepted_subject.temporal_continuation??null});
+   checkResultSemantics({raw:material.grr_raw,gaRaw,state:observation.row.execution,acceptedSchemaSha256:result.accepted_subject.control_schema_refs.GateResultReceipt.sha256,temporalDescriptor:result.accepted_subject.temporal_continuation??null,runtimeClockDescriptor:result.accepted_subject.runtime_clock??null});
    return {state:'EXACT_RESULT_REQUIRES_TERMINAL_CAS',request:resultCommitRequest(material.grr_raw,receipt),receipt_id:receipt.gate_result_receipt_id,ga_id:receipt.gate_authorization_id,result:receipt.result,automatic_retry:false,qualified:false};
   }});
  }
@@ -247,10 +271,13 @@ export async function prepareTrustedToolMaterial(material){
   const current=checkCurrentSemantics({gaRaw,operation,observation,runtimeAcceptance:runtime,qualification,admissionPhase:'DISPATCHED_ONCE',expectedQuerySha256:sha(expectedQuery)});
   check(current.sequence===response.sequence,'EXACT_DISPATCH_CURRENT_SEQUENCE');currentWindow(sm.as_of,sm.expires_at,Date.now());
   seriesCheck(currentSource);
-   const actual=invokeFixedHost({gaRaw,operation,containerId:current.attempt.container_id,deadline:current.temporal?.deadline??time(current.ga.deadline),temporal:current.temporal?{raw:material.temporal_continuation.raw,sha256:material.temporal_continuation.sha256,event:current.temporal.event}:null});
+   const actual=invokeFixedHost({gaRaw,operation,containerId:current.attempt.container_id,deadline:current.rc?time(material.runtime_clock.host_window.deadline_utc):current.temporal?.deadline??time(current.ga.deadline),temporal:current.rc?{raw:material.runtime_clock.raw,sha256:material.runtime_clock.sha256,event:current.rc.event,host_window:material.runtime_clock.host_window}:current.temporal?{raw:material.temporal_continuation.raw,sha256:material.temporal_continuation.sha256,event:current.temporal.event}:null});
   const eventOperation=operation==='CREATE'?'CREATED':'RUNNING';
   const raw=JSON.stringify({ga_id:intent.gaId,ga_sha256:sha(gaRaw),operation:eventOperation,container_id:actual.container_id,observation:actual.observation,started_utc:actual.started_utc,ended_utc:actual.ended_utc})+'\n';
+  // Under the runtime-clock amendment the RUNNING event immutably records the
+  // container-derived runtime deadline: observed State.StartedAt plus 600s.
+  const runtimeDeadline=(current.rc&&eventOperation==='RUNNING')?{runtime_deadline:new Date(Date.parse(actual.observation.State.StartedAt)+600000).toISOString()}:{};
   return {state:'ACTUAL_HOST_EFFECT_REQUIRES_REMOTE_RESULT',ga_sha256:sha(gaRaw),operation,container_id:actual.container_id,
-   event_request:{idempotency_key:deriveEventKey(gaRaw,operation,'observed'),expected_sequence:current.sequence,ga_id:intent.gaId,operation:eventOperation,body:{container_id:actual.container_id,raw,sha256:sha(raw)}},capacity_released:false,qualified:false,automatic_retry:false};
+   event_request:{idempotency_key:deriveEventKey(gaRaw,operation,'observed'),expected_sequence:current.sequence,ga_id:intent.gaId,operation:eventOperation,body:{container_id:actual.container_id,raw,sha256:sha(raw),...runtimeDeadline}},capacity_released:false,qualified:false,automatic_retry:false};
  }});
 }

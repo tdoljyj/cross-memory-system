@@ -92,6 +92,116 @@ export function checkRoot10TemporalTime({context,execution,operation,now=Date.no
  return {finalization_expires_at:context.expires,authority_effect:'NONE'};
 }
 
+// Runtime-clock amendment: the 600 authorized seconds bound the container's own
+// observed run, never approval, transport, preparation, repair, acceptance or
+// archival. It supersedes the temporal continuation's wall-clock effect window,
+// which twice destroyed budget 117 without any container ever being created.
+// This parser is a rejection check, not proof of Owner authority.
+export const root10RuntimeClockIdentity=Object.freeze({
+ ga_id:'ga_32daa5daf52c4deb8e893c25b08eff38',
+ ga_sha256:'68afb1e6dc1367729cd6864b9ba9b5d846ab123ff5539d7a646f7fa1df988f78',
+ original_controller_sha256:'d01bd55e02614c0d2b6f51f80fe5b56816aecc2f29e753344a4bcac56aaaf559',
+ original_qualification_sha256:'3cd157e704660dac18d3e6c5fb790f6854f29d644c66d53b968bf94c07f12143',
+ original_runtime_acceptance_sha256:'bc6cb688231763f2ad1a56bbc77a22eb7a35cfd749b12e8827f5040582443a88',
+ predecessor_controller_sha256:'aca4db237a7572426fdf43c384abcc7fd945e5d0554b8a3b01a71959c2102041',
+ predecessor_qualification_sha256:'e3ded3a817082660fce7edc6e5a1964327cb7e7af413d15d49ce155298788405',
+ predecessor_runtime_acceptance_sha256:'17a5d20b7e6236cb276c7321955f6d0a5e5f83d9a35e83a570fcef251d59af42',
+ budget_sha256:'669d96057a44ed5e9c3eae9fed6ed8720aae8a2b48eef03761b8e9361433a462',
+ amendment_sha256:'e92a252a0ab62600d6153ece3e3df92a35bd5680b3d9e2c8f65b6c77ff236402',
+ activation_operation:'RUNTIME_CLOCK_AMENDMENT_ACTIVATED',
+ activation_key:'root10_runtime_clock_amendment_20260915',
+ original_deadline:'2026-09-15T09:37:03.454Z',
+ preparation_expires_at:'2026-09-16T03:00:00Z',
+ finalization_expires_at:'2026-09-16T03:00:00Z',
+ runtime_seconds:600,
+ max_predispatch_resets:3,
+ activation_sequence:119
+});
+const rcContexts=new WeakSet();
+const rcDescriptorKeys=['activation_idempotency_key','activation_operation','amendment_ref','budget_ref','continuation_controller_sha256','expected_activation_sequence','finalization_expires_at','max_predispatch_resets','no_automatic_retry','no_new_budget','no_new_ga','no_refund','predecessor_controller_sha256','preparation_expires_at','prior_ga_ref','runtime_seconds','source_ref'];
+const rcBodyKeys=['activated_at','amendment_ref','amendment_sha256','automatic_retry','budget_raw_sha256','budget_refund','budget_sequence','finalization_expires_at','max_predispatch_resets','new_binding','new_binding_sha256','new_budget','new_ga','old_binding','old_binding_sha256','preparation_expires_at','prior_ga_sha256','runtime_seconds'];
+const rcEffectOperations=['INTENT_RECORDED','CREATE_SENT','CREATED','INTENT_RECORDED','START_SENT','RUNNING','STOP_SENT','STOPPED'];
+export function readRoot10RuntimeClockContext({gaRaw,execution,descriptor}){
+ if(descriptor===undefined||descriptor===null)return null;
+ const fixed=root10RuntimeClockIdentity;
+ need(exact(descriptor,rcDescriptorKeys),'EXACT_RUNTIME_CLOCK_DESCRIPTOR');
+ need(ref(descriptor.amendment_ref)&&descriptor.amendment_ref.sha256===fixed.amendment_sha256&&descriptor.activation_operation===fixed.activation_operation&&descriptor.activation_idempotency_key===fixed.activation_key&&descriptor.expected_activation_sequence===fixed.activation_sequence,'EXACT_RUNTIME_CLOCK_ACTIVATION_CONTRACT');
+ need(descriptor.prior_ga_ref?.ga_id===fixed.ga_id&&descriptor.prior_ga_ref.sha256===fixed.ga_sha256&&descriptor.budget_ref?.sha256===fixed.budget_sha256&&descriptor.runtime_seconds===fixed.runtime_seconds&&descriptor.max_predispatch_resets===fixed.max_predispatch_resets&&descriptor.preparation_expires_at===fixed.preparation_expires_at&&descriptor.finalization_expires_at===fixed.finalization_expires_at,'EXACT_RUNTIME_CLOCK_GA_BUDGET_WINDOW');
+ need(descriptor.predecessor_controller_sha256===fixed.predecessor_controller_sha256&&hex(descriptor.continuation_controller_sha256)&&descriptor.continuation_controller_sha256!==fixed.predecessor_controller_sha256&&descriptor.continuation_controller_sha256!==fixed.original_controller_sha256&&['no_new_ga','no_new_budget','no_refund','no_automatic_retry'].every(k=>descriptor[k]===true),'EXACT_RUNTIME_CLOCK_NONEXPANDING_SUCCESSOR');
+ // History and event-shape rules are checked before the GA byte pin so each is
+ // independently provable live; nothing below grants anything before the pin.
+ const events=execution?.events;
+ need(Array.isArray(events)&&events.length===execution.current.sequence&&events.every((e,i)=>e.sequence===i+1),'COMPLETE_RUNTIME_CLOCK_EVENT_HISTORY');
+ // The superseded temporal activation stays immutable in history at sequence 118.
+ need(events[117]?.request?.operation===root10TemporalIdentity.activation_operation&&events[117].idempotency_key===root10TemporalIdentity.activation_key&&events[117].request.body?.amendment_sha256===root10TemporalIdentity.amendment_sha256,'SUPERSEDED_TEMPORAL_EVENT_IMMUTABLE');
+ const matches=events.filter(e=>e.request?.operation===fixed.activation_operation);
+ need(matches.length===1&&matches[0].sequence===fixed.activation_sequence&&matches[0].idempotency_key===fixed.activation_key,'ONE_RUNTIME_CLOCK_ACTIVATION_ONLY');
+ const event=matches[0],request=event.request,body=request.body;
+ need(exact(request,['operation','ga_id','expected_sequence','idempotency_key','body'])&&request.ga_id===fixed.ga_id&&request.expected_sequence===fixed.activation_sequence-1&&request.idempotency_key===fixed.activation_key&&exact(body,rcBodyKeys),'EXACT_RUNTIME_CLOCK_ACTIVATION_EVENT');
+ need(event.root_id===execution.current.root_id&&sameTemporal(body.amendment_ref,descriptor.amendment_ref)&&body.amendment_sha256===descriptor.amendment_ref.sha256&&body.prior_ga_sha256===fixed.ga_sha256&&body.budget_sequence===117&&body.budget_raw_sha256===fixed.budget_sha256,'EXACT_RUNTIME_CLOCK_EVENT_BINDINGS');
+ need(['automatic_retry','budget_refund','new_budget','new_ga'].every(k=>body[k]===false),'NO_RUNTIME_CLOCK_BUDGET_OR_GA_EFFECT');
+ need(body.preparation_expires_at===fixed.preparation_expires_at&&body.finalization_expires_at===fixed.finalization_expires_at&&body.runtime_seconds===fixed.runtime_seconds&&body.max_predispatch_resets===fixed.max_predispatch_resets,'EXACT_RUNTIME_CLOCK_WINDOW_TERMS');
+ need(!events.slice(0,117).some(e=>e.request?.ga_id===fixed.ga_id),'RUNTIME_CLOCK_ZERO_PRIOR_GA_EFFECT');
+ const changed=['controller_sha256','qualification_sha256','runtime_acceptance_sha256'];
+ need(body.old_binding?.controller_sha256===fixed.predecessor_controller_sha256&&body.old_binding.qualification_sha256===fixed.predecessor_qualification_sha256&&body.old_binding.runtime_acceptance_sha256===fixed.predecessor_runtime_acceptance_sha256&&body.new_binding?.controller_sha256===descriptor.continuation_controller_sha256&&changed.every(k=>hex(body.new_binding[k]))&&sameTemporal({...body.new_binding,...Object.fromEntries(changed.map(k=>[k,body.old_binding[k]]))},body.old_binding),'ONLY_ACCEPTED_RUNTIME_CLOCK_BINDING_COLUMNS_CHANGE');
+ need(sha(postgresJsonbText(body.old_binding))===body.old_binding_sha256&&sha(postgresJsonbText(body.new_binding))===body.new_binding_sha256&&sameTemporal(body.new_binding,execution.binding),'EXACT_RUNTIME_CLOCK_BINDING_PREIMAGE_AND_CURRENT');
+ need(execution.current.charged_seconds===11706&&execution.current.charged_evidence_bytes===2604247987,'RUNTIME_CLOCK_CUMULATIVE_CHARGES_UNCHANGED');
+ const budget=events[116];
+ need(budget.request?.operation==='BUDGET_RESERVED'&&sha(budget.request.body.raw)===fixed.budget_sha256&&budget.request.body.sha256===fixed.budget_sha256&&execution.attempts.filter(a=>a.budget_sequence===117).length===1,'ORIGINAL_RUNTIME_CLOCK_BUDGET_UNCHANGED');
+ need(typeof gaRaw==='string'&&sha(gaRaw)===fixed.ga_sha256,'EXACT_UNCHANGED_RUNTIME_CLOCK_GA_BYTES');
+ const ga=JSON.parse(gaRaw);
+ need(ga.gate_authorization_id===fixed.ga_id&&ga.controller_digest===fixed.original_controller_sha256&&ga.deadline===fixed.original_deadline&&ga.expires_at===fixed.original_deadline,'ORIGINAL_GA_CLOCK_IMMUTABLE');
+ need(event.root_id===ga.authority_source_ref.uri.split(':').at(-1),'EXACT_RUNTIME_CLOCK_EVENT_BINDINGS');
+ const attempt=execution.attempts?.filter(a=>a.ga_id===fixed.ga_id);
+ need(attempt?.length===1&&attempt[0].ga_raw===gaRaw&&attempt[0].ga_sha256===fixed.ga_sha256&&attempt[0].budget_sequence===117&&Date.parse(attempt[0].expires_at)===Date.parse(fixed.original_deadline)&&attempt[0].revoked===false,'ORIGINAL_RUNTIME_CLOCK_ATTEMPT_UNCHANGED');
+ const issued=Date.parse(body.activated_at),prep=Date.parse(body.preparation_expires_at),final=Date.parse(body.finalization_expires_at);
+ need(temporalUtc(body.activated_at)&&Date.parse(fixed.original_deadline)<issued&&issued<prep&&prep<=final,'EXACT_DATABASE_DERIVED_RUNTIME_CLOCK_WINDOW');
+ // Bounded in-place predispatch repair: a reset is only ever zero-effect, and at
+ // most one runtime interval can ever exist for the GA.
+ const gaEvents=events.filter(e=>e.request?.ga_id===fixed.ga_id&&e.sequence>fixed.activation_sequence);
+ const resets=gaEvents.filter(e=>e.request.operation==='PREDISPATCH_RESET');
+ need(resets.length<=fixed.max_predispatch_resets,'BOUNDED_PREDISPATCH_RESETS');
+ for(const reset of resets){
+  need(reset.request.body?.automatic_retry===false&&typeof reset.request.body.reason==='string'&&reset.request.body.reason.length>0&&reset.request.body.reason.length<=200,'EXACT_ZERO_EFFECT_RESET_EVENT');
+  need(!gaEvents.some(e=>e.sequence<reset.sequence&&['RUNNING','STOPPED'].includes(e.request.operation)),'RESET_ONLY_BEFORE_ANY_RUN');
+ }
+ need(gaEvents.filter(e=>e.request.operation==='RUNNING').length<=1,'ONE_RUNTIME_INTERVAL_ONLY');
+ const lastReset=resets.length?resets.at(-1).sequence:fixed.activation_sequence;
+ const context=Object.freeze({state:'RUNTIME_CLOCK_SEMANTICS_ONLY_NOT_AUTHORITY',descriptor,event,body,issued,prep,final,runtimeSeconds:fixed.runtime_seconds,resets:resets.length,lastReset,execution_baseline_sequence:fixed.activation_sequence,authority_effect:'NONE'});
+ rcContexts.add(context);return context;
+}
+export function checkRoot10RuntimeClockTime({context,execution,operation,now=Date.now()}){
+ need(rcContexts.has(context)&&Number.isFinite(now)&&now>=context.issued,'RECOGNIZED_RUNTIME_CLOCK_CONTEXT_AND_REAL_CLOCK');
+ if(['CREATE','START'].includes(operation)){
+  // Preparation is not runtime: CREATE and START are bounded only by the
+  // preparation window, never by a clock that started at an approval instant.
+  need(now<context.prep,'RUNTIME_CLOCK_PREPARATION_WINDOW_EXPIRED');
+  return {preparation_expires_at:context.prep,authority_effect:'NONE'};
+ }
+ if(operation==='STOP'){
+  // Stopping a container is never refused on account of any clock. A limit that
+  // forbids stopping a running container is itself the runaway risk.
+  return {stop_never_clock_refused:true,authority_effect:'NONE'};
+ }
+ need(operation==='GRR'&&now<context.final,'RUNTIME_CLOCK_FINALIZATION_WINDOW_EXPIRED');
+ const gaId=root10RuntimeClockIdentity.ga_id;
+ const events=execution.events.filter(e=>e.request?.ga_id===gaId&&e.sequence>context.execution_baseline_sequence&&e.request.operation!=='PREDISPATCH_RESET');
+ const finalRound=events.filter(e=>e.sequence>context.lastReset);
+ const effects=finalRound.filter(e=>rcEffectOperations.includes(e.request.operation));
+ need(effects.length===8&&effects.every((e,i)=>e.request.operation===rcEffectOperations[i]&&e.sequence===effects[0].sequence+i)&&finalRound.every(e=>rcEffectOperations.includes(e.request.operation)||['DECISION_RESERVED','SIGNING'].includes(e.request.operation)),'ONE_COMPLETE_RUNTIME_CLOCK_EFFECT_CHAIN');
+ need(!events.some(e=>e.sequence<=context.lastReset&&['RUNNING','STOPPED','DECISION_RESERVED','SIGNING'].includes(e.request.operation)),'EARLIER_ROUNDS_ZERO_EFFECT_ONLY');
+ const running=effects[5],runningValue=JSON.parse(running.request.body.raw);
+ need(sha(running.request.body.raw)===running.request.body.sha256&&typeof running.request.body.runtime_deadline==='string'&&Math.abs(Date.parse(running.request.body.runtime_deadline)-(Date.parse(runningValue.observation?.State?.StartedAt)+context.runtimeSeconds*1000))<1000,'EXACT_IMMUTABLE_RUNTIME_DEADLINE');
+ const stopped=effects[7],raw=stopped.request.body.raw,stop=JSON.parse(raw),container=execution.attempts.find(a=>a.ga_id===gaId).container_id;
+ need(sha(raw)===stopped.request.body.sha256&&stop.ga_id===gaId&&stop.ga_sha256===root10RuntimeClockIdentity.ga_sha256&&stop.container_id===container&&/^[a-f0-9]{64}$/.test(container??'')&&stop.observation?.Id===container&&stop.observation.State?.Running===false&&stop.observation.State?.Pid===0&&stop.observation.State?.Status==='exited','EXACT_RUNTIME_CLOCK_REAL_STOP');
+ // Runaway control: an overrun run was still stopped, but it can never pass.
+ need(stopped.request.body.overrun===false,'OVERRUN_RUN_CANNOT_PASS');
+ const startedAt=Date.parse(stop.observation.State.StartedAt),finishedAt=Date.parse(stop.observation.State.FinishedAt);
+ need(Number.isFinite(startedAt)&&Number.isFinite(finishedAt)&&startedAt>=context.issued&&startedAt<=finishedAt&&finishedAt-startedAt<=context.runtimeSeconds*1000,'RUNTIME_INTERVAL_WITHIN_BUDGET');
+ need(['STOPPED','DECISION_RESERVED','SIGNING'].includes(execution.attempts.find(a=>a.ga_id===gaId)?.phase),'REAL_STOP_REQUIRED_FOR_RUNTIME_CLOCK_FINALIZATION');
+ return {finalization_expires_at:context.final,authority_effect:'NONE'};
+}
+
 const ref=value=>exact(value,['uri','sha256'])&&typeof value.uri==='string'&&/^https:\/\/api\.github\.com\/repos\/tdoljyj\/cross-memory-system\/git\/blobs\/[a-f0-9]{40}$/.test(value.uri)&&hex(value.sha256);
 const contractKeys=['schema_version','ready','root_id','predecessor_generation','generation_id','generation_ordinal','window','baseline','postbaseline','caps','fixed_digests','accepted_suite','issuer_qualification_refs','reviewer_delegation','source_closure','invariants'];
 export function validateRoot10ControllerContract(value){

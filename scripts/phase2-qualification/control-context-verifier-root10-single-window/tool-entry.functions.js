@@ -57,6 +57,15 @@ else{
  //     entry proceeded to node, again indistinguishably from an honest run. Its bytes are now
  //     verified before it is invoked, by the same sha256sum the manifest gate uses.
  //
+ // R21-E1. The three host tool digests below were re-measured on 2026-09-15, after the actual
+ // runtime host refused with FIXED_SHELL_TOOL_BYTES_DRIFT and nothing else explained the refusal.
+ // sha256sum, cut and test moved; node, python3.11, docker and dash did not. The move is
+ // attributable: those three files are coreutils 9.4-3ubuntu6.1 on this host, `dpkg -V coreutils`
+ // reports only stripped man/doc pages and no checksum mismatch on any binary, and each file keeps
+ // its previous length exactly. That is a base-image package rebuild, not a substituted tool.
+ // Re-measuring is therefore the repair, not a weakening: the pin still names exact bytes, and a
+ // host that does not carry these exact bytes still refuses before anything runs.
+ //
  // Residual, stated rather than papered over: the shell binary itself is chosen by the harness's
  // exec_command, not by this script, so it cannot be pinned from here. /usr/bin/dash is in the
  // manifest, but nothing forces the harness to use it. That is the remaining root of trust,
@@ -85,7 +94,7 @@ for e in d["files"]:
     b=open(q,"rb").read()
     if len(b)!=e["bytes"] or hashlib.sha256(b).hexdigest()!=e["sha256"]:
         sys.exit("EXACT_CONTROLLER_SOURCE_BYTES_DRIFT")
-host={"/usr/bin/sha256sum":("4d2db56c867e5324e0084c9e897f6360d37517de77ac96f2bd31494223d69a60",39336),"/usr/bin/cut":("74e458a2da3a338c2b9e9a9180c300ed344f214d5f9de79dc39f7fa050d9c476",39432),"/usr/bin/test":("f789529392eab055ddbd6d4e3f44f6499ce7706ed623078c704406bc9f085b53",47552)}
+host={"/usr/bin/sha256sum":("e484c36c0613879fbd11058f7a2e194783bced59d4805d64c3d4b0d7f664094d",39336),"/usr/bin/cut":("e48d15703786f49ae0e01003d72d335b6307769735bd36d93df2983d6b340122",39432),"/usr/bin/test":("da73061ae72b78c517da9c1ed85ae6cbaf1cc00102c6afdb342e6347effc48af",47552)}
 for q,(h,n) in host.items():
     b=open(q,"rb").read()
     if len(b)!=n or hashlib.sha256(b).hexdigest()!=h: sys.exit("FIXED_SHELL_TOOL_BYTES_DRIFT")

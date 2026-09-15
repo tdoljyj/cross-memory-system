@@ -13,7 +13,7 @@ import sys
 
 BASE = Path(__file__).resolve().parent
 HOST = BASE / 'fixed_host.py'
-HOST_SHA = '21a6bba36f2284fc37ce4eb2cc4f372ff2c1a7507f76e1816554d7a9806eb23d'
+HOST_SHA = '43a5fc0017042493710dc5cb4da96beb2455238f47ea2e270af6906070860fba'
 MAX_INPUT = 131072
 BOUNDARY = {'qualified': False, 'capacity_released': False, 'authority_effect': 'NONE',
             'remote_result_persisted': False, 'automatic_retry': False}
@@ -49,7 +49,10 @@ def parse(raw):
         raise ValueError('Exact GA bytes changed')
     if 'temporal_continuation' in value:
         temporal = value['temporal_continuation']
-        if type(temporal) is not dict or set(temporal) != {'raw', 'sha256', 'event'}:
+        # Two accepted separate-authority shapes: the temporal continuation, and
+        # the runtime-clock amendment whose host_window bounds the container life.
+        if type(temporal) is not dict or set(temporal) not in ({'raw', 'sha256', 'event'},
+                                                               {'raw', 'sha256', 'event', 'host_window'}):
             raise ValueError('Exact separate temporal material required')
     if value['operation'] == 'CREATE':
         if value['container_id'] is not None:

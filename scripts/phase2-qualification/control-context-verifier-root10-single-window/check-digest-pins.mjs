@@ -53,6 +53,18 @@ const DECLARED_NON_FILE = {
     'The one unchanged budget117 raw in the actual execution history; never a new reservation.',
   '38eb6adca66de464fa88f4b7333649e9555d6a7d6b3fc23cd20ac18a0cfec4a6':
     'Exact separate temporal amendment bytes; Owner publication and immutable event118 are verified before any effect.',
+  e92a252a0ab62600d6153ece3e3df92a35bd5680b3d9e2c8f65b6c77ff236402:
+    'Exact separate runtime-clock amendment bytes (work/root10-single-window/runtime-clock/Root10RuntimeClockAmendment.json); Owner publication and immutable event119 are verified before any effect.',
+  '3cd157e704660dac18d3e6c5fb790f6854f29d644c66d53b968bf94c07f12143':
+    'Original GA controller qualification digest: historical Owner-published bytes the signed GA pins; the runtime-clock identity checks the GA against it, never a current file.',
+  bc6cb688231763f2ad1a56bbc77a22eb7a35cfd749b12e8827f5040582443a88:
+    'Original runtime acceptance digest bound by the signed Status29; the runtime-clock identity checks stored status observations against it, never a current file.',
+  aca4db237a7572426fdf43c384abcc7fd945e5d0554b8a3b01a71959c2102041:
+    'Temporal continuation controller manifest digest: the predecessor binding the runtime-clock amendment repoints away from, preserved in immutable event118/119 bodies.',
+  e3ded3a817082660fce7edc6e5a1964327cb7e7af413d15d49ce155298788405:
+    'Temporal continuation controller qualification digest: the predecessor binding column the runtime-clock old_binding must still carry exactly.',
+  '17a5d20b7e6236cb276c7321955f6d0a5e5f83d9a35e83a570fcef251d59af42':
+    'Temporal continuation runtime acceptance digest: the predecessor binding column the runtime-clock old_binding must still carry exactly.',
   ea96914e218460339508bc51eff0d10de41e1a94cfa3a0a544a85a132219791b:
     'proposalSHA. The file it described was lost with the old host; the constant is cross-checked against approved.proposal_sha256 and appendix.proposal_sha256 from merged materials.',
   '64b2ba3ef6bfe2755b78e03b19d6a6b6ea5a0e3735c4b9328e9be2c4715dff07':
@@ -145,10 +157,11 @@ const CONTROLLER_SOURCES = [
   'original-inputs-blob.mjs', 'parent600.py', 'read-source-blobs-linux.mjs',
   'request-denials.mjs', 'result-terminal.mjs', 'runtime-dependencies.mjs',
   'result-evidence-root10.mjs', 'root10-single-window.mjs', 'root-window-validation.mjs',
-  'selftest-root10-single-window.mjs', 'selftest-runtime-pins.mjs', 'source-publication.mjs',
+  'selftest-root10-single-window.mjs', 'selftest-runtime-clock.mjs', 'selftest-runtime-pins.mjs', 'source-publication.mjs',
   'tool-entry.functions.js', 'trusted-github.mjs',
 ];
-if (CONTROLLER_SOURCES.length !== 25) throw new Error('CONTROLLER_SOURCES length changed; declare a new source deliberately, not by accident');
+// R22: +1 for selftest-runtime-clock.mjs, the runtime-clock amendment's unit tests.
+if (CONTROLLER_SOURCES.length !== 26) throw new Error('CONTROLLER_SOURCES length changed; declare a new source deliberately, not by accident');
 // R20-F3. Round 20 ran this gate on a host with no gh installed and got
 // "UNEXPLAINED trusted-github.mjs: f687dc937534 matches no file", exit 1 -- correct fail-closed
 // behaviour, but indistinguishable from a real controller defect, and since build-linux-manifest
@@ -637,9 +650,14 @@ for (const [f, abs] of scanTargets) {
 // first time this was tested, and the run passed. Per-file counts shrink the cancellation to a
 // pair inside the same file, which is stated below rather than claimed away.
 const EXPECTED_PER_FILE = {
-  'bridge.py': 1, 'check-digest-pins.mjs': 18, 'context.mjs': 0, 'fixed_host.py': 3,
-  'host-effect.mjs': 2, 'parent600.py': 6, 'read-source-blobs-linux.mjs': 3, 'result-evidence-root10.mjs': 1, 'result-terminal.mjs': 0,
-  'root10-single-window.mjs': 4,
+  // R22 runtime-clock amendment: +6 declared non-file digests here, +1 amendment
+  // digest in parent600.py, +6 identity digests in root10-single-window.mjs.
+  // selftest-runtime-clock.mjs carries none by construction: it reads the fixed
+  // gate/scope/profile digests from the contract and every other value from the
+  // frozen identity, so a pin can never hide inside a test.
+  'bridge.py': 1, 'check-digest-pins.mjs': 24, 'context.mjs': 0, 'fixed_host.py': 3,
+  'host-effect.mjs': 2, 'parent600.py': 7, 'read-source-blobs-linux.mjs': 3, 'result-evidence-root10.mjs': 1, 'result-terminal.mjs': 0,
+  'root10-single-window.mjs': 10,
   'tool-entry.functions.js': 8, 'trusted-github.mjs': 1,
   // Cross-directory live code, newly scanned (R17-N5). Zero today; declared so it cannot appear
   // unnoticed.

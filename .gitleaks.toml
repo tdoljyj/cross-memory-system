@@ -14,7 +14,7 @@ regexes = ['''^sb_secret_fixture_rejected$''']
 # GA record IDs, and OAuth user IDs (not bearer tokens).
 # The CI helper validates and materializes these comments outside the repository.
 # This keeps review data inside the existing scanner-configuration boundary.
-# clued-reviewed-count: 388
+# clued-reviewed-count: 397
 # clued-reviewed-finding: {"fingerprint":"15856c6122c3c1eca21e9b7f2e73bd2411c6b2d6:scripts/phase2-qualification/control-context-verifier-root10-single-window/parent600.py:generic-api-key:107","kinds":["IDEMPOTENCY_METADATA"]}
 # clued-reviewed-finding: {"fingerprint":"15856c6122c3c1eca21e9b7f2e73bd2411c6b2d6:scripts/phase2-qualification/control-context-verifier-root10-single-window/root10-single-window.mjs:generic-api-key:24","kinds":["IDEMPOTENCY_METADATA"]}
 # clued-reviewed-finding: {"fingerprint":"15856c6122c3c1eca21e9b7f2e73bd2411c6b2d6:work/root10-single-window/temporal-continuation/Root10TemporalContinuationAmendment.json:generic-api-key:12","kinds":["IDEMPOTENCY_METADATA"]}
@@ -194,6 +194,15 @@ regexes = ['''^sb_secret_fixture_rejected$''']
 # clued-reviewed-finding: {"fingerprint":"81a45347dbf29568c03bd13bc5fb3ee5c211be5e:artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-m3/forward21rr/f1-transport-footer/probe-P3.raw-response.txt:generic-api-key:1","kinds":["OAUTH_USER_ID"]}
 # clued-reviewed-finding: {"fingerprint":"90e56f97287478a50cb95642b5b57e6cc8d651e6:artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/root7-runtime-v20/Status24SignatureEvidence.json:generic-api-key:43","kinds":["API_BUNDLE_DIGEST"]}
 # clued-reviewed-finding: {"fingerprint":"91f8d220841c2c5f8b961c1dc300ac960dbe3709:artifacts/clued-validation/phase2-entry-preparation-20260908/bootstrap/next-window-m3/root7-registration/ReadRootSnapshotAfterNW02.json:generic-api-key:1","kinds":["IDEMPOTENCY_METADATA"]}
+# clued-reviewed-finding: {"fingerprint":"95b8070b2231f8522deac20120c140d8b49c503d:work/root10-single-window/runtime-clock/activation/commit_gate_result.runtime-clock.sql:generic-api-key:25","kinds":["IDEMPOTENCY_METADATA"]}
+# clued-reviewed-finding: {"fingerprint":"95b8070b2231f8522deac20120c140d8b49c503d:work/root10-single-window/runtime-clock/activation/effective_execution_binding.runtime-clock.sql:generic-api-key:16","kinds":["IDEMPOTENCY_METADATA"]}
+# clued-reviewed-finding: {"fingerprint":"95b8070b2231f8522deac20120c140d8b49c503d:work/root10-single-window/runtime-clock/activation/execution_transition.runtime-clock.sql:generic-api-key:44","kinds":["IDEMPOTENCY_METADATA"]}
+# clued-reviewed-finding: {"fingerprint":"95b8070b2231f8522deac20120c140d8b49c503d:work/root10-single-window/runtime-clock/activation/root10-runtime-clock-activation-output/root10-runtime-clock-activation.apply-once.sql:generic-api-key:275","kinds":["IDEMPOTENCY_METADATA"]}
+# clued-reviewed-finding: {"fingerprint":"95b8070b2231f8522deac20120c140d8b49c503d:work/root10-single-window/runtime-clock/activation/root10-runtime-clock-activation-output/root10-runtime-clock-activation.apply-once.sql:generic-api-key:28","kinds":["IDEMPOTENCY_METADATA"]}
+# clued-reviewed-finding: {"fingerprint":"95b8070b2231f8522deac20120c140d8b49c503d:work/root10-single-window/runtime-clock/activation/root10-runtime-clock-activation-output/root10-runtime-clock-activation.apply-once.sql:generic-api-key:80","kinds":["IDEMPOTENCY_METADATA"]}
+# clued-reviewed-finding: {"fingerprint":"95b8070b2231f8522deac20120c140d8b49c503d:work/root10-single-window/runtime-clock/activation/root10-runtime-clock-activation-output/root10-runtime-clock-activation.full-rollback.sql:generic-api-key:197","kinds":["IDEMPOTENCY_METADATA"]}
+# clued-reviewed-finding: {"fingerprint":"95b8070b2231f8522deac20120c140d8b49c503d:work/root10-single-window/runtime-clock/activation/root10-runtime-clock-activation-output/root10-runtime-clock-activation.full-rollback.sql:generic-api-key:23","kinds":["IDEMPOTENCY_METADATA"]}
+# clued-reviewed-finding: {"fingerprint":"95b8070b2231f8522deac20120c140d8b49c503d:work/root10-single-window/runtime-clock/activation/root10-runtime-clock-activation-output/root10-runtime-clock-activation.full-rollback.sql:generic-api-key:62","kinds":["IDEMPOTENCY_METADATA"]}
 # clued-reviewed-finding: {"fingerprint":"a6b122f6bcfec21d9d976ac248031cea9ac1a8b3:work/cp02/measurement-2026-09-13/Preflight31.raw-response.json:generic-api-key:102","kinds":["OAUTH_USER_ID"]}
 # clued-reviewed-finding: {"fingerprint":"a6b122f6bcfec21d9d976ac248031cea9ac1a8b3:work/cp02/measurement-2026-09-13/Preflight31.raw-response.json:generic-api-key:119","kinds":["OAUTH_USER_ID"]}
 # clued-reviewed-finding: {"fingerprint":"a6b122f6bcfec21d9d976ac248031cea9ac1a8b3:work/cp02/measurement-2026-09-13/Preflight31.raw-response.json:generic-api-key:136","kinds":["OAUTH_USER_ID"]}

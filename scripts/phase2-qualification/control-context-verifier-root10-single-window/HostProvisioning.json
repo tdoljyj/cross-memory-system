@@ -8,7 +8,19 @@
   "measured_on": {
     "platform": "linux",
     "arch": "x64",
-    "at": "2026-09-12T16:58:32Z"
+    "at": "2026-09-15T13:34:00Z"
+  },
+  "shell_tool_remeasurement_20260915": {
+    "why": "The 2026-09-15 dispatch refused with FIXED_SHELL_TOOL_BYTES_DRIFT before any container was created, and the refusal was correct: sha256sum, cut and test on the actual runtime host no longer matched the digests measured on 2026-09-12. That refusal burned an execution window without producing any container effect, and no earlier round had identified which files moved.",
+    "what_moved": [
+      {"path": "/usr/bin/sha256sum", "was": "4d2db56c867e5324e0084c9e897f6360d37517de77ac96f2bd31494223d69a60", "now": "e484c36c0613879fbd11058f7a2e194783bced59d4805d64c3d4b0d7f664094d", "bytes_unchanged": 39336},
+      {"path": "/usr/bin/cut", "was": "74e458a2da3a338c2b9e9a9180c300ed344f214d5f9de79dc39f7fa050d9c476", "now": "e48d15703786f49ae0e01003d72d335b6307769735bd36d93df2983d6b340122", "bytes_unchanged": 39432},
+      {"path": "/usr/bin/test", "was": "f789529392eab055ddbd6d4e3f44f6499ce7706ed623078c704406bc9f085b53", "now": "da73061ae72b78c517da9c1ed85ae6cbaf1cc00102c6afdb342e6347effc48af", "bytes_unchanged": 47552}
+    ],
+    "what_did_not_move": ["/opt/node22/bin/node", "/usr/bin/python3.11", "/usr/bin/docker", "/usr/bin/dash", "/usr/local/bin/gh"],
+    "attribution": "The three files belong to coreutils 9.4-3ubuntu6.1 on this host. `dpkg -V coreutils` reports only stripped man and doc paths and no checksum mismatch on any binary, and every file keeps its previous length exactly. That is a base-image package rebuild, not a substituted tool.",
+    "why_remeasuring_is_not_weakening": "The pin still names exact bytes and is still checked before anything runs; a host that does not carry these exact bytes still refuses. What changed is which bytes are named, and that change is attributed to a named package version rather than accepted silently.",
+    "gh_disposition": "/usr/local/bin/gh was absent on this host, not drifted. The official gh 2.63.2 linux-amd64 release binary measures f687dc937534f8aa77ff9d2362163c645b5a8cc78297ef1a642c74c56aa48618 at 50098328 bytes, identical to the digest this document already pinned, so it was installed at the pinned path and no pin changed."
   },
   "runtime_boundary": {
     "coordinator": "Windows PowerShell 7.6.5",
@@ -57,17 +69,17 @@
   "shell_tools_pinned_by_host_provisioning": [
     {
       "path": "/usr/bin/sha256sum",
-      "sha256": "4d2db56c867e5324e0084c9e897f6360d37517de77ac96f2bd31494223d69a60",
+      "sha256": "e484c36c0613879fbd11058f7a2e194783bced59d4805d64c3d4b0d7f664094d",
       "bytes": 39336
     },
     {
       "path": "/usr/bin/cut",
-      "sha256": "74e458a2da3a338c2b9e9a9180c300ed344f214d5f9de79dc39f7fa050d9c476",
+      "sha256": "e48d15703786f49ae0e01003d72d335b6307769735bd36d93df2983d6b340122",
       "bytes": 39432
     },
     {
       "path": "/usr/bin/test",
-      "sha256": "f789529392eab055ddbd6d4e3f44f6499ce7706ed623078c704406bc9f085b53",
+      "sha256": "da73061ae72b78c517da9c1ed85ae6cbaf1cc00102c6afdb342e6347effc48af",
       "bytes": 47552
     },
     {
