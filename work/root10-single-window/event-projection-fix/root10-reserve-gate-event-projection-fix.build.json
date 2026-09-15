@@ -1,0 +1,45 @@
+{
+  "schema_version": "root10-reserve-gate-event-projection-fix-build/1",
+  "state": "LOCAL_CORRECTIVE_SQL_BUILT_NOT_EXECUTED",
+  "authority_effect": "NONE",
+  "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+  "generation_id": "ctrgen_48100437d24e448ba01c542ebe1290da",
+  "expected_current_sequence": 117,
+  "expected_pending_budget_sequence": 117,
+  "expected_active_ga_id": null,
+  "charged_seconds": 11706,
+  "charged_evidence_bytes": 2604247987,
+  "old_reserve_gate_catalog_sha256": "5dd90bdfb79a3a03289490130daf5be431b056f7432cb68c7dc0ce60d8459bb8",
+  "new_reserve_gate_catalog_sha256": "2c8bdb13242872ae2c379fbea8f3df4065dc88e52ccb250c1aafe586565ba80a",
+  "old_reserve_gate_source_sha256": "db0967d6b95c1a9a5b2d47bdbca6809728e272ea2b059ceba9c6e6bf20d269bc",
+  "new_reserve_gate_source_sha256": "dd89973ea38fb1c383fe577d68324f3a0392022f3749019ce0d50733f5e555ef",
+  "corrected_predicates": [
+    "event114 normalized operation/body exact",
+    "event115 normalized operation/body exact",
+    "51-field GA gate_id plus unique accepted Gate artifact ref and existing binding Gate version/digest"
+  ],
+  "preserved": [
+    "event sequence",
+    "event idempotency key",
+    "binding_id",
+    "evidence bytes",
+    "all other reserve_gate predicates",
+    "function owner/ACL/config/security/volatility/kind/parallel/leakproof",
+    "Root10 state",
+    "budget117",
+    "zero Root10 GA"
+  ],
+  "negative_manifest_sha256": "4e6ffd64880cddf96fc3d53ea3f7ef4bc9f85a92401f62b8ad47265e98f448ab",
+  "accepted_plan_sha256": "c414f8c9a2d858e20e6aa2ff118fc77beb925fb4e3a5e06ae687ac99ebb49256",
+  "probe_count": 15,
+  "subcase_count": 42,
+  "database_write": false,
+  "ga_issued": false,
+  "budget_changed": false,
+  "history_changed": false,
+  "files": {
+    "reserve_gate.root10-event-projection-fixed.sql": "dd89973ea38fb1c383fe577d68324f3a0392022f3749019ce0d50733f5e555ef",
+    "root10-reserve-gate-event-projection-fix.apply-once.sql": "06cb6d03ca4ae4dfb944b355b983cc8e6833e35cde67e0474dae62718387d3a4",
+    "root10-reserve-gate-event-projection-fix.full-rollback.sql": "fb5d8fc2e28918c52653e45b464dc251410f4eb00feff091cd0bd1cf2836eb3c"
+  }
+}

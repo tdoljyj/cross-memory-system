@@ -1,0 +1,36 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import {execFileSync} from 'node:child_process';
+
+const [sourceArg,negativeDirArg]=process.argv.slice(2);
+if(!sourceArg||!negativeDirArg) throw new Error('usage: node selftest-root10-reserve-gate-event-projection-fix.mjs LIVE_RESERVE_GATE_SOURCE NEGATIVE_OUTPUT_DIR');
+const here=path.dirname(new URL(import.meta.url).pathname.replace(/^\/(.:)/,'$1'));
+const builder=path.join(here,'build-root10-reserve-gate-event-projection-fix.mjs');
+const out=fs.mkdtempSync(path.join(os.tmpdir(),'root10-event-projection-selftest-'));
+const result=JSON.parse(execFileSync(process.execPath,[builder,path.resolve(sourceArg),path.resolve(negativeDirArg),out],{encoding:'utf8',maxBuffer:2*1024*1024}));
+const read=n=>fs.readFileSync(path.join(out,n),'utf8');
+const sha=s=>crypto.createHash('sha256').update(s).digest('hex');
+const source=fs.readFileSync(path.resolve(sourceArg),'utf8');
+const fixed=read('reserve_gate.root10-event-projection-fixed.sql');
+const apply=read('root10-reserve-gate-event-projection-fix.apply-once.sql');
+const rollback=read('root10-reserve-gate-event-projection-fix.full-rollback.sql');
+const manifest=JSON.parse(read('root10-reserve-gate-event-projection-fix.build.json'));
+const checks=[];const pass=(n,v)=>checks.push([n,Boolean(v)]);
+pass('builder reports local-only output',result.state==='BUILT_NOT_EXECUTED'&&manifest.database_write===false&&manifest.ga_issued===false);
+pass('exact old catalog preimage pinned',apply.includes('5dd90bdfb79a3a03289490130daf5be431b056f7432cb68c7dc0ce60d8459bb8'));
+pass('exact current117 no-GA CAS pinned',apply.includes('c.sequence<>117')&&apply.includes('c.pending_budget_sequence<>117')&&apply.includes('c.active_ga_id is not null'));
+pass('only intended stored-event predicate occurrences changed',fixed.length>source.length&&fixed.includes("request=jsonb_build_object('operation',fixed_prepared_event->'operation','body',jsonb_build_object('binding_id',fixed_prepared_event->'binding_id','evidence',fixed_prepared_event->'evidence'))")&&fixed.includes("request=jsonb_build_object('operation',fixed_qualified_event->'operation','body',jsonb_build_object('binding_id',fixed_qualified_event->'binding_id','evidence',fixed_qualified_event->'evidence'))"));
+pass('stored event sequence and idempotency remain exact',fixed.includes("sequence=114\n      and idempotency_key='root10_single_window_activation_20260915_prepared'")&&fixed.includes("sequence=115\n      and idempotency_key='root10_single_window_activation_20260915_qualified'"));
+pass('51-field GA Gate is mapped without field 52',fixed.includes("g->>'gate_id' is distinct from b.gate_id")&&fixed.includes("jsonb_array_elements(g->'artifact_refs')")&&fixed.includes('2afc439d56475fe58ca4168680e3cb2801d817b6')&&!fixed.includes("g->'gate_definition_ref'"));
+pass('function metadata compared before and after',apply.includes('_root10_event_projection_fn')&&apply.includes('ROOT10_EVENT_PROJECTION_FIX_SECURITY_METADATA_CHANGED'));
+const stateMutation=/(insert into|update|delete from) clued_control\.(events|execution_events|execution_current|gate_attempts|control_objects)/gi;
+pass('wrapper adds no Root state budget or history mutation',(apply.match(stateMutation)||[]).length===(fixed.match(stateMutation)||[]).length);
+pass('full rollback includes exact 15 plans',new Set([...rollback.matchAll(/^-- (N\d\d_[A-Z0-9_]+);/gm)].map(x=>x[1])).size===15);
+pass('each probe transaction installs then rolls back correction',(rollback.match(/^begin;$/gm)||[]).length===15&&(rollback.match(/^rollback;$/gm)||[]).length===15&&(rollback.match(/CREATE OR REPLACE FUNCTION clued_control\.reserve_gate\(p_raw text, p_sha text\)/g)||[]).length===15);
+pass('all output hashes close',Object.entries(manifest.files).every(([n,h])=>sha(read(n))===h));
+pass('manifest keeps accepted negative boundary',manifest.accepted_plan_sha256==='c414f8c9a2d858e20e6aa2ff118fc77beb925fb4e3a5e06ae687ac99ebb49256'&&manifest.probe_count===15&&manifest.subcase_count===42);
+let failed=false;for(const [n,ok] of checks){console.log(`${ok?'PASS':'FAIL'} ${n}`);failed||=!ok}
+console.log(`PASS ${checks.filter(x=>x[1]).length}/${checks.length} local-only; database=false; ga=false; all-probes=rollback`);
+if(failed)process.exit(1);
