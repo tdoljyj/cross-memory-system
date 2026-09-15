@@ -45,6 +45,8 @@ const HEX = /\b[a-fA-F0-9]{64}\b/g;
 // Digests that are deliberately not the digest of any file. Each needs a reason; anything not
 // listed here and not resolvable to a file fails the gate.
 const DECLARED_NON_FILE = {
+  '9373e3d9843055e9babc1564f4aaceb0966886f854fc0e107281d4ce618b3ce1':
+    'Previously accepted exact-pair controller manifest sha256; every inherited-chain predecessor after the original must carry this controller.',
   '50583449ba31202aa5a7cbb908ff82e556baf95bc6a8734c5b8e58890d6d8819':
     'Exact failed GateAuthorization raw sha256 for the sole Root9 pre-dispatch recovery subject.',
   'c0b49c6a782efe219485486c120c05a7b5e7171394194cebc8b7aec76047d10a':
@@ -610,7 +612,7 @@ for (const [f, abs] of scanTargets) {
 // first time this was tested, and the run passed. Per-file counts shrink the cancellation to a
 // pair inside the same file, which is stated below rather than claimed away.
 const EXPECTED_PER_FILE = {
-  'bridge.py': 1, 'check-digest-pins.mjs': 14, 'context.mjs': 27, 'fixed_host.py': 3,
+  'bridge.py': 1, 'check-digest-pins.mjs': 15, 'context.mjs': 28, 'fixed_host.py': 3,
   'host-effect.mjs': 2, 'parent600.py': 4, 'read-source-blobs-linux.mjs': 3, 'result-terminal.mjs': 1,
   'tool-entry.functions.js': 3, 'trusted-github.mjs': 1,
   // Cross-directory live code, newly scanned (R17-N5). Zero today; declared so it cannot appear
