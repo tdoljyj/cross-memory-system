@@ -3,12 +3,13 @@ import {createRequire} from 'node:module';
 import {parseExact,checkGAShape,time,audience,generation,gateID} from './context.mjs';
 import {sha,verifyDynamicPayload,readBlobRef} from './trusted-github.mjs';
 import {verifyRuntimeDependencies} from './runtime-dependencies.mjs';
+import {readRoot10TemporalContext,checkRoot10TemporalTime} from './root10-single-window.mjs';
 verifyRuntimeDependencies();
 const require=createRequire(new URL('../../../apps/clued-cloud/package.json',import.meta.url)),Ajv=require('ajv');
 const localSchema=fs.readFileSync(new URL('./gate-result-receipt.root5.schema.json',import.meta.url));
 const checkSchema=new Ajv({allErrors:true,strictKeywords:true,format:'full'}).compile(JSON.parse(localSchema));
 const need=(v,m)=>{if(!v)throw Error(m);};
-export function checkResultSemantics({raw,gaRaw,state,acceptedSchemaSha256,now=Date.now()}){
+export function checkResultSemantics({raw,gaRaw,state,acceptedSchemaSha256,temporalDescriptor=null,now=Date.now()}){
  const receipt=parseExact(raw),ga=checkGAShape(gaRaw);
  need(acceptedSchemaSha256===sha(localSchema)&&receipt.schema_digest===acceptedSchemaSha256&&checkSchema(receipt),'EXACT_ACCEPTED_COMPLETE_GRR_SCHEMA');
  need(receipt.issuer_purpose==='GATE_RESULT'&&receipt.audience===audience&&receipt.control_trust_root_generation===generation,'GRR_PURPOSE_AUDIENCE_GENERATION');
@@ -26,17 +27,19 @@ export function checkResultSemantics({raw,gaRaw,state,acceptedSchemaSha256,now=D
  need(new Set(receipt.actual_write_set).size===receipt.actual_write_set.length,'UNIQUE_CONCRETE_WRITE_TARGETS');
  need(new Set(receipt.test_results.map(t=>t.test_id)).size===receipt.test_results.length,'UNIQUE_TEST_RESULTS');
  if(receipt.result==='PASS'){
+  const temporal=readRoot10TemporalContext({gaRaw,execution:state,descriptor:temporalDescriptor});
+  if(temporal)checkRoot10TemporalTime({context:temporal,execution:state,operation:'GRR',now});
   const ids=Array.from({length:20},(_,i)=>'PQUAL-'+String(i+1).padStart(2,'0')).filter(x=>x!=='PQUAL-18');
   need(ids.every(id=>receipt.test_results.some(t=>t.test_id===id&&t.result==='PASS'))&&receipt.test_results.length===19,'COMPLETE_ACTUAL_APPLICABLE_COVERAGE');
-  need(!a.revoked&&now<Date.parse(a.expires_at)&&state.root.state==='STORED_NO_GATE_AUTHORITY'&&state.root.generation_id===ga.control_trust_root_generation,'NO_STALE_OR_REVOKED_PASS');
+  need(!a.revoked&&now<(temporal?temporal.expires:Date.parse(a.expires_at))&&expires<=(temporal?temporal.expires:Date.parse(a.expires_at))&&state.root.state==='STORED_NO_GATE_AUTHORITY'&&state.root.generation_id===ga.control_trust_root_generation,'NO_STALE_OR_REVOKED_PASS');
   for(const name of ['runner_generation','credential_generation','session_generation'])need(ga[name]===state.current[name],'NO_GENERATION_DRIFT_PASS');
  }
  return {state:'RESULT_SEMANTICS_ONLY_NOT_A_SIGNED_GRR',receipt};
 }
-export function verifyResultSignature(input,acceptedSchemaRef){
+export function verifyResultSignature(input,acceptedSchemaRef,temporalDescriptor=input.temporalDescriptor??null){
  // Accepted ref must originate in the already signature-verified runtime subject.
  need(sha(readBlobRef(acceptedSchemaRef))===sha(localSchema),'ACTUAL_ACCEPTED_GRR_SCHEMA_BYTES');
- const result=checkResultSemantics({...input,acceptedSchemaSha256:acceptedSchemaRef.sha256});
+ const result=checkResultSemantics({...input,acceptedSchemaSha256:acceptedSchemaRef.sha256,temporalDescriptor});
  verifyDynamicPayload(input.raw,'GateResultReceipt',result.receipt.expires_at);
  return {state:'HISTORICAL_RESULT_SIGNATURE_AND_SEMANTICS_CHECKED',requires_exact_raw_evidence_and_test_oracle_resolution:true,requires_fresh_same_reservation_and_terminal_sql_cas:true,not_final_receipt_admission:true};
 }

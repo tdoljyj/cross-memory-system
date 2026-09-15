@@ -21,7 +21,7 @@ export function checkIndependentAssessmentSource({resolved,supplied,acceptedRevi
 export function verifyResultMaterials({material,subject,root,state,ga}){
  const accepted=subject.control_schema_refs?.GateResultReceipt;
  need(accepted&&sha(readBlobRef(accepted))===accepted.sha256,'ACCEPTED_GRR_SCHEMA_SOURCE');
- const {receipt}=checkResultSemantics({raw:material.grr_raw,gaRaw:material.ga_raw,state,acceptedSchemaSha256:accepted.sha256});
+ const {receipt}=checkResultSemantics({raw:material.grr_raw,gaRaw:material.ga_raw,state,acceptedSchemaSha256:accepted.sha256,temporalDescriptor:subject.temporal_continuation??null});
  const issuer=root.issuer_bindings.filter(i=>i.purpose==='GATE_RESULT');
  need(issuer.length===1&&same(receipt.issuer_ref,issuer[0].qualification_ref),'ACTUAL_ROOT_RESULT_ISSUER');
  const suite=material.gate_suite,ref=subject.gate_suite_ref;
@@ -48,7 +48,7 @@ export function verifyResultMaterials({material,subject,root,state,ga}){
  need(executorDescriptor&&executorMaterial?.raw&&same(executorMaterial.ref,executorDescriptor.ref)&&sha(executorMaterial.raw)===executorDescriptor.ref.sha256,'ACTUAL_ROOT10_EXECUTOR_APPLICABILITY_BYTES');
  const mapped=verifyOwnerMergeArtifact({...executorDescriptor.publication,raw:executorMaterial.raw});need(same(mapped.blob_ref,executorDescriptor.ref),'ACTUAL_ROOT10_EXECUTOR_APPLICABILITY_SOURCE');
  const executorApplicability=JSON.parse(executorMaterial.raw);
- const resolution=checkRoot10ResultEvidenceStructure({receipt,ga,state,acceptedSuiteRaw:suite.raw,acceptedSuiteSha256:ref.sha256,executorApplicability,independentReviewer:delegation.scope.independent_assessor});
+ const resolution=checkRoot10ResultEvidenceStructure({receipt,ga,state,acceptedSuiteRaw:suite.raw,acceptedSuiteSha256:ref.sha256,executorApplicability,independentReviewer:delegation.scope.independent_assessor,temporalDescriptor:subject.temporal_continuation??null});
  for(const item of resolution.required_signed_assessments){
   need(same(item.required_reviewer_ref,subject.result_reviewer_ref),'EXACT_ACCEPTED_ASSESSOR_MAPPING');
   const found=material.oracle_assessments?.filter(x=>same(x.ref,item.ref));

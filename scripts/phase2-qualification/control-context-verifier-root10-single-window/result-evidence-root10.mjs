@@ -18,20 +18,22 @@ function realTimestamp(value){
  if(m[7]!=='Z'&&(Number(m[7].slice(1,3))>23||Number(m[7].slice(4,6))>59))return false;
  return Number.isFinite(Date.parse(value));
 }
-export function validateRoot10ExecutorApplicability({executorApplicability,suite,acceptedSuiteSha256,state,ga,independentReviewer}){
+export function validateRoot10ExecutorApplicability({executorApplicability,suite,acceptedSuiteSha256,state,ga,independentReviewer,temporalDescriptor=null}){
  const mappingKeys=['state','independent_reviewer','root_id','control_trust_root_generation','suite_ref','suite_executor_sha256','current_controller_sha256','formal_test_ids','pqual18_disposition','oracle_bytes_unchanged','fixture_refs_unchanged','test_definitions_unchanged','controller_executes_same_oracles','new_authority','authority_effect'];
  need(executorApplicability&&Object.keys(executorApplicability).sort().join(',')===mappingKeys.sort().join(','),'EXACT_ROOT10_EXECUTOR_APPLICABILITY_FIELDS');
  const formal=Object.keys(suite.tests).sort();
  need(executorApplicability.state==='ACCEPTED_EXACT_ROOT10_EXECUTOR_APPLICABILITY'&&executorApplicability.independent_reviewer===independentReviewer&&executorApplicability.root_id===state.binding.root_id&&executorApplicability.control_trust_root_generation===ga.control_trust_root_generation,'EXACT_ROOT10_EXECUTOR_APPLICABILITY_IDENTITY');
- need(same(executorApplicability.suite_ref,{uri:'https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/83f87805e1e5ecfa619cbb69db061f03999eb31f',sha256:acceptedSuiteSha256})&&executorApplicability.suite_executor_sha256==='27ede0fc0ff6afc4d5abf2f5c9f256fe22776165746dddc19aa2693c47bbc97c'&&executorApplicability.current_controller_sha256===ga.controller_digest,'EXACT_OLD_SUITE_TO_CURRENT_CONTROLLER_MAPPING');
+ const currentController=temporalDescriptor?temporalDescriptor.continuation_controller_sha256:ga.controller_digest;
+ if(temporalDescriptor)need(currentController===state.binding.controller_sha256,'EXACT_ACTUAL_EXECUTING_CONTROLLER');
+ need(same(executorApplicability.suite_ref,{uri:'https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/83f87805e1e5ecfa619cbb69db061f03999eb31f',sha256:acceptedSuiteSha256})&&executorApplicability.suite_executor_sha256==='27ede0fc0ff6afc4d5abf2f5c9f256fe22776165746dddc19aa2693c47bbc97c'&&executorApplicability.current_controller_sha256===currentController,'EXACT_OLD_SUITE_TO_CURRENT_CONTROLLER_MAPPING');
  need(formal.length===19&&!formal.includes('PQUAL-18')&&same(executorApplicability.formal_test_ids,formal)&&executorApplicability.pqual18_disposition==='NEGATIVE_ADMISSION_CHECK_NOT_FORMAL_RESULT','EXACT_19_FORMAL_PLUS_PQUAL18_NEGATIVE_GUARD');
  need(executorApplicability.oracle_bytes_unchanged===true&&executorApplicability.fixture_refs_unchanged===true&&executorApplicability.test_definitions_unchanged===true&&executorApplicability.controller_executes_same_oracles===true&&executorApplicability.new_authority===false&&executorApplicability.authority_effect==='NONE','NO_ORACLE_COVERAGE_OR_AUTHORITY_CHANGE');
  return {state:'ROOT10_EXECUTOR_APPLICABILITY_CHECKED',formal_test_ids:formal,pqual18_disposition:executorApplicability.pqual18_disposition,authority_effect:'NONE'};
 }
-export function checkRoot10ResultEvidenceStructure({receipt,ga,state,acceptedSuiteRaw,acceptedSuiteSha256,executorApplicability,independentReviewer}){
+export function checkRoot10ResultEvidenceStructure({receipt,ga,state,acceptedSuiteRaw,acceptedSuiteSha256,executorApplicability,independentReviewer,temporalDescriptor=null}){
  need(typeof acceptedSuiteRaw==='string'&&sha(acceptedSuiteRaw)===acceptedSuiteSha256,'EXACT_ACCEPTED_SUITE_BYTES');
  const suite=JSON.parse(acceptedSuiteRaw);safe(suite);need(suite.tests&&typeof suite.tests==='object','STATIC_TESTS_REQUIRED');
- validateRoot10ExecutorApplicability({executorApplicability,suite,acceptedSuiteSha256,state,ga,independentReviewer});
+ validateRoot10ExecutorApplicability({executorApplicability,suite,acceptedSuiteSha256,state,ga,independentReviewer,temporalDescriptor});
  const gaRaw=JSON.stringify(ga)+'\n',gaSha=sha(gaRaw);
  need(receipt.gate_authorization_id===ga.gate_authorization_id&&receipt.gate_authorization_sha256===gaSha,'EXACT_GA');
  const attempts=state.attempts.filter(a=>a.ga_id===ga.gate_authorization_id);
@@ -45,11 +47,12 @@ export function checkRoot10ResultEvidenceStructure({receipt,ga,state,acceptedSui
  const prefix='urn:clued:execution-evidence:'+state.binding.root_id+':';
  need(receipt.evidence_index_ref.uri===prefix+reserved.evidence_index_sha256,'EXACT_INDEX_LOCATOR');
  need(decision.result===receipt.result&&same(decision.test_results,receipt.test_results),'RESERVED_RESULT_AND_TESTS');
- need(same(index.executor_ref,receipt.executor_ref)&&receipt.executor_ref.sha256===ga.controller_digest,'EXACT_EXECUTOR');
+ need(same(index.executor_ref,receipt.executor_ref)&&receipt.executor_ref.sha256===(temporalDescriptor?temporalDescriptor.continuation_controller_sha256:ga.controller_digest),'EXACT_EXECUTOR');
  need(index.test_revision===receipt.test_revision&&index.performance_slo_revision===receipt.performance_slo_revision,'EXACT_REVISIONS');
  need(same(refSet(index.fixture_refs),refSet(receipt.fixture_refs)),'EXACT_FIXTURES');
  need(Array.isArray(index.input_artifact_digests)&&same([...index.input_artifact_digests].sort(),[...receipt.input_artifact_digests].sort()),'EXACT_INPUT_ARTIFACTS');
  need(receipt.input_artifact_digests.includes(ga.candidate_skill_digest)&&receipt.input_artifact_digests.includes(ga.controller_digest)&&receipt.input_artifact_digests.includes(acceptedSuiteSha256),'REQUIRED_ACTUAL_INPUT_DIGESTS');
+ if(temporalDescriptor)need([temporalDescriptor.continuation_controller_sha256,temporalDescriptor.amendment_ref.sha256].every(d=>receipt.input_artifact_digests.includes(d)),'EXACT_ADDITIONAL_TEMPORAL_AUTHORITY_INPUTS');
  need(Array.isArray(index.artifacts)&&index.artifacts.length<=256,'BOUNDED_ARTIFACT_INDEX');
  const artifacts=new Map();
  for(const item of index.artifacts){

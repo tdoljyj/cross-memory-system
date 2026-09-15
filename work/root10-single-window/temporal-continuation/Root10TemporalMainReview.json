@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "decision": "ROOT10_TEMPORAL_SOURCE_PUBLICATION_GO",
+  "reviewer": "/root",
+  "implementation_author": "/root",
+  "independent_review_path": "work/root10-single-window/temporal-continuation/Root10TemporalControllerIndependentReview.json",
+  "controller_manifest_sha256": "aca4db237a7572426fdf43c384abcc7fd945e5d0554b8a3b01a71959c2102041",
+  "amendment_sha256": "38eb6adca66de464fa88f4b7333649e9555d6a7d6b3fc23cd20ac18a0cfec4a6",
+  "contract_sha256": "c2943e560b9d5f8fb097b2fa2bf09ee9873b7deb9435f5771a059587a9534595",
+  "source_file_count": 33,
+  "reviewed_at": "2026-09-15T11:25:30Z",
+  "checks": [
+    "Original GA bytes, signature, issued_at, deadline and attempt expiry remain immutable; no replacement authorization is issued.",
+    "The original budget117 bytes and cumulative charged totals remain unchanged; no allocation, refund, reassignment or capacity increase.",
+    "Separate Owner-published amendment and one database-clock-derived event118 bind the same original GA to at most 600 seconds of effects.",
+    "Only controller, qualification and runtime acceptance digests change in the complete effective-binding preimage; Root, Gate, Profile, Scope and generations do not change.",
+    "The source verifies amendment, new metadata and source Owner publication separately from historical GA and Status29 evidence.",
+    "STOP reuses full trusted publication verification, then rechecks the fresh committed state through a private one-use closure before its fixed host call.",
+    "Real STOP requires the same container to be exited with Pid zero and FinishedAt and original observation timestamps inside the effective deadline.",
+    "Post-stop result work may finish within the Root10 window, but it grants no new container effects or automatic retry.",
+    "The actual networkless read-only Linux candidate passed runtime-pin checks, 20 contract checks, exact dependencies and schema/Python imports at 11:19:06Z.",
+    "The exact generated command passed an actual no-input entry check at 11:21:48Z in the fixed image with no network or Docker socket.",
+    "Temporal pure rejection checks passed 28 of 28; none are formal PQUAL results. Original PQUAL oracle, fixture and schema bytes remain unchanged."
+  ],
+  "scope": "SOURCE_PUBLICATION_ONLY",
+  "remaining_requirements": [
+    "Actual private Owner publication of this source and amendment, then exact non-self-referential P2 runtime and qualification publication.",
+    "Fresh live117 preimage, exact generated SQL full rollback, function catalog/ACL/config readback and independent deployment review before activation.",
+    "Final pinned STOP/collector/signing transport checks and actual formal evidence after the single activation."
+  ],
+  "note": "Root10TemporalLinuxReadiness.json preserves the older generic generator output verbatim; its next_required_step is not this task's execution plan. This amendment continues the existing GA and never issues another.",
+  "formal_pqual_claimed": false,
+  "grr_pass_claimed": false,
+  "database_write": false,
+  "new_ga": false,
+  "new_budget": false,
+  "authority_effect": "NONE"
+}

@@ -67,7 +67,7 @@ export function observeRequestDenials({gaRaw,observation,runtimeAcceptance,quali
   const ended_at=new Date().toISOString();
   const source={kind:'ACTUAL_VERIFIER_REQUEST_DENIAL_OBSERVATION',test_id,fault_name,
    baseline_ga_sha256:hash(gaRaw),actual_current_observation_sha256:hash(before),
-   actual_entry:'control-context-verifier-root5-final-successor/context.mjs#checkCurrentSemantics',
+   actual_entry:'control-context-verifier-root10-single-window/context.mjs#checkCurrentSemantics',
    original_inputs_ref:originalRef,
    fault_input_changes:changes,exact_input_reconstruction_checked:true,
    called_input_digests:{ga_raw:hash(input.gaRaw),runtime_acceptance_raw:hash(raw(input.runtimeAcceptance)),qualification_raw:hash(raw(input.qualification))},
@@ -95,4 +95,3 @@ export function observeRequestDenials({gaRaw,observation,runtimeAcceptance,quali
    'unconverged capacity/renewal fencing','unknown result and no duplicate terminal','unwritable sink refusal',
    'no automatic readiness or broader authority after results','independent assessment of every original Test oracle']};
 }
-

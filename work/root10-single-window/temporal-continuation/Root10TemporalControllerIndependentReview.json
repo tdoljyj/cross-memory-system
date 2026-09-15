@@ -1,0 +1,101 @@
+{
+  "schema_version": "root10-temporal-controller-independent-review/1",
+  "decision": "ROOT10_CONTROLLER_SOURCE_GO",
+  "review_scope": "TEMPORAL_CONTINUATION_SOURCE_PUBLICATION_ONLY",
+  "independent_reviewer": "/root/root9_recovery_review",
+  "reviewed_at": "2026-09-15T11:24:02.4765526Z",
+  "root": {
+    "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+    "control_trust_root_generation": "ctrgen_48100437d24e448ba01c542ebe1290da",
+    "gate_profile_scope_window_caps_generations_unchanged": true
+  },
+  "source": {
+    "repository_base_commit": "7770bd05b7b4b5dddecebdb3216cbbd78e2fec2f",
+    "predecessor_controller_manifest_sha256": "d01bd55e02614c0d2b6f51f80fe5b56816aecc2f29e753344a4bcac56aaaf559",
+    "controller_manifest": {
+      "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/ControllerSourceManifest.candidate.json",
+      "sha256": "aca4db237a7572426fdf43c384abcc7fd945e5d0554b8a3b01a71959c2102041",
+      "bytes": 8010,
+      "file_count": 33,
+      "closure_mismatch_count": 0
+    },
+    "contract": {
+      "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/Root10ControllerContract.candidate.json",
+      "sha256": "c2943e560b9d5f8fb097b2fa2bf09ee9873b7deb9435f5771a059587a9534595",
+      "bytes": 6291,
+      "unchanged_from_predecessor": true
+    },
+    "changed_manifest_entries": 13,
+    "unchanged_manifest_entries": 20,
+    "amendment_outside_controller_manifest": {
+      "path": "work/root10-single-window/temporal-continuation/Root10TemporalContinuationAmendment.json",
+      "sha256": "38eb6adca66de464fa88f4b7333649e9555d6a7d6b3fc23cd20ac18a0cfec4a6",
+      "bytes": 2473
+    }
+  },
+  "readiness_evidence": {
+    "path": "work/root10-single-window/temporal-continuation/Root10TemporalLinuxReadiness.json",
+    "sha256": "070ae6e758e2aab74b7cef5e4b68cd7cfa7c97a11af0464db5395214f05caa9a",
+    "bytes": 22534,
+    "state": "ROOT10_PRE_GA_READINESS_READY_NO_AUTHORITY",
+    "observed_at": "2026-09-15T11:19:06.329Z",
+    "linux_exit_code": 0,
+    "source_closure_files": 33,
+    "digest_pin_checks": 47,
+    "digest_pin_failures": 0,
+    "runtime_pin_modules": 61,
+    "runtime_pin_unproven": 0,
+    "runtime_pin_explicitly_not_covered": 9,
+    "contract_unit_checks_passed": 20,
+    "contract_unit_checks_total": 20,
+    "formal_suite_claimed": false,
+    "oracle_assessments_created": false,
+    "gate_result_receipt_created": false,
+    "ga_issued": false,
+    "postgres_called": false,
+    "controller_effect_entry_invoked": false,
+    "authority_effect": "NONE"
+  },
+  "review_findings": {
+    "normal_real_stop_path_only": true,
+    "predispatch_blocked_special_path_present": false,
+    "grr_schema_expanded": false,
+    "same_ga_raw_and_original_signature_unchanged": true,
+    "same_budget_sequence_117_and_budget_bytes_unchanged": true,
+    "refund": false,
+    "capacity_increase": false,
+    "new_budget_allocation": false,
+    "reassignment": false,
+    "new_ga_authorized_by_this_review": false,
+    "temporal_context_bound_to_exact_amendment_and_three_column_successor_binding": true,
+    "historical_ga_signature_verified_at_actual_historical_commit_time": true,
+    "stop_requires_trusted_material_before_stop_sent": true,
+    "stop_requires_real_container_terminal_observation_with_started_ended_finished_at_within_effect_deadline": true,
+    "temporal_wire_digest_is_sorted_compact_utf8_in_both_producer_and_consumer": true,
+    "formal_pqual_result_created": false
+  },
+  "approval_boundary": {
+    "owner_may_publish_exact_reviewed_source_bytes": true,
+    "owner_publication_activates_controller": false,
+    "database_activation_authorized": false,
+    "ga_issue_or_reissue_authorized": false,
+    "docker_or_host_effect_authorized": false,
+    "signing_mutation_authorized": false,
+    "formal_pqual_or_grr_claim_authorized": false,
+    "activation_requires_separate_review": true,
+    "activation_prerequisites": [
+      "Owner publication is verified from immutable repository objects and every published blob byte-matches this 33-file manifest.",
+      "The temporal amendment is independently Owner-signed and its exact published bytes and signature evidence are verified.",
+      "A fresh live expected-current preimage still matches Root10 sequence 117, the exact original GA and budget 117, zero GA events and container effects, unchanged charges, and the expected old function bytes and security metadata.",
+      "The exact temporal activation SQL passes a full PostgreSQL BEGIN/ROLLBACK execution with transaction postimage assertions and an independent post-rollback live readback.",
+      "Final STOP coordinator source pins are no longer placeholders and its exact no-effect tests and source closure are independently reviewed."
+    ]
+  },
+  "limitations": [
+    "The readiness record is structural and no-effect evidence only; it is not a formal PQUAL assessment or result.",
+    "Nine runtime paths are explicitly outside the runtime-pin selftest coverage and remain disclosed rather than treated as proven.",
+    "The readiness record's generic next_required_step text about issuing one GA is historical harness prose; it is not authority for a new GA and is outside this publication-only decision.",
+    "No Owner publication, database activation, signing mutation, Docker action, GA action, formal PQUAL, or GRR was performed by this review."
+  ],
+  "blockers": []
+}

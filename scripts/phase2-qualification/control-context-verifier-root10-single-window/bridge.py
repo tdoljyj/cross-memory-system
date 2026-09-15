@@ -13,7 +13,7 @@ import sys
 
 BASE = Path(__file__).resolve().parent
 HOST = BASE / 'fixed_host.py'
-HOST_SHA = 'cc1ff74983f0a246a50a6cd3d7a5529b49f43bfed3972a5a326aa68ff66a4e7b'
+HOST_SHA = '21a6bba36f2284fc37ce4eb2cc4f372ff2c1a7507f76e1816554d7a9806eb23d'
 MAX_INPUT = 131072
 BOUNDARY = {'qualified': False, 'capacity_released': False, 'authority_effect': 'NONE',
             'remote_result_persisted': False, 'automatic_retry': False}
@@ -32,7 +32,8 @@ def parse(raw):
     if type(raw) is not bytes or len(raw) > MAX_INPUT:
         raise ValueError('Bounded exact input required')
     value = json.loads(raw, object_pairs_hook=unique)
-    if type(value) is not dict or set(value) != {'operation', 'nonce', 'ga_raw', 'ga_sha256', 'container_id'}:
+    base_fields = {'operation', 'nonce', 'ga_raw', 'ga_sha256', 'container_id'}
+    if type(value) is not dict or set(value) not in (base_fields, base_fields | {'temporal_continuation'}):
         raise ValueError('Fixed input fields required')
     if value['operation'] not in ('CREATE', 'START', 'STOP', 'INSPECT'):
         raise ValueError('Fixed operation required')
@@ -46,6 +47,10 @@ def parse(raw):
         raise ValueError('Complete GA object required; engineering requests excluded')
     if value['ga_sha256'] != hashlib.sha256(ga_raw.encode('utf-8')).hexdigest():
         raise ValueError('Exact GA bytes changed')
+    if 'temporal_continuation' in value:
+        temporal = value['temporal_continuation']
+        if type(temporal) is not dict or set(temporal) != {'raw', 'sha256', 'event'}:
+            raise ValueError('Exact separate temporal material required')
     if value['operation'] == 'CREATE':
         if value['container_id'] is not None:
             raise ValueError('CREATE cannot target an existing container')
@@ -70,8 +75,10 @@ def dispatch(value, h):
     # CREATE preparation uses CreateNew; an existing or damaged reservation
     # refuses here. START's exact local intent is also CreateNew before dispatch.
     if operation == 'CREATE':
-        h.prepare(nonce, value['ga_raw'])
+        h.prepare(nonce, value['ga_raw'], value.get('temporal_continuation'))
     port = h.FixedHost(nonce, ga_sha)
+    if port.temporal != value.get('temporal_continuation'):
+        raise ValueError('Exact original temporal host input changed')
     h.observation.persist(port.folder, 'bridge-' + operation.lower() + '-once.json',
                           {'ga_sha256': ga_sha, 'container_id': container, **BOUNDARY})
     if operation == 'CREATE':

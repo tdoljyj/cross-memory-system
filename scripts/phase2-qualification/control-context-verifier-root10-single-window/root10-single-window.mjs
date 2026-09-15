@@ -12,6 +12,86 @@ const ordered=value=>Array.isArray(value)?value.map(ordered):value&&typeof value
 export const canonicalDigest=value=>crypto.createHash('sha256').update(JSON.stringify(ordered(value))+'\n','utf8').digest('hex');
 export const sha=value=>crypto.createHash('sha256').update(value).digest('hex');
 
+// A separately signed temporal amendment never changes the original GA or its
+// signed clock. This parser is a rejection check, not proof of Owner authority.
+export const root10TemporalIdentity=Object.freeze({
+ ga_id:'ga_32daa5daf52c4deb8e893c25b08eff38',
+ ga_sha256:'68afb1e6dc1367729cd6864b9ba9b5d846ab123ff5539d7a646f7fa1df988f78',
+ controller_sha256:'d01bd55e02614c0d2b6f51f80fe5b56816aecc2f29e753344a4bcac56aaaf559',
+ budget_sha256:'669d96057a44ed5e9c3eae9fed6ed8720aae8a2b48eef03761b8e9361433a462',
+ amendment_sha256:'38eb6adca66de464fa88f4b7333649e9555d6a7d6b3fc23cd20ac18a0cfec4a6',
+ activation_operation:'TEMPORAL_CONTINUATION_ACTIVATED',
+ activation_key:'root10_same_ga_temporal_continuation_20260915',
+ original_deadline:'2026-09-15T09:37:03.454Z',
+ finalization_expires_at:'2026-09-16T03:00:00Z'
+});
+const temporalContexts=new WeakSet();
+const temporalDescriptorKeys=['amendment_ref','publication','activation_operation','activation_idempotency_key','expected_activation_sequence','prior_ga_ref','budget_ref','effect_seconds','finalization_expires_at','predecessor_controller_sha256','continuation_controller_sha256','no_new_ga','no_new_budget','no_refund','no_automatic_retry','source_ref'];
+const temporalBodyKeys=['activated_at','amendment_ref','amendment_sha256','automatic_retry','budget_raw_sha256','budget_refund','budget_sequence','effect_deadline','finalization_expires_at','new_binding','new_binding_sha256','new_budget','new_ga','old_binding','old_binding_sha256','prior_ga_sha256'];
+const sameTemporal=(a,b)=>canonicalDigest(a)===canonicalDigest(b);
+const temporalUtc=value=>typeof value==='string'&&/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,6})?(?:Z|\+00:00)$/.test(value)&&Number.isFinite(Date.parse(value));
+// PostgreSQL jsonb::text uses UTF-8 key length, then byte order, with spaces.
+export function postgresJsonbText(value){
+ safe(value);
+ if(Array.isArray(value))return '['+value.map(postgresJsonbText).join(', ')+']';
+ if(value&&typeof value==='object')return '{'+Object.keys(value).sort((a,b)=>Buffer.byteLength(a)-Buffer.byteLength(b)||Buffer.compare(Buffer.from(a),Buffer.from(b))).map(k=>JSON.stringify(k)+': '+postgresJsonbText(value[k])).join(', ')+'}';
+ return JSON.stringify(value);
+}
+export function readRoot10TemporalContext({gaRaw,execution,descriptor}){
+ if(descriptor===undefined||descriptor===null)return null;
+ const fixed=root10TemporalIdentity;
+ need(exact(descriptor,temporalDescriptorKeys),'EXACT_TEMPORAL_RUNTIME_DESCRIPTOR');
+ need(ref(descriptor.amendment_ref)&&descriptor.amendment_ref.sha256===fixed.amendment_sha256&&descriptor.activation_operation===fixed.activation_operation&&descriptor.activation_idempotency_key===fixed.activation_key&&descriptor.expected_activation_sequence===118,'EXACT_TEMPORAL_ACTIVATION_CONTRACT');
+ need(descriptor.prior_ga_ref?.ga_id===fixed.ga_id&&descriptor.prior_ga_ref.sha256===fixed.ga_sha256&&descriptor.budget_ref?.sha256===fixed.budget_sha256&&descriptor.effect_seconds===600&&descriptor.finalization_expires_at===fixed.finalization_expires_at,'EXACT_TEMPORAL_GA_BUDGET_WINDOW');
+ need(descriptor.predecessor_controller_sha256===fixed.controller_sha256&&hex(descriptor.continuation_controller_sha256)&&descriptor.continuation_controller_sha256!==fixed.controller_sha256&&['no_new_ga','no_new_budget','no_refund','no_automatic_retry'].every(k=>descriptor[k]===true),'EXACT_TEMPORAL_NONEXPANDING_SUCCESSOR');
+ need(typeof gaRaw==='string'&&sha(gaRaw)===fixed.ga_sha256,'EXACT_UNCHANGED_TEMPORAL_GA_BYTES');
+ const ga=JSON.parse(gaRaw);
+ need(ga.gate_authorization_id===fixed.ga_id&&ga.controller_digest===fixed.controller_sha256&&ga.deadline===fixed.original_deadline&&ga.expires_at===fixed.original_deadline,'ORIGINAL_GA_CLOCK_IMMUTABLE');
+ const events=execution?.events;
+ need(Array.isArray(events)&&events.length===execution.current.sequence&&events.every((e,i)=>e.sequence===i+1),'COMPLETE_TEMPORAL_EVENT_HISTORY');
+ const matches=events.filter(e=>e.request?.operation===fixed.activation_operation);
+ need(matches.length===1&&matches[0].sequence===118&&matches[0].idempotency_key===fixed.activation_key,'ONE_TEMPORAL_ACTIVATION_ONLY');
+ const event=matches[0],request=event.request,body=request.body;
+ need(exact(request,['operation','ga_id','expected_sequence','idempotency_key','body'])&&request.ga_id===fixed.ga_id&&request.expected_sequence===117&&request.idempotency_key===fixed.activation_key&&exact(body,temporalBodyKeys),'EXACT_TEMPORAL_ACTIVATION_EVENT');
+ need(event.root_id===execution.current.root_id&&event.root_id===ga.authority_source_ref.uri.split(':').at(-1)&&sameTemporal(body.amendment_ref,descriptor.amendment_ref)&&body.amendment_sha256===descriptor.amendment_ref.sha256&&body.prior_ga_sha256===fixed.ga_sha256&&body.budget_sequence===117&&body.budget_raw_sha256===fixed.budget_sha256,'EXACT_TEMPORAL_EVENT_BINDINGS');
+ need(['automatic_retry','budget_refund','new_budget','new_ga'].every(k=>body[k]===false),'NO_TEMPORAL_BUDGET_OR_GA_EFFECT');
+ need(!events.slice(0,117).some(e=>e.request?.ga_id===fixed.ga_id),'TEMPORAL_ZERO_PRIOR_GA_EFFECT');
+ const changed=['controller_sha256','qualification_sha256','runtime_acceptance_sha256'];
+ need(body.old_binding?.controller_sha256===fixed.controller_sha256&&body.new_binding?.controller_sha256===descriptor.continuation_controller_sha256&&changed.every(k=>hex(body.new_binding[k]))&&sameTemporal({...body.new_binding,...Object.fromEntries(changed.map(k=>[k,body.old_binding[k]]))},body.old_binding),'ONLY_ACCEPTED_TEMPORAL_BINDING_COLUMNS_CHANGE');
+ need(sha(postgresJsonbText(body.old_binding))===body.old_binding_sha256&&sha(postgresJsonbText(body.new_binding))===body.new_binding_sha256&&sameTemporal(body.new_binding,execution.binding),'EXACT_TEMPORAL_BINDING_PREIMAGE_AND_CURRENT');
+ const attempt=execution.attempts?.filter(a=>a.ga_id===fixed.ga_id);
+ need(attempt?.length===1&&attempt[0].ga_raw===gaRaw&&attempt[0].ga_sha256===fixed.ga_sha256&&attempt[0].budget_sequence===117&&Date.parse(attempt[0].expires_at)===Date.parse(fixed.original_deadline)&&attempt[0].revoked===false,'ORIGINAL_TEMPORAL_ATTEMPT_UNCHANGED');
+ const budget=events[116];
+ need(budget.request?.operation==='BUDGET_RESERVED'&&sha(budget.request.body.raw)===fixed.budget_sha256&&budget.request.body.sha256===fixed.budget_sha256&&execution.attempts.filter(a=>a.budget_sequence===117).length===1,'ORIGINAL_TEMPORAL_BUDGET_UNCHANGED');
+ need(execution.current.charged_seconds===11706&&execution.current.charged_evidence_bytes===2604247987,'TEMPORAL_CUMULATIVE_CHARGES_UNCHANGED');
+ const issued=Date.parse(body.activated_at),deadline=Date.parse(body.effect_deadline),expires=Date.parse(body.finalization_expires_at);
+ need(temporalUtc(body.activated_at)&&temporalUtc(body.effect_deadline)&&body.finalization_expires_at===fixed.finalization_expires_at&&deadline-issued===600000&&Date.parse(fixed.original_deadline)<issued&&deadline<=expires,'EXACT_DATABASE_DERIVED_TEMPORAL_WINDOW');
+ const context=Object.freeze({state:'TEMPORAL_SEMANTICS_ONLY_NOT_AUTHORITY',descriptor,event,body,issued,deadline,expires,execution_baseline_sequence:118,authority_effect:'NONE'});
+ temporalContexts.add(context);return context;
+}
+export function checkRoot10TemporalTime({context,execution,operation,now=Date.now()}){
+ need(temporalContexts.has(context)&&Number.isFinite(now)&&now>=context.issued,'RECOGNIZED_TEMPORAL_CONTEXT_AND_REAL_CLOCK');
+ if(['CREATE','START','STOP'].includes(operation)){
+  need(now<context.deadline,'TEMPORAL_EFFECT_WINDOW_EXPIRED');
+  return {effect_deadline:context.deadline,authority_effect:'NONE'};
+ }
+ need(operation==='GRR'&&now<context.expires,'TEMPORAL_FINALIZATION_WINDOW_EXPIRED');
+ const gaId=root10TemporalIdentity.ga_id,events=execution.events.filter(e=>e.request?.ga_id===gaId&&e.request.operation!==root10TemporalIdentity.activation_operation),stopped=events.filter(e=>e.request.operation==='STOPPED');
+ need(stopped.length===1&&['STOPPED','DECISION_RESERVED','SIGNING'].includes(execution.attempts.find(a=>a.ga_id===gaId)?.phase),'REAL_STOP_REQUIRED_FOR_TEMPORAL_FINALIZATION');
+ const effectOperations=['INTENT_RECORDED','CREATE_SENT','CREATED','INTENT_RECORDED','START_SENT','RUNNING','STOP_SENT','STOPPED'];
+ const effects=events.filter(e=>effectOperations.includes(e.request.operation));
+ need(effects.length===8&&effects.every((e,i)=>e.sequence===119+i&&e.request.operation===effectOperations[i])&&events.every(e=>effectOperations.includes(e.request.operation)||['DECISION_RESERVED','SIGNING'].includes(e.request.operation)),'ONE_COMPLETE_TEMPORAL_EFFECT_CHAIN');
+ const raw=stopped[0].request.body.raw,stop=JSON.parse(raw),container=execution.attempts.find(a=>a.ga_id===gaId).container_id;
+ need(sha(raw)===stopped[0].request.body.sha256&&stop.ga_id===gaId&&stop.ga_sha256===root10TemporalIdentity.ga_sha256&&stop.container_id===container&&/^[a-f0-9]{64}$/.test(container??'')&&stop.observation?.Id===container&&stop.observation.State?.Running===false&&stop.observation.State?.Pid===0&&stop.observation.State?.Status==='exited','EXACT_TEMPORAL_REAL_STOP');
+ for(const e of events.filter(e=>['CREATED','RUNNING','STOPPED'].includes(e.request.operation))){
+  const value=JSON.parse(e.request.body.raw),start=Date.parse(value.started_utc),end=Date.parse(value.ended_utc);
+  need(sha(e.request.body.raw)===e.request.body.sha256&&Number.isFinite(start)&&Number.isFinite(end)&&context.issued<=start&&start<=end&&end<=context.deadline,'NO_POSTDEADLINE_TEMPORAL_EFFECT');
+ }
+ const finished=Date.parse(stop.observation.State.FinishedAt),ended=Date.parse(stop.ended_utc);
+ need(Number.isFinite(finished)&&finished>=context.issued&&finished<=ended&&ended<=context.deadline,'TEMPORAL_STOP_FINISHED_WITHIN_EFFECT_WINDOW');
+ return {finalization_expires_at:context.expires,authority_effect:'NONE'};
+}
+
 const ref=value=>exact(value,['uri','sha256'])&&typeof value.uri==='string'&&/^https:\/\/api\.github\.com\/repos\/tdoljyj\/cross-memory-system\/git\/blobs\/[a-f0-9]{40}$/.test(value.uri)&&hex(value.sha256);
 const contractKeys=['schema_version','ready','root_id','predecessor_generation','generation_id','generation_ordinal','window','baseline','postbaseline','caps','fixed_digests','accepted_suite','issuer_qualification_refs','reviewer_delegation','source_closure','invariants'];
 export function validateRoot10ControllerContract(value){

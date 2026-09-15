@@ -45,6 +45,14 @@ const HEX = /\b[a-fA-F0-9]{64}\b/g;
 // Digests that are deliberately not the digest of any file. Each needs a reason; anything not
 // listed here and not resolvable to a file fails the gate.
 const DECLARED_NON_FILE = {
+  '68afb1e6dc1367729cd6864b9ba9b5d846ab123ff5539d7a646f7fa1df988f78':
+    'Exact original signed Root10 GA bytes, preserved in the live attempt and verified from its append-only signature publication.',
+  'd01bd55e02614c0d2b6f51f80fe5b56816aecc2f29e753344a4bcac56aaaf559':
+    'Original GA controller manifest: historical Owner-published bytes, not this continuation controller manifest.',
+  '669d96057a44ed5e9c3eae9fed6ed8720aae8a2b48eef03761b8e9361433a462':
+    'The one unchanged budget117 raw in the actual execution history; never a new reservation.',
+  '38eb6adca66de464fa88f4b7333649e9555d6a7d6b3fc23cd20ac18a0cfec4a6':
+    'Exact separate temporal amendment bytes; Owner publication and immutable event118 are verified before any effect.',
   ea96914e218460339508bc51eff0d10de41e1a94cfa3a0a544a85a132219791b:
     'proposalSHA. The file it described was lost with the old host; the constant is cross-checked against approved.proposal_sha256 and appendix.proposal_sha256 from merged materials.',
   '64b2ba3ef6bfe2755b78e03b19d6a6b6ea5a0e3735c4b9328e9be2c4715dff07':
@@ -629,8 +637,9 @@ for (const [f, abs] of scanTargets) {
 // first time this was tested, and the run passed. Per-file counts shrink the cancellation to a
 // pair inside the same file, which is stated below rather than claimed away.
 const EXPECTED_PER_FILE = {
-  'bridge.py': 1, 'check-digest-pins.mjs': 14, 'context.mjs': 0, 'fixed_host.py': 3,
-  'host-effect.mjs': 2, 'parent600.py': 4, 'read-source-blobs-linux.mjs': 3, 'result-evidence-root10.mjs': 1, 'result-terminal.mjs': 0,
+  'bridge.py': 1, 'check-digest-pins.mjs': 18, 'context.mjs': 0, 'fixed_host.py': 3,
+  'host-effect.mjs': 2, 'parent600.py': 6, 'read-source-blobs-linux.mjs': 3, 'result-evidence-root10.mjs': 1, 'result-terminal.mjs': 0,
+  'root10-single-window.mjs': 4,
   'tool-entry.functions.js': 8, 'trusted-github.mjs': 1,
   // Cross-directory live code, newly scanned (R17-N5). Zero today; declared so it cannot appear
   // unnoticed.
