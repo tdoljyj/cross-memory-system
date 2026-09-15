@@ -1,0 +1,336 @@
+{
+  "schema_version": "clued.multitrack-repository-track/1",
+  "source_snapshot_id": "CLUED-CURRENT-PRIORITY-SNAPSHOT-v0.1.3-SOURCE-BOUND-20260912",
+  "source_inventory_id": "CLUED-CURRENT-GOVERNANCE-INVENTORY-v0.1.3-SOURCE-BOUND-20260912",
+  "authority_effect": "NONE",
+  "track_id": "E",
+  "track_name": "工程与平台",
+  "frontier": [
+    "E-001",
+    "E-008"
+  ],
+  "items": [
+    {
+      "id": "E-001",
+      "track": "E",
+      "title": "Kernel Phase 2 Real Closeout",
+      "status": "IN_PROGRESS",
+      "mark": "◐",
+      "priority": "P0 / #1",
+      "depends_on": [],
+      "blocked_by": [
+        "真实 Runtime Verification / Independent Evidence 条件仍需闭合"
+      ],
+      "unlocks": [
+        "E-002"
+      ],
+      "evidence_grade": "B",
+      "canonical_reconciliation": "REQUIRED_FOR_FINAL_CLOSEOUT"
+    },
+    {
+      "id": "E-002",
+      "track": "E",
+      "title": "Phase 2 Immutable Baseline Freeze",
+      "status": "WAITING",
+      "mark": "⏳",
+      "priority": "P0 / #2",
+      "depends_on": [
+        "E-001"
+      ],
+      "blocked_by": [
+        "E-001"
+      ],
+      "unlocks": [
+        "E-003"
+      ],
+      "evidence_grade": "D",
+      "canonical_reconciliation": "NOT_REQUIRED_UNTIL_PROMOTION_OR_EXECUTION"
+    },
+    {
+      "id": "E-003",
+      "track": "E",
+      "title": "Post-Phase-2 Health / Surgical 基线重新审定",
+      "status": "WAITING",
+      "mark": "⏳",
+      "priority": "P0 / #3",
+      "depends_on": [
+        "E-002"
+      ],
+      "blocked_by": [
+        "E-002"
+      ],
+      "unlocks": [
+        "E-004"
+      ],
+      "evidence_grade": "D",
+      "canonical_reconciliation": "NOT_REQUIRED_UNTIL_PROMOTION_OR_EXECUTION"
+    },
+    {
+      "id": "E-004",
+      "track": "E",
+      "title": "Full Kernel Health Run + Surgical Repair + Health Re-run",
+      "status": "NOT_STARTED",
+      "mark": "☐",
+      "priority": "P0 / #4",
+      "depends_on": [
+        "E-003"
+      ],
+      "blocked_by": [
+        "E-003"
+      ],
+      "unlocks": [
+        "E-005"
+      ],
+      "evidence_grade": "D",
+      "canonical_reconciliation": "NOT_REQUIRED_UNTIL_PROMOTION_OR_EXECUTION"
+    },
+    {
+      "id": "E-005",
+      "track": "E",
+      "title": "Canonical Authority Commit Core",
+      "status": "NOT_STARTED",
+      "mark": "☐",
+      "priority": "P0 / #5",
+      "depends_on": [
+        "E-004",
+        "R-005",
+        "R-006"
+      ],
+      "blocked_by": [
+        "E-004"
+      ],
+      "unlocks": [
+        "E-006"
+      ],
+      "evidence_grade": "D",
+      "canonical_reconciliation": "NOT_REQUIRED_UNTIL_PROMOTION_OR_EXECUTION"
+    },
+    {
+      "id": "E-006",
+      "track": "E",
+      "title": "Cross-Agent Currentness Core",
+      "status": "NOT_STARTED",
+      "mark": "☐",
+      "priority": "P0 / #6",
+      "depends_on": [
+        "E-005",
+        "R-004"
+      ],
+      "blocked_by": [
+        "E-005"
+      ],
+      "unlocks": [
+        "E-007"
+      ],
+      "evidence_grade": "D",
+      "canonical_reconciliation": "NOT_REQUIRED_UNTIL_PROMOTION_OR_EXECUTION"
+    },
+    {
+      "id": "E-007",
+      "track": "E",
+      "title": "Kernel Re-verification + Kernel→Product Readiness Gate",
+      "status": "NOT_STARTED",
+      "mark": "☐",
+      "priority": "P0 / #7",
+      "depends_on": [
+        "E-006"
+      ],
+      "blocked_by": [
+        "E-006"
+      ],
+      "unlocks": [
+        "P-007",
+        "E-011"
+      ],
+      "evidence_grade": "D",
+      "canonical_reconciliation": "NOT_REQUIRED_UNTIL_PROMOTION_OR_EXECUTION"
+    },
+    {
+      "id": "E-008",
+      "track": "E",
+      "title": "Multi-Track Bootstrap Governance / Current Governance Inventory",
+      "status": "IN_PROGRESS",
+      "mark": "◐",
+      "priority": "P1 / 并行",
+      "depends_on": [],
+      "blocked_by": [],
+      "unlocks": [
+        "P-013"
+      ],
+      "evidence_grade": "B",
+      "canonical_reconciliation": "ORIGINAL_AUTHORITY_EVENT_RECEIPT_STILL_REQUIRED_FOR_HARD_CANONICAL_PROOF"
+    },
+    {
+      "id": "E-009",
+      "track": "E",
+      "title": "Clued SDD Program M0–M6",
+      "status": "DEFERRED",
+      "mark": "↘",
+      "priority": "P1 / 受阶段约束",
+      "depends_on": [
+        "E-007"
+      ],
+      "blocked_by": [
+        "完整实施等待 Product Next/Console 条件"
+      ],
+      "unlocks": [
+        "更规范的开发闭环",
+        "Console Workflow"
+      ],
+      "evidence_grade": "C",
+      "canonical_reconciliation": "REVIEW_AND_FREEZE_REQUIRED"
+    },
+    {
+      "id": "E-010",
+      "track": "E",
+      "title": "Cross-Host Thin-Open Integration & Distribution 设计基线",
+      "status": "COMPLETED",
+      "mark": "✅",
+      "priority": "完成项",
+      "depends_on": [],
+      "blocked_by": [],
+      "unlocks": [
+        "E-011",
+        "E-012"
+      ],
+      "evidence_grade": "X",
+      "canonical_reconciliation": "CANONICAL_EVENT_RECEIPT_REQUIRED"
+    },
+    {
+      "id": "E-011",
+      "track": "E",
+      "title": "Public Integration Repository + Thin Skills 实施",
+      "status": "NOT_STARTED",
+      "mark": "☐",
+      "priority": "P1 / Product Next",
+      "depends_on": [
+        "E-007",
+        "E-010"
+      ],
+      "blocked_by": [
+        "E-007"
+      ],
+      "unlocks": [
+        "E-012",
+        "P-012"
+      ],
+      "evidence_grade": "D",
+      "canonical_reconciliation": "NOT_REQUIRED_UNTIL_PROMOTION_OR_EXECUTION"
+    },
+    {
+      "id": "E-012",
+      "track": "E",
+      "title": "Integration Lifecycle / Clued Connect Runtime Infrastructure",
+      "status": "NOT_STARTED",
+      "mark": "☐",
+      "priority": "P1",
+      "depends_on": [
+        "E-011"
+      ],
+      "blocked_by": [
+        "E-011"
+      ],
+      "unlocks": [
+        "P-012"
+      ],
+      "evidence_grade": "D",
+      "canonical_reconciliation": "NOT_REQUIRED_UNTIL_PROMOTION_OR_EXECUTION"
+    },
+    {
+      "id": "E-013",
+      "track": "E",
+      "title": "First-party Model Program 实施",
+      "status": "DEFERRED",
+      "mark": "↘",
+      "priority": "P2 / 已登记",
+      "depends_on": [
+        "E-007"
+      ],
+      "blocked_by": [
+        "实际实施需独立 Experiment/Qualification/Release Gate"
+      ],
+      "unlocks": [
+        "未来第一方模型能力"
+      ],
+      "evidence_grade": "B",
+      "canonical_reconciliation": "CURRENT_PLAN_REVISION_RECONCILIATION_REQUIRED"
+    },
+    {
+      "id": "E-014",
+      "track": "E",
+      "title": "项目成员 / 项目组权限 v1.1 设计基线",
+      "status": "COMPLETED",
+      "mark": "✅",
+      "priority": "完成项",
+      "depends_on": [],
+      "blocked_by": [],
+      "unlocks": [
+        "P-007"
+      ],
+      "evidence_grade": "A",
+      "canonical_reconciliation": "NONE"
+    },
+    {
+      "id": "E-015",
+      "track": "E",
+      "title": "Integration 安装与更新生命周期 v0.1 设计基线",
+      "status": "COMPLETED",
+      "mark": "✅",
+      "priority": "完成项",
+      "depends_on": [],
+      "blocked_by": [],
+      "unlocks": [
+        "E-012",
+        "P-012"
+      ],
+      "evidence_grade": "A",
+      "canonical_reconciliation": "NONE"
+    },
+    {
+      "id": "E-016",
+      "track": "E",
+      "title": "第一方模型实施计划独立 Plan Review 里程碑",
+      "status": "COMPLETED",
+      "mark": "✅",
+      "priority": "完成项",
+      "depends_on": [],
+      "blocked_by": [],
+      "unlocks": [
+        "E-013"
+      ],
+      "evidence_grade": "A",
+      "canonical_reconciliation": "LATEST_ADOPTED_PLAN_REVISION_REQUIRED"
+    },
+    {
+      "id": "E-017",
+      "track": "E",
+      "title": "多轨优先级治理引擎 v0.2.1 设计基线",
+      "status": "COMPLETED",
+      "mark": "✅",
+      "priority": "完成项",
+      "depends_on": [],
+      "blocked_by": [],
+      "unlocks": [
+        "E-008",
+        "P-013"
+      ],
+      "evidence_grade": "B",
+      "canonical_reconciliation": "ORIGINAL_AUTHORITY_EVENT_RECEIPT_STILL_REQUIRED_FOR_HARD_CANONICAL_PROOF"
+    },
+    {
+      "id": "E-018",
+      "track": "E",
+      "title": "Phase 2 Kernel Stability Hardening v0.1 正式执行基线",
+      "status": "COMPLETED",
+      "mark": "✅",
+      "priority": "完成项",
+      "depends_on": [],
+      "blocked_by": [],
+      "unlocks": [
+        "更可靠的 Phase 2 source manifest"
+      ],
+      "evidence_grade": "A",
+      "canonical_reconciliation": "NONE"
+    }
+  ]
+}
