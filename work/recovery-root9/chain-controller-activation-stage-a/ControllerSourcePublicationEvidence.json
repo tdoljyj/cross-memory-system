@@ -1,0 +1,30 @@
+{
+  "object_type": "Root9ChainControllerSourcePublicationEvidence",
+  "schema_version": "1.0",
+  "state": "VERIFIED_OWNER_SOURCE_MERGE",
+  "repository": "tdoljyj/cross-memory-system",
+  "pull_request": 188,
+  "source_commit": "3028314d9bb27166b123ec17fbc975023be9095a",
+  "owner_merge_commit": "5fca3828a953520c7e1884a3718a23663cc975fb",
+  "source_tree": "adec078e6490dd487718ad3f85b2d691b7fd68d5",
+  "merge_tree": "adec078e6490dd487718ad3f85b2d691b7fd68d5",
+  "controller_manifest_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/ef3a0f34814dbdd0c9f66f6f2498e78e982969c0",
+    "sha256": "f686f199ade403328dbef9cacb88439421d23f1861d196143af06909a9fab24f"
+  },
+  "closure": {
+    "declared_sources": 23,
+    "files_including_manifest": 24,
+    "missing": 0,
+    "sha_mismatches": 0,
+    "digest_pins": "PASS_61_ACCOUNTED_0_UNEXPLAINED",
+    "runtime_pin_selftest": "PASS"
+  },
+  "merge_verification": {
+    "verified": true,
+    "reason": "valid",
+    "merged_by": "tdoljyj",
+    "committer": "web-flow"
+  },
+  "authority_effect": "NONE"
+}

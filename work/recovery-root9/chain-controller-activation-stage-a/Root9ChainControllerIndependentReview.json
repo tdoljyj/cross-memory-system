@@ -1,0 +1,22 @@
+{
+  "object_type": "Root9ChainControllerIndependentReview",
+  "schema_version": "1.0",
+  "reviewer": "/root/root9_recovery_review",
+  "decision": "ROOT9_CHAIN_CONTROLLER_V2_GO",
+  "controller_sha256": "f686f199ade403328dbef9cacb88439421d23f1861d196143af06909a9fab24f",
+  "source_owner_merge_commit": "5fca3828a953520c7e1884a3718a23663cc975fb",
+  "findings": {
+    "participants_2_through_4_only": "PASS",
+    "original_predecessor_exact": "PASS",
+    "intermediate_successors_blocked_sequence2_no_container": "PASS",
+    "decision_index_observation_receipt_closure": "PASS",
+    "current_active_id_not_lexical": "PASS",
+    "fifth_participant_rejected": "PASS",
+    "seq102_exact": "PASS",
+    "root_gate_profile_scope_generations_unchanged": "PASS",
+    "refund_capacity_allocation_reassignment_false": "PASS"
+  },
+  "p0": [],
+  "p1": [],
+  "authority_effect": "NONE"
+}
