@@ -1,0 +1,115 @@
+{
+  "schema_version": "root10-event-projection-independent-review/1",
+  "decision": "ROOT10_CONTRACT_PROJECTION_OWNER_PUBLICATION_GO",
+  "independent_reviewer": "/root/root9_recovery_review",
+  "reviewed_at": "2026-09-15T09:11:13.463Z",
+  "scope": "One-time current117 reserve_gate stored-event and accepted 51-field Gate projection correction, including its all-rollback validation bundle only",
+  "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+  "control_trust_root_generation": "ctrgen_48100437d24e448ba01c542ebe1290da",
+  "expected_current": {
+    "execution_sequence": 117,
+    "pending_budget_sequence": 117,
+    "active_ga_id": null,
+    "charged_seconds": 11706,
+    "charged_evidence_bytes": 2604247987,
+    "root_event_count": 10,
+    "execution_event_count": 117,
+    "attempt_count": 17,
+    "root10_attempt_count": 0,
+    "status29_sha256": "72f6c8a2c4c5b5621814c8d4515e2821eb39c11247e318684d36d2e2be8afe83"
+  },
+  "reviewed_artifacts": {
+    "builder": {
+      "path": "work/new-window/activation/build-root10-reserve-gate-event-projection-fix.mjs",
+      "sha256": "abec57e2f7fa71e6d46486e24f1c8d343125413f02b3b5a273528f3900ae1d2a"
+    },
+    "old_reserve_gate_source": {
+      "sha256": "db0967d6b95c1a9a5b2d47bdbca6809728e272ea2b059ceba9c6e6bf20d269bc",
+      "catalog_sha256": "5dd90bdfb79a3a03289490130daf5be431b056f7432cb68c7dc0ce60d8459bb8"
+    },
+    "corrected_reserve_gate_source": {
+      "sha256": "dd89973ea38fb1c383fe577d68324f3a0392022f3749019ce0d50733f5e555ef",
+      "catalog_sha256": "2c8bdb13242872ae2c379fbea8f3df4065dc88e52ccb250c1aafe586565ba80a"
+    },
+    "full_rollback": {
+      "path": "C:/Users/17531/AppData/Local/Temp/root10-contract-projection-fix-immutable-aware-20260915/root10-reserve-gate-event-projection-fix.full-rollback.sql",
+      "sha256": "fb5d8fc2e28918c52653e45b464dc251410f4eb00feff091cd0bd1cf2836eb3c",
+      "begin_count": 15,
+      "rollback_count": 15,
+      "commit_count": 0,
+      "probe_count": 15,
+      "subcase_count": 42
+    },
+    "immutable_aware_negative_harness": {
+      "builder_sha256": "2dd166723e172f538f7ada4d59447167530febf02ae120b1baaa0e4e500f2072",
+      "selftest_sha256": "d388ea9a61d9cacb0bf5b4eecbf4e7ae95c7d2ce45d812c61155eea741a242d5",
+      "selftest_result": "25/25 PASS, synthetic-only, no authority effect",
+      "manifest_path": "C:/Users/17531/AppData/Local/Temp/root10-negative-immutable-aware-20260915/root10-negative-probes.build.json",
+      "manifest_sha256": "4e6ffd64880cddf96fc3d53ea3f7ef4bc9f85a92401f62b8ad47265e98f448ab",
+      "combined_sql_sha256": "35f527d164a06c169e008c3166a97497e63e28461d6e8a1041d39dfbbbb68eb2"
+    },
+    "apply_once": {
+      "path": "C:/Users/17531/AppData/Local/Temp/root10-contract-projection-fix-20260915/root10-reserve-gate-event-projection-fix.apply-once.sql",
+      "sha256": "06cb6d03ca4ae4dfb944b355b983cc8e6833e35cde67e0474dae62718387d3a4"
+    }
+  },
+  "findings": [
+    "The corrected function is byte-for-byte the old committed Root10 reserve_gate source except for exactly three bounded replacements: the two stored-event comparisons and the invalid GateAuthorization field projection.",
+    "Events 114 and 115 remain fixed by root, sequence, and idempotency key, while request equality now matches the actual normalized stored shape {operation,body:{binding_id,evidence}}.",
+    "The operation, binding_id, and complete evidence JSON remain exact; the correction does not accept a partial or caller-selected projection.",
+    "The event 116 chain continues to compare qualified_evidence against the unchanged invocation constant fixed_qualified_event->evidence, so no null or weakened link is introduced.",
+    "The exact accepted 51-field GateAuthorization has no gate_definition_ref. The replacement therefore keeps gate_id equal to the binding, keeps the binding gate version and digest fixed, and requires exactly one artifact_refs object equal to the accepted Gate blob URI plus the bound Gate digest.",
+    "The later fixed_ga comparison still byte-locks the complete artifact_refs array and every other accepted fixed field, so the Gate mapping neither adds a 52nd field nor allows another Gate artifact.",
+    "The immutable-aware harness leaves execution event 117 unchanged for the no-LF case and changes only the synthetic GA budget reference digest derived from the no-LF representation; the expected rejection remains root10_exact_prior_committed_budget117_required.",
+    "Historical gate_attempt mutations in N08 and N09 are attributed to the exact immutable_gate_bytes_or_decision trigger, while execution/root history mutations in N11 through N13 are attributed to immutable_control_evidence. These early trigger rejections are not represented as runtime coverage of downstream reserve_gate guards.",
+    "All other reserve_gate guards, Root/Gate/Profile/Scope/generation bindings, historical hashes, budget117, charges, one-GA limit, owner, ACL, configuration, security, volatility, kind, parallel-safety, and leakproof metadata remain unchanged.",
+    "The all-rollback bundle installs the correction separately inside each of fifteen transactions and contains fifteen BEGIN, fifteen ROLLBACK, and zero COMMIT statements."
+  ],
+  "blockers": [],
+  "execution_evidence": {
+    "actual_full_rollback_completed": true,
+    "actual_full_rollback_record_path": "work/new-window/stage2-corrected/Root10ContractProjectionActualRollback.json",
+    "actual_full_rollback_record_sha256": "067df4d8af7634d20dc2eb3d0e90ce1d3f393ad15fdf6078c5139fa9be154756",
+    "cli_exit_code": 0,
+    "last_returned_probe_id": "N15_CONTAINER_PHASE_MACHINE_DRIFT",
+    "last_returned_state": "ROOT10_NEGATIVE_ASSERTIONS_SATISFIED_ROLLBACK",
+    "evidence_limit": "The CLI returned the final N15 result set. Exit zero after the sequential assertion-bearing transactions proves that no earlier assertion escaped; it is not represented as fifteen separately returned result sets.",
+    "post_rollback_observed_at": "2026-09-15 09:11:13.463483+00",
+    "post_rollback_exact": {
+      "execution_sequence": 117,
+      "pending_budget_sequence": 117,
+      "active_ga_id": null,
+      "charged_seconds": 11706,
+      "charged_evidence_bytes": 2604247987,
+      "attempt_count": 17,
+      "root10_attempt_count": 0,
+      "execution_event_count": 117,
+      "budget_event_count": 17,
+      "reserve_gate_catalog_sha256": "5dd90bdfb79a3a03289490130daf5be431b056f7432cb68c7dc0ce60d8459bb8"
+    },
+    "note": "The actual immutable-aware full rollback completed without an escaped assertion and the independent native readback restored the exact seq117 preimage, original reserve_gate bytes and metadata, counts, charges, pending budget, and null active GA. This supports Owner source publication only; apply-once still requires immutable Owner publication verification and a fresh expected-current preimage review."
+  },
+  "authorization_boundary": {
+    "database_write_authorized_by_this_review": false,
+    "owner_publication_authorized_by_this_review": true,
+    "apply_once_authorized_by_this_review": false,
+    "ga_issuance_authorized_by_this_review": false,
+    "budget_change": false,
+    "refund": false,
+    "capacity_change": false,
+    "reallocation": false
+  },
+  "sources_read": [
+    "work/new-window/stage2-corrected/Root10ActivationCommittedVerification.json",
+    "work/new-window/stage2-corrected/Root10PreGAEventMappingDiagnosis.json",
+    "work/new-window/activation/build-root10-reserve-gate-event-projection-fix.mjs",
+    "C:/Users/17531/AppData/Local/Temp/root10-activation-corrected-20260915/reserve_gate.root10-one-ga.sql",
+    "C:/Users/17531/AppData/Local/Temp/root10-contract-projection-fix-20260915/reserve_gate.root10-event-projection-fixed.sql",
+    "work/new-window/activation/build-root10-negative-probes.mjs",
+    "work/new-window/activation/selftest-negative-probes.mjs",
+    "C:/Users/17531/AppData/Local/Temp/root10-negative-immutable-aware-20260915/root10-negative-probes.build.json",
+    "C:/Users/17531/AppData/Local/Temp/root10-contract-projection-fix-immutable-aware-20260915/root10-reserve-gate-event-projection-fix.full-rollback.sql",
+    "work/new-window/stage2-corrected/Root10ContractProjectionActualRollback.json",
+    "C:/Users/17531/AppData/Local/Temp/root10-contract-projection-fix-20260915/root10-reserve-gate-event-projection-fix.apply-once.sql"
+  ]
+}
