@@ -671,8 +671,13 @@ const EXPECTED_PER_FILE = {
   // literal the runtime-clock identity already carries, and a file is scanned as a set of
   // distinct literals, so repeating them moves no count. That is why the delta is exactly four
   // and not twelve: only genuinely new values are new here.
+  //
+  // parent600.py 7 -> 8 for the same reason and by the same arithmetic: scope_amendment_window()
+  // adds SCOPE_AMENDMENT_SHA256, one genuinely new value. The GA digest it checks and the
+  // runtime-clock digest it requires the amendment to supersede were both already literals in
+  // this file's runtime_clock_window(), so neither moves the count.
   'bridge.py': 1, 'check-digest-pins.mjs': 28, 'context.mjs': 0, 'fixed_host.py': 3,
-  'host-effect.mjs': 2, 'parent600.py': 7, 'read-source-blobs-linux.mjs': 3, 'result-evidence-root10.mjs': 1, 'result-terminal.mjs': 0,
+  'host-effect.mjs': 2, 'parent600.py': 8, 'read-source-blobs-linux.mjs': 3, 'result-evidence-root10.mjs': 1, 'result-terminal.mjs': 0,
   'root10-single-window.mjs': 14,
   'tool-entry.functions.js': 8, 'trusted-github.mjs': 1,
   // Cross-directory live code, newly scanned (R17-N5). Zero today; declared so it cannot appear

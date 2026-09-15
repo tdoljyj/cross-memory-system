@@ -15,13 +15,17 @@ export function invokeFixedHost({gaRaw,operation,containerId,deadline,temporal=n
  // live on its own if it has an error only it can raise, and with a single message the
  // self-test proved the bridge half while the python half went both unproven and unlisted.
  if(sha(fs.readFileSync(python))!=='f56a588548dd013906ae1dcd1b6faa417f4e204da634ff354840d9643e78ff9e')throw Error('EXACT_PYTHON_BYTES_REQUIRED');
- if(sha(fs.readFileSync(bridge))!=='1871c60e8a3809af254eef6c89cdfdf6de1f28653ff853409b99a5c744962983')throw Error('EXACT_PYTHON_BRIDGE_BYTES_REQUIRED');
+ if(sha(fs.readFileSync(bridge))!=='48386a5447a7a0ac465213025918f54699e9c84d4c19933acffb6c03ebb9e170')throw Error('EXACT_PYTHON_BRIDGE_BYTES_REQUIRED');
  const ga=JSON.parse(gaRaw),nonce=sha('clued-fixed-host-v1\0'+ga.gate_authorization_id).slice(0,32);
  if(temporal!==null){
   const shape=Object.keys(temporal).sort().join(',');
   // Two accepted separate-authority shapes: the temporal continuation carries a
   // fixed effect deadline; the runtime-clock amendment carries an explicit
   // per-dispatch host window whose deadline bounds only the container's life.
+  // The scope amendment narrows the applicable test set and carries that clock
+  // forward verbatim, so it presents the second shape and is held to the same
+  // 600000ms here. Telling the two amendments apart is parent600's job; this
+  // check is about the window, and it is the same window either way.
   if(shape==='event,raw,sha256'){if(sha(temporal.raw)!==temporal.sha256||Date.parse(temporal.event?.request?.body?.effect_deadline)!==deadline)throw Error('EXACT_SEPARATE_TEMPORAL_HOST_INPUT');}
   else if(shape==='event,host_window,raw,sha256'){if(sha(temporal.raw)!==temporal.sha256||Date.parse(temporal.host_window?.deadline_utc)!==deadline||Date.parse(temporal.host_window?.deadline_utc)-Date.parse(temporal.host_window?.prepared_utc)!==600000)throw Error('EXACT_SEPARATE_RUNTIME_CLOCK_HOST_INPUT');}
   else throw Error('EXACT_SEPARATE_TEMPORAL_HOST_INPUT');

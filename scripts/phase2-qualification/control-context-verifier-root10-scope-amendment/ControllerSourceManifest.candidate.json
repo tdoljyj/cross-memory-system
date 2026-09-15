@@ -57,8 +57,8 @@
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/historical-component-observations.mjs",
-      "sha256": "9120cec8caa1be89eddc54d97b6563bd55e8cefb7f1cfb1677e9edee22b925ba",
-      "bytes": 6918
+      "sha256": "bb0dfda3ca3ae6239a4b6ccf97d01f779e85c31471153cddcc583488df2875fc",
+      "bytes": 7374
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/host-effect.mjs",

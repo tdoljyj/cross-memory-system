@@ -96,6 +96,15 @@ def effective_window(ga_raw, temporal=None):
     require(type(temporal) is dict and set(temporal) in ({'raw', 'sha256', 'event'},
             {'raw', 'sha256', 'event', 'host_window'}), 'exact_temporal_host_fields')
     if 'host_window' in temporal:
+        # Two amendments share the host-window shape and are told apart by amendment
+        # identity alone: event 119 fixed the runtime clock, event 120 carries that
+        # clock forward verbatim and narrows only the applicable test set. Anything
+        # that is not exactly the scope amendment still reaches the runtime-clock
+        # branch and is judged there exactly as before. This dispatch decides
+        # nothing on its own: whichever branch runs re-derives the digest from the
+        # raw bytes and refuses if it does not match.
+        if temporal['sha256'] == SCOPE_AMENDMENT_SHA256:
+            return scope_amendment_window(ga_raw, temporal)
         return runtime_clock_window(ga_raw, temporal)
     ga_sha = hashlib.sha256(ga_raw.encode('utf-8')).hexdigest()
     expected_ga = '68afb1e6dc1367729cd6864b9ba9b5d846ab123ff5539d7a646f7fa1df988f78'
@@ -179,6 +188,110 @@ def runtime_clock_window(ga_raw, material):
     prepared, deadline = timestamp(hw['prepared_utc']), timestamp(hw['deadline_utc'])
     require(activated <= prepared < deadline and (deadline - prepared).total_seconds() == 600
             and deadline <= final, 'exact_runtime_clock_host_window_bounds')
+    return prepared, deadline, final
+
+
+# Exact separate scope amendment bytes (event 120). Written once so the dispatch in
+# effective_window() and the branch below can never drift apart.
+SCOPE_AMENDMENT_SHA256 = '5ae14a3c383b318e3e1e5fb22a2dacf546e74b5c51ef9c133d356caf6475b4a7'
+RUNTIME_CLOCK_AMENDMENT_SHA256 = 'e92a252a0ab62600d6153ece3e3df92a35bd5680b3d9e2c8f65b6c77ff236402'
+SCOPE_APPLICABLE_TEST_IDS = ['PQUAL-11', 'PQUAL-13', 'PQUAL-15', 'PQUAL-16', 'PQUAL-17']
+SCOPE_OUT_OF_SCOPE_TEST_IDS = ['PQUAL-01', 'PQUAL-02', 'PQUAL-03', 'PQUAL-04', 'PQUAL-05',
+                               'PQUAL-06', 'PQUAL-07', 'PQUAL-08', 'PQUAL-09', 'PQUAL-10',
+                               'PQUAL-12', 'PQUAL-14', 'PQUAL-19', 'PQUAL-20']
+
+
+def scope_amendment_window(ga_raw, material):
+    """Scope amendment host window: the runtime clock is carried forward, not replaced.
+
+    Event 120 narrows the applicable formal test set for this generation and
+    extends the administrative window; it grants no additional second of
+    container runtime. Every event-119 term that bounds execution itself is
+    restated in the event body and re-checked here, so a scope event cannot
+    quietly widen the runtime bound, lift the predispatch reset cap, or detach
+    itself from the runtime clock it claims to carry forward. As with event 119,
+    the 600 authorized seconds bound the container's own life via an explicit
+    per-dispatch host window chosen at prepare time, never an administrative
+    instant such as GA issue or amendment activation. Owner signature and
+    authentic DB event checks belong to the trusted parent entry; this fixed
+    host additionally rejects mismatched raw data or clocks.
+    """
+    ga = json.loads(ga_raw)
+    ga_sha = hashlib.sha256(ga_raw.encode('utf-8')).hexdigest()
+    expected_ga = '68afb1e6dc1367729cd6864b9ba9b5d846ab123ff5539d7a646f7fa1df988f78'
+    expected_amendment = SCOPE_AMENDMENT_SHA256
+    require(ga_sha == expected_ga and ga.get('gate_authorization_id') == 'ga_32daa5daf52c4deb8e893c25b08eff38',
+            'exact_scope_original_ga')
+    require(type(material['raw']) is str and material['sha256'] == expected_amendment
+            and hashlib.sha256(material['raw'].encode('utf-8')).hexdigest() == expected_amendment,
+            'exact_scope_amendment_bytes')
+    amendment = json.loads(material['raw'])
+    event = material['event']
+    key = 'root10_scope_amendment_20260915'
+    require(type(event) is dict and event.get('sequence') == 120, 'exact_scope_activation_event')
+    request = event.get('request', {})
+    require(set(request) == {'operation', 'ga_id', 'expected_sequence', 'idempotency_key', 'body'}
+            and request['operation'] == 'SCOPE_AMENDMENT_ACTIVATED' and request['expected_sequence'] == 119
+            and request['idempotency_key'] == key and event.get('idempotency_key') == key
+            and request['ga_id'] == ga['gate_authorization_id'], 'exact_scope_activation_binding')
+    body = request['body']
+    require(type(body) is dict and set(body) == {'activated_at', 'amendment_ref', 'amendment_sha256',
+            'applicable_test_ids', 'automatic_retry', 'budget_raw_sha256', 'budget_refund',
+            'budget_sequence', 'carries_forward_sequence', 'control_trust_root_generation',
+            'finalization_expires_at', 'max_predispatch_resets', 'new_binding', 'new_binding_sha256',
+            'new_budget', 'new_ga', 'old_binding', 'old_binding_sha256', 'out_of_scope_test_ids',
+            'preparation_expires_at', 'prior_ga_sha256', 'runtime_seconds'}, 'exact_scope_event_body')
+    require(body['prior_ga_sha256'] == ga_sha and body['amendment_sha256'] == expected_amendment
+            and body['amendment_ref'].get('sha256') == expected_amendment
+            and body['budget_sequence'] == 117 and body['budget_raw_sha256'] == ga['budget_reservation_ref']['sha256']
+            and body['runtime_seconds'] == 600 and body['max_predispatch_resets'] == 3
+            and all(body[name] is False for name in ('automatic_retry', 'budget_refund', 'new_budget', 'new_ga')),
+            'exact_scope_nonexpanding_binding')
+    # The scope event has no independent force: it may only ride on event 119, and it
+    # must restate that event's runtime terms rather than assert new ones. Narrowing is
+    # the only thing it is allowed to do, and the narrowed set is pinned, not inferred.
+    require(body['carries_forward_sequence'] == 119
+            and body['control_trust_root_generation'] == ga['control_trust_root_generation']
+            and body['applicable_test_ids'] == SCOPE_APPLICABLE_TEST_IDS
+            and body['out_of_scope_test_ids'] == SCOPE_OUT_OF_SCOPE_TEST_IDS,
+            'exact_scope_applicable_set')
+    activation = amendment['activation']
+    require(amendment.get('object_type') == 'Root10ScopeAmendment' and amendment.get('authority_effect') == 'NONE'
+            and amendment['supersedes'].get('sha256') == RUNTIME_CLOCK_AMENDMENT_SHA256
+            and amendment['supersedes'].get('activation_sequence') == 119
+            and amendment['carries_forward'].get('activation_sequence') == 119
+            and activation['operation'] == 'SCOPE_AMENDMENT_ACTIVATED' and activation['idempotency_key'] == key
+            and activation['expected_sequence'] == 119 and activation['activation_sequence'] == 120
+            and activation['maximum_activations'] == 1
+            and activation['ga_ref'].get('ga_id') == ga['gate_authorization_id']
+            and activation['ga_ref'].get('sha256') == ga_sha
+            and activation['budget_ref'].get('sequence') == 117
+            and activation['budget_ref'].get('sha256') == ga['budget_reservation_ref']['sha256']
+            and activation['budget_ref'].get('seconds') == 600
+            and activation['runtime_seconds'] == body['runtime_seconds']
+            and activation['max_predispatch_resets'] == body['max_predispatch_resets']
+            and activation['preparation_expires_at'] == body['preparation_expires_at']
+            and activation['finalization_expires_at'] == body['finalization_expires_at'],
+            'exact_scope_carried_forward_runtime_clock')
+    terms = amendment['amended_terms']['applicable_test_set_for_this_generation']
+    require(terms['applicable_test_ids'] == SCOPE_APPLICABLE_TEST_IDS
+            and terms['out_of_scope_test_ids'] == SCOPE_OUT_OF_SCOPE_TEST_IDS,
+            'exact_scope_amendment_applicable_set')
+    require(event.get('root_id') == amendment['root_id'] and ga['control_trust_root_generation'] == amendment['control_trust_root_generation']
+            and ga['deadline'] == ga['expires_at'], 'original_scope_identity_and_clock_immutable')
+    activated, prep, final = (timestamp(body[name]) for name in ('activated_at', 'preparation_expires_at', 'finalization_expires_at'))
+    owner_start, owner_end = root10_window()
+    require(owner_start <= activated and timestamp(ga['deadline']) < activated and prep <= final == owner_end,
+            'exact_scope_windows')
+    hw = material['host_window']
+    require(type(hw) is dict and set(hw) == {'prepared_utc', 'deadline_utc'}, 'exact_scope_host_window')
+    prepared, deadline = timestamp(hw['prepared_utc']), timestamp(hw['deadline_utc'])
+    # The container's life is the host window and nothing else: exactly the 600
+    # seconds event 119 fixed and event 120 restates, inside the administrative
+    # window, and never a second beyond it.
+    require(activated <= prepared < deadline
+            and (deadline - prepared).total_seconds() == 600 == body['runtime_seconds']
+            and deadline <= final, 'exact_scope_host_window_bounds')
     return prepared, deadline, final
 
 
