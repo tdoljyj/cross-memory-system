@@ -12,7 +12,7 @@ import boundedCrypto from 'node:crypto';import {isDeepStrictEqual as boundedSame
 import {createRequire} from 'node:module';
 import {sha,readBlobRef,verifyOwnerMergeArtifact,verifyDynamicPayload} from './trusted-github.mjs';
 import {validateRootShape,canonicalDigest,signaturePayloadDigest} from './root-window-validation.mjs';
-import {loadRoot10ControllerContract,checkRoot10RuntimeBinding,checkRoot10SingleWindowSeries,readRoot10TemporalContext,checkRoot10TemporalTime,root10TemporalIdentity,readRoot10RuntimeClockContext,checkRoot10RuntimeClockTime,root10RuntimeClockIdentity,readRoot10ScopeContext,checkRoot10ScopeTime} from './root10-single-window.mjs';
+import {loadRoot10ControllerContract,checkRoot10RuntimeBinding,checkRoot10SingleWindowSeries,readRoot10TemporalContext,checkRoot10TemporalTime,root10TemporalIdentity,readRoot10RuntimeClockContext,checkRoot10RuntimeClockTime,root10RuntimeClockIdentity,readRoot10ScopeContext,checkRoot10ScopeTime,root10ScopeIdentity} from './root10-single-window.mjs';
 import {verifyRuntimeDependencies} from './runtime-dependencies.mjs';
 const root10Contract=loadRoot10ControllerContract();
 export const project='uscrdifznmlvczcekqpw',rootID=root10Contract.value.root_id,generation=root10Contract.value.generation_id;
@@ -116,7 +116,7 @@ export function checkCurrentSemantics({gaRaw,operation,observation,runtimeAccept
  check(attempt.phase===(admissionPhase==='DISPATCHED_ONCE'?operation+'_SENT':({CREATE:'PENDING',START:'CREATED',STOP:'RUNNING',GRR:'SIGNING'}[operation])),'NO_REDISPATCH_OR_UNKNOWN');
  check(Date.parse(attempt.expires_at)===deadline,'RESERVATION_DEADLINE');
  checkCumulativeBudget(current,binding);
- return {state:'SEMANTICS_ONLY_NOT_ADMISSION',ga,root:body,attempt,accepted_subject:subject,sequence:current.sequence,temporal,rc};
+ return {state:'SEMANTICS_ONLY_NOT_ADMISSION',ga,root:body,attempt,accepted_subject:subject,sequence:current.sequence,temporal,rc,scope};
 }
 function signedMetadata(item,expectedSha){check(typeof item?.raw==='string'&&sha(item.raw)===expectedSha,'ACCEPTANCE_BYTES_MISSING_OR_DRIFT');verifyOwnerMergeArtifact({...item.publication,raw:item.raw});return JSON.parse(item.raw);}
 
@@ -152,7 +152,25 @@ export async function prepareTrustedToolMaterial(material){
  seriesCheck(material.observation.row.execution);
  // No effects or admission exist while these initially untrusted metadata bytes are checked.
  signedMetadata(material.controller_qualification,binding.qualification_sha256);
- if(result.rc){
+ if(result.scope){
+  // The scope amendment is a separately published Owner document, authenticated
+  // exactly as its predecessor is. It occupies the runtime clock's material slot
+  // because it carries that clock forward; the host window it bounds is still the
+  // 600 seconds event 119 fixed, never a longer one.
+  const descriptor=result.scope.descriptor,input=material.scope_amendment;
+  check(input&&Object.keys(input).sort().join(',')==='event,host_window,publication,raw,sha256'&&sha(input.raw)===descriptor.amendment_ref.sha256&&input.sha256===descriptor.amendment_ref.sha256&&same(input.event,result.scope.event),'EXACT_SEPARATE_SCOPE_AUTHORITY_MATERIAL');
+  const hw=input.host_window;
+  check(hw&&Object.keys(hw).sort().join(',')==='deadline_utc,prepared_utc'&&time(hw.deadline_utc)-time(hw.prepared_utc)===600000&&time(hw.prepared_utc)>=result.scope.issued&&time(hw.prepared_utc)<=Date.now()+2000&&time(hw.deadline_utc)<=result.scope.final,'EXACT_SCOPE_HOST_WINDOW');
+  const publication=verifyOwnerMergeArtifact({commitSha:input.publication.commitSha,artifactPath:input.publication.artifactPath,raw:input.raw});
+  check(same(publication.blob_ref,descriptor.amendment_ref),'ACTUAL_OWNER_SCOPE_AMENDMENT_PUBLICATION');
+  const amendment=JSON.parse(input.raw);
+  check(amendment.object_type==='Root10ScopeAmendment'&&amendment.root_id===rootID&&amendment.control_trust_root_generation===generation&&amendment.activation?.ga_ref?.ga_id===root10ScopeIdentity.ga_id&&amendment.activation.ga_ref.sha256===sha(material.ga_raw)&&amendment.activation.budget_ref?.sequence===117&&amendment.activation.budget_ref.sha256===root10ScopeIdentity.budget_sha256&&amendment.activation.maximum_activations===1&&amendment.activation.expected_sequence===119&&amendment.activation.runtime_seconds===600&&amendment.activation.max_predispatch_resets===3&&amendment.activation.preparation_expires_at===windowExpiry&&amendment.activation.finalization_expires_at===windowExpiry&&amendment.supersedes?.sha256===root10RuntimeClockIdentity.amendment_sha256,'EXACT_SIGNED_SCOPE_AUTHORITY_SCOPE');
+  const originalManifest=result.ga.source_ref.blobs.filter(ref=>ref.sha256===result.ga.controller_digest);
+  check(originalManifest.length===1,'ONE_ORIGINAL_SCOPE_SOURCE_MANIFEST');
+  const originalRaw=readBlobRef(originalManifest[0]);
+  verifyOwnerMergeArtifact({commitSha:result.ga.target_revision,artifactPath:'scripts/phase2-qualification/control-context-verifier-root10-single-window/ControllerSourceManifest.candidate.json',raw:originalRaw});
+  verifySourcePublication({sourceRef:descriptor.source_ref,ownerMerge:material.runtime_acceptance.publication.commitSha,controllerDigest:binding.controller_sha256});
+ }else if(result.rc){
   const descriptor=result.rc.descriptor,input=material.runtime_clock;
   check(input&&Object.keys(input).sort().join(',')==='event,host_window,publication,raw,sha256'&&sha(input.raw)===descriptor.amendment_ref.sha256&&input.sha256===descriptor.amendment_ref.sha256&&same(input.event,result.rc.event),'EXACT_SEPARATE_RUNTIME_CLOCK_AUTHORITY_MATERIAL');
   const hw=input.host_window;

@@ -32,8 +32,8 @@
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/context.mjs",
-      "sha256": "221f5c887c06dc23a302d7543c3452279381bc71eae446747852b605a219a0ab",
-      "bytes": 34945
+      "sha256": "612819968071c6141cbabaa30971dcd5b322c99895cf3841b76f9e4d7337a689",
+      "bytes": 37674
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/dynamic-signing.mjs",
@@ -107,8 +107,8 @@
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/root10-single-window.mjs",
-      "sha256": "da3c25c3d53a1a00bee7b381ec1a45c200c81c10b96d9a5c7cd20137e5228755",
-      "bytes": 55511
+      "sha256": "c15f1183e4317b71fcac015828ded82866659e7bdb98042ce7ef9024ce64d480",
+      "bytes": 56455
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/Root10ControllerContract.candidate.json",

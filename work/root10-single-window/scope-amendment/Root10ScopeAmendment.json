@@ -3,6 +3,33 @@
   "schema_version": "1.0",
   "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
   "control_trust_root_generation": "ctrgen_48100437d24e448ba01c542ebe1290da",
+  "supersedes": {
+    "object_type": "Root10RuntimeClockAmendment",
+    "sha256": "e92a252a0ab62600d6153ece3e3df92a35bd5680b3d9e2c8f65b6c77ff236402",
+    "activation_sequence": 119,
+    "disposition": "TERMS_CARRIED_FORWARD_WINDOW_EXTENDED_NO_LONGER_DERIVES_THE_BINDING"
+  },
+  "activation": {
+    "operation": "SCOPE_AMENDMENT_ACTIVATED",
+    "idempotency_key": "root10_scope_amendment_20260915",
+    "expected_sequence": 119,
+    "activation_sequence": 120,
+    "maximum_activations": 1,
+    "ga_ref": {
+      "ga_id": "ga_32daa5daf52c4deb8e893c25b08eff38",
+      "sha256": "68afb1e6dc1367729cd6864b9ba9b5d846ab123ff5539d7a646f7fa1df988f78"
+    },
+    "budget_ref": {
+      "sequence": 117,
+      "sha256": "669d96057a44ed5e9c3eae9fed6ed8720aae8a2b48eef03761b8e9361433a462",
+      "seconds": 600,
+      "evidence_bytes": 134217728
+    },
+    "preparation_expires_at": "2026-10-15T03:00:00Z",
+    "runtime_seconds": 600,
+    "max_predispatch_resets": 3,
+    "finalization_expires_at": "2026-10-15T03:00:00Z"
+  },
   "carries_forward": {
     "object_type": "Root10RuntimeClockAmendment",
     "activation_sequence": 119,

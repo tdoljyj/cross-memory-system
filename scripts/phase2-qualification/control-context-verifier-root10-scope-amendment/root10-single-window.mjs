@@ -211,6 +211,8 @@ export function checkRoot10RuntimeClockTime({context,execution,operation,now=Dat
 export const root10ScopeIdentity=Object.freeze({
  ga_id:'ga_32daa5daf52c4deb8e893c25b08eff38',
  ga_sha256:'68afb1e6dc1367729cd6864b9ba9b5d846ab123ff5539d7a646f7fa1df988f78',
+ control_trust_root_generation:'ctrgen_48100437d24e448ba01c542ebe1290da',
+ amendment_sha256:'5ae14a3c383b318e3e1e5fb22a2dacf546e74b5c51ef9c133d356caf6475b4a7',
  original_controller_sha256:'d01bd55e02614c0d2b6f51f80fe5b56816aecc2f29e753344a4bcac56aaaf559',
  predecessor_controller_sha256:'5c72dd8923436f6e9ab5b51160cd8751944158d3919d3ef09f6f3ec5006e40b6',
  predecessor_qualification_sha256:'6a7145fa0c09a00a917b40c42f5dbaa38f4c6028e75ab747dd234351b993b849',
@@ -231,34 +233,36 @@ export const root10ScopeIdentity=Object.freeze({
 });
 const scContexts=new WeakSet();
 const scDescriptorKeys=['activation_idempotency_key','activation_operation','amendment_ref','applicable_test_ids','budget_ref','carries_forward_sequence','continuation_controller_sha256','expected_activation_sequence','finalization_expires_at','max_predispatch_resets','no_automatic_retry','no_new_budget','no_new_ga','no_refund','out_of_scope_test_ids','predecessor_controller_sha256','preparation_expires_at','prior_ga_ref','runtime_clock_amendment_sha256','runtime_seconds','source_ref'];
-const scBodyKeys=['activated_at','amendment_ref','amendment_sha256','applicable_test_ids','automatic_retry','budget_raw_sha256','budget_refund','budget_sequence','carries_forward_sequence','finalization_expires_at','max_predispatch_resets','new_binding','new_binding_sha256','new_budget','new_ga','old_binding','old_binding_sha256','out_of_scope_test_ids','preparation_expires_at','prior_ga_sha256','runtime_seconds'];
+const scBodyKeys=['activated_at','amendment_ref','amendment_sha256','applicable_test_ids','automatic_retry','budget_raw_sha256','budget_refund','budget_sequence','carries_forward_sequence','control_trust_root_generation','finalization_expires_at','max_predispatch_resets','new_binding','new_binding_sha256','new_budget','new_ga','old_binding','old_binding_sha256','out_of_scope_test_ids','preparation_expires_at','prior_ga_sha256','runtime_seconds'];
 const scEffectOperations=rcEffectOperations;
 const sameIds=(a,b)=>Array.isArray(a)&&Array.isArray(b)&&a.length===b.length&&a.every((v,i)=>v===b[i]);
 export function readRoot10ScopeContext({gaRaw,execution,descriptor}){
  if(descriptor===undefined||descriptor===null)return null;
  const fixed=root10ScopeIdentity;
  need(exact(descriptor,scDescriptorKeys),'EXACT_SCOPE_DESCRIPTOR');
- need(ref(descriptor.amendment_ref)&&descriptor.activation_operation===fixed.activation_operation&&descriptor.activation_idempotency_key===fixed.activation_key&&descriptor.expected_activation_sequence===fixed.activation_sequence,'EXACT_SCOPE_ACTIVATION_CONTRACT');
+ need(ref(descriptor.amendment_ref)&&descriptor.amendment_ref.sha256===fixed.amendment_sha256&&descriptor.activation_operation===fixed.activation_operation&&descriptor.activation_idempotency_key===fixed.activation_key&&descriptor.expected_activation_sequence===fixed.activation_sequence,'EXACT_SCOPE_ACTIVATION_CONTRACT');
  need(descriptor.predecessor_controller_sha256===fixed.predecessor_controller_sha256&&hex(descriptor.continuation_controller_sha256)&&descriptor.continuation_controller_sha256!==fixed.predecessor_controller_sha256,'EXACT_SCOPE_CONTROLLER_FORWARD');
  need(descriptor.runtime_clock_amendment_sha256===fixed.runtime_clock_amendment_sha256&&descriptor.carries_forward_sequence===fixed.carries_forward_sequence,'EXACT_SCOPE_CARRIES_FORWARD_RUNTIME_CLOCK');
  need(descriptor.preparation_expires_at===fixed.preparation_expires_at&&descriptor.finalization_expires_at===fixed.finalization_expires_at&&descriptor.runtime_seconds===fixed.runtime_seconds&&descriptor.max_predispatch_resets===fixed.max_predispatch_resets,'EXACT_SCOPE_WINDOW_TERMS');
  need(sameIds(descriptor.applicable_test_ids,fixed.applicable_test_ids)&&sameIds(descriptor.out_of_scope_test_ids,fixed.out_of_scope_test_ids),'EXACT_SCOPE_APPLICABLE_SET');
  need(['no_automatic_retry','no_new_budget','no_new_ga','no_refund'].every(k=>descriptor[k]===true),'NO_SCOPE_BUDGET_OR_GA_EFFECT');
  const events=execution.events;
- need(Array.isArray(events),'ACTUAL_EXECUTION_EVENTS_REQUIRED');
+ need(Array.isArray(events)&&events.length===execution.current.sequence&&events.every((e,i)=>e.sequence===i+1),'EXACT_COMPLETE_SCOPE_EVENT_HISTORY');
  // The runtime clock must still be present and valid in history: a scope event
  // has no independent force and may only ride on the accepted event 119.
  const carried=events.filter(e=>e.sequence===fixed.carries_forward_sequence&&e.request?.operation===root10RuntimeClockIdentity.activation_operation&&e.request.ga_id===fixed.ga_id);
  need(carried.length===1&&carried[0].request.idempotency_key===root10RuntimeClockIdentity.activation_key&&carried[0].request.body?.amendment_sha256===fixed.runtime_clock_amendment_sha256,'SCOPE_REQUIRES_ACCEPTED_RUNTIME_CLOCK');
+ need(!events.slice(0,117).some(e=>e.request?.ga_id===fixed.ga_id),'SCOPE_ZERO_PRIOR_GA_EFFECT');
  const carriedBody=carried[0].request.body;
- const selected=events.filter(e=>e.sequence===fixed.activation_sequence&&e.request?.operation===fixed.activation_operation&&e.request.ga_id===fixed.ga_id);
- need(selected.length===1,'ONE_EXACT_SCOPE_ACTIVATION_EVENT');
+ const anywhere=events.filter(e=>e.request?.operation===fixed.activation_operation);
+ const selected=anywhere.filter(e=>e.sequence===fixed.activation_sequence&&e.request.ga_id===fixed.ga_id);
+ need(anywhere.length===1&&selected.length===1&&events[fixed.activation_sequence-1]===selected[0],'ONE_EXACT_SCOPE_ACTIVATION_EVENT');
  const event=selected[0],request=event.request,body=request.body;
- need(exact(request,['operation','ga_id','expected_sequence','idempotency_key','body'])&&request.ga_id===fixed.ga_id&&request.expected_sequence===fixed.activation_sequence-1&&request.idempotency_key===fixed.activation_key&&exact(body,scBodyKeys),'EXACT_SCOPE_ACTIVATION_EVENT');
+ need(exact(request,['operation','ga_id','expected_sequence','idempotency_key','body'])&&request.ga_id===fixed.ga_id&&request.expected_sequence===fixed.activation_sequence-1&&request.idempotency_key===fixed.activation_key&&event.idempotency_key===fixed.activation_key&&exact(body,scBodyKeys),'EXACT_SCOPE_ACTIVATION_EVENT');
  need(event.root_id===execution.current.root_id&&sameTemporal(body.amendment_ref,descriptor.amendment_ref)&&body.amendment_sha256===descriptor.amendment_ref.sha256&&body.prior_ga_sha256===fixed.ga_sha256&&body.budget_sequence===117&&body.budget_raw_sha256===fixed.budget_sha256,'EXACT_SCOPE_EVENT_BINDINGS');
  need(['automatic_retry','budget_refund','new_budget','new_ga'].every(k=>body[k]===false),'NO_SCOPE_BUDGET_OR_GA_EFFECT');
  need(body.preparation_expires_at===fixed.preparation_expires_at&&body.finalization_expires_at===fixed.finalization_expires_at&&body.runtime_seconds===fixed.runtime_seconds&&body.max_predispatch_resets===fixed.max_predispatch_resets,'EXACT_SCOPE_EVENT_WINDOW_TERMS');
- need(sameIds(body.applicable_test_ids,fixed.applicable_test_ids)&&sameIds(body.out_of_scope_test_ids,fixed.out_of_scope_test_ids)&&body.carries_forward_sequence===fixed.carries_forward_sequence,'EXACT_SCOPE_EVENT_APPLICABLE_SET');
+ need(sameIds(body.applicable_test_ids,fixed.applicable_test_ids)&&sameIds(body.out_of_scope_test_ids,fixed.out_of_scope_test_ids)&&body.carries_forward_sequence===fixed.carries_forward_sequence&&body.control_trust_root_generation===fixed.control_trust_root_generation,'EXACT_SCOPE_EVENT_APPLICABLE_SET');
  // Carry-forward is machine-checked, not asserted in prose: event 120 must restate
  // event 119's window terms exactly and must start from event 119's own new binding.
  need(Date.parse(body.preparation_expires_at)>=Date.parse(carriedBody.preparation_expires_at)&&Date.parse(body.finalization_expires_at)>=Date.parse(carriedBody.finalization_expires_at)&&body.runtime_seconds===carriedBody.runtime_seconds&&body.max_predispatch_resets===carriedBody.max_predispatch_resets&&body.budget_raw_sha256===carriedBody.budget_raw_sha256&&body.budget_sequence===carriedBody.budget_sequence,'SCOPE_MUST_CARRY_RUNTIME_CLOCK_FORWARD');
@@ -272,6 +276,8 @@ export function readRoot10ScopeContext({gaRaw,execution,descriptor}){
  need(ga.gate_authorization_id===fixed.ga_id&&ga.controller_digest===fixed.original_controller_sha256&&ga.deadline===fixed.original_deadline&&ga.expires_at===fixed.original_deadline,'ORIGINAL_GA_CLOCK_IMMUTABLE');
  const attempt=execution.attempts?.filter(a=>a.ga_id===fixed.ga_id);
  need(attempt?.length===1&&attempt[0].ga_raw===gaRaw&&attempt[0].ga_sha256===fixed.ga_sha256&&attempt[0].budget_sequence===117&&Date.parse(attempt[0].expires_at)===Date.parse(fixed.original_deadline)&&attempt[0].revoked===false,'ORIGINAL_SCOPE_ATTEMPT_UNCHANGED');
+ const budget=events[116];
+ need(budget.request?.operation==='BUDGET_RESERVED'&&sha(budget.request.body.raw)===fixed.budget_sha256&&budget.request.body.sha256===fixed.budget_sha256&&execution.attempts.filter(a=>a.budget_sequence===117).length===1,'ORIGINAL_SCOPE_BUDGET_UNCHANGED');
  const issued=Date.parse(body.activated_at),prep=Date.parse(fixed.preparation_expires_at),final=Date.parse(fixed.finalization_expires_at);
  need(temporalUtc(body.activated_at)&&Date.parse(carriedBody.activated_at)<=issued&&issued<prep&&prep<=final,'EXACT_DATABASE_DERIVED_SCOPE_WINDOW');
  // The reset bound and the one-run rule are the runtime clock's, carried forward
