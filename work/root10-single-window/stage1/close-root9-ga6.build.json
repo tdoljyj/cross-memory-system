@@ -1,0 +1,17 @@
+{
+  "state": "BUILT_EXACT_GA6_CLOSE_NO_SUCCESSOR",
+  "publication_commit": "3694ae41d6e80602ac73da9c6f73667277881d61",
+  "publication_tree": "eeb579aa12bcfa5ed3e6f4fd3eeaa452ad688fc8",
+  "original_execution_sha256": "96ee8ccbcfaa97ffce03a3a233968bd9f4db04b61cc333dac6977f39d38cd754",
+  "exact_close_execution_sha256": "20ff0a91eeaccab87a2de764e10a9830ee254b4f25bbbae75b51979b18ef2b5a",
+  "decision_sha256": "be4951c1c8177efd8fd9371669ba7988610cc84080c01500d33349f89214f0e4",
+  "index_sha256": "6f935fa4e5d9c2ca8544653fe01a74f703f36452daa46460b8409373b40c764c",
+  "observation_sha256": "1556f55026e8861a059fada73c8d91127a885232856023aea0203aae03337dc6",
+  "grr_sha256": "3d6fc55e6d2065fb40974161f3c0abb556817989c560e3072a080bea033ccfdd",
+  "signature_commit": "344cd2fa4c700320acc3e18ec8cde1052b8417c7",
+  "expected_sequence_before": 110,
+  "expected_sequence_after": 112,
+  "pending_budget_sequence_after": null,
+  "authority_effect": "NONE",
+  "successor": false
+}

@@ -1,0 +1,40 @@
+{
+  "state": "ACCEPTED_EXACT_ROOT10_EXECUTOR_APPLICABILITY",
+  "independent_reviewer": "/root/root9_recovery_review",
+  "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+  "control_trust_root_generation": "ctrgen_48100437d24e448ba01c542ebe1290da",
+  "suite_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/83f87805e1e5ecfa619cbb69db061f03999eb31f",
+    "sha256": "a7a70ddbe089d46609d2f8c877aa69792ad3b5aef7c5487a10d6b8951dee7c2c"
+  },
+  "suite_executor_sha256": "27ede0fc0ff6afc4d5abf2f5c9f256fe22776165746dddc19aa2693c47bbc97c",
+  "current_controller_sha256": "6b03b143d13f81c27602d44b071e70fc1f40cb9ca46e36286d499bd34341bc87",
+  "formal_test_ids": [
+    "PQUAL-01",
+    "PQUAL-02",
+    "PQUAL-03",
+    "PQUAL-04",
+    "PQUAL-05",
+    "PQUAL-06",
+    "PQUAL-07",
+    "PQUAL-08",
+    "PQUAL-09",
+    "PQUAL-10",
+    "PQUAL-11",
+    "PQUAL-12",
+    "PQUAL-13",
+    "PQUAL-14",
+    "PQUAL-15",
+    "PQUAL-16",
+    "PQUAL-17",
+    "PQUAL-19",
+    "PQUAL-20"
+  ],
+  "pqual18_disposition": "NEGATIVE_ADMISSION_CHECK_NOT_FORMAL_RESULT",
+  "oracle_bytes_unchanged": true,
+  "fixture_refs_unchanged": true,
+  "test_definitions_unchanged": true,
+  "controller_executes_same_oracles": true,
+  "new_authority": false,
+  "authority_effect": "NONE"
+}

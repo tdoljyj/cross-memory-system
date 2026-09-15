@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "status": "GRANTED_BY_EXPLICIT_USER_INSTRUCTION",
+  "root_set_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+  "control_trust_root_generation": "ctrgen_48100437d24e448ba01c542ebe1290da",
+  "not_before": "2026-09-15T03:00:00Z",
+  "expires_at": "2026-09-16T03:00:00Z",
+  "scope": {
+    "independent_assessor": "/root/root9_recovery_review",
+    "environment": "ISOLATED_TEST",
+    "purpose": "SKILL_COEXISTENCE_QUALIFICATION",
+    "gate_id": "G-PREENTRY-SKILL-QUALIFICATION",
+    "maximum_ga": 1,
+    "review_scope": "Independently assess the unchanged 19 applicable test oracles and the PQUAL-18 no-broader-authority preflight guard against actual raw evidence."
+  },
+  "source_authorization": "User explicitly authorized an independent sub-agent review, reasonable parallelism, and the recommended final single-window plan.",
+  "authority_effect": "NONE_UNTIL_OWNER_PUBLICATION",
+  "production": false,
+  "model_budget": 0,
+  "paid_budget": 0
+}

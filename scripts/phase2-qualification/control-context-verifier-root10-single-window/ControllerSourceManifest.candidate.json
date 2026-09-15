@@ -1,0 +1,176 @@
+{
+  "object_type": "ControllerSourceManifest",
+  "schema_version": 1,
+  "generation_id": "ctrgen_48100437d24e448ba01c542ebe1290da",
+  "not_before": "2026-09-15T03:00:00Z",
+  "expires_at": "2026-09-16T03:00:00Z",
+  "files": [
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/bridge.py",
+      "sha256": "350224d624568fa652acfa75508035f280d33f8b1caff339baa92fac99664fb7",
+      "bytes": 5121
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/build-linux-manifest.mjs",
+      "sha256": "fcf4005ad7081a38ffaa68ea9491fca1ea29ab48d47a25a521b2930f39ed14fc",
+      "bytes": 2320
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/build-runtime-dependency-manifest.mjs",
+      "sha256": "a8dce97cec8549a7040ce575784d3e807512bc77882172fb5c3b3874df60b852",
+      "bytes": 1822
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/check-digest-pins.mjs",
+      "sha256": "c7c767b2b1ae08d02250c54a465322b7a57c03715459020fdbc0e1ca0e3b82fc",
+      "bytes": 45378
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/cli.mjs",
+      "sha256": "54e3e847566df7540e477bd04b0514239d60679f124b6ce4fa0a28613c4039b3",
+      "bytes": 1733
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/context.mjs",
+      "sha256": "e434a1d309e0f7b735bccaacb443f23be7ea8f9d25bfad760539390b5e782912",
+      "bytes": 25625
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/dynamic-signing.mjs",
+      "sha256": "a8af75ae148e924d3661c0c8e0cddc79ce2cc4ac0adc1195b70b33f58f428b73",
+      "bytes": 6864
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/fixed_host.py",
+      "sha256": "cc1ff74983f0a246a50a6cd3d7a5529b49f43bfed3972a5a326aa68ff66a4e7b",
+      "bytes": 15678
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/gate-result-receipt.root5.schema.json",
+      "sha256": "1829212ccff80a8d7885cdd117426f1b073b32d306cd4c7e0cc2ea5f31de61a7",
+      "bytes": 8110
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/grr.mjs",
+      "sha256": "358def694b0a36ad7cdc1e1b05b92ed0d54beb9046f2efc0fa12e8c97ebb3e66",
+      "bytes": 5610
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/historical-component-observations.mjs",
+      "sha256": "e2dd30e3076fb055b0cf8e22da857cbecbae15aa2c8bd10a2749e6975e4946d6",
+      "bytes": 6403
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/host-effect.mjs",
+      "sha256": "08c90a7c1e29bfd5137752ec1765a9c000bf0215f3836f4454e4c28c8e6950a5",
+      "bytes": 2829
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/HostProvisioning.json",
+      "sha256": "5af3f5e94d1c10c4e644ef977ed5d77cf2c729580d2070e552ebf8f327acfffc",
+      "bytes": 5478
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/original-inputs-blob.mjs",
+      "sha256": "ff1f3fdf11322915a5aa4f3e81379d34a2bb2d85b1037a8edc6647340b3a3869",
+      "bytes": 17080
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/parent600.py",
+      "sha256": "8da1c067710859a417a9560fc3456cde4ebe0bf22931b03ecfdf25676d847a49",
+      "bytes": 12243
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/read-source-blobs-linux.mjs",
+      "sha256": "24cde115cd7eaebb10e61b651f53b6beb41c6d4f59743f93adf578b085604fc0",
+      "bytes": 8407
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/request-denials.mjs",
+      "sha256": "ba10acddd93289a3c75d6f14cc35a087cb5f2ba9d8a781ada31a7335375aa696",
+      "bytes": 7918
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/result-evidence-root10.mjs",
+      "sha256": "3ce716409fae1a313ec19aa55a325dd0fb1876db1bff53fd7306c7e319489afc",
+      "bytes": 10618
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/result-terminal.mjs",
+      "sha256": "85eee9e8686ff04630fb84cb1ba1e4f5ad77c6c29211e61e5e4897acf2341bb9",
+      "bytes": 8498
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/root-window-validation.mjs",
+      "sha256": "f8562a8177a2b81fad0fe5c85fa6e1bab807fc9c7883d3eb1962b8853d8c93de",
+      "bytes": 5292
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/root10-single-window.mjs",
+      "sha256": "60a3948fe4ed4b25896471f192559d74e695bd0d61d8c2e46f7d343f2cf511d2",
+      "bytes": 18781
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/Root10ControllerContract.candidate.json",
+      "sha256": "c2943e560b9d5f8fb097b2fa2bf09ee9873b7deb9435f5771a059587a9534595",
+      "bytes": 6291
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/runtime-dependencies.mjs",
+      "sha256": "3f4c6af9a19069f47ae34c07b24861c3d0da8711591b9145f30416ea026e4ab3",
+      "bytes": 3817
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/RuntimeDependencyManifest.json",
+      "sha256": "30accf070a68d67c85fbfeba6ba832962d599634bf0806b93bf2a66db135d2f0",
+      "bytes": 1938
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/selftest-root10-single-window.mjs",
+      "sha256": "2a6018edfc798ac715c1616aa0b1b5468059afa01452b923c52cd9e20b681b3a",
+      "bytes": 12173
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/selftest-runtime-pins.mjs",
+      "sha256": "0ea6d4c12d2dc580d8a6ecbd02ee53912fb6c71c586b5a53f7cf389ca2f69716",
+      "bytes": 38334
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/source-publication.mjs",
+      "sha256": "b6ce6e583ad3aafd14367be93d973581c908d709716331d899063c530a90fab2",
+      "bytes": 7329
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/status-manifest.root5.schema.json",
+      "sha256": "d0f06564d7d1c488b7499933672d8821b27fd8053f521437363f6fd90b4f238d",
+      "bytes": 5333
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/tool-entry.functions.js",
+      "sha256": "c2dee3178e47de8a9e728f1a7e5589ab8787e84d9363995d768abd5298f7d11b",
+      "bytes": 15614
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/trusted-github.mjs",
+      "sha256": "d7454b0c20e309e66116a626ad496fb53e1abb9a445be2b554229c8375b09305",
+      "bytes": 6009
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/install.candidate.sql",
+      "sha256": "3cbbed94e1c9ef5fec4db281526ca69b9b30a24d2812b5a8bb5eb6bc728146fb",
+      "bytes": 8741
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/budget-reservation-successor/install.candidate.sql",
+      "sha256": "8f732dd4013a18adde33a254631cdd5a04022f300d4c0a13d05dffbf36f97285",
+      "bytes": 40646
+    },
+    {
+      "path": "scripts/phase2-qualification/nonproduction-control-store/runtime-successor/runtime600-successor/alter.candidate.sql",
+      "sha256": "0ab15bbbc2f80421cb619b50de8816095359d9ffab1e96e372960c063bc80c9b",
+      "bytes": 12444
+    }
+  ],
+  "qualification_issued": false,
+  "authority_effect": "NONE"
+}

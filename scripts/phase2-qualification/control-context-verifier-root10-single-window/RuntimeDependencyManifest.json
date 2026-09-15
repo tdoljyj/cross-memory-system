@@ -1,0 +1,51 @@
+{
+  "object_type": "RuntimeDependencyManifest",
+  "schema_version": 1,
+  "algorithm": "SORTED_PACKAGE_TREE_JSON_LF_SHA256_V1",
+  "resolver_base": "apps/clued-cloud/package.json",
+  "entry_request": "ajv",
+  "resolved_entry": "apps/clued-cloud/node_modules/ajv/lib/ajv.js",
+  "packages": [
+    {
+      "request": "ajv",
+      "path": "apps/clued-cloud/node_modules/ajv",
+      "resolved_entry": "apps/clued-cloud/node_modules/ajv/lib/ajv.js",
+      "files": 92,
+      "bytes": 938206,
+      "tree_sha256": "3a6303a563a7f3c1f0c4f53b55419822f39c4eca6793be0b1ed1086821e2ed9a"
+    },
+    {
+      "request": "fast-deep-equal",
+      "path": "apps/clued-cloud/node_modules/fast-deep-equal",
+      "resolved_entry": "apps/clued-cloud/node_modules/fast-deep-equal/index.js",
+      "files": 11,
+      "bytes": 12966,
+      "tree_sha256": "fbbc607ad976c7fcbbae86f87eaf67d17b1ae7717ca89212f42d6f81a67fba23"
+    },
+    {
+      "request": "fast-json-stable-stringify",
+      "path": "apps/clued-cloud/node_modules/fast-json-stable-stringify",
+      "resolved_entry": "apps/clued-cloud/node_modules/fast-json-stable-stringify/index.js",
+      "files": 18,
+      "bytes": 16959,
+      "tree_sha256": "7f1b8fe63c02a73c9710e6b2f85f2de4da956324ba171c39f4cc36a533309d4b"
+    },
+    {
+      "request": "json-schema-traverse",
+      "path": "apps/clued-cloud/node_modules/json-schema-traverse",
+      "resolved_entry": "apps/clued-cloud/node_modules/json-schema-traverse/index.js",
+      "files": 9,
+      "bytes": 19564,
+      "tree_sha256": "bedae623cf35fe18838020e09fdf6d03d3749c40d420a65665d56f0656c48c0f"
+    },
+    {
+      "request": "uri-js",
+      "path": "apps/clued-cloud/node_modules/uri-js",
+      "resolved_entry": "apps/clued-cloud/node_modules/uri-js/dist/es5/uri.all.js",
+      "files": 46,
+      "bytes": 469879,
+      "tree_sha256": "27ce07187d3a5a723e494e7c3c565fcc855737d1691fb9cb04f723b0777284c7"
+    }
+  ],
+  "authority_effect": "NONE"
+}

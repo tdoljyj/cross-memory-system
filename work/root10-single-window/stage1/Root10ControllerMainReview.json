@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "decision": "ROOT10_CONTROLLER_RUNTIME_GO",
+  "independent_reviewer": "/root",
+  "implementation_author": "/root/controller_evidence_cap",
+  "reviewed_at": "2026-09-15T04:28:52.142Z",
+  "controller_manifest_sha256": "6b03b143d13f81c27602d44b071e70fc1f40cb9ca46e36286d499bd34341bc87",
+  "contract_sha256": "c2943e560b9d5f8fb097b2fa2bf09ee9873b7deb9435f5771a059587a9534595",
+  "source_file_count": 33,
+  "readiness_record": "work/root10-single-window/stage1/Root10PreflightReadiness.json",
+  "actual_linux_stdout_sha256": "8ca37654271c2a68871267d5c7554810408c1fd2799efcd18954d87ab2f00015",
+  "checks": [
+    "Actual fixed Linux image and exact candidate repository, without network or Docker socket, passed digest-pins and source runtime tests",
+    "Pristine source reached the real CLI before refusing absent input; wrong-source controls remained tested",
+    "All 33 declared source files match the frozen manifest",
+    "Entire Ajv runtime dependency closure verified before imports: 5 packages, 176 files",
+    "20 of 20 single-window unit checks passed; no unit result is classified as formal PQUAL",
+    "Context/schema imports and Python source compilation passed",
+    "Fixed Windows-to-Linux relay used one actual TTY process for two frames, including 3300049-byte JSON; Docker container and image are fixed",
+    "Direct GraphQL signer uses actual CommittableBranch branchName mapping",
+    "Root10 preserves all historical charges and closed seq102; permits one new 600-second/134217728-byte budget and one GA only",
+    "Cumulative ceilings are 11706 seconds, 2604247987 bytes and 11 series allocations; no reset, refund, reassignment, retry, repair or successor",
+    "Gate/Profile/Scope and runner/credential/session generations remain unchanged",
+    "Result handling requires actual evidence and independently authored assessments; PQUAL-18 stays outside formal positive scope"
+  ],
+  "limits": [
+    "The Windows coordinator and Docker daemon remain the explicitly declared host-side trust boundary",
+    "Runtime self-test names 9 checks not covered there; actual signed metadata, live state, effect dispatch and GRR still require their formal guards",
+    "Pre-GA readiness does not prove formal PQUAL behavior or guarantee GRR PASS"
+  ],
+  "formal_pqual_claimed": false,
+  "formal_ga_issued": false,
+  "budget_allocated": false,
+  "database_write": false,
+  "qualification_issued": false,
+  "authority_effect": "NONE_UNTIL_OWNER_PUBLICATION_AND_EXACT_CAS"
+}

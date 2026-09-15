@@ -1,0 +1,100 @@
+{
+  "schema_version": 1,
+  "state": "ACCEPTED_EXACT_FORWARD_ROOT10_REVIEW_SUBJECT",
+  "decision": "ROOT10_AUTHORIZATION_MATERIALS_GO",
+  "independent_reviewer": "/root/root9_recovery_review",
+  "reviewed_at": "2026-09-15T03:33:09.033Z",
+  "authority_effect": "NONE",
+  "database_access": "NO_DATABASE_WRITE",
+  "signature_created": false,
+  "publication_created": false,
+  "root_registered": false,
+  "ga_issued": false,
+  "review_subject": {
+    "raw_sha256": "35cdbde79173cac946efa247bbb3b122e3605925546c338624d4115413da1a06",
+    "canonical_sha256": "91f94d05a22f5da7945be0f9f6d03359ba9268e6850f3a9c981e7b33a072fab6",
+    "schema_sha256": "87f094fa079034aa886d6c568730370a3264e106529b4bfd79bc3369f30b79e5"
+  },
+  "root_set_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
+  "control_trust_root_generation": "ctrgen_48100437d24e448ba01c542ebe1290da",
+  "generation_ordinal": 10,
+  "accepted_predecessor": {
+    "generation_id": "ctrgen_308a1dfc185cff633892638581e0a34c",
+    "sha256": "7483e3d240b270d7ad49d9262c63bd49ae0290db08c1dec66aa0de2f239eab60"
+  },
+  "accepted_history_prefix_sequence": 9,
+  "accepted_history_prefix_sha256": "cc08775938519ad1ecbc1e956c7314cd9c07b7230dd9392309c27c6d05d830e8",
+  "accepted_window": {
+    "not_before": "2026-09-15T03:00:00Z",
+    "expires_at": "2026-09-16T03:00:00Z"
+  },
+  "accepted_owner_approval_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/be376bfff27a9da12576ef77aba801708f7b4a5b",
+    "sha256": "6ee3cd7c8dc5a5f17640751c30bc35665d74f78fe88d6ecd4dee5c87ad412405"
+  },
+  "accepted_issuer_qualification_refs": {
+    "STATUS": {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/0affcf8b323f0f225f0b914eb3acb9e26b6486af",
+      "sha256": "a8b9c147a414fca4947fea33c4a70b929f8b170f8619b01fe733816cf887e799"
+    },
+    "GATE_AUTHORIZATION": {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/8dc23635950b51b071a8d73c67cc61cc2abcba98",
+      "sha256": "e3b225d3b4cd6c904aa433c43e79bba8571b69dc308c0fd0cefe7da35fb105e6"
+    },
+    "GATE_RESULT": {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/1bebfe9bd4f7bb997a6e70c521f94a9e3497842e",
+      "sha256": "8c8ed69191218b8aa96fb1e3ef53fbef01425a08a8a2b6e9988eef6086ebbca8"
+    }
+  },
+  "accepted_reviewer_delegation_ref": {
+    "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/eafdbc2728dd1fecd987f9c32169a4df7a89ff68",
+    "sha256": "5baeb567ce212462e1605bc52eb119916563b90fbaf656d4007f831086e63b1e"
+  },
+  "accepted_limits": {
+    "preserved_charged_seconds": 11106,
+    "preserved_charged_evidence_bytes": 2470030259,
+    "maximum_cumulative_seconds": 11706,
+    "maximum_cumulative_evidence_bytes": 2604247987,
+    "maximum_series_allocations": 11,
+    "maximum_new_allocations": 1,
+    "maximum_new_ga": 1,
+    "per_ga_seconds": 600,
+    "per_ga_evidence_bytes": 134217728,
+    "refund": false,
+    "counter_reset": false,
+    "budget_reassignment": false,
+    "automatic_retry": false,
+    "successor_after_formal_failure": false
+  },
+  "unchanged": {
+    "gate_sha256": "3487d9fc6ccee5478569021961eac93bf5ef6bd4bc2428559b20a44abb9c155a",
+    "profile_sha256": "d1c060b85f0b842a397a478105ea57a208e62eb0a5a2d4c2cd8f93f63eae88f5",
+    "scope_sha256": "115408c69dcb2fa606fb0de34ec86c5239487d0cfa9a73abb267664a2482abe5",
+    "runner_generation": "runnergen_a256855fec9441839105c69b746c5244",
+    "credential_generation": "credgen_bac92a11e7144a3fb9e67f40a6a07d11",
+    "session_generation": "sessiongen_ffb02a907d334b0da0b37bf457a758c2"
+  },
+  "checks": [
+    "complete immutable Root history sequences 1 through 9 reproduced",
+    "Root9 predecessor canonical digest reproduced",
+    "Root10 review subject canonical digest and exact raw digest reproduced independently",
+    "owner approval, reviewer delegation, and three issuer qualification Git blob and SHA-256 identities reproduced",
+    "ControlTrustRootSet schema digest matches the accepted source and the review subject changes only forward-generation fields and exact referenced candidates",
+    "budget arithmetic is exact: 11106 + 600 = 11706 and 2470030259 + 134217728 = 2604247987",
+    "Gate, Profile, Scope, runner, credential, and session generation remain byte-identity pinned",
+    "one new allocation, one formal GA, no refund, no counter reset, no seq102 reassignment, no automatic retry, and no successor after formal failure are explicit"
+  ],
+  "activation_preconditions": [
+    "GA6 must first be atomically closed BLOCKED at execution sequence 112 with active_ga_id and pending_budget_sequence both null",
+    "the exact owner approval, reviewer acceptance, and issuer qualification bytes must be included in one verified Owner web-flow merge before any Root10 registration",
+    "the final signed Root10 object must add only the accepted independent_acceptance_ref and signature_binding required by the accepted schema",
+    "a fresh expected-current CAS must verify Root9 history, cumulative charges, closed seq102, zero Root10 budget and zero Root10 GA before allocating exactly one new budget",
+    "20 of 20 same-source preflight checks must pass before the sole formal GA is issued",
+    "runtime600 means a maximum 600-second authorization lifetime; the accepted watchdog cleanup margin and GRR commit must complete before the GA deadline"
+  ],
+  "not_verified_here": [
+    "future Owner merge and signature evidence",
+    "future Root10 binding, controller/runtime acceptance, Status, and activation CAS artifacts",
+    "future live postimage, one budget allocation, formal GA, Docker execution, 20 test evidence, or GRR"
+  ]
+}
