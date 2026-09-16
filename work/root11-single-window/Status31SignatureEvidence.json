@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "object_type": "StatusOwnerMergeSignatureEvidence",
+  "state": "STAGE2_OWNER_MERGE_BOUND_VERIFIED",
+  "authority_effect": "NONE",
+  "repository": "tdoljyj/cross-memory-system",
+  "issuer_purpose": "STATUS",
+  "status_manifest_id": "sm_root11_single_window_20260916_v2",
+  "control_trust_root_generation": "ctrgen_c725e90a595c00a041754ede3b00f408",
+  "supersedes": {
+    "status_manifest_id": "sm_root11_single_window_20260916",
+    "generation": 30,
+    "reason": "source_refs named generation 10 controller qualification 3cd157e7; this generation binds cc385768, so STATUS_EXACT_SOURCE_REFS could not hold",
+    "stored_and_immutable": true
+  },
+  "merge": {
+    "sha": "f113e9a6a937b4713c5866f7762f84325a565015",
+    "tree": "5dc9515b4f69384fd166fd1ea0984baf11f70f38",
+    "parents": [
+      "4494065fe3b69036c0c9ef1e9cb1c2584838b026",
+      "6dc8337d54ffb2c7f61fd5388a13750f06250d00"
+    ],
+    "required_verification": {
+      "verified": true,
+      "verification_reason": "valid",
+      "two_parents": true,
+      "committer": "web-flow",
+      "merged_by": "tdoljyj",
+      "base_branch": "main",
+      "exact_merged_pr": 217
+    },
+    "merged_at": "2026-09-16T06:47:19Z"
+  },
+  "payload": {
+    "artifact_path": "work/root11-single-window/Root11StatusManifest.json",
+    "blob_sha": "aca215da0eb855b85f8b145e94c7f6c04cfbfa86",
+    "file_sha256": "c9d36a098de48b0c2bd98fd30ffec6ddcdb742f8a628196719490bb2753a7851",
+    "signed_object_sha256": "06f252faefb7efb18a4d9e1cb7a51a936e07d89ed348d105dbefbba1f372fb92",
+    "canonicalization_id": "SORTED_JSON_UTF8_NO_FLOATS_LF_V1_CANDIDATE",
+    "excluded_fields": [
+      "signature_binding"
+    ]
+  },
+  "bound_refs": {
+    "controller_manifest": {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/ee62b630a34c80cf522d42afbeca557c8006a467",
+      "sha256": "fc6ca1759ef68a958564bd2d9fc16aab23297c2db30ac7581b4ec6227977c91f"
+    },
+    "controller_qualification": {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/df4cfd75372c3b7e9d931f5f361176588888d67a",
+      "sha256": "cc385768f9e04269d69b211a23fb08f4463215afa5c919649f42e17c7d58cbe9"
+    },
+    "runtime_acceptance": {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/f83954b8ba84fd3cbfcee657df4ad2dd95ec9098",
+      "sha256": "a013369e16da967cca9e25d5c8c4ab52d922abe45c065b9290d0426be8094ce4"
+    }
+  },
+  "verification_boundary": {
+    "stage2_verified_as_unique_owner_merge_into_main": true,
+    "exact_stage2_artifacts_verified": true,
+    "database_write": false,
+    "budget_reservation": false,
+    "capacity_value_change": false,
+    "refund": false,
+    "ga_dispatch": false
+  },
+  "no_full_status_reverse_hash": true
+}
