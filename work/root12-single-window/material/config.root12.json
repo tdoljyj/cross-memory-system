@@ -8,8 +8,8 @@
       "merge_commit": "af0d567d8d7d806151b5b67584c84364250280dc"
     },
     "ga_target": {
-      "pr_number": 224,
-      "merge_commit": "73e4ea02b89d877a945bc2d6832706f43b76b8bd"
+      "pr_number": 226,
+      "merge_commit": "11ffa75c35f80fc022d2812abf60d68fd7bbcabe"
     },
     "reviewer": {
       "pr_number": 190,
@@ -20,12 +20,12 @@
       "merge_commit": "f9e1bfc46b23c0e155c6d9953972ac105e479636"
     },
     "acceptance": {
-      "pr_number": 224,
-      "merge_commit": "73e4ea02b89d877a945bc2d6832706f43b76b8bd"
+      "pr_number": 226,
+      "merge_commit": "11ffa75c35f80fc022d2812abf60d68fd7bbcabe"
     },
     "status_manifest": {
-      "pr_number": 224,
-      "merge_commit": "73e4ea02b89d877a945bc2d6832706f43b76b8bd"
+      "pr_number": 226,
+      "merge_commit": "11ffa75c35f80fc022d2812abf60d68fd7bbcabe"
     }
   },
   "paths": {
