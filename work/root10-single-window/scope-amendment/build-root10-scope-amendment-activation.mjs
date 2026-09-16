@@ -58,7 +58,7 @@ const rcDir=path.resolve(here,'..','runtime-clock','activation');
 const amendmentPath=path.join(here,'Root10ScopeAmendment.json');
 const amendmentBytes=fs.readFileSync(amendmentPath);
 const amendmentRaw=amendmentBytes.toString('utf8'),amendment=JSON.parse(amendmentRaw);
-exactKeys(amendment,['object_type','schema_version','root_id','control_trust_root_generation','carries_forward','why','amended_terms','preserved_invariants','removed_restrictions','authority_effect'],'amendment keys');
+exactKeys(amendment,['object_type','schema_version','root_id','control_trust_root_generation','supersedes','activation','carries_forward','why','amended_terms','preserved_invariants','removed_restrictions','authority_effect'],'amendment keys');
 exactKeys(amendment.carries_forward,['object_type','activation_sequence','disposition','note'],'amendment carries_forward keys');
 const terms=amendment.amended_terms?.applicable_test_set_for_this_generation;
 exactKeys(terms,['rule','applicable_test_ids','out_of_scope_test_ids','disposition_of_out_of_scope_tests'],'amendment applicable_test_set keys');

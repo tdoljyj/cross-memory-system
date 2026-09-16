@@ -7,7 +7,7 @@
   "files": [
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/bridge.py",
-      "sha256": "e76eb89e35a2d4c3e7c920a1f8773cbdb8fe34baf4d65be9c8e450990fde0987",
+      "sha256": "a565fa9ee5ef8a54dce5cd2b5c1d3eba5a07210418a6f06a820010734e2f736f",
       "bytes": 6135
     },
     {
@@ -22,7 +22,7 @@
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/check-digest-pins.mjs",
-      "sha256": "2028ec3890ee6c861591ad0de238a0cb89f2a12fb4d9c6978f92405ddfdb1268",
+      "sha256": "8a3db002a5d6602bde56eab4ef56189dec459877e31ef4d2574d759aba309fcc",
       "bytes": 50440
     },
     {
@@ -42,7 +42,7 @@
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/fixed_host.py",
-      "sha256": "048721dd4a72c7c605049c04b9794c98568e38b921d6e87445abf5041faf44d3",
+      "sha256": "68059fec260acd6a6671315cf93f65c54616e4edfa3377ee25066b01b46f4259",
       "bytes": 16927
     },
     {
@@ -62,7 +62,7 @@
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/host-effect.mjs",
-      "sha256": "49b607c0ca2c7b32d4c52e6f45ea412c88f68fa86e6b9e083f6daafeb973ea09",
+      "sha256": "35a50f637142c0c79da526221a7ec9fe81fb1316971bc7248d01ba2193d29383",
       "bytes": 4084
     },
     {
@@ -77,7 +77,7 @@
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/parent600.py",
-      "sha256": "1b5ae3f95abf24ecf5219b596eca1bc7f99af1279a9d621ea058caefd9be7e52",
+      "sha256": "c9b68468814eb484f8a16e0edf9f0dae7f04b4afd045e2450d2b209fb3fb3d4d",
       "bytes": 27999
     },
     {
@@ -107,7 +107,7 @@
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/root10-single-window.mjs",
-      "sha256": "dabb3c2a20f7806128df5dc9a051dad7b202d7d31b111a55d853f9beca13ca82",
+      "sha256": "cb9dfabcead06bd6a449a18cad9f47ff0db751e113fbe5801aa662c0a7c309dc",
       "bytes": 57243
     },
     {
