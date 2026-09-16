@@ -468,7 +468,11 @@ const CENSUS = {
   'control-context-verifier-root10-single-window/grr.mjs': 0,
   'control-context-verifier-root10-single-window/host-effect.mjs': 2,
   // R22: +1 for the runtime-clock amendment digest in runtime_clock_window().
-  'control-context-verifier-root10-single-window/parent600.py': 7,
+  // R23: +1 more for the scope amendment digest in scope_amendment_window(). The GA digest
+  // that branch checks and the runtime-clock digest it requires the amendment to supersede
+  // were already literals in runtime_clock_window(), and a file is counted as a set of
+  // distinct literals, so only the genuinely new value moves this number.
+  'control-context-verifier-root10-single-window/parent600.py': 8,
   // Read at runtime by path, not imported -- invisible until the walk learned to follow new URL().
   // grr.mjs and context.mjs read the first two; bytes() resolves the ProfileDefinitions against
   // profileBase; root-window-validation.mjs reads the trust-root schema.
@@ -487,7 +491,10 @@ const CENSUS = {
   // acceptance digests, the predecessor (temporal) controller, qualification and
   // acceptance digests, and the runtime-clock amendment digest. The original
   // GA/controller/budget digests were already counted for the temporal identity.
-  'control-context-verifier-root10-single-window/root10-single-window.mjs': 10,
+  // R23: +4 for root10ScopeIdentity -- the scope amendment's own digest and the three
+  // runtime-clock predecessor binding columns (controller, qualification, acceptance).
+  // Everything else it pins the runtime-clock identity above already carries.
+  'control-context-verifier-root10-single-window/root10-single-window.mjs': 14,
   'control-context-verifier-root10-single-window/Root10ControllerContract.candidate.json': 20,
   'control-context-verifier-root10-single-window/runtime-dependencies.mjs': 0,
   'control-context-verifier-root10-single-window/RuntimeDependencyManifest.json': 5,
