@@ -15,9 +15,9 @@ const rejects=(pattern,fn)=>assert.throws(fn,pattern);
 
 function fixture(){
  const contract=clone(candidate);
- const oldRootEvents=Array.from({length:9},(_,i)=>({sequence:i+1,root_id:contract.root_id,request:{kind:'HISTORICAL'}}));
+ const oldRootEvents=Array.from({length:10},(_,i)=>({sequence:i+1,root_id:contract.root_id,request:{kind:'HISTORICAL'}}));
  contract.baseline.root_events_sha256=canonicalDigest(oldRootEvents);
- const rootEvents=[...oldRootEvents,{sequence:10,root_id:contract.root_id,request:{kind:'GENERATION_REGISTERED',generation_id:contract.generation_id,predecessor_generation_id:contract.predecessor_generation,body:{control_trust_root_generation:contract.generation_id,history:{prefix_sequence:9,prefix_digest:contract.baseline.root_events_sha256},not_before:contract.window.not_before,expires_at:contract.window.expires_at}}}];
+ const rootEvents=[...oldRootEvents,{sequence:11,root_id:contract.root_id,request:{kind:'GENERATION_REGISTERED',generation_id:contract.generation_id,predecessor_generation_id:contract.predecessor_generation,body:{control_trust_root_generation:contract.generation_id,history:{prefix_sequence:10,prefix_digest:contract.baseline.root_events_sha256},not_before:contract.window.not_before,expires_at:contract.window.expires_at}}}];
  const events=Array.from({length:110},(_,i)=>({sequence:i+1,root_id:contract.root_id,idempotency_key:'old_'+(i+1),request:{operation:'HISTORICAL',body:{}}}));
  for(const sequence of [1,5,11,18,27,41,46,51,59,68,73,77,81,85,91,102])events[sequence-1].request.operation='BUDGET_RESERVED';
  for(const sequence of [45,47,48,49,50,52,53,54,55,56,57,58,60,61,62,63,64])events[sequence-1].request.operation='EXECUTION_BINDING_FORWARD_ACCEPTED';
@@ -32,15 +32,16 @@ function fixture(){
  const closed=attempts.find(a=>a.ga_id===closure.ga_id);Object.assign(closed,{ga_sha256:closure.ga_sha256,phase:'BLOCKED',sequence:2,receipt_id:closure.receipt_id,receipt_raw:receiptRaw,receipt_sha256:closure.receipt_sha256,decision:{decision_sha256:closure.decision_sha256,evidence_index_sha256:closure.evidence_index_sha256}});
  contract.baseline.historical_preimage110.execution_events_sha256=canonicalDigest(events.slice(0,110));
  contract.baseline.historical_preimage110.other_attempts_sha256=canonicalDigest(attempts.filter(a=>a.ga_id!==closure.ga_id).sort((a,b)=>a.ga_id.localeCompare(b.ga_id)));
- for(let sequence=113;sequence<=116;sequence++)events.push({sequence,root_id:contract.root_id,idempotency_key:'activation_'+sequence,request:{operation:'ROOT10_ACTIVATION',body:{}}});
+ for(let sequence=113;sequence<=contract.baseline.execution_sequence;sequence++)events.push({sequence,root_id:contract.root_id,idempotency_key:'activation_'+sequence,request:{operation:sequence===117?'BUDGET_RESERVED':'ROOT10_ACTIVATION',body:{}}});
+ for(let sequence=contract.baseline.execution_sequence+1;sequence<contract.postbaseline.budget_sequence;sequence++)events.push({sequence,root_id:contract.root_id,idempotency_key:'registration_'+sequence,request:{operation:'SUCCESSOR_BINDING_REGISTERED',body:{}}});
  const gaId='ga_ffffffffffffffffffffffffffffffff';
  const ga={gate_authorization_id:gaId,controller_digest:'1'.repeat(64),control_trust_root_generation:contract.generation_id,profile_digest:contract.fixed_digests.profile_sha256,scope_digest:contract.fixed_digests.scope_sha256,runner_generation:'runnergen_test',credential_generation:'credgen_test',session_generation:'sessiongen_test'};
  const gaRaw=compact(ga);
  const budget={controller_digest:ga.controller_digest,credential_generation:ga.credential_generation,environment:'ISOLATED_TEST',evidence_bytes:134217728,expires_at:contract.window.expires_at,idempotency_key:contract.postbaseline.budget_idempotency_key,not_before:contract.window.not_before,profile_digest:contract.fixed_digests.profile_sha256,purpose:'SKILL_COEXISTENCE_QUALIFICATION',root_generation:contract.generation_id,runner_generation:ga.runner_generation,scope_digest:contract.fixed_digests.scope_sha256,seconds:600,session_generation:ga.session_generation};
  const budgetRaw=compact(budget);
- events.push({sequence:117,root_id:contract.root_id,idempotency_key:contract.postbaseline.budget_idempotency_key,request:{operation:'BUDGET_RESERVED',body:{raw:budgetRaw,sha256:sha(budgetRaw)}}});
- attempts.push({ga_id:gaId,budget_sequence:117,phase:'PENDING',ga,ga_raw:gaRaw,ga_sha256:sha(gaRaw),receipt_raw:null,receipt_sha256:null});
- const execution={root:{root_set_id:contract.root_id,generation_id:contract.generation_id,events:rootEvents},events,attempts,binding:{root_id:contract.root_id},current:{root_id:contract.root_id,charged_seconds:11706,charged_evidence_bytes:2604247987,active_ga_id:gaId,pending_budget_sequence:null}};
+ events.push({sequence:contract.postbaseline.budget_sequence,root_id:contract.root_id,idempotency_key:contract.postbaseline.budget_idempotency_key,request:{operation:'BUDGET_RESERVED',body:{raw:budgetRaw,sha256:sha(budgetRaw)}}});
+ attempts.push({ga_id:gaId,budget_sequence:contract.postbaseline.budget_sequence,phase:'PENDING',ga,ga_raw:gaRaw,ga_sha256:sha(gaRaw),receipt_raw:null,receipt_sha256:null});
+ const execution={root:{root_set_id:contract.root_id,generation_id:contract.generation_id,events:rootEvents},events,attempts,binding:{root_id:contract.root_id},current:{root_id:contract.root_id,charged_seconds:contract.caps.seconds,charged_evidence_bytes:contract.caps.evidence_bytes,active_ga_id:gaId,pending_budget_sequence:null}};
  return {contract,execution,gaId,budget};
 }
 function rebaseBaseline(contract,execution){
@@ -50,12 +51,12 @@ function rebaseBaseline(contract,execution){
 function series(value,operation='CURRENT_DISPATCH',result=null){return checkRoot10SingleWindowSeries({...value,operation,result});}
 
 pass('01 canonical digest uses protocol LF',()=>{assert.equal(canonicalDigest([{a:1}]),sha('[{"a":1}]\n'));});
-pass('02 finalized contract and actual CommittableBranch schema mapping validate',()=>{assert.equal(validateRoot10ControllerContract(fixture().contract).generation_ordinal,10);const input=committableBranchInput();assert.deepEqual(input,{repositoryNameWithOwner:signingRepository,branchName:signingBranch});assert.equal(Object.hasOwn(input,'refName'),false);});
+pass('02 finalized contract and actual CommittableBranch schema mapping validate',()=>{assert.equal(validateRoot10ControllerContract(fixture().contract).generation_ordinal,11);const input=committableBranchInput();assert.deepEqual(input,{repositoryNameWithOwner:signingRepository,branchName:signingBranch});assert.equal(Object.hasOwn(input,'refName'),false);});
 pass('03 exact single budget and GA pass',()=>{assert.equal(series(fixture()).state,'ROOT10_SINGLE_WINDOW_SERIES_CHECKED');});
 pass('04 terminal reconciliation uses the same window',()=>{assert.equal(series(fixture(),'RESULT_RECONCILIATION','FAIL').postbaseline_ga,1);});
 pass('05 unpublished contract fails closed',()=>{const x=fixture();x.contract.ready=false;rejects(/ROOT10_CONTRACT_NOT_FINAL/,()=>series(x));});
 pass('06 cap drift is rejected',()=>{const x=fixture();x.contract.caps.seconds++;rejects(/EXACT_AUTHORIZED_ROOT10_CAPS/,()=>series(x));});
-pass('07 second postbaseline budget is rejected',()=>{const x=fixture();const e=clone(x.execution.events.at(-1));e.sequence=118;e.idempotency_key='extra';x.execution.events.push(e);rejects(/EXACT_ONE_ROOT10_BUDGET_EVENT/,()=>series(x));});
+pass('07 second postbaseline budget is rejected',()=>{const x=fixture();const e=clone(x.execution.events.at(-1));e.sequence=x.contract.postbaseline.budget_sequence+1;e.idempotency_key='extra';x.execution.events.push(e);rejects(/EXACT_ONE_ROOT10_BUDGET_EVENT/,()=>series(x));});
 pass('08 second Root10 GA is rejected',()=>{const x=fixture();const a=clone(x.execution.attempts.at(-1));a.ga_id='ga_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';x.execution.attempts.push(a);rejects(/EXACT_ONE_ROOT10_GA/,()=>series(x));});
 pass('09 seq102 cannot become the Root10 budget',()=>{const x=fixture();x.contract.postbaseline.budget_sequence=102;rejects(/EXACT_SINGLE_POSTBASELINE_BUDGET/,()=>series(x));});
 pass('10 nonempty repair refs are rejected',()=>{const x=fixture();x.execution.events.at(-1).request.body.required_repair_refs=[{ga_id:x.gaId}];rejects(/NO_ROOT10_REPAIR/,()=>series(x));});

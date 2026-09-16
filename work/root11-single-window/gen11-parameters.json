@@ -2,14 +2,21 @@
  "generation_id": "ctrgen_c725e90a595c00a041754ede3b00f408",
  "successor_binding_id": "sb_873f7cf2f79fb3cb168138441e6fddbc",
  "window": "2026-09-16T04:00:00Z -> 2026-09-23T04:00:00Z",
- "controller_sha256": "89710145b27872314cd666b1ff5491d72b4193730d1b6ff3038a9baefb4664c0",
- "qualification_sha256": "1d44c7d3fc0cb7e7f3e1bbbb1b604401d4f0bb1d288dddeef0c49f6aca1c1f0f",
- "runtime_acceptance_sha256": "2638d1364046b8d72ebd233b49b3b7efb41397d166048c2e1a7cc93c632261ab",
+ "controller_sha256": "fc6ca1759ef68a958564bd2d9fc16aab23297c2db30ac7581b4ec6227977c91f",
+ "qualification_sha256": "ef6a6db15dce4155e020198dcfc81e57b691624aa7dd9072d2349903da7e1f46",
+ "runtime_acceptance_sha256": "1ca99743e2971de9cf60c71162799d28705ec6803f7c3fa2825a8be46a8935b0",
  "acceptance_dropped_descriptors": [
-  "scope_amendment"
+  "scope_amendment",
+  "runtime_clock",
+  "temporal_continuation"
  ],
- "acceptance_bytes": 33931,
- "qualification_bytes": 3513,
- "root_payload_bytes": 3556,
- "root_payload_unsigned": true
+ "acceptance_bytes": 33791,
+ "qualification_bytes": 3268,
+ "root_payload_bytes": 3493,
+ "root_payload_unsigned": true,
+ "controller_contract_sha256": "82417308ccffaf949f3d885d4b040cfe18cf45c1bf1a5cacbbf4dd67fb1214da",
+ "controller_source_commit": "55fd9732cbec0994ceb699a3e3f8985e79d7647c",
+ "baseline_execution_sequence": 131,
+ "postbaseline_budget_sequence": 136,
+ "owner_merge_commit_pending": true
 }
