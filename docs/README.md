@@ -5,7 +5,7 @@
 1. [正式冻结 / 接受基线归档](frozen-baselines/README.md)
 2. [R5 内核架构与合同](r5-kernel/01-Architecture-and-Contract-Freeze.md)
 3. [R5 K0 债务闭合](r5-kernel/02-K0-Debt-Closure.md)
-4. [R3 Gate 终态资料](r3-gate3/R3-Gate3-Report.md)
+4. [R3 Gate 终态资料](EXTERNAL_DOCUMENT_ARCHIVE.md)
 5. [Phase 2 每步验收与失效规则](execution-plans/phase2-structure-governance/AcceptanceAndInvalidation.md) · [2026-09-07 Step 1 / Step 2 证据核对](execution-plans/phase2-structure-governance/Step01-Step02-EvidenceReview.md)（执行补充与证据记录，不签发接受或冻结）
 
 ## 状态语义
@@ -30,3 +30,7 @@
 只删除能够明确证明为过期迁移投影、已被正式后继替代且不再承担证据角色，或已经明确废止且无固定路径依赖的文档。
 
 “旧”本身不是删除理由。FAIL 候选、历史 Gate、审查报告、Receipt、Migration Evidence 和被后继版本引用的前任，仍可能具有审计价值，因此默认保留。
+
+## External Document Archive
+
+历史研究、战略、汇报、评审/验收与 Closeout 叙事文档统一迁移至 Google Drive；仓库只保留工程必需文档。迁移目录、索引与校验信息见 [`EXTERNAL_DOCUMENT_ARCHIVE.md`](./EXTERNAL_DOCUMENT_ARCHIVE.md)。

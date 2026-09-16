@@ -127,3 +127,9 @@ Superseded and archived facts remain in Canonical history. Do not delete them to
 未绑定 Decision 不被解释为接受；无实际消费者证据的准备行不被解释为运行接线完成。新增 Alias 为零不证明历史或外部别名已经全量枚举。
 
 <!-- END CLUED PHASE2 GOVERNANCE PROJECTION -->
+
+## External document placement
+
+- Git 只承载与代码、协议/合同、ADR、Schema/Migration、测试/Fixture、Runbook、Skill、当前执行控制和可复现机器证据直接绑定的工程资料。
+- 产品研究、战略、商业、品牌、汇报、会议/对话整理、历史评审/验收/Closeout 长报告统一放 Google Drive，不再提交到主仓库。
+- 历史迁移位置与校验信息见 `docs/EXTERNAL_DOCUMENT_ARCHIVE.md`。

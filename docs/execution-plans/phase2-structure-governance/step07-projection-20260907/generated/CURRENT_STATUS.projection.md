@@ -42,4 +42,4 @@
 
 <!-- END CLUED PHASE2 GOVERNANCE PROJECTION -->
 
-原状态文档按原字节保留为[历史记录](docs/history/CURRENT_STATUS.before-phase2-af52a717b2c3.md)，不作为当前事实。此链接在正式 Step 12 保全后生效；本文件当前仅为迁移候选。
+原状态文档按原字节保留为[历史记录](../../../../EXTERNAL_DOCUMENT_ARCHIVE.md)，不作为当前事实。此链接在正式 Step 12 保全后生效；本文件当前仅为迁移候选。
