@@ -13,7 +13,7 @@ import sys
 
 BASE = Path(__file__).resolve().parent
 HOST = BASE / 'fixed_host.py'
-HOST_SHA = '43a5fc0017042493710dc5cb4da96beb2455238f47ea2e270af6906070860fba'
+HOST_SHA = '048721dd4a72c7c605049c04b9794c98568e38b921d6e87445abf5041faf44d3'
 MAX_INPUT = 131072
 BOUNDARY = {'qualified': False, 'capacity_released': False, 'authority_effect': 'NONE',
             'remote_result_persisted': False, 'automatic_retry': False}
@@ -51,6 +51,9 @@ def parse(raw):
         temporal = value['temporal_continuation']
         # Two accepted separate-authority shapes: the temporal continuation, and
         # the runtime-clock amendment whose host_window bounds the container life.
+        # The scope amendment that carries that clock forward uses the second shape
+        # unchanged; which amendment a host_window payload is, and the 600 seconds
+        # it must bound, are settled by parent600, not by this shape check.
         if type(temporal) is not dict or set(temporal) not in ({'raw', 'sha256', 'event'},
                                                                {'raw', 'sha256', 'event', 'host_window'}):
             raise ValueError('Exact separate temporal material required')

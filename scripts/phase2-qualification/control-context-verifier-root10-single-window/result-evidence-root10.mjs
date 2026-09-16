@@ -25,8 +25,8 @@ export function validateRoot10ExecutorApplicability({executorApplicability,suite
  need(executorApplicability.state==='ACCEPTED_EXACT_ROOT10_EXECUTOR_APPLICABILITY'&&executorApplicability.independent_reviewer===independentReviewer&&executorApplicability.root_id===state.binding.root_id&&executorApplicability.control_trust_root_generation===ga.control_trust_root_generation,'EXACT_ROOT10_EXECUTOR_APPLICABILITY_IDENTITY');
  const currentController=temporalDescriptor?temporalDescriptor.continuation_controller_sha256:ga.controller_digest;
  if(temporalDescriptor)need(currentController===state.binding.controller_sha256,'EXACT_ACTUAL_EXECUTING_CONTROLLER');
- need(same(executorApplicability.suite_ref,{uri:'https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/83f87805e1e5ecfa619cbb69db061f03999eb31f',sha256:acceptedSuiteSha256})&&executorApplicability.suite_executor_sha256==='27ede0fc0ff6afc4d5abf2f5c9f256fe22776165746dddc19aa2693c47bbc97c'&&executorApplicability.current_controller_sha256===currentController,'EXACT_OLD_SUITE_TO_CURRENT_CONTROLLER_MAPPING');
- need(formal.length===19&&!formal.includes('PQUAL-18')&&same(executorApplicability.formal_test_ids,formal)&&executorApplicability.pqual18_disposition==='NEGATIVE_ADMISSION_CHECK_NOT_FORMAL_RESULT','EXACT_19_FORMAL_PLUS_PQUAL18_NEGATIVE_GUARD');
+ need(same(executorApplicability.suite_ref,{uri:'https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/5a8ea176137f0f601488a0cbfa5ab69430a57744',sha256:acceptedSuiteSha256})&&executorApplicability.suite_executor_sha256==='27ede0fc0ff6afc4d5abf2f5c9f256fe22776165746dddc19aa2693c47bbc97c'&&executorApplicability.current_controller_sha256===currentController,'EXACT_OLD_SUITE_TO_CURRENT_CONTROLLER_MAPPING');
+ need(formal.length===5&&!formal.includes('PQUAL-18')&&same(executorApplicability.formal_test_ids,formal)&&executorApplicability.pqual18_disposition==='NEGATIVE_ADMISSION_CHECK_NOT_FORMAL_RESULT','EXACT_5_FORMAL_PLUS_PQUAL18_NEGATIVE_GUARD');
  need(executorApplicability.oracle_bytes_unchanged===true&&executorApplicability.fixture_refs_unchanged===true&&executorApplicability.test_definitions_unchanged===true&&executorApplicability.controller_executes_same_oracles===true&&executorApplicability.new_authority===false&&executorApplicability.authority_effect==='NONE','NO_ORACLE_COVERAGE_OR_AUTHORITY_CHANGE');
  return {state:'ROOT10_EXECUTOR_APPLICABILITY_CHECKED',formal_test_ids:formal,pqual18_disposition:executorApplicability.pqual18_disposition,authority_effect:'NONE'};
 }
@@ -90,7 +90,7 @@ export function checkRoot10ResultEvidenceStructure({receipt,ga,state,acceptedSui
   requiredSigned.push({ref:entry.oracle_assessment_ref,raw:original.raw,required_reviewer_ref:assessment.reviewer_ref});
  }
  if(receipt.result==='PASS'){
-  const all=Object.keys(suite.tests).sort();need(all.length===19&&!all.includes('PQUAL-18'),'EXACT_APPLICABLE_TEST_SET');
+  const all=Object.keys(suite.tests).sort();need(all.length===5&&!all.includes('PQUAL-18'),'EXACT_APPLICABLE_TEST_SET');
   need(same(receipt.test_results.map(t=>t.test_id).sort(),all)&&receipt.test_results.every(t=>t.result==='PASS'),'NO_PARTIAL_OR_FAILED_PASS');
  }
  return {state:'EXACT_RESULT_EVIDENCE_AND_ORACLE_BINDINGS_CHECKED',required_signed_assessments:requiredSigned,independent_assessment_authenticity_verified:false,actual_source_authenticity_requires_independent_assessment:true,not_final_receipt_admission:true,authority_effect:'NONE'};

@@ -27,6 +27,7 @@ function reconstruct(before,changes){
  }
  return result;
 }
+const applicableTestIds=['PQUAL-11','PQUAL-13','PQUAL-15','PQUAL-16','PQUAL-17'];
 const faults=[
  ['PQUAL-02','missing_profile_ref',ga=>{delete ga.profile_ref;}],
  ['PQUAL-02','missing_profile_acceptance',ga=>{delete ga.profile_ref.accepted_ref;}],
@@ -59,6 +60,11 @@ export function observeRequestDenials({gaRaw,observation,runtimeAcceptance,quali
   runtime_acceptance_raw:raw(runtimeAcceptance),qualification_raw:raw(qualification)});
  const originalRef={uri:'urn:clued:execution-evidence:'+observation.row.execution.binding.root_id+':'+hash(originalInputs),sha256:hash(originalInputs)};
  function measure(test_id,fault_name,input){
+  // Out-of-scope cases are not measured at all under the scope amendment. An
+  // index carrying a test id outside the applicable set can never be admitted
+  // (EXACT_INDEX_TEST_COVERAGE), so producing the observation would only
+  // manufacture evidence for a claim this generation does not make.
+  if(!applicableTestIds.includes(test_id))return;
   const called={ga:JSON.parse(input.gaRaw),operation:input.operation,runtimeAcceptance:input.runtimeAcceptance,qualification:input.qualification};
   const changes=differences(baselineInput,called);
   if(raw(reconstruct(baselineInput,changes))!==raw(called))throw Error('EXACT_FAULT_INPUT_RECONSTRUCTION_REQUIRED');

@@ -7,8 +7,8 @@
   "files": [
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/bridge.py",
-      "sha256": "1871c60e8a3809af254eef6c89cdfdf6de1f28653ff853409b99a5c744962983",
-      "bytes": 5892
+      "sha256": "e76eb89e35a2d4c3e7c920a1f8773cbdb8fe34baf4d65be9c8e450990fde0987",
+      "bytes": 6135
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/build-linux-manifest.mjs",
@@ -22,8 +22,8 @@
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/check-digest-pins.mjs",
-      "sha256": "5fea425f9b4fc5cc222beaca6f5890d595360473c34885bf1653123ee1d09fd5",
-      "bytes": 48083
+      "sha256": "2028ec3890ee6c861591ad0de238a0cb89f2a12fb4d9c6978f92405ddfdb1268",
+      "bytes": 50440
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/cli.mjs",
@@ -32,8 +32,8 @@
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/context.mjs",
-      "sha256": "ec0ed4fdf77da70f35947a82084a3531b1277a8a6c712bdb91b2af808bc5f51c",
-      "bytes": 34408
+      "sha256": "18bcfa0aa4a212638cb77f3d2386f4f3414cb880e5ac61f182348511607bf1c4",
+      "bytes": 38199
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/dynamic-signing.mjs",
@@ -42,7 +42,7 @@
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/fixed_host.py",
-      "sha256": "43a5fc0017042493710dc5cb4da96beb2455238f47ea2e270af6906070860fba",
+      "sha256": "048721dd4a72c7c605049c04b9794c98568e38b921d6e87445abf5041faf44d3",
       "bytes": 16927
     },
     {
@@ -52,18 +52,18 @@
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/grr.mjs",
-      "sha256": "df88084bb341738e30d398534a016dc28c675f95d6fa0839fe755475fb1437a8",
-      "bytes": 6523
+      "sha256": "935206da4fd2b259baeb3a3484eb65307f756a2d6a09885b8eb6f8aae41e4d20",
+      "bytes": 6784
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/historical-component-observations.mjs",
-      "sha256": "9120cec8caa1be89eddc54d97b6563bd55e8cefb7f1cfb1677e9edee22b925ba",
-      "bytes": 6918
+      "sha256": "bb0dfda3ca3ae6239a4b6ccf97d01f779e85c31471153cddcc583488df2875fc",
+      "bytes": 7374
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/host-effect.mjs",
-      "sha256": "8e1059e1c9414bf5eb2038b4b287e396724080cf8a9ef2f7c630e9191d540fb7",
-      "bytes": 3777
+      "sha256": "49b607c0ca2c7b32d4c52e6f45ea412c88f68fa86e6b9e083f6daafeb973ea09",
+      "bytes": 4084
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/HostProvisioning.json",
@@ -77,8 +77,8 @@
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/parent600.py",
-      "sha256": "7abfd18ff8457c5d3f9c183a949dc9fd877d8d39ebf362296c71731afd2853c2",
-      "bytes": 19712
+      "sha256": "1b5ae3f95abf24ecf5219b596eca1bc7f99af1279a9d621ea058caefd9be7e52",
+      "bytes": 27999
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/read-source-blobs-linux.mjs",
@@ -87,18 +87,18 @@
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/request-denials.mjs",
-      "sha256": "a9b9ad945eafe0b51e5bdf9d69b26a2dd2dfb4411e55e84636f004d5d455e937",
-      "bytes": 7916
+      "sha256": "cb69f43c8fd4e48d61ba8bc96eb73dc42d4e9858b056fdce9f2e00f98dc15dd3",
+      "bytes": 8348
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/result-evidence-root10.mjs",
-      "sha256": "d15b6c32768815e90b81a8ac12aedd3a7563b3481405d324eecd72d42479bc62",
-      "bytes": 11207
+      "sha256": "d7c6d73cb719833f8c83dfc5eb7021329f3b71097a6bd8494c5ac5c402274bfa",
+      "bytes": 11204
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/result-terminal.mjs",
-      "sha256": "15bd22bd8297445b121b56cfa99b9dccd2fe1e5e7de21c7fa2a9ccf5d01d9ea1",
-      "bytes": 8682
+      "sha256": "bd18f342e0ab99a49b918e67bbeb2b8f7eff31afd349862e9eb34835fbf6bfa0",
+      "bytes": 8753
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/root-window-validation.mjs",
@@ -107,13 +107,13 @@
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/root10-single-window.mjs",
-      "sha256": "f2d900a8fe7c960941b2f6e1e8e5e8331256a4ddd5df2ab7965600451b369298",
-      "bytes": 41724
+      "sha256": "dabb3c2a20f7806128df5dc9a051dad7b202d7d31b111a55d853f9beca13ca82",
+      "bytes": 57243
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/Root10ControllerContract.candidate.json",
-      "sha256": "c2943e560b9d5f8fb097b2fa2bf09ee9873b7deb9435f5771a059587a9534595",
-      "bytes": 6291
+      "sha256": "767fb3b0eea30d26a1c9178e606d92caac9a13219cc47f486b23c1da09842023",
+      "bytes": 6039
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/runtime-dependencies.mjs",
@@ -127,8 +127,8 @@
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/selftest-root10-single-window.mjs",
-      "sha256": "2a6018edfc798ac715c1616aa0b1b5468059afa01452b923c52cd9e20b681b3a",
-      "bytes": 12173
+      "sha256": "7552d042e8c9efa7b532dc4e871fb8f5917b2c9706aefc94e841ba3a25f8fee2",
+      "bytes": 12172
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/selftest-runtime-clock.mjs",
@@ -137,8 +137,13 @@
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/selftest-runtime-pins.mjs",
-      "sha256": "9fc66b0c28e96e186e6e1a1b52b402406eabed32cd61c8ea6761a5f91584565a",
-      "bytes": 39186
+      "sha256": "65fcdb2cc5aefa14f7453ff809d7b51a208576478748e8f95af51978ac2c3923",
+      "bytes": 39787
+    },
+    {
+      "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/selftest-scope-amendment.mjs",
+      "sha256": "db30963afcad4c025eb05d40a15f82d5828d19ae1d2e2ca7a674cd8c1e92bd60",
+      "bytes": 48197
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/source-publication.mjs",

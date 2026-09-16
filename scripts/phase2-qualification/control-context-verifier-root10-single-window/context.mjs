@@ -12,7 +12,7 @@ import boundedCrypto from 'node:crypto';import {isDeepStrictEqual as boundedSame
 import {createRequire} from 'node:module';
 import {sha,readBlobRef,verifyOwnerMergeArtifact,verifyDynamicPayload} from './trusted-github.mjs';
 import {validateRootShape,canonicalDigest,signaturePayloadDigest} from './root-window-validation.mjs';
-import {loadRoot10ControllerContract,checkRoot10RuntimeBinding,checkRoot10SingleWindowSeries,readRoot10TemporalContext,checkRoot10TemporalTime,root10TemporalIdentity,readRoot10RuntimeClockContext,checkRoot10RuntimeClockTime,root10RuntimeClockIdentity} from './root10-single-window.mjs';
+import {loadRoot10ControllerContract,checkRoot10RuntimeBinding,checkRoot10SingleWindowSeries,readRoot10TemporalContext,checkRoot10TemporalTime,root10TemporalIdentity,readRoot10RuntimeClockContext,checkRoot10RuntimeClockTime,root10RuntimeClockIdentity,readRoot10ScopeContext,checkRoot10ScopeTime,root10ScopeIdentity} from './root10-single-window.mjs';
 import {verifyRuntimeDependencies} from './runtime-dependencies.mjs';
 const root10Contract=loadRoot10ControllerContract();
 export const project='uscrdifznmlvczcekqpw',rootID=root10Contract.value.root_id,generation=root10Contract.value.generation_id;
@@ -71,8 +71,12 @@ export function checkCurrentSemantics({gaRaw,operation,observation,runtimeAccept
  check(ga.profile_ref.profile_id===profile.profile_id&&ga.profile_ref.definition_version===profile.definition_version&&ga.profile_ref.content_digest===sha(bytes('ProfileDefinition.json'))&&ga.profile_digest===ga.profile_ref.content_digest,'EXACT_SIGNED_PROFILE');
  const {binding,current,attempts}=state;safe(current);safe(binding);
  const temporal=readRoot10TemporalContext({gaRaw,execution:state,descriptor:runtimeAcceptance?.accepted_subject?.temporal_continuation});
- const rc=readRoot10RuntimeClockContext({gaRaw,execution:state,descriptor:runtimeAcceptance?.accepted_subject?.runtime_clock});
- check(!(temporal&&rc),'ONE_CLOCK_AMENDMENT_ONLY');
+ const runtimeClock=readRoot10RuntimeClockContext({gaRaw,execution:state,descriptor:runtimeAcceptance?.accepted_subject?.runtime_clock});
+ // The scope amendment carries the runtime clock forward and occupies the same
+ // slot, so exactly one clock amendment is ever in force.
+ const scope=readRoot10ScopeContext({gaRaw,execution:state,descriptor:runtimeAcceptance?.accepted_subject?.scope_amendment});
+ check([temporal,runtimeClock,scope].filter(Boolean).length<=1,'ONE_CLOCK_AMENDMENT_ONLY');
+ const rc=scope??runtimeClock;
  check(binding.gate_id===gateID&&ga.gate_id===gateID,'EXACT_SINGLE_REGISTERED_GATE');
  const gaBinding=rc?{controller_sha256:root10RuntimeClockIdentity.original_controller_sha256,qualification_sha256:root10RuntimeClockIdentity.original_qualification_sha256}:temporal?temporal.body.old_binding:binding;
  check(ga.controller_digest===gaBinding.controller_sha256&&ga.controller_qualification_ref.sha256===gaBinding.qualification_sha256&&ga.scope_digest===binding.scope_sha256&&ga.profile_digest===binding.profile_sha256,'EXACT_CONTROLLER_SCOPE_BINDING');
@@ -94,7 +98,8 @@ export function checkCurrentSemantics({gaRaw,operation,observation,runtimeAccept
   // preparation and finalization windows, and the container's own observed
   // start supplies the runtime clock.
   check(issued<deadline&&deadline===expires&&expires-issued===600000,'ORIGINAL_GA_WINDOW');
-  checkRoot10RuntimeClockTime({context:rc,execution:state,operation,now});
+  if(scope)checkRoot10ScopeTime({context:scope,execution:state,operation,now});
+  else checkRoot10RuntimeClockTime({context:rc,execution:state,operation,now});
  }else if(temporal){
   // Validate the original signed lifetime without substituting a new clock in
   // the GA; the separately accepted amendment supplies the current window.
@@ -111,7 +116,7 @@ export function checkCurrentSemantics({gaRaw,operation,observation,runtimeAccept
  check(attempt.phase===(admissionPhase==='DISPATCHED_ONCE'?operation+'_SENT':({CREATE:'PENDING',START:'CREATED',STOP:'RUNNING',GRR:'SIGNING'}[operation])),'NO_REDISPATCH_OR_UNKNOWN');
  check(Date.parse(attempt.expires_at)===deadline,'RESERVATION_DEADLINE');
  checkCumulativeBudget(current,binding);
- return {state:'SEMANTICS_ONLY_NOT_ADMISSION',ga,root:body,attempt,accepted_subject:subject,sequence:current.sequence,temporal,rc};
+ return {state:'SEMANTICS_ONLY_NOT_ADMISSION',ga,root:body,attempt,accepted_subject:subject,sequence:current.sequence,temporal,rc,scope};
 }
 function signedMetadata(item,expectedSha){check(typeof item?.raw==='string'&&sha(item.raw)===expectedSha,'ACCEPTANCE_BYTES_MISSING_OR_DRIFT');verifyOwnerMergeArtifact({...item.publication,raw:item.raw});return JSON.parse(item.raw);}
 
@@ -147,7 +152,25 @@ export async function prepareTrustedToolMaterial(material){
  seriesCheck(material.observation.row.execution);
  // No effects or admission exist while these initially untrusted metadata bytes are checked.
  signedMetadata(material.controller_qualification,binding.qualification_sha256);
- if(result.rc){
+ if(result.scope){
+  // The scope amendment is a separately published Owner document, authenticated
+  // exactly as its predecessor is. It occupies the runtime clock's material slot
+  // because it carries that clock forward; the host window it bounds is still the
+  // 600 seconds event 119 fixed, never a longer one.
+  const descriptor=result.scope.descriptor,input=material.scope_amendment;
+  check(input&&Object.keys(input).sort().join(',')==='event,host_window,publication,raw,sha256'&&sha(input.raw)===descriptor.amendment_ref.sha256&&input.sha256===descriptor.amendment_ref.sha256&&same(input.event,result.scope.event),'EXACT_SEPARATE_SCOPE_AUTHORITY_MATERIAL');
+  const hw=input.host_window;
+  check(hw&&Object.keys(hw).sort().join(',')==='deadline_utc,prepared_utc'&&time(hw.deadline_utc)-time(hw.prepared_utc)===600000&&time(hw.prepared_utc)>=result.scope.issued&&time(hw.prepared_utc)<=Date.now()+2000&&time(hw.deadline_utc)<=result.scope.final,'EXACT_SCOPE_HOST_WINDOW');
+  const publication=verifyOwnerMergeArtifact({commitSha:input.publication.commitSha,artifactPath:input.publication.artifactPath,raw:input.raw});
+  check(same(publication.blob_ref,descriptor.amendment_ref),'ACTUAL_OWNER_SCOPE_AMENDMENT_PUBLICATION');
+  const amendment=JSON.parse(input.raw);
+  check(amendment.object_type==='Root10ScopeAmendment'&&amendment.root_id===rootID&&amendment.control_trust_root_generation===generation&&amendment.activation?.ga_ref?.ga_id===root10ScopeIdentity.ga_id&&amendment.activation.ga_ref.sha256===sha(material.ga_raw)&&amendment.activation.budget_ref?.sequence===117&&amendment.activation.budget_ref.sha256===root10ScopeIdentity.budget_sha256&&amendment.activation.maximum_activations===1&&amendment.activation.expected_sequence===119&&amendment.activation.runtime_seconds===600&&amendment.activation.max_predispatch_resets===3&&amendment.activation.preparation_expires_at===windowExpiry&&amendment.activation.finalization_expires_at===windowExpiry&&amendment.supersedes?.sha256===root10RuntimeClockIdentity.amendment_sha256,'EXACT_SIGNED_SCOPE_AUTHORITY_SCOPE');
+  const originalManifest=result.ga.source_ref.blobs.filter(ref=>ref.sha256===result.ga.controller_digest);
+  check(originalManifest.length===1,'ONE_ORIGINAL_SCOPE_SOURCE_MANIFEST');
+  const originalRaw=readBlobRef(originalManifest[0]);
+  verifyOwnerMergeArtifact({commitSha:result.ga.target_revision,artifactPath:'scripts/phase2-qualification/control-context-verifier-root10-single-window/ControllerSourceManifest.candidate.json',raw:originalRaw});
+  verifySourcePublication({sourceRef:descriptor.source_ref,ownerMerge:material.runtime_acceptance.publication.commitSha,controllerDigest:binding.controller_sha256});
+ }else if(result.rc){
   const descriptor=result.rc.descriptor,input=material.runtime_clock;
   check(input&&Object.keys(input).sort().join(',')==='event,host_window,publication,raw,sha256'&&sha(input.raw)===descriptor.amendment_ref.sha256&&input.sha256===descriptor.amendment_ref.sha256&&same(input.event,result.rc.event),'EXACT_SEPARATE_RUNTIME_CLOCK_AUTHORITY_MATERIAL');
   const hw=input.host_window;
@@ -255,7 +278,7 @@ export async function prepareTrustedToolMaterial(material){
    check(canonicalDigest(observation?.row?.execution)===originalState,'RESULT_RESERVATION_OR_CURRENT_CHANGED');
    checkCurrentSemantics({gaRaw,operation,observation,runtimeAcceptance:runtime,qualification,terminalResult:receipt.result});
    seriesCheck(observation.row.execution);
-   checkResultSemantics({raw:material.grr_raw,gaRaw,state:observation.row.execution,acceptedSchemaSha256:result.accepted_subject.control_schema_refs.GateResultReceipt.sha256,temporalDescriptor:result.accepted_subject.temporal_continuation??null,runtimeClockDescriptor:result.accepted_subject.runtime_clock??null});
+   checkResultSemantics({raw:material.grr_raw,gaRaw,state:observation.row.execution,acceptedSchemaSha256:result.accepted_subject.control_schema_refs.GateResultReceipt.sha256,temporalDescriptor:result.accepted_subject.temporal_continuation??null,runtimeClockDescriptor:result.accepted_subject.runtime_clock??null,scopeDescriptor:result.accepted_subject.scope_amendment??null});
    return {state:'EXACT_RESULT_REQUIRES_TERMINAL_CAS',request:resultCommitRequest(material.grr_raw,receipt),receipt_id:receipt.gate_result_receipt_id,ga_id:receipt.gate_authorization_id,result:receipt.result,automatic_retry:false,qualified:false};
   }});
  }
@@ -271,7 +294,14 @@ export async function prepareTrustedToolMaterial(material){
   const current=checkCurrentSemantics({gaRaw,operation,observation,runtimeAcceptance:runtime,qualification,admissionPhase:'DISPATCHED_ONCE',expectedQuerySha256:sha(expectedQuery)});
   check(current.sequence===response.sequence,'EXACT_DISPATCH_CURRENT_SEQUENCE');currentWindow(sm.as_of,sm.expires_at,Date.now());
   seriesCheck(currentSource);
-   const actual=invokeFixedHost({gaRaw,operation,containerId:current.attempt.container_id,deadline:current.rc?time(material.runtime_clock.host_window.deadline_utc):current.temporal?.deadline??time(current.ga.deadline),temporal:current.rc?{raw:material.runtime_clock.raw,sha256:material.runtime_clock.sha256,event:current.rc.event,host_window:material.runtime_clock.host_window}:current.temporal?{raw:material.temporal_continuation.raw,sha256:material.temporal_continuation.sha256,event:current.temporal.event}:null});
+  // Which material the fixed host is handed follows which amendment is in force, not
+  // which slot the runtime clock used to occupy. current.rc is scope ?? runtimeClock, so
+  // it is TRUTHY under the scope amendment -- reading material.runtime_clock off the back
+  // of it dereferenced undefined and every CREATE and START died here with a TypeError,
+  // after the host had been taught event 120 and before its caller had. The clock context
+  // and the clock material have to be selected by the same question.
+  const clock=current.scope?material.scope_amendment:material.runtime_clock;
+  const actual=invokeFixedHost({gaRaw,operation,containerId:current.attempt.container_id,deadline:current.rc?time(clock.host_window.deadline_utc):current.temporal?.deadline??time(current.ga.deadline),temporal:current.rc?{raw:clock.raw,sha256:clock.sha256,event:current.rc.event,host_window:clock.host_window}:current.temporal?{raw:material.temporal_continuation.raw,sha256:material.temporal_continuation.sha256,event:current.temporal.event}:null});
   const eventOperation=operation==='CREATE'?'CREATED':'RUNNING';
   const raw=JSON.stringify({ga_id:intent.gaId,ga_sha256:sha(gaRaw),operation:eventOperation,container_id:actual.container_id,observation:actual.observation,started_utc:actual.started_utc,ended_utc:actual.ended_utc})+'\n';
   // Under the runtime-clock amendment the RUNNING event immutably records the

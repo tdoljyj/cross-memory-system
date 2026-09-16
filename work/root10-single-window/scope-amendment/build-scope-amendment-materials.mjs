@@ -5,9 +5,17 @@
 // is computed from bytes on disk.
 //
 //   node build-scope-amendment-materials.mjs [--write]
+//   node build-scope-amendment-materials.mjs --owner-merge=<sha> [--write]
 //
 // Publication-dependent fields the Owner merge has not produced yet are left as
 // explicit placeholder tokens. The script refuses to pretend it knows them.
+//
+// Once the Owner merge exists, --owner-merge=<sha> resolves them. It does not take
+// the caller's word for it: the commit must exist, its tree is read out of git
+// rather than supplied, and EVERY file the manifest declares is re-read AT THAT
+// COMMIT and must match the digest and byte count the manifest records. That is the
+// same property verifySourcePublication checks remotely, so a mismatch is caught
+// here instead of halfway through a dispatch, against a clock that does not stop.
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -20,6 +28,18 @@ const sha = b => crypto.createHash('sha256').update(b).digest('hex');
 const need = (ok, why) => {if (!ok) throw Error(why);};
 const blobOf = bytes => crypto.createHash('sha1').update('blob ' + bytes.length + '\0').update(bytes).digest('hex');
 const url = s => 'https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/' + s;
+const git = (...args) => execFileSync('/usr/bin/git', args, {cwd: REPO, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024});
+const ownerMergeArg = process.argv.find(a => a.startsWith('--owner-merge='));
+const OWNER_MERGE = ownerMergeArg ? ownerMergeArg.slice('--owner-merge='.length).trim() : null;
+let SOURCE_TREE = null;
+if (OWNER_MERGE !== null) {
+  need(/^[0-9a-f]{40}$/.test(OWNER_MERGE), 'OWNER_MERGE_MUST_BE_A_FULL_COMMIT_SHA:' + OWNER_MERGE);
+  need(git('cat-file', '-t', OWNER_MERGE).trim() === 'commit', 'OWNER_MERGE_COMMIT_NOT_FOUND:' + OWNER_MERGE);
+  SOURCE_TREE = git('rev-parse', OWNER_MERGE + '^{tree}').trim();
+  need(/^[0-9a-f]{40}$/.test(SOURCE_TREE), 'OWNER_MERGE_TREE_UNRESOLVED');
+}
+const MERGE_TOKEN = OWNER_MERGE ?? '__OWNER_MERGE_COMMIT__';
+const TREE_TOKEN = SOURCE_TREE ?? '__SOURCE_TREE__';
 const ref = (sha1, sha256) => ({uri: url(sha1), sha256});
 
 // Where the candidate tree lives now, and the canonical path its manifest
@@ -52,10 +72,15 @@ const readFile = rel => fs.readFileSync(path.join(REPO, rel));
 const describe = rel => {const bytes = readFile(rel); return {raw: bytes.toString('utf8'), sha256: sha(bytes), blob: blobOf(bytes)};};
 // A manifest path is canonical; its bytes live in the candidate tree until the
 // rename at activation.
-const onDisk = p => p.startsWith(CANONICAL + '/') ? CANDIDATE + '/' + p.slice(CANONICAL.length + 1) : p;
+// Before the publishing merge the tree is staged at CANDIDATE and the manifest already
+// names CANONICAL, so canonical paths are read from the staging copy. After the merge
+// moves it, CANDIDATE is gone and the canonical path is the real one. Decided by what
+// exists on disk rather than by a flag, so the two cannot be set inconsistently.
+const staged = fs.existsSync(path.join(REPO, CANDIDATE));
+const onDisk = p => (staged && p.startsWith(CANONICAL + '/')) ? CANDIDATE + '/' + p.slice(CANONICAL.length + 1) : p;
 
-const manifest = describe(CANDIDATE + '/ControllerSourceManifest.candidate.json');
-const contract = describe(CANDIDATE + '/Root10ControllerContract.candidate.json');
+const manifest = describe(onDisk(CANONICAL + '/ControllerSourceManifest.candidate.json'));
+const contract = describe(onDisk(CANONICAL + '/Root10ControllerContract.candidate.json'));
 const suite = describe(SUITE);
 const amendment = describe(AMENDMENT);
 
@@ -92,6 +117,17 @@ const blobs = [ref(manifest.blob, manifest.sha256)];
 for (const file of declared) {
   const bytes = readFile(onDisk(file.path));
   need(bytes.length === file.bytes && sha(bytes) === file.sha256, 'SOURCE_MANIFEST_LOCAL_BYTES:' + file.path);
+  // With a merge named, the bytes that matter are the PUBLISHED ones, not the ones
+  // in this working tree. Read them out of the commit and require both to agree:
+  // a local edit made after the merge would otherwise be signed for silently.
+  if (OWNER_MERGE !== null) {
+    let published;
+    try { published = execFileSync('/usr/bin/git', ['cat-file', 'blob', OWNER_MERGE + ':' + file.path],
+      {cwd: REPO, maxBuffer: 64 * 1024 * 1024}); }
+    catch { throw Error('SOURCE_FILE_ABSENT_AT_OWNER_MERGE:' + file.path); }
+    need(published.length === file.bytes && sha(published) === file.sha256,
+      'PUBLISHED_BYTES_DIFFER_FROM_MANIFEST:' + file.path);
+  }
   blobs.push(ref(blobOf(bytes), file.sha256));
 }
 need(blobs.some(b => b.sha256 === manifest.sha256), 'EXACT_SOURCE_MANIFEST_BLOB_REF');
@@ -110,8 +146,8 @@ const qualification = {
   amendment_object_type: 'Root10ScopeAmendment',
   predecessor_controller_digest: PRIOR_CONTROLLER,
   source_publication: {
-    owner_merge_commit: '__OWNER_MERGE_COMMIT__',
-    source_tree: '__SOURCE_TREE__',
+    owner_merge_commit: MERGE_TOKEN,
+    source_tree: TREE_TOKEN,
     controller_manifest_entries: declared.length,
   },
 };
@@ -138,7 +174,7 @@ const scopeDescriptor = {
   prior_ga_ref: priorAcceptance.accepted_subject.runtime_clock.prior_ga_ref,
   runtime_clock_amendment_sha256: RC_AMENDMENT,
   runtime_seconds: 600,
-  source_ref: {commit: '__OWNER_MERGE_COMMIT__', tree: '__SOURCE_TREE__', blobs},
+  source_ref: {commit: MERGE_TOKEN, tree: TREE_TOKEN, blobs},
 };
 
 // The scope amendment supersedes the runtime clock in the same slot: the
@@ -157,7 +193,7 @@ const acceptance = {
       contract_ref: ref(contract.blob, contract.sha256),
       executor_applicability: {
         ref: ref(applicabilityDigest.blob, applicabilityDigest.sha256),
-        publication: {commitSha: '__OWNER_MERGE_COMMIT__', artifactPath: APPLICABILITY},
+        publication: {commitSha: MERGE_TOKEN, artifactPath: APPLICABILITY},
       },
     },
     scope_amendment: scopeDescriptor,
@@ -195,5 +231,7 @@ process.stdout.write(JSON.stringify({
     emit('ControllerQualification.root10.scope.json', qualification),
     emit('RuntimeAcceptance.root10.scope.json', acceptance),
   ],
-  unresolved_placeholders: ['__OWNER_MERGE_COMMIT__', '__SOURCE_TREE__'],
+  owner_merge_commit: MERGE_TOKEN,
+  source_tree: TREE_TOKEN,
+  unresolved_placeholders: OWNER_MERGE ? [] : ['__OWNER_MERGE_COMMIT__', '__SOURCE_TREE__'],
 }, null, 2) + '\n');

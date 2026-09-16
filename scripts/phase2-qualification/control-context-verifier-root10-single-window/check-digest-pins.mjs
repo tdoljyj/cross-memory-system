@@ -65,6 +65,14 @@ const DECLARED_NON_FILE = {
     'Temporal continuation controller qualification digest: the predecessor binding column the runtime-clock old_binding must still carry exactly.',
   '17a5d20b7e6236cb276c7321955f6d0a5e5f83d9a35e83a570fcef251d59af42':
     'Temporal continuation runtime acceptance digest: the predecessor binding column the runtime-clock old_binding must still carry exactly.',
+  'a71bd7128eff8d3125711bf7967faddc9eab3c4ef675035db711b95b45136537':
+    'Exact separate scope amendment bytes (work/root10-single-window/scope-amendment/Root10ScopeAmendment.json); Owner publication and immutable event120 are verified before any effect.',
+  '5c72dd8923436f6e9ab5b51160cd8751944158d3919d3ef09f6f3ec5006e40b6':
+    'Runtime-clock controller manifest digest: the predecessor binding the scope amendment repoints away from, preserved in the immutable event119/120 bodies. It is the digest of the manifest THIS controller replaces at the same path, so once the scope tree lands it is deliberately the digest of no file here.',
+  '6a7145fa0c09a00a917b40c42f5dbaa38f4c6028e75ab747dd234351b993b849':
+    'Runtime-clock controller qualification digest: the predecessor binding column the scope old_binding must still carry exactly.',
+  '321221816f4c368d98833de6f698adcb1835d88e6b7c991c0b9d9537abba3c1e':
+    'Runtime-clock runtime acceptance digest: the predecessor binding column the scope old_binding must still carry exactly.',
   ea96914e218460339508bc51eff0d10de41e1a94cfa3a0a544a85a132219791b:
     'proposalSHA. The file it described was lost with the old host; the constant is cross-checked against approved.proposal_sha256 and appendix.proposal_sha256 from merged materials.',
   '64b2ba3ef6bfe2755b78e03b19d6a6b6ea5a0e3735c4b9328e9be2c4715dff07':
@@ -157,11 +165,15 @@ const CONTROLLER_SOURCES = [
   'original-inputs-blob.mjs', 'parent600.py', 'read-source-blobs-linux.mjs',
   'request-denials.mjs', 'result-terminal.mjs', 'runtime-dependencies.mjs',
   'result-evidence-root10.mjs', 'root10-single-window.mjs', 'root-window-validation.mjs',
-  'selftest-root10-single-window.mjs', 'selftest-runtime-clock.mjs', 'selftest-runtime-pins.mjs', 'source-publication.mjs',
+  'selftest-root10-single-window.mjs', 'selftest-runtime-clock.mjs', 'selftest-runtime-pins.mjs',
+  'selftest-scope-amendment.mjs', 'source-publication.mjs',
   'tool-entry.functions.js', 'trusted-github.mjs',
 ];
 // R22: +1 for selftest-runtime-clock.mjs, the runtime-clock amendment's unit tests.
-if (CONTROLLER_SOURCES.length !== 26) throw new Error('CONTROLLER_SOURCES length changed; declare a new source deliberately, not by accident');
+// R23: +1 for selftest-scope-amendment.mjs, the scope amendment's. It carries no digest
+// literal by construction, same as its runtime-clock counterpart -- every value it uses is
+// read from the frozen identity or from the contract -- so a pin cannot hide inside a test.
+if (CONTROLLER_SOURCES.length !== 27) throw new Error('CONTROLLER_SOURCES length changed; declare a new source deliberately, not by accident');
 // R20-F3. Round 20 ran this gate on a host with no gh installed and got
 // "UNEXPLAINED trusted-github.mjs: f687dc937534 matches no file", exit 1 -- correct fail-closed
 // behaviour, but indistinguishable from a real controller defect, and since build-linux-manifest
@@ -655,12 +667,26 @@ const EXPECTED_PER_FILE = {
   // selftest-runtime-clock.mjs carries none by construction: it reads the fixed
   // gate/scope/profile digests from the contract and every other value from the
   // frozen identity, so a pin can never hide inside a test.
-  'bridge.py': 1, 'check-digest-pins.mjs': 24, 'context.mjs': 0, 'fixed_host.py': 3,
-  'host-effect.mjs': 2, 'parent600.py': 7, 'read-source-blobs-linux.mjs': 3, 'result-evidence-root10.mjs': 1, 'result-terminal.mjs': 0,
-  'root10-single-window.mjs': 10,
+  //
+  // R23 scope amendment: +4 declared non-file digests here (the amendment's own bytes and the
+  // three runtime-clock predecessor binding columns), and the same +4 in
+  // root10-single-window.mjs, where root10ScopeIdentity pins them. Every other value in that
+  // identity -- the GA, the original controller, budget117, the runtime-clock amendment -- is a
+  // literal the runtime-clock identity already carries, and a file is scanned as a set of
+  // distinct literals, so repeating them moves no count. That is why the delta is exactly four
+  // and not twelve: only genuinely new values are new here.
+  //
+  // parent600.py 7 -> 8 for the same reason and by the same arithmetic: scope_amendment_window()
+  // adds SCOPE_AMENDMENT_SHA256, one genuinely new value. The GA digest it checks and the
+  // runtime-clock digest it requires the amendment to supersede were both already literals in
+  // this file's runtime_clock_window(), so neither moves the count.
+  'bridge.py': 1, 'check-digest-pins.mjs': 28, 'context.mjs': 0, 'fixed_host.py': 3,
+  'host-effect.mjs': 2, 'parent600.py': 8, 'read-source-blobs-linux.mjs': 3, 'result-evidence-root10.mjs': 1, 'result-terminal.mjs': 0,
+  'root10-single-window.mjs': 14,
   'tool-entry.functions.js': 8, 'trusted-github.mjs': 1,
   // Cross-directory live code, newly scanned (R17-N5). Zero today; declared so it cannot appear
   // unnoticed.
+  'selftest-scope-amendment.mjs': 0,
   'signing.mjs': 0,
 };
 if (!problems.length) {
