@@ -111,8 +111,8 @@
   },
   "reviewer_delegation": {
     "ref": {
-      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/eafdbc2728dd1fecd987f9c32169a4df7a89ff68",
-      "sha256": "5baeb567ce212462e1605bc52eb119916563b90fbaf656d4007f831086e63b1e"
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/ec6b42d6aac3edfde9e70c2732ebea58c98a774f",
+      "sha256": "8325eb075742bb79de1f3fbb7c01cb4d91f111074a8537baa0286e6342ac5127"
     },
     "independent_reviewer": "/root/root9_recovery_review"
   },
