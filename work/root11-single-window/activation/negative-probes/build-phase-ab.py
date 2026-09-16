@@ -54,6 +54,14 @@ g['status_manifest_ref'] = dict(g['status_manifest_ref'],
                                 uri='control://status-manifests/sm_root10_single_window_20260915')
 A.append(('N05_STATUS_WRONG_GENERATION', g, 'exact_stored_status_manifest_required'))
 
+# N19 Status 引用指向被取代的那一份（generation 30，仍不可变地存在库里）
+g = copy.deepcopy(ga0)
+g['status_manifest_ref'] = {'uri': 'control://status-manifests/sm_root11_single_window_20260916',
+                            'sha256': hashlib.sha256(
+                                pathlib.Path(r'C:/Users/17531/root10-snapshot-20260916/gen11-live/Root11SignedStatus.json')
+                                .read_bytes()).hexdigest()}
+A.append(('N19_SUPERSEDED_STATUS_GENERATION_30', g, 'exact_stored_status_manifest_required'))
+
 # N06 预算引用指向别的序号
 g = copy.deepcopy(ga0)
 g['budget_reservation_ref'] = dict(
