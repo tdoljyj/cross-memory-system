@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "object_type": "StatusOwnerMergeSignatureEvidence",
+  "state": "STAGE2_OWNER_MERGE_BOUND_VERIFIED",
+  "authority_effect": "NONE",
+  "repository": "tdoljyj/cross-memory-system",
+  "issuer_purpose": "STATUS",
+  "status_manifest_id": "sm_root12_single_window_20260916",
+  "control_trust_root_generation": "ctrgen_1cf79ef9a7ccc37800e8837ac8c10287",
+  "merge": {
+    "sha": "97e302c66c786e9e9394cef24f2d86e42f8ee071",
+    "tree": "56b26dfc10c032ff16df0a42378b1879c9ef85cc",
+    "parents": [
+      "4ba5f4f18ced38a3341f665b041b1fea27047ca4",
+      "72b7d4435deecd6f879db01d1115a99a13b60219"
+    ],
+    "required_verification": {
+      "verified": true,
+      "verification_reason": "valid",
+      "two_parents": true,
+      "committer": "web-flow",
+      "merged_by": "tdoljyj",
+      "base_branch": "main",
+      "exact_merged_pr": 234
+    },
+    "merged_at": "2026-09-16T09:12:17Z"
+  },
+  "payload": {
+    "artifact_path": "work/root12-single-window/Root12StatusManifest.json",
+    "blob_sha": "eed23a8eef0c1f9ad7a16eb137d0e96b022ba6e6",
+    "file_sha256": "9606926d16826685486e6741b165086383f6ab117ba072a0fae43ad602fb3cc5",
+    "signed_object_sha256": "288ce2ba4baead3edf7830e8b5f95e8f990791ed9fc45f1c1490bc7ba8bb1583",
+    "canonicalization_id": "SORTED_JSON_UTF8_NO_FLOATS_LF_V1_CANDIDATE",
+    "excluded_fields": [
+      "signature_binding"
+    ]
+  },
+  "bound_refs": {
+    "controller_manifest": {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/0e51b8572fe103b28f0d6f3e6f8bb40c60abba5b",
+      "sha256": "a959f7d18eb96e1babd81400a4dd46736b3fc11dd71ea341e5ec86d44272acb3"
+    },
+    "controller_qualification": {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/d112e10f02e50418eb70e00d430b2068d1772fd3",
+      "sha256": "3ccfd0211af0deef67687686ab205103022f5bb20816223e0fdb498c2ae87616"
+    },
+    "runtime_acceptance": {
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/30c56b1913d0793c906aac5c74a404f002c50269",
+      "sha256": "1843de24b4e5ef7b2c96e9f30f06ea2e453a65cd8abed25cc09f3b272fecee8b"
+    }
+  },
+  "verification_boundary": {
+    "stage2_verified_as_unique_owner_merge_into_main": true,
+    "exact_stage2_artifacts_verified": true,
+    "database_write": false,
+    "budget_reservation": false,
+    "capacity_value_change": false,
+    "refund": false,
+    "ga_dispatch": false
+  },
+  "no_full_status_reverse_hash": true
+}
