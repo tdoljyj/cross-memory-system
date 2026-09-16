@@ -40,10 +40,20 @@ GA 窗口直接承担 600 秒授权，`controller_digest` 也就必须直接等�
 
 **Root11SigningPayload.draft.json** — 代次、序数 11、窗口、前代引用、history、revocation。
 
-## 尚未完成：根载荷未签名
+## 根载荷的签名在数据库，不在文件里
 
-`signature_binding` 目前是 `{"state":"UNSIGNED_DRAFT_OWNER_MUST_SIGN"}`，是占位而非签名。
-合并前需由 Owner 按第 10 代同样的方式出具签名并回填，否则控制器读取根签名载荷时会失败。
+与第 10 代一致：`Root11SigningPayload.json` 是**未签名载荷**，不含 `signature_binding`。
+控制器的校验是 `signaturePayloadDigest(root) === canonicalDigest(已发布文件)`，
+其中 `signaturePayloadDigest` 正是"根对象去掉 signature_binding 后的规范摘要"。
+
+签名绑定存在**数据库根事件的 body** 里，包含 `owner_merge_commit`、
+`signature_evidence_ref` 与 `signed_object_sha256`。因此顺序是：
+
+1. 合并本 PR → 得到 merge commit 与文件 blob
+2. 由 Owner 出具签名证据 blob（记录该 merge 与 payload 的 blob/file 摘要）并发布
+3. 注册第 11 代时，根事件 body = 本载荷 + 上述 signature_binding
+
+**合并本 PR 是第 1 步，文件保持未签名是正确状态。**
 
 ## 执行方式
 
