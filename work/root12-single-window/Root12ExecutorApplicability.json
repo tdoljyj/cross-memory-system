@@ -8,7 +8,7 @@
     "sha256": "118cde8774c91adbdff439a8d6b6216d2a353ec983b24c49d3ce16d6c487433a"
   },
   "suite_executor_sha256": "27ede0fc0ff6afc4d5abf2f5c9f256fe22776165746dddc19aa2693c47bbc97c",
-  "current_controller_sha256": "14614efd0234c3f7424315251135c6b0fcb44ecf045eb6930e37ed8705313a46",
+  "current_controller_sha256": "a959f7d18eb96e1babd81400a4dd46736b3fc11dd71ea341e5ec86d44272acb3",
   "formal_test_ids": [
     "PQUAL-11",
     "PQUAL-13",
