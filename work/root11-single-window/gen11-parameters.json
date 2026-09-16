@@ -3,7 +3,7 @@
  "successor_binding_id": "sb_873f7cf2f79fb3cb168138441e6fddbc",
  "window": "2026-09-16T04:00:00Z -> 2026-09-23T04:00:00Z",
  "controller_sha256": "fc6ca1759ef68a958564bd2d9fc16aab23297c2db30ac7581b4ec6227977c91f",
- "qualification_sha256": "ef6a6db15dce4155e020198dcfc81e57b691624aa7dd9072d2349903da7e1f46",
+ "qualification_sha256": "cc385768f9e04269d69b211a23fb08f4463215afa5c919649f42e17c7d58cbe9",
  "runtime_acceptance_sha256": "a013369e16da967cca9e25d5c8c4ab52d922abe45c065b9290d0426be8094ce4",
  "acceptance_dropped_descriptors": [
   "scope_amendment",
@@ -11,14 +11,14 @@
   "temporal_continuation"
  ],
  "acceptance_bytes": 33803,
- "qualification_bytes": 3268,
+ "qualification_bytes": 3306,
  "root_payload_bytes": 3493,
  "root_payload_unsigned": true,
  "controller_contract_sha256": "82417308ccffaf949f3d885d4b040cfe18cf45c1bf1a5cacbbf4dd67fb1214da",
  "controller_source_commit": "55fd9732cbec0994ceb699a3e3f8985e79d7647c",
  "baseline_execution_sequence": 131,
  "postbaseline_budget_sequence": 136,
- "owner_merge_commit_pending": true,
+ "owner_merge_commit_pending": false,
  "status_manifest_id": "sm_root11_single_window_20260916_v2",
  "status_generation": 31
 }
