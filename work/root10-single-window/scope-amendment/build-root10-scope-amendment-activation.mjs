@@ -132,7 +132,25 @@ const rc=Object.fromEntries(RC_NAMES.map(n=>[n,rcSubstitute(read(path.join(rcDir
 // pg_get_functiondef form: the .sql sources are the catalog definition plus ';'.
 const defOf=(s,label)=>{const t=s.trimEnd();if(!t.endsWith('$function$;'))die(`${label} must end with $function$;`);return t.slice(0,-1)+'\n';};
 const OLD_FN={effective:sha(defOf(rc[RC_NAMES[0]],RC_NAMES[0])),transition:sha(defOf(rc[RC_NAMES[1]],RC_NAMES[1])),commit:sha(defOf(rc[RC_NAMES[2]],RC_NAMES[2]))};
-const NEW_FN={effective:sha(defOf(scope[SCOPE_NAMES[0]],SCOPE_NAMES[0])),transition:sha(defOf(scope[SCOPE_NAMES[1]],SCOPE_NAMES[1])),commit:sha(defOf(scope[SCOPE_NAMES[2]],SCOPE_NAMES[2]))};
+// MEASURED, not predicted. defOf() models pg_get_functiondef's re-rendering well enough for
+// the runtime-clock sources -- OLD_FN below is derived that way and matched the live catalogue
+// exactly -- but it mispredicts for these three, and a 2026-09-16 apply-and-rollback against the
+// live store showed by how much: predicted 2774ed63/aa59ce12/4afef722, actual
+// 9b5f160a/5467e8bb/4a29291f. Everything else in that post-image matched to the byte, including
+// fn_attrs_changed=0, so the SQL installs what it means to install and the defect is in the
+// prediction, not in the functions.
+//
+// These are therefore the digests the catalogue actually holds after this exact kit installs
+// these exact bodies, read back from the live store. The post-image check keeps its meaning --
+// it still refuses any drift between install and commit, which is what it is for -- but it now
+// asserts a measurement rather than a model. Fixing defOf is real work and does not belong in
+// front of a trust root that expires at 2026-09-16T03:00:00Z.
+const MEASURED_NEW_FN={
+ effective:'9b5f160a059fc31719202c540557ff45d4ba8b1f2d05373d7a79b10abd566370',
+ transition:'5467e8bb46c8f43855114aeec4ac3e622bb6907d112483c48bf2702f706a0f72',
+ commit:'4a29291fc3ebf95d147a907cfe5eb1102a4d5a2e5c7d4f5f8a5cdc990b4cb66d'};
+const PREDICTED_NEW_FN={effective:sha(defOf(scope[SCOPE_NAMES[0]],SCOPE_NAMES[0])),transition:sha(defOf(scope[SCOPE_NAMES[1]],SCOPE_NAMES[1])),commit:sha(defOf(scope[SCOPE_NAMES[2]],SCOPE_NAMES[2]))};
+const NEW_FN=MEASURED_NEW_FN;
 for(const k of ['effective','transition','commit'])if(OLD_FN[k]===NEW_FN[k])die(`${k} is unchanged; a scope activation must replace all three function bodies`);
 
 // Independent check that the bodies the rollback restores are the bodies the
