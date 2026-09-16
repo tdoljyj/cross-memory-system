@@ -1,0 +1,21 @@
+{
+  "gh_path": "gh",
+  "publications": {
+    "original_source": {"pr_number": 192, "merge_commit": "593bc7d26fbb850b30e80c9e4ea726e82f4d5eed"},
+    "ga_target": {"pr_number": 193, "merge_commit": "67e55ee767c3aaff6ae79a238e5ec3e1985d8003"},
+    "reviewer": {"pr_number": 190, "merge_commit": "1443bbe0164cd756136705897ec0cccb56cfc102"},
+    "scope_amendment": {"pr_number": 204, "merge_commit": "f9e1bfc46b23c0e155c6d9953972ac105e479636"},
+    "acceptance": {"pr_number": 205, "merge_commit": "26afacffbaeb556ba61e069b40ed381f507c8ddd"},
+    "status_manifest": {"pr_number": 193, "merge_commit": "67e55ee767c3aaff6ae79a238e5ec3e1985d8003"}
+  },
+  "paths": {
+    "runtime_acceptance_local": "work/root10-single-window/scope-amendment/RuntimeAcceptance.root10.scope.json",
+    "runtime_acceptance_repo": "work/root10-single-window/scope-amendment/RuntimeAcceptance.root10.scope.json",
+    "controller_qualification_local": "work/root10-single-window/scope-amendment/ControllerQualification.root10.scope.json",
+    "controller_qualification_repo": "work/root10-single-window/scope-amendment/ControllerQualification.root10.scope.json",
+    "amendment_local": "work/root10-single-window/scope-amendment/Root10ScopeAmendment.json",
+    "amendment_repo": "work/root10-single-window/scope-amendment/Root10ScopeAmendment.json",
+    "status29_signing_payload_local": "work/root10-single-window/stage2/Status29SigningPayload.json",
+    "status29_signing_payload_repo": "work/root10-single-window/stage2/Status29SigningPayload.json"
+  }
+}

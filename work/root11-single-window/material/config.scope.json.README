@@ -1,0 +1,32 @@
+Scope-amendment dispatch material, adapted from the runtime-clock kit.
+
+What is here and what it is for
+  build-root10-scope-material.mjs   assembles the dispatch material, GitHub verification only
+  drive-root10-scope-dispatch.mjs   the trusted caller: fresh observation in, intent/dispatch out
+  config.scope.json                 the six Owner merges and the six document paths
+
+What was changed from the runtime-clock originals, and why
+  material slot        subject.runtime_clock -> subject.scope_amendment, in both programs
+  activation event     sequence 119 / RUNTIME_CLOCK_AMENDMENT_ACTIVATED
+                    -> sequence 120 / SCOPE_AMENDMENT_ACTIVATED
+  amendment type       Root10RuntimeClockAmendment -> Root10ScopeAmendment
+  publications         scope_amendment = PR 204 / f9e1bfc4 (the controller tree and the
+                       amendment), acceptance = PR 205 / 26afacff (the stage-2 documents)
+  paths                the scope stage-2 documents and Root10ScopeAmendment.json
+
+Verified on 2026-09-16: build-root10-scope-material.mjs emits a complete template against
+those merges, and the six fields it leaves for dispatch are operation, ga_raw, observation,
+scope_amendment.event, scope_amendment.host_window and the three status_manifest fields.
+
+WHY IT WAS NOT RUN, measured rather than assumed
+  clued_control.read_execution() returns 3298514 bytes, and the controller requires the
+  observation to be at most 15 seconds old. The driver's own header already ruled out the
+  approach I tried: a 3 MB snapshot cannot make a human-mediated round trip inside that
+  window. A psql stand-in that relays queries through an out-of-band SQL channel works for
+  the small statements and cannot work for this one.
+
+  So the run needs ONE host holding all four at once:
+    a real Postgres route to the control store (not an HTTP SQL console)
+    Linux Docker, for the qualified container
+    gh 2.63.2 at /usr/local/bin/gh -- 2.45.0 from apt does NOT satisfy the byte pin
+    /opt/node22/bin/node and /usr/bin/python3.11 at the pinned digests
