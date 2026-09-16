@@ -3,12 +3,30 @@
   "first_budget_sequence": 143,
   "status_generation": 32,
   "publications": {
-    "original_source": {"pr_number": 220, "merge_commit": "af0d567d8d7d806151b5b67584c84364250280dc"},
-    "ga_target": {"pr_number": 221, "merge_commit": "3b8a0fae18c6a8d7b55ff2510ba7d5af2e16a500"},
-    "reviewer": {"pr_number": 190, "merge_commit": "1443bbe0164cd756136705897ec0cccb56cfc102"},
-    "executor_applicability": {"pr_number": 204, "merge_commit": "f9e1bfc46b23c0e155c6d9953972ac105e479636"},
-    "acceptance": {"pr_number": 221, "merge_commit": "3b8a0fae18c6a8d7b55ff2510ba7d5af2e16a500"},
-    "status_manifest": {"pr_number": 221, "merge_commit": "3b8a0fae18c6a8d7b55ff2510ba7d5af2e16a500"}
+    "original_source": {
+      "pr_number": 220,
+      "merge_commit": "af0d567d8d7d806151b5b67584c84364250280dc"
+    },
+    "ga_target": {
+      "pr_number": 224,
+      "merge_commit": "73e4ea02b89d877a945bc2d6832706f43b76b8bd"
+    },
+    "reviewer": {
+      "pr_number": 190,
+      "merge_commit": "1443bbe0164cd756136705897ec0cccb56cfc102"
+    },
+    "executor_applicability": {
+      "pr_number": 204,
+      "merge_commit": "f9e1bfc46b23c0e155c6d9953972ac105e479636"
+    },
+    "acceptance": {
+      "pr_number": 224,
+      "merge_commit": "73e4ea02b89d877a945bc2d6832706f43b76b8bd"
+    },
+    "status_manifest": {
+      "pr_number": 224,
+      "merge_commit": "73e4ea02b89d877a945bc2d6832706f43b76b8bd"
+    }
   },
   "paths": {
     "runtime_acceptance_local": "work/root12-single-window/RuntimeAcceptance.root12.json",

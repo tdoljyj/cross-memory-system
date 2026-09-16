@@ -23,7 +23,7 @@ begin
  or c.charged_seconds<>12306 or c.charged_evidence_bytes<>2738465715
  or r->>'state'<>'STORED_NO_GATE_AUTHORITY' or r->>'generation_id'<>'ctrgen_1cf79ef9a7ccc37800e8837ac8c10287'
  or w.generation_id<>'ctrgen_1cf79ef9a7ccc37800e8837ac8c10287' or w.budget_sequence_floor<>143
- or b.controller_sha256<>'37fcee123e2ef063608ef13d1564cec7923c6383ec0066f41180be51ab154d56' or b.qualification_sha256<>'4ffe769f19787abff6d9a1e2f1f2b16a430333bba0138f031de87a903381b317' or b.runtime_acceptance_sha256<>'0354be7b4e298b4e6501d66f4258d0217887821b25fb16b298ff1e7eaf5b4214'
+ or b.controller_sha256<>'37fcee123e2ef063608ef13d1564cec7923c6383ec0066f41180be51ab154d56' or b.qualification_sha256<>'4ffe769f19787abff6d9a1e2f1f2b16a430333bba0138f031de87a903381b317' or b.runtime_acceptance_sha256<>'3e9578e137a663424c5f7ae5ca3ab979f84594add06f4fc2c30b835880ba1457'
  or b.profile_sha256<>'d1c060b85f0b842a397a478105ea57a208e62eb0a5a2d4c2cd8f93f63eae88f5' or b.scope_sha256<>'115408c69dcb2fa606fb0de34ec86c5239487d0cfa9a73abb267664a2482abe5' or b.gate_sha256<>'3487d9fc6ccee5478569021961eac93bf5ef6bd4bc2428559b20a44abb9c155a'
  or (select count(*) from clued_control.events where root_id=root)<>12
  or (select count(*) from clued_control.execution_events where root_id=root)<>142

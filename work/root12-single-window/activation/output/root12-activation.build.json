@@ -47,20 +47,20 @@
   },
   "files": {
     "root12-activation.preimage-only.sql": "7afbdcb211e6852550e795d54de2a90dcec1a6f48489fb9fcf4b493faedffd14",
-    "root12-activation.full-rollback.sql": "89b599469b344d9e1fb4f981a2f9c3eb83ff1c6e9fbf0fa8be8e6c789b8fe9ea",
+    "root12-activation.full-rollback.sql": "daaf2a57e5cf44628b3cd18b5dda403a3cd9dea02d656699fe57616379dc4b7d",
     "read_root.root12.sql": "f791a58b2d40f0a2f907f466afc8e0e3642b7f1ba5de031ccf8a22f4b86d7242",
-    "reserve_execution_budget.root12-one-shot.sql": "5c7663bf60dafb9c36c0ebc451299c5501d510d1384286bad0abab4bd5e3b2cd",
-    "reserve_gate.root12-one-ga.sql": "e684d946c68369075478e02ee86631405f6ff164517b277e306af71b3027a689",
+    "reserve_execution_budget.root12-one-shot.sql": "aed62f17657f09245775a108c9818ba512681f3232341726a38bf456bfa78697",
+    "reserve_gate.root12-one-ga.sql": "1ca4245c0c1ddf6eb9ee57bf89ad1e95f3f99bb76aa22f3ceb8672d7313770cd",
     "reserve_gate.actual-negative-fixtures.json": "cd2387943b14425b890a42966c71176443871b0d8691ac3bdfd31da3c2c998f6",
-    "root12-activation.apply-once.sql": "430eee7a2ac8a2bbbf85bd728337acc0322ff35bbac29773461c0ff814332fbd",
+    "root12-activation.apply-once.sql": "c763b721ad6bfb912b45f0984ac6a684a8a0a73438c15c63952e1bfee6045a33",
     "root12-activation.readback.sql": "64e1d2ba645e3ae87b731d371e45e2666e97c9095f0426bbc6c6eed00f471192"
   },
   "pins": {
-    "root_full_sha256": "625b29b5e323121e33b93b8a2d74d1d6fc501462d2a0ef9e407c8c99b700838d",
-    "status_full_sha256": "d767ccc2db6cf1f2df73bfdc093d7a9b16fa9e9075f7fa82b6fde0bd78fe697d",
+    "root_full_sha256": "b5044828c789abb198ec462a467996a66cbac0f0e360dde8d7d3ef6c1509b4e9",
+    "status_full_sha256": "76854464403c2fa962819e376c6343ed04e8882c9c0eb3f3a76f74ac9acbf1e3",
     "controller_sha256": "37fcee123e2ef063608ef13d1564cec7923c6383ec0066f41180be51ab154d56",
     "qualification_sha256": "4ffe769f19787abff6d9a1e2f1f2b16a430333bba0138f031de87a903381b317",
-    "runtime_acceptance_sha256": "0354be7b4e298b4e6501d66f4258d0217887821b25fb16b298ff1e7eaf5b4214",
+    "runtime_acceptance_sha256": "3e9578e137a663424c5f7ae5ca3ab979f84594add06f4fc2c30b835880ba1457",
     "binding_sha256": "7bf9dfea9cddf9bcf748ca5a3ea261a8ecb88b93c7f68fd89a9d173ce09ac469",
     "budget_sha256": "a49ad448c0df13b8a20f9e366ee449694f0ddaa3211633019441932d00d56714"
   }
