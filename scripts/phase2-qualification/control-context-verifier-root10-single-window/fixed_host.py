@@ -30,7 +30,7 @@ def load(name, relative, expected):
 
 
 parent = load('accepted_fixed_parent', str(BASE / 'parent600.py'),
-              'c9b68468814eb484f8a16e0edf9f0dae7f04b4afd045e2450d2b209fb3fb3d4d')
+              '73f8999290d6a25632a5d70f500ffd6bedb60e85499c1531bd9d2ef704eab048')
 observation = load('accepted_observation', 'docker-engineering-observation/observe.py',
                    'cc3498e6dc5eed1f13fb0b84c4dd4df75f5ee76fb5d24d4167852cb92588ef5a')
 MAX_OUTPUT = 128 * 1024

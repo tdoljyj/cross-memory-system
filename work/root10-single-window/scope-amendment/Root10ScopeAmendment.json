@@ -7,7 +7,7 @@
     "object_type": "Root10RuntimeClockAmendment",
     "sha256": "e92a252a0ab62600d6153ece3e3df92a35bd5680b3d9e2c8f65b6c77ff236402",
     "activation_sequence": 119,
-    "disposition": "TERMS_CARRIED_FORWARD_WINDOW_EXTENDED_NO_LONGER_DERIVES_THE_BINDING"
+    "disposition": "TERMS_CARRIED_FORWARD_UNCHANGED_NO_LONGER_DERIVES_THE_BINDING"
   },
   "activation": {
     "operation": "SCOPE_AMENDMENT_ACTIVATED",

@@ -7,7 +7,7 @@
   "files": [
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/bridge.py",
-      "sha256": "a565fa9ee5ef8a54dce5cd2b5c1d3eba5a07210418a6f06a820010734e2f736f",
+      "sha256": "cfbf332cffed42543dbb7eab621f321b12b3b43428af9750a1304e80c92b62c1",
       "bytes": 6135
     },
     {
@@ -22,7 +22,7 @@
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/check-digest-pins.mjs",
-      "sha256": "8a3db002a5d6602bde56eab4ef56189dec459877e31ef4d2574d759aba309fcc",
+      "sha256": "952f0497b0178391fef23fa9aca9f10753ef24f368a6f7751951dbe7d1763446",
       "bytes": 50440
     },
     {
@@ -42,7 +42,7 @@
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/fixed_host.py",
-      "sha256": "68059fec260acd6a6671315cf93f65c54616e4edfa3377ee25066b01b46f4259",
+      "sha256": "d2eed50afa47c3fd95de6693b9627c1154aea7cc034b4645a432e416dd64eb43",
       "bytes": 16927
     },
     {
@@ -62,7 +62,7 @@
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/host-effect.mjs",
-      "sha256": "35a50f637142c0c79da526221a7ec9fe81fb1316971bc7248d01ba2193d29383",
+      "sha256": "c7c345deff7b03aee107e9c740abf439d0c0749415f9a0147a4a0fda1a746177",
       "bytes": 4084
     },
     {
@@ -77,7 +77,7 @@
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/parent600.py",
-      "sha256": "c9b68468814eb484f8a16e0edf9f0dae7f04b4afd045e2450d2b209fb3fb3d4d",
+      "sha256": "73f8999290d6a25632a5d70f500ffd6bedb60e85499c1531bd9d2ef704eab048",
       "bytes": 27999
     },
     {
@@ -107,7 +107,7 @@
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/root10-single-window.mjs",
-      "sha256": "cb9dfabcead06bd6a449a18cad9f47ff0db751e113fbe5801aa662c0a7c309dc",
+      "sha256": "7bbc9570a7b15e9308d6cedd8923f5485e87ae4020da8c53b4fd94b305f8e3a2",
       "bytes": 57243
     },
     {
