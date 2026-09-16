@@ -32,9 +32,14 @@ const assertFunction = (sql, name) => {
 };
 
 const ROOT_PREFIX_DIGEST_10 = 'ad34a824c8654830773d794042bb64d62ccec738ec22b005b6e43a56c4705184';
-const PREDECESSOR_ROOT_PREFIX_DIGEST = '4dd6294ff6840b5adcc7acbf617f8824dae29868a2c9685a7800127d81f2dbfb';
+// 第 11 号根事件的整行摘要（含 recorded_at / recording_transaction_id）只在生产库里成立：
+// 复制品是 2026-09-16T05:10Z 快照的还原，第 11 号是本地重放注册出来的，时间戳必然不同。
+// 把它钉死会让这条检查在复制品上永远失败、在生产库上永远通过——那样的检查验证不了任何东西。
+// 第 11 号的内容由下面逐字段的钉死值覆盖（kind / 双方代次 / 幂等键 / 绑定摘要 / history 两项）。
+// 记在这里备查：生产库上它是 4dd6294ff6840b5adcc7acbf617f8824dae29868a2c9685a7800127d81f2dbfb。
+const PREDECESSOR_ROOT_ROW_DIGEST_PRODUCTION_ONLY = '4dd6294ff6840b5adcc7acbf617f8824dae29868a2c9685a7800127d81f2dbfb';
 const [materialsPath, outArg = '--stdout'] = process.argv.slice(2);
-if (!materialsPath) die('usage: node build-root11-activation.mjs MATERIALS.json [--stdout|OUTDIR]');
+if (!materialsPath) die('usage: node build-root12-activation.mjs MATERIALS.json [--stdout|OUTDIR]');
 const m = json(materialsPath);
 const intent = json(m.intent_path);
 const live = json(m.live_preimage_path);
@@ -75,7 +80,7 @@ const EXPECT = {
   // 已入账的预算序号：attempt 用掉的（>44）并上被没收/过期的。第 10 代的 117 号现在也算一条。
   accounted_budgets: 12,
 };
-if (intent.root_id !== ROOT || intent.predecessor_generation !== ROOT11 || intent.generation_ordinal !== 11) die('intent: root/generation predecessor mismatch');
+if (intent.root_id !== ROOT || intent.predecessor_generation !== ROOT11 || intent.generation_ordinal !== 12) die('intent: root/generation predecessor mismatch');
 if (intent.old_charged_seconds !== EXPECT.old_charged_seconds || intent.old_charged_evidence_bytes !== EXPECT.old_charged_bytes || intent.new_budget_seconds !== 600 || intent.new_budget_evidence_bytes !== 134217728) die('intent: exact old/new charge mismatch');
 if (intent.cumulative_seconds_cap !== EXPECT.cap_seconds || intent.cumulative_evidence_bytes_cap !== EXPECT.cap_bytes || intent.cumulative_allocation_cap !== EXPECT.cap_allocations) die('intent: exact one-time cap mismatch');
 if (intent.max_new_budgets !== 1 || intent.max_new_ga !== 1 || intent.automatic_retry || intent.successor_ga || intent.refund || intent.reset_counters || intent.budget_reassignment) die('intent: forbidden continuation semantics');
@@ -281,9 +286,6 @@ begin
       and e->'request'->'body'->>'control_trust_root_generation'='${ROOT11}'
       and e->'request'->'body'->'history'->>'prefix_sequence'='10'
       and e->'request'->'body'->'history'->>'prefix_digest'='d4c85212ac82c087e3ccee574bbecfc92d2a74f6bfcb6e814a28127f41f618c1')
- or encode(sha256(convert_to((select jsonb_agg(e order by (e->>'sequence')::bigint)
-      from jsonb_array_elements(series_view->'root'->'events') e where (e->>'sequence')::bigint<=11)::text,'UTF8')),'hex')
-      is distinct from '${PREDECESSOR_ROOT_PREFIX_DIGEST}'
  or not exists(select 1 from jsonb_array_elements(series_view->'root'->'events') e
       where (e->>'sequence')::bigint=${EXPECT.root_events_after} and e->'request'->>'kind'='GENERATION_REGISTERED'
       and e->'request'->>'root_set_id'=root and e->'request'->>'expected_sequence'='${EXPECT.root_sequence}'
@@ -440,7 +442,7 @@ begin
       and a.receipt_id is null and a.receipt_raw is null and a.receipt_sha256 is null
       and a.ga_sha256='${EXPECT.terminated.ga_sha256}' and a.ga_sha256=encode(sha256(convert_to(a.ga_raw,'UTF8')),'hex')
       and a.ga=a.ga_raw::jsonb and a.ga->>'gate_authorization_id'=a.ga_id
-      and a.ga->>'control_trust_root_generation'='${ROOT11}'
+      and a.ga->>'control_trust_root_generation'='${EXPECT.gen10}'
       and a.decision->>'decision_sha256'='${EXPECT.terminated.decision_sha256}'
       and a.decision->>'evidence_index_sha256'='${EXPECT.terminated.evidence_index_sha256}'
       and (a.ga->>'deadline')::timestamptz<='${EXPECT.predecessor_expires_at}'::timestamptz
@@ -492,7 +494,7 @@ begin
  if not found or budget.recording_transaction_id=pg_current_xact_id() or budget.idempotency_key is distinct from '${q(intent.budget_idempotency_key)}'
  or budget.request is distinct from jsonb_build_object('operation','BUDGET_RESERVED','body',jsonb_build_object('raw','${q(budgetRaw)}','sha256','${budgetSha}'))
  or g->'budget_reservation_ref' is distinct from jsonb_build_object('uri','urn:clued:control-evidence:uscrdifznmlvczcekqpw:execution-events:${EXPECT.budget_sequence}','sha256','${budgetSha}')
- then raise exception 'root11_exact_prior_committed_budget_required'; end if;
+ then raise exception 'root12_exact_prior_committed_budget_required'; end if;
  allocation:=(budget.request->'body'->>'raw')::jsonb;
  if allocation is distinct from '${q(budgetRaw)}'::jsonb or allocation->>'root_generation' is distinct from gen
  or allocation->>'profile_digest' is distinct from g->>'profile_digest' or allocation->>'controller_digest' is distinct from g->>'controller_digest'
@@ -511,9 +513,9 @@ end $function$
 assertFunction(gateFn,'reserve_gate');
 
 // 现网的 read_root 已被第 10 代活化改写过：元数据分支是两代枚举，state 的第一段是第 10 代。
-const predecessorMetaCase = `case when x.generation_id in ('${ROOT9}','${ROOT11}')\n   then x.successor_binding_sha256 else`;
+const predecessorMetaCase = `case when x.generation_id in ('${ROOT9}','${EXPECT.gen10}','${ROOT11}')\n   then x.successor_binding_sha256 else`;
 if ((currentReadRoot.split(predecessorMetaCase).length - 1) !== 1) die('read_root metadata anchor count != 1');
-let nextReadRoot = currentReadRoot.replace(predecessorMetaCase, () => `case when x.generation_id in ('${ROOT9}','${ROOT11}','${intent.generation_id}')\n   then x.successor_binding_sha256 else`);
+let nextReadRoot = currentReadRoot.replace(predecessorMetaCase, () => `case when x.generation_id in ('${ROOT9}','${EXPECT.gen10}','${ROOT11}','${intent.generation_id}')\n   then x.successor_binding_sha256 else`);
 const stateAnchor = ` 'state',case\n   when x.generation_id='${ROOT11}'`;
 if ((nextReadRoot.split(stateAnchor).length - 1) !== 1) die('read_root state anchor count != 1');
 const generationBranch = ` 'state',case\n   when x.generation_id='${intent.generation_id}'\n        and x.sequence=${EXPECT.root_events_after}\n        and x.successor_binding_id='${intent.binding_id}'\n        and x.successor_registration_sequence=${EXPECT.registration_sequence}\n        and x.successor_not_before='${intent.not_before}'::timestamptz\n        and x.successor_expires_at='${intent.expires_at}'::timestamptz\n        and x.generation_body->>'control_trust_root_generation'='${intent.generation_id}'\n        and (x.generation_body->>'not_before')::timestamptz='${intent.not_before}'::timestamptz\n        and (x.generation_body->>'expires_at')::timestamptz='${intent.expires_at}'::timestamptz then\n     case when statement_timestamp()<'${intent.not_before}'::timestamptz or statement_timestamp()>='${intent.expires_at}'::timestamptz\n          then 'EXPIRED_OR_NOT_YET_VALID' when coalesce(x.revoked,false) then 'REVOKED' else 'STORED_NO_GATE_AUTHORITY' end\n   when x.generation_id='${intent.generation_id}' then 'EXPIRED_OR_NOT_YET_VALID'\n   when x.generation_id='${ROOT11}'`;
@@ -571,7 +573,7 @@ end $function$
 assertFunction(budgetFn,'reserve_execution_budget');
 
 const req = {
-  schema_version:'root11-activation-request/1', root_registration:{kind:'GENERATION_REGISTERED',root_set_id:ROOT,generation_id:intent.generation_id,predecessor_generation_id:ROOT11,expected_sequence:EXPECT.root_sequence,idempotency_key:m.activation_idempotency_key+'_root',metadata_binding_sha256:m.predecessor_binding_sha256,body:ro},
+  schema_version:'root12-activation-request/1', root_registration:{kind:'GENERATION_REGISTERED',root_set_id:ROOT,generation_id:intent.generation_id,predecessor_generation_id:ROOT11,expected_sequence:EXPECT.root_sequence,idempotency_key:m.activation_idempotency_key+'_root',metadata_binding_sha256:m.predecessor_binding_sha256,body:ro},
   binding_raw:bindingRaw,binding_sha256:bindingSha,status_raw:status.raw,status_sha256:status.sha256,
   prepared_evidence:po,qualified_evidence:eo,runtime_acceptance_raw:runtime.raw,runtime_acceptance_sha256:runtime.sha256,
   budget_raw:budgetRaw,budget_sha256:budgetSha,
@@ -605,7 +607,7 @@ begin
  or (select count(*) from clued_control.events where root_id=h.root_id)<>${EXPECT.root_sequence} or (select count(*) from clued_control.execution_events where root_id=h.root_id)<>${EXPECT.execution_sequence}
  or (select count(*) from clued_control.gate_attempts where root_id=h.root_id)<>${EXPECT.attempts}
  or not exists(select 1 from clued_control.gate_attempts where root_id=h.root_id and ga_id='${q(m.ga6_id)}' and ga_sha256='${m.ga6_sha256}' and phase='BLOCKED' and budget_sequence=102 and container_id is null and receipt_sha256='${m.ga6_blocked_receipt_sha256}')
- then raise exception 'ROOT11_ACTIVATION_STALE_PREIMAGE'; end if;
+ then raise exception 'ROOT12_ACTIVATION_STALE_PREIMAGE'; end if;
  select pg_get_constraintdef(oid,false) into d from pg_constraint where conrelid='clued_control.successor_binding'::regclass and conname='successor_binding_budget_sequence_floor_check'; if d is distinct from '${q(oldFloor)}' then raise exception 'successor floor constraint changed'; end if;
  select pg_get_constraintdef(oid,false) into d from pg_constraint where conrelid='clued_control.successor_binding'::regclass and conname='successor_binding_predecessor_generation_id_check'; if d is distinct from '${q(oldPred)}' then raise exception 'successor predecessor constraint changed'; end if;
  select pg_get_constraintdef(oid,false) into d from pg_constraint where conrelid='clued_control.execution_current'::regclass and conname='${q(preBudgetDef.name)}'; if d is distinct from '${q(preBudgetDef.def)}' then raise exception 'seconds cap constraint changed'; end if;
@@ -615,13 +617,15 @@ end $pre$;
 
 alter table clued_control.successor_binding drop constraint successor_binding_budget_sequence_floor_check,
  add constraint successor_binding_budget_sequence_floor_check check (budget_sequence_floor=98
+   or (generation_id='${EXPECT.gen10}' and budget_sequence_floor=${EXPECT.gen10_budget_floor})
    or (generation_id='${ROOT11}' and budget_sequence_floor=${EXPECT.predecessor_budget_floor})
    or (generation_id='${intent.generation_id}' and budget_sequence_floor=${EXPECT.budget_sequence}));
 alter table clued_control.successor_binding drop constraint successor_binding_predecessor_generation_id_check,
  add constraint successor_binding_predecessor_generation_id_check check (
  predecessor_generation_id='ctrgen_26769cc7109ced40bc4016b2af678198' or
  (generation_id='${ROOT9}' and predecessor_generation_id='ctrgen_b060bc520329398936e461af6a477f94') or
- (generation_id='${ROOT11}' and predecessor_generation_id='${ROOT9}') or
+ (generation_id='${EXPECT.gen10}' and predecessor_generation_id='${ROOT9}') or
+ (generation_id='${ROOT11}' and predecessor_generation_id='${EXPECT.gen10}') or
  (generation_id='${intent.generation_id}' and predecessor_generation_id='${ROOT11}'));
 alter table clued_control.execution_current drop constraint "${q(preBudgetDef.name)}",
  add constraint "${q(preBudgetDef.name)}" ${newBudgetDef};
@@ -670,11 +674,11 @@ begin select * into h from clued_control.current_head where root_id='${ROOT}' fo
  or (select count(*) from clued_control.events where root_id=h.root_id)<>${EXPECT.root_events_after} or (select count(*) from clued_control.execution_events where root_id=h.root_id)<>${EXPECT.budget_sequence}
  or (select count(*) from clued_control.gate_attempts where root_id=h.root_id)<>${EXPECT.attempts} or exists(select 1 from clued_control.gate_attempts where root_id=h.root_id and phase not in ('FAIL','BLOCKED','STALE'))
  or (select count(*) from clued_control.execution_events where root_id=h.root_id and sequence>44 and request->>'operation'='BUDGET_RESERVED')<>${EXPECT.budgets_after_44 + 1}
- or (select count(*) from clued_control.successor_binding where root_id=h.root_id)<>4
+ or (select count(*) from clued_control.successor_binding where root_id=h.root_id)<>5
  or not exists(select 1 from pg_proc p where p.oid=to_regprocedure('clued_control.read_root(text)') and p.proowner='postgres'::regrole and p.prosecdef and p.provolatile='s' and p.proacl::text='{postgres=X/postgres,service_role=X/postgres}' and p.proconfig @> array['search_path=""','TimeZone=UTC']::text[] and position('${intent.generation_id}' in pg_get_functiondef(p.oid))>0)
  or not exists(select 1 from pg_proc p where p.oid=to_regprocedure('clued_control.reserve_execution_budget(text,text)') and p.proowner='postgres'::regrole and p.prosecdef and p.provolatile='v' and p.proacl::text='{postgres=X/postgres,service_role=X/postgres}' and p.proconfig @> array['search_path=""','TimeZone=UTC']::text[] and position('${budgetSha}' in pg_get_functiondef(p.oid))>0)
  or not exists(select 1 from pg_proc p where p.oid=to_regprocedure('clued_control.reserve_gate(text,text)') and p.proowner='postgres'::regrole and p.prosecdef and p.provolatile='v' and p.proacl::text='{postgres=X/postgres,service_role=X/postgres}' and p.proconfig @> array['search_path=""','TimeZone=UTC']::text[] and position('${intent.generation_id}' in pg_get_functiondef(p.oid))>0 and position('${budgetSha}' in pg_get_functiondef(p.oid))>0)
- then raise exception 'ROOT11_ACTIVATION_POSTIMAGE_FAILED'; end if;
+ then raise exception 'ROOT12_ACTIVATION_POSTIMAGE_FAILED'; end if;
  ${unchangedFunctionPostflight}
 end $post$;
 select jsonb_build_object(
@@ -702,15 +706,15 @@ select * into h from clued_control.current_head where root_id='${ROOT}' for upda
 if h.sequence<>${EXPECT.root_sequence} or h.generation_id<>'${ROOT11}' or c.sequence<>${EXPECT.execution_sequence} or c.active_ga_id is not null or c.pending_budget_sequence is not null or c.charged_seconds<>${EXPECT.old_charged_seconds} or c.charged_evidence_bytes<>${EXPECT.old_charged_bytes}
 or (select count(*) from clued_control.execution_events where root_id=h.root_id)<>${EXPECT.execution_sequence} or (select count(*) from clued_control.gate_attempts where root_id=h.root_id)<>${EXPECT.attempts}
 or not exists(select 1 from clued_control.gate_attempts where root_id=h.root_id and ga_id='${q(m.ga6_id)}' and phase='BLOCKED' and receipt_sha256='${m.ga6_blocked_receipt_sha256}')
-then raise exception 'ROOT11_PREFLIGHT_NOT_READY'; end if; end $p$; rollback;`;
+then raise exception 'ROOT12_PREFLIGHT_NOT_READY'; end if; end $p$; rollback;`;
 const readback = `select clued_control.read_root('${ROOT}') root, clued_control.read_execution() execution;`;
-const negatives = {schema_version:'root11-reserve-gate-negative-fixtures/1',run_after_activation_before_final_ga:true,authority_effect:'NONE',fixtures:[
+const negatives = {schema_version:'root12-reserve-gate-negative-fixtures/1',run_after_activation_before_final_ga:true,authority_effect:'NONE',fixtures:[
  {id:'N01_CHANGED_BYTES_SAME_IDEMPOTENCY',expected_error:'idempotency_conflict',mutation:'same idempotency key with different GA bytes'},
  {id:'N02_SECOND_ROOT10_GA',expected_error:'root10_exact_single_ga_preimage_required',mutation:'new GA id/idempotency after first reservation'},
  {id:'N03_NONEMPTY_REPAIR_REFS',expected_error:'root10_exact_accepted_scope_or_zero_repairs_required',mutation:'one repair_refs entry'},
  {id:'N04_FIXED_SCHEMA_ISSUER_RISK_PROFILE_VECTOR_SOURCE_DRIFT',expected_error_one_of:['root10_exact_accepted_scope_or_zero_repairs_required','root10_complete_fixed_and_late_bound_ga_contract_required'],mutation:'change each fixed field one at a time'},
  {id:'N05_STATUS_NOT_GENERATION29',expected_error:'exact_stored_status29_required',mutation:'status ref points at a different stored generation'},
- {id:'N06_BUDGET_NOT_AT_EXPECTED_SEQUENCE_OR_RAW_NO_LF',expected_error:'root11_exact_prior_committed_budget_required',mutation:'budget reference/hash/raw bytes differ'},
+ {id:'N06_BUDGET_NOT_AT_EXPECTED_SEQUENCE_OR_RAW_NO_LF',expected_error:'root12_exact_prior_committed_budget_required',mutation:'budget reference/hash/raw bytes differ'},
  {id:'N07_NOT_EXACT_600_SECONDS',expected_error:'root10_exact_600_second_ga_window_required',mutation:'599 or 601 second interval'},
  {id:'N08_HISTORICAL_ATTEMPT_OR_RECEIPT_DRIFT',expected_error_one_of:['series_original_six_attempts_changed','root10_exact_single_ga_preimage_required'],mutation:'attempt id/raw/receipt/result/budget binding differs'},
  {id:'N09_CONTAINER_OR_ACTIVE_PHASE_PREEXISTS',expected_error:'root10_exact_single_ga_preimage_required',mutation:'active Root10 GA or nonterminal historical phase exists'},
@@ -721,11 +725,11 @@ const negatives = {schema_version:'root11-reserve-gate-negative-fixtures/1',run_
  {id:'N14_EXACT_51_FIELD_SCHEMA_SHAPE_MISSING_OR_EXTRA',expected_error:'root10_complete_fixed_and_late_bound_ga_contract_required',also_expected_rejection_layer:'trusted host schema/runtime-acceptance verifier before reserve_gate',mutation:'remove any required field or add any field outside the original 51-field schema'},
  {id:'N15_CONTAINER_PHASE_MACHINE_DRIFT',expected_rejection_layer:'unchanged pinned execution_transition',mutation:'CREATED/RUNNING/STOPPED with missing or mismatched container_id, or dispatch from a nonmatching phase'}
 ]};
-const manifest = {schema_version:'root11-activation-build/1',authority_effect:'NONE',execute:false,sequences:EXPECT,files:{},pins:{root_full_sha256:root.sha256,status_full_sha256:status.sha256,controller_sha256:m.controller_sha256,qualification_sha256:qual.sha256,runtime_acceptance_sha256:runtime.sha256,binding_sha256:bindingSha,budget_sha256:budgetSha}};
+const manifest = {schema_version:'root12-activation-build/1',authority_effect:'NONE',execute:false,sequences:EXPECT,files:{},pins:{root_full_sha256:root.sha256,status_full_sha256:status.sha256,controller_sha256:m.controller_sha256,qualification_sha256:qual.sha256,runtime_acceptance_sha256:runtime.sha256,binding_sha256:bindingSha,budget_sha256:budgetSha}};
 const files = [
- ['root11-activation.preimage-only.sql',preflight],['root11-activation.full-rollback.sql',fullRollback],['read_root.root11.sql',nextReadRoot.trimEnd()+';\n'],['reserve_execution_budget.root11-one-shot.sql',budgetFn.trimEnd()+';\n'],['reserve_gate.root11-one-ga.sql',gateFn.trimEnd()+';\n'],['reserve_gate.actual-negative-fixtures.json',JSON.stringify(negatives,null,2)+'\n'],['root11-activation.apply-once.sql',sql],['root11-activation.readback.sql',readback]
+ ['root12-activation.preimage-only.sql',preflight],['root12-activation.full-rollback.sql',fullRollback],['read_root.root12.sql',nextReadRoot.trimEnd()+';\n'],['reserve_execution_budget.root12-one-shot.sql',budgetFn.trimEnd()+';\n'],['reserve_gate.root12-one-ga.sql',gateFn.trimEnd()+';\n'],['reserve_gate.actual-negative-fixtures.json',JSON.stringify(negatives,null,2)+'\n'],['root12-activation.apply-once.sql',sql],['root12-activation.readback.sql',readback]
 ].map(([name,content])=>({name,content,sha256:sha(content)}));
 for (const f of files) manifest.files[f.name]=f.sha256;
-files.push({name:'root11-activation.build.json',content:JSON.stringify(manifest,null,2)+'\n',sha256:''}); files.at(-1).sha256=sha(files.at(-1).content);
+files.push({name:'root12-activation.build.json',content:JSON.stringify(manifest,null,2)+'\n',sha256:''}); files.at(-1).sha256=sha(files.at(-1).content);
 const result={ok:true,write_performed:outArg!=='--stdout',files};
 if(outArg==='--stdout') process.stdout.write(JSON.stringify(result)); else { const out=path.resolve(outArg); fs.mkdirSync(out,{recursive:true}); for(const f of files) fs.writeFileSync(path.join(out,f.name),f.content,'utf8'); process.stdout.write(JSON.stringify({ok:true,outdir:out,files:files.map(({name,sha256})=>({name,sha256}))},null,2)+'\n'); }

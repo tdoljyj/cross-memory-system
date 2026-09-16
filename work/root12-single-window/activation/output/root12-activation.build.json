@@ -1,0 +1,67 @@
+{
+  "schema_version": "root12-activation-build/1",
+  "authority_effect": "NONE",
+  "execute": false,
+  "sequences": {
+    "root_sequence": 11,
+    "execution_sequence": 138,
+    "registration_sequence": 139,
+    "prepared_sequence": 140,
+    "qualified_sequence": 141,
+    "repoint_sequence": 142,
+    "budget_sequence": 143,
+    "attempts": 18,
+    "budgets_after_44": 12,
+    "forwards_after_44": 17,
+    "root_events_after": 12,
+    "budgets_total_before": 18,
+    "old_charged_seconds": 12306,
+    "old_charged_bytes": 2738465715,
+    "cap_seconds": 12906,
+    "cap_bytes": 2872683443,
+    "cap_allocations": 13,
+    "predecessor_budget_floor": 136,
+    "predecessor_expires_at": "2026-09-23T04:00:00Z",
+    "gen10_budget_floor": 117,
+    "gen10_expires_at": "2026-09-16T03:00:00Z",
+    "gen10": "ctrgen_48100437d24e448ba01c542ebe1290da",
+    "forfeit": {
+      "budget_sequence": 136,
+      "event_sequence": 138,
+      "idempotency_key": "root11_budget_forfeited_unconsumed_20260916",
+      "operation": "BUDGET_OWNER_FORFEITED_UNCONSUMED"
+    },
+    "repoint_v2_sequence": 137,
+    "terminated": {
+      "ga_id": "ga_32daa5daf52c4deb8e893c25b08eff38",
+      "ga_sha256": "68afb1e6dc1367729cd6864b9ba9b5d846ab123ff5539d7a646f7fa1df988f78",
+      "budget_sequence": 117,
+      "phase": "STALE",
+      "decision_sha256": "470a21102a6ce6dae72c52a3dfc1e8f5d471c1fb64b5e9ab822f33dcf78e358c",
+      "evidence_index_sha256": "3fae54cdcfc1f271db081eb459bdce1013dcae86192425e2ca23e40f03a98e71",
+      "event_sequence": 131,
+      "event_idempotency_key": "root10_expired_attempt_terminated_20260916",
+      "event_operation": "EXPIRED_ATTEMPT_TERMINATED"
+    },
+    "accounted_budgets": 12
+  },
+  "files": {
+    "root12-activation.preimage-only.sql": "7afbdcb211e6852550e795d54de2a90dcec1a6f48489fb9fcf4b493faedffd14",
+    "root12-activation.full-rollback.sql": "89b599469b344d9e1fb4f981a2f9c3eb83ff1c6e9fbf0fa8be8e6c789b8fe9ea",
+    "read_root.root12.sql": "f791a58b2d40f0a2f907f466afc8e0e3642b7f1ba5de031ccf8a22f4b86d7242",
+    "reserve_execution_budget.root12-one-shot.sql": "5c7663bf60dafb9c36c0ebc451299c5501d510d1384286bad0abab4bd5e3b2cd",
+    "reserve_gate.root12-one-ga.sql": "e684d946c68369075478e02ee86631405f6ff164517b277e306af71b3027a689",
+    "reserve_gate.actual-negative-fixtures.json": "cd2387943b14425b890a42966c71176443871b0d8691ac3bdfd31da3c2c998f6",
+    "root12-activation.apply-once.sql": "430eee7a2ac8a2bbbf85bd728337acc0322ff35bbac29773461c0ff814332fbd",
+    "root12-activation.readback.sql": "64e1d2ba645e3ae87b731d371e45e2666e97c9095f0426bbc6c6eed00f471192"
+  },
+  "pins": {
+    "root_full_sha256": "625b29b5e323121e33b93b8a2d74d1d6fc501462d2a0ef9e407c8c99b700838d",
+    "status_full_sha256": "d767ccc2db6cf1f2df73bfdc093d7a9b16fa9e9075f7fa82b6fde0bd78fe697d",
+    "controller_sha256": "37fcee123e2ef063608ef13d1564cec7923c6383ec0066f41180be51ab154d56",
+    "qualification_sha256": "4ffe769f19787abff6d9a1e2f1f2b16a430333bba0138f031de87a903381b317",
+    "runtime_acceptance_sha256": "0354be7b4e298b4e6501d66f4258d0217887821b25fb16b298ff1e7eaf5b4214",
+    "binding_sha256": "7bf9dfea9cddf9bcf748ca5a3ea261a8ecb88b93c7f68fd89a9d173ce09ac469",
+    "budget_sha256": "a49ad448c0df13b8a20f9e366ee449694f0ddaa3211633019441932d00d56714"
+  }
+}

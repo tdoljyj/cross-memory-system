@@ -1,0 +1,6 @@
+begin; set local statement_timeout='60s'; do $p$ declare h clued_control.current_head; c clued_control.execution_current; begin
+select * into h from clued_control.current_head where root_id='ctr_414bd3c724264a83894b0c55cf2ab878' for update; select * into c from clued_control.execution_current where root_id='ctr_414bd3c724264a83894b0c55cf2ab878' for update;
+if h.sequence<>11 or h.generation_id<>'ctrgen_c725e90a595c00a041754ede3b00f408' or c.sequence<>138 or c.active_ga_id is not null or c.pending_budget_sequence is not null or c.charged_seconds<>12306 or c.charged_evidence_bytes<>2738465715
+or (select count(*) from clued_control.execution_events where root_id=h.root_id)<>138 or (select count(*) from clued_control.gate_attempts where root_id=h.root_id)<>18
+or not exists(select 1 from clued_control.gate_attempts where root_id=h.root_id and ga_id='ga_6addc4f9764b69ba8c10d258135ae0d4' and phase='BLOCKED' and receipt_sha256='3d6fc55e6d2065fb40974161f3c0abb556817989c560e3072a080bea033ccfdd')
+then raise exception 'ROOT12_PREFLIGHT_NOT_READY'; end if; end $p$; rollback;
