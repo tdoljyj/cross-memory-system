@@ -131,5 +131,8 @@ Superseded and archived facts remain in Canonical history. Do not delete them to
 ## External document placement
 
 - Git 只承载与代码、协议/合同、ADR、Schema/Migration、测试/Fixture、Runbook、Skill、当前执行控制和可复现机器证据直接绑定的工程资料。
-- 产品研究、战略、商业、品牌、汇报、会议/对话整理、历史评审/验收/Closeout 长报告统一放 Google Drive，不再提交到主仓库。
+- 产品研究、战略、商业、品牌、视觉、汇报、会议/对话整理、历史评审/验收/Closeout 长报告及非构建用 Office/PDF/ZIP 统一放 Google Drive，不再提交到主仓库。
+- 当前计划与确定基线目录：<https://drive.google.com/drive/folders/1Owx0Ow4RQY0CbYB5aDQ8RMXLNTA6EyT0>。
+- 当前总索引：<https://drive.google.com/file/d/13TE41MmUMnMZ19imQlR5UtrIVEEaGDps/view?usp=drivesdk>。必须保留索引中的 Frozen / Fixed / Candidate / Historical / Open 边界；Drive 副本不会自行产生 Authority。
 - 历史迁移位置与校验信息见 `docs/EXTERNAL_DOCUMENT_ARCHIVE.md`。
+- 禁止新增会把上述叙事资料或冻结副本重新物化到 `docs/` 的归档工作流；仓库只保留短指针、机器合同和可执行证据。
