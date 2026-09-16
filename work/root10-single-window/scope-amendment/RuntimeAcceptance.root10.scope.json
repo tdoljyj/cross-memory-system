@@ -699,7 +699,7 @@
           "sha256": "c136cc6f0f16c4d0d89087e1da9e372ec35de80a0aa6085a6ff697bdb8f1a173"
         },
         "publication": {
-          "commitSha": "__OWNER_MERGE_COMMIT__",
+          "commitSha": "4468aefcf1845080019db1aa2730b1bfe1dbb591",
           "artifactPath": "work/root10-single-window/scope-amendment/Root10ScopeExecutorApplicability.json"
         }
       }
@@ -756,8 +756,8 @@
       "runtime_clock_amendment_sha256": "e92a252a0ab62600d6153ece3e3df92a35bd5680b3d9e2c8f65b6c77ff236402",
       "runtime_seconds": 600,
       "source_ref": {
-        "commit": "__OWNER_MERGE_COMMIT__",
-        "tree": "__SOURCE_TREE__",
+        "commit": "4468aefcf1845080019db1aa2730b1bfe1dbb591",
+        "tree": "a764f36bf634b47edae3d631e141a2d1d5e0fdbc",
         "blobs": [
           {
             "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/e7cd8c242271a04bb2b0d437ed2ef7d50c770972",
