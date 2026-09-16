@@ -4,13 +4,13 @@
  "window": "2026-09-16T04:00:00Z -> 2026-09-23T04:00:00Z",
  "controller_sha256": "fc6ca1759ef68a958564bd2d9fc16aab23297c2db30ac7581b4ec6227977c91f",
  "qualification_sha256": "ef6a6db15dce4155e020198dcfc81e57b691624aa7dd9072d2349903da7e1f46",
- "runtime_acceptance_sha256": "1ca99743e2971de9cf60c71162799d28705ec6803f7c3fa2825a8be46a8935b0",
+ "runtime_acceptance_sha256": "a013369e16da967cca9e25d5c8c4ab52d922abe45c065b9290d0426be8094ce4",
  "acceptance_dropped_descriptors": [
   "scope_amendment",
   "runtime_clock",
   "temporal_continuation"
  ],
- "acceptance_bytes": 33791,
+ "acceptance_bytes": 33803,
  "qualification_bytes": 3268,
  "root_payload_bytes": 3493,
  "root_payload_unsigned": true,
@@ -18,5 +18,7 @@
  "controller_source_commit": "55fd9732cbec0994ceb699a3e3f8985e79d7647c",
  "baseline_execution_sequence": 131,
  "postbaseline_budget_sequence": 136,
- "owner_merge_commit_pending": true
+ "owner_merge_commit_pending": true,
+ "status_manifest_id": "sm_root11_single_window_20260916_v2",
+ "status_generation": 31
 }
