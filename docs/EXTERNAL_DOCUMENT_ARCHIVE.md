@@ -21,7 +21,8 @@ Clued 的主代码仓库只保留与工程运行、构建、测试、协议、Sc
 - Google Drive 目录：<https://drive.google.com/drive/folders/1Owx0Ow4RQY0CbYB5aDQ8RMXLNTA6EyT0>
 - 当前总索引：<https://drive.google.com/file/d/13TE41MmUMnMZ19imQlR5UtrIVEEaGDps/view?usp=drivesdk>
 - 已按产品与体验、品牌与视觉、商业与增长、基础研究、治理与跨 Host、阶段计划与汇报分类。
-- 本批保存 24 个现有原始资料文件及 1 个总索引；上传后逐文件回读核验目录归属与字节大小。
+- 当前集合保存 44 个原始资料/报告/证据文件及 1 个总索引；两轮共 45 个文件均已回读核验目录归属与字节大小。
+- 第二轮补入 MPS v0.1.2 精确包及独立合同、MPS-02A/02B 最新非生产实施资料和 GIKAO R6 检查点。MPS v0.1.2 完整 ZIP SHA-256 为 `d7c30f2060b0edd7ad51839f9edef0d1aa4c9b56fa6f1d66d33e56b6aa816a6e`；MPS-02B 并发/故障注入与 GIKAO R6 M2 仍未完成，不得写成整体 PASS。
 - 视觉方向以 `02.4B-R1 / Periwinkle B — Structure Growth / Growing Archive` 的固定语义投影为当前确定记录；Logo 与未绑定到该决定的图片仍不得标记为最终视觉资产。
 - 文件存在于 Drive 不自行产生当前性或 Authority；以总索引状态、Canonical Decision/Event/Receipt 和 Owner 裁决为准。
 
