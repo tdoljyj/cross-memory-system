@@ -33,8 +33,8 @@
   "carries_forward": {
     "object_type": "Root10RuntimeClockAmendment",
     "activation_sequence": 119,
-    "disposition": "RUNTIME_BOUND_AND_RESET_CAP_UNCHANGED_ADMINISTRATIVE_WINDOW_EXTENDED",
-    "note": "This amendment changes the applicable test set and extends the administrative window. Every term of event 119 that bounds execution itself -- preparation is not runtime, the 600 seconds start at the container observed start, stop is never refused, an overrun run cannot pass, predispatch failure is repairable in place under a cap of three -- continues to apply verbatim."
+    "disposition": "ALL_RUNTIME_CLOCK_TERMS_REMAIN_IN_FORCE_UNCHANGED",
+    "note": "This amendment changes the applicable test set and nothing else. Every term of event 119 -- preparation is not runtime, the 600 seconds start at the container observed start, stop is never refused, an overrun run cannot pass, predispatch failure is repairable in place under a cap of three, and both administrative expiries at 2026-09-16T03:00:00Z -- continues to apply verbatim. An earlier revision moved the two expiries to 2026-10-15 and was withdrawn: the signed trust root generation ends 2026-09-16T03:00:00Z and validateRootShape requires the controller contract window to equal it exactly, so a later window is refused one layer above any amendment."
   },
   "why": {
     "observed": "The gate suite pins 19 formal tests (PQUAL-01..17, 19, 20). Of those, exactly 5 -- PQUAL-11, 13, 15, 16, 17 -- have real recorded component observations (2026-09-08, kind ACTUAL_SYNTHETIC_COMPONENT_OBSERVATION_NOT_OUTER_GA_EXECUTION). The remaining 14 have no observation record of any kind in the repository or the control store.",
