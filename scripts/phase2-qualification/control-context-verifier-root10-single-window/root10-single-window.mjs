@@ -212,7 +212,7 @@ export const root10ScopeIdentity=Object.freeze({
  ga_id:'ga_32daa5daf52c4deb8e893c25b08eff38',
  ga_sha256:'68afb1e6dc1367729cd6864b9ba9b5d846ab123ff5539d7a646f7fa1df988f78',
  control_trust_root_generation:'ctrgen_48100437d24e448ba01c542ebe1290da',
- amendment_sha256:'a3d8961c4a08f7e716d9411d7b8b3f76c10162f4a356a2811c856a4ea780c46c',
+ amendment_sha256:'a9f210ac850498813f5a5bceda60a23a2fcca67122a6cd310dc66fc9eba88aad',
  original_controller_sha256:'d01bd55e02614c0d2b6f51f80fe5b56816aecc2f29e753344a4bcac56aaaf559',
  predecessor_controller_sha256:'5c72dd8923436f6e9ab5b51160cd8751944158d3919d3ef09f6f3ec5006e40b6',
  predecessor_qualification_sha256:'6a7145fa0c09a00a917b40c42f5dbaa38f4c6028e75ab747dd234351b993b849',

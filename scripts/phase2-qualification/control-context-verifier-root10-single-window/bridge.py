@@ -13,7 +13,7 @@ import sys
 
 BASE = Path(__file__).resolve().parent
 HOST = BASE / 'fixed_host.py'
-HOST_SHA = '68059fec260acd6a6671315cf93f65c54616e4edfa3377ee25066b01b46f4259'
+HOST_SHA = 'd2eed50afa47c3fd95de6693b9627c1154aea7cc034b4645a432e416dd64eb43'
 MAX_INPUT = 131072
 BOUNDARY = {'qualified': False, 'capacity_released': False, 'authority_effect': 'NONE',
             'remote_result_persisted': False, 'automatic_retry': False}

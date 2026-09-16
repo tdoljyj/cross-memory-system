@@ -65,7 +65,7 @@ const DECLARED_NON_FILE = {
     'Temporal continuation controller qualification digest: the predecessor binding column the runtime-clock old_binding must still carry exactly.',
   '17a5d20b7e6236cb276c7321955f6d0a5e5f83d9a35e83a570fcef251d59af42':
     'Temporal continuation runtime acceptance digest: the predecessor binding column the runtime-clock old_binding must still carry exactly.',
-  'a3d8961c4a08f7e716d9411d7b8b3f76c10162f4a356a2811c856a4ea780c46c':
+  'a9f210ac850498813f5a5bceda60a23a2fcca67122a6cd310dc66fc9eba88aad':
     'Exact separate scope amendment bytes (work/root10-single-window/scope-amendment/Root10ScopeAmendment.json); Owner publication and immutable event120 are verified before any effect.',
   '5c72dd8923436f6e9ab5b51160cd8751944158d3919d3ef09f6f3ec5006e40b6':
     'Runtime-clock controller manifest digest: the predecessor binding the scope amendment repoints away from, preserved in the immutable event119/120 bodies. It is the digest of the manifest THIS controller replaces at the same path, so once the scope tree lands it is deliberately the digest of no file here.',
