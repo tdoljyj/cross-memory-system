@@ -1,24 +1,24 @@
 {
   "kind": "ROOT_SIGNING_PAYLOAD_SIGNATURE_BINDING",
   "status": "VERIFIED",
-  "observed_at": "2026-09-16T07:46:28Z",
+  "observed_at": "2026-09-16T07:24:00Z",
   "repository": {
     "full_name": "tdoljyj/cross-memory-system",
     "private": true
   },
   "pr": {
-    "number": 221,
-    "url": "https://github.com/tdoljyj/cross-memory-system/pull/221",
+    "number": 220,
+    "url": "https://github.com/tdoljyj/cross-memory-system/pull/220",
     "state": "MERGED",
     "merged_by": "tdoljyj",
-    "merge_commit_sha": "68d6fcc81c475d04c8211bf3943f7c328484c893"
+    "merge_commit_sha": "af0d567d8d7d806151b5b67584c84364250280dc"
   },
   "merge": {
-    "sha": "68d6fcc81c475d04c8211bf3943f7c328484c893",
-    "tree": "2254c18481aaccca87233bd68cae6e322c855951",
+    "sha": "af0d567d8d7d806151b5b67584c84364250280dc",
+    "tree": "865a169d14aa9013ab27e08cb244d49aea6ec2b3",
     "parents": [
-      "3b8a0fae18c6a8d7b55ff2510ba7d5af2e16a500",
-      "f262bbd0eb8c95e2ea5237cfd0653aa5aa83bb02"
+      "4494065fe3b69036c0c9ef1e9cb1c2584838b026",
+      "7af122b5cdcc59dce19a6e7b6c697b7ce5e673bd"
     ],
     "committer_login": "web-flow",
     "verification": {
@@ -37,6 +37,7 @@
     "artifact_path": "work/root12-single-window/Root12IndependentAcceptance.json",
     "sha256": "fdd1c0c5a2d33026cdf329755899b5b56556c14273838f4ec0e4aa7fc61d4837"
   },
+  "binding_policy": "BOUND_TO_FIRST_PUBLICATION_AND_NEVER_REBOUND",
   "authority_effect": "NONE",
   "current_registration_claimed": false
 }
