@@ -1,0 +1,15 @@
+{
+ "generation_id": "ctrgen_c725e90a595c00a041754ede3b00f408",
+ "successor_binding_id": "sb_873f7cf2f79fb3cb168138441e6fddbc",
+ "window": "2026-09-16T04:00:00Z -> 2026-09-23T04:00:00Z",
+ "controller_sha256": "89710145b27872314cd666b1ff5491d72b4193730d1b6ff3038a9baefb4664c0",
+ "qualification_sha256": "1d44c7d3fc0cb7e7f3e1bbbb1b604401d4f0bb1d288dddeef0c49f6aca1c1f0f",
+ "runtime_acceptance_sha256": "2638d1364046b8d72ebd233b49b3b7efb41397d166048c2e1a7cc93c632261ab",
+ "acceptance_dropped_descriptors": [
+  "scope_amendment"
+ ],
+ "acceptance_bytes": 33931,
+ "qualification_bytes": 3513,
+ "root_payload_bytes": 3556,
+ "root_payload_unsigned": true
+}
