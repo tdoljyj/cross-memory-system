@@ -1,9 +1,9 @@
 {
   "object_type": "ControllerSourceManifest",
   "schema_version": 1,
-  "generation_id": "ctrgen_48100437d24e448ba01c542ebe1290da",
-  "not_before": "2026-09-15T03:00:00Z",
-  "expires_at": "2026-09-16T03:00:00Z",
+  "generation_id": "ctrgen_c725e90a595c00a041754ede3b00f408",
+  "not_before": "2026-09-16T04:00:00Z",
+  "expires_at": "2026-09-23T04:00:00Z",
   "files": [
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/bridge.py",
@@ -107,13 +107,13 @@
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/root10-single-window.mjs",
-      "sha256": "7bbc9570a7b15e9308d6cedd8923f5485e87ae4020da8c53b4fd94b305f8e3a2",
-      "bytes": 57243
+      "sha256": "ae8be02f96ba448814d40dd93592c012acd938fba0444c19f56dc152de0843bf",
+      "bytes": 57244
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/Root10ControllerContract.candidate.json",
-      "sha256": "767fb3b0eea30d26a1c9178e606d92caac9a13219cc47f486b23c1da09842023",
-      "bytes": 6039
+      "sha256": "82417308ccffaf949f3d885d4b040cfe18cf45c1bf1a5cacbbf4dd67fb1214da",
+      "bytes": 6087
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/runtime-dependencies.mjs",
@@ -127,8 +127,8 @@
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/selftest-root10-single-window.mjs",
-      "sha256": "7552d042e8c9efa7b532dc4e871fb8f5917b2c9706aefc94e841ba3a25f8fee2",
-      "bytes": 12172
+      "sha256": "3f6edc71287042a769ea36fe546eb2249f3b96d576d1f173baac1dd3c643c457",
+      "bytes": 12645
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/selftest-runtime-clock.mjs",
