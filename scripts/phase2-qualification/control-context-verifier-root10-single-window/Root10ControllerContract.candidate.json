@@ -2,17 +2,17 @@
   "schema_version": "root10-single-window-controller-contract/1",
   "ready": true,
   "root_id": "ctr_414bd3c724264a83894b0c55cf2ab878",
-  "predecessor_generation": "ctrgen_48100437d24e448ba01c542ebe1290da",
-  "generation_id": "ctrgen_c725e90a595c00a041754ede3b00f408",
-  "generation_ordinal": 11,
+  "predecessor_generation": "ctrgen_c725e90a595c00a041754ede3b00f408",
+  "generation_id": "ctrgen_1cf79ef9a7ccc37800e8837ac8c10287",
+  "generation_ordinal": 12,
   "window": {
-    "not_before": "2026-09-16T04:00:00Z",
-    "expires_at": "2026-09-23T04:00:00Z"
+    "not_before": "2026-09-16T07:00:00Z",
+    "expires_at": "2026-09-23T07:00:00Z"
   },
   "baseline": {
-    "root_sequence": 10,
-    "root_events_sha256": "d4c85212ac82c087e3ccee574bbecfc92d2a74f6bfcb6e814a28127f41f618c1",
-    "execution_sequence": 131,
+    "root_sequence": 11,
+    "root_events_sha256": "7a0b80c8d6ece910467e144a0703d1c9a765cd3a8348378b8eb41dbed1476236",
+    "execution_sequence": 138,
     "historical_preimage110": {
       "execution_events_sha256": "715256b00b82b60de7014133d0cc8f83e262910bc1004db0fb03a7f2fef2ab05",
       "other_attempts_sha256": "c077b3eaaba0356936ae5010555583537ce1cb7f72ef1a2be1c3299f88f1c598",
@@ -52,27 +52,27 @@
       "receipt_id": "grr_root9_exact_pair_ga6_blocked_20260915",
       "receipt_sha256": "3d6fc55e6d2065fb40974161f3c0abb556817989c560e3072a080bea033ccfdd"
     },
-    "charged_seconds": 11706,
-    "charged_evidence_bytes": 2604247987,
+    "charged_seconds": 12306,
+    "charged_evidence_bytes": 2738465715,
     "series_start_sequence": 44,
-    "allocation_count": 11,
-    "historical_budget_count": 17,
+    "allocation_count": 12,
+    "historical_budget_count": 18,
     "series_forward_count": 17,
     "active_ga_id": null,
     "pending_budget_sequence": null
   },
   "postbaseline": {
-    "budget_sequence": 136,
-    "budget_idempotency_key": "root11_single_window_budget_20260916",
+    "budget_sequence": 143,
+    "budget_idempotency_key": "root12_single_window_budget_20260916",
     "seconds": 600,
     "evidence_bytes": 134217728,
     "max_budgets": 1,
     "max_ga": 1
   },
   "caps": {
-    "allocations": 12,
-    "seconds": 12306,
-    "evidence_bytes": 2738465715,
+    "allocations": 13,
+    "seconds": 12906,
+    "evidence_bytes": 2872683443,
     "forwards": 19,
     "original_input_bytes": 4000000,
     "publication_bytes": 8388608
@@ -97,16 +97,16 @@
   },
   "issuer_qualification_refs": {
     "STATUS": {
-      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/0affcf8b323f0f225f0b914eb3acb9e26b6486af",
-      "sha256": "a8b9c147a414fca4947fea33c4a70b929f8b170f8619b01fe733816cf887e799"
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/7491efd371dc217ec46661ea51fe726b9a7ae270",
+      "sha256": "71aa7d0d2dd9a38323edbd32a666c7033c4ca950ff0e994a79dcd8cd7579adb5"
     },
     "GATE_AUTHORIZATION": {
-      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/8dc23635950b51b071a8d73c67cc61cc2abcba98",
-      "sha256": "e3b225d3b4cd6c904aa433c43e79bba8571b69dc308c0fd0cefe7da35fb105e6"
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/640526ea9c0472bfca07284e0abc018ab30e390a",
+      "sha256": "de15c6d4f7ee69f19991bd7501cae5e894453ea91818896db6391d8e5d9b267a"
     },
     "GATE_RESULT": {
-      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/1bebfe9bd4f7bb997a6e70c521f94a9e3497842e",
-      "sha256": "8c8ed69191218b8aa96fb1e3ef53fbef01425a08a8a2b6e9988eef6086ebbca8"
+      "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/bb2754698bdf519984f6fa12173c2abc6641fb2f",
+      "sha256": "d122e470f732994f175e7ef63ab4c1ad427f636008eeeb7c32371f8ec0e253ba"
     }
   },
   "reviewer_delegation": {

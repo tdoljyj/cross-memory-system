@@ -15,9 +15,9 @@ const rejects=(pattern,fn)=>assert.throws(fn,pattern);
 
 function fixture(){
  const contract=clone(candidate);
- const oldRootEvents=Array.from({length:10},(_,i)=>({sequence:i+1,root_id:contract.root_id,request:{kind:'HISTORICAL'}}));
+ const oldRootEvents=Array.from({length:11},(_,i)=>({sequence:i+1,root_id:contract.root_id,request:{kind:'HISTORICAL'}}));
  contract.baseline.root_events_sha256=canonicalDigest(oldRootEvents);
- const rootEvents=[...oldRootEvents,{sequence:11,root_id:contract.root_id,request:{kind:'GENERATION_REGISTERED',generation_id:contract.generation_id,predecessor_generation_id:contract.predecessor_generation,body:{control_trust_root_generation:contract.generation_id,history:{prefix_sequence:10,prefix_digest:contract.baseline.root_events_sha256},not_before:contract.window.not_before,expires_at:contract.window.expires_at}}}];
+ const rootEvents=[...oldRootEvents,{sequence:12,root_id:contract.root_id,request:{kind:'GENERATION_REGISTERED',generation_id:contract.generation_id,predecessor_generation_id:contract.predecessor_generation,body:{control_trust_root_generation:contract.generation_id,history:{prefix_sequence:11,prefix_digest:contract.baseline.root_events_sha256},not_before:contract.window.not_before,expires_at:contract.window.expires_at}}}];
  const events=Array.from({length:110},(_,i)=>({sequence:i+1,root_id:contract.root_id,idempotency_key:'old_'+(i+1),request:{operation:'HISTORICAL',body:{}}}));
  for(const sequence of [1,5,11,18,27,41,46,51,59,68,73,77,81,85,91,102])events[sequence-1].request.operation='BUDGET_RESERVED';
  for(const sequence of [45,47,48,49,50,52,53,54,55,56,57,58,60,61,62,63,64])events[sequence-1].request.operation='EXECUTION_BINDING_FORWARD_ACCEPTED';
@@ -32,7 +32,7 @@ function fixture(){
  const closed=attempts.find(a=>a.ga_id===closure.ga_id);Object.assign(closed,{ga_sha256:closure.ga_sha256,phase:'BLOCKED',sequence:2,receipt_id:closure.receipt_id,receipt_raw:receiptRaw,receipt_sha256:closure.receipt_sha256,decision:{decision_sha256:closure.decision_sha256,evidence_index_sha256:closure.evidence_index_sha256}});
  contract.baseline.historical_preimage110.execution_events_sha256=canonicalDigest(events.slice(0,110));
  contract.baseline.historical_preimage110.other_attempts_sha256=canonicalDigest(attempts.filter(a=>a.ga_id!==closure.ga_id).sort((a,b)=>a.ga_id.localeCompare(b.ga_id)));
- for(let sequence=113;sequence<=contract.baseline.execution_sequence;sequence++)events.push({sequence,root_id:contract.root_id,idempotency_key:'activation_'+sequence,request:{operation:sequence===117?'BUDGET_RESERVED':'ROOT10_ACTIVATION',body:{}}});
+ for(let sequence=113;sequence<=contract.baseline.execution_sequence;sequence++)events.push({sequence,root_id:contract.root_id,idempotency_key:'activation_'+sequence,request:{operation:(sequence===117||sequence===136)?'BUDGET_RESERVED':'ROOT10_ACTIVATION',body:{}}});
  for(let sequence=contract.baseline.execution_sequence+1;sequence<contract.postbaseline.budget_sequence;sequence++)events.push({sequence,root_id:contract.root_id,idempotency_key:'registration_'+sequence,request:{operation:'SUCCESSOR_BINDING_REGISTERED',body:{}}});
  const gaId='ga_ffffffffffffffffffffffffffffffff';
  const ga={gate_authorization_id:gaId,controller_digest:'1'.repeat(64),control_trust_root_generation:contract.generation_id,profile_digest:contract.fixed_digests.profile_sha256,scope_digest:contract.fixed_digests.scope_sha256,runner_generation:'runnergen_test',credential_generation:'credgen_test',session_generation:'sessiongen_test'};
@@ -51,7 +51,7 @@ function rebaseBaseline(contract,execution){
 function series(value,operation='CURRENT_DISPATCH',result=null){return checkRoot10SingleWindowSeries({...value,operation,result});}
 
 pass('01 canonical digest uses protocol LF',()=>{assert.equal(canonicalDigest([{a:1}]),sha('[{"a":1}]\n'));});
-pass('02 finalized contract and actual CommittableBranch schema mapping validate',()=>{assert.equal(validateRoot10ControllerContract(fixture().contract).generation_ordinal,11);const input=committableBranchInput();assert.deepEqual(input,{repositoryNameWithOwner:signingRepository,branchName:signingBranch});assert.equal(Object.hasOwn(input,'refName'),false);});
+pass('02 finalized contract and actual CommittableBranch schema mapping validate',()=>{assert.equal(validateRoot10ControllerContract(fixture().contract).generation_ordinal,12);const input=committableBranchInput();assert.deepEqual(input,{repositoryNameWithOwner:signingRepository,branchName:signingBranch});assert.equal(Object.hasOwn(input,'refName'),false);});
 pass('03 exact single budget and GA pass',()=>{assert.equal(series(fixture()).state,'ROOT10_SINGLE_WINDOW_SERIES_CHECKED');});
 pass('04 terminal reconciliation uses the same window',()=>{assert.equal(series(fixture(),'RESULT_RECONCILIATION','FAIL').postbaseline_ga,1);});
 pass('05 unpublished contract fails closed',()=>{const x=fixture();x.contract.ready=false;rejects(/ROOT10_CONTRACT_NOT_FINAL/,()=>series(x));});
