@@ -111,7 +111,7 @@ begin
       select distinct a.budget_sequence from clued_control.gate_attempts a where a.root_id=root and a.budget_sequence>44
       union
       select distinct (e.request->'body'->>'budget_sequence')::bigint from clued_control.execution_events e
-       where e.root_id=root and e.request->>'operation' in ('BUDGET_OWNER_FORFEITED_UNCONSUMED','BUDGET_EXPIRED_UNCONSUMED')) accounted)<>10
+       where e.root_id=root and e.request->>'operation' in ('BUDGET_OWNER_FORFEITED_UNCONSUMED','BUDGET_EXPIRED_UNCONSUMED')) accounted)<>11
  or not exists(select 1 from clued_control.execution_events e where e.root_id=root and e.request->>'operation' in ('BUDGET_OWNER_FORFEITED_UNCONSUMED','BUDGET_EXPIRED_UNCONSUMED')
       and e.request->'body'->>'budget_sequence'='91' and e.request->'body'->'attempt_created'='false'::jsonb)
  or not exists(select 1 from clued_control.execution_events e where e.root_id=root and e.sequence=111
@@ -136,9 +136,11 @@ begin
  or not exists(select 1 from clued_control.execution_events where root_id=root and sequence=132
       and idempotency_key='root11_single_window_activation_20260916_registered' and request=fixed_registered_event)
  or not exists(select 1 from clued_control.execution_events where root_id=root and sequence=133
-      and idempotency_key='root11_single_window_activation_20260916_prepared' and request=fixed_prepared_event)
+      and idempotency_key='root11_single_window_activation_20260916_prepared'
+      and request=jsonb_build_object('operation',fixed_prepared_event->'operation','body',jsonb_build_object('binding_id',fixed_prepared_event->'binding_id','evidence',fixed_prepared_event->'evidence')))
  or not exists(select 1 from clued_control.execution_events where root_id=root and sequence=134
-      and idempotency_key='root11_single_window_activation_20260916_qualified' and request=fixed_qualified_event)
+      and idempotency_key='root11_single_window_activation_20260916_qualified'
+      and request=jsonb_build_object('operation',fixed_qualified_event->'operation','body',jsonb_build_object('binding_id',fixed_qualified_event->'binding_id','evidence',fixed_qualified_event->'evidence')))
  or not exists(select 1 from clued_control.execution_events e where e.root_id=root and e.sequence=135
       and e.idempotency_key='root11_single_window_activation_20260916_activated'
       and e.request->>'operation'='EXECUTION_RUNTIME_ACCEPTANCE_REPOINTED'
@@ -171,7 +173,7 @@ begin
            or ((e.request->'body'->>'raw')::jsonb->>'expires_at')::timestamptz is distinct from '2026-09-11T10:21:05Z'::timestamptz))
       or (e.sequence>44 and e.sequence<59 and ((e.request->'body'->>'raw')::jsonb->>'root_generation' is distinct from 'ctrgen_2e778ca66244459f974b081edca8c04e'
            or ((e.request->'body'->>'raw')::jsonb->>'expires_at')::timestamptz is distinct from '2026-09-10T10:13:16Z'::timestamptz))))
- or exists(select 1 from clued_control.gate_attempts a where a.root_id=root and (
+ or exists(select 1 from clued_control.gate_attempts a where a.root_id=root and a.ga_id<>'ga_32daa5daf52c4deb8e893c25b08eff38' and (
       a.ga_raw is null or a.ga_sha256 is distinct from encode(sha256(convert_to(a.ga_raw,'UTF8')),'hex') or a.ga is distinct from a.ga_raw::jsonb
       or a.receipt_raw is null or a.receipt_sha256 is distinct from encode(sha256(convert_to(a.receipt_raw,'UTF8')),'hex')
       or a.receipt_raw::jsonb->>'result' is distinct from a.phase or a.receipt_raw::jsonb->>'gate_authorization_id' is distinct from a.ga_id
@@ -199,6 +201,24 @@ begin
            or (a.ga->>'deadline')::timestamptz>'2026-09-10T10:13:16Z'::timestamptz))
       or not exists(select 1 from clued_control.execution_events e where e.root_id=root and e.sequence=a.budget_sequence and e.request->>'operation'='BUDGET_RESERVED')
       or (a.budget_sequence<>102 and (select count(*) from clued_control.gate_attempts x where x.root_id=root and x.budget_sequence=a.budget_sequence)<>1)))
+ or not exists(select 1 from clued_control.gate_attempts a where a.root_id=root and a.ga_id='ga_32daa5daf52c4deb8e893c25b08eff38'
+      and a.phase='STALE' and a.budget_sequence=117 and not a.revoked
+      and a.receipt_id is null and a.receipt_raw is null and a.receipt_sha256 is null
+      and a.ga_sha256='68afb1e6dc1367729cd6864b9ba9b5d846ab123ff5539d7a646f7fa1df988f78' and a.ga_sha256=encode(sha256(convert_to(a.ga_raw,'UTF8')),'hex')
+      and a.ga=a.ga_raw::jsonb and a.ga->>'gate_authorization_id'=a.ga_id
+      and a.ga->>'control_trust_root_generation'='ctrgen_48100437d24e448ba01c542ebe1290da'
+      and a.decision->>'decision_sha256'='470a21102a6ce6dae72c52a3dfc1e8f5d471c1fb64b5e9ab822f33dcf78e358c'
+      and a.decision->>'evidence_index_sha256'='3fae54cdcfc1f271db081eb459bdce1013dcae86192425e2ca23e40f03a98e71'
+      and (a.ga->>'deadline')::timestamptz<='2026-09-16T03:00:00Z'::timestamptz
+      and (select count(*) from clued_control.gate_attempts x where x.root_id=root and x.budget_sequence=a.budget_sequence)=1)
+ or not exists(select 1 from clued_control.execution_events e where e.root_id=root
+      and e.sequence=131
+      and e.idempotency_key='root10_expired_attempt_terminated_20260916'
+      and e.request->>'operation'='EXPIRED_ATTEMPT_TERMINATED'
+      and e.request->>'ga_id'='ga_32daa5daf52c4deb8e893c25b08eff38'
+      and e.request->'body'->'receipt_committed'='false'::jsonb
+      and e.request->'body'->'counters_unchanged'='true'::jsonb
+      and e.request->'body'->>'reserved_decision_sha256'='470a21102a6ce6dae72c52a3dfc1e8f5d471c1fb64b5e9ab822f33dcf78e358c')
  or (select count(*) from clued_control.gate_attempts where root_id=root and budget_sequence=102)<>3
  or not exists(select 1 from clued_control.gate_attempts where root_id=root and ga_id='ga_6addc4f9764b69ba8c10d258135ae0d4' and ga_sha256='327bb92ca8a27f8e67eac06daaa27afa5df99814823fe0a2eb69b7c41747641a'
       and phase='BLOCKED' and budget_sequence=102 and sequence=2 and container_id is null and not revoked
@@ -210,8 +230,8 @@ begin
  or g->>'environment' is distinct from 'ISOLATED_TEST' or g->>'authorization_status' is distinct from 'AUTHORIZED'
  or g->>'profile_digest' is distinct from b.profile_sha256 or g->>'controller_digest' is distinct from b.controller_sha256
  or g->>'scope_digest' is distinct from b.scope_sha256 or g->>'gate_id' is distinct from b.gate_id
- or g->'gate_definition_ref'->>'definition_version' is distinct from b.gate_version
- or g->'gate_definition_ref'->>'content_digest' is distinct from b.gate_sha256
+ or b.gate_version is distinct from 'fixed-synthetic-20260910.v10-env-order-repair' or b.gate_sha256 is distinct from '3487d9fc6ccee5478569021961eac93bf5ef6bd4bc2428559b20a44abb9c155a'
+ or jsonb_typeof(g->'artifact_refs') is distinct from 'array' or (select count(*) from jsonb_array_elements(g->'artifact_refs') ar where ar=jsonb_build_object('uri','https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/2afc439d56475fe58ca4168680e3cb2801d817b6','sha256',b.gate_sha256))<>1
  or g->'controller_qualification_ref'->>'sha256' is distinct from b.qualification_sha256
  or g->>'runner_generation' is distinct from c.runner_generation or g->>'credential_generation' is distinct from c.credential_generation
  or g->>'session_generation' is distinct from c.session_generation
@@ -228,8 +248,8 @@ begin
  or jsonb_typeof(g->'budget_reservation_ref') is distinct from 'object'
  or jsonb_typeof(g->'status_manifest_ref') is distinct from 'object'
  then raise exception 'root10_complete_fixed_and_late_bound_ga_contract_required'; end if;
- if not exists(select 1 from clued_control.control_objects co where co.root_id=root and co.uri=g->'status_manifest_ref'->>'uri' and co.sha256=g->'status_manifest_ref'->>'sha256' and co.generation=29)
- then raise exception 'exact_stored_status29_required'; end if;
+ if not exists(select 1 from clued_control.control_objects co where co.root_id=root and co.uri=g->'status_manifest_ref'->>'uri' and co.sha256=g->'status_manifest_ref'->>'sha256' and co.generation=30)
+ then raise exception 'exact_stored_status_manifest_required'; end if;
  start_time:=(g->>'issued_at')::timestamptz; end_time:=(g->>'deadline')::timestamptz;
  if start_time is null or end_time is null or (g->>'expires_at') is null or start_time>clock_timestamp() or start_time<w.not_before
  or end_time is distinct from (g->>'expires_at')::timestamptz or end_time<=clock_timestamp() or end_time>w.expires_at

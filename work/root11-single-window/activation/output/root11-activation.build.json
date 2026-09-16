@@ -21,16 +21,28 @@
     "cap_bytes": 2738465715,
     "cap_allocations": 12,
     "predecessor_budget_floor": 117,
-    "predecessor_expires_at": "2026-09-16T03:00:00Z"
+    "predecessor_expires_at": "2026-09-16T03:00:00Z",
+    "terminated": {
+      "ga_id": "ga_32daa5daf52c4deb8e893c25b08eff38",
+      "ga_sha256": "68afb1e6dc1367729cd6864b9ba9b5d846ab123ff5539d7a646f7fa1df988f78",
+      "budget_sequence": 117,
+      "phase": "STALE",
+      "decision_sha256": "470a21102a6ce6dae72c52a3dfc1e8f5d471c1fb64b5e9ab822f33dcf78e358c",
+      "evidence_index_sha256": "3fae54cdcfc1f271db081eb459bdce1013dcae86192425e2ca23e40f03a98e71",
+      "event_sequence": 131,
+      "event_idempotency_key": "root10_expired_attempt_terminated_20260916",
+      "event_operation": "EXPIRED_ATTEMPT_TERMINATED"
+    },
+    "accounted_budgets": 11
   },
   "files": {
     "root11-activation.preimage-only.sql": "2c272ec38cf826618d7db0f4e808b3a8f7e10cadf2498ebe6d5e83162fd375cc",
-    "root11-activation.full-rollback.sql": "d509ab75b736e451f497659b82a16a430c6ad3a6f33715e4bb5ff868e967c8d5",
+    "root11-activation.full-rollback.sql": "700792ebd3868b3c35fdd8a385110fcb2bb33a5b30629b4c898fb79e0a224d87",
     "read_root.root11.sql": "78bd357fd1825ba6c1f4f7912d84a2bf15ec0a0b354242f9cf1d56958271c3a2",
     "reserve_execution_budget.root11-one-shot.sql": "e58f4f1628aca5522903bbec5ffe3d278dd7eb614b437c5dbf0caa336c93d7a4",
-    "reserve_gate.root11-one-ga.sql": "75b089f523384cb626fc5ec33177df27aa02321bebaa56bae47abf25110c4060",
+    "reserve_gate.root11-one-ga.sql": "befab59a58866d658c113cbb5f6432d06c41905d99a851279714ac01481d0550",
     "reserve_gate.actual-negative-fixtures.json": "b6406127e856ed5d2b40e3b866851246123c57ad5904846d8d629765826d822e",
-    "root11-activation.apply-once.sql": "e0e3273d900dccf59c452bcb017b2ab1501a47fde264cc1f6d11a1bc6b4ae699",
+    "root11-activation.apply-once.sql": "a8259b2668f293c47c20fd26d4179dcd22d098113ed23a9751fe304d9902edfe",
     "root11-activation.readback.sql": "64e1d2ba645e3ae87b731d371e45e2666e97c9095f0426bbc6c6eed00f471192"
   },
   "pins": {

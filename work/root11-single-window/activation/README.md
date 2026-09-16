@@ -49,8 +49,43 @@ attempt 阶梯   同上
 复制品上曾遇到两处**环境差异**（非套件缺陷）：生产的 `pg_dump` 用了 `--no-owner --no-privileges`，
 函数属主与 ACL 需先对齐生产才能通过前检；对齐后 23 个函数的 ACL 与生产逐条相同。
 
+## 复制品实测暴露的四个缺陷（都已修，未触及生产库）
+
+归档在仓库里的第 10 代生成器是**早于现网的版本**。现网那一版（范围修正案时重新生成的
+`reserve_gate`）已经修过其中两处，归档版没有同步。
+
+| # | 缺陷 | 表现 | 修法 |
+|---|---|---|---|
+| 1 | 已入账预算数仍写 10 | `root10_exact_single_ga_preimage_required` | 第 10 代的 117 号现在也算一条 → 11 |
+| 2 | PREPARED/QUALIFIED 事件按"调用体"形状钉死 | 同上 | `transition_successor_binding` 实际写入 `{operation, body:{binding_id, evidence}}`，按现网形态比对 |
+| 3 | 引用了并不存在的 `gate_definition_ref` 字段 | `root10_exact_accepted_scope_or_zero_repairs_required` | 改为现网形态：gate 版本/摘要直接比绑定，且 `artifact_refs` 里恰好一条 gate blob |
+| 4 | 存储的 Status 代次写死 29 | `exact_stored_status29_required` | 改为取自意图书（本代是 30） |
+
+另外，迁移 01 终止的那个 attempt 按设计没有收据，而 attempt 阶梯要求每个历史 attempt 都带收据。
+为它开了一个**逐字段钉死**的例外：只认那一个 ga_id、只认 STALE、`receipt_id/raw/sha256` 三者皆空、
+预算序号 117、GA 与决定的摘要逐条对上，并且要求第 131 号终止事件在场且
+`receipt_committed=false`、`counters_unchanged=true`。
+
+## 两处环境差异（不是缺陷，但会让复制品说谎）
+
+1. 生产的 `pg_dump` 用了 `--no-owner --no-privileges`，函数属主与 ACL 必须先对齐生产，
+   否则活化前检的 `proacl/proowner` 断言会失败。对齐后 23 个函数逐条相同。
+2. **排序规则**：生产库是 ICU `en-US`（`provider=i`），复制品原来是 glibc `en_US.utf8`。
+   这会改变 `array_agg(k order by k)` 的顺序——glibc 把 `controller_digest` 排在
+   `control_trust_root_generation` 前面，ICU 和 JS 则相反。GA 的 51 字段集合比对因此
+   在复制品上必然失败、在生产上却会通过。复制品已用
+   `locale_provider icu icu_locale 'en-US'` 重建，排序与生产、与 JS 一致。
+
+## 全链路实测结果
+
+复制品（ICU 重建 + 生产快照 + 迁移 01，停在 131）：
+
+1. `full-rollback.sql` 通过，回滚后准确回到 131
+2. `apply-once.sql` 通过 → root 11 / 执行 136 / attempt 18 / 12306 秒 / 2738465715 字节
+3. **`reserve_gate` 成功签发第 11 代 GA**：`{"status":"RESERVED"}`，
+   attempt PENDING、`budget_sequence=136`、控制器 `fc6ca175…`、`active_ga_id` 已置、
+   `pending_budget_sequence` 已清、计数器未再变动
+
 ## 尚未验证
 
-`reserve_gate` 生成后还没有真正签发过 GA——需要先构造第 11 代的 51 字段 GA 载荷。
-`reserve_gate.actual-negative-fixtures.json` 列出的负向探针也还没跑。
-这两项在生产执行活化之前会在复制品上补齐。
+`reserve_gate.actual-negative-fixtures.json` 里的 15 条负向探针还没跑。
