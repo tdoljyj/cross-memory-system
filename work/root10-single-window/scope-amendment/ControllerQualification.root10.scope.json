@@ -67,8 +67,8 @@
     "sha256": "767fb3b0eea30d26a1c9178e606d92caac9a13219cc47f486b23c1da09842023"
   },
   "source_publication": {
-    "owner_merge_commit": "__OWNER_MERGE_COMMIT__",
-    "source_tree": "__SOURCE_TREE__",
+    "owner_merge_commit": "f9e1bfc46b23c0e155c6d9953972ac105e479636",
+    "source_tree": "d57387df96c34e5a76ffdaeb7e7632bee7cef716",
     "controller_manifest_entries": 35
   },
   "automatic_retry": false,
