@@ -1,0 +1,92 @@
+{
+  "schema_version": "root11-reserve-gate-negative-fixtures/1",
+  "run_after_activation_before_final_ga": true,
+  "authority_effect": "NONE",
+  "fixtures": [
+    {
+      "id": "N01_CHANGED_BYTES_SAME_IDEMPOTENCY",
+      "expected_error": "idempotency_conflict",
+      "mutation": "same idempotency key with different GA bytes"
+    },
+    {
+      "id": "N02_SECOND_ROOT10_GA",
+      "expected_error": "root10_exact_single_ga_preimage_required",
+      "mutation": "new GA id/idempotency after first reservation"
+    },
+    {
+      "id": "N03_NONEMPTY_REPAIR_REFS",
+      "expected_error": "root10_exact_accepted_scope_or_zero_repairs_required",
+      "mutation": "one repair_refs entry"
+    },
+    {
+      "id": "N04_FIXED_SCHEMA_ISSUER_RISK_PROFILE_VECTOR_SOURCE_DRIFT",
+      "expected_error_one_of": [
+        "root10_exact_accepted_scope_or_zero_repairs_required",
+        "root10_complete_fixed_and_late_bound_ga_contract_required"
+      ],
+      "mutation": "change each fixed field one at a time"
+    },
+    {
+      "id": "N05_STATUS_NOT_GENERATION29",
+      "expected_error": "exact_stored_status29_required",
+      "mutation": "status ref points at a different stored generation"
+    },
+    {
+      "id": "N06_BUDGET_NOT_AT_EXPECTED_SEQUENCE_OR_RAW_NO_LF",
+      "expected_error": "root11_exact_prior_committed_budget_required",
+      "mutation": "budget reference/hash/raw bytes differ"
+    },
+    {
+      "id": "N07_NOT_EXACT_600_SECONDS",
+      "expected_error": "root10_exact_600_second_ga_window_required",
+      "mutation": "599 or 601 second interval"
+    },
+    {
+      "id": "N08_HISTORICAL_ATTEMPT_OR_RECEIPT_DRIFT",
+      "expected_error_one_of": [
+        "series_original_six_attempts_changed",
+        "root10_exact_single_ga_preimage_required"
+      ],
+      "mutation": "attempt id/raw/receipt/result/budget binding differs"
+    },
+    {
+      "id": "N09_CONTAINER_OR_ACTIVE_PHASE_PREEXISTS",
+      "expected_error": "root10_exact_single_ga_preimage_required",
+      "mutation": "active Root10 GA or nonterminal historical phase exists"
+    },
+    {
+      "id": "N10_EXACT_RESPONSE_LOSS_REPLAY",
+      "expected_status": "DUPLICATE",
+      "mutation": "same exact raw and hash after successful reserve"
+    },
+    {
+      "id": "N11_ROOT_OR_EXECUTION_IMMUTABLE_PREFIX_DRIFT",
+      "expected_error_one_of": [
+        "series_full_original_root_changed",
+        "series_original_44_events_changed"
+      ],
+      "mutation": "change one Root<=8 or execution<=44 request field"
+    },
+    {
+      "id": "N12_HISTORICAL_BUDGET_GENERATION_OR_EXPIRY_DRIFT",
+      "expected_error": "root10_exact_single_ga_preimage_required",
+      "mutation": "change one post-44 budget root_generation or historical expires_at"
+    },
+    {
+      "id": "N13_GA6_CLOSURE_111_112_BYTES_DRIFT",
+      "expected_error": "root10_exact_single_ga_preimage_required",
+      "mutation": "change a decision/evidence/observation raw byte, idempotency key, termination mode, or signing decision hash"
+    },
+    {
+      "id": "N14_EXACT_51_FIELD_SCHEMA_SHAPE_MISSING_OR_EXTRA",
+      "expected_error": "root10_complete_fixed_and_late_bound_ga_contract_required",
+      "also_expected_rejection_layer": "trusted host schema/runtime-acceptance verifier before reserve_gate",
+      "mutation": "remove any required field or add any field outside the original 51-field schema"
+    },
+    {
+      "id": "N15_CONTAINER_PHASE_MACHINE_DRIFT",
+      "expected_rejection_layer": "unchanged pinned execution_transition",
+      "mutation": "CREATED/RUNNING/STOPPED with missing or mismatched container_id, or dispatch from a nonmatching phase"
+    }
+  ]
+}

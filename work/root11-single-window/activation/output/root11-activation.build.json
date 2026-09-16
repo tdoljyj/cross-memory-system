@@ -1,0 +1,45 @@
+{
+  "schema_version": "root11-activation-build/1",
+  "authority_effect": "NONE",
+  "execute": false,
+  "sequences": {
+    "root_sequence": 10,
+    "execution_sequence": 131,
+    "registration_sequence": 132,
+    "prepared_sequence": 133,
+    "qualified_sequence": 134,
+    "repoint_sequence": 135,
+    "budget_sequence": 136,
+    "attempts": 18,
+    "budgets_after_44": 11,
+    "forwards_after_44": 17,
+    "root_events_after": 11,
+    "budgets_total_before": 17,
+    "old_charged_seconds": 11706,
+    "old_charged_bytes": 2604247987,
+    "cap_seconds": 12306,
+    "cap_bytes": 2738465715,
+    "cap_allocations": 12,
+    "predecessor_budget_floor": 117,
+    "predecessor_expires_at": "2026-09-16T03:00:00Z"
+  },
+  "files": {
+    "root11-activation.preimage-only.sql": "2c272ec38cf826618d7db0f4e808b3a8f7e10cadf2498ebe6d5e83162fd375cc",
+    "root11-activation.full-rollback.sql": "d509ab75b736e451f497659b82a16a430c6ad3a6f33715e4bb5ff868e967c8d5",
+    "read_root.root11.sql": "78bd357fd1825ba6c1f4f7912d84a2bf15ec0a0b354242f9cf1d56958271c3a2",
+    "reserve_execution_budget.root11-one-shot.sql": "e58f4f1628aca5522903bbec5ffe3d278dd7eb614b437c5dbf0caa336c93d7a4",
+    "reserve_gate.root11-one-ga.sql": "75b089f523384cb626fc5ec33177df27aa02321bebaa56bae47abf25110c4060",
+    "reserve_gate.actual-negative-fixtures.json": "b6406127e856ed5d2b40e3b866851246123c57ad5904846d8d629765826d822e",
+    "root11-activation.apply-once.sql": "e0e3273d900dccf59c452bcb017b2ab1501a47fde264cc1f6d11a1bc6b4ae699",
+    "root11-activation.readback.sql": "64e1d2ba645e3ae87b731d371e45e2666e97c9095f0426bbc6c6eed00f471192"
+  },
+  "pins": {
+    "root_full_sha256": "7217599ca63da091de8c284c31ff67872bd8f8c5f092490c2bcea7d9f0f2407a",
+    "status_full_sha256": "f72672d99b5afa46be83e13e7fccc0e5602ce568062b8c6b44652dedb9368ea9",
+    "controller_sha256": "fc6ca1759ef68a958564bd2d9fc16aab23297c2db30ac7581b4ec6227977c91f",
+    "qualification_sha256": "cc385768f9e04269d69b211a23fb08f4463215afa5c919649f42e17c7d58cbe9",
+    "runtime_acceptance_sha256": "171f8e32f79c0f071e8d0986d5ec8307154ecb9b346e998f3c356c4ea660d192",
+    "binding_sha256": "fb06ea5af1d3e34aed7a95d593f2520e83e9abb3271c30cf2f87a26232d5aa5f",
+    "budget_sha256": "8796ef665c25b6d139ac9d7ccc097248b557a2638ede9d2cefa531fae2280a53"
+  }
+}
