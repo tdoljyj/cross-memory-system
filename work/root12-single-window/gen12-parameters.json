@@ -1,0 +1,51 @@
+{
+ "predecessor_generation": "ctrgen_c725e90a595c00a041754ede3b00f408",
+ "generation_id": "ctrgen_1cf79ef9a7ccc37800e8837ac8c10287",
+ "generation_ordinal": 12,
+ "successor_binding_id": "sb_6aba4e3f3b33cabcb1171e10c70f40d2",
+ "window": {
+  "not_before": "2026-09-16T07:00:00Z",
+  "expires_at": "2026-09-23T07:00:00Z"
+ },
+ "baseline": {
+  "root_sequence": 11,
+  "execution_sequence": 138,
+  "charged_seconds": 12306,
+  "charged_evidence_bytes": 2738465715,
+  "allocation_count": 12,
+  "historical_budget_count": 18,
+  "series_forward_count": 17,
+  "accounted_budgets": 12,
+  "attempt_ids": 18
+ },
+ "postbaseline": {
+  "budget_sequence": 143,
+  "seconds": 600,
+  "evidence_bytes": 134217728,
+  "max_budgets": 1,
+  "max_ga": 1
+ },
+ "caps": {
+  "allocations": 13,
+  "seconds": 12906,
+  "evidence_bytes": 2872683443,
+  "forwards": 19,
+  "original_input_bytes": 4000000,
+  "publication_bytes": 8388608
+ },
+ "issuer_qualification_refs": {
+  "STATUS": {
+   "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/7491efd371dc217ec46661ea51fe726b9a7ae270",
+   "sha256": "71aa7d0d2dd9a38323edbd32a666c7033c4ca950ff0e994a79dcd8cd7579adb5"
+  },
+  "GATE_AUTHORIZATION": {
+   "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/640526ea9c0472bfca07284e0abc018ab30e390a",
+   "sha256": "de15c6d4f7ee69f19991bd7501cae5e894453ea91818896db6391d8e5d9b267a"
+  },
+  "GATE_RESULT": {
+   "uri": "https://api.github.com/repos/tdoljyj/cross-memory-system/git/blobs/bb2754698bdf519984f6fa12173c2abc6641fb2f",
+   "sha256": "d122e470f732994f175e7ef63ab4c1ad427f636008eeeb7c32371f8ec0e253ba"
+  }
+ },
+ "migration_04": "BUDGET_OWNER_FORFEITED_UNCONSUMED for the unconsumed generation-11 budget at 136, no refund; clears pending_budget_sequence and takes the store to 138"
+}

@@ -1,9 +1,9 @@
 {
   "object_type": "ControllerSourceManifest",
   "schema_version": 1,
-  "generation_id": "ctrgen_c725e90a595c00a041754ede3b00f408",
-  "not_before": "2026-09-16T04:00:00Z",
-  "expires_at": "2026-09-23T04:00:00Z",
+  "generation_id": "ctrgen_1cf79ef9a7ccc37800e8837ac8c10287",
+  "not_before": "2026-09-16T07:00:00Z",
+  "expires_at": "2026-09-23T07:00:00Z",
   "files": [
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/bridge.py",
@@ -107,12 +107,12 @@
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/root10-single-window.mjs",
-      "sha256": "ae8be02f96ba448814d40dd93592c012acd938fba0444c19f56dc152de0843bf",
+      "sha256": "7359f22c2f331318d384a82c2bdf31c9672bfe6cfb26933787b942fe0ac2af6a",
       "bytes": 57244
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/Root10ControllerContract.candidate.json",
-      "sha256": "82417308ccffaf949f3d885d4b040cfe18cf45c1bf1a5cacbbf4dd67fb1214da",
+      "sha256": "3c52f165be9ad9141022ebd0d644260d4d17e823580e0751bccd732e58fca7a4",
       "bytes": 6087
     },
     {
@@ -127,8 +127,8 @@
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/selftest-root10-single-window.mjs",
-      "sha256": "3f6edc71287042a769ea36fe546eb2249f3b96d576d1f173baac1dd3c643c457",
-      "bytes": 12645
+      "sha256": "2debcc06d7d05b458eba985a18abfae7a75426a66159dd2d55b58421545a7c73",
+      "bytes": 12663
     },
     {
       "path": "scripts/phase2-qualification/control-context-verifier-root10-single-window/selftest-runtime-clock.mjs",
