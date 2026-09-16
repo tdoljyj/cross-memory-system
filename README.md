@@ -87,6 +87,25 @@ python scripts/governance/validate_multitrack_projection.py
 
 Validator PASS 只证明 Repository 投影内部完整；**不等于 Canonical Currentness 已重新裁决、不等于 Inventory 已冻结，也不授予生产/Kernel/数据库/Provider 执行 Authority。**
 
+## 文件放置规则 / Where documents belong
+
+仓库与 Google Drive 的边界如下。提交或生成文件前先按本表判断；**不应进仓库的资料不要提交到仓库。**
+
+| 内容 | 存放位置 |
+|---|---|
+| 代码、协议/合同、ADR、Schema/Migration、测试/Fixture、Runbook、Skill、构建/部署配置、当前执行控制、机器可验证 Evidence | 本 Git 仓库 |
+| 产品研究、战略、商业、品牌、视觉、汇报、会议/对话整理、历史评审、验收/Closeout 长报告、图片及办公文档 | Google Drive |
+| 用户与项目的 Canonical 状态、任务、决定和运行记录 | 生产 Canonical Store；Git 与 Drive 都不是运行时权威源 |
+
+当前资料入口：
+
+- [当前计划与确定基线（Google Drive）](https://drive.google.com/drive/folders/1Owx0Ow4RQY0CbYB5aDQ8RMXLNTA6EyT0)
+- [当前计划与确定基线总索引](https://drive.google.com/file/d/13TE41MmUMnMZ19imQlR5UtrIVEEaGDps/view?usp=drivesdk)
+- [历史外迁资料归档（Google Drive）](https://drive.google.com/drive/folders/1sKZEVQOsEGDMs2b18H3kHp7t0jGq0rGJ)
+- [外迁清单与校验说明](docs/EXTERNAL_DOCUMENT_ARCHIVE.md)
+
+Google Drive 中“有文件”不等于该文件自动成为当前权威版本。状态以总索引中的“冻结 / 固定 / 候选 / 历史”标记、Canonical Decision/Event/Receipt 及对应 Owner 裁决为准。若一份材料同时包含工程合同与长篇叙事，仓库只保留可执行、可验证的短合同或指针，完整叙事放 Google Drive。
+
 ## 发布与回滚
 
 新快照走 `canonical_export → build → validate → expected-current CAS publish`。`published/{snapshot_version}` 不可原地修改。回滚只切换快照指针和只读根/镜像，不删除或倒退已经提交的 Canonical 历史。
