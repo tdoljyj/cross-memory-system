@@ -1,0 +1,22 @@
+--- /mnt/data/r6_m2_checkpoint/r6_verifier.py	1980-01-01 00:00:00.000000000 +0000
++++ /mnt/data/r6_m2_successor_work/r6_verifier.py	2026-09-15 06:52:57.809534595 +0000
+@@ -117,6 +117,7 @@
+     if key in _O200K_CACHE:
+         return _O200K_CACHE[key]
+     ranks={}
++    seen_ranks=set()
+     for n,line in enumerate(asset.read_text(encoding='utf-8').splitlines(),1):
+         if not line.strip():
+             continue
+@@ -125,9 +126,10 @@
+             token=base64.b64decode(token64, validate=True); rank=int(rank_s)
+         except Exception as exc:
+             raise RuntimeError(f'M2_TOKENIZER_ASSET_PARSE_ERROR:{n}') from exc
+-        if token in ranks or rank in ranks.values():
++        if token in ranks or rank in seen_ranks:
+             raise RuntimeError(f'M2_TOKENIZER_ASSET_DUPLICATE:{n}')
+         ranks[token]=rank
++        seen_ranks.add(rank)
+     if len(ranks)!=199998:
+         raise RuntimeError(f'M2_TOKENIZER_RANK_COUNT_MISMATCH:{len(ranks)}')
+     for i in range(256):
