@@ -18,36 +18,42 @@ class ModelProgramM1EntryTests(unittest.TestCase):
         self.assertFalse(good)
         self.assertEqual(code,'CLUED_MODEL_M1_PROFILE_PENDING_BINDING_ISSUED')
 
-    def test_issued_profile_is_accepted(self):
-        p=m.load(m.BASE/'governance/ExperimentAuthorizationProfile.M1-REF-QWEN35-08B-LLAMACPP-001.issued.json')
-        good,code=m.validate_issued_profile(p)
+    def test_profile001_closeout_is_consumed(self):
+        c=m.load(m.BASE/'evidence/M1ExperimentProfile001ExecutionCloseout_20260918.json')
+        self.assertEqual(c['attempt_accounting']['attempts_used'],1)
+        self.assertFalse(c['attempt_accounting']['retry_under_same_profile_allowed'])
+        self.assertEqual(c['effects']['network_model_download_bytes'],0)
+
+    def test_profile002_is_accepted(self):
+        p=m.load(m.BASE/'governance/ExperimentAuthorizationProfile.M1-REF-QWEN35-08B-LLAMACPP-002.issued.json')
+        good,code=m.validate_issued_profile(p,m.PROFILE002_CODE_COMMIT,m.PROFILE002_SCRIPT_BLOB)
         self.assertTrue(good,code)
 
     def test_model_revision_drift_fails(self):
-        p=m.load(m.BASE/'governance/ExperimentAuthorizationProfile.M1-REF-QWEN35-08B-LLAMACPP-001.issued.json')
+        p=m.load(m.BASE/'governance/ExperimentAuthorizationProfile.M1-REF-QWEN35-08B-LLAMACPP-002.issued.json')
         p=copy.deepcopy(p); p['model_binding']['revision']='deadbeef'
-        good,code=m.validate_issued_profile(p)
+        good,code=m.validate_issued_profile(p,m.PROFILE002_CODE_COMMIT,m.PROFILE002_SCRIPT_BLOB)
         self.assertFalse(good)
         self.assertEqual(code,'CLUED_MODEL_M1_PROFILE_MODEL_BINDING')
 
     def test_authority_expansion_fails(self):
-        p=m.load(m.BASE/'governance/ExperimentAuthorizationProfile.M1-REF-QWEN35-08B-LLAMACPP-001.issued.json')
+        p=m.load(m.BASE/'governance/ExperimentAuthorizationProfile.M1-REF-QWEN35-08B-LLAMACPP-002.issued.json')
         p=copy.deepcopy(p); p['prohibited_operations'].remove('TRAINING')
-        good,code=m.validate_issued_profile(p)
+        good,code=m.validate_issued_profile(p,m.PROFILE002_CODE_COMMIT,m.PROFILE002_SCRIPT_BLOB)
         self.assertFalse(good)
         self.assertEqual(code,'CLUED_MODEL_M1_PROFILE_AUTHORITY_EXPANSION')
 
     def test_execution_code_drift_fails(self):
-        p=m.load(m.BASE/'governance/ExperimentAuthorizationProfile.M1-REF-QWEN35-08B-LLAMACPP-001.issued.json')
+        p=m.load(m.BASE/'governance/ExperimentAuthorizationProfile.M1-REF-QWEN35-08B-LLAMACPP-002.issued.json')
         p=copy.deepcopy(p); p['execution_code']['commit']='deadbeef'
-        good,code=m.validate_issued_profile(p)
+        good,code=m.validate_issued_profile(p,m.PROFILE002_CODE_COMMIT,m.PROFILE002_SCRIPT_BLOB)
         self.assertFalse(good)
         self.assertEqual(code,'CLUED_MODEL_M1_PROFILE_EXECUTION_CODE_BINDING')
 
     def test_device_binding_drift_fails(self):
-        p=m.load(m.BASE/'governance/ExperimentAuthorizationProfile.M1-REF-QWEN35-08B-LLAMACPP-001.issued.json')
+        p=m.load(m.BASE/'governance/ExperimentAuthorizationProfile.M1-REF-QWEN35-08B-LLAMACPP-002.issued.json')
         p=copy.deepcopy(p); p['device_binding']['device_name']='OTHER'
-        good,code=m.validate_issued_profile(p)
+        good,code=m.validate_issued_profile(p,m.PROFILE002_CODE_COMMIT,m.PROFILE002_SCRIPT_BLOB)
         self.assertFalse(good)
         self.assertEqual(code,'CLUED_MODEL_M1_PROFILE_DEVICE_BINDING')
 
