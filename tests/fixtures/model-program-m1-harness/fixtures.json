@@ -1,0 +1,300 @@
+{
+  "schema_version": "clued.model-m1-harness-fixtures/1",
+  "positive_request": {
+    "mode": "STATIC_VALIDATE_ONLY",
+    "adapter_id": "m1-qwen35-08b-llamacpp-v1",
+    "input_payload": {
+      "kind": "text",
+      "text": "Return a short acknowledgement."
+    },
+    "output_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "answer",
+        "abstain"
+      ],
+      "properties": {
+        "answer": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "abstain": {
+          "type": "boolean"
+        }
+      }
+    },
+    "request": {
+      "schema_version": "2.0",
+      "object_type": "ModelInvocationRequest",
+      "adapter_version": "m1-static-v1",
+      "attempt_id": "att_m1_static_001",
+      "binding_ref": "sha256:4c341f30c6fbaca6f3c36dbb99ae507d5ce084db645efbdf34aebc80c786baa8",
+      "budgets": {
+        "currency": "USD",
+        "currency_exponent": 2,
+        "currency_profile_digest": "sha256:114dcbe2949cba016a6307a2c7cf9a1ace1d798d3b304aa086d50b8080f99199",
+        "max_attempts": 1,
+        "max_concurrent_requests": 1,
+        "max_cost_minor_units": 0,
+        "max_elapsed_ms": 1000,
+        "max_input_bytes": 4096,
+        "max_input_tokens": 1024,
+        "max_output_tokens": 256,
+        "max_request_count": 1,
+        "max_response_bytes": 4096,
+        "parse_budget_ms": 100,
+        "persistence_budget_ms": 0,
+        "scrub_wall_clock_budget_ms": 0,
+        "validation_budget_ms": 100
+      },
+      "capability": "structured_generate",
+      "context_slice_ref": "m1-static-context:none",
+      "correlation_id": "corr_m1_static_001",
+      "data_classification": "public",
+      "deadline": "2026-09-19T00:00:00Z",
+      "eval_set_digest": "sha256:f2da307b2e7b96d59568bca7219672cc7dfa14048343ff45dbe320d5d6841e24",
+      "idempotency_key": "sha256:a35a3e0101c70cb63829131e7bee3c111c1f6de4472336932ebaffdb750b9c3f",
+      "input_digest": "sha256:3c7686ce0091272427265406b6a321ea1c8e209e74f8f24cb781330b09cf951c",
+      "invocation_id": "inv_m1_static_001",
+      "lease_hard_stop": "2026-09-19T00:00:00Z",
+      "model_revision": "2fc06364715b967f1860aea9cf38778875588b17",
+      "output_schema_digest": "sha256:38e3ec818be3a0cedf54ca18450d5b04c85b06c7e502129293e302d703ab2efc",
+      "policy_snapshot_digest": "sha256:5cc6bde4f4089a2b6518f421a324b9b187c0283c2bff660afc9de66b3ae05f67",
+      "project_ref": "sha256:919b743b265f286f1316c777745739718fb7c143ed1436474e9e77bab8ae934f",
+      "provider_id": "m1-qwen35-08b-llamacpp",
+      "provider_qualification_ref": "sha256:cfcddc85f199b9d366fda53355c119ed6e3224d41d792ce663ebf0bf65b4c279",
+      "provider_type": "Local",
+      "purpose": "m1-static-harness-validation",
+      "region": "local",
+      "retention_mode": "ephemeral",
+      "scope_digest": "sha256:60f9791f21972e25f9207096dc784f885e6567c1d37a2a661ba553fd078924c8",
+      "security_profile_id": "m1-static-no-exec",
+      "step_deadline": "2026-09-19T00:00:00Z",
+      "subject_ref": "sha256:d5a1dc19c0240652c691797b2c1de593419aef5849c10d34730941e99b7524c0",
+      "template_hash": "sha256:9bfbbe579c31d52f51e2f15330b306de901e096931c83f074bd7373c8025c804",
+      "training_mode": "none",
+      "training_opt_in_receipt_ref": null
+    }
+  },
+  "positive_result": {
+    "mode": "STATIC_VALIDATE_ONLY",
+    "output_payload": {
+      "answer": "Acknowledged.",
+      "abstain": false
+    },
+    "result": {
+      "adapter_artifact_digest": "sha256:cca8c7d78106bc04635ebcd897a21cd2fe7b8a107516ad0491c5e651d737c7d6",
+      "adapter_version": "m1-static-v1",
+      "attempt_id": "att_m1_static_001",
+      "binding_projection": "sha256:273f6c6915650f50749eeb18c5f72ebb5a04a6cd512aa5dc4ace4108dd170750",
+      "budget_reservation_ref": "m1-static-budget:none",
+      "business_receipt_boundary": "SEPARATE_ID_SCHEMA_OUTCOME_AND_STORAGE",
+      "capability": "structured_generate",
+      "completed_at": "2026-09-18T09:45:01Z",
+      "correlation_id": "corr_m1_static_001",
+      "data_classification": "public",
+      "error": null,
+      "input_digest": "sha256:3c7686ce0091272427265406b6a321ea1c8e209e74f8f24cb781330b09cf951c",
+      "invocation_id": "inv_m1_static_001",
+      "invocation_result_authority": "PROVIDER_CALL_OUTCOME_ONLY",
+      "model_id": "qwen-qwen3.5-0.8b",
+      "model_revision": "2fc06364715b967f1860aea9cf38778875588b17",
+      "object_type": "ModelInvocationResult",
+      "outcome": "succeeded",
+      "output_digest": "sha256:a25c41647a24ba813e7bcf6530a38b1863285770d681d19ce218b7a98bb3858a",
+      "output_schema_digest": "sha256:38e3ec818be3a0cedf54ca18450d5b04c85b06c7e502129293e302d703ab2efc",
+      "payload_ref": "m1-static-payload:none",
+      "policy_snapshot_digest": "sha256:5cc6bde4f4089a2b6518f421a324b9b187c0283c2bff660afc9de66b3ae05f67",
+      "pre_output_schema_validation_status": "PASS",
+      "project_projection": "sha256:919b743b265f286f1316c777745739718fb7c143ed1436474e9e77bab8ae934f",
+      "provider_id": "m1-qwen35-08b-llamacpp",
+      "provider_response_id": null,
+      "provider_type": "Local",
+      "purpose": "m1-static-harness-validation",
+      "region": "local",
+      "request_budget_snapshot": {
+        "currency": "USD",
+        "currency_exponent": 2,
+        "currency_profile_digest": "sha256:114dcbe2949cba016a6307a2c7cf9a1ace1d798d3b304aa086d50b8080f99199",
+        "max_attempts": 1,
+        "max_concurrent_requests": 1,
+        "max_cost_minor_units": 0,
+        "max_elapsed_ms": 1000,
+        "max_input_bytes": 4096,
+        "max_input_tokens": 1024,
+        "max_output_tokens": 256,
+        "max_request_count": 1,
+        "max_response_bytes": 4096,
+        "parse_budget_ms": 100,
+        "persistence_budget_ms": 0,
+        "scrub_wall_clock_budget_ms": 0,
+        "validation_budget_ms": 100
+      },
+      "request_digest": "sha256:6bb6b5a338136eb70e5af216200216fa095eededd8d3999690972432cafc4fe3",
+      "response_summary": "Static harness fixture only; no model execution occurred.",
+      "result_id": "res_m1_static_001",
+      "retention_mode": "ephemeral",
+      "retention_policy": "ephemeral-no-persistence",
+      "routing_reason": "static-harness-fixture",
+      "schema_version": "2.0",
+      "scope_digest": "sha256:60f9791f21972e25f9207096dc784f885e6567c1d37a2a661ba553fd078924c8",
+      "settlement_ref": null,
+      "started_at": "2026-09-18T09:45:00Z",
+      "stop_reason": null,
+      "subject_projection": "sha256:d5a1dc19c0240652c691797b2c1de593419aef5849c10d34730941e99b7524c0",
+      "template_hash": "sha256:9bfbbe579c31d52f51e2f15330b306de901e096931c83f074bd7373c8025c804",
+      "training_mode": "none",
+      "usage": {
+        "cost_minor_units": 0,
+        "currency": "USD",
+        "currency_exponent": 2,
+        "currency_profile_digest": "sha256:114dcbe2949cba016a6307a2c7cf9a1ace1d798d3b304aa086d50b8080f99199",
+        "input_bytes": 31,
+        "input_tokens": 0,
+        "output_bytes": 42,
+        "output_tokens": 0
+      }
+    },
+    "candidate": {
+      "adapter_artifact_digest": "sha256:cca8c7d78106bc04635ebcd897a21cd2fe7b8a107516ad0491c5e651d737c7d6",
+      "adapter_version": "m1-static-v1",
+      "attempt_id": "att_m1_static_001",
+      "authority": "NON_AUTHORITATIVE_CANDIDATE",
+      "binding_ref": "sha256:4c341f30c6fbaca6f3c36dbb99ae507d5ce084db645efbdf34aebc80c786baa8",
+      "candidate_id": "cand_m1_static_001",
+      "canonical_status": "NOT_CANONICAL",
+      "capability": "structured_generate",
+      "correlation_id": "corr_m1_static_001",
+      "data_classification": "public",
+      "expires_at": "2026-09-19T09:45:01Z",
+      "generated_at": "2026-09-18T09:45:01Z",
+      "immutability": "IMMUTABLE_APPEND_ONLY",
+      "input_digest": "sha256:3c7686ce0091272427265406b6a321ea1c8e209e74f8f24cb781330b09cf951c",
+      "invocation_id": "inv_m1_static_001",
+      "invocation_result_digest": "sha256:e0b2603ebd77ce0399e82a0d5a91bc1af7dd83ab8fdc3cd5e793c744c4e1dbb2",
+      "invocation_result_id": "res_m1_static_001",
+      "lifecycle_projection_authority": "EVENT_DECISION_RECEIPT_ONLY",
+      "model_id": "qwen-qwen3.5-0.8b",
+      "model_revision": "2fc06364715b967f1860aea9cf38778875588b17",
+      "object_type": "ModelOutputCandidate",
+      "output_digest": "sha256:a25c41647a24ba813e7bcf6530a38b1863285770d681d19ce218b7a98bb3858a",
+      "output_schema_digest": "sha256:38e3ec818be3a0cedf54ca18450d5b04c85b06c7e502129293e302d703ab2efc",
+      "payload_ref": "m1-static-payload:none",
+      "policy_snapshot_digest": "sha256:5cc6bde4f4089a2b6518f421a324b9b187c0283c2bff660afc9de66b3ae05f67",
+      "project_ref": "sha256:919b743b265f286f1316c777745739718fb7c143ed1436474e9e77bab8ae934f",
+      "provider_id": "m1-qwen35-08b-llamacpp",
+      "provider_qualification_ref": "sha256:cfcddc85f199b9d366fda53355c119ed6e3224d41d792ce663ebf0bf65b4c279",
+      "provider_type": "Local",
+      "purpose": "m1-static-harness-validation",
+      "region": "local",
+      "retention_mode": "ephemeral",
+      "retention_policy": "ephemeral-no-persistence",
+      "schema_version": "2.0",
+      "scope_digest": "sha256:60f9791f21972e25f9207096dc784f885e6567c1d37a2a661ba553fd078924c8",
+      "subject_ref": "sha256:d5a1dc19c0240652c691797b2c1de593419aef5849c10d34730941e99b7524c0",
+      "template_hash": "sha256:9bfbbe579c31d52f51e2f15330b306de901e096931c83f074bd7373c8025c804",
+      "training_mode": "none"
+    }
+  },
+  "negative_cases": [
+    {
+      "id": "NEG-UNKNOWN-ADAPTER",
+      "target": "request",
+      "path": "adapter_id",
+      "value": "unknown-adapter",
+      "expected_error": "CLUED_MODEL_M1_HARNESS_UNKNOWN_ADAPTER"
+    },
+    {
+      "id": "NEG-MODEL-REVISION-DRIFT",
+      "target": "request",
+      "path": "request.model_revision",
+      "value": "deadbeef",
+      "expected_error": "CLUED_MODEL_M1_HARNESS_MODEL_REVISION_DRIFT"
+    },
+    {
+      "id": "NEG-TRAINING-MODE",
+      "target": "request",
+      "path": "request.training_mode",
+      "value": "sft",
+      "expected_error": "CLUED_MODEL_M1_HARNESS_TRAINING_FORBIDDEN",
+      "additional_mutations": [
+        {
+          "path": "request.training_opt_in_receipt_ref",
+          "value": "m1-static-training-opt-in"
+        }
+      ]
+    },
+    {
+      "id": "NEG-SECRET-DATA",
+      "target": "request",
+      "path": "request.data_classification",
+      "value": "secret_prohibited",
+      "expected_error": "CLUED_MODEL_M1_HARNESS_DATA_CLASSIFICATION_BLOCKED"
+    },
+    {
+      "id": "NEG-TEMPLATE-HASH",
+      "target": "request",
+      "path": "request.template_hash",
+      "value": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "expected_error": "CLUED_MODEL_M1_HARNESS_TEMPLATE_DRIFT"
+    },
+    {
+      "id": "NEG-OUTPUT-SCHEMA-DIGEST",
+      "target": "request",
+      "path": "request.output_schema_digest",
+      "value": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "expected_error": "CLUED_MODEL_M1_HARNESS_OUTPUT_SCHEMA_DRIFT"
+    },
+    {
+      "id": "NEG-INPUT-DIGEST",
+      "target": "request",
+      "path": "request.input_digest",
+      "value": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "expected_error": "CLUED_MODEL_M1_HARNESS_INPUT_DIGEST_DRIFT"
+    },
+    {
+      "id": "NEG-STATIC-QUALIFICATION-DRIFT",
+      "target": "request",
+      "path": "request.provider_qualification_ref",
+      "value": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "expected_error": "CLUED_MODEL_M1_HARNESS_QUALIFICATION_BINDING_DRIFT"
+    },
+    {
+      "id": "NEG-MISSING-REQUEST-FIELD",
+      "target": "request",
+      "path": "request.provider_id",
+      "delete": true,
+      "expected_error": "CLUED_MODEL_M1_HARNESS_SCHEMA_VALIDATION"
+    },
+    {
+      "id": "NEG-OUTPUT-PAYLOAD",
+      "target": "result",
+      "path": "output_payload.extra",
+      "value": "not-allowed",
+      "expected_error": "CLUED_MODEL_M1_HARNESS_OUTPUT_INVALID"
+    },
+    {
+      "id": "NEG-CANDIDATE-AUTHORITY",
+      "target": "result",
+      "path": "candidate.authority",
+      "value": "CANONICAL",
+      "expected_error": "CLUED_MODEL_M1_HARNESS_SCHEMA_VALIDATION"
+    }
+  ],
+  "error_normalization_cases": [
+    {
+      "kind": "timeout",
+      "expected_code": "MODEL_TIMEOUT"
+    },
+    {
+      "kind": "output_invalid",
+      "expected_code": "MODEL_OUTPUT_INVALID"
+    },
+    {
+      "kind": "unknown-provider-weird-error",
+      "expected_code": "MODEL_INTERNAL_ERROR"
+    }
+  ]
+}

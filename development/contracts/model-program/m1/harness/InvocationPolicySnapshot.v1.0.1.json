@@ -1,0 +1,27 @@
+{
+  "schema_version": "clued.model-m1-invocation-policy-snapshot/1",
+  "policy_id": "m1-static-harness-policy-v1",
+  "status": "STATIC_BOUND / REAL_EXECUTION_BLOCKED",
+  "policy": {
+    "mode": "STATIC_HARNESS_ONLY",
+    "allowed_data_classifications": [
+      "public",
+      "internal"
+    ],
+    "required_training_mode": "none",
+    "require_output_schema_validation": true,
+    "require_candidate_only_semantics": true,
+    "forbid_direct_canonical_write": true,
+    "forbid_tools": true,
+    "forbid_network": true,
+    "forbid_remote_code": true,
+    "forbid_training": true,
+    "forbid_evaluation": true,
+    "real_provider_execution": "BLOCKED_PENDING_SEPARATE_INFERENCE_PROFILE_AND_CURRENT_MODEL_CAPABILITY_PROFILE_SUCCESSOR",
+    "unknown_provider": "FAIL_CLOSED",
+    "unknown_adapter": "FAIL_CLOSED",
+    "unknown_error": "MODEL_INTERNAL_ERROR"
+  },
+  "policy_body_sha256": "sha256:5cc6bde4f4089a2b6518f421a324b9b187c0283c2bff660afc9de66b3ae05f67",
+  "authority_effect": "NONE"
+}

@@ -1,0 +1,64 @@
+{
+  "schema_version": "clued.model-m1-error-normalization-registry/1",
+  "record_id": "CLUED-MODEL-M1-ERROR-NORMALIZATION-v1-20260918",
+  "canonical_error_schema_ref": "urn:clued:schema:model-invocation-result:v2#/$defs/standard_error",
+  "mappings": {
+    "provider_unavailable": {
+      "code": "MODEL_PROVIDER_UNAVAILABLE",
+      "retryable": true,
+      "sanitized_message": "Model provider unavailable."
+    },
+    "timeout": {
+      "code": "MODEL_TIMEOUT",
+      "retryable": true,
+      "sanitized_message": "Model invocation timed out."
+    },
+    "cancelled": {
+      "code": "MODEL_CANCELLED",
+      "retryable": false,
+      "sanitized_message": "Model invocation cancelled."
+    },
+    "budget_exceeded": {
+      "code": "MODEL_BUDGET_EXCEEDED",
+      "retryable": false,
+      "sanitized_message": "Model invocation budget exceeded."
+    },
+    "scope_denied": {
+      "code": "MODEL_SCOPE_DENIED",
+      "retryable": false,
+      "sanitized_message": "Model invocation scope denied."
+    },
+    "output_invalid": {
+      "code": "MODEL_OUTPUT_INVALID",
+      "retryable": false,
+      "sanitized_message": "Model output failed validation."
+    },
+    "policy_blocked": {
+      "code": "MODEL_POLICY_BLOCKED",
+      "retryable": false,
+      "sanitized_message": "Model invocation blocked by policy."
+    },
+    "revision_drift": {
+      "code": "MODEL_REVISION_DRIFT",
+      "retryable": false,
+      "sanitized_message": "Model revision drift detected."
+    },
+    "payload_unavailable": {
+      "code": "MODEL_PAYLOAD_UNAVAILABLE",
+      "retryable": false,
+      "sanitized_message": "Model payload unavailable."
+    },
+    "internal_error": {
+      "code": "MODEL_INTERNAL_ERROR",
+      "retryable": false,
+      "sanitized_message": "Model invocation internal error."
+    }
+  },
+  "unknown_mapping": {
+    "code": "MODEL_INTERNAL_ERROR",
+    "retryable": false,
+    "sanitized_message": "Model invocation internal error."
+  },
+  "raw_detail_policy": "HASH_ONLY / NEVER_EXPOSE_RAW_DETAIL_IN_SANITIZED_MESSAGE",
+  "authority_effect": "NONE"
+}

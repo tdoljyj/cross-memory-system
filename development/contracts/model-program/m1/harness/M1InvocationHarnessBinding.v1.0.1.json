@@ -1,0 +1,93 @@
+{
+  "schema_version": "clued.model-m1-invocation-harness-binding/1",
+  "record_id": "CLUED-MODEL-M1-INVOCATION-HARNESS-BINDING-v1-20260918",
+  "stage_id": "MODEL-PROGRAM-M1",
+  "task_id": "M1-04",
+  "status": "STATIC_HARNESS_READY / REAL_PROVIDER_EXECUTION_BLOCKED",
+  "bound_plan": {
+    "version": "v1.0.1",
+    "sha256": "a918f42e6e9de160f7b14a95afafeae9022ddcc189b3663e768aa197110118a4"
+  },
+  "prerequisite": {
+    "m1_03_closeout_ref": "../evidence/M1ExperimentProfile003ExecutionCloseout_20260918.json",
+    "required_result": "PASS / CLUED_MODEL_M1_PROFILE_003_DOWNLOAD_AND_INTEGRITY_ACCEPTED"
+  },
+  "binding_identity": {
+    "program": "CLUED-FIRST-PARTY-MODEL",
+    "stage": "M1",
+    "task": "M1-04",
+    "revision": "v1.0.1",
+    "mode": "STATIC_HARNESS_ONLY",
+    "model_revision": "2fc06364715b967f1860aea9cf38778875588b17",
+    "runtime_revision": "bdcbaaf6e7520b68c8c60ff724c67409970d70e1"
+  },
+  "binding_identity_sha256": "sha256:4c341f30c6fbaca6f3c36dbb99ae507d5ce084db645efbdf34aebc80c786baa8",
+  "upstream_contracts": {
+    "model_invocation_request": {
+      "path": "protocol/continuity/v1/schemas/model/model-invocation-request.schema.json",
+      "git_blob_sha1": "60fc35b058d1bcf1d44ad0d0d6f6b29701508e6d",
+      "sha256": "4fe9f38171a925497631ff4bf59f06d6aed9db2d296a31f159a7e8f9f5f5f642",
+      "schema_id": "urn:clued:schema:model-invocation-request:v2"
+    },
+    "model_invocation_result": {
+      "path": "protocol/continuity/v1/schemas/model/model-invocation-result.schema.json",
+      "git_blob_sha1": "b3fb5de5723ff26d0996db34cd520d7efa2a1950",
+      "sha256": "818f9eac55201fb442e45e7fd4f50b6c00b23b4c0bdea16a4a0e33023c893a1f",
+      "schema_id": "urn:clued:schema:model-invocation-result:v2"
+    },
+    "model_output_candidate": {
+      "path": "protocol/continuity/v1/schemas/model/model-output-candidate.schema.json",
+      "git_blob_sha1": "a51f5357e1f718d2577b0840a721c8f9b7def156",
+      "sha256": "69fdbe65eb86b4af54f5428c85e072df7b91adf2b33a84f5b248429444b569c5",
+      "schema_id": "urn:clued:schema:model-output-candidate:v2"
+    },
+    "provider_descriptor": {
+      "path": "protocol/continuity/v1/schemas/model/provider-descriptor.schema.json",
+      "git_blob_sha1": "67ebfe614d1441787f62c7a47f7bd490f7b08178",
+      "sha256": "9fc150f7682a32799e5ca6e8439c28a0912804c16af70c034a5d080134b3f6b7",
+      "schema_id": "urn:clued:schema:model-provider-descriptor:v2"
+    },
+    "model_capability_profile": {
+      "path": "protocol/continuity/v1/profiles/model-capability.profile.json",
+      "git_blob_sha1": "329e2cf52758617e57308c3ee43c9d44cdceb28d",
+      "sha256": "880060ef06dc497df126b265f90a0265b708ce7172a4c4225c9de926ae13b663"
+    },
+    "complete_call": {
+      "path": "development/contracts/model-program/m0/schemas/CompleteCall.schema.json",
+      "git_blob_sha1": "6a181be353c57a64bc4a24a73b5f99aa8df687f5",
+      "sha256": "511c8478a3f253286f9958af9b5a49e047efa594c3bba2bc6c72f288fb539aeb"
+    }
+  },
+  "local_surfaces": {
+    "request_envelope_schema": "../schemas/M1HarnessRequestEnvelope.schema.json",
+    "result_envelope_schema": "../schemas/M1HarnessResultEnvelope.schema.json",
+    "adapter_registry": "ProviderAdapterRegistry.v1.0.1.json",
+    "prompt_registry": "PromptTemplateRegistry.v1.0.1.json",
+    "policy_snapshot": "InvocationPolicySnapshot.v1.0.1.json",
+    "error_normalization_registry": "ErrorNormalizationRegistry.v1.0.1.json"
+  },
+  "current_kernel_model_capability_profile": {
+    "allowed_provider_types": [
+      "Test"
+    ],
+    "allowed_capabilities": [],
+    "runtime_disposition": "N/A_WITH_PROOF_REAL_PROVIDER",
+    "local_provider_execution_allowed": false
+  },
+  "real_inference_gate": {
+    "status": "BLOCKED",
+    "required_before_real_model_call": [
+      "SEPARATE_EXACT_INFERENCE_EXPERIMENT_PROFILE",
+      "CURRENT_MODEL_CAPABILITY_PROFILE_SUCCESSOR_ALLOWING_LOCAL_AND_REQUESTED_CAPABILITY",
+      "EXACT_PROVIDER_QUALIFICATION_REF",
+      "M1_05_RUNTIME_PACKAGE_BINDING_FOR_LLAMA_CPP_OR_EXPLICIT_ALTERNATE_RUNTIME_PROFILE"
+    ],
+    "current_blockers": [
+      "CURRENT_MODEL_CAPABILITY_PROFILE_DISALLOWS_LOCAL_PROVIDER",
+      "CURRENT_MODEL_CAPABILITY_PROFILE_ALLOWED_CAPABILITIES_EMPTY",
+      "LLAMA_CPP_RUNTIME_PACKAGE_VARIANT_NOT_BOUND_UNTIL_M1_05"
+    ]
+  },
+  "task_effect": "M1-04_IN_PROGRESS / STATIC_HARNESS_READY / REAL_INVOCATION_PENDING",
+  "authority_effect": "NONE"
+}

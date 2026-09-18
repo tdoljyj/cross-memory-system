@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:clued:schema:model-m1-harness-request-envelope:v1",
+  "title": "M1HarnessRequestEnvelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "mode",
+    "adapter_id",
+    "request",
+    "input_payload",
+    "output_schema"
+  ],
+  "properties": {
+    "mode": {
+      "const": "STATIC_VALIDATE_ONLY"
+    },
+    "adapter_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "request": {
+      "type": "object"
+    },
+    "input_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "text"
+      ],
+      "properties": {
+        "kind": {
+          "const": "text"
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 65536
+        }
+      }
+    },
+    "output_schema": {
+      "type": "object",
+      "minProperties": 1
+    }
+  }
+}
