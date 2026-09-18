@@ -9,10 +9,46 @@ permissions:
   contents: read
 
 jobs:
-  trivy:
+  trivy-trusted-self-hosted:
+    if: >-
+      (github.event_name == 'push' &&
+       github.actor == github.repository_owner) ||
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name == github.repository &&
+       github.actor == github.repository_owner)
+    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal, cap-docker-linux]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Vulnerabilities (HIGH/CRITICAL)
+        run: |
+          docker run --rm -v "$PWD:/repo" \
+            ghcr.io/aquasecurity/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9 \
+            fs --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 /repo
+      - name: Secrets
+        run: |
+          docker run --rm -v "$PWD:/repo" \
+            ghcr.io/aquasecurity/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9 \
+            fs --scanners secret --exit-code 1 /repo
+      - name: Misconfiguration (HIGH/CRITICAL)
+        run: |
+          docker run --rm -v "$PWD:/repo" \
+            ghcr.io/aquasecurity/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9 \
+            fs --scanners misconfig --severity HIGH,CRITICAL --exit-code 1 /repo
+
+  trivy-untrusted-hosted:
+    if: >-
+      (github.event_name == 'push' &&
+       github.actor != github.repository_owner) ||
+      (github.event_name == 'pull_request' &&
+       (github.event.pull_request.head.repo.full_name != github.repository ||
+        github.actor != github.repository_owner))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
       - name: Vulnerabilities (HIGH/CRITICAL)
         run: |
           docker run --rm -v "$PWD:/repo" \
