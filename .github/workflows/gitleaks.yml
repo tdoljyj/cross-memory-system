@@ -9,12 +9,59 @@ permissions:
   contents: read
 
 jobs:
-  gitleaks:
+  gitleaks-trusted-self-hosted:
+    name: >-
+      ${{ (((github.event_name == 'push' && github.actor == github.repository_owner) ||
+             (github.event_name == 'pull_request' &&
+              github.event.pull_request.head.repo.full_name == github.repository &&
+              github.actor == github.repository_owner)))
+          && 'gitleaks' || 'gitleaks-self-hosted-skipped' }}
+    if: >-
+      (github.event_name == 'push' &&
+       github.actor == github.repository_owner) ||
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name == github.repository &&
+       github.actor == github.repository_owner)
+    runs-on: [self-hosted, Linux, X64, clued, pool-general, trust-internal, cap-docker-linux]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+      - name: Validate exact historical exceptions and detection regressions
+        run: |
+          python3 scripts/ci/reviewed_gitleaks.py \
+            --config .gitleaks.toml \
+            --output "$RUNNER_TEMP/clued-reviewed.ignore" \
+            --self-test
+      - name: Scan complete history with Gitleaks 8.30.1
+        run: |
+          docker run --rm \
+            -v "$PWD:/repo" \
+            -v "$RUNNER_TEMP/clued-reviewed.ignore:/reviewed.ignore:ro" \
+            ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f \
+            git /repo --config /repo/.gitleaks.toml \
+            --gitleaks-ignore-path /reviewed.ignore --redact --exit-code 1
+
+  gitleaks-untrusted-hosted:
+    name: >-
+      ${{ (((github.event_name == 'push' && github.actor != github.repository_owner) ||
+             (github.event_name == 'pull_request' &&
+              (github.event.pull_request.head.repo.full_name != github.repository ||
+               github.actor != github.repository_owner))))
+          && 'gitleaks' || 'gitleaks-hosted-skipped' }}
+    if: >-
+      (github.event_name == 'push' &&
+       github.actor != github.repository_owner) ||
+      (github.event_name == 'pull_request' &&
+       (github.event.pull_request.head.repo.full_name != github.repository ||
+        github.actor != github.repository_owner))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 0
+          persist-credentials: true
       - name: Validate exact historical exceptions and detection regressions
         run: |
           python3 scripts/ci/reviewed_gitleaks.py \
