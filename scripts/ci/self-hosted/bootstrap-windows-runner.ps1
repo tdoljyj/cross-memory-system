@@ -71,7 +71,7 @@ New-Item -ItemType Directory -Force -Path $tools | Out-Null
 $escapedPythonExe = $pythonExe.Replace('%', '%%')
 $pythonShim = @(
     '@echo off',
-    '"' + $escapedPythonExe + '" %*'
+    ('"' + $escapedPythonExe + '" %*')
 )
 $pythonShim | Set-Content -Path (Join-Path $tools 'python.cmd') -Encoding ASCII
 $pythonShim | Set-Content -Path (Join-Path $tools 'python3.cmd') -Encoding ASCII
