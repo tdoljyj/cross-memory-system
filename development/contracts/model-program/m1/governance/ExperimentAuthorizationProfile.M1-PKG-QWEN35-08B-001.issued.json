@@ -1,0 +1,143 @@
+{
+  "schema_version": "clued.model-experiment-authorization-profile/3",
+  "profile_id": "M1-PKG-QWEN35-08B-001",
+  "stage_id": "MODEL-PROGRAM-M1",
+  "task_id": "M1-05",
+  "status": "ISSUED",
+  "issued_at_utc": "2026-09-18T10:09:24.6501051Z",
+  "expiry_utc": "2026-09-19T10:09:24.6501051Z",
+  "objective": "Prepare exact-lineage GGUF package variants (BF16, Q8_0, Q4_0, Q4_K_M) from the M1-03 Qwen3.5-0.8B raw snapshot using exact llama.cpp b11033 conversion/quantization tooling; package preparation only, no inference or quality evaluation.",
+  "owner_authorization": {
+    "holder": "OWNER",
+    "source": "CURRENT_CONVERSATION",
+    "instructions": [
+      "好 进行下一步"
+    ],
+    "interpreted_scope": "Proceed with M1-05 Package / Quantization Variant preparation after M1-04 static harness merge."
+  },
+  "prerequisites": {
+    "m1_03_closeout_ref": "../evidence/M1ExperimentProfile003ExecutionCloseout_20260918.json",
+    "m1_03_required_result": "PASS / CLUED_MODEL_M1_PROFILE_003_DOWNLOAD_AND_INTEGRITY_ACCEPTED",
+    "runtime_package_selection_ref": "../package/RuntimePackageSelection.v1.0.1.json",
+    "package_variant_matrix_ref": "../package/PackageVariantMatrix.v1.0.1.json"
+  },
+  "source_snapshot": {
+    "local_path": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\references\\Qwen_Qwen3.5-0.8B\\2fc06364715b967f1860aea9cf38778875588b17-profile003",
+    "model_id": "Qwen/Qwen3.5-0.8B",
+    "revision": "2fc06364715b967f1860aea9cf38778875588b17",
+    "raw_weight_bytes": 1746942600,
+    "raw_weight_sha256": "04b1c301231dd422b8860db31311ab2721511346a32cb1e079c4c4e5f1fe4696"
+  },
+  "runtime_toolchain": {
+    "source_repo": "ggml-org/llama.cpp",
+    "release_tag": "b11033",
+    "commit": "8ed1a55efcd7424d2c592f6cbc9f97756db1d74d",
+    "windows_vulkan_asset": {
+      "name": "llama-b11033-bin-win-vulkan-x64.zip",
+      "bytes": 31766410,
+      "sha256": "8ca91d4621fcac8799245f01a6467e9c09eba7b8d3be161a382048dc5c839db2"
+    },
+    "conversion_script_git_blob_sha1": "e09616b190cf124e818d8a740468d4e84086015c",
+    "requirements_convert_hf_git_blob_sha1": "b1f7c863e27e184e55408c9e5792158301c86547"
+  },
+  "execution_code": {
+    "commit": "125c69c2e2320226c1f8719cbfeb61aae729a610",
+    "script_path": "scripts/model-program/m1_prepare_package_variants.py",
+    "script_git_blob_sha1": "adabf0a83f51b7d2e39ff9b87ddc3248c0026bac",
+    "required_preflight": "PYTHON_COMPILE_PASS"
+  },
+  "device_binding": {
+    "device_name": "DESK-W-591",
+    "device_profile_ref": "../registries/DeviceRuntimeMatrix.v1.0.2.json#DEV-PERSONAL-WINDOWS-01",
+    "binding_state": "EXACT_BOUND",
+    "free_storage_bytes_at_issue": 226084843520
+  },
+  "execution_target": {
+    "output_dir": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\packages\\Qwen_Qwen3.5-0.8B\\m1pkg001",
+    "requires_nonexistent_output_dir": true,
+    "one_shot_lock": true
+  },
+  "allowed_operations": [
+    "READ_EXACT_M1_03_RAW_SNAPSHOT",
+    "CLONE_EXACT_LLAMA_CPP_SOURCE_COMMIT",
+    "CREATE_ISOLATED_PYTHON_VENV",
+    "INSTALL_LLAMA_CPP_CONVERSION_REQUIREMENTS_IN_ISOLATED_VENV",
+    "DOWNLOAD_EXACT_LLAMA_CPP_RUNTIME_RELEASE_ASSET",
+    "EXTRACT_EXACT_RUNTIME_RELEASE_ASSET",
+    "CONVERT_HF_SNAPSHOT_TO_BF16_GGUF",
+    "CONVERT_HF_SNAPSHOT_TO_Q8_0_GGUF",
+    "QUANTIZE_BF16_GGUF_TO_Q4_0",
+    "QUANTIZE_BF16_GGUF_TO_Q4_K_M",
+    "COMPUTE_SHA256_AND_BYTES",
+    "WRITE_PACKAGE_PREPARATION_MANIFEST",
+    "RECORD_RESOLVED_PYTHON_ENVIRONMENT"
+  ],
+  "prohibited_operations": [
+    "MODEL_INFERENCE",
+    "MODEL_INFERENCE_LOAD",
+    "MODEL_EVALUATION",
+    "QUALITY_RANKING",
+    "HOSTED_PROVIDER_CALL",
+    "TRAINING",
+    "CONTINUED_PRETRAINING",
+    "SFT",
+    "DISTILLATION",
+    "PREFERENCE_TRAINING",
+    "LORA_OR_ADAPTER_TRAINING",
+    "MODEL_MERGE",
+    "SEMANTIC_INDEX_WRITE",
+    "SEMANTIC_RECALL_RELEASE",
+    "PROMOTION",
+    "ACTIVATION",
+    "PRODUCTION_DEPLOYMENT",
+    "PRODUCTION_TRAFFIC",
+    "PRODUCTION_DATABASE_MUTATION",
+    "PRODUCTION_SECRET_MUTATION",
+    "G1_CUTOVER",
+    "MACHINE_RC_SEAL",
+    "G7A",
+    "G7P"
+  ],
+  "network_allowlist": [
+    "github.com/ggml-org/llama.cpp.git",
+    "github.com/ggml-org/llama.cpp/releases/download/b11033/*",
+    "pypi.org / files.pythonhosted.org as resolved by pip",
+    "download.pytorch.org/whl/cpu as required by exact llama.cpp conversion requirements"
+  ],
+  "budget_ceiling": {
+    "max_wall_seconds": 7200,
+    "max_network_bytes": 6442450944,
+    "max_output_storage_bytes": 12884901888,
+    "max_cost_microunits": 0,
+    "currency": "USD",
+    "max_attempts": 1
+  },
+  "required_outputs": [
+    "PackagePreparationManifest.json",
+    "ResolvedPythonEnvironment.txt",
+    "packages/Qwen3.5-0.8B-BF16.gguf",
+    "packages/Qwen3.5-0.8B-Q8_0.gguf",
+    "packages/Qwen3.5-0.8B-Q4_0.gguf",
+    "packages/Qwen3.5-0.8B-Q4_K_M.gguf",
+    "runtime/b11033-vulkan/**"
+  ],
+  "stop_conditions": [
+    "SOURCE_WEIGHT_DIGEST_DRIFT",
+    "SOURCE_MODEL_REVISION_DRIFT",
+    "LLAMA_CPP_COMMIT_DRIFT",
+    "RUNTIME_ASSET_DIGEST_OR_SIZE_MISMATCH",
+    "UNSAFE_RUNTIME_ZIP_PATH",
+    "LLAMA_QUANTIZE_NOT_EXACTLY_ONE",
+    "PYTHON_REQUIREMENTS_INSTALL_FAILURE",
+    "CONVERSION_FAILURE",
+    "QUANTIZATION_FAILURE",
+    "NETWORK_BUDGET_EXCEEDED",
+    "OUTPUT_STORAGE_BUDGET_EXCEEDED",
+    "OUTPUT_DIR_ALREADY_EXISTS",
+    "ONE_SHOT_LOCK_ALREADY_EXISTS",
+    "PROFILE_EXPIRED_OR_REVOKED"
+  ],
+  "release_ceiling": "M1_05_PACKAGE_PREPARATION_EVIDENCE_ONLY / NO_INFERENCE / NO_EVALUATION / NO_QUALITY_SELECTION / NO_RELEASE",
+  "effectful_authority_issued": true,
+  "authority_effect": "M1-05_PACKAGE_CONVERSION_AND_QUANTIZATION_ONLY"
+}

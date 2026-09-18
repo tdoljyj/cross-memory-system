@@ -1,0 +1,32 @@
+name: model-program-m1-package
+on:
+  pull_request:
+    paths:
+      - "development/contracts/model-program/m1/package/**"
+      - "development/contracts/model-program/m1/governance/ExperimentAuthorizationProfile.M1-PKG-*"
+      - "scripts/model-program/m1_prepare_package_variants.py"
+      - "scripts/model-program/validate_m1_package_profile.py"
+      - "tests/test_model_program_m1_package.py"
+      - ".github/workflows/model-program-m1-package.yml"
+  push:
+    branches: [main]
+    paths:
+      - "development/contracts/model-program/m1/package/**"
+      - "development/contracts/model-program/m1/governance/ExperimentAuthorizationProfile.M1-PKG-*"
+      - "scripts/model-program/m1_prepare_package_variants.py"
+      - "scripts/model-program/validate_m1_package_profile.py"
+      - "tests/test_model_program_m1_package.py"
+      - ".github/workflows/model-program-m1-package.yml"
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m py_compile scripts/model-program/m1_prepare_package_variants.py scripts/model-program/validate_m1_package_profile.py
+      - run: python scripts/model-program/validate_m1_package_profile.py
+      - run: python -m unittest tests.test_model_program_m1_package -v
