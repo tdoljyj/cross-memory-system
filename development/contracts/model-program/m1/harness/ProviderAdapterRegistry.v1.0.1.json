@@ -1,0 +1,49 @@
+{
+  "schema_version": "clued.model-m1-provider-adapter-registry/1",
+  "record_id": "CLUED-MODEL-M1-PROVIDER-ADAPTER-REGISTRY-v1-20260918",
+  "status": "STATIC_BINDING_ONLY / EXECUTION_DISABLED",
+  "binding_ref": "M1InvocationHarnessBinding.v1.0.1.json",
+  "static_qualification_identity": {
+    "provider_id": "m1-qwen35-08b-llamacpp",
+    "adapter_id": "m1-qwen35-08b-llamacpp-v1",
+    "mode": "STATIC_SCHEMA_BINDING_ONLY",
+    "execution_qualification": false,
+    "authority_effect": "NONE"
+  },
+  "static_qualification_identity_sha256": "sha256:cfcddc85f199b9d366fda53355c119ed6e3224d41d792ce663ebf0bf65b4c279",
+  "adapters": [
+    {
+      "adapter_id": "m1-qwen35-08b-llamacpp-v1",
+      "adapter_version": "m1-static-v1",
+      "provider_id": "m1-qwen35-08b-llamacpp",
+      "provider_type": "Local",
+      "internal_model_id": "qwen-qwen3.5-0.8b",
+      "external_model_id": "Qwen/Qwen3.5-0.8B",
+      "model_revision": "2fc06364715b967f1860aea9cf38778875588b17",
+      "snapshot_weight_sha256": "04b1c301231dd422b8860db31311ab2721511346a32cb1e079c4c4e5f1fe4696",
+      "runtime_id": "llama.cpp",
+      "runtime_revision": "bdcbaaf6e7520b68c8c60ff724c67409970d70e1",
+      "runtime_package_binding": "PENDING_M1_05_PACKAGE_VARIANT",
+      "adapter_identity": {
+        "adapter_id": "m1-qwen35-08b-llamacpp-v1",
+        "adapter_version": "m1-static-v1",
+        "external_model_id": "Qwen/Qwen3.5-0.8B",
+        "model_revision": "2fc06364715b967f1860aea9cf38778875588b17",
+        "runtime_revision": "bdcbaaf6e7520b68c8c60ff724c67409970d70e1"
+      },
+      "adapter_artifact_digest": "sha256:cca8c7d78106bc04635ebcd897a21cd2fe7b8a107516ad0491c5e651d737c7d6",
+      "target_capabilities": [
+        "structured_generate"
+      ],
+      "qualified_capabilities": [],
+      "execution_allowed": false,
+      "execution_blockers": [
+        "KERNEL_MODEL_CAPABILITY_PROFILE_LOCAL_NOT_ALLOWED",
+        "KERNEL_MODEL_CAPABILITY_PROFILE_CAPABILITIES_EMPTY",
+        "RUNTIME_PACKAGE_VARIANT_PENDING_M1_05",
+        "INFERENCE_EXPERIMENT_PROFILE_NOT_ISSUED"
+      ]
+    }
+  ],
+  "authority_effect": "NONE"
+}

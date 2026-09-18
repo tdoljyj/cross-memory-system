@@ -1,0 +1,15 @@
+{
+  "schema_version": "clued.model-m1-prompt-template-registry/1",
+  "record_id": "CLUED-MODEL-M1-PROMPT-TEMPLATE-REGISTRY-v1-20260918",
+  "status": "STATIC_BOUND",
+  "templates": [
+    {
+      "template_id": "m1-structured-generate-json-v1",
+      "version": "1",
+      "capability": "structured_generate",
+      "content": "You are operating as a non-authoritative Clued model provider.\nReturn only one JSON value that conforms to the supplied output schema.\nDo not execute tools, access external resources, mutate state, grant authority, or invent canonical facts.\nIf the requested output cannot be produced within the supplied evidence and schema, return an abstention-shaped value when the schema permits it; otherwise the harness must treat the response as invalid.\nInput:\n{{input_text}}\nOutput schema:\n{{output_schema_json}}\n",
+      "template_sha256": "sha256:9bfbbe579c31d52f51e2f15330b306de901e096931c83f074bd7373c8025c804",
+      "authority_effect": "NONE"
+    }
+  ]
+}
