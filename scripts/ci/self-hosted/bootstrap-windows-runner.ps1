@@ -1,3 +1,5 @@
+#requires -Version 5.1
+
 param(
     [Parameter(Mandatory = $false)]
     [ValidateSet('home', 'company', 'other')]
@@ -22,6 +24,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 function Assert-Admin {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -37,7 +40,7 @@ if ($RunAsService -and -not (Assert-Admin)) {
     throw 'RunAsService requires an elevated PowerShell session. Re-run as Administrator or omit -RunAsService.'
 }
 
-Write-Host "Clued self-hosted runner bootstrap"
+Write-Host 'Clued self-hosted runner bootstrap'
 Write-Host "Runner: $RunnerName"
 Write-Host "Site:   $Site"
 Write-Host "Repo:   $RepositoryUrl"
@@ -62,24 +65,28 @@ if (-not $asset.digest -or ([string]$asset.digest) -notmatch '^sha256:') {
 }
 
 $downloads = Join-Path $Root 'downloads'
-$runnerDir = Join-Path $Root ("runner-" + $RunnerName)
+$runnerSuffix = $RunnerName
+if ($runnerSuffix.StartsWith('clued-ci-', [System.StringComparison]::OrdinalIgnoreCase)) {
+    $runnerSuffix = $runnerSuffix.Substring(9)
+}
+$runnerDir = Join-Path $Root ("runner-" + $runnerSuffix)
 New-Item -ItemType Directory -Force -Path $downloads | Out-Null
 
-if ((Test-Path (Join-Path $runnerDir '.runner')) -and -not $ReplaceExisting) {
-    throw "Runner is already configured at $runnerDir. Use -ReplaceExisting only when you intentionally want to replace it."
+if (Test-Path (Join-Path $runnerDir '.runner')) {
+    throw "Runner is already configured at $runnerDir. Remove the existing runner configuration explicitly before reusing this directory."
 }
 New-Item -ItemType Directory -Force -Path $runnerDir | Out-Null
 
 $zip = Join-Path $downloads $assetName
 Write-Host "Downloading GitHub Actions runner $version..."
-Invoke-WebRequest -Headers $headers -Uri $asset.browser_download_url -OutFile $zip
+Invoke-WebRequest -UseBasicParsing -Headers $headers -Uri $asset.browser_download_url -OutFile $zip
 
 $actualDigest = 'sha256:' + (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
 $expectedDigest = ([string]$asset.digest).ToLowerInvariant()
 if ($actualDigest -ne $expectedDigest) {
     throw "Runner package digest mismatch. Expected $expectedDigest, got $actualDigest"
 }
-Write-Host "Runner package SHA-256 verified."
+Write-Host 'Runner package SHA-256 verified.'
 
 Expand-Archive -Path $zip -DestinationPath $runnerDir -Force
 $config = Join-Path $runnerDir 'config.cmd'
