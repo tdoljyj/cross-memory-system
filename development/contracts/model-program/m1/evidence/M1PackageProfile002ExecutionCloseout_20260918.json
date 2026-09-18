@@ -1,0 +1,155 @@
+{
+  "schema_version": "clued.model-m1-package-profile-execution-closeout/1",
+  "closeout_id": "CLUED-MODEL-M1-PKG-PROFILE-002-CLOSEOUT-20260918",
+  "profile_id": "M1-PKG-QWEN35-08B-002",
+  "stage_id": "MODEL-PROGRAM-M1",
+  "task_id": "M1-05",
+  "result": "PASS / CLUED_MODEL_M1_PKG_PROFILE_002_VARIANTS_PREPARED_AND_INTEGRITY_VERIFIED",
+  "execution": {
+    "device_name": "DESK-W-591",
+    "started_utc": "2026-09-18T10:20:53Z",
+    "completed_utc": "2026-09-18T10:24:43.297969Z",
+    "process_exit_code": 0,
+    "observed_runtime_seconds": 230.65,
+    "execution_code_commit": "dc59d70a2196708a94d862073b52dd315b2a0c71",
+    "script_git_blob_sha1": "0f3e59b1c2022d8f298836f4d3c4c26b8e4c7ae5",
+    "output_dir": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\packages\\Qwen_Qwen3.5-0.8B\\m1pkg002"
+  },
+  "source_lineage": {
+    "model_id": "Qwen/Qwen3.5-0.8B",
+    "model_revision": "2fc06364715b967f1860aea9cf38778875588b17",
+    "raw_weight_bytes": 1746942600,
+    "raw_weight_sha256": "04b1c301231dd422b8860db31311ab2721511346a32cb1e079c4c4e5f1fe4696",
+    "m1_03_closeout_ref": "M1ExperimentProfile003ExecutionCloseout_20260918.json"
+  },
+  "runtime_toolchain": {
+    "release_tag": "b11033",
+    "source_commit": "8ed1a55efcd7424d2c592f6cbc9f97756db1d74d",
+    "runtime_asset": {
+      "name": "llama-b11033-bin-win-vulkan-x64.zip",
+      "bytes": 31766410,
+      "sha256": "8ca91d4621fcac8799245f01a6467e9c09eba7b8d3be161a382048dc5c839db2"
+    },
+    "llama_quantize_exe": {
+      "path": "runtime\\b11033-vulkan\\llama-quantize.exe",
+      "bytes": 9216,
+      "sha256": "d50239b3234a3feda2d5441f6eee442e31acb26be1194716a11e49c9bb331afe"
+    },
+    "local_source_head": "8ed1a55efcd7424d2c592f6cbc9f97756db1d74d"
+  },
+  "network_accounting": {
+    "method": "CONSERVATIVE_AT_REST_UPPER_BOUND",
+    "runtime_direct_http_bytes": 31766410,
+    "git_object_store_bytes": 63403086,
+    "pip_wheelhouse_bytes": 156284616,
+    "network_upper_bound_bytes": 251454112,
+    "max_network_bytes": 6442450944,
+    "pass": true,
+    "evidence_sha256": "3bb0d40c67a76c1bc0f6e46203133eca5f08c47832e4255d43d7cbb081029a7e"
+  },
+  "resolved_environment": {
+    "sha256": "07863d2c6ae5c2a919bad01770e23859b6f318e9246314365486f26acadbe2aa",
+    "core_versions": {
+      "torch": "2.11.0+cpu",
+      "transformers": "4.57.6",
+      "numpy": "2.2.6",
+      "gguf": "0.19.0",
+      "sentencepiece": "0.2.2",
+      "protobuf": "4.25.9"
+    },
+    "install_mode": "OFFLINE_FROM_WHEELHOUSE_AFTER_DOWNLOAD"
+  },
+  "variants": [
+    {
+      "variant_id": "bf16",
+      "path": "Qwen3.5-0.8B-BF16.gguf",
+      "bytes": 1557662720,
+      "sha256": "fbeda5bd9fa2e8c418cb08df1fa2d06082d2d8ded2728df2d94c9144033f2b73",
+      "method": "convert_hf_to_gguf:bf16",
+      "gguf_magic_verified": true,
+      "integrity_status": "PASS"
+    },
+    {
+      "variant_id": "q8_0",
+      "path": "Qwen3.5-0.8B-Q8_0.gguf",
+      "bytes": 833592320,
+      "sha256": "799482186ea1c91b63bf4eb2999e034330425745496a95f0bffbfe6300a1064d",
+      "method": "convert_hf_to_gguf:q8_0",
+      "gguf_magic_verified": true,
+      "integrity_status": "PASS"
+    },
+    {
+      "variant_id": "q4_0",
+      "path": "Qwen3.5-0.8B-Q4_0.gguf",
+      "bytes": 512977920,
+      "sha256": "d9192377b378863e309e5d2faeeea5b0489f385320a8ed281cff9568061577d6",
+      "method": "llama-quantize:Q4_0",
+      "gguf_magic_verified": true,
+      "integrity_status": "PASS"
+    },
+    {
+      "variant_id": "q4_k_m",
+      "path": "Qwen3.5-0.8B-Q4_K_M.gguf",
+      "bytes": 541903872,
+      "sha256": "2f26e07f5585a0f824edbb62a62c3f571bdbaae58d5f13b99befc6447edce90e",
+      "method": "llama-quantize:Q4_K_M",
+      "gguf_magic_verified": true,
+      "integrity_status": "PASS"
+    }
+  ],
+  "evidence_artifacts": {
+    "package_preparation_manifest": {
+      "bytes": 2186,
+      "sha256": "0161ef206f50b54ce0d822a5f2c7da9083a200448f6c74fac1ad1e1190a7b5c2"
+    },
+    "network_accounting": {
+      "bytes": 475,
+      "sha256": "3bb0d40c67a76c1bc0f6e46203133eca5f08c47832e4255d43d7cbb081029a7e"
+    },
+    "resolved_python_environment": {
+      "bytes": 511,
+      "sha256": "07863d2c6ae5c2a919bad01770e23859b6f318e9246314365486f26acadbe2aa"
+    },
+    "one_shot_lock": {
+      "bytes": 281,
+      "sha256": "72ce60d782639d37991c4b2c49150b0f7c27c4413265989254f38909dad1254c",
+      "state": "COMPLETED"
+    },
+    "output_tree_bytes_before_manifest_write": 4741570738
+  },
+  "external_integrity_verification": {
+    "verifier_mode": "SEPARATE_POST_EXECUTION_READBACK",
+    "all_four_variant_bytes_match_manifest": true,
+    "all_four_variant_sha256_match_manifest": true,
+    "all_four_gguf_magic_verified": true,
+    "runtime_asset_sha256_match": true,
+    "quantizer_sha256_match": true,
+    "manifest_hash_match_lock": true,
+    "network_evidence_hash_match_manifest": true,
+    "resolved_environment_hash_match_manifest": true,
+    "local_llama_cpp_head_match": true,
+    "remaining_package_process_count": 0
+  },
+  "effects": {
+    "model_inference_performed": false,
+    "model_evaluation_performed": false,
+    "quality_selection_performed": false,
+    "training_performed": false,
+    "semantic_index_written": false,
+    "semantic_recall_released": false,
+    "promotion_or_activation": false,
+    "production_mutation": false
+  },
+  "attempt_accounting": {
+    "max_attempts": 1,
+    "attempts_used": 1,
+    "profile_status_after_closeout": "CLOSED_SUCCESS",
+    "retry_under_same_profile_allowed": false
+  },
+  "task_effect": {
+    "M1-05": "COMPLETED",
+    "M1-06": "NOT_YET_EXECUTED",
+    "quality_selection": "DEFERRED_TO_M1_06"
+  },
+  "authority_effect": "CLOSEOUT_ONLY / NO_INFERENCE_EVALUATION_QUALITY_SELECTION_TRAINING_RELEASE_OR_PRODUCTION_AUTHORITY"
+}
