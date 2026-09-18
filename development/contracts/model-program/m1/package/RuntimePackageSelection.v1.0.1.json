@@ -1,0 +1,83 @@
+{
+  "schema_version": "clued.model-m1-runtime-package-selection/1",
+  "record_id": "CLUED-MODEL-M1-RUNTIME-PACKAGE-SELECTION-v1-20260918",
+  "stage_id": "MODEL-PROGRAM-M1",
+  "task_id": "M1-05",
+  "status": "SUCCESSOR_SELECTED_FOR_PACKAGE_PREPARATION",
+  "predecessor_runtime": {
+    "runtime_id": "llama.cpp",
+    "release_tag": "b11030",
+    "commit": "bdcbaaf6e7520b68c8c60ff724c67409970d70e1",
+    "disposition": "M1_00_CANDIDATE / WINDOWS_MAIN_RUNTIME_ASSET_UNAVAILABLE_AT_M1_05_SELECTION"
+  },
+  "successor_runtime": {
+    "runtime_id": "llama.cpp",
+    "release_tag": "b11033",
+    "commit": "8ed1a55efcd7424d2c592f6cbc9f97756db1d74d",
+    "selected_asset": {
+      "name": "llama-b11033-bin-win-vulkan-x64.zip",
+      "bytes": 31766410,
+      "sha256": "8ca91d4621fcac8799245f01a6467e9c09eba7b8d3be161a382048dc5c839db2",
+      "backend": "VULKAN",
+      "platform": "windows-x64"
+    },
+    "fallback_assets": [
+      {
+        "name": "llama-b11033-bin-win-cpu-x64.zip",
+        "bytes": 18439600,
+        "sha256": "bb14f6be60c40370fd6970a7a9201c96c5a69da180a5cf1737e566c2e497149a",
+        "backend": "CPU"
+      },
+      {
+        "name": "llama-b11033-bin-win-cuda-12.4-x64.zip",
+        "bytes": 254196481,
+        "sha256": "a764712dd00cc65e772961b157cdf45477ef6f49fe21efe6cebcd253383793b3",
+        "backend": "CUDA_12_4"
+      },
+      {
+        "name": "cudart-llama-bin-win-cuda-12.4-x64.zip",
+        "bytes": 391443627,
+        "sha256": "8c79a9b226de4b3cacfd1f83d24f962d0773be79f1e7b75c6af4ded7e32ae1d6",
+        "backend": "CUDA_RUNTIME_12_4"
+      }
+    ]
+  },
+  "successor_delta_review": {
+    "commits": [
+      {
+        "sha": "f03cf3e9b89a004b573080893e31c01931b5e6b3",
+        "summary": "CI cache/setup only"
+      },
+      {
+        "sha": "bb11ebb6820ae3f20fc96002f8fd8173a5d8ceed",
+        "summary": "gguf-py Q8_1 block-size correction"
+      },
+      {
+        "sha": "8ed1a55efcd7424d2c592f6cbc9f97756db1d74d",
+        "summary": "CMake fix for GGML_CPU=OFF + GGML_CUDA=ON"
+      }
+    ],
+    "changed_files": [
+      ".github/workflows/copilot-setup-steps.yml",
+      "examples/convert-llama2c-to-ggml/CMakeLists.txt",
+      "gguf-py/gguf/constants.py",
+      "pocs/CMakeLists.txt",
+      "tests/CMakeLists.txt"
+    ],
+    "qwen35_conversion_core_changed": false,
+    "qwen35_runtime_core_changed": false,
+    "q4_k_m_quantizer_mapping_changed": false,
+    "assessment": "TARGETED_RUNTIME_SUCCESSOR_ACCEPTABLE_FOR_M1_05_PACKAGE_PREPARATION"
+  },
+  "exact_qwen35_support_evidence": {
+    "conversion_registry": "Qwen3_5ForCausalLM -> conversion/qwen.py",
+    "conversion_model_class": "Qwen3_5TextModel / QWEN35",
+    "upstream_readme_example": "ggml-org/Qwen3.5-0.8B-GGUF",
+    "quantizer_types": [
+      "Q4_0",
+      "Q4_K_M",
+      "Q8_0"
+    ]
+  },
+  "authority_effect": "PACKAGE_SELECTION_ONLY / NO_INFERENCE_OR_EVALUATION_AUTHORITY"
+}
