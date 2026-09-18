@@ -69,7 +69,7 @@ def main():
     for forbidden in ('llama-cli','llama-server','llama-bench','--prompt','MODEL_INFERENCE'):
         if forbidden in src:
             fail('package script contains inference/evaluation primitive: '+forbidden)
-    for required_text in ('llama-quantize.exe','Q4_K_M','Q4_0','--outtype','bf16','q8_0','pip","download','--no-index','NetworkAccounting.json','git_object_store_bytes','wheelhouse_bytes'):
+    for required_text in ('llama-quantize.exe','Q4_K_M','Q4_0','--outtype','bf16','q8_0','"pip", "download"','--no-index','NetworkAccounting.json','git_object_store_bytes','wheelhouse_bytes'):
         if required_text not in src:
             fail('package script missing required operation/accounting control: '+required_text)
     accounting=profile.get('network_budget_accounting') or {}
