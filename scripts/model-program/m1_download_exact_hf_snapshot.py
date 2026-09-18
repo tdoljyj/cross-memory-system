@@ -47,7 +47,7 @@ def fetch_json(url: str) -> dict:
 
 def safe_relpath(rel: str) -> PurePosixPath:
     p = PurePosixPath(rel)
-    if not rel or p.is_absolute() or ".." in p.parts or "\" in rel:
+    if not rel or p.is_absolute() or ".." in p.parts or "\\" in rel:
         fail("unsafe repository path: " + rel)
     return p
 
