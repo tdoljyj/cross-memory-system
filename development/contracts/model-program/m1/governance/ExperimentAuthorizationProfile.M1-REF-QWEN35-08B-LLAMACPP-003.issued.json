@@ -1,0 +1,145 @@
+{
+  "schema_version": "clued.model-experiment-authorization-profile/2",
+  "profile_id": "M1-REF-QWEN35-08B-LLAMACPP-003",
+  "stage_id": "MODEL-PROGRAM-M1",
+  "status": "ISSUED",
+  "issued_at_utc": "2026-09-18T08:59:18.7020860Z",
+  "expiry_utc": "2026-09-19T08:59:18.7020860Z",
+  "predecessor_profile": {
+    "profile_id": "M1-REF-QWEN35-08B-LLAMACPP-002",
+    "closeout_ref": "../evidence/M1ExperimentProfile002ExecutionCloseout_20260918.json",
+    "disposition": "CLOSED_FAILED_NO_RETRY"
+  },
+  "objective": "M1-03 controlled exact-revision download and integrity verification using range-chunked transfer for large LFS artifacts; no model load, inference or evaluation is authorized.",
+  "owner_authorization": {
+    "holder": "OWNER",
+    "source": "CURRENT_CONVERSATION",
+    "instructions": [
+      "你直接操作吧",
+      "好了连上了"
+    ],
+    "scope": "Continue direct M1-03 execution using a fail-closed successor transfer strategy after the exact full-body LFS path stalled without writing model-weight bytes."
+  },
+  "allowed_operations": [
+    "DOWNLOAD_EXACT_MODEL_REVISION",
+    "HTTP_RANGE_DOWNLOAD_EXACT_LFS_ARTIFACTS",
+    "COMPUTE_FILE_SHA256",
+    "VERIFY_LFS_SHA256",
+    "BUILD_DOWNLOAD_MANIFEST",
+    "BUILD_BOM",
+    "CAPTURE_LICENSE_AND_MODEL_CARD_SNAPSHOT"
+  ],
+  "prohibited_operations": [
+    "MODEL_LOAD",
+    "MODEL_INFERENCE",
+    "HOSTED_PROVIDER_CALL",
+    "REAL_MODEL_EVALUATION",
+    "TRAINING",
+    "CONTINUED_PRETRAINING",
+    "SFT",
+    "DISTILLATION",
+    "PREFERENCE_TRAINING",
+    "LORA_OR_ADAPTER_TRAINING",
+    "QUANTIZATION_EXECUTION",
+    "MODEL_MERGE",
+    "SEMANTIC_INDEX_WRITE",
+    "SEMANTIC_RECALL_RELEASE",
+    "PROMOTION",
+    "ACTIVATION",
+    "PRODUCTION_DEPLOYMENT",
+    "PRODUCTION_TRAFFIC",
+    "PRODUCTION_DATABASE_MUTATION",
+    "PRODUCTION_SECRET_MUTATION",
+    "G1_CUTOVER",
+    "MACHINE_RC_SEAL",
+    "G7A",
+    "G7P"
+  ],
+  "authority_and_sources": {
+    "model_program_plan_sha256": "a918f42e6e9de160f7b14a95afafeae9022ddcc189b3663e768aa197110118a4",
+    "model_architecture_revision_sha256": "65b7384e94dea6f22f9678db88f8542010f16cc919010cdc546288f89641fbbc",
+    "m0_formal_baseline_commit": "3d3fa2dc0900d19252f3060012f81d1204c9d4c6",
+    "m1_stage_entry_ref": "governance/M1StageEntryAuthorization.v1.0.1.json",
+    "m1_device_binding_receipt_ref": "../evidence/M1PhysicalDeviceBindingReceipt_20260918.json",
+    "plan_review_attestation_sha256": "0fe4460473fceccd6484fd6f344fb304ff8249c9a5d86facfea8a9f726fc065b"
+  },
+  "model_binding": {
+    "provider": "Hugging Face",
+    "model_id": "Qwen/Qwen3.5-0.8B",
+    "revision": "2fc06364715b967f1860aea9cf38778875588b17",
+    "license": "Apache-2.0",
+    "observed_repo_storage_bytes": 1759750582,
+    "gated": false
+  },
+  "runtime_binding": {
+    "runtime_id": "llama.cpp",
+    "repository": "ggml-org/llama.cpp",
+    "revision": "bdcbaaf6e7520b68c8c60ff724c67409970d70e1",
+    "license": "MIT",
+    "runtime_execution_allowed_in_this_profile": false
+  },
+  "device_binding": {
+    "device_profile_ref": "../registries/DeviceRuntimeMatrix.v1.0.2.json#DEV-PERSONAL-WINDOWS-01",
+    "binding_receipt_ref": "../evidence/M1PhysicalDeviceBindingReceipt_20260918.json",
+    "binding_state": "EXACT_BOUND",
+    "device_name": "DESK-W-591"
+  },
+  "execution_code": {
+    "commit": "e2a1f0a3bc13b16b28efda73988f66b59d9b2d24",
+    "script_path": "scripts/model-program/m1_download_exact_hf_snapshot.py",
+    "script_git_blob_sha1": "8ea03adf720761eda3ffdb0dabeb9d4d450b370d",
+    "required_preflight": "PYTHON_COMPILE_AND_RANGE_PLAN_TEST_PASS"
+  },
+  "execution_target": {
+    "output_dir": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\references\\Qwen_Qwen3.5-0.8B\\2fc06364715b967f1860aea9cf38778875588b17\\profile-003",
+    "device_name": "DESK-W-591",
+    "free_storage_bytes_at_issue": 89175928832,
+    "transfer_strategy": "LFS_GE_64M_RANGE_CHUNKED_64M",
+    "range_chunk_bytes": 67108864
+  },
+  "budget_ceiling": {
+    "max_wall_seconds": 3600,
+    "max_network_bytes": 3221225472,
+    "max_storage_bytes": 4294967296,
+    "max_cost_microunits": 0,
+    "currency": "USD",
+    "max_attempts": 1
+  },
+  "allowed_outputs": [
+    "DownloadManifest.json",
+    "SHA256SUMS.json",
+    "BOM.json",
+    "LicenseSnapshot.txt",
+    "ModelCardSnapshot.md"
+  ],
+  "release_ceiling": "RESEARCH_REFERENCE_EVIDENCE_ONLY / NO_MODEL_LOAD / NO_INFERENCE / NO_EVALUATION / NO_RELEASE",
+  "stop_conditions": [
+    "PYTHON_COMPILE_FAILURE",
+    "RANGE_PLAN_VALIDATION_FAILURE",
+    "RANGE_REQUEST_NOT_HONORED",
+    "CONTENT_RANGE_MISMATCH",
+    "SHORT_RANGE_READ",
+    "ANY_DIGEST_MISMATCH",
+    "LICENSE_OR_TERMS_DRIFT",
+    "MODEL_REVISION_DRIFT",
+    "NETWORK_BYTES_LIMIT",
+    "STORAGE_LIMIT",
+    "COST_NONZERO",
+    "UNEXPECTED_EXECUTABLE_OR_REMOTE_CODE_REQUIREMENT",
+    "DEVICE_BINDING_DRIFT",
+    "PROFILE_EXPIRED_OR_REVOKED"
+  ],
+  "evidence_requirements": [
+    "EXACT_REMOTE_REVISION",
+    "PER_FILE_DIGEST_AND_BYTES",
+    "EXPECTED_LFS_SHA256_MATCH",
+    "TRANSFER_MODE_PER_FILE",
+    "LICENSE_SNAPSHOT",
+    "MODEL_CARD_SNAPSHOT",
+    "DOWNLOAD_SOURCE_LOCATORS",
+    "NO_TRUST_REMOTE_CODE",
+    "NO_MODEL_LOAD_OR_INFERENCE_OR_EVALUATION"
+  ],
+  "effectful_authority_issued": true,
+  "authority_effect": "M1-03_CONTROLLED_DOWNLOAD_AND_INTEGRITY_ONLY"
+}

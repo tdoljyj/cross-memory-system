@@ -12,6 +12,8 @@ PROFILE001_CODE_COMMIT='a7307dd78997ca5a6e6ef2a8f53811a3058e37ef'
 PROFILE001_SCRIPT_BLOB='086849744f4d66eeee49a8dea59c676d6582757d'
 PROFILE002_CODE_COMMIT='42240b91b29c80e45270036f8d98df0603f034cb'
 PROFILE002_SCRIPT_BLOB='9b31ee6003c53bbc045c99249b995e72aa9ae938'
+PROFILE003_CODE_COMMIT='e2a1f0a3bc13b16b28efda73988f66b59d9b2d24'
+PROFILE003_SCRIPT_BLOB='8ea03adf720761eda3ffdb0dabeb9d4d450b370d'
 REQ_ROLES={
 'Mobile-class Local Reference','Personal-device Local Reference','Strong Hosted / Enterprise Reference',
 'Reproducible From-scratch Reference','Embedding Reference','Reranker Reference','Guard / Classifier Reference'
@@ -126,6 +128,18 @@ def main():
     issued2=load(BASE/'governance/ExperimentAuthorizationProfile.M1-REF-QWEN35-08B-LLAMACPP-002.issued.json')
     good,code=validate_issued_profile(issued2,PROFILE002_CODE_COMMIT,PROFILE002_SCRIPT_BLOB)
     if not good: fail(code)
+    closeout2=load(BASE/'evidence/M1ExperimentProfile002ExecutionCloseout_20260918.json')
+    if closeout2.get('result')!='FAIL / CLUED_MODEL_M1_PROFILE_002_FULL_GET_STALL_PROXY_COMPATIBILITY':
+        fail('Profile 002 closeout missing')
+    if closeout2.get('attempt_accounting',{}).get('retry_under_same_profile_allowed') is not False or closeout2.get('effects',{}).get('completed_model_weight_bytes')!=0:
+        fail('Profile 002 fail-closed closeout invalid')
+
+    issued3=load(BASE/'governance/ExperimentAuthorizationProfile.M1-REF-QWEN35-08B-LLAMACPP-003.issued.json')
+    good,code=validate_issued_profile(issued3,PROFILE003_CODE_COMMIT,PROFILE003_SCRIPT_BLOB)
+    if not good: fail(code)
+    target3=issued3.get('execution_target') or {}
+    if target3.get('transfer_strategy')!='LFS_GE_64M_RANGE_CHUNKED_64M' or target3.get('range_chunk_bytes')!=67108864:
+        fail('Profile 003 transfer strategy binding invalid')
 
     script=ROOT/'scripts/model-program/m1_download_exact_hf_snapshot.py'
     if not script.is_file():

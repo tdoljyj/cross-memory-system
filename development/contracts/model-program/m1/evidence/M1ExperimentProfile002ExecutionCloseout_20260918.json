@@ -1,0 +1,51 @@
+{
+  "schema_version": "clued.model-m1-experiment-profile-execution-closeout/1",
+  "closeout_id": "CLUED-MODEL-M1-PROFILE-002-EXECUTION-CLOSEOUT-20260918",
+  "profile_id": "M1-REF-QWEN35-08B-LLAMACPP-002",
+  "attempt_id": "M1-REF-QWEN35-08B-LLAMACPP-002-A1",
+  "execution_started_local": "2026-09-18T16:52:34+08:00",
+  "execution_started_utc": "2026-09-18T08:52:34Z",
+  "execution_stopped_utc": "2026-09-18T08:56:26.1833335Z",
+  "bound_execution_code": {
+    "commit": "42240b91b29c80e45270036f8d98df0603f034cb",
+    "script_git_blob_sha1": "9b31ee6003c53bbc045c99249b995e72aa9ae938"
+  },
+  "result": "FAIL / CLUED_MODEL_M1_PROFILE_002_FULL_GET_STALL_PROXY_COMPATIBILITY",
+  "observed_execution_state": {
+    "completed_small_files": 6,
+    "filesystem_entries": 7,
+    "filesystem_bytes": 3438740,
+    "weight_target_file": "model.safetensors-00001-of-00001.safetensors",
+    "weight_target_bytes": 0,
+    "repeated_size_samples_unchanged": true,
+    "python_tcp_remote_address": "127.0.0.1",
+    "python_tcp_remote_port": 7897
+  },
+  "diagnostic_evidence": {
+    "exact_lfs_head_status": 200,
+    "exact_lfs_content_length": 1746942600,
+    "exact_lfs_range_probe_status": 206,
+    "range_probe_bytes": 1024,
+    "range_probe_elapsed_seconds": 1.565,
+    "final_cdn_host": "us.aws.cdn.hf.co",
+    "interpretation": "Exact revision and LFS access were valid; full-body transfer stalled on the current local proxy path while byte-range transfer succeeded."
+  },
+  "effects": {
+    "downloader_accounted_network_bytes": 3438740,
+    "diagnostic_range_probe_bytes": 1024,
+    "completed_model_weight_bytes": 0,
+    "model_loaded": false,
+    "inference_performed": false,
+    "evaluation_performed": false,
+    "training_performed": false,
+    "promotion_or_activation": false
+  },
+  "attempt_accounting": {
+    "max_attempts": 1,
+    "attempts_used": 1,
+    "retry_under_same_profile_allowed": false,
+    "profile_status_after_closeout": "CLOSED_FAILED_NO_RETRY"
+  },
+  "successor_rule": "Retry requires a new exact transfer strategy/code revision and successor Experiment Authorization Profile.",
+  "authority_effect": "CLOSEOUT_ONLY / NO_NEW_EXECUTION_AUTHORITY"
+}
