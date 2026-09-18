@@ -6,12 +6,25 @@ This directory contains the reusable bootstrap path for trusted Windows nodes jo
 
 A Windows node must already provide:
 
-- Windows x64 or arm64
+- Windows x64
 - Python 3.12 available as `python`
 - outbound HTTPS access to GitHub
 - enough local disk for the runner workspace
 
 The bootstrap script deliberately **does not install Python** and does not call `actions/setup-python` on the self-hosted Windows path. This avoids machine-wide installer/UAC behavior on owner-managed PCs.
+
+## Bootstrap artifact policy
+
+The script currently downloads the exact reviewed Windows x64 runner package:
+
+```text
+GitHub Actions Runner: 2.337.0
+SHA-256: 1150692afa94e71f872017e254ea55b6eece1eece3fe7e3a6d4c93d0a1b85cfc
+```
+
+The package hash is verified before extraction. This avoids depending on anonymous GitHub API rate limits during first-time setup. GitHub runner automatic updates remain enabled after registration.
+
+When GitHub eventually requires a newer bootstrap version, update the pinned version and digest through a reviewed repository change.
 
 ## Add the home Windows node
 
@@ -26,8 +39,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\ci\self-hosted\bootstrap-wind
 The script will:
 
 1. verify local Python 3.12;
-2. fetch the latest official GitHub Actions Windows runner;
-3. verify the published SHA-256 digest before extraction;
+2. download the pinned official GitHub Actions Windows x64 runner;
+3. verify the pinned SHA-256 digest before extraction;
 4. prompt for the short-lived GitHub runner registration token without echoing it;
 5. register capability labels;
 6. create a current-user login startup launcher;
