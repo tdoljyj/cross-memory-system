@@ -1,0 +1,24 @@
+{
+  "schema_version": "clued.model-m1-readback-attempt-successor-correction/1",
+  "record_id": "CLUED-MODEL-M1-READBACK-ATTEMPT-SUCCESSOR-CORRECTION-20260918",
+  "prior_record": {
+    "path": "M1PhysicalDeviceReadbackAttempt_20260918.json",
+    "git_blob_sha1": "8e77b179e5a5d6d6a67a75e5be819909320df597",
+    "original_result": "BLOCKED / CLUED_MODEL_M1_PHYSICAL_DEVICE_OFFLINE",
+    "bytes_mutated": false
+  },
+  "correction": {
+    "preserved_observation": "Remote Desktop Commander reported the registered device channel as offline at the earlier observation time.",
+    "corrected_interpretation": "That observation established REMOTE_DEVICE_CHANNEL_UNAVAILABLE, not that the physical computer itself was powered off or unavailable to the user.",
+    "corrected_prior_gate_label": "BLOCKED / CLUED_MODEL_M1_REMOTE_DEVICE_CHANNEL_UNAVAILABLE",
+    "historical_record_remains_immutable": true
+  },
+  "successor_observation": {
+    "device_name": "DESK-W-591",
+    "connector_status": "ONLINE",
+    "exact_hardware_readback_performed": true,
+    "binding_receipt_ref": "../../development/contracts/model-program/m1/evidence/M1PhysicalDeviceBindingReceipt_20260918.json",
+    "result": "PASS / CLUED_MODEL_M1_PHYSICAL_DEVICE_EXACT_BOUND"
+  },
+  "authority_effect": "NONE"
+}
