@@ -1,0 +1,24 @@
+name: model-program-m1-entry
+on:
+  pull_request:
+    paths:
+      - "development/contracts/model-program/m1/**"
+      - "scripts/model-program/validate_m1_entry_bindings.py"
+      - "tests/test_model_program_m1_entry.py"
+      - ".github/workflows/model-program-m1-entry.yml"
+  push:
+    branches: [main]
+    paths:
+      - "development/contracts/model-program/m1/**"
+      - "scripts/model-program/validate_m1_entry_bindings.py"
+      - "tests/test_model_program_m1_entry.py"
+      - ".github/workflows/model-program-m1-entry.yml"
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python scripts/model-program/validate_m1_entry_bindings.py
+      - run: python -m unittest tests.test_model_program_m1_entry -v
