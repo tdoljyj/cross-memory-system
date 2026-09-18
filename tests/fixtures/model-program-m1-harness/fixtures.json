@@ -218,7 +218,13 @@
       "target": "request",
       "path": "request.training_mode",
       "value": "sft",
-      "expected_error": "CLUED_MODEL_M1_HARNESS_TRAINING_FORBIDDEN"
+      "expected_error": "CLUED_MODEL_M1_HARNESS_TRAINING_FORBIDDEN",
+      "additional_mutations": [
+        {
+          "path": "request.training_opt_in_receipt_ref",
+          "value": "m1-static-training-opt-in"
+        }
+      ]
     },
     {
       "id": "NEG-SECRET-DATA",
