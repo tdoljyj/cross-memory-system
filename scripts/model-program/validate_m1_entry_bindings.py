@@ -139,6 +139,25 @@ def main():
     if issued3.get('attempt_control')!='ONE_SHOT_EXCLUSIVE_LOCK / NEW_OUTPUT_DIR / ATOMIC_FILE_REPLACE':
         fail('Profile 003 attempt control invalid')
 
+    closeout3=load(BASE/'evidence/M1ExperimentProfile003ExecutionCloseout_20260918.json')
+    if closeout3.get('profile_id')!='M1-REF-QWEN35-08B-LLAMACPP-003' or closeout3.get('result')!='PASS / CLUED_MODEL_M1_PROFILE_003_DOWNLOAD_AND_INTEGRITY_ACCEPTED':
+        fail('Profile 003 PASS closeout missing')
+    snap3=closeout3.get('snapshot') or {}
+    if snap3.get('source_file_count')!=13 or snap3.get('snapshot_bytes')!=1769980465 or snap3.get('network_bytes')!=1769980465 or snap3.get('mismatched_files')!=[] or snap3.get('partial_files_remaining')!=[]:
+        fail('Profile 003 snapshot closeout invalid')
+    w3=snap3.get('weight') or {}
+    if w3.get('bytes')!=1746942600 or w3.get('sha256')!='04b1c301231dd422b8860db31311ab2721511346a32cb1e079c4c4e5f1fe4696' or w3.get('expected_lfs_sha256')!=w3.get('sha256'):
+        fail('Profile 003 weight integrity invalid')
+    iv3=closeout3.get('integrity_verification') or {}
+    if iv3.get('downloader_internal_independent_rehash')!='PASS' or iv3.get('reviewer_external_rehash')!='PASS' or iv3.get('externally_matching_source_files')!=13:
+        fail('Profile 003 independent rehash evidence invalid')
+    eff3=closeout3.get('effects') or {}
+    if any(eff3.get(k) is not False for k in ('model_loaded','inference_performed','evaluation_performed','training_performed','semantic_index_written','semantic_recall_released','promotion_or_activation','production_mutation','trust_remote_code')):
+        fail('Profile 003 closeout authority/effect violation')
+    acct3=closeout3.get('attempt_accounting') or {}
+    if acct3.get('attempts_used')!=1 or acct3.get('retry_under_same_profile_allowed') is not False or acct3.get('profile_status_after_closeout')!='CLOSED_SUCCESS':
+        fail('Profile 003 attempt closeout invalid')
+
     script=ROOT/'scripts/model-program/m1_download_exact_hf_snapshot.py'
     if not script.is_file():
         fail('bound download script missing')
@@ -147,7 +166,7 @@ def main():
     except SyntaxError:
         fail('bound download script does not compile')
 
-    print('PASS: MODEL-PROGRAM-M1 Profiles 001/002 closed fail-closed; successor Profile 003 issued with exact device, one-shot lock and atomic downloader; inference/evaluation/training remain prohibited')
+    print('PASS: MODEL-PROGRAM-M1 Profiles 001/002 closed fail-closed; Profile 003 exact download/integrity closed PASS with dual rehash; inference/evaluation/training remain prohibited')
     return 0
 
 if __name__=='__main__': raise SystemExit(main())
