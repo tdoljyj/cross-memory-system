@@ -8,8 +8,10 @@ BASE=ROOT/'development/contracts/model-program/m1'
 PLAN='a918f42e6e9de160f7b14a95afafeae9022ddcc189b3663e768aa197110118a4'
 QWEN_REV='2fc06364715b967f1860aea9cf38778875588b17'
 LLAMA_REV='bdcbaaf6e7520b68c8c60ff724c67409970d70e1'
-DOWNLOAD_CODE_COMMIT='a7307dd78997ca5a6e6ef2a8f53811a3058e37ef'
-DOWNLOAD_SCRIPT_BLOB='086849744f4d66eeee49a8dea59c676d6582757d'
+PROFILE001_CODE_COMMIT='a7307dd78997ca5a6e6ef2a8f53811a3058e37ef'
+PROFILE001_SCRIPT_BLOB='086849744f4d66eeee49a8dea59c676d6582757d'
+PROFILE002_CODE_COMMIT='42240b91b29c80e45270036f8d98df0603f034cb'
+PROFILE002_SCRIPT_BLOB='9b31ee6003c53bbc045c99249b995e72aa9ae938'
 REQ_ROLES={
 'Mobile-class Local Reference','Personal-device Local Reference','Strong Hosted / Enterprise Reference',
 'Reproducible From-scratch Reference','Embedding Reference','Reranker Reference','Guard / Classifier Reference'
