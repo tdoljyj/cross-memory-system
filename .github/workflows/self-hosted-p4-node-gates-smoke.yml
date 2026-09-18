@@ -1,0 +1,46 @@
+name: Self-hosted P4 Node gate smoke
+
+on:
+  push:
+    branches:
+      - ci/self-hosted-p4-node-gates-20260918
+
+permissions:
+  contents: read
+
+jobs:
+  memory-gate-windows-smoke:
+    runs-on: [self-hosted, Windows, X64, clued, pool-general, trust-internal, cap-node24]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Verify Node.js 24
+        shell: powershell
+        run: |
+          node --version
+          node -e "const [m]=process.versions.node.split('.').map(Number); if (m !== 24) process.exit(1)"
+      - name: Run memory publication verifier on workflow-only delta
+        shell: powershell
+        run: |
+          $head = (git rev-parse HEAD).Trim()
+          $base = (git rev-parse HEAD~1).Trim()
+          node scripts/verify-memory-publication.mjs --repo . --base $base --candidate $head
+
+  gate-receipt-windows-smoke:
+    runs-on: [self-hosted, Windows, X64, clued, pool-general, trust-internal, cap-node24]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Verify Node.js 24
+        shell: powershell
+        run: |
+          node --version
+          node -e "const [m]=process.versions.node.split('.').map(Number); if (m !== 24) process.exit(1)"
+      - name: Run public MCP gate receipt unit tests
+        working-directory: apps/clued-cloud
+        run: node --test evals/public-mcp/gate-receipt.test.mjs
