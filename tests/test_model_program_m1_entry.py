@@ -25,8 +25,8 @@ class ModelProgramM1EntryTests(unittest.TestCase):
         self.assertEqual(c['effects']['network_model_download_bytes'],0)
 
     def test_profile002_is_accepted(self):
-        p=m.load(m.BASE/'governance/ExperimentAuthorizationProfile.M1-REF-QWEN35-08B-LLAMACPP-003.issued.json')
-        good,code=m.validate_issued_profile(p,m.PROFILE003_CODE_COMMIT,m.PROFILE003_SCRIPT_BLOB)
+        p=m.load(m.BASE/'governance/ExperimentAuthorizationProfile.M1-REF-QWEN35-08B-LLAMACPP-002.issued.json')
+        good,code=m.validate_issued_profile(p,m.PROFILE002_CODE_COMMIT,m.PROFILE002_SCRIPT_BLOB)
         self.assertTrue(good,code)
 
     def test_profile002_closeout_is_consumed(self):
