@@ -5,7 +5,6 @@ import argparse
 import hashlib
 import json
 import os
-import shutil
 import subprocess
 import sys
 import urllib.request
@@ -13,7 +12,7 @@ import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-PROFILE_ID = "M1-PKG-QWEN35-08B-001"
+PROFILE_ID = "M1-PKG-QWEN35-08B-002"
 LLAMA_COMMIT = "8ed1a55efcd7424d2c592f6cbc9f97756db1d74d"
 LLAMA_TAG = "b11033"
 RUNTIME_ASSET_URL = "https://github.com/ggml-org/llama.cpp/releases/download/b11033/llama-b11033-bin-win-vulkan-x64.zip"
@@ -23,7 +22,7 @@ RAW_MODEL_REVISION = "2fc06364715b967f1860aea9cf38778875588b17"
 RAW_WEIGHT_SHA256 = "04b1c301231dd422b8860db31311ab2721511346a32cb1e079c4c4e5f1fe4696"
 MAX_NETWORK_BYTES = 6 * 1024**3
 MAX_OUTPUT_BYTES = 12 * 1024**3
-USER_AGENT = "Clued-M1-Package-Preparation/1.0"
+USER_AGENT = "Clued-M1-Package-Preparation/1.1"
 
 def fail(msg: str) -> None:
     print("FAIL: " + msg, file=sys.stderr)
@@ -40,6 +39,11 @@ def sha256_file(path: Path) -> tuple[str, int]:
             n += len(b)
             h.update(b)
     return h.hexdigest(), n
+
+def tree_bytes(root: Path) -> int:
+    if not root.exists():
+        return 0
+    return sum(p.stat().st_size for p in root.rglob("*") if p.is_file())
 
 def run(cmd: list[str], cwd: Path | None = None) -> str:
     p = subprocess.run(cmd, cwd=str(cwd) if cwd else None, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
@@ -60,7 +64,7 @@ def acquire_lock(root: Path) -> Path:
         f.write("\n")
     return lock
 
-def download_exact(url: str, dest: Path, expected_sha: str, expected_bytes: int, network: dict) -> None:
+def download_exact(url: str, dest: Path, expected_sha: str, expected_bytes: int, direct_network: dict) -> None:
     part = Path(str(dest) + ".partial")
     if dest.exists() or part.exists():
         fail("download target already exists: " + str(dest))
@@ -75,9 +79,9 @@ def download_exact(url: str, dest: Path, expected_sha: str, expected_bytes: int,
                 if not b:
                     break
                 n += len(b)
-                network["bytes"] += len(b)
-                if network["bytes"] > MAX_NETWORK_BYTES:
-                    fail("network budget exceeded")
+                direct_network["bytes"] += len(b)
+                if direct_network["bytes"] > MAX_NETWORK_BYTES:
+                    fail("direct network budget exceeded")
                 h.update(b)
                 out.write(b)
         if n != expected_bytes or h.hexdigest() != expected_sha:
@@ -86,8 +90,23 @@ def download_exact(url: str, dest: Path, expected_sha: str, expected_bytes: int,
     finally:
         part.unlink(missing_ok=True)
 
-def tree_bytes(root: Path) -> int:
-    return sum(p.stat().st_size for p in root.rglob("*") if p.is_file())
+def enforce_network_upper_bound(runtime_bytes: int, git_object_bytes: int, wheelhouse_bytes: int, evidence_path: Path) -> int:
+    upper = runtime_bytes + git_object_bytes + wheelhouse_bytes
+    evidence = {
+        "schema_version": "clued.model-m1-network-accounting/1",
+        "method": "CONSERVATIVE_AT_REST_UPPER_BOUND",
+        "runtime_direct_http_bytes": runtime_bytes,
+        "git_object_store_bytes": git_object_bytes,
+        "pip_wheelhouse_bytes": wheelhouse_bytes,
+        "network_upper_bound_bytes": upper,
+        "max_network_bytes": MAX_NETWORK_BYTES,
+        "pass": upper <= MAX_NETWORK_BYTES,
+        "note": "Git object-store and wheelhouse sizes are used as conservative transfer proxies; installation is performed offline from wheelhouse.",
+    }
+    evidence_path.write_text(json.dumps(evidence, indent=2) + "\n", encoding="utf-8")
+    if upper > MAX_NETWORK_BYTES:
+        fail("conservative network upper bound exceeded")
+    return upper
 
 def main() -> int:
     ap = argparse.ArgumentParser()
@@ -113,9 +132,9 @@ def main() -> int:
     if raw_meta.get("revision") != RAW_MODEL_REVISION or raw_meta.get("post_download_independent_rehash") != "PASS":
         fail("raw M1-03 manifest drift")
 
-    network = {"bytes": 0}
+    direct_network = {"bytes": 0}
     runtime_zip = root / "runtime" / "llama-b11033-bin-win-vulkan-x64.zip"
-    download_exact(RUNTIME_ASSET_URL, runtime_zip, RUNTIME_ASSET_SHA256, RUNTIME_ASSET_BYTES, network)
+    download_exact(RUNTIME_ASSET_URL, runtime_zip, RUNTIME_ASSET_SHA256, RUNTIME_ASSET_BYTES, direct_network)
     runtime_dir = root / "runtime" / "b11033-vulkan"
     runtime_dir.mkdir(parents=True)
     with zipfile.ZipFile(runtime_zip) as z:
@@ -138,11 +157,23 @@ def main() -> int:
     head = run(["git", "rev-parse", "HEAD"], cwd=source_dir).strip()
     if head != LLAMA_COMMIT:
         fail("llama.cpp source revision drift")
+    git_object_bytes = tree_bytes(source_dir / ".git" / "objects")
 
     venv = root / "toolchain" / "venv"
     run([sys.executable, "-m", "venv", str(venv)])
     py = venv / "Scripts" / "python.exe"
-    run([str(py), "-m", "pip", "install", "--disable-pip-version-check", "-r", str(source_dir / "requirements" / "requirements-convert_hf_to_gguf.txt")])
+    wheelhouse = root / "toolchain" / "wheelhouse"
+    wheelhouse.mkdir()
+    req = source_dir / "requirements" / "requirements-convert_hf_to_gguf.txt"
+    run([str(py), "-m", "pip", "download", "--disable-pip-version-check", "--dest", str(wheelhouse), "-r", str(req)])
+    wheelhouse_bytes = tree_bytes(wheelhouse)
+    network_upper_bound = enforce_network_upper_bound(
+        direct_network["bytes"],
+        git_object_bytes,
+        wheelhouse_bytes,
+        root / "NetworkAccounting.json",
+    )
+    run([str(py), "-m", "pip", "install", "--disable-pip-version-check", "--no-index", "--find-links", str(wheelhouse), "-r", str(req)])
     freeze = run([str(py), "-m", "pip", "freeze"])
     (root / "ResolvedPythonEnvironment.txt").write_text(freeze, encoding="utf-8")
 
@@ -169,11 +200,12 @@ def main() -> int:
         digest, size = sha256_file(path)
         variants.append({"variant_id": variant_id, "path": path.name, "bytes": size, "sha256": digest, "method": method})
 
-    if tree_bytes(root) > MAX_OUTPUT_BYTES:
+    output_bytes = tree_bytes(root)
+    if output_bytes > MAX_OUTPUT_BYTES:
         fail("output storage budget exceeded")
 
     manifest = {
-        "schema_version": "clued.model-m1-package-preparation-manifest/1",
+        "schema_version": "clued.model-m1-package-preparation-manifest/2",
         "profile_id": PROFILE_ID,
         "source_model_revision": RAW_MODEL_REVISION,
         "source_weight_sha256": RAW_WEIGHT_SHA256,
@@ -182,7 +214,9 @@ def main() -> int:
         "runtime_asset": {"name": runtime_zip.name, "bytes": RUNTIME_ASSET_BYTES, "sha256": RUNTIME_ASSET_SHA256},
         "llama_quantize_exe": {"path": str(quantize.relative_to(root)), "bytes": quantize_bytes, "sha256": quantize_sha},
         "resolved_python_environment_sha256": sha256_file(root / "ResolvedPythonEnvironment.txt")[0],
-        "network_bytes_observed": network["bytes"],
+        "network_accounting_sha256": sha256_file(root / "NetworkAccounting.json")[0],
+        "network_upper_bound_bytes": network_upper_bound,
+        "output_tree_bytes": output_bytes,
         "variants": variants,
         "model_inference_performed": False,
         "model_evaluation_performed": False,
@@ -197,9 +231,10 @@ def main() -> int:
         "completed_at_utc": datetime.now(timezone.utc).isoformat(),
         "pid": os.getpid(),
         "manifest_sha256": sha256_file(root / "PackagePreparationManifest.json")[0],
+        "network_upper_bound_bytes": network_upper_bound,
     }, indent=2) + "\n", encoding="utf-8")
 
-    print(json.dumps({"result":"PASS","profile_id":PROFILE_ID,"variants":variants,"network_bytes":network["bytes"]}))
+    print(json.dumps({"result":"PASS","profile_id":PROFILE_ID,"variants":variants,"network_upper_bound_bytes":network_upper_bound}))
     return 0
 
 if __name__ == "__main__":

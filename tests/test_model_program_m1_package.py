@@ -12,12 +12,21 @@ class M1PackageProfileTests(unittest.TestCase):
         self.assertEqual(m.main(),0)
 
     def test_profile_is_package_only(self):
-        p=json.loads((ROOT/'development/contracts/model-program/m1/governance/ExperimentAuthorizationProfile.M1-PKG-QWEN35-08B-001.issued.json').read_text(encoding='utf-8'))
+        p=json.loads((ROOT/'development/contracts/model-program/m1/governance/ExperimentAuthorizationProfile.M1-PKG-QWEN35-08B-002.issued.json').read_text(encoding='utf-8'))
         self.assertEqual(p['authority_effect'],'M1-05_PACKAGE_CONVERSION_AND_QUANTIZATION_ONLY')
         self.assertIn('MODEL_INFERENCE',p['prohibited_operations'])
         self.assertIn('MODEL_EVALUATION',p['prohibited_operations'])
         self.assertIn('QUALITY_RANKING',p['prohibited_operations'])
         self.assertEqual(p['budget_ceiling']['max_attempts'],1)
+        self.assertEqual(p['network_budget_accounting']['method'],'CONSERVATIVE_AT_REST_UPPER_BOUND')
+        self.assertEqual(p['network_budget_accounting']['install_mode'],'PIP_DOWNLOAD_THEN_OFFLINE_NO_INDEX_INSTALL')
+        self.assertTrue(p['network_budget_accounting']['fail_closed'])
+
+    def test_profile001_closed_without_attempt(self):
+        c=json.loads((ROOT/'development/contracts/model-program/m1/evidence/M1PackageProfile001PreExecutionCloseout_20260918.json').read_text(encoding='utf-8'))
+        self.assertEqual(c['attempt_accounting']['attempts_used'],0)
+        self.assertFalse(c['execution_observation']['process_started'])
+        self.assertFalse(c['execution_observation']['conversion_performed'])
 
     def test_matrix_defers_quality_selection(self):
         p=json.loads((ROOT/'development/contracts/model-program/m1/package/PackageVariantMatrix.v1.0.1.json').read_text(encoding='utf-8'))
