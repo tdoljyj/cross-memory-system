@@ -76,6 +76,57 @@ def main():
     if accounting.get('method')!='CONSERVATIVE_AT_REST_UPPER_BOUND' or accounting.get('install_mode')!='PIP_DOWNLOAD_THEN_OFFLINE_NO_INDEX_INSTALL' or accounting.get('fail_closed') is not True:
         fail('Profile 002 network accounting not fail-closed')
 
+    closeout2=load(M1/'evidence/M1PackageProfile002ExecutionCloseout_20260918.json')
+    if closeout2.get('result')!='PASS / CLUED_MODEL_M1_PKG_PROFILE_002_VARIANTS_PREPARED_AND_INTEGRITY_VERIFIED':
+        fail('Profile 002 PASS closeout missing')
+    ex=closeout2.get('execution') or {}
+    if ex.get('process_exit_code')!=0 or ex.get('execution_code_commit')!='dc59d70a2196708a94d862073b52dd315b2a0c71' or ex.get('script_git_blob_sha1')!='0f3e59b1c2022d8f298836f4d3c4c26b8e4c7ae5':
+        fail('Profile 002 execution closeout binding invalid')
+    net=closeout2.get('network_accounting') or {}
+    if net.get('network_upper_bound_bytes')!=251454112 or net.get('max_network_bytes')!=6442450944 or net.get('pass') is not True or net.get('evidence_sha256')!='3bb0d40c67a76c1bc0f6e46203133eca5f08c47832e4255d43d7cbb081029a7e':
+        fail('Profile 002 network closeout invalid')
+    expected_variants={
+        'bf16': (1557662720,'fbeda5bd9fa2e8c418cb08df1fa2d06082d2d8ded2728df2d94c9144033f2b73'),
+        'q8_0': (833592320,'799482186ea1c91b63bf4eb2999e034330425745496a95f0bffbfe6300a1064d'),
+        'q4_0': (512977920,'d9192377b378863e309e5d2faeeea5b0489f385320a8ed281cff9568061577d6'),
+        'q4_k_m': (541903872,'2f26e07f5585a0f824edbb62a62c3f571bdbaae58d5f13b99befc6447edce90e'),
+    }
+    got={x['variant_id']:x for x in closeout2.get('variants',[])}
+    if set(got)!=set(expected_variants):
+        fail('Profile 002 variant closeout set invalid')
+    for vid,(size,digest) in expected_variants.items():
+        row=got[vid]
+        if row.get('bytes')!=size or row.get('sha256')!=digest or row.get('gguf_magic_verified') is not True or row.get('integrity_status')!='PASS':
+            fail('Profile 002 variant integrity invalid: '+vid)
+    ext=closeout2.get('external_integrity_verification') or {}
+    if not all(ext.get(k) is True for k in ('all_four_variant_bytes_match_manifest','all_four_variant_sha256_match_manifest','all_four_gguf_magic_verified','runtime_asset_sha256_match','quantizer_sha256_match','manifest_hash_match_lock','network_evidence_hash_match_manifest','resolved_environment_hash_match_manifest','local_llama_cpp_head_match')):
+        fail('Profile 002 external integrity verification incomplete')
+    if ext.get('remaining_package_process_count')!=0:
+        fail('Profile 002 package process still running')
+    effects=closeout2.get('effects') or {}
+    if any(effects.get(k) is not False for k in ('model_inference_performed','model_evaluation_performed','quality_selection_performed','training_performed','semantic_index_written','semantic_recall_released','promotion_or_activation','production_mutation')):
+        fail('Profile 002 closeout effect/authority violation')
+    acct=closeout2.get('attempt_accounting') or {}
+    if acct.get('attempts_used')!=1 or acct.get('profile_status_after_closeout')!='CLOSED_SUCCESS' or acct.get('retry_under_same_profile_allowed') is not False:
+        fail('Profile 002 attempt closeout invalid')
+
+    matrix2=load(M1/'package/PackageVariantMatrix.v1.0.2.json')
+    if matrix2.get('status')!='GENERATED_AND_INTEGRITY_VERIFIED / QUALITY_UNRANKED':
+        fail('current package matrix status invalid')
+    pred=matrix2.get('predecessor') or {}
+    if pred.get('git_blob_sha1')!='4975d05cf21895d9271a82a804bcc3d745997019' or git_blob_sha1(M1/'package/PackageVariantMatrix.v1.0.1.json')!='4975d05cf21895d9271a82a804bcc3d745997019':
+        fail('package matrix predecessor binding drift')
+    m2={x['variant_id']:x for x in matrix2.get('variants',[])}
+    if set(m2)!=set(expected_variants):
+        fail('current package matrix variant set invalid')
+    for vid,(size,digest) in expected_variants.items():
+        row=m2[vid]
+        if row.get('bytes')!=size or row.get('sha256')!=digest or row.get('package_status')!='GENERATED_INTEGRITY_VERIFIED' or row.get('quality_status')!='NOT_EVALUATED':
+            fail('current package matrix integrity/quality boundary invalid: '+vid)
+    qs=matrix2.get('quality_selection') or {}
+    if qs.get('performed') is not False or qs.get('winner') is not None or qs.get('required_stage')!='M1-06':
+        fail('quality selection occurred before M1-06')
+
     try:
         compile(src,str(SCRIPT),'exec')
     except SyntaxError:
@@ -91,7 +142,7 @@ def main():
         except SystemExit: pass
         else: fail('package second lock acquisition did not fail')
 
-    print('PASS: MODEL-PROGRAM-M1 M1-05 Profile 001 closed pre-execution and Profile 002 exact package conversion/quantization profile is bound with conservative network accounting; inference/evaluation/quality selection remain prohibited')
+    print('PASS: MODEL-PROGRAM-M1 M1-05 Profile 002 closed PASS with four exact-lineage GGUF variants integrity-verified; quality selection remains deferred to M1-06')
     return 0
 
 if __name__=='__main__':
