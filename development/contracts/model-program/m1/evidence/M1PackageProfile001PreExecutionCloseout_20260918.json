@@ -1,0 +1,35 @@
+{
+  "schema_version": "clued.model-m1-experiment-profile-execution-closeout/1",
+  "closeout_id": "CLUED-MODEL-M1-PKG-PROFILE-001-CLOSEOUT-20260918",
+  "profile_id": "M1-PKG-QWEN35-08B-001",
+  "stage_id": "MODEL-PROGRAM-M1",
+  "task_id": "M1-05",
+  "result": "CANCELLED / CLUED_MODEL_M1_PKG_PROFILE_001_PRE_EXECUTION_NETWORK_ACCOUNTING_INCOMPLETE",
+  "observed_at_utc": "2026-09-18T10:14:01.2499621Z",
+  "reason": "Pre-execution review found that the script hard-counted the direct runtime ZIP transfer but did not include git clone and pip dependency transfers in the same fail-closed network ceiling.",
+  "execution_observation": {
+    "output_dir_existed": false,
+    "one_shot_lock_existed": false,
+    "process_started": false,
+    "model_package_bytes_written": 0,
+    "runtime_asset_downloaded": false,
+    "conversion_performed": false,
+    "quantization_performed": false
+  },
+  "attempt_accounting": {
+    "max_attempts": 1,
+    "attempts_used": 0,
+    "profile_status_after_closeout": "CANCELLED_PRE_EXECUTION",
+    "retry_under_same_profile_allowed": false
+  },
+  "effects": {
+    "model_inference_performed": false,
+    "model_evaluation_performed": false,
+    "training_performed": false,
+    "package_conversion_performed": false,
+    "quantization_performed": false,
+    "production_mutation": false
+  },
+  "successor_requirement": "NEW_EXACT_SCRIPT_REVISION + CONSERVATIVE_NETWORK_UPPER_BOUND_ACCOUNTING + NEW_PROFILE",
+  "authority_effect": "CLOSEOUT_ONLY / NO_NEW_EXECUTION_AUTHORITY"
+}
