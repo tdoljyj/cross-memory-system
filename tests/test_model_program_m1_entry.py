@@ -40,6 +40,16 @@ class ModelProgramM1EntryTests(unittest.TestCase):
         self.assertTrue(good,code)
         self.assertEqual(p['attempt_control'],'ONE_SHOT_EXCLUSIVE_LOCK / NEW_OUTPUT_DIR / ATOMIC_FILE_REPLACE')
 
+    def test_profile003_closeout_is_consumed(self):
+        c=m.load(m.BASE/'evidence/M1ExperimentProfile003ExecutionCloseout_20260918.json')
+        self.assertEqual(c['result'],'PASS / CLUED_MODEL_M1_PROFILE_003_DOWNLOAD_AND_INTEGRITY_ACCEPTED')
+        self.assertEqual(c['snapshot']['source_file_count'],13)
+        self.assertEqual(c['snapshot']['weight']['sha256'],'04b1c301231dd422b8860db31311ab2721511346a32cb1e079c4c4e5f1fe4696')
+        self.assertEqual(c['integrity_verification']['downloader_internal_independent_rehash'],'PASS')
+        self.assertEqual(c['integrity_verification']['reviewer_external_rehash'],'PASS')
+        self.assertFalse(c['attempt_accounting']['retry_under_same_profile_allowed'])
+        self.assertEqual(c['m1_task_effect']['M1-03'],'COMPLETED')
+
     def test_model_revision_drift_fails(self):
         p=m.load(m.BASE/'governance/ExperimentAuthorizationProfile.M1-REF-QWEN35-08B-LLAMACPP-003.issued.json')
         p=copy.deepcopy(p); p['model_binding']['revision']='deadbeef'
