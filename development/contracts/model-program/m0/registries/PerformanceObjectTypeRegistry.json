@@ -1,0 +1,19 @@
+{
+  "schema_version": "clued.model-performance-type-registry/1",
+  "status": "M0_BOUND",
+  "types": {
+    "PERF-B": {
+      "kind": "TEST_OR_ATTESTATION",
+      "is_gate": false
+    },
+    "PERF-S": {
+      "kind": "KERNEL_GATE_BOUND_REQUIREMENT",
+      "is_gate": true
+    },
+    "PERF-Q": {
+      "kind": "TEST_OR_ATTESTATION",
+      "is_gate": false
+    }
+  },
+  "mutual_impersonation": "FORBIDDEN"
+}

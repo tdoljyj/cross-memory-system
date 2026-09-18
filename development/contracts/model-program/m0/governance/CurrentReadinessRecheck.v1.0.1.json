@@ -1,0 +1,33 @@
+{
+  "object_type": "CurrentReadinessUpstreamCompatibilityRecheck",
+  "schema_version": "clued.model-readiness-recheck/2",
+  "materialization_kind": "MACHINE_READABLE_RECORD_OF_PRIOR_RECHECK",
+  "date": "2026-09-18",
+  "recheck_event_utc": "2026-09-18T03:35:25Z",
+  "target": {
+    "version": "v1.0.1",
+    "sha256": "a918f42e6e9de160f7b14a95afafeae9022ddcc189b3663e768aa197110118a4"
+  },
+  "prerequisite_binding": {
+    "plan_review_attestation_sha256": "0fe4460473fceccd6484fd6f344fb304ff8249c9a5d86facfea8a9f726fc065b",
+    "owner_successor_adoption_sha256": "00fc705fef1ae70bb90b3b85307a3d09474ada6809fbeec2739bbfc0331df5e8",
+    "exact_plan_sha256": "a918f42e6e9de160f7b14a95afafeae9022ddcc189b3663e768aa197110118a4"
+  },
+  "current_readiness": "PASS",
+  "upstream_compatibility": "PASS",
+  "pre_m0_carrier_strategy_compatibility": "PASS",
+  "historical_recheck_blockers": {
+    "RCHK-BLOCK-01": "CLOSED",
+    "RCHK-BLOCK-02": "CLOSED_FOR_M0_ENTRY",
+    "RCHK-BLOCK-03": "CLOSED"
+  },
+  "does_not_issue": [
+    "training",
+    "evaluation",
+    "promotion",
+    "activation",
+    "production"
+  ],
+  "canonical_event_ref": null,
+  "canonical_receipt_ref": null
+}

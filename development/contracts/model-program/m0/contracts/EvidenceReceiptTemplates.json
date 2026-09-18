@@ -1,0 +1,34 @@
+{
+  "schema_version": "clued.model-evidence-receipt-templates/1",
+  "templates": {
+    "M0ValidationEvidence": [
+      "candidate_commit",
+      "source_lock_digest",
+      "validator_version",
+      "test_results",
+      "created_at"
+    ],
+    "ReadinessSourceLockVerification": [
+      "readiness_decision_digest",
+      "verified_bindings",
+      "mismatch_count",
+      "result"
+    ],
+    "IndependentM0ReviewAttestation": [
+      "fixed_candidate_commit",
+      "reviewer_independence",
+      "read_only",
+      "fresh_context",
+      "verdict",
+      "findings"
+    ],
+    "ProjectionEvidence": [
+      "input_set_digest",
+      "algorithm_version",
+      "output_digest",
+      "authority_effect"
+    ]
+  },
+  "kernel_receipt_impersonation": "FORBIDDEN",
+  "promotion_receipt_impersonation": "FORBIDDEN"
+}

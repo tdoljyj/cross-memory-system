@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ModelReleaseProfile",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "profile_id",
+    "tier_id",
+    "gate_refs",
+    "gate_definition_set_digest",
+    "carrier_binding_ref",
+    "risk_manifest_ref"
+  ],
+  "properties": {
+    "profile_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "tier_id": {
+      "enum": [
+        "mobile",
+        "standard",
+        "flagship"
+      ]
+    },
+    "gate_refs": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "gate_id",
+          "definition_version",
+          "content_digest",
+          "object_type",
+          "release_action",
+          "applicability_proof_digest",
+          "independent_reviewer_ref",
+          "attestation_max_age",
+          "revalidation_input_fields"
+        ],
+        "properties": {
+          "gate_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "definition_version": {
+            "type": "string",
+            "minLength": 1
+          },
+          "content_digest": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "object_type": {
+            "const": "KERNEL_ATOMIC_GATE"
+          },
+          "release_action": {
+            "enum": [
+              "rerun",
+              "revalidate_attestation",
+              "not_required"
+            ]
+          },
+          "applicability_proof_digest": {
+            "anyOf": [
+              {
+                "const": "N_A"
+              },
+              {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              }
+            ]
+          },
+          "independent_reviewer_ref": {
+            "type": "string",
+            "minLength": 1
+          },
+          "attestation_max_age": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "revalidation_input_fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "gate_definition_set_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "carrier_binding_ref": {
+      "type": "string",
+      "minLength": 1
+    },
+    "risk_manifest_ref": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

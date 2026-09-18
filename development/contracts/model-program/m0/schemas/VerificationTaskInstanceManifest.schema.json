@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "VerificationTaskInstanceManifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "task_id",
+    "action_id",
+    "writer",
+    "write_set"
+  ],
+  "properties": {
+    "task_id": {
+      "type": "string"
+    },
+    "action_id": {
+      "type": "string"
+    },
+    "writer": {
+      "const": "M6-V_EVIDENCE_ONLY"
+    },
+    "write_set": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "Evidence",
+          "VerificationCloseoutReference"
+        ]
+      }
+    }
+  }
+}

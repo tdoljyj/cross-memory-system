@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PromotionActionPlan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "action_id",
+    "tier_id",
+    "action_kind",
+    "promotion_authority_ref",
+    "preconditions"
+  ],
+  "properties": {
+    "action_id": {
+      "type": "string"
+    },
+    "tier_id": {
+      "enum": [
+        "mobile",
+        "standard",
+        "flagship"
+      ]
+    },
+    "action_kind": {
+      "enum": [
+        "publish",
+        "activate",
+        "rollback"
+      ]
+    },
+    "promotion_authority_ref": {
+      "type": "string",
+      "minLength": 1
+    },
+    "preconditions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

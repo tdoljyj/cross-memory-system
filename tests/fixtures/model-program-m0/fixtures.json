@@ -1,0 +1,100 @@
+{
+  "valid_profile": {
+    "profile_id": "m0-static-validation",
+    "stage_id": "MODEL-PROGRAM-M0",
+    "authority_ref": "NonProductionM0Authorization.v1.0.1",
+    "environment": "NON_PRODUCTION",
+    "training_allowed": false,
+    "real_model_evaluation_allowed": false,
+    "production_allowed": false,
+    "budget": {
+      "max_wall_seconds": 1800,
+      "max_compute_bytes": 1073741824,
+      "max_cost_microunits": 0
+    },
+    "attempts": {
+      "max_attempts": 3
+    },
+    "deadline": "2026-09-19T00:00:00Z",
+    "stop_conditions": [
+      "budget_exhausted",
+      "deadline_expired",
+      "validation_failure"
+    ]
+  },
+  "negative_unbounded_budget": {
+    "max_wall_seconds": 0
+  },
+  "negative_production_authority": {
+    "production_allowed": true
+  },
+  "negative_tier_implies_rc": {
+    "tier": "mobile",
+    "rc_type": "personal_runner",
+    "selection_basis": "TIER_NAME_ONLY"
+  },
+  "negative_cross_tier_risk_reuse": {
+    "mobile": "risk-1",
+    "standard": "risk-1",
+    "flagship": "risk-3"
+  },
+  "negative_verification_unlock": {
+    "lane": "M6-V",
+    "writes": [
+      "Evidence",
+      "DependencyUnlock"
+    ]
+  },
+  "negative_illegal_label": {
+    "label": "MAYBE",
+    "value": 0.7,
+    "evidence_refs": [
+      "e1"
+    ],
+    "calibration": "VALID"
+  },
+  "negative_illegal_number": {
+    "label": "SUPPORTED",
+    "value": 1.7,
+    "evidence_refs": [
+      "e1"
+    ],
+    "calibration": "VALID"
+  },
+  "positive_abstain": {
+    "kind": "abstain",
+    "reason": "insufficient_evidence"
+  },
+  "negative_missing_evidence": {
+    "label": "SUPPORTED",
+    "value": 0.7,
+    "evidence_refs": [],
+    "calibration": "VALID"
+  },
+  "negative_calibration_missing": {
+    "label": "SUPPORTED",
+    "value": 0.7,
+    "evidence_refs": [
+      "e1"
+    ],
+    "calibration": "MISSING"
+  },
+  "positive_raw_score_not_applicable": {
+    "label": "SUPPORTED",
+    "value": 0.7,
+    "evidence_refs": [
+      "e1"
+    ],
+    "calibration": "NOT_APPLICABLE_DECLARED_RAW_SCORE"
+  },
+  "negative_route_budget_terminal": {
+    "max_hops": 4,
+    "remaining_hops": 0,
+    "attempt_route_again": true
+  },
+  "negative_source_revision_drift": {
+    "bound_source_revision": "s1",
+    "observed_source_revision": "s2",
+    "reuse_previous_result": true
+  }
+}

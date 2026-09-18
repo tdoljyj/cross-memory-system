@@ -1,0 +1,31 @@
+{
+  "schema_version": "clued.model-rc-carrier-strategy-reference/1",
+  "status": "ACCEPTED_BY_v1.0.1_OWNER_ADOPTION_AND_CURRENT_RECHECK",
+  "mode": "product_runtime_package_rc",
+  "authority_owner": "KERNEL_ONLY",
+  "upstream_candidate": {
+    "path": "../upstream/ModelRcCarrierDecisionCandidate_product_runtime_package_rc_20260918.json",
+    "sha256": "7ded2172a8a69b4c930d10574c6da56dde62bf6f01d10998bf708bffe113d9a8"
+  },
+  "registered_rc_types": [
+    "kernel_core",
+    "personal_runner",
+    "import_storage",
+    "public_cloud",
+    "public_plugin",
+    "external_executor_pack",
+    "enterprise"
+  ],
+  "selection_rule": "TOPOLOGY_EVIDENCE_ONLY_NEVER_TIER_NAME",
+  "per_tier_exact_binding": {
+    "mobile": "TO_BE_BOUND",
+    "standard": "TO_BE_BOUND",
+    "flagship": "TO_BE_BOUND"
+  },
+  "fail_closed_until_binding": [
+    "MACHINE_RC_SEAL",
+    "STABLE_MODEL_RELEASE_PROFILE",
+    "G7A",
+    "G7P"
+  ]
+}

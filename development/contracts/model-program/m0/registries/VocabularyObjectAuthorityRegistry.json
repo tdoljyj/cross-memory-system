@@ -1,0 +1,74 @@
+{
+  "schema_version": "clued.model-vocabulary-object-authority/1",
+  "status": "M0_BOUND",
+  "responsibility_map": [
+    {
+      "responsibility": "deterministic_control",
+      "owner": "KERNEL_POLICY_EXISTING_STATE_CONTRACTS",
+      "may_final_authority": true
+    },
+    {
+      "responsibility": "judgment_scoring",
+      "owner": "MODEL_CAPABILITY_PORT",
+      "may_final_authority": false
+    },
+    {
+      "responsibility": "representation_retrieval",
+      "owner": "SEPARATE_CAPABILITY_OR_PROJECTION",
+      "canonical_source": false
+    },
+    {
+      "responsibility": "complex_reasoning",
+      "owner": "QUALIFIED_MODEL_CAPABILITY",
+      "may_approve_action": false
+    },
+    {
+      "responsibility": "generation_interaction",
+      "owner": "GENERATION_CAPABILITY_AND_CANDIDATE_SCHEMA",
+      "auto_canonical_commit": false
+    },
+    {
+      "responsibility": "action_execution",
+      "owner": "AGENT_TOOL_KERNEL_EXECUTION_CHAIN",
+      "model_output_is_authorization": false
+    }
+  ],
+  "logical_fragments": [
+    {
+      "name": "DecisionTaskSpec",
+      "owner": "MODEL_CAPABILITY_DOMAIN",
+      "m0_abc_override": "FORBIDDEN"
+    },
+    {
+      "name": "DecisionCalibrationSpec",
+      "owner": "EVALUATION_THRESHOLD_DOMAIN",
+      "qualification_authority": false
+    },
+    {
+      "name": "DecisionWorkflowSpec",
+      "owner": "EXISTING_ORCHESTRATION_POLICY_DOMAIN",
+      "creates_authority": false
+    }
+  ],
+  "information_flow_dependencies": {
+    "M0_A": {
+      "status": "EXTERNAL_INPUT_REQUIRED",
+      "mode": "READ_ONLY",
+      "reconstruction": "FORBIDDEN"
+    },
+    "M0_B": {
+      "status": "EXTERNAL_INPUT_REQUIRED",
+      "mode": "READ_ONLY",
+      "reconstruction": "FORBIDDEN"
+    },
+    "M0_C": {
+      "status": "EXTERNAL_INPUT_REQUIRED",
+      "mode": "READ_ONLY",
+      "reconstruction": "FORBIDDEN"
+    }
+  },
+  "upstream_object_authority_ref": {
+    "path": "../upstream/ObjectAuthorityRegistry_model_program_v1_20260918.json",
+    "sha256": "b89bb15a047cd59390428e86d33e8e2fc59d3a83954c68c2393d0e5b3dc4f3cc"
+  }
+}

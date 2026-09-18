@@ -1,0 +1,149 @@
+{
+  "schema_version": "clued.model-program-source-lock/3",
+  "program_id": "CLUED-FIRST-PARTY-MODEL",
+  "stage_id": "MODEL-PROGRAM-M0",
+  "status": "LOCKED_FOR_NON_PRODUCTION_M0_TARGETED_REPAIR_SUCCESSOR",
+  "plan": {
+    "version": "v1.0.1",
+    "delivery_revision": "r1",
+    "sha256": "a918f42e6e9de160f7b14a95afafeae9022ddcc189b3663e768aa197110118a4",
+    "artifact_location": "EXTERNAL_FORMAL_PLAN / EXACT_SHA_BOUND"
+  },
+  "governance_records": [
+    {
+      "path": "governance/IndependentPlanReviewReceipt.v1.0.1.json",
+      "sha256": "32ae65129996df696ab1fb1c6de770766b162ea63ebe54daf9ad54d7e1c2f113",
+      "kind": "MACHINE_READABLE_RECORD_OF_PRIOR_FRESH_CONTEXT_INDEPENDENT_REVIEW"
+    },
+    {
+      "path": "governance/PlanReviewAttestation.v1.0.1.json",
+      "sha256": "0fe4460473fceccd6484fd6f344fb304ff8249c9a5d86facfea8a9f726fc065b",
+      "kind": "DIGEST_BOUND_PLAN_REVIEW_ATTESTATION"
+    },
+    {
+      "path": "governance/OwnerSuccessorAdoption.v1.0.1.json",
+      "sha256": "00fc705fef1ae70bb90b3b85307a3d09474ada6809fbeec2739bbfc0331df5e8",
+      "kind": "MACHINE_READABLE_RECORD_OF_PRIOR_OWNER_DECISION"
+    },
+    {
+      "path": "governance/CurrentReadinessRecheck.v1.0.1.json",
+      "sha256": "4cf6624912694075b121f49fbbe6b7d8a43174b2946a75fb8b608e237f9b4b08",
+      "kind": "DIGEST_BOUND_CURRENT_READINESS_RECHECK"
+    },
+    {
+      "path": "governance/NonProductionM0Authorization.v1.0.1.json",
+      "sha256": "7a21e151e1b085f393f1a7dd96bdeafd0619b6175fb58e076bbb2e8021d92793",
+      "kind": "DIGEST_BOUND_NON_PRODUCTION_M0_IMPLEMENTATION_AUTHORITY"
+    }
+  ],
+  "required_typed_inputs": [
+    {
+      "id": "phase2_entry_readiness",
+      "path": "upstream/Phase2EntryDevelopmentReadinessDecision_PASS_20260918.json",
+      "sha256": "81f671b5e4504111c40826134bf67fc82d699e0a0f7667d67d91973820d6b254",
+      "kind": "EXACT_VENDOR_COPY"
+    },
+    {
+      "id": "parent_structure_compatibility",
+      "path": "upstream/ModelProgramParentStructureCompatibilityDecision_ACCEPTED_20260918.json",
+      "sha256": "22494b53cd7f5bb4d29857d88e56f464c8037f9ca3cbbe2239cef545f904ff9f",
+      "kind": "EXACT_VENDOR_COPY"
+    },
+    {
+      "id": "tier_set_revision",
+      "path": "upstream/TierSetRevision_v1_20260918.json",
+      "sha256": "88f1451fddb0a6e89664ea0eb82260a61ad3df50c696fc639b9878bdc47eaefc",
+      "kind": "EXACT_VENDOR_COPY"
+    },
+    {
+      "id": "tier_mobile",
+      "path": "upstream/TierDefinitionRevision_mobile_v1_20260918.json",
+      "sha256": "feaf5746f548e274557360196d90be7f03eff2f3f49ca2473b4ac3250a5fc2f2",
+      "kind": "EXACT_VENDOR_COPY"
+    },
+    {
+      "id": "tier_standard",
+      "path": "upstream/TierDefinitionRevision_standard_v1_20260918.json",
+      "sha256": "6b61538641d50a0548bb4bf5aa99212fd7f35df0ecbc8cd6b2d9fc0f539c9f20",
+      "kind": "EXACT_VENDOR_COPY"
+    },
+    {
+      "id": "tier_flagship",
+      "path": "upstream/TierDefinitionRevision_flagship_v1_20260918.json",
+      "sha256": "2a094c80e3e71fd345b73b71c18025476d4f0fdb0a2d1dfb557214f3d6353f2c",
+      "kind": "EXACT_VENDOR_COPY"
+    },
+    {
+      "id": "kernel_gate_mapping",
+      "path": "upstream/KernelGateMappingRevision_model_program_v1_20260918.json",
+      "sha256": "b235adf939fceb45f7ed707328eeb1622ec3b124e905437e824674fb3c6e6bcc",
+      "kind": "EXACT_VENDOR_COPY"
+    },
+    {
+      "id": "object_authority_registry",
+      "path": "upstream/ObjectAuthorityRegistry_model_program_v1_20260918.json",
+      "sha256": "b89bb15a047cd59390428e86d33e8e2fc59d3a83954c68c2393d0e5b3dc4f3cc",
+      "kind": "EXACT_VENDOR_COPY"
+    },
+    {
+      "id": "carrier_candidate_input",
+      "path": "upstream/ModelRcCarrierDecisionCandidate_product_runtime_package_rc_20260918.json",
+      "sha256": "7ded2172a8a69b4c930d10574c6da56dde62bf6f01d10998bf708bffe113d9a8",
+      "kind": "EXACT_VENDOR_COPY"
+    },
+    {
+      "id": "requirement_trace",
+      "path": "upstream/RequirementTraceRevision_v15.json",
+      "sha256": "ebc4036f9bf8cbf8b6bb463b3ec9c937b9ddc0e619f58a3e3662d1c6cbd9c11e",
+      "kind": "EXACT_GIT_BLOB_COPY",
+      "git_blob_sha1": "717c49f6d99a3385cbdd7d4ea7c0b436ec11d857"
+    },
+    {
+      "id": "kernel_v3_3",
+      "path": "upstream/KernelV33Reference.json",
+      "sha256": "b1698948b342fd96c2bea953bc3ba076d5e7146476edc27221de122b020ec2f1",
+      "kind": "RESOLVABLE_REFERENCE_WITH_REPOSITORY_SOURCE_EVIDENCE",
+      "source_sha256": "f967fdf3e63028d29ed191160698726b5d707aaae63bd951f6ba2e8584936fec"
+    }
+  ],
+  "repository_live_bindings": [
+    {
+      "id": "architecture_acceptance",
+      "path": "../../../../docs/execution-plans/phase2-structure-governance/ArchitectureConstitutionAcceptanceDecision_20260907.json",
+      "repo_path": "docs/execution-plans/phase2-structure-governance/ArchitectureConstitutionAcceptanceDecision_20260907.json",
+      "sha256": "f2ec1d6cf3afbd80d415c65c7bc0f71d86d606bda9031a174d92517e421ac246"
+    },
+    {
+      "id": "structure_freeze",
+      "path": "../../../../docs/execution-plans/phase2-structure-governance/Phase2StructureFreezeDecision_20260907.json",
+      "repo_path": "docs/execution-plans/phase2-structure-governance/Phase2StructureFreezeDecision_20260907.json",
+      "sha256": "f40c8af253f811f820e4b3eccc144d63ca3548663810aba10bebb22331661b36"
+    },
+    {
+      "id": "series_completion",
+      "path": "../../../../docs/execution-plans/phase2-structure-governance/SeriesCompletionIndex_20260907.json",
+      "repo_path": "docs/execution-plans/phase2-structure-governance/SeriesCompletionIndex_20260907.json",
+      "sha256": "95a0ef331cc598497e172565757649ce4bd66d070d256ee6ff67f782f3fbc58f"
+    },
+    {
+      "id": "phase2_terminal_closeout",
+      "path": "../../../../work/root12-single-window/PHASE2-KERNEL-CLOSEOUT.md",
+      "repo_path": "work/root12-single-window/PHASE2-KERNEL-CLOSEOUT.md",
+      "sha256": "8bd4c427677aef2609641bcdfc567f942bfcf90e693fce623e2ed592c68ac57d"
+    }
+  ],
+  "information_flow_dependencies": {
+    "M0_A": "EXTERNAL_INPUT_REQUIRED_READ_ONLY",
+    "M0_B": "EXTERNAL_INPUT_REQUIRED_READ_ONLY",
+    "M0_C": "EXTERNAL_INPUT_REQUIRED_READ_ONLY",
+    "reconstruction_from_summary": "FORBIDDEN"
+  },
+  "fail_closed": {
+    "missing_or_mismatched_required_binding": "BLOCKED / CLUED_MODEL_M0_REQUIRED_BINDINGS_MISSING",
+    "authority_scope_expansion": "FAIL / CLUED_MODEL_M0_AUTHORITY_GATE_MAPPING_OR_BOUNDARY_VIOLATION"
+  },
+  "review_lineage": {
+    "earlier_blocked_recheck": "SUPERSEDED_AS_REVIEW_STATUS_BY_LATER_FRESH_CONTEXT_PASS",
+    "current_independent_review_receipt": "governance/IndependentPlanReviewReceipt.v1.0.1.json"
+  }
+}

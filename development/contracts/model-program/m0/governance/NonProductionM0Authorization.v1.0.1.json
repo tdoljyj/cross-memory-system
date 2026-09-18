@@ -1,0 +1,47 @@
+{
+  "object_type": "ImplementationAuthorization",
+  "schema_version": "clued.model-implementation-authorization/2",
+  "materialization_kind": "MACHINE_READABLE_RECORD_OF_PRIOR_OWNER_DECISION",
+  "date": "2026-09-18",
+  "target": {
+    "version": "v1.0.1",
+    "sha256": "a918f42e6e9de160f7b14a95afafeae9022ddcc189b3663e768aa197110118a4"
+  },
+  "authority_type": "NON_PRODUCTION_M0_IMPLEMENTATION_AUTHORITY",
+  "status": "ISSUED",
+  "authorized_scope": [
+    "M0_FOUNDATION_IMPLEMENTATION",
+    "STATIC_VALIDATION",
+    "NEGATIVE_FIXTURES",
+    "QUALIFICATION_EVIDENCE_PREPARATION"
+  ],
+  "explicitly_not_authorized": [
+    "MODEL_DOWNLOAD",
+    "TRAINING",
+    "REAL_MODEL_EVALUATION",
+    "PROMOTION",
+    "ACTIVATION",
+    "PRODUCTION_DEPLOYMENT",
+    "PRODUCTION_TRAFFIC",
+    "PRODUCTION_DATABASE_MUTATION",
+    "PRODUCTION_SECRET_MUTATION",
+    "G1_CUTOVER",
+    "MACHINE_RC_SEAL",
+    "G7A",
+    "G7P"
+  ],
+  "prerequisite_binding": {
+    "independent_review_receipt_sha256": "32ae65129996df696ab1fb1c6de770766b162ea63ebe54daf9ad54d7e1c2f113",
+    "plan_review_attestation_sha256": "0fe4460473fceccd6484fd6f344fb304ff8249c9a5d86facfea8a9f726fc065b",
+    "owner_successor_adoption_sha256": "00fc705fef1ae70bb90b3b85307a3d09474ada6809fbeec2739bbfc0331df5e8",
+    "current_readiness_recheck_sha256": "4cf6624912694075b121f49fbbe6b7d8a43174b2946a75fb8b608e237f9b4b08",
+    "exact_plan_sha256": "a918f42e6e9de160f7b14a95afafeae9022ddcc189b3663e768aa197110118a4"
+  },
+  "decision_origin": {
+    "holder": "OWNER",
+    "source": "CURRENT_CONVERSATION",
+    "instruction": "好 进入下一关"
+  },
+  "canonical_event_ref": null,
+  "canonical_receipt_ref": null
+}

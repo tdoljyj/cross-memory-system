@@ -1,0 +1,25 @@
+{
+  "schema_version": "clued.model-release-gate-contract/2",
+  "status": "M0_EXACT_BOUND",
+  "authority_owner": "KERNEL_ONLY",
+  "gate_registry_ref": "../registries/GateDefinitionRegistry.json",
+  "exact_upstream_mapping_ref": "../upstream/KernelGateMappingRevision_model_program_v1_20260918.json",
+  "mapping_sha256": "b235adf939fceb45f7ed707328eeb1622ec3b124e905437e824674fb3c6e6bcc",
+  "requirement_trace_sha256": "ebc4036f9bf8cbf8b6bb463b3ec9c937b9ddc0e619f58a3e3662d1c6cbd9c11e",
+  "gate_definition_set_digest": "dda6a54f0251ac554049cc5aee1c32707116c852bf9cb7dd121518f1761d0974",
+  "machine_pass_from_mapping_revision": false,
+  "release_profile_requires_gate_refs_and_digest": true,
+  "gate_ref_required_fields": [
+    "gate_id",
+    "definition_version",
+    "content_digest",
+    "object_type",
+    "release_action",
+    "applicability_proof_digest",
+    "independent_reviewer_ref",
+    "attestation_max_age",
+    "revalidation_input_fields"
+  ],
+  "bare_gate_ids_forbidden": true,
+  "digest_mismatch_fail_closed": true
+}

@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "VerificationCloseoutReference",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "action_id",
+    "verification_result_ref",
+    "may_close_action",
+    "may_release_dependency"
+  ],
+  "properties": {
+    "action_id": {
+      "type": "string"
+    },
+    "verification_result_ref": {
+      "type": "string"
+    },
+    "may_close_action": {
+      "const": false
+    },
+    "may_release_dependency": {
+      "const": false
+    }
+  }
+}

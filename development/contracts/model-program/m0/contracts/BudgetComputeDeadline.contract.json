@@ -1,0 +1,18 @@
+{
+  "schema_version": "clued.model-budget-compute-deadline/1",
+  "status": "M0_BOUND",
+  "rules": {
+    "unbounded_budget": "REJECT",
+    "max_attempts_finite": true,
+    "deadline_required": true,
+    "budget_exhaustion": "STOP",
+    "deadline_expiry": "STOP",
+    "unknown_promotion_result": "STOP_AND_RECONCILE"
+  },
+  "m0": {
+    "max_cost_microunits": 0,
+    "training": false,
+    "real_model_evaluation": false,
+    "production": false
+  }
+}

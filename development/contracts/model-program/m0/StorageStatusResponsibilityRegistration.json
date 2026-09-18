@@ -1,0 +1,27 @@
+{
+  "schema_version": "clued.model-storage-status-responsibility/1",
+  "status": "M0_READ_ONLY_REGISTRATION",
+  "repository": {
+    "name": "tdoljyj/cross-memory-system",
+    "role": "DEVELOPMENT_AND_RELEASE_CONTROL_PLANE",
+    "canonical_store": false
+  },
+  "canonical_store": {
+    "role": "AUTHENTICATED_CLUED_SERVICE_BACKED_BY_SUPABASE",
+    "repository_writeback": "FORBIDDEN"
+  },
+  "memory_directory": {
+    "role": "READ_ONLY_VERSIONED_EXPORT",
+    "model_development_status_write": "FORBIDDEN"
+  },
+  "artifact_store": {
+    "role": "IMMUTABLE_EVIDENCE_AND_BUILD_ARTIFACTS",
+    "production_activation_authority": false
+  },
+  "development_control_plane": {
+    "unique_status_entry": "REPOSITORY_CONTRACT_AND_VALIDATOR",
+    "does_not_replace_canonical_status": true
+  },
+  "m0_performs_migration": false,
+  "m0_performs_cutover": false
+}

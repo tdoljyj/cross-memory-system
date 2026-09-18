@@ -1,0 +1,974 @@
+{
+  "schema_version": "clued.model-m0-fixtures/3",
+  "negative_cases": [
+    {
+      "id": "NEG-SHARED-RISK",
+      "validator": "tier_set",
+      "expected_error": "CLUED_MODEL_M0_SHARED_RISK",
+      "input": {
+        "units": [
+          {
+            "tier_id": "mobile",
+            "risk_manifest_ref": "risk-1",
+            "gate_receipt_refs": [
+              "g-mobile"
+            ],
+            "candidate_ref": "c-mobile",
+            "rc_ref": "rc-mobile"
+          },
+          {
+            "tier_id": "standard",
+            "risk_manifest_ref": "risk-1",
+            "gate_receipt_refs": [
+              "g-standard"
+            ],
+            "candidate_ref": "c-standard",
+            "rc_ref": "rc-standard"
+          },
+          {
+            "tier_id": "flagship",
+            "risk_manifest_ref": "risk-3",
+            "gate_receipt_refs": [
+              "g-flag"
+            ],
+            "candidate_ref": "c-flag",
+            "rc_ref": "rc-flag"
+          }
+        ]
+      }
+    },
+    {
+      "id": "NEG-CROSS-TIER-RECEIPT",
+      "validator": "tier_set",
+      "expected_error": "CLUED_MODEL_M0_CROSS_TIER_RECEIPT_REUSE",
+      "input": {
+        "units": [
+          {
+            "tier_id": "mobile",
+            "risk_manifest_ref": "r1",
+            "gate_receipt_refs": [
+              "grr-x"
+            ],
+            "candidate_ref": "c1",
+            "rc_ref": "rc1"
+          },
+          {
+            "tier_id": "standard",
+            "risk_manifest_ref": "r2",
+            "gate_receipt_refs": [
+              "grr-x"
+            ],
+            "candidate_ref": "c2",
+            "rc_ref": "rc2"
+          },
+          {
+            "tier_id": "flagship",
+            "risk_manifest_ref": "r3",
+            "gate_receipt_refs": [
+              "grr3"
+            ],
+            "candidate_ref": "c3",
+            "rc_ref": "rc3"
+          }
+        ]
+      }
+    },
+    {
+      "id": "NEG-PARALLEL-RC-SCHEMA",
+      "validator": "rc_schema_authority",
+      "expected_error": "CLUED_MODEL_M0_PARALLEL_RC_SCHEMA",
+      "input": {
+        "authority_owner": "MODEL_PROGRAM",
+        "schema_id": "model_rc_v1"
+      }
+    },
+    {
+      "id": "NEG-UNACCEPTED-CARRIER",
+      "validator": "carrier_decision",
+      "expected_error": "CLUED_MODEL_M0_CARRIER_UNACCEPTED",
+      "input": {
+        "status": "CANDIDATE",
+        "mode": "product_runtime_package_rc"
+      }
+    },
+    {
+      "id": "NEG-TIER-NAME-RC",
+      "validator": "carrier_binding",
+      "expected_error": "CLUED_MODEL_M0_TIER_NAME_RC_INFERENCE",
+      "input": {
+        "tier_id": "mobile",
+        "binding_status": "BOUND",
+        "selection_basis": "TIER_NAME_ONLY",
+        "rc_type": "personal_runner"
+      }
+    },
+    {
+      "id": "NEG-VERIFICATION-UNLOCK",
+      "validator": "verification_lane",
+      "expected_error": "CLUED_MODEL_M0_VERIFICATION_UNLOCK",
+      "input": {
+        "writer": "M6-V_EVIDENCE_ONLY",
+        "write_set": [
+          "Evidence",
+          "DependencyUnlock"
+        ],
+        "may_unlock_dependency": true
+      }
+    },
+    {
+      "id": "NEG-STRING-CONCAT-ID",
+      "validator": "identity",
+      "expected_error": "CLUED_MODEL_M0_IDENTITY_METHOD",
+      "input": {
+        "domain_separator": "clued:model:promotion-task:v1",
+        "parts": [
+          "mobile",
+          "publish"
+        ],
+        "canonicalization": "STRING_CONCAT",
+        "task_id": "mobilepublish"
+      }
+    },
+    {
+      "id": "NEG-INFINITE-BUDGET",
+      "validator": "experiment_profile",
+      "expected_error": "CLUED_MODEL_M0_PROFILE_BUDGET_UNBOUNDED",
+      "input": {
+        "profile_id": "m0-static-validation",
+        "stage_id": "MODEL-PROGRAM-M0",
+        "authority_ref": "NonProductionM0Authorization.v1.0.1",
+        "environment": "NON_PRODUCTION",
+        "training_allowed": false,
+        "real_model_evaluation_allowed": false,
+        "production_allowed": false,
+        "budget": {
+          "max_wall_seconds": 0,
+          "max_compute_bytes": 1073741824,
+          "max_cost_microunits": 0
+        },
+        "attempts": {
+          "max_attempts": 3
+        },
+        "deadline": "2026-09-19T00:00:00Z",
+        "stop_conditions": [
+          "budget_exhausted",
+          "deadline_expired",
+          "validation_failure"
+        ]
+      }
+    },
+    {
+      "id": "NEG-NO-PA-PUBLISH",
+      "validator": "promotion_action",
+      "expected_error": "CLUED_MODEL_M0_PROMOTION_AUTHORITY_MISSING",
+      "input": {
+        "action_id": "a1",
+        "tier_id": "mobile",
+        "action_kind": "publish",
+        "promotion_authority_ref": null,
+        "preconditions": []
+      }
+    },
+    {
+      "id": "NEG-PROJECTION-AUTHORITY",
+      "validator": "projection",
+      "expected_error": "CLUED_MODEL_M0_PROJECTION_AUTHORITY",
+      "input": {
+        "input_set_digest": "i",
+        "algorithm_version": "v1",
+        "output_digest": "o",
+        "creates_decision": false,
+        "creates_receipt": true,
+        "creates_authority": true
+      }
+    },
+    {
+      "id": "NEG-ILLEGAL-LABEL",
+      "validator": "complete_call",
+      "expected_error": "CLUED_MODEL_M0_CALL_LABEL",
+      "input": {
+        "source_revision": "src-1",
+        "route_budget": {
+          "max_depth": 4,
+          "max_calls": 4,
+          "remaining_calls": 3,
+          "max_escalations": 2,
+          "remaining_escalations": 2
+        },
+        "status": "PREDICTED",
+        "value": {
+          "label": "MAYBE",
+          "probability": 0.7
+        },
+        "score_kind": "CALIBRATED_PROBABILITY",
+        "calibration_ref": "cal-1",
+        "calibration_status": "VALID",
+        "evidence_required": true,
+        "evidence_refs": [
+          "ev-1"
+        ],
+        "abstain_reason": null
+      }
+    },
+    {
+      "id": "NEG-ILLEGAL-NUMBER",
+      "validator": "complete_call",
+      "expected_error": "CLUED_MODEL_M0_CALL_NUMBER",
+      "input": {
+        "source_revision": "src-1",
+        "route_budget": {
+          "max_depth": 4,
+          "max_calls": 4,
+          "remaining_calls": 3,
+          "max_escalations": 2,
+          "remaining_escalations": 2
+        },
+        "status": "PREDICTED",
+        "value": {
+          "label": "SUPPORTED",
+          "probability": 1.7
+        },
+        "score_kind": "CALIBRATED_PROBABILITY",
+        "calibration_ref": "cal-1",
+        "calibration_status": "VALID",
+        "evidence_required": true,
+        "evidence_refs": [
+          "ev-1"
+        ],
+        "abstain_reason": null
+      }
+    },
+    {
+      "id": "NEG-ABSTAIN-DEFAULT",
+      "validator": "complete_call",
+      "expected_error": "CLUED_MODEL_M0_CALL_ABSTAIN_DEFAULT",
+      "input": {
+        "source_revision": "src-1",
+        "route_budget": {
+          "max_depth": 4,
+          "max_calls": 4,
+          "remaining_calls": 3,
+          "max_escalations": 2,
+          "remaining_escalations": 2
+        },
+        "status": "ABSTAINED",
+        "value": "DEFAULT",
+        "score_kind": "NONE",
+        "calibration_ref": null,
+        "calibration_status": "NOT_APPLICABLE",
+        "evidence_required": false,
+        "evidence_refs": [],
+        "abstain_reason": "INSUFFICIENT_EVIDENCE"
+      }
+    },
+    {
+      "id": "NEG-MISSING-EVIDENCE",
+      "validator": "complete_call",
+      "expected_error": "CLUED_MODEL_M0_CALL_EVIDENCE",
+      "input": {
+        "source_revision": "src-1",
+        "route_budget": {
+          "max_depth": 4,
+          "max_calls": 4,
+          "remaining_calls": 3,
+          "max_escalations": 2,
+          "remaining_escalations": 2
+        },
+        "status": "PREDICTED",
+        "value": 0.7,
+        "score_kind": "CALIBRATED_PROBABILITY",
+        "calibration_ref": "cal-1",
+        "calibration_status": "VALID",
+        "evidence_required": true,
+        "evidence_refs": [],
+        "abstain_reason": null
+      }
+    },
+    {
+      "id": "NEG-CALIBRATION-MISSING",
+      "validator": "complete_call",
+      "expected_error": "CLUED_MODEL_M0_CALL_CALIBRATION",
+      "input": {
+        "source_revision": "src-1",
+        "route_budget": {
+          "max_depth": 4,
+          "max_calls": 4,
+          "remaining_calls": 3,
+          "max_escalations": 2,
+          "remaining_escalations": 2
+        },
+        "status": "PREDICTED",
+        "value": 0.7,
+        "score_kind": "CALIBRATED_PROBABILITY",
+        "calibration_ref": null,
+        "calibration_status": "MISSING",
+        "evidence_required": true,
+        "evidence_refs": [
+          "ev-1"
+        ],
+        "abstain_reason": null
+      }
+    },
+    {
+      "id": "NEG-SOURCE-REVISION-DRIFT",
+      "validator": "source_reuse",
+      "expected_error": "CLUED_MODEL_M0_SOURCE_REVISION_DRIFT",
+      "input": {
+        "bound_source_revision": "src-1",
+        "observed_source_revision": "src-2",
+        "reuse_previous_result": true
+      }
+    },
+    {
+      "id": "NEG-ROUTE-BUDGET-TERMINAL",
+      "validator": "complete_call",
+      "expected_error": "CLUED_MODEL_M0_ROUTE_BUDGET_TERMINAL",
+      "input": {
+        "source_revision": "src-1",
+        "route_budget": {
+          "max_depth": 4,
+          "max_calls": 4,
+          "remaining_calls": 0,
+          "max_escalations": 2,
+          "remaining_escalations": 0
+        },
+        "status": "PREDICTED",
+        "value": 0.7,
+        "score_kind": "CALIBRATED_PROBABILITY",
+        "calibration_ref": "cal-1",
+        "calibration_status": "VALID",
+        "evidence_required": true,
+        "evidence_refs": [
+          "ev-1"
+        ],
+        "abstain_reason": null,
+        "attempt_route_again": true
+      }
+    },
+    {
+      "id": "NEG-CROSS-TIER-CANDIDATE",
+      "validator": "tier_set",
+      "expected_error": "CLUED_MODEL_M0_CROSS_TIER_CANDIDATE_REUSE",
+      "input": {
+        "units": [
+          {
+            "tier_id": "mobile",
+            "risk_manifest_ref": "risk-m",
+            "gate_receipt_refs": [
+              "grr-m"
+            ],
+            "candidate_ref": "cand-shared",
+            "rc_ref": "rc-m"
+          },
+          {
+            "tier_id": "standard",
+            "risk_manifest_ref": "risk-s",
+            "gate_receipt_refs": [
+              "grr-s"
+            ],
+            "candidate_ref": "cand-shared",
+            "rc_ref": "rc-s"
+          },
+          {
+            "tier_id": "flagship",
+            "risk_manifest_ref": "risk-f",
+            "gate_receipt_refs": [
+              "grr-f"
+            ],
+            "candidate_ref": "cand-f",
+            "rc_ref": "rc-f"
+          }
+        ]
+      }
+    },
+    {
+      "id": "NEG-CROSS-TIER-RC",
+      "validator": "tier_set",
+      "expected_error": "CLUED_MODEL_M0_CROSS_TIER_CANDIDATE_REUSE",
+      "input": {
+        "units": [
+          {
+            "tier_id": "mobile",
+            "risk_manifest_ref": "risk-m",
+            "gate_receipt_refs": [
+              "grr-m"
+            ],
+            "candidate_ref": "cand-m",
+            "rc_ref": "rc-shared"
+          },
+          {
+            "tier_id": "standard",
+            "risk_manifest_ref": "risk-s",
+            "gate_receipt_refs": [
+              "grr-s"
+            ],
+            "candidate_ref": "cand-s",
+            "rc_ref": "rc-shared"
+          },
+          {
+            "tier_id": "flagship",
+            "risk_manifest_ref": "risk-f",
+            "gate_receipt_refs": [
+              "grr-f"
+            ],
+            "candidate_ref": "cand-f",
+            "rc_ref": "rc-f"
+          }
+        ]
+      }
+    },
+    {
+      "id": "NEG-UNKNOWN-GATE",
+      "validator": "gate_set",
+      "expected_error": "CLUED_MODEL_M0_UNKNOWN_GATE",
+      "input": {
+        "gate_refs": [
+          {
+            "gate_id": "MODEL-GATE-LOCAL",
+            "definition_version": "x",
+            "content_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "object_type": "KERNEL_ATOMIC_GATE",
+            "release_action": "rerun",
+            "applicability_proof_digest": "N_A",
+            "independent_reviewer_ref": "N_A",
+            "attestation_max_age": null,
+            "revalidation_input_fields": []
+          }
+        ],
+        "gate_definition_set_digest": "dda6a54f0251ac554049cc5aee1c32707116c852bf9cb7dd121518f1761d0974"
+      }
+    },
+    {
+      "id": "NEG-RELEASE-PROFILE-GATE-BINDING",
+      "validator": "release_profile",
+      "expected_error": "CLUED_MODEL_M0_RELEASE_PROFILE_GATE_BINDING",
+      "input": {
+        "profile_id": "p1",
+        "tier_id": "mobile",
+        "gate_refs": [],
+        "gate_definition_set_digest": null,
+        "carrier_binding_ref": "carrier:mobile",
+        "risk_manifest_ref": "risk:mobile"
+      }
+    },
+    {
+      "id": "NEG-PERF-TYPE",
+      "validator": "performance_type",
+      "expected_error": "CLUED_MODEL_M0_PERF_TYPE",
+      "input": {
+        "id": "PERF-S",
+        "kind": "TEST_OR_ATTESTATION"
+      }
+    },
+    {
+      "id": "NEG-MIG-NA-PROOF",
+      "validator": "migration",
+      "expected_error": "CLUED_MODEL_M0_MIGRATION_APPLICABILITY",
+      "input": {
+        "mode": "NOT_APPLICABLE_WITH_PROOF",
+        "mig_q_ref": null,
+        "mig_p_ref": null,
+        "mig_c_ref": null,
+        "na_proof_digest": null
+      }
+    },
+    {
+      "id": "NEG-TIERSET-MANIFEST-PREMATURE",
+      "validator": "signed_manifest",
+      "expected_error": "CLUED_MODEL_M0_TIERSET_MANIFEST_PREMATURE",
+      "input": {
+        "tier_set_revision": "ts1",
+        "tier_units": [
+          "mobile",
+          "standard",
+          "flagship"
+        ],
+        "final_rc_refs": {
+          "mobile": "rc-m",
+          "standard": "rc-s",
+          "flagship": "rc-f"
+        },
+        "profile_refs": {
+          "mobile": "p-m",
+          "standard": "p-s",
+          "flagship": "p-f"
+        },
+        "risk_refs": {
+          "mobile": "r-m",
+          "standard": "r-s",
+          "flagship": "r-f"
+        },
+        "j0_ref": "j0-1",
+        "all_required_tiers_final_rc": false,
+        "authority_effect": "NONE"
+      }
+    },
+    {
+      "id": "NEG-GATE-BARE-ID",
+      "validator": "gate_set",
+      "expected_error": "CLUED_MODEL_M0_GATE_REF_BARE",
+      "input": {
+        "gate_refs": [
+          "G3"
+        ],
+        "gate_definition_set_digest": "dda6a54f0251ac554049cc5aee1c32707116c852bf9cb7dd121518f1761d0974"
+      }
+    },
+    {
+      "id": "NEG-GATE-DEFINITION-SET-DIGEST-DRIFT",
+      "validator": "gate_set",
+      "expected_error": "CLUED_MODEL_M0_GATE_DEFINITION_SET_DRIFT",
+      "input": {
+        "gate_refs": [
+          {
+            "gate_id": "G3",
+            "definition_version": "1.0.0-local-rc-v15",
+            "content_digest": "e8b0f118bdb1fc55c752721633b0efca63d09f2186366230df2e3cb2ad1bba0a",
+            "object_type": "KERNEL_ATOMIC_GATE",
+            "release_action": "rerun",
+            "applicability_proof_digest": "N_A",
+            "independent_reviewer_ref": "N_A",
+            "attestation_max_age": null,
+            "revalidation_input_fields": []
+          }
+        ],
+        "gate_definition_set_digest": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      }
+    },
+    {
+      "id": "NEG-GATE-CONTENT-DRIFT",
+      "validator": "gate_set",
+      "expected_error": "CLUED_MODEL_M0_GATE_DEFINITION_DRIFT",
+      "input": {
+        "gate_refs": [
+          {
+            "gate_id": "G3",
+            "definition_version": "1.0.0-local-rc-v15",
+            "content_digest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "object_type": "KERNEL_ATOMIC_GATE",
+            "release_action": "rerun",
+            "applicability_proof_digest": "N_A",
+            "independent_reviewer_ref": "N_A",
+            "attestation_max_age": null,
+            "revalidation_input_fields": []
+          }
+        ],
+        "gate_definition_set_digest": "dda6a54f0251ac554049cc5aee1c32707116c852bf9cb7dd121518f1761d0974"
+      }
+    },
+    {
+      "id": "NEG-SCHEMA-RELEASE-PROFILE-MISSING-RISK",
+      "schema": "ModelReleaseProfile.schema.json",
+      "expected_error": "CLUED_MODEL_M0_SCHEMA_VALIDATION",
+      "input": {
+        "profile_id": "p1",
+        "tier_id": "mobile",
+        "gate_refs": [
+          {
+            "gate_id": "G3",
+            "definition_version": "1.0.0-local-rc-v15",
+            "content_digest": "e8b0f118bdb1fc55c752721633b0efca63d09f2186366230df2e3cb2ad1bba0a",
+            "object_type": "KERNEL_ATOMIC_GATE",
+            "release_action": "rerun",
+            "applicability_proof_digest": "N_A",
+            "independent_reviewer_ref": "N_A",
+            "attestation_max_age": null,
+            "revalidation_input_fields": []
+          }
+        ],
+        "gate_definition_set_digest": "dda6a54f0251ac554049cc5aee1c32707116c852bf9cb7dd121518f1761d0974",
+        "carrier_binding_ref": "carrier:mobile"
+      }
+    },
+    {
+      "id": "NEG-TIERSET-MANIFEST-DUPLICATE-TIER",
+      "schema": "SignedTierSetReleaseManifest.schema.json",
+      "expected_error": "CLUED_MODEL_M0_SCHEMA_VALIDATION",
+      "input": {
+        "tier_set_revision": "ts1",
+        "tier_units": [
+          "mobile",
+          "mobile",
+          "flagship"
+        ],
+        "final_rc_refs": {
+          "mobile": "rc-m",
+          "standard": "rc-s",
+          "flagship": "rc-f"
+        },
+        "profile_refs": {
+          "mobile": "p-m",
+          "standard": "p-s",
+          "flagship": "p-f"
+        },
+        "risk_refs": {
+          "mobile": "r-m",
+          "standard": "r-s",
+          "flagship": "r-f"
+        },
+        "j0_ref": "j0-1",
+        "all_required_tiers_final_rc": true,
+        "authority_effect": "NONE"
+      }
+    },
+    {
+      "id": "NEG-TIERSET-READINESS-MISSING-G7P",
+      "validator": "tier_set_readiness",
+      "expected_error": "CLUED_MODEL_M0_TIERSET_READINESS_BINDING",
+      "input": {
+        "tier_set_revision": "ts1",
+        "required_tier_units": [
+          "mobile",
+          "standard",
+          "flagship"
+        ],
+        "final_rc_refs": {
+          "mobile": "rc-m",
+          "standard": "rc-s",
+          "flagship": "rc-f"
+        },
+        "g7p_refs": {
+          "mobile": "g7p-m",
+          "standard": "",
+          "flagship": "g7p-f"
+        },
+        "signed_tier_set_manifest_ref": "manifest-1",
+        "all_required_tiers_final_rc": true,
+        "all_required_tiers_g7p": true,
+        "creates_promotion_authority": false
+      }
+    },
+    {
+      "id": "NEG-OBJECT-AUTHORITY-EXPANSION",
+      "schema": "ObjectAuthorityAssertion.schema.json",
+      "validator": "object_authority",
+      "expected_error": "CLUED_MODEL_M0_OBJECT_AUTHORITY",
+      "input": {
+        "object_name": "Kernel RC",
+        "owner": "MODEL PROGRAM",
+        "model_domain_effect": "TYPED_REFERENCE_ONLY",
+        "creates_authority": true
+      }
+    },
+    {
+      "id": "NEG-M6-REVIEW-NO-SIGNATURE",
+      "schema": "IndependentM6Review.schema.json",
+      "expected_error": "CLUED_MODEL_M0_SCHEMA_VALIDATION",
+      "input": {
+        "fixed_candidate_digest": "1111111111111111111111111111111111111111111111111111111111111111",
+        "closeout_evidence_set_digest": "2222222222222222222222222222222222222222222222222222222222222222",
+        "read_only": true,
+        "fresh_context": true,
+        "reviewer_not_modifier": true,
+        "verdict": "PASS",
+        "findings": [],
+        "authority_effect": "NONE"
+      }
+    }
+  ],
+  "positive_cases": [
+    {
+      "id": "POS-VALID-PROFILE",
+      "validator": "experiment_profile",
+      "input": {
+        "profile_id": "m0-static-validation",
+        "stage_id": "MODEL-PROGRAM-M0",
+        "authority_ref": "NonProductionM0Authorization.v1.0.1",
+        "environment": "NON_PRODUCTION",
+        "training_allowed": false,
+        "real_model_evaluation_allowed": false,
+        "production_allowed": false,
+        "budget": {
+          "max_wall_seconds": 1800,
+          "max_compute_bytes": 1073741824,
+          "max_cost_microunits": 0
+        },
+        "attempts": {
+          "max_attempts": 3
+        },
+        "deadline": "2026-09-19T00:00:00Z",
+        "stop_conditions": [
+          "budget_exhausted",
+          "deadline_expired",
+          "validation_failure"
+        ]
+      },
+      "schema": "ExperimentAuthorizationProfile.schema.json"
+    },
+    {
+      "id": "POS-RAW-SCORE-NA",
+      "validator": "complete_call",
+      "input": {
+        "source_revision": "src-1",
+        "route_budget": {
+          "max_depth": 4,
+          "max_calls": 4,
+          "remaining_calls": 3,
+          "max_escalations": 2,
+          "remaining_escalations": 2
+        },
+        "status": "PREDICTED",
+        "value": 0.44,
+        "score_kind": "RAW_SCORE",
+        "calibration_ref": null,
+        "calibration_status": "NOT_APPLICABLE",
+        "evidence_required": false,
+        "evidence_refs": [],
+        "abstain_reason": null
+      }
+    },
+    {
+      "id": "POS-ABSTAIN",
+      "validator": "complete_call",
+      "input": {
+        "source_revision": "src-1",
+        "route_budget": {
+          "max_depth": 4,
+          "max_calls": 4,
+          "remaining_calls": 3,
+          "max_escalations": 2,
+          "remaining_escalations": 2
+        },
+        "status": "ABSTAINED",
+        "value": null,
+        "score_kind": "NONE",
+        "calibration_ref": null,
+        "calibration_status": "NOT_APPLICABLE",
+        "evidence_required": false,
+        "evidence_refs": [],
+        "abstain_reason": "INSUFFICIENT_EVIDENCE"
+      }
+    },
+    {
+      "id": "POS-PROJECTION",
+      "validator": "projection",
+      "input": {
+        "input_set_digest": "i",
+        "algorithm_version": "m6-projection-jcs-sha256-v1",
+        "output_digest": "o",
+        "creates_decision": false,
+        "creates_receipt": false,
+        "creates_authority": false
+      },
+      "schema": "Projection.schema.json"
+    },
+    {
+      "id": "POS-TIER-SET-UNIQUE",
+      "validator": "tier_set",
+      "input": {
+        "units": [
+          {
+            "tier_id": "mobile",
+            "risk_manifest_ref": "risk-m",
+            "gate_receipt_refs": [
+              "grr-m"
+            ],
+            "candidate_ref": "cand-m",
+            "rc_ref": "rc-m"
+          },
+          {
+            "tier_id": "standard",
+            "risk_manifest_ref": "risk-s",
+            "gate_receipt_refs": [
+              "grr-s"
+            ],
+            "candidate_ref": "cand-s",
+            "rc_ref": "rc-s"
+          },
+          {
+            "tier_id": "flagship",
+            "risk_manifest_ref": "risk-f",
+            "gate_receipt_refs": [
+              "grr-f"
+            ],
+            "candidate_ref": "cand-f",
+            "rc_ref": "rc-f"
+          }
+        ]
+      }
+    },
+    {
+      "id": "POS-GATE-SET",
+      "validator": "gate_set",
+      "input": {
+        "gate_refs": [
+          {
+            "gate_id": "G3",
+            "definition_version": "1.0.0-local-rc-v15",
+            "content_digest": "e8b0f118bdb1fc55c752721633b0efca63d09f2186366230df2e3cb2ad1bba0a",
+            "object_type": "KERNEL_ATOMIC_GATE",
+            "release_action": "rerun",
+            "applicability_proof_digest": "N_A",
+            "independent_reviewer_ref": "N_A",
+            "attestation_max_age": null,
+            "revalidation_input_fields": []
+          },
+          {
+            "gate_id": "G6a",
+            "definition_version": "1.0.0-local-rc-v15",
+            "content_digest": "1c5bd689e3ac66eb73134475ae84b1d6c000ec7994c429c815882ece45381e40",
+            "object_type": "KERNEL_ATOMIC_GATE",
+            "release_action": "rerun",
+            "applicability_proof_digest": "N_A",
+            "independent_reviewer_ref": "N_A",
+            "attestation_max_age": null,
+            "revalidation_input_fields": []
+          },
+          {
+            "gate_id": "G7A",
+            "definition_version": "1.0.0-local-rc-v15",
+            "content_digest": "0aa1e1ca21652bfcd01edc6f6d8fb1f2da62af74e1e8f61ba6a4d541c5f89caf",
+            "object_type": "KERNEL_ATOMIC_GATE",
+            "release_action": "rerun",
+            "applicability_proof_digest": "N_A",
+            "independent_reviewer_ref": "N_A",
+            "attestation_max_age": null,
+            "revalidation_input_fields": []
+          }
+        ],
+        "gate_definition_set_digest": "dda6a54f0251ac554049cc5aee1c32707116c852bf9cb7dd121518f1761d0974"
+      }
+    },
+    {
+      "id": "POS-RELEASE-PROFILE",
+      "validator": "release_profile",
+      "input": {
+        "profile_id": "p1",
+        "tier_id": "mobile",
+        "gate_refs": [
+          {
+            "gate_id": "G3",
+            "definition_version": "1.0.0-local-rc-v15",
+            "content_digest": "e8b0f118bdb1fc55c752721633b0efca63d09f2186366230df2e3cb2ad1bba0a",
+            "object_type": "KERNEL_ATOMIC_GATE",
+            "release_action": "rerun",
+            "applicability_proof_digest": "N_A",
+            "independent_reviewer_ref": "N_A",
+            "attestation_max_age": null,
+            "revalidation_input_fields": []
+          },
+          {
+            "gate_id": "G7A",
+            "definition_version": "1.0.0-local-rc-v15",
+            "content_digest": "0aa1e1ca21652bfcd01edc6f6d8fb1f2da62af74e1e8f61ba6a4d541c5f89caf",
+            "object_type": "KERNEL_ATOMIC_GATE",
+            "release_action": "rerun",
+            "applicability_proof_digest": "N_A",
+            "independent_reviewer_ref": "N_A",
+            "attestation_max_age": null,
+            "revalidation_input_fields": []
+          }
+        ],
+        "gate_definition_set_digest": "dda6a54f0251ac554049cc5aee1c32707116c852bf9cb7dd121518f1761d0974",
+        "carrier_binding_ref": "carrier:mobile:bound",
+        "risk_manifest_ref": "risk:mobile:contract"
+      },
+      "schema": "ModelReleaseProfile.schema.json"
+    },
+    {
+      "id": "POS-PERF-S",
+      "validator": "performance_type",
+      "input": {
+        "id": "PERF-S",
+        "kind": "KERNEL_GATE_BOUND_REQUIREMENT"
+      }
+    },
+    {
+      "id": "POS-MIG-NA",
+      "validator": "migration",
+      "input": {
+        "mode": "NOT_APPLICABLE_WITH_PROOF",
+        "mig_q_ref": null,
+        "mig_p_ref": null,
+        "mig_c_ref": null,
+        "na_proof_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+      },
+      "schema": "MigrationApplicability.schema.json"
+    },
+    {
+      "id": "POS-SIGNED-MANIFEST",
+      "validator": "signed_manifest",
+      "input": {
+        "tier_set_revision": "ts1",
+        "tier_units": [
+          "mobile",
+          "standard",
+          "flagship"
+        ],
+        "final_rc_refs": {
+          "mobile": "rc-m",
+          "standard": "rc-s",
+          "flagship": "rc-f"
+        },
+        "profile_refs": {
+          "mobile": "p-m",
+          "standard": "p-s",
+          "flagship": "p-f"
+        },
+        "risk_refs": {
+          "mobile": "r-m",
+          "standard": "r-s",
+          "flagship": "r-f"
+        },
+        "j0_ref": "j0-1",
+        "all_required_tiers_final_rc": true,
+        "authority_effect": "NONE"
+      },
+      "schema": "SignedTierSetReleaseManifest.schema.json"
+    },
+    {
+      "id": "POS-TIERSET-READINESS",
+      "schema": "TierSetPromotionReadinessInput.schema.json",
+      "validator": "tier_set_readiness",
+      "input": {
+        "tier_set_revision": "ts1",
+        "required_tier_units": [
+          "mobile",
+          "standard",
+          "flagship"
+        ],
+        "final_rc_refs": {
+          "mobile": "rc-m",
+          "standard": "rc-s",
+          "flagship": "rc-f"
+        },
+        "g7p_refs": {
+          "mobile": "g7p-m",
+          "standard": "g7p-s",
+          "flagship": "g7p-f"
+        },
+        "signed_tier_set_manifest_ref": "manifest-1",
+        "all_required_tiers_final_rc": true,
+        "all_required_tiers_g7p": true,
+        "creates_promotion_authority": false
+      }
+    },
+    {
+      "id": "POS-OBJECT-AUTHORITY",
+      "schema": "ObjectAuthorityAssertion.schema.json",
+      "validator": "object_authority",
+      "input": {
+        "object_name": "Kernel RC",
+        "owner": "KERNEL / EXISTING DOMAIN AUTHORITY",
+        "model_domain_effect": "TYPED_REFERENCE_ONLY",
+        "creates_authority": false
+      }
+    },
+    {
+      "id": "POS-M6-REVIEW",
+      "schema": "IndependentM6Review.schema.json",
+      "validator": "m6_review",
+      "input": {
+        "fixed_candidate_digest": "1111111111111111111111111111111111111111111111111111111111111111",
+        "closeout_evidence_set_digest": "2222222222222222222222222222222222222222222222222222222222222222",
+        "read_only": true,
+        "fresh_context": true,
+        "reviewer_not_modifier": true,
+        "verdict": "PASS",
+        "findings": [],
+        "signature_ref": "sig:test",
+        "authority_effect": "NONE"
+      }
+    }
+  ]
+}

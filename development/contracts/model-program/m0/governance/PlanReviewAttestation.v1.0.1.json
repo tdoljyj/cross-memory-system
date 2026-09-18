@@ -1,0 +1,38 @@
+{
+  "object_type": "PlanReviewAttestation",
+  "schema_version": "clued.model-plan-review-attestation/2",
+  "materialization_kind": "MACHINE_READABLE_ATTESTATION_BOUND_TO_INDEPENDENT_REVIEW_RECEIPT",
+  "date": "2026-09-18",
+  "target": {
+    "version": "v1.0.1",
+    "delivery_revision": "r1",
+    "sha256": "a918f42e6e9de160f7b14a95afafeae9022ddcc189b3663e768aa197110118a4"
+  },
+  "review_mode": [
+    "FRESH_CONTEXT",
+    "READ_ONLY",
+    "INDEPENDENT",
+    "REVIEWER_NOT_MODIFIER"
+  ],
+  "verdict": "PASS",
+  "findings": {
+    "BLOCKER": 0,
+    "MAJOR": 0,
+    "MINOR": 0,
+    "EDITORIAL": 0
+  },
+  "closed_findings": [
+    "V101-MAJOR-01",
+    "V101-MAJOR-02"
+  ],
+  "independent_review_receipt": {
+    "path": "IndependentPlanReviewReceipt.v1.0.1.json",
+    "sha256": "32ae65129996df696ab1fb1c6de770766b162ea63ebe54daf9ad54d7e1c2f113",
+    "verdict": "PASS / CLUED_FIRST_PARTY_MODEL_SYSTEM_PLAN_V1_0_1_ACCEPTED"
+  },
+  "review_receipt_required": true,
+  "authority_effect": "NONE",
+  "candidate_mutation_by_reviewer": "NONE",
+  "canonical_event_ref": null,
+  "canonical_receipt_ref": null
+}

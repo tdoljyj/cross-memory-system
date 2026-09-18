@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SignedTierSetReleaseManifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "tier_set_revision",
+    "tier_units",
+    "final_rc_refs",
+    "profile_refs",
+    "risk_refs",
+    "j0_ref",
+    "all_required_tiers_final_rc",
+    "authority_effect"
+  ],
+  "properties": {
+    "tier_set_revision": {
+      "type": "string",
+      "minLength": 1
+    },
+    "tier_units": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "mobile",
+          "standard",
+          "flagship"
+        ]
+      }
+    },
+    "final_rc_refs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mobile",
+        "standard",
+        "flagship"
+      ],
+      "properties": {
+        "mobile": {
+          "type": "string",
+          "minLength": 1
+        },
+        "standard": {
+          "type": "string",
+          "minLength": 1
+        },
+        "flagship": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "profile_refs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mobile",
+        "standard",
+        "flagship"
+      ],
+      "properties": {
+        "mobile": {
+          "type": "string",
+          "minLength": 1
+        },
+        "standard": {
+          "type": "string",
+          "minLength": 1
+        },
+        "flagship": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "risk_refs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mobile",
+        "standard",
+        "flagship"
+      ],
+      "properties": {
+        "mobile": {
+          "type": "string",
+          "minLength": 1
+        },
+        "standard": {
+          "type": "string",
+          "minLength": 1
+        },
+        "flagship": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "j0_ref": {
+      "type": "string",
+      "minLength": 1
+    },
+    "all_required_tiers_final_rc": {
+      "const": true
+    },
+    "authority_effect": {
+      "const": "NONE"
+    }
+  }
+}

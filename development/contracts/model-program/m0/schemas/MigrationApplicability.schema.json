@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "MigrationApplicability",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "mode",
+    "mig_q_ref",
+    "mig_p_ref",
+    "mig_c_ref",
+    "na_proof_digest"
+  ],
+  "properties": {
+    "mode": {
+      "enum": [
+        "REQUIRED",
+        "NOT_APPLICABLE_WITH_PROOF",
+        "TO_BE_BOUND"
+      ]
+    },
+    "mig_q_ref": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "mig_p_ref": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "mig_c_ref": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "na_proof_digest": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  }
+}

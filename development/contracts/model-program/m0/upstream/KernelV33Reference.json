@@ -1,0 +1,15 @@
+{
+  "object_type": "KernelNaturalLanguageContractReference",
+  "version": "v3.3",
+  "source_filename": "Clued_Kernel_Next_多厂商连续性与执行基础设施完整整合方案_v3.3.md",
+  "source_sha256": "f967fdf3e63028d29ed191160698726b5d707aaae63bd951f6ba2e8584936fec",
+  "source_bytes": 557313,
+  "verification_mode": "READ_BACK_EXISTING_PHASE2_SOURCE_EVIDENCE_ONLY / NO_PHASE2_RERUN",
+  "repository_evidence": {
+    "path": "artifacts/clued-validation/phase2-entry-readiness-20260908/README.md",
+    "sha256": "0c9fa24a30e564711b90f5d39a0e51815aa13ae1b6eb392e3af5708b860a80d7",
+    "required_literal_sha256": "f967fdf3e63028d29ed191160698726b5d707aaae63bd951f6ba2e8584936fec"
+  },
+  "authority_state": "CURRENT_PRE_G1_NORMATIVE_DESIGN_AND_ACCEPTANCE_SOURCE",
+  "authority_effect": "REFERENCE_ONLY"
+}

@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "KernelRcCandidateReference",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "rc_candidate_id",
+    "digest",
+    "rc_type",
+    "schema_ref",
+    "registry_revision_ref"
+  ],
+  "properties": {
+    "rc_candidate_id": {
+      "type": "string"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "rc_type": {
+      "type": "string"
+    },
+    "schema_ref": {
+      "type": "string"
+    },
+    "registry_revision_ref": {
+      "type": "string"
+    }
+  }
+}

@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "IndependentM6Review",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "fixed_candidate_digest",
+    "closeout_evidence_set_digest",
+    "read_only",
+    "fresh_context",
+    "reviewer_not_modifier",
+    "verdict",
+    "findings",
+    "signature_ref",
+    "authority_effect"
+  ],
+  "properties": {
+    "fixed_candidate_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "closeout_evidence_set_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "read_only": {
+      "const": true
+    },
+    "fresh_context": {
+      "const": true
+    },
+    "reviewer_not_modifier": {
+      "const": true
+    },
+    "verdict": {
+      "enum": [
+        "PASS",
+        "BLOCKED",
+        "FAIL"
+      ]
+    },
+    "findings": {
+      "type": "array"
+    },
+    "signature_ref": {
+      "type": "string",
+      "minLength": 1
+    },
+    "authority_effect": {
+      "const": "NONE"
+    }
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "schema_version": "clued.model-performance-migration/1",
+  "status": "M0_BOUND",
+  "performance_types_ref": "../registries/PerformanceObjectTypeRegistry.json",
+  "profiles": {
+    "PerformanceProfile": [
+      "profile_id",
+      "tier_id",
+      "workload_ref",
+      "slo_ref",
+      "gate_refs",
+      "gate_definition_set_digest"
+    ],
+    "WorkloadProfile": [
+      "workload_id",
+      "source_revision",
+      "input_contract_ref"
+    ],
+    "HoldoutReference": [
+      "dataset_revision",
+      "split_role",
+      "digest"
+    ],
+    "ThresholdProposal": [
+      "metric",
+      "proposal_value",
+      "calibration_requirement",
+      "source_revision"
+    ],
+    "SLOContract": [
+      "metric",
+      "operator",
+      "target",
+      "measurement_contract_ref"
+    ]
+  },
+  "holdout_feedback_to_selection": "FORBIDDEN",
+  "migration_schema_ref": "../schemas/MigrationApplicability.schema.json"
+}

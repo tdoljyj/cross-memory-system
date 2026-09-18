@@ -1,0 +1,15 @@
+{
+  "schema_version": "clued.model-pre-m0-receipt-currentness/1",
+  "scope": "READBACK_OF_CURRENT_READINESS_DECISION_FIELDS / NOT_LIVE_PRODUCTION_REQUERY",
+  "gate_id": "G-PREENTRY-SKILL-QUALIFICATION",
+  "gate_authorization_id": "ga_2f8794bb73289e01b67ace6c960339ec",
+  "gate_result_receipt_id": "grr_57c3f349fadc2078dcb97ccc4fc2396a",
+  "gate_result_receipt_sha256": "61184cc73656491f3427a761ef396ca3544c52b5446e258c878a83080282794c",
+  "result": "PASS",
+  "receipt_revoked": false,
+  "current_head_revoked": false,
+  "active_ga_id": null,
+  "pending_budget_sequence": null,
+  "check_result": "PASS_CURRENTNESS_FIELDS_AND_DIGEST_PRESENT",
+  "does_not_relabel_receipt_as_model_release_qualification": true
+}

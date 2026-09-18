@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TierSetReleaseBOM",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "tier_set_revision",
+    "artifacts"
+  ],
+  "properties": {
+    "tier_set_revision": {
+      "type": "string",
+      "minLength": 1
+    },
+    "artifacts": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "tier_id",
+          "artifact_ref",
+          "final_rc_ref"
+        ],
+        "properties": {
+          "tier_id": {
+            "enum": [
+              "mobile",
+              "standard",
+              "flagship"
+            ]
+          },
+          "artifact_ref": {
+            "type": "string",
+            "minLength": 1
+          },
+          "final_rc_ref": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  }
+}
