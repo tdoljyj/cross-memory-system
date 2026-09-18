@@ -67,15 +67,34 @@ def parse_records(text):
     return records
 
 
+def _ensure_reviewed_commits(repo, records):
+    commits = sorted({record["fingerprint"].split(":", 1)[0] for record in records})
+    missing = []
+    for commit in commits:
+        result = subprocess.run(
+            ["git", "cat-file", "-e", f"{commit}^{{commit}}"],
+            cwd=repo, capture_output=True, check=False,
+        )
+        if result.returncode:
+            missing.append(commit)
+    if missing:
+        result = subprocess.run(
+            ["git", "fetch", "--no-tags", "--no-recurse-submodules", "--depth=1", "origin", *missing],
+            cwd=repo, capture_output=True, check=False,
+        )
+        if result.returncode:
+            raise ValueError("Reviewed commit is not available")
+    for commit in commits:
+        if run(["git", "cat-file", "-t", commit], cwd=repo).strip() != b"commit":
+            raise ValueError("Reviewed commit is not available")
+    return commits
+
+
 def verify_history(repo, records):
-    commits = set()
+    commits = _ensure_reviewed_commits(repo, records)
     blobs = {}
     for record in records:
         commit, path, rule, line = record["fingerprint"].split(":")
-        if commit not in commits:
-            if run(["git", "cat-file", "-t", commit], cwd=repo).strip() != b"commit":
-                raise ValueError("Reviewed commit is not available")
-            commits.add(commit)
         key = commit + ":" + path
         if key not in blobs:
             blobs[key] = run(["git", "cat-file", "blob", key], cwd=repo).decode("utf-8")
