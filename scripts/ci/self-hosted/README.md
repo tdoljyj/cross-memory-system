@@ -13,6 +13,8 @@ A Windows node must already provide:
 
 The bootstrap script deliberately **does not install Python** and does not call `actions/setup-python` on the self-hosted Windows path. This avoids machine-wide installer/UAC behavior on owner-managed PCs.
 
+During bootstrap, the script resolves the exact verified Python 3.12 executable with `sys.executable`, writes local `python.cmd` / `python3.cmd` shims under `C:\clued-ci\tools`, and prepends that tools directory to the login-started runner PATH. This prevents later runner sessions from falling back to WindowsApps/Python Launcher aliases and re-triggering installer/UAC prompts.
+
 ## Bootstrap artifact policy
 
 The script currently downloads the exact reviewed Windows x64 runner package:
@@ -39,12 +41,13 @@ powershell -ExecutionPolicy Bypass -File .\scripts\ci\self-hosted\bootstrap-wind
 The script will:
 
 1. verify local Python 3.12;
-2. download the pinned official GitHub Actions Windows x64 runner;
-3. verify the pinned SHA-256 digest before extraction;
-4. prompt for the short-lived GitHub runner registration token without echoing it;
-5. register capability labels;
-6. create a current-user login startup launcher;
-7. start the runner and verify `Runner.Listener` locally.
+2. resolve and pin the exact verified Python executable for future runner sessions;
+3. download the pinned official GitHub Actions Windows x64 runner;
+4. verify the pinned SHA-256 digest before extraction;
+5. prompt for the short-lived GitHub runner registration token without echoing it;
+6. register capability labels;
+7. create a current-user login startup launcher;
+8. start the runner and verify `Runner.Listener` locally.
 
 Default custom labels for the home node:
 
@@ -68,13 +71,15 @@ Paste only the one-time token into the script prompt. Do not commit, save, scree
 
 ## Service mode
 
-The default onboarding path does not require administrator elevation. It starts the runner after the current Windows user signs in.
+The default onboarding path does not require administrator elevation. It starts the runner after the current Windows user signs in and pins the verified Python executable through the local tools shim.
 
 If a future dedicated machine should run as a Windows Service, launch an elevated PowerShell intentionally and add:
 
 ```powershell
 -RunAsService
 ```
+
+Service mode does not modify machine PATH. The service account must therefore already have the verified Python 3.12 executable available on its persistent PATH.
 
 Do not use service mode on company-managed devices unless permitted.
 
