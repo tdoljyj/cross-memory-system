@@ -1,0 +1,63 @@
+{
+  "schema_version": "clued.model-m0-program-foundation-baseline-registration/1",
+  "record_id": "CLUED-MODEL-M0-PROGRAM-FOUNDATION-BASELINE-REGISTRATION-20260918",
+  "date": "2026-09-18",
+  "status": "REGISTERED_POST_MERGE",
+  "program_id": "CLUED-FIRST-PARTY-MODEL",
+  "stage_id": "MODEL-PROGRAM-M0",
+  "bound_plan": {
+    "version": "v1.0.1",
+    "sha256": "a918f42e6e9de160f7b14a95afafeae9022ddcc189b3663e768aa197110118a4"
+  },
+  "reviewed_baseline": {
+    "exact_commit": "3d3fa2dc0900d19252f3060012f81d1204c9d4c6",
+    "exact_tree": "7644118a006abba9cf75184bdd91ae1cb7c902ce",
+    "verdict": "PASS / CLUED_MODEL_M0_PROGRAM_FOUNDATION_ACCEPTED",
+    "review_mode": [
+      "FRESH_CONTEXT",
+      "READ_ONLY",
+      "REVIEWER_NOT_MODIFIER",
+      "INDEPENDENT_FINAL_REVIEW"
+    ],
+    "candidate_modified_by_reviewer": "NO"
+  },
+  "owner_acceptance": {
+    "source": "CURRENT_CONVERSATION",
+    "owner_message": "正式接受 `3d3fa2dc0900d19252f3060012f81d1204c9d4c6` 为 Clued 第一方模型系统 v1.0.1 的 M0 Program Foundation Formal Baseline，然后合并 PR #239。",
+    "pr_comment_id": 5726791552,
+    "effect": "FORMAL_BASELINE_ACCEPTANCE"
+  },
+  "integration": {
+    "pull_request": 239,
+    "merge_commit": "6c431e72796bcec351bd566bd75c56844c232309",
+    "merged_at": "2026-09-18T07:34:41Z",
+    "merge_method": "merge",
+    "reviewed_commit_preserved": true
+  },
+  "baseline_semantics": {
+    "formal_baseline": true,
+    "reviewed_exact_commit_immutable": true,
+    "future_change_requires_successor": true,
+    "merge_commit_does_not_replace_reviewed_commit": true
+  },
+  "authority": {
+    "effect": "NONE",
+    "m0_scope_remains": "NON_PRODUCTION_M0_FOUNDATION_ONLY",
+    "explicitly_not_issued": [
+      "MODEL_DOWNLOAD",
+      "TRAINING",
+      "REAL_MODEL_EVALUATION",
+      "PROMOTION",
+      "ACTIVATION",
+      "PRODUCTION_DEPLOYMENT",
+      "PRODUCTION_TRAFFIC",
+      "PRODUCTION_DATABASE_MUTATION",
+      "PRODUCTION_SECRET_MUTATION",
+      "G1_CUTOVER",
+      "MACHINE_RC_SEAL",
+      "G7A",
+      "G7P"
+    ]
+  },
+  "next_gate": "MODEL-PROGRAM-M1-STAGE-ENTRY"
+}
