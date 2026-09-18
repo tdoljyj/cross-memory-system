@@ -4,6 +4,19 @@ P=ROOT/'scripts/model-program/validate_m1_entry_bindings.py'
 s=importlib.util.spec_from_file_location('m1v',P);m=importlib.util.module_from_spec(s);s.loader.exec_module(m)
 
 class ModelProgramM1EntryTests(unittest.TestCase):
+    def test_range_plan_exact(self):
+        ranges=list(d.iter_ranges(1746942600))
+        self.assertEqual(ranges[0],(0,d.RANGE_CHUNK_BYTES-1))
+        self.assertEqual(ranges[-1][1],1746942599)
+        self.assertEqual(sum(e-s+1 for s,e in ranges),1746942600)
+        self.assertTrue(all(ranges[i][1]+1==ranges[i+1][0] for i in range(len(ranges)-1)))
+
+    def test_downloader_file_policy(self):
+        self.assertTrue(d.allowed_file('model.safetensors'))
+        self.assertTrue(d.allowed_file('tokenizer.json'))
+        self.assertFalse(d.allowed_file('remote_code.py'))
+        self.assertFalse(d.allowed_file('weights.pkl'))
+
     def test_bound_downloader_compiles(self):
         p=ROOT/'scripts/model-program/m1_download_exact_hf_snapshot.py'
         compile(p.read_text(encoding='utf-8'),str(p),'exec')

@@ -4,7 +4,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 import shutil
 import sys
 import urllib.parse
@@ -13,9 +12,12 @@ from pathlib import Path, PurePosixPath
 
 MODEL_ID = "Qwen/Qwen3.5-0.8B"
 REVISION = "2fc06364715b967f1860aea9cf38778875588b17"
+PROFILE_ID = "M1-REF-QWEN35-08B-LLAMACPP-003"
 MAX_NETWORK_BYTES = 3221225472
 MAX_STORAGE_BYTES = 4294967296
-USER_AGENT = "Clued-M1-Reference-Downloader/1.0"
+RANGE_CHUNK_BYTES = 64 * 1024 * 1024
+IO_CHUNK_BYTES = 8 * 1024 * 1024
+USER_AGENT = "Clued-M1-Reference-Downloader/2.0"
 
 SAFE_EXACT_NAMES = {".gitattributes", "LICENSE", "LICENSE.txt", "NOTICE", "NOTICE.txt"}
 SAFE_SUFFIXES = {
@@ -28,7 +30,7 @@ FORBIDDEN_SUFFIXES = {
 }
 
 def fail(msg: str) -> None:
-    print("FAIL: " + msg, file=sys.stderr)
+    print("FAIL: " + msg, file=sys.stderr, flush=True)
     raise SystemExit(1)
 
 def api_url() -> str:
@@ -53,34 +55,92 @@ def safe_relpath(rel: str) -> PurePosixPath:
 
 def allowed_file(rel: str) -> bool:
     p = safe_relpath(rel)
-    name = p.name
     suffix = p.suffix.lower()
     if suffix in FORBIDDEN_SUFFIXES:
         return False
-    return name in SAFE_EXACT_NAMES or suffix in SAFE_SUFFIXES
+    return p.name in SAFE_EXACT_NAMES or suffix in SAFE_SUFFIXES
 
-def stream_download(url: str, target: Path, network_state: dict) -> tuple[str, int]:
+def iter_ranges(total: int, chunk: int = RANGE_CHUNK_BYTES):
+    if total <= 0 or chunk <= 0:
+        raise ValueError("positive total and chunk required")
+    start = 0
+    while start < total:
+        end = min(start + chunk - 1, total - 1)
+        yield start, end
+        start = end + 1
+
+def account_and_write(data: bytes, out, hasher, network_state: dict) -> None:
+    network_state["bytes"] += len(data)
+    if network_state["bytes"] > MAX_NETWORK_BYTES:
+        fail("network budget exceeded")
+    hasher.update(data)
+    out.write(data)
+
+def stream_full(url: str, target: Path, network_state: dict) -> tuple[str, int]:
     target.parent.mkdir(parents=True, exist_ok=True)
+    partial = target.with_name(target.name + ".partial")
+    partial.unlink(missing_ok=True)
     h = hashlib.sha256()
     written = 0
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    with urllib.request.urlopen(req, timeout=120) as resp, target.open("wb") as out:
+    with urllib.request.urlopen(req, timeout=120) as resp, partial.open("wb") as out:
         while True:
-            chunk = resp.read(8 * 1024 * 1024)
-            if not chunk:
+            data = resp.read(IO_CHUNK_BYTES)
+            if not data:
                 break
-            network_state["bytes"] += len(chunk)
-            if network_state["bytes"] > MAX_NETWORK_BYTES:
-                out.close()
-                target.unlink(missing_ok=True)
-                fail("network budget exceeded")
-            written += len(chunk)
+            written += len(data)
             if written > MAX_STORAGE_BYTES:
-                out.close()
-                target.unlink(missing_ok=True)
                 fail("single-file storage ceiling exceeded")
-            h.update(chunk)
-            out.write(chunk)
+            account_and_write(data, out, h, network_state)
+    partial.replace(target)
+    return h.hexdigest(), written
+
+def stream_ranged(url: str, target: Path, expected_size: int, network_state: dict) -> tuple[str, int]:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    partial = target.with_name(target.name + ".partial")
+    partial.unlink(missing_ok=True)
+    h = hashlib.sha256()
+    written = 0
+    with partial.open("wb") as out:
+        for start, end in iter_ranges(expected_size):
+            req = urllib.request.Request(
+                url,
+                headers={"User-Agent": USER_AGENT, "Range": f"bytes={start}-{end}"}
+            )
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                if getattr(resp, "status", None) != 206:
+                    fail(f"range request not honored for {target.name}: status={getattr(resp, 'status', None)}")
+                content_range = resp.headers.get("Content-Range")
+                expected_prefix = f"bytes {start}-{end}/"
+                if not content_range or not content_range.startswith(expected_prefix):
+                    fail(f"unexpected Content-Range for {target.name}: {content_range}")
+                expected_chunk = end - start + 1
+                header_len = resp.headers.get("Content-Length")
+                if header_len is not None and int(header_len) != expected_chunk:
+                    fail(f"range Content-Length mismatch for {target.name}")
+                received = 0
+                while received < expected_chunk:
+                    data = resp.read(min(IO_CHUNK_BYTES, expected_chunk - received))
+                    if not data:
+                        break
+                    received += len(data)
+                    written += len(data)
+                    if written > MAX_STORAGE_BYTES:
+                        fail("single-file storage ceiling exceeded")
+                    account_and_write(data, out, h, network_state)
+                if received != expected_chunk:
+                    fail(f"short range read for {target.name}: {received}/{expected_chunk}")
+            print(json.dumps({
+                "progress": "RANGE_COMPLETE",
+                "file": target.name,
+                "range_start": start,
+                "range_end": end,
+                "written": written,
+                "expected_size": expected_size
+            }), flush=True)
+    if written != expected_size:
+        fail(f"ranged file size mismatch for {target.name}: {written}/{expected_size}")
+    partial.replace(target)
     return h.hexdigest(), written
 
 def main() -> int:
@@ -124,29 +184,40 @@ def main() -> int:
     for row in selected:
         rel = row["rfilename"]
         target = root.joinpath(*PurePosixPath(rel).parts)
-        digest, written = stream_download(download_url(rel), target, network_state)
+        size = row.get("size")
+        lfs = row.get("lfs")
+        use_range = isinstance(lfs, dict) and isinstance(size, int) and size >= RANGE_CHUNK_BYTES
+        if use_range:
+            digest, written = stream_ranged(download_url(rel), target, size, network_state)
+        else:
+            digest, written = stream_full(download_url(rel), target, network_state)
+
         total_written += written
         if total_written > MAX_STORAGE_BYTES:
             fail("snapshot storage ceiling exceeded")
 
-        expected_lfs = None
-        lfs = row.get("lfs")
-        if isinstance(lfs, dict):
-            expected_lfs = lfs.get("sha256")
-            if expected_lfs and digest != expected_lfs:
-                target.unlink(missing_ok=True)
-                fail(f"LFS sha256 mismatch for {rel}")
+        expected_lfs = lfs.get("sha256") if isinstance(lfs, dict) else None
+        if expected_lfs and digest != expected_lfs:
+            target.unlink(missing_ok=True)
+            fail(f"LFS sha256 mismatch for {rel}")
 
         manifest_files.append({
             "path": rel,
             "bytes": written,
             "sha256": digest,
             "expected_lfs_sha256": expected_lfs,
-            "source_url": download_url(rel)
+            "source_url": download_url(rel),
+            "transfer_mode": "RANGE_CHUNKED" if use_range else "FULL"
         })
+        print(json.dumps({
+            "progress": "FILE_COMPLETE",
+            "file": rel,
+            "bytes": written,
+            "sha256": digest,
+            "network_bytes": network_state["bytes"]
+        }), flush=True)
 
-    license_candidates = [root / "LICENSE", root / "LICENSE.txt"]
-    license_path = next((p for p in license_candidates if p.is_file()), None)
+    license_path = next((p for p in [root / "LICENSE", root / "LICENSE.txt"] if p.is_file()), None)
     readme_path = root / "README.md"
     if license_path is None:
         fail("LICENSE snapshot missing")
@@ -157,7 +228,8 @@ def main() -> int:
     shutil.copyfile(readme_path, root / "ModelCardSnapshot.md")
 
     manifest = {
-        "schema_version": "clued.model-m1-download-manifest/1",
+        "schema_version": "clued.model-m1-download-manifest/2",
+        "profile_id": PROFILE_ID,
         "model_id": MODEL_ID,
         "revision": REVISION,
         "api_observed_sha": meta.get("sha"),
@@ -166,6 +238,7 @@ def main() -> int:
         "snapshot_bytes": total_written,
         "max_network_bytes": MAX_NETWORK_BYTES,
         "max_storage_bytes": MAX_STORAGE_BYTES,
+        "range_chunk_bytes": RANGE_CHUNK_BYTES,
         "files": manifest_files,
         "model_loaded": False,
         "inference_performed": False,
@@ -183,7 +256,8 @@ def main() -> int:
     (root / "SHA256SUMS.json").write_text(json.dumps(sums, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
     bom = {
-        "schema_version": "clued.model-m1-reference-bom/1",
+        "schema_version": "clued.model-m1-reference-bom/2",
+        "profile_id": PROFILE_ID,
         "model_id": MODEL_ID,
         "revision": REVISION,
         "license_declared": meta.get("cardData", {}).get("license"),
@@ -198,13 +272,14 @@ def main() -> int:
 
     print(json.dumps({
         "result": "PASS",
+        "profile_id": PROFILE_ID,
         "model_id": MODEL_ID,
         "revision": REVISION,
         "file_count": len(manifest_files),
         "network_bytes": network_state["bytes"],
         "snapshot_bytes": total_written,
         "output_dir": str(root)
-    }, ensure_ascii=False))
+    }, ensure_ascii=False), flush=True)
     return 0
 
 if __name__ == "__main__":
