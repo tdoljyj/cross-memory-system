@@ -28,6 +28,27 @@ class M1PackageProfileTests(unittest.TestCase):
         self.assertFalse(c['execution_observation']['process_started'])
         self.assertFalse(c['execution_observation']['conversion_performed'])
 
+    def test_profile002_pass_closeout_is_consumed(self):
+        c=json.loads((ROOT/'development/contracts/model-program/m1/evidence/M1PackageProfile002ExecutionCloseout_20260918.json').read_text(encoding='utf-8'))
+        self.assertEqual(c['result'],'PASS / CLUED_MODEL_M1_PKG_PROFILE_002_VARIANTS_PREPARED_AND_INTEGRITY_VERIFIED')
+        self.assertEqual(c['attempt_accounting']['attempts_used'],1)
+        self.assertFalse(c['attempt_accounting']['retry_under_same_profile_allowed'])
+        self.assertEqual(len(c['variants']),4)
+        self.assertTrue(all(x['gguf_magic_verified'] for x in c['variants']))
+        self.assertTrue(c['external_integrity_verification']['all_four_variant_sha256_match_manifest'])
+        self.assertFalse(c['effects']['model_inference_performed'])
+        self.assertFalse(c['effects']['model_evaluation_performed'])
+        self.assertFalse(c['effects']['quality_selection_performed'])
+
+    def test_generated_matrix_is_integrity_verified_but_unranked(self):
+        p=json.loads((ROOT/'development/contracts/model-program/m1/package/PackageVariantMatrix.v1.0.2.json').read_text(encoding='utf-8'))
+        self.assertEqual(p['status'],'GENERATED_AND_INTEGRITY_VERIFIED / QUALITY_UNRANKED')
+        self.assertFalse(p['quality_selection']['performed'])
+        self.assertIsNone(p['quality_selection']['winner'])
+        self.assertEqual(p['quality_selection']['required_stage'],'M1-06')
+        self.assertTrue(all(x['package_status']=='GENERATED_INTEGRITY_VERIFIED' for x in p['variants']))
+        self.assertTrue(all(x['quality_status']=='NOT_EVALUATED' for x in p['variants']))
+
     def test_matrix_defers_quality_selection(self):
         p=json.loads((ROOT/'development/contracts/model-program/m1/package/PackageVariantMatrix.v1.0.1.json').read_text(encoding='utf-8'))
         self.assertTrue(p['m1_06_required_before_quality_selection'])
