@@ -12,18 +12,56 @@ permissions:
   contents: read
 
 jobs:
-  memory-publication-gate:
-    runs-on: ubuntu-latest
+  trusted-self-hosted:
+    name: memory-publication-gate
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.actor == github.repository_owner
+    runs-on: [self-hosted, Windows, X64, clued, pool-general, trust-internal, cap-node24]
     timeout-minutes: 5
     steps:
       - name: Check out trusted verifier from the base revision
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           ref: ${{ github.event.pull_request.base.sha }}
           path: trusted
           persist-credentials: false
       - name: Check out candidate without persisted credentials
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+          path: candidate
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Verify pre-provisioned Node.js 24
+        shell: powershell
+        run: |
+          node --version
+          node -e "const [m]=process.versions.node.split('.').map(Number); if (m !== 24) process.exit(1)"
+      - name: Reject direct memory edits outside an atomic snapshot publication
+        shell: powershell
+        run: >-
+          node trusted/scripts/verify-memory-publication.mjs
+          --repo candidate
+          --base ${{ github.event.pull_request.base.sha }}
+          --candidate ${{ github.event.pull_request.head.sha }}
+
+  untrusted-hosted:
+    name: memory-publication-gate
+    if: >-
+      github.event.pull_request.head.repo.full_name != github.repository ||
+      github.actor != github.repository_owner
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out trusted verifier from the base revision
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: trusted
+          persist-credentials: false
+      - name: Check out candidate without persisted credentials
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           fetch-depth: 0
           path: candidate

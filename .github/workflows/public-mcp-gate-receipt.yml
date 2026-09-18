@@ -14,17 +14,60 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  public-mcp-gate-receipt:
-    runs-on: ubuntu-latest
+  trusted-self-hosted:
+    name: public-mcp-gate-receipt
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.actor == github.repository_owner
+    runs-on: [self-hosted, Windows, X64, clued, pool-general, trust-internal, cap-node24]
     timeout-minutes: 20
     steps:
       - name: Check out trusted gate implementation from the base revision
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           ref: ${{ github.event.pull_request.base.sha }}
           path: trusted-gate
           persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - name: Verify pre-provisioned Node.js 24
+        shell: powershell
+        run: |
+          node --version
+          node -e "const [m]=process.versions.node.split('.').map(Number); if (m !== 24) process.exit(1)"
+      - name: Verify exact-SHA four-green gate and issue receipt
+        env:
+          CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
+          GATE_REPOSITORY: ${{ github.repository }}
+          GATE_PR_NUMBER: ${{ github.event.pull_request.number }}
+          GATE_RECEIPT_OUTPUT: ${{ runner.temp }}\public-mcp-gate-receipt.json
+          GH_TOKEN: ${{ github.token }}
+        shell: powershell
+        run: node trusted-gate/apps/clued-cloud/evals/public-mcp/gate-receipt.mjs
+      - name: Hash gate receipt
+        shell: powershell
+        run: |
+          $receipt = "${{ runner.temp }}\public-mcp-gate-receipt.json"
+          $sums = "${{ runner.temp }}\SHA256SUMS"
+          $hash = (Get-FileHash -Path $receipt -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  public-mcp-gate-receipt.json" | Set-Content -Path $sums -Encoding ascii
+      - name: Report immutable receipt digest without writing an Artifact
+        shell: powershell
+        run: Get-Content "${{ runner.temp }}\SHA256SUMS"
+
+  untrusted-hosted:
+    name: public-mcp-gate-receipt
+    if: >-
+      github.event.pull_request.head.repo.full_name != github.repository ||
+      github.actor != github.repository_owner
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out trusted gate implementation from the base revision
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: trusted-gate
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 24.19.0
       - name: Verify exact-SHA four-green gate and issue receipt
