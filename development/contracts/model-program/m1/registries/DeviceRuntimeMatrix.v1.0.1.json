@@ -1,0 +1,132 @@
+{
+  "schema_version": "clued.model-m1-device-runtime-matrix/1",
+  "record_id": "CLUED-MODEL-M1-DEVICE-RUNTIME-MATRIX-v1-20260918",
+  "stage_id": "MODEL-PROGRAM-M1",
+  "task_id": "M1-00",
+  "status": "PREPARATION_COMPLETE / EFFECTFUL_DEVICE_EXECUTION_BLOCKED_PENDING_PHYSICAL_DEVICE_READBACK",
+  "bound_plan": {
+    "version": "v1.0.1",
+    "sha256": "a918f42e6e9de160f7b14a95afafeae9022ddcc189b3663e768aa197110118a4"
+  },
+  "stage_entry_ref": "governance/M1StageEntryAuthorization.v1.0.1.json",
+  "physical_device_profiles": [
+    {
+      "device_id": "DEV-PERSONAL-WINDOWS-01",
+      "role": "PERSONAL_DEVICE_LOCAL_REFERENCE",
+      "binding_state": "TO_BE_BOUND_BY_OWNER_CONTROLLED_HOST_READBACK",
+      "required_readback": [
+        "os_version",
+        "cpu_model",
+        "ram_bytes",
+        "gpu_model",
+        "gpu_vram_bytes",
+        "gpu_driver",
+        "free_storage_bytes"
+      ],
+      "effectful_execution_allowed": false
+    },
+    {
+      "device_id": "DEV-MOBILE-01",
+      "role": "MOBILE_CLASS_LOCAL_REFERENCE",
+      "binding_state": "TO_BE_BOUND",
+      "required_readback": [
+        "vendor",
+        "model",
+        "os_version",
+        "soc",
+        "ram_bytes",
+        "accelerator",
+        "free_storage_bytes"
+      ],
+      "effectful_execution_allowed": false
+    },
+    {
+      "device_id": "DEV-MAC-01",
+      "role": "APPLE_PERSONAL_DEVICE_REFERENCE",
+      "binding_state": "TO_BE_BOUND",
+      "required_readback": [
+        "model",
+        "soc",
+        "unified_memory_bytes",
+        "os_version",
+        "free_storage_bytes"
+      ],
+      "effectful_execution_allowed": false
+    }
+  ],
+  "runtime_candidates": [
+    {
+      "runtime_id": "llama.cpp",
+      "repository": "ggml-org/llama.cpp",
+      "revision": "bdcbaaf6e7520b68c8c60ff724c67409970d70e1",
+      "license": "MIT",
+      "status": "SELECTED_FOR_FIRST_PROFILE_CANDIDATE",
+      "capability_notes": [
+        "NVIDIA_CUDA",
+        "CPU_GPU_HYBRID",
+        "APPLE_METAL",
+        "GGUF",
+        "QWEN3_5_EXAMPLE_IN_UPSTREAM_README"
+      ],
+      "execution_authority": "NOT_ISSUED"
+    },
+    {
+      "runtime_id": "ExecuTorch",
+      "repository": "pytorch/executorch",
+      "revision": "3a4f0b54d0e25b58874761bb429e0267cde931b7",
+      "license": "BSD-3-CLAUSE_STYLE",
+      "status": "MOBILE_EDGE_CANDIDATE",
+      "capability_notes": [
+        "ANDROID",
+        "IOS",
+        "EDGE",
+        "LLM_EXPORT_AND_RUNTIME"
+      ],
+      "execution_authority": "NOT_ISSUED"
+    },
+    {
+      "runtime_id": "ONNX-Runtime-GenAI",
+      "repository": "microsoft/onnxruntime-genai",
+      "revision": "5d18d6952f45c1e547be3b1bbca5bb96537423bf",
+      "license": "MIT",
+      "status": "CANDIDATE / GENERATE_API_PREVIEW_RISK",
+      "capability_notes": [
+        "CPU",
+        "CUDA",
+        "DIRECTML",
+        "QWEN3_5_MODEL_TYPES_PRESENT"
+      ],
+      "execution_authority": "NOT_ISSUED"
+    },
+    {
+      "runtime_id": "MLX-LM",
+      "repository": "ml-explore/mlx-lm",
+      "revision": "28e9ccd9cb52d1d4a6f674b7914bae2de49d9aad",
+      "license": "MIT",
+      "status": "APPLE_SILICON_CANDIDATE",
+      "capability_notes": [
+        "APPLE_SILICON"
+      ],
+      "execution_authority": "NOT_ISSUED"
+    },
+    {
+      "runtime_id": "Core-ML",
+      "repository": null,
+      "revision": "TO_BE_BOUND",
+      "license": "PLATFORM_TERMS_REVIEW_REQUIRED",
+      "status": "APPLE_PLATFORM_CANDIDATE / NOT_YET_BOUND",
+      "execution_authority": "NOT_ISSUED"
+    },
+    {
+      "runtime_id": "Android-NPU-Delegate",
+      "repository": null,
+      "revision": "TO_BE_BOUND_PER_DEVICE_SOC",
+      "license": "DEPENDENCY_SPECIFIC",
+      "status": "MOBILE_NPU_CANDIDATE / NOT_YET_BOUND",
+      "execution_authority": "NOT_ISSUED"
+    }
+  ],
+  "first_tranche_runtime": "llama.cpp",
+  "fail_closed_rule": "NO_M1_03_TO_M1_09_EFFECTFUL_EXECUTION_UNTIL_EXACT_PHYSICAL_DEVICE_PROFILE_AND_EXPERIMENT_PROFILE_ARE_BOUND",
+  "authority_effect": "NONE"
+}

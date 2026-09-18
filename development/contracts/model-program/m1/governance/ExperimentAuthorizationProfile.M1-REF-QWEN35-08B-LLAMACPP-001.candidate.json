@@ -1,0 +1,106 @@
+{
+  "schema_version": "clued.model-experiment-authorization-profile/2",
+  "profile_id": "M1-REF-QWEN35-08B-LLAMACPP-001-CANDIDATE",
+  "stage_id": "MODEL-PROGRAM-M1",
+  "status": "BLOCKED_PENDING_EXACT_PHYSICAL_DEVICE_READBACK_AND_FINAL_ISSUANCE",
+  "objective": "M1-03 controlled download and integrity verification of the exact Qwen3.5-0.8B reference revision; no inference or evaluation in this profile.",
+  "allowed_operations_if_issued": [
+    "DOWNLOAD_EXACT_MODEL_REVISION",
+    "COMPUTE_FILE_SHA256",
+    "BUILD_DOWNLOAD_MANIFEST",
+    "BUILD_BOM",
+    "CAPTURE_LICENSE_AND_MODEL_CARD_SNAPSHOT"
+  ],
+  "prohibited_operations": [
+    "MODEL_INFERENCE",
+    "HOSTED_PROVIDER_CALL",
+    "REAL_MODEL_EVALUATION",
+    "TRAINING",
+    "CONTINUED_PRETRAINING",
+    "SFT",
+    "DISTILLATION",
+    "PREFERENCE_TRAINING",
+    "LORA_OR_ADAPTER_TRAINING",
+    "QUANTIZATION_EXECUTION",
+    "MODEL_MERGE",
+    "SEMANTIC_INDEX_WRITE",
+    "SEMANTIC_RECALL_RELEASE",
+    "PROMOTION",
+    "ACTIVATION",
+    "PRODUCTION_DEPLOYMENT",
+    "PRODUCTION_TRAFFIC",
+    "PRODUCTION_DATABASE_MUTATION",
+    "PRODUCTION_SECRET_MUTATION",
+    "G1_CUTOVER",
+    "MACHINE_RC_SEAL",
+    "G7A",
+    "G7P"
+  ],
+  "authority_and_sources": {
+    "model_program_plan_sha256": "a918f42e6e9de160f7b14a95afafeae9022ddcc189b3663e768aa197110118a4",
+    "model_architecture_revision_sha256": "65b7384e94dea6f22f9678db88f8542010f16cc919010cdc546288f89641fbbc",
+    "m0_formal_baseline_commit": "3d3fa2dc0900d19252f3060012f81d1204c9d4c6",
+    "m1_stage_entry_ref": "governance/M1StageEntryAuthorization.v1.0.1.json",
+    "plan_review_attestation_sha256": "0fe4460473fceccd6484fd6f344fb304ff8249c9a5d86facfea8a9f726fc065b"
+  },
+  "model_binding": {
+    "provider": "Hugging Face",
+    "model_id": "Qwen/Qwen3.5-0.8B",
+    "revision": "2fc06364715b967f1860aea9cf38778875588b17",
+    "license": "Apache-2.0",
+    "observed_repo_storage_bytes": 1759750582,
+    "gated": false
+  },
+  "runtime_binding": {
+    "runtime_id": "llama.cpp",
+    "repository": "ggml-org/llama.cpp",
+    "revision": "bdcbaaf6e7520b68c8c60ff724c67409970d70e1",
+    "license": "MIT",
+    "runtime_execution_allowed_in_this_profile": false
+  },
+  "device_binding": {
+    "device_profile_ref": "../registries/DeviceRuntimeMatrix.v1.0.1.json#DEV-PERSONAL-WINDOWS-01",
+    "binding_state": "TO_BE_BOUND_BY_OWNER_CONTROLLED_HOST_READBACK"
+  },
+  "execution_code_revision": "NO_EXECUTION_CODE_AUTHORIZED / DOWNLOAD_PROCEDURE_TO_BE_BOUND_AT_ISSUANCE",
+  "budget_ceiling": {
+    "max_wall_seconds": 3600,
+    "max_network_bytes": 3221225472,
+    "max_storage_bytes": 4294967296,
+    "max_cost_microunits": 0,
+    "currency": "USD",
+    "max_attempts": 1
+  },
+  "allowed_outputs": [
+    "DownloadManifest.json",
+    "SHA256SUMS.json",
+    "BOM.json",
+    "LicenseSnapshot.txt",
+    "ModelCardSnapshot.md"
+  ],
+  "release_ceiling": "RESEARCH_REFERENCE_EVIDENCE_ONLY / NO_INFERENCE / NO_RELEASE",
+  "stop_conditions": [
+    "ANY_DIGEST_MISMATCH",
+    "LICENSE_OR_TERMS_DRIFT",
+    "MODEL_REVISION_DRIFT",
+    "NETWORK_BYTES_LIMIT",
+    "STORAGE_LIMIT",
+    "COST_NONZERO",
+    "UNEXPECTED_EXECUTABLE_OR_REMOTE_CODE_REQUIREMENT",
+    "DEVICE_BINDING_STILL_UNRESOLVED_AT_EXECUTION",
+    "PROFILE_EXPIRED_OR_REVOKED"
+  ],
+  "evidence_requirements": [
+    "EXACT_REMOTE_REVISION",
+    "PER_FILE_DIGEST_AND_BYTES",
+    "LICENSE_SNAPSHOT",
+    "MODEL_CARD_SNAPSHOT",
+    "DOWNLOAD_SOURCE_LOCATORS",
+    "NO_TRUST_REMOTE_CODE",
+    "NO_MODEL_LOAD_OR_INFERENCE"
+  ],
+  "expiry": "TO_BE_BOUND_AT_FINAL_ISSUANCE",
+  "effectful_authority_issued": false,
+  "fail_closed_rule": "IF_ANY_REQUIRED_BINDING_IS_TO_BE_BOUND_OR_STATUS_IS_NOT_ISSUED_THEN_M1_03_MUST_NOT_EXECUTE",
+  "authority_effect": "NONE"
+}

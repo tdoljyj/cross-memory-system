@@ -1,0 +1,76 @@
+{
+  "schema_version": "clued.model-m1-reference-model-shortlist/1",
+  "record_id": "CLUED-MODEL-M1-REFERENCE-MODEL-SHORTLIST-v1-20260918",
+  "stage_id": "MODEL-PROGRAM-M1",
+  "task_id": "M1-01",
+  "status": "SHORTLIST_REGISTERED / EXECUTION_REVISIONS_MUST_BE_EXACT_BEFORE_USE",
+  "bound_plan_sha256": "a918f42e6e9de160f7b14a95afafeae9022ddcc189b3663e768aa197110118a4",
+  "roles": [
+    {
+      "role": "Mobile-class Local Reference",
+      "candidate": "Qwen/Qwen3.5-0.8B",
+      "revision": "2fc06364715b967f1860aea9cf38778875588b17",
+      "license": "apache-2.0",
+      "selection_state": "FIRST_TRANCHE_SELECTED_FOR_PROFILE_CANDIDATE",
+      "notes": "Current Hugging Face main revision observed 2026-09-18; no download authority issued."
+    },
+    {
+      "role": "Personal-device Local Reference",
+      "candidate": "Qwen/Qwen3.5-4B",
+      "revision": "TO_BE_BOUND_BEFORE_EXECUTION",
+      "license": "apache-2.0",
+      "selection_state": "SHORTLISTED"
+    },
+    {
+      "role": "Strong Hosted / Enterprise Reference",
+      "candidate": "TO_BE_SELECTED_AFTER_PROVIDER_TERMS_AND_ACCOUNT_SCOPE_REVIEW",
+      "revision": "TO_BE_BOUND",
+      "license": "PROVIDER_TERMS",
+      "selection_state": "BLOCKED_PENDING_PROVIDER_SELECTION"
+    },
+    {
+      "role": "Reproducible From-scratch Reference",
+      "candidate": "allenai/OLMo-2-0425-1B",
+      "revision": "TO_BE_BOUND_BEFORE_EXECUTION",
+      "license": "apache-2.0",
+      "selection_state": "SHORTLISTED",
+      "notes": "Open code/checkpoints/logs/training details make it suitable for reproducibility study; actual training remains unauthorized."
+    },
+    {
+      "role": "Embedding Reference",
+      "candidate": "Qwen/Qwen3-Embedding-0.6B",
+      "revision": "TO_BE_BOUND_BEFORE_EXECUTION",
+      "license": "apache-2.0",
+      "selection_state": "SHORTLISTED_RESEARCH_ONLY",
+      "semantic_recall_effect": "NONE"
+    },
+    {
+      "role": "Reranker Reference",
+      "candidate": "Qwen/Qwen3-Reranker-0.6B",
+      "revision": "TO_BE_BOUND_BEFORE_EXECUTION",
+      "license": "apache-2.0",
+      "selection_state": "SHORTLISTED_RESEARCH_ONLY",
+      "semantic_recall_effect": "NONE"
+    },
+    {
+      "role": "Guard / Classifier Reference",
+      "candidate": "Qwen/Qwen3Guard-Gen-0.6B",
+      "revision": "TO_BE_BOUND_BEFORE_EXECUTION",
+      "license": "apache-2.0",
+      "selection_state": "SHORTLISTED_RESEARCH_ONLY"
+    }
+  ],
+  "first_tranche": {
+    "model_id": "Qwen/Qwen3.5-0.8B",
+    "revision": "2fc06364715b967f1860aea9cf38778875588b17",
+    "runtime_id": "llama.cpp",
+    "purpose": "M1_REFERENCE_DOWNLOAD_INTEGRITY_AND_LATER_DEVICE_BASELINE_ONLY"
+  },
+  "prohibited_inferences": [
+    "SHORTLIST_EQUALS_CLUED_FIRST_PARTY_RELEASE",
+    "SHORTLIST_CREATES_TRAINING_AUTHORITY",
+    "SHORTLIST_CREATES_PROMOTION_OR_ACTIVATION_AUTHORITY",
+    "EMBEDDING_OR_RERANKER_SHORTLIST_RELEASES_SEMANTIC_RECALL"
+  ],
+  "authority_effect": "NONE"
+}
