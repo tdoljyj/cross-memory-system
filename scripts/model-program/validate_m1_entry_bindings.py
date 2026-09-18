@@ -11,7 +11,7 @@ LLAMA_REV='bdcbaaf6e7520b68c8c60ff724c67409970d70e1'
 PROFILE001_CODE_COMMIT='a7307dd78997ca5a6e6ef2a8f53811a3058e37ef'
 PROFILE001_SCRIPT_BLOB='086849744f4d66eeee49a8dea59c676d6582757d'
 PROFILE002_CODE_COMMIT='42240b91b29c80e45270036f8d98df0603f034cb'
-PROFILE002_SCRIPT_BLOB='9b31ee6003c53bbc045c99249b995e72aa9ae938'
+PROFILE002_SCRIPT_BLOB='9b31ee6003c53bbc045c99249b995e72aa9ae938'\nPROFILE003_CODE_COMMIT='6e26bd4a4d90772a83c1dd1f1e8f2c9524e3eafd'\nPROFILE003_SCRIPT_BLOB='f69c8abece8854de67c87c489076d5e52eb2c097'
 REQ_ROLES={
 'Mobile-class Local Reference','Personal-device Local Reference','Strong Hosted / Enterprise Reference',
 'Reproducible From-scratch Reference','Embedding Reference','Reranker Reference','Guard / Classifier Reference'
@@ -126,6 +126,16 @@ def main():
     issued2=load(BASE/'governance/ExperimentAuthorizationProfile.M1-REF-QWEN35-08B-LLAMACPP-002.issued.json')
     good,code=validate_issued_profile(issued2,PROFILE002_CODE_COMMIT,PROFILE002_SCRIPT_BLOB)
     if not good: fail(code)
+    closeout2=load(BASE/'evidence/M1ExperimentProfile002ExecutionCloseout_20260918.json')
+    if closeout2.get('profile_id')!='M1-REF-QWEN35-08B-LLAMACPP-002' or closeout2.get('result')!='FAIL / CLUED_MODEL_M1_PROFILE_002_CONCURRENT_DUPLICATE_WRITE_INVALIDATED_SNAPSHOT':
+        fail('Profile 002 closeout missing')
+    if closeout2.get('attempt_accounting',{}).get('retry_under_same_profile_allowed') is not False:
+        fail('Profile 002 retry ceiling invalid')
+    issued3=load(BASE/'governance/ExperimentAuthorizationProfile.M1-REF-QWEN35-08B-LLAMACPP-003.issued.json')
+    good,code=validate_issued_profile(issued3,PROFILE003_CODE_COMMIT,PROFILE003_SCRIPT_BLOB)
+    if not good: fail(code)
+    if issued3.get('attempt_control')!='ONE_SHOT_EXCLUSIVE_LOCK / NEW_OUTPUT_DIR / ATOMIC_FILE_REPLACE':
+        fail('Profile 003 attempt control invalid')
 
     script=ROOT/'scripts/model-program/m1_download_exact_hf_snapshot.py'
     if not script.is_file():
@@ -135,7 +145,7 @@ def main():
     except SyntaxError:
         fail('bound download script does not compile')
 
-    print('PASS: MODEL-PROGRAM-M1 Profile 001 closed fail-closed before download; successor Profile 002 issued with compile-validated downloader; inference/evaluation/training remain prohibited')
+    print('PASS: MODEL-PROGRAM-M1 Profiles 001/002 closed fail-closed; successor Profile 003 issued with exact device, one-shot lock and atomic downloader; inference/evaluation/training remain prohibited')
     return 0
 
 if __name__=='__main__': raise SystemExit(main())
