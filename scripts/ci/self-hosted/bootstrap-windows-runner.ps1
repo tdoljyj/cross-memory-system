@@ -48,6 +48,22 @@ Write-Host "Runner: $RunnerName"
 Write-Host "Site:   $Site"
 Write-Host "Repo:   $RepositoryUrl"
 
+$gitCommand = Get-Command git -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+if (-not $gitCommand) {
+    throw 'Git for Windows must already be installed and on PATH.'
+}
+
+$gitConfigScope = if ($RunAsService) { '--system' } else { '--global' }
+& git config $gitConfigScope core.longpaths true
+if ($LASTEXITCODE -ne 0) {
+    throw "Unable to enable Git long-path support with git config $gitConfigScope core.longpaths true."
+}
+$gitLongPaths = (& git config $gitConfigScope --get core.longpaths 2>&1 | Out-String).Trim()
+if ($LASTEXITCODE -ne 0 -or $gitLongPaths -ne 'true') {
+    throw "Git long-path support verification failed for scope $gitConfigScope. Found: $gitLongPaths"
+}
+Write-Host "Git capability OK: core.longpaths=true ($gitConfigScope)"
+
 $pythonVersion = (& python --version 2>&1 | Out-String).Trim()
 if ($LASTEXITCODE -ne 0 -or $pythonVersion -notmatch '^Python 3\.12\.') {
     throw "Python 3.12 must already be installed and on PATH. Found: $pythonVersion"
@@ -75,6 +91,30 @@ $pythonShim = @(
 )
 $pythonShim | Set-Content -Path (Join-Path $tools 'python.cmd') -Encoding ASCII
 $pythonShim | Set-Content -Path (Join-Path $tools 'python3.cmd') -Encoding ASCII
+
+$customLabels = @('clued', 'pool-general', 'trust-internal', "site-$Site", 'cap-python312')
+$node24Enabled = $false
+$nodeCommand = Get-Command node -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($nodeCommand) {
+    $nodeExe = $nodeCommand.Source
+    $nodeVersion = (& $nodeExe --version 2>&1 | Out-String).Trim()
+    if ($LASTEXITCODE -eq 0 -and $nodeVersion -match '^v24\.') {
+        $escapedNodeExe = $nodeExe.Replace('%', '%%')
+        $nodeShim = @(
+            '@echo off',
+            ('"' + $escapedNodeExe + '" %*')
+        )
+        $nodeShim | Set-Content -Path (Join-Path $tools 'node.cmd') -Encoding ASCII
+        $customLabels += 'cap-node24'
+        $node24Enabled = $true
+        Write-Host "Node capability OK: $nodeVersion"
+        Write-Host "Pinned runner Node executable: $nodeExe"
+    } else {
+        Write-Host "Node.js 24 capability not enabled. Found: $nodeVersion"
+    }
+} else {
+    Write-Host 'Node.js 24 capability not enabled because node was not found on PATH.'
+}
 
 $assetName = "actions-runner-win-x64-$RunnerVersion.zip"
 $downloadUrl = "https://github.com/actions/runner/releases/download/v$RunnerVersion/$assetName"
@@ -120,7 +160,7 @@ if ([string]::IsNullOrWhiteSpace($token)) {
     throw 'Registration token was empty.'
 }
 
-$labels = "clued,pool-general,trust-internal,site-$Site,cap-python312"
+$labels = $customLabels -join ','
 $args = @(
     '--unattended',
     '--url', $RepositoryUrl,
@@ -178,9 +218,10 @@ if (-not $RunAsService) {
 
     Write-Host "Runner listener started: PID $($listener.Id)"
     Write-Host 'Startup launcher installed for the current Windows user.'
-    Write-Host "Runner PATH is pinned through $tools so python resolves to the verified executable."
+    Write-Host "Runner PATH is pinned through $tools for verified runtime shims."
 } else {
-    Write-Host 'Service mode selected. The service account must already have the verified Python 3.12 executable on its persistent PATH.'
+    Write-Host 'Service mode selected. The service account must already have Python 3.12 and every advertised optional runtime capability on its persistent PATH.'
+    Write-Host 'Git long-path support was configured at system scope for service-mode checkout compatibility.'
     Write-Host 'The bootstrap does not modify the machine PATH or service-account environment.'
 }
 
