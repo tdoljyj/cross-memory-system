@@ -8,8 +8,10 @@ BASE=ROOT/'development/contracts/model-program/m1'
 PLAN='a918f42e6e9de160f7b14a95afafeae9022ddcc189b3663e768aa197110118a4'
 QWEN_REV='2fc06364715b967f1860aea9cf38778875588b17'
 LLAMA_REV='bdcbaaf6e7520b68c8c60ff724c67409970d70e1'
-DOWNLOAD_CODE_COMMIT='a7307dd78997ca5a6e6ef2a8f53811a3058e37ef'
-DOWNLOAD_SCRIPT_BLOB='086849744f4d66eeee49a8dea59c676d6582757d'
+PROFILE001_CODE_COMMIT='a7307dd78997ca5a6e6ef2a8f53811a3058e37ef'
+PROFILE001_SCRIPT_BLOB='086849744f4d66eeee49a8dea59c676d6582757d'
+PROFILE002_CODE_COMMIT='42240b91b29c80e45270036f8d98df0603f034cb'
+PROFILE002_SCRIPT_BLOB='9b31ee6003c53bbc045c99249b995e72aa9ae938'
 REQ_ROLES={
 'Mobile-class Local Reference','Personal-device Local Reference','Strong Hosted / Enterprise Reference',
 'Reproducible From-scratch Reference','Embedding Reference','Reranker Reference','Guard / Classifier Reference'
@@ -50,7 +52,7 @@ def validate_candidate_profile(p):
         return False,'CLUED_MODEL_M1_PROFILE_AUTHORITY_EXPANSION'
     return True,'PASS'
 
-def validate_issued_profile(p):
+def validate_issued_profile(p,expected_code_commit,expected_script_blob):
     good,code=common_profile_checks(p,ISSUED_REQ_PROHIBITED)
     if not good: return good,code
     if has_tbb(p):
@@ -65,7 +67,7 @@ def validate_issued_profile(p):
     if d.get('binding_state')!='EXACT_BOUND' or d.get('device_name')!='DESK-W-591' or 'v1.0.2' not in d.get('device_profile_ref',''):
         return False,'CLUED_MODEL_M1_PROFILE_DEVICE_BINDING'
     codeb=p.get('execution_code') or {}
-    if codeb.get('commit')!=DOWNLOAD_CODE_COMMIT or codeb.get('script_git_blob_sha1')!=DOWNLOAD_SCRIPT_BLOB:
+    if codeb.get('commit')!=expected_code_commit or codeb.get('script_git_blob_sha1')!=expected_script_blob:
         return False,'CLUED_MODEL_M1_PROFILE_EXECUTION_CODE_BINDING'
     b=p.get('budget_ceiling') or {}
     if b.get('max_network_bytes')!=3221225472 or b.get('max_storage_bytes')!=4294967296 or b.get('max_cost_microunits')!=0 or b.get('max_attempts')!=1:
@@ -112,15 +114,28 @@ def main():
     good,code=validate_candidate_profile(candidate)
     if not good: fail(code)
 
-    issued=load(BASE/'governance/ExperimentAuthorizationProfile.M1-REF-QWEN35-08B-LLAMACPP-001.issued.json')
-    good,code=validate_issued_profile(issued)
+    issued1=load(BASE/'governance/ExperimentAuthorizationProfile.M1-REF-QWEN35-08B-LLAMACPP-001.issued.json')
+    good,code=validate_issued_profile(issued1,PROFILE001_CODE_COMMIT,PROFILE001_SCRIPT_BLOB)
+    if not good: fail(code)
+    closeout=load(BASE/'evidence/M1ExperimentProfile001ExecutionCloseout_20260918.json')
+    if closeout.get('profile_id')!='M1-REF-QWEN35-08B-LLAMACPP-001' or closeout.get('result')!='FAIL / CLUED_MODEL_M1_PROFILE_001_EXECUTION_CODE_SYNTAX_ERROR':
+        fail('Profile 001 closeout missing')
+    if closeout.get('attempt_accounting',{}).get('retry_under_same_profile_allowed') is not False or closeout.get('effects',{}).get('network_model_download_bytes')!=0:
+        fail('Profile 001 fail-closed closeout invalid')
+
+    issued2=load(BASE/'governance/ExperimentAuthorizationProfile.M1-REF-QWEN35-08B-LLAMACPP-002.issued.json')
+    good,code=validate_issued_profile(issued2,PROFILE002_CODE_COMMIT,PROFILE002_SCRIPT_BLOB)
     if not good: fail(code)
 
     script=ROOT/'scripts/model-program/m1_download_exact_hf_snapshot.py'
     if not script.is_file():
         fail('bound download script missing')
+    try:
+        compile(script.read_text(encoding='utf-8'),str(script),'exec')
+    except SyntaxError:
+        fail('bound download script does not compile')
 
-    print('PASS: MODEL-PROGRAM-M1 exact Windows device binding and first M1-03 controlled-download profile issued; inference/evaluation/training remain prohibited')
+    print('PASS: MODEL-PROGRAM-M1 Profile 001 closed fail-closed before download; successor Profile 002 issued with compile-validated downloader; inference/evaluation/training remain prohibited')
     return 0
 
 if __name__=='__main__': raise SystemExit(main())
