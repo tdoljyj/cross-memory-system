@@ -1,0 +1,40 @@
+{
+  "object_type": "IndependentPlanReviewReceipt",
+  "schema_version": "clued.model-independent-plan-review-receipt/1",
+  "materialization_kind": "MACHINE_READABLE_RECORD_OF_PRIOR_FRESH_CONTEXT_INDEPENDENT_REVIEW_EVENT",
+  "review_event_utc": "2026-09-18T03:31:07Z",
+  "target": {
+    "version": "v1.0.1",
+    "delivery_revision": "r1",
+    "sha256": "a918f42e6e9de160f7b14a95afafeae9022ddcc189b3663e768aa197110118a4",
+    "bytes": 356825,
+    "physical_lines": 6220
+  },
+  "review_mode": [
+    "FRESH_CONTEXT",
+    "READ_ONLY",
+    "INDEPENDENT",
+    "REVIEWER_NOT_MODIFIER"
+  ],
+  "reviewer_not_modifier": true,
+  "candidate_mutation_by_reviewer": "NONE",
+  "checks": {
+    "passed": 35,
+    "total": 35
+  },
+  "findings": {
+    "BLOCKER": 0,
+    "MAJOR": 0,
+    "MINOR": 0,
+    "EDITORIAL": 0
+  },
+  "verdict": "PASS / CLUED_FIRST_PARTY_MODEL_SYSTEM_PLAN_V1_0_1_ACCEPTED",
+  "review_input_package_sha256": "7bbb81ac02d0b383cb5f4fb9f45d084a0a06d556e27133900fca482e767686eb",
+  "supersedes_earlier_blocked_recheck": {
+    "status": "BLOCKED / REVIEWER_INDEPENDENCE_NOT_ESTABLISHED",
+    "chronology": "EARLIER_EVENT_ONLY / DOES_NOT_OVERRIDE_LATER_FRESH_CONTEXT_PASS"
+  },
+  "authority_effect": "NONE",
+  "kernel_receipt": false,
+  "note": "Repository normalization of the later independent review event; it is not a Kernel Decision, GateResultReceipt, or execution authority."
+}

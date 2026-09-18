@@ -1,7 +1,8 @@
 {
-  "schema_version": "clued.model-gate-definition-registry/1",
-  "status": "M0_BOUND_REFERENCE_ONLY",
+  "schema_version": "clued.model-gate-definition-registry/2",
+  "status": "M0_EXACT_BOUND_REFERENCE_ONLY",
   "authority_owner": "KERNEL_ONLY",
+  "definition_source": "EXACT_REQUIREMENT_TRACE_REGISTERED_GATE_RECORDS",
   "atomic_gate_ids": [
     "G1",
     "G2",
@@ -11,8 +12,86 @@
     "G5a",
     "G5c",
     "G6a",
-    "G7A",
+    "G7A"
+  ],
+  "future_atomic_gate_ids": [
     "G7P"
+  ],
+  "gate_definition_set_digest": "dda6a54f0251ac554049cc5aee1c32707116c852bf9cb7dd121518f1761d0974",
+  "gate_definition_set_digest_algorithm": "SHA256_CANONICAL_JSON_SORTED_GATE_DEFINITION_TUPLES",
+  "gate_definitions": [
+    {
+      "gate_id": "G1",
+      "definition_version": "1.0.0-local-rc-v15",
+      "typed_uri": "urn:clued:gate:G1",
+      "content_digest": "3762faf90ba2eb975b3f982d4e15bc5ed2e03de94f2564a0ce7bab12dbde739b",
+      "object_type": "KERNEL_ATOMIC_GATE",
+      "source_record_sha256": "3762faf90ba2eb975b3f982d4e15bc5ed2e03de94f2564a0ce7bab12dbde739b"
+    },
+    {
+      "gate_id": "G2",
+      "definition_version": "1.0.0-local-rc-v15",
+      "typed_uri": "urn:clued:gate:G2",
+      "content_digest": "a831390bc68ca125507cc05cbcc53084fc93eaf542faf6abe3b472d2a608abc0",
+      "object_type": "KERNEL_ATOMIC_GATE",
+      "source_record_sha256": "a831390bc68ca125507cc05cbcc53084fc93eaf542faf6abe3b472d2a608abc0"
+    },
+    {
+      "gate_id": "G3",
+      "definition_version": "1.0.0-local-rc-v15",
+      "typed_uri": "urn:clued:gate:G3",
+      "content_digest": "e8b0f118bdb1fc55c752721633b0efca63d09f2186366230df2e3cb2ad1bba0a",
+      "object_type": "KERNEL_ATOMIC_GATE",
+      "source_record_sha256": "e8b0f118bdb1fc55c752721633b0efca63d09f2186366230df2e3cb2ad1bba0a"
+    },
+    {
+      "gate_id": "G4b",
+      "definition_version": "1.0.0-local-rc-v15",
+      "typed_uri": "urn:clued:gate:G4b",
+      "content_digest": "d9c645a45e0efc00a23334d6f08ca22d59de3aef46b7539e326238c81acba307",
+      "object_type": "KERNEL_ATOMIC_GATE",
+      "source_record_sha256": "d9c645a45e0efc00a23334d6f08ca22d59de3aef46b7539e326238c81acba307"
+    },
+    {
+      "gate_id": "G4f",
+      "definition_version": "1.0.0-local-rc-v15",
+      "typed_uri": "urn:clued:gate:G4f",
+      "content_digest": "8c6c5789f8c920cb2c5fe743ad5d27338f1c1e2d917363f0f2b46626468cf393",
+      "object_type": "KERNEL_ATOMIC_GATE",
+      "source_record_sha256": "8c6c5789f8c920cb2c5fe743ad5d27338f1c1e2d917363f0f2b46626468cf393"
+    },
+    {
+      "gate_id": "G5a",
+      "definition_version": "1.0.0-local-rc-v15",
+      "typed_uri": "urn:clued:gate:G5a",
+      "content_digest": "5a210468c474263ce3c4284cbf67cf9c0049c2131ef7cbf6ee56ac07b075231d",
+      "object_type": "KERNEL_ATOMIC_GATE",
+      "source_record_sha256": "5a210468c474263ce3c4284cbf67cf9c0049c2131ef7cbf6ee56ac07b075231d"
+    },
+    {
+      "gate_id": "G5c",
+      "definition_version": "1.0.0-local-rc-v15",
+      "typed_uri": "urn:clued:gate:G5c",
+      "content_digest": "4d9410b55e06aff927fce1da575ae56b4b79baf63212223138ce49589eb0a825",
+      "object_type": "KERNEL_ATOMIC_GATE",
+      "source_record_sha256": "4d9410b55e06aff927fce1da575ae56b4b79baf63212223138ce49589eb0a825"
+    },
+    {
+      "gate_id": "G6a",
+      "definition_version": "1.0.0-local-rc-v15",
+      "typed_uri": "urn:clued:gate:G6a",
+      "content_digest": "1c5bd689e3ac66eb73134475ae84b1d6c000ec7994c429c815882ece45381e40",
+      "object_type": "KERNEL_ATOMIC_GATE",
+      "source_record_sha256": "1c5bd689e3ac66eb73134475ae84b1d6c000ec7994c429c815882ece45381e40"
+    },
+    {
+      "gate_id": "G7A",
+      "definition_version": "1.0.0-local-rc-v15",
+      "typed_uri": "urn:clued:gate:G7A",
+      "content_digest": "0aa1e1ca21652bfcd01edc6f6d8fb1f2da62af74e1e8f61ba6a4d541c5f89caf",
+      "object_type": "KERNEL_ATOMIC_GATE",
+      "source_record_sha256": "0aa1e1ca21652bfcd01edc6f6d8fb1f2da62af74e1e8f61ba6a4d541c5f89caf"
+    }
   ],
   "upstream_mapping": {
     "path": "../upstream/KernelGateMappingRevision_model_program_v1_20260918.json",

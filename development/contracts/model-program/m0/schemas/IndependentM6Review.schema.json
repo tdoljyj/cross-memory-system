@@ -4,16 +4,24 @@
   "type": "object",
   "additionalProperties": false,
   "required": [
-    "fixed_candidate",
+    "fixed_candidate_digest",
+    "closeout_evidence_set_digest",
     "read_only",
     "fresh_context",
     "reviewer_not_modifier",
     "verdict",
-    "findings"
+    "findings",
+    "signature_ref",
+    "authority_effect"
   ],
   "properties": {
-    "fixed_candidate": {
-      "type": "string"
+    "fixed_candidate_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "closeout_evidence_set_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
     },
     "read_only": {
       "const": true
@@ -33,6 +41,13 @@
     },
     "findings": {
       "type": "array"
+    },
+    "signature_ref": {
+      "type": "string",
+      "minLength": 1
+    },
+    "authority_effect": {
+      "const": "NONE"
     }
   }
 }

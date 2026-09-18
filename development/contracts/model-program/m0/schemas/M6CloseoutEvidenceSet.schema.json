@@ -5,28 +5,152 @@
   "additionalProperties": false,
   "required": [
     "required_tiers",
+    "tier_release_unit_refs",
+    "profile_refs",
+    "risk_refs",
+    "final_rc_refs",
+    "signed_tier_set_manifest_ref",
     "promotion_action_refs",
     "verification_closeout_refs",
     "reconciliation_refs",
-    "projection_ref"
+    "projection_ref",
+    "closeout_evidence_set_digest"
   ],
   "properties": {
     "required_tiers": {
       "type": "array",
       "minItems": 3,
-      "maxItems": 3
+      "maxItems": 3,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "mobile",
+          "standard",
+          "flagship"
+        ]
+      }
+    },
+    "tier_release_unit_refs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mobile",
+        "standard",
+        "flagship"
+      ],
+      "properties": {
+        "mobile": {
+          "type": "string",
+          "minLength": 1
+        },
+        "standard": {
+          "type": "string",
+          "minLength": 1
+        },
+        "flagship": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "profile_refs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mobile",
+        "standard",
+        "flagship"
+      ],
+      "properties": {
+        "mobile": {
+          "type": "string",
+          "minLength": 1
+        },
+        "standard": {
+          "type": "string",
+          "minLength": 1
+        },
+        "flagship": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "risk_refs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mobile",
+        "standard",
+        "flagship"
+      ],
+      "properties": {
+        "mobile": {
+          "type": "string",
+          "minLength": 1
+        },
+        "standard": {
+          "type": "string",
+          "minLength": 1
+        },
+        "flagship": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "final_rc_refs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mobile",
+        "standard",
+        "flagship"
+      ],
+      "properties": {
+        "mobile": {
+          "type": "string",
+          "minLength": 1
+        },
+        "standard": {
+          "type": "string",
+          "minLength": 1
+        },
+        "flagship": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "signed_tier_set_manifest_ref": {
+      "type": "string",
+      "minLength": 1
     },
     "promotion_action_refs": {
-      "type": "array"
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
     },
     "verification_closeout_refs": {
-      "type": "array"
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
     },
     "reconciliation_refs": {
-      "type": "array"
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
     },
     "projection_ref": {
-      "type": "string"
+      "type": "string",
+      "minLength": 1
+    },
+    "closeout_evidence_set_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
     }
   }
 }

@@ -1,8 +1,8 @@
 {
-  "schema_version": "clued.model-program-source-lock/2",
+  "schema_version": "clued.model-program-source-lock/3",
   "program_id": "CLUED-FIRST-PARTY-MODEL",
   "stage_id": "MODEL-PROGRAM-M0",
-  "status": "LOCKED_FOR_NON_PRODUCTION_M0_TARGETED_REPAIR",
+  "status": "LOCKED_FOR_NON_PRODUCTION_M0_TARGETED_REPAIR_SUCCESSOR",
   "plan": {
     "version": "v1.0.1",
     "delivery_revision": "r1",
@@ -11,24 +11,29 @@
   },
   "governance_records": [
     {
+      "path": "governance/IndependentPlanReviewReceipt.v1.0.1.json",
+      "sha256": "32ae65129996df696ab1fb1c6de770766b162ea63ebe54daf9ad54d7e1c2f113",
+      "kind": "MACHINE_READABLE_RECORD_OF_PRIOR_FRESH_CONTEXT_INDEPENDENT_REVIEW"
+    },
+    {
       "path": "governance/PlanReviewAttestation.v1.0.1.json",
-      "sha256": "673059fd83b3558c9ebedbf3f218cc7eca7eff86c53c1c1e0d713917938c5cbf",
-      "kind": "MACHINE_READABLE_RECORD_OF_PRIOR_DECISION"
+      "sha256": "0fe4460473fceccd6484fd6f344fb304ff8249c9a5d86facfea8a9f726fc065b",
+      "kind": "DIGEST_BOUND_PLAN_REVIEW_ATTESTATION"
     },
     {
       "path": "governance/OwnerSuccessorAdoption.v1.0.1.json",
-      "sha256": "adc4f4bc13533e5ca34c115419652fa8591a61145c10567c28fd89285015a953",
-      "kind": "MACHINE_READABLE_RECORD_OF_PRIOR_DECISION"
+      "sha256": "00fc705fef1ae70bb90b3b85307a3d09474ada6809fbeec2739bbfc0331df5e8",
+      "kind": "MACHINE_READABLE_RECORD_OF_PRIOR_OWNER_DECISION"
     },
     {
       "path": "governance/CurrentReadinessRecheck.v1.0.1.json",
-      "sha256": "04ec4e11651d8ec4d880594c68e59c935ab701a5efc0297e60c5167d04c44a26",
-      "kind": "MACHINE_READABLE_RECORD_OF_PRIOR_DECISION"
+      "sha256": "4cf6624912694075b121f49fbbe6b7d8a43174b2946a75fb8b608e237f9b4b08",
+      "kind": "DIGEST_BOUND_CURRENT_READINESS_RECHECK"
     },
     {
       "path": "governance/NonProductionM0Authorization.v1.0.1.json",
-      "sha256": "71efbb9fdfbbcb06054d7ab1b2ee9426aa600f0535531c88e6858de642c96941",
-      "kind": "MACHINE_READABLE_RECORD_OF_PRIOR_DECISION"
+      "sha256": "7a21e151e1b085f393f1a7dd96bdeafd0619b6175fb58e076bbb2e8021d92793",
+      "kind": "DIGEST_BOUND_NON_PRODUCTION_M0_IMPLEMENTATION_AUTHORITY"
     }
   ],
   "required_typed_inputs": [
@@ -136,5 +141,9 @@
   "fail_closed": {
     "missing_or_mismatched_required_binding": "BLOCKED / CLUED_MODEL_M0_REQUIRED_BINDINGS_MISSING",
     "authority_scope_expansion": "FAIL / CLUED_MODEL_M0_AUTHORITY_GATE_MAPPING_OR_BOUNDARY_VIOLATION"
+  },
+  "review_lineage": {
+    "earlier_blocked_recheck": "SUPERSEDED_AS_REVIEW_STATUS_BY_LATER_FRESH_CONTEXT_PASS",
+    "current_independent_review_receipt": "governance/IndependentPlanReviewReceipt.v1.0.1.json"
   }
 }

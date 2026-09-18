@@ -1,5 +1,5 @@
 {
-  "schema_version": "clued.model-m0-fixtures/2",
+  "schema_version": "clued.model-m0-fixtures/3",
   "negative_cases": [
     {
       "id": "NEG-SHARED-RISK",
@@ -423,10 +423,19 @@
       "expected_error": "CLUED_MODEL_M0_UNKNOWN_GATE",
       "input": {
         "gate_refs": [
-          "G3",
-          "MODEL-GATE-LOCAL"
+          {
+            "gate_id": "MODEL-GATE-LOCAL",
+            "definition_version": "x",
+            "content_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "object_type": "KERNEL_ATOMIC_GATE",
+            "release_action": "rerun",
+            "applicability_proof_digest": "N_A",
+            "independent_reviewer_ref": "N_A",
+            "attestation_max_age": null,
+            "revalidation_input_fields": []
+          }
         ],
-        "gate_definition_set_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        "gate_definition_set_digest": "dda6a54f0251ac554049cc5aee1c32707116c852bf9cb7dd121518f1761d0974"
       }
     },
     {
@@ -437,7 +446,9 @@
         "profile_id": "p1",
         "tier_id": "mobile",
         "gate_refs": [],
-        "gate_definition_set_digest": null
+        "gate_definition_set_digest": null,
+        "carrier_binding_ref": "carrier:mobile",
+        "risk_manifest_ref": "risk:mobile"
       }
     },
     {
@@ -472,7 +483,185 @@
           "standard",
           "flagship"
         ],
+        "final_rc_refs": {
+          "mobile": "rc-m",
+          "standard": "rc-s",
+          "flagship": "rc-f"
+        },
+        "profile_refs": {
+          "mobile": "p-m",
+          "standard": "p-s",
+          "flagship": "p-f"
+        },
+        "risk_refs": {
+          "mobile": "r-m",
+          "standard": "r-s",
+          "flagship": "r-f"
+        },
+        "j0_ref": "j0-1",
         "all_required_tiers_final_rc": false,
+        "authority_effect": "NONE"
+      }
+    },
+    {
+      "id": "NEG-GATE-BARE-ID",
+      "validator": "gate_set",
+      "expected_error": "CLUED_MODEL_M0_GATE_REF_BARE",
+      "input": {
+        "gate_refs": [
+          "G3"
+        ],
+        "gate_definition_set_digest": "dda6a54f0251ac554049cc5aee1c32707116c852bf9cb7dd121518f1761d0974"
+      }
+    },
+    {
+      "id": "NEG-GATE-DEFINITION-SET-DIGEST-DRIFT",
+      "validator": "gate_set",
+      "expected_error": "CLUED_MODEL_M0_GATE_DEFINITION_SET_DRIFT",
+      "input": {
+        "gate_refs": [
+          {
+            "gate_id": "G3",
+            "definition_version": "1.0.0-local-rc-v15",
+            "content_digest": "e8b0f118bdb1fc55c752721633b0efca63d09f2186366230df2e3cb2ad1bba0a",
+            "object_type": "KERNEL_ATOMIC_GATE",
+            "release_action": "rerun",
+            "applicability_proof_digest": "N_A",
+            "independent_reviewer_ref": "N_A",
+            "attestation_max_age": null,
+            "revalidation_input_fields": []
+          }
+        ],
+        "gate_definition_set_digest": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      }
+    },
+    {
+      "id": "NEG-GATE-CONTENT-DRIFT",
+      "validator": "gate_set",
+      "expected_error": "CLUED_MODEL_M0_GATE_DEFINITION_DRIFT",
+      "input": {
+        "gate_refs": [
+          {
+            "gate_id": "G3",
+            "definition_version": "1.0.0-local-rc-v15",
+            "content_digest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "object_type": "KERNEL_ATOMIC_GATE",
+            "release_action": "rerun",
+            "applicability_proof_digest": "N_A",
+            "independent_reviewer_ref": "N_A",
+            "attestation_max_age": null,
+            "revalidation_input_fields": []
+          }
+        ],
+        "gate_definition_set_digest": "dda6a54f0251ac554049cc5aee1c32707116c852bf9cb7dd121518f1761d0974"
+      }
+    },
+    {
+      "id": "NEG-SCHEMA-RELEASE-PROFILE-MISSING-RISK",
+      "schema": "ModelReleaseProfile.schema.json",
+      "expected_error": "CLUED_MODEL_M0_SCHEMA_VALIDATION",
+      "input": {
+        "profile_id": "p1",
+        "tier_id": "mobile",
+        "gate_refs": [
+          {
+            "gate_id": "G3",
+            "definition_version": "1.0.0-local-rc-v15",
+            "content_digest": "e8b0f118bdb1fc55c752721633b0efca63d09f2186366230df2e3cb2ad1bba0a",
+            "object_type": "KERNEL_ATOMIC_GATE",
+            "release_action": "rerun",
+            "applicability_proof_digest": "N_A",
+            "independent_reviewer_ref": "N_A",
+            "attestation_max_age": null,
+            "revalidation_input_fields": []
+          }
+        ],
+        "gate_definition_set_digest": "dda6a54f0251ac554049cc5aee1c32707116c852bf9cb7dd121518f1761d0974",
+        "carrier_binding_ref": "carrier:mobile"
+      }
+    },
+    {
+      "id": "NEG-TIERSET-MANIFEST-DUPLICATE-TIER",
+      "schema": "SignedTierSetReleaseManifest.schema.json",
+      "expected_error": "CLUED_MODEL_M0_SCHEMA_VALIDATION",
+      "input": {
+        "tier_set_revision": "ts1",
+        "tier_units": [
+          "mobile",
+          "mobile",
+          "flagship"
+        ],
+        "final_rc_refs": {
+          "mobile": "rc-m",
+          "standard": "rc-s",
+          "flagship": "rc-f"
+        },
+        "profile_refs": {
+          "mobile": "p-m",
+          "standard": "p-s",
+          "flagship": "p-f"
+        },
+        "risk_refs": {
+          "mobile": "r-m",
+          "standard": "r-s",
+          "flagship": "r-f"
+        },
+        "j0_ref": "j0-1",
+        "all_required_tiers_final_rc": true,
+        "authority_effect": "NONE"
+      }
+    },
+    {
+      "id": "NEG-TIERSET-READINESS-MISSING-G7P",
+      "validator": "tier_set_readiness",
+      "expected_error": "CLUED_MODEL_M0_TIERSET_READINESS_BINDING",
+      "input": {
+        "tier_set_revision": "ts1",
+        "required_tier_units": [
+          "mobile",
+          "standard",
+          "flagship"
+        ],
+        "final_rc_refs": {
+          "mobile": "rc-m",
+          "standard": "rc-s",
+          "flagship": "rc-f"
+        },
+        "g7p_refs": {
+          "mobile": "g7p-m",
+          "standard": "",
+          "flagship": "g7p-f"
+        },
+        "signed_tier_set_manifest_ref": "manifest-1",
+        "all_required_tiers_final_rc": true,
+        "all_required_tiers_g7p": true,
+        "creates_promotion_authority": false
+      }
+    },
+    {
+      "id": "NEG-OBJECT-AUTHORITY-EXPANSION",
+      "schema": "ObjectAuthorityAssertion.schema.json",
+      "validator": "object_authority",
+      "expected_error": "CLUED_MODEL_M0_OBJECT_AUTHORITY",
+      "input": {
+        "object_name": "Kernel RC",
+        "owner": "MODEL PROGRAM",
+        "model_domain_effect": "TYPED_REFERENCE_ONLY",
+        "creates_authority": true
+      }
+    },
+    {
+      "id": "NEG-M6-REVIEW-NO-SIGNATURE",
+      "schema": "IndependentM6Review.schema.json",
+      "expected_error": "CLUED_MODEL_M0_SCHEMA_VALIDATION",
+      "input": {
+        "fixed_candidate_digest": "1111111111111111111111111111111111111111111111111111111111111111",
+        "closeout_evidence_set_digest": "2222222222222222222222222222222222222222222222222222222222222222",
+        "read_only": true,
+        "fresh_context": true,
+        "reviewer_not_modifier": true,
+        "verdict": "PASS",
+        "findings": [],
         "authority_effect": "NONE"
       }
     }
@@ -503,7 +692,8 @@
           "deadline_expired",
           "validation_failure"
         ]
-      }
+      },
+      "schema": "ExperimentAuthorizationProfile.schema.json"
     },
     {
       "id": "POS-RAW-SCORE-NA",
@@ -559,7 +749,8 @@
         "creates_decision": false,
         "creates_receipt": false,
         "creates_authority": false
-      }
+      },
+      "schema": "Projection.schema.json"
     },
     {
       "id": "POS-TIER-SET-UNIQUE",
@@ -601,11 +792,41 @@
       "validator": "gate_set",
       "input": {
         "gate_refs": [
-          "G3",
-          "G6a",
-          "G7A"
+          {
+            "gate_id": "G3",
+            "definition_version": "1.0.0-local-rc-v15",
+            "content_digest": "e8b0f118bdb1fc55c752721633b0efca63d09f2186366230df2e3cb2ad1bba0a",
+            "object_type": "KERNEL_ATOMIC_GATE",
+            "release_action": "rerun",
+            "applicability_proof_digest": "N_A",
+            "independent_reviewer_ref": "N_A",
+            "attestation_max_age": null,
+            "revalidation_input_fields": []
+          },
+          {
+            "gate_id": "G6a",
+            "definition_version": "1.0.0-local-rc-v15",
+            "content_digest": "1c5bd689e3ac66eb73134475ae84b1d6c000ec7994c429c815882ece45381e40",
+            "object_type": "KERNEL_ATOMIC_GATE",
+            "release_action": "rerun",
+            "applicability_proof_digest": "N_A",
+            "independent_reviewer_ref": "N_A",
+            "attestation_max_age": null,
+            "revalidation_input_fields": []
+          },
+          {
+            "gate_id": "G7A",
+            "definition_version": "1.0.0-local-rc-v15",
+            "content_digest": "0aa1e1ca21652bfcd01edc6f6d8fb1f2da62af74e1e8f61ba6a4d541c5f89caf",
+            "object_type": "KERNEL_ATOMIC_GATE",
+            "release_action": "rerun",
+            "applicability_proof_digest": "N_A",
+            "independent_reviewer_ref": "N_A",
+            "attestation_max_age": null,
+            "revalidation_input_fields": []
+          }
         ],
-        "gate_definition_set_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        "gate_definition_set_digest": "dda6a54f0251ac554049cc5aee1c32707116c852bf9cb7dd121518f1761d0974"
       }
     },
     {
@@ -615,11 +836,34 @@
         "profile_id": "p1",
         "tier_id": "mobile",
         "gate_refs": [
-          "G3",
-          "G7A"
+          {
+            "gate_id": "G3",
+            "definition_version": "1.0.0-local-rc-v15",
+            "content_digest": "e8b0f118bdb1fc55c752721633b0efca63d09f2186366230df2e3cb2ad1bba0a",
+            "object_type": "KERNEL_ATOMIC_GATE",
+            "release_action": "rerun",
+            "applicability_proof_digest": "N_A",
+            "independent_reviewer_ref": "N_A",
+            "attestation_max_age": null,
+            "revalidation_input_fields": []
+          },
+          {
+            "gate_id": "G7A",
+            "definition_version": "1.0.0-local-rc-v15",
+            "content_digest": "0aa1e1ca21652bfcd01edc6f6d8fb1f2da62af74e1e8f61ba6a4d541c5f89caf",
+            "object_type": "KERNEL_ATOMIC_GATE",
+            "release_action": "rerun",
+            "applicability_proof_digest": "N_A",
+            "independent_reviewer_ref": "N_A",
+            "attestation_max_age": null,
+            "revalidation_input_fields": []
+          }
         ],
-        "gate_definition_set_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
-      }
+        "gate_definition_set_digest": "dda6a54f0251ac554049cc5aee1c32707116c852bf9cb7dd121518f1761d0974",
+        "carrier_binding_ref": "carrier:mobile:bound",
+        "risk_manifest_ref": "risk:mobile:contract"
+      },
+      "schema": "ModelReleaseProfile.schema.json"
     },
     {
       "id": "POS-PERF-S",
@@ -638,7 +882,8 @@
         "mig_p_ref": null,
         "mig_c_ref": null,
         "na_proof_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
-      }
+      },
+      "schema": "MigrationApplicability.schema.json"
     },
     {
       "id": "POS-SIGNED-MANIFEST",
@@ -650,7 +895,78 @@
           "standard",
           "flagship"
         ],
+        "final_rc_refs": {
+          "mobile": "rc-m",
+          "standard": "rc-s",
+          "flagship": "rc-f"
+        },
+        "profile_refs": {
+          "mobile": "p-m",
+          "standard": "p-s",
+          "flagship": "p-f"
+        },
+        "risk_refs": {
+          "mobile": "r-m",
+          "standard": "r-s",
+          "flagship": "r-f"
+        },
+        "j0_ref": "j0-1",
         "all_required_tiers_final_rc": true,
+        "authority_effect": "NONE"
+      },
+      "schema": "SignedTierSetReleaseManifest.schema.json"
+    },
+    {
+      "id": "POS-TIERSET-READINESS",
+      "schema": "TierSetPromotionReadinessInput.schema.json",
+      "validator": "tier_set_readiness",
+      "input": {
+        "tier_set_revision": "ts1",
+        "required_tier_units": [
+          "mobile",
+          "standard",
+          "flagship"
+        ],
+        "final_rc_refs": {
+          "mobile": "rc-m",
+          "standard": "rc-s",
+          "flagship": "rc-f"
+        },
+        "g7p_refs": {
+          "mobile": "g7p-m",
+          "standard": "g7p-s",
+          "flagship": "g7p-f"
+        },
+        "signed_tier_set_manifest_ref": "manifest-1",
+        "all_required_tiers_final_rc": true,
+        "all_required_tiers_g7p": true,
+        "creates_promotion_authority": false
+      }
+    },
+    {
+      "id": "POS-OBJECT-AUTHORITY",
+      "schema": "ObjectAuthorityAssertion.schema.json",
+      "validator": "object_authority",
+      "input": {
+        "object_name": "Kernel RC",
+        "owner": "KERNEL / EXISTING DOMAIN AUTHORITY",
+        "model_domain_effect": "TYPED_REFERENCE_ONLY",
+        "creates_authority": false
+      }
+    },
+    {
+      "id": "POS-M6-REVIEW",
+      "schema": "IndependentM6Review.schema.json",
+      "validator": "m6_review",
+      "input": {
+        "fixed_candidate_digest": "1111111111111111111111111111111111111111111111111111111111111111",
+        "closeout_evidence_set_digest": "2222222222222222222222222222222222222222222222222222222222222222",
+        "read_only": true,
+        "fresh_context": true,
+        "reviewer_not_modifier": true,
+        "verdict": "PASS",
+        "findings": [],
+        "signature_ref": "sig:test",
         "authority_effect": "NONE"
       }
     }

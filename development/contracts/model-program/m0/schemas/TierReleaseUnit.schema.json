@@ -12,7 +12,8 @@
     "carrier_binding_ref",
     "gate_receipt_refs",
     "candidate_ref",
-    "rc_ref"
+    "rc_ref",
+    "release_eligible"
   ],
   "properties": {
     "tier_id": {
@@ -66,6 +67,9 @@
         "string",
         "null"
       ]
+    },
+    "release_eligible": {
+      "type": "boolean"
     }
   }
 }

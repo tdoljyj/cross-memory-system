@@ -1,8 +1,8 @@
 {
-  "schema_version": "clued.model-m0-closeout/2",
+  "schema_version": "clued.model-m0-closeout/3",
   "stage_id": "MODEL-PROGRAM-M0",
   "plan_sha256": "a918f42e6e9de160f7b14a95afafeae9022ddcc189b3663e768aa197110118a4",
-  "implementation_status": "TARGETED_REPAIR_CANDIDATE_READY_FOR_CI_AND_FRESH_CONTEXT_REVIEW",
+  "implementation_status": "TARGETED_REPAIR_SUCCESSOR_CANDIDATE_READY_FOR_CI_AND_FRESH_CONTEXT_REVIEW",
   "task_coverage": {
     "M0-00": "IMPLEMENTED_AS_TARGETED_REPAIR_CANDIDATE",
     "M0-01": "IMPLEMENTED_AS_TARGETED_REPAIR_CANDIDATE",
@@ -21,9 +21,9 @@
     "M0-14": "IMPLEMENTED_AS_TARGETED_REPAIR_CANDIDATE",
     "M0-15": "IMPLEMENTED_AS_TARGETED_REPAIR_CANDIDATE"
   },
-  "static_validation_status": "MUST_PASS_AT_FIXED_COMMIT",
-  "independent_qualification_status": "NOT_PERFORMED",
-  "m0_program_foundation_verdict": "NOT_YET_ISSUED",
+  "static_validation_status": "MUST_PASS_AT_SUCCESSOR_FIXED_COMMIT",
+  "independent_qualification_status": "NOT_PERFORMED_ON_SUCCESSOR",
+  "m0_program_foundation_verdict": "NOT_YET_ISSUED_ON_SUCCESSOR",
   "does_not_authorize": [
     "MODEL_DOWNLOAD",
     "TRAINING",
@@ -40,5 +40,6 @@
     "MAJOR-04",
     "MAJOR-05"
   ],
-  "next_gate": "FRESH_CONTEXT_READ_ONLY_INDEPENDENT_M0_QUALIFICATION"
+  "next_gate": "FRESH_CONTEXT_READ_ONLY_INDEPENDENT_M0_QUALIFICATION",
+  "targeted_repair_predecessor_commit": "83772fc14f07421ac62e045ad7ffc92106e00850"
 }

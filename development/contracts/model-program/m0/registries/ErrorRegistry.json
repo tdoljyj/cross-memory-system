@@ -1,5 +1,5 @@
 {
-  "schema_version": "clued.model-m0-error-registry/1",
+  "schema_version": "clued.model-m0-error-registry/2",
   "status": "M0_BOUND",
   "codes": {
     "CLUED_MODEL_M0_PROFILE_BUDGET_UNBOUNDED": "Experiment profile budget/attempt/deadline is not finite.",
@@ -27,6 +27,16 @@
     "CLUED_MODEL_M0_SOURCE_REVISION_DRIFT": "Result reused across changed source revision.",
     "CLUED_MODEL_M0_ROUTE_BUDGET_TERMINAL": "Route attempted after budget terminal state.",
     "CLUED_MODEL_M0_REQUIRED_BINDING": "Required source-lock binding missing/mismatched.",
-    "CLUED_MODEL_M0_TIERSET_MANIFEST_PREMATURE": "SignedTierSetReleaseManifest attempted before all required Tier final RCs."
+    "CLUED_MODEL_M0_TIERSET_MANIFEST_PREMATURE": "SignedTierSetReleaseManifest attempted before all required Tier final RCs.",
+    "CLUED_MODEL_M0_SCHEMA_VALIDATION": "Input failed its bound Draft 2020-12 JSON Schema.",
+    "CLUED_MODEL_M0_UNKNOWN_VALIDATOR": "Fixture referenced an unknown validator; fail closed.",
+    "CLUED_MODEL_M0_GATE_REF_BARE": "Gate reference was a bare ID instead of an exact typed gate reference.",
+    "CLUED_MODEL_M0_GATE_DEFINITION_SET_DRIFT": "Gate definition set digest does not equal the exact bound registry digest.",
+    "CLUED_MODEL_M0_GATE_DEFINITION_DRIFT": "Gate definition version/content/type differs from the bound Kernel gate definition reference.",
+    "CLUED_MODEL_M0_TIERSET_MANIFEST_BINDING": "Tier-set manifest lacks exact distinct tier/final-RC/profile/risk/J0 bindings.",
+    "CLUED_MODEL_M0_TIERSET_READINESS_BINDING": "Tier-set promotion readiness lacks exact per-tier final-RC/G7P/manifest bindings.",
+    "CLUED_MODEL_M0_OBJECT_AUTHORITY": "Object authority assertion conflicts with the exact upstream authority registry or creates authority.",
+    "CLUED_MODEL_M0_M6_REVIEW_BINDING": "Independent M6 review lacks fixed candidate/evidence digest/signature/no-authority binding.",
+    "CLUED_MODEL_M0_MANIFEST_COVERAGE": "SHA256 manifest does not exactly cover the closed M0 implementation surface."
   }
 }

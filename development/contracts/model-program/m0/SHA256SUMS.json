@@ -1,52 +1,14 @@
 {
-  "schema_version": "clued.model-m0-sha256-manifest/2",
+  "schema_version": "clued.model-m0-sha256-manifest/3",
   "manifest_self_excluded_by_design": true,
   "self_exclusion_reason": "A digest manifest cannot include its own digest without a recursive fixed-point construction; the fixed Git commit/tree binds this manifest itself.",
+  "coverage_mode": "CLOSED_WORLD_EXPECTED_SURFACE_EQUALITY",
+  "expected_surface_definition": "ALL_FILES_UNDER_development/contracts/model-program/m0_EXCEPT_SHA256SUMS + workflow + validator + both fixture files + unittest",
   "files": [
     {
       "path": ".github/workflows/model-program-m0.yml",
-      "sha256": "dae6fa343b285a3a9275ca78c6adf1b68a36cf09650b4f4ebea8f2442e4aa1ac",
-      "bytes": 779
-    },
-    {
-      "path": "development/contracts/model-program/m0/KnownSupersededInputRegister.json",
-      "sha256": "1872e1e19fe7a281d9b666ad7af5f28cbc74910e012f65c76bf4a3012a60c258",
-      "bytes": 533
-    },
-    {
-      "path": "development/contracts/model-program/m0/M0Closeout.json",
-      "sha256": "c84046bd0d35820031969aa289369778818664700249b96934922247a1cdca87",
-      "bytes": 1730
-    },
-    {
-      "path": "development/contracts/model-program/m0/MODEL-SOURCE-POLICY.json",
-      "sha256": "0ef120681e93621222a290eed07607f549621a1d80acf1106078f0aa67065f1c",
-      "bytes": 1220
-    },
-    {
-      "path": "development/contracts/model-program/m0/ModelProgramCharter.json",
-      "sha256": "bc8e58a3d0ef4ce04c362ecd6209dd7ff0a8c98b9b6e261a35124e6ead673147",
-      "bytes": 1352
-    },
-    {
-      "path": "development/contracts/model-program/m0/ModelProgramM0.contract-pack.json",
-      "sha256": "32a1e631f4a47c8d5b623e542735b1f92b45fbdaed257588c0061deeacbe6fb8",
-      "bytes": 2019
-    },
-    {
-      "path": "development/contracts/model-program/m0/README.md",
-      "sha256": "f04384f901892260c5715cb596e145e0d2939817d18227193e4930edea52414d",
-      "bytes": 1324
-    },
-    {
-      "path": "development/contracts/model-program/m0/ResponsibilityTransferVerification.json",
-      "sha256": "3ccb85a8ac3cf908aeb4bdd8bcd8ed9e78b0d9d4a913685e3642657e11cb7feb",
-      "bytes": 546
-    },
-    {
-      "path": "development/contracts/model-program/m0/StorageStatusResponsibilityRegistration.json",
-      "sha256": "d534b5cea76eae00f17d9234e094517d7038c23dbb77e3c61805824cffa1a0e9",
-      "bytes": 850
+      "sha256": "9d43e37bffd57a64d1c0b73abbf05dc8a68a4b0b48433deee375c6136d7e332a",
+      "bytes": 891
     },
     {
       "path": "development/contracts/model-program/m0/contracts/BudgetComputeDeadline.contract.json",
@@ -70,8 +32,8 @@
     },
     {
       "path": "development/contracts/model-program/m0/contracts/ModelReleaseGateContract.json",
-      "sha256": "24b47d613a595179a1ccaf2bb8a055db4e402c36e70bf0173decf2dd8d86319c",
-      "bytes": 486
+      "sha256": "4645c3c706bdc8cb4d6edfe8bf9e869cd0eff47ccb8d4c31df8d25123230d0f4",
+      "bytes": 1030
     },
     {
       "path": "development/contracts/model-program/m0/contracts/PerformanceMigration.contract.json",
@@ -105,23 +67,28 @@
     },
     {
       "path": "development/contracts/model-program/m0/governance/CurrentReadinessRecheck.v1.0.1.json",
-      "sha256": "04ec4e11651d8ec4d880594c68e59c935ab701a5efc0297e60c5167d04c44a26",
-      "bytes": 782
+      "sha256": "4cf6624912694075b121f49fbbe6b7d8a43174b2946a75fb8b608e237f9b4b08",
+      "bytes": 1167
+    },
+    {
+      "path": "development/contracts/model-program/m0/governance/IndependentPlanReviewReceipt.v1.0.1.json",
+      "sha256": "32ae65129996df696ab1fb1c6de770766b162ea63ebe54daf9ad54d7e1c2f113",
+      "bytes": 1380
     },
     {
       "path": "development/contracts/model-program/m0/governance/NonProductionM0Authorization.v1.0.1.json",
-      "sha256": "71efbb9fdfbbcb06054d7ab1b2ee9426aa600f0535531c88e6858de642c96941",
-      "bytes": 1108
+      "sha256": "7a21e151e1b085f393f1a7dd96bdeafd0619b6175fb58e076bbb2e8021d92793",
+      "bytes": 1663
     },
     {
       "path": "development/contracts/model-program/m0/governance/OwnerSuccessorAdoption.v1.0.1.json",
-      "sha256": "adc4f4bc13533e5ca34c115419652fa8591a61145c10567c28fd89285015a953",
-      "bytes": 691
+      "sha256": "00fc705fef1ae70bb90b3b85307a3d09474ada6809fbeec2739bbfc0331df5e8",
+      "bytes": 1071
     },
     {
       "path": "development/contracts/model-program/m0/governance/PlanReviewAttestation.v1.0.1.json",
-      "sha256": "673059fd83b3558c9ebedbf3f218cc7eca7eff86c53c1c1e0d713917938c5cbf",
-      "bytes": 753
+      "sha256": "0fe4460473fceccd6484fd6f344fb304ff8249c9a5d86facfea8a9f726fc065b",
+      "bytes": 1095
     },
     {
       "path": "development/contracts/model-program/m0/identity/TaskIdFixtures.json",
@@ -129,19 +96,49 @@
       "bytes": 3013
     },
     {
+      "path": "development/contracts/model-program/m0/KnownSupersededInputRegister.json",
+      "sha256": "1872e1e19fe7a281d9b666ad7af5f28cbc74910e012f65c76bf4a3012a60c258",
+      "bytes": 533
+    },
+    {
+      "path": "development/contracts/model-program/m0/M0Closeout.json",
+      "sha256": "3c326ca5570de8d2368f81b158f3d61b15b529929afa4212d04c290e762e4bdd",
+      "bytes": 1860
+    },
+    {
       "path": "development/contracts/model-program/m0/model-program-source-lock.json",
-      "sha256": "bd3a3fa6d8cb8688641583df311c1320c302d4a9008a862e632b551dc0ecf990",
-      "bytes": 6112
+      "sha256": "b032cc34815a7893860549c51d45b625ced566e5741147b140907b882e7822eb",
+      "bytes": 6595
+    },
+    {
+      "path": "development/contracts/model-program/m0/MODEL-SOURCE-POLICY.json",
+      "sha256": "0ef120681e93621222a290eed07607f549621a1d80acf1106078f0aa67065f1c",
+      "bytes": 1220
+    },
+    {
+      "path": "development/contracts/model-program/m0/ModelProgramCharter.json",
+      "sha256": "bc8e58a3d0ef4ce04c362ecd6209dd7ff0a8c98b9b6e261a35124e6ead673147",
+      "bytes": 1352
+    },
+    {
+      "path": "development/contracts/model-program/m0/ModelProgramM0.contract-pack.json",
+      "sha256": "1877e82659e264af148e9571349b63538623d9b0e34423cbb6d6b4aa24ed0247",
+      "bytes": 2440
+    },
+    {
+      "path": "development/contracts/model-program/m0/README.md",
+      "sha256": "0a87e6ec9cc55cb78d8b68447f20877f0c678cc66e978d82e6f25f6436bd9937",
+      "bytes": 1928
     },
     {
       "path": "development/contracts/model-program/m0/registries/ErrorRegistry.json",
-      "sha256": "9ccbe7b53edfa7b26d44dcfb4315ff327d2d15c4004d3332d7ca18e7b19172b8",
-      "bytes": 2668
+      "sha256": "de3f7dce7dee69521c24c0d25e2f46fa9b07d539ab8c7e17344c83133052118d",
+      "bytes": 3896
     },
     {
       "path": "development/contracts/model-program/m0/registries/GateDefinitionRegistry.json",
-      "sha256": "f2bed210ffd32c0b54b1c3bdb102e8bcf9c63e8c5a5caf344ffad4eb915eb170",
-      "bytes": 798
+      "sha256": "098df8d4cb2e406cceba71b5750b00136ed7dfb988a999858693d9a9fb0cfdbd",
+      "bytes": 4371
     },
     {
       "path": "development/contracts/model-program/m0/registries/PerformanceObjectTypeRegistry.json",
@@ -189,6 +186,11 @@
       "bytes": 391
     },
     {
+      "path": "development/contracts/model-program/m0/ResponsibilityTransferVerification.json",
+      "sha256": "3ccb85a8ac3cf908aeb4bdd8bcd8ed9e78b0d9d4a913685e3642657e11cb7feb",
+      "bytes": 546
+    },
+    {
       "path": "development/contracts/model-program/m0/schemas/CompleteCall.schema.json",
       "sha256": "511c8478a3f253286f9958af9b5a49e047efa594c3bba2bc6c72f288fb539aeb",
       "bytes": 2001
@@ -200,8 +202,8 @@
     },
     {
       "path": "development/contracts/model-program/m0/schemas/IndependentM6Review.schema.json",
-      "sha256": "43fff794895a1848f34c58df4834d53a2a25a9471a941bd2ebb4c5a94a50a861",
-      "bytes": 668
+      "sha256": "af087099c27962f31c7bce959be655ee972042d0de9defadbc83996205aaabfa",
+      "bytes": 1031
     },
     {
       "path": "development/contracts/model-program/m0/schemas/KernelRcCandidateReference.schema.json",
@@ -215,8 +217,8 @@
     },
     {
       "path": "development/contracts/model-program/m0/schemas/M6CloseoutEvidenceSet.schema.json",
-      "sha256": "a22dcf24cceed228b52fd3c2819f3858f7f7e7ca73486d756102ed33cb9d55a2",
-      "bytes": 661
+      "sha256": "5574e4be4f0126e16bb2bee67046212ba2521f79279cdceb1404828d03bce587",
+      "bytes": 3185
     },
     {
       "path": "development/contracts/model-program/m0/schemas/MigrationApplicability.schema.json",
@@ -225,8 +227,13 @@
     },
     {
       "path": "development/contracts/model-program/m0/schemas/ModelReleaseProfile.schema.json",
-      "sha256": "04578649e11bfc889096e06d3435d428da4d8f262e2bf012350bffd6e3fdafc1",
-      "bytes": 914
+      "sha256": "1cb81fec7e45a08d2e32aed8d8d3344f872037280b6beff33cd0df80ce749c9a",
+      "bytes": 2522
+    },
+    {
+      "path": "development/contracts/model-program/m0/schemas/ObjectAuthorityAssertion.schema.json",
+      "sha256": "94b7493b4b802c0b221026f134fd4427a7939fd98f4b55299580f7359a4675cd",
+      "bytes": 561
     },
     {
       "path": "development/contracts/model-program/m0/schemas/PerTierCarrierBinding.schema.json",
@@ -255,8 +262,8 @@
     },
     {
       "path": "development/contracts/model-program/m0/schemas/SignedTierSetReleaseManifest.schema.json",
-      "sha256": "daacf3da05bd2bc8fc4ff48354b70648975d5c0973fb1b8af716327f4fb482aa",
-      "bytes": 622
+      "sha256": "88ce0dc965fc6e601f8d299e2fb5372089cb43202bcb8a10a8e985d3c2a72d4e",
+      "bytes": 2258
     },
     {
       "path": "development/contracts/model-program/m0/schemas/TierFinalReleaseArtifactInputSet.schema.json",
@@ -265,18 +272,18 @@
     },
     {
       "path": "development/contracts/model-program/m0/schemas/TierReleaseUnit.schema.json",
-      "sha256": "4e66d0ca8c2ae874ff3c6c5c7fb10cdf739addd61907c1780874fa8b0f117da3",
-      "bytes": 1234
+      "sha256": "1a106cb53e510442cfe1b0cb0bc33b093880272ddc268917d5dd4df9209befc4",
+      "bytes": 1315
     },
     {
       "path": "development/contracts/model-program/m0/schemas/TierSetPromotionReadinessInput.schema.json",
-      "sha256": "24c20a0bab68e72ad40a55bdf295742e02b10dbcb741e5eef2adb1458b596fb8",
-      "bytes": 760
+      "sha256": "8c2618643efe8bfccafceb9a199ee9be947786623abd1e873b87d998562bdc14",
+      "bytes": 1949
     },
     {
       "path": "development/contracts/model-program/m0/schemas/TierSetReleaseBOM.schema.json",
-      "sha256": "c62167817b2a706175cf2d942d622f5a05d662e13bc80f93fd76683bc9d384dd",
-      "bytes": 410
+      "sha256": "bb2f85d87c96ba2a91f8da34319d2409b65f0d194f25fa40613710a038addcec",
+      "bytes": 1001
     },
     {
       "path": "development/contracts/model-program/m0/schemas/TierUnitIdentity.schema.json",
@@ -297,6 +304,11 @@
       "path": "development/contracts/model-program/m0/schemas/VerificationTaskInstanceManifest.schema.json",
       "sha256": "07c1e03241917f4f74690ab5c8c5b96e216bca8d17c167ebc632ada238e6d5b5",
       "bytes": 590
+    },
+    {
+      "path": "development/contracts/model-program/m0/StorageStatusResponsibilityRegistration.json",
+      "sha256": "d534b5cea76eae00f17d9234e094517d7038c23dbb77e3c61805824cffa1a0e9",
+      "bytes": 850
     },
     {
       "path": "development/contracts/model-program/m0/upstream/KernelGateMappingRevision_model_program_v1_20260918.json",
@@ -355,18 +367,23 @@
     },
     {
       "path": "scripts/model-program/validate_m0_foundation.py",
-      "sha256": "239b25766222e3f8418d87fac888bcb777d98772e65d608bbab3a709952b6b3e",
-      "bytes": 14618
+      "sha256": "e37924b5e89136427f99e292b172f31f19b6ce81f8c30572fee34535ce2d9722",
+      "bytes": 24881
+    },
+    {
+      "path": "tests/fixtures/model-program-m0/fixtures.json",
+      "sha256": "f847ad3acdfda57edb48c595ec661f9ecd0feeb6591bb96fb13a0768d5eb8047",
+      "bytes": 2275
     },
     {
       "path": "tests/fixtures/model-program-m0/negative-fixtures.json",
-      "sha256": "39200c9926026a227cb9d400482fdee51d98ce90e0538c94381f3d68bcca2a32",
-      "bytes": 17781
+      "sha256": "fae072d24c09510498d3fdbfcfa494307b4a8db12f17d6b7ebdee60e6e2a127d",
+      "bytes": 28831
     },
     {
       "path": "tests/test_model_program_m0.py",
-      "sha256": "ca66d2de5543ed5d686520b961142dd6ea2151476a3c73e592f39d2c61f58eac",
-      "bytes": 1111
+      "sha256": "1922d944ed0c06a672e44f22106e8bef1bd72914ef6139be3fc287897b90dadc",
+      "bytes": 1853
     }
   ]
 }

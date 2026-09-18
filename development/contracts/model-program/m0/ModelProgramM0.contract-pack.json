@@ -1,11 +1,11 @@
 {
-  "schema_version": "clued.model-program-m0-contract-pack/2",
+  "schema_version": "clued.model-program-m0-contract-pack/3",
   "stage_id": "MODEL-PROGRAM-M0",
   "plan": {
     "version": "v1.0.1",
     "sha256": "a918f42e6e9de160f7b14a95afafeae9022ddcc189b3663e768aa197110118a4"
   },
-  "status": "TARGETED_REPAIR_CANDIDATE",
+  "status": "TARGETED_REPAIR_SUCCESSOR_CANDIDATE",
   "artifact_refs": {
     "charter": "ModelProgramCharter.json",
     "source_lock": "model-program-source-lock.json",
@@ -24,7 +24,12 @@
     "readiness_verification": "evidence/ReadinessSourceLockVerification.json",
     "receipt_currentness": "evidence/PreM0ReceiptCurrentnessCheck.json",
     "negative_fixtures": "../../../../tests/fixtures/model-program-m0/negative-fixtures.json",
-    "validator": "../../../../scripts/model-program/validate_m0_foundation.py"
+    "validator": "../../../../scripts/model-program/validate_m0_foundation.py",
+    "independent_plan_review_receipt": "governance/IndependentPlanReviewReceipt.v1.0.1.json",
+    "object_authority_schema": "schemas/ObjectAuthorityAssertion.schema.json",
+    "tier_set_manifest_schema": "schemas/SignedTierSetReleaseManifest.schema.json",
+    "tier_set_readiness_schema": "schemas/TierSetPromotionReadinessInput.schema.json",
+    "m6_review_schema": "schemas/IndependentM6Review.schema.json"
   },
   "hard_boundaries": {
     "second_canonical": false,
