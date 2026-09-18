@@ -14,10 +14,11 @@ REQ_ROLES={
 'Mobile-class Local Reference','Personal-device Local Reference','Strong Hosted / Enterprise Reference',
 'Reproducible From-scratch Reference','Embedding Reference','Reranker Reference','Guard / Classifier Reference'
 }
-REQ_PROHIBITED={
-'MODEL_LOAD','MODEL_INFERENCE','REAL_MODEL_EVALUATION','TRAINING','DISTILLATION',
+BASE_REQ_PROHIBITED={
+'MODEL_INFERENCE','REAL_MODEL_EVALUATION','TRAINING','DISTILLATION',
 'PROMOTION','ACTIVATION','PRODUCTION_DEPLOYMENT','SEMANTIC_RECALL_RELEASE'
 }
+ISSUED_REQ_PROHIBITED=BASE_REQ_PROHIBITED|{'MODEL_LOAD'}
 
 def load(p): return json.loads(p.read_text(encoding='utf-8'))
 def fail(msg): print('FAIL: '+msg,file=sys.stderr); raise SystemExit(1)
@@ -28,18 +29,18 @@ def has_tbb(v):
     if isinstance(v,dict): return any(has_tbb(x) for x in v.values())
     return False
 
-def common_profile_checks(p):
+def common_profile_checks(p,required_prohibited):
     if p.get('model_binding',{}).get('model_id')!='Qwen/Qwen3.5-0.8B' or p.get('model_binding',{}).get('revision')!=QWEN_REV:
         return False,'CLUED_MODEL_M1_PROFILE_MODEL_BINDING'
     if p.get('runtime_binding',{}).get('revision')!=LLAMA_REV:
         return False,'CLUED_MODEL_M1_PROFILE_RUNTIME_BINDING'
     forbidden=set(p.get('prohibited_operations') or [])
-    if not REQ_PROHIBITED.issubset(forbidden):
+    if not required_prohibited.issubset(forbidden):
         return False,'CLUED_MODEL_M1_PROFILE_AUTHORITY_EXPANSION'
     return True,'PASS'
 
 def validate_candidate_profile(p):
-    good,code=common_profile_checks(p)
+    good,code=common_profile_checks(p,BASE_REQ_PROHIBITED)
     if not good: return good,code
     if has_tbb(p) and (p.get('status')=='ISSUED' or p.get('effectful_authority_issued') is True):
         return False,'CLUED_MODEL_M1_PROFILE_PENDING_BINDING_ISSUED'
@@ -50,7 +51,7 @@ def validate_candidate_profile(p):
     return True,'PASS'
 
 def validate_issued_profile(p):
-    good,code=common_profile_checks(p)
+    good,code=common_profile_checks(p,ISSUED_REQ_PROHIBITED)
     if not good: return good,code
     if has_tbb(p):
         return False,'CLUED_MODEL_M1_ISSUED_PROFILE_UNRESOLVED_BINDING'
