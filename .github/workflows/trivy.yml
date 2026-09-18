@@ -10,6 +10,12 @@ permissions:
 
 jobs:
   trivy-trusted-self-hosted:
+    name: >-
+      ${{ (((github.event_name == 'push' && github.actor == github.repository_owner) ||
+             (github.event_name == 'pull_request' &&
+              github.event.pull_request.head.repo.full_name == github.repository &&
+              github.actor == github.repository_owner)))
+          && 'trivy' || 'trivy-self-hosted-skipped' }}
     if: >-
       (github.event_name == 'push' &&
        github.actor == github.repository_owner) ||
@@ -43,6 +49,12 @@ jobs:
             fs --scanners misconfig --severity HIGH,CRITICAL --exit-code 1 /repo
 
   trivy-untrusted-hosted:
+    name: >-
+      ${{ (((github.event_name == 'push' && github.actor != github.repository_owner) ||
+             (github.event_name == 'pull_request' &&
+              (github.event.pull_request.head.repo.full_name != github.repository ||
+               github.actor != github.repository_owner))))
+          && 'trivy' || 'trivy-hosted-skipped' }}
     if: >-
       (github.event_name == 'push' &&
        github.actor != github.repository_owner) ||
