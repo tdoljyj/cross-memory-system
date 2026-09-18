@@ -1,0 +1,36 @@
+{
+  "object_type": "ModelRcCarrierDecisionCandidate",
+  "decision_id": "CLUED-MODEL-RC-CARRIER-STRATEGY-v1-CANDIDATE-20260918",
+  "date": "2026-09-18",
+  "status": "TARGETED_SUCCESSOR_REVISION_INPUT / NOT_M0_SUFFICIENT_FOR_v1.0.0",
+  "recommended_mode": "product_runtime_package_rc",
+  "why": "Preserves Kernel-only RC authority and avoids inventing a model-specific Kernel rc_type before a real runtime/package topology exists.",
+  "kernel_contract": {
+    "natural_language_contract_version": "v3.3",
+    "sha256": "f967fdf3e63028d29ed191160698726b5d707aaae63bd951f6ba2e8584936fec",
+    "rc_candidate_schema_path": "protocol/continuity/v1/schemas/core/rc-candidate.schema.json",
+    "current_registered_rc_types": [
+      "kernel_core",
+      "personal_runner",
+      "import_storage",
+      "public_cloud",
+      "public_plugin",
+      "external_executor_pack",
+      "enterprise"
+    ],
+    "machine_contract_state": "QUALIFIED_REFERENCE_NOT_CUT_OVER / CURRENT MAIN DOES NOT MATERIALIZE THE RC-CANDIDATE SCHEMA",
+    "requirement_trace_sha256": "ebc4036f9bf8cbf8b6bb463b3ec9c937b9ddc0e619f58a3e3662d1c6cbd9c11e"
+  },
+  "binding_policy": {
+    "tier_does_not_imply_deployment": true,
+    "global_single_rc_type_before_M0": "NOT_SAFE_TO_INFER",
+    "exact_rc_type_by_tier_runtime_package": "TO_BE_BOUND_AFTER_M3_TOPOLOGY_AND_BEFORE_TIER_RELEASE_PROFILE_FREEZE",
+    "machine_rc_seal_until_exact_binding": "PROHIBITED",
+    "stable_release_profile_until_exact_binding": "PROHIBITED",
+    "G7A_G7P_until_exact_binding": "PROHIBITED"
+  },
+  "alternative": {
+    "kernel_model_rc_type": "Requires an explicit post-Phase2 Kernel schema/registry/trace successor revision; not selected by this candidate."
+  },
+  "authority_effect": "NONE"
+}

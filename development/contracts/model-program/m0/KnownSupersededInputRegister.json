@@ -1,0 +1,22 @@
+{
+  "schema_version": "clued.model-known-superseded-inputs/1",
+  "current_plan": {
+    "version": "v1.0.1",
+    "sha256": "a918f42e6e9de160f7b14a95afafeae9022ddcc189b3663e768aa197110118a4"
+  },
+  "entries": [
+    {
+      "version": "v1.0.0",
+      "status": "FORMAL_PREDECESSOR_HISTORY"
+    },
+    {
+      "version": "v1.0.1-draft.1",
+      "status": "FAILED_REVISION_INPUT_HISTORY"
+    },
+    {
+      "version": "v0.9.2",
+      "status": "HISTORICAL_PLAN_BASELINE"
+    }
+  ],
+  "historical_inputs_may_issue_current_status": false
+}

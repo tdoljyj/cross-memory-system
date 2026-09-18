@@ -1,0 +1,44 @@
+{
+  "object_type": "ModelProgramParentStructureCompatibilityDecision",
+  "decision_id": "CLUED-MODEL-PARENT-STRUCTURE-COMPATIBILITY-v1.0.0-20260918",
+  "date": "2026-09-18",
+  "status": "ACCEPTED_FOR_MODEL_M0_FOUNDATION_ONLY",
+  "authority": {
+    "holder": "OWNER",
+    "source": "CURRENT_CONVERSATION",
+    "owner_instruction": "进入下一步",
+    "canonical_event_ref": null,
+    "canonical_receipt_ref": null
+  },
+  "consumer_plan": {
+    "version": "v1.0.0",
+    "sha256": "b1773742be41c8129b1cdf447c7b59dd1a235aba6ff35575b9c8288884f6b5d0"
+  },
+  "model_program_parent": {
+    "file": "Clued_第一方模型系统总体架构_训练体系与演进路线_v0.1.md",
+    "sha256": "65b7384e94dea6f22f9678db88f8542010f16cc919010cdc546288f89641fbbc",
+    "historical_axis_state": "MODEL_DOMAIN_DESIGN_INPUT_NOT_GLOBAL_CONSTITUTION"
+  },
+  "accepted_upstream": {
+    "architecture_acceptance_sha256": "f2ec1d6cf3afbd80d415c65c7bc0f71d86d606bda9031a174d92517e421ac246",
+    "structure_freeze_sha256": "f40c8af253f811f820e4b3eccc144d63ca3548663810aba10bebb22331661b36",
+    "kernel_natural_language_contract": {
+      "version": "v3.3",
+      "sha256": "f967fdf3e63028d29ed191160698726b5d707aaae63bd951f6ba2e8584936fec",
+      "state": "CURRENT_PRE_G1_NORMATIVE_DESIGN_AND_ACCEPTANCE_SOURCE"
+    }
+  },
+  "accepted_semantics": [
+    "Preserve separate clued_architecture_constitution_ref and model_program_parent_architecture_ref.",
+    "Use the exact model parent as the model-domain design parent for M0 foundation and source locking.",
+    "Kernel-only Authority, Model Output Candidate-only semantics, and existing Phase2 frozen responsibility boundaries remain controlling.",
+    "The adopted mobile/standard/flagship product Tier Set does not turn the model parent into the global architecture constitution."
+  ],
+  "excluded_effects": [
+    "Does not promote the parent file to global Clued Architecture Constitution.",
+    "Does not claim G1 machine-authority cutover.",
+    "Does not qualify a model combination for release or activation.",
+    "Does not issue M0, training, evaluation, promotion, activation or production authority."
+  ],
+  "compatibility_result": "PASS_FOR_PRE_M0_PARENT_AND_STRUCTURE_BINDING"
+}

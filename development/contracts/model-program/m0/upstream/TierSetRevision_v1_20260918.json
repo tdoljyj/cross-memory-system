@@ -1,0 +1,35 @@
+{
+  "object_type": "TierSetRevision",
+  "revision_id": "CLUED-MODEL-TIERSET-v1-20260918",
+  "date": "2026-09-18",
+  "status": "CURRENT",
+  "source": "OWNER_ADOPTED_v1.0.0_PLAN",
+  "source_plan_sha256": "b1773742be41c8129b1cdf447c7b59dd1a235aba6ff35575b9c8288884f6b5d0",
+  "required_tier_ids": [
+    "mobile",
+    "standard",
+    "flagship"
+  ],
+  "tier_definition_refs": {
+    "mobile": {
+      "path": "TierDefinitionRevision_mobile_v1_20260918.json",
+      "sha256": "feaf5746f548e274557360196d90be7f03eff2f3f49ca2473b4ac3250a5fc2f2"
+    },
+    "standard": {
+      "path": "TierDefinitionRevision_standard_v1_20260918.json",
+      "sha256": "6b61538641d50a0548bb4bf5aa99212fd7f35df0ecbc8cd6b2d9fc0f539c9f20"
+    },
+    "flagship": {
+      "path": "TierDefinitionRevision_flagship_v1_20260918.json",
+      "sha256": "2a094c80e3e71fd345b73b71c18025476d4f0fdb0a2d1dfb557214f3d6353f2c"
+    }
+  },
+  "architecture": "OPEN_VERSIONED_REGISTRY / NOT_KERNEL_ENUM",
+  "rules": {
+    "future_changes_require_new_revision": true,
+    "automatic_qualification_inheritance": false,
+    "training_topology_not_fixed": true,
+    "deployment_topology_not_fixed_by_tier": true
+  },
+  "authority_effect": "PRODUCT_RELEASE_TIER_IDENTITY_ONLY / NO_MODEL_QUALIFICATION / NO_RC / NO_PROMOTION"
+}

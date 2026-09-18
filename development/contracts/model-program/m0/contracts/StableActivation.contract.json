@@ -1,0 +1,12 @@
+{
+  "schema_version": "clued.model-stable-activation/1",
+  "status": "M0_BOUND",
+  "required_tiers": [
+    "mobile",
+    "standard",
+    "flagship"
+  ],
+  "production_write_requires_separate_promotion_authority": true,
+  "m0_authority_sufficient": false,
+  "stable_channel_and_product_activation_required_for_m6": true
+}

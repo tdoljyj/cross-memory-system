@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SignedTierSetReleaseManifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "tier_set_revision",
+    "tier_units",
+    "all_required_tiers_final_rc",
+    "authority_effect"
+  ],
+  "properties": {
+    "tier_set_revision": {
+      "type": "string"
+    },
+    "tier_units": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": {
+        "type": "string"
+      }
+    },
+    "all_required_tiers_final_rc": {
+      "const": true
+    },
+    "authority_effect": {
+      "const": "NONE"
+    }
+  }
+}

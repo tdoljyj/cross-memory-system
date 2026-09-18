@@ -1,0 +1,23 @@
+{
+  "profile_id": "m0-static-validation",
+  "stage_id": "MODEL-PROGRAM-M0",
+  "authority_ref": "NonProductionM0Authorization.v1.0.1",
+  "environment": "NON_PRODUCTION",
+  "training_allowed": false,
+  "real_model_evaluation_allowed": false,
+  "production_allowed": false,
+  "budget": {
+    "max_wall_seconds": 1800,
+    "max_compute_bytes": 1073741824,
+    "max_cost_microunits": 0
+  },
+  "attempts": {
+    "max_attempts": 3
+  },
+  "deadline": "2026-09-19T00:00:00Z",
+  "stop_conditions": [
+    "budget_exhausted",
+    "deadline_expired",
+    "validation_failure"
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "schema_version": "clued.model-tier-release-source-lock/1",
+  "tier_id": "standard",
+  "status": "FOUNDATION_BOUND_NOT_RELEASE_READY",
+  "tier_definition": {
+    "path": "../upstream/TierDefinitionRevision_standard_v1_20260918.json",
+    "sha256": "6b61538641d50a0548bb4bf5aa99212fd7f35df0ecbc8cd6b2d9fc0f539c9f20"
+  },
+  "profile_ref": "TO_BE_BOUND",
+  "risk_manifest_ref": "TO_BE_BOUND",
+  "carrier_binding_ref": "carrier:standard:TO_BE_BOUND",
+  "gate_receipt_refs": "TO_BE_BOUND",
+  "candidate_ref": "TO_BE_BOUND",
+  "rc_ref": "TO_BE_BOUND"
+}

@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TierReleaseUnit",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "tier_id",
+    "status",
+    "source_lock_ref",
+    "profile_ref",
+    "risk_manifest_ref",
+    "carrier_binding_ref",
+    "gate_receipt_refs",
+    "candidate_ref",
+    "rc_ref"
+  ],
+  "properties": {
+    "tier_id": {
+      "enum": [
+        "mobile",
+        "standard",
+        "flagship"
+      ]
+    },
+    "status": {
+      "enum": [
+        "FOUNDATION_REGISTERED_NOT_RELEASE_READY",
+        "RELEASE_READY"
+      ]
+    },
+    "source_lock_ref": {
+      "type": "string",
+      "minLength": 1
+    },
+    "profile_ref": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "risk_manifest_ref": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "carrier_binding_ref": {
+      "type": "string",
+      "minLength": 1
+    },
+    "gate_receipt_refs": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string"
+      }
+    },
+    "candidate_ref": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "rc_ref": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  }
+}

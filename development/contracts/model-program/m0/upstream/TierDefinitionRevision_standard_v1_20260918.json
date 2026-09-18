@@ -1,0 +1,17 @@
+{
+  "object_type": "TierDefinitionRevision",
+  "revision_id": "CLUED-MODEL-TIER-STANDARD-v1-20260918",
+  "tier_id": "standard",
+  "display_name": "Clued Standard / 标准版",
+  "status": "CURRENT_REQUIRED",
+  "source_plan_sha256": "b1773742be41c8129b1cdf447c7b59dd1a235aba6ff35575b9c8288884f6b5d0",
+  "semantics": {
+    "dimension": "PRODUCT_AND_RELEASE_TIER",
+    "deployment_topology": "NOT_FIXED_BY_TIER",
+    "training_topology": "M3_EVIDENCE_DECIDED",
+    "stable_channel_required": true,
+    "product_activation_required": true,
+    "qualification_inheritance": "FORBIDDEN_UNLESS_EXACT_COMPATIBILITY_DECISION"
+  },
+  "authority_effect": "MACHINE_READABLE_PROJECTION_OF_ADOPTED_PLAN / NO_RELEASE_AUTHORITY"
+}

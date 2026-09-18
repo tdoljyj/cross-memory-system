@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TierSetPromotionReadinessInput",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "tier_set_revision",
+    "required_tier_units",
+    "all_required_tiers_final_rc",
+    "all_required_tiers_g7p",
+    "creates_promotion_authority"
+  ],
+  "properties": {
+    "tier_set_revision": {
+      "type": "string"
+    },
+    "required_tier_units": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": {
+        "type": "string"
+      }
+    },
+    "all_required_tiers_final_rc": {
+      "type": "boolean"
+    },
+    "all_required_tiers_g7p": {
+      "type": "boolean"
+    },
+    "creates_promotion_authority": {
+      "const": false
+    }
+  }
+}

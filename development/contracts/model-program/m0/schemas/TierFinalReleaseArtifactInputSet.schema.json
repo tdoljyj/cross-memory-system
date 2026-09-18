@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TierFinalReleaseArtifactInputSet",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "tier_id",
+    "candidate_digest",
+    "profile_digest",
+    "risk_digest",
+    "gate_receipt_refs",
+    "rc_ref"
+  ],
+  "properties": {
+    "tier_id": {
+      "enum": [
+        "mobile",
+        "standard",
+        "flagship"
+      ]
+    },
+    "candidate_digest": {
+      "type": "string"
+    },
+    "profile_digest": {
+      "type": "string"
+    },
+    "risk_digest": {
+      "type": "string"
+    },
+    "gate_receipt_refs": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string"
+      }
+    },
+    "rc_ref": {
+      "type": "string"
+    }
+  }
+}

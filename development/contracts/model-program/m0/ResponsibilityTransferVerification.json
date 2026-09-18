@@ -1,0 +1,14 @@
+{
+  "schema_version": "clued.model-responsibility-transfer-verification/1",
+  "status": "READ_ONLY_VERIFIED_FROM_CURRENT_READINESS",
+  "readiness_ref": "upstream/Phase2EntryDevelopmentReadinessDecision_PASS_20260918.json",
+  "source_readiness_sha256": "81f671b5e4504111c40826134bf67fc82d699e0a0f7667d67d91973820d6b254",
+  "old_responsibilities_have_successor": true,
+  "unknown_fields_policy": [
+    "TO_BE_BOUND",
+    "EXTERNAL_INPUT_REQUIRED"
+  ],
+  "m0_performs_transfer": false,
+  "m0_performs_cutover": false,
+  "authority_effect": "NONE"
+}

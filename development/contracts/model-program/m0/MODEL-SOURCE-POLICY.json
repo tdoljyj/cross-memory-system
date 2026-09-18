@@ -1,0 +1,42 @@
+{
+  "schema_version": "clued.model-source-policy/1",
+  "policy_id": "MODEL-SOURCE-POLICY",
+  "status": "ACTIVE_FOR_M0_FOUNDATION",
+  "closed_source_default": true,
+  "public_release_decision": "DEFERRED",
+  "repository_is_canonical_store": false,
+  "memory_directory_model_status_write": "FORBIDDEN",
+  "product_feedback_training_default": "NOT_TRAINING_DATA",
+  "enterprise_data_public_model_default": "FORBIDDEN",
+  "unknown_license": "FORBIDDEN",
+  "secrets_in_dataset": "FORBIDDEN",
+  "access_matrix": [
+    {
+      "role": "owner",
+      "contracts": "READ",
+      "decision": "EXPLICIT_ONLY"
+    },
+    {
+      "role": "implementer",
+      "contracts": "BRANCH_WRITE_WITHIN_AUTHORITY",
+      "production": "FORBIDDEN",
+      "secrets": "FORBIDDEN"
+    },
+    {
+      "role": "independent_reviewer",
+      "contracts": "READ_ONLY",
+      "candidate_mutation": "FORBIDDEN"
+    },
+    {
+      "role": "runtime_consumer",
+      "contracts": "READ_ONLY",
+      "authority_inference": "FORBIDDEN"
+    }
+  ],
+  "public_stable_store_semantics": {
+    "public": "DISTRIBUTION_VISIBILITY_ONLY",
+    "stable": "RELEASE_CHANNEL_ONLY",
+    "store": "CATALOG_DISTRIBUTION_SURFACE_ONLY",
+    "none_creates_authority": true
+  }
+}

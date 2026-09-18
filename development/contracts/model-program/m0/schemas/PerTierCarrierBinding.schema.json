@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PerTierCarrierBinding",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "tier_id",
+    "binding_status",
+    "selection_basis",
+    "rc_type",
+    "kernel_schema_ref",
+    "registry_revision_ref",
+    "trace_ref"
+  ],
+  "properties": {
+    "tier_id": {
+      "enum": [
+        "mobile",
+        "standard",
+        "flagship"
+      ]
+    },
+    "binding_status": {
+      "enum": [
+        "TO_BE_BOUND",
+        "BOUND"
+      ]
+    },
+    "selection_basis": {
+      "enum": [
+        "TOPOLOGY_EVIDENCE",
+        "TO_BE_BOUND"
+      ]
+    },
+    "rc_type": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "kernel_schema_ref": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "registry_revision_ref": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "trace_ref": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  }
+}

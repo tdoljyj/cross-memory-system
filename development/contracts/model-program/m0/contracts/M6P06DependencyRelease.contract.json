@@ -1,0 +1,7 @@
+{
+  "schema_version": "clued.model-m6p06-dependency-release/1",
+  "writer": "M6-P06_ONLY",
+  "required_input": "VerificationCloseoutReference",
+  "verification_lane_may_release": false,
+  "action_closeout_owner": "M6-P"
+}

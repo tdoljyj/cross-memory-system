@@ -1,0 +1,104 @@
+{
+  "schema_version": "clued.model-task-id-fixtures/1",
+  "fixtures": [
+    {
+      "fixture_id": "TASK-ID-01",
+      "schema_kind": "promotion",
+      "domain_separator": "clued:model:promotion-task:v1",
+      "parts": [
+        "mobile",
+        "publish",
+        "stable",
+        "candidate-001"
+      ],
+      "canonicalization": "NFC_UTF8_JCS_SHA256",
+      "task_id": "faa43ae08972b427aa092d4508d7294751dc13f1844277212da57b4dfe548274"
+    },
+    {
+      "fixture_id": "TASK-ID-02",
+      "schema_kind": "promotion",
+      "domain_separator": "clued:model:promotion-task:v1",
+      "parts": [
+        "standard",
+        "activate",
+        "product",
+        "candidate-001"
+      ],
+      "canonicalization": "NFC_UTF8_JCS_SHA256",
+      "task_id": "970cfcd5b45e03359fe272ff8d52dc387441c70d9378ad986dff7aac519f7ca0"
+    },
+    {
+      "fixture_id": "TASK-ID-03",
+      "schema_kind": "promotion",
+      "domain_separator": "clued:model:promotion-task:v1",
+      "parts": [
+        "flagship",
+        "rollback",
+        "stable",
+        "candidate-001"
+      ],
+      "canonicalization": "NFC_UTF8_JCS_SHA256",
+      "task_id": "b454d4baaf154bcb30f5ef7c803a8b2537ea6761c2dcc5fd82b112079cdd634b"
+    },
+    {
+      "fixture_id": "TASK-ID-04",
+      "schema_kind": "verification",
+      "domain_separator": "clued:model:verification-task:v1",
+      "parts": [
+        "mobile",
+        "GA",
+        "action-001"
+      ],
+      "canonicalization": "NFC_UTF8_JCS_SHA256",
+      "task_id": "eed7191e0eef6d18a16b5c8e9666e7127fb95cb8ff89be38aeaf5ff8645030a8"
+    },
+    {
+      "fixture_id": "TASK-ID-05",
+      "schema_kind": "verification",
+      "domain_separator": "clued:model:verification-task:v1",
+      "parts": [
+        "standard",
+        "GRR",
+        "action-002"
+      ],
+      "canonicalization": "NFC_UTF8_JCS_SHA256",
+      "task_id": "e37227b3d4eb76a8bebf34dab9cc82634ccf58404498b1e2c558c49223039224"
+    },
+    {
+      "fixture_id": "TASK-ID-06",
+      "schema_kind": "verification",
+      "domain_separator": "clued:model:verification-task:v1",
+      "parts": [
+        "flagship",
+        "closeout",
+        "action-003"
+      ],
+      "canonicalization": "NFC_UTF8_JCS_SHA256",
+      "task_id": "48731496d0ee56116ac3159fee8a2b3f09d5916752764270c38af786feaaf2a7"
+    },
+    {
+      "fixture_id": "TASK-ID-07",
+      "schema_kind": "tier_unit",
+      "domain_separator": "clued:model:tier-unit:v1",
+      "parts": [
+        "mobile",
+        "release-unit",
+        "rev-001"
+      ],
+      "canonicalization": "NFC_UTF8_JCS_SHA256",
+      "task_id": "70207395c82c354d75f1686234814f245be771f42feff02a8dec7452b67c7b7e"
+    },
+    {
+      "fixture_id": "TASK-ID-08",
+      "schema_kind": "tier_unit",
+      "domain_separator": "clued:model:tier-unit:v1",
+      "parts": [
+        "flagship",
+        "release-unit",
+        "rev-001"
+      ],
+      "canonicalization": "NFC_UTF8_JCS_SHA256",
+      "task_id": "529944046c6146153625a6a4083f8bfd3a655120a99ff608a76daec08d77cf38"
+    }
+  ]
+}

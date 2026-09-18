@@ -1,0 +1,13 @@
+{
+  "schema_version": "clued.model-tier-release-unit/1",
+  "tier_id": "flagship",
+  "status": "FOUNDATION_REGISTERED_NOT_RELEASE_READY",
+  "source_lock_ref": "TierReleaseSourceLock_flagship.json",
+  "profile_ref": null,
+  "risk_manifest_ref": null,
+  "carrier_binding_ref": "carrier:flagship:TO_BE_BOUND",
+  "gate_receipt_refs": [],
+  "candidate_ref": null,
+  "rc_ref": null,
+  "release_eligible": false
+}

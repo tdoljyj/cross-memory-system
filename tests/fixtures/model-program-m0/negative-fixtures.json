@@ -1,0 +1,434 @@
+{
+  "schema_version": "clued.model-m0-fixtures/2",
+  "negative_cases": [
+    {
+      "id": "NEG-SHARED-RISK",
+      "validator": "tier_set",
+      "expected_error": "CLUED_MODEL_M0_SHARED_RISK",
+      "input": {
+        "units": [
+          {
+            "tier_id": "mobile",
+            "risk_manifest_ref": "risk-1",
+            "gate_receipt_refs": [
+              "g-mobile"
+            ],
+            "candidate_ref": "c-mobile",
+            "rc_ref": "rc-mobile"
+          },
+          {
+            "tier_id": "standard",
+            "risk_manifest_ref": "risk-1",
+            "gate_receipt_refs": [
+              "g-standard"
+            ],
+            "candidate_ref": "c-standard",
+            "rc_ref": "rc-standard"
+          },
+          {
+            "tier_id": "flagship",
+            "risk_manifest_ref": "risk-3",
+            "gate_receipt_refs": [
+              "g-flag"
+            ],
+            "candidate_ref": "c-flag",
+            "rc_ref": "rc-flag"
+          }
+        ]
+      }
+    },
+    {
+      "id": "NEG-CROSS-TIER-RECEIPT",
+      "validator": "tier_set",
+      "expected_error": "CLUED_MODEL_M0_CROSS_TIER_RECEIPT_REUSE",
+      "input": {
+        "units": [
+          {
+            "tier_id": "mobile",
+            "risk_manifest_ref": "r1",
+            "gate_receipt_refs": [
+              "grr-x"
+            ],
+            "candidate_ref": "c1",
+            "rc_ref": "rc1"
+          },
+          {
+            "tier_id": "standard",
+            "risk_manifest_ref": "r2",
+            "gate_receipt_refs": [
+              "grr-x"
+            ],
+            "candidate_ref": "c2",
+            "rc_ref": "rc2"
+          },
+          {
+            "tier_id": "flagship",
+            "risk_manifest_ref": "r3",
+            "gate_receipt_refs": [
+              "grr3"
+            ],
+            "candidate_ref": "c3",
+            "rc_ref": "rc3"
+          }
+        ]
+      }
+    },
+    {
+      "id": "NEG-PARALLEL-RC-SCHEMA",
+      "validator": "rc_schema_authority",
+      "expected_error": "CLUED_MODEL_M0_PARALLEL_RC_SCHEMA",
+      "input": {
+        "authority_owner": "MODEL_PROGRAM",
+        "schema_id": "model_rc_v1"
+      }
+    },
+    {
+      "id": "NEG-UNACCEPTED-CARRIER",
+      "validator": "carrier_decision",
+      "expected_error": "CLUED_MODEL_M0_CARRIER_UNACCEPTED",
+      "input": {
+        "status": "CANDIDATE",
+        "mode": "product_runtime_package_rc"
+      }
+    },
+    {
+      "id": "NEG-TIER-NAME-RC",
+      "validator": "carrier_binding",
+      "expected_error": "CLUED_MODEL_M0_TIER_NAME_RC_INFERENCE",
+      "input": {
+        "tier_id": "mobile",
+        "binding_status": "BOUND",
+        "selection_basis": "TIER_NAME_ONLY",
+        "rc_type": "personal_runner"
+      }
+    },
+    {
+      "id": "NEG-VERIFICATION-UNLOCK",
+      "validator": "verification_lane",
+      "expected_error": "CLUED_MODEL_M0_VERIFICATION_UNLOCK",
+      "input": {
+        "writer": "M6-V_EVIDENCE_ONLY",
+        "write_set": [
+          "Evidence",
+          "DependencyUnlock"
+        ],
+        "may_unlock_dependency": true
+      }
+    },
+    {
+      "id": "NEG-STRING-CONCAT-ID",
+      "validator": "identity",
+      "expected_error": "CLUED_MODEL_M0_IDENTITY_METHOD",
+      "input": {
+        "domain_separator": "clued:model:promotion-task:v1",
+        "parts": [
+          "mobile",
+          "publish"
+        ],
+        "canonicalization": "STRING_CONCAT",
+        "task_id": "mobilepublish"
+      }
+    },
+    {
+      "id": "NEG-INFINITE-BUDGET",
+      "validator": "experiment_profile",
+      "expected_error": "CLUED_MODEL_M0_PROFILE_BUDGET_UNBOUNDED",
+      "input": {
+        "profile_id": "m0-static-validation",
+        "stage_id": "MODEL-PROGRAM-M0",
+        "authority_ref": "NonProductionM0Authorization.v1.0.1",
+        "environment": "NON_PRODUCTION",
+        "training_allowed": false,
+        "real_model_evaluation_allowed": false,
+        "production_allowed": false,
+        "budget": {
+          "max_wall_seconds": 0,
+          "max_compute_bytes": 1073741824,
+          "max_cost_microunits": 0
+        },
+        "attempts": {
+          "max_attempts": 3
+        },
+        "deadline": "2026-09-19T00:00:00Z",
+        "stop_conditions": [
+          "budget_exhausted",
+          "deadline_expired",
+          "validation_failure"
+        ]
+      }
+    },
+    {
+      "id": "NEG-NO-PA-PUBLISH",
+      "validator": "promotion_action",
+      "expected_error": "CLUED_MODEL_M0_PROMOTION_AUTHORITY_MISSING",
+      "input": {
+        "action_id": "a1",
+        "tier_id": "mobile",
+        "action_kind": "publish",
+        "promotion_authority_ref": null,
+        "preconditions": []
+      }
+    },
+    {
+      "id": "NEG-PROJECTION-AUTHORITY",
+      "validator": "projection",
+      "expected_error": "CLUED_MODEL_M0_PROJECTION_AUTHORITY",
+      "input": {
+        "input_set_digest": "i",
+        "algorithm_version": "v1",
+        "output_digest": "o",
+        "creates_decision": false,
+        "creates_receipt": true,
+        "creates_authority": true
+      }
+    },
+    {
+      "id": "NEG-ILLEGAL-LABEL",
+      "validator": "complete_call",
+      "expected_error": "CLUED_MODEL_M0_CALL_LABEL",
+      "input": {
+        "source_revision": "src-1",
+        "route_budget": {
+          "max_depth": 4,
+          "max_calls": 4,
+          "remaining_calls": 3,
+          "max_escalations": 2,
+          "remaining_escalations": 2
+        },
+        "status": "PREDICTED",
+        "value": {
+          "label": "MAYBE",
+          "probability": 0.7
+        },
+        "score_kind": "CALIBRATED_PROBABILITY",
+        "calibration_ref": "cal-1",
+        "calibration_status": "VALID",
+        "evidence_required": true,
+        "evidence_refs": [
+          "ev-1"
+        ],
+        "abstain_reason": null
+      }
+    },
+    {
+      "id": "NEG-ILLEGAL-NUMBER",
+      "validator": "complete_call",
+      "expected_error": "CLUED_MODEL_M0_CALL_NUMBER",
+      "input": {
+        "source_revision": "src-1",
+        "route_budget": {
+          "max_depth": 4,
+          "max_calls": 4,
+          "remaining_calls": 3,
+          "max_escalations": 2,
+          "remaining_escalations": 2
+        },
+        "status": "PREDICTED",
+        "value": {
+          "label": "SUPPORTED",
+          "probability": 1.7
+        },
+        "score_kind": "CALIBRATED_PROBABILITY",
+        "calibration_ref": "cal-1",
+        "calibration_status": "VALID",
+        "evidence_required": true,
+        "evidence_refs": [
+          "ev-1"
+        ],
+        "abstain_reason": null
+      }
+    },
+    {
+      "id": "NEG-ABSTAIN-DEFAULT",
+      "validator": "complete_call",
+      "expected_error": "CLUED_MODEL_M0_CALL_ABSTAIN_DEFAULT",
+      "input": {
+        "source_revision": "src-1",
+        "route_budget": {
+          "max_depth": 4,
+          "max_calls": 4,
+          "remaining_calls": 3,
+          "max_escalations": 2,
+          "remaining_escalations": 2
+        },
+        "status": "ABSTAINED",
+        "value": "DEFAULT",
+        "score_kind": "NONE",
+        "calibration_ref": null,
+        "calibration_status": "NOT_APPLICABLE",
+        "evidence_required": false,
+        "evidence_refs": [],
+        "abstain_reason": "INSUFFICIENT_EVIDENCE"
+      }
+    },
+    {
+      "id": "NEG-MISSING-EVIDENCE",
+      "validator": "complete_call",
+      "expected_error": "CLUED_MODEL_M0_CALL_EVIDENCE",
+      "input": {
+        "source_revision": "src-1",
+        "route_budget": {
+          "max_depth": 4,
+          "max_calls": 4,
+          "remaining_calls": 3,
+          "max_escalations": 2,
+          "remaining_escalations": 2
+        },
+        "status": "PREDICTED",
+        "value": 0.7,
+        "score_kind": "CALIBRATED_PROBABILITY",
+        "calibration_ref": "cal-1",
+        "calibration_status": "VALID",
+        "evidence_required": true,
+        "evidence_refs": [],
+        "abstain_reason": null
+      }
+    },
+    {
+      "id": "NEG-CALIBRATION-MISSING",
+      "validator": "complete_call",
+      "expected_error": "CLUED_MODEL_M0_CALL_CALIBRATION",
+      "input": {
+        "source_revision": "src-1",
+        "route_budget": {
+          "max_depth": 4,
+          "max_calls": 4,
+          "remaining_calls": 3,
+          "max_escalations": 2,
+          "remaining_escalations": 2
+        },
+        "status": "PREDICTED",
+        "value": 0.7,
+        "score_kind": "CALIBRATED_PROBABILITY",
+        "calibration_ref": null,
+        "calibration_status": "MISSING",
+        "evidence_required": true,
+        "evidence_refs": [
+          "ev-1"
+        ],
+        "abstain_reason": null
+      }
+    },
+    {
+      "id": "NEG-SOURCE-REVISION-DRIFT",
+      "validator": "source_reuse",
+      "expected_error": "CLUED_MODEL_M0_SOURCE_REVISION_DRIFT",
+      "input": {
+        "bound_source_revision": "src-1",
+        "observed_source_revision": "src-2",
+        "reuse_previous_result": true
+      }
+    },
+    {
+      "id": "NEG-ROUTE-BUDGET-TERMINAL",
+      "validator": "complete_call",
+      "expected_error": "CLUED_MODEL_M0_ROUTE_BUDGET_TERMINAL",
+      "input": {
+        "source_revision": "src-1",
+        "route_budget": {
+          "max_depth": 4,
+          "max_calls": 4,
+          "remaining_calls": 0,
+          "max_escalations": 2,
+          "remaining_escalations": 0
+        },
+        "status": "PREDICTED",
+        "value": 0.7,
+        "score_kind": "CALIBRATED_PROBABILITY",
+        "calibration_ref": "cal-1",
+        "calibration_status": "VALID",
+        "evidence_required": true,
+        "evidence_refs": [
+          "ev-1"
+        ],
+        "abstain_reason": null,
+        "attempt_route_again": true
+      }
+    }
+  ],
+  "positive_cases": [
+    {
+      "id": "POS-VALID-PROFILE",
+      "validator": "experiment_profile",
+      "input": {
+        "profile_id": "m0-static-validation",
+        "stage_id": "MODEL-PROGRAM-M0",
+        "authority_ref": "NonProductionM0Authorization.v1.0.1",
+        "environment": "NON_PRODUCTION",
+        "training_allowed": false,
+        "real_model_evaluation_allowed": false,
+        "production_allowed": false,
+        "budget": {
+          "max_wall_seconds": 1800,
+          "max_compute_bytes": 1073741824,
+          "max_cost_microunits": 0
+        },
+        "attempts": {
+          "max_attempts": 3
+        },
+        "deadline": "2026-09-19T00:00:00Z",
+        "stop_conditions": [
+          "budget_exhausted",
+          "deadline_expired",
+          "validation_failure"
+        ]
+      }
+    },
+    {
+      "id": "POS-RAW-SCORE-NA",
+      "validator": "complete_call",
+      "input": {
+        "source_revision": "src-1",
+        "route_budget": {
+          "max_depth": 4,
+          "max_calls": 4,
+          "remaining_calls": 3,
+          "max_escalations": 2,
+          "remaining_escalations": 2
+        },
+        "status": "PREDICTED",
+        "value": 0.44,
+        "score_kind": "RAW_SCORE",
+        "calibration_ref": null,
+        "calibration_status": "NOT_APPLICABLE",
+        "evidence_required": false,
+        "evidence_refs": [],
+        "abstain_reason": null
+      }
+    },
+    {
+      "id": "POS-ABSTAIN",
+      "validator": "complete_call",
+      "input": {
+        "source_revision": "src-1",
+        "route_budget": {
+          "max_depth": 4,
+          "max_calls": 4,
+          "remaining_calls": 3,
+          "max_escalations": 2,
+          "remaining_escalations": 2
+        },
+        "status": "ABSTAINED",
+        "value": null,
+        "score_kind": "NONE",
+        "calibration_ref": null,
+        "calibration_status": "NOT_APPLICABLE",
+        "evidence_required": false,
+        "evidence_refs": [],
+        "abstain_reason": "INSUFFICIENT_EVIDENCE"
+      }
+    },
+    {
+      "id": "POS-PROJECTION",
+      "validator": "projection",
+      "input": {
+        "input_set_digest": "i",
+        "algorithm_version": "m6-projection-jcs-sha256-v1",
+        "output_digest": "o",
+        "creates_decision": false,
+        "creates_receipt": false,
+        "creates_authority": false
+      }
+    }
+  ]
+}

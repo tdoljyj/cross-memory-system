@@ -1,0 +1,11 @@
+{
+  "schema_version": "clued.model-projection-algorithm/1",
+  "algorithm_version": "m6-projection-jcs-sha256-v1",
+  "inputs": "EXACT_SORTED_TYPED_INPUT_SET",
+  "canonicalization": "NFC_UTF8_JCS",
+  "digest": "SHA-256",
+  "creates_decision": false,
+  "creates_receipt": false,
+  "creates_authority": false,
+  "replay_requirement": "SAME_INPUT_SET_AND_ALGORITHM_MUST_PRODUCE_SAME_OUTPUT_DIGEST"
+}

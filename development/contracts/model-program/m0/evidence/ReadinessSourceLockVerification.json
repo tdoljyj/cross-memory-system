@@ -1,0 +1,91 @@
+{
+  "schema_version": "clued.model-readiness-source-lock-verification/1",
+  "verification_scope": "M0-13 SUMMARY_BINDING_READBACK_ONLY / NO_PHASE2_RERUN",
+  "readiness_decision": {
+    "path": "../upstream/Phase2EntryDevelopmentReadinessDecision_PASS_20260918.json",
+    "sha256": "81f671b5e4504111c40826134bf67fc82d699e0a0f7667d67d91973820d6b254"
+  },
+  "verified_typed_inputs": [
+    {
+      "id": "phase2_entry_readiness",
+      "path": "upstream/Phase2EntryDevelopmentReadinessDecision_PASS_20260918.json",
+      "expected_sha256": "81f671b5e4504111c40826134bf67fc82d699e0a0f7667d67d91973820d6b254",
+      "observed_sha256": "81f671b5e4504111c40826134bf67fc82d699e0a0f7667d67d91973820d6b254",
+      "result": "MATCH"
+    },
+    {
+      "id": "parent_structure_compatibility",
+      "path": "upstream/ModelProgramParentStructureCompatibilityDecision_ACCEPTED_20260918.json",
+      "expected_sha256": "22494b53cd7f5bb4d29857d88e56f464c8037f9ca3cbbe2239cef545f904ff9f",
+      "observed_sha256": "22494b53cd7f5bb4d29857d88e56f464c8037f9ca3cbbe2239cef545f904ff9f",
+      "result": "MATCH"
+    },
+    {
+      "id": "tier_set_revision",
+      "path": "upstream/TierSetRevision_v1_20260918.json",
+      "expected_sha256": "88f1451fddb0a6e89664ea0eb82260a61ad3df50c696fc639b9878bdc47eaefc",
+      "observed_sha256": "88f1451fddb0a6e89664ea0eb82260a61ad3df50c696fc639b9878bdc47eaefc",
+      "result": "MATCH"
+    },
+    {
+      "id": "tier_mobile",
+      "path": "upstream/TierDefinitionRevision_mobile_v1_20260918.json",
+      "expected_sha256": "feaf5746f548e274557360196d90be7f03eff2f3f49ca2473b4ac3250a5fc2f2",
+      "observed_sha256": "feaf5746f548e274557360196d90be7f03eff2f3f49ca2473b4ac3250a5fc2f2",
+      "result": "MATCH"
+    },
+    {
+      "id": "tier_standard",
+      "path": "upstream/TierDefinitionRevision_standard_v1_20260918.json",
+      "expected_sha256": "6b61538641d50a0548bb4bf5aa99212fd7f35df0ecbc8cd6b2d9fc0f539c9f20",
+      "observed_sha256": "6b61538641d50a0548bb4bf5aa99212fd7f35df0ecbc8cd6b2d9fc0f539c9f20",
+      "result": "MATCH"
+    },
+    {
+      "id": "tier_flagship",
+      "path": "upstream/TierDefinitionRevision_flagship_v1_20260918.json",
+      "expected_sha256": "2a094c80e3e71fd345b73b71c18025476d4f0fdb0a2d1dfb557214f3d6353f2c",
+      "observed_sha256": "2a094c80e3e71fd345b73b71c18025476d4f0fdb0a2d1dfb557214f3d6353f2c",
+      "result": "MATCH"
+    },
+    {
+      "id": "kernel_gate_mapping",
+      "path": "upstream/KernelGateMappingRevision_model_program_v1_20260918.json",
+      "expected_sha256": "b235adf939fceb45f7ed707328eeb1622ec3b124e905437e824674fb3c6e6bcc",
+      "observed_sha256": "b235adf939fceb45f7ed707328eeb1622ec3b124e905437e824674fb3c6e6bcc",
+      "result": "MATCH"
+    },
+    {
+      "id": "object_authority_registry",
+      "path": "upstream/ObjectAuthorityRegistry_model_program_v1_20260918.json",
+      "expected_sha256": "b89bb15a047cd59390428e86d33e8e2fc59d3a83954c68c2393d0e5b3dc4f3cc",
+      "observed_sha256": "b89bb15a047cd59390428e86d33e8e2fc59d3a83954c68c2393d0e5b3dc4f3cc",
+      "result": "MATCH"
+    },
+    {
+      "id": "carrier_candidate_input",
+      "path": "upstream/ModelRcCarrierDecisionCandidate_product_runtime_package_rc_20260918.json",
+      "expected_sha256": "7ded2172a8a69b4c930d10574c6da56dde62bf6f01d10998bf708bffe113d9a8",
+      "observed_sha256": "7ded2172a8a69b4c930d10574c6da56dde62bf6f01d10998bf708bffe113d9a8",
+      "result": "MATCH"
+    },
+    {
+      "id": "requirement_trace",
+      "path": "upstream/RequirementTraceRevision_v15.json",
+      "expected_sha256": "ebc4036f9bf8cbf8b6bb463b3ec9c937b9ddc0e619f58a3e3662d1c6cbd9c11e",
+      "observed_sha256": "ebc4036f9bf8cbf8b6bb463b3ec9c937b9ddc0e619f58a3e3662d1c6cbd9c11e",
+      "result": "MATCH"
+    },
+    {
+      "id": "kernel_v3_3",
+      "path": "upstream/KernelV33Reference.json",
+      "expected_sha256": "b1698948b342fd96c2bea953bc3ba076d5e7146476edc27221de122b020ec2f1",
+      "observed_sha256": "b1698948b342fd96c2bea953bc3ba076d5e7146476edc27221de122b020ec2f1",
+      "result": "MATCH"
+    }
+  ],
+  "post_freeze_digest_binding_mode": "TRANSITIVE_EXACT_FIELDS_INSIDE_EXACT_READINESS_DECISION",
+  "mismatch_count": 0,
+  "result": "PASS_STATIC_READBACK",
+  "authority_effect": "NONE"
+}

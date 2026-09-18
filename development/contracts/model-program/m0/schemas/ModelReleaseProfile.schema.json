@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ModelReleaseProfile",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "profile_id",
+    "tier_id",
+    "gate_refs",
+    "gate_definition_set_digest",
+    "carrier_binding_ref",
+    "risk_manifest_ref"
+  ],
+  "properties": {
+    "profile_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "tier_id": {
+      "enum": [
+        "mobile",
+        "standard",
+        "flagship"
+      ]
+    },
+    "gate_refs": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string"
+      }
+    },
+    "gate_definition_set_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "carrier_binding_ref": {
+      "type": "string",
+      "minLength": 1
+    },
+    "risk_manifest_ref": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

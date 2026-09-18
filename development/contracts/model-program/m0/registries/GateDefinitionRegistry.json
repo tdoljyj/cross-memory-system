@@ -1,0 +1,28 @@
+{
+  "schema_version": "clued.model-gate-definition-registry/1",
+  "status": "M0_BOUND_REFERENCE_ONLY",
+  "authority_owner": "KERNEL_ONLY",
+  "atomic_gate_ids": [
+    "G1",
+    "G2",
+    "G3",
+    "G4b",
+    "G4f",
+    "G5a",
+    "G5c",
+    "G6a",
+    "G7A",
+    "G7P"
+  ],
+  "upstream_mapping": {
+    "path": "../upstream/KernelGateMappingRevision_model_program_v1_20260918.json",
+    "sha256": "b235adf939fceb45f7ed707328eeb1622ec3b124e905437e824674fb3c6e6bcc"
+  },
+  "requirement_trace": {
+    "path": "../upstream/RequirementTraceRevision_v15.json",
+    "sha256": "ebc4036f9bf8cbf8b6bb463b3ec9c937b9ddc0e619f58a3e3662d1c6cbd9c11e",
+    "git_blob_sha1": "717c49f6d99a3385cbdd7d4ea7c0b436ec11d857"
+  },
+  "model_domain_may_define_new_atomic_gate": false,
+  "release_actions_are_gate_ids": false
+}

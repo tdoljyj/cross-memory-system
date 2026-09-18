@@ -1,0 +1,31 @@
+{
+  "schema_version": "clued.model-m0-error-registry/1",
+  "status": "M0_BOUND",
+  "codes": {
+    "CLUED_MODEL_M0_PROFILE_BUDGET_UNBOUNDED": "Experiment profile budget/attempt/deadline is not finite.",
+    "CLUED_MODEL_M0_PROFILE_AUTHORITY_EXPANSION": "M0 profile attempts training, evaluation or production authority.",
+    "CLUED_MODEL_M0_CARRIER_UNACCEPTED": "Carrier strategy is not accepted for current plan.",
+    "CLUED_MODEL_M0_TIER_NAME_RC_INFERENCE": "Tier name was used to select an rc_type.",
+    "CLUED_MODEL_M0_PARALLEL_RC_SCHEMA": "Model domain attempted to create or own a parallel Kernel RC schema.",
+    "CLUED_MODEL_M0_UNKNOWN_GATE": "Gate set contains a non-registered atomic Kernel Gate.",
+    "CLUED_MODEL_M0_GATE_MAPPING_DRIFT": "Model requirement mapping differs from exact upstream Kernel mapping.",
+    "CLUED_MODEL_M0_SHARED_RISK": "Signed Risk Manifest reused across tiers.",
+    "CLUED_MODEL_M0_CROSS_TIER_RECEIPT_REUSE": "Gate/promotion receipt reused across tiers.",
+    "CLUED_MODEL_M0_CROSS_TIER_CANDIDATE_REUSE": "Candidate or final RC reused across tiers.",
+    "CLUED_MODEL_M0_RELEASE_PROFILE_GATE_BINDING": "ModelReleaseProfile lacks immutable gate refs/digest.",
+    "CLUED_MODEL_M0_PERF_TYPE": "PERF-B/PERF-S/PERF-Q object type mismatch.",
+    "CLUED_MODEL_M0_MIGRATION_APPLICABILITY": "Migration applicability/N-A proof/MIG refs invalid.",
+    "CLUED_MODEL_M0_IDENTITY_METHOD": "Task ID was not produced by typed NFC/UTF-8/JCS/domain-separated SHA-256.",
+    "CLUED_MODEL_M0_VERIFICATION_UNLOCK": "M6-V attempted non-evidence write or dependency unlock.",
+    "CLUED_MODEL_M0_PROMOTION_AUTHORITY_MISSING": "Publish/activate action lacks exact PromotionAuthorization.",
+    "CLUED_MODEL_M0_PROJECTION_AUTHORITY": "Projection attempted to create Decision, Receipt or Authority.",
+    "CLUED_MODEL_M0_CALL_LABEL": "Complete Call contains illegal label/status semantics.",
+    "CLUED_MODEL_M0_CALL_NUMBER": "Complete Call contains non-finite or out-of-range probability.",
+    "CLUED_MODEL_M0_CALL_EVIDENCE": "Required Evidence is missing.",
+    "CLUED_MODEL_M0_CALL_CALIBRATION": "Required calibration is missing/invalid.",
+    "CLUED_MODEL_M0_CALL_ABSTAIN_DEFAULT": "Abstain was converted into a default business value.",
+    "CLUED_MODEL_M0_SOURCE_REVISION_DRIFT": "Result reused across changed source revision.",
+    "CLUED_MODEL_M0_ROUTE_BUDGET_TERMINAL": "Route attempted after budget terminal state.",
+    "CLUED_MODEL_M0_REQUIRED_BINDING": "Required source-lock binding missing/mismatched."
+  }
+}

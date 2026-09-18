@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "IndependentM6Review",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "fixed_candidate",
+    "read_only",
+    "fresh_context",
+    "reviewer_not_modifier",
+    "verdict",
+    "findings"
+  ],
+  "properties": {
+    "fixed_candidate": {
+      "type": "string"
+    },
+    "read_only": {
+      "const": true
+    },
+    "fresh_context": {
+      "const": true
+    },
+    "reviewer_not_modifier": {
+      "const": true
+    },
+    "verdict": {
+      "enum": [
+        "PASS",
+        "BLOCKED",
+        "FAIL"
+      ]
+    },
+    "findings": {
+      "type": "array"
+    }
+  }
+}

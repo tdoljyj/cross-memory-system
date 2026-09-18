@@ -1,0 +1,14 @@
+{
+  "schema_version": "clued.model-tier-set-release-source-lock/1",
+  "status": "FOUNDATION_BOUND_NOT_RELEASE_READY",
+  "tier_set": {
+    "path": "../upstream/TierSetRevision_v1_20260918.json",
+    "sha256": "88f1451fddb0a6e89664ea0eb82260a61ad3df50c696fc639b9878bdc47eaefc"
+  },
+  "required_tiers": [
+    "mobile",
+    "standard",
+    "flagship"
+  ],
+  "creates_release_authority": false
+}

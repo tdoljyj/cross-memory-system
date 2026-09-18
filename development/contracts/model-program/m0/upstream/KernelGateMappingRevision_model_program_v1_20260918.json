@@ -1,0 +1,238 @@
+{
+  "object_type": "KernelGateMappingRevision",
+  "revision_id": "CLUED-MODEL-KERNEL-GATE-MAPPING-v1-20260918",
+  "date": "2026-09-18",
+  "status": "STRUCTURE_BOUND_PRE_G1 / NO_EXECUTION_EFFECT",
+  "source_plan_sha256": "b1773742be41c8129b1cdf447c7b59dd1a235aba6ff35575b9c8288884f6b5d0",
+  "kernel_contract": {
+    "version": "v3.3",
+    "sha256": "f967fdf3e63028d29ed191160698726b5d707aaae63bd951f6ba2e8584936fec",
+    "authority_state": "CURRENT_PRE_G1_NORMATIVE"
+  },
+  "machine_trace_reference": {
+    "definition_version": "1.0.0-local-rc-v15",
+    "sha256": "ebc4036f9bf8cbf8b6bb463b3ec9c937b9ddc0e619f58a3e3662d1c6cbd9c11e",
+    "git_blob_sha1": "717c49f6d99a3385cbdd7d4ea7c0b436ec11d857",
+    "execution_status": "NOT_RUN_DEFINITION_ONLY",
+    "machine_authority_cutover": "NOT_CLAIMED"
+  },
+  "registered_model_requirement_mappings": {
+    "MODEL-AUDIT-01": {
+      "tests": [
+        "CI-100",
+        "CI-102",
+        "CI-96"
+      ],
+      "gates": [
+        "G1",
+        "G3",
+        "G5a",
+        "G5c",
+        "G6a",
+        "G7A"
+      ]
+    },
+    "MODEL-BOUNDARY-01": {
+      "tests": [
+        "CI-88"
+      ],
+      "gates": [
+        "G1",
+        "G3",
+        "G5c",
+        "G7A"
+      ]
+    },
+    "MODEL-BUDGET-01": {
+      "tests": [
+        "CI-95",
+        "EIA-45"
+      ],
+      "gates": [
+        "G2",
+        "G3",
+        "G5c",
+        "G7A"
+      ]
+    },
+    "MODEL-CANDIDATE-01": {
+      "tests": [
+        "CI-89"
+      ],
+      "gates": [
+        "G2",
+        "G3",
+        "G6a",
+        "G7A"
+      ]
+    },
+    "MODEL-CANONICAL-01": {
+      "tests": [
+        "CI-88",
+        "CI-89",
+        "CI-98"
+      ],
+      "gates": [
+        "G1",
+        "G2",
+        "G3",
+        "G5c",
+        "G6a",
+        "G7A"
+      ]
+    },
+    "MODEL-DEADLINE-01": {
+      "tests": [
+        "CI-94",
+        "EIA-41",
+        "EIA-48"
+      ],
+      "gates": [
+        "G3",
+        "G5c",
+        "G6a",
+        "G7A"
+      ]
+    },
+    "MODEL-DRIFT-01": {
+      "tests": [
+        "CI-96",
+        "EIA-47",
+        "EIA-50"
+      ],
+      "gates": [
+        "G1",
+        "G3",
+        "G5c",
+        "G6a",
+        "G7A"
+      ]
+    },
+    "MODEL-FAILSAFE-01": {
+      "tests": [
+        "CI-100",
+        "CI-93",
+        "CI-94",
+        "EIA-41",
+        "EIA-42",
+        "EIA-47",
+        "EIA-48",
+        "EIA-49"
+      ],
+      "gates": [
+        "G2",
+        "G3",
+        "G4b",
+        "G5c",
+        "G6a",
+        "G7A"
+      ]
+    },
+    "MODEL-GATE-01": {
+      "tests": [
+        "CI-100",
+        "CI-98"
+      ],
+      "gates": [
+        "G3",
+        "G6a",
+        "G7A"
+      ]
+    },
+    "MODEL-IDEMPOTENCY-01": {
+      "tests": [
+        "CI-99",
+        "EIA-45"
+      ],
+      "gates": [
+        "G2",
+        "G3",
+        "G5c",
+        "G7A"
+      ]
+    },
+    "MODEL-MIN-DISCLOSURE-01": {
+      "tests": [
+        "CI-91",
+        "EIA-43",
+        "EIA-44"
+      ],
+      "gates": [
+        "G2",
+        "G3",
+        "G5c",
+        "G6a",
+        "G7A"
+      ]
+    },
+    "MODEL-NO-TRAINING-01": {
+      "tests": [
+        "CI-97",
+        "EIA-47"
+      ],
+      "gates": [
+        "G3",
+        "G5c",
+        "G6a",
+        "G7A"
+      ]
+    },
+    "MODEL-OPTIONAL-01": {
+      "tests": [
+        "CI-90"
+      ],
+      "gates": [
+        "G3",
+        "G6a",
+        "G7A"
+      ]
+    },
+    "MODEL-PROJECTION-01": {
+      "tests": [
+        "CI-101",
+        "CI-89"
+      ],
+      "gates": [
+        "G2",
+        "G3",
+        "G4b",
+        "G5c",
+        "G6a",
+        "G7A"
+      ]
+    },
+    "MODEL-PROVENANCE-01": {
+      "tests": [
+        "CI-96"
+      ],
+      "gates": [
+        "G1",
+        "G5c",
+        "G7A"
+      ]
+    },
+    "MODEL-SECRET-01": {
+      "tests": [
+        "CI-92",
+        "EIA-46"
+      ],
+      "gates": [
+        "G3",
+        "G4f",
+        "G5c",
+        "G7A"
+      ]
+    }
+  },
+  "model_plan_stage_rules": {
+    "MODEL-PROGRAM-GATE": "TO_BE_IMPLEMENTED_AND_BOUND_IN_M0; not a pre-M0 PASS requirement",
+    "PERF-B/PERF-Q": "TEST_OR_ATTESTATION, NOT GATE",
+    "PERF-S/G7A/G7P/MIG-*": "MUST USE EXACT REGISTERED KERNEL ATOMIC GATE REFS WHEN EXECUTED",
+    "release_actions": "Promotion actions are not Gate IDs"
+  },
+  "fail_closed": {
+    "no_machine_pass_from_this_revision": true,
+    "exact_release_gate_set_required_before_release_profile_freeze": true,
+    "g1_cutover_not_inferred": true
+  }
+}

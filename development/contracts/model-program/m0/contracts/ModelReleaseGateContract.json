@@ -1,0 +1,10 @@
+{
+  "schema_version": "clued.model-release-gate-contract/1",
+  "status": "M0_BOUND",
+  "authority_owner": "KERNEL_ONLY",
+  "gate_registry_ref": "../registries/GateDefinitionRegistry.json",
+  "exact_upstream_mapping_ref": "../upstream/KernelGateMappingRevision_model_program_v1_20260918.json",
+  "mapping_sha256": "b235adf939fceb45f7ed707328eeb1622ec3b124e905437e824674fb3c6e6bcc",
+  "machine_pass_from_mapping_revision": false,
+  "release_profile_requires_gate_refs_and_digest": true
+}

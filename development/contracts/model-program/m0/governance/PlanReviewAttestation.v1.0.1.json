@@ -24,8 +24,8 @@
     "V101-MAJOR-01",
     "V101-MAJOR-02"
   ],
-  "candidate_mutation_by_reviewer": "NONE",
   "authority_effect": "NONE",
+  "candidate_mutation_by_reviewer": "NONE",
   "canonical_event_ref": null,
   "canonical_receipt_ref": null
 }

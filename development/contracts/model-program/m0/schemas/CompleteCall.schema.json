@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CompleteCall",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "source_revision",
+    "route_budget",
+    "status",
+    "value",
+    "score_kind",
+    "calibration_ref",
+    "calibration_status",
+    "evidence_required",
+    "evidence_refs",
+    "abstain_reason"
+  ],
+  "properties": {
+    "source_revision": {
+      "type": "string",
+      "minLength": 1
+    },
+    "route_budget": {
+      "type": "object",
+      "required": [
+        "max_depth",
+        "max_calls",
+        "remaining_calls",
+        "max_escalations",
+        "remaining_escalations"
+      ],
+      "properties": {
+        "max_depth": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_calls": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "remaining_calls": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_escalations": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "remaining_escalations": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "status": {
+      "enum": [
+        "PREDICTED",
+        "ABSTAINED",
+        "INVALID",
+        "TIMEOUT",
+        "UNAVAILABLE",
+        "BUDGET_EXHAUSTED"
+      ]
+    },
+    "value": {},
+    "score_kind": {
+      "enum": [
+        "RAW_SCORE",
+        "MODEL_PROBABILITY",
+        "CALIBRATED_PROBABILITY",
+        "NONE"
+      ]
+    },
+    "calibration_ref": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "calibration_status": {
+      "enum": [
+        "VALID",
+        "NOT_APPLICABLE",
+        "MISSING",
+        "INVALID",
+        "EXPIRED"
+      ]
+    },
+    "evidence_required": {
+      "type": "boolean"
+    },
+    "evidence_refs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "abstain_reason": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  }
+}

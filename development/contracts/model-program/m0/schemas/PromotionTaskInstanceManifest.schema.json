@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PromotionTaskInstanceManifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "task_id",
+    "action_id",
+    "writer"
+  ],
+  "properties": {
+    "task_id": {
+      "type": "string"
+    },
+    "action_id": {
+      "type": "string"
+    },
+    "writer": {
+      "const": "M6-P_ONLY"
+    }
+  }
+}
