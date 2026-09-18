@@ -9,13 +9,15 @@ import shutil
 import sys
 import urllib.parse
 import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
 MODEL_ID = "Qwen/Qwen3.5-0.8B"
 REVISION = "2fc06364715b967f1860aea9cf38778875588b17"
+PROFILE_ID = "M1-REF-QWEN35-08B-LLAMACPP-003"
 MAX_NETWORK_BYTES = 3221225472
 MAX_STORAGE_BYTES = 4294967296
-USER_AGENT = "Clued-M1-Reference-Downloader/1.0"
+USER_AGENT = "Clued-M1-Reference-Downloader/1.1"
 
 SAFE_EXACT_NAMES = {".gitattributes", "LICENSE", "LICENSE.txt", "NOTICE", "NOTICE.txt"}
 SAFE_SUFFIXES = {
@@ -53,48 +55,100 @@ def safe_relpath(rel: str) -> PurePosixPath:
 
 def allowed_file(rel: str) -> bool:
     p = safe_relpath(rel)
-    name = p.name
     suffix = p.suffix.lower()
     if suffix in FORBIDDEN_SUFFIXES:
         return False
-    return name in SAFE_EXACT_NAMES or suffix in SAFE_SUFFIXES
+    return p.name in SAFE_EXACT_NAMES or suffix in SAFE_SUFFIXES
+
+def acquire_one_shot_lock(root: Path) -> Path:
+    parent = root.parent
+    parent.mkdir(parents=True, exist_ok=True)
+    lock = parent / f".{root.name}.{PROFILE_ID}.lock"
+    try:
+        fd = os.open(str(lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError:
+        fail("profile one-shot lock already exists: " + str(lock))
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(json.dumps({
+            "profile_id": PROFILE_ID,
+            "state": "ATTEMPT_STARTED",
+            "started_at_utc": datetime.now(timezone.utc).isoformat(),
+            "pid": os.getpid(),
+            "output_dir": str(root),
+        }, indent=2) + "\n")
+    return lock
 
 def stream_download(url: str, target: Path, network_state: dict) -> tuple[str, int]:
     target.parent.mkdir(parents=True, exist_ok=True)
+    partial = Path(str(target) + ".partial")
+    if partial.exists() or target.exists():
+        fail("target or partial already exists: " + str(target))
     h = hashlib.sha256()
     written = 0
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    with urllib.request.urlopen(req, timeout=120) as resp, target.open("wb") as out:
-        while True:
-            chunk = resp.read(8 * 1024 * 1024)
-            if not chunk:
-                break
-            network_state["bytes"] += len(chunk)
-            if network_state["bytes"] > MAX_NETWORK_BYTES:
-                out.close()
-                target.unlink(missing_ok=True)
-                fail("network budget exceeded")
-            written += len(chunk)
-            if written > MAX_STORAGE_BYTES:
-                out.close()
-                target.unlink(missing_ok=True)
-                fail("single-file storage ceiling exceeded")
-            h.update(chunk)
-            out.write(chunk)
+    try:
+        with urllib.request.urlopen(req, timeout=120) as resp, partial.open("xb") as out:
+            while True:
+                chunk = resp.read(8 * 1024 * 1024)
+                if not chunk:
+                    break
+                network_state["bytes"] += len(chunk)
+                if network_state["bytes"] > MAX_NETWORK_BYTES:
+                    fail("network budget exceeded")
+                written += len(chunk)
+                if written > MAX_STORAGE_BYTES:
+                    fail("single-file storage ceiling exceeded")
+                h.update(chunk)
+                out.write(chunk)
+        os.replace(partial, target)
+    except Exception:
+        partial.unlink(missing_ok=True)
+        raise
     return h.hexdigest(), written
+
+def independent_rehash(root: Path, rows: list[dict]) -> None:
+    for row in rows:
+        p = root.joinpath(*PurePosixPath(row["path"]).parts)
+        if not p.is_file():
+            fail("post-download file missing: " + row["path"])
+        h = hashlib.sha256()
+        size = 0
+        with p.open("rb") as f:
+            while True:
+                chunk = f.read(8 * 1024 * 1024)
+                if not chunk:
+                    break
+                size += len(chunk)
+                h.update(chunk)
+        if size != row["bytes"] or h.hexdigest() != row["sha256"]:
+            fail("post-download independent rehash mismatch: " + row["path"])
+
+def write_json_atomic(path: Path, value: dict) -> None:
+    tmp = Path(str(path) + ".partial")
+    if path.exists() or tmp.exists():
+        fail("output already exists: " + str(path))
+    tmp.write_text(json.dumps(value, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    os.replace(tmp, path)
 
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--output-dir", required=True)
     args = ap.parse_args()
     root = Path(args.output_dir).resolve()
-    root.mkdir(parents=True, exist_ok=True)
+
+    lock = acquire_one_shot_lock(root)
+    if root.exists():
+        fail("profile 003 requires a new non-existent output directory")
+    root.mkdir(parents=True, exist_ok=False)
 
     meta = fetch_json(api_url())
     if meta.get("sha") != REVISION:
         fail(f"model revision drift: expected {REVISION} got {meta.get('sha')}")
     if meta.get("gated") not in (False, None, "false"):
         fail("model unexpectedly gated")
+    license_id = (meta.get("cardData") or {}).get("license")
+    if str(license_id).lower() != "apache-2.0":
+        fail("license drift: " + str(license_id))
 
     siblings = meta.get("siblings") or []
     if not siblings:
@@ -134,7 +188,6 @@ def main() -> int:
         if isinstance(lfs, dict):
             expected_lfs = lfs.get("sha256")
             if expected_lfs and digest != expected_lfs:
-                target.unlink(missing_ok=True)
                 fail(f"LFS sha256 mismatch for {rel}")
 
         manifest_files.append({
@@ -144,6 +197,8 @@ def main() -> int:
             "expected_lfs_sha256": expected_lfs,
             "source_url": download_url(rel)
         })
+
+    independent_rehash(root, manifest_files)
 
     license_candidates = [root / "LICENSE", root / "LICENSE.txt"]
     license_path = next((p for p in license_candidates if p.is_file()), None)
@@ -157,7 +212,8 @@ def main() -> int:
     shutil.copyfile(readme_path, root / "ModelCardSnapshot.md")
 
     manifest = {
-        "schema_version": "clued.model-m1-download-manifest/1",
+        "schema_version": "clued.model-m1-download-manifest/2",
+        "profile_id": PROFILE_ID,
         "model_id": MODEL_ID,
         "revision": REVISION,
         "api_observed_sha": meta.get("sha"),
@@ -166,27 +222,30 @@ def main() -> int:
         "snapshot_bytes": total_written,
         "max_network_bytes": MAX_NETWORK_BYTES,
         "max_storage_bytes": MAX_STORAGE_BYTES,
+        "post_download_independent_rehash": "PASS",
         "files": manifest_files,
         "model_loaded": False,
         "inference_performed": False,
         "evaluation_performed": False,
         "trust_remote_code": False
     }
-    (root / "DownloadManifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    write_json_atomic(root / "DownloadManifest.json", manifest)
 
     sums = {
-        "schema_version": "clued.model-m1-snapshot-sha256/1",
+        "schema_version": "clued.model-m1-snapshot-sha256/2",
+        "profile_id": PROFILE_ID,
         "model_id": MODEL_ID,
         "revision": REVISION,
         "files": [{"path": x["path"], "sha256": x["sha256"], "bytes": x["bytes"]} for x in manifest_files]
     }
-    (root / "SHA256SUMS.json").write_text(json.dumps(sums, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    write_json_atomic(root / "SHA256SUMS.json", sums)
 
     bom = {
-        "schema_version": "clued.model-m1-reference-bom/1",
+        "schema_version": "clued.model-m1-reference-bom/2",
+        "profile_id": PROFILE_ID,
         "model_id": MODEL_ID,
         "revision": REVISION,
-        "license_declared": meta.get("cardData", {}).get("license"),
+        "license_declared": license_id,
         "pipeline_tag": meta.get("pipeline_tag"),
         "library_name": meta.get("library_name"),
         "file_count": len(manifest_files),
@@ -194,16 +253,28 @@ def main() -> int:
         "download_source": "huggingface.co exact revision",
         "execution_scope": "M1-03_DOWNLOAD_AND_INTEGRITY_ONLY"
     }
-    (root / "BOM.json").write_text(json.dumps(bom, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    write_json_atomic(root / "BOM.json", bom)
+
+    lock.write_text(json.dumps({
+        "profile_id": PROFILE_ID,
+        "state": "COMPLETED",
+        "completed_at_utc": datetime.now(timezone.utc).isoformat(),
+        "pid": os.getpid(),
+        "output_dir": str(root),
+        "network_bytes": network_state["bytes"],
+        "snapshot_bytes": total_written,
+    }, indent=2) + "\n", encoding="utf-8")
 
     print(json.dumps({
         "result": "PASS",
+        "profile_id": PROFILE_ID,
         "model_id": MODEL_ID,
         "revision": REVISION,
         "file_count": len(manifest_files),
         "network_bytes": network_state["bytes"],
         "snapshot_bytes": total_written,
-        "output_dir": str(root)
+        "output_dir": str(root),
+        "post_download_independent_rehash": "PASS"
     }, ensure_ascii=False))
     return 0
 
