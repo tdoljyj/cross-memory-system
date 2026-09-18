@@ -1,0 +1,134 @@
+{
+  "schema_version": "clued.model-m1-stage-entry-authorization/1",
+  "record_id": "CLUED-MODEL-M1-STAGE-ENTRY-20260918",
+  "date": "2026-09-18",
+  "status": "OWNER_AUTHORIZED_STAGE_ENTRY / EFFECTFUL_ACTIONS_PROFILE_GATED",
+  "program_id": "CLUED-FIRST-PARTY-MODEL",
+  "stage_id": "MODEL-PROGRAM-M1",
+  "bound_plan": {
+    "version": "v1.0.1",
+    "sha256": "a918f42e6e9de160f7b14a95afafeae9022ddcc189b3663e768aa197110118a4",
+    "scope": "M1 — Runtime 与参考模型基线"
+  },
+  "prerequisite": {
+    "m0_formal_baseline_commit": "3d3fa2dc0900d19252f3060012f81d1204c9d4c6",
+    "m0_merge_commit": "6c431e72796bcec351bd566bd75c56844c232309",
+    "m0_verdict": "PASS / CLUED_MODEL_M0_PROGRAM_FOUNDATION_ACCEPTED",
+    "satisfied": true
+  },
+  "owner_authority": {
+    "holder": "OWNER",
+    "source": "CURRENT_CONVERSATION",
+    "owner_message": "好 进入下一关",
+    "interpretation": "ENTER_M1_STAGE_ENTRY_GATE_AFTER_M0_ACCEPTANCE_AND_MERGE"
+  },
+  "objective": "建立可比较、可复验的 Runtime、参考模型、设备与性能基线，为后续架构选择、教师选择和第一方模型最低对照线提供 Evidence。",
+  "tasks": {
+    "M1-00": "绑定 Device Profile 与 Runtime 候选",
+    "M1-01": "建立 Reference Model Shortlist",
+    "M1-02": "完成 License / Terms Compatibility Review",
+    "M1-03": "受控下载和完整性验证",
+    "M1-04": "建立统一 Model Invocation Harness",
+    "M1-05": "建立量化与 Package Variant 对照",
+    "M1-06": "执行手机、平板、PC、Mac 基线",
+    "M1-07": "测试加载、取消、后台恢复和崩溃",
+    "M1-08": "测试安装、升级和回滚 Smoke",
+    "M1-09": "形成教师 / 对照选择矩阵",
+    "M1-10": "Fresh-Context / Read-Only Independent Review"
+  },
+  "reference_roles": [
+    "Mobile-class Local Reference",
+    "Personal-device Local Reference",
+    "Strong Hosted / Enterprise Reference",
+    "Reproducible From-scratch Reference",
+    "Embedding Reference",
+    "Reranker Reference",
+    "Guard / Classifier Reference"
+  ],
+  "runtime_candidate_classes": [
+    "ExecuTorch",
+    "llama.cpp / GGUF",
+    "ONNX Runtime",
+    "MLX / MLX-LM",
+    "Core ML",
+    "Android / NPU Runtime",
+    "OTHER_EXPLICITLY_QUALIFIED_RUNTIME"
+  ],
+  "allowed_without_experiment_profile": [
+    "M1-00_DEVICE_AND_RUNTIME_MATRIX_PREPARATION",
+    "M1-01_REFERENCE_MODEL_SHORTLIST_PREPARATION",
+    "M1-02_LICENSE_TERMS_REVIEW",
+    "M1-04_HARNESS_CONTRACT_AND_SCAFFOLD_ONLY_NO_REAL_MODEL_CALL",
+    "EXPERIMENT_PROFILE_PREPARATION",
+    "QUALIFICATION_EVIDENCE_PREPARATION"
+  ],
+  "exact_experiment_profile_required_before": [
+    "M1-03_ANY_MODEL_TOKENIZER_RUNTIME_OR_TOOL_DOWNLOAD",
+    "M1-04_ANY_REAL_MODEL_OR_HOSTED_PROVIDER_INVOCATION",
+    "M1-05_ANY_REAL_MODEL_QUANTIZATION_OR_PACKAGE_EXECUTION",
+    "M1-06_ANY_REAL_MODEL_DEVICE_BENCHMARK_OR_EVALUATION",
+    "M1-07_ANY_REAL_MODEL_RUNTIME_STABILITY_EXECUTION",
+    "M1-08_ANY_REAL_MODEL_INSTALL_UPGRADE_ROLLBACK_EXECUTION",
+    "M1-09_ANY_NEW_PROVIDER_CALL_OR_BENCHMARK_EXECUTION"
+  ],
+  "experiment_profile_minimum_bindings": [
+    "profile_id",
+    "objective",
+    "allowed_operations",
+    "prohibited_operations",
+    "model_program_revision",
+    "model_architecture_revision",
+    "plan_review_attestation",
+    "exact_model_ids_and_revisions",
+    "license_and_terms_disposition",
+    "runtime_and_device_profile",
+    "code_revision",
+    "config_revision",
+    "max_wall_time",
+    "max_compute",
+    "max_storage",
+    "max_cost_and_currency",
+    "max_attempts",
+    "allowed_outputs",
+    "release_ceiling",
+    "stop_conditions",
+    "evidence_requirements",
+    "expiry"
+  ],
+  "m1_hard_boundaries": {
+    "training": false,
+    "continued_pretraining": false,
+    "sft": false,
+    "distillation": false,
+    "preference_training": false,
+    "governed_self_training": false,
+    "promotion": false,
+    "activation": false,
+    "production": false,
+    "production_database_mutation": false,
+    "production_secret_mutation": false,
+    "canonical_authority_creation": false,
+    "kernel_gate_authority_creation": false,
+    "kernel_rc_authority_creation": false,
+    "semantic_recall_release": false,
+    "semantic_index_canonical_write": false
+  },
+  "embedding_reranker_boundary": "RESEARCH_BENCHMARK_EVIDENCE_ONLY / SEMANTIC_RECALL_UNRELEASED_DISABLED",
+  "independent_review": {
+    "task": "M1-10",
+    "required": true,
+    "mode": [
+      "FRESH_CONTEXT",
+      "READ_ONLY",
+      "REVIEWER_NOT_MODIFIER"
+    ],
+    "author_or_modifier_cannot_self_issue_pass": true
+  },
+  "verdict_set": [
+    "PASS / CLUED_MODEL_M1_RUNTIME_AND_REFERENCE_BASELINE_ACCEPTED",
+    "BLOCKED / CLUED_MODEL_M1_RUNTIME_OR_LICENSE_BINDING_REQUIRED",
+    "FAIL / CLUED_MODEL_M1_INTEGRITY_LICENSE_OR_DEVICE_BASELINE_FAILED"
+  ],
+  "authority_effect": "M1_STAGE_ENTRY_ONLY / EFFECTFUL_MODEL_ACTIONS_REQUIRE_SEPARATE_EXACT_EXPERIMENT_PROFILE",
+  "next_gate": "M1-00_TO_M1-02_BINDINGS_AND_FIRST_EXACT_EXPERIMENT_PROFILE"
+}
