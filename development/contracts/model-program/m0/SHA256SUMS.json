@@ -272,8 +272,8 @@
     },
     {
       "path": "development/contracts/model-program/m0/schemas/TierReleaseUnit.schema.json",
-      "sha256": "1a106cb53e510442cfe1b0cb0bc33b093880272ddc268917d5dd4df9209befc4",
-      "bytes": 1315
+      "sha256": "c3afb5dbcc88feacdcf226dc9d07edf53ce5a65d2d9f154481ca42b133b79daf",
+      "bytes": 1417
     },
     {
       "path": "development/contracts/model-program/m0/schemas/TierSetPromotionReadinessInput.schema.json",

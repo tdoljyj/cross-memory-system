@@ -4,6 +4,7 @@
   "type": "object",
   "additionalProperties": false,
   "required": [
+    "schema_version",
     "tier_id",
     "status",
     "source_lock_ref",
@@ -70,6 +71,9 @@
     },
     "release_eligible": {
       "type": "boolean"
+    },
+    "schema_version": {
+      "const": "clued.model-tier-release-unit/1"
     }
   }
 }
