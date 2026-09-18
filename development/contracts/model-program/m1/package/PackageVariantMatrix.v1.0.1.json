@@ -1,0 +1,80 @@
+{
+  "schema_version": "clued.model-m1-package-variant-matrix/1",
+  "record_id": "CLUED-MODEL-M1-PACKAGE-VARIANT-MATRIX-v1-20260918",
+  "stage_id": "MODEL-PROGRAM-M1",
+  "task_id": "M1-05",
+  "status": "EXACT_LINEAGE_VARIANTS_AUTHORIZED_FOR_PREPARATION",
+  "source_snapshot": {
+    "profile_id": "M1-REF-QWEN35-08B-LLAMACPP-003",
+    "model_id": "Qwen/Qwen3.5-0.8B",
+    "revision": "2fc06364715b967f1860aea9cf38778875588b17",
+    "snapshot_bytes": 1769980465,
+    "weight_sha256": "04b1c301231dd422b8860db31311ab2721511346a32cb1e079c4c4e5f1fe4696",
+    "closeout_ref": "../evidence/M1ExperimentProfile003ExecutionCloseout_20260918.json"
+  },
+  "conversion_toolchain": {
+    "source_repo": "ggml-org/llama.cpp",
+    "source_commit": "8ed1a55efcd7424d2c592f6cbc9f97756db1d74d",
+    "release_tag": "b11033",
+    "convert_script": "convert_hf_to_gguf.py",
+    "convert_script_git_blob_sha1": "e09616b190cf124e818d8a740468d4e84086015c",
+    "requirements": {
+      "root_git_blob_sha1": "f2a18d62879b4e37249b566d6d85fd9485fb20e2",
+      "convert_hf_git_blob_sha1": "b1f7c863e27e184e55408c9e5792158301c86547",
+      "legacy_git_blob_sha1": "edc945c1cb677cf9275470c83b1a773572579998",
+      "pinned_core": [
+        "torch==2.11.0",
+        "transformers==4.57.6"
+      ],
+      "bounded_or_compatible": [
+        "numpy~=2.2.6",
+        "sentencepiece>=0.1.98,<0.3.0",
+        "gguf>=0.1.0",
+        "protobuf>=4.21.0,<5.0.0"
+      ],
+      "resolved_environment_must_be_recorded": true
+    }
+  },
+  "variants": [
+    {
+      "variant_id": "bf16",
+      "production_method": "convert_hf_to_gguf --outtype bf16",
+      "role": "FIDELITY_BASELINE",
+      "status": "TO_BE_GENERATED",
+      "quality_claim": "NONE_UNTIL_M1_06"
+    },
+    {
+      "variant_id": "q8_0",
+      "production_method": "convert_hf_to_gguf --outtype q8_0",
+      "role": "HIGH_PRECISION_QUANTIZED_BASELINE",
+      "status": "TO_BE_GENERATED",
+      "quality_claim": "NONE_UNTIL_M1_06"
+    },
+    {
+      "variant_id": "q4_0",
+      "production_method": "llama-quantize BF16 Q4_0",
+      "role": "SIZE_ORIENTED_BASELINE",
+      "status": "TO_BE_GENERATED",
+      "quality_claim": "NONE_UNTIL_M1_06"
+    },
+    {
+      "variant_id": "q4_k_m",
+      "production_method": "llama-quantize BF16 Q4_K_M",
+      "role": "BALANCED_CANDIDATE",
+      "status": "TO_BE_GENERATED",
+      "quality_claim": "NONE_UNTIL_M1_06"
+    }
+  ],
+  "external_official_gguf_reference": {
+    "repo_id": "ggml-org/Qwen3.5-0.8B-GGUF",
+    "observed_revision": "8fea620810c4afa23dd6443f999a48574c1611a3",
+    "base_model_declared": [
+      "Qwen/Qwen3.5-0.8B"
+    ],
+    "use": "NON_AUTHORITATIVE_EXTERNAL_SIZE_AND_FORMAT_REFERENCE_ONLY",
+    "formal_lineage_source": false,
+    "reason": "Exact upstream raw revision equivalence to Clued's 2fc... source snapshot is not proven."
+  },
+  "m1_06_required_before_quality_selection": true,
+  "authority_effect": "NONE"
+}
