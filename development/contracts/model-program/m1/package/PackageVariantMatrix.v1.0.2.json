@@ -1,0 +1,87 @@
+{
+  "schema_version": "clued.model-m1-package-variant-matrix/2",
+  "record_id": "CLUED-MODEL-M1-PACKAGE-VARIANT-MATRIX-v1.0.2-20260918",
+  "stage_id": "MODEL-PROGRAM-M1",
+  "task_id": "M1-05",
+  "status": "GENERATED_AND_INTEGRITY_VERIFIED / QUALITY_UNRANKED",
+  "predecessor": {
+    "path": "PackageVariantMatrix.v1.0.1.json",
+    "git_blob_sha1": "4975d05cf21895d9271a82a804bcc3d745997019",
+    "disposition": "IMMUTABLE_PREPARATION_PREDECESSOR"
+  },
+  "preparation_profile": "M1-PKG-QWEN35-08B-002",
+  "closeout_ref": "../evidence/M1PackageProfile002ExecutionCloseout_20260918.json",
+  "source_snapshot": {
+    "profile_id": "M1-REF-QWEN35-08B-LLAMACPP-003",
+    "model_id": "Qwen/Qwen3.5-0.8B",
+    "revision": "2fc06364715b967f1860aea9cf38778875588b17",
+    "weight_sha256": "04b1c301231dd422b8860db31311ab2721511346a32cb1e079c4c4e5f1fe4696"
+  },
+  "runtime_package_binding": {
+    "runtime_id": "llama.cpp",
+    "release_tag": "b11033",
+    "commit": "8ed1a55efcd7424d2c592f6cbc9f97756db1d74d",
+    "backend": "VULKAN",
+    "asset_name": "llama-b11033-bin-win-vulkan-x64.zip",
+    "asset_bytes": 31766410,
+    "asset_sha256": "8ca91d4621fcac8799245f01a6467e9c09eba7b8d3be161a382048dc5c839db2",
+    "quantizer_sha256": "d50239b3234a3feda2d5441f6eee442e31acb26be1194716a11e49c9bb331afe",
+    "package_integrity_status": "PASS",
+    "inference_qualification_status": "NOT_GRANTED_BY_M1_05"
+  },
+  "variants": [
+    {
+      "variant_id": "bf16",
+      "path": "Qwen3.5-0.8B-BF16.gguf",
+      "bytes": 1557662720,
+      "sha256": "fbeda5bd9fa2e8c418cb08df1fa2d06082d2d8ded2728df2d94c9144033f2b73",
+      "production_method": "convert_hf_to_gguf:bf16",
+      "package_status": "GENERATED_INTEGRITY_VERIFIED",
+      "quality_status": "NOT_EVALUATED",
+      "quality_claim": "NONE_UNTIL_M1_06"
+    },
+    {
+      "variant_id": "q8_0",
+      "path": "Qwen3.5-0.8B-Q8_0.gguf",
+      "bytes": 833592320,
+      "sha256": "799482186ea1c91b63bf4eb2999e034330425745496a95f0bffbfe6300a1064d",
+      "production_method": "convert_hf_to_gguf:q8_0",
+      "package_status": "GENERATED_INTEGRITY_VERIFIED",
+      "quality_status": "NOT_EVALUATED",
+      "quality_claim": "NONE_UNTIL_M1_06"
+    },
+    {
+      "variant_id": "q4_0",
+      "path": "Qwen3.5-0.8B-Q4_0.gguf",
+      "bytes": 512977920,
+      "sha256": "d9192377b378863e309e5d2faeeea5b0489f385320a8ed281cff9568061577d6",
+      "production_method": "llama-quantize:Q4_0",
+      "package_status": "GENERATED_INTEGRITY_VERIFIED",
+      "quality_status": "NOT_EVALUATED",
+      "quality_claim": "NONE_UNTIL_M1_06"
+    },
+    {
+      "variant_id": "q4_k_m",
+      "path": "Qwen3.5-0.8B-Q4_K_M.gguf",
+      "bytes": 541903872,
+      "sha256": "2f26e07f5585a0f824edbb62a62c3f571bdbaae58d5f13b99befc6447edce90e",
+      "production_method": "llama-quantize:Q4_K_M",
+      "package_status": "GENERATED_INTEGRITY_VERIFIED",
+      "quality_status": "NOT_EVALUATED",
+      "quality_claim": "NONE_UNTIL_M1_06"
+    }
+  ],
+  "package_storage": {
+    "device_name": "DESK-W-591",
+    "local_root": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\packages\\Qwen_Qwen3.5-0.8B\\m1pkg002\\packages",
+    "repository_storage": "DIGESTS_AND_METADATA_ONLY / MODEL_BYTES_NOT_COMMITTED"
+  },
+  "quality_selection": {
+    "performed": false,
+    "winner": null,
+    "required_stage": "M1-06",
+    "reason": "M1-05 establishes exact package variants and integrity only; performance/quality comparison belongs to M1-06."
+  },
+  "m1_06_required_before_quality_selection": true,
+  "authority_effect": "PACKAGE_INVENTORY_AND_INTEGRITY_ONLY / NO_INFERENCE_EVALUATION_OR_RELEASE_AUTHORITY"
+}
