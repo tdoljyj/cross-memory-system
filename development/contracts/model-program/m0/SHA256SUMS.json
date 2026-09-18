@@ -135,8 +135,8 @@
     },
     {
       "path": "development/contracts/model-program/m0/registries/ErrorRegistry.json",
-      "sha256": "0ccd007e58e40ff2351ac5ad45461bd80451b677bb0e5dad6ecc1e8beecfb962",
-      "bytes": 2541
+      "sha256": "9ccbe7b53edfa7b26d44dcfb4315ff327d2d15c4004d3332d7ca18e7b19172b8",
+      "bytes": 2668
     },
     {
       "path": "development/contracts/model-program/m0/registries/GateDefinitionRegistry.json",
@@ -355,13 +355,13 @@
     },
     {
       "path": "scripts/model-program/validate_m0_foundation.py",
-      "sha256": "f52d1bad7a84d218db0db428a6c67f888cd96556b5473aed8e3c601061267444",
-      "bytes": 12669
+      "sha256": "239b25766222e3f8418d87fac888bcb777d98772e65d608bbab3a709952b6b3e",
+      "bytes": 14618
     },
     {
       "path": "tests/fixtures/model-program-m0/negative-fixtures.json",
-      "sha256": "ae187bc8c0694bf28c477b303839ddf2035c0be0b502f89ef133e99ee923bb73",
-      "bytes": 11991
+      "sha256": "39200c9926026a227cb9d400482fdee51d98ce90e0538c94381f3d68bcca2a32",
+      "bytes": 17781
     },
     {
       "path": "tests/test_model_program_m0.py",

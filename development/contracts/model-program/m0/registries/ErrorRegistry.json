@@ -26,6 +26,7 @@
     "CLUED_MODEL_M0_CALL_ABSTAIN_DEFAULT": "Abstain was converted into a default business value.",
     "CLUED_MODEL_M0_SOURCE_REVISION_DRIFT": "Result reused across changed source revision.",
     "CLUED_MODEL_M0_ROUTE_BUDGET_TERMINAL": "Route attempted after budget terminal state.",
-    "CLUED_MODEL_M0_REQUIRED_BINDING": "Required source-lock binding missing/mismatched."
+    "CLUED_MODEL_M0_REQUIRED_BINDING": "Required source-lock binding missing/mismatched.",
+    "CLUED_MODEL_M0_TIERSET_MANIFEST_PREMATURE": "SignedTierSetReleaseManifest attempted before all required Tier final RCs."
   }
 }

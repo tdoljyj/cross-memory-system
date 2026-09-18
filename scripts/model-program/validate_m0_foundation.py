@@ -51,6 +51,35 @@ def validate_promotion_action(v):
 def validate_projection(v):
     if v.get('creates_decision') or v.get('creates_receipt') or v.get('creates_authority'): return err('CLUED_MODEL_M0_PROJECTION_AUTHORITY')
     return ok()
+def validate_gate_set(v):
+    allowed=set(load(BASE/'registries/GateDefinitionRegistry.json')['atomic_gate_ids'])
+    refs=v.get('gate_refs') or []
+    digest=v.get('gate_definition_set_digest')
+    if not refs or any(g not in allowed for g in refs): return err('CLUED_MODEL_M0_UNKNOWN_GATE')
+    if not isinstance(digest,str) or len(digest)!=64 or any(c not in '0123456789abcdef' for c in digest): return err('CLUED_MODEL_M0_RELEASE_PROFILE_GATE_BINDING')
+    return ok()
+def validate_release_profile(v):
+    if not v.get('gate_refs') or not v.get('gate_definition_set_digest'): return err('CLUED_MODEL_M0_RELEASE_PROFILE_GATE_BINDING')
+    return validate_gate_set(v)
+def validate_performance_type(v):
+    expected={'PERF-B':'TEST_OR_ATTESTATION','PERF-S':'KERNEL_GATE_BOUND_REQUIREMENT','PERF-Q':'TEST_OR_ATTESTATION'}
+    return ok() if expected.get(v.get('id'))==v.get('kind') else err('CLUED_MODEL_M0_PERF_TYPE')
+def validate_migration(v):
+    mode=v.get('mode')
+    if mode=='NOT_APPLICABLE_WITH_PROOF':
+        proof=v.get('na_proof_digest')
+        if not isinstance(proof,str) or len(proof)!=64: return err('CLUED_MODEL_M0_MIGRATION_APPLICABILITY')
+        return ok()
+    if mode=='REQUIRED':
+        if not all(v.get(k) for k in ('mig_q_ref','mig_p_ref','mig_c_ref')): return err('CLUED_MODEL_M0_MIGRATION_APPLICABILITY')
+        return ok()
+    if mode=='TO_BE_BOUND': return ok()
+    return err('CLUED_MODEL_M0_MIGRATION_APPLICABILITY')
+def validate_signed_manifest(v):
+    tiers=v.get('tier_units') or []
+    if v.get('all_required_tiers_final_rc') is not True or len(tiers)!=3: return err('CLUED_MODEL_M0_TIERSET_MANIFEST_PREMATURE')
+    if v.get('authority_effect')!='NONE': return err('CLUED_MODEL_M0_PROJECTION_AUTHORITY')
+    return ok()
 def validate_complete_call(v):
     rb=v.get('route_budget') or {}
     if v.get('attempt_route_again') and rb.get('remaining_calls')==0: return err('CLUED_MODEL_M0_ROUTE_BUDGET_TERMINAL')
@@ -74,7 +103,7 @@ def validate_complete_call(v):
 def validate_source_reuse(v):
     if v.get('reuse_previous_result') and v.get('bound_source_revision')!=v.get('observed_source_revision'): return err('CLUED_MODEL_M0_SOURCE_REVISION_DRIFT')
     return ok()
-VALIDATORS={'experiment_profile':validate_experiment_profile,'carrier_decision':validate_carrier_decision,'carrier_binding':validate_carrier_binding,'rc_schema_authority':validate_rc_schema_authority,'tier_set':validate_tier_set,'identity':validate_identity,'verification_lane':validate_verification_lane,'promotion_action':validate_promotion_action,'projection':validate_projection,'complete_call':validate_complete_call,'source_reuse':validate_source_reuse}
+VALIDATORS={'experiment_profile':validate_experiment_profile,'carrier_decision':validate_carrier_decision,'carrier_binding':validate_carrier_binding,'rc_schema_authority':validate_rc_schema_authority,'tier_set':validate_tier_set,'identity':validate_identity,'verification_lane':validate_verification_lane,'promotion_action':validate_promotion_action,'projection':validate_projection,'gate_set':validate_gate_set,'release_profile':validate_release_profile,'performance_type':validate_performance_type,'migration':validate_migration,'signed_manifest':validate_signed_manifest,'complete_call':validate_complete_call,'source_reuse':validate_source_reuse}
 def main():
     required=['ModelProgramCharter.json','MODEL-SOURCE-POLICY.json','model-program-source-lock.json','ModelProgramM0.contract-pack.json','KnownSupersededInputRegister.json','StorageStatusResponsibilityRegistration.json','ResponsibilityTransferVerification.json','M0Closeout.json','SHA256SUMS.json']
     for n in required:
