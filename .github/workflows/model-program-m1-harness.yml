@@ -26,7 +26,8 @@ permissions:
 jobs:
   validate-trusted-self-hosted:
     if: >-
-      github.event_name == 'push' ||
+      (github.event_name == 'push' &&
+       github.actor == github.repository_owner) ||
       (github.event_name == 'pull_request' &&
        github.event.pull_request.head.repo.full_name == github.repository &&
        github.actor == github.repository_owner)
@@ -53,9 +54,11 @@ jobs:
 
   validate-untrusted-hosted:
     if: >-
-      github.event_name == 'pull_request' &&
-      (github.event.pull_request.head.repo.full_name != github.repository ||
-       github.actor != github.repository_owner)
+      (github.event_name == 'push' &&
+       github.actor != github.repository_owner) ||
+      (github.event_name == 'pull_request' &&
+       (github.event.pull_request.head.repo.full_name != github.repository ||
+        github.actor != github.repository_owner))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
