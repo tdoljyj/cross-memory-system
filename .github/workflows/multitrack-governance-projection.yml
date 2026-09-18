@@ -19,11 +19,36 @@ permissions:
   contents: read
 
 jobs:
-  validate:
+  validate-trusted-self-hosted:
+    if: >-
+      github.event_name == 'push' ||
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name == github.repository &&
+       github.actor == github.repository_owner)
+    runs-on: [self-hosted, Windows, X64, clued, pool-general, trust-internal, cap-python312]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Verify pre-provisioned Python 3.12
+        shell: powershell
+        run: |
+          python --version
+          python -c "import sys; assert sys.version_info[:2] == (3, 12), sys.version"
+      - name: Validate repository projection
+        run: python scripts/governance/validate_multitrack_projection.py
+
+  validate-untrusted-hosted:
+    if: >-
+      github.event_name == 'pull_request' &&
+      (github.event.pull_request.head.repo.full_name != github.repository ||
+       github.actor != github.repository_owner)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: "3.12"
       - name: Validate repository projection
