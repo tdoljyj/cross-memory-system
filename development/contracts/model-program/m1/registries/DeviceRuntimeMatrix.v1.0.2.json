@@ -1,0 +1,88 @@
+{
+  "schema_version": "clued.model-m1-device-runtime-matrix/2",
+  "record_id": "CLUED-MODEL-M1-DEVICE-RUNTIME-MATRIX-v1.0.2-20260918",
+  "stage_id": "MODEL-PROGRAM-M1",
+  "task_id": "M1-00",
+  "status": "PERSONAL_WINDOWS_DEVICE_EXACT_BOUND / OTHER_DEVICE_CLASSES_PENDING",
+  "predecessor": {
+    "path": "DeviceRuntimeMatrix.v1.0.1.json",
+    "git_blob_sha1": "76c1d93fcd074ca562bff4e609f7d6063b70926e",
+    "disposition": "IMMUTABLE_PREDECESSOR"
+  },
+  "bound_plan": {
+    "version": "v1.0.1",
+    "sha256": "a918f42e6e9de160f7b14a95afafeae9022ddcc189b3663e768aa197110118a4"
+  },
+  "physical_device_profiles": [
+    {
+      "device_id": "DEV-PERSONAL-WINDOWS-01",
+      "role": "PERSONAL_DEVICE_LOCAL_REFERENCE",
+      "binding_state": "EXACT_BOUND",
+      "device_name": "DESK-W-591",
+      "observed_at_utc": "2026-09-18T08:36:49.4396938Z",
+      "observation_source": {
+        "connector": "Remote Desktop Commander",
+        "app_version": "0.2.51",
+        "session_id": "785c4d1f-2d12-498e-bd00-4e6d978d1e96"
+      },
+      "os": {
+        "platform": "win32",
+        "version": "10.0.26200",
+        "build": "26200",
+        "ubr": 9457,
+        "edition_id": "Professional",
+        "display_version": "25H2",
+        "registry_product_name_observed": "Windows 10 Pro",
+        "product_name_note": "Numeric build/version and EditionID are normative for this binding; localized WMI caption indicated Windows 11 Pro while registry ProductName retained Windows 10 Pro compatibility text."
+      },
+      "system": {
+        "manufacturer": "Micro-Star International Co., Ltd.",
+        "model": "MS-7E07"
+      },
+      "cpu": {
+        "name": "Intel(R) Core(TM) i7-14700K",
+        "cores": 20,
+        "logical_processors": 28
+      },
+      "ram_bytes": 68719476736,
+      "primary_gpu": {
+        "name": "NVIDIA GeForce RTX 4070",
+        "vram_mib": 12282,
+        "vram_bytes": 12878610432,
+        "driver_version": "610.47",
+        "wmi_driver_version": "32.0.16.1047"
+      },
+      "secondary_gpus": [
+        {
+          "name": "Intel(R) UHD Graphics 770",
+          "wmi_driver_version": "32.0.101.7088"
+        },
+        {
+          "name": "GameViewer Virtual Display Adapter",
+          "wmi_driver_version": "15.6.5.199"
+        }
+      ],
+      "system_drive": {
+        "drive_letter": "C",
+        "size_bytes": 998980448256,
+        "free_bytes_at_binding": 90306404352
+      },
+      "effectful_execution_allowed": "ONLY_BY_SEPARATELY_ISSUED_EXPERIMENT_PROFILE"
+    },
+    {
+      "device_id": "DEV-MOBILE-01",
+      "role": "MOBILE_CLASS_LOCAL_REFERENCE",
+      "binding_state": "TO_BE_BOUND",
+      "effectful_execution_allowed": false
+    },
+    {
+      "device_id": "DEV-MAC-01",
+      "role": "APPLE_PERSONAL_DEVICE_REFERENCE",
+      "binding_state": "TO_BE_BOUND",
+      "effectful_execution_allowed": false
+    }
+  ],
+  "runtime_candidates_ref": "DeviceRuntimeMatrix.v1.0.1.json#/runtime_candidates",
+  "first_tranche_runtime": "llama.cpp",
+  "authority_effect": "DEVICE_EVIDENCE_BINDING_ONLY / NO_MODEL_ACTION_BY_ITSELF"
+}

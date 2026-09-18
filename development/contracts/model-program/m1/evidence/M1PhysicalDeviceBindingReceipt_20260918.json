@@ -1,0 +1,31 @@
+{
+  "schema_version": "clued.model-m1-physical-device-binding-receipt/1",
+  "receipt_id": "CLUED-MODEL-M1-PHYSICAL-DEVICE-BINDING-RECEIPT-20260918",
+  "stage_id": "MODEL-PROGRAM-M1",
+  "gate": "M1_EXACT_PHYSICAL_DEVICE_READBACK",
+  "observed_at_utc": "2026-09-18T08:36:49.4396938Z",
+  "device_profile_ref": "../registries/DeviceRuntimeMatrix.v1.0.2.json#DEV-PERSONAL-WINDOWS-01",
+  "device_name": "DESK-W-591",
+  "readback": {
+    "os_version": "10.0.26200",
+    "os_build": "26200",
+    "os_ubr": 9457,
+    "os_edition_id": "Professional",
+    "os_display_version": "25H2",
+    "cpu_model": "Intel(R) Core(TM) i7-14700K",
+    "cpu_cores": 20,
+    "cpu_logical_processors": 28,
+    "ram_bytes": 68719476736,
+    "gpu_model": "NVIDIA GeForce RTX 4070",
+    "gpu_vram_mib": 12282,
+    "gpu_vram_bytes": 12878610432,
+    "gpu_driver": "610.47",
+    "c_drive_free_bytes": 90306404352
+  },
+  "minimum_profile_storage_ceiling_bytes": 4294967296,
+  "storage_headroom_satisfied": true,
+  "result": "PASS / CLUED_MODEL_M1_PHYSICAL_DEVICE_EXACT_BOUND",
+  "model_download_performed": false,
+  "model_inference_performed": false,
+  "authority_effect": "DEVICE_BINDING_EVIDENCE_ONLY"
+}
