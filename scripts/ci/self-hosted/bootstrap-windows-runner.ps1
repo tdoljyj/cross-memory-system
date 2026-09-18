@@ -15,8 +15,11 @@ param(
     [string]$Root = 'C:\clued-ci',
 
     [Parameter(Mandatory = $false)]
-    [ValidateSet('x64', 'arm64')]
-    [string]$Arch = 'x64',
+    [string]$RunnerVersion = '2.337.0',
+
+    [Parameter(Mandatory = $false)]
+    [ValidatePattern('^[a-fA-F0-9]{64}$')]
+    [string]$RunnerSha256 = '1150692afa94e71f872017e254ea55b6eece1eece3fe7e3a6d4c93d0a1b85cfc',
 
     [switch]$RunAsService,
     [switch]$ReplaceExisting
@@ -51,18 +54,8 @@ if ($LASTEXITCODE -ne 0 -or $pythonVersion -notmatch '^Python 3\.12\.') {
 }
 Write-Host "Python capability OK: $pythonVersion"
 
-$headers = @{ 'User-Agent' = 'Clued-Runner-Bootstrap' }
-$release = Invoke-RestMethod -Headers $headers -Uri 'https://api.github.com/repos/actions/runner/releases/latest'
-$version = [string]$release.tag_name
-$plainVersion = $version.TrimStart('v')
-$assetName = "actions-runner-win-$Arch-$plainVersion.zip"
-$asset = $release.assets | Where-Object { $_.name -eq $assetName } | Select-Object -First 1
-if (-not $asset) {
-    throw "GitHub Actions runner asset not found: $assetName"
-}
-if (-not $asset.digest -or ([string]$asset.digest) -notmatch '^sha256:') {
-    throw 'GitHub release asset did not provide a SHA-256 digest; refusing unverified download.'
-}
+$assetName = "actions-runner-win-x64-$RunnerVersion.zip"
+$downloadUrl = "https://github.com/actions/runner/releases/download/v$RunnerVersion/$assetName"
 
 $downloads = Join-Path $Root 'downloads'
 $runnerSuffix = $RunnerName
@@ -78,11 +71,11 @@ if (Test-Path (Join-Path $runnerDir '.runner')) {
 New-Item -ItemType Directory -Force -Path $runnerDir | Out-Null
 
 $zip = Join-Path $downloads $assetName
-Write-Host "Downloading GitHub Actions runner $version..."
-Invoke-WebRequest -UseBasicParsing -Headers $headers -Uri $asset.browser_download_url -OutFile $zip
+Write-Host "Downloading pinned GitHub Actions runner v$RunnerVersion..."
+Invoke-WebRequest -UseBasicParsing -Uri $downloadUrl -OutFile $zip
 
-$actualDigest = 'sha256:' + (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
-$expectedDigest = ([string]$asset.digest).ToLowerInvariant()
+$actualDigest = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+$expectedDigest = $RunnerSha256.ToLowerInvariant()
 if ($actualDigest -ne $expectedDigest) {
     throw "Runner package digest mismatch. Expected $expectedDigest, got $actualDigest"
 }
@@ -167,4 +160,5 @@ if (-not $RunAsService) {
 Write-Host ''
 Write-Host 'Bootstrap complete.'
 Write-Host "Expected custom labels: $labels"
+Write-Host 'The runner remains on GitHub automatic updates after registration.'
 Write-Host 'No Python installation or machine-wide registry modification was performed.'
