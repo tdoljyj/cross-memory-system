@@ -52,7 +52,29 @@ $pythonVersion = (& python --version 2>&1 | Out-String).Trim()
 if ($LASTEXITCODE -ne 0 -or $pythonVersion -notmatch '^Python 3\.12\.') {
     throw "Python 3.12 must already be installed and on PATH. Found: $pythonVersion"
 }
-Write-Host "Python capability OK: $pythonVersion"
+
+$pythonExe = (& python -c "import sys; print(sys.executable)" 2>&1 | Out-String).Trim()
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($pythonExe) -or -not (Test-Path $pythonExe)) {
+    throw "Unable to resolve the verified Python 3.12 executable. Found: $pythonExe"
+}
+
+$resolvedPythonVersion = (& $pythonExe --version 2>&1 | Out-String).Trim()
+if ($LASTEXITCODE -ne 0 -or $resolvedPythonVersion -notmatch '^Python 3\.12\.') {
+    throw "Resolved Python executable is not Python 3.12: $pythonExe ($resolvedPythonVersion)"
+}
+
+Write-Host "Python capability OK: $resolvedPythonVersion"
+Write-Host "Pinned runner Python executable: $pythonExe"
+
+$tools = Join-Path $Root 'tools'
+New-Item -ItemType Directory -Force -Path $tools | Out-Null
+$escapedPythonExe = $pythonExe.Replace('%', '%%')
+$pythonShim = @(
+    '@echo off',
+    '"' + $escapedPythonExe + '" %*'
+)
+$pythonShim | Set-Content -Path (Join-Path $tools 'python.cmd') -Encoding ASCII
+$pythonShim | Set-Content -Path (Join-Path $tools 'python3.cmd') -Encoding ASCII
 
 $assetName = "actions-runner-win-x64-$RunnerVersion.zip"
 $downloadUrl = "https://github.com/actions/runner/releases/download/v$RunnerVersion/$assetName"
@@ -130,6 +152,7 @@ if (-not $RunAsService) {
     $launcher = Join-Path $Root ("start-" + $RunnerName + '.cmd')
     @(
         '@echo off',
+        ('set "PATH=' + $tools + ';%PATH%"'),
         "cd /d $runnerDir",
         'if not exist .runner exit /b 0',
         'start "Clued CI Runner" /min run.cmd'
@@ -155,6 +178,10 @@ if (-not $RunAsService) {
 
     Write-Host "Runner listener started: PID $($listener.Id)"
     Write-Host 'Startup launcher installed for the current Windows user.'
+    Write-Host "Runner PATH is pinned through $tools so python resolves to the verified executable."
+} else {
+    Write-Host 'Service mode selected. The service account must already have the verified Python 3.12 executable on its persistent PATH.'
+    Write-Host 'The bootstrap does not modify the machine PATH or service-account environment.'
 }
 
 Write-Host ''
