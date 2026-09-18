@@ -116,6 +116,8 @@ def main():
     for case in fx["negative_cases"]:
         obj = copy.deepcopy(req if case["target"] == "request" else res)
         set_path(obj, case["path"], case.get("value"), case.get("delete", False))
+        for extra in case.get("additional_mutations", []):
+            set_path(obj, extra["path"], extra.get("value"), extra.get("delete", False))
         try:
             if case["target"] == "request":
                 m.validate_static_request_envelope(obj)
