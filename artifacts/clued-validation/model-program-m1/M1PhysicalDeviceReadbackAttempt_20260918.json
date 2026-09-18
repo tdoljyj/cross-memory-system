@@ -1,0 +1,50 @@
+{
+  "schema_version": "clued.model-m1-physical-device-readback-attempt/1",
+  "record_id": "CLUED-MODEL-M1-PHYSICAL-DEVICE-READBACK-ATTEMPT-20260918",
+  "date": "2026-09-18",
+  "program_id": "CLUED-FIRST-PARTY-MODEL",
+  "stage_id": "MODEL-PROGRAM-M1",
+  "gate": "M1_EXACT_PHYSICAL_DEVICE_READBACK",
+  "target_device_profile": "DEV-PERSONAL-WINDOWS-01",
+  "expected_device_name": "DESK-W-591",
+  "observation": {
+    "source": "AUTHORIZED_REMOTE_DESKTOP_DEVICE_STATUS",
+    "device_name": "DESK-W-591",
+    "status": "OFFLINE",
+    "last_seen_utc": "2026-09-17T02:52:38.594Z",
+    "exact_hardware_readback_performed": false
+  },
+  "required_but_unobserved": [
+    "os_version",
+    "cpu_model",
+    "ram_bytes",
+    "gpu_model",
+    "gpu_vram_bytes",
+    "gpu_driver",
+    "free_storage_bytes"
+  ],
+  "experiment_profile": {
+    "profile_id": "M1-REF-QWEN35-08B-LLAMACPP-001-CANDIDATE",
+    "status_after_attempt": "BLOCKED_PENDING_EXACT_PHYSICAL_DEVICE_READBACK_AND_FINAL_ISSUANCE",
+    "effectful_authority_issued": false
+  },
+  "result": "BLOCKED / CLUED_MODEL_M1_PHYSICAL_DEVICE_OFFLINE",
+  "no_regression": {
+    "m1_00_device_runtime_matrix": "RETAINED",
+    "m1_01_reference_shortlist": "RETAINED",
+    "m1_02_license_terms_review": "RETAINED",
+    "rerun_required_for_m1_00_to_m1_02": false
+  },
+  "explicitly_not_performed": [
+    "MODEL_DOWNLOAD",
+    "MODEL_LOAD",
+    "MODEL_INFERENCE",
+    "REAL_MODEL_EVALUATION",
+    "TRAINING",
+    "PROMOTION",
+    "ACTIVATION",
+    "PRODUCTION_MUTATION"
+  ],
+  "next_gate": "DEVICE_ONLINE -> EXACT_HARDWARE_READBACK -> FINAL_EXPERIMENT_PROFILE_ISSUANCE -> M1-03_CONTROLLED_DOWNLOAD",
+  "authority_effect": "NONE"
+}
