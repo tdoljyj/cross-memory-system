@@ -7,8 +7,8 @@
   "files": [
     {
       "path": ".github/workflows/model-program-m0.yml",
-      "sha256": "ec7ba129ac87ff8e483078e0a31923f3f61b5bc025c91af6e0e64f28f7f4f7e8",
-      "bytes": 2515
+      "sha256": "a405d0f98c593911cf6f43b219e13518a054204b3bf3f1a76f220e47a155e7a0",
+      "bytes": 2660
     },
     {
       "path": "development/contracts/model-program/m0/contracts/BudgetComputeDeadline.contract.json",
