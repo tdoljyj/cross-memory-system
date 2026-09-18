@@ -2,6 +2,8 @@ import copy,importlib.util,pathlib,unittest
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 P=ROOT/'scripts/model-program/validate_m1_entry_bindings.py'
 s=importlib.util.spec_from_file_location('m1v',P);m=importlib.util.module_from_spec(s);s.loader.exec_module(m)
+DP=ROOT/'scripts/model-program/m1_download_exact_hf_snapshot.py'
+ds=importlib.util.spec_from_file_location('m1d',DP);d=importlib.util.module_from_spec(ds);ds.loader.exec_module(d)
 
 class ModelProgramM1EntryTests(unittest.TestCase):
     def test_range_plan_exact(self):

@@ -149,7 +149,10 @@ def main():
     except SyntaxError:
         fail('bound download script does not compile')
 
-    print('PASS: MODEL-PROGRAM-M1 Profile 001 closed fail-closed before download; successor Profile 002 issued with compile-validated downloader; inference/evaluation/training remain prohibited')
+    source=script.read_text(encoding='utf-8')
+    if 'PROFILE_ID = "M1-REF-QWEN35-08B-LLAMACPP-003"' not in source or 'RANGE_CHUNK_BYTES = 64 * 1024 * 1024' not in source:
+        fail('Profile 003 downloader constants drift')
+    print('PASS: MODEL-PROGRAM-M1 Profiles 001/002 closed fail-closed; Profile 003 issued with compile-validated range-chunked exact-revision downloader; inference/evaluation/training remain prohibited')
     return 0
 
 if __name__=='__main__': raise SystemExit(main())
