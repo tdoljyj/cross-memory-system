@@ -1,0 +1,104 @@
+{
+  "schema_version": "clued.model-program-source-lock/1",
+  "program_id": "CLUED-FIRST-PARTY-MODEL",
+  "stage_id": "MODEL-PROGRAM-M0",
+  "status": "LOCKED_FOR_NON_PRODUCTION_M0",
+  "plan": {
+    "version": "v1.0.1",
+    "delivery_revision": "r1",
+    "sha256": "a918f42e6e9de160f7b14a95afafeae9022ddcc189b3663e768aa197110118a4"
+  },
+  "governance_records": {
+    "PlanReviewAttestation.v1.0.1.json": "168b5e695fbfa224b8d713da196b99003b23658c6f42be010f221282c89d6fb7",
+    "OwnerSuccessorAdoption.v1.0.1.json": "adc4f4bc13533e5ca34c115419652fa8591a61145c10567c28fd89285015a953",
+    "CurrentReadinessRecheck.v1.0.1.json": "04ec4e11651d8ec4d880594c68e59c935ab701a5efc0297e60c5167d04c44a26",
+    "NonProductionM0Authorization.v1.0.1.json": "71efbb9fdfbbcb06054d7ab1b2ee9426aa600f0535531c88e6858de642c96941"
+  },
+  "upstream": {
+    "phase2_entry_readiness": {
+      "decision_id": "CLUED-PHASE2-ENTRY-DEVELOPMENT-READINESS-MODEL-BINDING-20260918",
+      "status": "PASS",
+      "sha256": "81f671b5e4504111c40826134bf67fc82d699e0a0f7667d67d91973820d6b254"
+    },
+    "parent_structure_compatibility": {
+      "status": "ACCEPTED_FOR_MODEL_M0_FOUNDATION_ONLY",
+      "sha256": "22494b53cd7f5bb4d29857d88e56f464c8037f9ca3cbbe2239cef545f904ff9f"
+    },
+    "tier_set_revision": {
+      "status": "CURRENT",
+      "sha256": "88f1451fddb0a6e89664ea0eb82260a61ad3df50c696fc639b9878bdc47eaefc",
+      "required_tiers": [
+        "mobile",
+        "standard",
+        "flagship"
+      ]
+    },
+    "tier_definitions": {
+      "mobile": "feaf5746f548e274557360196d90be7f03eff2f3f49ca2473b4ac3250a5fc2f2",
+      "standard": "6b61538641d50a0548bb4bf5aa99212fd7f35df0ecbc8cd6b2d9fc0f539c9f20",
+      "flagship": "2a094c80e3e71fd345b73b71c18025476d4f0fdb0a2d1dfb557214f3d6353f2c"
+    },
+    "kernel_gate_mapping": {
+      "sha256": "b235adf939fceb45f7ed707328eeb1622ec3b124e905437e824674fb3c6e6bcc"
+    },
+    "object_authority_registry": {
+      "sha256": "b89bb15a047cd59390428e86d33e8e2fc59d3a83954c68c2393d0e5b3dc4f3cc"
+    },
+    "carrier_candidate_input": {
+      "sha256": "7ded2172a8a69b4c930d10574c6da56dde62bf6f01d10998bf708bffe113d9a8",
+      "current_strategy_interpretation": "ACCEPTED_BY_OWNER_ADOPTED_v1.0.1_PLUS_READINESS_RECHECK"
+    },
+    "kernel_v3_3": {
+      "sha256": "f967fdf3e63028d29ed191160698726b5d707aaae63bd951f6ba2e8584936fec"
+    },
+    "requirement_trace": {
+      "sha256": "ebc4036f9bf8cbf8b6bb463b3ec9c937b9ddc0e619f58a3e3662d1c6cbd9c11e"
+    }
+  },
+  "repository_live_bindings": {
+    "architecture_acceptance": {
+      "path": "docs/execution-plans/phase2-structure-governance/ArchitectureConstitutionAcceptanceDecision_20260907.json",
+      "sha256": "f2ec1d6cf3afbd80d415c65c7bc0f71d86d606bda9031a174d92517e421ac246"
+    },
+    "structure_freeze": {
+      "path": "docs/execution-plans/phase2-structure-governance/Phase2StructureFreezeDecision_20260907.json",
+      "sha256": "f40c8af253f811f820e4b3eccc144d63ca3548663810aba10bebb22331661b36"
+    },
+    "series_completion": {
+      "path": "docs/execution-plans/phase2-structure-governance/SeriesCompletionIndex_20260907.json",
+      "sha256": "95a0ef331cc598497e172565757649ce4bd66d070d256ee6ff67f782f3fbc58f"
+    },
+    "phase2_terminal_closeout": {
+      "path": "work/root12-single-window/PHASE2-KERNEL-CLOSEOUT.md",
+      "sha256": "8bd4c427677aef2609641bcdfc567f942bfcf90e693fce623e2ed592c68ac57d"
+    }
+  },
+  "post_freeze_required_evidence_digests": {
+    "step12": "7ba04bc7cf715a6b96f05f64db3d7f0281627e9c0919b15dd66aa3d26f9f6ca7",
+    "step13": "562046e42bcbbea73bb99412cdc8161945b8e50fc519f335402f6529ca638acd",
+    "step14": "21040ca75a3ba95affef41b23d3e4d2fed39c71c57607daa4ebf21d68f4eaa3b",
+    "step15": "e6f2b44100feb66b429ab0af42c656bde7b150191a74b5294d336f5c703a3e96",
+    "step16": "23432db81babb59b7826a97fcd357c3ce5ea922d1cbe09cca9bf6f048a2ee1cc",
+    "step17": "a4d652aef2b799ee7f6b9d6e99b65c7ece646462d44c37ef2fdd64bc28b8c63a",
+    "step18": "c717f2e45705a651aca5b31f5ad00961f60062b1d99d4cc56427a284182d8c1c",
+    "step19": "f077de340810bef827ebdd92e2c2bdda3eef2bc894f7e9975edbf54623133740",
+    "step20": "2c7da02632520187aa3b95ebfac4e5f9ba4d9a55d32e25d7eb3bccacab7ffc42",
+    "step21": "7e34dc5fdf3c95b5f964217f55bc5088cbb120eaea4fc778e8b657e43d6df08b",
+    "refresh_15_17": "3bd87b5083f91a609fc85916cd0ea216120f3a46edaac64070327abbf03129d9"
+  },
+  "information_flow_dependencies": {
+    "M0-A": "EXTERNAL_INPUT_REQUIRED_READ_ONLY",
+    "M0-B": "EXTERNAL_INPUT_REQUIRED_READ_ONLY",
+    "M0-C": "EXTERNAL_INPUT_REQUIRED_READ_ONLY",
+    "reconstruction_from_summary": "FORBIDDEN"
+  },
+  "known_superseded_or_historical_inputs": [
+    "v1.0.0 formal predecessor",
+    "v1.0.1-draft.1 failed revision input",
+    "v0.9.2 historical plan baseline"
+  ],
+  "fail_closed": {
+    "missing_or_mismatched_required_binding": "BLOCKED / CLUED_MODEL_M0_REQUIRED_BINDINGS_MISSING",
+    "authority_scope_expansion": "FAIL / CLUED_MODEL_M0_AUTHORITY_GATE_MAPPING_OR_BOUNDARY_VIOLATION"
+  }
+}

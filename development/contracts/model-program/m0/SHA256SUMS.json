@@ -1,0 +1,40 @@
+{
+  "schema_version": "clued.model-m0-sha256-manifest/1",
+  "files": [
+    {
+      "path": "development/contracts/model-program/m0/governance/CurrentReadinessRecheck.v1.0.1.json",
+      "sha256": "04ec4e11651d8ec4d880594c68e59c935ab701a5efc0297e60c5167d04c44a26",
+      "bytes": 782
+    },
+    {
+      "path": "development/contracts/model-program/m0/governance/NonProductionM0Authorization.v1.0.1.json",
+      "sha256": "71efbb9fdfbbcb06054d7ab1b2ee9426aa600f0535531c88e6858de642c96941",
+      "bytes": 1108
+    },
+    {
+      "path": "development/contracts/model-program/m0/governance/OwnerSuccessorAdoption.v1.0.1.json",
+      "sha256": "adc4f4bc13533e5ca34c115419652fa8591a61145c10567c28fd89285015a953",
+      "bytes": 691
+    },
+    {
+      "path": "development/contracts/model-program/m0/governance/PlanReviewAttestation.v1.0.1.json",
+      "sha256": "168b5e695fbfa224b8d713da196b99003b23658c6f42be010f221282c89d6fb7",
+      "bytes": 753
+    },
+    {
+      "path": "development/contracts/model-program/m0/model-program-source-lock.json",
+      "sha256": "f3888d893c10fafc363c9f703ee22ceffc9e017090f0e579723a29e381de2474",
+      "bytes": 4976
+    },
+    {
+      "path": "development/contracts/model-program/m0/ModelProgramM0.contract-pack.json",
+      "sha256": "770c64c5e18aeccfca739664e2ca9aeda83b76a35d120548b0d8ce50c4180997",
+      "bytes": 16650
+    },
+    {
+      "path": "development/contracts/model-program/m0/README.md",
+      "sha256": "3f86ded8e0c2ddaae049d6a0bf565094483c7975735b58f2a9c94a1dec63d811",
+      "bytes": 594
+    }
+  ]
+}

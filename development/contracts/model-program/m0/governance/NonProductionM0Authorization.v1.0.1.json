@@ -1,0 +1,40 @@
+{
+  "object_type": "ImplementationAuthorization",
+  "schema_version": "clued.model-implementation-authorization/1",
+  "materialization_kind": "MACHINE_READABLE_RECORD_OF_PRIOR_OWNER_DECISION",
+  "date": "2026-09-18",
+  "target": {
+    "version": "v1.0.1",
+    "sha256": "a918f42e6e9de160f7b14a95afafeae9022ddcc189b3663e768aa197110118a4"
+  },
+  "authority_type": "NON_PRODUCTION_M0_IMPLEMENTATION_AUTHORITY",
+  "status": "ISSUED",
+  "authorized_scope": [
+    "M0_FOUNDATION_IMPLEMENTATION",
+    "STATIC_VALIDATION",
+    "NEGATIVE_FIXTURES",
+    "QUALIFICATION_EVIDENCE_PREPARATION"
+  ],
+  "explicitly_not_authorized": [
+    "MODEL_DOWNLOAD",
+    "TRAINING",
+    "REAL_MODEL_EVALUATION",
+    "PROMOTION",
+    "ACTIVATION",
+    "PRODUCTION_DEPLOYMENT",
+    "PRODUCTION_TRAFFIC",
+    "PRODUCTION_DATABASE_MUTATION",
+    "PRODUCTION_SECRET_MUTATION",
+    "G1_CUTOVER",
+    "MACHINE_RC_SEAL",
+    "G7A",
+    "G7P"
+  ],
+  "decision_origin": {
+    "holder": "OWNER",
+    "source": "CURRENT_CONVERSATION",
+    "instruction": "好 进入下一关"
+  },
+  "canonical_event_ref": null,
+  "canonical_receipt_ref": null
+}

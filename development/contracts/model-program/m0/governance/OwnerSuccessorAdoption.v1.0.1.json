@@ -1,0 +1,23 @@
+{
+  "object_type": "OwnerSuccessorAdoptionDecision",
+  "schema_version": "clued.model-owner-adoption/1",
+  "materialization_kind": "MACHINE_READABLE_RECORD_OF_PRIOR_OWNER_DECISION",
+  "date": "2026-09-18",
+  "target": {
+    "version": "v1.0.1",
+    "delivery_revision": "r1",
+    "sha256": "a918f42e6e9de160f7b14a95afafeae9022ddcc189b3663e768aa197110118a4"
+  },
+  "status": "ADOPTED",
+  "successor_status": "FORMAL_OWNER_ADOPTED_SUCCESSOR",
+  "formal_predecessor": {
+    "version": "v1.0.0"
+  },
+  "decision_origin": {
+    "holder": "OWNER",
+    "source": "CURRENT_CONVERSATION",
+    "instruction": "好 进入下一关"
+  },
+  "canonical_event_ref": null,
+  "canonical_receipt_ref": null
+}
