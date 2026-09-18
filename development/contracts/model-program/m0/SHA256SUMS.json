@@ -367,8 +367,8 @@
     },
     {
       "path": "scripts/model-program/validate_m0_foundation.py",
-      "sha256": "e37924b5e89136427f99e292b172f31f19b6ce81f8c30572fee34535ce2d9722",
-      "bytes": 24881
+      "sha256": "e8930366f335ae29587ef2e2ff80032a8c53eadf5654924d082bdeb83e68b541",
+      "bytes": 25021
     },
     {
       "path": "tests/fixtures/model-program-m0/fixtures.json",

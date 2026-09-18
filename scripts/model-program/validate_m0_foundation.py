@@ -121,6 +121,8 @@ def validate_gate_set(v):
     return ok()
 
 def validate_release_profile(v):
+    if not v.get('gate_refs') or not v.get('gate_definition_set_digest'):
+        return err('CLUED_MODEL_M0_RELEASE_PROFILE_GATE_BINDING')
     if not v.get('carrier_binding_ref') or not v.get('risk_manifest_ref'):
         return err('CLUED_MODEL_M0_REQUIRED_BINDING')
     return validate_gate_set(v)
