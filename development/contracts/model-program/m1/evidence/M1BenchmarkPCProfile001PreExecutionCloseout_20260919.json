@@ -1,0 +1,25 @@
+{
+  "schema_version": "clued.model-experiment-preexecution-closeout/1",
+  "record_id": "M1-BENCH-QWEN35-08B-PC-001-PREEXEC-CLOSEOUT-20260919",
+  "profile_id": "M1-BENCH-QWEN35-08B-PC-001",
+  "task_id": "M1-06",
+  "status": "CLOSED_PRE_EXECUTION / ZERO_MEASURED_SAMPLES",
+  "closed_at_utc": "2026-09-19T09:07:41.6318707Z",
+  "reason": "PowerShell wrapper used ErrorActionPreference=Stop; llama-bench normal backend diagnostics emitted on stderr were promoted to NativeCommandError and the wrapper terminated before benchmark JSON or measured samples were produced.",
+  "evidence": {
+    "raw_json_path": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\benchmarks\\M1-BENCH-QWEN35-08B-PC-001\\llama-bench.raw.json",
+    "raw_json_lines": 0,
+    "stderr_path": "C:\\Users\\Public\\Clued\\ModelProgram\\M1\\benchmarks\\M1-BENCH-QWEN35-08B-PC-001\\llama-bench.stderr.txt",
+    "stderr_lines": 0,
+    "run_meta_created": false,
+    "measured_result_groups": 0,
+    "measured_samples": 0
+  },
+  "model_or_runtime_fault_observed": false,
+  "package_mutation": false,
+  "profile_budget_consumption": {
+    "result_groups": 0,
+    "measurement_samples": 0
+  },
+  "disposition": "DO_NOT_REUSE_PROFILE_001 / ISSUE_EXACT_SUCCESSOR_WITH_NATIVE_STDERR_WRAPPER_FIX_ONLY"
+}

@@ -1,0 +1,41 @@
+{
+  "schema_version": "clued.model-experiment-execution-closeout/1",
+  "record_id": "M1-BENCH-QWEN35-08B-PC-002-EXECUTION-CLOSEOUT-20260919",
+  "profile_id": "M1-BENCH-QWEN35-08B-PC-002",
+  "task_id": "M1-06",
+  "status": "EXECUTED_BUT_INVALID_FOR_CPU_ONLY_BASELINE / POLICY_NONCONFORMANT",
+  "closed_at_utc": "2026-09-19T09:11:47.1541156Z",
+  "execution": {
+    "started_at_utc": "2026-09-19T09:08:28.8265083Z",
+    "ended_at_utc": "2026-09-19T09:10:17.8401167Z",
+    "wall_seconds": 109.01,
+    "exit_code": 0,
+    "result_groups": 8,
+    "measurement_samples": 40
+  },
+  "structural_validation": {
+    "result_groups_eight": true,
+    "measurement_samples_forty": true,
+    "n_gpu_layers_zero": true,
+    "n_threads_two": true,
+    "repetitions_five": true,
+    "tests_pp512_tg128_only": true
+  },
+  "nonconformance": {
+    "observed_backends": "Vulkan",
+    "observed_devices": "auto",
+    "observed_no_op_offload": 0,
+    "source_semantics": "llama.cpp b11033 common/arg.cpp documents op-offload as offloading host tensor operations to device; llama-bench parse_devices_arg('none') explicitly disables non-CPU devices.",
+    "reason": "The fixed benchmark semantic was CPU-only. PC-002 set n_gpu_layers=0 but left devices=auto and no_op_offload=0, so strict CPU-only execution was not proven and host tensor operation offload remained permitted.",
+    "model_quality_fault": false,
+    "package_integrity_fault": false
+  },
+  "evidence_disposition": {
+    "raw_results_preserved": true,
+    "raw_results_authoritative_for_cpu_only_baseline": false,
+    "exclude_from_variant_comparison": true,
+    "exclude_from_m1_06_acceptance": true,
+    "prior_m1_04_smoke_1_531s_excluded": true
+  },
+  "next_action": "ISSUE_EXACT_SUCCESSOR_PC_003_WITH_SAME_BENCHMARK_SEMANTICS_AND_EXPLICIT_-dev_none_-nopo_1_CPU_ONLY_ENFORCEMENT"
+}

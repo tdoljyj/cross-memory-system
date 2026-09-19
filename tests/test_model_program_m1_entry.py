@@ -78,4 +78,32 @@ class ModelProgramM1EntryTests(unittest.TestCase):
         self.assertFalse(good)
         self.assertEqual(code,'CLUED_MODEL_M1_PROFILE_DEVICE_BINDING')
 
+    def test_stage_successor_allows_only_m1_07_profile_preparation(self):
+        s=m.load(m.BASE/'governance/M1StageEntryAuthorization.v1.0.2.json')
+        p7=s['progression_policy']['m1_07']
+        self.assertTrue(p7['gate_satisfied'])
+        self.assertFalse(p7['effectful_execution_authorized_by_stage_successor'])
+        self.assertTrue(p7['exact_experiment_profile_still_required'])
+        self.assertEqual(
+            s['progression_policy']['current_frontier'],
+            'M1-07_AUTHORIZATION_PREPARATION_ALLOWED / M1-07_EXECUTION_NOT_YET_AUTHORIZED'
+        )
+
+    def test_stage_successor_preserves_final_device_gate(self):
+        s=m.load(m.BASE/'governance/M1StageEntryAuthorization.v1.0.2.json')
+        coverage=s['required_final_device_coverage']
+        self.assertEqual(coverage['device_classes'],['Phone','Tablet','PC','Mac'])
+        self.assertFalse(coverage['all_complete'])
+        self.assertFalse(coverage['may_claim_full_cross_device_baseline'])
+        self.assertEqual(coverage['status']['PC'],'PASS / DESK-W-591_STRICT_CPU_BASELINE_ACCEPTED')
+        for device in ('Phone','Tablet','Mac'):
+            self.assertEqual(coverage['status'][device],'DEFERRED_NO_BOUND_DEVICE')
+
+    def test_stage_successor_does_not_weaken_hard_boundaries(self):
+        s1=m.load(m.BASE/'governance/M1StageEntryAuthorization.v1.0.1.json')
+        s2=m.load(m.BASE/'governance/M1StageEntryAuthorization.v1.0.2.json')
+        self.assertEqual(s2['m1_hard_boundaries'],s1['m1_hard_boundaries'])
+        self.assertEqual(s2['exact_experiment_profile_required_before'],s1['exact_experiment_profile_required_before'])
+        self.assertEqual(s2['independent_review'],s1['independent_review'])
+
 if __name__=='__main__': unittest.main()

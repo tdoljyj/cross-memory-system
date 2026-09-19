@@ -1,0 +1,325 @@
+{
+  "schema_version": "clued.model-m1-device-benchmark-evidence/1",
+  "record_id": "CLUED-MODEL-M1-06-PC-DESK-W-591-v1.0.1-20260919",
+  "stage_id": "MODEL-PROGRAM-M1",
+  "task_id": "M1-06",
+  "sub_scope": "PC_BASELINE / STRICT_CPU_ONLY / FOUR_GGUF_VARIANTS",
+  "status": "VALIDATED_EVIDENCE",
+  "profile_id": "M1-BENCH-QWEN35-08B-PC-003",
+  "profile_commit": "665199797776c5c243f0b8cd2d1097995874a447",
+  "validated_at_utc": "2026-09-19T09:15:10.9292228Z",
+  "device": {
+    "device_name": "DESK-W-591",
+    "class": "PC",
+    "cpu": "Intel(R) Core(TM) i7-14700K",
+    "physical_cores": 20,
+    "logical_processors": 28,
+    "ram_bytes": 68399550464,
+    "os": "Microsoft Windows 11",
+    "os_version": "10.0.26200"
+  },
+  "runtime": {
+    "id": "llama.cpp",
+    "release_tag": "b11033",
+    "commit": "8ed1a55efcd7424d2c592f6cbc9f97756db1d74d",
+    "llama_bench_version": "0.4.1-dev",
+    "build_number": 11033,
+    "build_commit_short": "8ed1a55ef",
+    "executable_package": "llama-b11033-bin-win-vulkan-x64.zip",
+    "note": "Vulkan backend library is present and enumerated at process startup, but benchmark rows are strict CPU-only because devices=none, no_op_offload=1, and n_gpu_layers=0 on every accepted result row."
+  },
+  "model": {
+    "model_id": "Qwen/Qwen3.5-0.8B",
+    "revision": "2fc06364715b967f1860aea9cf38778875588b17",
+    "source_weight_sha256": "04b1c301231dd422b8860db31311ab2721511346a32cb1e079c4c4e5f1fe4696"
+  },
+  "benchmark_contract": {
+    "command": "llama-bench.exe -m BF16 -m Q8_0 -m Q4_0 -m Q4_K_M -p 512 -n 128 -t 2 -ngl 0 -dev none -nopo 1 -r 5 -o json",
+    "tests": [
+      "pp512",
+      "tg128"
+    ],
+    "repetitions_per_group": 5,
+    "expected_result_groups": 8,
+    "expected_measurement_samples": 40,
+    "warmup": "ENABLED_DEFAULT",
+    "threads": 2,
+    "n_gpu_layers": 0,
+    "devices": "none",
+    "no_op_offload": 1,
+    "output_format": "json",
+    "started_at_utc": "2026-09-19T09:12:29.8573055Z",
+    "ended_at_utc": "2026-09-19T09:14:50.3160041Z",
+    "wall_seconds": 140.454,
+    "exit_code": 0
+  },
+  "package_variants": [
+    {
+      "variant_id": "bf16",
+      "filename": "Qwen3.5-0.8B-BF16.gguf",
+      "package_bytes": 1557662720,
+      "package_sha256": "fbeda5bd9fa2e8c418cb08df1fa2d06082d2d8ded2728df2d94c9144033f2b73"
+    },
+    {
+      "variant_id": "q8_0",
+      "filename": "Qwen3.5-0.8B-Q8_0.gguf",
+      "package_bytes": 833592320,
+      "package_sha256": "799482186ea1c91b63bf4eb2999e034330425745496a95f0bffbfe6300a1064d"
+    },
+    {
+      "variant_id": "q4_0",
+      "filename": "Qwen3.5-0.8B-Q4_0.gguf",
+      "package_bytes": 512977920,
+      "package_sha256": "d9192377b378863e309e5d2faeeea5b0489f385320a8ed281cff9568061577d6"
+    },
+    {
+      "variant_id": "q4_k_m",
+      "filename": "Qwen3.5-0.8B-Q4_K_M.gguf",
+      "package_bytes": 541903872,
+      "package_sha256": "2f26e07f5585a0f824edbb62a62c3f571bdbaae58d5f13b99befc6447edce90e"
+    }
+  ],
+  "validation": {
+    "result_groups": 8,
+    "measurement_samples": 40,
+    "result_groups_eight": true,
+    "measurement_samples_forty": true,
+    "all_devices_none": true,
+    "all_no_op_offload_one": true,
+    "all_n_gpu_layers_zero": true,
+    "all_threads_two": true,
+    "all_repetitions_five": true,
+    "expected_tests_only": true
+  },
+  "results": [
+    {
+      "variant_id": "bf16",
+      "test": "pp512",
+      "llama_bench_model_size": 1546700032,
+      "avg_ns": 3063167760,
+      "stddev_ns": 12960673,
+      "avg_ts": 167.149615,
+      "stddev_ts": 0.705049,
+      "samples_ns": [
+        3063478900,
+        3050946600,
+        3053795800,
+        3063606600,
+        3084010900
+      ],
+      "samples_ts": [
+        167.13,
+        167.817,
+        167.66,
+        167.123,
+        166.018
+      ]
+    },
+    {
+      "variant_id": "bf16",
+      "test": "tg128",
+      "llama_bench_model_size": 1546700032,
+      "avg_ns": 6674267400,
+      "stddev_ns": 12646403,
+      "avg_ts": 19.17819,
+      "stddev_ts": 0.036317,
+      "samples_ns": [
+        6676657300,
+        6672026700,
+        6671251700,
+        6693247600,
+        6658153700
+      ],
+      "samples_ts": [
+        19.1713,
+        19.1846,
+        19.1868,
+        19.1238,
+        19.2245
+      ]
+    },
+    {
+      "variant_id": "q8_0",
+      "test": "pp512",
+      "llama_bench_model_size": 822629632,
+      "avg_ns": 2634391620,
+      "stddev_ns": 12743387,
+      "avg_ts": 194.355903,
+      "stddev_ts": 0.938008,
+      "samples_ns": [
+        2619032000,
+        2629659200,
+        2633918000,
+        2654149800,
+        2635199100
+      ],
+      "samples_ts": [
+        195.492,
+        194.702,
+        194.387,
+        192.905,
+        194.293
+      ]
+    },
+    {
+      "variant_id": "q8_0",
+      "test": "tg128",
+      "llama_bench_model_size": 822629632,
+      "avg_ns": 3733322700,
+      "stddev_ns": 30633657,
+      "avg_ts": 34.287641,
+      "stddev_ts": 0.278674,
+      "samples_ns": [
+        3718839400,
+        3714530900,
+        3714512500,
+        3732157600,
+        3786573100
+      ],
+      "samples_ts": [
+        34.4193,
+        34.4593,
+        34.4594,
+        34.2965,
+        33.8037
+      ]
+    },
+    {
+      "variant_id": "q4_0",
+      "test": "pp512",
+      "llama_bench_model_size": 502015232,
+      "avg_ns": 1823703340,
+      "stddev_ns": 12537726,
+      "avg_ts": 280.758082,
+      "stddev_ts": 1.939367,
+      "samples_ns": [
+        1830283900,
+        1828374700,
+        1819634800,
+        1803967000,
+        1836256300
+      ],
+      "samples_ts": [
+        279.738,
+        280.03,
+        281.375,
+        283.819,
+        278.828
+      ]
+    },
+    {
+      "variant_id": "q4_0",
+      "test": "tg128",
+      "llama_bench_model_size": 502015232,
+      "avg_ns": 2491325580,
+      "stddev_ns": 20352693,
+      "avg_ts": 51.380995,
+      "stddev_ts": 0.416803,
+      "samples_ns": [
+        2471449500,
+        2480848600,
+        2491369400,
+        2487868700,
+        2525091700
+      ],
+      "samples_ts": [
+        51.7915,
+        51.5952,
+        51.3774,
+        51.4497,
+        50.6912
+      ]
+    },
+    {
+      "variant_id": "q4_k_m",
+      "test": "pp512",
+      "llama_bench_model_size": 530941184,
+      "avg_ns": 2301660040,
+      "stddev_ns": 14678817,
+      "avg_ts": 222.455343,
+      "stddev_ts": 1.411326,
+      "samples_ns": [
+        2298978300,
+        2293652900,
+        2287211700,
+        2302698900,
+        2325758400
+      ],
+      "samples_ts": [
+        222.708,
+        223.225,
+        223.853,
+        222.348,
+        220.143
+      ]
+    },
+    {
+      "variant_id": "q4_k_m",
+      "test": "tg128",
+      "llama_bench_model_size": 530941184,
+      "avg_ns": 2733648680,
+      "stddev_ns": 1928113,
+      "avg_ts": 46.823885,
+      "stddev_ts": 0.033015,
+      "samples_ns": [
+        2736502800,
+        2733434700,
+        2731790200,
+        2732049700,
+        2734466000
+      ],
+      "samples_ts": [
+        46.775,
+        46.8275,
+        46.8557,
+        46.8513,
+        46.8099
+      ]
+    }
+  ],
+  "local_artifacts": [
+    {
+      "name": "llama-bench.raw.json",
+      "bytes": 11276,
+      "sha256": "17c6ea6a1e042eab84c83d27fd42e407d4e78b9b8a24f917b00af610384f269b"
+    },
+    {
+      "name": "llama-bench.stderr.txt",
+      "bytes": 842,
+      "sha256": "4a2867efe2cb89b039d31da7ed71ebf1dd494d59ec06fe472cf57b5fa09b3677"
+    },
+    {
+      "name": "run-meta.json",
+      "bytes": 668,
+      "sha256": "298808c9e75eb8fc4b672b13e805fd1ac60167bdda0f0634a613b2b8f17b2aa9"
+    },
+    {
+      "name": "validated-summary.json",
+      "bytes": 11691,
+      "sha256": "c608eada58db37474d3a7eadf06e29b3954bc288fd5d21852ba6b07004b1d17b"
+    },
+    {
+      "name": "preflight-inherited.json",
+      "bytes": 3015,
+      "sha256": "f8f718e3303007ad5f14196dcbd0b11f3a45b961a9c9c2db397b605b99de6c42"
+    }
+  ],
+  "exclusions": {
+    "m1_04_smoke_timing_1_531_seconds": "EXCLUDED / DIFFERENT PURPOSE AND PROFILE",
+    "pc_profile_002_result_groups": 8,
+    "pc_profile_002_measurement_samples": 40,
+    "pc_profile_002_disposition": "EXCLUDED / devices=auto and no_op_offload=0 did not prove strict CPU-only semantics"
+  },
+  "conclusions": {
+    "pc_strict_cpu_baseline_evidence_complete": true,
+    "quality_winner_selected": false,
+    "release_selection_performed": false,
+    "full_m1_06_closed": false,
+    "remaining_formal_device_classes": [
+      "phone",
+      "tablet",
+      "Mac"
+    ],
+    "authority_effect": "PC_BASELINE_EVIDENCE_ONLY / NO_PROMOTION / NO_ACTIVATION / NO_PRODUCTION"
+  }
+}
