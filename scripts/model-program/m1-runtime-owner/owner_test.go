@@ -359,6 +359,22 @@ func TestNativeBoundary(t *testing.T) {
 			t.Fatal("owner root fingerprint drift")
 		}
 	})
+	t.Run("server_environment_strips_llama_and_config_injection", func(t *testing.T) {
+		t.Setenv("LLAMA_ARG_AGENT", "1")
+		t.Setenv("LLAMA_ARG_TOOLS", "all")
+		t.Setenv("LLAMA_ARG_MCP_SERVERS_JSON", "{\"x\":{}}")
+		t.Setenv("PROGRAMDATA", filepath.Join(t.TempDir(), "programdata"))
+		t.Setenv("APPDATA", filepath.Join(t.TempDir(), "appdata"))
+		env := sanitizedServerEnv()
+		for _, row := range env {
+			upper := strings.ToUpper(row)
+			for _, forbidden := range []string{"LLAMA_ARG_", "HF_TOKEN=", "PROGRAMDATA=", "APPDATA="} {
+				if strings.HasPrefix(upper, forbidden) {
+					t.Fatal("inherited runtime authority surface", row)
+				}
+			}
+		}
+	})
 	t.Run("coedited_self_hash_and_outer_binding_cannot_self_issue", func(t *testing.T) {
 		x := newFixture(t)
 		set(x.p, "owner_final_execution_authorization/owner_message", "different")
