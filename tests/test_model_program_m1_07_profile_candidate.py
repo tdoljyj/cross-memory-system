@@ -117,6 +117,15 @@ class ModelProgramM107CandidateTests(unittest.TestCase):
         self.assertNotIn("Stop-Process", src)
         self.assertNotIn("os.kill(", src)
 
+    def test_crash_occurs_while_stream_connection_is_still_open(self):
+        src = O.read_text(encoding="utf-8")
+        block = src.split("def run_crash_restart", 1)[1].split("\ndef run(", 1)[0]
+        open_pos = block.index("stream_conn, stream_resp, first = open_stream(profile)")
+        kill_pos = block.index("force_kill_owned(proc)")
+        close_pos = block.index("stream_conn.close()")
+        self.assertLess(open_pos, kill_pos)
+        self.assertLess(kill_pos, close_pos)
+
 
 if __name__ == "__main__":
     unittest.main()
