@@ -6,6 +6,8 @@ import re
 import sys
 from pathlib import Path
 
+# P10 supersession probe: a newer PR commit must cancel stale validation runs.
+
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_DIR = ROOT / ".github" / "workflows"
 
@@ -21,8 +23,17 @@ HOSTED_ONLY_ALLOWLIST = {
     ),
 }
 
+CONCURRENCY_EXEMPTIONS = {
+    "model-program-m0.yml": (
+        "M0 SHA256SUMS binds this workflow as an exact candidate input; changing its bytes invalidates the formal M0 manifest."
+    ),
+}
+
 HOSTED_RE = re.compile(r"\b(?:ubuntu|windows|macos)-(?:latest|[0-9][A-Za-z0-9._-]*)\b", re.I)
 SELF_HOSTED_RE = re.compile(r"\bself-hosted\b", re.I)
+PR_TRIGGER_RE = re.compile(r"(?m)^\s*pull_request(?:_target)?\s*:")
+CONCURRENCY_RE = re.compile(r"(?m)^concurrency\s*:")
+CANCEL_RE = re.compile(r"(?m)^\s*cancel-in-progress\s*:")
 
 
 def runs_on_values(text: str) -> list[str]:
@@ -59,6 +70,10 @@ def main() -> int:
         hosted = any(HOSTED_RE.search(value) for value in values)
         self_hosted = any(SELF_HOSTED_RE.search(value) for value in values)
         allowlisted = path.name in HOSTED_ONLY_ALLOWLIST
+        pr_triggered = bool(PR_TRIGGER_RE.search(text))
+        has_concurrency = bool(CONCURRENCY_RE.search(text))
+        has_cancel = bool(CANCEL_RE.search(text))
+        concurrency_exempt = path.name in CONCURRENCY_EXEMPTIONS
 
         if hosted and not self_hosted and not allowlisted:
             violations.append({
@@ -72,6 +87,17 @@ def main() -> int:
                 "reason": "self-hosted workflow is missing trust-internal capability boundary",
             })
 
+        if self_hosted and pr_triggered and not concurrency_exempt and not has_concurrency:
+            violations.append({
+                "workflow": path.name,
+                "reason": "PR-triggered self-hosted workflow is missing top-level concurrency",
+            })
+        elif self_hosted and pr_triggered and not concurrency_exempt and not has_cancel:
+            violations.append({
+                "workflow": path.name,
+                "reason": "PR-triggered self-hosted workflow is missing cancel-in-progress",
+            })
+
         records.append({
             "workflow": path.name,
             "runs_on": values,
@@ -79,12 +105,18 @@ def main() -> int:
             "self_hosted": self_hosted,
             "hosted_only_allowlisted": allowlisted and hosted and not self_hosted,
             "allowlist_reason": HOSTED_ONLY_ALLOWLIST.get(path.name),
+            "pr_triggered": pr_triggered,
+            "has_concurrency": has_concurrency,
+            "has_cancel_in_progress": has_cancel,
+            "concurrency_exempt": concurrency_exempt,
+            "concurrency_exemption_reason": CONCURRENCY_EXEMPTIONS.get(path.name),
         })
 
     report = {
-        "schema": "clued.ci-runner-budget-policy/v1",
+        "schema": "clued.ci-runner-budget-policy/v2",
         "status": "PASS" if not violations else "FAIL",
         "hosted_only_allowlist": HOSTED_ONLY_ALLOWLIST,
+        "concurrency_exemptions": CONCURRENCY_EXEMPTIONS,
         "workflows": records,
         "violations": violations,
     }

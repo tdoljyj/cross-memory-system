@@ -11,6 +11,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: memory-publication-gate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   trusted-self-hosted:
     name: memory-publication-gate
