@@ -37,10 +37,10 @@ const maxStarts = 7
 const wallLimit = 1800 * time.Second
 const baseCommit = "bd80de6beed04a52b74f763baa7c274b5741fb1d"
 
-// Deliberately unbound. r5 never generates, imports or activates an issuance key.
-// A separately approved, reviewed successor must pin the trusted public key.
-// Runtime JSON, argv and environment cannot supply/override this constant.
-const issuerPublicKeyHex = ""
+// Owner-enrolled production trust root pinned by this non-issued successor.
+// Private key remains Owner-only on DESK-W-591; runtime input cannot supply/override it.
+const issuerPublicKeyHex = "a683b21e2d838f0773fc1251e6d0165c4b15ad2b2994cabf4290edff1c24eb03"
+const issuerPublicKeySHA256 = "7d8a39adb80276686ff052b65e074a8ea9e74f7eccbc44f4340b194fec342f9c"
 
 // Set at BUILD time by the exact-source manifest; never read from runtime input.
 var nativeSourceDigest = ""
@@ -268,7 +268,8 @@ func utc(s string) (time.Time, error) {
 func scopePolicy() object {
 	return object{
 		"task_id": "M1-07", "profile_id": issuedID, "effectful_authority_issued": true, "authority_effect": authorityEffect,
-		"code_revision/repository": "tdoljyj/cross-memory-system", "code_revision/base_commit": baseCommit,
+		"execution_control/issuer_public_key_sha256_fingerprint": issuerPublicKeySHA256,
+		"code_revision/repository":                               "tdoljyj/cross-memory-system", "code_revision/base_commit": baseCommit,
 		"code_revision/required_script_path":                                  "scripts/model-program/m1_runtime_stability_pc.py",
 		"code_revision/required_code_commit":                                  expectedFacadeCommit,
 		"code_revision/required_script_git_blob_sha1":                         expectedFacadeBlob,

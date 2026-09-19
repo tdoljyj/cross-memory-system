@@ -1,5 +1,6 @@
 import contextlib
 import ast
+import hashlib
 import subprocess
 from tests.m1_07_native_bridge import native_case, native_binary
 import copy
@@ -150,6 +151,22 @@ class ModelProgramM107CandidateTests(unittest.TestCase):
         p = self.load_candidate()
         semantics = set(p["exact_model_ids_and_revisions"]["stability_subject"]["selection_semantics"].split(" / "))
         self.assertEqual(semantics, m.REQUIRED_MODEL_SEMANTICS)
+
+    def test_candidate_pins_exact_owner_root_but_remains_non_issued(self):
+        p = self.load_candidate()
+        self.assertEqual(p["execution_control"]["issuer_public_key_sha256_fingerprint"], "7d8a39adb80276686ff052b65e074a8ea9e74f7eccbc44f4340b194fec342f9c")
+        self.assertEqual(p["successor_preparation"]["owner_public_key_canonical"], "a683b21e2d838f0773fc1251e6d0165c4b15ad2b2994cabf4290edff1c24eb03")
+        self.assertEqual(p["successor_preparation"]["predecessor_exact_head"], "d58df9c4a1885512bd4dd9b94f121b6a84e25744")
+        self.assertFalse(p["successor_preparation"]["private_key_material_present_in_repository"])
+        self.assertEqual(p["status"], "BLOCKED_PENDING_REVIEW_AND_FINAL_ISSUANCE")
+        self.assertFalse(p["effectful_authority_issued"])
+        self.assertIsNone(p.get("owner_final_execution_authorization"))
+        self.assertEqual(p["expiry"], "TO_BE_BOUND_AT_FINAL_ISSUANCE")
+
+    def test_candidate_binary_binding_matches_rebuilt_native_owner(self):
+        p = self.load_candidate()
+        actual = hashlib.sha256(native_binary().read_bytes()).hexdigest()
+        self.assertEqual(actual, p["code_revision"]["native_owner_binary_sha256"])
 
     def test_profile_declares_another_orchestrator_commit_fails(self):
         p = self.issued_profile()
@@ -536,7 +553,7 @@ class ModelProgramM107R5NativeBoundaryTests(unittest.TestCase):
 
     def test_native_authority_and_all_lifecycle_mock_regressions(self):
         out = native_case()
-        self.assertIn("--- PASS: TestNativeBoundary/production_key_remains_unbound", out)
+        self.assertIn("--- PASS: TestNativeBoundary/production_key_is_exact_owner_enrolled_root", out)
 
     def test_native_binary_has_no_process_injection_arguments(self):
         for flag in ("--pid", "--process", "--callback", "--registry", "--test", "--issuer-key"):
@@ -556,7 +573,7 @@ class ModelProgramM107R5NativeBoundaryTests(unittest.TestCase):
             self.assertFalse(output.exists())
             native = subprocess.run([str(native_binary()), "--execute", "--profile", str(path), "--output-dir", str(output)], capture_output=True, text=True, timeout=30)
             self.assertEqual(native.returncode, 3, native.stdout + native.stderr)
-            self.assertIn("OWNER_ISSUER_TRUST_ROOT_UNBOUND", native.stderr)
+            self.assertIn("OWNER_SIGNATURE_ALGORITHM", native.stderr)
             self.assertFalse(output.exists())
 
 if __name__ == "__main__":

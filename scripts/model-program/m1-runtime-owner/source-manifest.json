@@ -34,9 +34,9 @@
       "sha256": "2fae44661885cffdb1a12f3c222c3ce0c3e00e8b74ac94bebd02fd2ab2fb3b82"
     },
     "policy.go": {
-      "bytes": 12573,
-      "git_blob_sha1": "a50ee03adee6e5beb231940216bc49be0e8d0591",
-      "sha256": "470b45a6d6aa672a6a11f946aef17fc589f887791df04658d9816288d0a17693"
+      "bytes": 12777,
+      "git_blob_sha1": "eeffa9aaa16fd12afb830ac0d3b559771fdab08d",
+      "sha256": "888991dd5a36ac368f0dc731dc95f39f063cecc71a5ff6a7c40d2f3de6407f32"
     },
     "scenarios.go": {
       "bytes": 9907,
@@ -44,10 +44,18 @@
       "sha256": "b9b27c8474e39d5b16f26400b6d2bd5bd66a51b3579ddffd7aa9ff30852989c4"
     }
   },
-  "role": "AUTHOR_SIDE_REMEDIATION_NOT_ISSUANCE",
+  "role": "OWNER_ROOT_PINNED_SUCCESSOR_NOT_ISSUANCE",
   "schema_version": "clued.m1-07-native-source-manifest/1",
-  "source_base": "15aea8fe4c7702a49ed1c722cea00857b091c5ad",
+  "source_base": "d58df9c4a1885512bd4dd9b94f121b6a84e25744",
   "test_files_excluded_from_production": [
     "owner_test.go"
-  ]
+  ],
+  "issuer_public_key_sha256_fingerprint": "7d8a39adb80276686ff052b65e074a8ea9e74f7eccbc44f4340b194fec342f9c",
+  "owner_root_enrollment": {
+    "boundary_adoption_event": 833,
+    "successor_preparation_gate_event": 834,
+    "public_key_canonical_encoding": "lowercase-hex(raw-ed25519-public-key-32-bytes)",
+    "public_key_sha256_fingerprint": "7d8a39adb80276686ff052b65e074a8ea9e74f7eccbc44f4340b194fec342f9c",
+    "private_key_location": "OWNER_ONLY / NON_SECRET_LOCATOR_NOT_EMBEDDED_IN_BINARY"
+  }
 }

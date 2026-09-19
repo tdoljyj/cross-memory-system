@@ -349,9 +349,15 @@ func TestNativeBoundary(t *testing.T) {
 			}
 		}
 	})
-	t.Run("production_key_remains_unbound", func(t *testing.T) {
-		x := newFixture(t)
-		wantCode(t, verifySignature(x.p, issuerPublicKeyHex), "OWNER_ISSUER_TRUST_ROOT_UNBOUND")
+	t.Run("production_key_is_exact_owner_enrolled_root", func(t *testing.T) {
+		key, e := hex.DecodeString(issuerPublicKeyHex)
+		noError(t, e)
+		if len(key) != ed25519.PublicKeySize {
+			t.Fatal("owner root public key length", len(key))
+		}
+		if sha(key) != issuerPublicKeySHA256 {
+			t.Fatal("owner root fingerprint drift")
+		}
 	})
 	t.Run("coedited_self_hash_and_outer_binding_cannot_self_issue", func(t *testing.T) {
 		x := newFixture(t)

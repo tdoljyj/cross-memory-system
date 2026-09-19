@@ -11,6 +11,8 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE = Path(__file__).resolve().with_name("m1-runtime-owner")
+OWNER_PUBLIC_KEY_HEX = "a683b21e2d838f0773fc1251e6d0165c4b15ad2b2994cabf4290edff1c24eb03"
+OWNER_PUBLIC_KEY_SHA256 = "7d8a39adb80276686ff052b65e074a8ea9e74f7eccbc44f4340b194fec342f9c"
 
 def main():
     parser = argparse.ArgumentParser()
@@ -34,8 +36,11 @@ def main():
         blob = hashlib.sha1(b"blob " + str(len(data)).encode() + b"\0" + data).hexdigest()
         if len(data) != row["bytes"] or hashlib.sha256(data).hexdigest() != row["sha256"] or blob != row["git_blob_sha1"]:
             raise RuntimeError("source identity mismatch: " + name)
-    if 'const issuerPublicKeyHex = ""' not in (SOURCE / "policy.go").read_text(encoding="utf-8"):
-        raise RuntimeError("r5 development build requires an unbound issuer key")
+    policy = (SOURCE / "policy.go").read_text(encoding="utf-8")
+    if f'const issuerPublicKeyHex = "{OWNER_PUBLIC_KEY_HEX}"' not in policy:
+        raise RuntimeError("successor build requires exact Owner-enrolled issuer public key")
+    if f'const issuerPublicKeySHA256 = "{OWNER_PUBLIC_KEY_SHA256}"' not in policy:
+        raise RuntimeError("successor build requires exact Owner public-key fingerprint")
     digest = hashlib.sha256(raw).hexdigest()
     output.mkdir(parents=True, exist_ok=False)
     binary = output / ("m1-07-owner.exe" if os.name == "nt" else "m1-07-owner")
@@ -48,7 +53,7 @@ def main():
         if process.returncode:
             raise RuntimeError("native build failed; see external build.log")
         version = subprocess.check_output([str(go), "version"], env=env, text=True).strip()
-    receipt = {"role": "AUTHOR_SIDE_DEVELOPMENT_BUILD_NOT_ISSUANCE", "compiler": version, "compiler_sha256": hashlib.sha256(go.read_bytes()).hexdigest(), "argv": argv, "native_source_manifest_sha256": digest, "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(), "binary_bytes": binary.stat().st_size, "issuer_key_bound": False, "effectful_authority_issued": False, "binary_executed_by_build_helper": False}
+    receipt = {"role": "OWNER_ROOT_PINNED_DEVELOPMENT_BUILD_NOT_ISSUANCE", "compiler": version, "compiler_sha256": hashlib.sha256(go.read_bytes()).hexdigest(), "argv": argv, "native_source_manifest_sha256": digest, "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(), "binary_bytes": binary.stat().st_size, "issuer_key_bound": True, "issuer_public_key_sha256_fingerprint": OWNER_PUBLIC_KEY_SHA256, "effectful_authority_issued": False, "binary_executed_by_build_helper": False}
     (output / "build-receipt.json").write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(receipt))
     return 0

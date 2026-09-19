@@ -9,7 +9,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 M1 = ROOT / "development/contracts/model-program/m1"
-CANDIDATE = M1 / "governance/ExperimentAuthorizationProfile.M1-STAB-QWEN35-08B-PC-001.candidate.json"
+CANDIDATE = M1 / "governance/ExperimentAuthorizationProfile.M1-STAB-QWEN35-08B-PC-001.owner-root-pinned.candidate.json"
 ORCHESTRATOR = ROOT / "scripts/model-program/m1_runtime_stability_pc.py"
 BINDING = ROOT / "scripts/model-program/m1_runtime_stability_binding.py"
 
@@ -29,6 +29,8 @@ OWNER_BOUNDARY_SHA256 = '35fea706a095a2cba6e3e31377e56c2246e890dfce751d1b038185e
 ISSUED_PROFILE_ID = "M1-STAB-QWEN35-08B-PC-001-ISSUED"
 MACHINE_IDENTITY_SHA256 = "00b300c3b04e170bc097ac0a69cf39378a61f1bdd3ca15a970e55f2119b65522"
 ATTEMPT_GUARD_PATH = r"C:\Users\Public\Clued\ModelProgram\M1\runtime-state\M1-STAB-QWEN35-08B-PC-001\M1RuntimeStabilityAttemptGuard.json"
+OWNER_PUBLIC_KEY_HEX = "a683b21e2d838f0773fc1251e6d0165c4b15ad2b2994cabf4290edff1c24eb03"
+OWNER_PUBLIC_KEY_SHA256 = "7d8a39adb80276686ff052b65e074a8ea9e74f7eccbc44f4340b194fec342f9c"
 
 REQUIRED_MODEL_SEMANTICS = {
     "STABILITY_REFERENCE_ONLY",
@@ -169,14 +171,25 @@ def validate_native_source_binding(profile: dict) -> bool:
         p = native / name
         if p.stat().st_size != identity["bytes"] or git_blob_sha1(p) != identity["git_blob_sha1"] or hashlib.sha256(p.read_bytes()).hexdigest() != identity["sha256"]:
             return False
-    if 'const issuerPublicKeyHex = ""' not in (native / "policy.go").read_text(encoding="utf-8"):
+    policy = (native / "policy.go").read_text(encoding="utf-8")
+    if 'const issuerPublicKeyHex = "a683b21e2d838f0773fc1251e6d0165c4b15ad2b2994cabf4290edff1c24eb03"' not in policy:
         return False
-    if code.get("native_owner_binary_sha256") != "TO_BE_BOUND_AT_FINAL_ISSUANCE":
+    if 'const issuerPublicKeySHA256 = "7d8a39adb80276686ff052b65e074a8ea9e74f7eccbc44f4340b194fec342f9c"' not in policy:
+        return False
+    binary_sha = code.get("native_owner_binary_sha256")
+    if not isinstance(binary_sha, str) or len(binary_sha) != 64 or any(c not in "0123456789abcdef" for c in binary_sha):
         return False
     control = profile.get("execution_control") or {}
-    if control.get("issuer_trust_root_status") != "UNBOUND / SEPARATE_OWNER_APPROVED_REVIEWED_CODE_SUCCESSOR_REQUIRED / NO_KEY_GENERATED_BY_R5":
+    if control.get("issuer_public_key_sha256_fingerprint") != OWNER_PUBLIC_KEY_SHA256:
         return False
-    if control.get("boundary_contract_adoption_status") != "PROPOSED_BY_REMEDIATION / NOT_OWNER_ADOPTED / INDEPENDENT_REVIEW_REQUIRED":
+    if control.get("issuer_trust_root_status") != "PINNED_OWNER_ED25519_PUBLIC_KEY / OWNER_ENROLLMENT_COMPLETE / PRIVATE_KEY_OWNER_ONLY / NOT_ISSUED":
+        return False
+    if control.get("boundary_contract_adoption_status") != "OWNER_ADOPTED_EVENT_833 / SUCCESSOR_PREPARATION_GATE_EVENT_834 / INDEPENDENT_REVIEW_REQUIRED_BEFORE_FINAL_ISSUANCE":
+        return False
+    prep = profile.get("successor_preparation") or {}
+    if prep.get("predecessor_exact_head") != "d58df9c4a1885512bd4dd9b94f121b6a84e25744" or prep.get("owner_public_key_canonical") != OWNER_PUBLIC_KEY_HEX or prep.get("owner_public_key_sha256_fingerprint") != OWNER_PUBLIC_KEY_SHA256:
+        return False
+    if prep.get("private_key_material_present_in_repository") is not False:
         return False
     return True
 
