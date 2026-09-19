@@ -2,7 +2,7 @@ import contextlib
 import ast
 import hashlib
 import subprocess
-from tests.m1_07_native_bridge import native_case, native_binary
+from tests.m1_07_native_bridge import GO, native_case, native_binary
 import copy
 import importlib.util
 import io
@@ -18,6 +18,9 @@ from unittest import mock
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 P = ROOT / "scripts/model-program/validate_m1_07_profile_candidate.py"
 O = ROOT / "scripts/model-program/m1_runtime_stability_pc.py"
+BUILD_HELPER = ROOT / "scripts/model-program/build_m1_07_native_owner.py"
+NATIVE_WINDOWS = ROOT / "scripts/model-program/m1-runtime-owner/platform_windows.go"
+NATIVE_OWNER = ROOT / "scripts/model-program/m1-runtime-owner/owner.go"
 
 spec = importlib.util.spec_from_file_location("m1_07_validator", P)
 m = importlib.util.module_from_spec(spec)
@@ -162,6 +165,35 @@ class ModelProgramM107CandidateTests(unittest.TestCase):
         self.assertFalse(p["effectful_authority_issued"])
         self.assertIsNone(p.get("owner_final_execution_authorization"))
         self.assertEqual(p["expiry"], "TO_BE_BOUND_AT_FINAL_ISSUANCE")
+
+    def test_candidate_binds_full_runtime_release_tree_and_signed_only_config(self):
+        p = self.load_candidate()
+        runtime = p["runtime_and_device_profile"]
+        self.assertEqual(runtime["runtime_asset_name"], "llama-b11033-bin-win-vulkan-x64.zip")
+        self.assertEqual(runtime["runtime_asset_bytes"], 31766410)
+        self.assertEqual(runtime["runtime_asset_sha256"], "8ca91d4621fcac8799245f01a6467e9c09eba7b8d3be161a382048dc5c839db2")
+        self.assertEqual(runtime["runtime_tree_attestation_semantics"], "EXACT_RELEASE_ZIP_AND_EXTRACTED_TREE_MATCH / NO_EXTRA_MISSING_OR_MUTATED_FILES")
+        self.assertEqual(p["config_revision"]["server"]["configuration_sources"], "SIGNED_ARGV_ONLY / CHILD_ENV_ALLOWLIST / NO_LLAMA_ARG / NO_PROGRAMDATA_APPDATA_CONFIG")
+        self.assertIn("zip.OpenReader(runtimeAssetPath)", NATIVE_WINDOWS.read_text(encoding="utf-8"))
+        self.assertIn("Env: sanitizedServerEnv()", NATIVE_WINDOWS.read_text(encoding="utf-8"))
+        self.assertIn('allowed := []string{"SystemRoot", "WINDIR", "TEMP", "TMP"}', NATIVE_OWNER.read_text(encoding="utf-8"))
+
+    def test_build_helper_rejects_inherited_goflags_overlay_before_output(self):
+        self.assertTrue(GO)
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            overlay = root / "overlay.json"
+            overlay.write_text('{"Replace":{}}', encoding="utf-8")
+            output = root / "must-not-exist"
+            env = os.environ.copy()
+            env["GOFLAGS"] = "-overlay=" + str(overlay)
+            p = subprocess.run(
+                [sys.executable, str(BUILD_HELPER), "--go", str(GO), "--output", str(output)],
+                env=env, capture_output=True, text=True, timeout=30,
+            )
+            self.assertNotEqual(p.returncode, 0)
+            self.assertIn("forbidden inherited Go build environment: GOFLAGS", p.stdout + p.stderr)
+            self.assertFalse(output.exists())
 
     def test_candidate_binary_binding_matches_rebuilt_native_owner(self):
         p = self.load_candidate()
