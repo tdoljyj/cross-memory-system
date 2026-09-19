@@ -1,0 +1,177 @@
+{
+  "schema_version": "clued.model-experiment-authorization-profile/3",
+  "profile_id": "M1-BENCH-QWEN35-08B-PC-002",
+  "stage_id": "MODEL-PROGRAM-M1",
+  "task_id": "M1-06",
+  "status": "ISSUED",
+  "issued_at_utc": "2026-09-19T09:07:41.6318707Z",
+  "expiry_utc": "2026-09-20T09:07:41.6318707Z",
+  "predecessor_profile": {
+    "profile_id": "M1-BENCH-QWEN35-08B-PC-001",
+    "closeout_ref": "../evidence/M1BenchmarkPCProfile001PreExecutionCloseout_20260919.json",
+    "disposition": "CLOSED_PRE_EXECUTION / ZERO_MEASURED_SAMPLES"
+  },
+  "objective": "Execute the exact PC/CPU-only four-variant performance baseline authorized by predecessor PC-001, with one wrapper-only correction: native stderr backend diagnostics are captured as diagnostics and only llama-bench process exit code plus output validation determine execution success. No benchmark parameters or authority are expanded.",
+  "owner_authorization": {
+    "holder": "OWNER",
+    "source": "CURRENT_CONVERSATION",
+    "instructions": [
+      "好 进入下一步"
+    ],
+    "interpreted_scope": "Continue the authorized M1-06 PC benchmark; successor PC-002 is a fail-closed wrapper correction after PC-001 produced zero measured samples."
+  },
+  "exact_model_ids_and_revisions": {
+    "model_id": "Qwen/Qwen3.5-0.8B",
+    "revision": "2fc06364715b967f1860aea9cf38778875588b17",
+    "source_weight_sha256": "04b1c301231dd422b8860db31311ab2721511346a32cb1e079c4c4e5f1fe4696",
+    "package_matrix_git_blob_sha1": "f5e94be1befe99526cbd9f0cbb74ec500fc17622",
+    "variants": [
+      {
+        "variant_id": "bf16",
+        "filename": "Qwen3.5-0.8B-BF16.gguf",
+        "sha256": "fbeda5bd9fa2e8c418cb08df1fa2d06082d2d8ded2728df2d94c9144033f2b73",
+        "bytes": 1557662720
+      },
+      {
+        "variant_id": "q8_0",
+        "filename": "Qwen3.5-0.8B-Q8_0.gguf",
+        "sha256": "799482186ea1c91b63bf4eb2999e034330425745496a95f0bffbfe6300a1064d",
+        "bytes": 833592320
+      },
+      {
+        "variant_id": "q4_0",
+        "filename": "Qwen3.5-0.8B-Q4_0.gguf",
+        "sha256": "d9192377b378863e309e5d2faeeea5b0489f385320a8ed281cff9568061577d6",
+        "bytes": 512977920
+      },
+      {
+        "variant_id": "q4_k_m",
+        "filename": "Qwen3.5-0.8B-Q4_K_M.gguf",
+        "sha256": "2f26e07f5585a0f824edbb62a62c3f571bdbaae58d5f13b99befc6447edce90e",
+        "bytes": 541903872
+      }
+    ]
+  },
+  "runtime_and_device_profile": {
+    "device_name": "DESK-W-591",
+    "device_class": "PC",
+    "cpu": "Intel(R) Core(TM) i7-14700K",
+    "cpu_cores": 20,
+    "cpu_logical_processors": 28,
+    "ram_bytes": 68399550464,
+    "os_version": "10.0.26200",
+    "runtime_id": "llama.cpp",
+    "runtime_release_tag": "b11033",
+    "runtime_commit": "8ed1a55efcd7424d2c592f6cbc9f97756db1d74d",
+    "llama_bench_version": "0.4.1-dev",
+    "backend_policy": "CPU_ONLY",
+    "n_gpu_layers": 0,
+    "threads": 2
+  },
+  "code_revision": {
+    "repository": "tdoljyj/cross-memory-system",
+    "base_commit": "b454c1e7d9a642ac2ccd88bf4b7447f7a5703d17",
+    "predecessor_profile_commit": "55d69bd28ff5eac74c827f0b14eaf94cde4699e2",
+    "executable": "llama-bench.exe",
+    "executable_runtime_commit": "8ed1a55efcd7424d2c592f6cbc9f97756db1d74d"
+  },
+  "config_revision": {
+    "benchmark_suite": "PC-CPU-FOUR-VARIANT-v1",
+    "tests": [
+      {
+        "test_id": "pp512",
+        "n_prompt": 512,
+        "n_gen": 0
+      },
+      {
+        "test_id": "tg128",
+        "n_prompt": 0,
+        "n_gen": 128
+      }
+    ],
+    "repetitions_per_test": 5,
+    "warmup": "ENABLED_DEFAULT",
+    "n_threads": 2,
+    "n_gpu_layers": 0,
+    "output_format": "json",
+    "expected_result_groups": 8,
+    "expected_measurement_samples": 40,
+    "wrapper_policy": "CAPTURE_NATIVE_STDERR_AS_DIAGNOSTIC / PROCESS_EXIT_CODE_AUTHORITATIVE / VALIDATE_JSON_AFTER_EXIT"
+  },
+  "allowed_operations": [
+    "READ_EXACT_PACKAGE_VARIANTS",
+    "VERIFY_PACKAGE_SHA256_AND_BYTES",
+    "RUN_LLAMA_BENCH_CPU_ONLY_ON_DESK_W_591",
+    "LOAD_MODEL_FOR_BENCHMARK_ONLY",
+    "EXECUTE_PP512_AND_TG128_BENCHMARKS",
+    "PERFORM_DEFAULT_WARMUP",
+    "COLLECT_FIVE_MEASURED_REPETITIONS_PER_VARIANT_TEST",
+    "CAPTURE_NATIVE_STDERR_DIAGNOSTICS",
+    "WRITE_LOCAL_RAW_BENCHMARK_EVIDENCE",
+    "WRITE_AGGREGATED_PC_BASELINE_EVIDENCE",
+    "RECORD_HOST_AND_RUNTIME_IDENTITY"
+  ],
+  "prohibited_operations": [
+    "GPU_BENCHMARK",
+    "N_GPU_LAYERS_GREATER_THAN_ZERO",
+    "HOSTED_PROVIDER_CALL",
+    "NETWORK_DOWNLOAD",
+    "MODEL_SERVER_START",
+    "GENERAL_CHAT_OR_PRODUCT_INFERENCE",
+    "QUALITY_WINNER_SELECTION",
+    "PROMOTION",
+    "ACTIVATION",
+    "PRODUCTION_DEPLOYMENT",
+    "PRODUCTION_TRAFFIC",
+    "TRAINING",
+    "CONTINUED_PRETRAINING",
+    "SFT",
+    "DISTILLATION",
+    "PREFERENCE_TRAINING",
+    "LORA_OR_ADAPTER_TRAINING",
+    "MODEL_MERGE",
+    "SEMANTIC_INDEX_WRITE",
+    "CANONICAL_AUTHORITY_CREATION"
+  ],
+  "budget_ceiling": {
+    "max_wall_seconds": 3600,
+    "max_network_bytes": 0,
+    "max_output_storage_bytes": 268435456,
+    "max_cost_microunits": 0,
+    "currency": "USD",
+    "max_wrapper_launch_attempts": 1,
+    "max_benchmark_result_groups": 8,
+    "max_measurement_samples": 40
+  },
+  "stop_conditions": [
+    "PROFILE_EXPIRED_OR_REVOKED",
+    "MODEL_DIGEST_OR_SIZE_DRIFT",
+    "RUNTIME_COMMIT_OR_BUILD_DRIFT",
+    "DEVICE_IDENTITY_DRIFT",
+    "GPU_LAYER_COUNT_NOT_ZERO",
+    "THREAD_COUNT_NOT_TWO",
+    "NETWORK_ACTIVITY_REQUIRED",
+    "WRAPPER_LAUNCH_ATTEMPTS_EXCEED_ONE",
+    "LLAMA_BENCH_NONZERO_EXIT_CODE",
+    "INVALID_OR_PARTIAL_JSON_OUTPUT",
+    "RESULT_GROUP_COUNT_NOT_EIGHT",
+    "MEASUREMENT_SAMPLE_COUNT_NOT_FORTY",
+    "OUTPUT_STORAGE_BUDGET_EXCEEDED"
+  ],
+  "evidence_requirements": [
+    "exact command line",
+    "preflight digests and sizes",
+    "runtime build/commit",
+    "device CPU/RAM/OS identity",
+    "8 benchmark result groups",
+    "40 measured samples total",
+    "per-group avg/stddev ns and tokens-per-second",
+    "raw samples_ns and samples_ts",
+    "captured native stderr diagnostics",
+    "prior M1-04 1.531s smoke timing explicitly excluded",
+    "PC baseline explicitly not full phone/tablet/Mac M1-06 closure"
+  ],
+  "release_ceiling": "M1_06_PC_BASELINE_EVIDENCE_ONLY / NOT_FULL_M1_06_CLOSEOUT / NO_QUALITY_WINNER / NO_RELEASE",
+  "effectful_authority_issued": true,
+  "authority_effect": "M1-06_PC_CPU_FOUR_VARIANT_BENCHMARK_ONLY / ONE_WRAPPER_LAUNCH"
+}
