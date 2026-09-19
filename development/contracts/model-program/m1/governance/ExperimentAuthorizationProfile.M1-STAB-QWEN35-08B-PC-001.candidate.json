@@ -89,7 +89,7 @@
     "base_commit": "bd80de6beed04a52b74f763baa7c274b5741fb1d",
     "required_script_path": "scripts/model-program/m1_runtime_stability_pc.py",
     "required_script_git_blob_sha1": "b197aba8c4ab3d736f063ac823ddfeec85289f0d",
-    "required_script_normalized_sha256": "8519272ca6d61e64e897c2167a9f17b24737a67b8cf7472cb47acc174a40b5f6",
+    "required_script_normalized_sha256": "de43baf3445a415dd1639948aa3e674f1d04582f75b2c29f7cc3bd6e1f490d1e",
     "required_code_commit": "2209576a79af035a4ffe4a59aab4c0039107f36f",
     "orchestrator_default_mode": "VALIDATE_ONLY / NO SERVER START / NO MODEL LOAD",
     "execution_allowed_while_candidate": false
