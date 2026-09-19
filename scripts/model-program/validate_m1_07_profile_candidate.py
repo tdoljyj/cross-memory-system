@@ -186,7 +186,7 @@ def validate_native_source_binding(profile: dict) -> bool:
         return False
     if 'const issuerPublicKeySHA256 = "7d8a39adb80276686ff052b65e074a8ea9e74f7eccbc44f4340b194fec342f9c"' not in policy:
         return False
-    if "Env: sanitizedServerEnv()" not in platform_windows or "zip.OpenReader(runtimeAssetPath)" not in platform_windows:
+    if "Env: sanitizedServerEnv()" not in platform_windows or "zip.OpenReader(assetPath)" not in platform_windows or "attestRuntimeTreeAgainst(runtimeAssetPath, runtimeDir, runtimeAssetBytes, runtimeAssetSHA, deadline)" not in platform_windows:
         return False
     if 'allowed := []string{"SystemRoot", "WINDIR", "TEMP", "TMP"}' not in owner:
         return False
