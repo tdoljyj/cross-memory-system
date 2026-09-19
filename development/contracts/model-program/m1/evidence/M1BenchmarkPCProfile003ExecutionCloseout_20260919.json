@@ -1,0 +1,104 @@
+{
+  "schema_version": "clued.model-experiment-execution-closeout/1",
+  "record_id": "M1-BENCH-QWEN35-08B-PC-003-EXECUTION-CLOSEOUT-20260919",
+  "profile_id": "M1-BENCH-QWEN35-08B-PC-003",
+  "stage_id": "MODEL-PROGRAM-M1",
+  "task_id": "M1-06",
+  "sub_scope": "PC_BASELINE / STRICT_CPU_ONLY",
+  "status": "PASS / M1_06_PC_STRICT_CPU_FOUR_VARIANT_BASELINE_ACCEPTED",
+  "closed_at_utc": "2026-09-19T09:16:47.8950266Z",
+  "authority": {
+    "owner_instruction": "好 进入下一步",
+    "profile_commit": "665199797776c5c243f0b8cd2d1097995874a447",
+    "release_ceiling": "M1_06_PC_BASELINE_EVIDENCE_ONLY / NOT_FULL_M1_06_CLOSEOUT / NO_QUALITY_WINNER / NO_RELEASE"
+  },
+  "execution": {
+    "device_name": "DESK-W-591",
+    "runtime": "llama.cpp b11033 / 8ed1a55efcd7424d2c592f6cbc9f97756db1d74d",
+    "command": "llama-bench.exe -m BF16 -m Q8_0 -m Q4_0 -m Q4_K_M -p 512 -n 128 -t 2 -ngl 0 -dev none -nopo 1 -r 5 -o json",
+    "started_at_utc": "2026-09-19T09:12:29.8573055Z",
+    "ended_at_utc": "2026-09-19T09:14:50.3160041Z",
+    "wall_seconds": 140.454,
+    "exit_code": 0,
+    "result_groups": 8,
+    "measured_samples": 40
+  },
+  "strict_cpu_validation": {
+    "devices_none_all_rows": true,
+    "no_op_offload_one_all_rows": true,
+    "n_gpu_layers_zero_all_rows": true,
+    "n_threads_two_all_rows": true,
+    "repetitions_five_all_rows": true,
+    "tests_exactly_pp512_and_tg128": true,
+    "result_groups_exactly_eight": true,
+    "measured_samples_exactly_forty": true,
+    "verdict": "PASS"
+  },
+  "evidence": {
+    "benchmark_evidence_ref": "DeviceBenchmarkEvidence.PC.DESK-W-591.v1.0.1.json",
+    "benchmark_evidence_git_blob_sha1": "9e65dc42e0844419d89a58bd4874603ac7747a7e",
+    "raw_json_sha256": "17c6ea6a1e042eab84c83d27fd42e407d4e78b9b8a24f917b00af610384f269b",
+    "stderr_sha256": "4a2867efe2cb89b039d31da7ed71ebf1dd494d59ec06fe472cf57b5fa09b3677",
+    "run_meta_sha256": "298808c9e75eb8fc4b672b13e805fd1ac60167bdda0f0634a613b2b8f17b2aa9",
+    "validated_summary_sha256": "c608eada58db37474d3a7eadf06e29b3954bc288fd5d21852ba6b07004b1d17b",
+    "inherited_preflight_sha256": "f8f718e3303007ad5f14196dcbd0b11f3a45b961a9c9c2db397b605b99de6c42"
+  },
+  "exclusions": [
+    {
+      "source": "M1-04 first real Qwen invocation",
+      "value": "~1.531 s",
+      "disposition": "EXCLUDED_FROM_BENCHMARK",
+      "reason": "Smoke/invocation-path qualification used a different profile and purpose."
+    },
+    {
+      "source": "M1-BENCH-QWEN35-08B-PC-002",
+      "result_groups": 8,
+      "measured_samples": 40,
+      "disposition": "EXCLUDED_FROM_ACCEPTED_BASELINE",
+      "reason": "n_gpu_layers=0 was insufficient to prove strict CPU-only because devices=auto and no_op_offload=0 permitted host operation offload."
+    }
+  ],
+  "benchmark_observations": {
+    "note": "These are descriptive measurements only; this closeout does not select, rank, promote, or activate any variant.",
+    "bf16": {
+      "pp512_avg_ts": 167.149615,
+      "tg128_avg_ts": 19.17819
+    },
+    "q8_0": {
+      "pp512_avg_ts": 194.355903,
+      "tg128_avg_ts": 34.287641
+    },
+    "q4_0": {
+      "pp512_avg_ts": 280.758082,
+      "tg128_avg_ts": 51.380995
+    },
+    "q4_k_m": {
+      "pp512_avg_ts": 222.455343,
+      "tg128_avg_ts": 46.823885
+    }
+  },
+  "scope_disposition": {
+    "pc_baseline": "CLOSED_SUCCESS",
+    "full_m1_06": "OPEN",
+    "remaining_required_device_classes": [
+      "phone",
+      "tablet",
+      "Mac"
+    ],
+    "quality_selection": "NOT_PERFORMED",
+    "teacher_or_reference_selection": "NOT_PERFORMED",
+    "m1_07": "NOT_AUTHORIZED_BY_THIS_CLOSEOUT"
+  },
+  "prohibited_effects_confirmed": {
+    "training_performed": false,
+    "hosted_provider_call_performed": false,
+    "network_download_performed": false,
+    "promotion_performed": false,
+    "activation_performed": false,
+    "production_deployment_performed": false,
+    "production_traffic_performed": false,
+    "production_database_mutation_performed": false,
+    "quality_winner_selected": false
+  },
+  "next_frontier": "M1-06 remaining formal device baselines: phone / tablet / Mac. Do not advance to M1-07 until M1-06 device-baseline scope is closed or explicitly re-scoped by Owner."
+}
