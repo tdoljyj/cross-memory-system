@@ -127,3 +127,55 @@ BLOCKED_PENDING_REVIEW_AND_FINAL_ISSUANCE / NONE / PROFILE_PREPARATION_ONLY / fa
 Fresh-Context independent review of the exact successor head is still required.
 No Owner Final Issuance, PR merge, model execution, M1-08, training, production
 or release is authorized or performed by this successor.
+
+
+## Owner-root successor r1 targeted remediation
+
+Fresh-Context review of exact successor head `aa127d5d0623cce921cb90643ec620ace2b70a1f`
+found 0 BLOCKER / 3 MAJOR. This r1 changes only those three boundaries and
+does not expand M1-07 execution authority.
+
+1. **Runtime configuration authority is closed.** The native owner no longer
+   passes `os.Environ()` to llama-server. The child receives only
+   `SystemRoot`, `WINDIR`, `TEMP`, and `TMP`. Therefore
+   `PROGRAMDATA` / `APPDATA` config.ini discovery and all inherited
+   `LLAMA_ARG_*` / token variables are absent. Signed fixed argv is the sole
+   llama-server configuration source.
+2. **Source-to-binary build provenance is closed.** The build helper rejects
+   inherited `GOFLAGS` before creating an output directory, uses
+   `GOENV=off`, `GOWORK=off`, an empty `GOEXPERIMENT`, local toolchain,
+   offline module settings, and CGO disabled. The build receipt records the
+   effective build environment and target.
+3. **Runtime implementation identity is closed over the exact release tree.**
+   Before any attempt guard, output directory, or server start, the native owner
+   verifies the exact b11033 Windows Vulkan release ZIP and then cryptographically
+   compares every extracted runtime file against that ZIP, rejecting extra,
+   missing, non-regular, size-drifted, or digest-drifted files. This covers
+   `llama-server-impl.dll`, `llama.dll`, `llama-common.dll`, GGML backend
+   DLLs, and the remainder of the exact runtime release tree rather than only
+   the 9 KiB launcher.
+
+r1 exact identities:
+
+- remediation predecessor: `aa127d5d0623cce921cb90643ec620ace2b70a1f`
+- native source manifest SHA-256:
+  `ecf1279eb8e8e443af5b0fc3bff7d94e4e1147203d314dc07970ef9667b887d5`
+- development native binary SHA-256:
+  `398045c9166189383506135302152dc11dbad4cf7ee032edb5b85aa398560aed`
+- exact runtime asset SHA-256:
+  `8ca91d4621fcac8799245f01a6467e9c09eba7b8d3be161a382048dc5c839db2`
+- Owner public-root fingerprint remains:
+  `7d8a39adb80276686ff052b65e074a8ea9e74f7eccbc44f4340b194fec342f9c`
+
+Final author-side r1 verification: focused 59/59 PASS; four M1 validators
+PASS; full M1 88/88 PASS; native Go 100 leaf cases PASS / 0 failed; go vet
+PASS. Adversarial runtime-tree tests reject same-size content drift, extra
+files and missing files. Inherited `GOFLAGS=-overlay=...` is rejected before
+build output creation. The exact NON-ISSUED Candidate returns exit 3 /
+`PROFILE_NOT_ISSUED` with no output directory; an ISSUED-shaped unsigned
+profile returns exit 3 / `OWNER_SIGNATURE_ALGORITHM` with no output directory;
+observed Windows llama-server process count remains 0 -> 0 -> 0.
+
+This remains **NOT FINAL ISSUANCE**. No Owner private key was read or used, no
+real M1-07 scenario ran, no llama-server/model was started, and PR #268 remains
+outside r1 merge authority.
