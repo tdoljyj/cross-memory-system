@@ -1,0 +1,40 @@
+name: compute-pool-health
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 * * * *"
+  pull_request:
+    paths:
+      - ".github/workflows/compute-pool-health.yml"
+      - "scripts/ci/compute_pool_health.py"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/compute-pool-health.yml"
+      - "scripts/ci/compute_pool_health.py"
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: compute-pool-health-${{ github.event.pull_request.number || github.ref || 'schedule' }}
+  cancel-in-progress: true
+
+jobs:
+  health:
+    if: >-
+      github.event_name != 'pull_request' ||
+      (github.event.pull_request.head.repo.full_name == github.repository &&
+       github.actor == github.repository_owner)
+    runs-on: [self-hosted, clued, pool-general, trust-internal]
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Inspect registered runners and recent queue pressure
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python scripts/ci/compute_pool_health.py
