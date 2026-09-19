@@ -5,7 +5,7 @@
   "stage_id": "MODEL-PROGRAM-M1",
   "task_id": "M1-07",
   "created_at_utc": "2026-09-19T10:22:14.4365891Z",
-  "status": "CURRENT_AUTHORITATIVE_REMEDIATION_BINDING / ROUND_2 / MAJOR_01_02_03_04_CLOSED_AUTHOR_SIDE / EFFECTFUL_EXECUTION_BLOCKED / FRESH_CONTEXT_RE_REVIEW_REQUIRED",
+  "status": "CURRENT_AUTHORITATIVE_REMEDIATION_BINDING / ROUND_3 / MAJOR_04_CONTEXT_OWNERSHIP_REMEDIATED_AUTHOR_SIDE / EFFECTFUL_EXECUTION_BLOCKED / FRESH_CONTEXT_RE_REVIEW_REQUIRED",
   "source_baseline": {
     "main_merge_commit": "bd80de6beed04a52b74f763baa7c274b5741fb1d",
     "stage_successor_ref": "../governance/M1StageEntryAuthorization.v1.0.2.json",
@@ -13,7 +13,7 @@
   },
   "candidate": {
     "path": "development/contracts/model-program/m1/governance/ExperimentAuthorizationProfile.M1-STAB-QWEN35-08B-PC-001.candidate.json",
-    "git_blob_sha1": "f64f265fb57ccb07ab22c270c802c37b57a401dd",
+    "git_blob_sha1": "af9d8516610868512e302b03f36b076bbadf8e8a",
     "profile_id": "M1-STAB-QWEN35-08B-PC-001-CANDIDATE",
     "status": "BLOCKED_PENDING_REVIEW_AND_FINAL_ISSUANCE",
     "effectful_authority_issued": false,
@@ -22,11 +22,11 @@
   },
   "orchestrator": {
     "path": "scripts/model-program/m1_runtime_stability_pc.py",
-    "code_commit": "52c99f179a4046430fbafc1ea610303dbfcbc5ce",
-    "git_blob_sha1": "60310021d161eeb0aace2dd670241523845a60f0",
-    "normalized_sha256": "59a4a95ce234b76c4f6852370ff2b05a5dcd6b3de372d45e59a558041e4bed8a",
+    "code_commit": "7c430bf143d1f8e9b66c7c02ff7caa406190ccbb",
+    "git_blob_sha1": "1b07232fd63cf6d0b2079919a6cc0ab0fec4e09a",
+    "normalized_sha256": "31c1a57eb29e49bc090af2664c4b2fbb083a97c28a081e27601cce2265b297c6",
     "exact_binding_module_path": "scripts/model-program/m1_runtime_stability_binding.py",
-    "exact_binding_module_git_blob_sha1": "d86bd85a06bccfabe1fbcd7345a3895c4cf4e836",
+    "exact_binding_module_git_blob_sha1": "1a0c111f06a8b36ea559547b66d04d46df3efc02",
     "default_mode": "VALIDATE_ONLY / NO SERVER START / NO MODEL LOAD",
     "machine_identity_guard": {
       "logical_name": "DESK-W-591",
@@ -35,8 +35,8 @@
       "sha256": "00b300c3b04e170bc097ac0a69cf39378a61f1bdd3ca15a970e55f2119b65522",
       "raw_identifier_stored": false
     },
-    "process_ownership_guard": "VALIDATED_EXECUTION_CONTEXT + INTERNAL_OWNED_PROCESS_REGISTRY + CONTEXT_NONCE / FOREIGN_POPEN_REJECTED / NO_ARBITRARY_PID_KILL_PATH",
-    "crash_semantics": "ACTIVE_STREAM_OBSERVED -> FORCE_KILL_ORCHESTRATOR_OWNED_SERVER -> CLOSE_STREAM_CONNECTION -> WAIT_PORT_RELEASE -> EXACT_RESTART -> HEALTH -> MINIMAL_PROBE",
+    "process_ownership_guard": "OPAQUE_INTERNAL_VALIDATED_CONTEXT_REGISTRY / CALLER_CONSTRUCTORS_FORBIDDEN / POST_AUTH_CONTEXT_TAMPER_FAIL_CLOSED / INTERNAL_WRAPPER_PLUS_ORIGINAL_POPEN_IDENTITY_REGISTRY / FOREIGN_OR_SWAPPED_POPEN_REJECTED",
+    "crash_semantics": "ACTIVE_STREAM_OBSERVED -> FORCE_KILL_INTERNALLY_REGISTERED_ORCHESTRATOR_OWNED_SERVER -> CLOSE_STREAM_CONNECTION -> WAIT_PORT_RELEASE -> EXACT_RESTART -> HEALTH -> MINIMAL_PROBE",
     "exact_scope_guard": "PROFILE_DECLARED_IDENTITY_EQUALS_HARD_CODED_EXPECTED_IDENTITY AND ACTUAL_SCRIPT_BYTES_EQUAL_HARD_CODED_EXPECTED_HASH / DESK-W-591 MACHINEGUID HASH / Q8_0_SHA256 / LLAMA_CPP_B11033_COMMIT / LLAMA_SERVER_SHA256 / 127.0.0.1:18087 / THREADS_2 / THREADS_BATCH_2 / GPU_OFFLOAD_DISABLED",
     "owner_authorization_guard": "AUTHORIZATION_OBJECT_CANONICAL_SHA256 + INDEPENDENT_ISSUED_PROFILE_OUTER EXPECTED_AUTHORIZATION_ID_AND_SHA256 + STRICT UTC AWARE TIMESTAMP",
     "evidence_and_budget_guard": "PER_SUCCESSFUL_POPEN PROCESS_START_EVIDENCE WITH INITIAL_RSS_OR_EXPLICIT_FAILURE / BOUNDED_STDOUT_STDERR / BUDGETED JSON+JSONL / GLOBAL_MONOTONIC_DEADLINE_1800 / PERSISTENT ATOMIC MAX_ATTEMPTS_1"
@@ -62,13 +62,13 @@
     "compile_result": "PASS",
     "candidate_validator": {
       "path": "scripts/model-program/validate_m1_07_profile_candidate.py",
-      "git_blob_sha1": "e59a9ba3ad9421b74eb0d89834d4d0788aaf8f6d",
+      "git_blob_sha1": "a8976ef765159f87e677a64c02f9b16db4ffc711",
       "result": "PASS"
     },
     "candidate_tests": {
       "path": "tests/test_model_program_m1_07_profile_candidate.py",
-      "git_blob_sha1": "0d3eb778a0e6c7ef5964b5cd315ea885d59ef524",
-      "passed": 29,
+      "git_blob_sha1": "115022b909da80b896a0a027f2a919ef736e9419",
+      "passed": 33,
       "failed": 0
     },
     "m1_validators": {
@@ -76,9 +76,10 @@
       "failed": 0
     },
     "full_m1_regression": {
-      "pytest_passed": 58,
-      "pytest_failed": 0,
-      "environment_note": "pytest and jsonschema were installed only into temporary .validation-deps in the isolated validation worktree; system Python and tracked files were not modified."
+      "test_runner": "python -m unittest",
+      "tests_passed": 62,
+      "tests_failed": 0,
+      "environment_note": "jsonschema==4.25.1 was installed only into a temporary isolated dependency directory and deleted after validation; system Python and tracked repository files were not modified."
     },
     "default_orchestrator_readback": {
       "execution_ready": false,
@@ -117,12 +118,10 @@
   "next_frontier": "FRESH_CONTEXT_READ_ONLY_M1_07_PROFILE_ORCHESTRATOR_FINAL_RE_REVIEW / DO_NOT_ISSUE / DO_NOT_EXECUTE",
   "review_remediation": {
     "source_verdict": "BLOCKED / M1_07_PROFILE_OR_ORCHESTRATOR_CORRECTION_REQUIRED",
-    "remediation_scope": "MAJOR_01_02_03_04_ONLY / NO_SCOPE_EXPANSION / NO_EFFECTFUL_EXECUTION",
+    "remediation_scope": "MAJOR_04_ONLY / NO_SCOPE_EXPANSION / NO_EFFECTFUL_EXECUTION",
     "resolved_items": [
-      "MAJOR-01 CLOSED AUTHOR-SIDE: exact orchestrator commit/blob/normalized SHA are independently hard-bound and profile-declared identity must equal them; actual script bytes must also equal the hard-coded expected hashes. DESK-W-591 is additionally bound to a stable Windows HKLM MachineGuid canonical SHA-256 read from the OS.",
-      "MAJOR-02 CLOSED AUTHOR-SIDE: Owner authorization self-hash is insufficient by design; execution also requires independently bound expected authorization ID and expected canonical SHA-256 from the issued-profile outer trusted binding, plus strict timezone-aware UTC issued_at_utc.",
-      "MAJOR-03 CLOSED AUTHOR-SIDE: every successful Popen creates process-start evidence with initial RSS or explicit RSS failure; stdout/stderr and JSON/JSONL writes are hard-budgeted to 134217728 bytes; all long waits/hash loops use a global 1800-second monotonic deadline; max_attempts=1 remains persistent atomic no-reuse.",
-      "MAJOR-04 CLOSED AUTHOR-SIDE: run/start_server/kill paths require a sealed ValidatedExecutionContext; process kill accepts only internally wrapped processes registered to that context; foreign Popen handles are rejected."
+      "MAJOR-01/02/03 RETAINED CLOSED AUTHOR-SIDE: exact orchestrator/device binding, independent Owner authorization binding, and evidence/budget/deadline/attempt guards remain unchanged in authority and pass regression.",
+      "MAJOR-04 REMEDIATED AUTHOR-SIDE: externally reusable module seals and caller-writable ctx.owned registry were removed. ValidatedExecutionContext and OwnedServerProcess constructors now fail closed. Only authorize_execution can register a valid context in an opaque internal closure registry; context profile/deadline/budget/guard/physical identity/start-count tamper is rejected. Only start_server can register an owned wrapper, and ownership binds both wrapper identity and the original Popen object identity."
     ],
     "required_negative_behavior_coverage": [
       "wrong orchestrator commit -> FAIL",
@@ -138,17 +137,23 @@
       "scenario-internal wall deadline expiry -> FAIL CLOSED",
       "direct run bypass -> BLOCKED",
       "direct start_server bypass -> BLOCKED",
-      "foreign Popen kill attempt -> REJECTED",
+      "caller construction of ValidatedExecutionContext -> BLOCKED",
+      "object.__new__ forged unregistered context -> BLOCKED BEFORE Popen",
+      "post-authorization profile/deadline context tamper -> BLOCKED BEFORE Popen",
+      "direct foreign Popen kill -> REJECTED",
+      "caller construction/object.__new__ forged OwnedServerProcess -> REJECTED",
+      "registered wrapper underlying Popen swap, including same PID -> REJECTED WITHOUT KILL",
+      "owned process from another execution context -> REJECTED",
       "candidate default invocation remains validate-only and starts no server/model"
     ]
   },
-  "updated_at_utc": "2026-09-19T11:17:11.3127652Z",
+  "updated_at_utc": "2026-09-19T11:51:47.866567+00:00",
   "authoritative_for_current_binding": true,
-  "remediation_round": 2,
+  "remediation_round": 3,
   "source_review": {
-    "exact_reviewed_head": "2454c44817c642e76ecfb25317fe1192b3a003c4",
+    "exact_reviewed_head": "3b8b8ff672defd4fd4c8e9414bbbfdc20dda821a",
     "verdict": "BLOCKED / M1_07_PROFILE_OR_ORCHESTRATOR_CORRECTION_REQUIRED",
-    "mode": "REMEDIATION ONLY / NO SCOPE EXPANSION / NO EFFECTFUL EXECUTION"
+    "mode": "REMEDIATION ONLY / MAJOR_04 / NO SCOPE EXPANSION / NO EFFECTFUL EXECUTION"
   },
   "historical_evidence": [
     {
