@@ -1,0 +1,96 @@
+{
+  "schema_version": "clued.model-m1-07-profile-exact-binding-receipt/1",
+  "record_id": "M1-STAB-QWEN35-08B-PC-001-EXACT-BINDING-20260919",
+  "program_id": "CLUED-FIRST-PARTY-MODEL",
+  "stage_id": "MODEL-PROGRAM-M1",
+  "task_id": "M1-07",
+  "created_at_utc": "2026-09-19T10:22:14.4365891Z",
+  "status": "EXACT_PROFILE_CANDIDATE_BOUND / STATICALLY_VALIDATED / EFFECTFUL_EXECUTION_BLOCKED",
+  "source_baseline": {
+    "main_merge_commit": "bd80de6beed04a52b74f763baa7c274b5741fb1d",
+    "stage_successor_ref": "../governance/M1StageEntryAuthorization.v1.0.2.json",
+    "m1_06a_pc_baseline": "CLOSED_SUCCESS"
+  },
+  "candidate": {
+    "path": "../governance/ExperimentAuthorizationProfile.M1-STAB-QWEN35-08B-PC-001.candidate.json",
+    "git_blob_sha1": "fa54a638081fc925d56b49d0fd8737f32da66fbe",
+    "profile_id": "M1-STAB-QWEN35-08B-PC-001-CANDIDATE",
+    "status": "BLOCKED_PENDING_REVIEW_AND_FINAL_ISSUANCE",
+    "effectful_authority_issued": false
+  },
+  "orchestrator": {
+    "path": "../../../scripts/model-program/m1_runtime_stability_pc.py",
+    "code_commit": "732ff6328b9446a836ad40d41ba543a35d13fe1d",
+    "git_blob_sha1": "c737e6d40ab93740eb9e77a8c2f5edeb3c0776af",
+    "normalized_sha256": "69ff7e33640363653cfbd8d1339a4bf3485804708affd6837edd33abe16b0ad7",
+    "default_mode": "VALIDATE_ONLY / NO SERVER START / NO MODEL LOAD",
+    "process_ownership_guard": "FORCE_KILL_ACCEPTS_ONLY_THE_PROFILE_OWNED_SUBPROCESS_POPEN_HANDLE / NO_ARBITRARY_PID_KILL_PATH",
+    "crash_semantics": "ACTIVE_STREAM_OBSERVED -> FORCE_KILL_PROFILE_OWNED_SERVER -> CLOSE_STREAM_CONNECTION -> WAIT_PORT_RELEASE -> EXACT_RESTART"
+  },
+  "exact_execution_scope_if_later_issued": {
+    "device": "DESK-W-591",
+    "model_variant": "Qwen3.5-0.8B-Q8_0.gguf",
+    "model_sha256": "799482186ea1c91b63bf4eb2999e034330425745496a95f0bffbfe6300a1064d",
+    "runtime": "llama.cpp b11033 / commit 8ed1a55efcd7424d2c592f6cbc9f97756db1d74d",
+    "server_sha256": "085151c9dc45b6b6b74ece45207afd809e68c91e05938bb00532a24e80aaabba",
+    "host": "127.0.0.1",
+    "port": 18087,
+    "offline": true,
+    "strict_cpu_only": true,
+    "scenarios": [
+      "3x cold load / probe / graceful unload",
+      "1x in-flight stream cancellation + post-cancel health/probe",
+      "1x PC background-service controller disconnect/reconnect",
+      "1x forced profile-owned server crash during active stream + exact restart"
+    ]
+  },
+  "static_validation": {
+    "compile_result": "PASS",
+    "candidate_validator": {
+      "path": "../../../scripts/model-program/validate_m1_07_profile_candidate.py",
+      "git_blob_sha1": "1a8984627abe38a87d297801d8ebdbff28f12e87",
+      "result": "PASS"
+    },
+    "candidate_tests": {
+      "path": "../../../../tests/test_model_program_m1_07_profile_candidate.py",
+      "git_blob_sha1": "dd61667df264d1e6f3ab633523296aca23cae521",
+      "passed": 15,
+      "failed": 0
+    },
+    "full_m1_regression": {
+      "validators_passed": 4,
+      "validators_failed": 0,
+      "pytest_passed": 44,
+      "pytest_failed": 0
+    },
+    "default_orchestrator_readback": {
+      "execution_ready": false,
+      "reason": "PROFILE_NOT_ISSUED",
+      "server_started": false,
+      "model_loaded": false,
+      "llama_server_process_count_before": 0,
+      "llama_server_process_count_after": 0
+    }
+  },
+  "effects": {
+    "model_loaded": false,
+    "llama_server_started": false,
+    "inference_performed": false,
+    "cancellation_test_executed": false,
+    "crash_test_executed": false,
+    "port_18087_bound": false,
+    "hosted_provider_called": false,
+    "external_network_access": false,
+    "training_performed": false,
+    "production_mutation": false
+  },
+  "remaining_final_issuance_gates": [
+    "Fresh-Context read-only review of candidate profile and orchestrator, or Owner-accepted equivalent review",
+    "Owner explicit M1-07 effectful execution authorization",
+    "bind final expiry",
+    "create issued successor profile with status ISSUED",
+    "set effectful_authority_issued=true and exact M1-07 authority effect"
+  ],
+  "conclusion": "PASS / M1_07_EXACT_PROFILE_AND_ORCHESTRATOR_PREPARED / EXECUTION_NOT_AUTHORIZED",
+  "next_frontier": "FRESH_CONTEXT_READ_ONLY_M1_07_PROFILE_AND_ORCHESTRATOR_REVIEW / DO_NOT_EXECUTE_MODEL"
+}
