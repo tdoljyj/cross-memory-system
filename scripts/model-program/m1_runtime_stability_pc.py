@@ -321,7 +321,7 @@ def minimal_probe(profile: dict[str, Any]) -> dict[str, Any]:
     return {"status": status, "response": data}
 
 
-def stream_then_cancel(profile: dict[str, Any]) -> dict[str, Any]:
+def open_stream(profile: dict[str, Any]) -> tuple[http.client.HTTPConnection, http.client.HTTPResponse, bytes]:
     cfg = server_config(profile)
     host, port = cfg["host"], int(cfg["port"])
     conn = http.client.HTTPConnection(host, port, timeout=30.0)
@@ -335,10 +335,24 @@ def stream_then_cancel(profile: dict[str, Any]) -> dict[str, Any]:
         conn.request("POST", "/completion", body=payload, headers={"Content-Type": "application/json"})
         resp = conn.getresponse()
         if not (200 <= resp.status < 300):
+            conn.close()
             raise StabilityError("STREAM_HTTP_FAILURE", f"status={resp.status}")
         first = resp.read(1)
         if not first:
+            conn.close()
             raise StabilityError("STREAM_NO_DATA", "stream ended before cancellation point")
+        return conn, resp, first
+    except Exception:
+        try:
+            conn.close()
+        except Exception:
+            pass
+        raise
+
+
+def stream_then_cancel(profile: dict[str, Any]) -> dict[str, Any]:
+    conn, resp, first = open_stream(profile)
+    try:
         return {"http_status": resp.status, "first_byte_hex": first.hex(), "cancelled_by_client_close": True}
     finally:
         conn.close()
@@ -442,9 +456,20 @@ def run_crash_restart(profile: dict[str, Any], out_dir: Path, events: Path) -> d
     event(events, "M1-07-PC-CRASH-001", "server_started", pid=first_pid, command=cmd)
     try:
         ready1 = wait_health(cfg["host"], int(cfg["port"]))
-        _ = stream_then_cancel(profile)
-        force_kill_owned(proc)
-        event(events, "M1-07-PC-CRASH-001", "forced_crash", pid=first_pid)
+        stream_conn, stream_resp, first = open_stream(profile)
+        event(
+            events,
+            "M1-07-PC-CRASH-001",
+            "active_stream_observed",
+            pid=first_pid,
+            http_status=stream_resp.status,
+            first_byte_hex=first.hex(),
+        )
+        try:
+            force_kill_owned(proc)
+            event(events, "M1-07-PC-CRASH-001", "forced_crash_during_active_stream", pid=first_pid)
+        finally:
+            stream_conn.close()
         if not wait_port_released(cfg["host"], int(cfg["port"])):
             raise StabilityError("CRASH_PORT_RELEASE_TIMEOUT", "port not released after forced crash")
 
