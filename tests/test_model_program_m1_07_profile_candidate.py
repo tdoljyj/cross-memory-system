@@ -30,11 +30,13 @@ class FakePopen:
         self.stdout = io.BytesIO(stdout_bytes)
         self.stderr = io.BytesIO(stderr_bytes)
         self.returncode = None
+        self.kill_calls = 0
 
     def poll(self):
         return self.returncode
 
     def kill(self):
+        self.kill_calls += 1
         self.returncode = -9
 
     def terminate(self):
@@ -74,25 +76,23 @@ class ModelProgramM107CandidateTests(unittest.TestCase):
         p["expiry"] = "2099-01-01T00:00:00+00:00"
         return p
 
-    def make_context(self, profile=None, initial_used=0):
+    def make_context(self, profile=None):
         temp = tempfile.TemporaryDirectory()
         root = pathlib.Path(temp.name)
-        guard = root / "guard.json"
-        guard.write_text("{}\n", encoding="utf-8")
-        budget = orch.OutputBudget(orch.EXPECTED_MAX_STORAGE, initial_used=initial_used)
-        ctx = orch.ValidatedExecutionContext(
-            profile or self.issued_profile(),
-            root,
-            guard,
-            time.monotonic(),
-            budget,
-            {
-                "logical_name": "DESK-W-591",
-                "machine_identity_source": orch.EXPECTED_MACHINE_IDENTITY_SOURCE,
-                "machine_identity_sha256": orch.EXPECTED_MACHINE_IDENTITY_SHA256,
-            },
-            orch._CONTEXT_SEAL,
-        )
+        guard = root / "attempt-guard.json"
+        output = root / "effectful-output"
+        p = copy.deepcopy(profile or self.issued_profile())
+        p["execution_control"]["attempt_guard_path"] = str(guard)
+        physical = {
+            "logical_name": "DESK-W-591",
+            "machine_identity_source": orch.EXPECTED_MACHINE_IDENTITY_SOURCE,
+            "machine_identity_sha256": orch.EXPECTED_MACHINE_IDENTITY_SHA256,
+        }
+        with (
+            mock.patch.object(orch, "EXPECTED_ATTEMPT_GUARD_PATH", guard),
+            mock.patch.object(orch, "verify_physical_device_identity", return_value=physical),
+        ):
+            ctx = orch.authorize_execution(p, output)
         return temp, ctx
 
     def assert_stability_error(self, expected_code, fn):
@@ -280,8 +280,8 @@ class ModelProgramM107CandidateTests(unittest.TestCase):
     def test_wall_deadline_inside_scenario_fails_closed(self):
         temp, ctx = self.make_context()
         try:
-            ctx.deadline = time.monotonic() - 0.01
-            self.assert_stability_error("MAX_WALL_TIME_EXCEEDED", lambda: orch.wait_health(ctx, timeout=60.0))
+            with mock.patch.object(orch.time, "monotonic", return_value=ctx.deadline + 0.01):
+                self.assert_stability_error("MAX_WALL_TIME_EXCEEDED", lambda: orch.wait_health(ctx, timeout=60.0))
         finally:
             temp.cleanup()
 
@@ -293,6 +293,79 @@ class ModelProgramM107CandidateTests(unittest.TestCase):
             "EXECUTION_CONTEXT_REQUIRED",
             lambda: orch.start_server(self.load_candidate(), "M1-07-PC-LOAD-001", "bypass"),
         )
+
+    def test_candidate_cannot_forge_registered_execution_context(self):
+        self.assertFalse(hasattr(orch, "_CONTEXT_SEAL"))
+        self.assert_stability_error(
+            "EXECUTION_CONTEXT_CONSTRUCTION_FORBIDDEN",
+            lambda: orch.ValidatedExecutionContext(),
+        )
+        forged = object.__new__(orch.ValidatedExecutionContext)
+        with mock.patch.object(orch.subprocess, "Popen", side_effect=AssertionError("Popen must not be reached")):
+            self.assert_stability_error(
+                "EXECUTION_CONTEXT_REQUIRED",
+                lambda: orch.start_server(forged, "M1-07-PC-LOAD-001", "forged"),
+            )
+
+    def test_authorized_context_tamper_is_rejected_before_popen(self):
+        temp, ctx = self.make_context()
+        try:
+            ctx.profile["config_revision"]["server"]["port"] = 18088
+            with mock.patch.object(orch.subprocess, "Popen", side_effect=AssertionError("Popen must not be reached")):
+                self.assert_stability_error(
+                    "EXECUTION_CONTEXT_TAMPERED",
+                    lambda: orch.start_server(ctx, "M1-07-PC-LOAD-001", "tampered-profile"),
+                )
+            ctx.profile["config_revision"]["server"]["port"] = 18087
+            ctx.deadline += 10.0
+            with mock.patch.object(orch.subprocess, "Popen", side_effect=AssertionError("Popen must not be reached")):
+                self.assert_stability_error(
+                    "EXECUTION_CONTEXT_TAMPERED",
+                    lambda: orch.start_server(ctx, "M1-07-PC-LOAD-001", "tampered-deadline"),
+                )
+        finally:
+            temp.cleanup()
+
+    def test_foreign_popen_cannot_be_forged_into_owned_registry(self):
+        temp, ctx = self.make_context()
+        foreign = FakePopen(pid=99998)
+        try:
+            self.assertFalse(hasattr(orch, "_OWNED_PROCESS_SEAL"))
+            self.assertFalse(hasattr(ctx, "owned"))
+            self.assert_stability_error(
+                "OWNED_PROCESS_CONSTRUCTION_FORBIDDEN",
+                lambda: orch.OwnedServerProcess(),
+            )
+            forged = object.__new__(orch.OwnedServerProcess)
+            object.__setattr__(forged, "proc", foreign)
+            object.__setattr__(forged, "label", "foreign")
+            object.__setattr__(forged, "scenario", "M1-07-PC-CRASH-001")
+            object.__setattr__(forged, "start_index", 99)
+            object.__setattr__(forged, "stdout_capture", orch.BoundedCapture(foreign.stdout, ctx.output_dir / "foreign.out", ctx.budget))
+            object.__setattr__(forged, "stderr_capture", orch.BoundedCapture(foreign.stderr, ctx.output_dir / "foreign.err", ctx.budget))
+            self.assert_stability_error("FOREIGN_PROCESS_REJECTED", lambda: orch.force_kill_owned(ctx, forged))
+            self.assertEqual(foreign.kill_calls, 0)
+        finally:
+            temp.cleanup()
+
+    def test_registered_wrapper_underlying_popen_swap_is_rejected(self):
+        temp, ctx = self.make_context()
+        original = FakePopen(pid=42423)
+        foreign_same_pid = FakePopen(pid=42423)
+        try:
+            with (
+                mock.patch.object(orch, "build_server_command", return_value=[r"C:\fake\llama-server.exe"]),
+                mock.patch.object(orch.subprocess, "Popen", return_value=original),
+                mock.patch.object(orch, "process_rss_bytes", return_value=123456),
+            ):
+                owned, _ = orch.start_server(ctx, "M1-07-PC-LOAD-001", "registered")
+            owned.proc = foreign_same_pid
+            self.assert_stability_error("FOREIGN_PROCESS_REJECTED", lambda: orch.force_kill_owned(ctx, owned))
+            self.assertEqual(foreign_same_pid.kill_calls, 0)
+            owned.proc = original
+            orch.force_kill_owned(ctx, owned)
+        finally:
+            temp.cleanup()
 
     def test_foreign_popen_passed_to_kill_is_rejected(self):
         temp, ctx = self.make_context()
@@ -307,14 +380,16 @@ class ModelProgramM107CandidateTests(unittest.TestCase):
         temp1, ctx1 = self.make_context()
         temp2, ctx2 = self.make_context()
         fake = FakePopen(pid=42422)
-        capture1 = orch.BoundedCapture(fake.stdout, ctx1.output_dir / "a.out", ctx1.budget)
-        capture2 = orch.BoundedCapture(fake.stderr, ctx1.output_dir / "a.err", ctx1.budget)
-        owned = orch.OwnedServerProcess(
-            fake, ctx1.nonce, "a", "M1-07-PC-LOAD-001", 1, capture1, capture2, orch._OWNED_PROCESS_SEAL
-        )
-        ctx1.owned[fake.pid] = owned
         try:
+            with (
+                mock.patch.object(orch, "build_server_command", return_value=[r"C:\fake\llama-server.exe"]),
+                mock.patch.object(orch.subprocess, "Popen", return_value=fake),
+                mock.patch.object(orch, "process_rss_bytes", return_value=123456),
+            ):
+                owned, _ = orch.start_server(ctx1, "M1-07-PC-LOAD-001", "ctx1-owned")
             self.assert_stability_error("FOREIGN_PROCESS_REJECTED", lambda: orch.force_kill_owned(ctx2, owned))
+            self.assertEqual(fake.kill_calls, 0)
+            orch.force_kill_owned(ctx1, owned)
         finally:
             temp1.cleanup()
             temp2.cleanup()

@@ -59,8 +59,6 @@ EXPECTED_MAX_ATTEMPTS = 1
 EXPECTED_MAX_SERVER_STARTS = 7
 EXPECTED_ATTEMPT_GUARD_PATH = Path(r"C:\Users\Public\Clued\ModelProgram\M1\runtime-state\M1-STAB-QWEN35-08B-PC-001\M1RuntimeStabilityAttemptGuard.json")
 
-_CONTEXT_SEAL = object()
-_OWNED_PROCESS_SEAL = object()
 
 
 class StabilityError(RuntimeError):
@@ -414,61 +412,26 @@ class BoundedCapture:
 
 
 class OwnedServerProcess:
-    __slots__ = ("proc", "context_nonce", "label", "scenario", "start_index", "stdout_capture", "stderr_capture", "_seal")
+    __slots__ = ("proc", "label", "scenario", "start_index", "stdout_capture", "stderr_capture")
 
-    def __init__(
-        self,
-        proc: subprocess.Popen[Any],
-        context_nonce: object,
-        label: str,
-        scenario: str,
-        start_index: int,
-        stdout_capture: BoundedCapture,
-        stderr_capture: BoundedCapture,
-        seal: object,
-    ):
-        if seal is not _OWNED_PROCESS_SEAL:
-            raise StabilityError("OWNED_PROCESS_CONSTRUCTION_FORBIDDEN", "owned process wrappers are orchestrator-internal")
-        self.proc = proc
-        self.context_nonce = context_nonce
-        self.label = label
-        self.scenario = scenario
-        self.start_index = start_index
-        self.stdout_capture = stdout_capture
-        self.stderr_capture = stderr_capture
-        self._seal = seal
+    def __init__(self, *args: Any, **kwargs: Any):
+        raise StabilityError(
+            "OWNED_PROCESS_CONSTRUCTION_FORBIDDEN",
+            "owned process wrappers are created only by the internally registered start_server path",
+        )
 
 
 class ValidatedExecutionContext:
     __slots__ = (
         "profile", "output_dir", "events_path", "attempt_guard", "started_monotonic", "deadline",
-        "budget", "nonce", "owned", "server_start_count", "_seal", "physical_identity",
+        "budget", "server_start_count", "physical_identity",
     )
 
-    def __init__(
-        self,
-        profile: dict[str, Any],
-        output_dir: Path,
-        attempt_guard: Path,
-        started_monotonic: float,
-        budget: OutputBudget,
-        physical_identity: dict[str, Any],
-        seal: object,
-    ):
-        if seal is not _CONTEXT_SEAL:
-            raise StabilityError("EXECUTION_CONTEXT_CONSTRUCTION_FORBIDDEN", "context must be created by authorize_execution")
-        self.profile = profile
-        self.output_dir = output_dir
-        self.events_path = output_dir / "M1RuntimeStabilityEvents.jsonl"
-        self.attempt_guard = attempt_guard
-        self.started_monotonic = started_monotonic
-        self.deadline = started_monotonic + EXPECTED_MAX_WALL_TIME
-        self.budget = budget
-        self.nonce = object()
-        self.owned: dict[int, OwnedServerProcess] = {}
-        self.server_start_count = 0
-        self._seal = seal
-        self.physical_identity = physical_identity
+    def __init__(self, *args: Any, **kwargs: Any):
+        raise StabilityError(
+            "EXECUTION_CONTEXT_CONSTRUCTION_FORBIDDEN",
+            "context can be created only by authorize_execution after the full fail-closed gate",
+        )
 
     def check_limits(self) -> None:
         _require_ctx(self)
@@ -486,22 +449,121 @@ class ValidatedExecutionContext:
         return max(0.001, remaining)
 
 
-def _require_ctx(ctx: Any) -> ValidatedExecutionContext:
-    if not isinstance(ctx, ValidatedExecutionContext) or getattr(ctx, "_seal", None) is not _CONTEXT_SEAL:
-        raise StabilityError("EXECUTION_CONTEXT_REQUIRED", "effectful entry point requires ValidatedExecutionContext")
-    return ctx
+def _build_execution_authority_registry():
+    valid_contexts: dict[int, dict[str, Any]] = {}
+    owned_processes: dict[int, dict[int, tuple[OwnedServerProcess, subprocess.Popen[Any]]]] = {}
+
+    def digest(value: Any) -> str:
+        return hashlib.sha256(canonical_json(value)).hexdigest()
+
+    def create_context(
+        profile: dict[str, Any],
+        output_dir: Path,
+        attempt_guard: Path,
+        started_monotonic: float,
+        budget: OutputBudget,
+        physical_identity: dict[str, Any],
+    ) -> ValidatedExecutionContext:
+        ctx = object.__new__(ValidatedExecutionContext)
+        object.__setattr__(ctx, "profile", profile)
+        object.__setattr__(ctx, "output_dir", output_dir)
+        object.__setattr__(ctx, "events_path", output_dir / "M1RuntimeStabilityEvents.jsonl")
+        object.__setattr__(ctx, "attempt_guard", attempt_guard)
+        object.__setattr__(ctx, "started_monotonic", started_monotonic)
+        object.__setattr__(ctx, "deadline", started_monotonic + EXPECTED_MAX_WALL_TIME)
+        object.__setattr__(ctx, "budget", budget)
+        object.__setattr__(ctx, "server_start_count", 0)
+        object.__setattr__(ctx, "physical_identity", physical_identity)
+        valid_contexts[id(ctx)] = {
+            "ctx": ctx,
+            "profile_digest": digest(profile),
+            "output_dir": output_dir,
+            "attempt_guard": attempt_guard,
+            "started_monotonic": started_monotonic,
+            "deadline": started_monotonic + EXPECTED_MAX_WALL_TIME,
+            "budget": budget,
+            "server_start_count": 0,
+            "physical_identity_digest": digest(physical_identity),
+        }
+        owned_processes[id(ctx)] = {}
+        return ctx
+
+    def require_ctx(ctx: Any) -> ValidatedExecutionContext:
+        if not isinstance(ctx, ValidatedExecutionContext):
+            raise StabilityError("EXECUTION_CONTEXT_REQUIRED", "effectful entry point requires ValidatedExecutionContext")
+        record = valid_contexts.get(id(ctx))
+        if record is None or record.get("ctx") is not ctx:
+            raise StabilityError(
+                "EXECUTION_CONTEXT_REQUIRED",
+                "context is not registered by the original authorize_execution gate",
+            )
+        try:
+            profile_digest = digest(ctx.profile)
+            physical_digest = digest(ctx.physical_identity)
+        except Exception as exc:
+            raise StabilityError("EXECUTION_CONTEXT_TAMPERED", repr(exc))
+        if (
+            profile_digest != record["profile_digest"]
+            or ctx.output_dir != record["output_dir"]
+            or ctx.attempt_guard != record["attempt_guard"]
+            or ctx.started_monotonic != record["started_monotonic"]
+            or ctx.deadline != record["deadline"]
+            or ctx.budget is not record["budget"]
+            or ctx.server_start_count != record["server_start_count"]
+            or physical_digest != record["physical_identity_digest"]
+        ):
+            raise StabilityError(
+                "EXECUTION_CONTEXT_TAMPERED",
+                "validated execution context state changed after authorization",
+            )
+        return ctx
+
+    def create_owned_process(
+        ctx: ValidatedExecutionContext,
+        proc: subprocess.Popen[Any],
+        label: str,
+        scenario: str,
+        stdout_capture: BoundedCapture,
+        stderr_capture: BoundedCapture,
+    ) -> OwnedServerProcess:
+        require_ctx(ctx)
+        record = valid_contexts[id(ctx)]
+        start_index = int(record["server_start_count"]) + 1
+        if start_index > EXPECTED_MAX_SERVER_STARTS:
+            raise StabilityError("MAX_SERVER_STARTS_EXCEEDED", f"count={record['server_start_count']}")
+        owned = object.__new__(OwnedServerProcess)
+        object.__setattr__(owned, "proc", proc)
+        object.__setattr__(owned, "label", label)
+        object.__setattr__(owned, "scenario", scenario)
+        object.__setattr__(owned, "start_index", start_index)
+        object.__setattr__(owned, "stdout_capture", stdout_capture)
+        object.__setattr__(owned, "stderr_capture", stderr_capture)
+        owned_processes[id(ctx)][proc.pid] = (owned, proc)
+        record["server_start_count"] = start_index
+        object.__setattr__(ctx, "server_start_count", start_index)
+        return owned
+
+    def require_owned(ctx: ValidatedExecutionContext, owned: Any) -> OwnedServerProcess:
+        require_ctx(ctx)
+        if not isinstance(owned, OwnedServerProcess):
+            raise StabilityError(
+                "FOREIGN_PROCESS_REJECTED",
+                "kill/cleanup accepts only internally registered orchestrator-owned process wrappers",
+            )
+        proc = getattr(owned, "proc", None)
+        pid = getattr(proc, "pid", None)
+        entry = owned_processes.get(id(ctx), {}).get(pid)
+        if entry is None or entry[0] is not owned or entry[1] is not proc:
+            raise StabilityError(
+                "FOREIGN_PROCESS_REJECTED",
+                "process wrapper or underlying Popen was not created and registered by this execution context",
+            )
+        return owned
+
+    return create_context, require_ctx, create_owned_process, require_owned
 
 
-def _require_owned(ctx: ValidatedExecutionContext, owned: Any) -> OwnedServerProcess:
-    _require_ctx(ctx)
-    if not isinstance(owned, OwnedServerProcess) or getattr(owned, "_seal", None) is not _OWNED_PROCESS_SEAL:
-        raise StabilityError("FOREIGN_PROCESS_REJECTED", "kill/cleanup accepts only orchestrator-owned process wrappers")
-    if owned.context_nonce is not ctx.nonce:
-        raise StabilityError("FOREIGN_PROCESS_REJECTED", "process belongs to a different execution context")
-    current = ctx.owned.get(owned.proc.pid)
-    if current is not owned:
-        raise StabilityError("FOREIGN_PROCESS_REJECTED", "process is not in this execution context registry")
-    return owned
+_create_validated_context, _require_ctx, _create_owned_process, _require_owned = _build_execution_authority_registry()
 
 
 def claim_attempt_guard(profile: dict[str, Any], output_dir: Path) -> Path:
@@ -523,19 +585,26 @@ def claim_attempt_guard(profile: dict[str, Any], output_dir: Path) -> Path:
     return guard
 
 
-def authorize_execution(profile: dict[str, Any], output_dir: Path) -> ValidatedExecutionContext:
-    ready, reason = validate_execution_profile(profile)
-    if not ready:
-        raise StabilityError("EXECUTION_AUTHORIZATION_BLOCKED", reason)
-    physical = verify_physical_device_identity(profile)
-    output_dir.mkdir(parents=True, exist_ok=False)
-    started = time.monotonic()
-    guard = claim_attempt_guard(profile, output_dir)
-    budget = OutputBudget(EXPECTED_MAX_STORAGE, initial_used=guard.stat().st_size)
-    ctx = ValidatedExecutionContext(profile, output_dir, guard, started, budget, physical, _CONTEXT_SEAL)
-    event(ctx, "PROFILE", "attempt_guard_claimed", path=str(guard))
-    event(ctx, "PROFILE", "physical_device_bound", **physical)
-    return ctx
+def _make_authorize_execution(create_validated_context):
+    def authorize_execution(profile: dict[str, Any], output_dir: Path) -> ValidatedExecutionContext:
+        ready, reason = validate_execution_profile(profile)
+        if not ready:
+            raise StabilityError("EXECUTION_AUTHORIZATION_BLOCKED", reason)
+        physical = verify_physical_device_identity(profile)
+        output_dir.mkdir(parents=True, exist_ok=False)
+        started = time.monotonic()
+        guard = claim_attempt_guard(profile, output_dir)
+        budget = OutputBudget(EXPECTED_MAX_STORAGE, initial_used=guard.stat().st_size)
+        ctx = create_validated_context(profile, output_dir, guard, started, budget, physical)
+        event(ctx, "PROFILE", "attempt_guard_claimed", path=str(guard))
+        event(ctx, "PROFILE", "physical_device_bound", **physical)
+        return ctx
+
+    return authorize_execution
+
+
+authorize_execution = _make_authorize_execution(_create_validated_context)
+del _make_authorize_execution, _create_validated_context
 
 
 def event(ctx: ValidatedExecutionContext, scenario: str, kind: str, **extra: Any) -> None:
@@ -765,49 +834,54 @@ def build_server_command(profile: dict[str, Any]) -> list[str]:
     ]
 
 
-def start_server(ctx: ValidatedExecutionContext, scenario: str, label: str) -> tuple[OwnedServerProcess, list[str]]:
-    _require_ctx(ctx)
-    ctx.check_limits()
-    if ctx.server_start_count >= EXPECTED_MAX_SERVER_STARTS:
-        raise StabilityError("MAX_SERVER_STARTS_EXCEEDED", f"count={ctx.server_start_count}")
-    cmd = build_server_command(ctx.profile)
-    creationflags = 0
-    startupinfo = None
-    if os.name == "nt":
-        creationflags |= getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-        startupinfo = subprocess.STARTUPINFO()
-        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        startupinfo.wShowWindow = 0
+def _make_start_server(create_owned_process):
+    def start_server(ctx: ValidatedExecutionContext, scenario: str, label: str) -> tuple[OwnedServerProcess, list[str]]:
+        _require_ctx(ctx)
+        ctx.check_limits()
+        if ctx.server_start_count >= EXPECTED_MAX_SERVER_STARTS:
+            raise StabilityError("MAX_SERVER_STARTS_EXCEEDED", f"count={ctx.server_start_count}")
+        cmd = build_server_command(ctx.profile)
+        creationflags = 0
+        startupinfo = None
+        if os.name == "nt":
+            creationflags |= getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = 0
 
-    stdout_path = ctx.output_dir / f"{label}.stdout.txt"
-    stderr_path = ctx.output_dir / f"{label}.stderr.txt"
-    ctx.budget.write_bytes(stdout_path, b"")
-    ctx.budget.write_bytes(stderr_path, b"")
+        stdout_path = ctx.output_dir / f"{label}.stdout.txt"
+        stderr_path = ctx.output_dir / f"{label}.stderr.txt"
+        ctx.budget.write_bytes(stdout_path, b"")
+        ctx.budget.write_bytes(stderr_path, b"")
 
-    proc = subprocess.Popen(
-        cmd,
-        cwd=str(Path(cmd[0]).parent),
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        creationflags=creationflags,
-        startupinfo=startupinfo,
-    )
-    ctx.server_start_count += 1
-    start_index = ctx.server_start_count
-    stdout_capture = BoundedCapture(proc.stdout, stdout_path, ctx.budget)
-    stderr_capture = BoundedCapture(proc.stderr, stderr_path, ctx.budget)
-    owned = OwnedServerProcess(proc, ctx.nonce, label, scenario, start_index, stdout_capture, stderr_capture, _OWNED_PROCESS_SEAL)
-    ctx.owned[proc.pid] = owned
-    stdout_capture.start()
-    stderr_capture.start()
-    try:
-        initial_rss = record_process_start_evidence(ctx, owned, cmd)
-        event(ctx, scenario, "server_started", start_index=start_index, label=label, pid=proc.pid, command=cmd, initial_rss_bytes=initial_rss)
-        return owned, cmd
-    except Exception:
-        _safe_cleanup_owned(ctx, owned)
-        raise
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(Path(cmd[0]).parent),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            creationflags=creationflags,
+            startupinfo=startupinfo,
+        )
+        stdout_capture = BoundedCapture(proc.stdout, stdout_path, ctx.budget)
+        stderr_capture = BoundedCapture(proc.stderr, stderr_path, ctx.budget)
+        owned = create_owned_process(ctx, proc, label, scenario, stdout_capture, stderr_capture)
+        start_index = owned.start_index
+        stdout_capture.start()
+        stderr_capture.start()
+        try:
+            initial_rss = record_process_start_evidence(ctx, owned, cmd)
+            event(ctx, scenario, "server_started", start_index=start_index, label=label, pid=proc.pid, command=cmd, initial_rss_bytes=initial_rss)
+            return owned, cmd
+        except Exception:
+            _safe_cleanup_owned(ctx, owned)
+            raise
+
+    return start_server
+
+
+start_server = _make_start_server(_create_owned_process)
+del _make_start_server, _create_owned_process, _build_execution_authority_registry
 
 
 def owned_process_alive(ctx: ValidatedExecutionContext, owned: OwnedServerProcess) -> bool:
