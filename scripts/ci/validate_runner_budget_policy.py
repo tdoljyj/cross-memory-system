@@ -6,6 +6,8 @@ import re
 import sys
 from pathlib import Path
 
+# P10 supersession probe: a newer PR commit must cancel stale validation runs.
+
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_DIR = ROOT / ".github" / "workflows"
 
