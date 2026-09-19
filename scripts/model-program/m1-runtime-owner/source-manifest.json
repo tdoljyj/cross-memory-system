@@ -34,9 +34,9 @@
       "sha256": "a1ff77636938965c3d77ab68cc34702d9c1e7da7e03bd9a12dcc8a296bd04de6"
     },
     "policy.go": {
-      "bytes": 13289,
-      "git_blob_sha1": "b3a71142c08ba6b9c35fa6636c528c16d01c929f",
-      "sha256": "bcb20ecda9735cbc64a96d5c7d8e5e79f9b648697f0463108494f95bb2527fd2"
+      "bytes": 13722,
+      "git_blob_sha1": "a5f932f49b5268e6faa4c837f92e7f0257033c28",
+      "sha256": "2aa7bf90b735c3f615b365694c60bd805c1000d204a737ac9b3566fb3618183a"
     },
     "scenarios.go": {
       "bytes": 9907,
