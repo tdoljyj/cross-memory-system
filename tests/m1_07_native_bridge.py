@@ -21,10 +21,23 @@ GO = os.environ.get("CLUED_M107_GO") or shutil.which("go")
 TEST_BINARY = CACHE / ("owner.test.exe" if os.name == "nt" else "owner.test")
 OWNER_BINARY = CACHE / ("owner.exe" if os.name == "nt" else "owner")
 
+SAFE_HOST_ENV = {"SYSTEMROOT", "WINDIR", "TEMP", "TMP", "COMSPEC", "PATH", "PATHEXT", "USERPROFILE"}
+
 def _env():
-    env = os.environ.copy()
-    env.update(GOTOOLCHAIN="local", GOPROXY="off", GOSUMDB="off", CGO_ENABLED="0")
-    env["GOCACHE"] = os.environ.get("CLUED_M107_GOCACHE", str(CACHE / "go-cache"))
+    if os.environ.get("GOFLAGS"):
+        raise AssertionError("forbidden inherited Go build environment: GOFLAGS")
+    env = {k: v for k, v in os.environ.items() if k.upper() in SAFE_HOST_ENV and v}
+    env.update(
+        GOENV="off",
+        GOFLAGS="",
+        GOWORK="off",
+        GOEXPERIMENT="",
+        GOTOOLCHAIN="local",
+        GOPROXY="off",
+        GOSUMDB="off",
+        CGO_ENABLED="0",
+        GOCACHE=os.environ.get("CLUED_M107_GOCACHE", str(CACHE / "go-cache")),
+    )
     return env
 
 def _capture(argv, name, timeout=180):
