@@ -193,6 +193,7 @@ if (-not $RunAsService) {
     @(
         '@echo off',
         ('set "PATH=' + $tools + ';%PATH%"'),
+        'set "PSExecutionPolicyPreference=Bypass"',
         "cd /d $runnerDir",
         'if not exist .runner exit /b 0',
         'start "Clued CI Runner" /min run.cmd'
@@ -219,6 +220,7 @@ if (-not $RunAsService) {
     Write-Host "Runner listener started: PID $($listener.Id)"
     Write-Host 'Startup launcher installed for the current Windows user.'
     Write-Host "Runner PATH is pinned through $tools for verified runtime shims."
+    Write-Host 'Runner PowerShell steps use process-scoped execution-policy bypass without changing user or machine policy.'
 } else {
     Write-Host 'Service mode selected. The service account must already have Python 3.12 and every advertised optional runtime capability on its persistent PATH.'
     Write-Host 'Git long-path support was configured at system scope for service-mode checkout compatibility.'
