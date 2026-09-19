@@ -1,79 +1,123 @@
-# M1-07 MAJOR-04 round 4: isolated owner boundary
+# M1-07 / MAJOR-04 r5: native owner remediation candidate
 
-Status: remediation candidate; independent review required. No execution authority.
-Starting head: `8db4e5e8c9fd7d95813141077f62a6f761427dbc` (PR #268).
-Scope: MAJOR-04 only. No M1-08, model load, scenario execution, issuance or release.
+Status: AUTHOR-SIDE REMEDIATION / NOT INDEPENDENT REVIEW / NOT ISSUANCE.
+Starting blocked reviewed head: `15aea8fe4c7702a49ed1c722cea00857b091c5ad`.
+Formal base: `bd80de6beed04a52b74f763baa7c274b5741fb1d`.
+Scope remains MAJOR-04 and its absolute-launch-path MINOR only.
 
-## What changed
+## Production boundary
 
-An imported Python module is now a validation-only facade. It does not install
-any live context registry, ownership registry, registration factory, process
-controller, callback receiver, execution RPC, or activation token. Public
-context/process types are non-authoritative diagnostic placeholders. Even a
-copied real owner's metadata or object cannot enable their start/kill methods.
+`m1_runtime_stability_pc.py` is permanently validation-only. The effectful
+branch, context/process registration writers, closures, captures, process
+controller and runtime installer have been removed, not renamed or concealed.
+Replacing its legacy helper or replaying the old white-box loader cannot
+install an implementation that is absent from the Python source.
+`m1_runtime_stability_owner_boundary.py` is legacy launch-shape lint only;
+`require_owner_process` unconditionally rejects. It is not an authority gate.
+Both executable and script paths in that legacy lint now must be absolute.
 
-The effectful implementation is installed only in a fresh, standalone CPython
-owner process directly executing the exact reviewed script with `-I -S`.
-Bootstrap verifies the actual Windows executable and command line through
-native APIs; `__name__`, `sys.argv`, `sys.orig_argv`, environment variables,
-public booleans and closure secrecy are not authority. No callable installer
-is exposed by the import facade. A spoofed `__main__`/argv in a `-c` or runpy
-host remains an unprivileged facade.
+The candidate replacement is `m1-runtime-owner`, a standalone Go executable.
+It does not load Python, shared user libraries, plugins, callbacks or an RPC.
+The production command does not accept a process, PID, wrapper, registry,
+controller, runtime driver, issuer key or caller executable command.
+No native library or Python extension is built or shipped.
+Private owner state cannot be reached by Python object introspection.
 
-The helper is included in exact source/blob/hash bindings. It returns no
-capability. Authorization still requires the full profile check, independently
-bound Owner authorization, exact code identity, physical device check and
-one-attempt claim. Registry membership never replaces those checks.
+Only successful full native policy validation, whole-profile signature check,
+exact native source/binary binding, physical machine identity, exact package
+integrity and atomic one-attempt claim can register a context. Only the native
+start path registers its newly created process. All kill, graceful-stop,
+liveness, RSS and cleanup operations resolve the retained original OS process
+handle; diagnostic pid/label/scenario/start_index cannot redirect them.
+The Windows implementation retains the handle returned by process creation,
+not a later handle looked up from a supplied/reused PID. Graceful console
+signalling uses only that internally retained creation-time process group.
 
-## Process ownership inside the trusted owner
+## Issuer trust and authority: intentionally unresolved
 
-Only the actual start path creates and registers wrappers. Registries compare
-exact context and wrapper object identity and retain the original Popen plus
-captures. The caller-visible pid, label, scenario and start_index are diagnostic.
-Kill/stop/metrics/cleanup target that retained original process, not those fields.
-No external command accepts a PID, Popen, wrapper, registry, callback or Python
-object. Context and ownership objects never cross the owner process boundary.
+A digest inside caller JSON is not an independent authorization origin.
+The native owner therefore additionally verifies Ed25519 over the entire
+canonical JSON profile excluding only `owner_signature`. The public key is
+compiled into the reviewed binary, never accepted from JSON, argv or env.
+Canonical format: UTF-8, sorted object keys, compact separators, no ASCII/HTML
+escaping; duplicate keys and oversized input are rejected.
 
-## Threat model and limits
+**The production issuer public key is deliberately EMPTY in r5.** No real
+Owner key, signature, issued successor or execution authority was created.
+Test-only keys are ephemeral and exist only in `owner_test.go`, which is
+excluded from the production binary. `go build` cannot enable test drivers.
+Production rejects both the current Candidate and a fabricated ISSUED-shaped
+profile before context, attempt-guard, output-directory or model creation.
 
-Python closures and registries are NOT a same-interpreter security sandbox.
-This change removes untrusted callers from the owner interpreter instead of
-renaming or hiding its writers. No untrusted Python/plugin/user callback may
-be loaded into the owner process. Inputs are JSON profile data and paths only.
+This native/signature contract is PROPOSED, NOT OWNER-ADOPTED. Accepting it
+requires independent review and explicit Owner contract adoption. A separately
+approved and independently reviewed code successor must then pin the Owner's
+trusted public key, rebind native source/binary identities and obtain a signed
+issued profile. A review PASS on r5 alone cannot enable execution or bypass
+that successor. Do not silently weaken this gate to make issuance easier.
 
-The owner interpreter, standard library and reviewed files must be trusted.
-Replacing code/dependencies, monkeypatching the running owner, changing its
-files, native memory access, debugger/process injection, or compromising the
-OS account is outside this mechanism. `-I -S` hardens interpreter startup; it
-is NOT OS privilege separation. No OS account, ACL, service, deployment or
-production change has been performed or authorized by this remediation.
+## Threat model
 
-## Launch contract (NOT authorized by this document)
+The boundary moves authority outside the importing Python interpreter.
+A hostile importing Python program can replace its own code, but the shipped
+Python code contains no effectful controller and cannot confer native rights.
+This is not isolation from OS-account compromise, replacing the native binary,
+modifying reviewed sources/toolchain, debugger/native-memory injection or
+interference by another process that already has sufficient OS rights.
+No accounts, ACLs, services, firewall, registry writes, deployment or production
+changes are part of this remediation. No such protection is claimed as tested.
+An independent reviewer must evaluate compatibility with the original contract;
+these limits and the proposed contract must not be treated as self-approval.
 
-After separate independent review and Owner Final Issuance, the supported
-shape is a direct launch using absolute paths, in this exact order:
+## Fixed scope and future launch (NOT authorized here)
+
+The model/package, DESK-W-591 identity, CPU-only threads=2, loopback:18087,
+four scenarios, seven starts, one attempt, 1800-second wall budget and
+128-MiB evidence budget remain fixed. No M1-08 or other model-program stage.
+Future syntax, only after all separate gates:
 
 ```text
-<python.exe> -I -S <exact-reviewed-script> --execute --profile <exact-issued-profile> --output-dir <new-output-directory>
+<absolute-native-owner.exe> --execute --profile <absolute-signed-issued-profile.json> --output-dir <absolute-new-output-directory>
 ```
 
-The current candidate remains `BLOCKED_PENDING_REVIEW_AND_FINAL_ISSUANCE`,
-`effectful_authority_issued=false`, `NONE / PROFILE_PREPARATION_ONLY`.
-A direct launch with that candidate must reject before context creation,
-attempt-guard creation, output directory creation, Popen or scenario execution.
-Default invocation and ordinary imports remain validate-only.
+Python `--execute` is permanently rejected. Native `--execute` with the current
+Candidate is rejected. Default/validate-only readbacks never start a server.
 
-## Verification rules
+## Build and author-side regression
 
-Retain the original profile/lifecycle unit tests and their mock-only process
-controls. The trusted owner unit fixture explicitly substitutes the native
-startup check solely inside the test loader; this is NOT external-boundary
-proof and there is no shipped test-mode flag. External negative tests import
-the unmodified facade without that substitution. Separate real child Python
-interpreters test spoofed name/argv rejection and direct candidate rejection.
-They must not start a real llama-server, load a model or execute a scenario.
+Go >=1.23 is required; use an approved local toolchain. No third-party Go modules,
+auto-toolchain download or automatic dependency installation is allowed by the
+build/test commands. `source-manifest.json` hashes all production source inputs.
+The build helper checks the manifest and writes binary/build receipt outside
+the repository. The executable hash is DEVELOPMENT BUILD evidence, not an
+issued profile or accepted runtime binary identity.
 
-Positive controls must prove that the original internally registered fake
-Popen alone is controlled, including after all visible wrapper fields change.
-Test counts are author-side evidence, not an independent closure verdict.
-Only a fresh-context reviewer of the new exact head may close MAJOR-04.
+```text
+python -B scripts/model-program/build_m1_07_native_owner.py --go <approved-go.exe> --output <outside-repository-directory>
+python -B -m unittest tests.test_model_program_m1_07_profile_candidate -v
+```
+
+Tests use `CLUED_M107_GO` to select a compiler, `CLUED_M107_GOCACHE` for an
+outside-repository cache, and `CLUED_M107_TEST_LOG_DIR` for raw native outputs.
+Those are test/build settings only; they do not exist in native authority input.
+Missing compiler is a test FAILURE, never an automatic skip.
+
+All original 48 Python test names are retained. Eleven original lifecycle
+cases are explicitly migrated to real native-controller assertions using fake
+OS/process/HTTP objects, not relabelled tests of the refusing Python facade.
+`test-migration.json` is the traceability map, not proof by name retention.
+The old trusted-owner loader is now used only to assert that it cannot install
+an effectful runtime. Additional tests cover all original-handle control paths,
+signed authorization, fixed arguments, no-key rejection and a seven-start
+MOCK-ONLY sequence. Native unit tests do not start a real process/server, bind
+a port, load a model or make real HTTP requests. Production child-binary tests
+exercise rejection paths only. Actual Windows process lifecycle and real M1-07
+qualification remain NOT EXECUTED; do not infer them from mocks or compilation.
+
+## Final gate
+
+MAJOR-04 remains NOT FORMALLY CLOSED. The modifier cannot issue an independent
+Fresh-Context verdict. Candidate status, authority effect and issued flag remain
+BLOCKED_PENDING_REVIEW_AND_FINAL_ISSUANCE / NONE / PROFILE_PREPARATION_ONLY / false.
+No Owner Final Issuance, PR merge, model execution, M1-08, training, production
+or release is authorized or performed by this candidate.

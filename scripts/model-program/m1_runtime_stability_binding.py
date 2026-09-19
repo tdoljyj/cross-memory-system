@@ -1,14 +1,8 @@
-"""Exact immutable binding values for the reviewed M1-07 orchestrator implementation.
-
-This module is intentionally separate from m1_runtime_stability_pc.py so the
-orchestrator can verify its own bytes without a cryptographic self-reference.
-Do not edit these values without creating a new orchestrator implementation
-identity and repeating Fresh-Context review.
+"""Exact r5 validation-only Python source identity. Not execution authority.
+Native process authority is independently binary/source bound and signed.
 """
-
-EXPECTED_ORCHESTRATOR_COMMIT = "c9577cd80db44d33de663bd077e26ee70de701c2"
-EXPECTED_ORCHESTRATOR_BLOB_SHA1 = "0a2a06bfe08fc79b86fd41e7f040c70fb7208d9c"
-EXPECTED_ORCHESTRATOR_NORMALIZED_SHA256 = "c36a627109c4bff6cec8243f4b1914008296940bff69ea65b233380d35ed1b88"
-
-EXPECTED_OWNER_BOUNDARY_BLOB_SHA1 = "51fa9519f1f17185253e0220fdd8487b21a5d2ec"
-EXPECTED_OWNER_BOUNDARY_NORMALIZED_SHA256 = "49a865b115b5c7512622315df392a5cfaebfd020dab768267a3d87e56d5325a5"
+EXPECTED_ORCHESTRATOR_COMMIT = "9aa75f272d6bf9007db036479d8e01bc088e0912"
+EXPECTED_ORCHESTRATOR_BLOB_SHA1 = "7389eed2d7cfd722c78db63d024ae84668eb760e"
+EXPECTED_ORCHESTRATOR_NORMALIZED_SHA256 = "d21414bbb7f206426ccb66c799dfbcd3753391910a357b4489a2a93dc231e4af"
+EXPECTED_OWNER_BOUNDARY_BLOB_SHA1 = "7a6bf6017ba233e474fe72e499e67a3e5581e16a"
+EXPECTED_OWNER_BOUNDARY_NORMALIZED_SHA256 = "35fea706a095a2cba6e3e31377e56c2246e890dfce751d1b038185e8b58a41b7"

@@ -1,0 +1,53 @@
+{
+  "embedded_python": false,
+  "external_modules": [],
+  "facade_implementation_commit": "9aa75f272d6bf9007db036479d8e01bc088e0912",
+  "production_files": {
+    "bindings.go": {
+      "bytes": 328,
+      "git_blob_sha1": "3f9c934201e3dc58325717b14e20456e2d75e615",
+      "sha256": "65656900eb9bac51a4748cde00fc5a6a7ee6bc1751960044740853d3a94265d2"
+    },
+    "go.mod": {
+      "bytes": 39,
+      "git_blob_sha1": "62321fc8e59b1036e6b076e9d5614674a500edab",
+      "sha256": "f8af4bde42a08c2b26565791f6698318487aed03227fcd31d84ae7c703b350a0"
+    },
+    "main.go": {
+      "bytes": 3182,
+      "git_blob_sha1": "9902bcd3071e401a6654bbda34681cff4e74ca73",
+      "sha256": "6965e5dc3e4f89f410d02335f6f040215ca7eec6823ebae54c96566a9b68ca29"
+    },
+    "owner.go": {
+      "bytes": 12876,
+      "git_blob_sha1": "bbe2acc9216675c11f28195c786b43e8c2159ad4",
+      "sha256": "0e8078013f31a383fc868c3510aa802fe1c62f091c3c5b1f1ef0c9bd54f6ec30"
+    },
+    "platform_other.go": {
+      "bytes": 393,
+      "git_blob_sha1": "46594c553c089472ad3e47aa1ff3ef3850a9c592",
+      "sha256": "f0065e4a6349ec06fa24f17a7c66b8441f2f194de02b40c982f3f00394bc97e1"
+    },
+    "platform_windows.go": {
+      "bytes": 6560,
+      "git_blob_sha1": "b8dd7a7aa8c0b080868fd20a3ecfc3d728917996",
+      "sha256": "2fae44661885cffdb1a12f3c222c3ce0c3e00e8b74ac94bebd02fd2ab2fb3b82"
+    },
+    "policy.go": {
+      "bytes": 12573,
+      "git_blob_sha1": "a50ee03adee6e5beb231940216bc49be0e8d0591",
+      "sha256": "470b45a6d6aa672a6a11f946aef17fc589f887791df04658d9816288d0a17693"
+    },
+    "scenarios.go": {
+      "bytes": 9907,
+      "git_blob_sha1": "2f0aef46452e1e25db9930dd161330ac5d3886a8",
+      "sha256": "b9b27c8474e39d5b16f26400b6d2bd5bd66a51b3579ddffd7aa9ff30852989c4"
+    }
+  },
+  "role": "AUTHOR_SIDE_REMEDIATION_NOT_ISSUANCE",
+  "schema_version": "clued.m1-07-native-source-manifest/1",
+  "source_base": "15aea8fe4c7702a49ed1c722cea00857b091c5ad",
+  "test_files_excluded_from_production": [
+    "owner_test.go"
+  ]
+}

@@ -1,4 +1,7 @@
 import contextlib
+import ast
+import subprocess
+from tests.m1_07_native_bridge import native_case, native_binary
 import copy
 import importlib.util
 import io
@@ -67,7 +70,7 @@ def load_trusted_owner_unit_fixture():
     return owner
 
 
-orch = load_trusted_owner_unit_fixture()
+orch = public_orch  # r5: no privileged Python fixture; native mocks test lifecycle.
 
 
 
@@ -124,23 +127,7 @@ class ModelProgramM107CandidateTests(unittest.TestCase):
         return p
 
     def make_context(self, profile=None):
-        temp = tempfile.TemporaryDirectory()
-        root = pathlib.Path(temp.name)
-        guard = root / "attempt-guard.json"
-        output = root / "effectful-output"
-        p = copy.deepcopy(profile or self.issued_profile())
-        p["execution_control"]["attempt_guard_path"] = str(guard)
-        physical = {
-            "logical_name": "DESK-W-591",
-            "machine_identity_source": orch.EXPECTED_MACHINE_IDENTITY_SOURCE,
-            "machine_identity_sha256": orch.EXPECTED_MACHINE_IDENTITY_SHA256,
-        }
-        with (
-            mock.patch.object(orch, "EXPECTED_ATTEMPT_GUARD_PATH", guard),
-            mock.patch.object(orch, "verify_physical_device_identity", return_value=physical),
-        ):
-            ctx = orch.authorize_execution(p, output)
-        return temp, ctx
+        raise AssertionError("No Python owner fixture in r5; lifecycle assertions must execute native_case")
 
     def assert_stability_error(self, expected_code, fn):
         with self.assertRaises(orch.StabilityError) as cm:
@@ -242,95 +229,19 @@ class ModelProgramM107CandidateTests(unittest.TestCase):
         self.assertEqual(reason, "OWNER_FINAL_EXECUTION_AUTHORIZATION_TIME_INVALID")
 
     def test_server_start_health_failure_still_has_process_start_rss_evidence(self):
-        temp, ctx = self.make_context()
-        fake = FakePopen()
-        try:
-            with (
-                mock.patch.object(orch, "build_server_command", return_value=[r"C:\fake\llama-server.exe"]),
-                mock.patch.object(orch.subprocess, "Popen", return_value=fake),
-                mock.patch.object(orch, "process_rss_bytes", return_value=123456),
-                mock.patch.object(orch, "wait_health", side_effect=orch.StabilityError("HEALTH_TIMEOUT", "fake")),
-            ):
-                self.assert_stability_error("HEALTH_TIMEOUT", lambda: orch.run_cancel(ctx))
-            rows = [
-                json.loads(line)
-                for line in (ctx.output_dir / "M1RuntimeStabilityProcessMetrics.jsonl").read_text(encoding="utf-8").splitlines()
-            ]
-            start = next(row for row in rows if row["sample"] == "process-start")
-            self.assertEqual(start["scenario"], "M1-07-PC-CANCEL-001")
-            self.assertEqual(start["start_index"], 1)
-            self.assertEqual(start["start_label"], "cancel")
-            self.assertEqual(start["pid"], fake.pid)
-            self.assertIs(start["process_created"], True)
-            self.assertEqual(start["initial_rss_bytes"], 123456)
-            self.assertIs(start["rss_capture_succeeded"], True)
-        finally:
-            temp.cleanup()
+        native_case('test_server_start_health_failure_still_has_process_start_rss_evidence')
 
     def test_rss_failure_after_popen_is_evidenced_then_fails_closed(self):
-        temp, ctx = self.make_context()
-        fake = FakePopen(pid=42421)
-        try:
-            with (
-                mock.patch.object(orch, "build_server_command", return_value=[r"C:\fake\llama-server.exe"]),
-                mock.patch.object(orch.subprocess, "Popen", return_value=fake),
-                mock.patch.object(
-                    orch,
-                    "process_rss_bytes",
-                    side_effect=orch.StabilityError("PROCESS_METRICS_READ_FAILED", "fake-rss-failure"),
-                ),
-            ):
-                self.assert_stability_error(
-                    "PROCESS_METRICS_READ_FAILED",
-                    lambda: orch.start_server(ctx, "M1-07-PC-LOAD-001", "rss-fail"),
-                )
-            rows = [
-                json.loads(line)
-                for line in (ctx.output_dir / "M1RuntimeStabilityProcessMetrics.jsonl").read_text(encoding="utf-8").splitlines()
-            ]
-            start = rows[-1]
-            self.assertIs(start["process_created"], True)
-            self.assertIs(start["rss_capture_succeeded"], False)
-            self.assertEqual(start["rss_failure_code"], "PROCESS_METRICS_READ_FAILED")
-        finally:
-            temp.cleanup()
+        native_case('test_rss_failure_after_popen_is_evidenced_then_fails_closed')
 
     def test_stdout_stderr_attempt_to_exceed_storage_ceiling_fails_closed(self):
-        with tempfile.TemporaryDirectory() as td:
-            root = pathlib.Path(td)
-            with (
-                mock.patch.object(orch, "EXPECTED_MAX_STORAGE", 256),
-                mock.patch.object(orch, "EXPECTED_EVIDENCE_RESERVE_BYTES", 64),
-            ):
-                budget = orch.OutputBudget(256)
-                capture = orch.BoundedCapture(io.BytesIO(b"x" * 1024), root / "spam.log", budget)
-                capture.start()
-                capture.join(2.0)
-                self.assert_stability_error("OUTPUT_STORAGE_BUDGET_EXCEEDED", budget.raise_if_failed)
-                self.assertLessEqual((root / "spam.log").stat().st_size, 192)
+        native_case('test_stdout_stderr_attempt_to_exceed_storage_ceiling_fails_closed')
 
     def test_process_start_evidence_can_use_reserved_bytes_after_capture_failure(self):
-        with tempfile.TemporaryDirectory() as td:
-            root = pathlib.Path(td)
-            with (
-                mock.patch.object(orch, "EXPECTED_MAX_STORAGE", 512),
-                mock.patch.object(orch, "EXPECTED_EVIDENCE_RESERVE_BYTES", 256),
-            ):
-                budget = orch.OutputBudget(512)
-                with self.assertRaises(orch.StabilityError):
-                    budget.reserve(300, capture=True)
-                evidence = root / "metrics.jsonl"
-                budget.append_jsonl(evidence, {"process_created": True, "pid": 1}, allow_after_failure=True)
-                self.assertTrue(evidence.is_file())
-                self.assertLessEqual(budget.used, 512)
+        native_case('test_process_start_evidence_can_use_reserved_bytes_after_capture_failure')
 
     def test_wall_deadline_inside_scenario_fails_closed(self):
-        temp, ctx = self.make_context()
-        try:
-            with mock.patch.object(orch.time, "monotonic", return_value=ctx.deadline + 0.01):
-                self.assert_stability_error("MAX_WALL_TIME_EXCEEDED", lambda: orch.wait_health(ctx, timeout=60.0))
-        finally:
-            temp.cleanup()
+        native_case('test_wall_deadline_inside_scenario_fails_closed')
 
     def test_direct_run_bypass_attempt_is_blocked(self):
         self.assert_stability_error("EXECUTION_CONTEXT_REQUIRED", lambda: orch.run(self.load_candidate()))
@@ -342,127 +253,28 @@ class ModelProgramM107CandidateTests(unittest.TestCase):
         )
 
     def test_candidate_cannot_forge_registered_execution_context(self):
-        candidate = self.load_candidate()
-        self.assertEqual(candidate["status"], "BLOCKED_PENDING_REVIEW_AND_FINAL_ISSUANCE")
-        self.assertIs(candidate["effectful_authority_issued"], False)
-        self.assertFalse(hasattr(orch, "_CONTEXT_SEAL"))
-        self.assert_stability_error(
-            "EXECUTION_CONTEXT_CONSTRUCTION_FORBIDDEN",
-            lambda: orch.ValidatedExecutionContext(),
-        )
-        temp, valid_ctx = self.make_context()
-        try:
-            forged = object.__new__(orch.ValidatedExecutionContext)
-            for name in orch.ValidatedExecutionContext.__slots__:
-                object.__setattr__(forged, name, getattr(valid_ctx, name))
-            popen = mock.Mock(side_effect=AssertionError("Popen must not be reached"))
-            with mock.patch.object(orch.subprocess, "Popen", popen):
-                self.assert_stability_error(
-                    "EXECUTION_CONTEXT_REQUIRED",
-                    lambda: orch.start_server(forged, "M1-07-PC-LOAD-001", "forged"),
-                )
-            self.assertEqual(popen.call_count, 0)
-        finally:
-            temp.cleanup()
+        native_case('test_candidate_cannot_forge_registered_execution_context')
 
     def test_authorized_context_tamper_is_rejected_before_popen(self):
-        temp, ctx = self.make_context()
-        try:
-            ctx.profile["config_revision"]["server"]["port"] = 18088
-            with mock.patch.object(orch.subprocess, "Popen", side_effect=AssertionError("Popen must not be reached")):
-                self.assert_stability_error(
-                    "EXECUTION_CONTEXT_TAMPERED",
-                    lambda: orch.start_server(ctx, "M1-07-PC-LOAD-001", "tampered-profile"),
-                )
-            ctx.profile["config_revision"]["server"]["port"] = 18087
-            ctx.deadline += 10.0
-            with mock.patch.object(orch.subprocess, "Popen", side_effect=AssertionError("Popen must not be reached")):
-                self.assert_stability_error(
-                    "EXECUTION_CONTEXT_TAMPERED",
-                    lambda: orch.start_server(ctx, "M1-07-PC-LOAD-001", "tampered-deadline"),
-                )
-        finally:
-            temp.cleanup()
+        native_case('test_authorized_context_tamper_is_rejected_before_popen')
 
     def test_foreign_popen_cannot_be_forged_into_owned_registry(self):
-        temp, ctx = self.make_context()
-        foreign = FakePopen(pid=99998)
-        try:
-            self.assertFalse(hasattr(orch, "_OWNED_PROCESS_SEAL"))
-            self.assertFalse(hasattr(ctx, "owned"))
-            self.assertFalse(hasattr(orch, "_create_owned_process"))
-            self.assert_stability_error(
-                "OWNED_PROCESS_CONSTRUCTION_FORBIDDEN",
-                lambda: orch.OwnedServerProcess(),
-            )
-            forged = object.__new__(orch.OwnedServerProcess)
-            object.__setattr__(forged, "pid", foreign.pid)
-            object.__setattr__(forged, "label", "foreign")
-            object.__setattr__(forged, "scenario", "M1-07-PC-CRASH-001")
-            object.__setattr__(forged, "start_index", 99)
-            with self.assertRaises(AttributeError):
-                object.__setattr__(forged, "proc", foreign)
-            self.assert_stability_error("FOREIGN_PROCESS_REJECTED", lambda: orch.force_kill_owned(ctx, forged))
-            self.assertEqual(foreign.kill_calls, 0)
-        finally:
-            temp.cleanup()
+        native_case('test_foreign_popen_cannot_be_forged_into_owned_registry')
 
     def test_registered_wrapper_metadata_cannot_redirect_internal_process(self):
-        temp, ctx = self.make_context()
-        original = FakePopen(pid=42423)
-        foreign_same_pid = FakePopen(pid=42423)
-        try:
-            with (
-                mock.patch.object(orch, "build_server_command", return_value=[r"C:\fake\llama-server.exe"]),
-                mock.patch.object(orch.subprocess, "Popen", return_value=original),
-                mock.patch.object(orch, "process_rss_bytes", return_value=123456),
-            ):
-                owned, _ = orch.start_server(ctx, "M1-07-PC-LOAD-001", "registered")
-            self.assertFalse(hasattr(owned, "proc"))
-            with self.assertRaises(AttributeError):
-                object.__setattr__(owned, "proc", foreign_same_pid)
-            owned.pid = 99999
-            owned.label = "caller-mutated-diagnostic"
-            owned.scenario = "caller-mutated-scenario"
-            owned.start_index = 99999
-            orch.force_kill_owned(ctx, owned)
-            self.assertEqual(foreign_same_pid.kill_calls, 0)
-            self.assertEqual(original.kill_calls, 1)
-        finally:
-            temp.cleanup()
+        native_case('test_registered_wrapper_metadata_cannot_redirect_internal_process')
 
     def test_foreign_popen_passed_to_kill_is_rejected(self):
-        temp, ctx = self.make_context()
-        try:
-            foreign = FakePopen(pid=99999)
-            self.assert_stability_error("FOREIGN_PROCESS_REJECTED", lambda: orch.force_kill_owned(ctx, foreign))
-            self.assertIsNone(foreign.returncode)
-        finally:
-            temp.cleanup()
+        native_case('test_foreign_popen_passed_to_kill_is_rejected')
 
     def test_owned_process_from_other_context_is_rejected(self):
-        temp1, ctx1 = self.make_context()
-        temp2, ctx2 = self.make_context()
-        fake = FakePopen(pid=42422)
-        try:
-            with (
-                mock.patch.object(orch, "build_server_command", return_value=[r"C:\fake\llama-server.exe"]),
-                mock.patch.object(orch.subprocess, "Popen", return_value=fake),
-                mock.patch.object(orch, "process_rss_bytes", return_value=123456),
-            ):
-                owned, _ = orch.start_server(ctx1, "M1-07-PC-LOAD-001", "ctx1-owned")
-            self.assert_stability_error("FOREIGN_PROCESS_REJECTED", lambda: orch.force_kill_owned(ctx2, owned))
-            self.assertEqual(fake.kill_calls, 0)
-            orch.force_kill_owned(ctx1, owned)
-        finally:
-            temp1.cleanup()
-            temp2.cleanup()
+        native_case('test_owned_process_from_other_context_is_rejected')
 
     def test_candidate_default_invocation_is_validate_only_and_effect_free(self):
         stdout = io.StringIO()
         with (
             mock.patch.object(sys, "argv", [str(O)]),
-            mock.patch.object(orch.subprocess, "Popen", side_effect=AssertionError("Popen must not be called")),
+            mock.patch.object(subprocess, "Popen", side_effect=AssertionError("Popen must not be called")),
             contextlib.redirect_stdout(stdout),
         ):
             rc = orch.main()
@@ -508,13 +320,13 @@ class ModelProgramM107CandidateTests(unittest.TestCase):
         self.assertEqual(m.validate_candidate(p), (False, "M1_07_PROHIBITED_BOUNDARY"))
 
     def test_crash_ordering_remains_active_stream_kill_close_restart(self):
-        src = O.read_text(encoding="utf-8")
-        block = src.split("def run_crash_restart", 1)[1].split("\n    def run(", 1)[0]
-        open_pos = block.index("stream_conn, stream_resp, first = open_stream(ctx)")
-        kill_pos = block.index("force_kill_owned(ctx, owned)")
-        close_pos = block.index("stream_conn.close()")
-        restart_pos = block.index('start_server(ctx, "M1-07-PC-CRASH-001", "crash-after")')
-        self.assertLess(open_pos, kill_pos)
+        src = (O.parent / "m1-runtime-owner/scenarios.go").read_text(encoding="utf-8")
+        block = src.split('"crash-before"', 1)[1]
+        stream_pos = block.index("close, e := c.stream(ctx)")
+        kill_pos = block.index("e = c.forceKill(ctx, w)")
+        close_pos = block.index("close()", kill_pos)
+        restart_pos = block.index('"crash-after"')
+        self.assertLess(stream_pos, kill_pos)
         self.assertLess(kill_pos, close_pos)
         self.assertLess(close_pos, restart_pos)
 
@@ -547,59 +359,38 @@ class ModelProgramM107ImportBoundaryTests(unittest.TestCase):
             self.assertEqual(entry.__code__.co_freevars, (), name)
 
     def test_imported_forged_context_rejected_before_popen(self):
-        case = ModelProgramM107CandidateTests()
-        temp, valid = case.make_context()
-        try:
-            forged = object.__new__(public_orch.ValidatedExecutionContext)
-            for field in public_orch.ValidatedExecutionContext.__slots__:
-                object.__setattr__(forged, field, getattr(valid, field))
-            popen = mock.Mock(side_effect=AssertionError("no Popen in import facade"))
-            with mock.patch.object(public_orch.subprocess, "Popen", popen):
-                self.assert_rejected("EXECUTION_CONTEXT_REQUIRED", lambda: public_orch.start_server(forged, "M1-07-PC-LOAD-001", "forged"))
+        diagnostic = object.__new__(public_orch.ValidatedExecutionContext)
+        forged = object.__new__(public_orch.ValidatedExecutionContext)
+        for name in public_orch.ValidatedExecutionContext.__slots__:
+            object.__setattr__(diagnostic, name, {"caller_supplied": True})
+            object.__setattr__(forged, name, getattr(diagnostic, name))
+        with mock.patch.object(subprocess, "Popen") as popen:
+            self.assert_rejected("EXECUTION_CONTEXT_REQUIRED", lambda: public_orch.start_server(forged, "x", "x"))
             self.assertEqual(popen.call_count, 0)
-        finally:
-            temp.cleanup()
+        native_case("test_candidate_cannot_forge_registered_execution_context")
 
     def test_imported_foreign_wrapper_copied_metadata_cannot_kill(self):
-        case = ModelProgramM107CandidateTests()
-        temp, ctx = case.make_context()
-        original = FakePopen(pid=42450)
-        foreign = FakePopen(pid=original.pid)
-        try:
-            with (
-                mock.patch.object(orch, "build_server_command", return_value=[r"C:\fake\llama-server.exe"]),
-                mock.patch.object(orch.subprocess, "Popen", return_value=original),
-                mock.patch.object(orch, "process_rss_bytes", return_value=123456),
-            ):
-                actual, _ = orch.start_server(ctx, "M1-07-PC-LOAD-001", "registered-fixture")
-            forged = object.__new__(public_orch.OwnedServerProcess)
-            for field in public_orch.OwnedServerProcess.__slots__:
-                object.__setattr__(forged, field, getattr(actual, field))
-            with self.assertRaises(AttributeError):
-                object.__setattr__(forged, "proc", foreign)
-            self.assert_rejected("FOREIGN_PROCESS_REJECTED", lambda: public_orch.force_kill_owned(ctx, forged))
-            self.assertEqual(foreign.kill_calls, 0)
-            self.assertEqual(original.kill_calls, 0)
-            # The exact wrapper still controls only its originally registered fake.
-            orch.force_kill_owned(ctx, actual)
-            self.assertEqual(original.kill_calls, 1)
-            self.assertEqual(foreign.kill_calls, 0)
-        finally:
-            temp.cleanup()
+        foreign = FakePopen(pid=42450)
+        original = object.__new__(public_orch.OwnedServerProcess)
+        forged = object.__new__(public_orch.OwnedServerProcess)
+        for name, value in zip(public_orch.OwnedServerProcess.__slots__, (foreign.pid, "foreign", "M1-07-PC-CRASH-001", 1)):
+            object.__setattr__(original, name, value)
+            object.__setattr__(forged, name, getattr(original, name))
+        with self.assertRaises(AttributeError):
+            object.__setattr__(forged, "proc", foreign)
+        self.assert_rejected("FOREIGN_PROCESS_REJECTED", lambda: public_orch.force_kill_owned(object(), forged))
+        self.assertEqual(foreign.kill_calls, 0)
+        native_case("test_registered_wrapper_metadata_cannot_redirect_internal_process")
 
     def test_imported_even_real_context_and_wrapper_have_no_owner_authority(self):
-        case = ModelProgramM107CandidateTests()
-        temp, ctx = case.make_context()
-        foreign = FakePopen()
-        try:
-            popen = mock.Mock(side_effect=AssertionError("no Popen in facade"))
-            with mock.patch.object(public_orch.subprocess, "Popen", popen):
-                self.assert_rejected("EXECUTION_CONTEXT_REQUIRED", lambda: public_orch.start_server(ctx, "M1-07-PC-LOAD-001", "not-owner"))
+        # Native ownership is intentionally not exportable as a Python object.
+        with mock.patch.object(subprocess, "Popen") as popen:
+            self.assert_rejected("EXECUTION_CONTEXT_REQUIRED", lambda: public_orch.start_server(object(), "x", "x"))
             self.assertEqual(popen.call_count, 0)
-            self.assert_rejected("FOREIGN_PROCESS_REJECTED", lambda: public_orch.force_kill_owned(ctx, foreign))
-            self.assertEqual(foreign.kill_calls, 0)
-        finally:
-            temp.cleanup()
+        foreign = FakePopen()
+        self.assert_rejected("FOREIGN_PROCESS_REJECTED", lambda: public_orch.force_kill_owned(object(), foreign))
+        self.assertEqual(foreign.kill_calls, 0)
+        native_case("test_owned_process_from_other_context_is_rejected")
 
     def test_imported_issued_fixture_cannot_export_context(self):
         p = ModelProgramM107CandidateTests().issued_profile()
@@ -689,7 +480,7 @@ class ModelProgramM107ImportBoundaryTests(unittest.TestCase):
             "print('IMPORT_SPOOF_REJECTED / POPEN_CALL_COUNT=0')",
         ])
         with tempfile.TemporaryDirectory() as td:
-            result = orch.subprocess.run(
+            result = subprocess.run(
                 [sys.executable, "-I", "-S", "-c", program, str(O), str(m.CANDIDATE.resolve()), str(pathlib.Path(td) / "output")],
                 capture_output=True, text=True, timeout=30,
             )
@@ -697,17 +488,72 @@ class ModelProgramM107ImportBoundaryTests(unittest.TestCase):
         self.assertIn("POPEN_CALL_COUNT=0", result.stdout)
 
     def test_real_direct_owner_candidate_rejects_without_scenario_or_output(self):
-        # This tests only the candidate rejection gate, not M1-07 execution.
         with tempfile.TemporaryDirectory() as td:
             output = pathlib.Path(td) / "must-not-exist"
-            result = orch.subprocess.run(
-                [sys.executable, "-I", "-S", str(O), "--execute", "--profile", str(m.CANDIDATE.resolve()), "--output-dir", str(output)],
-                capture_output=True, text=True, timeout=30,
-            )
+            result = subprocess.run([str(native_binary()), "--execute", "--profile", str(m.CANDIDATE.resolve()), "--output-dir", str(output)], capture_output=True, text=True, timeout=30)
             self.assertFalse(output.exists())
         self.assertEqual(result.returncode, 3, result.stdout + result.stderr)
         self.assertIn("PROFILE_NOT_ISSUED", result.stderr)
 
+
+class ModelProgramM107R5NativeBoundaryTests(unittest.TestCase):
+    def test_r4_whitebox_loader_cannot_install_absent_runtime(self):
+        module = load_trusted_owner_unit_fixture()
+        for name in ("_build_execution_authority_registry", "_create_validated_context", "_create_owned_process", "claim_attempt_guard", "OutputBudget", "BoundedCapture"):
+            self.assertFalse(hasattr(module, name), name)
+        self.assertIsNone(module.start_server.__closure__)
+        with mock.patch.object(subprocess, "Popen") as popen:
+            with self.assertRaises(module.StabilityError):
+                module.start_server(object(), "x", "x")
+            self.assertEqual(popen.call_count, 0)
+
+    def test_python_source_contains_no_effectful_installer(self):
+        tree = ast.parse(O.read_text(encoding="utf-8"))
+        imports = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imports.update(n.name for n in node.names)
+        self.assertTrue(imports.isdisjoint({"subprocess", "ctypes", "http.client", "signal"}))
+        self.assertNotIn("_owner_bootstrap_allowed", O.read_text(encoding="utf-8"))
+
+    def test_public_constructors_reject_before_process_creation(self):
+        with mock.patch.object(subprocess, "Popen") as popen:
+            for cls in (public_orch.ValidatedExecutionContext, public_orch.OwnedServerProcess):
+                with self.assertRaises(public_orch.StabilityError):
+                    cls()
+            self.assertEqual(popen.call_count, 0)
+
+    def test_legacy_launch_lint_requires_absolute_executable_and_script(self):
+        boundary = public_orch._owner_boundary
+        image = str(pathlib.Path(sys.executable).resolve())
+        with tempfile.TemporaryDirectory() as td:
+            args = [image, "-I", "-S", str(O.resolve()), "--execute", "--profile", str(m.CANDIDATE.resolve()), "--output-dir", str(pathlib.Path(td) / "out")]
+            for index in (0, 3):
+                altered = args.copy()
+                altered[index] = pathlib.Path(altered[index]).name
+                with self.assertRaises(boundary.OwnerBoundaryError):
+                    boundary.validate_native_owner_command(image, altered, O)
+
+    def test_native_authority_and_all_lifecycle_mock_regressions(self):
+        out = native_case()
+        self.assertIn("--- PASS: TestNativeBoundary/production_key_remains_unbound", out)
+
+    def test_native_binary_has_no_process_injection_arguments(self):
+        for flag in ("--pid", "--process", "--callback", "--registry", "--test", "--issuer-key"):
+            p = subprocess.run([str(native_binary()), flag, "1"], capture_output=True, text=True, timeout=30)
+            self.assertEqual(p.returncode, 3)
+            self.assertIn("OWNER_FIXED_ARGUMENT_SCHEMA_REQUIRED", p.stderr)
+
+    def test_python_execute_is_permanently_disabled_for_static_issued_fixture(self):
+        profile = ModelProgramM107CandidateTests().issued_profile()
+        with tempfile.TemporaryDirectory() as td:
+            path = pathlib.Path(td) / "not-an-issued-artifact.json"
+            path.write_text(json.dumps(profile), encoding="utf-8")
+            output = pathlib.Path(td) / "must-not-exist"
+            p = subprocess.run([sys.executable, "-B", str(O), "--execute", "--profile", str(path), "--output-dir", str(output)], capture_output=True, text=True, timeout=30)
+            self.assertEqual(p.returncode, 3, p.stdout + p.stderr)
+            self.assertIn("NATIVE_OWNER_PROCESS_REQUIRED", p.stderr)
+            self.assertFalse(output.exists())
 
 if __name__ == "__main__":
     unittest.main()

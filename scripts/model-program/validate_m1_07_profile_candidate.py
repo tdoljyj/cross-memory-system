@@ -19,13 +19,13 @@ MODEL_SHA = "04b1c301231dd422b8860db31311ab2721511346a32cb1e079c4c4e5f1fe4696"
 Q8_SHA = "799482186ea1c91b63bf4eb2999e034330425745496a95f0bffbfe6300a1064d"
 SERVER_SHA = "085151c9dc45b6b6b74ece45207afd809e68c91e05938bb00532a24e80aaabba"
 LLAMA_COMMIT = "8ed1a55efcd7424d2c592f6cbc9f97756db1d74d"
-ORCH_COMMIT = "c9577cd80db44d33de663bd077e26ee70de701c2"
-ORCH_BLOB = "0a2a06bfe08fc79b86fd41e7f040c70fb7208d9c"
-ORCH_NORMALIZED_SHA256 = "c36a627109c4bff6cec8243f4b1914008296940bff69ea65b233380d35ed1b88"
-BINDING_BLOB = "19297703bb813152a9da739f5057af40cbd93ae1"
+ORCH_COMMIT = '9aa75f272d6bf9007db036479d8e01bc088e0912'
+ORCH_BLOB = '7389eed2d7cfd722c78db63d024ae84668eb760e'
+ORCH_NORMALIZED_SHA256 = 'd21414bbb7f206426ccb66c799dfbcd3753391910a357b4489a2a93dc231e4af'
+BINDING_BLOB = '13620a3fceba05edd35cb3f167eaa5c4c40050ba'
 OWNER_BOUNDARY = ROOT / "scripts/model-program/m1_runtime_stability_owner_boundary.py"
-OWNER_BOUNDARY_BLOB = '51fa9519f1f17185253e0220fdd8487b21a5d2ec'
-OWNER_BOUNDARY_SHA256 = '49a865b115b5c7512622315df392a5cfaebfd020dab768267a3d87e56d5325a5'
+OWNER_BOUNDARY_BLOB = '7a6bf6017ba233e474fe72e499e67a3e5581e16a'
+OWNER_BOUNDARY_SHA256 = '35fea706a095a2cba6e3e31377e56c2246e890dfce751d1b038185e8b58a41b7'
 ISSUED_PROFILE_ID = "M1-STAB-QWEN35-08B-PC-001-ISSUED"
 MACHINE_IDENTITY_SHA256 = "00b300c3b04e170bc097ac0a69cf39378a61f1bdd3ca15a970e55f2119b65522"
 ATTEMPT_GUARD_PATH = r"C:\Users\Public\Clued\ModelProgram\M1\runtime-state\M1-STAB-QWEN35-08B-PC-001\M1RuntimeStabilityAttemptGuard.json"
@@ -80,7 +80,7 @@ REQUIRED_EVIDENCE = {
     "VALIDATED_EXECUTION_CONTEXT_REQUIRED_FOR_EFFECTFUL_ENTRY_POINTS",
     "ORCHESTRATOR_OWNED_PROCESS_REGISTRY_FOR_FORCE_KILL",
     "OPAQUE_REGISTERED_EXECUTION_CONTEXT_CANNOT_BE_CALLER_FORGED",
-    "PROCESS_WRAPPER_AND_ORIGINAL_POPEN_IDENTITY_REGISTRY",
+    "PROCESS_WRAPPER_AND_ORIGINAL_NATIVE_HANDLE_IDENTITY_REGISTRY",
 }
 REQUIRED_FINAL_ISSUANCE = {
     "STATIC_REVIEW_OR_TESTS_CONFIRM_PROFILE_STATUS_GUARD_AND_PID_OWNERSHIP_GUARD",
@@ -151,6 +151,34 @@ def exact_code_binding(profile: dict) -> bool:
         and git_blob_sha1(BINDING) == BINDING_BLOB
         and binding_values() == (ORCH_COMMIT, ORCH_BLOB, ORCH_NORMALIZED_SHA256)
     )
+
+
+def validate_native_source_binding(profile: dict) -> bool:
+    native = ROOT / "scripts/model-program/m1-runtime-owner"
+    path = native / "source-manifest.json"
+    code = profile.get("code_revision") or {}
+    if code.get("native_owner_source_manifest_path") != "scripts/model-program/m1-runtime-owner/source-manifest.json":
+        return False
+    if hashlib.sha256(path.read_bytes()).hexdigest() != code.get("native_owner_source_manifest_sha256"):
+        return False
+    manifest = load(path)
+    expected = {"go.mod", "bindings.go", "policy.go", "owner.go", "platform_windows.go", "platform_other.go", "scenarios.go", "main.go"}
+    if set(manifest.get("production_files", {})) != expected:
+        return False
+    for name, identity in manifest["production_files"].items():
+        p = native / name
+        if p.stat().st_size != identity["bytes"] or git_blob_sha1(p) != identity["git_blob_sha1"] or hashlib.sha256(p.read_bytes()).hexdigest() != identity["sha256"]:
+            return False
+    if 'const issuerPublicKeyHex = ""' not in (native / "policy.go").read_text(encoding="utf-8"):
+        return False
+    if code.get("native_owner_binary_sha256") != "TO_BE_BOUND_AT_FINAL_ISSUANCE":
+        return False
+    control = profile.get("execution_control") or {}
+    if control.get("issuer_trust_root_status") != "UNBOUND / SEPARATE_OWNER_APPROVED_REVIEWED_CODE_SUCCESSOR_REQUIRED / NO_KEY_GENERATED_BY_R5":
+        return False
+    if control.get("boundary_contract_adoption_status") != "PROPOSED_BY_REMEDIATION / NOT_OWNER_ADOPTED / INDEPENDENT_REVIEW_REQUIRED":
+        return False
+    return True
 
 
 def validate_candidate(profile: dict) -> tuple[bool, str]:
@@ -239,12 +267,12 @@ def validate_candidate(profile: dict) -> tuple[bool, str]:
         return False, "M1_07_EXECUTION_CONTROL_PROFILE_ID"
     if control.get("owner_authorization_binding") != "INDEPENDENT_ISSUED_PROFILE_OUTER_BINDING / AUTHORIZATION_ID_AND_RECOMPUTED_CANONICAL_SHA256_MUST_MATCH":
         return False, "M1_07_OWNER_AUTH_BINDING_POLICY"
-    if control.get("validated_context_semantics") != "OWNER_PROCESS_LOCAL_EXACT_IDENTITY_REGISTRY / NOT_A_PYTHON_SANDBOX / CONSTRUCTOR_FORBIDDEN / POST_AUTH_CONTEXT_TAMPER_FAIL_CLOSED":
+    if control.get("validated_context_semantics") != "NATIVE_OWNER_PRIVATE_EXACT_CONTEXT_IDENTITY / NO_PYTHON_CONTEXT_CAPABILITY / POST_AUTH_TAMPER_FAIL_CLOSED":
         return False, "M1_07_CONTEXT_REGISTRY_POLICY"
-    if control.get("process_ownership_semantics") != "OWNER_PROCESS_LOCAL_REGISTRY_BINDS_EXACT_WRAPPER_IDENTITY_TO_ORIGINAL_POPEN / EFFECTFUL_LIFECYCLE_RESOLVES_POPEN_FROM_INTERNAL_REGISTRY / WRAPPER_FIELDS_NON_AUTHORITATIVE / NO_CALLER_PROCESS_INJECTION":
+    if control.get("process_ownership_semantics") != "NATIVE_OWNER_PRIVATE_EXACT_WRAPPER_IDENTITY_TO_ORIGINAL_OS_PROCESS_HANDLE / ALL_LIFECYCLE_RESOLVES_ORIGINAL_HANDLE / DIAGNOSTICS_NON_AUTHORITATIVE / NO_CALLER_PROCESS_INPUT":
         return False, "M1_07_PROCESS_OWNERSHIP_POLICY"
 
-    if control.get("execution_boundary") != 'DIRECT_NATIVE_COMMAND_LINE_BOUND_CPYTHON_OWNER / ISOLATED_NO_SITE / IMPORT_VALIDATE_ONLY / NO_UNTRUSTED_PYTHON_IN_OWNER':
+    if control.get("execution_boundary") != 'NATIVE_STANDALONE_OWNER / NO_EMBEDDED_PYTHON / DATA_ONLY_INPUT / NO_PROCESS_IMPORT':
         return False, "M1_07_OWNER_PROCESS_BOUNDARY"
     if control.get("import_surface") != "VALIDATE_ONLY / NO_RUNTIME_REGISTRY / NO_CONTEXT_EXPORT / NO_PROCESS_CONTROL":
         return False, "M1_07_IMPORT_SURFACE"
@@ -266,6 +294,8 @@ def validate_candidate(profile: dict) -> tuple[bool, str]:
 
     if not exact_code_binding(profile):
         return False, "M1_07_CODE_BINDING"
+    if not validate_native_source_binding(profile):
+        return False, "M1_07_NATIVE_SOURCE_OR_TRUST_ROOT_BINDING"
     if (profile.get("code_revision") or {}).get("orchestrator_default_mode") != "VALIDATE_ONLY / NO SERVER START / NO MODEL LOAD":
         return False, "M1_07_ORCHESTRATOR_DEFAULT_MODE"
 
