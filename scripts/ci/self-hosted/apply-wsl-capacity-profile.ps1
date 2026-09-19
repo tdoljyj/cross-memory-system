@@ -18,11 +18,11 @@ $manifestPath = Join-Path $PSScriptRoot 'node-profiles.json'
 $data = Get-Content $manifestPath -Raw | ConvertFrom-Json
 
 if ($HostId) {
-    $host = @($data.hosts | Where-Object { $_.host_id -eq $HostId })
-    if ($host.Count -ne 1) {
+    $hostRecord = @($data.hosts | Where-Object { $_.host_id -eq $HostId })
+    if ($hostRecord.Count -ne 1) {
         throw "Unknown or duplicate HostId: $HostId"
     }
-    $Profile = $host[0].capacity_profile
+    $Profile = $hostRecord[0].capacity_profile
 }
 
 $profileProperty = $data.capacity_profiles.PSObject.Properties | Where-Object { $_.Name -eq $Profile }
