@@ -1,0 +1,74 @@
+name: Self-hosted P8 dual Linux pool validation
+
+on:
+  push:
+    branches:
+      - ci/self-hosted-p8-dual-linux-pool-20260919
+
+permissions:
+  contents: read
+
+concurrency:
+  group: self-hosted-p8-dual-linux-pool-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate-company-linux:
+    name: Validate company Linux runner
+    runs-on:
+      - self-hosted
+      - Linux
+      - X64
+      - clued
+      - pool-general
+      - trust-internal
+      - site-company
+      - cap-docker-linux
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Verify company Linux runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "START=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          echo "Runner=${{ runner.name }}"
+          test "${{ runner.name }}" = "clued-ci-company-linux-01"
+          uname -a
+          docker --version
+          docker info --format 'Server={{.ServerVersion}} OS={{.OSType}}'
+          docker ps --format '{{.ID}} {{.Image}} {{.Status}}' >/dev/null
+          sleep 20
+          echo "END=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+  validate-home-linux:
+    name: Validate home Linux runner
+    runs-on:
+      - self-hosted
+      - Linux
+      - X64
+      - clued
+      - pool-general
+      - trust-internal
+      - site-home
+      - cap-docker-linux
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Verify home Linux runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "START=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          echo "Runner=${{ runner.name }}"
+          test "${{ runner.name }}" = "clued-ci-home-linux-01"
+          uname -a
+          docker --version
+          docker info --format 'Server={{.ServerVersion}} OS={{.OSType}}'
+          docker ps --format '{{.ID}} {{.Image}} {{.Status}}' >/dev/null
+          sleep 20
+          echo "END=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
