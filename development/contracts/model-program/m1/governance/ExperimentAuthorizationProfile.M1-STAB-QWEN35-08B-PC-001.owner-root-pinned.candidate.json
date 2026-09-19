@@ -111,8 +111,8 @@
     "owner_boundary_normalized_sha256": "35fea706a095a2cba6e3e31377e56c2246e890dfce751d1b038185e8b58a41b7",
     "native_owner_source_path": "scripts/model-program/m1-runtime-owner",
     "native_owner_source_manifest_path": "scripts/model-program/m1-runtime-owner/source-manifest.json",
-    "native_owner_source_manifest_sha256": "de90079cfc7e182efb950276005caf0c2f12d389999c9ddfd895d1b86153c616",
-    "native_owner_binary_sha256": "067e303d64e52ed0fc3112494622c01e660f67c40047daf7933c036e1e14923f",
+    "native_owner_source_manifest_sha256": "5ff4e639585c8b12dc41b6ac8edc62943faafd6dad70660f734353b284b96957",
+    "native_owner_binary_sha256": "36407fbe3128793ff2902328077f0b3318238bec10067695cd5d4e0643108ec8",
     "python_execution_surface": "PERMANENTLY_VALIDATE_ONLY / NO_EFFECTFUL_IMPLEMENTATION"
   },
   "config_revision": {
@@ -451,6 +451,7 @@
   },
   "successor_preparation": {
     "predecessor_exact_head": "d58df9c4a1885512bd4dd9b94f121b6a84e25744",
+    "r1_remediation_predecessor_exact_head": "aa127d5d0623cce921cb90643ec620ace2b70a1f",
     "owner_root_enrollment_state": "COMPLETE",
     "boundary_adoption_event": 833,
     "boundary_adoption_receipt": "9e614dc6-8db4-4e64-8035-cfbec4d4bcba",
@@ -461,6 +462,6 @@
     "owner_public_key_sha256_fingerprint": "7d8a39adb80276686ff052b65e074a8ea9e74f7eccbc44f4340b194fec342f9c",
     "private_key_storage_locator": "windows-local-owner-key://DESK-W-591/Clued/M1-07/Owner-Ed25519-Root",
     "private_key_material_present_in_repository": false,
-    "successor_state": "OWNER_ROOT_PINNED / NATIVE_SOURCE_AND_BINARY_EXACT_BOUND / NOT_ISSUED / INDEPENDENT_REVIEW_REQUIRED / NO_MODEL_EXECUTION / NO_MERGE"
+    "successor_state": "OWNER_ROOT_PINNED / R1_TARGETED_REMEDIATION / NATIVE_SOURCE_BINARY_RUNTIME_TREE_EXACT_BOUND / NOT_ISSUED / INDEPENDENT_REVIEW_REQUIRED / NO_MODEL_EXECUTION / NO_MERGE"
   }
 }
