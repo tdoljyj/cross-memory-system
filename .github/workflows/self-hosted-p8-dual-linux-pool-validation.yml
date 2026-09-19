@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: self-hosted-p8-dual-linux-pool-${{ github.ref }}
+  group: self-hosted-p8-dual-linux-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -22,24 +22,24 @@ jobs:
       - clued
       - pool-general
       - trust-internal
-      - site-company
       - cap-docker-linux
+      - site-company
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-        with:
-          persist-credentials: false
-      - name: Verify company Linux runner
+      - name: Verify company Linux Docker engine
         shell: bash
         run: |
           set -euo pipefail
           echo "START=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           echo "Runner=${{ runner.name }}"
           test "${{ runner.name }}" = "clued-ci-company-linux-01"
-          uname -a
-          docker --version
-          docker info --format 'Server={{.ServerVersion}} OS={{.OSType}}'
-          docker ps --format '{{.ID}} {{.Image}} {{.Status}}' >/dev/null
+          test "$(command -v docker)" = "/usr/bin/docker"
+          docker version --format 'Client={{.Client.Version}} Server={{.Server.Version}}'
+          docker info --format 'Server={{.ServerVersion}} OS={{.OSType}} Driver={{.Driver}}'
+          docker ps >/dev/null
+          volume="clued-p8-${{ github.run_id }}-company"
+          docker volume create "$volume" >/dev/null
+          docker volume rm "$volume" >/dev/null
           sleep 20
           echo "END=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
@@ -52,23 +52,23 @@ jobs:
       - clued
       - pool-general
       - trust-internal
-      - site-home
       - cap-docker-linux
+      - site-home
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-        with:
-          persist-credentials: false
-      - name: Verify home Linux runner
+      - name: Verify home Linux Docker engine
         shell: bash
         run: |
           set -euo pipefail
           echo "START=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           echo "Runner=${{ runner.name }}"
           test "${{ runner.name }}" = "clued-ci-home-linux-01"
-          uname -a
-          docker --version
-          docker info --format 'Server={{.ServerVersion}} OS={{.OSType}}'
-          docker ps --format '{{.ID}} {{.Image}} {{.Status}}' >/dev/null
+          test "$(command -v docker)" = "/usr/bin/docker"
+          docker version --format 'Client={{.Client.Version}} Server={{.Server.Version}}'
+          docker info --format 'Server={{.ServerVersion}} OS={{.OSType}} Driver={{.Driver}}'
+          docker ps >/dev/null
+          volume="clued-p8-${{ github.run_id }}-home"
+          docker volume create "$volume" >/dev/null
+          docker volume rm "$volume" >/dev/null
           sleep 20
           echo "END=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
