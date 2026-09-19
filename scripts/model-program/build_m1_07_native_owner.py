@@ -13,6 +13,26 @@ ROOT = Path(__file__).resolve().parents[2]
 SOURCE = Path(__file__).resolve().with_name("m1-runtime-owner")
 OWNER_PUBLIC_KEY_HEX = "a683b21e2d838f0773fc1251e6d0165c4b15ad2b2994cabf4290edff1c24eb03"
 OWNER_PUBLIC_KEY_SHA256 = "7d8a39adb80276686ff052b65e074a8ea9e74f7eccbc44f4340b194fec342f9c"
+SAFE_HOST_ENV = {"SYSTEMROOT", "WINDIR", "TEMP", "TMP", "COMSPEC", "PATH", "PATHEXT", "USERPROFILE"}
+
+def build_env(cache: str) -> dict[str, str]:
+    # GOFLAGS can inject -overlay and replace reviewed source bytes after the
+    # manifest has been verified. Refuse it rather than silently inheriting it.
+    if os.environ.get("GOFLAGS"):
+        raise RuntimeError("forbidden inherited Go build environment: GOFLAGS")
+    env = {k: v for k, v in os.environ.items() if k.upper() in SAFE_HOST_ENV and v}
+    env.update(
+        GOENV="off",
+        GOFLAGS="",
+        GOWORK="off",
+        GOEXPERIMENT="",
+        GOTOOLCHAIN="local",
+        GOPROXY="off",
+        GOSUMDB="off",
+        CGO_ENABLED="0",
+        GOCACHE=cache,
+    )
+    return env
 
 def main():
     parser = argparse.ArgumentParser()
@@ -45,15 +65,15 @@ def main():
     output.mkdir(parents=True, exist_ok=False)
     binary = output / ("m1-07-owner.exe" if os.name == "nt" else "m1-07-owner")
     with tempfile.TemporaryDirectory(prefix="m107-go-build-") as temp:
-        env = os.environ.copy()
-        env.update(GOTOOLCHAIN="local", GOPROXY="off", GOSUMDB="off", CGO_ENABLED="0", GOCACHE=os.environ.get("CLUED_M107_GOCACHE", temp))
+        env = build_env(os.environ.get("CLUED_M107_GOCACHE", temp))
         argv = [str(go), "build", "-trimpath", "-buildvcs=false", "-ldflags=-X main.nativeSourceDigest=" + digest, "-o", str(binary), "."]
         process = subprocess.run(argv, cwd=SOURCE, env=env, capture_output=True, text=True, timeout=300)
         (output / "build.log").write_text(process.stdout + process.stderr, encoding="utf-8")
         if process.returncode:
             raise RuntimeError("native build failed; see external build.log")
         version = subprocess.check_output([str(go), "version"], env=env, text=True).strip()
-    receipt = {"role": "OWNER_ROOT_PINNED_DEVELOPMENT_BUILD_NOT_ISSUANCE", "compiler": version, "compiler_sha256": hashlib.sha256(go.read_bytes()).hexdigest(), "argv": argv, "native_source_manifest_sha256": digest, "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(), "binary_bytes": binary.stat().st_size, "issuer_key_bound": True, "issuer_public_key_sha256_fingerprint": OWNER_PUBLIC_KEY_SHA256, "effectful_authority_issued": False, "binary_executed_by_build_helper": False}
+        target = subprocess.check_output([str(go), "env", "GOOS", "GOARCH", "GOAMD64"], env=env, text=True).splitlines()
+    receipt = {"role": "OWNER_ROOT_PINNED_DEVELOPMENT_BUILD_NOT_ISSUANCE", "compiler": version, "compiler_sha256": hashlib.sha256(go.read_bytes()).hexdigest(), "target": {"goos": target[0], "goarch": target[1], "goamd64": target[2]}, "effective_build_env": {k: env[k] for k in ("GOENV","GOFLAGS","GOWORK","GOEXPERIMENT","GOTOOLCHAIN","GOPROXY","GOSUMDB","CGO_ENABLED","GOCACHE")}, "argv": argv, "native_source_manifest_sha256": digest, "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(), "binary_bytes": binary.stat().st_size, "issuer_key_bound": True, "issuer_public_key_sha256_fingerprint": OWNER_PUBLIC_KEY_SHA256, "effectful_authority_issued": False, "binary_executed_by_build_helper": False}
     (output / "build-receipt.json").write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(receipt))
     return 0
