@@ -60,7 +60,7 @@ The two-host/four-runner pool is operational and qualification-complete through 
 - P14B Turing cold boot: PASS — post-boot P7 attempt 3 and P8 attempt 5 both succeeded
 - DESK-W-591 cold boot: DEFERRED / NOT TESTED
 
-Known operational notes: GitHub runner online/offline status can lag behind the actual runner session, so scheduler/job evidence and local watchdog state are authoritative for failover qualification. Full historical evidence and troubleshooting notes are intentionally kept outside this repository in the Clued资料中心.
+Known operational notes: GitHub runner online/offline status can lag behind the actual runner session, so scheduler/job evidence and local watchdog state are authoritative for failover qualification. Turing's post-boot Runner/Docker qualification is PASS, but containerized scanners that must download external databases still require separate proxy-egress hardening. Full historical evidence and troubleshooting notes are intentionally kept outside this repository in the Clued资料中心.
 
 ## Runner profiles
 
