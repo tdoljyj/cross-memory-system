@@ -19,9 +19,9 @@
       "sha256": "6965e5dc3e4f89f410d02335f6f040215ca7eec6823ebae54c96566a9b68ca29"
     },
     "owner.go": {
-      "bytes": 12876,
-      "git_blob_sha1": "bbe2acc9216675c11f28195c786b43e8c2159ad4",
-      "sha256": "0e8078013f31a383fc868c3510aa802fe1c62f091c3c5b1f1ef0c9bd54f6ec30"
+      "bytes": 13441,
+      "git_blob_sha1": "e6f489ea63555e28a33fa2f8ae17dc6326de3046",
+      "sha256": "24bcfdc42ba028b45967ce374e4e0482153f632afbb636a66ebfd17f2b8d8a6d"
     },
     "platform_other.go": {
       "bytes": 393,
@@ -29,14 +29,14 @@
       "sha256": "f0065e4a6349ec06fa24f17a7c66b8441f2f194de02b40c982f3f00394bc97e1"
     },
     "platform_windows.go": {
-      "bytes": 6560,
-      "git_blob_sha1": "b8dd7a7aa8c0b080868fd20a3ecfc3d728917996",
-      "sha256": "2fae44661885cffdb1a12f3c222c3ce0c3e00e8b74ac94bebd02fd2ab2fb3b82"
+      "bytes": 8411,
+      "git_blob_sha1": "025d28a480a33e2262af16f3cb66280da6d81a59",
+      "sha256": "a1ff77636938965c3d77ab68cc34702d9c1e7da7e03bd9a12dcc8a296bd04de6"
     },
     "policy.go": {
-      "bytes": 12777,
-      "git_blob_sha1": "eeffa9aaa16fd12afb830ac0d3b559771fdab08d",
-      "sha256": "888991dd5a36ac368f0dc731dc95f39f063cecc71a5ff6a7c40d2f3de6407f32"
+      "bytes": 13261,
+      "git_blob_sha1": "6b694fdff18c6a26b4b542adb62ed17f9c8ec77d",
+      "sha256": "041bc94c15708497044ed3adb066545e53f3c3ca6f0327d2bd337e969ee03360"
     },
     "scenarios.go": {
       "bytes": 9907,
@@ -44,9 +44,9 @@
       "sha256": "b9b27c8474e39d5b16f26400b6d2bd5bd66a51b3579ddffd7aa9ff30852989c4"
     }
   },
-  "role": "OWNER_ROOT_PINNED_SUCCESSOR_NOT_ISSUANCE",
+  "role": "OWNER_ROOT_PINNED_SUCCESSOR_R1_NOT_ISSUANCE",
   "schema_version": "clued.m1-07-native-source-manifest/1",
-  "source_base": "d58df9c4a1885512bd4dd9b94f121b6a84e25744",
+  "source_base": "aa127d5d0623cce921cb90643ec620ace2b70a1f",
   "test_files_excluded_from_production": [
     "owner_test.go"
   ],
@@ -57,5 +57,7 @@
     "public_key_canonical_encoding": "lowercase-hex(raw-ed25519-public-key-32-bytes)",
     "public_key_sha256_fingerprint": "7d8a39adb80276686ff052b65e074a8ea9e74f7eccbc44f4340b194fec342f9c",
     "private_key_location": "OWNER_ONLY / NON_SECRET_LOCATOR_NOT_EMBEDDED_IN_BINARY"
-  }
+  },
+  "r1_remediation_predecessor_exact_head": "aa127d5d0623cce921cb90643ec620ace2b70a1f",
+  "owner_root_predecessor_exact_head": "d58df9c4a1885512bd4dd9b94f121b6a84e25744"
 }
