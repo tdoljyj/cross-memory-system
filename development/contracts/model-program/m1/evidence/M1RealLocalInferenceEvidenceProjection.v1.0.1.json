@@ -1,0 +1,249 @@
+{
+    "schema_version":  "clued.model-m1-real-local-inference-evidence-projection/1",
+    "record_id":  "M1-REAL-LOCAL-INFERENCE-QWEN35-08B-Q8_0-001-PROJECTION-20260919",
+    "source_class":  "LOCAL_IMMUTABLE_EXPERIMENT_EVIDENCE / HASH_BOUND_PROJECTION",
+    "source_device_name":  "DESK-W-591",
+    "profile_id":  "M1-INF-QWEN35-08B-Q8_0-001",
+    "profile_sha256":  "45211288a98e860f83cf96d3d1684884d96348dda9bc23d3b11061a97c77e6cc",
+    "profile_scope":  {
+                          "benchmark_allowed":  false,
+                          "capability":  "structured_generate",
+                          "environment":  "NON_PRODUCTION",
+                          "evaluation_allowed":  false,
+                          "model_inference_allowed":  true,
+                          "model_load_allowed":  true,
+                          "production_allowed":  false,
+                          "training_allowed":  false
+                      },
+    "model_binding":  {
+                          "external_model_id":  "Qwen/Qwen3.5-0.8B",
+                          "revision":  "2fc06364715b967f1860aea9cf38778875588b17",
+                          "variant_id":  "q8_0",
+                          "gguf_bytes":  833592320,
+                          "gguf_sha256":  "799482186ea1c91b63bf4eb2999e034330425745496a95f0bffbfe6300a1064d"
+                      },
+    "runtime_binding":  {
+                            "runtime_id":  "llama.cpp",
+                            "release_tag":  "b11033",
+                            "source_commit":  "8ed1a55efcd7424d2c592f6cbc9f97756db1d74d",
+                            "backend":  "CPU"
+                        },
+    "provider":  {
+                     "provider_type":  "Local",
+                     "capabilities":  [
+                                          "structured_generate"
+                                      ],
+                     "cancellation_claim":  false,
+                     "qualification_status":  "QUALIFIED_FOR_ONE_INFERENCE_ADMISSION",
+                     "qualification_scope":  "PRE_INFERENCE_ADMISSION_ONLY",
+                     "required_claim_limits":  {
+                                                   "cancellation":  "CLAIM_TRUE_ONLY_AFTER_PROCESS_TERMINATION_CONTROL_TEST",
+                                                   "capabilities":  [
+                                                                        "structured_generate"
+                                                                    ],
+                                                   "data_classes":  [
+                                                                        "public"
+                                                                    ],
+                                                   "idempotency":  "CLAIM_TRUE_ONLY_AFTER_ONE_SHOT_LEDGER_NEGATIVE_TEST",
+                                                   "regions":  [
+                                                                   "offline-local"
+                                                               ],
+                                                   "retention_modes":  [
+                                                                           "local-experiment-evidence"
+                                                                       ],
+                                                   "streaming":  false,
+                                                   "training_modes":  [
+                                                                          "none"
+                                                                      ]
+                                               }
+                 },
+    "capability_successor":  {
+                                 "status":  "ISSUED",
+                                 "current":  true,
+                                 "allowed_provider_types":  [
+                                                                "Local"
+                                                            ],
+                                 "allowed_capabilities":  [
+                                                              "structured_generate"
+                                                          ],
+                                 "execution_authority_issued":  false
+                             },
+    "independent_review":  {
+                               "verdict":  "PASS",
+                               "reviewer_mode":  "INDEPENDENT / READ_ONLY / REVIEWER_NOT_MODIFIER",
+                               "reviewed_input_manifest_sha256":  "1e3118fb8089394b8b6a848b4c1f4b009e60ed96a99adecb7c41daa709a80c64"
+                           },
+    "execution":  {
+                      "request_capability":  "structured_generate",
+                      "data_classification":  "public",
+                      "attempt_ordinal":  1,
+                      "late_result":  false,
+                      "outcome":  "succeeded",
+                      "error":  null,
+                      "response_summary":  "Exact synthetic JSON schema satisfied",
+                      "elapsed_ms":  1531,
+                      "generation_post_count":  1,
+                      "server_terminated":  true,
+                      "candidate_authority":  "NON_AUTHORITATIVE_CANDIDATE",
+                      "candidate_canonical_status":  "NOT_CANONICAL",
+                      "ledger_attempts":  1,
+                      "ledger_retries_allowed":  false
+                  },
+    "accepted_output_payload":  {
+                                    "status":  "ok",
+                                    "value":  "clued-local-smoke"
+                                },
+    "checks":  {
+                   "profile_sha_matches_execution":  true,
+                   "profile_sha_matches_ledger":  true,
+                   "adapter_sha_matches_profile":  true,
+                   "qualification_local_structured_generate":  true,
+                   "capability_exact":  true,
+                   "pointer_matches_capability":  true,
+                   "pointer_matches_qualification":  true,
+                   "independent_review_pass":  true,
+                   "request_exact_capability":  true,
+                   "result_success":  true,
+                   "candidate_non_authoritative":  true,
+                   "single_attempt_spent":  true,
+                   "server_terminated":  true,
+                   "one_generation_post":  true,
+                   "synthetic_payload_exact":  true
+               },
+    "source_artifacts":  [
+                             {
+                                 "label":  "inference_profile",
+                                 "bytes":  20017,
+                                 "sha256":  "45211288a98e860f83cf96d3d1684884d96348dda9bc23d3b11061a97c77e6cc"
+                             },
+                             {
+                                 "label":  "owner_authorization_receipt",
+                                 "bytes":  2649,
+                                 "sha256":  "d4994133c8439aed5a566c5d0da2077a177ea47340cd02b5615196d8e919e11f"
+                             },
+                             {
+                                 "label":  "provider_qualification",
+                                 "bytes":  15712,
+                                 "sha256":  "1c8625be538ffa8406dd8d72fa1e11574194e6ae6ebfbec06dfec97ec3a17801"
+                             },
+                             {
+                                 "label":  "provider_descriptor",
+                                 "bytes":  864,
+                                 "sha256":  "02f5fc55cff31d8d039011ab7f7fe6dfba28c32328cbcbbc13e97823d6faed66"
+                             },
+                             {
+                                 "label":  "capability_profile",
+                                 "bytes":  5101,
+                                 "sha256":  "399ec145a191ea23445e51af3db03634dbb3867dc7f17891f9193a770b0c3d13"
+                             },
+                             {
+                                 "label":  "current_capability_selection",
+                                 "bytes":  1035,
+                                 "sha256":  "240bc07b344aa338d5b1f427c37adbc3efeafea13378da51ed6009f55cc03b84"
+                             },
+                             {
+                                 "label":  "invocation_policy",
+                                 "bytes":  1270,
+                                 "sha256":  "c46188c5ac716ef5a218598fbdbfac12653b51372a07967cfba0e5d5a4380073"
+                             },
+                             {
+                                 "label":  "execution_config",
+                                 "bytes":  1910,
+                                 "sha256":  "72ccd4ab42dcf5209503280e12e63b1672208e446e476d7433a9d0821824bf05"
+                             },
+                             {
+                                 "label":  "adapter_source",
+                                 "bytes":  35561,
+                                 "sha256":  "b9e3d16aa505fff39eec4de4ac2e34858feeacf230f3e85a1d5c1830456b7220"
+                             },
+                             {
+                                 "label":  "prompt_template",
+                                 "bytes":  353,
+                                 "sha256":  "3ef641c0dc396a83ff623630a59b16012ff5de25427e3fca319fd528fc7be54c"
+                             },
+                             {
+                                 "label":  "output_schema",
+                                 "bytes":  225,
+                                 "sha256":  "7c3293e4f777923abf2f4d31c157f1eff177b16522c60dcc003bb34dd69c2a5d"
+                             },
+                             {
+                                 "label":  "adapter_manifest",
+                                 "bytes":  1155,
+                                 "sha256":  "c7f8d65172941fb3a5bc63fb93120dd7f1530dc442b3778be30da3881274a2d9"
+                             },
+                             {
+                                 "label":  "runtime_manifest",
+                                 "bytes":  8470,
+                                 "sha256":  "1739baad78bd642d8cb9660984f08694bbc9ffa6abce2de661e0a97c14a9c13e"
+                             },
+                             {
+                                 "label":  "bundle_manifest",
+                                 "bytes":  5047,
+                                 "sha256":  "50a8ccdca98eabfb660d75fa98a0044b0f9ef11bd05148a38dddbad887b59f0b"
+                             },
+                             {
+                                 "label":  "review_inputs",
+                                 "bytes":  2382,
+                                 "sha256":  "1e3118fb8089394b8b6a848b4c1f4b009e60ed96a99adecb7c41daa709a80c64"
+                             },
+                             {
+                                 "label":  "independent_review",
+                                 "bytes":  2110,
+                                 "sha256":  "61c6b790d4bd7ae93b003bd1039cfe125ecfba1db56b5fdbab790637e2dcedef"
+                             },
+                             {
+                                 "label":  "guardrail_report",
+                                 "bytes":  1482,
+                                 "sha256":  "4e38efad9618acdcd7849a12c4738b5e7af21079508e0176c65d7f367fe6fc2d"
+                             },
+                             {
+                                 "label":  "request",
+                                 "bytes":  2600,
+                                 "sha256":  "6357af69af818fbde8d09a2ab020cdf1e9dadddd2d0a8b710b7a4b440995dab0"
+                             },
+                             {
+                                 "label":  "attempt_started",
+                                 "bytes":  1351,
+                                 "sha256":  "c9ab32073b41f8d89f42e3709ae7c3de05fae5c5eec6ab891cce7e57b9d08575"
+                             },
+                             {
+                                 "label":  "attempt_final",
+                                 "bytes":  1372,
+                                 "sha256":  "25c6f040a3b4c3f693f391f0c38a41d35dfb00f57bc6c6648256a7285bf18ab3"
+                             },
+                             {
+                                 "label":  "result",
+                                 "bytes":  3555,
+                                 "sha256":  "4f0261ac7115d6ba9f1b9e8ff347df69f3b2e5c04b09cdcf222fbb409954faec"
+                             },
+                             {
+                                 "label":  "candidate",
+                                 "bytes":  2375,
+                                 "sha256":  "e5806cb103c510698392aebab3e063ab289639fee4139a0d406f888bcc682758"
+                             },
+                             {
+                                 "label":  "execution_evidence",
+                                 "bytes":  1683,
+                                 "sha256":  "69b77a2c2d7df0b2f184f7ec022315c310c07485e002de9c356e4e21ab95239f"
+                             },
+                             {
+                                 "label":  "output_payload",
+                                 "bytes":  53,
+                                 "sha256":  "8011a09e2d709b7bc343078ad586075c5775ed27b8676fb0fe7bc0fb0176db07"
+                             },
+                             {
+                                 "label":  "provider_response",
+                                 "bytes":  2708,
+                                 "sha256":  "39c3ba44f3d9b9d3311043e8b2cb1b926218bc2f662ddb7c8f880a65a670e6f1"
+                             },
+                             {
+                                 "label":  "spent_ledger",
+                                 "bytes":  267,
+                                 "sha256":  "940167f66e4c3ceb369d3bede7c3023479ac069cf590880bb74f6fb62d0a7bb3"
+                             }
+                         ],
+    "raw_source_retention":  "LOCAL_ONLY / NOT_COMMITTED / ABSOLUTE_PATHS_AND_LOGS_EXCLUDED",
+    "authority_effect":  "AUDIT_EVIDENCE_PROJECTION_ONLY / NO_NEW_INFERENCE_AUTHORITY / NO_GLOBAL_CAPABILITY_MUTATION"
+}
+
+[executed on device: DESK-W-591 (cf9920cf-79a6-4daf-bcdc-514dcb4232ee)]
