@@ -1,0 +1,90 @@
+{
+  "schema_version": "clued.model-m1-07-owner-root-pinned-successor-preparation-receipt/1",
+  "record_id": "M1-STAB-QWEN35-08B-PC-001-OWNER-ROOT-PINNED-SUCCESSOR-20260920",
+  "program_id": "CLUED-FIRST-PARTY-MODEL",
+  "stage_id": "MODEL-PROGRAM-M1",
+  "task_id": "M1-07",
+  "role": "SUCCESSOR_IMPLEMENTER / NOT_FRESH_CONTEXT_REVIEWER",
+  "status": "AUTHOR_SIDE_SUCCESSOR_PREPARATION_PASS / NOT_INDEPENDENTLY_REVIEWED / NOT_ISSUED",
+  "predecessor_exact_head": "d58df9c4a1885512bd4dd9b94f121b6a84e25744",
+  "implementation_commit": "bec1fb98008e71bbb660b386a37d046a4548514b",
+  "owner_enrollment": {
+    "boundary_adoption_event": 833,
+    "boundary_adoption_receipt": "9e614dc6-8db4-4e64-8035-cfbec4d4bcba",
+    "successor_preparation_gate_event": 834,
+    "successor_preparation_gate_receipt": "03cc1671-440c-4ae6-a2f9-947ff6777741",
+    "algorithm": "Ed25519",
+    "public_key_canonical_encoding": "lowercase-hex(raw-ed25519-public-key-32-bytes)",
+    "public_key_canonical": "a683b21e2d838f0773fc1251e6d0165c4b15ad2b2994cabf4290edff1c24eb03",
+    "public_key_sha256_fingerprint": "7d8a39adb80276686ff052b65e074a8ea9e74f7eccbc44f4340b194fec342f9c",
+    "private_key_storage_locator": "windows-local-owner-key://DESK-W-591/Clued/M1-07/Owner-Ed25519-Root",
+    "private_key_material_in_repository_or_receipt": false
+  },
+  "successor_candidate": {
+    "path": "development/contracts/model-program/m1/governance/ExperimentAuthorizationProfile.M1-STAB-QWEN35-08B-PC-001.owner-root-pinned.candidate.json",
+    "bytes": 21952,
+    "sha256": "0cd4ac3a6f661e7cfd86e7c71f3690a87a7181e302494079ff5d33d0ec7aa431",
+    "git_blob_sha1": "95a51032775168a748f4875ca057a965e82abc1a",
+    "status": "BLOCKED_PENDING_REVIEW_AND_FINAL_ISSUANCE",
+    "effectful_authority_issued": false,
+    "authority_effect": "NONE / PROFILE_PREPARATION_ONLY"
+  },
+  "native_owner": {
+    "source_manifest_path": "scripts/model-program/m1-runtime-owner/source-manifest.json",
+    "source_manifest_bytes": 2499,
+    "source_manifest_sha256": "de90079cfc7e182efb950276005caf0c2f12d389999c9ddfd895d1b86153c616",
+    "source_manifest_git_blob_sha1": "b8b809cedc866b85d6861cadb9e85b565e3a6ad8",
+    "development_binary_sha256": "067e303d64e52ed0fc3112494622c01e660f67c40047daf7933c036e1e14923f",
+    "development_binary_bytes": 10199552,
+    "compiler": "go version go1.27.1 windows/amd64",
+    "compiler_sha256": "d3ccdb604eafa6031133aefe1a3db24f0bb7362b857bc2125ac4e4c178b4b490",
+    "issuer_key_bound": true,
+    "effectful_authority_issued": false,
+    "binary_executed_by_build_helper": false
+  },
+  "validation": {
+    "focused": {"result": "PASS", "tests": 57, "log_sha256": "f27c99a9e22dd6ab55fbb9256d830ad43fc389cd3d084b51206d92e4504f79ca"},
+    "validators": {
+      "validate_m1_entry_bindings": {"result": "PASS", "log_sha256": "2efffca9a513e96537655e0631d439dd0fcce9c5cf49398ef853c8f2da1508a8"},
+      "validate_m1_harness": {"result": "PASS", "log_sha256": "073268477d26c57708e0a3f6c52f0a0a450982d38c7425c6c6eba407e5db2775"},
+      "validate_m1_package_profile": {"result": "PASS", "log_sha256": "d5d233b90afd8f5d7274a146970f94b05b46ce803b6a6b1df852c340e4b838a2"},
+      "validate_m1_07_profile_candidate": {"result": "PASS", "log_sha256": "4cd3b4def50214bb19dfb8ac119050285d1edc0013306b104d32e6d72bb83ac9"}
+    },
+    "full_m1": {"result": "PASS", "tests": 86, "log_sha256": "c9725a82f22ff72587c9c3c4757900c55e6dd63379fb1667b3aa7ee43a9f77d2"},
+    "native_go": {"result": "PASS", "leaf_cases": 89, "failed_test_events": 0, "log_sha256": "b89c57615864d7ba91fc8edfcacc3ce4d52108722936d05b1f4950f7187dcd6a"},
+    "go_vet": {"result": "PASS", "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}
+  },
+  "rejection_checks": {
+    "non_issued_successor_exact_binary": {
+      "exit_code": 3,
+      "reason": "PROFILE_NOT_ISSUED",
+      "output_directory_created": false,
+      "llama_server_before_after": [0, 0]
+    },
+    "fabricated_issued_without_owner_signature": {
+      "exit_code": 3,
+      "reason": "OWNER_SIGNATURE_ALGORITHM",
+      "output_directory_created": false,
+      "llama_server_before_after": [0, 0]
+    }
+  },
+  "effects": {
+    "owner_final_issuance_performed": false,
+    "llama_server_started": false,
+    "model_loaded": false,
+    "real_m1_07_scenario_executed": false,
+    "m1_08_started": false,
+    "training_performed": false,
+    "promotion_or_activation_performed": false,
+    "production_mutation": false,
+    "repository_merge_performed": false
+  },
+  "independent_review_performed": false,
+  "remaining_gates": [
+    "Fresh-Context read-only independent review of the exact Owner-root-pinned successor head",
+    "Separate Owner Final Issuance only after independent review PASS",
+    "No real M1-07 execution until separately issued exact signed profile exists"
+  ],
+  "conclusion": "AUTHOR_SIDE_SUCCESSOR_PREPARATION_PASS / OWNER_ROOT_PINNED / EXACT_NATIVE_SOURCE_AND_BINARY_BOUND / EXECUTION_BLOCKED",
+  "next_frontier": "FRESH_CONTEXT_INDEPENDENT_OWNER_ROOT_PINNED_SUCCESSOR_REVIEW / DO_NOT_ISSUE / DO_NOT_EXECUTE / DO_NOT_MERGE"
+}

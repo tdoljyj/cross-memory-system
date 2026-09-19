@@ -1,9 +1,10 @@
-# M1-07 / MAJOR-04 r5: native owner remediation candidate
+# M1-07: Owner-root-pinned native owner successor
 
-Status: AUTHOR-SIDE REMEDIATION / NOT INDEPENDENT REVIEW / NOT ISSUANCE.
-Starting blocked reviewed head: `15aea8fe4c7702a49ed1c722cea00857b091c5ad`.
+Status: OWNER ROOT PINNED SUCCESSOR / NOT INDEPENDENTLY REVIEWED / NOT ISSUED.
+Predecessor exact head: `d58df9c4a1885512bd4dd9b94f121b6a84e25744`.
 Formal base: `bd80de6beed04a52b74f763baa7c274b5741fb1d`.
-Scope remains MAJOR-04 and its absolute-launch-path MINOR only.
+Boundary Adoption Event: `833`; Successor Preparation Gate Event: `834`.
+Scope is limited to Owner trust-root pinning and exact native source/binary rebinding.
 
 ## Production boundary
 
@@ -33,28 +34,29 @@ The Windows implementation retains the handle returned by process creation,
 not a later handle looked up from a supplied/reused PID. Graceful console
 signalling uses only that internally retained creation-time process group.
 
-## Issuer trust and authority: intentionally unresolved
+## Issuer trust root pinned; execution authority remains unresolved
 
 A digest inside caller JSON is not an independent authorization origin.
-The native owner therefore additionally verifies Ed25519 over the entire
-canonical JSON profile excluding only `owner_signature`. The public key is
-compiled into the reviewed binary, never accepted from JSON, argv or env.
+The native owner therefore verifies Ed25519 over the entire canonical JSON
+profile excluding only `owner_signature`. The Owner-enrolled public key is
+compiled into the native binary and is never accepted from JSON, argv or env.
 Canonical format: UTF-8, sorted object keys, compact separators, no ASCII/HTML
 escaping; duplicate keys and oversized input are rejected.
 
-**The production issuer public key is deliberately EMPTY in r5.** No real
-Owner key, signature, issued successor or execution authority was created.
-Test-only keys are ephemeral and exist only in `owner_test.go`, which is
-excluded from the production binary. `go build` cannot enable test drivers.
-Production rejects both the current Candidate and a fabricated ISSUED-shaped
-profile before context, attempt-guard, output-directory or model creation.
+The enrolled Owner Ed25519 public-key SHA-256 fingerprint is
+`7d8a39adb80276686ff052b65e074a8ea9e74f7eccbc44f4340b194fec342f9c`.
+The corresponding private key remains Owner-only on `DESK-W-591` and is not
+stored in this repository, profile, build log, argv, environment, CI artifact,
+or any remote agent. Test-only keys remain isolated to `owner_test.go`.
 
-This native/signature contract is PROPOSED, NOT OWNER-ADOPTED. Accepting it
-requires independent review and explicit Owner contract adoption. A separately
-approved and independently reviewed code successor must then pin the Owner's
-trusted public key, rebind native source/binary identities and obtain a signed
-issued profile. A review PASS on r5 alone cannot enable execution or bypass
-that successor. Do not silently weaken this gate to make issuance easier.
+Owner adoption of the native/signature boundary is recorded by Event `833`,
+and successor preparation is authorized by Event `834`. This pinning does NOT
+constitute Final Issuance: the successor profile remains non-issued, has no
+Owner final execution authorization, and must pass Fresh-Context independent
+review before any separately authorized issuance. Production child-binary
+checks reject both the non-issued Candidate and an ISSUED-shaped profile that
+lacks a valid Owner signature before context, attempt guard, output directory,
+or model creation.
 
 ## Threat model
 
@@ -89,8 +91,9 @@ Go >=1.23 is required; use an approved local toolchain. No third-party Go module
 auto-toolchain download or automatic dependency installation is allowed by the
 build/test commands. `source-manifest.json` hashes all production source inputs.
 The build helper checks the manifest and writes binary/build receipt outside
-the repository. The executable hash is DEVELOPMENT BUILD evidence, not an
-issued profile or accepted runtime binary identity.
+the repository. The NON-ISSUED successor binds the exact development binary
+SHA-256 for independent review; that binding does not make the profile ISSUED
+and does not grant effectful execution authority.
 
 ```text
 python -B scripts/model-program/build_m1_07_native_owner.py --go <approved-go.exe> --output <outside-repository-directory>
@@ -108,16 +111,19 @@ OS/process/HTTP objects, not relabelled tests of the refusing Python facade.
 `test-migration.json` is the traceability map, not proof by name retention.
 The old trusted-owner loader is now used only to assert that it cannot install
 an effectful runtime. Additional tests cover all original-handle control paths,
-signed authorization, fixed arguments, no-key rejection and a seven-start
-MOCK-ONLY sequence. Native unit tests do not start a real process/server, bind
+signed authorization, fixed arguments, exact Owner-root fingerprint pinning,
+unsigned-ISSUED rejection and a seven-start MOCK-ONLY sequence. Native unit tests do not start a real process/server, bind
 a port, load a model or make real HTTP requests. Production child-binary tests
 exercise rejection paths only. Actual Windows process lifecycle and real M1-07
 qualification remain NOT EXECUTED; do not infer them from mocks or compilation.
 
 ## Final gate
 
-MAJOR-04 remains NOT FORMALLY CLOSED. The modifier cannot issue an independent
-Fresh-Context verdict. Candidate status, authority effect and issued flag remain
+The r5 native/signature boundary has been Owner-adopted via Event `833`, and
+Event `834` authorizes preparation of this pinned-root successor only. The
+modifier cannot issue an independent Fresh-Context verdict. Candidate status,
+authority effect and issued flag remain
 BLOCKED_PENDING_REVIEW_AND_FINAL_ISSUANCE / NONE / PROFILE_PREPARATION_ONLY / false.
+Fresh-Context independent review of the exact successor head is still required.
 No Owner Final Issuance, PR merge, model execution, M1-08, training, production
-or release is authorized or performed by this candidate.
+or release is authorized or performed by this successor.
