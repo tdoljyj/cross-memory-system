@@ -17,27 +17,27 @@ $hosts = @($data.hosts | Where-Object { $_.host_id -eq $HostId })
 if ($hosts.Count -ne 1) {
     throw "Unknown or duplicate HostId: $HostId"
 }
-$host = $hosts[0]
+$hostRecord = $hosts[0]
 
-$capacityProperty = $data.capacity_profiles.PSObject.Properties | Where-Object { $_.Name -eq $host.capacity_profile }
+$capacityProperty = $data.capacity_profiles.PSObject.Properties | Where-Object { $_.Name -eq $hostRecord.capacity_profile }
 if (-not $capacityProperty) {
-    throw "Unknown capacity profile: $($host.capacity_profile)"
+    throw "Unknown capacity profile: $($hostRecord.capacity_profile)"
 }
 $capacity = $capacityProperty.Value
 
-if (-not $host.windows_runner -or -not $host.linux_runner) {
+if (-not $hostRecord.windows_runner -or -not $hostRecord.linux_runner) {
     throw 'The v1 watchdog renderer expects one Windows runner and one WSL2 Linux runner on the host.'
 }
 
 if (-not $OutputPath) {
-    $OutputPath = $host.watchdog_path
+    $OutputPath = $hostRecord.watchdog_path
 }
 
 function Escape-SingleQuoted([string]$value) {
     return $value.Replace("'", "''")
 }
 
-$manageDocker = if ([bool]$host.linux_runner.manage_native_docker) { '$true' } else { '$false' }
+$manageDocker = if ([bool]$hostRecord.linux_runner.manage_native_docker) { '$true' } else { '$false' }
 $template = @'
 $ErrorActionPreference='Continue'
 $logDir='C:\clued-ci\logs'; New-Item -ItemType Directory -Force -Path $logDir | Out-Null
@@ -73,11 +73,11 @@ try{while($true){
 $replacements = [ordered]@{
     '__LOG_FILE__' = "watchdog-$HostId.log"
     '__MUTEX__' = "CluedCIWatchdog-$HostId"
-    '__WIN_ROOT__' = (Escape-SingleQuoted $host.windows_runner.root)
-    '__WIN_LAUNCHER__' = (Escape-SingleQuoted $host.windows_runner.launcher)
-    '__DISTRO__' = (Escape-SingleQuoted $host.linux_runner.distro)
-    '__LINUX_USER__' = (Escape-SingleQuoted $host.linux_runner.user)
-    '__LINUX_UNIT__' = (Escape-SingleQuoted $host.linux_runner.service_unit)
+    '__WIN_ROOT__' = (Escape-SingleQuoted $hostRecord.windows_runner.root)
+    '__WIN_LAUNCHER__' = (Escape-SingleQuoted $hostRecord.windows_runner.launcher)
+    '__DISTRO__' = (Escape-SingleQuoted $hostRecord.linux_runner.distro)
+    '__LINUX_USER__' = (Escape-SingleQuoted $hostRecord.linux_runner.user)
+    '__LINUX_UNIT__' = (Escape-SingleQuoted $hostRecord.linux_runner.service_unit)
     '__MANAGE_DOCKER__' = $manageDocker
     '__SUSPEND_MEM__' = [string]$capacity.suspend_free_memory_gb
     '__RESUME_MEM__' = [string]$capacity.resume_free_memory_gb
