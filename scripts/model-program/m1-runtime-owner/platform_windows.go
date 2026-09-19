@@ -95,11 +95,11 @@ func fileHash(path string, bytesExpected int64, expected string, deadline time.T
 	}
 	return nil
 }
-func attestRuntimeTree(deadline time.Time) error {
-	if e := fileHash(runtimeAssetPath, runtimeAssetBytes, runtimeAssetSHA, deadline); e != nil {
+func attestRuntimeTreeAgainst(assetPath, treeDir string, assetBytes int64, assetSHA string, deadline time.Time) error {
+	if e := fileHash(assetPath, assetBytes, assetSHA, deadline); e != nil {
 		return e
 	}
-	z, e := zip.OpenReader(runtimeAssetPath)
+	z, e := zip.OpenReader(assetPath)
 	if e != nil {
 		return e
 	}
@@ -134,7 +134,7 @@ func attestRuntimeTree(deadline time.Time) error {
 		}
 		expected[name] = spec{bytes: total, sha: digest}
 	}
-	actual, e := os.ReadDir(runtimeDir)
+	actual, e := os.ReadDir(treeDir)
 	if e != nil {
 		return e
 	}
@@ -149,11 +149,14 @@ func attestRuntimeTree(deadline time.Time) error {
 		if !ok {
 			return &fault{"RUNTIME_TREE_UNEXPECTED_FILE", entry.Name()}
 		}
-		if e := fileHash(filepath.Join(runtimeDir, entry.Name()), want.bytes, want.sha, deadline); e != nil {
+		if e := fileHash(filepath.Join(treeDir, entry.Name()), want.bytes, want.sha, deadline); e != nil {
 			return e
 		}
 	}
 	return nil
+}
+func attestRuntimeTree(deadline time.Time) error {
+	return attestRuntimeTreeAgainst(runtimeAssetPath, runtimeDir, runtimeAssetBytes, runtimeAssetSHA, deadline)
 }
 func (realPlatform) attestFiles(deadline time.Time) error {
 	if e := attestRuntimeTree(deadline); e != nil {
