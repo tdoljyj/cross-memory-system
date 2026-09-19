@@ -554,6 +554,10 @@ class ModelProgramM107R5NativeBoundaryTests(unittest.TestCase):
             self.assertEqual(p.returncode, 3, p.stdout + p.stderr)
             self.assertIn("NATIVE_OWNER_PROCESS_REQUIRED", p.stderr)
             self.assertFalse(output.exists())
+            native = subprocess.run([str(native_binary()), "--execute", "--profile", str(path), "--output-dir", str(output)], capture_output=True, text=True, timeout=30)
+            self.assertEqual(native.returncode, 3, native.stdout + native.stderr)
+            self.assertIn("OWNER_ISSUER_TRUST_ROOT_UNBOUND", native.stderr)
+            self.assertFalse(output.exists())
 
 if __name__ == "__main__":
     unittest.main()
