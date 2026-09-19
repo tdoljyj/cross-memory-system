@@ -18,6 +18,28 @@ SCRIPT_PATH = Path(__file__).resolve()
 ROOT = SCRIPT_PATH.parents[2]
 DEFAULT_CANDIDATE = ROOT / "development/contracts/model-program/m1/governance/ExperimentAuthorizationProfile.M1-STAB-QWEN35-08B-PC-001.candidate.json"
 
+EXPECTED_ISSUED_PROFILE_ID = "M1-STAB-QWEN35-08B-PC-001-ISSUED"
+EXPECTED_AUTHORITY_EFFECT = "M1-07_PC_RUNTIME_STABILITY_EXECUTION_ONLY"
+EXPECTED_BASE_COMMIT = "bd80de6beed04a52b74f763baa7c274b5741fb1d"
+EXPECTED_DEVICE_NAME = "DESK-W-591"
+EXPECTED_MODEL_FILENAME = "Qwen3.5-0.8B-Q8_0.gguf"
+EXPECTED_MODEL_BYTES = 833592320
+EXPECTED_MODEL_SHA256 = "799482186ea1c91b63bf4eb2999e034330425745496a95f0bffbfe6300a1064d"
+EXPECTED_RUNTIME_RELEASE_TAG = "b11033"
+EXPECTED_RUNTIME_COMMIT = "8ed1a55efcd7424d2c592f6cbc9f97756db1d74d"
+EXPECTED_SERVER_BYTES = 9216
+EXPECTED_SERVER_SHA256 = "085151c9dc45b6b6b74ece45207afd809e68c91e05938bb00532a24e80aaabba"
+EXPECTED_HOST = "127.0.0.1"
+EXPECTED_PORT = 18087
+EXPECTED_THREADS = 2
+EXPECTED_THREADS_BATCH = 2
+EXPECTED_PARALLEL = 1
+EXPECTED_CTX_SIZE = 2048
+EXPECTED_MAX_WALL_TIME = 1800
+EXPECTED_MAX_STORAGE = 134217728
+EXPECTED_MAX_ATTEMPTS = 1
+EXPECTED_ATTEMPT_GUARD_PATH = Path(r"C:\Users\Public\Clued\ModelProgram\M1\runtime-state\M1-STAB-QWEN35-08B-PC-001\M1RuntimeStabilityAttemptGuard.json")
+
 
 class StabilityError(RuntimeError):
     def __init__(self, code: str, message: str):
@@ -57,28 +79,125 @@ def now_utc() -> str:
     return datetime.datetime.now(datetime.timezone.utc).isoformat()
 
 
+def _is_hex(value: Any, length: int) -> bool:
+    return isinstance(value, str) and len(value) == length and all(c in "0123456789abcdef" for c in value.lower())
+
+
+def owner_authorization_sha256(auth: dict[str, Any]) -> str:
+    payload = {k: v for k, v in auth.items() if k != "sha256"}
+    return hashlib.sha256(canonical_json(payload)).hexdigest()
+
+
 def validate_execution_profile(profile: dict[str, Any]) -> tuple[bool, str]:
     if profile.get("task_id") != "M1-07":
         return False, "M1_07_TASK_ID"
     if profile.get("status") != "ISSUED":
         return False, "PROFILE_NOT_ISSUED"
+    if profile.get("profile_id") != EXPECTED_ISSUED_PROFILE_ID:
+        return False, "PROFILE_ID_SCOPE_DRIFT"
     if profile.get("effectful_authority_issued") is not True:
         return False, "EFFECTFUL_AUTHORITY_NOT_ISSUED"
-    if profile.get("authority_effect") != "M1-07_PC_RUNTIME_STABILITY_EXECUTION_ONLY":
+    if profile.get("authority_effect") != EXPECTED_AUTHORITY_EFFECT:
         return False, "M1_07_AUTHORITY_EFFECT"
 
     auth = profile.get("owner_final_execution_authorization") or {}
     if auth.get("present") is not True or not auth.get("owner_message"):
         return False, "OWNER_FINAL_EXECUTION_AUTHORIZATION_MISSING"
+    if not auth.get("authorization_id") or not auth.get("issued_at_utc"):
+        return False, "OWNER_FINAL_EXECUTION_AUTHORIZATION_IDENTITY_MISSING"
+    if auth.get("authorized_profile_id") != EXPECTED_ISSUED_PROFILE_ID:
+        return False, "OWNER_FINAL_EXECUTION_AUTHORIZATION_PROFILE_MISMATCH"
+    if auth.get("authorized_authority_effect") != EXPECTED_AUTHORITY_EFFECT:
+        return False, "OWNER_FINAL_EXECUTION_AUTHORIZATION_SCOPE_MISMATCH"
+    auth_sha = auth.get("sha256")
+    if not _is_hex(auth_sha, 64) or auth_sha != owner_authorization_sha256(auth):
+        return False, "OWNER_FINAL_EXECUTION_AUTHORIZATION_DIGEST_INVALID"
+    try:
+        import datetime
+        datetime.datetime.fromisoformat(str(auth["issued_at_utc"]).replace("Z", "+00:00"))
+    except Exception:
+        return False, "OWNER_FINAL_EXECUTION_AUTHORIZATION_TIME_INVALID"
 
     code = profile.get("code_revision") or {}
     if code.get("status") != "EXACT_BOUND":
         return False, "EXECUTION_CODE_BINDING_UNRESOLVED"
+    if code.get("repository") != "tdoljyj/cross-memory-system":
+        return False, "EXECUTION_CODE_REPOSITORY_DRIFT"
+    if code.get("base_commit") != EXPECTED_BASE_COMMIT:
+        return False, "EXECUTION_CODE_BASE_DRIFT"
+    if code.get("required_script_path") != "scripts/model-program/m1_runtime_stability_pc.py":
+        return False, "EXECUTION_SCRIPT_PATH_DRIFT"
+    if not _is_hex(code.get("required_code_commit"), 40) or not _is_hex(code.get("required_script_git_blob_sha1"), 40):
+        return False, "EXECUTION_CODE_IDENTITY_INVALID"
     expected_script_sha = code.get("required_script_normalized_sha256")
-    if not expected_script_sha or expected_script_sha == "TO_BE_BOUND":
+    if not _is_hex(expected_script_sha, 64):
         return False, "EXECUTION_CODE_BINDING_UNRESOLVED"
     if normalized_text_sha256(SCRIPT_PATH) != expected_script_sha:
         return False, "EXECUTION_SCRIPT_SHA256_DRIFT"
+
+    model = model_binding(profile)
+    if (
+        model.get("filename") != EXPECTED_MODEL_FILENAME
+        or model.get("bytes") != EXPECTED_MODEL_BYTES
+        or model.get("sha256") != EXPECTED_MODEL_SHA256
+        or model.get("variant_id") != "q8_0"
+    ):
+        return False, "M1_07_STABILITY_SUBJECT_DRIFT"
+
+    runtime = runtime_binding(profile)
+    if runtime.get("device_name") != EXPECTED_DEVICE_NAME or runtime.get("device_class") != "PC":
+        return False, "M1_07_DEVICE_SCOPE_DRIFT"
+    if (
+        runtime.get("runtime_release_tag") != EXPECTED_RUNTIME_RELEASE_TAG
+        or runtime.get("runtime_commit") != EXPECTED_RUNTIME_COMMIT
+        or runtime.get("server_executable") != "llama-server.exe"
+        or runtime.get("server_executable_bytes") != EXPECTED_SERVER_BYTES
+        or runtime.get("server_executable_sha256") != EXPECTED_SERVER_SHA256
+    ):
+        return False, "M1_07_RUNTIME_SCOPE_DRIFT"
+
+    cfg = server_config(profile)
+    expected_cfg = {
+        "host": EXPECTED_HOST,
+        "port": EXPECTED_PORT,
+        "offline": True,
+        "webui": False,
+        "threads": EXPECTED_THREADS,
+        "threads_batch": EXPECTED_THREADS_BATCH,
+        "ctx_size": EXPECTED_CTX_SIZE,
+        "parallel": EXPECTED_PARALLEL,
+        "n_gpu_layers": 0,
+        "device": "none",
+        "op_offload": False,
+        "external_bind": False,
+        "external_network": False,
+    }
+    for key, value in expected_cfg.items():
+        if cfg.get(key) != value:
+            return False, f"M1_07_CONFIG_SCOPE_DRIFT:{key}"
+
+    if profile.get("max_wall_time") != EXPECTED_MAX_WALL_TIME:
+        return False, "M1_07_MAX_WALL_TIME_DRIFT"
+    if profile.get("max_storage") != EXPECTED_MAX_STORAGE:
+        return False, "M1_07_MAX_STORAGE_DRIFT"
+    if profile.get("max_attempts") != EXPECTED_MAX_ATTEMPTS:
+        return False, "M1_07_MAX_ATTEMPTS_DRIFT"
+    compute = profile.get("max_compute") or {}
+    if (
+        compute.get("device") != EXPECTED_DEVICE_NAME
+        or compute.get("cpu_threads") != EXPECTED_THREADS
+        or compute.get("gpu_layers") != 0
+        or compute.get("non_cpu_devices") != "NONE"
+        or compute.get("max_parallel_server_processes") != 1
+        or compute.get("max_profile_owned_server_starts") != 7
+    ):
+        return False, "M1_07_MAX_COMPUTE_DRIFT"
+
+    control = profile.get("execution_control") or {}
+    if control.get("attempt_guard_path") != str(EXPECTED_ATTEMPT_GUARD_PATH):
+        return False, "M1_07_ATTEMPT_GUARD_PATH_DRIFT"
+    if control.get("attempt_guard_semantics") != "ATOMIC_CREATE_ON_FIRST_EFFECTFUL_ATTEMPT / NO_REUSE_AFTER_SUCCESS_OR_FAILURE":
+        return False, "M1_07_ATTEMPT_GUARD_SEMANTICS_DRIFT"
 
     expiry = profile.get("expiry")
     if not expiry or expiry == "TO_BE_BOUND_AT_FINAL_ISSUANCE":
@@ -86,6 +205,8 @@ def validate_execution_profile(profile: dict[str, Any]) -> tuple[bool, str]:
     try:
         import datetime
         expiry_dt = datetime.datetime.fromisoformat(expiry.replace("Z", "+00:00"))
+        if expiry_dt.tzinfo is None:
+            return False, "EXPIRY_INVALID"
         if datetime.datetime.now(datetime.timezone.utc) >= expiry_dt:
             return False, "PROFILE_EXPIRED"
     except Exception:
@@ -107,6 +228,12 @@ def runtime_binding(profile: dict[str, Any]) -> dict[str, Any]:
 
 
 def preflight(profile: dict[str, Any], out_dir: Path) -> dict[str, Any]:
+    if os.name != "nt":
+        raise StabilityError("DEVICE_OS_DRIFT", "M1-07 PC stability profile is bound to Windows DESK-W-591")
+    actual_device = os.environ.get("COMPUTERNAME", "")
+    if actual_device.upper() != EXPECTED_DEVICE_NAME:
+        raise StabilityError("DEVICE_IDENTITY_DRIFT", f"expected={EXPECTED_DEVICE_NAME} actual={actual_device}")
+
     cfg = server_config(profile)
     if cfg.get("host") != "127.0.0.1" or cfg.get("external_bind") is not False:
         raise StabilityError("NON_LOOPBACK_BIND", "server must bind only to 127.0.0.1")
@@ -177,6 +304,110 @@ def wait_port_released(host: str, port: int, timeout: float = 10.0) -> bool:
             return True
         time.sleep(0.2)
     return False
+
+
+def process_rss_bytes(proc: subprocess.Popen[Any]) -> int:
+    if proc.poll() is not None:
+        raise StabilityError("PROCESS_METRICS_PROCESS_EXITED", f"pid={proc.pid}")
+    if os.name != "nt":
+        raise StabilityError("PROCESS_METRICS_UNSUPPORTED_OS", os.name)
+    import ctypes
+    from ctypes import wintypes
+
+    class PROCESS_MEMORY_COUNTERS_EX(ctypes.Structure):
+        _fields_ = [
+            ("cb", wintypes.DWORD),
+            ("PageFaultCount", wintypes.DWORD),
+            ("PeakWorkingSetSize", ctypes.c_size_t),
+            ("WorkingSetSize", ctypes.c_size_t),
+            ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+            ("PagefileUsage", ctypes.c_size_t),
+            ("PeakPagefileUsage", ctypes.c_size_t),
+            ("PrivateUsage", ctypes.c_size_t),
+        ]
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    psapi = ctypes.WinDLL("psapi", use_last_error=True)
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    psapi.GetProcessMemoryInfo.argtypes = [wintypes.HANDLE, ctypes.POINTER(PROCESS_MEMORY_COUNTERS_EX), wintypes.DWORD]
+    psapi.GetProcessMemoryInfo.restype = wintypes.BOOL
+
+    handle = kernel32.OpenProcess(0x0400 | 0x0010, False, proc.pid)
+    if not handle:
+        raise StabilityError("PROCESS_METRICS_OPEN_FAILED", f"pid={proc.pid} winerr={ctypes.get_last_error()}")
+    try:
+        counters = PROCESS_MEMORY_COUNTERS_EX()
+        counters.cb = ctypes.sizeof(counters)
+        if not psapi.GetProcessMemoryInfo(handle, ctypes.byref(counters), counters.cb):
+            raise StabilityError("PROCESS_METRICS_READ_FAILED", f"pid={proc.pid} winerr={ctypes.get_last_error()}")
+        return int(counters.WorkingSetSize)
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def record_process_metrics(proc: subprocess.Popen[Any], out_dir: Path, scenario: str, sample: str) -> int:
+    rss = process_rss_bytes(proc)
+    append_jsonl(
+        out_dir / "M1RuntimeStabilityProcessMetrics.jsonl",
+        {
+            "ts_utc": now_utc(),
+            "scenario": scenario,
+            "sample": sample,
+            "pid": proc.pid,
+            "rss_bytes": rss,
+            "process_alive": proc.poll() is None,
+        },
+    )
+    return rss
+
+
+def directory_size_bytes(root: Path) -> int:
+    total = 0
+    for p in root.rglob("*"):
+        if p.is_file():
+            total += p.stat().st_size
+    return total
+
+
+def enforce_output_storage_budget(profile: dict[str, Any], out_dir: Path) -> int:
+    used = directory_size_bytes(out_dir)
+    limit = int(profile.get("max_storage") or 0)
+    if limit != EXPECTED_MAX_STORAGE or used > limit:
+        raise StabilityError("OUTPUT_STORAGE_BUDGET_EXCEEDED", f"used={used} limit={limit}")
+    return used
+
+
+def enforce_wall_budget(profile: dict[str, Any], started: float) -> float:
+    elapsed = time.monotonic() - started
+    limit = float(profile.get("max_wall_time") or 0)
+    if limit != EXPECTED_MAX_WALL_TIME or elapsed > limit:
+        raise StabilityError("MAX_WALL_TIME_EXCEEDED", f"elapsed={elapsed:.3f} limit={limit}")
+    return elapsed
+
+
+def claim_attempt_guard(profile: dict[str, Any], output_dir: Path) -> Path:
+    if profile.get("max_attempts") != 1:
+        raise StabilityError("MAX_ATTEMPTS_DRIFT", str(profile.get("max_attempts")))
+    guard = EXPECTED_ATTEMPT_GUARD_PATH
+    guard.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "profile_id": profile.get("profile_id"),
+        "claimed_at_utc": now_utc(),
+        "output_dir": str(output_dir.resolve()),
+        "semantics": "FIRST_EFFECTFUL_ATTEMPT_CONSUMES_PROFILE / NO_REUSE_AFTER_SUCCESS_OR_FAILURE",
+    }
+    try:
+        with guard.open("x", encoding="utf-8", newline="\n") as f:
+            f.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+    except FileExistsError:
+        raise StabilityError("MAX_ATTEMPTS_EXCEEDED", str(guard))
+    return guard
 
 
 def build_server_command(profile: dict[str, Any]) -> list[str]:
@@ -371,14 +602,15 @@ def run_load_cycles(profile: dict[str, Any], out_dir: Path, events: Path) -> dic
         event(events, "M1-07-PC-LOAD-001", "server_started", cycle=i, pid=proc.pid, command=cmd)
         try:
             ready = wait_health(cfg["host"], int(cfg["port"]))
+            rss = record_process_metrics(proc, out_dir, "M1-07-PC-LOAD-001", f"cycle-{i}-ready")
             probe = minimal_probe(profile)
-            event(events, "M1-07-PC-LOAD-001", "ready", cycle=i, pid=proc.pid, readiness_seconds=ready)
+            event(events, "M1-07-PC-LOAD-001", "ready", cycle=i, pid=proc.pid, readiness_seconds=ready, rss_bytes=rss)
             graceful = graceful_stop_owned(proc)
             if not graceful:
                 raise StabilityError("GRACEFUL_STOP_FAILED", f"cycle={i}")
             if not wait_port_released(cfg["host"], int(cfg["port"])):
                 raise StabilityError("PORT_RELEASE_TIMEOUT", f"cycle={i}")
-            rows.append({"cycle": i, "pid": proc.pid, "readiness_seconds": ready, "probe": probe, "graceful_exit": True})
+            rows.append({"cycle": i, "pid": proc.pid, "readiness_seconds": ready, "rss_bytes": rss, "probe": probe, "graceful_exit": True})
         finally:
             if owned_process_alive(proc):
                 force_kill_owned(proc)
@@ -391,12 +623,14 @@ def run_cancel(profile: dict[str, Any], out_dir: Path, events: Path) -> dict[str
     event(events, "M1-07-PC-CANCEL-001", "server_started", pid=proc.pid, command=cmd)
     try:
         ready = wait_health(cfg["host"], int(cfg["port"]))
+        rss_ready = record_process_metrics(proc, out_dir, "M1-07-PC-CANCEL-001", "ready")
         cancelled = stream_then_cancel(profile)
         time.sleep(0.5)
         alive = owned_process_alive(proc)
         if not alive:
             raise StabilityError("SERVER_CRASHED_AFTER_CANCEL", "server process exited")
         post_health = wait_health(cfg["host"], int(cfg["port"]), timeout=5.0)
+        rss_post_cancel = record_process_metrics(proc, out_dir, "M1-07-PC-CANCEL-001", "post-cancel")
         probe = minimal_probe(profile)
         graceful = graceful_stop_owned(proc)
         if not graceful or not wait_port_released(cfg["host"], int(cfg["port"])):
@@ -404,6 +638,8 @@ def run_cancel(profile: dict[str, Any], out_dir: Path, events: Path) -> dict[str
         return {
             "scenario_id": "M1-07-PC-CANCEL-001",
             "readiness_seconds": ready,
+            "rss_ready_bytes": rss_ready,
+            "rss_post_cancel_bytes": rss_post_cancel,
             "cancel": cancelled,
             "server_alive_after_cancel": alive,
             "post_cancel_health_seconds": post_health,
@@ -422,6 +658,7 @@ def run_background_reconnect(profile: dict[str, Any], out_dir: Path, events: Pat
     event(events, "M1-07-PC-BACKGROUND-001", "server_started", pid=pid, command=cmd)
     try:
         ready = wait_health(cfg["host"], int(cfg["port"]))
+        rss_ready = record_process_metrics(proc, out_dir, "M1-07-PC-BACKGROUND-001", "ready")
         status, _ = request_json(cfg["host"], int(cfg["port"]), "GET", "/health", timeout=2.0)
         if not (200 <= status < 300):
             raise StabilityError("BACKGROUND_INITIAL_HEALTH_FAILED", str(status))
@@ -430,6 +667,7 @@ def run_background_reconnect(profile: dict[str, Any], out_dir: Path, events: Pat
         if not same_pid_alive:
             raise StabilityError("BACKGROUND_SERVER_EXITED", "server exited while controller detached")
         reconnect = wait_health(cfg["host"], int(cfg["port"]), timeout=5.0)
+        rss_reconnect = record_process_metrics(proc, out_dir, "M1-07-PC-BACKGROUND-001", "fresh-client-reconnect")
         probe = minimal_probe(profile)
         graceful = graceful_stop_owned(proc)
         if not graceful or not wait_port_released(cfg["host"], int(cfg["port"])):
@@ -439,6 +677,8 @@ def run_background_reconnect(profile: dict[str, Any], out_dir: Path, events: Pat
             "semantics": "PC_BACKGROUND_SERVICE_CONTINUITY_ONLY / NOT_MOBILE_APP_BACKGROUND_RESUME",
             "pid": pid,
             "readiness_seconds": ready,
+            "rss_ready_bytes": rss_ready,
+            "rss_reconnect_bytes": rss_reconnect,
             "same_pid_alive_after_10s_no_client": same_pid_alive,
             "reconnect_health_seconds": reconnect,
             "probe": probe,
@@ -456,6 +696,7 @@ def run_crash_restart(profile: dict[str, Any], out_dir: Path, events: Path) -> d
     event(events, "M1-07-PC-CRASH-001", "server_started", pid=first_pid, command=cmd)
     try:
         ready1 = wait_health(cfg["host"], int(cfg["port"]))
+        rss_before_crash = record_process_metrics(proc, out_dir, "M1-07-PC-CRASH-001", "pre-crash-ready")
         stream_conn, stream_resp, first = open_stream(profile)
         event(
             events,
@@ -478,6 +719,7 @@ def run_crash_restart(profile: dict[str, Any], out_dir: Path, events: Path) -> d
         event(events, "M1-07-PC-CRASH-001", "server_restarted", pid=second_pid, command=cmd2)
         try:
             ready2 = wait_health(cfg["host"], int(cfg["port"]))
+            rss_after_restart = record_process_metrics(proc2, out_dir, "M1-07-PC-CRASH-001", "post-restart-ready")
             probe = minimal_probe(profile)
             graceful = graceful_stop_owned(proc2)
             if not graceful or not wait_port_released(cfg["host"], int(cfg["port"])):
@@ -492,6 +734,8 @@ def run_crash_restart(profile: dict[str, Any], out_dir: Path, events: Path) -> d
             "second_pid": second_pid,
             "first_readiness_seconds": ready1,
             "restart_readiness_seconds": ready2,
+            "rss_before_crash_bytes": rss_before_crash,
+            "rss_after_restart_bytes": rss_after_restart,
             "post_restart_probe": probe,
             "pass": True,
         }
@@ -504,20 +748,33 @@ def run(profile: dict[str, Any], output_dir: Path) -> dict[str, Any]:
     output_dir.mkdir(parents=True, exist_ok=False)
     events = output_dir / "M1RuntimeStabilityEvents.jsonl"
     start = time.monotonic()
+    attempt_guard = claim_attempt_guard(profile, output_dir)
+    event(events, "PROFILE", "attempt_guard_claimed", path=str(attempt_guard))
+
     pre = preflight(profile, output_dir)
     event(events, "PROFILE", "preflight_pass", **pre)
+    enforce_wall_budget(profile, start)
+    enforce_output_storage_budget(profile, output_dir)
 
     load = run_load_cycles(profile, output_dir, events)
     (output_dir / "M1RuntimeStabilityLoad.json").write_text(json.dumps(load, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    enforce_wall_budget(profile, start)
+    enforce_output_storage_budget(profile, output_dir)
 
     cancel = run_cancel(profile, output_dir, events)
     (output_dir / "M1RuntimeStabilityCancel.json").write_text(json.dumps(cancel, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    enforce_wall_budget(profile, start)
+    enforce_output_storage_budget(profile, output_dir)
 
     background = run_background_reconnect(profile, output_dir, events)
     (output_dir / "M1RuntimeStabilityBackgroundReconnect.json").write_text(json.dumps(background, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    enforce_wall_budget(profile, start)
+    enforce_output_storage_budget(profile, output_dir)
 
     crash = run_crash_restart(profile, output_dir, events)
     (output_dir / "M1RuntimeStabilityCrashRestart.json").write_text(json.dumps(crash, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    enforce_wall_budget(profile, start)
+    enforce_output_storage_budget(profile, output_dir)
 
     runtime = runtime_binding(profile)
     model = model_binding(profile)
@@ -537,11 +794,15 @@ def run(profile: dict[str, Any], output_dir: Path) -> dict[str, Any]:
     if not digests["pass"]:
         raise StabilityError("POST_RUN_DIGEST_DRIFT", json.dumps(digests))
 
+    final_wall = enforce_wall_budget(profile, start)
+    final_storage = enforce_output_storage_budget(profile, output_dir)
     summary = {
         "profile_id": profile["profile_id"],
+        "attempt_guard": str(attempt_guard),
         "started_at_utc": pre["checked_at_utc"],
         "ended_at_utc": now_utc(),
-        "wall_seconds": round(time.monotonic() - start, 3),
+        "wall_seconds": round(final_wall, 3),
+        "output_storage_bytes": final_storage,
         "load": load["pass"],
         "cancel": cancel["pass"],
         "background_reconnect": background["pass"],
