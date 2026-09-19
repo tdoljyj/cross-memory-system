@@ -1,0 +1,79 @@
+{
+  "schema_version": "clued.model-m1-stage-successor-adoption-receipt/1",
+  "record_id": "M1-STAGE-ENTRY-v1.0.2-OWNER-ADOPTION-VALIDATION-20260919",
+  "program_id": "CLUED-FIRST-PARTY-MODEL",
+  "stage_id": "MODEL-PROGRAM-M1",
+  "created_at_utc": "2026-09-19T09:32:40.9927614Z",
+  "status": "OWNER_ADOPTED / SELF_VALIDATED / MERGE_PENDING / NOT_INDEPENDENT_REVIEW",
+  "owner_authorization": {
+    "source": "CURRENT_CONVERSATION",
+    "owner_message": "我同意 就这么办",
+    "adopted_semantics": "Progressive M1-06 device-baseline acceptance: available real-device baseline may unlock downstream engineering profile preparation; missing Phone/Tablet/Mac remain deferred and mandatory before M1-09 finalization and M1-10 final acceptance."
+  },
+  "successor": {
+    "path": "../governance/M1StageEntryAuthorization.v1.0.2.json",
+    "git_blob_sha1": "51d00b12935e84b93ce19693e56387b67556ad95",
+    "predecessor_path": "../governance/M1StageEntryAuthorization.v1.0.1.json",
+    "predecessor_git_blob_sha1": "7d9fbf7bc083d980cd7a3f43ef2bfdc0a58dd17c",
+    "bound_plan_sha256": "a918f42e6e9de160f7b14a95afafeae9022ddcc189b3663e768aa197110118a4"
+  },
+  "accepted_current_device_baseline": {
+    "device_class": "PC",
+    "device_name": "DESK-W-591",
+    "evidence_ref": "DeviceBenchmarkEvidence.PC.DESK-W-591.v1.0.1.json",
+    "closeout_ref": "M1BenchmarkPCProfile003ExecutionCloseout_20260919.json",
+    "status": "CLOSED_SUCCESS"
+  },
+  "deferred_required_device_baselines": {
+    "Phone": "DEFERRED_NO_BOUND_DEVICE",
+    "Tablet": "DEFERRED_NO_BOUND_DEVICE",
+    "Mac": "DEFERRED_NO_BOUND_DEVICE",
+    "substitution_allowed": false,
+    "full_cross_device_claim_allowed": false,
+    "procurement_required_for_progression": false,
+    "procurement_authority_granted": false
+  },
+  "progression": {
+    "m1_07_profile_preparation_allowed": true,
+    "m1_07_effectful_execution_authorized": false,
+    "m1_07_exact_experiment_profile_required": true,
+    "m1_08_gate_satisfied": false,
+    "m1_09_final_selection_gate_satisfied": false,
+    "m1_10_final_acceptance_gate_satisfied": false
+  },
+  "validation": {
+    "branch_head": "c8706d14786bf88383309f19dfc6fbac1b666878",
+    "validator_blob_sha1": "be9247692079fa9c25e20cb43f0ea5724a305771",
+    "entry_test_blob_sha1": "ececa154ef11899fd9d4d0f1636a2529a01c395c",
+    "validators": [
+      {
+        "name": "validate_m1_entry_bindings.py",
+        "result": "PASS"
+      },
+      {
+        "name": "validate_m1_harness.py",
+        "result": "PASS"
+      },
+      {
+        "name": "validate_m1_package_profile.py",
+        "result": "PASS"
+      }
+    ],
+    "pytest": {
+      "result": "PASS",
+      "passed": 29,
+      "failed": 0
+    },
+    "hard_boundaries_preserved": true,
+    "exact_effectful_profile_gates_preserved": true,
+    "independent_review_requirement_preserved": true
+  },
+  "repository_state": {
+    "pull_request": 267,
+    "branch": "model-program/m1-06-pc-benchmark-20260919",
+    "main_baseline_updated": false,
+    "effect_on_main": "NONE_UNTIL_PR_MERGE"
+  },
+  "authority_effect": "OWNER_ADOPTION_OF_SUCCESSOR_SEMANTICS / NO_M1_07_EXECUTION / NO_TRAINING / NO_PROMOTION / NO_ACTIVATION / NO_PRODUCTION / NO_PROCUREMENT",
+  "next_frontier_after_merge": "PREPARE_EXACT_M1-07_RUNTIME_STABILITY_EXPERIMENT_PROFILE"
+}
