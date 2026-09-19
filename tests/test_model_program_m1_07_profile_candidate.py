@@ -9,6 +9,7 @@ import io
 import json
 import os
 import pathlib
+import shutil
 import sys
 import tempfile
 import time
@@ -195,6 +196,65 @@ class ModelProgramM107CandidateTests(unittest.TestCase):
             self.assertNotEqual(p.returncode, 0)
             self.assertIn("forbidden inherited Go build environment: GOFLAGS", p.stdout + p.stderr)
             self.assertFalse(output.exists())
+
+    def test_build_helper_rejects_unmanifested_source_before_output(self):
+        self.assertTrue(GO)
+        with tempfile.TemporaryDirectory() as td, tempfile.TemporaryDirectory() as od:
+            sandbox = pathlib.Path(td)
+            helper_dir = sandbox / "scripts/model-program"
+            helper_dir.mkdir(parents=True)
+            shutil.copy2(BUILD_HELPER, helper_dir / BUILD_HELPER.name)
+            shutil.copytree(ROOT / "scripts/model-program/m1-runtime-owner", helper_dir / "m1-runtime-owner")
+            (helper_dir / "m1-runtime-owner/extra.go").write_text(
+                "package main\n\nfunc init() {}\n", encoding="utf-8"
+            )
+            output = pathlib.Path(od) / "must-not-exist"
+            env = os.environ.copy()
+            env.pop("GOFLAGS", None)
+            p = subprocess.run(
+                [
+                    sys.executable,
+                    str(helper_dir / BUILD_HELPER.name),
+                    "--go",
+                    str(GO),
+                    "--output",
+                    str(output),
+                ],
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            self.assertNotEqual(p.returncode, 0)
+            self.assertIn("native source directory set drift", p.stdout + p.stderr)
+            self.assertFalse(output.exists())
+
+    def test_build_helper_clean_snapshot_matches_candidate_binary(self):
+        self.assertTrue(GO)
+        with tempfile.TemporaryDirectory() as td:
+            output = pathlib.Path(td) / "clean-build"
+            env = os.environ.copy()
+            env.pop("GOFLAGS", None)
+            p = subprocess.run(
+                [
+                    sys.executable,
+                    str(BUILD_HELPER),
+                    "--go",
+                    str(GO),
+                    "--output",
+                    str(output),
+                ],
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+            built = output / ("m1-07-owner.exe" if os.name == "nt" else "m1-07-owner")
+            self.assertEqual(
+                hashlib.sha256(built.read_bytes()).hexdigest(),
+                self.load_candidate()["code_revision"]["native_owner_binary_sha256"],
+            )
 
     def test_candidate_binary_binding_matches_rebuilt_native_owner(self):
         p = self.load_candidate()
