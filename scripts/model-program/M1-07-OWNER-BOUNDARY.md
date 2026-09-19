@@ -179,3 +179,65 @@ observed Windows llama-server process count remains 0 -> 0 -> 0.
 This remains **NOT FINAL ISSUANCE**. No Owner private key was read or used, no
 real M1-07 scenario ran, no llama-server/model was started, and PR #268 remains
 outside r1 merge authority.
+
+
+## Owner-root successor r2 build-provenance remediation
+
+Same-session technical pre-review of r1 exact head
+`ffff2580f1c3fb9453fef9bd517cd5e12b01226e` found one remaining MAJOR:
+the build helper verified the eight manifest-listed production files but still
+executed `go build .` in the original package directory. An unmanifested
+`extra.go` was therefore accepted by Go and changed the produced binary while
+the receipt still reported the r1 manifest digest.
+
+r2 changes only that build-provenance boundary:
+
+1. The package directory has an exact allowed entry set: eight manifest-bound
+   production inputs, two named test files, and two named non-build metadata
+   files. Extra, missing, directory, symlink/reparse-like non-regular, or other
+   entries fail before output directory creation.
+2. The build helper itself is now byte/SHA-256/Git-blob bound by
+   `source-manifest.json`, and Candidate records the helper path/SHA and
+   provenance semantics.
+3. After verification, the helper writes only the already-verified production
+   bytes into a fresh temporary `verified-source` snapshot and runs
+   `go build` from that snapshot, not from the repository directory. This
+   closes both unmanifested build inputs and the verify-then-build directory
+   substitution window.
+4. The Go environment remains fail-closed and now also uses fresh isolated
+   `GOCACHE`, `GOMODCACHE`, and `GOTMPDIR` in addition to
+   `GOENV=off`, empty `GOFLAGS`, `GOWORK=off`, empty
+   `GOEXPERIMENT`, local toolchain, offline proxy/sumdb and CGO disabled.
+
+r2 exact identities:
+
+- remediation predecessor:
+  `ffff2580f1c3fb9453fef9bd517cd5e12b01226e`
+- validated code candidate head:
+  `d680d2635a2dd42cca84becaec298c2babf470df`
+- Candidate SHA-256:
+  `30b52405c5a3297eed29b545074010c098e3041c34e838120e2be42b570e4363`
+- native source manifest SHA-256:
+  `335a998f3acbb70cddecf02cb2de644264146164508133dccc3299255bbdd36d`
+- build helper SHA-256:
+  `52ef67351c3f976593c4332f47ca1805340de40df6f3cce22b2a38f9feded1b2`
+- development native binary SHA-256:
+  `ce44ea928b8e124c91e7694b84090c279e171e37471b9bb9a453aabf66dfc28a`
+- external build receipt SHA-256:
+  `40c4a2e751ed33c42d8537e2f9a9b7a220a09b39f3256d613b9b9a4487269153`
+
+Adversarial closure proof: a repository-external copy with an unmanifested
+`extra.go` returns nonzero, reports `native source directory set drift`,
+and creates no output directory. The clean snapshot build succeeds and matches
+the exact Candidate binary.
+
+Final author-side r2 verification: focused 61/61 PASS; four M1 validators PASS;
+full M1 90/90 PASS; native Go 100 leaf cases PASS / 0 failed; go vet PASS.
+The exact NON-ISSUED Candidate returns exit 3 / `PROFILE_NOT_ISSUED` with no
+output; an ISSUED-shaped unsigned profile returns exit 3 /
+`OWNER_SIGNATURE_ALGORITHM` with no output; Windows llama-server process
+count remains 0 -> 0 -> 0.
+
+This remains **NOT FINAL ISSUANCE**. No Owner private key was read or used, no
+real M1-07 scenario ran, no llama-server/model was started, and PR #268 remains
+outside r2 merge authority.
