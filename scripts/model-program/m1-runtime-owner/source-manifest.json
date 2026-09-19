@@ -29,9 +29,9 @@
       "sha256": "f0065e4a6349ec06fa24f17a7c66b8441f2f194de02b40c982f3f00394bc97e1"
     },
     "platform_windows.go": {
-      "bytes": 8411,
-      "git_blob_sha1": "025d28a480a33e2262af16f3cb66280da6d81a59",
-      "sha256": "a1ff77636938965c3d77ab68cc34702d9c1e7da7e03bd9a12dcc8a296bd04de6"
+      "bytes": 8608,
+      "git_blob_sha1": "c5143dfbc35e6c61328d96473e6165fcc270208f",
+      "sha256": "e1e57d181cdf3fb07fa70dd2d469079f804850f1ca4234fa16187244a561bdff"
     },
     "policy.go": {
       "bytes": 13722,
@@ -48,7 +48,8 @@
   "schema_version": "clued.m1-07-native-source-manifest/1",
   "source_base": "aa127d5d0623cce921cb90643ec620ace2b70a1f",
   "test_files_excluded_from_production": [
-    "owner_test.go"
+    "owner_test.go",
+    "runtime_tree_windows_test.go"
   ],
   "issuer_public_key_sha256_fingerprint": "7d8a39adb80276686ff052b65e074a8ea9e74f7eccbc44f4340b194fec342f9c",
   "owner_root_enrollment": {
